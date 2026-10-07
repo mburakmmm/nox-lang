@@ -484,6 +484,10 @@ const Printer = struct {
             }
             try self.writer.print("{s}: ", .{p.name});
             try self.printType(p.type_expr);
+            if (p.default) |d| {
+                try self.writer.writeAll(" = ");
+                try self.printExpr(d);
+            }
         }
     }
 
@@ -544,6 +548,10 @@ const Printer = struct {
                 try self.writer.print(" {s} ", .{binOpStr(b.op)});
                 try self.printExprAt(b.right.*, my_prec, right_side);
                 if (need_parens) try self.writer.writeAll(")");
+            },
+            .kwarg => |k| {
+                try self.writer.print("{s}=", .{k.name});
+                try self.printExpr(k.value.*);
             },
             .ternary => |t| {
                 // Üçlü ifade en gevşek bağlanır: herhangi bir operatör bağlamında parantez gerekir; `then` ve
@@ -639,7 +647,7 @@ const Printer = struct {
                 }
                 try self.writer.writeAll(")");
             },
-            .binary, .unary, .ternary => unreachable, // yukarıda printExprAt'ta ele alındı
+            .binary, .unary, .ternary, .kwarg => unreachable, // yukarıda printExprAt'ta ele alındı
         }
     }
 

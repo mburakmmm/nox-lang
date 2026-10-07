@@ -354,6 +354,7 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
         .unary => |u| exprHasUnsafeLocalUse(self, u.operand.*, name, class_params),
+        .kwarg => |k| exprHasUnsafeLocalUse(self, k.value.*, name, class_params),
         .ternary => |t| exprHasUnsafeLocalUse(self, t.cond.*, name, class_params) or exprHasUnsafeLocalUse(self, t.then_expr.*, name, class_params) or exprHasUnsafeLocalUse(self, t.else_expr.*, name, class_params),
         .binary => |b| exprHasUnsafeLocalUse(self, b.left.*, name, class_params) or exprHasUnsafeLocalUse(self, b.right.*, name, class_params),
         .call => |c| blk: {
@@ -533,6 +534,7 @@ fn exprHasUnsafeGrowableLocalUse(self: *const Codegen, expr: ast.Expr, name: []c
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
         .unary => |u| exprHasUnsafeGrowableLocalUse(self, u.operand.*, name),
+        .kwarg => |k| exprHasUnsafeGrowableLocalUse(self, k.value.*, name),
         .ternary => |t| exprHasUnsafeGrowableLocalUse(self, t.cond.*, name) or exprHasUnsafeGrowableLocalUse(self, t.then_expr.*, name) or exprHasUnsafeGrowableLocalUse(self, t.else_expr.*, name),
         .binary => |b| exprHasUnsafeGrowableLocalUse(self, b.left.*, name) or exprHasUnsafeGrowableLocalUse(self, b.right.*, name),
         .call => |c| blk: {

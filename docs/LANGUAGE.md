@@ -111,6 +111,23 @@ label: str = "big" if n > 10 else "small"
 ```
 
 
+**Default parameter values and keyword arguments.** A parameter may have a default,
+`def f(a: int, b: int = 2)`; it must be a constant literal (`int`, `float`, `bool`, `str`, a
+negative number, or `None` for an optional parameter), and parameters with defaults come last.
+Call sites may name arguments: `f(1, b=3)`, `f(b=3, a=1)`; positional arguments come first,
+and an unknown name, a repeated parameter or a missing required argument is a compile error.
+This works for functions, constructors, methods (including `super().__init__`), generic
+functions and `spawn f(...)`; function-typed values and built-ins take positional arguments only.
+Arguments are evaluated in parameter order, not in the order written.
+
+```nox
+def connect(host: str, port: int = 8080, tls: bool = False) -> str:
+    return host + ":" + str(port)
+
+connect("localhost")
+connect("example.com", tls=True)
+```
+
 **Variable declarations require an explicit type on first assignment**
 (`x: int = 5`); subsequent assignments to the same name don't repeat the
 annotation (`x = 6`).

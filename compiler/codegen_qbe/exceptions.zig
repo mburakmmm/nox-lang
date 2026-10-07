@@ -607,6 +607,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
             }
         },
         .unary => |u| try self.collectRaiseInfoExpr(u.operand.*, info, class_ctx, var_types, poisoned),
+        .kwarg => |k| try self.collectRaiseInfoExpr(k.value.*, info, class_ctx, var_types, poisoned),
         .ternary => |t| {
             try self.collectRaiseInfoExpr(t.cond.*, info, class_ctx, var_types, poisoned);
             try self.collectRaiseInfoExpr(t.then_expr.*, info, class_ctx, var_types, poisoned);

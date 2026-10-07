@@ -185,6 +185,62 @@ test "golden(typecheck): v1.146.0 — üçlü ifadenin koşulu bool değilse red
     );
 }
 
+test "golden(typecheck): v1.147.0 — varsayılan değerli parametreler ve keyword argümanlar (fonksiyon/kurucu/metod)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_default_keyword_args.nox"),
+        @embedFile("typecheck_cases/ok_default_keyword_args.expected"),
+    );
+}
+
+test "golden(typecheck): v1.147.0 — bilinmeyen keyword argüman adı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_kwarg_unknown_name.nox"),
+        @embedFile("typecheck_cases/err_kwarg_unknown_name.expected"),
+    );
+}
+
+test "golden(typecheck): v1.147.0 — aynı parametrenin hem konumsal hem keyword verilmesi reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_kwarg_duplicate.nox"),
+        @embedFile("typecheck_cases/err_kwarg_duplicate.expected"),
+    );
+}
+
+test "golden(typecheck): v1.147.0 — varsayılanı olmayan eksik argüman reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_kwarg_missing_required.nox"),
+        @embedFile("typecheck_cases/err_kwarg_missing_required.expected"),
+    );
+}
+
+test "golden(typecheck): v1.147.0 — varsayılanlı parametreden sonra varsayılansız parametre reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_default_before_required.nox"),
+        @embedFile("typecheck_cases/err_default_before_required.expected"),
+    );
+}
+
+test "golden(typecheck): v1.147.0 — varsayılan değer sabit literal olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_default_not_literal.nox"),
+        @embedFile("typecheck_cases/err_default_not_literal.expected"),
+    );
+}
+
+test "golden(typecheck): v1.147.0 — varsayılan değerin tipi parametre tipine uymalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_default_type_mismatch.nox"),
+        @embedFile("typecheck_cases/err_default_type_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): v1.147.0 — keyword ile spawn'a geçirilen paylaşılan argüman da yarış denetiminden geçer" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_via_keyword_arg.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_via_keyword_arg.expected"),
+    );
+}
+
 test "golden(typecheck): var_decl tip uyuşmazlığı" {
     try expectGolden(
         @embedFile("typecheck_cases/err_var_decl_mismatch.nox"),

@@ -1,0 +1,79 @@
+def add(a: int, b: int = 10) -> int:
+    return a + b
+
+def greet(name: str, greeting: str = "hi", punct: str = "!") -> str:
+    return greeting + " " + name + punct
+
+def scale(x: float, k: float = 2.0, neg: bool = False) -> float:
+    if neg:
+        return -x * k
+    return x * k
+
+class Point:
+    x: int
+    y: int
+    label: str
+    def __init__(self, x: int, y: int = 7, label: str = "p") -> None:
+        self.x = x
+        self.y = y
+        self.label = label
+    def moved(self, dx: int = 1, dy: int = 1) -> int:
+        return self.x + dx + self.y + dy
+
+class Base:
+    v: int
+    def __init__(self, v: int = 3) -> None:
+        self.v = v
+
+class Derived(Base):
+    w: int
+    def __init__(self, v: int = 4, w: int = 5) -> None:
+        super().__init__(v=v)
+        self.w = w
+
+def pick[T](a: T, b: T, first: bool = True) -> T:
+    return a if first else b
+
+async def work(n: int, bonus: int = 100) -> int:
+    return n + bonus
+
+def maybe(x: int, other: Point | None = None) -> int:
+    return x if other == None else x + 1
+
+print(add(1))
+print(add(1, 2))
+print(add(b=5, a=1))
+print(add(a=2))
+print(greet("ann"))
+print(greet("bob", punct="?"))
+print(greet(greeting="yo", name="cy"))
+print(scale(3.0))
+print(scale(3.0, neg=True))
+print(scale(1.5, k=3.0))
+p: Point = Point(1)
+print(p.x + p.y)
+q: Point = Point(x=2, label="q")
+print(q.y)
+print(q.label)
+print(p.moved())
+print(p.moved(dy=10))
+print(p.moved(5, dy=0))
+d: Derived = Derived()
+print(d.v + d.w)
+d2: Derived = Derived(w=9)
+print(d2.v + d2.w)
+print(pick(1, 2))
+print(pick(1, 2, first=False))
+print(pick("a", "b", False))
+async def main2() -> int:
+    t: Task[int] = spawn work(1)
+    r: int = await t
+    t2: Task[int] = spawn work(bonus=5, n=1)
+    r2: int = await t2
+    return r + r2
+
+m: Task[int] = spawn main2()
+print(await m)
+print(maybe(1))
+print(maybe(1, other=p))
+print(add(a=1 if True else 2))

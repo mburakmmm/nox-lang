@@ -1,0 +1,33 @@
+class Tag:
+    name: str
+    parts: list[str]
+    def __init__(self, name: str, suffix: str = "-s") -> None:
+        self.name = name + suffix
+        self.parts = [name, suffix]
+
+def build(n: int) -> str:
+    return "n" + str(n)
+
+def join3(a: str, b: str, sep: str = ",", c: str = "z") -> str:
+    return a + sep + b + sep + c
+
+def pick(first: Tag, second: Tag, take_first: bool = True) -> Tag:
+    return first if take_first else second
+
+def total(n: int) -> int:
+    acc: int = 0
+    i: int = 0
+    while i < n:
+        i = i + 1
+        # keyword args reorder fresh temporaries (they must still be released)
+        s: str = join3(b=build(i), a=build(i + 1))
+        s2: str = join3(c=build(i), sep=build(i + 2), b="b", a="a")
+        t: Tag = pick(Tag(name=build(i)), Tag(build(i + 1), suffix="-t"), take_first=i % 2 == 0)
+        u: Tag = pick(second=Tag("q"), first=Tag("p"))
+        acc = acc + len(s) + len(s2) + len(t.name) + len(u.name) + len(t.parts)
+        if i == 4000:
+            break
+    return acc
+
+print(total(100))
+print(total(10000))

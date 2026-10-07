@@ -43,6 +43,7 @@
 const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
+const call_expand_apply = @import("call_expand_apply.zig");
 const index_call_fixup = @import("index_call_fixup.zig");
 const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
@@ -157,6 +158,9 @@ pub const Diagnostic = struct {
 const FuncSig = struct {
     params: []const Type,
     return_type: Type,
+    /// v1.147.0: parametrelerin AST bildirimi (`self` HARİÇ) — ad + varsayılan değer. `null` İSE (fonksiyon-tipli değerler,
+    /// dahili imzalar) keyword/varsayılan argüman desteklenmez. Bkz. `checkArgsDecl`.
+    decl: ?[]const ast.Param = null,
 };
 
 /// v2.0 madde 2.3 (bkz. `Checker.extern_callbacks`in belge notu).
@@ -641,6 +645,8 @@ pub const Checker = struct {
     /// maliyeti: `noxc check`, `list`/`class`/`dict` taşıyan bir `nox.
     /// thread.start`ı HATA olarak İŞARETLER, AYNI program `noxc build
     /// --release` İLE GERÇEKTEN DERLENEBİLİR OLSA BİLE).
+    /// v1.147.0: çağrı sitesi → genişletilmiş (tam konumsal) argüman listesi. Bkz. `call_expand_apply.zig`.
+    call_expansions: call_expand_apply.Map = .empty,
     /// v1.144.0: post-spawn akış analizi (`walkPostSpawnCallerMutation`) için `break`/`continue` noktalarındaki
     /// durum kopyaları — döngü çıkışına/başına ORTA-gövde durumları da katılsın (yalnızca gövde SONU durumu
     /// yetmez: gövdenin ortasındaki `break`ten sonra döngü SONRASI kod, o noktadaki "uçuşta spawn" durumunu görür).
@@ -1431,6 +1437,9 @@ pub const Checker = struct {
     /// örnekleri Nox'un kendi ARC başlığını taşır, bu da C tarafına anlamsız
     /// bir bellek düzeni dayatır (bkz. nox-teknik-spesifikasyon.md §3.20).
     fn registerExternFunc(self: *Checker, ed: ast.ExternDef) TypeError!void {
+        for (ed.params) |p| {
+            if (p.default != null) return self.fail(error.TypeMismatch, "'extern def {s}': parametre '{s}' için varsayılan değer verilemez", .{ ed.name, p.name });
+        }
         if (self.functions.contains(ed.name) or self.generic_functions.contains(ed.name)) {
             return self.fail(error.DuplicateDefinition, "fonksiyon zaten tanımlı: {s}", .{ed.name});
         }
@@ -1820,7 +1829,105 @@ pub const Checker = struct {
         };
     }
 
+    /// v1.147.0: varsayılan değerli parametrelerin kuralları — yalnızca SABİT literal (int/float/bool/str, negatif sayı,
+    /// Optional için `None`), tipi parametre tipine uyar (`skip_types`: generic şablonda tip parametreleri henüz
+    /// çözülemez, orada tip örneklemede `checkArgs` ile denetlenir) ve varsayılanlılar sona yığılır.
+    fn validateParamDefaults(self: *Checker, fname: []const u8, params: []const ast.Param, skip_types: bool) TypeError!void {
+        var seen_default = false;
+        for (params) |p| {
+            const d = p.default orelse {
+                if (seen_default) {
+                    return self.fail(error.TypeMismatch, "'{s}': varsayılan değerli bir parametreden sonra varsayılansız parametre ('{s}') olamaz", .{ fname, p.name });
+                }
+                continue;
+            };
+            seen_default = true;
+            const lit_t: Type = switch (d) {
+                .int_lit => .int,
+                .float_lit => .float,
+                .bool_lit => .boolean,
+                .string_lit => .str,
+                .none_lit => .none,
+                .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) Type.int else if (u.op == .neg and u.operand.* == .float_lit) Type.float else return self.fail(error.TypeMismatch, "'{s}' parametresi '{s}': varsayılan değer yalnızca bir sabit literal olabilir", .{ fname, p.name }),
+                else => return self.fail(error.TypeMismatch, "'{s}' parametresi '{s}': varsayılan değer yalnızca bir sabit literal (int/float/bool/str/None, negatif sayı) olabilir", .{ fname, p.name }),
+            };
+            if (skip_types) continue;
+            const pt = try self.typeExprToType(p.type_expr);
+            const ok = if (lit_t == .none) pt == .optional else self.assignable(pt, lit_t);
+            if (!ok) {
+                return self.fail(error.TypeMismatch, "'{s}' parametresi '{s}': varsayılan değerin tipi parametre tipiyle uyuşmuyor", .{ fname, p.name });
+            }
+        }
+    }
+
+    /// v1.147.0: keyword (`ad=değer`) ve eksik (varsayılanlı) argümanları parametre sırasına dizip TAM konumsal bir argüman
+    /// listesi üretir. Argümanlar parametre SIRASIYLA değerlendirilir (yazılış sırasıyla değil).
+    fn expandCallArgs(self: *Checker, decl: []const ast.Param, args: []const ast.Expr, name: []const u8) TypeError![]ast.Expr {
+        const n = decl.len;
+        const slots = try self.allocator.alloc(?ast.Expr, n);
+        defer self.allocator.free(slots);
+        @memset(slots, null);
+        for (args, 0..) |a, i| {
+            if (a == .kwarg) {
+                var found: ?usize = null;
+                for (decl, 0..) |p, j| {
+                    if (std.mem.eql(u8, p.name, a.kwarg.name)) {
+                        found = j;
+                        break;
+                    }
+                }
+                const j = found orelse return self.fail(error.ArgumentCountMismatch, "'{s}' fonksiyonunun '{s}' adlı bir parametresi yok", .{ name, a.kwarg.name });
+                if (slots[j] != null) return self.fail(error.ArgumentCountMismatch, "'{s}' çağrısında '{s}' parametresi birden fazla kez verildi", .{ name, a.kwarg.name });
+                slots[j] = a.kwarg.value.*;
+            } else {
+                if (i >= n) return self.fail(error.ArgumentCountMismatch, "'{s}' en fazla {d} argüman alır, {d} verildi", .{ name, n, args.len });
+                slots[i] = a;
+            }
+        }
+        const out = try self.allocator.alloc(ast.Expr, n);
+        for (decl, 0..) |p, j| {
+            out[j] = slots[j] orelse (p.default orelse return self.fail(error.ArgumentCountMismatch, "'{s}' çağrısında '{s}' argümanı eksik", .{ name, p.name }));
+        }
+        return out;
+    }
+
+    /// `checkArgs`in varsayılan/keyword farkındalıklı sarmalayıcısı. Düz konumsal ve tam çağrılar ESKİ yolla (aynı hata
+    /// iletileri) denetlenir; keyword içeren ya da eksik argümanlı çağrılar `expandCallArgs` ile genişletilip
+    /// `call_expansions[key]`e kaydedilir (AST yeniden yazımı checker sonunda, `applyCallExpansions`).
+    fn checkArgsDecl(self: *Checker, ctx: *FnCtx, sig: FuncSig, args: []const ast.Expr, name: []const u8, key: usize) TypeError!void {
+        var has_kw = false;
+        for (args) |a| if (a == .kwarg) {
+            has_kw = true;
+        };
+        if (!has_kw and (sig.decl == null or args.len >= sig.params.len)) {
+            return self.checkArgs(ctx, sig.params, args, name);
+        }
+        const decl = sig.decl orelse return self.fail(error.TypeMismatch, "'{s}' keyword argüman/varsayılan değer desteklemiyor", .{name});
+        const expanded = try self.expandCallArgs(decl, args, name);
+        try self.call_expansions.put(self.allocator, key, expanded);
+        return self.checkArgs(ctx, sig.params, expanded, name);
+    }
+
+    /// Bir serbest fonksiyonun `kw` adlı parametresinin konumu (bildirimden); yoksa `null`.
+    fn kwargDeclIndex(self: *Checker, fn_name: []const u8, kw: []const u8) ?usize {
+        const sig = self.functions.get(fn_name) orelse return null;
+        const decl = sig.decl orelse return null;
+        for (decl, 0..) |p, j| {
+            if (std.mem.eql(u8, p.name, kw)) return j;
+        }
+        return null;
+    }
+
+    /// Checker bitince, kaydedilen genişletmeleri AST'ye yazar (bkz. `call_expand_apply.zig`).
+    fn applyCallExpansions(self: *Checker, module: ast.Module) void {
+        if (self.call_expansions.count() == 0) return;
+        call_expand_apply.stmts(module.body, &self.call_expansions);
+        for (self.instantiations.items) |fd| call_expand_apply.stmts(fd.body, &self.call_expansions);
+        for (self.class_instantiations.items) |cd| for (cd.methods) |m| call_expand_apply.stmts(m.body, &self.call_expansions);
+    }
+
     fn registerFunc(self: *Checker, fd: ast.FuncDef) TypeError!void {
+        try self.validateParamDefaults(fd.name, fd.params, fd.type_params.len > 0);
         // Bulundu (bkz. proje belleği "nox.http gzip düzeltmesi + dil
         // eksikleri" görevi): Nox'ta bir `def main()` sözleşmesi YOK — üst
         // düzey deyimler ZATEN programın giriş noktasıdır (bkz. nox-teknik-
@@ -1871,7 +1978,7 @@ pub const Checker = struct {
                 }
             }
         }
-        try self.functions.put(self.allocator, fd.name, .{ .params = params, .return_type = ret });
+        try self.functions.put(self.allocator, fd.name, .{ .params = params, .return_type = ret, .decl = fd.params });
         if (fd.is_async) try self.async_functions.put(self.allocator, fd.name, {});
         if (fd.decorators.len > 0) try self.registerDecorators(fd, params, ret);
     }
@@ -2169,7 +2276,7 @@ pub const Checker = struct {
             if (self.async_functions.contains(mangled)) {
                 return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, yalnızca 'spawn' ile başlatılabilir", .{mangled});
             }
-            try self.checkArgs(ctx, sig.params, c.args, mangled);
+            try self.checkArgsDecl(ctx, sig, c.args, mangled, @intFromPtr(c.callee));
             try self.checkCapabilityCall(mangled);
             c.callee.* = .{ .identifier = mangled };
             return sig.return_type;
@@ -2177,7 +2284,7 @@ pub const Checker = struct {
         if (self.classes.contains(mangled)) {
             const info = self.classes.get(mangled).?;
             const init_sig = info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
-            try self.checkArgs(ctx, init_sig.params, c.args, mangled);
+            try self.checkArgsDecl(ctx, init_sig, c.args, mangled, @intFromPtr(c.callee));
             c.callee.* = .{ .identifier = mangled };
             return Type{ .class = mangled };
         }
@@ -2805,7 +2912,8 @@ pub const Checker = struct {
             const params = try self.allocator.alloc(Type, m.params.len - 1);
             for (m.params[1..], 0..) |p, i| params[i] = try self.typeExprToType(p.type_expr);
             const ret = try self.typeExprToType(m.return_type);
-            const sig = FuncSig{ .params = params, .return_type = ret };
+            try self.validateParamDefaults(m.name, m.params[1..], false);
+            const sig = FuncSig{ .params = params, .return_type = ret, .decl = m.params[1..] };
             if (std.mem.eql(u8, m.name, "__init__")) {
                 info.init_sig = sig;
                 const metas = try self.allocator.alloc(ParamMeta, params.len);
@@ -3025,6 +3133,7 @@ pub const Checker = struct {
         // `checkFunctionBody`nin AYNI YENİ kontrolü, BOŞ bir parametre
         // dilimiyle (üst-düzeyin parametresi YOK).
         self.checkNoPostSpawnCallerMutation(module.body, &.{}) catch |e| try self.recordDiagnostic(e);
+        self.applyCallExpansions(module);
     }
 
     /// Modüldeki tüm `protocol_def`leri kaydeder (`self.protocols`). Her
@@ -3136,6 +3245,7 @@ pub const Checker = struct {
         switch (e) {
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
             .unary => |u| try self.collectSpawnTargetsExpr(u.operand.*),
+            .kwarg => |k| try self.collectSpawnTargetsExpr(k.value.*),
             .ternary => |t| {
                 try self.collectSpawnTargetsExpr(t.cond.*);
                 try self.collectSpawnTargetsExpr(t.then_expr.*);
@@ -3559,6 +3669,7 @@ pub const Checker = struct {
         switch (expr) {
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
             .unary => |u| try self.scanMutatesGraphExpr(fname, params, u.operand.*, shared, seeds, reverse_edges),
+            .kwarg => |k| try self.scanMutatesGraphExpr(fname, params, k.value.*, shared, seeds, reverse_edges),
             .ternary => |t| {
                 try self.scanMutatesGraphExpr(fname, params, t.cond.*, shared, seeds, reverse_edges);
                 try self.scanMutatesGraphExpr(fname, params, t.then_expr.*, shared, seeds, reverse_edges);
@@ -3597,10 +3708,22 @@ pub const Checker = struct {
                         }
                     }
                 }
-                for (c.args, 0..) |a, arg_index| {
-                    if (self.resolveExprSharedType(a, shared)) |r| {
+                for (c.args, 0..) |a, arg_index0| {
+                    // v1.147.0: keyword argüman (`ad=değer`, checker genişletmesinden ÖNCE) — değer çözülür; parametre
+                    // indeksi çözülemezse (metod hedefi) mutasyon konservatif olarak tohum sayılır.
+                    const av: ast.Expr = if (a == .kwarg) a.kwarg.value.* else a;
+                    var arg_index: usize = arg_index0;
+                    var index_unknown = false;
+                    if (a == .kwarg) {
+                        if (callee_is_resolvable_free_fn) {
+                            if (self.kwargDeclIndex(c.callee.identifier, a.kwarg.name)) |ki| arg_index = ki else index_unknown = true;
+                        } else index_unknown = true;
+                    }
+                    if (self.resolveExprSharedType(av, shared)) |r| {
                         if (r.ty == .list or r.ty == .dict or r.ty == .class) {
-                            if (callee_is_resolvable_free_fn) {
+                            if (index_unknown) {
+                                if (!callee_is_known_safe_builtin) try self.addMutatesSeed(fname, params, r.root_param, seeds);
+                            } else if (callee_is_resolvable_free_fn) {
                                 try self.addMutatesEdge(c.callee.identifier, @intCast(arg_index), fname, params, r.root_param, reverse_edges);
                             } else if (method_owner_symbol) |owner_symbol| {
                                 // `self` metodun KENDİ NodeKey indekslemesinde
@@ -3687,6 +3810,7 @@ pub const Checker = struct {
     fn checkTransitiveSpawnSharedMutationExpr(self: *Checker, fd_name: []const u8, expr: ast.Expr, params: []const SharedParam) TypeError!void {
         switch (expr) {
             .unary => |u| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, u.operand.*, params),
+            .kwarg => |k| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, k.value.*, params),
             .ternary => |t| {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, t.cond.*, params);
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, t.then_expr.*, params);
@@ -3718,9 +3842,24 @@ pub const Checker = struct {
                         }
                     }
                 }
-                for (c.args, 0..) |a, idx| {
+                for (c.args, 0..) |a, idx0| {
+                    // v1.147.0: keyword argüman — serbest fonksiyon için parametre indeksi bildirimden çözülür;
+                    // metod hedefinde çözülemez (bu lint'te atlanır).
+                    const av: ast.Expr = if (a == .kwarg) a.kwarg.value.* else a;
+                    var idx: usize = idx0;
+                    if (a == .kwarg) {
+                        if (callee_is_resolvable_free_fn) {
+                            idx = self.kwargDeclIndex(c.callee.identifier, a.kwarg.name) orelse {
+                                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, av, params);
+                                continue;
+                            };
+                        } else {
+                            try self.checkTransitiveSpawnSharedMutationExpr(fd_name, av, params);
+                            continue;
+                        }
+                    }
                     if (callee_is_resolvable_free_fn) {
-                        if (self.resolveExprSharedType(a, params)) |r| {
+                        if (self.resolveExprSharedType(av, params)) |r| {
                             if (r.ty == .list or r.ty == .dict or r.ty == .class) {
                                 if (self.mutates_params.contains(.{ .func = c.callee.identifier, .index = @intCast(idx) })) {
                                     return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada '{s}' üzerinden transitif olarak değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param, c.callee.identifier });
@@ -3922,6 +4061,7 @@ pub const Checker = struct {
                 try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners, locked_resources);
             },
             .unary => |u| try self.removeAwaitedTaskSharing(aa, u.operand.*, task_spawn_ids, resource_owners, locked_resources),
+            .kwarg => |k| try self.removeAwaitedTaskSharing(aa, k.value.*, task_spawn_ids, resource_owners, locked_resources),
             .ternary => |t| {
                 try self.removeAwaitedTaskSharing(aa, t.cond.*, task_spawn_ids, resource_owners, locked_resources);
                 try self.removeAwaitedTaskSharing(aa, t.then_expr.*, task_spawn_ids, resource_owners, locked_resources);
@@ -4329,8 +4469,22 @@ pub const Checker = struct {
                             .alias_params => |indices| {
                                 var collected: std.ArrayListUnmanaged(usize) = .empty;
                                 for (indices) |idx| {
-                                    if (idx < c.args.len and c.args[idx] == .identifier) {
-                                        if (state.points_to.get(c.args[idx].identifier)) |src_ids| {
+                                    // v1.147.0: konumsal argüman ya da (bildirimden adıyla çözülen) keyword argümanın değeri.
+                                    const arg_expr: ?ast.Expr = blk: {
+                                        if (idx < c.args.len and c.args[idx] != .kwarg) break :blk c.args[idx];
+                                        if (self.functions.get(c.callee.identifier)) |sg| {
+                                            if (sg.decl) |decl| {
+                                                if (idx < decl.len) {
+                                                    for (c.args) |ka| {
+                                                        if (ka == .kwarg and std.mem.eql(u8, ka.kwarg.name, decl[idx].name)) break :blk ka.kwarg.value.*;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        break :blk null;
+                                    };
+                                    if (arg_expr != null and arg_expr.? == .identifier) {
+                                        if (state.points_to.get(arg_expr.?.identifier)) |src_ids| {
                                             for (src_ids) |sid| {
                                                 var found = false;
                                                 for (collected.items) |x| {
@@ -4420,7 +4574,9 @@ pub const Checker = struct {
                     // (GG.15-18/HH.3'ün AYNI `@intFromPtr(...)` deseni).
                     const spawn_id: usize = @intFromPtr(sv.spawn_expr);
                     var any_shared = false;
-                    for (c.args) |arg| {
+                    for (c.args) |arg0| {
+                        // v1.147.0: keyword argümanın DEĞERİ de paylaşılan sayılır (`spawn w(c=c1)`).
+                        const arg: ast.Expr = if (arg0 == .kwarg) arg0.kwarg.value.* else arg0;
                         if (arg == .identifier) {
                             if (known_types.get(arg.identifier)) |t| {
                                 if (t == .list or t == .dict or t == .class) {
@@ -5357,6 +5513,7 @@ pub const Checker = struct {
             },
             .binary => |b| try self.checkBinary(ctx, b),
             .ternary => |t| try self.checkTernary(ctx, t, null),
+            .kwarg => return self.fail(error.TypeMismatch, "keyword argüman (ad=değer) yalnızca bir fonksiyon/metod çağrısının argüman listesinde kullanılabilir", .{}),
             .call => |c| try self.checkCall(ctx, c),
             .attribute => |a| try self.checkAttribute(ctx, a),
             .index => |idx| blk: {
@@ -5468,7 +5625,7 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "'spawn' yalnızca 'async def' fonksiyonlarını başlatabilir: '{s}' async değil", .{fn_name});
                 }
                 const sig = self.functions.get(fn_name).?; // async_functions'a girdiyse functions'ta da vardır
-                try self.checkArgs(ctx, sig.params, call.args, fn_name);
+                try self.checkArgsDecl(ctx, sig, call.args, fn_name, @intFromPtr(call.callee));
                 const boxed = try self.allocator.create(Type);
                 boxed.* = sig.return_type;
                 break :blk .{ .task = boxed };
@@ -5558,7 +5715,7 @@ pub const Checker = struct {
             const class_t = try self.instantiateGenericClass(gcd, bound);
             const info = self.classes.get(class_t.class).?;
             const init_sig = info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
-            try self.checkArgs(ctx, init_sig.params, g.args, g.name);
+            try self.checkArgsDecl(ctx, init_sig, g.args, g.name, @intFromPtr(g.resolved_class_name));
             g.resolved_class_name.* = class_t.class;
             return class_t;
         }
@@ -6643,7 +6800,7 @@ pub const Checker = struct {
                     if (self.extern_callbacks.get(name)) |cb_cfg| {
                         try self.checkExternCallbackArgs(ctx, sig.params, c.args, name, cb_cfg);
                     } else {
-                        try self.checkArgs(ctx, sig.params, c.args, name);
+                        try self.checkArgsDecl(ctx, sig, c.args, name, @intFromPtr(c.callee));
                     }
                     try self.checkCapabilityCall(name);
                     return sig.return_type;
@@ -6651,7 +6808,7 @@ pub const Checker = struct {
                 if (self.classes.contains(name)) {
                     const info = self.classes.get(name).?;
                     const init_sig = info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
-                    try self.checkArgs(ctx, init_sig.params, c.args, name);
+                    try self.checkArgsDecl(ctx, init_sig, c.args, name, @intFromPtr(c.callee));
                     return .{ .class = name };
                 }
                 // Faz U.3: `from X.Y import foo[as bar]` ile bağlanan ÇIPLAK
@@ -6730,11 +6887,11 @@ pub const Checker = struct {
                     const base_info = self.classes.get(base_name).?;
                     if (std.mem.eql(u8, a.attr, "__init__")) {
                         const init_sig = base_info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
-                        try self.checkArgs(ctx, init_sig.params, c.args, "__init__");
+                        try self.checkArgsDecl(ctx, init_sig, c.args, "__init__", @intFromPtr(c.callee));
                         return .none;
                     }
                     if (base_info.methods.get(a.attr)) |sig| {
-                        try self.checkArgs(ctx, sig.params, c.args, a.attr);
+                        try self.checkArgsDecl(ctx, sig, c.args, a.attr, @intFromPtr(c.callee));
                         const owner = base_info.method_owners.get(a.attr) orelse base_name;
                         try self.checkMethodCapabilityCall(owner, a.attr);
                         return sig.return_type;
@@ -6944,7 +7101,7 @@ pub const Checker = struct {
                 const info = self.classes.getPtr(class_name) orelse
                     return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
                 if (info.methods.get(a.attr)) |sig| {
-                    try self.checkArgs(ctx, sig.params, c.args, a.attr);
+                    try self.checkArgsDecl(ctx, sig, c.args, a.attr, @intFromPtr(c.callee));
                     const owner = info.method_owners.get(a.attr) orelse class_name;
                     try self.checkMethodCapabilityCall(owner, a.attr);
                     return sig.return_type;
@@ -7424,6 +7581,11 @@ pub const Checker = struct {
                 operand.* = try self.substituteExpr(u.operand.*, bindings);
                 break :blk .{ .unary = .{ .op = u.op, .operand = operand } };
             },
+            .kwarg => |k| blk: {
+                const v = try self.allocator.create(ast.Expr);
+                v.* = try self.substituteExpr(k.value.*, bindings);
+                break :blk .{ .kwarg = .{ .name = k.name, .value = v } };
+            },
             .ternary => |t| blk: {
                 const c = try self.allocator.create(ast.Expr);
                 c.* = try self.substituteExpr(t.cond.*, bindings);
@@ -7777,7 +7939,7 @@ pub const Checker = struct {
         for (gcd.methods, 0..) |m, i| {
             const params = try self.allocator.alloc(ast.Param, m.params.len);
             for (m.params, 0..) |p, j| {
-                params[j] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings), .self_inferred = p.self_inferred };
+                params[j] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings), .self_inferred = p.self_inferred, .default = p.default };
             }
             methods[i] = .{
                 .name = m.name,
@@ -7936,7 +8098,7 @@ pub const Checker = struct {
         if (!def_info_ptr.methods.contains(mangled)) {
             const params = try self.allocator.alloc(ast.Param, gfd.params.len);
             for (gfd.params, 0..) |p, i| {
-                params[i] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings), .self_inferred = p.self_inferred };
+                params[i] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings), .self_inferred = p.self_inferred, .default = p.default };
             }
             const concrete: ast.FuncDef = .{
                 .name = mangled,
@@ -7948,7 +8110,7 @@ pub const Checker = struct {
             };
             const sig_params = try self.allocator.alloc(Type, params.len - 1);
             for (params[1..], 0..) |p, i| sig_params[i] = try self.typeExprToType(p.type_expr);
-            const sig = FuncSig{ .params = sig_params, .return_type = try self.typeExprToType(concrete.return_type) };
+            const sig = FuncSig{ .params = sig_params, .return_type = try self.typeExprToType(concrete.return_type), .decl = params[1..] };
             // İmza ÖNCE (özyinelemeli çağrılar aynı örneklemeyi bulsun),
             // gövde SONRA — `instantiateGeneric`in AYNI sırası. Tanımlayan
             // sınıfın TÜM alt sınıfları da (kayıt-zamanında düzleştirilmiş
@@ -7978,7 +8140,19 @@ pub const Checker = struct {
         c.callee.* = .{ .attribute = .{ .obj = at.obj, .attr = mangled } };
     }
 
-    fn instantiateGeneric(self: *Checker, ctx: *FnCtx, gfd: ast.FuncDef, c: ast.Call) TypeError!Type {
+    fn instantiateGeneric(self: *Checker, ctx: *FnCtx, gfd: ast.FuncDef, c0: ast.Call) TypeError!Type {
+        // v1.147.0: keyword/eksik (varsayılanlı) argümanlar ÖNCE şablonun parametrelerine göre genişletilir
+        // (tip çıkarımı tam konumsal listeyi bekler).
+        var c = c0;
+        var has_kw = false;
+        for (c0.args) |a| if (a == .kwarg) {
+            has_kw = true;
+        };
+        if (has_kw or c0.args.len < gfd.params.len) {
+            const expanded = try self.expandCallArgs(gfd.params, c0.args, gfd.name);
+            try self.call_expansions.put(self.allocator, @intFromPtr(c0.callee), expanded);
+            c.args = expanded;
+        }
         if (gfd.params.len != c.args.len) {
             return self.fail(error.ArgumentCountMismatch, "'{s}' {d} argüman bekler, {d} verildi", .{ gfd.name, gfd.params.len, c.args.len });
         }
@@ -8025,7 +8199,7 @@ pub const Checker = struct {
 
         const params = try self.allocator.alloc(ast.Param, gfd.params.len);
         for (gfd.params, 0..) |p, i| {
-            params[i] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings) };
+            params[i] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings), .default = p.default };
         }
         const concrete: ast.FuncDef = .{
             .name = mangled,

@@ -28445,6 +28445,42 @@ taze/literal dallar, çağrı argümanı, atılan ifade, break ile; sızıntı d
 
 **Bilinen sınırlamalar:** dallar farklı sınıflarsa (polimorfik) reddedilir; `T | None` dalı (`x if c else None`) yok.
 
+## 3.264 Varsayılan parametre değerleri ve keyword argümanlar (v1.147.0)
+
+`def f(a: int, b: int = 2)` ve `f(b=1, a=3)`. AST: `Param.default: ?Expr`, `Expr.kwarg{name, value}` (yalnızca çağrı argüman
+listesinde; parser: bir keyword'den sonra konumsal argüman → sözdizimi hatası).
+
+**Kurallar (checker):** varsayılan değer yalnızca SABİT literal olabilir (int/float/bool/str, negatif sayı, Optional
+parametre için `None`) — bu yüzden Python'daki "paylaşılan değişebilir varsayılan" tuzağı YOK ve genişletme güvenli;
+tipi parametre tipine uymalı (generic şablonda tip örneklemede denetlenir); varsayılanlı parametreden sonra varsayılansız
+parametre olamaz; `extern def`te varsayılan yok. Çağrıda: bilinmeyen keyword, aynı parametrenin iki kez verilmesi ve varsayılanı
+olmayan eksik argüman derleme hatası. Fonksiyon-tipli değerler ve yerleşikler keyword/varsayılan almaz.
+
+**Uygulama:** `FuncSig.decl` (parametre bildirimi, `self` hariç) tüm kullanıcı çağrı yollarında (serbest fonksiyon, kurucu
+`__init__` (miras dahil), metod, `super().__init__`/`super().m`, `spawn f(...)`, generic fonksiyon, generic sınıf kurucusu,
+from-import/modül-nitelikli çağrı) `checkArgsDecl` ile tüketilir: düz ve tam konumsal çağrılar ESKİ yoldan (aynı hata
+iletileri) geçer; keyword'lü ya da eksik argümanlı çağrılar `expandCallArgs` ile TAM konumsal listeye genişletilir (sıra
+düzeltilir, eksikler varsayılan literalle dolar) ve `Checker.call_expansions`a (anahtar: `callee` kutusunun adresi) yazılır.
+`checkModule` sonunda `call_expand_apply.zig` AST'yi YERİNDE yeniden yazar (modül gövdesi + generic örneklemeler) —
+böylece sahiplik/kaçış/inline/raise analizleri ve her iki backend (argüman↔parametre eşlemesini indeksle yapan her şey) yalnızca
+sıradan konumsal çağrılar görür; `kwarg` hiçbir aşağı-akış geçişine ulaşmaz. Yeniden yazımdan ÖNCE çalışan checker ön-lint'leri
+keyword-farkındalıklı yapıldı: yarış denetimi (`spawn w(c=c1)` paylaşılan sayılır), mutasyon grafiği (serbest fonksiyonda
+parametre konumu bildirimden bulunur, metodda konservatif tohum), alias takibi (adla çözülür). Generic şablonların
+`Param.default`u module_loader/substitute kopyalarında korunur.
+
+**Anlamsal notlar:** argümanlar yazılış sırasıyla değil PARAMETRE sırasıyla değerlendirilir (yalnızca yan etkili argümanlar
+keyword ile yer değiştirirse fark eder); varsayılan literal her çağrıda yeniden "değerlendirilir" (sabit olduğundan gözlemlenemez);
+bir metodun varsayılanı STATİK alıcı tipinin bildirimindendir (override'ın varsayılanı değil).
+
+Golden: `default_keyword_args_basic` (fonksiyon/kurucu/metod/miras `super().__init__(v=v)`/generic/spawn/Optional varsayılan),
+`default_keyword_args_arc_temporaries` (keyword ile yeniden sıralanan taze geçicilerde ARC, sızıntı denetimli; Python ile
+sayısal olarak doğrulandı); typecheck: `ok_default_keyword_args`, `err_kwarg_unknown_name`, `err_kwarg_duplicate`,
+`err_kwarg_missing_required`, `err_default_before_required`, `err_default_not_literal`, `err_default_type_mismatch`,
+`err_spawn_shared_via_keyword_arg`; fmt idempotans; tree-sitter corpus. Mevcut hiçbir IR anlık görüntüsü değişmedi.
+
+**Bilinen sınırlamalar:** keyword/varsayılan `nox.*` stdlib fonksiyonlarında şimdilik kullanılmıyor (bildirimleri destekler);
+`*args`/`**kwargs` yok (bilinçli ertelenmiş).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

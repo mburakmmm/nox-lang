@@ -527,7 +527,26 @@ pub const Parser = struct {
         const name = (try self.expect(.identifier)).lexeme;
         _ = try self.expect(.colon);
         const type_expr = try self.parseTypeExpr();
-        return .{ .name = name, .type_expr = type_expr };
+        // `ad: tip = varsayılan` (v1.147.0). Değerin bir sabit literal olması checker'da doğrulanır.
+        const default: ?ast.Expr = if (self.match(.assign)) try self.parseExpr() else null;
+        return .{ .name = name, .type_expr = type_expr, .default = default };
+    }
+
+    /// Bir çağrının TEK argümanı: `ifade` ya da `ad=ifade` (keyword). Python kuralı: bir keyword argümandan SONRA
+    /// konumsal argüman gelemez (`saw_kw` bunu izler).
+    fn parseCallArg(self: *Parser, saw_kw: *bool) ParseError!ast.Expr {
+        if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .assign) {
+            const name = self.advance().lexeme;
+            _ = self.advance(); // `=`
+            const value = try self.parseExpr();
+            saw_kw.* = true;
+            return .{ .kwarg = .{ .name = name, .value = try self.box(value) } };
+        }
+        if (saw_kw.*) {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()) };
+            return error.UnexpectedToken;
+        }
+        return self.parseExpr();
     }
 
     /// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): bir metodun İLK
@@ -1091,10 +1110,11 @@ pub const Parser = struct {
         _ = try self.expect(.l_paren);
 
         var args = std.ArrayList(ast.Expr).empty;
+        var saw_kw = false;
         if (!self.check(.r_paren)) {
-            try args.append(self.allocator, try self.parseExpr());
+            try args.append(self.allocator, try self.parseCallArg(&saw_kw));
             while (self.match(.comma)) {
-                try args.append(self.allocator, try self.parseExpr());
+                try args.append(self.allocator, try self.parseCallArg(&saw_kw));
             }
         }
         _ = try self.expect(.r_paren);
@@ -1127,15 +1147,16 @@ pub const Parser = struct {
                 // toplanır, `@intFromPtr` yalnızca KALICI (yeniden
                 // tahsis edilmeyecek) son dizi ELDE EDİLDİKTEN SONRA alınır.
                 var arg_spans: std.ArrayList(Span) = .empty;
+                var saw_kw = false;
                 if (!self.check(.r_paren)) {
                     {
                         const arg_start = self.cur();
-                        try args.append(self.allocator, try self.parseExpr());
+                        try args.append(self.allocator, try self.parseCallArg(&saw_kw));
                         try arg_spans.append(self.allocator, span_mod.fromTokens(arg_start, self.tokens[self.pos - 1]));
                     }
                     while (self.match(.comma)) {
                         const arg_start = self.cur();
-                        try args.append(self.allocator, try self.parseExpr());
+                        try args.append(self.allocator, try self.parseCallArg(&saw_kw));
                         try arg_spans.append(self.allocator, span_mod.fromTokens(arg_start, self.tokens[self.pos - 1]));
                     }
                 }

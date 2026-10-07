@@ -169,7 +169,10 @@ module.exports = grammar({
     type_parameters: $ => seq('[', commaSep1($.identifier), ']'),
 
     parameters: $ => seq('(', commaSep($.parameter), ')'),
-    parameter: $ => seq(field('name', $.identifier), ':', field('type', $._type_expression)),
+    parameter: $ => seq(
+      field('name', $.identifier), ':', field('type', $._type_expression),
+      optional(seq('=', field('default', $._expression))),
+    ),
 
     // `extern def name(a: int) -> int from "lib" with_rt` — gövde YOK,
     // native ABI sınırı bildirimi (bkz. AGENTS.md §9.5 — güven sınırı).
@@ -313,7 +316,10 @@ module.exports = grammar({
       field('function', $._postfix_expression),
       field('arguments', $.argument_list),
     )),
-    argument_list: $ => seq('(', commaSep($._expression), ')'),
+    argument_list: $ => seq('(', commaSep(choice($.keyword_argument, $._expression)), ')'),
+
+    // `f(name=value)` (v1.147.0)
+    keyword_argument: $ => seq(field('name', $.identifier), '=', field('value', $._expression)),
 
     attribute: $ => prec(PREC.postfix, seq(
       field('object', $._postfix_expression), '.', field('attribute', $.identifier),

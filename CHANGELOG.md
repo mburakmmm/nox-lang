@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.147.0]
+
+### Eklendi
+
+- **Varsayılan parametre değerleri** (`def f(a: int, b: int = 2)`; yalnızca sabit literal) ve **keyword argümanlar**
+  (`f(b=1, a=3)`) — fonksiyon, kurucu, metod, miras, generic ve `spawn` çağrılarında; QBE ve LLVM. Checker çağrıları tam
+  konumsal listeye genişletip AST'yi yeniden yazar. Spec §3.264.
+
+### Düzeltme
+
+- Yarış denetimi (post-spawn) keyword ile `spawn`a geçirilen paylaşılan argümanı da izler.
+
 ## [1.146.1]
 
 ### Belge

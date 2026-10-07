@@ -102,6 +102,7 @@ pub fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
         .unary => |u| exprMentionsName(u.operand.*, name),
+        .kwarg => |k| exprMentionsName(k.value.*, name),
         .ternary => |t| exprMentionsName(t.cond.*, name) or exprMentionsName(t.then_expr.*, name) or exprMentionsName(t.else_expr.*, name),
         .binary => |b| exprMentionsName(b.left.*, name) or exprMentionsName(b.right.*, name),
         .call => |c| callMentionsName(c, name),
@@ -668,6 +669,7 @@ fn findListIndexedByVarExpr(e: ast.Expr, idx_var: []const u8) ?[]const u8 {
             return findListIndexedByVarExpr(idx.index.*, idx_var);
         },
         .unary => |u| return findListIndexedByVarExpr(u.operand.*, idx_var),
+        .kwarg => |k| return findListIndexedByVarExpr(k.value.*, idx_var),
         .ternary => |t| {
             if (findListIndexedByVarExpr(t.cond.*, idx_var)) |n| return n;
             if (findListIndexedByVarExpr(t.then_expr.*, idx_var)) |n| return n;

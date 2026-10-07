@@ -367,6 +367,8 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         .unary => |u| try self.genUnary(u),
         .binary => |b| try self.genBinary(b),
         .ternary => |t| try self.genTernary(t),
+        // `kwarg` checker tarafından konumsal argümanlara açılır; codegen'e ASLA ulaşmamalı.
+        .kwarg => error.Unsupported,
         .call => |c| try self.genCall(c),
         .index => |idx| try self.genIndex(idx),
         .list_lit => |elems| try self.genListLit(elems),

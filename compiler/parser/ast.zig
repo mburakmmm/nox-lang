@@ -59,6 +59,9 @@ pub const Param = struct {
     /// `printParams`ı (kullanıcının YAZDIĞI yüzey sözdizimini SADIK biçimde
     /// yeniden üretmek İçin) okur.
     self_inferred: bool = false,
+    /// v1.147.0: `name: T = <literal>` — varsayılan değer. Checker yalnızca SABİT literallere (int/float/bool/str,
+    /// negatif sayı, Optional parametre için `None`) izin verir; çağrı yerinde tam konumsal çağrıya genişletilir.
+    default: ?Expr = null,
 };
 
 pub const UnaryOp = enum { neg, not_, invert };
@@ -87,6 +90,11 @@ pub const BinaryOp = enum {
     in_,
     not_in,
 };
+
+/// v1.147.0: çağrıdaki `ad=değer` keyword argümanı (yalnızca çağrı argüman listesinde bulunur). Checker çağrı hedefinin
+/// imzasına göre BU sarmalayıcıları kaldırıp argümanları parametre sırasına dizer ve eksikleri varsayılanla doldurur
+/// (`Checker.call_expansions` + `applyCallExpansions`); checker bittikten sonra AST'de `kwarg` KALMAZ.
+pub const Kwarg = struct { name: []const u8, value: *Expr };
 
 /// v1.146.0: `then_expr if cond else else_expr` (Python üçlü ifadesi). Yalnızca seçilen dal değerlendirilir.
 pub const Ternary = struct { cond: *Expr, then_expr: *Expr, else_expr: *Expr };
@@ -131,6 +139,7 @@ pub const Expr = union(enum) {
     /// TAMAMEN checker'ın işidir.
     generic_construct: GenericConstruct,
     ternary: Ternary,
+    kwarg: Kwarg,
 };
 
 pub const Unary = struct { op: UnaryOp, operand: *Expr };

@@ -346,6 +346,7 @@ fn renameExpr(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.
         .identifier => |name| if (map.get(name)) |mangled| .{ .identifier = mangled } else e,
         .unary => |u| .{ .unary = .{ .op = u.op, .operand = try renameExprBox(a, u.operand.*, map) } },
         .binary => |b| .{ .binary = .{ .op = b.op, .left = try renameExprBox(a, b.left.*, map), .right = try renameExprBox(a, b.right.*, map) } },
+        .kwarg => |k| .{ .kwarg = .{ .name = k.name, .value = try renameExprBox(a, k.value.*, map) } },
         .ternary => |t| .{ .ternary = .{ .cond = try renameExprBox(a, t.cond.*, map), .then_expr = try renameExprBox(a, t.then_expr.*, map), .else_expr = try renameExprBox(a, t.else_expr.*, map) } },
         .call => |c| blk: {
             const args = try a.alloc(ast.Expr, c.args.len);
@@ -409,7 +410,7 @@ fn renameStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, map: *const Rename
 /// tip ifadeleri VE gövde YENİDEN adlandırılır (bkz. modül üstü not).
 fn renameMethodDef(a: std.mem.Allocator, m: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
     const params = try a.alloc(ast.Param, m.params.len);
-    for (m.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map), .self_inferred = p.self_inferred };
+    for (m.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map), .self_inferred = p.self_inferred, .default = p.default };
     return .{
         .name = m.name,
         .type_params = m.type_params,
@@ -437,7 +438,7 @@ fn renameMethodDef(a: std.mem.Allocator, m: ast.FuncDef, map: *const RenameMap) 
 /// üst-düzey tanımlar için çağrılır — bkz. `loadImportsRecursive`).
 fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
     const params = try a.alloc(ast.Param, fd.params.len);
-    for (fd.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map) };
+    for (fd.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map), .default = p.default };
     return .{
         .name = map.get(fd.name).?,
         .type_params = fd.type_params,
@@ -468,7 +469,7 @@ fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rena
 /// bakarak bu iki fonksiyon arasında dispatch eder.
 fn renameNestedFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
     const params = try a.alloc(ast.Param, fd.params.len);
-    for (fd.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map) };
+    for (fd.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map), .default = p.default };
     return .{
         .name = fd.name,
         .type_params = fd.type_params,

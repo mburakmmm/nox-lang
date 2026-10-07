@@ -286,6 +286,11 @@ fn dumpExpr(writer: *std.Io.Writer, e: ast.Expr) std.Io.Writer.Error!void {
             try dumpExpr(writer, u.operand.*);
             try writer.writeAll(")");
         },
+        .kwarg => |k| {
+            try writer.print("(kwarg {s} ", .{k.name});
+            try dumpExpr(writer, k.value.*);
+            try writer.writeAll(")");
+        },
         .ternary => |t| {
             try writer.writeAll("(ternary ");
             try dumpExpr(writer, t.cond.*);

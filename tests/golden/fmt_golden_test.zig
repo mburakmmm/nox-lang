@@ -43,6 +43,25 @@ test "fmt: gerekli parens KORUNUR, gereksiz parens ATILIR (precedence)" {
     }
 }
 
+test "fmt: v1.147.0 — varsayılan parametre ve keyword argüman İDEMPOTENT round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "def f(a: int, b: int = 2, c: str = \"x\") -> int:\n    pass\n", .out = "def f(a: int, b: int = 2, c: str = \"x\") -> int:\n    pass\n" },
+        .{ .in = "def f(a: int, b: int=-2) -> int:\n    pass\n", .out = "def f(a: int, b: int = -2) -> int:\n    pass\n" },
+        .{ .in = "y: int = f(1, b=2)\n", .out = "y: int = f(1, b=2)\n" },
+        .{ .in = "y: int = f(b = 2, a = 1)\n", .out = "y: int = f(b=2, a=1)\n" },
+        .{ .in = "y: int = f(a=1 if c else 2)\n", .out = "y: int = f(a=1 if c else 2)\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}
+
 test "fmt: v1.146.0 — üçlü ifade İDEMPOTENT round-trip ve parantezleme" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

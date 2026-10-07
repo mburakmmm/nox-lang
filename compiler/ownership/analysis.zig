@@ -381,6 +381,7 @@ pub const Analyzer = struct {
                     else => self.scanExprEscapes(scope, index_of, c.callee.*),
                 }
             },
+            .kwarg => |k| self.scanExprEscapes(scope, index_of, k.value.*),
             .ternary => |t| {
                 markEscapeIfIdentifier(scope, index_of, t.then_expr.*, "bir üçlü ifadenin dalı olduğu için");
                 markEscapeIfIdentifier(scope, index_of, t.else_expr.*, "bir üçlü ifadenin dalı olduğu için");

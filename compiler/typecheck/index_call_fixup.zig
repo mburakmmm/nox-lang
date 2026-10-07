@@ -139,6 +139,7 @@ const Fixer = struct {
         switch (e.*) {
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
             .unary => |*u| try self.fixExpr(u.operand),
+            .kwarg => |*k| try self.fixExpr(k.value),
             .ternary => |*t| {
                 try self.fixExpr(t.cond);
                 try self.fixExpr(t.then_expr);
