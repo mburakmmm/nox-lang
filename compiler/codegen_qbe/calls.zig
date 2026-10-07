@@ -18,6 +18,8 @@ const Value = types.Value;
 const QbeType = types.QbeType;
 const ClassInfo = types.ClassInfo;
 const ElemHeapInfo = types.ElemHeapInfo;
+const DictInfo = types.DictInfo;
+const HeapKind = types.HeapKind;
 const RT_PARAM = types.RT_PARAM;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const TAG_SIZE = types.TAG_SIZE;
@@ -338,6 +340,9 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 // eklendi — GENEL bir yerleşik, JSON'a özgü DEĞİL).
                 if (v.heap == .list) {
                     try self.qbeLoadL(result_t, v.text);
+                } else if (v.heap == .dict) {
+                    // v1.149.0: `len(d)` — `d.len()` ile aynı.
+                    try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_dict_len", &.{.{ .ty = .l, .text = v.text }});
                 } else {
                     try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_str_char_count", &.{.{ .ty = .l, .text = v.text }});
                 }
@@ -1931,6 +1936,144 @@ pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
     return .{ .text = "0", .qtype = .w };
 }
 
+/// `dict` değer `Value`sine (okunan ham yük `converted`) heap meta verisini ekler.
+fn dictValueOf(dinfo: *const DictInfo, converted: Value) Value {
+    return .{
+        .text = converted.text,
+        .qtype = converted.qtype,
+        .heap = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else .none,
+        .class_name = if (dinfo.value_is_class) dinfo.value_class_name else null,
+    };
+}
+
+fn emitKeyError(self: *Codegen, release_a: ast.Expr, release_av: Value, release_b: ast.Expr, release_bv: Value) CodegenError!void {
+    const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
+    const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
+    const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(ke_obj.text, "KeyError", self.current_raise_line);
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ke_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+    try self.releaseIfTemporary(release_a, release_av);
+    try self.releaseIfTemporary(release_b, release_bv);
+    try self.emitRaisePropagate();
+}
+
+/// v1.149.0: `d.get(k[, varsayılan])`, `d.pop(k[, varsayılan])`, `d.setdefault(k, varsayılan)`. Sonuç HER ZAMAN sahipli (+1):
+/// sözlükten OKUNAN ödünç değer (get/setdefault bulunca) retain edilir; `pop` sahipliği zaten sözlükten devralır; varsayılan
+/// dal `genTernaryBranch` (retainIfAliasing) ile sahipli yapılır. Varsayılan YALNIZCA anahtar yokken değerlendirilir (tembel).
+/// `get(k)` (varsayılansız) `V | None` döner: heap değerde null işaretçi, skalerde kutulanmış (`boxScalar`) değer ya da null.
+fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr, dinfo: *const DictInfo) CodegenError!Value {
+    const is_get = std.mem.eql(u8, a.attr, "get");
+    const is_pop = std.mem.eql(u8, a.attr, "pop");
+    if (args.len < 1 or args.len > 2) return error.Unsupported;
+    if (!is_get and !is_pop and args.len != 2) return error.Unsupported; // setdefault
+    try self.checkNoLowlevelEscape(obj);
+    const key_expr = args[0];
+    const key_v0 = try self.genExpr(key_expr);
+    try self.checkNoLowlevelEscape(key_v0);
+    const key_payload = try self.toPayload(key_v0);
+    const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+    const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+    const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+    const heap_value = dinfo.value_is_str or dinfo.value_is_class;
+    const heap_kind: HeapKind = if (dinfo.value_is_str) .str else .class;
+
+    const has_t = try self.newTemp();
+    try self.qbeCall(.{ .name = has_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+    const found_label = try self.newLabel("dict_found");
+    const miss_label = try self.newLabel("dict_miss");
+    const end_label = try self.newLabel("dict_end");
+
+    // `pop(k)` varsayılansız: eksik anahtar KeyError.
+    const strict_pop = is_pop and args.len == 1;
+    if (strict_pop) {
+        const err_label = try self.newLabel("dict_pop_err");
+        try self.qbeJnz(has_t, found_label, err_label);
+        try self.qbeLabel(err_label);
+        try emitKeyError(self, key_expr, key_v0, a.obj.*, obj);
+        try self.qbeLabel(found_label);
+        const payload_t = try self.newTemp();
+        try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+        const conv = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
+        try self.releaseIfTemporary(key_expr, key_v0);
+        try self.releaseIfTemporary(a.obj.*, obj);
+        return dictValueOf(dinfo, conv);
+    }
+
+    try self.qbeJnz(has_t, found_label, miss_label);
+
+    // ---- bulundu ----
+    try self.qbeLabel(found_label);
+    var found_text: []const u8 = undefined;
+    var found_qtype: QbeType = undefined;
+    var found_val: Value = undefined;
+    {
+        const payload_t = try self.newTemp();
+        if (is_pop) {
+            try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+        } else {
+            try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+        }
+        const conv = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
+        found_val = dictValueOf(dinfo, conv);
+        // `get`/`setdefault`: ödünç okuma → sonuç için retain; `pop`: sahiplik zaten devralındı.
+        if (!is_pop and heap_value) try self.emitInlineRetain(found_val.text, heap_kind);
+        if (is_get and args.len == 1) {
+            // `get(k)`: Optional sonuç — skalerde kutula.
+            if (!heap_value) {
+                const boxed = try self.boxScalar(found_val, dinfo.value_qtype);
+                found_text = boxed.text;
+                found_qtype = .l;
+                found_val = boxed;
+            } else {
+                found_text = found_val.text;
+                found_qtype = .l;
+            }
+        } else {
+            found_text = found_val.text;
+            found_qtype = found_val.qtype;
+        }
+        // Anahtar bu dalda saklanmaz: geçici ise serbest bırak (setdefault'ın miss dalında sahiplik sözlüğe geçer).
+        try self.releaseIfTemporary(key_expr, key_v0);
+    }
+    const found_pred = self.current_label;
+    try self.qbeJmp(end_label);
+
+    // ---- bulunamadı ----
+    try self.qbeLabel(miss_label);
+    var miss_text: []const u8 = "0";
+    if (args.len == 1) {
+        // get(k): None
+        miss_text = "0";
+        try self.releaseIfTemporary(key_expr, key_v0);
+    } else {
+        const dv0 = try self.genTernaryBranch(args[1], null);
+        const dv = try self.convert(dv0, dinfo.value_qtype);
+        miss_text = dv.text;
+        if (std.mem.eql(u8, a.attr, "setdefault")) {
+            // sözlüğe EKLE: anahtar (ödünç ise retain; geçici ise sahiplik sözlüğe geçer) + değer için ayrı +1.
+            const key_v = try self.retainIfAliasing(key_expr, key_v0);
+            const key_payload2 = try self.toPayload(key_v);
+            if (heap_value) try self.emitInlineRetain(dv.text, heap_kind);
+            const value_payload = try self.toPayload(.{ .text = dv.text, .qtype = dv.qtype });
+            try self.qbeCall(null, "$nox_dict_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .w, .text = value_is_str_lit }, .{ .ty = .w, .text = value_is_class_lit }, .{ .ty = .l, .text = key_payload2.text }, .{ .ty = .l, .text = value_payload.text } });
+        } else {
+            try self.releaseIfTemporary(key_expr, key_v0);
+        }
+    }
+    const miss_pred = self.current_label;
+    try self.qbeJmp(end_label);
+
+    try self.qbeLabel(end_label);
+    const result_t = try self.newTemp();
+    const phi_ty: QbeType = if (is_get and args.len == 1) .l else found_qtype;
+    try self.qbePhi(result_t, phi_ty, found_pred, found_text, miss_pred, miss_text);
+    try self.releaseIfTemporary(a.obj.*, obj);
+    var result = found_val;
+    result.text = result_t;
+    result.qtype = phi_ty;
+    return result;
+}
+
 /// `d.contains(key)`/`d.len()` — `Channel.send/recv` İLE AYNI desen
 /// (bir kullanıcı sınıfı DEĞİL, burada özel işlenir — bkz. checker.zig'in
 /// eşdeğer notu).
@@ -1950,6 +2093,34 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         try self.releaseIfTemporary(args[0], key_v0);
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = result, .qtype = .w };
+    }
+    // v1.149.0: get/pop/setdefault/clear/update/copy (bkz. spec §3.266).
+    if (std.mem.eql(u8, a.attr, "get") or std.mem.eql(u8, a.attr, "pop") or std.mem.eql(u8, a.attr, "setdefault")) return genDictGetLike(self, obj, a, args, dinfo);
+    if (std.mem.eql(u8, a.attr, "clear")) {
+        if (args.len != 0) return error.Unsupported;
+        try self.checkNoLowlevelEscape(obj);
+        try self.qbeCall(null, "$nox_dict_clear", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_class) "1" else "0" } });
+        try self.releaseIfTemporary(a.obj.*, obj);
+        return .{ .text = "0", .qtype = .w };
+    }
+    if (std.mem.eql(u8, a.attr, "update")) {
+        if (args.len != 1) return error.Unsupported;
+        const other = try self.genExpr(args[0]);
+        try self.checkNoLowlevelEscape(obj);
+        try self.checkNoLowlevelEscape(other);
+        try self.qbeCall(null, "$nox_dict_update", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = other.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_class) "1" else "0" } });
+        try self.releaseIfTemporary(args[0], other);
+        try self.releaseIfTemporary(a.obj.*, obj);
+        return .{ .text = "0", .qtype = .w };
+    }
+    if (std.mem.eql(u8, a.attr, "copy")) {
+        if (args.len != 0) return error.Unsupported;
+        try self.checkNoLowlevelEscape(obj);
+        const copy_t = try self.newTemp();
+        try self.qbeCall(.{ .name = copy_t, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" } });
+        try self.qbeCall(null, "$nox_dict_update", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = copy_t }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_class) "1" else "0" } });
+        try self.releaseIfTemporary(a.obj.*, obj);
+        return .{ .text = copy_t, .qtype = .l, .heap = .dict, .dict_info = dinfo };
     }
     if (std.mem.eql(u8, a.attr, "len")) {
         if (args.len != 0) return error.Unsupported;

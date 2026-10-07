@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.149.0]
+
+### Eklendi
+
+- **`dict` tam API:** `get(k[, varsayılan])`, `pop(k[, varsayılan])`, `setdefault`, `update`, `copy`, `clear`, `len(d)` ve yeni
+  **`del d[k]`** deyimi (QBE ve LLVM). Spec §3.266.
+- Spawn paylaşım/mutasyon denetimleri list/dict mutasyon yöntemlerinin tamamını tanır.
+
 ## [1.148.0]
 
 ### Eklendi

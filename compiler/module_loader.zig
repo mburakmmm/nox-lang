@@ -566,6 +566,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         .extern_def => return s,
         .return_stmt => |r| .{ .return_stmt = if (r) |e| try renameExpr(a, e, map) else null },
         .raise_stmt => |e| .{ .raise_stmt = try renameExpr(a, e, map) },
+        .del_stmt => |e| .{ .del_stmt = try renameExpr(a, e, map) },
         .try_stmt => |t| blk: {
             const ecs = try a.alloc(ast.ExceptClause, t.except_clauses.len);
             for (t.except_clauses, 0..) |ec, i| ecs[i] = .{

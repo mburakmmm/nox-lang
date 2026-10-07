@@ -546,6 +546,12 @@ pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInf
             info.direct_unsafe = true;
             try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned);
         },
+        // `del d[k]`: anahtar yoksa KeyError fırlatır ve sözlüğü DEĞİŞTİRİR.
+        .del_stmt => |e| {
+            info.direct_unsafe = true;
+            info.direct_mutates = true;
+            try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned);
+        },
         .try_stmt => |t| {
             try self.collectRaiseInfoStmts(t.try_body, info, class_ctx, var_types, poisoned, list_elem_types);
             for (t.except_clauses) |ec| try self.collectRaiseInfoStmts(ec.body, info, class_ctx, var_types, poisoned, list_elem_types);

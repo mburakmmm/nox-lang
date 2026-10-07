@@ -124,6 +124,7 @@ pub fn visitStmtsForReqUsage(stmts: []const ast.Stmt, param_name: []const u8, us
             },
             .return_stmt => |maybe_e| if (maybe_e) |e| visitExprForReqUsage(e, param_name, used),
             .raise_stmt => |e| visitExprForReqUsage(e, param_name, used),
+            .del_stmt => |e| visitExprForReqUsage(e, param_name, used),
             .try_stmt => |s| {
                 visitStmtsForReqUsage(s.try_body, param_name, used);
                 for (s.except_clauses) |ec| visitStmtsForReqUsage(ec.body, param_name, used);

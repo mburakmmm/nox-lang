@@ -1,0 +1,44 @@
+class Rec:
+    label: str
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+def work(n: int) -> int:
+    acc: int = 0
+    i: int = 0
+    names: dict[str, str] = {}
+    recs: dict[str, Rec] = {}
+    while i < n:
+        i = i + 1
+        k: str = "k" + str(i % 7)
+        v: str = "v" + str(i)
+        names[k] = v
+        acc = acc + len(names.get(k, "none"))
+        acc = acc + len(names.get("absent" + str(i), "dflt" + str(i)))
+        acc = acc + len(names.setdefault("s" + str(i % 5), "sv" + str(i)))
+        r: Rec = recs.setdefault(k, Rec("r" + str(i)))
+        acc = acc + len(r.label)
+        acc = acc + len(recs.get("zz" + str(i), Rec("d" + str(i))).label)
+        if i % 3 == 0:
+            popped: str = names.pop(k, "gone")
+            acc = acc + len(popped)
+        if i % 4 == 0:
+            if k in recs:
+                gone: Rec = recs.pop(k)
+                acc = acc + len(gone.label)
+        copy1: dict[str, str] = names.copy()
+        copy1["extra"] = "e" + str(i)
+        names.update(copy1)
+        if i % 5 == 0:
+            tmp: dict[str, str] = names.copy()
+            tmp.clear()
+            acc = acc + len(tmp)
+        if i % 6 == 0:
+            if "extra" in names:
+                del names["extra"]
+        if i == 3000:
+            break
+    return acc + len(names) + len(recs)
+
+print(work(100))
+print(work(5000))

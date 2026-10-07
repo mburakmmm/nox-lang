@@ -120,6 +120,7 @@ const Fixer = struct {
                 .class_def => |cd| for (cd.methods) |m| try self.fixStmts(m.body),
                 .return_stmt => |*maybe| if (maybe.*) |*e| try self.fixExpr(e, true),
                 .raise_stmt => |*e| try self.fixExpr(e, true),
+                .del_stmt => |*e| try self.fixExpr(e, true),
                 .try_stmt => |*s| {
                     try self.fixStmts(s.try_body);
                     for (s.except_clauses) |ec| try self.fixStmts(ec.body);

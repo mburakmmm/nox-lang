@@ -51,6 +51,7 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
             .class_def => |cd| for (cd.methods) |m| stmts(m.body, map),
             .return_stmt => |*maybe| if (maybe.*) |*e| expr(e, map),
             .raise_stmt => |*e| expr(e, map),
+            .del_stmt => |*e| expr(e, map),
             .try_stmt => |*s| {
                 stmts(s.try_body, map);
                 for (s.except_clauses) |ec| stmts(ec.body, map);

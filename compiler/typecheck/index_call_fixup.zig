@@ -80,7 +80,7 @@ const Fixer = struct {
                 .lowlevel_stmt => |s| try self.collectVars(s.body),
                 .func_def => |fd| try self.collectFunc(fd),
                 .class_def => |cd| for (cd.methods) |m| try self.collectFunc(m),
-                .expr_stmt, .assign, .protocol_def, .extern_def, .return_stmt, .raise_stmt, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt, .defer_stmt => {},
+                .expr_stmt, .assign, .protocol_def, .extern_def, .return_stmt, .raise_stmt, .del_stmt, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt, .defer_stmt => {},
             }
         }
     }
@@ -117,6 +117,7 @@ const Fixer = struct {
                 .class_def => |cd| for (cd.methods) |m| try self.fixStmts(m.body),
                 .return_stmt => |*maybe| if (maybe.*) |*e| try self.fixExpr(e),
                 .raise_stmt => |*e| try self.fixExpr(e),
+                .del_stmt => |*e| try self.fixExpr(e),
                 .try_stmt => |*s| {
                     try self.fixStmts(s.try_body);
                     for (s.except_clauses) |ec| try self.fixStmts(ec.body);

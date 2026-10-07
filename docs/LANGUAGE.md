@@ -141,6 +141,13 @@ connect("localhost")
 connect("example.com", tls=True)
 ```
 
+**Dictionaries** (`dict[K, V]`, keys `int`/`bool`/`str`, values `int`/`float`/`bool`/`str`/class) keep
+insertion order: `d[k]`, `d[k] = v`, `k in d`, `len(d)`, `d.keys()`, `d.values()`, `for k in d`,
+`d.get(k, default)` (the default is only evaluated when the key is missing), `d.get(k)` (a
+`V | None`), `d.pop(k)` (raises `KeyError`), `d.pop(k, default)`, `d.setdefault(k, default)`,
+`d.update(other)`, `d.copy()`, `d.clear()` and the `del d[k]` statement (raises `KeyError`).
+Deleting is O(n).
+
 **Variable declarations require an explicit type on first assignment**
 (`x: int = 5`); subsequent assignments to the same name don't repeat the
 annotation (`x = 6`).

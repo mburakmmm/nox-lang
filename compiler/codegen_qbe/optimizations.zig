@@ -55,7 +55,7 @@ pub fn collectReassignedNames(body: []const ast.Stmt, reassigned: *std.StringHas
                 if (s.binding) |b| try reassigned.put(allocator, b, {});
                 try collectReassignedNames(s.body, reassigned, allocator);
             },
-            .expr_stmt, .return_stmt, .raise_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt, .defer_stmt => {},
+            .expr_stmt, .return_stmt, .raise_stmt, .del_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt, .defer_stmt => {},
         }
     }
 }
@@ -154,6 +154,7 @@ fn nameUsedUnsafely(body: []const ast.Stmt, name: []const u8) bool {
                 if (maybe_e) |e| if (exprMentionsName(e, name)) return true;
             },
             .raise_stmt => |e| if (exprMentionsName(e, name)) return true,
+            .del_stmt => |e| if (exprMentionsName(e, name)) return true,
             .if_stmt => |f| {
                 if (exprMentionsName(f.cond, name)) return true;
                 if (nameUsedUnsafely(f.then_body, name)) return true;

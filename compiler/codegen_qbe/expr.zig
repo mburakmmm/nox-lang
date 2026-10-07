@@ -1454,7 +1454,7 @@ pub fn genIn(self: *Codegen, b: ast.Binary) CodegenError!Value {
 /// `narrowed_unbox`a eklenir; `mod_cache` anlık görüntüsü geri yüklenir (dal çalışmamış olabilir); heap-yönetimli
 /// bir sonuç ÖDÜNÇ ise (`identifier`/alan/eleman okuması) retain edilir — böylece ternary'nin sonucu HER ZAMAN
 /// sahipli (+1) bir değerdir (`isTemporaryExpr(.ternary) == true`).
-fn genTernaryBranch(self: *Codegen, branch: ast.Expr, narrowed: ?[]const u8) CodegenError!Value {
+pub fn genTernaryBranch(self: *Codegen, branch: ast.Expr, narrowed: ?[]const u8) CodegenError!Value {
     const mc_snap = try self.snapshotModCache();
     const was_present = if (narrowed) |n| self.narrowed_unbox.contains(n) else true;
     if (narrowed) |n| try self.narrowed_unbox.put(self.allocator, n, {});

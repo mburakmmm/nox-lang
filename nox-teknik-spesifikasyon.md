@@ -28512,6 +28512,34 @@ Golden: `for_iterables_and_range_forms`, `for_hoisted_iterable_arc_early_exits` 
 **Bilinen sınırlama:** döngü sırasında iterable'ın değiştirilmesi (listeye `append`) tanımsız sonuç verebilir (liste işaretçisi/uzunluğu
 döngü girişinde okunur, eski davranışla aynı); `for k, v in d.items()`/`enumerate`/`zip` tuple gerektirir (yol haritası 1.13).
 
+## 3.266 `dict` tam API: `get`/`pop`/`setdefault`/`update`/`copy`/`clear`, `len(d)`, `del d[k]` (v1.149.0)
+
+Önceki API yalnızca `d[k]`, `d[k] = v`, `contains`, `len`, `keys`, `values` idi. Eklenenler (Python semantiği):
+- `d.get(k, varsayılan) -> V`; `d.get(k) -> V | None` (heap değerde null işaretçi, skalerde kutulanmış `boxScalar`).
+- `d.pop(k) -> V` (anahtar yoksa `KeyError`), `d.pop(k, varsayılan) -> V`; `d.setdefault(k, varsayılan) -> V` (yoksa ekler);
+  `d.update(diğer)` (aynı `dict[K, V]`), `d.copy()`, `d.clear()`; `len(d)`; `del d[k]` (yeni `del` deyimi, `KeyError`).
+- Varsayılan YALNIZCA anahtar yokken değerlendirilir (tembel — Python eager; yalnızca yan etkili varsayılanda fark eder).
+
+**Sahiplik:** sonuç HER ZAMAN sahipli (+1): sözlükten okunan ödünç değer (get/setdefault bulunca) retain edilir; `pop` sahipliği
+sözlükten devralır (`nox_dict_pop`); varsayılan dal `genTernaryBranch` (retainIfAliasing) ile sahipli yapılır; `setdefault`
+eksik anahtarda varsayılan için sözlüğe ayrı +1, sonuç için ayrı +1; anahtar ödünçse retain edilir, geçiciyse sahiplik
+sözlüğe geçer. Çalışma zamanı: `nox_dict_remove/pop/clear/update` (`runtime/collections/dict.zig`). Silme ekleme SIRASINI korur
+(`orderedRemove`), `index_built` ise hash indeksi yeniden kurulur, `last_idx` geçersiz kılınır — **bilinen sınırlama:** silme
+O(n) (çok büyük sözlüklerde çok sayıda silme yavaş; tombstone'lu O(1) silme ileride).
+
+`del` deyimi: AST `del_stmt: Expr` (hedef `index`), parser `kw_del`, checker yalnızca `dict[K, V][anahtar]` kabul eder (liste
+`del xs[i]` yol haritası 1.7), codegen `genDel`. `raise` analizi `del`i "fırlatabilir + değiştirir" sayar. Spawn paylaşım/mutasyon
+denetimleri `isMutatingContainerMethod` ile list+dict mutasyon yöntemlerini (append/pop/sort/insert/extend/reverse/remove/
+clear/update/setdefault) tanır.
+
+Golden: `dict_api_get_pop_setdefault_update` (int/str/float/bool/sınıf değerler, KeyError, silme sonrası indeks yeniden kurma),
+`dict_api_arc_heap_values` (döngüde str/sınıf değerli tüm yöntemler; Python ile sayısal doğrulandı; sızıntı denetimli);
+typecheck: `ok_dict_api`, `err_dict_get_key_type`, `err_dict_get_default_type`, `err_dict_update_type`, `err_del_key_type`,
+`err_del_list_not_yet`, `err_spawn_shared_dict_clear`; Zig birim testi (`nox_dict_remove/pop/clear/update`). Mevcut hiçbir
+IR anlık görüntüsü değişmedi.
+
+**Henüz yok (yol haritası 1.6b):** değer tipi `list[T]`/`dict[...]`, anahtar tipi `float`, `d.items()` (tuple, 1.13).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

@@ -174,6 +174,12 @@ pub const Parser = struct {
                 _ = try self.expect(.newline);
                 break :blk .break_stmt;
             },
+            .kw_del => blk: {
+                _ = self.advance();
+                const target = try self.parseExpr();
+                _ = try self.expect(.newline);
+                break :blk .{ .del_stmt = target };
+            },
             .kw_continue => blk: {
                 _ = self.advance();
                 _ = try self.expect(.newline);

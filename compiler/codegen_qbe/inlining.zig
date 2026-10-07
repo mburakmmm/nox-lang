@@ -368,6 +368,7 @@ fn scanParamEscapesStmts(self: *Codegen, fname: []const u8, param_idx: u32, name
             },
             .return_stmt => |r| if (r) |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, class_params, seeds, reverse_edges),
             .raise_stmt => |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, class_params, seeds, reverse_edges),
+            .del_stmt => |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, class_params, seeds, reverse_edges),
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, `exprHasUnsafeParamUse`in AYNI muhafazakârlığı.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => try addEscapeSeed(self, fname, param_idx, seeds),
@@ -618,6 +619,7 @@ pub fn collectInlineSitesStmt(self: *Codegen, stmt: ast.Stmt) CodegenError!void 
         },
         .return_stmt => |r| if (r) |e| try self.collectInlineSitesExpr(e),
         .raise_stmt => |e| try self.collectInlineSitesExpr(e),
+        .del_stmt => |e| try self.collectInlineSitesExpr(e),
         .try_stmt => |t| {
             try self.collectInlineSitesStmts(t.try_body);
             for (t.except_clauses) |ec| try self.collectInlineSitesStmts(ec.body);
@@ -742,6 +744,7 @@ fn scanStackConstructsStmts(self: *Codegen, stmts: []const ast.Stmt, all_ok: *bo
             },
             .return_stmt => |r| if (r) |e| try scanStackConstructsExpr(self, e, all_ok, any),
             .raise_stmt => |e| try scanStackConstructsExpr(self, e, all_ok, any),
+            .del_stmt => |e| try scanStackConstructsExpr(self, e, all_ok, any),
             // `try`/İç İçe `lowlevel`/`func_def`/`with` — GG.15'in
             // KAPSAMI DIŞINDA (bilinçli, MUHAFAZAKÂR): BULUNURSA BU
             // `lowlevel:` örneğinin arena elenmesi İPTAL edilir (`all_ok
@@ -907,6 +910,7 @@ fn stmtsSafeForParam(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
                 if (r) |e| if (exprHasUnsafeParamUse(self, e, name, class_params)) return false;
             },
             .raise_stmt => |e| if (exprHasUnsafeParamUse(self, e, name, class_params)) return false,
+            .del_stmt => |e| if (exprHasUnsafeParamUse(self, e, name, class_params)) return false,
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, TÜM analiz GÜVENLİ tarafta kalmak İçin İPTAL edilir.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,

@@ -19,8 +19,8 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [x] **1.4 Varsayılan argümanlar + keyword argümanlar** — v1.147.0 (spec §3.264). Yalnızca sabit literal varsayılanlar; argümanlar parametre sırasıyla değerlendirilir.
 - [x] **1.5 `for` genişletmeleri** — v1.148.0 (spec §3.265): `range(a,b,adım)`, `for c in str`, `for k in dict`, her liste ifadesi. Ayrıca eski bir
   doğruluk açığı kapandı (aynı kapsamda farklı tiple yeniden bildirim).
-- [ ] **1.6 dict tam API + tipler:** `.get(k, d)`, `.get(k)` (Optional), `pop`, `del d[k]`/`remove`, `clear`, `update`, `setdefault`, `len(d)`;
-  değer tipi `list[T]`/`dict` (şu an yalnızca int/float/bool/str/sınıf), anahtar tipi `float` (şu an int/bool/str).
+- [x] **1.6a dict tam API** — v1.149.0 (spec §3.266): get/pop/setdefault/update/copy/clear/len/`del d[k]`. Silme O(n).
+- [ ] **1.6b dict değer/anahtar tipleri:** değer tipi `list[T]`/`dict` (şu an yalnızca int/float/bool/str/sınıf), anahtar tipi `float` (şu an int/bool/str).
 - [ ] **1.7 list tam API:** `insert`, `extend`, `reverse`, `remove`, `index`, `count`, `clear`, `copy`; `list + list`, `list * n`; `sorted`/`reversed` (liste döndürür).
 - [ ] **1.8 `float(int)` / açık int→float dönüşümü** (şu an `float` yalnızca `str` alıyor).
 - [ ] **1.9 Dize karşılaştırması `<`/`>`/`<=`/`>=`**, `"ab" * 3`, dilimleme (`xs[a:b]`, `s[a:b]`).

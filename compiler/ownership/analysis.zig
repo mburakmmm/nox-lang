@@ -314,6 +314,7 @@ pub const Analyzer = struct {
                     markEscapeIfIdentifier(scope, index_of, e, "raise ile fırlatıldığı için");
                     self.scanExprEscapes(scope, index_of, e);
                 },
+                .del_stmt => |e| self.scanExprEscapes(scope, index_of, e),
                 .try_stmt => |t| {
                     try self.scanStmts(scope, index_of, t.try_body);
                     for (t.except_clauses) |ec| try self.scanStmts(scope, index_of, ec.body);

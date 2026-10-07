@@ -276,6 +276,55 @@ test "golden(typecheck): v1.148.0 — döngü değişkeni başka eleman tipli ik
     );
 }
 
+test "golden(typecheck): v1.149.0 — dict get/pop/setdefault/update/copy/clear/len/del geçerli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_dict_api.nox"),
+        @embedFile("typecheck_cases/ok_dict_api.expected"),
+    );
+}
+
+test "golden(typecheck): v1.149.0 — dict.get anahtar tipi uyuşmazsa reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_dict_get_key_type.nox"),
+        @embedFile("typecheck_cases/err_dict_get_key_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.149.0 — dict.get varsayılan değer tipi uyuşmazsa reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_dict_get_default_type.nox"),
+        @embedFile("typecheck_cases/err_dict_get_default_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.149.0 — dict.update argümanı aynı dict tipinde olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_dict_update_type.nox"),
+        @embedFile("typecheck_cases/err_dict_update_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.149.0 — del d[k] anahtar tipi uyuşmazsa reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_del_key_type.nox"),
+        @embedFile("typecheck_cases/err_del_key_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.149.0 — del şimdilik yalnızca dict üzerinde (liste 1.7)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_del_list_not_yet.nox"),
+        @embedFile("typecheck_cases/err_del_list_not_yet.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_dict_clear.expected"),
+    );
+}
+
 test "golden(typecheck): var_decl tip uyuşmazlığı" {
     try expectGolden(
         @embedFile("typecheck_cases/err_var_decl_mismatch.nox"),

@@ -1,0 +1,104 @@
+class Item:
+    n: int
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+d: dict[str, int] = {"a": 1, "b": 2, "c": 3}
+print(d.get("a", 0))
+print(d.get("zz", -1))
+print(len(d))
+
+# get without default -> Optional
+g: int | None = d.get("b")
+if g != None:
+    print(g)
+h: int | None = d.get("nope")
+if h == None:
+    print("none")
+
+# pop
+print(d.pop("a"))
+print(d.pop("zz", 99))
+print(len(d))
+print("a" in d)
+
+# setdefault
+print(d.setdefault("x", 10))
+print(d.setdefault("x", 20))
+print(d["x"])
+
+# update / copy / clear
+e: dict[str, int] = {"b": 20, "y": 30}
+d.update(e)
+print(d["b"])
+print(len(d))
+c2: dict[str, int] = d.copy()
+c2["b"] = 0
+print(d["b"])
+print(c2["b"])
+d.clear()
+print(len(d))
+print(len(c2))
+
+# del
+del c2["b"]
+print(len(c2))
+print("b" in c2)
+
+# str values
+s: dict[str, str] = {"k": "v"}
+print(s.get("k", "d"))
+print(s.get("q", "d" + "!"))
+print(s.setdefault("m", "n"))
+print(s.pop("k"))
+print(len(s))
+so: str | None = s.get("m")
+if so != None:
+    print(so)
+
+# float / bool values
+f: dict[int, float] = {1: 1.5}
+print(f.get(1, 0.0))
+print(f.get(2, 2.5))
+fo: float | None = f.get(1)
+if fo != None:
+    print(fo)
+bl: dict[str, bool] = {"t": True}
+print(bl.get("t", False))
+print(bl.get("u", True))
+
+# class values
+it: dict[str, Item] = {"one": Item(1)}
+print(it.get("one", Item(0)).n)
+print(it.get("two", Item(7)).n)
+print(it.pop("one").n)
+print(len(it))
+io: Item | None = it.get("none")
+if io == None:
+    print("no item")
+it.setdefault("z", Item(5))
+print(it["z"].n)
+
+# KeyError cases
+try:
+    d.pop("missing")
+except KeyError as ke:
+    print("keyerror pop")
+try:
+    del d["missing"]
+except KeyError as ke2:
+    print("keyerror del")
+
+# many keys: index rebuilt after deletes
+big: dict[int, int] = {}
+for i in range(50):
+    big[i] = i * 2
+for i in range(0, 50, 2):
+    del big[i]
+print(len(big))
+tot: int = 0
+for k in big:
+    tot = tot + big[k]
+print(tot)
+print(big.get(3, -1))
+print(big.get(4, -1))

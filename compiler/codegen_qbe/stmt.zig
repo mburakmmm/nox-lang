@@ -198,6 +198,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
             },
             .for_stmt => |f| try self.genFor(f, ret_qtype),
             .raise_stmt => |e| try self.genRaise(e),
+            .del_stmt => |e| try self.genDel(e),
             .try_stmt => |t| try self.genTry(t, ret_qtype),
             .lowlevel_stmt => |ll| try self.genLowLevel(ll, ret_qtype),
             .pass_stmt => {},
@@ -849,6 +850,7 @@ pub fn collectIndexStrBasesStmts(self: *Codegen, body: []const ast.Stmt, candida
             },
             .return_stmt => |e| if (e) |ex| try self.collectIndexStrBasesExpr(ex, candidates),
             .raise_stmt => |e| try self.collectIndexStrBasesExpr(e, candidates),
+            .del_stmt => |e| try self.collectIndexStrBasesExpr(e, candidates),
             .try_stmt => |s| {
                 try self.collectIndexStrBasesStmts(s.try_body, candidates);
                 for (s.except_clauses) |ec| try self.collectIndexStrBasesStmts(ec.body, candidates);
@@ -863,6 +865,39 @@ pub fn collectIndexStrBasesStmts(self: *Codegen, body: []const ast.Stmt, candida
             .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
         }
     }
+}
+
+/// v1.149.0: `del d[k]` — anahtar yoksa `KeyError`, varsa girdi (anahtar + str/sınıf değer) serbest bırakılarak silinir.
+pub fn genDel(self: *Codegen, e: ast.Expr) CodegenError!void {
+    if (e != .index) return error.Unsupported;
+    const ix = e.index;
+    const obj = try self.genExpr(ix.obj.*);
+    if (obj.heap != .dict) return error.Unsupported;
+    const dinfo = obj.dict_info orelse return error.Unsupported;
+    const key_v0 = try self.genExpr(ix.index.*);
+    try self.checkNoLowlevelEscape(obj);
+    try self.checkNoLowlevelEscape(key_v0);
+    const key_payload = try self.toPayload(key_v0);
+    const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+    const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+    const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+    const removed = try self.newTemp();
+    try self.qbeCall(.{ .name = removed, .ty = .w }, "$nox_dict_remove", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .w, .text = value_is_str_lit }, .{ .ty = .w, .text = value_is_class_lit }, .{ .ty = .l, .text = key_payload.text } });
+    const err_label = try self.newLabel("dict_del_err");
+    const ok_label = try self.newLabel("dict_del_ok");
+    try self.qbeJnz(removed, ok_label, err_label);
+    try self.qbeLabel(err_label);
+    const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
+    const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
+    const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(ke_obj.text, "KeyError", self.current_raise_line);
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ke_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+    try self.releaseIfTemporary(ix.index.*, key_v0);
+    try self.releaseIfTemporary(ix.obj.*, obj);
+    try self.emitRaisePropagate();
+    try self.qbeLabel(ok_label);
+    try self.releaseIfTemporary(ix.index.*, key_v0);
+    try self.releaseIfTemporary(ix.obj.*, obj);
 }
 
 /// `break` (`is_break`) / `continue`: en içteki döngünün etiketine atlar. Önce döngü gövdesi İÇİNDE açılmış

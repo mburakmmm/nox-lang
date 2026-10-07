@@ -448,6 +448,8 @@ pub const StmtKind = union(enum) {
     /// v1.144.0: en içteki `while`/`for` döngüsünden çıkar / sonraki yinelemeye geçer.
     break_stmt,
     continue_stmt,
+    /// v1.149.0: `del d[k]` (dict anahtarı) / `del xs[i]` (liste elemanı) — hedef bir `index` ifadesidir.
+    del_stmt: Expr,
     with_stmt: WithStmt,
     defer_stmt: DeferStmt,
 };

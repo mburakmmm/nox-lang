@@ -429,6 +429,75 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
     }
 }
 
+/// v1.149.0: `entries[i]`yi (ekleme SIRASINI koruyarak) siler. `entries` indeksleri kaydığından hash indeksi (`index`) yeniden
+/// kurulur (`index_built` ise) ve `last_idx` geçersiz kılınır. Karmaşıklık O(n) (küçük/orta sözlükler için yeterli; büyük
+/// sözlüklerde çok sayıda silme için bkz. spec §3.266 "bilinen sınırlama").
+fn removeAt(rt: ?*anyopaque, d: *Dict, i: usize) void {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    _ = d.entries.orderedRemove(i);
+    d.last_idx = std.math.maxInt(usize);
+    if (d.index_built) {
+        d.index.deinit(state.allocator());
+        d.index_built = false;
+        if (d.entries.items.len > SMALL_MAP_THRESHOLD) buildIndex(d, state.allocator(), rt);
+    }
+}
+
+/// `del d[k]` / `d.remove`: anahtar + değer (str/sınıf ise) serbest bırakılarak silinir. Silindiyse 1, yoksa 0.
+pub export fn nox_dict_remove(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64) i32 {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const i = findIndex(d, key, rt) orelse return 0;
+    const old = d.entries.items[i];
+    if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.value));
+    if (value_is_class != 0) releaseClassPayload(rt, old.value);
+    if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
+    removeAt(rt, d, i);
+    return 1;
+}
+
+/// `d.pop(k)`: anahtarı siler ve DEĞERİN sahipliğini çağırana DEVREDER (değer serbest bırakılmaz); anahtar serbest bırakılır.
+/// Anahtar yoksa 0 döner (çağıran önce `contains` ile doğrular).
+pub export fn nox_dict_pop(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i64 {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const i = findIndex(d, key, rt) orelse return 0;
+    const old = d.entries.items[i];
+    if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
+    removeAt(rt, d, i);
+    return old.value;
+}
+
+/// `d.clear()`: tüm girdiler (str/sınıf anahtar-değerler) serbest bırakılır, sözlük boş kalır.
+pub export fn nox_dict_clear(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32) void {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return));
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    for (d.entries.items) |e| {
+        if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.value));
+        if (value_is_class != 0) releaseClassPayload(rt, e.value);
+        if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.key));
+    }
+    d.entries.clearRetainingCapacity();
+    d.index.deinit(state.allocator());
+    d.index_built = false;
+    d.last_idx = std.math.maxInt(usize);
+}
+
+/// `dst.update(src)` / `src.copy()`: `src`nin her girdisi `dst`ye eklenir/üzerine yazılır. Anahtar ve değer (str/sınıf ise)
+/// önce RETAIN edilir (`nox_dict_set` kendi sahipliğini alır, üzerine yazılan eskileri serbest bırakır).
+pub export fn nox_dict_update(rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32) void {
+    const s: *Dict = @ptrCast(@alignCast(src orelse return));
+    if (dst == src) return;
+    // `src.entries` `dst` güncellenirken DEĞİŞMEZ (farklı sözlükler), ama güvenli olsun diye uzunluk önceden alınır.
+    var i: usize = 0;
+    const n = s.entries.items.len;
+    while (i < n) : (i += 1) {
+        const e = s.entries.items[i];
+        if (key_is_str != 0 and e.key != 0) str_mod.nox_str_retain(payloadToStrPtr(e.key).?);
+        if (value_is_str != 0 and e.value != 0) str_mod.nox_str_retain(payloadToStrPtr(e.value).?);
+        if (value_is_class != 0 and e.value != 0) arc.nox_rc_retain(payloadToStrPtr(e.value).?);
+        nox_dict_set(rt, dst, key_is_str, value_is_str, value_is_class, e.key, e.value);
+    }
+}
+
 /// Bir anahtarın değerini okur — BORROWED bir okumadır (`str` değer İSE
 /// retain EDİLMEZ, dict sahipliği korur — `list[T]` eleman okumasıyla AYNI
 /// semantik). Anahtar YOKSA `0` döner (v1 kapsamı: Python'ın `KeyError`ı
@@ -568,6 +637,41 @@ pub export fn nox_dict_shallow_gc_free_class_values(rt: ?*anyopaque, dp: ?*anyop
     d.entries.deinit(state.allocator());
     d.index.deinit(state.allocator());
     arc.nox_rc_free_payload(rt, ptr, @sizeOf(Dict));
+}
+
+test "nox_dict_remove/pop/clear/update — sıra korunur, indeks yeniden kurulur, int anahtar/değer" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    var k: i64 = 1;
+    while (k <= 20) : (k += 1) nox_dict_set(rt, d, 0, 0, 0, k, k * 10); // eşik (8) aşılır -> indeks kurulu
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_remove(rt, d, 0, 0, 0, 5));
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_remove(rt, d, 0, 0, 0, 5));
+    try std.testing.expectEqual(@as(i64, 19), nox_dict_len(d));
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_contains(rt, d, 0, 5));
+    try std.testing.expectEqual(@as(i64, 200), nox_dict_get(rt, d, 0, 20));
+    // Ekleme sırası korunur: 4'ten sonra 6 gelir.
+    const dd: *Dict = @ptrCast(@alignCast(d));
+    try std.testing.expectEqual(@as(i64, 4), dd.entries.items[3].key);
+    try std.testing.expectEqual(@as(i64, 6), dd.entries.items[4].key);
+    try std.testing.expectEqual(@as(i64, 70), nox_dict_pop(rt, d, 0, 7));
+    try std.testing.expectEqual(@as(i64, 18), nox_dict_len(d));
+
+    const e = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    nox_dict_set(rt, e, 0, 0, 0, 100, 1);
+    nox_dict_set(rt, e, 0, 0, 0, 1, 999);
+    nox_dict_update(rt, d, e, 0, 0, 0);
+    try std.testing.expectEqual(@as(i64, 999), nox_dict_get(rt, d, 0, 1));
+    try std.testing.expectEqual(@as(i64, 1), nox_dict_get(rt, d, 0, 100));
+    try std.testing.expectEqual(@as(i64, 19), nox_dict_len(d));
+
+    nox_dict_clear(rt, d, 0, 0, 0);
+    try std.testing.expectEqual(@as(i64, 0), nox_dict_len(d));
+    nox_dict_set(rt, d, 0, 0, 0, 3, 33);
+    try std.testing.expectEqual(@as(i64, 33), nox_dict_get(rt, d, 0, 3));
+    nox_dict_release(rt, d, 0, 0, 0);
+    nox_dict_release(rt, e, 0, 0, 0);
 }
 
 test "nox_dict_new/set/get/contains/len/destroy — int anahtar/değer" {

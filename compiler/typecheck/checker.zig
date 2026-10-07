@@ -3226,6 +3226,7 @@ pub const Checker = struct {
                 .class_def => |cd| for (cd.methods) |m| try self.collectSpawnTargetsStmts(m.body),
                 .return_stmt => |maybe_e| if (maybe_e) |e| try self.collectSpawnTargetsExpr(e),
                 .raise_stmt => |e| try self.collectSpawnTargetsExpr(e),
+                .del_stmt => |e| try self.collectSpawnTargetsExpr(e),
                 .try_stmt => |t| {
                     try self.collectSpawnTargetsStmts(t.try_body);
                     for (t.except_clauses) |ec| try self.collectSpawnTargetsStmts(ec.body);
@@ -3514,6 +3515,13 @@ pub const Checker = struct {
     /// (YANLIŞLIKLA) "çözülemeyen çağrı" sayıp GEREKSİZ yere tohum
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
+    /// v1.149.0: bir list/dict METODUNUN kapsayıcıyı değiştirip değiştirmediği (spawn paylaşım/mutasyon denetimleri için).
+    fn isMutatingContainerMethod(attr: []const u8) bool {
+        const m = [_][]const u8{ "append", "pop", "sort", "insert", "extend", "reverse", "remove", "clear", "update", "setdefault" };
+        for (m) |x| if (std.mem.eql(u8, attr, x)) return true;
+        return false;
+    }
+
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
         const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
         for (safe) |s| {
@@ -3622,9 +3630,9 @@ pub const Checker = struct {
                 .expr_stmt => |e| {
                     if (e == .call and e.call.callee.* == .attribute) {
                         const at = e.call.callee.*.attribute;
-                        if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
+                        if (isMutatingContainerMethod(at.attr)) {
                             if (self.resolveExprSharedType(at.obj.*, shared)) |r| {
-                                if (r.ty == .list) try self.addMutatesSeed(fname, params, r.root_param, seeds);
+                                if (r.ty == .list or r.ty == .dict) try self.addMutatesSeed(fname, params, r.root_param, seeds);
                             }
                         }
                     }
@@ -3633,6 +3641,7 @@ pub const Checker = struct {
                 .var_decl => |v| try self.scanMutatesGraphExpr(fname, params, v.value, shared, seeds, reverse_edges),
                 .return_stmt => |maybe_e| if (maybe_e) |e| try self.scanMutatesGraphExpr(fname, params, e, shared, seeds, reverse_edges),
                 .raise_stmt => |e| try self.scanMutatesGraphExpr(fname, params, e, shared, seeds, reverse_edges),
+                .del_stmt => |e| try self.scanMutatesGraphExpr(fname, params, e, shared, seeds, reverse_edges),
                 .if_stmt => |i| {
                     try self.scanMutatesGraphExpr(fname, params, i.cond, shared, seeds, reverse_edges);
                     try self.scanMutatesGraphStmts(fname, params, i.then_body, shared, seeds, reverse_edges);
@@ -3932,9 +3941,9 @@ pub const Checker = struct {
                         const c = e.call;
                         if (c.callee.* == .attribute) {
                             const at = c.callee.*.attribute;
-                            if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
+                            if (isMutatingContainerMethod(at.attr)) {
                                 if (self.resolveExprSharedType(at.obj.*, params)) |r| {
-                                    if (r.ty == .list) {
+                                    if (r.ty == .list or r.ty == .dict) {
                                         return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
                                     }
                                 }
@@ -4011,7 +4020,7 @@ pub const Checker = struct {
                 if (c.callee.* == .attribute) {
                     const at = c.callee.attribute;
                     if (at.obj.* == .identifier and isResourceOwned(points_to, resource_owners, at.obj.identifier)) {
-                        if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
+                        if (isMutatingContainerMethod(at.attr)) {
                             return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{at.obj.identifier});
                         }
                     }
@@ -4961,6 +4970,16 @@ pub const Checker = struct {
             .raise_stmt => |e| {
                 const t = try self.checkExpr(ctx, e);
                 if (t != .class) return self.fail(error.TypeMismatch, "'raise' yalnızca bir sınıf örneği alabilir", .{});
+            },
+            // v1.149.0: `del d[k]` — hedef `dict[K, V]` indeksi (anahtar tipi K); liste `del xs[i]` roadmap 1.7.
+            .del_stmt => |e| {
+                if (e != .index) return self.fail(error.TypeMismatch, "'del' yalnızca bir indeks hedefi alır (del d[anahtar])", .{});
+                const obj_t = try self.checkExpr(ctx, e.index.obj.*);
+                const idx_t = try self.checkExpr(ctx, e.index.index.*);
+                switch (obj_t) {
+                    .dict => |d| if (!types.eql(idx_t, d.key.*)) return self.fail(error.TypeMismatch, "'del' anahtarı dict'in anahtar tipiyle uyuşmuyor", .{}),
+                    else => return self.fail(error.TypeMismatch, "'del' şimdilik yalnızca dict[anahtar] üzerinde çalışır", .{}),
+                }
             },
             .try_stmt => |t| try self.checkTry(ctx, t),
             .with_stmt => |w| try self.checkWith(ctx, w),
@@ -6135,8 +6154,8 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "len")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'len' tam olarak 1 argüman alır", .{});
                     const t = try self.checkExpr(ctx, c.args[0]);
-                    if (t != .str and t != .list) {
-                        return self.fail(error.TypeMismatch, "'len' yalnızca str/list üzerinde çalışır", .{});
+                    if (t != .str and t != .list and t != .dict) {
+                        return self.fail(error.TypeMismatch, "'len' yalnızca str/list/dict üzerinde çalışır", .{});
                     }
                     return .int;
                 }
@@ -7087,7 +7106,46 @@ pub const Checker = struct {
                         if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'values' hiç argüman almaz", .{});
                         return Type{ .list = obj_t.dict.value };
                     }
-                    return self.fail(error.UndefinedMethod, "dict'in '{s}' metodu yok (yalnızca contains/len/keys/values)", .{a.attr});
+                    // v1.149.0: get/pop/setdefault/clear/update/copy (bkz. spec §3.266).
+                    const vt: Type = obj_t.dict.value.*;
+                    if (std.mem.eql(u8, a.attr, "get") or std.mem.eql(u8, a.attr, "pop")) {
+                        if (c.args.len < 1 or c.args.len > 2) return self.fail(error.ArgumentCountMismatch, "'{s}' 1 ya da 2 argüman alır (anahtar[, varsayılan])", .{a.attr});
+                        const kt = try self.checkExpr(ctx, c.args[0]);
+                        if (!types.eql(kt, obj_t.dict.key.*)) return self.fail(error.TypeMismatch, "'{s}' anahtarı dict'in anahtar tipiyle uyuşmuyor", .{a.attr});
+                        if (c.args.len == 2) {
+                            const dt = try self.checkExprExpected(ctx, c.args[1], vt);
+                            if (!self.assignable(vt, dt)) return self.fail(error.TypeMismatch, "'{s}' varsayılan değeri dict'in değer tipiyle uyuşmuyor", .{a.attr});
+                            return vt;
+                        }
+                        // `get(k)` → `V | None`; `pop(k)` → `V` (anahtar yoksa KeyError).
+                        if (std.mem.eql(u8, a.attr, "pop")) return vt;
+                        const boxed = try self.allocator.create(Type);
+                        boxed.* = vt;
+                        return Type{ .optional = boxed };
+                    }
+                    if (std.mem.eql(u8, a.attr, "setdefault")) {
+                        if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'setdefault' tam olarak 2 argüman alır (anahtar, varsayılan)", .{});
+                        const kt = try self.checkExpr(ctx, c.args[0]);
+                        if (!types.eql(kt, obj_t.dict.key.*)) return self.fail(error.TypeMismatch, "'setdefault' anahtarı dict'in anahtar tipiyle uyuşmuyor", .{});
+                        const dt = try self.checkExprExpected(ctx, c.args[1], vt);
+                        if (!self.assignable(vt, dt)) return self.fail(error.TypeMismatch, "'setdefault' varsayılan değeri dict'in değer tipiyle uyuşmuyor", .{});
+                        return vt;
+                    }
+                    if (std.mem.eql(u8, a.attr, "clear")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'clear' hiç argüman almaz", .{});
+                        return .none;
+                    }
+                    if (std.mem.eql(u8, a.attr, "copy")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'copy' hiç argüman almaz", .{});
+                        return obj_t;
+                    }
+                    if (std.mem.eql(u8, a.attr, "update")) {
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'update' tam olarak 1 argüman alır", .{});
+                        const ot = try self.checkExpr(ctx, c.args[0]);
+                        if (!types.eql(ot, obj_t)) return self.fail(error.TypeMismatch, "'update' argümanı aynı dict[K, V] tipinde olmalıdır", .{});
+                        return .none;
+                    }
+                    return self.fail(error.UndefinedMethod, "dict'in '{s}' metodu yok (contains/len/keys/values/get/pop/setdefault/clear/copy/update)", .{a.attr});
                 }
                 // `list[T]`in yerleşik `append`i — Faz U.1, `dict`in AYNI
                 // deseni. **Bilinçli v1 sınırlaması:** alıcı (`a.obj.*`)

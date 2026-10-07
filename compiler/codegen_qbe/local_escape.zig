@@ -320,6 +320,7 @@ fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
                 if (r) |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false;
             },
             .raise_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false,
+            .del_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false,
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, TÜM analiz GÜVENLİ tarafta kalmak İçin İPTAL edilir.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
@@ -501,6 +502,7 @@ fn stmtsSafeForGrowableLocal(self: *const Codegen, stmts: []const ast.Stmt, name
                 if (r) |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false;
             },
             .raise_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
+            .del_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
             .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }

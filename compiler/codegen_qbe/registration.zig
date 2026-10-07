@@ -775,6 +775,7 @@ fn collectIdentifierNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, ou
             .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
             .return_stmt => |r| if (r) |e| try collectIdentifierNamesExpr(a, e, out),
             .raise_stmt => |e| try collectIdentifierNamesExpr(a, e, out),
+            .del_stmt => |e| try collectIdentifierNamesExpr(a, e, out),
             .try_stmt => |t| {
                 try collectIdentifierNamesStmts(a, t.try_body, out);
                 for (t.except_clauses) |ec| try collectIdentifierNamesStmts(a, ec.body, out);
