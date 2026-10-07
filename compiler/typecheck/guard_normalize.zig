@@ -57,7 +57,9 @@ fn normalizeBlock(a: std.mem.Allocator, stmts: []ast.Stmt) std.mem.Allocator.Err
                 const guard = stmt.*;
                 for (stmts[i .. stmts.len - 1]) |*r| r.kind = .pass_stmt;
                 stmts[stmts.len - 1] = guard;
-                try normalizeBlock(a, f.then_body);
+                // `f` (stmts[i]'yi gösteriyordu) artık `pass_stmt` ile ÜZERİNE YAZILDI — Debug'da yük 0xAA ile doldurulur (Linux CI'da
+                // çöktü). `guard` kopyasından (artık bloğun son konumunda aynı `then_body` dilimini taşıyan) okunur.
+                try normalizeBlock(a, guard.kind.if_stmt.then_body);
                 try normalizeBlock(a, rest);
                 return;
             }

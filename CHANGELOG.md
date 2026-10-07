@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.160.1]
+
+### Düzeltildi
+
+- **`guard_normalize` sarkan işaretçi (v1.156.0'dan beri):** koruma (guard) deyimi bloğun sonuna taşındıktan sonra, üzerine `pass` yazılmış eski konumu gösteren `f` işaretçisi okunuyordu; Debug/safety derlemesinde yük `0xAA` ile dolduğundan Linux x86-64 CI'da `typecheck`/`codegen` golden testleri `General protection` ile çöküyordu (v1.157.0–v1.160.0 Linux CI kırmızıydı). Artık taşınan deyimin kopyasından okunur.
+
 ## [1.160.0]
 
 ### Değişti (davranış)
