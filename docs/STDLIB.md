@@ -26,6 +26,7 @@ Bu dosya `scripts/gen_stdlib_docs.py` ile `stdlib/nox/*.nox`ten ÜRETİLİR (ell
 - [`nox.mathx`](#noxmathx)
 - [`nox.mem`](#noxmem)
 - [`nox.mysql`](#noxmysql)
+- [`nox.native`](#noxnative)
 - [`nox.orm`](#noxorm)
 - [`nox.os`](#noxos)
 - [`nox.path`](#noxpath)
@@ -382,6 +383,16 @@ libmysqlclient'e (ya da ikili-uyumlu MariaDB connector'üne) `std.DynLib` (dlope
 - `class Connection`
   - `def prepare(self: Connection, sql: str) -> Statement`
 - `def open_url(conn_url: str) -> Connection` — `mysql://[user[:pass]@]host[:port]/db` — port belirtilmemişse `3306` (MySQL'in KENDİ varsayılanı) kullanılır.
+
+## `nox.native`
+
+Nox Native Interface (NNI) v1: C/Zig/Rust/C++ eklentilerini YÜKLEME ve ÇAĞIRMA yüzü.
+
+- `class NativeError(Exception)`
+- `class Event`
+- `class Plugin`
+  - `def arg_int(self, v: int) -> None`
+- `def open_plugin(path: str) -> Plugin` — Eklentiyi yükler (`nox_plugin_init_v1`'i çağırır).
 
 ## `nox.orm`
 

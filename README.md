@@ -406,7 +406,7 @@ Ayrıntılar için [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundar
 | `stdlib/` | Nox'un KENDİSİYLE yazılmış standart kütüphane (`nox.*`) |
 | `tests/` | Unit + golden + uçtan uca (CLI alt süreç) testleri |
 | `benchmarks/` | Nox/Python/C/Rust/Go/Zig/FastAPI karşılaştırmalı benchmark paketi |
-| `docs/` | Üretim-hazırlığı analizi, yol haritası, dil referansı (`LANGUAGE.md`), stdlib başvurusu (`STDLIB.md`), platform durumu (`PLATFORMS.md`) ve İngilizce mimari özeti (`ARCHITECTURE.en.md`) |
+| `docs/` | Üretim-hazırlığı analizi, yol haritası, dil referansı (`LANGUAGE.md`), stdlib başvurusu (`STDLIB.md`), platform durumu (`PLATFORMS.md`), yerel arayüz/API katmanları (`NATIVE-API.md`) ve İngilizce mimari özeti (`ARCHITECTURE.en.md`) |
 
 ## Katkıda Bulunma
 

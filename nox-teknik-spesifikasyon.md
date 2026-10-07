@@ -28917,3 +28917,12 @@ Keyword argümanlar KAYNAK sırasıyla değerlendirilir, parametre sırasıyla b
 `ast.Call.eval_order` permütasyonunu kaydeder (`call_orders`, apply pasında `Call`a yazılır). Codegen: `genCall` permütasyonu `pending_eval_order`a koyar; argümanları değerlendiren noktalar (serbest fonksiyon, kurucu, metod, `super().__init__`/metod)
 `takeEvalOrder` ile (alıcı ifadesi değerlendirilmeden ÖNCE) tüketir ve `arg_values[i]`yi indeksle doldurur — bağlama/serbest bırakma sırası değişmez. Bu çağrılar satır içine açılmaz. `spawn` operandında belirsiz sıra derleme hatasıdır.
 Golden: `kwarg_source_order_eval` (iki backend), `err_kwarg_effect_order` (spawn), `ok_kwarg_pure_reorder`, `uyum: ... HER İKİ backend'de tuzağa düşer`.
+
+## 3.285 Nox Native Interface (NNI) v1 ve API katmanları (v1.170.0)
+
+Kullanıcı/GPT-5.6 önerisi üzerine genel (public) yerel arayüz ile iç runtime ABI'si AYRI tutuldu. **Genel:** `include/nox_nni.h` (+ belgelenmiş `extern def` C ABI). **İç:** `nox_*` runtime sembolleri, ARC başlığı, `RuntimeState`,
+liste/dict/str/sınıf düzenleri — özel ve kararsız (docs/NATIVE-API.md §3). Host (`runtime/stdlib_shims/native.zig`): her yüklenen eklenti için `Host` bağlamı (runtime allocator'ı ile tahsis; gizli global yok),
+`NoxHandle = (gen<<32)|(idx+1)` tutamaç tablosu (kilitli; bayat tutamaç `NOX_BAD_HANDLE`), `NoxApiV1` sabit tablosu (yalnızca sona ekleme + `struct_size` ile sürümleme), `register_function`, kopyalayan thread-güvenli `post_event`.
+Nox yüzü `nox.native` (argümanlar `Plugin.arg_*` ile biriktirilir, `call_*` ile çağrılır; hata `NativeError`). Çağrı sözleşmesi: yerel işlev çağıran iş parçacığında senkron; hata sınırından unwind yok.
+Bilinçli olarak v1 dışı: liste/dict/nesne belleğine doğrudan erişim, Nox closure'ının C işlev işaretçisi olarak geçirilmesi, GC kancaları, Nox-Nox ikili bağlama. Kapsam dışı bırakılan: iç sembollerin `__nox_internal_` önekiyle mekanik yeniden adlandırılması (büyük, ayrı iş).
+Golden/entegrasyon: `tests/cli/nni_test.zig` (C eklentisi, tamsayı/ondalık/bool/dize, hata, bilinmeyen işlev, iş parçacığından olay, her iki backend); birim: tutamaç üreteç sayacı.

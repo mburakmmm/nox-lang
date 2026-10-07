@@ -23,7 +23,7 @@ const arc = @import("alloc/arc.zig");
 const abi_layout = @import("abi_layout");
 
 const STR_HEADER_SIZE = abi_layout.STR_HEADER_SIZE;
-const ASCII_UNKNOWN = abi_layout.STR_ASCII_UNKNOWN;
+pub const ASCII_UNKNOWN = abi_layout.STR_ASCII_UNKNOWN;
 pub const ASCII_TRUE = abi_layout.STR_ASCII_TRUE;
 pub const ASCII_FALSE = abi_layout.STR_ASCII_FALSE;
 

@@ -5,7 +5,7 @@ This is an English summary of the two Turkish engineering documents that govern 
 runtime) and [`nox-teknik-spesifikasyon.md`](../nox-teknik-spesifikasyon.md) (the full design history, one numbered
 section per change, ~30,000 lines). If this summary and the Turkish documents disagree, **the Turkish documents are
 authoritative**. For the language itself see [`LANGUAGE.md`](LANGUAGE.md); for the standard library see
-[`STDLIB.md`](STDLIB.md); for platform status see [`PLATFORMS.md`](PLATFORMS.md).
+[`STDLIB.md`](STDLIB.md); for platform status see [`PLATFORMS.md`](PLATFORMS.md); for native extensions and the API stability layers see [`NATIVE-API.md`](NATIVE-API.md).
 
 ## 1. What Nox is
 

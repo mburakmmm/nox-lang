@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.170.0]
+
+### Eklendi
+
+- **Nox Native Interface (NNI) v1** — yerel eklentiler (C/C++/Rust/Zig) için kararlı sınır: `include/nox_nni.h` (sürümlü `NoxApiV1` işlev tablosu, opak üreteç-sayaçlı `NoxHandle`, `NoxValue`, `NoxStatus`), host tarafı `runtime/stdlib_shims/native.zig`, Nox yüzü `nox.native` (`open_plugin`, `Plugin.arg_*`/`call_*`, `poll_event`/`wait_event`). Eklenti Nox'un ARC başlığını/bellek düzenini asla görmez; hata sınırından unwind/longjmp geçmez; yerel iş parçacıkları `post_event` ile (kopyalanan yüklerle) Nox zamanlayıcısına olay bırakır. Gerçek bir C eklentisiyle iki backend'de uçtan uca test (`tests/cli/nni_test.zig`).
+- **`docs/NATIVE-API.md`:** dört katman (Language/Source API, Framework Author Contract, NNI v1, Internal Runtime ABI), kararlı/kararsız listeleri, iş parçacığı sözleşmesi. Spec §3.285.
+
 ## [1.169.0]
 
 ### Değişti (davranış — 2.0 notu)

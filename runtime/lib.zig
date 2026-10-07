@@ -49,6 +49,7 @@ pub const io_shim = @import("stdlib_shims/io.zig");
 pub const sqlite_shim = @import("stdlib_shims/sqlite.zig");
 pub const process_shim = @import("stdlib_shims/process.zig");
 pub const postgres_shim = @import("stdlib_shims/postgres.zig");
+pub const native_shim = @import("stdlib_shims/native.zig");
 pub const mysql_shim = @import("stdlib_shims/mysql.zig");
 pub const tls_shim = @import("stdlib_shims/tls.zig");
 pub const tls_server_shim = @import("stdlib_shims/tls_server.zig");
@@ -103,6 +104,7 @@ comptime {
     _ = sqlite_shim;
     _ = process_shim;
     _ = postgres_shim;
+    _ = native_shim;
     _ = mysql_shim;
     _ = tls_shim;
     _ = websocket_shim;

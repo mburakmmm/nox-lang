@@ -1,0 +1,140 @@
+# nox.native — Nox Native Interface (NNI) v1: C/Zig/Rust/C++ eklentilerini YÜKLEME ve ÇAĞIRMA yüzü. Bkz. docs/NATIVE-API.md ve include/nox_nni.h.
+#
+# Kullanım:
+#   from nox.native import open_plugin, Plugin
+#   p: Plugin = open_plugin("./libmyext.so")
+#   p.arg_int(20)
+#   p.arg_str("merhaba")
+#   r: int = p.call_int("add_len")
+#
+# Eklenti işlevleri Nox'un çağıran iş parçacığında SENKRON çalışır. Yerel iş parçacıkları Nox nesnelerine girmez; `post_event` ile olay bırakır,
+# Nox kodu `poll_event`/`wait_event` ile kendi zamanlayıcısında tüketir.
+#
+# Güven sınırı: eklenti TAM yerel yetkiyle çalışır (AGENTS.md §9.5 — `extern def` ile aynı); Nox onu sandbox'lamaz.
+
+from nox.time import sleep_ms
+
+extern def nox_native_open_raw(path: str) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_native_is_ready_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_error_raw(h: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_native_close_raw(h: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_native_args_clear_raw(h: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_native_arg_int_raw(h: int, v: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_native_arg_float_raw(h: int, v: float) -> None from "zig-out/lib/noxrt.o"
+extern def nox_native_arg_bool_raw(h: int, v: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_native_arg_str_raw(h: int, s: str) -> None from "zig-out/lib/noxrt.o"
+extern def nox_native_call_raw(h: int, name: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_result_kind_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_result_int_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_result_float_raw(h: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_native_result_str_raw(h: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_native_event_poll_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_event_value_kind_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_event_int_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_event_float_raw(h: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_native_event_str_raw(h: int) -> str from "zig-out/lib/noxrt.o" with_rt
+
+class NativeError(Exception):
+    pass
+
+# NoxValue türleri (include/nox_nni.h ile aynı)
+VALUE_NONE: int = 0
+VALUE_INT: int = 1
+VALUE_FLOAT: int = 2
+VALUE_BOOL: int = 3
+VALUE_STRING: int = 4
+VALUE_BYTES: int = 5
+
+class Event:
+    kind: int
+    value_kind: int
+    int_value: int
+    float_value: float
+    str_value: str
+
+    def __init__(self, kind: int, value_kind: int, int_value: int, float_value: float, str_value: str) -> None:
+        self.kind = kind
+        self.value_kind = value_kind
+        self.int_value = int_value
+        self.float_value = float_value
+        self.str_value = str_value
+
+class Plugin:
+    handle: int
+
+    def __init__(self, handle: int) -> None:
+        self.handle = handle
+
+    def arg_int(self, v: int) -> None:
+        nox_native_arg_int_raw(self.handle, v)
+
+    def arg_float(self, v: float) -> None:
+        nox_native_arg_float_raw(self.handle, v)
+
+    def arg_bool(self, v: bool) -> None:
+        if v:
+            nox_native_arg_bool_raw(self.handle, 1)
+        else:
+            nox_native_arg_bool_raw(self.handle, 0)
+
+    def arg_str(self, v: str) -> None:
+        nox_native_arg_str_raw(self.handle, v)
+
+    # Önceden eklenen argümanlarla `name` işlevini çağırır; hata durumunda NativeError (eklentinin `error_set` iletisi).
+    def call(self, name: str) -> None:
+        st: int = nox_native_call_raw(self.handle, name)
+        if st != 0:
+            raise NativeError(name + ": " + nox_native_error_raw(self.handle))
+
+    def call_int(self, name: str) -> int:
+        self.call(name)
+        return nox_native_result_int_raw(self.handle)
+
+    def call_float(self, name: str) -> float:
+        self.call(name)
+        return nox_native_result_float_raw(self.handle)
+
+    def call_bool(self, name: str) -> bool:
+        self.call(name)
+        return nox_native_result_int_raw(self.handle) != 0
+
+    def call_str(self, name: str) -> str:
+        self.call(name)
+        return nox_native_result_str_raw(self.handle)
+
+    # Son çağrının sonuç türü (VALUE_*).
+    def result_kind(self) -> int:
+        return nox_native_result_kind_raw(self.handle)
+
+    # Bir yerel iş parçacığından `post_event` ile bırakılmış sıradaki olay; yoksa None.
+    def poll_event(self) -> Event | None:
+        k: int = nox_native_event_poll_raw(self.handle)
+        if k < 0:
+            return None
+        return Event(k, nox_native_event_value_kind_raw(self.handle), nox_native_event_int_raw(self.handle), nox_native_event_float_raw(self.handle), nox_native_event_str_raw(self.handle))
+
+    # En çok `timeout_ms` bekleyerek (1 ms aralıklarla yoklar) bir olay bekler.
+    def wait_event(self, timeout_ms: int) -> Event | None:
+        waited: int = 0
+        while waited <= timeout_ms:
+            ev: Event | None = self.poll_event()
+            if ev != None:
+                return ev
+            sleep_ms(1)
+            waited = waited + 1
+        return None
+
+    def close(self) -> None:
+        nox_native_close_raw(self.handle)
+        self.handle = 0
+
+# Eklentiyi yükler (`nox_plugin_init_v1`'i çağırır). Başarısızsa NativeError.
+def open_plugin(path: str) -> Plugin:
+    h: int = nox_native_open_raw(path)
+    if h == 0:
+        raise NativeError("eklenti yuklenemedi: " + path)
+    if nox_native_is_ready_raw(h) == 0:
+        msg: str = nox_native_error_raw(h)
+        nox_native_close_raw(h)
+        raise NativeError(path + ": " + msg)
+    return Plugin(h)
