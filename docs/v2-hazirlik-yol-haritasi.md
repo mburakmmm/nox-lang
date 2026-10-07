@@ -56,20 +56,22 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 ## 3. Platform ve dağıtım
 
-- [ ] **3.1 Windows:** LLVM yolunda MinGW bağlama argümanları yok → Windows'ta QBE'ye düşülüyor. CI'da Windows işi
+> v1.166.0: durum ve kısıtlar `docs/PLATFORMS.md`te BELGELENDİ ([~] = belgelendi, kalıcı çözüm açık). Windows LLVM / paketlenmiş clang ve aarch64 kök neden hâlâ yapılacak.
+
+- [~] **3.1 Windows:** LLVM yolunda MinGW bağlama argümanları yok → Windows'ta QBE'ye düşülüyor. CI'da Windows işi
   "yalnızca derleyici ön-ucu". LLVM'i Windows'ta çalıştır VEYA belgeli kısıt olarak bırak.
-- [ ] **3.2 `clang` bağımlılığı:** release paketi `qbe` içeriyor, `clang` içermiyor; clang yoksa sessizce QBE'ye
+- [~] **3.2 `clang` bağımlılığı:** release paketi `qbe` içeriyor, `clang` içermiyor; clang yoksa sessizce QBE'ye
   düşülüyor (not basılıyor). Kalıcı çözüm: `zig cc` ya da paketlenmiş clang değerlendir.
-- [ ] **3.3 aarch64 stack-smash:** kök neden aarch64 için DOĞRULANMADI (x86-64 muadili v1.142.3'te bulundu).
+- [~] **3.3 aarch64 stack-smash:** kök neden aarch64 için DOĞRULANMADI (x86-64 muadili v1.142.3'te bulundu).
   `allow_failure` v1.142.21'de kaldırıldı; v1.142.24 CI temiz. Birkaç koşu daha izle; çıkarsa kök nedeni araştır.
-- [ ] **3.4 riscv64 hosted** desteği yok (yalnızca freestanding `--emit-asm`).
+- [~] **3.4 riscv64 hosted** desteği yok (yalnızca freestanding `--emit-asm`).
 
 ## 4. Dokümantasyon
 
 - [x] **4.1** `docs/LANGUAGE.md` genişletildi — v1.159.0 (sayısal kurallar, Optional, modüller, hata modeli, backend'ler). Yazarken 2 gerçek hata bulundu/düzeltildi (sıfıra bölme, print(Optional)).
 - [x] **4.2** Stdlib API başvurusu — v1.158.0 (`docs/STDLIB.md`, üretici betik `scripts/gen_stdlib_docs.py`). Öğretici ayrı.
 - [x] **4.3** Çapraz-dil benchmark yenilendi (v1.158.0 ölçümü; `benchmarks/` .gitignore'da olduğundan README özeti ana README'de).
-- [ ] **4.4** İngilizce spec/AGENTS özeti (şu an yalnızca Türkçe).
+- [x] **4.4** İngilizce mimari/katkı özeti — v1.166.0 (`docs/ARCHITECTURE.en.md`; platform durumu `docs/PLATFORMS.md`).
 
 ## 5. Güvenlik ve kalite
 
@@ -82,7 +84,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 - [ ] **6.1** ASAP closure-effect genişletmesi (araştırıldı, uygulanmadı).
 - [ ] **6.2** `genClassRelease` özyinelemesi 256 KiB fiber yığınında sınırda (STACK_SIZE küçültülmedi).
-- [ ] **6.3** `nox.binary` hâlâ somut `Buffer` alıyor (generic sınıf çapraz-modül hatası sonrası kapsam dışı kaldı).
+- [x] **6.3** `nox.binary` artık `Span` üzerinde de çalışır — v1.166.0 (`span_reader`/`span_writer`; tam generic sınıf yerine geriye uyumlu yardımcı).
 - [ ] **6.4** Aether `is_stopping()` + `HttpRequest` uyumu (Aether deposunda yapılacak).
 - [x] **6.5** Eski async-istisna notları düzeltildi — v1.158.0.
 

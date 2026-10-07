@@ -1,0 +1,19 @@
+from nox.buffer import Buffer, Span
+from nox.binary import BinaryReader, BinaryWriter, span_reader, span_writer
+
+b: Buffer = Buffer(16)
+w: BinaryWriter = BinaryWriter(b)
+w.write_u32_le(u32(0xDEADBEEF))
+w.write_u16_be(u16(0x1234))
+sp: Span = b.span(2, 8)
+r: BinaryReader = span_reader(sp)
+print(r.remaining(), r.read_u8(), r.read_u8())
+sw: BinaryWriter = span_writer(b.span(8, 12))
+sw.write_u32_be(u32(0x01020304))
+print(b.get(8), b.get(9), b.get(10), b.get(11))
+try:
+    sw.write_u8(u8(1))
+except IndexError as e:
+    print("span overflow:", e)
+r2: BinaryReader = BinaryReader(b)
+print(r2.remaining(), r2.read_u32_le())

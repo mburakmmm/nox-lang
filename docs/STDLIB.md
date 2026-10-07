@@ -83,6 +83,8 @@ BinaryReader/BinaryWriter (ELF/PCI/ACPI/ağ paketi/dosya- sistemi GİBİ ikili f
   - `def position(self: BinaryReader) -> int`
 - `class BinaryWriter`
   - `def position(self: BinaryWriter) -> int`
+- `def span_reader(sp: Span) -> BinaryReader` — v1.166.0: `Span` penceresi üzerinde okuma/yazma — Span'in altındaki `Buffer`i AYNI bellek olarak kullanır (kopya YOK), konumlar Span'e göredir, pencerenin dışı `IndexError`.
+- `def span_writer(sp: Span) -> BinaryWriter`
 
 ## `nox.bits`
 
@@ -166,6 +168,8 @@ v4 Faz B (bkz. nox-teknik-spesifikasyon.md §3.2xx) — `nox.console`: `nox.log`
 - `class Exception` — Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): TÜM `raise` edilebilir sınıfların ORTAK taban sınıfı — `except Exception:` İLE programdaki HERHANGİ bir istisnayı (hangi modülden gelirse gelsin) tek
 - `class ValueError(Exception)`
 - `class IndexError(Exception)`
+- `class AssertionError(Exception)` — `assert koşul, "mesaj"` deyimi başarısız olursa fırlatılır (parser `if not koşul: raise AssertionError(mesaj)`e indirger).
+- `class ZeroDivisionError(Exception)` — Tamsayı `//` ve `%` sıfır bölenle bu sınıfı fırlatır (float bölme IEEE: inf/nan).
 - `class KeyError(Exception)` — Güvenlik bulgusu H-2 (bkz. güvenlik raporu) — `d[key]`nin eksik bir anahtarda SESSİZCE `0`/null DÖNDÜRDÜĞÜ (Python'un `KeyError`ı YOK denen v1 kararı) GERÇEKTE bir null-pointer çökmesiydi: dönen değer
 - `class HPyError(Exception)` — Faz 18 (bkz. plan dosyası "HPy köprüsünü Nox'un istisna mekanizmasına entegre etme"): `hpy_call`/`hpy_open`/`hpy_call_on`/vb.nin (bkz. runtime/foreign_bridge.zig'in `setHpyError`/`nox_hpy_take_error`s
 - `class CancelledError(Exception)` — Faz SC.2 (bkz. nox-teknik-spesifikasyon.md, "Task[T].cancel()"): `t.
@@ -175,10 +179,17 @@ v4 Faz B (bkz. nox-teknik-spesifikasyon.md §3.2xx) — `nox.console`: `nox.log`
 - `def abs[T](x: T) -> T`
 - `def min[T](a: T, b: T) -> T` — v1 kapsamı: yalnızca İKİ argüman (Nox'ta fonksiyon overload'u/değişken sayıda argüman YOK, Python'ın iterable-alan `min(xs)` formu desteklenmez).
 - `def max[T](a: T, b: T) -> T`
-- `def round(x: float) -> int` — v1 kapsamı: yalnızca `float -> int` (Python'ın `ndigits` parametresi YOK).
+- `def round(x: float) -> int` — v1.162.0: Python gibi YARIM → ÇİFTE yuvarlama (`round(2.5) == 2`) ve tam ikili değer üzerinden (`round(x, nd)` aşağıda).
+- `def chr(cp: int) -> str`
+- `def ord(s: str) -> int`
+- `def any(xs: list[bool]) -> bool`
+- `def all(xs: list[bool]) -> bool`
+- `def divmod[T](a: T, b: T) -> tuple[T, T]`
 - `def sum(xs: list[int]) -> int` — v1 kapsamı: `sum`/`sum_float` AYRI adlarla (Nox'ta dönüş-tipine göre overload YOK — `total = 0` ile `total = 0.0` FARKLI somut başlangıç qtype'ları gerektirdiğinden TEK bir generic `sum[T]` yazılamaz)
 - `def sum_float(xs: list[float]) -> float`
-- `def sorted[T](xs: list[T]) -> list[T]` — v1.150.0 (list tam API): `sorted(xs)` yeni, sıralanmış bir liste döner (orijinal değişmez; `sort()` gibi yalnızca list[int]/list[float]/list[str] için).
+- `def sorted[T](xs: list[T], reverse: bool = False) -> list[T]` — v1.150.0 (list tam API): `sorted(xs)` yeni, sıralanmış bir liste döner (orijinal değişmez; `sort()` gibi yalnızca list[int]/list[float]/list[str] için).
+- `def map[T, U](f: (T) -> U, xs: list[T]) -> list[U]` — `map`/`filter` Python'dan FARKLI olarak tembel yineleyici değil, YENİ bir liste döner (`for x in map(f, xs):` ve `list(map(f, xs))` çalışır).
+- `def filter[T](f: (T) -> bool, xs: list[T]) -> list[T]`
 - `def reversed[T](xs: list[T]) -> list[T]`
 - `def enumerate[T](xs: list[T]) -> list[tuple[int, T]]`
 - `def zip[A, B](a: list[A], b: list[B]) -> list[tuple[A, B]]`
@@ -282,6 +293,7 @@ Stdlib fazı §L — bkz. nox-teknik-spesifikasyon.md.
 - `def object_key(v: JsonValue, i: int) -> str`
 - `def object_value(v: JsonValue, i: int) -> JsonValue`
 - `def dump_string(s: str) -> str` — Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67, test kapsamı genişletmesi sırasında BULUNAN, GERÇEK bir düzeltme) — ÖNCEKİ sürüm yalnızca `"`/`\`/`\n`i escape ediyordu; bir `\t` (VEYA CR baytı)
+- `def dump_number(n: float) -> str` — JSON sayıları tek tipte (float) tutulur; tamsayı değerli olanlar `1` olarak yazılır (`1.0` değil) — Python'un `json.dumps`ı int'i int olarak yazar ve JSON'da ayrım yoktur.
 - `def dump(v: JsonValue) -> str`
 - `def dump_array(v: JsonValue) -> str`
 - `def dump_object(v: JsonValue) -> str`

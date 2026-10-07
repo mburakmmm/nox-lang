@@ -35,27 +35,33 @@
 # bulundu: `i16(u16(65535))` bir taşma hatasıYLA ÇÖKER, ÇÜNKÜ dönüşüm
 # DEĞER-korumalı değil BİT-korumalıdır bekleniyordu).
 
-from nox.buffer import Buffer
+from nox.buffer import Buffer, Span
 
 class BinaryReader:
     _buf: Buffer
     _pos: int
+    _base: int
+    _limit: int
 
     def __init__(self, buf: Buffer) -> None:
         self._buf = buf
         self._pos = 0
+        self._base = 0
+        self._limit = buf.len()
 
     def position(self: BinaryReader) -> int:
         return self._pos
 
     def remaining(self: BinaryReader) -> int:
-        return self._buf.len() - self._pos
+        return self._limit - self._pos
 
     def seek(self: BinaryReader, pos: int) -> None:
         self._pos = pos
 
     def read_u8(self: BinaryReader) -> u8:
-        v: u8 = self._buf.get(self._pos)
+        if self._pos < 0 or self._pos >= self._limit:
+            raise IndexError("BinaryReader okuma konumu sinirlarin disinda")
+        v: u8 = self._buf.get(self._base + self._pos)
         self._pos = self._pos + 1
         return v
 
@@ -166,10 +172,14 @@ class BinaryReader:
 class BinaryWriter:
     _buf: Buffer
     _pos: int
+    _base: int
+    _limit: int
 
     def __init__(self, buf: Buffer) -> None:
         self._buf = buf
         self._pos = 0
+        self._base = 0
+        self._limit = buf.len()
 
     def position(self: BinaryWriter) -> int:
         return self._pos
@@ -178,7 +188,9 @@ class BinaryWriter:
         self._pos = pos
 
     def write_u8(self: BinaryWriter, v: u8) -> None:
-        self._buf.set(self._pos, v)
+        if self._pos < 0 or self._pos >= self._limit:
+            raise IndexError("BinaryWriter yazma konumu sinirlarin disinda")
+        self._buf.set(self._base + self._pos, v)
         self._pos = self._pos + 1
 
     def write_i8(self: BinaryWriter, v: i8) -> None:
@@ -269,3 +281,18 @@ class BinaryWriter:
         self.write_u8(u8((v >> 16) & i64(255)))
         self.write_u8(u8((v >> 8) & i64(255)))
         self.write_u8(u8(v & i64(255)))
+
+
+# v1.166.0: `Span` penceresi üzerinde okuma/yazma — Span'in altındaki `Buffer`i AYNI bellek olarak kullanır (kopya YOK), konumlar Span'e göredir,
+# pencerenin dışı `IndexError`. (Tam generic `BinaryReader[T]` yerine geriye uyumlu ince bir yardımcı: mevcut `BinaryReader(buf)` çağrıları değişmez.)
+def span_reader(sp: Span) -> BinaryReader:
+    r: BinaryReader = BinaryReader(sp._buf)
+    r._base = sp._start
+    r._limit = sp._len
+    return r
+
+def span_writer(sp: Span) -> BinaryWriter:
+    w: BinaryWriter = BinaryWriter(sp._buf)
+    w._base = sp._start
+    w._limit = sp._len
+    return w

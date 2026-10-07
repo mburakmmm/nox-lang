@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.166.0]
+
+### Eklendi
+
+- `nox.binary`: `span_reader(span)` / `span_writer(span)` — `Span` penceresi üzerinde (kopyasız) okuma/yazma, pencere dışı `IndexError`; `BinaryReader`/`BinaryWriter` artık taban/sınır tutar (mevcut `BinaryReader(buf)` çağrıları değişmez).
+- Belgeler: `docs/ARCHITECTURE.en.md` (İngilizce mimari/katkı özeti), `docs/PLATFORMS.md` (backend seçimi, platform tablosu, bilinen kısıtlar), `docs/STDLIB.md` yenilendi.
+
 ## [1.165.0]
 
 ### Eklendi
