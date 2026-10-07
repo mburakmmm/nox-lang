@@ -490,6 +490,76 @@ pub const Codegen = struct {
     pub const genPow = expr_mod.genPow;
     pub const genPrint = expr_mod.genPrint;
     pub const genPrintFragment = expr_mod.genPrintFragment;
+    pub const genReprString = expr_mod.genReprString;
+
+    fn fmtSymbolText(self: *Codegen, sym: []const u8) ?[]const u8 {
+        const table = [_]struct { s: []const u8, t: []const u8 }{
+            .{ .s = "$fmt_int", .t = "%lld\n" },
+            .{ .s = "$fmt_str", .t = "%s\n" },
+            .{ .s = "$fmt_bool_true", .t = "True\n" },
+            .{ .s = "$fmt_bool_false", .t = "False\n" },
+            .{ .s = "$fmt_newline", .t = "\n" },
+            .{ .s = "$fmt_int_frag", .t = "%lld" },
+            .{ .s = "$fmt_str_frag", .t = "'%s'" },
+            .{ .s = "$fmt_bool_true_frag", .t = "True" },
+            .{ .s = "$fmt_bool_false_frag", .t = "False" },
+            .{ .s = "$fmt_lbracket", .t = "[" },
+            .{ .s = "$fmt_rbracket", .t = "]" },
+            .{ .s = "$fmt_rparen", .t = ")" },
+            .{ .s = "$fmt_comma_sp", .t = ", " },
+            .{ .s = "$fmt_uint", .t = "%llu\n" },
+            .{ .s = "$fmt_uint_frag", .t = "%llu" },
+        };
+        for (table) |e| if (std.mem.eql(u8, e.s, sym)) return e.t;
+        for (self.fmt_data.items) |fd| if (std.mem.eql(u8, fd.symbol, sym)) return fd.raw;
+        return null;
+    }
+
+    fn sinkAppendStr(self: *Codegen, piece_text: []const u8) CodegenError!void {
+        const acc = try self.newTemp();
+        try self.qbeLoadL(acc, self.print_acc.?);
+        const nacc = try self.newTemp();
+        try self.qbeCall(.{ .name = nacc, .ty = .l }, "$nox_str_append", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = acc }, .{ .ty = .l, .text = piece_text } });
+        try self.qbeStoreL(nacc, self.print_acc.?);
+    }
+
+    /// `print_acc` etkinken `$printf(fmt, args...)` çağrısını ARC `str` birikimine EKLEMEYE çevirir (`%lld`/`%llu`/`%s` tek direktifli kalıplar).
+    pub fn sinkPrintf(self: *Codegen, fmt_sym: []const u8, variadic: []const QbeArg) CodegenError!void {
+        const text = self.fmtSymbolText(fmt_sym) orelse return error.Unsupported;
+        const pct = std.mem.indexOfScalar(u8, text, '%');
+        if (pct == null) {
+            if (text.len == 0) return;
+            const lit = try self.emitStringLiteral(text);
+            return self.sinkAppendStr(lit.text);
+        }
+        const p = pct.?;
+        if (p > 0) {
+            const lit = try self.emitStringLiteral(text[0..p]);
+            try self.sinkAppendStr(lit.text);
+        }
+        var rest = text[p + 1 ..];
+        if (variadic.len != 1) return error.Unsupported;
+        if (std.mem.startsWith(u8, rest, "lld")) {
+            const t = try self.newTemp();
+            try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_int_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = variadic[0].text } });
+            try self.sinkAppendStr(t);
+            try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = t } });
+            rest = rest[3..];
+        } else if (std.mem.startsWith(u8, rest, "llu")) {
+            const t = try self.newTemp();
+            try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_uint_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = variadic[0].text } });
+            try self.sinkAppendStr(t);
+            try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = t } });
+            rest = rest[3..];
+        } else if (std.mem.startsWith(u8, rest, "s")) {
+            try self.sinkAppendStr(variadic[0].text);
+            rest = rest[1..];
+        } else return error.Unsupported;
+        if (rest.len > 0) {
+            const lit = try self.emitStringLiteral(rest);
+            try self.sinkAppendStr(lit.text);
+        }
+    }
     pub const widenFixedIntForPrint = expr_mod.widenFixedIntForPrint;
     pub const internFmtString = expr_mod.internFmtString;
     pub const genPrintList = expr_mod.genPrintList;
@@ -827,12 +897,14 @@ pub const Codegen = struct {
         };
     }
     pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []const QbeArg) CodegenError!void {
+        if (self.print_acc != null and args.len >= 1 and std.mem.eql(u8, func_text, "$printf")) return self.sinkPrintf(args[0].text, &.{});
         return switch (self.backend) {
             .qbe => qbe_emit.qbeCall(self, dst, func_text, args),
             .llvm => llvm_emit.qbeCall(self, dst, func_text, args),
         };
     }
     pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, fixed: []const QbeArg, variadic: []const QbeArg) CodegenError!void {
+        if (self.print_acc != null and fixed.len >= 1 and std.mem.eql(u8, func_text, "$printf")) return self.sinkPrintf(fixed[0].text, variadic);
         return switch (self.backend) {
             .qbe => qbe_emit.qbeCallVariadic(self, dst, func_text, fixed, variadic),
             .llvm => llvm_emit.qbeCallVariadic(self, dst, func_text, fixed, variadic),
@@ -1230,6 +1302,9 @@ pub const Codegen = struct {
     /// başlığı TAŞIMAZLAR (asla bir Nox `str` DEĞERİ olarak dolaşmazlar).
     fmt_counter: usize = 0,
     fmt_data: std.ArrayListUnmanaged(StringDatum) = .empty,
+    /// v1.167.0: `print` ailesi (`genPrintFragment` & kardeşleri) `$printf` yerine bu yığın yuvasındaki ARC `str` birikimine EKLEME yapar —
+    /// `str(list)` / `repr(x)` / f-string `{xs}` için AYNI yapısal yazdırıcı yeniden kullanılır (bkz. `genReprString`).
+    print_acc: ?[]const u8 = null,
     /// Faz 21 aşama 4: her `spawn <çağrı>` çağrı sitesi için üretilecek
     /// `$spawn_wrap_N(l %argp) l` sarmalayıcılarının TEMBEL kaydı —
     /// `list_release_queue` ile AYNI desen, `generateModule`nin sonunda

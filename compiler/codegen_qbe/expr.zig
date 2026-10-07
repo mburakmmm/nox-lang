@@ -2092,6 +2092,25 @@ fn genPrintNullGuarded(self: *Codegen, v: Value, frag: bool) CodegenError!void {
     try self.qbeLabel(done_label);
 }
 
+/// v1.167.0: `v`nin YAPISAL yazdırma biçimini (`print`in AYNI kodu: liste/sözlük/sınıf/tuple/Optional, `str` elemanlar tırnaklı) yeni bir ARC `str` olarak
+/// üretir — `str(xs)`, `repr(x)`, f-string `{xs}`. `print_acc` yuvası etkinken `$printf` çağrıları birikime eklenir (bkz. `Codegen.sinkPrintf`).
+pub fn genReprString(self: *Codegen, v: Value) CodegenError!Value {
+    const slot = try self.newTemp();
+    try self.qbeAlloc(slot, .eight, 8);
+    const empty = try self.emitStringLiteral("");
+    try self.qbeStoreL(empty.text, slot);
+    const saved = self.print_acc;
+    self.print_acc = slot;
+    genPrintFragment(self, v) catch |e| {
+        self.print_acc = saved;
+        return e;
+    };
+    self.print_acc = saved;
+    const result = try self.newTemp();
+    try self.qbeLoadL(result, slot);
+    return .{ .text = result, .qtype = .l, .heap = .str };
+}
+
 /// v1.160.0: `float` Python `repr` biçiminde basılır (bkz. `runtime/str.zig` `formatFloatRepr`): geçici bir `str`e
 /// çevrilip `fmt` (`%s\n` ya da yalın `%s`) ile yazılır, sonra serbest bırakılır.
 fn genPrintFloat(self: *Codegen, v: Value, fmt: []const u8) CodegenError!void {

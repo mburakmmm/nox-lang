@@ -6776,6 +6776,12 @@ pub const Checker = struct {
                 // BAŞARISIZ olursa çalışma zamanında bir `ValueError`
                 // `raise` eder (bkz. codegen.zig'in `genCall`ı,
                 // `nox_str_is_valid_int`/`float` + `nox_raise`).
+                if (std.mem.eql(u8, name, "repr") and !self.functions.contains("repr")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'repr' tam olarak 1 argüman alır", .{});
+                    const t = try self.checkExpr(ctx, c.args[0]);
+                    if (t == .func or t == .none) return self.fail(error.TypeMismatch, "'repr' fonksiyon/None değerleri için çalışmaz", .{});
+                    return .str;
+                }
                 if (std.mem.eql(u8, name, "str")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'str' tam olarak 1 argüman alır", .{});
                     const t = try self.checkExpr(ctx, c.args[0]);
@@ -6795,8 +6801,10 @@ pub const Checker = struct {
                         if (rt != .str) return self.fail(error.TypeMismatch, "'__str__' str döndürmelidir", .{});
                         return .str;
                     }
+                    // v1.167.0: liste/sözlük/sınıf (yapısal) — `print`in biçimiyle; `Optional` için önce `None` olmadığını daraltın.
+                    if (t == .list or t == .dict or t == .class) return .str;
                     if (t != .int and t != .float and t != .str and t != .boolean and t != .fixed_int) {
-                        return self.fail(error.TypeMismatch, "'str' yalnızca int/float/str/bool üzerinde çalışır (sınıflar için `__str__` tanımlayın)", .{});
+                        return self.fail(error.TypeMismatch, "'str' int/float/str/bool/list/dict/sınıf üzerinde çalışır (Optional için önce None olmadığını daraltın)", .{});
                     }
                     return .str;
                 }

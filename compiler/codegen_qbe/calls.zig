@@ -355,6 +355,15 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // not). `x`in qtype'ına göre doğru runtime dönüştürücüsüne
             // lowerlanır — HEPSİ HER ZAMAN başarılıdır (bkz. runtime/
             // str.zig'in belge notu), istisna kontrolü GEREKMEZ.
+            // v1.167.0: `repr(x)` — HER tür için yapısal/tırnaklı biçim (`str` elemanlar tırnaklı).
+            if (std.mem.eql(u8, name, "repr")) {
+                if (c.args.len != 1) return error.Unsupported;
+                const v = try self.genExpr(c.args[0]);
+                try self.checkNoLowlevelEscape(v);
+                const r = try self.genReprString(v);
+                try self.releaseIfTemporary(c.args[0], v);
+                return r;
+            }
             if (std.mem.eql(u8, name, "str")) {
                 if (c.args.len != 1) return error.Unsupported;
                 const v = try self.genExpr(c.args[0]);
@@ -367,6 +376,12 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 // İSE bu bir no-op'tur (bkz. `retainIfAliasing`in belge notu).
                 if (v.heap == .str) {
                     return self.retainIfAliasing(c.args[0], v);
+                }
+                // v1.167.0: liste/sözlük/sınıf/tuple — `print`in yapısal biçimi bir `str` olarak (bkz. `genReprString`).
+                if (v.heap == .list or v.heap == .dict or v.heap == .class or v.heap == .boxed_scalar) {
+                    const r = try self.genReprString(v);
+                    try self.releaseIfTemporary(c.args[0], v);
+                    return r;
                 }
                 // v2.0 madde 4: sabit-genişlikli bir kind — `genPrint`in
                 // AYNI widen+işaretlilik-farkında dallanmasi (bkz. onun

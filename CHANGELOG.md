@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.167.0]
+
+### Eklendi
+
+- **`str(x)`, `repr(x)` ve f-string `{x}` artık liste / sözlük / sınıf / tuple için çalışır** (`print`in yapısal biçimiyle aynı; `str` elemanlar tırnaklı). `print` ailesi `$printf` yerine bir ARC `str` birikimine yazabilir (`Codegen.print_acc`, `sinkPrintf`) — yazdırma kodu çoğaltılmadı. `repr()` yeni yerleşik. Spec §3.282.
+
 ## [1.166.0]
 
 ### Eklendi

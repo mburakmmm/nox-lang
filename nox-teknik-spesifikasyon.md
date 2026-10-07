@@ -28889,3 +28889,10 @@ anahtarıyla). Bu yüzden sahiplik analizi, kalıtım (metodlar alt sınıf `Cla
   üstünde). Uygulamalar `core.nox`ta saf Nox (dilimleme/`find`/`replace` üzerine) — Python çıktısıyla birebir doğrulandı.
 - Parser özyineleme sınırı 500 → 200 (Debug'da çerçeveler büyüdükçe 8MB yığını zorluyordu; gerçekçi programlar 200 iç içe ifadeyi aşmaz).
 - Golden: `docstrings_triple_quotes`, `except_tuple_classes`, `str_methods_extra`.
+
+## 3.282 Konteynerler için `str()` / `repr()` (v1.167.0)
+
+`print`in yapısal yazdırıcısı (`genPrintFragment` ve kardeşleri) `$printf` çağrılarını `qbeCall`/`qbeCallVariadic` sarmalayıcılarında yakalayan bir "sink" ile yeniden kullanılır: `Codegen.print_acc`
+(bir yığın yuvası) doluyken `$printf(fmt, arg)` çağrısı `sinkPrintf` ile `nox_str_append` (amortize O(1)) çağrılarına çevrilir (`%lld`/`%llu`/`%s` direktifleri `nox_int_to_str`/
+`nox_uint_to_str`/doğrudan işaretçi). `genReprString(v)` yuvayı kurar, parçayı yazdırır, sonucu yeni bir ARC `str` olarak döner. Checker `str(list|dict|class)` ve yeni `repr(x)` yerleşiğine izin verir
+(sınıf `__str__` varsa `str(obj)` ona yönlenir). Sınırlama: `str(Optional)` için önce `None` olmadığı daraltılmalı; literal içinde boş `[]`/`{}` elemanlar (beklenen tip yayılımı) henüz yok.
