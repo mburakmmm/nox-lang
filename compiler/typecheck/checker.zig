@@ -650,6 +650,8 @@ pub const Checker = struct {
     for_hoist_counter: u32 = 0,
     /// v1.150.0: `xs.extend(ys)` → `for`+`append` yeniden yazımı (bkz. `call_expand_apply.StmtForMap`).
     stmt_for_rewrites: call_expand_apply.StmtForMap = .empty,
+    /// v1.154.0: comprehension sonuç tipleri (bkz. `call_expand_apply.CompTypeMap`).
+    comp_types: call_expand_apply.CompTypeMap = .empty,
     extend_counter: u32 = 0,
     /// v1.147.0: çağrı sitesi → genişletilmiş (tam konumsal) argüman listesi. Bkz. `call_expand_apply.zig`.
     call_expansions: call_expand_apply.Map = .empty,
@@ -1929,8 +1931,8 @@ pub const Checker = struct {
 
     /// Checker bitince, kaydedilen genişletmeleri AST'ye yazar (bkz. `call_expand_apply.zig`).
     fn applyCallExpansions(self: *Checker, module: ast.Module) void {
-        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0) return;
-        const cx: call_expand_apply.Ctx = .{ .calls = &self.call_expansions, .fors = &self.for_rewrites, .stmt_fors = &self.stmt_for_rewrites };
+        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0) return;
+        const cx: call_expand_apply.Ctx = .{ .calls = &self.call_expansions, .fors = &self.for_rewrites, .stmt_fors = &self.stmt_for_rewrites, .comps = &self.comp_types };
         call_expand_apply.stmts(module.body, &cx);
         for (self.instantiations.items) |fd| call_expand_apply.stmts(fd.body, &cx);
         for (self.class_instantiations.items) |cd| for (cd.methods) |m| call_expand_apply.stmts(m.body, &cx);
@@ -3271,6 +3273,21 @@ pub const Checker = struct {
                 for (c.args) |a| try self.collectSpawnTargetsExpr(a);
             },
             .attribute => |a| try self.collectSpawnTargetsExpr(a.obj.*),
+            .list_comp => |lc| {
+                try self.collectSpawnTargetsExpr(lc.elem.*);
+                for (lc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| try self.collectSpawnTargetsExpr(fc.iterable),
+                    .if_clause => |ce| try self.collectSpawnTargetsExpr(ce),
+                };
+            },
+            .dict_comp => |dc| {
+                try self.collectSpawnTargetsExpr(dc.key.*);
+                try self.collectSpawnTargetsExpr(dc.value.*);
+                for (dc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| try self.collectSpawnTargetsExpr(fc.iterable),
+                    .if_clause => |ce| try self.collectSpawnTargetsExpr(ce),
+                };
+            },
             .slice => |sl| {
                 try self.collectSpawnTargetsExpr(sl.obj.*);
                 if (sl.lo) |x| try self.collectSpawnTargetsExpr(x.*);
@@ -3766,6 +3783,21 @@ pub const Checker = struct {
                 try self.scanMutatesGraphExpr(fname, params, c.callee.*, shared, seeds, reverse_edges);
             },
             .attribute => |a| try self.scanMutatesGraphExpr(fname, params, a.obj.*, shared, seeds, reverse_edges),
+            .list_comp => |lc| {
+                try self.scanMutatesGraphExpr(fname, params, lc.elem.*, shared, seeds, reverse_edges);
+                for (lc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| try self.scanMutatesGraphExpr(fname, params, fc.iterable, shared, seeds, reverse_edges),
+                    .if_clause => |ce| try self.scanMutatesGraphExpr(fname, params, ce, shared, seeds, reverse_edges),
+                };
+            },
+            .dict_comp => |dc| {
+                try self.scanMutatesGraphExpr(fname, params, dc.key.*, shared, seeds, reverse_edges);
+                try self.scanMutatesGraphExpr(fname, params, dc.value.*, shared, seeds, reverse_edges);
+                for (dc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| try self.scanMutatesGraphExpr(fname, params, fc.iterable, shared, seeds, reverse_edges),
+                    .if_clause => |ce| try self.scanMutatesGraphExpr(fname, params, ce, shared, seeds, reverse_edges),
+                };
+            },
             .slice => |sl| {
                 try self.scanMutatesGraphExpr(fname, params, sl.obj.*, shared, seeds, reverse_edges);
                 if (sl.lo) |x| try self.scanMutatesGraphExpr(fname, params, x.*, shared, seeds, reverse_edges);
@@ -3914,6 +3946,21 @@ pub const Checker = struct {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, c.callee.*, params);
             },
             .attribute => |a| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, a.obj.*, params),
+            .list_comp => |lc| {
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, lc.elem.*, params);
+                for (lc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, fc.iterable, params),
+                    .if_clause => |ce| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, ce, params),
+                };
+            },
+            .dict_comp => |dc| {
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, dc.key.*, params);
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, dc.value.*, params);
+                for (dc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, fc.iterable, params),
+                    .if_clause => |ce| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, ce, params),
+                };
+            },
             .slice => |sl| {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, sl.obj.*, params);
                 if (sl.lo) |x| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, x.*, params);
@@ -4113,6 +4160,21 @@ pub const Checker = struct {
                 for (c.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners, locked_resources);
             },
             .attribute => |a| try self.removeAwaitedTaskSharing(aa, a.obj.*, task_spawn_ids, resource_owners, locked_resources),
+            .list_comp => |lc| {
+                try self.removeAwaitedTaskSharing(aa, lc.elem.*, task_spawn_ids, resource_owners, locked_resources);
+                for (lc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| try self.removeAwaitedTaskSharing(aa, fc.iterable, task_spawn_ids, resource_owners, locked_resources),
+                    .if_clause => |ce| try self.removeAwaitedTaskSharing(aa, ce, task_spawn_ids, resource_owners, locked_resources),
+                };
+            },
+            .dict_comp => |dc| {
+                try self.removeAwaitedTaskSharing(aa, dc.key.*, task_spawn_ids, resource_owners, locked_resources);
+                try self.removeAwaitedTaskSharing(aa, dc.value.*, task_spawn_ids, resource_owners, locked_resources);
+                for (dc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| try self.removeAwaitedTaskSharing(aa, fc.iterable, task_spawn_ids, resource_owners, locked_resources),
+                    .if_clause => |ce| try self.removeAwaitedTaskSharing(aa, ce, task_spawn_ids, resource_owners, locked_resources),
+                };
+            },
             .slice => |sl| {
                 try self.removeAwaitedTaskSharing(aa, sl.obj.*, task_spawn_ids, resource_owners, locked_resources);
                 if (sl.lo) |x| try self.removeAwaitedTaskSharing(aa, x.*, task_spawn_ids, resource_owners, locked_resources);
@@ -5629,6 +5691,8 @@ pub const Checker = struct {
                 }
             },
             .binary => |b| try self.checkBinary(ctx, b),
+            .list_comp => |lc| try self.checkListComp(ctx, lc),
+            .dict_comp => |dc| try self.checkDictComp(ctx, dc),
             .slice => |sl| try self.checkSlice(ctx, sl),
             .ternary => |t| try self.checkTernary(ctx, t, null),
             .kwarg => return self.fail(error.TypeMismatch, "keyword argüman (ad=değer) yalnızca bir fonksiyon/metod çağrısının argüman listesinde kullanılabilir", .{}),
@@ -7367,6 +7431,89 @@ pub const Checker = struct {
         }
     }
 
+    const SavedCompVar = struct { name: []const u8, prior: ?Type };
+
+    /// v1.154.0: comprehension yan tümcelerini sırayla denetler; her `for` değişkenini kapsama ekler (önceki bağlama kaydedilir,
+    /// `restoreCompScope` ile geri yüklenir — Python 3'te comprehension değişkeni dışarı sızmaz).
+    fn checkCompClauses(self: *Checker, ctx: *FnCtx, clauses: []ast.CompClause, saved: *std.ArrayListUnmanaged(SavedCompVar)) TypeError!void {
+        for (clauses, 0..) |cl, i| {
+            switch (cl) {
+                .for_clause => |fc| {
+                    const key = @intFromPtr(&clauses[i].for_clause.iterable);
+                    const elem_t = try self.checkForIterable(ctx, fc.iterable, key);
+                    try saved.append(self.allocator, .{ .name = fc.var_name, .prior = ctx.scope.vars.get(fc.var_name) });
+                    try ctx.scope.declare(self.allocator, fc.var_name, elem_t);
+                },
+                .if_clause => |ce| {
+                    const t = try self.checkExpr(ctx, ce);
+                    if (t != .boolean) return self.fail(error.TypeMismatch, "comprehension 'if' koşulu bool olmalıdır", .{});
+                },
+            }
+        }
+    }
+
+    fn restoreCompScope(ctx: *FnCtx, saved: *std.ArrayListUnmanaged(SavedCompVar)) void {
+        var i: usize = saved.items.len;
+        while (i > 0) {
+            i -= 1;
+            const sv = saved.items[i];
+            if (sv.prior) |p| {
+                ctx.scope.vars.putAssumeCapacity(sv.name, p);
+            } else {
+                _ = ctx.scope.vars.remove(sv.name);
+            }
+        }
+    }
+
+    /// v1.154.0: `[elem for x in it if c ...]` → `list[T]`.
+    fn checkListComp(self: *Checker, ctx: *FnCtx, lc: ast.ListComp) TypeError!Type {
+        var saved: std.ArrayListUnmanaged(SavedCompVar) = .empty;
+        defer saved.deinit(self.allocator);
+        try self.checkCompClauses(ctx, lc.clauses, &saved);
+        const elem_t = try self.checkExpr(ctx, lc.elem.*);
+        restoreCompScope(ctx, &saved);
+        if (elem_t == .none) return self.fail(error.TypeMismatch, "comprehension elemanı bir değer üretmelidir", .{});
+        const boxed = try self.allocator.create(Type);
+        boxed.* = elem_t;
+        const result: Type = .{ .list = boxed };
+        try self.comp_types.put(self.allocator, @intFromPtr(lc.elem), try self.typeToTypeExpr(result));
+        return result;
+    }
+
+    /// v1.154.0: `{k: v for x in it if c ...}` → `dict[K, V]` (anahtar/değer tipleri `dict[K, V]` kurallarıyla aynı).
+    fn checkDictComp(self: *Checker, ctx: *FnCtx, dc: ast.DictComp) TypeError!Type {
+        var saved: std.ArrayListUnmanaged(SavedCompVar) = .empty;
+        defer saved.deinit(self.allocator);
+        try self.checkCompClauses(ctx, dc.clauses, &saved);
+        const key_t = try self.checkExpr(ctx, dc.key.*);
+        const value_t = try self.checkExpr(ctx, dc.value.*);
+        restoreCompScope(ctx, &saved);
+        if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float) {
+            return self.fail(error.TypeMismatch, "'dict' anahtar tipi yalnızca int/float/bool/str olabilir", .{});
+        }
+        if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .class and value_t != .list and value_t != .dict) {
+            return self.fail(error.TypeMismatch, "'dict' değer tipi yalnızca int/float/bool/str/sınıf/list/dict olabilir", .{});
+        }
+        const kb = try self.allocator.create(Type);
+        kb.* = key_t;
+        const vb = try self.allocator.create(Type);
+        vb.* = value_t;
+        const result: Type = .{ .dict = .{ .key = kb, .value = vb } };
+        try self.comp_types.put(self.allocator, @intFromPtr(dc.key), try self.typeToTypeExpr(result));
+        return result;
+    }
+
+    fn substituteCompClauses(self: *Checker, clauses: []const ast.CompClause, bindings: *const std.StringHashMapUnmanaged(Type)) TypeError![]ast.CompClause {
+        const out = try self.allocator.alloc(ast.CompClause, clauses.len);
+        for (clauses, 0..) |cl, i| {
+            out[i] = switch (cl) {
+                .for_clause => |fc| .{ .for_clause = .{ .var_name = fc.var_name, .iterable = try self.substituteExpr(fc.iterable, bindings) } },
+                .if_clause => |ce| .{ .if_clause = try self.substituteExpr(ce, bindings) },
+            };
+        }
+        return out;
+    }
+
     /// v1.153.0: `obj[lo:hi:step]` — `list[T]` → `list[T]`, `str` → `str` (yeni değer; sınırlar Python gibi sıkıştırılır, hata
     /// yok; adım 0 → `ValueError`, sabit sıfır derleme hatası). Sınırlar `int` olmalıdır.
     fn checkSlice(self: *Checker, ctx: *FnCtx, sl: ast.Slice) TypeError!Type {
@@ -7451,7 +7598,7 @@ pub const Checker = struct {
         self.extend_counter += 1;
         const var_name = try std.fmt.allocPrint(self.allocator, "__nox_ext_{d}", .{self.extend_counter});
         const fresh = switch (c.args[0]) {
-            .call, .list_lit, .binary, .ternary, .slice => true,
+            .call, .list_lit, .binary, .ternary, .slice, .list_comp, .dict_comp => true,
             else => false,
         };
         var iterable: ast.Expr = c.args[0];
@@ -7984,6 +8131,18 @@ pub const Checker = struct {
                 const idx = try self.allocator.create(ast.Expr);
                 idx.* = try self.substituteExpr(ix.index.*, bindings);
                 break :blk .{ .index = .{ .obj = obj, .index = idx } };
+            },
+            .list_comp => |lc| blk: {
+                const elem = try self.allocator.create(ast.Expr);
+                elem.* = try self.substituteExpr(lc.elem.*, bindings);
+                break :blk .{ .list_comp = .{ .elem = elem, .clauses = try self.substituteCompClauses(lc.clauses, bindings) } };
+            },
+            .dict_comp => |dc| blk: {
+                const k = try self.allocator.create(ast.Expr);
+                k.* = try self.substituteExpr(dc.key.*, bindings);
+                const v = try self.allocator.create(ast.Expr);
+                v.* = try self.substituteExpr(dc.value.*, bindings);
+                break :blk .{ .dict_comp = .{ .key = k, .value = v, .clauses = try self.substituteCompClauses(dc.clauses, bindings) } };
             },
             .slice => |sl| blk: {
                 const obj = try self.allocator.create(ast.Expr);

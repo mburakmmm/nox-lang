@@ -1,0 +1,87 @@
+class Rec:
+    label: str
+    n: int
+    def __init__(self, label: str, n: int) -> None:
+        self.label = label
+        self.n = n
+
+def total(xs: list[int]) -> int:
+    t: int = 0
+    for x in xs:
+        t = t + x
+    return t
+
+def squares(n: int) -> list[int]:
+    return [i * i for i in range(n)]
+
+xs: list[int] = [1, 2, 3, 4, 5, 6]
+print(total([x * x for x in xs]))
+print(total([x for x in xs if x % 2 == 0]))
+print(total(squares(5)))
+print(total([i for i in range(10, 0, -3)]))
+print(total([a * b for a in range(1, 4) for b in range(1, 4) if a != b]))
+print(total([a for a in range(6) if a > 1 if a < 5]))
+print(total([i for i in range(-2, 3)]))
+print(len([i for i in range(0)]))
+print(len([x for x in xs if x > 100]))
+
+names: list[str] = ["bob", "al", "christine", "dee"]
+lens: list[int] = [len(n) for n in names]
+print(total(lens))
+up: list[str] = [n + "!" for n in names if len(n) > 2]
+print(len(up))
+print(up[1])
+first: list[str] = [n[0] for n in names]
+print(first[2])
+chars: list[str] = [c for c in "hey"]
+print(chars[1])
+
+recs: list[Rec] = [Rec("r" + str(i), i) for i in range(5)]
+print(len(recs))
+print(recs[4].label)
+big: list[Rec] = [r for r in recs if r.n > 1]
+print(len(big))
+big[0].n = 100
+print(recs[2].n)
+labels: list[str] = [r.label for r in recs]
+print(labels[3])
+nested: list[list[int]] = [[j for j in range(i)] for i in range(5)]
+print(len(nested))
+print(len(nested[4]))
+flat: list[int] = [y for row in nested for y in row]
+print(len(flat))
+print(total(flat))
+tern: list[int] = [x if x % 2 == 0 else -x for x in xs]
+print(total(tern))
+fl: list[float] = [float(i) / 2.0 for i in range(4)]
+print(fl[3])
+bl: list[bool] = [x > 3 for x in xs]
+print(bl[4])
+print(bl[0])
+d1: dict[str, int] = {n: len(n) for n in names}
+print(d1["christine"])
+print(len(d1))
+d2: dict[int, list[int]] = {i: [i, i * 2] for i in range(4)}
+print(d2[3][1])
+d3: dict[str, Rec] = {r.label: r for r in recs if r.n % 2 == 0}
+print(len(d3))
+print(d3["r4"].n)
+d4: dict[int, str] = {i: str(i) * 2 for i in range(3)}
+print(d4[2])
+x: int = 99
+w: list[int] = [x for x in xs]
+print(x)
+print(len(w))
+
+# döngüde sızıntı denetimi
+acc: int = 0
+i: int = 0
+while i < 1500:
+    i = i + 1
+    rs: list[Rec] = [Rec("t" + str(k), k + i) for k in range(4) if k != 2]
+    ss: list[str] = [r.label + "-" + str(r.n) for r in rs]
+    m: dict[str, int] = {s: len(s) for s in ss}
+    grid: list[list[str]] = [[s + str(j) for j in range(2)] for s in ss]
+    acc = acc + len(rs) + len(ss) + len(m) + len(grid[1][1]) + total([len(g) for row in grid for g in row])
+    acc = acc + len([c for c in "ab" * (i % 4)])
+print(acc)

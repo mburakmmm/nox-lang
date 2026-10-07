@@ -155,6 +155,21 @@ const Fixer = struct {
                 for (c.args) |*a| try self.fixExpr(a);
             },
             .attribute => |*a| try self.fixExpr(a.obj),
+            .list_comp => |*lc| {
+                try self.fixExpr(lc.elem);
+                for (lc.clauses) |*cl| switch (cl.*) {
+                    .for_clause => |*fc| try self.fixExpr(&fc.iterable),
+                    .if_clause => |*ce| try self.fixExpr(ce),
+                };
+            },
+            .dict_comp => |*dc| {
+                try self.fixExpr(dc.key);
+                try self.fixExpr(dc.value);
+                for (dc.clauses) |*cl| switch (cl.*) {
+                    .for_clause => |*fc| try self.fixExpr(&fc.iterable),
+                    .if_clause => |*ce| try self.fixExpr(ce),
+                };
+            },
             .slice => |*sl| {
                 try self.fixExpr(sl.obj);
                 if (sl.lo) |x| try self.fixExpr(x);

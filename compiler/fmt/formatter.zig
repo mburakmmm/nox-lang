@@ -608,6 +608,20 @@ const Printer = struct {
                 try self.printExprAt(a.obj.*, 0, .loose);
                 try self.writer.print(".{s}", .{a.attr});
             },
+            .list_comp => |lc| {
+                try self.writer.writeAll("[");
+                try self.printExpr(lc.elem.*);
+                try self.printCompClauses(lc.clauses);
+                try self.writer.writeAll("]");
+            },
+            .dict_comp => |dc| {
+                try self.writer.writeAll("{");
+                try self.printExpr(dc.key.*);
+                try self.writer.writeAll(": ");
+                try self.printExpr(dc.value.*);
+                try self.printCompClauses(dc.clauses);
+                try self.writer.writeAll("}");
+            },
             .slice => |sl| {
                 try self.printExprAt(sl.obj.*, 0, .loose);
                 try self.writer.writeAll("[");
@@ -666,6 +680,22 @@ const Printer = struct {
                 try self.writer.writeAll(")");
             },
             .binary, .unary, .ternary, .kwarg => unreachable, // yukarıda printExprAt'ta ele alındı
+        }
+    }
+
+    /// v1.154.0: comprehension yan tümceleri (` for x in it`, ` if cond`); iterable/koşul `or`-seviyesinde (üçlü ifade parantezlenir).
+    fn printCompClauses(self: *Printer, clauses: []const ast.CompClause) FormatError!void {
+        for (clauses) |cl| {
+            switch (cl) {
+                .for_clause => |fc| {
+                    try self.writer.print(" for {s} in ", .{fc.var_name});
+                    try self.printExprAt(fc.iterable, 1, .loose);
+                },
+                .if_clause => |ce| {
+                    try self.writer.writeAll(" if ");
+                    try self.printExprAt(ce, 1, .loose);
+                },
+            }
         }
     }
 

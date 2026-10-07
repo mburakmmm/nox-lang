@@ -335,6 +335,24 @@ fn renameTypeExpr(a: std.mem.Allocator, te: ast.TypeExpr, map: *const RenameMap)
     };
 }
 
+/// v1.154.0: comprehension yan tümcesini yeniden adlandırır; `for` değişkeni adı bir modül-özel ad ile çakışıyorsa o ad ilgili
+/// kapsamda yeniden adlandırma dışı bırakılır (bağlayıcı ve kullanımlar tutarlı kalır).
+fn renameCompClause(a: std.mem.Allocator, cl: ast.CompClause, cur: *(*const RenameMap), owned: *?RenameMap) std.mem.Allocator.Error!ast.CompClause {
+    switch (cl) {
+        .for_clause => |fc| {
+            const it = try renameExpr(a, fc.iterable, cur.*);
+            if (cur.*.contains(fc.var_name)) {
+                var m = try cur.*.clone(a);
+                _ = m.remove(fc.var_name);
+                owned.* = m;
+                cur.* = &owned.*.?;
+            }
+            return .{ .for_clause = .{ .var_name = fc.var_name, .iterable = it } };
+        },
+        .if_clause => |c| return .{ .if_clause = try renameExpr(a, c, cur.*) },
+    }
+}
+
 fn renameExprBox(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.Allocator.Error!*ast.Expr {
     const p = try a.create(ast.Expr);
     p.* = try renameExpr(a, e, map);
@@ -357,6 +375,20 @@ fn renameExpr(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.
         // yalnızca TABAN ifadesindeki (`a.obj`) olası bir üst-düzey isim
         // başvurusu yeniden adlandırılabilir.
         .attribute => |at| .{ .attribute = .{ .obj = try renameExprBox(a, at.obj.*, map), .attr = at.attr } },
+        .list_comp => |lc| blk: {
+            var cur: *const RenameMap = map;
+            var owned: ?RenameMap = null;
+            const clauses = try a.alloc(ast.CompClause, lc.clauses.len);
+            for (lc.clauses, 0..) |cl, i| clauses[i] = try renameCompClause(a, cl, &cur, &owned);
+            break :blk .{ .list_comp = .{ .elem = try renameExprBox(a, lc.elem.*, cur), .clauses = clauses } };
+        },
+        .dict_comp => |dc| blk: {
+            var cur: *const RenameMap = map;
+            var owned: ?RenameMap = null;
+            const clauses = try a.alloc(ast.CompClause, dc.clauses.len);
+            for (dc.clauses, 0..) |cl, i| clauses[i] = try renameCompClause(a, cl, &cur, &owned);
+            break :blk .{ .dict_comp = .{ .key = try renameExprBox(a, dc.key.*, cur), .value = try renameExprBox(a, dc.value.*, cur), .clauses = clauses } };
+        },
         .slice => |s| .{ .slice = .{ .obj = try renameExprBox(a, s.obj.*, map), .lo = if (s.lo) |x| try renameExprBox(a, x.*, map) else null, .hi = if (s.hi) |x| try renameExprBox(a, x.*, map) else null, .step = if (s.step) |x| try renameExprBox(a, x.*, map) else null } },
         .index => |idx| .{ .index = .{ .obj = try renameExprBox(a, idx.obj.*, map), .index = try renameExprBox(a, idx.index.*, map) } },
         .list_lit => |elems| blk: {

@@ -45,7 +45,7 @@ module.exports = grammar({
     '}',
   ],
 
-  conflicts: $ => [],
+  conflicts: $ => [[$._expression, $._or_expression]],
 
   rules: {
     module: $ => repeat($._statement),
@@ -357,7 +357,23 @@ module.exports = grammar({
       $.parenthesized_expression,
       $.list,
       $.dict,
+      $.list_comprehension,
+      $.dict_comprehension,
     ),
+
+    // `[e for x in it if c]` / `{k: v for x in it if c}` (v1.154.0) — iterable/koşul `or`-seviyesinde (üçlü ifade DEĞİL).
+    _or_expression: $ => choice(
+      $.binary_expression,
+      $.unary_expression,
+      $.await_expression,
+      $.spawn_expression,
+      $._postfix_expression,
+    ),
+    list_comprehension: $ => seq('[', field('element', $._expression), repeat1($._comp_clause), ']'),
+    dict_comprehension: $ => seq('{', field('key', $._expression), ':', field('value', $._expression), repeat1($._comp_clause), '}'),
+    _comp_clause: $ => choice($.comp_for_clause, $.comp_if_clause),
+    comp_for_clause: $ => seq('for', field('variable', $.identifier), 'in', field('iterable', $._or_expression)),
+    comp_if_clause: $ => seq('if', field('condition', $._or_expression)),
 
     parenthesized_expression: $ => seq('(', $._expression, ')'),
 

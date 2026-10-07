@@ -583,6 +583,21 @@ pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInf
     }
 }
 
+/// v1.154.0: comprehension yan tümcelerinin istisna/mutasyon analizi — `for` değişkeni adı "çözülemez" (poisoned) sayılır; dinamik adımlı
+/// `range` `ValueError` fırlatabilir.
+fn collectRaiseInfoClauses(self: *Codegen, clauses: []const ast.CompClause, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+    for (clauses) |cl| {
+        switch (cl) {
+            .for_clause => |fc| {
+                try poisoned.put(self.allocator, fc.var_name, {});
+                if (fc.iterable == .call and fc.iterable.call.callee.* == .identifier and std.mem.eql(u8, fc.iterable.call.callee.identifier, "range") and fc.iterable.call.args.len == 3) info.direct_unsafe = true;
+                try self.collectRaiseInfoExpr(fc.iterable, info, class_ctx, var_types, poisoned);
+            },
+            .if_clause => |ce| try self.collectRaiseInfoExpr(ce, info, class_ctx, var_types, poisoned),
+        }
+    }
+}
+
 pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
     switch (expr) {
         // `await`/`spawn`: async istisna yayılımı ZATEN bilinçli olarak
@@ -722,6 +737,15 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
             for (c.args) |a| try self.collectRaiseInfoExpr(a, info, class_ctx, var_types, poisoned);
         },
         .attribute => |a| try self.collectRaiseInfoExpr(a.obj.*, info, class_ctx, var_types, poisoned),
+        .list_comp => |lc| {
+            try self.collectRaiseInfoExpr(lc.elem.*, info, class_ctx, var_types, poisoned);
+            try collectRaiseInfoClauses(self, lc.clauses, info, class_ctx, var_types, poisoned);
+        },
+        .dict_comp => |dc| {
+            try self.collectRaiseInfoExpr(dc.key.*, info, class_ctx, var_types, poisoned);
+            try self.collectRaiseInfoExpr(dc.value.*, info, class_ctx, var_types, poisoned);
+            try collectRaiseInfoClauses(self, dc.clauses, info, class_ctx, var_types, poisoned);
+        },
         .slice => |sl| {
             // Dilimleme sınır dışı değerleri sıkıştırır (hata yok); yalnızca adım 0 olabilen dinamik adım `ValueError` fırlatır.
             if (sl.step) |st| {

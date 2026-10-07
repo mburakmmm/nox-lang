@@ -141,6 +141,10 @@ connect("localhost")
 connect("example.com", tls=True)
 ```
 
+**Comprehensions:** `[x * x for x in xs if x > 0]`, `{k: len(k) for k in names}`, multiple `for`/`if` clauses
+(`[a * b for a in A for b in B if a != b]`), over lists, `range(...)`, `str` and `dict`. The loop variable does not leak.
+The condition and the iterable are `or`-level expressions (use parentheses for a conditional expression there).
+
 **Slicing:** `xs[a:b]`, `xs[:b]`, `xs[a:]`, `xs[:]`, `xs[a:b:step]`, `xs[::-1]` on `list[T]` (a new list) and `str`
 (by code point). Bounds clamp and negative indexes count from the end like Python; a zero step raises `ValueError`
 (a literal zero is a compile error). Slices are values: assigning to one is not supported. Strings also compare with

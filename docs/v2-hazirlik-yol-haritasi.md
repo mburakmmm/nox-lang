@@ -24,7 +24,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [x] **1.7 list tam API** — v1.150.0 (spec §3.267): `extend`, `insert`, `pop(i)`, `remove`, `index`, `count`, `clear`, `reverse`, `copy`, `del xs[i]`, `list + list`, `list * n`, `sorted`/`reversed` (yeni liste döner). Dilimleme 1.9'da.
 - [x] **1.8 `float(int)` / açık int→float dönüşümü** — v1.151.0 (spec §3.268): `float(int/float/bool/u8…u64/str)`.
 - [x] **1.9 str karşılaştırma `<`/`>`/`<=`/`>=`, `"ab" * 3`, dilimleme** — v1.153.0 (spec §3.270): `xs[a:b:adım]`, `s[a:b:adım]`, tree-sitter dahil.
-- [ ] **1.10 list comprehension** (AGENTS.md §5 "comprehension'lar" diyor ama YOK — ekle) ve `lambda`.
+- [~] **1.10 list/dict comprehension** — v1.154.0 (spec §3.271). `lambda` sırada (v1.155.0).
 - [ ] **1.11 `is None` / `Optional` ergonomisi**, `print` çoklu argüman, dize metot sözdizimi (`s.split()`).
 - [ ] **1.12 Koruma (guard) tarzı Optional daraltma:** `if x == None: return/break/continue` sonrası `x` daraltılsın
   (şu an yalnızca `if x != None:` bloğu içinde; bağlı liste gezintisi için gerekli).

@@ -396,6 +396,21 @@ pub const Analyzer = struct {
             },
             .unary => |u| self.scanExprEscapes(scope, index_of, u.operand.*),
             .attribute => |a| self.scanExprEscapes(scope, index_of, a.obj.*),
+            .list_comp => |lc| {
+                self.scanExprEscapes(scope, index_of, lc.elem.*);
+                for (lc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| self.scanExprEscapes(scope, index_of, fc.iterable),
+                    .if_clause => |ce| self.scanExprEscapes(scope, index_of, ce),
+                };
+            },
+            .dict_comp => |dc| {
+                self.scanExprEscapes(scope, index_of, dc.key.*);
+                self.scanExprEscapes(scope, index_of, dc.value.*);
+                for (dc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| self.scanExprEscapes(scope, index_of, fc.iterable),
+                    .if_clause => |ce| self.scanExprEscapes(scope, index_of, ce),
+                };
+            },
             .slice => |sl| {
                 self.scanExprEscapes(scope, index_of, sl.obj.*);
                 if (sl.lo) |x| self.scanExprEscapes(scope, index_of, x.*);

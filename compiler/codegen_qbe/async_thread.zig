@@ -203,6 +203,35 @@ pub fn exprUsesAsync(expr: ast.Expr) bool {
             break :blk false;
         },
         .attribute => |a| exprUsesAsync(a.obj.*),
+        .list_comp => |lc| blk: {
+            if (exprUsesAsync(lc.elem.*)) break :blk true;
+            for (lc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprUsesAsync(fc.iterable)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprUsesAsync(ce)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
+        .dict_comp => |dc| blk: {
+            if (exprUsesAsync(dc.key.*)) break :blk true;
+            if (exprUsesAsync(dc.value.*)) break :blk true;
+            for (dc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprUsesAsync(fc.iterable)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprUsesAsync(ce)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
         .slice => |sl| exprUsesAsync(sl.obj.*) or (if (sl.lo) |x| exprUsesAsync(x.*) else false) or (if (sl.hi) |x| exprUsesAsync(x.*) else false) or (if (sl.step) |x| exprUsesAsync(x.*) else false),
         .index => |idx| exprUsesAsync(idx.obj.*) or exprUsesAsync(idx.index.*),
         .list_lit => |elems| blk: {
@@ -336,6 +365,35 @@ pub fn exprUsesMulticorePool(expr: ast.Expr) bool {
             break :blk false;
         },
         .attribute => |a| exprUsesMulticorePool(a.obj.*),
+        .list_comp => |lc| blk: {
+            if (exprUsesMulticorePool(lc.elem.*)) break :blk true;
+            for (lc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprUsesMulticorePool(fc.iterable)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprUsesMulticorePool(ce)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
+        .dict_comp => |dc| blk: {
+            if (exprUsesMulticorePool(dc.key.*)) break :blk true;
+            if (exprUsesMulticorePool(dc.value.*)) break :blk true;
+            for (dc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprUsesMulticorePool(fc.iterable)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprUsesMulticorePool(ce)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
         .slice => |sl| exprUsesMulticorePool(sl.obj.*) or (if (sl.lo) |x| exprUsesMulticorePool(x.*) else false) or (if (sl.hi) |x| exprUsesMulticorePool(x.*) else false) or (if (sl.step) |x| exprUsesMulticorePool(x.*) else false),
         .index => |idx| exprUsesMulticorePool(idx.obj.*) or exprUsesMulticorePool(idx.index.*),
         .list_lit => |elems| blk: {

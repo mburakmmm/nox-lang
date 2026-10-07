@@ -326,6 +326,20 @@ fn dumpExpr(writer: *std.Io.Writer, e: ast.Expr) std.Io.Writer.Error!void {
             try dumpExpr(writer, a.obj.*);
             try writer.print(" {s})", .{a.attr});
         },
+        .list_comp => |lc| {
+            try writer.writeAll("(list_comp ");
+            try dumpExpr(writer, lc.elem.*);
+            try dumpCompClauses(writer, lc.clauses);
+            try writer.writeAll(")");
+        },
+        .dict_comp => |dc| {
+            try writer.writeAll("(dict_comp ");
+            try dumpExpr(writer, dc.key.*);
+            try writer.writeAll(" ");
+            try dumpExpr(writer, dc.value.*);
+            try dumpCompClauses(writer, dc.clauses);
+            try writer.writeAll(")");
+        },
         .slice => |sl| {
             try writer.writeAll("(slice ");
             try dumpExpr(writer, sl.obj.*);
@@ -395,4 +409,22 @@ pub fn dumpToAlloc(allocator: std.mem.Allocator, module: ast.Module) ![]u8 {
     defer aw.deinit();
     try dumpModule(&aw.writer, module);
     return aw.toOwnedSlice();
+}
+
+fn dumpCompClauses(writer: anytype, clauses: []const ast.CompClause) !void {
+    for (clauses) |cl| {
+        try writer.writeAll(" ");
+        switch (cl) {
+            .for_clause => |fc| {
+                try writer.print("(for {s} ", .{fc.var_name});
+                try dumpExpr(writer, fc.iterable);
+                try writer.writeAll(")");
+            },
+            .if_clause => |ce| {
+                try writer.writeAll("(if ");
+                try dumpExpr(writer, ce);
+                try writer.writeAll(")");
+            },
+        }
+    }
 }

@@ -468,6 +468,21 @@ fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name:
             if (a.obj.* == .identifier and std.mem.eql(u8, a.obj.identifier, name)) return;
             try scanParamEscapesExpr(self, fname, param_idx, name, a.obj.*, class_params, seeds, reverse_edges);
         },
+        .list_comp => |lc| {
+            try scanParamEscapesExpr(self, fname, param_idx, name, lc.elem.*, class_params, seeds, reverse_edges);
+            for (lc.clauses) |cl| switch (cl) {
+                .for_clause => |fc| try scanParamEscapesExpr(self, fname, param_idx, name, fc.iterable, class_params, seeds, reverse_edges),
+                .if_clause => |ce| try scanParamEscapesExpr(self, fname, param_idx, name, ce, class_params, seeds, reverse_edges),
+            };
+        },
+        .dict_comp => |dc| {
+            try scanParamEscapesExpr(self, fname, param_idx, name, dc.key.*, class_params, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, dc.value.*, class_params, seeds, reverse_edges);
+            for (dc.clauses) |cl| switch (cl) {
+                .for_clause => |fc| try scanParamEscapesExpr(self, fname, param_idx, name, fc.iterable, class_params, seeds, reverse_edges),
+                .if_clause => |ce| try scanParamEscapesExpr(self, fname, param_idx, name, ce, class_params, seeds, reverse_edges),
+            };
+        },
         .slice => |sl| {
             try scanParamEscapesExpr(self, fname, param_idx, name, sl.obj.*, class_params, seeds, reverse_edges);
             if (sl.lo) |x| try scanParamEscapesExpr(self, fname, param_idx, name, x.*, class_params, seeds, reverse_edges);
@@ -691,6 +706,21 @@ pub fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void 
             }
         },
         .attribute => |a| try self.collectInlineSitesExpr(a.obj.*),
+        .list_comp => |lc| {
+            try self.collectInlineSitesExpr(lc.elem.*);
+            for (lc.clauses) |cl| switch (cl) {
+                .for_clause => |fc| try self.collectInlineSitesExpr(fc.iterable),
+                .if_clause => |ce| try self.collectInlineSitesExpr(ce),
+            };
+        },
+        .dict_comp => |dc| {
+            try self.collectInlineSitesExpr(dc.key.*);
+            try self.collectInlineSitesExpr(dc.value.*);
+            for (dc.clauses) |cl| switch (cl) {
+                .for_clause => |fc| try self.collectInlineSitesExpr(fc.iterable),
+                .if_clause => |ce| try self.collectInlineSitesExpr(ce),
+            };
+        },
         .slice => |sl| {
             try self.collectInlineSitesExpr(sl.obj.*);
             if (sl.lo) |x| try self.collectInlineSitesExpr(x.*);
@@ -830,6 +860,21 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
             }
         },
         .attribute => |a| try scanStackConstructsExpr(self, a.obj.*, all_ok, any),
+        .list_comp => |lc| {
+            try scanStackConstructsExpr(self, lc.elem.*, all_ok, any);
+            for (lc.clauses) |cl| switch (cl) {
+                .for_clause => |fc| try scanStackConstructsExpr(self, fc.iterable, all_ok, any),
+                .if_clause => |ce| try scanStackConstructsExpr(self, ce, all_ok, any),
+            };
+        },
+        .dict_comp => |dc| {
+            try scanStackConstructsExpr(self, dc.key.*, all_ok, any);
+            try scanStackConstructsExpr(self, dc.value.*, all_ok, any);
+            for (dc.clauses) |cl| switch (cl) {
+                .for_clause => |fc| try scanStackConstructsExpr(self, fc.iterable, all_ok, any),
+                .if_clause => |ce| try scanStackConstructsExpr(self, ce, all_ok, any),
+            };
+        },
         .slice => |sl| {
             try scanStackConstructsExpr(self, sl.obj.*, all_ok, any);
             if (sl.lo) |x| try scanStackConstructsExpr(self, x.*, all_ok, any);
@@ -1019,6 +1064,35 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             break :blk false;
         },
         .attribute => |a| exprHasUnsafeParamUse(self, a.obj.*, name, class_params),
+        .list_comp => |lc| blk: {
+            if (exprHasUnsafeParamUse(self, lc.elem.*, name, class_params)) break :blk true;
+            for (lc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprHasUnsafeParamUse(self, fc.iterable, name, class_params)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprHasUnsafeParamUse(self, ce, name, class_params)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
+        .dict_comp => |dc| blk: {
+            if (exprHasUnsafeParamUse(self, dc.key.*, name, class_params)) break :blk true;
+            if (exprHasUnsafeParamUse(self, dc.value.*, name, class_params)) break :blk true;
+            for (dc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprHasUnsafeParamUse(self, fc.iterable, name, class_params)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprHasUnsafeParamUse(self, ce, name, class_params)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
         .slice => |sl| exprHasUnsafeParamUse(self, sl.obj.*, name, class_params) or (if (sl.lo) |x| exprHasUnsafeParamUse(self, x.*, name, class_params) else false) or (if (sl.hi) |x| exprHasUnsafeParamUse(self, x.*, name, class_params) else false) or (if (sl.step) |x| exprHasUnsafeParamUse(self, x.*, name, class_params) else false),
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);

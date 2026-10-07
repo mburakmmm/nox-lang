@@ -2820,6 +2820,240 @@ pub fn genSlice(self: *Codegen, sl: ast.Slice) CodegenError!Value {
     return freshListValue(self, obj, result);
 }
 
+// ===== v1.154.0: list/dict comprehension — iç içe döngüler satır içi (ifade bağlamında) üretilir =====
+
+const CompTarget = union(enum) {
+    list: struct { elem: ast.Expr, esz: []const u8 },
+    dict: struct { key: ast.Expr, value: ast.Expr, dinfo: *const DictInfo },
+};
+
+const CompState = struct {
+    res_slot: []const u8,
+    target: CompTarget,
+};
+
+/// Comprehension döngü değişkenini (ödünç eleman) geçici olarak `self.vars`e bağlar; `is_param` release'i atlatır.
+fn bindCompVar(self: *Codegen, name: []const u8, slot: []const u8, elem: Value) CodegenError!void {
+    try self.vars.put(self.allocator, name, .{
+        .slot = slot,
+        .qtype = elem.qtype,
+        .heap = elem.heap,
+        .elem_qtype = elem.elem_qtype,
+        .class_name = elem.class_name,
+        .elem_heap_info = elem.elem_heap_info,
+        .elem_is_str = elem.elem_is_str,
+        .dict_info = elem.dict_info,
+        .func_sig = elem.func_sig,
+        .fixed_int = elem.fixed_int,
+        .elem_fixed_int = elem.elem_fixed_int,
+        .is_param = true,
+    });
+    try self.modCacheInvalidateName(name);
+}
+
+fn genCompClauses(self: *Codegen, clauses: []const ast.CompClause, i: usize, st: *const CompState) CodegenError!void {
+    if (i == clauses.len) return genCompLeaf(self, st);
+    switch (clauses[i]) {
+        .if_clause => |ce| {
+            const c = try self.genExpr(ce);
+            const then_label = try self.newLabel("comp_if_then");
+            const skip_label = try self.newLabel("comp_if_skip");
+            try self.qbeJnz(c.text, then_label, skip_label);
+            try self.qbeLabel(then_label);
+            try genCompClauses(self, clauses, i + 1, st);
+            try self.qbeJmp(skip_label);
+            try self.qbeLabel(skip_label);
+        },
+        .for_clause => |fc| try genCompFor(self, clauses, i, fc, st),
+    }
+}
+
+fn genCompFor(self: *Codegen, clauses: []const ast.CompClause, i: usize, fc: ast.CompForClause, st: *const CompState) CodegenError!void {
+    const saved = self.vars.get(fc.var_name);
+    const mc_snap = try self.snapshotModCache();
+    const var_slot = try self.newTemp();
+    try self.qbeAlloc(var_slot, .eight, 8);
+    const cond_label = try self.newLabel("comp_cond");
+    const body_label = try self.newLabel("comp_body");
+    const end_label = try self.newLabel("comp_end");
+
+    if (isRangeCallExpr(fc.iterable)) {
+        const rc = fc.iterable.call;
+        var lo: []const u8 = "0";
+        var hi: []const u8 = undefined;
+        var step: []const u8 = "1";
+        var step_sign: i2 = 1; // 1 pozitif sabit, -1 negatif sabit, 0 dinamik
+        if (rc.args.len == 1) {
+            hi = (try self.convert(try self.genExpr(rc.args[0]), .l)).text;
+        } else {
+            lo = (try self.convert(try self.genExpr(rc.args[0]), .l)).text;
+            hi = (try self.convert(try self.genExpr(rc.args[1]), .l)).text;
+            if (rc.args.len == 3) {
+                const sa = rc.args[2];
+                step = (try self.convert(try self.genExpr(sa), .l)).text;
+                if (sa == .int_lit and sa.int_lit > 0) {
+                    step_sign = 1;
+                } else if (sa == .unary and sa.unary.op == .neg and sa.unary.operand.* == .int_lit and sa.unary.operand.int_lit > 0) {
+                    step_sign = -1;
+                } else {
+                    step_sign = 0;
+                    const bad = try self.newTemp();
+                    try self.qbeOp2Imm(bad, .w, "ceql", step, 0);
+                    const rels = [_]RelPair{};
+                    try emitColdListError(self, bad, "ValueError", "range adimi sifir olamaz", &rels);
+                }
+            }
+        }
+        try self.qbeStoreL(lo, var_slot);
+        try self.qbeJmp(cond_label);
+        try self.qbeLabel(cond_label);
+        const cur = try self.newTemp();
+        try self.qbeLoadL(cur, var_slot);
+        const cont = try self.newTemp();
+        switch (step_sign) {
+            1 => try self.qbeOp2(cont, .w, "csltl", cur, hi),
+            -1 => try self.qbeOp2(cont, .w, "csgtl", cur, hi),
+            else => {
+                const pos = try self.newTemp();
+                try self.qbeOp2Imm(pos, .w, "csgtl", step, 0);
+                const lt = try self.newTemp();
+                try self.qbeOp2(lt, .w, "csltl", cur, hi);
+                const gt = try self.newTemp();
+                try self.qbeOp2(gt, .w, "csgtl", cur, hi);
+                const a1 = try self.newTemp();
+                try self.qbeOp2(a1, .w, "and", pos, lt);
+                const npos = try self.newTemp();
+                try self.qbeOp2Imm(npos, .w, "xor", pos, 1);
+                const a2 = try self.newTemp();
+                try self.qbeOp2(a2, .w, "and", npos, gt);
+                try self.qbeOp2(cont, .w, "or", a1, a2);
+            },
+        }
+        try self.qbeJnz(cont, body_label, end_label);
+        try self.qbeLabel(body_label);
+        try bindCompVar(self, fc.var_name, var_slot, .{ .text = cur, .qtype = .l });
+        try genCompClauses(self, clauses, i + 1, st);
+        const cur2 = try self.newTemp();
+        try self.qbeLoadL(cur2, var_slot);
+        const nxt = try self.newTemp();
+        try self.qbeOp2(nxt, .l, "add", cur2, step);
+        try self.qbeStoreL(nxt, var_slot);
+        try self.qbeJmp(cond_label);
+        try self.qbeLabel(end_label);
+    } else {
+        const iter = try self.genExpr(fc.iterable);
+        try self.checkNoLowlevelEscape(iter);
+        if (iter.heap != .list) return error.Unsupported;
+        const idx_slot = try self.newTemp();
+        try self.qbeAlloc(idx_slot, .eight, 8);
+        try self.qbeStoreImmL(0, idx_slot);
+        const len_t = try self.newTemp();
+        try self.qbeLoadL(len_t, iter.text);
+        try self.qbeJmp(cond_label);
+        try self.qbeLabel(cond_label);
+        const idx = try self.newTemp();
+        try self.qbeLoadL(idx, idx_slot);
+        const cont = try self.newTemp();
+        try self.qbeOp2(cont, .w, "csltl", idx, len_t);
+        try self.qbeJnz(cont, body_label, end_label);
+        try self.qbeLabel(body_label);
+        const elem = try self.loadListElemValueAt(iter, idx);
+        try self.qbeStore(elem.qtype, elem.text, var_slot);
+        try bindCompVar(self, fc.var_name, var_slot, elem);
+        try genCompClauses(self, clauses, i + 1, st);
+        const idx2 = try self.newTemp();
+        try self.qbeOp2Imm(idx2, .l, "add", idx, 1);
+        try self.qbeStoreL(idx2, idx_slot);
+        try self.qbeJmp(cond_label);
+        try self.qbeLabel(end_label);
+        try self.releaseIfTemporary(fc.iterable, iter);
+    }
+    self.restoreModCache(mc_snap);
+    if (saved) |sv| {
+        try self.vars.put(self.allocator, fc.var_name, sv);
+    } else {
+        _ = self.vars.remove(fc.var_name);
+    }
+}
+
+fn isRangeCallExpr(e: ast.Expr) bool {
+    return e == .call and e.call.callee.* == .identifier and std.mem.eql(u8, e.call.callee.identifier, "range") and e.call.args.len >= 1 and e.call.args.len <= 3;
+}
+
+fn genCompLeaf(self: *Codegen, st: *const CompState) CodegenError!void {
+    switch (st.target) {
+        .list => |t| {
+            const ev0 = try self.genExpr(t.elem);
+            try self.checkNoLowlevelEscape(ev0);
+            const ev = try self.retainIfAliasing(t.elem, ev0);
+            const payload = try self.toPayload(ev);
+            const cur = try self.newTemp();
+            try self.qbeLoadL(cur, st.res_slot);
+            const np = try self.newTemp();
+            try self.qbeCall(.{ .name = np, .ty = .l }, "$nox_list_push", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cur }, .{ .ty = .l, .text = payload.text }, .{ .ty = .l, .text = t.esz } });
+            try self.qbeStoreL(np, st.res_slot);
+        },
+        .dict => |t| {
+            const k0 = try self.genExpr(t.key);
+            try self.checkNoLowlevelEscape(k0);
+            const kv = try self.retainIfAliasing(t.key, k0);
+            const v0 = try self.genExpr(t.value);
+            try self.checkNoLowlevelEscape(v0);
+            const vv = try self.retainIfAliasing(t.value, v0);
+            const kp = try self.toPayload(kv);
+            const vp = try self.toPayload(vv);
+            const d = try self.newTemp();
+            try self.qbeLoadL(d, st.res_slot);
+            try self.qbeCall(null, "$nox_dict_set", &.{
+                .{ .ty = .l, .text = RT_PARAM },
+                .{ .ty = .l, .text = d },
+                .{ .ty = .w, .text = if (t.dinfo.key_is_str) "1" else "0" },
+                .{ .ty = .w, .text = if (t.dinfo.value_is_str) "1" else "0" },
+                .{ .ty = .w, .text = if (t.dinfo.valueIsArc()) "1" else "0" },
+                .{ .ty = .l, .text = kp.text },
+                .{ .ty = .l, .text = vp.text },
+            });
+        },
+    }
+}
+
+/// `[elem for x in it if c ...]` — sonuç listesi `result_type`tan (checker) bilinen tipte; döngüler satır içi üretilir, her eleman sahipli
+/// (+1) olarak `nox_list_push` ile eklenir. Bilinen sınırlama: gövdede bir istisna fırlarsa kısmi sonuç listesi sızar.
+pub fn genListComp(self: *Codegen, lc: ast.ListComp) CodegenError!Value {
+    const rt_te = lc.result_type orelse return error.Unsupported;
+    const ti = try self.resolveType(rt_te);
+    if (ti.heap != .list) return error.Unsupported;
+    const res_slot = try self.newTemp();
+    try self.qbeAlloc(res_slot, .eight, 8);
+    const empty = try self.newTemp();
+    try self.qbeCall(.{ .name = empty, .ty = .l }, "$nox_list_empty", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeStoreL(empty, res_slot);
+    const st: CompState = .{ .res_slot = res_slot, .target = .{ .list = .{ .elem = lc.elem.*, .esz = try std.fmt.allocPrint(self.allocator, "{d}", .{qbeSizeOf(ti.elem_qtype)}) } } };
+    try genCompClauses(self, lc.clauses, 0, &st);
+    const res = try self.newTemp();
+    try self.qbeLoadL(res, res_slot);
+    return .{ .text = res, .qtype = .l, .heap = .list, .elem_qtype = ti.elem_qtype, .elem_heap_info = ti.elem_heap_info, .elem_is_str = ti.elem_is_str, .elem_fixed_int = ti.elem_fixed_int };
+}
+
+/// `{k: v for x in it if c ...}` — sözlük `result_type`tan bilinen tipte kurulur (değer list/dict ise serbest bırakıcı yazılır).
+pub fn genDictComp(self: *Codegen, dc: ast.DictComp) CodegenError!Value {
+    const rt_te = dc.result_type orelse return error.Unsupported;
+    const ti = try self.resolveType(rt_te);
+    if (ti.heap != .dict) return error.Unsupported;
+    const dinfo = ti.dict_info orelse return error.Unsupported;
+    const res_slot = try self.newTemp();
+    try self.qbeAlloc(res_slot, .eight, 8);
+    const d = try self.newTemp();
+    try self.qbeCall(.{ .name = d, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" } });
+    try emitDictInstallValueRelease(self, d, dinfo);
+    try self.qbeStoreL(d, res_slot);
+    const st: CompState = .{ .res_slot = res_slot, .target = .{ .dict = .{ .key = dc.key.*, .value = dc.value.*, .dinfo = dinfo } } };
+    try genCompClauses(self, dc.clauses, 0, &st);
+    const res = try self.newTemp();
+    try self.qbeLoadL(res, res_slot);
+    return .{ .text = res, .qtype = .l, .heap = .dict, .dict_info = dinfo };
+}
+
 /// `del xs[i]`: elemanı çıkarıp serbest bırakır; aralık dışı → `IndexError`.
 pub fn genListDelete(self: *Codegen, ix: ast.Index, obj: Value) CodegenError!void {
     try self.checkNoLowlevelEscape(obj);

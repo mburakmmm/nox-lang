@@ -428,6 +428,35 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             if (a.obj.* == .identifier and std.mem.eql(u8, a.obj.identifier, name)) break :blk false;
             break :blk exprHasUnsafeLocalUse(self, a.obj.*, name, class_params);
         },
+        .list_comp => |lc| blk: {
+            if (exprHasUnsafeLocalUse(self, lc.elem.*, name, class_params)) break :blk true;
+            for (lc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprHasUnsafeLocalUse(self, fc.iterable, name, class_params)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprHasUnsafeLocalUse(self, ce, name, class_params)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
+        .dict_comp => |dc| blk: {
+            if (exprHasUnsafeLocalUse(self, dc.key.*, name, class_params)) break :blk true;
+            if (exprHasUnsafeLocalUse(self, dc.value.*, name, class_params)) break :blk true;
+            for (dc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprHasUnsafeLocalUse(self, fc.iterable, name, class_params)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprHasUnsafeLocalUse(self, ce, name, class_params)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
         .slice => |sl| exprHasUnsafeLocalUse(self, sl.obj.*, name, class_params) or (if (sl.lo) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false) or (if (sl.hi) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false) or (if (sl.step) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false),
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
@@ -562,6 +591,35 @@ fn exprHasUnsafeGrowableLocalUse(self: *const Codegen, expr: ast.Expr, name: []c
         .attribute => |a| blk: {
             if (a.obj.* == .identifier and std.mem.eql(u8, a.obj.identifier, name)) break :blk false;
             break :blk exprHasUnsafeGrowableLocalUse(self, a.obj.*, name);
+        },
+        .list_comp => |lc| blk: {
+            if (exprHasUnsafeGrowableLocalUse(self, lc.elem.*, name)) break :blk true;
+            for (lc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprHasUnsafeGrowableLocalUse(self, fc.iterable, name)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprHasUnsafeGrowableLocalUse(self, ce, name)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
+        .dict_comp => |dc| blk: {
+            if (exprHasUnsafeGrowableLocalUse(self, dc.key.*, name)) break :blk true;
+            if (exprHasUnsafeGrowableLocalUse(self, dc.value.*, name)) break :blk true;
+            for (dc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprHasUnsafeGrowableLocalUse(self, fc.iterable, name)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprHasUnsafeGrowableLocalUse(self, ce, name)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
         },
         .slice => |sl| exprHasUnsafeGrowableLocalUse(self, sl.obj.*, name) or (if (sl.lo) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false) or (if (sl.hi) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false) or (if (sl.step) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false),
         .index => |idx| blk: {

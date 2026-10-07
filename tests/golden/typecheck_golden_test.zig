@@ -465,6 +465,48 @@ test "golden(typecheck): v1.153.0 — dilimleme, str karşılaştırma ve tekrar
     );
 }
 
+test "golden(typecheck): v1.154.0 — comprehension if koşulu bool olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_comp_if_not_bool.nox"),
+        @embedFile("typecheck_cases/err_comp_if_not_bool.expected"),
+    );
+}
+
+test "golden(typecheck): v1.154.0 — comprehension iterable olmayan ifadeyi reddeder" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_comp_not_iterable.nox"),
+        @embedFile("typecheck_cases/err_comp_not_iterable.expected"),
+    );
+}
+
+test "golden(typecheck): v1.154.0 — comprehension değişkeni dışarı sızmaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_comp_var_not_visible_after.nox"),
+        @embedFile("typecheck_cases/err_comp_var_not_visible_after.expected"),
+    );
+}
+
+test "golden(typecheck): v1.154.0 — comprehension elemanı değer üretmeli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_comp_none_element.nox"),
+        @embedFile("typecheck_cases/err_comp_none_element.expected"),
+    );
+}
+
+test "golden(typecheck): v1.154.0 — dict comprehension anahtar tipi sınırlı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_dict_comp_key_type.nox"),
+        @embedFile("typecheck_cases/err_dict_comp_key_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.154.0 — list/dict comprehension tip denetimi geçer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_comprehensions.nox"),
+        @embedFile("typecheck_cases/ok_comprehensions.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

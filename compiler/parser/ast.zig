@@ -102,6 +102,16 @@ pub const Ternary = struct { cond: *Expr, then_expr: *Expr, else_expr: *Expr };
 /// v1.153.0: `obj[lo:hi:step]` dilimleme (her bölüm isteğe bağlı: `xs[:]`, `xs[2:]`, `xs[:n]`, `xs[::2]`, `xs[::-1]`).
 pub const Slice = struct { obj: *Expr, lo: ?*Expr, hi: ?*Expr, step: ?*Expr };
 
+/// v1.154.0: comprehension yan tümcesi — `for <ad> in <iterable>` ya da `if <koşul>` (soldan sağa iç içe).
+pub const CompForClause = struct { var_name: []const u8, iterable: Expr };
+pub const CompClause = union(enum) { for_clause: CompForClause, if_clause: Expr };
+
+/// `[elem for x in it if c ...]` (v1.154.0).
+pub const ListComp = struct { elem: *Expr, clauses: []CompClause, result_type: ?TypeExpr = null };
+
+/// `{k: v for x in it if c ...}` (v1.154.0).
+pub const DictComp = struct { key: *Expr, value: *Expr, clauses: []CompClause, result_type: ?TypeExpr = null };
+
 pub const Expr = union(enum) {
     int_lit: i64,
     float_lit: f64,
@@ -144,6 +154,8 @@ pub const Expr = union(enum) {
     ternary: Ternary,
     kwarg: Kwarg,
     slice: Slice,
+    list_comp: ListComp,
+    dict_comp: DictComp,
 };
 
 pub const Unary = struct { op: UnaryOp, operand: *Expr };

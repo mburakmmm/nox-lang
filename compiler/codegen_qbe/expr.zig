@@ -370,6 +370,8 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         // `kwarg` checker tarafından konumsal argümanlara açılır; codegen'e ASLA ulaşmamalı.
         .kwarg => error.Unsupported,
         .call => |c| try self.genCall(c),
+        .list_comp => |lc| try self.genListComp(lc),
+        .dict_comp => |dc| try self.genDictComp(dc),
         .slice => |sl| try self.genSlice(sl),
         .index => |idx| try self.genIndex(idx),
         .list_lit => |elems| try self.genListLit(elems),

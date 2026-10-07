@@ -76,6 +76,21 @@ pub fn visitExprForReqUsage(e: ast.Expr, param_name: []const u8, used: *UsedRequ
                 visitExprForReqUsage(a.obj.*, param_name, used);
             }
         },
+        .list_comp => |lc| {
+            visitExprForReqUsage(lc.elem.*, param_name, used);
+            for (lc.clauses) |cl| switch (cl) {
+                .for_clause => |fc| visitExprForReqUsage(fc.iterable, param_name, used),
+                .if_clause => |ce| visitExprForReqUsage(ce, param_name, used),
+            };
+        },
+        .dict_comp => |dc| {
+            visitExprForReqUsage(dc.key.*, param_name, used);
+            visitExprForReqUsage(dc.value.*, param_name, used);
+            for (dc.clauses) |cl| switch (cl) {
+                .for_clause => |fc| visitExprForReqUsage(fc.iterable, param_name, used),
+                .if_clause => |ce| visitExprForReqUsage(ce, param_name, used),
+            };
+        },
         .slice => |sl| {
             visitExprForReqUsage(sl.obj.*, param_name, used);
             if (sl.lo) |x| visitExprForReqUsage(x.*, param_name, used);

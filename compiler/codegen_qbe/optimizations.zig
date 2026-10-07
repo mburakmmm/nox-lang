@@ -107,6 +107,35 @@ pub fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
         .binary => |b| exprMentionsName(b.left.*, name) or exprMentionsName(b.right.*, name),
         .call => |c| callMentionsName(c, name),
         .attribute => |a| exprMentionsName(a.obj.*, name),
+        .list_comp => |lc| blk: {
+            if (exprMentionsName(lc.elem.*, name)) break :blk true;
+            for (lc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprMentionsName(fc.iterable, name)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprMentionsName(ce, name)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
+        .dict_comp => |dc| blk: {
+            if (exprMentionsName(dc.key.*, name)) break :blk true;
+            if (exprMentionsName(dc.value.*, name)) break :blk true;
+            for (dc.clauses) |cl| {
+                switch (cl) {
+                    .for_clause => |fc| {
+                        if (exprMentionsName(fc.iterable, name)) break :blk true;
+                    },
+                    .if_clause => |ce| {
+                        if (exprMentionsName(ce, name)) break :blk true;
+                    },
+                }
+            }
+            break :blk false;
+        },
         .slice => |sl| exprMentionsName(sl.obj.*, name) or (if (sl.lo) |x| exprMentionsName(x.*, name) else false) or (if (sl.hi) |x| exprMentionsName(x.*, name) else false) or (if (sl.step) |x| exprMentionsName(x.*, name) else false),
         .index => |idx| exprMentionsName(idx.obj.*, name) or exprMentionsName(idx.index.*, name),
         .list_lit => |items| blk: {
@@ -663,6 +692,8 @@ fn findListIndexedByVar(body: []const ast.Stmt, idx_var: []const u8) ?[]const u8
 
 fn findListIndexedByVarExpr(e: ast.Expr, idx_var: []const u8) ?[]const u8 {
     switch (e) {
+        // comprehension'lara İNİLMEZ (yalnızca eleme fırsatı kaçar, güvenli).
+        .list_comp, .dict_comp => return null,
         .slice => |sl| {
             if (findListIndexedByVarExpr(sl.obj.*, idx_var)) |n| return n;
             if (sl.lo) |x| if (findListIndexedByVarExpr(x.*, idx_var)) |n| return n;

@@ -312,3 +312,22 @@ test "fmt: v1.153.0 — dilimleme İDEMPOTENT round-trip" {
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: v1.154.0 — comprehension İDEMPOTENT round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "y: list[int] = [x*x for x in xs]\n", .out = "y: list[int] = [x * x for x in xs]\n" },
+        .{ .in = "y: list[int] = [x for x in xs if x>0 if x<9]\n", .out = "y: list[int] = [x for x in xs if x > 0 if x < 9]\n" },
+        .{ .in = "y: list[int] = [a+b for a in xs for b in ys]\n", .out = "y: list[int] = [a + b for a in xs for b in ys]\n" },
+        .{ .in = "y: dict[str, int] = {k: len(k) for k in names}\n", .out = "y: dict[str, int] = {k: len(k) for k in names}\n" },
+        .{ .in = "y: list[int] = [a if c else b for a in xs]\n", .out = "y: list[int] = [a if c else b for a in xs]\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

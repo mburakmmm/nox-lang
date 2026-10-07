@@ -19,7 +19,22 @@ pub const ForMap = std.AutoHashMapUnmanaged(usize, ForRewrite);
 /// `if True:` bloğuna (geçici yerel + işlem + geri yazma) yeniden yazılır (anahtar: çağrının `callee` kutusunun adresi). Böylece büyüme/sahiplik/ARC yolları `append` ile BİREBİR aynıdır, yeni bir codegen yolu yoktur.
 pub const StmtForMap = std.AutoHashMapUnmanaged(usize, ast.StmtKind);
 
-pub const Ctx = struct { calls: *const Map, fors: *const ForMap, stmt_fors: *const StmtForMap };
+/// v1.154.0: comprehension sonuç tipleri (anahtar: `elem`/`key` kutusunun adresi) — checker'ın çıkardığı tip codegen'e `result_type` olarak akar.
+pub const CompTypeMap = std.AutoHashMapUnmanaged(usize, ast.TypeExpr);
+
+pub const Ctx = struct { calls: *const Map, fors: *const ForMap, stmt_fors: *const StmtForMap, comps: *const CompTypeMap };
+
+fn applyClauses(clauses: []ast.CompClause, map: *const Ctx) void {
+    for (clauses) |*cl| switch (cl.*) {
+        .for_clause => |*fc| {
+            if (map.fors.get(@intFromPtr(&fc.iterable))) |rw| {
+                if (rw.iterable) |it| fc.iterable = it;
+            }
+            expr(&fc.iterable, map);
+        },
+        .if_clause => |*ce| expr(ce, map),
+    };
+}
 
 pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
     for (body) |*stmt| {
@@ -99,6 +114,17 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
             for (c.args) |*a| expr(a, map);
         },
         .attribute => |*a| expr(a.obj, map),
+        .list_comp => |*lc| {
+            expr(lc.elem, map);
+            applyClauses(lc.clauses, map);
+            if (map.comps.get(@intFromPtr(lc.elem))) |te| lc.result_type = te;
+        },
+        .dict_comp => |*dc| {
+            expr(dc.key, map);
+            expr(dc.value, map);
+            applyClauses(dc.clauses, map);
+            if (map.comps.get(@intFromPtr(dc.key))) |te| dc.result_type = te;
+        },
         .slice => |*sl| {
             expr(sl.obj, map);
             if (sl.lo) |x| expr(x, map);

@@ -168,6 +168,34 @@ fn testFree(rt: ?*anyopaque, p: ?*anyopaque) void {
     arc.nox_rc_release(rt, p, HDR + cap * 8);
 }
 
+/// v1.154.0 (comprehension): boş liste (len = cap = 0).
+pub export fn nox_list_empty(rt: ?*anyopaque) ?*anyopaque {
+    const out = newList(rt, 0, 8) orelse return null;
+    return @ptrCast(out);
+}
+
+/// v1.154.0 (comprehension): `value`nun düşük `esz` baytını listenin sonuna ekler; kapasite dolunca ikiye katlar (ilk büyüme 4). Liste YALNIZCA
+/// çağıranın (comprehension) elindedir — eski blok doğrudan serbest bırakılır, elemanlar taşınır (retain değişmez). Yeni (olası) işaretçi döner.
+pub export fn nox_list_push(rt: ?*anyopaque, list: ?*anyopaque, value: i64, esz_i: i64) ?*anyopaque {
+    var base: [*]u8 = @ptrCast(list orelse return null);
+    const esz: usize = @intCast(esz_i);
+    const len = hdrLen(base);
+    const cap: usize = @intCast(@as(*align(1) i64, @ptrCast(base + 8)).*);
+    if (len == cap) {
+        const new_cap: usize = if (cap == 0) 4 else cap * 2;
+        const raw = arc.nox_rc_alloc(rt, HDR + new_cap * esz) orelse return null;
+        const nb: [*]u8 = @ptrCast(raw);
+        @memcpy(nb[0 .. HDR + len * esz], base[0 .. HDR + len * esz]);
+        @as(*align(1) i64, @ptrCast(nb + 8)).* = @intCast(new_cap);
+        arc.nox_rc_free_payload(rt, @ptrCast(base), HDR + cap * esz);
+        base = nb;
+    }
+    const bytes: [8]u8 = @bitCast(value);
+    @memcpy(base[HDR + len * esz ..][0..esz], bytes[0..esz]);
+    setLen(base, len + 1);
+    return @ptrCast(base);
+}
+
 test "nox_list_ops: copy/concat/repeat/slice/reverse/move_last/remove_at (int elemanlar)" {
     const asap = @import("../alloc/asap.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
@@ -236,4 +264,26 @@ test "nox_list_ops: copy/concat/repeat/slice/reverse/move_last/remove_at (int el
     try std.testing.expectEqual(@as(i64, 99), rd.at(m, 1));
     try std.testing.expectEqual(@as(i64, 2), rd.at(m, 2));
     try std.testing.expectEqual(@as(i64, 4), rd.at(m, 4));
+}
+
+test "v1.154.0: nox_list_empty/nox_list_push büyür, bayt genişlikleri doğru" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    var l = nox_list_empty(rt);
+    var i: i64 = 0;
+    while (i < 11) : (i += 1) l = nox_list_push(rt, l, i * 3, 8);
+    const b: [*]u8 = @ptrCast(l.?);
+    try std.testing.expectEqual(@as(usize, 11), hdrLen(b));
+    try std.testing.expectEqual(@as(i64, 30), @as(*align(1) i64, @ptrCast(b + HDR + 10 * 8)).*);
+    testFree(rt, l);
+    var bl = nox_list_empty(rt);
+    var k: i64 = 0;
+    while (k < 6) : (k += 1) bl = nox_list_push(rt, bl, if (@mod(k, 2) == 0) 1 else 0, 1);
+    const bb: [*]u8 = @ptrCast(bl.?);
+    try std.testing.expectEqual(@as(usize, 6), hdrLen(bb));
+    try std.testing.expectEqual(@as(u8, 1), bb[HDR + 4]);
+    try std.testing.expectEqual(@as(u8, 0), bb[HDR + 5]);
+    const bcap: usize = @intCast(@as(*align(1) i64, @ptrCast(bb + 8)).*);
+    arc.nox_rc_release(rt, bl, HDR + bcap);
 }

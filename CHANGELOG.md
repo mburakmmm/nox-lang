@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.154.0]
+
+### Eklendi
+
+- **List ve dict comprehension:** `[e for x in it if c ...]`, `{k: v for x in it if c ...}` — çoklu `for`/`if`, `range`, liste/`str`/`dict`
+  iterable'ları, iç içe comprehension; değişken dışarı sızmaz. Yeni AST düğümleri `list_comp`/`dict_comp`, tree-sitter kuralları. Spec §3.271.
+
 ## [1.153.0]
 
 ### Eklendi

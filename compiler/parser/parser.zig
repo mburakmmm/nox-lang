@@ -1135,6 +1135,23 @@ pub const Parser = struct {
         } };
     }
 
+    /// v1.154.0: comprehension yan tümceleri — `for <ad> in <or-ifadesi>` ve `if <or-ifadesi>` dizisi (en az bir `for`, ilki `for`).
+    /// İterable/koşul `or`-seviyesinde ayrıştırılır (üçlü ifade değil): `[x for x in xs if c]`deki `if` bir üçlü ifade değil yan tümcedir.
+    fn parseCompClauses(self: *Parser) ParseError![]ast.CompClause {
+        var out = std.ArrayList(ast.CompClause).empty;
+        while (true) {
+            if (self.match(.kw_for)) {
+                const name = (try self.expect(.identifier)).lexeme;
+                _ = try self.expect(.kw_in);
+                const it = try self.parseOr();
+                try out.append(self.allocator, .{ .for_clause = .{ .var_name = name, .iterable = it } });
+            } else if (self.match(.kw_if)) {
+                try out.append(self.allocator, .{ .if_clause = try self.parseOr() });
+            } else break;
+        }
+        return out.toOwnedSlice(self.allocator);
+    }
+
     /// `[` zaten tüketildi: `idx]` (indeksleme) ya da `lo?:hi?(:step?)?]` (v1.153.0 dilimleme).
     fn parseSubscriptTail(self: *Parser, obj: ast.Expr) ParseError!ast.Expr {
         var lo: ?*ast.Expr = null;
@@ -1277,6 +1294,11 @@ pub const Parser = struct {
                 var elems = std.ArrayList(ast.Expr).empty;
                 if (!self.check(.r_bracket)) {
                     try elems.append(self.allocator, try self.parseExpr());
+                    if (self.check(.kw_for)) {
+                        const clauses = try self.parseCompClauses();
+                        _ = try self.expect(.r_bracket);
+                        return .{ .list_comp = .{ .elem = try self.box(elems.items[0]), .clauses = clauses } };
+                    }
                     while (self.match(.comma)) {
                         if (self.check(.r_bracket)) break;
                         try elems.append(self.allocator, try self.parseExpr());
@@ -1296,6 +1318,11 @@ pub const Parser = struct {
                     const first_key = try self.parseExpr();
                     _ = try self.expect(.colon);
                     const first_value = try self.parseExpr();
+                    if (self.check(.kw_for)) {
+                        const clauses = try self.parseCompClauses();
+                        _ = try self.expect(.r_brace);
+                        return .{ .dict_comp = .{ .key = try self.box(first_key), .value = try self.box(first_value), .clauses = clauses } };
+                    }
                     try pairs.append(self.allocator, .{ .key = first_key, .value = first_value });
                     while (self.match(.comma)) {
                         const key = try self.parseExpr();

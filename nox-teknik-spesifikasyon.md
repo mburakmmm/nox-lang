@@ -28624,6 +28624,32 @@ Tree-sitter: `slice` kuralı + corpus.
 typecheck `ok_slice_and_str_ops`, `err_slice_non_sliceable`, `err_slice_bound_type`, `err_slice_zero_step`, `err_slice_assign`, `err_str_compare_with_int`,
 `err_str_mul_str`; Zig birim testleri (`computeSlice`, `nox_list_slice`).
 
+## 3.271 List/dict comprehension (v1.154.0)
+
+**Sözdizimi.** `[elem for v in it (if c | for v2 in it2)*]` ve `{k: val for ...}`. Parser `parseCompClauses`: iterable/koşul `parseOr` seviyesinde
+(bir `if`, üçlü ifade değil yan tümcedir; elemanın kendisi tam ifadedir: `[a if c else b for a in xs]`). AST: `ListComp{elem, clauses, result_type}`,
+`DictComp{key, value, clauses, result_type}`, `CompClause = for_clause{var_name, iterable} | if_clause`.
+
+**Checker.** `checkCompClauses`: her `for` iterable'ı `checkForIterable` ile (range/list/str/dict; str/dict listeye yeniden yazılır, `for_rewrites`),
+değişken kapsama eklenir (önceki bağlama kaydedilip `restoreCompScope` ile geri yüklenir — Python 3 gibi sızmaz), `if` bool olmalı. Sonuç tipi
+`list[T]`/`dict[K,V]` (`dict` anahtar/değer kuralları aynı) ve `comp_types`e (anahtar: `elem`/`key` kutusu) `TypeExpr` olarak yazılır; `call_expand_apply`
+bunu AST'deki `result_type`a akıtır, codegen sonuç tipini önceden bilir.
+
+**Codegen** (`calls.zig`: `genListComp`/`genDictComp`): ifade bağlamında SATIR İÇİ iç içe döngüler üretilir (`genIn` gibi); `for` değişkeni geçici olarak
+`self.vars`e `is_param` (ödünç, release atlanır) olarak bağlanır, çıkışta önceki bağlama geri yüklenir; `mod_cache` döngü başına anlık görüntü/geri yükleme.
+Liste: `nox_list_empty` + eleman başına `nox_list_push(rt, liste, değer, esz)` (kapasite 4'ten başlayıp iki katına çıkar; elemanlar `retainIfAliasing` ile sahipli +1).
+Dict: `result_type`tan `DictInfo` ile `nox_dict_new` (+ list/dict değerler için serbest bırakıcı) ve `nox_dict_set`. `range(a,b,adım)` doğrudan sayaç döngüsü
+(dinamik adım 0 → `ValueError`). Sonuç `isTemporaryExpr` (taze). **Bilinen sınırlama:** gövdede bir istisna fırlarsa kısmi sonuç listesi sızar.
+`raise` analizi: `for` değişken adı "çözülemez" sayılır, dinamik adımlı `range` fırlatabilir.
+
+**Yürüteçler.** Tüm AST gezginleri (checker ön-geçişleri, escape/inline/local_escape analizleri, rename, substitute, fixup'lar, formatter, dump) iki düğümü gezer;
+`module_loader` `for` değişkeni adını modül-özel ad yeniden adlandırmasının dışında tutar. Tree-sitter: `list_comprehension`/`dict_comprehension`/
+`comp_for_clause`/`comp_if_clause` (+ `[_expression, _or_expression]` çakışma bildirimi).
+
+**Golden:** `comprehensions` (Python ile birebir, iki backend, sızıntı denetimli: iç içe, çoklu for/if, range, str, sınıf, dict, döngüde); fmt round-trip; typecheck
+`ok_comprehensions`, `err_comp_if_not_bool`, `err_comp_not_iterable`, `err_comp_var_not_visible_after`, `err_comp_none_element`, `err_dict_comp_key_type`;
+Zig birim testi (`nox_list_push`).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
