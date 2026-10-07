@@ -28851,3 +28851,18 @@ Sistematik deneme programlarından çıkan boşluklar (37 Python idiomu denendi;
   küçük tutuldu (`last_right` işaretçi) — aksi halde derin iç içe testte yığın taşıyor.
 - **Formatter:** yüzey biçimleri bayraklarla korunur (aug-assign, zincir, assert, genexpr).
 - Golden: `builtins_python_forms`, `parser_python_forms`, `generic_higher_order_functions` (Python referansıyla birebir).
+
+## 3.279 Operatör aşırı yükleme / dunder protokolü (v1.163.0)
+
+Python'un özel metodları, checker'da SIRADAN bir metod çağrısına yeniden yazılır (`call_expand_apply` yan tabloları: ikili/tekli operatörler `b.left`/
+`u.operand` işaretçisi anahtarıyla `expr_rewrites`, `obj[i] = v` indeks işaretçisi anahtarıyla `stmt_for_rewrites`, `str/len/bool/print` çağrıları `callee`
+anahtarıyla). Bu yüzden sahiplik analizi, kalıtım (metodlar alt sınıf `ClassInfo.methods`ına kopyalanır) ve iki backend hiçbir özel desteğe ihtiyaç duymaz.
+
+- İkili: `__add__ __sub__ __mul__ __truediv__ __floordiv__ __mod__ __pow__ __and__ __or__ __xor__ __lshift__ __rshift__` + yansıyan `__r…__`
+  (sol işlenen sınıf değilse sağdaki). Karşılaştırma: `__eq__ __ne__ __lt__ __le__ __gt__ __ge__`; `!=` → `not __eq__`; eksik sıralama operatörü sağ işlenenin
+  yansıyan metoduna düşer (`a > b` → `b.__lt__(a)`; `<=` Python gibi türetilmez). Sonuç `bool` olmalı. `None` ile karşılaştırma asla aşırı yüklenmez.
+- Tekli `__neg__ __invert__`; `x in obj` → `__contains__`; `obj[i]` → `__getitem__`; `obj[i] = v` → `__setitem__`; `len(obj)` → `__len__`;
+  `str(obj)`/`print(obj)`/f-string → `__str__`; `bool(obj)` → `__bool__`, yoksa `__len__() != 0`, yoksa `True`.
+- Kapsam dışı: `__iter__`/`__next__` (özel sınıf üzerinde `for`), `__hash__` (sınıf dict anahtarı), yerinde operatörler (`__iadd__`; `+=` `__add__`e iner),
+  konteyner içindeki nesnelerin `__str__` ile yazdırılması (yapısal yazdırma sürer).
+- Golden: `dunder_protocol` (Python referansıyla birebir).

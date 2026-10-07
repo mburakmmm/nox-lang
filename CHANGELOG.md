@@ -14,7 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.162.0]
+## [1.163.0]
+
+### Eklendi
+
+- **Operatör aşırı yükleme / Python "dunder" metodları:** `__add__/__sub__/__mul__/__truediv__/__floordiv__/__mod__/__pow__/__and__/__or__/__xor__/__lshift__/__rshift__` (+ yansıyan `__r…__`), `__eq__/__ne__/__lt__/__le__/__gt__/__ge__` (yansıyan geri-düşüşle), `__neg__/__invert__`, `__contains__` (`x in obj`), `__getitem__/__setitem__` (`obj[i]`, `obj[i] = v`), `__len__`, `__str__` (`str()`/`print()`/f-string), `__bool__`. Hepsi checker'da sıradan bir metod çağrısına yeniden yazılır; sahiplik/kalıtım/iki backend özel destek gerektirmez. Spec §3.279.
+
 
 ### Eklendi
 

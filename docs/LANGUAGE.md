@@ -302,6 +302,31 @@ print(c.value)
   `except ClassName` also matches subclasses of `ClassName` (single
   inheritance hierarchy).
 
+## Operator overloading and special methods
+
+Classes can define Python's "dunder" methods; the compiler rewrites the operator into an ordinary method call
+(so ownership, inheritance and both backends need no special support):
+
+| Syntax | Method |
+|---|---|
+| `a + b`, `a - b`, `a * b`, `a / b`, `a // b`, `a % b`, `a ** b` | `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__mod__`, `__pow__` |
+| `a & b`, `a \| b`, `a ^ b`, `a << b`, `a >> b` | `__and__`, `__or__`, `__xor__`, `__lshift__`, `__rshift__` |
+| `2 * v` (left operand is not a class) | `__rmul__` (likewise `__radd__`, `__rsub__`, ...) |
+| `a == b`, `a != b` | `__eq__`, `__ne__` (or `not __eq__`) |
+| `a < b`, `a <= b`, `a > b`, `a >= b` | `__lt__`, `__le__`, `__gt__`, `__ge__` (a missing one falls back to the reflected method of the right operand: `a > b` → `b.__lt__(a)`) |
+| `-a`, `~a` | `__neg__`, `__invert__` |
+| `x in a`, `x not in a` | `__contains__` |
+| `a[i]`, `a[i] = v` | `__getitem__`, `__setitem__` |
+| `len(a)` | `__len__` |
+| `str(a)`, `print(a)`, `f"{a}"` | `__str__` |
+| `bool(a)` | `__bool__`, else `__len__() != 0`, else `True` |
+
+`x += y` on a class value uses `__add__` (there is no separate in-place protocol). Comparison methods must return
+`bool`, `__len__` an `int`, `__str__` a `str`. Comparing against `None` (`x is None`, `x == None`) is never
+overloaded. Containers print their elements structurally (`[Vec(x=1, y=2)]`), not through `__str__`, and iteration
+(`for x in obj`) over a custom class is not supported. Operand evaluation order can differ from Python only for
+reflected comparisons with side-effecting operands.
+
 ## Protocols
 
 Protocols provide **structural** polymorphism — a class doesn't declare

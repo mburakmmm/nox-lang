@@ -67,6 +67,10 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
         if (stmt.kind == .expr_stmt and stmt.kind.expr_stmt == .call) {
             if (map.stmt_fors.get(@intFromPtr(stmt.kind.expr_stmt.call.callee))) |rw| stmt.kind = rw;
         }
+        // v1.163.0: `obj[i] = v` → `obj.__setitem__(i, v)` (anahtar: indeks kutusu).
+        if (stmt.kind == .assign and stmt.kind.assign.target == .index) {
+            if (map.stmt_fors.get(@intFromPtr(stmt.kind.assign.target.index.index))) |rw| stmt.kind = rw;
+        }
         switch (stmt.kind) {
             .expr_stmt => |*e| expr(e, map),
             .var_decl => |*v| {
@@ -144,7 +148,15 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
 pub fn expr(e: *ast.Expr, map: *const Ctx) void {
     switch (e.*) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
-        .unary => |*u| expr(u.operand, map),
+        .unary => |*u| {
+            // v1.163.0: `-obj` / `~obj` → `obj.__neg__()` / `obj.__invert__()` (anahtar: operand kutusu).
+            if (map.exprs.get(@intFromPtr(u.operand))) |r| {
+                e.* = r;
+                expr(e, map);
+                return;
+            }
+            expr(u.operand, map);
+        },
         .kwarg => |*k| expr(k.value, map),
         .ternary => |*t| {
             expr(t.cond, map);
@@ -152,6 +164,12 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
             expr(t.else_expr, map);
         },
         .binary => |*b| {
+            // v1.163.0: operatör aşırı yükleme — `a + b` → `a.__add__(b)` (anahtar: sol işlenen kutusu).
+            if (map.exprs.get(@intFromPtr(b.left))) |r| {
+                e.* = r;
+                expr(e, map);
+                return;
+            }
             expr(b.left, map);
             expr(b.right, map);
         },

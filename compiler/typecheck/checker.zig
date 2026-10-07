@@ -5393,6 +5393,13 @@ pub const Checker = struct {
             .index => |idx| {
                 const obj_t = try self.checkExpr(ctx, idx.obj.*);
                 try self.requireNotOptional(obj_t, "[]");
+                // v1.163.0: `obj[i] = v` → `obj.__setitem__(i, v)` (deyim düzeyinde yeniden yazım).
+                if (self.hasDunder(obj_t, "__setitem__")) {
+                    const call = try self.mkDunderCall(idx.obj.*, "__setitem__", &.{ idx.index.*, a.value });
+                    _ = try self.checkExpr(ctx, call);
+                    try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(idx.index), .{ .expr_stmt = call });
+                    return;
+                }
                 if (obj_t == .list) {
                     const key_t = try self.checkExpr(ctx, idx.index.*);
                     if (key_t != .int) {
@@ -5727,6 +5734,11 @@ pub const Checker = struct {
             },
             .unary => |u| blk: {
                 const t = try self.checkExpr(ctx, u.operand.*);
+                // v1.163.0: `-obj` / `~obj` → `__neg__` / `__invert__`.
+                if ((u.op == .neg or u.op == .invert) and self.hasDunder(t, if (u.op == .neg) "__neg__" else "__invert__")) {
+                    const dn: []const u8 = if (u.op == .neg) "__neg__" else "__invert__";
+                    break :blk try self.rewriteExprTo(ctx, @intFromPtr(u.operand), try self.mkDunderCall(u.operand.*, dn, &.{}));
+                }
                 switch (u.op) {
                     .neg => {
                         if (!types.isNumeric(t)) return self.fail(error.TypeMismatch, "unary '-' yalnızca sayısal tiplere uygulanabilir", .{});
@@ -5767,6 +5779,10 @@ pub const Checker = struct {
             .index => |idx| blk: {
                 const obj_t = try self.checkExpr(ctx, idx.obj.*);
                 try self.requireNotOptional(obj_t, "[]");
+                // v1.163.0: `obj[i]` → `obj.__getitem__(i)`.
+                if (self.hasDunder(obj_t, "__getitem__")) {
+                    break :blk try self.rewriteExprTo(ctx, @intFromPtr(idx.index), try self.mkDunderCall(idx.obj.*, "__getitem__", &.{idx.index.*}));
+                }
                 // v1.157.0: `t[k]` — tuple indeksi SABİT int olmalı (eleman tipleri farklı olabilir); `f<k>` alan okumasına yeniden yazılır.
                 if (obj_t == .class and isTupleClassName(obj_t.class)) {
                     const ets = self.tuple_elem_types.get(obj_t.class).?;
@@ -6032,9 +6048,130 @@ pub const Checker = struct {
         return .{ .channel = boxed };
     }
 
+    // ---- v1.163.0: Python "dunder" protokolü (operatör aşırı yükleme) ----
+    // `a + b` (a bir sınıf ve `__add__` tanımlı) → `a.__add__(b)`; yansıyan biçim (`2 * v` → `v.__rmul__(2)`); karşılaştırmalar
+    // (`__eq__/__ne__/__lt__/__le__/__gt__/__ge__`, yansıyan geri-düşüşle); tekli `-x`/`~x` (`__neg__`/`__invert__`); `x in obj`
+    // (`__contains__`); `obj[i]` (`__getitem__`) / `obj[i] = v` (`__setitem__`); `len(obj)` (`__len__`); `str(obj)`/`print(obj)`/f-string
+    // (`__str__`); `bool(obj)` (`__bool__`, yoksa `__len__`, yoksa True). Hepsi checker'da bir METOD ÇAĞRISINA yeniden yazılır
+    // (`expr_rewrites`) — sonrası (sahiplik, codegen, her iki backend) sıradan metod çağrısı görür.
+
+    fn dunderClassInfo(self: *Checker, t: Type) ?*ClassInfo {
+        if (t != .class or isTupleClassName(t.class)) return null;
+        return self.classes.getPtr(t.class);
+    }
+
+    fn hasDunder(self: *Checker, t: Type, name: []const u8) bool {
+        const info = self.dunderClassInfo(t) orelse return false;
+        return info.methods.contains(name);
+    }
+
+    fn mkDunderCall(self: *Checker, obj: ast.Expr, name: []const u8, args: []const ast.Expr) TypeError!ast.Expr {
+        const o = try self.allocator.create(ast.Expr);
+        o.* = obj;
+        const callee = try self.allocator.create(ast.Expr);
+        callee.* = .{ .attribute = .{ .obj = o, .attr = name } };
+        const a = try self.allocator.alloc(ast.Expr, args.len);
+        @memcpy(a, args);
+        return .{ .call = .{ .callee = callee, .args = a } };
+    }
+
+    fn rewriteExprTo(self: *Checker, ctx: *FnCtx, key_ptr: usize, repl: ast.Expr) TypeError!Type {
+        const rt = try self.checkExpr(ctx, repl);
+        try self.expr_rewrites.put(self.allocator, key_ptr, repl);
+        return rt;
+    }
+
+    fn dunderBase(op: ast.BinaryOp) ?[]const u8 {
+        return switch (op) {
+            .add => "add",
+            .sub => "sub",
+            .mul => "mul",
+            .div => "truediv",
+            .floordiv => "floordiv",
+            .mod => "mod",
+            .pow => "pow",
+            .bit_and => "and",
+            .bit_or => "or",
+            .bit_xor => "xor",
+            .shl => "lshift",
+            .shr => "rshift",
+            else => null,
+        };
+    }
+
+    fn notOf(self: *Checker, e: ast.Expr) TypeError!ast.Expr {
+        const operand = try self.allocator.create(ast.Expr);
+        operand.* = e;
+        return .{ .unary = .{ .op = .not_, .operand = operand } };
+    }
+
+    fn tryOperatorOverload(self: *Checker, ctx: *FnCtx, b: ast.Binary, l: Type, r: Type) TypeError!?Type {
+        if (b.left.* == .none_lit or b.right.* == .none_lit) return null;
+        // `x in obj` / `x not in obj`
+        if (b.op == .in_ or b.op == .not_in) {
+            if (!self.hasDunder(r, "__contains__")) return null;
+            const call = try self.mkDunderCall(b.right.*, "__contains__", &.{b.left.*});
+            const rt = try self.checkExpr(ctx, call);
+            if (rt != .boolean) return self.fail(error.TypeMismatch, "'__contains__' bool döndürmelidir", .{});
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(b.left), if (b.op == .in_) call else try self.notOf(call));
+            return .boolean;
+        }
+        const lc = self.dunderClassInfo(l) != null;
+        const rc = self.dunderClassInfo(r) != null;
+        if (!lc and !rc) return null;
+        if (dunderBase(b.op)) |base| {
+            const fwd = try std.fmt.allocPrint(self.allocator, "__{s}__", .{base});
+            if (lc and self.hasDunder(l, fwd)) {
+                return try self.rewriteExprTo(ctx, @intFromPtr(b.left), try self.mkDunderCall(b.left.*, fwd, &.{b.right.*}));
+            }
+            const refl = try std.fmt.allocPrint(self.allocator, "__r{s}__", .{base});
+            if (rc and self.hasDunder(r, refl)) {
+                return try self.rewriteExprTo(ctx, @intFromPtr(b.left), try self.mkDunderCall(b.right.*, refl, &.{b.left.*}));
+            }
+            return null;
+        }
+        const name: []const u8 = switch (b.op) {
+            .eq => "__eq__",
+            .ne => "__ne__",
+            .lt => "__lt__",
+            .le => "__le__",
+            .gt => "__gt__",
+            .ge => "__ge__",
+            else => return null,
+        };
+        if (lc and self.hasDunder(l, name)) {
+            const rt = try self.rewriteExprTo(ctx, @intFromPtr(b.left), try self.mkDunderCall(b.left.*, name, &.{b.right.*}));
+            if (rt != .boolean) return self.fail(error.TypeMismatch, "'{s}' bool döndürmelidir", .{name});
+            return .boolean;
+        }
+        if (b.op == .ne and lc and self.hasDunder(l, "__eq__")) {
+            const neg = try self.notOf(try self.mkDunderCall(b.left.*, "__eq__", &.{b.right.*}));
+            const rt = try self.rewriteExprTo(ctx, @intFromPtr(b.left), neg);
+            if (rt != .boolean) return self.fail(error.TypeMismatch, "'__eq__' bool döndürmelidir", .{});
+            return .boolean;
+        }
+        // Yansıyan karşılaştırma: `a > b` → `b.__lt__(a)` (a'da `__gt__` yoksa). Not: işlenen değerlendirme sırası değişir (yalnızca yan etkili işlenenlerde fark eder).
+        const refl_name: ?[]const u8 = switch (b.op) {
+            .lt => "__gt__",
+            .le => "__ge__",
+            .gt => "__lt__",
+            .ge => "__le__",
+            else => null,
+        };
+        if (refl_name) |rn| {
+            if (rc and self.hasDunder(r, rn)) {
+                const rt = try self.rewriteExprTo(ctx, @intFromPtr(b.left), try self.mkDunderCall(b.right.*, rn, &.{b.left.*}));
+                if (rt != .boolean) return self.fail(error.TypeMismatch, "'{s}' bool döndürmelidir", .{rn});
+                return .boolean;
+            }
+        }
+        return null;
+    }
+
     fn checkBinary(self: *Checker, ctx: *FnCtx, b: ast.Binary) TypeError!Type {
         const l = try self.checkExpr(ctx, b.left.*);
         const r = try self.checkExpr(ctx, b.right.*);
+        if (try self.tryOperatorOverload(ctx, b, l, r)) |t| return t;
         return switch (b.op) {
             // `str + str` — birleştirme (bkz. stdlib fazı §B, codegen.zig'in
             // `genBinary`i). Diğer sayısal operatörlerden FARKLI: yalnızca
@@ -6433,7 +6570,18 @@ pub const Checker = struct {
                     zero.* = .{ .int_lit = 0 };
                     break :blk .{ .binary = .{ .op = .ne, .left = len_call, .right = zero } };
                 },
-                else => return self.fail(error.TypeMismatch, "'bool' yalnızca bool/int/float/str/list/dict üzerinde çalışır", .{}),
+                // v1.163.0: sınıf — `__bool__`, yoksa `__len__() != 0`, yoksa her zaman True (Python gibi).
+                .class => blk: {
+                    if (self.hasDunder(at, "__bool__")) break :blk try self.mkDunderCall(c.args[0], "__bool__", &.{});
+                    if (self.hasDunder(at, "__len__")) {
+                        const len_call = try self.allocator.create(ast.Expr);
+                        len_call.* = try self.mkDunderCall(c.args[0], "__len__", &.{});
+                        zero.* = .{ .int_lit = 0 };
+                        break :blk .{ .binary = .{ .op = .ne, .left = len_call, .right = zero } };
+                    }
+                    break :blk .{ .bool_lit = true };
+                },
+                else => return self.fail(error.TypeMismatch, "'bool' yalnızca bool/int/float/str/list/dict/sınıf üzerinde çalışır", .{}),
             };
             _ = try self.checkExpr(ctx, repl);
             try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
@@ -6509,7 +6657,8 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "print")) {
                     // v1.156.0: `print(a, b, c)` (boşlukla ayrılmış), `print()` (boş satır), `sep=`/`end=` str anahtar argümanları.
                     var saw_kw = false;
-                    for (c.args) |arg| {
+                    var print_args: ?[]ast.Expr = null;
+                    for (c.args, 0..) |arg, pi| {
                         if (arg == .kwarg) {
                             saw_kw = true;
                             const k = arg.kwarg;
@@ -6520,8 +6669,23 @@ pub const Checker = struct {
                             if (kt != .str) return self.fail(error.TypeMismatch, "'print' '{s}=' argümanı str olmalıdır", .{k.name});
                         } else {
                             if (saw_kw) return self.fail(error.TypeMismatch, "'print' konumsal argümanları anahtar argümanlardan önce gelmelidir", .{});
-                            _ = try self.checkExpr(ctx, arg);
+                            const pt = try self.checkExpr(ctx, arg);
+                            // v1.163.0: `print(obj)` → `print(obj.__str__())` (sınıfta `__str__` tanımlıysa).
+                            if (self.hasDunder(pt, "__str__")) {
+                                if (print_args == null) {
+                                    print_args = try self.allocator.alloc(ast.Expr, c.args.len);
+                                    @memcpy(print_args.?, c.args);
+                                }
+                                print_args.?[pi] = try self.mkDunderCall(arg, "__str__", &.{});
+                            }
                         }
+                    }
+                    if (print_args) |pa| {
+                        const callee = try self.allocator.create(ast.Expr);
+                        callee.* = .{ .identifier = "print" };
+                        const repl: ast.Expr = .{ .call = .{ .callee = callee, .args = pa } };
+                        _ = try self.checkExpr(ctx, repl);
+                        try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
                     }
                     return .none;
                 }
@@ -6541,8 +6705,14 @@ pub const Checker = struct {
                         try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .int_lit = n });
                         return .int;
                     }
+                    // v1.163.0: `len(obj)` → `obj.__len__()`.
+                    if (self.hasDunder(t, "__len__")) {
+                        const rt = try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkDunderCall(c.args[0], "__len__", &.{}));
+                        if (rt != .int) return self.fail(error.TypeMismatch, "'__len__' int döndürmelidir", .{});
+                        return .int;
+                    }
                     if (t != .str and t != .list and t != .dict) {
-                        return self.fail(error.TypeMismatch, "'len' yalnızca str/list/dict/tuple üzerinde çalışır", .{});
+                        return self.fail(error.TypeMismatch, "'len' yalnızca str/list/dict/tuple üzerinde çalışır (sınıflar için `__len__` tanımlayın)", .{});
                     }
                     return .int;
                 }
@@ -6568,8 +6738,14 @@ pub const Checker = struct {
                     // `str(True)` artık DOĞRUDAN da çalışır).
                     // v2.0 madde 4: sabit-genişlikli bir kind (`u8`/vb.)
                     // `int`in KENDİSİYLE AYNI gerekçeyle kabul edilir.
+                    // v1.163.0: `str(obj)` → `obj.__str__()` (sınıfta tanımlıysa).
+                    if (self.hasDunder(t, "__str__")) {
+                        const rt = try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkDunderCall(c.args[0], "__str__", &.{}));
+                        if (rt != .str) return self.fail(error.TypeMismatch, "'__str__' str döndürmelidir", .{});
+                        return .str;
+                    }
                     if (t != .int and t != .float and t != .str and t != .boolean and t != .fixed_int) {
-                        return self.fail(error.TypeMismatch, "'str' yalnızca int/float/str/bool üzerinde çalışır", .{});
+                        return self.fail(error.TypeMismatch, "'str' yalnızca int/float/str/bool üzerinde çalışır (sınıflar için `__str__` tanımlayın)", .{});
                     }
                     return .str;
                 }
