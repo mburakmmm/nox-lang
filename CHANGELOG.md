@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.146.1]
+
+### Belge
+
+- Yol haritası: 1.4 (varsayılan/keyword argüman) yarım kaldı, çalışma git stash'te.
+
 ## [1.146.0]
 
 ### Eklendi
