@@ -174,6 +174,9 @@ The condition and the iterable are `or`-level expressions (use parentheses for a
 (a literal zero is a compile error). Slices are values: assigning to one is not supported. Strings also compare with
 `<`, `<=`, `>`, `>=` (code point order) and repeat with `s * n` / `n * s`.
 
+**Printing containers** follows Python: `print([1, 'a'])` → `[1, 'a']`, `print({'a': [1]})` → `{'a': [1]}`,
+`print(None)`-valued optionals show `None`, class instances show `Name(field=value, ...)`, tuples `(1, 'x')`.
+
 **Dictionaries** (`dict[K, V]`, keys `int`/`float`/`bool`/`str`, values `int`/`float`/`bool`/`str`/class/`list[T]`/`dict`; `groups[k].append(v)` works on list values) keep
 insertion order: `d[k]`, `d[k] = v`, `k in d`, `len(d)`, `d.keys()`, `d.values()`, `for k in d`,
 `d.get(k, default)` (the default is only evaluated when the key is missing), `d.get(k)` (a
@@ -187,8 +190,9 @@ Deleting is O(n).
 `xs.sort()`, `xs.copy()` (a shallow copy), `xs + ys`, `xs * n` / `n * xs` (`n <= 0` gives an empty
 list), `sorted(xs)` and `reversed(xs)` (both return a **new list**, `reversed` is not a lazy
 iterator). `remove`/`index` raise `ValueError` when the value is missing; `pop(i)`/`del xs[i]` raise
-`IndexError` when `i` is out of range or negative (negative indexing is deliberately not
-supported, except that `insert` clamps like Python). Element equality is `==` (structural for
+`IndexError` when `i` is out of range. **Negative indexes count from the end** like Python — `xs[-1]`,
+`s[-2]`, `xs[-1] = v`, `xs.pop(-1)`, `del xs[-1]` — and anything still out of range (`xs[-9]` on a 4-element list)
+raises `IndexError`. (`insert` clamps like Python.) Element equality is `==` (structural for
 classes and nested lists). `append`/`insert`/`extend` need a variable or `name.field` receiver
 (the list may be reallocated), the other methods accept any expression. `xs.extend(xs)` is safe.
 

@@ -28815,3 +28815,19 @@ DEĞİL, testin kendi iddiasının mimarinin garanti edemeyeceği bir şeyi
   `nox.json` kodlayıcısı tamsayı değerli sayıları `1` olarak yazmaya devam eder (`dump_number`, JSON tek sayı tipi tutar);
   `JsonWriter.write_float` ise `str(float)` kullanır.
 - Golden: `float_repr_python`, `numeric_literals`; birim: `formatFloatRepr`, `parseSource`.
+
+## 3.277 Negatif indeks, `print(dict)`, indeksli atamada boş literal (v1.161.0)
+
+Belge yazarken yapılan sistematik deneme programlarıyla bulunan üç Python-uyum boşluğu (önceki karar "negatif indeks bilinçli olarak
+desteklenmiyor" 2.0 için tersine çevrildi — `xs[-1]` en yaygın Python idiomlarından biri):
+
+- **Negatif indeks:** `expr.zig normalizeNegativeIndex` — `i + (len & (i >> 63))` (dallanmasız) ardından mevcut TEK işaretsiz
+  `cugel` sınır kontrolü; böylece hâlâ negatif kalanlar `IndexError`. Okuma (`genIndex`, `genStrIndex`), atama (`genListAssign`),
+  `pop(i)` ve `del xs[i]` (`emitListRemoveAtChecked`). Pozitif literal indekste ve `boundsElideApplies` (range-döngüsü) yolunda atlanır.
+  Ölçüm (M4): sieve ~%10, QBE matmul ~%30 yavaşladı (LLVM matmul etkilenmedi: sınır kontrolü zaten elenmiş); diğerleri gürültü içinde.
+  `insert` zaten Python gibi kıskaçlıyordu. Dilimleme zaten negatifleri destekliyordu.
+- **`print(dict)`:** `genPrintDict` — `keys()`/`values()` listeleriyle paralel gezinti, `{k: v, ...}`, `str` tırnaklı, boş sözlük `{}`,
+  iç içe liste/sözlük/sınıf değerleri özyinelemeli (null kontrolü dahil, bkz. §3.275).
+- **Boş literal hedefi:** `checkAssign`in `.index` dalı artık `checkExprExpected` (liste elemanı / dict değer tipi) kullanır ve
+  `genListAssign`/`genDictAssign` hedef `TypeInfo`yu `genExprForTarget`e verir → `d[k] = []`, `xs[i] = []`, `d[k] = {}`.
+- Golden: `negative_indexing`, `print_dict_index_assign_empty`; eski üç fixture'ın "negatif → IndexError" varsayımı gerçek aralık-dışı değerlere taşındı.

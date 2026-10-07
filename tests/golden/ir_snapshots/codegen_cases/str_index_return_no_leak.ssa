@@ -1502,46 +1502,49 @@ export function l $char_at(l %rt, l %p_s, l %p_i) {
     %t2 =l loadl %t0
     %t3 =l loadl %t1
     %t4 =l call $nox_str_char_count(l %t2)
-    %t5 =w cugel %t3, %t4
-    jnz %t5, @str_idx_err0, @str_idx_ok1
+    %t5 =l sar %t3, 63
+    %t6 =l and %t5, %t4
+    %t7 =l add %t3, %t6
+    %t8 =w cugel %t7, %t4
+    jnz %t8, @str_idx_err0, @str_idx_ok1
 @str_idx_ok1
-    %t15 =l call $nox_str_char_at(l %rt, l %t2, l %t3)
-    ret %t15
+    %t18 =l call $nox_str_char_at(l %rt, l %t2, l %t7)
+    ret %t18
 @after_return9
 @fn_end10
     ret 0
 @str_idx_err0
-    %t6 =l add $str0, 16
-    %t7 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 7, %t7
-    %t8 =l add %t7, 8
-    storel 0, %t8
-    %t9 =l add %t7, 16
-    storel 0, %t9
-    %t10 =l add %t7, 24
-    storel 0, %t10
-    call $Exception___init__(l %rt, l %t7, l %t6)
-    %t11 =w call $nox_exception_pending(l %rt)
-    jnz %t11, @ctor_init_failed2, @ctor_init_cont3
+    %t9 =l add $str0, 16
+    %t10 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 7, %t10
+    %t11 =l add %t10, 8
+    storel 0, %t11
+    %t12 =l add %t10, 16
+    storel 0, %t12
+    %t13 =l add %t10, 24
+    storel 0, %t13
+    call $Exception___init__(l %rt, l %t10, l %t9)
+    %t14 =w call $nox_exception_pending(l %rt)
+    jnz %t14, @ctor_init_failed2, @ctor_init_cont3
 @ctor_init_failed2
-    %t12 =w ceql %t7, 0
-    jnz %t12, @release_skip5, @release4
+    %t15 =w ceql %t10, 0
+    jnz %t15, @release_skip5, @release4
 @release4
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t7)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t10)
     jmp @release_done6
 @release_skip5
     jmp @release_done6
 @release_done6
     jmp @ctor_init_cont3
 @ctor_init_cont3
-    %t13 =w call $nox_exception_pending(l %rt)
-    jnz %t13, @exc_propagate7, @exc_continue8
+    %t16 =w call $nox_exception_pending(l %rt)
+    jnz %t16, @exc_propagate7, @exc_continue8
 @exc_propagate7
     ret 0
 @exc_continue8
-    %t14 =l add %t7, 24
-    storel 2, %t14
-    call $nox_raise(l %rt, l %t7, l 2)
+    %t17 =l add %t10, 24
+    storel 2, %t17
+    call $nox_raise(l %rt, l %t10, l 2)
     ret 0
 }
 export function w $main(w %argc, l %argv) {

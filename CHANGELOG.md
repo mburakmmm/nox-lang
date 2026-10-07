@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.161.0]
+
+### Eklendi
+
+- **Negatif indeks (Python gibi):** `xs[-1]`, `s[-2]`, `xs[-1] = v`, `xs.pop(-1)`, `del xs[-1]`; hâlâ aralık dışı olan (`xs[-9]`) `IndexError`. Dallanmasız normalleştirme (`sar/and/add`), pozitif literal indekste ve sınır-kontrolü elenen döngülerde maliyet yok. Spec §3.277.
+- **`print(dict)`** Python biçiminde (`{'a': [1], 'b': 2}`); önceden işaretçi adresi basıyordu.
+- `d[k] = []`, `xs[i] = []`, `d[k] = {}`: boş literaller hedef tipten çıkarılır (önceden "boş liste literalinin tipi çıkarılamaz").
+- Tip anotasyonsuz ilk atama (`t = 5`) artık "ilk atamada tip belirtin" ipucu verir.
+
+### Değişti (davranış)
+
+- Negatif indeks artık `IndexError` DEĞİL, sondan sayar (eski testler `xs[-4]`/`s[-6]` gibi gerçek aralık-dışı değerlere taşındı).
+
 ## [1.160.1]
 
 ### Düzeltildi

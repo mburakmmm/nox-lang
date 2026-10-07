@@ -7,6 +7,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
+const expr_mod = @import("expr.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
 
@@ -462,10 +463,11 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
 /// KORUNDU, DEĞİŞMEDİ.
 pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
     if (obj.heap != .list) return error.Unsupported;
-    const index_v = try self.genExpr(idx.index.*);
+    var index_v = try self.genExpr(idx.index.*);
 
     const len_t = try self.newTemp();
     try self.qbeLoadL(len_t, obj.text);
+    index_v.text = try expr_mod.normalizeNegativeIndex(self, idx.index.*, index_v.text, len_t);
     // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
     // işaretsiz yorumlandığında ≥ 2^63 > len olur (3 işlem → 1).
     const oob_t = try self.newTemp();
@@ -489,7 +491,9 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     try self.stashCold(cold_start);
 
     try self.qbeLabel(ok_label);
-    const value_v0 = try self.genExpr(value_expr);
+    // v1.161.0: hedef (liste elemanı) tipi biliniyor → `xs[i] = []` / `xs[i] = {}` boş literalleri çözülebilir.
+    const elem_target = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int));
+    const value_v0 = try self.genExprForTarget(value_expr, elem_target);
     try self.checkNoLowlevelEscape(value_v0);
     const retained = try self.retainIfAliasing(value_expr, value_v0);
     const val = try self.convert(retained, obj.elem_qtype);
@@ -551,7 +555,9 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     try self.checkNoLowlevelEscape(key_v0);
     const key_v = try self.retainIfAliasing(idx.index.*, key_v0);
 
-    const value_v0 = try self.genExpr(value_expr);
+    // v1.161.0: hedef (sözlük değeri) tipi biliniyor → `d[k] = []` / `d[k] = {}` boş literalleri çözülebilir.
+    const value_target = abi.typeInfoOfValue(abi.dictValueValue(dinfo, "0", dinfo.value_qtype));
+    const value_v0 = try self.genExprForTarget(value_expr, value_target);
     try self.checkNoLowlevelEscape(value_v0);
     const value_v = try self.retainIfAliasing(value_expr, value_v0);
     const value_converted = try self.convert(value_v, dinfo.value_qtype);

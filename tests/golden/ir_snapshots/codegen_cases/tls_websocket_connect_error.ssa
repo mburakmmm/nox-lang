@@ -4113,37 +4113,40 @@ export function l $nox_url__substr(l %rt, l %p_s, l %p_start, l %p_end) {
 @while_body7
     %t19 =l loadl %t0
     %t20 =l loadl %t4
-    %t21 =w cugel %t20, %t14
-    jnz %t21, @str_idx_err9, @str_idx_ok10
+    %t21 =l sar %t20, 63
+    %t22 =l and %t21, %t14
+    %t23 =l add %t20, %t22
+    %t24 =w cugel %t23, %t14
+    jnz %t24, @str_idx_err9, @str_idx_ok10
 @str_idx_ok10
     jnz %t15, @str_idx_ascii30, @str_idx_unicode31
 @str_idx_ascii30
-    %t44 =l add %t19, %t20
-    %t45 =w loadub %t44
-    %t46 =l extuw %t45
-    %t47 =l mul %t46, 24
-    %t48 =l add $nox_ascii_chars, %t47
-    %t49 =l add %t48, 16
+    %t47 =l add %t19, %t23
+    %t48 =w loadub %t47
+    %t49 =l extuw %t48
+    %t50 =l mul %t49, 24
+    %t51 =l add $nox_ascii_chars, %t50
+    %t52 =l add %t51, 16
     jmp @str_idx_done32
 @str_idx_unicode31
-    %t50 =l call $nox_str_char_at(l %rt, l %t19, l %t20)
+    %t53 =l call $nox_str_char_at(l %rt, l %t19, l %t23)
     jmp @str_idx_done32
 @str_idx_done32
-    %t43 =l phi @str_idx_ascii30 %t49, @str_idx_unicode31 %t50
-    %t51 =l loadl %t3
-    %t52 =l call $nox_str_append(l %rt, l %t51, l %t43)
-    storel %t52, %t3
-    %t53 =w ceql %t43, 0
-    jnz %t53, @release_skip34, @release33
+    %t46 =l phi @str_idx_ascii30 %t52, @str_idx_unicode31 %t53
+    %t54 =l loadl %t3
+    %t55 =l call $nox_str_append(l %rt, l %t54, l %t46)
+    storel %t55, %t3
+    %t56 =w ceql %t46, 0
+    jnz %t56, @release_skip34, @release33
 @release33
-    %t54 =l sub %t43, 16
-    %t55 =l loadl %t54
-    %t56 =l sub %t55, 1
-    storel %t56, %t54
-    %t57 =w cslel %t56, 0
-    jnz %t57, @str_free36, @str_free_skip37
+    %t57 =l sub %t46, 16
+    %t58 =l loadl %t57
+    %t59 =l sub %t58, 1
+    storel %t59, %t57
+    %t60 =w cslel %t59, 0
+    jnz %t60, @str_free36, @str_free_skip37
 @str_free36
-    call $nox_str_free_now(l %rt, l %t43)
+    call $nox_str_free_now(l %rt, l %t46)
     jmp @str_free_done38
 @str_free_skip37
     jmp @str_free_done38
@@ -4152,26 +4155,26 @@ export function l $nox_url__substr(l %rt, l %p_s, l %p_start, l %p_end) {
 @release_skip34
     jmp @release_done35
 @release_done35
-    %t58 =l loadl %t4
-    %t59 =l add %t58, 1
-    storel %t59, %t4
+    %t61 =l loadl %t4
+    %t62 =l add %t61, 1
+    storel %t62, %t4
     jmp @while_cond6
 @while_end8
-    %t60 =l loadl %t3
-    ret %t60
+    %t63 =l loadl %t3
+    ret %t63
 @after_return39
-    %t61 =l loadl %t3
-    %t62 =w ceql %t61, 0
-    jnz %t62, @release_skip41, @release40
+    %t64 =l loadl %t3
+    %t65 =w ceql %t64, 0
+    jnz %t65, @release_skip41, @release40
 @release40
-    %t63 =l sub %t61, 16
-    %t64 =l loadl %t63
-    %t65 =l sub %t64, 1
-    storel %t65, %t63
-    %t66 =w cslel %t65, 0
-    jnz %t66, @str_free43, @str_free_skip44
+    %t66 =l sub %t64, 16
+    %t67 =l loadl %t66
+    %t68 =l sub %t67, 1
+    storel %t68, %t66
+    %t69 =w cslel %t68, 0
+    jnz %t69, @str_free43, @str_free_skip44
 @str_free43
-    call $nox_str_free_now(l %rt, l %t61)
+    call $nox_str_free_now(l %rt, l %t64)
     jmp @str_free_done45
 @str_free_skip44
     jmp @str_free_done45
@@ -4184,44 +4187,44 @@ export function l $nox_url__substr(l %rt, l %p_s, l %p_start, l %p_end) {
 @fn_end46
     ret 0
 @str_idx_err9
-    %t22 =l add $str11, 16
-    %t23 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 14, %t23
-    %t24 =l add %t23, 8
-    storel 0, %t24
-    %t25 =l add %t23, 16
-    storel 0, %t25
-    %t26 =l add %t23, 24
-    storel 0, %t26
-    call $Exception___init__(l %rt, l %t23, l %t22)
-    %t27 =w call $nox_exception_pending(l %rt)
-    jnz %t27, @ctor_init_failed11, @ctor_init_cont12
+    %t25 =l add $str11, 16
+    %t26 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 14, %t26
+    %t27 =l add %t26, 8
+    storel 0, %t27
+    %t28 =l add %t26, 16
+    storel 0, %t28
+    %t29 =l add %t26, 24
+    storel 0, %t29
+    call $Exception___init__(l %rt, l %t26, l %t25)
+    %t30 =w call $nox_exception_pending(l %rt)
+    jnz %t30, @ctor_init_failed11, @ctor_init_cont12
 @ctor_init_failed11
-    %t28 =w ceql %t23, 0
-    jnz %t28, @release_skip14, @release13
+    %t31 =w ceql %t26, 0
+    jnz %t31, @release_skip14, @release13
 @release13
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t23)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t26)
     jmp @release_done15
 @release_skip14
     jmp @release_done15
 @release_done15
     jmp @ctor_init_cont12
 @ctor_init_cont12
-    %t29 =w call $nox_exception_pending(l %rt)
-    jnz %t29, @exc_propagate16, @exc_continue17
+    %t32 =w call $nox_exception_pending(l %rt)
+    jnz %t32, @exc_propagate16, @exc_continue17
 @exc_propagate16
-    %t30 =l loadl %t3
-    %t31 =w ceql %t30, 0
-    jnz %t31, @release_skip19, @release18
+    %t33 =l loadl %t3
+    %t34 =w ceql %t33, 0
+    jnz %t34, @release_skip19, @release18
 @release18
-    %t32 =l sub %t30, 16
-    %t33 =l loadl %t32
-    %t34 =l sub %t33, 1
-    storel %t34, %t32
-    %t35 =w cslel %t34, 0
-    jnz %t35, @str_free21, @str_free_skip22
+    %t35 =l sub %t33, 16
+    %t36 =l loadl %t35
+    %t37 =l sub %t36, 1
+    storel %t37, %t35
+    %t38 =w cslel %t37, 0
+    jnz %t38, @str_free21, @str_free_skip22
 @str_free21
-    call $nox_str_free_now(l %rt, l %t30)
+    call $nox_str_free_now(l %rt, l %t33)
     jmp @str_free_done23
 @str_free_skip22
     jmp @str_free_done23
@@ -4233,21 +4236,21 @@ export function l $nox_url__substr(l %rt, l %p_s, l %p_start, l %p_end) {
     storel 0, %t3
     ret 0
 @exc_continue17
-    %t36 =l add %t23, 24
-    storel 57, %t36
-    call $nox_raise(l %rt, l %t23, l 57)
-    %t37 =l loadl %t3
-    %t38 =w ceql %t37, 0
-    jnz %t38, @release_skip25, @release24
+    %t39 =l add %t26, 24
+    storel 57, %t39
+    call $nox_raise(l %rt, l %t26, l 57)
+    %t40 =l loadl %t3
+    %t41 =w ceql %t40, 0
+    jnz %t41, @release_skip25, @release24
 @release24
-    %t39 =l sub %t37, 16
-    %t40 =l loadl %t39
-    %t41 =l sub %t40, 1
-    storel %t41, %t39
-    %t42 =w cslel %t41, 0
-    jnz %t42, @str_free27, @str_free_skip28
+    %t42 =l sub %t40, 16
+    %t43 =l loadl %t42
+    %t44 =l sub %t43, 1
+    storel %t44, %t42
+    %t45 =w cslel %t44, 0
+    jnz %t45, @str_free27, @str_free_skip28
 @str_free27
-    call $nox_str_free_now(l %rt, l %t37)
+    call $nox_str_free_now(l %rt, l %t40)
     jmp @str_free_done29
 @str_free_skip28
     jmp @str_free_done29
@@ -10328,41 +10331,44 @@ export function l $nox_url__hex_digit(l %rt, l %p_n) {
     %t38 =l loadl %t1
     %t39 =l loadl %t0
     %t40 =l loadl %t38
-    %t41 =w cugel %t39, %t40
-    jnz %t41, @list_idx_err3, @list_idx_ok4
+    %t41 =l sar %t39, 63
+    %t42 =l and %t41, %t40
+    %t43 =l add %t39, %t42
+    %t44 =w cugel %t43, %t40
+    jnz %t44, @list_idx_err3, @list_idx_ok4
 @list_idx_ok4
-    %t55 =l mul %t39, 8
-    %t56 =l add %t55, 16
-    %t57 =l add %t38, %t56
-    %t58 =l loadl %t57
-    %t59 =w ceql %t58, 0
-    jnz %t59, @retain_skip19, @retain18
-@retain18
-    %t60 =l sub %t58, 16
+    %t58 =l mul %t43, 8
+    %t59 =l add %t58, 16
+    %t60 =l add %t38, %t59
     %t61 =l loadl %t60
-    %t62 =l add %t61, 1
-    storel %t62, %t60
+    %t62 =w ceql %t61, 0
+    jnz %t62, @retain_skip19, @retain18
+@retain18
+    %t63 =l sub %t61, 16
+    %t64 =l loadl %t63
+    %t65 =l add %t64, 1
+    storel %t65, %t63
     jmp @retain_done20
 @retain_skip19
     jmp @retain_done20
 @retain_done20
-    %t63 =l loadl %t1
-    %t64 =w ceql %t63, 0
-    jnz %t64, @release_skip22, @release21
+    %t66 =l loadl %t1
+    %t67 =w ceql %t66, 0
+    jnz %t67, @release_skip22, @release21
 @release21
-    call $List_str_release(l %rt, l %t63)
+    call $List_str_release(l %rt, l %t66)
     jmp @release_done23
 @release_skip22
     jmp @release_done23
 @release_done23
     storel 0, %t1
-    ret %t58
+    ret %t61
 @after_return24
-    %t65 =l loadl %t1
-    %t66 =w ceql %t65, 0
-    jnz %t66, @release_skip26, @release25
+    %t68 =l loadl %t1
+    %t69 =w ceql %t68, 0
+    jnz %t69, @release_skip26, @release25
 @release25
-    call $List_str_release(l %rt, l %t65)
+    call $List_str_release(l %rt, l %t68)
     jmp @release_done27
 @release_skip26
     jmp @release_done27
@@ -10371,37 +10377,37 @@ export function l $nox_url__hex_digit(l %rt, l %p_n) {
 @fn_end28
     ret 0
 @list_idx_err3
-    %t42 =l add $str47, 16
-    %t43 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 14, %t43
-    %t44 =l add %t43, 8
-    storel 0, %t44
-    %t45 =l add %t43, 16
-    storel 0, %t45
-    %t46 =l add %t43, 24
-    storel 0, %t46
-    call $Exception___init__(l %rt, l %t43, l %t42)
-    %t47 =w call $nox_exception_pending(l %rt)
-    jnz %t47, @ctor_init_failed5, @ctor_init_cont6
+    %t45 =l add $str47, 16
+    %t46 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 14, %t46
+    %t47 =l add %t46, 8
+    storel 0, %t47
+    %t48 =l add %t46, 16
+    storel 0, %t48
+    %t49 =l add %t46, 24
+    storel 0, %t49
+    call $Exception___init__(l %rt, l %t46, l %t45)
+    %t50 =w call $nox_exception_pending(l %rt)
+    jnz %t50, @ctor_init_failed5, @ctor_init_cont6
 @ctor_init_failed5
-    %t48 =w ceql %t43, 0
-    jnz %t48, @release_skip8, @release7
+    %t51 =w ceql %t46, 0
+    jnz %t51, @release_skip8, @release7
 @release7
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t43)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t46)
     jmp @release_done9
 @release_skip8
     jmp @release_done9
 @release_done9
     jmp @ctor_init_cont6
 @ctor_init_cont6
-    %t49 =w call $nox_exception_pending(l %rt)
-    jnz %t49, @exc_propagate10, @exc_continue11
+    %t52 =w call $nox_exception_pending(l %rt)
+    jnz %t52, @exc_propagate10, @exc_continue11
 @exc_propagate10
-    %t50 =l loadl %t1
-    %t51 =w ceql %t50, 0
-    jnz %t51, @release_skip13, @release12
+    %t53 =l loadl %t1
+    %t54 =w ceql %t53, 0
+    jnz %t54, @release_skip13, @release12
 @release12
-    call $List_str_release(l %rt, l %t50)
+    call $List_str_release(l %rt, l %t53)
     jmp @release_done14
 @release_skip13
     jmp @release_done14
@@ -10409,14 +10415,14 @@ export function l $nox_url__hex_digit(l %rt, l %p_n) {
     storel 0, %t1
     ret 0
 @exc_continue11
-    %t52 =l add %t43, 24
-    storel 135, %t52
-    call $nox_raise(l %rt, l %t43, l 135)
-    %t53 =l loadl %t1
-    %t54 =w ceql %t53, 0
-    jnz %t54, @release_skip16, @release15
+    %t55 =l add %t46, 24
+    storel 135, %t55
+    call $nox_raise(l %rt, l %t46, l 135)
+    %t56 =l loadl %t1
+    %t57 =w ceql %t56, 0
+    jnz %t57, @release_skip16, @release15
 @release15
-    call $List_str_release(l %rt, l %t53)
+    call $List_str_release(l %rt, l %t56)
     jmp @release_done17
 @release_skip16
     jmp @release_done17
@@ -11124,35 +11130,38 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @while_body7
     %t24 =l loadl %t0
     %t25 =l loadl %t2
-    %t26 =w cugel %t25, %t19
-    jnz %t26, @str_idx_err9, @str_idx_ok10
+    %t26 =l sar %t25, 63
+    %t27 =l and %t26, %t19
+    %t28 =l add %t25, %t27
+    %t29 =w cugel %t28, %t19
+    jnz %t29, @str_idx_err9, @str_idx_ok10
 @str_idx_ok10
     jnz %t20, @str_idx_ascii42, @str_idx_unicode43
 @str_idx_ascii42
-    %t61 =l add %t24, %t25
-    %t62 =w loadub %t61
-    %t63 =l extuw %t62
-    %t64 =l mul %t63, 24
-    %t65 =l add $nox_ascii_chars, %t64
-    %t66 =l add %t65, 16
+    %t64 =l add %t24, %t28
+    %t65 =w loadub %t64
+    %t66 =l extuw %t65
+    %t67 =l mul %t66, 24
+    %t68 =l add $nox_ascii_chars, %t67
+    %t69 =l add %t68, 16
     jmp @str_idx_done44
 @str_idx_unicode43
-    %t67 =l call $nox_str_char_at(l %rt, l %t24, l %t25)
+    %t70 =l call $nox_str_char_at(l %rt, l %t24, l %t28)
     jmp @str_idx_done44
 @str_idx_done44
-    %t60 =l phi @str_idx_ascii42 %t66, @str_idx_unicode43 %t67
-    %t68 =l loadl %t4
-    %t69 =w ceql %t68, 0
-    jnz %t69, @release_skip46, @release45
+    %t63 =l phi @str_idx_ascii42 %t69, @str_idx_unicode43 %t70
+    %t71 =l loadl %t4
+    %t72 =w ceql %t71, 0
+    jnz %t72, @release_skip46, @release45
 @release45
-    %t70 =l sub %t68, 16
-    %t71 =l loadl %t70
-    %t72 =l sub %t71, 1
-    storel %t72, %t70
-    %t73 =w cslel %t72, 0
-    jnz %t73, @str_free48, @str_free_skip49
+    %t73 =l sub %t71, 16
+    %t74 =l loadl %t73
+    %t75 =l sub %t74, 1
+    storel %t75, %t73
+    %t76 =w cslel %t75, 0
+    jnz %t76, @str_free48, @str_free_skip49
 @str_free48
-    call $nox_str_free_now(l %rt, l %t68)
+    call $nox_str_free_now(l %rt, l %t71)
     jmp @str_free_done50
 @str_free_skip49
     jmp @str_free_done50
@@ -11162,42 +11171,42 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done47
 @release_done47
     storel 0, %t4
-    storel %t60, %t4
-    %t74 =l loadl %t4
-    %t75 =l add $str75, 16
-    %t76 =w call $strcmp(l %t74, l %t75)
-    %t77 =w ceqw %t76, 0
-    jnz %t77, @if_then52, @if_else53
+    storel %t63, %t4
+    %t77 =l loadl %t4
+    %t78 =l add $str75, 16
+    %t79 =w call $strcmp(l %t77, l %t78)
+    %t80 =w ceqw %t79, 0
+    jnz %t80, @if_then52, @if_else53
 @if_then52
-    %t78 =l loadl %t2
-    %t79 =l add %t78, 2
-    %t80 =l loadl %t3
-    %t81 =w csgel %t79, %t80
-    jnz %t81, @if_then55, @if_end54
+    %t81 =l loadl %t2
+    %t82 =l add %t81, 2
+    %t83 =l loadl %t3
+    %t84 =w csgel %t82, %t83
+    jnz %t84, @if_then55, @if_end54
 @if_then55
-    %t82 =l add $str76, 16
-    %t83 =l loadl %t0
-    %t84 =l call $nox_str_concat(l %rt, l %t82, l %t83)
-    %t85 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 6, %t85
-    %t86 =l add %t85, 8
-    storel 0, %t86
-    %t87 =l add %t85, 16
-    storel 0, %t87
-    %t88 =l add %t85, 24
-    storel 0, %t88
-    call $Exception___init__(l %rt, l %t85, l %t84)
-    %t89 =w ceql %t84, 0
-    jnz %t89, @release_skip57, @release56
+    %t85 =l add $str76, 16
+    %t86 =l loadl %t0
+    %t87 =l call $nox_str_concat(l %rt, l %t85, l %t86)
+    %t88 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 6, %t88
+    %t89 =l add %t88, 8
+    storel 0, %t89
+    %t90 =l add %t88, 16
+    storel 0, %t90
+    %t91 =l add %t88, 24
+    storel 0, %t91
+    call $Exception___init__(l %rt, l %t88, l %t87)
+    %t92 =w ceql %t87, 0
+    jnz %t92, @release_skip57, @release56
 @release56
-    %t90 =l sub %t84, 16
-    %t91 =l loadl %t90
-    %t92 =l sub %t91, 1
-    storel %t92, %t90
-    %t93 =w cslel %t92, 0
-    jnz %t93, @str_free59, @str_free_skip60
+    %t93 =l sub %t87, 16
+    %t94 =l loadl %t93
+    %t95 =l sub %t94, 1
+    storel %t95, %t93
+    %t96 =w cslel %t95, 0
+    jnz %t96, @str_free59, @str_free_skip60
 @str_free59
-    call $nox_str_free_now(l %rt, l %t84)
+    call $nox_str_free_now(l %rt, l %t87)
     jmp @str_free_done61
 @str_free_skip60
     jmp @str_free_done61
@@ -11206,34 +11215,34 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @release_skip57
     jmp @release_done58
 @release_done58
-    %t94 =w call $nox_exception_pending(l %rt)
-    jnz %t94, @ctor_init_failed62, @ctor_init_cont63
+    %t97 =w call $nox_exception_pending(l %rt)
+    jnz %t97, @ctor_init_failed62, @ctor_init_cont63
 @ctor_init_failed62
-    %t95 =w ceql %t85, 0
-    jnz %t95, @release_skip65, @release64
+    %t98 =w ceql %t88, 0
+    jnz %t98, @release_skip65, @release64
 @release64
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t85)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t88)
     jmp @release_done66
 @release_skip65
     jmp @release_done66
 @release_done66
     jmp @ctor_init_cont63
 @ctor_init_cont63
-    %t96 =w call $nox_exception_pending(l %rt)
-    jnz %t96, @exc_propagate67, @exc_continue68
+    %t99 =w call $nox_exception_pending(l %rt)
+    jnz %t99, @exc_propagate67, @exc_continue68
 @exc_propagate67
-    %t97 =l loadl %t1
-    %t98 =w ceql %t97, 0
-    jnz %t98, @release_skip70, @release69
+    %t100 =l loadl %t1
+    %t101 =w ceql %t100, 0
+    jnz %t101, @release_skip70, @release69
 @release69
-    %t99 =l sub %t97, 16
-    %t100 =l loadl %t99
-    %t101 =l sub %t100, 1
-    storel %t101, %t99
-    %t102 =w cslel %t101, 0
-    jnz %t102, @str_free72, @str_free_skip73
+    %t102 =l sub %t100, 16
+    %t103 =l loadl %t102
+    %t104 =l sub %t103, 1
+    storel %t104, %t102
+    %t105 =w cslel %t104, 0
+    jnz %t105, @str_free72, @str_free_skip73
 @str_free72
-    call $nox_str_free_now(l %rt, l %t97)
+    call $nox_str_free_now(l %rt, l %t100)
     jmp @str_free_done74
 @str_free_skip73
     jmp @str_free_done74
@@ -11243,18 +11252,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done71
 @release_done71
     storel 0, %t1
-    %t103 =l loadl %t4
-    %t104 =w ceql %t103, 0
-    jnz %t104, @release_skip76, @release75
+    %t106 =l loadl %t4
+    %t107 =w ceql %t106, 0
+    jnz %t107, @release_skip76, @release75
 @release75
-    %t105 =l sub %t103, 16
-    %t106 =l loadl %t105
-    %t107 =l sub %t106, 1
-    storel %t107, %t105
-    %t108 =w cslel %t107, 0
-    jnz %t108, @str_free78, @str_free_skip79
+    %t108 =l sub %t106, 16
+    %t109 =l loadl %t108
+    %t110 =l sub %t109, 1
+    storel %t110, %t108
+    %t111 =w cslel %t110, 0
+    jnz %t111, @str_free78, @str_free_skip79
 @str_free78
-    call $nox_str_free_now(l %rt, l %t103)
+    call $nox_str_free_now(l %rt, l %t106)
     jmp @str_free_done80
 @str_free_skip79
     jmp @str_free_done80
@@ -11266,24 +11275,24 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @exc_continue68
-    %t109 =l add %t85, 24
-    storel 202, %t109
-    call $nox_raise(l %rt, l %t85, l 202)
-    %t110 =w call $nox_exception_pending(l %rt)
-    jnz %t110, @exc_propagate81, @exc_continue82
+    %t112 =l add %t88, 24
+    storel 202, %t112
+    call $nox_raise(l %rt, l %t88, l 202)
+    %t113 =w call $nox_exception_pending(l %rt)
+    jnz %t113, @exc_propagate81, @exc_continue82
 @exc_propagate81
-    %t111 =l loadl %t1
-    %t112 =w ceql %t111, 0
-    jnz %t112, @release_skip84, @release83
+    %t114 =l loadl %t1
+    %t115 =w ceql %t114, 0
+    jnz %t115, @release_skip84, @release83
 @release83
-    %t113 =l sub %t111, 16
-    %t114 =l loadl %t113
-    %t115 =l sub %t114, 1
-    storel %t115, %t113
-    %t116 =w cslel %t115, 0
-    jnz %t116, @str_free86, @str_free_skip87
+    %t116 =l sub %t114, 16
+    %t117 =l loadl %t116
+    %t118 =l sub %t117, 1
+    storel %t118, %t116
+    %t119 =w cslel %t118, 0
+    jnz %t119, @str_free86, @str_free_skip87
 @str_free86
-    call $nox_str_free_now(l %rt, l %t111)
+    call $nox_str_free_now(l %rt, l %t114)
     jmp @str_free_done88
 @str_free_skip87
     jmp @str_free_done88
@@ -11293,18 +11302,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done85
 @release_done85
     storel 0, %t1
-    %t117 =l loadl %t4
-    %t118 =w ceql %t117, 0
-    jnz %t118, @release_skip90, @release89
+    %t120 =l loadl %t4
+    %t121 =w ceql %t120, 0
+    jnz %t121, @release_skip90, @release89
 @release89
-    %t119 =l sub %t117, 16
-    %t120 =l loadl %t119
-    %t121 =l sub %t120, 1
-    storel %t121, %t119
-    %t122 =w cslel %t121, 0
-    jnz %t122, @str_free92, @str_free_skip93
+    %t122 =l sub %t120, 16
+    %t123 =l loadl %t122
+    %t124 =l sub %t123, 1
+    storel %t124, %t122
+    %t125 =w cslel %t124, 0
+    jnz %t125, @str_free92, @str_free_skip93
 @str_free92
-    call $nox_str_free_now(l %rt, l %t117)
+    call $nox_str_free_now(l %rt, l %t120)
     jmp @str_free_done94
 @str_free_skip93
     jmp @str_free_done94
@@ -11318,38 +11327,41 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @exc_continue82
     jmp @if_end54
 @if_end54
-    %t123 =l loadl %t0
-    %t124 =l loadl %t2
-    %t125 =l add %t124, 1
-    %t126 =w cugel %t125, %t19
-    jnz %t126, @str_idx_err95, @str_idx_ok96
+    %t126 =l loadl %t0
+    %t127 =l loadl %t2
+    %t128 =l add %t127, 1
+    %t129 =l sar %t128, 63
+    %t130 =l and %t129, %t19
+    %t131 =l add %t128, %t130
+    %t132 =w cugel %t131, %t19
+    jnz %t132, @str_idx_err95, @str_idx_ok96
 @str_idx_ok96
     jnz %t20, @str_idx_ascii128, @str_idx_unicode129
 @str_idx_ascii128
-    %t161 =l add %t123, %t125
-    %t162 =w loadub %t161
-    %t163 =l extuw %t162
-    %t164 =l mul %t163, 24
-    %t165 =l add $nox_ascii_chars, %t164
-    %t166 =l add %t165, 16
+    %t167 =l add %t126, %t131
+    %t168 =w loadub %t167
+    %t169 =l extuw %t168
+    %t170 =l mul %t169, 24
+    %t171 =l add $nox_ascii_chars, %t170
+    %t172 =l add %t171, 16
     jmp @str_idx_done130
 @str_idx_unicode129
-    %t167 =l call $nox_str_char_at(l %rt, l %t123, l %t125)
+    %t173 =l call $nox_str_char_at(l %rt, l %t126, l %t131)
     jmp @str_idx_done130
 @str_idx_done130
-    %t160 =l phi @str_idx_ascii128 %t166, @str_idx_unicode129 %t167
-    %t168 =l call $nox_url__hex_val(l %rt, l %t160)
-    %t169 =w ceql %t160, 0
-    jnz %t169, @release_skip132, @release131
+    %t166 =l phi @str_idx_ascii128 %t172, @str_idx_unicode129 %t173
+    %t174 =l call $nox_url__hex_val(l %rt, l %t166)
+    %t175 =w ceql %t166, 0
+    jnz %t175, @release_skip132, @release131
 @release131
-    %t170 =l sub %t160, 16
-    %t171 =l loadl %t170
-    %t172 =l sub %t171, 1
-    storel %t172, %t170
-    %t173 =w cslel %t172, 0
-    jnz %t173, @str_free134, @str_free_skip135
+    %t176 =l sub %t166, 16
+    %t177 =l loadl %t176
+    %t178 =l sub %t177, 1
+    storel %t178, %t176
+    %t179 =w cslel %t178, 0
+    jnz %t179, @str_free134, @str_free_skip135
 @str_free134
-    call $nox_str_free_now(l %rt, l %t160)
+    call $nox_str_free_now(l %rt, l %t166)
     jmp @str_free_done136
 @str_free_skip135
     jmp @str_free_done136
@@ -11358,21 +11370,21 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @release_skip132
     jmp @release_done133
 @release_done133
-    %t174 =w call $nox_exception_pending(l %rt)
-    jnz %t174, @exc_propagate137, @exc_continue138
+    %t180 =w call $nox_exception_pending(l %rt)
+    jnz %t180, @exc_propagate137, @exc_continue138
 @exc_propagate137
-    %t175 =l loadl %t1
-    %t176 =w ceql %t175, 0
-    jnz %t176, @release_skip140, @release139
+    %t181 =l loadl %t1
+    %t182 =w ceql %t181, 0
+    jnz %t182, @release_skip140, @release139
 @release139
-    %t177 =l sub %t175, 16
-    %t178 =l loadl %t177
-    %t179 =l sub %t178, 1
-    storel %t179, %t177
-    %t180 =w cslel %t179, 0
-    jnz %t180, @str_free142, @str_free_skip143
+    %t183 =l sub %t181, 16
+    %t184 =l loadl %t183
+    %t185 =l sub %t184, 1
+    storel %t185, %t183
+    %t186 =w cslel %t185, 0
+    jnz %t186, @str_free142, @str_free_skip143
 @str_free142
-    call $nox_str_free_now(l %rt, l %t175)
+    call $nox_str_free_now(l %rt, l %t181)
     jmp @str_free_done144
 @str_free_skip143
     jmp @str_free_done144
@@ -11382,18 +11394,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done141
 @release_done141
     storel 0, %t1
-    %t181 =l loadl %t4
-    %t182 =w ceql %t181, 0
-    jnz %t182, @release_skip146, @release145
+    %t187 =l loadl %t4
+    %t188 =w ceql %t187, 0
+    jnz %t188, @release_skip146, @release145
 @release145
-    %t183 =l sub %t181, 16
-    %t184 =l loadl %t183
-    %t185 =l sub %t184, 1
-    storel %t185, %t183
-    %t186 =w cslel %t185, 0
-    jnz %t186, @str_free148, @str_free_skip149
+    %t189 =l sub %t187, 16
+    %t190 =l loadl %t189
+    %t191 =l sub %t190, 1
+    storel %t191, %t189
+    %t192 =w cslel %t191, 0
+    jnz %t192, @str_free148, @str_free_skip149
 @str_free148
-    call $nox_str_free_now(l %rt, l %t181)
+    call $nox_str_free_now(l %rt, l %t187)
     jmp @str_free_done150
 @str_free_skip149
     jmp @str_free_done150
@@ -11405,39 +11417,42 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @exc_continue138
-    storel %t168, %t5
-    %t187 =l loadl %t0
-    %t188 =l loadl %t2
-    %t189 =l add %t188, 2
-    %t190 =w cugel %t189, %t19
-    jnz %t190, @str_idx_err151, @str_idx_ok152
+    storel %t174, %t5
+    %t193 =l loadl %t0
+    %t194 =l loadl %t2
+    %t195 =l add %t194, 2
+    %t196 =l sar %t195, 63
+    %t197 =l and %t196, %t19
+    %t198 =l add %t195, %t197
+    %t199 =w cugel %t198, %t19
+    jnz %t199, @str_idx_err151, @str_idx_ok152
 @str_idx_ok152
     jnz %t20, @str_idx_ascii184, @str_idx_unicode185
 @str_idx_ascii184
-    %t225 =l add %t187, %t189
-    %t226 =w loadub %t225
-    %t227 =l extuw %t226
-    %t228 =l mul %t227, 24
-    %t229 =l add $nox_ascii_chars, %t228
-    %t230 =l add %t229, 16
+    %t234 =l add %t193, %t198
+    %t235 =w loadub %t234
+    %t236 =l extuw %t235
+    %t237 =l mul %t236, 24
+    %t238 =l add $nox_ascii_chars, %t237
+    %t239 =l add %t238, 16
     jmp @str_idx_done186
 @str_idx_unicode185
-    %t231 =l call $nox_str_char_at(l %rt, l %t187, l %t189)
+    %t240 =l call $nox_str_char_at(l %rt, l %t193, l %t198)
     jmp @str_idx_done186
 @str_idx_done186
-    %t224 =l phi @str_idx_ascii184 %t230, @str_idx_unicode185 %t231
-    %t232 =l call $nox_url__hex_val(l %rt, l %t224)
-    %t233 =w ceql %t224, 0
-    jnz %t233, @release_skip188, @release187
+    %t233 =l phi @str_idx_ascii184 %t239, @str_idx_unicode185 %t240
+    %t241 =l call $nox_url__hex_val(l %rt, l %t233)
+    %t242 =w ceql %t233, 0
+    jnz %t242, @release_skip188, @release187
 @release187
-    %t234 =l sub %t224, 16
-    %t235 =l loadl %t234
-    %t236 =l sub %t235, 1
-    storel %t236, %t234
-    %t237 =w cslel %t236, 0
-    jnz %t237, @str_free190, @str_free_skip191
+    %t243 =l sub %t233, 16
+    %t244 =l loadl %t243
+    %t245 =l sub %t244, 1
+    storel %t245, %t243
+    %t246 =w cslel %t245, 0
+    jnz %t246, @str_free190, @str_free_skip191
 @str_free190
-    call $nox_str_free_now(l %rt, l %t224)
+    call $nox_str_free_now(l %rt, l %t233)
     jmp @str_free_done192
 @str_free_skip191
     jmp @str_free_done192
@@ -11446,21 +11461,21 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @release_skip188
     jmp @release_done189
 @release_done189
-    %t238 =w call $nox_exception_pending(l %rt)
-    jnz %t238, @exc_propagate193, @exc_continue194
+    %t247 =w call $nox_exception_pending(l %rt)
+    jnz %t247, @exc_propagate193, @exc_continue194
 @exc_propagate193
-    %t239 =l loadl %t1
-    %t240 =w ceql %t239, 0
-    jnz %t240, @release_skip196, @release195
+    %t248 =l loadl %t1
+    %t249 =w ceql %t248, 0
+    jnz %t249, @release_skip196, @release195
 @release195
-    %t241 =l sub %t239, 16
-    %t242 =l loadl %t241
-    %t243 =l sub %t242, 1
-    storel %t243, %t241
-    %t244 =w cslel %t243, 0
-    jnz %t244, @str_free198, @str_free_skip199
+    %t250 =l sub %t248, 16
+    %t251 =l loadl %t250
+    %t252 =l sub %t251, 1
+    storel %t252, %t250
+    %t253 =w cslel %t252, 0
+    jnz %t253, @str_free198, @str_free_skip199
 @str_free198
-    call $nox_str_free_now(l %rt, l %t239)
+    call $nox_str_free_now(l %rt, l %t248)
     jmp @str_free_done200
 @str_free_skip199
     jmp @str_free_done200
@@ -11470,18 +11485,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done197
 @release_done197
     storel 0, %t1
-    %t245 =l loadl %t4
-    %t246 =w ceql %t245, 0
-    jnz %t246, @release_skip202, @release201
+    %t254 =l loadl %t4
+    %t255 =w ceql %t254, 0
+    jnz %t255, @release_skip202, @release201
 @release201
-    %t247 =l sub %t245, 16
-    %t248 =l loadl %t247
-    %t249 =l sub %t248, 1
-    storel %t249, %t247
-    %t250 =w cslel %t249, 0
-    jnz %t250, @str_free204, @str_free_skip205
+    %t256 =l sub %t254, 16
+    %t257 =l loadl %t256
+    %t258 =l sub %t257, 1
+    storel %t258, %t256
+    %t259 =w cslel %t258, 0
+    jnz %t259, @str_free204, @str_free_skip205
 @str_free204
-    call $nox_str_free_now(l %rt, l %t245)
+    call $nox_str_free_now(l %rt, l %t254)
     jmp @str_free_done206
 @str_free_skip205
     jmp @str_free_done206
@@ -11493,34 +11508,34 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @exc_continue194
-    storel %t232, %t6
-    %t251 =l loadl %t5
-    %t252 =l mul %t251, 16
-    %t253 =l loadl %t6
-    %t254 =l add %t252, %t253
-    storel %t254, %t7
-    %t255 =l loadl %t7
-    %t256 =l call $nox_char_from_byte(l %rt, l %t255)
-    storel %t256, %t8
+    storel %t241, %t6
+    %t260 =l loadl %t5
+    %t261 =l mul %t260, 16
+    %t262 =l loadl %t6
+    %t263 =l add %t261, %t262
+    storel %t263, %t7
+    %t264 =l loadl %t7
+    %t265 =l call $nox_char_from_byte(l %rt, l %t264)
+    storel %t265, %t8
     jmp @inline_done207
 @after_inline_return208
     jmp @inline_done207
 @inline_done207
-    %t257 =l loadl %t8
-    %t258 =l loadl %t1
-    %t259 =l call $nox_str_append(l %rt, l %t258, l %t257)
-    storel %t259, %t1
-    %t260 =w ceql %t257, 0
-    jnz %t260, @release_skip210, @release209
+    %t266 =l loadl %t8
+    %t267 =l loadl %t1
+    %t268 =l call $nox_str_append(l %rt, l %t267, l %t266)
+    storel %t268, %t1
+    %t269 =w ceql %t266, 0
+    jnz %t269, @release_skip210, @release209
 @release209
-    %t261 =l sub %t257, 16
-    %t262 =l loadl %t261
-    %t263 =l sub %t262, 1
-    storel %t263, %t261
-    %t264 =w cslel %t263, 0
-    jnz %t264, @str_free212, @str_free_skip213
+    %t270 =l sub %t266, 16
+    %t271 =l loadl %t270
+    %t272 =l sub %t271, 1
+    storel %t272, %t270
+    %t273 =w cslel %t272, 0
+    jnz %t273, @str_free212, @str_free_skip213
 @str_free212
-    call $nox_str_free_now(l %rt, l %t257)
+    call $nox_str_free_now(l %rt, l %t266)
     jmp @str_free_done214
 @str_free_skip213
     jmp @str_free_done214
@@ -11529,35 +11544,35 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @release_skip210
     jmp @release_done211
 @release_done211
-    %t265 =l loadl %t2
-    %t266 =l add %t265, 3
-    storel %t266, %t2
+    %t274 =l loadl %t2
+    %t275 =l add %t274, 3
+    storel %t275, %t2
     jmp @if_end51
 @if_else53
-    %t267 =l loadl %t4
-    %t268 =l loadl %t1
-    %t269 =l call $nox_str_append(l %rt, l %t268, l %t267)
-    storel %t269, %t1
-    %t270 =l loadl %t2
-    %t271 =l add %t270, 1
-    storel %t271, %t2
+    %t276 =l loadl %t4
+    %t277 =l loadl %t1
+    %t278 =l call $nox_str_append(l %rt, l %t277, l %t276)
+    storel %t278, %t1
+    %t279 =l loadl %t2
+    %t280 =l add %t279, 1
+    storel %t280, %t2
     jmp @if_end51
 @if_end51
     jmp @while_cond6
 @while_end8
-    %t272 =l loadl %t1
-    %t273 =l loadl %t4
-    %t274 =w ceql %t273, 0
-    jnz %t274, @release_skip216, @release215
+    %t281 =l loadl %t1
+    %t282 =l loadl %t4
+    %t283 =w ceql %t282, 0
+    jnz %t283, @release_skip216, @release215
 @release215
-    %t275 =l sub %t273, 16
-    %t276 =l loadl %t275
-    %t277 =l sub %t276, 1
-    storel %t277, %t275
-    %t278 =w cslel %t277, 0
-    jnz %t278, @str_free218, @str_free_skip219
+    %t284 =l sub %t282, 16
+    %t285 =l loadl %t284
+    %t286 =l sub %t285, 1
+    storel %t286, %t284
+    %t287 =w cslel %t286, 0
+    jnz %t287, @str_free218, @str_free_skip219
 @str_free218
-    call $nox_str_free_now(l %rt, l %t273)
+    call $nox_str_free_now(l %rt, l %t282)
     jmp @str_free_done220
 @str_free_skip219
     jmp @str_free_done220
@@ -11567,20 +11582,20 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done217
 @release_done217
     storel 0, %t4
-    ret %t272
+    ret %t281
 @after_return221
-    %t279 =l loadl %t1
-    %t280 =w ceql %t279, 0
-    jnz %t280, @release_skip223, @release222
+    %t288 =l loadl %t1
+    %t289 =w ceql %t288, 0
+    jnz %t289, @release_skip223, @release222
 @release222
-    %t281 =l sub %t279, 16
-    %t282 =l loadl %t281
-    %t283 =l sub %t282, 1
-    storel %t283, %t281
-    %t284 =w cslel %t283, 0
-    jnz %t284, @str_free225, @str_free_skip226
+    %t290 =l sub %t288, 16
+    %t291 =l loadl %t290
+    %t292 =l sub %t291, 1
+    storel %t292, %t290
+    %t293 =w cslel %t292, 0
+    jnz %t293, @str_free225, @str_free_skip226
 @str_free225
-    call $nox_str_free_now(l %rt, l %t279)
+    call $nox_str_free_now(l %rt, l %t288)
     jmp @str_free_done227
 @str_free_skip226
     jmp @str_free_done227
@@ -11590,18 +11605,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done224
 @release_done224
     storel 0, %t1
-    %t285 =l loadl %t4
-    %t286 =w ceql %t285, 0
-    jnz %t286, @release_skip229, @release228
+    %t294 =l loadl %t4
+    %t295 =w ceql %t294, 0
+    jnz %t295, @release_skip229, @release228
 @release228
-    %t287 =l sub %t285, 16
-    %t288 =l loadl %t287
-    %t289 =l sub %t288, 1
-    storel %t289, %t287
-    %t290 =w cslel %t289, 0
-    jnz %t290, @str_free231, @str_free_skip232
+    %t296 =l sub %t294, 16
+    %t297 =l loadl %t296
+    %t298 =l sub %t297, 1
+    storel %t298, %t296
+    %t299 =w cslel %t298, 0
+    jnz %t299, @str_free231, @str_free_skip232
 @str_free231
-    call $nox_str_free_now(l %rt, l %t285)
+    call $nox_str_free_now(l %rt, l %t294)
     jmp @str_free_done233
 @str_free_skip232
     jmp @str_free_done233
@@ -11614,44 +11629,44 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @fn_end234
     ret 0
 @str_idx_err9
-    %t27 =l add $str74, 16
-    %t28 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 14, %t28
-    %t29 =l add %t28, 8
-    storel 0, %t29
-    %t30 =l add %t28, 16
-    storel 0, %t30
-    %t31 =l add %t28, 24
-    storel 0, %t31
-    call $Exception___init__(l %rt, l %t28, l %t27)
-    %t32 =w call $nox_exception_pending(l %rt)
-    jnz %t32, @ctor_init_failed11, @ctor_init_cont12
+    %t30 =l add $str74, 16
+    %t31 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 14, %t31
+    %t32 =l add %t31, 8
+    storel 0, %t32
+    %t33 =l add %t31, 16
+    storel 0, %t33
+    %t34 =l add %t31, 24
+    storel 0, %t34
+    call $Exception___init__(l %rt, l %t31, l %t30)
+    %t35 =w call $nox_exception_pending(l %rt)
+    jnz %t35, @ctor_init_failed11, @ctor_init_cont12
 @ctor_init_failed11
-    %t33 =w ceql %t28, 0
-    jnz %t33, @release_skip14, @release13
+    %t36 =w ceql %t31, 0
+    jnz %t36, @release_skip14, @release13
 @release13
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t28)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t31)
     jmp @release_done15
 @release_skip14
     jmp @release_done15
 @release_done15
     jmp @ctor_init_cont12
 @ctor_init_cont12
-    %t34 =w call $nox_exception_pending(l %rt)
-    jnz %t34, @exc_propagate16, @exc_continue17
+    %t37 =w call $nox_exception_pending(l %rt)
+    jnz %t37, @exc_propagate16, @exc_continue17
 @exc_propagate16
-    %t35 =l loadl %t1
-    %t36 =w ceql %t35, 0
-    jnz %t36, @release_skip19, @release18
+    %t38 =l loadl %t1
+    %t39 =w ceql %t38, 0
+    jnz %t39, @release_skip19, @release18
 @release18
-    %t37 =l sub %t35, 16
-    %t38 =l loadl %t37
-    %t39 =l sub %t38, 1
-    storel %t39, %t37
-    %t40 =w cslel %t39, 0
-    jnz %t40, @str_free21, @str_free_skip22
+    %t40 =l sub %t38, 16
+    %t41 =l loadl %t40
+    %t42 =l sub %t41, 1
+    storel %t42, %t40
+    %t43 =w cslel %t42, 0
+    jnz %t43, @str_free21, @str_free_skip22
 @str_free21
-    call $nox_str_free_now(l %rt, l %t35)
+    call $nox_str_free_now(l %rt, l %t38)
     jmp @str_free_done23
 @str_free_skip22
     jmp @str_free_done23
@@ -11661,18 +11676,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done20
 @release_done20
     storel 0, %t1
-    %t41 =l loadl %t4
-    %t42 =w ceql %t41, 0
-    jnz %t42, @release_skip25, @release24
+    %t44 =l loadl %t4
+    %t45 =w ceql %t44, 0
+    jnz %t45, @release_skip25, @release24
 @release24
-    %t43 =l sub %t41, 16
-    %t44 =l loadl %t43
-    %t45 =l sub %t44, 1
-    storel %t45, %t43
-    %t46 =w cslel %t45, 0
-    jnz %t46, @str_free27, @str_free_skip28
+    %t46 =l sub %t44, 16
+    %t47 =l loadl %t46
+    %t48 =l sub %t47, 1
+    storel %t48, %t46
+    %t49 =w cslel %t48, 0
+    jnz %t49, @str_free27, @str_free_skip28
 @str_free27
-    call $nox_str_free_now(l %rt, l %t41)
+    call $nox_str_free_now(l %rt, l %t44)
     jmp @str_free_done29
 @str_free_skip28
     jmp @str_free_done29
@@ -11684,21 +11699,21 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @exc_continue17
-    %t47 =l add %t28, 24
-    storel 199, %t47
-    call $nox_raise(l %rt, l %t28, l 199)
-    %t48 =l loadl %t1
-    %t49 =w ceql %t48, 0
-    jnz %t49, @release_skip31, @release30
+    %t50 =l add %t31, 24
+    storel 199, %t50
+    call $nox_raise(l %rt, l %t31, l 199)
+    %t51 =l loadl %t1
+    %t52 =w ceql %t51, 0
+    jnz %t52, @release_skip31, @release30
 @release30
-    %t50 =l sub %t48, 16
-    %t51 =l loadl %t50
-    %t52 =l sub %t51, 1
-    storel %t52, %t50
-    %t53 =w cslel %t52, 0
-    jnz %t53, @str_free33, @str_free_skip34
+    %t53 =l sub %t51, 16
+    %t54 =l loadl %t53
+    %t55 =l sub %t54, 1
+    storel %t55, %t53
+    %t56 =w cslel %t55, 0
+    jnz %t56, @str_free33, @str_free_skip34
 @str_free33
-    call $nox_str_free_now(l %rt, l %t48)
+    call $nox_str_free_now(l %rt, l %t51)
     jmp @str_free_done35
 @str_free_skip34
     jmp @str_free_done35
@@ -11708,18 +11723,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done32
 @release_done32
     storel 0, %t1
-    %t54 =l loadl %t4
-    %t55 =w ceql %t54, 0
-    jnz %t55, @release_skip37, @release36
+    %t57 =l loadl %t4
+    %t58 =w ceql %t57, 0
+    jnz %t58, @release_skip37, @release36
 @release36
-    %t56 =l sub %t54, 16
-    %t57 =l loadl %t56
-    %t58 =l sub %t57, 1
-    storel %t58, %t56
-    %t59 =w cslel %t58, 0
-    jnz %t59, @str_free39, @str_free_skip40
+    %t59 =l sub %t57, 16
+    %t60 =l loadl %t59
+    %t61 =l sub %t60, 1
+    storel %t61, %t59
+    %t62 =w cslel %t61, 0
+    jnz %t62, @str_free39, @str_free_skip40
 @str_free39
-    call $nox_str_free_now(l %rt, l %t54)
+    call $nox_str_free_now(l %rt, l %t57)
     jmp @str_free_done41
 @str_free_skip40
     jmp @str_free_done41
@@ -11731,44 +11746,44 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @str_idx_err95
-    %t127 =l add $str77, 16
-    %t128 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 14, %t128
-    %t129 =l add %t128, 8
-    storel 0, %t129
-    %t130 =l add %t128, 16
-    storel 0, %t130
-    %t131 =l add %t128, 24
-    storel 0, %t131
-    call $Exception___init__(l %rt, l %t128, l %t127)
-    %t132 =w call $nox_exception_pending(l %rt)
-    jnz %t132, @ctor_init_failed97, @ctor_init_cont98
+    %t133 =l add $str77, 16
+    %t134 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 14, %t134
+    %t135 =l add %t134, 8
+    storel 0, %t135
+    %t136 =l add %t134, 16
+    storel 0, %t136
+    %t137 =l add %t134, 24
+    storel 0, %t137
+    call $Exception___init__(l %rt, l %t134, l %t133)
+    %t138 =w call $nox_exception_pending(l %rt)
+    jnz %t138, @ctor_init_failed97, @ctor_init_cont98
 @ctor_init_failed97
-    %t133 =w ceql %t128, 0
-    jnz %t133, @release_skip100, @release99
+    %t139 =w ceql %t134, 0
+    jnz %t139, @release_skip100, @release99
 @release99
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t128)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t134)
     jmp @release_done101
 @release_skip100
     jmp @release_done101
 @release_done101
     jmp @ctor_init_cont98
 @ctor_init_cont98
-    %t134 =w call $nox_exception_pending(l %rt)
-    jnz %t134, @exc_propagate102, @exc_continue103
+    %t140 =w call $nox_exception_pending(l %rt)
+    jnz %t140, @exc_propagate102, @exc_continue103
 @exc_propagate102
-    %t135 =l loadl %t1
-    %t136 =w ceql %t135, 0
-    jnz %t136, @release_skip105, @release104
+    %t141 =l loadl %t1
+    %t142 =w ceql %t141, 0
+    jnz %t142, @release_skip105, @release104
 @release104
-    %t137 =l sub %t135, 16
-    %t138 =l loadl %t137
-    %t139 =l sub %t138, 1
-    storel %t139, %t137
-    %t140 =w cslel %t139, 0
-    jnz %t140, @str_free107, @str_free_skip108
+    %t143 =l sub %t141, 16
+    %t144 =l loadl %t143
+    %t145 =l sub %t144, 1
+    storel %t145, %t143
+    %t146 =w cslel %t145, 0
+    jnz %t146, @str_free107, @str_free_skip108
 @str_free107
-    call $nox_str_free_now(l %rt, l %t135)
+    call $nox_str_free_now(l %rt, l %t141)
     jmp @str_free_done109
 @str_free_skip108
     jmp @str_free_done109
@@ -11778,18 +11793,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done106
 @release_done106
     storel 0, %t1
-    %t141 =l loadl %t4
-    %t142 =w ceql %t141, 0
-    jnz %t142, @release_skip111, @release110
+    %t147 =l loadl %t4
+    %t148 =w ceql %t147, 0
+    jnz %t148, @release_skip111, @release110
 @release110
-    %t143 =l sub %t141, 16
-    %t144 =l loadl %t143
-    %t145 =l sub %t144, 1
-    storel %t145, %t143
-    %t146 =w cslel %t145, 0
-    jnz %t146, @str_free113, @str_free_skip114
+    %t149 =l sub %t147, 16
+    %t150 =l loadl %t149
+    %t151 =l sub %t150, 1
+    storel %t151, %t149
+    %t152 =w cslel %t151, 0
+    jnz %t152, @str_free113, @str_free_skip114
 @str_free113
-    call $nox_str_free_now(l %rt, l %t141)
+    call $nox_str_free_now(l %rt, l %t147)
     jmp @str_free_done115
 @str_free_skip114
     jmp @str_free_done115
@@ -11801,21 +11816,21 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @exc_continue103
-    %t147 =l add %t128, 24
-    storel 203, %t147
-    call $nox_raise(l %rt, l %t128, l 203)
-    %t148 =l loadl %t1
-    %t149 =w ceql %t148, 0
-    jnz %t149, @release_skip117, @release116
+    %t153 =l add %t134, 24
+    storel 203, %t153
+    call $nox_raise(l %rt, l %t134, l 203)
+    %t154 =l loadl %t1
+    %t155 =w ceql %t154, 0
+    jnz %t155, @release_skip117, @release116
 @release116
-    %t150 =l sub %t148, 16
-    %t151 =l loadl %t150
-    %t152 =l sub %t151, 1
-    storel %t152, %t150
-    %t153 =w cslel %t152, 0
-    jnz %t153, @str_free119, @str_free_skip120
+    %t156 =l sub %t154, 16
+    %t157 =l loadl %t156
+    %t158 =l sub %t157, 1
+    storel %t158, %t156
+    %t159 =w cslel %t158, 0
+    jnz %t159, @str_free119, @str_free_skip120
 @str_free119
-    call $nox_str_free_now(l %rt, l %t148)
+    call $nox_str_free_now(l %rt, l %t154)
     jmp @str_free_done121
 @str_free_skip120
     jmp @str_free_done121
@@ -11825,18 +11840,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done118
 @release_done118
     storel 0, %t1
-    %t154 =l loadl %t4
-    %t155 =w ceql %t154, 0
-    jnz %t155, @release_skip123, @release122
+    %t160 =l loadl %t4
+    %t161 =w ceql %t160, 0
+    jnz %t161, @release_skip123, @release122
 @release122
-    %t156 =l sub %t154, 16
-    %t157 =l loadl %t156
-    %t158 =l sub %t157, 1
-    storel %t158, %t156
-    %t159 =w cslel %t158, 0
-    jnz %t159, @str_free125, @str_free_skip126
+    %t162 =l sub %t160, 16
+    %t163 =l loadl %t162
+    %t164 =l sub %t163, 1
+    storel %t164, %t162
+    %t165 =w cslel %t164, 0
+    jnz %t165, @str_free125, @str_free_skip126
 @str_free125
-    call $nox_str_free_now(l %rt, l %t154)
+    call $nox_str_free_now(l %rt, l %t160)
     jmp @str_free_done127
 @str_free_skip126
     jmp @str_free_done127
@@ -11848,44 +11863,44 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @str_idx_err151
-    %t191 =l add $str78, 16
-    %t192 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 14, %t192
-    %t193 =l add %t192, 8
-    storel 0, %t193
-    %t194 =l add %t192, 16
-    storel 0, %t194
-    %t195 =l add %t192, 24
-    storel 0, %t195
-    call $Exception___init__(l %rt, l %t192, l %t191)
-    %t196 =w call $nox_exception_pending(l %rt)
-    jnz %t196, @ctor_init_failed153, @ctor_init_cont154
+    %t200 =l add $str78, 16
+    %t201 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 14, %t201
+    %t202 =l add %t201, 8
+    storel 0, %t202
+    %t203 =l add %t201, 16
+    storel 0, %t203
+    %t204 =l add %t201, 24
+    storel 0, %t204
+    call $Exception___init__(l %rt, l %t201, l %t200)
+    %t205 =w call $nox_exception_pending(l %rt)
+    jnz %t205, @ctor_init_failed153, @ctor_init_cont154
 @ctor_init_failed153
-    %t197 =w ceql %t192, 0
-    jnz %t197, @release_skip156, @release155
+    %t206 =w ceql %t201, 0
+    jnz %t206, @release_skip156, @release155
 @release155
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t192)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t201)
     jmp @release_done157
 @release_skip156
     jmp @release_done157
 @release_done157
     jmp @ctor_init_cont154
 @ctor_init_cont154
-    %t198 =w call $nox_exception_pending(l %rt)
-    jnz %t198, @exc_propagate158, @exc_continue159
+    %t207 =w call $nox_exception_pending(l %rt)
+    jnz %t207, @exc_propagate158, @exc_continue159
 @exc_propagate158
-    %t199 =l loadl %t1
-    %t200 =w ceql %t199, 0
-    jnz %t200, @release_skip161, @release160
+    %t208 =l loadl %t1
+    %t209 =w ceql %t208, 0
+    jnz %t209, @release_skip161, @release160
 @release160
-    %t201 =l sub %t199, 16
-    %t202 =l loadl %t201
-    %t203 =l sub %t202, 1
-    storel %t203, %t201
-    %t204 =w cslel %t203, 0
-    jnz %t204, @str_free163, @str_free_skip164
+    %t210 =l sub %t208, 16
+    %t211 =l loadl %t210
+    %t212 =l sub %t211, 1
+    storel %t212, %t210
+    %t213 =w cslel %t212, 0
+    jnz %t213, @str_free163, @str_free_skip164
 @str_free163
-    call $nox_str_free_now(l %rt, l %t199)
+    call $nox_str_free_now(l %rt, l %t208)
     jmp @str_free_done165
 @str_free_skip164
     jmp @str_free_done165
@@ -11895,18 +11910,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done162
 @release_done162
     storel 0, %t1
-    %t205 =l loadl %t4
-    %t206 =w ceql %t205, 0
-    jnz %t206, @release_skip167, @release166
+    %t214 =l loadl %t4
+    %t215 =w ceql %t214, 0
+    jnz %t215, @release_skip167, @release166
 @release166
-    %t207 =l sub %t205, 16
-    %t208 =l loadl %t207
-    %t209 =l sub %t208, 1
-    storel %t209, %t207
-    %t210 =w cslel %t209, 0
-    jnz %t210, @str_free169, @str_free_skip170
+    %t216 =l sub %t214, 16
+    %t217 =l loadl %t216
+    %t218 =l sub %t217, 1
+    storel %t218, %t216
+    %t219 =w cslel %t218, 0
+    jnz %t219, @str_free169, @str_free_skip170
 @str_free169
-    call $nox_str_free_now(l %rt, l %t205)
+    call $nox_str_free_now(l %rt, l %t214)
     jmp @str_free_done171
 @str_free_skip170
     jmp @str_free_done171
@@ -11918,21 +11933,21 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @exc_continue159
-    %t211 =l add %t192, 24
-    storel 204, %t211
-    call $nox_raise(l %rt, l %t192, l 204)
-    %t212 =l loadl %t1
-    %t213 =w ceql %t212, 0
-    jnz %t213, @release_skip173, @release172
+    %t220 =l add %t201, 24
+    storel 204, %t220
+    call $nox_raise(l %rt, l %t201, l 204)
+    %t221 =l loadl %t1
+    %t222 =w ceql %t221, 0
+    jnz %t222, @release_skip173, @release172
 @release172
-    %t214 =l sub %t212, 16
-    %t215 =l loadl %t214
-    %t216 =l sub %t215, 1
-    storel %t216, %t214
-    %t217 =w cslel %t216, 0
-    jnz %t217, @str_free175, @str_free_skip176
+    %t223 =l sub %t221, 16
+    %t224 =l loadl %t223
+    %t225 =l sub %t224, 1
+    storel %t225, %t223
+    %t226 =w cslel %t225, 0
+    jnz %t226, @str_free175, @str_free_skip176
 @str_free175
-    call $nox_str_free_now(l %rt, l %t212)
+    call $nox_str_free_now(l %rt, l %t221)
     jmp @str_free_done177
 @str_free_skip176
     jmp @str_free_done177
@@ -11942,18 +11957,18 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     jmp @release_done174
 @release_done174
     storel 0, %t1
-    %t218 =l loadl %t4
-    %t219 =w ceql %t218, 0
-    jnz %t219, @release_skip179, @release178
+    %t227 =l loadl %t4
+    %t228 =w ceql %t227, 0
+    jnz %t228, @release_skip179, @release178
 @release178
-    %t220 =l sub %t218, 16
-    %t221 =l loadl %t220
-    %t222 =l sub %t221, 1
-    storel %t222, %t220
-    %t223 =w cslel %t222, 0
-    jnz %t223, @str_free181, @str_free_skip182
+    %t229 =l sub %t227, 16
+    %t230 =l loadl %t229
+    %t231 =l sub %t230, 1
+    storel %t231, %t229
+    %t232 =w cslel %t231, 0
+    jnz %t232, @str_free181, @str_free_skip182
 @str_free181
-    call $nox_str_free_now(l %rt, l %t218)
+    call $nox_str_free_now(l %rt, l %t227)
     jmp @str_free_done183
 @str_free_skip182
     jmp @str_free_done183

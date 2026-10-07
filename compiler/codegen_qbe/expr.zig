@@ -540,6 +540,20 @@ pub fn boundsElideApplies(self: *Codegen, idx: ast.Index) bool {
     return std.mem.eql(u8, ctx.list_name, idx.obj.identifier) and std.mem.eql(u8, ctx.idx_var, idx.index.identifier);
 }
 
+/// v1.161.0: Python gibi negatif indeks (`xs[-1]`, `s[-2]`): `i < 0` ise `i + len`. Dallanmasız (`sar`/`and`/`add`); pozitif sabit
+/// literal indekste (`xs[0]`) atlanır. Sonuçtan sonra mevcut TEK işaretsiz `cugel` sınır kontrolü hâlâ geçerlidir
+/// (`i + len` hâlâ negatifse işaretsiz olarak çok büyüktür → `IndexError`).
+pub fn normalizeNegativeIndex(self: *Codegen, index_expr: ast.Expr, index_text: []const u8, len_t: []const u8) CodegenError![]const u8 {
+    if (index_expr == .int_lit and index_expr.int_lit >= 0) return index_text;
+    const sign = try self.newTemp();
+    try self.qbeOp2(sign, .l, "sar", index_text, "63");
+    const add_len = try self.newTemp();
+    try self.qbeOp2(add_len, .l, "and", sign, len_t);
+    const adj = try self.newTemp();
+    try self.qbeOp2(adj, .l, "add", index_text, add_len);
+    return adj;
+}
+
 pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     const obj = try self.genExpr(idx.obj.*);
     // Faz NN: `d[key]`nin taban SÖZLÜĞÜ (`obj`) TEMPORARY İSE (ör.
@@ -552,7 +566,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     if (obj.heap == .dict) return self.genDictGet(idx.obj.*, obj, idx.index.*);
     if (obj.heap == .str) return self.genStrIndex(obj, idx);
     if (obj.heap != .list) return error.Unsupported;
-    const index_v = try self.genExpr(idx.index.*);
+    var index_v = try self.genExpr(idx.index.*);
 
     // Faz S.2: sınır kontrolü — `genStrIndex`in AYNI "önce doğrula, hata
     // dalında raise et, phi'SİZ ok'e atla" deseni (bkz. onun belge notu).
@@ -565,6 +579,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     if (!self.boundsElideApplies(idx)) {
         const len_t = try self.newTemp();
         try self.qbeLoadL(len_t, obj.text);
+        index_v.text = try normalizeNegativeIndex(self, idx.index.*, index_v.text, len_t);
         // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
         // işaretsiz yorumlandığında ≥ 2^63 > len olur (3 işlem → 1).
         const oob_t = try self.newTemp();
@@ -640,7 +655,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
 /// olsa BİLE ÖNCE retain etmeye GEREK YOKTUR, yalnızca SONRADAN
 /// `releaseIfTemporary` ile tabanı serbest bırakmak yeterlidir.
 pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Value {
-    const index_v = try self.genExpr(idx.index.*);
+    var index_v = try self.genExpr(idx.index.*);
     // Faz GG.9: `genForRange`nin TESPİT ETTİĞİ `for i in range(len(s)):
     // ... s[i] ...` deseninin TAM İÇİNDEYSE (bkz. `bounds_elide_ctx`)
     // sınır kontrolü TAMAMEN ATLANIR — `strlen`in KENDİSİ de (`len_t`
@@ -665,6 +680,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
             try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_str_char_count", &.{.{ .ty = .l, .text = obj.text }});
             break :blk t;
         };
+        index_v.text = try normalizeNegativeIndex(self, idx.index.*, index_v.text, len_t);
         // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
         // işaretsiz yorumlandığında ≥ 2^63 > len olur (3 işlem → 1).
         const oob_t = try self.newTemp();
@@ -2046,7 +2062,7 @@ pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
 /// kutunun adresini basıyordu). Boş (null) işaretçi hiçbir Optional-OLMAYAN yığın değerinde oluşamaz,
 /// bu yüzden koşulsuz çalışma-zamanı kontrolü güvenlidir.
 fn printMayBeNull(v: Value) bool {
-    return v.heap == .str or v.heap == .list or v.heap == .class or v.heap == .boxed_scalar;
+    return v.heap == .str or v.heap == .list or v.heap == .class or v.heap == .boxed_scalar or v.heap == .dict;
 }
 
 fn genPrintNullGuarded(self: *Codegen, v: Value, frag: bool) CodegenError!void {
@@ -2086,7 +2102,7 @@ fn genPrintFloat(self: *Codegen, v: Value, fmt: []const u8) CodegenError!void {
 }
 
 fn genPrintRaw(self: *Codegen, v: Value) CodegenError!void {
-    if (v.heap == .list or v.heap == .class) {
+    if (v.heap == .list or v.heap == .class or v.heap == .dict) {
         try genPrintFragmentRaw(self, v);
         try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
         return;
@@ -2130,6 +2146,7 @@ pub fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
 }
 
 fn genPrintFragmentRaw(self: *Codegen, v: Value) CodegenError!void {
+    if (v.heap == .dict) return genPrintDict(self, v);
     if (v.heap == .list) return self.genPrintList(v);
     if (v.heap == .class) return self.genPrintClass(v);
     if (v.fixed_int) |kind| {
@@ -2231,6 +2248,60 @@ pub fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
     try self.qbeLabel(end_label);
 
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_rbracket" }});
+}
+
+/// v1.161.0: `dict[K, V]` Python gibi `{k: v, ...}` (ekleme sırası; `str` anahtar/değerler tırnaklı) basılır — `keys()`/`values()`
+/// listeleri üretilip paralel gezilir, sonra serbest bırakılır (boş sözlük `{}`).
+fn genPrintDict(self: *Codegen, v: Value) CodegenError!void {
+    var none_expr: ast.Expr = .none_lit;
+    const keys = try self.genDictMethod(v, .{ .obj = &none_expr, .attr = "keys" }, &.{});
+    const vals = try self.genDictMethod(v, .{ .obj = &none_expr, .attr = "values" }, &.{});
+    const lb = try self.internFmtString("{");
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = lb }});
+
+    const len_t = try self.newTemp();
+    try self.qbeLoadL(len_t, keys.text);
+    const idx_slot = try self.newTemp();
+    try self.qbeAlloc(idx_slot, .eight, 8);
+    try self.qbeStoreImmL(0, idx_slot);
+    const cond_label = try self.newLabel("printdict_cond");
+    const body_label = try self.newLabel("printdict_body");
+    const end_label = try self.newLabel("printdict_end");
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
+    const idx_cur = try self.newTemp();
+    try self.qbeLoadL(idx_cur, idx_slot);
+    const cont = try self.newTemp();
+    try self.qbeOp2(cont, .w, "csltl", idx_cur, len_t);
+    try self.qbeJnz(cont, body_label, end_label);
+    try self.qbeLabel(body_label);
+
+    const not_first = try self.newTemp();
+    try self.qbeOp2Imm(not_first, .w, "cnel", idx_cur, 0);
+    const comma_label = try self.newLabel("printdict_comma");
+    const skip_label = try self.newLabel("printdict_skipcomma");
+    try self.qbeJnz(not_first, comma_label, skip_label);
+    try self.qbeLabel(comma_label);
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_comma_sp" }});
+    try self.qbeJmp(skip_label);
+    try self.qbeLabel(skip_label);
+
+    const kv = try self.loadListElemValueAt(keys, idx_cur);
+    try self.genPrintFragment(kv);
+    const colon = try self.internFmtString(": ");
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = colon }});
+    const vv = try self.loadListElemValueAt(vals, idx_cur);
+    try self.genPrintFragment(vv);
+
+    const idx_next = try self.newTemp();
+    try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);
+    try self.qbeStoreL(idx_next, idx_slot);
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(end_label);
+    const rb = try self.internFmtString("}");
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = rb }});
+    try self.releaseValueIfSet(keys.text, keys.heap, keys.elem_qtype, keys.class_name, keys.elem_heap_info, keys.dict_info);
+    try self.releaseValueIfSet(vals.text, vals.heap, vals.elem_qtype, vals.class_name, vals.elem_heap_info, vals.dict_info);
 }
 
 /// Sınıf görüntülemesi — `ClassName(alan1=değer1, alan2=değer2, ...)`.

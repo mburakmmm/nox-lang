@@ -5334,7 +5334,7 @@ pub const Checker = struct {
                     // hatası ÖNCELİKLİ kalır (capture'lar zaten mutasyona
                     // KAPALI, bu değişmiyor).
                     if (self.module_globals.get(name)) |gt| break :blk gt;
-                    return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name});
+                    return self.fail(error.UndefinedVariable, "tanımsız değişken: {s} (ilk atamada tip belirtin: `{s}: <tip> = ...`)", .{ name, name });
                 };
                 const value_t = try self.checkExprExpected(ctx, a.value, existing);
                 if (!self.assignable(existing, value_t)) {
@@ -5398,7 +5398,7 @@ pub const Checker = struct {
                     if (key_t != .int) {
                         return self.fail(error.TypeMismatch, "liste indeksi 'int' olmalı", .{});
                     }
-                    const value_t = try self.checkExpr(ctx, a.value);
+                    const value_t = try self.checkExprExpected(ctx, a.value, obj_t.list.*);
                     if (!self.assignable(obj_t.list.*, value_t)) {
                         return self.fail(error.TypeMismatch, "indeksli atamada tip uyuşmazlığı: listenin eleman tipiyle uyuşmuyor", .{});
                     }
@@ -5411,7 +5411,7 @@ pub const Checker = struct {
                 if (!types.eql(key_t, obj_t.dict.key.*)) {
                     return self.fail(error.TypeMismatch, "dict indeksi anahtar tipiyle uyuşmuyor", .{});
                 }
-                const value_t = try self.checkExpr(ctx, a.value);
+                const value_t = try self.checkExprExpected(ctx, a.value, obj_t.dict.value.*);
                 if (!self.assignable(obj_t.dict.value.*, value_t)) {
                     return self.fail(error.TypeMismatch, "dict değeri değer tipiyle uyuşmuyor", .{});
                 }

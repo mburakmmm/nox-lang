@@ -1565,41 +1565,44 @@ export function l $hexd(l %rt, l %p_n) {
     %t38 =l loadl %t1
     %t39 =l loadl %t0
     %t40 =l loadl %t38
-    %t41 =w cugel %t39, %t40
-    jnz %t41, @list_idx_err3, @list_idx_ok4
+    %t41 =l sar %t39, 63
+    %t42 =l and %t41, %t40
+    %t43 =l add %t39, %t42
+    %t44 =w cugel %t43, %t40
+    jnz %t44, @list_idx_err3, @list_idx_ok4
 @list_idx_ok4
-    %t55 =l mul %t39, 8
-    %t56 =l add %t55, 16
-    %t57 =l add %t38, %t56
-    %t58 =l loadl %t57
-    %t59 =w ceql %t58, 0
-    jnz %t59, @retain_skip19, @retain18
-@retain18
-    %t60 =l sub %t58, 16
+    %t58 =l mul %t43, 8
+    %t59 =l add %t58, 16
+    %t60 =l add %t38, %t59
     %t61 =l loadl %t60
-    %t62 =l add %t61, 1
-    storel %t62, %t60
+    %t62 =w ceql %t61, 0
+    jnz %t62, @retain_skip19, @retain18
+@retain18
+    %t63 =l sub %t61, 16
+    %t64 =l loadl %t63
+    %t65 =l add %t64, 1
+    storel %t65, %t63
     jmp @retain_done20
 @retain_skip19
     jmp @retain_done20
 @retain_done20
-    %t63 =l loadl %t1
-    %t64 =w ceql %t63, 0
-    jnz %t64, @release_skip22, @release21
+    %t66 =l loadl %t1
+    %t67 =w ceql %t66, 0
+    jnz %t67, @release_skip22, @release21
 @release21
-    call $List_str_release(l %rt, l %t63)
+    call $List_str_release(l %rt, l %t66)
     jmp @release_done23
 @release_skip22
     jmp @release_done23
 @release_done23
     storel 0, %t1
-    ret %t58
+    ret %t61
 @after_return24
-    %t65 =l loadl %t1
-    %t66 =w ceql %t65, 0
-    jnz %t66, @release_skip26, @release25
+    %t68 =l loadl %t1
+    %t69 =w ceql %t68, 0
+    jnz %t69, @release_skip26, @release25
 @release25
-    call $List_str_release(l %rt, l %t65)
+    call $List_str_release(l %rt, l %t68)
     jmp @release_done27
 @release_skip26
     jmp @release_done27
@@ -1608,37 +1611,37 @@ export function l $hexd(l %rt, l %p_n) {
 @fn_end28
     ret 0
 @list_idx_err3
-    %t42 =l add $str16, 16
-    %t43 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 7, %t43
-    %t44 =l add %t43, 8
-    storel 0, %t44
-    %t45 =l add %t43, 16
-    storel 0, %t45
-    %t46 =l add %t43, 24
-    storel 0, %t46
-    call $Exception___init__(l %rt, l %t43, l %t42)
-    %t47 =w call $nox_exception_pending(l %rt)
-    jnz %t47, @ctor_init_failed5, @ctor_init_cont6
+    %t45 =l add $str16, 16
+    %t46 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 7, %t46
+    %t47 =l add %t46, 8
+    storel 0, %t47
+    %t48 =l add %t46, 16
+    storel 0, %t48
+    %t49 =l add %t46, 24
+    storel 0, %t49
+    call $Exception___init__(l %rt, l %t46, l %t45)
+    %t50 =w call $nox_exception_pending(l %rt)
+    jnz %t50, @ctor_init_failed5, @ctor_init_cont6
 @ctor_init_failed5
-    %t48 =w ceql %t43, 0
-    jnz %t48, @release_skip8, @release7
+    %t51 =w ceql %t46, 0
+    jnz %t51, @release_skip8, @release7
 @release7
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t43)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t46)
     jmp @release_done9
 @release_skip8
     jmp @release_done9
 @release_done9
     jmp @ctor_init_cont6
 @ctor_init_cont6
-    %t49 =w call $nox_exception_pending(l %rt)
-    jnz %t49, @exc_propagate10, @exc_continue11
+    %t52 =w call $nox_exception_pending(l %rt)
+    jnz %t52, @exc_propagate10, @exc_continue11
 @exc_propagate10
-    %t50 =l loadl %t1
-    %t51 =w ceql %t50, 0
-    jnz %t51, @release_skip13, @release12
+    %t53 =l loadl %t1
+    %t54 =w ceql %t53, 0
+    jnz %t54, @release_skip13, @release12
 @release12
-    call $List_str_release(l %rt, l %t50)
+    call $List_str_release(l %rt, l %t53)
     jmp @release_done14
 @release_skip13
     jmp @release_done14
@@ -1646,14 +1649,14 @@ export function l $hexd(l %rt, l %p_n) {
     storel 0, %t1
     ret 0
 @exc_continue11
-    %t52 =l add %t43, 24
-    storel 3, %t52
-    call $nox_raise(l %rt, l %t43, l 3)
-    %t53 =l loadl %t1
-    %t54 =w ceql %t53, 0
-    jnz %t54, @release_skip16, @release15
+    %t55 =l add %t46, 24
+    storel 3, %t55
+    call $nox_raise(l %rt, l %t46, l 3)
+    %t56 =l loadl %t1
+    %t57 =w ceql %t56, 0
+    jnz %t57, @release_skip16, @release15
 @release15
-    call $List_str_release(l %rt, l %t53)
+    call $List_str_release(l %rt, l %t56)
     jmp @release_done17
 @release_skip16
     jmp @release_done17

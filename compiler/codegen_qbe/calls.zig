@@ -10,6 +10,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
+const expr_mod = @import("expr.zig");
 const codegen = @import("codegen.zig");
 const async_thread_mod = @import("async_thread.zig");
 
@@ -2643,9 +2644,10 @@ pub fn emitColdListError(self: *Codegen, bad: []const u8, class_name: []const u8
 
 /// `idx` (l) indeksindeki elemanı sınır denetimiyle (aralık dışı/negatif → `IndexError`) listeden ÇIKARIR (sonrakileri kaydırır,
 /// `len`i azaltır). Dönen eleman değeri artık ÇAĞIRANA aittir (serbest bırakmak ya da devralmak çağıranın işidir).
-fn emitListRemoveAtChecked(self: *Codegen, obj: Value, idx: []const u8, rels: []const RelPair) CodegenError!Value {
+fn emitListRemoveAtChecked(self: *Codegen, obj: Value, index_expr: ast.Expr, idx_in: []const u8, rels: []const RelPair) CodegenError!Value {
     const len_t = try self.newTemp();
     try self.qbeLoadL(len_t, obj.text);
+    const idx = try expr_mod.normalizeNegativeIndex(self, index_expr, idx_in, len_t); // v1.161.0: negatif indeks sondan sayar
     const bad = try self.newTemp();
     try self.qbeOp2(bad, .w, "cugel", idx, len_t); // işaretsiz idx >= len (negatif de yakalanır)
     try emitColdListError(self, bad, "IndexError", "liste indeksi aralik disi", rels);
@@ -2759,7 +2761,7 @@ fn genListPopAt(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.
     const idx0 = try self.genExpr(args[0]);
     const idx = try self.convert(idx0, .l);
     const rels = [_]RelPair{.{ .e = a.obj.*, .v = obj }};
-    const elem = try emitListRemoveAtChecked(self, obj, idx.text, &rels);
+    const elem = try emitListRemoveAtChecked(self, obj, args[0], idx.text, &rels);
     try self.releaseIfTemporary(a.obj.*, obj);
     return elem;
 }
@@ -3062,7 +3064,7 @@ pub fn genListDelete(self: *Codegen, ix: ast.Index, obj: Value) CodegenError!voi
     const idx0 = try self.genExpr(ix.index.*);
     const idx = try self.convert(idx0, .l);
     const rels = [_]RelPair{.{ .e = ix.obj.*, .v = obj }};
-    const elem = try emitListRemoveAtChecked(self, obj, idx.text, &rels);
+    const elem = try emitListRemoveAtChecked(self, obj, ix.index.*, idx.text, &rels);
     try releaseListElem(self, obj, elem.text);
     try self.releaseIfTemporary(ix.obj.*, obj);
 }
