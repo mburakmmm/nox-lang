@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.143.0]
+
+### Değişti (varsayılan davranış)
+
+- **Varsayılan backend artık LLVM** (`.ll` + `clang -O2`): QBE'ye göre geometrik ortalama 1.71x → 1.49x (C'ye göre),
+  derleme süresi aynı/daha kısa. QBE `--backend qbe` ile seçilir; freestanding, `--target`, `--emit-asm`, Windows
+  ve `clang` yokken (not basılır) otomatik seçilir. `--release` eski ad olarak LLVM'e eşdeğer kalır.
+  Sonuç: `spawn`/`await` varsayılanda gerçek M:N havuzu kullanır. Spec §3.260.
+
+### Eklendi
+
+- `--backend <llvm|qbe>` bayrağı; `noxc check` build ile aynı backend'e göre denetler.
+
 ## [1.142.26]
 
 ### Performans

@@ -136,6 +136,7 @@ fn printHelp(is_tr: bool) void {
             \\  --dump, -v             ayrıntılı/AST dökümü (build/run/check ile)
             \\  -o <çıktı>             çıktı ikilisinin adı (yalnızca build ile)
             \\  --profile <hosted|freestanding>  stdlib import allowlist'i (build/check ile, varsayılan: hosted)
+            \\  --backend <llvm|qbe>   kod üretim backend'i (varsayılan: llvm; freestanding/--target/--emit-asm/Windows/clang yoksa qbe)
             \\
             \\Örnekler:
             \\  noxc run main.nox -- a b c
@@ -181,6 +182,7 @@ fn printHelp(is_tr: bool) void {
             \\  --dump, -v             verbose/AST dump (with build/run/check)
             \\  -o <output>            output binary name (build only)
             \\  --profile <hosted|freestanding>  stdlib import allowlist (with build/check, default: hosted)
+            \\  --backend <llvm|qbe>   code generation backend (default: llvm; qbe for freestanding/--target/--emit-asm/Windows/no clang)
             \\
             \\Examples:
             \\  noxc run main.nox -- a b c
@@ -805,7 +807,7 @@ fn installOrUpdatePackage(
     defer std.Io.Dir.cwd().deleteTree(io, scratch_dir_path) catch {};
     const scratch_bin_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ scratch_dir_path, bin_spec.name });
 
-    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, false, .hosted, fetch_policy, null, false);
+    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, .auto, .hosted, fetch_policy, null, false);
 
     const bin_dir_path = try project.resolveGlobalBinDir(a, nox_home);
     try std.Io.Dir.cwd().createDirPath(io, bin_dir_path);
@@ -1018,12 +1020,11 @@ const BuildOpts = struct {
     /// TETİKLER. Varsayılan `false` — M.2'nin "sessiz varsayılan" ilkesiyle
     /// TUTARLI (opt-in, çıktı boyutunu/derleme süresini gereksiz büyütmez).
     debug_info: bool = false,
-    /// DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel
-    /// bir LLVM backend'i"): `true` İKEN `buildOne` QBE/`qbe`/`cc` yolu
-    /// YERİNE `.ll`/`clang -O2` yolunu kullanır. Kapsam BİLİNÇLİ olarak dar
-    /// (bkz. planın "Kapsam DIŞI" bölümü) — varsayılan `false`, mevcut QBE
-    /// yolu DEĞİŞMEDEN kalır.
-    release: bool = false,
+    /// v1.143.0: backend seçimi. `.auto` (varsayılan) `resolveRelease`e bırakılır: hosted +
+    /// macOS/Linux + `clang` varsa LLVM (`.ll`/`clang -O2`), aksi halde QBE (freestanding,
+    /// `--target`, `--emit-asm`, Windows, clang yok). `--backend qbe|llvm` ve (eski ad) `--release`
+    /// seçimi açıkça sabitler.
+    backend: BackendChoice = .auto,
     /// Faz F.2 (bkz. plan dosyası "capability sistemi"): `--profile
     /// <hosted|freestanding>` — `checker_state.profile`e AKTARILIR
     /// (bkz. `buildOne`). VARSAYILAN `.hosted` — mevcut TÜM davranış
@@ -1044,6 +1045,49 @@ const BuildOpts = struct {
     emit_asm: bool = false,
 };
 
+const BackendChoice = enum { auto, qbe, llvm };
+
+var g_clang_available: ?bool = null;
+
+fn clangAvailable(gpa: std.mem.Allocator, io: std.Io) bool {
+    if (g_clang_available) |v| return v;
+    const result = std.process.run(gpa, io, .{ .argv = &.{ "clang", "--version" } }) catch {
+        g_clang_available = false;
+        return false;
+    };
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    const ok = result.term == .exited and result.term.exited == 0;
+    g_clang_available = ok;
+    return ok;
+}
+
+/// v1.143.0: `BackendChoice.auto`yu somut bir backend'e (`true` = LLVM) çözer. LLVM varsayılandır
+/// (QBE'ye göre ~1.0-1.5x daha hızlı kod, derleme süresi aynı); QBE'ye düşülen durumlar: freestanding
+/// profili (LLVM'in OS iş parçacığı havuzu yok), `--target`/`--emit-asm` (yalnızca QBE yolu hedef/asm
+/// çıktısını destekler), Windows ana makinesi (LLVM yolunda MinGW bağlama argümanları yok) ve `clang`ın
+/// PATH'te bulunmaması (bu son durumda tek satırlık bir not basılır — checker'ın `spawn` tip kuralları
+/// backend'e göre farklıdır, sessiz düşüş şaşırtıcı olurdu).
+fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, profile: codegen.Profile, target: ?[]const u8, emit_asm: bool) bool {
+    switch (choice) {
+        .qbe => return false,
+        .llvm => return true,
+        .auto => {},
+    }
+    if (profile == .freestanding) return false;
+    if (target != null or emit_asm) return false;
+    if (builtin.os.tag == .windows) return false;
+    if (!clangAvailable(gpa, io)) {
+        if (g_is_tr) {
+            printErr("not: clang bulunamadi, QBE backend'i kullaniliyor (varsayilan LLVM backend'i icin PATH'te clang gerekir; --backend qbe ile bu notu kapatabilirsiniz)\n", .{});
+        } else {
+            printErr("note: clang not found, using the QBE backend (the default LLVM backend needs clang on PATH; pass --backend qbe to silence this)\n", .{});
+        }
+        return false;
+    }
+    return true;
+}
+
 fn parseBuildOpts(args: []const []const u8) BuildOpts {
     var opts: BuildOpts = .{};
     var i: usize = 0;
@@ -1054,7 +1098,19 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
         } else if (std.mem.eql(u8, arg, "-g")) {
             opts.debug_info = true;
         } else if (std.mem.eql(u8, arg, "--release")) {
-            opts.release = true;
+            opts.backend = .llvm;
+        } else if (std.mem.eql(u8, arg, "--backend")) {
+            i += 1;
+            if (i < args.len) {
+                if (std.mem.eql(u8, args[i], "qbe")) {
+                    opts.backend = .qbe;
+                } else if (std.mem.eql(u8, args[i], "llvm")) {
+                    opts.backend = .llvm;
+                } else {
+                    printErr("bilinmeyen backend: '{s}' (gecerli degerler: qbe, llvm)\n", .{args[i]});
+                    std.process.exit(1);
+                }
+            }
         } else if (std.mem.eql(u8, arg, "-o")) {
             i += 1;
             if (i < args.len) opts.output = args[i];
@@ -1099,7 +1155,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
     };
-    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
     printOk("derlendi: {s}\n", .{out});
 }
 
@@ -1154,7 +1210,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     }
 
     const cache_bin_path = try cacheBinPath(io, a, path_arg);
-    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
 
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
@@ -1199,7 +1255,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
     if (opts.path) |t| {
         if (std.mem.endsWith(u8, t, ".nox")) {
             const cache_bin_path = try cacheBinPath(io, a, t);
-            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
             const code = try runAndWait(io, a, bin_path, &.{});
             std.process.exit(code);
         }
@@ -1225,7 +1281,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const fa = file_arena.allocator();
 
         const cache_bin_path = try cacheBinPath(io, fa, file);
-        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             printOk("GECTI: {s}\n", .{file});
@@ -1730,6 +1786,8 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 
     var checker_state = checker.Checker.init(a);
     checker_state.profile = opts.profile;
+    // `build` ile aynı backend'e göre denetle (checker'ın `spawn` tip kuralları backend'e bağlıdır).
+    checker_state.backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm)) .llvm else .qbe;
     checker_state.checkModule(module) catch |e| {
         printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         std.process.exit(1);
@@ -1839,7 +1897,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     const user_module = try parser.parseModule(a, tokens);
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
-    const backend: codegen.Backend = if (opts.release) .llvm else .qbe;
+    const backend: codegen.Backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm)) .llvm else .qbe;
     var checker_state = checker.Checker.init(a);
     checker_state.backend = backend;
     checker_state.checkModule(module) catch |e| {
@@ -1965,7 +2023,8 @@ fn computeLinkerVisibilityArgs() []const []const u8 {
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
-fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, release: bool, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy, target: ?[]const u8, emit_asm: bool) ![]const u8 {
+fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, backend_choice: BackendChoice, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy, target: ?[]const u8, emit_asm: bool) ![]const u8 {
+    const release = resolveRelease(gpa, io, backend_choice, profile, target, emit_asm);
     // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--release` (LLVM) yolu
     // GERÇEK OS iş parçacıklarına dayanan paylaşılan bir `WorkerPool`
     // kurar (Task[T]/Channel[T] DAHİL, TÜM `spawn`lar İçİn) — freestanding

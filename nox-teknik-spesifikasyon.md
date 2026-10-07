@@ -28330,6 +28330,29 @@ Golden: `strings_replace_join_edge_cases` (çakışma, baş/son eşleşme, boş 
 girdi, `join` boş liste/boş ayırıcı, `repeat`, `upper`/`lower`; QBE ve `--release` aynı çıktı, Python
 referansıyla da doğrulandı). Birim test: `nox_str_alloc_buf`.
 
+## 3.260 Varsayılan backend LLVM (v1.143.0)
+
+Kullanıcı kararıyla `noxc build/run/test/check/explain` varsayılan backend'i QBE'den LLVM'e (`.ll` +
+`clang -O2`) çevrildi. Gerekçe (ölçülmüş): cross_lang geometrik ortalama C'ye göre QBE 1.71x, LLVM 1.49x;
+LLVM derleme süresi QBE ile aynı ya da daha kısa (küçük/orta programlar: 0.08 s vs 0.11 s).
+
+`main.zig`: `BuildOpts.backend: BackendChoice = .auto` (`.qbe`/`.llvm` açık). `--backend qbe|llvm` yeni;
+`--release` eski ad olarak LLVM'e eşdeğer. `resolveRelease` `.auto`yu çözer: QBE'ye düşülen durumlar —
+`--profile freestanding` (LLVM'in OS iş parçacığı havuzu yok; açık `--backend llvm` + freestanding hâlâ hata),
+`--target` ve `--emit-asm` (yalnızca QBE yolu hedef/asm çıktısını destekler), Windows ana makinesi (LLVM
+yolunda MinGW bağlama argümanları yok; CI'da Windows yalnızca QBE ile doğrulanır) ve `clang`ın PATH'te
+olmaması (tek satırlık not basılır; sessiz düşüş şaşırtıcı olurdu çünkü checker'ın `spawn` kuralları
+backend'e bağlıdır). `noxc check` da aynı çözümü kullanır (build ile aynı backend'e göre denetler);
+`noxc install` yüklenen araçları da varsayılan olarak LLVM ile derler.
+
+**Anlamsal sonuçlar (dokümante):** varsayılanda `spawn`/`await` artık gerçek, paylaşılan M:N iş-çalan havuzuna
+bağlanır (§MN), `nox.thread.start`/`ThreadChannel[T]` aynı havuza birleşir, `spawn`/`thread` argüman tipi kümesi
+`list`/sınıf/`dict`i de kabul eder. Fiber-kooperatif M:1 davranışı `--backend qbe`de korunur. Tam test paketi
+(her fixture iki backend'de) varsayılan değişikliğinden sonra değişmeden yeşil (173/173).
+
+Golden/CLI: `tests/cli/backend_default_test.zig` (varsayılan `.ll`, `--backend qbe` `.ssa`, `--backend llvm`/
+`--release` `.ll`, `--emit-asm` QBE, bilinmeyen backend hatası; hepsi aynı program çıktısı).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

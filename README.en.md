@@ -51,11 +51,13 @@ print(c.value)
   path), compile-time-monomorphized user-defined generic classes
   (`class Box[T]:`), and simple single inheritance (`class Derived(Base):`
   — method overriding, `super()`, runtime polymorphic dispatch).
-- **AOT compilation directly to native code via QBE** — no LLVM/MLIR
-  dependency. `noxc build --release` (macOS/arm64, experimental)
-  OPTIONALLY switches to a second, LLVM-based backend (`clang -O2`) —
-  ONLY for programs that opt into `--release`; the default QBE path is
-  unchanged.
+- **AOT compilation directly to native code with two backends.** **The
+  default (since v1.143.0) is the LLVM backend** (`.ll` + `clang -O2`;
+  macOS/Linux, needs `clang`). The [QBE](https://c9x.me/compile/) backend
+  is selected with `--backend qbe` and is used AUTOMATICALLY for
+  `--profile freestanding`, `--target`, `--emit-asm`, on Windows, and when
+  `clang` is not found (a note is printed in that last case). `--release`
+  remains as the old name for `--backend llvm`.
 - **A layered, mostly invisible memory model** (the "Ownership Pyramid"):
   the compiler emits zero-cost ASAP destructors whenever possible, and
   falls back to ARC (reference counting) when ownership is ambiguous —
@@ -64,8 +66,8 @@ print(c.value)
   importing as a library).
 - **A Go-style fiber/cooperative async runtime** (`spawn`/`await`,
   `Task`/`Channel`) plus real concurrent I/O (a kqueue/epoll-based
-  reactor). The default (flagless) build runs cooperatively on a single
-  OS thread (M:1); **under `noxc build --release`, the ENTIRE async
+  reactor). The QBE backend runs cooperatively on a single
+  OS thread (M:1); **under the default LLVM backend, the ENTIRE async
   runtime transparently attaches to a real, shared M:N work-stealing
   scheduler** (atomic ARC, Chase-Lev deques, a cooperative stop-the-world
   cycle collector) — no code changes or opt-in required: `$main` itself
@@ -73,10 +75,10 @@ print(c.value)
   default, configurable via `NOX_POOL_WORKERS`), and even ordinary
   `spawn`/`await` gets distributed across multiple cores.
 - **Shared-nothing, multi-core thread support** (`nox.thread`) — under
-  the flagless (QBE) build, real OS threads (`ThreadHandle[T]`/`.join()`),
+  the QBE backend, real OS threads (`ThreadHandle[T]`/`.join()`),
   each with its own independent fiber runtime, and continuous,
   bidirectional communication between them (`ThreadChannel[T]`).
-  **Under `--release`, `nox.thread.start`/`ThreadChannel[T]` join the
+  **Under the LLVM backend (the default), `nox.thread.start`/`ThreadChannel[T]` join the
   SAME shared M:N pool described above** (with the Nox-source API
   unchanged) — the argument/return type restriction widens (`list`/class/
   `dict` become transferable too), delivering real, stealable parallelism.
@@ -147,8 +149,9 @@ a specific version or change the install root (see
 ### Building from source
 
 For contributors, or users on an unsupported platform (e.g. an Intel
-Mac). Requirements: [Zig 0.16](https://ziglang.org/download/) and
-[QBE](https://c9x.me/compile/) (`brew install qbe` / build from source).
+Mac). Requirements: [Zig 0.16](https://ziglang.org/download/), `clang` (for the
+default LLVM backend) and [QBE](https://c9x.me/compile/) (`brew install qbe` /
+build from source; needed for `--backend qbe` and freestanding).
 
 ```sh
 git clone https://github.com/mburakmmm/nox-lang.git

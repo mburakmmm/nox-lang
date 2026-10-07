@@ -44,11 +44,12 @@ print(c.value)
   yolu ile), derleme-zamanı monomorfizasyonlu kullanıcı-tanımlı generic
   sınıflar (`class Box[T]:`) ve basit tek-kalıtım (`class Derived(Base):`
   — metod override, `super()`, çalışma-zamanı polimorfik dispatch) DAHİL.
-- **QBE üzerinden doğrudan native koda AOT derleme** — LLVM/MLIR bağımlılığı
-  yok. `noxc build --release` (macOS/arm64, deneysel) İSTEĞE BAĞLI olarak
-  ikinci, LLVM tabanlı bir backend'e (`clang -O2`) geçer — YALNIZCA
-  `--release`in KENDİ SEÇTİĞİ programlar İçİn, varsayılan QBE yolu
-  DEĞİŞMEDEN kalır.
+- **İki backend ile doğrudan native koda AOT derleme.** **Varsayılan (v1.143.0'dan
+  beri) LLVM backend'idir** (`.ll` + `clang -O2`; macOS/Linux, `clang` gerekir).
+  [QBE](https://c9x.me/compile/) backend'i `--backend qbe` ile seçilir ve şu
+  durumlarda OTOMATİK kullanılır: `--profile freestanding`, `--target`,
+  `--emit-asm`, Windows ve `clang` bulunamadığında (bu sonuncuda bir not
+  basılır). `--release` eski ad olarak `--backend llvm`e eşdeğer kalır.
 - **Katmanlı, çoğunlukla görünmez bir bellek modeli** ("Sahiplik Piramidi"):
   derleyici mümkün olduğunda sıfır maliyetli ASAP destructor'lar üretir,
   belirsiz durumlarda ARC'ye (referans sayımı) düşer — kullanıcıya hiçbir
@@ -63,8 +64,8 @@ print(c.value)
   ile bırakıldı (bkz. `runtime/hpy_bridge/context.zig`).
 - **Go tarzı fiber/kooperatif async çalışma zamanı** (`spawn`/`await`,
   `Task`/`Channel`) + gerçek eşzamanlı G/Ç (kqueue tabanlı reaktör).
-  Varsayılan (bayraksız) derlemede TEK bir OS iş parçacığında kooperatif
-  çalışır (M:1); **`noxc build --release` altında İSE TÜM async
+  QBE backend'inde TEK bir OS iş parçacığında kooperatif çalışır (M:1);
+  **varsayılan LLVM backend'inde İSE TÜM async
   çalışma zamanı ŞEFFAF olarak GERÇEK, paylaşılan bir M:N iş-çalan
   (work-stealing) zamanlayıcıya (atomik ARC, Chase-Lev deque'ler,
   kooperatif "dünyayı-durdur" döngü-çözücü) OTOMATİK BAĞLANIR** — hiçbir
@@ -73,10 +74,10 @@ print(c.value)
   bir worker havuzu kurar, sıradan `spawn`/`await` DAHİ birden fazla OS
   çekirdeğine dağılır.
 - **Paylaşımsız (shared-nothing), çok çekirdekli iş parçacığı desteği**
-  (`nox.thread`) — bayraksız (QBE) derlemede her biri KENDİ bağımsız
+  (`nox.thread`) — QBE backend'inde her biri KENDİ bağımsız
   fiber çalışma zamanına sahip gerçek OS iş parçacıkları (`ThreadHandle[T]`/
   `.join()`) ve aralarında sürekli, çift-yönlü iletişim (`ThreadChannel[T]`).
-  **`--release` altında İSE `nox.thread.start`/`ThreadChannel[T]` de
+  **LLVM backend'inde (varsayılan) İSE `nox.thread.start`/`ThreadChannel[T]` de
   YUKARIDAKİ AYNI paylaşılan M:N havuzuna BİRLEŞİR** (Nox-kaynak API'si
   DEĞİŞMEDEN) — argüman/dönüş tipi kısıtı GENİŞLER (`list`/sınıf/`dict`
   DE artık taşınabilir), çalınabilir gerçek paralellik SAĞLAR.
@@ -145,8 +146,9 @@ Belirli bir sürümü kurmak/kurulum kökünü değiştirmek için `NOX_VERSION`
 ### Kaynaktan derleme
 
 Katkıda bulunanlar ya da desteklenmeyen bir platformdaki (ör. Intel Mac)
-kullanıcılar için. Gereksinimler: [Zig 0.16](https://ziglang.org/download/)
-ve [QBE](https://c9x.me/compile/) (`brew install qbe` / kaynaktan derleme).
+kullanıcılar için. Gereksinimler: [Zig 0.16](https://ziglang.org/download/),
+`clang` (varsayılan LLVM backend'i için) ve [QBE](https://c9x.me/compile/)
+(`brew install qbe` / kaynaktan derleme; `--backend qbe` ve freestanding için).
 
 ```sh
 git clone https://github.com/mburakmmm/nox-lang.git
