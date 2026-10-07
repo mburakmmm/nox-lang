@@ -562,6 +562,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         const err_label = try self.newLabel("list_idx_err");
         const ok_label = try self.newLabel("list_idx_ok");
         try self.qbeJnz(oob_t, err_label, ok_label);
+        const cold_start = self.beginCold();
         try self.qbeLabel(err_label);
 
         const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
@@ -580,6 +581,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         try self.releaseIfTemporary(idx.obj.*, obj);
         try self.emitExceptionCheck();
         try self.qbeJmp(ok_label);
+        try self.stashCold(cold_start);
 
         try self.qbeLabel(ok_label);
     }
@@ -661,6 +663,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         const err_label = try self.newLabel("str_idx_err");
         const ok_label = try self.newLabel("str_idx_ok");
         try self.qbeJnz(oob_t, err_label, ok_label);
+        const cold_start = self.beginCold();
         try self.qbeLabel(err_label);
 
         const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
@@ -674,6 +677,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         try self.releaseIfTemporary(idx.obj.*, obj);
         try self.emitExceptionCheck();
         try self.qbeJmp(ok_label);
+        try self.stashCold(cold_start);
 
         try self.qbeLabel(ok_label);
     }
@@ -1617,6 +1621,7 @@ pub fn genCheckedShift(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) C
     const err_label = try self.newLabel("shift_err");
     const ok_label = try self.newLabel("shift_ok");
     try self.qbeJnz(bad_t, err_label, ok_label);
+    const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
 
     const msg_value = try self.emitStringLiteral("kaydirma miktari gecersiz (negatif ya da tipin bit genisligini asiyor)");
@@ -1626,6 +1631,7 @@ pub fn genCheckedShift(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) C
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ve_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     try self.emitExceptionCheck();
     try self.qbeJmp(ok_label);
+    try self.stashCold(cold_start);
 
     try self.qbeLabel(ok_label);
     const r = try self.convert(r0, l0.qtype);

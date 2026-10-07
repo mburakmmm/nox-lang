@@ -847,11 +847,37 @@ pub const Codegen = struct {
         };
     }
 
+    /// `begin` (bir `jnz ... err, ok` satırından HEMEN SONRAKİ yazma konumu) ile şimdiki konum
+    /// arasındaki metni (hata bloğu: `err` etiketinden `jmp ok`a kadar) çıktıdan KESİP `cold_blocks`a
+    /// taşır; `flushHoistedAllocs` (fonksiyon sonu) bunları son bloğun ARKASINA ekler. Böylece sıcak
+    /// yolun hemen ardından `ok` bloğu gelir: sınır kontrolü `bcs err` (alınmayan) + düz akış olur, her
+    /// erişimde atlanan hata bloğu için ek bir `b ok` dalı ve I-cache şişkinliği kalmaz.
+    pub fn beginCold(self: *Codegen) usize {
+        return self.out.writer.end;
+    }
+
+    pub fn stashCold(self: *Codegen, begin: usize) CodegenError!void {
+        if (!self.alloc_hoist_active) return; // fonksiyon dışı: yerinde bırak
+        const w = &self.out.writer;
+        if (w.end <= begin) return;
+        try self.cold_blocks.appendSlice(self.allocator, w.buffer[begin..w.end]);
+        w.end = begin;
+    }
+
     /// Fonksiyon sonunda biriken `alloc`/`alloca` satırlarını giriş bloğunun başına ekler.
     pub fn flushHoistedAllocs(self: *Codegen) CodegenError!void {
         defer {
             self.hoisted_allocs.clearRetainingCapacity();
+            self.cold_blocks.clearRetainingCapacity();
             self.alloc_hoist_active = false;
+        }
+        // Soğuk bloklar son bloğun ARKASINA, kapanış `}`ten ÖNCE eklenir: `}\n` zaten yazıldı, bu yüzden
+        // `}\n`i (2 bayt) geri alıp bloklardan SONRA yeniden yaz.
+        if (self.cold_blocks.items.len > 0) {
+            const w0 = &self.out.writer;
+            w0.end -= 2;
+            try w0.writeAll(self.cold_blocks.items);
+            try w0.writeAll("}\n");
         }
         if (self.hoisted_allocs.items.len == 0) return;
         const w = &self.out.writer;
@@ -893,6 +919,9 @@ pub const Codegen = struct {
     /// bloğu dışındaki `alloc` (ve LLVM'de giriş dışı `alloca`) HER çalıştırmada yığını büyütür
     /// ve fonksiyon dönene kadar geri vermez: döngü içinde `list.append` büyüme yolundaki geçici
     /// slotlar 3M iterasyonda ana yığını taşırıyor (SIGSEGV), 256 KiB fiber yığınında ~20K büyümede.
+    /// v1.142.24: "soğuk" (hata) bloklarının çıktıdan kesilip fonksiyon sonuna eklenmesi (bkz. `stashCold`).
+    cold_blocks: std.ArrayListUnmanaged(u8) = .empty,
+    cold_depth: u32 = 0,
     alloc_insert_pos: usize = 0,
     hoisted_allocs: std.ArrayListUnmanaged(u8) = .empty,
     alloc_hoist_active: bool = false,

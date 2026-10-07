@@ -1449,44 +1449,6 @@ export function l $run(l %rt) {
     %t23 =l call $nox_str_char_count(l %t22)
     %t24 =w cugel 3, %t23
     jnz %t24, @str_idx_err20, @str_idx_ok21
-@str_idx_err20
-    %t25 =l add $str2, 16
-    %t26 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 6, %t26
-    %t27 =l add %t26, 8
-    storel 0, %t27
-    %t28 =l add %t26, 16
-    storel 0, %t28
-    %t29 =l add %t26, 24
-    storel 0, %t29
-    call $Exception___init__(l %rt, l %t26, l %t25)
-    %t30 =w call $nox_exception_pending(l %rt)
-    jnz %t30, @ctor_init_failed22, @ctor_init_cont23
-@ctor_init_failed22
-    %t31 =w ceql %t26, 0
-    jnz %t31, @release_skip25, @release24
-@release24
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t26)
-    jmp @release_done26
-@release_skip25
-    jmp @release_done26
-@release_done26
-    jmp @ctor_init_cont23
-@ctor_init_cont23
-    %t32 =w call $nox_exception_pending(l %rt)
-    jnz %t32, @exc_propagate27, @exc_continue28
-@exc_propagate27
-    jmp @try_dispatch17
-@exc_continue28
-    %t33 =l add %t26, 24
-    storel 9, %t33
-    call $nox_raise(l %rt, l %t26, l 9)
-    %t34 =w call $nox_exception_pending(l %rt)
-    jnz %t34, @exc_propagate29, @exc_continue30
-@exc_propagate29
-    jmp @try_dispatch17
-@exc_continue30
-    jmp @str_idx_ok21
 @str_idx_ok21
     %t35 =l call $nox_str_char_at(l %rt, l %t22, l 3)
     %t36 =l loadl %t3
@@ -1674,6 +1636,44 @@ export function l $run(l %rt) {
     storel 0, %t3
 @fn_end79
     ret 0
+@str_idx_err20
+    %t25 =l add $str2, 16
+    %t26 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 6, %t26
+    %t27 =l add %t26, 8
+    storel 0, %t27
+    %t28 =l add %t26, 16
+    storel 0, %t28
+    %t29 =l add %t26, 24
+    storel 0, %t29
+    call $Exception___init__(l %rt, l %t26, l %t25)
+    %t30 =w call $nox_exception_pending(l %rt)
+    jnz %t30, @ctor_init_failed22, @ctor_init_cont23
+@ctor_init_failed22
+    %t31 =w ceql %t26, 0
+    jnz %t31, @release_skip25, @release24
+@release24
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t26)
+    jmp @release_done26
+@release_skip25
+    jmp @release_done26
+@release_done26
+    jmp @ctor_init_cont23
+@ctor_init_cont23
+    %t32 =w call $nox_exception_pending(l %rt)
+    jnz %t32, @exc_propagate27, @exc_continue28
+@exc_propagate27
+    jmp @try_dispatch17
+@exc_continue28
+    %t33 =l add %t26, 24
+    storel 9, %t33
+    call $nox_raise(l %rt, l %t26, l 9)
+    %t34 =w call $nox_exception_pending(l %rt)
+    jnz %t34, @exc_propagate29, @exc_continue30
+@exc_propagate29
+    jmp @try_dispatch17
+@exc_continue30
+    jmp @str_idx_ok21
 }
 export function w $main(w %argc, l %argv) {
 @start

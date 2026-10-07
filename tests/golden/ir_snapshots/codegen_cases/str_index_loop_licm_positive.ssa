@@ -1398,44 +1398,6 @@ export function l $count_two(l %rt, l %p_s) {
     %t9 =l loadl %t2
     %t10 =w cugel %t9, %t4
     jnz %t10, @str_idx_err4, @str_idx_ok5
-@str_idx_err4
-    %t11 =l add $str0, 16
-    %t12 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 6, %t12
-    %t13 =l add %t12, 8
-    storel 0, %t13
-    %t14 =l add %t12, 16
-    storel 0, %t14
-    %t15 =l add %t12, 24
-    storel 0, %t15
-    call $Exception___init__(l %rt, l %t12, l %t11)
-    %t16 =w call $nox_exception_pending(l %rt)
-    jnz %t16, @ctor_init_failed6, @ctor_init_cont7
-@ctor_init_failed6
-    %t17 =w ceql %t12, 0
-    jnz %t17, @release_skip9, @release8
-@release8
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t12)
-    jmp @release_done10
-@release_skip9
-    jmp @release_done10
-@release_done10
-    jmp @ctor_init_cont7
-@ctor_init_cont7
-    %t18 =w call $nox_exception_pending(l %rt)
-    jnz %t18, @exc_propagate11, @exc_continue12
-@exc_propagate11
-    ret 0
-@exc_continue12
-    %t19 =l add %t12, 24
-    storel 5, %t19
-    call $nox_raise(l %rt, l %t12, l 5)
-    %t20 =w call $nox_exception_pending(l %rt)
-    jnz %t20, @exc_propagate13, @exc_continue14
-@exc_propagate13
-    ret 0
-@exc_continue14
-    jmp @str_idx_ok5
 @str_idx_ok5
     jnz %t5, @str_idx_ascii15, @str_idx_unicode16
 @str_idx_ascii15
@@ -1484,44 +1446,6 @@ export function l $count_two(l %rt, l %p_s) {
     %t40 =l loadl %t2
     %t41 =w cugel %t40, %t4
     jnz %t41, @str_idx_err26, @str_idx_ok27
-@str_idx_err26
-    %t42 =l add $str2, 16
-    %t43 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 6, %t43
-    %t44 =l add %t43, 8
-    storel 0, %t44
-    %t45 =l add %t43, 16
-    storel 0, %t45
-    %t46 =l add %t43, 24
-    storel 0, %t46
-    call $Exception___init__(l %rt, l %t43, l %t42)
-    %t47 =w call $nox_exception_pending(l %rt)
-    jnz %t47, @ctor_init_failed28, @ctor_init_cont29
-@ctor_init_failed28
-    %t48 =w ceql %t43, 0
-    jnz %t48, @release_skip31, @release30
-@release30
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t43)
-    jmp @release_done32
-@release_skip31
-    jmp @release_done32
-@release_done32
-    jmp @ctor_init_cont29
-@ctor_init_cont29
-    %t49 =w call $nox_exception_pending(l %rt)
-    jnz %t49, @exc_propagate33, @exc_continue34
-@exc_propagate33
-    ret 0
-@exc_continue34
-    %t50 =l add %t43, 24
-    storel 7, %t50
-    call $nox_raise(l %rt, l %t43, l 7)
-    %t51 =w call $nox_exception_pending(l %rt)
-    jnz %t51, @exc_propagate35, @exc_continue36
-@exc_propagate35
-    ret 0
-@exc_continue36
-    jmp @str_idx_ok27
 @str_idx_ok27
     jnz %t5, @str_idx_ascii37, @str_idx_unicode38
 @str_idx_ascii37
@@ -1576,6 +1500,82 @@ export function l $count_two(l %rt, l %p_s) {
 @after_return47
 @fn_end48
     ret 0
+@str_idx_err4
+    %t11 =l add $str0, 16
+    %t12 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 6, %t12
+    %t13 =l add %t12, 8
+    storel 0, %t13
+    %t14 =l add %t12, 16
+    storel 0, %t14
+    %t15 =l add %t12, 24
+    storel 0, %t15
+    call $Exception___init__(l %rt, l %t12, l %t11)
+    %t16 =w call $nox_exception_pending(l %rt)
+    jnz %t16, @ctor_init_failed6, @ctor_init_cont7
+@ctor_init_failed6
+    %t17 =w ceql %t12, 0
+    jnz %t17, @release_skip9, @release8
+@release8
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t12)
+    jmp @release_done10
+@release_skip9
+    jmp @release_done10
+@release_done10
+    jmp @ctor_init_cont7
+@ctor_init_cont7
+    %t18 =w call $nox_exception_pending(l %rt)
+    jnz %t18, @exc_propagate11, @exc_continue12
+@exc_propagate11
+    ret 0
+@exc_continue12
+    %t19 =l add %t12, 24
+    storel 5, %t19
+    call $nox_raise(l %rt, l %t12, l 5)
+    %t20 =w call $nox_exception_pending(l %rt)
+    jnz %t20, @exc_propagate13, @exc_continue14
+@exc_propagate13
+    ret 0
+@exc_continue14
+    jmp @str_idx_ok5
+@str_idx_err26
+    %t42 =l add $str2, 16
+    %t43 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 6, %t43
+    %t44 =l add %t43, 8
+    storel 0, %t44
+    %t45 =l add %t43, 16
+    storel 0, %t45
+    %t46 =l add %t43, 24
+    storel 0, %t46
+    call $Exception___init__(l %rt, l %t43, l %t42)
+    %t47 =w call $nox_exception_pending(l %rt)
+    jnz %t47, @ctor_init_failed28, @ctor_init_cont29
+@ctor_init_failed28
+    %t48 =w ceql %t43, 0
+    jnz %t48, @release_skip31, @release30
+@release30
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t43)
+    jmp @release_done32
+@release_skip31
+    jmp @release_done32
+@release_done32
+    jmp @ctor_init_cont29
+@ctor_init_cont29
+    %t49 =w call $nox_exception_pending(l %rt)
+    jnz %t49, @exc_propagate33, @exc_continue34
+@exc_propagate33
+    ret 0
+@exc_continue34
+    %t50 =l add %t43, 24
+    storel 7, %t50
+    call $nox_raise(l %rt, l %t43, l 7)
+    %t51 =w call $nox_exception_pending(l %rt)
+    jnz %t51, @exc_propagate35, @exc_continue36
+@exc_propagate35
+    ret 0
+@exc_continue36
+    jmp @str_idx_ok27
 }
 export function l $count_via_for(l %rt, l %p_s) {
 @start

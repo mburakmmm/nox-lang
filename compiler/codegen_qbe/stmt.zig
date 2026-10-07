@@ -467,6 +467,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const err_label = try self.newLabel("list_assign_err");
     const ok_label = try self.newLabel("list_assign_ok");
     try self.qbeJnz(oob_t, err_label, ok_label);
+    const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
 
     const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
@@ -480,6 +481,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     try self.releaseIfTemporary(idx.obj.*, obj);
     try self.emitExceptionCheck();
     try self.qbeJmp(ok_label);
+    try self.stashCold(cold_start);
 
     try self.qbeLabel(ok_label);
     const value_v0 = try self.genExpr(value_expr);

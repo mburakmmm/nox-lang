@@ -1511,46 +1511,6 @@ export function w $main(w %argc, l %argv) {
     %t66 =l loadl %t65
     %t67 =w cugel 1, %t66
     jnz %t67, @list_assign_err16, @list_assign_ok17
-@list_assign_err16
-    %t68 =l add $str0, 16
-    %t69 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 6, %t69
-    %t70 =l add %t69, 8
-    storel 0, %t70
-    %t71 =l add %t69, 16
-    storel 0, %t71
-    %t72 =l add %t69, 24
-    storel 0, %t72
-    call $Exception___init__(l %rt, l %t69, l %t68)
-    %t73 =w call $nox_exception_pending(l %rt)
-    jnz %t73, @ctor_init_failed18, @ctor_init_cont19
-@ctor_init_failed18
-    %t74 =w ceql %t69, 0
-    jnz %t74, @release_skip21, @release20
-@release20
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t69)
-    jmp @release_done22
-@release_skip21
-    jmp @release_done22
-@release_done22
-    jmp @ctor_init_cont19
-@ctor_init_cont19
-    %t75 =w call $nox_exception_pending(l %rt)
-    jnz %t75, @exc_propagate23, @exc_continue24
-@exc_propagate23
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue24
-    %t76 =l add %t69, 24
-    storel 18, %t76
-    call $nox_raise(l %rt, l %t69, l 18)
-    %t77 =w call $nox_exception_pending(l %rt)
-    jnz %t77, @exc_propagate25, @exc_continue26
-@exc_propagate25
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue26
-    jmp @list_assign_ok17
 @list_assign_ok17
     %t78 =w csltl 99, 0
     %t79 =w csgtl 99, 255
@@ -1686,6 +1646,46 @@ export function w $main(w %argc, l %argv) {
     call $nox_runtime_deinit(l %rt)
 @fn_end50
     ret 0
+@list_assign_err16
+    %t68 =l add $str0, 16
+    %t69 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 6, %t69
+    %t70 =l add %t69, 8
+    storel 0, %t70
+    %t71 =l add %t69, 16
+    storel 0, %t71
+    %t72 =l add %t69, 24
+    storel 0, %t72
+    call $Exception___init__(l %rt, l %t69, l %t68)
+    %t73 =w call $nox_exception_pending(l %rt)
+    jnz %t73, @ctor_init_failed18, @ctor_init_cont19
+@ctor_init_failed18
+    %t74 =w ceql %t69, 0
+    jnz %t74, @release_skip21, @release20
+@release20
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t69)
+    jmp @release_done22
+@release_skip21
+    jmp @release_done22
+@release_done22
+    jmp @ctor_init_cont19
+@ctor_init_cont19
+    %t75 =w call $nox_exception_pending(l %rt)
+    jnz %t75, @exc_propagate23, @exc_continue24
+@exc_propagate23
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue24
+    %t76 =l add %t69, 24
+    storel 18, %t76
+    call $nox_raise(l %rt, l %t69, l 18)
+    %t77 =w call $nox_exception_pending(l %rt)
+    jnz %t77, @exc_propagate25, @exc_continue26
+@exc_propagate25
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue26
+    jmp @list_assign_ok17
 }
 export function $List_str_release(l %rt, l %p) {
 @start

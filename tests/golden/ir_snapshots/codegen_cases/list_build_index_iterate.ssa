@@ -1430,6 +1430,25 @@ export function w $main(w %argc, l %argv) {
     %t25 =l loadl %t24
     %t26 =w cugel 0, %t25
     jnz %t26, @list_idx_err3, @list_idx_ok4
+@list_idx_ok4
+    %t37 =l mul 0, 8
+    %t38 =l add %t37, 16
+    %t39 =l add %t24, %t38
+    %t40 =l loadl %t39
+    call $printf(l $fmt_int, ..., l %t40)
+    %t41 =l loadl %t1
+    %t42 =l loadl %t41
+    %t43 =w cugel 3, %t42
+    jnz %t43, @list_idx_err14, @list_idx_ok15
+@list_idx_ok15
+    %t54 =l mul 3, 8
+    %t55 =l add %t54, 16
+    %t56 =l add %t41, %t55
+    %t57 =l loadl %t56
+    call $printf(l $fmt_int, ..., l %t57)
+    call $nox_runtime_deinit(l %rt)
+@fn_end25
+    ret 0
 @list_idx_err3
     %t27 =l add $str0, 16
     %t28 =l call $nox_rc_alloc(l %rt, l 32)
@@ -1470,16 +1489,6 @@ export function w $main(w %argc, l %argv) {
     ret 0
 @exc_continue13
     jmp @list_idx_ok4
-@list_idx_ok4
-    %t37 =l mul 0, 8
-    %t38 =l add %t37, 16
-    %t39 =l add %t24, %t38
-    %t40 =l loadl %t39
-    call $printf(l $fmt_int, ..., l %t40)
-    %t41 =l loadl %t1
-    %t42 =l loadl %t41
-    %t43 =w cugel 3, %t42
-    jnz %t43, @list_idx_err14, @list_idx_ok15
 @list_idx_err14
     %t44 =l add $str1, 16
     %t45 =l call $nox_rc_alloc(l %rt, l 32)
@@ -1520,15 +1529,6 @@ export function w $main(w %argc, l %argv) {
     ret 0
 @exc_continue24
     jmp @list_idx_ok15
-@list_idx_ok15
-    %t54 =l mul 3, 8
-    %t55 =l add %t54, 16
-    %t56 =l add %t41, %t55
-    %t57 =l loadl %t56
-    call $printf(l $fmt_int, ..., l %t57)
-    call $nox_runtime_deinit(l %rt)
-@fn_end25
-    ret 0
 }
 export function $List_str_release(l %rt, l %p) {
 @start

@@ -2320,6 +2320,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     const err_label = try self.newLabel("list_pop_err");
     const ok_label = try self.newLabel("list_pop_ok");
     try self.qbeJnz(empty_t, err_label, ok_label);
+    const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
     const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
@@ -2336,6 +2337,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     try self.releaseIfTemporary(a.obj.*, obj);
     try self.emitExceptionCheck();
     try self.qbeJmp(ok_label);
+    try self.stashCold(cold_start);
     try self.qbeLabel(ok_label);
 
     const new_len = try self.newTemp();

@@ -28264,6 +28264,19 @@ okur (dict tarama listeleri de). Eşitlik fonksiyonu adı `primb` (i32 listeleri
 (gzip `list[int]` kullanır; `nox.buffer`/`nox.binary` saf Nox). Sonuç: sieve 10M 0.060 → 0.030 s. Golden
 `list_bool_byte_packed`, `list_fixed_int_byte_packed` (QBE ve `--release` aynı çıktı).
 
+## 3.257 Sınır-kontrolü hata yollarını soğuk bloğa taşıma (v1.142.24)
+
+Liste/dize indeksleme, `pop`, atama gibi sınır kontrollerinin hata yolu (IndexError oluşturma + yayılım)
+daha önce sıcak döngünün içine satır içi yazılıyordu; QBE/LLVM düzen sırası sıcak yolu bölüp talimat
+önbelleğini ve dal tahminini bozuyordu. `codegen.zig`e `beginCold`/`stashCold` eklendi: hata bloğunun
+metni `cold_blocks`ta biriktirilir ve fonksiyon sonunda (`flushHoistedAllocs`in yanında) sıcak kodun
+ARKASINA yazılır. Davranış değişmez (aynı bloklar, aynı atlamalar; yalnızca metin sırası). Uygulanan
+yerler: `genIndex`, `genStrIndex`, liste-atama (`stmt.zig`), `pop` (`calls.zig`). Bilinen sınırlama:
+dict `get`/ayrıştırma hata blokları henüz taşınmadı. Sonuç: matmul 0.061 → ~0.04 s, sort 0.07 → 0.06 s;
+collatz/sieve değişmedi. 116 IR anlık görüntüsü (blok sırası) yeniden üretildi; mevcut golden'lar
+(`list_bool_byte_packed`, `list_fixed_int_byte_packed`, `str_index_ascii_table_and_field`) QBE ve
+`--release`te aynı çıktıyı verir.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

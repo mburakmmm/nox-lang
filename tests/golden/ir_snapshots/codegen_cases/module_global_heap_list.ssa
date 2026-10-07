@@ -1582,6 +1582,60 @@ export function l $join_names(l %rt) {
     %t19 =l loadl %t17
     %t20 =w cugel %t18, %t19
     jnz %t20, @list_idx_err9, @list_idx_ok10
+@list_idx_ok10
+    %t43 =l mul %t18, 8
+    %t44 =l add %t43, 16
+    %t45 =l add %t17, %t44
+    %t46 =l loadl %t45
+    %t47 =l loadl %t0
+    %t48 =l call $nox_str_append(l %rt, l %t47, l %t46)
+    storel %t48, %t0
+    %t49 =l loadl %t1
+    %t50 =l call $nox_globals_get(l %rt)
+    %t51 =l add %t50, 0
+    %t52 =l loadl %t51
+    %t53 =l loadl %t52
+    %t54 =l sub %t53, 1
+    %t55 =w csltl %t49, %t54
+    jnz %t55, @if_then33, @if_end32
+@if_then33
+    %t56 =l add $str2, 16
+    %t57 =l loadl %t0
+    %t58 =l call $nox_str_append(l %rt, l %t57, l %t56)
+    storel %t58, %t0
+    jmp @if_end32
+@if_end32
+    %t59 =l loadl %t1
+    %t60 =l add %t59, 1
+    storel %t60, %t1
+    jmp @while_cond6
+@while_end8
+    %t61 =l loadl %t0
+    ret %t61
+@after_return34
+    %t62 =l loadl %t0
+    %t63 =w ceql %t62, 0
+    jnz %t63, @release_skip36, @release35
+@release35
+    %t64 =l sub %t62, 16
+    %t65 =l loadl %t64
+    %t66 =l sub %t65, 1
+    storel %t66, %t64
+    %t67 =w cslel %t66, 0
+    jnz %t67, @str_free38, @str_free_skip39
+@str_free38
+    call $nox_str_free_now(l %rt, l %t62)
+    jmp @str_free_done40
+@str_free_skip39
+    jmp @str_free_done40
+@str_free_done40
+    jmp @release_done37
+@release_skip36
+    jmp @release_done37
+@release_done37
+    storel 0, %t0
+@fn_end41
+    ret 0
 @list_idx_err9
     %t21 =l add $str1, 16
     %t22 =l call $nox_rc_alloc(l %rt, l 32)
@@ -1662,60 +1716,6 @@ export function l $join_names(l %rt) {
     ret 0
 @exc_continue25
     jmp @list_idx_ok10
-@list_idx_ok10
-    %t43 =l mul %t18, 8
-    %t44 =l add %t43, 16
-    %t45 =l add %t17, %t44
-    %t46 =l loadl %t45
-    %t47 =l loadl %t0
-    %t48 =l call $nox_str_append(l %rt, l %t47, l %t46)
-    storel %t48, %t0
-    %t49 =l loadl %t1
-    %t50 =l call $nox_globals_get(l %rt)
-    %t51 =l add %t50, 0
-    %t52 =l loadl %t51
-    %t53 =l loadl %t52
-    %t54 =l sub %t53, 1
-    %t55 =w csltl %t49, %t54
-    jnz %t55, @if_then33, @if_end32
-@if_then33
-    %t56 =l add $str2, 16
-    %t57 =l loadl %t0
-    %t58 =l call $nox_str_append(l %rt, l %t57, l %t56)
-    storel %t58, %t0
-    jmp @if_end32
-@if_end32
-    %t59 =l loadl %t1
-    %t60 =l add %t59, 1
-    storel %t60, %t1
-    jmp @while_cond6
-@while_end8
-    %t61 =l loadl %t0
-    ret %t61
-@after_return34
-    %t62 =l loadl %t0
-    %t63 =w ceql %t62, 0
-    jnz %t63, @release_skip36, @release35
-@release35
-    %t64 =l sub %t62, 16
-    %t65 =l loadl %t64
-    %t66 =l sub %t65, 1
-    storel %t66, %t64
-    %t67 =w cslel %t66, 0
-    jnz %t67, @str_free38, @str_free_skip39
-@str_free38
-    call $nox_str_free_now(l %rt, l %t62)
-    jmp @str_free_done40
-@str_free_skip39
-    jmp @str_free_done40
-@str_free_done40
-    jmp @release_done37
-@release_skip36
-    jmp @release_done37
-@release_done37
-    storel 0, %t0
-@fn_end41
-    ret 0
 }
 export function w $main(w %argc, l %argv) {
 @start

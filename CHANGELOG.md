@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.24]
+
+### Performans
+
+- **Sınır-kontrolü hata yolları soğuk bloğa taşındı** (liste/dize indeksleme, liste atama, `pop`): sıcak
+  yol kesintisiz kalır. matmul 0.061 → ~0.04 s, sort 0.07 → 0.06 s. 116 IR anlık görüntüsü yeniden
+  üretildi (yalnızca blok sırası). Spec §3.257.
+
 ## [1.142.23]
 
 ### Performans

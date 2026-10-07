@@ -1414,6 +1414,23 @@ export function l $run(l %rt, l %p_xs) {
     %t16 =l loadl %t14
     %t17 =w cugel %t15, %t16
     jnz %t17, @list_idx_err5, @list_idx_ok6
+@list_idx_ok6
+    %t28 =l mul %t15, 8
+    %t29 =l add %t28, 16
+    %t30 =l add %t14, %t29
+    %t31 =l loadl %t30
+    %t32 =l add %t13, %t31
+    storel %t32, %t1
+    %t33 =l loadl %t2
+    %t34 =l add %t33, 1
+    storel %t34, %t2
+    jmp @for_cond0
+@for_end2
+    %t35 =l loadl %t1
+    ret %t35
+@after_return16
+@fn_end17
+    ret 0
 @list_idx_err5
     %t18 =l add $str0, 16
     %t19 =l call $nox_rc_alloc(l %rt, l 32)
@@ -1452,23 +1469,6 @@ export function l $run(l %rt, l %p_xs) {
     ret 0
 @exc_continue15
     jmp @list_idx_ok6
-@list_idx_ok6
-    %t28 =l mul %t15, 8
-    %t29 =l add %t28, 16
-    %t30 =l add %t14, %t29
-    %t31 =l loadl %t30
-    %t32 =l add %t13, %t31
-    storel %t32, %t1
-    %t33 =l loadl %t2
-    %t34 =l add %t33, 1
-    storel %t34, %t2
-    jmp @for_cond0
-@for_end2
-    %t35 =l loadl %t1
-    ret %t35
-@after_return16
-@fn_end17
-    ret 0
 }
 export function w $main(w %argc, l %argv) {
 @start
