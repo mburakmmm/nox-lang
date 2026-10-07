@@ -226,7 +226,7 @@ test "noxc build: nox.json.parse + sınıf + cycle-collector (5-sembol dlsym lis
         std.debug.print("program calisirken basarisiz oldu, term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ run_result.term, run_result.stdout, run_result.stderr });
     }
     try std.testing.expect(run_result.term == .exited and run_result.term.exited == 0);
-    try std.testing.expectEqualStrings("a\n1\n800\n", run_result.stdout);
+    try std.testing.expectEqualStrings("a\n1.0\n800\n", run_result.stdout);
     // DebugAllocator'ın sızıntı/UAF kontrolü BOŞ stderr İLE kanıtlanır —
     // 5-sembol dlsym listesinin EKSİK/YANLIŞ olması (bkz. plan dosyası,
     // `nox_trace_dispatch` çıkarılınca kanıtlanan break→red→fix) cycle-

@@ -13,6 +13,7 @@ pub const checker = @import("typecheck/checker.zig");
 pub const ownership = @import("ownership/analysis.zig");
 pub const codegen = @import("codegen_qbe/codegen.zig");
 pub const module_loader = @import("module_loader.zig");
+pub const syntax_report = @import("syntax_report.zig");
 pub const project = @import("project.zig");
 pub const test_runner = @import("pkg/test_runner.zig");
 pub const fetch = @import("pkg/fetch.zig");

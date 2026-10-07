@@ -412,8 +412,8 @@ module.exports = grammar({
     false: _$ => 'False',
     none: _$ => 'None',
 
-    integer: _$ => token(/\d+/),
-    float: _$ => token(/\d+\.\d+/),
+    integer: _$ => token(choice(/0[xX][0-9a-fA-F_]+/, /0[bB][01_]+/, /0[oO][0-7_]+/, /\d[\d_]*/)),
+    float: _$ => token(choice(/\d[\d_]*\.\d[\d_]*([eE][+-]?\d+)?/, /\d[\d_]*[eE][+-]?\d+/)),
 
     // Tek/çift tırnaklı, çok satırlı OLMAYAN string (bkz. lexer.zig'in
     // KENDİSİ de teknik olarak satır içi `\n`'i özel işlemez, ama pratikte

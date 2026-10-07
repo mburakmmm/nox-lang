@@ -20,6 +20,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
+const syntax_report = @import("syntax_report.zig");
 const ast = @import("parser/ast.zig");
 const ast_dump = @import("parser/ast_dump.zig");
 const checker = @import("typecheck/checker.zig");
@@ -215,7 +216,23 @@ fn printOk(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
+/// Kullanıcı kaynağını ayrıştırır; sözdizimi hatasında okunaklı tanılamayı basıp süreci sonlandırır.
+fn parseUserSource(a: std.mem.Allocator, source: []const u8, path: []const u8) !ast.Module {
+    return syntax_report.parseSource(a, source, path) catch |e| switch (e) {
+        error.SyntaxError => std.process.exit(1),
+        error.OutOfMemory => return e,
+    };
+}
+
 pub fn main(init: std.process.Init) !void {
+    return realMain(init) catch |e| {
+        // `syntax_report` hatayı ZATEN okunaklı biçimde yazdı (örn. bir içe aktarılan modülde).
+        if (std.mem.eql(u8, @errorName(e), "SyntaxError")) std.process.exit(1);
+        return e;
+    };
+}
+
+fn realMain(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
@@ -1780,8 +1797,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
     defer gpa.free(source);
 
-    const tokens = try lexer.tokenize(a, source);
-    const user_module = try parser.parseModule(a, tokens);
+    const user_module = try parseUserSource(a, source, path_arg);
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     var checker_state = checker.Checker.init(a);
@@ -1819,8 +1835,7 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
     const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
     defer gpa.free(source);
 
-    const tokens = try lexer.tokenize(a, source);
-    const user_module = try parser.parseModule(a, tokens);
+    const user_module = try parseUserSource(a, source, path_arg);
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     var checker_state = checker.Checker.init(a);
@@ -1893,8 +1908,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
     defer gpa.free(source);
 
-    const tokens = try lexer.tokenize(a, source);
-    const user_module = try parser.parseModule(a, tokens);
+    const user_module = try parseUserSource(a, source, path_arg);
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     const backend: codegen.Backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm)) .llvm else .qbe;
@@ -2063,8 +2077,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     };
     defer gpa.free(source);
 
-    const tokens = try lexer.tokenize(a, source);
-    const user_module = try parser.parseModule(a, tokens);
+    const user_module = try parseUserSource(a, source, path_arg);
 
     // Faz O §P.6: proje kökü (`nox.json`) BULUNAMAZSA `resolveImports`in
     // ESKİ, DEĞİŞMEMİŞ davranışına (yalnızca `nox.*` stdlib) DÜŞER;

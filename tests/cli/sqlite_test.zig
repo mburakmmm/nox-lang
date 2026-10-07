@@ -80,7 +80,7 @@ test "nox.sqlite: tablo olustur + parametreli INSERT (int/float/str/NULL) + SELE
         return error.UnexpectedStderrOutput;
     }
     try std.testing.expectEqualStrings(
-        "1\n1\n2\n1\nAyse\n95.5\nTrue\n2\nMehmet\n88\nFalse\n",
+        "1\n1\n2\n1\nAyse\n95.5\nTrue\n2\nMehmet\n88.0\nFalse\n",
         result.stdout,
     );
 }

@@ -1803,8 +1803,8 @@ export function $nox_json_JsonWriter__emit_prefix(l %rt, l %p_self) {
     ret
 @exc_continue11
     %t25 =l add %t18, 24
-    storel 316, %t25
-    call $nox_raise(l %rt, l %t18, l 316)
+    storel 325, %t25
+    call $nox_raise(l %rt, l %t18, l 325)
     ret
 @list_assign_err15
     %t40 =l add $str3, 16
@@ -1836,8 +1836,8 @@ export function $nox_json_JsonWriter__emit_prefix(l %rt, l %p_self) {
     ret
 @exc_continue23
     %t48 =l add %t41, 24
-    storel 318, %t48
-    call $nox_raise(l %rt, l %t41, l 318)
+    storel 327, %t48
+    call $nox_raise(l %rt, l %t41, l 327)
     ret
 }
 export function $nox_json_JsonWriter_write_key(l %rt, l %p_self, l %p_key) {
@@ -1973,8 +1973,8 @@ export function $nox_json_JsonWriter_end_object(l %rt, l %p_self) {
     ret
 @exc_continue8
     %t14 =l add %t7, 24
-    storel 340, %t14
-    call $nox_raise(l %rt, l %t7, l 340)
+    storel 349, %t14
+    call $nox_raise(l %rt, l %t7, l 349)
     ret
 }
 export function $nox_json_JsonWriter_begin_array(l %rt, l %p_self) {
@@ -2063,8 +2063,8 @@ export function $nox_json_JsonWriter_end_array(l %rt, l %p_self) {
     ret
 @exc_continue8
     %t14 =l add %t7, 24
-    storel 349, %t14
-    call $nox_raise(l %rt, l %t7, l 349)
+    storel 358, %t14
+    call $nox_raise(l %rt, l %t7, l 358)
     ret
 }
 export function $nox_json_JsonWriter_write_string(l %rt, l %p_self, l %p_s) {
@@ -7268,6 +7268,49 @@ export function l $nox_json_dump_string(l %rt, l %p_s) {
 @fn_end1
     ret 0
 }
+export function l $nox_json_dump_number(l %rt, d %p_n) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    stored %p_n, %t0
+    %t2 =d loadd %t0
+    %t3 =w cltd %t2, d_1000000000000000
+    jnz %t3, @logic_rhs1, @logic_short2
+@logic_short2
+    jmp @logic_done3
+@logic_rhs1
+    %t4 =d loadd %t0
+    %t5 =d neg d_1000000000000000
+    %t6 =w cgtd %t4, %t5
+    jmp @logic_done3
+@logic_done3
+    %t7 =w phi @logic_short2 0, @logic_rhs1 %t6
+    jnz %t7, @if_then4, @if_end0
+@if_then4
+    %t8 =d loadd %t0
+    %t9 =l dtosi %t8
+    storel %t9, %t1
+    %t10 =l loadl %t1
+    %t11 =d sltof %t10
+    %t12 =d loadd %t0
+    %t13 =w ceqd %t11, %t12
+    jnz %t13, @if_then6, @if_end5
+@if_then6
+    %t14 =l loadl %t1
+    %t15 =l call $nox_int_to_str(l %rt, l %t14)
+    ret %t15
+@after_return7
+    jmp @if_end5
+@if_end5
+    jmp @if_end0
+@if_end0
+    %t16 =d loadd %t0
+    %t17 =l call $nox_float_to_str(l %rt, d %t16)
+    ret %t17
+@after_return8
+@fn_end9
+    ret 0
+}
 export function l $nox_json_dump(l %rt, l %p_v) {
 @start
     %t0 =l alloc8 8
@@ -7373,114 +7416,119 @@ export function l $nox_json_dump(l %rt, l %p_v) {
     jmp @inline_done19
 @inline_done19
     %t49 =d loadd %t10
-    %t50 =l call $nox_float_to_str(l %rt, d %t49)
+    %t50 =l call $nox_json_dump_number(l %rt, d %t49)
+    %t51 =w call $nox_exception_pending(l %rt)
+    jnz %t51, @exc_propagate21, @exc_continue22
+@exc_propagate21
+    ret 0
+@exc_continue22
     ret %t50
-@after_return21
+@after_return23
     jmp @if_end15
 @if_end15
-    %t51 =l loadl %t0
-    storel %t51, %t11
-    %t52 =l loadl %t11
-    %t53 =l add %t52, 8
-    %t54 =l loadl %t53
-    %t55 =w ceql %t54, 3
-    storew %t55, %t12
-    jmp @inline_done23
-@after_inline_return24
-    jmp @inline_done23
-@inline_done23
-    %t56 =w loadw %t12
-    jnz %t56, @if_then25, @if_end22
-@if_then25
-    %t57 =l loadl %t0
-    storel %t57, %t13
-    %t58 =l loadl %t13
-    %t59 =l add %t58, 32
-    %t60 =l loadl %t59
-    %t61 =w ceql %t60, 0
-    jnz %t61, @retain_skip28, @retain27
-@retain27
-    %t62 =l sub %t60, 16
-    %t63 =l loadl %t62
-    %t64 =l add %t63, 1
-    storel %t64, %t62
-    jmp @retain_done29
-@retain_skip28
-    jmp @retain_done29
-@retain_done29
-    storel %t60, %t14
-    jmp @inline_done26
-@after_inline_return30
-    jmp @inline_done26
-@inline_done26
-    %t65 =l loadl %t14
-    storel %t65, %t15
-    %t66 =l loadl %t15
-    %t67 =l call $nox_json_escape_string_raw(l %rt, l %t66)
-    storel %t67, %t16
-    jmp @inline_done31
+    %t52 =l loadl %t0
+    storel %t52, %t11
+    %t53 =l loadl %t11
+    %t54 =l add %t53, 8
+    %t55 =l loadl %t54
+    %t56 =w ceql %t55, 3
+    storew %t56, %t12
+    jmp @inline_done25
+@after_inline_return26
+    jmp @inline_done25
+@inline_done25
+    %t57 =w loadw %t12
+    jnz %t57, @if_then27, @if_end24
+@if_then27
+    %t58 =l loadl %t0
+    storel %t58, %t13
+    %t59 =l loadl %t13
+    %t60 =l add %t59, 32
+    %t61 =l loadl %t60
+    %t62 =w ceql %t61, 0
+    jnz %t62, @retain_skip30, @retain29
+@retain29
+    %t63 =l sub %t61, 16
+    %t64 =l loadl %t63
+    %t65 =l add %t64, 1
+    storel %t65, %t63
+    jmp @retain_done31
+@retain_skip30
+    jmp @retain_done31
+@retain_done31
+    storel %t61, %t14
+    jmp @inline_done28
 @after_inline_return32
-    jmp @inline_done31
-@inline_done31
-    %t68 =w ceql %t65, 0
-    jnz %t68, @release_skip34, @release33
-@release33
-    %t69 =l sub %t65, 16
-    %t70 =l loadl %t69
-    %t71 =l sub %t70, 1
-    storel %t71, %t69
-    %t72 =w cslel %t71, 0
-    jnz %t72, @str_free36, @str_free_skip37
-@str_free36
-    call $nox_str_free_now(l %rt, l %t65)
-    jmp @str_free_done38
-@str_free_skip37
-    jmp @str_free_done38
-@str_free_done38
-    jmp @release_done35
-@release_skip34
-    jmp @release_done35
-@release_done35
-    %t73 =l loadl %t16
-    ret %t73
-@after_return39
-    jmp @if_end22
-@if_end22
-    %t74 =l loadl %t0
-    storel %t74, %t17
-    %t75 =l loadl %t17
-    %t76 =l add %t75, 8
-    %t77 =l loadl %t76
-    %t78 =w ceql %t77, 4
-    storew %t78, %t18
-    jmp @inline_done41
-@after_inline_return42
-    jmp @inline_done41
-@inline_done41
-    %t79 =w loadw %t18
-    jnz %t79, @if_then43, @if_end40
-@if_then43
-    %t80 =l loadl %t0
-    %t81 =l call $nox_json_dump_array(l %rt, l %t80)
-    %t82 =w call $nox_exception_pending(l %rt)
-    jnz %t82, @exc_propagate44, @exc_continue45
-@exc_propagate44
+    jmp @inline_done28
+@inline_done28
+    %t66 =l loadl %t14
+    storel %t66, %t15
+    %t67 =l loadl %t15
+    %t68 =l call $nox_json_escape_string_raw(l %rt, l %t67)
+    storel %t68, %t16
+    jmp @inline_done33
+@after_inline_return34
+    jmp @inline_done33
+@inline_done33
+    %t69 =w ceql %t66, 0
+    jnz %t69, @release_skip36, @release35
+@release35
+    %t70 =l sub %t66, 16
+    %t71 =l loadl %t70
+    %t72 =l sub %t71, 1
+    storel %t72, %t70
+    %t73 =w cslel %t72, 0
+    jnz %t73, @str_free38, @str_free_skip39
+@str_free38
+    call $nox_str_free_now(l %rt, l %t66)
+    jmp @str_free_done40
+@str_free_skip39
+    jmp @str_free_done40
+@str_free_done40
+    jmp @release_done37
+@release_skip36
+    jmp @release_done37
+@release_done37
+    %t74 =l loadl %t16
+    ret %t74
+@after_return41
+    jmp @if_end24
+@if_end24
+    %t75 =l loadl %t0
+    storel %t75, %t17
+    %t76 =l loadl %t17
+    %t77 =l add %t76, 8
+    %t78 =l loadl %t77
+    %t79 =w ceql %t78, 4
+    storew %t79, %t18
+    jmp @inline_done43
+@after_inline_return44
+    jmp @inline_done43
+@inline_done43
+    %t80 =w loadw %t18
+    jnz %t80, @if_then45, @if_end42
+@if_then45
+    %t81 =l loadl %t0
+    %t82 =l call $nox_json_dump_array(l %rt, l %t81)
+    %t83 =w call $nox_exception_pending(l %rt)
+    jnz %t83, @exc_propagate46, @exc_continue47
+@exc_propagate46
     ret 0
-@exc_continue45
-    ret %t81
-@after_return46
-    jmp @if_end40
-@if_end40
-    %t83 =l loadl %t0
-    %t84 =l call $nox_json_dump_object(l %rt, l %t83)
-    %t85 =w call $nox_exception_pending(l %rt)
-    jnz %t85, @exc_propagate47, @exc_continue48
-@exc_propagate47
+@exc_continue47
+    ret %t82
+@after_return48
+    jmp @if_end42
+@if_end42
+    %t84 =l loadl %t0
+    %t85 =l call $nox_json_dump_object(l %rt, l %t84)
+    %t86 =w call $nox_exception_pending(l %rt)
+    jnz %t86, @exc_propagate49, @exc_continue50
+@exc_propagate49
     ret 0
-@exc_continue48
-    ret %t84
-@after_return49
-@fn_end50
+@exc_continue50
+    ret %t85
+@after_return51
+@fn_end52
     ret 0
 }
 export function l $nox_json_dump_array(l %rt, l %p_v) {

@@ -1684,7 +1684,9 @@ export function $print_area__Circle(l %rt, l %p_shape) {
     storel %p_shape, %t0
     %t1 =l loadl %t0
     %t2 =d call $Circle_area(l %rt, l %t1)
-    call $printf(l $fmt_float, ..., d %t2)
+    %t3 =l call $nox_float_to_str(l %rt, d %t2)
+    call $printf(l $fmt_str, ..., l %t3)
+    call $nox_str_release(l %rt, l %t3)
 @fn_end0
     ret
 }
@@ -1694,7 +1696,9 @@ export function $print_area__Square(l %rt, l %p_shape) {
     storel %p_shape, %t0
     %t1 =l loadl %t0
     %t2 =d call $Square_area(l %rt, l %t1)
-    call $printf(l $fmt_float, ..., d %t2)
+    %t3 =l call $nox_float_to_str(l %rt, d %t2)
+    call $printf(l $fmt_str, ..., l %t3)
+    call $nox_str_release(l %rt, l %t3)
 @fn_end0
     ret
 }
@@ -1714,33 +1718,37 @@ export function w $main(w %argc, l %argv) {
     storel %t2, %t0
     %t5 =l loadl %t0
     %t6 =d call $Circle_area(l %rt, l %t5)
-    call $printf(l $fmt_float, ..., d %t6)
+    %t7 =l call $nox_float_to_str(l %rt, d %t6)
+    call $printf(l $fmt_str, ..., l %t7)
+    call $nox_str_release(l %rt, l %t7)
     jmp @inline_done0
 @inline_done0
-    %t7 =w ceql %t2, 0
-    jnz %t7, @release_skip2, @release1
+    %t8 =w ceql %t2, 0
+    jnz %t8, @release_skip2, @release1
 @release1
     call $nox_rc_release_enqueue_fixed(l %rt, l %t2, l $Circle_release)
     jmp @release_done3
 @release_skip2
     jmp @release_done3
 @release_done3
-    %t8 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t8
-    %t9 =l add %t8, 8
-    storel 0, %t9
-    %t10 =l add %t8, 8
-    stored d_3, %t10
-    storel %t8, %t1
-    %t11 =l loadl %t1
-    %t12 =d call $Square_area(l %rt, l %t11)
-    call $printf(l $fmt_float, ..., d %t12)
+    %t9 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t9
+    %t10 =l add %t9, 8
+    storel 0, %t10
+    %t11 =l add %t9, 8
+    stored d_3, %t11
+    storel %t9, %t1
+    %t12 =l loadl %t1
+    %t13 =d call $Square_area(l %rt, l %t12)
+    %t14 =l call $nox_float_to_str(l %rt, d %t13)
+    call $printf(l $fmt_str, ..., l %t14)
+    call $nox_str_release(l %rt, l %t14)
     jmp @inline_done4
 @inline_done4
-    %t13 =w ceql %t8, 0
-    jnz %t13, @release_skip6, @release5
+    %t15 =w ceql %t9, 0
+    jnz %t15, @release_skip6, @release5
 @release5
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t8, l $Square_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t9, l $Square_release)
     jmp @release_done7
 @release_skip6
     jmp @release_done7

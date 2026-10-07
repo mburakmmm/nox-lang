@@ -129,7 +129,7 @@ test "extern def: gerçek bir C kütüphanesi + gerçek bir Zig dosyası + siste
     , .{ build_options.mathutil_o_path, build_options.util_o_path });
     defer allocator.free(source);
 
-    try expectGolden(source, "4\n7\n21\n");
+    try expectGolden(source, "4.0\n7\n21\n");
 }
 
 test "extern def: opak `ptr` tipi — gerçek bir handle-tabanlı C API (FILE*/sqlite3* deseni)" {

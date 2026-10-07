@@ -1342,7 +1342,7 @@ pub const Parser = struct {
         switch (self.curKind()) {
             .int_lit => {
                 const t = self.advance();
-                const v = std.fmt.parseInt(i64, t.lexeme, 10) catch {
+                const v = std.fmt.parseInt(i64, t.lexeme, 0) catch {
                     self.last_diagnostic = .{ .found = t.kind, .span = span_mod.fromToken(t) };
                     return error.InvalidNumberLiteral;
                 };

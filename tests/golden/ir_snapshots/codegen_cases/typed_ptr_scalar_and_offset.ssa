@@ -2410,15 +2410,17 @@ export function $scalar_roundtrip(l %rt) {
     stored d_2.5, %t212
     %t213 =l loadl %t7
     %t214 =d loadd %t213
-    call $printf(l $fmt_float, ..., d %t214)
-    %t215 =l loadl %t2
-    %t216 =l add %t215, 25
-    storel %t216, %t8
-    %t217 =l loadl %t8
-    storew 1, %t217
+    %t215 =l call $nox_float_to_str(l %rt, d %t214)
+    call $printf(l $fmt_str, ..., l %t215)
+    call $nox_str_release(l %rt, l %t215)
+    %t216 =l loadl %t2
+    %t217 =l add %t216, 25
+    storel %t217, %t8
     %t218 =l loadl %t8
-    %t219 =w loadw %t218
-    jnz %t219, @print_true70, @print_false71
+    storew 1, %t218
+    %t219 =l loadl %t8
+    %t220 =w loadw %t219
+    jnz %t220, @print_true70, @print_false71
 @print_true70
     call $printf(l $fmt_bool_true)
     jmp @print_done72

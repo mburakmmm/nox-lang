@@ -2076,6 +2076,15 @@ fn genPrintNullGuarded(self: *Codegen, v: Value, frag: bool) CodegenError!void {
     try self.qbeLabel(done_label);
 }
 
+/// v1.160.0: `float` Python `repr` biçiminde basılır (bkz. `runtime/str.zig` `formatFloatRepr`): geçici bir `str`e
+/// çevrilip `fmt` (`%s\n` ya da yalın `%s`) ile yazılır, sonra serbest bırakılır.
+fn genPrintFloat(self: *Codegen, v: Value, fmt: []const u8) CodegenError!void {
+    const s = try self.newTemp();
+    try self.qbeCall(.{ .name = s, .ty = .l }, "$nox_float_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .d, .text = v.text } });
+    try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt }}, &.{.{ .ty = .l, .text = s }});
+    try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = s } });
+}
+
 fn genPrintRaw(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .list or v.heap == .class) {
         try genPrintFragmentRaw(self, v);
@@ -2093,7 +2102,7 @@ fn genPrintRaw(self: *Codegen, v: Value) CodegenError!void {
             try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_str" }}, &.{.{ .ty = .l, .text = v.text }})
         else
             try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int" }}, &.{.{ .ty = .l, .text = v.text }}),
-        .d => try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_float" }}, &.{.{ .ty = .d, .text = v.text }}),
+        .d => try genPrintFloat(self, v, "$fmt_str"),
         .w => {
             const true_label = try self.newLabel("print_true");
             const false_label = try self.newLabel("print_false");
@@ -2134,7 +2143,7 @@ fn genPrintFragmentRaw(self: *Codegen, v: Value) CodegenError!void {
             try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_str_frag" }}, &.{.{ .ty = .l, .text = v.text }})
         else
             try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int_frag" }}, &.{.{ .ty = .l, .text = v.text }}),
-        .d => try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_float_frag" }}, &.{.{ .ty = .d, .text = v.text }}),
+        .d => try genPrintFloat(self, v, try self.internFmtString("%s")),
         .w => {
             const true_label = try self.newLabel("print_true");
             const false_label = try self.newLabel("print_false");

@@ -1511,12 +1511,16 @@ export function w $main(w %argc, l %argv) {
     %t7 =d loadd %t1
     %t8 =d sltof %t6
     %t9 =d add %t8, %t7
-    call $printf(l $fmt_float, ..., d %t9)
-    %t10 =l loadl %t0
-    %t11 =d sltof %t10
-    %t12 =d sltof 2
-    %t13 =d div %t11, %t12
-    call $printf(l $fmt_float, ..., d %t13)
+    %t10 =l call $nox_float_to_str(l %rt, d %t9)
+    call $printf(l $fmt_str, ..., l %t10)
+    call $nox_str_release(l %rt, l %t10)
+    %t11 =l loadl %t0
+    %t12 =d sltof %t11
+    %t13 =d sltof 2
+    %t14 =d div %t12, %t13
+    %t15 =l call $nox_float_to_str(l %rt, d %t14)
+    call $printf(l $fmt_str, ..., l %t15)
+    call $nox_str_release(l %rt, l %t15)
     call $nox_runtime_deinit(l %rt)
 @fn_end0
     ret 0

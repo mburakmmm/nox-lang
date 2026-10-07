@@ -2963,15 +2963,41 @@
     "integer": {
       "type": "TOKEN",
       "content": {
-        "type": "PATTERN",
-        "value": "\\d+"
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "PATTERN",
+            "value": "0[xX][0-9a-fA-F_]+"
+          },
+          {
+            "type": "PATTERN",
+            "value": "0[bB][01_]+"
+          },
+          {
+            "type": "PATTERN",
+            "value": "0[oO][0-7_]+"
+          },
+          {
+            "type": "PATTERN",
+            "value": "\\d[\\d_]*"
+          }
+        ]
       }
     },
     "float": {
       "type": "TOKEN",
       "content": {
-        "type": "PATTERN",
-        "value": "\\d+\\.\\d+"
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "PATTERN",
+            "value": "\\d[\\d_]*\\.\\d[\\d_]*([eE][+-]?\\d+)?"
+          },
+          {
+            "type": "PATTERN",
+            "value": "\\d[\\d_]*[eE][+-]?\\d+"
+          }
+        ]
       }
     },
     "string": {

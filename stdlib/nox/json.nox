@@ -117,6 +117,15 @@ def object_value(v: JsonValue, i: int) -> JsonValue:
 def dump_string(s: str) -> str:
     return nox_json_escape_string_raw(s)
 
+# JSON sayıları tek tipte (float) tutulur; tamsayı değerli olanlar `1` olarak yazılır (`1.0` değil) — Python'un
+# `json.dumps`ı int'i int olarak yazar ve JSON'da ayrım yoktur. Diğerleri `str(float)` (en kısa gidiş-dönüşlü).
+def dump_number(n: float) -> str:
+    if n < 1000000000000000.0 and n > -1000000000000000.0:
+        i: int = int(n)
+        if float(i) == n:
+            return str(i)
+    return str(n)
+
 def dump(v: JsonValue) -> str:
     if is_null(v):
         return "null"
@@ -125,7 +134,7 @@ def dump(v: JsonValue) -> str:
             return "true"
         return "false"
     if is_number(v):
-        return str(as_number(v))
+        return dump_number(as_number(v))
     if is_string(v):
         return dump_string(as_string(v))
     if is_array(v):

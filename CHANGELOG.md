@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.160.0]
+
+### Değişti (davranış)
+
+- **`float` yazdırma artık Python `repr` ile birebir:** `print(2.0)` → `2.0` (eskiden `2`), `print(0.1 + 0.2)` → `0.30000000000000004` (eskiden `0.3`, 6 anlamlı hane), `1e+20`, `1.5e-07`; `print`/`str()`/f-string/liste-tuple-sınıf yazdırma tutarlı. Çıktısını `2`/`3.14159` gibi eski biçime bağlayan programlar etkilenir. `nox.json` kodlayıcısı tamsayı değerli sayıları `1` olarak yazmayı sürdürür. Spec §3.276.
+
+### Eklendi
+
+- **Okunaklı sözdizimi hataları:** `dosya:satır:sütun: sözdizimi hatası: ...` + kaynak satırı + `^` (önceden Zig yığın izi, konum yok).
+- **Sayı değişmezleri:** `0xFF`, `0b1010`, `0o17`, `1_000_000`, `1e3`/`2.5E-3` (üstel gösterim).
+
+### Düzeltildi
+
+- v1.159.0 etiketinde `build.zig.zon` boş çıkmıştı (derlenemezdi); bu sürümde onarıldı (v1.159.0 etiketi derlenemez; v1.160.0 kullanın).
+
 ## [1.159.0]
 
 ### Düzeltildi

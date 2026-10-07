@@ -1577,19 +1577,21 @@ export function w $main(w %argc, l %argv) {
     %t22 =d call $nox_str_to_float(l %t11)
     stored %t22, %t1
     %t23 =d loadd %t1
-    call $printf(l $fmt_float, ..., d %t23)
-    %t24 =l loadl %t0
-    %t25 =w ceql %t24, 0
-    jnz %t25, @release_skip19, @release18
+    %t24 =l call $nox_float_to_str(l %rt, d %t23)
+    call $printf(l $fmt_str, ..., l %t24)
+    call $nox_str_release(l %rt, l %t24)
+    %t25 =l loadl %t0
+    %t26 =w ceql %t25, 0
+    jnz %t26, @release_skip19, @release18
 @release18
-    %t26 =l sub %t24, 16
-    %t27 =l loadl %t26
-    %t28 =l sub %t27, 1
-    storel %t28, %t26
-    %t29 =w cslel %t28, 0
-    jnz %t29, @str_free21, @str_free_skip22
+    %t27 =l sub %t25, 16
+    %t28 =l loadl %t27
+    %t29 =l sub %t28, 1
+    storel %t29, %t27
+    %t30 =w cslel %t29, 0
+    jnz %t30, @str_free21, @str_free_skip22
 @str_free21
-    call $nox_str_free_now(l %rt, l %t24)
+    call $nox_str_free_now(l %rt, l %t25)
     jmp @str_free_done23
 @str_free_skip22
     jmp @str_free_done23

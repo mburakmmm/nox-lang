@@ -212,11 +212,28 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
         if (isDigit(c)) {
             const start = i;
             var is_float = false;
-            while (i < source.len and isDigit(source[i])) : (i += 1) {}
+            // v1.160.0: `0xFF`, `0b1010`, `0o17` ve basamak ayırıcı `_` (`1_000_000`).
+            if (c == '0' and i + 2 < source.len and (source[i + 1] == 'x' or source[i + 1] == 'X' or source[i + 1] == 'b' or source[i + 1] == 'B' or source[i + 1] == 'o' or source[i + 1] == 'O') and isHexDigit(source[i + 2])) {
+                i += 2;
+                while (i < source.len and (isHexDigit(source[i]) or source[i] == '_')) : (i += 1) {}
+                try tokens.append(allocator, mkToken(.int_lit, source[start..i], line, col, start));
+                continue;
+            }
+            while (i < source.len and (isDigit(source[i]) or (source[i] == '_' and i + 1 < source.len and isDigit(source[i + 1])))) : (i += 1) {}
             if (i < source.len and source[i] == '.' and i + 1 < source.len and isDigit(source[i + 1])) {
                 is_float = true;
                 i += 1;
-                while (i < source.len and isDigit(source[i])) : (i += 1) {}
+                while (i < source.len and (isDigit(source[i]) or (source[i] == '_' and i + 1 < source.len and isDigit(source[i + 1])))) : (i += 1) {}
+            }
+            // v1.160.0: üstel gösterim (`1e20`, `2.5E-3`, `1e+9`) — her zaman `float`.
+            if (i < source.len and (source[i] == 'e' or source[i] == 'E')) {
+                var j = i + 1;
+                if (j < source.len and (source[j] == '+' or source[j] == '-')) j += 1;
+                if (j < source.len and isDigit(source[j])) {
+                    is_float = true;
+                    while (j < source.len and isDigit(source[j])) : (j += 1) {}
+                    i = j;
+                }
             }
             const lexeme = source[start..i];
             try tokens.append(allocator, mkToken(if (is_float) .float_lit else .int_lit, lexeme, line, col, start));
@@ -561,6 +578,10 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
 fn peek(source: []const u8, idx: usize) u8 {
     if (idx >= source.len) return 0;
     return source[idx];
+}
+
+fn isHexDigit(c: u8) bool {
+    return isDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
 }
 
 fn isDigit(c: u8) bool {

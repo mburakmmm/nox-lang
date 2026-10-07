@@ -231,6 +231,11 @@ metadata-only decorators — see `nox.reflect` — are supported.)
   backend traps with a message. Do not rely on either; mask explicitly when you
   mean to wrap.
 - `list[u8]` etc. are byte-packed.
+- **Literals:** decimal `42`, `1_000_000`; hex/binary/octal `0xFF`, `0b1010`, `0o17`; floats `3.14`, `1e-3`,
+  `2.5E+10`, `1_0.5` (an exponent always makes a `float`). Note that `noxc fmt` rewrites `0xFF` as `255`.
+- **Printing floats** follows Python's `repr`: the shortest digits that round-trip, `2.0` (not `2`), `0.1 + 0.2`
+  prints `0.30000000000000004`, scientific notation outside `1e-4 <= |x| < 1e16` (`1e+16`, `1.5e-07`), and
+  `inf`/`-inf`/`nan`. `print`, `str(x)`, f-strings and list/tuple/class printing all agree.
 
 ## Optionals
 
@@ -507,6 +512,20 @@ embedded WASM runtime for importing WASM modules as libraries. Both
 type/ownership guarantees with no sandboxing (see the main
 [README](../README.en.md#security) and `AGENTS.md` §9.5 for the full
 security model).
+
+## Diagnostics
+
+Syntax errors report file, line and column with the offending source line and a caret, and exit with
+status 1:
+
+```
+main.nox:2:9: sözdizimi hatası: beklenmeyen '2' (beklenen ')')
+    print(1 2)
+            ^
+```
+
+Type errors report the statement line (`tip hatasi (TypeMismatch): satır 25: ...`). `noxc check` runs only the
+front end; `noxlsp` serves the same diagnostics (with full spans) to editors.
 
 ## Tooling
 

@@ -28798,3 +28798,20 @@ DEĞİL, testin kendi iddiasının mimarinin garanti edemeyeceği bir şeyi
   değerleri hiçbir zaman null olamadığından kontrol koşulsuz güvenlidir. Not: `str(opt)`/f-string hâlâ derleme
   hatasıdır (önce daraltın).
 - Golden: `zero_division`, `print_optional` (iki backend).
+
+## 3.276 Sözdizimi tanılamaları, sayı değişmezleri, Python-repr float biçimi (v1.160.0)
+
+- **Sözdizimi hataları artık okunaklı** (`compiler/syntax_report.zig`): `noxc check/build/run` ve içe aktarılan modüller
+  için `dosya:satır:sütun: sözdizimi hatası: ...` + kaynak satırı + işaret (`^`), çıkış kodu 1. Önceden Zig'in
+  `error: UnexpectedToken` + yığın izi çıkıyordu. LSP zaten `Parser.last_diagnostic`/`tokenizeCapturingSpan` kullanıyordu;
+  CLI aynı bilgiyi bağlar. `module_loader.LoadError`a `SyntaxError` eklendi, `main` bunu "zaten yazıldı" sayıp 1 ile çıkar.
+- **Sayı değişmezleri:** `0x`/`0b`/`0o`, `_` basamak ayırıcı (`1_000`, `1_0.5`), üstel gösterim (`1e3`, `2.5E-3`; üs her
+  zaman `float` yapar). Parser `parseInt(.., 0)`. `noxc fmt` onaltılık yazımı ondalığa çevirir (AST yalnız `i64` taşır;
+  bilinen sınırlama). tree-sitter + TextMate güncellendi.
+- **`float` yazdırma Python `repr`:** `runtime/str.zig` `formatFloatRepr` — en kısa gidiş-dönüşlü rakamlar (`{e}`'den),
+  ondalık üssü `-4 <= e < 16` sabit (`2.0`), dışında bilimsel (`1e+20`, `1.5e-07`), `inf`/`nan`. `print` (eskiden `%g`,
+  6 anlamlı hane) artık geçici `str` üzerinden `nox_float_to_str` kullanır; `str()` (eskiden `{d}`: `2.0` → `2`) aynı
+  fonksiyonu kullanır — iki yol tutarlı ve Python ile birebir. **Davranış değişikliği (2.0 notu):** `print(2.0)` artık `2.0`.
+  `nox.json` kodlayıcısı tamsayı değerli sayıları `1` olarak yazmaya devam eder (`dump_number`, JSON tek sayı tipi tutar);
+  `JsonWriter.write_float` ise `str(float)` kullanır.
+- Golden: `float_repr_python`, `numeric_literals`; birim: `formatFloatRepr`, `parseSource`.

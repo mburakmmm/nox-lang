@@ -26,11 +26,12 @@
 
 const std = @import("std");
 const lexer = @import("lexer/lexer.zig");
+const syntax_report = @import("syntax_report.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
 const project = @import("project.zig");
 
-pub const LoadError = error{ ModuleNotFound, UnknownImportAlias } || lexer.LexError || parser.ParseError || std.Io.Dir.ReadFileAllocError;
+pub const LoadError = error{ ModuleNotFound, UnknownImportAlias, SyntaxError } || lexer.LexError || parser.ParseError || std.Io.Dir.ReadFileAllocError;
 
 /// `user_module`ün (KENDİSİ hiç değiştirilmez/yeniden adlandırılmaz) `import`
 /// deyimlerini (özyinelemeli olarak) çözer; sonuç, çözülen TÜM stdlib
@@ -239,8 +240,7 @@ fn loadImportsRecursive(
             else => return e,
         };
 
-        const tokens = try lexer.tokenize(a, source);
-        const stdlib_module = try parser.parseModule(a, tokens);
+        const stdlib_module = try syntax_report.parseSource(a, source, file_path);
 
         // Faz NN.3: BU dosyanın (varsa) kendi paket kökünün KENDİ `nox.json`
         // adını best-effort okur (yok/geçersizse SESSİZCE yok sayılır —

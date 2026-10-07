@@ -423,10 +423,111 @@ pub export fn nox_uint_to_str(rt: ?*anyopaque, n: u64) ?[*:0]u8 {
     return allocStr(rt, s, ASCII_TRUE);
 }
 
+/// v1.160.0: Python'un `repr(float)` biçimi — en kısa gidiş-dönüşlü (round-trip) rakamlar; ondalık üssü
+/// `-5 < e < 16` aralığında sabit gösterim (`2.0`, `0.0001`, `123456789.125`), dışında bilimsel (`1e+20`,
+/// `1.5e-07`); `inf`/`-inf`/`nan`. (Eskiden `print` `%g` (6 anlamlı hane: `0.1+0.2` → `0.3`) ve `str()` `{d}`
+/// (`2.0` → `2`) kullanıyordu — iki yol da Python'dan sapıyor ve birbirinden farklıydı.)
+pub fn formatFloatRepr(out: *[64]u8, f: f64) []const u8 {
+    if (std.math.isNan(f)) return std.fmt.bufPrint(out, "nan", .{}) catch unreachable;
+    if (std.math.isInf(f)) return std.fmt.bufPrint(out, "{s}", .{if (f < 0) "-inf" else "inf"}) catch unreachable;
+    var sci: [64]u8 = undefined;
+    const t = std.fmt.bufPrint(&sci, "{e}", .{f}) catch unreachable; // "-d.ddde[-]x"
+    var pos: usize = 0;
+    var neg = false;
+    if (t[0] == '-') {
+        neg = true;
+        pos = 1;
+    }
+    const e_idx = std.mem.indexOfScalar(u8, t, 'e').?;
+    var digits: [32]u8 = undefined;
+    var nd: usize = 0;
+    for (t[pos..e_idx]) |c| {
+        if (c != '.') {
+            digits[nd] = c;
+            nd += 1;
+        }
+    }
+    const exp = std.fmt.parseInt(i32, t[e_idx + 1 ..], 10) catch 0;
+    var w: usize = 0;
+    if (neg) {
+        out[w] = '-';
+        w += 1;
+    }
+    if (exp < -4 or exp >= 16) {
+        out[w] = digits[0];
+        w += 1;
+        if (nd > 1) {
+            out[w] = '.';
+            w += 1;
+            @memcpy(out[w .. w + nd - 1], digits[1..nd]);
+            w += nd - 1;
+        }
+        const es = std.fmt.bufPrint(out[w..], "e{c}{d:0>2}", .{ @as(u8, if (exp < 0) '-' else '+'), @abs(exp) }) catch unreachable;
+        return out[0 .. w + es.len];
+    }
+    if (exp < 0) {
+        out[w] = '0';
+        out[w + 1] = '.';
+        w += 2;
+        var z: i32 = exp + 1;
+        while (z < 0) : (z += 1) {
+            out[w] = '0';
+            w += 1;
+        }
+        @memcpy(out[w .. w + nd], digits[0..nd]);
+        w += nd;
+    } else {
+        const int_len: usize = @intCast(exp + 1);
+        var k: usize = 0;
+        while (k < int_len) : (k += 1) {
+            out[w] = if (k < nd) digits[k] else '0';
+            w += 1;
+        }
+        out[w] = '.';
+        w += 1;
+        if (nd > int_len) {
+            @memcpy(out[w .. w + nd - int_len], digits[int_len..nd]);
+            w += nd - int_len;
+        } else {
+            out[w] = '0';
+            w += 1;
+        }
+    }
+    return out[0..w];
+}
+
 pub export fn nox_float_to_str(rt: ?*anyopaque, f: f64) ?[*:0]u8 {
     var buf: [64]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, "{d}", .{f}) catch return null;
+    const s = formatFloatRepr(&buf, f);
     return allocStr(rt, s, ASCII_TRUE);
+}
+
+test "formatFloatRepr Python repr ile birebir" {
+    const cases = [_]struct { v: f64, want: []const u8 }{
+        .{ .v = 2.0, .want = "2.0" },
+        .{ .v = 3.5, .want = "3.5" },
+        .{ .v = -0.0, .want = "-0.0" },
+        .{ .v = 0.0, .want = "0.0" },
+        .{ .v = @as(f64, @bitCast(@as(u64, 0x3FB999999999999A))) + @as(f64, @bitCast(@as(u64, 0x3FC999999999999A))), .want = "0.30000000000000004" },
+        .{ .v = 1e15, .want = "1000000000000000.0" },
+        .{ .v = 1e16, .want = "1e+16" },
+        .{ .v = 1e20, .want = "1e+20" },
+        .{ .v = 123456789.125, .want = "123456789.125" },
+        .{ .v = 0.0001, .want = "0.0001" },
+        .{ .v = 0.00001, .want = "1e-05" },
+        .{ .v = 1.5e-7, .want = "1.5e-07" },
+        .{ .v = 1.7976931348623157e308, .want = "1.7976931348623157e+308" },
+        .{ .v = 5e-324, .want = "5e-324" },
+        .{ .v = 100.0, .want = "100.0" },
+        .{ .v = -12.5, .want = "-12.5" },
+        .{ .v = std.math.inf(f64), .want = "inf" },
+        .{ .v = -std.math.inf(f64), .want = "-inf" },
+        .{ .v = std.math.nan(f64), .want = "nan" },
+    };
+    for (cases) |c| {
+        var buf: [64]u8 = undefined;
+        try std.testing.expectEqualStrings(c.want, formatFloatRepr(&buf, c.v));
+    }
 }
 
 pub export fn nox_str_is_valid_int(s: ?[*:0]const u8) i32 {
