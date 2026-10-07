@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.19]
+
+### Dokümantasyon
+
+- `benchmarks/cross_lang/README.md` sonuç tablosu v1.142.18 ile yenilendi (C'ye göre geometrik ortalama:
+  QBE 1.71×, LLVM 1.49×; başlangıç 3.53× / 2.92×). Kod değişikliği yok.
+
 ## [1.142.18]
 
 ### Düzeltildi / Performans
