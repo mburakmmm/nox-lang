@@ -170,6 +170,9 @@ const Fixer = struct {
                     .if_clause => |*ce| try self.fixExpr(ce),
                 };
             },
+            .lambda => |*lam| {
+                try self.fixExpr(lam.body);
+            },
             .slice => |*sl| {
                 try self.fixExpr(sl.obj);
                 if (sl.lo) |x| try self.fixExpr(x);

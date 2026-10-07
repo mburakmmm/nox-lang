@@ -457,6 +457,7 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             }
             break :blk false;
         },
+        .lambda => |lam| exprHasUnsafeLocalUse(self, lam.body.*, name, class_params),
         .slice => |sl| exprHasUnsafeLocalUse(self, sl.obj.*, name, class_params) or (if (sl.lo) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false) or (if (sl.hi) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false) or (if (sl.step) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false),
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
@@ -621,6 +622,7 @@ fn exprHasUnsafeGrowableLocalUse(self: *const Codegen, expr: ast.Expr, name: []c
             }
             break :blk false;
         },
+        .lambda => |lam| exprHasUnsafeGrowableLocalUse(self, lam.body.*, name),
         .slice => |sl| exprHasUnsafeGrowableLocalUse(self, sl.obj.*, name) or (if (sl.lo) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false) or (if (sl.hi) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false) or (if (sl.step) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false),
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);

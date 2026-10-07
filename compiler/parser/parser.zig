@@ -847,6 +847,17 @@ pub const Parser = struct {
     fn parseExpr(self: *Parser) ParseError!ast.Expr {
         try self.enterRecursion();
         defer self.exitRecursion();
+        // v1.155.0: `lambda a, b: <ifade>` (en gevşek bağlanır; gövde tam ifadedir).
+        if (self.match(.kw_lambda)) {
+            var params = std.ArrayList([]const u8).empty;
+            if (!self.check(.colon)) {
+                try params.append(self.allocator, (try self.expect(.identifier)).lexeme);
+                while (self.match(.comma)) try params.append(self.allocator, (try self.expect(.identifier)).lexeme);
+            }
+            _ = try self.expect(.colon);
+            const body = try self.parseExpr();
+            return .{ .lambda = .{ .params = try params.toOwnedSlice(self.allocator), .body = try self.box(body) } };
+        }
         const value = try self.parseOr();
         // `a if cond else b` (v1.146.0): Python gibi `cond` bir `or`-seviyesi ifadedir, `else` kolu SAĞ-birleşimli
         // (iç içe üçlü `parseExpr` özyinelemesiyle; derinlik koruması orada).

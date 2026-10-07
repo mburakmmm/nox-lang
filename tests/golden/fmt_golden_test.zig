@@ -331,3 +331,21 @@ test "fmt: v1.154.0 — comprehension İDEMPOTENT round-trip" {
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: v1.155.0 — lambda İDEMPOTENT round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "f: (int) -> int = lambda x: x+1\n", .out = "f: (int) -> int = lambda x: x + 1\n" },
+        .{ .in = "y: int = apply(lambda a,b: a*b, 1, 2)\n", .out = "y: int = apply(lambda a, b: a * b, 1, 2)\n" },
+        .{ .in = "f: () -> int = lambda : 42\n", .out = "f: () -> int = lambda: 42\n" },
+        .{ .in = "f: (int) -> (int) -> int = lambda x: lambda y: x + y\n", .out = "f: (int) -> (int) -> int = lambda x: lambda y: x + y\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

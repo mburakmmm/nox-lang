@@ -483,6 +483,9 @@ fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name:
                 .if_clause => |ce| try scanParamEscapesExpr(self, fname, param_idx, name, ce, class_params, seeds, reverse_edges),
             };
         },
+        .lambda => |lam| {
+            try scanParamEscapesExpr(self, fname, param_idx, name, lam.body.*, class_params, seeds, reverse_edges);
+        },
         .slice => |sl| {
             try scanParamEscapesExpr(self, fname, param_idx, name, sl.obj.*, class_params, seeds, reverse_edges);
             if (sl.lo) |x| try scanParamEscapesExpr(self, fname, param_idx, name, x.*, class_params, seeds, reverse_edges);
@@ -721,6 +724,9 @@ pub fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void 
                 .if_clause => |ce| try self.collectInlineSitesExpr(ce),
             };
         },
+        .lambda => |lam| {
+            try self.collectInlineSitesExpr(lam.body.*);
+        },
         .slice => |sl| {
             try self.collectInlineSitesExpr(sl.obj.*);
             if (sl.lo) |x| try self.collectInlineSitesExpr(x.*);
@@ -874,6 +880,9 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
                 .for_clause => |fc| try scanStackConstructsExpr(self, fc.iterable, all_ok, any),
                 .if_clause => |ce| try scanStackConstructsExpr(self, ce, all_ok, any),
             };
+        },
+        .lambda => |lam| {
+            try scanStackConstructsExpr(self, lam.body.*, all_ok, any);
         },
         .slice => |sl| {
             try scanStackConstructsExpr(self, sl.obj.*, all_ok, any);
@@ -1093,6 +1102,7 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             }
             break :blk false;
         },
+        .lambda => |lam| exprHasUnsafeParamUse(self, lam.body.*, name, class_params),
         .slice => |sl| exprHasUnsafeParamUse(self, sl.obj.*, name, class_params) or (if (sl.lo) |x| exprHasUnsafeParamUse(self, x.*, name, class_params) else false) or (if (sl.hi) |x| exprHasUnsafeParamUse(self, x.*, name, class_params) else false) or (if (sl.step) |x| exprHasUnsafeParamUse(self, x.*, name, class_params) else false),
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);

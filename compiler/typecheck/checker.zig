@@ -652,6 +652,10 @@ pub const Checker = struct {
     stmt_for_rewrites: call_expand_apply.StmtForMap = .empty,
     /// v1.154.0: comprehension sonuç tipleri (bkz. `call_expand_apply.CompTypeMap`).
     comp_types: call_expand_apply.CompTypeMap = .empty,
+    /// v1.155.0: lambda → yükseltilecek `FuncDef` (bkz. `call_expand_apply.LambdaMap`).
+    lambda_defs: call_expand_apply.LambdaMap = .empty,
+    lambda_counter: u32 = 0,
+    comp_depth: u32 = 0,
     extend_counter: u32 = 0,
     /// v1.147.0: çağrı sitesi → genişletilmiş (tam konumsal) argüman listesi. Bkz. `call_expand_apply.zig`.
     call_expansions: call_expand_apply.Map = .empty,
@@ -1931,11 +1935,44 @@ pub const Checker = struct {
 
     /// Checker bitince, kaydedilen genişletmeleri AST'ye yazar (bkz. `call_expand_apply.zig`).
     fn applyCallExpansions(self: *Checker, module: ast.Module) void {
-        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0) return;
-        const cx: call_expand_apply.Ctx = .{ .calls = &self.call_expansions, .fors = &self.for_rewrites, .stmt_fors = &self.stmt_for_rewrites, .comps = &self.comp_types };
+        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0 and self.lambda_defs.count() == 0) return;
+        var pending: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        var lifted: std.ArrayListUnmanaged(ast.FuncDef) = .empty;
+        var in_func: u32 = 0;
+        const cx: call_expand_apply.Ctx = .{
+            .calls = &self.call_expansions,
+            .fors = &self.for_rewrites,
+            .stmt_fors = &self.stmt_for_rewrites,
+            .comps = &self.comp_types,
+            .lambdas = &self.lambda_defs,
+            .allocator = self.allocator,
+            .pending = &pending,
+            .lifted = &lifted,
+            .in_func = &in_func,
+        };
         call_expand_apply.stmts(module.body, &cx);
+        in_func = 1;
+        // `instantiations` yürütülürken büyüyebilir (yükseltilen lambdalar eklenmez: `lifted` ayrı biriktirilir).
         for (self.instantiations.items) |fd| call_expand_apply.stmts(fd.body, &cx);
         for (self.class_instantiations.items) |cd| for (cd.methods) |m| call_expand_apply.stmts(m.body, &cx);
+        in_func = 0;
+        // Modül üst düzeyindeki lambda'lar üst-düzey fonksiyon olarak derlenir ve fonksiyon-değeri olarak kullanılır.
+        for (lifted.items) |fd| {
+            self.instantiations.append(self.allocator, fd) catch return;
+            self.functions_used_as_value.put(self.allocator, fd.name, {}) catch return;
+            // Yükseltilen fonksiyonun içindeki iç içe `def`lerin closure anahtarları modül ctx yolundan (".N.iç") üst-düzey yola ("N.iç") taşınır.
+            const old_prefix = std.fmt.allocPrint(self.allocator, ".{s}.", .{fd.name}) catch return;
+            var moves: std.ArrayListUnmanaged(struct { old: []const u8, info: ClosureInfo }) = .empty;
+            var cit = self.closure_infos.iterator();
+            while (cit.next()) |entry| {
+                if (std.mem.startsWith(u8, entry.key_ptr.*, old_prefix)) moves.append(self.allocator, .{ .old = entry.key_ptr.*, .info = entry.value_ptr.* }) catch return;
+            }
+            for (moves.items) |mv| {
+                _ = self.closure_infos.remove(mv.old);
+                const new_key = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ fd.name, mv.old[old_prefix.len..] }) catch return;
+                self.closure_infos.put(self.allocator, new_key, mv.info) catch return;
+            }
+        }
     }
 
     fn registerFunc(self: *Checker, fd: ast.FuncDef) TypeError!void {
@@ -3288,6 +3325,9 @@ pub const Checker = struct {
                     .if_clause => |ce| try self.collectSpawnTargetsExpr(ce),
                 };
             },
+            .lambda => |lam| {
+                try self.collectSpawnTargetsExpr(lam.body.*);
+            },
             .slice => |sl| {
                 try self.collectSpawnTargetsExpr(sl.obj.*);
                 if (sl.lo) |x| try self.collectSpawnTargetsExpr(x.*);
@@ -3798,6 +3838,9 @@ pub const Checker = struct {
                     .if_clause => |ce| try self.scanMutatesGraphExpr(fname, params, ce, shared, seeds, reverse_edges),
                 };
             },
+            .lambda => |lam| {
+                try self.scanMutatesGraphExpr(fname, params, lam.body.*, shared, seeds, reverse_edges);
+            },
             .slice => |sl| {
                 try self.scanMutatesGraphExpr(fname, params, sl.obj.*, shared, seeds, reverse_edges);
                 if (sl.lo) |x| try self.scanMutatesGraphExpr(fname, params, x.*, shared, seeds, reverse_edges);
@@ -3960,6 +4003,9 @@ pub const Checker = struct {
                     .for_clause => |fc| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, fc.iterable, params),
                     .if_clause => |ce| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, ce, params),
                 };
+            },
+            .lambda => |lam| {
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, lam.body.*, params);
             },
             .slice => |sl| {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, sl.obj.*, params);
@@ -4174,6 +4220,9 @@ pub const Checker = struct {
                     .for_clause => |fc| try self.removeAwaitedTaskSharing(aa, fc.iterable, task_spawn_ids, resource_owners, locked_resources),
                     .if_clause => |ce| try self.removeAwaitedTaskSharing(aa, ce, task_spawn_ids, resource_owners, locked_resources),
                 };
+            },
+            .lambda => |lam| {
+                try self.removeAwaitedTaskSharing(aa, lam.body.*, task_spawn_ids, resource_owners, locked_resources);
             },
             .slice => |sl| {
                 try self.removeAwaitedTaskSharing(aa, sl.obj.*, task_spawn_ids, resource_owners, locked_resources);
@@ -5483,6 +5532,7 @@ pub const Checker = struct {
     }
 
     fn checkExprExpected(self: *Checker, ctx: *FnCtx, expr: ast.Expr, expected: ?Type) TypeError!Type {
+        if (expr == .lambda) return self.checkLambda(ctx, expr.lambda, expected);
         if (expr == .ternary) return self.checkTernary(ctx, expr.ternary, expected);
         if (expr == .list_lit and expr.list_lit.len == 0) {
             if (expected) |exp| {
@@ -5498,6 +5548,20 @@ pub const Checker = struct {
         // list'lerin `checkExpr`in KENDİ katı pairwise-`types.eql`
         // davranışı DEĞİŞMEDİ — int→float genişletme GİBİ farklı bir
         // semantiğe kazara KAYMAMAK İçin bilinçli olarak dar tutuldu).
+        // v1.155.0: `list[(T) -> U]` beklenirken her eleman (özellikle lambda) beklenen fonksiyon tipiyle denetlenir.
+        if (expr == .list_lit and expr.list_lit.len > 0) {
+            if (expected) |exp| {
+                if (exp == .list and exp.list.* == .func) {
+                    for (expr.list_lit) |el| {
+                        const t = try self.checkExprExpected(ctx, el, exp.list.*);
+                        if (!self.assignable(exp.list.*, t)) {
+                            return self.fail(error.TypeMismatch, "liste elemanı beklenen fonksiyon tipiyle uyuşmuyor", .{});
+                        }
+                    }
+                    return exp;
+                }
+            }
+        }
         if (expr == .list_lit and expr.list_lit.len > 0) {
             if (expected) |exp| {
                 if (exp == .list and exp.list.* == .class) {
@@ -5693,6 +5757,7 @@ pub const Checker = struct {
             .binary => |b| try self.checkBinary(ctx, b),
             .list_comp => |lc| try self.checkListComp(ctx, lc),
             .dict_comp => |dc| try self.checkDictComp(ctx, dc),
+            .lambda => return self.fail(error.TypeMismatch, "'lambda' yalnızca beklenen fonksiyon tipinin bilindiği bağlamlarda kullanılabilir (fonksiyon-tipli parametre/değişken/dönüş)", .{}),
             .slice => |sl| try self.checkSlice(ctx, sl),
             .ternary => |t| try self.checkTernary(ctx, t, null),
             .kwarg => return self.fail(error.TypeMismatch, "keyword argüman (ad=değer) yalnızca bir fonksiyon/metod çağrısının argüman listesinde kullanılabilir", .{}),
@@ -7469,6 +7534,8 @@ pub const Checker = struct {
     fn checkListComp(self: *Checker, ctx: *FnCtx, lc: ast.ListComp) TypeError!Type {
         var saved: std.ArrayListUnmanaged(SavedCompVar) = .empty;
         defer saved.deinit(self.allocator);
+        self.comp_depth += 1;
+        defer self.comp_depth -= 1;
         try self.checkCompClauses(ctx, lc.clauses, &saved);
         const elem_t = try self.checkExpr(ctx, lc.elem.*);
         restoreCompScope(ctx, &saved);
@@ -7484,6 +7551,8 @@ pub const Checker = struct {
     fn checkDictComp(self: *Checker, ctx: *FnCtx, dc: ast.DictComp) TypeError!Type {
         var saved: std.ArrayListUnmanaged(SavedCompVar) = .empty;
         defer saved.deinit(self.allocator);
+        self.comp_depth += 1;
+        defer self.comp_depth -= 1;
         try self.checkCompClauses(ctx, dc.clauses, &saved);
         const key_t = try self.checkExpr(ctx, dc.key.*);
         const value_t = try self.checkExpr(ctx, dc.value.*);
@@ -7512,6 +7581,43 @@ pub const Checker = struct {
             };
         }
         return out;
+    }
+
+    /// v1.155.0: `lambda a, b: <ifade>` — parametre tipleri ve dönüş tipi BEKLENEN fonksiyon tipinden gelir; lambda, sentezlenmiş bir iç içe
+    /// `def __nox_lambda_N(a: T1, b: T2) -> R: return <ifade>` olarak denetlenir (yakalamalar mevcut closure mekanizmasıyla), sonuç tipi
+    /// beklenen fonksiyon tipidir. `call_expand_apply` ifadeyi yükseltilmiş `def` adıyla değiştirir (fonksiyon içinde: deyimden önce iç içe
+    /// `def`; modül üst düzeyinde: üst-düzey fonksiyon).
+    fn checkLambda(self: *Checker, ctx: *FnCtx, lam: ast.Lambda, expected: ?Type) TypeError!Type {
+        const exp = expected orelse return self.fail(error.TypeMismatch, "'lambda' yalnızca beklenen fonksiyon tipinin bilindiği bağlamlarda kullanılabilir (fonksiyon-tipli parametre/değişken/dönüş)", .{});
+        if (exp != .func) return self.fail(error.TypeMismatch, "'lambda' yalnızca fonksiyon tipi beklenen bir bağlamda kullanılabilir", .{});
+        if (exp.func.params.len != lam.params.len) {
+            return self.fail(error.ArgumentCountMismatch, "lambda {d} parametre alıyor, beklenen fonksiyon tipi {d} parametre bekliyor", .{ lam.params.len, exp.func.params.len });
+        }
+        if (self.comp_depth > 0) return self.fail(error.TypeMismatch, "'lambda' comprehension içinde desteklenmiyor — önce bir değişkene alın", .{});
+        self.lambda_counter += 1;
+        const name = try std.fmt.allocPrint(self.allocator, "__nox_lambda_{d}", .{self.lambda_counter});
+        const params = try self.allocator.alloc(ast.Param, lam.params.len);
+        for (lam.params, 0..) |pn, i| params[i] = .{ .name = pn, .type_expr = try self.typeToTypeExpr(exp.func.params[i]) };
+        const ret_t = exp.func.return_type.*;
+        const body = try self.allocator.alloc(ast.Stmt, 1);
+        body[0] = .{ .kind = if (ret_t == .none) .{ .expr_stmt = lam.body.* } else .{ .return_stmt = lam.body.* }, .line = self.current_line, .span = self.current_span };
+        const fd: ast.FuncDef = .{ .name = name, .params = params, .return_type = try self.typeToTypeExpr(ret_t), .body = body };
+        const func_t = try self.checkNestedFuncDef(ctx, fd);
+        try ctx.scope.declare(self.allocator, name, func_t);
+        const inner_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ctx.path, name });
+        const has_captures = if (self.closure_infos.get(inner_path)) |ci| ci.captures.len > 0 else false;
+        // Modül düzeyinde lambda üst-düzey fonksiyona yükselir: yakaladığı değişkenler modül-global olarak terfi edebilenler (üst-düzey `var_decl`) olmalı.
+        if (ctx.path.len == 0) {
+            if (self.closure_infos.get(inner_path)) |ci| {
+                for (ci.captures) |cv| {
+                    if (!self.module_globals.contains(cv.name)) {
+                        return self.fail(error.TypeMismatch, "modül düzeyindeki bir lambda, bir döngü/blok içinde tanımlı '{s}' yerel değişkenini yakalayamaz — lambda'yı bir fonksiyon içinde kullanın ya da değişkeni üst düzeyde tanımlayın", .{cv.name});
+                    }
+                }
+            }
+        }
+        try self.lambda_defs.put(self.allocator, @intFromPtr(lam.body), .{ .fd = fd, .has_captures = has_captures });
+        return func_t;
     }
 
     /// v1.153.0: `obj[lo:hi:step]` — `list[T]` → `list[T]`, `str` → `str` (yeni değer; sınırlar Python gibi sıkıştırılır, hata
@@ -8143,6 +8249,11 @@ pub const Checker = struct {
                 const v = try self.allocator.create(ast.Expr);
                 v.* = try self.substituteExpr(dc.value.*, bindings);
                 break :blk .{ .dict_comp = .{ .key = k, .value = v, .clauses = try self.substituteCompClauses(dc.clauses, bindings) } };
+            },
+            .lambda => |lam| blk: {
+                const body = try self.allocator.create(ast.Expr);
+                body.* = try self.substituteExpr(lam.body.*, bindings);
+                break :blk .{ .lambda = .{ .params = lam.params, .body = body } };
             },
             .slice => |sl| blk: {
                 const obj = try self.allocator.create(ast.Expr);

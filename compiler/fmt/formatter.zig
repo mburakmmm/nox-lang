@@ -622,6 +622,15 @@ const Printer = struct {
                 try self.printCompClauses(dc.clauses);
                 try self.writer.writeAll("}");
             },
+            .lambda => |lam| {
+                try self.writer.writeAll("lambda");
+                for (lam.params, 0..) |pn, i| {
+                    try self.writer.writeAll(if (i == 0) " " else ", ");
+                    try self.writer.writeAll(pn);
+                }
+                try self.writer.writeAll(": ");
+                try self.printExpr(lam.body.*);
+            },
             .slice => |sl| {
                 try self.printExprAt(sl.obj.*, 0, .loose);
                 try self.writer.writeAll("[");

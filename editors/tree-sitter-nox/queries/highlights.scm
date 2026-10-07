@@ -25,6 +25,7 @@
   "while"
   "for"
   "in"
+  "lambda"
 ] @keyword.control.conditional
 
 "return" @keyword.control.return

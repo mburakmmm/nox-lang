@@ -797,6 +797,9 @@ pub fn collectIndexStrBasesExpr(self: *Codegen, e: ast.Expr, candidates: *std.St
                 .if_clause => |ce| try self.collectIndexStrBasesExpr(ce, candidates),
             };
         },
+        .lambda => |lam| {
+            try self.collectIndexStrBasesExpr(lam.body.*, candidates);
+        },
         .slice => |sl| {
             try self.collectIndexStrBasesExpr(sl.obj.*, candidates);
             if (sl.lo) |x| try self.collectIndexStrBasesExpr(x.*, candidates);

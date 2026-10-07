@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.155.0]
+
+### Eklendi
+
+- **`lambda`:** `lambda a, b: <ifade>` — parametre/dönüş tipleri BEKLENEN fonksiyon tipinden gelir (fonksiyon-tipli parametre, annotasyonlu değişken,
+  dönüş, `list[(T) -> U]` elemanı, sınıf alanı ataması). Yakalama destekli (fonksiyon içinde iç içe `def` closure mekanizmasıyla; modül düzeyinde
+  yakalanan üst-düzey değişkenler global olarak terfi eder). Spec §3.272.
+
 ## [1.154.0]
 
 ### Eklendi

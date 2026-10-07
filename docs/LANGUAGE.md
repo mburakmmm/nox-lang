@@ -141,6 +141,10 @@ connect("localhost")
 connect("example.com", tls=True)
 ```
 
+**Lambda:** `lambda a, b: a * b` — parameter and return types come from the expected function type, so a lambda can be passed
+to a function-typed parameter, assigned to an annotated variable, returned, or placed in a `list[(T) -> U]` literal. Lambdas capture
+variables like nested `def`s (read-only); inside comprehensions they are not supported.
+
 **Comprehensions:** `[x * x for x in xs if x > 0]`, `{k: len(k) for k in names}`, multiple `for`/`if` clauses
 (`[a * b for a in A for b in B if a != b]`), over lists, `range(...)`, `str` and `dict`. The loop variable does not leak.
 The condition and the iterable are `or`-level expressions (use parentheses for a conditional expression there).

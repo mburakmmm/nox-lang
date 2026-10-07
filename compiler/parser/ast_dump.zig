@@ -340,6 +340,13 @@ fn dumpExpr(writer: *std.Io.Writer, e: ast.Expr) std.Io.Writer.Error!void {
             try dumpCompClauses(writer, dc.clauses);
             try writer.writeAll(")");
         },
+        .lambda => |lam| {
+            try writer.writeAll("(lambda");
+            for (lam.params) |pn| try writer.print(" {s}", .{pn});
+            try writer.writeAll(" ");
+            try dumpExpr(writer, lam.body.*);
+            try writer.writeAll(")");
+        },
         .slice => |sl| {
             try writer.writeAll("(slice ");
             try dumpExpr(writer, sl.obj.*);

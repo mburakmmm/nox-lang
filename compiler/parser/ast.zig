@@ -107,6 +107,10 @@ pub const CompForClause = struct { var_name: []const u8, iterable: Expr };
 pub const CompClause = union(enum) { for_clause: CompForClause, if_clause: Expr };
 
 /// `[elem for x in it if c ...]` (v1.154.0).
+/// v1.155.0: `lambda a, b: <ifade>` — parametre tipleri ve dönüş tipi BEKLENEN fonksiyon tipinden gelir (checker); apply geçişi
+/// onu bir iç içe `def`e yükseltir ve ifadeyi o adın tanımlayıcısıyla değiştirir (bkz. `call_expand_apply`).
+pub const Lambda = struct { params: []const []const u8, body: *Expr };
+
 pub const ListComp = struct { elem: *Expr, clauses: []CompClause, result_type: ?TypeExpr = null };
 
 /// `{k: v for x in it if c ...}` (v1.154.0).
@@ -154,6 +158,7 @@ pub const Expr = union(enum) {
     ternary: Ternary,
     kwarg: Kwarg,
     slice: Slice,
+    lambda: Lambda,
     list_comp: ListComp,
     dict_comp: DictComp,
 };

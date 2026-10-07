@@ -184,6 +184,9 @@ const Fixer = struct {
                     .if_clause => |*ce| try self.fixExpr(ce, true),
                 };
             },
+            .lambda => |*lam| {
+                try self.fixExpr(lam.body, true);
+            },
             .slice => |*sl| {
                 try self.fixExpr(sl.obj, false);
                 if (sl.lo) |x| try self.fixExpr(x, true);

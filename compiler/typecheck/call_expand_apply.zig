@@ -22,7 +22,24 @@ pub const StmtForMap = std.AutoHashMapUnmanaged(usize, ast.StmtKind);
 /// v1.154.0: comprehension sonuç tipleri (anahtar: `elem`/`key` kutusunun adresi) — checker'ın çıkardığı tip codegen'e `result_type` olarak akar.
 pub const CompTypeMap = std.AutoHashMapUnmanaged(usize, ast.TypeExpr);
 
-pub const Ctx = struct { calls: *const Map, fors: *const ForMap, stmt_fors: *const StmtForMap, comps: *const CompTypeMap };
+/// v1.155.0: lambda → yükseltilmiş `FuncDef` (anahtar: lambda gövde kutusunun adresi). Bkz. `Ctx.pending`/`Ctx.lifted`.
+pub const LambdaEntry = struct { fd: ast.FuncDef, has_captures: bool };
+pub const LambdaMap = std.AutoHashMapUnmanaged(usize, LambdaEntry);
+
+/// `calls`/`fors`/`stmt_fors`/`comps`/`lambdas` salt-okunur yan tablolardır; `pending` (işlenen deyimin başlığında karşılaşılan, o deyimden ÖNCE
+/// tanımlanacak iç içe `def`ler), `lifted` (modül üst düzeyindeki lambda'ların yükseltildiği üst-düzey fonksiyonlar) ve `in_func` (fonksiyon/metod
+/// gövdesi derinliği) değiştirilebilir durumdur.
+pub const Ctx = struct {
+    calls: *const Map,
+    fors: *const ForMap,
+    stmt_fors: *const StmtForMap,
+    comps: *const CompTypeMap,
+    lambdas: *const LambdaMap,
+    allocator: std.mem.Allocator,
+    pending: *std.ArrayListUnmanaged(ast.Stmt),
+    lifted: *std.ArrayListUnmanaged(ast.FuncDef),
+    in_func: *u32,
+};
 
 fn applyClauses(clauses: []ast.CompClause, map: *const Ctx) void {
     for (clauses) |*cl| switch (cl.*) {
@@ -38,6 +55,7 @@ fn applyClauses(clauses: []ast.CompClause, map: *const Ctx) void {
 
 pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
     for (body) |*stmt| {
+        const pending_mark = map.pending.items.len;
         if (stmt.kind == .expr_stmt and stmt.kind.expr_stmt == .call) {
             if (map.stmt_fors.get(@intFromPtr(stmt.kind.expr_stmt.call.callee))) |rw| stmt.kind = rw;
         }
@@ -69,8 +87,16 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
                 expr(&s.iterable, map);
                 stmts(s.body, map);
             },
-            .func_def => |fd| stmts(fd.body, map),
-            .class_def => |cd| for (cd.methods) |m| stmts(m.body, map),
+            .func_def => |fd| {
+                map.in_func.* += 1;
+                stmts(fd.body, map);
+                map.in_func.* -= 1;
+            },
+            .class_def => |cd| for (cd.methods) |m| {
+                map.in_func.* += 1;
+                stmts(m.body, map);
+                map.in_func.* -= 1;
+            },
             .return_stmt => |*maybe| if (maybe.*) |*e| expr(e, map),
             .raise_stmt => |*e| expr(e, map),
             .del_stmt => |*e| expr(e, map),
@@ -90,6 +116,16 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
                 for (d.call.args) |*a| expr(a, map);
             },
             .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
+        }
+        // v1.155.0: bu deyimin başlığında yükseltilen lambda `def`leri (fonksiyon içinde) deyimden ÖNCE tanımlanır: deyim, `def`lerle birlikte
+        // `if True:` bloğuna sarılır (Nox'ta blok kapsamı yoktur; değişkenler fonksiyon boyunca görünür kalır).
+        if (map.pending.items.len > pending_mark) {
+            const defs = map.pending.items[pending_mark..];
+            const inner = map.allocator.alloc(ast.Stmt, defs.len + 1) catch return;
+            @memcpy(inner[0..defs.len], defs);
+            inner[defs.len] = .{ .kind = stmt.kind, .line = stmt.line, .span = stmt.span };
+            map.pending.shrinkRetainingCapacity(pending_mark);
+            stmt.kind = .{ .if_stmt = .{ .cond = .{ .bool_lit = true }, .then_body = inner, .elif_clauses = &.{}, .else_body = null } };
         }
     }
 }
@@ -124,6 +160,25 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
             expr(dc.value, map);
             applyClauses(dc.clauses, map);
             if (map.comps.get(@intFromPtr(dc.key))) |te| dc.result_type = te;
+        },
+        .lambda => |*lam| {
+            const entry = map.lambdas.get(@intFromPtr(lam.body)) orelse {
+                expr(lam.body, map);
+                return;
+            };
+            const fd = entry.fd;
+            // Gövdedeki iç içe lambda/çağrı genişletmeleri yükseltilmiş fonksiyonun gövdesinde işlenir.
+            map.in_func.* += 1;
+            stmts(fd.body, map);
+            map.in_func.* -= 1;
+            // Modül üst düzeyindeki lambda üst-düzey fonksiyona yükseltilir (yakaladığı modül değişkenleri global olarak terfi eder); fonksiyon içindeki
+            // lambda deyimden önce iç içe `def` olur (yakalamalar closure mekanizmasıyla).
+            if (map.in_func.* == 0) {
+                map.lifted.append(map.allocator, fd) catch return;
+            } else {
+                map.pending.append(map.allocator, .{ .kind = .{ .func_def = fd } }) catch return;
+            }
+            e.* = .{ .identifier = fd.name };
         },
         .slice => |*sl| {
             expr(sl.obj, map);

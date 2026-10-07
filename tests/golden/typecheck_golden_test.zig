@@ -507,6 +507,48 @@ test "golden(typecheck): v1.154.0 — list/dict comprehension tip denetimi geçe
     );
 }
 
+test "golden(typecheck): v1.155.0 — lambda fonksiyon-tipli beklenti olmadan reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_lambda_no_expected_type.nox"),
+        @embedFile("typecheck_cases/err_lambda_no_expected_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.155.0 — lambda parametre sayısı beklenen tiple uyuşmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_lambda_param_count.nox"),
+        @embedFile("typecheck_cases/err_lambda_param_count.expected"),
+    );
+}
+
+test "golden(typecheck): v1.155.0 — lambda gövde tipi beklenen dönüş tipiyle uyuşmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_lambda_body_type.nox"),
+        @embedFile("typecheck_cases/err_lambda_body_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.155.0 — lambda comprehension içinde desteklenmez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_lambda_in_comprehension.nox"),
+        @embedFile("typecheck_cases/err_lambda_in_comprehension.expected"),
+    );
+}
+
+test "golden(typecheck): v1.155.0 — modül düzeyi lambda blok-yerelini yakalayamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_lambda_module_loop_capture.nox"),
+        @embedFile("typecheck_cases/err_lambda_module_loop_capture.expected"),
+    );
+}
+
+test "golden(typecheck): v1.155.0 — lambda tip denetimi geçer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_lambdas.nox"),
+        @embedFile("typecheck_cases/ok_lambdas.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

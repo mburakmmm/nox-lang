@@ -91,6 +91,9 @@ pub fn visitExprForReqUsage(e: ast.Expr, param_name: []const u8, used: *UsedRequ
                 .if_clause => |ce| visitExprForReqUsage(ce, param_name, used),
             };
         },
+        .lambda => |lam| {
+            visitExprForReqUsage(lam.body.*, param_name, used);
+        },
         .slice => |sl| {
             visitExprForReqUsage(sl.obj.*, param_name, used);
             if (sl.lo) |x| visitExprForReqUsage(x.*, param_name, used);

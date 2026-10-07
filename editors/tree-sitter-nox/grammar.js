@@ -250,6 +250,7 @@ module.exports = grammar({
     // üs < postfix (çağrı/öznitelik/indeks).
 
     _expression: $ => choice(
+      $.lambda_expression,
       $.conditional_expression,
       $.binary_expression,
       $.unary_expression,
@@ -257,6 +258,14 @@ module.exports = grammar({
       $.spawn_expression,
       $._postfix_expression,
     ),
+
+    // `lambda a, b: ifade` (v1.155.0): en gevşek bağlanır; gövde tam ifadedir.
+    lambda_expression: $ => prec.right(PREC.ternary, seq(
+      'lambda',
+      optional(commaSep1(field('parameter', $.identifier))),
+      ':',
+      field('body', $._expression),
+    )),
 
     // `a if cond else b` (v1.146.0): en gevşek bağlanan ifade, `else` kolu sağ-birleşimli.
     conditional_expression: $ => prec.right(PREC.ternary, seq(

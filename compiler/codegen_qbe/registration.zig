@@ -629,7 +629,7 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
 /// SONRA çağrılmalıdır (`generateModule`, sınıf kayıt döngülerinden
 /// HEMEN SONRA) — bir global'in tipi `list[Foo]`/`Foo` OLABİLİR,
 /// `resolveType`in `self.classes`e İHTİYACI VAR.
-pub fn collectModuleGlobals(self: *Codegen, module: ast.Module) CodegenError!void {
+pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
     var used_in_functions: std.StringHashMapUnmanaged(void) = .empty;
     defer used_in_functions.deinit(self.allocator);
     for (module.body) |stmt| {
@@ -639,6 +639,9 @@ pub fn collectModuleGlobals(self: *Codegen, module: ast.Module) CodegenError!voi
             else => {},
         }
     }
+
+    // v1.155.0: yükseltilmiş lambda'lar (ve generic örneklemeler) `extra_functions`ta yaşar — onların modül değişkenlerine başvurusu da terfi sayılır.
+    for (extra_functions) |fd| try collectFreeNamesForTopLevelFunc(self.allocator, fd.params, fd.body, &used_in_functions);
 
     var idx: usize = 0;
     for (module.body) |stmt| {
@@ -824,6 +827,9 @@ fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.St
                 .for_clause => |fc| try collectIdentifierNamesExpr(a, fc.iterable, out),
                 .if_clause => |ce| try collectIdentifierNamesExpr(a, ce, out),
             };
+        },
+        .lambda => |lam| {
+            try collectIdentifierNamesExpr(a, lam.body.*, out);
         },
         .slice => |sl| {
             try collectIdentifierNamesExpr(a, sl.obj.*, out);

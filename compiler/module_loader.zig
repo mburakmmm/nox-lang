@@ -389,6 +389,19 @@ fn renameExpr(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.
             for (dc.clauses, 0..) |cl, i| clauses[i] = try renameCompClause(a, cl, &cur, &owned);
             break :blk .{ .dict_comp = .{ .key = try renameExprBox(a, dc.key.*, cur), .value = try renameExprBox(a, dc.value.*, cur), .clauses = clauses } };
         },
+        .lambda => |lam| blk: {
+            var cur: *const RenameMap = map;
+            var owned: ?RenameMap = null;
+            for (lam.params) |pn| {
+                if (cur.contains(pn)) {
+                    var m = try cur.clone(a);
+                    _ = m.remove(pn);
+                    owned = m;
+                    cur = &owned.?;
+                }
+            }
+            break :blk .{ .lambda = .{ .params = lam.params, .body = try renameExprBox(a, lam.body.*, cur) } };
+        },
         .slice => |s| .{ .slice = .{ .obj = try renameExprBox(a, s.obj.*, map), .lo = if (s.lo) |x| try renameExprBox(a, x.*, map) else null, .hi = if (s.hi) |x| try renameExprBox(a, x.*, map) else null, .step = if (s.step) |x| try renameExprBox(a, x.*, map) else null } },
         .index => |idx| .{ .index = .{ .obj = try renameExprBox(a, idx.obj.*, map), .index = try renameExprBox(a, idx.index.*, map) } },
         .list_lit => |elems| blk: {

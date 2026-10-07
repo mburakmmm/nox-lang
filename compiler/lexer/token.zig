@@ -53,6 +53,7 @@ pub const TokenKind = enum {
     kw_retains,
     kw_with,
     kw_defer,
+    kw_lambda,
 
     // punctuation
     colon,
@@ -204,6 +205,7 @@ const keyword_table = .{
     .{ "retains", TokenKind.kw_retains },
     .{ "with", TokenKind.kw_with },
     .{ "defer", TokenKind.kw_defer },
+    .{ "lambda", TokenKind.kw_lambda },
 };
 
 /// Bir tanımlayıcı sözcüğün anahtar kelime olup olmadığını denetler.

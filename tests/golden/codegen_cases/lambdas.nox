@@ -1,0 +1,95 @@
+class Counter:
+    step: int
+    label: str
+    def __init__(self, step: int, label: str) -> None:
+        self.step = step
+        self.label = label
+
+class Handler:
+    cb: (int) -> int
+    def __init__(self, k: int) -> None:
+        self.cb = lambda x: x + k
+    def run(self, v: int) -> int:
+        return self.cb(v)
+
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+def apply2(f: (int, int) -> int, a: int, b: int) -> int:
+    return f(a, b)
+
+def map_list(xs: list[int], f: (int) -> int) -> list[int]:
+    out: list[int] = [f(x) for x in xs]
+    return out
+
+def filter_list(xs: list[int], pred: (int) -> bool) -> list[int]:
+    return [x for x in xs if pred(x)]
+
+def make_adder(k: int) -> (int) -> int:
+    return lambda x: x + k
+
+def compose(f: (int) -> int, g: (int) -> int) -> (int) -> int:
+    return lambda x: f(g(x))
+
+def each(xs: list[int], f: (int) -> None) -> None:
+    for x in xs:
+        f(x)
+
+def describe(c: Counter, f: (Counter) -> str) -> str:
+    return f(c)
+
+off: int = 100
+print(apply(lambda x: x * 2, 21))
+print(apply2(lambda a, b: a * b + off, 6, 7))
+add5: (int) -> int = lambda x: x + 5
+print(add5(1))
+a10: (int) -> int = make_adder(10)
+print(a10(5))
+cf: (int) -> int = compose(lambda x: x + 1, lambda x: x * 3)
+print(cf(4))
+print(apply(lambda x: apply(lambda y: y + x, 1), 41))
+get: (str) -> int = lambda s: len(s)
+print(get("hello"))
+flag: (int) -> bool = lambda x: x > 3
+print(flag(5))
+print(flag(1))
+each([1, 2], lambda x: print(x * 10))
+ys: list[int] = map_list([1, 2, 3, 4], lambda x: x * x)
+print(ys[3])
+zs: list[int] = filter_list([1, 2, 3, 4, 5, 6], lambda x: x % 2 == 0)
+print(len(zs))
+c: Counter = Counter(3, "ctr")
+print(describe(c, lambda k: k.label + str(k.step)))
+h: Handler = Handler(7)
+print(h.run(1))
+nm: str = "world"
+greet: (str) -> str = lambda who: "hello " + who + "/" + nm
+print(greet("x"))
+
+def run(n: int) -> int:
+    base: int = n * 2
+    r: int = apply(lambda x: x + base, 5)
+    s: int = apply2(lambda a, b: a - b + base, 10, 3)
+    fs: list[(int) -> int] = [lambda x: x + base, lambda x: x * base]
+    ctr: Counter = Counter(n, "n" + str(n))
+    t: str = describe(ctr, lambda k: k.label + "!" + str(base))
+    return r + s + fs[0](1) + fs[1](2) + len(t)
+
+print(run(3))
+
+# döngüde sızıntı denetimi (yakalanan str/sınıf)
+def stress(n: int) -> int:
+    acc: int = 0
+    i: int = 0
+    while i < n:
+        i = i + 1
+        tag: str = "t" + str(i % 9)
+        ctr2: Counter = Counter(i, tag)
+        adder: (int) -> int = make_adder(i)
+        acc = acc + adder(1)
+        acc = acc + apply(lambda x: x + len(tag), i)
+        acc = acc + len(describe(ctr2, lambda k: k.label + tag))
+        acc = acc + len(map_list([1, 2, 3], lambda x: x + ctr2.step))
+    return acc
+
+print(stress(1500))

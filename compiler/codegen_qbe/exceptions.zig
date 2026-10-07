@@ -746,6 +746,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
             try self.collectRaiseInfoExpr(dc.value.*, info, class_ctx, var_types, poisoned);
             try collectRaiseInfoClauses(self, dc.clauses, info, class_ctx, var_types, poisoned);
         },
+        .lambda => {},
         .slice => |sl| {
             // Dilimleme sınır dışı değerleri sıkıştırır (hata yok); yalnızca adım 0 olabilen dinamik adım `ValueError` fırlatır.
             if (sl.step) |st| {

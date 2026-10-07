@@ -136,6 +136,7 @@ pub fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
             }
             break :blk false;
         },
+        .lambda => |lam| exprMentionsName(lam.body.*, name),
         .slice => |sl| exprMentionsName(sl.obj.*, name) or (if (sl.lo) |x| exprMentionsName(x.*, name) else false) or (if (sl.hi) |x| exprMentionsName(x.*, name) else false) or (if (sl.step) |x| exprMentionsName(x.*, name) else false),
         .index => |idx| exprMentionsName(idx.obj.*, name) or exprMentionsName(idx.index.*, name),
         .list_lit => |items| blk: {
@@ -694,6 +695,7 @@ fn findListIndexedByVarExpr(e: ast.Expr, idx_var: []const u8) ?[]const u8 {
     switch (e) {
         // comprehension'lara İNİLMEZ (yalnızca eleme fırsatı kaçar, güvenli).
         .list_comp, .dict_comp => return null,
+        .lambda => return null,
         .slice => |sl| {
             if (findListIndexedByVarExpr(sl.obj.*, idx_var)) |n| return n;
             if (sl.lo) |x| if (findListIndexedByVarExpr(x.*, idx_var)) |n| return n;

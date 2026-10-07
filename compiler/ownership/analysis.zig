@@ -411,6 +411,9 @@ pub const Analyzer = struct {
                     .if_clause => |ce| self.scanExprEscapes(scope, index_of, ce),
                 };
             },
+            .lambda => |lam| {
+                self.scanExprEscapes(scope, index_of, lam.body.*);
+            },
             .slice => |sl| {
                 self.scanExprEscapes(scope, index_of, sl.obj.*);
                 if (sl.lo) |x| self.scanExprEscapes(scope, index_of, x.*);

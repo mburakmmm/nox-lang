@@ -1705,7 +1705,7 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
     // İHTİYACI VAR) VE herhangi bir fonksiyon gövdesi/`$main` üretilmeden
     // ÖNCE (`genExpr`/`genAssign`nin `.identifier` yedek dalları
     // `gen.module_globals`in DOLU olmasına güvenir).
-    try gen.collectModuleGlobals(module);
+    try gen.collectModuleGlobals(module, extra_functions);
 
     for (module.body) |stmt| {
         if (stmt.kind == .extern_def) try gen.registerExternFunc(stmt.kind.extern_def);

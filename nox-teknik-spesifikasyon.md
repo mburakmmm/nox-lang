@@ -28650,6 +28650,28 @@ Dict: `result_type`tan `DictInfo` ile `nox_dict_new` (+ list/dict değerler içi
 `ok_comprehensions`, `err_comp_if_not_bool`, `err_comp_not_iterable`, `err_comp_var_not_visible_after`, `err_comp_none_element`, `err_dict_comp_key_type`;
 Zig birim testi (`nox_list_push`).
 
+## 3.272 `lambda` (v1.155.0)
+
+**Sözdizimi.** `lambda p1, p2: <ifade>` (parametre tipsiz; gövde tam ifade; en gevşek bağlanır). Yeni anahtar kelime `lambda`, AST `Lambda{params, body}`.
+
+**Tip çıkarımı.** Statik tipli dilde parametre tipleri yazılmaz: `checkExprExpected` bir BEKLENEN `.func` tipi görünce `checkLambda` çalışır (beklenen tip yoksa
+ya da fonksiyon tipi değilse derleme hatası; parametre sayısı uyuşmalı). Lambda, sentezlenmiş bir iç içe `def __nox_lambda_N(a: T1, ...) -> R: return <ifade>` olarak
+`checkNestedFuncDef` ile denetlenir (yakalamalar `closure_infos`ta, `None` dönüşte gövde ifade deyimi). Beklenti kaynakları: çağrı/kurucu/metod argümanları,
+annotasyonlu `var_decl`, `return`, atama hedef tipi, `list[(T) -> U]` literal elemanları (yeni: `checkExprExpected` liste literalinde elemanlara beklenen fonksiyon tipini iletir).
+Comprehension içinde lambda desteklenmez (hata).
+
+**Yükseltme (`call_expand_apply`).** Checker `lambda_defs`e (anahtar: gövde kutusu) sentezlenen `FuncDef`i yazar; checker sonunda AST'deki lambda ifadesi tanımlayıcıyla değişir:
+fonksiyon/metod gövdesinde deyimin başlığındaki lambda'lar için `def` deyimden ÖNCE iç içe tanımlanır — deyim `if True:` bloğuna sarılır (blok kapsamı yok; değişkenler
+görünür kalır); modül üst düzeyinde lambda ÜST-DÜZEY fonksiyona yükseltilir (`instantiations`a eklenir, `functions_used_as_value`a yazılır; iç içe `def`lerin `closure_infos`
+anahtarları ".N.iç" → "N.iç" taşınır). Modül düzeyi lambda'nın yakaladığı değişkenler üst-düzey `var_decl` olmalıdır (aksi halde derleme hatası: bir döngü/blok içindeki
+yerel global olamaz); `collectModuleGlobals` artık `extra_functions` gövdelerini de tarar (yükseltilmiş lambda ve generic örneklemelerin modül değişkeni referansları terfi sayılır).
+**Bilinen sınırlamalar:** modül düzeyinde yakalayan lambda'lar yakalanan değeri çağrı anında (geç bağlama) okur; capture'lı lambda ile başlatılan üst-düzey `var_decl` fonksiyonlardan global
+olarak başvurulamaz; `f(...)(...)` zincirleme çağrı hâlâ desteklenmez (ayrı kısıt).
+
+**Golden:** `lambdas` (Python ile birebir, iki backend, sızıntı denetimli: yakalama, iç içe, sınıf alanı, `list[(T)->U]`, döngüde str/sınıf yakalama); fmt round-trip; typecheck
+`ok_lambdas`, `err_lambda_no_expected_type`, `err_lambda_param_count`, `err_lambda_body_type`, `err_lambda_in_comprehension`, `err_lambda_module_loop_capture`.
+Tree-sitter `lambda_expression`, TextMate/LSP anahtar kelimeleri.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
