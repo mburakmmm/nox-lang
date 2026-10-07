@@ -28672,6 +28672,28 @@ olarak başvurulamaz; `f(...)(...)` zincirleme çağrı hâlâ desteklenmez (ayr
 `ok_lambdas`, `err_lambda_no_expected_type`, `err_lambda_param_count`, `err_lambda_body_type`, `err_lambda_in_comprehension`, `err_lambda_module_loop_capture`.
 Tree-sitter `lambda_expression`, TextMate/LSP anahtar kelimeleri.
 
+## 3.273 `is None`, koruma daraltması, çok argümanlı `print`, `str` metodları (v1.156.0)
+
+**`is None`.** Anahtar kelime `is`; `parseComparison` `x is None`/`x is not None` biçimini `Binary{eq|ne, x, none_lit, is_form=true}`ye indirger (yalnızca `None` ile; başka `is` hedefi
+ayrıştırma hatası). Optional daraltması, codegen ve IR değişmez; formatter `is_form` ile `is None`/`is not None` yazımını korur.
+
+**Bileşik daraltma.** Checker `collectNarrows(cond, scope, positive, out)`: THEN'de `A and B`nin her `x != None` yaprağı, ELSE'de `A or B`nin her `x == None` yaprağı, `not A` ters;
+`if`/`while`/üçlü ifade bunu kullanır (`NarrowList`, en çok 8 ad). Codegen aynası `collectNarrowedBoxed` (kutulu skaler Optional'lar için `narrowed_unbox`); `genAssign` yeniden atamada ismi
+`narrowed_unbox`tan çıkarır (checker `checkAssign` ile aynı).
+
+**Koruma (guard).** `guard_normalize.zig` (checker başında, yalnızca fonksiyon/metod gövdeleri): koşulu `or` zinciriyle bir `ident == None` yaprağı içeren, `then` gövdesi HER ZAMAN çıkan
+(`return`/`raise`/`break`/`continue`), `elif`/`else`siz bir `if`in sonrasındaki deyimler `else` gövdesine taşınır (koruma deyimi bloğun son konumuna gider, önceki konumlar `pass`) —
+anlamca özdeş, mevcut `else` daraltması ücretsiz çalışır; "tüm yollarda return" analizi korunur. Nox'ta blok kapsamı olmadığından yerel değişken görünürlüğü değişmez.
+
+**`print`.** Checker: konumsal argümanlar + yalnızca `sep=`/`end=` (str). Codegen `genPrintGeneral`: tüm argümanlar önce değerlendirilir, sonra `sep` (varsayılan boşluk) ile yazılır, `str` tırnaksız, diğerleri
+tek-argümanlı `print` ile aynı biçimde; sonda `end` (varsayılan satır sonu). Tek argümanlı hızlı yol değişmedi (IR anlık görüntüleri aynı).
+
+**`str` metodları.** Checker `checkStrMethod` (Python adları), codegen `genStrMethod` → `nox_strings_*_raw` (upper/lower/trim*/split/replace/join/starts_with/ends_with) ve yeni `nox_strings_split_ws_raw`,
+`nox_str_find` (codepoint indeksi), `nox_str_count`, `nox_str_char_class`, `nox_str_just` (ljust/rjust/center/zfill, işaret duyarlı zfill). Sonuçlar taze (+1). `index` bulunamazsa `ValueError`.
+
+**Golden:** `is_none_ergonomics` (guard: return/raise/continue/break, or/and, ternary, yeniden atama; iki backend), `str_methods` (Python ile doğrulandı, sızıntı denetimli), `print_multi_arg_sep_end`; fmt round-trip;
+typecheck `ok_is_none_guard_str_methods_print`, `err_str_method_unknown/arg_count/arg_type`, `err_print_sep_type`, `err_print_bad_kwarg`, `err_guard_without_exit`; Zig birim testleri. Tree-sitter `is`/`is not`.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

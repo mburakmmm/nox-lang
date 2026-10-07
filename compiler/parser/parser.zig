@@ -907,6 +907,17 @@ pub const Parser = struct {
     fn parseComparison(self: *Parser) ParseError!ast.Expr {
         var left = try self.parseBitOr();
         while (true) {
+            // v1.156.0: `x is None` / `x is not None` — yalnızca `None` ile (`==`/`!=` None'a indirgenir; Optional daraltması aynen çalışır).
+            if (self.check(.kw_is)) {
+                _ = self.advance();
+                const negated = self.match(.kw_not);
+                if (!self.check(.kw_none)) return error.UnexpectedToken;
+                _ = self.advance();
+                const old_left = left;
+                const none_box = try self.box(.none_lit);
+                left = .{ .binary = .{ .op = if (negated) .ne else .eq, .left = try self.box(old_left), .right = none_box, .is_form = true } };
+                continue;
+            }
             const op: ast.BinaryOp = switch (self.curKind()) {
                 .eq_eq => .eq,
                 .not_eq => .ne,

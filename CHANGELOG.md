@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.156.0]
+
+### Eklendi
+
+- **`x is None` / `x is not None`** (`==`/`!=` None'a indirgenir; formatter yazımı korur).
+- **Koruma (guard) tarzı Optional daraltma:** `if x is None: return/raise/break/continue` sonrasında `x` None-dışı; `and`/`or`/`not` bileşik koşullarında daraltma
+  (`if a is None or b is None: return`, `if a is not None and b is not None:`). Spec §3.273.
+- **`print(a, b, c)`, `print()`, `print(..., sep=..., end=...)`.**
+- **`str` metodları:** `upper/lower/strip/lstrip/rstrip/split/join/replace/startswith/endswith/find/index/count/isdigit/isalpha/isalnum/isspace/isupper/islower/
+  ljust/rjust/center/zfill` (ASCII semantiği, codepoint indeksli `find`).
+
+### Değişti
+
+- Yeniden atama, kutulu Optional'ın daraltma (unbox) durumunu codegen'de de geçersiz kılar.
+
 ## [1.155.0]
 
 ### Eklendi

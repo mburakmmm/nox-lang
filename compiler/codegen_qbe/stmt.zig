@@ -296,6 +296,9 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
             if (self.vars.get(name)) |info| {
                 if (try tryGenStrAppendAssign(self, name, info, a)) return;
                 const v0 = try self.genExprForTarget(a.value, info);
+                // v1.156.0: yeniden atama, kutulu Optional'ın daraltma (unbox) durumunu geçersiz kılar (checker `checkAssign`in aynası: RHS
+                // eski daraltmayla okunur, sonrasındaki okumalar Optional'dır).
+                _ = self.narrowed_unbox.remove(name);
                 // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-
                 // spesifikasyon.md ilgili bölüm): **DÜZELTME (GERÇEK, bir
                 // kaçış-taramasında BULUNAN bir hata)** — `.attribute`
@@ -667,6 +670,56 @@ pub fn detectNarrowedBoxedName(self: *Codegen, cond: ast.Expr) ?struct { name: [
     return .{ .name = name, .narrows_then = (b.op == .ne) };
 }
 
+/// v1.156.0: bileşik koşullardan (`and`/`or`/`not`) daraltılan KUTULU skaler Optional isimleri (checker `collectNarrows`ın aynası, en çok 8).
+pub const NameList = struct {
+    items: [8][]const u8 = undefined,
+    len: usize = 0,
+    pub fn add(self: *NameList, n: []const u8) void {
+        for (self.items[0..self.len]) |e| if (std.mem.eql(u8, e, n)) return;
+        if (self.len < self.items.len) {
+            self.items[self.len] = n;
+            self.len += 1;
+        }
+    }
+    pub fn slice(self: *const NameList) []const []const u8 {
+        return self.items[0..self.len];
+    }
+};
+
+pub fn collectNarrowedBoxed(self: *Codegen, cond: ast.Expr, positive: bool, out: *NameList) void {
+    switch (cond) {
+        .binary => |b| switch (b.op) {
+            .and_ => if (positive) {
+                self.collectNarrowedBoxed(b.left.*, true, out);
+                self.collectNarrowedBoxed(b.right.*, true, out);
+            },
+            .or_ => if (!positive) {
+                self.collectNarrowedBoxed(b.left.*, false, out);
+                self.collectNarrowedBoxed(b.right.*, false, out);
+            },
+            .eq, .ne => if (self.detectNarrowedBoxedName(cond)) |n| {
+                if (positive == n.narrows_then) out.add(n.name);
+            },
+            else => {},
+        },
+        .unary => |u| if (u.op == .not_) self.collectNarrowedBoxed(u.operand.*, !positive, out),
+        else => {},
+    }
+}
+
+/// `names`i `narrowed_unbox`a ekleyip `body`yi üretir; çıkışta önceden var olmayanları geri alır.
+pub fn genNarrowedStmts(self: *Codegen, names: []const []const u8, body: []const ast.Stmt, ret_qtype: QbeType) CodegenError!void {
+    var was: [8]bool = .{false} ** 8;
+    for (names, 0..) |n, i| {
+        was[i] = self.narrowed_unbox.contains(n);
+        try self.narrowed_unbox.put(self.allocator, n, {});
+    }
+    try self.genStmts(body, ret_qtype);
+    for (names, 0..) |n, i| if (!was[i]) {
+        _ = self.narrowed_unbox.remove(n);
+    };
+}
+
 pub fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!void {
     const end_label = try self.newLabel("if_end");
 
@@ -710,18 +763,9 @@ pub fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!voi
         // İÇİNDE ÖĞRENİLEN/geçersiz KILINAN hiçbir şey if SONRASINA
         // (ya da kardeş dallara) SIZMAMALI.
         const mc_snap = try self.snapshotModCache();
-        if (self.detectNarrowedBoxedName(f.cond)) |n| {
-            const was_present = self.narrowed_unbox.contains(n.name);
-            if (n.narrows_then) {
-                try self.narrowed_unbox.put(self.allocator, n.name, {});
-                try self.genStmts(f.then_body, ret_qtype);
-                if (!was_present) _ = self.narrowed_unbox.remove(n.name);
-            } else {
-                try self.genStmts(f.then_body, ret_qtype);
-            }
-        } else {
-            try self.genStmts(f.then_body, ret_qtype);
-        }
+        var then_n: NameList = .{};
+        self.collectNarrowedBoxed(f.cond, true, &then_n);
+        try genNarrowedStmts(self, then_n.slice(), f.then_body, ret_qtype);
         self.restoreModCache(mc_snap);
     }
     try self.qbeJmp(end_label);
@@ -755,18 +799,9 @@ pub fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!voi
     if (f.else_body) |eb| {
         try self.qbeLabel(next_label);
         const mc_snap = try self.snapshotModCache();
-        if (self.detectNarrowedBoxedName(f.cond)) |n| {
-            const was_present = self.narrowed_unbox.contains(n.name);
-            if (!n.narrows_then) {
-                try self.narrowed_unbox.put(self.allocator, n.name, {});
-                try self.genStmts(eb, ret_qtype);
-                if (!was_present) _ = self.narrowed_unbox.remove(n.name);
-            } else {
-                try self.genStmts(eb, ret_qtype);
-            }
-        } else {
-            try self.genStmts(eb, ret_qtype);
-        }
+        var else_n: NameList = .{};
+        self.collectNarrowedBoxed(f.cond, false, &else_n);
+        try genNarrowedStmts(self, else_n.slice(), eb, ret_qtype);
         self.restoreModCache(mc_snap);
         try self.qbeJmp(end_label);
     }
@@ -959,18 +994,9 @@ pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenErr
     try self.qbeLabel(body_label);
     try pushLoop(self, end_label, cond_label);
     defer _ = self.loop_stack.pop();
-    if (self.detectNarrowedBoxedName(w.cond)) |n| {
-        if (n.narrows_then) {
-            const was_present = self.narrowed_unbox.contains(n.name);
-            try self.narrowed_unbox.put(self.allocator, n.name, {});
-            try self.genStmts(w.body, ret_qtype);
-            if (!was_present) _ = self.narrowed_unbox.remove(n.name);
-        } else {
-            try self.genStmts(w.body, ret_qtype);
-        }
-    } else {
-        try self.genStmts(w.body, ret_qtype);
-    }
+    var while_n: NameList = .{};
+    self.collectNarrowedBoxed(w.cond, true, &while_n);
+    try genNarrowedStmts(self, while_n.slice(), w.body, ret_qtype);
     try self.qbeJmp(cond_label);
     try self.qbeLabel(end_label);
     self.restoreModCache(mc_scope);

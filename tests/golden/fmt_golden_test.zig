@@ -349,3 +349,22 @@ test "fmt: v1.155.0 — lambda İDEMPOTENT round-trip" {
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: v1.156.0 — `is None` / `is not None` ve çok argümanlı print İDEMPOTENT round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "y: bool = a is None\n", .out = "y: bool = a is None\n" },
+        .{ .in = "y: bool = a   is   not   None and b\n", .out = "y: bool = a is not None and b\n" },
+        .{ .in = "y: bool = a == None\n", .out = "y: bool = a == None\n" },
+        .{ .in = "if x is None or y is not None:\n    pass\n", .out = "if x is None or y is not None:\n    pass\n" },
+        .{ .in = "print(a,b, sep = \",\", end = \"\")\n", .out = "print(a, b, sep=\",\", end=\"\")\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

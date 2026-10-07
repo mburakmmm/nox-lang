@@ -25,6 +25,7 @@
   "while"
   "for"
   "in"
+  "is"
   "lambda"
 ] @keyword.control.conditional
 

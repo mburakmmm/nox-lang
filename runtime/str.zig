@@ -1018,3 +1018,139 @@ test "v1.153.0: computeSlice Python dilim semantiği" {
     sp = computeSlice(0, 0, false, 0, false, -1, true);
     try t.expectEqual(@as(usize, 0), sp.count);
 }
+
+/// v1.156.0 (`s.find(sub)`): `needle`ın ilk konumunun CODEPOINT indeksi (yoksa -1; boş needle → 0). ASCII dizelerde bayt indeksi = codepoint indeksi.
+pub export fn nox_str_find(s: ?[*:0]const u8, needle: ?[*:0]const u8) i64 {
+    const p = s orelse return -1;
+    const bytes = nox_str_slice(p);
+    const nb = nox_str_slice(needle orelse return -1);
+    if (nb.len == 0) return 0;
+    const idx = fastIndexOf(bytes, nb) orelse return -1;
+    if (ensureAsciiResolved(p)) return @intCast(idx);
+    const cps = std.unicode.utf8CountCodepoints(bytes[0..idx]) catch idx;
+    return @intCast(cps);
+}
+
+/// `s.count(sub)`: çakışmayan geçiş sayısı; boş `sub` → `len(s) + 1` (Python).
+pub export fn nox_str_count(s: ?[*:0]const u8, needle: ?[*:0]const u8) i64 {
+    const p = s orelse return 0;
+    const bytes = nox_str_slice(p);
+    const nb = nox_str_slice(needle orelse return 0);
+    if (nb.len == 0) return nox_str_char_count(p) + 1;
+    var n: i64 = 0;
+    var start: usize = 0;
+    while (start <= bytes.len) {
+        const pos = fastIndexOf(bytes[start..], nb) orelse break;
+        n += 1;
+        start += pos + nb.len;
+    }
+    return n;
+}
+
+/// `s.isdigit()`(0) / `isalpha()`(1) / `isalnum()`(2) / `isspace()`(3) / `isupper()`(4) / `islower()`(5) — ASCII; boş dize → 0.
+pub export fn nox_str_char_class(s: ?[*:0]const u8, kind: i32) i64 {
+    const bytes = nox_str_slice(s orelse return 0);
+    if (bytes.len == 0) return 0;
+    var cased = false;
+    for (bytes) |c| {
+        const ok = switch (kind) {
+            0 => std.ascii.isDigit(c),
+            1 => std.ascii.isAlphabetic(c),
+            2 => std.ascii.isAlphanumeric(c),
+            3 => std.ascii.isWhitespace(c),
+            4 => blk: {
+                if (std.ascii.isLower(c)) break :blk false;
+                if (std.ascii.isUpper(c)) cased = true;
+                break :blk true;
+            },
+            5 => blk: {
+                if (std.ascii.isUpper(c)) break :blk false;
+                if (std.ascii.isLower(c)) cased = true;
+                break :blk true;
+            },
+            else => false,
+        };
+        if (!ok) return 0;
+    }
+    if (kind == 4 or kind == 5) return if (cased) 1 else 0;
+    return 1;
+}
+
+/// `s.ljust(w[, f])`(0) / `rjust`(1) / `center`(2) / `zfill`(3): codepoint genişliğine göre doldurma; `fill` boş/null ise boşluk (`zfill` için '0'),
+/// çok karakterliyse ilk codepoint kullanılır. `zfill` işaret ('+'/'-') duyarlıdır.
+pub export fn nox_str_just(rt: ?*anyopaque, s: ?[*:0]const u8, width: i64, fill: ?[*:0]const u8, mode: i32) ?[*:0]u8 {
+    const p = s orelse return null;
+    const bytes = nox_str_slice(p);
+    const cur: i64 = nox_str_char_count(p);
+    if (width <= cur) return allocStr(rt, bytes, if (ensureAsciiResolved(p)) ASCII_TRUE else ASCII_UNKNOWN);
+    const pad: usize = @intCast(width - cur);
+    var fill_bytes: []const u8 = if (mode == 3) "0" else " ";
+    if (fill) |f| {
+        const fb = nox_str_slice(f);
+        if (fb.len > 0) {
+            const l = std.unicode.utf8ByteSequenceLength(fb[0]) catch 1;
+            fill_bytes = fb[0..@min(@as(usize, l), fb.len)];
+        }
+    }
+    var left: usize = 0;
+    var sign_len: usize = 0;
+    switch (mode) {
+        0 => left = 0,
+        1 => left = pad,
+        2 => left = pad / 2 + (pad & @as(usize, @intCast(width)) & 1),
+        else => {
+            left = pad;
+            if (bytes.len > 0 and (bytes[0] == '-' or bytes[0] == '+')) sign_len = 1;
+        },
+    }
+    const right = pad - left;
+    const total = bytes.len + pad * fill_bytes.len;
+    const buf = nox_str_alloc_buf(rt, total) orelse return null;
+    var w: usize = 0;
+    if (mode == 3) {
+        @memcpy(buf[0..sign_len], bytes[0..sign_len]);
+        w = sign_len;
+    }
+    var i: usize = 0;
+    while (i < left) : (i += 1) {
+        @memcpy(buf[w..][0..fill_bytes.len], fill_bytes);
+        w += fill_bytes.len;
+    }
+    const body = if (mode == 3) bytes[sign_len..] else bytes;
+    @memcpy(buf[w..][0..body.len], body);
+    w += body.len;
+    i = 0;
+    while (i < right) : (i += 1) {
+        @memcpy(buf[w..][0..fill_bytes.len], fill_bytes);
+        w += fill_bytes.len;
+    }
+    return @ptrCast(buf);
+}
+
+test "v1.156.0: nox_str_find/count/char_class/just" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const s = allocStr(rt, "héllo hello", ASCII_UNKNOWN) orelse return error.Failed;
+    defer nox_str_release(rt, s);
+    const sub = allocStr(rt, "llo", ASCII_UNKNOWN) orelse return error.Failed;
+    defer nox_str_release(rt, sub);
+    try std.testing.expectEqual(@as(i64, 2), nox_str_find(s, sub));
+    try std.testing.expectEqual(@as(i64, 2), nox_str_count(s, sub));
+    const d = allocStr(rt, "12a", ASCII_UNKNOWN) orelse return error.Failed;
+    defer nox_str_release(rt, d);
+    try std.testing.expectEqual(@as(i64, 0), nox_str_char_class(d, 0));
+    const d2 = allocStr(rt, "123", ASCII_UNKNOWN) orelse return error.Failed;
+    defer nox_str_release(rt, d2);
+    try std.testing.expectEqual(@as(i64, 1), nox_str_char_class(d2, 0));
+    const neg = allocStr(rt, "-42", ASCII_UNKNOWN) orelse return error.Failed;
+    defer nox_str_release(rt, neg);
+    const z = nox_str_just(rt, neg, 6, null, 3) orelse return error.Failed;
+    defer nox_str_release(rt, z);
+    try std.testing.expectEqualStrings("-00042", nox_str_slice(z));
+    const ab = allocStr(rt, "ab", ASCII_UNKNOWN) orelse return error.Failed;
+    defer nox_str_release(rt, ab);
+    const c = nox_str_just(rt, ab, 5, null, 2) orelse return error.Failed;
+    defer nox_str_release(rt, c);
+    try std.testing.expectEqualStrings("  ab ", nox_str_slice(c));
+}

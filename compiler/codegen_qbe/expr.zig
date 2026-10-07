@@ -17,6 +17,7 @@ const Value = types.Value;
 const QbeType = types.QbeType;
 const HeapKind = types.HeapKind;
 const ElemHeapInfo = types.ElemHeapInfo;
+const NameList = @import("stmt.zig").NameList;
 const DictInfo = types.DictInfo;
 const RT_PARAM = types.RT_PARAM;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
@@ -1504,12 +1505,15 @@ pub fn genIn(self: *Codegen, b: ast.Binary) CodegenError!Value {
 /// `narrowed_unbox`a eklenir; `mod_cache` anlık görüntüsü geri yüklenir (dal çalışmamış olabilir); heap-yönetimli
 /// bir sonuç ÖDÜNÇ ise (`identifier`/alan/eleman okuması) retain edilir — böylece ternary'nin sonucu HER ZAMAN
 /// sahipli (+1) bir değerdir (`isTemporaryExpr(.ternary) == true`).
-pub fn genTernaryBranch(self: *Codegen, branch: ast.Expr, narrowed: ?[]const u8) CodegenError!Value {
+pub fn genTernaryBranch(self: *Codegen, branch: ast.Expr, narrowed: []const []const u8) CodegenError!Value {
     const mc_snap = try self.snapshotModCache();
-    const was_present = if (narrowed) |n| self.narrowed_unbox.contains(n) else true;
-    if (narrowed) |n| try self.narrowed_unbox.put(self.allocator, n, {});
+    var was: [8]bool = .{false} ** 8;
+    for (narrowed, 0..) |n, i| {
+        was[i] = self.narrowed_unbox.contains(n);
+        try self.narrowed_unbox.put(self.allocator, n, {});
+    }
     var v = try self.genExpr(branch);
-    if (narrowed) |n| if (!was_present) {
+    for (narrowed, 0..) |n, i| if (!was[i]) {
         _ = self.narrowed_unbox.remove(n);
     };
     self.restoreModCache(mc_snap);
@@ -1530,14 +1534,17 @@ pub fn genTernary(self: *Codegen, t: ast.Ternary) CodegenError!Value {
     const end_label = try self.newLabel("tern_end");
     try self.qbeJnz(cond.text, then_label, else_label);
 
-    const narrow = self.detectNarrowedBoxedName(t.cond.*);
+    var then_n: NameList = .{};
+    var else_n: NameList = .{};
+    self.collectNarrowedBoxed(t.cond.*, true, &then_n);
+    self.collectNarrowedBoxed(t.cond.*, false, &else_n);
     try self.qbeLabel(then_label);
-    const vt = try genTernaryBranch(self, t.then_expr.*, if (narrow) |n| (if (n.narrows_then) n.name else null) else null);
+    const vt = try genTernaryBranch(self, t.then_expr.*, then_n.slice());
     const then_pred = self.current_label;
     try self.qbeJmp(end_label);
 
     try self.qbeLabel(else_label);
-    const ve = try genTernaryBranch(self, t.else_expr.*, if (narrow) |n| (if (!n.narrows_then) n.name else null) else null);
+    const ve = try genTernaryBranch(self, t.else_expr.*, else_n.slice());
     const else_pred = self.current_label;
     try self.qbeJmp(end_label);
 

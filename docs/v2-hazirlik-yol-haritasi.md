@@ -25,8 +25,8 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [x] **1.8 `float(int)` / açık int→float dönüşümü** — v1.151.0 (spec §3.268): `float(int/float/bool/u8…u64/str)`.
 - [x] **1.9 str karşılaştırma `<`/`>`/`<=`/`>=`, `"ab" * 3`, dilimleme** — v1.153.0 (spec §3.270): `xs[a:b:adım]`, `s[a:b:adım]`, tree-sitter dahil.
 - [x] **1.10 list/dict comprehension + lambda** — v1.154.0 (spec §3.271) / v1.155.0 (spec §3.272).
-- [ ] **1.11 `is None` / `Optional` ergonomisi**, `print` çoklu argüman, dize metot sözdizimi (`s.split()`).
-- [ ] **1.12 Koruma (guard) tarzı Optional daraltma:** `if x == None: return/break/continue` sonrası `x` daraltılsın
+- [x] **1.11 `is None`, `print` çoklu argüman (+sep/end), str metot sözdizimi** — v1.156.0 (spec §3.273).
+- [x] **1.12 Koruma (guard) tarzı Optional daraltma** (v1.156.0, spec §3.273) — eski tanım: ** `if x == None: return/break/continue` sonrası `x` daraltılsın
   (şu an yalnızca `if x != None:` bloğu içinde; bağlı liste gezintisi için gerekli).
 - [ ] **1.13 tuple (BÜYÜK, karar verildi: yapılacak):** `tuple[T1, T2]` tipi, `(a, b)` literal, `t[0]`, açma (`a, b = f()`), çoklu dönüş,
   `for k, v in d.items()`, `enumerate`/`zip`. Kullanıcı kararı (2026-10-07): 2.0 için özelliklerden kaçınma, eksiksiz olsun.

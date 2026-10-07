@@ -551,6 +551,11 @@ const Printer = struct {
                 const left_side: Side = if (right_assoc) .strict else .loose;
                 const right_side: Side = if (right_assoc) .loose else .strict;
                 try self.printExprAt(b.left.*, my_prec, left_side);
+                if (b.is_form and b.right.* == .none_lit and (b.op == .eq or b.op == .ne)) {
+                    try self.writer.writeAll(if (b.op == .eq) " is None" else " is not None");
+                    if (need_parens) try self.writer.writeAll(")");
+                    return;
+                }
                 try self.writer.print(" {s} ", .{binOpStr(b.op)});
                 try self.printExprAt(b.right.*, my_prec, right_side);
                 if (need_parens) try self.writer.writeAll(")");

@@ -1,0 +1,115 @@
+class Node:
+    val: int
+    next: Node | None
+    def __init__(self, val: int) -> None:
+        self.val = val
+        self.next = None
+
+def total(n: Node | None) -> int:
+    t: int = 0
+    cur: Node | None = n
+    while cur is not None:
+        t = t + cur.val
+        cur = cur.next
+    return t
+
+def describe(x: int | None) -> str:
+    if x is None:
+        return "none"
+    return "some " + str(x + 1)
+
+head: Node = Node(1)
+n2: Node = Node(2)
+n3: Node = Node(3)
+n2.next = n3
+head.next = n2
+print(total(head))
+print(total(None))
+x: int | None = None
+print(x is None)
+y: int | None = 5
+print(y is not None)
+print(describe(y))
+print(describe(x))
+z: str | None = None
+if z is None:
+    print("none")
+w: str | None = "w"
+if w is not None:
+    print(w + "!")
+flag: bool = y is not None and x is None
+print(flag)
+
+# koruma (guard) tarzı daraltma: `if x is None: <çıkış>` sonrası x None-dışıdır
+def guard_int(x: int | None) -> int:
+    if x is None:
+        return -1
+    return x * 2
+
+def guard_two(a: int | None, b: int | None) -> int:
+    if a is None or b is None:
+        return 0
+    return a + b
+
+def guard_node(n: Node | None) -> int:
+    if n == None:
+        raise ValueError("bos")
+    return n.val + 1
+
+def pick(i: int) -> int | None:
+    if i == 1:
+        return None
+    return i + 1
+
+def guard_loop() -> int:
+    t: int = 0
+    for i in range(4):
+        v: int | None = pick(i)
+        if v is None:
+            continue
+        t = t + v
+    return t
+
+def guard_break() -> int:
+    t: int = 0
+    for i in range(4):
+        v: int | None = pick(i)
+        if v is None:
+            break
+        t = t + v
+    return t
+
+def guard_reassign(x: int | None) -> int:
+    if x is None:
+        return 0
+    y: int | None = x
+    x = None
+    if y is None:
+        return -5
+    return y + 100
+
+def tern(x: int | None) -> int:
+    return x + 1 if x is not None else 0
+
+def both(a: int | None, b: int | None) -> int:
+    if a is not None and b is not None:
+        return a * b
+    return -1
+
+print(guard_int(None))
+print(guard_int(21))
+print(guard_two(1, 2))
+print(guard_two(None, 2))
+print(guard_node(head))
+try:
+    print(guard_node(None))
+except ValueError:
+    print("ValueError")
+print(guard_loop())
+print(guard_break())
+print(guard_reassign(7))
+print(guard_reassign(None))
+print(tern(4))
+print(tern(None))
+print(both(3, 4))
+print(both(3, None))

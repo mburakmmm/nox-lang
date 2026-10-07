@@ -77,6 +77,29 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
     return @ptrCast(bytes);
 }
 
+/// v1.156.0 (`s.split()`): ASCII boşluk dizileriyle böler, boş parçaları atar (Python `str.split()`).
+export fn nox_strings_split_ws_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const s_slice = str_mod.nox_str_slice(s orelse return null);
+    var count: usize = 0;
+    {
+        var it = std.mem.tokenizeAny(u8, s_slice, " \t\n\r\x0b\x0c");
+        while (it.next()) |_| count += 1;
+    }
+    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count) orelse return null;
+    const bytes: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(count);
+    @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(count);
+    var it = std.mem.tokenizeAny(u8, s_slice, " \t\n\r\x0b\x0c");
+    var i: usize = 0;
+    while (it.next()) |part| {
+        const dup = dupeToNoxStr(rt, part) orelse return null;
+        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+        i += 1;
+    }
+    return @ptrCast(bytes);
+}
+
 export fn nox_strings_trim_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const slice = str_mod.nox_str_slice(s orelse return null);
     const trimmed = std.mem.trim(u8, slice, " \t\r\n");
@@ -587,4 +610,21 @@ test "nox_strings_join_raw bos liste bos dize doner" {
     const joined = nox_strings_join_raw(rt, parts, sep_in) orelse return error.JoinFailed;
     defer str.nox_str_release(rt, joined);
     try std.testing.expectEqualStrings("", std.mem.sliceTo(joined, 0));
+}
+
+test "v1.156.0: nox_strings_split_ws_raw boşluk dizilerini böler, boşları atar" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const s = str_mod.nox_str_from_bytes(rt, "  a  bb\tc\n") orelse return error.Failed;
+    defer str_mod.nox_str_release(rt, s);
+    const l = nox_strings_split_ws_raw(rt, s) orelse return error.Failed;
+    const b: [*]u8 = @ptrCast(l);
+    try std.testing.expectEqual(@as(i64, 3), @as(*align(1) i64, @ptrCast(b)).*);
+    var i: usize = 0;
+    while (i < 3) : (i += 1) {
+        const p: usize = @intCast(@as(*align(1) i64, @ptrCast(b + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        str_mod.nox_str_release(rt, @ptrFromInt(p));
+    }
+    arc.nox_rc_release(rt, l, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 3);
 }

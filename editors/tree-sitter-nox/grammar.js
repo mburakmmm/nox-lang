@@ -283,7 +283,7 @@ module.exports = grammar({
         ['==', PREC.compare], ['!=', PREC.compare],
         ['<', PREC.compare], ['<=', PREC.compare],
         ['>', PREC.compare], ['>=', PREC.compare],
-        ['in', PREC.compare],
+        ['in', PREC.compare], ['is', PREC.compare],
         ['+', PREC.add], ['-', PREC.add],
         ['*', PREC.mul], ['/', PREC.mul], ['//', PREC.mul], ['%', PREC.mul],
       ].map(([op, p]) => prec.left(p, seq(
@@ -295,6 +295,12 @@ module.exports = grammar({
       prec.left(PREC.compare, seq(
         field('left', $._expression),
         field('operator', seq('not', 'in')),
+        field('right', $._expression),
+      )),
+      // `a is not None` (v1.156.0): iki token, tek operatör.
+      prec.left(PREC.compare, seq(
+        field('left', $._expression),
+        field('operator', seq('is', 'not')),
         field('right', $._expression),
       )),
       // `**` sağa-birleşimli (bkz. parsePower — üs, kendi tekrarında

@@ -549,6 +549,55 @@ test "golden(typecheck): v1.155.0 — lambda tip denetimi geçer" {
     );
 }
 
+test "golden(typecheck): v1.156.0 — bilinmeyen str metodu" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_str_method_unknown.nox"),
+        @embedFile("typecheck_cases/err_str_method_unknown.expected"),
+    );
+}
+
+test "golden(typecheck): v1.156.0 — str metodu argüman sayısı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_str_method_arg_count.nox"),
+        @embedFile("typecheck_cases/err_str_method_arg_count.expected"),
+    );
+}
+
+test "golden(typecheck): v1.156.0 — str metodu argüman tipi" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_str_method_arg_type.nox"),
+        @embedFile("typecheck_cases/err_str_method_arg_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.156.0 — print sep= str olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_print_sep_type.nox"),
+        @embedFile("typecheck_cases/err_print_sep_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.156.0 — print yalnızca sep=/end= kabul eder" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_print_bad_kwarg.nox"),
+        @embedFile("typecheck_cases/err_print_bad_kwarg.expected"),
+    );
+}
+
+test "golden(typecheck): v1.156.0 — çıkmayan koruma deyimi daraltma yapmaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_guard_without_exit.nox"),
+        @embedFile("typecheck_cases/err_guard_without_exit.expected"),
+    );
+}
+
+test "golden(typecheck): v1.156.0 — is None, koruma daraltma, str metodları, çok argümanlı print geçerli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_is_none_guard_str_methods_print.nox"),
+        @embedFile("typecheck_cases/ok_is_none_guard_str_methods_print.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

@@ -45,6 +45,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const call_expand_apply = @import("call_expand_apply.zig");
 const index_call_fixup = @import("index_call_fixup.zig");
+const guard_normalize = @import("guard_normalize.zig");
 const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
@@ -3074,6 +3075,8 @@ pub const Checker = struct {
 
     pub fn checkModule(self: *Checker, module: ast.Module) TypeError!void {
         self.module_expr_spans = module.expr_spans;
+        // v1.156.0: koruma tarzı Optional daraltma (`if x is None: return` + kalan deyimler → `else`), bkz. `guard_normalize.zig`.
+        try guard_normalize.run(self.allocator, module.body);
         try self.collectImports(module);
         try self.collectClassNames(module);
         // Faz C.6 (bkz. `index_call_fixup.zig`nin belge notu): `name[i](y)`
@@ -5012,40 +5015,19 @@ pub const Checker = struct {
                 // `elif` dalları HİÇ daraltılmaz (bkz. `detectNarrowing`in
                 // belge notu) — bu, ÖZELLİKLE dar tutulan, BİLİNÇLİ bir v1
                 // kapsamıdır.
-                if (detectNarrowing(f.cond, ctx.scope)) |n| {
-                    const prior = ctx.narrowed.get(n.name);
-                    if (n.narrows_then) {
-                        try ctx.narrowed.put(self.allocator, n.name, n.base);
-                        for (f.then_body) |s| try self.checkStmt(ctx, s);
-                        if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
-                        for (f.elif_clauses) |ec| {
-                            const ect = try self.checkExpr(ctx, ec.cond);
-                            if (ect != .boolean) return self.fail(error.TypeMismatch, "'elif' koşulu bool olmalıdır", .{});
-                            for (ec.body) |s| try self.checkStmt(ctx, s);
-                        }
-                        if (f.else_body) |eb| for (eb) |s| try self.checkStmt(ctx, s);
-                    } else {
-                        for (f.then_body) |s| try self.checkStmt(ctx, s);
-                        for (f.elif_clauses) |ec| {
-                            const ect = try self.checkExpr(ctx, ec.cond);
-                            if (ect != .boolean) return self.fail(error.TypeMismatch, "'elif' koşulu bool olmalıdır", .{});
-                            for (ec.body) |s| try self.checkStmt(ctx, s);
-                        }
-                        if (f.else_body) |eb| {
-                            try ctx.narrowed.put(self.allocator, n.name, n.base);
-                            for (eb) |s| try self.checkStmt(ctx, s);
-                            if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
-                        }
-                    }
-                    return;
-                }
-                for (f.then_body) |s| try self.checkStmt(ctx, s);
+                // v1.156.0: daraltma `and`/`or`/`not` bileşik koşullarına genişletildi (`collectNarrows`): THEN dalında `A and B`nin her
+                // `x != None` yaprağı, ELSE dalında `A or B`nin her `x == None` yaprağı daraltılır. `elif` dalları HÂLÂ daraltılmaz.
+                var then_n: NarrowList = .{};
+                var else_n: NarrowList = .{};
+                collectNarrows(f.cond, ctx.scope, true, &then_n);
+                collectNarrows(f.cond, ctx.scope, false, &else_n);
+                try self.checkNarrowedBlock(ctx, &then_n, f.then_body);
                 for (f.elif_clauses) |ec| {
                     const ect = try self.checkExpr(ctx, ec.cond);
                     if (ect != .boolean) return self.fail(error.TypeMismatch, "'elif' koşulu bool olmalıdır", .{});
                     for (ec.body) |s| try self.checkStmt(ctx, s);
                 }
-                if (f.else_body) |eb| for (eb) |s| try self.checkStmt(ctx, s);
+                if (f.else_body) |eb| try self.checkNarrowedBlock(ctx, &else_n, eb);
             },
             .while_stmt => |w| {
                 const ct = try self.checkExpr(ctx, w.cond);
@@ -5062,16 +5044,9 @@ pub const Checker = struct {
                 // (bir `break` gövde İÇİNDE x HÂLÂ Optional İKEN çıkabilir,
                 // bu yüzden döngü SONRASI daraltılmış SAYILAMAZ — güvenli/
                 // tutucu tercih).
-                if (detectNarrowing(w.cond, ctx.scope)) |n| {
-                    if (n.narrows_then) {
-                        const prior = ctx.narrowed.get(n.name);
-                        try ctx.narrowed.put(self.allocator, n.name, n.base);
-                        for (w.body) |s| try self.checkStmt(ctx, s);
-                        if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
-                        return;
-                    }
-                }
-                for (w.body) |s| try self.checkStmt(ctx, s);
+                var wn: NarrowList = .{};
+                collectNarrows(w.cond, ctx.scope, true, &wn);
+                try self.checkNarrowedBlock(ctx, &wn, w.body);
             },
             .for_stmt => |f| {
                 const elem_t = try self.checkForIterable(ctx, f.iterable, @intFromPtr(f.body.ptr));
@@ -5504,21 +5479,18 @@ pub const Checker = struct {
         if (ct != .boolean) return self.fail(error.TypeMismatch, "üçlü ifadenin koşulu bool olmalıdır", .{});
         var then_t: Type = undefined;
         var else_t: Type = undefined;
-        if (detectNarrowing(t.cond.*, ctx.scope)) |n| {
-            const prior = ctx.narrowed.get(n.name);
-            if (n.narrows_then) {
-                try ctx.narrowed.put(self.allocator, n.name, n.base);
-                then_t = try self.checkExprExpected(ctx, t.then_expr.*, expected);
-                if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
-                else_t = try self.checkExprExpected(ctx, t.else_expr.*, expected);
-            } else {
-                then_t = try self.checkExprExpected(ctx, t.then_expr.*, expected);
-                try ctx.narrowed.put(self.allocator, n.name, n.base);
-                else_t = try self.checkExprExpected(ctx, t.else_expr.*, expected);
-                if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
-            }
-        } else {
+        var then_n: NarrowList = .{};
+        var else_n: NarrowList = .{};
+        collectNarrows(t.cond.*, ctx.scope, true, &then_n);
+        collectNarrows(t.cond.*, ctx.scope, false, &else_n);
+        {
+            const saved = try self.applyNarrows(ctx, &then_n);
+            defer self.restoreNarrows(ctx, &then_n, saved);
             then_t = try self.checkExprExpected(ctx, t.then_expr.*, expected);
+        }
+        {
+            const saved = try self.applyNarrows(ctx, &else_n);
+            defer self.restoreNarrows(ctx, &else_n, saved);
             else_t = try self.checkExprExpected(ctx, t.else_expr.*, expected);
         }
         switch (then_t) {
@@ -6185,6 +6157,65 @@ pub const Checker = struct {
         narrows_then: bool,
     };
 
+    /// v1.156.0: bileşik koşullardan çıkan daraltmalar (en çok 8 isim).
+    const NarrowList = struct {
+        items: [8]Narrow = undefined,
+        len: usize = 0,
+        fn add(self: *NarrowList, n: Narrow) void {
+            for (self.items[0..self.len]) |e| if (std.mem.eql(u8, e.name, n.name)) return;
+            if (self.len < self.items.len) {
+                self.items[self.len] = n;
+                self.len += 1;
+            }
+        }
+    };
+
+    /// `cond` `positive` (doğru: THEN, yanlış: ELSE) ise kesin olarak None-dışı olan yerel Optional'ları toplar: `x != None` (then), `x == None` (else),
+    /// `A and B` (then: iki yaprak), `A or B` (else: iki yaprak), `not A` (ters). Başka hiçbir bileşik biçim daraltmaz.
+    fn collectNarrows(cond: ast.Expr, scope: *Scope, positive: bool, out: *NarrowList) void {
+        switch (cond) {
+            .binary => |b| switch (b.op) {
+                .and_ => if (positive) {
+                    collectNarrows(b.left.*, scope, true, out);
+                    collectNarrows(b.right.*, scope, true, out);
+                },
+                .or_ => if (!positive) {
+                    collectNarrows(b.left.*, scope, false, out);
+                    collectNarrows(b.right.*, scope, false, out);
+                },
+                .eq, .ne => if (detectNarrowing(cond, scope)) |n| {
+                    if (positive == n.narrows_then) out.add(n);
+                },
+                else => {},
+            },
+            .unary => |u| if (u.op == .not_) collectNarrows(u.operand.*, scope, !positive, out),
+            else => {},
+        }
+    }
+
+    const NarrowSaved = [8]?Type;
+
+    fn applyNarrows(self: *Checker, ctx: *FnCtx, list: *const NarrowList) TypeError!NarrowSaved {
+        var saved: NarrowSaved = .{null} ** 8;
+        for (list.items[0..list.len], 0..) |n, i| {
+            saved[i] = ctx.narrowed.get(n.name);
+            try ctx.narrowed.put(self.allocator, n.name, n.base);
+        }
+        return saved;
+    }
+
+    fn restoreNarrows(self: *Checker, ctx: *FnCtx, list: *const NarrowList, saved: NarrowSaved) void {
+        for (list.items[0..list.len], 0..) |n, i| {
+            if (saved[i]) |p| ctx.narrowed.put(self.allocator, n.name, p) catch {} else _ = ctx.narrowed.remove(n.name);
+        }
+    }
+
+    fn checkNarrowedBlock(self: *Checker, ctx: *FnCtx, list: *const NarrowList, body: []const ast.Stmt) TypeError!void {
+        const saved = try self.applyNarrows(ctx, list);
+        defer self.restoreNarrows(ctx, list, saved);
+        for (body) |s| try self.checkStmt(ctx, s);
+    }
+
     /// Yalnızca TAM OLARAK `<isim> != None` / `<isim> == None` (VE
     /// yansımaları, `None != <isim>` gibi) biçimindeki bir koşulu tanır —
     /// `<isim>` GEÇERLİ scope'un DOĞRUDAN bir YERELİ (parent zincirinden
@@ -6320,8 +6351,22 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "'super()' yalnızca 'super().metod(...)' ya da 'super().__init__(...)' kalıbında, doğrudan bir metod çağrısının alıcısı olarak kullanılabilir", .{});
                 }
                 if (std.mem.eql(u8, name, "print")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'print' tam olarak 1 argüman alır", .{});
-                    _ = try self.checkExpr(ctx, c.args[0]);
+                    // v1.156.0: `print(a, b, c)` (boşlukla ayrılmış), `print()` (boş satır), `sep=`/`end=` str anahtar argümanları.
+                    var saw_kw = false;
+                    for (c.args) |arg| {
+                        if (arg == .kwarg) {
+                            saw_kw = true;
+                            const k = arg.kwarg;
+                            if (!std.mem.eql(u8, k.name, "sep") and !std.mem.eql(u8, k.name, "end")) {
+                                return self.fail(error.TypeMismatch, "'print' yalnızca 'sep=' ve 'end=' anahtar argümanlarını kabul eder", .{});
+                            }
+                            const kt = try self.checkExpr(ctx, k.value.*);
+                            if (kt != .str) return self.fail(error.TypeMismatch, "'print' '{s}=' argümanı str olmalıdır", .{k.name});
+                        } else {
+                            if (saw_kw) return self.fail(error.TypeMismatch, "'print' konumsal argümanları anahtar argümanlardan önce gelmelidir", .{});
+                            _ = try self.checkExpr(ctx, arg);
+                        }
+                    }
                     return .none;
                 }
                 // `len(s) -> int` — stdlib fazı §B, `print`/`range` ile AYNI
@@ -7418,6 +7463,7 @@ pub const Checker = struct {
                     }
                     return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (append/extend/insert/pop/remove/clear/index/count/sort/reverse/copy)", .{a.attr});
                 }
+                if (obj_t == .str) return self.checkStrMethod(ctx, a, c.args);
                 const class_name = switch (obj_t) {
                     .class => |n| n,
                     else => return self.fail(error.TypeMismatch, "metod çağrısı yalnızca sınıf örneklerinde geçerlidir", .{}),
@@ -7618,6 +7664,50 @@ pub const Checker = struct {
         }
         try self.lambda_defs.put(self.allocator, @intFromPtr(lam.body), .{ .fd = fd, .has_captures = has_captures });
         return func_t;
+    }
+
+    /// v1.156.0: `str` metodları — `s.upper()`, `s.split(sep)`, `sep.join(parts)`... (Python adları; `nox.strings` çalışma zamanı işlevlerine iner). ASCII
+    /// büyük/küçük harf/boşluk semantiği (v1). Sonuçlar yeni değerlerdir.
+    fn checkStrMethod(self: *Checker, ctx: *FnCtx, a: ast.Attribute, args: []const ast.Expr) TypeError!Type {
+        const m = a.attr;
+        const eq = std.mem.eql;
+        const Sig = struct { name: []const u8, params: []const Type, ret: Type, optional_last: bool = false };
+        const str_t: Type = .str;
+        const int_t: Type = .int;
+        const sig: Sig = blk: {
+            const none_p: []const Type = &.{};
+            const one_str: []const Type = &.{str_t};
+            if (eq(u8, m, "upper") or eq(u8, m, "lower") or eq(u8, m, "strip") or eq(u8, m, "lstrip") or eq(u8, m, "rstrip")) break :blk .{ .name = m, .params = none_p, .ret = str_t };
+            if (eq(u8, m, "isdigit") or eq(u8, m, "isalpha") or eq(u8, m, "isalnum") or eq(u8, m, "isspace") or eq(u8, m, "isupper") or eq(u8, m, "islower")) break :blk .{ .name = m, .params = none_p, .ret = .boolean };
+            if (eq(u8, m, "startswith") or eq(u8, m, "endswith")) break :blk .{ .name = m, .params = one_str, .ret = .boolean };
+            if (eq(u8, m, "find") or eq(u8, m, "count") or eq(u8, m, "index")) break :blk .{ .name = m, .params = one_str, .ret = int_t };
+            if (eq(u8, m, "replace")) break :blk .{ .name = m, .params = &.{ str_t, str_t }, .ret = str_t };
+            if (eq(u8, m, "zfill")) break :blk .{ .name = m, .params = &.{int_t}, .ret = str_t };
+            if (eq(u8, m, "ljust") or eq(u8, m, "rjust") or eq(u8, m, "center")) break :blk .{ .name = m, .params = &.{ int_t, str_t }, .ret = str_t, .optional_last = true };
+            if (eq(u8, m, "split")) {
+                const boxed = try self.allocator.create(Type);
+                boxed.* = .str;
+                break :blk .{ .name = m, .params = one_str, .ret = .{ .list = boxed }, .optional_last = true };
+            }
+            if (eq(u8, m, "join")) {
+                const boxed = try self.allocator.create(Type);
+                boxed.* = .str;
+                const lt: Type = .{ .list = boxed };
+                const ps = try self.allocator.alloc(Type, 1);
+                ps[0] = lt;
+                break :blk .{ .name = m, .params = ps, .ret = str_t };
+            }
+            return self.fail(error.UndefinedMethod, "str'in '{s}' metodu yok (upper/lower/strip/lstrip/rstrip/split/join/replace/startswith/endswith/find/index/count/isdigit/isalpha/isalnum/isspace/isupper/islower/ljust/rjust/center/zfill)", .{m});
+        };
+        const min_args = if (sig.optional_last) sig.params.len - 1 else sig.params.len;
+        if (args.len < min_args or args.len > sig.params.len) {
+            return self.fail(error.ArgumentCountMismatch, "str.{s} {d} argüman bekler, {d} verildi", .{ m, sig.params.len, args.len });
+        }
+        for (args, 0..) |arg, i| {
+            const at = try self.checkExprExpected(ctx, arg, sig.params[i]);
+            if (!self.assignable(sig.params[i], at)) return self.fail(error.TypeMismatch, "str.{s} argüman {d} tipi uyuşmuyor", .{ m, i + 1 });
+        }
+        return sig.ret;
     }
 
     /// v1.153.0: `obj[lo:hi:step]` — `list[T]` → `list[T]`, `str` → `str` (yeni değer; sınırlar Python gibi sıkıştırılır, hata

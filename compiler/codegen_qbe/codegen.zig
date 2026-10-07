@@ -507,6 +507,7 @@ pub const Codegen = struct {
     pub const genDictAssign = stmt_mod.genDictAssign;
     pub const genDictGet = stmt_mod.genDictGet;
     pub const detectNarrowedBoxedName = stmt_mod.detectNarrowedBoxedName;
+    pub const collectNarrowedBoxed = stmt_mod.collectNarrowedBoxed;
     pub const genIf = stmt_mod.genIf;
     pub const collectIndexStrBasesExpr = stmt_mod.collectIndexStrBasesExpr;
     pub const collectIndexStrBasesStmts = stmt_mod.collectIndexStrBasesStmts;

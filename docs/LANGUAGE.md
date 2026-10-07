@@ -141,6 +141,15 @@ connect("localhost")
 connect("example.com", tls=True)
 ```
 
+**`None` checks and narrowing:** `x is None` / `x is not None` (same as `== None`). An `Optional` local is narrowed inside
+`if x is not None:`, in the `else` of `if x is None:`, through `and`/`or`/`not`, and after a guard
+`if x is None: return` (any branch that always exits: `return`, `raise`, `break`, `continue`).
+
+**`print`** takes several arguments (`print(a, b)`), no argument (blank line) and `sep=`/`end=`.
+**String methods:** `s.upper() lower() strip() lstrip() rstrip() split([sep]) sep.join(parts) replace(a, b) startswith(p)
+endswith(p) find(sub) index(sub) count(sub) isdigit() isalpha() isalnum() isspace() isupper() islower() ljust(w[, c])
+rjust(w[, c]) center(w[, c]) zfill(w)` (ASCII case/space rules; `find` returns a code point index).
+
 **Lambda:** `lambda a, b: a * b` — parameter and return types come from the expected function type, so a lambda can be passed
 to a function-typed parameter, assigned to an annotated variable, returned, or placed in a `list[(T) -> U]` literal. Lambdas capture
 variables like nested `def`s (read-only); inside comprehensions they are not supported.

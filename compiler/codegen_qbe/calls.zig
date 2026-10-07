@@ -312,7 +312,8 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
     switch (c.callee.*) {
         .identifier => |name| {
             if (std.mem.eql(u8, name, "print")) {
-                if (c.args.len != 1) return error.Unsupported;
+                // v1.156.0: çok argümanlı / `sep=`/`end=` biçimleri ayrı yolda (tek argüman hızlı yolu aşağıda değişmedi).
+                if (c.args.len != 1 or c.args[0] == .kwarg) return genPrintGeneral(self, c.args);
                 const v = try self.genExpr(c.args[0]);
                 try self.genPrint(v);
                 // `v` TAZE bir liste/sınıf olabilir (ör. `print(Point(1,2))`,
@@ -1764,6 +1765,7 @@ fn genBindMethod(self: *Codegen, c: ast.Call) CodegenError!Value {
 pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
     if (isSuperCallExpr(a.obj.*)) return self.genSuperMethodCall(a, args);
     const obj = try self.genExpr(a.obj.*);
+    if (obj.heap == .str) return genStrMethod(self, obj, a, args);
     if (obj.heap == .dict) return self.genDictMethod(obj, a, args);
     if (obj.heap == .list) {
         // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61): checker
@@ -2079,7 +2081,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
         miss_text = "0";
         try self.releaseIfTemporary(key_expr, key_v0);
     } else {
-        const dv0 = try self.genTernaryBranch(args[1], null);
+        const dv0 = try self.genTernaryBranch(args[1], &.{});
         const dv = try self.convert(dv0, dinfo.value_qtype);
         miss_text = dv.text;
         if (std.mem.eql(u8, a.attr, "setdefault")) {
@@ -3063,6 +3065,108 @@ pub fn genListDelete(self: *Codegen, ix: ast.Index, obj: Value) CodegenError!voi
     const elem = try emitListRemoveAtChecked(self, obj, idx.text, &rels);
     try releaseListElem(self, obj, elem.text);
     try self.releaseIfTemporary(ix.obj.*, obj);
+}
+
+/// v1.156.0: `print(a, b, ...)`, `print()`, `print(..., sep=s, end=e)` — tüm argümanlar ÖNCE değerlendirilir, sonra `sep` (varsayılan " ") ile
+/// ayrılarak yazılır, sonunda `end` (varsayılan satır sonu). `str` argümanlar tırnaksız (`%s`), diğerleri tek-argümanlı `print` ile aynı biçimde.
+fn genPrintGeneral(self: *Codegen, args: []const ast.Expr) CodegenError!Value {
+    var pos: std.ArrayListUnmanaged(ast.Expr) = .empty;
+    var sep_expr: ?ast.Expr = null;
+    var end_expr: ?ast.Expr = null;
+    for (args) |a| {
+        if (a == .kwarg) {
+            if (std.mem.eql(u8, a.kwarg.name, "sep")) sep_expr = a.kwarg.value.* else end_expr = a.kwarg.value.*;
+        } else try pos.append(self.allocator, a);
+    }
+    const values = try self.allocator.alloc(Value, pos.items.len);
+    for (pos.items, 0..) |e, i| values[i] = try self.genExpr(e);
+    const sep_v: ?Value = if (sep_expr) |e| try self.genExpr(e) else null;
+    const end_v: ?Value = if (end_expr) |e| try self.genExpr(e) else null;
+    const fmt_s = try self.internFmtString("%s");
+    const fmt_sp = try self.internFmtString(" ");
+    const fmt_nl = try self.internFmtString("\n");
+    for (values, 0..) |v, i| {
+        if (i > 0) {
+            if (sep_v) |sv| {
+                try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt_s }}, &.{.{ .ty = .l, .text = sv.text }});
+            } else try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = fmt_sp }});
+        }
+        if (v.heap == .str) {
+            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt_s }}, &.{.{ .ty = .l, .text = v.text }});
+        } else try self.genPrintFragment(v);
+    }
+    if (end_v) |ev| {
+        try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt_s }}, &.{.{ .ty = .l, .text = ev.text }});
+    } else try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = fmt_nl }});
+    for (pos.items, values) |e, v| try self.releaseIfTemporary(e, v);
+    if (sep_expr) |e| try self.releaseIfTemporary(e, sep_v.?);
+    if (end_expr) |e| try self.releaseIfTemporary(e, end_v.?);
+    return .{ .text = "0", .qtype = .w };
+}
+
+/// v1.156.0: `str` metodları (bkz. `checker.zig` `checkStrMethod`) — `nox_strings_*_raw`/`nox_str_*` çalışma zamanı işlevlerine iner. Sonuç str/list[str] TAZE (+1).
+fn genStrMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj);
+    const m = a.attr;
+    const eq = std.mem.eql;
+    const vals = try self.allocator.alloc(Value, args.len);
+    for (args, 0..) |arg, i| {
+        vals[i] = try self.genExpr(arg);
+        try self.checkNoLowlevelEscape(vals[i]);
+    }
+    const rt_arg: codegen.QbeArg = .{ .ty = .l, .text = RT_PARAM };
+    const s_arg: codegen.QbeArg = .{ .ty = .l, .text = obj.text };
+    const result = try self.newTemp();
+    var ret: Value = .{ .text = result, .qtype = .l, .heap = .str };
+    if (eq(u8, m, "upper") or eq(u8, m, "lower") or eq(u8, m, "strip") or eq(u8, m, "lstrip") or eq(u8, m, "rstrip")) {
+        const sym: []const u8 = if (eq(u8, m, "upper")) "$nox_strings_upper_raw" else if (eq(u8, m, "lower")) "$nox_strings_lower_raw" else if (eq(u8, m, "strip")) "$nox_strings_trim_raw" else if (eq(u8, m, "lstrip")) "$nox_strings_trim_start_raw" else "$nox_strings_trim_end_raw";
+        try self.qbeCall(.{ .name = result, .ty = .l }, sym, &.{ rt_arg, s_arg });
+    } else if (eq(u8, m, "replace")) {
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_strings_replace_raw", &.{ rt_arg, s_arg, .{ .ty = .l, .text = vals[0].text }, .{ .ty = .l, .text = vals[1].text } });
+    } else if (eq(u8, m, "split")) {
+        if (args.len == 0) {
+            try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_strings_split_ws_raw", &.{ rt_arg, s_arg });
+        } else {
+            try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_strings_split_raw", &.{ rt_arg, s_arg, .{ .ty = .l, .text = vals[0].text } });
+        }
+        const info = try self.allocator.create(ElemHeapInfo);
+        info.* = .{ .heap = .str };
+        ret = .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = .l, .elem_heap_info = info, .elem_is_str = true };
+    } else if (eq(u8, m, "join")) {
+        // `sep.join(parts)`: alıcı ayraçtır, argüman parçalar listesi.
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_strings_join_raw", &.{ rt_arg, .{ .ty = .l, .text = vals[0].text }, s_arg });
+    } else if (eq(u8, m, "startswith") or eq(u8, m, "endswith")) {
+        const raw = try self.newTemp();
+        try self.qbeCall(.{ .name = raw, .ty = .l }, if (eq(u8, m, "startswith")) "$nox_strings_starts_with_raw" else "$nox_strings_ends_with_raw", &.{ s_arg, .{ .ty = .l, .text = vals[0].text } });
+        try self.qbeOp2Imm(result, .w, "cnel", raw, 0);
+        ret = .{ .text = result, .qtype = .w };
+    } else if (eq(u8, m, "find") or eq(u8, m, "index")) {
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_str_find", &.{ s_arg, .{ .ty = .l, .text = vals[0].text } });
+        ret = .{ .text = result, .qtype = .l };
+        if (eq(u8, m, "index")) {
+            const bad = try self.newTemp();
+            try self.qbeOp2Imm(bad, .w, "csltl", result, 0);
+            var rels: [2]RelPair = .{ .{ .e = a.obj.*, .v = obj }, .{ .e = args[0], .v = vals[0] } };
+            try emitColdListError(self, bad, "ValueError", "str.index(sub): alt dize bulunamadi", &rels);
+        }
+    } else if (eq(u8, m, "count")) {
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_str_count", &.{ s_arg, .{ .ty = .l, .text = vals[0].text } });
+        ret = .{ .text = result, .qtype = .l };
+    } else if (eq(u8, m, "isdigit") or eq(u8, m, "isalpha") or eq(u8, m, "isalnum") or eq(u8, m, "isspace") or eq(u8, m, "isupper") or eq(u8, m, "islower")) {
+        const kind: []const u8 = if (eq(u8, m, "isdigit")) "0" else if (eq(u8, m, "isalpha")) "1" else if (eq(u8, m, "isalnum")) "2" else if (eq(u8, m, "isspace")) "3" else if (eq(u8, m, "isupper")) "4" else "5";
+        const raw = try self.newTemp();
+        try self.qbeCall(.{ .name = raw, .ty = .l }, "$nox_str_char_class", &.{ s_arg, .{ .ty = .w, .text = kind } });
+        try self.qbeOp2Imm(result, .w, "cnel", raw, 0);
+        ret = .{ .text = result, .qtype = .w };
+    } else if (eq(u8, m, "zfill") or eq(u8, m, "ljust") or eq(u8, m, "rjust") or eq(u8, m, "center")) {
+        const mode: []const u8 = if (eq(u8, m, "ljust")) "0" else if (eq(u8, m, "rjust")) "1" else if (eq(u8, m, "center")) "2" else "3";
+        const width = try self.convert(vals[0], .l);
+        const fill: []const u8 = if (args.len > 1) vals[1].text else "0";
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_str_just", &.{ rt_arg, s_arg, .{ .ty = .l, .text = width.text }, .{ .ty = .l, .text = fill }, .{ .ty = .w, .text = mode } });
+    } else return error.Unsupported;
+    for (args, vals) |arg, v| try self.releaseIfTemporary(arg, v);
+    try self.releaseIfTemporary(a.obj.*, obj);
+    return ret;
 }
 
 /// `Channel[T](capacity)`/`ThreadChannel[T](capacity)` (yerleşikler) YA DA
