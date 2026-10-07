@@ -263,11 +263,30 @@ const Printer = struct {
             .assign => |a| {
                 try self.indentTo(depth);
                 try self.printExpr(a.target);
-                try self.writer.writeAll(" = ");
-                try self.printExpr(a.value);
+                // v1.162.0: birleşik atama (`x += 1`) yüzey biçimini koru (parser `x = x + 1`e indirgemişti).
+                if (a.value == .binary and a.value.binary.is_form and isAugOp(a.value.binary.op)) {
+                    try self.writer.print(" {s}= ", .{binOpStr(a.value.binary.op)});
+                    try self.printExpr(a.value.binary.right.*);
+                } else {
+                    try self.writer.writeAll(" = ");
+                    try self.printExpr(a.value);
+                }
                 try self.line(stmt.line);
             },
             .if_stmt => |f| {
+                // v1.162.0: `assert koşul[, mesaj]` yüzey biçimi.
+                if (f.is_assert and f.cond == .unary and f.then_body.len == 1 and f.then_body[0].kind == .raise_stmt and f.then_body[0].kind.raise_stmt == .call) {
+                    const rc = f.then_body[0].kind.raise_stmt.call;
+                    try self.indentTo(depth);
+                    try self.writer.writeAll("assert ");
+                    try self.printExpr(f.cond.unary.operand.*);
+                    if (rc.args.len == 1 and !(rc.args[0] == .string_lit and std.mem.eql(u8, rc.args[0].string_lit, "assertion failed"))) {
+                        try self.writer.writeAll(", ");
+                        try self.printExpr(rc.args[0]);
+                    }
+                    try self.line(stmt.line);
+                    return;
+                }
                 try self.indentTo(depth);
                 try self.writer.writeAll("if ");
                 try self.printExpr(f.cond);
@@ -619,9 +638,37 @@ const Printer = struct {
         try self.printExprAt(e, 0, .loose);
     }
 
+    fn isAugOp(op: ast.BinaryOp) bool {
+        return switch (op) {
+            .add, .sub, .mul, .div, .floordiv, .mod, .pow, .bit_and, .bit_or, .bit_xor, .shl, .shr => true,
+            else => false,
+        };
+    }
+
+    /// Zincirleme karşılaştırmanın sol kısmı: ya düz bir karşılaştırma (`a < b`) ya da iç içe zincir.
+    fn printChainLeft(self: *Printer, e: ast.Expr) FormatError!void {
+        if (e == .binary and e.binary.is_form and e.binary.op == .and_ and e.binary.right.* == .binary) {
+            try self.printChainLeft(e.binary.left.*);
+            try self.writer.print(" {s} ", .{binOpStr(e.binary.right.binary.op)});
+            try self.printExprAt(e.binary.right.binary.right.*, binPrec(e.binary.right.binary.op), .strict);
+            return;
+        }
+        try self.printExprAt(e, binPrec(.lt), .loose);
+    }
+
     fn printExprAt(self: *Printer, e: ast.Expr, ctx_prec: u8, side: Side) FormatError!void {
         switch (e) {
             .binary => |b| {
+                // v1.162.0: zincirleme karşılaştırma yüzey biçimi — `and_(…, cmp(mid', op, rhs))` → `… op rhs`.
+                if (b.is_form and b.op == .and_ and b.right.* == .binary) {
+                    const need_chain_parens = binPrec(.lt) < ctx_prec or (binPrec(.lt) == ctx_prec and side == .strict);
+                    if (need_chain_parens) try self.writer.writeAll("(");
+                    try self.printChainLeft(b.left.*);
+                    try self.writer.print(" {s} ", .{binOpStr(b.right.binary.op)});
+                    try self.printExprAt(b.right.binary.right.*, binPrec(b.right.binary.op), .strict);
+                    if (need_chain_parens) try self.writer.writeAll(")");
+                    return;
+                }
                 const my_prec = binPrec(b.op);
                 const need_parens = my_prec < ctx_prec or (my_prec == ctx_prec and side == .strict);
                 if (need_parens) try self.writer.writeAll("(");
@@ -681,6 +728,13 @@ const Printer = struct {
             .call => |c| {
                 try self.printExprAt(c.callee.*, 0, .loose);
                 try self.writer.writeAll("(");
+                // v1.162.0: tek argümanlı üreteç ifadesi (`sum(x for x in xs)`) köşeli parantezsiz yazılır.
+                if (c.args.len == 1 and c.args[0] == .list_comp and c.args[0].list_comp.is_genexpr) {
+                    try self.printExpr(c.args[0].list_comp.elem.*);
+                    try self.printCompClauses(c.args[0].list_comp.clauses);
+                    try self.writer.writeAll(")");
+                    return;
+                }
                 for (c.args, 0..) |a, idx| {
                     if (idx > 0) try self.writer.writeAll(", ");
                     try self.printExpr(a);

@@ -313,11 +313,17 @@ test "augmented atamanin 7 operatoru de dogru BinaryOp'e eslenir" {
 // KRİTİK güvenlik testi (bkz. plan dosyası): `.attribute`/`.index` hedeflerde
 // augmented atama REDDEDİLİR — receiver'ı İKİ KEZ değerlendirmenin (yan-etkili
 // bir receiver İçin GERÇEK bir çiftleme hatası olurdu) ÖNÜNE GEÇER.
-test "augmented atama .attribute/.index hedeflerde REDDEDILIR (receiver cift degerlendirme riski)" {
+test "augmented atama: yan etkisiz .attribute/.index hedefler KABUL, çağrı içeren hedefler REDDEDİLİR (v1.162.0)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    try std.testing.expectError(error.UnexpectedToken, parse(arena.allocator(), "obj.field += 1\n"));
-    try std.testing.expectError(error.UnexpectedToken, parse(arena.allocator(), "arr[0] += 1\n"));
+    const m1 = try parse(arena.allocator(), "obj.field += 1\n");
+    try std.testing.expect(m1.body[0].kind == .assign);
+    try std.testing.expect(m1.body[0].kind.assign.value == .binary and m1.body[0].kind.assign.value.binary.is_form);
+    _ = try parse(arena.allocator(), "arr[0] += 1\n");
+    _ = try parse(arena.allocator(), "grid[i][j] *= 2\n");
+    // Çağrı içeren hedef iki kez değerlendirilirdi → hâlâ reddedilir.
+    try std.testing.expectError(error.UnexpectedToken, parse(arena.allocator(), "get()[0] += 1\n"));
+    try std.testing.expectError(error.UnexpectedToken, parse(arena.allocator(), "obj.make().field += 1\n"));
 }
 
 // F-string desugarı: `f"a{x}b"` → `("a" + str(x)) + "b"` (soldan sağa

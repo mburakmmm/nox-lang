@@ -747,3 +747,57 @@ b: float = 1e3 + 2.5e-3 + 1_0.5
         (float)
         (float))
       (float))))
+
+================================================================================
+assert, birleşik atama hedefleri, üreteç ifadesi, zincirleme karşılaştırma (v1.162.0)
+================================================================================
+
+assert x > 0, "pozitif"
+self.n += 1
+xs[i] *= 2
+total: int = sum(v * v for v in xs if v > 0)
+ok: bool = 0 < x < 10
+
+--------------------------------------------------------------------------------
+
+(module
+  (assert_statement
+    (binary_expression
+      (identifier)
+      (integer))
+    (string))
+  (augmented_assignment
+    (attribute
+      (identifier)
+      (identifier))
+    (integer))
+  (augmented_assignment
+    (index
+      (identifier)
+      (identifier))
+    (integer))
+  (var_declaration
+    (identifier)
+    (identifier)
+    (call
+      (identifier)
+      (argument_list
+        (binary_expression
+          (identifier)
+          (identifier))
+        (generator_clauses
+          (comp_for_clause
+            (identifier)
+            (identifier))
+          (comp_if_clause
+            (binary_expression
+              (identifier)
+              (integer)))))))
+  (var_declaration
+    (identifier)
+    (identifier)
+    (binary_expression
+      (binary_expression
+        (integer)
+        (identifier))
+      (integer))))

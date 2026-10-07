@@ -69,6 +69,19 @@ const builtins = [_]BuiltinDoc{
     .{ .name = "max", .detail = "def max(*args)  (yerlesik, sayisal tipi korur)" },
     .{ .name = "round", .detail = "def round(x: float) -> int  (yerlesik)" },
     .{ .name = "sum", .detail = "def sum(xs: list[...])  (yerlesik)" },
+    .{ .name = "sorted", .detail = "def sorted(xs, key=None, reverse=False) -> list  (yerlesik)" },
+    .{ .name = "reversed", .detail = "def reversed(xs) -> list  (yerlesik)" },
+    .{ .name = "list", .detail = "def list(iterable) -> list  (yerlesik: list/str/dict/range)" },
+    .{ .name = "bool", .detail = "def bool(x) -> bool  (yerlesik)" },
+    .{ .name = "any", .detail = "def any(xs: list[bool]) -> bool  (yerlesik)" },
+    .{ .name = "all", .detail = "def all(xs: list[bool]) -> bool  (yerlesik)" },
+    .{ .name = "divmod", .detail = "def divmod(a: int, b: int) -> tuple[int, int]  (yerlesik)" },
+    .{ .name = "chr", .detail = "def chr(cp: int) -> str  (yerlesik)" },
+    .{ .name = "ord", .detail = "def ord(s: str) -> int  (yerlesik)" },
+    .{ .name = "map", .detail = "def map(f, xs) -> list  (yerlesik, tembel degil)" },
+    .{ .name = "filter", .detail = "def filter(f, xs) -> list  (yerlesik, tembel degil)" },
+    .{ .name = "enumerate", .detail = "def enumerate(xs) -> list[tuple[int, T]]  (yerlesik)" },
+    .{ .name = "zip", .detail = "def zip(a, b) -> list[tuple]  (yerlesik)" },
 };
 
 const keywords = [_][]const u8{
@@ -76,7 +89,7 @@ const keywords = [_][]const u8{
     "return",   "pass",  "and",      "or",      "not",  "True",     "False",  "None",
     "raise",    "try",   "except",   "finally", "as",   "protocol", "extern", "from",
     "async",    "await", "spawn",    "import",  "with", "defer",    "lambda", "is",
-    "lowlevel", "break", "continue",
+    "lowlevel", "break", "continue", "assert",
 };
 
 /// `tokens` İÇİNDE (1-tabanlı) `line1`/`col1` konumunu KAPSAYAN bir

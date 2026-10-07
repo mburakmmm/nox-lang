@@ -6357,11 +6357,123 @@ pub const Checker = struct {
         return self.fail(error.UndefinedAttribute, "'{s}' sınıfının '{s}' alanı yok", .{ class_name, a.attr });
     }
 
+    /// v1.162.0: Python tarzı yerleşik biçimlerin prelude'a yönlendirilmesi — `list(x)`, `bool(x)`, `max(xs)`/`min(xs)` (liste biçimi),
+    /// `max/min/sorted(..., key=f)`, `sum(list[float])`, `round(x, nd)`. Ya çağrının tamamı bir ifadeyle değiştirilir (`expr_rewrites`,
+    /// dönüş tipi verilir) ya da yalnızca `callee` prelude fonksiyonuna YENİDEN ADLANDIRILIR (`null` döner, normal çağrı denetimi sürer).
+    fn tryDesugarPreludeCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
+        const name = c.callee.identifier;
+        const eq = std.mem.eql;
+        var has_key = false;
+        var positional: usize = 0;
+        for (c.args) |a| {
+            if (a == .kwarg) {
+                if (eq(u8, a.kwarg.name, "key")) has_key = true;
+            } else positional += 1;
+        }
+        const user_defined = self.classes.contains(name) or (self.functions.contains(name) and !isPreludeName(name));
+        if (user_defined) return null;
+        if (eq(u8, name, "list") and c.args.len == 1 and positional == 1 and !self.generic_functions.contains("list")) {
+            // `list(iterable)`: range → `[v for v in range(..)]`; list → `.copy()`; str → `__nox_str_chars`; dict → `.keys()`.
+            const arg0 = c.args[0];
+            const is_range = arg0 == .call and arg0.call.callee.* == .identifier and eq(u8, arg0.call.callee.identifier, "range");
+            const repl: ast.Expr = blk: {
+                if (is_range) {
+                    self.lambda_counter += 1;
+                    const vname = try std.fmt.allocPrint(self.allocator, "__nox_lc_{d}", .{self.lambda_counter});
+                    const elem = try self.allocator.create(ast.Expr);
+                    elem.* = .{ .identifier = vname };
+                    const clauses = try self.allocator.alloc(ast.CompClause, 1);
+                    clauses[0] = .{ .for_clause = .{ .var_name = vname, .iterable = arg0 } };
+                    break :blk .{ .list_comp = .{ .elem = elem, .clauses = clauses } };
+                }
+                const at = try self.checkExpr(ctx, arg0);
+                const callee = try self.allocator.create(ast.Expr);
+                switch (at) {
+                    .list, .dict => {
+                        const obj = try self.allocator.create(ast.Expr);
+                        obj.* = arg0;
+                        callee.* = .{ .attribute = .{ .obj = obj, .attr = if (at == .list) "copy" else "keys" } };
+                        break :blk .{ .call = .{ .callee = callee, .args = &.{} } };
+                    },
+                    .str => {
+                        callee.* = .{ .identifier = "__nox_str_chars" };
+                        const args = try self.allocator.alloc(ast.Expr, 1);
+                        args[0] = arg0;
+                        break :blk .{ .call = .{ .callee = callee, .args = args } };
+                    },
+                    else => return self.fail(error.TypeMismatch, "'list' yalnızca list/str/dict/range üzerinde çalışır", .{}),
+                }
+            };
+            const rt = try self.checkExpr(ctx, repl);
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+            return rt;
+        }
+        if (eq(u8, name, "bool") and c.args.len == 1 and positional == 1) {
+            const at = try self.checkExpr(ctx, c.args[0]);
+            const arg = try self.allocator.create(ast.Expr);
+            arg.* = c.args[0];
+            const zero = try self.allocator.create(ast.Expr);
+            const repl: ast.Expr = switch (at) {
+                .boolean => c.args[0],
+                .int => blk: {
+                    zero.* = .{ .int_lit = 0 };
+                    break :blk .{ .binary = .{ .op = .ne, .left = arg, .right = zero } };
+                },
+                .float => blk: {
+                    zero.* = .{ .float_lit = 0.0 };
+                    break :blk .{ .binary = .{ .op = .ne, .left = arg, .right = zero } };
+                },
+                .str, .list, .dict => blk: {
+                    const callee = try self.allocator.create(ast.Expr);
+                    callee.* = .{ .identifier = "len" };
+                    const args = try self.allocator.alloc(ast.Expr, 1);
+                    args[0] = c.args[0];
+                    const len_call = try self.allocator.create(ast.Expr);
+                    len_call.* = .{ .call = .{ .callee = callee, .args = args } };
+                    zero.* = .{ .int_lit = 0 };
+                    break :blk .{ .binary = .{ .op = .ne, .left = len_call, .right = zero } };
+                },
+                else => return self.fail(error.TypeMismatch, "'bool' yalnızca bool/int/float/str/list/dict üzerinde çalışır", .{}),
+            };
+            _ = try self.checkExpr(ctx, repl);
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+            return .boolean;
+        }
+        if ((eq(u8, name, "max") or eq(u8, name, "min")) and positional == 1) {
+            const is_max = eq(u8, name, "max");
+            c.callee.* = .{ .identifier = if (has_key) (if (is_max) "__nox_max_key" else "__nox_min_key") else (if (is_max) "__nox_max_list" else "__nox_min_list") };
+            return null;
+        }
+        if (eq(u8, name, "sorted") and has_key) {
+            c.callee.* = .{ .identifier = "__nox_sorted_key" };
+            return null;
+        }
+        if (eq(u8, name, "sum") and c.args.len == 1) {
+            const at = try self.checkExpr(ctx, c.args[0]);
+            if (at == .list and at.list.* == .float) c.callee.* = .{ .identifier = "sum_float" };
+            return null;
+        }
+        if (eq(u8, name, "round") and c.args.len == 2) {
+            c.callee.* = .{ .identifier = "__nox_round_digits" };
+            return null;
+        }
+        return null;
+    }
+
+    fn isPreludeName(name: []const u8) bool {
+        const names = [_][]const u8{ "max", "min", "sorted", "sum", "round", "map", "filter", "any", "all", "chr", "ord", "divmod" };
+        for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+        return false;
+    }
+
     fn checkCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
         // Faz C.2: `obj.metod[T](...)` / çıkarımlı `obj.metod(...)` generic
         // metod çağrısı — callee YERİNDE somut metod adına yeniden yazılır,
         // AŞAĞIDAKİ normal metod-çağrısı yolu aynen devam eder.
         if (self.generic_method_names.count() > 0) try self.tryResolveGenericMethodCall(ctx, c);
+        if (c.callee.* == .identifier) {
+            if (try self.tryDesugarPreludeCall(ctx, c)) |t| return t;
+        }
         switch (c.callee.*) {
             .identifier => |name| {
                 // Faz 7 (tekli kalıtım): çıplak `super()` (yani `super().
@@ -7476,7 +7588,25 @@ pub const Checker = struct {
                     // `__lt__`/karşılaştırıcı YOK, bu yüzden sınıf/`list`/
                     // `dict` elemanları İÇİN "nasıl sıralanır" TANIMSIZDIR.
                     if (std.mem.eql(u8, a.attr, "sort")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'sort' hiç argüman almaz", .{});
+                        // v1.162.0: `xs.sort(reverse=True)` / `xs.sort(key=f, reverse=...)` → prelude'daki yerinde sıralayıcılara yönlendirilir.
+                        if (c.args.len != 0) {
+                            var has_key = false;
+                            for (c.args) |ka| {
+                                if (ka != .kwarg or !(std.mem.eql(u8, ka.kwarg.name, "key") or std.mem.eql(u8, ka.kwarg.name, "reverse"))) {
+                                    return self.fail(error.ArgumentCountMismatch, "'sort' yalnızca 'key=' ve 'reverse=' anahtar argümanlarını alır", .{});
+                                }
+                                if (std.mem.eql(u8, ka.kwarg.name, "key")) has_key = true;
+                            }
+                            const callee = try self.allocator.create(ast.Expr);
+                            callee.* = .{ .identifier = if (has_key) "__nox_sort_key_inplace" else "__nox_sort_reverse_inplace" };
+                            const new_args = try self.allocator.alloc(ast.Expr, c.args.len + 1);
+                            new_args[0] = a.obj.*;
+                            @memcpy(new_args[1..], c.args);
+                            const repl: ast.Expr = .{ .call = .{ .callee = callee, .args = new_args } };
+                            const rt = try self.checkExpr(ctx, repl);
+                            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+                            return rt;
+                        }
                         switch (obj_t.list.*) {
                             .int, .float, .str => {},
                             else => return self.fail(error.TypeMismatch, "'sort' yalnızca list[int]/list[float]/list[str] üzerinde çağrılabilir", .{}),
@@ -8204,10 +8334,15 @@ pub const Checker = struct {
                 }
                 return self.fail(error.UnknownType, "bilinmeyen generic tip: {s}", .{g.name});
             },
-            // Faz U.4.1: generic fonksiyonlarda fonksiyon-tipi parametreler
-            // v1 kapsamı DIŞI (closure'lar generics'in monomorphization
-            // makinesiyle henüz entegre edilmedi).
-            .func_type => return self.fail(error.UnknownType, "'{s}' çağrısında fonksiyon tipi parametreler generic fonksiyonlarda henüz desteklenmiyor", .{fn_name}),
+            // v1.162.0: fonksiyon-tipli parametreler artık generic fonksiyonlarda da çıkarılır (`map`/`filter`/`sorted(key=...)` tarzı
+            // yüksek-dereceli API'ler): `actual` bir fonksiyon tipi olmalı; parametre/dönüş tipleri özyinelemeli birleştirilir.
+            .func_type => |ft| {
+                if (actual != .func or actual.func.params.len != ft.params.len) {
+                    return self.fail(error.TypeMismatch, "'{s}' çağrısında fonksiyon tipi argüman beklenen imzayla uyuşmuyor", .{fn_name});
+                }
+                for (ft.params, actual.func.params) |pte, pat| try self.unifyTypeExpr(pte, pat, type_params, bindings, fn_name);
+                try self.unifyTypeExpr(ft.return_type.*, actual.func.return_type.*, type_params, bindings, fn_name);
+            },
             // Faz FF.6: `T | None`li bir parametre generic bir fonksiyona
             // geçirilirse, `actual`ın da bir Optional olması VE payload'ların
             // özyinelemeli olarak birleşmesi gerekir (v1 kapsamı — Optional
@@ -9022,6 +9157,8 @@ pub const Checker = struct {
         var bindings: std.StringHashMapUnmanaged(Type) = .{};
         defer bindings.deinit(self.allocator);
         for (gfd.params, c.args) |p, arg| {
+            // v1.162.0: fonksiyon-tipli parametreler ikinci geçişte (diğer argümanlardan tip parametreleri bağlandıktan sonra) işlenir.
+            if (p.type_expr == .func_type) continue;
             // v1.76.0 (bkz. proje belleği "nox.orm" görevi): `checkExpr`
             // TEK BAŞINA BOŞ `[]`/`{}` literallerinin tipini ASLA çıkaramaz
             // (bkz. `checkExprExpected`in belge notu) — bir fonksiyon SADECE
@@ -9043,6 +9180,27 @@ pub const Checker = struct {
             };
             try self.unifyTypeExpr(p.type_expr, at, gfd.type_params, &bindings, gfd.name);
         }
+        // İkinci geçiş: fonksiyon-tipli parametreler. Lambda argümanı için parametre tipleri artık bağlı tip parametrelerinden bilinir; dönüş
+        // tipi gövdeden çıkarılır (`inferLambdaReturnType`). Diğer argümanlar (fonksiyon adları/değişkenler) normal `checkExpr` ile tiplenir.
+        for (gfd.params, c.args) |p, arg| {
+            if (p.type_expr != .func_type) continue;
+            const ft = p.type_expr.func_type;
+            const actual: Type = if (arg == .lambda) blk: {
+                if (arg.lambda.params.len != ft.params.len) {
+                    return self.fail(error.ArgumentCountMismatch, "lambda {d} parametre alıyor, '{s}' {d} parametreli bir fonksiyon bekliyor", .{ arg.lambda.params.len, gfd.name, ft.params.len });
+                }
+                const ptypes = try self.allocator.alloc(Type, ft.params.len);
+                for (ft.params, 0..) |pte, i| {
+                    const sub = try self.substituteTypeExpr(pte, &bindings);
+                    ptypes[i] = self.typeExprToType(sub) catch return self.fail(error.TypeMismatch, "'{s}' çağrısında lambda parametre tipi çıkarılamadı — önce tip parametresini bağlayan bir argüman verin (ör. liste)", .{gfd.name});
+                }
+                const ret_t = try self.inferLambdaReturnType(ctx, arg.lambda, ptypes);
+                const rb = try self.allocator.create(Type);
+                rb.* = ret_t;
+                break :blk .{ .func = .{ .params = ptypes, .return_type = rb } };
+            } else try self.checkExpr(ctx, arg);
+            try self.unifyTypeExpr(p.type_expr, actual, gfd.type_params, &bindings, gfd.name);
+        }
 
         const bound_types = try self.allocator.alloc(Type, gfd.type_params.len);
         for (gfd.type_params, 0..) |tp, i| {
@@ -9056,6 +9214,7 @@ pub const Checker = struct {
         const mangled = try self.mangleName(gfd.name, bound_types);
         if (self.functions.get(mangled)) |sig| {
             c.callee.* = .{ .identifier = mangled };
+            try self.checkLambdaArgsAgainst(ctx, sig.params, c.args);
             return sig.return_type;
         }
 
@@ -9079,7 +9238,30 @@ pub const Checker = struct {
         try self.checkFunctionBody(concrete);
 
         c.callee.* = .{ .identifier = mangled };
+        try self.checkLambdaArgsAgainst(ctx, self.functions.get(mangled).?.params, c.args);
         return self.functions.get(mangled).?.return_type;
+    }
+
+    /// v1.162.0: somutlaştırılmış imzaya göre lambda argümanlarını GERÇEKTEN tipler (köprü fonksiyonunu üretip `lambda_defs`e kaydeder).
+    fn checkLambdaArgsAgainst(self: *Checker, ctx: *FnCtx, param_types: []const Type, args: []const ast.Expr) TypeError!void {
+        for (args, 0..) |arg, i| {
+            if (arg == .lambda and i < param_types.len) _ = try self.checkLambda(ctx, arg.lambda, param_types[i]);
+        }
+    }
+
+    /// v1.162.0: bir lambda'nın dönüş tipini, parametre tipleri verildiğinde gövde ifadesinden çıkarır (gövde geçici bir iç kapsamda
+    /// denetlenir; yan etki olarak yakalama/yükseltme KAYDEDİLMEZ — bunu `checkLambda` gerçek denetimde yapar).
+    fn inferLambdaReturnType(self: *Checker, ctx: *FnCtx, lam: ast.Lambda, ptypes: []const Type) TypeError!Type {
+        var captures: std.StringHashMapUnmanaged(Type) = .{};
+        var inner_scope: Scope = .{ .parent = ctx.scope, .captures = &captures };
+        for (lam.params, ptypes) |pn, pt| try inner_scope.declare(self.allocator, pn, pt);
+        var inner_ctx: FnCtx = .{
+            .scope = &inner_scope,
+            .expected_return = .none,
+            .in_async = false,
+            .path = try std.fmt.allocPrint(self.allocator, "{s}.__nox_infer", .{ctx.path}),
+        };
+        return self.checkExpr(&inner_ctx, lam.body.*);
     }
 };
 

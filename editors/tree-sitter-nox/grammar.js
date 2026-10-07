@@ -62,6 +62,10 @@ module.exports = grammar({
         $.from_import_statement,
         $.var_declaration,
         $.assignment,
+        $.augmented_assignment,
+        $.assert_statement,
+        $.del_statement,
+        $.defer_statement,
         $.return_statement,
         $.raise_statement,
         $.pass_statement,
@@ -126,6 +130,20 @@ module.exports = grammar({
       field('value', choice($._expression, $.expression_list)),
     ),
 
+    // `x += 1` / `self.n -= 1` / `xs[i] *= 2` (v1.162.0'dan itibaren öz/dizin hedefleri de; yan etkisiz hedefler)
+    augmented_assignment: $ => seq(
+      field('target', $._expression),
+      field('operator', choice('+=', '-=', '*=', '/=', '//=', '%=', '**=', '&=', '|=', '^=', '<<=', '>>=')),
+      field('value', $._expression),
+    ),
+
+    // `assert koşul` / `assert koşul, "mesaj"` (v1.162.0)
+    assert_statement: $ => seq('assert', field('condition', $._expression), optional(seq(',', field('message', $._expression)))),
+
+    del_statement: $ => seq('del', field('target', $._expression)),
+
+    defer_statement: $ => seq('defer', field('call', $._expression)),
+
     // v1.157.0: çıplak tuple/açma — `a, b = b, a`, `return a, b`
     expression_list: $ => seq($._expression, repeat1(seq(',', $._expression)), optional(',')),
 
@@ -172,9 +190,10 @@ module.exports = grammar({
     type_parameters: $ => seq('[', commaSep1($.identifier), ']'),
 
     parameters: $ => seq('(', commaSep($.parameter), ')'),
+    // `self` tip anotasyonsuz olabilir (Faz FF.4): `def m(self) -> None` — diğer parametreler tip ister (derleyici reddeder).
     parameter: $ => seq(
-      field('name', $.identifier), ':', field('type', $._type_expression),
-      optional(seq('=', field('default', $._expression))),
+      field('name', $.identifier),
+      optional(seq(':', field('type', $._type_expression), optional(seq('=', field('default', $._expression))))),
     ),
 
     // `extern def name(a: int) -> int from "lib" with_rt` — gövde YOK,
@@ -335,7 +354,10 @@ module.exports = grammar({
       field('function', $._postfix_expression),
       field('arguments', $.argument_list),
     )),
-    argument_list: $ => seq('(', commaSep(choice($.keyword_argument, $._expression)), ')'),
+    argument_list: $ => seq('(', commaSep(choice($.keyword_argument, $._expression)), optional($.generator_clauses), ')'),
+
+    // `sum(x * x for x in xs)` — tek argüman olarak üreteç ifadesi (v1.162.0): ilk argümanı izleyen `for`/`if` yan tümceleri
+    generator_clauses: $ => seq($.comp_for_clause, repeat($._comp_clause)),
 
     // `f(name=value)` (v1.147.0)
     keyword_argument: $ => seq(field('name', $.identifier), '=', field('value', $._expression)),

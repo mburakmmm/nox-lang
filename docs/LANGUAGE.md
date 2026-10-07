@@ -517,6 +517,33 @@ type/ownership guarantees with no sandboxing (see the main
 [README](../README.en.md#security) and `AGENTS.md` §9.5 for the full
 security model).
 
+## Built-ins
+
+Always available (no import): `print`, `len`, `input`, `abs`, `min`, `max`, `sum`, `round`, `sorted`, `reversed`,
+`enumerate`, `zip`, `map`, `filter`, `any`, `all`, `divmod`, `chr`, `ord`, `bool`, `list`, `str`, `int`, `float`,
+`range` (in `for`/comprehensions/`list(...)`).
+
+- `min(a, b)` / `max(a, b)` and `min(xs)` / `max(xs)` (a list), plus `key=`: `max(words, key=lambda w: len(w))`.
+  An empty list raises `ValueError`.
+- `sorted(xs)`, `sorted(xs, reverse=True)`, `sorted(xs, key=f, reverse=...)` (stable) and in place
+  `xs.sort()`, `xs.sort(reverse=True)`, `xs.sort(key=f)`. Without `key`, elements must be `int`/`float`/`str`.
+- `round(x)` rounds half to even (`round(2.5) == 2`) and returns an `int`; `round(x, n)` returns a `float` and rounds the
+  exact binary value like Python (`round(2.675, 2) == 2.67`).
+- `list(range(5))`, `list("abc")` (characters), `list(d)` (keys), `list(xs)` (copy). `bool(x)` for
+  `bool`/`int`/`float`/`str`/`list`/`dict`. `divmod(a, b)` returns a tuple. `chr(cp)` / `ord(s)` use Unicode code points.
+- `map(f, xs)` and `filter(f, xs)` return a **new list** (not a lazy iterator); `any`/`all` take a `list[bool]`.
+- Generator expressions are accepted as the single argument of a call and are evaluated eagerly as a list:
+  `sum(x * x for x in xs if x > 0)`, `", ".join(str(x) for x in xs)`.
+
+## Statements and operators added for Python parity
+
+- `assert cond` / `assert cond, "message"` raises `AssertionError` (always on).
+- Chained comparisons: `0 <= i < n`, `a < b < c` (the middle operand must be side-effect free: it is evaluated twice).
+- Augmented assignment on variables, attributes and subscripts: `x += 1`, `self.n -= 1`, `xs[i] *= 2`, `d[k] += 1`
+  (targets containing calls, such as `f()[0] += 1`, are rejected).
+- Generic functions may take function-typed parameters; type parameters are inferred from the other arguments and from
+  the lambda body (`map_list(xs, lambda v: str(v))` infers `U = str`).
+
 ## Diagnostics
 
 Syntax errors report file, line and column with the offending source line and a caret, and exit with

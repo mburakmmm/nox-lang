@@ -33,6 +33,10 @@ class ValueError(Exception):
 class IndexError(Exception):
     pass
 
+# `assert koşul, "mesaj"` deyimi başarısız olursa fırlatılır (parser `if not koşul: raise AssertionError(mesaj)`e indirger).
+class AssertionError(Exception):
+    pass
+
 # Tamsayı `//` ve `%` sıfır bölenle bu sınıfı fırlatır (float bölme IEEE: inf/nan).
 class ZeroDivisionError(Exception):
     pass
@@ -127,11 +131,41 @@ def max[T](a: T, b: T) -> T:
         return a
     return b
 
-# v1 kapsamı: yalnızca `float -> int` (Python'ın `ndigits` parametresi YOK).
+extern def nox_float_round_digits_raw(x: float, nd: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_chr_raw(cp: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_ord_raw(s: str) -> int from "zig-out/lib/noxrt.o"
+
+# v1.162.0: Python gibi YARIM → ÇİFTE yuvarlama (`round(2.5) == 2`) ve tam ikili değer üzerinden (`round(x, nd)` aşağıda).
 def round(x: float) -> int:
-    if x >= 0.0:
-        return int(x + 0.5)
-    return int(x - 0.5)
+    return int(nox_float_round_digits_raw(x, 0))
+
+# `round(x, nd)` çağrısı checker tarafından bu fonksiyona yönlendirilir (`float` döner, Python gibi).
+def __nox_round_digits(x: float, nd: int) -> float:
+    return nox_float_round_digits_raw(x, nd)
+
+def chr(cp: int) -> str:
+    return nox_chr_raw(cp)
+
+def ord(s: str) -> int:
+    n: int = nox_ord_raw(s)
+    if n < 0:
+        raise ValueError("ord() bos bir str alamaz")
+    return n
+
+def any(xs: list[bool]) -> bool:
+    for x in xs:
+        if x:
+            return True
+    return False
+
+def all(xs: list[bool]) -> bool:
+    for x in xs:
+        if not x:
+            return False
+    return True
+
+def divmod[T](a: T, b: T) -> tuple[T, T]:
+    return a // b, a % b
 
 # v1 kapsamı: `sum`/`sum_float` AYRI adlarla (Nox'ta dönüş-tipine göre
 # overload YOK — `total = 0` ile `total = 0.0` FARKLI somut başlangıç
@@ -151,10 +185,134 @@ def sum_float(xs: list[float]) -> float:
 # v1.150.0 (list tam API): `sorted(xs)` yeni, sıralanmış bir liste döner (orijinal değişmez; `sort()` gibi yalnızca
 # list[int]/list[float]/list[str] için). `reversed(xs)` Python'dan FARKLI olarak bir yineleyici değil, ters sıralı YENİ bir
 # liste döner (`for x in reversed(xs):` olduğu gibi çalışır).
-def sorted[T](xs: list[T]) -> list[T]:
+def sorted[T](xs: list[T], reverse: bool = False) -> list[T]:
     ys: list[T] = xs.copy()
     ys.sort()
+    if reverse:
+        ys.reverse()
     return ys
+
+# v1.162.0: `sorted(xs, key=f, reverse=...)` bu kararlı birleştirme sıralamasına yönlendirilir (checker). `key` bir lambda ya da fonksiyon olabilir.
+def __nox_sorted_key[T, K](xs: list[T], key: (T) -> K, reverse: bool = False) -> list[T]:
+    n: int = len(xs)
+    keys: list[K] = []
+    for x in xs:
+        keys.append(key(x))
+    idx: list[int] = []
+    tmp: list[int] = []
+    i: int = 0
+    while i < n:
+        idx.append(i)
+        tmp.append(i)
+        i = i + 1
+    width: int = 1
+    while width < n:
+        lo: int = 0
+        while lo < n:
+            mid: int = min(lo + width, n)
+            hi: int = min(lo + 2 * width, n)
+            a: int = lo
+            b: int = mid
+            k: int = lo
+            while a < mid and b < hi:
+                take_right: bool = keys[idx[b]] < keys[idx[a]]
+                if reverse:
+                    take_right = keys[idx[b]] > keys[idx[a]]
+                if take_right:
+                    tmp[k] = idx[b]
+                    b = b + 1
+                else:
+                    tmp[k] = idx[a]
+                    a = a + 1
+                k = k + 1
+            while a < mid:
+                tmp[k] = idx[a]
+                a = a + 1
+                k = k + 1
+            while b < hi:
+                tmp[k] = idx[b]
+                b = b + 1
+                k = k + 1
+            lo = lo + 2 * width
+        i = 0
+        while i < n:
+            idx[i] = tmp[i]
+            i = i + 1
+        width = width * 2
+    out: list[T] = []
+    for j in idx:
+        out.append(xs[j])
+    return out
+
+# `xs.sort(reverse=True)` / `xs.sort(key=f, reverse=...)` bu iki fonksiyona yönlendirilir (yerinde sıralar).
+def __nox_sort_reverse_inplace[T](xs: list[T], reverse: bool = False) -> None:
+    xs.sort()
+    if reverse:
+        xs.reverse()
+
+def __nox_sort_key_inplace[T, K](xs: list[T], key: (T) -> K, reverse: bool = False) -> None:
+    ys: list[T] = __nox_sorted_key(xs, key, reverse)
+    i: int = 0
+    while i < len(xs):
+        xs[i] = ys[i]
+        i = i + 1
+
+# `max(xs)` / `min(xs)` (tek liste argümanı) ve `max(xs, key=f)` / `min(xs, key=f)` bu fonksiyonlara yönlendirilir (checker).
+def __nox_max_list[T](xs: list[T]) -> T:
+    if len(xs) == 0:
+        raise ValueError("max() bos bir diziyle cagrildi")
+    best: T = xs[0]
+    for x in xs:
+        if x > best:
+            best = x
+    return best
+
+def __nox_min_list[T](xs: list[T]) -> T:
+    if len(xs) == 0:
+        raise ValueError("min() bos bir diziyle cagrildi")
+    best: T = xs[0]
+    for x in xs:
+        if x < best:
+            best = x
+    return best
+
+def __nox_max_key[T, K](xs: list[T], key: (T) -> K) -> T:
+    if len(xs) == 0:
+        raise ValueError("max() bos bir diziyle cagrildi")
+    best: T = xs[0]
+    best_k: K = key(best)
+    for x in xs:
+        k: K = key(x)
+        if k > best_k:
+            best = x
+            best_k = k
+    return best
+
+def __nox_min_key[T, K](xs: list[T], key: (T) -> K) -> T:
+    if len(xs) == 0:
+        raise ValueError("min() bos bir diziyle cagrildi")
+    best: T = xs[0]
+    best_k: K = key(best)
+    for x in xs:
+        k: K = key(x)
+        if k < best_k:
+            best = x
+            best_k = k
+    return best
+
+# `map`/`filter` Python'dan FARKLI olarak tembel yineleyici değil, YENİ bir liste döner (`for x in map(f, xs):` ve `list(map(f, xs))` çalışır).
+def map[T, U](f: (T) -> U, xs: list[T]) -> list[U]:
+    out: list[U] = []
+    for x in xs:
+        out.append(f(x))
+    return out
+
+def filter[T](f: (T) -> bool, xs: list[T]) -> list[T]:
+    out: list[T] = []
+    for x in xs:
+        if f(x):
+            out.append(x)
+    return out
 
 def reversed[T](xs: list[T]) -> list[T]:
     ys: list[T] = xs.copy()

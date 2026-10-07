@@ -217,6 +217,23 @@ pub const Parser = struct {
             return .{ .var_decl = .{ .name = name, .type_expr = type_expr, .value = value } };
         }
 
+        // v1.162.0: `assert koşul[, "mesaj"]` → `if not koşul: raise AssertionError(mesaj)` (her zaman açık).
+        if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "assert") and self.pos + 1 < self.tokens.len) {
+            const nk = self.tokens[self.pos + 1].kind;
+            if (nk != .assign and nk != .dot and nk != .colon and nk != .comma and nk != .newline and nk != .l_bracket) {
+                const kw_tok = self.advance();
+                const cond = try self.parseExpr();
+                var msg: ast.Expr = .{ .string_lit = "assertion failed" };
+                if (self.match(.comma)) msg = try self.parseExpr();
+                _ = try self.expect(.newline);
+                const callee = try self.box(.{ .identifier = "AssertionError" });
+                const cargs = try self.allocator.alloc(ast.Expr, 1);
+                cargs[0] = msg;
+                const then_body = try self.allocator.alloc(ast.Stmt, 1);
+                then_body[0] = .{ .kind = .{ .raise_stmt = .{ .call = .{ .callee = callee, .args = cargs } } }, .line = kw_tok.line };
+                return .{ .if_stmt = .{ .cond = .{ .unary = .{ .op = .not_, .operand = try self.box(cond) } }, .then_body = then_body, .elif_clauses = &.{}, .else_body = null, .is_assert = true } };
+            }
+        }
         const expr = try self.parseExpr();
         // v1.157.0: tuple açma — `a, b = f()` / `a, b = b, a` / `self.x, self.y = p`. Parse-zamanı desugar: gizli bir `__nox_tup_N_<hedef sayısı>`
         // yerel (tipi checker çıkarır, `__infer`) değeri tutar, her hedef ondan `f<i>` alanını okur (isim hedefi: tip çıkarımlı bildirim; alan/indeks
@@ -281,7 +298,9 @@ pub const Parser = struct {
             else => null,
         };
         if (aug_op) |op| {
-            if (expr != .identifier) {
+            // v1.162.0: `self.n += 1`, `xs[i] += x`, `d[k] += 1`, `grid[i][j] *= 2` — hedef YAN ETKİSİZ ise (`isPureExpr`) iki kez değerlendirmek
+            // güvenlidir; çağrı içeren hedefler (`get()[i] += 1`) hâlâ reddedilir.
+            if (expr != .identifier and !((expr == .attribute or expr == .index) and isPureExpr(expr))) {
                 self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()) };
                 return error.UnexpectedToken;
             }
@@ -289,10 +308,10 @@ pub const Parser = struct {
             const value = try self.parseExpr();
             _ = try self.expect(.newline);
             const left_copy = try self.allocator.create(ast.Expr);
-            left_copy.* = expr; // `.identifier` bir dilimdir, sığ kopya GÜVENLİDİR
+            left_copy.* = try self.dupPure(expr); // `.identifier` bir dilimdir (sığ kopya GÜVENLİ); öz/dizin hedefleri derin kopyalanır
             const right = try self.allocator.create(ast.Expr);
             right.* = value;
-            return .{ .assign = .{ .target = expr, .value = .{ .binary = .{ .op = op, .left = left_copy, .right = right } } } };
+            return .{ .assign = .{ .target = expr, .value = .{ .binary = .{ .op = op, .left = left_copy, .right = right, .is_form = true } } } };
         }
         _ = try self.expect(.newline);
         return .{ .expr_stmt = expr };
@@ -979,8 +998,33 @@ pub const Parser = struct {
         return self.parseComparison();
     }
 
+    /// Yan etkisiz (kopyalanabilir) ifade mi — zincirleme karşılaştırma ve birleşik atama hedefleri aynı ifadeyi iki kez değerlendirir.
+    fn isPureExpr(e: ast.Expr) bool {
+        return switch (e) {
+            .identifier, .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => true,
+            .attribute => |a| isPureExpr(a.obj.*),
+            .index => |ix| isPureExpr(ix.obj.*) and isPureExpr(ix.index.*),
+            .unary => |u| isPureExpr(u.operand.*),
+            .binary => |b| isPureExpr(b.left.*) and isPureExpr(b.right.*),
+            else => false,
+        };
+    }
+
+    /// `isPureExpr` olan bir ifadenin derin kopyası (AST düğümleri iki konumda PAYLAŞILMAZ — işaretçi-anahtarlı yan tablolar için).
+    fn dupPure(self: *Parser, e: ast.Expr) ParseError!ast.Expr {
+        return switch (e) {
+            .attribute => |a| .{ .attribute = .{ .obj = try self.box(try self.dupPure(a.obj.*)), .attr = a.attr } },
+            .index => |ix| .{ .index = .{ .obj = try self.box(try self.dupPure(ix.obj.*)), .index = try self.box(try self.dupPure(ix.index.*)) } },
+            .unary => |u| .{ .unary = .{ .op = u.op, .operand = try self.box(try self.dupPure(u.operand.*)) } },
+            .binary => |b| .{ .binary = .{ .op = b.op, .left = try self.box(try self.dupPure(b.left.*)), .right = try self.box(try self.dupPure(b.right.*)), .is_form = b.is_form } },
+            else => e,
+        };
+    }
+
     fn parseComparison(self: *Parser) ParseError!ast.Expr {
         var left = try self.parseBitOr();
+        // v1.162.0: zincirleme karşılaştırma — `a < b <= c` → `(a < b) and (b <= c)` (ortadaki işlenen yan etkisiz olmalı: iki kez değerlendirilir).
+        var last_right: ?*ast.Expr = null; // işaretçi: özyinelemeli ayrıştırmada yığın çerçevesini küçük tutar
         while (true) {
             // v1.156.0: `x is None` / `x is not None` — yalnızca `None` ile (`==`/`!=` None'a indirgenir; Optional daraltması aynen çalışır).
             if (self.check(.kw_is)) {
@@ -1012,10 +1056,21 @@ pub const Parser = struct {
                 },
                 else => break,
             };
-            _ = self.advance();
-            const right = try self.parseBitOr();
-            const old_left = left;
-            left = .{ .binary = .{ .op = op, .left = try self.box(old_left), .right = try self.box(right) } };
+            const op_tok = self.advance();
+            const right_box = try self.box(try self.parseBitOr());
+            if (last_right) |mid| {
+                if (!isPureExpr(mid.*)) {
+                    self.last_diagnostic = .{ .found = op_tok.kind, .span = span_mod.fromToken(op_tok) };
+                    return error.UnexpectedToken;
+                }
+                const cmp: ast.Expr = .{ .binary = .{ .op = op, .left = try self.box(try self.dupPure(mid.*)), .right = right_box } };
+                const old_left = left;
+                left = .{ .binary = .{ .op = .and_, .left = try self.box(old_left), .right = try self.box(cmp), .is_form = true } };
+            } else {
+                const old_left = left;
+                left = .{ .binary = .{ .op = op, .left = try self.box(old_left), .right = right_box } };
+            }
+            last_right = right_box;
         }
         return left;
     }
@@ -1294,6 +1349,13 @@ pub const Parser = struct {
                     {
                         const arg_start = self.cur();
                         try args.append(self.allocator, try self.parseCallArg(&saw_kw));
+                        // v1.162.0: `f(x * x for x in xs if c)` — tek argüman olarak üreteç ifadesi, liste comprehension'ına indirgenir
+                        // (tembel değil; `sum`/`any`/`all`/`max`/`min`/`sorted`/`list` ve `sep.join(...)` ile çalışır).
+                        if (self.check(.kw_for) and !saw_kw) {
+                            const clauses = try self.parseCompClauses();
+                            const first_elem = try self.box(args.items[0]); // sonuç-konumu örtüşmesini önlemek için önce kutula
+                            args.items[0] = .{ .list_comp = .{ .elem = first_elem, .clauses = clauses, .is_genexpr = true } };
+                        }
                         try arg_spans.append(self.allocator, span_mod.fromTokens(arg_start, self.tokens[self.pos - 1]));
                     }
                     while (self.match(.comma)) {

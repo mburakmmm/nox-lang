@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.162.0]
+
+### Eklendi
+
+- **Yerleşikler (Python uyumu):** `list(x)` (range/list/str/dict), `bool(x)`, `any`/`all`, `divmod`, `chr`/`ord`, `max(xs)`/`min(xs)`, `max/min/sorted(..., key=f)`, `sorted(xs, reverse=True)`, `xs.sort(reverse=True)`/`xs.sort(key=f)`, `round(x, n)`, `map`/`filter` (liste döner), `sum(list[float])`. `round(x)` artık yarım → çifte (`round(2.5) == 2`) ve tam ikili değer üzerinden (`round(2.675, 2) == 2.67`). Spec §3.278.
+- **Generic fonksiyonlarda fonksiyon-tipli parametreler** (`def map[T, U](f: (T) -> U, xs: list[T])`): tip parametreleri diğer argümanlardan ve lambda gövdesinden çıkarılır; yakalamalı lambda'lar çalışır.
+- **Sözdizimi:** `assert cond[, msg]`, zincirleme karşılaştırma (`0 < x < 10`), üreteç ifadesi tek argüman olarak (`sum(x*x for x in xs)`), öz/dizin hedefli birleşik atama (`self.n += 1`, `xs[i] *= 2`, `d[k] += 1`).
+- `noxc fmt` bu yazımları korur (`assert`, `+=`, zincirleme, üreteç); tree-sitter/TextMate/LSP güncellendi (tree-sitter gramerinde eksik olan `+=`, `del`, `defer`, anotasyonsuz `self` de eklendi).
+
 ## [1.161.0]
 
 ### Eklendi

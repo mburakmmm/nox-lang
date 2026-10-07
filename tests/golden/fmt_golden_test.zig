@@ -390,3 +390,26 @@ test "fmt: v1.157.0 — tuple literal, açma ve çıplak tuple İDEMPOTENT round
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: v1.162.0 — assert, birleşik atama (öz/dizin), zincirleme karşılaştırma, üreteç ifadesi İDEMPOTENT round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "assert  x>0\n", .out = "assert x > 0\n" },
+        .{ .in = "assert x>0 , \"neg\"\n", .out = "assert x > 0, \"neg\"\n" },
+        .{ .in = "self.n+=1\n", .out = "self.n += 1\n" },
+        .{ .in = "xs[i] *=2\n", .out = "xs[i] *= 2\n" },
+        .{ .in = "d[k]-=1\n", .out = "d[k] -= 1\n" },
+        .{ .in = "ok: bool = 0<x<10\n", .out = "ok: bool = 0 < x < 10\n" },
+        .{ .in = "ok: bool = 0<x<=y<10\n", .out = "ok: bool = 0 < x <= y < 10\n" },
+        .{ .in = "t: int = sum(v*v for v in xs if v>0)\n", .out = "t: int = sum(v * v for v in xs if v > 0)\n" },
+        .{ .in = "x = x + 1\n", .out = "x = x + 1\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

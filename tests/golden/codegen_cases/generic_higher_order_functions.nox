@@ -1,0 +1,29 @@
+def apply2[T, U](x: T, f: (T) -> U) -> U:
+    return f(x)
+
+def map_list[T, U](xs: list[T], f: (T) -> U) -> list[U]:
+    out: list[U] = []
+    for x in xs:
+        out.append(f(x))
+    return out
+
+def filter_list[T](xs: list[T], pred: (T) -> bool) -> list[T]:
+    out: list[T] = []
+    for x in xs:
+        if pred(x):
+            out.append(x)
+    return out
+
+def double(v: int) -> int:
+    return v * 2
+
+print(apply2(3, double))
+print(apply2(3, lambda v: v + 1))
+print(apply2("ab", lambda s: len(s)))
+print(map_list([1, 2, 3], lambda v: v * 10))
+print(map_list(["a", "bb"], lambda s: len(s)))
+print(map_list([1, 2], lambda v: str(v) + "!"))
+print(filter_list([1, 2, 3, 4], lambda v: v % 2 == 0))
+k: int = 100
+print(map_list([1, 2], lambda v: v + k))
+print(map_list([1, 2], double))

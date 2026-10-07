@@ -28831,3 +28831,23 @@ desteklenmiyor" 2.0 için tersine çevrildi — `xs[-1]` en yaygın Python idiom
 - **Boş literal hedefi:** `checkAssign`in `.index` dalı artık `checkExprExpected` (liste elemanı / dict değer tipi) kullanır ve
   `genListAssign`/`genDictAssign` hedef `TypeInfo`yu `genExprForTarget`e verir → `d[k] = []`, `xs[i] = []`, `d[k] = {}`.
 - Golden: `negative_indexing`, `print_dict_index_assign_empty`; eski üç fixture'ın "negatif → IndexError" varsayımı gerçek aralık-dışı değerlere taşındı.
+
+## 3.278 Python-uyum turu: yerleşikler, generic yüksek-dereceli fonksiyonlar, sözdizimi (v1.162.0)
+
+Sistematik deneme programlarından çıkan boşluklar (37 Python idiomu denendi; çoğu reddediliyordu):
+
+- **Generic fonksiyonlarda fonksiyon-tipli parametre:** `unifyTypeExpr` `.func_type` dalı + `instantiateGeneric`te iki geçiş (önce
+  fonksiyon-tipli OLMAYAN argümanlar tip parametrelerini bağlar; sonra lambda argümanlarında parametre tipleri artık bilinir,
+  dönüş tipi `inferLambdaReturnType` ile gövdeden çıkarılır, fonksiyon değerleri normal `checkExpr` ile tiplenir). Somutlaştırma
+  sonrası lambda argümanları `checkLambdaArgsAgainst` ile gerçek imzaya göre yeniden tiplenir (köprü fonksiyonu + `lambda_defs`).
+- **Prelude (`core.nox`):** `any/all/chr/ord/__nox_round_digits`, generic `divmod/map/filter/__nox_sorted_key/__nox_sort_*_inplace/
+  __nox_max_*/__nox_min_*`; `sorted(xs, reverse=False)`. `round` artık `nox_float_round_digits_raw` (math.zig: `std.math.big.int` ile
+  tam ondalık yuvarlama, yarım→çifte); `chr/ord`: `nox_chr_raw/nox_ord_raw` (str.zig, UTF-8). Yeni `AssertionError(Exception)`.
+- **Checker (`tryDesugarPreludeCall`):** `list/bool` çağrıları `expr_rewrites` ile ifadeye çevrilir; `max/min/sorted/sum/round` biçim/anahtar
+  argümana göre `callee` yeniden adlandırılır; `xs.sort(key=/reverse=)` yerinde sıralayıcıya yönlendirilir.
+- **Parser:** `assert` (statement başı tanımlayıcı + sonraki simge ifade başlatıyorsa) → `if not c: raise AssertionError(m)` (`IfStmt.is_assert`);
+  zincirleme karşılaştırma → `(a<b) and (b<c)` (`Binary.is_form` + `dupPure`: ortadaki işlenen yan etkisiz olmalı); üreteç ifadesi
+  (`ListComp.is_genexpr`); birleşik atama öz/dizin hedefleri (yan etkisiz ise çift değerlendirme güvenli). `parseComparison` çerçevesi
+  küçük tutuldu (`last_right` işaretçi) — aksi halde derin iç içe testte yığın taşıyor.
+- **Formatter:** yüzey biçimleri bayraklarla korunur (aug-assign, zincir, assert, genexpr).
+- Golden: `builtins_python_forms`, `parser_python_forms`, `generic_higher_order_functions` (Python referansıyla birebir).

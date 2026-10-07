@@ -856,6 +856,39 @@ pub export fn nox_char_from_byte(rt: ?*anyopaque, b: i64) ?[*:0]u8 {
     return allocStr(rt, &[_]u8{byte}, ascii_state);
 }
 
+/// v1.162.0: `chr(n)` — Unicode kod noktasını (0..0x10FFFF, vekil aralığı hariç) UTF-8 `str`e çevirir; geçersizse boş `str`.
+pub export fn nox_chr_raw(rt: ?*anyopaque, cp: i64) ?[*:0]u8 {
+    if (cp <= 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) return allocStr(rt, &.{}, ASCII_TRUE);
+    var buf: [4]u8 = undefined;
+    const n = std.unicode.utf8Encode(@intCast(cp), &buf) catch return allocStr(rt, &.{}, ASCII_TRUE);
+    return allocStr(rt, buf[0..n], if (cp < 0x80) ASCII_TRUE else ASCII_FALSE);
+}
+
+/// v1.162.0: `ord(s)` — `s`in ilk kod noktası; boş `str` için -1.
+pub export fn nox_ord_raw(s: ?[*:0]const u8) i64 {
+    const p = s orelse return -1;
+    const sl = nox_str_slice(p);
+    if (sl.len == 0) return -1;
+    const len = std.unicode.utf8ByteSequenceLength(sl[0]) catch return sl[0];
+    if (len > sl.len) return sl[0];
+    return std.unicode.utf8Decode(sl[0..len]) catch sl[0];
+}
+
+test "nox_chr_raw/nox_ord_raw gidis-donus" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const cases = [_]i64{ 65, 0xE9, 0x20AC, 0x1F600 };
+    for (cases) |cp| {
+        const s = nox_chr_raw(rt, cp) orelse return error.ConvFailed;
+        defer nox_str_release(rt, s);
+        try std.testing.expectEqual(cp, nox_ord_raw(s));
+    }
+    const bad = nox_chr_raw(rt, -5) orelse return error.ConvFailed;
+    defer nox_str_release(rt, bad);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.span(bad).len);
+}
+
 test "nox_char_from_byte gecerli baytlardan tek karakterlik str uretir" {
     const asap = @import("alloc/asap.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;

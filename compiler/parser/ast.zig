@@ -111,7 +111,7 @@ pub const CompClause = union(enum) { for_clause: CompForClause, if_clause: Expr 
 /// onu bir iç içe `def`e yükseltir ve ifadeyi o adın tanımlayıcısıyla değiştirir (bkz. `call_expand_apply`).
 pub const Lambda = struct { params: []const []const u8, body: *Expr };
 
-pub const ListComp = struct { elem: *Expr, clauses: []CompClause, result_type: ?TypeExpr = null };
+pub const ListComp = struct { elem: *Expr, clauses: []CompClause, result_type: ?TypeExpr = null, is_genexpr: bool = false };
 
 /// `{k: v for x in it if c ...}` (v1.154.0).
 pub const DictComp = struct { key: *Expr, value: *Expr, clauses: []CompClause, result_type: ?TypeExpr = null };
@@ -167,6 +167,7 @@ pub const Expr = union(enum) {
 
 pub const Unary = struct { op: UnaryOp, operand: *Expr };
 /// `is_form`: v1.156.0 — `x is None` / `x is not None` yüzey biçimi (`==`/`!=` None'a indirgenir; yalnızca formatter yazımı korur).
+/// v1.162.0: aritmetik işlemde birleşik atama (`x += 1`), `and_`te zincirleme karşılaştırma (`a < b < c`) yüzey biçimi.
 pub const Binary = struct { op: BinaryOp, left: *Expr, right: *Expr, is_form: bool = false };
 pub const Call = struct { callee: *Expr, args: []Expr };
 pub const Attribute = struct { obj: *Expr, attr: []const u8 };
@@ -198,6 +199,8 @@ pub const IfStmt = struct {
     then_body: []Stmt,
     elif_clauses: []ElifClause,
     else_body: ?[]Stmt,
+    /// v1.162.0: `assert koşul, mesaj` yüzey biçimi (parse-zamanı `if not koşul: raise AssertionError(mesaj)`e indirgenir; yalnızca formatter yazımı korur).
+    is_assert: bool = false,
 };
 
 pub const WhileStmt = struct { cond: Expr, body: []Stmt };
