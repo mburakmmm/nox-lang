@@ -203,6 +203,7 @@ pub fn exprUsesAsync(expr: ast.Expr) bool {
             break :blk false;
         },
         .attribute => |a| exprUsesAsync(a.obj.*),
+        .slice => |sl| exprUsesAsync(sl.obj.*) or (if (sl.lo) |x| exprUsesAsync(x.*) else false) or (if (sl.hi) |x| exprUsesAsync(x.*) else false) or (if (sl.step) |x| exprUsesAsync(x.*) else false),
         .index => |idx| exprUsesAsync(idx.obj.*) or exprUsesAsync(idx.index.*),
         .list_lit => |elems| blk: {
             for (elems) |el| if (exprUsesAsync(el)) break :blk true;
@@ -335,6 +336,7 @@ pub fn exprUsesMulticorePool(expr: ast.Expr) bool {
             break :blk false;
         },
         .attribute => |a| exprUsesMulticorePool(a.obj.*),
+        .slice => |sl| exprUsesMulticorePool(sl.obj.*) or (if (sl.lo) |x| exprUsesMulticorePool(x.*) else false) or (if (sl.hi) |x| exprUsesMulticorePool(x.*) else false) or (if (sl.step) |x| exprUsesMulticorePool(x.*) else false),
         .index => |idx| exprUsesMulticorePool(idx.obj.*) or exprUsesMulticorePool(idx.index.*),
         .list_lit => |elems| blk: {
             for (elems) |el| if (exprUsesMulticorePool(el)) break :blk true;

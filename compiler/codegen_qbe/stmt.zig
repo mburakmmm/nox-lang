@@ -782,6 +782,12 @@ pub fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!voi
 /// belge notu), bu yüzden burada AYRICA bir `func_def` dalı GEREKMEZ.
 pub fn collectIndexStrBasesExpr(self: *Codegen, e: ast.Expr, candidates: *std.StringHashMapUnmanaged(void)) CodegenError!void {
     switch (e) {
+        .slice => |sl| {
+            try self.collectIndexStrBasesExpr(sl.obj.*, candidates);
+            if (sl.lo) |x| try self.collectIndexStrBasesExpr(x.*, candidates);
+            if (sl.hi) |x| try self.collectIndexStrBasesExpr(x.*, candidates);
+            if (sl.step) |x| try self.collectIndexStrBasesExpr(x.*, candidates);
+        },
         .index => |idx| {
             if (idx.obj.* == .identifier) {
                 if (self.vars.get(idx.obj.identifier)) |vi| {

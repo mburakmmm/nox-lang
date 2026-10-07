@@ -107,6 +107,7 @@ pub fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
         .binary => |b| exprMentionsName(b.left.*, name) or exprMentionsName(b.right.*, name),
         .call => |c| callMentionsName(c, name),
         .attribute => |a| exprMentionsName(a.obj.*, name),
+        .slice => |sl| exprMentionsName(sl.obj.*, name) or (if (sl.lo) |x| exprMentionsName(x.*, name) else false) or (if (sl.hi) |x| exprMentionsName(x.*, name) else false) or (if (sl.step) |x| exprMentionsName(x.*, name) else false),
         .index => |idx| exprMentionsName(idx.obj.*, name) or exprMentionsName(idx.index.*, name),
         .list_lit => |items| blk: {
             for (items) |it| if (exprMentionsName(it, name)) break :blk true;
@@ -662,6 +663,13 @@ fn findListIndexedByVar(body: []const ast.Stmt, idx_var: []const u8) ?[]const u8
 
 fn findListIndexedByVarExpr(e: ast.Expr, idx_var: []const u8) ?[]const u8 {
     switch (e) {
+        .slice => |sl| {
+            if (findListIndexedByVarExpr(sl.obj.*, idx_var)) |n| return n;
+            if (sl.lo) |x| if (findListIndexedByVarExpr(x.*, idx_var)) |n| return n;
+            if (sl.hi) |x| if (findListIndexedByVarExpr(x.*, idx_var)) |n| return n;
+            if (sl.step) |x| return findListIndexedByVarExpr(x.*, idx_var);
+            return null;
+        },
         .index => |idx| {
             if (idx.obj.* == .identifier and idx.index.* == .identifier and std.mem.eql(u8, idx.index.identifier, idx_var)) {
                 return idx.obj.identifier;

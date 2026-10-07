@@ -430,6 +430,7 @@ pub const Codegen = struct {
     pub const genListSort = calls.genListSort;
     pub const genListPop = calls.genListPop;
     pub const genListDelete = calls.genListDelete;
+    pub const genSlice = calls.genSlice;
     pub const emitDictInstallValueRelease = calls.emitDictInstallValueRelease;
     pub const listEszLit = calls.listEszLit;
     pub const listKindLit = calls.listKindLit;

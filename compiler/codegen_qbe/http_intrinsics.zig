@@ -76,6 +76,12 @@ pub fn visitExprForReqUsage(e: ast.Expr, param_name: []const u8, used: *UsedRequ
                 visitExprForReqUsage(a.obj.*, param_name, used);
             }
         },
+        .slice => |sl| {
+            visitExprForReqUsage(sl.obj.*, param_name, used);
+            if (sl.lo) |x| visitExprForReqUsage(x.*, param_name, used);
+            if (sl.hi) |x| visitExprForReqUsage(x.*, param_name, used);
+            if (sl.step) |x| visitExprForReqUsage(x.*, param_name, used);
+        },
         .index => |ix| {
             visitExprForReqUsage(ix.obj.*, param_name, used);
             visitExprForReqUsage(ix.index.*, param_name, used);

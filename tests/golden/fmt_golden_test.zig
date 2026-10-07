@@ -291,3 +291,24 @@ test "fmt: bildirilen sınıf alanları SİLİNMEZ, idempotenttir" {
     const formatted_twice = try formatSource(allocator, formatted_once);
     try std.testing.expectEqualStrings(formatted_once, formatted_twice);
 }
+
+test "fmt: v1.153.0 — dilimleme İDEMPOTENT round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "y: list[int] = xs[1:3]\n", .out = "y: list[int] = xs[1:3]\n" },
+        .{ .in = "y: list[int] = xs[ : 3 ]\n", .out = "y: list[int] = xs[:3]\n" },
+        .{ .in = "y: list[int] = xs[2:]\n", .out = "y: list[int] = xs[2:]\n" },
+        .{ .in = "y: list[int] = xs[:]\n", .out = "y: list[int] = xs[:]\n" },
+        .{ .in = "y: list[int] = xs[::-1]\n", .out = "y: list[int] = xs[::-1]\n" },
+        .{ .in = "y: str = s[1:n+1:2]\n", .out = "y: str = s[1:n + 1:2]\n" },
+        .{ .in = "y: list[int] = xs[1:3][0:1]\n", .out = "y: list[int] = xs[1:3][0:1]\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

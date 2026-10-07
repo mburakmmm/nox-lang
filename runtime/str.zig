@@ -871,3 +871,150 @@ test "v1.142.17: nox_str_append — yerinde büyüme, alias'ta kopya, büyük bl
     nox_str_release(rt, tt);
     nox_str_release(rt, s);
 }
+
+/// v1.153.0: Python dilim çözümlemesi — `len` elemanlı bir dizi için `[lo:hi:step]`in (başlangıç, eleman sayısı, adım)ı. Sınırlar
+/// Python gibi sıkıştırılır (hata yok); adım 0 çağıran tarafından önceden reddedilmelidir (burada 1'e düşer).
+pub const SliceSpec = struct { start: i64, count: usize, step: i64 };
+
+pub fn computeSlice(len_u: usize, lo_in: i64, has_lo: bool, hi_in: i64, has_hi: bool, step_in: i64, has_step: bool) SliceSpec {
+    const len: i64 = @intCast(len_u);
+    const step: i64 = if (has_step and step_in != 0) step_in else 1;
+    var lo: i64 = undefined;
+    var hi: i64 = undefined;
+    if (step > 0) {
+        lo = if (has_lo) lo_in else 0;
+        hi = if (has_hi) hi_in else len;
+        if (lo < 0) {
+            lo += len;
+            if (lo < 0) lo = 0;
+        } else if (lo > len) lo = len;
+        if (hi < 0) {
+            hi += len;
+            if (hi < 0) hi = 0;
+        } else if (hi > len) hi = len;
+        const count: i64 = if (hi > lo) @divTrunc(hi - lo + step - 1, step) else 0;
+        return .{ .start = lo, .count = @intCast(count), .step = step };
+    }
+    lo = if (has_lo) lo_in else len - 1;
+    hi = if (has_hi) hi_in else -1;
+    if (has_lo) {
+        if (lo < 0) {
+            lo += len;
+            if (lo < 0) lo = -1;
+        } else if (lo >= len) lo = len - 1;
+    }
+    if (has_hi) {
+        if (hi < 0) {
+            hi += len;
+            if (hi < 0) hi = -1;
+        } else if (hi >= len) hi = len - 1;
+    }
+    const nstep = -step;
+    const count: i64 = if (lo > hi) @divTrunc(lo - hi + nstep - 1, nstep) else 0;
+    return .{ .start = lo, .count = @intCast(count), .step = step };
+}
+
+/// `s[lo:hi:step]` (codepoint tabanlı; geçersiz UTF-8'de bayt semantiği, `nox_str_char_at` ile aynı). Her zaman YENİ bir `str` döner.
+pub export fn nox_str_slice_op(rt: ?*anyopaque, s: ?[*:0]const u8, lo: i64, has_lo: i32, hi: i64, has_hi: i32, step: i64, has_step: i32) ?[*:0]u8 {
+    const p = s orelse return null;
+    const bytes = nox_str_slice(p);
+    const ascii = ensureAsciiResolved(p);
+    const valid = ascii or std.unicode.utf8ValidateSlice(bytes);
+    const byte_mode = ascii or !valid;
+    const n_units: usize = if (byte_mode) bytes.len else (std.unicode.utf8CountCodepoints(bytes) catch bytes.len);
+    const sp = computeSlice(n_units, lo, has_lo != 0, hi, has_hi != 0, step, has_step != 0);
+    const result_ascii: u64 = if (ascii) ASCII_TRUE else ASCII_UNKNOWN;
+    if (sp.count == 0) return allocStr(rt, "", ASCII_TRUE);
+    if (byte_mode) {
+        if (sp.step == 1) return allocStr(rt, bytes[@intCast(sp.start)..][0..sp.count], result_ascii);
+        const buf = nox_str_alloc_buf(rt, sp.count) orelse return null;
+        var k: usize = 0;
+        var idx: i64 = sp.start;
+        while (k < sp.count) : ({
+            k += 1;
+            idx += sp.step;
+        }) buf[k] = bytes[@intCast(idx)];
+        if (ascii) setStrAsciiState(@ptrCast(buf), ASCII_TRUE);
+        return @ptrCast(buf);
+    }
+    // Geçerli, ASCII olmayan UTF-8: codepoint dilimleri iki geçişte işlenir.
+    var total: usize = 0;
+    var j: i64 = 0;
+    var it = std.unicode.Utf8View.initUnchecked(bytes).iterator();
+    while (it.nextCodepointSlice()) |cp| : (j += 1) {
+        if (selectedAt(sp, j)) total += cp.len;
+    }
+    const buf = nox_str_alloc_buf(rt, total) orelse return null;
+    var write_pos: usize = 0;
+    var write_end: usize = total;
+    j = 0;
+    it = std.unicode.Utf8View.initUnchecked(bytes).iterator();
+    while (it.nextCodepointSlice()) |cp| : (j += 1) {
+        if (!selectedAt(sp, j)) continue;
+        if (sp.step > 0) {
+            @memcpy(buf[write_pos..][0..cp.len], cp);
+            write_pos += cp.len;
+        } else {
+            write_end -= cp.len;
+            @memcpy(buf[write_end..][0..cp.len], cp);
+        }
+    }
+    return @ptrCast(buf);
+}
+
+fn selectedAt(sp: SliceSpec, j: i64) bool {
+    if (sp.step > 0) {
+        if (j < sp.start) return false;
+        const d = j - sp.start;
+        return @mod(d, sp.step) == 0 and @divExact(d, sp.step) < @as(i64, @intCast(sp.count));
+    }
+    if (j > sp.start) return false;
+    const d = sp.start - j;
+    return @mod(d, -sp.step) == 0 and @divExact(d, -sp.step) < @as(i64, @intCast(sp.count));
+}
+
+/// `s * n` / `n * s` — `s`in `n` kez art arda birleşimi (`n <= 0` → boş dize), tek tahsisle.
+pub export fn nox_str_repeat(rt: ?*anyopaque, s: ?[*:0]const u8, n: i64) ?[*:0]u8 {
+    const p = s orelse return null;
+    if (n <= 0) return allocStr(rt, "", ASCII_TRUE);
+    const bytes = nox_str_slice(p);
+    const count: usize = @intCast(n);
+    const buf = nox_str_alloc_buf(rt, bytes.len * count) orelse return null;
+    var i: usize = 0;
+    while (i < count) : (i += 1) @memcpy(buf[i * bytes.len ..][0..bytes.len], bytes);
+    if (ensureAsciiResolved(p)) setStrAsciiState(@ptrCast(buf), ASCII_TRUE);
+    return @ptrCast(buf);
+}
+
+test "v1.153.0: computeSlice Python dilim semantiği" {
+    const t = std.testing;
+    // [1,2,3,4,5][1:4] → start 1 count 3
+    var sp = computeSlice(5, 1, true, 4, true, 0, false);
+    try t.expectEqual(@as(i64, 1), sp.start);
+    try t.expectEqual(@as(usize, 3), sp.count);
+    // negatif sınırlar: [-2:] → start 3 count 2
+    sp = computeSlice(5, -2, true, 0, false, 0, false);
+    try t.expectEqual(@as(i64, 3), sp.start);
+    try t.expectEqual(@as(usize, 2), sp.count);
+    // aralık dışı: [10:20] → boş; [-100:100] → hepsi
+    sp = computeSlice(5, 10, true, 20, true, 0, false);
+    try t.expectEqual(@as(usize, 0), sp.count);
+    sp = computeSlice(5, -100, true, 100, true, 0, false);
+    try t.expectEqual(@as(usize, 5), sp.count);
+    // adım 2: [::2] → 0,2,4
+    sp = computeSlice(5, 0, false, 0, false, 2, true);
+    try t.expectEqual(@as(usize, 3), sp.count);
+    // adım -1: [::-1] → start 4 count 5
+    sp = computeSlice(5, 0, false, 0, false, -1, true);
+    try t.expectEqual(@as(i64, 4), sp.start);
+    try t.expectEqual(@as(usize, 5), sp.count);
+    // [3:0:-1] → 3,2,1
+    sp = computeSlice(5, 3, true, 0, true, -1, true);
+    try t.expectEqual(@as(usize, 3), sp.count);
+    // [::-2] on len 5 → 4,2,0
+    sp = computeSlice(5, 0, false, 0, false, -2, true);
+    try t.expectEqual(@as(usize, 3), sp.count);
+    // boş dizi
+    sp = computeSlice(0, 0, false, 0, false, -1, true);
+    try t.expectEqual(@as(usize, 0), sp.count);
+}

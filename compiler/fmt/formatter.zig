@@ -608,6 +608,18 @@ const Printer = struct {
                 try self.printExprAt(a.obj.*, 0, .loose);
                 try self.writer.print(".{s}", .{a.attr});
             },
+            .slice => |sl| {
+                try self.printExprAt(sl.obj.*, 0, .loose);
+                try self.writer.writeAll("[");
+                if (sl.lo) |x| try self.printExpr(x.*);
+                try self.writer.writeAll(":");
+                if (sl.hi) |x| try self.printExpr(x.*);
+                if (sl.step) |x| {
+                    try self.writer.writeAll(":");
+                    try self.printExpr(x.*);
+                }
+                try self.writer.writeAll("]");
+            },
             .index => |idx| {
                 try self.printExprAt(idx.obj.*, 0, .loose);
                 try self.writer.writeAll("[");

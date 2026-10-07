@@ -2762,6 +2762,64 @@ fn genListPopAt(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.
     return elem;
 }
 
+/// v1.153.0: `obj[lo:hi:step]` — `list[T]` (yeni liste, elemanlar retain) ya da `str` (codepoint tabanlı yeni dize). Sınırlar Python gibi
+/// sıkıştırılır; dinamik adım 0 → `ValueError`. Operandlar sırayla (obj, lo, hi, step) değerlendirilir.
+pub fn genSlice(self: *Codegen, sl: ast.Slice) CodegenError!Value {
+    const obj = try self.genExpr(sl.obj.*);
+    try self.checkNoLowlevelEscape(obj);
+    const Bound = struct { text: []const u8, has: []const u8 };
+    var bounds: [3]Bound = undefined;
+    const exprs = [3]?*ast.Expr{ sl.lo, sl.hi, sl.step };
+    for (exprs, 0..) |maybe, i| {
+        if (maybe) |x| {
+            const v = try self.genExpr(x.*);
+            const c = try self.convert(v, .l);
+            bounds[i] = .{ .text = c.text, .has = "1" };
+        } else {
+            bounds[i] = .{ .text = "0", .has = "0" };
+        }
+    }
+    if (sl.step) |st| {
+        const const_nonzero = (st.* == .int_lit and st.int_lit != 0) or (st.* == .unary and st.unary.op == .neg and st.unary.operand.* == .int_lit and st.unary.operand.int_lit != 0);
+        if (!const_nonzero) {
+            const bad = try self.newTemp();
+            try self.qbeOp2Imm(bad, .w, "ceql", bounds[2].text, 0);
+            const rels = [_]RelPair{.{ .e = sl.obj.*, .v = obj }};
+            try emitColdListError(self, bad, "ValueError", "dilim adimi sifir olamaz", &rels);
+        }
+    }
+    const result = try self.newTemp();
+    if (obj.heap == .str) {
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_str_slice_op", &.{
+            .{ .ty = .l, .text = RT_PARAM },
+            .{ .ty = .l, .text = obj.text },
+            .{ .ty = .l, .text = bounds[0].text },
+            .{ .ty = .w, .text = bounds[0].has },
+            .{ .ty = .l, .text = bounds[1].text },
+            .{ .ty = .w, .text = bounds[1].has },
+            .{ .ty = .l, .text = bounds[2].text },
+            .{ .ty = .w, .text = bounds[2].has },
+        });
+        try self.releaseIfTemporary(sl.obj.*, obj);
+        return .{ .text = result, .qtype = .l, .heap = .str };
+    }
+    if (obj.heap != .list) return error.Unsupported;
+    try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_list_slice", &.{
+        .{ .ty = .l, .text = RT_PARAM },
+        .{ .ty = .l, .text = obj.text },
+        .{ .ty = .l, .text = bounds[0].text },
+        .{ .ty = .w, .text = bounds[0].has },
+        .{ .ty = .l, .text = bounds[1].text },
+        .{ .ty = .w, .text = bounds[1].has },
+        .{ .ty = .l, .text = bounds[2].text },
+        .{ .ty = .w, .text = bounds[2].has },
+        .{ .ty = .l, .text = try listEszLit(self, obj) },
+        .{ .ty = .w, .text = listKindLit(self, obj) },
+    });
+    try self.releaseIfTemporary(sl.obj.*, obj);
+    return freshListValue(self, obj, result);
+}
+
 /// `del xs[i]`: elemanı çıkarıp serbest bırakır; aralık dışı → `IndexError`.
 pub fn genListDelete(self: *Codegen, ix: ast.Index, obj: Value) CodegenError!void {
     try self.checkNoLowlevelEscape(obj);

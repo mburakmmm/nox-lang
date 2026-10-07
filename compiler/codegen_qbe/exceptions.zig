@@ -722,6 +722,16 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
             for (c.args) |a| try self.collectRaiseInfoExpr(a, info, class_ctx, var_types, poisoned);
         },
         .attribute => |a| try self.collectRaiseInfoExpr(a.obj.*, info, class_ctx, var_types, poisoned),
+        .slice => |sl| {
+            // Dilimleme sınır dışı değerleri sıkıştırır (hata yok); yalnızca adım 0 olabilen dinamik adım `ValueError` fırlatır.
+            if (sl.step) |st| {
+                if (st.* != .int_lit or st.int_lit == 0) info.direct_unsafe = true;
+            }
+            try self.collectRaiseInfoExpr(sl.obj.*, info, class_ctx, var_types, poisoned);
+            if (sl.lo) |x| try self.collectRaiseInfoExpr(x.*, info, class_ctx, var_types, poisoned);
+            if (sl.hi) |x| try self.collectRaiseInfoExpr(x.*, info, class_ctx, var_types, poisoned);
+            if (sl.step) |x| try self.collectRaiseInfoExpr(x.*, info, class_ctx, var_types, poisoned);
+        },
         .index => |idx| {
             // list/str/dict indeksleme sınır dışında `IndexError`/`KeyError` fırlatır (genIndex,
             // genStrIndex, dict get). Önceden burası güvenli sayılıyordu: döngü içerdiği için

@@ -99,6 +99,12 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
             for (c.args) |*a| expr(a, map);
         },
         .attribute => |*a| expr(a.obj, map),
+        .slice => |*sl| {
+            expr(sl.obj, map);
+            if (sl.lo) |x| expr(x, map);
+            if (sl.hi) |x| expr(x, map);
+            if (sl.step) |x| expr(x, map);
+        },
         .index => |*ix| {
             expr(ix.obj, map);
             expr(ix.index, map);

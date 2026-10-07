@@ -810,6 +810,12 @@ fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.St
             for (c.args) |arg| try collectIdentifierNamesExpr(a, arg, out);
         },
         .attribute => |attr| try collectIdentifierNamesExpr(a, attr.obj.*, out),
+        .slice => |sl| {
+            try collectIdentifierNamesExpr(a, sl.obj.*, out);
+            if (sl.lo) |x| try collectIdentifierNamesExpr(a, x.*, out);
+            if (sl.hi) |x| try collectIdentifierNamesExpr(a, x.*, out);
+            if (sl.step) |x| try collectIdentifierNamesExpr(a, x.*, out);
+        },
         .index => |idx| {
             try collectIdentifierNamesExpr(a, idx.obj.*, out);
             try collectIdentifierNamesExpr(a, idx.index.*, out);

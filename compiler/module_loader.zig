@@ -357,6 +357,7 @@ fn renameExpr(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.
         // yalnızca TABAN ifadesindeki (`a.obj`) olası bir üst-düzey isim
         // başvurusu yeniden adlandırılabilir.
         .attribute => |at| .{ .attribute = .{ .obj = try renameExprBox(a, at.obj.*, map), .attr = at.attr } },
+        .slice => |s| .{ .slice = .{ .obj = try renameExprBox(a, s.obj.*, map), .lo = if (s.lo) |x| try renameExprBox(a, x.*, map) else null, .hi = if (s.hi) |x| try renameExprBox(a, x.*, map) else null, .step = if (s.step) |x| try renameExprBox(a, x.*, map) else null } },
         .index => |idx| .{ .index = .{ .obj = try renameExprBox(a, idx.obj.*, map), .index = try renameExprBox(a, idx.index.*, map) } },
         .list_lit => |elems| blk: {
             const out = try a.alloc(ast.Expr, elems.len);

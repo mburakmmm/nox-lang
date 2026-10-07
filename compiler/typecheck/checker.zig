@@ -3271,6 +3271,12 @@ pub const Checker = struct {
                 for (c.args) |a| try self.collectSpawnTargetsExpr(a);
             },
             .attribute => |a| try self.collectSpawnTargetsExpr(a.obj.*),
+            .slice => |sl| {
+                try self.collectSpawnTargetsExpr(sl.obj.*);
+                if (sl.lo) |x| try self.collectSpawnTargetsExpr(x.*);
+                if (sl.hi) |x| try self.collectSpawnTargetsExpr(x.*);
+                if (sl.step) |x| try self.collectSpawnTargetsExpr(x.*);
+            },
             .index => |ix| {
                 try self.collectSpawnTargetsExpr(ix.obj.*);
                 try self.collectSpawnTargetsExpr(ix.index.*);
@@ -3760,6 +3766,12 @@ pub const Checker = struct {
                 try self.scanMutatesGraphExpr(fname, params, c.callee.*, shared, seeds, reverse_edges);
             },
             .attribute => |a| try self.scanMutatesGraphExpr(fname, params, a.obj.*, shared, seeds, reverse_edges),
+            .slice => |sl| {
+                try self.scanMutatesGraphExpr(fname, params, sl.obj.*, shared, seeds, reverse_edges);
+                if (sl.lo) |x| try self.scanMutatesGraphExpr(fname, params, x.*, shared, seeds, reverse_edges);
+                if (sl.hi) |x| try self.scanMutatesGraphExpr(fname, params, x.*, shared, seeds, reverse_edges);
+                if (sl.step) |x| try self.scanMutatesGraphExpr(fname, params, x.*, shared, seeds, reverse_edges);
+            },
             .index => |ix| {
                 try self.scanMutatesGraphExpr(fname, params, ix.obj.*, shared, seeds, reverse_edges);
                 try self.scanMutatesGraphExpr(fname, params, ix.index.*, shared, seeds, reverse_edges);
@@ -3902,6 +3914,12 @@ pub const Checker = struct {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, c.callee.*, params);
             },
             .attribute => |a| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, a.obj.*, params),
+            .slice => |sl| {
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, sl.obj.*, params);
+                if (sl.lo) |x| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, x.*, params);
+                if (sl.hi) |x| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, x.*, params);
+                if (sl.step) |x| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, x.*, params);
+            },
             .index => |ix| {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, ix.obj.*, params);
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, ix.index.*, params);
@@ -4095,6 +4113,12 @@ pub const Checker = struct {
                 for (c.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners, locked_resources);
             },
             .attribute => |a| try self.removeAwaitedTaskSharing(aa, a.obj.*, task_spawn_ids, resource_owners, locked_resources),
+            .slice => |sl| {
+                try self.removeAwaitedTaskSharing(aa, sl.obj.*, task_spawn_ids, resource_owners, locked_resources);
+                if (sl.lo) |x| try self.removeAwaitedTaskSharing(aa, x.*, task_spawn_ids, resource_owners, locked_resources);
+                if (sl.hi) |x| try self.removeAwaitedTaskSharing(aa, x.*, task_spawn_ids, resource_owners, locked_resources);
+                if (sl.step) |x| try self.removeAwaitedTaskSharing(aa, x.*, task_spawn_ids, resource_owners, locked_resources);
+            },
             .index => |ix| {
                 try self.removeAwaitedTaskSharing(aa, ix.obj.*, task_spawn_ids, resource_owners, locked_resources);
                 try self.removeAwaitedTaskSharing(aa, ix.index.*, task_spawn_ids, resource_owners, locked_resources);
@@ -5605,6 +5629,7 @@ pub const Checker = struct {
                 }
             },
             .binary => |b| try self.checkBinary(ctx, b),
+            .slice => |sl| try self.checkSlice(ctx, sl),
             .ternary => |t| try self.checkTernary(ctx, t, null),
             .kwarg => return self.fail(error.TypeMismatch, "keyword argüman (ad=değer) yalnızca bir fonksiyon/metod çağrısının argüman listesinde kullanılabilir", .{}),
             .call => |c| try self.checkCall(ctx, c),
@@ -5884,6 +5909,8 @@ pub const Checker = struct {
                 // v1.150.0: `list[T] * int` / `int * list[T]` — yeni bir liste (n <= 0 → boş liste).
                 if (l == .list and r == .int) break :blk l;
                 if (l == .int and r == .list) break :blk r;
+                // v1.153.0: `str * int` / `int * str` — tekrarlı birleşim (n <= 0 → boş dize).
+                if ((l == .str and r == .int) or (l == .int and r == .str)) break :blk .str;
                 break :blk try self.numericPromote(l, r);
             },
             // v2.0 madde 4: `%`/`//`/`**` sabit-genişlikli tamsayı
@@ -5929,8 +5956,10 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "karşılaştırılan tipler uyuşmuyor", .{});
             },
             .lt, .le, .gt, .ge => blk: {
+                // v1.153.0: `str < str` — bayt (UTF-8 ⇒ codepoint) sırasına göre sözlükbilimsel karşılaştırma.
+                if (l == .str and r == .str) break :blk .boolean;
                 if (!types.isNumeric(l) or !types.isNumeric(r)) {
-                    return self.fail(error.TypeMismatch, "sıralama karşılaştırmaları yalnızca sayısal tiplerde çalışır", .{});
+                    return self.fail(error.TypeMismatch, "sıralama karşılaştırmaları yalnızca sayısal tiplerde ya da iki str arasında çalışır", .{});
                 }
                 _ = try self.requireSameFixedIntOrNone(l, r);
                 break :blk .boolean;
@@ -7338,6 +7367,27 @@ pub const Checker = struct {
         }
     }
 
+    /// v1.153.0: `obj[lo:hi:step]` — `list[T]` → `list[T]`, `str` → `str` (yeni değer; sınırlar Python gibi sıkıştırılır, hata
+    /// yok; adım 0 → `ValueError`, sabit sıfır derleme hatası). Sınırlar `int` olmalıdır.
+    fn checkSlice(self: *Checker, ctx: *FnCtx, sl: ast.Slice) TypeError!Type {
+        const obj_t = try self.checkExpr(ctx, sl.obj.*);
+        try self.requireNotOptional(obj_t, "[:]");
+        if (obj_t != .list and obj_t != .str) {
+            return self.fail(error.TypeMismatch, "dilimleme ('[a:b]') yalnızca list/str üzerinde çalışır", .{});
+        }
+        inline for (.{ sl.lo, sl.hi, sl.step }) |maybe| {
+            if (maybe) |x| {
+                const t = try self.checkExpr(ctx, x.*);
+                if (t != .int) return self.fail(error.TypeMismatch, "dilim sınırları/adımı 'int' olmalıdır", .{});
+            }
+        }
+        if (sl.step) |st| {
+            if (st.* == .int_lit and st.int_lit == 0) return self.fail(error.TypeMismatch, "dilim adımı sıfır olamaz", .{});
+            if (st.* == .unary and st.unary.op == .neg and st.unary.operand.* == .int_lit and st.unary.operand.int_lit == 0) return self.fail(error.TypeMismatch, "dilim adımı sıfır olamaz", .{});
+        }
+        return obj_t;
+    }
+
     /// v1.152.0: yan etkisiz (tekrar değerlendirilebilir) ifade mi — `d[k].append(v)` yeniden yazımı `d[k]`i iki kez kullanır.
     fn isDuplicableExpr(e: ast.Expr) bool {
         return switch (e) {
@@ -7401,7 +7451,7 @@ pub const Checker = struct {
         self.extend_counter += 1;
         const var_name = try std.fmt.allocPrint(self.allocator, "__nox_ext_{d}", .{self.extend_counter});
         const fresh = switch (c.args[0]) {
-            .call, .list_lit, .binary, .ternary => true,
+            .call, .list_lit, .binary, .ternary, .slice => true,
             else => false,
         };
         var iterable: ast.Expr = c.args[0];
@@ -7934,6 +7984,27 @@ pub const Checker = struct {
                 const idx = try self.allocator.create(ast.Expr);
                 idx.* = try self.substituteExpr(ix.index.*, bindings);
                 break :blk .{ .index = .{ .obj = obj, .index = idx } };
+            },
+            .slice => |sl| blk: {
+                const obj = try self.allocator.create(ast.Expr);
+                obj.* = try self.substituteExpr(sl.obj.*, bindings);
+                var out: ast.Slice = .{ .obj = obj, .lo = null, .hi = null, .step = null };
+                if (sl.lo) |x| {
+                    const b = try self.allocator.create(ast.Expr);
+                    b.* = try self.substituteExpr(x.*, bindings);
+                    out.lo = b;
+                }
+                if (sl.hi) |x| {
+                    const b = try self.allocator.create(ast.Expr);
+                    b.* = try self.substituteExpr(x.*, bindings);
+                    out.hi = b;
+                }
+                if (sl.step) |x| {
+                    const b = try self.allocator.create(ast.Expr);
+                    b.* = try self.substituteExpr(x.*, bindings);
+                    out.step = b;
+                }
+                break :blk .{ .slice = out };
             },
             .list_lit => |elems| .{ .list_lit = try self.substituteExprs(elems, bindings) },
             .dict_lit => |pairs| blk: {

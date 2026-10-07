@@ -23,7 +23,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [x] **1.6b dict değer/anahtar tipleri** — v1.152.0 (spec §3.269): değer `list[T]`/`dict`, anahtar `float`; ayrıca `xs[i].append`/`d[k].append` eleman alıcısı büyütme.
 - [x] **1.7 list tam API** — v1.150.0 (spec §3.267): `extend`, `insert`, `pop(i)`, `remove`, `index`, `count`, `clear`, `reverse`, `copy`, `del xs[i]`, `list + list`, `list * n`, `sorted`/`reversed` (yeni liste döner). Dilimleme 1.9'da.
 - [x] **1.8 `float(int)` / açık int→float dönüşümü** — v1.151.0 (spec §3.268): `float(int/float/bool/u8…u64/str)`.
-- [ ] **1.9 Dize karşılaştırması `<`/`>`/`<=`/`>=`**, `"ab" * 3`, dilimleme (`xs[a:b]`, `s[a:b]`).
+- [x] **1.9 str karşılaştırma `<`/`>`/`<=`/`>=`, `"ab" * 3`, dilimleme** — v1.153.0 (spec §3.270): `xs[a:b:adım]`, `s[a:b:adım]`, tree-sitter dahil.
 - [ ] **1.10 list comprehension** (AGENTS.md §5 "comprehension'lar" diyor ama YOK — ekle) ve `lambda`.
 - [ ] **1.11 `is None` / `Optional` ergonomisi**, `print` çoklu argüman, dize metot sözdizimi (`s.split()`).
 - [ ] **1.12 Koruma (guard) tarzı Optional daraltma:** `if x == None: return/break/continue` sonrası `x` daraltılsın

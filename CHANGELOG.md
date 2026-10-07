@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.153.0]
+
+### Eklendi
+
+- **Dilimleme:** `xs[a:b]`, `xs[:b]`, `xs[a:]`, `xs[:]`, `xs[a:b:adım]`, `xs[::-1]` — `list[T]` (yeni liste, elemanlar retain) ve `str`
+  (codepoint tabanlı). Python gibi sınır sıkıştırma/negatif indeks; adım 0 → `ValueError` (sabit sıfır derleme hatası). Yeni AST
+  düğümü `slice`, tree-sitter gramerine `slice` eklendi. Spec §3.270.
+- **`str < str`, `<=`, `>`, `>=`** (bayt/codepoint sırası) ve **`str * int` / `int * str`** (tekrar).
+
 ## [1.152.0]
 
 ### Eklendi

@@ -28606,6 +28606,24 @@ yolları aynen kullanılır. Alıcı yan etkisiz olmalıdır (`isDuplicableExpr`
 clear/values/del, float anahtarlar; Python ile birebir, iki backend, sızıntı denetimli); typecheck `ok_dict_list_values_and_element_grow`,
 `err_grow_on_call_element_receiver`, `err_dict_list_value_append_type`, `err_dict_update_list_value_type`; Zig birim testi (`value_release`).
 
+## 3.270 Dilimleme ve `str` karşılaştırma/tekrar (v1.153.0)
+
+**Dilimleme.** Yeni ifade düğümü `ast.Expr.slice` (`Slice{obj, lo?, hi?, step?}`); parser `parseSubscriptTail` (`[` sonrası `idx]` ya da
+`lo?:hi?(:step?)?]`). Checker `checkSlice`: yalnızca `list[T]`/`str` (sonuç aynı tip), sınırlar `int`, sabit sıfır adım derleme hatası; dilim ataması
+(`xs[a:b] = ...`) "geçersiz atama hedefi". Formatter `xs[a:b:c]` yazar (idempotent). `abi.isTemporaryExpr(.slice)` doğru → tüketici sonucu serbest bırakır.
+Çalışma zamanı `str.zig`: `computeSlice` (Python semantiği; pozitif/negatif adım, sıkıştırma), `nox_str_slice_op` (ASCII hızlı yol, geçerli UTF-8
+için codepoint iki-geçiş, geçersiz UTF-8'de bayt semantiği), `list_ops.zig`: `nox_list_slice(rt, a, lo, has_lo, hi, has_hi, step, has_step, esz, kind)`
+(heap elemanlar retain). Codegen `calls.zig` `genSlice`; dinamik adım için soğuk `ValueError` dalı. **Yürüteçler:** her AST gezgini (spawn lint, escape/inline/
+local_escape analizleri, rename, substitute, fixup'lar...) `slice` operandlarını gezer; kaçış analizlerinde `obj` düz kullanım sayılır (muhafazakâr).
+Tree-sitter: `slice` kuralı + corpus.
+
+**`str` karşılaştırma.** `<`/`<=`/`>`/`>=` iki `str` için `strcmp` (UTF-8'de bayt sırası = codepoint sırası). **`str * int`/`int * str`**:
+`nox_str_repeat` (tek tahsis, `n <= 0` → boş).
+
+**Golden:** `slice_and_str_ops` (Python ile birebir, iki backend, sızıntı denetimli: list/str/sınıf/çok baytlı, döngü); fmt round-trip testi;
+typecheck `ok_slice_and_str_ops`, `err_slice_non_sliceable`, `err_slice_bound_type`, `err_slice_zero_step`, `err_slice_assign`, `err_str_compare_with_int`,
+`err_str_mul_str`; Zig birim testleri (`computeSlice`, `nox_list_slice`).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

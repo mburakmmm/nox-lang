@@ -87,19 +87,28 @@ pub export fn nox_list_repeat(rt: ?*anyopaque, a: ?*anyopaque, n_i: i64, esz_i: 
     return @ptrCast(out);
 }
 
-/// Python dilimi `a[lo:hi]` (adım 1): negatif sınırlar sondan sayılır, aralık dışı sınırlar sıkıştırılır, hata fırlatmaz.
-/// `has_lo`/`has_hi` yanlışsa ilgili sınır atlanmıştır (`a[:hi]`, `a[lo:]`).
-pub export fn nox_list_slice(rt: ?*anyopaque, a: ?*anyopaque, lo_i: i64, has_lo: i32, hi_i: i64, has_hi: i32, esz_i: i64, kind: i32) ?*anyopaque {
+/// Python dilimi `a[lo:hi:step]`: negatif sınırlar sondan sayılır, aralık dışı sınırlar sıkıştırılır, hata fırlatmaz (adım 0'ı
+/// çağıran reddeder). `has_*` yanlışsa ilgili bölüm atlanmıştır. Yeni liste, kopyalanan elemanları retain eder.
+pub export fn nox_list_slice(rt: ?*anyopaque, a: ?*anyopaque, lo_i: i64, has_lo: i32, hi_i: i64, has_hi: i32, step_i: i64, has_step: i32, esz_i: i64, kind: i32) ?*anyopaque {
     const pa: [*]const u8 = @ptrCast(a orelse return null);
-    const len: i64 = @intCast(hdrLen(@constCast(pa)));
-    var lo: i64 = if (has_lo != 0) lo_i else 0;
-    var hi: i64 = if (has_hi != 0) hi_i else len;
-    if (lo < 0) lo += len;
-    if (hi < 0) hi += len;
-    lo = std.math.clamp(lo, 0, len);
-    hi = std.math.clamp(hi, 0, len);
-    if (hi < lo) hi = lo;
-    return sliceRaw(rt, pa, @intCast(lo), @intCast(hi), @intCast(esz_i), kind);
+    const esz: usize = @intCast(esz_i);
+    const sp = str_mod.computeSlice(hdrLen(@constCast(pa)), lo_i, has_lo != 0, hi_i, has_hi != 0, step_i, has_step != 0);
+    if (sp.step == 1) {
+        const lo: usize = if (sp.count == 0) 0 else @intCast(sp.start);
+        return sliceRaw(rt, pa, lo, lo + sp.count, esz, kind);
+    }
+    const out = newList(rt, sp.count, esz) orelse return null;
+    var k: usize = 0;
+    var idx: i64 = sp.start;
+    while (k < sp.count) : ({
+        k += 1;
+        idx += sp.step;
+    }) {
+        const src = pa + HDR + @as(usize, @intCast(idx)) * esz;
+        @memcpy(out[HDR + k * esz ..][0..esz], src[0..esz]);
+        retainElem(out + HDR + k * esz, kind);
+    }
+    return @ptrCast(out);
 }
 
 pub export fn nox_list_reverse(list: ?*anyopaque, esz_i: i64) void {
@@ -192,15 +201,24 @@ test "nox_list_ops: copy/concat/repeat/slice/reverse/move_last/remove_at (int el
     const z = nox_list_repeat(rt, l, 0, 8, 0);
     defer testFree(rt, z);
     try std.testing.expectEqual(@as(usize, 0), rd.len(z));
-    const sl = nox_list_slice(rt, l, 1, 1, 3, 1, 8, 0); // [2,3]
+    const sl = nox_list_slice(rt, l, 1, 1, 3, 1, 1, 0, 8, 0); // [2,3]
     defer testFree(rt, sl);
     try std.testing.expectEqual(@as(usize, 2), rd.len(sl));
     try std.testing.expectEqual(@as(i64, 2), rd.at(sl, 0));
-    const neg = nox_list_slice(rt, l, -2, 1, 0, 0, 8, 0); // [3,4]
+    const neg = nox_list_slice(rt, l, -2, 1, 0, 0, 1, 0, 8, 0); // [3,4]
     defer testFree(rt, neg);
     try std.testing.expectEqual(@as(usize, 2), rd.len(neg));
     try std.testing.expectEqual(@as(i64, 3), rd.at(neg, 0));
-    const empty = nox_list_slice(rt, l, 3, 1, 1, 1, 8, 0);
+    const rev = nox_list_slice(rt, l, 0, 0, 0, 0, -1, 1, 8, 0); // [4,3,2,1]
+    defer testFree(rt, rev);
+    try std.testing.expectEqual(@as(usize, 4), rd.len(rev));
+    try std.testing.expectEqual(@as(i64, 4), rd.at(rev, 0));
+    try std.testing.expectEqual(@as(i64, 1), rd.at(rev, 3));
+    const evens = nox_list_slice(rt, l, 0, 0, 0, 0, 2, 1, 8, 0); // [1,3]
+    defer testFree(rt, evens);
+    try std.testing.expectEqual(@as(usize, 2), rd.len(evens));
+    try std.testing.expectEqual(@as(i64, 3), rd.at(evens, 1));
+    const empty = nox_list_slice(rt, l, 3, 1, 1, 1, 1, 0, 8, 0);
     defer testFree(rt, empty);
     try std.testing.expectEqual(@as(usize, 0), rd.len(empty));
     nox_list_reverse(c, 8);

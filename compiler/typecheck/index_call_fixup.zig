@@ -155,6 +155,12 @@ const Fixer = struct {
                 for (c.args) |*a| try self.fixExpr(a);
             },
             .attribute => |*a| try self.fixExpr(a.obj),
+            .slice => |*sl| {
+                try self.fixExpr(sl.obj);
+                if (sl.lo) |x| try self.fixExpr(x);
+                if (sl.hi) |x| try self.fixExpr(x);
+                if (sl.step) |x| try self.fixExpr(x);
+            },
             .index => |*ix| {
                 try self.fixExpr(ix.obj);
                 try self.fixExpr(ix.index);

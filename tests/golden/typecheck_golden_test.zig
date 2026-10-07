@@ -416,6 +416,55 @@ test "golden(typecheck): v1.152.0 — dict list değerleri, element büyütme ve
     );
 }
 
+test "golden(typecheck): v1.153.0 — dilimleme yalnızca list/str" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_slice_non_sliceable.nox"),
+        @embedFile("typecheck_cases/err_slice_non_sliceable.expected"),
+    );
+}
+
+test "golden(typecheck): v1.153.0 — dilim sınırları int olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_slice_bound_type.nox"),
+        @embedFile("typecheck_cases/err_slice_bound_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.153.0 — sabit sıfır dilim adımı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_slice_zero_step.nox"),
+        @embedFile("typecheck_cases/err_slice_zero_step.expected"),
+    );
+}
+
+test "golden(typecheck): v1.153.0 — dilim ataması desteklenmez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_slice_assign.nox"),
+        @embedFile("typecheck_cases/err_slice_assign.expected"),
+    );
+}
+
+test "golden(typecheck): v1.153.0 — str < int reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_str_compare_with_int.nox"),
+        @embedFile("typecheck_cases/err_str_compare_with_int.expected"),
+    );
+}
+
+test "golden(typecheck): v1.153.0 — str * str reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_str_mul_str.nox"),
+        @embedFile("typecheck_cases/err_str_mul_str.expected"),
+    );
+}
+
+test "golden(typecheck): v1.153.0 — dilimleme, str karşılaştırma ve tekrar geçerli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_slice_and_str_ops.nox"),
+        @embedFile("typecheck_cases/ok_slice_and_str_ops.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

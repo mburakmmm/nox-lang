@@ -1135,6 +1135,28 @@ pub const Parser = struct {
         } };
     }
 
+    /// `[` zaten tüketildi: `idx]` (indeksleme) ya da `lo?:hi?(:step?)?]` (v1.153.0 dilimleme).
+    fn parseSubscriptTail(self: *Parser, obj: ast.Expr) ParseError!ast.Expr {
+        var lo: ?*ast.Expr = null;
+        if (!self.check(.colon)) {
+            const first = try self.parseExpr();
+            if (!self.check(.colon)) {
+                _ = try self.expect(.r_bracket);
+                return .{ .index = .{ .obj = try self.box(obj), .index = try self.box(first) } };
+            }
+            lo = try self.box(first);
+        }
+        _ = try self.expect(.colon);
+        var hi: ?*ast.Expr = null;
+        var step: ?*ast.Expr = null;
+        if (!self.check(.colon) and !self.check(.r_bracket)) hi = try self.box(try self.parseExpr());
+        if (self.match(.colon)) {
+            if (!self.check(.r_bracket)) step = try self.box(try self.parseExpr());
+        }
+        _ = try self.expect(.r_bracket);
+        return .{ .slice = .{ .obj = try self.box(obj), .lo = lo, .hi = hi, .step = step } };
+    }
+
     fn parsePostfix(self: *Parser) ParseError!ast.Expr {
         var expr = try self.parsePrimary();
         while (true) {
@@ -1193,16 +1215,10 @@ pub const Parser = struct {
                     // geri alındı) — sıradan indeksleme yolu, AŞAĞIDAKİ
                     // `self.match(.l_bracket)` dalıyla BİREBİR AYNI.
                     _ = try self.expect(.l_bracket);
-                    const idx = try self.parseExpr();
-                    _ = try self.expect(.r_bracket);
-                    const old_expr = expr;
-                    expr = .{ .index = .{ .obj = try self.box(old_expr), .index = try self.box(idx) } };
+                    expr = try self.parseSubscriptTail(expr);
                 }
             } else if (self.match(.l_bracket)) {
-                const idx = try self.parseExpr();
-                _ = try self.expect(.r_bracket);
-                const old_expr = expr;
-                expr = .{ .index = .{ .obj = try self.box(old_expr), .index = try self.box(idx) } };
+                expr = try self.parseSubscriptTail(expr);
             } else break;
         }
         return expr;

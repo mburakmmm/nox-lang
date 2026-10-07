@@ -141,6 +141,11 @@ connect("localhost")
 connect("example.com", tls=True)
 ```
 
+**Slicing:** `xs[a:b]`, `xs[:b]`, `xs[a:]`, `xs[:]`, `xs[a:b:step]`, `xs[::-1]` on `list[T]` (a new list) and `str`
+(by code point). Bounds clamp and negative indexes count from the end like Python; a zero step raises `ValueError`
+(a literal zero is a compile error). Slices are values: assigning to one is not supported. Strings also compare with
+`<`, `<=`, `>`, `>=` (code point order) and repeat with `s * n` / `n * s`.
+
 **Dictionaries** (`dict[K, V]`, keys `int`/`float`/`bool`/`str`, values `int`/`float`/`bool`/`str`/class/`list[T]`/`dict`; `groups[k].append(v)` works on list values) keep
 insertion order: `d[k]`, `d[k] = v`, `k in d`, `len(d)`, `d.keys()`, `d.values()`, `for k in d`,
 `d.get(k, default)` (the default is only evaluated when the key is missing), `d.get(k)` (a

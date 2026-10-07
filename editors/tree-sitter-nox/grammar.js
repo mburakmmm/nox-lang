@@ -309,6 +309,7 @@ module.exports = grammar({
       $.call,
       $.attribute,
       $.index,
+      $.slice,
       $._primary_expression,
     ),
 
@@ -334,6 +335,15 @@ module.exports = grammar({
     // denetimini TEKRARLAMAZ (bkz. bu dosyanın belge notu).
     index: $ => prec(PREC.postfix, seq(
       field('object', $._postfix_expression), '[', field('index', $._expression), ']',
+    )),
+
+    // `xs[a:b]`, `xs[:b]`, `xs[a:]`, `xs[::2]`, `xs[::-1]` (v1.153.0)
+    slice: $ => prec(PREC.postfix, seq(
+      field('object', $._postfix_expression), '[',
+      optional(field('start', $._expression)), ':',
+      optional(field('stop', $._expression)),
+      optional(seq(':', optional(field('step', $._expression)))),
+      ']',
     )),
 
     _primary_expression: $ => choice(

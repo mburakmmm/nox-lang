@@ -99,6 +99,9 @@ pub const Kwarg = struct { name: []const u8, value: *Expr };
 /// v1.146.0: `then_expr if cond else else_expr` (Python üçlü ifadesi). Yalnızca seçilen dal değerlendirilir.
 pub const Ternary = struct { cond: *Expr, then_expr: *Expr, else_expr: *Expr };
 
+/// v1.153.0: `obj[lo:hi:step]` dilimleme (her bölüm isteğe bağlı: `xs[:]`, `xs[2:]`, `xs[:n]`, `xs[::2]`, `xs[::-1]`).
+pub const Slice = struct { obj: *Expr, lo: ?*Expr, hi: ?*Expr, step: ?*Expr };
+
 pub const Expr = union(enum) {
     int_lit: i64,
     float_lit: f64,
@@ -140,6 +143,7 @@ pub const Expr = union(enum) {
     generic_construct: GenericConstruct,
     ternary: Ternary,
     kwarg: Kwarg,
+    slice: Slice,
 };
 
 pub const Unary = struct { op: UnaryOp, operand: *Expr };

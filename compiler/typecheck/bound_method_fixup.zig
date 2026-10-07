@@ -169,6 +169,12 @@ const Fixer = struct {
                     e.* = .{ .call = .{ .callee = callee, .args = args } };
                 }
             },
+            .slice => |*sl| {
+                try self.fixExpr(sl.obj, false);
+                if (sl.lo) |x| try self.fixExpr(x, true);
+                if (sl.hi) |x| try self.fixExpr(x, true);
+                if (sl.step) |x| try self.fixExpr(x, true);
+            },
             .index => |*ix| {
                 try self.fixExpr(ix.obj, false);
                 try self.fixExpr(ix.index, true);

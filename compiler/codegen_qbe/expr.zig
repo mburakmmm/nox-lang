@@ -370,6 +370,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         // `kwarg` checker tarafından konumsal argümanlara açılır; codegen'e ASLA ulaşmamalı.
         .kwarg => error.Unsupported,
         .call => |c| try self.genCall(c),
+        .slice => |sl| try self.genSlice(sl),
         .index => |idx| try self.genIndex(idx),
         .list_lit => |elems| try self.genListLit(elems),
         .dict_lit => |pairs| try self.genDictLit(pairs),
@@ -1712,6 +1713,33 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_str_concat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
         try self.releaseIfTemporary(b.left.*, l0);
         try self.releaseIfTemporary(b.right.*, r0);
+        return .{ .text = result_t, .qtype = .l, .heap = .str };
+    }
+
+    // v1.153.0: `str < str` / `<=` / `>` / `>=` — `strcmp` (bayt sırası; UTF-8'de codepoint sırasıyla aynı).
+    if (l0.heap == .str and r0.heap == .str and (b.op == .lt or b.op == .le or b.op == .gt or b.op == .ge)) {
+        const cmp_t = try self.newTemp();
+        try self.qbeCall(.{ .name = cmp_t, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
+        const result = try self.newTemp();
+        const mnemonic: []const u8 = switch (b.op) {
+            .lt => "csltw",
+            .le => "cslew",
+            .gt => "csgtw",
+            else => "csgew",
+        };
+        try self.qbeOp2Imm(result, .w, mnemonic, cmp_t, 0);
+        try self.releaseIfTemporary(b.left.*, l0);
+        try self.releaseIfTemporary(b.right.*, r0);
+        return .{ .text = result, .qtype = .w };
+    }
+    // v1.153.0: `str * n` / `n * str` — `nox_str_repeat` (tek tahsis). Sonuç TAZE (+1).
+    if (b.op == .mul and ((l0.heap == .str and r0.heap == .none) or (l0.heap == .none and r0.heap == .str))) {
+        const s = if (l0.heap == .str) l0 else r0;
+        const n0 = if (l0.heap == .str) r0 else l0;
+        const n = try self.convert(n0, .l);
+        const result_t = try self.newTemp();
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_str_repeat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = s.text }, .{ .ty = .l, .text = n.text } });
+        try self.releaseIfTemporary(if (l0.heap == .str) b.left.* else b.right.*, s);
         return .{ .text = result_t, .qtype = .l, .heap = .str };
     }
 

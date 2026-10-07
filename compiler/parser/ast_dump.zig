@@ -326,6 +326,17 @@ fn dumpExpr(writer: *std.Io.Writer, e: ast.Expr) std.Io.Writer.Error!void {
             try dumpExpr(writer, a.obj.*);
             try writer.print(" {s})", .{a.attr});
         },
+        .slice => |sl| {
+            try writer.writeAll("(slice ");
+            try dumpExpr(writer, sl.obj.*);
+            try writer.writeAll(" ");
+            if (sl.lo) |x| try dumpExpr(writer, x.*) else try writer.writeAll("_");
+            try writer.writeAll(" ");
+            if (sl.hi) |x| try dumpExpr(writer, x.*) else try writer.writeAll("_");
+            try writer.writeAll(" ");
+            if (sl.step) |x| try dumpExpr(writer, x.*) else try writer.writeAll("_");
+            try writer.writeAll(")");
+        },
         .index => |idx| {
             try writer.writeAll("(index ");
             try dumpExpr(writer, idx.obj.*);
