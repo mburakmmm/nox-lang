@@ -633,7 +633,7 @@ const Printer = struct {
         switch (t) {
             .simple => |s| try self.writer.writeAll(s),
             .generic => |g| {
-                try self.writer.print("{s}[", .{g.name});
+                try self.writer.print("{s}[", .{if (std.mem.eql(u8, g.name, "__nox_Set")) "set" else g.name});
                 for (g.args, 0..) |a, idx| {
                     if (idx > 0) try self.writer.writeAll(", ");
                     try self.printType(a);
@@ -808,6 +808,23 @@ const Printer = struct {
             .identifier => |name| try self.writer.writeAll(name),
             .call => |c| {
                 if (c.fstring) return self.printFString(e);
+                // v1.168.0: küme literali/comprehension'ı yüzey biçimi.
+                if (c.set_lit and c.args.len == 1) {
+                    try self.writer.writeAll("{");
+                    switch (c.args[0]) {
+                        .list_lit => |items| for (items, 0..) |it, i| {
+                            if (i > 0) try self.writer.writeAll(", ");
+                            try self.printExpr(it);
+                        },
+                        .list_comp => |lc| {
+                            try self.printExpr(lc.elem.*);
+                            try self.printCompClauses(lc.clauses);
+                        },
+                        else => {},
+                    }
+                    try self.writer.writeAll("}");
+                    return;
+                }
                 try self.printExprAt(c.callee.*, 0, .loose);
                 try self.writer.writeAll("(");
                 // v1.162.0: tek argümanlı üreteç ifadesi (`sum(x for x in xs)`) köşeli parantezsiz yazılır.

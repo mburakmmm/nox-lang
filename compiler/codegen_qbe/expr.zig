@@ -21,6 +21,7 @@ const ElemHeapInfo = types.ElemHeapInfo;
 const NameList = @import("stmt.zig").NameList;
 const DictInfo = types.DictInfo;
 const RT_PARAM = types.RT_PARAM;
+const TAG_SIZE = types.TAG_SIZE;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const ARC_HEADER_SIZE = types.ARC_HEADER_SIZE;
 const STR_HEADER_SIZE = types.STR_HEADER_SIZE;
@@ -2348,6 +2349,35 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
         }
         try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_rparen" }});
         return;
+    }
+    // v1.168.0: sınıfta `__repr__` (yoksa `__str__`) tanımlıysa konteyner içindeki/doğrudan yazdırılan örnek onunla yazılır (Set, kullanıcı sınıfları).
+    if (cinfo.methods.get("__repr__") orelse cinfo.methods.get("__str__")) |msig| {
+        const mname: []const u8 = if (cinfo.methods.contains("__repr__")) "__repr__" else "__str__";
+        if (msig.sig.params.len == 0 and msig.sig.ret.heap == .str) {
+            const res = try self.newTemp();
+            const margs = [_]codegen.QbeArg{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = v.text } };
+            if (cinfo.has_vtable) {
+                const vt_addr = try self.newTemp();
+                try self.qbeOp2Imm(vt_addr, .l, "add", v.text, @intCast(TAG_SIZE));
+                const vtable_ptr = try self.newTemp();
+                try self.qbeLoadL(vtable_ptr, vt_addr);
+                const slot_addr = try self.newTemp();
+                try self.qbeOp2Imm(slot_addr, .l, "add", vtable_ptr, @intCast(msig.slot * 8));
+                const fn_ptr = try self.newTemp();
+                try self.qbeLoadL(fn_ptr, slot_addr);
+                try self.qbeCall(.{ .name = res, .ty = .l }, fn_ptr, &margs);
+                try self.emitExceptionCheck();
+            } else {
+                const sym = try std.fmt.allocPrint(self.allocator, "${s}_{s}", .{ msig.owner, mname });
+                try self.qbeCall(.{ .name = res, .ty = .l }, sym, &margs);
+                const plain = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, mname });
+                if (!self.must_not_raise.contains(plain)) try self.emitExceptionCheck();
+            }
+            const pct_s = try self.internFmtString("%s");
+            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = pct_s }}, &.{.{ .ty = .l, .text = res }});
+            try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = res } });
+            return;
+        }
     }
     const open_sym = try self.internFmtString(try std.fmt.allocPrint(self.allocator, "{s}(", .{class_name}));
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = open_sym }});

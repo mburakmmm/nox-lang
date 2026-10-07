@@ -449,3 +449,20 @@ test "fmt: v1.165.0 — docstring, except (A, B), üç tırnak İDEMPOTENT" {
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: v1.168.0 — set[T] ve küme literali yüzey biçimi korunur (İDEMPOTENT)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "a: set[int] = {1,2, 3}\n", .out = "a: set[int] = {1, 2, 3}\n" },
+        .{ .in = "b: set[int] = {x*x for x in xs if x>0}\n", .out = "b: set[int] = {x * x for x in xs if x > 0}\n" },
+        .{ .in = "e: set[str] = set()\n", .out = "e: set[str] = set()\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

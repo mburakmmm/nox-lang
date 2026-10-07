@@ -28896,3 +28896,12 @@ anahtarıyla). Bu yüzden sahiplik analizi, kalıtım (metodlar alt sınıf `Cla
 (bir yığın yuvası) doluyken `$printf(fmt, arg)` çağrısı `sinkPrintf` ile `nox_str_append` (amortize O(1)) çağrılarına çevrilir (`%lld`/`%llu`/`%s` direktifleri `nox_int_to_str`/
 `nox_uint_to_str`/doğrudan işaretçi). `genReprString(v)` yuvayı kurar, parçayı yazdırır, sonucu yeni bir ARC `str` olarak döner. Checker `str(list|dict|class)` ve yeni `repr(x)` yerleşiğine izin verir
 (sınıf `__str__` varsa `str(obj)` ona yönlenir). Sınırlama: `str(Optional)` için önce `None` olmadığı daraltılmalı; literal içinde boş `[]`/`{}` elemanlar (beklenen tip yayılımı) henüz yok.
+
+## 3.283 `set[T]`, `__iter__`, konteyner içinde `__repr__`/`__str__` (v1.168.0)
+
+- **set:** `core.nox`ta generic `__nox_Set[T]` (`_d: dict[T, bool]`) + `__nox_set_from_list`. Parser `set[T]`yi `__nox_Set[T]` tip ifadesine, `{a, b}`/`{x for …}`i `Call{set_lit}` (`__nox_set_from_list([...])`)ne çevirir
+  (formatter geri-çevirir). Checker: `set(it)` → `__nox_set_from_list(list(it))`; boş `set()` beklenen `set[T]` tipinden (`class_type_args` haritası) generic kurucuya yazılır, tip bilinmiyorsa net hata.
+  Operatörler/`in`/`len`/`for` dunder protokolüyle (§3.279). Sıra: ekleme sırası.
+- **`__iter__`:** `checkForIterable` sınıfta `__iter__` bulursa iterable'ı `obj.__iter__()` çağrısına yazar (list/str/dict dönebilir); `tryDesugarPreludeCall` aynısını `sorted/sum/list/…` argümanları için yapar.
+- **Yazdırma:** `genPrintClass` sınıfta `__repr__`/`__str__` varsa (vtable'lı sınıflar için vtable üzerinden) onu çağırıp sonucu yazar — `print`, `str()` (§3.282 sink'i) ve iç içe konteynerler için.
+- Sınırlama: küme elemanı `int/float/bool/str`; literal içinde boş `[]`/`{}` yok; `frozenset` yok.

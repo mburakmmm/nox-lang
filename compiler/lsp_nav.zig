@@ -81,6 +81,8 @@ const builtins = [_]BuiltinDoc{
     .{ .name = "map", .detail = "def map(f, xs) -> list  (yerlesik, tembel degil)" },
     .{ .name = "filter", .detail = "def filter(f, xs) -> list  (yerlesik, tembel degil)" },
     .{ .name = "enumerate", .detail = "def enumerate(xs) -> list[tuple[int, T]]  (yerlesik)" },
+    .{ .name = "set", .detail = "def set(iterable) -> set[T]  (yerlesik; set() icin tip bildirin)" },
+    .{ .name = "repr", .detail = "def repr(x) -> str  (yerlesik)" },
     .{ .name = "zip", .detail = "def zip(a, b) -> list[tuple]  (yerlesik)" },
 };
 

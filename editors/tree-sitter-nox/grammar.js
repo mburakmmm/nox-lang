@@ -405,6 +405,8 @@ module.exports = grammar({
       $.dict,
       $.list_comprehension,
       $.dict_comprehension,
+      $.set,
+      $.set_comprehension,
     ),
 
     // `[e for x in it if c]` / `{k: v for x in it if c}` (v1.154.0) — iterable/koşul `or`-seviyesinde (üçlü ifade DEĞİL).
@@ -433,6 +435,9 @@ module.exports = grammar({
     // bir çift BEKLER) — bkz. parser.zig'in parsePrimary'si.
     list: $ => seq('[', commaSep($._expression), ']'),
     dict: $ => seq('{', commaSep1($.pair), '}'),
+    // `{1, 2}` ve `{x for x in xs}` — küme (v1.168.0); boş `{}` sözlüktür, boş küme `set()`
+    set: $ => seq('{', $._expression, repeat(seq(',', $._expression)), optional(','), '}'),
+    set_comprehension: $ => seq('{', field('element', $._expression), repeat1($._comp_clause), '}'),
     pair: $ => seq(field('key', $._expression), ':', field('value', $._expression)),
 
     true: _$ => 'True',

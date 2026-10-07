@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.168.0]
+
+### Eklendi
+
+- **`set[T]`:** `{1, 2}` literali, `{x for x in xs}` comprehension'ı, `set()` / `set(iterable)`, `add/remove/discard/pop/clear/copy/update/union/intersection/difference/symmetric_difference/issubset/issuperset/isdisjoint`, operatörler `| & - ^ <= >= < > ==`, `in`, `len`, `for`. Sözlük (T → bool) üzerine kurulu, O(1); eleman tipi dict anahtarı kurallarına tabi (int/float/bool/str). Yazdırma **ekleme sırasıyla** (Python'da küme sırası tanımsızdır). Boş küme `set()`; `{}` hâlâ boş sözlüktür.
+- **`__iter__` protokolü:** `for x in obj`, comprehension ve `sorted/sum/list/min/max/any/all/set/enumerate/zip/map/filter/reversed` argümanı olarak (`__iter__() -> list[T]`).
+- **Konteyner içindeki sınıflar** `__repr__` (yoksa `__str__`) ile yazdırılır; `print([Money(5)])` → `[$5]`. Spec §3.283.
+
 ## [1.167.0]
 
 ### Eklendi

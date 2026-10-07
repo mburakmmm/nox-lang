@@ -366,7 +366,9 @@ pub const Parser = struct {
                 try args.append(self.allocator, try self.parseTypeExpr());
             }
             _ = try self.expect(.r_bracket);
-            return .{ .generic = .{ .name = name, .args = try args.toOwnedSlice(self.allocator) } };
+            // v1.168.0: `set[T]` → prelude'daki generic `__nox_Set[T]` sınıfı (yüzey adı `set`; formatter geri çevirir).
+            const gname: []const u8 = if (std.mem.eql(u8, name, "set") and args.items.len == 1) "__nox_Set" else name;
+            return .{ .generic = .{ .name = gname, .args = try args.toOwnedSlice(self.allocator) } };
         }
         // Faz NN.2: `pkg.module.ClassName` — nitelikli tip adı (bkz.
         // `ast.TypeExpr.qualified`in belge notu). Bir tip adı ŞİMDİYE
@@ -1519,6 +1521,27 @@ pub const Parser = struct {
                 // bir BEKLENEN `dict[K,V]` tipi biliniyorsa kabul eder.
                 if (!self.check(.r_brace)) {
                     const first_key = try self.parseExpr();
+                    // v1.168.0: `{a, b}` / `{x for x in xs}` — küme literali/comprehension'ı (`__nox_set_from_list([...])`).
+                    if (self.check(.comma) or self.check(.r_brace) or self.check(.kw_for)) {
+                        const lst: ast.Expr = blk: {
+                            if (self.check(.kw_for)) {
+                                const clauses = try self.parseCompClauses();
+                                break :blk .{ .list_comp = .{ .elem = try self.box(first_key), .clauses = clauses } };
+                            }
+                            var elems = std.ArrayList(ast.Expr).empty;
+                            try elems.append(self.allocator, first_key);
+                            while (self.match(.comma)) {
+                                if (self.check(.r_brace)) break;
+                                try elems.append(self.allocator, try self.parseExpr());
+                            }
+                            break :blk .{ .list_lit = try elems.toOwnedSlice(self.allocator) };
+                        };
+                        _ = try self.expect(.r_brace);
+                        const sargs = try self.allocator.alloc(ast.Expr, 1);
+                        sargs[0] = lst;
+                        const scallee = try self.box(.{ .identifier = "__nox_set_from_list" });
+                        return .{ .call = .{ .callee = scallee, .args = sargs, .set_lit = true } };
+                    }
                     _ = try self.expect(.colon);
                     const first_value = try self.parseExpr();
                     if (self.check(.kw_for)) {

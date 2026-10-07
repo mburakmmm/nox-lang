@@ -569,6 +569,8 @@ pub const Checker = struct {
     /// edilmiş) sınıf tanımları — `instantiations`in AYNISI ama SINIFLAR
     /// İçin.
     class_instantiations: std.ArrayListUnmanaged(ast.ClassDef) = .empty,
+    /// v1.168.0: somutlaştırılmış generic sınıf adı → tip argümanları (`set()` boş kurucusu beklenen tipten eleman tipini bulur).
+    class_type_args: std.StringHashMapUnmanaged([]const Type) = .{},
     /// Yapısal protokoller (Faz 11) — adları modül düzeyinde benzersizdir,
     /// bir sınıfla hiçbir açık ilişki (implements) bildirmezler (bkz.
     /// `collectProtocols`). Bir fonksiyonun bir parametresi/dönüş tipi bir
@@ -5446,20 +5448,27 @@ pub const Checker = struct {
             }
             return .int;
         }
-        const t = try self.checkExpr(ctx, iterable);
+        var t = try self.checkExpr(ctx, iterable);
+        // v1.168.0: `for x in obj` — sınıfta `__iter__() -> list[T]` (ya da str/dict) tanımlıysa iterable `obj.__iter__()`e yeniden yazılır.
+        var dunder_iter: ?ast.Expr = null;
+        if (self.hasDunder(t, "__iter__")) {
+            const call = try self.mkDunderCall(iterable, "__iter__", &.{});
+            t = try self.checkExpr(ctx, call);
+            dunder_iter = call;
+        }
         const elem_t: Type = switch (t) {
             .list => |elem| elem.*,
             .str => .str,
             .dict => |d| d.key.*,
-            else => return self.fail(error.NotIterable, "bu ifade üzerinde 'for' çalıştırılamaz (list/str/dict/range olmalı)", .{}),
+            else => return self.fail(error.NotIterable, "bu ifade üzerinde 'for' çalıştırılamaz (list/str/dict/range ya da `__iter__` olan sınıf olmalı)", .{}),
         };
         // Yeniden yazılacak iterable ifadesi (str/dict → liste) ve hoist (gizli yerel) gereksinimi.
-        var new_iterable: ?ast.Expr = null;
+        var new_iterable: ?ast.Expr = dunder_iter;
         var list_type: Type = t;
         switch (t) {
             .str => {
                 const args = try self.allocator.alloc(ast.Expr, 1);
-                args[0] = iterable;
+                args[0] = dunder_iter orelse iterable;
                 const callee = try self.allocator.create(ast.Expr);
                 callee.* = .{ .identifier = "__nox_str_chars" };
                 new_iterable = .{ .call = .{ .callee = callee, .args = args } };
@@ -5469,7 +5478,7 @@ pub const Checker = struct {
             },
             .dict => |d| {
                 const obj = try self.allocator.create(ast.Expr);
-                obj.* = iterable;
+                obj.* = dunder_iter orelse iterable;
                 const callee = try self.allocator.create(ast.Expr);
                 callee.* = .{ .attribute = .{ .obj = obj, .attr = "keys" } };
                 new_iterable = .{ .call = .{ .callee = callee, .args = &.{} } };
@@ -5586,6 +5595,24 @@ pub const Checker = struct {
             if (expected) |exp| {
                 if (exp == .dict) return exp;
             }
+        }
+        // v1.168.0: `set()` — eleman tipi beklenen `set[T]` tipinden alınır.
+        if (expr == .call and expr.call.callee.* == .identifier and std.mem.eql(u8, expr.call.callee.identifier, "set") and expr.call.args.len == 0 and !self.functions.contains("set")) {
+            if (expected) |exp| {
+                if (exp == .class) if (self.class_type_args.get(exp.class)) |targs| {
+                    if (targs.len == 1 and std.mem.startsWith(u8, exp.class, "__nox_Set__")) {
+                        const targ_exprs = try self.allocator.alloc(ast.TypeExpr, 1);
+                        targ_exprs[0] = try self.typeToTypeExpr(targs[0]);
+                        const resolved = try self.allocator.create(?[]const u8);
+                        resolved.* = null;
+                        const repl: ast.Expr = .{ .generic_construct = .{ .name = "__nox_Set", .type_args = targ_exprs, .args = &.{}, .resolved_class_name = resolved } };
+                        const rt = try self.checkExpr(ctx, repl);
+                        try self.expr_rewrites.put(self.allocator, @intFromPtr(expr.call.callee), repl);
+                        return rt;
+                    }
+                };
+            }
+            return self.fail(error.UnknownType, "set() için eleman tipi çıkarılamıyor — `s: set[int] = set()` biçiminde tipi bildirin", .{});
         }
         // Faz F.3: `adopt(p) -> T` — `T`, Nox'ta tiplerin birinci-sınıf
         // değer OLMADIĞINDAN bir argüman olarak GEÇİRİLEMEZ; bunun yerine
@@ -6509,6 +6536,34 @@ pub const Checker = struct {
         }
         const user_defined = self.classes.contains(name) or (self.functions.contains(name) and !isPreludeName(name));
         if (user_defined) return null;
+        // v1.168.0: yinelenebilir (`__iter__`) sınıf argümanları — `sorted(s)`, `sum(s)`, `list(s)`, `min/max/any/all/set/enumerate/zip/map/filter/reversed` — `arg.__iter__()`e açılır.
+        const iter_taking = [_][]const u8{ "sorted", "sum", "list", "min", "max", "any", "all", "set", "enumerate", "zip", "map", "filter", "reversed" };
+        var takes_iter: bool = false;
+        for (iter_taking) |itn| {
+            if (eq(u8, itn, name)) takes_iter = true;
+        }
+        if (takes_iter) {
+            var new_args: ?[]ast.Expr = null;
+            for (c.args, 0..) |a, ai| {
+                if (a == .kwarg or a == .lambda or a == .string_lit or a == .list_lit or a == .list_comp) continue;
+                const at = self.checkExpr(ctx, a) catch continue;
+                if (self.hasDunder(at, "__iter__")) {
+                    if (new_args == null) {
+                        new_args = try self.allocator.alloc(ast.Expr, c.args.len);
+                        @memcpy(new_args.?, c.args);
+                    }
+                    new_args.?[ai] = try self.mkDunderCall(a, "__iter__", &.{});
+                }
+            }
+            if (new_args) |na| {
+                const callee = try self.allocator.create(ast.Expr);
+                callee.* = .{ .identifier = name };
+                const repl: ast.Expr = .{ .call = .{ .callee = callee, .args = na } };
+                const rt = try self.checkExpr(ctx, repl);
+                try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+                return rt;
+            }
+        }
         if (eq(u8, name, "list") and c.args.len == 1 and positional == 1 and !self.generic_functions.contains("list")) {
             // `list(iterable)`: range → `[v for v in range(..)]`; list → `.copy()`; str → `__nox_str_chars`; dict → `.keys()`.
             const arg0 = c.args[0];
@@ -6541,6 +6596,22 @@ pub const Checker = struct {
                     else => return self.fail(error.TypeMismatch, "'list' yalnızca list/str/dict/range üzerinde çalışır", .{}),
                 }
             };
+            const rt = try self.checkExpr(ctx, repl);
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+            return rt;
+        }
+        if (eq(u8, name, "set") and c.args.len == 1 and positional == 1) {
+            // `set(iterable)` → `__nox_set_from_list(list(iterable))`.
+            const lc = try self.allocator.create(ast.Expr);
+            lc.* = .{ .identifier = "list" };
+            const largs = try self.allocator.alloc(ast.Expr, 1);
+            largs[0] = c.args[0];
+            const inner: ast.Expr = .{ .call = .{ .callee = lc, .args = largs } };
+            const sc = try self.allocator.create(ast.Expr);
+            sc.* = .{ .identifier = "__nox_set_from_list" };
+            const sargs = try self.allocator.alloc(ast.Expr, 1);
+            sargs[0] = inner;
+            const repl: ast.Expr = .{ .call = .{ .callee = sc, .args = sargs } };
             const rt = try self.checkExpr(ctx, repl);
             try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
             return rt;
@@ -9208,6 +9279,7 @@ pub const Checker = struct {
         // sınıflar AYNI somutlaştırmayı YENİDEN bulsun diye — `instantiateGeneric`in
         // AYNI yorumuyla TUTARLI), SONRA gövdeyi denetle.
         try self.classes.put(self.allocator, mangled, .{});
+        try self.class_type_args.put(self.allocator, mangled, try self.allocator.dupe(Type, bound_types));
         try self.registerClassSignatures(concrete);
         try self.class_instantiations.append(self.allocator, concrete);
         try self.checkClassBody(concrete);

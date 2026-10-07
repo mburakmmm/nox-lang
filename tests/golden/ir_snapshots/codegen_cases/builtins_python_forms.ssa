@@ -15,12 +15,12 @@ data $fmt_rparen = { b ")", b 0 }
 data $fmt_comma_sp = { b ", ", b 0 }
 data $fmt_uint = { b "%llu\n", b 0 }
 data $fmt_uint_frag = { b "%llu", b 0 }
-export function l $__nox_lambda_7__fnval(l %rt, l %env, l %p0) {
+export function l $__nox_lambda_12__fnval(l %rt, l %env, l %p0) {
 @start
-    %t0 =l call $__nox_lambda_7(l %rt, l %p0)
+    %t0 =l call $__nox_lambda_12(l %rt, l %p0)
     ret %t0
 }
-export function $__nox_lambda_7__fnval_release(l %rt, l %p) {
+export function $__nox_lambda_12__fnval_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
@@ -40,6 +40,25 @@ export function l $__nox_lambda_1__fnval(l %rt, l %env, l %p0) {
     ret %t0
 }
 export function $__nox_lambda_1__fnval_release(l %rt, l %p) {
+@start
+    %t0 =l sub %p, 8
+    %t1 =l loadl %t0
+    %t2 =l sub %t1, 1
+    storel %t2, %t0
+    %t3 =w cslel %t2, 0
+    jnz %t3, @release_free0, @release_done1
+@release_free0
+    call $nox_rc_free_payload(l %rt, l %p, l 16)
+    jmp @release_done1
+@release_done1
+    ret
+}
+export function w $__nox_lambda_11__fnval(l %rt, l %env, l %p0) {
+@start
+    %t0 =w call $__nox_lambda_11(l %rt, l %p0)
+    ret %t0
+}
+export function $__nox_lambda_11__fnval_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
@@ -110,31 +129,12 @@ export function $__nox_lambda_2__fnval_release(l %rt, l %p) {
 @release_done1
     ret
 }
-export function w $__nox_lambda_9__fnval(l %rt, l %env, l %p0) {
+export function l $__nox_lambda_8__fnval(l %rt, l %env, l %p0) {
 @start
-    %t0 =w call $__nox_lambda_9(l %rt, l %p0)
+    %t0 =l call $__nox_lambda_8(l %rt, l %p0)
     ret %t0
 }
-export function $__nox_lambda_9__fnval_release(l %rt, l %p) {
-@start
-    %t0 =l sub %p, 8
-    %t1 =l loadl %t0
-    %t2 =l sub %t1, 1
-    storel %t2, %t0
-    %t3 =w cslel %t2, 0
-    jnz %t3, @release_free0, @release_done1
-@release_free0
-    call $nox_rc_free_payload(l %rt, l %p, l 16)
-    jmp @release_done1
-@release_done1
-    ret
-}
-export function l $__nox_lambda_10__fnval(l %rt, l %env, l %p0) {
-@start
-    %t0 =l call $__nox_lambda_10(l %rt, l %p0)
-    ret %t0
-}
-export function $__nox_lambda_10__fnval_release(l %rt, l %p) {
+export function $__nox_lambda_8__fnval_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
@@ -6713,7 +6713,7 @@ export function l $__nox_lambda_4(l %rt, l %p_s) {
 @fn_end1
     ret 0
 }
-export function l $__nox_lambda_7(l %rt, l %p_v) {
+export function l $__nox_lambda_8(l %rt, l %p_v) {
 @start
     %t0 =l alloc8 8
     storel %p_v, %t0
@@ -6724,7 +6724,7 @@ export function l $__nox_lambda_7(l %rt, l %p_v) {
 @fn_end1
     ret 0
 }
-export function w $__nox_lambda_9(l %rt, l %p_v) {
+export function w $__nox_lambda_11(l %rt, l %p_v) {
 @start
     %t0 =l alloc8 8
     storel %p_v, %t0
@@ -6735,7 +6735,7 @@ export function w $__nox_lambda_9(l %rt, l %p_v) {
 @fn_end1
     ret 0
 }
-export function l $__nox_lambda_10(l %rt, l %p_s) {
+export function l $__nox_lambda_12(l %rt, l %p_s) {
 @start
     %t0 =l alloc8 8
     storel %p_s, %t0
@@ -8046,9 +8046,9 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_str, ..., l %t412)
     call $nox_str_release(l %rt, l %t412)
     %t413 =l call $nox_rc_alloc(l %rt, l 16)
-    storel $__nox_lambda_7__fnval, %t413
+    storel $__nox_lambda_8__fnval, %t413
     %t414 =l add %t413, 8
-    storel $__nox_lambda_7__fnval_release, %t414
+    storel $__nox_lambda_8__fnval_release, %t414
     %t415 =l loadl %t0
     %t416 =l call $map__int_int(l %rt, l %t413, l %t415)
     %t417 =w ceql %t413, 0
@@ -8092,9 +8092,9 @@ export function w $main(w %argc, l %argv) {
     jmp @release_done304
 @release_done304
     %t431 =l call $nox_rc_alloc(l %rt, l 16)
-    storel $__nox_lambda_9__fnval, %t431
+    storel $__nox_lambda_11__fnval, %t431
     %t432 =l add %t431, 8
-    storel $__nox_lambda_9__fnval_release, %t432
+    storel $__nox_lambda_11__fnval_release, %t432
     %t433 =l loadl %t0
     %t434 =l call $filter__int(l %rt, l %t431, l %t433)
     %t435 =w ceql %t431, 0
@@ -8357,9 +8357,9 @@ export function w $main(w %argc, l %argv) {
     storel %t521, %t3
     %t528 =l loadl %t3
     %t529 =l call $nox_rc_alloc(l %rt, l 16)
-    storel $__nox_lambda_10__fnval, %t529
+    storel $__nox_lambda_12__fnval, %t529
     %t530 =l add %t529, 8
-    storel $__nox_lambda_10__fnval_release, %t530
+    storel $__nox_lambda_12__fnval_release, %t530
     call $__nox_sort_key_inplace__str_int(l %rt, l %t528, l %t529, w 0)
     %t531 =w ceql %t529, 0
     jnz %t531, @release_skip367, @release366

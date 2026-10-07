@@ -483,3 +483,140 @@ def zip[A, B](a: list[A], b: list[B]) -> list[tuple[A, B]]:
         out.append((a[i], b[i]))
         i = i + 1
     return out
+
+
+# ---- v1.168.0: `set[T]` — sözlük (T → bool) üzerine kurulu küme. Yüzey adı `set`; parser `set[T]`yi `__nox_Set[T]`ye, `{a, b}`/`{x for ...}`i
+# `__nox_set_from_list([...])`e, checker `set()`/`set(it)`i buraya yönlendirir. Operatörler dunder protokolüyle (`|` `&` `-` `^` `<=` `>=` `<` `>` `==` `in` `len` `for`).
+# Eleman tipi dict anahtarı kurallarına tabidir (int/float/bool/str). Yazdırma ekleme sırasıyla (Python'da sıra tanımsızdır).
+class __nox_Set[T]:
+    _d: dict[T, bool]
+
+    def __init__(self) -> None:
+        self._d = {}
+
+    def add(self, v: T) -> None:
+        self._d[v] = True
+
+    def update(self, other: __nox_Set[T]) -> None:
+        for k in other._d:
+            self._d[k] = True
+
+    def remove(self, v: T) -> None:
+        if v not in self._d:
+            raise KeyError("set.remove(x): x kümede yok")
+        del self._d[v]
+
+    def discard(self, v: T) -> None:
+        if v in self._d:
+            del self._d[v]
+
+    def pop(self) -> T:
+        ks: list[T] = list(self._d)
+        if len(ks) == 0:
+            raise KeyError("boş kümeden pop")
+        v: T = ks[0]
+        del self._d[v]
+        return v
+
+    def clear(self) -> None:
+        self._d.clear()
+
+    def copy(self) -> __nox_Set[T]:
+        r: __nox_Set[T] = __nox_Set[T]()
+        r.update(self)
+        return r
+
+    def union(self, other: __nox_Set[T]) -> __nox_Set[T]:
+        r: __nox_Set[T] = self.copy()
+        r.update(other)
+        return r
+
+    def intersection(self, other: __nox_Set[T]) -> __nox_Set[T]:
+        r: __nox_Set[T] = __nox_Set[T]()
+        for k in self._d:
+            if k in other._d:
+                r._d[k] = True
+        return r
+
+    def difference(self, other: __nox_Set[T]) -> __nox_Set[T]:
+        r: __nox_Set[T] = __nox_Set[T]()
+        for k in self._d:
+            if k not in other._d:
+                r._d[k] = True
+        return r
+
+    def symmetric_difference(self, other: __nox_Set[T]) -> __nox_Set[T]:
+        r: __nox_Set[T] = self.difference(other)
+        for k in other._d:
+            if k not in self._d:
+                r._d[k] = True
+        return r
+
+    def issubset(self, other: __nox_Set[T]) -> bool:
+        for k in self._d:
+            if k not in other._d:
+                return False
+        return True
+
+    def issuperset(self, other: __nox_Set[T]) -> bool:
+        return other.issubset(self)
+
+    def isdisjoint(self, other: __nox_Set[T]) -> bool:
+        for k in self._d:
+            if k in other._d:
+                return False
+        return True
+
+    def __contains__(self, v: T) -> bool:
+        return v in self._d
+
+    def __len__(self) -> int:
+        return len(self._d)
+
+    def __iter__(self) -> list[T]:
+        return list(self._d)
+
+    def __or__(self, other: __nox_Set[T]) -> __nox_Set[T]:
+        return self.union(other)
+
+    def __and__(self, other: __nox_Set[T]) -> __nox_Set[T]:
+        return self.intersection(other)
+
+    def __sub__(self, other: __nox_Set[T]) -> __nox_Set[T]:
+        return self.difference(other)
+
+    def __xor__(self, other: __nox_Set[T]) -> __nox_Set[T]:
+        return self.symmetric_difference(other)
+
+    def __le__(self, other: __nox_Set[T]) -> bool:
+        return self.issubset(other)
+
+    def __ge__(self, other: __nox_Set[T]) -> bool:
+        return other.issubset(self)
+
+    def __lt__(self, other: __nox_Set[T]) -> bool:
+        return len(self._d) < len(other._d) and self.issubset(other)
+
+    def __gt__(self, other: __nox_Set[T]) -> bool:
+        return len(self._d) > len(other._d) and other.issubset(self)
+
+    def __eq__(self, other: __nox_Set[T]) -> bool:
+        return len(self._d) == len(other._d) and self.issubset(other)
+
+    def __str__(self) -> str:
+        if len(self._d) == 0:
+            return "set()"
+        out: str = "{"
+        first: bool = True
+        for k in self._d:
+            if not first:
+                out = out + ", "
+            out = out + repr(k)
+            first = False
+        return out + "}"
+
+def __nox_set_from_list[T](xs: list[T]) -> __nox_Set[T]:
+    s: __nox_Set[T] = __nox_Set[T]()
+    for x in xs:
+        s.add(x)
+    return s
