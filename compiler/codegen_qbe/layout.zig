@@ -1045,7 +1045,7 @@ pub fn genEqCompareOrJump(
         const t = try self.newTemp();
         const mnemonic: []const u8 = switch (qtype) {
             .l => "ceql",
-            .w, .b => "ceqw",
+            .w, .b, .sb, .h, .sh => "ceqw",
             .d => "ceqd",
             .none => unreachable,
         };

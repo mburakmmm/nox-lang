@@ -9,11 +9,12 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const abi_layout = @import("abi_layout");
 
-/// `b` (v1.142.19): YALNIZCA `list[bool]` ELEMAN DEPOLAMA tipini (`elem_qtype`) betimler — bellekte
-/// TEK bayt (`qbeSizeOf(.b) == 1`), hesaplamada `w` (0/1). Bir `Value`/IR işleminin tipi OLARAK ASLA
+/// `b`/`sb`/`h`/`sh` (v1.142.19/22): YALNIZCA `list[bool|u8|i8|u16|i16]` ELEMAN DEPOLAMA tiplerini
+/// (`elem_qtype`) betimler — bellekte 1/1/2/2 bayt (`b` işaretsiz/bool, `sb` işaretli bayt, `h` işaretsiz
+/// yarım-sözcük, `sh` işaretli), hesaplamada `w`. Bir `Value`/IR işleminin tipi OLARAK ASLA
 /// kullanılmaz: eleman okuma/yazma `loadElem`/`storeElem` (loadub/storeb) üzerinden, değer
 /// tipine dönüşüm `elemValueQtype` ile yapılır.
-pub const QbeType = enum { l, d, w, none, b };
+pub const QbeType = enum { l, d, w, none, b, sb, h, sh };
 
 /// v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192): `compiler/
 /// typecheck/types.zig`den yeniden İHRAÇ edilir (`Backend`/`Profile`nin

@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.23]
+
+### Performans
+
+- **`list[u8]`/`i8`/`u16`/`i16` 1/1/2/2 bayt/eleman** (önceden 4): `QbeType` depolama varyantları
+  `sb`/`h`/`sh`, işaretli/işaretsiz yükleme. Spec §3.256.
+
 ## [1.142.22]
 
 ### Performans

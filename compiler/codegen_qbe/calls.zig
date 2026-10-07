@@ -37,7 +37,7 @@ fn hpyElemKindLit(qtype: QbeType, is_str: bool) []const u8 {
     return switch (qtype) {
         .l => "0", // int
         .d => "1", // float
-        .w, .b => "2", // bool
+        .w, .b, .sb, .h, .sh => "2", // bool
         .none => "0",
     };
 }
@@ -181,7 +181,7 @@ pub fn genHpyMarshalTrailingArgs(self: *Codegen, mc_temp: []const u8, trailing: 
                         .l => if (f.info.heap == .str) "$nox_hpy_class_arg_set_str" else "$nox_hpy_class_arg_set_int",
                         .d => "$nox_hpy_class_arg_set_float",
                         .w => "$nox_hpy_class_arg_set_bool",
-                        .none, .b => return error.Unsupported,
+                        .none, .b, .sb, .h, .sh => return error.Unsupported,
                     };
                     try self.qbeCall(null, setter, &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = fname_v.text }, .{ .ty = f.info.qtype, .text = fv.text } });
                 }
@@ -191,7 +191,7 @@ pub fn genHpyMarshalTrailingArgs(self: *Codegen, mc_temp: []const u8, trailing: 
                 .l => try self.qbeCall(null, "$nox_hpy_args_add_int", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text } }),
                 .d => try self.qbeCall(null, "$nox_hpy_args_add_float", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .d, .text = av.text } }),
                 .w => try self.qbeCall(null, "$nox_hpy_args_add_bool", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .w, .text = av.text } }),
-                .none, .b => return error.Unsupported,
+                .none, .b, .sb, .h, .sh => return error.Unsupported,
             },
             else => return error.Unsupported,
         }

@@ -33,7 +33,8 @@ pub fn qbeTypeName(t: QbeType) []const u8 {
         .l => "l",
         .d => "d",
         .w => "w",
-        .b => "b",
+        .b, .sb => "b",
+        .h, .sh => "h",
         .none => "",
     };
 }
@@ -41,18 +42,32 @@ pub fn qbeTypeName(t: QbeType) []const u8 {
 /// v1.142.19: `list[bool]` eleman depolaması 1 bayttır (`.b`, bkz. `QbeType`nin belge notu). Eleman
 /// TİPİ (skaler, ARC'sız, sabit-genişlikli-olmayan `.w` = bool) `.b`ye, diğerleri değişmeden eşlenir.
 pub fn elemStorageQtype(q: QbeType, fixed_int: ?types.FixedIntKind, heap: HeapKind) QbeType {
-    if (q == .w and fixed_int == null and heap == .none) return .b;
+    if (heap != .none) return q;
+    if (fixed_int) |k| {
+        return switch (k) {
+            .u8 => .b,
+            .i8 => .sb,
+            .u16 => .h,
+            .i16 => .sh,
+            else => q,
+        };
+    }
+    if (q == .w) return .b; // bool
     return q;
 }
 
 /// Depolama tipini DEĞER (register) tipine çevirir: `.b` → `.w` (bool 0/1).
 pub fn elemValueQtype(q: QbeType) QbeType {
-    return if (q == .b) .w else q;
+    return switch (q) {
+        .b, .sb, .h, .sh => .w,
+        else => q,
+    };
 }
 
 pub fn qbeSizeOf(t: QbeType) usize {
     return switch (t) {
-        .b => 1,
+        .b, .sb => 1,
+        .h, .sh => 2,
         .w => 4,
         .l, .d => 8,
         .none => 0,

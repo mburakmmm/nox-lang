@@ -1,0 +1,62 @@
+# v1.142.22: list[u8]/list[i8]/list[u16]/list[i16] artık 1/1/2/2 bayt/eleman (önceden 4). İşaret/
+# sıfır genişletme, büyüme, atama, for, ==, i32/u32/u64 listelerinin dokunulmazlığı.
+a: list[u8] = [u8(0), u8(127), u8(128), u8(255)]
+print(a[0])
+print(a[2])
+print(a[3])
+a[1] = u8(200)
+print(a[1])
+
+b: list[i8] = [i8(-128), i8(-1), i8(0), i8(127)]
+print(b[0])
+print(b[1])
+print(b[3])
+b[2] = i8(-7)
+print(b[2])
+
+c: list[u16] = [u16(0), u16(65535), u16(40000)]
+print(c[1])
+print(c[2])
+c[0] = u16(513)
+print(c[0])
+
+d: list[i16] = [i16(-32768), i16(32767), i16(-1)]
+print(d[0])
+print(d[1])
+print(d[2])
+
+# büyüme + toplam
+e: list[u8] = []
+i: int = 0
+while i < 600:
+    e.append(u8(i % 256))
+    i = i + 1
+s: u32 = u32(0)
+for x in e:
+    s = s + u32(x)
+print(len(e))
+print(s)
+print(e[255])
+print(e[256])
+print(e[599])
+
+h: list[i16] = []
+i = 0
+while i < 300:
+    h.append(i16(i - 150))
+    i = i + 1
+print(h[0])
+print(h[299])
+
+# eşitlik
+print(a == [u8(0), u8(200), u8(128), u8(255)])
+print(a == [u8(0), u8(0), u8(128), u8(255)])
+print(b == [i8(-128), i8(-1), i8(-7), i8(127)])
+
+# 4/8 baytlık listeler değişmez
+k: list[i32] = [i32(-2147483648), i32(5)]
+print(k[0])
+l: list[u32] = [u32(4294967295)]
+print(l[0])
+m: list[u64] = [u64(9000000000000)]
+print(m[0])

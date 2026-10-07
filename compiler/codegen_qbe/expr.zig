@@ -192,7 +192,7 @@ pub fn convert(self: *Codegen, v: Value, target_in: QbeType) CodegenError!Value 
 pub fn toPayload(self: *Codegen, v: Value) CodegenError!Value {
     return switch (v.qtype) {
         .l => v,
-        .w, .b => blk: {
+        .w, .b, .sb, .h, .sh => blk: {
             const t = try self.newTemp();
             try self.qbeOp1(t, .l, "extuw", v.text);
             break :blk .{ .text = t, .qtype = .l };
@@ -212,7 +212,7 @@ pub fn toPayload(self: *Codegen, v: Value) CodegenError!Value {
 pub fn fromPayload(self: *Codegen, payload: Value, target_qtype: QbeType) CodegenError!Value {
     return switch (target_qtype) {
         .l => payload,
-        .w, .b => blk: {
+        .w, .b, .sb, .h, .sh => blk: {
             const t = try self.newTemp();
             try self.qbeOp1(t, .w, "copy", payload.text);
             break :blk .{ .text = t, .qtype = .w };
@@ -1772,7 +1772,7 @@ pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
             try self.qbeJmp(done_label);
             try self.qbeLabel(done_label);
         },
-        .none, .b => return error.Unsupported,
+        .none, .b, .sb, .h, .sh => return error.Unsupported,
     }
 }
 
@@ -1808,7 +1808,7 @@ pub fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
             try self.qbeJmp(done_label);
             try self.qbeLabel(done_label);
         },
-        .none, .b => return error.Unsupported,
+        .none, .b, .sb, .h, .sh => return error.Unsupported,
     }
 }
 

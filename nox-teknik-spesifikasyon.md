@@ -28257,9 +28257,12 @@ değer tipine dönüşüm `abi.elemValueQtype` (`valueFromElemDescriptor`, `conv
 `qbeSizeOf(elem_qtype)` kullanan tüm boyut hesapları (tahsis, büyüme, serbest bırakma, eşitlik adımı)
 otomatik doğru. Runtime: `buildEntryList` 1 baytlık elemanı yazar; HPy köprüsü `list[bool]`ı 1 bayt
 okur (dict tarama listeleri de). Eşitlik fonksiyonu adı `primb` (i32 listelerinden ayrı).
-**Kapsam dışı (bilinçli):** `list[u8]`/`i8`/`u16`/`i16` hâlâ 4 bayt — `ptr[u8]` görünümleri ve
-`nox.buffer` bunlara dayanıyor, ayrı iş. Sonuç: sieve 10M 0.060 → 0.030 s. Golden
-`list_bool_byte_packed` (QBE ve `--release` aynı çıktı).
+**v1.142.23 genişletmesi:** aynı mekanizma `list[u8]` (`.b`), `list[i8]` (`.sb`), `list[u16]` (`.h`) ve
+`list[i16]` (`.sh`) için (1/1/2/2 bayt; `loadub/loadsb/loaduh/loadsh`, `storeb/storeh`, LLVM'de
+`trunc`+`store i8/i16`). `list[i32]/u32/u64/int/float` değişmez. Eşitlik fonksiyonu adı `.b`/`.sb` için
+`primb`, `.h`/`.sh` için `primh` (aynı bayt karşılaştırması). Runtime'da u8/i8/u16/i16 liste tüketicisi yok
+(gzip `list[int]` kullanır; `nox.buffer`/`nox.binary` saf Nox). Sonuç: sieve 10M 0.060 → 0.030 s. Golden
+`list_bool_byte_packed`, `list_fixed_int_byte_packed` (QBE ve `--release` aynı çıktı).
 
 ## 11. Sonraki Adımlar
 
