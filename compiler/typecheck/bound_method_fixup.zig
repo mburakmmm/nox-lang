@@ -142,6 +142,11 @@ const Fixer = struct {
         switch (e.*) {
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
             .unary => |*u| try self.fixExpr(u.operand, true),
+            .ternary => |*t| {
+                try self.fixExpr(t.cond, true);
+                try self.fixExpr(t.then_expr, true);
+                try self.fixExpr(t.else_expr, true);
+            },
             .binary => |*b| {
                 try self.fixExpr(b.left, true);
                 try self.fixExpr(b.right, true);

@@ -28415,6 +28415,36 @@ boş alt-dize, `and`/`not`/döngü/`break`/fonksiyon içinde kullanım); typeche
 `err_in_list_elem_mismatch`, `err_in_dict_key_mismatch`; fmt idempotans+öncelik; tree-sitter corpus; Zig birim testi
 `nox_str_contains`. QBE ve `--release` aynı çıktı.
 
+## 3.263 Üçlü ifade `a if cond else b` (v1.146.0)
+
+`ast.Expr.ternary{cond, then_expr, else_expr}`. Parser: `parseExpr` önce `parseOr` değerini okur, ardından `if` gelirse
+koşulu `parseOr` ile (Python gibi: koşulda parantezsiz üçlü yok), `else` kolunu `parseExpr` ile (sağ-birleşimli, derinlik
+koruması orada) okur. En gevşek bağlanan ifadedir; formatter herhangi bir operatör bağlamında parantezler, `then`/`cond`
+içindeki iç içe üçlüyü parantezler, `else`teki iç içe üçlüyü parantezlemez.
+
+**Tip kuralı (`checkTernary`):** koşul `bool`; iki dal AYNI tipte (`types.eql`) ve int/float/bool/str/fixed_int/list/dict/sınıf
+olmalı. `int`/`float` karışımı BİLİNÇLİ olarak reddedilir (dalı açıkça dönüştürmek gerekir; `float(int)` roadmap 1.6).
+Beklenen tip varsa iki dala da iletilir (`xs: list[int] = [1] if c else []`). `x != None` / `x == None` koşullarında Optional
+daraltması `if` deyimiyle aynı dar örüntüyle ilgili dal için uygulanır (`n.val if n != None else d`); codegen `narrowed_unbox`
+ile eşlenir.
+
+**Kod üretimi (`genTernary`, her iki backend):** `jnz` + iki blok + `phi` (`and`/`or` ile aynı desen; öncül etiket
+`current_label`). Yalnızca seçilen dal çalışır (yan etki/istisna yalnızca orada). Her dal `mod_cache` anlık görüntüsüyle
+sarılır (dal çalışmamış olabilir; yoksa dalda önbelleğe alınan `x % c` sonucu birleşimden sonra dominance ihlali yapar).
+**Sahiplik:** ternary sonucu HER ZAMAN sahipli (+1) bir değerdir — ödünç bir dal (`identifier`/alan/eleman okuması)
+`retainIfAliasing` ile retain edilir, taze dal (çağrı/birleştirme/literal) edilmez — bu yüzden `isTemporaryExpr(.ternary)`
+doğrudur (tüketici serbest bırakır, `var_decl` retain etmez). Ödünç dalların kaçış analizleri (`ownership/analysis`,
+`local_escape`, `inlining`) dallardaki çıplak tanımlayıcıyı kaçış sayar (yığına/arena'ya taşınmış yerel bir değişken
+ternary ile dışarı verilemez).
+
+Golden: `ternary_basic` (tipler, tek-dal değerlendirme, iç içe, Optional daraltma, döngü), `ternary_arc_branches` (ödünç/
+taze/literal dallar, çağrı argümanı, atılan ifade, break ile; sızıntı denetimli debug runtime'da), `ternary_edge_cases` (mod
+önbelleği, istisna, f-string, liste/dict literali, spawn argümanı, `in`, `continue`); typecheck `ok_ternary`,
+`err_ternary_branch_type_mismatch`, `err_ternary_cond_not_bool`; fmt idempotans/parantezleme; tree-sitter corpus
+(`conditional_expression`). QBE ve `--release` aynı çıktı.
+
+**Bilinen sınırlamalar:** dallar farklı sınıflarsa (polimorfik) reddedilir; `T | None` dalı (`x if c else None`) yok.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

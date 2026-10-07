@@ -43,6 +43,28 @@ test "fmt: gerekli parens KORUNUR, gereksiz parens ATILIR (precedence)" {
     }
 }
 
+test "fmt: v1.146.0 — üçlü ifade İDEMPOTENT round-trip ve parantezleme" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "y: int = a if c else b\n", .out = "y: int = a if c else b\n" },
+        .{ .in = "y: int = (a if c else b)\n", .out = "y: int = a if c else b\n" },
+        .{ .in = "y: int = a if c else (b if d else e)\n", .out = "y: int = a if c else b if d else e\n" },
+        .{ .in = "y: int = (a if c else b) if d else e\n", .out = "y: int = (a if c else b) if d else e\n" },
+        .{ .in = "y: int = (a if c else b) + 1\n", .out = "y: int = (a if c else b) + 1\n" },
+        .{ .in = "y: int = 1 + (a if c else b)\n", .out = "y: int = 1 + (a if c else b)\n" },
+        .{ .in = "y: bool = a or b if c and d else e\n", .out = "y: bool = a or b if c and d else e\n" },
+        .{ .in = "print(a if c else b)\n", .out = "print(a if c else b)\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}
+
 test "fmt: v1.145.0 — in/not in İDEMPOTENT round-trip ve öncelik" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

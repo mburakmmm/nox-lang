@@ -15,7 +15,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 - [x] **1.1 `break` / `continue`** — v1.144.0 (spec §3.261). Tasarım notları aşağıda.
 - [x] **1.2 `in` / `not in`** — v1.145.0 (spec §3.262). Kullanıcı sınıfları için `__contains__` yok (ayrı karar).
-- [ ] **1.3 Üçlü ifade** `a if cond else b`.
+- [x] **1.3 Üçlü ifade** `a if cond else b` — v1.146.0 (spec §3.263). Dallar aynı tipte olmalı (int/float karışımı → 1.6 `float(int)` sonrası gevşetilebilir).
 - [ ] **1.4 Varsayılan argümanlar + keyword argümanlar** (`def f(a: int, b: int = 2)`, `f(b=1, a=3)`).
 - [ ] **1.5 dict: `.get(k, default)`, `for k in d`, `.items()`**; **list: `insert`/`extend`/`reverse`/`remove`/`index`**.
 - [ ] **1.6 `float(int)` / açık int→float dönüşümü** (şu an `float` yalnızca `str` alıyor).

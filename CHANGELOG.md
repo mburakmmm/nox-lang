@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.146.0]
+
+### Eklendi
+
+- **Üçlü ifade** `a if cond else b` (aynı tipli dallar, iç içe, Optional daraltmalı; yalnızca seçilen dal çalışır; QBE ve
+  LLVM). Spec §3.263.
+
 ## [1.145.0]
 
 ### Eklendi

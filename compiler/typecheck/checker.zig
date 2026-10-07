@@ -3136,6 +3136,11 @@ pub const Checker = struct {
         switch (e) {
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
             .unary => |u| try self.collectSpawnTargetsExpr(u.operand.*),
+            .ternary => |t| {
+                try self.collectSpawnTargetsExpr(t.cond.*);
+                try self.collectSpawnTargetsExpr(t.then_expr.*);
+                try self.collectSpawnTargetsExpr(t.else_expr.*);
+            },
             .binary => |b| {
                 try self.collectSpawnTargetsExpr(b.left.*);
                 try self.collectSpawnTargetsExpr(b.right.*);
@@ -3554,6 +3559,11 @@ pub const Checker = struct {
         switch (expr) {
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
             .unary => |u| try self.scanMutatesGraphExpr(fname, params, u.operand.*, shared, seeds, reverse_edges),
+            .ternary => |t| {
+                try self.scanMutatesGraphExpr(fname, params, t.cond.*, shared, seeds, reverse_edges);
+                try self.scanMutatesGraphExpr(fname, params, t.then_expr.*, shared, seeds, reverse_edges);
+                try self.scanMutatesGraphExpr(fname, params, t.else_expr.*, shared, seeds, reverse_edges);
+            },
             .binary => |b| {
                 try self.scanMutatesGraphExpr(fname, params, b.left.*, shared, seeds, reverse_edges);
                 try self.scanMutatesGraphExpr(fname, params, b.right.*, shared, seeds, reverse_edges);
@@ -3677,6 +3687,11 @@ pub const Checker = struct {
     fn checkTransitiveSpawnSharedMutationExpr(self: *Checker, fd_name: []const u8, expr: ast.Expr, params: []const SharedParam) TypeError!void {
         switch (expr) {
             .unary => |u| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, u.operand.*, params),
+            .ternary => |t| {
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, t.cond.*, params);
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, t.then_expr.*, params);
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, t.else_expr.*, params);
+            },
             .binary => |b| {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, b.left.*, params);
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, b.right.*, params);
@@ -3907,6 +3922,11 @@ pub const Checker = struct {
                 try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners, locked_resources);
             },
             .unary => |u| try self.removeAwaitedTaskSharing(aa, u.operand.*, task_spawn_ids, resource_owners, locked_resources),
+            .ternary => |t| {
+                try self.removeAwaitedTaskSharing(aa, t.cond.*, task_spawn_ids, resource_owners, locked_resources);
+                try self.removeAwaitedTaskSharing(aa, t.then_expr.*, task_spawn_ids, resource_owners, locked_resources);
+                try self.removeAwaitedTaskSharing(aa, t.else_expr.*, task_spawn_ids, resource_owners, locked_resources);
+            },
             .binary => |b| {
                 try self.removeAwaitedTaskSharing(aa, b.left.*, task_spawn_ids, resource_owners, locked_resources);
                 try self.removeAwaitedTaskSharing(aa, b.right.*, task_spawn_ids, resource_owners, locked_resources);
@@ -5091,7 +5111,44 @@ pub const Checker = struct {
     /// (parser'ın `.l_brace` dalı ARTIK `{}`ye izin verir, bkz. onun belge
     /// notu; codegen'in `genExprForTarget`i AYNI şekilde `target.dict_info`den
     /// tipi alan bir `genEmptyDictLit`e sahiptir).
+    /// v1.146.0: `then if cond else else_` — koşul `bool`; iki dal AYNI tipte (int/float/bool/str/fixed_int/list/dict/
+    /// sınıf). `expected` (varsa) iki dala da iletilir (boş `[]`/`{}` literalleri için). `x != None`/`x == None`
+    /// koşullarında Optional daraltması `if` ifadesiyle aynı dar örüntüyle, ilgili dal için uygulanır
+    /// (`n.val if n != None else 0`).
+    fn checkTernary(self: *Checker, ctx: *FnCtx, t: ast.Ternary, expected: ?Type) TypeError!Type {
+        const ct = try self.checkExpr(ctx, t.cond.*);
+        if (ct != .boolean) return self.fail(error.TypeMismatch, "üçlü ifadenin koşulu bool olmalıdır", .{});
+        var then_t: Type = undefined;
+        var else_t: Type = undefined;
+        if (detectNarrowing(t.cond.*, ctx.scope)) |n| {
+            const prior = ctx.narrowed.get(n.name);
+            if (n.narrows_then) {
+                try ctx.narrowed.put(self.allocator, n.name, n.base);
+                then_t = try self.checkExprExpected(ctx, t.then_expr.*, expected);
+                if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
+                else_t = try self.checkExprExpected(ctx, t.else_expr.*, expected);
+            } else {
+                then_t = try self.checkExprExpected(ctx, t.then_expr.*, expected);
+                try ctx.narrowed.put(self.allocator, n.name, n.base);
+                else_t = try self.checkExprExpected(ctx, t.else_expr.*, expected);
+                if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
+            }
+        } else {
+            then_t = try self.checkExprExpected(ctx, t.then_expr.*, expected);
+            else_t = try self.checkExprExpected(ctx, t.else_expr.*, expected);
+        }
+        switch (then_t) {
+            .int, .float, .boolean, .str, .fixed_int, .list, .dict, .class => {},
+            else => return self.fail(error.TypeMismatch, "üçlü ifadenin dallarının tipi desteklenmiyor (int/float/bool/str/list/dict/sınıf olmalı)", .{}),
+        }
+        if (!types.eql(then_t, else_t)) {
+            return self.fail(error.TypeMismatch, "üçlü ifadenin iki dalı AYNI tipte olmalıdır (int ile float karışımı için dalı açıkça dönüştürün)", .{});
+        }
+        return then_t;
+    }
+
     fn checkExprExpected(self: *Checker, ctx: *FnCtx, expr: ast.Expr, expected: ?Type) TypeError!Type {
+        if (expr == .ternary) return self.checkTernary(ctx, expr.ternary, expected);
         if (expr == .list_lit and expr.list_lit.len == 0) {
             if (expected) |exp| {
                 if (exp == .list) return exp;
@@ -5299,6 +5356,7 @@ pub const Checker = struct {
                 }
             },
             .binary => |b| try self.checkBinary(ctx, b),
+            .ternary => |t| try self.checkTernary(ctx, t, null),
             .call => |c| try self.checkCall(ctx, c),
             .attribute => |a| try self.checkAttribute(ctx, a),
             .index => |idx| blk: {
@@ -7365,6 +7423,15 @@ pub const Checker = struct {
                 const operand = try self.allocator.create(ast.Expr);
                 operand.* = try self.substituteExpr(u.operand.*, bindings);
                 break :blk .{ .unary = .{ .op = u.op, .operand = operand } };
+            },
+            .ternary => |t| blk: {
+                const c = try self.allocator.create(ast.Expr);
+                c.* = try self.substituteExpr(t.cond.*, bindings);
+                const th = try self.allocator.create(ast.Expr);
+                th.* = try self.substituteExpr(t.then_expr.*, bindings);
+                const el = try self.allocator.create(ast.Expr);
+                el.* = try self.substituteExpr(t.else_expr.*, bindings);
+                break :blk .{ .ternary = .{ .cond = c, .then_expr = th, .else_expr = el } };
             },
             .binary => |b| blk: {
                 const left = try self.allocator.create(ast.Expr);

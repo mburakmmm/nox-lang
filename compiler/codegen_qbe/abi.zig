@@ -268,7 +268,9 @@ pub fn isTemporaryExpr(expr: ast.Expr) bool {
         // YARATMAZ — `releaseIfTemporary`nin `isHeapManaged(v.heap)` ÖN-
         // koşulu ZATEN `.channel`/`.thread_channel`i (ARC-DIŞI, bkz.
         // `isHeapManaged`in belge notu) ELER.
-        .call, .list_lit, .dict_lit, .binary, .generic_construct => true,
+        // `.ternary`: `genTernary` her dalın sonucunu SAHİPLİ (+1) hale getirir (ödünç bir dal retain edilir) —
+        // sonuç HER ZAMAN taze bir sahiplik taşır, tüketici serbest bırakmalıdır.
+        .call, .list_lit, .dict_lit, .binary, .generic_construct, .ternary => true,
         .attribute => |a| isTemporaryExpr(a.obj.*),
         .index => |idx| isTemporaryExpr(idx.obj.*),
         else => false,

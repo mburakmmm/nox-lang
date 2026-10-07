@@ -794,6 +794,11 @@ pub fn collectIndexStrBasesExpr(self: *Codegen, e: ast.Expr, candidates: *std.St
             try self.collectIndexStrBasesExpr(idx.index.*, candidates);
         },
         .unary => |u| try self.collectIndexStrBasesExpr(u.operand.*, candidates),
+        .ternary => |t| {
+            try self.collectIndexStrBasesExpr(t.cond.*, candidates);
+            try self.collectIndexStrBasesExpr(t.then_expr.*, candidates);
+            try self.collectIndexStrBasesExpr(t.else_expr.*, candidates);
+        },
         .binary => |b| {
             try self.collectIndexStrBasesExpr(b.left.*, candidates);
             try self.collectIndexStrBasesExpr(b.right.*, candidates);

@@ -164,6 +164,27 @@ test "golden(typecheck): v1.145.0 — in sol işleneni dict anahtar tipine uymuy
     );
 }
 
+test "golden(typecheck): v1.146.0 — üçlü ifade (aynı tipli dallar, iç içe, boş liste dalı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_ternary.nox"),
+        @embedFile("typecheck_cases/ok_ternary.expected"),
+    );
+}
+
+test "golden(typecheck): v1.146.0 — üçlü ifadenin dalları farklı tipteyse reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_ternary_branch_type_mismatch.nox"),
+        @embedFile("typecheck_cases/err_ternary_branch_type_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): v1.146.0 — üçlü ifadenin koşulu bool değilse reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_ternary_cond_not_bool.nox"),
+        @embedFile("typecheck_cases/err_ternary_cond_not_bool.expected"),
+    );
+}
+
 test "golden(typecheck): var_decl tip uyuşmazlığı" {
     try expectGolden(
         @embedFile("typecheck_cases/err_var_decl_mismatch.nox"),

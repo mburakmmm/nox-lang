@@ -1,0 +1,78 @@
+class Box:
+    v: int
+    def __init__(self: Box, v: int) -> None:
+        self.v = v
+
+class Node:
+    val: int
+    nxt: Node | None
+    def __init__(self: Node, v: int) -> None:
+        self.val = v
+        self.nxt = None
+
+def side(label: str, v: int) -> int:
+    print("eval " + label)
+    return v
+
+def pick(n: int) -> str:
+    return "big" if n > 10 else "small"
+
+def first_or(n: Node | None, d: int) -> int:
+    return n.val if n != None else d
+
+def second_or(n: Node | None, d: int) -> int:
+    return d if n == None else n.val
+
+a: int = 5
+print(a if a > 3 else 0)
+print(a if a > 9 else -1)
+print(pick(3))
+print(pick(30))
+b: float = 1.5 if a > 1 else 2.5
+print(b)
+c: bool = True if a == 5 else False
+print(c)
+s: str = "yes" if a > 2 else "no"
+w: str = "x" + "y"
+t: str = w if a > 100 else s
+print(t)
+xs: list[int] = [1, 2, 3]
+ys: list[int] = [9] if a > 100 else xs
+print(len(ys))
+zs: list[int] = xs if a > 1 else [7, 8]
+print(len(zs))
+bx: Box = Box(1) if a > 100 else Box(2)
+print(bx.v)
+
+# only the selected branch runs
+r: int = side("then", 1) if a > 1 else side("else", 2)
+print(r)
+q: int = side("then2", 1) if a > 100 else side("else2", 2)
+print(q)
+
+# nested / right-associative
+n: int = 15
+grade: str = "A" if n > 20 else "B" if n > 10 else "C"
+print(grade)
+print((1 if n > 3 else 2) + 10)
+
+# in conditions and with `in`
+names: list[str] = ["ann", "bob"]
+print("found" if "bob" in names else "missing")
+
+# Optional narrowing in ternary
+p: Node = Node(7)
+print(first_or(p, -1))
+print(first_or(None, -1))
+print(second_or(p, -2))
+print(second_or(None, -2))
+
+# in a loop with break / continue
+total: int = 0
+for k in range(10):
+    total = total + (k if k % 2 == 0 else 0)
+print(total)
+
+# as call argument and str building
+print(str(5 if a > 1 else 6) + "!")
+print(len(names if a > 1 else ["z"]))

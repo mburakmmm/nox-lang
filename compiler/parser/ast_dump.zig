@@ -286,6 +286,15 @@ fn dumpExpr(writer: *std.Io.Writer, e: ast.Expr) std.Io.Writer.Error!void {
             try dumpExpr(writer, u.operand.*);
             try writer.writeAll(")");
         },
+        .ternary => |t| {
+            try writer.writeAll("(ternary ");
+            try dumpExpr(writer, t.cond.*);
+            try writer.writeAll(" ");
+            try dumpExpr(writer, t.then_expr.*);
+            try writer.writeAll(" ");
+            try dumpExpr(writer, t.else_expr.*);
+            try writer.writeAll(")");
+        },
         .binary => |b| {
             try writer.print("(binary {s} ", .{@tagName(b.op)});
             try dumpExpr(writer, b.left.*);

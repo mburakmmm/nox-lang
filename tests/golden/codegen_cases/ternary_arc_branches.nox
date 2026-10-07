@@ -1,0 +1,40 @@
+class Item:
+    label: str
+    tags: list[str]
+    def __init__(self: Item, label: str) -> None:
+        self.label = label
+        self.tags = [label, "t"]
+
+def pick_label(it: Item, other: str, c: bool) -> str:
+    return it.label if c else other
+
+def choose(a: list[str], b: list[str], c: bool) -> list[str]:
+    return a if c else b
+
+def build(n: int) -> str:
+    return "n=" + str(n)
+
+def total(n: int) -> int:
+    base: str = "base"
+    it: Item = Item("item")
+    names: list[str] = ["p", "q"]
+    acc: int = 0
+    i: int = 0
+    while i < n:
+        i = i + 1
+        # borrowed vs fresh branches (identifier / field / call / concat / literal)
+        s1: str = base if i % 2 == 0 else build(i)
+        s2: str = it.label if i % 3 == 0 else "lit" + str(i)
+        s3: str = pick_label(it, build(i), i % 2 == 0)
+        ls: list[str] = choose(names, [build(i)], i % 2 == 0)
+        it2: Item = it if i % 5 == 0 else Item("fresh" + str(i))
+        acc = acc + len(s1) + len(s2) + len(s3) + len(ls) + len(it2.label)
+        # nested ternary and ternary as call argument / discarded expression
+        acc = acc + len(base if i % 2 == 0 else (build(i) if i % 3 == 0 else "z"))
+        base if i % 7 == 0 else build(i)
+        if i == 9000:
+            break
+    return acc
+
+print(total(200))
+print(total(20000))

@@ -17,6 +17,7 @@
 // @ts-check
 
 const PREC = {
+  ternary: 0,
   or: 1,
   and: 2,
   not: 3,
@@ -246,12 +247,22 @@ module.exports = grammar({
     // üs < postfix (çağrı/öznitelik/indeks).
 
     _expression: $ => choice(
+      $.conditional_expression,
       $.binary_expression,
       $.unary_expression,
       $.await_expression,
       $.spawn_expression,
       $._postfix_expression,
     ),
+
+    // `a if cond else b` (v1.146.0): en gevşek bağlanan ifade, `else` kolu sağ-birleşimli.
+    conditional_expression: $ => prec.right(PREC.ternary, seq(
+      field('consequence', $._expression),
+      'if',
+      field('condition', $._expression),
+      'else',
+      field('alternative', $._expression),
+    )),
 
     binary_expression: $ => choice(
       ...[

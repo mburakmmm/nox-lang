@@ -822,7 +822,20 @@ pub const Parser = struct {
     fn parseExpr(self: *Parser) ParseError!ast.Expr {
         try self.enterRecursion();
         defer self.exitRecursion();
-        return self.parseOr();
+        const value = try self.parseOr();
+        // `a if cond else b` (v1.146.0): Python gibi `cond` bir `or`-seviyesi ifadedir, `else` kolu SAĞ-birleşimli
+        // (iç içe üçlü `parseExpr` özyinelemesiyle; derinlik koruması orada).
+        if (self.match(.kw_if)) {
+            const cond = try self.parseOr();
+            _ = try self.expect(.kw_else);
+            const else_e = try self.parseExpr();
+            return .{ .ternary = .{
+                .cond = try self.box(cond),
+                .then_expr = try self.box(value),
+                .else_expr = try self.box(else_e),
+            } };
+        }
+        return value;
     }
 
     fn parseOr(self: *Parser) ParseError!ast.Expr {

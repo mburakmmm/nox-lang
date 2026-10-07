@@ -55,6 +55,11 @@ pub fn visitExprForReqUsage(e: ast.Expr, param_name: []const u8, used: *UsedRequ
             used.* = UsedRequestFields.allUsed();
         },
         .unary => |u| visitExprForReqUsage(u.operand.*, param_name, used),
+        .ternary => |t| {
+            visitExprForReqUsage(t.cond.*, param_name, used);
+            visitExprForReqUsage(t.then_expr.*, param_name, used);
+            visitExprForReqUsage(t.else_expr.*, param_name, used);
+        },
         .binary => |b| {
             visitExprForReqUsage(b.left.*, param_name, used);
             visitExprForReqUsage(b.right.*, param_name, used);

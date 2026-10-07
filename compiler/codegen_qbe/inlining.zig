@@ -404,6 +404,11 @@ fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name:
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
         .identifier => |n| if (std.mem.eql(u8, n, name)) try addEscapeSeed(self, fname, param_idx, seeds),
         .unary => |u| try scanParamEscapesExpr(self, fname, param_idx, name, u.operand.*, class_params, seeds, reverse_edges),
+        .ternary => |t| {
+            try scanParamEscapesExpr(self, fname, param_idx, name, t.cond.*, class_params, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, t.then_expr.*, class_params, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, t.else_expr.*, class_params, seeds, reverse_edges);
+        },
         .binary => |b| {
             try scanParamEscapesExpr(self, fname, param_idx, name, b.left.*, class_params, seeds, reverse_edges);
             try scanParamEscapesExpr(self, fname, param_idx, name, b.right.*, class_params, seeds, reverse_edges);
@@ -638,6 +643,11 @@ pub fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void 
     switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
         .unary => |u| try self.collectInlineSitesExpr(u.operand.*),
+        .ternary => |t| {
+            try self.collectInlineSitesExpr(t.cond.*);
+            try self.collectInlineSitesExpr(t.then_expr.*);
+            try self.collectInlineSitesExpr(t.else_expr.*);
+        },
         .binary => |b| {
             try self.collectInlineSitesExpr(b.left.*);
             try self.collectInlineSitesExpr(b.right.*);
@@ -777,6 +787,11 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
     switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
         .unary => |u| try scanStackConstructsExpr(self, u.operand.*, all_ok, any),
+        .ternary => |t| {
+            try scanStackConstructsExpr(self, t.cond.*, all_ok, any);
+            try scanStackConstructsExpr(self, t.then_expr.*, all_ok, any);
+            try scanStackConstructsExpr(self, t.else_expr.*, all_ok, any);
+        },
         .binary => |b| {
             try scanStackConstructsExpr(self, b.left.*, all_ok, any);
             try scanStackConstructsExpr(self, b.right.*, all_ok, any);
@@ -923,6 +938,7 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
         .unary => |u| exprHasUnsafeParamUse(self, u.operand.*, name, class_params),
+        .ternary => |t| exprHasUnsafeParamUse(self, t.cond.*, name, class_params) or exprHasUnsafeParamUse(self, t.then_expr.*, name, class_params) or exprHasUnsafeParamUse(self, t.else_expr.*, name, class_params),
         .binary => |b| exprHasUnsafeParamUse(self, b.left.*, name, class_params) or exprHasUnsafeParamUse(self, b.right.*, name, class_params),
         .call => |c| blk: {
             if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "len") and

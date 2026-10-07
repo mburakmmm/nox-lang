@@ -346,6 +346,7 @@ fn renameExpr(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.
         .identifier => |name| if (map.get(name)) |mangled| .{ .identifier = mangled } else e,
         .unary => |u| .{ .unary = .{ .op = u.op, .operand = try renameExprBox(a, u.operand.*, map) } },
         .binary => |b| .{ .binary = .{ .op = b.op, .left = try renameExprBox(a, b.left.*, map), .right = try renameExprBox(a, b.right.*, map) } },
+        .ternary => |t| .{ .ternary = .{ .cond = try renameExprBox(a, t.cond.*, map), .then_expr = try renameExprBox(a, t.then_expr.*, map), .else_expr = try renameExprBox(a, t.else_expr.*, map) } },
         .call => |c| blk: {
             const args = try a.alloc(ast.Expr, c.args.len);
             for (c.args, 0..) |arg, i| args[i] = try renameExpr(a, arg, map);

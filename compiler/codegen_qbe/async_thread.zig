@@ -192,6 +192,7 @@ pub fn exprUsesAsync(expr: ast.Expr) bool {
             break :blk false;
         },
         .unary => |u| exprUsesAsync(u.operand.*),
+        .ternary => |t| exprUsesAsync(t.cond.*) or exprUsesAsync(t.then_expr.*) or exprUsesAsync(t.else_expr.*),
         .binary => |b| exprUsesAsync(b.left.*) or exprUsesAsync(b.right.*),
         .call => |c| blk: {
             if (matchIntrinsicKind(c.callee.*) != null) break :blk true;
@@ -321,6 +322,7 @@ pub fn exprUsesMulticorePool(expr: ast.Expr) bool {
             break :blk false;
         },
         .unary => |u| exprUsesMulticorePool(u.operand.*),
+        .ternary => |t| exprUsesMulticorePool(t.cond.*) or exprUsesMulticorePool(t.then_expr.*) or exprUsesMulticorePool(t.else_expr.*),
         .binary => |b| exprUsesMulticorePool(b.left.*) or exprUsesMulticorePool(b.right.*),
         .call => |c| blk: {
             if (matchIntrinsicKind(c.callee.*)) |k| if (isMulticorePoolKind(k)) break :blk true;

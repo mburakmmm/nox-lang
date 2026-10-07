@@ -1,0 +1,55 @@
+def risky(x: int) -> int:
+    if x > 5:
+        raise ValueError("too big")
+    return x * 2
+
+async def worker(v: int) -> int:
+    return v + 100
+
+flag: bool = True
+x: int = 7
+a: int = (x % 3) if flag else 0
+b: int = x % 3
+print(a + b)
+c: int = 0 if not flag else (x % 4)
+d: int = x % 4
+print(c + d)
+
+# exception raised inside the taken branch is catchable
+try:
+    r: int = risky(9) if flag else risky(1)
+    print(r)
+except ValueError as e:
+    print("caught")
+# exception in the NOT taken branch never fires
+r2: int = risky(1) if flag else risky(99)
+print(r2)
+
+# f-string, list/dict literal, call args
+n: int = 4
+print(f"v={n if n > 3 else 0}")
+lst: list[int] = [1 if n > 3 else 2, 3 if n > 100 else 4]
+print(lst[0] + lst[1])
+d2: dict[str, int] = {"k": 10 if n > 3 else 20}
+print(d2["k"])
+print(len("abc" if n > 3 else "abcdef"))
+
+async def main2() -> int:
+    t: Task[int] = spawn worker(1 if n > 3 else 2)
+    v: int = await t
+    return v
+
+m: Task[int] = spawn main2()
+print(await m)
+
+# ternary condition uses a comparison chain and `in`
+words: list[str] = ["x", "y"]
+print(1 if "x" in words and n > 3 else 0)
+
+# loop with continue + ternary
+cnt: int = 0
+for k in range(6):
+    if k == 2:
+        continue
+    cnt = cnt + (10 if k % 2 == 0 else 1)
+print(cnt)

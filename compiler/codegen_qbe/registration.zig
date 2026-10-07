@@ -795,6 +795,11 @@ fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.St
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
         .identifier => |name| try out.put(a, name, {}),
         .unary => |u| try collectIdentifierNamesExpr(a, u.operand.*, out),
+        .ternary => |t| {
+            try collectIdentifierNamesExpr(a, t.cond.*, out);
+            try collectIdentifierNamesExpr(a, t.then_expr.*, out);
+            try collectIdentifierNamesExpr(a, t.else_expr.*, out);
+        },
         .binary => |b| {
             try collectIdentifierNamesExpr(a, b.left.*, out);
             try collectIdentifierNamesExpr(a, b.right.*, out);

@@ -88,6 +88,9 @@ pub const BinaryOp = enum {
     not_in,
 };
 
+/// v1.146.0: `then_expr if cond else else_expr` (Python üçlü ifadesi). Yalnızca seçilen dal değerlendirilir.
+pub const Ternary = struct { cond: *Expr, then_expr: *Expr, else_expr: *Expr };
+
 pub const Expr = union(enum) {
     int_lit: i64,
     float_lit: f64,
@@ -127,6 +130,7 @@ pub const Expr = union(enum) {
     /// OLMADIĞI ÇÖZÜMLEMESİ (bkz. `GenericConstruct.resolved_class_name`)
     /// TAMAMEN checker'ın işidir.
     generic_construct: GenericConstruct,
+    ternary: Ternary,
 };
 
 pub const Unary = struct { op: UnaryOp, operand: *Expr };

@@ -366,6 +366,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         },
         .unary => |u| try self.genUnary(u),
         .binary => |b| try self.genBinary(b),
+        .ternary => |t| try self.genTernary(t),
         .call => |c| try self.genCall(c),
         .index => |idx| try self.genIndex(idx),
         .list_lit => |elems| try self.genListLit(elems),
@@ -1445,6 +1446,55 @@ pub fn genIn(self: *Codegen, b: ast.Binary) CodegenError!Value {
         return .{ .text = t, .qtype = .w };
     }
     return .{ .text = found, .qtype = .w };
+}
+
+/// `genTernary`nin tek bir dalı: koşulun ilgili tarafında Optional daraltması varsa (`boxed_scalar`) o dal için
+/// `narrowed_unbox`a eklenir; `mod_cache` anlık görüntüsü geri yüklenir (dal çalışmamış olabilir); heap-yönetimli
+/// bir sonuç ÖDÜNÇ ise (`identifier`/alan/eleman okuması) retain edilir — böylece ternary'nin sonucu HER ZAMAN
+/// sahipli (+1) bir değerdir (`isTemporaryExpr(.ternary) == true`).
+fn genTernaryBranch(self: *Codegen, branch: ast.Expr, narrowed: ?[]const u8) CodegenError!Value {
+    const mc_snap = try self.snapshotModCache();
+    const was_present = if (narrowed) |n| self.narrowed_unbox.contains(n) else true;
+    if (narrowed) |n| try self.narrowed_unbox.put(self.allocator, n, {});
+    var v = try self.genExpr(branch);
+    if (narrowed) |n| if (!was_present) {
+        _ = self.narrowed_unbox.remove(n);
+    };
+    self.restoreModCache(mc_snap);
+    try self.checkNoLowlevelEscape(v);
+    v = try self.retainIfAliasing(branch, v);
+    v.always_fresh = false;
+    v.is_pinned = false;
+    v.is_stack_slot = false;
+    return v;
+}
+
+/// v1.146.0: `then if cond else else_` — yalnızca seçilen dal değerlendirilir. `phi` ile birleşir (`and`/`or`
+/// ile aynı desen: öncül etiket `current_label`dir, çünkü dal ifadesi kendi blokları üretmiş olabilir).
+pub fn genTernary(self: *Codegen, t: ast.Ternary) CodegenError!Value {
+    const cond = try self.genExpr(t.cond.*);
+    const then_label = try self.newLabel("tern_then");
+    const else_label = try self.newLabel("tern_else");
+    const end_label = try self.newLabel("tern_end");
+    try self.qbeJnz(cond.text, then_label, else_label);
+
+    const narrow = self.detectNarrowedBoxedName(t.cond.*);
+    try self.qbeLabel(then_label);
+    const vt = try genTernaryBranch(self, t.then_expr.*, if (narrow) |n| (if (n.narrows_then) n.name else null) else null);
+    const then_pred = self.current_label;
+    try self.qbeJmp(end_label);
+
+    try self.qbeLabel(else_label);
+    const ve = try genTernaryBranch(self, t.else_expr.*, if (narrow) |n| (if (!n.narrows_then) n.name else null) else null);
+    const else_pred = self.current_label;
+    try self.qbeJmp(end_label);
+
+    try self.qbeLabel(end_label);
+    const result_t = try self.newTemp();
+    try self.qbePhi(result_t, vt.qtype, then_pred, vt.text, else_pred, ve.text);
+    var result = vt;
+    result.text = result_t;
+    return result;
 }
 
 pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {

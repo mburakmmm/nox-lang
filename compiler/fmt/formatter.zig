@@ -545,6 +545,18 @@ const Printer = struct {
                 try self.printExprAt(b.right.*, my_prec, right_side);
                 if (need_parens) try self.writer.writeAll(")");
             },
+            .ternary => |t| {
+                // Üçlü ifade en gevşek bağlanır: herhangi bir operatör bağlamında parantez gerekir; `then` ve
+                // `cond` `or`-seviyesi (iç içe üçlü parantezlenir), `else` sağ-birleşimli.
+                const need_parens = ctx_prec > 0;
+                if (need_parens) try self.writer.writeAll("(");
+                try self.printExprAt(t.then_expr.*, 1, .loose);
+                try self.writer.writeAll(" if ");
+                try self.printExprAt(t.cond.*, 1, .loose);
+                try self.writer.writeAll(" else ");
+                try self.printExprAt(t.else_expr.*, 0, .loose);
+                if (need_parens) try self.writer.writeAll(")");
+            },
             .unary => |u| {
                 const my_prec = unaryPrec(u.op);
                 const need_parens = my_prec < ctx_prec or (my_prec == ctx_prec and side == .strict);
@@ -627,7 +639,7 @@ const Printer = struct {
                 }
                 try self.writer.writeAll(")");
             },
-            .binary, .unary => unreachable, // yukarıda printExprAt'ta ele alındı
+            .binary, .unary, .ternary => unreachable, // yukarıda printExprAt'ta ele alındı
         }
     }
 

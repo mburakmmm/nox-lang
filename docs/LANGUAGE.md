@@ -98,6 +98,19 @@ if key not in table:
     table[key] = 0
 ```
 
+A conditional expression `a if cond else b` evaluates only the chosen branch. The
+condition must be a `bool`; both branches must have the same type (`int`, `float`,
+`bool`, `str`, `list`, `dict` or a class), so `1 if ok else 2.5` is rejected —
+convert one branch explicitly. It binds more loosely than every operator and is
+right-associative, so `"A" if n > 20 else "B" if n > 10 else "C"` works without
+parentheses. After a `x != None` / `x == None` test the optional `x` is narrowed in
+the matching branch: `node.val if node != None else 0`.
+
+```nox
+label: str = "big" if n > 10 else "small"
+```
+
+
 **Variable declarations require an explicit type on first assignment**
 (`x: int = 5`); subsequent assignments to the same name don't repeat the
 annotation (`x = 6`).
