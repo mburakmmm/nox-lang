@@ -60,6 +60,8 @@ const websocket_server = @import("websocket_server.zig");
 /// GENEL bir okuma hatası olarak YAYILIR — Q.5'in "reddetmenin KENDİSİ ek
 /// kaynak tüketmemeli" ilkesiyle TUTARLI, hiçbir HTTP yanıtı YAZILMAZ).
 const READ_TIMEOUT_MS: u32 = 30_000;
+/// v1.158.0: yanıt yazma zaman aşımı (yavaş-okuyucu koruması, bkz. `io.nonBlockingWriteWithTimeout`).
+const WRITE_TIMEOUT_MS: u32 = 30_000;
 
 /// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.close`
 /// (CRT fd-tablosu İçin) Windows SOCKET'leri İçin GEÇERSİZDİR —
@@ -122,7 +124,7 @@ fn rawWriteAll(scheduler: ?*scheduler_mod.Scheduler, fd: posix.fd_t, bytes: []co
     var off: usize = 0;
     while (off < bytes.len) {
         const n = if (scheduler) |s|
-            try io_mod.nonBlockingWrite(s, fd, bytes[off..])
+            try io_mod.nonBlockingWriteWithTimeout(s, fd, bytes[off..], WRITE_TIMEOUT_MS)
         else if (builtin.os.tag == .windows) blk: {
             const rc = io_mod.WinSock.send(@intFromPtr(fd), bytes[off..].ptr, @intCast(bytes.len - off), 0);
             if (rc < 0) return error.Unexpected;

@@ -2951,8 +2951,8 @@ yalnızca gereksiz bir kontrol FAZLADAN kalabilir):**
   hem kendisi hem onu çağıranlar (transitif). Metod çağrısının KENDİSİ
   HER ZAMAN kendi kontrolünü alır (`genMethodCall` hiç değişmedi).
 - **`await`/`spawn` içeren gövdeler KOŞULSUZ güvensiz** — async istisna
-  yayılımı zaten §3.21'de bilinçli olarak eksik bırakılmış bir alan,
-  bu analiz oraya HİÇ dokunmadı.
+  yayılımı çalışır (v1.157.0 doğrulaması: görevin istisnası `await`te yeniden fırlatılır; eski "§3.21'de eksik" notu
+  GEÇERSİZ), ama bu analiz onu modellemez ve muhafazakâr davranır.
 - Bu iki kısıtlama SADECE optimizasyonun kapsamını daraltır (daha az
   kontrol elenir) — DOĞRULUĞU asla tehlikeye atmaz.
 

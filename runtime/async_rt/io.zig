@@ -541,6 +541,48 @@ pub fn nonBlockingWrite(scheduler: *Scheduler, fd: posix.fd_t, buf: []const u8) 
     }
 }
 
+/// v1.158.0 (güvenlik, yavaş-okuyucu/slow-read): `nonBlockingWrite`in AYNISI, ama `fd` YAZILABİLİR olmadan `timeout_ms` geçerse `error.Timeout` döner —
+/// istemcinin TCP penceresini kapatıp yanıtın yazılmasını sonsuza dek engellemesi (bağlantı yuvası tüketme) önlenir. Eşik her `EAGAIN` sonrası yeniden
+/// başlayan bir penceredir (`nonBlockingReadWithTimeout` ile aynı bilinçli basitleştirme).
+pub fn nonBlockingWriteWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []const u8, timeout_ms: u32) !usize {
+    while (true) {
+        if (builtin.os.tag == .windows) {
+            const rc = WinSock.send(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
+            if (rc >= 0) return @intCast(rc);
+            if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
+                if (scheduler.suspendForIoOrTimeout(fd, .write, timeout_ms) == .timed_out) return error.Timeout;
+                continue;
+            }
+            // Bkz. POSIX yolunun `.CONNRESET`/`.PIPE` notu — YAZMA'da (okumanın
+            // AKSİNE) `0` dönmenin YERLEŞİK bir "bağlantı kapandı" ANLAMI
+            // YOKTUR, bu YÜZDEN EOF'a benzetmek YERİNE `std.posix.read`in
+            // KENDİ `ECONNRESET` İçin kullandığı (`posix.zig:426`) AYNI
+            // isimli, `FiberWriter.drain`in (bkz. `http_server.zig`) ZATEN
+            // GENEL olarak `catch return error.WriteFailed` İLE yakaladığı
+            // ADLANDIRILMIŞ bir hata döner.
+            if (WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) return error.ConnectionResetByPeer;
+            return error.Unexpected;
+        }
+        const rc = std.c.write(fd, buf.ptr, buf.len);
+        if (rc >= 0) return @intCast(rc);
+        switch (posix.errno(rc)) {
+            .AGAIN => if (scheduler.suspendForIoOrTimeout(fd, .write, timeout_ms) == .timed_out) return error.Timeout,
+            // İstemci bağlantıyı bir TCP RST İLE ANİDEN kapattı (`wrk`
+            // GİBİ yük-test araçlarının zaman aşımında/koşum sonunda
+            // RUTİN olarak yaptığı bir şey) — `Zig`in KENDİ `std.posix.
+            // read`inin `ECONNRESET` İçin kullandığı AYNI isimli hata
+            // (`error.ConnectionResetByPeer`, `posix.zig:426`), NOKTALI
+            // `posix.unexpectedErrno`nin gürültülü YOLU YERİNE.
+            .CONNRESET => return error.ConnectionResetByPeer,
+            // `EPIPE`: karşı taraf ZATEN okuma ucunu kapatmış bir soket/
+            // borsağa yazma denemesi — `std.Io.zig`nin (`Io.zig:313`)
+            // KENDİ `BrokenPipe` adını taşır, AYNI gerekçeyle.
+            .PIPE => return error.BrokenPipe,
+            else => |e| return fiberSafeUnexpectedErrno(scheduler, e),
+        }
+    }
+}
+
 test "nonBlockingRead: bir fiber G/Ç beklerken BAŞKA bir hazır fiber çalışabilir (zamanlayıcı BLOKE OLMAZ)" {
     // Faz LL.2/LL.3 (bkz. nox-teknik-spesifikasyon.md §3.71): bu test
     // `nonBlockingRead`/`nonBlockingWrite`in KENDİSİNİ (yukarıda, `std.c.
@@ -734,6 +776,46 @@ test "nonBlockingReadWithTimeout: istemci TCP RST ile ANİ kapatınca ECONNRESET
     // (2) Zamanlayıcı/reaktör BOZULMADI — TAMAMEN BAĞIMSIZ soket çifti
     // AYNI koşumda doğru tamamlandı.
     try std.testing.expectEqualStrings("hala-canli", Shared.pair_got[0..Shared.pair_got_len]);
+}
+
+test "nonBlockingWriteWithTimeout: okunmayan (dolu) soket tamponunda yazma error.Timeout ile döner (yavaş-okuyucu koruması)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var pair_fds: [2]posix.fd_t = undefined;
+    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair_fds) != 0) return error.SocketPairFailed;
+    defer _ = std.c.close(pair_fds[0]);
+    defer _ = std.c.close(pair_fds[1]);
+    setNonBlocking(pair_fds[0]);
+    setNonBlocking(pair_fds[1]);
+
+    const spawn = @import("scheduler.zig").spawn;
+    var scheduler = try Scheduler.init(std.heap.page_allocator);
+    defer scheduler.deinit();
+
+    const Shared = struct {
+        var result: ?(anyerror!usize) = null;
+        var scheduler_ptr: *Scheduler = undefined;
+        var wfd: posix.fd_t = undefined;
+        fn writerFn(_: *anyopaque) callconv(.c) void {
+            // Karşı uç HİÇ okumaz: tampon dolana dek yaz, sonra zaman aşımı beklenir.
+            var chunk: [4096]u8 = undefined;
+            @memset(&chunk, 'x');
+            while (true) {
+                const n = nonBlockingWriteWithTimeout(scheduler_ptr, wfd, &chunk, 100) catch |e| {
+                    result = e;
+                    return;
+                };
+                _ = n;
+            }
+        }
+    };
+    Shared.scheduler_ptr = &scheduler;
+    Shared.wfd = pair_fds[0];
+    var dummy: u8 = 0;
+    const task = try spawn(&scheduler, void, Shared.writerFn, &dummy);
+    defer scheduler.allocator.destroy(task);
+    try scheduler.run();
+    const r = Shared.result orelse return error.WriterNeverFinished;
+    try std.testing.expectError(error.Timeout, r);
 }
 
 // `ECONNRESET`in KENDİSİ DIŞINDAKİ (`.CONNRESET`/`.PIPE`/`.CONNABORTED`

@@ -67,7 +67,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 ## 4. Dokümantasyon
 
 - [ ] **4.1** `docs/LANGUAGE.md` (330 satır) genişlet: tüm sözdizimi, tip kuralları, hata modeli.
-- [ ] **4.2** Stdlib API başvurusu (her `nox.*` modülü için imza + örnek) ve öğretici.
+- [x] **4.2** Stdlib API başvurusu — v1.158.0 (`docs/STDLIB.md`, üretici betik `scripts/gen_stdlib_docs.py`). Öğretici ayrı.
 - [ ] **4.3** README benchmark tablosunu güncel sayılarla yenile (v1.142.x/1.143 ölçümleri, `benchmarks/cross_lang`).
 - [ ] **4.4** İngilizce spec/AGENTS özeti (şu an yalnızca Türkçe).
 
@@ -75,9 +75,8 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 - [ ] **5.1** `extern def` / bağımlılık güven sınırı belgeli (AGENTS.md §9.5) ama sandbox/imzalama YOK — 2.0
   duyurusunda açık uyarı; paket imzalama değerlendir.
-- [ ] **5.2** HTTP sunucusu için 2.0 öncesi güvenlik incelemesi (istek ayrıştırma, sınırlar, TLS).
-- [ ] **5.3** LLVM artık varsayılan: fuzz (`tests/fuzz`), stres (`stress.yml`), torture testlerinin LLVM'i
-  kapsadığını doğrula.
+- [x] **5.2** HTTP sunucusu güvenlik incelemesi — v1.158.0: eksik yazma zaman aşımı (yavaş-okuyucu DoS) bulundu ve düzeltildi.
+- [x] **5.3** Doğrulandı: stres/torture `--release` LLVM kullanır, diferansiyel korpus iki backend'i çalıştırır, fuzz ön-uç düzeyindedir.
 
 ## 6. Teknik borç
 
@@ -85,7 +84,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [ ] **6.2** `genClassRelease` özyinelemesi 256 KiB fiber yığınında sınırda (STACK_SIZE küçültülmedi).
 - [ ] **6.3** `nox.binary` hâlâ somut `Buffer` alıyor (generic sınıf çapraz-modül hatası sonrası kapsam dışı kaldı).
 - [ ] **6.4** Aether `is_stopping()` + `HttpRequest` uyumu (Aether deposunda yapılacak).
-- [ ] **6.5** Spec §3.x'teki eski/yanlış notlar (ör. "async istisna yayılımı eksik" notu artık geçersiz — çalışıyor).
+- [x] **6.5** Eski async-istisna notları düzeltildi — v1.158.0.
 
 ## 7. Performans (engelleyici değil)
 

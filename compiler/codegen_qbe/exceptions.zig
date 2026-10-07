@@ -600,9 +600,8 @@ fn collectRaiseInfoClauses(self: *Codegen, clauses: []const ast.CompClause, info
 
 pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
     switch (expr) {
-        // `await`/`spawn`: async istisna yayılımı ZATEN bilinçli olarak
-        // eksik/ele alınmamış bir alan (bkz. nox-teknik-spesifikasyon.md
-        // §3.21) — bu analiz oraya HİÇ dokunmaz, muhafazakâr kalır.
+        // `await`/`spawn`: async istisna yayılımı ÇALIŞIR (bir görevin istisnası `await` noktasında yeniden fırlatılır, golden testli) —
+        // ama bu "fırlatabilir mi" analizi await/spawn'ı modellemez, MUHAFAZAKÂR kalır (güvensiz + mutasyon sayar).
         .await_expr, .spawn_expr => {
             info.direct_unsafe = true;
             info.direct_mutates = true;
@@ -793,7 +792,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
 ///     tam tip çıkarımı gerektiren durumlar, `poisoned` bir isim) İÇİNDE
 ///     bulunduğu fonksiyonu/kurucuyu KOŞULSUZ güvensiz sayar.
 ///   - `await`/`spawn` içeren HERHANGİ bir gövde KOŞULSUZ güvensiz sayılır
-///     (async istisna yayılımı zaten bilinçli olarak eksik bir alan).
+///     (async istisna yayılımı çalışır; bu analiz onu modellemeyip muhafazakâr davranır).
 ///   - Sabit nokta (fixpoint) hesabı: `direct_unsafe` bulunanlarla
 ///     başlanır, sonra HERHANGİ bir çağrı hedefi (`callees`) güvensiz
 ///     kümedeyse çağıran da güvensiz kümeye eklenir — değişiklik

@@ -413,7 +413,7 @@ fn rawSockWriteAll(scheduler: ?*scheduler_mod.Scheduler, fd: posix.fd_t, bytes: 
     var off: usize = 0;
     while (off < bytes.len) {
         const n = if (scheduler) |s|
-            try io_mod.nonBlockingWrite(s, fd, bytes[off..])
+            try io_mod.nonBlockingWriteWithTimeout(s, fd, bytes[off..], 30_000) // v1.158.0: yavaş-okuyucu koruması (bkz. http_server.zig WRITE_TIMEOUT_MS)
         else if (builtin.os.tag == .windows) blk: {
             const rc = io_mod.WinSock.send(@intFromPtr(fd), bytes[off..].ptr, @intCast(bytes.len - off), 0);
             if (rc < 0) return error.Unexpected;

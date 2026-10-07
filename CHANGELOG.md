@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.158.0]
+
+### Güvenlik
+
+- **HTTP/TLS sunucusu yazma zaman aşımı (yavaş-okuyucu DoS):** yanıt yazımı artık `nonBlockingWriteWithTimeout` ile 30 sn'lik üst sınıra sahip (`http_server.zig` `WRITE_TIMEOUT_MS`, `tls_server.zig` `rawSockWriteAll`). Yanıtı hiç okumayan bir istemci artık bir fiber'ı/bağlantıyı sonsuza dek tutamaz. Birim testi: socketpair ile dolu tampon.
+
+### Eklendi
+
+- **`docs/STDLIB.md`:** her `nox.*` modülü için imza başvurusu (`scripts/gen_stdlib_docs.py` ile `stdlib/nox/*.nox`'tan üretilir).
+
+### Düzeltildi
+
+- Eski/yanlış belge notları: "async istisna yayılımı eksik" notu (spec + `exceptions.zig` yorumları) — yayılım çalışıyor.
+
 ## [1.157.0]
 
 ### Eklendi
