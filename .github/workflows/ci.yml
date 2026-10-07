@@ -104,22 +104,16 @@ jobs:
           - os: ubuntu-24.04-arm
             name: Linux (aarch64)
             zig_arch: aarch64-linux
-            # v1.102.0 (bkz. nox-teknik-spesifikasyon.md §3.184/§3.189'un
-            # DEVAMI): `http_serve_multicore`/`http_serve_multicore_pool`
-            # N=2 testlerinin, SADECE bu platformda tetiklenen, ÖNCEDEN
-            # (v1.99.0/v1.99.1) KISMEN araştırılmış AMA kesin kök nedeni
-            # KANITLANAMAMIŞ bir "stack smashing detected" (`nox_thread_
-            # join`, thread_bridge.zig) çöküşü VAR — v1.102.0'ın push'unda
-            # 5 ardışık koşuda TUTARLI şekilde tetiklendi (öncesinde
-            # NADİR'di). x18-yazmacı kaydı (v1.99.1) HÂLÂ doğru yerinde
-            # (regresyon DEĞİL) — kök neden CANLI aarch64 Linux donanımına
-            # erişim GEREKTİRİYOR (CI log'larından/post-mortem core dump'lardan
-            # KESİN teşhis KONULAMADI, GDB'nin KENDİ backtrace'i bozuk-
-            # yığın SONRASI güvenilmez). GEÇİCİ olarak `main`i BU tek,
-            # BİLİNEN sorun İçİn ENGELLEMEMEK için `allow_failure: true` —
-            # KALICI bir düzeltme AYRI, canlı donanımlı bir tur GEREKTİRİR;
-            # bu bayrak o tur TAMAMLANINCA KALDIRILMALIDIR.
-            allow_failure: true
+            # v1.142.21: `allow_failure` KALDIRILDI. Bu platformda `http_serve_multicore` N=2
+            # testlerinde görülen "stack smashing detected" (`nox_thread_join`, thread_bridge.zig)
+            # çöküşünün KÖK NEDENİ bulundu: `serveImpl`in YIĞIN-YEREL bağlantı sayacına fiber'lar
+            # `serveImpl` döndükten SONRA yazıyordu (sarkan yığın işaretçisi; yeniden kullanılan
+            # yığın belleğinde örn. `ThreadHandle*`i bozuyordu) — v1.142.3'te heap'teki referans
+            # sayaçlı `ConnCounter`a taşınarak düzeltildi (bkz. spec §3.243). Düzeltmeden önce son 100
+            # koşunun %40'ında bu job kırmızıydı; v1.142.3'ten beri 17 ardışık koşuda (12 turluk
+            # N=2 testi dahil) tek hata YOK. Yeniden görülürse bu bayrağı GERİ KOYMAK yerine kök
+            # neden araştırılmalı (bkz. proje belleği `aarch64 stack-smash`).
+            allow_failure: false
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.allow_failure }}

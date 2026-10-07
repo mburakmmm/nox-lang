@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.21]
+
+### CI
+
+- Linux (aarch64) job'ı artık `allow_failure: false`: `nox_thread_join`daki "stack smashing detected"in kök
+  nedeni (sarkan yığın işaretçisi, v1.142.3'te düzeltildi) doğrulandı; son 17 ardışık koşu temiz.
+
 ## [1.142.20]
 
 ### Performans
