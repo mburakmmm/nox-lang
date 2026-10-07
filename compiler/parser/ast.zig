@@ -170,7 +170,9 @@ pub const Unary = struct { op: UnaryOp, operand: *Expr };
 /// v1.162.0: aritmetik işlemde birleşik atama (`x += 1`), `and_`te zincirleme karşılaştırma (`a < b < c`) yüzey biçimi.
 pub const Binary = struct { op: BinaryOp, left: *Expr, right: *Expr, is_form: bool = false, fstring: bool = false };
 /// `fstring`: v1.164.0 — f-string / `"...".format(...)` parçası (`str(x)` / `format(x, spec)`) ya da zincir kökü; yalnızca formatter yazımı korur.
-pub const Call = struct { callee: *Expr, args: []Expr, fstring: bool = false, set_lit: bool = false };
+/// `eval_order`: v1.169.0 — keyword argümanlar parametre sırasına çevrildiğinde, YAN ETKİLİ argümanların KAYNAK sırasıyla değerlendirilmesi için
+/// `args` indekslerinin değerlendirme sırası (yalnızca sıra gerçekten değiştiğinde dolu; `null` = `args` sırası).
+pub const Call = struct { callee: *Expr, args: []Expr, fstring: bool = false, set_lit: bool = false, eval_order: ?[]const u8 = null };
 pub const Attribute = struct { obj: *Expr, attr: []const u8 };
 pub const Index = struct { obj: *Expr, index: *Expr };
 

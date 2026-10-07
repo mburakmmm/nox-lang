@@ -30,6 +30,8 @@ pub const LambdaMap = std.AutoHashMapUnmanaged(usize, LambdaEntry);
 /// tanımlanacak iç içe `def`ler), `lifted` (modül üst düzeyindeki lambda'ların yükseltildiği üst-düzey fonksiyonlar) ve `in_func` (fonksiyon/metod
 /// gövdesi derinliği) değiştirilebilir durumdur.
 /// v1.157.0: ifade yeniden yazımları (anahtar: tuple literal için `items.ptr`, `d.items()`/`len(t)` için çağrının `callee` kutusu, `t[k]` için indeks kutusu).
+pub const OrderMap = std.AutoHashMapUnmanaged(usize, []const u8);
+
 pub const ExprRewriteMap = std.AutoHashMapUnmanaged(usize, ast.Expr);
 
 /// v1.157.0: tip-çıkarımlı (`__infer`) `var_decl`ların çözülmüş tipleri (anahtar: bildirilen ismin işaretçisi).
@@ -39,6 +41,7 @@ pub const Ctx = struct {
     exprs: *const ExprRewriteMap,
     infers: *const InferMap,
     calls: *const Map,
+    orders: *const OrderMap,
     fors: *const ForMap,
     stmt_fors: *const StmtForMap,
     comps: *const CompTypeMap,
@@ -127,6 +130,7 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
             },
             .defer_stmt => |*d| {
                 if (map.calls.get(@intFromPtr(d.call.callee))) |exp| d.call.args = exp;
+                if (map.orders.get(@intFromPtr(d.call.callee))) |o| d.call.eval_order = o;
                 expr(d.call.callee, map);
                 for (d.call.args) |*a| expr(a, map);
             },
@@ -180,6 +184,7 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
                 return;
             }
             if (map.calls.get(@intFromPtr(c.callee))) |exp| c.args = exp;
+            if (map.orders.get(@intFromPtr(c.callee))) |o| c.eval_order = o;
             expr(c.callee, map);
             for (c.args) |*a| expr(a, map);
         },

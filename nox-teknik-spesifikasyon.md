@@ -28905,3 +28905,15 @@ anahtarıyla). Bu yüzden sahiplik analizi, kalıtım (metodlar alt sınıf `Cla
 - **`__iter__`:** `checkForIterable` sınıfta `__iter__` bulursa iterable'ı `obj.__iter__()` çağrısına yazar (list/str/dict dönebilir); `tryDesugarPreludeCall` aynısını `sorted/sum/list/…` argümanları için yapar.
 - **Yazdırma:** `genPrintClass` sınıfta `__repr__`/`__str__` varsa (vtable'lı sınıflar için vtable üzerinden) onu çağırıp sonucu yazar — `print`, `str()` (§3.282 sink'i) ve iç içe konteynerler için.
 - Sınırlama: küme elemanı `int/float/bool/str`; literal içinde boş `[]`/`{}` yok; `frozenset` yok.
+
+## 3.284 Backend semantik eşitliği: sabit-genişlikli taşma; keyword değerlendirme sırası (v1.169.0)
+
+§3.204'ün "QBE tuzak / LLVM sarar — kalıcı tasarım kararı" maddesi GERİ ALINDI: dilin program anlamı backend'e (QBE/LLVM/gelecekte başka biri) bağlı olmamalıdır.
+`emitCheckedFixedBin{Narrow,32,64}` içindeki `backend != .qbe` erken dönüşleri kaldırıldı — denetim dizisi seam (`qbe*` sarmalayıcıları) üzerinden her iki backend'e üretilir. `llvm_emit.arithOpFor` `udiv`/`urem`
+eşlemesini kazandı (`emitMul64OverflowCheck`). Doğrulama: u8/i8/u16/i16/u32/i32/u64/i64 × {+ taşar, + taşmaz, - taşar, - taşmaz, * taşar, * taşmaz, *0, *1} = 64 vaka, iki backend'de çıkış kodu ve stdout birebir aynı.
+`backend_conformance_test` farklılık beklentisi `traps/traps` oldu; `fixed_int_overflow_trap` diferansiyel denylist'ten çıkarıldı. Düz `int` (64-bit) iki backend'de de sarar (değişmedi).
+
+Keyword argümanlar KAYNAK sırasıyla değerlendirilir, parametre sırasıyla bağlanır: `expandCallArgs` yan etkili (`exprHasEffects`: çağrı/await/spawn/kurucu/comprehension içeren) iki argümanın göreli sırası parametre sırasından farklıysa
+`ast.Call.eval_order` permütasyonunu kaydeder (`call_orders`, apply pasında `Call`a yazılır). Codegen: `genCall` permütasyonu `pending_eval_order`a koyar; argümanları değerlendiren noktalar (serbest fonksiyon, kurucu, metod, `super().__init__`/metod)
+`takeEvalOrder` ile (alıcı ifadesi değerlendirilmeden ÖNCE) tüketir ve `arg_values[i]`yi indeksle doldurur — bağlama/serbest bırakma sırası değişmez. Bu çağrılar satır içine açılmaz. `spawn` operandında belirsiz sıra derleme hatasıdır.
+Golden: `kwarg_source_order_eval` (iki backend), `err_kwarg_effect_order` (spawn), `ok_kwarg_pure_reorder`, `uyum: ... HER İKİ backend'de tuzağa düşer`.

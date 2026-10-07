@@ -406,10 +406,10 @@ test "divergence: nox.thread.start'a dict[str,str] parametresi — QBE reddeder,
     );
 }
 
-test "divergence: v2.0 madde 4 — sabit-genişlikli tamsayı taşması QBE'de tuzağa düşer, --release/LLVM'de sessizce sarar" {
+test "uyum: sabit-genişlikli tamsayı taşması HER İKİ backend'de de tuzağa düşer (v1.169.0 — önceden LLVM sarıyordu)" {
     try expectDivergence(
         @embedFile("conformance_cases/divergence_fixed_int_overflow_wrap_vs_trap.nox"),
         .{ .traps = "255\n" },
-        .{ .accepted = "255\n0\n" },
+        .{ .traps = "255\n" },
     );
 }

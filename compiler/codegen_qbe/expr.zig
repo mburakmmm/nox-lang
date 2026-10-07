@@ -1052,11 +1052,9 @@ pub fn emitBin(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, result_
 
 /// v2.0 madde 4 (§3): sabit-genişlikli `+`/`-`/`*`in TEK giriş noktası —
 /// depolama genişliğine göre ÜÇ ayrı alt-yola dağıtır (bkz. plan
-/// dosyasının "Aritmetik taşma kontrolü" bölümü). `--release` (LLVM)
-/// backend'i HER ZAMAN sessizce sarar (kontrol dalı hiç ÜRETİLMEZ) —
-/// bu ayrım HER alt-yolun KENDİ İçİNDE (`self.backend != .qbe` erken
-/// dönüşü) yapılır, TEK bir merkezi dal YERİNE (8/16/32/64-bit yolların
-/// HER BİRİNİN "ham SONUCU nasıl hesaplarım" adımı FARKLI olduğundan).
+/// dosyasının "Aritmetik taşma kontrolü" bölümü). v1.169.0: taşma HER İKİ
+/// backend'de (QBE ve LLVM) AYNI şekilde yakalanamaz bir tuzağa düşer —
+/// önceden LLVM sessizce sarıyordu (backend'e bağlı program anlamı).
 pub fn emitCheckedFixedBin(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, kind: types.FixedIntKind) CodegenError!Value {
     return switch (kind.bitWidth()) {
         8, 16 => self.emitCheckedFixedBinNarrow(mnemonic, l, r, kind),
@@ -1094,7 +1092,6 @@ pub fn emitCheckedFixedBinNarrow(self: *Codegen, mnemonic: []const u8, l: Value,
     // ÇALIŞTIRILIP BULUNDU).
     const narrowed = try self.newTemp();
     try self.qbeOp1(narrowed, .w, check_mnemonic, raw.text);
-    if (self.backend != .qbe) return .{ .text = narrowed, .qtype = .w, .fixed_int = kind };
     const mismatch = try self.newTemp();
     try self.qbeOp2(mismatch, .w, "cnew", narrowed, raw.text);
     try self.emitOverflowTrapIfNonzero(mismatch, kind);
@@ -1111,10 +1108,6 @@ pub fn emitCheckedFixedBinNarrow(self: *Codegen, mnemonic: []const u8, l: Value,
 /// bkz. onun belge notu — "print İçİn" adı YANILTICI, SAF bit-genişletme
 /// olduğundan burada da GEÇERLİ).
 pub fn emitCheckedFixedBin32(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, kind: types.FixedIntKind) CodegenError!Value {
-    if (self.backend != .qbe) {
-        const raw = try self.emitBin(mnemonic, l, r, .w);
-        return .{ .text = raw.text, .qtype = .w, .fixed_int = kind };
-    }
     const lw = try self.widenFixedIntForPrint(l, kind);
     const rw = try self.widenFixedIntForPrint(r, kind);
     const wide = try self.emitBin(mnemonic, lw, rw, .l);
@@ -1137,7 +1130,6 @@ pub fn emitCheckedFixedBin32(self: *Codegen, mnemonic: []const u8, l: Value, r: 
 /// devredilir.
 pub fn emitCheckedFixedBin64(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, kind: types.FixedIntKind) CodegenError!Value {
     const raw = try self.emitBin(mnemonic, l, r, .l);
-    if (self.backend != .qbe) return .{ .text = raw.text, .qtype = .l, .fixed_int = kind };
     const signed = kind.isSigned();
     if (std.mem.eql(u8, mnemonic, "mul")) {
         try self.emitMul64OverflowCheck(l, r, raw, kind, signed);

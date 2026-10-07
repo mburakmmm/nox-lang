@@ -492,6 +492,21 @@ pub const Codegen = struct {
     pub const genPrintFragment = expr_mod.genPrintFragment;
     pub const genReprString = expr_mod.genReprString;
 
+    /// Değerlendirme sırası: `pending_eval_order` doluysa onu (TÜKETEREK), değilse `0..n` kimlik sırasını döner. Argüman değerlendirmesine
+    /// BAŞLAMADAN ÖNCE çağrılmalıdır (iç içe çağrılar kendi permütasyonlarını kurar).
+    pub fn takeEvalOrder(self: *Codegen, n: usize) CodegenError![]const usize {
+        const out = try self.allocator.alloc(usize, n);
+        if (self.pending_eval_order) |o| {
+            self.pending_eval_order = null;
+            if (o.len == n) {
+                for (o, 0..) |v, i| out[i] = v;
+                return out;
+            }
+        }
+        for (out, 0..) |*slot, i| slot.* = i;
+        return out;
+    }
+
     fn fmtSymbolText(self: *Codegen, sym: []const u8) ?[]const u8 {
         const table = [_]struct { s: []const u8, t: []const u8 }{
             .{ .s = "$fmt_int", .t = "%lld\n" },
@@ -1305,6 +1320,8 @@ pub const Codegen = struct {
     /// v1.167.0: `print` ailesi (`genPrintFragment` & kardeşleri) `$printf` yerine bu yığın yuvasındaki ARC `str` birikimine EKLEME yapar —
     /// `str(list)` / `repr(x)` / f-string `{xs}` için AYNI yapısal yazdırıcı yeniden kullanılır (bkz. `genReprString`).
     print_acc: ?[]const u8 = null,
+    /// v1.169.0: bir sonraki argüman-değerlendirme noktasının tüketeceği kaynak-sırası permütasyonu (bkz. `ast.Call.eval_order`, `takeEvalOrder`).
+    pending_eval_order: ?[]const u8 = null,
     /// Faz 21 aşama 4: her `spawn <çağrı>` çağrı sitesi için üretilecek
     /// `$spawn_wrap_N(l %argp) l` sarmalayıcılarının TEMBEL kaydı —
     /// `list_release_queue` ile AYNI desen, `generateModule`nin sonunda

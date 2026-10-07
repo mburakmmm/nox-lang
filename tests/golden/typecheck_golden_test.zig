@@ -654,6 +654,20 @@ test "golden(typecheck): v1.157.0 — tuple tip denetimi geçer" {
     );
 }
 
+test "golden(typecheck): v1.169.0 — spawn çağrısında yan etkili keyword argümanlar parametre sırasından farklıysa reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_kwarg_effect_order.nox"),
+        @embedFile("typecheck_cases/err_kwarg_effect_order.expected"),
+    );
+}
+
+test "golden(typecheck): v1.169.0 — tek yan etkili/saf keyword argümanların yeniden sıralanması serbest" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_kwarg_pure_reorder.nox"),
+        @embedFile("typecheck_cases/ok_kwarg_pure_reorder.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

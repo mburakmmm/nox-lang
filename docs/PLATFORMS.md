@@ -13,8 +13,8 @@ This page states what is supported, what is tested in CI, and the known gaps. It
 | Windows | QBE (automatic: the LLVM path has no MinGW link arguments yet) |
 | `clang` not installed | QBE (automatic, a note is printed) |
 
-Both backends run the entire golden corpus and must agree on program output. The one intentional difference is
-**fixed-width integer overflow** (`u8`, `i32`, …): LLVM wraps, QBE traps with a message. Plain `int` (64-bit) wraps on both.
+Both backends run the entire golden corpus and must agree on program output, including fixed-width integer overflow
+(`u8`, `i32`, … trap with a message on both since v1.169.0). Plain `int` (64-bit) wraps on both.
 
 ## Tier table
 

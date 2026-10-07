@@ -569,6 +569,10 @@ pub const Checker = struct {
     /// edilmiş) sınıf tanımları — `instantiations`in AYNISI ama SINIFLAR
     /// İçin.
     class_instantiations: std.ArrayListUnmanaged(ast.ClassDef) = .empty,
+    /// v1.169.0: yan etkili keyword argümanların kaynak-sırası değerlendirme permütasyonu (anahtar: `call_expansions` ile aynı `callee` işaretçisi).
+    call_orders: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
+    last_eval_order: ?[]const u8 = null,
+    in_spawn_operand: bool = false,
     /// v1.168.0: somutlaştırılmış generic sınıf adı → tip argümanları (`set()` boş kurucusu beklenen tipten eleman tipini bulur).
     class_type_args: std.StringHashMapUnmanaged([]const Type) = .{},
     /// Yapısal protokoller (Faz 11) — adları modül düzeyinde benzersizdir,
@@ -1920,11 +1924,86 @@ pub const Checker = struct {
                 slots[i] = a;
             }
         }
+        // v1.169.0: değerlendirme sırası. Bağlama parametre sırasıyla yapılır, AMA yan etkili (çağrı/await/spawn/kurucu içeren) argümanlar KAYNAK sırasıyla
+        // değerlendirilir: göreli sıraları değişen iki yan etkili argüman varsa `last_eval_order` permütasyonu kaydedilir (codegen uygular).
+        self.last_eval_order = null;
+        {
+            const slot_of = try self.allocator.alloc(usize, args.len);
+            defer self.allocator.free(slot_of);
+            var ambiguous = false;
+            var last_effect_slot: ?usize = null;
+            for (args, 0..) |a, i| {
+                var slot_idx: usize = i;
+                var val = a;
+                if (a == .kwarg) {
+                    for (decl, 0..) |p, j| {
+                        if (std.mem.eql(u8, p.name, a.kwarg.name)) slot_idx = j;
+                    }
+                    val = a.kwarg.value.*;
+                }
+                slot_of[i] = slot_idx;
+                if (!exprHasEffects(val)) continue;
+                if (last_effect_slot) |prev| {
+                    if (slot_idx < prev) ambiguous = true;
+                }
+                last_effect_slot = slot_idx;
+            }
+            if (ambiguous) {
+                if (self.in_spawn_operand) {
+                    return self.fail(error.ArgumentCountMismatch, "'{s}': 'spawn' çağrısında yan etkili keyword argümanlar parametre sırasıyla yazılmalıdır", .{name});
+                }
+                const order = try self.allocator.alloc(u8, n);
+                var k: usize = 0;
+                for (slot_of) |sl| {
+                    order[k] = @intCast(sl);
+                    k += 1;
+                }
+                // Verilmeyen (varsayılan) slotlar sona, artan sırada.
+                var j: usize = 0;
+                while (j < n) : (j += 1) {
+                    var given = false;
+                    for (slot_of) |sl| if (sl == j) {
+                        given = true;
+                    };
+                    if (!given) {
+                        order[k] = @intCast(j);
+                        k += 1;
+                    }
+                }
+                self.last_eval_order = order;
+            }
+        }
         const out = try self.allocator.alloc(ast.Expr, n);
         for (decl, 0..) |p, j| {
             out[j] = slots[j] orelse (p.default orelse return self.fail(error.ArgumentCountMismatch, "'{s}' çağrısında '{s}' argümanı eksik", .{ name, p.name }));
         }
         return out;
+    }
+
+    /// İfade, değerlendirilmesiyle gözlemlenebilir yan etki üretebilecek bir şey (çağrı, `await`, `spawn`, kurucu) içeriyor mu?
+    fn exprHasEffects(e: ast.Expr) bool {
+        return switch (e) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier, .lambda => false,
+            .unary => |u| exprHasEffects(u.operand.*),
+            .binary => |b| exprHasEffects(b.left.*) or exprHasEffects(b.right.*),
+            .attribute => |a| exprHasEffects(a.obj.*),
+            .index => |ix| exprHasEffects(ix.obj.*) or exprHasEffects(ix.index.*),
+            .ternary => |t| exprHasEffects(t.cond.*) or exprHasEffects(t.then_expr.*) or exprHasEffects(t.else_expr.*),
+            .list_lit => |items| blk: {
+                for (items) |it| if (exprHasEffects(it)) break :blk true;
+                break :blk false;
+            },
+            .tuple_lit => |items| blk: {
+                for (items) |it| if (exprHasEffects(it)) break :blk true;
+                break :blk false;
+            },
+            .dict_lit => |pairs| blk: {
+                for (pairs) |p| if (exprHasEffects(p.key) or exprHasEffects(p.value)) break :blk true;
+                break :blk false;
+            },
+            .slice => |sl| exprHasEffects(sl.obj.*) or (if (sl.lo) |x| exprHasEffects(x.*) else false) or (if (sl.hi) |x| exprHasEffects(x.*) else false) or (if (sl.step) |x| exprHasEffects(x.*) else false),
+            else => true, // call, await_expr, spawn_expr, generic_construct, comprehension'lar, kwarg...: muhafazakâr
+        };
     }
 
     /// `checkArgs`in varsayılan/keyword farkındalıklı sarmalayıcısı. Düz konumsal ve tam çağrılar ESKİ yolla (aynı hata
@@ -1941,6 +2020,7 @@ pub const Checker = struct {
         const decl = sig.decl orelse return self.fail(error.TypeMismatch, "'{s}' keyword argüman/varsayılan değer desteklemiyor", .{name});
         const expanded = try self.expandCallArgs(decl, args, name);
         try self.call_expansions.put(self.allocator, key, expanded);
+        if (self.last_eval_order) |o| try self.call_orders.put(self.allocator, key, o);
         return self.checkArgs(ctx, sig.params, expanded, name);
     }
 
@@ -1956,7 +2036,7 @@ pub const Checker = struct {
 
     /// Checker bitince, kaydedilen genişletmeleri AST'ye yazar (bkz. `call_expand_apply.zig`).
     fn applyCallExpansions(self: *Checker, module: ast.Module) void {
-        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0 and self.lambda_defs.count() == 0 and self.expr_rewrites.count() == 0 and self.infer_types.count() == 0) return;
+        if (self.call_expansions.count() == 0 and self.call_orders.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0 and self.lambda_defs.count() == 0 and self.expr_rewrites.count() == 0 and self.infer_types.count() == 0) return;
         var pending: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         var lifted: std.ArrayListUnmanaged(ast.FuncDef) = .empty;
         var in_func: u32 = 0;
@@ -1964,6 +2044,7 @@ pub const Checker = struct {
             .exprs = &self.expr_rewrites,
             .infers = &self.infer_types,
             .calls = &self.call_expansions,
+            .orders = &self.call_orders,
             .fors = &self.for_rewrites,
             .stmt_fors = &self.stmt_for_rewrites,
             .comps = &self.comp_types,
@@ -5931,6 +6012,8 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "'spawn' yalnızca 'async def' fonksiyonlarını başlatabilir: '{s}' async değil", .{fn_name});
                 }
                 const sig = self.functions.get(fn_name).?; // async_functions'a girdiyse functions'ta da vardır
+                self.in_spawn_operand = true;
+                defer self.in_spawn_operand = false;
                 try self.checkArgsDecl(ctx, sig, call.args, fn_name, @intFromPtr(call.callee));
                 const boxed = try self.allocator.create(Type);
                 boxed.* = sig.return_type;
@@ -9475,6 +9558,7 @@ pub const Checker = struct {
         if (has_kw or c0.args.len < gfd.params.len) {
             const expanded = try self.expandCallArgs(gfd.params, c0.args, gfd.name);
             try self.call_expansions.put(self.allocator, @intFromPtr(c0.callee), expanded);
+            if (self.last_eval_order) |o| try self.call_orders.put(self.allocator, @intFromPtr(c0.callee), o);
             c.args = expanded;
         }
         if (gfd.params.len != c.args.len) {

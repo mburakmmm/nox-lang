@@ -336,6 +336,9 @@ fn arithOpFor(mnemonic: []const u8, ty: QbeType) ?[]const u8 {
     if (std.mem.eql(u8, mnemonic, "mul")) return if (is_float) "fmul" else "mul";
     if (std.mem.eql(u8, mnemonic, "div")) return if (is_float) "fdiv" else "sdiv";
     if (std.mem.eql(u8, mnemonic, "rem")) return if (is_float) "frem" else "srem";
+    // v1.169.0: işaretsiz 64-bit `*` taşma denetimi (`emitMul64OverflowCheck`) `udiv` kullanır (önceden yalnızca QBE'de çalışıyordu).
+    if (std.mem.eql(u8, mnemonic, "udiv")) return "udiv";
+    if (std.mem.eql(u8, mnemonic, "urem")) return "urem";
     if (std.mem.eql(u8, mnemonic, "or")) return "or";
     if (std.mem.eql(u8, mnemonic, "and")) return "and";
     if (std.mem.eql(u8, mnemonic, "xor")) return "xor";

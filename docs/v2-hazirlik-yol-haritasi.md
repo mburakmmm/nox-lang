@@ -51,8 +51,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [ ] **2.2 Stdlib sınıf kurucu imzalarını dondur** — `HttpRequest`'e 1.127'de eklenen 5. argüman (`peer_addr`)
   Aether'i kırdı. Fabrika fonksiyonu / kurucu dondurma politikası.
 - [ ] **2.3 2.0'a hangi diğer kırıcı temizlikler girecek?** (kullanıcıyla birlikte karar).
-- [ ] **2.4 Semantik dondurma (§10) gözden geçirme:** v1.143.0 varsayılan backend LLVM oldu → sabit-genişlikli
-  tamsayı taşması varsayılan olarak SARAR (QBE'de tuzaktı). Bu 2.0 notlarına açıkça girmeli.
+- [x] **2.4 Backend'ler arası semantik eşitliği** — v1.169.0: sabit-genişlikli taşma HER İKİ backend'de tuzağa düşer (önceden LLVM sarıyordu); 64 vakalık fark matrisi (8 genişlik × 8 durum) iki backend'de birebir aynı. Düz `int` her ikisinde de sarar. Keyword değerlendirme sırası: yan etkili argümanlar KAYNAK sırasıyla değerlendirilir, parametre sırasıyla bağlanır (spawn'da yan etkili kwarg'lar parametre sırasıyla yazılmalı).
 
 ## 3. Platform ve dağıtım
 

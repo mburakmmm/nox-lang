@@ -26,10 +26,8 @@
 //!   HİÇ await EDİLMEDEN bağımsız çalışır, bu YÜZDEN İKİ görevin YAZDIRMA
 //!   SIRASI zamanlayıcıya bağlıdır (testin KENDİ amacı sızıntı/UAF
 //!   OLMAMASI, çıktı SIRASI DEĞİL).
-//! - `fixed_int_overflow_trap` (v2.0 madde 4/v3 madde 7, §3.204): sabit-
-//!   genişlikli taşma QBE'de HER ZAMAN tuzağa düşer, LLVM'de HER ZAMAN
-//!   sessizce sarar — KASITLI, KALICI bir tasarım kararı (bkz. §3.204),
-//!   "düzeltilecek" bir hata DEĞİL.
+//! - (v1.169.0: `fixed_int_overflow_trap` denylist'ten ÇIKARILDI — sabit-genişlikli
+//!   taşma artık İKİ backend'de de aynı şekilde tuzağa düşer.)
 //!
 //! HER DÖRDÜ de GERÇEK zamanlayıcı/tasarım-kararı asimetrileridir — QBE'nin
 //! KATI M:1 fiber zamanlayıcısı İLE `--release`in GERÇEK M:N iş-çalan
@@ -66,7 +64,6 @@ const DENYLISTED_SOURCES = [_][]const u8{
     @embedFile("codegen_cases/async_deadlock.nox"),
     @embedFile("codegen_cases/thread_spawn_ordering.nox"),
     @embedFile("codegen_cases/task_reassignment_frees_old.nox"),
-    @embedFile("codegen_cases/fixed_int_overflow_trap.nox"),
 };
 
 fn isDenylistedSource(source: []const u8) bool {

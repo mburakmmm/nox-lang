@@ -23,8 +23,7 @@ when `clang` is available; `clang -O2`) or [QBE](https://c9x.me/compile/)
 builds, Windows, and when `clang` is missing). A small runtime written in
 Zig handles memory management, error propagation, and the C/WASM bridge.
 Both backends are exercised by the whole test corpus and must agree on
-program output; the one intentional difference is fixed-width integer
-overflow (see [Numeric rules](#numeric-rules)).
+program output; program output is identical (see [Numeric rules](#numeric-rules) for integer overflow).
 
 Where Nox differs from Python:
 
@@ -137,7 +136,7 @@ Call sites may name arguments: `f(1, b=3)`, `f(b=3, a=1)`; positional arguments 
 and an unknown name, a repeated parameter or a missing required argument is a compile error.
 This works for functions, constructors, methods (including `super().__init__`), generic
 functions and `spawn f(...)`; function-typed values and built-ins take positional arguments only.
-Arguments are evaluated in parameter order, not in the order written.
+Arguments with side effects are evaluated in the order they are written (left to right), and bound by name; `f(b=g(), a=h())` calls `g` before `h`. (The one exception: in a `spawn` call, keyword arguments with side effects must be written in parameter order.)
 
 ```nox
 def connect(host: str, port: int = 8080, tls: bool = False) -> str:
@@ -231,9 +230,9 @@ metadata-only decorators — see `nox.reflect` — are supported.)
 - **Fixed-width integers** `i8 i16 i32 i64 isize u8 u16 u32 u64 usize` exist for byte-level
   work, binary formats and `lowlevel` code. They never mix implicitly with each
   other or with `int`/`float` (`u8(10)`, `int(b)` convert explicitly). **Overflow
-  differs by backend:** the LLVM backend (default) wraps around; the QBE
-  backend traps with a message. Do not rely on either; mask explicitly when you
-  mean to wrap.
+  of `+ - *` on a fixed-width integer terminates the program with a message on every
+  backend** (QBE and LLVM behave identically). Plain `int` (64-bit) wraps around on both
+  backends. To wrap deliberately, compute in `int` and mask (`(x * 31 + c) & 0xFFFFFFFF`).
 - `list[u8]` etc. are byte-packed.
 - **Literals:** decimal `42`, `1_000_000`; hex/binary/octal `0xFF`, `0b1010`, `0o17`; floats `3.14`, `1e-3`,
   `2.5E+10`, `1_0.5` (an exponent always makes a `float`). Note that `noxc fmt` rewrites `0xFF` as `255`.

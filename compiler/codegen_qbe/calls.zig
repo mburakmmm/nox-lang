@@ -310,6 +310,8 @@ fn checkInsideLowlevel(self: *Codegen) CodegenError!void {
 }
 
 pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
+    self.pending_eval_order = c.eval_order;
+    defer self.pending_eval_order = null;
     switch (c.callee.*) {
         .identifier => |name| {
             if (std.mem.eql(u8, name, "print")) {
@@ -1176,14 +1178,16 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // GERÇEK bir `call`in YERİNE callee'nin gövdesi BURAYA splice
             // edilir — bkz. `genInlinedCall`in belge notu.
             if (self.inline_sites.get(@intFromPtr(c.callee))) |site| {
-                return self.genInlinedCall(c, site);
+                if (c.eval_order == null) return self.genInlinedCall(c, site);
             }
 
             const sig = self.functions.get(name) orelse return error.Unsupported;
             if (sig.params.len != c.args.len) return error.Unsupported;
 
             const arg_values = try self.allocator.alloc(Value, c.args.len);
-            for (c.args, 0..) |a, i| {
+            const eval_order = try self.takeEvalOrder(c.args.len);
+            for (eval_order) |i| {
+                const a = c.args[i];
                 const v0 = try self.genExprForTarget(a, sig.params[i]);
                 try self.checkNoLowlevelEscape(v0);
                 arg_values[i] = try self.convert(v0, sig.params[i].qtype);
@@ -1417,7 +1421,9 @@ pub fn currentArena(self: *Codegen) ?[]const u8 {
 pub fn genConstruct(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, args: []const ast.Expr) CodegenError!Value {
     if (cinfo.init_params.len != args.len) return error.Unsupported;
     const arg_values = try self.allocator.alloc(Value, args.len);
-    for (args, 0..) |a, i| {
+    const eval_order = try self.takeEvalOrder(args.len);
+    for (eval_order) |i| {
+        const a = args[i];
         const v0 = try self.genExprForTarget(a, cinfo.init_params[i]);
         try self.checkNoLowlevelEscape(v0);
         arg_values[i] = try self.convert(v0, cinfo.init_params[i].qtype);
@@ -1780,6 +1786,8 @@ fn genBindMethod(self: *Codegen, c: ast.Call) CodegenError!Value {
 
 pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
     if (isSuperCallExpr(a.obj.*)) return self.genSuperMethodCall(a, args);
+    // v1.169.0: kaynak-sırası değerlendirme permütasyonu, alıcı ifadesi (iç çağrılar içerebilir) değerlendirilmeden ÖNCE alınır.
+    const eval_order = try self.takeEvalOrder(args.len);
     const obj = try self.genExpr(a.obj.*);
     if (obj.heap == .str) return genStrMethod(self, obj, a, args);
     if (obj.heap == .dict) return self.genDictMethod(obj, a, args);
@@ -1835,7 +1843,8 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     if (msig.sig.params.len != args.len) return error.Unsupported;
 
     const arg_values = try self.allocator.alloc(Value, args.len);
-    for (args, 0..) |arg, i| {
+    for (eval_order) |i| {
+        const arg = args[i];
         const v0 = try self.genExprForTarget(arg, msig.sig.params[i]);
         try self.checkNoLowlevelEscape(v0);
         arg_values[i] = try self.convert(v0, msig.sig.params[i].qtype);
@@ -1918,6 +1927,7 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
 /// gitmek, GERİ DÖNÜP KENDİ override'ını TEKRAR çağırarak sonsuz
 /// özyinelemeye yol açardı).
 pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    const eval_order = try self.takeEvalOrder(args.len);
     const self_class = self.current_self_class.?;
     const base_name = self.classes.get(self_class).?.base.?;
     const base_info = self.classes.get(base_name).?;
@@ -1926,7 +1936,9 @@ pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
     if (std.mem.eql(u8, a.attr, "__init__")) {
         const init_owner = base_info.init_owner.?;
         const arg_values = try self.allocator.alloc(Value, args.len);
-        for (args, base_info.init_params, 0..) |arg, pt, i| {
+        for (eval_order) |i| {
+            const arg = args[i];
+            const pt = base_info.init_params[i];
             const v0 = try self.genExprForTarget(arg, pt);
             try self.checkNoLowlevelEscape(v0);
             arg_values[i] = try self.convert(v0, pt.qtype);
@@ -1947,7 +1959,8 @@ pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
     const msig = base_info.methods.get(a.attr) orelse return error.Unsupported;
     if (msig.sig.params.len != args.len) return error.Unsupported;
     const arg_values = try self.allocator.alloc(Value, args.len);
-    for (args, 0..) |arg, i| {
+    for (eval_order) |i| {
+        const arg = args[i];
         const v0 = try self.genExprForTarget(arg, msig.sig.params[i]);
         try self.checkNoLowlevelEscape(v0);
         arg_values[i] = try self.convert(v0, msig.sig.params[i].qtype);

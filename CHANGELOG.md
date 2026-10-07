@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.169.0]
+
+### Değişti (davranış — 2.0 notu)
+
+- **Sabit-genişlikli tamsayı taşması artık LLVM'de de QBE'deki gibi tuzağa düşer** (`nox: 'u8' tipinde tamsayı taşması`). Önceden LLVM (varsayılan backend) sessizce sarıyordu; program anlamı backend'e bağlıydı. 8 genişlik × 8 durumluk fark matrisi iki backend'de birebir aynı. LLVM'de işaretsiz 64-bit `*` denetimi için `udiv` eşlemesi eklendi. Bilinçli sarma için `int` ile hesaplayıp maskeleyin. Düz `int` iki backend'de de sarar.
+- **Keyword argümanlar kaynak sırasıyla değerlendirilir, parametre sırasıyla bağlanır** (`f(b=g(), a=h())` önce `g`, sonra `h`). Önceden parametre sırasıyla değerlendiriliyordu; 2.0 sonrası değiştirmek kırıcı olacağından şimdi düzeltildi. Yalnızca yan etkili argümanların göreli sırası değiştiğinde `Call.eval_order` kaydedilir; bu çağrılar satır içine açılmaz. `spawn` çağrılarında yan etkili keyword argümanlar parametre sırasıyla yazılmalıdır (derleme hatası).
+
 ## [1.168.0]
 
 ### Eklendi
