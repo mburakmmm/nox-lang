@@ -28581,6 +28581,31 @@ geçici serbest bırakma; sızıntı denetimli); typecheck: `ok_list_api_all_met
 LLVM seam'ine `uitofp i64` eşlemesi eklendi) — 2^63 üstü doğru çevrilir. `float(str)` değişmedi (ValueError). Golden:
 `float_from_numeric` (iki backend), typecheck `err_float_of_list`. **Henüz yok:** üçlü ifadede int/float dal karışımı (ayrı karar).
 
+## 3.269 `dict` değerleri `list`/`dict`, `float` anahtar, eleman alıcısında büyütme (v1.152.0)
+
+**Değer tipleri.** `dict[K, V]` değeri artık `list[T]` ya da `dict[K2, V2]` olabilir. Runtime sözlüğü değerin türünü bilmez; bu yüzden
+`Dict.value_release: ?fn(rt, ptr)` alanı eklendi: codegen sözlüğü kurarken (`{}`/literal/`copy()`) değerin serbest bırakıcısını yazar —
+liste değer için üretilmiş `$List_..._release` (`emitDictInstallValueRelease`), iç sözlük değer için iç bayrak üçlüsüne göre 8 sabit
+sarmalayıcıdan biri (`nox_dict_set_value_release_dict(d, combo)`). `set` (üzerine yazma)/`remove`/`clear`/`release` değerleri
+`releaseValuePayload` ile bırakır (`value_release` varsa o, yoksa sınıf etiket-dağıtımı); `update` fonksiyonu hedefe devreder.
+`DictInfo` yeni alanlar: `value_heap` (`.list`/`.dict`/`.none`) ve `value_ti` (tam `TypeInfo`); `value_is_class` BİLİNÇLİ `false` kalır
+(sınıf-dağıtımlı gc/trace yolları list/dict değerlere uygulanmaz), runtime'a giden "ARC işaretçisi" bayrağı `DictInfo.valueIsArc()`.
+`abi.dictValueValue`/`makeDictInfo`/`typeInfoOfValue` ortak yardımcılar. Okuma (`d[k]`, `get`, `pop`, `setdefault`, `values()`) değer
+`Value`sini `value_ti`dan kurar; ödünç okuma/temp-taban retain kuralları sınıf değerlerle aynı.
+
+**`float` anahtar.** Yük (payload) bit desenidir: hash/eşitlik int yolundan geçer. `0.0` ve `-0.0` AYRI anahtardır (bit farkı), `NaN`
+anahtar kullanılmamalıdır (belgeli sınırlama). `keys()` `list[float]` döner.
+
+**Eleman alıcısında büyütme.** `append`/`insert`/`extend` listeyi yeniden ayırabilir; yeni işaretçinin yazılacağı değişken slotu yalnız
+isim/alan alıcılarında vardır. `xs[i].append(v)`/`d[k].append(v)` (alıcı `index` ifadesi, liste tipli) checker'da (`tryCheckElementGrowStmt`)
+`if True:` bloğuna yeniden yazılır: `__nox_el_N: list[T] = <alıcı>`; `__nox_el_N.işlem(...)`; `<alıcı> = __nox_el_N` — mevcut ARC/büyüme/index-atama
+yolları aynen kullanılır. Alıcı yan etkisiz olmalıdır (`isDuplicableExpr`: isim/literal/alan/indeks/ikili/tekli; çağrı yok → derleme hatası).
+`call_expand_apply.StmtForMap` artık `StmtKind` yeniden yazımlarını taşır (extend → `for`, bu → `if`).
+
+**Golden:** `dict_list_dict_values_float_keys` (iç içe list/dict/sınıf değerler, `d[k].append/insert`, get/pop/setdefault/update/copy/
+clear/values/del, float anahtarlar; Python ile birebir, iki backend, sızıntı denetimli); typecheck `ok_dict_list_values_and_element_grow`,
+`err_grow_on_call_element_receiver`, `err_dict_list_value_append_type`, `err_dict_update_list_value_type`; Zig birim testi (`value_release`).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

@@ -915,6 +915,7 @@ fn genEmptyDictLit(self: *Codegen, target: anytype) CodegenError!Value {
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const d = try self.newTemp();
     try self.qbeCall(.{ .name = d, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = key_is_str_lit } });
+    try self.emitDictInstallValueRelease(d, dinfo);
     return .{ .text = d, .qtype = .l, .heap = .dict, .dict_info = dinfo };
 }
 
@@ -941,12 +942,8 @@ pub fn genDictLit(self: *Codegen, pairs: []const ast.DictPair) CodegenError!Valu
     }
     const key_is_str = key_values[0].heap == .str;
     const value_is_str = value_values[0].heap == .str;
-    const value_is_class = value_values[0].heap == .class;
-    const key_qtype = key_values[0].qtype;
-    const value_qtype = value_values[0].qtype;
-
-    const dinfo = try self.allocator.create(DictInfo);
-    dinfo.* = .{ .key_is_str = key_is_str, .key_qtype = key_qtype, .value_qtype = value_qtype, .value_is_str = value_is_str, .value_is_class = value_is_class, .value_class_name = value_values[0].class_name };
+    const dinfo = try abi.makeDictInfo(self.allocator, abi.typeInfoOfValue(key_values[0]), abi.typeInfoOfValue(value_values[0]));
+    const value_is_class = dinfo.valueIsArc();
 
     const key_is_str_lit: []const u8 = if (key_is_str) "1" else "0";
     const value_is_str_lit: []const u8 = if (value_is_str) "1" else "0";
@@ -954,6 +951,7 @@ pub fn genDictLit(self: *Codegen, pairs: []const ast.DictPair) CodegenError!Valu
 
     const d = try self.newTemp();
     try self.qbeCall(.{ .name = d, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = key_is_str_lit } });
+    try self.emitDictInstallValueRelease(d, dinfo);
 
     for (key_values, 0..) |kv, i| {
         const key_payload = try self.toPayload(kv);

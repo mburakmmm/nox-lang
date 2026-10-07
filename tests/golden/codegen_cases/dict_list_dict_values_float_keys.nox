@@ -1,0 +1,70 @@
+class Rec:
+    label: str
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+def work(n: int) -> int:
+    acc: int = 0
+    i: int = 0
+    groups: dict[str, list[str]] = {"seed": ["s0"]}
+    recs: dict[int, list[Rec]] = {0: [Rec("r0")]}
+    nested: dict[str, dict[str, int]] = {"o": {"a": 1}}
+    deep: dict[str, dict[str, list[int]]] = {"d": {"x": [1, 2]}}
+    while i < n:
+        i = i + 1
+        k: str = "g" + str(i % 7)
+        if k not in groups:
+            groups[k] = ["first" + str(i)]
+        groups[k].append("v" + str(i))
+        groups[k].insert(0, "h" + str(i))
+        acc = acc + len(groups[k])
+        rk: int = i % 5
+        if rk not in recs:
+            recs[rk] = [Rec("p" + str(i))]
+        recs[rk].append(Rec("q" + str(i)))
+        acc = acc + len(recs[rk][0].label) + len(recs[rk])
+        inner: dict[str, int] = nested.setdefault("n" + str(i % 3), {"z": 0})
+        inner["c" + str(i % 4)] = i
+        acc = acc + len(inner)
+        got: list[str] = groups.get("zz" + str(i), ["dflt"])
+        acc = acc + len(got)
+        if i % 4 == 0:
+            popped: list[str] = groups.pop(k, ["none"])
+            acc = acc + len(popped)
+        if i % 6 == 0:
+            cp: dict[str, list[str]] = groups.copy()
+            cp["extra"] = ["e"]
+            groups.update(cp)
+            del groups["extra"]
+        if i % 9 == 0:
+            vs: list[list[str]] = groups.values()
+            acc = acc + len(vs)
+        if i % 11 == 0:
+            tmp: dict[str, list[str]] = groups.copy()
+            tmp.clear()
+            acc = acc + len(tmp)
+        deep["d"]["x"].append(i)
+        if len(deep["d"]["x"]) > 5:
+            deep["d"]["x"] = [0]
+        acc = acc + len(deep["d"]["x"])
+    return acc + len(groups) + len(recs) + len(nested) + len(deep)
+
+print(work(30))
+print(work(2500))
+
+# float anahtarlar
+fk: dict[float, str] = {1.5: "a", 2.5: "b"}
+fk[3.5] = "c"
+fk[1.5] = "z"
+print(fk[1.5])
+print(len(fk))
+print(2.5 in fk)
+print(9.5 in fk)
+print(fk.get(3.5, "none"))
+print(fk.pop(2.5))
+ks: list[float] = fk.keys()
+print(len(ks))
+print(ks[0])
+del fk[3.5]
+print(len(fk))
+print(fk.get(8.25, "missing"))

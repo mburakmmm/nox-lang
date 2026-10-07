@@ -141,7 +141,7 @@ connect("localhost")
 connect("example.com", tls=True)
 ```
 
-**Dictionaries** (`dict[K, V]`, keys `int`/`bool`/`str`, values `int`/`float`/`bool`/`str`/class) keep
+**Dictionaries** (`dict[K, V]`, keys `int`/`float`/`bool`/`str`, values `int`/`float`/`bool`/`str`/class/`list[T]`/`dict`; `groups[k].append(v)` works on list values) keep
 insertion order: `d[k]`, `d[k] = v`, `k in d`, `len(d)`, `d.keys()`, `d.values()`, `for k in d`,
 `d.get(k, default)` (the default is only evaluated when the key is missing), `d.get(k)` (a
 `V | None`), `d.pop(k)` (raises `KeyError`), `d.pop(k, default)`, `d.setdefault(k, default)`,

@@ -557,7 +557,7 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const value_payload = try self.toPayload(value_converted);
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-    const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+    const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
     try self.qbeCall(null, "$nox_dict_set", &.{
         .{ .ty = .l, .text = RT_PARAM },
         .{ .ty = .l, .text = obj.text },
@@ -639,14 +639,11 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
         try self.emitInlineRetain(converted.text, .str);
     } else if (isTemporaryExpr(obj_expr) and dinfo.value_is_class) {
         try self.emitInlineRetain(converted.text, .class);
+    } else if (isTemporaryExpr(obj_expr) and (dinfo.value_heap == .list or dinfo.value_heap == .dict)) {
+        try self.emitInlineRetain(converted.text, dinfo.value_heap);
     }
     try self.releaseIfTemporary(obj_expr, obj);
-    return .{
-        .text = converted.text,
-        .qtype = converted.qtype,
-        .heap = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else .none,
-        .class_name = if (dinfo.value_is_class) dinfo.value_class_name else null,
-    };
+    return abi.dictValueValue(dinfo, converted.text, converted.qtype);
 }
 
 /// Faz FF.6.4 (bkz. `narrowed_unbox`ın belge notu): `checker.zig`'in
@@ -881,7 +878,7 @@ pub fn genDel(self: *Codegen, e: ast.Expr) CodegenError!void {
     const key_payload = try self.toPayload(key_v0);
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-    const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+    const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
     const removed = try self.newTemp();
     try self.qbeCall(.{ .name = removed, .ty = .w }, "$nox_dict_remove", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .w, .text = value_is_str_lit }, .{ .ty = .w, .text = value_is_class_lit }, .{ .ty = .l, .text = key_payload.text } });
     const err_label = try self.newLabel("dict_del_err");

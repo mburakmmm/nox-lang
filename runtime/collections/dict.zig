@@ -73,6 +73,22 @@ const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 /// yorumlayıp `nox_class_release_dispatch`e (tag'i KENDİ İLK `TAG_SIZE`
 /// baytından okuyarak) dağıtır — `payload == 0` (hiç ATANMAMIŞ) İSE
 /// hiçbir şey YAPMAZ.
+/// `value_is_class` bayraklı bir değeri bırakır: sözlüğün `value_release`i varsa (list/dict değer) onunla, yoksa sınıf dağıtımıyla.
+fn releaseValuePayload(rt: ?*anyopaque, d: *const Dict, payload: i64) void {
+    if (payload == 0) return;
+    if (d.value_release) |f| {
+        f(rt, @ptrFromInt(@as(usize, @bitCast(payload))));
+        return;
+    }
+    releaseClassPayload(rt, payload);
+}
+
+/// Codegen, değeri `list[T]`/`dict[K, V]` olan bir sözlüğü kurarken çağırır (bkz. `Dict.value_release`).
+pub export fn nox_dict_set_value_release(dp: ?*anyopaque, f: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void) void {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return));
+    d.value_release = f;
+}
+
 fn releaseClassPayload(rt: ?*anyopaque, payload: i64) void {
     if (payload == 0) return;
     const p: *anyopaque = @ptrFromInt(@as(usize, @bitCast(payload)));
@@ -340,6 +356,10 @@ pub const Dict = struct {
     /// gerçek hash aramasına indirir. Dict'te silme olmadığından indeksler kararlıdır (`entries`
     /// yalnızca büyür), doğrulama `entries[last_idx].key == key` (int: değer, str: aynı işaretçi).
     last_idx: usize = std.math.maxInt(usize),
+    /// v1.152.0 (roadmap 1.6b): değerleri `list[T]`/`dict[K, V]` olan sözlüklerde bu değerlerin SOMUT serbest bırakma
+    /// fonksiyonu (codegen kurulumda `nox_dict_set_value_release` ile yazar; `value_is_class` bayrağı bu durumda "ARC
+    /// işaretçisi" demektir). `null` ise `value_is_class` değerleri sınıf etiket-dağıtımıyla (`releaseClassPayload`) bırakılır.
+    value_release: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void = null,
 };
 
 fn payloadToStrPtr(v: i64) ?[*:0]u8 {
@@ -408,7 +428,7 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
     if (findIndex(d, key, rt)) |i| {
         const old = d.entries.items[i];
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.value));
-        if (value_is_class != 0) releaseClassPayload(rt, old.value);
+        if (value_is_class != 0) releaseValuePayload(rt, d, old.value);
         // v1.142.16: anahtarlar yalnızca `entries`te yaşar (indeks tablosunda kopya yok) — aşağıdaki
         // `entries[i]` güncellemesi (yeni anahtar işaretçisi) tek yetkili güncellemedir.
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
@@ -449,7 +469,7 @@ pub export fn nox_dict_remove(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32,
     const i = findIndex(d, key, rt) orelse return 0;
     const old = d.entries.items[i];
     if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.value));
-    if (value_is_class != 0) releaseClassPayload(rt, old.value);
+    if (value_is_class != 0) releaseValuePayload(rt, d, old.value);
     if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
     removeAt(rt, d, i);
     return 1;
@@ -472,7 +492,7 @@ pub export fn nox_dict_clear(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, 
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     for (d.entries.items) |e| {
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.value));
-        if (value_is_class != 0) releaseClassPayload(rt, e.value);
+        if (value_is_class != 0) releaseValuePayload(rt, d, e.value);
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.key));
     }
     d.entries.clearRetainingCapacity();
@@ -486,6 +506,10 @@ pub export fn nox_dict_clear(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, 
 pub export fn nox_dict_update(rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32) void {
     const s: *Dict = @ptrCast(@alignCast(src orelse return));
     if (dst == src) return;
+    if (dst) |dp| {
+        const dd: *Dict = @ptrCast(@alignCast(dp));
+        if (dd.value_release == null) dd.value_release = s.value_release;
+    }
     // `src.entries` `dst` güncellenirken DEĞİŞMEZ (farklı sözlükler), ama güvenli olsun diye uzunluk önceden alınır.
     var i: usize = 0;
     const n = s.entries.items.len;
@@ -609,7 +633,7 @@ pub export fn nox_dict_release(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32
     const d: *Dict = @ptrCast(@alignCast(ptr));
     for (d.entries.items) |e| {
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.value));
-        if (value_is_class != 0) releaseClassPayload(rt, e.value);
+        if (value_is_class != 0) releaseValuePayload(rt, d, e.value);
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.key));
     }
     d.entries.deinit(state.allocator());
@@ -960,4 +984,54 @@ test "v1.142.16: kompakt indeks tablosu + son-arama önbelleği — rastgele iş
     var it = model.iterator();
     while (it.next()) |e| try std.testing.expectEqual(e.value_ptr.*, nox_dict_get(rt, d, 0, e.key_ptr.*));
     nox_dict_release(rt, d, 0, 0, 0);
+}
+
+/// `dict[K, dict[K2, V2]]` değer serbest bırakıcıları: iç sözlüğün (anahtar-str, değer-str, değer-ARC) bayrak üçlüsüne göre
+/// 8 sabit `fn(rt, ptr)` — `Dict.value_release` olarak yazılır. İç sözlüğün KENDİ `value_release`i (iç değerler list/dict ise)
+/// iç sözlüğün yapısında durur.
+fn dictReleaseWrapper(comptime combo: u3) *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void {
+    return &struct {
+        fn f(rt: ?*anyopaque, p: ?*anyopaque) callconv(.c) void {
+            nox_dict_release(rt, p, @intFromBool(combo & 4 != 0), @intFromBool(combo & 2 != 0), @intFromBool(combo & 1 != 0));
+        }
+    }.f;
+}
+
+pub const dict_release_wrappers = [8]*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void{
+    dictReleaseWrapper(0), dictReleaseWrapper(1), dictReleaseWrapper(2), dictReleaseWrapper(3),
+    dictReleaseWrapper(4), dictReleaseWrapper(5), dictReleaseWrapper(6), dictReleaseWrapper(7),
+};
+
+/// Codegen için: iç sözlük bayraklarına (`combo = key_is_str<<2 | value_is_str<<1 | value_is_class`) uygun release işaretçisini
+/// sözlüğün `value_release`ine yazar.
+pub export fn nox_dict_set_value_release_dict(dp: ?*anyopaque, combo: i32) void {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return));
+    d.value_release = dict_release_wrappers[@as(usize, @intCast(combo)) & 7];
+}
+
+var test_value_release_calls: usize = 0;
+fn testCountingRelease(_: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+    test_value_release_calls += 1;
+}
+
+test "v1.152.0: value_release — set/remove/clear/release değerleri sözlüğün kendi fonksiyonuyla bırakır; update fonksiyonu devralır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    test_value_release_calls = 0;
+    const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    nox_dict_set_value_release(d, &testCountingRelease);
+    nox_dict_set(rt, d, 0, 0, 1, 1, 0x1000);
+    nox_dict_set(rt, d, 0, 0, 1, 2, 0x2000);
+    nox_dict_set(rt, d, 0, 0, 1, 1, 0x3000); // üzerine yazma: eski değer bırakılır
+    try std.testing.expectEqual(@as(usize, 1), test_value_release_calls);
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_remove(rt, d, 0, 0, 1, 2));
+    try std.testing.expectEqual(@as(usize, 2), test_value_release_calls);
+    const e = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    nox_dict_update(rt, e, d, 0, 0, 0); // value_is_class=0 → retain yok; value_release e'ye geçer
+    try std.testing.expect(@as(*Dict, @ptrCast(@alignCast(e))).value_release != null);
+    nox_dict_clear(rt, d, 0, 0, 1);
+    try std.testing.expectEqual(@as(usize, 3), test_value_release_calls);
+    nox_dict_release(rt, d, 0, 0, 1);
+    // e'nin tek değeri (0x3000) sahte işaretçi: release'te bırakılmasın diye bayrak 0.
+    nox_dict_release(rt, e, 0, 0, 0);
 }

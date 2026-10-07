@@ -15,16 +15,16 @@ pub const Map = std.AutoHashMapUnmanaged(usize, []ast.Expr);
 pub const ForRewrite = struct { iterable: ?ast.Expr, hoist: ?ast.ForHoist };
 pub const ForMap = std.AutoHashMapUnmanaged(usize, ForRewrite);
 
-/// v1.150.0: `xs.extend(ys)` deyimi checker'da bir `for e in ys: xs.append(e)` döngüsüne yeniden yazılır (anahtar: çağrının
-/// `callee` kutusunun adresi). Böylece büyüme/sahiplik/ARC yolları `append` ile BİREBİR aynıdır, yeni bir codegen yolu yoktur.
-pub const StmtForMap = std.AutoHashMapUnmanaged(usize, ast.ForStmt);
+/// v1.150.0: `xs.extend(ys)` deyimi checker'da bir `for e in ys: xs.append(e)` döngüsüne, v1.152.0: `d[k].append(v)` bir
+/// `if True:` bloğuna (geçici yerel + işlem + geri yazma) yeniden yazılır (anahtar: çağrının `callee` kutusunun adresi). Böylece büyüme/sahiplik/ARC yolları `append` ile BİREBİR aynıdır, yeni bir codegen yolu yoktur.
+pub const StmtForMap = std.AutoHashMapUnmanaged(usize, ast.StmtKind);
 
 pub const Ctx = struct { calls: *const Map, fors: *const ForMap, stmt_fors: *const StmtForMap };
 
 pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
     for (body) |*stmt| {
         if (stmt.kind == .expr_stmt and stmt.kind.expr_stmt == .call) {
-            if (map.stmt_fors.get(@intFromPtr(stmt.kind.expr_stmt.call.callee))) |fs| stmt.kind = .{ .for_stmt = fs };
+            if (map.stmt_fors.get(@intFromPtr(stmt.kind.expr_stmt.call.callee))) |rw| stmt.kind = rw;
         }
         switch (stmt.kind) {
             .expr_stmt => |*e| expr(e, map),

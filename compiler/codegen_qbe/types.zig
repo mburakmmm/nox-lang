@@ -113,6 +113,15 @@ pub const DictInfo = struct {
     /// STATİK olarak BUNA İHTİYAÇ DUYAR, `list[T]`nin `ElemHeapInfo.
     /// class_name`iyle AYNI gerekçe) doğru DOLDURABİLMEK İçİn.
     value_class_name: ?[]const u8 = null,
+    /// v1.152.0 (roadmap 1.6b): değer `list[T]`/`dict[K2, V2]` İSE `.list`/`.dict` (aksi halde `.none`); `value_ti` o değerin tam
+    /// betimleyicisi. `value_is_class` BİLİNÇLİ olarak `false` kalır (sınıf-dağıtımlı gc/trace yolları list/dict değerlere uygulanmaz);
+    /// runtime'a giden "değer ARC işaretçisi" bayrağı `valueIsArc()`tir.
+    value_heap: HeapKind = .none,
+    value_ti: ?*const TypeInfo = null,
+
+    pub fn valueIsArc(self: DictInfo) bool {
+        return self.value_is_class or self.value_heap == .list or self.value_heap == .dict;
+    }
 };
 
 /// Faz U.4.4: bir `(params) -> ret` tip ifadesinin (`ast.TypeExpr.func_type`)

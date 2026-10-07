@@ -283,3 +283,67 @@ pub fn containsName(list: []const []const u8, name: []const u8) bool {
     }
     return false;
 }
+
+/// v1.152.0 (roadmap 1.6b): `dict[K, V]` değerini (`d[k]`, `get`, `pop`, `setdefault`...) betimleyen `Value` — str/sınıf (mevcut bayraklar) VEYA
+/// `list[T]`/`dict[K2, V2]` (`dinfo.value_ti`) değerler için eleman/anahtar betimleyicileri DOĞRU akıtılır.
+pub fn dictValueValue(dinfo: *const types.DictInfo, text: []const u8, qtype: QbeType) Value {
+    if (dinfo.value_ti) |ti| {
+        if (dinfo.value_heap == .list or dinfo.value_heap == .dict) {
+            return .{
+                .text = text,
+                .qtype = qtype,
+                .heap = ti.heap,
+                .elem_qtype = ti.elem_qtype,
+                .class_name = ti.class_name,
+                .elem_heap_info = ti.elem_heap_info,
+                .elem_is_str = ti.elem_is_str,
+                .dict_info = ti.dict_info,
+                .fixed_int = ti.fixed_int,
+                .elem_fixed_int = ti.elem_fixed_int,
+                .func_sig = ti.func_sig,
+            };
+        }
+    }
+    return .{
+        .text = text,
+        .qtype = qtype,
+        .heap = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else .none,
+        .class_name = if (dinfo.value_is_class) dinfo.value_class_name else null,
+    };
+}
+
+/// `TypeInfo`dan `Value` betimleyici alanları (metin/qtype çağıranca verilir).
+pub fn typeInfoOfValue(v: Value) types.TypeInfo {
+    return .{
+        .qtype = v.qtype,
+        .heap = v.heap,
+        .elem_qtype = v.elem_qtype,
+        .class_name = v.class_name,
+        .elem_heap_info = v.elem_heap_info,
+        .elem_is_str = v.elem_is_str,
+        .dict_info = v.dict_info,
+        .func_sig = v.func_sig,
+        .fixed_int = v.fixed_int,
+        .elem_fixed_int = v.elem_fixed_int,
+    };
+}
+
+/// Anahtar/değer `TypeInfo`larından `DictInfo` kurar (`registration.resolveType` ve `genDictLit` ortak).
+pub fn makeDictInfo(allocator: std.mem.Allocator, key: types.TypeInfo, value: types.TypeInfo) std.mem.Allocator.Error!*const types.DictInfo {
+    const d = try allocator.create(types.DictInfo);
+    d.* = .{
+        .key_is_str = key.heap == .str,
+        .key_qtype = key.qtype,
+        .value_qtype = value.qtype,
+        .value_is_str = value.heap == .str,
+        .value_is_class = value.heap == .class,
+        .value_class_name = value.class_name,
+    };
+    if (value.heap == .list or value.heap == .dict) {
+        const ti = try allocator.create(types.TypeInfo);
+        ti.* = value;
+        d.value_heap = value.heap;
+        d.value_ti = ti;
+    }
+    return d;
+}

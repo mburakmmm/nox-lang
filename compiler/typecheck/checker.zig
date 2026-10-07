@@ -816,8 +816,10 @@ pub const Checker = struct {
                     }
                     const key_t = try self.typeExprToType(g.args[0]);
                     const value_t = try self.typeExprToType(g.args[1]);
-                    if (key_t != .int and key_t != .boolean and key_t != .str) {
-                        return self.fail(error.UnknownType, "'dict' anahtar tipi yalnızca int/bool/str olabilir (v1 kapsamı)", .{});
+                    // v1.152.0 (roadmap 1.6b): `float` anahtar eklendi (bit deseniyle hash/eşitlik; 0.0 ve -0.0 AYRI anahtardır,
+                    // NaN anahtar kullanılmamalıdır).
+                    if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float) {
+                        return self.fail(error.UnknownType, "'dict' anahtar tipi yalnızca int/float/bool/str olabilir", .{});
                     }
                     // Faz OO.4 (bkz. nox-teknik-spesifikasyon.md §3.85):
                     // `.class` DEĞER OLARAK KABUL EDİLİR — `nox_class_
@@ -828,8 +830,9 @@ pub const Checker = struct {
                     // DEĞİLDİR (Madde 1'in `TaskLocal[T]`siyle AYNI desen).
                     // Sınıf ANAHTAR olarak HÂLÂ REDDEDİLİR (hash/eşitlik
                     // AYRI, DAHA ZOR bir problem — bilinçli kapsam DIŞI).
-                    if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .class) {
-                        return self.fail(error.UnknownType, "'dict' değer tipi yalnızca int/float/bool/str/sınıf olabilir (v1 kapsamı)", .{});
+                    // v1.152.0 (roadmap 1.6b): `list[T]` ve `dict[K2, V2]` değerler eklendi (sözlük `Dict.value_release` ile bırakır).
+                    if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .class and value_t != .list and value_t != .dict) {
+                        return self.fail(error.UnknownType, "'dict' değer tipi yalnızca int/float/bool/str/sınıf/list/dict olabilir", .{});
                     }
                     const key_boxed = try self.allocator.create(Type);
                     key_boxed.* = key_t;
@@ -4851,6 +4854,7 @@ pub const Checker = struct {
         self.current_span = stmt.span;
         switch (stmt.kind) {
             .expr_stmt => |e| {
+                if (try self.tryCheckElementGrowStmt(ctx, e)) return;
                 if (try self.tryCheckExtendStmt(ctx, e)) return;
                 _ = try self.checkExpr(ctx, e);
             },
@@ -5652,11 +5656,11 @@ pub const Checker = struct {
                 if (pairs.len == 0) return self.fail(error.UnknownType, "boş dict literalinin tipi çıkarılamaz", .{});
                 const first_key = try self.checkExpr(ctx, pairs[0].key);
                 const first_value = try self.checkExpr(ctx, pairs[0].value);
-                if (first_key != .int and first_key != .boolean and first_key != .str) {
-                    return self.fail(error.TypeMismatch, "'dict' anahtar tipi yalnızca int/bool/str olabilir (v1 kapsamı)", .{});
+                if (first_key != .int and first_key != .boolean and first_key != .str and first_key != .float) {
+                    return self.fail(error.TypeMismatch, "'dict' anahtar tipi yalnızca int/float/bool/str olabilir", .{});
                 }
-                if (first_value != .int and first_value != .float and first_value != .boolean and first_value != .str and first_value != .class) {
-                    return self.fail(error.TypeMismatch, "'dict' değer tipi yalnızca int/float/bool/str/sınıf olabilir (v1 kapsamı)", .{});
+                if (first_value != .int and first_value != .float and first_value != .boolean and first_value != .str and first_value != .class and first_value != .list and first_value != .dict) {
+                    return self.fail(error.TypeMismatch, "'dict' değer tipi yalnızca int/float/bool/str/sınıf/list/dict olabilir", .{});
                 }
                 for (pairs[1..]) |p| {
                     const kt = try self.checkExpr(ctx, p.key);
@@ -7334,6 +7338,49 @@ pub const Checker = struct {
         }
     }
 
+    /// v1.152.0: yan etkisiz (tekrar değerlendirilebilir) ifade mi — `d[k].append(v)` yeniden yazımı `d[k]`i iki kez kullanır.
+    fn isDuplicableExpr(e: ast.Expr) bool {
+        return switch (e) {
+            .identifier, .int_lit, .float_lit, .bool_lit, .string_lit => true,
+            .attribute => |a| isDuplicableExpr(a.obj.*),
+            .index => |ix| isDuplicableExpr(ix.obj.*) and isDuplicableExpr(ix.index.*),
+            .binary => |b| isDuplicableExpr(b.left.*) and isDuplicableExpr(b.right.*),
+            .unary => |u| isDuplicableExpr(u.operand.*),
+            else => false,
+        };
+    }
+
+    /// v1.152.0: `xs[i].append(v)` / `d[k].insert(..)` / `.extend(..)` — liste BÜYÜYEBİLİR (yeniden ayrılabilir), yeni işaretçinin geri
+    /// yazılacağı bir değişken slotu yoktur. Deyim, `if True:` bloğuna yeniden yazılır: geçici yerel `tmp = <alıcı>`; `tmp.işlem(..)`;
+    /// `<alıcı> = tmp` — mevcut ARC/büyüme yolları aynen kullanılır. Alıcı yan etkisiz olmalıdır (çağrı içeremez).
+    fn tryCheckElementGrowStmt(self: *Checker, ctx: *FnCtx, e: ast.Expr) TypeError!bool {
+        if (e != .call) return false;
+        const c = e.call;
+        if (c.callee.* != .attribute) return false;
+        const a = c.callee.attribute;
+        const is_grow = std.mem.eql(u8, a.attr, "append") or std.mem.eql(u8, a.attr, "insert") or std.mem.eql(u8, a.attr, "extend");
+        if (!is_grow or a.obj.* != .index) return false;
+        const recv_t = try self.checkExpr(ctx, a.obj.*);
+        if (recv_t != .list) return false;
+        if (!isDuplicableExpr(a.obj.*)) {
+            return self.fail(error.TypeMismatch, "'{s}' elemanın üzerinde yalnızca yan etkisiz bir indeks ifadesiyle çağrılabilir (ör. 'grup[anahtar].append(v)'); önce bir değişkene alın", .{a.attr});
+        }
+        self.extend_counter += 1;
+        const tmp_name = try std.fmt.allocPrint(self.allocator, "__nox_el_{d}", .{self.extend_counter});
+        const tmp_ref = try self.allocator.create(ast.Expr);
+        tmp_ref.* = .{ .identifier = tmp_name };
+        const op_callee = try self.allocator.create(ast.Expr);
+        op_callee.* = .{ .attribute = .{ .obj = tmp_ref, .attr = a.attr } };
+        const body = try self.allocator.alloc(ast.Stmt, 3);
+        body[0] = .{ .kind = .{ .var_decl = .{ .name = tmp_name, .type_expr = try self.typeToTypeExpr(recv_t), .value = a.obj.* } }, .line = self.current_line, .span = self.current_span };
+        body[1] = .{ .kind = .{ .expr_stmt = .{ .call = .{ .callee = op_callee, .args = c.args } } }, .line = self.current_line, .span = self.current_span };
+        body[2] = .{ .kind = .{ .assign = .{ .target = a.obj.*, .value = .{ .identifier = tmp_name } } }, .line = self.current_line, .span = self.current_span };
+        const if_stmt: ast.IfStmt = .{ .cond = .{ .bool_lit = true }, .then_body = body, .elif_clauses = &.{}, .else_body = null };
+        try self.checkStmt(ctx, .{ .kind = .{ .if_stmt = if_stmt }, .line = self.current_line, .span = self.current_span });
+        try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .if_stmt = if_stmt });
+        return true;
+    }
+
     /// v1.150.0: `xs.extend(ys)` ifade deyimi — `for __nox_ext_N in ys: xs.append(__nox_ext_N)` döngüsüne yeniden yazılır (bkz.
     /// `call_expand_apply.StmtForMap`). `ys` ödünç bir ifade ise (değişken/alan/eleman: `xs`le aynı listeyi gösterebilir) önce
     /// `ys.copy()` ile anlık görüntüsü alınır — kendini genişletme (`xs.extend(xs)`) sonsuz döngü/bayat işaretçi üretmez. Dönüş: bu
@@ -7373,7 +7420,7 @@ pub const Checker = struct {
         body[0] = .{ .kind = .{ .expr_stmt = .{ .call = .{ .callee = append_callee, .args = arg_slot } } }, .line = self.current_line, .span = self.current_span };
         const fs: ast.ForStmt = .{ .var_name = var_name, .iterable = iterable, .body = body };
         try self.checkStmt(ctx, .{ .kind = .{ .for_stmt = fs }, .line = self.current_line, .span = self.current_span });
-        try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(c.callee), fs);
+        try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .for_stmt = fs });
         return true;
     }
 

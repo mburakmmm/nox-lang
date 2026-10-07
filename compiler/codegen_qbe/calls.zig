@@ -1954,14 +1954,29 @@ pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
     return .{ .text = "0", .qtype = .w };
 }
 
+/// v1.152.0 (roadmap 1.6b): değeri `list[T]`/`dict[K2, V2]` olan YENİ bir sözlüğe (`d`) değer serbest bırakıcısını yazar — runtime
+/// (`dict.zig`) bu değerleri tür-bağımsız `fn(rt, ptr)` ile bırakır (`Dict.value_release`). Diğer değer türlerinde no-op.
+pub fn emitDictInstallValueRelease(self: *Codegen, d: []const u8, dinfo: *const DictInfo) CodegenError!void {
+    switch (dinfo.value_heap) {
+        .list => {
+            const ti = dinfo.value_ti.?;
+            const self_info: ElemHeapInfo = .{ .heap = .list, .elem_qtype = ti.elem_qtype, .nested = ti.elem_heap_info };
+            const fn_name = try self.releaseFnNameFor(self_info);
+            const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{fn_name});
+            try self.qbeCall(null, "$nox_dict_set_value_release", &.{ .{ .ty = .l, .text = d }, .{ .ty = .l, .text = fn_sym } });
+        },
+        .dict => {
+            const inner = dinfo.value_ti.?.dict_info orelse return error.Unsupported;
+            const combo: u8 = (@as(u8, @intFromBool(inner.key_is_str)) << 2) | (@as(u8, @intFromBool(inner.value_is_str)) << 1) | @as(u8, @intFromBool(inner.valueIsArc()));
+            try self.qbeCall(null, "$nox_dict_set_value_release_dict", &.{ .{ .ty = .l, .text = d }, .{ .ty = .w, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{combo}) } });
+        },
+        else => {},
+    }
+}
+
 /// `dict` değer `Value`sine (okunan ham yük `converted`) heap meta verisini ekler.
 fn dictValueOf(dinfo: *const DictInfo, converted: Value) Value {
-    return .{
-        .text = converted.text,
-        .qtype = converted.qtype,
-        .heap = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else .none,
-        .class_name = if (dinfo.value_is_class) dinfo.value_class_name else null,
-    };
+    return abi.dictValueValue(dinfo, converted.text, converted.qtype);
 }
 
 fn emitKeyError(self: *Codegen, release_a: ast.Expr, release_av: Value, release_b: ast.Expr, release_bv: Value) CodegenError!void {
@@ -1991,9 +2006,9 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
     const key_payload = try self.toPayload(key_v0);
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-    const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
-    const heap_value = dinfo.value_is_str or dinfo.value_is_class;
-    const heap_kind: HeapKind = if (dinfo.value_is_str) .str else .class;
+    const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
+    const heap_value = dinfo.value_is_str or dinfo.valueIsArc();
+    const heap_kind: HeapKind = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else dinfo.value_heap;
 
     const has_t = try self.newTemp();
     try self.qbeCall(.{ .name = has_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
@@ -2117,7 +2132,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     if (std.mem.eql(u8, a.attr, "clear")) {
         if (args.len != 0) return error.Unsupported;
         try self.checkNoLowlevelEscape(obj);
-        try self.qbeCall(null, "$nox_dict_clear", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_class) "1" else "0" } });
+        try self.qbeCall(null, "$nox_dict_clear", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.valueIsArc()) "1" else "0" } });
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = "0", .qtype = .w };
     }
@@ -2126,7 +2141,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const other = try self.genExpr(args[0]);
         try self.checkNoLowlevelEscape(obj);
         try self.checkNoLowlevelEscape(other);
-        try self.qbeCall(null, "$nox_dict_update", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = other.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_class) "1" else "0" } });
+        try self.qbeCall(null, "$nox_dict_update", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = other.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.valueIsArc()) "1" else "0" } });
         try self.releaseIfTemporary(args[0], other);
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = "0", .qtype = .w };
@@ -2136,7 +2151,8 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         try self.checkNoLowlevelEscape(obj);
         const copy_t = try self.newTemp();
         try self.qbeCall(.{ .name = copy_t, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" } });
-        try self.qbeCall(null, "$nox_dict_update", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = copy_t }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_class) "1" else "0" } });
+        try emitDictInstallValueRelease(self, copy_t, dinfo);
+        try self.qbeCall(null, "$nox_dict_update", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = copy_t }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else "0" }, .{ .ty = .w, .text = if (dinfo.valueIsArc()) "1" else "0" } });
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = copy_t, .qtype = .l, .heap = .dict, .dict_info = dinfo };
     }
@@ -2175,7 +2191,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     if (std.mem.eql(u8, a.attr, "values")) {
         if (args.len != 0) return error.Unsupported;
         const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-        const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+        const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
         const value_storage = abi.elemStorageQtype(dinfo.value_qtype, null, .none);
         const elem_size = qbeSizeOf(value_storage);
         const result = try self.newTemp();
@@ -2189,6 +2205,11 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         } else if (dinfo.value_is_class) {
             const info = try self.allocator.create(ElemHeapInfo);
             info.* = .{ .heap = .class, .class_name = dinfo.value_class_name };
+            elem_heap_info = info;
+        } else if (dinfo.value_ti) |ti| {
+            // v1.152.0: `list[T]`/`dict` değerler — sonuç `list[list[T]]`/`list[dict]`: eleman betimleyicisi değerin kendisi.
+            const info = try self.allocator.create(ElemHeapInfo);
+            info.* = .{ .heap = ti.heap, .elem_qtype = ti.elem_qtype, .nested = ti.elem_heap_info, .elem_is_str = ti.elem_is_str, .dict_info = ti.dict_info };
             elem_heap_info = info;
         }
         return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = value_storage, .elem_heap_info = elem_heap_info, .elem_is_str = dinfo.value_is_str };

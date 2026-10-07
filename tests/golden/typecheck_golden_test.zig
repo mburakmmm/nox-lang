@@ -388,6 +388,34 @@ test "golden(typecheck): v1.151.0 — float() liste gibi sayısal olmayan kayna�
     );
 }
 
+test "golden(typecheck): v1.152.0 — append/insert/extend eleman alıcısı çağrı içeremez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_grow_on_call_element_receiver.nox"),
+        @embedFile("typecheck_cases/err_grow_on_call_element_receiver.expected"),
+    );
+}
+
+test "golden(typecheck): v1.152.0 — dict[str, list[int]] değerine append tipi uyuşmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_dict_list_value_append_type.nox"),
+        @embedFile("typecheck_cases/err_dict_list_value_append_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.152.0 — dict.update list-değerli sözlüklerde aynı tip ister" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_dict_update_list_value_type.nox"),
+        @embedFile("typecheck_cases/err_dict_update_list_value_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.152.0 — dict list değerleri, element büyütme ve float anahtar geçerli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_dict_list_values_and_element_grow.nox"),
+        @embedFile("typecheck_cases/ok_dict_list_values_and_element_grow.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

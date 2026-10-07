@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.152.0]
+
+### Eklendi
+
+- **`dict` değer tipleri `list[T]` ve `dict[K2, V2]`** (iç içe, ör. `dict[str, list[str]]`, `dict[str, dict[str, list[int]]]`) ve
+  **`float` anahtar** (`dict[float, V]`). Spec §3.269.
+- **`xs[i].append(v)` / `d[k].append(v)` / `.insert` / `.extend`** — eleman alıcılarında büyütme (liste yeniden ayrılsa bile
+  yeni işaretçi geri yazılır; checker `if True:` bloğuna yeniden yazar). Alıcı yan etkisiz bir indeks ifadesi olmalı.
+- Çalışma zamanı: `Dict.value_release` + `nox_dict_set_value_release[_dict]` (list/dict değerlerin tür-bağımsız serbest bırakılması).
+
 ## [1.151.0]
 
 ### Eklendi

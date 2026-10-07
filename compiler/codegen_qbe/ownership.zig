@@ -350,7 +350,7 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
             const dinfo = n.dict_info.?;
             const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
             const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-            const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+            const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
             try self.qbeCall(null, "$nox_dict_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = elem }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .w, .text = value_is_str_lit }, .{ .ty = .w, .text = value_is_class_lit } });
         } else {
             try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = elem } });
@@ -489,7 +489,7 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         const dinfo = dict_info.?;
         const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
         const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-        const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+        const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
         try self.qbeCall(null, "$nox_dict_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .w, .text = value_is_str_lit }, .{ .ty = .w, .text = value_is_class_lit } });
     } else if (heap == .boxed_scalar) {
         // Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): kutu,
