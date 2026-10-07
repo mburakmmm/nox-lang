@@ -420,6 +420,10 @@ pub fn qbeOp1(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8
         try self.out.writer.print("    {s} = sitofp i64 {s} to double\n", .{ dst, a });
         return;
     }
+    if (std.mem.eql(u8, mnemonic, "ultof")) {
+        try self.out.writer.print("    {s} = uitofp i64 {s} to double\n", .{ dst, a });
+        return;
+    }
     if (std.mem.eql(u8, mnemonic, "uwtof")) {
         try self.out.writer.print("    {s} = uitofp i32 {s} to double\n", .{ dst, a });
         return;

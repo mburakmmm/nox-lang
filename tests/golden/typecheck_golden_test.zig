@@ -381,6 +381,13 @@ test "golden(typecheck): v1.150.0 — list tam API tip denetimi geçer" {
     );
 }
 
+test "golden(typecheck): v1.151.0 — float() liste gibi sayısal olmayan kaynağı reddeder" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_float_of_list.nox"),
+        @embedFile("typecheck_cases/err_float_of_list.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

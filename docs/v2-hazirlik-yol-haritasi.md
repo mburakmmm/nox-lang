@@ -22,7 +22,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [x] **1.6a dict tam API** — v1.149.0 (spec §3.266): get/pop/setdefault/update/copy/clear/len/`del d[k]`. Silme O(n).
 - [ ] **1.6b dict değer/anahtar tipleri:** değer tipi `list[T]`/`dict` (şu an yalnızca int/float/bool/str/sınıf), anahtar tipi `float` (şu an int/bool/str).
 - [x] **1.7 list tam API** — v1.150.0 (spec §3.267): `extend`, `insert`, `pop(i)`, `remove`, `index`, `count`, `clear`, `reverse`, `copy`, `del xs[i]`, `list + list`, `list * n`, `sorted`/`reversed` (yeni liste döner). Dilimleme 1.9'da.
-- [ ] **1.8 `float(int)` / açık int→float dönüşümü** (şu an `float` yalnızca `str` alıyor).
+- [x] **1.8 `float(int)` / açık int→float dönüşümü** — v1.151.0 (spec §3.268): `float(int/float/bool/u8…u64/str)`.
 - [ ] **1.9 Dize karşılaştırması `<`/`>`/`<=`/`>=`**, `"ab" * 3`, dilimleme (`xs[a:b]`, `s[a:b]`).
 - [ ] **1.10 list comprehension** (AGENTS.md §5 "comprehension'lar" diyor ama YOK — ekle) ve `lambda`.
 - [ ] **1.11 `is None` / `Optional` ergonomisi**, `print` çoklu argüman, dize metot sözdizimi (`s.split()`).

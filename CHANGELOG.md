@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.151.0]
+
+### Eklendi
+
+- **`float(x)` açık sayısal dönüşümü:** `float(int)`, `float(float)`, `float(bool)`, `float(u8…u64)` (artık yalnızca `str` değil). İşaretsiz 64-bit
+  için `ultof`/`uitofp` (LLVM seam'ine `ultof` eklendi). Spec §3.268.
+
 ## [1.150.0]
 
 ### Eklendi

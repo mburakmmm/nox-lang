@@ -6218,8 +6218,11 @@ pub const Checker = struct {
                 }
                 if (std.mem.eql(u8, name, "float")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'float' tam olarak 1 argüman alır", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) {
-                        return self.fail(error.TypeMismatch, "'float' yalnızca str üzerinde çalışır", .{});
+                    // v1.151.0: `float(int)` / `float(float)` / `float(bool)` / `float(u8…)` — açık sayısal dönüşüm
+                    // (`float(str)` ayrıştırması ValueError fırlatabilir, sayısal kaynaklar fırlatmaz).
+                    const ft = try self.checkExpr(ctx, c.args[0]);
+                    if (ft != .str and ft != .int and ft != .float and ft != .boolean and ft != .fixed_int) {
+                        return self.fail(error.TypeMismatch, "'float' yalnızca str/int/float/bool/sabit-genişlikli tamsayı üzerinde çalışır", .{});
                     }
                     return .float;
                 }

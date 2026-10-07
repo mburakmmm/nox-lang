@@ -433,6 +433,18 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             if (std.mem.eql(u8, name, "float")) {
                 if (c.args.len != 1) return error.Unsupported;
                 const v = try self.genExpr(c.args[0]);
+                // v1.151.0: sayısal kaynaklar ayrıştırmasız dönüştürülür; işaretsiz 64-bit (`u64`/`usize`) `ultof` ile.
+                if (v.heap == .none) {
+                    if (v.qtype == .d) return v;
+                    if (v.fixed_int) |k| {
+                        if (v.qtype == .l and !k.isSigned()) {
+                            const t = try self.newTemp();
+                            try self.qbeOp1(t, .d, "ultof", v.text);
+                            return .{ .text = t, .qtype = .d };
+                        }
+                    }
+                    return self.convert(v, .d);
+                }
                 const result = try self.genParseOrRaise(v, "nox_str_is_valid_float", "nox_str_to_float", .d, "float(): gecersiz sayi bicimi");
                 try self.releaseIfTemporary(c.args[0], v);
                 return result;

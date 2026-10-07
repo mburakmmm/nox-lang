@@ -167,7 +167,8 @@ annotation (`x = 6`).
 `dict[K, V]`, user-defined `class` names, first-class function types
 (`(int, int) -> int`), and generic user types (`Task[T]`, `Channel[T]`).
 Mixed `int`/`float` arithmetic promotes to `float`; the only other
-implicit conversion is `int → float` on assignment.
+implicit conversion is `int → float` on assignment. `float(x)` converts explicitly from
+`int`, `bool`, fixed-width integers or `str` (the `str` form raises `ValueError` on bad input).
 
 **Deliberately not supported** (each one considered and explicitly
 deferred, not overlooked): multiple return values via tuple unpacking,

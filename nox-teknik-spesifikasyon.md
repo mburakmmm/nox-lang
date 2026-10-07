@@ -28573,6 +28573,14 @@ geçici serbest bırakma; sızıntı denetimli); typecheck: `ok_list_api_all_met
 
 **Henüz yok:** `xs[a:b]` dilimleme (1.9), `list(...)` dönüştürücüsü, negatif indeksleme (bilinçli).
 
+## 3.268 `float(x)` açık sayısal dönüşümü (v1.151.0)
+
+`float` yerleşiği artık `str` yanında `int`, `float` (özdeşlik), `bool` ve sabit-genişlikli tamsayıları kabul eder (checker
+`checkCall` `.identifier` dalı). Codegen (`calls.zig` `genCall`): sayısal kaynaklar ayrıştırmasız `convert(v, .d)` ile dönüştürülür
+(`.l`→`sltof`, `.w`→işaretliliğe göre `extsw`/`extuw`+`sltof`); işaretsiz 64-bit (`u64`/`usize`, `.l`) `ultof` ile (QBE yerleşik,
+LLVM seam'ine `uitofp i64` eşlemesi eklendi) — 2^63 üstü doğru çevrilir. `float(str)` değişmedi (ValueError). Golden:
+`float_from_numeric` (iki backend), typecheck `err_float_of_list`. **Henüz yok:** üçlü ifadede int/float dal karışımı (ayrı karar).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
