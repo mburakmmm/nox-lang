@@ -442,7 +442,8 @@ fn readListElemAsHpy(mc: *MarshalCtx, list_ptr: ?*anyopaque, index: usize, elem_
             return ctx.ctx_Float_FromDouble.?(ctx, f);
         },
         2 => {
-            const slot: *align(1) const i32 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index * 4);
+            // v1.142.19: `list[bool]` elemanları 1 bayttır.
+            const slot: *const u8 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index);
             return ctx.ctx_Bool_FromBool.?(ctx, slot.* != 0);
         },
         3 => {
@@ -600,8 +601,8 @@ pub export fn nox_hpy_args_add_dict_scalar(rt: ?*anyopaque, mc_ptr: ?*anyopaque,
     };
     const key_is_str: i32 = if (key_kind == 3) 1 else 0;
     const value_is_str: i32 = if (value_kind == 3) 1 else 0;
-    const key_elem_size: i64 = if (key_kind == 2) 4 else 8;
-    const value_elem_size: i64 = if (value_kind == 2) 4 else 8;
+    const key_elem_size: i64 = if (key_kind == 2) 1 else 8;
+    const value_elem_size: i64 = if (value_kind == 2) 1 else 8;
     const keys_list = dict_mod.nox_dict_keys(rt, dp, key_is_str, key_elem_size);
     const values_list = dict_mod.nox_dict_values(rt, dp, value_is_str, 0, value_elem_size);
     defer freeTempScalarList(rt, keys_list, key_elem_size, key_is_str != 0);

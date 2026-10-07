@@ -711,7 +711,7 @@ pub fn destroyNonArcSlotIfSet(self: *Codegen, info: VarInfo) CodegenError!void {
 pub fn emitDefaultReturn(self: *Codegen, ret_qtype: QbeType) CodegenError!void {
     switch (ret_qtype) {
         .none => try self.qbeRet(null),
-        .l, .w => try self.qbeRet("0"),
+        .l, .w, .b => try self.qbeRet("0"),
         .d => try self.qbeRet("d_0"),
     }
 }

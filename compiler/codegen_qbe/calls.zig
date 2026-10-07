@@ -37,7 +37,7 @@ fn hpyElemKindLit(qtype: QbeType, is_str: bool) []const u8 {
     return switch (qtype) {
         .l => "0", // int
         .d => "1", // float
-        .w => "2", // bool
+        .w, .b => "2", // bool
         .none => "0",
     };
 }
@@ -181,7 +181,7 @@ pub fn genHpyMarshalTrailingArgs(self: *Codegen, mc_temp: []const u8, trailing: 
                         .l => if (f.info.heap == .str) "$nox_hpy_class_arg_set_str" else "$nox_hpy_class_arg_set_int",
                         .d => "$nox_hpy_class_arg_set_float",
                         .w => "$nox_hpy_class_arg_set_bool",
-                        .none => return error.Unsupported,
+                        .none, .b => return error.Unsupported,
                     };
                     try self.qbeCall(null, setter, &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = fname_v.text }, .{ .ty = f.info.qtype, .text = fv.text } });
                 }
@@ -191,7 +191,7 @@ pub fn genHpyMarshalTrailingArgs(self: *Codegen, mc_temp: []const u8, trailing: 
                 .l => try self.qbeCall(null, "$nox_hpy_args_add_int", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text } }),
                 .d => try self.qbeCall(null, "$nox_hpy_args_add_float", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .d, .text = av.text } }),
                 .w => try self.qbeCall(null, "$nox_hpy_args_add_bool", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .w, .text = av.text } }),
-                .none => return error.Unsupported,
+                .none, .b => return error.Unsupported,
             },
             else => return error.Unsupported,
         }
@@ -1958,7 +1958,8 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     if (std.mem.eql(u8, a.attr, "keys")) {
         if (args.len != 0) return error.Unsupported;
         const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
-        const elem_size = qbeSizeOf(dinfo.key_qtype);
+        const key_storage = abi.elemStorageQtype(dinfo.key_qtype, null, .none);
+        const elem_size = qbeSizeOf(key_storage);
         const result = try self.newTemp();
         try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_dict_keys", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{elem_size}) } });
         try self.releaseIfTemporary(a.obj.*, obj);
@@ -1968,13 +1969,14 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
             info.* = .{ .heap = .str };
             elem_heap_info = info;
         }
-        return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = dinfo.key_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = dinfo.key_is_str };
+        return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = key_storage, .elem_heap_info = elem_heap_info, .elem_is_str = dinfo.key_is_str };
     }
     if (std.mem.eql(u8, a.attr, "values")) {
         if (args.len != 0) return error.Unsupported;
         const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
         const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
-        const elem_size = qbeSizeOf(dinfo.value_qtype);
+        const value_storage = abi.elemStorageQtype(dinfo.value_qtype, null, .none);
+        const elem_size = qbeSizeOf(value_storage);
         const result = try self.newTemp();
         try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_dict_values", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = value_is_str_lit }, .{ .ty = .w, .text = value_is_class_lit }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{elem_size}) } });
         try self.releaseIfTemporary(a.obj.*, obj);
@@ -1988,7 +1990,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
             info.* = .{ .heap = .class, .class_name = dinfo.value_class_name };
             elem_heap_info = info;
         }
-        return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = dinfo.value_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = dinfo.value_is_str };
+        return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = value_storage, .elem_heap_info = elem_heap_info, .elem_is_str = dinfo.value_is_str };
     }
     return error.Unsupported;
 }
@@ -2351,7 +2353,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     const addr = try self.newTemp();
     try self.qbeOp2(addr, .l, "add", obj.text, off8);
     const result = try self.newTemp();
-    try self.qbeLoad(result, obj.elem_qtype, obj.elem_qtype, addr);
+    try self.loadListElem(result, obj.elem_qtype, addr);
 
     try self.releaseIfTemporary(a.obj.*, obj);
 

@@ -836,6 +836,12 @@ pub const Codegen = struct {
             .llvm => llvm_emit.qbeRaw(self, fmt, args),
         };
     }
+    /// Liste elemanı okuma: `.b` (bool) 1 bayt zero-extend (`loadub`), diğerleri tam genişlik.
+    pub fn loadListElem(self: *Codegen, dst: []const u8, elem_qtype: QbeType, addr: []const u8) CodegenError!void {
+        if (elem_qtype == .b) return self.qbeLoadUB(dst, addr);
+        return self.qbeLoad(dst, elem_qtype, elem_qtype, addr);
+    }
+
     /// Fonksiyon sonunda biriken `alloc`/`alloca` satırlarını giriş bloğunun başına ekler.
     pub fn flushHoistedAllocs(self: *Codegen) CodegenError!void {
         defer {

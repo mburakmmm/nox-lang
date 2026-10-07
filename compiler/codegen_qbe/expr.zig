@@ -140,7 +140,9 @@ pub fn boxScalar(self: *Codegen, v: Value, elem_qtype: QbeType) CodegenError!Val
     return .{ .text = box, .qtype = .l, .heap = .boxed_scalar, .elem_qtype = elem_qtype, .always_fresh = true };
 }
 
-pub fn convert(self: *Codegen, v: Value, target: QbeType) CodegenError!Value {
+pub fn convert(self: *Codegen, v: Value, target_in: QbeType) CodegenError!Value {
+    // `.b` (bool eleman DEPOLAMA tipi) bir DEĞER tipi değildir — değer `.w`dir.
+    const target: QbeType = abi.elemValueQtype(target_in);
     if (v.qtype == target) return v;
     if (v.qtype == .l and target == .d) {
         const t = try self.newTemp();
@@ -190,7 +192,7 @@ pub fn convert(self: *Codegen, v: Value, target: QbeType) CodegenError!Value {
 pub fn toPayload(self: *Codegen, v: Value) CodegenError!Value {
     return switch (v.qtype) {
         .l => v,
-        .w => blk: {
+        .w, .b => blk: {
             const t = try self.newTemp();
             try self.qbeOp1(t, .l, "extuw", v.text);
             break :blk .{ .text = t, .qtype = .l };
@@ -210,7 +212,7 @@ pub fn toPayload(self: *Codegen, v: Value) CodegenError!Value {
 pub fn fromPayload(self: *Codegen, payload: Value, target_qtype: QbeType) CodegenError!Value {
     return switch (target_qtype) {
         .l => payload,
-        .w => blk: {
+        .w, .b => blk: {
             const t = try self.newTemp();
             try self.qbeOp1(t, .w, "copy", payload.text);
             break :blk .{ .text = t, .qtype = .w };
@@ -588,7 +590,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     const addr = try self.newTemp();
     try self.qbeOp2(addr, .l, "add", obj.text, off8);
     const result = try self.newTemp();
-    try self.qbeLoad(result, obj.elem_qtype, obj.elem_qtype, addr);
+    try self.loadListElem(result, obj.elem_qtype, addr);
     // `list[T]`nin elemanları (Faz 21 ön-koşulundan beri) heap tipli
     // (sınıf/iç içe liste) OLABİLİR — okunan değer listenin İÇİNDEKİ bir
     // elemana ÖDÜNÇ ALINMIŞ bir referanstır (bu okuma BAŞLI BAŞINA retain
@@ -808,7 +810,8 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
         values[i] = try self.retainIfAliasing(el, v0);
     }
     const first = values[0];
-    const elem_qtype = first.qtype;
+    // v1.142.19: bool elemanlar 1 bayt depolanır (`.b`).
+    const elem_qtype = abi.elemStorageQtype(first.qtype, first.fixed_int, first.heap);
     var elem_heap_info: ?*const ElemHeapInfo = null;
     // `str` DAHİL (bkz. `resolveType`in list dalındaki AYNI gerekçe,
     // stdlib fazı §B) — `list[str]` elemanlarının kapsam-sonu/yeniden
@@ -1769,7 +1772,7 @@ pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
             try self.qbeJmp(done_label);
             try self.qbeLabel(done_label);
         },
-        .none => return error.Unsupported,
+        .none, .b => return error.Unsupported,
     }
 }
 
@@ -1805,7 +1808,7 @@ pub fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
             try self.qbeJmp(done_label);
             try self.qbeLabel(done_label);
         },
-        .none => return error.Unsupported,
+        .none, .b => return error.Unsupported,
     }
 }
 
@@ -1869,7 +1872,7 @@ pub fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
     const addr = try self.newTemp();
     try self.qbeOp2(addr, .l, "add", v.text, off8);
     const elem = try self.newTemp();
-    try self.qbeLoad(elem, v.elem_qtype, v.elem_qtype, addr);
+    try self.loadListElem(elem, v.elem_qtype, addr);
     try self.genPrintFragment(valueFromElemDescriptor(elem, v.elem_qtype, v.elem_heap_info, v.elem_is_str, v.elem_fixed_int));
 
     const idx_next = try self.newTemp();

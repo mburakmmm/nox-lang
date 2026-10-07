@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.22]
+
+### Performans
+
+- **`list[bool]` 1 bayt/eleman** (önceden 4): `QbeType.b` depolama tipi, `loadListElem`/`storeb`, runtime
+  (`dict` listeleri, HPy köprüsü) uyumlu. `sieve` 0.060 → 0.030 s. Spec §3.256.
+
 ## [1.142.21]
 
 ### CI

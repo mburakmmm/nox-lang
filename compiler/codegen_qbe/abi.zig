@@ -33,12 +33,26 @@ pub fn qbeTypeName(t: QbeType) []const u8 {
         .l => "l",
         .d => "d",
         .w => "w",
+        .b => "b",
         .none => "",
     };
 }
 
+/// v1.142.19: `list[bool]` eleman depolaması 1 bayttır (`.b`, bkz. `QbeType`nin belge notu). Eleman
+/// TİPİ (skaler, ARC'sız, sabit-genişlikli-olmayan `.w` = bool) `.b`ye, diğerleri değişmeden eşlenir.
+pub fn elemStorageQtype(q: QbeType, fixed_int: ?types.FixedIntKind, heap: HeapKind) QbeType {
+    if (q == .w and fixed_int == null and heap == .none) return .b;
+    return q;
+}
+
+/// Depolama tipini DEĞER (register) tipine çevirir: `.b` → `.w` (bool 0/1).
+pub fn elemValueQtype(q: QbeType) QbeType {
+    return if (q == .b) .w else q;
+}
+
 pub fn qbeSizeOf(t: QbeType) usize {
     return switch (t) {
+        .b => 1,
         .w => 4,
         .l, .d => 8,
         .none => 0,
@@ -107,7 +121,7 @@ pub fn nextFieldOffset(cursor: *usize, layout_mode: types.ClassLayoutMode, ti: T
 pub fn valueFromElemDescriptor(text: []const u8, qtype: QbeType, container_elem_heap_info: ?*const ElemHeapInfo, container_elem_is_str: bool, container_elem_fixed_int: ?types.FixedIntKind) Value {
     return .{
         .text = text,
-        .qtype = qtype,
+        .qtype = elemValueQtype(qtype),
         .heap = if (container_elem_heap_info) |ehi| ehi.heap else if (container_elem_is_str) .str else .none,
         .class_name = if (container_elem_heap_info) |ehi| ehi.class_name else null,
         .elem_qtype = if (container_elem_heap_info) |ehi| ehi.elem_qtype else .none,

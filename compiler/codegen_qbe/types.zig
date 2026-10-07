@@ -9,7 +9,11 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const abi_layout = @import("abi_layout");
 
-pub const QbeType = enum { l, d, w, none };
+/// `b` (v1.142.19): YALNIZCA `list[bool]` ELEMAN DEPOLAMA tipini (`elem_qtype`) betimler — bellekte
+/// TEK bayt (`qbeSizeOf(.b) == 1`), hesaplamada `w` (0/1). Bir `Value`/IR işleminin tipi OLARAK ASLA
+/// kullanılmaz: eleman okuma/yazma `loadElem`/`storeElem` (loadub/storeb) üzerinden, değer
+/// tipine dönüşüm `elemValueQtype` ile yapılır.
+pub const QbeType = enum { l, d, w, none, b };
 
 /// v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192): `compiler/
 /// typecheck/types.zig`den yeniden İHRAÇ edilir (`Backend`/`Profile`nin

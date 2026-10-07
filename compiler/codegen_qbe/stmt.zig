@@ -990,13 +990,15 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     try self.qbeLabel(body_label);
 
     const byte_off = try self.newTemp();
-    try self.qbeOp2Imm(byte_off, .l, "mul", idx_cur, @intCast(qbeSizeOf(loop_var.qtype)));
+    // v1.142.19: adım ve yükleme LİSTENİN eleman depolama tipinden (`.b` = 1 bayt), döngü değişkeni ise
+    // değer tipinden (`.w`) gelir.
+    try self.qbeOp2Imm(byte_off, .l, "mul", idx_cur, @intCast(qbeSizeOf(list_info.elem_qtype)));
     const off8 = try self.newTemp();
     try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
     const elem_addr = try self.newTemp();
     try self.qbeOp2(elem_addr, .l, "add", list_ptr, off8);
     const elem_val = try self.newTemp();
-    try self.qbeLoad(elem_val, loop_var.qtype, loop_var.qtype, elem_addr);
+    try self.loadListElem(elem_val, list_info.elem_qtype, elem_addr);
     try self.qbeStore(loop_var.qtype, elem_val, loop_var.slot);
 
     try self.genStmts(f.body, ret_qtype);

@@ -305,7 +305,8 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             return .{
                 .qtype = .l,
                 .heap = if (is_list) .list else if (is_task) .task else if (is_channel) .channel else if (is_thread_handle) .thread_handle else if (is_thread_channel) .thread_channel else .task_local,
-                .elem_qtype = elem.qtype,
+                // v1.142.19: `list[bool]` elemanları 1 bayt (`.b`); Task/Channel/... yükleri değişmez.
+                .elem_qtype = if (is_list) abi.elemStorageQtype(elem.qtype, elem.fixed_int, elem.heap) else elem.qtype,
                 .elem_heap_info = elem_heap_info,
                 .elem_is_str = elem.heap == .str,
                 .elem_fixed_int = elem_fixed_int,
@@ -1022,7 +1023,7 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
                     // KENDİ sahipliğini bozan bir çifte-serbest-bırakma
                     // riski doğardı. `.class`/iç-içe `.list` DIŞINDA
                     // (int/float/bool/str) bu zaten etkisizdir.
-                    var loop_var_info: TypeInfo = .{ .qtype = src.elem_qtype, .fixed_int = src.elem_fixed_int };
+                    var loop_var_info: TypeInfo = .{ .qtype = abi.elemValueQtype(src.elem_qtype), .fixed_int = src.elem_fixed_int };
                     if (src.elem_heap_info) |ehi| {
                         loop_var_info.heap = ehi.heap;
                         loop_var_info.class_name = ehi.class_name;

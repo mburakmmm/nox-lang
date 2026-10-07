@@ -1,0 +1,99 @@
+# v1.142.19: list[bool] elemanları 1 bayt/eleman depolanır (önceden 4). Anlam AYNI kalmalı:
+# literal, append (büyüme), indeks okuma/atama, for gezinme, print, ==, pop, iç içe liste,
+# dict.keys()/values() listeleri, sınıf alanı, fonksiyon argümanı/dönüşü, i32 listesi dokunulmamış.
+class Flags:
+    bits: list[bool]
+
+    def __init__(self: Flags) -> None:
+        self.bits = []
+
+    def push(self: Flags, b: bool) -> None:
+        bits: list[bool] = self.bits
+        bits.append(b)
+        self.bits = bits
+
+    def count_true(self: Flags) -> int:
+        n: int = 0
+        bits: list[bool] = self.bits
+        for b in bits:
+            if b:
+                n = n + 1
+        return n
+
+def make(n: int) -> list[bool]:
+    out: list[bool] = []
+    i: int = 0
+    while i < n:
+        out.append(i % 3 == 0)
+        i = i + 1
+    return out
+
+def count(xs: list[bool]) -> int:
+    c: int = 0
+    i: int = 0
+    while i < len(xs):
+        if xs[i]:
+            c = c + 1
+        i = i + 1
+    return c
+
+lit: list[bool] = [True, False, True, True]
+print(lit)
+print(len(lit))
+lit[1] = True
+lit[2] = False
+print(lit)
+print(lit[0])
+print(lit[2])
+
+big: list[bool] = make(1000)
+print(len(big))
+print(count(big))
+print(big[999])
+print(big[998])
+
+c: int = 0
+for b in big:
+    if b:
+        c = c + 1
+print(c)
+
+print(lit == [True, True, False, True])
+print(lit == [True, True, True, True])
+print(make(5) == make(5))
+
+p: bool = lit.pop()
+print(p)
+print(len(lit))
+
+nested: list[list[bool]] = [[True, False], [False, False, True]]
+print(nested[0][1])
+print(nested[1][2])
+nested[1][0] = True
+print(nested[1])
+print(len(nested[1]))
+
+fl: Flags = Flags()
+i: int = 0
+while i < 100:
+    fl.push(i % 4 == 0)
+    i = i + 1
+print(fl.count_true())
+
+d: dict[int, bool] = {}
+d[1] = True
+d[2] = False
+d[3] = True
+vals: list[bool] = d.values()
+print(vals)
+dk: dict[bool, int] = {}
+dk[True] = 5
+dk[False] = 6
+print(dk.keys())
+
+# i32 listesi etkilenmemeli (4 bayt)
+ys: list[i32] = [i32(-1), i32(7), i32(300000)]
+ys[1] = i32(8)
+print(ys[0])
+print(ys[1])
+print(ys[2])

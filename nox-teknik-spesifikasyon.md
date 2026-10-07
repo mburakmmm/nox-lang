@@ -28244,6 +28244,23 @@ listesine append desteklenmez); büyütme çağıranın yerel dansıyla. Silme (
 indeksi yeniden kurar (silme zaten O(n) idi). Sonuç (M4): 300K int Set 26 ms, 100K farklı str'li 300K Counter
 23 ms, 200K OrderedDict set+get 29 ms (önceden O(n²)). Golden `collections_hashed_index`.
 
+## 3.256 `list[bool]` bayt-paketleme: 4 → 1 bayt/eleman (v1.142.22)
+
+`sieve` benchmark'ının C'den ~5x yavaş olmasının nedeni bellek bant genişliğiydi (C ile 4-baytlık
+bayrak dizisi denendiğinde 0.01 s → 0.05 s). `list[bool]` elemanları artık 1 bayt depolanır:
+`QbeType`a YALNIZCA eleman DEPOLAMA tipini betimleyen `.b` eklendi (`qbeSizeOf(.b) == 1`; bir `Value`/
+IR işleminin tipi OLARAK asla kullanılmaz). `resolveType` (liste dalı), `genListLit` ve `dict.keys()/
+values()` bool elemanlar için `elem_qtype = .b` üretir (`abi.elemStorageQtype`); `elem_qtype` zaten tüm
+Value/TypeInfo/VarInfo/ElemHeapInfo alanlarında olduğundan yayılım için yeni alan gerekmedi. Okuma
+`loadListElem` (loadub), yazma `qbeStore(.b)` (QBE'de `storeb`; LLVM'de `trunc`+`store i8`),
+değer tipine dönüşüm `abi.elemValueQtype` (`valueFromElemDescriptor`, `convert`, döngü değişkeni).
+`qbeSizeOf(elem_qtype)` kullanan tüm boyut hesapları (tahsis, büyüme, serbest bırakma, eşitlik adımı)
+otomatik doğru. Runtime: `buildEntryList` 1 baytlık elemanı yazar; HPy köprüsü `list[bool]`ı 1 bayt
+okur (dict tarama listeleri de). Eşitlik fonksiyonu adı `primb` (i32 listelerinden ayrı).
+**Kapsam dışı (bilinçli):** `list[u8]`/`i8`/`u16`/`i16` hâlâ 4 bayt — `ptr[u8]` görünümleri ve
+`nox.buffer` bunlara dayanıyor, ayrı iş. Sonuç: sieve 10M 0.060 → 0.030 s. Golden
+`list_bool_byte_packed` (QBE ve `--release` aynı çıktı).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

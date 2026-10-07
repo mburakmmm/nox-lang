@@ -477,7 +477,7 @@ pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
 /// ORTAK yardımcısı: `entries`i (SIRALI, `nox_dict_len`in saydığı AYNI
 /// eleman sayısınca) `list[T]`nin ham bayt düzenine (`nox_fs_read_dir_raw`
 /// İLE AYNI el-yapımı desen: 8 bayt uzunluk + 8 bayt kapasite + N eleman)
-/// KOPYALAR. `elem_size` (4: `bool`/`w`, 8: `int`/`str`/`float`/`l`/`d`)
+/// KOPYALAR. `elem_size` (1: `bool` — v1.142.19 `list[bool]` 1 bayt/eleman; 4: eski `w`, 8: `int`/`str`/`float`/`l`/`d`)
 /// codegen'in `DictInfo.key_qtype`/`value_qtype`sinden ÖNCEDEN bilinir —
 /// `Entry.key`/`.value` HER ZAMAN 8 baytlık bir "payload" (bkz. `codegen.
 /// zig`nin `toPayload`sı, `bool` DAHİL HER tip `nox_dict_set`e ÖNCE 8
@@ -505,7 +505,9 @@ fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, is_class: bool, elem_
         // `nox_str_retain` DEĞİL.
         if (is_class and payload != 0) arc.nox_rc_retain(payloadToStrPtr(payload).?);
         const slot = bytes + LIST_HEADER_SIZE + esz * i;
-        if (esz == 4) {
+        if (esz == 1) {
+            slot[0] = @truncate(@as(u64, @bitCast(payload)));
+        } else if (esz == 4) {
             @as(*align(1) i32, @ptrCast(slot)).* = @truncate(payload);
         } else {
             @as(*align(1) i64, @ptrCast(slot)).* = payload;

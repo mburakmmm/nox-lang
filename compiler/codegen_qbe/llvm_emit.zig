@@ -78,6 +78,7 @@ fn llvmTypeName(ty: QbeType) []const u8 {
     return switch (ty) {
         .l => "i64",
         .w => "i32",
+        .b => "i8",
         .d => "double",
         .none => "void",
     };
@@ -526,6 +527,7 @@ pub fn qbeLoadL(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!
 }
 
 pub fn qbeStore(self: *Codegen, ty: QbeType, value_raw: []const u8, addr: []const u8) CodegenError!void {
+    if (ty == .b) return qbeStoreB(self, value_raw, addr);
     const value = try renderOperand(self, value_raw);
     const ptr_reg = try resolveAddrPtr(self, addr);
     try self.out.writer.print("    store {s} {s}, ptr {s}\n", .{ llvmTypeName(ty), value, ptr_reg });

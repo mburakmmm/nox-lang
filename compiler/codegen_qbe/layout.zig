@@ -1045,7 +1045,7 @@ pub fn genEqCompareOrJump(
         const t = try self.newTemp();
         const mnemonic: []const u8 = switch (qtype) {
             .l => "ceql",
-            .w => "ceqw",
+            .w, .b => "ceqw",
             .d => "ceqd",
             .none => unreachable,
         };
@@ -1338,9 +1338,9 @@ pub fn genListEq(self: *Codegen, name: []const u8, elem_qtype: QbeType, elem_hea
     const addr_b = try self.newTemp();
     try self.qbeOp2(addr_b, .l, "add", "%b", off8);
     const ea = try self.newTemp();
-    try self.qbeLoad(ea, elem_qtype, elem_qtype, addr_a);
+    try self.loadListElem(ea, elem_qtype, addr_a);
     const eb = try self.newTemp();
-    try self.qbeLoad(eb, elem_qtype, elem_qtype, addr_b);
+    try self.loadListElem(eb, elem_qtype, addr_b);
     const elem_heap: HeapKind = if (elem_heap_info) |ehi| ehi.heap else if (elem_is_str) .str else .none;
     const elem_class_name: ?[]const u8 = if (elem_heap_info) |ehi| ehi.class_name else null;
     try self.genEqCompareOrJump(ea, eb, elem_qtype, elem_heap, elem_class_name, if (elem_heap_info) |ehi| ehi.elem_qtype else .none, if (elem_heap_info) |ehi| ehi.nested else null, if (elem_heap_info) |ehi| ehi.elem_is_str else false, false_label, backedge_label);
