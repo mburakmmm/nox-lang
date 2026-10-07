@@ -409,6 +409,11 @@ fn renameExpr(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.
             for (elems, 0..) |el, i| out[i] = try renameExpr(a, el, map);
             break :blk .{ .list_lit = out };
         },
+        .tuple_lit => |elems| blk: {
+            const out = try a.alloc(ast.Expr, elems.len);
+            for (elems, 0..) |el, i| out[i] = try renameExpr(a, el, map);
+            break :blk .{ .tuple_lit = out };
+        },
         .dict_lit => |pairs| blk: {
             const out = try a.alloc(ast.DictPair, pairs.len);
             for (pairs, 0..) |p, i| out[i] = .{ .key = try renameExpr(a, p.key, map), .value = try renameExpr(a, p.value, map) };

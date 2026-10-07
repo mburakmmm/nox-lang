@@ -468,6 +468,10 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             for (elems) |el| if (exprHasUnsafeLocalUse(self, el, name, class_params)) break :blk true;
             break :blk false;
         },
+        .tuple_lit => |elems| blk: {
+            for (elems) |el| if (exprHasUnsafeLocalUse(self, el, name, class_params)) break :blk true;
+            break :blk false;
+        },
         .dict_lit => |pairs| blk: {
             for (pairs) |p| {
                 if (exprHasUnsafeLocalUse(self, p.key, name, class_params)) break :blk true;
@@ -630,6 +634,10 @@ fn exprHasUnsafeGrowableLocalUse(self: *const Codegen, expr: ast.Expr, name: []c
             break :blk exprHasUnsafeGrowableLocalUse(self, idx.index.*, name);
         },
         .list_lit => |elems| blk: {
+            for (elems) |el| if (exprHasUnsafeGrowableLocalUse(self, el, name)) break :blk true;
+            break :blk false;
+        },
+        .tuple_lit => |elems| blk: {
             for (elems) |el| if (exprHasUnsafeGrowableLocalUse(self, el, name)) break :blk true;
             break :blk false;
         },

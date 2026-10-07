@@ -159,6 +159,8 @@ pub const Expr = union(enum) {
     kwarg: Kwarg,
     slice: Slice,
     lambda: Lambda,
+    /// v1.157.0: `(a, b)` / `a, b` — tuple literal; checker onu sentezlenmiş `tuple__...` sınıfının kurucu çağrısına yeniden yazar.
+    tuple_lit: []Expr,
     list_comp: ListComp,
     dict_comp: DictComp,
 };

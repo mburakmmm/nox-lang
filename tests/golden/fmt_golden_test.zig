@@ -368,3 +368,25 @@ test "fmt: v1.156.0 — `is None` / `is not None` ve çok argümanlı print İDE
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: v1.157.0 — tuple literal, açma ve çıplak tuple İDEMPOTENT round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "t: tuple[int, str] = (1, \"x\")\n", .out = "t: tuple[int, str] = (1, \"x\")\n" },
+        .{ .in = "t: tuple[int, int] = 1,2\n", .out = "t: tuple[int, int] = (1, 2)\n" },
+        .{ .in = "y: tuple[int] = (1,)\n", .out = "y: tuple[int] = (1,)\n" },
+        .{ .in = "a,b = b,a\n", .out = "a, b = b, a\n" },
+        .{ .in = "q, r = divmod2(17, 5)\n", .out = "q, r = divmod2(17, 5)\n" },
+        .{ .in = "self.x, self.y = p\n", .out = "self.x, self.y = p\n" },
+        .{ .in = "for k,v in d.items():\n    print(k, v)\n", .out = "for k, v in d.items():\n    print(k, v)\n" },
+        .{ .in = "def f() -> tuple[int, int]:\n    return 1,2\n", .out = "def f() -> tuple[int, int]:\n    return (1, 2)\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

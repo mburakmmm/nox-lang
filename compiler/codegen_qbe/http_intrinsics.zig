@@ -105,6 +105,7 @@ pub fn visitExprForReqUsage(e: ast.Expr, param_name: []const u8, used: *UsedRequ
             visitExprForReqUsage(ix.index.*, param_name, used);
         },
         .list_lit => |items| for (items) |it| visitExprForReqUsage(it, param_name, used),
+        .tuple_lit => |items| for (items) |it| visitExprForReqUsage(it, param_name, used),
         .dict_lit => |pairs| for (pairs) |p| {
             visitExprForReqUsage(p.key, param_name, used);
             visitExprForReqUsage(p.value, param_name, used);

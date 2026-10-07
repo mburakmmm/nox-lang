@@ -239,6 +239,10 @@ pub fn exprUsesAsync(expr: ast.Expr) bool {
             for (elems) |el| if (exprUsesAsync(el)) break :blk true;
             break :blk false;
         },
+        .tuple_lit => |elems| blk: {
+            for (elems) |el| if (exprUsesAsync(el)) break :blk true;
+            break :blk false;
+        },
         .dict_lit => |pairs| blk: {
             for (pairs) |p| {
                 if (exprUsesAsync(p.key) or exprUsesAsync(p.value)) break :blk true;
@@ -399,6 +403,10 @@ pub fn exprUsesMulticorePool(expr: ast.Expr) bool {
         .slice => |sl| exprUsesMulticorePool(sl.obj.*) or (if (sl.lo) |x| exprUsesMulticorePool(x.*) else false) or (if (sl.hi) |x| exprUsesMulticorePool(x.*) else false) or (if (sl.step) |x| exprUsesMulticorePool(x.*) else false),
         .index => |idx| exprUsesMulticorePool(idx.obj.*) or exprUsesMulticorePool(idx.index.*),
         .list_lit => |elems| blk: {
+            for (elems) |el| if (exprUsesMulticorePool(el)) break :blk true;
+            break :blk false;
+        },
+        .tuple_lit => |elems| blk: {
             for (elems) |el| if (exprUsesMulticorePool(el)) break :blk true;
             break :blk false;
         },

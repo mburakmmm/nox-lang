@@ -143,6 +143,10 @@ pub fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
             for (items) |it| if (exprMentionsName(it, name)) break :blk true;
             break :blk false;
         },
+        .tuple_lit => |items| blk: {
+            for (items) |it| if (exprMentionsName(it, name)) break :blk true;
+            break :blk false;
+        },
         .dict_lit => |pairs| blk: {
             for (pairs) |p| {
                 if (exprMentionsName(p.key, name)) break :blk true;
@@ -730,6 +734,12 @@ fn findListIndexedByVarExpr(e: ast.Expr, idx_var: []const u8) ?[]const u8 {
         },
         .attribute => |a| return findListIndexedByVarExpr(a.obj.*, idx_var),
         .list_lit => |items| {
+            for (items) |it| {
+                if (findListIndexedByVarExpr(it, idx_var)) |n| return n;
+            }
+            return null;
+        },
+        .tuple_lit => |items| {
             for (items) |it| {
                 if (findListIndexedByVarExpr(it, idx_var)) |n| return n;
             }

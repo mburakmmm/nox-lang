@@ -114,19 +114,22 @@ module.exports = grammar({
       ':',
       field('type', $._type_expression),
       '=',
-      field('value', $._expression),
+      field('value', choice($._expression, $.expression_list)),
     ),
 
     // `x = 1` / `obj.attr = 1` / `xs[0] = 1` — mevcut bir isme/erişimciye
     // yeniden atama (bkz. parser.zig'in parseSimpleStmt'i — hedef tip
     // anotasyonu TAŞIMAZ, bu `var_declaration`dan ayıran şey budur).
     assignment: $ => seq(
-      field('target', $._expression),
+      field('target', choice($._expression, $.expression_list)),
       '=',
-      field('value', $._expression),
+      field('value', choice($._expression, $.expression_list)),
     ),
 
-    return_statement: $ => seq('return', optional(field('value', $._expression))),
+    // v1.157.0: çıplak tuple/açma — `a, b = b, a`, `return a, b`
+    expression_list: $ => seq($._expression, repeat1(seq(',', $._expression)), optional(',')),
+
+    return_statement: $ => seq('return', optional(field('value', choice($._expression, $.expression_list)))),
 
     raise_statement: $ => seq('raise', field('value', $._expression)),
 
@@ -149,7 +152,7 @@ module.exports = grammar({
     while_statement: $ => seq('while', field('condition', $._expression), ':', field('body', $.block)),
 
     for_statement: $ => seq(
-      'for', field('name', $.identifier), 'in', field('iterable', $._expression), ':', field('body', $.block),
+      'for', field('name', choice($.identifier, $.identifier_list)), 'in', field('iterable', $._expression), ':', field('body', $.block),
     ),
 
     // `def name[T](a: int) -> int:` — `[T]` isteğe bağlı generic tip
@@ -370,6 +373,7 @@ module.exports = grammar({
       $.string,
       $.identifier,
       $.parenthesized_expression,
+      $.tuple,
       $.list,
       $.dict,
       $.list_comprehension,
@@ -390,7 +394,12 @@ module.exports = grammar({
     comp_for_clause: $ => seq('for', field('variable', $.identifier), 'in', field('iterable', $._or_expression)),
     comp_if_clause: $ => seq('if', field('condition', $._or_expression)),
 
+    identifier_list: $ => seq($.identifier, repeat1(seq(',', $.identifier))),
+
     parenthesized_expression: $ => seq('(', $._expression, ')'),
+
+    // `(a, b)` / `(a,)` (v1.157.0)
+    tuple: $ => seq('(', $._expression, choice(seq(repeat1(seq(',', $._expression)), optional(',')), ','), ')'),
 
     // Boş `[]` GEÇERLİDİR (tip çıkarımı checker'da reddedilir — bkz.
     // ast.zig'in list_lit notu), ama boş `{}` GEÇERSİZDİR (parser en az

@@ -867,6 +867,7 @@ pub fn collectIndexStrBasesExpr(self: *Codegen, e: ast.Expr, candidates: *std.St
         },
         .attribute => |a| try self.collectIndexStrBasesExpr(a.obj.*, candidates),
         .list_lit => |items| for (items) |it| try self.collectIndexStrBasesExpr(it, candidates),
+        .tuple_lit => |items| for (items) |it| try self.collectIndexStrBasesExpr(it, candidates),
         .dict_lit => |pairs| for (pairs) |p| {
             try self.collectIndexStrBasesExpr(p.key, candidates);
             try self.collectIndexStrBasesExpr(p.value, candidates);

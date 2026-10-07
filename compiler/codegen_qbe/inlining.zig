@@ -498,6 +498,7 @@ fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name:
             try scanParamEscapesExpr(self, fname, param_idx, name, idx.index.*, class_params, seeds, reverse_edges);
         },
         .list_lit => |elems| for (elems) |el| try scanParamEscapesExpr(self, fname, param_idx, name, el, class_params, seeds, reverse_edges),
+        .tuple_lit => |elems| for (elems) |el| try scanParamEscapesExpr(self, fname, param_idx, name, el, class_params, seeds, reverse_edges),
         .dict_lit => |pairs| for (pairs) |p| {
             try scanParamEscapesExpr(self, fname, param_idx, name, p.key, class_params, seeds, reverse_edges);
             try scanParamEscapesExpr(self, fname, param_idx, name, p.value, class_params, seeds, reverse_edges);
@@ -738,6 +739,7 @@ pub fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void 
             try self.collectInlineSitesExpr(idx.index.*);
         },
         .list_lit => |elems| for (elems) |el| try self.collectInlineSitesExpr(el),
+        .tuple_lit => |elems| for (elems) |el| try self.collectInlineSitesExpr(el),
         .dict_lit => |pairs| for (pairs) |p| {
             try self.collectInlineSitesExpr(p.key);
             try self.collectInlineSitesExpr(p.value);
@@ -895,6 +897,23 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
             try scanStackConstructsExpr(self, idx.index.*, all_ok, any);
         },
         .list_lit => |elems| {
+            any.* = true;
+            if (simpleLiteralListQtype(elems)) |elem_qtype| {
+                const elem_size = qbeSizeOf(elem_qtype);
+                const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
+                if (payload_size <= MAX_STACK_ALLOC_SIZE) {
+                    const slot = try self.newTemp();
+                    try self.qbeAlloc(slot, .eight, payload_size);
+                    try self.stack_construct_sites.put(self.allocator, @intFromPtr(elems.ptr), .{ .slot = slot });
+                } else {
+                    all_ok.* = false;
+                }
+            } else {
+                all_ok.* = false;
+            }
+            for (elems) |el| try scanStackConstructsExpr(self, el, all_ok, any);
+        },
+        .tuple_lit => |elems| {
             any.* = true;
             if (simpleLiteralListQtype(elems)) |elem_qtype| {
                 const elem_size = qbeSizeOf(elem_qtype);
@@ -1110,6 +1129,10 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             break :blk exprHasUnsafeParamUse(self, idx.index.*, name, class_params);
         },
         .list_lit => |elems| blk: {
+            for (elems) |el| if (exprHasUnsafeParamUse(self, el, name, class_params)) break :blk true;
+            break :blk false;
+        },
+        .tuple_lit => |elems| blk: {
             for (elems) |el| if (exprHasUnsafeParamUse(self, el, name, class_params)) break :blk true;
             break :blk false;
         },

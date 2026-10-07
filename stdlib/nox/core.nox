@@ -156,3 +156,30 @@ def reversed[T](xs: list[T]) -> list[T]:
     ys: list[T] = xs.copy()
     ys.reverse()
     return ys
+
+# v1.157.0 (tuple): `d.items()` bu fonksiyona yeniden yazılır; `enumerate`/`zip` Python'dan FARKLI olarak tembel yineleyici değil, tuple listesi döner
+# (`for i, x in enumerate(xs):` olduğu gibi çalışır).
+def __nox_dict_items[K, V](d: dict[K, V]) -> list[tuple[K, V]]:
+    out: list[tuple[K, V]] = []
+    for k in d:
+        out.append((k, d[k]))
+    return out
+
+def enumerate[T](xs: list[T]) -> list[tuple[int, T]]:
+    out: list[tuple[int, T]] = []
+    i: int = 0
+    while i < len(xs):
+        out.append((i, xs[i]))
+        i = i + 1
+    return out
+
+def zip[A, B](a: list[A], b: list[B]) -> list[tuple[A, B]]:
+    out: list[tuple[A, B]] = []
+    n: int = len(a)
+    if len(b) < n:
+        n = len(b)
+    i: int = 0
+    while i < n:
+        out.append((a[i], b[i]))
+        i = i + 1
+    return out

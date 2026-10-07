@@ -347,6 +347,12 @@ pub const Analyzer = struct {
                     self.scanExprEscapes(scope, index_of, el);
                 }
             },
+            .tuple_lit => |elems| {
+                for (elems) |el| {
+                    markEscapeIfIdentifier(scope, index_of, el, "bir liste literaline eklendiği için");
+                    self.scanExprEscapes(scope, index_of, el);
+                }
+            },
             .dict_lit => |pairs| {
                 for (pairs) |p| {
                     markEscapeIfIdentifier(scope, index_of, p.key, "bir dict literaline anahtar olarak eklendiği için");

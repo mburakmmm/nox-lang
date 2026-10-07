@@ -184,6 +184,7 @@ const Fixer = struct {
                 try self.fixExpr(ix.index);
             },
             .list_lit => |items| for (items) |*it| try self.fixExpr(it),
+            .tuple_lit => |items| for (items) |*it| try self.fixExpr(it),
             .dict_lit => |pairs| for (pairs) |*p| {
                 try self.fixExpr(&p.key);
                 try self.fixExpr(&p.value);

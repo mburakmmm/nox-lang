@@ -198,6 +198,7 @@ const Fixer = struct {
                 try self.fixExpr(ix.index, true);
             },
             .list_lit => |items| for (items) |*it| try self.fixExpr(it, true),
+            .tuple_lit => |items| for (items) |*it| try self.fixExpr(it, true),
             .dict_lit => |pairs| for (pairs) |*p| {
                 try self.fixExpr(&p.key, true);
                 try self.fixExpr(&p.value, true);

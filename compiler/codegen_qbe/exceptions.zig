@@ -767,6 +767,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
             try self.collectRaiseInfoExpr(idx.index.*, info, class_ctx, var_types, poisoned);
         },
         .list_lit => |elems| for (elems) |el| try self.collectRaiseInfoExpr(el, info, class_ctx, var_types, poisoned),
+        .tuple_lit => |elems| for (elems) |el| try self.collectRaiseInfoExpr(el, info, class_ctx, var_types, poisoned),
         .dict_lit => |pairs| for (pairs) |p| {
             try self.collectRaiseInfoExpr(p.key, info, class_ctx, var_types, poisoned);
             try self.collectRaiseInfoExpr(p.value, info, class_ctx, var_types, poisoned);

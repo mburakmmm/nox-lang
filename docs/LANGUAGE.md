@@ -141,6 +141,11 @@ connect("localhost")
 connect("example.com", tls=True)
 ```
 
+**Tuples:** `tuple[int, str]`, literals `(1, "x")` / `1, "x"`, constant indexing `t[0]` / `t[-1]`, `len(t)`, `==`,
+multiple return (`return a, b`), unpacking (`q, r = divmod2(17, 5)`, `a, b = b, a`, `self.x, self.y = p`),
+`for k, v in d.items()`, `enumerate(xs)` and `zip(a, b)` (they return lists of tuples). A tuple is an immutable
+value; it cannot be a dict key or be iterated.
+
 **`None` checks and narrowing:** `x is None` / `x is not None` (same as `== None`). An `Optional` local is narrowed inside
 `if x is not None:`, in the `else` of `if x is None:`, through `and`/`or`/`not`, and after a guard
 `if x is None: return` (any branch that always exits: `return`, `raise`, `break`, `continue`).
@@ -193,8 +198,7 @@ implicit conversion is `int → float` on assignment. `float(x)` converts explic
 `int`, `bool`, fixed-width integers or `str` (the `str` form raises `ValueError` on bad input).
 
 **Deliberately not supported** (each one considered and explicitly
-deferred, not overlooked): multiple return values via tuple unpacking,
-`*args`/`**kwargs`, multiple inheritance, metaclasses, and dynamic
+deferred, not overlooked): `*args`/`**kwargs`, multiple inheritance, metaclasses, and dynamic
 attribute manipulation (`setattr`, `exec`, runtime class generation).
 (f-strings, augmented assignment on variables, single inheritance and
 metadata-only decorators — see `nox.reflect` — are supported.)

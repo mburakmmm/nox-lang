@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.157.0]
+
+### Eklendi
+
+- **`tuple`:** `tuple[T1, T2, ...]` tipi; `(a, b)` / `a, b` literalleri, `t[k]` (sabit indeks, negatif dahil), `len(t)`, `==`, çoklu dönüş (`return a, b`), açma (`a, b = f()`, `a, b = b, a`,
+  `self.x, self.y = p`), `for a, b in ...`, `d.items()`, `enumerate(xs)`, `zip(a, b)` (tuple listeleri), tuple'ın iç içe/sınıf alanı/dict değeri/liste elemanı olarak kullanımı; `print((1, 'x'))`. Spec §3.274.
+
 ## [1.156.0]
 
 ### Eklendi

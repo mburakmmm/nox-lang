@@ -374,6 +374,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         .list_comp => |lc| try self.genListComp(lc),
         .dict_comp => |dc| try self.genDictComp(dc),
         .lambda => error.Unsupported,
+        .tuple_lit => error.Unsupported,
         .slice => |sl| try self.genSlice(sl),
         .index => |idx| try self.genIndex(idx),
         .list_lit => |elems| try self.genListLit(elems),
@@ -2170,6 +2171,25 @@ pub fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
 pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
     const class_name = v.class_name.?;
     const cinfo = self.classes.get(class_name).?;
+    // v1.157.0: tuple sınıfları Python gibi `(a, b)` / `(a,)` basılır.
+    if (std.mem.startsWith(u8, class_name, "tuple__")) {
+        const lp = try self.internFmtString("(");
+        try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = lp }});
+        for (cinfo.fields.items, 0..) |f, i| {
+            if (i != 0) try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_comma_sp" }});
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", v.text, @intCast(f.offset));
+            const fv = try self.newTemp();
+            try self.qbeLoad(fv, f.info.qtype, f.info.qtype, addr);
+            try self.genPrintFragment(.{ .text = fv, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .fixed_int = f.info.fixed_int });
+        }
+        if (cinfo.fields.items.len == 1) {
+            const comma = try self.internFmtString(",");
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = comma }});
+        }
+        try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_rparen" }});
+        return;
+    }
     const open_sym = try self.internFmtString(try std.fmt.allocPrint(self.allocator, "{s}(", .{class_name}));
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = open_sym }});
     for (cinfo.fields.items, 0..) |f, i| {

@@ -655,6 +655,13 @@ pub const Checker = struct {
     comp_types: call_expand_apply.CompTypeMap = .empty,
     /// v1.155.0: lambda → yükseltilecek `FuncDef` (bkz. `call_expand_apply.LambdaMap`).
     lambda_defs: call_expand_apply.LambdaMap = .empty,
+    /// v1.157.0: ifade yeniden yazımları (tuple literal → kurucu çağrısı, `t[k]` → alan, `d.items()`, `len(t)`) ve `__infer` var_decl tipleri.
+    expr_rewrites: call_expand_apply.ExprRewriteMap = .empty,
+    /// `tuple__...` sınıf adı → eleman tipleri (beklenen-tip yayılımı için).
+    tuple_elem_types: std.StringHashMapUnmanaged([]const Type) = .{},
+    infer_types: call_expand_apply.InferMap = .empty,
+    /// Şu an denetlenen deyim tuple açma desugarının sentetik bir okuması mı (`__nox_tup_N_K.f<i>`); hatası bastırılır.
+    synthetic_followup: bool = false,
     lambda_counter: u32 = 0,
     comp_depth: u32 = 0,
     extend_counter: u32 = 0,
@@ -730,6 +737,8 @@ pub const Checker = struct {
     /// bu, İSTENEN davranıştır).
     fn recordDiagnostic(self: *Checker, err: TypeError) TypeError!void {
         if (err == error.OutOfMemory) return err;
+        // v1.157.0: tuple açma desugarının başarısız gizli yerelinden gelen ARTIK-hatalar (sentetik okumalar) gürültü olmasın diye atlanır.
+        if (self.synthetic_followup) return;
         try self.diagnostics.append(self.allocator, .{
             .code = err,
             .line = self.current_line,
@@ -776,6 +785,13 @@ pub const Checker = struct {
                 return self.fail(error.UnknownType, "bilinmeyen tip: {s}", .{name});
             },
             .generic => |g| {
+                // v1.157.0: `tuple[T1, T2, ...]` — sentezlenmiş `tuple__...` sınıfına çözülür (bkz. `instantiateTupleClass`).
+                if (std.mem.eql(u8, g.name, "tuple")) {
+                    if (g.args.len == 0) return self.fail(error.UnknownType, "'tuple' en az bir tip argümanı alır", .{});
+                    const ts = try self.allocator.alloc(Type, g.args.len);
+                    for (g.args, 0..) |ga, i| ts[i] = try self.typeExprToType(ga);
+                    return self.instantiateTupleClass(ts);
+                }
                 // v2.0 madde 6: `ptr[T]` — çıplak `ptr`in (satır ~647'deki
                 // `.simple` dalı, TAMAMEN DEĞİŞMEDEN) tipli karşılığı. `T`
                 // HERHANGİ bir tip OLABİLİR (kullanıcının BİLİNÇLİ kararı,
@@ -1380,6 +1396,8 @@ pub const Checker = struct {
             self.current_span = stmt.span;
             if (stmt.kind != .var_decl) continue;
             const v = stmt.kind.var_decl;
+            // v1.157.0: tip-çıkarımlı (`__infer`, tuple açma) bildirimler modül-global olarak terfi etmez.
+            if (v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer")) continue;
             const declared = try self.typeExprToType(v.type_expr);
             try self.module_globals.put(self.allocator, v.name, declared);
         }
@@ -1936,11 +1954,13 @@ pub const Checker = struct {
 
     /// Checker bitince, kaydedilen genişletmeleri AST'ye yazar (bkz. `call_expand_apply.zig`).
     fn applyCallExpansions(self: *Checker, module: ast.Module) void {
-        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0 and self.lambda_defs.count() == 0) return;
+        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0 and self.lambda_defs.count() == 0 and self.expr_rewrites.count() == 0 and self.infer_types.count() == 0) return;
         var pending: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         var lifted: std.ArrayListUnmanaged(ast.FuncDef) = .empty;
         var in_func: u32 = 0;
         const cx: call_expand_apply.Ctx = .{
+            .exprs = &self.expr_rewrites,
+            .infers = &self.infer_types,
             .calls = &self.call_expansions,
             .fors = &self.for_rewrites,
             .stmt_fors = &self.stmt_for_rewrites,
@@ -3342,6 +3362,7 @@ pub const Checker = struct {
                 try self.collectSpawnTargetsExpr(ix.index.*);
             },
             .list_lit => |items| for (items) |it| try self.collectSpawnTargetsExpr(it),
+            .tuple_lit => |items| for (items) |it| try self.collectSpawnTargetsExpr(it),
             .dict_lit => |pairs| for (pairs) |p| {
                 try self.collectSpawnTargetsExpr(p.key);
                 try self.collectSpawnTargetsExpr(p.value);
@@ -3855,6 +3876,7 @@ pub const Checker = struct {
                 try self.scanMutatesGraphExpr(fname, params, ix.index.*, shared, seeds, reverse_edges);
             },
             .list_lit => |items| for (items) |it| try self.scanMutatesGraphExpr(fname, params, it, shared, seeds, reverse_edges),
+            .tuple_lit => |items| for (items) |it| try self.scanMutatesGraphExpr(fname, params, it, shared, seeds, reverse_edges),
             .dict_lit => |pairs| for (pairs) |p| {
                 try self.scanMutatesGraphExpr(fname, params, p.key, shared, seeds, reverse_edges);
                 try self.scanMutatesGraphExpr(fname, params, p.value, shared, seeds, reverse_edges);
@@ -4021,6 +4043,7 @@ pub const Checker = struct {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, ix.index.*, params);
             },
             .list_lit => |items| for (items) |it| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, it, params),
+            .tuple_lit => |items| for (items) |it| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, it, params),
             .dict_lit => |pairs| for (pairs) |p| {
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, p.key, params);
                 try self.checkTransitiveSpawnSharedMutationExpr(fd_name, p.value, params);
@@ -4238,6 +4261,7 @@ pub const Checker = struct {
                 try self.removeAwaitedTaskSharing(aa, ix.index.*, task_spawn_ids, resource_owners, locked_resources);
             },
             .list_lit => |items| for (items) |it| try self.removeAwaitedTaskSharing(aa, it, task_spawn_ids, resource_owners, locked_resources),
+            .tuple_lit => |items| for (items) |it| try self.removeAwaitedTaskSharing(aa, it, task_spawn_ids, resource_owners, locked_resources),
             .dict_lit => |pairs| for (pairs) |p| {
                 try self.removeAwaitedTaskSharing(aa, p.key, task_spawn_ids, resource_owners, locked_resources);
                 try self.removeAwaitedTaskSharing(aa, p.value, task_spawn_ids, resource_owners, locked_resources);
@@ -4990,6 +5014,7 @@ pub const Checker = struct {
         // deyim (if/while/for gövdeleri DAHİL) İÇİN otomatik doğru çalışır.
         self.current_line = stmt.line;
         self.current_span = stmt.span;
+        self.synthetic_followup = isSyntheticUnpackRead(stmt);
         switch (stmt.kind) {
             .expr_stmt => |e| {
                 if (try self.tryCheckElementGrowStmt(ctx, e)) return;
@@ -4997,6 +5022,8 @@ pub const Checker = struct {
                 _ = try self.checkExpr(ctx, e);
             },
             .var_decl => |v| {
+                // v1.157.0: tuple açma desugarının tip-çıkarımlı bildirimi (`__infer`): tip değerden çıkar; isim zaten bildirilmiş ve değer atanabilirse mevcut tip.
+                if (v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer")) return self.checkInferVarDecl(ctx, v);
                 const declared = try self.typeExprToType(v.type_expr);
                 const value_t = try self.checkExprExpected(ctx, v.value, declared);
                 if (!self.assignable(declared, value_t)) {
@@ -5505,6 +5532,7 @@ pub const Checker = struct {
 
     fn checkExprExpected(self: *Checker, ctx: *FnCtx, expr: ast.Expr, expected: ?Type) TypeError!Type {
         if (expr == .lambda) return self.checkLambda(ctx, expr.lambda, expected);
+        if (expr == .tuple_lit) return self.checkTupleLit(ctx, expr.tuple_lit, expected);
         if (expr == .ternary) return self.checkTernary(ctx, expr.ternary, expected);
         if (expr == .list_lit and expr.list_lit.len == 0) {
             if (expected) |exp| {
@@ -5731,6 +5759,7 @@ pub const Checker = struct {
             .dict_comp => |dc| try self.checkDictComp(ctx, dc),
             .lambda => return self.fail(error.TypeMismatch, "'lambda' yalnızca beklenen fonksiyon tipinin bilindiği bağlamlarda kullanılabilir (fonksiyon-tipli parametre/değişken/dönüş)", .{}),
             .slice => |sl| try self.checkSlice(ctx, sl),
+            .tuple_lit => |elems| try self.checkTupleLit(ctx, elems, null),
             .ternary => |t| try self.checkTernary(ctx, t, null),
             .kwarg => return self.fail(error.TypeMismatch, "keyword argüman (ad=değer) yalnızca bir fonksiyon/metod çağrısının argüman listesinde kullanılabilir", .{}),
             .call => |c| try self.checkCall(ctx, c),
@@ -5738,6 +5767,21 @@ pub const Checker = struct {
             .index => |idx| blk: {
                 const obj_t = try self.checkExpr(ctx, idx.obj.*);
                 try self.requireNotOptional(obj_t, "[]");
+                // v1.157.0: `t[k]` — tuple indeksi SABİT int olmalı (eleman tipleri farklı olabilir); `f<k>` alan okumasına yeniden yazılır.
+                if (obj_t == .class and isTupleClassName(obj_t.class)) {
+                    const ets = self.tuple_elem_types.get(obj_t.class).?;
+                    const k: i64 = switch (idx.index.*) {
+                        .int_lit => |v| v,
+                        .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) -u.operand.int_lit else return self.fail(error.TypeMismatch, "tuple indeksi sabit bir int literali olmalıdır", .{}),
+                        else => return self.fail(error.TypeMismatch, "tuple indeksi sabit bir int literali olmalıdır", .{}),
+                    };
+                    const n: i64 = @intCast(ets.len);
+                    const ki = if (k < 0) k + n else k;
+                    if (ki < 0 or ki >= n) return self.fail(error.TypeMismatch, "tuple indeksi aralık dışı (tuple {d} eleman içeriyor)", .{n});
+                    const attr = try std.fmt.allocPrint(self.allocator, "f{d}", .{ki});
+                    try self.expr_rewrites.put(self.allocator, @intFromPtr(idx.index), .{ .attribute = .{ .obj = idx.obj, .attr = attr } });
+                    break :blk ets[@intCast(ki)];
+                }
                 if (obj_t == .dict) {
                     const idx_t = try self.checkExpr(ctx, idx.index.*);
                     if (!types.eql(idx_t, obj_t.dict.key.*)) {
@@ -6379,8 +6423,14 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "len")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'len' tam olarak 1 argüman alır", .{});
                     const t = try self.checkExpr(ctx, c.args[0]);
+                    // v1.157.0: `len(tuple)` derleme zamanı sabiti.
+                    if (t == .class and isTupleClassName(t.class)) {
+                        const n: i64 = @intCast(self.tuple_elem_types.get(t.class).?.len);
+                        try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .int_lit = n });
+                        return .int;
+                    }
                     if (t != .str and t != .list and t != .dict) {
-                        return self.fail(error.TypeMismatch, "'len' yalnızca str/list/dict üzerinde çalışır", .{});
+                        return self.fail(error.TypeMismatch, "'len' yalnızca str/list/dict/tuple üzerinde çalışır", .{});
                     }
                     return .int;
                 }
@@ -7312,6 +7362,18 @@ pub const Checker = struct {
                 // desen: bir kullanıcı sınıfı DEĞİL, burada özel işlenir
                 // (bkz. nox-teknik-spesifikasyon.md §3.28).
                 if (obj_t == .dict) {
+                    // v1.157.0: `d.items()` → `list[tuple[K, V]]` — `__nox_dict_items(d)` (core.nox) çağrısına yeniden yazılır.
+                    if (std.mem.eql(u8, a.attr, "items")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'items' hiç argüman almaz", .{});
+                        const callee = try self.allocator.create(ast.Expr);
+                        callee.* = .{ .identifier = "__nox_dict_items" };
+                        const call_args = try self.allocator.alloc(ast.Expr, 1);
+                        call_args[0] = a.obj.*;
+                        const repl: ast.Expr = .{ .call = .{ .callee = callee, .args = call_args } };
+                        const rt = try self.checkExpr(ctx, repl);
+                        try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+                        return rt;
+                    }
                     if (std.mem.eql(u8, a.attr, "contains")) {
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'contains' tam olarak 1 argüman alır", .{});
                         const kt = try self.checkExpr(ctx, c.args[0]);
@@ -7627,6 +7689,93 @@ pub const Checker = struct {
             };
         }
         return out;
+    }
+
+    // ===== v1.157.0: tuple (roadmap 1.13) — `tuple[T1, T2, ...]` sentezlenmiş bir sınıftır (`tuple__T1_T2`, alanlar `f0`, `f1`, ...) =====
+
+    fn isTupleClassName(name: []const u8) bool {
+        return std.mem.startsWith(u8, name, "tuple__");
+    }
+
+    /// `tuple[T1, ..., Tn]` için somut sınıfı (alanlar `f0..f{n-1}`, `__init__(self, f0, ...)`) bir kez üretip kaydeder (`instantiateGenericClass`ın sonu gibi:
+    /// `classes` + `registerClassSignatures` + `class_instantiations` + `checkClassBody`). Sınıf ARC/eşitlik/release/GC makinesini ücretsiz kullanır.
+    fn instantiateTupleClass(self: *Checker, elem_types: []const Type) TypeError!Type {
+        const mangled = try self.mangleName("tuple", elem_types);
+        if (self.classes.contains(mangled)) return .{ .class = mangled };
+        try self.tuple_elem_types.put(self.allocator, mangled, try self.allocator.dupe(Type, elem_types));
+        const n = elem_types.len;
+        const fields = try self.allocator.alloc(ast.FieldDecl, n);
+        const params = try self.allocator.alloc(ast.Param, n + 1);
+        const body = try self.allocator.alloc(ast.Stmt, n);
+        params[0] = .{ .name = "self", .type_expr = .{ .simple = mangled }, .self_inferred = true };
+        for (elem_types, 0..) |et, i| {
+            const fname = try std.fmt.allocPrint(self.allocator, "f{d}", .{i});
+            const te = try self.typeToTypeExpr(et);
+            fields[i] = .{ .name = fname, .type_expr = te };
+            params[i + 1] = .{ .name = fname, .type_expr = te };
+            const self_ref = try self.allocator.create(ast.Expr);
+            self_ref.* = .{ .identifier = "self" };
+            body[i] = .{ .kind = .{ .assign = .{ .target = .{ .attribute = .{ .obj = self_ref, .attr = fname } }, .value = .{ .identifier = fname } } } };
+        }
+        const methods = try self.allocator.alloc(ast.FuncDef, 1);
+        methods[0] = .{ .name = "__init__", .params = params, .return_type = .{ .simple = "None" }, .body = body };
+        const concrete: ast.ClassDef = .{ .name = mangled, .type_params = &.{}, .methods = methods, .fields = fields };
+        // Sentezlenen sınıfın gövdesi denetlenirken `current_line`/`current_span` bozulur; çağıran deyimin konumu korunur.
+        const saved_line = self.current_line;
+        const saved_span = self.current_span;
+        defer {
+            self.current_line = saved_line;
+            self.current_span = saved_span;
+        }
+        try self.classes.put(self.allocator, mangled, .{});
+        try self.registerClassSignatures(concrete);
+        try self.class_instantiations.append(self.allocator, concrete);
+        try self.checkClassBody(concrete);
+        return .{ .class = mangled };
+    }
+
+    /// `(a, b, ...)` — eleman tipleri (varsa beklenen tuple tipinin eleman tipleriyle denetlenerek) çıkarılır; ifade `tuple__...` kurucu çağrısına yeniden yazılır.
+    fn checkTupleLit(self: *Checker, ctx: *FnCtx, elems: []const ast.Expr, expected: ?Type) TypeError!Type {
+        if (elems.len == 0) return self.fail(error.TypeMismatch, "boş tuple desteklenmiyor", .{});
+        var exp_fields: ?[]const Type = null;
+        if (expected) |ex| {
+            if (ex == .class and isTupleClassName(ex.class)) {
+                if (self.tuple_elem_types.get(ex.class)) |ets| {
+                    if (ets.len == elems.len) exp_fields = ets;
+                }
+            }
+        }
+        const ts = try self.allocator.alloc(Type, elems.len);
+        for (elems, 0..) |el, i| {
+            const et = try self.checkExprExpected(ctx, el, if (exp_fields) |ef| ef[i] else null);
+            if (et == .none) return self.fail(error.TypeMismatch, "tuple elemanı bir değer üretmelidir", .{});
+            ts[i] = if (exp_fields) |ef| (if (self.assignable(ef[i], et)) ef[i] else et) else et;
+        }
+        const t = try self.instantiateTupleClass(ts);
+        try self.tuple_elem_types.put(self.allocator, t.class, ts);
+        const callee = try self.allocator.create(ast.Expr);
+        callee.* = .{ .identifier = t.class };
+        try self.expr_rewrites.put(self.allocator, @intFromPtr(elems.ptr), .{ .call = .{ .callee = callee, .args = @constCast(elems) } });
+        return t;
+    }
+
+    /// `__nox_tup_N_K` gizli yereli (tuple açma): değer bir tuple olmalı ve K hedefle eleman sayısı eşleşmeli. Diğer `__infer` bildirimleri: tip değerden çıkarılır.
+    fn checkInferVarDecl(self: *Checker, ctx: *FnCtx, v: ast.VarDecl) TypeError!void {
+        const t = try self.checkExpr(ctx, v.value);
+        if (t == .none) return self.fail(error.TypeMismatch, "'{s}' için değer bir tip üretmiyor", .{v.name});
+        if (std.mem.startsWith(u8, v.name, "__nox_tup_")) {
+            const us = std.mem.lastIndexOfScalar(u8, v.name, '_').?;
+            const want = std.fmt.parseInt(usize, v.name[us + 1 ..], 10) catch 0;
+            if (t != .class or !isTupleClassName(t.class)) return self.fail(error.TypeMismatch, "tuple açma: sağ taraf bir tuple olmalıdır", .{});
+            const have = self.tuple_elem_types.get(t.class).?.len;
+            if (have != want) return self.fail(error.TypeMismatch, "tuple açma: {d} hedef var ama değer {d} eleman içeriyor", .{ want, have });
+        }
+        var declared = t;
+        if (ctx.scope.lookupLocal(v.name)) |existing| {
+            if (self.assignable(existing, t)) declared = existing;
+        }
+        try self.declareVar(ctx, v.name, declared);
+        try self.infer_types.put(self.allocator, @intFromPtr(v.name.ptr), try self.typeToTypeExpr(declared));
     }
 
     /// v1.155.0: `lambda a, b: <ifade>` — parametre tipleri ve dönüş tipi BEKLENEN fonksiyon tipinden gelir; lambda, sentezlenmiş bir iç içe
@@ -8367,6 +8516,7 @@ pub const Checker = struct {
                 break :blk .{ .slice = out };
             },
             .list_lit => |elems| .{ .list_lit = try self.substituteExprs(elems, bindings) },
+            .tuple_lit => |elems| .{ .tuple_lit = try self.substituteExprs(elems, bindings) },
             .dict_lit => |pairs| blk: {
                 const out = try self.allocator.alloc(ast.DictPair, pairs.len);
                 for (pairs, 0..) |p, i| out[i] = .{
@@ -8949,6 +9099,18 @@ pub const CheckOutcome = union(enum) {
 /// `all` alanında İSE TÜM (kurtarılmış + varsa fırlatılmış) tanılamaları taşır.
 /// `a`, `a.b`, `a.b.c`… biçiminde SAF alan zinciri mi? (kök bir isim;
 /// çağrı/indeksleme/literal YOK — yani alıcı bir GEÇİCİ üretmez.)
+/// `x: __infer = __nox_tup_N_K.f<i>` (ya da `hedef = __nox_tup_N_K.f<i>`) — tuple açma desugarının sentetik okuması.
+fn isSyntheticUnpackRead(stmt: ast.Stmt) bool {
+    const v: ast.Expr = switch (stmt.kind) {
+        .var_decl => |d| d.value,
+        .assign => |a| a.value,
+        else => return false,
+    };
+    if (v != .attribute) return false;
+    const o = v.attribute.obj.*;
+    return o == .identifier and std.mem.startsWith(u8, o.identifier, "__nox_tup_");
+}
+
 fn isPlainFieldChain(e: ast.Expr) bool {
     return switch (e) {
         .identifier => true,

@@ -373,6 +373,14 @@ fn dumpExpr(writer: *std.Io.Writer, e: ast.Expr) std.Io.Writer.Error!void {
             }
             try writer.writeAll(")");
         },
+        .tuple_lit => |elems| {
+            try writer.writeAll("(tuple");
+            for (elems) |el| {
+                try writer.writeAll(" ");
+                try dumpExpr(writer, el);
+            }
+            try writer.writeAll(")");
+        },
         .dict_lit => |pairs| {
             try writer.writeAll("(dict");
             for (pairs) |p| {

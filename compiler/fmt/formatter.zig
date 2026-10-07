@@ -84,6 +84,42 @@ fn unaryPrec(op: ast.UnaryOp) u8 {
     };
 }
 
+/// `__nox_tup_N_K: __infer = ...` gizli tuple yereli ise K (hedef sayısı).
+fn tupleTempCount(stmt: ast.Stmt) ?usize {
+    if (stmt.kind != .var_decl) return null;
+    const v = stmt.kind.var_decl;
+    if (!std.mem.startsWith(u8, v.name, "__nox_tup_")) return null;
+    if (v.type_expr != .simple or !std.mem.eql(u8, v.type_expr.simple, "__infer")) return null;
+    const us = std.mem.lastIndexOfScalar(u8, v.name, '_') orelse return null;
+    return std.fmt.parseInt(usize, v.name[us + 1 ..], 10) catch null;
+}
+
+fn isUnpackRead(stmt: ast.Stmt, tmp: []const u8) bool {
+    const val: ast.Expr = switch (stmt.kind) {
+        .var_decl => |d| d.value,
+        .assign => |a| a.value,
+        else => return false,
+    };
+    if (val != .attribute) return false;
+    const o = val.attribute.obj.*;
+    return o == .identifier and std.mem.eql(u8, o.identifier, tmp);
+}
+
+fn isUnpackSequence(rest: []const ast.Stmt, tmp: []const u8, k: usize) bool {
+    if (rest.len < k) return false;
+    for (rest[0..k]) |s| if (!isUnpackRead(s, tmp)) return false;
+    return true;
+}
+
+fn forUnpackCount(f: ast.ForStmt) ?usize {
+    if (!std.mem.startsWith(u8, f.var_name, "__nox_tup_")) return null;
+    const us = std.mem.lastIndexOfScalar(u8, f.var_name, '_') orelse return null;
+    const k = std.fmt.parseInt(usize, f.var_name[us + 1 ..], 10) catch return null;
+    if (f.body.len < k or !isUnpackSequence(f.body, f.var_name, k)) return null;
+    for (f.body[0..k]) |s| if (s.kind != .var_decl) return null;
+    return k;
+}
+
 fn binOpStr(op: ast.BinaryOp) []const u8 {
     return switch (op) {
         .add => "+",
@@ -175,9 +211,37 @@ const Printer = struct {
     }
 
     fn printStmts(self: *Printer, stmts: []const ast.Stmt, depth: usize) FormatError!void {
-        for (stmts) |stmt| {
+        var i: usize = 0;
+        while (i < stmts.len) {
+            const stmt = stmts[i];
             try self.emitLeadingTrivia(depth, stmt.line);
+            // v1.157.0: tuple açma desugarı (`__nox_tup_N_K: __infer = <değer>` + K okuma) kullanıcının yazdığı `a, b = <değer>` biçimine geri çevrilir.
+            if (tupleTempCount(stmt)) |k| {
+                if (i + k < stmts.len + 0 and isUnpackSequence(stmts[i + 1 ..], stmt.kind.var_decl.name, k)) {
+                    try self.indentTo(depth);
+                    for (stmts[i + 1 .. i + 1 + k], 0..) |t, j| {
+                        if (j > 0) try self.writer.writeAll(", ");
+                        switch (t.kind) {
+                            .var_decl => |d| try self.writer.writeAll(d.name),
+                            .assign => |a| try self.printExpr(a.target),
+                            else => unreachable,
+                        }
+                    }
+                    try self.writer.writeAll(" = ");
+                    const rhs = stmt.kind.var_decl.value;
+                    if (rhs == .tuple_lit and rhs.tuple_lit.len > 1) {
+                        for (rhs.tuple_lit, 0..) |el, j| {
+                            if (j > 0) try self.writer.writeAll(", ");
+                            try self.printExpr(el);
+                        }
+                    } else try self.printExpr(rhs);
+                    try self.line(stmt.line);
+                    i += 1 + k;
+                    continue;
+                }
+            }
             try self.printStmt(stmt, depth);
+            i += 1;
         }
     }
 
@@ -235,6 +299,20 @@ const Printer = struct {
             },
             .for_stmt => |f| {
                 try self.indentTo(depth);
+                // v1.157.0: `for a, b in X:` desugarı (gizli tuple değişkeni + gövde başında K tip-çıkarımlı bildirim) geri çevrilir.
+                if (forUnpackCount(f)) |k| {
+                    try self.writer.writeAll("for ");
+                    for (f.body[0..k], 0..) |d, j| {
+                        if (j > 0) try self.writer.writeAll(", ");
+                        try self.writer.writeAll(d.kind.var_decl.name);
+                    }
+                    try self.writer.writeAll(" in ");
+                    try self.printExpr(f.iterable);
+                    try self.writer.writeAll(":");
+                    try self.line(stmt.line);
+                    try self.printStmts(f.body[k..], depth + 1);
+                    return;
+                }
                 try self.writer.print("for {s} in ", .{f.var_name});
                 try self.printExpr(f.iterable);
                 try self.writer.writeAll(":");
@@ -661,6 +739,15 @@ const Printer = struct {
                     try self.printExpr(el);
                 }
                 try self.writer.writeAll("]");
+            },
+            .tuple_lit => |elems| {
+                try self.writer.writeAll("(");
+                for (elems, 0..) |el, i| {
+                    if (i > 0) try self.writer.writeAll(", ");
+                    try self.printExpr(el);
+                }
+                if (elems.len == 1) try self.writer.writeAll(",");
+                try self.writer.writeAll(")");
             },
             .dict_lit => |pairs| {
                 try self.writer.writeAll("{");

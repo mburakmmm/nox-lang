@@ -1,0 +1,103 @@
+class Rec:
+    label: str
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+def minmax(xs: list[int]) -> tuple[int, int]:
+    lo: int = xs[0]
+    hi: int = xs[0]
+    for x in xs:
+        if x < lo:
+            lo = x
+        if x > hi:
+            hi = x
+    return lo, hi
+
+def pair(i: int) -> tuple[str, list[int], Rec]:
+    return ("n" + str(i), [i, i + 1], Rec("r" + str(i)))
+
+def swap(t: tuple[int, str]) -> tuple[str, int]:
+    return t[1], t[0]
+
+lo, hi = minmax([3, 1, 4, 1, 5, 9, 2, 6])
+print(lo)
+print(hi)
+t: tuple[int, str] = (1, "x")
+print(t[0])
+print(t[1])
+print(t[-1])
+print(len(t))
+print(t)
+print(swap(t))
+print((1,))
+print((1, 2.5, True, "s"))
+a: int = 1
+b: int = 2
+a, b = b, a
+print(a)
+print(b)
+name, items, rec = pair(7)
+print(name)
+print(items[1])
+print(rec.label)
+nested: tuple[tuple[int, int], str] = ((1, 2), "z")
+print(nested[0][1])
+print(nested[1])
+print(nested)
+d: dict[str, int] = {"x": 1, "y": 2, "z": 3}
+total: int = 0
+for k, v in d.items():
+    total = total + v + len(k)
+print(total)
+names: list[str] = ["p", "q", "r"]
+for i, n in enumerate(names):
+    print(i)
+    print(n)
+for x, y in zip([1, 2, 3], ["a", "b"]):
+    print(x)
+    print(y)
+pairs: list[tuple[int, str]] = [(1, "one"), (2, "two")]
+print(len(pairs))
+print(pairs[1][1])
+for num, word in pairs:
+    print(num)
+    print(word)
+print((1, 2) == (1, 2))
+print((1, 2) == (1, 3))
+fp: tuple[float, int] = (1, 2)
+print(fp)
+class Holder:
+    pos: tuple[int, int]
+    def __init__(self, x: int, y: int) -> None:
+        self.pos = (x, y)
+h: Holder = Holder(3, 4)
+hx, hy = h.pos
+print(hx + hy)
+h.pos = (hy, hx)
+print(h.pos[0])
+m: dict[str, tuple[int, int]] = {"a": (1, 2)}
+m["b"] = (3, 4)
+bx, by = m["b"]
+print(bx * by)
+print(m["a"][1])
+
+# döngüde sızıntı denetimli
+acc: int = 0
+i2: int = 0
+while i2 < 2000:
+    i2 = i2 + 1
+    n2, l2, r2 = pair(i2)
+    acc = acc + len(n2) + l2[1] + len(r2.label)
+    lo2, hi2 = minmax([i2, i2 % 7, i2 % 13])
+    acc = acc + lo2 + hi2
+    a2: int = i2
+    b2: int = i2 + 1
+    a2, b2 = b2, a2
+    acc = acc + a2 - b2
+    for kk, vv in {"u": i2, "w": 2}.items():
+        acc = acc + len(kk) + vv
+    for ix, nm in enumerate(["a", "bb"]):
+        acc = acc + ix + len(nm)
+    sw: tuple[str, int] = swap((i2, "t" + str(i2 % 5)))
+    acc = acc + len(sw[0]) + sw[1]
+print(acc)

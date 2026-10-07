@@ -598,6 +598,62 @@ test "golden(typecheck): v1.156.0 — is None, koruma daraltma, str metodları, 
     );
 }
 
+test "golden(typecheck): v1.157.0 — tuple açma hedef sayısı eleman sayısıyla eşleşmeli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_tuple_unpack_arity.nox"),
+        @embedFile("typecheck_cases/err_tuple_unpack_arity.expected"),
+    );
+}
+
+test "golden(typecheck): v1.157.0 — tuple açma sağ tarafı tuple olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_tuple_unpack_non_tuple.nox"),
+        @embedFile("typecheck_cases/err_tuple_unpack_non_tuple.expected"),
+    );
+}
+
+test "golden(typecheck): v1.157.0 — tuple indeksi sabit olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_tuple_index_not_const.nox"),
+        @embedFile("typecheck_cases/err_tuple_index_not_const.expected"),
+    );
+}
+
+test "golden(typecheck): v1.157.0 — tuple indeksi aralık dışı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_tuple_index_range.nox"),
+        @embedFile("typecheck_cases/err_tuple_index_range.expected"),
+    );
+}
+
+test "golden(typecheck): v1.157.0 — tuple eleman ataması yok (değişmez)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_tuple_index_assign.nox"),
+        @embedFile("typecheck_cases/err_tuple_index_assign.expected"),
+    );
+}
+
+test "golden(typecheck): v1.157.0 — tuple üzerinde for çalışmaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_tuple_not_iterable.nox"),
+        @embedFile("typecheck_cases/err_tuple_not_iterable.expected"),
+    );
+}
+
+test "golden(typecheck): v1.157.0 — tuple eleman tipi uyuşmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_tuple_element_type.nox"),
+        @embedFile("typecheck_cases/err_tuple_element_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.157.0 — tuple tip denetimi geçer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_tuples.nox"),
+        @embedFile("typecheck_cases/ok_tuples.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

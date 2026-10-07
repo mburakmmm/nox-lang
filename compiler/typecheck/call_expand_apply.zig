@@ -29,7 +29,15 @@ pub const LambdaMap = std.AutoHashMapUnmanaged(usize, LambdaEntry);
 /// `calls`/`fors`/`stmt_fors`/`comps`/`lambdas` salt-okunur yan tablolardır; `pending` (işlenen deyimin başlığında karşılaşılan, o deyimden ÖNCE
 /// tanımlanacak iç içe `def`ler), `lifted` (modül üst düzeyindeki lambda'ların yükseltildiği üst-düzey fonksiyonlar) ve `in_func` (fonksiyon/metod
 /// gövdesi derinliği) değiştirilebilir durumdur.
+/// v1.157.0: ifade yeniden yazımları (anahtar: tuple literal için `items.ptr`, `d.items()`/`len(t)` için çağrının `callee` kutusu, `t[k]` için indeks kutusu).
+pub const ExprRewriteMap = std.AutoHashMapUnmanaged(usize, ast.Expr);
+
+/// v1.157.0: tip-çıkarımlı (`__infer`) `var_decl`ların çözülmüş tipleri (anahtar: bildirilen ismin işaretçisi).
+pub const InferMap = std.AutoHashMapUnmanaged(usize, ast.TypeExpr);
+
 pub const Ctx = struct {
+    exprs: *const ExprRewriteMap,
+    infers: *const InferMap,
     calls: *const Map,
     fors: *const ForMap,
     stmt_fors: *const StmtForMap,
@@ -61,7 +69,10 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
         }
         switch (stmt.kind) {
             .expr_stmt => |*e| expr(e, map),
-            .var_decl => |*v| expr(&v.value, map),
+            .var_decl => |*v| {
+                if (map.infers.get(@intFromPtr(v.name.ptr))) |te| v.type_expr = te;
+                expr(&v.value, map);
+            },
             .assign => |*a| {
                 expr(&a.target, map);
                 expr(&a.value, map);
@@ -145,6 +156,11 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
             expr(b.right, map);
         },
         .call => |*c| {
+            if (map.exprs.get(@intFromPtr(c.callee))) |r| {
+                e.* = r;
+                expr(e, map);
+                return;
+            }
             if (map.calls.get(@intFromPtr(c.callee))) |exp| c.args = exp;
             expr(c.callee, map);
             for (c.args) |*a| expr(a, map);
@@ -187,10 +203,23 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
             if (sl.step) |x| expr(x, map);
         },
         .index => |*ix| {
+            if (map.exprs.get(@intFromPtr(ix.index))) |r| {
+                e.* = r;
+                expr(e, map);
+                return;
+            }
             expr(ix.obj, map);
             expr(ix.index, map);
         },
         .list_lit => |items| for (items) |*it| expr(it, map),
+        .tuple_lit => |items| {
+            if (map.exprs.get(@intFromPtr(items.ptr))) |r| {
+                e.* = r;
+                expr(e, map);
+                return;
+            }
+            for (items) |*it| expr(it, map);
+        },
         .dict_lit => |pairs| for (pairs) |*p| {
             expr(&p.key, map);
             expr(&p.value, map);

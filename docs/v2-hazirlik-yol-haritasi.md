@@ -28,7 +28,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [x] **1.11 `is None`, `print` çoklu argüman (+sep/end), str metot sözdizimi** — v1.156.0 (spec §3.273).
 - [x] **1.12 Koruma (guard) tarzı Optional daraltma** (v1.156.0, spec §3.273) — eski tanım: ** `if x == None: return/break/continue` sonrası `x` daraltılsın
   (şu an yalnızca `if x != None:` bloğu içinde; bağlı liste gezintisi için gerekli).
-- [ ] **1.13 tuple (BÜYÜK, karar verildi: yapılacak):** `tuple[T1, T2]` tipi, `(a, b)` literal, `t[0]`, açma (`a, b = f()`), çoklu dönüş,
+- [x] **1.13 tuple** — v1.157.0 (spec §3.274). Eski tanım:  `tuple[T1, T2]` tipi, `(a, b)` literal, `t[0]`, açma (`a, b = f()`), çoklu dönüş,
   `for k, v in d.items()`, `enumerate`/`zip`. Kullanıcı kararı (2026-10-07): 2.0 için özelliklerden kaçınma, eksiksiz olsun.
 - Bilinçli ertelenmiş (LANGUAGE.md): `*args`/`**kwargs`, çoklu kalıtım — 2.0 için yeniden değerlendirilecek mi, kullanıcıya sorulacak.
 

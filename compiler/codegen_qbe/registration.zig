@@ -117,6 +117,15 @@ fn appendMangledTypeExprName(self: *Codegen, buf: *std.ArrayListUnmanaged(u8), t
                 try appendMangledTypeExprName(self, buf, g.args[1]);
                 return;
             }
+            // v1.157.0: `tuple[A, B]` — checker'ın `tuple__A_B` sınıf adıyla BİREBİR (tüm argümanlar).
+            if (std.mem.eql(u8, g.name, "tuple") and g.args.len >= 1) {
+                try buf.appendSlice(self.allocator, "tuple__");
+                for (g.args, 0..) |ga, i| {
+                    if (i != 0) try buf.appendSlice(self.allocator, "_");
+                    try appendMangledTypeExprName(self, buf, ga);
+                }
+                return;
+            }
             if (g.args.len == 0) return error.Unsupported;
             try buf.appendSlice(self.allocator, g.name);
             try buf.appendSlice(self.allocator, "_");
@@ -842,6 +851,7 @@ fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.St
             try collectIdentifierNamesExpr(a, idx.index.*, out);
         },
         .list_lit => |elems| for (elems) |el| try collectIdentifierNamesExpr(a, el, out),
+        .tuple_lit => |elems| for (elems) |el| try collectIdentifierNamesExpr(a, el, out),
         .dict_lit => |pairs| for (pairs) |p| {
             try collectIdentifierNamesExpr(a, p.key, out);
             try collectIdentifierNamesExpr(a, p.value, out);

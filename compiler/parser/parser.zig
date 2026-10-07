@@ -46,6 +46,9 @@ pub const Parser = struct {
     /// Bkz. `ast.Module.expr_spans`nin belge notu — `parseModule` SONUNDA
     /// döndürülen `Module`a TAŞINIR.
     expr_spans: std.AutoHashMapUnmanaged(usize, Span) = .empty,
+    /// v1.157.0: tuple açma desugarının ek deyimleri ve gizli ad sayacı (bkz. `parseSimpleStmt`/`parseFor`).
+    extra_stmts: std.ArrayList(ast.Stmt) = .empty,
+    tuple_counter: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator, tokens: []const Token) Parser {
         return .{ .allocator = allocator, .tokens = tokens, .pos = 0 };
@@ -123,8 +126,15 @@ pub const Parser = struct {
         var stmts = std.ArrayList(ast.Stmt).empty;
         while (!self.check(.eof)) {
             try stmts.append(self.allocator, try self.parseStmt());
+            try self.drainExtraStmts(&stmts);
         }
         return .{ .body = try stmts.toOwnedSlice(self.allocator), .expr_spans = self.expr_spans };
+    }
+
+    /// `parseSimpleStmt`in (tuple açma) ek deyimlerini ana deyimin HEMEN ardına ekler.
+    fn drainExtraStmts(self: *Parser, stmts: *std.ArrayList(ast.Stmt)) ParseError!void {
+        for (self.extra_stmts.items) |s| try stmts.append(self.allocator, s);
+        self.extra_stmts.clearRetainingCapacity();
     }
 
     fn parseBlock(self: *Parser) ParseError![]ast.Stmt {
@@ -133,6 +143,7 @@ pub const Parser = struct {
         var stmts = std.ArrayList(ast.Stmt).empty;
         while (!self.check(.dedent)) {
             try stmts.append(self.allocator, try self.parseStmt());
+            try self.drainExtraStmts(&stmts);
         }
         _ = try self.expect(.dedent);
         return stmts.toOwnedSlice(self.allocator);
@@ -201,14 +212,47 @@ pub const Parser = struct {
             _ = try self.expect(.colon);
             const type_expr = try self.parseTypeExpr();
             _ = try self.expect(.assign);
-            const value = try self.parseExpr();
+            const value = try self.parseExprOrTuple();
             _ = try self.expect(.newline);
             return .{ .var_decl = .{ .name = name, .type_expr = type_expr, .value = value } };
         }
 
         const expr = try self.parseExpr();
+        // v1.157.0: tuple açma — `a, b = f()` / `a, b = b, a` / `self.x, self.y = p`. Parse-zamanı desugar: gizli bir `__nox_tup_N_<hedef sayısı>`
+        // yerel (tipi checker çıkarır, `__infer`) değeri tutar, her hedef ondan `f<i>` alanını okur (isim hedefi: tip çıkarımlı bildirim; alan/indeks
+        // hedefi: atama). Hedef sayısı ismin sonuna kodlanır (checker arity doğrular).
+        if (self.check(.comma)) {
+            var targets = std.ArrayList(ast.Expr).empty;
+            try targets.append(self.allocator, expr);
+            while (self.match(.comma)) {
+                if (self.check(.assign)) break;
+                try targets.append(self.allocator, try self.parseExpr());
+            }
+            _ = try self.expect(.assign);
+            for (targets.items) |t| {
+                if (t != .identifier and t != .attribute and t != .index) {
+                    self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()) };
+                    return error.UnexpectedToken;
+                }
+            }
+            const rhs = try self.parseExprOrTuple();
+            _ = try self.expect(.newline);
+            self.tuple_counter += 1;
+            const tmp_name = try std.fmt.allocPrint(self.allocator, "__nox_tup_{d}_{d}", .{ self.tuple_counter, targets.items.len });
+            const line = self.tokens[self.pos - 1].line;
+            for (targets.items, 0..) |t, i| {
+                const tmp_ref = try self.box(.{ .identifier = tmp_name });
+                const field_read: ast.Expr = .{ .attribute = .{ .obj = tmp_ref, .attr = try std.fmt.allocPrint(self.allocator, "f{d}", .{i}) } };
+                const kind: ast.StmtKind = if (t == .identifier)
+                    .{ .var_decl = .{ .name = t.identifier, .type_expr = .{ .simple = "__infer" }, .value = field_read } }
+                else
+                    .{ .assign = .{ .target = t, .value = field_read } };
+                try self.extra_stmts.append(self.allocator, .{ .kind = kind, .line = line });
+            }
+            return .{ .var_decl = .{ .name = tmp_name, .type_expr = .{ .simple = "__infer" }, .value = rhs } };
+        }
         if (self.match(.assign)) {
-            const value = try self.parseExpr();
+            const value = try self.parseExprOrTuple();
             _ = try self.expect(.newline);
             return .{ .assign = .{ .target = expr, .value = value } };
         }
@@ -359,10 +403,28 @@ pub const Parser = struct {
     fn parseFor(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_for);
         const name = (try self.expect(.identifier)).lexeme;
+        // v1.157.0: `for a, b in X:` — gizli bir tuple döngü değişkeni + gövde başında tip-çıkarımlı açma bildirimleri.
+        var unpack_names = std.ArrayList([]const u8).empty;
+        if (self.check(.comma)) {
+            try unpack_names.append(self.allocator, name);
+            while (self.match(.comma)) try unpack_names.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        }
         _ = try self.expect(.kw_in);
         const iterable = try self.parseExpr();
         _ = try self.expect(.colon);
         const body = try self.parseBlock();
+        if (unpack_names.items.len > 1) {
+            self.tuple_counter += 1;
+            const tmp_name = try std.fmt.allocPrint(self.allocator, "__nox_tup_{d}_{d}", .{ self.tuple_counter, unpack_names.items.len });
+            const line = self.tokens[self.pos - 1].line;
+            const new_body = try self.allocator.alloc(ast.Stmt, unpack_names.items.len + body.len);
+            for (unpack_names.items, 0..) |un, i| {
+                const tmp_ref = try self.box(.{ .identifier = tmp_name });
+                new_body[i] = .{ .kind = .{ .var_decl = .{ .name = un, .type_expr = .{ .simple = "__infer" }, .value = .{ .attribute = .{ .obj = tmp_ref, .attr = try std.fmt.allocPrint(self.allocator, "f{d}", .{i}) } } } }, .line = line };
+            }
+            @memcpy(new_body[unpack_names.items.len..], body);
+            return .{ .for_stmt = .{ .var_name = tmp_name, .iterable = iterable, .body = new_body } };
+        }
         return .{ .for_stmt = .{ .var_name = name, .iterable = iterable, .body = body } };
     }
 
@@ -699,7 +761,7 @@ pub const Parser = struct {
         if (self.match(.newline)) {
             return .{ .return_stmt = null };
         }
-        const value = try self.parseExpr();
+        const value = try self.parseExprOrTuple();
         _ = try self.expect(.newline);
         return .{ .return_stmt = value };
     }
@@ -843,6 +905,19 @@ pub const Parser = struct {
     }
 
     // ---- İfadeler: öncelik tırmanışı (precedence climbing) ----
+
+    /// v1.157.0: çıplak tuple — `return a, b`, `x = 1, 2`, `t: tuple[int, int] = 1, 2`. İlk ifadeden sonra `,` varsa tuple literaldir.
+    fn parseExprOrTuple(self: *Parser) ParseError!ast.Expr {
+        const first = try self.parseExpr();
+        if (!self.check(.comma)) return first;
+        var elems = std.ArrayList(ast.Expr).empty;
+        try elems.append(self.allocator, first);
+        while (self.match(.comma)) {
+            if (self.check(.newline)) break;
+            try elems.append(self.allocator, try self.parseExpr());
+        }
+        return .{ .tuple_lit = try elems.toOwnedSlice(self.allocator) };
+    }
 
     fn parseExpr(self: *Parser) ParseError!ast.Expr {
         try self.enterRecursion();
@@ -1308,6 +1383,17 @@ pub const Parser = struct {
             .l_paren => {
                 _ = self.advance();
                 const inner = try self.parseExpr();
+                // v1.157.0: `(a, b)` / `(a,)` tuple literal.
+                if (self.check(.comma)) {
+                    var elems = std.ArrayList(ast.Expr).empty;
+                    try elems.append(self.allocator, inner);
+                    while (self.match(.comma)) {
+                        if (self.check(.r_paren)) break;
+                        try elems.append(self.allocator, try self.parseExpr());
+                    }
+                    _ = try self.expect(.r_paren);
+                    return .{ .tuple_lit = try elems.toOwnedSlice(self.allocator) };
+                }
                 _ = try self.expect(.r_paren);
                 return inner;
             },

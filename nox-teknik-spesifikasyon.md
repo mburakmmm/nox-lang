@@ -28694,6 +28694,28 @@ tek-argümanlı `print` ile aynı biçimde; sonda `end` (varsayılan satır sonu
 **Golden:** `is_none_ergonomics` (guard: return/raise/continue/break, or/and, ternary, yeniden atama; iki backend), `str_methods` (Python ile doğrulandı, sızıntı denetimli), `print_multi_arg_sep_end`; fmt round-trip;
 typecheck `ok_is_none_guard_str_methods_print`, `err_str_method_unknown/arg_count/arg_type`, `err_print_sep_type`, `err_print_bad_kwarg`, `err_guard_without_exit`; Zig birim testleri. Tree-sitter `is`/`is not`.
 
+## 3.274 `tuple` (v1.157.0)
+
+**Temsil.** `tuple[T1, ..., Tn]` bir SENTEZLENMİŞ SINIFTIR: `tuple__T1_..._Tn` (alanlar `f0..f{n-1}`, `__init__(self, f0, ...)`); `instantiateTupleClass` (checker) bunu `instantiateGenericClass`ın
+sonundaki gibi kaydeder (`classes` + `registerClassSignatures` + `class_instantiations` + `checkClassBody`; sentezleme sırasında `current_line`/`span` korunur). Böylece ARC/release/eşitlik/GC/ownership/
+liste-dict-alan olarak kullanım makinesi SIFIR yeni codegen ile çalışır. Tip eşitliği sınıf adı eşitliğidir. Codegen `appendMangledTypeExprName` `tuple[A, B]` için checker'la birebir `tuple__A_B` üretir.
+
+**Sözdizimi (parser).** `(a, b)` / `(a,)` → `Expr.tuple_lit`; çıplak tuple `parseExprOrTuple` (`return a, b`, `x = 1, 2`, `t: tuple[int, int] = 1, 2`). Açma parse-zamanı desugar: `a, b = rhs` →
+`__nox_tup_N_K: __infer = rhs` + her hedef için (`__infer` bildirimi ya da alan/indeks hedefinde atama) `<hedef> = __nox_tup_N_K.f<i>`; ek deyimler `extra_stmts` ile ana deyimin hemen ardına eklenir (modül
+düzeyinde de yerinde genişler). `for a, b in X:` → gizli tuple döngü değişkeni + gövde başında K `__infer` bildirimi. `K` (hedef sayısı) gizli adın sonuna kodlanır (checker arity doğrular). `noxc fmt` bu
+desugarı geri çevirir (kullanıcının yazdığı biçim yazılır).
+
+**Checker.** `checkTupleLit` (beklenen tuple tipinden eleman beklentileri: `fp: tuple[float, int] = (1, 2)`), `__infer` var_decl'ı `checkInferVarDecl` (tip değerden; isim zaten bildirilmiş ve atanabilirse mevcut tip →
+`a, b = b, a`), `t[k]` sabit indeks → `f<k>` (aralık/sabitlik denetimi), `len(t)` → sabit, `d.items()` → `__nox_dict_items(d)` (core.nox generic), `enumerate`/`zip` core.nox generic fonksiyonları (tuple listesi
+döner, Python'un tembel yineleyicisinden farklı). Yeniden yazımlar `call_expand_apply` ile yerinde (`expr_rewrites`: tuple literal → kurucu çağrısı, indeks → alan, `len`/`items` çağrısı; `infer_types`:
+`__infer` → gerçek tip). Gizli açma okumalarının artık-hataları bastırılır (`synthetic_followup`). Modül-seviyesi `__infer` bildirimleri `collectModuleGlobals`ta terfi etmez.
+
+**Codegen.** Yalnızca `genPrintClass`: tuple sınıfları `(a, b)` / `(a,)` basılır. **Bilinen sınırlamalar:** tuple dict anahtarı olamaz; `for x in t` yok; tuple dilimleme yok; Optional/fonksiyon-tipli eleman
+(isim üretimi) yok; modül düzeyinde tuple-açma ile bildirilen değişkenler fonksiyonlardan global olarak görünmez; `tuple` eleman ataması yok (değişmez) ama sentezlenmiş `fN` alanları teknik olarak yazılabilir.
+
+**Golden:** `tuples` (Python ile birebir, iki backend, sızıntı denetimli: çoklu dönüş, swap, iç içe, items/enumerate/zip, sınıf alanı, dict değeri, döngüde ARC); fmt round-trip; typecheck `ok_tuples`,
+`err_tuple_unpack_arity`, `err_tuple_unpack_non_tuple`, `err_tuple_index_not_const`, `err_tuple_index_range`, `err_tuple_index_assign`, `err_tuple_not_iterable`, `err_tuple_element_type`. Tree-sitter `tuple`/`expression_list`/`identifier_list`.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
