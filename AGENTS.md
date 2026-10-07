@@ -9,6 +9,7 @@ Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm AI kod
 - Yeni bir göreve başlamadan önce: §2 (Değişmez İlkeler) ve görevle ilgili implementasyon kılavuzunu (§8-§12) oku.
 - Belirsiz bir tasarım kararıyla karşılaşırsan: önce spesifikasyon dosyasına bak, orada da yoksa §16'daki karar prosedürünü izle. **Tahmin yürütüp devam etme.**
 - Her PR/görev sonunda §14'teki checklist'i uygula.
+- **2.0 öncesi yapılacaklar KALICI listesi: `docs/v2-hazirlik-yol-haritasi.md`.** Yeni bir göreve başlamadan önce oraya bak; bir madde bitince ya da yeni eksik bulununca o dosyayı güncelle.
 
 ---
 

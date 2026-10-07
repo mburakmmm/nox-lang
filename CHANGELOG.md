@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.143.2]
+
+### Belge
+
+- `docs/v2-hazirlik-yol-haritasi.md`: 2.0 öncesi yapılacakların kalıcı listesi (dil özellikleri, kırıcı
+  değişiklik penceresi, platform, dokümantasyon, güvenlik, teknik borç); `AGENTS.md` §0'dan işaret edilir.
+
 ## [1.143.1]
 
 ### Belge
