@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.144.0]
+
+### Eklendi
+
+- **`break` ve `continue`** (`while`, `for range`, `for list`; iç içe döngüler, `try/finally`, `with`, `lowlevel`,
+  `except` içinden; QBE ve LLVM). Döngü dışında kullanım derleme hatası. Spec §3.261.
+
+### Düzeltme
+
+- Post-spawn akış analizi döngü gövdesinin ORTASINDAKİ çıkış noktalarındaki durumu artık döngü sonrasına katar.
+
 ## [1.143.2]
 
 ### Belge

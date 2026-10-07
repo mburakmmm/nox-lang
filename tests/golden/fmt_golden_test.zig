@@ -43,6 +43,17 @@ test "fmt: gerekli parens KORUNUR, gereksiz parens ATILIR (precedence)" {
     }
 }
 
+test "fmt: v1.144.0 — break/continue İDEMPOTENT round-trip (girinti korunur)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const src = "while True:\n    if x:\n        break\n    for k in range(3):\n        if k == 1:\n            continue\n        print(k)\n";
+    const once = try formatSource(allocator, src);
+    try std.testing.expectEqualStrings(src, once);
+    const twice = try formatSource(allocator, once);
+    try std.testing.expectEqualStrings(once, twice);
+}
+
 // Faz FFI.4: `extern def`nin YENİ `retains(...)` yan tümcesinin
 // formatlayıcı TARAFINDAN İDEMPOTENT/KAYIPSIZ yeniden ÜRETİLDİĞİNİN kanıtı
 // (`with_rt`nin AYNI, MEVCUT davranışıyla TUTARLI).

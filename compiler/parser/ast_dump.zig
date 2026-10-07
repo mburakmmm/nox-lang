@@ -179,6 +179,8 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
             try writer.writeAll(")\n");
         },
         .pass_stmt => try writer.writeAll("(pass)\n"),
+        .break_stmt => try writer.writeAll("(break)\n"),
+        .continue_stmt => try writer.writeAll("(continue)\n"),
         .import_stmt => |imp| {
             try writer.writeAll("(import");
             for (imp.segments) |seg| try writer.print(" {s}", .{seg});

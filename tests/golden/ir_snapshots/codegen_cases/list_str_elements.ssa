@@ -1329,6 +1329,8 @@ export function l $sum(l %rt, l %p_xs) {
     %t13 =l loadl %t2
     %t14 =l add %t12, %t13
     storel %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1336,8 +1338,8 @@ export function l $sum(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =l loadl %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret 0
 }
 export function d $sum_float(l %rt, l %p_xs) {
@@ -1366,6 +1368,8 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t13 =d loadd %t2
     %t14 =d add %t12, %t13
     stored %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1373,8 +1377,8 @@ export function d $sum_float(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =d loadd %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret d_0
 }
 export function w $main(w %argc, l %argv) {
@@ -1426,6 +1430,8 @@ export function w $main(w %argc, l %argv) {
     storel %t20, %t1
     %t21 =l loadl %t1
     call $printf(l $fmt_str, ..., l %t21)
+    jmp @forlist_step6
+@forlist_step6
     %t22 =l loadl %t2
     %t23 =l add %t22, 1
     storel %t23, %t2
@@ -1433,16 +1439,16 @@ export function w $main(w %argc, l %argv) {
 @forlist_end5
     %t24 =l loadl %t0
     %t25 =w ceql %t24, 0
-    jnz %t25, @release_skip7, @release6
-@release6
+    jnz %t25, @release_skip8, @release7
+@release7
     call $List_str_release(l %rt, l %t24)
-    jmp @release_done8
-@release_skip7
-    jmp @release_done8
-@release_done8
+    jmp @release_done9
+@release_skip8
+    jmp @release_done9
+@release_done9
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end9
+@fn_end10
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

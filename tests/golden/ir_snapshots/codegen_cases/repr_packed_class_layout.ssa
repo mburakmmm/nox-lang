@@ -1867,6 +1867,8 @@ export function l $sum(l %rt, l %p_xs) {
     %t13 =l loadl %t2
     %t14 =l add %t12, %t13
     storel %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1874,8 +1876,8 @@ export function l $sum(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =l loadl %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret 0
 }
 export function d $sum_float(l %rt, l %p_xs) {
@@ -1904,6 +1906,8 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t13 =d loadd %t2
     %t14 =d add %t12, %t13
     stored %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1911,8 +1915,8 @@ export function d $sum_float(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =d loadd %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret d_0
 }
 export function w $main(w %argc, l %argv) {
@@ -2311,31 +2315,33 @@ export function w $main(w %argc, l %argv) {
     %t154 =l loadl %t153
     %t150 =l call %t154(l %rt, l %t149)
     %t155 =w call $nox_exception_pending(l %rt)
-    jnz %t155, @exc_propagate75, @exc_continue76
-@exc_propagate75
+    jnz %t155, @exc_propagate76, @exc_continue77
+@exc_propagate76
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue76
+@exc_continue77
     call $printf(l $fmt_str, ..., l %t150)
     %t156 =w ceql %t150, 0
-    jnz %t156, @release_skip78, @release77
-@release77
+    jnz %t156, @release_skip79, @release78
+@release78
     %t157 =l sub %t150, 16
     %t158 =l loadl %t157
     %t159 =l sub %t158, 1
     storel %t159, %t157
     %t160 =w cslel %t159, 0
-    jnz %t160, @str_free80, @str_free_skip81
-@str_free80
+    jnz %t160, @str_free81, @str_free_skip82
+@str_free81
     call $nox_str_free_now(l %rt, l %t150)
-    jmp @str_free_done82
-@str_free_skip81
-    jmp @str_free_done82
-@str_free_done82
-    jmp @release_done79
-@release_skip78
-    jmp @release_done79
-@release_done79
+    jmp @str_free_done83
+@str_free_skip82
+    jmp @str_free_done83
+@str_free_done83
+    jmp @release_done80
+@release_skip79
+    jmp @release_done80
+@release_done80
+    jmp @forlist_step75
+@forlist_step75
     %t161 =l loadl %t5
     %t162 =l add %t161, 1
     storel %t162, %t5
@@ -2343,46 +2349,46 @@ export function w $main(w %argc, l %argv) {
 @forlist_end74
     %t163 =l loadl %t1
     %t164 =w ceql %t163, 0
-    jnz %t164, @release_skip84, @release83
-@release83
+    jnz %t164, @release_skip85, @release84
+@release84
     call $nox_rc_release_enqueue_fixed(l %rt, l %t163, l $PackedMixed_release)
-    jmp @release_done85
-@release_skip84
-    jmp @release_done85
-@release_done85
+    jmp @release_done86
+@release_skip85
+    jmp @release_done86
+@release_done86
     storel 0, %t1
     %t165 =l loadl %t2
     %t166 =w ceql %t165, 0
-    jnz %t166, @release_skip87, @release86
-@release86
+    jnz %t166, @release_skip88, @release87
+@release87
     call $nox_rc_release_enqueue_fixed(l %rt, l %t165, l $PackedMixed_release)
-    jmp @release_done88
-@release_skip87
-    jmp @release_done88
-@release_done88
+    jmp @release_done89
+@release_skip88
+    jmp @release_done89
+@release_done89
     storel 0, %t2
     %t167 =l loadl %t3
     %t168 =w ceql %t167, 0
-    jnz %t168, @release_skip90, @release89
-@release89
+    jnz %t168, @release_skip91, @release90
+@release90
     call $List_Animal_release(l %rt, l %t167)
-    jmp @release_done91
-@release_skip90
-    jmp @release_done91
-@release_done91
+    jmp @release_done92
+@release_skip91
+    jmp @release_done92
+@release_done92
     storel 0, %t3
     %t169 =l loadl %t0
     %t170 =w ceql %t169, 0
-    jnz %t170, @release_skip93, @release92
-@release92
+    jnz %t170, @release_skip94, @release93
+@release93
     call $nox_rc_release_enqueue_fixed(l %rt, l %t169, l $ReprMixed_release)
-    jmp @release_done94
-@release_skip93
-    jmp @release_done94
-@release_done94
+    jmp @release_done95
+@release_skip94
+    jmp @release_done95
+@release_done95
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end95
+@fn_end96
     ret 0
 }
 export function $List_Animal_release(l %rt, l %p) {

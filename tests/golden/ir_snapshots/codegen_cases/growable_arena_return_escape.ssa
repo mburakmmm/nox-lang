@@ -1329,6 +1329,8 @@ export function l $sum(l %rt, l %p_xs) {
     %t13 =l loadl %t2
     %t14 =l add %t12, %t13
     storel %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1336,8 +1338,8 @@ export function l $sum(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =l loadl %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret 0
 }
 export function d $sum_float(l %rt, l %p_xs) {
@@ -1366,6 +1368,8 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t13 =d loadd %t2
     %t14 =d add %t12, %t13
     stored %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1373,8 +1377,8 @@ export function d $sum_float(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =d loadd %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret d_0
 }
 export function l $build(l %rt) {
@@ -1635,6 +1639,8 @@ export function l $compute(l %rt) {
     %t35 =l loadl %t2
     %t36 =l add %t34, %t35
     storel %t36, %t1
+    jmp @forlist_step17
+@forlist_step17
     %t37 =l loadl %t3
     %t38 =l add %t37, 1
     storel %t38, %t3
@@ -1643,8 +1649,8 @@ export function l $compute(l %rt) {
     %t39 =l loadl %t1
     %t40 =l loadl %t0
     %t41 =w ceql %t40, 0
-    jnz %t41, @release_skip18, @release17
-@release17
+    jnz %t41, @release_skip19, @release18
+@release18
     %t42 =l add %t40, 8
     %t43 =l loadl %t42
     %t44 =l mul %t43, 8
@@ -1654,24 +1660,24 @@ export function l $compute(l %rt) {
     %t48 =l sub %t47, 1
     storel %t48, %t46
     %t49 =w cslel %t48, 0
-    jnz %t49, @list_free20, @list_free_skip21
-@list_free20
+    jnz %t49, @list_free21, @list_free_skip22
+@list_free21
     call $nox_rc_free_payload(l %rt, l %t40, l %t45)
-    jmp @list_free_done22
-@list_free_skip21
-    jmp @list_free_done22
-@list_free_done22
-    jmp @release_done19
-@release_skip18
-    jmp @release_done19
-@release_done19
+    jmp @list_free_done23
+@list_free_skip22
+    jmp @list_free_done23
+@list_free_done23
+    jmp @release_done20
+@release_skip19
+    jmp @release_done20
+@release_done20
     storel 0, %t0
     ret %t39
-@after_return23
+@after_return24
     %t50 =l loadl %t0
     %t51 =w ceql %t50, 0
-    jnz %t51, @release_skip25, @release24
-@release24
+    jnz %t51, @release_skip26, @release25
+@release25
     %t52 =l add %t50, 8
     %t53 =l loadl %t52
     %t54 =l mul %t53, 8
@@ -1681,19 +1687,19 @@ export function l $compute(l %rt) {
     %t58 =l sub %t57, 1
     storel %t58, %t56
     %t59 =w cslel %t58, 0
-    jnz %t59, @list_free27, @list_free_skip28
-@list_free27
+    jnz %t59, @list_free28, @list_free_skip29
+@list_free28
     call $nox_rc_free_payload(l %rt, l %t50, l %t55)
-    jmp @list_free_done29
-@list_free_skip28
-    jmp @list_free_done29
-@list_free_done29
-    jmp @release_done26
-@release_skip25
-    jmp @release_done26
-@release_done26
+    jmp @list_free_done30
+@list_free_skip29
+    jmp @list_free_done30
+@list_free_done30
+    jmp @release_done27
+@release_skip26
+    jmp @release_done27
+@release_done27
     storel 0, %t0
-@fn_end30
+@fn_end31
     ret 0
 }
 export function w $main(w %argc, l %argv) {

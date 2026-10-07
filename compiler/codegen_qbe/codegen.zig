@@ -287,6 +287,7 @@ const NamedSlot = inlining.NamedSlot;
 const InlineSiteInfo = inlining.InlineSiteInfo;
 const StackConstructSite = inlining.StackConstructSite;
 const ArenaStackEntry = types.ArenaStackEntry;
+const LoopCtx = types.LoopCtx;
 const InlineReturnTarget = inlining.InlineReturnTarget;
 
 /// Faz IR.0: `qbe_emit.zig`nin metin-emisyon katmanının PAYLAŞILAN veri
@@ -390,6 +391,8 @@ pub const Codegen = struct {
 
     pub const genRaise = exceptions.genRaise;
     pub const drainFinally = exceptions.drainFinally;
+    pub const drainFinallyDownTo = exceptions.drainFinallyDownTo;
+    pub const drainArenasDownTo = exceptions.drainArenasDownTo;
     pub const drainArenas = exceptions.drainArenas;
     /// GG.18: bkz. `exceptions.zig`nin `drainFunctionArena`sının belge notu.
     pub const drainFunctionArena = exceptions.drainFunctionArena;
@@ -495,6 +498,7 @@ pub const Codegen = struct {
     pub const collectIndexStrBasesExpr = stmt_mod.collectIndexStrBasesExpr;
     pub const collectIndexStrBasesStmts = stmt_mod.collectIndexStrBasesStmts;
     pub const genWhile = stmt_mod.genWhile;
+    pub const genLoopJump = stmt_mod.genLoopJump;
     pub const isRangeCall = stmt_mod.isRangeCall;
     pub const findLocal = stmt_mod.findLocal;
     pub const genFor = stmt_mod.genFor;
@@ -1468,6 +1472,11 @@ pub const Codegen = struct {
     /// slotlarına dönüştürüldü) — `.handle` GEÇERSİZ bir yer tutucudur,
     /// `drainArenas`/`genLowLevel` BUNUN İçin `nox_arena_destroy` ÇAĞIRMAZ.
     arena_stack: std.ArrayListUnmanaged(ArenaStackEntry) = .empty,
+    /// v1.144.0: içinde bulunulan döngülerin (en dıştan en içe) `break`/`continue` hedefleri. Yerel
+    /// değişkenler döngü yinelemesi başına serbest bırakılmadığından (slotlar yeniden kullanılır, eski değer
+    /// yeniden bildirimde ya da fonksiyon sonunda bırakılır) `break`/`continue` yalnızca `finally_stack` ve
+    /// `arena_stack` girdilerini (döngü giriş derinliğinin üstündekileri) boşaltıp etikete atlar.
+    loop_stack: std.ArrayListUnmanaged(LoopCtx) = .empty,
     /// `> 0`: şu an bir `lowlevel` bloğunun (doğrudan ya da iç içe) içindeyiz.
     /// Basitlik ve güvenlik için, bu blok içindeyken heap tipli (`list`/sınıf)
     /// hiçbir değer bir çağrıya argüman/alıcı olamaz, döndürülemez, başka bir

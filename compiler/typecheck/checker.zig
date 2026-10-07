@@ -350,6 +350,9 @@ const FnCtx = struct {
     self_class: ?[]const u8 = null,
     /// `__init__` içindeyken `self.<alan> = ...` yeni bir alan tanımlayabilir.
     is_init: bool = false,
+    /// v1.144.0: içinde bulunulan `while`/`for` döngüsü derinliği — `break`/`continue` yalnızca `> 0` iken geçerlidir.
+    /// Her fonksiyon/metod/iç içe `def` KENDİ `FnCtx`ini kurduğundan işlev sınırı otomatik olarak sıfırlanır.
+    loop_depth: u32 = 0,
     /// `true`: bir `async def` gövdesi içindeyiz — `await` yalnızca burada
     /// geçerlidir (bkz. nox-teknik-spesifikasyon.md §3.21).
     in_async: bool = false,
@@ -638,6 +641,11 @@ pub const Checker = struct {
     /// maliyeti: `noxc check`, `list`/`class`/`dict` taşıyan bir `nox.
     /// thread.start`ı HATA olarak İŞARETLER, AYNI program `noxc build
     /// --release` İLE GERÇEKTEN DERLENEBİLİR OLSA BİLE).
+    /// v1.144.0: post-spawn akış analizi (`walkPostSpawnCallerMutation`) için `break`/`continue` noktalarındaki
+    /// durum kopyaları — döngü çıkışına/başına ORTA-gövde durumları da katılsın (yalnızca gövde SONU durumu
+    /// yetmez: gövdenin ortasındaki `break`ten sonra döngü SONRASI kod, o noktadaki "uçuşta spawn" durumunu görür).
+    /// `checkNoPostSpawnCallerMutation` arena ömrüyle sınırlar (başında/sonunda sıfırlanır).
+    flow_jump_states: std.ArrayListUnmanaged(SpawnFlowState) = .empty,
     backend: types.Backend = .qbe,
 
     /// Faz F.2 (bkz. plan dosyası "capability sistemi"): `Backend`den
@@ -3119,7 +3127,7 @@ pub const Checker = struct {
                     try self.collectSpawnTargetsExpr(d.call.callee.*);
                     for (d.call.args) |a| try self.collectSpawnTargetsExpr(a);
                 },
-                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
             }
         }
     }
@@ -3537,7 +3545,7 @@ pub const Checker = struct {
                 // birimler — v1.30.0'ın "transitif takip yok" kararıyla
                 // TUTARLI (BU graf SADECE üst-düzey fonksiyon/metod
                 // ÇAĞRILARINI kapsar).
-                .func_def, .class_def, .defer_stmt, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+                .func_def, .class_def, .defer_stmt, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
             }
         }
     }
@@ -3941,6 +3949,8 @@ pub const Checker = struct {
         defer arena.deinit();
         const aa = arena.allocator();
 
+        self.flow_jump_states = .empty;
+        defer self.flow_jump_states = .empty;
         var known_types: std.StringHashMapUnmanaged(Type) = .empty;
         var state: SpawnFlowState = .{};
         for (params) |p| {
@@ -4229,9 +4239,16 @@ pub const Checker = struct {
         var iterations: usize = 0;
         while (true) {
             iterations += 1;
+            const jump_mark = self.flow_jump_states.items.len;
             var body_state = try state.clone(aa);
             try self.walkPostSpawnCallerMutation(aa, body, known_types, &body_state);
-            const changed = try state.mergeFrom(aa, body_state);
+            var changed = try state.mergeFrom(aa, body_state);
+            // v1.144.0: bu döngü gövdesindeki `break`/`continue` noktalarının durumlarını da katılım (iç döngüler
+            // kendi işaretlerini zaten tüketip kırptı).
+            for (self.flow_jump_states.items[jump_mark..]) |js| {
+                if (try state.mergeFrom(aa, js)) changed = true;
+            }
+            self.flow_jump_states.shrinkRetainingCapacity(jump_mark);
             if (!changed) {
                 try self.lockRecurrentLoopOwnership(aa, pre_loop, state);
                 return;
@@ -4450,6 +4467,7 @@ pub const Checker = struct {
                 },
                 .while_stmt => |w| try self.iterateLoopToFixpoint(aa, w.body, known_types, state),
                 .for_stmt => |f| try self.iterateLoopToFixpoint(aa, f.body, known_types, state),
+                .break_stmt, .continue_stmt => try self.flow_jump_states.append(aa, try state.clone(aa)),
                 else => {},
             }
         }
@@ -4682,6 +4700,8 @@ pub const Checker = struct {
             .while_stmt => |w| {
                 const ct = try self.checkExpr(ctx, w.cond);
                 if (ct != .boolean) return self.fail(error.TypeMismatch, "'while' koşulu bool olmalıdır", .{});
+                ctx.loop_depth += 1;
+                defer ctx.loop_depth -= 1;
                 // Faz FF.6: `while x != None:` — `if`in AYNI DAR
                 // `detectNarrowing` örüntüsü, bağlı liste/ağaç TRAVERSAL'ı
                 // (bu özelliğin asıl motive edici kullanım örneği) İÇİN
@@ -4706,6 +4726,8 @@ pub const Checker = struct {
             .for_stmt => |f| {
                 const elem_t = try self.checkForIterable(ctx, f.iterable);
                 try ctx.scope.declare(self.allocator, f.var_name, elem_t);
+                ctx.loop_depth += 1;
+                defer ctx.loop_depth -= 1;
                 for (f.body) |s| try self.checkStmt(ctx, s);
             },
             // Faz U.4.2: iç içe `def` artık KISITLI bir biçimde
@@ -4780,6 +4802,8 @@ pub const Checker = struct {
                 for (to_remove.items) |name| _ = ctx.scope.vars.remove(name);
             },
             .pass_stmt => {},
+            .break_stmt => if (ctx.loop_depth == 0) return self.fail(error.TypeMismatch, "'break' yalnızca bir 'while'/'for' döngüsü içinde kullanılabilir", .{}),
+            .continue_stmt => if (ctx.loop_depth == 0) return self.fail(error.TypeMismatch, "'continue' yalnızca bir 'while'/'for' döngüsü içinde kullanılabilir", .{}),
         }
     }
 

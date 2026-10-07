@@ -169,6 +169,16 @@ pub const Parser = struct {
                 _ = try self.expect(.newline);
                 break :blk .pass_stmt;
             },
+            .kw_break => blk: {
+                _ = self.advance();
+                _ = try self.expect(.newline);
+                break :blk .break_stmt;
+            },
+            .kw_continue => blk: {
+                _ = self.advance();
+                _ = try self.expect(.newline);
+                break :blk .continue_stmt;
+            },
             else => try self.parseSimpleStmt(),
         };
         // Gerçek span sistemi: bu deyimin TÜKETTİĞİ SON token, `self.pos - 1`

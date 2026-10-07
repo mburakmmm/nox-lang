@@ -116,6 +116,39 @@ pub fn drainFinally(self: *Codegen, ret_qtype: QbeType) CodegenError!void {
     }
 }
 
+/// v1.144.0: `drainFinally`nin `break`/`continue` için KISMİ eşi — `finally_stack`in YALNIZCA `depth`
+/// indeksinden itibaren olan girdilerini (döngü gövdesinin içindekileri), en içten başlayarak satır içi üretir.
+/// Her girdi, üretildiği sırada yığından GEÇİCİ olarak çıkarılır (yığın yalnızca DIŞ girdileri içerir):
+/// `finally` gövdesi içindeki bir çağrının istisna kontrolü kendi `finally`sini TEKRAR boşaltıp derleme
+/// zamanında sonsuz özyinelemeye girmesin, ve içindeki bir hata yalnızca DIŞ `finally`lere gitsin (`runDetachedFinally`
+/// ile aynı gerekçe). İş bitince yığın eski haline döner.
+pub fn drainFinallyDownTo(self: *Codegen, depth: usize, ret_qtype: QbeType) CodegenError!void {
+    if (self.finally_stack.items.len <= depth) return;
+    const saved = try self.allocator.dupe([]const ast.Stmt, self.finally_stack.items);
+    defer self.allocator.free(saved);
+    defer {
+        self.finally_stack.clearRetainingCapacity();
+        self.finally_stack.appendSlice(self.allocator, saved) catch unreachable;
+    }
+    var i = saved.len;
+    while (i > depth) {
+        i -= 1;
+        self.finally_stack.shrinkRetainingCapacity(i);
+        try self.genStmts(saved[i], ret_qtype);
+    }
+}
+
+/// `drainFinallyDownTo`nun `arena_stack` karşılığı: `depth`in üstündeki (`.elided` olmayan) `lowlevel`
+/// arenalarını yıkar; yığına DOKUNMAZ (bloğun kendi çıkış kodu normal yolda onu zaten çıkarır).
+pub fn drainArenasDownTo(self: *Codegen, depth: usize) CodegenError!void {
+    var i = self.arena_stack.items.len;
+    while (i > depth) {
+        i -= 1;
+        if (self.arena_stack.items[i].elided) continue;
+        try self.qbeCall(null, "$nox_arena_destroy", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = self.arena_stack.items[i].handle } });
+    }
+}
+
 /// Şu an aktif olan (en içten en dışa) tüm `lowlevel` arenalarını yıkar —
 /// `drainFinally` ile aynı gerekçeyle, bir `return`/yakalanmamış istisna
 /// gerçek çıkıştan önce (bkz. `finally_stack`'in belge notu, aynı mantık
@@ -507,7 +540,7 @@ pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInf
             try self.declareVarType(f.var_name, elem_cn, var_types, poisoned);
             try self.collectRaiseInfoStmts(f.body, info, class_ctx, var_types, poisoned, list_elem_types);
         },
-        .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+        .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
         .return_stmt => |r| if (r) |e| try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned),
         .raise_stmt => |e| {
             info.direct_unsafe = true;

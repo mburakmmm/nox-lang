@@ -401,6 +401,16 @@ const Printer = struct {
                 try self.writer.writeAll("pass");
                 try self.line(stmt.line);
             },
+            .break_stmt => {
+                try self.indentTo(depth);
+                try self.writer.writeAll("break");
+                try self.line(stmt.line);
+            },
+            .continue_stmt => {
+                try self.indentTo(depth);
+                try self.writer.writeAll("continue");
+                try self.line(stmt.line);
+            },
             .with_stmt => |w| {
                 try self.indentTo(depth);
                 try self.writer.writeAll("with ");

@@ -80,7 +80,7 @@ const Fixer = struct {
                 .lowlevel_stmt => |s| try self.collectVars(s.body),
                 .func_def => |fd| try self.collectFunc(fd),
                 .class_def => |cd| for (cd.methods) |m| try self.collectFunc(m),
-                .expr_stmt, .assign, .protocol_def, .extern_def, .return_stmt, .raise_stmt, .import_stmt, .from_import_stmt, .pass_stmt, .defer_stmt => {},
+                .expr_stmt, .assign, .protocol_def, .extern_def, .return_stmt, .raise_stmt, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt, .defer_stmt => {},
             }
         }
     }
@@ -130,7 +130,7 @@ const Fixer = struct {
                 // `defer f(x)`: `call.callee` pointer kimliği `defer_synthetic_names`
                 // anahtarıdır — YENİDEN YAZILMAZ; argümanları gezilir.
                 .defer_stmt => |*d| for (d.call.args) |*a| try self.fixExpr(a),
-                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
             }
         }
     }

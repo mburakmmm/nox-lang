@@ -43,6 +43,8 @@
 ] @keyword.coroutine
 
 (pass_statement) @keyword
+(break_statement) @keyword.control
+(continue_statement) @keyword.control
 
 [
   "and"

@@ -68,6 +68,16 @@ pub const ArenaStackEntry = struct {
     elided: bool = false,
 };
 
+/// v1.144.0: bkz. `Codegen.loop_stack`.
+pub const LoopCtx = struct {
+    break_label: []const u8,
+    continue_label: []const u8,
+    /// Döngüye GİRİLDİĞİNDEKİ `finally_stack`/`arena_stack` uzunlukları: `break`/`continue` yalnızca bu
+    /// derinliğin ÜSTÜNDEKİ (döngü gövdesinin İÇİNDEKİ) `try/finally`/`with`/`lowlevel` kapsamlarını boşaltır.
+    finally_depth: usize,
+    arena_depth: usize,
+};
+
 pub const ElemHeapInfo = struct {
     heap: HeapKind,
     class_name: ?[]const u8 = null,

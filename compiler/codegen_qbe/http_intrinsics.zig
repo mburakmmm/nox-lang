@@ -130,7 +130,7 @@ pub fn visitStmtsForReqUsage(stmts: []const ast.Stmt, param_name: []const u8, us
             },
             .defer_stmt => |d| visitExprForReqUsage(.{ .call = d.call }, param_name, used),
             .func_def => used.* = UsedRequestFields.allUsed(),
-            .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+            .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
         }
     }
 }

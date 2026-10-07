@@ -13,7 +13,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 2026-10-07'de ~50 özellik `noxc check` ile denendi; aşağıdakiler REDDEDİLİYOR. Sıra, öneri sırasıdır.
 
-- [~] **1.1 `break` / `continue`** — spec'te bilinçli ertelenmiş diye GEÇMİYOR (unutulmuş). Tasarım notları aşağıda.
+- [x] **1.1 `break` / `continue`** — v1.144.0 (spec §3.261). Tasarım notları aşağıda.
 - [ ] **1.2 `in` / `not in`** (liste, dict anahtarı, dize alt-dizesi).
 - [ ] **1.3 Üçlü ifade** `a if cond else b`.
 - [ ] **1.4 Varsayılan argümanlar + keyword argümanlar** (`def f(a: int, b: int = 2)`, `f(b=1, a=3)`).
@@ -24,6 +24,8 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [ ] **1.9 Dilimleme** (`xs[a:b]`, `s[a:b]`).
 - [ ] **1.10 list comprehension** (AGENTS.md §5 "comprehension'lar" diyor ama YOK — ya ekle ya AGENTS.md'yi düzelt).
 - [ ] **1.11 `lambda`**, **`is None` / `Optional`**, **`print` çoklu argüman**, dize metot sözdizimi (`s.split()`).
+- [ ] **1.12 Koruma (guard) tarzı Optional daraltma:** `if x == None: return/break/continue` sonrası `x` daraltılsın
+  (şu an yalnızca `if x != None:` bloğu içinde; bağlı liste gezintisi için gerekli, `break` ile birlikte önem kazandı).
 - Bilinçli ertelenmiş (LANGUAGE.md): tuple/çoklu dönüş, `*args`/`**kwargs`, çoklu kalıtım — 2.0 için yeniden
   değerlendirilecek mi, kullanıcıya sorulacak.
 

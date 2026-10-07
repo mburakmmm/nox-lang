@@ -1329,6 +1329,8 @@ export function l $sum(l %rt, l %p_xs) {
     %t13 =l loadl %t2
     %t14 =l add %t12, %t13
     storel %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1336,8 +1338,8 @@ export function l $sum(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =l loadl %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret 0
 }
 export function d $sum_float(l %rt, l %p_xs) {
@@ -1366,6 +1368,8 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t13 =d loadd %t2
     %t14 =d add %t12, %t13
     stored %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1373,8 +1377,8 @@ export function d $sum_float(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =d loadd %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret d_0
 }
 export function w $main(w %argc, l %argv) {
@@ -1442,12 +1446,12 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t4
     %t28 =l loadl %t1
     %t29 =l loadl %t28
-    jmp @forlist_cond6
-@forlist_cond6
+    jmp @forlist_cond7
+@forlist_cond7
     %t30 =l loadl %t4
     %t31 =w csltl %t30, %t29
-    jnz %t31, @forlist_body7, @forlist_end8
-@forlist_body7
+    jnz %t31, @forlist_body8, @forlist_end9
+@forlist_body8
     %t32 =l mul %t30, 8
     %t33 =l add %t32, 16
     %t34 =l add %t28, %t33
@@ -1455,11 +1459,15 @@ export function w $main(w %argc, l %argv) {
     storel %t35, %t3
     %t36 =l loadl %t3
     call $printf(l $fmt_int, ..., l %t36)
+    jmp @forlist_step10
+@forlist_step10
     %t37 =l loadl %t4
     %t38 =l add %t37, 1
     storel %t38, %t4
-    jmp @forlist_cond6
-@forlist_end8
+    jmp @forlist_cond7
+@forlist_end9
+    jmp @forlist_step6
+@forlist_step6
     %t39 =l loadl %t2
     %t40 =l add %t39, 1
     storel %t40, %t2
@@ -1467,16 +1475,16 @@ export function w $main(w %argc, l %argv) {
 @forlist_end5
     %t41 =l loadl %t0
     %t42 =w ceql %t41, 0
-    jnz %t42, @release_skip10, @release9
-@release9
+    jnz %t42, @release_skip12, @release11
+@release11
     call $List_List_priml_release(l %rt, l %t41)
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
+    jmp @release_done13
+@release_skip12
+    jmp @release_done13
+@release_done13
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end12
+@fn_end14
     ret 0
 }
 export function $List_List_priml_release(l %rt, l %p) {

@@ -67,6 +67,24 @@ for n in numbers:
 `for` only iterates a `range(...)` call or a named `list[T]` variable —
 not an inline list-literal expression.
 
+`break` leaves the innermost `while`/`for` loop and `continue` jumps to its
+next iteration (in a `while` loop that is the condition check; in a `for`
+loop it is the next element). Both are compile errors outside a loop — a
+nested `def` inside a loop is a new function and does not count. A `break`
+or `continue` that leaves a `try ... finally`, a `with`, or a `lowlevel`
+block runs the `finally` body / `__exit__` / arena teardown first, exactly
+like `return` does.
+
+```nox
+total: int = 0
+for n in numbers:
+    if n < 0:
+        continue      # skip negatives
+    if n > 100:
+        break         # stop at the first big value
+    total = total + n
+```
+
 **Variable declarations require an explicit type on first assignment**
 (`x: int = 5`); subsequent assignments to the same name don't repeat the
 annotation (`x = 6`).

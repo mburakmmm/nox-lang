@@ -1329,6 +1329,8 @@ export function l $sum(l %rt, l %p_xs) {
     %t13 =l loadl %t2
     %t14 =l add %t12, %t13
     storel %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1336,8 +1338,8 @@ export function l $sum(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =l loadl %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret 0
 }
 export function d $sum_float(l %rt, l %p_xs) {
@@ -1366,6 +1368,8 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t13 =d loadd %t2
     %t14 =d add %t12, %t13
     stored %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1373,8 +1377,8 @@ export function d $sum_float(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =d loadd %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret d_0
 }
 export function w $main(w %argc, l %argv) {
@@ -1472,6 +1476,8 @@ export function w $main(w %argc, l %argv) {
     storel %t39, %t1
     %t40 =l loadl %t1
     call $printf(l $fmt_int, ..., l %t40)
+    jmp @forlist_step15
+@forlist_step15
     %t41 =l loadl %t2
     %t42 =l add %t41, 1
     storel %t42, %t2
@@ -1479,8 +1485,8 @@ export function w $main(w %argc, l %argv) {
 @forlist_end14
     %t43 =l loadl %t0
     %t44 =w ceql %t43, 0
-    jnz %t44, @release_skip16, @release15
-@release15
+    jnz %t44, @release_skip17, @release16
+@release16
     %t45 =l add %t43, 8
     %t46 =l loadl %t45
     %t47 =l mul %t46, 8
@@ -1490,20 +1496,20 @@ export function w $main(w %argc, l %argv) {
     %t51 =l sub %t50, 1
     storel %t51, %t49
     %t52 =w cslel %t51, 0
-    jnz %t52, @list_free18, @list_free_skip19
-@list_free18
+    jnz %t52, @list_free19, @list_free_skip20
+@list_free19
     call $nox_rc_free_payload(l %rt, l %t43, l %t48)
-    jmp @list_free_done20
-@list_free_skip19
-    jmp @list_free_done20
-@list_free_done20
-    jmp @release_done17
-@release_skip16
-    jmp @release_done17
-@release_done17
+    jmp @list_free_done21
+@list_free_skip20
+    jmp @list_free_done21
+@list_free_done21
+    jmp @release_done18
+@release_skip17
+    jmp @release_done18
+@release_done18
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end21
+@fn_end22
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

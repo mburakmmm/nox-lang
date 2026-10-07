@@ -71,7 +71,7 @@ pub fn stmtUsesAsync(stmt: ast.Stmt) bool {
             }
             break :blk false;
         },
-        .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => false,
+        .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => false,
         .return_stmt => |r| if (r) |e| exprUsesAsync(e) else false,
         .raise_stmt => |e| exprUsesAsync(e),
         .try_stmt => |t| blk: {
@@ -290,7 +290,7 @@ pub fn stmtUsesMulticorePool(stmt: ast.Stmt) bool {
             }
             break :blk false;
         },
-        .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => false,
+        .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => false,
         .return_stmt => |r| if (r) |e| exprUsesMulticorePool(e) else false,
         .raise_stmt => |e| exprUsesMulticorePool(e),
         .try_stmt => |t| blk: {

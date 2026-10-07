@@ -772,7 +772,7 @@ fn collectIdentifierNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, ou
             },
             .func_def => |fd| try collectIdentifierNamesStmts(a, fd.body, out),
             .class_def => |cd| for (cd.methods) |m| try collectIdentifierNamesStmts(a, m.body, out),
-            .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+            .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
             .return_stmt => |r| if (r) |e| try collectIdentifierNamesExpr(a, e, out),
             .raise_stmt => |e| try collectIdentifierNamesExpr(a, e, out),
             .try_stmt => |t| {
@@ -834,7 +834,7 @@ fn computeSimpleInit(self: *Codegen, info: *types.ClassInfo, init: ast.FuncDef, 
     @memset(used, false);
     for (init.body) |stmt| {
         switch (stmt.kind) {
-            .pass_stmt => {},
+            .pass_stmt, .break_stmt, .continue_stmt => {},
             .assign => |a| {
                 if (a.target != .attribute) return;
                 const t = a.target.attribute;

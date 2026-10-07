@@ -140,7 +140,7 @@ fn inlineBodyStmtCount(stmts: []const ast.Stmt) ?usize {
     var total: usize = 0;
     for (stmts) |stmt| {
         switch (stmt.kind) {
-            .var_decl, .assign, .expr_stmt, .return_stmt, .pass_stmt => total += 1,
+            .var_decl, .assign, .expr_stmt, .return_stmt, .pass_stmt, .break_stmt, .continue_stmt => total += 1,
             .if_stmt => |f| {
                 total += 1;
                 total += inlineBodyStmtCount(f.then_body) orelse return null;
@@ -371,7 +371,7 @@ fn scanParamEscapesStmts(self: *Codegen, fname: []const u8, param_idx: u32, name
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, `exprHasUnsafeParamUse`in AYNI muhafazakârlığı.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => try addEscapeSeed(self, fname, param_idx, seeds),
-            .pass_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+            .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
     }
 }
@@ -630,7 +630,7 @@ pub fn collectInlineSitesStmt(self: *Codegen, stmt: ast.Stmt) CodegenError!void 
         },
         // `defer` codegen'i HENÜZ YOK (görev #62) — İÇİNDEKİ çağrı
         // inline-site TARAMASINA KASITLI olarak DAHİL EDİLMEZ.
-        .defer_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+        .defer_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
     }
 }
 
@@ -736,7 +736,7 @@ fn scanStackConstructsStmts(self: *Codegen, stmts: []const ast.Stmt, all_ok: *bo
             // = false`), ama fonksiyonun GERİ KALANI/DİĞER `lowlevel`
             // örnekleri ETKİLENMEZ.
             .try_stmt, .lowlevel_stmt, .func_def, .with_stmt, .defer_stmt => all_ok.* = false,
-            .pass_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+            .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
     }
 }
@@ -892,7 +892,7 @@ fn stmtsSafeForParam(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, TÜM analiz GÜVENLİ tarafta kalmak İçin İPTAL edilir.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
-            .pass_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+            .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
     }
     return true;

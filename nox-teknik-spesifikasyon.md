@@ -28359,6 +28359,39 @@ program kümesi genişler, mevcut programların davranışı değişmez).
 Golden/CLI: `tests/cli/backend_default_test.zig` (varsayılan `.ll`, `--backend qbe` `.ssa`, `--backend llvm`/
 `--release` `.ll`, `--emit-asm` QBE, bilinmeyen backend hatası; hepsi aynı program çıktısı).
 
+## 3.261 `break` / `continue` (v1.144.0)
+
+Dil yüzeyindeki en büyük boşluk (Python'a yakın bir dilde döngüden çıkış yoktu; spec'te bilinçli erteleme olarak da
+geçmiyordu). Anlam Python ile aynı: `break` en içteki `while`/`for`'dan çıkar, `continue` sonraki yinelemeye geçer
+(`while`'da koşula, `for range`/`for list`'te artırma adımına). Döngü dışında (iç içe `def` içinde dış döngü sayılmaz)
+kullanım derleme hatasıdır (`FnCtx.loop_depth`).
+
+**Uygulama:** `kw_break`/`kw_continue` + `ast.StmtKind.break_stmt/continue_stmt` + parser + formatter + LSP/tree-sitter/
+TextMate anahtar kelimeleri. Codegen: `Codegen.loop_stack` (`LoopCtx{break_label, continue_label, finally_depth,
+arena_depth}`); `genWhile`/`genForRange`/`genForList` bir bağlam iter (`for` döngülerine `continue` hedefi olarak bir
+`for_step`/`forlist_step` etiketi eklendi — bu yüzden TÜM IR anlık görüntüleri yeniden üretildi, davranış aynı).
+`genLoopJump`: önce döngü giriş derinliğinin ÜSTÜNDEKİ `finally_stack` girdilerini (`drainFinallyDownTo`, her girdi
+üretilirken yığından geçici çıkarılır → derleme-zamanı sonsuz özyineleme ve çift `finally` yok) ve `arena_stack`
+girdilerini (`drainArenasDownTo`) boşaltır — `try/finally`, `with` (`__exit__`) ve `lowlevel` arenaları `return` ile
+AYNI kapsam-çıkışı mekanizmasını paylaşır (AGENTS.md §9) — sonra etikete atlar. Yerel değişkenler yineleme başına
+serbest bırakılmadığından (slotlar yeniden kullanılır, eski değer yeniden bildirimde/fonksiyon sonunda bırakılır)
+ek bir ARC/ASAP temizliği GEREKMEZ. `defer` fonksiyon-kapsamlı olduğundan etkilenmez.
+
+**Analizler:** (a) checker'ın post-spawn akış analizi (`iterateLoopToFixpoint`) yalnızca gövde SONU durumunu döngü
+çıkışına katıyordu; `break`ten sonraki kod ORTA-gövde "uçuşta spawn" durumunu görebilir → `Checker.flow_jump_states`
+ile her `break`/`continue` noktasındaki durum kopyası döngü durumuna birleştirilir (aksi halde yarış denetimi bir
+false-negative üretirdi). (b) sınır-kontrolü eleme (`detectWhileBoundsElideCtx`), mod/uzunluk önbellekleri ve LICM
+`break`/`continue`ten etkilenmez (indeks değişkeni gövde içinde yalnızca sabit bir artırmayla ilerler; `continue` o
+artırmayı atlarsa indeks AYNI kalır, aralık içinde kalmaya devam eder; `break` yalnızca döngüden erken çıkar).
+
+Golden: `break_continue_basic` (while/for range/for list/iç içe), `break_continue_finally_with_lowlevel` (try/finally,
+iç içe finally, `with`, `except`ten `break`, `lowlevel`), `break_continue_heap_and_async` (heap yerelleri, `spawn`/`await`);
+typecheck: `ok_break_continue`, `err_break_outside_loop`, `err_continue_in_nested_def`; fmt round-trip; tree-sitter
+corpus. Hepsi QBE ve `--release`te aynı çıktıyı verir.
+
+**Bilinen sınırlama:** `if x == None: break` sonrası `x` daraltılmaz (erken-`return` ile de daraltılmıyor; ayrı madde,
+roadmap 1.12).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

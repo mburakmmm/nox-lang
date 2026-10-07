@@ -201,6 +201,8 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
             .try_stmt => |t| try self.genTry(t, ret_qtype),
             .lowlevel_stmt => |ll| try self.genLowLevel(ll, ret_qtype),
             .pass_stmt => {},
+            .break_stmt => try self.genLoopJump(true),
+            .continue_stmt => try self.genLoopJump(false),
             .func_def => |fd| try self.genNestedFuncDef(fd),
             .with_stmt => |w| try self.genWith(w, stmt.line, ret_qtype),
             .defer_stmt => |d| try self.genDeferStmt(d, stmt.line),
@@ -852,9 +854,32 @@ pub fn collectIndexStrBasesStmts(self: *Codegen, body: []const ast.Stmt, candida
                 try self.collectIndexStrBasesStmts(s.body, candidates);
             },
             .defer_stmt => |d| try self.collectIndexStrBasesExpr(.{ .call = d.call }, candidates),
-            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
         }
     }
+}
+
+/// `break` (`is_break`) / `continue`: en içteki döngünün etiketine atlar. Önce döngü gövdesi İÇİNDE açılmış
+/// `try/finally`/`with` gövdeleri ve `lowlevel` arenaları (en içten) boşaltılır — `return` ile aynı kapsam-çıkışı
+/// mekanizması (AGENTS.md §9), ama yalnızca döngü giriş derinliğinin ÜSTÜNDEKİLER için. Yerel değişkenler yinelemede
+/// serbest bırakılmaz (bkz. `Codegen.loop_stack`). Checker döngü dışı kullanımı reddettiğinden `loop_stack` boş olamaz.
+pub fn genLoopJump(self: *Codegen, is_break: bool) CodegenError!void {
+    if (self.loop_stack.items.len == 0) return error.Unsupported;
+    const ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
+    try self.drainFinallyDownTo(ctx.finally_depth, self.current_ret_qtype);
+    try self.drainArenasDownTo(ctx.arena_depth);
+    try self.qbeJmp(if (is_break) ctx.break_label else ctx.continue_label);
+    const label = if (is_break) try self.newLabel("after_break") else try self.newLabel("after_continue");
+    try self.qbeLabel(label);
+}
+
+fn pushLoop(self: *Codegen, break_label: []const u8, continue_label: []const u8) CodegenError!void {
+    try self.loop_stack.append(self.allocator, .{
+        .break_label = break_label,
+        .continue_label = continue_label,
+        .finally_depth = self.finally_stack.items.len,
+        .arena_depth = self.arena_stack.items.len,
+    });
 }
 
 pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenError!void {
@@ -869,6 +894,8 @@ pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenErr
     const cond_v = try self.genExpr(w.cond);
     try self.qbeJnz(cond_v.text, body_label, end_label);
     try self.qbeLabel(body_label);
+    try pushLoop(self, end_label, cond_label);
+    defer _ = self.loop_stack.pop();
     if (self.detectNarrowedBoxedName(w.cond)) |n| {
         if (n.narrows_then) {
             const was_present = self.narrowed_unbox.contains(n.name);
@@ -915,6 +942,8 @@ pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenEr
     const cond_label = try self.newLabel("for_cond");
     const body_label = try self.newLabel("for_body");
     const end_label = try self.newLabel("for_end");
+    // `continue` artırma adımına gider (v1.144.0).
+    const step_label = try self.newLabel("for_step");
 
     const str_len_scope = try self.enterStrLenCacheScope(f.body);
     // `f.var_name`in artışı (aşağıda) BİR `.assign` AST düğümünü
@@ -938,7 +967,11 @@ pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenEr
     try self.qbeOp2(cmp, .w, "csltl", cur, limit.text);
     try self.qbeJnz(cmp, body_label, end_label);
     try self.qbeLabel(body_label);
+    try pushLoop(self, end_label, step_label);
     try self.genStmts(f.body, ret_qtype);
+    _ = self.loop_stack.pop();
+    try self.qbeJmp(step_label);
+    try self.qbeLabel(step_label);
     const cur2 = try self.newTemp();
     try self.qbeLoadL(cur2, var_info.slot);
     const next = try self.newTemp();
@@ -972,6 +1005,7 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     const cond_label = try self.newLabel("forlist_cond");
     const body_label = try self.newLabel("forlist_body");
     const end_label = try self.newLabel("forlist_end");
+    const step_label = try self.newLabel("forlist_step");
 
     const str_len_scope = try self.enterStrLenCacheScope(f.body);
     // `loop_var`e HER yinelemede öğenin DEĞERİ yazılır (aşağıda) —
@@ -1001,7 +1035,11 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     try self.loadListElem(elem_val, list_info.elem_qtype, elem_addr);
     try self.qbeStore(loop_var.qtype, elem_val, loop_var.slot);
 
+    try pushLoop(self, end_label, step_label);
     try self.genStmts(f.body, ret_qtype);
+    _ = self.loop_stack.pop();
+    try self.qbeJmp(step_label);
+    try self.qbeLabel(step_label);
 
     const idx_base = try self.newTemp();
     try self.qbeLoadL(idx_base, idx_slot);

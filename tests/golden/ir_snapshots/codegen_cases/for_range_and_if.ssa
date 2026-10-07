@@ -1329,6 +1329,8 @@ export function l $sum(l %rt, l %p_xs) {
     %t13 =l loadl %t2
     %t14 =l add %t12, %t13
     storel %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1336,8 +1338,8 @@ export function l $sum(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =l loadl %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret 0
 }
 export function d $sum_float(l %rt, l %p_xs) {
@@ -1366,6 +1368,8 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t13 =d loadd %t2
     %t14 =d add %t12, %t13
     stored %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1373,8 +1377,8 @@ export function d $sum_float(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =d loadd %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret d_0
 }
 export function w $main(w %argc, l %argv) {
@@ -1395,28 +1399,30 @@ export function w $main(w %argc, l %argv) {
     %t4 =l loadl %t1
     %t5 =l and %t4, 1
     %t6 =w ceql %t5, 0
-    jnz %t6, @if_then4, @if_elif5
-@if_then4
+    jnz %t6, @if_then5, @if_elif6
+@if_then5
     %t7 =l loadl %t0
     %t8 =l loadl %t1
     %t9 =l add %t7, %t8
     storel %t9, %t0
-    jmp @if_end3
-@if_elif5
+    jmp @if_end4
+@if_elif6
     %t10 =l loadl %t1
     %t11 =w ceql %t10, 3
-    jnz %t11, @if_elif_body6, @if_else7
-@if_elif_body6
+    jnz %t11, @if_elif_body7, @if_else8
+@if_elif_body7
     %t12 =l loadl %t0
     %t13 =l add %t12, 100
     storel %t13, %t0
-    jmp @if_end3
-@if_else7
+    jmp @if_end4
+@if_else8
     %t14 =l loadl %t0
     %t15 =l sub %t14, 1
     storel %t15, %t0
-    jmp @if_end3
-@if_end3
+    jmp @if_end4
+@if_end4
+    jmp @for_step3
+@for_step3
     %t16 =l loadl %t1
     %t17 =l add %t16, 1
     storel %t17, %t1
@@ -1425,7 +1431,7 @@ export function w $main(w %argc, l %argv) {
     %t18 =l loadl %t0
     call $printf(l $fmt_int, ..., l %t18)
     call $nox_runtime_deinit(l %rt)
-@fn_end8
+@fn_end9
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

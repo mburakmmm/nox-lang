@@ -333,7 +333,7 @@ pub const Analyzer = struct {
                 // dönüşüne kadar SAKLANDIĞINDAN GERÇEK bir kaçıştır) normal bir
                 // çağrı GİBİ taranır.
                 .defer_stmt => |d| self.scanExprEscapes(scope, index_of, ast.Expr{ .call = d.call }),
-                .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .lowlevel_stmt, .import_stmt, .from_import_stmt => {},
+                .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .lowlevel_stmt, .import_stmt, .from_import_stmt => {},
             }
         }
     }

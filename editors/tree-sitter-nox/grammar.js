@@ -64,6 +64,8 @@ module.exports = grammar({
         $.return_statement,
         $.raise_statement,
         $.pass_statement,
+        $.break_statement,
+        $.continue_statement,
         $.expression_statement,
       ),
       $._newline,
@@ -128,6 +130,10 @@ module.exports = grammar({
     raise_statement: $ => seq('raise', field('value', $._expression)),
 
     pass_statement: _$ => 'pass',
+
+    break_statement: _$ => 'break',
+
+    continue_statement: _$ => 'continue',
 
     expression_statement: $ => $._expression,
 

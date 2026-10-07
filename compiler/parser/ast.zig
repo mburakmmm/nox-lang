@@ -423,6 +423,9 @@ pub const StmtKind = union(enum) {
     import_stmt: ImportStmt,
     from_import_stmt: FromImportStmt,
     pass_stmt,
+    /// v1.144.0: en içteki `while`/`for` döngüsünden çıkar / sonraki yinelemeye geçer.
+    break_stmt,
+    continue_stmt,
     with_stmt: WithStmt,
     defer_stmt: DeferStmt,
 };

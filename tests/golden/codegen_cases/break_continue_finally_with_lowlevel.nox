@@ -1,0 +1,69 @@
+class Res:
+    name: str
+    def __init__(self: Res, name: str) -> None:
+        self.name = name
+    def __enter__(self: Res) -> Res:
+        print("enter " + self.name)
+        return self
+    def __exit__(self: Res) -> None:
+        print("exit " + self.name)
+
+# break inside try/finally: finally must run before leaving the loop
+i: int = 0
+while i < 5:
+    i = i + 1
+    try:
+        if i == 2:
+            continue
+        if i == 4:
+            break
+        print("body " + str(i))
+    finally:
+        print("fin " + str(i))
+print("after " + str(i))
+
+# break out of a `with` inside a loop
+for k in range(3):
+    with Res("r" + str(k)) as r:
+        if k == 1:
+            break
+        print("in " + r.name)
+print("done with")
+
+# nested try/finally, continue
+j: int = 0
+while j < 3:
+    j = j + 1
+    try:
+        try:
+            if j == 2:
+                continue
+            print("inner " + str(j))
+        finally:
+            print("f1 " + str(j))
+    finally:
+        print("f2 " + str(j))
+print("end nested")
+
+# exception caught inside the loop, then break from the except handler
+m: int = 0
+while m < 5:
+    m = m + 1
+    try:
+        if m == 3:
+            raise ValueError("boom")
+        print("ok " + str(m))
+    except ValueError as e:
+        print("caught " + str(m))
+        break
+print("m=" + str(m))
+
+# break inside lowlevel inside a loop
+total: int = 0
+for q in range(5):
+    lowlevel:
+        tmp: list[int] = [q, q + 1]
+        total = total + tmp[0]
+        if q == 3:
+            break
+print(total)

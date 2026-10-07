@@ -55,7 +55,7 @@ pub fn collectReassignedNames(body: []const ast.Stmt, reassigned: *std.StringHas
                 if (s.binding) |b| try reassigned.put(allocator, b, {});
                 try collectReassignedNames(s.body, reassigned, allocator);
             },
-            .expr_stmt, .return_stmt, .raise_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt, .defer_stmt => {},
+            .expr_stmt, .return_stmt, .raise_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt, .defer_stmt => {},
         }
     }
 }
@@ -182,7 +182,7 @@ fn nameUsedUnsafely(body: []const ast.Stmt, name: []const u8) bool {
             },
             .func_def => return true,
             .defer_stmt => |d| if (callMentionsName(d.call, name)) return true,
-            .pass_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+            .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
     }
     return false;

@@ -1329,6 +1329,8 @@ export function l $sum(l %rt, l %p_xs) {
     %t13 =l loadl %t2
     %t14 =l add %t12, %t13
     storel %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1336,8 +1338,8 @@ export function l $sum(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =l loadl %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret 0
 }
 export function d $sum_float(l %rt, l %p_xs) {
@@ -1366,6 +1368,8 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t13 =d loadd %t2
     %t14 =d add %t12, %t13
     stored %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1373,8 +1377,8 @@ export function d $sum_float(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =d loadd %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret d_0
 }
 export function w $main(w %argc, l %argv) {
@@ -1542,6 +1546,8 @@ export function w $main(w %argc, l %argv) {
     %t92 =w loadw %t9
     %t93 =l extuw %t92
     call $printf(l $fmt_uint, ..., l %t93)
+    jmp @forlist_step30
+@forlist_step30
     %t94 =l loadl %t10
     %t95 =l add %t94, 1
     storel %t95, %t10
@@ -1551,18 +1557,18 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_lbracket)
     %t97 =l loadl %t96
     storel 0, %t98
-    jmp @printlist_cond30
-@printlist_cond30
+    jmp @printlist_cond31
+@printlist_cond31
     %t99 =l loadl %t98
     %t100 =w csltl %t99, %t97
-    jnz %t100, @printlist_body31, @printlist_end32
-@printlist_body31
+    jnz %t100, @printlist_body32, @printlist_end33
+@printlist_body32
     %t101 =w cnel %t99, 0
-    jnz %t101, @printlist_comma33, @printlist_skipcomma34
-@printlist_comma33
+    jnz %t101, @printlist_comma34, @printlist_skipcomma35
+@printlist_comma34
     call $printf(l $fmt_comma_sp)
-    jmp @printlist_skipcomma34
-@printlist_skipcomma34
+    jmp @printlist_skipcomma35
+@printlist_skipcomma35
     %t102 =l mul %t99, 1
     %t103 =l add %t102, 16
     %t104 =l add %t96, %t103
@@ -1571,18 +1577,18 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_uint_frag, ..., l %t106)
     %t107 =l add %t99, 1
     storel %t107, %t98
-    jmp @printlist_cond30
-@printlist_end32
+    jmp @printlist_cond31
+@printlist_end33
     call $printf(l $fmt_rbracket)
     call $printf(l $fmt_newline)
     %t108 =w csltl 200, 0
     %t109 =w csgtl 200, 255
     %t110 =w or %t108, %t109
-    jnz %t110, @ovf_trap35, @ovf_ok36
-@ovf_trap35
+    jnz %t110, @ovf_trap36, @ovf_ok37
+@ovf_trap36
     call $nox_int_overflow_trap(l %rt, l $fmt_lit6)
     ret 0
-@ovf_ok36
+@ovf_ok37
     %t111 =w copy 200
     storew %t111, %t11
     %t112 =w loadw %t11
@@ -1593,11 +1599,11 @@ export function w $main(w %argc, l %argv) {
     %t116 =w csltl %t115, -2147483648
     %t117 =w csgtl %t115, 2147483647
     %t118 =w or %t116, %t117
-    jnz %t118, @ovf_trap37, @ovf_ok38
-@ovf_trap37
+    jnz %t118, @ovf_trap38, @ovf_ok39
+@ovf_trap38
     call $nox_int_overflow_trap(l %rt, l $fmt_lit7)
     ret 0
-@ovf_ok38
+@ovf_ok39
     %t119 =w copy %t115
     storew %t119, %t12
     %t120 =w loadw %t12
@@ -1610,18 +1616,18 @@ export function w $main(w %argc, l %argv) {
     %t124 =w loadw %t13
     %t125 =w loadw %t14
     %t126 =w cugtw %t124, %t125
-    jnz %t126, @print_true39, @print_false40
-@print_true39
+    jnz %t126, @print_true40, @print_false41
+@print_true40
     call $printf(l $fmt_bool_true)
-    jmp @print_done41
-@print_false40
+    jmp @print_done42
+@print_false41
     call $printf(l $fmt_bool_false)
-    jmp @print_done41
-@print_done41
+    jmp @print_done42
+@print_done42
     %t127 =l loadl %t8
     %t128 =w ceql %t127, 0
-    jnz %t128, @release_skip43, @release42
-@release42
+    jnz %t128, @release_skip44, @release43
+@release43
     %t129 =l add %t127, 8
     %t130 =l loadl %t129
     %t131 =l mul %t130, 1
@@ -1631,20 +1637,20 @@ export function w $main(w %argc, l %argv) {
     %t135 =l sub %t134, 1
     storel %t135, %t133
     %t136 =w cslel %t135, 0
-    jnz %t136, @list_free45, @list_free_skip46
-@list_free45
+    jnz %t136, @list_free46, @list_free_skip47
+@list_free46
     call $nox_rc_free_payload(l %rt, l %t127, l %t132)
-    jmp @list_free_done47
-@list_free_skip46
-    jmp @list_free_done47
-@list_free_done47
-    jmp @release_done44
-@release_skip43
-    jmp @release_done44
-@release_done44
+    jmp @list_free_done48
+@list_free_skip47
+    jmp @list_free_done48
+@list_free_done48
+    jmp @release_done45
+@release_skip44
+    jmp @release_done45
+@release_done45
     storel 0, %t8
     call $nox_runtime_deinit(l %rt)
-@fn_end48
+@fn_end49
     ret 0
 @list_assign_err16
     %t68 =l add $str0, 16

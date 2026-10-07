@@ -115,6 +115,27 @@ test "golden(typecheck): liste ve indeksleme" {
     );
 }
 
+test "golden(typecheck): v1.144.0 — break/continue döngü içinde geçerli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_break_continue.nox"),
+        @embedFile("typecheck_cases/ok_break_continue.expected"),
+    );
+}
+
+test "golden(typecheck): v1.144.0 — döngü dışında break reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_break_outside_loop.nox"),
+        @embedFile("typecheck_cases/err_break_outside_loop.expected"),
+    );
+}
+
+test "golden(typecheck): v1.144.0 — iç içe def içinde (dış döngü yetmez) continue reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_continue_in_nested_def.nox"),
+        @embedFile("typecheck_cases/err_continue_in_nested_def.expected"),
+    );
+}
+
 test "golden(typecheck): var_decl tip uyuşmazlığı" {
     try expectGolden(
         @embedFile("typecheck_cases/err_var_decl_mismatch.nox"),

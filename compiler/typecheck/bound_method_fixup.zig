@@ -131,7 +131,7 @@ const Fixer = struct {
                     try self.fixStmts(s.body);
                 },
                 .defer_stmt => |*d| for (d.call.args) |*a| try self.fixExpr(a, true),
-                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
             }
         }
     }

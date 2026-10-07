@@ -1329,6 +1329,8 @@ export function l $sum(l %rt, l %p_xs) {
     %t13 =l loadl %t2
     %t14 =l add %t12, %t13
     storel %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1336,8 +1338,8 @@ export function l $sum(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =l loadl %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret 0
 }
 export function d $sum_float(l %rt, l %p_xs) {
@@ -1366,6 +1368,8 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t13 =d loadd %t2
     %t14 =d add %t12, %t13
     stored %t14, %t1
+    jmp @forlist_step3
+@forlist_step3
     %t15 =l loadl %t3
     %t16 =l add %t15, 1
     storel %t16, %t3
@@ -1373,8 +1377,8 @@ export function d $sum_float(l %rt, l %p_xs) {
 @forlist_end2
     %t17 =d loadd %t1
     ret %t17
-@after_return3
-@fn_end4
+@after_return4
+@fn_end5
     ret d_0
 }
 export function l $count_two(l %rt, l %p_s) {
@@ -1588,49 +1592,51 @@ export function l $count_via_for(l %rt, l %p_s) {
 @for_body1
     %t10 =l loadl %t0
     %t11 =l loadl %t2
-    jnz %t7, @str_idx_ascii4, @str_idx_unicode5
-@str_idx_ascii4
+    jnz %t7, @str_idx_ascii5, @str_idx_unicode6
+@str_idx_ascii5
     %t13 =l add %t10, %t11
     %t14 =w loadub %t13
     %t15 =l extuw %t14
     %t16 =l mul %t15, 24
     %t17 =l add $nox_ascii_chars, %t16
     %t18 =l add %t17, 16
-    jmp @str_idx_done6
-@str_idx_unicode5
+    jmp @str_idx_done7
+@str_idx_unicode6
     %t19 =l call $nox_str_char_at(l %rt, l %t10, l %t11)
-    jmp @str_idx_done6
-@str_idx_done6
-    %t12 =l phi @str_idx_ascii4 %t18, @str_idx_unicode5 %t19
+    jmp @str_idx_done7
+@str_idx_done7
+    %t12 =l phi @str_idx_ascii5 %t18, @str_idx_unicode6 %t19
     %t20 =l add $str4, 16
     %t21 =w call $strcmp(l %t12, l %t20)
     %t22 =w ceqw %t21, 0
     %t23 =w ceql %t12, 0
-    jnz %t23, @release_skip8, @release7
-@release7
+    jnz %t23, @release_skip9, @release8
+@release8
     %t24 =l sub %t12, 16
     %t25 =l loadl %t24
     %t26 =l sub %t25, 1
     storel %t26, %t24
     %t27 =w cslel %t26, 0
-    jnz %t27, @str_free10, @str_free_skip11
-@str_free10
+    jnz %t27, @str_free11, @str_free_skip12
+@str_free11
     call $nox_str_free_now(l %rt, l %t12)
-    jmp @str_free_done12
-@str_free_skip11
-    jmp @str_free_done12
-@str_free_done12
-    jmp @release_done9
-@release_skip8
-    jmp @release_done9
-@release_done9
-    jnz %t22, @if_then13, @if_end3
-@if_then13
+    jmp @str_free_done13
+@str_free_skip12
+    jmp @str_free_done13
+@str_free_done13
+    jmp @release_done10
+@release_skip9
+    jmp @release_done10
+@release_done10
+    jnz %t22, @if_then14, @if_end4
+@if_then14
     %t28 =l loadl %t1
     %t29 =l add %t28, 1
     storel %t29, %t1
-    jmp @if_end3
-@if_end3
+    jmp @if_end4
+@if_end4
+    jmp @for_step3
+@for_step3
     %t30 =l loadl %t2
     %t31 =l add %t30, 1
     storel %t31, %t2
@@ -1638,8 +1644,8 @@ export function l $count_via_for(l %rt, l %p_s) {
 @for_end2
     %t32 =l loadl %t1
     ret %t32
-@after_return14
-@fn_end15
+@after_return15
+@fn_end16
     ret 0
 }
 export function w $main(w %argc, l %argv) {

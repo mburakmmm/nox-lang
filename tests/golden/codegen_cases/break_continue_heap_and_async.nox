@@ -1,0 +1,41 @@
+class Item:
+    label: str
+    def __init__(self: Item, label: str) -> None:
+        self.label = label
+
+def collect(n: int) -> list[str]:
+    out: list[str] = []
+    i: int = 0
+    while i < n:
+        i = i + 1
+        it: Item = Item("item" + str(i))
+        names: list[str] = [it.label, "x"]
+        if i % 2 == 0:
+            continue
+        if i == 7:
+            break
+        out.append(names[0])
+    return out
+
+r: list[str] = collect(10)
+print(len(r))
+for s in r:
+    print(s)
+
+async def worker(x: int) -> int:
+    return x * 2
+
+async def run_all() -> int:
+    total: int = 0
+    for k in range(6):
+        t: Task[int] = spawn worker(k)
+        v: int = await t
+        if v == 4:
+            continue
+        if v > 8:
+            break
+        total = total + v
+    return total
+
+m: Task[int] = spawn run_all()
+print(await m)

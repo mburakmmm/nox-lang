@@ -587,7 +587,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         // takma adlardır (Nox bildirim adları DEĞİL) — yeniden adlandırmaya
         // gerek yok.
         .from_import_stmt => return s,
-        .pass_stmt => return s,
+        .pass_stmt, .break_stmt, .continue_stmt => return s,
         .with_stmt => |w| .{ .with_stmt = .{
             .ctx_expr = try renameExpr(a, w.ctx_expr, map),
             .binding = w.binding,
