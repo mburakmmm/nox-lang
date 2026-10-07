@@ -872,6 +872,7 @@ pub fn genDel(self: *Codegen, e: ast.Expr) CodegenError!void {
     if (e != .index) return error.Unsupported;
     const ix = e.index;
     const obj = try self.genExpr(ix.obj.*);
+    if (obj.heap == .list) return self.genListDelete(ix, obj);
     if (obj.heap != .dict) return error.Unsupported;
     const dinfo = obj.dict_info orelse return error.Unsupported;
     const key_v0 = try self.genExpr(ix.index.*);

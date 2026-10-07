@@ -1761,7 +1761,13 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
         // YAPMAZ, `args.len`e göre AYRIM yapardı — `sort`nin 0 argümanı
         // `append`nin "tam olarak 1 argüman" KONTROLÜNE takılırdı).
         if (std.mem.eql(u8, a.attr, "sort")) return self.genListSort(obj, a, args);
-        if (std.mem.eql(u8, a.attr, "pop")) return self.genListPop(obj, a);
+        if (std.mem.eql(u8, a.attr, "pop")) return if (args.len == 1) genListPopAt(self, obj, a, args) else self.genListPop(obj, a);
+        // v1.150.0 (bkz. nox-teknik-spesifikasyon.md §3.267).
+        if (std.mem.eql(u8, a.attr, "reverse")) return genListReverse(self, obj, a);
+        if (std.mem.eql(u8, a.attr, "clear")) return genListClear(self, obj, a);
+        if (std.mem.eql(u8, a.attr, "copy")) return genListCopy(self, obj, a);
+        if (std.mem.eql(u8, a.attr, "insert")) return genListInsert(self, obj, a, args);
+        if (std.mem.eql(u8, a.attr, "remove") or std.mem.eql(u8, a.attr, "index") or std.mem.eql(u8, a.attr, "count")) return genListSearchOp(self, obj, a, args);
         return self.genListAppend(obj, a, args);
     }
     // Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83): `TaskLocal[T]`in
@@ -2542,6 +2548,196 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     try self.releaseIfTemporary(a.obj.*, obj);
 
     return abi.valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int);
+}
+
+// ===== v1.150.0: list tam API (reverse/clear/copy/insert/remove/index/count/pop(i)/del xs[i]) — bkz. spec §3.267 =====
+
+/// Eleman baytı (`list_ops.zig` ABI'sine `esz` argümanı) — `append`/`sort` ile aynı paketli boyutlar.
+pub fn listEszLit(self: *Codegen, obj: Value) CodegenError![]const u8 {
+    return std.fmt.allocPrint(self.allocator, "{d}", .{qbeSizeOf(obj.elem_qtype)});
+}
+
+/// Kopyalanan elemanların retain türü (`list_ops.zig` `kind`): 0 skaler, 1 `str`, 2 düz ARC işaretçisi.
+pub fn listKindLit(_: *Codegen, obj: Value) []const u8 {
+    if (obj.elem_heap_info) |eh| {
+        if (isHeapManaged(eh.heap)) return if (eh.heap == .str) "1" else "2";
+    }
+    return if (obj.elem_is_str) "1" else "0";
+}
+
+/// `proto` liste değerinin eleman betimleyicilerini taşıyan, TAZE (+1) bir liste değeri.
+pub fn freshListValue(_: *Codegen, proto: Value, text: []const u8) Value {
+    var v = proto;
+    v.text = text;
+    v.qtype = .l;
+    v.always_fresh = false;
+    v.is_pinned = false;
+    v.is_stack_slot = false;
+    v.arena = false;
+    v.growable_arena = null;
+    return v;
+}
+
+const RelPair = struct { e: ast.Expr, v: Value };
+
+/// Listeden çıkarılan/silinen elemanı (heap-yönetimliyse) serbest bırakır.
+fn releaseListElem(self: *Codegen, obj: Value, elem_text: []const u8) CodegenError!void {
+    const eh = obj.elem_heap_info orelse return;
+    if (!isHeapManaged(eh.heap)) return;
+    try self.releaseValueIfSet(elem_text, eh.heap, eh.elem_qtype, eh.class_name, eh.nested, eh.dict_info);
+}
+
+/// `bad` (w, doğruysa HATA) koşuluyla soğuk bir hata dalı üretir: `class_name(msg)` fırlatır, `rels` içindeki geçicileri
+/// serbest bırakır ve hata yayılımına atlar; normal akış `ok` etiketinde devam eder (`genListPop`un hata dalıyla aynı desen).
+fn emitColdListError(self: *Codegen, bad: []const u8, class_name: []const u8, msg: []const u8, rels: []const RelPair) CodegenError!void {
+    const err_label = try self.newLabel("list_err");
+    const ok_label = try self.newLabel("list_ok");
+    try self.qbeJnzCold(bad, err_label, ok_label);
+    const cold_start = self.beginCold();
+    try self.qbeLabel(err_label);
+    const msg_value = try self.emitStringLiteral(msg);
+    const cinfo = self.classes.get(class_name) orelse return error.Unsupported;
+    const err_obj = try self.genConstructFromValues(class_name, cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(err_obj.text, class_name, self.current_raise_line);
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = err_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+    for (rels) |r| try self.releaseIfTemporary(r.e, r.v);
+    try self.emitRaisePropagate();
+    try self.stashCold(cold_start);
+    try self.qbeLabel(ok_label);
+}
+
+/// `idx` (l) indeksindeki elemanı sınır denetimiyle (aralık dışı/negatif → `IndexError`) listeden ÇIKARIR (sonrakileri kaydırır,
+/// `len`i azaltır). Dönen eleman değeri artık ÇAĞIRANA aittir (serbest bırakmak ya da devralmak çağıranın işidir).
+fn emitListRemoveAtChecked(self: *Codegen, obj: Value, idx: []const u8, rels: []const RelPair) CodegenError!Value {
+    const len_t = try self.newTemp();
+    try self.qbeLoadL(len_t, obj.text);
+    const bad = try self.newTemp();
+    try self.qbeOp2(bad, .w, "cugel", idx, len_t); // işaretsiz idx >= len (negatif de yakalanır)
+    try emitColdListError(self, bad, "IndexError", "liste indeksi aralik disi", rels);
+    const elem = try self.loadListElemValueAt(obj, idx);
+    const esz = try listEszLit(self, obj);
+    try self.qbeCall(null, "$nox_list_remove_at", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = idx }, .{ .ty = .l, .text = esz } });
+    return elem;
+}
+
+fn genListReverse(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj);
+    const esz = try listEszLit(self, obj);
+    try self.qbeCall(null, "$nox_list_reverse", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = esz } });
+    try self.releaseIfTemporary(a.obj.*, obj);
+    return .{ .text = "0", .qtype = .none };
+}
+
+/// `xs.clear()`: heap-yönetimli elemanları tek tek serbest bırakır, `len`i 0 yapar (kapasite korunur; sonraki `append` yerinde yazar).
+fn genListClear(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj);
+    if (obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap)) {
+        const idx_slot = try self.newTemp();
+        try self.qbeAlloc(idx_slot, .eight, 8);
+        try self.qbeStoreImmL(0, idx_slot);
+        const len_t = try self.newTemp();
+        try self.qbeLoadL(len_t, obj.text);
+        const cond_label = try self.newLabel("clear_cond");
+        const body_label = try self.newLabel("clear_body");
+        const done_label = try self.newLabel("clear_done");
+        try self.qbeJmp(cond_label);
+        try self.qbeLabel(cond_label);
+        const idx = try self.newTemp();
+        try self.qbeLoadL(idx, idx_slot);
+        const cont = try self.newTemp();
+        try self.qbeOp2(cont, .w, "csltl", idx, len_t);
+        try self.qbeJnz(cont, body_label, done_label);
+        try self.qbeLabel(body_label);
+        const elem = try self.loadListElemValueAt(obj, idx);
+        try releaseListElem(self, obj, elem.text);
+        const idx2 = try self.newTemp();
+        try self.qbeOp2Imm(idx2, .l, "add", idx, 1);
+        try self.qbeStoreL(idx2, idx_slot);
+        try self.qbeJmp(cond_label);
+        try self.qbeLabel(done_label);
+    }
+    try self.qbeStoreImmL(0, obj.text);
+    try self.releaseIfTemporary(a.obj.*, obj);
+    return .{ .text = "0", .qtype = .none };
+}
+
+/// `xs.copy()`: yüzeysel kopya — yeni bir blok, heap-yönetimli elemanlar RETAIN edilir (iki liste bağımsız sahip).
+fn genListCopy(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj);
+    const esz = try listEszLit(self, obj);
+    const t = try self.newTemp();
+    try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_list_copy", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = esz }, .{ .ty = .w, .text = listKindLit(self, obj) } });
+    try self.releaseIfTemporary(a.obj.*, obj);
+    return freshListValue(self, obj, t);
+}
+
+/// `xs.insert(i, v)`: `v` önce `append` ile (büyüme/ARC/yeniden-yazma yolu aynı) sona eklenir, sonra alıcı yeniden okunup
+/// (büyüme işaretçiyi değiştirmiş olabilir) son eleman Python semantiğiyle `i` konumuna taşınır (negatif `i` sondan sayılır,
+/// sınırlar `[0, len]`e sıkıştırılır). `i` argümanı `v`den ÖNCE değerlendirilir.
+fn genListInsert(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    if (args.len != 2) return error.Unsupported;
+    const idx0 = try self.genExpr(args[0]);
+    const idx = try self.convert(idx0, .l);
+    _ = try genListAppend(self, obj, a, args[1..2]);
+    const fresh = try self.genExpr(a.obj.*);
+    const esz = try listEszLit(self, obj);
+    try self.qbeCall(null, "$nox_list_move_last", &.{ .{ .ty = .l, .text = fresh.text }, .{ .ty = .l, .text = idx.text }, .{ .ty = .l, .text = esz } });
+    return .{ .text = "0", .qtype = .none };
+}
+
+/// `xs.remove(x)` / `xs.index(x)` / `xs.count(x)`: doğrusal tarama, eşitlik `==` ile aynı (`emitValueEq`). `remove`/`index`
+/// bulunamazsa `ValueError`; `remove` elemanı serbest bırakır.
+fn genListSearchOp(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    if (args.len != 1) return error.Unsupported;
+    const x = try self.genExpr(args[0]);
+    try self.checkNoLowlevelEscape(obj);
+    try self.checkNoLowlevelEscape(x);
+    const rels = [_]RelPair{ .{ .e = a.obj.*, .v = obj }, .{ .e = args[0], .v = x } };
+    if (std.mem.eql(u8, a.attr, "count")) {
+        const n = try self.emitListCount(obj, x);
+        try self.releaseIfTemporary(args[0], x);
+        try self.releaseIfTemporary(a.obj.*, obj);
+        return .{ .text = n, .qtype = .l };
+    }
+    const idx = try self.emitListFind(obj, x);
+    const bad = try self.newTemp();
+    try self.qbeOp2Imm(bad, .w, "csltl", idx, 0);
+    const msg: []const u8 = if (std.mem.eql(u8, a.attr, "remove")) "list.remove(x): x listede yok" else "list.index(x): x listede yok";
+    try emitColdListError(self, bad, "ValueError", msg, &rels);
+    if (std.mem.eql(u8, a.attr, "remove")) {
+        const elem = try self.loadListElemValueAt(obj, idx);
+        const esz = try listEszLit(self, obj);
+        try self.qbeCall(null, "$nox_list_remove_at", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = idx }, .{ .ty = .l, .text = esz } });
+        try releaseListElem(self, obj, elem.text);
+        try self.releaseIfTemporary(args[0], x);
+        try self.releaseIfTemporary(a.obj.*, obj);
+        return .{ .text = "0", .qtype = .none };
+    }
+    try self.releaseIfTemporary(args[0], x);
+    try self.releaseIfTemporary(a.obj.*, obj);
+    return .{ .text = idx, .qtype = .l };
+}
+
+/// `xs.pop(i)`: `i`indeksindeki elemanı çıkarıp döner (sahiplik listeden çağırana geçer); aralık dışı → `IndexError`.
+fn genListPopAt(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj);
+    const idx0 = try self.genExpr(args[0]);
+    const idx = try self.convert(idx0, .l);
+    const rels = [_]RelPair{.{ .e = a.obj.*, .v = obj }};
+    const elem = try emitListRemoveAtChecked(self, obj, idx.text, &rels);
+    try self.releaseIfTemporary(a.obj.*, obj);
+    return elem;
+}
+
+/// `del xs[i]`: elemanı çıkarıp serbest bırakır; aralık dışı → `IndexError`.
+pub fn genListDelete(self: *Codegen, ix: ast.Index, obj: Value) CodegenError!void {
+    try self.checkNoLowlevelEscape(obj);
+    const idx0 = try self.genExpr(ix.index.*);
+    const idx = try self.convert(idx0, .l);
+    const rels = [_]RelPair{.{ .e = ix.obj.*, .v = obj }};
+    const elem = try emitListRemoveAtChecked(self, obj, idx.text, &rels);
+    try releaseListElem(self, obj, elem.text);
+    try self.releaseIfTemporary(ix.obj.*, obj);
 }
 
 /// `Channel[T](capacity)`/`ThreadChannel[T](capacity)` (yerleşikler) YA DA

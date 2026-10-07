@@ -1,0 +1,157 @@
+class Item:
+    n: int
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+def show(xs: list[int]) -> None:
+    s: str = ""
+    for x in xs:
+        s = s + str(x) + ","
+    print(s)
+
+# reverse / insert (başa, ortaya, sona, aralık dışı, negatif) / copy bağımsızlığı
+a: list[int] = [1, 2, 3, 4]
+a.reverse()
+show(a)
+a.insert(0, 10)
+a.insert(2, 20)
+a.insert(99, 30)
+a.insert(-1, 40)
+a.insert(-99, 50)
+show(a)
+b: list[int] = a.copy()
+b.append(7)
+b[0] = 0
+show(a)
+show(b)
+
+# index / count / remove
+c: list[int] = [5, 3, 5, 8, 5]
+print(c.index(3))
+print(c.index(5))
+print(c.count(5))
+print(c.count(9))
+c.remove(5)
+show(c)
+c.remove(8)
+show(c)
+
+# pop(i) / del xs[i]
+d: list[int] = [10, 20, 30, 40, 50]
+print(d.pop(0))
+print(d.pop(2))
+show(d)
+del d[1]
+show(d)
+del d[0]
+show(d)
+
+# clear sonrası yeniden kullanım
+d.clear()
+print(len(d))
+d.append(1)
+d.append(2)
+show(d)
+
+# extend (başka liste, kendini, literal, çağrı sonucu)
+e: list[int] = [1, 2]
+e.extend([3, 4])
+e.extend(e)
+show(e)
+f: list[int] = a.copy()
+f.extend(f.copy())
+print(len(f))
+e.extend(b)
+print(len(e))
+
+# + ve *
+g: list[int] = [1, 2] + [3]
+show(g)
+h: list[int] = [0] * 3
+show(h)
+i: list[int] = 2 * [7, 8]
+show(i)
+j: list[int] = [1] * 0
+print(len(j))
+k: list[int] = [1] * -5
+print(len(k))
+show(g + g)
+l1: list[int] = [9, 9]
+l2: list[int] = l1 + l1
+l2[0] = 1
+show(l1)
+show(l2)
+
+# sorted / reversed
+m: list[int] = [3, 1, 2]
+show(sorted(m))
+show(m)
+show(reversed(m))
+n: list[str] = ["pear", "apple", "fig"]
+print(sorted(n)[0])
+print(reversed(n)[0])
+for x in reversed([1, 2, 3]):
+    print(x)
+
+# str / float / bool / sınıf elemanlar
+s1: list[str] = ["a", "b", "c", "b"]
+print(s1.index("b"))
+print(s1.count("b"))
+s1.remove("b")
+print(len(s1))
+s1.insert(1, "z")
+print(s1[1])
+print(s1.pop(0))
+t1: list[float] = [1.5, 2.5, 1.5]
+print(t1.count(1.5))
+print(t1.index(2.5))
+u1: list[bool] = [True, False, True]
+print(u1.count(True))
+u1.insert(0, False)
+print(u1.index(True))
+it: list[Item] = [Item(1), Item(2), Item(1)]
+print(it.count(Item(1)))
+print(it.index(Item(2)))
+it.remove(Item(1))
+print(len(it))
+print(it[0].n)
+print(it.pop(1).n)
+
+# sabit-genişlikli elemanlar (paketli bayt/halfword): kopya, ters, ekleme, silme
+p: list[u8] = [u8(1), u8(2), u8(3)]
+q: list[u8] = p.copy()
+q.reverse()
+q.insert(1, u8(9))
+print(q[0])
+print(q[1])
+print(q[2])
+print(q[3])
+print(p[0])
+del q[0]
+print(len(q))
+print(q.index(u8(1)))
+r: list[u8] = p + q
+print(len(r))
+print(r[3])
+
+# hatalar
+try:
+    c.remove(1000)
+except ValueError:
+    print("remove ValueError")
+try:
+    print(c.index(1000))
+except ValueError:
+    print("index ValueError")
+try:
+    print(c.pop(50))
+except IndexError:
+    print("pop IndexError")
+try:
+    print(c.pop(-1))
+except IndexError:
+    print("pop negatif IndexError")
+try:
+    del c[50]
+except IndexError:
+    print("del IndexError")

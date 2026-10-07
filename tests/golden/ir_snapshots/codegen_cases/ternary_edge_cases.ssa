@@ -2004,31 +2004,31 @@ export function l $main_body(l %argp) {
     %t190 =l add $str14, 16
     %t191 =l loadl %t13
     storel 0, %t192
-    storel 0, %t193
+    storel -1, %t193
     %t194 =l loadl %t191
-    jmp @in_cond110
-@in_cond110
+    jmp @find_cond110
+@find_cond110
     %t195 =l loadl %t192
     %t196 =w csltl %t195, %t194
-    jnz %t196, @in_body111, @in_done114
-@in_body111
+    jnz %t196, @find_body111, @find_done114
+@find_body111
     %t197 =l mul %t195, 8
     %t198 =l add %t197, 16
     %t199 =l add %t191, %t198
     %t200 =l loadl %t199
     %t201 =w call $strcmp(l %t200, l %t190)
     %t202 =w ceqw %t201, 0
-    jnz %t202, @in_hit113, @in_next112
-@in_hit113
-    storel 1, %t193
-    jmp @in_done114
-@in_next112
+    jnz %t202, @find_hit113, @find_next112
+@find_hit113
+    storel %t195, %t193
+    jmp @find_done114
+@find_next112
     %t203 =l add %t195, 1
     storel %t203, %t192
-    jmp @in_cond110
-@in_done114
+    jmp @find_cond110
+@find_done114
     %t204 =l loadl %t193
-    %t205 =w cnel %t204, 0
+    %t205 =w cnel %t204, -1
     jnz %t205, @logic_rhs115, @logic_short116
 @logic_short116
     jmp @logic_done117

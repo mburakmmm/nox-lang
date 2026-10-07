@@ -429,6 +429,10 @@ pub const Codegen = struct {
     pub const genListAppend = calls.genListAppend;
     pub const genListSort = calls.genListSort;
     pub const genListPop = calls.genListPop;
+    pub const genListDelete = calls.genListDelete;
+    pub const listEszLit = calls.listEszLit;
+    pub const listKindLit = calls.listKindLit;
+    pub const freshListValue = calls.freshListValue;
     pub const genGenericConstruct = calls.genGenericConstruct;
     pub const typedPtrStride = calls.typedPtrStride;
     pub const genTypedPtrLoad = calls.genTypedPtrLoad;
@@ -475,6 +479,8 @@ pub const Codegen = struct {
     pub const genTernary = expr_mod.genTernary;
     pub const genTernaryBranch = expr_mod.genTernaryBranch;
     pub const genIn = expr_mod.genIn;
+    pub const emitListFind = expr_mod.emitListFind;
+    pub const emitListCount = expr_mod.emitListCount;
     pub const genCheckedShift = expr_mod.genCheckedShift;
     pub const genFloorDiv = expr_mod.genFloorDiv;
     pub const genPow = expr_mod.genPow;
@@ -851,6 +857,19 @@ pub const Codegen = struct {
             .llvm => llvm_emit.qbeRaw(self, fmt, args),
         };
     }
+    /// v1.150.0: `coll[idx]`in (`idx`: `l` temp, sınır denetimi YOK) ÖDÜNÇ-okunan eleman `Value`si.
+    pub fn loadListElemValueAt(self: *Codegen, coll: Value, idx: []const u8) CodegenError!Value {
+        const byte_off = try self.newTemp();
+        try self.qbeOp2Imm(byte_off, .l, "mul", idx, @intCast(qbeSizeOf(coll.elem_qtype)));
+        const off8 = try self.newTemp();
+        try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
+        const addr = try self.newTemp();
+        try self.qbeOp2(addr, .l, "add", coll.text, off8);
+        const raw = try self.newTemp();
+        try self.loadListElem(raw, coll.elem_qtype, addr);
+        return abi.valueFromElemDescriptor(raw, coll.elem_qtype, coll.elem_heap_info, coll.elem_is_str, coll.elem_fixed_int);
+    }
+
     /// Liste elemanı okuma: `.b` (bool) 1 bayt zero-extend (`loadub`), diğerleri tam genişlik.
     pub fn loadListElem(self: *Codegen, dst: []const u8, elem_qtype: QbeType, addr: []const u8) CodegenError!void {
         return switch (elem_qtype) {

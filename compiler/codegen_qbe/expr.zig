@@ -1337,7 +1337,7 @@ pub fn genStrCompare(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value) Codeg
 /// İki aynı-tipli değerin eşitliği (`w` 0/1 temp metni): `genBinary`nin `==` dallarıyla AYNI yollar —
 /// `str` (`strcmp`), `class`/`list` (`$X_eq`), skaler (ortak tipe `convert` + `ceq*`). `genIn` liste elemanlarını
 /// aranan değerle karşılaştırmak için kullanır.
-fn emitValueEq(self: *Codegen, l0: Value, r0: Value) CodegenError![]const u8 {
+pub fn emitValueEq(self: *Codegen, l0: Value, r0: Value) CodegenError![]const u8 {
     if (l0.heap == .str and r0.heap == .str) return (try self.genStrCompare(.eq, l0, r0)).text;
     if ((l0.heap == .list or l0.heap == .class) and r0.heap == l0.heap) {
         const t = try self.newTemp();
@@ -1356,6 +1356,101 @@ fn emitValueEq(self: *Codegen, l0: Value, r0: Value) CodegenError![]const u8 {
     const l = try self.convert(l0, common);
     const r = try self.convert(r0, common);
     return (try self.emitCmp(.eq, l, r, common)).text;
+}
+
+/// v1.150.0: `coll` listesinde `x`e EŞİT (`emitValueEq`) ilk elemanın indeksini (`l` temp metni) ya da bulunamazsa `-1`
+/// döner (doğrusal tarama). `in`, `list.index` ve `list.remove` ortak kullanır; eleman ödünç okunur (retain/release yok).
+pub fn emitListFind(self: *Codegen, coll: Value, x: Value) CodegenError![]const u8 {
+    const idx_slot = try self.newTemp();
+    try self.qbeAlloc(idx_slot, .eight, 8);
+    const res_slot = try self.newTemp();
+    try self.qbeAlloc(res_slot, .eight, 8);
+    try self.qbeStoreImmL(0, idx_slot);
+    try self.qbeStoreImmL(-1, res_slot);
+    const len_t = try self.newTemp();
+    try self.qbeLoadL(len_t, coll.text);
+
+    const cond_label = try self.newLabel("find_cond");
+    const body_label = try self.newLabel("find_body");
+    const next_label = try self.newLabel("find_next");
+    const hit_label = try self.newLabel("find_hit");
+    const done_label = try self.newLabel("find_done");
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
+    const idx = try self.newTemp();
+    try self.qbeLoadL(idx, idx_slot);
+    const cmp = try self.newTemp();
+    try self.qbeOp2(cmp, .w, "csltl", idx, len_t);
+    try self.qbeJnz(cmp, body_label, done_label);
+    try self.qbeLabel(body_label);
+
+    const elem = try self.loadListElemValueAt(coll, idx);
+    const eq = try emitValueEq(self, elem, x);
+    try self.qbeJnz(eq, hit_label, next_label);
+
+    try self.qbeLabel(hit_label);
+    try self.qbeStoreL(idx, res_slot);
+    try self.qbeJmp(done_label);
+
+    try self.qbeLabel(next_label);
+    const idx2 = try self.newTemp();
+    try self.qbeOp2Imm(idx2, .l, "add", idx, 1);
+    try self.qbeStoreL(idx2, idx_slot);
+    try self.qbeJmp(cond_label);
+
+    try self.qbeLabel(done_label);
+    const res = try self.newTemp();
+    try self.qbeLoadL(res, res_slot);
+    return res;
+}
+
+/// v1.150.0: `list.count(x)` — `x`e eşit eleman sayısı (`l` temp metni).
+pub fn emitListCount(self: *Codegen, coll: Value, x: Value) CodegenError![]const u8 {
+    const idx_slot = try self.newTemp();
+    try self.qbeAlloc(idx_slot, .eight, 8);
+    const cnt_slot = try self.newTemp();
+    try self.qbeAlloc(cnt_slot, .eight, 8);
+    try self.qbeStoreImmL(0, idx_slot);
+    try self.qbeStoreImmL(0, cnt_slot);
+    const len_t = try self.newTemp();
+    try self.qbeLoadL(len_t, coll.text);
+
+    const cond_label = try self.newLabel("count_cond");
+    const body_label = try self.newLabel("count_body");
+    const inc_label = try self.newLabel("count_inc");
+    const next_label = try self.newLabel("count_next");
+    const done_label = try self.newLabel("count_done");
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
+    const idx = try self.newTemp();
+    try self.qbeLoadL(idx, idx_slot);
+    const cmp = try self.newTemp();
+    try self.qbeOp2(cmp, .w, "csltl", idx, len_t);
+    try self.qbeJnz(cmp, body_label, done_label);
+    try self.qbeLabel(body_label);
+
+    const elem = try self.loadListElemValueAt(coll, idx);
+    const eq = try emitValueEq(self, elem, x);
+    try self.qbeJnz(eq, inc_label, next_label);
+
+    try self.qbeLabel(inc_label);
+    const c0 = try self.newTemp();
+    try self.qbeLoadL(c0, cnt_slot);
+    const c1 = try self.newTemp();
+    try self.qbeOp2Imm(c1, .l, "add", c0, 1);
+    try self.qbeStoreL(c1, cnt_slot);
+    try self.qbeJmp(next_label);
+
+    try self.qbeLabel(next_label);
+    const idx2 = try self.newTemp();
+    try self.qbeOp2Imm(idx2, .l, "add", idx, 1);
+    try self.qbeStoreL(idx2, idx_slot);
+    try self.qbeJmp(cond_label);
+
+    try self.qbeLabel(done_label);
+    const res = try self.newTemp();
+    try self.qbeLoadL(res, cnt_slot);
+    return res;
 }
 
 /// v1.145.0: `a in b` / `a not in b`. Sol işlenen ÖNCE, sonra sağ işlenen değerlendirilir. `str` içinde alt-dize
@@ -1385,56 +1480,9 @@ pub fn genIn(self: *Codegen, b: ast.Binary) CodegenError!Value {
             found = t;
         },
         .list => {
-            const idx_slot = try self.newTemp();
-            try self.qbeAlloc(idx_slot, .eight, 8);
-            const res_slot = try self.newTemp();
-            try self.qbeAlloc(res_slot, .eight, 8);
-            try self.qbeStoreImmL(0, idx_slot);
-            try self.qbeStoreImmL(0, res_slot);
-            const len_t = try self.newTemp();
-            try self.qbeLoadL(len_t, coll.text);
-
-            const cond_label = try self.newLabel("in_cond");
-            const body_label = try self.newLabel("in_body");
-            const next_label = try self.newLabel("in_next");
-            const hit_label = try self.newLabel("in_hit");
-            const done_label = try self.newLabel("in_done");
-            try self.qbeJmp(cond_label);
-            try self.qbeLabel(cond_label);
-            const idx = try self.newTemp();
-            try self.qbeLoadL(idx, idx_slot);
-            const cmp = try self.newTemp();
-            try self.qbeOp2(cmp, .w, "csltl", idx, len_t);
-            try self.qbeJnz(cmp, body_label, done_label);
-            try self.qbeLabel(body_label);
-
-            const byte_off = try self.newTemp();
-            try self.qbeOp2Imm(byte_off, .l, "mul", idx, @intCast(qbeSizeOf(coll.elem_qtype)));
-            const off8 = try self.newTemp();
-            try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
-            const addr = try self.newTemp();
-            try self.qbeOp2(addr, .l, "add", coll.text, off8);
-            const raw = try self.newTemp();
-            try self.loadListElem(raw, coll.elem_qtype, addr);
-            const elem = valueFromElemDescriptor(raw, coll.elem_qtype, coll.elem_heap_info, coll.elem_is_str, coll.elem_fixed_int);
-            const eq = try emitValueEq(self, elem, x);
-            try self.qbeJnz(eq, hit_label, next_label);
-
-            try self.qbeLabel(hit_label);
-            try self.qbeStoreImmL(1, res_slot);
-            try self.qbeJmp(done_label);
-
-            try self.qbeLabel(next_label);
-            const idx2 = try self.newTemp();
-            try self.qbeOp2Imm(idx2, .l, "add", idx, 1);
-            try self.qbeStoreL(idx2, idx_slot);
-            try self.qbeJmp(cond_label);
-
-            try self.qbeLabel(done_label);
-            const res = try self.newTemp();
-            try self.qbeLoadL(res, res_slot);
+            const hit = try emitListFind(self, coll, x);
             const w = try self.newTemp();
-            try self.qbeOp2Imm(w, .w, "cnel", res, 0);
+            try self.qbeOp2Imm(w, .w, "cnel", hit, -1);
             found = w;
         },
         else => return error.Unsupported,
@@ -1667,6 +1715,28 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         try self.releaseIfTemporary(b.left.*, l0);
         try self.releaseIfTemporary(b.right.*, r0);
         return .{ .text = result_t, .qtype = .l, .heap = .str };
+    }
+
+    // v1.150.0: `list[T] + list[T]` ve `list[T] * n` / `n * list[T]` — YENİ bir liste (heap-yönetimli elemanlar retain edilir;
+    // `nox_list_concat`/`nox_list_repeat`, bkz. `runtime/collections/list_ops.zig`). Sonuç TAZE (+1) bir değerdir.
+    if (l0.heap == .list and r0.heap == .list and b.op == .add) {
+        try self.checkNoLowlevelEscape(l0);
+        try self.checkNoLowlevelEscape(r0);
+        const result_t = try self.newTemp();
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_list_concat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text }, .{ .ty = .l, .text = try self.listEszLit(l0) }, .{ .ty = .w, .text = self.listKindLit(l0) } });
+        try self.releaseIfTemporary(b.left.*, l0);
+        try self.releaseIfTemporary(b.right.*, r0);
+        return self.freshListValue(l0, result_t);
+    }
+    if (b.op == .mul and ((l0.heap == .list and r0.heap == .none) or (l0.heap == .none and r0.heap == .list))) {
+        const lst = if (l0.heap == .list) l0 else r0;
+        const n0 = if (l0.heap == .list) r0 else l0;
+        try self.checkNoLowlevelEscape(lst);
+        const n = try self.convert(n0, .l);
+        const result_t = try self.newTemp();
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_list_repeat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = lst.text }, .{ .ty = .l, .text = n.text }, .{ .ty = .l, .text = try self.listEszLit(lst) }, .{ .ty = .w, .text = self.listKindLit(lst) } });
+        try self.releaseIfTemporary(if (l0.heap == .list) b.left.* else b.right.*, lst);
+        return self.freshListValue(lst, result_t);
     }
 
     // list[T]/sınıf içerik karşılaştırması yalnızca `==`/`!=` içindir —

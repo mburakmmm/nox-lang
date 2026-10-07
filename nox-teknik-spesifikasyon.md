@@ -28540,6 +28540,39 @@ IR anlık görüntüsü değişmedi.
 
 **Henüz yok (yol haritası 1.6b):** değer tipi `list[T]`/`dict[...]`, anahtar tipi `float`, `d.items()` (tuple, 1.13).
 
+## 3.267 `list` tam API (v1.150.0)
+
+Eklenenler (Python semantiği; negatif indeksleme bilinçli YOK — `insert` hariç, o Python gibi sıkıştırır):
+`xs.extend(ys)`, `xs.insert(i, v)`, `xs.pop(i)`, `xs.remove(v)`, `xs.index(v)`, `xs.count(v)`, `xs.clear()`, `xs.reverse()`,
+`xs.copy()`, `del xs[i]`, `xs + ys`, `xs * n` / `n * xs`, `sorted(xs)`, `reversed(xs)`.
+
+**Uygulama:**
+- Çalışma zamanı `runtime/collections/list_ops.zig`: `nox_list_copy/concat/repeat/slice` (yeni blok, `kind` ile elemanları retain eder:
+  0 skaler, 1 `str`, 2 düz ARC işaretçisi), `nox_list_reverse`, `nox_list_move_last` (insert için), `nox_list_remove_at`. Liste ham
+  düzeni `append`/`sort` ile aynıdır (16 bayt başlık + paketli elemanlar). `nox_list_slice` dilimleme (roadmap 1.9) için hazır.
+- `extend` **checker'da** `for __nox_ext_N in ys: xs.append(__nox_ext_N)` döngüsüne yeniden yazılır (`call_expand_apply.StmtForMap`,
+  anahtar: çağrının `callee` kutusu) — büyüme/ARC/yeniden-yazma yolları `append`le BİREBİR aynıdır. `ys` ödünç bir ifadeyse
+  (değişken/alan/eleman, `xs`le aynı listeyi gösterebilir) önce `ys.copy()` alınır → `xs.extend(xs)` güvenli. Yalnızca ifade deyimi.
+- `insert`: `i` önce değerlendirilir, `v` `genListAppend` ile eklenir, alıcı yeniden okunur (büyüme işaretçiyi değiştirmiş olabilir),
+  `nox_list_move_last` son elemanı konumuna taşır. Alıcı kısıtı `append`le aynı (değişken ya da `isim.alan[...]`).
+- `remove/index/count`: `emitListFind/emitListCount` (`in` operatörünün tarama döngüsü genelleştirildi; eşitlik `emitValueEq`).
+  `remove` elemanı `releaseValueIfSet` ile serbest bırakır. `pop(i)`/`del xs[i]`: işaretsiz `idx >= len` → `IndexError` (negatif de),
+  eleman `remove_at` ile çıkarılır; `pop` sahipliği çağırana verir, `del` serbest bırakır. `clear` heap elemanları serbest bırakır,
+  `len`i 0 yapar (kapasite korunur).
+- Hata dalları soğuk (`qbeJnzCold`) ve geçici alıcı/argümanları serbest bırakır (`genListPop`un deseni).
+- `sorted`/`reversed` `stdlib/nox/core.nox`ta generic (`copy` + `sort`/`reverse`) — derleyici değişikliği yok. `reversed` bir yineleyici
+  DEĞİL, yeni liste döner.
+- `raise` analizi: bu metodlar çözülemeyen alıcılı metod çağrısı sayıldığından zaten "fırlatabilir + değiştirir" (muhafazakâr).
+
+**Golden:** `list_api_basic` (int/str/float/bool/sınıf/`u8` elemanlar, tüm yöntemler ve hatalar; Python ile birebir doğrulandı, iki
+backend), `list_api_arc_heap_elements` (döngüde str/sınıf/iç içe liste ARC, kendini genişletme, sınıf alanı alıcısı, hata yollarında
+geçici serbest bırakma; sızıntı denetimli); typecheck: `ok_list_api_all_methods`, `err_del_list_index_type`, `err_del_str_target`,
+`err_list_extend_type`, `err_list_extend_as_value`, `err_list_insert_value_type`, `err_list_insert_non_identifier_receiver`,
+`err_list_add_elem_mismatch`, `err_list_remove_elem_type`, `err_list_pop_index_type`; Zig birim testi (`list_ops.zig`).
+`in`/üçlü ifade IR anlık görüntüleri etiket adları değiştiği için yenilendi.
+
+**Henüz yok:** `xs[a:b]` dilimleme (1.9), `list(...)` dönüştürücüsü, negatif indeksleme (bilinçli).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

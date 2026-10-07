@@ -31,6 +31,7 @@ pub const pool_bridge = @import("async_rt/pool_bridge.zig");
 pub const str = @import("str.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
+pub const list_ops = @import("collections/list_ops.zig");
 pub const http_client = @import("stdlib_shims/http_client.zig");
 pub const http_server = @import("stdlib_shims/http_server.zig");
 pub const strings_shim = @import("stdlib_shims/strings.zig");
@@ -83,6 +84,7 @@ comptime {
     _ = str;
     _ = dict;
     _ = list_sort;
+    _ = list_ops;
     _ = http_client;
     _ = http_server;
     _ = strings_shim;

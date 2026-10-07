@@ -220,7 +220,8 @@ test "Faz F.4: kernel_demo.nox GERÇEK bir x86_64 kernel imajına derlenip QEMU'
     // 4 MiB'lik kernel heap'in (`nox_runtime_init_freestanding`nin `.bss`
     // arabelleği) dosya boyutunu ŞİŞİRMEDİĞİNİN (GERÇEKTEN `.bss`e gittiğinin)
     // dolaylı kanıtı.
-    try std.testing.expect(elf_bytes.len < 1024 * 1024);
+    // (v1.150.0: runtime büyüdükçe 1 MiB aşıldı; 4 MiB heap .bss'te değilse zaten >4 MiB olurdu → 2 MiB sınırı aynı kanıtı verir.)
+    try std.testing.expect(elf_bytes.len < 2 * 1024 * 1024);
 
     // (6) GERÇEK QEMU çalıştırması — `isa-debug-exit` (normal çıkış) +
     // `-no-reboot` (triple fault → QEMU sonlanır) + `ChildWatchdog` (20s

@@ -148,6 +148,17 @@ insertion order: `d[k]`, `d[k] = v`, `k in d`, `len(d)`, `d.keys()`, `d.values()
 `d.update(other)`, `d.copy()`, `d.clear()` and the `del d[k]` statement (raises `KeyError`).
 Deleting is O(n).
 
+**Lists** (`list[T]`) have the full Python-style API: `xs.append(v)`, `xs.extend(ys)`,
+`xs.insert(i, v)` (negative/oversized `i` clamps like Python), `xs.pop()`, `xs.pop(i)`,
+`xs.remove(v)`, `del xs[i]`, `xs.clear()`, `xs.index(v)`, `xs.count(v)`, `xs.reverse()`,
+`xs.sort()`, `xs.copy()` (a shallow copy), `xs + ys`, `xs * n` / `n * xs` (`n <= 0` gives an empty
+list), `sorted(xs)` and `reversed(xs)` (both return a **new list**, `reversed` is not a lazy
+iterator). `remove`/`index` raise `ValueError` when the value is missing; `pop(i)`/`del xs[i]` raise
+`IndexError` when `i` is out of range or negative (negative indexing is deliberately not
+supported, except that `insert` clamps like Python). Element equality is `==` (structural for
+classes and nested lists). `append`/`insert`/`extend` need a variable or `name.field` receiver
+(the list may be reallocated), the other methods accept any expression. `xs.extend(xs)` is safe.
+
 **Variable declarations require an explicit type on first assignment**
 (`x: int = 5`); subsequent assignments to the same name don't repeat the
 annotation (`x = 6`).

@@ -311,10 +311,73 @@ test "golden(typecheck): v1.149.0 — del d[k] anahtar tipi uyuşmazsa reddedili
     );
 }
 
-test "golden(typecheck): v1.149.0 — del şimdilik yalnızca dict üzerinde (liste 1.7)" {
+test "golden(typecheck): v1.150.0 — del xs[i]: indeks int olmalı" {
     try expectGolden(
-        @embedFile("typecheck_cases/err_del_list_not_yet.nox"),
-        @embedFile("typecheck_cases/err_del_list_not_yet.expected"),
+        @embedFile("typecheck_cases/err_del_list_index_type.nox"),
+        @embedFile("typecheck_cases/err_del_list_index_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — del yalnızca list/dict hedefi alır" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_del_str_target.nox"),
+        @embedFile("typecheck_cases/err_del_str_target.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — list.extend argümanı aynı list[T] tipinde olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_extend_type.nox"),
+        @embedFile("typecheck_cases/err_list_extend_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — list.insert değeri eleman tipiyle uyuşmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_insert_value_type.nox"),
+        @embedFile("typecheck_cases/err_list_insert_value_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — list.insert alıcısı değişken/alan olmalı (büyüme geri yazması)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_insert_non_identifier_receiver.nox"),
+        @embedFile("typecheck_cases/err_list_insert_non_identifier_receiver.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — list.extend yalnızca ifade deyimidir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_extend_as_value.nox"),
+        @embedFile("typecheck_cases/err_list_extend_as_value.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — list + list eleman tipleri aynı olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_add_elem_mismatch.nox"),
+        @embedFile("typecheck_cases/err_list_add_elem_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — list.remove argümanı eleman tipiyle uyuşmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_remove_elem_type.nox"),
+        @embedFile("typecheck_cases/err_list_remove_elem_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — list.pop indeksi int olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_pop_index_type.nox"),
+        @embedFile("typecheck_cases/err_list_pop_index_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.150.0 — list tam API tip denetimi geçer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_list_api_all_methods.nox"),
+        @embedFile("typecheck_cases/ok_list_api_all_methods.expected"),
     );
 }
 

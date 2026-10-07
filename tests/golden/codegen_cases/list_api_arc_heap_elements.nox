@@ -1,0 +1,105 @@
+class Rec:
+    label: str
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+class Bag:
+    items: list[str]
+    recs: list[Rec]
+    def __init__(self) -> None:
+        self.items = ["seed"]
+        self.recs = [Rec("seed")]
+
+    def churn(self, i: int) -> int:
+        self.items.insert(0, "b" + str(i))
+        self.items.extend(["x" + str(i), "y" + str(i)])
+        self.recs.insert(0, Rec("r" + str(i)))
+        self.recs.extend([Rec("p" + str(i))])
+        n: int = len(self.items) + len(self.recs)
+        if len(self.items) > 6:
+            self.items.remove(self.items[3])
+            del self.items[0]
+            self.items.pop(1)
+        if len(self.recs) > 5:
+            gone: Rec = self.recs.pop(2)
+            n = n + len(gone.label)
+            del self.recs[0]
+        return n
+
+def work(n: int) -> int:
+    acc: int = 0
+    i: int = 0
+    names: list[str] = ["a", "b"]
+    recs: list[Rec] = [Rec("one")]
+    nested: list[list[str]] = [["n0"]]
+    bag: Bag = Bag()
+    while i < n:
+        i = i + 1
+        names.append("s" + str(i))
+        names.insert(1, "i" + str(i))
+        acc = acc + len(names[1]) + names.count("a")
+        cp: list[str] = names.copy()
+        cp.reverse()
+        acc = acc + len(cp[0])
+        both: list[str] = names + cp
+        acc = acc + len(both)
+        rep: list[str] = cp * 2
+        acc = acc + len(rep)
+        if i % 3 == 0:
+            popped: str = names.pop(1)
+            acc = acc + len(popped)
+        if i % 4 == 0:
+            names.remove("a")
+            names.insert(0, "a")
+        if i % 5 == 0:
+            del names[0]
+            names.insert(0, "a")
+        names.extend(names)
+        if len(names) > 40:
+            names.clear()
+            names.append("a")
+            names.append("b")
+        recs.insert(0, Rec("r" + str(i)))
+        recs.extend(recs.copy())
+        if len(recs) > 12:
+            while len(recs) > 3:
+                gone: Rec = recs.pop(len(recs) - 1)
+                acc = acc + len(gone.label)
+        acc = acc + len(recs[0].label)
+        nested.insert(0, ["m" + str(i)])
+        nested.extend(nested.copy())
+        if len(nested) > 8:
+            nested.clear()
+            nested.append(["z"])
+        acc = acc + len(nested[0][0])
+        acc = acc + bag.churn(i)
+        tmp_len: int = len((names + cp).copy())
+        acc = acc + tmp_len
+        if i == 2000:
+            break
+    return acc + len(names) + len(recs) + len(nested) + len(bag.items) + len(bag.recs)
+
+print(work(50))
+print(work(1500))
+
+# hata yolunda geçici alıcı/argüman serbest bırakılır
+def failing(i: int) -> int:
+    try:
+        ["a" + str(i), "b"].remove("zz" + str(i))
+    except ValueError:
+        return 1
+    return 0
+
+def failing_pop(i: int) -> int:
+    try:
+        x: str = ["a" + str(i)].pop(5)
+        return len(x)
+    except IndexError:
+        return 2
+
+t: int = 0
+k: int = 0
+while k < 3000:
+    k = k + 1
+    t = t + failing(k) + failing_pop(k)
+print(t)

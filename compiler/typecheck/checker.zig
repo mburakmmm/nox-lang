@@ -648,6 +648,9 @@ pub const Checker = struct {
     /// v1.148.0: `for` yeniden yazımları (anahtar: gövde dilimi adresi). Bkz. `call_expand_apply.ForRewrite`.
     for_rewrites: call_expand_apply.ForMap = .empty,
     for_hoist_counter: u32 = 0,
+    /// v1.150.0: `xs.extend(ys)` → `for`+`append` yeniden yazımı (bkz. `call_expand_apply.StmtForMap`).
+    stmt_for_rewrites: call_expand_apply.StmtForMap = .empty,
+    extend_counter: u32 = 0,
     /// v1.147.0: çağrı sitesi → genişletilmiş (tam konumsal) argüman listesi. Bkz. `call_expand_apply.zig`.
     call_expansions: call_expand_apply.Map = .empty,
     /// v1.144.0: post-spawn akış analizi (`walkPostSpawnCallerMutation`) için `break`/`continue` noktalarındaki
@@ -1923,8 +1926,8 @@ pub const Checker = struct {
 
     /// Checker bitince, kaydedilen genişletmeleri AST'ye yazar (bkz. `call_expand_apply.zig`).
     fn applyCallExpansions(self: *Checker, module: ast.Module) void {
-        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0) return;
-        const cx: call_expand_apply.Ctx = .{ .calls = &self.call_expansions, .fors = &self.for_rewrites };
+        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0) return;
+        const cx: call_expand_apply.Ctx = .{ .calls = &self.call_expansions, .fors = &self.for_rewrites, .stmt_fors = &self.stmt_for_rewrites };
         call_expand_apply.stmts(module.body, &cx);
         for (self.instantiations.items) |fd| call_expand_apply.stmts(fd.body, &cx);
         for (self.class_instantiations.items) |cd| for (cd.methods) |m| call_expand_apply.stmts(m.body, &cx);
@@ -4847,7 +4850,10 @@ pub const Checker = struct {
         self.current_line = stmt.line;
         self.current_span = stmt.span;
         switch (stmt.kind) {
-            .expr_stmt => |e| _ = try self.checkExpr(ctx, e),
+            .expr_stmt => |e| {
+                if (try self.tryCheckExtendStmt(ctx, e)) return;
+                _ = try self.checkExpr(ctx, e);
+            },
             .var_decl => |v| {
                 const declared = try self.typeExprToType(v.type_expr);
                 const value_t = try self.checkExprExpected(ctx, v.value, declared);
@@ -4978,7 +4984,8 @@ pub const Checker = struct {
                 const idx_t = try self.checkExpr(ctx, e.index.index.*);
                 switch (obj_t) {
                     .dict => |d| if (!types.eql(idx_t, d.key.*)) return self.fail(error.TypeMismatch, "'del' anahtarı dict'in anahtar tipiyle uyuşmuyor", .{}),
-                    else => return self.fail(error.TypeMismatch, "'del' şimdilik yalnızca dict[anahtar] üzerinde çalışır", .{}),
+                    .list => if (idx_t != .int) return self.fail(error.TypeMismatch, "'del' liste indeksi 'int' olmalıdır", .{}),
+                    else => return self.fail(error.TypeMismatch, "'del' yalnızca list[i] ya da dict[anahtar] üzerinde çalışır", .{}),
                 }
             },
             .try_stmt => |t| try self.checkTry(ctx, t),
@@ -5861,9 +5868,20 @@ pub const Checker = struct {
             // aşağıdaki `numericPromote`ye düşülür ve orada reddedilir.
             .add => blk: {
                 if (l == .str and r == .str) break :blk .str;
+                // v1.150.0: `list[T] + list[T]` — yeni bir liste (eleman tipleri birebir aynı olmalı).
+                if (l == .list and r == .list) {
+                    if (!types.eql(l, r)) return self.fail(error.TypeMismatch, "'+' iki liste için eleman tipleri aynı olmalıdır", .{});
+                    break :blk l;
+                }
                 break :blk try self.numericPromote(l, r);
             },
-            .sub, .mul => try self.numericPromote(l, r),
+            .sub => try self.numericPromote(l, r),
+            .mul => blk: {
+                // v1.150.0: `list[T] * int` / `int * list[T]` — yeni bir liste (n <= 0 → boş liste).
+                if (l == .list and r == .int) break :blk l;
+                if (l == .int and r == .list) break :blk r;
+                break :blk try self.numericPromote(l, r);
+            },
             // v2.0 madde 4: `%`/`//`/`**` sabit-genişlikli tamsayı
             // kind'leri İçİn HENÜZ DESTEKLENMİYOR — codegen'in `genMod`/
             // `genFloorDiv`/`genPow`u ("rem"/"div"i HER ZAMAN `.l` SANIP
@@ -7168,23 +7186,7 @@ pub const Checker = struct {
                         // geçici alıcılar (`get().alan.append`) HÂLÂ
                         // reddedilir: büyüme-geri-yazması + geçici-release
                         // sıralaması ayrı bir risk kategorisidir.
-                        const recv_ok = switch (a.obj.*) {
-                            .identifier => true,
-                            .attribute => |fa| blk: {
-                                // Zincirleme alan erişimi (`a.b.c.append`):
-                                // kök BİR İSİM olmalı ve zincirdeki HER
-                                // ara değer bir sınıf örneği olmalı —
-                                // çağrı/indeksleme içeren (geçici üreten)
-                                // alıcılar HÂLÂ reddedilir.
-                                if (!isPlainFieldChain(fa.obj.*)) break :blk false;
-                                const base_t = try self.checkExpr(ctx, fa.obj.*);
-                                break :blk base_t == .class;
-                            },
-                            else => false,
-                        };
-                        if (!recv_ok) {
-                            return self.fail(error.TypeMismatch, "'append' yalnızca bir değişken ya da 'isim.alan[.alan...]' üzerinde çağrılabilir (ör. 'xs.append(v)', 'self.items.append(v)')", .{});
-                        }
+                        try self.checkGrowableListRecv(ctx, a, "append", "xs.append(v)");
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' tam olarak 1 argüman alır", .{});
                         const vt = try self.checkExpr(ctx, c.args[0]);
                         if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "'append' argümanı listenin eleman tipiyle uyuşmuyor", .{});
@@ -7209,18 +7211,47 @@ pub const Checker = struct {
                         }
                         return .none;
                     }
-                    // `list[T].pop()`: `.sort()` GİBİ alıcı keyfi bir ifade
-                    // OLABİLİR (`self.items.pop()` doğrudan geçerli) —
-                    // `.append`in AKSİNE `pop` HİÇBİR ZAMAN büyümez/yeniden
-                    // ayırmaz (yalnızca `len` başlığını AYNI blokta bir
-                    // AZALTIR, bkz. `codegen_qbe/calls.zig`nin `genListPop`ı),
-                    // bu yüzden alıcının KENDİ SLOTUNA geri yazma GEREKMEZ.
-                    // Boş listede `IndexError` (bkz. `core.nox`) fırlatılır.
+                    // `list[T].pop()` / `pop(i)`: `.sort()` GİBİ alıcı keyfi bir ifade OLABİLİR — `.append`in AKSİNE
+                    // `pop` HİÇBİR ZAMAN büyümez/yeniden ayırmaz (yalnızca `len` başlığını AYNI blokta azaltır, bkz.
+                    // `codegen_qbe/calls.zig`nin `genListPop`ı), alıcının SLOTUNA geri yazma GEREKMEZ. Boş listede ya da
+                    // aralık dışı indekste `IndexError` (bkz. `core.nox`) fırlatılır. v1.150.0: isteğe bağlı `int` indeksi.
                     if (std.mem.eql(u8, a.attr, "pop")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'pop' hiç argüman almaz", .{});
+                        if (c.args.len > 1) return self.fail(error.ArgumentCountMismatch, "'pop' 0 ya da 1 (indeks) argüman alır", .{});
+                        if (c.args.len == 1) {
+                            const it = try self.checkExpr(ctx, c.args[0]);
+                            if (it != .int) return self.fail(error.TypeMismatch, "'pop' indeksi 'int' olmalıdır", .{});
+                        }
                         return obj_t.list.*;
                     }
-                    return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (yalnızca append/sort/pop)", .{a.attr});
+                    // v1.150.0 (bkz. nox-teknik-spesifikasyon.md §3.267): `reverse`/`clear`/`copy`/`insert`/`remove`/`index`/`count`
+                    // (`extend` yalnızca ifade deyimi olarak — bkz. `tryCheckExtendStmt`).
+                    if (std.mem.eql(u8, a.attr, "reverse") or std.mem.eql(u8, a.attr, "clear")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'{s}' hiç argüman almaz", .{a.attr});
+                        return .none;
+                    }
+                    if (std.mem.eql(u8, a.attr, "copy")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'copy' hiç argüman almaz", .{});
+                        return obj_t;
+                    }
+                    if (std.mem.eql(u8, a.attr, "insert")) {
+                        try self.checkGrowableListRecv(ctx, a, "insert", "xs.insert(i, v)");
+                        if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'insert' tam olarak 2 argüman alır (indeks, değer)", .{});
+                        const it = try self.checkExpr(ctx, c.args[0]);
+                        if (it != .int) return self.fail(error.TypeMismatch, "'insert' indeksi 'int' olmalıdır", .{});
+                        const vt = try self.checkExpr(ctx, c.args[1]);
+                        if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "'insert' değeri listenin eleman tipiyle uyuşmuyor", .{});
+                        return .none;
+                    }
+                    if (std.mem.eql(u8, a.attr, "extend")) {
+                        return self.fail(error.TypeMismatch, "'extend' yalnızca bir ifade deyimi olarak kullanılabilir (xs.extend(ys)); değer üretmez", .{});
+                    }
+                    if (std.mem.eql(u8, a.attr, "remove") or std.mem.eql(u8, a.attr, "index") or std.mem.eql(u8, a.attr, "count")) {
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' tam olarak 1 argüman alır", .{a.attr});
+                        const xt = try self.checkExpr(ctx, c.args[0]);
+                        try self.requireListElemComparable(obj_t.list.*, xt, a.attr);
+                        return if (std.mem.eql(u8, a.attr, "remove")) .none else .int;
+                    }
+                    return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (append/extend/insert/pop/remove/clear/index/count/sort/reverse/copy)", .{a.attr});
                 }
                 const class_name = switch (obj_t) {
                     .class => |n| n,
@@ -7269,6 +7300,78 @@ pub const Checker = struct {
             },
             else => return self.fail(error.NotCallable, "bu ifade çağrılabilir değil", .{}),
         }
+    }
+
+    /// v1.150.0: `append`/`insert`/`extend` listeyi BÜYÜTEBİLİR — büyüme sonrası yeni işaretçinin alıcının KENDİ slotuna
+    /// geri yazılması gerektiğinden alıcı yalnızca bir değişken ya da `isim.alan[.alan...]` olabilir (bkz. `append`in belge notu).
+    fn checkGrowableListRecv(self: *Checker, ctx: *FnCtx, a: ast.Attribute, what: []const u8, example: []const u8) TypeError!void {
+        const recv_ok = switch (a.obj.*) {
+            .identifier => true,
+            .attribute => |fa| blk: {
+                if (!isPlainFieldChain(fa.obj.*)) break :blk false;
+                const base_t = try self.checkExpr(ctx, fa.obj.*);
+                break :blk base_t == .class;
+            },
+            else => false,
+        };
+        if (!recv_ok) {
+            return self.fail(error.TypeMismatch, "'{s}' yalnızca bir değişken ya da 'isim.alan[.alan...]' üzerinde çağrılabilir (ör. '{s}', 'self.items.append(v)')", .{ what, example });
+        }
+    }
+
+    /// v1.150.0: `list.remove/index/count(x)` — `x`, `==`in desteklediği eleman tipleriyle (codegen `emitValueEq`) karşılaştırılabilir olmalı.
+    fn requireListElemComparable(self: *Checker, et: Type, xt: Type, method: []const u8) TypeError!void {
+        switch (et) {
+            .int, .float, .boolean, .str, .fixed_int, .class, .list => {},
+            else => return self.fail(error.TypeMismatch, "'{s}' için liste eleman tipi desteklenmiyor (int/float/bool/str/sınıf/list olmalı)", .{method}),
+        }
+        _ = try self.requireSameFixedIntOrNone(xt, et);
+        if (!((types.isNumeric(xt) and types.isNumeric(et)) or types.eql(xt, et))) {
+            return self.fail(error.TypeMismatch, "'{s}' argümanı liste eleman tipiyle uyuşmuyor", .{method});
+        }
+    }
+
+    /// v1.150.0: `xs.extend(ys)` ifade deyimi — `for __nox_ext_N in ys: xs.append(__nox_ext_N)` döngüsüne yeniden yazılır (bkz.
+    /// `call_expand_apply.StmtForMap`). `ys` ödünç bir ifade ise (değişken/alan/eleman: `xs`le aynı listeyi gösterebilir) önce
+    /// `ys.copy()` ile anlık görüntüsü alınır — kendini genişletme (`xs.extend(xs)`) sonsuz döngü/bayat işaretçi üretmez. Dönüş: bu
+    /// deyim bir liste `extend`i olarak işlendi mi.
+    fn tryCheckExtendStmt(self: *Checker, ctx: *FnCtx, e: ast.Expr) TypeError!bool {
+        if (e != .call) return false;
+        const c = e.call;
+        if (c.callee.* != .attribute) return false;
+        const a = c.callee.attribute;
+        if (!std.mem.eql(u8, a.attr, "extend")) return false;
+        const obj_t = try self.checkExpr(ctx, a.obj.*);
+        if (obj_t != .list) return false;
+        try self.checkGrowableListRecv(ctx, a, "extend", "xs.extend(ys)");
+        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'extend' tam olarak 1 argüman alır", .{});
+        const ot = try self.checkExpr(ctx, c.args[0]);
+        if (!types.eql(ot, obj_t)) return self.fail(error.TypeMismatch, "'extend' argümanı aynı list[T] tipinde olmalıdır", .{});
+
+        self.extend_counter += 1;
+        const var_name = try std.fmt.allocPrint(self.allocator, "__nox_ext_{d}", .{self.extend_counter});
+        const fresh = switch (c.args[0]) {
+            .call, .list_lit, .binary, .ternary => true,
+            else => false,
+        };
+        var iterable: ast.Expr = c.args[0];
+        if (!fresh) {
+            const src = try self.allocator.create(ast.Expr);
+            src.* = c.args[0];
+            const copy_callee = try self.allocator.create(ast.Expr);
+            copy_callee.* = .{ .attribute = .{ .obj = src, .attr = "copy" } };
+            iterable = .{ .call = .{ .callee = copy_callee, .args = &.{} } };
+        }
+        const arg_slot = try self.allocator.alloc(ast.Expr, 1);
+        arg_slot[0] = .{ .identifier = var_name };
+        const append_callee = try self.allocator.create(ast.Expr);
+        append_callee.* = .{ .attribute = .{ .obj = a.obj, .attr = "append" } };
+        const body = try self.allocator.alloc(ast.Stmt, 1);
+        body[0] = .{ .kind = .{ .expr_stmt = .{ .call = .{ .callee = append_callee, .args = arg_slot } } }, .line = self.current_line, .span = self.current_span };
+        const fs: ast.ForStmt = .{ .var_name = var_name, .iterable = iterable, .body = body };
+        try self.checkStmt(ctx, .{ .kind = .{ .for_stmt = fs }, .line = self.current_line, .span = self.current_span });
+        try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(c.callee), fs);
+        return true;
     }
 
     fn checkArgs(self: *Checker, ctx: *FnCtx, params: []const Type, args: []const ast.Expr, name: []const u8) TypeError!void {

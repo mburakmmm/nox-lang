@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.150.0]
+
+### Eklendi
+
+- **`list` tam API:** `extend`, `insert(i, v)`, `pop(i)`, `remove`, `index`, `count`, `clear`, `reverse`, `copy`, `del xs[i]`,
+  `list + list`, `list * n` / `n * list`, `sorted(xs)`, `reversed(xs)` (QBE ve LLVM). Spec §3.267.
+- `in` ile `list.index/remove/count` aynı doğrusal tarama yolunu (`emitListFind`) paylaşır; heap-yönetimli elemanlar (str/sınıf/
+  iç içe liste) doğru retain/release edilir; paketli (`u8`/`i32`/`bool`) listeler çalışır.
+
+### Değişti
+
+- `del xs[i]` artık derleme hatası değil (v1.149.0'da "liste yol haritası 1.7" idi).
+- `kernel_boot_x86_64_test`: freestanding ELF boyut sınırı 1 MiB → 2 MiB (runtime büyüdü; sınırın amacı 4 MiB heap'in `.bss`te
+  olduğunu kanıtlamak, hâlâ geçerli).
+
 ## [1.149.0]
 
 ### Eklendi

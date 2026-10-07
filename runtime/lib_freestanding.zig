@@ -39,6 +39,7 @@ pub const chase_lev_deque = @import("async_rt/chase_lev_deque.zig");
 pub const str = @import("str.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
+pub const list_ops = @import("collections/list_ops.zig");
 /// v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.math`
 /// ARTIK Zig'in KENDİ `std.math`ı üzerine kurulu (ESKİDEN bare `extern def
 /// ... from "m"`, libm'e DOĞRUDAN bağlıydı — freestanding'de HİÇBİR libc/
@@ -451,6 +452,7 @@ comptime {
     _ = str;
     _ = dict;
     _ = list_sort;
+    _ = list_ops;
     _ = math_shim;
     _ = time_shim;
 }

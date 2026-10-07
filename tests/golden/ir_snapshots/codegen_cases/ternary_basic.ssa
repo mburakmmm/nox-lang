@@ -2415,31 +2415,31 @@ export function w $main(w %argc, l %argv) {
     %t281 =l add $str24, 16
     %t282 =l loadl %t14
     storel 0, %t283
-    storel 0, %t284
+    storel -1, %t284
     %t285 =l loadl %t282
-    jmp @in_cond159
-@in_cond159
+    jmp @find_cond159
+@find_cond159
     %t286 =l loadl %t283
     %t287 =w csltl %t286, %t285
-    jnz %t287, @in_body160, @in_done163
-@in_body160
+    jnz %t287, @find_body160, @find_done163
+@find_body160
     %t288 =l mul %t286, 8
     %t289 =l add %t288, 16
     %t290 =l add %t282, %t289
     %t291 =l loadl %t290
     %t292 =w call $strcmp(l %t291, l %t281)
     %t293 =w ceqw %t292, 0
-    jnz %t293, @in_hit162, @in_next161
-@in_hit162
-    storel 1, %t284
-    jmp @in_done163
-@in_next161
+    jnz %t293, @find_hit162, @find_next161
+@find_hit162
+    storel %t286, %t284
+    jmp @find_done163
+@find_next161
     %t294 =l add %t286, 1
     storel %t294, %t283
-    jmp @in_cond159
-@in_done163
+    jmp @find_cond159
+@find_done163
     %t295 =l loadl %t284
-    %t296 =w cnel %t295, 0
+    %t296 =w cnel %t295, -1
     jnz %t296, @tern_then164, @tern_else165
 @tern_then164
     %t297 =l add $str25, 16
