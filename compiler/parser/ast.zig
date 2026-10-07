@@ -83,6 +83,9 @@ pub const BinaryOp = enum {
     bit_xor,
     shl,
     shr,
+    /// v1.145.0: `a in b` / `a not in b` (list/dict/str üyelik testi).
+    in_,
+    not_in,
 };
 
 pub const Expr = union(enum) {

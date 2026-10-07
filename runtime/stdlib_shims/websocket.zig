@@ -100,7 +100,6 @@ const WsConn = struct {
     }
 };
 
-
 fn connectInner(conn: *WsConn, host: []const u8, port: i64, path: []const u8, use_tls: bool) !void {
     const io = conn.io;
     var host_name = try std.Io.net.HostName.init(host);

@@ -28392,6 +28392,29 @@ corpus. Hepsi QBE ve `--release`te aynı çıktıyı verir.
 **Bilinen sınırlama:** `if x == None: break` sonrası `x` daraltılmaz (erken-`return` ile de daraltılmıyor; ayrı madde,
 roadmap 1.12).
 
+## 3.262 `in` / `not in` (v1.145.0)
+
+`a in b` ve `a not in b`, `==`/`<` ile aynı karşılaştırma önceliğinde ikili operatörler (`ast.BinaryOp.in_/not_in`);
+`not x in y` = `not (x in y)`. `for x in ...` başlığı hedefi doğrudan tanımlayıcı olarak tükettiğinden çakışma yok.
+Parser `kw_not` + `kw_in` ikilisini yalnızca karşılaştırma konumunda `not_in` yapar.
+
+**Tipler (checker):** `list[T]` — sol işlenen eleman tipine `==` ile aynı kuralla uyar (sayısal karışım serbest, sabit-
+genişlikli tamsayıda aynı kind), eleman tipi int/float/bool/str/fixed_int/sınıf/list olmalı (codegen eşitliği bunlar için
+var); `dict[K, V]` — sol işlenen anahtar tipi; `str` — sol işlenen `str` (alt-dize). Diğer sağ işlenen tipleri derleme hatası.
+Sonuç `bool`.
+
+**Kod üretimi (`genIn`, her iki backend):** sol işlenen önce, sağ sonra değerlendirilir. `str`: `$nox_str_contains`
+(runtime/str.zig; `nox.strings.index_of` ile aynı SIMD ilk-bayt araması `fastIndexOf` buraya taşındı; boş needle → 1).
+`dict`: `$nox_dict_contains` (`d.contains(k)` ile aynı). `list`: doğrusal döngü; eleman eşitliği `emitValueEq` ile
+`genBinary`nin `==` yollarının aynısıdır (`strcmp`, `$Class_eq`, liste `_eq`, skaler `ceq*`). Geçici işlenenler
+`releaseIfTemporary` ile serbest bırakılır. Bilinen sınırlama: `in` yalnızca yerleşik list/dict/str için (kullanıcı
+sınıfları için `__contains__` yok; `nox.collections.Set` için `.contains()` kullanılır).
+
+Golden: `in_operator_list_dict_str` (24+ durum: int/str/float/sınıf/iç içe liste, boş liste, dict str/int anahtar, alt-dize,
+boş alt-dize, `and`/`not`/döngü/`break`/fonksiyon içinde kullanım); typecheck `ok_in_operator`, `err_in_unsupported_rhs`,
+`err_in_list_elem_mismatch`, `err_in_dict_key_mismatch`; fmt idempotans+öncelik; tree-sitter corpus; Zig birim testi
+`nox_str_contains`. QBE ve `--release` aynı çıktı.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

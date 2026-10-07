@@ -112,7 +112,6 @@ export fn nox_exception_take(rt: ?*anyopaque) ?*anyopaque {
 /// İTİBAREN `dispatch_registry`nin (bkz. onun modül üstü notu) program-
 /// başlangıcında BİR KEZ kaydedilen, statik tablosu ÜZERİNDEN erişilir
 /// (ÖNCEDEN `dlsym`/`GetProcAddress` İLE ÇALIŞMA ZAMANINDA aranıyordu).
-
 /// `main`'in kendi gövdesinden hiçbir `except` tarafından yakalanmamış bir
 /// istisna sızarsa çağrılır (codegen bunu yalnızca `main` bağlamında,
 /// `current_catch_label` boşken kullanır — bkz. codegen_qbe/codegen.zig).

@@ -5622,6 +5622,31 @@ pub const Checker = struct {
                 }
                 break :blk .boolean;
             },
+            // v1.145.0: `a in b` / `a not in b` — `list[T]` (eleman eşitliği), `dict[K, V]` (anahtar), `str` (alt-dize).
+            .in_, .not_in => blk: {
+                switch (r) {
+                    .list => |elem| {
+                        const et = elem.*;
+                        // Eleman eşitliği `==`in desteklediği tiplerle sınırlı (codegen `emitValueEq`).
+                        switch (et) {
+                            .int, .float, .boolean, .str, .fixed_int, .class, .list => {},
+                            else => return self.fail(error.TypeMismatch, "'in' için liste eleman tipi desteklenmiyor (int/float/bool/str/sınıf/list olmalı)", .{}),
+                        }
+                        _ = try self.requireSameFixedIntOrNone(l, et);
+                        if (!((types.isNumeric(l) and types.isNumeric(et)) or types.eql(l, et))) {
+                            return self.fail(error.TypeMismatch, "'in' sol işleneni liste eleman tipiyle uyuşmuyor", .{});
+                        }
+                    },
+                    .dict => |d| {
+                        if (!types.eql(l, d.key.*)) return self.fail(error.TypeMismatch, "'in' sol işleneni dict anahtar tipiyle uyuşmuyor", .{});
+                    },
+                    .str => {
+                        if (l != .str) return self.fail(error.TypeMismatch, "'in' ile bir str içinde yalnızca str aranabilir", .{});
+                    },
+                    else => return self.fail(error.TypeMismatch, "'in'/'not in' yalnızca list, dict ve str üzerinde kullanılabilir", .{}),
+                }
+                break :blk .boolean;
+            },
             // v3 madde 2 (bitwise operatörler, bkz. nox-teknik-
             // spesifikasyon.md ilgili bölüm): **DÜZELTME (KODLAMA
             // SIRASINDA GERÇEKTEN bulunan bir codegen tutarsızlığı

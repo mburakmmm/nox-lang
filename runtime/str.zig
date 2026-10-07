@@ -119,6 +119,28 @@ pub fn nox_str_alloc_buf(rt: ?*anyopaque, len: usize) ?[*]u8 {
     return data;
 }
 
+/// `needle`ın `haystack` içindeki ilk konumu (SIMD ilk-bayt araması + doğrulama; `nox.strings.index_of` ile
+/// `in` operatörü paylaşır). `needle` BOŞ OLMAMALI. En kötü durum (needle'ın ilk baytı çok sık) O(n×m).
+pub fn fastIndexOf(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len > haystack.len) return null;
+    const first = needle[0];
+    var start: usize = 0;
+    while (std.mem.indexOfScalarPos(u8, haystack, start, first)) |pos| {
+        if (pos + needle.len > haystack.len) return null;
+        if (std.mem.eql(u8, haystack[pos..][0..needle.len], needle)) return pos;
+        start = pos + 1;
+    }
+    return null;
+}
+
+/// `needle in haystack` (v1.145.0): alt-dize varsa 1, yoksa 0. Boş `needle` HER ZAMAN 1 (Python: `"" in s`).
+pub export fn nox_str_contains(haystack: ?[*:0]const u8, needle: ?[*:0]const u8) i64 {
+    const h = nox_str_slice(haystack orelse return 0);
+    const n = nox_str_slice(needle orelse return 0);
+    if (n.len == 0) return 1;
+    return if (fastIndexOf(h, n) != null) 1 else 0;
+}
+
 /// O(1) — paketlenmiş başlıktan HAM BAYT uzunluğunu okur (artık `strlen`
 /// TARAMASI YOK).
 pub fn strByteLen(str_ptr: [*:0]const u8) u64 {
@@ -311,6 +333,29 @@ pub export fn nox_str_release(rt: ?*anyopaque, ptr: ?[*:0]u8) void {
 pub export fn nox_str_free_now(rt: ?*anyopaque, ptr: [*:0]u8) void {
     const arc_ptr = strArcPtr(ptr);
     arc.nox_rc_free_payload(rt, arc_ptr, abi_layout.strPayloadSize(strHeaderField(ptr).*));
+}
+
+test "nox_str_contains alt-dize arar (boş needle her zaman 1)" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const hay = allocStr(rt, "hello world", ASCII_UNKNOWN) orelse return error.AllocFailed;
+    defer nox_str_release(rt, hay);
+    const yes = allocStr(rt, "lo w", ASCII_UNKNOWN) orelse return error.AllocFailed;
+    defer nox_str_release(rt, yes);
+    const no = allocStr(rt, "xyz", ASCII_UNKNOWN) orelse return error.AllocFailed;
+    defer nox_str_release(rt, no);
+    const longer = allocStr(rt, "hello world!", ASCII_UNKNOWN) orelse return error.AllocFailed;
+    defer nox_str_release(rt, longer);
+    const empty = allocStr(rt, "", ASCII_UNKNOWN) orelse return error.AllocFailed;
+    defer nox_str_release(rt, empty);
+
+    try std.testing.expectEqual(@as(i64, 1), nox_str_contains(hay, yes));
+    try std.testing.expectEqual(@as(i64, 0), nox_str_contains(hay, no));
+    try std.testing.expectEqual(@as(i64, 0), nox_str_contains(hay, longer));
+    try std.testing.expectEqual(@as(i64, 1), nox_str_contains(hay, empty));
+    try std.testing.expectEqual(@as(i64, 1), nox_str_contains(empty, empty));
 }
 
 test "nox_str_alloc_buf yazılabilir, uzunluk başlıklı, sıfırla sonlanan dize verir" {

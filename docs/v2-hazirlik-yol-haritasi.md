@@ -14,7 +14,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 2026-10-07'de ~50 özellik `noxc check` ile denendi; aşağıdakiler REDDEDİLİYOR. Sıra, öneri sırasıdır.
 
 - [x] **1.1 `break` / `continue`** — v1.144.0 (spec §3.261). Tasarım notları aşağıda.
-- [ ] **1.2 `in` / `not in`** (liste, dict anahtarı, dize alt-dizesi).
+- [x] **1.2 `in` / `not in`** — v1.145.0 (spec §3.262). Kullanıcı sınıfları için `__contains__` yok (ayrı karar).
 - [ ] **1.3 Üçlü ifade** `a if cond else b`.
 - [ ] **1.4 Varsayılan argümanlar + keyword argümanlar** (`def f(a: int, b: int = 2)`, `f(b=1, a=3)`).
 - [ ] **1.5 dict: `.get(k, default)`, `for k in d`, `.items()`**; **list: `insert`/`extend`/`reverse`/`remove`/`index`**.

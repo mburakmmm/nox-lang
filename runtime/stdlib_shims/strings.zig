@@ -287,17 +287,7 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
 /// üretmediğinden (`int` döner) `rt`/`with_rt` GEREKMEZ. Boş `needle`
 /// (v1 sözleşmesi, `strings_search.expected` golden testiyle SABİTLENMİŞ)
 /// `0` döner.
-fn fastIndexOf(haystack: []const u8, needle: []const u8) ?usize {
-    if (needle.len > haystack.len) return null;
-    const first = needle[0];
-    var start: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, haystack, start, first)) |pos| {
-        if (pos + needle.len > haystack.len) return null;
-        if (std.mem.eql(u8, haystack[pos..][0..needle.len], needle)) return pos;
-        start = pos + 1;
-    }
-    return null;
-}
+const fastIndexOf = str_mod.fastIndexOf;
 
 export fn nox_strings_index_of_raw(s: ?[*:0]const u8, needle: ?[*:0]const u8) callconv(.c) i64 {
     const s_slice = str_mod.nox_str_slice(s orelse return -1);

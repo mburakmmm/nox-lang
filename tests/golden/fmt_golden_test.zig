@@ -43,6 +43,25 @@ test "fmt: gerekli parens KORUNUR, gereksiz parens ATILIR (precedence)" {
     }
 }
 
+test "fmt: v1.145.0 — in/not in İDEMPOTENT round-trip ve öncelik" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "y: bool = a in b\n", .out = "y: bool = a in b\n" },
+        .{ .in = "y: bool = a not in b\n", .out = "y: bool = a not in b\n" },
+        .{ .in = "y: bool = (a in b) and (c not in d)\n", .out = "y: bool = a in b and c not in d\n" },
+        .{ .in = "y: bool = not (a in b)\n", .out = "y: bool = not a in b\n" },
+        .{ .in = "y: bool = (a + 1) in b\n", .out = "y: bool = a + 1 in b\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}
+
 test "fmt: v1.144.0 — break/continue İDEMPOTENT round-trip (girinti korunur)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

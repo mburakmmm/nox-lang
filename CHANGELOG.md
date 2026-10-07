@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.145.0]
+
+### Eklendi
+
+- **`in` / `not in`** operatörleri: `x in list[T]` (eleman eşitliği), `k in dict` (anahtar), `s in str` (alt-dize);
+  QBE ve LLVM. Çekirdek runtime'a `nox_str_contains` eklendi. Spec §3.262.
+
 ## [1.144.0]
 
 ### Eklendi

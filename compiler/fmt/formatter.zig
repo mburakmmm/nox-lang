@@ -66,7 +66,7 @@ fn binPrec(op: ast.BinaryOp) u8 {
     return switch (op) {
         .or_ => 1,
         .and_ => 2,
-        .eq, .ne, .lt, .le, .gt, .ge => 4,
+        .eq, .ne, .lt, .le, .gt, .ge, .in_, .not_in => 4,
         .bit_or => 5,
         .bit_xor => 6,
         .bit_and => 7,
@@ -106,6 +106,8 @@ fn binOpStr(op: ast.BinaryOp) []const u8 {
         .bit_xor => "^",
         .shl => "<<",
         .shr => ">>",
+        .in_ => "in",
+        .not_in => "not in",
     };
 }
 

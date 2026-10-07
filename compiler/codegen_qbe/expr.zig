@@ -1331,6 +1331,122 @@ pub fn genStrCompare(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value) Codeg
     return .{ .text = result, .qtype = .w };
 }
 
+/// İki aynı-tipli değerin eşitliği (`w` 0/1 temp metni): `genBinary`nin `==` dallarıyla AYNI yollar —
+/// `str` (`strcmp`), `class`/`list` (`$X_eq`), skaler (ortak tipe `convert` + `ceq*`). `genIn` liste elemanlarını
+/// aranan değerle karşılaştırmak için kullanır.
+fn emitValueEq(self: *Codegen, l0: Value, r0: Value) CodegenError![]const u8 {
+    if (l0.heap == .str and r0.heap == .str) return (try self.genStrCompare(.eq, l0, r0)).text;
+    if ((l0.heap == .list or l0.heap == .class) and r0.heap == l0.heap) {
+        const t = try self.newTemp();
+        if (l0.heap == .class) {
+            const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{l0.class_name.?});
+            try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
+        } else {
+            const fn_name = try self.eqFnNameForList(l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str);
+            const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{fn_name});
+            try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
+        }
+        return t;
+    }
+    if (l0.heap != .none or r0.heap != .none) return error.Unsupported;
+    const common: QbeType = if (l0.qtype == .d or r0.qtype == .d) .d else if (l0.qtype == .w or r0.qtype == .w) .w else .l;
+    const l = try self.convert(l0, common);
+    const r = try self.convert(r0, common);
+    return (try self.emitCmp(.eq, l, r, common)).text;
+}
+
+/// v1.145.0: `a in b` / `a not in b`. Sol işlenen ÖNCE, sonra sağ işlenen değerlendirilir. `str` içinde alt-dize
+/// (`$nox_str_contains`), `dict`te anahtar (`$nox_dict_contains`, `d.contains(k)` ile aynı), `list[T]`de eleman eşitliği
+/// (doğrusal tarama; eşitlik `==` ile aynı yollar, bkz. `emitValueEq`). Sonuç `w` (0/1); `not in` sonucu tersler.
+pub fn genIn(self: *Codegen, b: ast.Binary) CodegenError!Value {
+    const x = try self.genExpr(b.left.*);
+    const coll = try self.genExpr(b.right.*);
+    try self.checkNoLowlevelEscape(x);
+    try self.checkNoLowlevelEscape(coll);
+
+    var found: []const u8 = undefined;
+    switch (coll.heap) {
+        .str => {
+            const t = try self.newTemp();
+            try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_str_contains", &.{ .{ .ty = .l, .text = coll.text }, .{ .ty = .l, .text = x.text } });
+            const w = try self.newTemp();
+            try self.qbeOp2Imm(w, .w, "cnel", t, 0);
+            found = w;
+        },
+        .dict => {
+            const dinfo = coll.dict_info orelse return error.Unsupported;
+            const key_payload = try self.toPayload(x);
+            const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+            const t = try self.newTemp();
+            try self.qbeCall(.{ .name = t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = coll.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+            found = t;
+        },
+        .list => {
+            const idx_slot = try self.newTemp();
+            try self.qbeAlloc(idx_slot, .eight, 8);
+            const res_slot = try self.newTemp();
+            try self.qbeAlloc(res_slot, .eight, 8);
+            try self.qbeStoreImmL(0, idx_slot);
+            try self.qbeStoreImmL(0, res_slot);
+            const len_t = try self.newTemp();
+            try self.qbeLoadL(len_t, coll.text);
+
+            const cond_label = try self.newLabel("in_cond");
+            const body_label = try self.newLabel("in_body");
+            const next_label = try self.newLabel("in_next");
+            const hit_label = try self.newLabel("in_hit");
+            const done_label = try self.newLabel("in_done");
+            try self.qbeJmp(cond_label);
+            try self.qbeLabel(cond_label);
+            const idx = try self.newTemp();
+            try self.qbeLoadL(idx, idx_slot);
+            const cmp = try self.newTemp();
+            try self.qbeOp2(cmp, .w, "csltl", idx, len_t);
+            try self.qbeJnz(cmp, body_label, done_label);
+            try self.qbeLabel(body_label);
+
+            const byte_off = try self.newTemp();
+            try self.qbeOp2Imm(byte_off, .l, "mul", idx, @intCast(qbeSizeOf(coll.elem_qtype)));
+            const off8 = try self.newTemp();
+            try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
+            const addr = try self.newTemp();
+            try self.qbeOp2(addr, .l, "add", coll.text, off8);
+            const raw = try self.newTemp();
+            try self.loadListElem(raw, coll.elem_qtype, addr);
+            const elem = valueFromElemDescriptor(raw, coll.elem_qtype, coll.elem_heap_info, coll.elem_is_str, coll.elem_fixed_int);
+            const eq = try emitValueEq(self, elem, x);
+            try self.qbeJnz(eq, hit_label, next_label);
+
+            try self.qbeLabel(hit_label);
+            try self.qbeStoreImmL(1, res_slot);
+            try self.qbeJmp(done_label);
+
+            try self.qbeLabel(next_label);
+            const idx2 = try self.newTemp();
+            try self.qbeOp2Imm(idx2, .l, "add", idx, 1);
+            try self.qbeStoreL(idx2, idx_slot);
+            try self.qbeJmp(cond_label);
+
+            try self.qbeLabel(done_label);
+            const res = try self.newTemp();
+            try self.qbeLoadL(res, res_slot);
+            const w = try self.newTemp();
+            try self.qbeOp2Imm(w, .w, "cnel", res, 0);
+            found = w;
+        },
+        else => return error.Unsupported,
+    }
+
+    try self.releaseIfTemporary(b.left.*, x);
+    try self.releaseIfTemporary(b.right.*, coll);
+    if (b.op == .not_in) {
+        const t = try self.newTemp();
+        try self.qbeOp2Imm(t, .w, "xor", found, 1);
+        return .{ .text = t, .qtype = .w };
+    }
+    return .{ .text = found, .qtype = .w };
+}
+
 pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     // Darboğaz analizi bulgu #3 (bkz. `Codegen.mod_cache`nin belge
     // notu): `<isim> % <tam-sayı-sabiti>` İçin ÖNCE önbelleğe bak —
@@ -1415,6 +1531,8 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         try self.releaseIfTemporary(other_expr, other);
         return .{ .text = cmp_t, .qtype = .w };
     }
+
+    if (b.op == .in_ or b.op == .not_in) return self.genIn(b);
 
     const l0 = try self.genExpr(b.left.*);
     const r0 = try self.genExpr(b.right.*);
@@ -1585,7 +1703,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
             v.fixed_int = fixed_kind;
             break :blk v;
         },
-        .div, .and_, .or_, .shl, .shr => unreachable,
+        .div, .and_, .or_, .shl, .shr, .in_, .not_in => unreachable,
     };
 }
 

@@ -472,6 +472,7 @@ pub const Codegen = struct {
     pub const callLibm2 = expr_mod.callLibm2;
     pub const genStrCompare = expr_mod.genStrCompare;
     pub const genBinary = expr_mod.genBinary;
+    pub const genIn = expr_mod.genIn;
     pub const genCheckedShift = expr_mod.genCheckedShift;
     pub const genFloorDiv = expr_mod.genFloorDiv;
     pub const genPow = expr_mod.genPow;

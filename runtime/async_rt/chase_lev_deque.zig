@@ -86,7 +86,7 @@ pub fn ChaseLevDeque(comptime T: type, comptime capacity: usize) type {
             // İLERLETTİĞİ `top`u GÖREBİLMEK İçİn GEREKLİ — aksi halde
             // dolu OLMAYAN bir deque yanlışlıkla `error.Full` DÖNEBİLİR
             // (YANLIŞ ama GÜVENLİ yönde bir hata; TERSİ — kapasiteyi
-          // AŞAN bir yazma — asla OLAMAZ, ÇÜNKÜ `t` SADECE artabilir).
+            // AŞAN bir yazma — asla OLAMAZ, ÇÜNKÜ `t` SADECE artabilir).
             const t = self.top.load(.acquire);
             if (b -% t >= @as(isize, @intCast(capacity))) return error.Full;
             self.buffer[idx(b)] = item;
@@ -233,7 +233,7 @@ test "GERÇEK eşzamanlılık: 1 owner + N thief, HER eleman TAM BİR KEZ alın�
             const idx: usize = @intCast(value);
             // `fetchAdd` — İKİ farklı ÇAĞIRANIN (owner+thief ya da İKİ
             // thief) AYNI değeri İKİ KEZ "aldığını" SANMASI durumunda
-          // (bu asla OLMAMALI — algoritmanın TAM DA kanıtlamaya
+            // (bu asla OLMAMALI — algoritmanın TAM DA kanıtlamaya
             // çalıştığımız GARANTİSİ) testte YAKALANIR (1'den BÜYÜK sayaç).
             const prev = self.taken[idx].fetchAdd(1, .seq_cst);
             std.debug.assert(prev == 0);

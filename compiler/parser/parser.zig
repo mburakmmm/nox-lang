@@ -865,6 +865,16 @@ pub const Parser = struct {
                 .lt_eq => .le,
                 .gt => .gt,
                 .gt_eq => .ge,
+                .kw_in => .in_,
+                // `a not in b` — `not` TEK başına bir karşılaştırma operatörü DEĞİLDİR; yalnızca ardından `in`
+                // geliyorsa (`not in`) buraya girer (aksi halde `parseNot` zaten tüketmiştir).
+                .kw_not => blk: {
+                    if (self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .kw_in) {
+                        _ = self.advance();
+                        break :blk .not_in;
+                    }
+                    break;
+                },
                 else => break,
             };
             _ = self.advance();

@@ -126,8 +126,8 @@ test "defer_stack: push+run_all LIFO sırasıyla çağırır, yığını serbest
         fn make(r: ?*anyopaque, call_fn: ClosureFn) *anyopaque {
             const raw = asap.nox_alloc(r, 2 * PTR_SIZE).?;
             const header: [*]?*anyopaque = @ptrCast(@alignCast(raw));
-            header[0] = @constCast(@ptrCast(call_fn));
-            header[1] = @constCast(@ptrCast(&S.freeSelf));
+            header[0] = @ptrCast(@constCast(call_fn));
+            header[1] = @ptrCast(@constCast(&S.freeSelf));
             return raw;
         }
     }.make;
@@ -168,8 +168,8 @@ test "defer_stack: INITIAL_CAP'i AŞAN itme büyümeyi doğru test eder" {
         fn make(r: ?*anyopaque) *anyopaque {
             const raw = asap.nox_alloc(r, 2 * PTR_SIZE).?;
             const header: [*]?*anyopaque = @ptrCast(@alignCast(raw));
-            header[0] = @constCast(@ptrCast(&S.call));
-            header[1] = @constCast(@ptrCast(&S.freeSelf));
+            header[0] = @ptrCast(@constCast(&S.call));
+            header[1] = @ptrCast(@constCast(&S.freeSelf));
             return raw;
         }
     }.make;

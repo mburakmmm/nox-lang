@@ -250,7 +250,7 @@ pub export fn nox_mysql_fname_raw(rt: ?*anyopaque, res: ?*anyopaque, col: i64) c
 pub export fn nox_mysql_fetch_row_raw(res: ?*anyopaque) callconv(.c) ?*anyopaque {
     if (!ensureLoaded()) return null;
     const row = g_funcs.fetch_row(res) orelse return null;
-    return @constCast(@ptrCast(row));
+    return @ptrCast(@constCast(row));
 }
 
 pub export fn nox_mysql_row_isnull_raw(row: ?*anyopaque, col: i64) callconv(.c) i64 {

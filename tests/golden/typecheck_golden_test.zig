@@ -136,6 +136,34 @@ test "golden(typecheck): v1.144.0 — iç içe def içinde (dış döngü yetmez
     );
 }
 
+test "golden(typecheck): v1.145.0 — in/not in list/dict/str üzerinde geçerli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_in_operator.nox"),
+        @embedFile("typecheck_cases/ok_in_operator.expected"),
+    );
+}
+
+test "golden(typecheck): v1.145.0 — in sağ işleneni list/dict/str değilse reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_in_unsupported_rhs.nox"),
+        @embedFile("typecheck_cases/err_in_unsupported_rhs.expected"),
+    );
+}
+
+test "golden(typecheck): v1.145.0 — in sol işleneni liste eleman tipine uymuyorsa reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_in_list_elem_mismatch.nox"),
+        @embedFile("typecheck_cases/err_in_list_elem_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): v1.145.0 — in sol işleneni dict anahtar tipine uymuyorsa reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_in_dict_key_mismatch.nox"),
+        @embedFile("typecheck_cases/err_in_dict_key_mismatch.expected"),
+    );
+}
+
 test "golden(typecheck): var_decl tip uyuşmazlığı" {
     try expectGolden(
         @embedFile("typecheck_cases/err_var_decl_mismatch.nox"),

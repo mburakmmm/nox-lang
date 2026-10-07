@@ -118,8 +118,7 @@ fn idtInstall() void {
     asm volatile ("lidt (%[p])"
         :
         : [p] "r" (&ptr),
-        : .{ .memory = true }
-    );
+        : .{ .memory = true });
 }
 
 fn picMaskAll() void {

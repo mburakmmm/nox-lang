@@ -85,6 +85,19 @@ for n in numbers:
     total = total + n
 ```
 
+`in` / `not in` test membership: `x in xs` (element equality, same rules as `==`),
+`key in d` (dict key) and `needle in text` (substring; the empty string is in every
+string). The left operand must match the list's element type, the dict's key type, or be a
+`str`. They bind like the other comparison operators, so `not x in xs` means
+`not (x in xs)`.
+
+```nox
+if 3 in numbers and "ab" in word:
+    print("found")
+if key not in table:
+    table[key] = 0
+```
+
 **Variable declarations require an explicit type on first assignment**
 (`x: int = 5`); subsequent assignments to the same name don't repeat the
 annotation (`x = 6`).
