@@ -432,3 +432,20 @@ test "fmt: v1.164.0 — f-string ve str.format yüzey biçimi korunur (İDEMPOTE
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: v1.165.0 — docstring, except (A, B), üç tırnak İDEMPOTENT" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "def f() -> None:\n    \"\"\"Doc.\"\"\"\n    pass\n", .out = "def f() -> None:\n    \"\"\"Doc.\"\"\"\n    pass\n" },
+        .{ .in = "class A:\n    \"\"\"Doc.\"\"\"\n    def f(self) -> None:\n        pass\n", .out = "class A:\n    \"\"\"Doc.\"\"\"\n    def f(self) -> None:\n        pass\n" },
+        .{ .in = "try:\n    pass\nexcept (ValueError,KeyError) as e:\n    pass\n", .out = "try:\n    pass\nexcept (ValueError, KeyError) as e:\n    pass\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

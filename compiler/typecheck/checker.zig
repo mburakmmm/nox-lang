@@ -6653,6 +6653,12 @@ pub const Checker = struct {
         return null;
     }
 
+    fn isCoreStrMethod(m: []const u8) bool {
+        const core = [_][]const u8{ "upper", "lower", "strip", "lstrip", "rstrip", "split", "join", "replace", "startswith", "endswith", "find", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "isupper", "islower", "ljust", "rjust", "center", "zfill" };
+        for (core) |n| if (std.mem.eql(u8, n, m)) return true;
+        return false;
+    }
+
     fn isPreludeName(name: []const u8) bool {
         const names = [_][]const u8{ "max", "min", "sorted", "sum", "round", "map", "filter", "any", "all", "chr", "ord", "divmod" };
         for (names) |n| if (std.mem.eql(u8, n, name)) return true;
@@ -7876,7 +7882,7 @@ pub const Checker = struct {
                     }
                     return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (append/extend/insert/pop/remove/clear/index/count/sort/reverse/copy)", .{a.attr});
                 }
-                if (obj_t == .str) return self.checkStrMethod(ctx, a, c.args);
+                if (obj_t == .str) return self.checkStrMethod(ctx, a, c);
                 const class_name = switch (obj_t) {
                     .class => |n| n,
                     else => return self.fail(error.TypeMismatch, "metod çağrısı yalnızca sınıf örneklerinde geçerlidir", .{}),
@@ -8168,8 +8174,28 @@ pub const Checker = struct {
 
     /// v1.156.0: `str` metodları — `s.upper()`, `s.split(sep)`, `sep.join(parts)`... (Python adları; `nox.strings` çalışma zamanı işlevlerine iner). ASCII
     /// büyük/küçük harf/boşluk semantiği (v1). Sonuçlar yeni değerlerdir.
-    fn checkStrMethod(self: *Checker, ctx: *FnCtx, a: ast.Attribute, args: []const ast.Expr) TypeError!Type {
+    fn checkStrMethod(self: *Checker, ctx: *FnCtx, a: ast.Attribute, c: ast.Call) TypeError!Type {
+        const args = c.args;
         const m = a.attr;
+        // v1.165.0: çekirdek tabloda olmayan str metodları (`title`, `capitalize`, `partition`, `rsplit`, `removeprefix`, `strip(chars)` ...) `core.nox`taki
+        // `__nox_str_<metod>(s, ...)` prelude işlevlerine yönlendirilir (saf Nox; alıcı ilk argüman olur).
+        {
+            var nbuf: [64]u8 = undefined;
+            const pre = std.fmt.bufPrint(&nbuf, "__nox_str_{s}", .{m}) catch "";
+            const takes_extra_args = (std.mem.eql(u8, m, "strip") or std.mem.eql(u8, m, "lstrip") or std.mem.eql(u8, m, "rstrip")) and args.len > 0;
+            const core_has = std.mem.eql(u8, m, "split") == false and std.mem.eql(u8, m, "join") == false;
+            if (pre.len > 0 and (self.functions.contains(pre) or self.generic_functions.contains(pre)) and core_has and (takes_extra_args or !isCoreStrMethod(m))) {
+                const callee = try self.allocator.create(ast.Expr);
+                callee.* = .{ .identifier = try self.allocator.dupe(u8, pre) };
+                const new_args = try self.allocator.alloc(ast.Expr, args.len + 1);
+                new_args[0] = a.obj.*;
+                @memcpy(new_args[1..], args);
+                const repl: ast.Expr = .{ .call = .{ .callee = callee, .args = new_args } };
+                const rt = try self.checkExpr(ctx, repl);
+                try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+                return rt;
+            }
+        }
         const eq = std.mem.eql;
         const Sig = struct { name: []const u8, params: []const Type, ret: Type, optional_last: bool = false };
         const str_t: Type = .str;

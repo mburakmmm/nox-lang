@@ -339,6 +339,44 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
             continue;
         }
 
+        // v1.164.1: üç tırnaklı dizeler (`"""..."""` / `'''...'''`, çok satırlı, docstring'ler) — satır sayacı içerideki `\n`lerle ilerler.
+        if ((c == '\'' or c == '"') and i + 2 < source.len and source[i + 1] == c and source[i + 2] == c) {
+            const quote = c;
+            const start = i;
+            const start_line = line;
+            const start_line_start = line_start;
+            i += 3;
+            var closed = false;
+            while (i < source.len) {
+                if (source[i] == '\\' and i + 1 < source.len) {
+                    if (source[i + 1] == '\n') {
+                        line += 1;
+                        line_start = i + 2;
+                    }
+                    i += 2;
+                    continue;
+                }
+                if (source[i] == '\n') {
+                    line += 1;
+                    line_start = i + 1;
+                    i += 1;
+                    continue;
+                }
+                if (source[i] == quote and i + 2 < source.len and source[i + 1] == quote and source[i + 2] == quote) {
+                    i += 3;
+                    closed = true;
+                    break;
+                }
+                i += 1;
+            }
+            if (!closed) {
+                if (err_span_out) |so| so.* = posSpan(start, start_line, start_line_start); // açılış konumu
+                return error.UnterminatedString;
+            }
+            try tokens.append(allocator, mkToken(.string_lit, source[start..i], start_line, col, start));
+            continue;
+        }
+
         if (c == '\'' or c == '"') {
             const quote = c;
             const start = i;

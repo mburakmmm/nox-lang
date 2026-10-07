@@ -227,9 +227,13 @@ module.exports = grammar({
       repeat($.except_clause),
       optional($.finally_clause),
     ),
+    // `except:` (çıplak), `except E as e:`, `except (A, B) as e:` (v1.164.1)
     except_clause: $ => seq(
-      'except', field('type', $.identifier), optional(seq('as', field('name', $.identifier))), ':', field('body', $.block),
+      'except',
+      optional(choice(field('type', $.identifier), field('types', $.exception_tuple))),
+      optional(seq('as', field('name', $.identifier))), ':', field('body', $.block),
     ),
+    exception_tuple: $ => seq('(', commaSep1($.identifier), optional(','), ')'),
     finally_clause: $ => seq('finally', ':', field('body', $.block)),
 
     // `with EXPR as NAME:` / `with EXPR:` (bkz. Faz U.5).
@@ -442,6 +446,9 @@ module.exports = grammar({
     // KENDİSİ de teknik olarak satır içi `\n`'i özel işlemez, ama pratikte
     // TEK satırlık kullanım BEKLENİR — bu gramer bunu KATI şekilde uygular).
     string: _$ => token(choice(
+      // üç tırnaklı (docstring / çok satırlı) — v1.164.1
+      seq('"""', repeat(choice(/[^"\\]/, /\\./, /"[^"]/, /""[^"]/)), '"""'),
+      seq("'''", repeat(choice(/[^'\\]/, /\\./, /'[^']/, /''[^']/)), "'''"),
       seq('"', repeat(choice(/[^"\\\n]/, /\\./)), '"'),
       seq("'", repeat(choice(/[^'\\\n]/, /\\./)), "'"),
     )),

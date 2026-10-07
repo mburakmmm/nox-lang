@@ -271,6 +271,8 @@ pub const FieldDecl = struct {
 
 pub const ClassDef = struct {
     name: []const u8,
+    /// v1.164.1: sınıf docstring'i (yalnızca formatter için korunur).
+    doc: ?[]const u8 = null,
     /// Faz 7 (basit tek-kalıtım): `class Derived(Base):` — boşsa
     /// (varsayılan) sınıfın taban sınıfı YOK. Çoklu kalıtım (birden
     /// fazla parantez-içi ad) v1 kapsamı DIŞINDA — parser TEK bir

@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.165.0]
+
+### Eklendi
+
+- **Üç tırnaklı dizeler ve docstring'ler:** `"""..."""` / `'''...'''` (çok satırlı), modül/işlev/sınıf docstring'leri (`noxc fmt` korur; sınıf docstring'i `ClassDef.doc`).
+- **`except (A, B) as e:`** — her sınıf için aynı gövdeyi paylaşan yan tümcelere açılır (`noxc fmt` geri birleştirir).
+- **Ek str metodları:** `capitalize`, `title`, `swapcase`, `casefold`, `isnumeric`, `isdecimal`, `removeprefix`, `removesuffix`, `rfind`, `rindex`, `partition`, `rpartition`, `splitlines`, `rsplit(sep, maxsplit)`, `strip/lstrip/rstrip(chars)` (saf Nox prelude işlevleri; checker `s.metod()`u `__nox_str_metod(s)`e yönlendirir). Spec §3.281.
+
 ## [1.164.0]
 
 ### Eklendi

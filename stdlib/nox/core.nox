@@ -41,6 +41,119 @@ class IndexError(Exception):
 class AssertionError(Exception):
     pass
 
+# ---- v1.165.0: ek str metodları (checker `s.metod(...)`yi `__nox_str_<metod>(s, ...)`e yönlendirir) ----
+def __nox_str_capitalize[T](s: T) -> T:
+    if len(s) == 0:
+        return s
+    return s[:1].upper() + s[1:].lower()
+
+def __nox_str_title[T](s: T) -> T:
+    out: str = ""
+    prev_alpha: bool = False
+    for ch in s:
+        if prev_alpha:
+            out = out + ch.lower()
+        else:
+            out = out + ch.upper()
+        prev_alpha = ch.isalpha()
+    return out
+
+def __nox_str_swapcase[T](s: T) -> T:
+    out: str = ""
+    for ch in s:
+        if ch.isupper():
+            out = out + ch.lower()
+        else:
+            out = out + ch.upper()
+    return out
+
+def __nox_str_casefold[T](s: T) -> T:
+    return s.lower()
+
+def __nox_str_isnumeric[T](s: T) -> bool:
+    return s.isdigit()
+
+def __nox_str_isdecimal[T](s: T) -> bool:
+    return s.isdigit()
+
+def __nox_str_removeprefix[T](s: T, prefix: T) -> T:
+    if s.startswith(prefix):
+        return s[len(prefix):]
+    return s
+
+def __nox_str_removesuffix[T](s: T, suffix: T) -> T:
+    if len(suffix) > 0 and s.endswith(suffix):
+        return s[:len(s) - len(suffix)]
+    return s
+
+def __nox_str_rfind[T](s: T, sub: T) -> int:
+    n: int = len(s)
+    m: int = len(sub)
+    i: int = n - m
+    while i >= 0:
+        if s[i:i + m] == sub:
+            return i
+        i = i - 1
+    return -1
+
+def __nox_str_rindex[T](s: T, sub: T) -> int:
+    i: int = __nox_str_rfind(s, sub)
+    if i < 0:
+        raise ValueError("str.rindex(sub): alt dize bulunamadi")
+    return i
+
+# NOT: dönüş tipinde tuple olan prelude işlevleri GENERİK olmalıdır (`T` = str): jenerik olmayanlar, tuple sınıfları örneklenmeden
+# imza kaydı yapan eski codegen test donanımlarını (`extra_classes = &.{}`) kırar; jenerikler yalnızca kullanıldığında örneklenir.
+def __nox_str_partition[T](s: T, sep: T) -> tuple[T, T, T]:
+    i: int = s.find(sep)
+    if i < 0 or len(sep) == 0:
+        return s, "", ""
+    return s[:i], sep, s[i + len(sep):]
+
+def __nox_str_rpartition[T](s: T, sep: T) -> tuple[T, T, T]:
+    i: int = __nox_str_rfind(s, sep)
+    if i < 0 or len(sep) == 0:
+        return "", "", s
+    return s[:i], sep, s[i + len(sep):]
+
+def __nox_str_splitlines[T](s: T) -> list[T]:
+    parts: list[str] = s.replace("\r\n", "\n").split("\n")
+    if len(parts) > 0 and parts[len(parts) - 1] == "":
+        parts.pop()
+    return parts
+
+def __nox_str_rsplit[T](s: T, sep: T, maxsplit: int = -1) -> list[T]:
+    if maxsplit < 0:
+        return s.split(sep)
+    out: list[str] = []
+    rest: str = s
+    k: int = 0
+    while k < maxsplit:
+        i: int = __nox_str_rfind(rest, sep)
+        if i < 0:
+            break
+        out.append(rest[i + len(sep):])
+        rest = rest[:i]
+        k = k + 1
+    out.append(rest)
+    out.reverse()
+    return out
+
+def __nox_str_strip[T](s: T, chars: T) -> T:
+    return __nox_str_rstrip(__nox_str_lstrip(s, chars), chars)
+
+def __nox_str_lstrip[T](s: T, chars: T) -> T:
+    i: int = 0
+    while i < len(s) and chars.find(s[i]) >= 0:
+        i = i + 1
+    return s[i:]
+
+def __nox_str_rstrip[T](s: T, chars: T) -> T:
+    j: int = len(s)
+    while j > 0 and chars.find(s[j - 1]) >= 0:
+        j = j - 1
+    return s[:j]
+
 # Tamsayı `//` ve `%` sıfır bölenle bu sınıfı fırlatır (float bölme IEEE: inf/nan).
 class ZeroDivisionError(Exception):
     pass

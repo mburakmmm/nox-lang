@@ -28878,3 +28878,14 @@ anahtarıyla). Bu yüzden sahiplik analizi, kalıtım (metodlar alt sınıf `Cla
   f-string'ler `"a" + str(x)` zincirine dönüşüyordu.
 - `class Exception.__str__` → `print(e)`/`str(e)` yalnızca mesaj (kalıtımla tüm istisnalar). Tüm IR snapshot'ları yenilendi (prelude değişti).
 - Golden: `fstring_format_specs`, `str_format_method`, `exception_str_message` (Python referansıyla birebir; `{e}` istisna mesajı).
+
+## 3.281 Docstring/üç tırnak, `except (A, B)`, ek str metodları (v1.165.0)
+
+- **Lexer:** `"""`/`'''` açılışı kapanışa kadar tarar (satır sayacı içerideki `\n`lerle ilerler); `decodeString` üç tırnağı soyar. Docstring bir ifade deyimi (`expr_stmt` string) olarak kalır
+  (modül/işlev); sınıf gövdesindeki ilk dize `ClassDef.doc`a alınır (formatter yazar). `noxc fmt` çıplak dize deyimlerini `"""…"""` biçiminde yazar.
+- **Parser:** `except (A, B) as e:` → aynı `body` dilimini paylaşan N `ExceptClause` (checker/codegen her biri için gövdeyi ayrı denetler/üretir); formatter ardışık, gövde işaretçisi
+  aynı yan tümceleri `except (A, B)` olarak birleştirir. Sözdizimi hata konumu: geri-izleme kalıntısı yerine hata anındaki simge (`syntax_report`).
+- **str metodları:** çekirdek tabloda olmayanlar için `checkStrMethod` `__nox_str_<m>`(prelude) arar ve çağrıyı `expr_rewrites` ile yeniden yazar (alıcı ilk argüman; `strip(chars)` çekirdek `strip()`in
+  üstünde). Uygulamalar `core.nox`ta saf Nox (dilimleme/`find`/`replace` üzerine) — Python çıktısıyla birebir doğrulandı.
+- Parser özyineleme sınırı 500 → 200 (Debug'da çerçeveler büyüdükçe 8MB yığını zorluyordu; gerçekçi programlar 200 iç içe ifadeyi aşmaz).
+- Golden: `docstrings_triple_quotes`, `except_tuple_classes`, `str_methods_extra`.

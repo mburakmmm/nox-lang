@@ -697,6 +697,7 @@ pub const Parser = struct {
 
         var methods = std.ArrayList(ast.FuncDef).empty;
         var fields = std.ArrayList(ast.FieldDecl).empty;
+        var class_doc: ?[]const u8 = null;
         // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): sınıf gövdesi
         // ARTIK deyim-BAŞINA dispatch eder — `parseSimpleStmt`in AYNI
         // ileriye-bakma deseni (`.identifier` + bir SONRAKİ token `.colon`)
@@ -719,6 +720,12 @@ pub const Parser = struct {
             if (self.check(.kw_pass)) {
                 _ = self.advance();
                 _ = try self.expect(.newline);
+            } else if (self.check(.string_lit)) {
+                // v1.164.1: sınıf docstring'i (ilk deyim) — AST'de `ClassDef.doc` olarak korunur (formatter yazar); sonraki çıplak dizeler yok sayılır.
+                const doc_tok = self.advance();
+                const text = try self.decodeString(doc_tok.lexeme);
+                _ = try self.expect(.newline);
+                if (class_doc == null and methods.items.len == 0 and fields.items.len == 0) class_doc = text;
             } else if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
                 try fields.append(self.allocator, try self.parseClassFieldDecl());
             } else if (self.check(.at_sign)) {
@@ -745,6 +752,7 @@ pub const Parser = struct {
             .type_params = try type_params.toOwnedSlice(self.allocator),
             .methods = try methods.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),
+            .doc = class_doc,
         } };
     }
 
@@ -815,8 +823,19 @@ pub const Parser = struct {
             _ = self.advance();
             var class_name: ?[]const u8 = null;
             var bind_name: ?[]const u8 = null;
+            // v1.164.1: `except (A, B) as e:` — her sınıf için AYNI gövdeyi paylaşan ayrı bir yan tümceye açılır (e'nin tipi eşleşen sınıftır).
+            var multi: std.ArrayList([]const u8) = .empty;
             if (!self.check(.colon)) {
-                class_name = (try self.expect(.identifier)).lexeme;
+                if (self.match(.l_paren)) {
+                    try multi.append(self.allocator, (try self.expect(.identifier)).lexeme);
+                    while (self.match(.comma)) {
+                        if (self.check(.r_paren)) break;
+                        try multi.append(self.allocator, (try self.expect(.identifier)).lexeme);
+                    }
+                    _ = try self.expect(.r_paren);
+                } else {
+                    class_name = (try self.expect(.identifier)).lexeme;
+                }
                 if (self.match(.kw_as)) {
                     bind_name = (try self.expect(.identifier)).lexeme;
                 }
@@ -825,7 +844,11 @@ pub const Parser = struct {
             }
             _ = try self.expect(.colon);
             const body = try self.parseBlock();
-            try except_clauses.append(self.allocator, .{ .class_name = class_name, .bind_name = bind_name, .body = body });
+            if (multi.items.len > 0) {
+                for (multi.items) |cn| try except_clauses.append(self.allocator, .{ .class_name = cn, .bind_name = bind_name, .body = body });
+            } else {
+                try except_clauses.append(self.allocator, .{ .class_name = class_name, .bind_name = bind_name, .body = body });
+            }
         }
 
         var finally_body: ?[]ast.Stmt = null;
@@ -1530,6 +1553,8 @@ pub const Parser = struct {
     /// `114`/'r', 13/CR DEĞİL). Mail header injection kontrolü GİBİ
     /// `\r`/`\n` ARAYAN kod bu YÜZDEN GERÇEK CR baytını hiç GÖRMÜYORDU.
     fn decodeString(self: *Parser, lexeme: []const u8) ParseError![]const u8 {
+        // v1.164.1: üç tırnaklı (`"""…"""`) dizeler.
+        if (lexeme.len >= 6 and lexeme[0] == lexeme[1] and lexeme[1] == lexeme[2]) return self.decodeEscapes(lexeme[3 .. lexeme.len - 3]);
         return self.decodeEscapes(lexeme[1 .. lexeme.len - 1]);
     }
 

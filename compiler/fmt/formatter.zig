@@ -251,7 +251,14 @@ const Printer = struct {
         switch (stmt.kind) {
             .expr_stmt => |e| {
                 try self.indentTo(depth);
-                try self.printExpr(e);
+                // v1.164.1: çıplak bir str deyimi (docstring) üç tırnaklı yazılır — çok satırlı metin okunaklı kalır.
+                if (e == .string_lit and std.mem.indexOf(u8, e.string_lit, "\"\"\"") == null and std.mem.indexOfScalar(u8, e.string_lit, '\\') == null) {
+                    try self.writer.writeAll("\"\"\"");
+                    try self.writer.writeAll(e.string_lit);
+                    try self.writer.writeAll("\"\"\"");
+                } else {
+                    try self.printExpr(e);
+                }
                 try self.line(stmt.line);
             },
             .var_decl => |v| {
@@ -349,6 +356,14 @@ const Printer = struct {
                     try self.writer.print("class {s}:", .{c.name});
                 }
                 try self.line(stmt.line);
+                // v1.164.1: sınıf docstring'i.
+                if (c.doc) |doc| {
+                    try self.indentTo(depth + 1);
+                    try self.writer.writeAll("\"\"\"");
+                    try self.writer.writeAll(doc);
+                    try self.writer.writeAll("\"\"\"\n");
+                    self.last_was_blank = false;
+                }
                 // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
                 // bildirilen alanlar (varsa) metodlardan ÖNCE, her biri
                 // KENDİ satırında `ad: Tip` olarak basılır — BURADA
@@ -442,9 +457,27 @@ const Printer = struct {
                 try self.writer.writeAll("try:");
                 try self.line(stmt.line);
                 try self.printStmts(t.try_body, depth + 1);
-                for (t.except_clauses) |ec| {
+                var ci: usize = 0;
+                while (ci < t.except_clauses.len) : (ci += 1) {
+                    const ec = t.except_clauses[ci];
                     try self.indentTo(depth);
-                    if (ec.class_name) |cn| {
+                    // v1.164.1: AYNI gövdeyi paylaşan ardışık yan tümceler `except (A, B) as e:` olarak birleştirilir.
+                    var group_end = ci + 1;
+                    while (group_end < t.except_clauses.len and ec.class_name != null and t.except_clauses[group_end].class_name != null and
+                        t.except_clauses[group_end].body.ptr == ec.body.ptr and t.except_clauses[group_end].body.len == ec.body.len) : (group_end += 1)
+                    {}
+                    if (group_end > ci + 1) {
+                        try self.writer.writeAll("except (");
+                        var gi = ci;
+                        while (gi < group_end) : (gi += 1) {
+                            if (gi > ci) try self.writer.writeAll(", ");
+                            try self.writer.writeAll(t.except_clauses[gi].class_name.?);
+                        }
+                        try self.writer.writeAll(")");
+                        if (ec.bind_name) |bn| try self.writer.print(" as {s}", .{bn});
+                        try self.writer.writeAll(":\n");
+                        ci = group_end - 1;
+                    } else if (ec.class_name) |cn| {
                         if (ec.bind_name) |bn| {
                             try self.writer.print("except {s} as {s}:\n", .{ cn, bn });
                         } else {
