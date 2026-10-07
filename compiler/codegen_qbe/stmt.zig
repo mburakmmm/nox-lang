@@ -922,7 +922,7 @@ pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenErr
 
 pub fn isRangeCall(e: ast.Expr) bool {
     return e == .call and e.call.callee.* == .identifier and
-        std.mem.eql(u8, e.call.callee.identifier, "range") and e.call.args.len == 1;
+        std.mem.eql(u8, e.call.callee.identifier, "range") and e.call.args.len >= 1 and e.call.args.len <= 3;
 }
 
 pub fn findLocal(locals: []const LocalDecl, name: []const u8) ?TypeInfo {
@@ -936,14 +936,67 @@ pub fn findLocal(locals: []const LocalDecl, name: []const u8) ?TypeInfo {
 
 pub fn genFor(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
     if (isRangeCall(f.iterable)) return self.genForRange(f, ret_qtype);
+    // v1.148.0: iterable adlandırılmış bir liste değilse checker bir gizli yerel (`hoist`) tanımlamıştır: ifade BİR KEZ,
+    // sıradan bir `var_decl` gibi (retain/serbest bırakma/tüm çıkış yolları) o yerele alınır, sonra yerel üzerinde dönülür.
+    if (f.hoist) |h| {
+        const decl = [_]ast.Stmt{.{ .kind = .{ .var_decl = .{ .name = h.name, .type_expr = h.type_expr, .value = f.iterable } }, .line = @intCast(@max(self.current_raise_line, 0)) }};
+        try self.genStmts(&decl, ret_qtype);
+        var f2 = f;
+        f2.iterable = .{ .identifier = h.name };
+        f2.hoist = null;
+        return self.genForList(f2, ret_qtype);
+    }
     if (f.iterable == .identifier) return self.genForList(f, ret_qtype);
     return error.Unsupported;
 }
 
+/// `range(...)` adımının DERLEME-ZAMANI değeri: argüman yok → 1; int literal (ya da negatif literal) → o değer;
+/// aksi halde (çalışma zamanı ifadesi) `null`.
+fn rangeStepLiteral(args: []const ast.Expr) ?i64 {
+    if (args.len < 3) return 1;
+    return switch (args[2]) {
+        .int_lit => |v| v,
+        .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) -u.operand.int_lit else null,
+        else => null,
+    };
+}
+
 pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
-    const limit = try self.genExpr(f.iterable.call.args[0]);
+    const rargs = f.iterable.call.args;
     const var_info = self.vars.get(f.var_name).?;
-    try self.qbeStoreImmL(0, var_info.slot);
+    // v1.148.0: `range(bitiş)` / `range(başlangıç, bitiş)` / `range(başlangıç, bitiş, adım)`. Değerlendirme sırası
+    // başlangıç → bitiş → adım; üçü de döngüye girmeden BİR KEZ.
+    var limit: Value = undefined;
+    if (rargs.len >= 2) {
+        const start = try self.genExpr(rargs[0]);
+        try self.qbeStoreL(start.text, var_info.slot);
+        limit = try self.genExpr(rargs[1]);
+    } else {
+        limit = try self.genExpr(rargs[0]);
+        try self.qbeStoreImmL(0, var_info.slot);
+    }
+    const step_lit = rangeStepLiteral(rargs);
+    var step_dyn: ?Value = null;
+    if (step_lit == null) {
+        const sv = try self.genExpr(rargs[2]);
+        step_dyn = sv;
+        // Çalışma zamanı adımı sıfır olamaz (Python: ValueError).
+        const zero_t = try self.newTemp();
+        try self.qbeOp2Imm(zero_t, .w, "ceql", sv.text, 0);
+        const zerr_label = try self.newLabel("range_step_err");
+        const zok_label = try self.newLabel("range_step_ok");
+        try self.qbeJnzCold(zero_t, zerr_label, zok_label);
+        const cold_start = self.beginCold();
+        try self.qbeLabel(zerr_label);
+        const zmsg = try self.emitStringLiteral("range() adimi sifir olamaz");
+        const zve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
+        const zve_obj = try self.genConstructFromValues("ValueError", zve_cinfo, &.{zmsg}, null);
+        try self.emitExceptionLineStore(zve_obj.text, "ValueError", self.current_raise_line);
+        try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = zve_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+        try self.emitRaisePropagate();
+        try self.stashCold(cold_start);
+        try self.qbeLabel(zok_label);
+    }
 
     const cond_label = try self.newLabel("for_cond");
     const body_label = try self.newLabel("for_body");
@@ -970,7 +1023,26 @@ pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenEr
     const cur = try self.newTemp();
     try self.qbeLoadL(cur, var_info.slot);
     const cmp = try self.newTemp();
-    try self.qbeOp2(cmp, .w, "csltl", cur, limit.text);
+    if (step_lit) |sl| {
+        // Adım derleme zamanında biliniyor: yön sabit (pozitif → `<`, negatif → `>`).
+        try self.qbeOp2(cmp, .w, if (sl > 0) "csltl" else "csgtl", cur, limit.text);
+    } else {
+        // Çalışma zamanı adımı: (adım > 0 ve cur < bitiş) veya (adım < 0 ve cur > bitiş).
+        const sv = step_dyn.?;
+        const lt = try self.newTemp();
+        try self.qbeOp2(lt, .w, "csltl", cur, limit.text);
+        const gt = try self.newTemp();
+        try self.qbeOp2(gt, .w, "csgtl", cur, limit.text);
+        const pos = try self.newTemp();
+        try self.qbeOp2Imm(pos, .w, "csgtl", sv.text, 0);
+        const neg = try self.newTemp();
+        try self.qbeOp2Imm(neg, .w, "csltl", sv.text, 0);
+        const c1 = try self.newTemp();
+        try self.qbeOp2(c1, .w, "and", pos, lt);
+        const c2 = try self.newTemp();
+        try self.qbeOp2(c2, .w, "and", neg, gt);
+        try self.qbeOp2(cmp, .w, "or", c1, c2);
+    }
     try self.qbeJnz(cmp, body_label, end_label);
     try self.qbeLabel(body_label);
     try pushLoop(self, end_label, step_label);
@@ -981,7 +1053,11 @@ pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenEr
     const cur2 = try self.newTemp();
     try self.qbeLoadL(cur2, var_info.slot);
     const next = try self.newTemp();
-    try self.qbeOp2Imm(next, .l, "add", cur2, 1);
+    if (step_lit) |sl| {
+        try self.qbeOp2Imm(next, .l, "add", cur2, sl);
+    } else {
+        try self.qbeOp2(next, .l, "add", cur2, step_dyn.?.text);
+    }
     try self.qbeStoreL(next, var_info.slot);
     try self.qbeJmp(cond_label);
     try self.qbeLabel(end_label);

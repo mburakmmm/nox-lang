@@ -733,6 +733,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // çağrısı — alan İSE düz okuma, metod İSE bağlı closure.
             if (std.mem.eql(u8, name, "__nox_bind_method")) return genBindMethod(self, c);
             if (std.mem.eql(u8, name, "__nox_hash")) return genNoxHash(self, c);
+            if (std.mem.eql(u8, name, "__nox_str_chars")) return genStrChars(self, c);
             if (reflectMetaResult(name)) |ret_is_str| {
                 self.uses_reflect_meta = true;
                 const arg_values = try self.allocator.alloc(codegen.QbeArg, 1 + c.args.len);
@@ -1649,6 +1650,19 @@ fn reflectMetaResult(name: []const u8) ?bool {
 /// v1.142.20: `__nox_hash(x)` — dahili karma ilkeli (bkz. checker'daki aynı ad). `str` → `nox_hash_str`,
 /// `int`/`bool`/sabit-genişlikli → `nox_hash_int`, `float` → `nox_hash_float`; heap-yönetimli diğer
 /// tipler (sınıf/liste/dict/...) için sabit 0 (`Set[Point]` gibi kullanımlar doğrusal ama DOĞRU kalır).
+/// `__nox_str_chars(s)` (v1.148.0, `for c in s` yeniden yazımı): `$nox_str_chars` — `list[str]`.
+fn genStrChars(self: *Codegen, c: ast.Call) CodegenError!Value {
+    if (c.args.len != 1) return error.Unsupported;
+    const v = try self.genExpr(c.args[0]);
+    try self.checkNoLowlevelEscape(v);
+    const result = try self.newTemp();
+    try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_str_chars", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = v.text } });
+    try self.releaseIfTemporary(c.args[0], v);
+    const info = try self.allocator.create(ElemHeapInfo);
+    info.* = .{ .heap = .str };
+    return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = .l, .elem_heap_info = info, .elem_is_str = true };
+}
+
 fn genNoxHash(self: *Codegen, c: ast.Call) CodegenError!Value {
     if (c.args.len != 1) return error.Unsupported;
     const v = try self.genExpr(c.args[0]);

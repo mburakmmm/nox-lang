@@ -178,10 +178,16 @@ pub const IfStmt = struct {
 
 pub const WhileStmt = struct { cond: Expr, body: []Stmt };
 
+/// v1.148.0: `for x in <herhangi bir liste ifadesi>` için checker'ın yazdığı bilgi — iterable bir adlandırılmış liste
+/// DEĞİLSE (çağrı, alan okuması, `d.keys()`...) codegen ifadeyi BİR KEZ gizli bir yerele (`name`: `type_expr` tipinde,
+/// sıradan bir `var_decl` gibi: sahiplik/retain/serbest bırakma tüm çıkış yollarında) alıp o yerel üzerinde döner.
+pub const ForHoist = struct { name: []const u8, type_expr: TypeExpr };
+
 pub const ForStmt = struct {
     var_name: []const u8,
     iterable: Expr,
     body: []Stmt,
+    hoist: ?ForHoist = null,
 };
 
 /// `@isim` / `@isim(arg1, arg2, ...)` — Faz 1 decorator (bkz. nox-teknik-

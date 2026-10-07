@@ -1,0 +1,61 @@
+class Box:
+    names: list[str]
+    def __init__(self, n: int) -> None:
+        self.names = ["a" + str(n), "b" + str(n), "c" + str(n)]
+    def all(self) -> list[str]:
+        return self.names
+
+def make(n: int) -> list[str]:
+    out: list[str] = []
+    i: int = 0
+    while i < n:
+        out.append("k" + str(i))
+        i = i + 1
+    return out
+
+def find(n: int) -> int:
+    for s in make(n):
+        if s == "k3":
+            return 1
+    return 0
+
+def boom(n: int) -> int:
+    for s in make(n):
+        if s == "k2":
+            raise ValueError("stop")
+    return 0
+
+def total(n: int) -> int:
+    acc: int = 0
+    i: int = 0
+    while i < n:
+        i = i + 1
+        for s in make(5):
+            if s == "k4":
+                break
+            acc = acc + len(s)
+        for ch in "héllo wörld":
+            if ch == " ":
+                continue
+            acc = acc + 1
+        b: Box = Box(i)
+        for nm in b.all():
+            acc = acc + len(nm)
+        for nm2 in b.names:
+            acc = acc + 1
+        d: dict[str, int] = {"p" + str(i): i, "q": 2}
+        for key in d:
+            acc = acc + d[key]
+        for j in range(i, i + 3):
+            acc = acc + j
+        acc = acc + find(5)
+        try:
+            boom(4)
+        except ValueError as e:
+            acc = acc + 1
+        if i == 3000:
+            break
+    return acc
+
+print(total(100))
+print(total(6000))

@@ -10,7 +10,14 @@ const ast = @import("../parser/ast.zig");
 
 pub const Map = std.AutoHashMapUnmanaged(usize, []ast.Expr);
 
-pub fn stmts(body: []ast.Stmt, map: *const Map) void {
+/// v1.148.0: bir `for`un checker tarafından belirlenen yeniden yazımı (anahtar: `body.ptr`): `iterable` yerine geçecek
+/// ifade (dict → `d.keys()`, str → karakter listesi) ve/veya gizli yerel bildirimi.
+pub const ForRewrite = struct { iterable: ?ast.Expr, hoist: ?ast.ForHoist };
+pub const ForMap = std.AutoHashMapUnmanaged(usize, ForRewrite);
+
+pub const Ctx = struct { calls: *const Map, fors: *const ForMap };
+
+pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
     for (body) |*stmt| {
         switch (stmt.kind) {
             .expr_stmt => |*e| expr(e, map),
@@ -33,6 +40,10 @@ pub fn stmts(body: []ast.Stmt, map: *const Map) void {
                 stmts(s.body, map);
             },
             .for_stmt => |*s| {
+                if (map.fors.get(@intFromPtr(s.body.ptr))) |rw| {
+                    if (rw.iterable) |it| s.iterable = it;
+                    s.hoist = rw.hoist;
+                }
                 expr(&s.iterable, map);
                 stmts(s.body, map);
             },
@@ -51,7 +62,7 @@ pub fn stmts(body: []ast.Stmt, map: *const Map) void {
                 stmts(s.body, map);
             },
             .defer_stmt => |*d| {
-                if (map.get(@intFromPtr(d.call.callee))) |exp| d.call.args = exp;
+                if (map.calls.get(@intFromPtr(d.call.callee))) |exp| d.call.args = exp;
                 expr(d.call.callee, map);
                 for (d.call.args) |*a| expr(a, map);
             },
@@ -60,7 +71,7 @@ pub fn stmts(body: []ast.Stmt, map: *const Map) void {
     }
 }
 
-pub fn expr(e: *ast.Expr, map: *const Map) void {
+pub fn expr(e: *ast.Expr, map: *const Ctx) void {
     switch (e.*) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
         .unary => |*u| expr(u.operand, map),
@@ -75,7 +86,7 @@ pub fn expr(e: *ast.Expr, map: *const Map) void {
             expr(b.right, map);
         },
         .call => |*c| {
-            if (map.get(@intFromPtr(c.callee))) |exp| c.args = exp;
+            if (map.calls.get(@intFromPtr(c.callee))) |exp| c.args = exp;
             expr(c.callee, map);
             for (c.args) |*a| expr(a, map);
         },
@@ -92,7 +103,7 @@ pub fn expr(e: *ast.Expr, map: *const Map) void {
         .await_expr => |op| expr(op, map),
         .spawn_expr => |op| expr(op, map),
         .generic_construct => |*g| {
-            if (map.get(@intFromPtr(g.resolved_class_name))) |exp| g.args = exp;
+            if (map.calls.get(@intFromPtr(g.resolved_class_name))) |exp| g.args = exp;
             for (g.args) |*a| expr(a, map);
         },
     }

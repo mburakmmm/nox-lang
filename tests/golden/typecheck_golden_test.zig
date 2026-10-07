@@ -241,6 +241,41 @@ test "golden(typecheck): v1.147.0 — keyword ile spawn'a geçirilen paylaşıla
     );
 }
 
+test "golden(typecheck): v1.148.0 — for: str/dict/liste ifadesi/range(a,b,s); sınıf↔sınıf yeniden bildirim serbest" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_for_iterables_and_class_redeclare.nox"),
+        @embedFile("typecheck_cases/ok_for_iterables_and_class_redeclare.expected"),
+    );
+}
+
+test "golden(typecheck): v1.148.0 — range adımı sabit sıfır olamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_range_zero_step.nox"),
+        @embedFile("typecheck_cases/err_range_zero_step.expected"),
+    );
+}
+
+test "golden(typecheck): v1.148.0 — range en fazla 3 argüman alır" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_range_too_many_args.nox"),
+        @embedFile("typecheck_cases/err_range_too_many_args.expected"),
+    );
+}
+
+test "golden(typecheck): v1.148.0 — aynı kapsamda farklı tiple yeniden bildirim reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_redeclare_different_type.nox"),
+        @embedFile("typecheck_cases/err_redeclare_different_type.expected"),
+    );
+}
+
+test "golden(typecheck): v1.148.0 — döngü değişkeni başka eleman tipli ikinci for'da yeniden kullanılamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_for_var_reused_with_other_type.nox"),
+        @embedFile("typecheck_cases/err_for_var_reused_with_other_type.expected"),
+    );
+}
+
 test "golden(typecheck): var_decl tip uyuşmazlığı" {
     try expectGolden(
         @embedFile("typecheck_cases/err_var_decl_mismatch.nox"),

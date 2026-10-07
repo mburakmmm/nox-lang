@@ -1017,8 +1017,14 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
             .for_stmt => |f| {
                 if (Codegen.isRangeCall(f.iterable)) {
                     try locals.append(self.allocator, .{ .name = f.var_name, .info = .{ .qtype = .l } });
-                } else if (f.iterable == .identifier) {
-                    const src = Codegen.findLocal(locals.items, f.iterable.identifier) orelse return error.Unsupported;
+                } else if (f.hoist != null or f.iterable == .identifier) {
+                    // v1.148.0: `hoist` varsa iterable ifadesi gizli bir yerele alınır (bkz. `ast.ForHoist`) — o yerelin
+                    // tipi `type_expr`den; yoksa adlandırılmış liste yereli.
+                    const src: TypeInfo = if (f.hoist) |h| blk: {
+                        const hinfo = try self.resolveType(h.type_expr);
+                        try locals.append(self.allocator, .{ .name = h.name, .info = hinfo });
+                        break :blk hinfo;
+                    } else Codegen.findLocal(locals.items, f.iterable.identifier) orelse return error.Unsupported;
                     if (src.heap != .list) return error.Unsupported;
                     // Döngü değişkeni listenin İÇİNDEKİ bir elemana ÖDÜNÇ
                     // ALINMIŞ bir referanstır (listenin kendisi hâlâ

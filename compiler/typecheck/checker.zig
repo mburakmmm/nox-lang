@@ -645,6 +645,9 @@ pub const Checker = struct {
     /// maliyeti: `noxc check`, `list`/`class`/`dict` taşıyan bir `nox.
     /// thread.start`ı HATA olarak İŞARETLER, AYNI program `noxc build
     /// --release` İLE GERÇEKTEN DERLENEBİLİR OLSA BİLE).
+    /// v1.148.0: `for` yeniden yazımları (anahtar: gövde dilimi adresi). Bkz. `call_expand_apply.ForRewrite`.
+    for_rewrites: call_expand_apply.ForMap = .empty,
+    for_hoist_counter: u32 = 0,
     /// v1.147.0: çağrı sitesi → genişletilmiş (tam konumsal) argüman listesi. Bkz. `call_expand_apply.zig`.
     call_expansions: call_expand_apply.Map = .empty,
     /// v1.144.0: post-spawn akış analizi (`walkPostSpawnCallerMutation`) için `break`/`continue` noktalarındaki
@@ -1920,10 +1923,11 @@ pub const Checker = struct {
 
     /// Checker bitince, kaydedilen genişletmeleri AST'ye yazar (bkz. `call_expand_apply.zig`).
     fn applyCallExpansions(self: *Checker, module: ast.Module) void {
-        if (self.call_expansions.count() == 0) return;
-        call_expand_apply.stmts(module.body, &self.call_expansions);
-        for (self.instantiations.items) |fd| call_expand_apply.stmts(fd.body, &self.call_expansions);
-        for (self.class_instantiations.items) |cd| for (cd.methods) |m| call_expand_apply.stmts(m.body, &self.call_expansions);
+        if (self.call_expansions.count() == 0 and self.for_rewrites.count() == 0) return;
+        const cx: call_expand_apply.Ctx = .{ .calls = &self.call_expansions, .fors = &self.for_rewrites };
+        call_expand_apply.stmts(module.body, &cx);
+        for (self.instantiations.items) |fd| call_expand_apply.stmts(fd.body, &cx);
+        for (self.class_instantiations.items) |cd| for (cd.methods) |m| call_expand_apply.stmts(m.body, &cx);
     }
 
     fn registerFunc(self: *Checker, fd: ast.FuncDef) TypeError!void {
@@ -3515,7 +3519,7 @@ pub const Checker = struct {
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
-        return std.mem.startsWith(u8, name, "__nox_reflect_");
+        return std.mem.startsWith(u8, name, "__nox_reflect_") or std.mem.eql(u8, name, "__nox_str_chars");
     }
 
     /// Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına çoklu-
@@ -4810,6 +4814,22 @@ pub const Checker = struct {
         };
     }
 
+    /// v1.148.0: bir yerel değişkenin (var_decl / `for` değişkeni / `except ... as` / `with ... as`) AYNI kapsamda FARKLI bir
+    /// tiple yeniden bildirilmesini reddeder. Codegen ad başına TEK slot/tip tuttuğundan önceden `x: int = 1` sonra
+    /// `x: str = "a"` (ya da aynı döngü değişkenini farklı eleman tipli iki `for`da kullanmak) SESSİZCE yanlış kod
+    /// üretiyordu. Aynı tipte yeniden bildirim serbesttir.
+    fn declareVar(self: *Checker, ctx: *FnCtx, name: []const u8, ty: Type) TypeError!void {
+        if (ctx.scope.lookupLocal(name)) |existing| {
+            // Sınıf ↔ sınıf yeniden bildirimi serbest: temsil aynı (işaretçi), serbest bırakma tag-tabanlı; yaygın kullanım
+            // (`except A as e` ... `except B as e`).
+            const both_classes = existing == .class and ty == .class;
+            if (!types.eql(existing, ty) and !both_classes) {
+                return self.fail(error.TypeMismatch, "'{s}' bu kapsamda zaten '{s}' tipiyle tanımlı; '{s}' tipiyle yeniden tanımlanamaz (farklı bir ad kullanın)", .{ name, try self.typeText(existing), try self.typeText(ty) });
+            }
+        }
+        try ctx.scope.declare(self.allocator, name, ty);
+    }
+
     fn checkStmt(self: *Checker, ctx: *FnCtx, stmt: ast.Stmt) TypeError!void {
         // Faz T.1: `fail`in okuduğu "şu an neredeyiz" konumu — bkz.
         // `ast.Stmt`in belge notu (DEYİM granülerliği). Bu, `checkStmt`in
@@ -4825,7 +4845,7 @@ pub const Checker = struct {
                 if (!self.assignable(declared, value_t)) {
                     return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{v.name});
                 }
-                try ctx.scope.declare(self.allocator, v.name, declared);
+                try self.declareVar(ctx, v.name, declared);
             },
             .assign => |a| try self.checkAssign(ctx, a),
             .if_stmt => |f| {
@@ -4900,8 +4920,8 @@ pub const Checker = struct {
                 for (w.body) |s| try self.checkStmt(ctx, s);
             },
             .for_stmt => |f| {
-                const elem_t = try self.checkForIterable(ctx, f.iterable);
-                try ctx.scope.declare(self.allocator, f.var_name, elem_t);
+                const elem_t = try self.checkForIterable(ctx, f.iterable, @intFromPtr(f.body.ptr));
+                try self.declareVar(ctx, f.var_name, elem_t);
                 ctx.loop_depth += 1;
                 defer ctx.loop_depth -= 1;
                 for (f.body) |s| try self.checkStmt(ctx, s);
@@ -5016,7 +5036,7 @@ pub const Checker = struct {
             const class_name = resolved_class_name orelse
                 return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{ec_class_name});
             if (ec.bind_name) |bn| {
-                try ctx.scope.declare(self.allocator, bn, .{ .class = class_name });
+                try self.declareVar(ctx, bn, .{ .class = class_name });
             }
             for (ec.body) |s| try self.checkStmt(ctx, s);
         }
@@ -5052,7 +5072,7 @@ pub const Checker = struct {
             return self.fail(error.TypeMismatch, "'{s}.__exit__' None DÖNMELİDİR", .{class_name});
         }
         if (w.binding) |bn| {
-            try ctx.scope.declare(self.allocator, bn, enter_sig.return_type);
+            try self.declareVar(ctx, bn, enter_sig.return_type);
         }
         for (w.body) |s| try self.checkStmt(ctx, s);
     }
@@ -5233,21 +5253,64 @@ pub const Checker = struct {
         }
     }
 
-    fn checkForIterable(self: *Checker, ctx: *FnCtx, iterable: ast.Expr) TypeError!Type {
+    /// `for x in <iterable>` — v1.148.0'dan beri: `range(n)`/`range(a, b)`/`range(a, b, step)` (int); herhangi bir
+    /// `list[T]` ifadesi (eleman `T`); `str` (her karakter bir `str`); `dict[K, V]` (anahtarlar `K`, ekleme sırasıyla).
+    /// Adlandırılmış liste değişkeni dışındaki iterable'lar için yeniden yazım `for_rewrites`a yazılır (bkz.
+    /// `call_expand_apply.ForRewrite`): str/dict listeye çevrilir, liste-olmayan-isim iterable'lar gizli yerele alınır.
+    fn checkForIterable(self: *Checker, ctx: *FnCtx, iterable: ast.Expr, key: usize) TypeError!Type {
         if (iterable == .call and iterable.call.callee.* == .identifier and
             std.mem.eql(u8, iterable.call.callee.identifier, "range"))
         {
             const c = iterable.call;
-            if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'range' tam olarak 1 argüman alır", .{});
-            const at = try self.checkExpr(ctx, c.args[0]);
-            if (at != .int) return self.fail(error.TypeMismatch, "'range' bir int argüman bekler", .{});
+            if (c.args.len < 1 or c.args.len > 3) return self.fail(error.ArgumentCountMismatch, "'range' 1, 2 ya da 3 argüman alır (bitiş | başlangıç, bitiş | başlangıç, bitiş, adım)", .{});
+            for (c.args) |a| {
+                const at = try self.checkExpr(ctx, a);
+                if (at != .int) return self.fail(error.TypeMismatch, "'range' bir int argüman bekler", .{});
+            }
+            if (c.args.len == 3 and c.args[2] == .int_lit and c.args[2].int_lit == 0) {
+                return self.fail(error.TypeMismatch, "'range' adımı sıfır olamaz", .{});
+            }
             return .int;
         }
         const t = try self.checkExpr(ctx, iterable);
-        return switch (t) {
+        const elem_t: Type = switch (t) {
             .list => |elem| elem.*,
-            else => self.fail(error.NotIterable, "bu ifade üzerinde 'for' çalıştırılamaz", .{}),
+            .str => .str,
+            .dict => |d| d.key.*,
+            else => return self.fail(error.NotIterable, "bu ifade üzerinde 'for' çalıştırılamaz (list/str/dict/range olmalı)", .{}),
         };
+        // Yeniden yazılacak iterable ifadesi (str/dict → liste) ve hoist (gizli yerel) gereksinimi.
+        var new_iterable: ?ast.Expr = null;
+        var list_type: Type = t;
+        switch (t) {
+            .str => {
+                const args = try self.allocator.alloc(ast.Expr, 1);
+                args[0] = iterable;
+                const callee = try self.allocator.create(ast.Expr);
+                callee.* = .{ .identifier = "__nox_str_chars" };
+                new_iterable = .{ .call = .{ .callee = callee, .args = args } };
+                const boxed = try self.allocator.create(Type);
+                boxed.* = .str;
+                list_type = .{ .list = boxed };
+            },
+            .dict => |d| {
+                const obj = try self.allocator.create(ast.Expr);
+                obj.* = iterable;
+                const callee = try self.allocator.create(ast.Expr);
+                callee.* = .{ .attribute = .{ .obj = obj, .attr = "keys" } };
+                new_iterable = .{ .call = .{ .callee = callee, .args = &.{} } };
+                list_type = .{ .list = d.key };
+            },
+            else => {},
+        }
+        if (new_iterable == null and iterable == .identifier) return elem_t; // adlandırılmış liste: eski yol
+        self.for_hoist_counter += 1;
+        const hoist_name = try std.fmt.allocPrint(self.allocator, "__nox_it_{d}", .{self.for_hoist_counter});
+        try self.for_rewrites.put(self.allocator, key, .{
+            .iterable = new_iterable,
+            .hoist = .{ .name = hoist_name, .type_expr = try self.typeToTypeExpr(list_type) },
+        });
+        return elem_t;
     }
 
     /// Faz P2.2 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"):
@@ -6042,6 +6105,13 @@ pub const Checker = struct {
                 }
                 // v1.142.20: dahili karma ilkeli (`nox.collections` Set/Counter/OrderedDict) — int/bool/
                 // sabit-genişlikli/float/str için gerçek karma, diğer tüm tipler için 0 (doğrusal geri düşüş).
+                if (std.mem.eql(u8, name, "__nox_str_chars")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_str_chars' (dahili) tam olarak 1 argüman alır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'__nox_str_chars' (dahili) bir str bekler", .{});
+                    const boxed = try self.allocator.create(Type);
+                    boxed.* = .str;
+                    return .{ .list = boxed };
+                }
                 if (std.mem.eql(u8, name, "__nox_hash")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_hash' (dahili) tam olarak 1 argüman alır", .{});
                     _ = try self.checkExpr(ctx, c.args[0]);

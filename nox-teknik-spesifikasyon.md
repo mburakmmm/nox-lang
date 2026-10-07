@@ -28481,6 +28481,37 @@ sayısal olarak doğrulandı); typecheck: `ok_default_keyword_args`, `err_kwarg_
 **Bilinen sınırlamalar:** keyword/varsayılan `nox.*` stdlib fonksiyonlarında şimdilik kullanılmıyor (bildirimleri destekler);
 `*args`/`**kwargs` yok (bilinçli ertelenmiş).
 
+## 3.265 `for` genişletmeleri: her liste ifadesi, `str`, `dict`, `range(a, b, adım)` + yeniden-bildirim kuralı (v1.148.0)
+
+**Önceki sınır:** `for` yalnızca `range(n)` ya da ADLANDIRILMIŞ bir `list[T]` değişkenini geziyordu (`range(a, b)`, `for c in s`,
+`for k in d`, `for x in f()` yoktu).
+
+**Yeni kapsam (checker, `checkForIterable`):** (1) `range(bitiş)`, `range(başlangıç, bitiş)`, `range(başlangıç, bitiş, adım)`
+(hepsi int; negatif adım desteklenir; sabit sıfır adım derleme hatası, çalışma zamanı sıfır adım `ValueError`); (2) herhangi bir
+`list[T]` ifadesi (çağrı, alan okuması, metod sonucu, literal, `d.keys()`/`d.values()`); (3) `str` — her UTF-8 karakter bir `str`
+(geçersiz UTF-8'de bayt semantiği, `s[i]` ile aynı); (4) `dict[K, V]` — anahtarlar, ekleme sırasıyla.
+
+**Uygulama:** checker adlandırılmış-liste-olmayan iterable'lar için `Checker.for_rewrites`a (anahtar: gövde dilimi adresi) bir
+yeniden yazım kaydeder; `checkModule` sonunda `call_expand_apply.zig` AST'yi yerinde günceller: str → `__nox_str_chars(s)`
+(`nox_str_chars`: `list[str]`, ASCII karakterler pinned tablodan), dict → `d.keys()` (anlık görüntü) ve her iki durumda ile
+herhangi bir liste ifadesi için `ForStmt.hoist` (`__nox_it_N` + liste tipi). Codegen (`genFor`) hoist'i SIRADAN bir `var_decl` gibi
+üretir (retain/serbest bırakma/ASAP kararları ve TÜM çıkış yolları — `return`, `break`, istisna — yerel olarak `releaseAllLocals`ta),
+sonra o yerel üzerinde `genForList` ile döner. `range` için `genForRange` başlangıç/bitiş/adımı döngüye girmeden bir kez değerlendirir;
+sabit adımın işaretine göre `<`/`>`, çalışma zamanı adımı için `(adım>0 ∧ cur<bitiş) ∨ (adım<0 ∧ cur>bitiş)`. `range(len(xs))` sınır
+elemesi yalnızca tek argümanlı biçimde geçerlidir.
+
+**Yeniden-bildirim kuralı (eski bir doğruluk açığı):** `x: int = 1` sonra `x: str = "a"` (ya da aynı döngü değişkenini farklı eleman
+tipli iki `for`da kullanmak) checker'ca kabul ediliyor ve codegen ad başına TEK slot/tip tuttuğundan SESSİZCE yanlış kod/çöp çıktı
+üretiyordu. Artık aynı kapsamda FARKLI tiple yeniden bildirim derleme hatasıdır (`declareVar`); aynı tip ve sınıf↔sınıf (temsil aynı:
+işaretçi; `except A as e` … `except B as e` yaygın) serbesttir.
+
+Golden: `for_iterables_and_range_forms`, `for_hoisted_iterable_arc_early_exits` (Python ile sayısal doğrulandı; sızıntı denetimli),
+`range_dynamic_zero_step_raises`; typecheck: `ok_for_iterables_and_class_redeclare`, `err_range_zero_step`, `err_range_too_many_args`,
+`err_redeclare_different_type`, `err_for_var_reused_with_other_type`. Mevcut hiçbir IR anlık görüntüsü değişmedi.
+
+**Bilinen sınırlama:** döngü sırasında iterable'ın değiştirilmesi (listeye `append`) tanımsız sonuç verebilir (liste işaretçisi/uzunluğu
+döngü girişinde okunur, eski davranışla aynı); `for k, v in d.items()`/`enumerate`/`zip` tuple gerektirir (yol haritası 1.13).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

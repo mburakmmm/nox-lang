@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.148.0]
+
+### Eklendi
+
+- **`for` genişletmeleri:** `range(başlangıç, bitiş[, adım])` (negatif adım dahil), `for c in str`, `for k in dict`, ve herhangi
+  bir liste ifadesi (`for x in obj.items`, `f()`, `d.values()`, literal). Spec §3.265.
+
+### Düzeltme
+
+- **Doğruluk:** aynı kapsamda bir değişkenin FARKLI tiple yeniden bildirilmesi (ya da aynı döngü değişkeninin farklı eleman tipli iki
+  `for`da kullanılması) sessizce yanlış kod üretiyordu; artık derleme hatası (aynı tip ve sınıf↔sınıf serbest).
+
 ## [1.147.0]
 
 ### Eklendi

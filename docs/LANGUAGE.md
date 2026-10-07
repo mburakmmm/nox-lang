@@ -64,8 +64,21 @@ for n in numbers:
     print(n)
 ```
 
-`for` only iterates a `range(...)` call or a named `list[T]` variable —
-not an inline list-literal expression.
+`for` iterates a `range(...)`, any `list[T]` expression, a `str` (one `str` per
+character) or a `dict` (its keys, in insertion order):
+
+```nox
+for i in range(5):            # 0 1 2 3 4
+for i in range(2, 10, 3):     # 2 5 8   (a negative step counts down)
+for ch in "héllo":            # one character at a time
+for key in table:             # dict keys
+for item in make_items():     # any list expression
+```
+
+`range(stop)`, `range(start, stop)` and `range(start, stop, step)` take `int`s; a step
+of zero is an error. A name declared in a scope keeps its type there: re-declaring
+`x` with a different type (or reusing a loop variable name for loops over different
+element types) is a compile error.
 
 `break` leaves the innermost `while`/`for` loop and `continue` jumps to its
 next iteration (in a `while` loop that is the condition check; in a `for`

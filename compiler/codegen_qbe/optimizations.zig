@@ -852,6 +852,8 @@ pub fn enterModCacheLoopScope(self: *Codegen, body: []const ast.Stmt) CodegenErr
 /// üretilir).
 pub fn detectBoundsElideCtx(self: *Codegen, f: ast.ForStmt) CodegenError!?BoundsElideCtx {
     if (!Codegen.isRangeCall(f.iterable)) return null;
+    // `range(len(xs))` yalnızca TEK argümanlı biçimde sınır-kontrolü elemesi sağlar (başlangıç/adım 0/1 olmalı).
+    if (f.iterable.call.args.len != 1) return null;
     const limit_expr = f.iterable.call.args[0];
     if (limit_expr != .call) return null;
     if (limit_expr.call.callee.* != .identifier) return null;

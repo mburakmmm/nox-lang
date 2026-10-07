@@ -15,19 +15,22 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 - [x] **1.1 `break` / `continue`** — v1.144.0 (spec §3.261). Tasarım notları aşağıda.
 - [x] **1.2 `in` / `not in`** — v1.145.0 (spec §3.262). Kullanıcı sınıfları için `__contains__` yok (ayrı karar).
-- [x] **1.3 Üçlü ifade** `a if cond else b` — v1.146.0 (spec §3.263). Dallar aynı tipte olmalı (int/float karışımı → 1.6 `float(int)` sonrası gevşetilebilir).
+- [x] **1.3 Üçlü ifade** `a if cond else b` — v1.146.0 (spec §3.263). Dallar aynı tipte olmalı (int/float karışımı → 1.8 `float(int)` sonrası gevşetilebilir).
 - [x] **1.4 Varsayılan argümanlar + keyword argümanlar** — v1.147.0 (spec §3.264). Yalnızca sabit literal varsayılanlar; argümanlar parametre sırasıyla değerlendirilir.
-- [ ] **1.5 dict: `.get(k, default)`, `for k in d`, `.items()`**; **list: `insert`/`extend`/`reverse`/`remove`/`index`**.
-- [ ] **1.6 `float(int)` / açık int→float dönüşümü** (şu an `float` yalnızca `str` alıyor).
-- [ ] **1.7 Dize karşılaştırması `<`/`>`/`<=`/`>=`**, `"ab" * 3`, list `+`/`* n`.
-- [ ] **1.8 `sorted` / `enumerate` / `zip` / `reversed`** yerleşikleri.
-- [ ] **1.9 Dilimleme** (`xs[a:b]`, `s[a:b]`).
-- [ ] **1.10 list comprehension** (AGENTS.md §5 "comprehension'lar" diyor ama YOK — ya ekle ya AGENTS.md'yi düzelt).
-- [ ] **1.11 `lambda`**, **`is None` / `Optional`**, **`print` çoklu argüman**, dize metot sözdizimi (`s.split()`).
+- [x] **1.5 `for` genişletmeleri** — v1.148.0 (spec §3.265): `range(a,b,adım)`, `for c in str`, `for k in dict`, her liste ifadesi. Ayrıca eski bir
+  doğruluk açığı kapandı (aynı kapsamda farklı tiple yeniden bildirim).
+- [ ] **1.6 dict tam API + tipler:** `.get(k, d)`, `.get(k)` (Optional), `pop`, `del d[k]`/`remove`, `clear`, `update`, `setdefault`, `len(d)`;
+  değer tipi `list[T]`/`dict` (şu an yalnızca int/float/bool/str/sınıf), anahtar tipi `float` (şu an int/bool/str).
+- [ ] **1.7 list tam API:** `insert`, `extend`, `reverse`, `remove`, `index`, `count`, `clear`, `copy`; `list + list`, `list * n`; `sorted`/`reversed` (liste döndürür).
+- [ ] **1.8 `float(int)` / açık int→float dönüşümü** (şu an `float` yalnızca `str` alıyor).
+- [ ] **1.9 Dize karşılaştırması `<`/`>`/`<=`/`>=`**, `"ab" * 3`, dilimleme (`xs[a:b]`, `s[a:b]`).
+- [ ] **1.10 list comprehension** (AGENTS.md §5 "comprehension'lar" diyor ama YOK — ekle) ve `lambda`.
+- [ ] **1.11 `is None` / `Optional` ergonomisi**, `print` çoklu argüman, dize metot sözdizimi (`s.split()`).
 - [ ] **1.12 Koruma (guard) tarzı Optional daraltma:** `if x == None: return/break/continue` sonrası `x` daraltılsın
-  (şu an yalnızca `if x != None:` bloğu içinde; bağlı liste gezintisi için gerekli, `break` ile birlikte önem kazandı).
-- Bilinçli ertelenmiş (LANGUAGE.md): tuple/çoklu dönüş, `*args`/`**kwargs`, çoklu kalıtım — 2.0 için yeniden
-  değerlendirilecek mi, kullanıcıya sorulacak.
+  (şu an yalnızca `if x != None:` bloğu içinde; bağlı liste gezintisi için gerekli).
+- [ ] **1.13 tuple (BÜYÜK, karar verildi: yapılacak):** `tuple[T1, T2]` tipi, `(a, b)` literal, `t[0]`, açma (`a, b = f()`), çoklu dönüş,
+  `for k, v in d.items()`, `enumerate`/`zip`. Kullanıcı kararı (2026-10-07): 2.0 için özelliklerden kaçınma, eksiksiz olsun.
+- Bilinçli ertelenmiş (LANGUAGE.md): `*args`/`**kwargs`, çoklu kalıtım — 2.0 için yeniden değerlendirilecek mi, kullanıcıya sorulacak.
 
 ### 1.1 `break` / `continue` — tasarım
 
