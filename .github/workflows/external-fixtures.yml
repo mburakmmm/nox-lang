@@ -6,8 +6,8 @@ name: Harici entegrasyon fixture'ları (Aether + Nyx)
 # github.com/mburakmmm/aether + github.com/mburakmmm/nyx repo'ları)
 # KENDİ test paketini, KAYNAKTAN derlenen GÜNCEL noxc'ye karşı çalıştırır.
 # `ci.yml`ye BİLİNÇLİ olarak DOKUNULMADI (stress.yml/http-soak'ın AYNI
-# "paylaşılan CI dosyasına dokunma" ilkesi). Etiketler (Aether v0.6.5,
-# Nyx v0.17.0) BİLİNÇLİ olarak PINNED — framework'lerin KENDİ GELECEKTEKİ
+# "paylaşılan CI dosyasına dokunma" ilkesi). Etiketler (Aether v0.7.0,
+# Nyx v0.19.0) BİLİNÇLİ olarak PINNED — framework'lerin KENDİ GELECEKTEKİ
 # değişiklikleri bu CI'yi BEKLENMEDİK KIRMASIN diye, İHTİYAÇ olduğunda
 # ELLE güncellenir. Aether/Nyx'in KENDİ bash "smoke_*.sh" script'leri
 # (HTTP/multicore/release/shutdown/package smoke) + Nyx'in postgres-
@@ -22,7 +22,7 @@ on:
 
 jobs:
   aether:
-    name: Aether (v0.6.5) — gerçek framework test paketi
+    name: Aether (v0.7.0) — gerçek framework test paketi
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: mburakmmm/aether
-          ref: v0.6.5
+          ref: v0.7.0
           path: aether
 
       - name: Zig kur
@@ -77,7 +77,7 @@ jobs:
               f.write("\n")
           PY
 
-      - name: Fetch & test (aether'in KENDİ 20 test dosyası)
+      - name: Fetch & test (aether'in kendi tests/*.nox paketi)
         working-directory: aether
         run: |
           noxc --version
@@ -93,7 +93,7 @@ jobs:
           exit "$fail"
 
   nyx:
-    name: Nyx (v0.17.0) — gerçek framework test paketi
+    name: Nyx (v0.19.0) — gerçek framework test paketi
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: mburakmmm/nyx
-          ref: v0.17.0
+          ref: v0.19.0
           path: nyx
 
       - name: Zig kur
