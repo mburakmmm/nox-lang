@@ -34,14 +34,13 @@ kümesi KÜÇÜLMEZ), stdlib (`nox.*`) fonksiyon imzaları ve davranışı,
 (`build`/`run`/`test`/`search`) mevcut davranışı.
 
 **Bu garantinin KAPSAMI DIŞINDA (bilinçli olarak, açıkça belgelenir):**
-- **Derleyici/çalışma zamanı ikili (ABI) uyumluluğu.** Nox'ta HENÜZ
-  stabil bir ikili dağıtım formatı/ABI YOKTUR — `noxrt.o`, `extern
-  def`in C ABI'si, HPy/WASM köprü düzenleri TAMAMEN İÇ implementasyon
-  detaylarıdır ve `x.y.z`nin HERHANGİ bir bileşeninde DEĞİŞEBİLİR.
-  Pratik sonuç: bir Nox programı HER ZAMAN KAYNAKTAN yeniden
-  derlenmelidir — önceden derlenmiş bir `.o`/ikili dosyanın farklı bir
-  `noxc` sürümüyle ÇALIŞACAĞI GARANTİ EDİLMEZ (Rust'ın `cargo` öncesi
-  dönemine ya da Zig'in KENDİ mevcut politikasına BENZER bir duruş).
+- **Derleyici/çalışma zamanı ikili (ABI) uyumluluğu.** İÇ runtime ABI'si
+  (`noxrt.o`, `nox_*` runtime sembolleri, ARC başlığı, nesne düzenleri,
+  QBE/LLVM IR) TAMAMEN İÇ detaydır ve HERHANGİ bir sürümde DEĞİŞEBİLİR; ayrı
+  derlenmiş Nox `.o` dosyalarının birbiriyle uyumu GARANTİ EDİLMEZ — bir Nox
+  programı HER ZAMAN KAYNAKTAN yeniden derlenmelidir. **İSTİSNA (v2.0.0'dan
+  itibaren, genel ve kararlı):** Nox Native Interface v1 (`include/nox_nni.h`,
+  `docs/NATIVE-API.md`) ve belgelenmiş `extern def` C ABI eşlemesi.
 - **Hata mesajı/tanılama METNİ.** Bir hatanın TÜRÜ (ör. `TypeMismatch`)
   sabit kalır, ama TAM metni (bkz. Faz T.2'nin çoklu-tanılama biçimi)
   PATCH sürümlerinde bile İYİLEŞTİRİLEBİLİR — hata metnini ayrıştırıp
@@ -120,3 +119,10 @@ gruplarının TAMAMININ tamamlandığı somut kontrol listesini (bkz.
 `nox-teknik-spesifikasyon.md` §3.43, Faz Z.1) KARŞILADIKTAN SONRA
 atılır (bkz. Faz Z.3). `v1.0.0`dan ÖNCEKİ HİÇBİR etiket/commit BU
 belgenin garantilerine TABİ DEĞİLDİR.
+
+## 5. Stdlib sınıf kurucuları (v2.0.0 sözleşmesi)
+
+Çalışma zamanının/stdlib'in ürettiği ve kullanıcı kodunun (özellikle testlerin ve çerçevelerin) doğrudan kurabildiği sınıflar (`HttpRequest`,
+`HttpResponse`, `Row`, `Statement`, `JsonValue` sarmalayıcıları, ...) için: bir kurucunun mevcut parametreleri bir MAJOR sürüm içinde
+DEĞİŞMEZ; yeni parametre YALNIZCA **varsayılan değerle** eklenir (MINOR). Alanlar eklenebilir, mevcut alanlar kaldırılmaz/yeniden adlandırılmaz.
+Çalışma zamanının kendisinin kurduğu nesnelerin (ör. `serve` işleyicisine verilen `HttpRequest`) alan KÜMESİ de bu kurala uyar.

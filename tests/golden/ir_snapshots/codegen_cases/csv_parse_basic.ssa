@@ -6147,38 +6147,6 @@ export function l $nox_csv_dump(l %rt, l %p_rows) {
     storel 0, %t1
     ret 0
 }
-export function l $nox_csv_write(l %rt, l %p_rows) {
-@start
-    %t0 =l alloc8 8
-    storel %p_rows, %t0
-    %t1 =l loadl %t0
-    %t2 =l call $nox_csv_dump(l %rt, l %t1)
-    %t3 =w call $nox_exception_pending(l %rt)
-    jnz %t3, @exc_propagate0, @exc_continue1
-@exc_propagate0
-    ret 0
-@exc_continue1
-    ret %t2
-@after_return2
-@fn_end3
-    ret 0
-}
-export function l $nox_csv_write_row(l %rt, l %p_fields) {
-@start
-    %t0 =l alloc8 8
-    storel %p_fields, %t0
-    %t1 =l loadl %t0
-    %t2 =l call $nox_csv_dump_row(l %rt, l %t1)
-    %t3 =w call $nox_exception_pending(l %rt)
-    jnz %t3, @exc_propagate0, @exc_continue1
-@exc_propagate0
-    ret 0
-@exc_continue1
-    ret %t2
-@after_return2
-@fn_end3
-    ret 0
-}
 export function w $main(w %argc, l %argv) {
 @start
     %t0 =l alloc8 8

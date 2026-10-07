@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.171.0]
+
+### Kaldırıldı (2.0 öncesi kırıcı temizlik — bkz. `docs/MIGRATING-2.0.md`)
+
+- **`nox.json` eski adları:** `decode/encode/encode_pretty/encode_string/encode_array/encode_object/encode_pretty_at/encode_pretty_array/encode_pretty_object` (yerine `parse/dump/dump_pretty/dump_string/dump_array/dump_object/dump_pretty_at/dump_pretty_array/dump_pretty_object`). **`nox.csv`:** `write/write_row` (yerine `dump/dump_row`). 1.x boyunca `deprecated` idi; VERSIONING.md gereği kaldırma MAJOR sürüme (2.0) hazırlıktır.
+
+### Değişti
+
+- `HttpRequest.__init__` artık `peer_addr: str = ""` varsayılanı taşır (VERSIONING.md §5: stdlib kurucularına yeni parametre yalnızca varsayılanla eklenir).
+
+### Eklendi
+
+- `docs/MIGRATING-2.0.md` (kaldırılanlar + davranış değişiklikleri), `VERSIONING.md` §5 (stdlib kurucu sözleşmesi) ve NNI'nın kararlı ABI istisnası, `scripts/release.sh` (sürüm kapısı: sürüm tutarlılığı → fmt → build → test → QBE/LLVM fark testi → [stres] → tag/push).
+
 ## [1.170.0]
 
 ### Eklendi

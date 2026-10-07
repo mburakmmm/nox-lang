@@ -17,8 +17,10 @@ class HttpResponse:
 # spesifikasyon.md ilgili bölüm): `peer_addr` — bağlantıyı kabul eden
 # `accept()`in doldurduğu karşı tarafın "`ip:port`" adresi (HER ZAMAN
 # IPv4 — dinleme soketi HER ZAMAN `AF_INET`dir).
+# v2.0 sözleşmesi (VERSIONING.md §5): kurucuya EKLENEN her yeni parametre varsayılan değer TAŞIR, böylece mevcut çağıranlar (testler, çerçeveler)
+# bozulmaz; `peer_addr` bunun ilk uygulamasıdır (eskiden zorunluydu ve Aether'i kırmıştı).
 class HttpRequest:
-    def __init__(self: HttpRequest, method: str, target: str, body: str, headers: dict[str, str], peer_addr: str) -> None:
+    def __init__(self: HttpRequest, method: str, target: str, body: str, headers: dict[str, str], peer_addr: str = "") -> None:
         self.method = method
         self.target = target
         self.body = body
