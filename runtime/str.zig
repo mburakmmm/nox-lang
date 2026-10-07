@@ -105,6 +105,20 @@ pub fn nox_str_from_bytes(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
     return allocStr(rt, bytes, ASCII_UNKNOWN);
 }
 
+/// `len` baytlık, sıfırla-sonlanan YENİ bir Nox `str` tahsis eder ve veri işaretçisini döner;
+/// çağıran `len` baytı DOĞRUDAN buraya yazar (ASCII durumu "bilinmiyor"). `nox_strings_*`
+/// shim'leri önceden sonucu `page_allocator`dan (her çağrıda mmap/munmap) geçici bir arabelleğe
+/// kurup `nox_str_from_bytes` ile ikinci kez kopyalıyordu: `join` Python'dan ~7x yavaştı.
+pub fn nox_str_alloc_buf(rt: ?*anyopaque, len: usize) ?[*]u8 {
+    const raw = arc.nox_rc_alloc(rt, STR_HEADER_SIZE + len + 1) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    const header: *align(1) i64 = @ptrCast(base);
+    header.* = abi_layout.packStrHeader(len, ASCII_UNKNOWN);
+    const data = base + STR_HEADER_SIZE;
+    data[len] = 0;
+    return data;
+}
+
 /// O(1) — paketlenmiş başlıktan HAM BAYT uzunluğunu okur (artık `strlen`
 /// TARAMASI YOK).
 pub fn strByteLen(str_ptr: [*:0]const u8) u64 {
@@ -297,6 +311,25 @@ pub export fn nox_str_release(rt: ?*anyopaque, ptr: ?[*:0]u8) void {
 pub export fn nox_str_free_now(rt: ?*anyopaque, ptr: [*:0]u8) void {
     const arc_ptr = strArcPtr(ptr);
     arc.nox_rc_free_payload(rt, arc_ptr, abi_layout.strPayloadSize(strHeaderField(ptr).*));
+}
+
+test "nox_str_alloc_buf yazılabilir, uzunluk başlıklı, sıfırla sonlanan dize verir" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const buf = nox_str_alloc_buf(rt, 5) orelse return error.AllocFailed;
+    @memcpy(buf[0..5], "salut");
+    const s: [*:0]u8 = @ptrCast(buf);
+    defer nox_str_release(rt, s);
+    try std.testing.expectEqual(@as(u64, 5), strByteLen(s));
+    try std.testing.expectEqualStrings("salut", std.mem.sliceTo(s, 0));
+
+    const empty = nox_str_alloc_buf(rt, 0) orelse return error.AllocFailed;
+    const e: [*:0]u8 = @ptrCast(empty);
+    defer nox_str_release(rt, e);
+    try std.testing.expectEqual(@as(u64, 0), strByteLen(e));
+    try std.testing.expectEqual(@as(u8, 0), e[0]);
 }
 
 test "nox_str_concat iki dizeyi doğru birleştirir, sıfırla sonlanır" {

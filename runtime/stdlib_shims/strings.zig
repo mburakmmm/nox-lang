@@ -158,16 +158,12 @@ export fn nox_strings_repeat_raw(rt: ?*anyopaque, s: ?[*:0]const u8, n: i64) cal
 
     const count: usize = @intCast(n);
     const total_len = s_slice.len * count;
-    // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz. plan
-    // dosyası) düz (ARA) bir arabellekte İNŞA EDİLİP `dupeToNoxStr` İLE
-    // GERÇEK, başlıklı bir Nox `str`ine kopyalanır.
-    const buf = std.heap.page_allocator.alloc(u8, total_len) catch return null;
-    defer std.heap.page_allocator.free(buf);
+    const buf = str_mod.nox_str_alloc_buf(rt, total_len) orelse return null;
     var i: usize = 0;
     while (i < count) : (i += 1) {
         @memcpy(buf[i * s_slice.len ..][0..s_slice.len], s_slice);
     }
-    return dupeToNoxStr(rt, buf);
+    return @ptrCast(buf);
 }
 
 /// Faz III.2 — ASCII büyük/küçük harf DUYARSIZ karşılaştırma (ASCII v1
@@ -181,18 +177,16 @@ export fn nox_strings_eq_ignore_case_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) c
 
 export fn nox_strings_upper_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const slice = str_mod.nox_str_slice(s orelse return null);
-    const buf = std.heap.page_allocator.alloc(u8, slice.len) catch return null;
-    defer std.heap.page_allocator.free(buf);
+    const buf = str_mod.nox_str_alloc_buf(rt, slice.len) orelse return null;
     for (slice, 0..) |c, i| buf[i] = std.ascii.toUpper(c);
-    return dupeToNoxStr(rt, buf);
+    return @ptrCast(buf);
 }
 
 export fn nox_strings_lower_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const slice = str_mod.nox_str_slice(s orelse return null);
-    const buf = std.heap.page_allocator.alloc(u8, slice.len) catch return null;
-    defer std.heap.page_allocator.free(buf);
+    const buf = str_mod.nox_str_alloc_buf(rt, slice.len) orelse return null;
     for (slice, 0..) |c, i| buf[i] = std.ascii.toLower(c);
-    return dupeToNoxStr(rt, buf);
+    return @ptrCast(buf);
 }
 
 /// `old` BOŞSA (v1 bilinçli basitleştirmesi — sonsuz/anlamsız bir
@@ -204,11 +198,28 @@ export fn nox_strings_replace_raw(rt: ?*anyopaque, s: ?[*:0]const u8, old: ?[*:0
     const new_slice = str_mod.nox_str_slice(new orelse return null);
     if (old_slice.len == 0) return dupeToNoxStr(rt, s_slice);
 
-    const out_len = std.mem.replacementSize(u8, s_slice, old_slice, new_slice);
-    const buf = std.heap.page_allocator.alloc(u8, out_len) catch return null;
-    defer std.heap.page_allocator.free(buf);
-    _ = std.mem.replace(u8, s_slice, old_slice, new_slice, buf[0..out_len]);
-    return dupeToNoxStr(rt, buf);
+    // `std.mem.replace`/`replacementSize` her konumda `startsWith` denediği için 57 baytlık bir
+    // dizede Python'dan ~4x yavaştı; `index_of`un SIMD ilk-bayt aramasıyla (`fastIndexOf`) iki geçiş.
+    var count: usize = 0;
+    var pos: usize = 0;
+    while (fastIndexOf(s_slice[pos..], old_slice)) |idx| {
+        count += 1;
+        pos += idx + old_slice.len;
+    }
+    if (count == 0) return dupeToNoxStr(rt, s_slice);
+    const out_len = s_slice.len - count * old_slice.len + count * new_slice.len;
+    const buf = str_mod.nox_str_alloc_buf(rt, out_len) orelse return null;
+    var rd: usize = 0;
+    var wr: usize = 0;
+    while (fastIndexOf(s_slice[rd..], old_slice)) |idx| {
+        @memcpy(buf[wr..][0..idx], s_slice[rd..][0..idx]);
+        wr += idx;
+        @memcpy(buf[wr..][0..new_slice.len], new_slice);
+        wr += new_slice.len;
+        rd += idx + old_slice.len;
+    }
+    @memcpy(buf[wr..][0 .. s_slice.len - rd], s_slice[rd..]);
+    return @ptrCast(buf);
 }
 
 /// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `join`nin ÖNCEKİ
@@ -236,8 +247,7 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
         if (i + 1 < count) total_len += sep_slice.len;
     }
 
-    const buf = std.heap.page_allocator.alloc(u8, total_len) catch return null;
-    defer std.heap.page_allocator.free(buf);
+    const buf = str_mod.nox_str_alloc_buf(rt, total_len) orelse return null;
     var off: usize = 0;
     i = 0;
     while (i < count) : (i += 1) {
@@ -251,7 +261,7 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
             off += sep_slice.len;
         }
     }
-    return dupeToNoxStr(rt, buf);
+    return @ptrCast(buf);
 }
 
 /// Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67) — `index_of`nin

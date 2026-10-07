@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.26]
+
+### Performans
+
+- **`nox.strings.join/upper/lower/replace/repeat`:** sonuç artık geçici `page_allocator` arabelleği
+  (her çağrıda mmap/munmap) + ikinci kopya yerine doğrudan Nox `str`ine yazılır; `split`+`join` döngüsü
+  0.90 → 0.10 s (Python 0.118 s).
+- **`nox.strings.replace`:** SIMD ilk-bayt aramasıyla iki geçiş (Zig `std.mem.replace` her konumda
+  `startsWith` deniyordu): 214 → 52 ms / 1M çağrı. Spec §3.259.
+
 ## [1.142.25]
 
 ### Düzeltme

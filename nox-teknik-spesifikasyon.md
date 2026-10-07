@@ -28307,6 +28307,29 @@ Golden: `bounds_error_path_propagates_from_loop` (döngüde iç içe indeks, ça
 temizlik; QBE ve `--release` aynı çıktı), `dict_returned_from_loop_function_indexed_directly`.
 87 IR anlık görüntüsü (inline/istisna kontrolü farkı) yeniden üretildi.
 
+## 3.259 `nox.strings` shim'leri: geçici page_allocator arabelleği kaldırıldı, `replace` SIMD aramasına taşındı (v1.142.26)
+
+Python'a karşı gerçekçi mikro-iş yükleri taranırken (`/tmp` içi, kelime sayımı/f-string/split+join/
+sınıf nesnesi/dize sıralama/dosya okuma/JSON/regex/float matematik) yalnızca iki gerçek aykırı değer çıktı:
+
+- `split` + `join` döngüsü Python'dan ~7.6x YAVAŞTI (0.90 s vs 0.118 s). Neden: `join` (ve `upper`/`lower`/
+  `replace`/`repeat`) sonucu önce `std.heap.page_allocator`dan alınan geçici bir arabelleğe kuruyor
+  (her çağrıda mmap + munmap), sonra `nox_str_from_bytes` ile ikinci kez kopyalıyordu. `str.zig`e
+  `nox_str_alloc_buf(rt, len)` eklendi (başlıklı, sıfırla sonlanan, yazılabilir Nox `str`); bu beşi
+  sonucu doğrudan oraya yazar. Sonuç 0.90 → 0.10 s.
+- `replace` Python'dan ~4x yavaştı (214 ms vs 54 ms / 1M çağrı): `std.mem.replace`/`replacementSize` her
+  konumda `startsWith` dener (ve iki kez tarar). `index_of`un SIMD ilk-bayt aramasıyla (`fastIndexOf`) iki
+  geçişli uygulamaya geçildi: 214 → 52 ms. Anlambilim aynı (soldan sağa, çakışmasız eşleşmeler; boş `old`
+  → değişmemiş kopya).
+
+Diğer ölçümler (değişiklik GEREKMEDİ): kelime sayımı 2x, f-string 1.7x, dize sıralama 1.3x, dosya okuma 1.3x,
+float matematik ~15x Python'dan hızlı; JSON decode+encode Python'un C `json`una göre 1.2x (decode ~0.7 µs,
+encode ~0.85 µs / küçük belge).
+
+Golden: `strings_replace_join_edge_cases` (çakışma, baş/son eşleşme, boş yerine koyma, eşleşme yok, uzun
+girdi, `join` boş liste/boş ayırıcı, `repeat`, `upper`/`lower`; QBE ve `--release` aynı çıktı, Python
+referansıyla da doğrulandı). Birim test: `nox_str_alloc_buf`.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
