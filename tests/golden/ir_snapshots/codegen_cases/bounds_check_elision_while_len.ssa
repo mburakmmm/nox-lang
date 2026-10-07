@@ -1443,9 +1443,15 @@ export function w $main(w %argc, l %argv) {
     storel %t0, %t1
     %t11 =l loadl %t1
     %t12 =l call $sum_while(l %rt, l %t11)
+    %t13 =w call $nox_exception_pending(l %rt)
+    jnz %t13, @exc_propagate0, @exc_continue1
+@exc_propagate0
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue1
     call $printf(l $fmt_int, ..., l %t12)
     call $nox_runtime_deinit(l %rt)
-@fn_end0
+@fn_end2
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

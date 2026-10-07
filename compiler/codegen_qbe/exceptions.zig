@@ -575,6 +575,9 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
         },
         .unary => |u| try self.collectRaiseInfoExpr(u.operand.*, info, class_ctx, var_types, poisoned),
         .binary => |b| {
+            // `<<`/`>>` (genCheckedShift): kaydırma miktarı sabit literal değilse çalışma zamanında
+            // `ValueError` fırlatabilir.
+            if ((b.op == .shl or b.op == .shr) and b.right.* != .int_lit) info.direct_unsafe = true;
             try self.collectRaiseInfoExpr(b.left.*, info, class_ctx, var_types, poisoned);
             try self.collectRaiseInfoExpr(b.right.*, info, class_ctx, var_types, poisoned);
         },
@@ -675,6 +678,11 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
         },
         .attribute => |a| try self.collectRaiseInfoExpr(a.obj.*, info, class_ctx, var_types, poisoned),
         .index => |idx| {
+            // list/str/dict indeksleme sınır dışında `IndexError`/`KeyError` fırlatır (genIndex,
+            // genStrIndex, dict get). Önceden burası güvenli sayılıyordu: döngü içerdiği için
+            // inline edilmeyen bir fonksiyonun çağıranı istisna kontrolünü atlıyor, IndexError
+            // sessizce yutuluyor (ya da sonraki ilgisiz bir kontrolde ortaya çıkıyordu).
+            info.direct_unsafe = true;
             try self.collectRaiseInfoExpr(idx.obj.*, info, class_ctx, var_types, poisoned);
             try self.collectRaiseInfoExpr(idx.index.*, info, class_ctx, var_types, poisoned);
         },
@@ -1023,6 +1031,21 @@ pub fn emitExceptionCheckExcept(self: *Codegen, except_name: ?[]const u8) Codege
     const continue_label = try self.newLabel("exc_continue");
     try self.qbeJnz(pending, propagate_label, continue_label);
     try self.qbeLabel(propagate_label);
+    try emitPropagateBody(self, except_name);
+    try self.qbeLabel(continue_label);
+}
+
+/// `$nox_raise` çağrısından HEMEN SONRA kullanılır: bekleyen istisna KESİNLİKLE ayarlıdır, bu
+/// yüzden `nox_exception_pending` sorgusu ve "devam" dalı gereksizdir. Önceden her sınır-kontrolü
+/// hata bloğu `jnz pending, propagate, continue` ile sıcak yola GERİ BAĞLANIYORDU; bu, hata
+/// bloğunu (nox_rc_alloc/nox_raise çağrılarıyla) döngünün parçası yapıp LLVM'in LICM'inin
+/// döngü-değişmez yüklemeleri taşımasını ("the loop may invalidate its value") ve register
+/// ayırıcının sıcak değerleri tutmasını engelliyordu. Blok artık `ret`/`jmp` ile biter.
+pub fn emitRaisePropagate(self: *Codegen) CodegenError!void {
+    try emitPropagateBody(self, null);
+}
+
+fn emitPropagateBody(self: *Codegen, except_name: ?[]const u8) CodegenError!void {
     if (self.current_catch_label) |cl| {
         // Bu `try`nin kendi dispatch'ine giriyoruz — henüz onun korumalı
         // bölgesinden ÇIKMIYORUZ, bu yüzden `finally` burada DEĞİL,
@@ -1049,5 +1072,4 @@ pub fn emitExceptionCheckExcept(self: *Codegen, except_name: ?[]const u8) Codege
         try self.releaseAllLocalsExcept(except_name);
         try self.emitDefaultReturn(self.current_ret_qtype);
     }
-    try self.qbeLabel(continue_label);
 }

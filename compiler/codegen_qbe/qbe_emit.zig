@@ -53,6 +53,12 @@ pub fn qbeJnz(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) Co
     try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond, t, f });
 }
 
+/// `qbeJnz`in "t dalı nadiren alınır" (sınır-kontrolü hata yolu) VARYANTI — QBE'de ipucu
+/// yoktur, `qbeJnz` ile aynı metin; LLVM'de `!prof` dal ağırlığı (bkz. `llvm_emit.zig`).
+pub fn qbeJnzCold(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
+    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond, t, f });
+}
+
 /// `qbeJnz`nin `l`-tipli (i64-taşınan) koşul VARYANTI — QBE'nin `jnz`ı
 /// GENİŞLİK-BAĞIMSIZ olduğundan (bkz. `Codegen.str_ascii_cache`nin TEK
 /// üreticisi, `nox_str_is_ascii`nin GERÇEK `i64` dönüş tipi) BU dal İLE

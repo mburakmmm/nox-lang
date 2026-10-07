@@ -69,8 +69,7 @@ pub fn emitHpyErrorCheckOrRaise(self: *Codegen) CodegenError!void {
     try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = err_t } });
     try self.emitExceptionLineStore(he_obj.text, "HPyError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = he_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
-    try self.emitExceptionCheck();
-    try self.qbeJmp(ok_label);
+    try self.emitRaisePropagate();
     try self.qbeLabel(ok_label);
 }
 
@@ -1192,7 +1191,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 // (`x`in KENDİ değişken slotu fixed_int'i AYRICA taşır).
                 // `nox.bits`nin (bu madde) `print(nox.bits.rotl_u8(...))`
                 // GİBİ ÇAĞRILARI GERÇEKTEN denenip YAKALANDI.
-                return .{ .text = rt, .qtype = sig.ret.qtype, .heap = sig.ret.heap, .elem_qtype = sig.ret.elem_qtype, .class_name = sig.ret.class_name, .elem_heap_info = sig.ret.elem_heap_info, .elem_is_str = sig.ret.elem_is_str, .fixed_int = sig.ret.fixed_int };
+                return .{ .text = rt, .qtype = sig.ret.qtype, .heap = sig.ret.heap, .elem_qtype = sig.ret.elem_qtype, .class_name = sig.ret.class_name, .elem_heap_info = sig.ret.elem_heap_info, .elem_is_str = sig.ret.elem_is_str, .dict_info = sig.ret.dict_info, .fixed_int = sig.ret.fixed_int };
             }
             return .{ .text = "0", .qtype = .w };
         },
@@ -1265,8 +1264,7 @@ pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_f
     const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
     try self.emitExceptionLineStore(ve_obj.text, "ValueError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ve_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
-    try self.emitExceptionCheck();
-    try self.qbeJmp(ok_label);
+    try self.emitRaisePropagate();
 
     try self.qbeLabel(ok_label);
     const result_t = try self.newTemp();
@@ -2319,7 +2317,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     try self.qbeOp2Imm(empty_t, .w, "ceql", len_t, 0);
     const err_label = try self.newLabel("list_pop_err");
     const ok_label = try self.newLabel("list_pop_ok");
-    try self.qbeJnz(empty_t, err_label, ok_label);
+    try self.qbeJnzCold(empty_t, err_label, ok_label);
     const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
     const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
@@ -2335,8 +2333,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     // ULAŞMAZ. `obj`nin BURADAN SONRA HİÇ kullanılmadığı İçin (SADECE
     // raise edip çıkıyoruz) serbest bırakmak GÜVENLİDİR.
     try self.releaseIfTemporary(a.obj.*, obj);
-    try self.emitExceptionCheck();
-    try self.qbeJmp(ok_label);
+    try self.emitRaisePropagate();
     try self.stashCold(cold_start);
     try self.qbeLabel(ok_label);
 

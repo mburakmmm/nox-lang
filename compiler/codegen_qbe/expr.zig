@@ -561,7 +561,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         try self.qbeOp2(oob_t, .w, "cugel", index_v.text, len_t);
         const err_label = try self.newLabel("list_idx_err");
         const ok_label = try self.newLabel("list_idx_ok");
-        try self.qbeJnz(oob_t, err_label, ok_label);
+        try self.qbeJnzCold(oob_t, err_label, ok_label);
         const cold_start = self.beginCold();
         try self.qbeLabel(err_label);
 
@@ -579,8 +579,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         // eklendi — 50 iterasyonluk döngü testiyle DOĞRULANDI (bkz. proje
         // belleği "ARC sızıntı düzeltmeleri").
         try self.releaseIfTemporary(idx.obj.*, obj);
-        try self.emitExceptionCheck();
-        try self.qbeJmp(ok_label);
+        try self.emitRaisePropagate();
         try self.stashCold(cold_start);
 
         try self.qbeLabel(ok_label);
@@ -662,7 +661,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         try self.qbeOp2(oob_t, .w, "cugel", index_v.text, len_t);
         const err_label = try self.newLabel("str_idx_err");
         const ok_label = try self.newLabel("str_idx_ok");
-        try self.qbeJnz(oob_t, err_label, ok_label);
+        try self.qbeJnzCold(oob_t, err_label, ok_label);
         const cold_start = self.beginCold();
         try self.qbeLabel(err_label);
 
@@ -675,8 +674,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
         // yeniden eklendi, döngü testiyle DOĞRULANDI.
         try self.releaseIfTemporary(idx.obj.*, obj);
-        try self.emitExceptionCheck();
-        try self.qbeJmp(ok_label);
+        try self.emitRaisePropagate();
         try self.stashCold(cold_start);
 
         try self.qbeLabel(ok_label);
@@ -1620,7 +1618,7 @@ pub fn genCheckedShift(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) C
 
     const err_label = try self.newLabel("shift_err");
     const ok_label = try self.newLabel("shift_ok");
-    try self.qbeJnz(bad_t, err_label, ok_label);
+    try self.qbeJnzCold(bad_t, err_label, ok_label);
     const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
 
@@ -1629,8 +1627,7 @@ pub fn genCheckedShift(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) C
     const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
     try self.emitExceptionLineStore(ve_obj.text, "ValueError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ve_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
-    try self.emitExceptionCheck();
-    try self.qbeJmp(ok_label);
+    try self.emitRaisePropagate();
     try self.stashCold(cold_start);
 
     try self.qbeLabel(ok_label);

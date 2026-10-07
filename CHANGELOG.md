@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.25]
+
+### Düzeltme
+
+- **`IndexError`/`KeyError` sessizce yutuluyordu:** raise analizi `.index` ifadesini güvenli sayıyordu;
+  inline edilmeyen (ör. döngülü) bir fonksiyon indeks hatası fırlatınca çağıran istisna kontrolünü atlıyordu.
+  Artık list/str/dict indeksleme ve değişken-miktarlı `<<`/`>>` "fırlatabilir" sayılır.
+- **Derleyici çökmesi:** inline edilmeyen fonksiyonun döndürdüğü sözlüğü doğrudan indekslemek (`f()["k"]`)
+  SIGSEGV veriyordu (`dict_info` kayboluyordu).
+
+### Performans
+
+- Sınır-kontrolü hata blokları artık koşulsuz yayılır (sıcak döngüye geri bağlanmaz) ve LLVM'de `!prof`
+  ile soğuk işaretlenir: LLVM matmul 0.049 → 0.040 s, QBE sieve 0.037 → 0.032 s. Spec §3.258.
+
 ## [1.142.24]
 
 ### Performans

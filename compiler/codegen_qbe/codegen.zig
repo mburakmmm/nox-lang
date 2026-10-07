@@ -480,6 +480,7 @@ pub const Codegen = struct {
     pub const genPrintClass = expr_mod.genPrintClass;
 
     pub const emitExceptionCheck = exceptions.emitExceptionCheck;
+    pub const emitRaisePropagate = exceptions.emitRaisePropagate;
     pub const emitExceptionCheckExcept = exceptions.emitExceptionCheckExcept;
     pub const emitExceptionLineStore = exceptions.emitExceptionLineStore;
 
@@ -596,6 +597,12 @@ pub const Codegen = struct {
         return switch (self.backend) {
             .qbe => qbe_emit.qbeJnz(self, cond, t, f),
             .llvm => llvm_emit.qbeJnz(self, cond, t, f),
+        };
+    }
+    pub fn qbeJnzCold(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeJnzCold(self, cond, t, f),
+            .llvm => llvm_emit.qbeJnzCold(self, cond, t, f),
         };
     }
     pub fn qbeJnzL(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
@@ -1984,6 +1991,8 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
             if (gen.llvm_defined_syms.contains(decl.name)) continue;
             try gen.out.writer.writeAll(decl.line);
         }
+        // `qbeJnzCold`un `!prof !0` dal ağırlığı (true = hata yolu: 1, false = sıcak yol: 4000).
+        try gen.out.writer.writeAll("!0 = !{!\"branch_weights\", i32 1, i32 4000}\n");
     }
 
     return gen.out.toOwnedSlice();

@@ -216,6 +216,16 @@ pub fn qbeJnz(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) Co
     self.llvm_block_open = false;
 }
 
+/// `qbeJnz`in "t dalı nadiren alınır" varyantı: sınır-kontrolü hata yolları. `!prof` dal
+/// ağırlığı (modül sonundaki `!0`, bkz. `codegen.zig`) LLVM'in blok yerleşimine hata bloğunu
+/// sıcak döngüden uzaklaştırmasını ve register ayırıcıya sıcak yolu önceliklendirmesini söyler.
+pub fn qbeJnzCold(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
+    const cmp_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = icmp ne i32 {s}, 0\n", .{ cmp_reg, cond });
+    try self.out.writer.print("    br i1 {s}, label %{s}, label %{s}, !prof !0\n", .{ cmp_reg, llLabelRef(t), llLabelRef(f) });
+    self.llvm_block_open = false;
+}
+
 /// `qbeJnz`nin `l`-tipli (i64) koşul VARYANTI — bkz. `qbe_emit.zig`nin
 /// AYNI adının belge notu (`nox_str_is_ascii`nin GERÇEK `i64` dönüşü,
 /// `Codegen.str_ascii_cache`nin TEK üreticisi).

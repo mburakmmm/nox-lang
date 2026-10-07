@@ -1658,300 +1658,295 @@ export function w $main(w %argc, l %argv) {
     %t43 =w cugel 10, %t42
     jnz %t43, @list_idx_err29, @list_idx_ok30
 @list_idx_ok30
-    %t54 =l mul 10, 8
-    %t55 =l add %t54, 16
-    %t56 =l add %t41, %t55
-    %t57 =l loadl %t56
-    call $printf(l $fmt_int, ..., l %t57)
+    %t53 =l mul 10, 8
+    %t54 =l add %t53, 16
+    %t55 =l add %t41, %t54
+    %t56 =l loadl %t55
+    call $printf(l $fmt_int, ..., l %t56)
     jmp @try_after27
 @try_dispatch26
-    %t58 =l call $nox_exception_take(l %rt)
-    %t59 =l loadl %t58
-    jmp @except_check40
-@except_check40
-    %t60 =w ceql %t59, 7
-    jnz %t60, @except_body41, @except_reraise42
-@except_body41
-    %t61 =l loadl %t4
-    %t62 =w ceql %t61, 0
-    jnz %t62, @release_skip44, @release43
-@release43
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t61)
-    jmp @release_done45
-@release_skip44
-    jmp @release_done45
-@release_done45
+    %t57 =l call $nox_exception_take(l %rt)
+    %t58 =l loadl %t57
+    jmp @except_check38
+@except_check38
+    %t59 =w ceql %t58, 7
+    jnz %t59, @except_body39, @except_reraise40
+@except_body39
+    %t60 =l loadl %t4
+    %t61 =w ceql %t60, 0
+    jnz %t61, @release_skip42, @release41
+@release41
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t60)
+    jmp @release_done43
+@release_skip42
+    jmp @release_done43
+@release_done43
     storel 0, %t4
-    storel %t58, %t4
-    %t63 =l loadl %t4
-    %t64 =l add %t63, 24
-    %t65 =l loadl %t64
-    call $printf(l $fmt_int, ..., l %t65)
+    storel %t57, %t4
+    %t62 =l loadl %t4
+    %t63 =l add %t62, 24
+    %t64 =l loadl %t63
+    call $printf(l $fmt_int, ..., l %t64)
     jmp @try_after27
-@except_reraise42
-    call $nox_raise(l %rt, l %t58, l 22)
-    %t66 =w call $nox_exception_pending(l %rt)
-    jnz %t66, @exc_propagate46, @exc_continue47
-@exc_propagate46
+@except_reraise40
+    call $nox_raise(l %rt, l %t57, l 22)
+    %t65 =w call $nox_exception_pending(l %rt)
+    jnz %t65, @exc_propagate44, @exc_continue45
+@exc_propagate44
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue47
+@exc_continue45
     jmp @try_after27
 @try_after27
 @try_end28
-    %t67 =l call $nox_dict_new(l %rt, w 1)
-    %t68 =l loadl %t3
-    %t69 =w ceql %t68, 0
-    jnz %t69, @release_skip49, @release48
-@release48
-    call $nox_dict_release(l %rt, l %t68, w 1, w 0, w 0)
-    jmp @release_done50
-@release_skip49
-    jmp @release_done50
-@release_done50
+    %t66 =l call $nox_dict_new(l %rt, w 1)
+    %t67 =l loadl %t3
+    %t68 =w ceql %t67, 0
+    jnz %t68, @release_skip47, @release46
+@release46
+    call $nox_dict_release(l %rt, l %t67, w 1, w 0, w 0)
+    jmp @release_done48
+@release_skip47
+    jmp @release_done48
+@release_done48
     storel 0, %t3
-    storel %t67, %t3
-    %t70 =l loadl %t3
-    %t71 =l add $str2, 16
-    %t72 =w call $nox_dict_contains(l %rt, l %t70, w 1, l %t71)
-    jnz %t72, @dict_get_ok55, @dict_get_err54
-@dict_get_err54
-    %t73 =l add $str3, 16
-    %t74 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 6, %t74
-    %t75 =l add %t74, 8
+    storel %t66, %t3
+    %t69 =l loadl %t3
+    %t70 =l add $str2, 16
+    %t71 =w call $nox_dict_contains(l %rt, l %t69, w 1, l %t70)
+    jnz %t71, @dict_get_ok53, @dict_get_err52
+@dict_get_err52
+    %t72 =l add $str3, 16
+    %t73 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 6, %t73
+    %t74 =l add %t73, 8
+    storel 0, %t74
+    %t75 =l add %t73, 16
     storel 0, %t75
-    %t76 =l add %t74, 16
+    %t76 =l add %t73, 24
     storel 0, %t76
-    %t77 =l add %t74, 24
-    storel 0, %t77
-    call $Exception___init__(l %rt, l %t74, l %t73)
-    %t78 =w call $nox_exception_pending(l %rt)
-    jnz %t78, @ctor_init_failed56, @ctor_init_cont57
-@ctor_init_failed56
-    %t79 =w ceql %t74, 0
-    jnz %t79, @release_skip59, @release58
-@release58
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t74)
-    jmp @release_done60
-@release_skip59
-    jmp @release_done60
-@release_done60
-    jmp @ctor_init_cont57
-@ctor_init_cont57
-    %t80 =w call $nox_exception_pending(l %rt)
-    jnz %t80, @exc_propagate61, @exc_continue62
-@exc_propagate61
-    jmp @try_dispatch51
-@exc_continue62
-    %t81 =l add %t74, 24
-    storel 26, %t81
-    call $nox_raise(l %rt, l %t74, l 26)
-    %t82 =w call $nox_exception_pending(l %rt)
-    jnz %t82, @exc_propagate63, @exc_continue64
-@exc_propagate63
-    jmp @try_dispatch51
-@exc_continue64
-    jmp @dict_get_ok55
-@dict_get_ok55
-    %t83 =l call $nox_dict_get(l %rt, l %t70, w 1, l %t71)
-    call $printf(l $fmt_int, ..., l %t83)
-    jmp @try_after52
-@try_dispatch51
-    %t84 =l call $nox_exception_take(l %rt)
-    %t85 =l loadl %t84
-    jmp @except_check65
-@except_check65
-    %t86 =w ceql %t85, 6
-    jnz %t86, @except_body66, @except_reraise67
-@except_body66
-    %t87 =l loadl %t4
-    %t88 =w ceql %t87, 0
-    jnz %t88, @release_skip69, @release68
-@release68
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t87)
-    jmp @release_done70
-@release_skip69
-    jmp @release_done70
-@release_done70
+    call $Exception___init__(l %rt, l %t73, l %t72)
+    %t77 =w call $nox_exception_pending(l %rt)
+    jnz %t77, @ctor_init_failed54, @ctor_init_cont55
+@ctor_init_failed54
+    %t78 =w ceql %t73, 0
+    jnz %t78, @release_skip57, @release56
+@release56
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t73)
+    jmp @release_done58
+@release_skip57
+    jmp @release_done58
+@release_done58
+    jmp @ctor_init_cont55
+@ctor_init_cont55
+    %t79 =w call $nox_exception_pending(l %rt)
+    jnz %t79, @exc_propagate59, @exc_continue60
+@exc_propagate59
+    jmp @try_dispatch49
+@exc_continue60
+    %t80 =l add %t73, 24
+    storel 26, %t80
+    call $nox_raise(l %rt, l %t73, l 26)
+    jmp @try_dispatch49
+@dict_get_ok53
+    %t81 =l call $nox_dict_get(l %rt, l %t69, w 1, l %t70)
+    call $printf(l $fmt_int, ..., l %t81)
+    jmp @try_after50
+@try_dispatch49
+    %t82 =l call $nox_exception_take(l %rt)
+    %t83 =l loadl %t82
+    jmp @except_check61
+@except_check61
+    %t84 =w ceql %t83, 6
+    jnz %t84, @except_body62, @except_reraise63
+@except_body62
+    %t85 =l loadl %t4
+    %t86 =w ceql %t85, 0
+    jnz %t86, @release_skip65, @release64
+@release64
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t85)
+    jmp @release_done66
+@release_skip65
+    jmp @release_done66
+@release_done66
     storel 0, %t4
-    storel %t84, %t4
-    %t89 =l loadl %t4
-    %t90 =l add %t89, 24
-    %t91 =l loadl %t90
-    call $printf(l $fmt_int, ..., l %t91)
-    jmp @try_after52
-@except_reraise67
-    call $nox_raise(l %rt, l %t84, l 28)
-    %t92 =w call $nox_exception_pending(l %rt)
-    jnz %t92, @exc_propagate71, @exc_continue72
-@exc_propagate71
+    storel %t82, %t4
+    %t87 =l loadl %t4
+    %t88 =l add %t87, 24
+    %t89 =l loadl %t88
+    call $printf(l $fmt_int, ..., l %t89)
+    jmp @try_after50
+@except_reraise63
+    call $nox_raise(l %rt, l %t82, l 28)
+    %t90 =w call $nox_exception_pending(l %rt)
+    jnz %t90, @exc_propagate67, @exc_continue68
+@exc_propagate67
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue72
-    jmp @try_after52
-@try_after52
-@try_end53
-    %t93 =l add $str4, 16
-    %t94 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 8, %t94
-    %t95 =l add %t94, 8
+@exc_continue68
+    jmp @try_after50
+@try_after50
+@try_end51
+    %t91 =l add $str4, 16
+    %t92 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 8, %t92
+    %t93 =l add %t92, 8
+    storel 0, %t93
+    %t94 =l add %t92, 16
+    storel 0, %t94
+    %t95 =l add %t92, 24
     storel 0, %t95
-    %t96 =l add %t94, 16
-    storel 0, %t96
-    %t97 =l add %t94, 24
-    storel 0, %t97
-    call $Exception___init__(l %rt, l %t94, l %t93)
+    call $Exception___init__(l %rt, l %t92, l %t91)
+    %t96 =w call $nox_exception_pending(l %rt)
+    jnz %t96, @ctor_init_failed69, @ctor_init_cont70
+@ctor_init_failed69
+    %t97 =w ceql %t92, 0
+    jnz %t97, @release_skip72, @release71
+@release71
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t92)
+    jmp @release_done73
+@release_skip72
+    jmp @release_done73
+@release_done73
+    jmp @ctor_init_cont70
+@ctor_init_cont70
     %t98 =w call $nox_exception_pending(l %rt)
-    jnz %t98, @ctor_init_failed73, @ctor_init_cont74
-@ctor_init_failed73
-    %t99 =w ceql %t94, 0
-    jnz %t99, @release_skip76, @release75
-@release75
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t94)
-    jmp @release_done77
-@release_skip76
-    jmp @release_done77
-@release_done77
-    jmp @ctor_init_cont74
-@ctor_init_cont74
-    %t100 =w call $nox_exception_pending(l %rt)
-    jnz %t100, @exc_propagate78, @exc_continue79
-@exc_propagate78
+    jnz %t98, @exc_propagate74, @exc_continue75
+@exc_propagate74
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue79
+@exc_continue75
+    %t99 =l loadl %t5
+    %t100 =w ceql %t99, 0
+    jnz %t100, @release_skip77, @release76
+@release76
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t99)
+    jmp @release_done78
+@release_skip77
+    jmp @release_done78
+@release_done78
+    storel 0, %t5
+    storel %t92, %t5
     %t101 =l loadl %t5
-    %t102 =w ceql %t101, 0
-    jnz %t102, @release_skip81, @release80
-@release80
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t101)
-    jmp @release_done82
-@release_skip81
-    jmp @release_done82
-@release_done82
-    storel 0, %t5
-    storel %t94, %t5
-    %t103 =l loadl %t5
-    %t104 =l add %t103, 24
-    %t105 =l loadl %t104
-    call $printf(l $fmt_int, ..., l %t105)
-    %t106 =l add $str5, 16
-    %t107 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t107
-    %t108 =l add %t107, 8
-    storel 0, %t108
-    %t109 =l add %t107, 8
-    storel %t106, %t109
-    call $nox_raise(l %rt, l %t107, l 34)
-    %t110 =w call $nox_exception_pending(l %rt)
-    jnz %t110, @exc_propagate86, @exc_continue87
-@exc_propagate86
-    jmp @try_dispatch83
-@exc_continue87
-    jmp @try_after84
-@try_dispatch83
-    %t111 =l call $nox_exception_take(l %rt)
-    %t112 =l loadl %t111
-    jmp @except_check88
-@except_check88
-    %t113 =w ceql %t112, 2
-    jnz %t113, @except_body89, @except_reraise90
-@except_body89
-    %t114 =l loadl %t6
-    %t115 =w ceql %t114, 0
-    jnz %t115, @release_skip92, @release91
-@release91
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t114, l $PlainError_release)
-    jmp @release_done93
-@release_skip92
-    jmp @release_done93
-@release_done93
+    %t102 =l add %t101, 24
+    %t103 =l loadl %t102
+    call $printf(l $fmt_int, ..., l %t103)
+    %t104 =l add $str5, 16
+    %t105 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t105
+    %t106 =l add %t105, 8
+    storel 0, %t106
+    %t107 =l add %t105, 8
+    storel %t104, %t107
+    call $nox_raise(l %rt, l %t105, l 34)
+    %t108 =w call $nox_exception_pending(l %rt)
+    jnz %t108, @exc_propagate82, @exc_continue83
+@exc_propagate82
+    jmp @try_dispatch79
+@exc_continue83
+    jmp @try_after80
+@try_dispatch79
+    %t109 =l call $nox_exception_take(l %rt)
+    %t110 =l loadl %t109
+    jmp @except_check84
+@except_check84
+    %t111 =w ceql %t110, 2
+    jnz %t111, @except_body85, @except_reraise86
+@except_body85
+    %t112 =l loadl %t6
+    %t113 =w ceql %t112, 0
+    jnz %t113, @release_skip88, @release87
+@release87
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t112, l $PlainError_release)
+    jmp @release_done89
+@release_skip88
+    jmp @release_done89
+@release_done89
     storel 0, %t6
-    storel %t111, %t6
-    %t116 =l loadl %t6
-    %t117 =l add %t116, 8
-    %t118 =l loadl %t117
-    call $printf(l $fmt_str, ..., l %t118)
-    jmp @try_after84
-@except_reraise90
-    call $nox_raise(l %rt, l %t111, l 36)
-    %t119 =w call $nox_exception_pending(l %rt)
-    jnz %t119, @exc_propagate94, @exc_continue95
-@exc_propagate94
+    storel %t109, %t6
+    %t114 =l loadl %t6
+    %t115 =l add %t114, 8
+    %t116 =l loadl %t115
+    call $printf(l $fmt_str, ..., l %t116)
+    jmp @try_after80
+@except_reraise86
+    call $nox_raise(l %rt, l %t109, l 36)
+    %t117 =w call $nox_exception_pending(l %rt)
+    jnz %t117, @exc_propagate90, @exc_continue91
+@exc_propagate90
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue95
-    jmp @try_after84
-@try_after84
-@try_end85
-    %t120 =l loadl %t1
-    %t121 =w ceql %t120, 0
-    jnz %t121, @release_skip97, @release96
-@release96
-    %t122 =l add %t120, 8
-    %t123 =l loadl %t122
-    %t124 =l mul %t123, 8
-    %t125 =l add %t124, 16
-    %t126 =l sub %t120, 8
-    %t127 =l loadl %t126
-    %t128 =l sub %t127, 1
-    storel %t128, %t126
-    %t129 =w cslel %t128, 0
-    jnz %t129, @list_free99, @list_free_skip100
-@list_free99
-    call $nox_rc_free_payload(l %rt, l %t120, l %t125)
-    jmp @list_free_done101
-@list_free_skip100
-    jmp @list_free_done101
-@list_free_done101
-    jmp @release_done98
-@release_skip97
-    jmp @release_done98
-@release_done98
+@exc_continue91
+    jmp @try_after80
+@try_after80
+@try_end81
+    %t118 =l loadl %t1
+    %t119 =w ceql %t118, 0
+    jnz %t119, @release_skip93, @release92
+@release92
+    %t120 =l add %t118, 8
+    %t121 =l loadl %t120
+    %t122 =l mul %t121, 8
+    %t123 =l add %t122, 16
+    %t124 =l sub %t118, 8
+    %t125 =l loadl %t124
+    %t126 =l sub %t125, 1
+    storel %t126, %t124
+    %t127 =w cslel %t126, 0
+    jnz %t127, @list_free95, @list_free_skip96
+@list_free95
+    call $nox_rc_free_payload(l %rt, l %t118, l %t123)
+    jmp @list_free_done97
+@list_free_skip96
+    jmp @list_free_done97
+@list_free_done97
+    jmp @release_done94
+@release_skip93
+    jmp @release_done94
+@release_done94
     storel 0, %t1
-    %t130 =l loadl %t6
-    %t131 =w ceql %t130, 0
-    jnz %t131, @release_skip103, @release102
-@release102
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t130, l $PlainError_release)
-    jmp @release_done104
-@release_skip103
-    jmp @release_done104
-@release_done104
+    %t128 =l loadl %t6
+    %t129 =w ceql %t128, 0
+    jnz %t129, @release_skip99, @release98
+@release98
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t128, l $PlainError_release)
+    jmp @release_done100
+@release_skip99
+    jmp @release_done100
+@release_done100
     storel 0, %t6
-    %t132 =l loadl %t5
-    %t133 =w ceql %t132, 0
-    jnz %t133, @release_skip106, @release105
-@release105
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t132)
-    jmp @release_done107
-@release_skip106
-    jmp @release_done107
-@release_done107
+    %t130 =l loadl %t5
+    %t131 =w ceql %t130, 0
+    jnz %t131, @release_skip102, @release101
+@release101
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t130)
+    jmp @release_done103
+@release_skip102
+    jmp @release_done103
+@release_done103
     storel 0, %t5
-    %t134 =l loadl %t3
-    %t135 =w ceql %t134, 0
-    jnz %t135, @release_skip109, @release108
-@release108
-    call $nox_dict_release(l %rt, l %t134, w 1, w 0, w 0)
-    jmp @release_done110
-@release_skip109
-    jmp @release_done110
-@release_done110
+    %t132 =l loadl %t3
+    %t133 =w ceql %t132, 0
+    jnz %t133, @release_skip105, @release104
+@release104
+    call $nox_dict_release(l %rt, l %t132, w 1, w 0, w 0)
+    jmp @release_done106
+@release_skip105
+    jmp @release_done106
+@release_done106
     storel 0, %t3
-    %t136 =l loadl %t4
-    %t137 =w ceql %t136, 0
-    jnz %t137, @release_skip112, @release111
-@release111
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t136)
-    jmp @release_done113
-@release_skip112
-    jmp @release_done113
-@release_done113
+    %t134 =l loadl %t4
+    %t135 =w ceql %t134, 0
+    jnz %t135, @release_skip108, @release107
+@release107
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t134)
+    jmp @release_done109
+@release_skip108
+    jmp @release_done109
+@release_done109
     storel 0, %t4
     call $nox_runtime_deinit(l %rt)
-@fn_end114
+@fn_end110
     ret 0
 @list_idx_err29
     %t44 =l add $str1, 16
@@ -1985,12 +1980,7 @@ export function w $main(w %argc, l %argv) {
     %t52 =l add %t45, 24
     storel 20, %t52
     call $nox_raise(l %rt, l %t45, l 20)
-    %t53 =w call $nox_exception_pending(l %rt)
-    jnz %t53, @exc_propagate38, @exc_continue39
-@exc_propagate38
     jmp @try_dispatch26
-@exc_continue39
-    jmp @list_idx_ok30
 }
 export function $List_str_release(l %rt, l %p) {
 @start

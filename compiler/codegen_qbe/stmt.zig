@@ -466,7 +466,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     try self.qbeOp2(oob_t, .w, "cugel", index_v.text, len_t);
     const err_label = try self.newLabel("list_assign_err");
     const ok_label = try self.newLabel("list_assign_ok");
-    try self.qbeJnz(oob_t, err_label, ok_label);
+    try self.qbeJnzCold(oob_t, err_label, ok_label);
     const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
 
@@ -479,8 +479,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
     // yeniden eklendi, döngü testiyle DOĞRULANDI.
     try self.releaseIfTemporary(idx.obj.*, obj);
-    try self.emitExceptionCheck();
-    try self.qbeJmp(ok_label);
+    try self.emitRaisePropagate();
     try self.stashCold(cold_start);
 
     try self.qbeLabel(ok_label);
@@ -618,8 +617,7 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     // BURADA olmak ZORUNDA.
     try self.releaseIfTemporary(key_expr, key_v0);
     try self.releaseIfTemporary(obj_expr, obj);
-    try self.emitExceptionCheck();
-    try self.qbeJmp(ok_label);
+    try self.emitRaisePropagate();
 
     try self.qbeLabel(ok_label);
 

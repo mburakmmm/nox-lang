@@ -1542,9 +1542,15 @@ export function w $main(w %argc, l %argv) {
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
     %t0 =l call $compute(l %rt)
+    %t1 =w call $nox_exception_pending(l %rt)
+    jnz %t1, @exc_propagate0, @exc_continue1
+@exc_propagate0
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue1
     call $printf(l $fmt_int, ..., l %t0)
     call $nox_runtime_deinit(l %rt)
-@fn_end0
+@fn_end2
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

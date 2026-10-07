@@ -28277,6 +28277,36 @@ collatz/sieve değişmedi. 116 IR anlık görüntüsü (blok sırası) yeniden �
 (`list_bool_byte_packed`, `list_fixed_int_byte_packed`, `str_index_ascii_table_and_field`) QBE ve
 `--release`te aynı çıktıyı verir.
 
+## 3.258 Sınır-kontrolü hata yolları koşulsuz yayılır + `.index` "fırlatabilir" sayılır (v1.142.25)
+
+Üç bağlantılı bulgu (matmul incelemesinde ortaya çıktı):
+
+1. **Hata bloğu sıcak yola geri bağlanıyordu.** Her sınır-kontrolü hata bloğu `$nox_raise`dan sonra
+   `emitExceptionCheck` (`jnz pending, propagate, continue`) + `jmp ok` ile döngüye GERİ düşüyordu;
+   `nox_raise` her zaman bekleyen istisnayı ayarladığından "continue" dalı ölü koddu, ama blok
+   (nox_rc_alloc/nox_raise çağrılarıyla) döngünün parçası göründüğü için LLVM LICM "the loop may
+   invalidate its value" diyerek döngü-değişmez yüklemeleri (liste uzunluğu, `a[i]` satır işaretçisi)
+   taşıyamıyor, register ayırıcı da sıcak değerleri yığına döküyordu. `exceptions.zig`e
+   `emitRaisePropagate` eklendi (propagate gövdesi koşulsuz, `ret`/`jmp catch` ile biter); 8 hata
+   sitesi (list/str index, liste atama, shift, pop, dict get, parse, HPy) bunu kullanır. LLVM
+   arka ucunda `qbeJnzCold` bu dalı `!prof !0` (1:4000) ile işaretler. Sonuç: LLVM matmul iç döngüsü
+   20 → 14 talimat, 0.049 → 0.040 s; QBE sieve 0.037 → 0.032 s.
+2. **GERÇEK doğruluk hatası (önceden vardı):** `collectRaiseInfoExpr` `.index` ifadesini istisna
+   fırlatmaz sayıyordu. Döngü içerdiği için inline edilmeyen ve tek fırlatma kaynağı indeksleme olan
+   bir fonksiyonun çağıranı `nox_exception_pending` kontrolünü ATLIYOR, `IndexError` yutuluyordu
+   (çağıran 0 yazdırıyor, bekleyen istisna sonraki ilgisiz bir kontrolde yanlış yerde patlıyordu).
+   Artık `.index` (list/str/dict) ve değişken miktarlı `<<`/`>>` `direct_unsafe` sayılır. Karşılığı:
+   bu ifadeleri içeren fonksiyonlar `must_not_raise` kümesinden çıktığı için inline edilmez; compute
+   benchmark'larında ve HTTP sıcak yolunda (~230K req/s) ölçülebilir fark yok.
+3. **Önceden var olan derleyici çökmesi:** inline edilmeyen bir serbest fonksiyonun döndürdüğü sözlük
+   doğrudan indekslenince (`f()["k"]`) `genCall` sonuç `Value`suna `dict_info` koymadığından
+   `genDictGet`te null deref (SIGSEGV) oluyordu; yalnızca fonksiyon inline EDİLDİĞİNDE gizleniyordu.
+   Düzeltildi.
+
+Golden: `bounds_error_path_propagates_from_loop` (döngüde iç içe indeks, çağıran yakalama,
+temizlik; QBE ve `--release` aynı çıktı), `dict_returned_from_loop_function_indexed_directly`.
+87 IR anlık görüntüsü (inline/istisna kontrolü farkı) yeniden üretildi.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

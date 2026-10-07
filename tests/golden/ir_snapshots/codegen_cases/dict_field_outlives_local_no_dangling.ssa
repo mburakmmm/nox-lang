@@ -1708,28 +1708,23 @@ export function w $main(w %argc, l %argv) {
     %t37 =l add %t30, 24
     storel 11, %t37
     call $nox_raise(l %rt, l %t30, l 11)
-    %t38 =w call $nox_exception_pending(l %rt)
-    jnz %t38, @exc_propagate29, @exc_continue30
-@exc_propagate29
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue30
-    jmp @dict_get_ok21
 @dict_get_ok21
-    %t39 =l call $nox_dict_get(l %rt, l %t26, w 1, l %t27)
-    call $printf(l $fmt_str, ..., l %t39)
-    %t40 =l loadl %t0
-    %t41 =w ceql %t40, 0
-    jnz %t41, @release_skip32, @release31
-@release31
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t40, l $Box_release)
-    jmp @release_done33
-@release_skip32
-    jmp @release_done33
-@release_done33
+    %t38 =l call $nox_dict_get(l %rt, l %t26, w 1, l %t27)
+    call $printf(l $fmt_str, ..., l %t38)
+    %t39 =l loadl %t0
+    %t40 =w ceql %t39, 0
+    jnz %t40, @release_skip30, @release29
+@release29
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t39, l $Box_release)
+    jmp @release_done31
+@release_skip30
+    jmp @release_done31
+@release_done31
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end34
+@fn_end32
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

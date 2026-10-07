@@ -1446,41 +1446,36 @@ export function w $main(w %argc, l %argv) {
     %t20 =l add %t13, 24
     storel 3, %t20
     call $nox_raise(l %rt, l %t13, l 3)
-    %t21 =w call $nox_exception_pending(l %rt)
-    jnz %t21, @exc_propagate15, @exc_continue16
-@exc_propagate15
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue16
-    jmp @parse_ok7
 @parse_ok7
-    %t22 =d call $nox_str_to_float(l %t10)
-    stored %t22, %t1
-    %t23 =d loadd %t1
-    call $printf(l $fmt_float, ..., d %t23)
-    %t24 =l loadl %t0
-    %t25 =w ceql %t24, 0
-    jnz %t25, @release_skip18, @release17
-@release17
-    %t26 =l sub %t24, 16
-    %t27 =l loadl %t26
-    %t28 =l sub %t27, 1
-    storel %t28, %t26
-    %t29 =w cslel %t28, 0
-    jnz %t29, @str_free20, @str_free_skip21
-@str_free20
-    call $nox_str_free_now(l %rt, l %t24)
-    jmp @str_free_done22
-@str_free_skip21
-    jmp @str_free_done22
-@str_free_done22
-    jmp @release_done19
-@release_skip18
-    jmp @release_done19
-@release_done19
+    %t21 =d call $nox_str_to_float(l %t10)
+    stored %t21, %t1
+    %t22 =d loadd %t1
+    call $printf(l $fmt_float, ..., d %t22)
+    %t23 =l loadl %t0
+    %t24 =w ceql %t23, 0
+    jnz %t24, @release_skip16, @release15
+@release15
+    %t25 =l sub %t23, 16
+    %t26 =l loadl %t25
+    %t27 =l sub %t26, 1
+    storel %t27, %t25
+    %t28 =w cslel %t27, 0
+    jnz %t28, @str_free18, @str_free_skip19
+@str_free18
+    call $nox_str_free_now(l %rt, l %t23)
+    jmp @str_free_done20
+@str_free_skip19
+    jmp @str_free_done20
+@str_free_done20
+    jmp @release_done17
+@release_skip16
+    jmp @release_done17
+@release_done17
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end23
+@fn_end21
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {
