@@ -1,0 +1,95 @@
+# v1.142.20: Set/Counter/OrderedDict artık açık adresli karma indeksi kullanır (önceden O(n)
+# doğrusal tarama → 100K farklı öğede O(n²)). Anlam AYNI kalmalı: eşitlik `==` ile doğrulanır,
+# ekleme sırası korunur, silme sonrası indeks yeniden kurulur, sınıf öğeleri (karma 0 → tek kova)
+# hâlâ DOĞRU, str/int/float/bool anahtarlar çalışır. Boş stderr = sızıntı yok.
+from nox.collections import Set, Counter, OrderedDict
+
+class Pt:
+    x: int
+    y: int
+
+    def __init__(self: Pt, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+# --- Set[int]: 20K ekleme (çoğu tekrar), üyelik, silme
+s: Set[int] = Set[int]()
+i: int = 0
+while i < 20000:
+    s.add(i % 7919)
+    i = i + 1
+print(s.size())
+print(s.contains(0))
+print(s.contains(7918))
+print(s.contains(7919))
+print(s.remove(5000))
+print(s.remove(5000))
+print(s.contains(5000))
+print(s.size())
+print(s.contains(5001))
+
+# --- Set[str]
+w: Set[str] = Set[str]()
+j: int = 0
+while j < 3000:
+    w.add("k" + str(j % 1000))
+    j = j + 1
+print(w.size())
+print(w.contains("k999"))
+print(w.contains("k1000"))
+print(w.to_list()[0])
+
+# --- Set[float] (-0.0 == 0.0)
+f: Set[float] = Set[float]()
+f.add(0.0)
+f.add(1.5)
+f.add(-0.0)
+f.add(1.5)
+print(f.size())
+
+# --- Set[Pt] (sınıf: karma 0, doğrusal geri düşüş ama DOĞRU)
+ps: Set[Pt] = Set[Pt]()
+ps.add(Pt(1, 2))
+ps.add(Pt(1, 2))
+ps.add(Pt(2, 1))
+print(ps.size())
+print(ps.contains(Pt(2, 1)))
+print(ps.contains(Pt(9, 9)))
+
+# --- küme işlemleri
+a: Set[int] = Set[int]()
+b: Set[int] = Set[int]()
+k: int = 0
+while k < 50:
+    a.add(k)
+    b.add(k + 25)
+    k = k + 1
+print(a.union(b).size())
+print(a.intersection(b).size())
+print(a.difference(b).size())
+
+# --- Counter[str]
+c: Counter[str] = Counter[str]()
+m: int = 0
+while m < 5000:
+    c.add("w" + str(m % 37))
+    m = m + 1
+print(c.size())
+print(c.count("w0"))
+print(c.count("w36"))
+print(c.count("yok"))
+print(c.total())
+
+# --- OrderedDict[str, int]: sıra korunur, güncelleme, silme
+d: OrderedDict[str, int] = OrderedDict[str, int]()
+d.set("b", 1)
+d.set("a", 2)
+d.set("c", 3)
+d.set("a", 20)
+print(d.get("a"))
+print(d.keys_list()[0] + d.keys_list()[1] + d.keys_list()[2])
+print(d.remove("b"))
+print(d.contains("b"))
+print(d.contains("c"))
+print(d.size())
+print(d.keys_list()[0] + d.keys_list()[1])

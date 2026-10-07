@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.20]
+
+### Performans
+
+- **`nox.collections` Set/Counter/OrderedDict karma indeksi** (dahili `__nox_hash`): ekleme/arama O(n) →
+  ortalama O(1); 100K farklı öğede inşa O(n²) → O(n). Sınıf öğeleri doğru kalır (karma 0 → doğrusal geri
+  düşüş). Spec §3.255.
+
 ## [1.142.19]
 
 ### Dokümantasyon

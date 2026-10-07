@@ -449,6 +449,25 @@ pub export fn nox_dict_contains(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i3
     return if (findIndex(d, key, rt) != null) 1 else 0;
 }
 
+/// v1.142.20: `nox.collections` (Set/Counter/OrderedDict) için dahili karma (`__nox_hash` ilkeli).
+/// Dict'inkiyle AYNI tohumlu (hash-flooding'e karşı) karıştırıcılar; sonuç NEGATİF OLMAYAN `int`
+/// (çağıran `& (kapasite - 1)` ile konum alır). Eşit değerlerin eşit karması şarttır: `float`
+/// için `-0.0` ve `0.0` aynı kabul edilir.
+pub export fn nox_hash_int(rt: ?*anyopaque, k: i64) i64 {
+    return @bitCast(mixInt(hashSeed(rt), k) & 0x7fff_ffff_ffff_ffff);
+}
+
+pub export fn nox_hash_float(rt: ?*anyopaque, f: f64) i64 {
+    const bits: i64 = if (f == 0.0) 0 else @bitCast(f);
+    return nox_hash_int(rt, bits);
+}
+
+pub export fn nox_hash_str(rt: ?*anyopaque, s: ?[*:0]const u8) i64 {
+    const p = s orelse return 0;
+    const h = std.hash.Wyhash.hash(hashSeed(rt), std.mem.sliceTo(p, 0));
+    return @bitCast(h & 0x7fff_ffff_ffff_ffff);
+}
+
 pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
     return @intCast(d.entries.items.len);

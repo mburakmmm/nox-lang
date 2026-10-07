@@ -5776,6 +5776,13 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "__nox_bind_method")) {
                     return self.checkBindMethod(ctx, c);
                 }
+                // v1.142.20: dahili karma ilkeli (`nox.collections` Set/Counter/OrderedDict) — int/bool/
+                // sabit-genişlikli/float/str için gerçek karma, diğer tüm tipler için 0 (doğrusal geri düşüş).
+                if (std.mem.eql(u8, name, "__nox_hash")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_hash' (dahili) tam olarak 1 argüman alır", .{});
+                    _ = try self.checkExpr(ctx, c.args[0]);
+                    return .int;
+                }
                 if (std.mem.eql(u8, name, "super")) {
                     return self.fail(error.TypeMismatch, "'super()' yalnızca 'super().metod(...)' ya da 'super().__init__(...)' kalıbında, doğrudan bir metod çağrısının alıcısı olarak kullanılabilir", .{});
                 }

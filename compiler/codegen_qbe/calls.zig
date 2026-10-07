@@ -733,6 +733,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // Faz C.1b: `bound_method_fixup.zig`nin ürettiği `obj.ad` bağlama
             // çağrısı — alan İSE düz okuma, metod İSE bağlı closure.
             if (std.mem.eql(u8, name, "__nox_bind_method")) return genBindMethod(self, c);
+            if (std.mem.eql(u8, name, "__nox_hash")) return genNoxHash(self, c);
             if (reflectMetaResult(name)) |ret_is_str| {
                 self.uses_reflect_meta = true;
                 const arg_values = try self.allocator.alloc(codegen.QbeArg, 1 + c.args.len);
@@ -1645,6 +1646,33 @@ fn reflectMetaResult(name: []const u8) ?bool {
         if (std.mem.eql(u8, name, e.name)) return e.is_str;
     }
     return null;
+}
+
+/// v1.142.20: `__nox_hash(x)` — dahili karma ilkeli (bkz. checker'daki aynı ad). `str` → `nox_hash_str`,
+/// `int`/`bool`/sabit-genişlikli → `nox_hash_int`, `float` → `nox_hash_float`; heap-yönetimli diğer
+/// tipler (sınıf/liste/dict/...) için sabit 0 (`Set[Point]` gibi kullanımlar doğrusal ama DOĞRU kalır).
+fn genNoxHash(self: *Codegen, c: ast.Call) CodegenError!Value {
+    if (c.args.len != 1) return error.Unsupported;
+    const v = try self.genExpr(c.args[0]);
+    const result = try self.newTemp();
+    if (v.heap == .str) {
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_hash_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = v.text } });
+    } else if (v.heap == .none and v.qtype == .d) {
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_hash_float", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .d, .text = v.text } });
+    } else if (v.heap == .none and (v.qtype == .l or v.qtype == .w)) {
+        var lv_text: []const u8 = v.text;
+        if (v.qtype == .w) {
+            // bool / 32-bit-ve-altı sabit-genişlikli: sıfır-genişletme (eşit değer ⇒ eşit karma)
+            const ext = try self.newTemp();
+            try self.qbeOp1(ext, .l, "extuw", v.text);
+            lv_text = ext;
+        }
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_hash_int", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = lv_text } });
+    } else {
+        try self.qbeOp1(result, .l, "copy", "0");
+    }
+    try self.releaseIfTemporary(c.args[0], v);
+    return .{ .text = result, .qtype = .l };
 }
 
 /// Faz C.1b (bkz. `bound_method_fixup.zig`): `__nox_bind_method(obj, "ad")`.

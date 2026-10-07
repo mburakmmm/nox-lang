@@ -14,6 +14,12 @@
 # SINIRLI bir varyant istenirse (native `dict` üzerine), bu AYRI bir
 # gelecek görev olabilir — bu modül BİLİNÇLİ olarak genelliği tercih eder.
 #
+# v1.142.20: `Set[T]`/`Counter[T]`/`OrderedDict[K,V]` ARTIK doğrusal tarama YERİNE açık adresli bir
+# KARMA indeksi kullanır (ekleme/arama ortalama O(1); 100K farklı öğede inşa O(n²) → O(n)). Karma
+# dahili `__nox_hash` ilkelinden gelir: int/bool/sabit-genişlikli/float/str için gerçek karma,
+# DİĞER tipler (sınıf/liste/...) için 0 — bu tiplerde tüm öğeler tek kovaya düşer (eski doğrusal
+# davranış, DOĞRU ama yavaş). Eşitlik HER ZAMAN `==` ile (sınıflar için yapısal) doğrulanır.
+#
 # `Heap[T]`/`PriorityQueue[T]`: Nox'ta kullanıcı-tanımlı `__lt__` YOK
 # (`list.sort()`nin AYNI kısıtı) — `Heap[T]`, `T`yi `<` operatörünün
 # ZATEN desteklediği tiplerle (int/float/str) SOMUTLAŞTIĞINDA doğal
@@ -35,6 +41,56 @@
 #
 # Nox'ta `break`/`continue` YOK — döngü-içi erken-çıkış TÜM metodlarda
 # bir `active: bool` bayrağıyla (`while cond and active:`) taklit edilir.
+
+# ---------------------------------------------------------------------
+# Dahili karma indeksi (Set/Counter/OrderedDict): `slots` açık adresli, 2'nin kuvveti uzunluklu bir
+# `list[int]` (0 = boş, değer = `items` indeksi + 1), doğrusal problama, yük <= 0.5. Yardımcılar
+# `.append()` ÇAĞIRMAZ (parametre listesine append desteklenmez); büyütme/yeniden kurma çağıranın
+# yerel dansıyla yapılır.
+def _hx_find[T](items: list[T], slots: list[int], v: T) -> int:
+    cap: int = len(slots)
+    if cap == 0:
+        return -1
+    mask: int = cap - 1
+    pos: int = __nox_hash(v) & mask
+    probes: int = 0
+    while probes < cap:
+        s: int = slots[pos]
+        if s == 0:
+            return -1
+        if items[s - 1] == v:
+            return s - 1
+        pos = (pos + 1) & mask
+        probes = probes + 1
+    return -1
+
+def _hx_place(slots: list[int], h: int, idx: int) -> None:
+    mask: int = len(slots) - 1
+    pos: int = h & mask
+    while slots[pos] != 0:
+        pos = (pos + 1) & mask
+    slots[pos] = idx + 1
+
+def _hx_rebuild[T](items: list[T], cap: int) -> list[int]:
+    slots: list[int] = []
+    i: int = 0
+    while i < cap:
+        slots.append(0)
+        i = i + 1
+    j: int = 0
+    while j < len(items):
+        _hx_place(slots, __nox_hash(items[j]), j)
+        j = j + 1
+    return slots
+
+# `n_items` öğe için en az 2*n_items uzunlukta, en az 16 olan 2'nin kuvveti.
+def _hx_cap_for(n_items: int, cur_cap: int) -> int:
+    cap: int = cur_cap
+    if cap < 16:
+        cap = 16
+    while cap < n_items * 2:
+        cap = cap * 2
+    return cap
 
 # ---------------------------------------------------------------------
 # Stack[T] — LIFO, dogrudan list[T] uzerinde.
@@ -165,17 +221,14 @@ class Deque[T]:
 # dogru (siniflar DAHIL).
 class Set[T]:
     items: list[T]
+    _slots: list[int]
 
     def __init__(self: Set) -> None:
         self.items = []
+        self._slots = []
 
     def contains(self: Set, v: T) -> bool:
-        i: int = 0
-        while i < len(self.items):
-            if self.items[i] == v:
-                return True
-            i = i + 1
-        return False
+        return _hx_find(self.items, self._slots, v) >= 0
 
     def add(self: Set, v: T) -> None:
         if self.contains(v):
@@ -183,6 +236,10 @@ class Set[T]:
         items: list[T] = self.items
         items.append(v)
         self.items = items
+        if len(items) * 2 > len(self._slots):
+            self._slots = _hx_rebuild(items, _hx_cap_for(len(items), len(self._slots)))
+        else:
+            _hx_place(self._slots, __nox_hash(v), len(items) - 1)
 
     def remove(self: Set, v: T) -> bool:
         items: list[T] = self.items
@@ -196,6 +253,8 @@ class Set[T]:
                 new_items.append(items[i])
             i = i + 1
         self.items = new_items
+        if found:
+            self._slots = _hx_rebuild(new_items, len(self._slots))
         return found
 
     def size(self: Set) -> int:
@@ -253,18 +312,15 @@ class Set[T]:
 class Counter[T]:
     _keys: list[T]
     _counts: list[int]
+    _slots: list[int]
 
     def __init__(self: Counter) -> None:
         self._keys = []
         self._counts = []
+        self._slots = []
 
     def _index_of(self: Counter, v: T) -> int:
-        i: int = 0
-        while i < len(self._keys):
-            if self._keys[i] == v:
-                return i
-            i = i + 1
-        return -1
+        return _hx_find(self._keys, self._slots, v)
 
     def add(self: Counter, v: T) -> None:
         idx: int = self._index_of(v)
@@ -275,6 +331,10 @@ class Counter[T]:
             counts.append(1)
             self._keys = keys
             self._counts = counts
+            if len(keys) * 2 > len(self._slots):
+                self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
+            else:
+                _hx_place(self._slots, __nox_hash(v), len(keys) - 1)
         else:
             self._counts[idx] = self._counts[idx] + 1
 
@@ -302,18 +362,15 @@ class Counter[T]:
 class OrderedDict[K, V]:
     _keys: list[K]
     _values: list[V]
+    _slots: list[int]
 
     def __init__(self: OrderedDict) -> None:
         self._keys = []
         self._values = []
+        self._slots = []
 
     def _index_of(self: OrderedDict, k: K) -> int:
-        i: int = 0
-        while i < len(self._keys):
-            if self._keys[i] == k:
-                return i
-            i = i + 1
-        return -1
+        return _hx_find(self._keys, self._slots, k)
 
     def contains(self: OrderedDict, k: K) -> bool:
         return self._index_of(k) >= 0
@@ -329,6 +386,10 @@ class OrderedDict[K, V]:
             values.append(v)
             self._keys = keys
             self._values = values
+            if len(keys) * 2 > len(self._slots):
+                self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
+            else:
+                _hx_place(self._slots, __nox_hash(k), len(keys) - 1)
 
     def get(self: OrderedDict, k: K) -> V:
         idx: int = self._index_of(k)
@@ -352,6 +413,7 @@ class OrderedDict[K, V]:
             i = i + 1
         self._keys = new_keys
         self._values = new_values
+        self._slots = _hx_rebuild(new_keys, len(self._slots))
         return True
 
     def keys_list(self: OrderedDict) -> list[K]:

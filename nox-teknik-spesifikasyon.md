@@ -28227,6 +28227,23 @@ tablo adresi hesaplar (LLVM'de `@nox_ascii_chars = external global`). Sonuç: 12
 3851 ms → 2 ms; LCS 2000×2000 61 ms → 25 ms; char taraması 2M 14 ms → 7 ms. Golden
 `str_index_ascii_table_and_field`.
 
+## 3.255 `nox.collections` Set/Counter/OrderedDict: karma indeksi (v1.142.20)
+
+**Bulgu (stdlib taraması):** `Set[T]`, `Counter[T]` ve `OrderedDict[K,V]` her işlemi `list[T]` üzerinde
+doğrusal tarama (`==`) ile yapıyordu — `add`/`contains`/`get` O(n), 100K farklı öğeyle inşa O(n²)
+(kelime sayımı gibi yaygın kullanım dakikalar sürerdi). Sınıf anahtarları için `dict` kullanılamadığından
+(dict anahtarı yalnızca int/str...) tasarım bilinçli genelliği seçmişti.
+
+**Düzeltme:** genelliği KORUYAN karma indeksi. Dahili (kullanıcıya açık OLMAYAN) ilkel `__nox_hash(x)`:
+int/bool/sabit-genişlikli → `nox_hash_int`, float → `nox_hash_float` (`-0.0 == 0.0`), str →
+`nox_hash_str` (dict'inkiyle aynı tohum), diğer tüm tipler (sınıf/liste/...) → 0 (hepsi tek kovaya düşer:
+eski doğrusal davranış, DOĞRU ama yavaş). `collections.nox`te açık adresli, 2'nin kuvveti uzunluklu
+`slots: list[int]` (0 = boş, değer = öğe indeksi + 1), doğrusal problama, yük ≤ 0.5; eşitlik her zaman `==` ile
+doğrulanır. Yardımcılar (`_hx_find/_hx_place/_hx_rebuild/_hx_cap_for`) `.append()` çağırmaz (parametre
+listesine append desteklenmez); büyütme çağıranın yerel dansıyla. Silme (`Set.remove`, `OrderedDict.remove`)
+indeksi yeniden kurar (silme zaten O(n) idi). Sonuç (M4): 300K int Set 26 ms, 100K farklı str'li 300K Counter
+23 ms, 200K OrderedDict set+get 29 ms (önceden O(n²)). Golden `collections_hashed_index`.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
