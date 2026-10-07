@@ -882,6 +882,9 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
 export function l $JsonValue_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t17 =l alloc8 8
+    %t22 =l alloc8 8
+    %t39 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 40
     %t2 =l loadl %t1
@@ -914,7 +917,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     %t15 =l add %t14, 8
     %t16 =l call $nox_trace_buf_alloc(l %rt, l %t15)
     storel %t13, %t16
-    %t17 =l alloc8 8
     storel 0, %t17
     %t18 =l add %p, 40
     %t19 =l loadl %t18
@@ -922,7 +924,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t20, @trace_list_fill_skip6, @trace_list_fill_have7
 @trace_list_fill_have7
     %t21 =l loadl %t19
-    %t22 =l alloc8 8
     storel 0, %t22
     jmp @trace_list_fill_cond9
 @trace_list_fill_cond9
@@ -955,7 +956,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t37, @trace_list_fill_skip12, @trace_list_fill_have13
 @trace_list_fill_have13
     %t38 =l loadl %t36
-    %t39 =l alloc8 8
     storel 0, %t39
     jmp @trace_list_fill_cond15
 @trace_list_fill_cond15
@@ -1440,30 +1440,28 @@ export function l $count_char(l %rt, l %p_s, l %p_target) {
 @str_idx_ascii4
     %t14 =l add %t11, %t12
     %t15 =w loadub %t14
-    %t16 =l call $nox_rc_alloc(l %rt, l 10)
-    storel 2305843009213693953, %t16
-    %t17 =l add %t16, 8
-    storeb %t15, %t17
-    %t18 =l add %t17, 1
-    storeb 0, %t18
+    %t16 =l extuw %t15
+    %t17 =l mul %t16, 24
+    %t18 =l add $nox_ascii_chars, %t17
+    %t19 =l add %t18, 16
     jmp @str_idx_done6
 @str_idx_unicode5
-    %t19 =l call $nox_str_char_at(l %rt, l %t11, l %t12)
+    %t20 =l call $nox_str_char_at(l %rt, l %t11, l %t12)
     jmp @str_idx_done6
 @str_idx_done6
-    %t13 =l phi @str_idx_ascii4 %t17, @str_idx_unicode5 %t19
-    %t20 =l loadl %t1
-    %t21 =w call $strcmp(l %t13, l %t20)
-    %t22 =w ceqw %t21, 0
-    %t23 =w ceql %t13, 0
-    jnz %t23, @release_skip8, @release7
+    %t13 =l phi @str_idx_ascii4 %t19, @str_idx_unicode5 %t20
+    %t21 =l loadl %t1
+    %t22 =w call $strcmp(l %t13, l %t21)
+    %t23 =w ceqw %t22, 0
+    %t24 =w ceql %t13, 0
+    jnz %t24, @release_skip8, @release7
 @release7
-    %t24 =l sub %t13, 16
-    %t25 =l loadl %t24
-    %t26 =l sub %t25, 1
-    storel %t26, %t24
-    %t27 =w cslel %t26, 0
-    jnz %t27, @str_free10, @str_free_skip11
+    %t25 =l sub %t13, 16
+    %t26 =l loadl %t25
+    %t27 =l sub %t26, 1
+    storel %t27, %t25
+    %t28 =w cslel %t27, 0
+    jnz %t28, @str_free10, @str_free_skip11
 @str_free10
     call $nox_str_free_now(l %rt, l %t13)
     jmp @str_free_done12
@@ -1474,20 +1472,20 @@ export function l $count_char(l %rt, l %p_s, l %p_target) {
 @release_skip8
     jmp @release_done9
 @release_done9
-    jnz %t22, @if_then13, @if_end3
+    jnz %t23, @if_then13, @if_end3
 @if_then13
-    %t28 =l loadl %t2
-    %t29 =l add %t28, 1
-    storel %t29, %t2
+    %t29 =l loadl %t2
+    %t30 =l add %t29, 1
+    storel %t30, %t2
     jmp @if_end3
 @if_end3
-    %t30 =l loadl %t3
-    %t31 =l add %t30, 1
-    storel %t31, %t3
+    %t31 =l loadl %t3
+    %t32 =l add %t31, 1
+    storel %t32, %t3
     jmp @for_cond0
 @for_end2
-    %t32 =l loadl %t2
-    ret %t32
+    %t33 =l loadl %t2
+    ret %t33
 @after_return14
 @fn_end15
     ret 0
@@ -1564,6 +1562,7 @@ export function w $main(w %argc, l %argv) {
 }
 export function $List_str_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -1574,7 +1573,6 @@ export function $List_str_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -1605,6 +1603,7 @@ export function $List_str_release(l %rt, l %p) {
 }
 export function $List_JsonValue_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -1615,7 +1614,6 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2

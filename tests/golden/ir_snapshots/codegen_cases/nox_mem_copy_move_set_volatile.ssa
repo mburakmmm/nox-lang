@@ -882,6 +882,9 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
 export function l $JsonValue_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t17 =l alloc8 8
+    %t22 =l alloc8 8
+    %t39 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 40
     %t2 =l loadl %t1
@@ -914,7 +917,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     %t15 =l add %t14, 8
     %t16 =l call $nox_trace_buf_alloc(l %rt, l %t15)
     storel %t13, %t16
-    %t17 =l alloc8 8
     storel 0, %t17
     %t18 =l add %p, 40
     %t19 =l loadl %t18
@@ -922,7 +924,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t20, @trace_list_fill_skip6, @trace_list_fill_have7
 @trace_list_fill_have7
     %t21 =l loadl %t19
-    %t22 =l alloc8 8
     storel 0, %t22
     jmp @trace_list_fill_cond9
 @trace_list_fill_cond9
@@ -955,7 +956,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t37, @trace_list_fill_skip12, @trace_list_fill_have13
 @trace_list_fill_have13
     %t38 =l loadl %t36
-    %t39 =l alloc8 8
     storel 0, %t39
     jmp @trace_list_fill_cond15
 @trace_list_fill_cond15
@@ -1394,13 +1394,13 @@ export function l $data_ptr(l %rt, l %p_raw) {
 export function $test_copy_and_set(l %rt) {
 @start
     %t0 =l alloc8 8
-    storel 0, %t0
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    storel 0, %t2
     %t3 =l alloc8 8
     %t4 =l alloc8 56
     %t5 =l alloc8 56
+    storel 0, %t0
+    storel 0, %t2
     %t6 =l call $nox_arena_create(l %rt)
     storel 5, %t4
     %t7 =l add %t4, 8
@@ -1487,10 +1487,10 @@ export function $test_copy_and_set(l %rt) {
 export function $test_move_overlap_forward(l %rt) {
 @start
     %t0 =l alloc8 8
-    storel 0, %t0
     %t1 =l alloc8 8
     %t2 =l alloc8 8
     %t3 =l alloc8 72
+    storel 0, %t0
     %t4 =l call $nox_arena_create(l %rt)
     storel 7, %t3
     %t5 =l add %t3, 8
@@ -1555,10 +1555,10 @@ export function $test_move_overlap_forward(l %rt) {
 export function $test_move_overlap_backward(l %rt) {
 @start
     %t0 =l alloc8 8
-    storel 0, %t0
     %t1 =l alloc8 8
     %t2 =l alloc8 8
     %t3 =l alloc8 64
+    storel 0, %t0
     %t4 =l call $nox_arena_create(l %rt)
     storel 6, %t3
     %t5 =l add %t3, 8
@@ -1621,9 +1621,9 @@ export function $test_move_overlap_backward(l %rt) {
 export function $test_volatile(l %rt) {
 @start
     %t0 =l alloc8 8
-    storel 0, %t0
     %t1 =l alloc8 8
     %t2 =l alloc8 24
+    storel 0, %t0
     %t3 =l call $nox_arena_create(l %rt)
     storel 1, %t2
     %t4 =l add %t2, 8
@@ -1869,6 +1869,7 @@ export function w $main(w %argc, l %argv) {
 }
 export function $List_str_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -1879,7 +1880,6 @@ export function $List_str_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -1910,6 +1910,7 @@ export function $List_str_release(l %rt, l %p) {
 }
 export function $List_JsonValue_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -1920,7 +1921,6 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2

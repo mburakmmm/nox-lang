@@ -258,6 +258,7 @@ pub fn qbeFuncEnd(self: *Codegen) CodegenError!void {
         self.llvm_block_open = false;
     }
     try self.out.writer.writeAll("}\n");
+    try self.flushHoistedAllocs();
 }
 
 const CmpSpec = struct { float: bool, pred: []const u8, operand_ty: []const u8 };
@@ -716,7 +717,12 @@ pub fn qbeCompilerFence(self: *Codegen) CodegenError!void {
 /// İçin BU HİÇ mümkün DEĞİLDİ — bkz. plan dosyasının kök-neden analizi).
 pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {
     const ptr_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = alloca [{d} x i8], align {d}\n", .{ ptr_reg, n, @intFromEnum(size) });
+    if (self.alloc_hoist_active) {
+        const line = try std.fmt.allocPrint(self.allocator, "    {s} = alloca [{d} x i8], align {d}\n", .{ ptr_reg, n, @intFromEnum(size) });
+        try self.hoisted_allocs.appendSlice(self.allocator, line);
+    } else {
+        try self.out.writer.print("    {s} = alloca [{d} x i8], align {d}\n", .{ ptr_reg, n, @intFromEnum(size) });
+    }
     try self.llvm_alloca_ptrs.put(self.allocator, dst, ptr_reg);
 }
 
@@ -921,6 +927,9 @@ pub fn qbeFuncParam(self: *Codegen, ty: QbeType, text: []const u8, first: bool) 
 pub fn qbeFuncHeaderEnd(self: *Codegen) CodegenError!void {
     try self.out.writer.writeAll(") {\nstart:\n");
     self.llvm_block_open = true;
+    self.alloc_insert_pos = self.out.writer.end;
+    self.hoisted_allocs.clearRetainingCapacity();
+    self.alloc_hoist_active = true;
 }
 
 pub fn qbeRaw(self: *Codegen, comptime fmt: []const u8, args: anytype) CodegenError!void {

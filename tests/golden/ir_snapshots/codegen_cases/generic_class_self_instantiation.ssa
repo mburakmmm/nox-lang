@@ -882,6 +882,9 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
 export function l $JsonValue_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t17 =l alloc8 8
+    %t22 =l alloc8 8
+    %t39 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 40
     %t2 =l loadl %t1
@@ -914,7 +917,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     %t15 =l add %t14, 8
     %t16 =l call $nox_trace_buf_alloc(l %rt, l %t15)
     storel %t13, %t16
-    %t17 =l alloc8 8
     storel 0, %t17
     %t18 =l add %p, 40
     %t19 =l loadl %t18
@@ -922,7 +924,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t20, @trace_list_fill_skip6, @trace_list_fill_have7
 @trace_list_fill_have7
     %t21 =l loadl %t19
-    %t22 =l alloc8 8
     storel 0, %t22
     jmp @trace_list_fill_cond9
 @trace_list_fill_cond9
@@ -955,7 +956,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t37, @trace_list_fill_skip12, @trace_list_fill_have13
 @trace_list_fill_have13
     %t38 =l loadl %t36
-    %t39 =l alloc8 8
     storel 0, %t39
     jmp @trace_list_fill_cond15
 @trace_list_fill_cond15
@@ -1263,6 +1263,7 @@ export function $nox_collections_Set__int_add(l %rt, l %p_self, l %p_v) {
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
+    %t41 =l alloc8 8
     storel 0, %t2
     storel %p_self, %t0
     storel %p_v, %t1
@@ -1350,7 +1351,6 @@ export function $nox_collections_Set__int_add(l %rt, l %p_self, l %p_v) {
 @append_grow18
     %t39 =w ceql %t37, 0
     %t40 =l mul %t37, 2
-    %t41 =l alloc8 8
     jnz %t39, @append_capzero21, @append_capnz22
 @append_capzero21
     storel 1, %t41
@@ -1468,11 +1468,12 @@ export function w $nox_collections_Set__int_remove(l %rt, l %p_self, l %p_v) {
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    storel 0, %t2
     %t3 =l alloc8 8
-    storel 0, %t3
     %t4 =l alloc4 4
     %t5 =l alloc8 8
+    %t63 =l alloc8 8
+    storel 0, %t2
+    storel 0, %t3
     storel %p_self, %t0
     storel %p_v, %t1
     %t6 =l loadl %t0
@@ -1592,7 +1593,6 @@ export function w $nox_collections_Set__int_remove(l %rt, l %p_self, l %p_v) {
 @append_grow24
     %t61 =w ceql %t59, 0
     %t62 =l mul %t59, 2
-    %t63 =l alloc8 8
     jnz %t61, @append_capzero27, @append_capnz28
 @append_capzero27
     storel 1, %t63
@@ -1845,9 +1845,9 @@ export function l $nox_collections_Set__int_union(l %rt, l %p_self, l %p_other) 
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    storel 0, %t2
     %t3 =l alloc8 8
     %t4 =l alloc8 8
+    storel 0, %t2
     storel %p_self, %t0
     storel %p_other, %t1
     %t5 =l call $nox_rc_alloc(l %rt, l 16)
@@ -2093,8 +2093,8 @@ export function l $nox_collections_Set__int_intersection(l %rt, l %p_self, l %p_
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    storel 0, %t2
     %t3 =l alloc8 8
+    storel 0, %t2
     storel %p_self, %t0
     storel %p_other, %t1
     %t4 =l call $nox_rc_alloc(l %rt, l 16)
@@ -2313,8 +2313,8 @@ export function l $nox_collections_Set__int_difference(l %rt, l %p_self, l %p_ot
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    storel 0, %t2
     %t3 =l alloc8 8
+    storel 0, %t2
     storel %p_self, %t0
     storel %p_other, %t1
     %t4 =l call $nox_rc_alloc(l %rt, l 16)
@@ -3013,22 +3013,22 @@ export function d $sum_float(l %rt, l %p_xs) {
 }
 export function w $main(w %argc, l %argv) {
 @start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    %t4 =l alloc8 8
+    %t5 =l alloc8 8
+    %t6 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    %t0 =l alloc8 8
     storel 0, %t0
-    %t1 =l alloc8 8
     storel 0, %t1
-    %t2 =l alloc8 8
     storel 0, %t2
-    %t3 =l alloc8 8
     storel 0, %t3
-    %t4 =l alloc8 8
     storel 0, %t4
-    %t5 =l alloc8 8
     storel 0, %t5
-    %t6 =l alloc8 8
     storel 0, %t6
     %t7 =l call $nox_rc_alloc(l %rt, l 16)
     storel 3, %t7
@@ -3349,6 +3349,7 @@ export function w $main(w %argc, l %argv) {
 }
 export function $List_str_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -3359,7 +3360,6 @@ export function $List_str_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -3390,6 +3390,7 @@ export function $List_str_release(l %rt, l %p) {
 }
 export function $List_JsonValue_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -3400,7 +3401,6 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2

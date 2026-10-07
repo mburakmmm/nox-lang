@@ -84,6 +84,7 @@ pub fn qbeRet(self: *Codegen, value: ?[]const u8) CodegenError!void {
 /// BÖLÜNMESİYLE birleştirilmiş çıktı BYTE-BİREBİR AYNI kalır.
 pub fn qbeFuncEnd(self: *Codegen) CodegenError!void {
     try self.out.writer.writeAll("}\n");
+    try self.flushHoistedAllocs();
 }
 
 // ---- Aritmetik / mantık / karşılaştırma -------------------------------
@@ -276,6 +277,11 @@ pub fn qbeCompilerFence(self: *Codegen) CodegenError!void {
 pub const QbeAllocSize = enum(u8) { four = 4, eight = 8 };
 
 pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {
+    if (self.alloc_hoist_active) {
+        const line = try std.fmt.allocPrint(self.allocator, "    {s} =l alloc{d} {d}\n", .{ dst, @intFromEnum(size), n });
+        try self.hoisted_allocs.appendSlice(self.allocator, line);
+        return;
+    }
     try self.out.writer.print("    {s} =l alloc{d} {d}\n", .{ dst, @intFromEnum(size), n });
 }
 
@@ -352,6 +358,9 @@ pub fn qbeFuncParam(self: *Codegen, ty: QbeType, text: []const u8, first: bool) 
 
 pub fn qbeFuncHeaderEnd(self: *Codegen) CodegenError!void {
     try self.out.writer.writeAll(") {\n@start\n");
+    self.alloc_insert_pos = self.out.writer.end;
+    self.hoisted_allocs.clearRetainingCapacity();
+    self.alloc_hoist_active = true;
 }
 
 // ---- Kaçış kapısı ---------------------------------------------------

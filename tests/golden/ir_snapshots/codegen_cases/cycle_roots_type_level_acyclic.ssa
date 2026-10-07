@@ -882,6 +882,9 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
 export function l $JsonValue_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t17 =l alloc8 8
+    %t22 =l alloc8 8
+    %t39 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 40
     %t2 =l loadl %t1
@@ -914,7 +917,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     %t15 =l add %t14, 8
     %t16 =l call $nox_trace_buf_alloc(l %rt, l %t15)
     storel %t13, %t16
-    %t17 =l alloc8 8
     storel 0, %t17
     %t18 =l add %p, 40
     %t19 =l loadl %t18
@@ -922,7 +924,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t20, @trace_list_fill_skip6, @trace_list_fill_have7
 @trace_list_fill_have7
     %t21 =l loadl %t19
-    %t22 =l alloc8 8
     storel 0, %t22
     jmp @trace_list_fill_cond9
 @trace_list_fill_cond9
@@ -955,7 +956,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t37, @trace_list_fill_skip12, @trace_list_fill_have13
 @trace_list_fill_have13
     %t38 =l loadl %t36
-    %t39 =l alloc8 8
     storel 0, %t39
     jmp @trace_list_fill_cond15
 @trace_list_fill_cond15
@@ -1166,6 +1166,8 @@ export function w $Tree_eq(l %rt, l %a, l %b) {
 export function l $Tree_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t11 =l alloc8 8
+    %t19 =l alloc8 8
     storel 1, %t0
     %t1 =l add %p, 8
     %t2 =l loadl %t1
@@ -1185,7 +1187,6 @@ export function l $Tree_trace(l %rt, l %p) {
     %t9 =l add %t8, 8
     %t10 =l call $nox_trace_buf_alloc(l %rt, l %t9)
     storel %t7, %t10
-    %t11 =l alloc8 8
     storel 1, %t11
     %t12 =l add %p, 16
     %t13 =l loadl %t12
@@ -1197,7 +1198,6 @@ export function l $Tree_trace(l %rt, l %p) {
     jnz %t17, @trace_list_fill_skip3, @trace_list_fill_have4
 @trace_list_fill_have4
     %t18 =l loadl %t16
-    %t19 =l alloc8 8
     storel 0, %t19
     jmp @trace_list_fill_cond6
 @trace_list_fill_cond6
@@ -1324,6 +1324,8 @@ export function w $Holder_eq(l %rt, l %a, l %b) {
 export function l $Holder_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t11 =l alloc8 8
+    %t16 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 8
     %t2 =l loadl %t1
@@ -1343,7 +1345,6 @@ export function l $Holder_trace(l %rt, l %p) {
     %t9 =l add %t8, 8
     %t10 =l call $nox_trace_buf_alloc(l %rt, l %t9)
     storel %t7, %t10
-    %t11 =l alloc8 8
     storel 0, %t11
     %t12 =l add %p, 8
     %t13 =l loadl %t12
@@ -1351,7 +1352,6 @@ export function l $Holder_trace(l %rt, l %p) {
     jnz %t14, @trace_list_fill_skip3, @trace_list_fill_have4
 @trace_list_fill_have4
     %t15 =l loadl %t13
-    %t16 =l alloc8 8
     storel 0, %t16
     jmp @trace_list_fill_cond6
 @trace_list_fill_cond6
@@ -2189,10 +2189,16 @@ export function l $make_tree_cycle(l %rt, l %p_i) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
-    storel 0, %t1
     %t2 =l alloc8 8
-    storel 0, %t2
     %t3 =l alloc8 8
+    %t36 =l alloc8 8
+    %t43 =l alloc8 8
+    %t64 =l alloc8 8
+    %t115 =l alloc8 8
+    %t122 =l alloc8 8
+    %t143 =l alloc8 8
+    storel 0, %t1
+    storel 0, %t2
     storel 0, %t3
     storel %p_i, %t0
     %t4 =l loadl %t0
@@ -2264,7 +2270,6 @@ export function l $make_tree_cycle(l %rt, l %p_i) {
 @append_grow9
     %t34 =w ceql %t32, 0
     %t35 =l mul %t32, 2
-    %t36 =l alloc8 8
     jnz %t34, @append_capzero12, @append_capnz13
 @append_capzero12
     storel 1, %t36
@@ -2279,7 +2284,6 @@ export function l $make_tree_cycle(l %rt, l %p_i) {
     %t41 =l mul %t30, 8
     %t40 =l add %t41, 16
     %t42 =l call $nox_list_grow(l %rt, l %t29, l %t40, l %t38)
-    %t43 =l alloc8 8
     storel 0, %t43
     jmp @append_retain_cond15
 @append_retain_cond15
@@ -2321,7 +2325,6 @@ export function l $make_tree_cycle(l %rt, l %p_i) {
     %t63 =w cslel %t62, 0
     jnz %t63, @append_free_old21, @append_skip_free22
 @append_free_old21
-    %t64 =l alloc8 8
     storel 0, %t64
     jmp @append_deccomp_cond23
 @append_deccomp_cond23
@@ -2432,7 +2435,6 @@ export function l $make_tree_cycle(l %rt, l %p_i) {
 @append_grow40
     %t113 =w ceql %t111, 0
     %t114 =l mul %t111, 2
-    %t115 =l alloc8 8
     jnz %t113, @append_capzero43, @append_capnz44
 @append_capzero43
     storel 1, %t115
@@ -2447,7 +2449,6 @@ export function l $make_tree_cycle(l %rt, l %p_i) {
     %t120 =l mul %t109, 8
     %t119 =l add %t120, 16
     %t121 =l call $nox_list_grow(l %rt, l %t108, l %t119, l %t117)
-    %t122 =l alloc8 8
     storel 0, %t122
     jmp @append_retain_cond46
 @append_retain_cond46
@@ -2489,7 +2490,6 @@ export function l $make_tree_cycle(l %rt, l %p_i) {
     %t142 =w cslel %t141, 0
     jnz %t142, @append_free_old52, @append_skip_free53
 @append_free_old52
-    %t143 =l alloc8 8
     storel 0, %t143
     jmp @append_deccomp_cond54
 @append_deccomp_cond54
@@ -2615,8 +2615,8 @@ export function l $make_poly_cycle(l %rt, l %p_i) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
-    storel 0, %t1
     %t2 =l alloc8 8
+    storel 0, %t1
     storel 0, %t2
     storel %p_i, %t0
     %t3 =l loadl %t0
@@ -2753,17 +2753,17 @@ export function l $make_poly_cycle(l %rt, l %p_i) {
 }
 export function w $main(w %argc, l %argv) {
 @start
-    %rt =l call $nox_runtime_init()
-    call $nox_os_init(w %argc, l %argv)
-    call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
     %t3 =l alloc8 8
-    storel 0, %t3
     %t4 =l alloc8 8
-    storel 0, %t4
     %t5 =l alloc8 8
+    %rt =l call $nox_runtime_init()
+    call $nox_os_init(w %argc, l %argv)
+    call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
+    storel 0, %t3
+    storel 0, %t4
     storel 0, %t0
     storel 0, %t1
     jmp @while_cond0
@@ -2932,6 +2932,7 @@ export function w $main(w %argc, l %argv) {
 }
 export function $List_Tree_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -2942,7 +2943,6 @@ export function $List_Tree_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -2973,6 +2973,7 @@ export function $List_Tree_release(l %rt, l %p) {
 }
 export function $List_str_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -2983,7 +2984,6 @@ export function $List_str_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -3014,6 +3014,7 @@ export function $List_str_release(l %rt, l %p) {
 }
 export function $List_JsonValue_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -3024,7 +3025,6 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2

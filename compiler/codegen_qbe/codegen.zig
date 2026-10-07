@@ -836,6 +836,20 @@ pub const Codegen = struct {
             .llvm => llvm_emit.qbeRaw(self, fmt, args),
         };
     }
+    /// Fonksiyon sonunda biriken `alloc`/`alloca` satırlarını giriş bloğunun başına ekler.
+    pub fn flushHoistedAllocs(self: *Codegen) CodegenError!void {
+        defer {
+            self.hoisted_allocs.clearRetainingCapacity();
+            self.alloc_hoist_active = false;
+        }
+        if (self.hoisted_allocs.items.len == 0) return;
+        const w = &self.out.writer;
+        const ins = self.alloc_insert_pos;
+        const old_end = w.end;
+        try w.writeAll(self.hoisted_allocs.items);
+        std.mem.rotate(u8, w.buffer[ins..w.end], old_end - ins);
+    }
+
     pub fn qbeRawAll(self: *Codegen, text: []const u8) CodegenError!void {
         return switch (self.backend) {
             .qbe => qbe_emit.qbeRawAll(self, text),
@@ -864,6 +878,13 @@ pub const Codegen = struct {
     /// örtük bir `br label` EKLER). `.qbe` backend'İ BU ALANI HİÇ OKUMAZ/
     /// YAZMAZ.
     llvm_block_open: bool = false,
+    /// v1.142.18: `qbeAlloc` çıktısı giriş bloğuna TOPLANIR (bkz. `flushHoistedAllocs`). QBE'de giriş
+    /// bloğu dışındaki `alloc` (ve LLVM'de giriş dışı `alloca`) HER çalıştırmada yığını büyütür
+    /// ve fonksiyon dönene kadar geri vermez: döngü içinde `list.append` büyüme yolundaki geçici
+    /// slotlar 3M iterasyonda ana yığını taşırıyor (SIGSEGV), 256 KiB fiber yığınında ~20K büyümede.
+    alloc_insert_pos: usize = 0,
+    hoisted_allocs: std.ArrayListUnmanaged(u8) = .empty,
+    alloc_hoist_active: bool = false,
     /// Faz LLVM.3/5: `qbeCall`nin (bkz. `llvm_emit.zig`) `declare`-takibi —
     /// LLVM'de bir sembol İçin HEM `declare` HEM `define` bulunması
     /// GEÇERSİZDİR (deneyerek doğrulandı). Bulundu (Faz LLVM.5, `List_
@@ -1521,6 +1542,8 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
             const line = try llvm_emit.llvmCStringConstant(allocator, fs.name, fs.bytes);
             try gen.out.writer.writeAll(line);
         }
+        // v1.142.18: `runtime/str.zig`nin PINNED ASCII tablosu (`s[i]` tahsissiz sonuç adresi).
+        try gen.out.writer.writeAll("@nox_ascii_chars = external global [3072 x i8]\n");
     }
 
     // Stdlib fazı §L: kendi kendine başvuran (self-referential) bir sınıf

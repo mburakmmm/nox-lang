@@ -882,6 +882,9 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
 export function l $JsonValue_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t17 =l alloc8 8
+    %t22 =l alloc8 8
+    %t39 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 40
     %t2 =l loadl %t1
@@ -914,7 +917,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     %t15 =l add %t14, 8
     %t16 =l call $nox_trace_buf_alloc(l %rt, l %t15)
     storel %t13, %t16
-    %t17 =l alloc8 8
     storel 0, %t17
     %t18 =l add %p, 40
     %t19 =l loadl %t18
@@ -922,7 +924,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t20, @trace_list_fill_skip6, @trace_list_fill_have7
 @trace_list_fill_have7
     %t21 =l loadl %t19
-    %t22 =l alloc8 8
     storel 0, %t22
     jmp @trace_list_fill_cond9
 @trace_list_fill_cond9
@@ -955,7 +956,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t37, @trace_list_fill_skip12, @trace_list_fill_have13
 @trace_list_fill_have13
     %t38 =l loadl %t36
-    %t39 =l alloc8 8
     storel 0, %t39
     jmp @trace_list_fill_cond15
 @trace_list_fill_cond15
@@ -1166,6 +1166,7 @@ export function $Bag_add_num(l %rt, l %p_self, l %p_v) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
+    %t15 =l alloc8 8
     storel %p_self, %t0
     storel %p_v, %t1
     %t2 =l loadl %t0
@@ -1183,7 +1184,6 @@ export function $Bag_add_num(l %rt, l %p_self, l %p_v) {
 @append_grow0
     %t13 =w ceql %t11, 0
     %t14 =l mul %t11, 2
-    %t15 =l alloc8 8
     jnz %t13, @append_capzero3, @append_capnz4
 @append_capzero3
     storel 1, %t15
@@ -1236,6 +1236,9 @@ export function $Bag_add_name(l %rt, l %p_self, l %p_s) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
+    %t19 =l alloc8 8
+    %t26 =l alloc8 8
+    %t47 =l alloc8 8
     storel %p_self, %t0
     storel %p_s, %t1
     %t2 =l loadl %t0
@@ -1264,7 +1267,6 @@ export function $Bag_add_name(l %rt, l %p_self, l %p_s) {
 @append_grow3
     %t17 =w ceql %t15, 0
     %t18 =l mul %t15, 2
-    %t19 =l alloc8 8
     jnz %t17, @append_capzero6, @append_capnz7
 @append_capzero6
     storel 1, %t19
@@ -1279,7 +1281,6 @@ export function $Bag_add_name(l %rt, l %p_self, l %p_s) {
     %t24 =l mul %t13, 8
     %t23 =l add %t24, 16
     %t25 =l call $nox_list_grow(l %rt, l %t12, l %t23, l %t21)
-    %t26 =l alloc8 8
     storel 0, %t26
     jmp @append_retain_cond9
 @append_retain_cond9
@@ -1321,7 +1322,6 @@ export function $Bag_add_name(l %rt, l %p_self, l %p_s) {
     %t46 =w cslel %t45, 0
     jnz %t46, @append_free_old15, @append_skip_free16
 @append_free_old15
-    %t47 =l alloc8 8
     storel 0, %t47
     jmp @append_deccomp_cond17
 @append_deccomp_cond17
@@ -1370,6 +1370,9 @@ export function $Bag_add_item(l %rt, l %p_self, l %p_n) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
+    %t18 =l alloc8 8
+    %t25 =l alloc8 8
+    %t46 =l alloc8 8
     storel %p_self, %t0
     storel %p_n, %t1
     %t2 =l loadl %t0
@@ -1393,7 +1396,6 @@ export function $Bag_add_item(l %rt, l %p_self, l %p_n) {
 @append_grow0
     %t16 =w ceql %t14, 0
     %t17 =l mul %t14, 2
-    %t18 =l alloc8 8
     jnz %t16, @append_capzero3, @append_capnz4
 @append_capzero3
     storel 1, %t18
@@ -1408,7 +1410,6 @@ export function $Bag_add_item(l %rt, l %p_self, l %p_n) {
     %t23 =l mul %t12, 8
     %t22 =l add %t23, 16
     %t24 =l call $nox_list_grow(l %rt, l %t11, l %t22, l %t20)
-    %t25 =l alloc8 8
     storel 0, %t25
     jmp @append_retain_cond6
 @append_retain_cond6
@@ -1450,7 +1451,6 @@ export function $Bag_add_item(l %rt, l %p_self, l %p_n) {
     %t45 =w cslel %t44, 0
     jnz %t45, @append_free_old12, @append_skip_free13
 @append_free_old12
-    %t46 =l alloc8 8
     storel 0, %t46
     jmp @append_deccomp_cond14
 @append_deccomp_cond14
@@ -1499,6 +1499,7 @@ export function $Bag_add_item(l %rt, l %p_self, l %p_n) {
 export function l $Bag_next_num(l %rt, l %p_self) {
 @start
     %t0 =l alloc8 8
+    %t18 =l alloc8 8
     storel %p_self, %t0
     %t1 =l loadl %t0
     %t2 =l add %t1, 8
@@ -1519,7 +1520,6 @@ export function l $Bag_next_num(l %rt, l %p_self) {
 @append_grow0
     %t16 =w ceql %t14, 0
     %t17 =l mul %t14, 2
-    %t18 =l alloc8 8
     jnz %t16, @append_capzero3, @append_capnz4
 @append_capzero3
     storel 1, %t18
@@ -1577,6 +1577,7 @@ export function l $Bag_next_num(l %rt, l %p_self) {
 export function $Bag_add_via_nested(l %rt, l %p_self) {
 @start
     %t0 =l alloc8 8
+    %t16 =l alloc8 8
     storel %p_self, %t0
     %t1 =l loadl %t0
     %t2 =l add %t1, 8
@@ -1599,7 +1600,6 @@ export function $Bag_add_via_nested(l %rt, l %p_self) {
 @append_grow2
     %t14 =w ceql %t12, 0
     %t15 =l mul %t12, 2
-    %t16 =l alloc8 8
     jnz %t14, @append_capzero5, @append_capnz6
 @append_capzero5
     storel 1, %t16
@@ -1763,6 +1763,8 @@ export function w $Bag_eq(l %rt, l %a, l %b) {
 export function l $Bag_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t11 =l alloc8 8
+    %t16 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 24
     %t2 =l loadl %t1
@@ -1782,7 +1784,6 @@ export function l $Bag_trace(l %rt, l %p) {
     %t9 =l add %t8, 8
     %t10 =l call $nox_trace_buf_alloc(l %rt, l %t9)
     storel %t7, %t10
-    %t11 =l alloc8 8
     storel 0, %t11
     %t12 =l add %p, 24
     %t13 =l loadl %t12
@@ -1790,7 +1791,6 @@ export function l $Bag_trace(l %rt, l %p) {
     jnz %t14, @trace_list_fill_skip3, @trace_list_fill_have4
 @trace_list_fill_have4
     %t15 =l loadl %t13
-    %t16 =l alloc8 8
     storel 0, %t16
     jmp @trace_list_fill_cond6
 @trace_list_fill_cond6
@@ -2256,16 +2256,27 @@ export function d $sum_float(l %rt, l %p_xs) {
 }
 export function w $main(w %argc, l %argv) {
 @start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    %t4 =l alloc8 8
+    %t180 =l alloc8 8
+    %t215 =l alloc8 8
+    %t222 =l alloc8 8
+    %t243 =l alloc8 8
+    %t277 =l alloc8 8
+    %t284 =l alloc8 8
+    %t305 =l alloc8 8
+    %t408 =l alloc8 8
+    %t415 =l alloc8 8
+    %t436 =l alloc8 8
+    %t483 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    %t0 =l alloc8 8
     storel 0, %t0
-    %t1 =l alloc8 8
-    %t2 =l alloc8 8
     storel 0, %t2
-    %t3 =l alloc8 8
-    %t4 =l alloc8 8
     %t5 =l call $nox_rc_alloc(l %rt, l 32)
     storel 2, %t5
     %t6 =l add %t5, 8
@@ -2712,7 +2723,6 @@ export function w $main(w %argc, l %argv) {
 @append_grow90
     %t178 =w ceql %t176, 0
     %t179 =l mul %t176, 2
-    %t180 =l alloc8 8
     jnz %t178, @append_capzero93, @append_capnz94
 @append_capzero93
     storel 1, %t180
@@ -2773,7 +2783,6 @@ export function w $main(w %argc, l %argv) {
 @append_grow98
     %t213 =w ceql %t211, 0
     %t214 =l mul %t211, 2
-    %t215 =l alloc8 8
     jnz %t213, @append_capzero101, @append_capnz102
 @append_capzero101
     storel 1, %t215
@@ -2788,7 +2797,6 @@ export function w $main(w %argc, l %argv) {
     %t220 =l mul %t209, 8
     %t219 =l add %t220, 16
     %t221 =l call $nox_list_grow(l %rt, l %t208, l %t219, l %t217)
-    %t222 =l alloc8 8
     storel 0, %t222
     jmp @append_retain_cond104
 @append_retain_cond104
@@ -2830,7 +2838,6 @@ export function w $main(w %argc, l %argv) {
     %t242 =w cslel %t241, 0
     jnz %t242, @append_free_old110, @append_skip_free111
 @append_free_old110
-    %t243 =l alloc8 8
     storel 0, %t243
     jmp @append_deccomp_cond112
 @append_deccomp_cond112
@@ -2892,7 +2899,6 @@ export function w $main(w %argc, l %argv) {
 @append_grow117
     %t275 =w ceql %t273, 0
     %t276 =l mul %t273, 2
-    %t277 =l alloc8 8
     jnz %t275, @append_capzero120, @append_capnz121
 @append_capzero120
     storel 1, %t277
@@ -2907,7 +2913,6 @@ export function w $main(w %argc, l %argv) {
     %t282 =l mul %t271, 8
     %t281 =l add %t282, 16
     %t283 =l call $nox_list_grow(l %rt, l %t270, l %t281, l %t279)
-    %t284 =l alloc8 8
     storel 0, %t284
     jmp @append_retain_cond123
 @append_retain_cond123
@@ -2949,7 +2954,6 @@ export function w $main(w %argc, l %argv) {
     %t304 =w cslel %t303, 0
     jnz %t304, @append_free_old129, @append_skip_free130
 @append_free_old129
-    %t305 =l alloc8 8
     storel 0, %t305
     jmp @append_deccomp_cond131
 @append_deccomp_cond131
@@ -3197,7 +3201,6 @@ export function w $main(w %argc, l %argv) {
 @append_grow178
     %t406 =w ceql %t404, 0
     %t407 =l mul %t404, 2
-    %t408 =l alloc8 8
     jnz %t406, @append_capzero181, @append_capnz182
 @append_capzero181
     storel 1, %t408
@@ -3212,7 +3215,6 @@ export function w $main(w %argc, l %argv) {
     %t413 =l mul %t402, 8
     %t412 =l add %t413, 16
     %t414 =l call $nox_list_grow(l %rt, l %t401, l %t412, l %t410)
-    %t415 =l alloc8 8
     storel 0, %t415
     jmp @append_retain_cond184
 @append_retain_cond184
@@ -3254,7 +3256,6 @@ export function w $main(w %argc, l %argv) {
     %t435 =w cslel %t434, 0
     jnz %t435, @append_free_old190, @append_skip_free191
 @append_free_old190
-    %t436 =l alloc8 8
     storel 0, %t436
     jmp @append_deccomp_cond192
 @append_deccomp_cond192
@@ -3343,7 +3344,6 @@ export function w $main(w %argc, l %argv) {
 @append_grow203
     %t481 =w ceql %t479, 0
     %t482 =l mul %t479, 2
-    %t483 =l alloc8 8
     jnz %t481, @append_capzero206, @append_capnz207
 @append_capzero206
     storel 1, %t483
@@ -3490,6 +3490,7 @@ export function w $main(w %argc, l %argv) {
 }
 export function $List_Item_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -3500,7 +3501,6 @@ export function $List_Item_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -3531,6 +3531,7 @@ export function $List_Item_release(l %rt, l %p) {
 }
 export function $List_str_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -3541,7 +3542,6 @@ export function $List_str_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -3572,6 +3572,7 @@ export function $List_str_release(l %rt, l %p) {
 }
 export function $List_JsonValue_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -3582,7 +3583,6 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2

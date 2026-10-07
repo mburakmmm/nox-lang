@@ -882,6 +882,9 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
 export function l $JsonValue_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t17 =l alloc8 8
+    %t22 =l alloc8 8
+    %t39 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 40
     %t2 =l loadl %t1
@@ -914,7 +917,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     %t15 =l add %t14, 8
     %t16 =l call $nox_trace_buf_alloc(l %rt, l %t15)
     storel %t13, %t16
-    %t17 =l alloc8 8
     storel 0, %t17
     %t18 =l add %p, 40
     %t19 =l loadl %t18
@@ -922,7 +924,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t20, @trace_list_fill_skip6, @trace_list_fill_have7
 @trace_list_fill_have7
     %t21 =l loadl %t19
-    %t22 =l alloc8 8
     storel 0, %t22
     jmp @trace_list_fill_cond9
 @trace_list_fill_cond9
@@ -955,7 +956,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t37, @trace_list_fill_skip12, @trace_list_fill_have13
 @trace_list_fill_have13
     %t38 =l loadl %t36
-    %t39 =l alloc8 8
     storel 0, %t39
     jmp @trace_list_fill_cond15
 @trace_list_fill_cond15
@@ -1146,8 +1146,8 @@ export function $nox_smtp_SmtpClient__send_line(l %rt, l %p_self, l %p_line) {
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    storel 0, %t2
     %t3 =l alloc8 8
+    storel 0, %t2
     storel %p_self, %t0
     storel %p_line, %t1
     %t4 =l loadl %t1
@@ -2888,15 +2888,15 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    storel 0, %t2
     %t3 =l alloc8 8
     %t4 =l alloc8 8
     %t5 =l alloc8 8
-    storel 0, %t5
     %t6 =l alloc8 8
     %t7 =l alloc4 4
     %t8 =l alloc8 8
     %t9 =l alloc4 4
+    storel 0, %t2
+    storel 0, %t5
     storel %p_self, %t0
     storel %p_text, %t1
     %t10 =l add $str19, 16
@@ -3067,30 +3067,28 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @str_idx_ascii44
     %t63 =l add %t25, %t26
     %t64 =w loadub %t63
-    %t65 =l call $nox_rc_alloc(l %rt, l 10)
-    storel 2305843009213693953, %t65
-    %t66 =l add %t65, 8
-    storeb %t64, %t66
-    %t67 =l add %t66, 1
-    storeb 0, %t67
+    %t65 =l extuw %t64
+    %t66 =l mul %t65, 24
+    %t67 =l add $nox_ascii_chars, %t66
+    %t68 =l add %t67, 16
     jmp @str_idx_done46
 @str_idx_unicode45
-    %t68 =l call $nox_str_char_at(l %rt, l %t25, l %t26)
+    %t69 =l call $nox_str_char_at(l %rt, l %t25, l %t26)
     jmp @str_idx_done46
 @str_idx_done46
-    %t62 =l phi @str_idx_ascii44 %t66, @str_idx_unicode45 %t68
-    %t69 =l loadl %t5
-    %t70 =w ceql %t69, 0
-    jnz %t70, @release_skip48, @release47
+    %t62 =l phi @str_idx_ascii44 %t68, @str_idx_unicode45 %t69
+    %t70 =l loadl %t5
+    %t71 =w ceql %t70, 0
+    jnz %t71, @release_skip48, @release47
 @release47
-    %t71 =l sub %t69, 16
-    %t72 =l loadl %t71
-    %t73 =l sub %t72, 1
-    storel %t73, %t71
-    %t74 =w cslel %t73, 0
-    jnz %t74, @str_free50, @str_free_skip51
+    %t72 =l sub %t70, 16
+    %t73 =l loadl %t72
+    %t74 =l sub %t73, 1
+    storel %t74, %t72
+    %t75 =w cslel %t74, 0
+    jnz %t75, @str_free50, @str_free_skip51
 @str_free50
-    call $nox_str_free_now(l %rt, l %t69)
+    call $nox_str_free_now(l %rt, l %t70)
     jmp @str_free_done52
 @str_free_skip51
     jmp @str_free_done52
@@ -3101,75 +3099,75 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @release_done49
     storel 0, %t5
     storel %t62, %t5
-    %t75 =l loadl %t5
-    %t76 =l add $str21, 16
-    %t77 =w call $strcmp(l %t75, l %t76)
-    %t78 =w ceqw %t77, 0
-    jnz %t78, @if_then54, @if_elif55
+    %t76 =l loadl %t5
+    %t77 =l add $str21, 16
+    %t78 =w call $strcmp(l %t76, l %t77)
+    %t79 =w ceqw %t78, 0
+    jnz %t79, @if_then54, @if_elif55
 @if_then54
     jmp @if_end53
 @if_elif55
-    %t79 =l loadl %t5
-    %t80 =l add $str22, 16
-    %t81 =w call $strcmp(l %t79, l %t80)
-    %t82 =w ceqw %t81, 0
-    jnz %t82, @if_elif_body56, @if_else57
+    %t80 =l loadl %t5
+    %t81 =l add $str22, 16
+    %t82 =w call $strcmp(l %t80, l %t81)
+    %t83 =w ceqw %t82, 0
+    jnz %t83, @if_elif_body56, @if_else57
 @if_elif_body56
-    %t83 =l loadl %t2
-    storel %t83, %t6
-    %t84 =l loadl %t6
-    %t85 =l call $nox_str_char_count(l %t84)
-    %t86 =w ceql %t85, 0
-    jnz %t86, @if_then61, @if_end60
+    %t84 =l loadl %t2
+    storel %t84, %t6
+    %t85 =l loadl %t6
+    %t86 =l call $nox_str_char_count(l %t85)
+    %t87 =w ceql %t86, 0
+    jnz %t87, @if_then61, @if_end60
 @if_then61
     storew 0, %t7
     jmp @inline_done59
 @after_inline_return62
     jmp @if_end60
 @if_end60
-    %t87 =l loadl %t6
-    %t88 =l call $nox_str_char_count(l %t87)
-    %t89 =w cugel 0, %t88
-    jnz %t89, @str_idx_err63, @str_idx_ok64
+    %t88 =l loadl %t6
+    %t89 =l call $nox_str_char_count(l %t88)
+    %t90 =w cugel 0, %t89
+    jnz %t90, @str_idx_err63, @str_idx_ok64
 @str_idx_err63
-    %t90 =l add $str23, 16
-    %t91 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 8, %t91
-    %t92 =l add %t91, 8
-    storel 0, %t92
-    %t93 =l add %t91, 16
+    %t91 =l add $str23, 16
+    %t92 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 8, %t92
+    %t93 =l add %t92, 8
     storel 0, %t93
-    %t94 =l add %t91, 24
+    %t94 =l add %t92, 16
     storel 0, %t94
-    call $Exception___init__(l %rt, l %t91, l %t90)
-    %t95 =w call $nox_exception_pending(l %rt)
-    jnz %t95, @ctor_init_failed65, @ctor_init_cont66
+    %t95 =l add %t92, 24
+    storel 0, %t95
+    call $Exception___init__(l %rt, l %t92, l %t91)
+    %t96 =w call $nox_exception_pending(l %rt)
+    jnz %t96, @ctor_init_failed65, @ctor_init_cont66
 @ctor_init_failed65
-    %t96 =w ceql %t91, 0
-    jnz %t96, @release_skip68, @release67
+    %t97 =w ceql %t92, 0
+    jnz %t97, @release_skip68, @release67
 @release67
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t91)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t92)
     jmp @release_done69
 @release_skip68
     jmp @release_done69
 @release_done69
     jmp @ctor_init_cont66
 @ctor_init_cont66
-    %t97 =w call $nox_exception_pending(l %rt)
-    jnz %t97, @exc_propagate70, @exc_continue71
+    %t98 =w call $nox_exception_pending(l %rt)
+    jnz %t98, @exc_propagate70, @exc_continue71
 @exc_propagate70
-    %t98 =l loadl %t5
-    %t99 =w ceql %t98, 0
-    jnz %t99, @release_skip73, @release72
+    %t99 =l loadl %t5
+    %t100 =w ceql %t99, 0
+    jnz %t100, @release_skip73, @release72
 @release72
-    %t100 =l sub %t98, 16
-    %t101 =l loadl %t100
-    %t102 =l sub %t101, 1
-    storel %t102, %t100
-    %t103 =w cslel %t102, 0
-    jnz %t103, @str_free75, @str_free_skip76
+    %t101 =l sub %t99, 16
+    %t102 =l loadl %t101
+    %t103 =l sub %t102, 1
+    storel %t103, %t101
+    %t104 =w cslel %t103, 0
+    jnz %t104, @str_free75, @str_free_skip76
 @str_free75
-    call $nox_str_free_now(l %rt, l %t98)
+    call $nox_str_free_now(l %rt, l %t99)
     jmp @str_free_done77
 @str_free_skip76
     jmp @str_free_done77
@@ -3181,24 +3179,24 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     storel 0, %t5
     ret
 @exc_continue71
-    %t104 =l add %t91, 24
-    storel 32, %t104
-    call $nox_raise(l %rt, l %t91, l 32)
-    %t105 =w call $nox_exception_pending(l %rt)
-    jnz %t105, @exc_propagate78, @exc_continue79
+    %t105 =l add %t92, 24
+    storel 32, %t105
+    call $nox_raise(l %rt, l %t92, l 32)
+    %t106 =w call $nox_exception_pending(l %rt)
+    jnz %t106, @exc_propagate78, @exc_continue79
 @exc_propagate78
-    %t106 =l loadl %t5
-    %t107 =w ceql %t106, 0
-    jnz %t107, @release_skip81, @release80
+    %t107 =l loadl %t5
+    %t108 =w ceql %t107, 0
+    jnz %t108, @release_skip81, @release80
 @release80
-    %t108 =l sub %t106, 16
-    %t109 =l loadl %t108
-    %t110 =l sub %t109, 1
-    storel %t110, %t108
-    %t111 =w cslel %t110, 0
-    jnz %t111, @str_free83, @str_free_skip84
+    %t109 =l sub %t107, 16
+    %t110 =l loadl %t109
+    %t111 =l sub %t110, 1
+    storel %t111, %t109
+    %t112 =w cslel %t111, 0
+    jnz %t112, @str_free83, @str_free_skip84
 @str_free83
-    call $nox_str_free_now(l %rt, l %t106)
+    call $nox_str_free_now(l %rt, l %t107)
     jmp @str_free_done85
 @str_free_skip84
     jmp @str_free_done85
@@ -3212,21 +3210,21 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @exc_continue79
     jmp @str_idx_ok64
 @str_idx_ok64
-    %t112 =l call $nox_str_char_at(l %rt, l %t87, l 0)
-    %t113 =l add $str24, 16
-    %t114 =w call $strcmp(l %t112, l %t113)
-    %t115 =w ceqw %t114, 0
-    %t116 =w ceql %t112, 0
-    jnz %t116, @release_skip87, @release86
+    %t113 =l call $nox_str_char_at(l %rt, l %t88, l 0)
+    %t114 =l add $str24, 16
+    %t115 =w call $strcmp(l %t113, l %t114)
+    %t116 =w ceqw %t115, 0
+    %t117 =w ceql %t113, 0
+    jnz %t117, @release_skip87, @release86
 @release86
-    %t117 =l sub %t112, 16
-    %t118 =l loadl %t117
-    %t119 =l sub %t118, 1
-    storel %t119, %t117
-    %t120 =w cslel %t119, 0
-    jnz %t120, @str_free89, @str_free_skip90
+    %t118 =l sub %t113, 16
+    %t119 =l loadl %t118
+    %t120 =l sub %t119, 1
+    storel %t120, %t118
+    %t121 =w cslel %t120, 0
+    jnz %t121, @str_free89, @str_free_skip90
 @str_free89
-    call $nox_str_free_now(l %rt, l %t112)
+    call $nox_str_free_now(l %rt, l %t113)
     jmp @str_free_done91
 @str_free_skip90
     jmp @str_free_done91
@@ -3235,30 +3233,30 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @release_skip87
     jmp @release_done88
 @release_done88
-    storew %t115, %t7
+    storew %t116, %t7
     jmp @inline_done59
 @after_inline_return92
     jmp @inline_done59
 @inline_done59
-    %t121 =w loadw %t7
-    jnz %t121, @if_then93, @if_else94
+    %t122 =w loadw %t7
+    jnz %t122, @if_then93, @if_else94
 @if_then93
-    %t122 =l loadl %t0
-    %t123 =l add $str25, 16
-    %t124 =l loadl %t2
-    %t125 =l call $nox_str_concat(l %rt, l %t123, l %t124)
-    call $nox_smtp_SmtpClient__send_line(l %rt, l %t122, l %t125)
-    %t126 =w ceql %t125, 0
-    jnz %t126, @release_skip96, @release95
+    %t123 =l loadl %t0
+    %t124 =l add $str25, 16
+    %t125 =l loadl %t2
+    %t126 =l call $nox_str_concat(l %rt, l %t124, l %t125)
+    call $nox_smtp_SmtpClient__send_line(l %rt, l %t123, l %t126)
+    %t127 =w ceql %t126, 0
+    jnz %t127, @release_skip96, @release95
 @release95
-    %t127 =l sub %t125, 16
-    %t128 =l loadl %t127
-    %t129 =l sub %t128, 1
-    storel %t129, %t127
-    %t130 =w cslel %t129, 0
-    jnz %t130, @str_free98, @str_free_skip99
+    %t128 =l sub %t126, 16
+    %t129 =l loadl %t128
+    %t130 =l sub %t129, 1
+    storel %t130, %t128
+    %t131 =w cslel %t130, 0
+    jnz %t131, @str_free98, @str_free_skip99
 @str_free98
-    call $nox_str_free_now(l %rt, l %t125)
+    call $nox_str_free_now(l %rt, l %t126)
     jmp @str_free_done100
 @str_free_skip99
     jmp @str_free_done100
@@ -3267,21 +3265,21 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @release_skip96
     jmp @release_done97
 @release_done97
-    %t131 =w call $nox_exception_pending(l %rt)
-    jnz %t131, @exc_propagate101, @exc_continue102
+    %t132 =w call $nox_exception_pending(l %rt)
+    jnz %t132, @exc_propagate101, @exc_continue102
 @exc_propagate101
-    %t132 =l loadl %t2
-    %t133 =w ceql %t132, 0
-    jnz %t133, @release_skip104, @release103
+    %t133 =l loadl %t2
+    %t134 =w ceql %t133, 0
+    jnz %t134, @release_skip104, @release103
 @release103
-    %t134 =l sub %t132, 16
-    %t135 =l loadl %t134
-    %t136 =l sub %t135, 1
-    storel %t136, %t134
-    %t137 =w cslel %t136, 0
-    jnz %t137, @str_free106, @str_free_skip107
+    %t135 =l sub %t133, 16
+    %t136 =l loadl %t135
+    %t137 =l sub %t136, 1
+    storel %t137, %t135
+    %t138 =w cslel %t137, 0
+    jnz %t138, @str_free106, @str_free_skip107
 @str_free106
-    call $nox_str_free_now(l %rt, l %t132)
+    call $nox_str_free_now(l %rt, l %t133)
     jmp @str_free_done108
 @str_free_skip107
     jmp @str_free_done108
@@ -3291,18 +3289,18 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     jmp @release_done105
 @release_done105
     storel 0, %t2
-    %t138 =l loadl %t5
-    %t139 =w ceql %t138, 0
-    jnz %t139, @release_skip110, @release109
+    %t139 =l loadl %t5
+    %t140 =w ceql %t139, 0
+    jnz %t140, @release_skip110, @release109
 @release109
-    %t140 =l sub %t138, 16
-    %t141 =l loadl %t140
-    %t142 =l sub %t141, 1
-    storel %t142, %t140
-    %t143 =w cslel %t142, 0
-    jnz %t143, @str_free112, @str_free_skip113
+    %t141 =l sub %t139, 16
+    %t142 =l loadl %t141
+    %t143 =l sub %t142, 1
+    storel %t143, %t141
+    %t144 =w cslel %t143, 0
+    jnz %t144, @str_free112, @str_free_skip113
 @str_free112
-    call $nox_str_free_now(l %rt, l %t138)
+    call $nox_str_free_now(l %rt, l %t139)
     jmp @str_free_done114
 @str_free_skip113
     jmp @str_free_done114
@@ -3316,24 +3314,24 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @exc_continue102
     jmp @if_end58
 @if_else94
-    %t144 =l loadl %t0
-    %t145 =l loadl %t2
-    call $nox_smtp_SmtpClient__send_line(l %rt, l %t144, l %t145)
-    %t146 =w call $nox_exception_pending(l %rt)
-    jnz %t146, @exc_propagate115, @exc_continue116
+    %t145 =l loadl %t0
+    %t146 =l loadl %t2
+    call $nox_smtp_SmtpClient__send_line(l %rt, l %t145, l %t146)
+    %t147 =w call $nox_exception_pending(l %rt)
+    jnz %t147, @exc_propagate115, @exc_continue116
 @exc_propagate115
-    %t147 =l loadl %t2
-    %t148 =w ceql %t147, 0
-    jnz %t148, @release_skip118, @release117
+    %t148 =l loadl %t2
+    %t149 =w ceql %t148, 0
+    jnz %t149, @release_skip118, @release117
 @release117
-    %t149 =l sub %t147, 16
-    %t150 =l loadl %t149
-    %t151 =l sub %t150, 1
-    storel %t151, %t149
-    %t152 =w cslel %t151, 0
-    jnz %t152, @str_free120, @str_free_skip121
+    %t150 =l sub %t148, 16
+    %t151 =l loadl %t150
+    %t152 =l sub %t151, 1
+    storel %t152, %t150
+    %t153 =w cslel %t152, 0
+    jnz %t153, @str_free120, @str_free_skip121
 @str_free120
-    call $nox_str_free_now(l %rt, l %t147)
+    call $nox_str_free_now(l %rt, l %t148)
     jmp @str_free_done122
 @str_free_skip121
     jmp @str_free_done122
@@ -3343,18 +3341,18 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     jmp @release_done119
 @release_done119
     storel 0, %t2
-    %t153 =l loadl %t5
-    %t154 =w ceql %t153, 0
-    jnz %t154, @release_skip124, @release123
+    %t154 =l loadl %t5
+    %t155 =w ceql %t154, 0
+    jnz %t155, @release_skip124, @release123
 @release123
-    %t155 =l sub %t153, 16
-    %t156 =l loadl %t155
-    %t157 =l sub %t156, 1
-    storel %t157, %t155
-    %t158 =w cslel %t157, 0
-    jnz %t158, @str_free126, @str_free_skip127
+    %t156 =l sub %t154, 16
+    %t157 =l loadl %t156
+    %t158 =l sub %t157, 1
+    storel %t158, %t156
+    %t159 =w cslel %t158, 0
+    jnz %t159, @str_free126, @str_free_skip127
 @str_free126
-    call $nox_str_free_now(l %rt, l %t153)
+    call $nox_str_free_now(l %rt, l %t154)
     jmp @str_free_done128
 @str_free_skip127
     jmp @str_free_done128
@@ -3368,19 +3366,19 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @exc_continue116
     jmp @if_end58
 @if_end58
-    %t159 =l add $str26, 16
-    %t160 =l loadl %t2
-    %t161 =w ceql %t160, 0
-    jnz %t161, @release_skip130, @release129
+    %t160 =l add $str26, 16
+    %t161 =l loadl %t2
+    %t162 =w ceql %t161, 0
+    jnz %t162, @release_skip130, @release129
 @release129
-    %t162 =l sub %t160, 16
-    %t163 =l loadl %t162
-    %t164 =l sub %t163, 1
-    storel %t164, %t162
-    %t165 =w cslel %t164, 0
-    jnz %t165, @str_free132, @str_free_skip133
+    %t163 =l sub %t161, 16
+    %t164 =l loadl %t163
+    %t165 =l sub %t164, 1
+    storel %t165, %t163
+    %t166 =w cslel %t165, 0
+    jnz %t166, @str_free132, @str_free_skip133
 @str_free132
-    call $nox_str_free_now(l %rt, l %t160)
+    call $nox_str_free_now(l %rt, l %t161)
     jmp @str_free_done134
 @str_free_skip133
     jmp @str_free_done134
@@ -3390,81 +3388,81 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     jmp @release_done131
 @release_done131
     storel 0, %t2
-    storel %t159, %t2
+    storel %t160, %t2
     jmp @if_end53
 @if_else57
-    %t166 =l loadl %t5
-    %t167 =l loadl %t2
-    %t168 =l call $nox_str_append(l %rt, l %t167, l %t166)
-    storel %t168, %t2
+    %t167 =l loadl %t5
+    %t168 =l loadl %t2
+    %t169 =l call $nox_str_append(l %rt, l %t168, l %t167)
+    storel %t169, %t2
     jmp @if_end53
 @if_end53
-    %t169 =l loadl %t3
-    %t170 =l add %t169, 1
-    storel %t170, %t3
+    %t170 =l loadl %t3
+    %t171 =l add %t170, 1
+    storel %t171, %t3
     jmp @while_cond6
 @while_end8
-    %t171 =l loadl %t2
-    %t172 =l add $str27, 16
-    %t173 =w call $strcmp(l %t171, l %t172)
-    %t174 =w cnew %t173, 0
-    jnz %t174, @if_then136, @if_end135
+    %t172 =l loadl %t2
+    %t173 =l add $str27, 16
+    %t174 =w call $strcmp(l %t172, l %t173)
+    %t175 =w cnew %t174, 0
+    jnz %t175, @if_then136, @if_end135
 @if_then136
-    %t175 =l loadl %t2
-    storel %t175, %t8
-    %t176 =l loadl %t8
-    %t177 =l call $nox_str_char_count(l %t176)
-    %t178 =w ceql %t177, 0
-    jnz %t178, @if_then140, @if_end139
+    %t176 =l loadl %t2
+    storel %t176, %t8
+    %t177 =l loadl %t8
+    %t178 =l call $nox_str_char_count(l %t177)
+    %t179 =w ceql %t178, 0
+    jnz %t179, @if_then140, @if_end139
 @if_then140
     storew 0, %t9
     jmp @inline_done138
 @after_inline_return141
     jmp @if_end139
 @if_end139
-    %t179 =l loadl %t8
-    %t180 =l call $nox_str_char_count(l %t179)
-    %t181 =w cugel 0, %t180
-    jnz %t181, @str_idx_err142, @str_idx_ok143
+    %t180 =l loadl %t8
+    %t181 =l call $nox_str_char_count(l %t180)
+    %t182 =w cugel 0, %t181
+    jnz %t182, @str_idx_err142, @str_idx_ok143
 @str_idx_err142
-    %t182 =l add $str28, 16
-    %t183 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 8, %t183
-    %t184 =l add %t183, 8
-    storel 0, %t184
-    %t185 =l add %t183, 16
+    %t183 =l add $str28, 16
+    %t184 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 8, %t184
+    %t185 =l add %t184, 8
     storel 0, %t185
-    %t186 =l add %t183, 24
+    %t186 =l add %t184, 16
     storel 0, %t186
-    call $Exception___init__(l %rt, l %t183, l %t182)
-    %t187 =w call $nox_exception_pending(l %rt)
-    jnz %t187, @ctor_init_failed144, @ctor_init_cont145
+    %t187 =l add %t184, 24
+    storel 0, %t187
+    call $Exception___init__(l %rt, l %t184, l %t183)
+    %t188 =w call $nox_exception_pending(l %rt)
+    jnz %t188, @ctor_init_failed144, @ctor_init_cont145
 @ctor_init_failed144
-    %t188 =w ceql %t183, 0
-    jnz %t188, @release_skip147, @release146
+    %t189 =w ceql %t184, 0
+    jnz %t189, @release_skip147, @release146
 @release146
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t183)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t184)
     jmp @release_done148
 @release_skip147
     jmp @release_done148
 @release_done148
     jmp @ctor_init_cont145
 @ctor_init_cont145
-    %t189 =w call $nox_exception_pending(l %rt)
-    jnz %t189, @exc_propagate149, @exc_continue150
+    %t190 =w call $nox_exception_pending(l %rt)
+    jnz %t190, @exc_propagate149, @exc_continue150
 @exc_propagate149
-    %t190 =l loadl %t5
-    %t191 =w ceql %t190, 0
-    jnz %t191, @release_skip152, @release151
+    %t191 =l loadl %t5
+    %t192 =w ceql %t191, 0
+    jnz %t192, @release_skip152, @release151
 @release151
-    %t192 =l sub %t190, 16
-    %t193 =l loadl %t192
-    %t194 =l sub %t193, 1
-    storel %t194, %t192
-    %t195 =w cslel %t194, 0
-    jnz %t195, @str_free154, @str_free_skip155
+    %t193 =l sub %t191, 16
+    %t194 =l loadl %t193
+    %t195 =l sub %t194, 1
+    storel %t195, %t193
+    %t196 =w cslel %t195, 0
+    jnz %t196, @str_free154, @str_free_skip155
 @str_free154
-    call $nox_str_free_now(l %rt, l %t190)
+    call $nox_str_free_now(l %rt, l %t191)
     jmp @str_free_done156
 @str_free_skip155
     jmp @str_free_done156
@@ -3476,24 +3474,24 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     storel 0, %t5
     ret
 @exc_continue150
-    %t196 =l add %t183, 24
-    storel 32, %t196
-    call $nox_raise(l %rt, l %t183, l 32)
-    %t197 =w call $nox_exception_pending(l %rt)
-    jnz %t197, @exc_propagate157, @exc_continue158
+    %t197 =l add %t184, 24
+    storel 32, %t197
+    call $nox_raise(l %rt, l %t184, l 32)
+    %t198 =w call $nox_exception_pending(l %rt)
+    jnz %t198, @exc_propagate157, @exc_continue158
 @exc_propagate157
-    %t198 =l loadl %t5
-    %t199 =w ceql %t198, 0
-    jnz %t199, @release_skip160, @release159
+    %t199 =l loadl %t5
+    %t200 =w ceql %t199, 0
+    jnz %t200, @release_skip160, @release159
 @release159
-    %t200 =l sub %t198, 16
-    %t201 =l loadl %t200
-    %t202 =l sub %t201, 1
-    storel %t202, %t200
-    %t203 =w cslel %t202, 0
-    jnz %t203, @str_free162, @str_free_skip163
+    %t201 =l sub %t199, 16
+    %t202 =l loadl %t201
+    %t203 =l sub %t202, 1
+    storel %t203, %t201
+    %t204 =w cslel %t203, 0
+    jnz %t204, @str_free162, @str_free_skip163
 @str_free162
-    call $nox_str_free_now(l %rt, l %t198)
+    call $nox_str_free_now(l %rt, l %t199)
     jmp @str_free_done164
 @str_free_skip163
     jmp @str_free_done164
@@ -3507,21 +3505,21 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @exc_continue158
     jmp @str_idx_ok143
 @str_idx_ok143
-    %t204 =l call $nox_str_char_at(l %rt, l %t179, l 0)
-    %t205 =l add $str29, 16
-    %t206 =w call $strcmp(l %t204, l %t205)
-    %t207 =w ceqw %t206, 0
-    %t208 =w ceql %t204, 0
-    jnz %t208, @release_skip166, @release165
+    %t205 =l call $nox_str_char_at(l %rt, l %t180, l 0)
+    %t206 =l add $str29, 16
+    %t207 =w call $strcmp(l %t205, l %t206)
+    %t208 =w ceqw %t207, 0
+    %t209 =w ceql %t205, 0
+    jnz %t209, @release_skip166, @release165
 @release165
-    %t209 =l sub %t204, 16
-    %t210 =l loadl %t209
-    %t211 =l sub %t210, 1
-    storel %t211, %t209
-    %t212 =w cslel %t211, 0
-    jnz %t212, @str_free168, @str_free_skip169
+    %t210 =l sub %t205, 16
+    %t211 =l loadl %t210
+    %t212 =l sub %t211, 1
+    storel %t212, %t210
+    %t213 =w cslel %t212, 0
+    jnz %t213, @str_free168, @str_free_skip169
 @str_free168
-    call $nox_str_free_now(l %rt, l %t204)
+    call $nox_str_free_now(l %rt, l %t205)
     jmp @str_free_done170
 @str_free_skip169
     jmp @str_free_done170
@@ -3530,30 +3528,30 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @release_skip166
     jmp @release_done167
 @release_done167
-    storew %t207, %t9
+    storew %t208, %t9
     jmp @inline_done138
 @after_inline_return171
     jmp @inline_done138
 @inline_done138
-    %t213 =w loadw %t9
-    jnz %t213, @if_then172, @if_else173
+    %t214 =w loadw %t9
+    jnz %t214, @if_then172, @if_else173
 @if_then172
-    %t214 =l loadl %t0
-    %t215 =l add $str30, 16
-    %t216 =l loadl %t2
-    %t217 =l call $nox_str_concat(l %rt, l %t215, l %t216)
-    call $nox_smtp_SmtpClient__send_line(l %rt, l %t214, l %t217)
-    %t218 =w ceql %t217, 0
-    jnz %t218, @release_skip175, @release174
+    %t215 =l loadl %t0
+    %t216 =l add $str30, 16
+    %t217 =l loadl %t2
+    %t218 =l call $nox_str_concat(l %rt, l %t216, l %t217)
+    call $nox_smtp_SmtpClient__send_line(l %rt, l %t215, l %t218)
+    %t219 =w ceql %t218, 0
+    jnz %t219, @release_skip175, @release174
 @release174
-    %t219 =l sub %t217, 16
-    %t220 =l loadl %t219
-    %t221 =l sub %t220, 1
-    storel %t221, %t219
-    %t222 =w cslel %t221, 0
-    jnz %t222, @str_free177, @str_free_skip178
+    %t220 =l sub %t218, 16
+    %t221 =l loadl %t220
+    %t222 =l sub %t221, 1
+    storel %t222, %t220
+    %t223 =w cslel %t222, 0
+    jnz %t223, @str_free177, @str_free_skip178
 @str_free177
-    call $nox_str_free_now(l %rt, l %t217)
+    call $nox_str_free_now(l %rt, l %t218)
     jmp @str_free_done179
 @str_free_skip178
     jmp @str_free_done179
@@ -3562,21 +3560,21 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @release_skip175
     jmp @release_done176
 @release_done176
-    %t223 =w call $nox_exception_pending(l %rt)
-    jnz %t223, @exc_propagate180, @exc_continue181
+    %t224 =w call $nox_exception_pending(l %rt)
+    jnz %t224, @exc_propagate180, @exc_continue181
 @exc_propagate180
-    %t224 =l loadl %t2
-    %t225 =w ceql %t224, 0
-    jnz %t225, @release_skip183, @release182
+    %t225 =l loadl %t2
+    %t226 =w ceql %t225, 0
+    jnz %t226, @release_skip183, @release182
 @release182
-    %t226 =l sub %t224, 16
-    %t227 =l loadl %t226
-    %t228 =l sub %t227, 1
-    storel %t228, %t226
-    %t229 =w cslel %t228, 0
-    jnz %t229, @str_free185, @str_free_skip186
+    %t227 =l sub %t225, 16
+    %t228 =l loadl %t227
+    %t229 =l sub %t228, 1
+    storel %t229, %t227
+    %t230 =w cslel %t229, 0
+    jnz %t230, @str_free185, @str_free_skip186
 @str_free185
-    call $nox_str_free_now(l %rt, l %t224)
+    call $nox_str_free_now(l %rt, l %t225)
     jmp @str_free_done187
 @str_free_skip186
     jmp @str_free_done187
@@ -3586,18 +3584,18 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     jmp @release_done184
 @release_done184
     storel 0, %t2
-    %t230 =l loadl %t5
-    %t231 =w ceql %t230, 0
-    jnz %t231, @release_skip189, @release188
+    %t231 =l loadl %t5
+    %t232 =w ceql %t231, 0
+    jnz %t232, @release_skip189, @release188
 @release188
-    %t232 =l sub %t230, 16
-    %t233 =l loadl %t232
-    %t234 =l sub %t233, 1
-    storel %t234, %t232
-    %t235 =w cslel %t234, 0
-    jnz %t235, @str_free191, @str_free_skip192
+    %t233 =l sub %t231, 16
+    %t234 =l loadl %t233
+    %t235 =l sub %t234, 1
+    storel %t235, %t233
+    %t236 =w cslel %t235, 0
+    jnz %t236, @str_free191, @str_free_skip192
 @str_free191
-    call $nox_str_free_now(l %rt, l %t230)
+    call $nox_str_free_now(l %rt, l %t231)
     jmp @str_free_done193
 @str_free_skip192
     jmp @str_free_done193
@@ -3611,24 +3609,24 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @exc_continue181
     jmp @if_end137
 @if_else173
-    %t236 =l loadl %t0
-    %t237 =l loadl %t2
-    call $nox_smtp_SmtpClient__send_line(l %rt, l %t236, l %t237)
-    %t238 =w call $nox_exception_pending(l %rt)
-    jnz %t238, @exc_propagate194, @exc_continue195
+    %t237 =l loadl %t0
+    %t238 =l loadl %t2
+    call $nox_smtp_SmtpClient__send_line(l %rt, l %t237, l %t238)
+    %t239 =w call $nox_exception_pending(l %rt)
+    jnz %t239, @exc_propagate194, @exc_continue195
 @exc_propagate194
-    %t239 =l loadl %t2
-    %t240 =w ceql %t239, 0
-    jnz %t240, @release_skip197, @release196
+    %t240 =l loadl %t2
+    %t241 =w ceql %t240, 0
+    jnz %t241, @release_skip197, @release196
 @release196
-    %t241 =l sub %t239, 16
-    %t242 =l loadl %t241
-    %t243 =l sub %t242, 1
-    storel %t243, %t241
-    %t244 =w cslel %t243, 0
-    jnz %t244, @str_free199, @str_free_skip200
+    %t242 =l sub %t240, 16
+    %t243 =l loadl %t242
+    %t244 =l sub %t243, 1
+    storel %t244, %t242
+    %t245 =w cslel %t244, 0
+    jnz %t245, @str_free199, @str_free_skip200
 @str_free199
-    call $nox_str_free_now(l %rt, l %t239)
+    call $nox_str_free_now(l %rt, l %t240)
     jmp @str_free_done201
 @str_free_skip200
     jmp @str_free_done201
@@ -3638,18 +3636,18 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     jmp @release_done198
 @release_done198
     storel 0, %t2
-    %t245 =l loadl %t5
-    %t246 =w ceql %t245, 0
-    jnz %t246, @release_skip203, @release202
+    %t246 =l loadl %t5
+    %t247 =w ceql %t246, 0
+    jnz %t247, @release_skip203, @release202
 @release202
-    %t247 =l sub %t245, 16
-    %t248 =l loadl %t247
-    %t249 =l sub %t248, 1
-    storel %t249, %t247
-    %t250 =w cslel %t249, 0
-    jnz %t250, @str_free205, @str_free_skip206
+    %t248 =l sub %t246, 16
+    %t249 =l loadl %t248
+    %t250 =l sub %t249, 1
+    storel %t250, %t248
+    %t251 =w cslel %t250, 0
+    jnz %t251, @str_free205, @str_free_skip206
 @str_free205
-    call $nox_str_free_now(l %rt, l %t245)
+    call $nox_str_free_now(l %rt, l %t246)
     jmp @str_free_done207
 @str_free_skip206
     jmp @str_free_done207
@@ -3665,18 +3663,18 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
 @if_end137
     jmp @if_end135
 @if_end135
-    %t251 =l loadl %t2
-    %t252 =w ceql %t251, 0
-    jnz %t252, @release_skip209, @release208
+    %t252 =l loadl %t2
+    %t253 =w ceql %t252, 0
+    jnz %t253, @release_skip209, @release208
 @release208
-    %t253 =l sub %t251, 16
-    %t254 =l loadl %t253
-    %t255 =l sub %t254, 1
-    storel %t255, %t253
-    %t256 =w cslel %t255, 0
-    jnz %t256, @str_free211, @str_free_skip212
+    %t254 =l sub %t252, 16
+    %t255 =l loadl %t254
+    %t256 =l sub %t255, 1
+    storel %t256, %t254
+    %t257 =w cslel %t256, 0
+    jnz %t257, @str_free211, @str_free_skip212
 @str_free211
-    call $nox_str_free_now(l %rt, l %t251)
+    call $nox_str_free_now(l %rt, l %t252)
     jmp @str_free_done213
 @str_free_skip212
     jmp @str_free_done213
@@ -3686,18 +3684,18 @@ export function $nox_smtp_SmtpClient__send_dot_stuffed(l %rt, l %p_self, l %p_te
     jmp @release_done210
 @release_done210
     storel 0, %t2
-    %t257 =l loadl %t5
-    %t258 =w ceql %t257, 0
-    jnz %t258, @release_skip215, @release214
+    %t258 =l loadl %t5
+    %t259 =w ceql %t258, 0
+    jnz %t259, @release_skip215, @release214
 @release214
-    %t259 =l sub %t257, 16
-    %t260 =l loadl %t259
-    %t261 =l sub %t260, 1
-    storel %t261, %t259
-    %t262 =w cslel %t261, 0
-    jnz %t262, @str_free217, @str_free_skip218
+    %t260 =l sub %t258, 16
+    %t261 =l loadl %t260
+    %t262 =l sub %t261, 1
+    storel %t262, %t260
+    %t263 =w cslel %t262, 0
+    jnz %t263, @str_free217, @str_free_skip218
 @str_free217
-    call $nox_str_free_now(l %rt, l %t257)
+    call $nox_str_free_now(l %rt, l %t258)
     jmp @str_free_done219
 @str_free_skip218
     jmp @str_free_done219
@@ -4888,8 +4886,8 @@ export function l $nox_smtp__join_addrs(l %rt, l %p_addrs) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
-    storel 0, %t1
     %t2 =l alloc8 8
+    storel 0, %t1
     storel %p_addrs, %t0
     %t3 =l add $str44, 16
     %t4 =l loadl %t1
@@ -4982,10 +4980,10 @@ export function l $nox_smtp_connect(l %rt, l %p_host, l %p_port, w %p_use_tls) {
     %t3 =l alloc8 8
     %t4 =l alloc8 8
     %t5 =l alloc8 8
-    storel 0, %t5
     %t6 =l alloc8 8
-    storel 0, %t6
     %t7 =l alloc8 8
+    storel 0, %t5
+    storel 0, %t6
     storel %p_host, %t0
     storel %p_port, %t1
     storew %p_use_tls, %t2
@@ -5764,6 +5762,7 @@ export function w $main(w %argc, l %argv) {
 }
 export function $List_str_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -5774,7 +5773,6 @@ export function $List_str_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -5805,6 +5803,7 @@ export function $List_str_release(l %rt, l %p) {
 }
 export function $List_JsonValue_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -5815,7 +5814,6 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2

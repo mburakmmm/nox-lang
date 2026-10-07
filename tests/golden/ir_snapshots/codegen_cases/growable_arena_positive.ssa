@@ -882,6 +882,9 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
 export function l $JsonValue_trace(l %rt, l %p) {
 @start
     %t0 =l alloc8 8
+    %t17 =l alloc8 8
+    %t22 =l alloc8 8
+    %t39 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 40
     %t2 =l loadl %t1
@@ -914,7 +917,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     %t15 =l add %t14, 8
     %t16 =l call $nox_trace_buf_alloc(l %rt, l %t15)
     storel %t13, %t16
-    %t17 =l alloc8 8
     storel 0, %t17
     %t18 =l add %p, 40
     %t19 =l loadl %t18
@@ -922,7 +924,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t20, @trace_list_fill_skip6, @trace_list_fill_have7
 @trace_list_fill_have7
     %t21 =l loadl %t19
-    %t22 =l alloc8 8
     storel 0, %t22
     jmp @trace_list_fill_cond9
 @trace_list_fill_cond9
@@ -955,7 +956,6 @@ export function l $JsonValue_trace(l %rt, l %p) {
     jnz %t37, @trace_list_fill_skip12, @trace_list_fill_have13
 @trace_list_fill_have13
     %t38 =l loadl %t36
-    %t39 =l alloc8 8
     storel 0, %t39
     jmp @trace_list_fill_cond15
 @trace_list_fill_cond15
@@ -1379,12 +1379,15 @@ export function d $sum_float(l %rt, l %p_xs) {
 }
 export function l $compute(l %rt) {
 @start
-    %t0 =l call $nox_arena_create(l %rt)
     %t1 =l alloc8 8
-    storel 0, %t1
     %t2 =l alloc8 8
     %t3 =l alloc8 8
     %t4 =l alloc8 8
+    %t14 =l alloc8 8
+    %t37 =l alloc8 8
+    %t60 =l alloc8 8
+    %t0 =l call $nox_arena_create(l %rt)
+    storel 0, %t1
     %t5 =l call $nox_arena_alloc(l %t0, l 16)
     storel 0, %t5
     %t6 =l add %t5, 8
@@ -1399,7 +1402,6 @@ export function l $compute(l %rt) {
 @append_grow0
     %t12 =w ceql %t10, 0
     %t13 =l mul %t10, 2
-    %t14 =l alloc8 8
     jnz %t12, @append_capzero3, @append_capnz4
 @append_capzero3
     storel 1, %t14
@@ -1442,7 +1444,6 @@ export function l $compute(l %rt) {
 @append_grow6
     %t35 =w ceql %t33, 0
     %t36 =l mul %t33, 2
-    %t37 =l alloc8 8
     jnz %t35, @append_capzero9, @append_capnz10
 @append_capzero9
     storel 1, %t37
@@ -1485,7 +1486,6 @@ export function l $compute(l %rt) {
 @append_grow12
     %t58 =w ceql %t56, 0
     %t59 =l mul %t56, 2
-    %t60 =l alloc8 8
     jnz %t58, @append_capzero15, @append_capnz16
 @append_capzero15
     storel 1, %t60
@@ -1570,6 +1570,7 @@ export function w $main(w %argc, l %argv) {
 }
 export function $List_str_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -1580,7 +1581,6 @@ export function $List_str_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2
@@ -1611,6 +1611,7 @@ export function $List_str_release(l %rt, l %p) {
 }
 export function $List_JsonValue_release(l %rt, l %p) {
 @start
+    %t7 =l alloc8 8
     %t0 =l sub %p, 8
     %t1 =l loadl %t0
     %t2 =l sub %t1, 1
@@ -1621,7 +1622,6 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t4 =l loadl %p
     %t5 =l add %p, 8
     %t6 =l loadl %t5
-    %t7 =l alloc8 8
     storel 0, %t7
     jmp @list_release_cond2
 @list_release_cond2

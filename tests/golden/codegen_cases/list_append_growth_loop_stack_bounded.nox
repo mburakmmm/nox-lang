@@ -1,0 +1,23 @@
+# v1.142.18: `list.append`'in büyüme yolundaki geçici slot (`alloc8`) giriş bloğu DIŞINDA
+# yayılıyordu — QBE'de bu, her çalıştırmada yığını büyütür ve fonksiyon dönene kadar geri vermez.
+# Döngüde her iterasyonda yeni bir liste kurup büyütmek ana yığını (3M iterasyonda) ve 256 KiB
+# fiber yığınını (~20K iterasyonda; aşağıdaki async tanım ana programı fiber'a taşır) taşırıyordu
+# (SIGSEGV/SIGBUS). Artık tüm `alloc`/`alloca`lar giriş bloğunda: yığın kullanımı sabit.
+async def unused(x: int) -> int:
+    return x
+
+def f(n: int) -> int:
+    s: int = 0
+    i: int = 0
+    while i < n:
+        xs: list[int] = []
+        xs.append(i)
+        xs.append(i + 1)
+        xs.append(i + 2)
+        xs.append(i + 3)
+        xs.append(i + 4)
+        s = s + len(xs) + xs[2]
+        i = i + 1
+    return s
+
+print(f(80000))

@@ -1,0 +1,70 @@
+# v1.142.18: s[i] ASCII'de önceden kurulmuş PINNED tablodan döner (tahsis yok) ve O(1)'dir
+# (alan üzerinden `self.src[self.pos]` önceden O(n) idi: 120 KB'ta 3.85 s). Anlam aynı kalmalı:
+# alias/mutasyon güvenliği (pinned dizeye ekleme KOPYA yapar), unicode, sınır dışı IndexError.
+class Lexer:
+    src: str
+    pos: int
+
+    def __init__(self: Lexer, src: str) -> None:
+        self.src = src
+        self.pos = 0
+
+    def count(self: Lexer, ch: str) -> int:
+        n: int = 0
+        while self.pos < len(self.src):
+            if self.src[self.pos] == ch:
+                n = n + 1
+            self.pos = self.pos + 1
+        return n
+
+lx: Lexer = Lexer("a b c d e a a")
+print(lx.count("a"))
+
+# s[i] sonucuna ekleme: tablo girişi DEĞİŞMEMELİ
+s: str = "xyz"
+c: str = s[1]
+c = c + "!"
+c = c + "?"
+print(c)
+print(s[1])
+d: str = s[1]
+print(d + d)
+
+# liste içinde saklama + yeniden kullanma
+parts: list[str] = []
+i: int = 0
+while i < len(s):
+    parts.append(s[i])
+    i = i + 1
+print(parts[0] + parts[1] + parts[2])
+
+# unicode: kod noktası bazlı indeks
+u: str = "çağ"
+print(len(u))
+print(u[0])
+print(u[1])
+print(u[2])
+
+# sınır dışı
+try:
+    print(s[3])
+except IndexError:
+    print("IndexError")
+try:
+    print(u[3])
+except IndexError:
+    print("IndexError2")
+
+# 2 KB'lık ASCII dizeyi tamamen gez
+big: str = ""
+j: int = 0
+while j < 2000:
+    big = big + "k"
+    j = j + 1
+cnt: int = 0
+j = 0
+while j < len(big):
+    if big[j] == "k":
+        cnt = cnt + 1
+    j = j + 1
+print(cnt)

@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.18]
+
+### Düzeltildi / Performans
+
+- **Döngüde `list.append` yığın taşması** (giriş dışı `alloc`/`alloca` → giriş bloğuna toplama).
+- **`nox.strings.byte_at` sınır dışı çökmesi** (artık 0).
+- **`s[i]` O(1) + tahsissiz (ASCII)**: pinned 128'lik ASCII tablosu; alan üzerinden indeksleme
+  120 KB'ta 3851 ms → 2 ms. Spec §3.254.
+
 ## [1.142.17]
 
 ### Performans

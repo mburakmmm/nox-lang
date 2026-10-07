@@ -710,15 +710,16 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         // karakterlik SONUÇ HER ZAMAN ascii'dir (bu dal, tanım gereği) —
         // paketlenmiş başlık (`uzunluk=1, ascii=TRUE`) DERLEME ZAMANINDA
         // sabit bir değerdir, SIFIR ek çalışma-zamanı maliyetiyle yazılır.
-        const raw = try self.newTemp();
-        try self.qbeCall(.{ .name = raw, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{STR_HEADER_SIZE + 2}) } });
-        try self.qbeStoreImmL(@intCast(packStrHeader(1, STR_ASCII_TRUE)), raw);
+        // v1.142.18: tahsis YOK — önceden kurulmuş PINNED ASCII tablosundan (`runtime/str.zig`nin
+        // `nox_ascii_chars`i: 24 baytlık girişler, dize işaretçisi giriş + 16) adres hesaplanır.
+        const byte_l = try self.newTemp();
+        try self.qbeOp1(byte_l, .l, "extuw", byte_val);
+        const tbl_off = try self.newTemp();
+        try self.qbeOp2Imm(tbl_off, .l, "mul", byte_l, 24);
+        const tbl_addr = try self.newTemp();
+        try self.qbeOp2(tbl_addr, .l, "add", "$nox_ascii_chars", tbl_off);
         const ascii_result = try self.newTemp();
-        try self.qbeOp2Imm(ascii_result, .l, "add", raw, @intCast(STR_HEADER_SIZE));
-        try self.qbeStoreB(byte_val, ascii_result);
-        const nul_addr = try self.newTemp();
-        try self.qbeOp2Imm(nul_addr, .l, "add", ascii_result, 1);
-        try self.qbeStoreB("0", nul_addr);
+        try self.qbeOp2Imm(ascii_result, .l, "add", tbl_addr, @intCast(ARC_HEADER_SIZE + STR_HEADER_SIZE));
         try self.qbeJmp(done_label);
 
         try self.qbeLabel(unicode_label);

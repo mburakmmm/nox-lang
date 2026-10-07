@@ -68,6 +68,11 @@ def replace(s: str, old: str, new: str) -> str:
 # `index_of`si ARTIK bunu KULLANMIYOR (Zig'e taşındı, bkz. yukarısı) —
 # `byte_at` yalnızca genel/dış kullanım İçin AÇIK kalır.
 def byte_at(s: str, idx: int) -> int:
+    # v1.142.18: `nox_str_byte_at` "çağıran sınırı doğruladı" sözleşmeli, sınır kontrolsüz bir
+    # ilkeldir; bu genel sarmalayıcı sınır dışı indeksle bellek DIŞI okuyup çöküyordu (SIGSEGV).
+    # Sınır dışı (negatif zaten 0 döner) artık güvenli biçimde 0 döner.
+    if idx >= nox_str_byte_len(s):
+        return 0
     return nox_str_byte_at(s, idx)
 
 # `byte_at`nin TERSİ — HAM bir bayt DEĞERİNİ (0-255) TEK karakterlik bir

@@ -28201,6 +28201,32 @@ sırasıyla) değerlendirilir, sonra art arda `nox_str_append`. Golden `str_appe
 birim test `nox_str_append`. Sonuç: 200K birleştirme 2667 ms → ~1 ms. (Alan hedefli
 `self.buf = self.buf + x` bu sürümde kapsam dışı.)
 
+## 3.254 Mikro-benchmark taramasında bulunan 3 gerçek hata/darboğaz (v1.142.18)
+
+**1) Döngüde `list.append` yığını tüketiyordu (SIGSEGV/SIGBUS).** `genListAppend`in büyüme yolu
+kapasite birleştirmesi için `alloc8` yayıyordu; QBE'de giriş bloğu DIŞINDAKİ `alloc` her
+çalıştırmada yığını büyütür ve fonksiyon dönene kadar geri vermez (LLVM'de aynı: giriş dışı
+`alloca`). Döngüde her iterasyonda yeni liste kurup büyütmek 3M iterasyonda ana yığını,
+~20K iterasyonda 256 KiB fiber yığınını (async tanımı olan her program) taşırıyordu (v1.142.3'te
+de vardı). Düzeltme: iki emitter'da (`qbe_emit`/`llvm_emit`) `qbeAlloc` satırları fonksiyon
+boyunca toplanır ve `qbeFuncEnd`te giriş bloğunun başına eklenir (`flushHoistedAllocs`);
+böylece tüm slotlar statik olur (QBE'nin mem2reg'ine de aday). Golden
+`list_append_growth_loop_stack_bounded` (async + 80K iterasyon; eski derleyicide çöküyor).
+
+**2) `nox.strings.byte_at` sınır dışı indekste bellek dışı okuyup çöküyordu.** İlkel
+(`nox_str_byte_at`) "çağıran sınırı doğruladı" sözleşmeliydi, genel sarmalayıcı doğrulamıyordu;
+sarmalayıcı artık sınır dışında 0 döner (negatif zaten 0'dı). Golden
+`strings_byte_at_out_of_range_safe`.
+
+**3) `s[i]` O(n) idi ve her çağrıda tahsis ediyordu.** `nox_str_char_at` her çağrıda tüm dizeyi
+UTF-8 doğrulayıp indekse kadar yürüyordu: alan üzerinden `self.src[self.pos]` döngüsü 120 KB'ta
+3.85 s (tokenizer/parser sınıfları için felaket). Artık ASCII (başlıkta önbellekli durum) için
+O(1) ve sonuç, `runtime/str.zig`deki 128 girişlik PINNED `nox_ascii_chars` tablosundan döner
+(24 bayt/giriş, işaretçi giriş + 16) — derleyici satır içi yolu da (`genStrIndex`) tahsis yerine
+tablo adresi hesaplar (LLVM'de `@nox_ascii_chars = external global`). Sonuç: 120 KB lexer
+3851 ms → 2 ms; LCS 2000×2000 61 ms → 25 ms; char taraması 2M 14 ms → 7 ms. Golden
+`str_index_ascii_table_and_field`.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

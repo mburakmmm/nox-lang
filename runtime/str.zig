@@ -373,6 +373,31 @@ pub export fn nox_str_to_float(s: ?[*:0]const u8) f64 {
     return std.fmt.parseFloat(f64, nox_str_slice(p)) catch 0;
 }
 
+/// v1.142.18: 128 ASCII karakterin ÖNCEDEN kurulmuş, PINNED (`PINNED_REFCOUNT`) tek karakterlik
+/// dizeleri — `s[i]` (ve çağıran derleyici kodu) ASCII bayt için tahsis ETMEZ, serbest
+/// bırakma refcount azaltmaktan ibarettir (asla sıfıra düşmez). Düzen string literalleriyle
+/// AYNI: `{ refcount: i64, packed_header: i64, bayt, NUL, dolgu }` (24 bayt); dize işaretçisi
+/// `&tablo[b].ch`dir (`tablo + b*24 + 16`).
+pub const AsciiChar = extern struct {
+    rc: i64,
+    header: i64,
+    ch: u8,
+    nul: u8 = 0,
+    pad: [6]u8 = .{0} ** 6,
+};
+
+pub export var nox_ascii_chars: [128]AsciiChar = blk: {
+    var t: [128]AsciiChar = undefined;
+    for (&t, 0..) |*e, i| {
+        e.* = .{
+            .rc = abi_layout.PINNED_REFCOUNT,
+            .header = abi_layout.packStrHeader(1, abi_layout.STR_ASCII_TRUE),
+            .ch = @intCast(i),
+        };
+    }
+    break :blk t;
+};
+
 /// Stdlib fazı §G: `s[i]` string indekslemesinin çalışma zamanı desteği.
 /// Sınır KONTROLÜ BURADA yapılMAZ — codegen'in `genIndex`i (QBE'de
 /// `nox_str_char_count`+karşılaştırma ile) `idx`nin GEÇERLİ olduğunu
@@ -385,6 +410,14 @@ pub export fn nox_str_to_float(s: ?[*:0]const u8) f64 {
 pub export fn nox_str_char_at(rt: ?*anyopaque, s: ?[*:0]const u8, idx: i64) ?[*:0]u8 {
     const p = s orelse return null;
     if (idx < 0) return null;
+    // v1.142.18: ASCII dizelerde O(1) (ascii durumu başlıkta önbellekli) — önceden her çağrı tüm
+    // dizeyi UTF-8 doğruluyor ve indekse kadar yürüyordu (O(n)): alan üzerinden `self.src[self.pos]`
+    // döngüsü 120 KB'ta 3.85 s sürüyordu.
+    if (ensureAsciiResolved(p)) {
+        const len: usize = @intCast(strByteLen(p));
+        if (@as(usize, @intCast(idx)) >= len) return null;
+        return @ptrCast(&nox_ascii_chars[p[@intCast(idx)]].ch);
+    }
     const bytes = nox_str_slice(p);
     if (std.unicode.Utf8View.init(bytes)) |view| {
         var it = view.iterator();
