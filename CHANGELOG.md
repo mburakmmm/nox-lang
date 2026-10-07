@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.143.1]
+
+### Belge
+
+- v1.143.0'ın tek GÖRÜNÜR davranış değişikliği belgelendi: sabit-genişlikli tamsayı taşması artık varsayılan
+  olarak sessizce sarar (QBE'de tuzağa düşerdi; `--backend qbe` eski davranışı korur). Spec §3.260.
+
 ## [1.143.0]
 
 ### Değişti (varsayılan davranış)

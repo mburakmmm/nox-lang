@@ -28350,6 +28350,12 @@ bağlanır (§MN), `nox.thread.start`/`ThreadChannel[T]` aynı havuza birleşir,
 `list`/sınıf/`dict`i de kabul eder. Fiber-kooperatif M:1 davranışı `--backend qbe`de korunur. Tam test paketi
 (her fixture iki backend'de) varsayılan değişikliğinden sonra değişmeden yeşil (173/173).
 
+**Görünür davranış değişikliği (§3.204/§9 karar #6 ile uyumlu, kasıtlı ve kalıcı backend asimetrisi):** sabit-genişlikli
+tamsayı (`u8`/`i8`/`u16`/`i16`/`u32`/`i32`/`u64`...) aritmetik taşması QBE'de tuzağa düşer (program çöker), LLVM'de
+sessizce sarar. Varsayılan LLVM olduğundan taşma artık VARSAYILAN olarak sarar; eski tuzak davranışı `--backend qbe`
+ile korunur. Diğer `expectDivergence` asimetrileri "QBE reddeder, LLVM kabul eder" biçimindedir (yalnızca kabul edilen
+program kümesi genişler, mevcut programların davranışı değişmez).
+
 Golden/CLI: `tests/cli/backend_default_test.zig` (varsayılan `.ll`, `--backend qbe` `.ssa`, `--backend llvm`/
 `--release` `.ll`, `--emit-asm` QBE, bilinmeyen backend hatası; hepsi aynı program çıktısı).
 
