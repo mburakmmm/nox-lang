@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.164.0]
+
+### Eklendi
+
+- **f-string biçim belirteçleri (Python `format()` mini-dili):** `f"{x:.2f}"`, `{n:>5}`, `{i:03d}`, `{x:,}`, `{x:#x}`, `{p:.1%}`, `{v:^10}`, `{s:*<8}`, `{x:e}`/`{x:g}`; `{x!s}`; yerleşik `format(x, spec)`. `f` biçimi sayının TAM ikili değeri üzerinde Python gibi yuvarlar (`f"{2.675:.2f}" == "2.67"`). Geçersiz belirteç `ValueError`. (`runtime/format.zig`, spec §3.280.)
+- **`"...".format(...)`** (literal alıcı): `{}`, `{0}`, `{ad}`, belirteçler; f-string zincirine indirgenir.
+- **`print(e)` / `str(e)` / f-string bir istisna için YALNIZCA mesajı yazar** (`Exception.__str__`), Python gibi.
+
+### Düzeltildi
+
+- `noxc fmt` f-string'leri `"a" + str(x) + "b"` zincirine çeviriyordu (kaynağı bozuyordu); artık `f"..."` yüzey biçimi korunur (`"...".format()` f-string olarak yazılır). Aynı zamanda: sözdizimi hata konumu artık geri-izleme kalıntısından değil gerçek simgeden raporlanır; `a is b` (None dışı) açık bir mesajla reddedilir; tree-sitter gramerine f-string eklendi.
+
 ## [1.163.0]
 
 ### Eklendi

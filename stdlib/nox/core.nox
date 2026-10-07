@@ -27,6 +27,10 @@ class Exception:
         # satır bilgisi KONSTRÜKTÖRDE DEĞİL, raise ANINDA yazılmalıdır.
         self.line = 0
 
+    # v1.164.0: `print(e)` / `str(e)` / f-string — Python gibi YALNIZCA mesajı yazar (`__str__` protokolü, bkz. spec §3.279).
+    def __str__(self: Exception) -> str:
+        return self.message
+
 class ValueError(Exception):
     pass
 
@@ -142,6 +146,27 @@ def round(x: float) -> int:
 # `round(x, nd)` çağrısı checker tarafından bu fonksiyona yönlendirilir (`float` döner, Python gibi).
 def __nox_round_digits(x: float, nd: int) -> float:
     return nox_float_round_digits_raw(x, nd)
+
+# v1.164.0: `format(x, spec)` ve f-string biçim belirteçleri (`f"{x:.2f}"`) — checker tür-bazlı olarak bu üç işleve yönlendirir.
+extern def nox_format_spec_check(kind: int, spec: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_format_int_raw(v: int, spec: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_format_float_raw(v: float, spec: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_format_str_raw(v: str, spec: str) -> str from "zig-out/lib/noxrt.o" with_rt
+
+def __nox_format_int(v: int, spec: str) -> str:
+    if nox_format_spec_check(0, spec) == 0:
+        raise ValueError("gecersiz bicim belirteci: " + spec)
+    return nox_format_int_raw(v, spec)
+
+def __nox_format_float(v: float, spec: str) -> str:
+    if nox_format_spec_check(1, spec) == 0:
+        raise ValueError("gecersiz bicim belirteci: " + spec)
+    return nox_format_float_raw(v, spec)
+
+def __nox_format_str(v: str, spec: str) -> str:
+    if nox_format_spec_check(2, spec) == 0:
+        raise ValueError("gecersiz bicim belirteci: " + spec)
+    return nox_format_str_raw(v, spec)
 
 def chr(cp: int) -> str:
     return nox_chr_raw(cp)

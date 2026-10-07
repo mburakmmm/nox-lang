@@ -1,0 +1,19 @@
+class MyErr(Exception):
+    def __init__(self, msg: str, code: int) -> None:
+        super().__init__(msg)
+        self.code = code
+
+try:
+    raise ValueError("boom")
+except ValueError as e:
+    print(e)
+    print(str(e), f"[{e}]", e.message, e.line > 0)
+try:
+    raise MyErr("custom", 7)
+except Exception as e:
+    print(e)
+try:
+    xs: list[int] = [1]
+    print(xs[5])
+except IndexError as e:
+    print("caught:", e)

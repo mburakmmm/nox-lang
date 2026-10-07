@@ -24,8 +24,8 @@ const abi_layout = @import("abi_layout");
 
 const STR_HEADER_SIZE = abi_layout.STR_HEADER_SIZE;
 const ASCII_UNKNOWN = abi_layout.STR_ASCII_UNKNOWN;
-const ASCII_TRUE = abi_layout.STR_ASCII_TRUE;
-const ASCII_FALSE = abi_layout.STR_ASCII_FALSE;
+pub const ASCII_TRUE = abi_layout.STR_ASCII_TRUE;
+pub const ASCII_FALSE = abi_layout.STR_ASCII_FALSE;
 
 /// `str_ptr`den ARC payload işaretçisine (`arc.*` fonksiyonlarının
 /// beklediği "gerçek" işaretçi) döner.
@@ -197,7 +197,7 @@ fn ensureAsciiResolved(str_ptr: [*:0]const u8) bool {
 /// biliyorsa dolduru, aksi halde `ASCII_UNKNOWN` geçirip çözümlemeyi
 /// `ensureAsciiResolved`e ERTELER) yazar, baytları kopyalar, kamuya açık
 /// `str_ptr`yi (paketlenmiş başlığın ARDINDAN) döner.
-fn allocStr(rt: ?*anyopaque, bytes: []const u8, ascii_state: u64) ?[*:0]u8 {
+pub fn allocStr(rt: ?*anyopaque, bytes: []const u8, ascii_state: u64) ?[*:0]u8 {
     const raw = arc.nox_rc_alloc(rt, STR_HEADER_SIZE + bytes.len + 1) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
     const header: *align(1) i64 = @ptrCast(base);

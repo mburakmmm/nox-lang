@@ -228,7 +228,7 @@ test "güvenlik H-3: aşırı iç içe ifadeler noxc'un kendisini çökertmek ye
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // Makul derinlik (500'ün ALTINDA) — HÂLÂ TEMİZ ayrıştırılmalı.
+    // Makul derinlik (sınırın ALTINDA) — HÂLÂ TEMİZ ayrıştırılmalı.
     {
         var source: std.ArrayListUnmanaged(u8) = .empty;
         try source.appendSlice(allocator, "x: int = ");

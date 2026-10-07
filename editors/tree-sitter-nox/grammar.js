@@ -392,6 +392,7 @@ module.exports = grammar({
       $.true,
       $.false,
       $.none,
+      $.f_string,
       $.string,
       $.identifier,
       $.parenthesized_expression,
@@ -443,6 +444,13 @@ module.exports = grammar({
     string: _$ => token(choice(
       seq('"', repeat(choice(/[^"\\\n]/, /\\./)), '"'),
       seq("'", repeat(choice(/[^'\\\n]/, /\\./)), "'"),
+    )),
+
+    // `f"... {ifade:belirteç} ..."` (v1.164.0'a kadar gramerde eksikti): tek token; klasik iç-içe-tırnak kuralı gereği `{}` içindeki
+    // string'ler öteki tırnak türünü kullanır, bu yüzden tek bir regex yeterlidir.
+    f_string: _$ => token(choice(
+      seq(/[fF]/, '"', repeat(choice(/[^"\\\n]/, /\\./)), '"'),
+      seq(/[fF]/, "'", repeat(choice(/[^'\\\n]/, /\\./)), "'"),
     )),
 
     identifier: _$ => /[A-Za-z_][A-Za-z0-9_]*/,

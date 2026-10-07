@@ -168,8 +168,9 @@ pub const Expr = union(enum) {
 pub const Unary = struct { op: UnaryOp, operand: *Expr };
 /// `is_form`: v1.156.0 — `x is None` / `x is not None` yüzey biçimi (`==`/`!=` None'a indirgenir; yalnızca formatter yazımı korur).
 /// v1.162.0: aritmetik işlemde birleşik atama (`x += 1`), `and_`te zincirleme karşılaştırma (`a < b < c`) yüzey biçimi.
-pub const Binary = struct { op: BinaryOp, left: *Expr, right: *Expr, is_form: bool = false };
-pub const Call = struct { callee: *Expr, args: []Expr };
+pub const Binary = struct { op: BinaryOp, left: *Expr, right: *Expr, is_form: bool = false, fstring: bool = false };
+/// `fstring`: v1.164.0 — f-string / `"...".format(...)` parçası (`str(x)` / `format(x, spec)`) ya da zincir kökü; yalnızca formatter yazımı korur.
+pub const Call = struct { callee: *Expr, args: []Expr, fstring: bool = false };
 pub const Attribute = struct { obj: *Expr, attr: []const u8 };
 pub const Index = struct { obj: *Expr, index: *Expr };
 

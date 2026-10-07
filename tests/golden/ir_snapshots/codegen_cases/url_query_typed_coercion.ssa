@@ -62,6 +62,29 @@ export function $Exception___init__(l %rt, l %p_self, l %p_message) {
 @fn_end9
     ret
 }
+export function l $Exception___str__(l %rt, l %p_self) {
+@start
+    %t0 =l alloc8 8
+    storel %p_self, %t0
+    %t1 =l loadl %t0
+    %t2 =l add %t1, 16
+    %t3 =l loadl %t2
+    %t4 =w ceql %t3, 0
+    jnz %t4, @retain_skip1, @retain0
+@retain0
+    %t5 =l sub %t3, 16
+    %t6 =l loadl %t5
+    %t7 =l add %t6, 1
+    storel %t7, %t5
+    jmp @retain_done2
+@retain_skip1
+    jmp @retain_done2
+@retain_done2
+    ret %t3
+@after_return3
+@fn_end4
+    ret 0
+}
 export function $Exception_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -150,6 +173,7 @@ export function $Exception_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $Exception_vtable = { l $Exception___str__ }
 export function $ValueError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -238,6 +262,7 @@ export function $ValueError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $ValueError_vtable = { l $Exception___str__ }
 export function $IndexError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -326,6 +351,7 @@ export function $IndexError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $IndexError_vtable = { l $Exception___str__ }
 export function $AssertionError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -414,6 +440,7 @@ export function $AssertionError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $AssertionError_vtable = { l $Exception___str__ }
 export function $ZeroDivisionError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -502,6 +529,7 @@ export function $ZeroDivisionError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $ZeroDivisionError_vtable = { l $Exception___str__ }
 export function $KeyError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -590,6 +618,7 @@ export function $KeyError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $KeyError_vtable = { l $Exception___str__ }
 export function $HPyError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -678,6 +707,7 @@ export function $HPyError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $HPyError_vtable = { l $Exception___str__ }
 export function $CancelledError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -766,6 +796,7 @@ export function $CancelledError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $CancelledError_vtable = { l $Exception___str__ }
 export function $JsonValue___init__(l %rt, l %p_self, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
 @start
     %t0 =l alloc8 8
@@ -1304,6 +1335,7 @@ export function $nox_url_UrlError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $nox_url_UrlError_vtable = { l $Exception___str__ }
 export function $nox_url_URL___init__(l %rt, l %p_self, l %p_scheme, l %p_userinfo, l %p_host, l %p_port, l %p_path, l %p_query, l %p_fragment) {
 @start
     %t0 =l alloc8 8
@@ -2209,6 +2241,240 @@ export function d $__nox_round_digits(l %rt, d %p_x, l %p_nd) {
 @fn_end1
     ret d_0
 }
+export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    storel %p_v, %t0
+    storel %p_spec, %t1
+    %t2 =l loadl %t1
+    %t3 =l call $nox_format_spec_check(l 0, l %t2)
+    %t4 =w ceql %t3, 0
+    jnz %t4, @if_then1, @if_end0
+@if_then1
+    %t5 =l add $str0, 16
+    %t6 =l loadl %t1
+    %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
+    %t8 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 11, %t8
+    %t9 =l add %t8, 8
+    storel $ValueError_vtable, %t9
+    %t10 =l add %t8, 16
+    storel 0, %t10
+    %t11 =l add %t8, 24
+    storel 0, %t11
+    call $Exception___init__(l %rt, l %t8, l %t7)
+    %t12 =w ceql %t7, 0
+    jnz %t12, @release_skip3, @release2
+@release2
+    %t13 =l sub %t7, 16
+    %t14 =l loadl %t13
+    %t15 =l sub %t14, 1
+    storel %t15, %t13
+    %t16 =w cslel %t15, 0
+    jnz %t16, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t7)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @ctor_init_failed8, @ctor_init_cont9
+@ctor_init_failed8
+    %t18 =w ceql %t8, 0
+    jnz %t18, @release_skip11, @release10
+@release10
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t8)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
+    jmp @ctor_init_cont9
+@ctor_init_cont9
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate13, @exc_continue14
+@exc_propagate13
+    ret 0
+@exc_continue14
+    %t20 =l add %t8, 24
+    storel 158, %t20
+    call $nox_raise(l %rt, l %t8, l 158)
+    %t21 =w call $nox_exception_pending(l %rt)
+    jnz %t21, @exc_propagate15, @exc_continue16
+@exc_propagate15
+    ret 0
+@exc_continue16
+    jmp @if_end0
+@if_end0
+    %t22 =l loadl %t0
+    %t23 =l loadl %t1
+    %t24 =l call $nox_format_int_raw(l %rt, l %t22, l %t23)
+    ret %t24
+@after_return17
+@fn_end18
+    ret 0
+}
+export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    stored %p_v, %t0
+    storel %p_spec, %t1
+    %t2 =l loadl %t1
+    %t3 =l call $nox_format_spec_check(l 1, l %t2)
+    %t4 =w ceql %t3, 0
+    jnz %t4, @if_then1, @if_end0
+@if_then1
+    %t5 =l add $str1, 16
+    %t6 =l loadl %t1
+    %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
+    %t8 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 11, %t8
+    %t9 =l add %t8, 8
+    storel $ValueError_vtable, %t9
+    %t10 =l add %t8, 16
+    storel 0, %t10
+    %t11 =l add %t8, 24
+    storel 0, %t11
+    call $Exception___init__(l %rt, l %t8, l %t7)
+    %t12 =w ceql %t7, 0
+    jnz %t12, @release_skip3, @release2
+@release2
+    %t13 =l sub %t7, 16
+    %t14 =l loadl %t13
+    %t15 =l sub %t14, 1
+    storel %t15, %t13
+    %t16 =w cslel %t15, 0
+    jnz %t16, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t7)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @ctor_init_failed8, @ctor_init_cont9
+@ctor_init_failed8
+    %t18 =w ceql %t8, 0
+    jnz %t18, @release_skip11, @release10
+@release10
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t8)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
+    jmp @ctor_init_cont9
+@ctor_init_cont9
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate13, @exc_continue14
+@exc_propagate13
+    ret 0
+@exc_continue14
+    %t20 =l add %t8, 24
+    storel 163, %t20
+    call $nox_raise(l %rt, l %t8, l 163)
+    %t21 =w call $nox_exception_pending(l %rt)
+    jnz %t21, @exc_propagate15, @exc_continue16
+@exc_propagate15
+    ret 0
+@exc_continue16
+    jmp @if_end0
+@if_end0
+    %t22 =d loadd %t0
+    %t23 =l loadl %t1
+    %t24 =l call $nox_format_float_raw(l %rt, d %t22, l %t23)
+    ret %t24
+@after_return17
+@fn_end18
+    ret 0
+}
+export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    storel %p_v, %t0
+    storel %p_spec, %t1
+    %t2 =l loadl %t1
+    %t3 =l call $nox_format_spec_check(l 2, l %t2)
+    %t4 =w ceql %t3, 0
+    jnz %t4, @if_then1, @if_end0
+@if_then1
+    %t5 =l add $str2, 16
+    %t6 =l loadl %t1
+    %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
+    %t8 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 11, %t8
+    %t9 =l add %t8, 8
+    storel $ValueError_vtable, %t9
+    %t10 =l add %t8, 16
+    storel 0, %t10
+    %t11 =l add %t8, 24
+    storel 0, %t11
+    call $Exception___init__(l %rt, l %t8, l %t7)
+    %t12 =w ceql %t7, 0
+    jnz %t12, @release_skip3, @release2
+@release2
+    %t13 =l sub %t7, 16
+    %t14 =l loadl %t13
+    %t15 =l sub %t14, 1
+    storel %t15, %t13
+    %t16 =w cslel %t15, 0
+    jnz %t16, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t7)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @ctor_init_failed8, @ctor_init_cont9
+@ctor_init_failed8
+    %t18 =w ceql %t8, 0
+    jnz %t18, @release_skip11, @release10
+@release10
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t8)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
+    jmp @ctor_init_cont9
+@ctor_init_cont9
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate13, @exc_continue14
+@exc_propagate13
+    ret 0
+@exc_continue14
+    %t20 =l add %t8, 24
+    storel 168, %t20
+    call $nox_raise(l %rt, l %t8, l 168)
+    %t21 =w call $nox_exception_pending(l %rt)
+    jnz %t21, @exc_propagate15, @exc_continue16
+@exc_propagate15
+    ret 0
+@exc_continue16
+    jmp @if_end0
+@if_end0
+    %t22 =l loadl %t0
+    %t23 =l loadl %t1
+    %t24 =l call $nox_format_str_raw(l %rt, l %t22, l %t23)
+    ret %t24
+@after_return17
+@fn_end18
+    ret 0
+}
 export function l $chr(l %rt, l %p_cp) {
 @start
     %t0 =l alloc8 8
@@ -2232,11 +2498,11 @@ export function l $ord(l %rt, l %p_s) {
     %t5 =w csltl %t4, 0
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str0, 16
+    %t6 =l add $str3, 16
     %t7 =l call $nox_rc_alloc(l %rt, l 32)
     storel 11, %t7
     %t8 =l add %t7, 8
-    storel 0, %t8
+    storel $ValueError_vtable, %t8
     %t9 =l add %t7, 16
     storel 0, %t9
     %t10 =l add %t7, 24
@@ -2261,8 +2527,8 @@ export function l $ord(l %rt, l %p_s) {
     ret 0
 @exc_continue8
     %t14 =l add %t7, 24
-    storel 152, %t14
-    call $nox_raise(l %rt, l %t7, l 152)
+    storel 177, %t14
+    call $nox_raise(l %rt, l %t7, l 177)
     %t15 =w call $nox_exception_pending(l %rt)
     jnz %t15, @exc_propagate9, @exc_continue10
 @exc_propagate9
@@ -2910,7 +3176,7 @@ export function l $nox_strings_zfill(l %rt, l %p_s, l %p_width) {
     storel %p_width, %t1
     %t2 =l loadl %t0
     %t3 =l loadl %t1
-    %t4 =l add $str1, 16
+    %t4 =l add $str4, 16
     %t5 =l call $nox_strings_pad_left(l %rt, l %t2, l %t3, l %t4)
     ret %t5
 @after_return0
@@ -2928,7 +3194,7 @@ export function l $nox_url__substr(l %rt, l %p_s, l %p_start, l %p_end) {
     storel %p_s, %t0
     storel %p_start, %t1
     storel %p_end, %t2
-    %t5 =l add $str2, 16
+    %t5 =l add $str5, 16
     %t6 =l loadl %t3
     %t7 =w ceql %t6, 0
     jnz %t7, @release_skip1, @release0
@@ -3039,11 +3305,11 @@ export function l $nox_url__substr(l %rt, l %p_s, l %p_start, l %p_end) {
 @fn_end46
     ret 0
 @str_idx_err9
-    %t25 =l add $str3, 16
+    %t25 =l add $str6, 16
     %t26 =l call $nox_rc_alloc(l %rt, l 32)
     storel 10, %t26
     %t27 =l add %t26, 8
-    storel 0, %t27
+    storel $IndexError_vtable, %t27
     %t28 =l add %t26, 16
     storel 0, %t28
     %t29 =l add %t26, 24
@@ -3119,7 +3385,7 @@ export function l $nox_url__default_port(l %rt, l %p_scheme) {
     %t0 =l alloc8 8
     storel %p_scheme, %t0
     %t1 =l loadl %t0
-    %t2 =l add $str4, 16
+    %t2 =l add $str7, 16
     %t3 =w call $strcmp(l %t1, l %t2)
     %t4 =w ceqw %t3, 0
     jnz %t4, @if_then1, @if_end0
@@ -3129,7 +3395,7 @@ export function l $nox_url__default_port(l %rt, l %p_scheme) {
     jmp @if_end0
 @if_end0
     %t5 =l loadl %t0
-    %t6 =l add $str5, 16
+    %t6 =l add $str8, 16
     %t7 =w call $strcmp(l %t5, l %t6)
     %t8 =w ceqw %t7, 0
     jnz %t8, @if_then4, @if_end3
@@ -3139,7 +3405,7 @@ export function l $nox_url__default_port(l %rt, l %p_scheme) {
     jmp @if_end3
 @if_end3
     %t9 =l loadl %t0
-    %t10 =l add $str6, 16
+    %t10 =l add $str9, 16
     %t11 =w call $strcmp(l %t9, l %t10)
     %t12 =w ceqw %t11, 0
     jnz %t12, @if_then7, @if_end6
@@ -3242,7 +3508,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
 @release_done5
     storel 0, %t1
     storel %t40, %t1
-    %t51 =l add $str7, 16
+    %t51 =l add $str10, 16
     %t52 =l loadl %t2
     %t53 =w ceql %t52, 0
     jnz %t53, @release_skip10, @release9
@@ -3267,7 +3533,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     storel %t51, %t2
     %t58 =l loadl %t1
     storel %t58, %t20
-    %t59 =l add $str8, 16
+    %t59 =l add $str11, 16
     storel %t59, %t21
     %t60 =l loadl %t20
     %t61 =l loadl %t21
@@ -3830,7 +4096,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     storel %t149, %t1
     jmp @if_end17
 @if_end17
-    %t225 =l add $str9, 16
+    %t225 =l add $str12, 16
     %t226 =l loadl %t4
     %t227 =w ceql %t226, 0
     jnz %t227, @release_skip174, @release173
@@ -3855,7 +4121,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     storel %t225, %t4
     %t232 =l loadl %t1
     storel %t232, %t23
-    %t233 =l add $str10, 16
+    %t233 =l add $str13, 16
     storel %t233, %t24
     %t234 =l loadl %t23
     %t235 =l loadl %t24
@@ -4420,7 +4686,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
 @if_end181
     %t399 =l loadl %t1
     storel %t399, %t26
-    %t400 =l add $str11, 16
+    %t400 =l add $str14, 16
     storel %t400, %t27
     %t401 =l loadl %t26
     %t402 =l loadl %t27
@@ -4436,13 +4702,13 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     %t406 =w csltl %t405, 0
     jnz %t406, @if_then340, @if_end339
 @if_then340
-    %t407 =l add $str12, 16
+    %t407 =l add $str15, 16
     %t408 =l loadl %t0
     %t409 =l call $nox_str_concat(l %rt, l %t407, l %t408)
     %t410 =l call $nox_rc_alloc(l %rt, l 32)
     storel 3, %t410
     %t411 =l add %t410, 8
-    storel 0, %t411
+    storel $nox_url_UrlError_vtable, %t411
     %t412 =l add %t410, 16
     storel 0, %t412
     %t413 =l add %t410, 24
@@ -5556,7 +5822,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
 @release_done653
     storel 0, %t9
     storel %t719, %t9
-    %t730 =l add $str13, 16
+    %t730 =l add $str16, 16
     %t731 =l loadl %t10
     %t732 =w ceql %t731, 0
     jnz %t732, @release_skip658, @release657
@@ -5581,7 +5847,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     storel %t730, %t10
     %t737 =l loadl %t8
     storel %t737, %t29
-    %t738 =l add $str14, 16
+    %t738 =l add $str17, 16
     storel %t738, %t30
     %t739 =l loadl %t29
     %t740 =l loadl %t30
@@ -6143,7 +6409,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     storel %t827, %t10
     jmp @if_end665
 @if_end665
-    %t903 =l add $str15, 16
+    %t903 =l add $str18, 16
     %t904 =l loadl %t12
     %t905 =w ceql %t904, 0
     jnz %t905, @release_skip822, @release821
@@ -6202,7 +6468,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     storel %t910, %t13
     %t921 =l loadl %t9
     storel %t921, %t32
-    %t922 =l add $str16, 16
+    %t922 =l add $str19, 16
     storel %t922, %t33
     %t923 =l loadl %t32
     %t924 =l loadl %t33
@@ -6802,7 +7068,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     %t1099 =l loadl %t7
     storel %t1099, %t35
     %t1100 =l loadl %t35
-    %t1101 =l add $str17, 16
+    %t1101 =l add $str20, 16
     %t1102 =w call $strcmp(l %t1100, l %t1101)
     %t1103 =w ceqw %t1102, 0
     jnz %t1103, @if_then1005, @if_end1004
@@ -6813,7 +7079,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     jmp @if_end1004
 @if_end1004
     %t1104 =l loadl %t35
-    %t1105 =l add $str18, 16
+    %t1105 =l add $str21, 16
     %t1106 =w call $strcmp(l %t1104, l %t1105)
     %t1107 =w ceqw %t1106, 0
     jnz %t1107, @if_then1008, @if_end1007
@@ -6824,7 +7090,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     jmp @if_end1007
 @if_end1007
     %t1108 =l loadl %t35
-    %t1109 =l add $str19, 16
+    %t1109 =l add $str22, 16
     %t1110 =w call $strcmp(l %t1108, l %t1109)
     %t1111 =w ceqw %t1110, 0
     jnz %t1111, @if_then1011, @if_end1010
@@ -6843,7 +7109,7 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     storel %t1112, %t16
     %t1113 =l loadl %t13
     storel %t1113, %t37
-    %t1114 =l add $str20, 16
+    %t1114 =l add $str23, 16
     storel %t1114, %t38
     %t1115 =l loadl %t37
     %t1116 =l loadl %t38
@@ -7408,11 +7674,11 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     %t1281 =w call $nox_str_is_valid_int(l %t1280)
     jnz %t1281, @parse_ok1176, @parse_err1175
 @parse_err1175
-    %t1282 =l add $str21, 16
+    %t1282 =l add $str24, 16
     %t1283 =l call $nox_rc_alloc(l %rt, l 32)
     storel 11, %t1283
     %t1284 =l add %t1283, 8
-    storel 0, %t1284
+    storel $ValueError_vtable, %t1284
     %t1285 =l add %t1283, 16
     storel 0, %t1285
     %t1286 =l add %t1283, 24
@@ -7453,13 +7719,13 @@ export function l $nox_url_parse(l %rt, l %p_s) {
     jnz %t1294, @except_body1185, @except_reraise1186
 @except_body1185
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t1292)
-    %t1295 =l add $str22, 16
+    %t1295 =l add $str25, 16
     %t1296 =l loadl %t18
     %t1297 =l call $nox_str_concat(l %rt, l %t1295, l %t1296)
     %t1298 =l call $nox_rc_alloc(l %rt, l 32)
     storel 3, %t1298
     %t1299 =l add %t1298, 8
-    storel 0, %t1299
+    storel $nox_url_UrlError_vtable, %t1299
     %t1300 =l add %t1298, 16
     storel 0, %t1300
     %t1301 =l add %t1298, 24
@@ -9117,22 +9383,22 @@ export function l $nox_url__hex_digit(l %rt, l %p_n) {
     %t1 =l alloc8 8
     storel 0, %t1
     storel %p_n, %t0
-    %t2 =l add $str23, 16
-    %t3 =l add $str24, 16
-    %t4 =l add $str25, 16
-    %t5 =l add $str26, 16
-    %t6 =l add $str27, 16
-    %t7 =l add $str28, 16
-    %t8 =l add $str29, 16
-    %t9 =l add $str30, 16
-    %t10 =l add $str31, 16
-    %t11 =l add $str32, 16
-    %t12 =l add $str33, 16
-    %t13 =l add $str34, 16
-    %t14 =l add $str35, 16
-    %t15 =l add $str36, 16
-    %t16 =l add $str37, 16
-    %t17 =l add $str38, 16
+    %t2 =l add $str26, 16
+    %t3 =l add $str27, 16
+    %t4 =l add $str28, 16
+    %t5 =l add $str29, 16
+    %t6 =l add $str30, 16
+    %t7 =l add $str31, 16
+    %t8 =l add $str32, 16
+    %t9 =l add $str33, 16
+    %t10 =l add $str34, 16
+    %t11 =l add $str35, 16
+    %t12 =l add $str36, 16
+    %t13 =l add $str37, 16
+    %t14 =l add $str38, 16
+    %t15 =l add $str39, 16
+    %t16 =l add $str40, 16
+    %t17 =l add $str41, 16
     %t18 =l call $nox_rc_alloc(l %rt, l 144)
     storel 16, %t18
     %t19 =l add %t18, 8
@@ -9229,11 +9495,11 @@ export function l $nox_url__hex_digit(l %rt, l %p_n) {
 @fn_end28
     ret 0
 @list_idx_err3
-    %t45 =l add $str39, 16
+    %t45 =l add $str42, 16
     %t46 =l call $nox_rc_alloc(l %rt, l 32)
     storel 10, %t46
     %t47 =l add %t46, 8
-    storel 0, %t47
+    storel $IndexError_vtable, %t47
     %t48 =l add %t46, 16
     storel 0, %t48
     %t49 =l add %t46, 24
@@ -9301,7 +9567,7 @@ export function l $nox_url_percent_encode(l %rt, l %p_s) {
     storel 0, %t1
     storel 0, %t13
     storel %p_s, %t0
-    %t14 =l add $str40, 16
+    %t14 =l add $str43, 16
     %t15 =l loadl %t1
     %t16 =w ceql %t15, 0
     jnz %t16, @release_skip1, @release0
@@ -9502,7 +9768,7 @@ export function l $nox_url_percent_encode(l %rt, l %p_s) {
 @release_done55
     jmp @if_end16
 @if_else50
-    %t77 =l add $str41, 16
+    %t77 =l add $str44, 16
     %t78 =l loadl %t4
     %t79 =l sar %t78, 4
     %t80 =l call $nox_url__hex_digit(l %rt, l %t79)
@@ -9643,7 +9909,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     %t0 =l alloc8 8
     storel %p_ch, %t0
     %t1 =l loadl %t0
-    %t2 =l add $str42, 16
+    %t2 =l add $str45, 16
     %t3 =w call $strcmp(l %t1, l %t2)
     %t4 =w ceqw %t3, 0
     jnz %t4, @if_then1, @if_end0
@@ -9653,7 +9919,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end0
 @if_end0
     %t5 =l loadl %t0
-    %t6 =l add $str43, 16
+    %t6 =l add $str46, 16
     %t7 =w call $strcmp(l %t5, l %t6)
     %t8 =w ceqw %t7, 0
     jnz %t8, @if_then4, @if_end3
@@ -9663,7 +9929,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end3
 @if_end3
     %t9 =l loadl %t0
-    %t10 =l add $str44, 16
+    %t10 =l add $str47, 16
     %t11 =w call $strcmp(l %t9, l %t10)
     %t12 =w ceqw %t11, 0
     jnz %t12, @if_then7, @if_end6
@@ -9673,7 +9939,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end6
 @if_end6
     %t13 =l loadl %t0
-    %t14 =l add $str45, 16
+    %t14 =l add $str48, 16
     %t15 =w call $strcmp(l %t13, l %t14)
     %t16 =w ceqw %t15, 0
     jnz %t16, @if_then10, @if_end9
@@ -9683,7 +9949,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end9
 @if_end9
     %t17 =l loadl %t0
-    %t18 =l add $str46, 16
+    %t18 =l add $str49, 16
     %t19 =w call $strcmp(l %t17, l %t18)
     %t20 =w ceqw %t19, 0
     jnz %t20, @if_then13, @if_end12
@@ -9693,7 +9959,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end12
 @if_end12
     %t21 =l loadl %t0
-    %t22 =l add $str47, 16
+    %t22 =l add $str50, 16
     %t23 =w call $strcmp(l %t21, l %t22)
     %t24 =w ceqw %t23, 0
     jnz %t24, @if_then16, @if_end15
@@ -9703,7 +9969,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end15
 @if_end15
     %t25 =l loadl %t0
-    %t26 =l add $str48, 16
+    %t26 =l add $str51, 16
     %t27 =w call $strcmp(l %t25, l %t26)
     %t28 =w ceqw %t27, 0
     jnz %t28, @if_then19, @if_end18
@@ -9713,7 +9979,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end18
 @if_end18
     %t29 =l loadl %t0
-    %t30 =l add $str49, 16
+    %t30 =l add $str52, 16
     %t31 =w call $strcmp(l %t29, l %t30)
     %t32 =w ceqw %t31, 0
     jnz %t32, @if_then22, @if_end21
@@ -9723,7 +9989,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end21
 @if_end21
     %t33 =l loadl %t0
-    %t34 =l add $str50, 16
+    %t34 =l add $str53, 16
     %t35 =w call $strcmp(l %t33, l %t34)
     %t36 =w ceqw %t35, 0
     jnz %t36, @if_then25, @if_end24
@@ -9733,7 +9999,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end24
 @if_end24
     %t37 =l loadl %t0
-    %t38 =l add $str51, 16
+    %t38 =l add $str54, 16
     %t39 =w call $strcmp(l %t37, l %t38)
     %t40 =w ceqw %t39, 0
     jnz %t40, @if_then28, @if_end27
@@ -9743,7 +10009,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end27
 @if_end27
     %t41 =l loadl %t0
-    %t42 =l add $str52, 16
+    %t42 =l add $str55, 16
     %t43 =w call $strcmp(l %t41, l %t42)
     %t44 =w ceqw %t43, 0
     jnz %t44, @logic_short32, @logic_rhs31
@@ -9751,7 +10017,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @logic_done33
 @logic_rhs31
     %t45 =l loadl %t0
-    %t46 =l add $str53, 16
+    %t46 =l add $str56, 16
     %t47 =w call $strcmp(l %t45, l %t46)
     %t48 =w ceqw %t47, 0
     jmp @logic_done33
@@ -9764,7 +10030,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end30
 @if_end30
     %t50 =l loadl %t0
-    %t51 =l add $str54, 16
+    %t51 =l add $str57, 16
     %t52 =w call $strcmp(l %t50, l %t51)
     %t53 =w ceqw %t52, 0
     jnz %t53, @logic_short38, @logic_rhs37
@@ -9772,7 +10038,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @logic_done39
 @logic_rhs37
     %t54 =l loadl %t0
-    %t55 =l add $str55, 16
+    %t55 =l add $str58, 16
     %t56 =w call $strcmp(l %t54, l %t55)
     %t57 =w ceqw %t56, 0
     jmp @logic_done39
@@ -9785,7 +10051,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end36
 @if_end36
     %t59 =l loadl %t0
-    %t60 =l add $str56, 16
+    %t60 =l add $str59, 16
     %t61 =w call $strcmp(l %t59, l %t60)
     %t62 =w ceqw %t61, 0
     jnz %t62, @logic_short44, @logic_rhs43
@@ -9793,7 +10059,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @logic_done45
 @logic_rhs43
     %t63 =l loadl %t0
-    %t64 =l add $str57, 16
+    %t64 =l add $str60, 16
     %t65 =w call $strcmp(l %t63, l %t64)
     %t66 =w ceqw %t65, 0
     jmp @logic_done45
@@ -9806,7 +10072,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end42
 @if_end42
     %t68 =l loadl %t0
-    %t69 =l add $str58, 16
+    %t69 =l add $str61, 16
     %t70 =w call $strcmp(l %t68, l %t69)
     %t71 =w ceqw %t70, 0
     jnz %t71, @logic_short50, @logic_rhs49
@@ -9814,7 +10080,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @logic_done51
 @logic_rhs49
     %t72 =l loadl %t0
-    %t73 =l add $str59, 16
+    %t73 =l add $str62, 16
     %t74 =w call $strcmp(l %t72, l %t73)
     %t75 =w ceqw %t74, 0
     jmp @logic_done51
@@ -9827,7 +10093,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end48
 @if_end48
     %t77 =l loadl %t0
-    %t78 =l add $str60, 16
+    %t78 =l add $str63, 16
     %t79 =w call $strcmp(l %t77, l %t78)
     %t80 =w ceqw %t79, 0
     jnz %t80, @logic_short56, @logic_rhs55
@@ -9835,7 +10101,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @logic_done57
 @logic_rhs55
     %t81 =l loadl %t0
-    %t82 =l add $str61, 16
+    %t82 =l add $str64, 16
     %t83 =w call $strcmp(l %t81, l %t82)
     %t84 =w ceqw %t83, 0
     jmp @logic_done57
@@ -9848,7 +10114,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @if_end54
 @if_end54
     %t86 =l loadl %t0
-    %t87 =l add $str62, 16
+    %t87 =l add $str65, 16
     %t88 =w call $strcmp(l %t86, l %t87)
     %t89 =w ceqw %t88, 0
     jnz %t89, @logic_short62, @logic_rhs61
@@ -9856,7 +10122,7 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
     jmp @logic_done63
 @logic_rhs61
     %t90 =l loadl %t0
-    %t91 =l add $str63, 16
+    %t91 =l add $str66, 16
     %t92 =w call $strcmp(l %t90, l %t91)
     %t93 =w ceqw %t92, 0
     jmp @logic_done63
@@ -9868,13 +10134,13 @@ export function l $nox_url__hex_val(l %rt, l %p_ch) {
 @after_return65
     jmp @if_end60
 @if_end60
-    %t95 =l add $str64, 16
+    %t95 =l add $str67, 16
     %t96 =l loadl %t0
     %t97 =l call $nox_str_concat(l %rt, l %t95, l %t96)
     %t98 =l call $nox_rc_alloc(l %rt, l 32)
     storel 3, %t98
     %t99 =l add %t98, 8
-    storel 0, %t99
+    storel $nox_url_UrlError_vtable, %t99
     %t100 =l add %t98, 16
     storel 0, %t100
     %t101 =l add %t98, 24
@@ -9943,7 +10209,7 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     storel 0, %t8
     storel %p_s, %t0
-    %t9 =l add $str65, 16
+    %t9 =l add $str68, 16
     %t10 =l loadl %t1
     %t11 =w ceql %t10, 0
     jnz %t11, @release_skip1, @release0
@@ -10025,7 +10291,7 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     storel %t63, %t4
     %t77 =l loadl %t4
-    %t78 =l add $str67, 16
+    %t78 =l add $str70, 16
     %t79 =w call $strcmp(l %t77, l %t78)
     %t80 =w ceqw %t79, 0
     jnz %t80, @if_then52, @if_else53
@@ -10036,13 +10302,13 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     %t84 =w csgel %t82, %t83
     jnz %t84, @if_then55, @if_end54
 @if_then55
-    %t85 =l add $str68, 16
+    %t85 =l add $str71, 16
     %t86 =l loadl %t0
     %t87 =l call $nox_str_concat(l %rt, l %t85, l %t86)
     %t88 =l call $nox_rc_alloc(l %rt, l 32)
     storel 3, %t88
     %t89 =l add %t88, 8
-    storel 0, %t89
+    storel $nox_url_UrlError_vtable, %t89
     %t90 =l add %t88, 16
     storel 0, %t90
     %t91 =l add %t88, 24
@@ -10481,11 +10747,11 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @fn_end234
     ret 0
 @str_idx_err9
-    %t30 =l add $str66, 16
+    %t30 =l add $str69, 16
     %t31 =l call $nox_rc_alloc(l %rt, l 32)
     storel 10, %t31
     %t32 =l add %t31, 8
-    storel 0, %t32
+    storel $IndexError_vtable, %t32
     %t33 =l add %t31, 16
     storel 0, %t33
     %t34 =l add %t31, 24
@@ -10598,11 +10864,11 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @str_idx_err95
-    %t133 =l add $str69, 16
+    %t133 =l add $str72, 16
     %t134 =l call $nox_rc_alloc(l %rt, l 32)
     storel 10, %t134
     %t135 =l add %t134, 8
-    storel 0, %t135
+    storel $IndexError_vtable, %t135
     %t136 =l add %t134, 16
     storel 0, %t136
     %t137 =l add %t134, 24
@@ -10715,11 +10981,11 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
     storel 0, %t4
     ret 0
 @str_idx_err151
-    %t200 =l add $str70, 16
+    %t200 =l add $str73, 16
     %t201 =l call $nox_rc_alloc(l %rt, l 32)
     storel 10, %t201
     %t202 =l add %t201, 8
-    storel 0, %t202
+    storel $IndexError_vtable, %t202
     %t203 =l add %t201, 16
     storel 0, %t203
     %t204 =l add %t201, 24
@@ -10975,7 +11241,7 @@ export function l $nox_url_query_encode(l %rt, l %p_params) {
     storel 0, %t4
     ret 0
 @exc_continue19
-    %t50 =l add $str71, 16
+    %t50 =l add $str74, 16
     %t51 =l call $nox_str_concat(l %rt, l %t38, l %t50)
     %t52 =w ceql %t38, 0
     jnz %t52, @release_skip33, @release32
@@ -11001,11 +11267,11 @@ export function l $nox_url_query_encode(l %rt, l %p_params) {
     %t59 =w call $nox_dict_contains(l %rt, l %t57, w 1, l %t58)
     jnz %t59, @dict_get_ok39, @dict_get_err38
 @dict_get_err38
-    %t60 =l add $str72, 16
+    %t60 =l add $str75, 16
     %t61 =l call $nox_rc_alloc(l %rt, l 32)
     storel 7, %t61
     %t62 =l add %t61, 8
-    storel 0, %t62
+    storel $KeyError_vtable, %t62
     %t63 =l add %t61, 16
     storel 0, %t63
     %t64 =l add %t61, 24
@@ -11314,7 +11580,7 @@ export function l $nox_url_query_encode(l %rt, l %p_params) {
 @while_end8
     %t168 =l loadl %t2
     storel %t168, %t5
-    %t169 =l add $str73, 16
+    %t169 =l add $str76, 16
     storel %t169, %t6
     %t170 =l loadl %t5
     %t171 =l loadl %t6
@@ -11424,13 +11690,13 @@ export function l $nox_url_query_int(l %rt, l %p_q, l %p_key) {
     %t5 =w xor %t4, 1
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str74, 16
+    %t6 =l add $str77, 16
     %t7 =l loadl %t1
     %t8 =l call $nox_str_concat(l %rt, l %t6, l %t7)
     %t9 =l call $nox_rc_alloc(l %rt, l 32)
     storel 11, %t9
     %t10 =l add %t9, 8
-    storel 0, %t10
+    storel $ValueError_vtable, %t10
     %t11 =l add %t9, 16
     storel 0, %t11
     %t12 =l add %t9, 24
@@ -11488,11 +11754,11 @@ export function l $nox_url_query_int(l %rt, l %p_q, l %p_key) {
     %t25 =w call $nox_dict_contains(l %rt, l %t23, w 1, l %t24)
     jnz %t25, @dict_get_ok18, @dict_get_err17
 @dict_get_err17
-    %t26 =l add $str75, 16
+    %t26 =l add $str78, 16
     %t27 =l call $nox_rc_alloc(l %rt, l 32)
     storel 7, %t27
     %t28 =l add %t27, 8
-    storel 0, %t28
+    storel $KeyError_vtable, %t28
     %t29 =l add %t27, 16
     storel 0, %t29
     %t30 =l add %t27, 24
@@ -11525,11 +11791,11 @@ export function l $nox_url_query_int(l %rt, l %p_q, l %p_key) {
     %t36 =w call $nox_str_is_valid_int(l %t35)
     jnz %t36, @parse_ok27, @parse_err26
 @parse_err26
-    %t37 =l add $str76, 16
+    %t37 =l add $str79, 16
     %t38 =l call $nox_rc_alloc(l %rt, l 32)
     storel 11, %t38
     %t39 =l add %t38, 8
-    storel 0, %t39
+    storel $ValueError_vtable, %t39
     %t40 =l add %t38, 16
     storel 0, %t40
     %t41 =l add %t38, 24
@@ -11576,13 +11842,13 @@ export function d $nox_url_query_float(l %rt, l %p_q, l %p_key) {
     %t5 =w xor %t4, 1
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str77, 16
+    %t6 =l add $str80, 16
     %t7 =l loadl %t1
     %t8 =l call $nox_str_concat(l %rt, l %t6, l %t7)
     %t9 =l call $nox_rc_alloc(l %rt, l 32)
     storel 11, %t9
     %t10 =l add %t9, 8
-    storel 0, %t10
+    storel $ValueError_vtable, %t10
     %t11 =l add %t9, 16
     storel 0, %t11
     %t12 =l add %t9, 24
@@ -11640,11 +11906,11 @@ export function d $nox_url_query_float(l %rt, l %p_q, l %p_key) {
     %t25 =w call $nox_dict_contains(l %rt, l %t23, w 1, l %t24)
     jnz %t25, @dict_get_ok18, @dict_get_err17
 @dict_get_err17
-    %t26 =l add $str78, 16
+    %t26 =l add $str81, 16
     %t27 =l call $nox_rc_alloc(l %rt, l 32)
     storel 7, %t27
     %t28 =l add %t27, 8
-    storel 0, %t28
+    storel $KeyError_vtable, %t28
     %t29 =l add %t27, 16
     storel 0, %t29
     %t30 =l add %t27, 24
@@ -11677,11 +11943,11 @@ export function d $nox_url_query_float(l %rt, l %p_q, l %p_key) {
     %t36 =w call $nox_str_is_valid_float(l %t35)
     jnz %t36, @parse_ok27, @parse_err26
 @parse_err26
-    %t37 =l add $str79, 16
+    %t37 =l add $str82, 16
     %t38 =l call $nox_rc_alloc(l %rt, l 32)
     storel 11, %t38
     %t39 =l add %t38, 8
-    storel 0, %t39
+    storel $ValueError_vtable, %t39
     %t40 =l add %t38, 16
     storel 0, %t40
     %t41 =l add %t38, 24
@@ -11730,13 +11996,13 @@ export function w $nox_url_query_bool(l %rt, l %p_q, l %p_key) {
     %t6 =w xor %t5, 1
     jnz %t6, @if_then1, @if_end0
 @if_then1
-    %t7 =l add $str80, 16
+    %t7 =l add $str83, 16
     %t8 =l loadl %t1
     %t9 =l call $nox_str_concat(l %rt, l %t7, l %t8)
     %t10 =l call $nox_rc_alloc(l %rt, l 32)
     storel 11, %t10
     %t11 =l add %t10, 8
-    storel 0, %t11
+    storel $ValueError_vtable, %t11
     %t12 =l add %t10, 16
     storel 0, %t12
     %t13 =l add %t10, 24
@@ -11836,11 +12102,11 @@ export function w $nox_url_query_bool(l %rt, l %p_q, l %p_key) {
     %t38 =w call $nox_dict_contains(l %rt, l %t36, w 1, l %t37)
     jnz %t38, @dict_get_ok30, @dict_get_err29
 @dict_get_err29
-    %t39 =l add $str81, 16
+    %t39 =l add $str84, 16
     %t40 =l call $nox_rc_alloc(l %rt, l 32)
     storel 7, %t40
     %t41 =l add %t40, 8
-    storel 0, %t41
+    storel $KeyError_vtable, %t41
     %t42 =l add %t40, 16
     storel 0, %t42
     %t43 =l add %t40, 24
@@ -11946,7 +12212,7 @@ export function w $nox_url_query_bool(l %rt, l %p_q, l %p_key) {
     storel 0, %t2
     storel %t60, %t2
     %t71 =l loadl %t2
-    %t72 =l add $str82, 16
+    %t72 =l add $str85, 16
     %t73 =w call $strcmp(l %t71, l %t72)
     %t74 =w ceqw %t73, 0
     jnz %t74, @logic_short61, @logic_rhs60
@@ -11954,7 +12220,7 @@ export function w $nox_url_query_bool(l %rt, l %p_q, l %p_key) {
     jmp @logic_done62
 @logic_rhs60
     %t75 =l loadl %t2
-    %t76 =l add $str83, 16
+    %t76 =l add $str86, 16
     %t77 =w call $strcmp(l %t75, l %t76)
     %t78 =w ceqw %t77, 0
     jmp @logic_done62
@@ -11988,7 +12254,7 @@ export function w $nox_url_query_bool(l %rt, l %p_q, l %p_key) {
     jmp @if_end59
 @if_end59
     %t86 =l loadl %t2
-    %t87 =l add $str84, 16
+    %t87 =l add $str87, 16
     %t88 =w call $strcmp(l %t86, l %t87)
     %t89 =w ceqw %t88, 0
     jnz %t89, @logic_short73, @logic_rhs72
@@ -11996,7 +12262,7 @@ export function w $nox_url_query_bool(l %rt, l %p_q, l %p_key) {
     jmp @logic_done74
 @logic_rhs72
     %t90 =l loadl %t2
-    %t91 =l add $str85, 16
+    %t91 =l add $str88, 16
     %t92 =w call $strcmp(l %t90, l %t91)
     %t93 =w ceqw %t92, 0
     jmp @logic_done74
@@ -12029,10 +12295,10 @@ export function w $nox_url_query_bool(l %rt, l %p_q, l %p_key) {
 @after_return82
     jmp @if_end71
 @if_end71
-    %t101 =l add $str86, 16
+    %t101 =l add $str89, 16
     %t102 =l loadl %t1
     %t103 =l call $nox_str_concat(l %rt, l %t101, l %t102)
-    %t104 =l add $str87, 16
+    %t104 =l add $str90, 16
     %t105 =l call $nox_str_concat(l %rt, l %t103, l %t104)
     %t106 =w ceql %t103, 0
     jnz %t106, @release_skip84, @release83
@@ -12077,7 +12343,7 @@ export function w $nox_url_query_bool(l %rt, l %p_q, l %p_key) {
     %t118 =l call $nox_rc_alloc(l %rt, l 32)
     storel 11, %t118
     %t119 =l add %t118, 8
-    storel 0, %t119
+    storel $ValueError_vtable, %t119
     %t120 =l add %t118, 16
     storel 0, %t120
     %t121 =l add %t118, 24
@@ -12314,7 +12580,7 @@ export function l $nox_url_query_decode(l %rt, l %p_s) {
 @if_end3
     %t41 =l loadl %t0
     storel %t41, %t8
-    %t42 =l add $str88, 16
+    %t42 =l add $str91, 16
     storel %t42, %t9
     %t43 =l loadl %t8
     %t44 =l loadl %t9
@@ -12386,7 +12652,7 @@ export function l $nox_url_query_decode(l %rt, l %p_s) {
     storel %t58, %t4
     %t69 =l loadl %t4
     storel %t69, %t11
-    %t70 =l add $str89, 16
+    %t70 =l add $str92, 16
     storel %t70, %t12
     %t71 =l loadl %t11
     %t72 =l loadl %t12
@@ -12493,7 +12759,7 @@ export function l $nox_url_query_decode(l %rt, l %p_s) {
     storel 0, %t6
     ret 0
 @exc_continue50
-    %t103 =l add $str90, 16
+    %t103 =l add $str93, 16
     call $nox_dict_set(l %rt, l %t77, w 1, w 1, w 0, l %t79, l %t103)
     jmp @if_end46
 @if_else48
@@ -13103,7 +13369,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     storel %p_relative, %t1
     %t16 =l loadl %t1
     storel %t16, %t8
-    %t17 =l add $str91, 16
+    %t17 =l add $str94, 16
     storel %t17, %t9
     %t18 =l loadl %t8
     %t19 =l loadl %t9
@@ -13300,7 +13566,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     %t73 =l loadl %t2
     %t74 =l add %t73, 8
     %t75 =l loadl %t74
-    %t76 =l add $str92, 16
+    %t76 =l add $str95, 16
     %t77 =l call $nox_str_concat(l %rt, l %t75, l %t76)
     %t78 =l loadl %t2
     %t79 =l add %t78, 24
@@ -13355,7 +13621,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     %t98 =l loadl %t97
     storel %t98, %t11
     %t99 =l loadl %t11
-    %t100 =l add $str93, 16
+    %t100 =l add $str96, 16
     %t101 =w call $strcmp(l %t99, l %t100)
     %t102 =w ceqw %t101, 0
     jnz %t102, @if_then70, @if_end69
@@ -13366,7 +13632,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @if_end69
 @if_end69
     %t103 =l loadl %t11
-    %t104 =l add $str94, 16
+    %t104 =l add $str97, 16
     %t105 =w call $strcmp(l %t103, l %t104)
     %t106 =w ceqw %t105, 0
     jnz %t106, @if_then73, @if_end72
@@ -13377,7 +13643,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @if_end72
 @if_end72
     %t107 =l loadl %t11
-    %t108 =l add $str95, 16
+    %t108 =l add $str98, 16
     %t109 =w call $strcmp(l %t107, l %t108)
     %t110 =w ceqw %t109, 0
     jnz %t110, @if_then76, @if_end75
@@ -13396,7 +13662,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     %t112 =w cnel %t95, %t111
     jnz %t112, @if_then79, @if_end67
 @if_then79
-    %t113 =l add $str96, 16
+    %t113 =l add $str99, 16
     %t114 =l loadl %t2
     %t115 =l add %t114, 32
     %t116 =l loadl %t115
@@ -13428,7 +13694,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
 @if_end67
     %t126 =l loadl %t1
     storel %t126, %t13
-    %t127 =l add $str97, 16
+    %t127 =l add $str100, 16
     storel %t127, %t14
     %t128 =l loadl %t13
     %t129 =l loadl %t14
@@ -13587,7 +13853,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @str_idx_done127
 @str_idx_done127
     %t178 =l phi @str_idx_ascii125 %t184, @str_idx_unicode126 %t185
-    %t186 =l add $str98, 16
+    %t186 =l add $str101, 16
     %t187 =w call $strcmp(l %t178, l %t186)
     %t188 =w ceqw %t187, 0
     %t189 =w ceql %t178, 0
@@ -13916,7 +14182,7 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t3
     storel 0, %t4
     storel 0, %t5
-    %t6 =l add $str99, 16
+    %t6 =l add $str102, 16
     %t7 =l call $nox_url_query_decode(l %rt, l %t6)
     %t8 =w call $nox_exception_pending(l %rt)
     jnz %t8, @exc_propagate0, @exc_continue1
@@ -13936,7 +14202,7 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t0
     storel %t7, %t0
     %t11 =l loadl %t0
-    %t12 =l add $str100, 16
+    %t12 =l add $str103, 16
     %t13 =l call $nox_url_query_int(l %rt, l %t11, l %t12)
     %t14 =w call $nox_exception_pending(l %rt)
     jnz %t14, @exc_propagate5, @exc_continue6
@@ -13946,7 +14212,7 @@ export function w $main(w %argc, l %argv) {
 @exc_continue6
     call $printf(l $fmt_int, ..., l %t13)
     %t15 =l loadl %t0
-    %t16 =l add $str101, 16
+    %t16 =l add $str104, 16
     %t17 =d call $nox_url_query_float(l %rt, l %t15, l %t16)
     %t18 =w call $nox_exception_pending(l %rt)
     jnz %t18, @exc_propagate7, @exc_continue8
@@ -13958,7 +14224,7 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_str, ..., l %t19)
     call $nox_str_release(l %rt, l %t19)
     %t20 =l loadl %t0
-    %t21 =l add $str102, 16
+    %t21 =l add $str105, 16
     %t22 =w call $nox_url_query_bool(l %rt, l %t20, l %t21)
     %t23 =w call $nox_exception_pending(l %rt)
     jnz %t23, @exc_propagate9, @exc_continue10
@@ -13975,7 +14241,7 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done13
 @print_done13
     %t24 =l loadl %t0
-    %t25 =l add $str103, 16
+    %t25 =l add $str106, 16
     %t26 =w call $nox_url_query_bool(l %rt, l %t24, l %t25)
     %t27 =w call $nox_exception_pending(l %rt)
     jnz %t27, @exc_propagate14, @exc_continue15
@@ -13992,7 +14258,7 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done18
 @print_done18
     %t28 =l loadl %t0
-    %t29 =l add $str104, 16
+    %t29 =l add $str107, 16
     %t30 =l call $nox_url_query_int(l %rt, l %t28, l %t29)
     %t31 =w call $nox_exception_pending(l %rt)
     jnz %t31, @exc_propagate22, @exc_continue23
@@ -14045,7 +14311,7 @@ export function w $main(w %argc, l %argv) {
 @try_after20
 @try_end21
     %t42 =l loadl %t0
-    %t43 =l add $str105, 16
+    %t43 =l add $str108, 16
     %t44 =l call $nox_url_query_int(l %rt, l %t42, l %t43)
     %t45 =w call $nox_exception_pending(l %rt)
     jnz %t45, @exc_propagate38, @exc_continue39
@@ -14098,7 +14364,7 @@ export function w $main(w %argc, l %argv) {
 @try_after36
 @try_end37
     %t56 =l loadl %t0
-    %t57 =l add $str106, 16
+    %t57 =l add $str109, 16
     %t58 =d call $nox_url_query_float(l %rt, l %t56, l %t57)
     %t59 =w call $nox_exception_pending(l %rt)
     jnz %t59, @exc_propagate54, @exc_continue55
@@ -14151,7 +14417,7 @@ export function w $main(w %argc, l %argv) {
 @try_after52
 @try_end53
     %t70 =l loadl %t0
-    %t71 =l add $str107, 16
+    %t71 =l add $str110, 16
     %t72 =w call $nox_url_query_bool(l %rt, l %t70, l %t71)
     %t73 =w call $nox_exception_pending(l %rt)
     jnz %t73, @exc_propagate70, @exc_continue71
@@ -14204,7 +14470,7 @@ export function w $main(w %argc, l %argv) {
 @try_after68
 @try_end69
     %t84 =l loadl %t0
-    %t85 =l add $str108, 16
+    %t85 =l add $str111, 16
     %t86 =w call $nox_url_query_bool(l %rt, l %t84, l %t85)
     %t87 =w call $nox_exception_pending(l %rt)
     jnz %t87, @exc_propagate86, @exc_continue87
@@ -14517,7 +14783,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str109, 16
+    %t9 =l add $str112, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -14632,7 +14898,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str110, 16
+    %t9 =l add $str113, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -14647,7 +14913,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str111, 16
+    %t20 =l add $str114, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -14670,118 +14936,121 @@ export function l $__nox_reflect_decorator_handler(l %rt, l %i) {
 @start
     ret 0
 }
-data $str0 = { l 1073741824, l 2305843009213693976, b "ord() bos bir str alamaz", b 0 }
-data $str1 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
-data $str2 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str3 = { l 1073741824, l 2305843009213693982, b "str indeksi sinirlarin disinda", b 0 }
-data $str4 = { l 1073741824, l 2305843009213693956, b "http", b 0 }
-data $str5 = { l 1073741824, l 2305843009213693957, b "https", b 0 }
-data $str6 = { l 1073741824, l 2305843009213693955, b "ftp", b 0 }
-data $str7 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str8 = { l 1073741824, l 2305843009213693953, b "#", b 0 }
-data $str9 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str10 = { l 1073741824, l 2305843009213693953, b "?", b 0 }
-data $str11 = { l 1073741824, l 2305843009213693955, b "://", b 0 }
-data $str12 = { l 1073741824, l 2305843009213693981, b "URL'de sema (scheme://) yok: ", b 0 }
-data $str13 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
-data $str14 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
-data $str15 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str16 = { l 1073741824, l 2305843009213693953, b "@", b 0 }
-data $str17 = { l 1073741824, l 2305843009213693956, b "http", b 0 }
-data $str18 = { l 1073741824, l 2305843009213693957, b "https", b 0 }
-data $str19 = { l 1073741824, l 2305843009213693955, b "ftp", b 0 }
-data $str20 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
-data $str21 = { l 1073741824, l 2305843009213693979, b "int(): gecersiz sayi bicimi", b 0 }
-data $str22 = { l 1073741824, l 2305843009213693967, b "gecersiz port: ", b 0 }
-data $str23 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
-data $str24 = { l 1073741824, l 2305843009213693953, b "1", b 0 }
-data $str25 = { l 1073741824, l 2305843009213693953, b "2", b 0 }
-data $str26 = { l 1073741824, l 2305843009213693953, b "3", b 0 }
-data $str27 = { l 1073741824, l 2305843009213693953, b "4", b 0 }
-data $str28 = { l 1073741824, l 2305843009213693953, b "5", b 0 }
-data $str29 = { l 1073741824, l 2305843009213693953, b "6", b 0 }
-data $str30 = { l 1073741824, l 2305843009213693953, b "7", b 0 }
-data $str31 = { l 1073741824, l 2305843009213693953, b "8", b 0 }
-data $str32 = { l 1073741824, l 2305843009213693953, b "9", b 0 }
-data $str33 = { l 1073741824, l 2305843009213693953, b "A", b 0 }
-data $str34 = { l 1073741824, l 2305843009213693953, b "B", b 0 }
-data $str35 = { l 1073741824, l 2305843009213693953, b "C", b 0 }
-data $str36 = { l 1073741824, l 2305843009213693953, b "D", b 0 }
-data $str37 = { l 1073741824, l 2305843009213693953, b "E", b 0 }
-data $str38 = { l 1073741824, l 2305843009213693953, b "F", b 0 }
-data $str39 = { l 1073741824, l 2305843009213693984, b "liste indeksi sinirlarin disinda", b 0 }
-data $str40 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str41 = { l 1073741824, l 2305843009213693953, b "%", b 0 }
-data $str42 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
-data $str43 = { l 1073741824, l 2305843009213693953, b "1", b 0 }
-data $str44 = { l 1073741824, l 2305843009213693953, b "2", b 0 }
-data $str45 = { l 1073741824, l 2305843009213693953, b "3", b 0 }
-data $str46 = { l 1073741824, l 2305843009213693953, b "4", b 0 }
-data $str47 = { l 1073741824, l 2305843009213693953, b "5", b 0 }
-data $str48 = { l 1073741824, l 2305843009213693953, b "6", b 0 }
-data $str49 = { l 1073741824, l 2305843009213693953, b "7", b 0 }
-data $str50 = { l 1073741824, l 2305843009213693953, b "8", b 0 }
-data $str51 = { l 1073741824, l 2305843009213693953, b "9", b 0 }
-data $str52 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
-data $str53 = { l 1073741824, l 2305843009213693953, b "A", b 0 }
-data $str54 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
-data $str55 = { l 1073741824, l 2305843009213693953, b "B", b 0 }
-data $str56 = { l 1073741824, l 2305843009213693953, b "c", b 0 }
-data $str57 = { l 1073741824, l 2305843009213693953, b "C", b 0 }
-data $str58 = { l 1073741824, l 2305843009213693953, b "d", b 0 }
-data $str59 = { l 1073741824, l 2305843009213693953, b "D", b 0 }
-data $str60 = { l 1073741824, l 2305843009213693953, b "e", b 0 }
-data $str61 = { l 1073741824, l 2305843009213693953, b "E", b 0 }
-data $str62 = { l 1073741824, l 2305843009213693953, b "f", b 0 }
-data $str63 = { l 1073741824, l 2305843009213693953, b "F", b 0 }
-data $str64 = { l 1073741824, l 2305843009213693974, b "gecersiz hex basamak: ", b 0 }
-data $str65 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str66 = { l 1073741824, l 2305843009213693982, b "str indeksi sinirlarin disinda", b 0 }
-data $str67 = { l 1073741824, l 2305843009213693953, b "%", b 0 }
-data $str68 = { l 1073741824, l 2305843009213693976, b "eksik percent-encoding: ", b 0 }
+data $str0 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci: ", b 0 }
+data $str1 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci: ", b 0 }
+data $str2 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci: ", b 0 }
+data $str3 = { l 1073741824, l 2305843009213693976, b "ord() bos bir str alamaz", b 0 }
+data $str4 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
+data $str5 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str6 = { l 1073741824, l 2305843009213693982, b "str indeksi sinirlarin disinda", b 0 }
+data $str7 = { l 1073741824, l 2305843009213693956, b "http", b 0 }
+data $str8 = { l 1073741824, l 2305843009213693957, b "https", b 0 }
+data $str9 = { l 1073741824, l 2305843009213693955, b "ftp", b 0 }
+data $str10 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str11 = { l 1073741824, l 2305843009213693953, b "#", b 0 }
+data $str12 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str13 = { l 1073741824, l 2305843009213693953, b "?", b 0 }
+data $str14 = { l 1073741824, l 2305843009213693955, b "://", b 0 }
+data $str15 = { l 1073741824, l 2305843009213693981, b "URL'de sema (scheme://) yok: ", b 0 }
+data $str16 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
+data $str17 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
+data $str18 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str19 = { l 1073741824, l 2305843009213693953, b "@", b 0 }
+data $str20 = { l 1073741824, l 2305843009213693956, b "http", b 0 }
+data $str21 = { l 1073741824, l 2305843009213693957, b "https", b 0 }
+data $str22 = { l 1073741824, l 2305843009213693955, b "ftp", b 0 }
+data $str23 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
+data $str24 = { l 1073741824, l 2305843009213693979, b "int(): gecersiz sayi bicimi", b 0 }
+data $str25 = { l 1073741824, l 2305843009213693967, b "gecersiz port: ", b 0 }
+data $str26 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
+data $str27 = { l 1073741824, l 2305843009213693953, b "1", b 0 }
+data $str28 = { l 1073741824, l 2305843009213693953, b "2", b 0 }
+data $str29 = { l 1073741824, l 2305843009213693953, b "3", b 0 }
+data $str30 = { l 1073741824, l 2305843009213693953, b "4", b 0 }
+data $str31 = { l 1073741824, l 2305843009213693953, b "5", b 0 }
+data $str32 = { l 1073741824, l 2305843009213693953, b "6", b 0 }
+data $str33 = { l 1073741824, l 2305843009213693953, b "7", b 0 }
+data $str34 = { l 1073741824, l 2305843009213693953, b "8", b 0 }
+data $str35 = { l 1073741824, l 2305843009213693953, b "9", b 0 }
+data $str36 = { l 1073741824, l 2305843009213693953, b "A", b 0 }
+data $str37 = { l 1073741824, l 2305843009213693953, b "B", b 0 }
+data $str38 = { l 1073741824, l 2305843009213693953, b "C", b 0 }
+data $str39 = { l 1073741824, l 2305843009213693953, b "D", b 0 }
+data $str40 = { l 1073741824, l 2305843009213693953, b "E", b 0 }
+data $str41 = { l 1073741824, l 2305843009213693953, b "F", b 0 }
+data $str42 = { l 1073741824, l 2305843009213693984, b "liste indeksi sinirlarin disinda", b 0 }
+data $str43 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str44 = { l 1073741824, l 2305843009213693953, b "%", b 0 }
+data $str45 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
+data $str46 = { l 1073741824, l 2305843009213693953, b "1", b 0 }
+data $str47 = { l 1073741824, l 2305843009213693953, b "2", b 0 }
+data $str48 = { l 1073741824, l 2305843009213693953, b "3", b 0 }
+data $str49 = { l 1073741824, l 2305843009213693953, b "4", b 0 }
+data $str50 = { l 1073741824, l 2305843009213693953, b "5", b 0 }
+data $str51 = { l 1073741824, l 2305843009213693953, b "6", b 0 }
+data $str52 = { l 1073741824, l 2305843009213693953, b "7", b 0 }
+data $str53 = { l 1073741824, l 2305843009213693953, b "8", b 0 }
+data $str54 = { l 1073741824, l 2305843009213693953, b "9", b 0 }
+data $str55 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
+data $str56 = { l 1073741824, l 2305843009213693953, b "A", b 0 }
+data $str57 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
+data $str58 = { l 1073741824, l 2305843009213693953, b "B", b 0 }
+data $str59 = { l 1073741824, l 2305843009213693953, b "c", b 0 }
+data $str60 = { l 1073741824, l 2305843009213693953, b "C", b 0 }
+data $str61 = { l 1073741824, l 2305843009213693953, b "d", b 0 }
+data $str62 = { l 1073741824, l 2305843009213693953, b "D", b 0 }
+data $str63 = { l 1073741824, l 2305843009213693953, b "e", b 0 }
+data $str64 = { l 1073741824, l 2305843009213693953, b "E", b 0 }
+data $str65 = { l 1073741824, l 2305843009213693953, b "f", b 0 }
+data $str66 = { l 1073741824, l 2305843009213693953, b "F", b 0 }
+data $str67 = { l 1073741824, l 2305843009213693974, b "gecersiz hex basamak: ", b 0 }
+data $str68 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str69 = { l 1073741824, l 2305843009213693982, b "str indeksi sinirlarin disinda", b 0 }
-data $str70 = { l 1073741824, l 2305843009213693982, b "str indeksi sinirlarin disinda", b 0 }
-data $str71 = { l 1073741824, l 2305843009213693953, b "=", b 0 }
-data $str72 = { l 1073741824, l 2305843009213693970, b "anahtar bulunamadi", b 0 }
-data $str73 = { l 1073741824, l 2305843009213693953, b "&", b 0 }
-data $str74 = { l 1073741824, l 2305843009213693977, b "sorgu parametresi eksik: ", b 0 }
+data $str70 = { l 1073741824, l 2305843009213693953, b "%", b 0 }
+data $str71 = { l 1073741824, l 2305843009213693976, b "eksik percent-encoding: ", b 0 }
+data $str72 = { l 1073741824, l 2305843009213693982, b "str indeksi sinirlarin disinda", b 0 }
+data $str73 = { l 1073741824, l 2305843009213693982, b "str indeksi sinirlarin disinda", b 0 }
+data $str74 = { l 1073741824, l 2305843009213693953, b "=", b 0 }
 data $str75 = { l 1073741824, l 2305843009213693970, b "anahtar bulunamadi", b 0 }
-data $str76 = { l 1073741824, l 2305843009213693979, b "int(): gecersiz sayi bicimi", b 0 }
+data $str76 = { l 1073741824, l 2305843009213693953, b "&", b 0 }
 data $str77 = { l 1073741824, l 2305843009213693977, b "sorgu parametresi eksik: ", b 0 }
 data $str78 = { l 1073741824, l 2305843009213693970, b "anahtar bulunamadi", b 0 }
-data $str79 = { l 1073741824, l 2305843009213693981, b "float(): gecersiz sayi bicimi", b 0 }
+data $str79 = { l 1073741824, l 2305843009213693979, b "int(): gecersiz sayi bicimi", b 0 }
 data $str80 = { l 1073741824, l 2305843009213693977, b "sorgu parametresi eksik: ", b 0 }
 data $str81 = { l 1073741824, l 2305843009213693970, b "anahtar bulunamadi", b 0 }
-data $str82 = { l 1073741824, l 2305843009213693956, b "true", b 0 }
-data $str83 = { l 1073741824, l 2305843009213693953, b "1", b 0 }
-data $str84 = { l 1073741824, l 2305843009213693957, b "false", b 0 }
-data $str85 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
-data $str86 = { l 1073741824, l 2305843009213693992, b "sorgu parametresi gecersiz bool degeri: ", b 0 }
-data $str87 = { l 1073741824, l 2305843009213693953, b "=", b 0 }
-data $str88 = { l 1073741824, l 2305843009213693953, b "&", b 0 }
-data $str89 = { l 1073741824, l 2305843009213693953, b "=", b 0 }
-data $str90 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str91 = { l 1073741824, l 2305843009213693955, b "://", b 0 }
-data $str92 = { l 1073741824, l 2305843009213693955, b "://", b 0 }
-data $str93 = { l 1073741824, l 2305843009213693956, b "http", b 0 }
-data $str94 = { l 1073741824, l 2305843009213693957, b "https", b 0 }
-data $str95 = { l 1073741824, l 2305843009213693955, b "ftp", b 0 }
-data $str96 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
-data $str97 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
-data $str98 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
-data $str99 = { l 1073741824, l 2305843009213693997, b "page=2&ratio=1.5&active=true&flag=0&weird=yes", b 0 }
-data $str100 = { l 1073741824, l 2305843009213693956, b "page", b 0 }
-data $str101 = { l 1073741824, l 2305843009213693957, b "ratio", b 0 }
-data $str102 = { l 1073741824, l 2305843009213693958, b "active", b 0 }
-data $str103 = { l 1073741824, l 2305843009213693956, b "flag", b 0 }
-data $str104 = { l 1073741824, l 2305843009213693959, b "missing", b 0 }
-data $str105 = { l 1073741824, l 2305843009213693957, b "ratio", b 0 }
-data $str106 = { l 1073741824, l 2305843009213693959, b "missing", b 0 }
-data $str107 = { l 1073741824, l 2305843009213693957, b "weird", b 0 }
-data $str108 = { l 1073741824, l 2305843009213693959, b "missing", b 0 }
-data $str109 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str110 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str111 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str82 = { l 1073741824, l 2305843009213693981, b "float(): gecersiz sayi bicimi", b 0 }
+data $str83 = { l 1073741824, l 2305843009213693977, b "sorgu parametresi eksik: ", b 0 }
+data $str84 = { l 1073741824, l 2305843009213693970, b "anahtar bulunamadi", b 0 }
+data $str85 = { l 1073741824, l 2305843009213693956, b "true", b 0 }
+data $str86 = { l 1073741824, l 2305843009213693953, b "1", b 0 }
+data $str87 = { l 1073741824, l 2305843009213693957, b "false", b 0 }
+data $str88 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
+data $str89 = { l 1073741824, l 2305843009213693992, b "sorgu parametresi gecersiz bool degeri: ", b 0 }
+data $str90 = { l 1073741824, l 2305843009213693953, b "=", b 0 }
+data $str91 = { l 1073741824, l 2305843009213693953, b "&", b 0 }
+data $str92 = { l 1073741824, l 2305843009213693953, b "=", b 0 }
+data $str93 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str94 = { l 1073741824, l 2305843009213693955, b "://", b 0 }
+data $str95 = { l 1073741824, l 2305843009213693955, b "://", b 0 }
+data $str96 = { l 1073741824, l 2305843009213693956, b "http", b 0 }
+data $str97 = { l 1073741824, l 2305843009213693957, b "https", b 0 }
+data $str98 = { l 1073741824, l 2305843009213693955, b "ftp", b 0 }
+data $str99 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
+data $str100 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
+data $str101 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
+data $str102 = { l 1073741824, l 2305843009213693997, b "page=2&ratio=1.5&active=true&flag=0&weird=yes", b 0 }
+data $str103 = { l 1073741824, l 2305843009213693956, b "page", b 0 }
+data $str104 = { l 1073741824, l 2305843009213693957, b "ratio", b 0 }
+data $str105 = { l 1073741824, l 2305843009213693958, b "active", b 0 }
+data $str106 = { l 1073741824, l 2305843009213693956, b "flag", b 0 }
+data $str107 = { l 1073741824, l 2305843009213693959, b "missing", b 0 }
+data $str108 = { l 1073741824, l 2305843009213693957, b "ratio", b 0 }
+data $str109 = { l 1073741824, l 2305843009213693959, b "missing", b 0 }
+data $str110 = { l 1073741824, l 2305843009213693957, b "weird", b 0 }
+data $str111 = { l 1073741824, l 2305843009213693959, b "missing", b 0 }
+data $str112 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str113 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str114 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
 data $fmt_lit1 = { b "None", b 0 }
 data $fmt_lit2 = { b "None", b 0 }

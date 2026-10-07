@@ -23,6 +23,8 @@ pub const ParserDiagnostic = struct {
     expected: ?TokenKind = null,
     found: TokenKind,
     span: Span,
+    /// v1.160.1: belirli sözdizimi ihlalleri için hazır bir açıklama (`syntax_report` bunu `beklenmeyen ...` yerine gösterir).
+    note: ?[]const u8 = null,
 };
 
 pub const ParseError = error{
@@ -66,10 +68,10 @@ pub const Parser = struct {
     /// ...`), TEK bir PAYLAŞILAN sayaç bunların ÜÇÜNÜN de GİRİŞİNDE
     /// çağrılır — sayaç yalnızca CANLI (şu an yığında olan) derinliği
     /// ölçer, SIRALI (kardeş) çağrılar arasında SIFIRLANIR (`defer` İLE).
-    /// `MAX_EXPR_DEPTH` (500), GERÇEKÇİ HERHANGİ bir Nox programının asla
+    /// `MAX_EXPR_DEPTH` (200; v1.164.0'a kadar 500 — Debug'da ayrıştırma çerçeveleri büyüdükçe 500 derinlik 8MB'ı zorluyordu), GERÇEKÇİ HERHANGİ bir Nox programının asla
     /// yaklaşmayacağı ama macOS'un varsayılan 8MB yığınında GÜVENLE BOL
     /// PAY bırakan bir sınırdır.
-    const MAX_EXPR_DEPTH: usize = 500;
+    const MAX_EXPR_DEPTH: usize = 200;
 
     fn enterRecursion(self: *Parser) ParseError!void {
         self.depth += 1;
@@ -1030,7 +1032,10 @@ pub const Parser = struct {
             if (self.check(.kw_is)) {
                 _ = self.advance();
                 const negated = self.match(.kw_not);
-                if (!self.check(.kw_none)) return error.UnexpectedToken;
+                if (!self.check(.kw_none)) {
+                    self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "'is' yalnızca 'None' ile kullanılabilir (x is None / x is not None)" };
+                    return error.UnexpectedToken;
+                }
                 _ = self.advance();
                 const old_left = left;
                 const none_box = try self.box(.none_lit);
@@ -1371,7 +1376,12 @@ pub const Parser = struct {
                     try self.expr_spans.put(self.allocator, @intFromPtr(arg), sp);
                 }
                 arg_spans.deinit(self.allocator);
-                expr = .{ .call = .{ .callee = try self.box(old_expr), .args = final_args } };
+                // v1.164.0: `"{} {:>5}".format(a, b)` (alıcı bir str LİTERALİ) → f-string ile aynı biçimlendirme zincirine indirgenir.
+                if (old_expr == .attribute and old_expr.attribute.obj.* == .string_lit and std.mem.eql(u8, old_expr.attribute.attr, "format")) {
+                    expr = try self.desugarStrFormat(old_expr.attribute.obj.string_lit, final_args);
+                } else {
+                    expr = .{ .call = .{ .callee = try self.box(old_expr), .args = final_args } };
+                }
             } else if (self.check(.l_bracket) and expr == .identifier) {
                 // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı):
                 // `İsim[TipArgs](args)` ARTIK HERHANGİ bir tanımlayıcı İçin
@@ -1565,13 +1575,128 @@ pub const Parser = struct {
     /// konumuna GÖRE DEĞİL (`lexer.tokenize`nin bir başlangıç-ofseti
     /// parametresi YOK) — tanılama kalitesinde küçük, dokümante edilen bir
     /// sınırlama.
+    /// `"...{}...{0:>5}...{name}".format(args, name=v)` → `"..." + str(a0) + "..." + format(a0, ">5") + ...` (parse zamanı). Yalnızca `{}`/`{N}`/`{ad}` alanları
+    /// ve biçim belirteçleri; `!s` desteklenir, `!r`/öznitelik/indeks alanları ve iç içe `{}` reddedilir. Bir argüman birden çok alanda ya da sıra dışı
+    /// kullanılırsa çift değerlendirme olmaması için yan etkisiz (`isPureExpr`) olmalıdır.
+    fn desugarStrFormat(self: *Parser, lit: []const u8, args: []ast.Expr) ParseError!ast.Expr {
+        var positional = std.ArrayList(ast.Expr).empty;
+        var kw_names = std.ArrayList([]const u8).empty;
+        var kw_vals = std.ArrayList(ast.Expr).empty;
+        for (args) |a| {
+            if (a == .kwarg) {
+                try kw_names.append(self.allocator, a.kwarg.name);
+                try kw_vals.append(self.allocator, a.kwarg.value.*);
+            } else try positional.append(self.allocator, a);
+        }
+        const uses_pos = try self.allocator.alloc(u32, positional.items.len);
+        @memset(uses_pos, 0);
+        const uses_kw = try self.allocator.alloc(u32, kw_names.items.len);
+        @memset(uses_kw, 0);
+        var pieces = std.ArrayList(ast.Expr).empty;
+        var lit_buf = std.ArrayList(u8).empty;
+        var next_auto: usize = 0;
+        var i: usize = 0;
+        const bad = struct {
+            fn at(p: *Parser, note: []const u8) ParseError {
+                p.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(p.tokens[p.pos - 1]), .note = note };
+                return error.UnexpectedToken;
+            }
+        };
+        while (i < lit.len) {
+            const ch = lit[i];
+            if (ch == '{') {
+                if (i + 1 < lit.len and lit[i + 1] == '{') {
+                    try lit_buf.append(self.allocator, '{');
+                    i += 2;
+                    continue;
+                }
+                const close = std.mem.indexOfScalarPos(u8, lit, i + 1, '}') orelse return bad.at(self, "str.format: kapanmamış '{' alanı");
+                const field = lit[i + 1 .. close];
+                if (std.mem.indexOfScalar(u8, field, '{') != null) return bad.at(self, "str.format: iç içe '{}' alanları desteklenmiyor");
+                var name_end = field.len;
+                var spec: []const u8 = "";
+                if (std.mem.indexOfScalar(u8, field, ':')) |ci| {
+                    name_end = ci;
+                    spec = field[ci + 1 ..];
+                }
+                var name = field[0..name_end];
+                if (std.mem.indexOfScalar(u8, name, '!')) |bi| {
+                    const conv = name[bi + 1 ..];
+                    if (!std.mem.eql(u8, conv, "s")) return bad.at(self, "str.format: '!r'/'!a' dönüşümü desteklenmiyor");
+                    name = name[0..bi];
+                }
+                if (std.mem.indexOfAny(u8, name, ".[") != null) return bad.at(self, "str.format: öznitelik/indeks alanları desteklenmiyor — f-string kullanın");
+                var arg_expr: ast.Expr = undefined;
+                if (name.len == 0 or (name[0] >= '0' and name[0] <= '9')) {
+                    const idx: usize = if (name.len == 0) blk: {
+                        const k = next_auto;
+                        next_auto += 1;
+                        break :blk k;
+                    } else std.fmt.parseInt(usize, name, 10) catch return bad.at(self, "str.format: geçersiz alan indeksi");
+                    if (idx >= positional.items.len) return bad.at(self, "str.format: yeterli konumsal argüman yok");
+                    uses_pos[idx] += 1;
+                    arg_expr = positional.items[idx];
+                    if (uses_pos[idx] > 1 and !isPureExpr(arg_expr)) return bad.at(self, "str.format: aynı argüman birden çok alanda kullanılıyorsa yan etkisiz olmalı");
+                } else {
+                    var found: ?usize = null;
+                    for (kw_names.items, 0..) |kn, ki| {
+                        if (std.mem.eql(u8, kn, name)) found = ki;
+                    }
+                    const ki = found orelse return bad.at(self, "str.format: bilinmeyen adlı alan");
+                    uses_kw[ki] += 1;
+                    arg_expr = kw_vals.items[ki];
+                    if (uses_kw[ki] > 1 and !isPureExpr(arg_expr)) return bad.at(self, "str.format: aynı argüman birden çok alanda kullanılıyorsa yan etkisiz olmalı");
+                }
+                if (lit_buf.items.len > 0) {
+                    try pieces.append(self.allocator, .{ .string_lit = try lit_buf.toOwnedSlice(self.allocator) });
+                    lit_buf = .empty;
+                }
+                const fargs = try self.allocator.alloc(ast.Expr, if (spec.len > 0) 2 else 1);
+                fargs[0] = if (uses_pos.len > 0 or uses_kw.len > 0) try self.dupPure2(arg_expr) else arg_expr;
+                if (spec.len > 0) fargs[1] = .{ .string_lit = spec };
+                const fcallee = try self.allocator.create(ast.Expr);
+                fcallee.* = .{ .identifier = if (spec.len > 0) "format" else "str" };
+                try pieces.append(self.allocator, .{ .call = .{ .callee = fcallee, .args = fargs, .fstring = true } });
+                i = close + 1;
+                continue;
+            }
+            if (ch == '}') {
+                if (i + 1 < lit.len and lit[i + 1] == '}') {
+                    try lit_buf.append(self.allocator, '}');
+                    i += 2;
+                    continue;
+                }
+                return bad.at(self, "str.format: eşleşmemiş '}'");
+            }
+            try lit_buf.append(self.allocator, ch);
+            i += 1;
+        }
+        if (lit_buf.items.len > 0) try pieces.append(self.allocator, .{ .string_lit = try lit_buf.toOwnedSlice(self.allocator) });
+        if (pieces.items.len == 0) return .{ .string_lit = "" };
+        var acc = pieces.items[0];
+        for (pieces.items[1..]) |pc| {
+            const left = try self.allocator.create(ast.Expr);
+            left.* = acc;
+            const right = try self.allocator.create(ast.Expr);
+            right.* = pc;
+            acc = .{ .binary = .{ .op = .add, .left = left, .right = right, .fstring = true } };
+        }
+        return acc;
+    }
+
+    /// Tekrar kullanılabilecek bir argümanın kopyası: saf ifadeler derin kopyalanır (işaretçi-anahtarlı yan tablolar için), diğerleri olduğu gibi.
+    fn dupPure2(self: *Parser, e: ast.Expr) ParseError!ast.Expr {
+        if (isPureExpr(e)) return self.dupPure(e);
+        return e;
+    }
+
     fn parseFStringLit(self: *Parser, lexeme: []const u8) ParseError!ast.Expr {
         // `lexeme[0]` = 'f'/'F', `lexeme[1]` = açılış tırnağı, `lexeme[len-1]`
         // = kapanış tırnağı (lexer ZATEN dengelenmiş/geçerli olduğunu
         // doğruladı — bkz. `lexer.zig`nin f-string durum makinesi).
         const inner = lexeme[2 .. lexeme.len - 1];
 
-        const Segment = union(enum) { literal: []const u8, expr: ast.Expr };
+        const Segment = union(enum) { literal: []const u8, expr: ast.Expr, formatted: ast.Expr };
         var segments = std.ArrayList(Segment).empty;
         var literal_buf = std.ArrayList(u8).empty;
 
@@ -1639,14 +1764,66 @@ pub const Parser = struct {
                     }
                     j += 1;
                 }
-                const expr_text = inner[expr_start .. j - 1];
+                const field_text = inner[expr_start .. j - 1];
+                // v1.164.0: `{ifade:belirteç}` / `{ifade!s}` — en dıştaki `:` (parantez/tırnak dışında) ifadeyi biçim belirtecinden ayırır.
+                var expr_text: []const u8 = field_text;
+                var fmt_spec: ?[]const u8 = null;
+                {
+                    var d: u32 = 0;
+                    var q: ?u8 = null;
+                    var k: usize = 0;
+                    while (k < field_text.len) : (k += 1) {
+                        const fc = field_text[k];
+                        if (q) |qq| {
+                            if (fc == '\\') k += 1 else if (fc == qq) q = null;
+                            continue;
+                        }
+                        switch (fc) {
+                            '\'', '"' => q = fc,
+                            '(', '[', '{' => d += 1,
+                            ')', ']', '}' => d -|= 1,
+                            ':' => if (d == 0) {
+                                expr_text = field_text[0..k];
+                                fmt_spec = field_text[k + 1 ..];
+                                break;
+                            },
+                            else => {},
+                        }
+                    }
+                }
+                // Dönüşümler: `!s` ≡ str(); `!r`/`!a` desteklenmez.
+                if (expr_text.len >= 2 and expr_text[expr_text.len - 2] == '!') {
+                    const conv = expr_text[expr_text.len - 1];
+                    if (conv == 's') {
+                        expr_text = expr_text[0 .. expr_text.len - 2];
+                    } else if (conv == 'r' or conv == 'a') {
+                        self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "f-string '!r'/'!a' dönüşümü desteklenmiyor — str() ya da açık biçimlendirme kullanın" };
+                        return error.UnexpectedToken;
+                    }
+                }
+                if (fmt_spec) |fs| {
+                    if (std.mem.indexOfScalar(u8, fs, '{') != null) {
+                        self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "f-string biçim belirtecinde iç içe `{}` alanı desteklenmiyor" };
+                        return error.UnexpectedToken;
+                    }
+                    if (fs.len == 0) fmt_spec = null;
+                }
                 const sub_tokens = lexer_mod.tokenize(self.allocator, expr_text) catch {
                     self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]) };
                     return error.UnexpectedToken;
                 };
                 var sub_parser = Parser.init(self.allocator, sub_tokens);
                 const sub_expr = try sub_parser.parseExpr();
-                try segments.append(self.allocator, .{ .expr = sub_expr });
+                if (fmt_spec) |fs| {
+                    const fargs = try self.allocator.alloc(ast.Expr, 2);
+                    fargs[0] = sub_expr;
+                    fargs[1] = .{ .string_lit = fs };
+                    const fcallee = try self.allocator.create(ast.Expr);
+                    fcallee.* = .{ .identifier = "format" };
+                    try segments.append(self.allocator, .{ .formatted = .{ .call = .{ .callee = fcallee, .args = fargs, .fstring = true } } });
+                } else {
+                    try segments.append(self.allocator, .{ .expr = sub_expr });
+                }
                 i = j;
                 continue;
             }
@@ -1673,12 +1850,13 @@ pub const Parser = struct {
         for (segments.items) |seg| {
             const piece: ast.Expr = switch (seg) {
                 .literal => |lit| .{ .string_lit = lit },
+                .formatted => |fe| fe,
                 .expr => |e| blk: {
                     const args = try self.allocator.alloc(ast.Expr, 1);
                     args[0] = e;
                     const callee = try self.allocator.create(ast.Expr);
                     callee.* = .{ .identifier = "str" };
-                    break :blk .{ .call = .{ .callee = callee, .args = args } };
+                    break :blk .{ .call = .{ .callee = callee, .args = args, .fstring = true } };
                 },
             };
             if (acc) |a| {
@@ -1686,7 +1864,7 @@ pub const Parser = struct {
                 left.* = a;
                 const right = try self.allocator.create(ast.Expr);
                 right.* = piece;
-                acc = .{ .binary = .{ .op = .add, .left = left, .right = right } };
+                acc = .{ .binary = .{ .op = .add, .left = left, .right = right, .fstring = true } };
             } else {
                 acc = piece;
             }

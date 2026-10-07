@@ -29,6 +29,7 @@ pub const worker_pool = @import("async_rt/worker_pool.zig");
 /// keşfi İçİN" notu BURAYA UYGULANMAZ).
 pub const pool_bridge = @import("async_rt/pool_bridge.zig");
 pub const str = @import("str.zig");
+pub const format = @import("format.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
 pub const list_ops = @import("collections/list_ops.zig");
@@ -82,6 +83,7 @@ comptime {
     _ = chase_lev_deque;
     _ = worker_pool;
     _ = str;
+    _ = format;
     _ = dict;
     _ = list_sort;
     _ = list_ops;

@@ -62,6 +62,29 @@ export function $Exception___init__(l %rt, l %p_self, l %p_message) {
 @fn_end9
     ret
 }
+export function l $Exception___str__(l %rt, l %p_self) {
+@start
+    %t0 =l alloc8 8
+    storel %p_self, %t0
+    %t1 =l loadl %t0
+    %t2 =l add %t1, 16
+    %t3 =l loadl %t2
+    %t4 =w ceql %t3, 0
+    jnz %t4, @retain_skip1, @retain0
+@retain0
+    %t5 =l sub %t3, 16
+    %t6 =l loadl %t5
+    %t7 =l add %t6, 1
+    storel %t7, %t5
+    jmp @retain_done2
+@retain_skip1
+    jmp @retain_done2
+@retain_done2
+    ret %t3
+@after_return3
+@fn_end4
+    ret 0
+}
 export function $Exception_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -150,6 +173,7 @@ export function $Exception_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $Exception_vtable = { l $Exception___str__ }
 export function $ValueError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -238,6 +262,7 @@ export function $ValueError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $ValueError_vtable = { l $Exception___str__ }
 export function $IndexError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -326,6 +351,7 @@ export function $IndexError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $IndexError_vtable = { l $Exception___str__ }
 export function $AssertionError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -414,6 +440,7 @@ export function $AssertionError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $AssertionError_vtable = { l $Exception___str__ }
 export function $ZeroDivisionError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -502,6 +529,7 @@ export function $ZeroDivisionError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $ZeroDivisionError_vtable = { l $Exception___str__ }
 export function $KeyError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -590,6 +618,7 @@ export function $KeyError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $KeyError_vtable = { l $Exception___str__ }
 export function $HPyError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -678,6 +707,7 @@ export function $HPyError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $HPyError_vtable = { l $Exception___str__ }
 export function $CancelledError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -766,6 +796,7 @@ export function $CancelledError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $CancelledError_vtable = { l $Exception___str__ }
 export function $JsonValue___init__(l %rt, l %p_self, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
 @start
     %t0 =l alloc8 8
@@ -1530,6 +1561,240 @@ export function d $__nox_round_digits(l %rt, d %p_x, l %p_nd) {
 @fn_end1
     ret d_0
 }
+export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    storel %p_v, %t0
+    storel %p_spec, %t1
+    %t2 =l loadl %t1
+    %t3 =l call $nox_format_spec_check(l 0, l %t2)
+    %t4 =w ceql %t3, 0
+    jnz %t4, @if_then1, @if_end0
+@if_then1
+    %t5 =l add $str0, 16
+    %t6 =l loadl %t1
+    %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
+    %t8 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 9, %t8
+    %t9 =l add %t8, 8
+    storel $ValueError_vtable, %t9
+    %t10 =l add %t8, 16
+    storel 0, %t10
+    %t11 =l add %t8, 24
+    storel 0, %t11
+    call $Exception___init__(l %rt, l %t8, l %t7)
+    %t12 =w ceql %t7, 0
+    jnz %t12, @release_skip3, @release2
+@release2
+    %t13 =l sub %t7, 16
+    %t14 =l loadl %t13
+    %t15 =l sub %t14, 1
+    storel %t15, %t13
+    %t16 =w cslel %t15, 0
+    jnz %t16, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t7)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @ctor_init_failed8, @ctor_init_cont9
+@ctor_init_failed8
+    %t18 =w ceql %t8, 0
+    jnz %t18, @release_skip11, @release10
+@release10
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t8)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
+    jmp @ctor_init_cont9
+@ctor_init_cont9
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate13, @exc_continue14
+@exc_propagate13
+    ret 0
+@exc_continue14
+    %t20 =l add %t8, 24
+    storel 158, %t20
+    call $nox_raise(l %rt, l %t8, l 158)
+    %t21 =w call $nox_exception_pending(l %rt)
+    jnz %t21, @exc_propagate15, @exc_continue16
+@exc_propagate15
+    ret 0
+@exc_continue16
+    jmp @if_end0
+@if_end0
+    %t22 =l loadl %t0
+    %t23 =l loadl %t1
+    %t24 =l call $nox_format_int_raw(l %rt, l %t22, l %t23)
+    ret %t24
+@after_return17
+@fn_end18
+    ret 0
+}
+export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    stored %p_v, %t0
+    storel %p_spec, %t1
+    %t2 =l loadl %t1
+    %t3 =l call $nox_format_spec_check(l 1, l %t2)
+    %t4 =w ceql %t3, 0
+    jnz %t4, @if_then1, @if_end0
+@if_then1
+    %t5 =l add $str1, 16
+    %t6 =l loadl %t1
+    %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
+    %t8 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 9, %t8
+    %t9 =l add %t8, 8
+    storel $ValueError_vtable, %t9
+    %t10 =l add %t8, 16
+    storel 0, %t10
+    %t11 =l add %t8, 24
+    storel 0, %t11
+    call $Exception___init__(l %rt, l %t8, l %t7)
+    %t12 =w ceql %t7, 0
+    jnz %t12, @release_skip3, @release2
+@release2
+    %t13 =l sub %t7, 16
+    %t14 =l loadl %t13
+    %t15 =l sub %t14, 1
+    storel %t15, %t13
+    %t16 =w cslel %t15, 0
+    jnz %t16, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t7)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @ctor_init_failed8, @ctor_init_cont9
+@ctor_init_failed8
+    %t18 =w ceql %t8, 0
+    jnz %t18, @release_skip11, @release10
+@release10
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t8)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
+    jmp @ctor_init_cont9
+@ctor_init_cont9
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate13, @exc_continue14
+@exc_propagate13
+    ret 0
+@exc_continue14
+    %t20 =l add %t8, 24
+    storel 163, %t20
+    call $nox_raise(l %rt, l %t8, l 163)
+    %t21 =w call $nox_exception_pending(l %rt)
+    jnz %t21, @exc_propagate15, @exc_continue16
+@exc_propagate15
+    ret 0
+@exc_continue16
+    jmp @if_end0
+@if_end0
+    %t22 =d loadd %t0
+    %t23 =l loadl %t1
+    %t24 =l call $nox_format_float_raw(l %rt, d %t22, l %t23)
+    ret %t24
+@after_return17
+@fn_end18
+    ret 0
+}
+export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    storel %p_v, %t0
+    storel %p_spec, %t1
+    %t2 =l loadl %t1
+    %t3 =l call $nox_format_spec_check(l 2, l %t2)
+    %t4 =w ceql %t3, 0
+    jnz %t4, @if_then1, @if_end0
+@if_then1
+    %t5 =l add $str2, 16
+    %t6 =l loadl %t1
+    %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
+    %t8 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 9, %t8
+    %t9 =l add %t8, 8
+    storel $ValueError_vtable, %t9
+    %t10 =l add %t8, 16
+    storel 0, %t10
+    %t11 =l add %t8, 24
+    storel 0, %t11
+    call $Exception___init__(l %rt, l %t8, l %t7)
+    %t12 =w ceql %t7, 0
+    jnz %t12, @release_skip3, @release2
+@release2
+    %t13 =l sub %t7, 16
+    %t14 =l loadl %t13
+    %t15 =l sub %t14, 1
+    storel %t15, %t13
+    %t16 =w cslel %t15, 0
+    jnz %t16, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t7)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @ctor_init_failed8, @ctor_init_cont9
+@ctor_init_failed8
+    %t18 =w ceql %t8, 0
+    jnz %t18, @release_skip11, @release10
+@release10
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t8)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
+    jmp @ctor_init_cont9
+@ctor_init_cont9
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate13, @exc_continue14
+@exc_propagate13
+    ret 0
+@exc_continue14
+    %t20 =l add %t8, 24
+    storel 168, %t20
+    call $nox_raise(l %rt, l %t8, l 168)
+    %t21 =w call $nox_exception_pending(l %rt)
+    jnz %t21, @exc_propagate15, @exc_continue16
+@exc_propagate15
+    ret 0
+@exc_continue16
+    jmp @if_end0
+@if_end0
+    %t22 =l loadl %t0
+    %t23 =l loadl %t1
+    %t24 =l call $nox_format_str_raw(l %rt, l %t22, l %t23)
+    ret %t24
+@after_return17
+@fn_end18
+    ret 0
+}
 export function l $chr(l %rt, l %p_cp) {
 @start
     %t0 =l alloc8 8
@@ -1553,11 +1818,11 @@ export function l $ord(l %rt, l %p_s) {
     %t5 =w csltl %t4, 0
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str0, 16
+    %t6 =l add $str3, 16
     %t7 =l call $nox_rc_alloc(l %rt, l 32)
     storel 9, %t7
     %t8 =l add %t7, 8
-    storel 0, %t8
+    storel $ValueError_vtable, %t8
     %t9 =l add %t7, 16
     storel 0, %t9
     %t10 =l add %t7, 24
@@ -1582,8 +1847,8 @@ export function l $ord(l %rt, l %p_s) {
     ret 0
 @exc_continue8
     %t14 =l add %t7, 24
-    storel 152, %t14
-    call $nox_raise(l %rt, l %t7, l 152)
+    storel 177, %t14
+    call $nox_raise(l %rt, l %t7, l 177)
     %t15 =w call $nox_exception_pending(l %rt)
     jnz %t15, @exc_propagate9, @exc_continue10
 @exc_propagate9
@@ -1780,10 +2045,10 @@ export function l $build(l %rt) {
     storel 0, %t0
     storel %t1, %t0
     %t5 =l loadl %t0
-    %t6 =l add $str1, 16
-    %t7 =l add $str2, 16
-    %t8 =l add $str3, 16
-    %t9 =l add $str4, 16
+    %t6 =l add $str4, 16
+    %t7 =l add $str5, 16
+    %t8 =l add $str6, 16
+    %t9 =l add $str7, 16
     %t10 =l call $nox_dict_new(l %rt, w 1)
     call $nox_dict_set(l %rt, l %t10, w 1, w 1, w 0, l %t6, l %t7)
     call $nox_dict_set(l %rt, l %t10, w 1, w 1, w 0, l %t8, l %t9)
@@ -1892,10 +2157,10 @@ export function l $build(l %rt) {
     jmp @append_done5
 @append_done5
     %t64 =l loadl %t0
-    %t65 =l add $str5, 16
-    %t66 =l add $str6, 16
-    %t67 =l add $str7, 16
-    %t68 =l add $str8, 16
+    %t65 =l add $str8, 16
+    %t66 =l add $str9, 16
+    %t67 =l add $str10, 16
+    %t68 =l add $str11, 16
     %t69 =l call $nox_dict_new(l %rt, w 1)
     call $nox_dict_set(l %rt, l %t69, w 1, w 1, w 0, l %t65, l %t66)
     call $nox_dict_set(l %rt, l %t69, w 1, w 1, w 0, l %t67, l %t68)
@@ -2026,7 +2291,7 @@ export function l $render_records(l %rt, l %p_rows) {
     %t2 =l alloc8 8
     storel 0, %t1
     storel %p_rows, %t0
-    %t3 =l add $str9, 16
+    %t3 =l add $str12, 16
     %t4 =l loadl %t1
     %t5 =w ceql %t4, 0
     jnz %t5, @release_skip1, @release0
@@ -2064,15 +2329,15 @@ export function l $render_records(l %rt, l %p_rows) {
     %t17 =l add %t16, 16
     %t18 =l add %t14, %t17
     %t19 =l loadl %t18
-    %t20 =l add $str10, 16
+    %t20 =l add $str13, 16
     %t21 =w call $nox_dict_contains(l %rt, l %t19, w 1, l %t20)
     jnz %t21, @dict_get_ok10, @dict_get_err9
 @dict_get_err9
-    %t22 =l add $str11, 16
+    %t22 =l add $str14, 16
     %t23 =l call $nox_rc_alloc(l %rt, l 32)
     storel 5, %t23
     %t24 =l add %t23, 8
-    storel 0, %t24
+    storel $KeyError_vtable, %t24
     %t25 =l add %t23, 16
     storel 0, %t25
     %t26 =l add %t23, 24
@@ -2144,22 +2409,22 @@ export function l $render_records(l %rt, l %p_rows) {
     ret 0
 @dict_get_ok10
     %t43 =l call $nox_dict_get(l %rt, l %t19, w 1, l %t20)
-    %t44 =l add $str12, 16
+    %t44 =l add $str15, 16
     %t45 =l loadl %t0
     %t46 =l loadl %t2
     %t47 =l mul %t46, 8
     %t48 =l add %t47, 16
     %t49 =l add %t45, %t48
     %t50 =l loadl %t49
-    %t51 =l add $str13, 16
+    %t51 =l add $str16, 16
     %t52 =w call $nox_dict_contains(l %rt, l %t50, w 1, l %t51)
     jnz %t52, @dict_get_ok31, @dict_get_err30
 @dict_get_err30
-    %t53 =l add $str14, 16
+    %t53 =l add $str17, 16
     %t54 =l call $nox_rc_alloc(l %rt, l 32)
     storel 5, %t54
     %t55 =l add %t54, 8
-    storel 0, %t55
+    storel $KeyError_vtable, %t55
     %t56 =l add %t54, 16
     storel 0, %t56
     %t57 =l add %t54, 24
@@ -2231,7 +2496,7 @@ export function l $render_records(l %rt, l %p_rows) {
     ret 0
 @dict_get_ok31
     %t74 =l call $nox_dict_get(l %rt, l %t50, w 1, l %t51)
-    %t75 =l add $str15, 16
+    %t75 =l add $str18, 16
     %t76 =l loadl %t1
     %t77 =l call $nox_str_append(l %rt, l %t76, l %t43)
     %t78 =l call $nox_str_append(l %rt, l %t77, l %t44)
@@ -2340,10 +2605,10 @@ export function w $main(w %argc, l %argv) {
     %t18 =w cugel 0, %t17
     jnz %t18, @list_assign_err16, @list_assign_ok17
 @list_assign_ok17
-    %t28 =l add $str17, 16
-    %t29 =l add $str18, 16
-    %t30 =l add $str19, 16
-    %t31 =l add $str20, 16
+    %t28 =l add $str20, 16
+    %t29 =l add $str21, 16
+    %t30 =l add $str22, 16
+    %t31 =l add $str23, 16
     %t32 =l call $nox_dict_new(l %rt, w 1)
     call $nox_dict_set(l %rt, l %t32, w 1, w 1, w 0, l %t28, l %t29)
     call $nox_dict_set(l %rt, l %t32, w 1, w 1, w 0, l %t30, l %t31)
@@ -2404,7 +2669,7 @@ export function w $main(w %argc, l %argv) {
     %t48 =w csltl %t47, 5
     jnz %t48, @while_body40, @while_end41
 @while_body40
-    %t49 =l add $str21, 16
+    %t49 =l add $str24, 16
     %t50 =l loadl %t1
     %t51 =l call $nox_int_to_str(l %rt, l %t50)
     %t52 =l call $nox_dict_new(l %rt, w 1)
@@ -2431,7 +2696,7 @@ export function w $main(w %argc, l %argv) {
     storel %t59, %t1
     jmp @while_cond39
 @while_end41
-    %t60 =l add $str22, 16
+    %t60 =l add $str25, 16
     %t61 =w ceql %t60, 0
     jnz %t61, @print_none45, @print_some46
 @print_none45
@@ -2466,11 +2731,11 @@ export function w $main(w %argc, l %argv) {
 @fn_end54
     ret 0
 @list_assign_err16
-    %t19 =l add $str16, 16
+    %t19 =l add $str19, 16
     %t20 =l call $nox_rc_alloc(l %rt, l 32)
     storel 8, %t20
     %t21 =l add %t20, 8
-    storel 0, %t21
+    storel $IndexError_vtable, %t21
     %t22 =l add %t20, 16
     storel 0, %t22
     %t23 =l add %t20, 24
@@ -2739,7 +3004,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str23, 16
+    %t9 =l add $str26, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -2854,7 +3119,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str24, 16
+    %t9 =l add $str27, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -2869,7 +3134,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str25, 16
+    %t20 =l add $str28, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -2892,32 +3157,35 @@ export function l $__nox_reflect_decorator_handler(l %rt, l %i) {
 @start
     ret 0
 }
-data $str0 = { l 1073741824, l 2305843009213693976, b "ord() bos bir str alamaz", b 0 }
-data $str1 = { l 1073741824, l 2305843009213693956, b "name", b 0 }
-data $str2 = { l 1073741824, l 2305843009213693957, b "alice", b 0 }
-data $str3 = { l 1073741824, l 2305843009213693956, b "role", b 0 }
-data $str4 = { l 1073741824, l 2305843009213693957, b "admin", b 0 }
-data $str5 = { l 1073741824, l 2305843009213693956, b "name", b 0 }
-data $str6 = { l 1073741824, l 2305843009213693955, b "bob", b 0 }
-data $str7 = { l 1073741824, l 2305843009213693956, b "role", b 0 }
-data $str8 = { l 1073741824, l 2305843009213693956, b "user", b 0 }
-data $str9 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str10 = { l 1073741824, l 2305843009213693956, b "name", b 0 }
-data $str11 = { l 1073741824, l 2305843009213693970, b "anahtar bulunamadi", b 0 }
-data $str12 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
-data $str13 = { l 1073741824, l 2305843009213693956, b "role", b 0 }
+data $str0 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci: ", b 0 }
+data $str1 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci: ", b 0 }
+data $str2 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci: ", b 0 }
+data $str3 = { l 1073741824, l 2305843009213693976, b "ord() bos bir str alamaz", b 0 }
+data $str4 = { l 1073741824, l 2305843009213693956, b "name", b 0 }
+data $str5 = { l 1073741824, l 2305843009213693957, b "alice", b 0 }
+data $str6 = { l 1073741824, l 2305843009213693956, b "role", b 0 }
+data $str7 = { l 1073741824, l 2305843009213693957, b "admin", b 0 }
+data $str8 = { l 1073741824, l 2305843009213693956, b "name", b 0 }
+data $str9 = { l 1073741824, l 2305843009213693955, b "bob", b 0 }
+data $str10 = { l 1073741824, l 2305843009213693956, b "role", b 0 }
+data $str11 = { l 1073741824, l 2305843009213693956, b "user", b 0 }
+data $str12 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str13 = { l 1073741824, l 2305843009213693956, b "name", b 0 }
 data $str14 = { l 1073741824, l 2305843009213693970, b "anahtar bulunamadi", b 0 }
-data $str15 = { l 1073741824, l 2305843009213693953, b ";", b 0 }
-data $str16 = { l 1073741824, l 2305843009213693984, b "liste indeksi sinirlarin disinda", b 0 }
-data $str17 = { l 1073741824, l 2305843009213693956, b "name", b 0 }
-data $str18 = { l 1073741824, l 2305843009213693957, b "carol", b 0 }
-data $str19 = { l 1073741824, l 2305843009213693956, b "role", b 0 }
-data $str20 = { l 1073741824, l 2305843009213693957, b "owner", b 0 }
-data $str21 = { l 1073741824, l 2305843009213693953, b "k", b 0 }
-data $str22 = { l 1073741824, l 2305843009213693963, b "stress done", b 0 }
-data $str23 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str24 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str25 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str15 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
+data $str16 = { l 1073741824, l 2305843009213693956, b "role", b 0 }
+data $str17 = { l 1073741824, l 2305843009213693970, b "anahtar bulunamadi", b 0 }
+data $str18 = { l 1073741824, l 2305843009213693953, b ";", b 0 }
+data $str19 = { l 1073741824, l 2305843009213693984, b "liste indeksi sinirlarin disinda", b 0 }
+data $str20 = { l 1073741824, l 2305843009213693956, b "name", b 0 }
+data $str21 = { l 1073741824, l 2305843009213693957, b "carol", b 0 }
+data $str22 = { l 1073741824, l 2305843009213693956, b "role", b 0 }
+data $str23 = { l 1073741824, l 2305843009213693957, b "owner", b 0 }
+data $str24 = { l 1073741824, l 2305843009213693953, b "k", b 0 }
+data $str25 = { l 1073741824, l 2305843009213693963, b "stress done", b 0 }
+data $str26 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str27 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str28 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
 data $fmt_lit1 = { b "None", b 0 }
 data $fmt_lit2 = { b "None", b 0 }

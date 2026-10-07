@@ -6601,6 +6601,51 @@ pub const Checker = struct {
             if (at == .list and at.list.* == .float) c.callee.* = .{ .identifier = "sum_float" };
             return null;
         }
+        if (eq(u8, name, "format") and c.args.len == 2 and positional == 2 and !self.functions.contains("format")) {
+            // `format(x, spec)` / f-string `{x:spec}` → tür-bazlı biçimlendirici (bkz. `runtime/format.zig`).
+            const at = try self.checkExpr(ctx, c.args[0]);
+            const st = try self.checkExpr(ctx, c.args[1]);
+            if (st != .str) return self.fail(error.TypeMismatch, "'format' ikinci argümanı (belirteç) str olmalıdır", .{});
+            const empty_spec = c.args[1] == .string_lit and c.args[1].string_lit.len == 0;
+            switch (at) {
+                .int => c.callee.* = .{ .identifier = "__nox_format_int" },
+                .float => c.callee.* = .{ .identifier = "__nox_format_float" },
+                .str => c.callee.* = .{ .identifier = "__nox_format_str" },
+                .boolean, .class => {
+                    // Boş belirteçle `str(x)`; bool için sayısal belirteç `1 if x else 0` üzerinden.
+                    if (empty_spec or (at == .class and self.hasDunder(at, "__str__"))) {
+                        const callee = try self.allocator.create(ast.Expr);
+                        callee.* = .{ .identifier = "str" };
+                        const args = try self.allocator.alloc(ast.Expr, 1);
+                        args[0] = c.args[0];
+                        const repl: ast.Expr = .{ .call = .{ .callee = callee, .args = args } };
+                        const rt = try self.checkExpr(ctx, repl);
+                        try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+                        return rt;
+                    }
+                    if (at == .boolean) {
+                        const cond = try self.allocator.create(ast.Expr);
+                        cond.* = c.args[0];
+                        const one = try self.allocator.create(ast.Expr);
+                        one.* = .{ .int_lit = 1 };
+                        const zero = try self.allocator.create(ast.Expr);
+                        zero.* = .{ .int_lit = 0 };
+                        const callee = try self.allocator.create(ast.Expr);
+                        callee.* = .{ .identifier = "__nox_format_int" };
+                        const args = try self.allocator.alloc(ast.Expr, 2);
+                        args[0] = .{ .ternary = .{ .cond = cond, .then_expr = one, .else_expr = zero } };
+                        args[1] = c.args[1];
+                        const repl: ast.Expr = .{ .call = .{ .callee = callee, .args = args } };
+                        const rt = try self.checkExpr(ctx, repl);
+                        try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+                        return rt;
+                    }
+                    return self.fail(error.TypeMismatch, "'format' sınıf değerleri için `__str__` ve boş belirteç gerektirir", .{});
+                },
+                else => return self.fail(error.TypeMismatch, "'format' yalnızca int/float/str/bool (ve `__str__` olan sınıflar) için çalışır", .{}),
+            }
+            return null;
+        }
         if (eq(u8, name, "round") and c.args.len == 2) {
             c.callee.* = .{ .identifier = "__nox_round_digits" };
             return null;

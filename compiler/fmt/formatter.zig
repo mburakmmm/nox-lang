@@ -157,6 +157,8 @@ const Printer = struct {
     trivia: []const token.Trivia,
     trivia_idx: usize = 0,
     last_was_blank: bool = true, // dosya BAŞINDA baştaki boş satırı BASTIRIR
+    /// v1.164.0: f-string `{...}` ifadesi içindeyken iç içe str literalleri TEK tırnakla yazılır (klasik iç-içe-tırnak kuralı).
+    in_fstring: u32 = 0,
 
     fn indentTo(self: *Printer, depth: usize) FormatError!void {
         var i: usize = 0;
@@ -638,6 +640,51 @@ const Printer = struct {
         try self.printExprAt(e, 0, .loose);
     }
 
+    /// v1.164.0: f-string / `"...".format(...)` yüzey biçimini yeniden kurar: `f"...{ifade}...{ifade:belirteç}..."`.
+    fn printFString(self: *Printer, e: ast.Expr) FormatError!void {
+        try self.writer.writeAll("f\"");
+        try self.printFPieces(e);
+        try self.writer.writeAll("\"");
+    }
+
+    fn printFPieces(self: *Printer, e: ast.Expr) FormatError!void {
+        if (e == .binary and e.binary.fstring and e.binary.op == .add) {
+            try self.printFPieces(e.binary.left.*);
+            try self.printFPiece(e.binary.right.*);
+            return;
+        }
+        try self.printFPiece(e);
+    }
+
+    fn printFPiece(self: *Printer, pc: ast.Expr) FormatError!void {
+        switch (pc) {
+            .string_lit => |lit| for (lit) |c| switch (c) {
+                '{' => try self.writer.writeAll("{{"),
+                '}' => try self.writer.writeAll("}}"),
+                '"' => try self.writer.writeAll("\\\""),
+                '\\' => try self.writer.writeAll("\\\\"),
+                '\n' => try self.writer.writeAll("\\n"),
+                '\t' => try self.writer.writeAll("\\t"),
+                else => try self.writer.writeByte(c),
+            },
+            .call => |cl| {
+                try self.writer.writeAll("{");
+                self.in_fstring += 1;
+                if (cl.args.len > 0) try self.printExpr(cl.args[0]);
+                self.in_fstring -= 1;
+                if (cl.args.len == 2 and cl.args[1] == .string_lit) try self.writer.print(":{s}", .{cl.args[1].string_lit});
+                try self.writer.writeAll("}");
+            },
+            else => {
+                try self.writer.writeAll("{");
+                self.in_fstring += 1;
+                try self.printExpr(pc);
+                self.in_fstring -= 1;
+                try self.writer.writeAll("}");
+            },
+        }
+    }
+
     fn isAugOp(op: ast.BinaryOp) bool {
         return switch (op) {
             .add, .sub, .mul, .div, .floordiv, .mod, .pow, .bit_and, .bit_or, .bit_xor, .shl, .shr => true,
@@ -659,6 +706,7 @@ const Printer = struct {
     fn printExprAt(self: *Printer, e: ast.Expr, ctx_prec: u8, side: Side) FormatError!void {
         switch (e) {
             .binary => |b| {
+                if (b.fstring) return self.printFString(e);
                 // v1.162.0: zincirleme karşılaştırma yüzey biçimi — `and_(…, cmp(mid', op, rhs))` → `… op rhs`.
                 if (b.is_form and b.op == .and_ and b.right.* == .binary) {
                     const need_chain_parens = binPrec(.lt) < ctx_prec or (binPrec(.lt) == ctx_prec and side == .strict);
@@ -726,6 +774,7 @@ const Printer = struct {
             .none_lit => try self.writer.writeAll("None"),
             .identifier => |name| try self.writer.writeAll(name),
             .call => |c| {
+                if (c.fstring) return self.printFString(e);
                 try self.printExprAt(c.callee.*, 0, .loose);
                 try self.writer.writeAll("(");
                 // v1.162.0: tek argümanlı üreteç ifadesi (`sum(x for x in xs)`) köşeli parantezsiz yazılır.
@@ -869,6 +918,20 @@ const Printer = struct {
     /// TERSİ (yeniden kaçışlama) yapılır. Kanonik stil: HER ZAMAN çift
     /// tırnak (kaynakta tek tırnak kullanılmış olsa BİLE).
     fn printStringLit(self: *Printer, s: []const u8) FormatError!void {
+        if (self.in_fstring > 0) {
+            try self.writer.writeAll("'");
+            for (s) |c| {
+                switch (c) {
+                    '\'' => try self.writer.writeAll("\\'"),
+                    '\\' => try self.writer.writeAll("\\\\"),
+                    '\n' => try self.writer.writeAll("\\n"),
+                    '\t' => try self.writer.writeAll("\\t"),
+                    else => try self.writer.writeByte(c),
+                }
+            }
+            try self.writer.writeAll("'");
+            return;
+        }
         try self.writer.writeAll("\"");
         for (s) |c| {
             switch (c) {

@@ -37,6 +37,7 @@ pub const task_local = @import("async_rt/task_local.zig");
 /// bu satır davranışı DEĞİŞTİRMEZ, sadece isim-üzerinden ERİŞİLEBİLİR kılar.
 pub const chase_lev_deque = @import("async_rt/chase_lev_deque.zig");
 pub const str = @import("str.zig");
+pub const format = @import("format.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
 pub const list_ops = @import("collections/list_ops.zig");
@@ -450,6 +451,7 @@ comptime {
     _ = task_local;
     _ = chase_lev_deque;
     _ = str;
+    _ = format;
     _ = dict;
     _ = list_sort;
     _ = list_ops;

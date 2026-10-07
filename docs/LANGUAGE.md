@@ -560,6 +560,21 @@ Always available (no import): `print`, `len`, `input`, `abs`, `min`, `max`, `sum
 - Generator expressions are accepted as the single argument of a call and are evaluated eagerly as a list:
   `sum(x * x for x in xs if x > 0)`, `", ".join(str(x) for x in xs)`.
 
+## String formatting
+
+f-strings support Python's full format mini-language, and so do `format()` and `"...".format()`:
+
+```nox
+f"{x:5d} {x:03d} {name:<8} {name:^8} {pi:.3f} {big:,} {n:#x} {p:.1%} {x:*>6} {x!s}"
+format(3.14159, ".2f")
+"{} scored {:.1f}".format(name, score)       # {} / {0} / {name}, with format specs
+```
+
+`[[fill]align][sign][#][0][width][,|_][.precision][type]` with types `b c d n o x X e E f F g G %` (and `s` for strings).
+`f`/`%` round the exact binary value like Python (`f"{2.675:.2f}" == "2.67"`). An invalid specifier raises `ValueError`.
+Not supported: `!r`/`!a` conversions, nested `{}` inside a specifier, attribute/index fields in `str.format`
+(use an f-string), and `%`-style formatting. `print(e)` / `str(e)` / `f"{e}"` of an exception show its message.
+
 ## Statements and operators added for Python parity
 
 - `assert cond` / `assert cond, "message"` raises `AssertionError` (always on).

@@ -28866,3 +28866,15 @@ anahtarıyla). Bu yüzden sahiplik analizi, kalıtım (metodlar alt sınıf `Cla
 - Kapsam dışı: `__iter__`/`__next__` (özel sınıf üzerinde `for`), `__hash__` (sınıf dict anahtarı), yerinde operatörler (`__iadd__`; `+=` `__add__`e iner),
   konteyner içindeki nesnelerin `__str__` ile yazdırılması (yapısal yazdırma sürer).
 - Golden: `dunder_protocol` (Python referansıyla birebir).
+
+## 3.280 f-string biçim belirteçleri, `str.format`, `Exception.__str__`, formatter f-string koruması (v1.164.0)
+
+- **Runtime (`runtime/format.zig`):** Python biçim mini-dili `[[fill]align][sign][#][0][width][,|_][.precision][type]`; tamsayı `b c d n o x X` (+ ondalık tipler → float), ondalık
+  `e E f F g G %` ve tür-yok (precision yoksa `repr`), `str` `s`. `f`/`%` `std.math.big.int` ile TAM ikili değer üzerinde yarım→çifte yuvarlar; `e`/`g` Zig `{e}`
+  (en kısa gidiş-dönüş) kullanır. `nox_format_spec_check` önce çağrılır (geçersiz → `ValueError`). `core.nox`: `__nox_format_int/float/str`.
+- **Parser:** `{ifade:belirteç}` en dıştaki `:` ile ayrılır (`!s` kabul, `!r/!a` ve iç içe `{}` belirteç reddedilir) → `format(ifade, "belirteç")` çağrısı; `"…".format(…)` (literal
+  alıcı) parse zamanında aynı zincire. Checker `format(x, spec)`i tür-bazlı `__nox_format_*`a yönlendirir (`bool` boş belirteçle `str`, sayısalla `1 if x else 0`).
+- **Formatter:** `Binary.fstring`/`Call.fstring` bayrakları f-string zincirini işaretler; `printFString` onu `f"…{x:spec}…"` olarak yeniden yazar (iç string'ler tek tırnak). Eskiden
+  f-string'ler `"a" + str(x)` zincirine dönüşüyordu.
+- `class Exception.__str__` → `print(e)`/`str(e)` yalnızca mesaj (kalıtımla tüm istisnalar). Tüm IR snapshot'ları yenilendi (prelude değişti).
+- Golden: `fstring_format_specs`, `str_format_method`, `exception_str_message` (Python referansıyla birebir; `{e}` istisna mesajı).

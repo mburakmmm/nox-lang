@@ -413,3 +413,22 @@ test "fmt: v1.162.0 — assert, birleşik atama (öz/dizin), zincirleme karşıl
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: v1.164.0 — f-string ve str.format yüzey biçimi korunur (İDEMPOTENT)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "print(f\"a{x}b {x:>3}\")\n", .out = "print(f\"a{x}b {x:>3}\")\n" },
+        .{ .in = "print(f\"{x+1:03d}\")\n", .out = "print(f\"{x + 1:03d}\")\n" },
+        .{ .in = "s: str = f\"{{lit}} {d['k']}\"\n", .out = "s: str = f\"{{lit}} {d['k']}\"\n" },
+        .{ .in = "print(\"{} and {:>4}\".format(a, b))\n", .out = "print(f\"{a} and {b:>4}\")\n" },
+        .{ .in = "s: str = \"a\" + str(x) + \"b\"\n", .out = "s: str = \"a\" + str(x) + \"b\"\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

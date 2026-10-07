@@ -18,6 +18,7 @@ const ast = @import("parser/ast.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const token_mod = @import("lexer/token.zig");
+const span_mod = @import("span.zig");
 const TokenKind = token_mod.TokenKind;
 
 pub const Error = error{ SyntaxError, OutOfMemory };
@@ -103,7 +104,16 @@ pub fn parseSource(a: std.mem.Allocator, source: []const u8, label: []const u8) 
     var p = parser.Parser.init(a, tokens);
     return p.parseModule() catch |e| {
         if (e == error.OutOfMemory) return error.OutOfMemory;
-        if (p.last_diagnostic) |d| {
+        // `last_diagnostic` geri-izlemeli (backtracking) bir denemeden kalma BAYAT bir konum taşıyabilir: gerçek hata konumu hata anındaki
+        // geçerli simgedir; yalnızca tanılama o simgeyle tutarlıysa onun `expected` bilgisi kullanılır.
+        var diag: ?parser.ParserDiagnostic = p.last_diagnostic;
+        if (e == error.UnexpectedToken) {
+            const cur = p.tokens[@min(p.pos, p.tokens.len - 1)];
+            if (diag == null or diag.?.span.start_byte != cur.start_byte) {
+                diag = .{ .found = cur.kind, .span = span_mod.fromToken(cur), .note = if (diag) |old| old.note else null };
+            }
+        }
+        if (diag) |d| {
             const found: []const u8 = switch (d.found) {
                 .newline, .indent, .dedent, .eof => kindName(d.found),
                 else => if (d.span.end_byte <= source.len and d.span.start_byte < d.span.end_byte) source[d.span.start_byte..d.span.end_byte] else kindName(d.found),
@@ -112,7 +122,9 @@ pub fn parseSource(a: std.mem.Allocator, source: []const u8, label: []const u8) 
                 .newline, .indent, .dedent, .eof => "",
                 else => "'",
             };
-            if (d.expected) |exp| {
+            if (d.note) |note| {
+                report(source, label, d.span.start_line, d.span.start_col, "{s}", .{note});
+            } else if (d.expected) |exp| {
                 report(source, label, d.span.start_line, d.span.start_col, "beklenmeyen {s}{s}{s} (beklenen {s})", .{ quote, found, quote, kindName(exp) });
             } else {
                 report(source, label, d.span.start_line, d.span.start_col, "beklenmeyen {s}{s}{s}", .{ quote, found, quote });
