@@ -66,9 +66,9 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 ## 4. Dokümantasyon
 
-- [ ] **4.1** `docs/LANGUAGE.md` (330 satır) genişlet: tüm sözdizimi, tip kuralları, hata modeli.
+- [x] **4.1** `docs/LANGUAGE.md` genişletildi — v1.159.0 (sayısal kurallar, Optional, modüller, hata modeli, backend'ler). Yazarken 2 gerçek hata bulundu/düzeltildi (sıfıra bölme, print(Optional)).
 - [x] **4.2** Stdlib API başvurusu — v1.158.0 (`docs/STDLIB.md`, üretici betik `scripts/gen_stdlib_docs.py`). Öğretici ayrı.
-- [ ] **4.3** README benchmark tablosunu güncel sayılarla yenile (v1.142.x/1.143 ölçümleri, `benchmarks/cross_lang`).
+- [x] **4.3** Çapraz-dil benchmark yenilendi (v1.158.0 ölçümü; `benchmarks/` .gitignore'da olduğundan README özeti ana README'de).
 - [ ] **4.4** İngilizce spec/AGENTS özeti (şu an yalnızca Türkçe).
 
 ## 5. Güvenlik ve kalite

@@ -326,6 +326,94 @@ export function $IndexError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+export function $ZeroDivisionError_release(l %rt, l %p) {
+@start
+    %t0 =l sub %p, 8
+    %t1 =l loadl %t0
+    %t2 =l sub %t1, 1
+    storel %t2, %t0
+    %t4 =l and %t2, 4294967295
+    %t3 =w ceql %t4, 0
+    jnz %t3, @release_free0, @release_done1
+@release_free0
+    %t5 =l add %p, 16
+    %t6 =l loadl %t5
+    %t7 =w ceql %t6, 0
+    jnz %t7, @release_skip3, @release2
+@release2
+    %t8 =l sub %t6, 16
+    %t9 =l loadl %t8
+    %t10 =l sub %t9, 1
+    storel %t10, %t8
+    %t11 =w cslel %t10, 0
+    jnz %t11, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t6)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    call $nox_rc_free_payload(l %rt, l %p, l 32)
+    jmp @release_done1
+@release_done1
+    ret
+}
+export function w $ZeroDivisionError_eq(l %rt, l %a, l %b) {
+@start
+    %t0 =l add %a, 16
+    %t1 =l add %b, 16
+    %t2 =l loadl %t0
+    %t3 =l loadl %t1
+    %t4 =w call $strcmp(l %t2, l %t3)
+    jnz %t4, @classeq_mismatch0, @eqcmp_cont1
+@eqcmp_cont1
+    %t5 =l add %a, 24
+    %t6 =l add %b, 24
+    %t7 =l loadl %t5
+    %t8 =l loadl %t6
+    %t9 =w ceql %t7, %t8
+    jnz %t9, @eqcmp_cont2, @classeq_mismatch0
+@eqcmp_cont2
+    ret 1
+@classeq_mismatch0
+    ret 0
+}
+export function l $ZeroDivisionError_trace(l %rt, l %p) {
+@start
+    %t0 =l call $nox_trace_buf_alloc(l %rt, l 8)
+    storel 0, %t0
+    ret %t0
+}
+export function $ZeroDivisionError_gc_free(l %rt, l %p) {
+@start
+    %t0 =l add %p, 16
+    %t1 =l loadl %t0
+    %t2 =w ceql %t1, 0
+    jnz %t2, @release_skip1, @release0
+@release0
+    %t3 =l sub %t1, 16
+    %t4 =l loadl %t3
+    %t5 =l sub %t4, 1
+    storel %t5, %t3
+    %t6 =w cslel %t5, 0
+    jnz %t6, @str_free3, @str_free_skip4
+@str_free3
+    call $nox_str_free_now(l %rt, l %t1)
+    jmp @str_free_done5
+@str_free_skip4
+    jmp @str_free_done5
+@str_free_done5
+    jmp @release_done2
+@release_skip1
+    jmp @release_done2
+@release_done2
+    call $nox_rc_free_payload(l %rt, l %p, l 32)
+    ret
+}
 export function $KeyError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -1077,7 +1165,7 @@ export function $nox_buffer_Span___init__(l %rt, l %p_self, l %p_buf, l %p_start
 @if_then7
     %t15 =l add $str0, 16
     %t16 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 10, %t16
+    storel 11, %t16
     %t17 =l add %t16, 8
     storel 0, %t17
     %t18 =l add %t16, 16
@@ -1186,7 +1274,7 @@ export function w $nox_buffer_Span_get(l %rt, l %p_self, l %p_i) {
 @if_then4
     %t10 =l add $str1, 16
     %t11 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 10, %t11
+    storel 11, %t11
     %t12 =l add %t11, 8
     storel 0, %t12
     %t13 =l add %t11, 16
@@ -1267,7 +1355,7 @@ export function $nox_buffer_Span_set(l %rt, l %p_self, l %p_i, w %p_v) {
 @if_then4
     %t11 =l add $str2, 16
     %t12 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 10, %t12
+    storel 11, %t12
     %t13 =l add %t12, 8
     storel 0, %t13
     %t14 =l add %t12, 16
@@ -1618,7 +1706,7 @@ export function w $nox_buffer_Buffer_get(l %rt, l %p_self, l %p_i) {
 @list_idx_err0
     %t8 =l add $str3, 16
     %t9 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 10, %t9
+    storel 11, %t9
     %t10 =l add %t9, 8
     storel 0, %t10
     %t11 =l add %t9, 16
@@ -1675,7 +1763,7 @@ export function $nox_buffer_Buffer_set(l %rt, l %p_self, l %p_i, w %p_v) {
 @list_assign_err0
     %t9 =l add $str4, 16
     %t10 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 10, %t10
+    storel 11, %t10
     %t11 =l add %t10, 8
     storel 0, %t11
     %t12 =l add %t10, 16
@@ -1750,7 +1838,7 @@ export function $nox_buffer_Buffer_fill(l %rt, l %p_self, w %p_v) {
 @list_assign_err3
     %t17 =l add $str5, 16
     %t18 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 10, %t18
+    storel 11, %t18
     %t19 =l add %t18, 8
     storel 0, %t19
     %t20 =l add %t18, 16
@@ -1845,7 +1933,7 @@ export function $nox_buffer_Buffer_copy_from(l %rt, l %p_self, l %p_other) {
 @list_assign_err5
     %t24 =l add $str6, 16
     %t25 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 10, %t25
+    storel 11, %t25
     %t26 =l add %t25, 8
     storel 0, %t26
     %t27 =l add %t25, 16
@@ -2261,7 +2349,7 @@ export function w $nox_binary_BinaryReader_read_u16_le(l %rt, l %p_self) {
 @shift_err8
     %t24 =l add $str7, 16
     %t25 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t25
+    storel 12, %t25
     %t26 =l add %t25, 8
     storel 0, %t26
     %t27 =l add %t25, 16
@@ -2352,7 +2440,7 @@ export function w $nox_binary_BinaryReader_read_u16_be(l %rt, l %p_self) {
 @shift_err8
     %t23 =l add $str8, 16
     %t24 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t24
+    storel 12, %t24
     %t25 =l add %t24, 8
     storel 0, %t25
     %t26 =l add %t24, 16
@@ -2443,7 +2531,7 @@ export function w $nox_binary_BinaryReader_read_i16_le(l %rt, l %p_self) {
 @shift_err8
     %t24 =l add $str9, 16
     %t25 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t25
+    storel 12, %t25
     %t26 =l add %t25, 8
     storel 0, %t26
     %t27 =l add %t25, 16
@@ -2534,7 +2622,7 @@ export function w $nox_binary_BinaryReader_read_i16_be(l %rt, l %p_self) {
 @shift_err8
     %t23 =l add $str10, 16
     %t24 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t24
+    storel 12, %t24
     %t25 =l add %t24, 8
     storel 0, %t25
     %t26 =l add %t24, 16
@@ -2680,7 +2768,7 @@ export function w $nox_binary_BinaryReader_read_u32_le(l %rt, l %p_self) {
 @shift_err16
     %t42 =l add $str11, 16
     %t43 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t43
+    storel 12, %t43
     %t44 =l add %t43, 8
     storel 0, %t44
     %t45 =l add %t43, 16
@@ -2713,7 +2801,7 @@ export function w $nox_binary_BinaryReader_read_u32_le(l %rt, l %p_self) {
 @shift_err25
     %t58 =l add $str12, 16
     %t59 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t59
+    storel 12, %t59
     %t60 =l add %t59, 8
     storel 0, %t60
     %t61 =l add %t59, 16
@@ -2746,7 +2834,7 @@ export function w $nox_binary_BinaryReader_read_u32_le(l %rt, l %p_self) {
 @shift_err34
     %t74 =l add $str13, 16
     %t75 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t75
+    storel 12, %t75
     %t76 =l add %t75, 8
     storel 0, %t76
     %t77 =l add %t75, 16
@@ -2892,7 +2980,7 @@ export function w $nox_binary_BinaryReader_read_u32_be(l %rt, l %p_self) {
 @shift_err16
     %t41 =l add $str14, 16
     %t42 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t42
+    storel 12, %t42
     %t43 =l add %t42, 8
     storel 0, %t43
     %t44 =l add %t42, 16
@@ -2925,7 +3013,7 @@ export function w $nox_binary_BinaryReader_read_u32_be(l %rt, l %p_self) {
 @shift_err25
     %t56 =l add $str15, 16
     %t57 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t57
+    storel 12, %t57
     %t58 =l add %t57, 8
     storel 0, %t58
     %t59 =l add %t57, 16
@@ -2958,7 +3046,7 @@ export function w $nox_binary_BinaryReader_read_u32_be(l %rt, l %p_self) {
 @shift_err34
     %t72 =l add $str16, 16
     %t73 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t73
+    storel 12, %t73
     %t74 =l add %t73, 8
     storel 0, %t74
     %t75 =l add %t73, 16
@@ -3104,7 +3192,7 @@ export function w $nox_binary_BinaryReader_read_i32_le(l %rt, l %p_self) {
 @shift_err16
     %t42 =l add $str17, 16
     %t43 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t43
+    storel 12, %t43
     %t44 =l add %t43, 8
     storel 0, %t44
     %t45 =l add %t43, 16
@@ -3137,7 +3225,7 @@ export function w $nox_binary_BinaryReader_read_i32_le(l %rt, l %p_self) {
 @shift_err25
     %t58 =l add $str18, 16
     %t59 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t59
+    storel 12, %t59
     %t60 =l add %t59, 8
     storel 0, %t60
     %t61 =l add %t59, 16
@@ -3170,7 +3258,7 @@ export function w $nox_binary_BinaryReader_read_i32_le(l %rt, l %p_self) {
 @shift_err34
     %t74 =l add $str19, 16
     %t75 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t75
+    storel 12, %t75
     %t76 =l add %t75, 8
     storel 0, %t76
     %t77 =l add %t75, 16
@@ -3316,7 +3404,7 @@ export function w $nox_binary_BinaryReader_read_i32_be(l %rt, l %p_self) {
 @shift_err16
     %t41 =l add $str20, 16
     %t42 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t42
+    storel 12, %t42
     %t43 =l add %t42, 8
     storel 0, %t43
     %t44 =l add %t42, 16
@@ -3349,7 +3437,7 @@ export function w $nox_binary_BinaryReader_read_i32_be(l %rt, l %p_self) {
 @shift_err25
     %t56 =l add $str21, 16
     %t57 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t57
+    storel 12, %t57
     %t58 =l add %t57, 8
     storel 0, %t58
     %t59 =l add %t57, 16
@@ -3382,7 +3470,7 @@ export function w $nox_binary_BinaryReader_read_i32_be(l %rt, l %p_self) {
 @shift_err34
     %t72 =l add $str22, 16
     %t73 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t73
+    storel 12, %t73
     %t74 =l add %t73, 8
     storel 0, %t74
     %t75 =l add %t73, 16
@@ -3609,7 +3697,7 @@ export function l $nox_binary_BinaryReader_read_u64_le(l %rt, l %p_self) {
 @shift_err32
     %t54 =l add $str23, 16
     %t55 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t55
+    storel 12, %t55
     %t56 =l add %t55, 8
     storel 0, %t56
     %t57 =l add %t55, 16
@@ -3642,7 +3730,7 @@ export function l $nox_binary_BinaryReader_read_u64_le(l %rt, l %p_self) {
 @shift_err41
     %t69 =l add $str24, 16
     %t70 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t70
+    storel 12, %t70
     %t71 =l add %t70, 8
     storel 0, %t71
     %t72 =l add %t70, 16
@@ -3675,7 +3763,7 @@ export function l $nox_binary_BinaryReader_read_u64_le(l %rt, l %p_self) {
 @shift_err50
     %t84 =l add $str25, 16
     %t85 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t85
+    storel 12, %t85
     %t86 =l add %t85, 8
     storel 0, %t86
     %t87 =l add %t85, 16
@@ -3708,7 +3796,7 @@ export function l $nox_binary_BinaryReader_read_u64_le(l %rt, l %p_self) {
 @shift_err59
     %t99 =l add $str26, 16
     %t100 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t100
+    storel 12, %t100
     %t101 =l add %t100, 8
     storel 0, %t101
     %t102 =l add %t100, 16
@@ -3741,7 +3829,7 @@ export function l $nox_binary_BinaryReader_read_u64_le(l %rt, l %p_self) {
 @shift_err68
     %t114 =l add $str27, 16
     %t115 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t115
+    storel 12, %t115
     %t116 =l add %t115, 8
     storel 0, %t116
     %t117 =l add %t115, 16
@@ -3774,7 +3862,7 @@ export function l $nox_binary_BinaryReader_read_u64_le(l %rt, l %p_self) {
 @shift_err77
     %t129 =l add $str28, 16
     %t130 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t130
+    storel 12, %t130
     %t131 =l add %t130, 8
     storel 0, %t131
     %t132 =l add %t130, 16
@@ -3807,7 +3895,7 @@ export function l $nox_binary_BinaryReader_read_u64_le(l %rt, l %p_self) {
 @shift_err86
     %t144 =l add $str29, 16
     %t145 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t145
+    storel 12, %t145
     %t146 =l add %t145, 8
     storel 0, %t146
     %t147 =l add %t145, 16
@@ -4034,7 +4122,7 @@ export function l $nox_binary_BinaryReader_read_u64_be(l %rt, l %p_self) {
 @shift_err32
     %t53 =l add $str30, 16
     %t54 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t54
+    storel 12, %t54
     %t55 =l add %t54, 8
     storel 0, %t55
     %t56 =l add %t54, 16
@@ -4067,7 +4155,7 @@ export function l $nox_binary_BinaryReader_read_u64_be(l %rt, l %p_self) {
 @shift_err41
     %t67 =l add $str31, 16
     %t68 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t68
+    storel 12, %t68
     %t69 =l add %t68, 8
     storel 0, %t69
     %t70 =l add %t68, 16
@@ -4100,7 +4188,7 @@ export function l $nox_binary_BinaryReader_read_u64_be(l %rt, l %p_self) {
 @shift_err50
     %t82 =l add $str32, 16
     %t83 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t83
+    storel 12, %t83
     %t84 =l add %t83, 8
     storel 0, %t84
     %t85 =l add %t83, 16
@@ -4133,7 +4221,7 @@ export function l $nox_binary_BinaryReader_read_u64_be(l %rt, l %p_self) {
 @shift_err59
     %t97 =l add $str33, 16
     %t98 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t98
+    storel 12, %t98
     %t99 =l add %t98, 8
     storel 0, %t99
     %t100 =l add %t98, 16
@@ -4166,7 +4254,7 @@ export function l $nox_binary_BinaryReader_read_u64_be(l %rt, l %p_self) {
 @shift_err68
     %t112 =l add $str34, 16
     %t113 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t113
+    storel 12, %t113
     %t114 =l add %t113, 8
     storel 0, %t114
     %t115 =l add %t113, 16
@@ -4199,7 +4287,7 @@ export function l $nox_binary_BinaryReader_read_u64_be(l %rt, l %p_self) {
 @shift_err77
     %t127 =l add $str35, 16
     %t128 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t128
+    storel 12, %t128
     %t129 =l add %t128, 8
     storel 0, %t129
     %t130 =l add %t128, 16
@@ -4232,7 +4320,7 @@ export function l $nox_binary_BinaryReader_read_u64_be(l %rt, l %p_self) {
 @shift_err86
     %t142 =l add $str36, 16
     %t143 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t143
+    storel 12, %t143
     %t144 =l add %t143, 8
     storel 0, %t144
     %t145 =l add %t143, 16
@@ -4475,7 +4563,7 @@ export function l $nox_binary_BinaryReader_read_i64_le(l %rt, l %p_self) {
 @shift_err32
     %t70 =l add $str37, 16
     %t71 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t71
+    storel 12, %t71
     %t72 =l add %t71, 8
     storel 0, %t72
     %t73 =l add %t71, 16
@@ -4508,7 +4596,7 @@ export function l $nox_binary_BinaryReader_read_i64_le(l %rt, l %p_self) {
 @shift_err41
     %t85 =l add $str38, 16
     %t86 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t86
+    storel 12, %t86
     %t87 =l add %t86, 8
     storel 0, %t87
     %t88 =l add %t86, 16
@@ -4541,7 +4629,7 @@ export function l $nox_binary_BinaryReader_read_i64_le(l %rt, l %p_self) {
 @shift_err50
     %t100 =l add $str39, 16
     %t101 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t101
+    storel 12, %t101
     %t102 =l add %t101, 8
     storel 0, %t102
     %t103 =l add %t101, 16
@@ -4574,7 +4662,7 @@ export function l $nox_binary_BinaryReader_read_i64_le(l %rt, l %p_self) {
 @shift_err59
     %t115 =l add $str40, 16
     %t116 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t116
+    storel 12, %t116
     %t117 =l add %t116, 8
     storel 0, %t117
     %t118 =l add %t116, 16
@@ -4607,7 +4695,7 @@ export function l $nox_binary_BinaryReader_read_i64_le(l %rt, l %p_self) {
 @shift_err68
     %t130 =l add $str41, 16
     %t131 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t131
+    storel 12, %t131
     %t132 =l add %t131, 8
     storel 0, %t132
     %t133 =l add %t131, 16
@@ -4640,7 +4728,7 @@ export function l $nox_binary_BinaryReader_read_i64_le(l %rt, l %p_self) {
 @shift_err77
     %t145 =l add $str42, 16
     %t146 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t146
+    storel 12, %t146
     %t147 =l add %t146, 8
     storel 0, %t147
     %t148 =l add %t146, 16
@@ -4673,7 +4761,7 @@ export function l $nox_binary_BinaryReader_read_i64_le(l %rt, l %p_self) {
 @shift_err86
     %t160 =l add $str43, 16
     %t161 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t161
+    storel 12, %t161
     %t162 =l add %t161, 8
     storel 0, %t162
     %t163 =l add %t161, 16
@@ -4916,7 +5004,7 @@ export function l $nox_binary_BinaryReader_read_i64_be(l %rt, l %p_self) {
 @shift_err32
     %t69 =l add $str44, 16
     %t70 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t70
+    storel 12, %t70
     %t71 =l add %t70, 8
     storel 0, %t71
     %t72 =l add %t70, 16
@@ -4949,7 +5037,7 @@ export function l $nox_binary_BinaryReader_read_i64_be(l %rt, l %p_self) {
 @shift_err41
     %t83 =l add $str45, 16
     %t84 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t84
+    storel 12, %t84
     %t85 =l add %t84, 8
     storel 0, %t85
     %t86 =l add %t84, 16
@@ -4982,7 +5070,7 @@ export function l $nox_binary_BinaryReader_read_i64_be(l %rt, l %p_self) {
 @shift_err50
     %t98 =l add $str46, 16
     %t99 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t99
+    storel 12, %t99
     %t100 =l add %t99, 8
     storel 0, %t100
     %t101 =l add %t99, 16
@@ -5015,7 +5103,7 @@ export function l $nox_binary_BinaryReader_read_i64_be(l %rt, l %p_self) {
 @shift_err59
     %t113 =l add $str47, 16
     %t114 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t114
+    storel 12, %t114
     %t115 =l add %t114, 8
     storel 0, %t115
     %t116 =l add %t114, 16
@@ -5048,7 +5136,7 @@ export function l $nox_binary_BinaryReader_read_i64_be(l %rt, l %p_self) {
 @shift_err68
     %t128 =l add $str48, 16
     %t129 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t129
+    storel 12, %t129
     %t130 =l add %t129, 8
     storel 0, %t130
     %t131 =l add %t129, 16
@@ -5081,7 +5169,7 @@ export function l $nox_binary_BinaryReader_read_i64_be(l %rt, l %p_self) {
 @shift_err77
     %t143 =l add $str49, 16
     %t144 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t144
+    storel 12, %t144
     %t145 =l add %t144, 8
     storel 0, %t145
     %t146 =l add %t144, 16
@@ -5114,7 +5202,7 @@ export function l $nox_binary_BinaryReader_read_i64_be(l %rt, l %p_self) {
 @shift_err86
     %t158 =l add $str50, 16
     %t159 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t159
+    storel 12, %t159
     %t160 =l add %t159, 8
     storel 0, %t160
     %t161 =l add %t159, 16
@@ -5425,7 +5513,7 @@ export function $nox_binary_BinaryWriter_write_u16_le(l %rt, l %p_self, w %p_v) 
 @shift_err6
     %t20 =l add $str51, 16
     %t21 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t21
+    storel 12, %t21
     %t22 =l add %t21, 8
     storel 0, %t22
     %t23 =l add %t21, 16
@@ -5530,7 +5618,7 @@ export function $nox_binary_BinaryWriter_write_u16_be(l %rt, l %p_self, w %p_v) 
 @shift_err0
     %t7 =l add $str52, 16
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t8
+    storel 12, %t8
     %t9 =l add %t8, 8
     storel 0, %t9
     %t10 =l add %t8, 16
@@ -5635,7 +5723,7 @@ export function $nox_binary_BinaryWriter_write_i16_le(l %rt, l %p_self, w %p_v) 
 @shift_err6
     %t20 =l add $str53, 16
     %t21 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t21
+    storel 12, %t21
     %t22 =l add %t21, 8
     storel 0, %t22
     %t23 =l add %t21, 16
@@ -5740,7 +5828,7 @@ export function $nox_binary_BinaryWriter_write_i16_be(l %rt, l %p_self, w %p_v) 
 @shift_err0
     %t7 =l add $str54, 16
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t8
+    storel 12, %t8
     %t9 =l add %t8, 8
     storel 0, %t9
     %t10 =l add %t8, 16
@@ -5915,7 +6003,7 @@ export function $nox_binary_BinaryWriter_write_u32_le(l %rt, l %p_self, w %p_v) 
 @shift_err6
     %t20 =l add $str55, 16
     %t21 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t21
+    storel 12, %t21
     %t22 =l add %t21, 8
     storel 0, %t22
     %t23 =l add %t21, 16
@@ -5948,7 +6036,7 @@ export function $nox_binary_BinaryWriter_write_u32_le(l %rt, l %p_self, w %p_v) 
 @shift_err21
     %t47 =l add $str56, 16
     %t48 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t48
+    storel 12, %t48
     %t49 =l add %t48, 8
     storel 0, %t49
     %t50 =l add %t48, 16
@@ -5981,7 +6069,7 @@ export function $nox_binary_BinaryWriter_write_u32_le(l %rt, l %p_self, w %p_v) 
 @shift_err36
     %t74 =l add $str57, 16
     %t75 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t75
+    storel 12, %t75
     %t76 =l add %t75, 8
     storel 0, %t76
     %t77 =l add %t75, 16
@@ -6156,7 +6244,7 @@ export function $nox_binary_BinaryWriter_write_u32_be(l %rt, l %p_self, w %p_v) 
 @shift_err0
     %t7 =l add $str58, 16
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t8
+    storel 12, %t8
     %t9 =l add %t8, 8
     storel 0, %t9
     %t10 =l add %t8, 16
@@ -6189,7 +6277,7 @@ export function $nox_binary_BinaryWriter_write_u32_be(l %rt, l %p_self, w %p_v) 
 @shift_err15
     %t34 =l add $str59, 16
     %t35 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t35
+    storel 12, %t35
     %t36 =l add %t35, 8
     storel 0, %t36
     %t37 =l add %t35, 16
@@ -6222,7 +6310,7 @@ export function $nox_binary_BinaryWriter_write_u32_be(l %rt, l %p_self, w %p_v) 
 @shift_err30
     %t61 =l add $str60, 16
     %t62 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t62
+    storel 12, %t62
     %t63 =l add %t62, 8
     storel 0, %t63
     %t64 =l add %t62, 16
@@ -6397,7 +6485,7 @@ export function $nox_binary_BinaryWriter_write_i32_le(l %rt, l %p_self, w %p_v) 
 @shift_err6
     %t20 =l add $str61, 16
     %t21 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t21
+    storel 12, %t21
     %t22 =l add %t21, 8
     storel 0, %t22
     %t23 =l add %t21, 16
@@ -6430,7 +6518,7 @@ export function $nox_binary_BinaryWriter_write_i32_le(l %rt, l %p_self, w %p_v) 
 @shift_err21
     %t47 =l add $str62, 16
     %t48 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t48
+    storel 12, %t48
     %t49 =l add %t48, 8
     storel 0, %t49
     %t50 =l add %t48, 16
@@ -6463,7 +6551,7 @@ export function $nox_binary_BinaryWriter_write_i32_le(l %rt, l %p_self, w %p_v) 
 @shift_err36
     %t74 =l add $str63, 16
     %t75 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t75
+    storel 12, %t75
     %t76 =l add %t75, 8
     storel 0, %t76
     %t77 =l add %t75, 16
@@ -6638,7 +6726,7 @@ export function $nox_binary_BinaryWriter_write_i32_be(l %rt, l %p_self, w %p_v) 
 @shift_err0
     %t7 =l add $str64, 16
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t8
+    storel 12, %t8
     %t9 =l add %t8, 8
     storel 0, %t9
     %t10 =l add %t8, 16
@@ -6671,7 +6759,7 @@ export function $nox_binary_BinaryWriter_write_i32_be(l %rt, l %p_self, w %p_v) 
 @shift_err15
     %t34 =l add $str65, 16
     %t35 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t35
+    storel 12, %t35
     %t36 =l add %t35, 8
     storel 0, %t36
     %t37 =l add %t35, 16
@@ -6704,7 +6792,7 @@ export function $nox_binary_BinaryWriter_write_i32_be(l %rt, l %p_self, w %p_v) 
 @shift_err30
     %t61 =l add $str66, 16
     %t62 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t62
+    storel 12, %t62
     %t63 =l add %t62, 8
     storel 0, %t63
     %t64 =l add %t62, 16
@@ -6980,7 +7068,7 @@ export function $nox_binary_BinaryWriter_write_u64_le(l %rt, l %p_self, l %p_v) 
 @shift_err6
     %t16 =l add $str67, 16
     %t17 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t17
+    storel 12, %t17
     %t18 =l add %t17, 8
     storel 0, %t18
     %t19 =l add %t17, 16
@@ -7013,7 +7101,7 @@ export function $nox_binary_BinaryWriter_write_u64_le(l %rt, l %p_self, l %p_v) 
 @shift_err21
     %t38 =l add $str68, 16
     %t39 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t39
+    storel 12, %t39
     %t40 =l add %t39, 8
     storel 0, %t40
     %t41 =l add %t39, 16
@@ -7046,7 +7134,7 @@ export function $nox_binary_BinaryWriter_write_u64_le(l %rt, l %p_self, l %p_v) 
 @shift_err36
     %t60 =l add $str69, 16
     %t61 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t61
+    storel 12, %t61
     %t62 =l add %t61, 8
     storel 0, %t62
     %t63 =l add %t61, 16
@@ -7079,7 +7167,7 @@ export function $nox_binary_BinaryWriter_write_u64_le(l %rt, l %p_self, l %p_v) 
 @shift_err51
     %t82 =l add $str70, 16
     %t83 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t83
+    storel 12, %t83
     %t84 =l add %t83, 8
     storel 0, %t84
     %t85 =l add %t83, 16
@@ -7112,7 +7200,7 @@ export function $nox_binary_BinaryWriter_write_u64_le(l %rt, l %p_self, l %p_v) 
 @shift_err66
     %t104 =l add $str71, 16
     %t105 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t105
+    storel 12, %t105
     %t106 =l add %t105, 8
     storel 0, %t106
     %t107 =l add %t105, 16
@@ -7145,7 +7233,7 @@ export function $nox_binary_BinaryWriter_write_u64_le(l %rt, l %p_self, l %p_v) 
 @shift_err81
     %t126 =l add $str72, 16
     %t127 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t127
+    storel 12, %t127
     %t128 =l add %t127, 8
     storel 0, %t128
     %t129 =l add %t127, 16
@@ -7178,7 +7266,7 @@ export function $nox_binary_BinaryWriter_write_u64_le(l %rt, l %p_self, l %p_v) 
 @shift_err96
     %t148 =l add $str73, 16
     %t149 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t149
+    storel 12, %t149
     %t150 =l add %t149, 8
     storel 0, %t150
     %t151 =l add %t149, 16
@@ -7454,7 +7542,7 @@ export function $nox_binary_BinaryWriter_write_u64_be(l %rt, l %p_self, l %p_v) 
 @shift_err0
     %t7 =l add $str74, 16
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t8
+    storel 12, %t8
     %t9 =l add %t8, 8
     storel 0, %t9
     %t10 =l add %t8, 16
@@ -7487,7 +7575,7 @@ export function $nox_binary_BinaryWriter_write_u64_be(l %rt, l %p_self, l %p_v) 
 @shift_err15
     %t29 =l add $str75, 16
     %t30 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t30
+    storel 12, %t30
     %t31 =l add %t30, 8
     storel 0, %t31
     %t32 =l add %t30, 16
@@ -7520,7 +7608,7 @@ export function $nox_binary_BinaryWriter_write_u64_be(l %rt, l %p_self, l %p_v) 
 @shift_err30
     %t51 =l add $str76, 16
     %t52 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t52
+    storel 12, %t52
     %t53 =l add %t52, 8
     storel 0, %t53
     %t54 =l add %t52, 16
@@ -7553,7 +7641,7 @@ export function $nox_binary_BinaryWriter_write_u64_be(l %rt, l %p_self, l %p_v) 
 @shift_err45
     %t73 =l add $str77, 16
     %t74 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t74
+    storel 12, %t74
     %t75 =l add %t74, 8
     storel 0, %t75
     %t76 =l add %t74, 16
@@ -7586,7 +7674,7 @@ export function $nox_binary_BinaryWriter_write_u64_be(l %rt, l %p_self, l %p_v) 
 @shift_err60
     %t95 =l add $str78, 16
     %t96 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t96
+    storel 12, %t96
     %t97 =l add %t96, 8
     storel 0, %t97
     %t98 =l add %t96, 16
@@ -7619,7 +7707,7 @@ export function $nox_binary_BinaryWriter_write_u64_be(l %rt, l %p_self, l %p_v) 
 @shift_err75
     %t117 =l add $str79, 16
     %t118 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t118
+    storel 12, %t118
     %t119 =l add %t118, 8
     storel 0, %t119
     %t120 =l add %t118, 16
@@ -7652,7 +7740,7 @@ export function $nox_binary_BinaryWriter_write_u64_be(l %rt, l %p_self, l %p_v) 
 @shift_err90
     %t139 =l add $str80, 16
     %t140 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t140
+    storel 12, %t140
     %t141 =l add %t140, 8
     storel 0, %t141
     %t142 =l add %t140, 16
@@ -7944,7 +8032,7 @@ export function $nox_binary_BinaryWriter_write_i64_le(l %rt, l %p_self, l %p_v) 
 @shift_err6
     %t18 =l add $str81, 16
     %t19 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t19
+    storel 12, %t19
     %t20 =l add %t19, 8
     storel 0, %t20
     %t21 =l add %t19, 16
@@ -7977,7 +8065,7 @@ export function $nox_binary_BinaryWriter_write_i64_le(l %rt, l %p_self, l %p_v) 
 @shift_err21
     %t42 =l add $str82, 16
     %t43 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t43
+    storel 12, %t43
     %t44 =l add %t43, 8
     storel 0, %t44
     %t45 =l add %t43, 16
@@ -8010,7 +8098,7 @@ export function $nox_binary_BinaryWriter_write_i64_le(l %rt, l %p_self, l %p_v) 
 @shift_err36
     %t66 =l add $str83, 16
     %t67 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t67
+    storel 12, %t67
     %t68 =l add %t67, 8
     storel 0, %t68
     %t69 =l add %t67, 16
@@ -8043,7 +8131,7 @@ export function $nox_binary_BinaryWriter_write_i64_le(l %rt, l %p_self, l %p_v) 
 @shift_err51
     %t90 =l add $str84, 16
     %t91 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t91
+    storel 12, %t91
     %t92 =l add %t91, 8
     storel 0, %t92
     %t93 =l add %t91, 16
@@ -8076,7 +8164,7 @@ export function $nox_binary_BinaryWriter_write_i64_le(l %rt, l %p_self, l %p_v) 
 @shift_err66
     %t114 =l add $str85, 16
     %t115 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t115
+    storel 12, %t115
     %t116 =l add %t115, 8
     storel 0, %t116
     %t117 =l add %t115, 16
@@ -8109,7 +8197,7 @@ export function $nox_binary_BinaryWriter_write_i64_le(l %rt, l %p_self, l %p_v) 
 @shift_err81
     %t138 =l add $str86, 16
     %t139 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t139
+    storel 12, %t139
     %t140 =l add %t139, 8
     storel 0, %t140
     %t141 =l add %t139, 16
@@ -8142,7 +8230,7 @@ export function $nox_binary_BinaryWriter_write_i64_le(l %rt, l %p_self, l %p_v) 
 @shift_err96
     %t162 =l add $str87, 16
     %t163 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t163
+    storel 12, %t163
     %t164 =l add %t163, 8
     storel 0, %t164
     %t165 =l add %t163, 16
@@ -8434,7 +8522,7 @@ export function $nox_binary_BinaryWriter_write_i64_be(l %rt, l %p_self, l %p_v) 
 @shift_err0
     %t7 =l add $str88, 16
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t8
+    storel 12, %t8
     %t9 =l add %t8, 8
     storel 0, %t9
     %t10 =l add %t8, 16
@@ -8467,7 +8555,7 @@ export function $nox_binary_BinaryWriter_write_i64_be(l %rt, l %p_self, l %p_v) 
 @shift_err15
     %t31 =l add $str89, 16
     %t32 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t32
+    storel 12, %t32
     %t33 =l add %t32, 8
     storel 0, %t33
     %t34 =l add %t32, 16
@@ -8500,7 +8588,7 @@ export function $nox_binary_BinaryWriter_write_i64_be(l %rt, l %p_self, l %p_v) 
 @shift_err30
     %t55 =l add $str90, 16
     %t56 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t56
+    storel 12, %t56
     %t57 =l add %t56, 8
     storel 0, %t57
     %t58 =l add %t56, 16
@@ -8533,7 +8621,7 @@ export function $nox_binary_BinaryWriter_write_i64_be(l %rt, l %p_self, l %p_v) 
 @shift_err45
     %t79 =l add $str91, 16
     %t80 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t80
+    storel 12, %t80
     %t81 =l add %t80, 8
     storel 0, %t81
     %t82 =l add %t80, 16
@@ -8566,7 +8654,7 @@ export function $nox_binary_BinaryWriter_write_i64_be(l %rt, l %p_self, l %p_v) 
 @shift_err60
     %t103 =l add $str92, 16
     %t104 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t104
+    storel 12, %t104
     %t105 =l add %t104, 8
     storel 0, %t105
     %t106 =l add %t104, 16
@@ -8599,7 +8687,7 @@ export function $nox_binary_BinaryWriter_write_i64_be(l %rt, l %p_self, l %p_v) 
 @shift_err75
     %t127 =l add $str93, 16
     %t128 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t128
+    storel 12, %t128
     %t129 =l add %t128, 8
     storel 0, %t129
     %t130 =l add %t128, 16
@@ -8632,7 +8720,7 @@ export function $nox_binary_BinaryWriter_write_i64_be(l %rt, l %p_self, l %p_v) 
 @shift_err90
     %t151 =l add $str94, 16
     %t152 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t152
+    storel 12, %t152
     %t153 =l add %t152, 8
     storel 0, %t153
     %t154 =l add %t152, 16
@@ -8740,69 +8828,75 @@ export function l $nox_trace_dispatch(l %rt, l %tag, l %p) {
     %t1 =l call $Exception_trace(l %rt, l %p)
     ret %t1
 @trace_next1
-    %t2 =w ceql %tag, 11
+    %t2 =w ceql %tag, 12
     jnz %t2, @trace_case2, @trace_next3
 @trace_case2
     %t3 =l call $ValueError_trace(l %rt, l %p)
     ret %t3
 @trace_next3
-    %t4 =w ceql %tag, 10
+    %t4 =w ceql %tag, 11
     jnz %t4, @trace_case4, @trace_next5
 @trace_case4
     %t5 =l call $IndexError_trace(l %rt, l %p)
     ret %t5
 @trace_next5
-    %t6 =w ceql %tag, 9
+    %t6 =w ceql %tag, 10
     jnz %t6, @trace_case6, @trace_next7
 @trace_case6
-    %t7 =l call $KeyError_trace(l %rt, l %p)
+    %t7 =l call $ZeroDivisionError_trace(l %rt, l %p)
     ret %t7
 @trace_next7
-    %t8 =w ceql %tag, 8
+    %t8 =w ceql %tag, 9
     jnz %t8, @trace_case8, @trace_next9
 @trace_case8
-    %t9 =l call $HPyError_trace(l %rt, l %p)
+    %t9 =l call $KeyError_trace(l %rt, l %p)
     ret %t9
 @trace_next9
-    %t10 =w ceql %tag, 7
+    %t10 =w ceql %tag, 8
     jnz %t10, @trace_case10, @trace_next11
 @trace_case10
-    %t11 =l call $CancelledError_trace(l %rt, l %p)
+    %t11 =l call $HPyError_trace(l %rt, l %p)
     ret %t11
 @trace_next11
-    %t12 =w ceql %tag, 6
+    %t12 =w ceql %tag, 7
     jnz %t12, @trace_case12, @trace_next13
 @trace_case12
-    %t13 =l call $JsonValue_trace(l %rt, l %p)
+    %t13 =l call $CancelledError_trace(l %rt, l %p)
     ret %t13
 @trace_next13
-    %t14 =w ceql %tag, 5
+    %t14 =w ceql %tag, 6
     jnz %t14, @trace_case14, @trace_next15
 @trace_case14
-    %t15 =l call $nox_buffer_Span_trace(l %rt, l %p)
+    %t15 =l call $JsonValue_trace(l %rt, l %p)
     ret %t15
 @trace_next15
-    %t16 =w ceql %tag, 4
+    %t16 =w ceql %tag, 5
     jnz %t16, @trace_case16, @trace_next17
 @trace_case16
-    %t17 =l call $nox_buffer_Buffer_trace(l %rt, l %p)
+    %t17 =l call $nox_buffer_Span_trace(l %rt, l %p)
     ret %t17
 @trace_next17
-    %t18 =w ceql %tag, 3
+    %t18 =w ceql %tag, 4
     jnz %t18, @trace_case18, @trace_next19
 @trace_case18
-    %t19 =l call $nox_binary_BinaryReader_trace(l %rt, l %p)
+    %t19 =l call $nox_buffer_Buffer_trace(l %rt, l %p)
     ret %t19
 @trace_next19
-    %t20 =w ceql %tag, 2
+    %t20 =w ceql %tag, 3
     jnz %t20, @trace_case20, @trace_next21
 @trace_case20
-    %t21 =l call $nox_binary_BinaryWriter_trace(l %rt, l %p)
+    %t21 =l call $nox_binary_BinaryReader_trace(l %rt, l %p)
     ret %t21
 @trace_next21
-    %t22 =l call $nox_trace_buf_alloc(l %rt, l 8)
-    storel 0, %t22
-    ret %t22
+    %t22 =w ceql %tag, 2
+    jnz %t22, @trace_case22, @trace_next23
+@trace_case22
+    %t23 =l call $nox_binary_BinaryWriter_trace(l %rt, l %p)
+    ret %t23
+@trace_next23
+    %t24 =l call $nox_trace_buf_alloc(l %rt, l 8)
+    storel 0, %t24
+    ret %t24
 }
 export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
 @start
@@ -8812,66 +8906,72 @@ export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
     call $Exception_gc_free(l %rt, l %p)
     ret
 @gc_free_next1
-    %t1 =w ceql %tag, 11
+    %t1 =w ceql %tag, 12
     jnz %t1, @gc_free_case2, @gc_free_next3
 @gc_free_case2
     call $ValueError_gc_free(l %rt, l %p)
     ret
 @gc_free_next3
-    %t2 =w ceql %tag, 10
+    %t2 =w ceql %tag, 11
     jnz %t2, @gc_free_case4, @gc_free_next5
 @gc_free_case4
     call $IndexError_gc_free(l %rt, l %p)
     ret
 @gc_free_next5
-    %t3 =w ceql %tag, 9
+    %t3 =w ceql %tag, 10
     jnz %t3, @gc_free_case6, @gc_free_next7
 @gc_free_case6
-    call $KeyError_gc_free(l %rt, l %p)
+    call $ZeroDivisionError_gc_free(l %rt, l %p)
     ret
 @gc_free_next7
-    %t4 =w ceql %tag, 8
+    %t4 =w ceql %tag, 9
     jnz %t4, @gc_free_case8, @gc_free_next9
 @gc_free_case8
-    call $HPyError_gc_free(l %rt, l %p)
+    call $KeyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next9
-    %t5 =w ceql %tag, 7
+    %t5 =w ceql %tag, 8
     jnz %t5, @gc_free_case10, @gc_free_next11
 @gc_free_case10
-    call $CancelledError_gc_free(l %rt, l %p)
+    call $HPyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next11
-    %t6 =w ceql %tag, 6
+    %t6 =w ceql %tag, 7
     jnz %t6, @gc_free_case12, @gc_free_next13
 @gc_free_case12
-    call $JsonValue_gc_free(l %rt, l %p)
+    call $CancelledError_gc_free(l %rt, l %p)
     ret
 @gc_free_next13
-    %t7 =w ceql %tag, 5
+    %t7 =w ceql %tag, 6
     jnz %t7, @gc_free_case14, @gc_free_next15
 @gc_free_case14
-    call $nox_buffer_Span_gc_free(l %rt, l %p)
+    call $JsonValue_gc_free(l %rt, l %p)
     ret
 @gc_free_next15
-    %t8 =w ceql %tag, 4
+    %t8 =w ceql %tag, 5
     jnz %t8, @gc_free_case16, @gc_free_next17
 @gc_free_case16
-    call $nox_buffer_Buffer_gc_free(l %rt, l %p)
+    call $nox_buffer_Span_gc_free(l %rt, l %p)
     ret
 @gc_free_next17
-    %t9 =w ceql %tag, 3
+    %t9 =w ceql %tag, 4
     jnz %t9, @gc_free_case18, @gc_free_next19
 @gc_free_case18
-    call $nox_binary_BinaryReader_gc_free(l %rt, l %p)
+    call $nox_buffer_Buffer_gc_free(l %rt, l %p)
     ret
 @gc_free_next19
-    %t10 =w ceql %tag, 2
+    %t10 =w ceql %tag, 3
     jnz %t10, @gc_free_case20, @gc_free_next21
 @gc_free_case20
-    call $nox_binary_BinaryWriter_gc_free(l %rt, l %p)
+    call $nox_binary_BinaryReader_gc_free(l %rt, l %p)
     ret
 @gc_free_next21
+    %t11 =w ceql %tag, 2
+    jnz %t11, @gc_free_case22, @gc_free_next23
+@gc_free_case22
+    call $nox_binary_BinaryWriter_gc_free(l %rt, l %p)
+    ret
+@gc_free_next23
     ret
 }
 export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
@@ -8882,72 +8982,79 @@ export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
     call $Exception_release(l %rt, l %p)
     ret
 @class_release_next1
-    %t1 =w ceql %tag, 11
+    %t1 =w ceql %tag, 12
     jnz %t1, @class_release_case2, @class_release_next3
 @class_release_case2
     call $ValueError_release(l %rt, l %p)
     ret
 @class_release_next3
-    %t2 =w ceql %tag, 10
+    %t2 =w ceql %tag, 11
     jnz %t2, @class_release_case4, @class_release_next5
 @class_release_case4
     call $IndexError_release(l %rt, l %p)
     ret
 @class_release_next5
-    %t3 =w ceql %tag, 9
+    %t3 =w ceql %tag, 10
     jnz %t3, @class_release_case6, @class_release_next7
 @class_release_case6
-    call $KeyError_release(l %rt, l %p)
+    call $ZeroDivisionError_release(l %rt, l %p)
     ret
 @class_release_next7
-    %t4 =w ceql %tag, 8
+    %t4 =w ceql %tag, 9
     jnz %t4, @class_release_case8, @class_release_next9
 @class_release_case8
-    call $HPyError_release(l %rt, l %p)
+    call $KeyError_release(l %rt, l %p)
     ret
 @class_release_next9
-    %t5 =w ceql %tag, 7
+    %t5 =w ceql %tag, 8
     jnz %t5, @class_release_case10, @class_release_next11
 @class_release_case10
-    call $CancelledError_release(l %rt, l %p)
+    call $HPyError_release(l %rt, l %p)
     ret
 @class_release_next11
-    %t6 =w ceql %tag, 6
+    %t6 =w ceql %tag, 7
     jnz %t6, @class_release_case12, @class_release_next13
 @class_release_case12
-    call $JsonValue_release(l %rt, l %p)
+    call $CancelledError_release(l %rt, l %p)
     ret
 @class_release_next13
-    %t7 =w ceql %tag, 5
+    %t7 =w ceql %tag, 6
     jnz %t7, @class_release_case14, @class_release_next15
 @class_release_case14
-    call $nox_buffer_Span_release(l %rt, l %p)
+    call $JsonValue_release(l %rt, l %p)
     ret
 @class_release_next15
-    %t8 =w ceql %tag, 4
+    %t8 =w ceql %tag, 5
     jnz %t8, @class_release_case16, @class_release_next17
 @class_release_case16
-    call $nox_buffer_Buffer_release(l %rt, l %p)
+    call $nox_buffer_Span_release(l %rt, l %p)
     ret
 @class_release_next17
-    %t9 =w ceql %tag, 3
+    %t9 =w ceql %tag, 4
     jnz %t9, @class_release_case18, @class_release_next19
 @class_release_case18
-    call $nox_binary_BinaryReader_release(l %rt, l %p)
+    call $nox_buffer_Buffer_release(l %rt, l %p)
     ret
 @class_release_next19
-    %t10 =w ceql %tag, 2
+    %t10 =w ceql %tag, 3
     jnz %t10, @class_release_case20, @class_release_next21
 @class_release_case20
-    call $nox_binary_BinaryWriter_release(l %rt, l %p)
+    call $nox_binary_BinaryReader_release(l %rt, l %p)
     ret
 @class_release_next21
+    %t11 =w ceql %tag, 2
+    jnz %t11, @class_release_case22, @class_release_next23
+@class_release_case22
+    call $nox_binary_BinaryWriter_release(l %rt, l %p)
+    ret
+@class_release_next23
     ret
 }
 data $__nox_classname_unknown = { b "bilinmeyen sinif", b 0 }
 data $__nox_classname_Exception = { b "Exception", b 0 }
 data $__nox_classname_ValueError = { b "ValueError", b 0 }
 data $__nox_classname_IndexError = { b "IndexError", b 0 }
+data $__nox_classname_ZeroDivisionError = { b "ZeroDivisionError", b 0 }
 data $__nox_classname_KeyError = { b "KeyError", b 0 }
 data $__nox_classname_HPyError = { b "HPyError", b 0 }
 data $__nox_classname_CancelledError = { b "CancelledError", b 0 }
@@ -8963,56 +9070,61 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_case0
     ret $__nox_classname_Exception
 @class_name_next1
-    %t1 =w ceql %tag, 11
+    %t1 =w ceql %tag, 12
     jnz %t1, @class_name_case2, @class_name_next3
 @class_name_case2
     ret $__nox_classname_ValueError
 @class_name_next3
-    %t2 =w ceql %tag, 10
+    %t2 =w ceql %tag, 11
     jnz %t2, @class_name_case4, @class_name_next5
 @class_name_case4
     ret $__nox_classname_IndexError
 @class_name_next5
-    %t3 =w ceql %tag, 9
+    %t3 =w ceql %tag, 10
     jnz %t3, @class_name_case6, @class_name_next7
 @class_name_case6
-    ret $__nox_classname_KeyError
+    ret $__nox_classname_ZeroDivisionError
 @class_name_next7
-    %t4 =w ceql %tag, 8
+    %t4 =w ceql %tag, 9
     jnz %t4, @class_name_case8, @class_name_next9
 @class_name_case8
-    ret $__nox_classname_HPyError
+    ret $__nox_classname_KeyError
 @class_name_next9
-    %t5 =w ceql %tag, 7
+    %t5 =w ceql %tag, 8
     jnz %t5, @class_name_case10, @class_name_next11
 @class_name_case10
-    ret $__nox_classname_CancelledError
+    ret $__nox_classname_HPyError
 @class_name_next11
-    %t6 =w ceql %tag, 6
+    %t6 =w ceql %tag, 7
     jnz %t6, @class_name_case12, @class_name_next13
 @class_name_case12
-    ret $__nox_classname_JsonValue
+    ret $__nox_classname_CancelledError
 @class_name_next13
-    %t7 =w ceql %tag, 5
+    %t7 =w ceql %tag, 6
     jnz %t7, @class_name_case14, @class_name_next15
 @class_name_case14
-    ret $__nox_classname_nox_buffer_Span
+    ret $__nox_classname_JsonValue
 @class_name_next15
-    %t8 =w ceql %tag, 4
+    %t8 =w ceql %tag, 5
     jnz %t8, @class_name_case16, @class_name_next17
 @class_name_case16
-    ret $__nox_classname_nox_buffer_Buffer
+    ret $__nox_classname_nox_buffer_Span
 @class_name_next17
-    %t9 =w ceql %tag, 3
+    %t9 =w ceql %tag, 4
     jnz %t9, @class_name_case18, @class_name_next19
 @class_name_case18
-    ret $__nox_classname_nox_binary_BinaryReader
+    ret $__nox_classname_nox_buffer_Buffer
 @class_name_next19
-    %t10 =w ceql %tag, 2
+    %t10 =w ceql %tag, 3
     jnz %t10, @class_name_case20, @class_name_next21
 @class_name_case20
-    ret $__nox_classname_nox_binary_BinaryWriter
+    ret $__nox_classname_nox_binary_BinaryReader
 @class_name_next21
+    %t11 =w ceql %tag, 2
+    jnz %t11, @class_name_case22, @class_name_next23
+@class_name_case22
+    ret $__nox_classname_nox_binary_BinaryWriter
+@class_name_next23
     ret $__nox_classname_unknown
 }
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {

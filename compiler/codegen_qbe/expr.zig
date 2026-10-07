@@ -11,6 +11,7 @@ const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
 const layout = @import("layout.zig");
+const calls = @import("calls.zig");
 
 const Codegen = codegen.Codegen;
 const Value = types.Value;
@@ -1816,8 +1817,12 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         .add => if (fixed_kind) |k| self.emitCheckedFixedBin("add", l, r, k) else self.emitBin("add", l, r, common),
         .sub => if (fixed_kind) |k| self.emitCheckedFixedBin("sub", l, r, k) else self.emitBin("sub", l, r, common),
         .mul => if (fixed_kind) |k| self.emitCheckedFixedBin("mul", l, r, k) else self.emitBin("mul", l, r, common),
-        .floordiv => self.genFloorDiv(l, r, common),
+        .floordiv => blk: {
+            try emitZeroDivisorCheck(self, r, common);
+            break :blk self.genFloorDiv(l, r, common);
+        },
         .mod => blk: {
+            try emitZeroDivisorCheck(self, r, common);
             const result = try self.genMod(l, r, common);
             // Bkz. genBinary'nin BAŞINDAKİ önbellek KONTROLÜYLE eşleşen
             // desen — YALNIZCA AYNI şekle (`isim % tam-sayı-sabiti`)
@@ -1943,6 +1948,16 @@ pub fn genCheckedShift(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) C
     return .{ .text = t, .qtype = l0.qtype, .fixed_int = fixed_kind };
 }
 
+/// v1.159.0: tamsayı `//` ve `%` sıfır bölenle `ZeroDivisionError` fırlatır (önceden LLVM'de tanımsız davranış,
+/// QBE'de çöp/0). Sabit pozitif bölen kontrolsüz kalır. `float` bölme IEEE (inf/nan) olarak kalır.
+fn emitZeroDivisorCheck(self: *Codegen, r: Value, common: QbeType) CodegenError!void {
+    if (common == .d) return;
+    if (optimizations.constPositiveDivisor(r) != null) return;
+    const bad = try self.newTemp();
+    try self.qbeOp2Imm(bad, .w, if (r.qtype == .l) "ceql" else "ceqw", r.text, 0);
+    try calls.emitColdListError(self, bad, "ZeroDivisionError", "sifira bolme", &.{});
+}
+
 pub fn genFloorDiv(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!Value {
     if (common == .d) {
         const divided = try self.emitBin("div", l, r, .d);
@@ -2022,8 +2037,48 @@ pub fn widenFixedIntForPrint(self: *Codegen, v: Value, kind: types.FixedIntKind)
 /// biçiminden BİLEREK FARKLI) DEĞİŞMEMİŞ eski (satır-sonu dahil) format
 /// sabitlerini kullanır.
 pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
+    if (printMayBeNull(v)) return genPrintNullGuarded(self, v, false);
+    return genPrintRaw(self, v);
+}
+
+/// v1.159.0: `str | None` / `list[T] | None` / `Sınıf | None` / `int | None` değerleri Python gibi
+/// `None` basar (önceden null işaretçi `printf("%s")`/sınıf-alan yüklemesine gidiyor, `int | None` ise
+/// kutunun adresini basıyordu). Boş (null) işaretçi hiçbir Optional-OLMAYAN yığın değerinde oluşamaz,
+/// bu yüzden koşulsuz çalışma-zamanı kontrolü güvenlidir.
+fn printMayBeNull(v: Value) bool {
+    return v.heap == .str or v.heap == .list or v.heap == .class or v.heap == .boxed_scalar;
+}
+
+fn genPrintNullGuarded(self: *Codegen, v: Value, frag: bool) CodegenError!void {
+    const is_null = try self.newTemp();
+    try self.qbeOp2Imm(is_null, .w, "ceql", v.text, 0);
+    const none_label = try self.newLabel("print_none");
+    const val_label = try self.newLabel("print_some");
+    const done_label = try self.newLabel("print_opt_done");
+    try self.qbeJnz(is_null, none_label, val_label);
+    try self.qbeLabel(none_label);
+    const none_sym = try self.internFmtString("None");
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = none_sym }});
+    if (!frag) try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(val_label);
+    if (v.heap == .boxed_scalar) {
+        const inner = try self.newTemp();
+        try self.qbeLoad(inner, v.elem_qtype, v.elem_qtype, v.text);
+        const iv: Value = .{ .text = inner, .qtype = v.elem_qtype };
+        if (frag) try genPrintFragmentRaw(self, iv) else try genPrintRaw(self, iv);
+    } else if (frag) {
+        try genPrintFragmentRaw(self, v);
+    } else {
+        try genPrintRaw(self, v);
+    }
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(done_label);
+}
+
+fn genPrintRaw(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .list or v.heap == .class) {
-        try self.genPrintFragment(v);
+        try genPrintFragmentRaw(self, v);
         try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
         return;
     }
@@ -2061,6 +2116,11 @@ pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
 /// (bir listenin/sınıfın elemanı/alanı yine bir liste/sınıf olabilir);
 /// yalnızca en dıştaki `genPrint` çağrısı bir satır sonu ekler.
 pub fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
+    if (printMayBeNull(v)) return genPrintNullGuarded(self, v, true);
+    return genPrintFragmentRaw(self, v);
+}
+
+fn genPrintFragmentRaw(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .list) return self.genPrintList(v);
     if (v.heap == .class) return self.genPrintClass(v);
     if (v.fixed_int) |kind| {

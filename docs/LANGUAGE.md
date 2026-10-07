@@ -16,9 +16,15 @@ Turkish spec is authoritative — file an issue.*
 Nox combines Python's syntactic familiarity with the performance and
 determinism of a systems language. It is fully **ahead-of-time
 compiled**: there is no interpreter and no garbage collector. Source
-compiles to [QBE](https://c9x.me/compile/) IR, which QBE lowers to native
-machine code; a small runtime written in Zig handles memory management,
-error propagation, and the C/WASM bridge.
+is type-checked, lowered to a typed IR, and emitted through one of two
+interchangeable backends — **LLVM** (the default on hosted macOS/Linux
+when `clang` is available; `clang -O2`) or [QBE](https://c9x.me/compile/)
+(`--backend qbe`; also used automatically for freestanding/`--target`
+builds, Windows, and when `clang` is missing). A small runtime written in
+Zig handles memory management, error propagation, and the C/WASM bridge.
+Both backends are exercised by the whole test corpus and must agree on
+program output; the one intentional difference is fixed-width integer
+overflow (see [Numeric rules](#numeric-rules)).
 
 Where Nox differs from Python:
 
@@ -203,6 +209,53 @@ attribute manipulation (`setattr`, `exec`, runtime class generation).
 (f-strings, augmented assignment on variables, single inheritance and
 metadata-only decorators — see `nox.reflect` — are supported.)
 
+## Numeric rules
+
+- `int` is a signed 64-bit integer (plain `int` arithmetic wraps on overflow); `float` is an IEEE-754 double; `bool` is
+  its own type (it never silently becomes an `int`).
+- `int` and `float` mix in arithmetic (the result is `float`); `int → float` is
+  also implicit on assignment. Everything else is explicit: `float(x)`, `int(x)`
+  (from `float`, truncating, or from `str`; bad input raises `ValueError`), `str(x)`
+  (from `int`/`float`/`bool`/`str`).
+- `//` floors and `%` takes the sign of the divisor, like Python; `/` always
+  yields a `float`; `**` works on `int`/`float`. Bitwise operators
+  (`& | ^ ~ << >>`) work on `int` and fixed-width integers; a shift count outside
+  `[0, width)` raises `ValueError`.
+- **Division by zero:** integer `//` and `%` with a zero divisor raise
+  `ZeroDivisionError` (catchable, like any exception). Floating-point `/`, `//`
+  and `%` follow IEEE-754 instead (`inf`/`nan`) and never raise.
+- **Fixed-width integers** `i8 i16 i32 i64 isize u8 u16 u32 u64 usize` exist for byte-level
+  work, binary formats and `lowlevel` code. They never mix implicitly with each
+  other or with `int`/`float` (`u8(10)`, `int(b)` convert explicitly). **Overflow
+  differs by backend:** the LLVM backend (default) wraps around; the QBE
+  backend traps with a message. Do not rely on either; mask explicitly when you
+  mean to wrap.
+- `list[u8]` etc. are byte-packed.
+
+## Optionals
+
+`T | None` is available for `str`, `list`, `dict`, classes and the scalar types
+(`int | None`, `float | None`, `bool | None`). A scalar optional is boxed
+internally; this is invisible. Use `x is None` / `x is not None` (or `== None`)
+and the narrowing rules above to use the value; reading an un-narrowed optional
+where a plain `T` is needed is a compile error. `print(x)` shows `None` or the
+value, but `str(x)`/f-strings need a narrowed value.
+
+## Modules and imports
+
+```nox
+import nox.strings              # qualified use: nox.strings.upper(s)
+from nox.math import sqrt       # direct use: sqrt(2.0)
+import mypkg.util               # a file util.nox in package mypkg
+```
+
+A project is a directory with a `nox.json` (name, version, `requires[]` for
+third-party packages locked in `nox.lock`). All modules are compiled together as
+one unit, so there are no separate-compilation or ABI-stability concerns inside a
+program. Module-level variables are readable and assignable from functions in the
+same module (no `global` keyword is needed). A top-level function named `main`
+is reserved. Cyclic imports are rejected.
+
 ## `self` and Classes
 
 ```nox
@@ -296,33 +349,49 @@ method, and a generic method on a generic class is not supported.
 
 ## Error Handling
 
-Python's `try`/`except`/`raise`/`finally` syntax is preserved, matching
-by exact class identity (there's no subclass hierarchy to walk):
+Python's `try`/`except`/`raise`/`finally` syntax is preserved. Exceptions are
+classes; the built-in `Exception` (always available, with `message: str` and
+a `line: int` filled in at the `raise`) is the root, and `ValueError`,
+`IndexError`, `KeyError`, `ZeroDivisionError`, `CancelledError` derive from it. Because Nox has
+single inheritance, `except Base:` also matches every subclass:
 
 ```nox
-class HttpError:
-    def __init__(self, message: str) -> None:
-        self.message = message
+class HttpError(Exception):
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
 
 def fetch(url: str) -> str:
     if url == "":
-        raise HttpError("empty url")
+        raise HttpError("empty url", 400)
     return "..."
 
 try:
     body: str = fetch("")
 except HttpError as e:
-    print(e.message)
+    print(e.message, e.status)
+except Exception as e:
+    print("other:", e.message)
 finally:
     print("done")
 ```
 
 Under the hood, `raise` compiles to an implicit error-return thread
 through every call frame (Zig-style error unions), not stack unwinding —
-QBE has no landing-pad/unwind-table support.
+no unwind tables or landing pads are ever emitted. An exception that
+escapes `main` terminates the program and reports the class and source line.
+Failures in built-ins use the same mechanism: `xs[i]` out of range raises
+`IndexError`, a missing `dict` key `KeyError`, bad conversions
+`ValueError`, integer `//`/`%` by zero `ZeroDivisionError`. Overflow of the
+checked fixed-width kinds on the QBE backend terminates the program with a
+message (see [Numeric rules](#numeric-rules)).
 
-`with EXPR as NAME:` is also supported for any class implementing
-`__enter__`/`__exit__` (Python's context-manager protocol).
+`with EXPR as NAME:` works for any class implementing
+`__enter__`/`__exit__` (Python's context-manager protocol), and
+`defer EXPR` (Go-style) schedules a call for scope exit. `finally`, `with`,
+`defer`, `break`/`continue`/`return` all share one scope-exit mechanism, so
+cleanup always runs. Exceptions also cross `async` boundaries: `await` on a
+`Task` re-raises what the task raised.
 
 ## Memory Model — the "Ownership Pyramid"
 
@@ -409,12 +478,18 @@ synthesizes its own program entry point of that name.)
 
 ## Standard Library
 
-Growing, written in Nox itself (`stdlib/nox/*.nox`) with thin Zig shims
-for anything that needs to call into the OS: `nox.http` (client +
-multi-core server), `nox.json`, `nox.strings`, `nox.math`, `nox.os` /
-`nox.fs`, `nox.time`, `nox.test`, `nox.log`, `nox.random`, `nox.crypto`,
-`nox.regex`, `nox.path`. `ValueError`/`IndexError` and a few other core
-types are available everywhere with no `import` needed.
+Written in Nox itself (`stdlib/nox/*.nox`) with thin Zig shims for anything that
+calls into the OS. The full per-module signature reference lives in
+[`STDLIB.md`](STDLIB.md) (generated from the sources by
+`scripts/gen_stdlib_docs.py`). Highlights: `nox.http` (client, multi-core server,
+TLS, WebSocket), `nox.json`, `nox.strings`, `nox.regex`, `nox.math`, `nox.os` /
+`nox.fs` / `nox.path` / `nox.process`, `nox.time`, `nox.random`, `nox.crypto`
+(hashes, HMAC, password hashing), `nox.base64`, `nox.jwt`, `nox.collections`
+(Stack/Queue/Deque/Set/Counter/OrderedDict/LRUCache/Heap/PriorityQueue),
+`nox.sqlite` / `nox.postgres` / `nox.mysql`, `nox.router`, `nox.validate`,
+`nox.template`, `nox.test`, `nox.log`, `nox.reflect`. The prelude (`Exception`
+and friends, `sorted`, `reversed`, `enumerate`, `zip`, `abs`, `min`, `max`,
+`sum`, `round`, `input`) is available everywhere with no `import`.
 
 ## FFI and Native Code
 

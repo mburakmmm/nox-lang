@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.159.0]
+
+### Düzeltildi
+
+- **Tamsayı `//` ve `%` sıfır bölenle artık `ZeroDivisionError` fırlatır** (yakalanabilir; yeni `ZeroDivisionError(Exception)` core sınıfı). Önceden LLVM'de tanımsız davranış, QBE'de çöp/0 idi. Sabit pozitif literal bölende kontrol yok (sıcak yol etkilenmez); `float` bölme IEEE olarak kalır. Spec §3.275.
+- **`print(Optional)`:** `str | None`/`list | None`/`Sınıf | None` null iken çöküyor, `int | None`/`float | None`/`bool | None` kutu adresini basıyordu; artık Python gibi `None` ya da değer basılır (sınıf/liste alanları dahil).
+
+### Belgeler
+
+- `docs/LANGUAGE.md`: backend'ler (LLVM varsayılan), hata modeli (hiyerarşi, `defer`, `ZeroDivisionError`), sayısal kurallar (sabit genişlikli tamsayılar, taşma), Optional, modüller/import, stdlib özeti; README çapraz-dil benchmark özeti (v1.158.0 ölçümü: C'ye göre LLVM 1.34×, QBE 1.53×).
+
 ## [1.158.0]
 
 ### Güvenlik

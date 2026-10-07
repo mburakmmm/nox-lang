@@ -326,6 +326,94 @@ export function $IndexError_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+export function $ZeroDivisionError_release(l %rt, l %p) {
+@start
+    %t0 =l sub %p, 8
+    %t1 =l loadl %t0
+    %t2 =l sub %t1, 1
+    storel %t2, %t0
+    %t4 =l and %t2, 4294967295
+    %t3 =w ceql %t4, 0
+    jnz %t3, @release_free0, @release_done1
+@release_free0
+    %t5 =l add %p, 16
+    %t6 =l loadl %t5
+    %t7 =w ceql %t6, 0
+    jnz %t7, @release_skip3, @release2
+@release2
+    %t8 =l sub %t6, 16
+    %t9 =l loadl %t8
+    %t10 =l sub %t9, 1
+    storel %t10, %t8
+    %t11 =w cslel %t10, 0
+    jnz %t11, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t6)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    call $nox_rc_free_payload(l %rt, l %p, l 32)
+    jmp @release_done1
+@release_done1
+    ret
+}
+export function w $ZeroDivisionError_eq(l %rt, l %a, l %b) {
+@start
+    %t0 =l add %a, 16
+    %t1 =l add %b, 16
+    %t2 =l loadl %t0
+    %t3 =l loadl %t1
+    %t4 =w call $strcmp(l %t2, l %t3)
+    jnz %t4, @classeq_mismatch0, @eqcmp_cont1
+@eqcmp_cont1
+    %t5 =l add %a, 24
+    %t6 =l add %b, 24
+    %t7 =l loadl %t5
+    %t8 =l loadl %t6
+    %t9 =w ceql %t7, %t8
+    jnz %t9, @eqcmp_cont2, @classeq_mismatch0
+@eqcmp_cont2
+    ret 1
+@classeq_mismatch0
+    ret 0
+}
+export function l $ZeroDivisionError_trace(l %rt, l %p) {
+@start
+    %t0 =l call $nox_trace_buf_alloc(l %rt, l 8)
+    storel 0, %t0
+    ret %t0
+}
+export function $ZeroDivisionError_gc_free(l %rt, l %p) {
+@start
+    %t0 =l add %p, 16
+    %t1 =l loadl %t0
+    %t2 =w ceql %t1, 0
+    jnz %t2, @release_skip1, @release0
+@release0
+    %t3 =l sub %t1, 16
+    %t4 =l loadl %t3
+    %t5 =l sub %t4, 1
+    storel %t5, %t3
+    %t6 =w cslel %t5, 0
+    jnz %t6, @str_free3, @str_free_skip4
+@str_free3
+    call $nox_str_free_now(l %rt, l %t1)
+    jmp @str_free_done5
+@str_free_skip4
+    jmp @str_free_done5
+@str_free_done5
+    jmp @release_done2
+@release_skip1
+    jmp @release_done2
+@release_done2
+    call $nox_rc_free_payload(l %rt, l %p, l 32)
+    ret
+}
 export function $KeyError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -2360,105 +2448,111 @@ export function l $nox_trace_dispatch(l %rt, l %tag, l %p) {
     %t1 =l call $Exception_trace(l %rt, l %p)
     ret %t1
 @trace_next1
-    %t2 =w ceql %tag, 17
+    %t2 =w ceql %tag, 18
     jnz %t2, @trace_case2, @trace_next3
 @trace_case2
     %t3 =l call $ValueError_trace(l %rt, l %p)
     ret %t3
 @trace_next3
-    %t4 =w ceql %tag, 16
+    %t4 =w ceql %tag, 17
     jnz %t4, @trace_case4, @trace_next5
 @trace_case4
     %t5 =l call $IndexError_trace(l %rt, l %p)
     ret %t5
 @trace_next5
-    %t6 =w ceql %tag, 15
+    %t6 =w ceql %tag, 16
     jnz %t6, @trace_case6, @trace_next7
 @trace_case6
-    %t7 =l call $KeyError_trace(l %rt, l %p)
+    %t7 =l call $ZeroDivisionError_trace(l %rt, l %p)
     ret %t7
 @trace_next7
-    %t8 =w ceql %tag, 14
+    %t8 =w ceql %tag, 15
     jnz %t8, @trace_case8, @trace_next9
 @trace_case8
-    %t9 =l call $HPyError_trace(l %rt, l %p)
+    %t9 =l call $KeyError_trace(l %rt, l %p)
     ret %t9
 @trace_next9
-    %t10 =w ceql %tag, 13
+    %t10 =w ceql %tag, 14
     jnz %t10, @trace_case10, @trace_next11
 @trace_case10
-    %t11 =l call $CancelledError_trace(l %rt, l %p)
+    %t11 =l call $HPyError_trace(l %rt, l %p)
     ret %t11
 @trace_next11
-    %t12 =w ceql %tag, 12
+    %t12 =w ceql %tag, 13
     jnz %t12, @trace_case12, @trace_next13
 @trace_case12
-    %t13 =l call $JsonValue_trace(l %rt, l %p)
+    %t13 =l call $CancelledError_trace(l %rt, l %p)
     ret %t13
 @trace_next13
-    %t14 =w ceql %tag, 11
+    %t14 =w ceql %tag, 12
     jnz %t14, @trace_case14, @trace_next15
 @trace_case14
-    %t15 =l call $Rec_trace(l %rt, l %p)
+    %t15 =l call $JsonValue_trace(l %rt, l %p)
     ret %t15
 @trace_next15
-    %t16 =w ceql %tag, 10
+    %t16 =w ceql %tag, 11
     jnz %t16, @trace_case16, @trace_next17
 @trace_case16
-    %t17 =l call $Holder_trace(l %rt, l %p)
+    %t17 =l call $Rec_trace(l %rt, l %p)
     ret %t17
 @trace_next17
-    %t18 =w ceql %tag, 9
+    %t18 =w ceql %tag, 10
     jnz %t18, @trace_case18, @trace_next19
 @trace_case18
-    %t19 =l call $tuple__int_int_trace(l %rt, l %p)
+    %t19 =l call $Holder_trace(l %rt, l %p)
     ret %t19
 @trace_next19
-    %t20 =w ceql %tag, 8
+    %t20 =w ceql %tag, 9
     jnz %t20, @trace_case20, @trace_next21
 @trace_case20
-    %t21 =l call $tuple__str_list_int_Rec_trace(l %rt, l %p)
+    %t21 =l call $tuple__int_int_trace(l %rt, l %p)
     ret %t21
 @trace_next21
-    %t22 =w ceql %tag, 7
+    %t22 =w ceql %tag, 8
     jnz %t22, @trace_case22, @trace_next23
 @trace_case22
-    %t23 =l call $tuple__int_str_trace(l %rt, l %p)
+    %t23 =l call $tuple__str_list_int_Rec_trace(l %rt, l %p)
     ret %t23
 @trace_next23
-    %t24 =w ceql %tag, 6
+    %t24 =w ceql %tag, 7
     jnz %t24, @trace_case24, @trace_next25
 @trace_case24
-    %t25 =l call $tuple__str_int_trace(l %rt, l %p)
+    %t25 =l call $tuple__int_str_trace(l %rt, l %p)
     ret %t25
 @trace_next25
-    %t26 =w ceql %tag, 5
+    %t26 =w ceql %tag, 6
     jnz %t26, @trace_case26, @trace_next27
 @trace_case26
-    %t27 =l call $tuple__tuple__int_int_str_trace(l %rt, l %p)
+    %t27 =l call $tuple__str_int_trace(l %rt, l %p)
     ret %t27
 @trace_next27
-    %t28 =w ceql %tag, 4
+    %t28 =w ceql %tag, 5
     jnz %t28, @trace_case28, @trace_next29
 @trace_case28
-    %t29 =l call $tuple__float_int_trace(l %rt, l %p)
+    %t29 =l call $tuple__tuple__int_int_str_trace(l %rt, l %p)
     ret %t29
 @trace_next29
-    %t30 =w ceql %tag, 3
+    %t30 =w ceql %tag, 4
     jnz %t30, @trace_case30, @trace_next31
 @trace_case30
-    %t31 =l call $tuple__int_trace(l %rt, l %p)
+    %t31 =l call $tuple__float_int_trace(l %rt, l %p)
     ret %t31
 @trace_next31
-    %t32 =w ceql %tag, 2
+    %t32 =w ceql %tag, 3
     jnz %t32, @trace_case32, @trace_next33
 @trace_case32
-    %t33 =l call $tuple__int_float_bool_str_trace(l %rt, l %p)
+    %t33 =l call $tuple__int_trace(l %rt, l %p)
     ret %t33
 @trace_next33
-    %t34 =l call $nox_trace_buf_alloc(l %rt, l 8)
-    storel 0, %t34
-    ret %t34
+    %t34 =w ceql %tag, 2
+    jnz %t34, @trace_case34, @trace_next35
+@trace_case34
+    %t35 =l call $tuple__int_float_bool_str_trace(l %rt, l %p)
+    ret %t35
+@trace_next35
+    %t36 =l call $nox_trace_buf_alloc(l %rt, l 8)
+    storel 0, %t36
+    ret %t36
 }
 export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
 @start
@@ -2468,102 +2562,108 @@ export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
     call $Exception_gc_free(l %rt, l %p)
     ret
 @gc_free_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 18
     jnz %t1, @gc_free_case2, @gc_free_next3
 @gc_free_case2
     call $ValueError_gc_free(l %rt, l %p)
     ret
 @gc_free_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 17
     jnz %t2, @gc_free_case4, @gc_free_next5
 @gc_free_case4
     call $IndexError_gc_free(l %rt, l %p)
     ret
 @gc_free_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 16
     jnz %t3, @gc_free_case6, @gc_free_next7
 @gc_free_case6
-    call $KeyError_gc_free(l %rt, l %p)
+    call $ZeroDivisionError_gc_free(l %rt, l %p)
     ret
 @gc_free_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 15
     jnz %t4, @gc_free_case8, @gc_free_next9
 @gc_free_case8
-    call $HPyError_gc_free(l %rt, l %p)
+    call $KeyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 14
     jnz %t5, @gc_free_case10, @gc_free_next11
 @gc_free_case10
-    call $CancelledError_gc_free(l %rt, l %p)
+    call $HPyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 13
     jnz %t6, @gc_free_case12, @gc_free_next13
 @gc_free_case12
-    call $JsonValue_gc_free(l %rt, l %p)
+    call $CancelledError_gc_free(l %rt, l %p)
     ret
 @gc_free_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 12
     jnz %t7, @gc_free_case14, @gc_free_next15
 @gc_free_case14
-    call $Rec_gc_free(l %rt, l %p)
+    call $JsonValue_gc_free(l %rt, l %p)
     ret
 @gc_free_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 11
     jnz %t8, @gc_free_case16, @gc_free_next17
 @gc_free_case16
-    call $Holder_gc_free(l %rt, l %p)
+    call $Rec_gc_free(l %rt, l %p)
     ret
 @gc_free_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 10
     jnz %t9, @gc_free_case18, @gc_free_next19
 @gc_free_case18
-    call $tuple__int_int_gc_free(l %rt, l %p)
+    call $Holder_gc_free(l %rt, l %p)
     ret
 @gc_free_next19
-    %t10 =w ceql %tag, 8
+    %t10 =w ceql %tag, 9
     jnz %t10, @gc_free_case20, @gc_free_next21
 @gc_free_case20
-    call $tuple__str_list_int_Rec_gc_free(l %rt, l %p)
+    call $tuple__int_int_gc_free(l %rt, l %p)
     ret
 @gc_free_next21
-    %t11 =w ceql %tag, 7
+    %t11 =w ceql %tag, 8
     jnz %t11, @gc_free_case22, @gc_free_next23
 @gc_free_case22
-    call $tuple__int_str_gc_free(l %rt, l %p)
+    call $tuple__str_list_int_Rec_gc_free(l %rt, l %p)
     ret
 @gc_free_next23
-    %t12 =w ceql %tag, 6
+    %t12 =w ceql %tag, 7
     jnz %t12, @gc_free_case24, @gc_free_next25
 @gc_free_case24
-    call $tuple__str_int_gc_free(l %rt, l %p)
+    call $tuple__int_str_gc_free(l %rt, l %p)
     ret
 @gc_free_next25
-    %t13 =w ceql %tag, 5
+    %t13 =w ceql %tag, 6
     jnz %t13, @gc_free_case26, @gc_free_next27
 @gc_free_case26
-    call $tuple__tuple__int_int_str_gc_free(l %rt, l %p)
+    call $tuple__str_int_gc_free(l %rt, l %p)
     ret
 @gc_free_next27
-    %t14 =w ceql %tag, 4
+    %t14 =w ceql %tag, 5
     jnz %t14, @gc_free_case28, @gc_free_next29
 @gc_free_case28
-    call $tuple__float_int_gc_free(l %rt, l %p)
+    call $tuple__tuple__int_int_str_gc_free(l %rt, l %p)
     ret
 @gc_free_next29
-    %t15 =w ceql %tag, 3
+    %t15 =w ceql %tag, 4
     jnz %t15, @gc_free_case30, @gc_free_next31
 @gc_free_case30
-    call $tuple__int_gc_free(l %rt, l %p)
+    call $tuple__float_int_gc_free(l %rt, l %p)
     ret
 @gc_free_next31
-    %t16 =w ceql %tag, 2
+    %t16 =w ceql %tag, 3
     jnz %t16, @gc_free_case32, @gc_free_next33
 @gc_free_case32
-    call $tuple__int_float_bool_str_gc_free(l %rt, l %p)
+    call $tuple__int_gc_free(l %rt, l %p)
     ret
 @gc_free_next33
+    %t17 =w ceql %tag, 2
+    jnz %t17, @gc_free_case34, @gc_free_next35
+@gc_free_case34
+    call $tuple__int_float_bool_str_gc_free(l %rt, l %p)
+    ret
+@gc_free_next35
     ret
 }
 export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
@@ -2574,108 +2674,115 @@ export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
     call $Exception_release(l %rt, l %p)
     ret
 @class_release_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 18
     jnz %t1, @class_release_case2, @class_release_next3
 @class_release_case2
     call $ValueError_release(l %rt, l %p)
     ret
 @class_release_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 17
     jnz %t2, @class_release_case4, @class_release_next5
 @class_release_case4
     call $IndexError_release(l %rt, l %p)
     ret
 @class_release_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 16
     jnz %t3, @class_release_case6, @class_release_next7
 @class_release_case6
-    call $KeyError_release(l %rt, l %p)
+    call $ZeroDivisionError_release(l %rt, l %p)
     ret
 @class_release_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 15
     jnz %t4, @class_release_case8, @class_release_next9
 @class_release_case8
-    call $HPyError_release(l %rt, l %p)
+    call $KeyError_release(l %rt, l %p)
     ret
 @class_release_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 14
     jnz %t5, @class_release_case10, @class_release_next11
 @class_release_case10
-    call $CancelledError_release(l %rt, l %p)
+    call $HPyError_release(l %rt, l %p)
     ret
 @class_release_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 13
     jnz %t6, @class_release_case12, @class_release_next13
 @class_release_case12
-    call $JsonValue_release(l %rt, l %p)
+    call $CancelledError_release(l %rt, l %p)
     ret
 @class_release_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 12
     jnz %t7, @class_release_case14, @class_release_next15
 @class_release_case14
-    call $Rec_release(l %rt, l %p)
+    call $JsonValue_release(l %rt, l %p)
     ret
 @class_release_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 11
     jnz %t8, @class_release_case16, @class_release_next17
 @class_release_case16
-    call $Holder_release(l %rt, l %p)
+    call $Rec_release(l %rt, l %p)
     ret
 @class_release_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 10
     jnz %t9, @class_release_case18, @class_release_next19
 @class_release_case18
-    call $tuple__int_int_release(l %rt, l %p)
+    call $Holder_release(l %rt, l %p)
     ret
 @class_release_next19
-    %t10 =w ceql %tag, 8
+    %t10 =w ceql %tag, 9
     jnz %t10, @class_release_case20, @class_release_next21
 @class_release_case20
-    call $tuple__str_list_int_Rec_release(l %rt, l %p)
+    call $tuple__int_int_release(l %rt, l %p)
     ret
 @class_release_next21
-    %t11 =w ceql %tag, 7
+    %t11 =w ceql %tag, 8
     jnz %t11, @class_release_case22, @class_release_next23
 @class_release_case22
-    call $tuple__int_str_release(l %rt, l %p)
+    call $tuple__str_list_int_Rec_release(l %rt, l %p)
     ret
 @class_release_next23
-    %t12 =w ceql %tag, 6
+    %t12 =w ceql %tag, 7
     jnz %t12, @class_release_case24, @class_release_next25
 @class_release_case24
-    call $tuple__str_int_release(l %rt, l %p)
+    call $tuple__int_str_release(l %rt, l %p)
     ret
 @class_release_next25
-    %t13 =w ceql %tag, 5
+    %t13 =w ceql %tag, 6
     jnz %t13, @class_release_case26, @class_release_next27
 @class_release_case26
-    call $tuple__tuple__int_int_str_release(l %rt, l %p)
+    call $tuple__str_int_release(l %rt, l %p)
     ret
 @class_release_next27
-    %t14 =w ceql %tag, 4
+    %t14 =w ceql %tag, 5
     jnz %t14, @class_release_case28, @class_release_next29
 @class_release_case28
-    call $tuple__float_int_release(l %rt, l %p)
+    call $tuple__tuple__int_int_str_release(l %rt, l %p)
     ret
 @class_release_next29
-    %t15 =w ceql %tag, 3
+    %t15 =w ceql %tag, 4
     jnz %t15, @class_release_case30, @class_release_next31
 @class_release_case30
-    call $tuple__int_release(l %rt, l %p)
+    call $tuple__float_int_release(l %rt, l %p)
     ret
 @class_release_next31
-    %t16 =w ceql %tag, 2
+    %t16 =w ceql %tag, 3
     jnz %t16, @class_release_case32, @class_release_next33
 @class_release_case32
-    call $tuple__int_float_bool_str_release(l %rt, l %p)
+    call $tuple__int_release(l %rt, l %p)
     ret
 @class_release_next33
+    %t17 =w ceql %tag, 2
+    jnz %t17, @class_release_case34, @class_release_next35
+@class_release_case34
+    call $tuple__int_float_bool_str_release(l %rt, l %p)
+    ret
+@class_release_next35
     ret
 }
 data $__nox_classname_unknown = { b "bilinmeyen sinif", b 0 }
 data $__nox_classname_Exception = { b "Exception", b 0 }
 data $__nox_classname_ValueError = { b "ValueError", b 0 }
 data $__nox_classname_IndexError = { b "IndexError", b 0 }
+data $__nox_classname_ZeroDivisionError = { b "ZeroDivisionError", b 0 }
 data $__nox_classname_KeyError = { b "KeyError", b 0 }
 data $__nox_classname_HPyError = { b "HPyError", b 0 }
 data $__nox_classname_CancelledError = { b "CancelledError", b 0 }
@@ -2697,86 +2804,91 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_case0
     ret $__nox_classname_Exception
 @class_name_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 18
     jnz %t1, @class_name_case2, @class_name_next3
 @class_name_case2
     ret $__nox_classname_ValueError
 @class_name_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 17
     jnz %t2, @class_name_case4, @class_name_next5
 @class_name_case4
     ret $__nox_classname_IndexError
 @class_name_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 16
     jnz %t3, @class_name_case6, @class_name_next7
 @class_name_case6
-    ret $__nox_classname_KeyError
+    ret $__nox_classname_ZeroDivisionError
 @class_name_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 15
     jnz %t4, @class_name_case8, @class_name_next9
 @class_name_case8
-    ret $__nox_classname_HPyError
+    ret $__nox_classname_KeyError
 @class_name_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 14
     jnz %t5, @class_name_case10, @class_name_next11
 @class_name_case10
-    ret $__nox_classname_CancelledError
+    ret $__nox_classname_HPyError
 @class_name_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 13
     jnz %t6, @class_name_case12, @class_name_next13
 @class_name_case12
-    ret $__nox_classname_JsonValue
+    ret $__nox_classname_CancelledError
 @class_name_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 12
     jnz %t7, @class_name_case14, @class_name_next15
 @class_name_case14
-    ret $__nox_classname_Rec
+    ret $__nox_classname_JsonValue
 @class_name_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 11
     jnz %t8, @class_name_case16, @class_name_next17
 @class_name_case16
-    ret $__nox_classname_Holder
+    ret $__nox_classname_Rec
 @class_name_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 10
     jnz %t9, @class_name_case18, @class_name_next19
 @class_name_case18
-    ret $__nox_classname_tuple__int_int
+    ret $__nox_classname_Holder
 @class_name_next19
-    %t10 =w ceql %tag, 8
+    %t10 =w ceql %tag, 9
     jnz %t10, @class_name_case20, @class_name_next21
 @class_name_case20
-    ret $__nox_classname_tuple__str_list_int_Rec
+    ret $__nox_classname_tuple__int_int
 @class_name_next21
-    %t11 =w ceql %tag, 7
+    %t11 =w ceql %tag, 8
     jnz %t11, @class_name_case22, @class_name_next23
 @class_name_case22
-    ret $__nox_classname_tuple__int_str
+    ret $__nox_classname_tuple__str_list_int_Rec
 @class_name_next23
-    %t12 =w ceql %tag, 6
+    %t12 =w ceql %tag, 7
     jnz %t12, @class_name_case24, @class_name_next25
 @class_name_case24
-    ret $__nox_classname_tuple__str_int
+    ret $__nox_classname_tuple__int_str
 @class_name_next25
-    %t13 =w ceql %tag, 5
+    %t13 =w ceql %tag, 6
     jnz %t13, @class_name_case26, @class_name_next27
 @class_name_case26
-    ret $__nox_classname_tuple__tuple__int_int_str
+    ret $__nox_classname_tuple__str_int
 @class_name_next27
-    %t14 =w ceql %tag, 4
+    %t14 =w ceql %tag, 5
     jnz %t14, @class_name_case28, @class_name_next29
 @class_name_case28
-    ret $__nox_classname_tuple__float_int
+    ret $__nox_classname_tuple__tuple__int_int_str
 @class_name_next29
-    %t15 =w ceql %tag, 3
+    %t15 =w ceql %tag, 4
     jnz %t15, @class_name_case30, @class_name_next31
 @class_name_case30
-    ret $__nox_classname_tuple__int
+    ret $__nox_classname_tuple__float_int
 @class_name_next31
-    %t16 =w ceql %tag, 2
+    %t16 =w ceql %tag, 3
     jnz %t16, @class_name_case32, @class_name_next33
 @class_name_case32
-    ret $__nox_classname_tuple__int_float_bool_str
+    ret $__nox_classname_tuple__int
 @class_name_next33
+    %t17 =w ceql %tag, 2
+    jnz %t17, @class_name_case34, @class_name_next35
+@class_name_case34
+    ret $__nox_classname_tuple__int_float_bool_str
+@class_name_next35
     ret $__nox_classname_unknown
 }
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
@@ -3019,7 +3131,7 @@ export function l $minmax(l %rt, l %p_xs) {
 @list_idx_err0
     %t8 =l add $str0, 16
     %t9 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 16, %t9
+    storel 17, %t9
     %t10 =l add %t9, 8
     storel 0, %t10
     %t11 =l add %t9, 16
@@ -3052,7 +3164,7 @@ export function l $minmax(l %rt, l %p_xs) {
 @list_idx_err9
     %t24 =l add $str1, 16
     %t25 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 16, %t25
+    storel 17, %t25
     %t26 =l add %t25, 8
     storel 0, %t26
     %t27 =l add %t25, 16
@@ -3316,8 +3428,8 @@ export function l $__nox_dict_items__str_int(l %rt, l %p_d) {
     ret 0
 @exc_continue18
     %t38 =l add %t27, 24
-    storel 165, %t38
-    call $nox_raise(l %rt, l %t27, l 165)
+    storel 169, %t38
+    call $nox_raise(l %rt, l %t27, l 169)
     %t39 =l loadl %t1
     %t40 =w ceql %t39, 0
     jnz %t40, @release_skip26, @release25
@@ -3919,7 +4031,7 @@ export function l $zip__int_str(l %rt, l %p_a, l %p_b) {
 @list_idx_err8
     %t25 =l add $str5, 16
     %t26 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 16, %t26
+    storel 17, %t26
     %t27 =l add %t26, 8
     storel 0, %t27
     %t28 =l add %t26, 16
@@ -3956,8 +4068,8 @@ export function l $zip__int_str(l %rt, l %p_a, l %p_b) {
     ret 0
 @exc_continue16
     %t35 =l add %t26, 24
-    storel 183, %t35
-    call $nox_raise(l %rt, l %t26, l 183)
+    storel 187, %t35
+    call $nox_raise(l %rt, l %t26, l 187)
     %t36 =l loadl %t2
     %t37 =w ceql %t36, 0
     jnz %t37, @release_skip21, @release20
@@ -3972,7 +4084,7 @@ export function l $zip__int_str(l %rt, l %p_a, l %p_b) {
 @list_idx_err23
     %t46 =l add $str6, 16
     %t47 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 16, %t47
+    storel 17, %t47
     %t48 =l add %t47, 8
     storel 0, %t48
     %t49 =l add %t47, 16
@@ -4009,8 +4121,8 @@ export function l $zip__int_str(l %rt, l %p_a, l %p_b) {
     ret 0
 @exc_continue31
     %t56 =l add %t47, 24
-    storel 183, %t56
-    call $nox_raise(l %rt, l %t47, l 183)
+    storel 187, %t56
+    call $nox_raise(l %rt, l %t47, l 187)
     %t57 =l loadl %t2
     %t58 =w ceql %t57, 0
     jnz %t58, @release_skip36, @release35
@@ -4248,2531 +4360,2706 @@ export function w $main(w %argc, l %argv) {
     %t122 =l loadl %t4
     %t123 =l add %t122, 16
     %t124 =l loadl %t123
-    call $printf(l $fmt_str, ..., l %t124)
-    %t125 =l loadl %t4
-    %t126 =l add %t125, 16
-    %t127 =l loadl %t126
-    call $printf(l $fmt_str, ..., l %t127)
-    call $printf(l $fmt_int, ..., l 2)
-    %t128 =l loadl %t4
+    %t125 =w ceql %t124, 0
+    jnz %t125, @print_none14, @print_some15
+@print_none14
     call $printf(l $fmt_lit0)
-    %t129 =l add %t128, 8
-    %t130 =l loadl %t129
-    call $printf(l $fmt_int_frag, ..., l %t130)
-    call $printf(l $fmt_comma_sp)
-    %t131 =l add %t128, 16
-    %t132 =l loadl %t131
-    call $printf(l $fmt_str_frag, ..., l %t132)
-    call $printf(l $fmt_rparen)
     call $printf(l $fmt_newline)
-    %t133 =l loadl %t4
-    storel %t133, %t72
-    %t134 =l loadl %t72
-    %t135 =l add %t134, 16
-    %t136 =l loadl %t135
-    %t137 =l loadl %t72
-    %t138 =l add %t137, 8
-    %t139 =l loadl %t138
-    %t140 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 6, %t140
-    %t141 =l add %t140, 8
-    storel 0, %t141
-    %t142 =l add %t140, 16
-    storel 0, %t142
-    %t143 =l add %t140, 8
-    %t144 =w ceql %t136, 0
-    jnz %t144, @retain_skip16, @retain15
-@retain15
-    %t145 =l sub %t136, 16
-    %t146 =l loadl %t145
-    %t147 =l add %t146, 1
-    storel %t147, %t145
-    jmp @retain_done17
-@retain_skip16
-    jmp @retain_done17
-@retain_done17
-    storel %t136, %t143
-    %t148 =l add %t140, 16
-    storel %t139, %t148
-    storel %t140, %t73
-    jmp @inline_done14
-@after_inline_return18
-    jmp @inline_done14
-@inline_done14
-    %t149 =l loadl %t73
+    jmp @print_opt_done16
+@print_some15
+    call $printf(l $fmt_str, ..., l %t124)
+    jmp @print_opt_done16
+@print_opt_done16
+    %t126 =l loadl %t4
+    %t127 =l add %t126, 16
+    %t128 =l loadl %t127
+    %t129 =w ceql %t128, 0
+    jnz %t129, @print_none17, @print_some18
+@print_none17
     call $printf(l $fmt_lit1)
-    %t150 =l add %t149, 8
-    %t151 =l loadl %t150
-    call $printf(l $fmt_str_frag, ..., l %t151)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done19
+@print_some18
+    call $printf(l $fmt_str, ..., l %t128)
+    jmp @print_opt_done19
+@print_opt_done19
+    call $printf(l $fmt_int, ..., l 2)
+    %t130 =l loadl %t4
+    %t131 =w ceql %t130, 0
+    jnz %t131, @print_none20, @print_some21
+@print_none20
+    call $printf(l $fmt_lit2)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done22
+@print_some21
+    call $printf(l $fmt_lit3)
+    %t132 =l add %t130, 8
+    %t133 =l loadl %t132
+    call $printf(l $fmt_int_frag, ..., l %t133)
     call $printf(l $fmt_comma_sp)
-    %t152 =l add %t149, 16
-    %t153 =l loadl %t152
-    call $printf(l $fmt_int_frag, ..., l %t153)
+    %t134 =l add %t130, 16
+    %t135 =l loadl %t134
+    %t136 =w ceql %t135, 0
+    jnz %t136, @print_none23, @print_some24
+@print_none23
+    call $printf(l $fmt_lit4)
+    jmp @print_opt_done25
+@print_some24
+    call $printf(l $fmt_str_frag, ..., l %t135)
+    jmp @print_opt_done25
+@print_opt_done25
     call $printf(l $fmt_rparen)
     call $printf(l $fmt_newline)
-    %t154 =w ceql %t149, 0
-    jnz %t154, @release_skip20, @release19
-@release19
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t149, l $tuple__str_int_release)
-    jmp @release_done21
-@release_skip20
-    jmp @release_done21
-@release_done21
-    %t155 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 3, %t155
-    %t156 =l add %t155, 8
-    storel 0, %t156
-    %t157 =l add %t155, 8
-    storel 1, %t157
-    call $printf(l $fmt_lit2)
-    %t158 =l add %t155, 8
+    jmp @print_opt_done22
+@print_opt_done22
+    %t137 =l loadl %t4
+    storel %t137, %t72
+    %t138 =l loadl %t72
+    %t139 =l add %t138, 16
+    %t140 =l loadl %t139
+    %t141 =l loadl %t72
+    %t142 =l add %t141, 8
+    %t143 =l loadl %t142
+    %t144 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 6, %t144
+    %t145 =l add %t144, 8
+    storel 0, %t145
+    %t146 =l add %t144, 16
+    storel 0, %t146
+    %t147 =l add %t144, 8
+    %t148 =w ceql %t140, 0
+    jnz %t148, @retain_skip28, @retain27
+@retain27
+    %t149 =l sub %t140, 16
+    %t150 =l loadl %t149
+    %t151 =l add %t150, 1
+    storel %t151, %t149
+    jmp @retain_done29
+@retain_skip28
+    jmp @retain_done29
+@retain_done29
+    storel %t140, %t147
+    %t152 =l add %t144, 16
+    storel %t143, %t152
+    storel %t144, %t73
+    jmp @inline_done26
+@after_inline_return30
+    jmp @inline_done26
+@inline_done26
+    %t153 =l loadl %t73
+    %t154 =w ceql %t153, 0
+    jnz %t154, @print_none31, @print_some32
+@print_none31
+    call $printf(l $fmt_lit5)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done33
+@print_some32
+    call $printf(l $fmt_lit6)
+    %t155 =l add %t153, 8
+    %t156 =l loadl %t155
+    %t157 =w ceql %t156, 0
+    jnz %t157, @print_none34, @print_some35
+@print_none34
+    call $printf(l $fmt_lit7)
+    jmp @print_opt_done36
+@print_some35
+    call $printf(l $fmt_str_frag, ..., l %t156)
+    jmp @print_opt_done36
+@print_opt_done36
+    call $printf(l $fmt_comma_sp)
+    %t158 =l add %t153, 16
     %t159 =l loadl %t158
     call $printf(l $fmt_int_frag, ..., l %t159)
-    call $printf(l $fmt_lit3)
     call $printf(l $fmt_rparen)
     call $printf(l $fmt_newline)
-    %t160 =w ceql %t155, 0
-    jnz %t160, @release_skip23, @release22
-@release22
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t155, l $tuple__int_release)
-    jmp @release_done24
-@release_skip23
-    jmp @release_done24
-@release_done24
-    %t161 =l add $str8, 16
-    %t162 =l call $nox_rc_alloc(l %rt, l 40)
-    storel 2, %t162
-    %t163 =l add %t162, 8
-    storel 0, %t163
-    %t164 =l add %t162, 16
-    storel 0, %t164
-    %t165 =l add %t162, 24
-    storel 0, %t165
-    %t166 =l add %t162, 32
-    storel 0, %t166
-    %t167 =l add %t162, 8
-    storel 1, %t167
-    %t168 =l add %t162, 16
-    stored d_2.5, %t168
-    %t169 =l add %t162, 24
-    storew 1, %t169
-    %t170 =l add %t162, 32
-    storel %t161, %t170
-    call $printf(l $fmt_lit4)
-    %t171 =l add %t162, 8
-    %t172 =l loadl %t171
-    call $printf(l $fmt_int_frag, ..., l %t172)
+    jmp @print_opt_done33
+@print_opt_done33
+    %t160 =w ceql %t153, 0
+    jnz %t160, @release_skip38, @release37
+@release37
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t153, l $tuple__str_int_release)
+    jmp @release_done39
+@release_skip38
+    jmp @release_done39
+@release_done39
+    %t161 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 3, %t161
+    %t162 =l add %t161, 8
+    storel 0, %t162
+    %t163 =l add %t161, 8
+    storel 1, %t163
+    %t164 =w ceql %t161, 0
+    jnz %t164, @print_none40, @print_some41
+@print_none40
+    call $printf(l $fmt_lit8)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done42
+@print_some41
+    call $printf(l $fmt_lit9)
+    %t165 =l add %t161, 8
+    %t166 =l loadl %t165
+    call $printf(l $fmt_int_frag, ..., l %t166)
+    call $printf(l $fmt_lit10)
+    call $printf(l $fmt_rparen)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done42
+@print_opt_done42
+    %t167 =w ceql %t161, 0
+    jnz %t167, @release_skip44, @release43
+@release43
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t161, l $tuple__int_release)
+    jmp @release_done45
+@release_skip44
+    jmp @release_done45
+@release_done45
+    %t168 =l add $str8, 16
+    %t169 =l call $nox_rc_alloc(l %rt, l 40)
+    storel 2, %t169
+    %t170 =l add %t169, 8
+    storel 0, %t170
+    %t171 =l add %t169, 16
+    storel 0, %t171
+    %t172 =l add %t169, 24
+    storel 0, %t172
+    %t173 =l add %t169, 32
+    storel 0, %t173
+    %t174 =l add %t169, 8
+    storel 1, %t174
+    %t175 =l add %t169, 16
+    stored d_2.5, %t175
+    %t176 =l add %t169, 24
+    storew 1, %t176
+    %t177 =l add %t169, 32
+    storel %t168, %t177
+    %t178 =w ceql %t169, 0
+    jnz %t178, @print_none46, @print_some47
+@print_none46
+    call $printf(l $fmt_lit11)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done48
+@print_some47
+    call $printf(l $fmt_lit12)
+    %t179 =l add %t169, 8
+    %t180 =l loadl %t179
+    call $printf(l $fmt_int_frag, ..., l %t180)
     call $printf(l $fmt_comma_sp)
-    %t173 =l add %t162, 16
-    %t174 =d loadd %t173
-    call $printf(l $fmt_float_frag, ..., d %t174)
+    %t181 =l add %t169, 16
+    %t182 =d loadd %t181
+    call $printf(l $fmt_float_frag, ..., d %t182)
     call $printf(l $fmt_comma_sp)
-    %t175 =l add %t162, 24
-    %t176 =w loadw %t175
-    jnz %t176, @print_true25, @print_false26
-@print_true25
+    %t183 =l add %t169, 24
+    %t184 =w loadw %t183
+    jnz %t184, @print_true49, @print_false50
+@print_true49
     call $printf(l $fmt_bool_true_frag)
-    jmp @print_done27
-@print_false26
+    jmp @print_done51
+@print_false50
     call $printf(l $fmt_bool_false_frag)
-    jmp @print_done27
-@print_done27
+    jmp @print_done51
+@print_done51
     call $printf(l $fmt_comma_sp)
-    %t177 =l add %t162, 32
-    %t178 =l loadl %t177
-    call $printf(l $fmt_str_frag, ..., l %t178)
+    %t185 =l add %t169, 32
+    %t186 =l loadl %t185
+    %t187 =w ceql %t186, 0
+    jnz %t187, @print_none52, @print_some53
+@print_none52
+    call $printf(l $fmt_lit13)
+    jmp @print_opt_done54
+@print_some53
+    call $printf(l $fmt_str_frag, ..., l %t186)
+    jmp @print_opt_done54
+@print_opt_done54
     call $printf(l $fmt_rparen)
     call $printf(l $fmt_newline)
-    %t179 =w ceql %t162, 0
-    jnz %t179, @release_skip29, @release28
-@release28
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t162, l $tuple__int_float_bool_str_release)
-    jmp @release_done30
-@release_skip29
-    jmp @release_done30
-@release_done30
+    jmp @print_opt_done48
+@print_opt_done48
+    %t188 =w ceql %t169, 0
+    jnz %t188, @release_skip56, @release55
+@release55
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t169, l $tuple__int_float_bool_str_release)
+    jmp @release_done57
+@release_skip56
+    jmp @release_done57
+@release_done57
     storel 1, %t8
     storel 2, %t9
-    %t180 =l loadl %t9
-    %t181 =l loadl %t8
+    %t189 =l loadl %t9
+    %t190 =l loadl %t8
     storel 9, %t0
-    %t182 =l add %t0, 8
-    storel 0, %t182
-    %t183 =l add %t0, 16
-    storel 0, %t183
-    %t184 =l add %t0, 8
-    storel %t180, %t184
-    %t185 =l add %t0, 16
-    storel %t181, %t185
+    %t191 =l add %t0, 8
+    storel 0, %t191
+    %t192 =l add %t0, 16
+    storel 0, %t192
+    %t193 =l add %t0, 8
+    storel %t189, %t193
+    %t194 =l add %t0, 16
+    storel %t190, %t194
     storel %t0, %t7
-    %t186 =l loadl %t7
-    %t187 =l add %t186, 8
-    %t188 =l loadl %t187
-    storel %t188, %t8
-    %t189 =l loadl %t7
-    %t190 =l add %t189, 16
-    %t191 =l loadl %t190
-    storel %t191, %t9
-    %t192 =l loadl %t8
-    call $printf(l $fmt_int, ..., l %t192)
-    %t193 =l loadl %t9
-    call $printf(l $fmt_int, ..., l %t193)
-    storel 7, %t74
-    %t194 =l add $str9, 16
-    %t195 =l loadl %t74
-    %t196 =l call $nox_int_to_str(l %rt, l %t195)
-    %t197 =l call $nox_str_concat(l %rt, l %t194, l %t196)
-    %t198 =w ceql %t196, 0
-    jnz %t198, @release_skip33, @release32
-@release32
-    %t199 =l sub %t196, 16
+    %t195 =l loadl %t7
+    %t196 =l add %t195, 8
+    %t197 =l loadl %t196
+    storel %t197, %t8
+    %t198 =l loadl %t7
+    %t199 =l add %t198, 16
     %t200 =l loadl %t199
-    %t201 =l sub %t200, 1
-    storel %t201, %t199
-    %t202 =w cslel %t201, 0
-    jnz %t202, @str_free35, @str_free_skip36
-@str_free35
-    call $nox_str_free_now(l %rt, l %t196)
-    jmp @str_free_done37
-@str_free_skip36
-    jmp @str_free_done37
-@str_free_done37
-    jmp @release_done34
-@release_skip33
-    jmp @release_done34
-@release_done34
-    %t203 =l loadl %t74
+    storel %t200, %t9
+    %t201 =l loadl %t8
+    call $printf(l $fmt_int, ..., l %t201)
+    %t202 =l loadl %t9
+    call $printf(l $fmt_int, ..., l %t202)
+    storel 7, %t74
+    %t203 =l add $str9, 16
     %t204 =l loadl %t74
-    %t205 =l add %t204, 1
-    %t206 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 2, %t206
-    %t207 =l add %t206, 8
-    storel 2, %t207
-    %t208 =l add %t206, 16
-    storel %t203, %t208
-    %t209 =l add %t206, 24
-    storel %t205, %t209
-    %t210 =l add $str10, 16
-    %t211 =l loadl %t74
-    %t212 =l call $nox_int_to_str(l %rt, l %t211)
-    %t213 =l call $nox_str_concat(l %rt, l %t210, l %t212)
-    %t214 =w ceql %t212, 0
-    jnz %t214, @release_skip39, @release38
-@release38
-    %t215 =l sub %t212, 16
-    %t216 =l loadl %t215
-    %t217 =l sub %t216, 1
-    storel %t217, %t215
-    %t218 =w cslel %t217, 0
-    jnz %t218, @str_free41, @str_free_skip42
-@str_free41
-    call $nox_str_free_now(l %rt, l %t212)
-    jmp @str_free_done43
-@str_free_skip42
-    jmp @str_free_done43
-@str_free_done43
-    jmp @release_done40
-@release_skip39
-    jmp @release_done40
-@release_done40
-    %t219 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 11, %t219
-    %t220 =l add %t219, 8
-    storel 0, %t220
-    %t221 =l add %t219, 8
-    storel %t213, %t221
-    %t222 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 8, %t222
-    %t223 =l add %t222, 8
-    storel 0, %t223
-    %t224 =l add %t222, 16
-    storel 0, %t224
-    %t225 =l add %t222, 24
-    storel 0, %t225
-    %t226 =l add %t222, 8
-    storel %t197, %t226
-    %t227 =l add %t222, 16
-    storel %t206, %t227
-    %t228 =l add %t222, 24
-    storel %t219, %t228
-    storel %t222, %t75
-    jmp @inline_done31
-@after_inline_return44
-    jmp @inline_done31
-@inline_done31
-    %t229 =l loadl %t75
-    %t230 =l loadl %t10
-    %t231 =w ceql %t230, 0
-    jnz %t231, @release_skip46, @release45
-@release45
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t230, l $tuple__str_list_int_Rec_release)
-    jmp @release_done47
-@release_skip46
-    jmp @release_done47
-@release_done47
-    storel 0, %t10
-    storel %t229, %t10
-    %t232 =l loadl %t10
-    %t233 =l add %t232, 8
-    %t234 =l loadl %t233
-    %t235 =w ceql %t234, 0
-    jnz %t235, @retain_skip49, @retain48
-@retain48
-    %t236 =l sub %t234, 16
-    %t237 =l loadl %t236
-    %t238 =l add %t237, 1
-    storel %t238, %t236
-    jmp @retain_done50
-@retain_skip49
-    jmp @retain_done50
-@retain_done50
-    %t239 =l loadl %t11
+    %t205 =l call $nox_int_to_str(l %rt, l %t204)
+    %t206 =l call $nox_str_concat(l %rt, l %t203, l %t205)
+    %t207 =w ceql %t205, 0
+    jnz %t207, @release_skip60, @release59
+@release59
+    %t208 =l sub %t205, 16
+    %t209 =l loadl %t208
+    %t210 =l sub %t209, 1
+    storel %t210, %t208
+    %t211 =w cslel %t210, 0
+    jnz %t211, @str_free62, @str_free_skip63
+@str_free62
+    call $nox_str_free_now(l %rt, l %t205)
+    jmp @str_free_done64
+@str_free_skip63
+    jmp @str_free_done64
+@str_free_done64
+    jmp @release_done61
+@release_skip60
+    jmp @release_done61
+@release_done61
+    %t212 =l loadl %t74
+    %t213 =l loadl %t74
+    %t214 =l add %t213, 1
+    %t215 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 2, %t215
+    %t216 =l add %t215, 8
+    storel 2, %t216
+    %t217 =l add %t215, 16
+    storel %t212, %t217
+    %t218 =l add %t215, 24
+    storel %t214, %t218
+    %t219 =l add $str10, 16
+    %t220 =l loadl %t74
+    %t221 =l call $nox_int_to_str(l %rt, l %t220)
+    %t222 =l call $nox_str_concat(l %rt, l %t219, l %t221)
+    %t223 =w ceql %t221, 0
+    jnz %t223, @release_skip66, @release65
+@release65
+    %t224 =l sub %t221, 16
+    %t225 =l loadl %t224
+    %t226 =l sub %t225, 1
+    storel %t226, %t224
+    %t227 =w cslel %t226, 0
+    jnz %t227, @str_free68, @str_free_skip69
+@str_free68
+    call $nox_str_free_now(l %rt, l %t221)
+    jmp @str_free_done70
+@str_free_skip69
+    jmp @str_free_done70
+@str_free_done70
+    jmp @release_done67
+@release_skip66
+    jmp @release_done67
+@release_done67
+    %t228 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 11, %t228
+    %t229 =l add %t228, 8
+    storel 0, %t229
+    %t230 =l add %t228, 8
+    storel %t222, %t230
+    %t231 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 8, %t231
+    %t232 =l add %t231, 8
+    storel 0, %t232
+    %t233 =l add %t231, 16
+    storel 0, %t233
+    %t234 =l add %t231, 24
+    storel 0, %t234
+    %t235 =l add %t231, 8
+    storel %t206, %t235
+    %t236 =l add %t231, 16
+    storel %t215, %t236
+    %t237 =l add %t231, 24
+    storel %t228, %t237
+    storel %t231, %t75
+    jmp @inline_done58
+@after_inline_return71
+    jmp @inline_done58
+@inline_done58
+    %t238 =l loadl %t75
+    %t239 =l loadl %t10
     %t240 =w ceql %t239, 0
-    jnz %t240, @release_skip52, @release51
-@release51
-    %t241 =l sub %t239, 16
-    %t242 =l loadl %t241
-    %t243 =l sub %t242, 1
-    storel %t243, %t241
-    %t244 =w cslel %t243, 0
-    jnz %t244, @str_free54, @str_free_skip55
-@str_free54
-    call $nox_str_free_now(l %rt, l %t239)
-    jmp @str_free_done56
-@str_free_skip55
-    jmp @str_free_done56
-@str_free_done56
-    jmp @release_done53
-@release_skip52
-    jmp @release_done53
-@release_done53
+    jnz %t240, @release_skip73, @release72
+@release72
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t239, l $tuple__str_list_int_Rec_release)
+    jmp @release_done74
+@release_skip73
+    jmp @release_done74
+@release_done74
+    storel 0, %t10
+    storel %t238, %t10
+    %t241 =l loadl %t10
+    %t242 =l add %t241, 8
+    %t243 =l loadl %t242
+    %t244 =w ceql %t243, 0
+    jnz %t244, @retain_skip76, @retain75
+@retain75
+    %t245 =l sub %t243, 16
+    %t246 =l loadl %t245
+    %t247 =l add %t246, 1
+    storel %t247, %t245
+    jmp @retain_done77
+@retain_skip76
+    jmp @retain_done77
+@retain_done77
+    %t248 =l loadl %t11
+    %t249 =w ceql %t248, 0
+    jnz %t249, @release_skip79, @release78
+@release78
+    %t250 =l sub %t248, 16
+    %t251 =l loadl %t250
+    %t252 =l sub %t251, 1
+    storel %t252, %t250
+    %t253 =w cslel %t252, 0
+    jnz %t253, @str_free81, @str_free_skip82
+@str_free81
+    call $nox_str_free_now(l %rt, l %t248)
+    jmp @str_free_done83
+@str_free_skip82
+    jmp @str_free_done83
+@str_free_done83
+    jmp @release_done80
+@release_skip79
+    jmp @release_done80
+@release_done80
     storel 0, %t11
-    storel %t234, %t11
-    %t245 =l loadl %t10
-    %t246 =l add %t245, 16
-    %t247 =l loadl %t246
-    %t248 =w ceql %t247, 0
-    jnz %t248, @retain_skip58, @retain57
-@retain57
-    %t249 =l sub %t247, 8
-    %t250 =l loadl %t249
-    %t251 =l add %t250, 1
-    storel %t251, %t249
-    jmp @retain_done59
-@retain_skip58
-    jmp @retain_done59
-@retain_done59
-    %t252 =l loadl %t12
-    %t253 =w ceql %t252, 0
-    jnz %t253, @release_skip61, @release60
-@release60
-    %t254 =l add %t252, 8
-    %t255 =l loadl %t254
-    %t256 =l mul %t255, 8
-    %t257 =l add %t256, 16
-    %t258 =l sub %t252, 8
+    storel %t243, %t11
+    %t254 =l loadl %t10
+    %t255 =l add %t254, 16
+    %t256 =l loadl %t255
+    %t257 =w ceql %t256, 0
+    jnz %t257, @retain_skip85, @retain84
+@retain84
+    %t258 =l sub %t256, 8
     %t259 =l loadl %t258
-    %t260 =l sub %t259, 1
+    %t260 =l add %t259, 1
     storel %t260, %t258
-    %t261 =w cslel %t260, 0
-    jnz %t261, @list_free63, @list_free_skip64
-@list_free63
-    call $nox_rc_free_payload(l %rt, l %t252, l %t257)
-    jmp @list_free_done65
-@list_free_skip64
-    jmp @list_free_done65
-@list_free_done65
-    jmp @release_done62
-@release_skip61
-    jmp @release_done62
-@release_done62
-    storel 0, %t12
-    storel %t247, %t12
-    %t262 =l loadl %t10
-    %t263 =l add %t262, 24
+    jmp @retain_done86
+@retain_skip85
+    jmp @retain_done86
+@retain_done86
+    %t261 =l loadl %t12
+    %t262 =w ceql %t261, 0
+    jnz %t262, @release_skip88, @release87
+@release87
+    %t263 =l add %t261, 8
     %t264 =l loadl %t263
-    %t265 =w ceql %t264, 0
-    jnz %t265, @retain_skip67, @retain66
-@retain66
-    %t266 =l sub %t264, 8
-    %t267 =l loadl %t266
-    %t268 =l add %t267, 1
-    storel %t268, %t266
-    jmp @retain_done68
-@retain_skip67
-    jmp @retain_done68
-@retain_done68
-    %t269 =l loadl %t13
-    %t270 =w ceql %t269, 0
-    jnz %t270, @release_skip70, @release69
-@release69
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t269, l $Rec_release)
-    jmp @release_done71
-@release_skip70
-    jmp @release_done71
-@release_done71
-    storel 0, %t13
-    storel %t264, %t13
-    %t271 =l loadl %t11
-    call $printf(l $fmt_str, ..., l %t271)
-    %t272 =l loadl %t12
+    %t265 =l mul %t264, 8
+    %t266 =l add %t265, 16
+    %t267 =l sub %t261, 8
+    %t268 =l loadl %t267
+    %t269 =l sub %t268, 1
+    storel %t269, %t267
+    %t270 =w cslel %t269, 0
+    jnz %t270, @list_free90, @list_free_skip91
+@list_free90
+    call $nox_rc_free_payload(l %rt, l %t261, l %t266)
+    jmp @list_free_done92
+@list_free_skip91
+    jmp @list_free_done92
+@list_free_done92
+    jmp @release_done89
+@release_skip88
+    jmp @release_done89
+@release_done89
+    storel 0, %t12
+    storel %t256, %t12
+    %t271 =l loadl %t10
+    %t272 =l add %t271, 24
     %t273 =l loadl %t272
-    %t274 =w cugel 1, %t273
-    jnz %t274, @list_idx_err72, @list_idx_ok73
-@list_idx_ok73
-    %t284 =l mul 1, 8
-    %t285 =l add %t284, 16
-    %t286 =l add %t272, %t285
-    %t287 =l loadl %t286
-    call $printf(l $fmt_int, ..., l %t287)
-    %t288 =l loadl %t13
-    %t289 =l add %t288, 8
-    %t290 =l loadl %t289
-    call $printf(l $fmt_str, ..., l %t290)
-    %t291 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t291
-    %t292 =l add %t291, 8
-    storel 0, %t292
-    %t293 =l add %t291, 16
-    storel 0, %t293
-    %t294 =l add %t291, 8
-    storel 1, %t294
-    %t295 =l add %t291, 16
-    storel 2, %t295
-    %t296 =l add $str12, 16
-    %t297 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 5, %t297
-    %t298 =l add %t297, 8
-    storel 0, %t298
-    %t299 =l add %t297, 16
-    storel 0, %t299
-    %t300 =l add %t297, 8
-    storel %t291, %t300
-    %t301 =l add %t297, 16
-    storel %t296, %t301
-    %t302 =l loadl %t14
-    %t303 =w ceql %t302, 0
-    jnz %t303, @release_skip82, @release81
-@release81
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t302, l $tuple__tuple__int_int_str_release)
-    jmp @release_done83
-@release_skip82
-    jmp @release_done83
-@release_done83
+    %t274 =w ceql %t273, 0
+    jnz %t274, @retain_skip94, @retain93
+@retain93
+    %t275 =l sub %t273, 8
+    %t276 =l loadl %t275
+    %t277 =l add %t276, 1
+    storel %t277, %t275
+    jmp @retain_done95
+@retain_skip94
+    jmp @retain_done95
+@retain_done95
+    %t278 =l loadl %t13
+    %t279 =w ceql %t278, 0
+    jnz %t279, @release_skip97, @release96
+@release96
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t278, l $Rec_release)
+    jmp @release_done98
+@release_skip97
+    jmp @release_done98
+@release_done98
+    storel 0, %t13
+    storel %t273, %t13
+    %t280 =l loadl %t11
+    %t281 =w ceql %t280, 0
+    jnz %t281, @print_none99, @print_some100
+@print_none99
+    call $printf(l $fmt_lit14)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done101
+@print_some100
+    call $printf(l $fmt_str, ..., l %t280)
+    jmp @print_opt_done101
+@print_opt_done101
+    %t282 =l loadl %t12
+    %t283 =l loadl %t282
+    %t284 =w cugel 1, %t283
+    jnz %t284, @list_idx_err102, @list_idx_ok103
+@list_idx_ok103
+    %t294 =l mul 1, 8
+    %t295 =l add %t294, 16
+    %t296 =l add %t282, %t295
+    %t297 =l loadl %t296
+    call $printf(l $fmt_int, ..., l %t297)
+    %t298 =l loadl %t13
+    %t299 =l add %t298, 8
+    %t300 =l loadl %t299
+    %t301 =w ceql %t300, 0
+    jnz %t301, @print_none111, @print_some112
+@print_none111
+    call $printf(l $fmt_lit15)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done113
+@print_some112
+    call $printf(l $fmt_str, ..., l %t300)
+    jmp @print_opt_done113
+@print_opt_done113
+    %t302 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 9, %t302
+    %t303 =l add %t302, 8
+    storel 0, %t303
+    %t304 =l add %t302, 16
+    storel 0, %t304
+    %t305 =l add %t302, 8
+    storel 1, %t305
+    %t306 =l add %t302, 16
+    storel 2, %t306
+    %t307 =l add $str12, 16
+    %t308 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 5, %t308
+    %t309 =l add %t308, 8
+    storel 0, %t309
+    %t310 =l add %t308, 16
+    storel 0, %t310
+    %t311 =l add %t308, 8
+    storel %t302, %t311
+    %t312 =l add %t308, 16
+    storel %t307, %t312
+    %t313 =l loadl %t14
+    %t314 =w ceql %t313, 0
+    jnz %t314, @release_skip115, @release114
+@release114
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t313, l $tuple__tuple__int_int_str_release)
+    jmp @release_done116
+@release_skip115
+    jmp @release_done116
+@release_done116
     storel 0, %t14
-    storel %t297, %t14
-    %t304 =l loadl %t14
-    %t305 =l add %t304, 8
-    %t306 =l loadl %t305
-    %t307 =l add %t306, 16
-    %t308 =l loadl %t307
-    call $printf(l $fmt_int, ..., l %t308)
-    %t309 =l loadl %t14
-    %t310 =l add %t309, 16
-    %t311 =l loadl %t310
-    call $printf(l $fmt_str, ..., l %t311)
-    %t312 =l loadl %t14
-    call $printf(l $fmt_lit5)
-    %t313 =l add %t312, 8
-    %t314 =l loadl %t313
-    call $printf(l $fmt_lit6)
-    %t315 =l add %t314, 8
-    %t316 =l loadl %t315
-    call $printf(l $fmt_int_frag, ..., l %t316)
+    storel %t308, %t14
+    %t315 =l loadl %t14
+    %t316 =l add %t315, 8
+    %t317 =l loadl %t316
+    %t318 =l add %t317, 16
+    %t319 =l loadl %t318
+    call $printf(l $fmt_int, ..., l %t319)
+    %t320 =l loadl %t14
+    %t321 =l add %t320, 16
+    %t322 =l loadl %t321
+    %t323 =w ceql %t322, 0
+    jnz %t323, @print_none117, @print_some118
+@print_none117
+    call $printf(l $fmt_lit16)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done119
+@print_some118
+    call $printf(l $fmt_str, ..., l %t322)
+    jmp @print_opt_done119
+@print_opt_done119
+    %t324 =l loadl %t14
+    %t325 =w ceql %t324, 0
+    jnz %t325, @print_none120, @print_some121
+@print_none120
+    call $printf(l $fmt_lit17)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done122
+@print_some121
+    call $printf(l $fmt_lit18)
+    %t326 =l add %t324, 8
+    %t327 =l loadl %t326
+    %t328 =w ceql %t327, 0
+    jnz %t328, @print_none123, @print_some124
+@print_none123
+    call $printf(l $fmt_lit19)
+    jmp @print_opt_done125
+@print_some124
+    call $printf(l $fmt_lit20)
+    %t329 =l add %t327, 8
+    %t330 =l loadl %t329
+    call $printf(l $fmt_int_frag, ..., l %t330)
     call $printf(l $fmt_comma_sp)
-    %t317 =l add %t314, 16
-    %t318 =l loadl %t317
-    call $printf(l $fmt_int_frag, ..., l %t318)
+    %t331 =l add %t327, 16
+    %t332 =l loadl %t331
+    call $printf(l $fmt_int_frag, ..., l %t332)
     call $printf(l $fmt_rparen)
+    jmp @print_opt_done125
+@print_opt_done125
     call $printf(l $fmt_comma_sp)
-    %t319 =l add %t312, 16
-    %t320 =l loadl %t319
-    call $printf(l $fmt_str_frag, ..., l %t320)
+    %t333 =l add %t324, 16
+    %t334 =l loadl %t333
+    %t335 =w ceql %t334, 0
+    jnz %t335, @print_none126, @print_some127
+@print_none126
+    call $printf(l $fmt_lit21)
+    jmp @print_opt_done128
+@print_some127
+    call $printf(l $fmt_str_frag, ..., l %t334)
+    jmp @print_opt_done128
+@print_opt_done128
     call $printf(l $fmt_rparen)
     call $printf(l $fmt_newline)
-    %t321 =l add $str13, 16
-    %t322 =l add $str14, 16
-    %t323 =l add $str15, 16
-    %t324 =l call $nox_dict_new(l %rt, w 1)
-    call $nox_dict_set(l %rt, l %t324, w 1, w 0, w 0, l %t321, l 1)
-    call $nox_dict_set(l %rt, l %t324, w 1, w 0, w 0, l %t322, l 2)
-    call $nox_dict_set(l %rt, l %t324, w 1, w 0, w 0, l %t323, l 3)
-    %t325 =l loadl %t15
-    %t326 =w ceql %t325, 0
-    jnz %t326, @release_skip85, @release84
-@release84
-    call $nox_dict_release(l %rt, l %t325, w 1, w 0, w 0)
-    jmp @release_done86
-@release_skip85
-    jmp @release_done86
-@release_done86
+    jmp @print_opt_done122
+@print_opt_done122
+    %t336 =l add $str13, 16
+    %t337 =l add $str14, 16
+    %t338 =l add $str15, 16
+    %t339 =l call $nox_dict_new(l %rt, w 1)
+    call $nox_dict_set(l %rt, l %t339, w 1, w 0, w 0, l %t336, l 1)
+    call $nox_dict_set(l %rt, l %t339, w 1, w 0, w 0, l %t337, l 2)
+    call $nox_dict_set(l %rt, l %t339, w 1, w 0, w 0, l %t338, l 3)
+    %t340 =l loadl %t15
+    %t341 =w ceql %t340, 0
+    jnz %t341, @release_skip130, @release129
+@release129
+    call $nox_dict_release(l %rt, l %t340, w 1, w 0, w 0)
+    jmp @release_done131
+@release_skip130
+    jmp @release_done131
+@release_done131
     storel 0, %t15
-    storel %t324, %t15
+    storel %t339, %t15
     storel 0, %t16
-    %t327 =l loadl %t15
-    %t328 =l call $__nox_dict_items__str_int(l %rt, l %t327)
-    %t329 =w call $nox_exception_pending(l %rt)
-    jnz %t329, @exc_propagate87, @exc_continue88
-@exc_propagate87
+    %t342 =l loadl %t15
+    %t343 =l call $__nox_dict_items__str_int(l %rt, l %t342)
+    %t344 =w call $nox_exception_pending(l %rt)
+    jnz %t344, @exc_propagate132, @exc_continue133
+@exc_propagate132
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue88
-    %t330 =l loadl %t17
-    %t331 =w ceql %t330, 0
-    jnz %t331, @release_skip90, @release89
-@release89
-    call $List_tuple__str_int_release(l %rt, l %t330)
-    jmp @release_done91
-@release_skip90
-    jmp @release_done91
-@release_done91
+@exc_continue133
+    %t345 =l loadl %t17
+    %t346 =w ceql %t345, 0
+    jnz %t346, @release_skip135, @release134
+@release134
+    call $List_tuple__str_int_release(l %rt, l %t345)
+    jmp @release_done136
+@release_skip135
+    jmp @release_done136
+@release_done136
     storel 0, %t17
-    storel %t328, %t17
+    storel %t343, %t17
     storel 0, %t19
-    %t332 =l loadl %t17
-    %t333 =l loadl %t332
-    jmp @forlist_cond92
-@forlist_cond92
-    %t334 =l loadl %t19
-    %t335 =w csltl %t334, %t333
-    jnz %t335, @forlist_body93, @forlist_end94
-@forlist_body93
-    %t336 =l mul %t334, 8
-    %t337 =l add %t336, 16
-    %t338 =l add %t332, %t337
-    %t339 =l loadl %t338
-    storel %t339, %t18
-    %t340 =l loadl %t18
-    %t341 =l add %t340, 8
-    %t342 =l loadl %t341
-    %t343 =w ceql %t342, 0
-    jnz %t343, @retain_skip97, @retain96
-@retain96
-    %t344 =l sub %t342, 16
-    %t345 =l loadl %t344
-    %t346 =l add %t345, 1
-    storel %t346, %t344
-    jmp @retain_done98
-@retain_skip97
-    jmp @retain_done98
-@retain_done98
-    %t347 =l loadl %t20
-    %t348 =w ceql %t347, 0
-    jnz %t348, @release_skip100, @release99
-@release99
-    %t349 =l sub %t347, 16
-    %t350 =l loadl %t349
-    %t351 =l sub %t350, 1
-    storel %t351, %t349
-    %t352 =w cslel %t351, 0
-    jnz %t352, @str_free102, @str_free_skip103
-@str_free102
-    call $nox_str_free_now(l %rt, l %t347)
-    jmp @str_free_done104
-@str_free_skip103
-    jmp @str_free_done104
-@str_free_done104
-    jmp @release_done101
-@release_skip100
-    jmp @release_done101
-@release_done101
+    %t347 =l loadl %t17
+    %t348 =l loadl %t347
+    jmp @forlist_cond137
+@forlist_cond137
+    %t349 =l loadl %t19
+    %t350 =w csltl %t349, %t348
+    jnz %t350, @forlist_body138, @forlist_end139
+@forlist_body138
+    %t351 =l mul %t349, 8
+    %t352 =l add %t351, 16
+    %t353 =l add %t347, %t352
+    %t354 =l loadl %t353
+    storel %t354, %t18
+    %t355 =l loadl %t18
+    %t356 =l add %t355, 8
+    %t357 =l loadl %t356
+    %t358 =w ceql %t357, 0
+    jnz %t358, @retain_skip142, @retain141
+@retain141
+    %t359 =l sub %t357, 16
+    %t360 =l loadl %t359
+    %t361 =l add %t360, 1
+    storel %t361, %t359
+    jmp @retain_done143
+@retain_skip142
+    jmp @retain_done143
+@retain_done143
+    %t362 =l loadl %t20
+    %t363 =w ceql %t362, 0
+    jnz %t363, @release_skip145, @release144
+@release144
+    %t364 =l sub %t362, 16
+    %t365 =l loadl %t364
+    %t366 =l sub %t365, 1
+    storel %t366, %t364
+    %t367 =w cslel %t366, 0
+    jnz %t367, @str_free147, @str_free_skip148
+@str_free147
+    call $nox_str_free_now(l %rt, l %t362)
+    jmp @str_free_done149
+@str_free_skip148
+    jmp @str_free_done149
+@str_free_done149
+    jmp @release_done146
+@release_skip145
+    jmp @release_done146
+@release_done146
     storel 0, %t20
-    storel %t342, %t20
-    %t353 =l loadl %t18
-    %t354 =l add %t353, 16
-    %t355 =l loadl %t354
-    storel %t355, %t21
-    %t356 =l loadl %t16
-    %t357 =l loadl %t21
-    %t358 =l add %t356, %t357
-    %t359 =l loadl %t20
-    %t360 =l call $nox_str_char_count(l %t359)
-    %t361 =l add %t358, %t360
-    storel %t361, %t16
-    jmp @forlist_step95
-@forlist_step95
-    %t362 =l loadl %t19
-    %t363 =l add %t362, 1
-    storel %t363, %t19
-    jmp @forlist_cond92
-@forlist_end94
-    %t364 =l loadl %t16
-    call $printf(l $fmt_int, ..., l %t364)
-    %t365 =l add $str16, 16
-    %t366 =l add $str17, 16
-    %t367 =l add $str18, 16
-    %t368 =l call $nox_rc_alloc(l %rt, l 40)
-    storel 3, %t368
-    %t369 =l add %t368, 8
-    storel 3, %t369
-    %t370 =l add %t368, 16
-    storel %t365, %t370
-    %t371 =l add %t368, 24
-    storel %t366, %t371
-    %t372 =l add %t368, 32
-    storel %t367, %t372
-    %t373 =l loadl %t22
-    %t374 =w ceql %t373, 0
-    jnz %t374, @release_skip106, @release105
-@release105
-    call $List_str_release(l %rt, l %t373)
-    jmp @release_done107
-@release_skip106
-    jmp @release_done107
-@release_done107
+    storel %t357, %t20
+    %t368 =l loadl %t18
+    %t369 =l add %t368, 16
+    %t370 =l loadl %t369
+    storel %t370, %t21
+    %t371 =l loadl %t16
+    %t372 =l loadl %t21
+    %t373 =l add %t371, %t372
+    %t374 =l loadl %t20
+    %t375 =l call $nox_str_char_count(l %t374)
+    %t376 =l add %t373, %t375
+    storel %t376, %t16
+    jmp @forlist_step140
+@forlist_step140
+    %t377 =l loadl %t19
+    %t378 =l add %t377, 1
+    storel %t378, %t19
+    jmp @forlist_cond137
+@forlist_end139
+    %t379 =l loadl %t16
+    call $printf(l $fmt_int, ..., l %t379)
+    %t380 =l add $str16, 16
+    %t381 =l add $str17, 16
+    %t382 =l add $str18, 16
+    %t383 =l call $nox_rc_alloc(l %rt, l 40)
+    storel 3, %t383
+    %t384 =l add %t383, 8
+    storel 3, %t384
+    %t385 =l add %t383, 16
+    storel %t380, %t385
+    %t386 =l add %t383, 24
+    storel %t381, %t386
+    %t387 =l add %t383, 32
+    storel %t382, %t387
+    %t388 =l loadl %t22
+    %t389 =w ceql %t388, 0
+    jnz %t389, @release_skip151, @release150
+@release150
+    call $List_str_release(l %rt, l %t388)
+    jmp @release_done152
+@release_skip151
+    jmp @release_done152
+@release_done152
     storel 0, %t22
-    storel %t368, %t22
-    %t375 =l loadl %t22
-    %t376 =l call $enumerate__str(l %rt, l %t375)
-    %t377 =w call $nox_exception_pending(l %rt)
-    jnz %t377, @exc_propagate108, @exc_continue109
-@exc_propagate108
+    storel %t383, %t22
+    %t390 =l loadl %t22
+    %t391 =l call $enumerate__str(l %rt, l %t390)
+    %t392 =w call $nox_exception_pending(l %rt)
+    jnz %t392, @exc_propagate153, @exc_continue154
+@exc_propagate153
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue109
-    %t378 =l loadl %t23
-    %t379 =w ceql %t378, 0
-    jnz %t379, @release_skip111, @release110
-@release110
-    call $List_tuple__int_str_release(l %rt, l %t378)
-    jmp @release_done112
-@release_skip111
-    jmp @release_done112
-@release_done112
-    storel 0, %t23
-    storel %t376, %t23
-    storel 0, %t25
-    %t380 =l loadl %t23
-    %t381 =l loadl %t380
-    jmp @forlist_cond113
-@forlist_cond113
-    %t382 =l loadl %t25
-    %t383 =w csltl %t382, %t381
-    jnz %t383, @forlist_body114, @forlist_end115
-@forlist_body114
-    %t384 =l mul %t382, 8
-    %t385 =l add %t384, 16
-    %t386 =l add %t380, %t385
-    %t387 =l loadl %t386
-    storel %t387, %t24
-    %t388 =l loadl %t24
-    %t389 =l add %t388, 8
-    %t390 =l loadl %t389
-    storel %t390, %t26
-    %t391 =l loadl %t24
-    %t392 =l add %t391, 16
-    %t393 =l loadl %t392
+@exc_continue154
+    %t393 =l loadl %t23
     %t394 =w ceql %t393, 0
-    jnz %t394, @retain_skip118, @retain117
-@retain117
-    %t395 =l sub %t393, 16
+    jnz %t394, @release_skip156, @release155
+@release155
+    call $List_tuple__int_str_release(l %rt, l %t393)
+    jmp @release_done157
+@release_skip156
+    jmp @release_done157
+@release_done157
+    storel 0, %t23
+    storel %t391, %t23
+    storel 0, %t25
+    %t395 =l loadl %t23
     %t396 =l loadl %t395
-    %t397 =l add %t396, 1
-    storel %t397, %t395
-    jmp @retain_done119
-@retain_skip118
-    jmp @retain_done119
-@retain_done119
-    %t398 =l loadl %t27
-    %t399 =w ceql %t398, 0
-    jnz %t399, @release_skip121, @release120
-@release120
-    %t400 =l sub %t398, 16
-    %t401 =l loadl %t400
-    %t402 =l sub %t401, 1
-    storel %t402, %t400
-    %t403 =w cslel %t402, 0
-    jnz %t403, @str_free123, @str_free_skip124
-@str_free123
-    call $nox_str_free_now(l %rt, l %t398)
-    jmp @str_free_done125
-@str_free_skip124
-    jmp @str_free_done125
-@str_free_done125
-    jmp @release_done122
-@release_skip121
-    jmp @release_done122
-@release_done122
+    jmp @forlist_cond158
+@forlist_cond158
+    %t397 =l loadl %t25
+    %t398 =w csltl %t397, %t396
+    jnz %t398, @forlist_body159, @forlist_end160
+@forlist_body159
+    %t399 =l mul %t397, 8
+    %t400 =l add %t399, 16
+    %t401 =l add %t395, %t400
+    %t402 =l loadl %t401
+    storel %t402, %t24
+    %t403 =l loadl %t24
+    %t404 =l add %t403, 8
+    %t405 =l loadl %t404
+    storel %t405, %t26
+    %t406 =l loadl %t24
+    %t407 =l add %t406, 16
+    %t408 =l loadl %t407
+    %t409 =w ceql %t408, 0
+    jnz %t409, @retain_skip163, @retain162
+@retain162
+    %t410 =l sub %t408, 16
+    %t411 =l loadl %t410
+    %t412 =l add %t411, 1
+    storel %t412, %t410
+    jmp @retain_done164
+@retain_skip163
+    jmp @retain_done164
+@retain_done164
+    %t413 =l loadl %t27
+    %t414 =w ceql %t413, 0
+    jnz %t414, @release_skip166, @release165
+@release165
+    %t415 =l sub %t413, 16
+    %t416 =l loadl %t415
+    %t417 =l sub %t416, 1
+    storel %t417, %t415
+    %t418 =w cslel %t417, 0
+    jnz %t418, @str_free168, @str_free_skip169
+@str_free168
+    call $nox_str_free_now(l %rt, l %t413)
+    jmp @str_free_done170
+@str_free_skip169
+    jmp @str_free_done170
+@str_free_done170
+    jmp @release_done167
+@release_skip166
+    jmp @release_done167
+@release_done167
     storel 0, %t27
-    storel %t393, %t27
-    %t404 =l loadl %t26
-    call $printf(l $fmt_int, ..., l %t404)
-    %t405 =l loadl %t27
-    call $printf(l $fmt_str, ..., l %t405)
-    jmp @forlist_step116
-@forlist_step116
-    %t406 =l loadl %t25
-    %t407 =l add %t406, 1
-    storel %t407, %t25
-    jmp @forlist_cond113
-@forlist_end115
-    %t408 =l call $nox_rc_alloc(l %rt, l 40)
-    storel 3, %t408
-    %t409 =l add %t408, 8
-    storel 3, %t409
-    %t410 =l add %t408, 16
-    storel 1, %t410
-    %t411 =l add %t408, 24
-    storel 2, %t411
-    %t412 =l add %t408, 32
-    storel 3, %t412
-    %t413 =l add $str19, 16
-    %t414 =l add $str20, 16
-    %t415 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 2, %t415
-    %t416 =l add %t415, 8
-    storel 2, %t416
-    %t417 =l add %t415, 16
-    storel %t413, %t417
-    %t418 =l add %t415, 24
-    storel %t414, %t418
-    %t419 =l call $zip__int_str(l %rt, l %t408, l %t415)
-    %t420 =w ceql %t408, 0
-    jnz %t420, @release_skip127, @release126
-@release126
-    %t421 =l add %t408, 8
-    %t422 =l loadl %t421
-    %t423 =l mul %t422, 8
-    %t424 =l add %t423, 16
-    %t425 =l sub %t408, 8
-    %t426 =l loadl %t425
-    %t427 =l sub %t426, 1
-    storel %t427, %t425
-    %t428 =w cslel %t427, 0
-    jnz %t428, @list_free129, @list_free_skip130
-@list_free129
-    call $nox_rc_free_payload(l %rt, l %t408, l %t424)
-    jmp @list_free_done131
-@list_free_skip130
-    jmp @list_free_done131
-@list_free_done131
-    jmp @release_done128
-@release_skip127
-    jmp @release_done128
-@release_done128
-    %t429 =w ceql %t415, 0
-    jnz %t429, @release_skip133, @release132
-@release132
-    call $List_str_release(l %rt, l %t415)
-    jmp @release_done134
-@release_skip133
-    jmp @release_done134
-@release_done134
-    %t430 =w call $nox_exception_pending(l %rt)
-    jnz %t430, @exc_propagate135, @exc_continue136
-@exc_propagate135
+    storel %t408, %t27
+    %t419 =l loadl %t26
+    call $printf(l $fmt_int, ..., l %t419)
+    %t420 =l loadl %t27
+    %t421 =w ceql %t420, 0
+    jnz %t421, @print_none171, @print_some172
+@print_none171
+    call $printf(l $fmt_lit22)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done173
+@print_some172
+    call $printf(l $fmt_str, ..., l %t420)
+    jmp @print_opt_done173
+@print_opt_done173
+    jmp @forlist_step161
+@forlist_step161
+    %t422 =l loadl %t25
+    %t423 =l add %t422, 1
+    storel %t423, %t25
+    jmp @forlist_cond158
+@forlist_end160
+    %t424 =l call $nox_rc_alloc(l %rt, l 40)
+    storel 3, %t424
+    %t425 =l add %t424, 8
+    storel 3, %t425
+    %t426 =l add %t424, 16
+    storel 1, %t426
+    %t427 =l add %t424, 24
+    storel 2, %t427
+    %t428 =l add %t424, 32
+    storel 3, %t428
+    %t429 =l add $str19, 16
+    %t430 =l add $str20, 16
+    %t431 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 2, %t431
+    %t432 =l add %t431, 8
+    storel 2, %t432
+    %t433 =l add %t431, 16
+    storel %t429, %t433
+    %t434 =l add %t431, 24
+    storel %t430, %t434
+    %t435 =l call $zip__int_str(l %rt, l %t424, l %t431)
+    %t436 =w ceql %t424, 0
+    jnz %t436, @release_skip175, @release174
+@release174
+    %t437 =l add %t424, 8
+    %t438 =l loadl %t437
+    %t439 =l mul %t438, 8
+    %t440 =l add %t439, 16
+    %t441 =l sub %t424, 8
+    %t442 =l loadl %t441
+    %t443 =l sub %t442, 1
+    storel %t443, %t441
+    %t444 =w cslel %t443, 0
+    jnz %t444, @list_free177, @list_free_skip178
+@list_free177
+    call $nox_rc_free_payload(l %rt, l %t424, l %t440)
+    jmp @list_free_done179
+@list_free_skip178
+    jmp @list_free_done179
+@list_free_done179
+    jmp @release_done176
+@release_skip175
+    jmp @release_done176
+@release_done176
+    %t445 =w ceql %t431, 0
+    jnz %t445, @release_skip181, @release180
+@release180
+    call $List_str_release(l %rt, l %t431)
+    jmp @release_done182
+@release_skip181
+    jmp @release_done182
+@release_done182
+    %t446 =w call $nox_exception_pending(l %rt)
+    jnz %t446, @exc_propagate183, @exc_continue184
+@exc_propagate183
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue136
-    %t431 =l loadl %t28
-    %t432 =w ceql %t431, 0
-    jnz %t432, @release_skip138, @release137
-@release137
-    call $List_tuple__int_str_release(l %rt, l %t431)
-    jmp @release_done139
-@release_skip138
-    jmp @release_done139
-@release_done139
+@exc_continue184
+    %t447 =l loadl %t28
+    %t448 =w ceql %t447, 0
+    jnz %t448, @release_skip186, @release185
+@release185
+    call $List_tuple__int_str_release(l %rt, l %t447)
+    jmp @release_done187
+@release_skip186
+    jmp @release_done187
+@release_done187
     storel 0, %t28
-    storel %t419, %t28
+    storel %t435, %t28
     storel 0, %t30
-    %t433 =l loadl %t28
-    %t434 =l loadl %t433
-    jmp @forlist_cond140
-@forlist_cond140
-    %t435 =l loadl %t30
-    %t436 =w csltl %t435, %t434
-    jnz %t436, @forlist_body141, @forlist_end142
-@forlist_body141
-    %t437 =l mul %t435, 8
-    %t438 =l add %t437, 16
-    %t439 =l add %t433, %t438
-    %t440 =l loadl %t439
-    storel %t440, %t29
-    %t441 =l loadl %t29
-    %t442 =l add %t441, 8
-    %t443 =l loadl %t442
-    storel %t443, %t31
-    %t444 =l loadl %t29
-    %t445 =l add %t444, 16
-    %t446 =l loadl %t445
-    %t447 =w ceql %t446, 0
-    jnz %t447, @retain_skip145, @retain144
-@retain144
-    %t448 =l sub %t446, 16
-    %t449 =l loadl %t448
-    %t450 =l add %t449, 1
-    storel %t450, %t448
-    jmp @retain_done146
-@retain_skip145
-    jmp @retain_done146
-@retain_done146
-    %t451 =l loadl %t32
-    %t452 =w ceql %t451, 0
-    jnz %t452, @release_skip148, @release147
-@release147
-    %t453 =l sub %t451, 16
-    %t454 =l loadl %t453
-    %t455 =l sub %t454, 1
-    storel %t455, %t453
-    %t456 =w cslel %t455, 0
-    jnz %t456, @str_free150, @str_free_skip151
-@str_free150
-    call $nox_str_free_now(l %rt, l %t451)
-    jmp @str_free_done152
-@str_free_skip151
-    jmp @str_free_done152
-@str_free_done152
-    jmp @release_done149
-@release_skip148
-    jmp @release_done149
-@release_done149
+    %t449 =l loadl %t28
+    %t450 =l loadl %t449
+    jmp @forlist_cond188
+@forlist_cond188
+    %t451 =l loadl %t30
+    %t452 =w csltl %t451, %t450
+    jnz %t452, @forlist_body189, @forlist_end190
+@forlist_body189
+    %t453 =l mul %t451, 8
+    %t454 =l add %t453, 16
+    %t455 =l add %t449, %t454
+    %t456 =l loadl %t455
+    storel %t456, %t29
+    %t457 =l loadl %t29
+    %t458 =l add %t457, 8
+    %t459 =l loadl %t458
+    storel %t459, %t31
+    %t460 =l loadl %t29
+    %t461 =l add %t460, 16
+    %t462 =l loadl %t461
+    %t463 =w ceql %t462, 0
+    jnz %t463, @retain_skip193, @retain192
+@retain192
+    %t464 =l sub %t462, 16
+    %t465 =l loadl %t464
+    %t466 =l add %t465, 1
+    storel %t466, %t464
+    jmp @retain_done194
+@retain_skip193
+    jmp @retain_done194
+@retain_done194
+    %t467 =l loadl %t32
+    %t468 =w ceql %t467, 0
+    jnz %t468, @release_skip196, @release195
+@release195
+    %t469 =l sub %t467, 16
+    %t470 =l loadl %t469
+    %t471 =l sub %t470, 1
+    storel %t471, %t469
+    %t472 =w cslel %t471, 0
+    jnz %t472, @str_free198, @str_free_skip199
+@str_free198
+    call $nox_str_free_now(l %rt, l %t467)
+    jmp @str_free_done200
+@str_free_skip199
+    jmp @str_free_done200
+@str_free_done200
+    jmp @release_done197
+@release_skip196
+    jmp @release_done197
+@release_done197
     storel 0, %t32
-    storel %t446, %t32
-    %t457 =l loadl %t31
-    call $printf(l $fmt_int, ..., l %t457)
-    %t458 =l loadl %t32
-    call $printf(l $fmt_str, ..., l %t458)
-    jmp @forlist_step143
-@forlist_step143
-    %t459 =l loadl %t30
-    %t460 =l add %t459, 1
-    storel %t460, %t30
-    jmp @forlist_cond140
-@forlist_end142
-    %t461 =l add $str21, 16
-    %t462 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 7, %t462
-    %t463 =l add %t462, 8
-    storel 0, %t463
-    %t464 =l add %t462, 16
-    storel 0, %t464
-    %t465 =l add %t462, 8
-    storel 1, %t465
-    %t466 =l add %t462, 16
-    storel %t461, %t466
-    %t467 =l add $str22, 16
-    %t468 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 7, %t468
-    %t469 =l add %t468, 8
-    storel 0, %t469
-    %t470 =l add %t468, 16
-    storel 0, %t470
-    %t471 =l add %t468, 8
-    storel 2, %t471
-    %t472 =l add %t468, 16
-    storel %t467, %t472
-    %t473 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 2, %t473
-    %t474 =l add %t473, 8
-    storel 2, %t474
-    %t475 =l add %t473, 16
-    storel %t462, %t475
-    %t476 =l add %t473, 24
-    storel %t468, %t476
-    %t477 =l loadl %t33
-    %t478 =w ceql %t477, 0
-    jnz %t478, @release_skip154, @release153
-@release153
-    call $List_tuple__int_str_release(l %rt, l %t477)
-    jmp @release_done155
-@release_skip154
-    jmp @release_done155
-@release_done155
+    storel %t462, %t32
+    %t473 =l loadl %t31
+    call $printf(l $fmt_int, ..., l %t473)
+    %t474 =l loadl %t32
+    %t475 =w ceql %t474, 0
+    jnz %t475, @print_none201, @print_some202
+@print_none201
+    call $printf(l $fmt_lit23)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done203
+@print_some202
+    call $printf(l $fmt_str, ..., l %t474)
+    jmp @print_opt_done203
+@print_opt_done203
+    jmp @forlist_step191
+@forlist_step191
+    %t476 =l loadl %t30
+    %t477 =l add %t476, 1
+    storel %t477, %t30
+    jmp @forlist_cond188
+@forlist_end190
+    %t478 =l add $str21, 16
+    %t479 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 7, %t479
+    %t480 =l add %t479, 8
+    storel 0, %t480
+    %t481 =l add %t479, 16
+    storel 0, %t481
+    %t482 =l add %t479, 8
+    storel 1, %t482
+    %t483 =l add %t479, 16
+    storel %t478, %t483
+    %t484 =l add $str22, 16
+    %t485 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 7, %t485
+    %t486 =l add %t485, 8
+    storel 0, %t486
+    %t487 =l add %t485, 16
+    storel 0, %t487
+    %t488 =l add %t485, 8
+    storel 2, %t488
+    %t489 =l add %t485, 16
+    storel %t484, %t489
+    %t490 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 2, %t490
+    %t491 =l add %t490, 8
+    storel 2, %t491
+    %t492 =l add %t490, 16
+    storel %t479, %t492
+    %t493 =l add %t490, 24
+    storel %t485, %t493
+    %t494 =l loadl %t33
+    %t495 =w ceql %t494, 0
+    jnz %t495, @release_skip205, @release204
+@release204
+    call $List_tuple__int_str_release(l %rt, l %t494)
+    jmp @release_done206
+@release_skip205
+    jmp @release_done206
+@release_done206
     storel 0, %t33
-    storel %t473, %t33
-    %t479 =l loadl %t33
-    %t480 =l loadl %t479
-    call $printf(l $fmt_int, ..., l %t480)
-    %t481 =l loadl %t33
-    %t482 =l loadl %t481
-    %t483 =w cugel 1, %t482
-    jnz %t483, @list_idx_err156, @list_idx_ok157
-@list_idx_ok157
-    %t493 =l mul 1, 8
-    %t494 =l add %t493, 16
-    %t495 =l add %t481, %t494
-    %t496 =l loadl %t495
-    %t497 =l add %t496, 16
-    %t498 =l loadl %t497
-    call $printf(l $fmt_str, ..., l %t498)
-    storel 0, %t35
-    %t499 =l loadl %t33
-    %t500 =l loadl %t499
-    jmp @forlist_cond165
-@forlist_cond165
-    %t501 =l loadl %t35
-    %t502 =w csltl %t501, %t500
-    jnz %t502, @forlist_body166, @forlist_end167
-@forlist_body166
-    %t503 =l mul %t501, 8
-    %t504 =l add %t503, 16
-    %t505 =l add %t499, %t504
-    %t506 =l loadl %t505
-    storel %t506, %t34
-    %t507 =l loadl %t34
-    %t508 =l add %t507, 8
-    %t509 =l loadl %t508
-    storel %t509, %t36
-    %t510 =l loadl %t34
+    storel %t490, %t33
+    %t496 =l loadl %t33
+    %t497 =l loadl %t496
+    call $printf(l $fmt_int, ..., l %t497)
+    %t498 =l loadl %t33
+    %t499 =l loadl %t498
+    %t500 =w cugel 1, %t499
+    jnz %t500, @list_idx_err207, @list_idx_ok208
+@list_idx_ok208
+    %t510 =l mul 1, 8
     %t511 =l add %t510, 16
-    %t512 =l loadl %t511
-    %t513 =w ceql %t512, 0
-    jnz %t513, @retain_skip170, @retain169
-@retain169
-    %t514 =l sub %t512, 16
+    %t512 =l add %t498, %t511
+    %t513 =l loadl %t512
+    %t514 =l add %t513, 16
     %t515 =l loadl %t514
-    %t516 =l add %t515, 1
-    storel %t516, %t514
-    jmp @retain_done171
-@retain_skip170
-    jmp @retain_done171
-@retain_done171
-    %t517 =l loadl %t37
-    %t518 =w ceql %t517, 0
-    jnz %t518, @release_skip173, @release172
-@release172
-    %t519 =l sub %t517, 16
-    %t520 =l loadl %t519
-    %t521 =l sub %t520, 1
-    storel %t521, %t519
-    %t522 =w cslel %t521, 0
-    jnz %t522, @str_free175, @str_free_skip176
-@str_free175
-    call $nox_str_free_now(l %rt, l %t517)
-    jmp @str_free_done177
-@str_free_skip176
-    jmp @str_free_done177
-@str_free_done177
-    jmp @release_done174
-@release_skip173
-    jmp @release_done174
-@release_done174
+    %t516 =w ceql %t515, 0
+    jnz %t516, @print_none216, @print_some217
+@print_none216
+    call $printf(l $fmt_lit24)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done218
+@print_some217
+    call $printf(l $fmt_str, ..., l %t515)
+    jmp @print_opt_done218
+@print_opt_done218
+    storel 0, %t35
+    %t517 =l loadl %t33
+    %t518 =l loadl %t517
+    jmp @forlist_cond219
+@forlist_cond219
+    %t519 =l loadl %t35
+    %t520 =w csltl %t519, %t518
+    jnz %t520, @forlist_body220, @forlist_end221
+@forlist_body220
+    %t521 =l mul %t519, 8
+    %t522 =l add %t521, 16
+    %t523 =l add %t517, %t522
+    %t524 =l loadl %t523
+    storel %t524, %t34
+    %t525 =l loadl %t34
+    %t526 =l add %t525, 8
+    %t527 =l loadl %t526
+    storel %t527, %t36
+    %t528 =l loadl %t34
+    %t529 =l add %t528, 16
+    %t530 =l loadl %t529
+    %t531 =w ceql %t530, 0
+    jnz %t531, @retain_skip224, @retain223
+@retain223
+    %t532 =l sub %t530, 16
+    %t533 =l loadl %t532
+    %t534 =l add %t533, 1
+    storel %t534, %t532
+    jmp @retain_done225
+@retain_skip224
+    jmp @retain_done225
+@retain_done225
+    %t535 =l loadl %t37
+    %t536 =w ceql %t535, 0
+    jnz %t536, @release_skip227, @release226
+@release226
+    %t537 =l sub %t535, 16
+    %t538 =l loadl %t537
+    %t539 =l sub %t538, 1
+    storel %t539, %t537
+    %t540 =w cslel %t539, 0
+    jnz %t540, @str_free229, @str_free_skip230
+@str_free229
+    call $nox_str_free_now(l %rt, l %t535)
+    jmp @str_free_done231
+@str_free_skip230
+    jmp @str_free_done231
+@str_free_done231
+    jmp @release_done228
+@release_skip227
+    jmp @release_done228
+@release_done228
     storel 0, %t37
-    storel %t512, %t37
-    %t523 =l loadl %t36
-    call $printf(l $fmt_int, ..., l %t523)
-    %t524 =l loadl %t37
-    call $printf(l $fmt_str, ..., l %t524)
-    jmp @forlist_step168
-@forlist_step168
-    %t525 =l loadl %t35
-    %t526 =l add %t525, 1
-    storel %t526, %t35
-    jmp @forlist_cond165
-@forlist_end167
-    %t527 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t527
-    %t528 =l add %t527, 8
-    storel 0, %t528
-    %t529 =l add %t527, 16
-    storel 0, %t529
-    %t530 =l add %t527, 8
-    storel 1, %t530
-    %t531 =l add %t527, 16
-    storel 2, %t531
-    %t532 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t532
-    %t533 =l add %t532, 8
-    storel 0, %t533
-    %t534 =l add %t532, 16
-    storel 0, %t534
-    %t535 =l add %t532, 8
-    storel 1, %t535
-    %t536 =l add %t532, 16
-    storel 2, %t536
-    %t537 =l add %t527, 8
-    %t538 =l add %t532, 8
-    %t539 =l loadl %t537
-    %t540 =l loadl %t538
-    %t541 =w ceql %t539, %t540
-    jnz %t541, @eqcmp_cont180, @eqinline_mismatch178
-@eqcmp_cont180
-    %t542 =l add %t527, 16
-    %t543 =l add %t532, 16
-    %t544 =l loadl %t542
-    %t545 =l loadl %t543
-    %t546 =w ceql %t544, %t545
-    jnz %t546, @eqcmp_cont181, @eqinline_mismatch178
-@eqcmp_cont181
-    jmp @eqinline_match179
-@eqinline_match179
-    jmp @eqinline_done182
-@eqinline_mismatch178
-    jmp @eqinline_done182
-@eqinline_done182
-    %t547 =w phi @eqinline_match179 1, @eqinline_mismatch178 0
-    %t548 =w ceql %t527, 0
-    jnz %t548, @release_skip184, @release183
-@release183
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t527, l $tuple__int_int_release)
-    jmp @release_done185
-@release_skip184
-    jmp @release_done185
-@release_done185
-    %t549 =w ceql %t532, 0
-    jnz %t549, @release_skip187, @release186
-@release186
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t532, l $tuple__int_int_release)
-    jmp @release_done188
-@release_skip187
-    jmp @release_done188
-@release_done188
-    jnz %t547, @print_true189, @print_false190
-@print_true189
-    call $printf(l $fmt_bool_true)
-    jmp @print_done191
-@print_false190
-    call $printf(l $fmt_bool_false)
-    jmp @print_done191
-@print_done191
-    %t550 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t550
-    %t551 =l add %t550, 8
-    storel 0, %t551
-    %t552 =l add %t550, 16
+    storel %t530, %t37
+    %t541 =l loadl %t36
+    call $printf(l $fmt_int, ..., l %t541)
+    %t542 =l loadl %t37
+    %t543 =w ceql %t542, 0
+    jnz %t543, @print_none232, @print_some233
+@print_none232
+    call $printf(l $fmt_lit25)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done234
+@print_some233
+    call $printf(l $fmt_str, ..., l %t542)
+    jmp @print_opt_done234
+@print_opt_done234
+    jmp @forlist_step222
+@forlist_step222
+    %t544 =l loadl %t35
+    %t545 =l add %t544, 1
+    storel %t545, %t35
+    jmp @forlist_cond219
+@forlist_end221
+    %t546 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 9, %t546
+    %t547 =l add %t546, 8
+    storel 0, %t547
+    %t548 =l add %t546, 16
+    storel 0, %t548
+    %t549 =l add %t546, 8
+    storel 1, %t549
+    %t550 =l add %t546, 16
+    storel 2, %t550
+    %t551 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 9, %t551
+    %t552 =l add %t551, 8
     storel 0, %t552
-    %t553 =l add %t550, 8
-    storel 1, %t553
-    %t554 =l add %t550, 16
-    storel 2, %t554
-    %t555 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t555
-    %t556 =l add %t555, 8
-    storel 0, %t556
-    %t557 =l add %t555, 16
-    storel 0, %t557
-    %t558 =l add %t555, 8
-    storel 1, %t558
-    %t559 =l add %t555, 16
-    storel 3, %t559
-    %t560 =l add %t550, 8
-    %t561 =l add %t555, 8
-    %t562 =l loadl %t560
+    %t553 =l add %t551, 16
+    storel 0, %t553
+    %t554 =l add %t551, 8
+    storel 1, %t554
+    %t555 =l add %t551, 16
+    storel 2, %t555
+    %t556 =l add %t546, 8
+    %t557 =l add %t551, 8
+    %t558 =l loadl %t556
+    %t559 =l loadl %t557
+    %t560 =w ceql %t558, %t559
+    jnz %t560, @eqcmp_cont237, @eqinline_mismatch235
+@eqcmp_cont237
+    %t561 =l add %t546, 16
+    %t562 =l add %t551, 16
     %t563 =l loadl %t561
-    %t564 =w ceql %t562, %t563
-    jnz %t564, @eqcmp_cont194, @eqinline_mismatch192
-@eqcmp_cont194
-    %t565 =l add %t550, 16
-    %t566 =l add %t555, 16
-    %t567 =l loadl %t565
-    %t568 =l loadl %t566
-    %t569 =w ceql %t567, %t568
-    jnz %t569, @eqcmp_cont195, @eqinline_mismatch192
-@eqcmp_cont195
-    jmp @eqinline_match193
-@eqinline_match193
-    jmp @eqinline_done196
-@eqinline_mismatch192
-    jmp @eqinline_done196
-@eqinline_done196
-    %t570 =w phi @eqinline_match193 1, @eqinline_mismatch192 0
-    %t571 =w ceql %t550, 0
-    jnz %t571, @release_skip198, @release197
-@release197
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t550, l $tuple__int_int_release)
-    jmp @release_done199
-@release_skip198
-    jmp @release_done199
-@release_done199
-    %t572 =w ceql %t555, 0
-    jnz %t572, @release_skip201, @release200
-@release200
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t555, l $tuple__int_int_release)
-    jmp @release_done202
-@release_skip201
-    jmp @release_done202
-@release_done202
-    jnz %t570, @print_true203, @print_false204
-@print_true203
+    %t564 =l loadl %t562
+    %t565 =w ceql %t563, %t564
+    jnz %t565, @eqcmp_cont238, @eqinline_mismatch235
+@eqcmp_cont238
+    jmp @eqinline_match236
+@eqinline_match236
+    jmp @eqinline_done239
+@eqinline_mismatch235
+    jmp @eqinline_done239
+@eqinline_done239
+    %t566 =w phi @eqinline_match236 1, @eqinline_mismatch235 0
+    %t567 =w ceql %t546, 0
+    jnz %t567, @release_skip241, @release240
+@release240
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t546, l $tuple__int_int_release)
+    jmp @release_done242
+@release_skip241
+    jmp @release_done242
+@release_done242
+    %t568 =w ceql %t551, 0
+    jnz %t568, @release_skip244, @release243
+@release243
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t551, l $tuple__int_int_release)
+    jmp @release_done245
+@release_skip244
+    jmp @release_done245
+@release_done245
+    jnz %t566, @print_true246, @print_false247
+@print_true246
     call $printf(l $fmt_bool_true)
-    jmp @print_done205
-@print_false204
+    jmp @print_done248
+@print_false247
     call $printf(l $fmt_bool_false)
-    jmp @print_done205
-@print_done205
-    %t573 =d sltof 1
+    jmp @print_done248
+@print_done248
+    %t569 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 9, %t569
+    %t570 =l add %t569, 8
+    storel 0, %t570
+    %t571 =l add %t569, 16
+    storel 0, %t571
+    %t572 =l add %t569, 8
+    storel 1, %t572
+    %t573 =l add %t569, 16
+    storel 2, %t573
     %t574 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 4, %t574
+    storel 9, %t574
     %t575 =l add %t574, 8
     storel 0, %t575
     %t576 =l add %t574, 16
     storel 0, %t576
     %t577 =l add %t574, 8
-    stored %t573, %t577
+    storel 1, %t577
     %t578 =l add %t574, 16
-    storel 2, %t578
-    %t579 =l loadl %t38
-    %t580 =w ceql %t579, 0
-    jnz %t580, @release_skip207, @release206
-@release206
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t579, l $tuple__float_int_release)
-    jmp @release_done208
-@release_skip207
-    jmp @release_done208
-@release_done208
+    storel 3, %t578
+    %t579 =l add %t569, 8
+    %t580 =l add %t574, 8
+    %t581 =l loadl %t579
+    %t582 =l loadl %t580
+    %t583 =w ceql %t581, %t582
+    jnz %t583, @eqcmp_cont251, @eqinline_mismatch249
+@eqcmp_cont251
+    %t584 =l add %t569, 16
+    %t585 =l add %t574, 16
+    %t586 =l loadl %t584
+    %t587 =l loadl %t585
+    %t588 =w ceql %t586, %t587
+    jnz %t588, @eqcmp_cont252, @eqinline_mismatch249
+@eqcmp_cont252
+    jmp @eqinline_match250
+@eqinline_match250
+    jmp @eqinline_done253
+@eqinline_mismatch249
+    jmp @eqinline_done253
+@eqinline_done253
+    %t589 =w phi @eqinline_match250 1, @eqinline_mismatch249 0
+    %t590 =w ceql %t569, 0
+    jnz %t590, @release_skip255, @release254
+@release254
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t569, l $tuple__int_int_release)
+    jmp @release_done256
+@release_skip255
+    jmp @release_done256
+@release_done256
+    %t591 =w ceql %t574, 0
+    jnz %t591, @release_skip258, @release257
+@release257
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t574, l $tuple__int_int_release)
+    jmp @release_done259
+@release_skip258
+    jmp @release_done259
+@release_done259
+    jnz %t589, @print_true260, @print_false261
+@print_true260
+    call $printf(l $fmt_bool_true)
+    jmp @print_done262
+@print_false261
+    call $printf(l $fmt_bool_false)
+    jmp @print_done262
+@print_done262
+    %t592 =d sltof 1
+    %t593 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 4, %t593
+    %t594 =l add %t593, 8
+    storel 0, %t594
+    %t595 =l add %t593, 16
+    storel 0, %t595
+    %t596 =l add %t593, 8
+    stored %t592, %t596
+    %t597 =l add %t593, 16
+    storel 2, %t597
+    %t598 =l loadl %t38
+    %t599 =w ceql %t598, 0
+    jnz %t599, @release_skip264, @release263
+@release263
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t598, l $tuple__float_int_release)
+    jmp @release_done265
+@release_skip264
+    jmp @release_done265
+@release_done265
     storel 0, %t38
-    storel %t574, %t38
-    %t581 =l loadl %t38
-    call $printf(l $fmt_lit7)
-    %t582 =l add %t581, 8
-    %t583 =d loadd %t582
-    call $printf(l $fmt_float_frag, ..., d %t583)
+    storel %t593, %t38
+    %t600 =l loadl %t38
+    %t601 =w ceql %t600, 0
+    jnz %t601, @print_none266, @print_some267
+@print_none266
+    call $printf(l $fmt_lit26)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done268
+@print_some267
+    call $printf(l $fmt_lit27)
+    %t602 =l add %t600, 8
+    %t603 =d loadd %t602
+    call $printf(l $fmt_float_frag, ..., d %t603)
     call $printf(l $fmt_comma_sp)
-    %t584 =l add %t581, 16
-    %t585 =l loadl %t584
-    call $printf(l $fmt_int_frag, ..., l %t585)
+    %t604 =l add %t600, 16
+    %t605 =l loadl %t604
+    call $printf(l $fmt_int_frag, ..., l %t605)
     call $printf(l $fmt_rparen)
     call $printf(l $fmt_newline)
-    %t586 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 10, %t586
-    %t587 =l add %t586, 8
-    storel 0, %t587
-    call $Holder___init__(l %rt, l %t586, l 3, l 4)
-    %t588 =l loadl %t39
-    %t589 =w ceql %t588, 0
-    jnz %t589, @release_skip210, @release209
-@release209
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t588, l $Holder_release)
-    jmp @release_done211
-@release_skip210
-    jmp @release_done211
-@release_done211
-    storel 0, %t39
-    storel %t586, %t39
-    %t590 =l loadl %t39
-    %t591 =l add %t590, 8
-    %t592 =l loadl %t591
-    %t593 =w ceql %t592, 0
-    jnz %t593, @retain_skip213, @retain212
-@retain212
-    %t594 =l sub %t592, 8
-    %t595 =l loadl %t594
-    %t596 =l add %t595, 1
-    storel %t596, %t594
-    jmp @retain_done214
-@retain_skip213
-    jmp @retain_done214
-@retain_done214
-    %t597 =l loadl %t40
-    %t598 =w ceql %t597, 0
-    jnz %t598, @release_skip216, @release215
-@release215
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t597, l $tuple__int_int_release)
-    jmp @release_done217
-@release_skip216
-    jmp @release_done217
-@release_done217
-    storel 0, %t40
-    storel %t592, %t40
-    %t599 =l loadl %t40
-    %t600 =l add %t599, 8
-    %t601 =l loadl %t600
-    storel %t601, %t41
-    %t602 =l loadl %t40
-    %t603 =l add %t602, 16
-    %t604 =l loadl %t603
-    storel %t604, %t42
-    %t605 =l loadl %t41
-    %t606 =l loadl %t42
-    %t607 =l add %t605, %t606
-    call $printf(l $fmt_int, ..., l %t607)
+    jmp @print_opt_done268
+@print_opt_done268
+    %t606 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 10, %t606
+    %t607 =l add %t606, 8
+    storel 0, %t607
+    call $Holder___init__(l %rt, l %t606, l 3, l 4)
     %t608 =l loadl %t39
-    %t609 =l loadl %t42
-    %t610 =l loadl %t41
-    %t611 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t611
-    %t612 =l add %t611, 8
-    storel 0, %t612
-    %t613 =l add %t611, 16
-    storel 0, %t613
-    %t614 =l add %t611, 8
-    storel %t609, %t614
-    %t615 =l add %t611, 16
-    storel %t610, %t615
-    %t616 =l add %t608, 8
-    %t617 =l loadl %t616
-    storel %t611, %t616
+    %t609 =w ceql %t608, 0
+    jnz %t609, @release_skip270, @release269
+@release269
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t608, l $Holder_release)
+    jmp @release_done271
+@release_skip270
+    jmp @release_done271
+@release_done271
+    storel 0, %t39
+    storel %t606, %t39
+    %t610 =l loadl %t39
+    %t611 =l add %t610, 8
+    %t612 =l loadl %t611
+    %t613 =w ceql %t612, 0
+    jnz %t613, @retain_skip273, @retain272
+@retain272
+    %t614 =l sub %t612, 8
+    %t615 =l loadl %t614
+    %t616 =l add %t615, 1
+    storel %t616, %t614
+    jmp @retain_done274
+@retain_skip273
+    jmp @retain_done274
+@retain_done274
+    %t617 =l loadl %t40
     %t618 =w ceql %t617, 0
-    jnz %t618, @release_skip219, @release218
-@release218
+    jnz %t618, @release_skip276, @release275
+@release275
     call $nox_rc_release_enqueue_fixed(l %rt, l %t617, l $tuple__int_int_release)
-    jmp @release_done220
-@release_skip219
-    jmp @release_done220
-@release_done220
-    %t619 =l loadl %t39
+    jmp @release_done277
+@release_skip276
+    jmp @release_done277
+@release_done277
+    storel 0, %t40
+    storel %t612, %t40
+    %t619 =l loadl %t40
     %t620 =l add %t619, 8
     %t621 =l loadl %t620
-    %t622 =l add %t621, 8
-    %t623 =l loadl %t622
-    call $printf(l $fmt_int, ..., l %t623)
-    %t624 =l add $str24, 16
-    %t625 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t625
-    %t626 =l add %t625, 8
-    storel 0, %t626
-    %t627 =l add %t625, 16
-    storel 0, %t627
-    %t628 =l add %t625, 8
-    storel 1, %t628
-    %t629 =l add %t625, 16
-    storel 2, %t629
-    %t630 =l call $nox_dict_new(l %rt, w 1)
-    call $nox_dict_set(l %rt, l %t630, w 1, w 0, w 1, l %t624, l %t625)
-    %t631 =l loadl %t43
-    %t632 =w ceql %t631, 0
-    jnz %t632, @release_skip222, @release221
-@release221
-    call $nox_dict_release(l %rt, l %t631, w 1, w 0, w 1)
-    jmp @release_done223
-@release_skip222
-    jmp @release_done223
-@release_done223
-    storel 0, %t43
-    storel %t630, %t43
-    %t633 =l loadl %t43
-    %t634 =l add $str25, 16
-    %t635 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t635
-    %t636 =l add %t635, 8
-    storel 0, %t636
-    %t637 =l add %t635, 16
-    storel 0, %t637
-    %t638 =l add %t635, 8
-    storel 3, %t638
-    %t639 =l add %t635, 16
-    storel 4, %t639
-    call $nox_dict_set(l %rt, l %t633, w 1, w 0, w 1, l %t634, l %t635)
-    %t640 =l loadl %t43
-    %t641 =l add $str26, 16
-    %t642 =w call $nox_dict_contains(l %rt, l %t640, w 1, l %t641)
-    jnz %t642, @dict_get_ok225, @dict_get_err224
-@dict_get_err224
-    %t643 =l add $str27, 16
-    %t644 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 15, %t644
-    %t645 =l add %t644, 8
-    storel 0, %t645
-    %t646 =l add %t644, 16
+    storel %t621, %t41
+    %t622 =l loadl %t40
+    %t623 =l add %t622, 16
+    %t624 =l loadl %t623
+    storel %t624, %t42
+    %t625 =l loadl %t41
+    %t626 =l loadl %t42
+    %t627 =l add %t625, %t626
+    call $printf(l $fmt_int, ..., l %t627)
+    %t628 =l loadl %t39
+    %t629 =l loadl %t42
+    %t630 =l loadl %t41
+    %t631 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 9, %t631
+    %t632 =l add %t631, 8
+    storel 0, %t632
+    %t633 =l add %t631, 16
+    storel 0, %t633
+    %t634 =l add %t631, 8
+    storel %t629, %t634
+    %t635 =l add %t631, 16
+    storel %t630, %t635
+    %t636 =l add %t628, 8
+    %t637 =l loadl %t636
+    storel %t631, %t636
+    %t638 =w ceql %t637, 0
+    jnz %t638, @release_skip279, @release278
+@release278
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t637, l $tuple__int_int_release)
+    jmp @release_done280
+@release_skip279
+    jmp @release_done280
+@release_done280
+    %t639 =l loadl %t39
+    %t640 =l add %t639, 8
+    %t641 =l loadl %t640
+    %t642 =l add %t641, 8
+    %t643 =l loadl %t642
+    call $printf(l $fmt_int, ..., l %t643)
+    %t644 =l add $str24, 16
+    %t645 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 9, %t645
+    %t646 =l add %t645, 8
     storel 0, %t646
-    %t647 =l add %t644, 24
+    %t647 =l add %t645, 16
     storel 0, %t647
-    call $Exception___init__(l %rt, l %t644, l %t643)
-    %t648 =w call $nox_exception_pending(l %rt)
-    jnz %t648, @ctor_init_failed226, @ctor_init_cont227
-@ctor_init_failed226
-    %t649 =w ceql %t644, 0
-    jnz %t649, @release_skip229, @release228
-@release228
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t644)
-    jmp @release_done230
-@release_skip229
-    jmp @release_done230
-@release_done230
-    jmp @ctor_init_cont227
-@ctor_init_cont227
-    %t650 =w call $nox_exception_pending(l %rt)
-    jnz %t650, @exc_propagate231, @exc_continue232
-@exc_propagate231
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue232
-    %t651 =l add %t644, 24
-    storel 80, %t651
-    call $nox_raise(l %rt, l %t644, l 80)
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@dict_get_ok225
-    %t652 =l call $nox_dict_get(l %rt, l %t640, w 1, l %t641)
-    %t653 =w ceql %t652, 0
-    jnz %t653, @retain_skip234, @retain233
-@retain233
-    %t654 =l sub %t652, 8
-    %t655 =l loadl %t654
-    %t656 =l add %t655, 1
-    storel %t656, %t654
-    jmp @retain_done235
-@retain_skip234
-    jmp @retain_done235
-@retain_done235
-    %t657 =l loadl %t44
-    %t658 =w ceql %t657, 0
-    jnz %t658, @release_skip237, @release236
-@release236
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t657, l $tuple__int_int_release)
-    jmp @release_done238
-@release_skip237
-    jmp @release_done238
-@release_done238
-    storel 0, %t44
-    storel %t652, %t44
-    %t659 =l loadl %t44
-    %t660 =l add %t659, 8
-    %t661 =l loadl %t660
-    storel %t661, %t45
-    %t662 =l loadl %t44
-    %t663 =l add %t662, 16
-    %t664 =l loadl %t663
-    storel %t664, %t46
-    %t665 =l loadl %t45
-    %t666 =l loadl %t46
-    %t667 =l mul %t665, %t666
-    call $printf(l $fmt_int, ..., l %t667)
-    %t668 =l loadl %t43
-    %t669 =l add $str28, 16
-    %t670 =w call $nox_dict_contains(l %rt, l %t668, w 1, l %t669)
-    jnz %t670, @dict_get_ok240, @dict_get_err239
-@dict_get_err239
-    %t671 =l add $str29, 16
-    %t672 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 15, %t672
-    %t673 =l add %t672, 8
-    storel 0, %t673
-    %t674 =l add %t672, 16
-    storel 0, %t674
-    %t675 =l add %t672, 24
-    storel 0, %t675
-    call $Exception___init__(l %rt, l %t672, l %t671)
-    %t676 =w call $nox_exception_pending(l %rt)
-    jnz %t676, @ctor_init_failed241, @ctor_init_cont242
-@ctor_init_failed241
-    %t677 =w ceql %t672, 0
-    jnz %t677, @release_skip244, @release243
-@release243
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t672)
-    jmp @release_done245
-@release_skip244
-    jmp @release_done245
-@release_done245
-    jmp @ctor_init_cont242
-@ctor_init_cont242
-    %t678 =w call $nox_exception_pending(l %rt)
-    jnz %t678, @exc_propagate246, @exc_continue247
-@exc_propagate246
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue247
-    %t679 =l add %t672, 24
-    storel 82, %t679
-    call $nox_raise(l %rt, l %t672, l 82)
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@dict_get_ok240
-    %t680 =l call $nox_dict_get(l %rt, l %t668, w 1, l %t669)
-    %t681 =l add %t680, 16
-    %t682 =l loadl %t681
-    call $printf(l $fmt_int, ..., l %t682)
-    storel 0, %t47
-    storel 0, %t48
-    jmp @while_cond248
-@while_cond248
-    %t683 =l loadl %t48
-    %t684 =w csltl %t683, 2000
-    jnz %t684, @while_body249, @while_end250
-@while_body249
-    %t685 =l loadl %t48
-    %t686 =l add %t685, 1
-    storel %t686, %t48
-    %t687 =l loadl %t48
-    storel %t687, %t76
-    %t688 =l add $str30, 16
-    %t689 =l loadl %t76
-    %t690 =l call $nox_int_to_str(l %rt, l %t689)
-    %t691 =l call $nox_str_concat(l %rt, l %t688, l %t690)
-    %t692 =w ceql %t690, 0
-    jnz %t692, @release_skip253, @release252
-@release252
-    %t693 =l sub %t690, 16
-    %t694 =l loadl %t693
-    %t695 =l sub %t694, 1
-    storel %t695, %t693
-    %t696 =w cslel %t695, 0
-    jnz %t696, @str_free255, @str_free_skip256
-@str_free255
-    call $nox_str_free_now(l %rt, l %t690)
-    jmp @str_free_done257
-@str_free_skip256
-    jmp @str_free_done257
-@str_free_done257
-    jmp @release_done254
-@release_skip253
-    jmp @release_done254
-@release_done254
-    %t697 =l loadl %t76
-    %t698 =l loadl %t76
-    %t699 =l add %t698, 1
-    %t700 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 2, %t700
-    %t701 =l add %t700, 8
-    storel 2, %t701
-    %t702 =l add %t700, 16
-    storel %t697, %t702
-    %t703 =l add %t700, 24
-    storel %t699, %t703
-    %t704 =l add $str31, 16
-    %t705 =l loadl %t76
-    %t706 =l call $nox_int_to_str(l %rt, l %t705)
-    %t707 =l call $nox_str_concat(l %rt, l %t704, l %t706)
-    %t708 =w ceql %t706, 0
-    jnz %t708, @release_skip259, @release258
-@release258
-    %t709 =l sub %t706, 16
-    %t710 =l loadl %t709
-    %t711 =l sub %t710, 1
-    storel %t711, %t709
-    %t712 =w cslel %t711, 0
-    jnz %t712, @str_free261, @str_free_skip262
-@str_free261
-    call $nox_str_free_now(l %rt, l %t706)
-    jmp @str_free_done263
-@str_free_skip262
-    jmp @str_free_done263
-@str_free_done263
-    jmp @release_done260
-@release_skip259
-    jmp @release_done260
-@release_done260
-    %t713 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 11, %t713
-    %t714 =l add %t713, 8
-    storel 0, %t714
-    %t715 =l add %t713, 8
-    storel %t707, %t715
-    %t716 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 8, %t716
-    %t717 =l add %t716, 8
-    storel 0, %t717
-    %t718 =l add %t716, 16
-    storel 0, %t718
-    %t719 =l add %t716, 24
-    storel 0, %t719
-    %t720 =l add %t716, 8
-    storel %t691, %t720
-    %t721 =l add %t716, 16
-    storel %t700, %t721
-    %t722 =l add %t716, 24
-    storel %t713, %t722
-    storel %t716, %t77
-    jmp @inline_done251
-@after_inline_return264
-    jmp @inline_done251
-@inline_done251
-    %t723 =l loadl %t77
-    %t724 =l loadl %t49
-    %t725 =w ceql %t724, 0
-    jnz %t725, @release_skip266, @release265
-@release265
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t724, l $tuple__str_list_int_Rec_release)
-    jmp @release_done267
-@release_skip266
-    jmp @release_done267
-@release_done267
-    storel 0, %t49
-    storel %t723, %t49
-    %t726 =l loadl %t49
-    %t727 =l add %t726, 8
-    %t728 =l loadl %t727
-    %t729 =w ceql %t728, 0
-    jnz %t729, @retain_skip269, @retain268
-@retain268
-    %t730 =l sub %t728, 16
-    %t731 =l loadl %t730
-    %t732 =l add %t731, 1
-    storel %t732, %t730
-    jmp @retain_done270
-@retain_skip269
-    jmp @retain_done270
-@retain_done270
-    %t733 =l loadl %t50
-    %t734 =w ceql %t733, 0
-    jnz %t734, @release_skip272, @release271
-@release271
-    %t735 =l sub %t733, 16
-    %t736 =l loadl %t735
-    %t737 =l sub %t736, 1
-    storel %t737, %t735
-    %t738 =w cslel %t737, 0
-    jnz %t738, @str_free274, @str_free_skip275
-@str_free274
-    call $nox_str_free_now(l %rt, l %t733)
-    jmp @str_free_done276
-@str_free_skip275
-    jmp @str_free_done276
-@str_free_done276
-    jmp @release_done273
-@release_skip272
-    jmp @release_done273
-@release_done273
-    storel 0, %t50
-    storel %t728, %t50
-    %t739 =l loadl %t49
-    %t740 =l add %t739, 16
-    %t741 =l loadl %t740
-    %t742 =w ceql %t741, 0
-    jnz %t742, @retain_skip278, @retain277
-@retain277
-    %t743 =l sub %t741, 8
-    %t744 =l loadl %t743
-    %t745 =l add %t744, 1
-    storel %t745, %t743
-    jmp @retain_done279
-@retain_skip278
-    jmp @retain_done279
-@retain_done279
-    %t746 =l loadl %t51
-    %t747 =w ceql %t746, 0
-    jnz %t747, @release_skip281, @release280
-@release280
-    %t748 =l add %t746, 8
-    %t749 =l loadl %t748
-    %t750 =l mul %t749, 8
-    %t751 =l add %t750, 16
-    %t752 =l sub %t746, 8
-    %t753 =l loadl %t752
-    %t754 =l sub %t753, 1
-    storel %t754, %t752
-    %t755 =w cslel %t754, 0
-    jnz %t755, @list_free283, @list_free_skip284
-@list_free283
-    call $nox_rc_free_payload(l %rt, l %t746, l %t751)
-    jmp @list_free_done285
-@list_free_skip284
-    jmp @list_free_done285
-@list_free_done285
-    jmp @release_done282
-@release_skip281
-    jmp @release_done282
-@release_done282
-    storel 0, %t51
-    storel %t741, %t51
-    %t756 =l loadl %t49
-    %t757 =l add %t756, 24
-    %t758 =l loadl %t757
-    %t759 =w ceql %t758, 0
-    jnz %t759, @retain_skip287, @retain286
-@retain286
-    %t760 =l sub %t758, 8
-    %t761 =l loadl %t760
-    %t762 =l add %t761, 1
-    storel %t762, %t760
-    jmp @retain_done288
-@retain_skip287
-    jmp @retain_done288
-@retain_done288
-    %t763 =l loadl %t52
-    %t764 =w ceql %t763, 0
-    jnz %t764, @release_skip290, @release289
-@release289
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t763, l $Rec_release)
-    jmp @release_done291
-@release_skip290
-    jmp @release_done291
-@release_done291
-    storel 0, %t52
-    storel %t758, %t52
-    %t765 =l loadl %t47
-    %t766 =l loadl %t50
-    %t767 =l call $nox_str_char_count(l %t766)
-    %t768 =l add %t765, %t767
-    %t769 =l loadl %t51
-    %t770 =l loadl %t769
-    %t771 =w cugel 1, %t770
-    jnz %t771, @list_idx_err292, @list_idx_ok293
-@list_idx_ok293
-    %t781 =l mul 1, 8
-    %t782 =l add %t781, 16
-    %t783 =l add %t769, %t782
-    %t784 =l loadl %t783
-    %t785 =l add %t768, %t784
-    %t786 =l loadl %t52
-    %t787 =l add %t786, 8
-    %t788 =l loadl %t787
-    %t789 =l call $nox_str_char_count(l %t788)
-    %t790 =l add %t785, %t789
-    storel %t790, %t47
-    %t791 =l loadl %t48
-    %t792 =l loadl %t48
-    %t793 =l rem %t792, 7
-    %t794 =l sar %t793, 63
-    %t795 =l and %t794, 7
-    %t796 =l add %t793, %t795
-    %t797 =l loadl %t48
-    %t798 =l rem %t797, 13
-    %t799 =l sar %t798, 63
-    %t800 =l and %t799, 13
-    %t801 =l add %t798, %t800
-    %t802 =l call $nox_rc_alloc(l %rt, l 40)
-    storel 3, %t802
-    %t803 =l add %t802, 8
-    storel 3, %t803
-    %t804 =l add %t802, 16
-    storel %t791, %t804
-    %t805 =l add %t802, 24
-    storel %t796, %t805
-    %t806 =l add %t802, 32
-    storel %t801, %t806
-    %t807 =l call $minmax(l %rt, l %t802)
-    %t808 =w ceql %t802, 0
-    jnz %t808, @release_skip302, @release301
-@release301
-    %t809 =l add %t802, 8
-    %t810 =l loadl %t809
-    %t811 =l mul %t810, 8
-    %t812 =l add %t811, 16
-    %t813 =l sub %t802, 8
-    %t814 =l loadl %t813
-    %t815 =l sub %t814, 1
-    storel %t815, %t813
-    %t816 =w cslel %t815, 0
-    jnz %t816, @list_free304, @list_free_skip305
-@list_free304
-    call $nox_rc_free_payload(l %rt, l %t802, l %t812)
-    jmp @list_free_done306
-@list_free_skip305
-    jmp @list_free_done306
-@list_free_done306
-    jmp @release_done303
-@release_skip302
-    jmp @release_done303
-@release_done303
-    %t817 =w call $nox_exception_pending(l %rt)
-    jnz %t817, @exc_propagate307, @exc_continue308
-@exc_propagate307
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue308
-    %t818 =l loadl %t53
-    %t819 =w ceql %t818, 0
-    jnz %t819, @release_skip310, @release309
-@release309
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t818, l $tuple__int_int_release)
-    jmp @release_done311
-@release_skip310
-    jmp @release_done311
-@release_done311
-    storel 0, %t53
-    storel %t807, %t53
-    %t820 =l loadl %t53
-    %t821 =l add %t820, 8
-    %t822 =l loadl %t821
-    storel %t822, %t54
-    %t823 =l loadl %t53
-    %t824 =l add %t823, 16
-    %t825 =l loadl %t824
-    storel %t825, %t55
-    %t826 =l loadl %t47
-    %t827 =l loadl %t54
-    %t828 =l add %t826, %t827
-    %t829 =l loadl %t55
-    %t830 =l add %t828, %t829
-    storel %t830, %t47
-    %t831 =l loadl %t48
-    storel %t831, %t59
-    %t832 =l loadl %t48
-    %t833 =l add %t832, 1
-    storel %t833, %t60
-    %t834 =l loadl %t60
-    %t835 =l loadl %t59
-    %t836 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 9, %t836
-    %t837 =l add %t836, 8
-    storel 0, %t837
-    %t838 =l add %t836, 16
-    storel 0, %t838
-    %t839 =l add %t836, 8
-    storel %t834, %t839
-    %t840 =l add %t836, 16
-    storel %t835, %t840
-    %t841 =l loadl %t58
-    %t842 =w ceql %t841, 0
-    jnz %t842, @release_skip313, @release312
-@release312
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t841, l $tuple__int_int_release)
-    jmp @release_done314
-@release_skip313
-    jmp @release_done314
-@release_done314
-    storel 0, %t58
-    storel %t836, %t58
-    %t843 =l loadl %t58
-    %t844 =l add %t843, 8
-    %t845 =l loadl %t844
-    storel %t845, %t59
-    %t846 =l loadl %t58
-    %t847 =l add %t846, 16
-    %t848 =l loadl %t847
-    storel %t848, %t60
-    %t849 =l loadl %t47
-    %t850 =l loadl %t59
-    %t851 =l add %t849, %t850
-    %t852 =l loadl %t60
-    %t853 =l sub %t851, %t852
-    storel %t853, %t47
-    %t854 =l add $str33, 16
-    %t855 =l loadl %t48
-    %t856 =l add $str34, 16
-    %t857 =l call $nox_dict_new(l %rt, w 1)
-    call $nox_dict_set(l %rt, l %t857, w 1, w 0, w 0, l %t854, l %t855)
-    call $nox_dict_set(l %rt, l %t857, w 1, w 0, w 0, l %t856, l 2)
-    %t858 =l call $__nox_dict_items__str_int(l %rt, l %t857)
-    %t859 =w ceql %t857, 0
-    jnz %t859, @release_skip316, @release315
-@release315
-    call $nox_dict_release(l %rt, l %t857, w 1, w 0, w 0)
-    jmp @release_done317
-@release_skip316
-    jmp @release_done317
-@release_done317
-    %t860 =w call $nox_exception_pending(l %rt)
-    jnz %t860, @exc_propagate318, @exc_continue319
-@exc_propagate318
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue319
-    %t861 =l loadl %t61
-    %t862 =w ceql %t861, 0
-    jnz %t862, @release_skip321, @release320
-@release320
-    call $List_tuple__str_int_release(l %rt, l %t861)
-    jmp @release_done322
-@release_skip321
-    jmp @release_done322
-@release_done322
-    storel 0, %t61
-    storel %t858, %t61
-    storel 0, %t63
-    %t863 =l loadl %t61
-    %t864 =l loadl %t863
-    jmp @forlist_cond323
-@forlist_cond323
-    %t865 =l loadl %t63
-    %t866 =w csltl %t865, %t864
-    jnz %t866, @forlist_body324, @forlist_end325
-@forlist_body324
-    %t867 =l mul %t865, 8
-    %t868 =l add %t867, 16
-    %t869 =l add %t863, %t868
-    %t870 =l loadl %t869
-    storel %t870, %t62
-    %t871 =l loadl %t62
-    %t872 =l add %t871, 8
-    %t873 =l loadl %t872
-    %t874 =w ceql %t873, 0
-    jnz %t874, @retain_skip328, @retain327
-@retain327
-    %t875 =l sub %t873, 16
-    %t876 =l loadl %t875
-    %t877 =l add %t876, 1
-    storel %t877, %t875
-    jmp @retain_done329
-@retain_skip328
-    jmp @retain_done329
-@retain_done329
-    %t878 =l loadl %t64
-    %t879 =w ceql %t878, 0
-    jnz %t879, @release_skip331, @release330
-@release330
-    %t880 =l sub %t878, 16
-    %t881 =l loadl %t880
-    %t882 =l sub %t881, 1
-    storel %t882, %t880
-    %t883 =w cslel %t882, 0
-    jnz %t883, @str_free333, @str_free_skip334
-@str_free333
-    call $nox_str_free_now(l %rt, l %t878)
-    jmp @str_free_done335
-@str_free_skip334
-    jmp @str_free_done335
-@str_free_done335
-    jmp @release_done332
-@release_skip331
-    jmp @release_done332
-@release_done332
-    storel 0, %t64
-    storel %t873, %t64
-    %t884 =l loadl %t62
-    %t885 =l add %t884, 16
-    %t886 =l loadl %t885
-    storel %t886, %t65
-    %t887 =l loadl %t47
-    %t888 =l loadl %t64
-    %t889 =l call $nox_str_char_count(l %t888)
-    %t890 =l add %t887, %t889
-    %t891 =l loadl %t65
-    %t892 =l add %t890, %t891
-    storel %t892, %t47
-    jmp @forlist_step326
-@forlist_step326
-    %t893 =l loadl %t63
-    %t894 =l add %t893, 1
-    storel %t894, %t63
-    jmp @forlist_cond323
-@forlist_end325
-    %t895 =l add $str35, 16
-    %t896 =l add $str36, 16
-    %t897 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 2, %t897
-    %t898 =l add %t897, 8
-    storel 2, %t898
-    %t899 =l add %t897, 16
-    storel %t895, %t899
-    %t900 =l add %t897, 24
-    storel %t896, %t900
-    %t901 =l call $enumerate__str(l %rt, l %t897)
-    %t902 =w ceql %t897, 0
-    jnz %t902, @release_skip337, @release336
-@release336
-    call $List_str_release(l %rt, l %t897)
-    jmp @release_done338
-@release_skip337
-    jmp @release_done338
-@release_done338
-    %t903 =w call $nox_exception_pending(l %rt)
-    jnz %t903, @exc_propagate339, @exc_continue340
-@exc_propagate339
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue340
-    %t904 =l loadl %t66
-    %t905 =w ceql %t904, 0
-    jnz %t905, @release_skip342, @release341
-@release341
-    call $List_tuple__int_str_release(l %rt, l %t904)
-    jmp @release_done343
-@release_skip342
-    jmp @release_done343
-@release_done343
-    storel 0, %t66
-    storel %t901, %t66
-    storel 0, %t68
-    %t906 =l loadl %t66
-    %t907 =l loadl %t906
-    jmp @forlist_cond344
-@forlist_cond344
-    %t908 =l loadl %t68
-    %t909 =w csltl %t908, %t907
-    jnz %t909, @forlist_body345, @forlist_end346
-@forlist_body345
-    %t910 =l mul %t908, 8
-    %t911 =l add %t910, 16
-    %t912 =l add %t906, %t911
-    %t913 =l loadl %t912
-    storel %t913, %t67
-    %t914 =l loadl %t67
-    %t915 =l add %t914, 8
-    %t916 =l loadl %t915
-    storel %t916, %t69
-    %t917 =l loadl %t67
-    %t918 =l add %t917, 16
-    %t919 =l loadl %t918
-    %t920 =w ceql %t919, 0
-    jnz %t920, @retain_skip349, @retain348
-@retain348
-    %t921 =l sub %t919, 16
-    %t922 =l loadl %t921
-    %t923 =l add %t922, 1
-    storel %t923, %t921
-    jmp @retain_done350
-@retain_skip349
-    jmp @retain_done350
-@retain_done350
-    %t924 =l loadl %t70
-    %t925 =w ceql %t924, 0
-    jnz %t925, @release_skip352, @release351
-@release351
-    %t926 =l sub %t924, 16
-    %t927 =l loadl %t926
-    %t928 =l sub %t927, 1
-    storel %t928, %t926
-    %t929 =w cslel %t928, 0
-    jnz %t929, @str_free354, @str_free_skip355
-@str_free354
-    call $nox_str_free_now(l %rt, l %t924)
-    jmp @str_free_done356
-@str_free_skip355
-    jmp @str_free_done356
-@str_free_done356
-    jmp @release_done353
-@release_skip352
-    jmp @release_done353
-@release_done353
-    storel 0, %t70
-    storel %t919, %t70
-    %t930 =l loadl %t47
-    %t931 =l loadl %t69
-    %t932 =l add %t930, %t931
-    %t933 =l loadl %t70
-    %t934 =l call $nox_str_char_count(l %t933)
-    %t935 =l add %t932, %t934
-    storel %t935, %t47
-    jmp @forlist_step347
-@forlist_step347
-    %t936 =l loadl %t68
-    %t937 =l add %t936, 1
-    storel %t937, %t68
-    jmp @forlist_cond344
-@forlist_end346
-    %t938 =l loadl %t48
-    %t939 =l add $str37, 16
-    %t940 =l loadl %t48
-    %t941 =l rem %t940, 5
-    %t942 =l sar %t941, 63
-    %t943 =l and %t942, 5
-    %t944 =l add %t941, %t943
-    %t945 =l call $nox_int_to_str(l %rt, l %t944)
-    %t946 =l call $nox_str_concat(l %rt, l %t939, l %t945)
-    %t947 =w ceql %t945, 0
-    jnz %t947, @release_skip358, @release357
-@release357
-    %t948 =l sub %t945, 16
-    %t949 =l loadl %t948
-    %t950 =l sub %t949, 1
-    storel %t950, %t948
-    %t951 =w cslel %t950, 0
-    jnz %t951, @str_free360, @str_free_skip361
-@str_free360
-    call $nox_str_free_now(l %rt, l %t945)
-    jmp @str_free_done362
-@str_free_skip361
-    jmp @str_free_done362
-@str_free_done362
-    jmp @release_done359
-@release_skip358
-    jmp @release_done359
-@release_done359
-    %t952 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 7, %t952
-    %t953 =l add %t952, 8
-    storel 0, %t953
-    %t954 =l add %t952, 16
-    storel 0, %t954
-    %t955 =l add %t952, 8
-    storel %t938, %t955
-    %t956 =l add %t952, 16
-    storel %t946, %t956
-    storel %t952, %t78
-    %t957 =l loadl %t78
-    %t958 =l add %t957, 16
-    %t959 =l loadl %t958
-    %t960 =l loadl %t78
-    %t961 =l add %t960, 8
-    %t962 =l loadl %t961
-    %t963 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 6, %t963
-    %t964 =l add %t963, 8
-    storel 0, %t964
-    %t965 =l add %t963, 16
-    storel 0, %t965
-    %t966 =l add %t963, 8
-    %t967 =w ceql %t959, 0
-    jnz %t967, @retain_skip365, @retain364
-@retain364
-    %t968 =l sub %t959, 16
-    %t969 =l loadl %t968
-    %t970 =l add %t969, 1
-    storel %t970, %t968
-    jmp @retain_done366
-@retain_skip365
-    jmp @retain_done366
-@retain_done366
-    storel %t959, %t966
-    %t971 =l add %t963, 16
-    storel %t962, %t971
-    storel %t963, %t79
-    jmp @inline_done363
-@after_inline_return367
-    jmp @inline_done363
-@inline_done363
-    %t972 =w ceql %t952, 0
-    jnz %t972, @release_skip369, @release368
-@release368
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t952, l $tuple__int_str_release)
-    jmp @release_done370
-@release_skip369
-    jmp @release_done370
-@release_done370
-    %t973 =l loadl %t79
-    %t974 =l loadl %t71
-    %t975 =w ceql %t974, 0
-    jnz %t975, @release_skip372, @release371
-@release371
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t974, l $tuple__str_int_release)
-    jmp @release_done373
-@release_skip372
-    jmp @release_done373
-@release_done373
-    storel 0, %t71
-    storel %t973, %t71
-    %t976 =l loadl %t47
-    %t977 =l loadl %t71
-    %t978 =l add %t977, 8
-    %t979 =l loadl %t978
-    %t980 =l call $nox_str_char_count(l %t979)
-    %t981 =l add %t976, %t980
-    %t982 =l loadl %t71
-    %t983 =l add %t982, 16
-    %t984 =l loadl %t983
-    %t985 =l add %t981, %t984
-    storel %t985, %t47
-    jmp @while_cond248
-@while_end250
-    %t986 =l loadl %t47
-    call $printf(l $fmt_int, ..., l %t986)
-    %t987 =l loadl %t15
-    %t988 =w ceql %t987, 0
-    jnz %t988, @release_skip375, @release374
-@release374
-    call $nox_dict_release(l %rt, l %t987, w 1, w 0, w 0)
-    jmp @release_done376
-@release_skip375
-    jmp @release_done376
-@release_done376
-    storel 0, %t15
-    %t989 =l loadl %t58
-    %t990 =w ceql %t989, 0
-    jnz %t990, @release_skip378, @release377
-@release377
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t989, l $tuple__int_int_release)
-    jmp @release_done379
-@release_skip378
-    jmp @release_done379
-@release_done379
-    storel 0, %t58
-    %t991 =l loadl %t23
-    %t992 =w ceql %t991, 0
-    jnz %t992, @release_skip381, @release380
-@release380
-    call $List_tuple__int_str_release(l %rt, l %t991)
-    jmp @release_done382
-@release_skip381
-    jmp @release_done382
-@release_done382
-    storel 0, %t23
-    %t993 =l loadl %t71
-    %t994 =w ceql %t993, 0
-    jnz %t994, @release_skip384, @release383
-@release383
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t993, l $tuple__str_int_release)
-    jmp @release_done385
-@release_skip384
-    jmp @release_done385
-@release_done385
-    storel 0, %t71
-    %t995 =l loadl %t70
-    %t996 =w ceql %t995, 0
-    jnz %t996, @release_skip387, @release386
-@release386
-    %t997 =l sub %t995, 16
-    %t998 =l loadl %t997
-    %t999 =l sub %t998, 1
-    storel %t999, %t997
-    %t1000 =w cslel %t999, 0
-    jnz %t1000, @str_free389, @str_free_skip390
-@str_free389
-    call $nox_str_free_now(l %rt, l %t995)
-    jmp @str_free_done391
-@str_free_skip390
-    jmp @str_free_done391
-@str_free_done391
-    jmp @release_done388
-@release_skip387
-    jmp @release_done388
-@release_done388
-    storel 0, %t70
-    %t1001 =l loadl %t22
-    %t1002 =w ceql %t1001, 0
-    jnz %t1002, @release_skip393, @release392
-@release392
-    call $List_str_release(l %rt, l %t1001)
-    jmp @release_done394
-@release_skip393
-    jmp @release_done394
-@release_done394
-    storel 0, %t22
-    %t1003 =l loadl %t53
-    %t1004 =w ceql %t1003, 0
-    jnz %t1004, @release_skip396, @release395
-@release395
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1003, l $tuple__int_int_release)
-    jmp @release_done397
-@release_skip396
-    jmp @release_done397
-@release_done397
-    storel 0, %t53
-    %t1005 =l loadl %t37
-    %t1006 =w ceql %t1005, 0
-    jnz %t1006, @release_skip399, @release398
-@release398
-    %t1007 =l sub %t1005, 16
-    %t1008 =l loadl %t1007
-    %t1009 =l sub %t1008, 1
-    storel %t1009, %t1007
-    %t1010 =w cslel %t1009, 0
-    jnz %t1010, @str_free401, @str_free_skip402
-@str_free401
-    call $nox_str_free_now(l %rt, l %t1005)
-    jmp @str_free_done403
-@str_free_skip402
-    jmp @str_free_done403
-@str_free_done403
-    jmp @release_done400
-@release_skip399
-    jmp @release_done400
-@release_done400
-    storel 0, %t37
-    %t1011 =l loadl %t20
-    %t1012 =w ceql %t1011, 0
-    jnz %t1012, @release_skip405, @release404
-@release404
-    %t1013 =l sub %t1011, 16
-    %t1014 =l loadl %t1013
-    %t1015 =l sub %t1014, 1
-    storel %t1015, %t1013
-    %t1016 =w cslel %t1015, 0
-    jnz %t1016, @str_free407, @str_free_skip408
-@str_free407
-    call $nox_str_free_now(l %rt, l %t1011)
-    jmp @str_free_done409
-@str_free_skip408
-    jmp @str_free_done409
-@str_free_done409
-    jmp @release_done406
-@release_skip405
-    jmp @release_done406
-@release_done406
-    storel 0, %t20
-    %t1017 =l loadl %t49
-    %t1018 =w ceql %t1017, 0
-    jnz %t1018, @release_skip411, @release410
-@release410
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1017, l $tuple__str_list_int_Rec_release)
-    jmp @release_done412
-@release_skip411
-    jmp @release_done412
-@release_done412
-    storel 0, %t49
-    %t1019 =l loadl %t52
-    %t1020 =w ceql %t1019, 0
-    jnz %t1020, @release_skip414, @release413
-@release413
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1019, l $Rec_release)
-    jmp @release_done415
-@release_skip414
-    jmp @release_done415
-@release_done415
-    storel 0, %t52
-    %t1021 =l loadl %t66
-    %t1022 =w ceql %t1021, 0
-    jnz %t1022, @release_skip417, @release416
-@release416
-    call $List_tuple__int_str_release(l %rt, l %t1021)
-    jmp @release_done418
-@release_skip417
-    jmp @release_done418
-@release_done418
-    storel 0, %t66
-    %t1023 =l loadl %t44
-    %t1024 =w ceql %t1023, 0
-    jnz %t1024, @release_skip420, @release419
-@release419
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1023, l $tuple__int_int_release)
-    jmp @release_done421
-@release_skip420
-    jmp @release_done421
-@release_done421
-    storel 0, %t44
-    %t1025 =l loadl %t10
-    %t1026 =w ceql %t1025, 0
-    jnz %t1026, @release_skip423, @release422
-@release422
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1025, l $tuple__str_list_int_Rec_release)
-    jmp @release_done424
-@release_skip423
-    jmp @release_done424
-@release_done424
-    storel 0, %t10
-    %t1027 =l loadl %t39
-    %t1028 =w ceql %t1027, 0
-    jnz %t1028, @release_skip426, @release425
-@release425
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1027, l $Holder_release)
-    jmp @release_done427
-@release_skip426
-    jmp @release_done427
-@release_done427
-    storel 0, %t39
-    %t1029 =l loadl %t28
-    %t1030 =w ceql %t1029, 0
-    jnz %t1030, @release_skip429, @release428
-@release428
-    call $List_tuple__int_str_release(l %rt, l %t1029)
-    jmp @release_done430
-@release_skip429
-    jmp @release_done430
-@release_done430
-    storel 0, %t28
-    %t1031 =l loadl %t40
-    %t1032 =w ceql %t1031, 0
-    jnz %t1032, @release_skip432, @release431
-@release431
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1031, l $tuple__int_int_release)
-    jmp @release_done433
-@release_skip432
-    jmp @release_done433
-@release_done433
-    storel 0, %t40
-    %t1033 =l loadl %t51
-    %t1034 =w ceql %t1033, 0
-    jnz %t1034, @release_skip435, @release434
-@release434
-    %t1035 =l add %t1033, 8
-    %t1036 =l loadl %t1035
-    %t1037 =l mul %t1036, 8
-    %t1038 =l add %t1037, 16
-    %t1039 =l sub %t1033, 8
-    %t1040 =l loadl %t1039
-    %t1041 =l sub %t1040, 1
-    storel %t1041, %t1039
-    %t1042 =w cslel %t1041, 0
-    jnz %t1042, @list_free437, @list_free_skip438
-@list_free437
-    call $nox_rc_free_payload(l %rt, l %t1033, l %t1038)
-    jmp @list_free_done439
-@list_free_skip438
-    jmp @list_free_done439
-@list_free_done439
-    jmp @release_done436
-@release_skip435
-    jmp @release_done436
-@release_done436
-    storel 0, %t51
-    %t1043 =l loadl %t64
-    %t1044 =w ceql %t1043, 0
-    jnz %t1044, @release_skip441, @release440
-@release440
-    %t1045 =l sub %t1043, 16
-    %t1046 =l loadl %t1045
-    %t1047 =l sub %t1046, 1
-    storel %t1047, %t1045
-    %t1048 =w cslel %t1047, 0
-    jnz %t1048, @str_free443, @str_free_skip444
-@str_free443
-    call $nox_str_free_now(l %rt, l %t1043)
-    jmp @str_free_done445
-@str_free_skip444
-    jmp @str_free_done445
-@str_free_done445
-    jmp @release_done442
-@release_skip441
-    jmp @release_done442
-@release_done442
-    storel 0, %t64
-    %t1049 =l loadl %t43
-    %t1050 =w ceql %t1049, 0
-    jnz %t1050, @release_skip447, @release446
-@release446
-    call $nox_dict_release(l %rt, l %t1049, w 1, w 0, w 1)
-    jmp @release_done448
-@release_skip447
-    jmp @release_done448
-@release_done448
+    %t648 =l add %t645, 8
+    storel 1, %t648
+    %t649 =l add %t645, 16
+    storel 2, %t649
+    %t650 =l call $nox_dict_new(l %rt, w 1)
+    call $nox_dict_set(l %rt, l %t650, w 1, w 0, w 1, l %t644, l %t645)
+    %t651 =l loadl %t43
+    %t652 =w ceql %t651, 0
+    jnz %t652, @release_skip282, @release281
+@release281
+    call $nox_dict_release(l %rt, l %t651, w 1, w 0, w 1)
+    jmp @release_done283
+@release_skip282
+    jmp @release_done283
+@release_done283
     storel 0, %t43
-    %t1051 =l loadl %t27
-    %t1052 =w ceql %t1051, 0
-    jnz %t1052, @release_skip450, @release449
-@release449
-    %t1053 =l sub %t1051, 16
-    %t1054 =l loadl %t1053
-    %t1055 =l sub %t1054, 1
-    storel %t1055, %t1053
-    %t1056 =w cslel %t1055, 0
-    jnz %t1056, @str_free452, @str_free_skip453
-@str_free452
-    call $nox_str_free_now(l %rt, l %t1051)
-    jmp @str_free_done454
-@str_free_skip453
-    jmp @str_free_done454
-@str_free_done454
-    jmp @release_done451
-@release_skip450
-    jmp @release_done451
-@release_done451
-    storel 0, %t27
-    %t1057 =l loadl %t61
-    %t1058 =w ceql %t1057, 0
-    jnz %t1058, @release_skip456, @release455
-@release455
-    call $List_tuple__str_int_release(l %rt, l %t1057)
-    jmp @release_done457
-@release_skip456
-    jmp @release_done457
-@release_done457
-    storel 0, %t61
-    %t1059 =l loadl %t13
-    %t1060 =w ceql %t1059, 0
-    jnz %t1060, @release_skip459, @release458
-@release458
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1059, l $Rec_release)
-    jmp @release_done460
-@release_skip459
-    jmp @release_done460
-@release_done460
-    storel 0, %t13
-    %t1061 =l loadl %t14
-    %t1062 =w ceql %t1061, 0
-    jnz %t1062, @release_skip462, @release461
-@release461
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1061, l $tuple__tuple__int_int_str_release)
-    jmp @release_done463
-@release_skip462
-    jmp @release_done463
-@release_done463
-    storel 0, %t14
-    %t1063 =l loadl %t1
-    %t1064 =w ceql %t1063, 0
-    jnz %t1064, @release_skip465, @release464
-@release464
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1063, l $tuple__int_int_release)
-    jmp @release_done466
-@release_skip465
-    jmp @release_done466
-@release_done466
-    storel 0, %t1
-    %t1065 =l loadl %t50
-    %t1066 =w ceql %t1065, 0
-    jnz %t1066, @release_skip468, @release467
-@release467
-    %t1067 =l sub %t1065, 16
-    %t1068 =l loadl %t1067
-    %t1069 =l sub %t1068, 1
-    storel %t1069, %t1067
-    %t1070 =w cslel %t1069, 0
-    jnz %t1070, @str_free470, @str_free_skip471
-@str_free470
-    call $nox_str_free_now(l %rt, l %t1065)
-    jmp @str_free_done472
-@str_free_skip471
-    jmp @str_free_done472
-@str_free_done472
-    jmp @release_done469
-@release_skip468
-    jmp @release_done469
-@release_done469
-    storel 0, %t50
-    %t1071 =l loadl %t38
-    %t1072 =w ceql %t1071, 0
-    jnz %t1072, @release_skip474, @release473
-@release473
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1071, l $tuple__float_int_release)
-    jmp @release_done475
-@release_skip474
-    jmp @release_done475
-@release_done475
-    storel 0, %t38
-    %t1073 =l loadl %t4
-    %t1074 =w ceql %t1073, 0
-    jnz %t1074, @release_skip477, @release476
-@release476
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1073, l $tuple__int_str_release)
-    jmp @release_done478
-@release_skip477
-    jmp @release_done478
-@release_done478
-    storel 0, %t4
-    %t1075 =l loadl %t32
-    %t1076 =w ceql %t1075, 0
-    jnz %t1076, @release_skip480, @release479
-@release479
-    %t1077 =l sub %t1075, 16
-    %t1078 =l loadl %t1077
-    %t1079 =l sub %t1078, 1
-    storel %t1079, %t1077
-    %t1080 =w cslel %t1079, 0
-    jnz %t1080, @str_free482, @str_free_skip483
-@str_free482
-    call $nox_str_free_now(l %rt, l %t1075)
-    jmp @str_free_done484
-@str_free_skip483
-    jmp @str_free_done484
-@str_free_done484
-    jmp @release_done481
-@release_skip480
-    jmp @release_done481
-@release_done481
-    storel 0, %t32
-    %t1081 =l loadl %t12
-    %t1082 =w ceql %t1081, 0
-    jnz %t1082, @release_skip486, @release485
-@release485
-    %t1083 =l add %t1081, 8
-    %t1084 =l loadl %t1083
-    %t1085 =l mul %t1084, 8
-    %t1086 =l add %t1085, 16
-    %t1087 =l sub %t1081, 8
-    %t1088 =l loadl %t1087
-    %t1089 =l sub %t1088, 1
-    storel %t1089, %t1087
-    %t1090 =w cslel %t1089, 0
-    jnz %t1090, @list_free488, @list_free_skip489
-@list_free488
-    call $nox_rc_free_payload(l %rt, l %t1081, l %t1086)
-    jmp @list_free_done490
-@list_free_skip489
-    jmp @list_free_done490
-@list_free_done490
-    jmp @release_done487
-@release_skip486
-    jmp @release_done487
-@release_done487
-    storel 0, %t12
-    %t1091 =l loadl %t33
-    %t1092 =w ceql %t1091, 0
-    jnz %t1092, @release_skip492, @release491
-@release491
-    call $List_tuple__int_str_release(l %rt, l %t1091)
-    jmp @release_done493
-@release_skip492
-    jmp @release_done493
-@release_done493
-    storel 0, %t33
-    %t1093 =l loadl %t11
-    %t1094 =w ceql %t1093, 0
-    jnz %t1094, @release_skip495, @release494
-@release494
-    %t1095 =l sub %t1093, 16
-    %t1096 =l loadl %t1095
-    %t1097 =l sub %t1096, 1
-    storel %t1097, %t1095
-    %t1098 =w cslel %t1097, 0
-    jnz %t1098, @str_free497, @str_free_skip498
-@str_free497
-    call $nox_str_free_now(l %rt, l %t1093)
-    jmp @str_free_done499
-@str_free_skip498
-    jmp @str_free_done499
-@str_free_done499
-    jmp @release_done496
-@release_skip495
-    jmp @release_done496
-@release_done496
-    storel 0, %t11
-    %t1099 =l loadl %t17
-    %t1100 =w ceql %t1099, 0
-    jnz %t1100, @release_skip501, @release500
-@release500
-    call $List_tuple__str_int_release(l %rt, l %t1099)
-    jmp @release_done502
-@release_skip501
-    jmp @release_done502
-@release_done502
-    storel 0, %t17
-    call $nox_runtime_deinit(l %rt)
-@fn_end503
-    ret 0
-@list_idx_err72
-    %t275 =l add $str11, 16
-    %t276 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 16, %t276
-    %t277 =l add %t276, 8
-    storel 0, %t277
-    %t278 =l add %t276, 16
-    storel 0, %t278
-    %t279 =l add %t276, 24
-    storel 0, %t279
-    call $Exception___init__(l %rt, l %t276, l %t275)
-    %t280 =w call $nox_exception_pending(l %rt)
-    jnz %t280, @ctor_init_failed74, @ctor_init_cont75
-@ctor_init_failed74
-    %t281 =w ceql %t276, 0
-    jnz %t281, @release_skip77, @release76
-@release76
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t276)
-    jmp @release_done78
-@release_skip77
-    jmp @release_done78
-@release_done78
-    jmp @ctor_init_cont75
-@ctor_init_cont75
-    %t282 =w call $nox_exception_pending(l %rt)
-    jnz %t282, @exc_propagate79, @exc_continue80
-@exc_propagate79
+    storel %t650, %t43
+    %t653 =l loadl %t43
+    %t654 =l add $str25, 16
+    %t655 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 9, %t655
+    %t656 =l add %t655, 8
+    storel 0, %t656
+    %t657 =l add %t655, 16
+    storel 0, %t657
+    %t658 =l add %t655, 8
+    storel 3, %t658
+    %t659 =l add %t655, 16
+    storel 4, %t659
+    call $nox_dict_set(l %rt, l %t653, w 1, w 0, w 1, l %t654, l %t655)
+    %t660 =l loadl %t43
+    %t661 =l add $str26, 16
+    %t662 =w call $nox_dict_contains(l %rt, l %t660, w 1, l %t661)
+    jnz %t662, @dict_get_ok285, @dict_get_err284
+@dict_get_err284
+    %t663 =l add $str27, 16
+    %t664 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 15, %t664
+    %t665 =l add %t664, 8
+    storel 0, %t665
+    %t666 =l add %t664, 16
+    storel 0, %t666
+    %t667 =l add %t664, 24
+    storel 0, %t667
+    call $Exception___init__(l %rt, l %t664, l %t663)
+    %t668 =w call $nox_exception_pending(l %rt)
+    jnz %t668, @ctor_init_failed286, @ctor_init_cont287
+@ctor_init_failed286
+    %t669 =w ceql %t664, 0
+    jnz %t669, @release_skip289, @release288
+@release288
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t664)
+    jmp @release_done290
+@release_skip289
+    jmp @release_done290
+@release_done290
+    jmp @ctor_init_cont287
+@ctor_init_cont287
+    %t670 =w call $nox_exception_pending(l %rt)
+    jnz %t670, @exc_propagate291, @exc_continue292
+@exc_propagate291
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue80
-    %t283 =l add %t276, 24
-    storel 41, %t283
-    call $nox_raise(l %rt, l %t276, l 41)
+@exc_continue292
+    %t671 =l add %t664, 24
+    storel 80, %t671
+    call $nox_raise(l %rt, l %t664, l 80)
     call $nox_unhandled_exception(l %rt)
     ret 0
-@list_idx_err156
-    %t484 =l add $str23, 16
-    %t485 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 16, %t485
-    %t486 =l add %t485, 8
-    storel 0, %t486
-    %t487 =l add %t485, 16
-    storel 0, %t487
-    %t488 =l add %t485, 24
-    storel 0, %t488
-    call $Exception___init__(l %rt, l %t485, l %t484)
-    %t489 =w call $nox_exception_pending(l %rt)
-    jnz %t489, @ctor_init_failed158, @ctor_init_cont159
-@ctor_init_failed158
-    %t490 =w ceql %t485, 0
-    jnz %t490, @release_skip161, @release160
-@release160
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t485)
-    jmp @release_done162
-@release_skip161
-    jmp @release_done162
-@release_done162
-    jmp @ctor_init_cont159
-@ctor_init_cont159
-    %t491 =w call $nox_exception_pending(l %rt)
-    jnz %t491, @exc_propagate163, @exc_continue164
-@exc_propagate163
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue164
-    %t492 =l add %t485, 24
-    storel 61, %t492
-    call $nox_raise(l %rt, l %t485, l 61)
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@list_idx_err292
-    %t772 =l add $str32, 16
-    %t773 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 16, %t773
-    %t774 =l add %t773, 8
-    storel 0, %t774
-    %t775 =l add %t773, 16
-    storel 0, %t775
-    %t776 =l add %t773, 24
-    storel 0, %t776
-    call $Exception___init__(l %rt, l %t773, l %t772)
-    %t777 =w call $nox_exception_pending(l %rt)
-    jnz %t777, @ctor_init_failed294, @ctor_init_cont295
-@ctor_init_failed294
-    %t778 =w ceql %t773, 0
-    jnz %t778, @release_skip297, @release296
+@dict_get_ok285
+    %t672 =l call $nox_dict_get(l %rt, l %t660, w 1, l %t661)
+    %t673 =w ceql %t672, 0
+    jnz %t673, @retain_skip294, @retain293
+@retain293
+    %t674 =l sub %t672, 8
+    %t675 =l loadl %t674
+    %t676 =l add %t675, 1
+    storel %t676, %t674
+    jmp @retain_done295
+@retain_skip294
+    jmp @retain_done295
+@retain_done295
+    %t677 =l loadl %t44
+    %t678 =w ceql %t677, 0
+    jnz %t678, @release_skip297, @release296
 @release296
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t773)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t677, l $tuple__int_int_release)
     jmp @release_done298
 @release_skip297
     jmp @release_done298
 @release_done298
-    jmp @ctor_init_cont295
-@ctor_init_cont295
-    %t779 =w call $nox_exception_pending(l %rt)
-    jnz %t779, @exc_propagate299, @exc_continue300
-@exc_propagate299
+    storel 0, %t44
+    storel %t672, %t44
+    %t679 =l loadl %t44
+    %t680 =l add %t679, 8
+    %t681 =l loadl %t680
+    storel %t681, %t45
+    %t682 =l loadl %t44
+    %t683 =l add %t682, 16
+    %t684 =l loadl %t683
+    storel %t684, %t46
+    %t685 =l loadl %t45
+    %t686 =l loadl %t46
+    %t687 =l mul %t685, %t686
+    call $printf(l $fmt_int, ..., l %t687)
+    %t688 =l loadl %t43
+    %t689 =l add $str28, 16
+    %t690 =w call $nox_dict_contains(l %rt, l %t688, w 1, l %t689)
+    jnz %t690, @dict_get_ok300, @dict_get_err299
+@dict_get_err299
+    %t691 =l add $str29, 16
+    %t692 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 15, %t692
+    %t693 =l add %t692, 8
+    storel 0, %t693
+    %t694 =l add %t692, 16
+    storel 0, %t694
+    %t695 =l add %t692, 24
+    storel 0, %t695
+    call $Exception___init__(l %rt, l %t692, l %t691)
+    %t696 =w call $nox_exception_pending(l %rt)
+    jnz %t696, @ctor_init_failed301, @ctor_init_cont302
+@ctor_init_failed301
+    %t697 =w ceql %t692, 0
+    jnz %t697, @release_skip304, @release303
+@release303
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t692)
+    jmp @release_done305
+@release_skip304
+    jmp @release_done305
+@release_done305
+    jmp @ctor_init_cont302
+@ctor_init_cont302
+    %t698 =w call $nox_exception_pending(l %rt)
+    jnz %t698, @exc_propagate306, @exc_continue307
+@exc_propagate306
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue300
-    %t780 =l add %t773, 24
-    storel 90, %t780
-    call $nox_raise(l %rt, l %t773, l 90)
+@exc_continue307
+    %t699 =l add %t692, 24
+    storel 82, %t699
+    call $nox_raise(l %rt, l %t692, l 82)
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@dict_get_ok300
+    %t700 =l call $nox_dict_get(l %rt, l %t688, w 1, l %t689)
+    %t701 =l add %t700, 16
+    %t702 =l loadl %t701
+    call $printf(l $fmt_int, ..., l %t702)
+    storel 0, %t47
+    storel 0, %t48
+    jmp @while_cond308
+@while_cond308
+    %t703 =l loadl %t48
+    %t704 =w csltl %t703, 2000
+    jnz %t704, @while_body309, @while_end310
+@while_body309
+    %t705 =l loadl %t48
+    %t706 =l add %t705, 1
+    storel %t706, %t48
+    %t707 =l loadl %t48
+    storel %t707, %t76
+    %t708 =l add $str30, 16
+    %t709 =l loadl %t76
+    %t710 =l call $nox_int_to_str(l %rt, l %t709)
+    %t711 =l call $nox_str_concat(l %rt, l %t708, l %t710)
+    %t712 =w ceql %t710, 0
+    jnz %t712, @release_skip313, @release312
+@release312
+    %t713 =l sub %t710, 16
+    %t714 =l loadl %t713
+    %t715 =l sub %t714, 1
+    storel %t715, %t713
+    %t716 =w cslel %t715, 0
+    jnz %t716, @str_free315, @str_free_skip316
+@str_free315
+    call $nox_str_free_now(l %rt, l %t710)
+    jmp @str_free_done317
+@str_free_skip316
+    jmp @str_free_done317
+@str_free_done317
+    jmp @release_done314
+@release_skip313
+    jmp @release_done314
+@release_done314
+    %t717 =l loadl %t76
+    %t718 =l loadl %t76
+    %t719 =l add %t718, 1
+    %t720 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 2, %t720
+    %t721 =l add %t720, 8
+    storel 2, %t721
+    %t722 =l add %t720, 16
+    storel %t717, %t722
+    %t723 =l add %t720, 24
+    storel %t719, %t723
+    %t724 =l add $str31, 16
+    %t725 =l loadl %t76
+    %t726 =l call $nox_int_to_str(l %rt, l %t725)
+    %t727 =l call $nox_str_concat(l %rt, l %t724, l %t726)
+    %t728 =w ceql %t726, 0
+    jnz %t728, @release_skip319, @release318
+@release318
+    %t729 =l sub %t726, 16
+    %t730 =l loadl %t729
+    %t731 =l sub %t730, 1
+    storel %t731, %t729
+    %t732 =w cslel %t731, 0
+    jnz %t732, @str_free321, @str_free_skip322
+@str_free321
+    call $nox_str_free_now(l %rt, l %t726)
+    jmp @str_free_done323
+@str_free_skip322
+    jmp @str_free_done323
+@str_free_done323
+    jmp @release_done320
+@release_skip319
+    jmp @release_done320
+@release_done320
+    %t733 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 11, %t733
+    %t734 =l add %t733, 8
+    storel 0, %t734
+    %t735 =l add %t733, 8
+    storel %t727, %t735
+    %t736 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 8, %t736
+    %t737 =l add %t736, 8
+    storel 0, %t737
+    %t738 =l add %t736, 16
+    storel 0, %t738
+    %t739 =l add %t736, 24
+    storel 0, %t739
+    %t740 =l add %t736, 8
+    storel %t711, %t740
+    %t741 =l add %t736, 16
+    storel %t720, %t741
+    %t742 =l add %t736, 24
+    storel %t733, %t742
+    storel %t736, %t77
+    jmp @inline_done311
+@after_inline_return324
+    jmp @inline_done311
+@inline_done311
+    %t743 =l loadl %t77
+    %t744 =l loadl %t49
+    %t745 =w ceql %t744, 0
+    jnz %t745, @release_skip326, @release325
+@release325
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t744, l $tuple__str_list_int_Rec_release)
+    jmp @release_done327
+@release_skip326
+    jmp @release_done327
+@release_done327
+    storel 0, %t49
+    storel %t743, %t49
+    %t746 =l loadl %t49
+    %t747 =l add %t746, 8
+    %t748 =l loadl %t747
+    %t749 =w ceql %t748, 0
+    jnz %t749, @retain_skip329, @retain328
+@retain328
+    %t750 =l sub %t748, 16
+    %t751 =l loadl %t750
+    %t752 =l add %t751, 1
+    storel %t752, %t750
+    jmp @retain_done330
+@retain_skip329
+    jmp @retain_done330
+@retain_done330
+    %t753 =l loadl %t50
+    %t754 =w ceql %t753, 0
+    jnz %t754, @release_skip332, @release331
+@release331
+    %t755 =l sub %t753, 16
+    %t756 =l loadl %t755
+    %t757 =l sub %t756, 1
+    storel %t757, %t755
+    %t758 =w cslel %t757, 0
+    jnz %t758, @str_free334, @str_free_skip335
+@str_free334
+    call $nox_str_free_now(l %rt, l %t753)
+    jmp @str_free_done336
+@str_free_skip335
+    jmp @str_free_done336
+@str_free_done336
+    jmp @release_done333
+@release_skip332
+    jmp @release_done333
+@release_done333
+    storel 0, %t50
+    storel %t748, %t50
+    %t759 =l loadl %t49
+    %t760 =l add %t759, 16
+    %t761 =l loadl %t760
+    %t762 =w ceql %t761, 0
+    jnz %t762, @retain_skip338, @retain337
+@retain337
+    %t763 =l sub %t761, 8
+    %t764 =l loadl %t763
+    %t765 =l add %t764, 1
+    storel %t765, %t763
+    jmp @retain_done339
+@retain_skip338
+    jmp @retain_done339
+@retain_done339
+    %t766 =l loadl %t51
+    %t767 =w ceql %t766, 0
+    jnz %t767, @release_skip341, @release340
+@release340
+    %t768 =l add %t766, 8
+    %t769 =l loadl %t768
+    %t770 =l mul %t769, 8
+    %t771 =l add %t770, 16
+    %t772 =l sub %t766, 8
+    %t773 =l loadl %t772
+    %t774 =l sub %t773, 1
+    storel %t774, %t772
+    %t775 =w cslel %t774, 0
+    jnz %t775, @list_free343, @list_free_skip344
+@list_free343
+    call $nox_rc_free_payload(l %rt, l %t766, l %t771)
+    jmp @list_free_done345
+@list_free_skip344
+    jmp @list_free_done345
+@list_free_done345
+    jmp @release_done342
+@release_skip341
+    jmp @release_done342
+@release_done342
+    storel 0, %t51
+    storel %t761, %t51
+    %t776 =l loadl %t49
+    %t777 =l add %t776, 24
+    %t778 =l loadl %t777
+    %t779 =w ceql %t778, 0
+    jnz %t779, @retain_skip347, @retain346
+@retain346
+    %t780 =l sub %t778, 8
+    %t781 =l loadl %t780
+    %t782 =l add %t781, 1
+    storel %t782, %t780
+    jmp @retain_done348
+@retain_skip347
+    jmp @retain_done348
+@retain_done348
+    %t783 =l loadl %t52
+    %t784 =w ceql %t783, 0
+    jnz %t784, @release_skip350, @release349
+@release349
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t783, l $Rec_release)
+    jmp @release_done351
+@release_skip350
+    jmp @release_done351
+@release_done351
+    storel 0, %t52
+    storel %t778, %t52
+    %t785 =l loadl %t47
+    %t786 =l loadl %t50
+    %t787 =l call $nox_str_char_count(l %t786)
+    %t788 =l add %t785, %t787
+    %t789 =l loadl %t51
+    %t790 =l loadl %t789
+    %t791 =w cugel 1, %t790
+    jnz %t791, @list_idx_err352, @list_idx_ok353
+@list_idx_ok353
+    %t801 =l mul 1, 8
+    %t802 =l add %t801, 16
+    %t803 =l add %t789, %t802
+    %t804 =l loadl %t803
+    %t805 =l add %t788, %t804
+    %t806 =l loadl %t52
+    %t807 =l add %t806, 8
+    %t808 =l loadl %t807
+    %t809 =l call $nox_str_char_count(l %t808)
+    %t810 =l add %t805, %t809
+    storel %t810, %t47
+    %t811 =l loadl %t48
+    %t812 =l loadl %t48
+    %t813 =l rem %t812, 7
+    %t814 =l sar %t813, 63
+    %t815 =l and %t814, 7
+    %t816 =l add %t813, %t815
+    %t817 =l loadl %t48
+    %t818 =l rem %t817, 13
+    %t819 =l sar %t818, 63
+    %t820 =l and %t819, 13
+    %t821 =l add %t818, %t820
+    %t822 =l call $nox_rc_alloc(l %rt, l 40)
+    storel 3, %t822
+    %t823 =l add %t822, 8
+    storel 3, %t823
+    %t824 =l add %t822, 16
+    storel %t811, %t824
+    %t825 =l add %t822, 24
+    storel %t816, %t825
+    %t826 =l add %t822, 32
+    storel %t821, %t826
+    %t827 =l call $minmax(l %rt, l %t822)
+    %t828 =w ceql %t822, 0
+    jnz %t828, @release_skip362, @release361
+@release361
+    %t829 =l add %t822, 8
+    %t830 =l loadl %t829
+    %t831 =l mul %t830, 8
+    %t832 =l add %t831, 16
+    %t833 =l sub %t822, 8
+    %t834 =l loadl %t833
+    %t835 =l sub %t834, 1
+    storel %t835, %t833
+    %t836 =w cslel %t835, 0
+    jnz %t836, @list_free364, @list_free_skip365
+@list_free364
+    call $nox_rc_free_payload(l %rt, l %t822, l %t832)
+    jmp @list_free_done366
+@list_free_skip365
+    jmp @list_free_done366
+@list_free_done366
+    jmp @release_done363
+@release_skip362
+    jmp @release_done363
+@release_done363
+    %t837 =w call $nox_exception_pending(l %rt)
+    jnz %t837, @exc_propagate367, @exc_continue368
+@exc_propagate367
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue368
+    %t838 =l loadl %t53
+    %t839 =w ceql %t838, 0
+    jnz %t839, @release_skip370, @release369
+@release369
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t838, l $tuple__int_int_release)
+    jmp @release_done371
+@release_skip370
+    jmp @release_done371
+@release_done371
+    storel 0, %t53
+    storel %t827, %t53
+    %t840 =l loadl %t53
+    %t841 =l add %t840, 8
+    %t842 =l loadl %t841
+    storel %t842, %t54
+    %t843 =l loadl %t53
+    %t844 =l add %t843, 16
+    %t845 =l loadl %t844
+    storel %t845, %t55
+    %t846 =l loadl %t47
+    %t847 =l loadl %t54
+    %t848 =l add %t846, %t847
+    %t849 =l loadl %t55
+    %t850 =l add %t848, %t849
+    storel %t850, %t47
+    %t851 =l loadl %t48
+    storel %t851, %t59
+    %t852 =l loadl %t48
+    %t853 =l add %t852, 1
+    storel %t853, %t60
+    %t854 =l loadl %t60
+    %t855 =l loadl %t59
+    %t856 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 9, %t856
+    %t857 =l add %t856, 8
+    storel 0, %t857
+    %t858 =l add %t856, 16
+    storel 0, %t858
+    %t859 =l add %t856, 8
+    storel %t854, %t859
+    %t860 =l add %t856, 16
+    storel %t855, %t860
+    %t861 =l loadl %t58
+    %t862 =w ceql %t861, 0
+    jnz %t862, @release_skip373, @release372
+@release372
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t861, l $tuple__int_int_release)
+    jmp @release_done374
+@release_skip373
+    jmp @release_done374
+@release_done374
+    storel 0, %t58
+    storel %t856, %t58
+    %t863 =l loadl %t58
+    %t864 =l add %t863, 8
+    %t865 =l loadl %t864
+    storel %t865, %t59
+    %t866 =l loadl %t58
+    %t867 =l add %t866, 16
+    %t868 =l loadl %t867
+    storel %t868, %t60
+    %t869 =l loadl %t47
+    %t870 =l loadl %t59
+    %t871 =l add %t869, %t870
+    %t872 =l loadl %t60
+    %t873 =l sub %t871, %t872
+    storel %t873, %t47
+    %t874 =l add $str33, 16
+    %t875 =l loadl %t48
+    %t876 =l add $str34, 16
+    %t877 =l call $nox_dict_new(l %rt, w 1)
+    call $nox_dict_set(l %rt, l %t877, w 1, w 0, w 0, l %t874, l %t875)
+    call $nox_dict_set(l %rt, l %t877, w 1, w 0, w 0, l %t876, l 2)
+    %t878 =l call $__nox_dict_items__str_int(l %rt, l %t877)
+    %t879 =w ceql %t877, 0
+    jnz %t879, @release_skip376, @release375
+@release375
+    call $nox_dict_release(l %rt, l %t877, w 1, w 0, w 0)
+    jmp @release_done377
+@release_skip376
+    jmp @release_done377
+@release_done377
+    %t880 =w call $nox_exception_pending(l %rt)
+    jnz %t880, @exc_propagate378, @exc_continue379
+@exc_propagate378
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue379
+    %t881 =l loadl %t61
+    %t882 =w ceql %t881, 0
+    jnz %t882, @release_skip381, @release380
+@release380
+    call $List_tuple__str_int_release(l %rt, l %t881)
+    jmp @release_done382
+@release_skip381
+    jmp @release_done382
+@release_done382
+    storel 0, %t61
+    storel %t878, %t61
+    storel 0, %t63
+    %t883 =l loadl %t61
+    %t884 =l loadl %t883
+    jmp @forlist_cond383
+@forlist_cond383
+    %t885 =l loadl %t63
+    %t886 =w csltl %t885, %t884
+    jnz %t886, @forlist_body384, @forlist_end385
+@forlist_body384
+    %t887 =l mul %t885, 8
+    %t888 =l add %t887, 16
+    %t889 =l add %t883, %t888
+    %t890 =l loadl %t889
+    storel %t890, %t62
+    %t891 =l loadl %t62
+    %t892 =l add %t891, 8
+    %t893 =l loadl %t892
+    %t894 =w ceql %t893, 0
+    jnz %t894, @retain_skip388, @retain387
+@retain387
+    %t895 =l sub %t893, 16
+    %t896 =l loadl %t895
+    %t897 =l add %t896, 1
+    storel %t897, %t895
+    jmp @retain_done389
+@retain_skip388
+    jmp @retain_done389
+@retain_done389
+    %t898 =l loadl %t64
+    %t899 =w ceql %t898, 0
+    jnz %t899, @release_skip391, @release390
+@release390
+    %t900 =l sub %t898, 16
+    %t901 =l loadl %t900
+    %t902 =l sub %t901, 1
+    storel %t902, %t900
+    %t903 =w cslel %t902, 0
+    jnz %t903, @str_free393, @str_free_skip394
+@str_free393
+    call $nox_str_free_now(l %rt, l %t898)
+    jmp @str_free_done395
+@str_free_skip394
+    jmp @str_free_done395
+@str_free_done395
+    jmp @release_done392
+@release_skip391
+    jmp @release_done392
+@release_done392
+    storel 0, %t64
+    storel %t893, %t64
+    %t904 =l loadl %t62
+    %t905 =l add %t904, 16
+    %t906 =l loadl %t905
+    storel %t906, %t65
+    %t907 =l loadl %t47
+    %t908 =l loadl %t64
+    %t909 =l call $nox_str_char_count(l %t908)
+    %t910 =l add %t907, %t909
+    %t911 =l loadl %t65
+    %t912 =l add %t910, %t911
+    storel %t912, %t47
+    jmp @forlist_step386
+@forlist_step386
+    %t913 =l loadl %t63
+    %t914 =l add %t913, 1
+    storel %t914, %t63
+    jmp @forlist_cond383
+@forlist_end385
+    %t915 =l add $str35, 16
+    %t916 =l add $str36, 16
+    %t917 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 2, %t917
+    %t918 =l add %t917, 8
+    storel 2, %t918
+    %t919 =l add %t917, 16
+    storel %t915, %t919
+    %t920 =l add %t917, 24
+    storel %t916, %t920
+    %t921 =l call $enumerate__str(l %rt, l %t917)
+    %t922 =w ceql %t917, 0
+    jnz %t922, @release_skip397, @release396
+@release396
+    call $List_str_release(l %rt, l %t917)
+    jmp @release_done398
+@release_skip397
+    jmp @release_done398
+@release_done398
+    %t923 =w call $nox_exception_pending(l %rt)
+    jnz %t923, @exc_propagate399, @exc_continue400
+@exc_propagate399
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue400
+    %t924 =l loadl %t66
+    %t925 =w ceql %t924, 0
+    jnz %t925, @release_skip402, @release401
+@release401
+    call $List_tuple__int_str_release(l %rt, l %t924)
+    jmp @release_done403
+@release_skip402
+    jmp @release_done403
+@release_done403
+    storel 0, %t66
+    storel %t921, %t66
+    storel 0, %t68
+    %t926 =l loadl %t66
+    %t927 =l loadl %t926
+    jmp @forlist_cond404
+@forlist_cond404
+    %t928 =l loadl %t68
+    %t929 =w csltl %t928, %t927
+    jnz %t929, @forlist_body405, @forlist_end406
+@forlist_body405
+    %t930 =l mul %t928, 8
+    %t931 =l add %t930, 16
+    %t932 =l add %t926, %t931
+    %t933 =l loadl %t932
+    storel %t933, %t67
+    %t934 =l loadl %t67
+    %t935 =l add %t934, 8
+    %t936 =l loadl %t935
+    storel %t936, %t69
+    %t937 =l loadl %t67
+    %t938 =l add %t937, 16
+    %t939 =l loadl %t938
+    %t940 =w ceql %t939, 0
+    jnz %t940, @retain_skip409, @retain408
+@retain408
+    %t941 =l sub %t939, 16
+    %t942 =l loadl %t941
+    %t943 =l add %t942, 1
+    storel %t943, %t941
+    jmp @retain_done410
+@retain_skip409
+    jmp @retain_done410
+@retain_done410
+    %t944 =l loadl %t70
+    %t945 =w ceql %t944, 0
+    jnz %t945, @release_skip412, @release411
+@release411
+    %t946 =l sub %t944, 16
+    %t947 =l loadl %t946
+    %t948 =l sub %t947, 1
+    storel %t948, %t946
+    %t949 =w cslel %t948, 0
+    jnz %t949, @str_free414, @str_free_skip415
+@str_free414
+    call $nox_str_free_now(l %rt, l %t944)
+    jmp @str_free_done416
+@str_free_skip415
+    jmp @str_free_done416
+@str_free_done416
+    jmp @release_done413
+@release_skip412
+    jmp @release_done413
+@release_done413
+    storel 0, %t70
+    storel %t939, %t70
+    %t950 =l loadl %t47
+    %t951 =l loadl %t69
+    %t952 =l add %t950, %t951
+    %t953 =l loadl %t70
+    %t954 =l call $nox_str_char_count(l %t953)
+    %t955 =l add %t952, %t954
+    storel %t955, %t47
+    jmp @forlist_step407
+@forlist_step407
+    %t956 =l loadl %t68
+    %t957 =l add %t956, 1
+    storel %t957, %t68
+    jmp @forlist_cond404
+@forlist_end406
+    %t958 =l loadl %t48
+    %t959 =l add $str37, 16
+    %t960 =l loadl %t48
+    %t961 =l rem %t960, 5
+    %t962 =l sar %t961, 63
+    %t963 =l and %t962, 5
+    %t964 =l add %t961, %t963
+    %t965 =l call $nox_int_to_str(l %rt, l %t964)
+    %t966 =l call $nox_str_concat(l %rt, l %t959, l %t965)
+    %t967 =w ceql %t965, 0
+    jnz %t967, @release_skip418, @release417
+@release417
+    %t968 =l sub %t965, 16
+    %t969 =l loadl %t968
+    %t970 =l sub %t969, 1
+    storel %t970, %t968
+    %t971 =w cslel %t970, 0
+    jnz %t971, @str_free420, @str_free_skip421
+@str_free420
+    call $nox_str_free_now(l %rt, l %t965)
+    jmp @str_free_done422
+@str_free_skip421
+    jmp @str_free_done422
+@str_free_done422
+    jmp @release_done419
+@release_skip418
+    jmp @release_done419
+@release_done419
+    %t972 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 7, %t972
+    %t973 =l add %t972, 8
+    storel 0, %t973
+    %t974 =l add %t972, 16
+    storel 0, %t974
+    %t975 =l add %t972, 8
+    storel %t958, %t975
+    %t976 =l add %t972, 16
+    storel %t966, %t976
+    storel %t972, %t78
+    %t977 =l loadl %t78
+    %t978 =l add %t977, 16
+    %t979 =l loadl %t978
+    %t980 =l loadl %t78
+    %t981 =l add %t980, 8
+    %t982 =l loadl %t981
+    %t983 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 6, %t983
+    %t984 =l add %t983, 8
+    storel 0, %t984
+    %t985 =l add %t983, 16
+    storel 0, %t985
+    %t986 =l add %t983, 8
+    %t987 =w ceql %t979, 0
+    jnz %t987, @retain_skip425, @retain424
+@retain424
+    %t988 =l sub %t979, 16
+    %t989 =l loadl %t988
+    %t990 =l add %t989, 1
+    storel %t990, %t988
+    jmp @retain_done426
+@retain_skip425
+    jmp @retain_done426
+@retain_done426
+    storel %t979, %t986
+    %t991 =l add %t983, 16
+    storel %t982, %t991
+    storel %t983, %t79
+    jmp @inline_done423
+@after_inline_return427
+    jmp @inline_done423
+@inline_done423
+    %t992 =w ceql %t972, 0
+    jnz %t992, @release_skip429, @release428
+@release428
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t972, l $tuple__int_str_release)
+    jmp @release_done430
+@release_skip429
+    jmp @release_done430
+@release_done430
+    %t993 =l loadl %t79
+    %t994 =l loadl %t71
+    %t995 =w ceql %t994, 0
+    jnz %t995, @release_skip432, @release431
+@release431
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t994, l $tuple__str_int_release)
+    jmp @release_done433
+@release_skip432
+    jmp @release_done433
+@release_done433
+    storel 0, %t71
+    storel %t993, %t71
+    %t996 =l loadl %t47
+    %t997 =l loadl %t71
+    %t998 =l add %t997, 8
+    %t999 =l loadl %t998
+    %t1000 =l call $nox_str_char_count(l %t999)
+    %t1001 =l add %t996, %t1000
+    %t1002 =l loadl %t71
+    %t1003 =l add %t1002, 16
+    %t1004 =l loadl %t1003
+    %t1005 =l add %t1001, %t1004
+    storel %t1005, %t47
+    jmp @while_cond308
+@while_end310
+    %t1006 =l loadl %t47
+    call $printf(l $fmt_int, ..., l %t1006)
+    %t1007 =l loadl %t15
+    %t1008 =w ceql %t1007, 0
+    jnz %t1008, @release_skip435, @release434
+@release434
+    call $nox_dict_release(l %rt, l %t1007, w 1, w 0, w 0)
+    jmp @release_done436
+@release_skip435
+    jmp @release_done436
+@release_done436
+    storel 0, %t15
+    %t1009 =l loadl %t58
+    %t1010 =w ceql %t1009, 0
+    jnz %t1010, @release_skip438, @release437
+@release437
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1009, l $tuple__int_int_release)
+    jmp @release_done439
+@release_skip438
+    jmp @release_done439
+@release_done439
+    storel 0, %t58
+    %t1011 =l loadl %t23
+    %t1012 =w ceql %t1011, 0
+    jnz %t1012, @release_skip441, @release440
+@release440
+    call $List_tuple__int_str_release(l %rt, l %t1011)
+    jmp @release_done442
+@release_skip441
+    jmp @release_done442
+@release_done442
+    storel 0, %t23
+    %t1013 =l loadl %t71
+    %t1014 =w ceql %t1013, 0
+    jnz %t1014, @release_skip444, @release443
+@release443
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1013, l $tuple__str_int_release)
+    jmp @release_done445
+@release_skip444
+    jmp @release_done445
+@release_done445
+    storel 0, %t71
+    %t1015 =l loadl %t70
+    %t1016 =w ceql %t1015, 0
+    jnz %t1016, @release_skip447, @release446
+@release446
+    %t1017 =l sub %t1015, 16
+    %t1018 =l loadl %t1017
+    %t1019 =l sub %t1018, 1
+    storel %t1019, %t1017
+    %t1020 =w cslel %t1019, 0
+    jnz %t1020, @str_free449, @str_free_skip450
+@str_free449
+    call $nox_str_free_now(l %rt, l %t1015)
+    jmp @str_free_done451
+@str_free_skip450
+    jmp @str_free_done451
+@str_free_done451
+    jmp @release_done448
+@release_skip447
+    jmp @release_done448
+@release_done448
+    storel 0, %t70
+    %t1021 =l loadl %t22
+    %t1022 =w ceql %t1021, 0
+    jnz %t1022, @release_skip453, @release452
+@release452
+    call $List_str_release(l %rt, l %t1021)
+    jmp @release_done454
+@release_skip453
+    jmp @release_done454
+@release_done454
+    storel 0, %t22
+    %t1023 =l loadl %t53
+    %t1024 =w ceql %t1023, 0
+    jnz %t1024, @release_skip456, @release455
+@release455
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1023, l $tuple__int_int_release)
+    jmp @release_done457
+@release_skip456
+    jmp @release_done457
+@release_done457
+    storel 0, %t53
+    %t1025 =l loadl %t37
+    %t1026 =w ceql %t1025, 0
+    jnz %t1026, @release_skip459, @release458
+@release458
+    %t1027 =l sub %t1025, 16
+    %t1028 =l loadl %t1027
+    %t1029 =l sub %t1028, 1
+    storel %t1029, %t1027
+    %t1030 =w cslel %t1029, 0
+    jnz %t1030, @str_free461, @str_free_skip462
+@str_free461
+    call $nox_str_free_now(l %rt, l %t1025)
+    jmp @str_free_done463
+@str_free_skip462
+    jmp @str_free_done463
+@str_free_done463
+    jmp @release_done460
+@release_skip459
+    jmp @release_done460
+@release_done460
+    storel 0, %t37
+    %t1031 =l loadl %t20
+    %t1032 =w ceql %t1031, 0
+    jnz %t1032, @release_skip465, @release464
+@release464
+    %t1033 =l sub %t1031, 16
+    %t1034 =l loadl %t1033
+    %t1035 =l sub %t1034, 1
+    storel %t1035, %t1033
+    %t1036 =w cslel %t1035, 0
+    jnz %t1036, @str_free467, @str_free_skip468
+@str_free467
+    call $nox_str_free_now(l %rt, l %t1031)
+    jmp @str_free_done469
+@str_free_skip468
+    jmp @str_free_done469
+@str_free_done469
+    jmp @release_done466
+@release_skip465
+    jmp @release_done466
+@release_done466
+    storel 0, %t20
+    %t1037 =l loadl %t49
+    %t1038 =w ceql %t1037, 0
+    jnz %t1038, @release_skip471, @release470
+@release470
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1037, l $tuple__str_list_int_Rec_release)
+    jmp @release_done472
+@release_skip471
+    jmp @release_done472
+@release_done472
+    storel 0, %t49
+    %t1039 =l loadl %t52
+    %t1040 =w ceql %t1039, 0
+    jnz %t1040, @release_skip474, @release473
+@release473
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1039, l $Rec_release)
+    jmp @release_done475
+@release_skip474
+    jmp @release_done475
+@release_done475
+    storel 0, %t52
+    %t1041 =l loadl %t66
+    %t1042 =w ceql %t1041, 0
+    jnz %t1042, @release_skip477, @release476
+@release476
+    call $List_tuple__int_str_release(l %rt, l %t1041)
+    jmp @release_done478
+@release_skip477
+    jmp @release_done478
+@release_done478
+    storel 0, %t66
+    %t1043 =l loadl %t44
+    %t1044 =w ceql %t1043, 0
+    jnz %t1044, @release_skip480, @release479
+@release479
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1043, l $tuple__int_int_release)
+    jmp @release_done481
+@release_skip480
+    jmp @release_done481
+@release_done481
+    storel 0, %t44
+    %t1045 =l loadl %t10
+    %t1046 =w ceql %t1045, 0
+    jnz %t1046, @release_skip483, @release482
+@release482
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1045, l $tuple__str_list_int_Rec_release)
+    jmp @release_done484
+@release_skip483
+    jmp @release_done484
+@release_done484
+    storel 0, %t10
+    %t1047 =l loadl %t39
+    %t1048 =w ceql %t1047, 0
+    jnz %t1048, @release_skip486, @release485
+@release485
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1047, l $Holder_release)
+    jmp @release_done487
+@release_skip486
+    jmp @release_done487
+@release_done487
+    storel 0, %t39
+    %t1049 =l loadl %t28
+    %t1050 =w ceql %t1049, 0
+    jnz %t1050, @release_skip489, @release488
+@release488
+    call $List_tuple__int_str_release(l %rt, l %t1049)
+    jmp @release_done490
+@release_skip489
+    jmp @release_done490
+@release_done490
+    storel 0, %t28
+    %t1051 =l loadl %t40
+    %t1052 =w ceql %t1051, 0
+    jnz %t1052, @release_skip492, @release491
+@release491
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1051, l $tuple__int_int_release)
+    jmp @release_done493
+@release_skip492
+    jmp @release_done493
+@release_done493
+    storel 0, %t40
+    %t1053 =l loadl %t51
+    %t1054 =w ceql %t1053, 0
+    jnz %t1054, @release_skip495, @release494
+@release494
+    %t1055 =l add %t1053, 8
+    %t1056 =l loadl %t1055
+    %t1057 =l mul %t1056, 8
+    %t1058 =l add %t1057, 16
+    %t1059 =l sub %t1053, 8
+    %t1060 =l loadl %t1059
+    %t1061 =l sub %t1060, 1
+    storel %t1061, %t1059
+    %t1062 =w cslel %t1061, 0
+    jnz %t1062, @list_free497, @list_free_skip498
+@list_free497
+    call $nox_rc_free_payload(l %rt, l %t1053, l %t1058)
+    jmp @list_free_done499
+@list_free_skip498
+    jmp @list_free_done499
+@list_free_done499
+    jmp @release_done496
+@release_skip495
+    jmp @release_done496
+@release_done496
+    storel 0, %t51
+    %t1063 =l loadl %t64
+    %t1064 =w ceql %t1063, 0
+    jnz %t1064, @release_skip501, @release500
+@release500
+    %t1065 =l sub %t1063, 16
+    %t1066 =l loadl %t1065
+    %t1067 =l sub %t1066, 1
+    storel %t1067, %t1065
+    %t1068 =w cslel %t1067, 0
+    jnz %t1068, @str_free503, @str_free_skip504
+@str_free503
+    call $nox_str_free_now(l %rt, l %t1063)
+    jmp @str_free_done505
+@str_free_skip504
+    jmp @str_free_done505
+@str_free_done505
+    jmp @release_done502
+@release_skip501
+    jmp @release_done502
+@release_done502
+    storel 0, %t64
+    %t1069 =l loadl %t43
+    %t1070 =w ceql %t1069, 0
+    jnz %t1070, @release_skip507, @release506
+@release506
+    call $nox_dict_release(l %rt, l %t1069, w 1, w 0, w 1)
+    jmp @release_done508
+@release_skip507
+    jmp @release_done508
+@release_done508
+    storel 0, %t43
+    %t1071 =l loadl %t27
+    %t1072 =w ceql %t1071, 0
+    jnz %t1072, @release_skip510, @release509
+@release509
+    %t1073 =l sub %t1071, 16
+    %t1074 =l loadl %t1073
+    %t1075 =l sub %t1074, 1
+    storel %t1075, %t1073
+    %t1076 =w cslel %t1075, 0
+    jnz %t1076, @str_free512, @str_free_skip513
+@str_free512
+    call $nox_str_free_now(l %rt, l %t1071)
+    jmp @str_free_done514
+@str_free_skip513
+    jmp @str_free_done514
+@str_free_done514
+    jmp @release_done511
+@release_skip510
+    jmp @release_done511
+@release_done511
+    storel 0, %t27
+    %t1077 =l loadl %t61
+    %t1078 =w ceql %t1077, 0
+    jnz %t1078, @release_skip516, @release515
+@release515
+    call $List_tuple__str_int_release(l %rt, l %t1077)
+    jmp @release_done517
+@release_skip516
+    jmp @release_done517
+@release_done517
+    storel 0, %t61
+    %t1079 =l loadl %t13
+    %t1080 =w ceql %t1079, 0
+    jnz %t1080, @release_skip519, @release518
+@release518
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1079, l $Rec_release)
+    jmp @release_done520
+@release_skip519
+    jmp @release_done520
+@release_done520
+    storel 0, %t13
+    %t1081 =l loadl %t14
+    %t1082 =w ceql %t1081, 0
+    jnz %t1082, @release_skip522, @release521
+@release521
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1081, l $tuple__tuple__int_int_str_release)
+    jmp @release_done523
+@release_skip522
+    jmp @release_done523
+@release_done523
+    storel 0, %t14
+    %t1083 =l loadl %t1
+    %t1084 =w ceql %t1083, 0
+    jnz %t1084, @release_skip525, @release524
+@release524
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1083, l $tuple__int_int_release)
+    jmp @release_done526
+@release_skip525
+    jmp @release_done526
+@release_done526
+    storel 0, %t1
+    %t1085 =l loadl %t50
+    %t1086 =w ceql %t1085, 0
+    jnz %t1086, @release_skip528, @release527
+@release527
+    %t1087 =l sub %t1085, 16
+    %t1088 =l loadl %t1087
+    %t1089 =l sub %t1088, 1
+    storel %t1089, %t1087
+    %t1090 =w cslel %t1089, 0
+    jnz %t1090, @str_free530, @str_free_skip531
+@str_free530
+    call $nox_str_free_now(l %rt, l %t1085)
+    jmp @str_free_done532
+@str_free_skip531
+    jmp @str_free_done532
+@str_free_done532
+    jmp @release_done529
+@release_skip528
+    jmp @release_done529
+@release_done529
+    storel 0, %t50
+    %t1091 =l loadl %t38
+    %t1092 =w ceql %t1091, 0
+    jnz %t1092, @release_skip534, @release533
+@release533
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1091, l $tuple__float_int_release)
+    jmp @release_done535
+@release_skip534
+    jmp @release_done535
+@release_done535
+    storel 0, %t38
+    %t1093 =l loadl %t4
+    %t1094 =w ceql %t1093, 0
+    jnz %t1094, @release_skip537, @release536
+@release536
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t1093, l $tuple__int_str_release)
+    jmp @release_done538
+@release_skip537
+    jmp @release_done538
+@release_done538
+    storel 0, %t4
+    %t1095 =l loadl %t32
+    %t1096 =w ceql %t1095, 0
+    jnz %t1096, @release_skip540, @release539
+@release539
+    %t1097 =l sub %t1095, 16
+    %t1098 =l loadl %t1097
+    %t1099 =l sub %t1098, 1
+    storel %t1099, %t1097
+    %t1100 =w cslel %t1099, 0
+    jnz %t1100, @str_free542, @str_free_skip543
+@str_free542
+    call $nox_str_free_now(l %rt, l %t1095)
+    jmp @str_free_done544
+@str_free_skip543
+    jmp @str_free_done544
+@str_free_done544
+    jmp @release_done541
+@release_skip540
+    jmp @release_done541
+@release_done541
+    storel 0, %t32
+    %t1101 =l loadl %t12
+    %t1102 =w ceql %t1101, 0
+    jnz %t1102, @release_skip546, @release545
+@release545
+    %t1103 =l add %t1101, 8
+    %t1104 =l loadl %t1103
+    %t1105 =l mul %t1104, 8
+    %t1106 =l add %t1105, 16
+    %t1107 =l sub %t1101, 8
+    %t1108 =l loadl %t1107
+    %t1109 =l sub %t1108, 1
+    storel %t1109, %t1107
+    %t1110 =w cslel %t1109, 0
+    jnz %t1110, @list_free548, @list_free_skip549
+@list_free548
+    call $nox_rc_free_payload(l %rt, l %t1101, l %t1106)
+    jmp @list_free_done550
+@list_free_skip549
+    jmp @list_free_done550
+@list_free_done550
+    jmp @release_done547
+@release_skip546
+    jmp @release_done547
+@release_done547
+    storel 0, %t12
+    %t1111 =l loadl %t33
+    %t1112 =w ceql %t1111, 0
+    jnz %t1112, @release_skip552, @release551
+@release551
+    call $List_tuple__int_str_release(l %rt, l %t1111)
+    jmp @release_done553
+@release_skip552
+    jmp @release_done553
+@release_done553
+    storel 0, %t33
+    %t1113 =l loadl %t11
+    %t1114 =w ceql %t1113, 0
+    jnz %t1114, @release_skip555, @release554
+@release554
+    %t1115 =l sub %t1113, 16
+    %t1116 =l loadl %t1115
+    %t1117 =l sub %t1116, 1
+    storel %t1117, %t1115
+    %t1118 =w cslel %t1117, 0
+    jnz %t1118, @str_free557, @str_free_skip558
+@str_free557
+    call $nox_str_free_now(l %rt, l %t1113)
+    jmp @str_free_done559
+@str_free_skip558
+    jmp @str_free_done559
+@str_free_done559
+    jmp @release_done556
+@release_skip555
+    jmp @release_done556
+@release_done556
+    storel 0, %t11
+    %t1119 =l loadl %t17
+    %t1120 =w ceql %t1119, 0
+    jnz %t1120, @release_skip561, @release560
+@release560
+    call $List_tuple__str_int_release(l %rt, l %t1119)
+    jmp @release_done562
+@release_skip561
+    jmp @release_done562
+@release_done562
+    storel 0, %t17
+    call $nox_runtime_deinit(l %rt)
+@fn_end563
+    ret 0
+@list_idx_err102
+    %t285 =l add $str11, 16
+    %t286 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 17, %t286
+    %t287 =l add %t286, 8
+    storel 0, %t287
+    %t288 =l add %t286, 16
+    storel 0, %t288
+    %t289 =l add %t286, 24
+    storel 0, %t289
+    call $Exception___init__(l %rt, l %t286, l %t285)
+    %t290 =w call $nox_exception_pending(l %rt)
+    jnz %t290, @ctor_init_failed104, @ctor_init_cont105
+@ctor_init_failed104
+    %t291 =w ceql %t286, 0
+    jnz %t291, @release_skip107, @release106
+@release106
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t286)
+    jmp @release_done108
+@release_skip107
+    jmp @release_done108
+@release_done108
+    jmp @ctor_init_cont105
+@ctor_init_cont105
+    %t292 =w call $nox_exception_pending(l %rt)
+    jnz %t292, @exc_propagate109, @exc_continue110
+@exc_propagate109
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue110
+    %t293 =l add %t286, 24
+    storel 41, %t293
+    call $nox_raise(l %rt, l %t286, l 41)
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@list_idx_err207
+    %t501 =l add $str23, 16
+    %t502 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 17, %t502
+    %t503 =l add %t502, 8
+    storel 0, %t503
+    %t504 =l add %t502, 16
+    storel 0, %t504
+    %t505 =l add %t502, 24
+    storel 0, %t505
+    call $Exception___init__(l %rt, l %t502, l %t501)
+    %t506 =w call $nox_exception_pending(l %rt)
+    jnz %t506, @ctor_init_failed209, @ctor_init_cont210
+@ctor_init_failed209
+    %t507 =w ceql %t502, 0
+    jnz %t507, @release_skip212, @release211
+@release211
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t502)
+    jmp @release_done213
+@release_skip212
+    jmp @release_done213
+@release_done213
+    jmp @ctor_init_cont210
+@ctor_init_cont210
+    %t508 =w call $nox_exception_pending(l %rt)
+    jnz %t508, @exc_propagate214, @exc_continue215
+@exc_propagate214
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue215
+    %t509 =l add %t502, 24
+    storel 61, %t509
+    call $nox_raise(l %rt, l %t502, l 61)
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@list_idx_err352
+    %t792 =l add $str32, 16
+    %t793 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 17, %t793
+    %t794 =l add %t793, 8
+    storel 0, %t794
+    %t795 =l add %t793, 16
+    storel 0, %t795
+    %t796 =l add %t793, 24
+    storel 0, %t796
+    call $Exception___init__(l %rt, l %t793, l %t792)
+    %t797 =w call $nox_exception_pending(l %rt)
+    jnz %t797, @ctor_init_failed354, @ctor_init_cont355
+@ctor_init_failed354
+    %t798 =w ceql %t793, 0
+    jnz %t798, @release_skip357, @release356
+@release356
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t793)
+    jmp @release_done358
+@release_skip357
+    jmp @release_done358
+@release_done358
+    jmp @ctor_init_cont355
+@ctor_init_cont355
+    %t799 =w call $nox_exception_pending(l %rt)
+    jnz %t799, @exc_propagate359, @exc_continue360
+@exc_propagate359
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue360
+    %t800 =l add %t793, 24
+    storel 90, %t800
+    call $nox_raise(l %rt, l %t793, l 90)
     call $nox_unhandled_exception(l %rt)
     ret 0
 }
@@ -7280,11 +7567,31 @@ data $str37 = { l 1073741824, l 2305843009213693953, b "t", b 0 }
 data $str38 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str39 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str40 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $fmt_lit0 = { b "(", b 0 }
-data $fmt_lit1 = { b "(", b 0 }
-data $fmt_lit2 = { b "(", b 0 }
-data $fmt_lit3 = { b ",", b 0 }
-data $fmt_lit4 = { b "(", b 0 }
-data $fmt_lit5 = { b "(", b 0 }
+data $fmt_lit0 = { b "None", b 0 }
+data $fmt_lit1 = { b "None", b 0 }
+data $fmt_lit2 = { b "None", b 0 }
+data $fmt_lit3 = { b "(", b 0 }
+data $fmt_lit4 = { b "None", b 0 }
+data $fmt_lit5 = { b "None", b 0 }
 data $fmt_lit6 = { b "(", b 0 }
-data $fmt_lit7 = { b "(", b 0 }
+data $fmt_lit7 = { b "None", b 0 }
+data $fmt_lit8 = { b "None", b 0 }
+data $fmt_lit9 = { b "(", b 0 }
+data $fmt_lit10 = { b ",", b 0 }
+data $fmt_lit11 = { b "None", b 0 }
+data $fmt_lit12 = { b "(", b 0 }
+data $fmt_lit13 = { b "None", b 0 }
+data $fmt_lit14 = { b "None", b 0 }
+data $fmt_lit15 = { b "None", b 0 }
+data $fmt_lit16 = { b "None", b 0 }
+data $fmt_lit17 = { b "None", b 0 }
+data $fmt_lit18 = { b "(", b 0 }
+data $fmt_lit19 = { b "None", b 0 }
+data $fmt_lit20 = { b "(", b 0 }
+data $fmt_lit21 = { b "None", b 0 }
+data $fmt_lit22 = { b "None", b 0 }
+data $fmt_lit23 = { b "None", b 0 }
+data $fmt_lit24 = { b "None", b 0 }
+data $fmt_lit25 = { b "None", b 0 }
+data $fmt_lit26 = { b "None", b 0 }
+data $fmt_lit27 = { b "(", b 0 }

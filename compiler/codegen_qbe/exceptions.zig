@@ -637,6 +637,8 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
             // `<<`/`>>` (genCheckedShift): kaydırma miktarı sabit literal değilse çalışma zamanında
             // `ValueError` fırlatabilir.
             if ((b.op == .shl or b.op == .shr) and b.right.* != .int_lit) info.direct_unsafe = true;
+            // `//`/`%` (emitZeroDivisorCheck): sabit pozitif literal bölen dışında `ZeroDivisionError` fırlatabilir.
+            if ((b.op == .floordiv or b.op == .mod) and !(b.right.* == .int_lit and b.right.int_lit > 0)) info.direct_unsafe = true;
             try self.collectRaiseInfoExpr(b.left.*, info, class_ctx, var_types, poisoned);
             try self.collectRaiseInfoExpr(b.right.*, info, class_ctx, var_types, poisoned);
         },

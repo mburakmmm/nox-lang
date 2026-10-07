@@ -2624,7 +2624,7 @@ fn releaseListElem(self: *Codegen, obj: Value, elem_text: []const u8) CodegenErr
 
 /// `bad` (w, doğruysa HATA) koşuluyla soğuk bir hata dalı üretir: `class_name(msg)` fırlatır, `rels` içindeki geçicileri
 /// serbest bırakır ve hata yayılımına atlar; normal akış `ok` etiketinde devam eder (`genListPop`un hata dalıyla aynı desen).
-fn emitColdListError(self: *Codegen, bad: []const u8, class_name: []const u8, msg: []const u8, rels: []const RelPair) CodegenError!void {
+pub fn emitColdListError(self: *Codegen, bad: []const u8, class_name: []const u8, msg: []const u8, rels: []const RelPair) CodegenError!void {
     const err_label = try self.newLabel("list_err");
     const ok_label = try self.newLabel("list_ok");
     try self.qbeJnzCold(bad, err_label, ok_label);

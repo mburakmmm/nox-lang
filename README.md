@@ -228,6 +228,12 @@ tamamen offline çalışır.
 
 ## Benchmark'lar
 
+**Çapraz-dil özeti (v1.158.0, Apple M4, 10 uzun-çalışan kernel, ortanca saniye — tam tablo:
+[`benchmarks/cross_lang/`](benchmarks/cross_lang/README.md)):** C'ye göre geometrik ortalama —
+Nox LLVM (varsayılan) **1.34×**, Nox QBE 1.53×, Go 1.27×, Node 5.3×, Python 23×.
+`fib`/`trees`/`collatz`/`sort`'ta C/Go ile aynı bantta; `matmul`/`sieve`/`dict` ~2–3× C
+(sınır kontrolleri).
+
 `zig build bench -Doptimize=ReleaseFast` — TAM, ham çıktı İÇİN
 [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'ye bakın. Dört kategori
 (aşağıdaki katlanır bölümlerde özetlenir): **dil temelleri**
@@ -400,7 +406,7 @@ Ayrıntılar için [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundar
 | `stdlib/` | Nox'un KENDİSİYLE yazılmış standart kütüphane (`nox.*`) |
 | `tests/` | Unit + golden + uçtan uca (CLI alt süreç) testleri |
 | `benchmarks/` | Nox/Python/C/Rust/Go/Zig/FastAPI karşılaştırmalı benchmark paketi |
-| `docs/` | Üretim-hazırlığı analizi, yol haritası ve İngilizce dil referansı |
+| `docs/` | Üretim-hazırlığı analizi, yol haritası, dil referansı (`LANGUAGE.md`) ve stdlib başvurusu (`STDLIB.md`) |
 
 ## Katkıda Bulunma
 

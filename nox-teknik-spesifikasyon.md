@@ -28779,3 +28779,22 @@ watchpoint'i gerektiriyor), AMA concurrency-torture'ın nadir determinizm
 bulgusu KÖK NEDENİYLE BİRLİKTE ÇÖZÜLDÜ (§3.221) — bu bir runtime hatası
 DEĞİL, testin kendi iddiasının mimarinin garanti edemeyeceği bir şeyi
 (bit-bit aynı çıktı) talep etmesiydi.
+
+## 3.275 Sıfıra bölme ve `print(Optional)` (v1.159.0)
+
+`docs/LANGUAGE.md` yazılırken, iki gerçek doğruluk boşluğu bulundu ve kapatıldı (2.0 öncesi yol haritası, madde 4.1 yan bulgusu).
+
+- **Tamsayı `//` ve `%` sıfır bölenle artık `ZeroDivisionError` fırlatır** (yeni `class ZeroDivisionError(Exception)`, `stdlib/nox/core.nox`).
+  Önceden LLVM'de `sdiv/srem` sıfıra tanımsız davranıştı (çöp değer), QBE'de arm64'te sessizce 0 dönüyordu. Kontrol
+  `expr.zig` `emitZeroDivisorCheck` (soğuk dal, `emitColdListError` ile aynı kalıp); sabit pozitif literal bölende
+  atlanır (sıcak döngüler — `i % 3`, `x // 2` — etkilenmez). `exceptions.zig` raise analizi: sabit pozitif literal
+  dışı bölenli `//`/`%` içeren işlev "fırlatabilir" sayılır. `float` `/`, `//`, `%` IEEE (`inf`/`nan`) olarak kalır
+  (bilinçli: Python'dan sapma, sıcak yolda dal maliyeti yok). `INT_MIN // -1` ayrı bir tuzak olarak bilinir (tamsayı
+  taşması sarar; özel kontrol yok).
+- **`print(Optional)`:** `str | None`, `list[T] | None`, `Sınıf | None` değerleri null iken çöküyor/çöp basıyordu,
+  `int | None`/`float | None`/`bool | None` ise kutunun adresini basıyordu. `genPrint`/`genPrintFragment` artık
+  yığın işaretçili (str/list/class/kutu) değerlerde çalışma zamanında null kontrolü yapıp `None` basar, kutuyu
+  açıp içeriği basar; sınıf/liste/tuple içindeki Optional alanlar da aynı yoldan geçer. Optional-OLMAYAN yığın
+  değerleri hiçbir zaman null olamadığından kontrol koşulsuz güvenlidir. Not: `str(opt)`/f-string hâlâ derleme
+  hatasıdır (önce daraltın).
+- Golden: `zero_division`, `print_optional` (iki backend).
