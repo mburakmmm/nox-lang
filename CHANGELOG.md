@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.0-rc.1]
+
+Nox 2.0 sürüm adayı. Geçiş için bkz. `docs/MIGRATING-2.0.md`; kararlılık sözleşmesi `VERSIONING.md` + `docs/NATIVE-API.md`; güven sınırı `docs/SECURITY.md`.
+
+### Kırıcı değişiklikler (özet)
+
+- `nox.json` ve `nox.csv` eski adları kaldırıldı (`decode/encode*` → `parse/dump*`, `write/write_row` → `dump/dump_row`).
+- Sabit-genişlikli tamsayı taşması iki backend'de de tuzağa düşer; `//` ve `%` sıfıra bölmede `ZeroDivisionError`; negatif indeks Python anlamıyla; float yazdırma Python `repr`; keyword argümanlar kaynak sırasıyla değerlendirilir.
+- Varsayılan backend LLVM (v1.143.0); `clang` yoksa `zig cc`, o da yoksa QBE; Windows'ta `zig` varsa LLVM.
+
+### Kararlı sözleşmeler (2.x boyunca)
+
+Dil anlambilimi, belgelenmiş `nox.*` imzaları (stdlib kurucularına yalnızca varsayılanlı parametre eklenir), `nox.json` manifestosu, **NNI v1**. Kararsız: iç runtime ABI'si, IR, üretilen semboller.
+
+### Sürüm kapısı
+
+`scripts/release.sh` (sürüm tutarlılığı → fmt → build → test → QBE/LLVM fark testi → [stres] → tag/push) ve `release.yml` `ci-gate` (etiket == `build.zig.zon` == CHANGELOG, CI yeşil olmadan yayın yok). Son tur: stres, 2 torture, HTTP soak, fark korpusu ve tam test paketi yeşil; Linux x86-64/aarch64, macOS ve Windows CI yeşil.
+
 ## [1.171.2]
 
 ### Değişti

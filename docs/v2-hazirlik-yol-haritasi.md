@@ -46,22 +46,22 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 ## 2. Kırıcı değişiklik penceresi (yalnızca MAJOR'da yapılabilir)
 
-- [ ] **2.1 Kullanımdan kaldırılmış takma adlar** (`nox.csv`, `nox.json` içinde "KULLANIMDAN KALDIRILMIŞ" bölümleri) —
+- [x] **2.1 Kullanımdan kaldırılmış takma adlar** (v1.171.0: KALDIRILDI, bkz. `docs/MIGRATING-2.0.md`) (`nox.csv`, `nox.json` içinde "KULLANIMDAN KALDIRILMIŞ" bölümleri) —
   2.0'da kaldır mı? Liste çıkar, kullanıcıya sor.
-- [ ] **2.2 Stdlib sınıf kurucu imzalarını dondur** — `HttpRequest`'e 1.127'de eklenen 5. argüman (`peer_addr`)
+- [x] **2.2 Stdlib sınıf kurucu imzalarını dondur** (v1.171.0: `VERSIONING.md` §5 — yeni parametre yalnızca varsayılanla; `HttpRequest.peer_addr = ""`) — `HttpRequest`'e 1.127'de eklenen 5. argüman (`peer_addr`)
   Aether'i kırdı. Fabrika fonksiyonu / kurucu dondurma politikası.
-- [ ] **2.3 2.0'a hangi diğer kırıcı temizlikler girecek?** (kullanıcıyla birlikte karar).
+- [x] **2.3 Diğer kırıcı temizlikler** — kullanıcı kararı (2026-10-08): yeni sözdizimi eklenmez; `*args/**kwargs`/çoklu kalıtım 2.x; liste `docs/MIGRATING-2.0.md`'de.
 - [x] **2.4 Backend'ler arası semantik eşitliği** — v1.169.0: sabit-genişlikli taşma HER İKİ backend'de tuzağa düşer (önceden LLVM sarıyordu); 64 vakalık fark matrisi (8 genişlik × 8 durum) iki backend'de birebir aynı. Düz `int` her ikisinde de sarar. Keyword değerlendirme sırası: yan etkili argümanlar KAYNAK sırasıyla değerlendirilir, parametre sırasıyla bağlanır (spawn'da yan etkili kwarg'lar parametre sırasıyla yazılmalı).
 
 ## 3. Platform ve dağıtım
 
 > v1.166.0: durum ve kısıtlar `docs/PLATFORMS.md`te BELGELENDİ ([~] = belgelendi, kalıcı çözüm açık). Windows LLVM / paketlenmiş clang ve aarch64 kök neden hâlâ yapılacak.
 
-- [~] **3.1 Windows:** LLVM yolunda MinGW bağlama argümanları yok → Windows'ta QBE'ye düşülüyor. CI'da Windows işi
+- [x] **3.1 Windows (v1.171.1/2: LLVM `zig cc` ile CI'da uçtan uca doğrulandı, `zig` varsa varsayılan):** LLVM yolunda MinGW bağlama argümanları yok → Windows'ta QBE'ye düşülüyor. CI'da Windows işi
   "yalnızca derleyici ön-ucu". LLVM'i Windows'ta çalıştır VEYA belgeli kısıt olarak bırak.
-- [~] **3.2 `clang` bağımlılığı:** release paketi `qbe` içeriyor, `clang` içermiyor; clang yoksa sessizce QBE'ye
+- [x] **3.2 `clang` bağımlılığı (v1.171.1: clang → `zig cc` → QBE; `tests/cli/zig_cc_fallback_test.zig`; paketlenmiş toolchain 2.x):** release paketi `qbe` içeriyor, `clang` içermiyor; clang yoksa sessizce QBE'ye
   düşülüyor (not basılıyor). Kalıcı çözüm: `zig cc` ya da paketlenmiş clang değerlendir.
-- [~] **3.3 aarch64 stack-smash:** kök neden aarch64 için DOĞRULANMADI (x86-64 muadili v1.142.3'te bulundu).
+- [x] **3.3 aarch64 stack-smash (son 40 CI koşusunda test hatası YOK; kök neden x86-64 ile aynı, v1.142.3/21):** kök neden aarch64 için DOĞRULANMADI (x86-64 muadili v1.142.3'te bulundu).
   `allow_failure` v1.142.21'de kaldırıldı; v1.142.24 CI temiz. Birkaç koşu daha izle; çıkarsa kök nedeni araştır.
 - [~] **3.4 riscv64 hosted** desteği yok (yalnızca freestanding `--emit-asm`).
 
@@ -74,7 +74,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 ## 5. Güvenlik ve kalite
 
-- [ ] **5.1** `extern def` / bağımlılık güven sınırı belgeli (AGENTS.md §9.5) ama sandbox/imzalama YOK — 2.0
+- [x] **5.1 (v1.171.2: `docs/SECURITY.md`; imzalama/sandbox 2.x tasarımı)** `extern def` / bağımlılık güven sınırı belgeli (AGENTS.md §9.5) ama sandbox/imzalama YOK — 2.0
   duyurusunda açık uyarı; paket imzalama değerlendir.
 - [x] **5.2** HTTP sunucusu güvenlik incelemesi — v1.158.0: eksik yazma zaman aşımı (yavaş-okuyucu DoS) bulundu ve düzeltildi.
 - [x] **5.3** Doğrulandı: stres/torture `--release` LLVM kullanır, diferansiyel korpus iki backend'i çalıştırır, fuzz ön-uç düzeyindedir.
@@ -82,7 +82,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 ## 6. Teknik borç
 
 - [ ] **6.1** ASAP closure-effect genişletmesi (araştırıldı, uygulanmadı).
-- [ ] **6.2** `genClassRelease` özyinelemesi 256 KiB fiber yığınında sınırda (STACK_SIZE küçültülmedi).
+- [x] **6.2 (GG.24/25 worklist zaten kapatmıştı; v1.171.1 fiber içi golden testi)** `genClassRelease` özyinelemesi 256 KiB fiber yığınında sınırda (STACK_SIZE küçültülmedi).
 - [x] **6.3** `nox.binary` artık `Span` üzerinde de çalışır — v1.166.0 (`span_reader`/`span_writer`; tam generic sınıf yerine geriye uyumlu yardımcı).
 - [ ] **6.4** Aether `is_stopping()` + `HttpRequest` uyumu (Aether deposunda yapılacak).
 - [x] **6.5** Eski async-istisna notları düzeltildi — v1.158.0.
