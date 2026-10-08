@@ -1381,6 +1381,26 @@ pub fn genExternCallEmit(self: *Codegen, name: []const u8, esig: types.FuncSig, 
     } else {
         try self.qbeCall(null, extern_sym, extern_args);
     }
+    // v2.0: dar (8/16-bit) sabit-genişlikli dönüş — C ABI'si (x86-64 SysV) `eax`in üst bitlerini TANIMSIZ
+    // bırakır; çağıran taraf dönüşü KENDİSİ genişletmelidir, aksi halde sonraki taşma denetimi çöp bitleri
+    // "taşma" sanar (Linux x86-64 CI'da yakalandı; macOS arm64 genelde temiz döndüğü için görünmüyordu).
+    if (result_temp) |rt| {
+        if (esig.ret.fixed_int) |k| {
+            const ext: ?[]const u8 = switch (k) {
+                .u8 => "extub",
+                .i8 => "extsb",
+                .u16 => "extuh",
+                .i16 => "extsh",
+                else => null,
+            };
+            if (ext) |mnemonic| {
+                const norm = try self.newTemp();
+                try self.qbeOp1(norm, .w, mnemonic, rt);
+                try self.releaseTemporaryArgs(release_exprs, arg_values);
+                return .{ .text = norm, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str, .dict_info = esig.ret.dict_info, .fixed_int = esig.ret.fixed_int };
+            }
+        }
+    }
     // Faz FFI.1 (bkz. nox-teknik-spesifikasyon.md §3.146): extern def
     // çağrısı da GEÇİCİ (taze/fresh) bir str/list/dict/class argümanının
     // refcount'unu ÇAĞRI SONRASI DOĞRU dengeler (`releaseTemporaryArgs`in

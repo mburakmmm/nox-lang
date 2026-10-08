@@ -15,6 +15,13 @@ export fn nox_test_u8_inc(x: u8) callconv(.c) u8 {
     return x +% 1;
 }
 
+/// v2.0: C ABI'si (x86-64 SysV) dar dönüşlerde `eax`in üst bitlerini TANIMSIZ bırakır. Bu fonksiyon, Nox tarafı
+/// `-> u8` bildirse bile 32-bit döndürerek o durumu HER platformda deterministik olarak taklit eder; çağıran
+/// taraf dönüşü genişletmezse `+ u8(1)` sahte "u8 taşması" tuzağına düşer.
+export fn nox_test_u8_dirty() callconv(.c) u32 {
+    return 0xABCD002A;
+}
+
 /// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.189): `@ffi.callback`
 /// uçtan uca doğrulaması — GERÇEK bir C kütüphanesinin "trailing userdata"
 /// konvansiyonunu (GNU/glibc `qsort_r`, GLib callback'leri, libuv vb. ÇOĞU

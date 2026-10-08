@@ -136,17 +136,19 @@ test "extern def: sabit-genişlikli dönüş tipi (u8) etiketi korunur — print
     const allocator = std.testing.allocator;
     const source = try std.fmt.allocPrint(allocator,
         \\extern def nox_test_u8_inc(x: u8) -> u8 from "{s}"
+        \\extern def nox_test_u8_dirty() -> u8 from "{s}"
         \\
         \\r: u8 = nox_test_u8_inc(u8(41))
         \\print(r)
         \\print(nox_test_u8_inc(u8(41)))
         \\print(str(nox_test_u8_inc(u8(1))) + "!")
         \\print(nox_test_u8_inc(u8(1)) + u8(1))
+        \\print(nox_test_u8_dirty() + u8(1))
         \\
-    , .{build_options.util_o_path});
+    , .{ build_options.util_o_path, build_options.util_o_path });
     defer allocator.free(source);
 
-    try expectGolden(source, "42\n42\n2!\n3\n");
+    try expectGolden(source, "42\n42\n2!\n3\n43\n");
 }
 
 test "extern def: opak `ptr` tipi — gerçek bir handle-tabanlı C API (FILE*/sqlite3* deseni)" {

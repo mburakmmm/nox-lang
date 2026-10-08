@@ -32,7 +32,7 @@ Nox 2.0 ikinci sürüm adayı: **yeni dokümantasyon ağacı**, **Plugin API**, 
 - `return` bir `with`/`try-finally` gövdesinde olduğunda "her yolda dönüş" denetimi doğru çalışır.
 - Aynı adlı farklı sınıflar için `except ... as e` bağlaması (alan çözümü) her yan tümcede yeniden bağlanır.
 - `spawn f()` ifade deyimi görev tutamacını artık sızdırmaz.
-- `extern def` dönüşü sabit-genişlikli tipini korur (`u8` dönen çağrı `True/False` basmaz).
+- `extern def` dönüşü sabit-genişlikli tipini korur (`u8` dönen çağrı `True/False` basmaz); 8/16-bit dönüşler çağıran tarafta genişletilir (x86-64 SysV `eax` üst bitlerini tanımsız bırakır — Linux CI'da sahte "u8 taşması" olarak yakalandı; test, kirli üst bitli bir C fonksiyonuyla her platformda deterministik).
 - `nox.router`: sorgu dizesi ayrıştırılır (`Context.query`), yol eşleşmesi sorgu dizesini yok sayar. `nox.sqlite`: aralık dışı `bind_*` artık `SqliteError` fırlatır.
 - `noxc -g` yalnızca QBE ile birlikte geçerlidir (açıkça `--backend llvm -g` hata verir); yardım ekranı çıplak `noxc dosya.nox` biçimini doğru gösterir.
 
