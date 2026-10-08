@@ -1,0 +1,21 @@
+# v2.0 madde 5: 30.000 düğümlük bağlı zincirin bir fiber (spawn) içinde serbest bırakılması yığını taşırmaz (genClassRelease derinlik eşikli worklist, GG.24/GG.25).
+class Node:
+    next: Node | None
+    def __init__(self, next: Node | None) -> None:
+        self.next = next
+
+def build_chain(n: int) -> Node | None:
+    head: Node | None = None
+    i: int = 0
+    while i < n:
+        head = Node(head)
+        i = i + 1
+    return head
+
+async def work(n: int) -> int:
+    head: Node | None = build_chain(n)
+    head = None
+    return n
+
+t: Task[int] = spawn work(30000)
+print(await t)

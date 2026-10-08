@@ -437,6 +437,47 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "noxc run basarisiz (exit $LASTEXITCODE): $output" }
           if ($output -ne "42") { throw "noxc run yanlis cikti: '$output' (beklenen '42')" }
 
+      # v2.0 madde 1: Windows'ta LLVM backend'i (`--backend llvm`) — `.ll` + `zig cc -target x86_64-windows-gnu`
+      # (swap_asm + `-lntdll -lws2_32 -lcrypt32` QBE yoluyla aynı). Sınıf/liste/dict/spawn/f-string/istisna içeren
+      # bir program KENDİ ürettiği çıktıyla (QBE yolu ile BİREBİR aynı) doğrulanır.
+      - name: Duman testi — noxc.exe run --backend llvm (zig cc ile bağlama)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = @'
+          class P:
+              x: int
+              def __init__(self, x: int) -> None:
+                  self.x = x
+              def twice(self) -> int:
+                  return self.x * 2
+
+          async def work(n: int) -> int:
+              return n + 1
+
+          xs: list[int] = []
+          i: int = 0
+          while i < 5:
+              xs.append(i * i)
+              i = i + 1
+          d: dict[str, int] = {"a": 1, "b": 2}
+          p: P = P(21)
+          t: Task[int] = spawn work(41)
+          print(p.twice(), len(xs), sum(xs), d["b"], await t)
+          print(f"{p.x:>4}|{3.5:.2f}|{'s'}")
+          try:
+              print(1 // (i - 5))
+          except ZeroDivisionError:
+              print("zero")
+          '@
+          Set-Content -Path smoke_llvm.nox -Value ($src -replace "(?m)^          ", "")
+          foreach ($backend in @("llvm", "qbe")) {
+            $output = (& ".\zig-out\bin\noxc.exe" run --backend $backend smoke_llvm.nox) -join "`n"
+            if ($LASTEXITCODE -ne 0) { throw "noxc run --backend $backend basarisiz (exit $LASTEXITCODE): $output" }
+            $expected = "42 5 30 2 42`n  21|3.50|s`nzero"
+            if ($output -ne $expected) { throw "backend ${backend}: yanlis cikti: '$output'" }
+          }
+
       # Faz "sunucu-tarafı TLS terminasyonu + WebSocket Upgrade" (bkz. plan
       # dosyası): kullanıcının AÇIKÇA seçtiği "Windows'u da TAM doğrula"
       # kararının GERÇEK CI uygulaması. `tls_server.zig`nin Windows dalı

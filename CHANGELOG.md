@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.171.1]
+
+### Eklendi
+
+- **LLVM backend'i `clang` yokken `zig cc`'ye düşer** (`.ll` girdisini derler; sürücü sırası clang → zig → QBE). Windows'ta LLVM yolu `zig cc -target x86_64-windows-gnu` + `swap_asm` + `-lntdll -lws2_32 -lcrypt32` ile bağlanır (CI'da `--backend llvm` duman testi; Windows varsayılanı CI kanıtlanana kadar QBE). Test: `tests/cli/zig_cc_fallback_test.zig`.
+- Fiber içinde derin sınıf zinciri serbest bırakma golden testi (`deep_chain_release_in_spawned_task`, iki backend) — `genClassRelease` özyineleme riski GG.24/GG.25 worklist'iyle zaten kapalıydı, artık fiber içinde de kanıtlı.
+
+### Notlar
+
+- aarch64 stack-smash: kök neden v1.142.3/v1.142.21'de (ConnCounter sarkan işaretçi) kapatıldı; Linux aarch64 job'u zorunlu ve son 40 koşuda test hatası yok.
+
 ## [1.171.0]
 
 ### Kaldırıldı (2.0 öncesi kırıcı temizlik — bkz. `docs/MIGRATING-2.0.md`)

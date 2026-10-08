@@ -7,11 +7,11 @@ This page states what is supported, what is tested in CI, and the known gaps. It
 
 | Situation | Backend used |
 |---|---|
-| macOS / Linux, hosted, `clang` on `PATH` | **LLVM** (`.ll` → `clang -O2`), the default |
+| macOS / Linux, hosted, `clang` **or `zig`** on `PATH` | **LLVM** (`.ll` → `clang -O2`, or `zig cc -O2` when `clang` is absent), the default |
 | `--backend qbe` | QBE (`.ssa` → `qbe` → `cc`) |
 | freestanding profile, `--target`, `--emit-asm` | QBE (automatic) |
 | Windows | QBE (automatic: the LLVM path has no MinGW link arguments yet) |
-| `clang` not installed | QBE (automatic, a note is printed) |
+| neither `clang` nor `zig` installed | QBE (automatic, a note is printed) |
 
 Both backends run the entire golden corpus and must agree on program output, including fixed-width integer overflow
 (`u8`, `i32`, … trap with a message on both since v1.169.0). Plain `int` (64-bit) wraps on both.
@@ -34,14 +34,14 @@ runtime and a kernel-provided allocator. The x86-64 path is proven by booting a 
 
 - Building the compiler: Zig 0.16.
 - Compiling a hosted Nox program: a C toolchain for linking (`cc`/`clang`); `qbe` for the QBE backend (the release archive
-  bundles `qbe`); `clang` for the default LLVM backend (**not bundled**; its absence silently selects QBE).
+  bundles `qbe`); `clang` or `zig` for the default LLVM backend (**not bundled**; with neither on `PATH` QBE is selected and a note is printed).
 - WASM is a library-import mechanism, never a compile target.
 
 ## Known constraints
 
 1. **Windows:** LLVM backend not wired for MinGW linking; CI exercises only the compiler front end. Treat Windows as
    "compiles Nox code to QBE IR and links with the platform C toolchain, best effort".
-2. **`clang` is not bundled.** A permanent fix (a bundled clang or `zig cc` as the linker driver) is still open.
+2. **`clang` is not bundled.** Mitigated in 2.0: the driver falls back to `zig cc` (Zig's clang + LLD) when `clang` is missing, and to QBE when neither exists; `tests/cli/zig_cc_fallback_test.zig` covers it. A fully bundled toolchain is still open.
 3. **aarch64 watch:** a stack-smash seen occasionally on aarch64 in the HTTP server tests has an unverified root cause (the
    x86-64 twin was a dangling pointer, fixed in v1.142.3). The `continue-on-error` workaround was removed in v1.142.21; if it
    reappears, investigate the root cause rather than re-adding an allow-failure.

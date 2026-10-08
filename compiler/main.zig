@@ -1064,19 +1064,38 @@ const BuildOpts = struct {
 
 const BackendChoice = enum { auto, qbe, llvm };
 
-var g_clang_available: ?bool = null;
+/// v2.0 madde 2: LLVM yolunun C sürücüsü. Sıra: PATH'te `clang` -> PATH'te `zig` (`zig cc`, Zig'in kendi
+/// clang'ı + LLD'si; `.ll` girdisini de derler) -> yok (QBE'ye düşülür). `zig cc` Windows'ta da çalışır; bu yüzden
+/// Windows LLVM yolunun tercih edilen sürücüsüdür (MinGW hedefi `-target x86_64-windows-gnu` ile seçilir).
+const CcDriver = enum { clang, zig_cc, none };
 
-fn clangAvailable(gpa: std.mem.Allocator, io: std.Io) bool {
-    if (g_clang_available) |v| return v;
-    const result = std.process.run(gpa, io, .{ .argv = &.{ "clang", "--version" } }) catch {
-        g_clang_available = false;
-        return false;
-    };
+var g_cc_driver: ?CcDriver = null;
+
+fn probeOk(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8) bool {
+    const result = std.process.run(gpa, io, .{ .argv = argv }) catch return false;
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
-    const ok = result.term == .exited and result.term.exited == 0;
-    g_clang_available = ok;
-    return ok;
+    return result.term == .exited and result.term.exited == 0;
+}
+
+fn ccDriver(gpa: std.mem.Allocator, io: std.Io) CcDriver {
+    if (g_cc_driver) |v| return v;
+    const found: CcDriver = if (builtin.os.tag == .windows) blk: {
+        // Windows: Zig'in MinGW hedefi bilinen-iyi yoldur; `clang` (genelde MSVC hedefli) yalnızca yedek.
+        if (probeOk(gpa, io, &.{ "zig", "version" })) break :blk .zig_cc;
+        if (probeOk(gpa, io, &.{ "clang", "--version" })) break :blk .clang;
+        break :blk .none;
+    } else blk: {
+        if (probeOk(gpa, io, &.{ "clang", "--version" })) break :blk .clang;
+        if (probeOk(gpa, io, &.{ "zig", "version" })) break :blk .zig_cc;
+        break :blk .none;
+    };
+    g_cc_driver = found;
+    return found;
+}
+
+fn clangAvailable(gpa: std.mem.Allocator, io: std.Io) bool {
+    return ccDriver(gpa, io) != .none;
 }
 
 /// v1.143.0: `BackendChoice.auto`yu somut bir backend'e (`true` = LLVM) çözer. LLVM varsayılandır
@@ -1096,9 +1115,9 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
     if (builtin.os.tag == .windows) return false;
     if (!clangAvailable(gpa, io)) {
         if (g_is_tr) {
-            printErr("not: clang bulunamadi, QBE backend'i kullaniliyor (varsayilan LLVM backend'i icin PATH'te clang gerekir; --backend qbe ile bu notu kapatabilirsiniz)\n", .{});
+            printErr("not: clang/zig bulunamadi, QBE backend'i kullaniliyor (varsayilan LLVM backend'i icin PATH'te clang ya da zig gerekir; --backend qbe ile bu notu kapatabilirsiniz)\n", .{});
         } else {
-            printErr("note: clang not found, using the QBE backend (the default LLVM backend needs clang on PATH; pass --backend qbe to silence this)\n", .{});
+            printErr("note: neither clang nor zig found, using the QBE backend (the default LLVM backend needs clang or zig on PATH; pass --backend qbe to silence this)\n", .{});
         }
         return false;
     }
@@ -2236,15 +2255,29 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{stem});
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
 
+        const driver = ccDriver(gpa, io);
         var clang_argv: std.ArrayListUnmanaged([]const u8) = .empty;
-        try clang_argv.appendSlice(a, &.{ "clang", "-O2" });
+        switch (driver) {
+            .zig_cc => {
+                try clang_argv.appendSlice(a, &.{ "zig", "cc", "-O2", "-Wno-override-module" });
+                if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-target", "x86_64-windows-gnu" });
+            },
+            .clang, .none => {
+                try clang_argv.appendSlice(a, &.{ "clang", "-O2", "-Wno-override-module" });
+                if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-target", "x86_64-w64-windows-gnu" });
+            },
+        }
         try clang_argv.appendSlice(a, linker_visibility_args);
-        try clang_argv.appendSlice(a, &.{ "-o", bin_path, ll_path, resource_dirs.noxrt_path, "-lm" });
+        try clang_argv.appendSlice(a, &.{ "-o", bin_path, ll_path, resource_dirs.noxrt_path });
+        // Windows'ta fiber bağlam değişimi assembly'si `noxrt.o`nun dışında ayrı kurulur (QBE yolundaki ile aynı).
+        if (builtin.os.tag == .windows) try clang_argv.append(a, resource_dirs.swap_asm_path);
+        try clang_argv.append(a, "-lm");
+        if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
         try appendExternLinkArgs(a, &clang_argv, module);
 
         const clang_result = std.process.run(gpa, io, .{ .argv = clang_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
-                printErr("clang bulunamadi: --release icin PATH'te bir 'clang' calistirilabilir dosyasi gerekir (ornegin: brew install llvm)\n", .{});
+                printErr("clang/zig bulunamadi: LLVM backend'i icin PATH'te 'clang' ya da 'zig' gerekir (ornegin: brew install llvm); alternatif: --backend qbe\n", .{});
                 std.process.exit(1);
             }
             return err;
@@ -2252,7 +2285,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         defer gpa.free(clang_result.stdout);
         defer gpa.free(clang_result.stderr);
         if (clang_result.term != .exited or clang_result.term.exited != 0) {
-            printErr("clang basarisiz:\n{s}\n", .{clang_result.stderr});
+            printErr("{s} basarisiz:\n{s}\n", .{ if (driver == .zig_cc) "zig cc" else "clang", clang_result.stderr });
             std.process.exit(1);
         }
         return bin_path;
