@@ -24,8 +24,12 @@ const pkg_index = @import("index.zig");
 /// varsayılan değerler burada SABİT TUTULUR (main.zig'de `NOX_UPGRADE_
 /// API_BASE` İLE AYNI desende, main() İÇİNDE BİR KEZ env'den override
 /// edilir).
-pub const default_index_url: []const u8 = "https://noxpkg.2mtechnology.org/index.json";
-pub const default_publish_api_base: []const u8 = "https://noxpkg.2mtechnology.org";
+//
+/// v2.0: alan adı `noxpkg.2mtechnology.org`dan `noxpkg.noxlang.com`a taşındı. ESKİ ad, eski `noxc`
+/// sürümleri çalışmaya devam etsin diye sunucu tarafında (Cloudflare Tunnel girişi) AYNI hizmete
+/// yönlendirilmeye devam eder; yeni sürümler yalnızca yeni adı kullanır.
+pub const default_index_url: []const u8 = "https://noxpkg.noxlang.com/index.json";
+pub const default_publish_api_base: []const u8 = "https://noxpkg.noxlang.com";
 
 pub const RegistryPolicy = struct {
     index_url: []const u8 = default_index_url,
@@ -125,8 +129,8 @@ test "RegistryPolicy varsayilanlari belgelenen noxpkg URL'lerine esittir" {
     const policy: RegistryPolicy = .{};
     try std.testing.expectEqualStrings(default_index_url, policy.index_url);
     try std.testing.expectEqualStrings(default_publish_api_base, policy.publish_api_base);
-    try std.testing.expectEqualStrings("https://noxpkg.2mtechnology.org/index.json", default_index_url);
-    try std.testing.expectEqualStrings("https://noxpkg.2mtechnology.org", default_publish_api_base);
+    try std.testing.expectEqualStrings("https://noxpkg.noxlang.com/index.json", default_index_url);
+    try std.testing.expectEqualStrings("https://noxpkg.noxlang.com", default_publish_api_base);
 }
 
 test "findByAlias: tam isim eslesmesi, alt-dizge eslesmez" {

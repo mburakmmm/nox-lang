@@ -1,0 +1,39 @@
+# nox-web — Cloudflare Tunnel (cloudflared). Tünel: noxpkg (10d2b429-9912-44a6-8615-11ef5910ba74).
+#
+# Yönlendirme:
+#   noxlang.com, www.noxlang.com   → noxlang-site (Nyx uygulaması, :8080)
+#   noxpkg.noxlang.com             → noxpkg       (indeks + yönetim paneli, :8080)
+#   noxpkg.2mtechnology.org        → noxpkg       (ESKİ ad; eski `noxc` sürümleri çalışsın diye korunur)
+#
+# Kimlik bilgisi: host ~/.cloudflared/10d2b429-9912-44a6-8615-11ef5910ba74.json → /etc/cloudflared/tunnel.json
+#
+# DNS (Cloudflare panelinde, hepsi Proxied/turuncu bulut AÇIK, hedef 10d2b429-9912-44a6-8615-11ef5910ba74.cfargotunnel.com):
+#   CNAME  noxlang.com    (apex; Cloudflare CNAME flattening kullanır)
+#   CNAME  www            noxlang.com yönlendirmesi için
+#   CNAME  noxpkg         (noxpkg.noxlang.com)
+tunnel: 10d2b429-9912-44a6-8615-11ef5910ba74
+credentials-file: /etc/cloudflared/tunnel.json
+
+originRequest:
+  connectTimeout: 30s
+  tcpKeepAlive: 30s
+  noHappyEyeballs: true
+
+ingress:
+  - hostname: noxlang.com
+    service: http://noxlang-site:8080
+    originRequest:
+      httpHostHeader: noxlang.com
+  - hostname: www.noxlang.com
+    service: http://noxlang-site:8080
+    originRequest:
+      httpHostHeader: www.noxlang.com
+  - hostname: noxpkg.noxlang.com
+    service: http://noxpkg:8080
+    originRequest:
+      httpHostHeader: noxpkg.noxlang.com
+  - hostname: noxpkg.2mtechnology.org
+    service: http://noxpkg:8080
+    originRequest:
+      httpHostHeader: noxpkg.2mtechnology.org
+  - service: http_status:404

@@ -1,0 +1,18 @@
+class Account:
+    balance: int
+
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+
+    def withdraw(self, amount: int) -> None:
+        if amount > self.balance:
+            raise ValueError("insufficient funds")
+        self.balance -= amount
+
+acct: Account = Account(100)
+try:
+    acct.withdraw(30)
+    acct.withdraw(100)
+except ValueError as e:
+    print("refused:", e.message)
+print(acct.balance)

@@ -1,0 +1,17 @@
+import nox.http
+from nox.http import HttpRequest, HttpResponse
+from nox.router import Router, Context
+
+router: Router = Router()
+
+def hello(ctx: Context) -> HttpResponse:
+    headers: dict[str, str] = {}
+    headers["Content-Type"] = "text/plain; charset=utf-8"
+    return HttpResponse(200, "hello, " + ctx.param("name") + "\n", headers)
+
+router.get("/hello/:name", hello)
+
+def handle(req: HttpRequest) -> HttpResponse:
+    return router.dispatch(req)
+
+nox.http.serve(8080, handle)

@@ -1,0 +1,115 @@
+# noxlang-site — noxlang.com'u sunan Nyx uygulaması.
+#
+# İçerik, `scripts/build_site.py`nin ürettiği `public/` ağacıdır (HTML, CSS, JS, yazı tipleri, görseller,
+# `install.sh`/`install.ps1`). Açılışta `public/manifest.tsv` okunur ve her dosya bellekte tutulur
+# (~7 MB); istekler yalnızca sözlük aramasıdır. Nyx şunları sağlar: yapılandırma (`NYX_*` ortam
+# değişkenleri), yönlendirici, güvenlik başlıkları + CSP, istek kimliği/günlüğü, hız sınırı ve `/healthz`.
+#
+# Tek iş parçacıklı `nox.http.serve` kullanılır: modül-düzeyi durum işçi başına kopyalanacağından
+# (bkz. docs/language/concurrency.md "The scheduler") çok çekirdekli sunucu burada 7 MB'ı çoğaltırdı;
+# trafiği Cloudflare önbelleği zaten karşılar.
+import nox.http
+import nox.fs
+import nox.os
+import nox.strings
+import nox.log
+from nox.os import OsError
+from nox.http import HttpRequest, HttpResponse
+from nox.router import Context
+import nyx.app
+import nyx.config
+from nyx.app import Application
+from nyx.config import Config
+
+def site_root() -> str:
+    try:
+        v: str = nox.os.getenv("SITE_ROOT")
+        if len(v) > 0:
+            return v
+    except OsError:
+        return "public"
+    return "public"
+
+# Modül düzeyi durum işçi (worker) BAŞINA kopyalanır; kopyalar yalnızca BAŞLATICI İFADELERİYLE doldurulur
+# (main gövdesindeki sonradan atamalar diğer işçilere görünmez). Bu yüzden içerik başlatıcıda yüklenir.
+def load_files() -> dict[str, str]:
+    out: dict[str, str] = {}
+    root: str = site_root()
+    manifest: str = nox.fs.read_to_string(root + "/manifest.tsv")
+    for line in nox.strings.split(manifest, "\n"):
+        if len(line) == 0:
+            continue
+        cols: list[str] = nox.strings.split(line, "\t")
+        if len(cols) != 4:
+            continue
+        out[cols[0]] = nox.fs.read_to_string(root + "/" + cols[1])
+    return out
+
+def load_meta() -> dict[str, str]:
+    out: dict[str, str] = {}
+    manifest: str = nox.fs.read_to_string(site_root() + "/manifest.tsv")
+    for line in nox.strings.split(manifest, "\n"):
+        if len(line) == 0:
+            continue
+        cols: list[str] = nox.strings.split(line, "\t")
+        if len(cols) != 4:
+            continue
+        out[cols[0]] = cols[2] + "|" + cols[3]
+    return out
+
+files: dict[str, str] = load_files()
+meta: dict[str, str] = load_meta()
+cfg: Config = nyx.config.load()
+apps: list[Application] = []
+
+def respond(url: str, status: int) -> HttpResponse:
+    parts: list[str] = nox.strings.split(meta[url], "|")
+    headers: dict[str, str] = {}
+    headers["Content-Type"] = parts[0]
+    headers["Cache-Control"] = parts[1]
+    return HttpResponse(status, files[url], headers)
+
+def serve_path(path: str) -> HttpResponse:
+    if path in files:
+        return respond(path, 200)
+    if (path + "/") in files:
+        headers: dict[str, str] = {}
+        headers["Location"] = path + "/"
+        return HttpResponse(301, "", headers)
+    return respond("/404.html", 404)
+
+def setup(application: Application) -> None:
+    def page(ctx: Context) -> HttpResponse:
+        return serve_path(ctx.request.target)
+
+    patterns: list[str] = ["/", "/:a", "/:a/:b", "/:a/:b/:c", "/:a/:b/:c/:d", "/:a/:b/:c/:d/:e"]
+    for pattern in patterns:
+        application.router.get(pattern, page)
+        application.router.add("HEAD", pattern, page)
+
+# Nyx uygulaması işçi başına BİR KEZ, ilk istekte açılır (modül düzeyinde `boot` çağrısı başlatıcı
+# bağlamında çalıştığından güvenilir değildir; bkz. docs/language/modules.md "Module-level state").
+def app() -> Application:
+    if len(apps) == 0:
+        apps.append(nyx.app.boot(cfg, setup))
+    return apps[0]
+
+def host_of(req: HttpRequest) -> str:
+    try:
+        return req.headers["Host"]
+    except KeyError:
+        d: int = 0
+    try:
+        return req.headers["host"]
+    except KeyError:
+        return ""
+
+def handle(req: HttpRequest) -> HttpResponse:
+    # `www.` tek bir kanonik adrese (apex) yönlendirilir.
+    if host_of(req) == "www.noxlang.com":
+        headers: dict[str, str] = {}
+        headers["Location"] = "https://noxlang.com" + req.target
+        return HttpResponse(301, "", headers)
+    return nyx.app.dispatch(app(), req)
+
+nox.http.serve(cfg.port, handle)

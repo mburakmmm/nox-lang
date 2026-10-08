@@ -120,7 +120,7 @@ fn printHelp(is_tr: bool) void {
             \\  init [ad]             yeni bir proje iskeleti oluşturur (nox.json + main.nox)
             \\  fetch                 nox.json'daki bağımlılıkları önbelleğe doldurur
             \\  update                bağımlılıkları en son ref'lerine yeniden çözer, nox.lock'u günceller
-            \\  search <q>            merkezi indekste (varsayilan: noxpkg.2mtechnology.org) sorgular
+            \\  search <q>            merkezi indekste (varsayilan: noxpkg.noxlang.com) sorgular
             \\  search <indeks> <q>   belirtilen bir paket indeksini (dosya veya URL) sorgular
             \\  add <alias> [repo]    bagimliligi nox.json'a ekler (repo verilmezse indeksten cozer)
             \\  delete <alias>        bagimliligi nox.json'dan (ve nox.lock'tan) cikarir
@@ -137,7 +137,7 @@ fn printHelp(is_tr: bool) void {
             \\  --dump, -v             ayrıntılı/AST dökümü (build/run/check ile)
             \\  -o <çıktı>             çıktı ikilisinin adı (yalnızca build ile)
             \\  --profile <hosted|freestanding>  stdlib import allowlist'i (build/check ile, varsayılan: hosted)
-            \\  --backend <llvm|qbe>   kod üretim backend'i (varsayılan: llvm; freestanding/--target/--emit-asm/Windows/clang yoksa qbe)
+            \\  --backend <llvm|qbe>   kod üretim backend'i (varsayılan: llvm; freestanding/--target/--emit-asm/-g yada clang ve zig yoksa qbe)
             \\
             \\Örnekler:
             \\  noxc run main.nox -- a b c
@@ -167,7 +167,7 @@ fn printHelp(is_tr: bool) void {
             \\  init [name]           scaffold a new project (nox.json + main.nox)
             \\  fetch                 populate the dependency cache from nox.json
             \\  update                re-resolve dependencies to their latest refs, update nox.lock
-            \\  search <q>            query the central index (default: noxpkg.2mtechnology.org)
+            \\  search <q>            query the central index (default: noxpkg.noxlang.com)
             \\  search <index> <q>    query a specific package index (file or URL)
             \\  add <alias> [repo]    add a dependency to nox.json (resolves repo from the index if omitted)
             \\  delete <alias>        remove a dependency from nox.json (and nox.lock)
@@ -183,7 +183,7 @@ fn printHelp(is_tr: bool) void {
             \\  --dump, -v             verbose/AST dump (with build/run/check)
             \\  -o <output>            output binary name (build only)
             \\  --profile <hosted|freestanding>  stdlib import allowlist (with build/check, default: hosted)
-            \\  --backend <llvm|qbe>   code generation backend (default: llvm; qbe for freestanding/--target/--emit-asm/Windows/no clang)
+            \\  --backend <llvm|qbe>   code generation backend (default: llvm; qbe for freestanding/--target/--emit-asm/-g or when neither clang nor zig is found)
             \\
             \\Examples:
             \\  noxc run main.nox -- a b c

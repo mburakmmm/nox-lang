@@ -88,6 +88,48 @@ jobs:
           done
           exit $fail
 
+  # v2.0 (bkz. docs/internals/deployment.md): noxpkg yedekleme betiğinin testi (anlık görüntü, bozuk veriyi
+  # reddetme, rotasyon, geri yükleme, sağlama toplamı). Zig GEREKTİRMEZ; hem GNU hem (yerelde) busybox'ta doğrulandı.
+  backup-script:
+    name: Yedekleme betiği testi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: jq kur ve testi çalıştır
+        run: |
+          sudo apt-get install -y -qq jq
+          sh scripts/test_backup.sh
+
+  # v2.0: dokümantasyon doğrulaması — docs/ içindeki HER bağlantı/sayfa/başlık bağası ve HER ```nox bloğu derleyiciye
+  # karşı denetlenir (```output blokları çalıştırılıp birebir karşılaştırılır). Bkz. scripts/check_docs.py.
+  docs:
+    name: Dokümanlar (bağlantılar + kod blokları)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - name: qbe kur (kaynaktan derle)
+        run: |
+          curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz
+          tar xf /tmp/qbe.tar.xz -C /tmp
+          make -C /tmp/qbe-1.3 -j"$(nproc)"
+          sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
+      - name: Python bağımlılıkları
+        run: python3 -m pip install --quiet "Markdown==3.11" "Pygments==2.21.0" "PyYAML==6.0.3"
+      - name: Derleyiciyi kur
+        run: zig build
+      - name: Dokümanları denetle
+        run: python3 scripts/check_docs.py
+      - name: Siteyi üret (landing örnekleri dahil doğrulanır)
+        run: python3 scripts/build_site.py --verify
+
   test:
     strategy:
       fail-fast: false

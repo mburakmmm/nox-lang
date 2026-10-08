@@ -1,0 +1,17 @@
+class Counter:
+    n: int
+
+    def __init__(self, start: int) -> None:
+        self.n = start
+
+    def bump(self) -> int:
+        self.n += 1
+        return self.n
+
+async def square(x: int) -> int:
+    return x * x
+
+c: Counter = Counter(40)
+c.bump()
+a: Task[int] = spawn square(6)
+print(c.bump(), await a)

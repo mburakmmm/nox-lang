@@ -1,0 +1,14 @@
+async def worker(ch: Channel[int], n: int) -> None:
+    await ch.send(n * n)
+
+async def run() -> None:
+    ch: Channel[int] = Channel[int](4)
+    for i in range(4):
+        spawn worker(ch, i)
+    total: int = 0
+    for i in range(4):
+        total += await ch.recv()
+    print("total", total)
+
+t: Task[None] = spawn run()
+await t

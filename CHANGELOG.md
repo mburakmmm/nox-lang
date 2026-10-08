@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.0-rc.3]
+
+noxlang.com sitesi, birleşik dağıtım yığını, noxpkg yedekleme ve alan adı geçişi.
+
+### Eklendi
+
+- **noxlang.com sitesi:** `scripts/build_site.py` `docs/` ağacını statik siteye çevirir (Nox sözdizimi renklendirme, istemci tarafı arama, koyu/açık tema, `install.sh`/`install.ps1`, site haritası); `services/noxlang-site/` onu bir **Nyx** uygulamasıyla sunar (güvenlik başlıkları + CSP, istek kimliği, `/healthz`, `www` → apex yönlendirmesi). Landing sayfasındaki örnekler `--verify` ile derleyiciyle çalıştırılıp doğrulanır. Marka varlıkları (`assets/brand/`) siteye, README'ye ve VS Code eklentisine (simge + galeri bilgisi) işlendi.
+- **Birleşik dağıtım yığını** `deploy/web/` (site + noxpkg + yedekleme + tek Cloudflare Tüneli; yalnızca 127.0.0.1'e yayın, salt-okunur kök dosya sistemi). Bkz. `docs/internals/deployment.md`.
+- **noxpkg yedekleme** `scripts/backup_noxpkg.sh`: saatlik doğrulanmış anlık görüntü (+ sağlama toplamı), saatlik/günlük/haftalık rotasyon, üzerine yazmayan geri yükleme, `verify` testi ve isteğe bağlı restic ile Cloudflare R2'ye şifreli off-site kopya. `scripts/test_backup.sh` busybox ve GNU kabuklarında geçer.
+- CI: `backup-script` ve `docs` işleri (her sayfa/bağlantı/` ```nox ` bloğu derleyiciye karşı denetlenir).
+
+### Değişti
+
+- **Merkezi kayıt alan adı** `noxpkg.2mtechnology.org` → `noxpkg.noxlang.com` (`noxc search/add/publish` varsayılanı). Eski ad, eski `noxc` sürümleri çalışsın diye sunucu tarafında aynı hizmete yönlendirilmeye devam eder.
+- `noxc --help` backend satırı Windows'ta artık LLVM (zig varsa) kullanıldığını doğru anlatır.
+
+### Bilinen konu
+
+- Nyx 0.21.0'ın "modül düzeyinde `application = nyx.app.boot(...)`" deseni bu derleyicide çöker ve Nyx'in blog örneği derlenmez (v1.170.0'dan beri; bu sürümde değil). Site, içeriği başlatıcı ifadeleriyle yükleyip Nyx uygulamasını işçi başına tembelce açarak bunu aşar; kök neden ayrıca araştırılacak.
+
 ## [2.0.0-rc.2]
 
 Nox 2.0 ikinci sürüm adayı: **yeni dokümantasyon ağacı**, **Plugin API**, marka varlıkları ve dokümanları örnek-örnek doğrularken bulunan gerçek hataların düzeltmeleri.

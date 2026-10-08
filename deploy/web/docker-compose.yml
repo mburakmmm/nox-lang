@@ -1,0 +1,88 @@
+# noxlang.com + noxpkg.noxlang.com — Mac mini M4 (OrbStack) üretim yığını. Depo KÖKÜNDEN çalıştırılır:
+#   docker compose -f deploy/web/docker-compose.yml --env-file deploy/web/.env up -d --build
+#
+# Tek Cloudflare Tüneli (noxpkg tüneli) iki ana makineyi de karşılar; ingress deploy/web/cloudflared.yml'dedir.
+# Konteynerler yalnızca 127.0.0.1'e yayınlanır; dış dünyaya YALNIZCA tünel açılır (host 80/443 yok).
+name: nox-web
+services:
+  noxlang-site:
+    build:
+      context: ../..
+      dockerfile: services/noxlang-site/Dockerfile
+    environment:
+      NYX_ENV: production
+      NYX_SECRET_KEY: ${NYX_SECRET_KEY:?NYX_SECRET_KEY ayarlanmali (en az 32 karakter)}
+      NYX_PORT: "8080"
+      NYX_DB_PATH: ":memory:"
+      NYX_JOBS_DB_PATH: ":memory:"
+      NYX_AUTO_MIGRATE: "false"
+      NYX_SESSION: "false"
+      NYX_CSRF: "false"
+      NYX_LOG_REQUESTS: "true"
+      NYX_TRUST_X_FORWARDED_FOR: "true"
+      NYX_CSP: "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+    ports:
+      - "127.0.0.1:8081:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q 200"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  noxpkg:
+    build:
+      context: ../..
+      dockerfile: services/noxpkg/Dockerfile
+    environment:
+      NOXPKG_ADMIN_PASSWORD_HASH: ${NOXPKG_ADMIN_PASSWORD_HASH:?NOXPKG_ADMIN_PASSWORD_HASH ayarlanmali}
+      NOXPKG_SESSION_SECRET: ${NOXPKG_SESSION_SECRET:?NOXPKG_SESSION_SECRET ayarlanmali}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ${NOXPKG_DATA_DIR:-../../services/noxpkg/data}:/app/data
+    restart: unless-stopped
+
+  # Yedekleme: saatlik yerel anlık görüntü + (R2 anahtarları verilmişse) restic ile Cloudflare R2'ye şifreli,
+  # tekilleştirilmiş kopya. Ayrıntı ve geri yükleme: docs/internals/deployment.md
+  noxpkg-backup:
+    image: alpine:3.20
+    depends_on:
+      - noxpkg
+    environment:
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-3600}
+      KEEP_HOURLY: ${KEEP_HOURLY:-48}
+      KEEP_DAILY: ${KEEP_DAILY:-30}
+      KEEP_WEEKLY: ${KEEP_WEEKLY:-12}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - ${NOXPKG_DATA_DIR:-../../services/noxpkg/data}:/data:ro
+      - ${BACKUP_DIR:-../../services/noxpkg/backups}:/backups
+      - ../../scripts/backup_noxpkg.sh:/usr/local/bin/backup_noxpkg.sh:ro
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache restic tar gzip jq >/dev/null && exec /usr/local/bin/backup_noxpkg.sh loop"]
+    restart: unless-stopped
+    healthcheck:
+      # son başarılı anlık görüntü aralığın 2 katından eskiyse "unhealthy"
+      test: ["CMD-SHELL", "[ $$(( $$(date +%s) - $$(cat /backups/.last_ok 2>/dev/null || echo 0) )) -lt 7500 ]"]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 5m
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.1
+    container_name: nox-web-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ./cloudflared.yml:/etc/cloudflared/config.yml:ro
+      - ${HOME}/.cloudflared/10d2b429-9912-44a6-8615-11ef5910ba74.json:/etc/cloudflared/tunnel.json:ro
+    depends_on:
+      - noxlang-site
+      - noxpkg

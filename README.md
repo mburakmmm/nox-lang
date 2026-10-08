@@ -55,4 +55,4 @@ See [Contributing](docs/internals/contributing.md) and, for the design rules eve
 
 ## License
 
-See [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
