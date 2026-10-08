@@ -106,7 +106,7 @@ def load_index(path: str) -> list[IndexEntry]:
     out: list[IndexEntry] = []
     if not nox.fs.exists(path):
         return out
-    v: JsonValue = nox.json.decode(nox.fs.read_to_string(path))
+    v: JsonValue = nox.json.parse(nox.fs.read_to_string(path))
     packages_v: JsonValue | None = _object_get(v, "packages")
     if packages_v != None:
         i: int = 0
@@ -125,7 +125,7 @@ def save_index(path: str, entries: list[IndexEntry]) -> None:
     keys: list[str] = ["packages"]
     vals: list[JsonValue] = [_json_array(entry_vals)]
     root: JsonValue = _json_object(keys, vals)
-    content: str = nox.json.encode_pretty(root, 2)
+    content: str = nox.json.dump_pretty(root, 2)
     tmp: str = path + ".tmp"
     nox.fs.write_string(tmp, content)
     nox.fs.rename(tmp, path)
@@ -171,7 +171,7 @@ def load_inbox(path: str) -> list[Submission]:
     out: list[Submission] = []
     if not nox.fs.exists(path):
         return out
-    v: JsonValue = nox.json.decode(nox.fs.read_to_string(path))
+    v: JsonValue = nox.json.parse(nox.fs.read_to_string(path))
     subs_v: JsonValue | None = _object_get(v, "submissions")
     if subs_v != None:
         i: int = 0
@@ -190,7 +190,7 @@ def save_inbox(path: str, subs: list[Submission]) -> None:
     keys: list[str] = ["submissions"]
     vals: list[JsonValue] = [_json_array(sub_vals)]
     root: JsonValue = _json_object(keys, vals)
-    content: str = nox.json.encode_pretty(root, 2)
+    content: str = nox.json.dump_pretty(root, 2)
     tmp: str = path + ".tmp"
     nox.fs.write_string(tmp, content)
     nox.fs.rename(tmp, path)

@@ -535,6 +535,13 @@ def main():
     for n in ("install.sh", "install.ps1"):
         shutil.copy(os.path.join(ROOT, n), os.path.join(out, n))
 
+    # İzinleri normalleştir: kaynak dosyaların kısıtlayıcı modları (ör. 0600) çıktıya taşınırsa, root olmayan kullanıcıyla
+    # çalışan konteyner onları okuyamaz (v2.0.0-rc.3 dağıtımında yakalandı).
+    for dp, dns, fns in os.walk(out):
+        os.chmod(dp, 0o755)
+        for fn in fns:
+            os.chmod(os.path.join(dp, fn), 0o644)
+
     # Nyx'in okuduğu manifest: url TAB dosya TAB tür TAB cache
     rows = []
     for dp, _, fns in os.walk(out):

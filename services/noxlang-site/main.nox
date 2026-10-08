@@ -30,10 +30,16 @@ def site_root() -> str:
         return "public"
     return "public"
 
-# Modül düzeyi durum işçi (worker) BAŞINA kopyalanır; kopyalar yalnızca BAŞLATICI İFADELERİYLE doldurulur
-# (main gövdesindeki sonradan atamalar diğer işçilere görünmez). Bu yüzden içerik başlatıcıda yüklenir.
-def load_files() -> dict[str, str]:
-    out: dict[str, str] = {}
+# Modül düzeyi durum işçi (worker) BAŞINA kopyalanır ve HER işçi kendi `nox_init_globals`ını koşturur. Başlatıcılar bu yüzden
+# UCUZ tutulur: ağır iş (7 MB'lık dosya yükleme) başlatıcıda yapılırsa, başlatması henüz bitmemiş bir işçiye kayan görev
+# boş (NULL) global görür ve çöker (Linux/aarch64'te root olmayan kullanıcıyla gözlendi). İçerik işçi başına BİR KEZ, ilk
+# istekte doldurulur; sözlükler başlatıcıda yalnızca boş olarak oluşturulur.
+files: dict[str, str] = {}
+meta: dict[str, str] = {}
+cfg: Config = nyx.config.load()
+apps: list[Application] = []
+
+def load_content() -> None:
     root: str = site_root()
     manifest: str = nox.fs.read_to_string(root + "/manifest.tsv")
     for line in nox.strings.split(manifest, "\n"):
@@ -42,25 +48,12 @@ def load_files() -> dict[str, str]:
         cols: list[str] = nox.strings.split(line, "\t")
         if len(cols) != 4:
             continue
-        out[cols[0]] = nox.fs.read_to_string(root + "/" + cols[1])
-    return out
+        files[cols[0]] = nox.fs.read_to_string(root + "/" + cols[1])
+        meta[cols[0]] = cols[2] + "|" + cols[3]
 
-def load_meta() -> dict[str, str]:
-    out: dict[str, str] = {}
-    manifest: str = nox.fs.read_to_string(site_root() + "/manifest.tsv")
-    for line in nox.strings.split(manifest, "\n"):
-        if len(line) == 0:
-            continue
-        cols: list[str] = nox.strings.split(line, "\t")
-        if len(cols) != 4:
-            continue
-        out[cols[0]] = cols[2] + "|" + cols[3]
-    return out
-
-files: dict[str, str] = load_files()
-meta: dict[str, str] = load_meta()
-cfg: Config = nyx.config.load()
-apps: list[Application] = []
+def ensure_content() -> None:
+    if len(files) == 0:
+        load_content()
 
 def respond(url: str, status: int) -> HttpResponse:
     parts: list[str] = nox.strings.split(meta[url], "|")
@@ -70,6 +63,7 @@ def respond(url: str, status: int) -> HttpResponse:
     return HttpResponse(status, files[url], headers)
 
 def serve_path(path: str) -> HttpResponse:
+    ensure_content()
     if path in files:
         return respond(path, 200)
     if (path + "/") in files:
@@ -112,4 +106,6 @@ def handle(req: HttpRequest) -> HttpResponse:
         return HttpResponse(301, "", headers)
     return nyx.app.dispatch(app(), req)
 
-nox.http.serve(cfg.port, handle)
+# Port, modül düzeyi `cfg`ye DOKUNMADAN alınır (ana görev başka bir işçide devam ederse o işçinin global bloğu henüz boş olabilir).
+port: int = nyx.config.load().port
+nox.http.serve(port, handle)

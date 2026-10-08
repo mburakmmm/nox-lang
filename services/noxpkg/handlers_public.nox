@@ -71,10 +71,10 @@ def _opt_field(v: JsonValue, key: str) -> JsonValue | None:
 def publish(ctx: Context) -> HttpResponse:
     errors: list[str] = nox.validate.validate_json_str(ctx.request.body, _publish_schema())
     if len(errors) > 0:
-        body: str = "{\"ok\": false, \"error\": " + nox.json.encode_string(errors[0]) + "}"
+        body: str = "{\"ok\": false, \"error\": " + nox.json.dump_string(errors[0]) + "}"
         return HttpResponse(400, body, {"Content-Type": "application/json"})
 
-    v: JsonValue = nox.json.decode(ctx.request.body)
+    v: JsonValue = nox.json.parse(ctx.request.body)
     name: str = ""
     name_v: JsonValue | None = _opt_field(v, "name")
     if name_v != None:
@@ -112,5 +112,5 @@ def publish(ctx: Context) -> HttpResponse:
         if subs[i2].name == name and subs[i2].repo == repo:
             id = subs[i2].id
         i2 = i2 + 1
-    body2: str = "{\"ok\": true, \"id\": " + nox.json.encode_string(id) + "}"
+    body2: str = "{\"ok\": true, \"id\": " + nox.json.dump_string(id) + "}"
     return HttpResponse(200, body2, {"Content-Type": "application/json"})

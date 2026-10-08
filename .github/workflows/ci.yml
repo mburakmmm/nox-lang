@@ -127,6 +127,12 @@ jobs:
         run: zig build
       - name: Dokümanları denetle
         run: python3 scripts/check_docs.py
+      # v2.0: hizmetler (noxpkg, noxlang-site) derleyiciyle birlikte tip denetiminden geçmeli. (rc.3'te noxpkg'nin kaldırılan
+      # `nox.json.decode/encode_*` adlarını kullandığı ancak üretim imajı yeniden derlenirken fark edildi.)
+      - name: Hizmetleri tip denetle (noxpkg + noxlang-site)
+        run: |
+          zig-out/bin/noxc check services/noxpkg/main.nox
+          cd services/noxlang-site && ../../zig-out/bin/noxc fetch && ../../zig-out/bin/noxc check main.nox
       - name: Siteyi üret (landing örnekleri dahil doğrulanır)
         run: python3 scripts/build_site.py --verify
 
