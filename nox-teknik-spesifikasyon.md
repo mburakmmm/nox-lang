@@ -28940,3 +28940,9 @@ son terfi bildirimine kadar (`Codegen.module_global_init_last`)— okuduğu üst
 kendisinden SONRA bildirilen terfi etmiş bir değişkeni okuyorsa `error.GlobalInitOrder` (derleme hatası, ileti iki değişkeni adlandırır). Değişmez İlkeler etkilenmez: ownership/tip sistemi/unwind/gizli global değişmedi;
 terfi etmiş değişkenler zaten işçi başına kopya olarak yaşıyordu, yalnızca hangi deyimlerin o bağlamda çalıştığı genişledi. Her iki backend aynı yolu kullanır (kayıt/ön-geçiş ortak, `genNoxInitGlobals` seam üstünde).
 Golden: `module_global_init_reads_unpromoted_main_local` (fixture korpusu: QBE+LLVM), `rejected_global_init_reads_later_global` (`GlobalInitOrder`).
+
+## 3.287 Modül-global ilklendiricisinde yakalanmamış istisna (v2.0.0-rc.5)
+
+`$nox_init_globals` `void` döner ve hiçbir çağıranı (`$main`, `$main_body` öncesi çağrı, `nox.thread` / `serve_multicore` işçi girişleri) dönüşte bekleyen istisnayı sorgulamaz. Bir ilklendirici `raise` ederse standart yayılım yolu (`emitPropagateBody`, `current_catch_label`/`in_main` dışı dal) init fonksiyonundan sessizce `ret` ediyor, global bloğunun geri kalanı NULL kalıyor ve ilk okumada SIGSEGV oluşuyordu.
+**Karar:** `Codegen.in_global_init` (yalnızca `genNoxInitGlobals` gövdesi boyunca açık) yayılımı `$nox_unhandled_exception(rt)` çağrısına yönlendirir (`main`den sızan istisnayla aynı rapor ve sıfırdan farklı çıkış). İlklendiricide `try` yoktur; yakalanabilir bir bağlam yoktur, yarım ilklendirilmiş durumla devam etmek tanımsız davranıştır. Bu bir `raise`i `except` ile yakalanamaz kılmaz (yakalayıcı bağlam zaten mümkün değildir). Değişmez İlkeler etkilenmez: unwind tablosu yok (kontrol akışı aynı örtük error-union zinciri), ownership/tip sistemi değişmedi, gizli global yok.
+Golden: `module_global_init_raise_unhandled` (fixture korpusu: QBE+LLVM, `uncaught_exception_with_stderr`).

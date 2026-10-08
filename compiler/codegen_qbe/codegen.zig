@@ -1585,6 +1585,12 @@ pub const Codegen = struct {
     /// bir kodla sonlandırmak gerektiğini bildirir (bkz. bilinen sınırlama:
     /// diğer fonksiyonlardan sızan istisnalar normal şekilde çağırana yayılır).
     in_main: bool = false,
+    /// `$nox_init_globals` gövdesini üretirken `true`. Bu fonksiyon `void` döner ve çağıranları
+    /// (`$main`, worker giriş noktaları) dönüşte bekleyen istisnayı KONTROL ETMEZ; bir ilklendiricide
+    /// yükselen istisna eskiden sessizce `ret` olup yarım ilklendirilmiş (NULL) globallerle devam
+    /// ediyor ve ilk okumada SIGSEGV veriyordu. Bu bayrak açıkken yayılım yolu
+    /// `nox_unhandled_exception`a gider (`emitPropagateBody`) — `main`den sızan istisnayla aynı rapor.
+    in_global_init: bool = false,
     /// İçinde bulunulan `try`lerin `finally` gövdelerinin yığını (en dıştan en
     /// içe). Python gibi, `finally` `try`/`except` içindeki bir `return`'de
     /// bile ÇALIŞMALIDIR — QBE'de paylaşılan bir "unwind" hedefi olmadığından

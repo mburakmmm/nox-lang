@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.0-rc.5]
+
+Modül-global ilklendiricisinde yükselen yakalanmamış istisna artık SIGSEGV değil, normal yakalanmamış-istisna raporuyla sonlanır.
+
+### Düzeltildi
+
+- **`$nox_init_globals` içinde yükselen istisna sessizce yutuluyor, program yarım ilklendirilmiş globallerle devam edip çöküyordu.** `$nox_init_globals` `void` döner ve çağıranları (`$main`, `$main_body` öncesi, `nox.thread`/`serve_multicore` işçileri) dönüşte bekleyen istisnayı kontrol etmez; bir ilklendirici fonksiyonu `raise` ederse init fonksiyonu erken `ret` ediyor, kalan globaller NULL kalıyor ve ilk okumada (`main_body`/handler) SIGSEGV (çıkış 139) oluyordu. Üretimde: root olmayan kullanıcıyla okunamayan bir dosyayı `nox.fs.read_to_string` ile yükleyen `files: dict[str, str] = load()` ilklendiricisi. Artık init gövdesindeki yayılım yolu (`Codegen.in_global_init`) `nox_unhandled_exception`a gider: `nox: yakalanmamış istisna: <Sınıf> (satır N) — program sonlandırılıyor`, çıkış kodu 1, hiçbir sonraki kod yarım ilklendirilmiş globallerle çalışmaz. Her iki backend ve `serve_multicore` işçileri doğrulandı.
+- **Hata tanısı:** codegen bir adı fonksiyon-değeri yedeğinde de çözemediğinde genel "desteklenmeyen yapı" yerine adı ve satırı söyleyen kesin bir ileti verir (rc.4'te düzeltilen `cfgx`/`cfg` bayat-yerel durumu bu iletiye düşerdi).
+
+### Doğrulandı (kod değişikliği yok)
+
+- Nyx 0.21.0 `application: Application = nyx.app.boot(cfg, setup)` (modül düzeyinde, handler okur): rc.4 ile `serve` ve `serve_multicore`, QBE ve LLVM'de her istekte 200 döner (kök neden rc.4'te düzeltilen bayat-yerel sızıntısıydı, istisna değil).
+- Nyx `examples/blog/main.nox` rc.4 ile iki backend'de derlenir.
+
+### Test
+
+- Golden `module_global_init_raise_unhandled` (fixture korpusu: QBE + LLVM fark testi + IR anlık görüntüsü): ilklendiricide `raise` → stdout boş, stderr yakalanmamış-istisna raporu, sıfırdan farklı çıkış.
+
 ## [2.0.0-rc.4]
 
 Modül düzeyindeki `application = nyx.app.boot(cfg, setup)` deseninin SIGSEGV'si ve Nyx blog örneğinin derlenmemesi (v1.170.0'dan beri bilinen konu) düzeltildi.
@@ -50,8 +68,14 @@ noxlang.com sitesi, birleşik dağıtım yığını, noxpkg yedekleme ve alan ad
 - **Merkezi kayıt alan adı** `noxpkg.2mtechnology.org` → `noxpkg.noxlang.com` (`noxc search/add/publish` varsayılanı). Eski ad, eski `noxc` sürümleri çalışsın diye sunucu tarafında aynı hizmete yönlendirilmeye devam eder.
 - `noxc --help` backend satırı Windows'ta artık LLVM (zig varsa) kullanıldığını doğru anlatır.
 
-### Bilinen konu
+### Düzeltildi
 
+- **`services/noxpkg`** 2.0'da kaldırılan `nox.json.decode/encode_pretty/encode_string` adlarını kullanıyordu (üretim imajı yeniden derlenirken yakalandı); `parse`/`dump_pretty`/`dump_string`e taşındı. CI'ın `docs` işi artık noxpkg ve noxlang-site'ı tip denetler.
+- Site derleyicisi çıktı izinlerini normalleştirir (kaynak dosyadaki 0600 mod, root olmayan konteynerde okunamayıp başlatıcıda istisnaya yol açıyordu). `.dockerignore` yerel önbellek dizinlerini (`**/.nox`, `.claude`) dışlar.
+
+### Bilinen konular
+
+- Her işçi iş parçacığı kendi `nox_init_globals`ını koşturur; **başlatıcıda ağır iş yapan** bir program (ör. 7 MB dosya yükleme) ve başlatıcıdaki **işlenmeyen istisna**, Linux/aarch64'te `main_body` içinde NULL global okuyup SIGSEGV verebilir (mesaj yerine). Site, ağır işi işçi başına ilk isteğe erteleyerek bunu aşar; kök neden ayrıca araştırılacak.
 - Nyx 0.21.0'ın "modül düzeyinde `application = nyx.app.boot(...)`" deseni bu derleyicide çöker ve Nyx'in blog örneği derlenmez (v1.170.0'dan beri; bu sürümde değil). Site, içeriği başlatıcı ifadeleriyle yükleyip Nyx uygulamasını işçi başına tembelce açarak bunu aşar. **Düzeltildi: v2.0.0-rc.4.**
 
 ## [2.0.0-rc.2]

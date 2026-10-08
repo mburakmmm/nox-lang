@@ -275,6 +275,15 @@ pub fn internPinnedStringConst(self: *Codegen, s: []const u8) CodegenError![]con
     return std.fmt.allocPrint(self.allocator, "{s}+{d}", .{ sym, ARC_HEADER_SIZE + STR_HEADER_SIZE });
 }
 
+/// `buildFunctionValueForIdentifier`in çözümleyemediği ad için kesin bir iletiyle `error.Unsupported`
+/// döner (checker adı zaten kabul ettiğinden bu, codegen'in o noktada o ada bağlı bir yerel/modül
+/// değişkeni/fonksiyon bulamadığı bir iç tutarsızlıktır — ör. modül-global ilklendiricisinde terfi
+/// etmemiş bir üst düzey değişken).
+noinline fn unresolvedIdentifier(self: *Codegen, name: []const u8) CodegenError {
+    std.debug.print("codegen: '{s}' adı bu noktada çözümlenemedi (satır {d}): ne bir yerel/parametre, ne bir modül değişkeni, ne de üst düzey bir fonksiyon olarak codegen'e görünür. Modül-global ilklendiricilerinde bu, adın terfi etmemiş bir üst düzey değişkene işaret etmesi anlamına gelebilir\n", .{ name, self.current_raise_line });
+    return error.Unsupported;
+}
+
 /// Faz U.4.5 (bkz. `checker.zig`nin `checkExpr`'in `.identifier` dalı VE
 /// `functions_used_as_value`in belge notu): `genExpr`nin `.identifier`
 /// dalının, `self.vars`de BULUNAMAYAN bir isim İçin YEDEK inşası — üst-
@@ -301,11 +310,13 @@ pub noinline fn buildFunctionValueForIdentifier(self: *Codegen, name: []const u8
     // yalnızca (`checker.zig`nin `resolveIdentifierAsFunctionValue`ının
     // AYNI geri düşüşle `functions_used_as_value`e KAYDETTİĞİ) MANGLED
     // anahtarı taşır.
+    // Önceden iki başarısızlık da genel "desteklenmeyen yapı" iletisine düşüyordu; buraya yalnızca
+    // `genExpr`nin `.identifier` dalı bir yerel/parametre/modül değişkeni bulamadığında gelinir.
     const resolved_name = if (self.functions.contains(name))
         name
     else
-        self.from_imports.get(name) orelse return error.Unsupported;
-    const sig = self.functions.get(resolved_name) orelse return error.Unsupported;
+        self.from_imports.get(name) orelse return unresolvedIdentifier(self, name);
+    const sig = self.functions.get(resolved_name) orelse return unresolvedIdentifier(self, name);
     const trampoline_name = try std.fmt.allocPrint(self.allocator, "{s}__fnval", .{resolved_name});
     const block = try self.newTemp();
     try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = std.fmt.comptimePrint("{d}", .{CLOSURE_HEADER_SIZE}) } });

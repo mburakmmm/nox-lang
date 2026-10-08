@@ -57,6 +57,8 @@ pub fn genNoxInitGlobals(self: *Codegen, module: ast.Module) CodegenError!void {
     self.current_defer_list = null;
     self.current_path = "";
     self.in_main = false;
+    self.in_global_init = true;
+    defer self.in_global_init = false;
 
     try self.qbeFuncHeaderStart(null, "$nox_init_globals");
     try self.qbeFuncParam(.l, RT_PARAM, true);

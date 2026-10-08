@@ -1142,6 +1142,13 @@ fn emitPropagateBody(self: *Codegen, except_name: ?[]const u8) CodegenError!void
         // bölgesinden ÇIKMIYORUZ, bu yüzden `finally` burada DEĞİL,
         // dispatch'in kendi tamamlanma/yeniden-fırlatma yollarında çalışır.
         try self.qbeJmp(cl);
+    } else if (self.in_global_init) {
+        // Modül-global ilklendiricisi (`$nox_init_globals`, `void` döner): çağıranlar dönüşte
+        // bekleyen istisnayı kontrol etmez, bu yüzden sessizce dönmek yarım ilklendirilmiş (NULL)
+        // globallerle devam etmek demektir. `nox_unhandled_exception` `noreturn`dur; `ret` yalnızca
+        // bloğu sonlandırır.
+        try self.qbeCall(null, "$nox_unhandled_exception", &.{.{ .ty = .l, .text = RT_PARAM }});
+        try self.qbeRet(null);
     } else if (self.in_main) {
         // Gerçekten dışarı sızıyoruz: aradan geçtiğimiz her `try`nin
         // `finally`'si ve her `lowlevel` arenası burada, program
