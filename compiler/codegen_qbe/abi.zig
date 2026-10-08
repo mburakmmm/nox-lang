@@ -14,6 +14,10 @@ const HeapKind = types.HeapKind;
 pub const CodegenError = error{
     OutOfMemory,
     Unsupported,
+    /// Bir fonksiyonun okuduğu modül değişkeninin ilk değeri, kendisinden
+    /// SONRA bildirilen (henüz ilklendirilmemiş) bir modül değişkenini okuyor.
+    /// Sessiz sıfır/çökme yerine derleme zamanında reddedilir.
+    GlobalInitOrder,
 } || std.Io.Writer.Error;
 
 /// Faz U.4.3: `Codegen.current_path`i (checker'ın `FnCtx.path`iyle AYNI

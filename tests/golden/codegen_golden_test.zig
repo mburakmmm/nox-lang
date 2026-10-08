@@ -805,6 +805,24 @@ test "codegen: detach() edilmiş bir değişkene lowlevel içinde yeniden atama 
     try expectRejected(@embedFile("codegen_cases/rejected_lowlevel_detach_reassign.nox"));
 }
 
+// Nyx `application = nyx.app.boot(cfg, setup)` SIGSEGV'sinin kardeşi: terfi etmiş
+// bir modül değişkeninin ilk değeri kendisinden SONRA bildirilen terfi etmiş
+// bir değişkeni okuyorsa (`a = b + 1; b = 2`), `$nox_init_globals` henüz
+// yazılmamış belleği okurdu (int'te sessiz 0, işaretçide çökme). Artık
+// derleme zamanında `GlobalInitOrder` ile reddedilir.
+test "codegen: terfi etmiş modül değişkeninin ilk değeri SONRA bildirilen bir modül değişkenini okuyamaz (GlobalInitOrder) — DÜZELTME öncesi sessiz 0/çökme" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const tokens = try nox.lexer.tokenize(allocator, @embedFile("codegen_cases/rejected_global_init_reads_later_global.nox"));
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    try std.testing.expectError(error.GlobalInitOrder, nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, .hosted, null, &.{}, .empty));
+}
+
 // Bulundu (nyx framework — bkz. proje belleği "nyx'te farkedilen Nox
 // eksiklikleri" görevi): `closures.zig`nin `buildClosureValue`ı, bir
 // yakalanan (capture) DEĞERİN `func_sig`ini (`heap == .closure` OLAN

@@ -638,6 +638,132 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
 /// SONRA çağrılmalıdır (`generateModule`, sınıf kayıt döngülerinden
 /// HEMEN SONRA) — bir global'in tipi `list[Foo]`/`Foo` OLABİLİR,
 /// `resolveType`in `self.classes`e İHTİYACI VAR.
+/// Bir ifadenin kökündeki çıplak isim: `cfg`, `cfg.secret_key`, `xs[i]`,
+/// `xs[:]`. Çağrı/literal gibi bir kökte `null`.
+fn exprRootIdent(expr: ast.Expr) ?[]const u8 {
+    return switch (expr) {
+        .identifier => |n| n,
+        .attribute => |a| exprRootIdent(a.obj.*),
+        .index => |i| exprRootIdent(i.obj.*),
+        .slice => |s| exprRootIdent(s.obj.*),
+        else => null,
+    };
+}
+
+/// `xs.append(...)` / `cfg.touch()`: alıcının kökü TERFİ ETMİŞ bir modül
+/// değişkeni olan bir metod çağrısı. `print(x)` ve `boot(cfg)` DEĞİLDİR
+/// (kök bir fonksiyon adıdır) — onlar `$main`de kalır.
+fn exprIsPromotedMethodCall(expr: ast.Expr, is_promoted: *const std.StringHashMapUnmanaged(void)) bool {
+    if (expr != .call) return false;
+    const callee = expr.call.callee.*;
+    switch (callee) {
+        .attribute => |attr| {
+            const root = exprRootIdent(attr.obj.*) orelse return false;
+            return is_promoted.contains(root);
+        },
+        else => return false,
+    }
+}
+
+/// `bound` (lambda parametresi / comprehension döngü değişkeni) DIŞINDAKİ
+/// çıplak isimler. İlklendiricinin OKUDUĞU modül değişkenini, aynı adlı
+/// bir döngü değişkeniyle karıştırmamak için bağlanan adlar düşülür.
+fn collectFreeNamesExpr(a: std.mem.Allocator, expr: ast.Expr, bound: *const std.StringHashMapUnmanaged(void), out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+    switch (expr) {
+        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+        .identifier => |name| if (!bound.contains(name)) try out.put(a, name, {}),
+        .unary => |u| try collectFreeNamesExpr(a, u.operand.*, bound, out),
+        .kwarg => |k| try collectFreeNamesExpr(a, k.value.*, bound, out),
+        .ternary => |t| {
+            try collectFreeNamesExpr(a, t.cond.*, bound, out);
+            try collectFreeNamesExpr(a, t.then_expr.*, bound, out);
+            try collectFreeNamesExpr(a, t.else_expr.*, bound, out);
+        },
+        .binary => |b| {
+            try collectFreeNamesExpr(a, b.left.*, bound, out);
+            try collectFreeNamesExpr(a, b.right.*, bound, out);
+        },
+        .call => |c| {
+            try collectFreeNamesExpr(a, c.callee.*, bound, out);
+            for (c.args) |arg| try collectFreeNamesExpr(a, arg, bound, out);
+        },
+        .attribute => |attr| try collectFreeNamesExpr(a, attr.obj.*, bound, out),
+        .slice => |sl| {
+            try collectFreeNamesExpr(a, sl.obj.*, bound, out);
+            if (sl.lo) |x| try collectFreeNamesExpr(a, x.*, bound, out);
+            if (sl.hi) |x| try collectFreeNamesExpr(a, x.*, bound, out);
+            if (sl.step) |x| try collectFreeNamesExpr(a, x.*, bound, out);
+        },
+        .index => |idx| {
+            try collectFreeNamesExpr(a, idx.obj.*, bound, out);
+            try collectFreeNamesExpr(a, idx.index.*, bound, out);
+        },
+        .list_lit => |elems| for (elems) |el| try collectFreeNamesExpr(a, el, bound, out),
+        .tuple_lit => |elems| for (elems) |el| try collectFreeNamesExpr(a, el, bound, out),
+        .dict_lit => |pairs| for (pairs) |p| {
+            try collectFreeNamesExpr(a, p.key, bound, out);
+            try collectFreeNamesExpr(a, p.value, bound, out);
+        },
+        .await_expr => |operand| try collectFreeNamesExpr(a, operand.*, bound, out),
+        .spawn_expr => |operand| try collectFreeNamesExpr(a, operand.*, bound, out),
+        .generic_construct => |g| for (g.args) |arg| try collectFreeNamesExpr(a, arg, bound, out),
+        .lambda => |lam| {
+            var inner: std.StringHashMapUnmanaged(void) = .empty;
+            defer inner.deinit(a);
+            var it = bound.iterator();
+            while (it.next()) |e| try inner.put(a, e.key_ptr.*, {});
+            for (lam.params) |p| try inner.put(a, p, {});
+            try collectFreeNamesExpr(a, lam.body.*, &inner, out);
+        },
+        .list_comp => |lc| try collectFreeNamesComp(a, lc.elem, null, lc.clauses, bound, out),
+        .dict_comp => |dc| try collectFreeNamesComp(a, dc.key, dc.value, dc.clauses, bound, out),
+    }
+}
+
+fn collectFreeNamesComp(a: std.mem.Allocator, elem: *ast.Expr, value: ?*ast.Expr, clauses: []const ast.CompClause, bound: *const std.StringHashMapUnmanaged(void), out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+    var inner: std.StringHashMapUnmanaged(void) = .empty;
+    defer inner.deinit(a);
+    var it = bound.iterator();
+    while (it.next()) |e| try inner.put(a, e.key_ptr.*, {});
+    for (clauses) |cl| switch (cl) {
+        .for_clause => |fc| {
+            try collectFreeNamesExpr(a, fc.iterable, &inner, out);
+            try inner.put(a, fc.var_name, {});
+        },
+        .if_clause => |ce| try collectFreeNamesExpr(a, ce, &inner, out),
+    };
+    try collectFreeNamesExpr(a, elem.*, &inner, out);
+    if (value) |v| try collectFreeNamesExpr(a, v.*, &inner, out);
+}
+
+fn promoteReferencedVars(a: std.mem.Allocator, refs: *const std.StringHashMapUnmanaged(void), var_index: *const std.StringHashMapUnmanaged(usize), promoted: *std.StringHashMapUnmanaged(void)) CodegenError!bool {
+    var changed = false;
+    var it = refs.keyIterator();
+    while (it.next()) |k| {
+        if (!var_index.contains(k.*)) continue;
+        if (promoted.contains(k.*)) continue;
+        try promoted.put(a, k.*, {});
+        changed = true;
+    }
+    return changed;
+}
+
+fn ensureGlobalsReady(a: std.mem.Allocator, expr: ast.Expr, reader: []const u8, ready: *const std.StringHashMapUnmanaged(void), var_index: *const std.StringHashMapUnmanaged(usize), promoted: *const std.StringHashMapUnmanaged(void)) CodegenError!void {
+    var refs: std.StringHashMapUnmanaged(void) = .empty;
+    defer refs.deinit(a);
+    var bound: std.StringHashMapUnmanaged(void) = .empty;
+    defer bound.deinit(a);
+    try collectFreeNamesExpr(a, expr, &bound, &refs);
+    var it = refs.keyIterator();
+    while (it.next()) |k| {
+        if (!var_index.contains(k.*)) continue;
+        if (!promoted.contains(k.*)) continue;
+        if (ready.contains(k.*)) continue;
+        std.debug.print("codegen: '{s}' hazırlanırken henüz bildirilmemiş modül değişkeni '{s}' okunuyor; bir fonksiyonun gördüğü modül değişkenleri bildirim sırasıyla ilklendirilir\n", .{ reader, k.* });
+        return error.GlobalInitOrder;
+    }
+}
+
 pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
     var used_in_functions: std.StringHashMapUnmanaged(void) = .empty;
     defer used_in_functions.deinit(self.allocator);
@@ -651,6 +777,120 @@ pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions:
 
     // v1.155.0: yükseltilmiş lambda'lar (ve generic örneklemeler) `extra_functions`ta yaşar — onların modül değişkenlerine başvurusu da terfi sayılır.
     for (extra_functions) |fd| try collectFreeNamesForTopLevelFunc(self.allocator, fd.params, fd.body, &used_in_functions);
+
+    // Bulundu (Nyx `application = nyx.app.boot(cfg, setup)`, fonksiyon
+    // yalnızca `application`ı okuyor): terfi, YALNIZCA fonksiyon
+    // gövdesinden okunan ada uygulanıyordu. `application`ın İLK DEĞERİ
+    // `$nox_init_globals` içinde değerlendirilirken `cfg` ne yerel ne
+    // globaldi — isim bir fonksiyon değerine düşüyor (çakışan bir ad
+    // VARSA sessizce YANLIŞ bir işaretçi, YOKSA `error.Unsupported`) ve
+    // `boot` boş `cfg` ile çöküyordu (QBE: `nox_init_globals` →
+    // `nyx_app_boot`; LLVM: işleyici globali okurken). İsim farkı
+    // (`cfg` derlenir, `cfgx` "desteklenmeyen yapı") bu düşüşün
+    // sonucudur: ad bir fonksiyona çözülürse derleme "başarılı" olur ve
+    // çalışma zamanı çöker. Düzeltme: terfi GEÇİŞLİDİR. Bir terfi etmiş
+    // değişkenin ilk değeri, ona yapılan ve SON terfi `var_decl`dan
+    // ÖNCEKİ üst düzey atama / metod çağrısı, okuduğu modül
+    // değişkenlerini de terfi ettirir. Böylece `cfgx` ile `cfg` aynı
+    // yolu izler.
+    var var_index: std.StringHashMapUnmanaged(usize) = .empty;
+    defer var_index.deinit(self.allocator);
+    var decl_i: usize = 0;
+    for (module.body) |stmt| {
+        if (stmt.kind != .var_decl) continue;
+        try var_index.put(self.allocator, stmt.kind.var_decl.name, decl_i);
+        decl_i += 1;
+    }
+
+    // Yalnızca SON terfi bildirimine KADAR olan dilim taranır. Ondan
+    // SONRAKİ `g = h` ataması `h`'yi terfi ETMEZ: o atama `$main`de kalır
+    // ve `h` sıradan bir yerel olabilir. Aksi halde geç bir atama, araya
+    // girmiş `print` gibi deyimlerin ÖNÜNE alınırdı.
+    var changed = true;
+    while (changed) {
+        changed = false;
+        var last_now: ?usize = null;
+        for (module.body, 0..) |stmt, i| {
+            if (stmt.kind == .var_decl and used_in_functions.contains(stmt.kind.var_decl.name)) last_now = i;
+        }
+        const last = last_now orelse break;
+        for (module.body, 0..) |stmt, i| {
+            if (i > last) break;
+            switch (stmt.kind) {
+                .var_decl => |v| {
+                    if (!used_in_functions.contains(v.name)) continue;
+                    var refs: std.StringHashMapUnmanaged(void) = .empty;
+                    defer refs.deinit(self.allocator);
+                    var bound: std.StringHashMapUnmanaged(void) = .empty;
+                    defer bound.deinit(self.allocator);
+                    try collectFreeNamesExpr(self.allocator, v.value, &bound, &refs);
+                    if (try promoteReferencedVars(self.allocator, &refs, &var_index, &used_in_functions)) changed = true;
+                },
+                .assign => |asg| {
+                    const root = exprRootIdent(asg.target) orelse continue;
+                    if (!var_index.contains(root) or !used_in_functions.contains(root)) continue;
+                    var refs: std.StringHashMapUnmanaged(void) = .empty;
+                    defer refs.deinit(self.allocator);
+                    var bound: std.StringHashMapUnmanaged(void) = .empty;
+                    defer bound.deinit(self.allocator);
+                    try collectFreeNamesExpr(self.allocator, asg.target, &bound, &refs);
+                    try collectFreeNamesExpr(self.allocator, asg.value, &bound, &refs);
+                    if (try promoteReferencedVars(self.allocator, &refs, &var_index, &used_in_functions)) changed = true;
+                },
+                .expr_stmt => |e| {
+                    if (!exprIsPromotedMethodCall(e, &used_in_functions)) continue;
+                    var refs: std.StringHashMapUnmanaged(void) = .empty;
+                    defer refs.deinit(self.allocator);
+                    var bound: std.StringHashMapUnmanaged(void) = .empty;
+                    defer bound.deinit(self.allocator);
+                    try collectFreeNamesExpr(self.allocator, e, &bound, &refs);
+                    if (try promoteReferencedVars(self.allocator, &refs, &var_index, &used_in_functions)) changed = true;
+                },
+                else => {},
+            }
+        }
+    }
+
+    var last_promoted: ?usize = null;
+    for (module.body, 0..) |stmt, i| {
+        if (stmt.kind == .var_decl and used_in_functions.contains(stmt.kind.var_decl.name)) last_promoted = i;
+    }
+    self.module_global_init_last = last_promoted orelse 0;
+
+    // Son terfi bildirimine KADAR (dahil) olan ilklendirme diliminde, bir
+    // terfi etmiş değişken kendisinden SONRA bildirilen bir değişkeni
+    // okuyorsa bu tanımsızdır (eski yol çöküyordu). Atamalar bu
+    // bildirimden SONRAYSA `$main`de kalır; kaynak sırası bozulmaz.
+    if (last_promoted) |last| {
+        var ready: std.StringHashMapUnmanaged(void) = .empty;
+        defer ready.deinit(self.allocator);
+        for (module.body, 0..) |stmt, i| {
+            if (i > last) break;
+            switch (stmt.kind) {
+                .var_decl => |v| {
+                    if (!used_in_functions.contains(v.name)) continue;
+                    try ensureGlobalsReady(self.allocator, v.value, v.name, &ready, &var_index, &used_in_functions);
+                    try ready.put(self.allocator, v.name, {});
+                },
+                .assign => |asg| {
+                    const root = exprRootIdent(asg.target) orelse continue;
+                    if (!used_in_functions.contains(root)) continue;
+                    try ensureGlobalsReady(self.allocator, asg.target, root, &ready, &var_index, &used_in_functions);
+                    try ensureGlobalsReady(self.allocator, asg.value, root, &ready, &var_index, &used_in_functions);
+                },
+                .expr_stmt => |e| {
+                    if (!exprIsPromotedMethodCall(e, &used_in_functions)) continue;
+                    const callee = e.call.callee.*;
+                    const root = switch (callee) {
+                        .attribute => |attr| exprRootIdent(attr.obj.*) orelse continue,
+                        else => continue,
+                    };
+                    try ensureGlobalsReady(self.allocator, e, root, &ready, &var_index, &used_in_functions);
+                },
+                else => {},
+            }
+        }
+    }
 
     var idx: usize = 0;
     for (module.body) |stmt| {
@@ -666,6 +906,33 @@ pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions:
         idx += 1;
     }
     self.module_globals_size = idx * FIELD_SLOT_SIZE;
+}
+
+/// Bu üst düzey deyim `$nox_init_globals` içinde (bildirim sırasıyla,
+/// son terfi `var_decl`a kadar) çalışır mı? Ayrıntı: `collectModuleGlobals`.
+pub fn stmtRunsInGlobalInit(self: *const Codegen, stmt: ast.Stmt, index: usize) bool {
+    if (index > self.module_global_init_last) return false;
+    switch (stmt.kind) {
+        .var_decl => |v| return self.module_globals.contains(v.name),
+        .assign => |a| {
+            const root = exprRootIdent(a.target) orelse return false;
+            return self.module_globals.contains(root);
+        },
+        .expr_stmt => |e| return exprIsPromotedMethodCallOnGlobals(e, self),
+        else => return false,
+    }
+}
+
+fn exprIsPromotedMethodCallOnGlobals(expr: ast.Expr, self: *const Codegen) bool {
+    if (expr != .call) return false;
+    const callee = expr.call.callee.*;
+    switch (callee) {
+        .attribute => |attr| {
+            const root = exprRootIdent(attr.obj.*) orelse return false;
+            return self.module_globals.contains(root);
+        },
+        else => return false,
+    }
 }
 
 /// Bir üst-düzey `func_def`/metod gövdesindeki (İÇ İÇE `def`ler DAHİL,

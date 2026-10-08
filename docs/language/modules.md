@@ -89,6 +89,36 @@ print(bump(), bump())
 1 2
 ```
 
+A module-level variable that a function reads is initialised before `main` runs. Whatever its initialiser needs comes with it: a variable
+the initialiser mentions is initialised in the same step, together with the attribute assignments (`cfg.port = 80`) and method calls
+(`names.append("a")`) on those variables that precede the last such declaration in the file. This is what makes the common
+"configure, then boot" shape work:
+
+```nox
+class Config:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+cfg: Config = Config("dev")
+cfg.name = "prod"
+label: str = cfg.name + "!"
+
+def show() -> None:
+    print(label)
+
+show()
+```
+
+```output
+prod!
+```
+
+Statements after the last such declaration, and compound statements such as `if` or `for`, run in `main` after all initialisers. An
+initialiser may not read a module variable that a function reads but that is declared *after* it; the compiler rejects that with a
+message naming both variables instead of reading uninitialised memory.
+
 Under the multi-core runtime each worker keeps its own copy of module state; share data between tasks with channels, `nox.atomic` or
 `nox.sharedmem` ([Concurrency](concurrency.md#the-scheduler)).
 

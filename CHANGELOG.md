@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.0-rc.4]
+
+Modül düzeyindeki `application = nyx.app.boot(cfg, setup)` deseninin SIGSEGV'si ve Nyx blog örneğinin derlenmemesi (v1.170.0'dan beri bilinen konu) düzeltildi.
+
+### Düzeltildi
+
+- **`$nox_init_globals` bayat yerelleri miras alıyordu (kök neden).** Sınıf metodları `$nox_init_globals`ten ÖNCE üretilir ve `genMethod`/`genFunction` `vars`ı çıkışta değil girişte temizler; init fonksiyonu son üretilen metodun yerellerini görürdü. İlklendirici ifadesindeki çıplak `cfg`, Nyx'te son üretilen metodun (`Application.__init__(self, cfg)`) aynı adlı parametresine bağlanıp başka bir fonksiyonun slotunu (`loadl %t1`) okuyordu → `boot` bozuk bir `Config` ile çalışıp çöküyordu (QBE: `nyx_app_boot` içinde `nox_init_globals`ten; LLVM: işleyicide global okunurken). Çakışmayan bir ad (`cfgx`) bayat yerel bulamayıp fonksiyon-değeri yedeğine düşüyor ve `error.Unsupported` ("desteklenmeyen yapı") veriyordu — ismin sonucu değiştirmesinin nedeni buydu. `genNoxInitGlobals` artık her fonksiyon-benzeri codegen girişi gibi fonksiyon-başına durumu sıfırlar.
+- **Terfi geçişli oldu.** Bir fonksiyonun okuduğu modül değişkeni terfi eder (per-worker global); ama ilk değerinin okuduğu BAŞKA bir üst düzey değişken (`cfg`) terfi etmiyor, `$main`de kalıyordu — `$nox_init_globals` onu göremezdi. Artık terfi etmiş bir değişkenin ilklendiricisinin (ve ona yapılan üst düzey öznitelik/indeks atamasının ya da metod çağrısının, son terfi bildirimine kadar) okuduğu üst düzey değişkenler de terfi eder; bu dilim kaynak sırasıyla `$nox_init_globals`te çalışır, `$main` onları yinelemez. Böylece `cfg.secret_key = ...` atamaları `boot(cfg, ...)`ten önce görülür. Nyx'in blog örneği her iki backend'de derlenir ve çalışır (HTTP 200 + CSRF alanı).
+- **Sıra ihlali artık derleme hatası.** Terfi etmiş bir değişkenin ilk değeri kendisinden SONRA bildirilen terfi etmiş bir değişkeni okuyorsa (`a: int = b + 1` / `b: int = 2` ve ikisini de bir fonksiyon okuyor) önceden ilklendirilmemiş belleği okuyup sessiz 0 / çökme veriyordu; artık hangi değişkenin hangisini okuduğunu söyleyen bir hatayla (`GlobalInitOrder`) reddedilir.
+
+### Test
+
+- Golden `module_global_init_reads_unpromoted_main_local` (iki backend + IR anlık görüntüsü): çakışan (`cfg`) ve çakışmayan ad, geçişli terfi, init dilimindeki öznitelik ataması ve `list.append`, dilim sonrası `append` `$main`de kalır.
+- `rejected_global_init_reads_later_global` → `GlobalInitOrder`.
+- Nyx 0.21.0 (49 test), Aether (24 test), noxlang.com sitesi ve Nyx blog örneği yeni derleyiciyle doğrulandı.
+
+### Bilinen davranış
+
+- Bir işçi başına modül durumu kopyası olduğundan (v1.143'ten beri belgeli) terfi etmiş değişkenlerin ilklendiricileri (ör. `nyx.app.boot`) her işçide çalışır; `nox.http.serve_multicore` ile bu, işçi başına bir Nyx uygulaması demektir. `if`/`for` gibi bileşik üst düzey deyimler `$main`de, tüm ilklendiricilerden SONRA çalışır.
+
 ## [2.0.0-rc.3]
 
 noxlang.com sitesi, birleşik dağıtım yığını, noxpkg yedekleme ve alan adı geçişi.
@@ -32,7 +52,7 @@ noxlang.com sitesi, birleşik dağıtım yığını, noxpkg yedekleme ve alan ad
 
 ### Bilinen konu
 
-- Nyx 0.21.0'ın "modül düzeyinde `application = nyx.app.boot(...)`" deseni bu derleyicide çöker ve Nyx'in blog örneği derlenmez (v1.170.0'dan beri; bu sürümde değil). Site, içeriği başlatıcı ifadeleriyle yükleyip Nyx uygulamasını işçi başına tembelce açarak bunu aşar; kök neden ayrıca araştırılacak.
+- Nyx 0.21.0'ın "modül düzeyinde `application = nyx.app.boot(...)`" deseni bu derleyicide çöker ve Nyx'in blog örneği derlenmez (v1.170.0'dan beri; bu sürümde değil). Site, içeriği başlatıcı ifadeleriyle yükleyip Nyx uygulamasını işçi başına tembelce açarak bunu aşar. **Düzeltildi: v2.0.0-rc.4.**
 
 ## [2.0.0-rc.2]
 

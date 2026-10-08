@@ -28926,3 +28926,17 @@ liste/dict/str/sınıf düzenleri — özel ve kararsız (docs/NATIVE-API.md §3
 Nox yüzü `nox.native` (argümanlar `Plugin.arg_*` ile biriktirilir, `call_*` ile çağrılır; hata `NativeError`). Çağrı sözleşmesi: yerel işlev çağıran iş parçacığında senkron; hata sınırından unwind yok.
 Bilinçli olarak v1 dışı: liste/dict/nesne belleğine doğrudan erişim, Nox closure'ının C işlev işaretçisi olarak geçirilmesi, GC kancaları, Nox-Nox ikili bağlama. Kapsam dışı bırakılan: iç sembollerin `__nox_internal_` önekiyle mekanik yeniden adlandırılması (büyük, ayrı iş).
 Golden/entegrasyon: `tests/cli/nni_test.zig` (C eklentisi, tamsayı/ondalık/bool/dize, hata, bilinmeyen işlev, iş parçacığından olay, her iki backend); birim: tutamaç üreteç sayacı.
+
+## 3.286 Modül-global ilklendirme: bayat yerel sıfırlaması, geçişli terfi, sıra denetimi (v2.0.0-rc.4)
+
+Nyx'in `application = nyx.app.boot(cfg, setup)` deseni (yalnızca `application`ı bir fonksiyon okur) SIGSEGV veriyor, Nyx'in blog örneği ise "desteklenmeyen yapı" ile derlenmiyordu (v1.170.0'dan beri). Kök neden iki parçalıydı:
+(1) `genNoxInitGlobals` fonksiyon-başına durumu (`vars`, `narrowed_unbox`, `stack_local_names`, `current_*`) sıfırlamıyordu; sınıf metodları ondan önce üretildiği için son metodun yerelleri/parametreleri
+(Nyx'te `Application.__init__(self, cfg)`) ilklendirici ifadelerine sızıyordu — `cfg` o parametreye bağlanıp başka bir fonksiyonun slotunu okuyordu; çakışmayan ad (`cfgx`) fonksiyon-değeri yedeğine düşüp `error.Unsupported` veriyordu.
+(2) Terfi (`collectModuleGlobals`) yalnızca bir fonksiyon gövdesinde okunan adlara uygulanıyordu; o değişkenin ilklendiricisinin okuduğu üst düzey `cfg` `$main`in yereli kalıyor ve init fonksiyonunda erişilemiyordu.
+
+**Karar:** terfi geçişlidir. Terfi etmiş bir `var_decl`ın ilklendiricisi ve ona yapılan üst düzey atama (`cfg.port = ...`, `xs[i] = ...`) / alıcısı terfi etmiş metod çağrısı (`xs.append(...)`) —
+son terfi bildirimine kadar (`Codegen.module_global_init_last`)— okuduğu üst düzey değişkenleri de terfi ettirir (sabit noktaya kadar). Bu dilim kaynak sırasıyla `$nox_init_globals`te çalışır ve `$main` onu yinelemez
+(`stmtRunsInGlobalInit`); dilim sonrası deyimler ve bileşik deyimler (`if`/`for`/`try`) `$main`de, tüm ilklendiricilerden sonra kalır (§router.nox "bilinçli v1 semantiği" ile tutarlı). Bir terfi etmiş ilklendirici
+kendisinden SONRA bildirilen terfi etmiş bir değişkeni okuyorsa `error.GlobalInitOrder` (derleme hatası, ileti iki değişkeni adlandırır). Değişmez İlkeler etkilenmez: ownership/tip sistemi/unwind/gizli global değişmedi;
+terfi etmiş değişkenler zaten işçi başına kopya olarak yaşıyordu, yalnızca hangi deyimlerin o bağlamda çalıştığı genişledi. Her iki backend aynı yolu kullanır (kayıt/ön-geçiş ortak, `genNoxInitGlobals` seam üstünde).
+Golden: `module_global_init_reads_unpromoted_main_local` (fixture korpusu: QBE+LLVM), `rejected_global_init_reads_later_global` (`GlobalInitOrder`).

@@ -611,6 +611,7 @@ pub const Codegen = struct {
     pub const registerClass = registration.registerClass;
     pub const registerClassesInOrder = registration.registerClassesInOrder;
     pub const collectModuleGlobals = registration.collectModuleGlobals;
+    pub const stmtRunsInGlobalInit = registration.stmtRunsInGlobalInit;
     pub const inferFieldType = registration.inferFieldType;
     pub const registerFunc = registration.registerFunc;
     pub const registerExternFunc = registration.registerExternFunc;
@@ -1151,6 +1152,12 @@ pub const Codegen = struct {
     /// FIELD_SLOT_SIZE` ofsetinde (`TAG_SIZE` YOK, bkz. `GlobalVar`nin
     /// belge notu).
     module_globals_size: usize = 0,
+    /// Son terfi etmiş `var_decl`ın `module.body` indeksi (dahil). Bu
+    /// indekse KADAR (dahil) olan, terfi etmiş bir globale yazan üst düzey
+    /// atamalar/metod çağrıları `$nox_init_globals`e girer; SONRAKİLER
+    /// `$main`de, kaynak sırasındaki yerinde kalır. Ayrıntı:
+    /// `registration.zig` `collectModuleGlobals`.
+    module_global_init_last: usize = 0,
     /// Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): `genIf`/`genWhile`nin
     /// `checker.zig`'in `FnCtx.narrowed`iyle AYNI DAR örüntüyü (yalnızca
     /// `if x != None:`/`if x == None:`) MEKANİK olarak YANSITAN örtüsü —
@@ -1938,16 +1945,14 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
 
     var loose: std.ArrayListUnmanaged(ast.Stmt) = .empty;
     defer loose.deinit(allocator);
-    for (module.body) |stmt| {
+    for (module.body, 0..) |stmt, i| {
         switch (stmt.kind) {
             .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
-            // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
-            // planı): modül-global'i OLAN bir `var_decl`, `$main`in SIRADAN
-            // yerel/deyim işleyişine (collectLocals/genStmts) HİÇ ULAŞMAZ
-            // — initializer'ı ZATEN `$nox_init_globals`de (yukarıda,
-            // `genNoxInitGlobals`) üretildi.
-            .var_decl => |v| if (!gen.module_globals.contains(v.name)) try loose.append(allocator, stmt),
-            else => try loose.append(allocator, stmt),
+            // İlklendirme dilimindeki terfi `var_decl` / globale atama /
+            // globale metod çağrısı `$nox_init_globals`te ÜRETİLDİ — `$main`
+            // onları TEKRAR çalıştırmaz. Dilimden sonraki atamalar ve
+            // terfi ETMEMİŞ değişkenler burada kalır.
+            else => if (!gen.stmtRunsInGlobalInit(stmt, i)) try loose.append(allocator, stmt),
         }
     }
     // Faz 21 aşama 4: modül HERHANGİ bir async özelliği (async def/spawn/

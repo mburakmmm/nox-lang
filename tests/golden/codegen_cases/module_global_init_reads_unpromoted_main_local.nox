@@ -1,0 +1,41 @@
+# Nyx deseni: `application = nyx.app.boot(cfg, setup)` — bir fonksiyonun yalnızca
+# `server`ı okuduğu, ama ilk değerinin üst düzey `cfg`ye (ve onun üzerindeki
+# atamalara) dayandığı durum. Eskiden `cfg` terfi etmediğinden
+# `$nox_init_globals` içinde çözülemiyordu: ya son üretilen metodun aynı adlı
+# parametresine (`Server.__init__(cfg)`) bayat bir yerel olarak bağlanıp çöküyor
+# ya da (`settings` gibi çakışmayan ad) "desteklenmeyen yapı" hatası veriyordu.
+class Settings:
+    name: str
+    port: int
+
+    def __init__(self, name: str, port: int) -> None:
+        self.name = name
+        self.port = port
+
+# Son üretilen metod: parametresi `cfg` (global ile AYNI ad).
+class Server:
+    label: str
+
+    def __init__(self, cfg: Settings) -> None:
+        self.label = cfg.name + ":" + str(cfg.port)
+
+def describe() -> str:
+    return server.label + "/" + other.label
+
+def boots() -> int:
+    return len(log)
+
+log: list[str] = []
+cfg: Settings = Settings("dev", 80)
+cfg.name = "prod"
+cfg.port = 8423
+settings: Settings = Settings("x", 1)
+settings.port = 2
+log.append("boot")
+server: Server = Server(cfg)
+other: Server = Server(settings)
+log.append("after")
+print(describe())
+print(boots())
+print(cfg.name)
+print(settings.port)

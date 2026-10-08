@@ -2236,6 +2236,8 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             );
             std.process.exit(1);
         },
+        // Ayrıntılı ileti (hangi değişken hangisini okuyor) codegen'de basıldı.
+        error.GlobalInitOrder => std.process.exit(1),
         else => |e| return e,
     };
 
