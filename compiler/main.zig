@@ -1101,7 +1101,7 @@ fn clangAvailable(gpa: std.mem.Allocator, io: std.Io) bool {
 /// v1.143.0: `BackendChoice.auto`yu somut bir backend'e (`true` = LLVM) çözer. LLVM varsayılandır
 /// (QBE'ye göre ~1.0-1.5x daha hızlı kod, derleme süresi aynı); QBE'ye düşülen durumlar: freestanding
 /// profili (LLVM'in OS iş parçacığı havuzu yok), `--target`/`--emit-asm` (yalnızca QBE yolu hedef/asm
-/// çıktısını destekler), Windows ana makinesi (LLVM yolunda MinGW bağlama argümanları yok) ve `clang`ın
+/// çıktısını destekler), Windows ana makinesi (yalnızca `zig` varsa LLVM; aksi halde QBE) ve `clang`/`zig`in
 /// PATH'te bulunmaması (bu son durumda tek satırlık bir not basılır — checker'ın `spawn` tip kuralları
 /// backend'e göre farklıdır, sessiz düşüş şaşırtıcı olurdu).
 fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, profile: codegen.Profile, target: ?[]const u8, emit_asm: bool) bool {
@@ -1112,7 +1112,9 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
     }
     if (profile == .freestanding) return false;
     if (target != null or emit_asm) return false;
-    if (builtin.os.tag == .windows) return false;
+    // v2.0 madde 1: Windows'ta LLVM yolu YALNIZCA `zig cc` (MinGW hedefi, CI'da doğrulandı) varken otomatik seçilir;
+    // yalnızca `clang` (genelde MSVC hedefli) olan makinede QBE + MinGW `cc` yolu korunur. `--backend llvm` her zaman zorlar.
+    if (builtin.os.tag == .windows) return ccDriver(gpa, io) == .zig_cc;
     if (!clangAvailable(gpa, io)) {
         if (g_is_tr) {
             printErr("not: clang/zig bulunamadi, QBE backend'i kullaniliyor (varsayilan LLVM backend'i icin PATH'te clang ya da zig gerekir; --backend qbe ile bu notu kapatabilirsiniz)\n", .{});

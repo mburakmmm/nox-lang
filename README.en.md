@@ -395,7 +395,7 @@ that package (and its transitive dependencies) declares via `extern
 def`. Stdlib modules like `nox.fs`/`nox.os` also perform no path/input
 validation (e.g. `nox.fs` is not protected against path traversal). See
 [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundary--extern-def--lowlevel)
-for details (Turkish).
+for details (Turkish), and [docs/SECURITY.md](docs/SECURITY.md) for the full 2.0 trust-boundary summary.
 
 ## Project Structure
 

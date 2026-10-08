@@ -395,7 +395,7 @@ tip/sahiplik garantilerinin dışında, hiçbir sandbox/doğrulama olmadan
 bağımlılıklarının) `extern def` ile bildirdiği native koda güvenmek
 demektir. `nox.fs`/`nox.os` gibi stdlib modülleri de path/girdi
 doğrulaması yapmaz (ör. `nox.fs` path-traversal'a karşı korumasızdır).
-Ayrıntılar için [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundary--extern-def--lowlevel).
+Ayrıntılar için [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundary--extern-def--lowlevel) ve 2.0 güven sınırı özeti için [docs/SECURITY.md](docs/SECURITY.md) (İngilizce).
 
 ## Proje Yapısı
 

@@ -57,6 +57,18 @@ jobs:
     # BEKLEDİĞİNDEN ucuz).
     timeout-minutes: 40
     steps:
+      # v2.0 madde 8: etiket (vX.Y.Z[-rc.N]) ile build.zig.zon sürümü VE CHANGELOG girişi tutarlı olmalı; aksi halde release durur.
+      - uses: actions/checkout@v4
+      - name: Sürüm tutarlılığı (etiket == build.zig.zon == CHANGELOG)
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME:-}"
+          if [ -z "$tag" ] || [ "${GITHUB_REF_TYPE:-}" != "tag" ]; then echo "etiket değil (workflow_dispatch): sürüm kontrolü atlandı"; exit 0; fi
+          zon=$(grep -o '\.version = "[^"]*"' build.zig.zon | sed -E 's/\.version = "([^"]*)"/\1/')
+          if [ "v$zon" != "$tag" ]; then echo "::error::etiket $tag, build.zig.zon sürümü v$zon — uyuşmuyor"; exit 1; fi
+          grep -q "^## \[$zon\]" CHANGELOG.md || { echo "::error::CHANGELOG.md'de '## [$zon]' yok"; exit 1; }
+          echo "sürüm tutarlı: $tag"
+
       - name: main'deki ci.yml sonucunu bekle/doğrula (poll)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -178,6 +190,7 @@ jobs:
             nox-lang-*.tar.gz
             nox-lang-*.tar.gz.sha256
           draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
 
   # Faz LL.7 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows paketi —
@@ -275,4 +288,5 @@ jobs:
             nox-lang-*.zip
             nox-lang-*.zip.sha256
           draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

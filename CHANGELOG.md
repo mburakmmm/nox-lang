@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.171.2]
+
+### Değişti
+
+- **Windows varsayılan backend'i:** `zig` PATH'teyse LLVM (`zig cc -target x86_64-windows-gnu`; CI'da uçtan uca doğrulandı), değilse QBE + MinGW `cc`. `--backend llvm|qbe` her zaman zorlar.
+- `release.yml` `ci-gate`: etiket == `build.zig.zon` sürümü == CHANGELOG girişi kontrolü; `-rc.N` etiketleri GitHub'da pre-release işaretlenir.
+
+### Eklendi
+
+- `docs/SECURITY.md` (2.0 güven sınırı özeti: `extern def`/`lowlevel`/NNI/bağımlılıklar/stdlib yolları), README bağlantıları, PLATFORMS.md güncellemesi.
+
 ## [1.171.1]
 
 ### Eklendi
