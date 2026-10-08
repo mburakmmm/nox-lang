@@ -153,6 +153,38 @@ export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
 /// "yakalanamaz, process-abort" deyimi — bu bir `raise` DEĞİLDİR (AGENTS.
 /// md İlke #3 İLE TUTARLI: QBE çıktısında unwind tablosu/landing pad
 /// ÜRETİLMEZ, `except` İLE YAKALANAMAZ).
+/// v2.0: `int ** int` — tam sayı üs alma (ikili üs alma, 64-bit sarmalı çarpma; diğer düz `int` işlemleriyle aynı). Önceden `pow()` üzerinden
+/// çift duyarlıklı hesaplanıyor, büyük sonuçlar kesinliğini kaybediyor ve iki backend farklı değerler üretiyordu. Negatif üs `1 / base**|exp|`
+/// tamsayı kesmesidir: yalnızca |taban| == 1 sıfırdan farklı kalır. `0 ** negatif` kodgen'de `ZeroDivisionError` olur.
+export fn nox_int_pow(base: i64, exp: i64) callconv(.c) i64 {
+    if (exp < 0) {
+        if (base == 1) return 1;
+        if (base == -1) return if (@mod(exp, 2) == 0) 1 else -1;
+        return 0;
+    }
+    var result: i64 = 1;
+    var b: i64 = base;
+    var e: u64 = @intCast(exp);
+    while (e > 0) {
+        if (e & 1 == 1) result = result *% b;
+        b = b *% b;
+        e >>= 1;
+    }
+    return result;
+}
+
+test "nox_int_pow: tam sayi us alma, sarma ve negatif us" {
+    try std.testing.expectEqual(@as(i64, 1024), nox_int_pow(2, 10));
+    try std.testing.expectEqual(@as(i64, 1), nox_int_pow(0, 0));
+    try std.testing.expectEqual(@as(i64, -8), nox_int_pow(-2, 3));
+    try std.testing.expectEqual(@as(i64, 4052555153018976267), nox_int_pow(3, 39));
+    try std.testing.expectEqual(@as(i64, -6289078614652622815), nox_int_pow(3, 40));
+    try std.testing.expectEqual(@as(i64, 0), nox_int_pow(2, 64));
+    try std.testing.expectEqual(@as(i64, 0), nox_int_pow(2, -1));
+    try std.testing.expectEqual(@as(i64, -1), nox_int_pow(-1, -3));
+    try std.testing.expectEqual(@as(i64, 1), nox_int_pow(-1, -2));
+}
+
 export fn nox_int_overflow_trap(rt: ?*anyopaque, kind_name: ?[*:0]const u8) noreturn {
     const name = kind_name orelse "?";
     diag_sink.report(rt, "nox: '{s}' tipinde tamsayı taşması — program sonlandırılıyor\n", .{name});

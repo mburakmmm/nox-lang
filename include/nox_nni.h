@@ -104,6 +104,10 @@ struct NoxApiV1 {
 /* Every plugin exports this symbol. Return NOX_ABI_UNSUPPORTED if `api->abi_version` is too old. */
 NOX_EXPORT NoxStatus nox_plugin_init_v1(const NoxApiV1* api, NoxRuntime* rt);
 
+/* OPTIONAL (Plugin API v1): if exported, the host calls it exactly once, from the thread that closes the plugin, just before the
+ * library is unloaded. Stop native threads and release resources here; after it returns the host may unload the code. */
+NOX_EXPORT void nox_plugin_shutdown_v1(const NoxApiV1* api, NoxRuntime* rt);
+
 #ifdef __cplusplus
 }
 #endif

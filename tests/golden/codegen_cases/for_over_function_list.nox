@@ -1,0 +1,13 @@
+# v2.0: list[(T) -> U] üzerinde for döngüsü (döngü değişkeni işlev imzasını taşır) — önceden "desteklenmeyen yapı" hatası veriyordu.
+def make_adder(k: int) -> (int) -> int:
+    def add(x: int) -> int:
+        return x + k
+    return add
+fs: list[(int) -> int] = [make_adder(1), make_adder(2), lambda z: z * 10]
+for f in fs:
+    print(f(3))
+def dbl(x: int) -> int:
+    return x * 2
+gs: list[(int) -> int] = [dbl, lambda z: z + 100]
+for g in gs:
+    print(g(1))

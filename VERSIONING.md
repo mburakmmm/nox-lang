@@ -2,7 +2,7 @@
 
 Bu belge, Nox'un `v1.0.0`dan itibaren izleyeceği sürüm numaralandırma
 politikasını ve kullanıcılara verilen somut stabilite garantilerini
-tanımlar (bkz. `docs/uretim-hazirlik-analizi.md` Faz Z.2). **`v0.1
+tanımlar (bkz. `project/uretim-hazirlik-analizi.md` Faz Z.2). **`v0.1
 (taslak)` sürümü bu politikanın KAPSAMI DIŞINDADIR** — taslak aşamasında
 HİÇBİR geriye dönük uyumluluk garantisi verilmemiştir/verilmeyecektir;
 bu belge yalnızca `v1.0.0` ETİKETİ atıldıktan SONRAKİ sürümler için
@@ -40,7 +40,7 @@ kümesi KÜÇÜLMEZ), stdlib (`nox.*`) fonksiyon imzaları ve davranışı,
   derlenmiş Nox `.o` dosyalarının birbiriyle uyumu GARANTİ EDİLMEZ — bir Nox
   programı HER ZAMAN KAYNAKTAN yeniden derlenmelidir. **İSTİSNA (v2.0.0'dan
   itibaren, genel ve kararlı):** Nox Native Interface v1 (`include/nox_nni.h`,
-  `docs/NATIVE-API.md`) ve belgelenmiş `extern def` C ABI eşlemesi.
+  `docs/apis/` (NAPI, NNI, Plugin API)) ve belgelenmiş `extern def` C ABI eşlemesi.
 - **Hata mesajı/tanılama METNİ.** Bir hatanın TÜRÜ (ör. `TypeMismatch`)
   sabit kalır, ama TAM metni (bkz. Faz T.2'nin çoklu-tanılama biçimi)
   PATCH sürümlerinde bile İYİLEŞTİRİLEBİLİR — hata metnini ayrıştırıp
@@ -114,13 +114,13 @@ YENİ bir PATCH sürümüyle gelir.
 
 ## 5. `v0.1` → `v1.0.0` Geçişi
 
-`v1.0.0` etiketi, `docs/uretim-hazirlik-analizi.md`nin Faz Q–Y
+`v1.0.0` etiketi, `project/uretim-hazirlik-analizi.md`nin Faz Q–Y
 gruplarının TAMAMININ tamamlandığı somut kontrol listesini (bkz.
 `nox-teknik-spesifikasyon.md` §3.43, Faz Z.1) KARŞILADIKTAN SONRA
 atılır (bkz. Faz Z.3). `v1.0.0`dan ÖNCEKİ HİÇBİR etiket/commit BU
 belgenin garantilerine TABİ DEĞİLDİR.
 
-## 5. Stdlib sınıf kurucuları (v2.0.0 sözleşmesi)
+## 6. Stdlib sınıf kurucuları (v2.0.0 sözleşmesi)
 
 Çalışma zamanının/stdlib'in ürettiği ve kullanıcı kodunun (özellikle testlerin ve çerçevelerin) doğrudan kurabildiği sınıflar (`HttpRequest`,
 `HttpResponse`, `Row`, `Statement`, `JsonValue` sarmalayıcıları, ...) için: bir kurucunun mevcut parametreleri bir MAJOR sürüm içinde

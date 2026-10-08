@@ -1078,6 +1078,8 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
                         loop_var_info.class_name = ehi.class_name;
                         loop_var_info.elem_qtype = ehi.elem_qtype;
                         loop_var_info.elem_heap_info = ehi.nested;
+                        // v2.0: `list[(T) -> U]` üzerinde `for f in fs:` — döngü değişkeni, çağrılabilmesi için işlev imzasını taşımalı.
+                        loop_var_info.func_sig = ehi.func_sig;
                     } else if (src.elem_is_str) {
                         loop_var_info.heap = .str;
                     }

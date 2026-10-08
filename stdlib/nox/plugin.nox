@@ -1,0 +1,324 @@
+# nox.plugin — Plugin API v1: NNI (nox.native) ÜSTÜNDE manifestli, sürüm-denetimli, yetenek-onaylı eklenti yükleme. Bkz. docs (The Plugin API).
+#
+# Bir eklenti = bir paylaşımlı kitaplık (NNI v1, `nox_plugin_init_v1`) + `nox-plugin.json` manifesti:
+#
+#   {
+#     "name": "acme.image", "version": "1.2.0", "plugin_api": 1,
+#     "library": {"macos-arm64": "libimage.dylib", "linux-x64": "libimage.so", "windows-x64": "image.dll"},
+#     "capabilities": ["fs.read"],
+#     "functions": [{"name": "resize", "args": ["int", "int", "str"], "returns": "str"}]
+#   }
+#
+# Kullanım:
+#   from nox.plugin import load_plugin, LoadedPlugin, PluginError
+#   p: LoadedPlugin = load_plugin("./image/nox-plugin.json", ["fs.read"])
+#   p.arg_int(640)
+#   p.arg_int(480)
+#   p.arg_str("a.png")
+#   out: str = p.call_str("resize")      # argüman sayısı/türleri ve dönüş türü manifest imzasına karşı DENETLENİR
+#   p.shutdown()                         # nox_plugin_shutdown_v1 (varsa) + kitaplığı kapat
+#
+# Yetenekler (capabilities) bir BİLDİRİM + ONAY mekanizmasıdır, sandbox DEĞİLDİR: eklenti yüklendikten sonra TAM yerel yetkiyle çalışır
+# (AGENTS.md §9.5). Çağıran, manifestin istediği her yeteneği `allowed` listesinde AÇIKÇA vermelidir ("*" hepsini verir).
+# Standart yetenek adları: fs.read, fs.write, net, process, env, threads, unsafe.
+
+from nox.json import parse, array_len, array_get, object_len, object_key, object_value, as_string, as_number, is_string, is_array, is_object, is_number
+from nox.fs import read_to_string, exists
+from nox.native import Plugin, Event, NativeError, open_plugin
+
+extern def nox_native_func_count_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_func_name_raw(h: int, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_native_platform_raw() -> str from "zig-out/lib/noxrt.o" with_rt
+
+PLUGIN_API_VERSION: int = 1
+
+class PluginError(Exception):
+    pass
+
+class FunctionSpec:
+    name: str
+    args: list[str]
+    returns: str
+
+    def __init__(self, name: str, args: list[str], returns: str) -> None:
+        self.name = name
+        self.args = args
+        self.returns = returns
+
+class PluginManifest:
+    name: str
+    version: str
+    plugin_api: int
+    library: str
+    capabilities: list[str]
+    functions: list[FunctionSpec]
+
+    def __init__(self, name: str, version: str, plugin_api: int, library: str, capabilities: list[str], functions: list[FunctionSpec]) -> None:
+        self.name = name
+        self.version = version
+        self.plugin_api = plugin_api
+        self.library = library
+        self.capabilities = capabilities
+        self.functions = functions
+
+# Ana makine anahtarı: "macos-arm64", "linux-x64", "linux-arm64", "windows-x64".
+def host_platform() -> str:
+    return nox_native_platform_raw()
+
+def obj_get(v: JsonValue, key: str) -> JsonValue | None:
+    i: int = 0
+    n: int = object_len(v)
+    while i < n:
+        if object_key(v, i) == key:
+            return object_value(v, i)
+        i = i + 1
+    return None
+
+def dir_of(path: str) -> str:
+    i: int = len(path) - 1
+    while i >= 0:
+        if path[i] == "/" or path[i] == "\\":
+            return path[0:i + 1]
+        i = i - 1
+    return ""
+
+def kind_ok(kind: str) -> bool:
+    return kind == "int" or kind == "float" or kind == "bool" or kind == "str" or kind == "none"
+
+def require_string(v: JsonValue, key: str, what: str) -> str:
+    f: JsonValue | None = obj_get(v, key)
+    if f == None:
+        raise PluginError(what + ": missing field '" + key + "'")
+    if not is_string(f):
+        raise PluginError(what + ": field '" + key + "' must be a string")
+    return as_string(f)
+
+# `nox-plugin.json` dosyasını okur ve DOĞRULAR (sürüm, kitaplık seçimi, imzalar). Kitaplık yolu manifest dizinine göre çözülür.
+def read_manifest(manifest_path: str) -> PluginManifest:
+    if not exists(manifest_path):
+        raise PluginError("manifest not found: " + manifest_path)
+    root: JsonValue = parse(read_to_string(manifest_path))
+    if not is_object(root):
+        raise PluginError(manifest_path + ": the manifest root must be an object")
+    name: str = require_string(root, "name", manifest_path)
+    version: str = require_string(root, "version", manifest_path)
+
+    api_field: JsonValue | None = obj_get(root, "plugin_api")
+    if api_field == None:
+        raise PluginError(name + ": missing field 'plugin_api' (a number)")
+    if not is_number(api_field):
+        raise PluginError(name + ": field 'plugin_api' must be a number")
+    api: int = int(as_number(api_field))
+    if api != PLUGIN_API_VERSION:
+        raise PluginError(name + ": unsupported plugin_api " + str(api) + " (this runtime supports " + str(PLUGIN_API_VERSION) + ")")
+
+    lib_field: JsonValue | None = obj_get(root, "library")
+    if lib_field == None:
+        raise PluginError(name + ": missing field 'library' (a platform -> file table)")
+    if not is_object(lib_field):
+        raise PluginError(name + ": field 'library' must be an object")
+    platform: str = host_platform()
+    lib_name: str = ""
+    found: bool = False
+    li: int = 0
+    while li < object_len(lib_field):
+        if object_key(lib_field, li) == platform:
+            lib_name = as_string(object_value(lib_field, li))
+            found = True
+        li = li + 1
+    if not found:
+        raise PluginError(name + ": no 'library' entry for this platform (" + platform + ")")
+    lib_path: str = lib_name
+    if not (lib_name.startswith("/") or (len(lib_name) > 1 and lib_name[1] == ":")):
+        lib_path = dir_of(manifest_path) + lib_name
+
+    caps: list[str] = []
+    caps_field: JsonValue | None = obj_get(root, "capabilities")
+    if caps_field != None:
+        if not is_array(caps_field):
+            raise PluginError(name + ": field 'capabilities' must be an array")
+        ci: int = 0
+        while ci < array_len(caps_field):
+            caps.append(as_string(array_get(caps_field, ci)))
+            ci = ci + 1
+
+    specs: list[FunctionSpec] = []
+    fn_field: JsonValue | None = obj_get(root, "functions")
+    if fn_field == None:
+        raise PluginError(name + ": missing field 'functions' (an array)")
+    if not is_array(fn_field):
+        raise PluginError(name + ": field 'functions' must be an array")
+    fi: int = 0
+    while fi < array_len(fn_field):
+        entry: JsonValue = array_get(fn_field, fi)
+        fname: str = require_string(entry, "name", name + ".functions[" + str(fi) + "]")
+        ret: str = require_string(entry, "returns", name + "." + fname)
+        if not kind_ok(ret):
+            raise PluginError(name + "." + fname + ": unknown return type '" + ret + "'")
+        argkinds: list[str] = []
+        args_field: JsonValue | None = obj_get(entry, "args")
+        if args_field != None:
+            if not is_array(args_field):
+                raise PluginError(name + "." + fname + ": field 'args' must be an array")
+            ai: int = 0
+            while ai < array_len(args_field):
+                k: str = as_string(array_get(args_field, ai))
+                if k != "..." and not kind_ok(k):
+                    raise PluginError(name + "." + fname + ": unknown argument type '" + k + "'")
+                if k == "..." and len(argkinds) == 0:
+                    raise PluginError(name + "." + fname + ": '...' cannot be the first argument")
+                argkinds.append(k)
+                ai = ai + 1
+        specs.append(FunctionSpec(fname, argkinds, ret))
+        fi = fi + 1
+    return PluginManifest(name, version, api, lib_path, caps, specs)
+
+def capability_granted(cap: str, allowed: list[str]) -> bool:
+    for a in allowed:
+        if a == "*" or a == cap:
+            return True
+    return False
+
+class LoadedPlugin:
+    manifest: PluginManifest
+    native: Plugin
+    pushed: list[str]
+    open: bool
+
+    def __init__(self, manifest: PluginManifest, native: Plugin) -> None:
+        self.manifest = manifest
+        self.native = native
+        self.pushed = []
+        self.open = True
+
+    def spec_of(self, name: str) -> FunctionSpec:
+        for f in self.manifest.functions:
+            if f.name == name:
+                return f
+        raise PluginError(self.manifest.name + ": the manifest declares no function '" + name + "'")
+
+    def has_function(self, name: str) -> bool:
+        for f in self.manifest.functions:
+            if f.name == name:
+                return True
+        return False
+
+    def arg_int(self, v: int) -> None:
+        self.native.arg_int(v)
+        self.pushed.append("int")
+
+    def arg_float(self, v: float) -> None:
+        self.native.arg_float(v)
+        self.pushed.append("float")
+
+    def arg_bool(self, v: bool) -> None:
+        self.native.arg_bool(v)
+        self.pushed.append("bool")
+
+    def arg_str(self, v: str) -> None:
+        self.native.arg_str(v)
+        self.pushed.append("str")
+
+    # Biriken argümanları manifest imzasıyla karşılaştırır; uyuşmazlıkta PluginError (eklenti HİÇ çağrılmaz).
+    def check_call(self, name: str, want_ret: str) -> None:
+        if not self.open:
+            raise PluginError(self.manifest.name + ": the plugin is closed")
+        if not self.has_function(name):
+            self.clear_args()
+        spec: FunctionSpec = self.spec_of(name)
+        if spec.returns != want_ret:
+            self.clear_args()
+            raise PluginError(name + ": returns " + spec.returns + ", not " + want_ret)
+        i: int = 0
+        expected: str = ""
+        variadic: bool = len(spec.args) > 0 and spec.args[len(spec.args) - 1] == "..."
+        fixed: int = len(spec.args)
+        if variadic:
+            fixed = len(spec.args) - 1
+        if len(self.pushed) < fixed or (not variadic and len(self.pushed) != fixed):
+            got_n: int = len(self.pushed)
+            self.clear_args()
+            raise PluginError(name + ": expected " + str(fixed) + " argument(s), got " + str(got_n))
+        while i < len(self.pushed):
+            if i < fixed:
+                expected = spec.args[i]
+            else:
+                expected = spec.args[fixed - 1]
+            if self.pushed[i] != expected:
+                got: str = self.pushed[i]
+                self.clear_args()
+                raise PluginError(name + ": argument " + str(i + 1) + " must be " + expected + ", got " + got)
+            i = i + 1
+
+    def reset_args(self) -> None:
+        self.pushed = []
+
+    # Henüz çağrılmamış biriken argümanları (hem Nox tarafı hem NNI host'u) atar.
+    def clear_args(self) -> None:
+        self.pushed = []
+        self.native.clear_args()
+
+    def finish(self) -> None:
+        self.reset_args()
+
+    def call(self, name: str) -> None:
+        self.check_call(name, "none")
+        self.reset_args()
+        self.native.call(name)
+
+    def call_int(self, name: str) -> int:
+        self.check_call(name, "int")
+        self.reset_args()
+        return self.native.call_int(name)
+
+    def call_float(self, name: str) -> float:
+        self.check_call(name, "float")
+        self.reset_args()
+        return self.native.call_float(name)
+
+    def call_bool(self, name: str) -> bool:
+        self.check_call(name, "bool")
+        self.reset_args()
+        return self.native.call_bool(name)
+
+    def call_str(self, name: str) -> str:
+        self.check_call(name, "str")
+        self.reset_args()
+        return self.native.call_str(name)
+
+    def poll_event(self) -> Event | None:
+        return self.native.poll_event()
+
+    def wait_event(self, timeout_ms: int) -> Event | None:
+        return self.native.wait_event(timeout_ms)
+
+    def shutdown(self) -> None:
+        if self.open:
+            self.open = False
+            self.native.close()
+
+# Manifesti okur, yetenekleri `allowed` ile karşılaştırır, kitaplığı yükler, `nox_plugin_init_v1`i çağırır ve KAYITLI işlev kümesinin
+# manifestin `functions` listesiyle BİREBİR aynı olduğunu doğrular.
+def load_plugin(manifest_path: str, allowed: list[str]) -> LoadedPlugin:
+    m: PluginManifest = read_manifest(manifest_path)
+    for cap in m.capabilities:
+        if not capability_granted(cap, allowed):
+            raise PluginError(m.name + ": capability not granted: " + cap)
+    native: Plugin = open_plugin(m.library)
+    declared: int = len(m.functions)
+    registered: int = nox_native_func_count_raw(native.handle)
+    ok: bool = registered == declared
+    ri: int = 0
+    while ok and ri < registered:
+        rn: str = nox_native_func_name_raw(native.handle, ri)
+        found: bool = False
+        for f in m.functions:
+            if f.name == rn:
+                found = True
+        if not found:
+            ok = False
+        ri = ri + 1
+    if not ok:
+        native.close()
+        raise PluginError(m.name + ": registered functions do not match the manifest (" + str(registered) + " registered, " + str(declared) + " declared)")
+    return LoadedPlugin(m, native)

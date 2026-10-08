@@ -10,6 +10,11 @@ export fn triple(x: i64) callconv(.c) i64 {
     return x * 3;
 }
 
+/// v2.0: sabit-genişlikli (`u8`) argüman/dönüş etiketi — `print(f(u8(41)))` sayı basmalı (önceden `True`).
+export fn nox_test_u8_inc(x: u8) callconv(.c) u8 {
+    return x +% 1;
+}
+
 /// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.189): `@ffi.callback`
 /// uçtan uca doğrulaması — GERÇEK bir C kütüphanesinin "trailing userdata"
 /// konvansiyonunu (GNU/glibc `qsort_r`, GLib callback'leri, libuv vb. ÇOĞU

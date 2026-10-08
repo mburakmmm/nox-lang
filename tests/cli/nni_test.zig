@@ -76,7 +76,7 @@ test "NNI v1: gercek bir C eklentisi yuklenir, cagrilir, hata ve iplik olaylari 
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.nox", .data = source });
 
     const expected =
-        "42\n42.0\nmerhaba, dünya! (6 bayt)\nhata: fail: bilerek basarisiz\nhata: yok: kayitli yerel islev bulunamadi\nbitti 30\nacilamadi\n";
+        "42\n42.0\nmerhaba, dünya! (6 bayt)\nhata: fail: bilerek basarisiz\nhata: yok: no registered native function with that name\nbitti 30\nacilamadi\n";
     for ([_][]const u8{ "llvm", "qbe" }) |backend| {
         const result = try std.process.run(gpa, io, .{
             .argv = &.{ "zig-out/bin/noxc", "run", "--backend", backend, nox_path },

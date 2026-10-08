@@ -1,0 +1,19 @@
+# v2.0: `with` ve `try/finally` gövdesinde return her yolu kapsar ("tüm yollarda değer döndürmüyor" yanlış pozitifi yok).
+class Res:
+    name: str
+    def __init__(self, name: str) -> None:
+        self.name = name
+    def __enter__(self) -> Res:
+        return self
+    def __exit__(self) -> None:
+        pass
+def cleanup() -> None:
+    pass
+def work() -> int:
+    with Res("a") as r:
+        return 7
+def f() -> int:
+    try:
+        return 1
+    finally:
+        cleanup()

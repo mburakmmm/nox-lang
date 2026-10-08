@@ -14,6 +14,33 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.0-rc.2]
+
+Nox 2.0 ikinci sürüm adayı: **yeni dokümantasyon ağacı**, **Plugin API**, marka varlıkları ve dokümanları örnek-örnek doğrularken bulunan gerçek hataların düzeltmeleri.
+
+### Eklendi
+
+- **Dokümantasyon baştan yazıldı (`docs/`, 116 sayfa, İngilizce):** başlangıç, öğretici (11 bölüm), dil başvurusu, 46 stdlib modülü, üç API (NAPI / NNI / Plugin API), araçlar, iç yapı ve başvuru bölümleri. Her ` ```nox ` bloğu `scripts/check_docs.py` ile derleyiciye karşı denetlenir; ` ```output ` bloğu olanlar çalıştırılıp çıktısı birebir karşılaştırılır. Eski `README*`, `CONTRIBUTING*`, `docs/LANGUAGE.md`, `STDLIB.md`, `PLATFORMS.md`, `SECURITY.md`, `NATIVE-API.md`, `ARCHITECTURE.en.md`, `MIGRATING-2.0.md` ve alt dizin README'leri kaldırıldı; yerlerini yeni ağaç ve kısa bir kök `README.md` aldı. İç yol haritası/analiz belgeleri `project/` altına taşındı.
+- **Plugin API v1:** `nox-plugin.json` bildirimi (ad, sürüm, `plugin_api`, platforma göre kitaplık, yetenekler, işlev imzaları), `stdlib/nox/plugin.nox` yükleyicisi, kapatma kancası, platform anahtarı ve yetenek rızası (sandbox DEĞİL). NNI başlığı (`include/nox_nni.h`) buna göre genişledi; `Plugin.clear_args`/`native.clear_args` eklendi.
+- **Marka:** `assets/brand/` (simge boyutları, afiş, sosyal önizleme). Sürüm arşivlerine `include/` (NNI başlığı) eklendi.
+- `scripts/check_docs.py` (doküman doğrulayıcısı) ve `scripts/build_site.py` (noxlang.com derleyicisi).
+
+### Düzeltildi
+
+- `int()` artık `bool` ve sabit-genişlikli tamsayılardan dönüştürür; `**` tamsayı için tam (sarmalayan) sonuç verir (`nox_int_pow`), sıfır tabanlı negatif üs için `ZeroDivisionError`.
+- `print(None)` ve `print` içinde `None` sabiti; `for` döngüsü artık işlev listesi, modül-global ve yakalanan değişken üzerinde dolaşabilir.
+- `return` bir `with`/`try-finally` gövdesinde olduğunda "her yolda dönüş" denetimi doğru çalışır.
+- Aynı adlı farklı sınıflar için `except ... as e` bağlaması (alan çözümü) her yan tümcede yeniden bağlanır.
+- `spawn f()` ifade deyimi görev tutamacını artık sızdırmaz.
+- `extern def` dönüşü sabit-genişlikli tipini korur (`u8` dönen çağrı `True/False` basmaz).
+- `nox.router`: sorgu dizesi ayrıştırılır (`Context.query`), yol eşleşmesi sorgu dizesini yok sayar. `nox.sqlite`: aralık dışı `bind_*` artık `SqliteError` fırlatır.
+- `noxc -g` yalnızca QBE ile birlikte geçerlidir (açıkça `--backend llvm -g` hata verir); yardım ekranı çıplak `noxc dosya.nox` biçimini doğru gösterir.
+
+### Not
+
+- `nox.router` artık `nox.url` modülüne bağımlıdır; router kullanan programların IR'ı bu yüzden büyür (LLVM'de ölü kod elenir).
+- Eski mesajlar hâlâ Türkçedir (derleyici tanılamaları, stdlib istisna metinleri); İngilizce varsayılan geçiş ayrı bir karar olarak bekliyor.
+
 ## [2.0.0-rc.1]
 
 Nox 2.0 sürüm adayı. Geçiş için bkz. `docs/MIGRATING-2.0.md`; kararlılık sözleşmesi `VERSIONING.md` + `docs/NATIVE-API.md`; güven sınırı `docs/SECURITY.md`.

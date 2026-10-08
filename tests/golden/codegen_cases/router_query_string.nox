@@ -1,0 +1,17 @@
+# v2.0: yönlendirici sorgu dizesini yol eşlemesinden ayırır ve Context.query (yüzde-çözülmüş) sunar — önceden "GET /x?a=1" hiçbir "/x" rotasıyla eşleşmiyordu.
+import nox.url
+from nox.http import HttpRequest, HttpResponse
+from nox.router import Router, Context
+
+router: Router = Router()
+
+def search(ctx: Context) -> HttpResponse:
+    q: str = ""
+    if "q" in ctx.query:
+        q = ctx.query["q"]
+    return HttpResponse(200, ctx.param("kind") + ":" + q + ":" + str(nox.url.query_int(ctx.query, "n")), {})
+
+router.get("/search/:kind", search)
+print(router.dispatch(HttpRequest("GET", "/search/books?q=a%20b&n=3", "", {}, "")).body)
+print(router.dispatch(HttpRequest("GET", "/search/music?n=7", "", {}, "")).body)
+print(router.dispatch(HttpRequest("GET", "/nope?x=1", "", {}, "")).status)

@@ -80,6 +80,10 @@ class Plugin:
     def arg_str(self, v: str) -> None:
         nox_native_arg_str_raw(self.handle, v)
 
+    # Henüz çağrılmamış biriken argümanları atar (Plugin API: doğrulama başarısız olduğunda).
+    def clear_args(self) -> None:
+        nox_native_args_clear_raw(self.handle)
+
     # Önceden eklenen argümanlarla `name` işlevini çağırır; hata durumunda NativeError (eklentinin `error_set` iletisi).
     def call(self, name: str) -> None:
         st: int = nox_native_call_raw(self.handle, name)
@@ -132,7 +136,7 @@ class Plugin:
 def open_plugin(path: str) -> Plugin:
     h: int = nox_native_open_raw(path)
     if h == 0:
-        raise NativeError("eklenti yuklenemedi: " + path)
+        raise NativeError("could not load plugin: " + path)
     if nox_native_is_ready_raw(h) == 0:
         msg: str = nox_native_error_raw(h)
         nox_native_close_raw(h)

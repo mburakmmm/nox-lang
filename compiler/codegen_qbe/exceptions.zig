@@ -307,6 +307,15 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
             // önceki istisna nesnesi sonsuza dek sızar.
             try self.releaseSlotIfSet(info);
             try self.qbeStoreL(exc_ptr, info.slot);
+            // v2.0: aynı `as e` adı FARKLI sınıflı birden çok `except` yan tümcesinde kullanılabilir (checker sınıf↔sınıf yeniden
+            // bildirimine izin verir) ama slot ad başına TEK. Gövde üretilirken adı BU yan tümcenin sınıfına bağla (aksi halde
+            // son yan tümcenin sınıfı kalır ve ilk yan tümcedeki alt sınıf alanlarına erişim "desteklenmiyor" olurdu).
+            if (ec.class_name) |clause_cn| {
+                const resolved: ?[]const u8 = if (self.classes.contains(clause_cn)) clause_cn else self.from_imports.get(clause_cn);
+                if (resolved) |rn| {
+                    if (self.vars.getPtr(bn)) |vp| vp.class_name = rn;
+                }
+            }
         } else {
             // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
             // incelemesi", P5), GERÇEK bir sızıntı — `as e:` bağlaması

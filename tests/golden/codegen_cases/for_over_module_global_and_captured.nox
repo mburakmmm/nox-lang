@@ -1,0 +1,39 @@
+# v2.0: bir fonksiyon İÇİNDE modül-düzeyi bir listeyi/sözlüğü/dizeyi gezmek (`for t in todos:`) ve yakalanan (closure) bir listeyi gezmek —
+# önceden "desteklenmeyen yapı" hatası veriyordu. Sızıntı olmamalı (DebugAllocator raporu boş).
+todos: list[str] = ["a", "b"]
+ages: dict[str, int] = {"ada": 36, "alan": 41}
+word: str = "hey"
+
+def count() -> int:
+    n: int = 0
+    for t in todos:
+        n += 1
+    return n
+
+def total_age() -> int:
+    s: int = 0
+    for k in ages:
+        s += ages[k]
+    return s
+
+def letters() -> int:
+    n: int = 0
+    for ch in word:
+        n += 1
+    return n
+
+def make_counter(xs: list[int]) -> () -> int:
+    def total() -> int:
+        t: int = 0
+        for x in xs:
+            t += x
+        return t
+    return total
+
+def add(title: str) -> int:
+    todos.append(title)
+    return len(todos)
+
+print(count(), add("c"), count(), total_age(), letters())
+c: () -> int = make_counter([1, 2, 3])
+print(c())

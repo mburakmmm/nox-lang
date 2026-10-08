@@ -1,0 +1,13 @@
+# v2.0: SQLite parametre indeksi (0-tabanlı) aralık dışıysa artık SqliteError (önceden sessizce hiçbir şey bağlanmıyordu).
+import nox.sqlite
+from nox.sqlite import Connection, SqliteError
+from nox.db import Statement
+conn: Connection = nox.sqlite.open(":memory:")
+conn.execute("CREATE TABLE u (a TEXT)")
+st: Statement = conn.prepare("INSERT INTO u (a) VALUES (?)")
+try:
+    st.bind_str(1, "x")
+except SqliteError as e:
+    print("out of range")
+st.bind_str(0, "ok")
+print(st.execute())

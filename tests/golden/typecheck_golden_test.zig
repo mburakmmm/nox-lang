@@ -668,6 +668,13 @@ test "golden(typecheck): v1.169.0 — tek yan etkili/saf keyword argümanların 
     );
 }
 
+test "golden(typecheck): v2.0: with/try-finally icinde return tum yollari kapsar" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_return_inside_with_and_try_finally.nox"),
+        @embedFile("typecheck_cases/ok_return_inside_with_and_try_finally.expected"),
+    );
+}
+
 test "golden(post-spawn-caller-mutation): v1.149.0 — spawn'a paylaşılan dict'in clear() ile değiştirilmesi yakalanır" {
     try expectGoldenLlvm(
         @embedFile("typecheck_cases/err_spawn_shared_dict_clear.nox"),

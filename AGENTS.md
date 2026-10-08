@@ -9,7 +9,7 @@ Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm AI kod
 - Yeni bir göreve başlamadan önce: §2 (Değişmez İlkeler) ve görevle ilgili implementasyon kılavuzunu (§8-§12) oku.
 - Belirsiz bir tasarım kararıyla karşılaşırsan: önce spesifikasyon dosyasına bak, orada da yoksa §16'daki karar prosedürünü izle. **Tahmin yürütüp devam etme.**
 - Her PR/görev sonunda §14'teki checklist'i uygula.
-- **2.0 öncesi yapılacaklar KALICI listesi: `docs/v2-hazirlik-yol-haritasi.md`.** Yeni bir göreve başlamadan önce oraya bak; bir madde bitince ya da yeni eksik bulununca o dosyayı güncelle.
+- **2.0 öncesi yapılacaklar KALICI listesi: `project/v2-hazirlik-yol-haritasi.md`.** Yeni bir göreve başlamadan önce oraya bak; bir madde bitince ya da yeni eksik bulununca o dosyayı güncelle.
 
 ---
 
@@ -172,7 +172,7 @@ Bu sıra atlanamaz; özellikle **golden test olmadan codegen değişikliği merg
 
 ## 9.5 Güven Sınırı (Trust Boundary) — `extern def` / `lowlevel`
 
-**Faz Q.6 (bkz. `docs/uretim-hazirlik-analizi.md`, P0 bulgusu #10):** Bu
+**Faz Q.6 (bkz. `project/uretim-hazirlik-analizi.md`, P0 bulgusu #10):** Bu
 bölüm ÖNCEDEN hiçbir yerde açıkça belgelenmemişti — §5/§6/§8/§9 yalnızca
 tip disiplinini ve bellek yönetimi/hata çevirisi MEKANİZMALARINI tartışır,
 ama **`extern def`in KULLANICIYA ne kadar geniş bir yetki verdiğini

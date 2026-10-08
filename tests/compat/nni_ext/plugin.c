@@ -2,6 +2,7 @@
 #include "nox_nni.h"
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const NoxApiV1* g_api;
@@ -90,4 +91,18 @@ NOX_EXPORT NoxStatus nox_plugin_init_v1(const NoxApiV1* api, NoxRuntime* rt) {
     api->register_function(rt, "fail", fn_fail);
     api->register_function(rt, "start_thread", fn_start_thread);
     return NOX_OK;
+}
+
+/* Plugin API v1: isteğe bağlı yaşam döngüsü kancası — test için bir işaret dosyasına yazar. */
+NOX_EXPORT void nox_plugin_shutdown_v1(const NoxApiV1* api, NoxRuntime* rt) {
+    (void)api;
+    (void)rt;
+    const char* marker = getenv("NOX_NNI_TEST_MARKER");
+    if (marker) {
+        FILE* f = fopen(marker, "a");
+        if (f) {
+            fputs("shutdown\n", f);
+            fclose(f);
+        }
+    }
 }

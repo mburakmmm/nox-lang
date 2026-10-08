@@ -56,6 +56,7 @@
 # çağrılarda ÇALIŞIR, bkz. checker.zig'in `typeExprToType`/`checkCall`ı).
 from nox.http import HttpRequest, HttpResponse
 import nox.strings
+import nox.url
 
 # `s[1:]` (Nox'ta dilim sözdizimi YOK) eşdeğeri — yalnızca `":isim"`
 # segmentinden baştaki `:`yi ATMAK İçin, bu modül İçinde YEREL.
@@ -71,10 +72,40 @@ def _drop_first_char(s: str) -> str:
 # bağlamı — ham `nox.http.HttpRequest`in SABİT alan kümesi path parametreleri
 # TAŞIYAMADIĞINDAN (Nox sınıfları ÇALIŞMA ZAMANINDA yeni alan KAZANAMAZ)
 # AYRI bir sarmalayıcı sınıf gerekir.
+# v2.0: hedefin `?` ÖNCESİ kısmı (yol) ve SONRASI (ham sorgu dizesi). Önceden yönlendirici TÜM `req.target`i (sorgu dizesi dahil) yol desenine
+# karşı eşliyordu: `GET /todos?x=1` hiçbir `/todos` rotasıyla eşleşmiyordu.
+def _path_part(target: str) -> str:
+    out: str = ""
+    i: int = 0
+    while i < len(target):
+        c: str = target[i]
+        if c == "?":
+            return out
+        out = out + c
+        i = i + 1
+    return out
+
+def _query_part(target: str) -> str:
+    out: str = ""
+    seen: bool = False
+    i: int = 0
+    while i < len(target):
+        c: str = target[i]
+        if seen:
+            out = out + c
+        elif c == "?":
+            seen = True
+        i = i + 1
+    return out
+
 class Context:
+    query: dict[str, str]
+
     def __init__(self: Context, request: HttpRequest, params: dict[str, str]) -> None:
         self.request = request
         self.params = params
+        # v2.0: ayrıştırılmış (yüzde-çözülmüş) sorgu parametreleri; `nox.url.query_int/float/bool` ile tipli okunabilir.
+        self.query = nox.url.query_decode(_query_part(request.target))
 
     def param(self: Context, name: str) -> str:
         return self.params[name]
@@ -184,7 +215,7 @@ class Router:
         while i < len(self.routes) and not found:
             route: Route = self.routes[i]
             if route.method == req.method:
-                m: dict[str, str] | None = _match_path(route.pattern, req.target)
+                m: dict[str, str] | None = _match_path(route.pattern, _path_part(req.target))
                 if m != None:
                     matched_route = route
                     matched_params = m

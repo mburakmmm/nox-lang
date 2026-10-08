@@ -2026,29 +2026,66 @@ export function w $main(w %argc, l %argv) {
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    %t2 =d sltof 2
-    %t3 =d sltof 10
-    %t4 =d call $pow(d %t2, d %t3)
-    %t5 =l dtosi %t4
-    call $printf(l $fmt_int, ..., l %t5)
+    %t2 =w ceql 2, 0
+    %t3 =w csltl 10, 0
+    %t4 =w and %t2, %t3
+    jnz %t4, @list_err0, @list_ok1
+@list_ok1
+    %t14 =l call $nox_int_pow(l 2, l 10)
+    call $printf(l $fmt_int, ..., l %t14)
     storel 3, %t0
     stored d_2, %t1
-    %t6 =l loadl %t0
-    %t7 =d loadd %t1
-    %t8 =d sltof %t6
-    %t9 =d add %t8, %t7
-    %t10 =l call $nox_float_to_str(l %rt, d %t9)
-    call $printf(l $fmt_str, ..., l %t10)
-    call $nox_str_release(l %rt, l %t10)
-    %t11 =l loadl %t0
-    %t12 =d sltof %t11
-    %t13 =d sltof 2
-    %t14 =d div %t12, %t13
-    %t15 =l call $nox_float_to_str(l %rt, d %t14)
-    call $printf(l $fmt_str, ..., l %t15)
-    call $nox_str_release(l %rt, l %t15)
+    %t15 =l loadl %t0
+    %t16 =d loadd %t1
+    %t17 =d sltof %t15
+    %t18 =d add %t17, %t16
+    %t19 =l call $nox_float_to_str(l %rt, d %t18)
+    call $printf(l $fmt_str, ..., l %t19)
+    call $nox_str_release(l %rt, l %t19)
+    %t20 =l loadl %t0
+    %t21 =d sltof %t20
+    %t22 =d sltof 2
+    %t23 =d div %t21, %t22
+    %t24 =l call $nox_float_to_str(l %rt, d %t23)
+    call $printf(l $fmt_str, ..., l %t24)
+    call $nox_str_release(l %rt, l %t24)
     call $nox_runtime_deinit(l %rt)
-@fn_end0
+@fn_end9
+    ret 0
+@list_err0
+    %t5 =l add $str4, 16
+    %t6 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 6, %t6
+    %t7 =l add %t6, 8
+    storel $ZeroDivisionError_vtable, %t7
+    %t8 =l add %t6, 16
+    storel 0, %t8
+    %t9 =l add %t6, 24
+    storel 0, %t9
+    call $Exception___init__(l %rt, l %t6, l %t5)
+    %t10 =w call $nox_exception_pending(l %rt)
+    jnz %t10, @ctor_init_failed2, @ctor_init_cont3
+@ctor_init_failed2
+    %t11 =w ceql %t6, 0
+    jnz %t11, @release_skip5, @release4
+@release4
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t6)
+    jmp @release_done6
+@release_skip5
+    jmp @release_done6
+@release_done6
+    jmp @ctor_init_cont3
+@ctor_init_cont3
+    %t12 =w call $nox_exception_pending(l %rt)
+    jnz %t12, @exc_propagate7, @exc_continue8
+@exc_propagate7
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue8
+    %t13 =l add %t6, 24
+    storel 1, %t13
+    call $nox_raise(l %rt, l %t6, l 1)
+    call $nox_unhandled_exception(l %rt)
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {
@@ -2248,7 +2285,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str4, 16
+    %t9 =l add $str5, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -2363,7 +2400,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str5, 16
+    %t9 =l add $str6, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -2378,7 +2415,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str6, 16
+    %t20 =l add $str7, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -2405,6 +2442,7 @@ data $str0 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci:
 data $str1 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci: ", b 0 }
 data $str2 = { l 1073741824, l 2305843009213693978, b "gecersiz bicim belirteci: ", b 0 }
 data $str3 = { l 1073741824, l 2305843009213693976, b "ord() bos bir str alamaz", b 0 }
-data $str4 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str4 = { l 1073741824, l 2305843009213693964, b "sifira bolme", b 0 }
 data $str5 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str6 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str7 = { l 1073741824, l 2305843009213693952, b "", b 0 }

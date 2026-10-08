@@ -317,6 +317,11 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             if (std.mem.eql(u8, name, "print")) {
                 // v1.156.0: çok argümanlı / `sep=`/`end=` biçimleri ayrı yolda (tek argüman hızlı yolu aşağıda değişmedi).
                 if (c.args.len != 1 or c.args[0] == .kwarg) return genPrintGeneral(self, c.args);
+                // v2.0: çıplak `None` değişmezi — Python gibi `None` basar (genExpr(.none_lit) bağlamsız desteklenmez).
+                if (c.args[0] == .none_lit) {
+                    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = try self.internFmtString("None\n") }});
+                    return .{ .text = "0", .qtype = .w };
+                }
                 const v = try self.genExpr(c.args[0]);
                 try self.genPrint(v);
                 // `v` TAZE bir liste/sınıf olabilir (ör. `print(Point(1,2))`,
@@ -444,6 +449,19 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     const result = try self.convert(v, .l);
                     try self.releaseIfTemporary(c.args[0], v);
                     return result;
+                }
+                // v2.0: `int(<sabit-genişlikli>)` (i64'e aralık-kontrollü genişletme, sonra etiketi at) ve `int(bool)` (0/1).
+                if (v.heap == .none) {
+                    if (v.fixed_int != null) {
+                        const wide = try self.genNarrowingCast(v, .i64);
+                        return .{ .text = wide.text, .qtype = .l };
+                    }
+                    if (v.qtype == .w) {
+                        const t = try self.newTemp();
+                        try self.qbeOp1(t, .l, "extuw", v.text);
+                        return .{ .text = t, .qtype = .l };
+                    }
+                    return v;
                 }
                 const result = try self.genParseOrRaise(v, "nox_str_is_valid_int", "nox_str_to_int", .l, "int(): gecersiz sayi bicimi");
                 try self.releaseIfTemporary(c.args[0], v);
@@ -1375,7 +1393,7 @@ pub fn genExternCallEmit(self: *Codegen, name: []const u8, esig: types.FuncSig, 
     // `elem_is_str`/`class_name`/`dict_info` — dönen `list[str]`/sınıf/
     // `dict[K,V]` değerlerinin doğru ARC izlenmesi İçİn GEREKLİ (bkz. git
     // geçmişinin AYNI notu).
-    if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str, .dict_info = esig.ret.dict_info };
+    if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str, .dict_info = esig.ret.dict_info, .fixed_int = esig.ret.fixed_int };
     return .{ .text = "0", .qtype = .w };
 }
 
@@ -3109,7 +3127,7 @@ fn genPrintGeneral(self: *Codegen, args: []const ast.Expr) CodegenError!Value {
         } else try pos.append(self.allocator, a);
     }
     const values = try self.allocator.alloc(Value, pos.items.len);
-    for (pos.items, 0..) |e, i| values[i] = try self.genExpr(e);
+    for (pos.items, 0..) |e, i| values[i] = if (e == .none_lit) Value{ .text = "0", .qtype = .none } else try self.genExpr(e);
     const sep_v: ?Value = if (sep_expr) |e| try self.genExpr(e) else null;
     const end_v: ?Value = if (end_expr) |e| try self.genExpr(e) else null;
     const fmt_s = try self.internFmtString("%s");
@@ -3121,7 +3139,9 @@ fn genPrintGeneral(self: *Codegen, args: []const ast.Expr) CodegenError!Value {
                 try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt_s }}, &.{.{ .ty = .l, .text = sv.text }});
             } else try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = fmt_sp }});
         }
-        if (v.heap == .str) {
+        if (v.qtype == .none) {
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = try self.internFmtString("None") }});
+        } else if (v.heap == .str) {
             try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt_s }}, &.{.{ .ty = .l, .text = v.text }});
         } else try self.genPrintFragment(v);
     }

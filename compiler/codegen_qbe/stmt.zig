@@ -189,6 +189,9 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                 // heap değeri (ör. bir çağrının sonucunu bir deyim olarak
                 // kullanmak) sızmaz — bkz. `releaseIfTemporary`.
                 try self.releaseIfTemporary(e, v);
+                // v2.0: `spawn f(x)` bir DEYİM olarak (ateşle-ve-unut) bir `Task` tutamacı üretir ve hiçbir yere bağlanmaz — tutamacı
+                // bırak (görev çalışmaya devam eder; çalışma zamanı görevin kendi referansını tutar). Önceden her çağrıda sızıyordu.
+                if (e == .spawn_expr and v.heap == .task) try self.destroyNonArcValue(v.text, .task);
             },
             .if_stmt => |f| try self.genIf(f, ret_qtype),
             .while_stmt => |w| {

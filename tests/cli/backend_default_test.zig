@@ -111,3 +111,23 @@ test "noxc build --backend <bilinmeyen>: acik hata, cikis kodu 1" {
     try std.testing.expect(r.term == .exited and r.term.exited == 1);
     try std.testing.expect(std.mem.indexOf(u8, r.stderr, "cranelift") != null);
 }
+
+test "noxc build -g: varsayilan backend QBE'ye duser (DWARF yalnizca orada uretilir)" {
+    const gpa = std.testing.allocator;
+    const p = try buildAndProbe(gpa, std.testing.io, &.{"-g"});
+    defer gpa.free(p.stdout);
+    try std.testing.expect(p.ok);
+    try std.testing.expectEqualStrings("42\n", p.stdout);
+    try std.testing.expect(p.has_ssa);
+    try std.testing.expect(!p.has_ll);
+}
+
+test "noxc build -g --backend llvm: acik hata (LLVM hata ayiklama bilgisi uretmez)" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    const r = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "-g", "--backend", "llvm", "x.nox" } });
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    try std.testing.expect(r.term == .exited and r.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, r.stderr, "--backend qbe -g") != null);
+}

@@ -132,6 +132,23 @@ test "extern def: gerçek bir C kütüphanesi + gerçek bir Zig dosyası + siste
     try expectGolden(source, "4.0\n7\n21\n");
 }
 
+test "extern def: sabit-genişlikli dönüş tipi (u8) etiketi korunur — print sayı basar" {
+    const allocator = std.testing.allocator;
+    const source = try std.fmt.allocPrint(allocator,
+        \\extern def nox_test_u8_inc(x: u8) -> u8 from "{s}"
+        \\
+        \\r: u8 = nox_test_u8_inc(u8(41))
+        \\print(r)
+        \\print(nox_test_u8_inc(u8(41)))
+        \\print(str(nox_test_u8_inc(u8(1))) + "!")
+        \\print(nox_test_u8_inc(u8(1)) + u8(1))
+        \\
+    , .{build_options.util_o_path});
+    defer allocator.free(source);
+
+    try expectGolden(source, "42\n42\n2!\n3\n");
+}
+
 test "extern def: opak `ptr` tipi — gerçek bir handle-tabanlı C API (FILE*/sqlite3* deseni)" {
     const allocator = std.testing.allocator;
     const source = try std.fmt.allocPrint(allocator,

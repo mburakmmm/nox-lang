@@ -92,17 +92,27 @@ def _read_row(stmt: ptr) -> Row:
 # sözleşmeyi KORUMAK İçin burada +1 uygulanır — aksi halde `bind_int(0,
 # ...)` SQLite'ın KENDİSİNDE geçersiz bir indekse (0) denk gelip SESSİZCE
 # hiçbir şeyi BAĞLAMAZ (parametre bağlanmamış kalır, NULL olarak davranır).
+# v2.0: SQLite bağlama durum kodunu YOK SAYMAK yerine denetler — aralık-dışı bir indeks (ör. 1-tabanlı varsayıp `bind_str(1, ...)` ile yalnızca
+# 1 parametreli bir deyimde `bind_str(1, ...)`) önceden SESSİZCE hiçbir şeyi bağlamıyordu (parametre NULL kalıyordu); artık SqliteError.
 def _sqlite_bind_int(stmt: Statement, idx: int, value: int) -> None:
-    nox_sqlite_bind_int_raw(stmt.handle, idx + 1, value)
+    rc: int = nox_sqlite_bind_int_raw(stmt.handle, idx + 1, value)
+    if rc != 0:
+        raise SqliteError("bind index out of range or invalid: " + str(idx))
 
 def _sqlite_bind_float(stmt: Statement, idx: int, value: float) -> None:
-    nox_sqlite_bind_double_raw(stmt.handle, idx + 1, value)
+    rc: int = nox_sqlite_bind_double_raw(stmt.handle, idx + 1, value)
+    if rc != 0:
+        raise SqliteError("bind index out of range or invalid: " + str(idx))
 
 def _sqlite_bind_str(stmt: Statement, idx: int, value: str) -> None:
-    nox_sqlite_bind_text_raw(stmt.handle, idx + 1, value)
+    rc: int = nox_sqlite_bind_text_raw(stmt.handle, idx + 1, value)
+    if rc != 0:
+        raise SqliteError("bind index out of range or invalid: " + str(idx))
 
 def _sqlite_bind_null(stmt: Statement, idx: int) -> None:
-    nox_sqlite_bind_null_raw(stmt.handle, idx + 1)
+    rc: int = nox_sqlite_bind_null_raw(stmt.handle, idx + 1)
+    if rc != 0:
+        raise SqliteError("bind index out of range or invalid: " + str(idx))
 
 # Parametreleri bağladıktan SONRA parametresiz bir deyimi (INSERT/UPDATE/
 # DELETE/DDL) sonuna kadar çalıştırır, ardından finalize eder — `http.nox`nin

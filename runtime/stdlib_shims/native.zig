@@ -65,6 +65,8 @@ pub const NoxApiV1 = extern struct {
 };
 
 const PluginInitFn = *const fn (api: *const NoxApiV1, rt: *NoxRuntime) callconv(.c) NoxStatus;
+/// Plugin API v1: isteğe bağlı yaşam döngüsü kancası. Eklenti `nox_plugin_shutdown_v1` dışa aktarırsa host, kitaplığı kapatmadan önce BİR KEZ çağırır.
+const PluginShutdownFn = *const fn (api: *const NoxApiV1, rt: *NoxRuntime) callconv(.c) void;
 
 // ---- Host bağlamı ----
 
@@ -298,13 +300,17 @@ fn openLib(path: [*:0]const u8) ?LibHandle {
     return std.DynLib.open(std.mem.span(path)) catch null;
 }
 
-fn lookupInit(lib: *LibHandle) ?PluginInitFn {
+fn lookupSym(comptime T: type, lib: *LibHandle, comptime name: [:0]const u8) ?T {
     if (builtin.os.tag == .windows) {
         const handle = lib.* orelse return null;
-        const addr = Kernel32.GetProcAddress(handle, "nox_plugin_init_v1") orelse return null;
+        const addr = Kernel32.GetProcAddress(handle, name.ptr) orelse return null;
         return @ptrCast(addr);
     }
-    return lib.lookup(PluginInitFn, "nox_plugin_init_v1");
+    return lib.lookup(T, name);
+}
+
+fn lookupInit(lib: *LibHandle) ?PluginInitFn {
+    return lookupSym(PluginInitFn, lib, "nox_plugin_init_v1");
 }
 
 /// Eklentiyi yükler ve başlatır. Hata iletisi okunabilsin diye başarısız yüklemede de bir host döner (`nox_native_is_ready_raw` == 0);
@@ -316,17 +322,17 @@ export fn nox_native_open_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
     const host = gpa.create(Host) catch return 0;
     host.* = .{ .allocator = gpa, .lib = undefined };
     host.lib = openLib(p) orelse {
-        setErr(host, "eklenti yuklenemedi (dlopen/LoadLibrary basarisiz)");
+        setErr(host, "could not load the plugin (dlopen/LoadLibrary failed)");
         return @intCast(@intFromPtr(host));
     };
     host.lib_open = true;
     const init = lookupInit(&host.lib) orelse {
-        setErr(host, "nox_plugin_init_v1 sembolu bulunamadi");
+        setErr(host, "symbol nox_plugin_init_v1 not found");
         return @intCast(@intFromPtr(host));
     };
     const st = init(&api_v1, @ptrCast(host));
     if (st != NOX_OK) {
-        if (host.err_msg.len == 0) setErr(host, "nox_plugin_init_v1 basarisiz");
+        if (host.err_msg.len == 0) setErr(host, "nox_plugin_init_v1 failed");
         return @intCast(@intFromPtr(host));
     }
     host.ready = true;
@@ -339,14 +345,47 @@ export fn nox_native_is_ready_raw(h: i64) callconv(.c) i64 {
     return if (host.ready) 1 else 0;
 }
 
+/// Plugin API v1: kayıtlı yerel işlev sayısı / i. işlevin adı (manifest ile çapraz doğrulama için).
+export fn nox_native_func_count_raw(h: i64) callconv(.c) i64 {
+    const host = hostFromInt(h) orelse return 0;
+    return @intCast(host.funcs.items.len);
+}
+
+export fn nox_native_func_name_raw(rt: ?*anyopaque, h: i64, i: i64) callconv(.c) ?[*:0]u8 {
+    const host = hostFromInt(h) orelse return str_mod.allocStr(rt, "", str_mod.ASCII_TRUE);
+    if (i < 0 or i >= host.funcs.items.len) return str_mod.allocStr(rt, "", str_mod.ASCII_TRUE);
+    return str_mod.allocStr(rt, host.funcs.items[@intCast(i)].name, str_mod.ASCII_UNKNOWN);
+}
+
+/// Plugin API v1: ana makine anahtarı ("macos-arm64", "linux-x64", ...). Manifestin `library` tablosunu seçmek için.
+export fn nox_native_platform_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    const os_name = switch (builtin.os.tag) {
+        .macos => "macos",
+        .linux => "linux",
+        .windows => "windows",
+        else => "other",
+    };
+    const arch_name = switch (builtin.cpu.arch) {
+        .aarch64 => "arm64",
+        .x86_64 => "x64",
+        else => "other",
+    };
+    var buf: [32]u8 = undefined;
+    const key = std.fmt.bufPrint(&buf, "{s}-{s}", .{ os_name, arch_name }) catch "other";
+    return str_mod.allocStr(rt, key, str_mod.ASCII_TRUE);
+}
+
 export fn nox_native_error_raw(rt: ?*anyopaque, h: i64) callconv(.c) ?[*:0]u8 {
-    const host = hostFromInt(h) orelse return str_mod.allocStr(rt, "gecersiz eklenti tutamaci", str_mod.ASCII_TRUE);
+    const host = hostFromInt(h) orelse return str_mod.allocStr(rt, "invalid plugin handle", str_mod.ASCII_TRUE);
     return str_mod.allocStr(rt, host.err_msg, str_mod.ASCII_UNKNOWN);
 }
 
 export fn nox_native_close_raw(h: i64) callconv(.c) void {
     const host = hostFromInt(h) orelse return;
     const gpa = host.allocator;
+    if (host.ready) {
+        if (lookupSym(PluginShutdownFn, &host.lib, "nox_plugin_shutdown_v1")) |shutdown| shutdown(&api_v1, @ptrCast(host));
+    }
     nox_native_args_clear_raw(h);
     for (host.entries.items) |*e| if (e.in_use) gpa.free(e.data);
     host.entries.deinit(gpa);
@@ -406,7 +445,7 @@ export fn nox_native_call_raw(h: i64, name: ?[*:0]const u8) callconv(.c) i64 {
         f = fe.f;
     };
     const fun = f orelse {
-        setErr(host, "kayitli yerel islev bulunamadi");
+        setErr(host, "no registered native function with that name");
         return NOX_NOT_FOUND;
     };
     if (host.err_msg.len > 0) {

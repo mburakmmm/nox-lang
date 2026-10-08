@@ -1,0 +1,26 @@
+# v2.0: aynı `as e` adı farklı sınıflı except yan tümcelerinde (ilkinde alt sınıf alanları): codegen slotu yan tümcenin sınıfına bağlar — önceden "desteklenmeyen yapı" hatası.
+class AppError(Exception):
+    code: int
+    def __init__(self, message: str, code: int) -> None:
+        super().__init__(message)
+        self.code = code
+
+class NotFound(AppError):
+    pass
+
+def find(key: str) -> int:
+    if key == "":
+        raise ValueError("empty key")
+    if key == "x":
+        raise NotFound("no such key", 404)
+    return 1
+
+for key in ["a", "", "x"]:
+    try:
+        print(find(key))
+    except NotFound as e:
+        print("not found:", e.message, e.code)
+    except (ValueError, KeyError) as e:
+        print("value-ish:", e.message)
+    finally:
+        print("done", key)

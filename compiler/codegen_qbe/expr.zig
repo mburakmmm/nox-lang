@@ -2016,6 +2016,19 @@ pub fn genFloorDiv(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenE
 }
 
 pub fn genPow(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!Value {
+    // v2.0: `int ** int` tam sayı üs almadır (sarmalı, iki backend'de aynı); yalnızca bir taraf `float` ise `pow()` kullanılır.
+    if (common == .l and l.qtype == .l and r.qtype == .l and l.fixed_int == null and r.fixed_int == null) {
+        const base_zero = try self.newTemp();
+        try self.qbeOp2Imm(base_zero, .w, "ceql", l.text, 0);
+        const exp_neg = try self.newTemp();
+        try self.qbeOp2Imm(exp_neg, .w, "csltl", r.text, 0);
+        const bad = try self.newTemp();
+        try self.qbeOp2(bad, .w, "and", base_zero, exp_neg);
+        try calls.emitColdListError(self, bad, "ZeroDivisionError", "sifira bolme", &.{});
+        const t = try self.newTemp();
+        try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_int_pow", &.{ .{ .ty = .l, .text = l.text }, .{ .ty = .l, .text = r.text } });
+        return .{ .text = t, .qtype = .l };
+    }
     const lf = try self.convert(l, .d);
     const rf = try self.convert(r, .d);
     const t = try self.newTemp();
@@ -2144,7 +2157,13 @@ fn genPrintRaw(self: *Codegen, v: Value) CodegenError!void {
             try self.qbeJmp(done_label);
             try self.qbeLabel(done_label);
         },
-        .none, .b, .sb, .h, .sh => return error.Unsupported,
+        // v2.0: `print(None)` (çıplak `None` değişmezi) Python gibi `None` basar.
+        .none => {
+            const none_sym = try self.internFmtString("None");
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = none_sym }});
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
+        },
+        .b, .sb, .h, .sh => return error.Unsupported,
     }
 }
 

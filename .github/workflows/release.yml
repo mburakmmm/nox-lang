@@ -180,6 +180,8 @@ jobs:
           cp zig-out/lib/noxrt-freestanding.o "$stage/lib/"
           cp -R zig-out/lib/nox "$stage/lib/"
           cp README.md LICENSE CHANGELOG.md "$stage/"
+          # NNI başlığı (yerel eklenti yazarları için kararlı C ABI)
+          cp -R include "$stage/"
           tar czf "${stage}.tar.gz" "$stage"
           shasum -a 256 "${stage}.tar.gz" > "${stage}.tar.gz.sha256"
 
@@ -277,6 +279,7 @@ jobs:
           Copy-Item "zig-out\lib\swap_asm.o" "$stage\lib\"
           Copy-Item -Recurse "zig-out\lib\nox" "$stage\lib\"
           Copy-Item README.md, LICENSE, CHANGELOG.md "$stage\"
+          Copy-Item -Recurse include "$stage\"
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
           $hash = (Get-FileHash "$stage.zip" -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path "$stage.zip.sha256" -Value "$hash  $stage.zip" -NoNewline

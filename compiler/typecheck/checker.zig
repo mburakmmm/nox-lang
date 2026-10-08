@@ -5067,8 +5067,11 @@ pub const Checker = struct {
                 for (t.except_clauses) |ec| {
                     if (!alwaysReturns(ec.body)) break :blk false;
                 }
-                break :blk t.except_clauses.len > 0;
+                // v2.0: `try: return … finally: …` (except yok) da her yolda döner/fırlatır.
+                break :blk t.except_clauses.len > 0 or t.finally_body != null;
             },
+            // v2.0: `with` gövdesi her yolda dönüyorsa (`__exit__` istisnayı yutmaz) `with` de döner.
+            .with_stmt => |w| alwaysReturns(w.body),
             .lowlevel_stmt => |ll| alwaysReturns(ll.body),
             else => false,
         };
@@ -5567,7 +5570,9 @@ pub const Checker = struct {
             },
             else => {},
         }
-        if (new_iterable == null and iterable == .identifier) return elem_t; // adlandırılmış liste: eski yol
+        // Adlandırılmış YEREL liste: eski yol. v2.0: iterable bir modül-düzeyi global ya da yakalanan (closure) değişken ise
+        // (`for t in todos:` bir fonksiyon İÇİNDE, `todos` modül-düzeyi) codegen onu yerel olarak bulamaz — gizli yerele alınır.
+        if (new_iterable == null and iterable == .identifier and ctx.scope.lookupLocal(iterable.identifier) != null) return elem_t;
         self.for_hoist_counter += 1;
         const hoist_name = try std.fmt.allocPrint(self.allocator, "__nox_it_{d}", .{self.for_hoist_counter});
         try self.for_rewrites.put(self.allocator, key, .{
@@ -6969,8 +6974,10 @@ pub const Checker = struct {
                     // `int(3.9) == 3` davranışıyla AYNI, `str` ayrıştırmasına
                     // EK olarak (onun YERİNE değil).
                     const t = try self.checkExpr(ctx, c.args[0]);
-                    if (t != .str and t != .float) {
-                        return self.fail(error.TypeMismatch, "'int' yalnızca str/float üzerinde çalışır", .{});
+                    // v2.0: `int(bool)` ve `int(<sabit-genişlikli>)` — açık, aralık-kontrollü genişletme (u64/usize > i64 en büyük
+                    // değerde tuzak; diğer her kaynak kayıpsızdır). Önceden sabit-genişlikli bir değerden düz `int`e DÖNÜŞ YOLU yoktu.
+                    if (t != .str and t != .float and t != .boolean and t != .fixed_int) {
+                        return self.fail(error.TypeMismatch, "'int' yalnızca str/float/bool/sabit-genişlikli tamsayı üzerinde çalışır", .{});
                     }
                     return .int;
                 }

@@ -1,0 +1,33 @@
+# v2.0: with / try-finally gövdesinde return — "tüm yollarda değer döndürmüyor" yanlış pozitifi düzeltildi; sıralama (enter/exit/defer/finally) doğrulanır.
+class Res:
+    name: str
+    def __init__(self, name: str) -> None:
+        self.name = name
+    def __enter__(self) -> Res:
+        print("enter", self.name)
+        return self
+    def __exit__(self) -> None:
+        print("exit", self.name)
+def work() -> int:
+    with Res("a") as r:
+        print("using", r.name)
+        return 7
+print(work())
+def cleanup(s: str) -> None:
+    print("cleanup", s)
+def run() -> None:
+    defer cleanup("one")
+    defer cleanup("two")
+    print("body")
+run()
+def f() -> int:
+    try:
+        return 1
+    finally:
+        print("fin")
+print(f())
+try:
+    with Res("b") as r2:
+        raise ValueError("oops")
+except ValueError as e:
+    print("caught after exit")

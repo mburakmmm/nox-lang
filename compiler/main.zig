@@ -106,7 +106,7 @@ fn printHelp(is_tr: bool) void {
             \\noxc {s} — Nox dili derleyicisi ve proje aracı
             \\
             \\Kullanım:
-            \\  noxc <dosya.nox>              dosyayı derler + çalıştırır (build'in kısayolu)
+            \\  noxc <dosya.nox>              dosyayı çalıştırılabilir bir ikiliye derler (build'in kısayolu)
             \\  noxc <alt-komut> [seçenekler]
             \\
             \\Alt komutlar:
@@ -153,7 +153,7 @@ fn printHelp(is_tr: bool) void {
             \\noxc {s} — the Nox language compiler and project tool
             \\
             \\Usage:
-            \\  noxc <file.nox>              compile + run the file (shortcut for build)
+            \\  noxc <file.nox>              compile the file to an executable (shortcut for build)
             \\  noxc <subcommand> [options]
             \\
             \\Subcommands:
@@ -1104,12 +1104,21 @@ fn clangAvailable(gpa: std.mem.Allocator, io: std.Io) bool {
 /// çıktısını destekler), Windows ana makinesi (yalnızca `zig` varsa LLVM; aksi halde QBE) ve `clang`/`zig`in
 /// PATH'te bulunmaması (bu son durumda tek satırlık bir not basılır — checker'ın `spawn` tip kuralları
 /// backend'e göre farklıdır, sessiz düşüş şaşırtıcı olurdu).
-fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, profile: codegen.Profile, target: ?[]const u8, emit_asm: bool) bool {
+fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, profile: codegen.Profile, target: ?[]const u8, emit_asm: bool, debug_info: bool) bool {
     switch (choice) {
         .qbe => return false,
-        .llvm => return true,
+        .llvm => {
+            // v2.0: `-g` (DWARF satır tablosu) yalnızca QBE yolunda üretilir; LLVM'de açıkça istenirse net bir hata ver.
+            if (debug_info) {
+                printErr("-g (hata ayiklama bilgisi) yalnizca QBE backend'inde desteklenir: --backend qbe -g kullanin\n", .{});
+                std.process.exit(1);
+            }
+            return true;
+        },
         .auto => {},
     }
+    // v2.0: `-g` ile varsayilan backend QBE'ye duser (DWARF yalnizca orada uretilir).
+    if (debug_info) return false;
     if (profile == .freestanding) return false;
     if (target != null or emit_asm) return false;
     // v2.0 madde 1: Windows'ta LLVM yolu YALNIZCA `zig cc` (MinGW hedefi, CI'da doğrulandı) varken otomatik seçilir;
@@ -1824,7 +1833,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     var checker_state = checker.Checker.init(a);
     checker_state.profile = opts.profile;
     // `build` ile aynı backend'e göre denetle (checker'ın `spawn` tip kuralları backend'e bağlıdır).
-    checker_state.backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm)) .llvm else .qbe;
+    checker_state.backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm, opts.debug_info)) .llvm else .qbe;
     checker_state.checkModule(module) catch |e| {
         printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         std.process.exit(1);
@@ -1932,7 +1941,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     const user_module = try parseUserSource(a, source, path_arg);
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
-    const backend: codegen.Backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm)) .llvm else .qbe;
+    const backend: codegen.Backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm, opts.debug_info)) .llvm else .qbe;
     var checker_state = checker.Checker.init(a);
     checker_state.backend = backend;
     checker_state.checkModule(module) catch |e| {
@@ -2059,7 +2068,7 @@ fn computeLinkerVisibilityArgs() []const []const u8 {
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
 fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, backend_choice: BackendChoice, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy, target: ?[]const u8, emit_asm: bool) ![]const u8 {
-    const release = resolveRelease(gpa, io, backend_choice, profile, target, emit_asm);
+    const release = resolveRelease(gpa, io, backend_choice, profile, target, emit_asm, debug_info);
     // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--release` (LLVM) yolu
     // GERÇEK OS iş parçacıklarına dayanan paylaşılan bir `WorkerPool`
     // kurar (Task[T]/Channel[T] DAHİL, TÜM `spawn`lar İçİn) — freestanding
