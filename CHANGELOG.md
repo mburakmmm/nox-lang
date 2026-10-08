@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.0]
+
+**Nox 2.0 kararlı sürümü.** rc.1–rc.5 sürüm adaylarının tamamını içerir (ayrıntılar aşağıda); rc.3/rc.4/rc.5 ayrı yayımlanmadı.
+
+### Öne çıkanlar
+
+- **Kararlılık sözleşmesi:** 2.x boyunca kaynak uyumluluğu (`VERSIONING.md`), **NAPI** (Nox kaynak/çerçeve API'si), **NNI v1** (yerel C ABI, `include/nox_nni.h`) ve **Plugin API v1** (`nox.plugin`, `nox-plugin.json`).
+- **Yeni dokümantasyon** (`docs/`, 117 sayfa) ve **noxlang.com** sitesi (Nyx ile sunulur); merkezi kayıt `noxpkg.noxlang.com` adresine taşındı (eski ad yönlendirilmeye devam eder), saatlik doğrulanmış + Cloudflare R2 off-site yedek.
+- LLVM varsayılan backend (`clang` yoksa `zig cc`, o da yoksa QBE; Windows'ta `zig` varsa LLVM); sabit-genişlikli tamsayı taşması her iki backend'de tuzaktır; çok çekirdekli M:N zamanlayıcı.
+- 2.0 öncesi kırıcı temizlik (eski `nox.json`/`nox.csv` adları kaldırıldı): bkz. `docs/whatsnew/migrating.md`.
+
+### Bu sürümde (rc.5'e göre)
+
+- Sürüm numarası 2.0.0; GitHub deposunun sosyal önizleme görseli 1 MB altı JPEG'e çevrildi (`assets/brand/social-preview.jpg`).
+
+### Bilinen konular
+
+- Derleyici tanılamaları, stdlib istisna metinleri ve `noxc` çıktısı bu sürümde hâlâ **Türkçe**; İngilizce varsayılana geçiş 2.0.x içinde yayımlanacak (iş `wip/english-messages` dalında).
+- `print(<kendine gönderme yapan sınıf>)` (ör. `print(nox.json.parse(...))`) derleyiciyi çökertir; düzeltme İngilizce-mesaj çalışmasıyla birlikte gelecek (`wip/english-messages`'ta hazır).
+
 ## [2.0.0-rc.5]
 
 Modül-global ilklendiricisinde yükselen yakalanmamış istisna artık SIGSEGV değil, normal yakalanmamış-istisna raporuyla sonlanır.

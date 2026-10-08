@@ -359,7 +359,7 @@ def build_doc_page(page, idx, order, sections, known, css_v):
     pager += "</nav>"
     edit = f'{REPO_URL}/blob/main/docs/{page["rel"]}'
     title = f'{page["title"]} · Nox docs' if page["rel"] != "index.md" else "Nox documentation"
-    head = head_html(title, desc, BASE_URL + page["url"], BASE_URL + "/assets/img/social-preview.png").replace("{CSSV}", css_v)
+    head = head_html(title, desc, BASE_URL + page["url"], BASE_URL + "/assets/img/social-preview.jpg").replace("{CSSV}", css_v)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -438,7 +438,7 @@ def build_landing(sections, snips, css_v, stdlib_pages):
     head = head_html("Nox — native without the ownership noise",
                      "Nox is a statically typed language with Python's syntax, compiled ahead of time to native code, "
                      "with automatic memory management and no ownership annotations.",
-                     BASE_URL + "/", BASE_URL + "/assets/img/social-preview.png").replace("{CSSV}", css_v)
+                     BASE_URL + "/", BASE_URL + "/assets/img/social-preview.jpg").replace("{CSSV}", css_v)
     tabs = [("classes", "Classes & types"), ("tasks", "Concurrency"), ("web", "A web service"), ("native", "Native code")]
     tab_btns = "".join(f'<button role="tab" class="tab" id="tab-{k}" aria-controls="panel-{k}" aria-selected="{"true" if i == 0 else "false"}" tabindex="{0 if i == 0 else -1}">{html.escape(t)}</button>'
                        for i, (k, t) in enumerate(tabs))
@@ -487,8 +487,9 @@ def main():
     shutil.copytree(os.path.join(SITE_SRC, "img"), os.path.join(out, "assets", "img"), dirs_exist_ok=True) \
         if os.path.isdir(os.path.join(SITE_SRC, "img")) else os.makedirs(os.path.join(out, "assets", "img"))
     for n in ("icon-16", "icon-32", "icon-64", "icon-180", "icon-256", "icon-512", "banner-1000", "release-2.0-1400",
-              "social-preview", "title"):
+              "title"):
         shutil.copy(os.path.join(BRAND, n + ".png"), os.path.join(out, "assets", "img", n + ".png"))
+    shutil.copy(os.path.join(BRAND, "social-preview.jpg"), os.path.join(out, "assets", "img", "social-preview.jpg"))
     css_v = asset_hash(os.path.join(out, "assets", "css", "site.css"))
 
     search = []
@@ -513,7 +514,7 @@ def main():
     css_v_page = css_v
     write(os.path.join(out, "404.html"), f"""<!doctype html>
 <html lang="en"><head>
-{head_html("Page not found · Nox", "That page does not exist.", BASE_URL + "/", BASE_URL + "/assets/img/social-preview.png").replace("{CSSV}", css_v_page)}
+{head_html("Page not found · Nox", "That page does not exist.", BASE_URL + "/", BASE_URL + "/assets/img/social-preview.jpg").replace("{CSSV}", css_v_page)}
 </head><body class="nf-body">
 {HEADER}
 <main class="nf"><img src="/assets/img/icon-256.png" width="128" height="128" alt="">
