@@ -3,6 +3,7 @@
 //! `zig-out/bin/noxc`yi GERÇEK bir alt süreç olarak çalıştırarak — doğrular.
 
 const std = @import("std");
+const sys = @import("sys_compat");
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
@@ -154,27 +155,25 @@ test "noxc search: bozuk indeks dosyasi net bir hatayla cikis kodu 1 doner" {
 // düzeltilen AYNI hatanın (gövde HAM/sıkıştırılmış okunması) burada TEKRAR
 // EDİLMEDİĞİNİN kanıtı.
 
-const posix = std.posix;
-
-fn testListenerOn127001(port_out: *u16) !posix.fd_t {
-    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-    if (fd < 0) return error.SocketFailed;
+fn testListenerOn127001(port_out: *u16) !sys.fd_t {
+    const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+    if (sys.badFd(fd)) return error.SocketFailed;
     var reuse: c_int = 1;
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    _ = sys.setsockopt(fd, sys.SOL.SOCKET, sys.SO.REUSEADDR, &reuse, @sizeOf(c_int));
 
-    var addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
-    if (std.c.listen(fd, 1) != 0) return error.ListenFailed;
+    var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
+    if (sys.listen(fd, 1) != 0) return error.ListenFailed;
 
-    var got: std.c.sockaddr.in = undefined;
-    var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-    if (std.c.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
+    var got: sys.sockaddr.in = undefined;
+    var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+    if (sys.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
     port_out.* = std.mem.bigToNative(u16, got.port);
     return fd;
 }
 
 /// v1.80.6 (bkz. CHANGELOG.md/nox-teknik-spesifikasyon.md §3.156):
-/// `std.c.accept`in ÇIPLAK (zaman-aşımsız) hâli, GERÇEK bir CI koşusunda
+/// `sys.accept`in ÇIPLAK (zaman-aşımsız) hâli, GERÇEK bir CI koşusunda
 /// (Linux aarch64, `zig build test`nin TAM paralel paketi İÇİNDE, bir
 /// Docker/aarch64 konteynerinde GERÇEKTEN reprodüklenip `gdb`yle KANITLANDI)
 /// istemci alt-süreci (GERÇEK `noxc` çağrısı) BEKLENEN bağlantıyı HİÇ
@@ -186,25 +185,25 @@ fn testListenerOn127001(port_out: *u16) !posix.fd_t {
 /// ilkesi: kök neden TAM olarak KANITLANAMASA da, HANGİSİ olursa olsun
 /// `accept()`i SINIRLI bir sürede GERİ dönmeye ZORLAYIP (`poll()` İLE)
 /// sessiz bir sonsuz askıyı HIZLI/AÇIK bir test BAŞARISIZLIĞINA çevirir.
-fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
-    var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
-    const n = std.c.poll(&pfd, 1, timeout_ms);
-    if (n <= 0) return -1;
-    return std.c.accept(listen_fd, null, null);
+fn acceptWithTimeout(listen_fd: sys.fd_t, timeout_ms: i32) sys.fd_t {
+    var pfd = [1]sys.pollfd{.{ .fd = listen_fd, .events = sys.POLL.IN, .revents = 0 }};
+    const n = sys.poll(&pfd, 1, timeout_ms);
+    if (n <= 0) return sys.bad_fd;
+    return sys.accept(listen_fd, null, null);
 }
 
 /// Bir bağlantı kabul eder, isteği okur, `gzip_body`yi (ZATEN gzip
 /// sıkıştırılmış baytlar — çağıran hazırlar) `Content-Encoding: gzip` İLE
 /// yanıtlar.
-fn testServeGzipIndex(listen_fd: posix.fd_t, gzip_body: []const u8) void {
+fn testServeGzipIndex(listen_fd: sys.fd_t, gzip_body: []const u8) void {
     const conn = acceptWithTimeout(listen_fd, 15_000);
-    if (conn < 0) return;
-    defer _ = std.c.close(conn);
+    if (sys.badFd(conn)) return;
+    defer _ = sys.close(conn);
 
     var req_buf: [4096]u8 = undefined;
     var total: usize = 0;
     while (total < req_buf.len) {
-        const n = std.c.read(conn, req_buf[total..].ptr, req_buf.len - total);
+        const n = sys.read(conn, req_buf[total..].ptr, req_buf.len - total);
         if (n <= 0) break;
         total += @intCast(n);
         if (std.mem.indexOf(u8, req_buf[0..total], "\r\n\r\n") != null) break;
@@ -214,13 +213,13 @@ fn testServeGzipIndex(listen_fd: posix.fd_t, gzip_body: []const u8) void {
     const header = std.fmt.bufPrint(&header_buf, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nContent-Encoding: gzip\r\nConnection: close\r\n\r\n", .{gzip_body.len}) catch return;
     var written: usize = 0;
     while (written < header.len) {
-        const n = std.c.write(conn, header[written..].ptr, header.len - written);
+        const n = sys.write(conn, header[written..].ptr, header.len - written);
         if (n <= 0) return;
         written += @intCast(n);
     }
     written = 0;
     while (written < gzip_body.len) {
-        const n = std.c.write(conn, gzip_body[written..].ptr, gzip_body.len - written);
+        const n = sys.write(conn, gzip_body[written..].ptr, gzip_body.len - written);
         if (n <= 0) return;
         written += @intCast(n);
     }
@@ -230,7 +229,7 @@ test "noxc search: http:// URL varsayilan olarak reddedilir (guvenli-tasima)" {
     const io = std.testing.io;
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer _ = sys.close(listen_fd);
 
     const url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}/index.json", .{port});
     defer std.testing.allocator.free(url);
@@ -258,7 +257,7 @@ test "noxc search: NOX_ALLOW_INSECURE_TRANSPORT ile http:// URL'den gzip'li inde
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer _ = sys.close(listen_fd);
 
     const server_thread = try std.Thread.spawn(.{}, testServeGzipIndex, .{ listen_fd, gzip_body });
     defer server_thread.join();

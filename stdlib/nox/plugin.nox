@@ -85,6 +85,10 @@ def dir_of(path: str) -> str:
 def kind_ok(kind: str) -> bool:
     return kind == "int" or kind == "float" or kind == "bool" or kind == "str" or kind == "none"
 
+# `list` yalnizca `list[int]`, `dict` yalnizca `dict[str, int]` (NNI v1.x). Argüman türü değildir.
+def return_ok(kind: str) -> bool:
+    return kind_ok(kind) or kind == "list" or kind == "dict"
+
 def require_string(v: JsonValue, key: str, what: str) -> str:
     f: JsonValue | None = obj_get(v, key)
     if f == None:
@@ -153,7 +157,7 @@ def read_manifest(manifest_path: str) -> PluginManifest:
         entry: JsonValue = array_get(fn_field, fi)
         fname: str = require_string(entry, "name", name + ".functions[" + str(fi) + "]")
         ret: str = require_string(entry, "returns", name + "." + fname)
-        if not kind_ok(ret):
+        if not return_ok(ret):
             raise PluginError(name + "." + fname + ": unknown return type '" + ret + "'")
         argkinds: list[str] = []
         args_field: JsonValue | None = obj_get(entry, "args")
@@ -285,6 +289,16 @@ class LoadedPlugin:
         self.check_call(name, "str")
         self.reset_args()
         return self.native.call_str(name)
+
+    def call_int_list(self, name: str) -> list[int]:
+        self.check_call(name, "list")
+        self.reset_args()
+        return self.native.call_int_list(name)
+
+    def call_str_int_dict(self, name: str) -> dict[str, int]:
+        self.check_call(name, "dict")
+        self.reset_args()
+        return self.native.call_str_int_dict(name)
 
     def poll_event(self) -> Event | None:
         return self.native.poll_event()

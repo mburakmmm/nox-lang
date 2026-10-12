@@ -49,9 +49,8 @@ name: CI
 # LL.1 yalnızca derleyici ön-ucunu doğruluyordu; LL.2-LL.5 runtime'ın
 # TAMAMINI (fiber/reaktör/soket/self-pipe) Windows'a taşıdı; LL.6 artık
 # `qbe`yi KAYNAKTAN derleyip GERÇEK bir Nox programını uçtan uca (`noxc
-# run`) ÇALIŞTIRIYOR — bu işin ADI ("yalnızca derleyici ön-ucu — Faz
-# LL.1") artık TARİHSEL, kapsamı bundan ÇOK DAHA GENİŞ (LL.8'de, TÜM
-# roadmap bitince güncellenecek).
+# run`) ÇALIŞTIRIYOR. İş, Linux/macOS ile aynı `zig build test` korpusunu
+# da çalıştırır.
 
 on:
   push:
@@ -359,15 +358,12 @@ jobs:
   # İÇERMEDİĞİNDEN, `build.zig`nin `noxc` adımı (runtime'a/`noxrt`e HİÇ
   # BAĞIMLI DEĞİL — bkz. o adımın belge notu) VE `compiler/lib.zig`nin
   # (lexer/parser/checker/module_loader) testleri (`frontend-test` adımı)
-  # native Windows'ta İLKE OLARAK çalışabilir olmalı. Bu iş TAM OLARAK bu
-  # iddiayı GERÇEK bir `windows-latest` çalıştırıcısında doğrular — ana
-  # 3-platform matrisinin YANINDA, İÇİNDE DEĞİL (o matrisin TAMAMI —
-  # `qbe`/`cc` gerektiren `build`/`test` adımları dahil — Windows'ta HENÜZ
-  # ÇALIŞMAZ, bkz. LL.2-LL.7 yol haritası).
+  # native Windows'ta İLKE OLARAK çalışabilir olmalı. Bu iş ana matrisin
+  # YANINDA durur ve `zig build test` ile aynı korpusu Windows'ta çalıştırır.
   windows-frontend:
-    name: Windows (yalnızca derleyici ön-ucu — Faz LL.1)
+    name: Windows (tam zig build test korpusu)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -733,8 +729,13 @@ jobs:
             Write-Host "'$name' derlemesi basarili."
           }
 
-  # v2.0.8: hosted riscv64 dumanı. Tam dil korpusu değil; sınıf, liste ve bir
-  # spawn/await (`class_list_spawn`, çıktı 70) qemu-user altında çalışır.
+      # Linux ve macOS ile aynı `zig build test` korpusu. qbe PATH'te,
+      # OpenSSL kurulu. Süre, tam golden + CLI + runtime paketini kapsar.
+      - name: zig build test (Debug)
+        run: zig build test
+
+  # v2.0.8: hosted riscv64 dumanı. Tam dil korpusu değil. Sınıf/liste/spawn,
+  # fibonacci, sözlük yazdırma ve satır taşıma hata sırası qemu-user altında çalışır.
   riscv64-smoke:
     name: linux-riscv64 qemu-user duman
     runs-on: ubuntu-latest
@@ -757,13 +758,23 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
       - name: noxc ve riscv64 runtime
         run: zig build
-      - name: class_list_spawn
+      - name: class_list_spawn, fibonacci, sozluk ve hata sirasi
         run: |
           set -euo pipefail
-          zig-out/bin/noxc build --target linux-riscv64 tests/golden/codegen_cases/class_list_spawn.nox -o /tmp/nox-riscv-smoke
           qemu=qemu-riscv64-static
           if ! command -v "$qemu" >/dev/null 2>&1; then
             qemu=qemu-riscv64
           fi
-          out="$("$qemu" /tmp/nox-riscv-smoke)"
-          test "$out" = "70"
+          run_one() {
+            local src="$1"
+            local out="$2"
+            local bin="$3"
+            zig-out/bin/noxc build --target linux-riscv64 "$src" -o "$bin"
+            got="$("$qemu" "$bin")"
+            printf '%s\n' "$got" > /tmp/nox-riscv-got
+            diff -u "$out" /tmp/nox-riscv-got
+          }
+          run_one tests/golden/codegen_cases/class_list_spawn.nox tests/golden/codegen_cases/class_list_spawn.expected /tmp/nox-riscv-smoke
+          run_one tests/golden/codegen_cases/fibonacci.nox tests/golden/codegen_cases/fibonacci.expected /tmp/nox-riscv-fib
+          run_one tests/golden/codegen_cases/print_dict_index_assign_empty.nox tests/golden/codegen_cases/print_dict_index_assign_empty.expected /tmp/nox-riscv-dict
+          run_one tests/golden/codegen_cases/list_row_hoist_order.nox tests/golden/codegen_cases/list_row_hoist_order.expected /tmp/nox-riscv-order

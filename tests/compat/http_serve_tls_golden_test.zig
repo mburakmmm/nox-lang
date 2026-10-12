@@ -11,7 +11,7 @@
 //! hem CA'dır).
 
 const std = @import("std");
-const posix = std.posix;
+const sys = @import("sys_compat");
 const nox = @import("nox");
 const child_watchdog = @import("child_watchdog.zig");
 
@@ -85,18 +85,18 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
 
 /// `http_serve_golden_test.zig`nin AYNI `probeFreePort`ı — kasıtlı tekrar.
 fn probeFreePort() !u16 {
-    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-    if (fd < 0) return error.SocketFailed;
-    defer _ = std.c.close(fd);
+    const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+    if (sys.badFd(fd)) return error.SocketFailed;
+    defer _ = sys.close(fd);
     var reuse: c_int = 1;
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    _ = sys.setsockopt(fd, sys.SOL.SOCKET, sys.SO.REUSEADDR, &reuse, @sizeOf(c_int));
 
-    var addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
+    var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
 
-    var got: std.c.sockaddr.in = undefined;
-    var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-    if (std.c.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
+    var got: sys.sockaddr.in = undefined;
+    var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+    if (sys.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
     return std.mem.bigToNative(u16, got.port);
 }
 
@@ -117,8 +117,8 @@ fn tlsRequestAndRead(io: std.Io, port: u16, out: []u8) !usize {
     while (true) : (attempt += 1) {
         const stream = addr.connect(io, .{ .mode = .stream }) catch |err| {
             if (attempt >= 200) return err;
-            const ts: posix.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            const ts: sys.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+            _ = sys.nanosleep(&ts, null);
             continue;
         };
         defer stream.close(io);
@@ -187,8 +187,8 @@ fn tlsRequestSplitAndRead(io: std.Io, port: u16, part1: []const u8, part2: []con
     while (true) : (attempt += 1) {
         const stream = addr.connect(io, .{ .mode = .stream }) catch |err| {
             if (attempt >= 200) return err;
-            const ts: posix.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            const ts: sys.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+            _ = sys.nanosleep(&ts, null);
             continue;
         };
         defer stream.close(io);
@@ -225,8 +225,8 @@ fn tlsRequestSplitAndRead(io: std.Io, port: u16, part1: []const u8, part2: []con
         try stream_writer.interface.flush();
 
         if (delay_ms != 0) {
-            const ts: posix.timespec = .{ .sec = 0, .nsec = @as(isize, delay_ms) * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            const ts: sys.timespec = .{ .sec = 0, .nsec = @as(isize, delay_ms) * std.time.ns_per_ms };
+            _ = sys.nanosleep(&ts, null);
         }
 
         if (part2.len != 0) {
@@ -378,8 +378,8 @@ test "nox.http.serve_tls: AYNI OS is parcaciginda ic ice gecen IKI TLS baglantis
             // "yavaş"ın bağlanıp İLK parçasını GÖNDERMESİ İçİn kısa bir
             // baş payı — çakışma penceresinin GERÇEKTEN "yavaş" askıdayken
             // açılmasını sağlar.
-            const ts: posix.timespec = .{ .sec = 0, .nsec = 30 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            const ts: sys.timespec = .{ .sec = 0, .nsec = 30 * std.time.ns_per_ms };
+            _ = sys.nanosleep(&ts, null);
             out_len.* = tlsRequestSplitAndRead(std.testing.io, p, "GET /fast HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", "", 0, out) catch 0;
         }
     }.run, .{ port, &fast_buf, &fast_len });

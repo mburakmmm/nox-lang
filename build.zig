@@ -990,6 +990,12 @@ pub fn build(b: *std.Build) void {
         "tests/golden/backend_conformance_test.zig",
     };
 
+    const sys_compat_mod = b.createModule(.{
+        .root_source_file = b.path("tests/sys_compat.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
     for (external_test_files) |path| {
         const mod = b.createModule(.{
             .root_source_file = b.path(path),
@@ -1008,6 +1014,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
             .imports = &.{
                 .{ .name = "nox", .module = nox_mod },
+                .{ .name = "sys_compat", .module = sys_compat_mod },
             },
         });
         const t = b.addTest(.{ .root_module = mod });
@@ -1026,6 +1033,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const codegen_test = b.addTest(.{ .root_module = codegen_test_mod });
@@ -1098,6 +1106,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .imports = &.{
                     .{ .name = "nox", .module = nox_mod },
+                    .{ .name = "sys_compat", .module = sys_compat_mod },
                 },
             });
             const hpy_call_golden_test = b.addTest(.{ .root_module = hpy_call_golden_mod });
@@ -1223,6 +1232,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
             .{ .name = "build_options", .module = ffi_build_options.createModule() },
         },
     });
@@ -1247,6 +1257,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const http_stdlib_test = b.addTest(.{ .root_module = http_stdlib_test_mod });
@@ -1264,6 +1275,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const search_test = b.addTest(.{ .root_module = search_test_mod });
     test_step.dependOn(&b.addRunArtifact(search_test).step);
@@ -1277,6 +1289,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const upgrade_test = b.addTest(.{ .root_module = upgrade_test_mod });
     test_step.dependOn(&b.addRunArtifact(upgrade_test).step);
@@ -1289,6 +1302,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const publish_test = b.addTest(.{ .root_module = publish_test_mod });
     test_step.dependOn(&b.addRunArtifact(publish_test).step);
@@ -1308,6 +1322,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const http_serve_test = b.addTest(.{ .root_module = http_serve_test_mod });
@@ -1325,6 +1340,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const router_module_state_test = b.addTest(.{ .root_module = router_module_state_test_mod });
@@ -1341,6 +1357,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const http_serve_multicore_test = b.addTest(.{ .root_module = http_serve_multicore_test_mod });
@@ -1360,6 +1377,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const http_serve_multicore_pool_test = b.addTest(.{ .root_module = http_serve_multicore_pool_test_mod });
@@ -1377,6 +1395,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const http_serve_tls_test = b.addTest(.{ .root_module = http_serve_tls_test_mod });
@@ -1390,6 +1409,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const http_serve_ws_test = b.addTest(.{ .root_module = http_serve_ws_test_mod });
@@ -1535,6 +1555,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const http_soak_test = b.addTest(.{ .root_module = http_soak_test_mod });
     http_soak_test.step.dependOn(b.getInstallStep());
@@ -1556,6 +1577,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const concurrency_torture_test = b.addTest(.{ .root_module = concurrency_torture_test_mod });
     concurrency_torture_test.step.dependOn(b.getInstallStep());
@@ -1579,6 +1601,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const concurrency_torture2_test = b.addTest(.{ .root_module = concurrency_torture2_test_mod });
     concurrency_torture2_test.step.dependOn(b.getInstallStep());
@@ -1606,6 +1629,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
+            .{ .name = "sys_compat", .module = sys_compat_mod },
         },
     });
     const backend_differential_corpus_test = b.addTest(.{ .root_module = backend_differential_corpus_test_mod });

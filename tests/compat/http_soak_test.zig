@@ -19,7 +19,7 @@
 //! v1.31.0'ın `stress-test`i GİBİ).
 
 const std = @import("std");
-const posix = std.posix;
+const sys = @import("sys_compat");
 
 const cert_path = "tests/fixtures/tls/test_cert.pem";
 const key_path = "tests/fixtures/tls/test_key.pem";
@@ -43,8 +43,8 @@ fn soakSecondsFromEnv(default_seconds: u32) u32 {
 /// BAĞIMSIZ, ham `clock_gettime(CLOCK.MONOTONIC)` İLE yapılır — GERÇEKTEN
 /// HERHANGİ bir OS iş parçacığından GÜVENLE çağrılabilir.
 fn monotonicNs() i128 {
-    var ts: std.c.timespec = undefined;
-    _ = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+    var ts: sys.timespec = undefined;
+    _ = sys.clock_gettime(sys.CLOCK.MONOTONIC, &ts);
     return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
 }
 
@@ -71,34 +71,34 @@ fn compileViaRealNoxc(gpa: std.mem.Allocator, io: std.Io, nox_path: []const u8, 
 }
 
 fn probeFreePort() !u16 {
-    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-    if (fd < 0) return error.SocketFailed;
-    defer _ = std.c.close(fd);
+    const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+    if (sys.badFd(fd)) return error.SocketFailed;
+    defer _ = sys.close(fd);
     var reuse: c_int = 1;
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    _ = sys.setsockopt(fd, sys.SOL.SOCKET, sys.SO.REUSEADDR, &reuse, @sizeOf(c_int));
 
-    var addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
+    var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
 
-    var got: std.c.sockaddr.in = undefined;
-    var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-    if (std.c.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
+    var got: sys.sockaddr.in = undefined;
+    var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+    if (sys.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
     return std.mem.bigToNative(u16, got.port);
 }
 
-fn testConnect(port: u16) !posix.fd_t {
+fn testConnect(port: u16) !sys.fd_t {
     var attempt: usize = 0;
     while (attempt < 500) : (attempt += 1) {
-        const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-        if (fd < 0) return error.SocketFailed;
-        var addr: std.c.sockaddr.in = .{
+        const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+        if (sys.badFd(fd)) return error.SocketFailed;
+        var addr: sys.sockaddr.in = .{
             .port = std.mem.nativeToBig(u16, port),
             .addr = std.mem.nativeToBig(u32, 0x7f000001),
         };
-        if (std.c.connect(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) == 0) return fd;
-        _ = std.c.close(fd);
-        const ts: posix.timespec = .{ .sec = 0, .nsec = 5 * std.time.ns_per_ms };
-        _ = std.c.nanosleep(&ts, null);
+        if (sys.connect(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) == 0) return fd;
+        _ = sys.close(fd);
+        const ts: sys.timespec = .{ .sec = 0, .nsec = 5 * std.time.ns_per_ms };
+        _ = sys.nanosleep(&ts, null);
     }
     return error.ConnectFailed;
 }
@@ -107,19 +107,19 @@ const SoakResult = struct { count: usize = 0 };
 
 fn doOnePlainRequest(port: u16) bool {
     const fd = testConnect(port) catch return false;
-    defer _ = std.c.close(fd);
+    defer _ = sys.close(fd);
 
     const req = "GET /soak HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     var off: usize = 0;
     while (off < req.len) {
-        const n = std.c.write(fd, req[off..].ptr, req.len - off);
+        const n = sys.write(fd, req[off..].ptr, req.len - off);
         if (n <= 0) return false;
         off += @intCast(n);
     }
     var buf: [512]u8 = undefined;
     var total: usize = 0;
     while (total < buf.len) {
-        const n = std.c.read(fd, buf[total..].ptr, buf.len - total);
+        const n = sys.read(fd, buf[total..].ptr, buf.len - total);
         if (n <= 0) break;
         total += @intCast(n);
     }
@@ -218,7 +218,7 @@ test "nox.http.serve_multicore soak: 8 sürekli istemci, sürdürülebilir süre
 /// nun ALTINDAKİ `Io.Threaded` reaktörünün `netConnectIp` yolunun BU
 /// yoğunlukta GÜVENİLİR olmadığı SONUCUNA VARILDI (standalone bir
 /// reprodüksiyonla DOĞRULANDI: 8 iş parçacığı × 5 saniye, `Io.net`
-/// KULLANILDIĞINDA ARALIKLI hata, `testConnect`nin HAM `std.c.connect`i +
+/// KULLANILDIĞINDA ARALIKLI hata, `testConnect`nin HAM `sys.connect`i +
 /// `std.Io.File`e SARILMASI KULLANILDIĞINDA 2000+ BAŞARILI istekte SIFIR
 /// hata). Bu YÜZDEN bağlantı `testConnect` (ham fd) İLE kurulup `std.Io.
 /// File`e SARILIR — `std.crypto.tls.Client`ın İHTİYAÇ DUYDUĞU `Reader`/
@@ -226,7 +226,7 @@ test "nox.http.serve_multicore soak: 8 sürekli istemci, sürdürülebilir süre
 /// TAMAMEN KAÇINARAK elde edilir.
 fn doOneTlsRequest(io: std.Io, port: u16, bundle: *std.crypto.Certificate.Bundle, now: std.Io.Timestamp) bool {
     const fd = testConnect(port) catch return false;
-    defer _ = std.c.close(fd);
+    defer _ = sys.close(fd);
     const file: std.Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
 
     var sock_read_buf: [std.crypto.tls.Client.min_buffer_len]u8 = undefined;

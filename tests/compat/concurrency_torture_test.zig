@@ -28,6 +28,7 @@
 //! dosyaya HİÇ DOKUNULMADI).
 
 const std = @import("std");
+const sys = @import("sys_compat");
 const child_watchdog = @import("child_watchdog.zig");
 
 fn tortureSeedCountFromEnv(default_count: u32) u32 {
@@ -58,8 +59,8 @@ fn nextSeed(master: *?std.Random.DefaultPrng) i64 {
     // `std.time.nanoTimestamp` bu Zig sürümünde YOK (`runtime/stdlib_shims/
     // random.zig`nin `ensureSeeded`i İLE AYNI, KANITLANMIŞ `clock_gettime`
     // deseni).
-    var ts: std.c.timespec = undefined;
-    _ = std.c.clock_gettime(.REALTIME, &ts);
+    var ts: sys.timespec = undefined;
+    _ = sys.clock_gettime(.REALTIME, &ts);
     const raw: i64 = ts.sec *% 1_000_000_000 +% ts.nsec;
     return @mod(raw, std.math.maxInt(i64));
 }

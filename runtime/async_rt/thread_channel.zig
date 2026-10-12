@@ -65,6 +65,7 @@
 //! ihtiyacı KARŞILAR.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const bridge = @import("bridge.zig");
@@ -312,8 +313,14 @@ test "nox_threadchannel: kapasite-sinirli tampon, gonderen dolu tamponda GERÇEK
     // basıncı ÇALIŞMIYOR demektir.
     var waited_ms: i64 = 0;
     while (waited_ms < 200 and !sent_all.load(.acquire)) : (waited_ms += 5) {
-        const ts: std.c.timespec = .{ .sec = 0, .nsec = 5 * std.time.ns_per_ms };
-        _ = std.c.nanosleep(&ts, null);
+        if (builtin.os.tag == .windows) {
+            struct {
+                extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(.c) void;
+            }.Sleep(5);
+        } else {
+            const ts: std.c.timespec = .{ .sec = 0, .nsec = 5 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+        }
     }
     try std.testing.expect(!sent_all.load(.acquire));
 

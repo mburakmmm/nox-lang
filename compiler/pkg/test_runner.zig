@@ -12,6 +12,15 @@
 //! olduğundan, dairesel import'tan KAÇINMAK için).
 
 const std = @import("std");
+const run_cache = @import("run_cache.zig");
+
+fn pathHasSkippedDir(path: []const u8) bool {
+    var it = std.mem.splitAny(u8, path, "/\\");
+    while (it.next()) |part| {
+        if (run_cache.shouldSkipDir(part)) return true;
+    }
+    return false;
+}
 
 /// `root` (MUTLAK yol, bir DİZİN olmalı) altında `*_test.nox` ile biten
 /// TÜM dosyaları özyinelemeli olarak bulur, MUTLAK yollarını döner. Sıra
@@ -26,7 +35,9 @@ pub fn discoverTestFiles(a: std.mem.Allocator, io: std.Io, root: []const u8) ![]
     var walker = try dir.walk(a);
     defer walker.deinit();
     while (try walker.next(io)) |entry| {
+        if (entry.kind == .directory and run_cache.shouldSkipDir(entry.basename)) continue;
         if (entry.kind != .file) continue;
+        if (pathHasSkippedDir(entry.path)) continue;
         if (!std.mem.endsWith(u8, entry.basename, "_test.nox")) continue;
         const full = try std.fmt.allocPrint(a, "{s}/{s}", .{ root, entry.path });
         try files.append(a, full);

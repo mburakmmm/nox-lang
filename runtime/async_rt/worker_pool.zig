@@ -32,6 +32,7 @@
 //! yazar, worker'LAR ARASI KARIŞMA OLMAZ.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const chase_lev_deque = @import("chase_lev_deque.zig");
 const fiber_mod = @import("fiber.zig");
@@ -390,6 +391,12 @@ test "WorkerPool: create/destroy tek başına (worker yok) sızmaz" {
 /// test` Windows CI'de HİÇ ÇALIŞMIYOR — `windows-frontend` işi SADECE
 /// `zig build frontend-test` çalıştırır), bu YÜZDEN Windows dalı GEREKMEZ.
 fn sleepMs(ms: i64) void {
+    if (builtin.os.tag == .windows) {
+        struct {
+            extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(.c) void;
+        }.Sleep(@intCast(ms));
+        return;
+    }
     const ts: std.c.timespec = .{
         .sec = @divTrunc(ms, std.time.ms_per_s),
         .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,

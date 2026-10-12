@@ -58,6 +58,7 @@
 //! (mimari düzeyde, salt bellek-güvenliği düzeyinde DEĞİL) korumalıdır).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const bridge = @import("bridge.zig");
@@ -121,6 +122,12 @@ pub const ThreadHandle = struct {
 /// kodunun KENDİ senkronizasyon/zamanlama ihtiyacı İÇİN (özellik KODU
 /// DEĞİL).
 fn sleepMs(ms: i64) void {
+    if (builtin.os.tag == .windows) {
+        struct {
+            extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(.c) void;
+        }.Sleep(@intCast(ms));
+        return;
+    }
     const ts: std.c.timespec = .{
         .sec = @divTrunc(ms, std.time.ms_per_s),
         .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,

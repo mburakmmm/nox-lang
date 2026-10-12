@@ -734,6 +734,10 @@ test "pickMainWorkerCount: NOX_POOL_WORKERS HER İKİ dalı da (multicore/multic
 /// sürümünde `std.Thread.sleep` YOK) — "kasıtlı, küçük tekrar" konvansiyonu
 /// (bu dosyanın KENDİ, İLK kopyası).
 fn sleepMs(ms: i64) void {
+    if (builtin.os.tag == .windows) {
+        WinSleep.Sleep(@intCast(ms));
+        return;
+    }
     const ts: posix.timespec = .{
         .sec = @divTrunc(ms, std.time.ms_per_s),
         .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,

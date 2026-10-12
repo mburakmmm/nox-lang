@@ -8,7 +8,7 @@
 //! test.zig`nin ham istemci deseniyle AYNI).
 
 const std = @import("std");
-const posix = std.posix;
+const sys = @import("sys_compat");
 const nox = @import("nox");
 const child_watchdog = @import("child_watchdog.zig");
 
@@ -81,51 +81,51 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
 
 /// `http_serve_golden_test.zig`nin AYNI `probeFreePort`ı — kasıtlı tekrar.
 fn probeFreePort() !u16 {
-    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-    if (fd < 0) return error.SocketFailed;
-    defer _ = std.c.close(fd);
+    const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+    if (sys.badFd(fd)) return error.SocketFailed;
+    defer _ = sys.close(fd);
     var reuse: c_int = 1;
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    _ = sys.setsockopt(fd, sys.SOL.SOCKET, sys.SO.REUSEADDR, &reuse, @sizeOf(c_int));
 
-    var addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
+    var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
 
-    var got: std.c.sockaddr.in = undefined;
-    var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-    if (std.c.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
+    var got: sys.sockaddr.in = undefined;
+    var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+    if (sys.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
     return std.mem.bigToNative(u16, got.port);
 }
 
-fn testConnect(port: u16) !posix.fd_t {
+fn testConnect(port: u16) !sys.fd_t {
     var attempt: usize = 0;
     while (attempt < 200) : (attempt += 1) {
-        const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-        if (fd < 0) return error.SocketFailed;
-        var addr: std.c.sockaddr.in = .{
+        const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+        if (sys.badFd(fd)) return error.SocketFailed;
+        var addr: sys.sockaddr.in = .{
             .port = std.mem.nativeToBig(u16, port),
             .addr = std.mem.nativeToBig(u32, 0x7f000001),
         };
-        if (std.c.connect(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) == 0) return fd;
-        _ = std.c.close(fd);
-        const ts: posix.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
-        _ = std.c.nanosleep(&ts, null);
+        if (sys.connect(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) == 0) return fd;
+        _ = sys.close(fd);
+        const ts: sys.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+        _ = sys.nanosleep(&ts, null);
     }
     return error.ConnectFailed;
 }
 
-fn writeAll(fd: posix.fd_t, bytes: []const u8) !void {
+fn writeAll(fd: sys.fd_t, bytes: []const u8) !void {
     var off: usize = 0;
     while (off < bytes.len) {
-        const n = std.c.write(fd, bytes[off..].ptr, bytes.len - off);
+        const n = sys.write(fd, bytes[off..].ptr, bytes.len - off);
         if (n <= 0) return error.WriteFailed;
         off += @intCast(n);
     }
 }
 
-fn readExact(fd: posix.fd_t, buf: []u8) !void {
+fn readExact(fd: sys.fd_t, buf: []u8) !void {
     var off: usize = 0;
     while (off < buf.len) {
-        const n = std.c.read(fd, buf[off..].ptr, buf.len - off);
+        const n = sys.read(fd, buf[off..].ptr, buf.len - off);
         if (n <= 0) return error.ReadFailed;
         off += @intCast(n);
     }
@@ -133,10 +133,10 @@ fn readExact(fd: posix.fd_t, buf: []u8) !void {
 
 /// El sıkışma sonrası "\r\n\r\n"e kadar ham başlıkları OKUR (basit, TEK
 /// baytlık bir sondaj döngüsü — testin küçük yanıtı İçİn yeterli).
-fn readHttpHeaders(fd: posix.fd_t, buf: []u8) ![]const u8 {
+fn readHttpHeaders(fd: sys.fd_t, buf: []u8) ![]const u8 {
     var total: usize = 0;
     while (total < buf.len) {
-        const n = std.c.read(fd, buf[total..].ptr, 1);
+        const n = sys.read(fd, buf[total..].ptr, 1);
         if (n <= 0) return error.ReadFailed;
         total += 1;
         if (total >= 4 and std.mem.eql(u8, buf[total - 4 .. total], "\r\n\r\n")) {
@@ -156,7 +156,7 @@ fn computeAcceptValue(key_b64: []const u8, out: *[28]u8) void {
 }
 
 /// İstemci→sunucu frame'i — RFC 6455 gereği MASKELENMİŞ olmalı.
-fn sendMaskedTextFrame(fd: posix.fd_t, payload: []const u8) !void {
+fn sendMaskedTextFrame(fd: sys.fd_t, payload: []const u8) !void {
     var header: [14]u8 = undefined;
     var hlen: usize = 0;
     header[0] = 0x81; // FIN=1, opcode=0x1 (text)
@@ -183,7 +183,7 @@ fn sendMaskedTextFrame(fd: posix.fd_t, payload: []const u8) !void {
 
 /// Sunucu→istemci frame'i — RFC 6455 gereği MASKELENMEMİŞ olmalı; bu test
 /// yalnızca TEK, KÜÇÜK bir metin frame'i BEKLER (7-bit uzunluk alanı).
-fn recvUnmaskedTextFrame(fd: posix.fd_t, out: []u8) !usize {
+fn recvUnmaskedTextFrame(fd: sys.fd_t, out: []u8) !usize {
     var header: [2]u8 = undefined;
     try readExact(fd, &header);
     const masked = (header[1] & 0x80) != 0;
@@ -235,7 +235,7 @@ test "nox.http.serve_ws: uctan uca, RFC 6455 el sikismasi + maskeli metin frame 
     defer watchdog.disarm();
 
     const fd = try testConnect(port);
-    defer _ = std.c.close(fd);
+    defer _ = sys.close(fd);
 
     // Sabit (test-only) bir 16 baytlık anahtar — RFC gereği base64 ile
     // kodlanır (Sec-WebSocket-Key rastgele OLMASI GEREKMEZ, sunucu YALNIZCA
@@ -321,7 +321,7 @@ test "nox.http.serve_ws: maskesiz gelen bir istemci frame'i RFC 6455 geregi redd
     defer watchdog.disarm();
 
     const fd = try testConnect(port);
-    defer _ = std.c.close(fd);
+    defer _ = sys.close(fd);
 
     const raw_key = "0123456789ABCDEF";
     var key_b64_buf: [24]u8 = undefined;
@@ -344,7 +344,7 @@ test "nox.http.serve_ws: maskesiz gelen bir istemci frame'i RFC 6455 geregi redd
     try writeAll(fd, &unmasked_frame);
 
     var resp: [16]u8 = undefined;
-    const n = std.c.read(fd, &resp, resp.len);
+    const n = sys.read(fd, &resp, resp.len);
     // Bağlantı ya HEMEN bir Close frame'i (opcode 0x8, İLK bayt 0x88) İLE
     // ya da doğrudan soket kapanışıyla (n <= 0) sonuçlanmalı — HER İKİSİ de
     // "reddedildi" kanıtıdır; yankılanan bir metin frame'i (0x81) ASLA

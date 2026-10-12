@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.10]
+
+### Düzeltildi
+
+- **Satır taşıma hata sırasını bozmaz.** Değişmeyen `a[i][k]` satırı, kendinden önce hata üretebilecek bir ifadenin önüne taşınmaz. Bölme önceyken `ZeroDivisionError`, indeks önceyken indeks hatası. Matmul'da yalnızca değişmeyen `a[i]` taşınır.
+- **LSP takma adı.** `from helper import double as twice` için tanım ve özgün import adı birlikte, takma ad ayrı yeniden adlandırılır. Gölgeleyen yerel tanıma dokunulmaz. Dosya başına sembol kaydı `didChange` ile düşer.
+- **NNI büyüme.** Liste ve sözlük kapasiteyle büyür; dolu uzunluk ayrıdır. Geçersiz UTF-8 anahtar `NOX_ERROR`. `post_event` ile biten eski başlık güncel hostta skaler işlev çağırır.
+- **Plugin manifesti** dönüşte `"list"` (`list[int]`) ve `"dict"` (`dict[str, int]`) kabul eder. Yanlış tür `PluginError`. Beş işlevlik test durur.
+- **`noxc install <yol>@etiket`** yerel git etiketini kurar. `--ref` gömülü etiketin önüne geçer.
+- **Release kapısı** CI'yi 100 dakika bekler. v2.0.9'da 35 dakikalık kapı, yeşil Linux işi bitmeden kesilmişti.
+
+### Eklendi
+
+- **`noxc test` seçimi.** İsim dosya adında aranır, dizin ağacı sınırlar, derleme hatası kalan dosyaları durdurmaz.
+- **`noxc run` / `noxc test` önbelleği** `$NOX_HOME/cache/run/` altındadır. Özet tutuyorsa yeniden derlenmez.
+- **Windows CI** tam `zig build test` korpusunu çalıştırır.
+- **RISC-V dumanı** fibonacci, sözlük ve hata sırasını da `qemu-user` altında doğrular.
+- **Aura `v1.0.0`** etiketi var; test paketi Skia host'una bağlı olduğu için harici fixture işine eklenmedi.
+
 ## [2.0.9]
 
 ### Düzeltildi

@@ -29026,3 +29026,35 @@ Aether ve Nyx bu deponun dışında, pinli etiketlerle `.github/workflows/extern
 ## 3.296 `noxc install` gömülü ref (v2.0.9)
 
 `noxc install github.com/org/name@v1.2.3` ref'i etiketten alır; `--ref` verilmişse o kazanır. `git@host:yol` adresindeki ilk `@` SSH kullanıcısıdır ve bölünmez. `http://` / `https://` bölünmez. Liste ve sözlük örnek işlevleri (`build_list`, `build_dict`) paylaşılan test eklentisinde yalnızca `-DNOX_NNI_CONTAINERS` ile kayıt edilir; Plugin API manifest testi beş işlevde kalır.
+
+## 3.297 `noxc test` seçimi ve çalıştırma önbelleği (v2.0.10)
+
+`noxc test` argümansızken çalışma dizinindeki her `*_test.nox` dosyasını çalıştırır. Bir kelime dosya adında aranır (`smtp` → `v18_smtp_test.nox`). Dizin o ağacı sınırlar. Tek bir `.nox` yolu programın çıkış kodunu olduğu gibi döndürür. Derleme hatası o dosyayı başarısız sayar ve kalan dosyalar çalışır. `.git`, `.nox`, `zig-out`, `zig-cache` ve `node_modules` yürünmez.
+
+`noxc run` ve `noxc test` ikiliyi proje klasörüne yazmaz. Yer `$NOX_HOME/cache/run/obj/<özet>/bin` dir. Özet; derleyici sürümü, backend, profil, hedef, `-g`, kaynak yolu, projedeki `.nox` dosyaları, `noxc` ikilisinin boyu ve değişiklik zamanı, `noxrt.o` ve kurulu stdlib'dir. Özet tutuyorsa yeniden derlenmez. Kaynak veya derleyici değişince önceki özet dizini silinir; bir kaynak yolu tek canlı ikili tutar.
+
+§3.6.4'teki "derleme hatası tüm turu durdurur" sınırı ve `.nox/cache/bin` yerleşimi bu bölümle kalkar. `buildOne` hata yolunda `error.BuildFailed` döner; `main` bunu çıkış kodu 1 yapar. `noxc test` bu hatayı yakalayıp sonraki dosyaya geçer.
+
+## 3.298 Windows'ta tam test korpusu
+
+`windows-frontend` işi `zig build test` çalıştırır. HTTP/CLI testlerinin soket ve saat çağrıları `tests/sys_compat.zig` üzerindedir: macOS/Linux'ta `std.c`, Windows'ta Winsock (`recv`/`send`/`closesocket`, `WSAPoll`) ve `kernel32.Sleep`. Plugin ve NNI testleri Windows'ta `.dll` üretir; manifest anahtarı `windows-x64` bu dosyayı gösterir.
+
+## 3.299 Doğruluk turu (v2.0.10)
+
+Bu tur `2.0.10` yamasıdır. Yayımlanmış `v2.0.8` ve `v2.0.9` etiketlerine dokunulmaz. Değişmez ilkelerden hiçbiri ihlal edilmedi. Release kapısı CI'yi 100 dakika bekler: v2.0.9'da Linux işi 43 dakika sürdüğü için 35 dakikalık kapı sürümü varlıksız bırakmıştı.
+
+**Hata sırası.** `while` gövdesinde değişmeyen `base[idx][k]` satırı, değerlendirme sırasında kendinden önce hata üretebilecek bir ifade varken taşınmaz. Hata üretenler indeks, dilim, nitelik erişimi, çağrı ve `.div` / `.floordiv` / `.mod` / `.pow` / `.shl` / `.shr` işlemleridir. `and` / `or` sağ tarafı taşınmaz. İç `if` ve iç döngüdeki satır taşınmaz; o deyim hata üretebiliyorsa sonraki satırlar da taşınmaz. Erken `break` / `return` / `raise` öneki keser. `s = s + a[i][k] * b[k][j]` içinde yalnızca `i` değişmiyorsa `a[i]` taşınır; matmul toplamı bozulmaz. İki backend golden'ı bölme önceyken `zero`, indeks önceyken `index` basar.
+
+**Takma ad.** `from helper import double as twice` için tanımın veya özgün import adının yeniden adlandırılması tanımı ve `double` adını değiştirir; `as twice` ve `twice` kullanımları kalır. Takma adın yeniden adlandırılması yalnızca `as` adını ve yerel kullanımları değiştirir; `helper.nox` içindeki tanım kalır. Aynı dosyada gölgeleyen `def twice` bu sembol yeniden adlandırmasına girmez.
+
+**Sembol önbelleği.** Sunucu açık belgeler ve disk taramasından dosya başına tanım ve import kaydı tutar. `didOpen` / `didChange` / `didClose` yalnızca o dosyayı günceller. Aynı metin ikinci references veya rename sorgusunda yeniden ayrıştırılmaz. Ayrıştırma hatası olan dosya indekse girmez; sorgu onu atlar.
+
+**NNI kapasite ve eski başlık.** Liste ve sözlükte `data.len` tahsis kapasitesi, `used` dolu bayt sayısıdır. Büyüme iki kattır; liste adımı en az 64 bayt (8 `i64`), sözlük adımı en az bir kayıttır. Sonuç kopyası `data[0..used]` dilimidir. C ABI ve bayt düzeni değişmez. `dict_set_int` bir megabayttan uzun veya geçersiz UTF-8 anahtarda `NOX_ERROR` döner. `post_event` ile biten eski başlıkla derlenen eklenti `struct_size` yeterliyse güncel hostta skaler işlev çağırır; liste ve sözlük üyelerine dokunmaz.
+
+**Manifest türleri.** `"list"` ve `"dict"` yalnızca dönüş türüdür: `list[int]` ve `dict[str, int]`. Argüman türü olarak kabul edilmezler. `LoadedPlugin.call_int_list` ve `call_str_int_dict` manifestteki dönüşü denetleyip `nox.native` kopyasına gider. Yanlış dönüş türü `PluginError` olur. Beş işlevlik manifest testi durur; ikinci manifest bu iki türü sayar.
+
+**Kurulum etiketi.** `noxc install <yerel-yol>@<etiket>` yerel git etiketini kurar. Ağ yoktur. `--ref` gömülü etiketin önüne geçer. `splitEmbeddedRef` birim testi durur.
+
+**RISC-V dumanı.** `riscv64-smoke` aynı runtime ile dört program çalıştırır: mevcut `class_list_spawn`, fibonacci, bir sözlük golden'ı ve hata sırası programı. Dördünün stdout'u `qemu-user` altında beklenen dosyayla doğrulanır. Tam korpus değildir.
+
+**Aura.** `github.com/mburakmmm/aura` etiketi `v1.0.0` vardır ve `tests/*.nox` paketi durur. Bu paket `native/libaura_host.dylib` bağlar; `WidgetTester` yolu `aura.runtime.frame` üzerinden o Skia host'una iner. Aether ve Nyx işleri salt `noxc test tests/*.nox` çalıştırır ve host derlemez. Skia derleyen veya test alt kümesi uyduran bir iş eklenmedi.

@@ -1,9 +1,11 @@
 # Testing
 
-`noxc test` finds every file named `*_test.nox` under the current directory, compiles and runs each as its own program, and reports one line per file and a summary.
+`noxc test` finds every file named `*_test.nox` under the current directory, compiles and runs each as its own program, and reports one line per file and a summary. A name argument matches the file name (`noxc test smtp` runs `v18_smtp_test.nox`). A directory limits the walk. One `.nox` path runs that file and returns its exit status. If a file fails to compile, it is reported as failed and the remaining files still run.
 
 ```sh
 noxc test
+noxc test smtp
+noxc test tests/http
 ```
 
 ```text

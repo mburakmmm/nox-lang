@@ -7,7 +7,7 @@
 //! tmpDir`e YÖNLENDİRİLİR — GERÇEK kurulu makine ORTAMI ASLA hedef alınmaz.
 
 const std = @import("std");
-const posix = std.posix;
+const sys = @import("sys_compat");
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
@@ -29,19 +29,19 @@ fn currentVersion(gpa: std.mem.Allocator, io: std.Io) ![]const u8 {
     return error.UnexpectedVersionOutput;
 }
 
-fn testListenerOn127001(port_out: *u16) !posix.fd_t {
-    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-    if (fd < 0) return error.SocketFailed;
+fn testListenerOn127001(port_out: *u16) !sys.fd_t {
+    const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+    if (sys.badFd(fd)) return error.SocketFailed;
     var reuse: c_int = 1;
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    _ = sys.setsockopt(fd, sys.SOL.SOCKET, sys.SO.REUSEADDR, &reuse, @sizeOf(c_int));
 
-    var addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
-    if (std.c.listen(fd, 4) != 0) return error.ListenFailed;
+    var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
+    if (sys.listen(fd, 4) != 0) return error.ListenFailed;
 
-    var got: std.c.sockaddr.in = undefined;
-    var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-    if (std.c.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
+    var got: sys.sockaddr.in = undefined;
+    var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+    if (sys.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
     port_out.* = std.mem.bigToNative(u16, got.port);
     return fd;
 }
@@ -68,28 +68,28 @@ fn extractPath(req: []const u8) []const u8 {
 /// v1.80.6 (bkz. `search_test.zig`nin AYNI adlı yardımcısının belge notu —
 /// BİREBİR AYNI gerekçe/savunma-derinliği ilkesi, BU dosyaya AYRI bir
 /// kopya olarak uygulanır).
-fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
-    var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
-    const n = std.c.poll(&pfd, 1, timeout_ms);
-    if (n <= 0) return -1;
-    return std.c.accept(listen_fd, null, null);
+fn acceptWithTimeout(listen_fd: sys.fd_t, timeout_ms: i32) sys.fd_t {
+    var pfd = [1]sys.pollfd{.{ .fd = listen_fd, .events = sys.POLL.IN, .revents = 0 }};
+    const n = sys.poll(&pfd, 1, timeout_ms);
+    if (n <= 0) return sys.bad_fd;
+    return sys.accept(listen_fd, null, null);
 }
 
 /// `routes`teki İLK EŞLEŞEN rotayı bulup yanıtlar; hiçbiri EŞLEŞMEZSE 404
 /// döner. `num_requests` bağlantı KABUL EDİLİR (HER biri TEK bir istek/
 /// yanıt) — `noxc upgrade`nin YAPACAĞI TOPLAM HTTP çağrısı sayısıyla AYNI
 /// olmalı (sırayla API + indirme [+ sağlama-toplamı]).
-fn serveFixtureRoutes(listen_fd: posix.fd_t, routes: []const Route, num_requests: usize) void {
+fn serveFixtureRoutes(listen_fd: sys.fd_t, routes: []const Route, num_requests: usize) void {
     var handled: usize = 0;
     while (handled < num_requests) : (handled += 1) {
         const conn = acceptWithTimeout(listen_fd, 15_000);
-        if (conn < 0) return;
-        defer _ = std.c.close(conn);
+        if (sys.badFd(conn)) return;
+        defer _ = sys.close(conn);
 
         var req_buf: [8192]u8 = undefined;
         var total: usize = 0;
         while (total < req_buf.len) {
-            const n = std.c.read(conn, req_buf[total..].ptr, req_buf.len - total);
+            const n = sys.read(conn, req_buf[total..].ptr, req_buf.len - total);
             if (n <= 0) break;
             total += @intCast(n);
             if (std.mem.indexOf(u8, req_buf[0..total], "\r\n\r\n") != null) break;
@@ -112,14 +112,14 @@ fn serveFixtureRoutes(listen_fd: posix.fd_t, routes: []const Route, num_requests
 
         var written: usize = 0;
         while (written < header.len) {
-            const n = std.c.write(conn, header[written..].ptr, header.len - written);
+            const n = sys.write(conn, header[written..].ptr, header.len - written);
             if (n <= 0) return;
             written += @intCast(n);
         }
         if (matched) |r| {
             written = 0;
             while (written < r.body.len) {
-                const n = std.c.write(conn, r.body[written..].ptr, r.body.len - written);
+                const n = sys.write(conn, r.body[written..].ptr, r.body.len - written);
                 if (n <= 0) return;
                 written += @intCast(n);
             }
@@ -214,7 +214,7 @@ test "noxc upgrade --check: zaten guncelse indirme/cikarma HIC tetiklenmeden 0 d
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer _ = sys.close(listen_fd);
     const routes = [_]Route{.{ .suffix = "/releases/latest", .body = latest_json, .content_type = "application/json" }};
     const server_thread = try std.Thread.spawn(.{}, serveFixtureRoutes, .{ listen_fd, &routes, @as(usize, 1) });
     defer server_thread.join();
@@ -242,7 +242,7 @@ test "noxc upgrade: http:// API tabani varsayilan olarak reddedilir" {
     const gpa = std.testing.allocator;
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer _ = sys.close(listen_fd);
 
     const api_base = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{port});
     defer gpa.free(api_base);
@@ -266,7 +266,7 @@ test "noxc upgrade: bozuk JSON API yaniti temiz bir hatayla cikis kodu 1 doner" 
     const gpa = std.testing.allocator;
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer _ = sys.close(listen_fd);
     const routes = [_]Route{.{ .suffix = "/releases/latest", .body = "{ bozuk json", .content_type = "application/json" }};
     const server_thread = try std.Thread.spawn(.{}, serveFixtureRoutes, .{ listen_fd, &routes, @as(usize, 1) });
     defer server_thread.join();
@@ -325,7 +325,7 @@ test "noxc upgrade: GERCEK uctan-uca cikarma+degistirme (sahte tar.gz, izole kur
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer _ = sys.close(listen_fd);
     const routes = [_]Route{
         .{ .suffix = "/releases/latest", .body = latest_json, .content_type = "application/json" },
         .{ .suffix = ".tar.gz.sha256", .body = sha_body },

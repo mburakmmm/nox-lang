@@ -88,6 +88,9 @@ const Entry = struct {
     gen: u32 = 1,
     refs: u32 = 0,
     kind: i32 = V_STRING,
+    /// Liste ve sözlükte dolu bayt sayısı. `data.len` tahsis kapasitesidir.
+    /// Diğer türlerde ikisi eşittir.
+    used: usize = 0,
     data: []u8 = &.{},
 };
 
@@ -161,6 +164,7 @@ fn newEntry(host: *Host, kind: i32, p: [*]const u8, len: usize) NoxHandle {
     e.refs = 1;
     e.kind = kind;
     e.data = copy;
+    e.used = len;
     return (@as(u64, e.gen) << 32) | @as(u64, @intCast(idx + 1));
 }
 
@@ -184,6 +188,7 @@ fn apiRelease(rt: *NoxRuntime, h: NoxHandle) callconv(.c) void {
     }
     host.allocator.free(e.data);
     e.data = &.{};
+    e.used = 0;
     e.in_use = false;
     e.refs = 0;
     e.gen +%= 1;
@@ -286,17 +291,35 @@ fn apiListNew(rt: *NoxRuntime) callconv(.c) NoxHandle {
     return newEntry(host, V_LIST, &empty, 0);
 }
 
+fn growCap(old: usize, need: usize, min_step: usize) usize {
+    var cap: usize = if (old == 0) @max(need, min_step) else old;
+    while (cap < need) {
+        if (cap > std.math.maxInt(usize) / 2) return need;
+        cap *= 2;
+    }
+    return cap;
+}
+
+fn ensure(host: *Host, e: *Entry, need: usize, min_step: usize) bool {
+    if (e.data.len >= need) return true;
+    const cap = growCap(e.data.len, need, min_step);
+    const neu = host.allocator.alloc(u8, cap) catch return false;
+    @memcpy(neu[0..e.used], e.data[0..e.used]);
+    host.allocator.free(e.data);
+    e.data = neu;
+    return true;
+}
+
 fn apiListAppendInt(rt: *NoxRuntime, h: NoxHandle, v: i64) callconv(.c) NoxStatus {
     const host = hostFrom(rt);
     host.lock.lock();
     defer host.lock.unlock();
     const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
     if (e.kind != V_LIST) return NOX_ERROR;
-    const neu = host.allocator.alloc(u8, e.data.len + 8) catch return NOX_OUT_OF_MEMORY;
-    @memcpy(neu[0..e.data.len], e.data);
-    std.mem.writeInt(i64, neu[e.data.len..][0..8], v, .little);
-    if (e.data.len != 0) host.allocator.free(e.data);
-    e.data = neu;
+    if (e.used > std.math.maxInt(usize) - 8) return NOX_ERROR;
+    if (!ensure(host, e, e.used + 8, 64)) return NOX_OUT_OF_MEMORY;
+    std.mem.writeInt(i64, e.data[e.used..][0..8], v, .little);
+    e.used += 8;
     return NOX_OK;
 }
 
@@ -305,8 +328,8 @@ fn apiListLen(rt: *NoxRuntime, h: NoxHandle, out_len: *i64) callconv(.c) NoxStat
     host.lock.lock();
     defer host.lock.unlock();
     const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
-    if (e.kind != V_LIST or e.data.len % 8 != 0) return NOX_ERROR;
-    out_len.* = @intCast(e.data.len / 8);
+    if (e.kind != V_LIST or e.used % 8 != 0) return NOX_ERROR;
+    out_len.* = @intCast(e.used / 8);
     return NOX_OK;
 }
 
@@ -315,9 +338,9 @@ fn apiListGetInt(rt: *NoxRuntime, h: NoxHandle, index: i64, out: *i64) callconv(
     host.lock.lock();
     defer host.lock.unlock();
     const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
-    if (e.kind != V_LIST or index < 0) return NOX_ERROR;
+    if (e.kind != V_LIST or index < 0 or e.used % 8 != 0) return NOX_ERROR;
     const i: usize = @intCast(index);
-    if (i >= e.data.len / 8) return NOX_NOT_FOUND;
+    if (i >= e.used / 8) return NOX_NOT_FOUND;
     out.* = std.mem.readInt(i64, e.data[i * 8 ..][0..8], .little);
     return NOX_OK;
 }
@@ -357,25 +380,27 @@ fn apiDictNew(rt: *NoxRuntime) callconv(.c) NoxHandle {
 fn apiDictSetInt(rt: *NoxRuntime, h: NoxHandle, key: [*]const u8, key_len: usize, v: i64) callconv(.c) NoxStatus {
     const host = hostFrom(rt);
     if (key_len > 1024 * 1024) return NOX_ERROR;
+    if (!std.unicode.utf8ValidateSlice(key[0..key_len])) return NOX_ERROR;
     host.lock.lock();
     defer host.lock.unlock();
     const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
     if (e.kind != V_DICT) return NOX_ERROR;
     const k = key[0..key_len];
-    if (dictWalk(e.data, k)) |at| {
+    const body = e.data[0..e.used];
+    if (dictWalk(body, k)) |at| {
         std.mem.writeInt(i64, e.data[at..][0..8], v, .little);
         return NOX_OK;
     }
-    const neu = host.allocator.alloc(u8, e.data.len + 4 + key_len + 8) catch return NOX_OUT_OF_MEMORY;
-    @memcpy(neu[0..e.data.len], e.data);
-    var o = e.data.len;
-    std.mem.writeInt(u32, neu[o..][0..4], @intCast(key_len), .little);
+    const add = 4 + key_len + 8;
+    if (e.used > std.math.maxInt(usize) - add) return NOX_ERROR;
+    if (!ensure(host, e, e.used + add, add)) return NOX_OUT_OF_MEMORY;
+    var o = e.used;
+    std.mem.writeInt(u32, e.data[o..][0..4], @intCast(key_len), .little);
     o += 4;
-    @memcpy(neu[o..][0..key_len], k);
+    @memcpy(e.data[o..][0..key_len], k);
     o += key_len;
-    std.mem.writeInt(i64, neu[o..][0..8], v, .little);
-    if (e.data.len != 0) host.allocator.free(e.data);
-    e.data = neu;
+    std.mem.writeInt(i64, e.data[o..][0..8], v, .little);
+    e.used += add;
     return NOX_OK;
 }
 
@@ -385,7 +410,7 @@ fn apiDictLen(rt: *NoxRuntime, h: NoxHandle, out_len: *i64) callconv(.c) NoxStat
     defer host.lock.unlock();
     const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
     if (e.kind != V_DICT) return NOX_ERROR;
-    const n = dictCount(e.data) orelse return NOX_ERROR;
+    const n = dictCount(e.data[0..e.used]) orelse return NOX_ERROR;
     out_len.* = @intCast(n);
     return NOX_OK;
 }
@@ -396,7 +421,7 @@ fn apiDictGetInt(rt: *NoxRuntime, h: NoxHandle, key: [*]const u8, key_len: usize
     defer host.lock.unlock();
     const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
     if (e.kind != V_DICT) return NOX_ERROR;
-    const at = dictWalk(e.data, key[0..key_len]) orelse return NOX_NOT_FOUND;
+    const at = dictWalk(e.data[0..e.used], key[0..key_len]) orelse return NOX_NOT_FOUND;
     out.* = std.mem.readInt(i64, e.data[at..][0..8], .little);
     return NOX_OK;
 }
@@ -625,7 +650,10 @@ export fn nox_native_call_raw(h: i64, name: ?[*:0]const u8) callconv(.c) i64 {
     if (st == NOX_OK and (out.kind == V_STRING or out.kind == V_BYTES or out.kind == V_LIST or out.kind == V_DICT)) {
         host.lock.lock();
         const e = lookupEntry(host, out.u.h);
-        if (e) |ent| host.result_bytes = host.allocator.dupe(u8, ent.data) catch &.{};
+        if (e) |ent| {
+            const bytes = if (ent.kind == V_LIST or ent.kind == V_DICT) ent.data[0..ent.used] else ent.data;
+            host.result_bytes = host.allocator.dupe(u8, bytes) catch &.{};
+        }
         host.lock.unlock();
         apiRelease(@ptrCast(host), out.u.h);
         out.u = .{ .i = 0 };
@@ -784,6 +812,42 @@ test "NNI v1.x: liste ve sozluk kuruculari sona eklenir, eski onek durur" {
     try std.testing.expectEqual(@as(i64, 3), got);
     try std.testing.expectEqual(NOX_OK, apiDictLen(rt, dict, &n));
     try std.testing.expectEqual(@as(i64, 2), n);
+    apiRelease(rt, list);
+    apiRelease(rt, dict);
+}
+
+test "NNI liste kapasitesi iki kat buyur, gecersiz UTF-8 anahtar reddedilir" {
+    var host: Host = .{ .allocator = std.testing.allocator, .lib = undefined };
+    defer {
+        for (host.entries.items) |*e| if (e.in_use) std.testing.allocator.free(e.data);
+        host.entries.deinit(std.testing.allocator);
+    }
+    const rt: *NoxRuntime = @ptrCast(&host);
+    const list = apiListNew(rt);
+    var i: i64 = 0;
+    while (i < 32) : (i += 1) {
+        try std.testing.expectEqual(NOX_OK, apiListAppendInt(rt, list, i));
+    }
+    const filled = lookupEntry(&host, list).?;
+    try std.testing.expectEqual(@as(usize, 32 * 8), filled.used);
+    try std.testing.expect(filled.data.len >= filled.used);
+    try std.testing.expectEqual(NOX_OK, apiListAppendInt(rt, list, 32));
+    const le = lookupEntry(&host, list).?;
+    try std.testing.expect(le.data.len > le.used);
+    try std.testing.expectEqual(@as(usize, 33 * 8), le.used);
+    var got: i64 = 0;
+    try std.testing.expectEqual(NOX_OK, apiListGetInt(rt, list, 31, &got));
+    try std.testing.expectEqual(@as(i64, 31), got);
+
+    const dict = apiDictNew(rt);
+    const bad = "\xff";
+    try std.testing.expectEqual(NOX_ERROR, apiDictSetInt(rt, dict, bad, bad.len, 1));
+    const ok = "çi";
+    try std.testing.expectEqual(NOX_OK, apiDictSetInt(rt, dict, ok, ok.len, 7));
+    try std.testing.expectEqual(NOX_OK, apiDictGetInt(rt, dict, ok, ok.len, &got));
+    try std.testing.expectEqual(@as(i64, 7), got);
+    const de = lookupEntry(&host, dict).?;
+    try std.testing.expect(de.data.len >= de.used);
     apiRelease(rt, list);
     apiRelease(rt, dict);
 }

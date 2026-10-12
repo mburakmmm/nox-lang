@@ -5,7 +5,7 @@
 //! yönlendirilir — GERÇEK ağa ASLA dokunulmaz.
 
 const std = @import("std");
-const posix = std.posix;
+const sys = @import("sys_compat");
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
@@ -21,19 +21,19 @@ fn absPath(io: std.Io, dir: std.Io.Dir, buf: []u8) ![]const u8 {
     return buf[0..len];
 }
 
-fn testListenerOn127001(port_out: *u16) !posix.fd_t {
-    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-    if (fd < 0) return error.SocketFailed;
+fn testListenerOn127001(port_out: *u16) !sys.fd_t {
+    const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+    if (sys.badFd(fd)) return error.SocketFailed;
     var reuse: c_int = 1;
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    _ = sys.setsockopt(fd, sys.SOL.SOCKET, sys.SO.REUSEADDR, &reuse, @sizeOf(c_int));
 
-    var addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
-    if (std.c.listen(fd, 4) != 0) return error.ListenFailed;
+    var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
+    if (sys.listen(fd, 4) != 0) return error.ListenFailed;
 
-    var got: std.c.sockaddr.in = undefined;
-    var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-    if (std.c.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
+    var got: sys.sockaddr.in = undefined;
+    var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+    if (sys.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
     port_out.* = std.mem.bigToNative(u16, got.port);
     return fd;
 }
@@ -53,26 +53,26 @@ fn contentLengthOf(headers: []const u8) usize {
 /// BİREBİR AYNI gerekçe/savunma-derinliği ilkesi, BU dosyaya AYRI bir
 /// kopya olarak uygulanır, `testListenerOn127001`nin ZATEN KURULU "kasıtlı
 /// tekrar" konvansiyonuyla TUTARLI).
-fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
-    var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
-    const n = std.c.poll(&pfd, 1, timeout_ms);
-    if (n <= 0) return -1;
-    return std.c.accept(listen_fd, null, null);
+fn acceptWithTimeout(listen_fd: sys.fd_t, timeout_ms: i32) sys.fd_t {
+    var pfd = [1]sys.pollfd{.{ .fd = listen_fd, .events = sys.POLL.IN, .revents = 0 }};
+    const n = sys.poll(&pfd, 1, timeout_ms);
+    if (n <= 0) return sys.bad_fd;
+    return sys.accept(listen_fd, null, null);
 }
 
 /// Tek bir bağlantı kabul eder, isteği (başlıklar + gövde, TAMAMEN
 /// drenaj edilir) okur, `response_body`yi `Content-Type: application/
 /// json` İLE yanıtlar.
-fn serveOnePublishResponse(listen_fd: posix.fd_t, response_body: []const u8) void {
+fn serveOnePublishResponse(listen_fd: sys.fd_t, response_body: []const u8) void {
     const conn = acceptWithTimeout(listen_fd, 15_000);
-    if (conn < 0) return;
-    defer _ = std.c.close(conn);
+    if (sys.badFd(conn)) return;
+    defer _ = sys.close(conn);
 
     var req_buf: [8192]u8 = undefined;
     var total: usize = 0;
     var header_end: usize = 0;
     while (total < req_buf.len) {
-        const n = std.c.read(conn, req_buf[total..].ptr, req_buf.len - total);
+        const n = sys.read(conn, req_buf[total..].ptr, req_buf.len - total);
         if (n <= 0) break;
         total += @intCast(n);
         if (std.mem.indexOf(u8, req_buf[0..total], "\r\n\r\n")) |idx| {
@@ -83,7 +83,7 @@ fn serveOnePublishResponse(listen_fd: posix.fd_t, response_body: []const u8) voi
     const content_length = contentLengthOf(req_buf[0..header_end]);
     var body_so_far = total - header_end;
     while (body_so_far < content_length and total < req_buf.len) {
-        const n = std.c.read(conn, req_buf[total..].ptr, req_buf.len - total);
+        const n = sys.read(conn, req_buf[total..].ptr, req_buf.len - total);
         if (n <= 0) break;
         total += @intCast(n);
         body_so_far += @intCast(n);
@@ -93,13 +93,13 @@ fn serveOnePublishResponse(listen_fd: posix.fd_t, response_body: []const u8) voi
     const header = std.fmt.bufPrint(&header_buf, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n", .{response_body.len}) catch return;
     var written: usize = 0;
     while (written < header.len) {
-        const n = std.c.write(conn, header[written..].ptr, header.len - written);
+        const n = sys.write(conn, header[written..].ptr, header.len - written);
         if (n <= 0) return;
         written += @intCast(n);
     }
     written = 0;
     while (written < response_body.len) {
-        const n = std.c.write(conn, response_body[written..].ptr, response_body.len - written);
+        const n = sys.write(conn, response_body[written..].ptr, response_body.len - written);
         if (n <= 0) return;
         written += @intCast(n);
     }
@@ -120,7 +120,7 @@ test "noxc publish: sunucu ok:true donerse basarili cikar, id'yi yazdirir" {
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer _ = sys.close(listen_fd);
     const thread = try std.Thread.spawn(.{}, serveOnePublishResponse, .{ listen_fd, "{\"ok\":true,\"id\":\"abc123\"}" });
     defer thread.join();
 
@@ -160,7 +160,7 @@ test "noxc publish: sunucu ok:false donerse cikis 1, hata mesaji basilir" {
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer _ = sys.close(listen_fd);
     const thread = try std.Thread.spawn(.{}, serveOnePublishResponse, .{ listen_fd, "{\"ok\":false,\"error\":\"isim zaten kayitli\"}" });
     defer thread.join();
 

@@ -19,7 +19,7 @@
 //! bloklayan bir `accept`/`read` YAPILMADIĞININ somut kanıtıdır.
 
 const std = @import("std");
-const posix = std.posix;
+const sys = @import("sys_compat");
 const nox = @import("nox");
 const child_watchdog = @import("child_watchdog.zig");
 
@@ -105,18 +105,18 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
 /// OS ataması" burada MÜMKÜN DEĞİLDİR (bkz. `genHttpServe`nin belge notu —
 /// `nox.http.serve` bağlı portu Nox tarafına GERİ DÖNDÜRMEZ).
 fn probeFreePort() !u16 {
-    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-    if (fd < 0) return error.SocketFailed;
-    defer _ = std.c.close(fd);
+    const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+    if (sys.badFd(fd)) return error.SocketFailed;
+    defer _ = sys.close(fd);
     var reuse: c_int = 1;
-    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    _ = sys.setsockopt(fd, sys.SOL.SOCKET, sys.SO.REUSEADDR, &reuse, @sizeOf(c_int));
 
-    var addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
-    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
+    var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
 
-    var got: std.c.sockaddr.in = undefined;
-    var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-    if (std.c.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
+    var got: sys.sockaddr.in = undefined;
+    var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+    if (sys.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
     return std.mem.bigToNative(u16, got.port);
 }
 
@@ -128,7 +128,7 @@ fn probeFreePort() !u16 {
 /// (ikilinin başlatılmasıyla istemci bağlantısı arasında) gidermek için
 /// bağlantı BAŞARILI olana ya da makul bir deneme sayısı tükenene kadar kısa
 /// aralıklarla YENİDEN dener.
-fn testConnect(port: u16) !posix.fd_t {
+fn testConnect(port: u16) !sys.fd_t {
     // Pencere 2 sn (200 × 10ms) idi: TÜM test paketi paralel (yük ortalaması
     // 4-6) çalışırken ikili 2 sn İçİNDE dinlemeye BAŞLAYAMADIĞINDA istemci
     // SESSİZCE vazgeçiyor (`catch return`), sunucu BİR bağlantı beklerken
@@ -136,45 +136,45 @@ fn testConnect(port: u16) !posix.fd_t {
     // testinde gözlendi) — 10 sn'ye çıkarıldı.
     var attempt: usize = 0;
     while (attempt < 1000) : (attempt += 1) {
-        const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
-        if (fd < 0) return error.SocketFailed;
-        var addr: std.c.sockaddr.in = .{
+        const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+        if (sys.badFd(fd)) return error.SocketFailed;
+        var addr: sys.sockaddr.in = .{
             .port = std.mem.nativeToBig(u16, port),
             .addr = std.mem.nativeToBig(u32, 0x7f000001),
         };
-        if (std.c.connect(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) == 0) return fd;
-        _ = std.c.close(fd);
-        const ts: posix.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
-        _ = std.c.nanosleep(&ts, null);
+        if (sys.connect(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) == 0) return fd;
+        _ = sys.close(fd);
+        const ts: sys.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+        _ = sys.nanosleep(&ts, null);
     }
     return error.ConnectFailed;
 }
 
-fn testSendGet(fd: posix.fd_t, path: []const u8) void {
+fn testSendGet(fd: sys.fd_t, path: []const u8) void {
     var buf: [256]u8 = undefined;
     const req = std.fmt.bufPrint(&buf, "GET {s} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", .{path}) catch unreachable;
     var off: usize = 0;
     while (off < req.len) {
-        const n = std.c.write(fd, req[off..].ptr, req.len - off);
+        const n = sys.write(fd, req[off..].ptr, req.len - off);
         if (n <= 0) break;
         off += @intCast(n);
     }
 }
 
-fn testReadAll(fd: posix.fd_t) void {
+fn testReadAll(fd: sys.fd_t) void {
     var buf: [256]u8 = undefined;
     while (true) {
-        const n = std.c.read(fd, &buf, buf.len);
+        const n = sys.read(fd, &buf, buf.len);
         if (n <= 0) break;
     }
 }
 
 fn connectSendAndDrain(port: u16, path: []const u8, delay_ms: u32) void {
     const fd = testConnect(port) catch return;
-    defer _ = std.c.close(fd);
+    defer _ = sys.close(fd);
     if (delay_ms != 0) {
-        const ts: posix.timespec = .{ .sec = 0, .nsec = @as(isize, delay_ms) * std.time.ns_per_ms };
-        _ = std.c.nanosleep(&ts, null);
+        const ts: sys.timespec = .{ .sec = 0, .nsec = @as(isize, delay_ms) * std.time.ns_per_ms };
+        _ = sys.nanosleep(&ts, null);
     }
     testSendGet(fd, path);
     testReadAll(fd);
@@ -313,25 +313,25 @@ test "nox.http.serve: HttpRequest'in DÖRT alanı da (method/target/body/headers
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, out: []u8, out_len: *usize) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = sys.close(fd);
             var header_buf: [256]u8 = undefined;
             const body = "gövde-verisi";
             const header = std.fmt.bufPrint(&header_buf, "POST /yol HTTP/1.1\r\nHost: 127.0.0.1\r\nx-test: baslik-degeri\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{body.len}) catch unreachable;
             var off: usize = 0;
             while (off < header.len) {
-                const n = std.c.write(fd, header[off..].ptr, header.len - off);
+                const n = sys.write(fd, header[off..].ptr, header.len - off);
                 if (n <= 0) return;
                 off += @intCast(n);
             }
             off = 0;
             while (off < body.len) {
-                const n = std.c.write(fd, body[off..].ptr, body.len - off);
+                const n = sys.write(fd, body[off..].ptr, body.len - off);
                 if (n <= 0) return;
                 off += @intCast(n);
             }
             var total: usize = 0;
             while (total < out.len) {
-                const n = std.c.read(fd, out[total..].ptr, out.len - total);
+                const n = sys.read(fd, out[total..].ptr, out.len - total);
                 if (n <= 0) break;
                 total += @intCast(n);
             }
@@ -412,25 +412,25 @@ test "nox.http.serve: yanit govdesi/basliklari DINAMIK insa edildiginde de dogru
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, out: []u8, out_len: *usize) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = sys.close(fd);
             const body = "canli-veri";
             var header_buf: [128]u8 = undefined;
             const header = std.fmt.bufPrint(&header_buf, "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{body.len}) catch unreachable;
             var off: usize = 0;
             while (off < header.len) {
-                const n = std.c.write(fd, header[off..].ptr, header.len - off);
+                const n = sys.write(fd, header[off..].ptr, header.len - off);
                 if (n <= 0) return;
                 off += @intCast(n);
             }
             off = 0;
             while (off < body.len) {
-                const n = std.c.write(fd, body[off..].ptr, body.len - off);
+                const n = sys.write(fd, body[off..].ptr, body.len - off);
                 if (n <= 0) return;
                 off += @intCast(n);
             }
             var total: usize = 0;
             while (total < out.len) {
-                const n = std.c.read(fd, out[total..].ptr, out.len - total);
+                const n = sys.read(fd, out[total..].ptr, out.len - total);
                 if (n <= 0) break;
                 total += @intCast(n);
             }
@@ -510,25 +510,25 @@ test "nox.http.serve: req HIC referans alinmayan handler'da tembel alan insasi d
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, out: []u8, out_len: *usize) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = sys.close(fd);
             const body = "onemsiz-govde";
             var header_buf: [160]u8 = undefined;
             const header = std.fmt.bufPrint(&header_buf, "POST /onemsiz-yol HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Onemsiz: deger\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{body.len}) catch unreachable;
             var off: usize = 0;
             while (off < header.len) {
-                const n = std.c.write(fd, header[off..].ptr, header.len - off);
+                const n = sys.write(fd, header[off..].ptr, header.len - off);
                 if (n <= 0) return;
                 off += @intCast(n);
             }
             off = 0;
             while (off < body.len) {
-                const n = std.c.write(fd, body[off..].ptr, body.len - off);
+                const n = sys.write(fd, body[off..].ptr, body.len - off);
                 if (n <= 0) return;
                 off += @intCast(n);
             }
             var total: usize = 0;
             while (total < out.len) {
-                const n = std.c.read(fd, out[total..].ptr, out.len - total);
+                const n = sys.read(fd, out[total..].ptr, out.len - total);
                 if (n <= 0) break;
                 total += @intCast(n);
             }
@@ -613,11 +613,11 @@ test "nox.http.serve: modul takma adiyla (`import nox.http as h; h.serve(...)`) 
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, out: []u8, out_len: *usize) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = sys.close(fd);
             testSendGet(fd, "/");
             var total: usize = 0;
             while (total < out.len) {
-                const n = std.c.read(fd, out[total..].ptr, out.len - total);
+                const n = sys.read(fd, out[total..].ptr, out.len - total);
                 if (n <= 0) break;
                 total += @intCast(n);
             }
@@ -699,18 +699,18 @@ test "nox.http.serve: Connection: close GONDERILMEDEN ayni baglanti uzerinden IK
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, out1: []u8, out1_len: *usize, out2: []u8, out2_len: *usize) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = sys.close(fd);
 
             // İLK istek: `Connection: close` YOK — bağlantının AÇIK
             // KALMASI beklenir.
             const req1 = "GET /birinci HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
             var off: usize = 0;
             while (off < req1.len) {
-                const n = std.c.write(fd, req1[off..].ptr, req1.len - off);
+                const n = sys.write(fd, req1[off..].ptr, req1.len - off);
                 if (n <= 0) return;
                 off += @intCast(n);
             }
-            const n1 = std.c.read(fd, out1.ptr, out1.len);
+            const n1 = sys.read(fd, out1.ptr, out1.len);
             if (n1 <= 0) return;
             out1_len.* = @intCast(n1);
 
@@ -719,13 +719,13 @@ test "nox.http.serve: Connection: close GONDERILMEDEN ayni baglanti uzerinden IK
             const req2 = "GET /ikinci HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
             off = 0;
             while (off < req2.len) {
-                const n = std.c.write(fd, req2[off..].ptr, req2.len - off);
+                const n = sys.write(fd, req2[off..].ptr, req2.len - off);
                 if (n <= 0) return;
                 off += @intCast(n);
             }
             var total: usize = 0;
             while (total < out2.len) {
-                const n = std.c.read(fd, out2[total..].ptr, out2.len - total);
+                const n = sys.read(fd, out2[total..].ptr, out2.len - total);
                 if (n <= 0) break;
                 total += @intCast(n);
             }
@@ -806,10 +806,10 @@ test "nox.http.serve: req.peer_addr GERCEK istemci adresini (ip:port) tasir" {
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, local_port_out: *u16) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
-            var got: std.c.sockaddr.in = undefined;
-            var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-            if (std.c.getsockname(fd, @ptrCast(&got), &got_len) == 0) {
+            defer _ = sys.close(fd);
+            var got: sys.sockaddr.in = undefined;
+            var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+            if (sys.getsockname(fd, @ptrCast(&got), &got_len) == 0) {
                 local_port_out.* = std.mem.bigToNative(u16, got.port);
             }
             testSendGet(fd, "/");

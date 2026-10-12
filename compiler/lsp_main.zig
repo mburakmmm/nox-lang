@@ -81,6 +81,10 @@ const Server = struct {
     /// URI -> belge metni (HER ikisi de `gpa` üzerinde sahiplenilir, bkz.
     /// `storeDocument`/`removeDocument`).
     documents: std.StringHashMapUnmanaged([]const u8) = .empty,
+    /// URI -> ayrıştırılmış tanım/import önbelleği. `didOpen`/`didChange`
+    /// yalnızca o dosyayı yeniler; aynı metinle ikinci sorgu yeniden
+    /// ayrıştırmaz. Ayrıştırma hatası indekse girmez (`parsed == null`).
+    symbols: std.StringHashMapUnmanaged(*FileSymbols) = .empty,
     /// `noxc`nin KENDİ çözülmüş `stdlib/` kökü (bkz. `project.
     /// resolveResourceDirs`) — başlangıçta BİR KEZ hesaplanır, İMPORT
     /// çözümlemesi BAŞARISIZ olursa (silinmiş kurulum, vb.) `null` kalır
@@ -103,6 +107,12 @@ const Server = struct {
             self.gpa.free(entry.value_ptr.*);
         }
         self.documents.deinit(self.gpa);
+        var sit = self.symbols.iterator();
+        while (sit.next()) |entry| {
+            self.gpa.free(entry.key_ptr.*);
+            entry.value_ptr.*.deinit(self.gpa);
+        }
+        self.symbols.deinit(self.gpa);
         if (self.root_uri) |u| self.gpa.free(u);
     }
 
@@ -115,6 +125,7 @@ const Server = struct {
         }
         const owned_uri = try self.gpa.dupe(u8, uri);
         try self.documents.put(self.gpa, owned_uri, owned_text);
+        self.reindex(owned_uri, owned_text);
     }
 
     fn removeDocument(self: *Server, uri: []const u8) void {
@@ -122,6 +133,70 @@ const Server = struct {
             self.gpa.free(kv.key);
             self.gpa.free(kv.value);
         }
+        self.dropIndex(uri);
+    }
+
+    fn reindex(self: *Server, uri: []const u8, text: []const u8) void {
+        _ = self.cachedNav(uri, text);
+    }
+
+    fn dropIndex(self: *Server, uri: []const u8) void {
+        if (self.symbols.fetchRemove(uri)) |kv| {
+            self.gpa.free(kv.key);
+            kv.value.deinit(self.gpa);
+        }
+    }
+
+    fn cachedNav(self: *Server, uri: []const u8, text: []const u8) ?*FileSymbols {
+        const hash = std.hash.Wyhash.hash(0, text);
+        if (self.symbols.get(uri)) |fs| {
+            if (fs.hash == hash) return fs;
+            fs.rebuild(self.gpa, text);
+            return fs;
+        }
+        const fs = self.gpa.create(FileSymbols) catch return null;
+        fs.* = .{
+            .arena = .init(self.gpa),
+            .text = &.{},
+            .hash = 0,
+            .parsed = null,
+        };
+        fs.rebuild(self.gpa, text);
+        const key = self.gpa.dupe(u8, uri) catch {
+            fs.deinit(self.gpa);
+            return null;
+        };
+        self.symbols.put(self.gpa, key, fs) catch {
+            self.gpa.free(key);
+            fs.deinit(self.gpa);
+            return null;
+        };
+        return fs;
+    }
+};
+
+const FileSymbols = struct {
+    arena: std.heap.ArenaAllocator,
+    text: []u8,
+    hash: u64,
+    parsed: ?nav.ParsedNav,
+
+    fn deinit(self: *FileSymbols, gpa: std.mem.Allocator) void {
+        self.arena.deinit();
+        gpa.destroy(self);
+    }
+
+    fn rebuild(self: *FileSymbols, gpa: std.mem.Allocator, text: []const u8) void {
+        self.arena.deinit();
+        self.arena = .init(gpa);
+        const a = self.arena.allocator();
+        self.text = a.dupe(u8, text) catch {
+            self.parsed = null;
+            self.hash = 0;
+            return;
+        };
+        self.hash = std.hash.Wyhash.hash(0, text);
+        self.parsed = nav.parseForNav(a, self.text);
     }
 };
 
@@ -778,16 +853,31 @@ const RefHit = struct { uri: []const u8, span: Span };
 fn collectRefs(server: *Server, a: std.mem.Allocator, q: NavQuery) []const Loc {
     var hits: std.ArrayListUnmanaged(RefHit) = .empty;
     const source = server.documents.get(q.uri) orelse return &.{};
-    const parsed = nav.parseForNav(a, source) orelse return &.{};
+    const cached = server.cachedNav(q.uri, source) orelse return &.{};
+    const parsed = cached.parsed orelse return &.{};
     const chain = (nav.chainAt(a, parsed.tokens, q.line1, q.col1) catch return &.{}) orelse return &.{};
     if (chain.len == 0) return &.{};
     if (chain.len == 1) {
-        if (nav.resolveAt(a, parsed.module, q.line1, chain[0]) catch null) |r| {
+        if (isAliasToken(parsed, q.line1, q.col1)) {
+            collectAliasRefs(server, a, q.uri, chain[0], &hits) catch return &.{};
+        } else if (nav.resolveAt(a, parsed.module, q.line1, chain[0]) catch null) |r| {
             if (r.span.isNone()) return &.{};
-            const uses = nav.usesOfSpan(a, parsed.tokens, parsed.module, r.span) catch return &.{};
-            for (uses) |s| hits.append(a, .{ .uri = q.uri, .span = s }) catch return &.{};
+            if (isPublishedDef(parsed.module, r.span)) {
+                const segs = moduleSegments(server, a, q.uri);
+                const before = hits.items.len;
+                if (segs.len != 0) refsOfSymbol(server, a, q.uri, segs, chain[0], &hits) catch {};
+                if (hits.items.len == before) appendLocalUses(a, q.uri, parsed, r.span, &hits) catch return &.{};
+            } else {
+                appendLocalUses(a, q.uri, parsed, r.span, &hits) catch return &.{};
+            }
         } else if (nav.importBinding(parsed.module, chain[0])) |imp| {
             if (imp.symbol.len == 0) return &.{};
+            if (!std.mem.eql(u8, imp.symbol, imp.local)) {
+                collectAliasRefs(server, a, q.uri, chain[0], &hits) catch return &.{};
+            } else {
+                refsOfSymbol(server, a, q.uri, imp.segments, imp.symbol, &hits) catch return &.{};
+            }
+        } else if (originalImportAt(parsed, q.line1, q.col1)) |imp| {
             refsOfSymbol(server, a, q.uri, imp.segments, imp.symbol, &hits) catch return &.{};
         }
     } else if (nav.importBinding(parsed.module, chain[0])) |head| {
@@ -810,22 +900,24 @@ fn refsOfSymbol(server: *Server, a: std.mem.Allocator, from_uri: []const u8, seg
     const path = resolveImport(server, a, from_uri, segments) orelse return;
     const def_uri = pathToUri(a, path) catch return;
     if (textOfPath(server, a, def_uri, path)) |text| {
-        if (nav.parseForNav(a, text)) |parsed| {
-            var def_span: Span = .{};
-            for (parsed.module.body) |s| {
-                switch (s.kind) {
-                    .func_def => |fd| {
-                        if (std.mem.eql(u8, fd.name, symbol)) def_span = s.span;
-                    },
-                    .class_def => |cd| {
-                        if (std.mem.eql(u8, cd.name, symbol)) def_span = s.span;
-                    },
-                    else => {},
+        if (server.cachedNav(def_uri, text)) |cached| {
+            if (cached.parsed) |parsed| {
+                var def_span: Span = .{};
+                for (parsed.module.body) |s| {
+                    switch (s.kind) {
+                        .func_def => |fd| {
+                            if (std.mem.eql(u8, fd.name, symbol)) def_span = s.span;
+                        },
+                        .class_def => |cd| {
+                            if (std.mem.eql(u8, cd.name, symbol)) def_span = s.span;
+                        },
+                        else => {},
+                    }
                 }
-            }
-            if (!def_span.isNone()) {
-                const uses = nav.usesOfSpan(a, parsed.tokens, parsed.module, def_span) catch &[_]Span{};
-                for (uses) |u| try hits.append(a, .{ .uri = def_uri, .span = u });
+                if (!def_span.isNone()) {
+                    const uses = nav.usesOfSpan(a, parsed.tokens, parsed.module, def_span) catch &[_]Span{};
+                    for (uses) |u| try hits.append(a, .{ .uri = def_uri, .span = u });
+                }
             }
         }
     }
@@ -834,7 +926,7 @@ fn refsOfSymbol(server: *Server, a: std.mem.Allocator, from_uri: []const u8, seg
     var docs = server.documents.iterator();
     while (docs.next()) |entry| {
         try seen.put(a, entry.key_ptr.*, {});
-        try refsInText(a, entry.value_ptr.*, entry.key_ptr.*, segments, symbol, hits);
+        try refsInText(server, a, entry.value_ptr.*, entry.key_ptr.*, segments, symbol, hits);
     }
     var unused_roots: std.StringHashMapUnmanaged([]const u8) = .empty;
     const root = fillAliasRoots(server, a, from_uri, &unused_roots) orelse return;
@@ -844,19 +936,27 @@ fn refsOfSymbol(server: *Server, a: std.mem.Allocator, from_uri: []const u8, seg
         const furi = pathToUri(a, fp) catch continue;
         if (seen.contains(furi)) continue;
         const text = std.Io.Dir.cwd().readFileAlloc(server.io, fp, a, .limited(1024 * 1024)) catch continue;
-        try refsInText(a, text, furi, segments, symbol, hits);
+        try refsInText(server, a, text, furi, segments, symbol, hits);
     }
 }
 
-fn refsInText(a: std.mem.Allocator, text: []const u8, uri: []const u8, segments: []const []const u8, symbol: []const u8, hits: *std.ArrayListUnmanaged(RefHit)) !void {
-    const parsed = nav.parseForNav(a, text) orelse return;
-    if (importedLocal(parsed.module, segments, symbol)) |local| {
-        for (parsed.tokens) |t| {
-            if (t.kind != .identifier or !std.mem.eql(u8, t.lexeme, local)) continue;
-            if (nav.resolveAt(a, parsed.module, t.line, t.lexeme) catch null) |r| {
-                if (!r.span.isNone()) continue;
+fn refsInText(server: *Server, a: std.mem.Allocator, text: []const u8, uri: []const u8, segments: []const []const u8, symbol: []const u8, hits: *std.ArrayListUnmanaged(RefHit)) !void {
+    const cached = server.cachedNav(uri, text) orelse return;
+    const parsed = cached.parsed orelse return;
+    if (fromImportOf(parsed.module, segments, symbol)) |imported| {
+        if (originalNameSpan(parsed.tokens, segments, symbol)) |sp| {
+            try hits.append(a, .{ .uri = uri, .span = sp });
+        }
+        if (imported.alias == null) {
+            for (parsed.tokens) |t| {
+                if (t.kind != .identifier or !std.mem.eql(u8, t.lexeme, symbol)) continue;
+                if (nav.resolveAt(a, parsed.module, t.line, t.lexeme) catch null) |r| {
+                    if (!r.span.isNone()) continue;
+                }
+                const sp = tokenSpan(t);
+                if (spanEq(sp, originalNameSpan(parsed.tokens, segments, symbol) orelse .{})) continue;
+                try hits.append(a, .{ .uri = uri, .span = sp });
             }
-            try hits.append(a, .{ .uri = uri, .span = tokenSpan(t) });
         }
     }
     if (importedModuleLocal(parsed.module, segments)) |local| {
@@ -895,19 +995,154 @@ fn importedModuleLocal(module: ast.Module, segments: []const []const u8) ?[]cons
     return null;
 }
 
-fn importedLocal(module: ast.Module, segments: []const []const u8, symbol: []const u8) ?[]const u8 {
+const ImportedName = struct { alias: ?[]const u8 };
+
+fn fromImportOf(module: ast.Module, segments: []const []const u8, symbol: []const u8) ?ImportedName {
     for (module.body) |s| {
         switch (s.kind) {
             .from_import_stmt => |fi| {
                 if (!segmentsEql(fi.segments, segments)) continue;
                 for (fi.names) |n| {
-                    if (std.mem.eql(u8, n.name, symbol)) return n.alias orelse n.name;
+                    if (std.mem.eql(u8, n.name, symbol)) return .{ .alias = n.alias };
                 }
             },
             else => {},
         }
     }
     return null;
+}
+
+fn spanEq(a: Span, b: Span) bool {
+    return a.start_line == b.start_line and a.start_col == b.start_col and a.end_line == b.end_line and a.end_col == b.end_col;
+}
+
+fn identifierIndex(tokens: []const token_mod.Token, line1: u32, col1: u32) ?usize {
+    for (tokens, 0..) |t, i| {
+        if (t.kind != .identifier) continue;
+        if (t.line == line1 and col1 >= t.col and col1 <= t.end_col) return i;
+    }
+    return null;
+}
+
+fn isAliasToken(parsed: nav.ParsedNav, line1: u32, col1: u32) bool {
+    const idx = identifierIndex(parsed.tokens, line1, col1) orelse return false;
+    if (idx == 0 or parsed.tokens[idx - 1].kind != .kw_as) return false;
+    const name = parsed.tokens[idx].lexeme;
+    for (parsed.module.body) |s| {
+        switch (s.kind) {
+            .from_import_stmt => |fi| {
+                for (fi.names) |n| {
+                    if (n.alias) |al| if (std.mem.eql(u8, al, name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn originalImportAt(parsed: nav.ParsedNav, line1: u32, col1: u32) ?nav.ImportRef {
+    const idx = identifierIndex(parsed.tokens, line1, col1) orelse return null;
+    if (idx + 1 >= parsed.tokens.len or parsed.tokens[idx + 1].kind != .kw_as) return null;
+    const name = parsed.tokens[idx].lexeme;
+    for (parsed.module.body) |s| {
+        switch (s.kind) {
+            .from_import_stmt => |fi| {
+                for (fi.names) |n| {
+                    if (n.alias == null) continue;
+                    if (!std.mem.eql(u8, n.name, name)) continue;
+                    const local = n.alias orelse n.name;
+                    return .{ .segments = fi.segments, .symbol = n.name, .local = local, .span = s.span };
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn originalNameSpan(tokens: []const token_mod.Token, segments: []const []const u8, symbol: []const u8) ?Span {
+    var i: usize = 0;
+    while (i < tokens.len) : (i += 1) {
+        if (tokens[i].kind != .kw_from) continue;
+        var j = i + 1;
+        var ok = true;
+        for (segments, 0..) |seg, si| {
+            if (j >= tokens.len or tokens[j].kind != .identifier or !std.mem.eql(u8, tokens[j].lexeme, seg)) {
+                ok = false;
+                break;
+            }
+            j += 1;
+            if (si + 1 < segments.len) {
+                if (j >= tokens.len or tokens[j].kind != .dot) {
+                    ok = false;
+                    break;
+                }
+                j += 1;
+            }
+        }
+        if (!ok or j >= tokens.len or tokens[j].kind != .kw_import) continue;
+        j += 1;
+        while (j < tokens.len and tokens[j].kind != .newline) : (j += 1) {
+            if (tokens[j].kind != .identifier) continue;
+            if (j > 0 and tokens[j - 1].kind == .kw_as) continue;
+            if (!std.mem.eql(u8, tokens[j].lexeme, symbol)) continue;
+            return tokenSpan(tokens[j]);
+        }
+    }
+    return null;
+}
+
+fn isPublishedDef(module: ast.Module, span: Span) bool {
+    if (span.isNone()) return false;
+    for (module.body) |s| {
+        switch (s.kind) {
+            .func_def, .class_def => if (spanEq(s.span, span)) return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn appendLocalUses(a: std.mem.Allocator, uri: []const u8, parsed: nav.ParsedNav, span: Span, hits: *std.ArrayListUnmanaged(RefHit)) !void {
+    const uses = try nav.usesOfSpan(a, parsed.tokens, parsed.module, span);
+    for (uses) |s| try hits.append(a, .{ .uri = uri, .span = s });
+}
+
+fn collectAliasRefs(server: *Server, a: std.mem.Allocator, uri: []const u8, local: []const u8, hits: *std.ArrayListUnmanaged(RefHit)) !void {
+    const source = server.documents.get(uri) orelse return;
+    const cached = server.cachedNav(uri, source) orelse return;
+    const parsed = cached.parsed orelse return;
+    for (parsed.tokens, 0..) |t, i| {
+        if (t.kind != .identifier or !std.mem.eql(u8, t.lexeme, local)) continue;
+        const binding = i > 0 and parsed.tokens[i - 1].kind == .kw_as;
+        if (!binding) {
+            if (nav.resolveAt(a, parsed.module, t.line, t.lexeme) catch null) |r| {
+                if (!r.span.isNone()) continue;
+            }
+        }
+        try hits.append(a, .{ .uri = uri, .span = tokenSpan(t) });
+    }
+}
+
+fn moduleSegments(server: *Server, a: std.mem.Allocator, uri: []const u8) []const []const u8 {
+    const path = uriToPath(a, uri) catch return &.{};
+    var roots: std.StringHashMapUnmanaged([]const u8) = .empty;
+    const proot = fillAliasRoots(server, a, uri, &roots) orelse return &.{};
+    var rel = path;
+    if (std.mem.startsWith(u8, path, proot) and path.len >= proot.len) {
+        rel = path[proot.len..];
+        if (rel.len > 0 and rel[0] == '/') rel = rel[1..];
+    }
+    if (std.mem.endsWith(u8, rel, ".nox")) rel = rel[0 .. rel.len - 4];
+    if (rel.len == 0) return &.{};
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, rel, '/');
+    while (it.next()) |part| {
+        if (part.len == 0) continue;
+        parts.append(a, part) catch return &.{};
+    }
+    return parts.items;
 }
 
 fn segmentsEql(left: []const []const u8, right: []const []const u8) bool {
@@ -980,9 +1215,12 @@ fn handleRename(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Va
 
 fn renameRejected(server: *Server, a: std.mem.Allocator, q: NavQuery) bool {
     const source = server.documents.get(q.uri) orelse return true;
-    const parsed = nav.parseForNav(a, source) orelse return true;
+    const cached = server.cachedNav(q.uri, source) orelse return true;
+    const parsed = cached.parsed orelse return true;
     const chain = (nav.chainAt(a, parsed.tokens, q.line1, q.col1) catch return true) orelse return true;
     if (chain.len != 1) return false;
+    if (isAliasToken(parsed, q.line1, q.col1)) return false;
+    if (originalImportAt(parsed, q.line1, q.col1) != null) return false;
     if (nav.importBinding(parsed.module, chain[0]) != null) return false;
     if (nav.resolveAt(a, parsed.module, q.line1, chain[0]) catch null) |r| return r.span.isNone();
     return true;

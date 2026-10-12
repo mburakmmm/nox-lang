@@ -3,6 +3,7 @@
 //! (tamsayı/ondalık/bool/dize argümanları, hata iletisi, bilinmeyen işlev, yerel iş parçacığından `post_event`).
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 test "NNI v1: gercek bir C eklentisi yuklenir, cagrilir, hata ve iplik olaylari calisir" {
     const io = std.testing.io;
@@ -14,10 +15,14 @@ test "NNI v1: gercek bir C eklentisi yuklenir, cagrilir, hata ve iplik olaylari 
     const dir_len = try tmp.dir.realPath(io, &path_buf);
     const dir = path_buf[0..dir_len];
 
-    const so_path = try std.fmt.allocPrint(gpa, "{s}/libnni_test.so", .{dir});
+    const lib_name = if (builtin.os.tag == .windows) "libnni_test.dll" else "libnni_test.so";
+    const so_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, lib_name });
     defer gpa.free(so_path);
     const cc = try std.process.run(gpa, io, .{
-        .argv = &.{ "cc", "-shared", "-fPIC", "-DNOX_NNI_CONTAINERS", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" },
+        .argv = if (builtin.os.tag == .windows)
+            &.{ "cc", "-shared", "-DNOX_NNI_CONTAINERS", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" }
+        else
+            &.{ "cc", "-shared", "-fPIC", "-DNOX_NNI_CONTAINERS", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" },
     });
     defer gpa.free(cc.stdout);
     defer gpa.free(cc.stderr);
@@ -97,4 +102,56 @@ test "NNI v1: gercek bir C eklentisi yuklenir, cagrilir, hata ve iplik olaylari 
         }
         try std.testing.expectEqualStrings(expected, result.stdout);
     }
+}
+
+test "NNI v1 oneki: eski baslik yeni hostta skaler cagri yapar" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const dir = path_buf[0..dir_len];
+
+    const lib_name = if (builtin.os.tag == .windows) "libnni_prefix.dll" else "libnni_prefix.so";
+    const so_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, lib_name });
+    defer gpa.free(so_path);
+    const cc = try std.process.run(gpa, io, .{
+        .argv = if (builtin.os.tag == .windows)
+            &.{ "cc", "-shared", "-o", so_path, "tests/compat/nni_ext/plugin_v1_prefix.c" }
+        else
+            &.{ "cc", "-shared", "-fPIC", "-o", so_path, "tests/compat/nni_ext/plugin_v1_prefix.c" },
+    });
+    defer gpa.free(cc.stdout);
+    defer gpa.free(cc.stderr);
+    if (cc.term != .exited or cc.term.exited != 0) {
+        std.debug.print("eski onek eklentisi derlenemedi: {s}\n", .{cc.stderr});
+        return error.PluginBuildFailed;
+    }
+
+    const source = try std.fmt.allocPrint(gpa,
+        \\from nox.native import open_plugin, Plugin
+        \\
+        \\p: Plugin = open_plugin("{s}")
+        \\p.arg_int(21)
+        \\print(p.call_int("twice"))
+        \\p.close()
+        \\
+    , .{so_path});
+    defer gpa.free(source);
+    try tmp.dir.writeFile(io, .{ .sub_path = "prog.nox", .data = source });
+    const nox_path = try std.fmt.allocPrint(gpa, "{s}/prog.nox", .{dir});
+    defer gpa.free(nox_path);
+
+    const result = try std.process.run(gpa, io, .{
+        .argv = &.{ "zig-out/bin/noxc", "run", nox_path },
+    });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        std.debug.print("onek programi basarisiz: {s}\n", .{result.stderr});
+        return error.ProgramFailed;
+    }
+    try std.testing.expectEqualStrings("42\n", result.stdout);
 }

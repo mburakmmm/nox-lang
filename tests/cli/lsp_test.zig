@@ -514,3 +514,192 @@ test "uctan uca: import edilen fonksiyonun tanimi ve imzasi hedef dosyadan gelir
     const term = try child.wait(io);
     try std.testing.expect(term == .exited and term.exited == 0);
 }
+
+const SrcPos = struct { line: usize, character: usize };
+
+fn posOf(text: []const u8, needle: []const u8) !SrcPos {
+    const at = std.mem.indexOf(u8, text, needle) orelse return error.NotFound;
+    var line: usize = 0;
+    var character: usize = 0;
+    for (text[0..at]) |c| {
+        if (c == '\n') {
+            line += 1;
+            character = 0;
+        } else character += 1;
+    }
+    return .{ .line = line, .character = character };
+}
+
+fn posOfNth(text: []const u8, needle: []const u8, n: usize) !SrcPos {
+    var from: usize = 0;
+    var seen: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, needle)) |at| {
+        if (seen == n) {
+            var line: usize = 0;
+            var character: usize = 0;
+            for (text[0..at]) |c| {
+                if (c == '\n') {
+                    line += 1;
+                    character = 0;
+                } else character += 1;
+            }
+            return .{ .line = line, .character = character };
+        }
+        seen += 1;
+        from = at + needle.len;
+    }
+    return error.NotFound;
+}
+
+fn jsonEsc(a: std.mem.Allocator, text: []const u8) ![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (text) |c| switch (c) {
+        '\n' => try out.appendSlice(a, "\\n"),
+        '"' => try out.appendSlice(a, "\\\""),
+        '\\' => try out.appendSlice(a, "\\\\"),
+        else => try out.append(a, c),
+    };
+    return out.toOwnedSlice(a);
+}
+
+fn hasPos(resp: []const u8, pos: SrcPos) bool {
+    var buf: [80]u8 = undefined;
+    const frag = std.fmt.bufPrint(&buf, "\"line\":{d},\"character\":{d}", .{ pos.line, pos.character }) catch return false;
+    return std.mem.indexOf(u8, resp, frag) != null;
+}
+
+test "from import as: sembol adi, takma ad ve golge ayri yeniden adlandirilir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const helper_src =
+        \\def double(x: int) -> int:
+        \\    return x * 2
+        \\
+    ;
+    const main_src =
+        \\from helper import double as twice
+        \\
+        \\def use() -> int:
+        \\    return twice(1)
+        \\
+    ;
+    const shadow_src =
+        \\from helper import double as twice
+        \\
+        \\def twice(n: int) -> int:
+        \\    return n
+        \\
+        \\def use() -> int:
+        \\    return twice(1)
+        \\
+    ;
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{ .sub_path = "helper.nox", .data = helper_src });
+    try proj.dir.writeFile(io, .{ .sub_path = "main.nox", .data = main_src });
+    try proj.dir.writeFile(io, .{ .sub_path = "shadow.nox", .data = shadow_src });
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+    const main_uri = try std.fmt.allocPrint(a, "file://{s}/main.nox", .{proj_path});
+    const helper_uri = try std.fmt.allocPrint(a, "file://{s}/helper.nox", .{proj_path});
+    const shadow_uri = try std.fmt.allocPrint(a, "file://{s}/shadow.nox", .{proj_path});
+    const root_uri = try std.fmt.allocPrint(a, "file://{s}", .{proj_path});
+
+    const alias_pos = try posOf(main_src, "twice");
+    const use_pos = try posOfNth(main_src, "twice", 1);
+    const import_name = try posOf(main_src, "double");
+    const def_pos = try posOf(helper_src, "double");
+    const shadow_name = try posOf(shadow_src, "double");
+    const shadow_def = try posOf(shadow_src, "def twice");
+    const shadow_def_name = SrcPos{ .line = shadow_def.line, .character = shadow_def.character + 4 };
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{noxlspPath()},
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    var stdin_buf: [8192]u8 = undefined;
+    var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
+    const w = &stdin_writer.interface;
+    var stdout_buf: [1 << 16]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const r = &stdout_reader.interface;
+
+    const init = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"rootUri\":\"{s}\"}}}}", .{root_uri});
+    try writeMessage(w, init);
+    _ = try readMessage(a, r);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+
+    const open_main = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"nox\",\"version\":1,\"text\":\"{s}\"}}}}}}", .{ main_uri, try jsonEsc(a, main_src) });
+    try writeMessage(w, open_main);
+    _ = try readMessage(a, r);
+    const open_helper = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"nox\",\"version\":1,\"text\":\"{s}\"}}}}}}", .{ helper_uri, try jsonEsc(a, helper_src) });
+    try writeMessage(w, open_helper);
+    _ = try readMessage(a, r);
+    const open_shadow = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"nox\",\"version\":1,\"text\":\"{s}\"}}}}}}", .{ shadow_uri, try jsonEsc(a, shadow_src) });
+    try writeMessage(w, open_shadow);
+    _ = try readMessage(a, r);
+
+    const alias_req = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/rename\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":{d},\"character\":{d}}},\"newName\":\"pair\"}}}}", .{ main_uri, alias_pos.line, alias_pos.character });
+    try writeMessage(w, alias_req);
+    const alias_resp = try readMessage(a, r);
+    try std.testing.expect(hasPos(alias_resp, alias_pos));
+    try std.testing.expect(hasPos(alias_resp, use_pos));
+    try std.testing.expect(std.mem.indexOf(u8, alias_resp, "helper.nox") == null);
+    try std.testing.expect(std.mem.indexOf(u8, alias_resp, "\"newText\":\"pair\"") != null);
+    try std.testing.expect(!hasPos(alias_resp, import_name));
+
+    const def_req = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/rename\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":{d},\"character\":{d}}},\"newName\":\"triple\"}}}}", .{ helper_uri, def_pos.line, def_pos.character });
+    try writeMessage(w, def_req);
+    const def_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, def_resp, "helper.nox") != null);
+    try std.testing.expect(std.mem.indexOf(u8, def_resp, "main.nox") != null);
+    try std.testing.expect(hasPos(def_resp, import_name));
+    try std.testing.expect(hasPos(def_resp, def_pos));
+    try std.testing.expect(!hasPos(def_resp, alias_pos));
+    try std.testing.expect(!hasPos(def_resp, use_pos));
+
+    const again = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/rename\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":{d},\"character\":{d}}},\"newName\":\"triple\"}}}}", .{ helper_uri, def_pos.line, def_pos.character });
+    try writeMessage(w, again);
+    const again_resp = try readMessage(a, r);
+    try std.testing.expect(hasPos(again_resp, import_name));
+
+    const changed = try jsonEsc(a, "n: int = 1\n");
+    const did_change = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\",\"version\":2}},\"contentChanges\":[{{\"text\":\"{s}\"}}]}}}}", .{ main_uri, changed });
+    try writeMessage(w, did_change);
+    _ = try readMessage(a, r);
+
+    const after = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/rename\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":{d},\"character\":{d}}},\"newName\":\"triple\"}}}}", .{ helper_uri, def_pos.line, def_pos.character });
+    try writeMessage(w, after);
+    const after_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, after_resp, "main.nox") == null);
+    try std.testing.expect(hasPos(after_resp, def_pos));
+
+    const sh_req = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/rename\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":{d},\"character\":{d}}},\"newName\":\"triple\"}}}}", .{ shadow_uri, shadow_name.line, shadow_name.character });
+    try writeMessage(w, sh_req);
+    const sh_resp = try readMessage(a, r);
+    try std.testing.expect(hasPos(sh_resp, shadow_name));
+    try std.testing.expect(!hasPos(sh_resp, shadow_def_name));
+    try std.testing.expect(std.mem.indexOf(u8, sh_resp, "\"newText\":\"triple\"") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"shutdown\",\"params\":null}");
+    _ = try readMessage(a, r);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited and term.exited == 0);
+}

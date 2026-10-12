@@ -22,6 +22,7 @@ pub const upgrade = @import("pkg/upgrade.zig");
 pub const install = @import("pkg/install.zig");
 pub const registry = @import("pkg/registry.zig");
 pub const cache_prune = @import("pkg/cache_prune.zig");
+pub const run_cache = @import("pkg/run_cache.zig");
 pub const qbe_target = @import("qbe_target.zig");
 
 // `zig build test`in `nox_mod`u (bu dosyayı KÖK olarak KULLANAN `lib_test`

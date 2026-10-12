@@ -61,7 +61,7 @@ Each entry of `functions` has:
 | `args` | array of argument types, in order; omit or `[]` for none |
 | `returns` | the return type |
 
-Types: `"int"` (NNI `NOX_V_INT`), `"float"`, `"bool"`, `"str"` (a validated-UTF-8 string handle) and, for `returns` only, `"none"`. A trailing `"..."` in
+Types: `"int"` (NNI `NOX_V_INT`), `"float"`, `"bool"`, `"str"` (a validated-UTF-8 string handle) and, for `returns` only, `"none"`, `"list"` (`list[int]`) and `"dict"` (`dict[str, int]`). A trailing `"..."` in
 `args` makes the **previous** type repeat zero or more times (`["int", "..."]` is one required integer followed by any number of integers; `"..."`
 cannot be first).
 
@@ -95,6 +95,7 @@ p.shutdown()
 | `arg_int(v)`, `arg_float(v)`, `arg_bool(v)`, `arg_str(v)` | push the next argument |
 | `call(name)` | call a function declared `returns: "none"` |
 | `call_int(name)`, `call_float(name)`, `call_bool(name)`, `call_str(name)` | call and read the result; the requested kind must match `returns` |
+| `call_int_list(name)`, `call_str_int_dict(name)` | call a function declared `returns: "list"` or `"dict"` and copy the host buffer into a Nox `list[int]` or `dict[str, int]` |
 | `poll_event()`, `wait_event(timeout_ms)` | drain events a native thread posted ([NNI](nni.md#threading-contract)) |
 | `clear_args()` | discard pushed arguments |
 | `shutdown()` | call the plugin's `nox_plugin_shutdown_v1` (if exported), unload it; later calls raise `PluginError` |

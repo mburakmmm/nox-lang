@@ -20,9 +20,9 @@ normally).
 | Command | Description |
 |---|---|
 | `noxc build [options] <file.nox>` | compile to a native executable named after the file (or `-o`) |
-| `noxc run [options] <file.nox> [-- args…]` | compile into `.nox/cache/bin/` and run; everything after `--` goes to the program (`nox.os.arg(1)`, …) |
+| `noxc run [options] <file.nox> [-- args…]` | compile into `$NOX_HOME/cache/run/` (keyed by path, source contents, the `noxc` binary, `noxrt.o`, and the installed stdlib) and run; a matching cache entry is not rebuilt. Everything after `--` goes to the program (`nox.os.arg(1)`, …) |
 | `noxc check [options] <file.nox>` | parse and type-check only — fast, no code generation. Exit status 0 means "no type errors" |
-| `noxc test` | discover and run every `*_test.nox` under the current directory ([Testing](testing.md)) |
+| `noxc test [name\|path …]` | run every `*_test.nox` under the current directory, or only those whose file name contains `name`, or the given directory. A compile error is a failed file; the rest still run ([Testing](testing.md)) |
 | `noxc expand <file.nox>` | print the decorator metadata the compiler extracted from the file |
 | `noxc explain [--release] <file.nox>` | print each local variable's allocation decision (stack, arena or reference-counted) and why ([Memory](../language/memory.md#seeing-the-compilers-decisions-noxc-explain)) |
 | `noxc fmt <file.nox>` | rewrite the file in the standard style, in place ([Formatter](formatter.md)) |

@@ -121,8 +121,14 @@ test "run: programi calistirir, derlendi mesaji basmaz, stdout'u yansitir" {
     const noxc = try noxcPath(a);
     const src_path = try std.fmt.allocPrint(a, "{s}/hello.nox", .{dir_path});
 
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    const home = try std.fmt.allocPrint(a, "{s}/nox-home", .{dir_path});
+    try env_map.put("NOX_HOME", home);
+
     const result = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxc, "run", src_path },
+        .environ_map = &env_map,
     });
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
@@ -130,8 +136,18 @@ test "run: programi calistirir, derlendi mesaji basmaz, stdout'u yansitir" {
     try std.testing.expectEqualStrings("koştu\n", result.stdout);
     try std.testing.expect(!std.mem.startsWith(u8, result.stdout, "built"));
 
-    // `.nox/cache/bin/hello` altına derlenmiş olmalı (kaynağın YANINA değil).
-    try tmp.dir.access(io, ".nox/cache/bin/hello", .{});
+    // İkili proje klasörüne değil, NOX_HOME önbelleğine yazılır.
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, ".nox/cache/bin/hello", .{}));
+    try tmp.dir.access(io, "nox-home/cache/run/obj", .{});
+
+    const again = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "run", src_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(again.stdout);
+    defer std.testing.allocator.free(again.stderr);
+    try std.testing.expect(again.term == .exited and again.term.exited == 0);
+    try std.testing.expectEqualStrings("koştu\n", again.stdout);
 }
 
 test "run: yakalanmamis istisna cikis kodunu sifirdan farkli yansitir" {
@@ -225,6 +241,81 @@ test "test: bos dizin -> 0 test dosyasi, cikis kodu 0" {
 
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "found 0 test files") != null);
+}
+
+test "test: isim yalnizca eslesen dosyayi calistirir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "smtp_case_test.nox",
+        .data = "import nox.test\nnox.test.assert_eq_int(1, 1, \"smtp\")\n",
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "other_test.nox",
+        .data = "import nox.test\nnox.test.assert_eq_int(1, 2, \"other\")\n",
+    });
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+    const noxc = try noxcAbsPath(io, a);
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("NOX_HOME", try std.fmt.allocPrint(a, "{s}/nox-home", .{dir_path}));
+
+    const result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "test", "smtp" },
+        .cwd = .{ .path = dir_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "smtp_case_test.nox") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "other_test.nox") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "1 passed, 0 failed (1 total)") != null);
+}
+
+test "test: derleme hatasi kalan dosyalari calistirmaya devam eder" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "good_test.nox",
+        .data = "import nox.test\nnox.test.assert_eq_int(2, 2, \"good\")\n",
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "bad_test.nox",
+        .data = "def (\n",
+    });
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+    const noxc = try noxcAbsPath(io, a);
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("NOX_HOME", try std.fmt.allocPrint(a, "{s}/nox-home", .{dir_path}));
+
+    const result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "test", dir_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "good_test.nox") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "bad_test.nox") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "1 passed, 1 failed (2 total)") != null);
 }
 
 // Faz CC.2 (bkz. nox-teknik-spesifikasyon.md §3.54): `fetch`/`update`

@@ -152,6 +152,79 @@ test "noxc install: yerel fixture paket global kurulur, GERCEKTEN calisir, list 
     try std.testing.expect(std.mem.indexOf(u8, list_after_result.stdout, "hellocli") == null);
 }
 
+test "noxc install: yerel depo etiketi kurulur, --ref gomulu etiketin onune gecer" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var pkg_dir = std.testing.tmpDir(.{});
+    defer pkg_dir.cleanup();
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg_dir.dir, &pkg_buf);
+    try seedInstallablePackage(io, gpa, pkg_dir.dir, pkg_path, "tagcli", "tagged");
+
+    const tag = try std.process.run(gpa, io, .{
+        .argv = &.{ "git", "tag", "v0.1.0" },
+        .cwd = .{ .path = pkg_path },
+    });
+    defer gpa.free(tag.stdout);
+    defer gpa.free(tag.stderr);
+    if (tag.term != .exited or tag.term.exited != 0) return error.FixtureSetupFailed;
+
+    try pkg_dir.dir.writeFile(io, .{ .sub_path = "cli.nox", .data = "print(\"head\")\n" });
+    try commitFixtureUpdate(io, gpa, pkg_path);
+
+    var home_dir = std.testing.tmpDir(.{});
+    defer home_dir.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home_dir.dir, &home_buf);
+    var env = try std.testing.environ.createMap(gpa);
+    defer env.deinit();
+    try env.put("NOX_HOME", home_path);
+
+    const spec = try std.fmt.allocPrint(gpa, "{s}@v0.1.0", .{pkg_path});
+    defer gpa.free(spec);
+    const bin_path = try std.fmt.allocPrint(gpa, "{s}/bin/tagcli{s}", .{ home_path, exeSuffix() });
+    defer gpa.free(bin_path);
+
+    const tagged = try std.process.run(gpa, io, .{
+        .argv = &.{ noxcPath(), "install", spec },
+        .environ_map = &env,
+    });
+    defer gpa.free(tagged.stdout);
+    defer gpa.free(tagged.stderr);
+    if (tagged.term != .exited or tagged.term.exited != 0) {
+        std.debug.print("etiket kurulumu basarisiz: {s}\n", .{tagged.stderr});
+        return error.InstallFailed;
+    }
+    const tagged_run = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
+    defer gpa.free(tagged_run.stdout);
+    defer gpa.free(tagged_run.stderr);
+    try std.testing.expectEqualStrings("tagged\n", tagged_run.stdout);
+
+    const removed = try std.process.run(gpa, io, .{
+        .argv = &.{ noxcPath(), "uninstall", "tagcli" },
+        .environ_map = &env,
+    });
+    defer gpa.free(removed.stdout);
+    defer gpa.free(removed.stderr);
+    try std.testing.expectEqual(@as(u8, 0), removed.term.exited);
+
+    const headed = try std.process.run(gpa, io, .{
+        .argv = &.{ noxcPath(), "install", spec, "--ref", "main" },
+        .environ_map = &env,
+    });
+    defer gpa.free(headed.stdout);
+    defer gpa.free(headed.stderr);
+    if (headed.term != .exited or headed.term.exited != 0) {
+        std.debug.print("--ref kurulumu basarisiz: {s}\n", .{headed.stderr});
+        return error.InstallFailed;
+    }
+    const headed_run = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
+    defer gpa.free(headed_run.stdout);
+    defer gpa.free(headed_run.stderr);
+    try std.testing.expectEqualStrings("head\n", headed_run.stdout);
+}
+
 test "noxc install: 'bin' girdi noktasi olmayan bir paket net bir hatayla reddedilir" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;

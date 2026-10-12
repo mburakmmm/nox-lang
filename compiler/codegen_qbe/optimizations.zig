@@ -952,50 +952,172 @@ pub fn exprBlocksRowHoist(e: ast.Expr) bool {
     }
 }
 
-fn noteRowsInExpr(e: ast.Expr, reassigned: *const std.StringHashMapUnmanaged(void), rows: *[8]RowKey, n: *usize) void {
+const RowWalk = struct {
+    reassigned: *const std.StringHashMapUnmanaged(void),
+    rows: *[8]RowKey,
+    n: *usize,
+    /// Bu noktadan önce hata üretebilecek bir ifade görüldü. Sonraki satır
+    /// yüklemesi döngü girişine taşınırsa o hatadan önce çalışır.
+    blocked: bool = false,
+};
+
+fn noteRow(w: *RowWalk, base: []const u8, iv: []const u8) void {
+    if (w.blocked) return;
+    if (w.reassigned.contains(base) or w.reassigned.contains(iv)) return;
+    if (w.n.* >= w.rows.len) return;
+    for (w.rows[0..w.n.*]) |row| {
+        if (std.mem.eql(u8, row.base, base) and std.mem.eql(u8, row.index, iv)) return;
+    }
+    w.rows[w.n.*] = .{ .base = base, .index = iv };
+    w.n.* += 1;
+}
+
+fn opCanThrow(op: ast.BinaryOp) bool {
+    return switch (op) {
+        .div, .floordiv, .mod, .pow, .shl, .shr => true,
+        else => false,
+    };
+}
+
+/// Değerlendirme sırasında yürür. `base[idx][k]` satırı, kendinden önce hata
+/// üretebilecek bir ifade yoksa not edilir. Eleman indeksi gövdede kalır;
+/// o erişim de hata üretebildiği için aynı ifadeden sonraki satırlar taşınmaz.
+/// `and`/`or` sağ tarafı her zaman çalışmaz.
+fn walkExpr(w: *RowWalk, e: ast.Expr) void {
+    if (w.blocked) return;
     switch (e) {
         .index => |idx| {
             if (idx.obj.* == .index) {
                 const inner = idx.obj.*.index;
                 if (inner.obj.* == .identifier and inner.index.* == .identifier) {
-                    const base = inner.obj.*.identifier;
-                    const iv = inner.index.*.identifier;
-                    if (!reassigned.contains(base) and !reassigned.contains(iv) and n.* < rows.len) {
-                        var seen = false;
-                        for (rows[0..n.*]) |row| {
-                            if (std.mem.eql(u8, row.base, base) and std.mem.eql(u8, row.index, iv)) seen = true;
-                        }
-                        if (!seen) {
-                            rows[n.*] = .{ .base = base, .index = iv };
-                            n.* += 1;
-                        }
-                    }
+                    walkExpr(w, inner.obj.*);
+                    walkExpr(w, inner.index.*);
+                    noteRow(w, inner.obj.*.identifier, inner.index.*.identifier);
+                    walkExpr(w, idx.index.*);
+                    w.blocked = true;
+                    return;
                 }
             }
-            noteRowsInExpr(idx.obj.*, reassigned, rows, n);
-            noteRowsInExpr(idx.index.*, reassigned, rows, n);
+            walkExpr(w, idx.obj.*);
+            walkExpr(w, idx.index.*);
+            w.blocked = true;
         },
         .binary => |b| {
-            noteRowsInExpr(b.left.*, reassigned, rows, n);
-            noteRowsInExpr(b.right.*, reassigned, rows, n);
+            if (b.op == .and_ or b.op == .or_) {
+                walkExpr(w, b.left.*);
+                w.blocked = true;
+                return;
+            }
+            walkExpr(w, b.left.*);
+            walkExpr(w, b.right.*);
+            if (opCanThrow(b.op)) w.blocked = true;
         },
-        .unary => |u| noteRowsInExpr(u.operand.*, reassigned, rows, n),
-        .attribute => |a| noteRowsInExpr(a.obj.*, reassigned, rows, n),
+        .unary => |u| walkExpr(w, u.operand.*),
+        .attribute => |at| {
+            walkExpr(w, at.obj.*);
+            w.blocked = true;
+        },
         .ternary => |t| {
-            noteRowsInExpr(t.cond.*, reassigned, rows, n);
-            noteRowsInExpr(t.then_expr.*, reassigned, rows, n);
-            noteRowsInExpr(t.else_expr.*, reassigned, rows, n);
+            walkExpr(w, t.cond.*);
+            w.blocked = true;
         },
+        .slice => |s| {
+            walkExpr(w, s.obj.*);
+            if (s.lo) |lo| walkExpr(w, lo.*);
+            if (s.hi) |hi| walkExpr(w, hi.*);
+            if (s.step) |step| walkExpr(w, step.*);
+            w.blocked = true;
+        },
+        .list_lit, .tuple_lit => |elems| {
+            for (elems) |el| walkExpr(w, el);
+        },
+        .dict_lit => |pairs| {
+            for (pairs) |p| {
+                walkExpr(w, p.key);
+                walkExpr(w, p.value);
+            }
+        },
+        .generic_construct => |g| {
+            for (g.args) |arg| walkExpr(w, arg);
+        },
+        .kwarg => |k| walkExpr(w, k.value.*),
+        .call, .spawn_expr, .await_expr, .lambda, .list_comp, .dict_comp => w.blocked = true,
         else => {},
     }
 }
 
-fn noteRowsInStmt(stmt: ast.Stmt, reassigned: *const std.StringHashMapUnmanaged(void), rows: *[8]RowKey, n: *usize) void {
+fn exprCanThrow(e: ast.Expr) bool {
+    switch (e) {
+        .call, .spawn_expr, .await_expr, .lambda, .list_comp, .dict_comp, .attribute, .slice, .index => return true,
+        .unary => |u| return exprCanThrow(u.operand.*),
+        .binary => |b| return opCanThrow(b.op) or exprCanThrow(b.left.*) or exprCanThrow(b.right.*),
+        .ternary => |t| return exprCanThrow(t.cond.*) or exprCanThrow(t.then_expr.*) or exprCanThrow(t.else_expr.*),
+        .list_lit, .tuple_lit => |elems| {
+            for (elems) |el| if (exprCanThrow(el)) return true;
+            return false;
+        },
+        .dict_lit => |pairs| {
+            for (pairs) |p| if (exprCanThrow(p.key) or exprCanThrow(p.value)) return true;
+            return false;
+        },
+        .generic_construct => |g| {
+            for (g.args) |arg| if (exprCanThrow(arg)) return true;
+            return false;
+        },
+        .kwarg => |k| return exprCanThrow(k.value.*),
+        else => return false,
+    }
+}
+
+fn bodyCanThrow(body: []const ast.Stmt) bool {
+    for (body) |stmt| if (stmtCanThrow(stmt)) return true;
+    return false;
+}
+
+fn stmtCanThrow(stmt: ast.Stmt) bool {
     switch (stmt.kind) {
-        .expr_stmt => |e| noteRowsInExpr(e, reassigned, rows, n),
-        .var_decl => |v| noteRowsInExpr(v.value, reassigned, rows, n),
-        .assign => |a| noteRowsInExpr(a.value, reassigned, rows, n),
-        else => {},
+        .expr_stmt => |e| return exprCanThrow(e),
+        .var_decl => |v| return exprCanThrow(v.value),
+        .assign => |a| return exprCanThrow(a.target) or exprCanThrow(a.value),
+        .raise_stmt, .del_stmt => return true,
+        .return_stmt => |e| return if (e) |ret| exprCanThrow(ret) else false,
+        .if_stmt => |f| {
+            if (exprCanThrow(f.cond) or bodyCanThrow(f.then_body)) return true;
+            for (f.elif_clauses) |ec| if (exprCanThrow(ec.cond) or bodyCanThrow(ec.body)) return true;
+            if (f.else_body) |eb| if (bodyCanThrow(eb)) return true;
+            return false;
+        },
+        .while_stmt => |wh| return exprCanThrow(wh.cond) or bodyCanThrow(wh.body),
+        .for_stmt => |f| return exprCanThrow(f.iterable) or bodyCanThrow(f.body),
+        .try_stmt => |t| {
+            if (bodyCanThrow(t.try_body)) return true;
+            for (t.except_clauses) |ec| if (bodyCanThrow(ec.body)) return true;
+            if (t.finally_body) |fb| if (bodyCanThrow(fb)) return true;
+            return false;
+        },
+        .lowlevel_stmt => |ll| return bodyCanThrow(ll.body),
+        .with_stmt => |wi| return exprCanThrow(wi.ctx_expr) or bodyCanThrow(wi.body),
+        .defer_stmt, .func_def, .class_def, .protocol_def, .extern_def => return true,
+        else => return false,
+    }
+}
+
+fn walkStmt(w: *RowWalk, stmt: ast.Stmt) void {
+    if (w.blocked) return;
+    switch (stmt.kind) {
+        .expr_stmt => |e| walkExpr(w, e),
+        .var_decl => |v| walkExpr(w, v.value),
+        .assign => |a| {
+            if (a.target == .identifier) {
+                walkExpr(w, a.value);
+            } else {
+                walkExpr(w, a.target);
+                walkExpr(w, a.value);
+            }
+        },
+        else => if (stmtCanThrow(stmt)) {
+            w.blocked = true;
+        },
     }
 }
 
@@ -1064,7 +1186,9 @@ fn bodyContainsReturnOrRaise(body: []const ast.Stmt) bool {
 
 /// Koşulsuz `base[idx][k]` satırları. Yalnızca gövdenin düz satır önekinde
 /// not edilir: erken `break`/`continue`/`return`/`raise`tan SONRAKİ erişim
-/// taşınmaz (taşınan yükleme o deyimden ÖNCE çalışırdı). Döngü hiç dönmezse
+/// taşınmaz. Satırdan önce hata üretebilecek bir ifade (bölme, indeks,
+/// nitelik, `and`/`or` sağ tarafı, iç `if`/döngü) varsa sonraki satır da
+/// taşınmaz — taşınan yükleme o hatadan önce çalışırdı. Döngü hiç dönmezse
 /// yükleme yapılmaz (çağıran, koşul tutunca bir kez üretir).
 pub fn planInvariantRows(self: *Codegen, body: []const ast.Stmt, out: *[8]RowKey) CodegenError!usize {
     var reassigned: std.StringHashMapUnmanaged(void) = .empty;
@@ -1072,8 +1196,10 @@ pub fn planInvariantRows(self: *Codegen, body: []const ast.Stmt, out: *[8]RowKey
     try collectReassignedNames(body, &reassigned, self.allocator);
     var found: [8]RowKey = undefined;
     var n: usize = 0;
+    var walk = RowWalk{ .reassigned = &reassigned, .rows = &found, .n = &n };
     for (body) |stmt| {
-        noteRowsInStmt(stmt, &reassigned, &found, &n);
+        if (walk.blocked) break;
+        walkStmt(&walk, stmt);
         if (stmtExitsThisLoop(stmt)) break;
     }
     var kept: usize = 0;

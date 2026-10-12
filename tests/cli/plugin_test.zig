@@ -2,6 +2,7 @@
 //! yetenek onayı, kayıtlı-işlev ↔ manifest çapraz doğrulaması, native hata, iş parçacığı olayı ve `nox_plugin_shutdown_v1` doğrulanır.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 test "Plugin API v1: manifest, imza denetimi, yetenek onayi, shutdown" {
     const io = std.testing.io;
@@ -13,10 +14,14 @@ test "Plugin API v1: manifest, imza denetimi, yetenek onayi, shutdown" {
     const dir_len = try tmp.dir.realPath(io, &path_buf);
     const dir = path_buf[0..dir_len];
 
-    const so_path = try std.fmt.allocPrint(gpa, "{s}/libplug.so", .{dir});
+    const lib_name = if (builtin.os.tag == .windows) "libplug.dll" else "libplug.so";
+    const so_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, lib_name });
     defer gpa.free(so_path);
     const cc = try std.process.run(gpa, io, .{
-        .argv = &.{ "cc", "-shared", "-fPIC", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" },
+        .argv = if (builtin.os.tag == .windows)
+            &.{ "cc", "-shared", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" }
+        else
+            &.{ "cc", "-shared", "-fPIC", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" },
     });
     defer gpa.free(cc.stdout);
     defer gpa.free(cc.stderr);
@@ -28,7 +33,7 @@ test "Plugin API v1: manifest, imza denetimi, yetenek onayi, shutdown" {
     const manifest =
         \\{
         \\  "name": "test.plug", "version": "0.1.0", "plugin_api": 1,
-        \\  "library": {"macos-arm64": "libplug.so", "linux-x64": "libplug.so", "linux-arm64": "libplug.so", "windows-x64": "libplug.so"},
+        \\  "library": {"macos-arm64": "libplug.so", "linux-x64": "libplug.so", "linux-arm64": "libplug.so", "windows-x64": "libplug.dll"},
         \\  "capabilities": ["threads"],
         \\  "functions": [
         \\    {"name": "add", "args": ["int", "..."], "returns": "int"},
@@ -43,7 +48,7 @@ test "Plugin API v1: manifest, imza denetimi, yetenek onayi, shutdown" {
     // Eksik işlev: kayıtlı küme manifestle uyuşmazsa yükleme REDDEDİLMELİ.
     try tmp.dir.writeFile(io, .{ .sub_path = "bad-plugin.json", .data =
         \\{"name": "test.bad", "version": "0.1.0", "plugin_api": 1,
-        \\ "library": {"macos-arm64": "libplug.so", "linux-x64": "libplug.so", "linux-arm64": "libplug.so", "windows-x64": "libplug.so"},
+        \\ "library": {"macos-arm64": "libplug.so", "linux-x64": "libplug.so", "linux-arm64": "libplug.so", "windows-x64": "libplug.dll"},
         \\ "functions": [{"name": "add", "args": ["int", "..."], "returns": "int"}]}
     });
     try tmp.dir.writeFile(io, .{ .sub_path = "future-plugin.json", .data =
@@ -169,4 +174,81 @@ test "Plugin API v1: manifest, imza denetimi, yetenek onayi, shutdown" {
         defer gpa.free(marker);
         try std.testing.expectEqualStrings("shutdown\nshutdown\nshutdown\n", marker);
     }
+}
+
+test "Plugin API: manifest list ve dict donus turlerini denetler" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const dir = path_buf[0..dir_len];
+
+    const lib_name = if (builtin.os.tag == .windows) "libplug.dll" else "libplug.so";
+    const so_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, lib_name });
+    defer gpa.free(so_path);
+    const cc = try std.process.run(gpa, io, .{
+        .argv = if (builtin.os.tag == .windows)
+            &.{ "cc", "-shared", "-DNOX_NNI_CONTAINERS", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" }
+        else
+            &.{ "cc", "-shared", "-fPIC", "-DNOX_NNI_CONTAINERS", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" },
+    });
+    defer gpa.free(cc.stdout);
+    defer gpa.free(cc.stderr);
+    if (cc.term != .exited or cc.term.exited != 0) {
+        std.debug.print("eklenti derlenemedi: {s}\n", .{cc.stderr});
+        return error.PluginBuildFailed;
+    }
+
+    const manifest =
+        \\{
+        \\  "name": "test.box", "version": "0.1.0", "plugin_api": 1,
+        \\  "library": {"macos-arm64": "libplug.so", "linux-x64": "libplug.so", "linux-arm64": "libplug.so", "windows-x64": "libplug.dll"},
+        \\  "capabilities": [],
+        \\  "functions": [
+        \\    {"name": "add", "args": ["int", "..."], "returns": "int"},
+        \\    {"name": "scale", "args": ["float", "bool"], "returns": "float"},
+        \\    {"name": "greet", "args": ["str"], "returns": "str"},
+        \\    {"name": "fail", "returns": "none"},
+        \\    {"name": "start_thread", "args": ["int"], "returns": "none"},
+        \\    {"name": "build_list", "returns": "list"},
+        \\    {"name": "build_dict", "returns": "dict"}
+        \\  ]
+        \\}
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "nox-plugin.json", .data = manifest });
+
+    const source = try std.fmt.allocPrint(gpa,
+        \\from nox.plugin import load_plugin, LoadedPlugin, PluginError
+        \\
+        \\allowed: list[str] = []
+        \\p: LoadedPlugin = load_plugin("{s}/nox-plugin.json", allowed)
+        \\xs: list[int] = p.call_int_list("build_list")
+        \\print(xs[0] + xs[1] + xs[2])
+        \\d: dict[str, int] = p.call_str_int_dict("build_dict")
+        \\print(d["a"] + d["b"])
+        \\try:
+        \\    print(p.call_int("build_list"))
+        \\except PluginError:
+        \\    print("hata")
+        \\p.shutdown()
+        \\
+    , .{dir});
+    defer gpa.free(source);
+    const nox_path = try std.fmt.allocPrint(gpa, "{s}/prog.nox", .{dir});
+    defer gpa.free(nox_path);
+    try tmp.dir.writeFile(io, .{ .sub_path = "prog.nox", .data = source });
+
+    const result = try std.process.run(gpa, io, .{
+        .argv = &.{ "zig-out/bin/noxc", "run", nox_path },
+    });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        std.debug.print("liste manifesti basarisiz: {s}\n", .{result.stderr});
+        return error.ProgramFailed;
+    }
+    try std.testing.expectEqualStrings("60\n3\nhata\n", result.stdout);
 }

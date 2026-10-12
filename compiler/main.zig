@@ -38,6 +38,7 @@ const upgrade_mod = @import("pkg/upgrade.zig");
 const registry = @import("pkg/registry.zig");
 const install_mod = @import("pkg/install.zig");
 const cache_prune = @import("pkg/cache_prune.zig");
+const run_cache = @import("pkg/run_cache.zig");
 const formatter = @import("fmt/formatter.zig");
 const build_options = @import("build_options");
 
@@ -106,7 +107,7 @@ fn printHelp(is_tr: bool) void {
             \\Alt komutlar:
             \\  build <dosya.nox>     derler, çalıştırılabilir bir ikili üretir
             \\  run <dosya.nox>       derler + hemen çalıştırır (-- ile argv iletilir)
-            \\  test                  CWD altındaki tüm *_test.nox dosyalarını keşfedip çalıştırır
+            \\  test [isim|yol ...]   *_test.nox dosyalarını çalıştırır; isim dosya adında aranır
             \\  check <dosya.nox>     yalnızca tip denetimi yapar (codegen/qbe/cc yok, hızlı)
             \\  expand <dosya.nox>    decorator metadata'sını (isim/argümanlar) yazdırır
             \\  explain [--release] <dosya.nox>  yerel değişkenlerin stack/arena/ARC tahsis kararını ve nedenini yazdırır
@@ -153,7 +154,7 @@ fn printHelp(is_tr: bool) void {
             \\Subcommands:
             \\  build <file.nox>      compile, producing an executable binary
             \\  run <file.nox>        compile + run immediately (argv after --)
-            \\  test                  discover and run all *_test.nox files under the CWD
+            \\  test [name|path ...]  run *_test.nox files; a name matches the file name
             \\  check <file.nox>      type-check only (no codegen/qbe/cc, fast feedback)
             \\  expand <file.nox>     print decorator metadata (name/args) extracted from the file
             \\  explain [--release] <file.nox>  print each local variable's stack/arena/ARC allocation decision and why
@@ -213,7 +214,7 @@ fn printOk(comptime fmt: []const u8, args: anytype) void {
 /// Kullanıcı kaynağını ayrıştırır; sözdizimi hatasında okunaklı tanılamayı basıp süreci sonlandırır.
 fn parseUserSource(a: std.mem.Allocator, source: []const u8, path: []const u8) !ast.Module {
     return syntax_report.parseSource(a, source, path) catch |e| switch (e) {
-        error.SyntaxError => std.process.exit(1),
+        error.SyntaxError => return error.SyntaxError,
         error.OutOfMemory => return e,
     };
 }
@@ -221,7 +222,8 @@ fn parseUserSource(a: std.mem.Allocator, source: []const u8, path: []const u8) !
 pub fn main(init: std.process.Init) !void {
     return realMain(init) catch |e| {
         // `syntax_report` hatayı ZATEN okunaklı biçimde yazdı (örn. bir içe aktarılan modülde).
-        if (std.mem.eql(u8, @errorName(e), "SyntaxError")) std.process.exit(1);
+        const name = @errorName(e);
+        if (std.mem.eql(u8, name, "SyntaxError") or std.mem.eql(u8, name, "BuildFailed")) std.process.exit(1);
         return e;
     };
 }
@@ -1217,12 +1219,9 @@ fn isRunnableOnHost(profile: codegen.Profile, target: []const u8) bool {
     return std.mem.eql(u8, target, host_name);
 }
 
-/// `noxc run`/`noxc test` (Faz O §P.2 — `test`in GERÇEK `*_test.nox` keşif/
-/// toplama kuralı §P.3'te bu fonksiyonun YERİNİ alacak; şimdilik TEK bir
-/// dosyayı derleyip çalıştırmak, `nox.test`in `raise`-ile-başarısız-olma
-/// modeliyle zaten TUTARLI bir ilk adımdır): `buildOne`ı proje-yerel bir
-/// önbelleğe (`<proje_kökü_veya_dosya_dizini>/.nox/cache/bin/<isim>`,
-/// KAYNAĞIN YANINA DEĞİL) derler, çalıştırılabilir dosyayı stdio'yu
+/// `noxc run`: `buildOne`ı `$NOX_HOME/cache/run/` altına, kaynak yolu ve
+/// içerik özetiyle derler. Özet tutuyorsa yeniden derlemez. Çalıştırılabilir
+/// dosyayı stdio'yu
 /// MİRAS ALARAK çalıştırır, çocuğun çıkış kodunu AYNEN yansıtır.
 fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const split = splitOnDoubleDash(args);
@@ -1247,8 +1246,13 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
         }
     }
 
-    const cache_bin_path = try cacheBinPath(io, a, path_arg);
-    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+    const tool_stamp = try toolchainStamp(io, a, resource_dirs);
+    const slot = try prepareRunCache(io, a, nox_home, path_arg, opts, null, tool_stamp);
+    const bin_path = if (slot.hit) slot.bin_path else blk: {
+        const built = try buildOne(gpa, io, a, path_arg, opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+        try commitRunCache(io, a, slot);
+        break :blk built;
+    };
 
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
@@ -1269,57 +1273,96 @@ fn runAndWait(io: std.Io, a: std.mem.Allocator, bin_path: []const u8, argv_tail:
     };
 }
 
-/// Faz O §P.3: `noxc test [yol]`. `yol` bir `.nox` DOSYASIYSA (P.2'nin
-/// eski davranışı — GERİYE DÖNÜK UYUMLU bırakıldı) TEK dosya derlenip
-/// çalıştırılır, çıkış kodu AYNEN yansıtılır. AKSİ HALDE (`yol` bir DİZİNSE
-/// ya da HİÇ verilmediyse — o zaman CWD kullanılır) `yol`(ya da CWD)
-/// altında `*_test.nox` İLE BİTEN TÜM dosyalar (bkz. `test_runner.
-/// discoverTestFiles`) KEŞFEDİLİR, HER biri BAĞIMSIZ derlenip çalıştırılır,
-/// sonuçlar TOPLANIP bir özet basılır; HERHANGİ biri başarısızsa (çıkış
-/// kodu != 0) `noxc test`in KENDİSİ de çıkış kodu `1` ile sonlanır.
-///
-/// **Bilinçli sınırlama:** bir test dosyasının DERLENMESİ başarısız olursa
-/// (`buildOne` İÇİNDEKİ mevcut hata yollarının HER BİRİ hâlâ doğrudan
-/// `std.process.exit(1)` çağırıyor, bkz. `buildOne`'ın belge notu) TÜM
-/// `noxc test` çalışması ORADA durur — yalnızca ÇALIŞMA ZAMANI (derlenmiş
-/// binary'nin çıkış kodu) başarısızlıkları dosya-dosya TOPLANIR. Bu, Go'nun
-/// `go test`inin KENDİ paketi derlenemezse TÜM paketi başarısız SAYMASIYLA
-/// AYNI kategoride bir davranış — bir test dosyasının derlenmemesi zaten
-/// KENDİ BAŞINA acil düzeltilmesi gereken bir hata, "diğer testlere devam
-/// et" mantığıyla GİZLENMEMELİ.
+/// `noxc test [isim|yol ...]`. Argüman yoksa CWD altındaki her `*_test.nox`.
+/// Dizin verilirse o ağaç. `.nox` dosyası TEK başına verilirse çıkış kodu
+/// programın kodudur. Başka bir kelime dosya adında aranır (`smtp` →
+/// `v18_smtp_test.nox`). Derleme hatası turu kesmez; dosya FAILED sayılır
+/// ve kalan dosyalar çalışır.
 fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const opts = parseBuildOpts(args);
+    const selectors = try testSelectors(a, args);
+    const cwd_abs = try std.process.currentPathAlloc(io, a);
 
-    if (opts.path) |t| {
-        if (std.mem.endsWith(u8, t, ".nox")) {
-            const cache_bin_path = try cacheBinPath(io, a, t);
-            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
-            const code = try runAndWait(io, a, bin_path, &.{});
-            std.process.exit(code);
+    if (selectors.len == 1 and std.mem.endsWith(u8, selectors[0], ".nox")) {
+        const tool_stamp = try toolchainStamp(io, a, resource_dirs);
+        const slot = try prepareRunCache(io, a, nox_home, selectors[0], opts, null, tool_stamp);
+        const bin_path = if (slot.hit) slot.bin_path else blk: {
+            const built = try buildOne(gpa, io, a, selectors[0], opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+            try commitRunCache(io, a, slot);
+            break :blk built;
+        };
+        const code = try runAndWait(io, a, bin_path, &.{});
+        std.process.exit(code);
+    }
+
+    var files: std.ArrayListUnmanaged([]const u8) = .empty;
+    var name_filters: std.ArrayListUnmanaged([]const u8) = .empty;
+    var walked = false;
+    for (selectors) |sel| {
+        const abs = if (std.fs.path.isAbsolute(sel)) try a.dupe(u8, sel) else try std.fs.path.resolve(a, &.{ cwd_abs, sel });
+        if (pathIsDir(io, abs)) {
+            const found = try test_runner.discoverTestFiles(a, io, abs);
+            try files.appendSlice(a, found);
+            walked = true;
+        } else if (std.mem.endsWith(u8, sel, ".nox")) {
+            try files.append(a, abs);
+        } else {
+            try name_filters.append(a, sel);
         }
     }
-
-    const cwd_abs = try std.process.currentPathAlloc(io, a);
-    const walk_root = if (opts.path) |t|
-        (if (std.fs.path.isAbsolute(t)) try a.dupe(u8, t) else try std.fs.path.resolve(a, &.{ cwd_abs, t }))
-    else
-        cwd_abs;
-
-    const files = try test_runner.discoverTestFiles(a, io, walk_root);
-    if (files.len == 0) {
-        std.debug.print("found 0 test files (looking for *_test.nox under {s})\n", .{walk_root});
-        return;
+    if (selectors.len == 0 or (name_filters.items.len > 0 and !walked and files.items.len == 0)) {
+        const found = try test_runner.discoverTestFiles(a, io, cwd_abs);
+        try files.appendSlice(a, found);
     }
+    if (name_filters.items.len > 0) {
+        var matched: std.ArrayListUnmanaged([]const u8) = .empty;
+        for (files.items) |file| {
+            for (name_filters.items) |query| {
+                if (run_cache.matchesTestName(file, query)) {
+                    try matched.append(a, file);
+                    break;
+                }
+            }
+        }
+        files = matched;
+    }
+
+    if (files.items.len == 0) {
+        if (name_filters.items.len == 0) {
+            std.debug.print("found 0 test files (looking for *_test.nox under {s})\n", .{cwd_abs});
+            return;
+        }
+        printErr("no test files matched\n", .{});
+        std.process.exit(1);
+    }
+
+    std.mem.sort([]const u8, files.items, {}, struct {
+        fn less(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    }.less);
 
     var pass_count: usize = 0;
     var fail_count: usize = 0;
-    for (files) |file| {
+    var stamps: std.StringHashMapUnmanaged([]const u8) = .empty;
+    const tool_stamp = toolchainStamp(io, a, resource_dirs) catch "-";
+    for (files.items) |file| {
         var file_arena = std.heap.ArenaAllocator.init(gpa);
         defer file_arena.deinit();
         const fa = file_arena.allocator();
 
-        const cache_bin_path = try cacheBinPath(io, fa, file);
-        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+        const stamp = sourceStamp(io, a, &stamps, file) catch null;
+        const slot = prepareRunCache(io, fa, nox_home, file, opts, stamp, tool_stamp) catch {
+            printErr("FAILED: {s}\n", .{file});
+            fail_count += 1;
+            continue;
+        };
+        const bin_path = if (slot.hit) slot.bin_path else buildOne(gpa, io, fa, file, opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm) catch {
+            printErr("FAILED: {s}\n", .{file});
+            fail_count += 1;
+            continue;
+        };
+        if (!slot.hit) commitRunCache(io, fa, slot) catch {};
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             printOk("PASSED: {s}\n", .{file});
@@ -1331,10 +1374,31 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
     }
 
     if (fail_count > 0) {
-        printErr("\n{d} passed, {d} failed ({d} total)\n", .{ pass_count, fail_count, files.len });
+        printErr("\n{d} passed, {d} failed ({d} total)\n", .{ pass_count, fail_count, files.items.len });
         std.process.exit(1);
     }
-    printOk("\n{d} passed, {d} failed ({d} total)\n", .{ pass_count, fail_count, files.len });
+    printOk("\n{d} passed, {d} failed ({d} total)\n", .{ pass_count, fail_count, files.items.len });
+}
+
+fn testSelectors(a: std.mem.Allocator, args: []const []const u8) ![]const []const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--backend") or std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--profile") or std.mem.eql(u8, arg, "--target")) {
+            i += 1;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "-")) continue;
+        try out.append(a, arg);
+    }
+    return out.items;
+}
+
+fn pathIsDir(io: std.Io, path: []const u8) bool {
+    var dir = std.Io.Dir.openDirAbsolute(io, path, .{}) catch return false;
+    dir.close(io);
+    return true;
 }
 
 /// Faz T.4b: `noxc fmt <dosya.nox>` — kaynağı `lexer.tokenizeWithTrivia` +
@@ -1368,27 +1432,155 @@ fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path_arg, .data = formatted });
 }
 
-/// `path_arg`in (proje kökü BULUNURSA o kök, BULUNAMAZSA dosyanın KENDİ
-/// dizini — bkz. `project.findProjectRoot`'un "manifestsiz de geçerli"
-/// notu) altında `.nox/cache/bin/<uzantısız-ad>` mutlak yolunu HAZIRLAR
-/// (dizinleri de oluşturarak).
-fn cacheBinPath(io: std.Io, a: std.mem.Allocator, path_arg: []const u8) ![]const u8 {
+const RunSlot = struct {
+    bin_path: []const u8,
+    hit: bool,
+    index_path: []const u8,
+    content_hex: []const u8,
+    stale_dir: ?[]const u8,
+};
+
+/// İkili `$NOX_HOME/cache/run/obj/<özet>/bin` altına yazılır. Özet; sürüm,
+/// backend, profil, hedef, `-g`, kaynak yolu, proje içeriği ve
+/// `tool_stamp` (noxc ikilisi, `noxrt.o`, stdlib) dir. Kaynak değişince
+/// önceki özet dizini `commitRunCache` ile silinir.
+fn prepareRunCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, path_arg: []const u8, opts: BuildOpts, source_stamp: ?[]const u8, tool_stamp: []const u8) !RunSlot {
     const cwd_abs = try std.process.currentPathAlloc(io, a);
-    const path_dir = std.fs.path.dirname(path_arg) orelse ".";
-    const start_dir = if (std.fs.path.isAbsolute(path_dir))
-        try a.dupe(u8, path_dir)
-    else
-        try std.fs.path.resolve(a, &.{ cwd_abs, path_dir });
+    const abs_path = if (std.fs.path.isAbsolute(path_arg)) try a.dupe(u8, path_arg) else try std.fs.path.resolve(a, &.{ cwd_abs, path_arg });
+    const path_dir = std.fs.path.dirname(abs_path) orelse abs_path;
+    const project_root = try project.findProjectRoot(a, io, path_dir);
 
-    const root = (try project.findProjectRoot(a, io, start_dir)) orelse start_dir;
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    try parts.append(a, build_options.version);
+    try parts.append(a, @tagName(opts.backend));
+    try parts.append(a, @tagName(opts.profile));
+    try parts.append(a, opts.target orelse "-");
+    try parts.append(a, if (opts.debug_info) "g" else "-");
+    try parts.append(a, abs_path);
+    try parts.append(a, tool_stamp);
+    if (source_stamp) |stamp| {
+        try parts.append(a, stamp);
+    } else if (project_root) |root| {
+        try appendProjectSources(io, a, root, &parts);
+    } else {
+        const bytes = try std.Io.Dir.cwd().readFileAlloc(io, abs_path, a, .limited(8 * 1024 * 1024));
+        try parts.append(a, bytes);
+    }
+    try std.Io.Dir.cwd().createDirPath(io, nox_home);
 
-    const cache_dir_rel = ".nox/cache/bin";
-    var root_dir = try std.Io.Dir.openDirAbsolute(io, root, .{});
-    defer root_dir.close(io);
-    try root_dir.createDirPath(io, cache_dir_rel);
+    const content = run_cache.hex16(run_cache.digest(parts.items));
+    const content_hex = try a.dupe(u8, &content);
+    const path_key = run_cache.hex16(run_cache.digest(&.{abs_path}));
+    const path_hex = try a.dupe(u8, &path_key);
 
-    const base_name = std.fs.path.stem(path_arg);
-    return std.fmt.allocPrint(a, "{s}/{s}/{s}", .{ root, cache_dir_rel, base_name });
+    const obj_dir = try std.fmt.allocPrint(a, "{s}/cache/run/obj/{s}", .{ nox_home, content_hex });
+    var home_dir = try std.Io.Dir.openDirAbsolute(io, nox_home, .{});
+    defer home_dir.close(io);
+    try home_dir.createDirPath(io, try std.fmt.allocPrint(a, "cache/run/obj/{s}", .{content_hex}));
+    try home_dir.createDirPath(io, "cache/run/paths");
+
+    const suffix = if (builtin.os.tag == .windows) ".exe" else "";
+    const bin_path = try std.fmt.allocPrint(a, "{s}/bin{s}", .{ obj_dir, suffix });
+    const index_path = try std.fmt.allocPrint(a, "{s}/cache/run/paths/{s}", .{ nox_home, path_hex });
+    const hit = if (std.Io.Dir.accessAbsolute(io, bin_path, .{})) |_| true else |_| false;
+
+    var stale_dir: ?[]const u8 = null;
+    if (std.Io.Dir.cwd().readFileAlloc(io, index_path, a, .limited(64))) |prev| {
+        const prev_hex = std.mem.trim(u8, prev, " \t\r\n");
+        if (!std.mem.eql(u8, prev_hex, content_hex)) {
+            stale_dir = try std.fmt.allocPrint(a, "{s}/cache/run/obj/{s}", .{ nox_home, prev_hex });
+        }
+    } else |_| {}
+
+    return .{
+        .bin_path = bin_path,
+        .hit = hit,
+        .index_path = index_path,
+        .content_hex = content_hex,
+        .stale_dir = stale_dir,
+    };
+}
+
+fn commitRunCache(io: std.Io, a: std.mem.Allocator, slot: RunSlot) !void {
+    if (slot.stale_dir) |dir| {
+        std.Io.Dir.cwd().deleteTree(io, dir) catch {};
+    }
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = slot.index_path, .data = slot.content_hex });
+    _ = a;
+}
+
+fn appendProjectSources(io: std.Io, a: std.mem.Allocator, root: []const u8, parts: *std.ArrayListUnmanaged([]const u8)) !void {
+    var files: std.ArrayListUnmanaged([]const u8) = .empty;
+    var dir = try std.Io.Dir.openDirAbsolute(io, root, .{ .iterate = true });
+    defer dir.close(io);
+    var walker = try dir.walk(a);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.basename, ".nox")) continue;
+        if (pathHasSkippedComponent(entry.path)) continue;
+        try files.append(a, try a.dupe(u8, entry.path));
+    }
+    std.mem.sort([]const u8, files.items, {}, struct {
+        fn less(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    }.less);
+    for (files.items) |rel| {
+        const full = try std.fmt.allocPrint(a, "{s}/{s}", .{ root, rel });
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, full, a, .limited(8 * 1024 * 1024)) catch continue;
+        try parts.append(a, rel);
+        try parts.append(a, bytes);
+    }
+}
+
+fn toolchainStamp(io: std.Io, a: std.mem.Allocator, resource_dirs: project.ResourceDirs) ![]const u8 {
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    const exe = std.process.executablePathAlloc(io, a) catch "-";
+    try appendFileStamp(io, a, &parts, exe);
+    try appendFileStamp(io, a, &parts, resource_dirs.noxrt_path);
+    if (builtin.os.tag == .windows) try appendFileStamp(io, a, &parts, resource_dirs.swap_asm_path);
+    appendProjectSources(io, a, resource_dirs.stdlib_dir, &parts) catch try parts.append(a, "-");
+    const hex = run_cache.hex16(run_cache.digest(parts.items));
+    return try a.dupe(u8, &hex);
+}
+
+fn appendFileStamp(io: std.Io, a: std.mem.Allocator, parts: *std.ArrayListUnmanaged([]const u8), path: []const u8) !void {
+    var file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch {
+        try parts.append(a, path);
+        try parts.append(a, "-");
+        return;
+    };
+    defer file.close(io);
+    const st = file.stat(io) catch {
+        try parts.append(a, path);
+        try parts.append(a, "-");
+        return;
+    };
+    try parts.append(a, path);
+    try parts.append(a, try std.fmt.allocPrint(a, "{d}:{d}", .{ st.size, st.mtime.nanoseconds }));
+}
+
+fn sourceStamp(io: std.Io, a: std.mem.Allocator, stamps: *std.StringHashMapUnmanaged([]const u8), path_arg: []const u8) !?[]const u8 {
+    const cwd_abs = try std.process.currentPathAlloc(io, a);
+    const abs_path = if (std.fs.path.isAbsolute(path_arg)) path_arg else try std.fs.path.resolve(a, &.{ cwd_abs, path_arg });
+    const path_dir = std.fs.path.dirname(abs_path) orelse abs_path;
+    const root = (try project.findProjectRoot(a, io, path_dir)) orelse return null;
+    if (stamps.get(root)) |stamp| return stamp;
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    try appendProjectSources(io, a, root, &parts);
+    const hex = run_cache.hex16(run_cache.digest(parts.items));
+    const stamp = try a.dupe(u8, &hex);
+    try stamps.put(a, root, stamp);
+    return stamp;
+}
+
+fn pathHasSkippedComponent(path: []const u8) bool {
+    var it = std.mem.splitAny(u8, path, "/\\");
+    while (it.next()) |part| {
+        if (run_cache.shouldSkipDir(part)) return true;
+    }
+    return false;
 }
 
 /// Faz O §P.6: `path_arg`in proje kökünü (`nox.json`) arar; BULAMAZSA
@@ -1423,7 +1615,7 @@ fn resolveImportsForBuild(
         return module_loader.resolveImportsFrom(a, io, user_module, resource_dirs.stdlib_dir) catch |e| switch (e) {
             error.ModuleNotFound => {
                 printErr("import: stdlib module not found (searched under {s})\n", .{resource_dirs.stdlib_dir});
-                std.process.exit(1);
+                return error.BuildFailed;
             },
             else => |err| return err,
         };
@@ -1431,11 +1623,11 @@ fn resolveImportsForBuild(
 
     const manifest = project.loadManifest(a, io, root) catch |e| {
         printErr("nox.json could not be read or is invalid ({s}): {t}\n", .{ root, e });
-        std.process.exit(1);
+        return error.BuildFailed;
     };
     const lock = project.loadLockfile(a, io, root) catch |e| {
         printErr("nox.lock could not be read or is invalid ({s}): {t}\n", .{ root, e });
-        std.process.exit(1);
+        return error.BuildFailed;
     };
 
     var roots: std.StringHashMapUnmanaged([]const u8) = .empty;
@@ -1478,7 +1670,7 @@ fn resolveImportsForBuild(
                 } else {
                     printErr("could not fetch the package (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
                 }
-                std.process.exit(1);
+                return error.BuildFailed;
             };
             try roots.put(a, req.alias, result.cache_dir);
 
@@ -1502,11 +1694,11 @@ fn resolveImportsForBuild(
     return module_loader.resolveProjectImports(a, io, user_module, roots, resource_dirs.stdlib_dir, root) catch |e| switch (e) {
         error.ModuleNotFound => {
             printErr("import: module not found (neither under 'stdlib/' nor in a dependency directory)\n", .{});
-            std.process.exit(1);
+            return error.BuildFailed;
         },
         error.UnknownImportAlias => {
             printErr("import: unknown alias, or project file not found (check the 'requires' list in {s}/nox.json, or make sure the .nox file exists under '{s}')\n", .{ root, root });
-            std.process.exit(1);
+            return error.BuildFailed;
         },
         else => |err| return err,
     };
@@ -2070,7 +2262,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // çağrı sitelerini otomatik/ücretsiz kapsar.
     if (release and profile == .freestanding) {
         printErr("the freestanding profile currently supports ONLY the QBE backend (it cannot be combined with --release: LLVM's own WorkerPool needs real OS threads, which do not exist in freestanding)\n", .{});
-        std.process.exit(1);
+        return error.BuildFailed;
     }
     // Bulundu (kullanıcı geri bildirimi): `noxc upgrade` gibi mistyped/
     // bilinmeyen bir alt komut, tanınan HİÇBİR anahtar kelimeyle
@@ -2086,7 +2278,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             } else {
                 printErr("unknown command or file: '{s}' — for commands, run: noxc --help\n", .{path_arg});
             }
-            std.process.exit(1);
+            return error.BuildFailed;
         }
         return err;
     };
@@ -2120,7 +2312,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     checker_state.profile = profile;
     checker_state.checkModule(module) catch |e| {
         printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
-        std.process.exit(1);
+        return error.BuildFailed;
     };
     // Faz T.2: `checkModule` artık fonksiyon/sınıf/metod/gevşek-deyim
     // SINIRINDAKİ hatalarda FIRLATMAZ, `checker_state.diagnostics`e
@@ -2130,7 +2322,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         for (checker_state.diagnostics.items) |d| {
             printErr("type error ({t}): {s}\n", .{ d.code, d.message });
         }
-        std.process.exit(1);
+        return error.BuildFailed;
     }
     const instantiations = checker_state.instantiations.items;
 
@@ -2219,10 +2411,10 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
                     "https://noxlang.com/docs/language/\n",
                 .{},
             );
-            std.process.exit(1);
+            return error.BuildFailed;
         },
         // Ayrıntılı ileti (hangi değişken hangisini okuyor) codegen'de basıldı.
-        error.GlobalInitOrder => std.process.exit(1),
+        error.GlobalInitOrder => return error.BuildFailed,
         else => |e| return e,
     };
 
@@ -2276,7 +2468,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         const clang_result = std.process.run(gpa, io, .{ .argv = clang_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
                 printErr("clang/zig not found: the LLVM backend needs 'clang' or 'zig' on PATH (for example: brew install llvm); alternative: --backend qbe\n", .{});
-                std.process.exit(1);
+                return error.BuildFailed;
             }
             return err;
         };
@@ -2284,7 +2476,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         defer gpa.free(clang_result.stderr);
         if (clang_result.term != .exited or clang_result.term.exited != 0) {
             printErr("{s} failed:\n{s}\n", .{ if (driver == .zig_cc) "zig cc" else "clang", clang_result.stderr });
-            std.process.exit(1);
+            return error.BuildFailed;
         }
         return bin_path;
     }
@@ -2306,7 +2498,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
             printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, linux-x64, linux-arm64, linux-riscv64, windows-x64)\n", .{target.?});
-            std.process.exit(1);
+            return error.BuildFailed;
         })
     else
         null;
@@ -2316,7 +2508,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     else if (profile == .freestanding and target != null)
         (qbe_target.nameForArch(target.?) orelse {
             printErr("--target: unknown freestanding architecture '{s}' (valid values: x86_64, aarch64, riscv64)\n", .{target.?});
-            std.process.exit(1);
+            return error.BuildFailed;
         })
     else
         qbe_target.name(profile == .freestanding);
@@ -2329,7 +2521,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `.s`, linksiz) YİNE de çalışır.
     if (profile == .freestanding and target != null and std.mem.eql(u8, target.?, "riscv64") and !emit_asm) {
         printErr("--target riscv64: there is no freestanding runtime yet (no boot chain) - hosted riscv64 is 'noxc build --target linux-riscv64'; freestanding can only emit a raw .s file with --emit-asm\n", .{});
-        std.process.exit(1);
+        return error.BuildFailed;
     }
 
     const qbe_result = try std.process.run(gpa, io, .{
@@ -2339,7 +2531,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     defer gpa.free(qbe_result.stderr);
     if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
         printErr("qbe failed:\n{s}\n", .{qbe_result.stderr});
-        std.process.exit(1);
+        return error.BuildFailed;
     }
 
     // v2.0 madde 8: `--emit-asm` — `qbe -t ...` çalıştırıldıktan HEMEN
@@ -2380,7 +2572,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         const zig_result = std.process.run(gpa, io, .{ .argv = zig_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
                 printErr("zig not found: --profile freestanding needs a 'zig' executable on PATH\n", .{});
-                std.process.exit(1);
+                return error.BuildFailed;
             }
             return err;
         };
@@ -2388,7 +2580,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         defer gpa.free(zig_result.stderr);
         if (zig_result.term != .exited or zig_result.term.exited != 0) {
             printErr("zig cc failed:\n{s}\n", .{zig_result.stderr});
-            std.process.exit(1);
+            return error.BuildFailed;
         }
         return bin_path;
     }
@@ -2461,7 +2653,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     defer gpa.free(cc_result.stderr);
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         printErr("cc failed:\n{s}\n", .{cc_result.stderr});
-        std.process.exit(1);
+        return error.BuildFailed;
     }
 
     return bin_path;
