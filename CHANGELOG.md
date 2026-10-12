@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.5]
+
+### Düzeltildi
+
+- `noxc publish` testleri İngilizce durum metinlerine kilitlendi (`submitted:`, `'name' in nox.json is empty`). Debug CI bu iki beklenti yüzünden kırmızıydı.
+
 ## [2.0.4]
 
 ### Eklendi

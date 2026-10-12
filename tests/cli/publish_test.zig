@@ -148,7 +148,7 @@ test "noxc publish: sunucu ok:true donerse basarili cikar, id'yi yazdirir" {
         std.debug.print("publish basarisiz, stderr: {s}\n", .{result.stderr});
     }
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "gonderildi: testpkg") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "submitted: testpkg") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "abc123") != null);
 }
 
@@ -217,5 +217,5 @@ test "noxc publish: nox.json'da bos 'name' varsa hic ag cagrisi yapmadan yerel h
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "'name' bos") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "'name' in nox.json is empty") != null);
 }
