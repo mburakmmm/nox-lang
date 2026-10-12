@@ -81,8 +81,10 @@ static NoxStatus fn_start_thread(const NoxApiV1* api, NoxRuntime* rt, const NoxV
     return NOX_OK;
 }
 
+#ifdef NOX_NNI_CONTAINERS
 static NoxStatus fn_build_list(const NoxApiV1* api, NoxRuntime* rt, const NoxValue* args, size_t argc, NoxValue* out);
 static NoxStatus fn_build_dict(const NoxApiV1* api, NoxRuntime* rt, const NoxValue* args, size_t argc, NoxValue* out);
+#endif
 
 NOX_EXPORT NoxStatus nox_plugin_init_v1(const NoxApiV1* api, NoxRuntime* rt) {
     if (api->abi_version < 1 || api->struct_size < sizeof(NoxApiV1)) return NOX_ABI_UNSUPPORTED;
@@ -93,11 +95,14 @@ NOX_EXPORT NoxStatus nox_plugin_init_v1(const NoxApiV1* api, NoxRuntime* rt) {
     api->register_function(rt, "greet", fn_greet);
     api->register_function(rt, "fail", fn_fail);
     api->register_function(rt, "start_thread", fn_start_thread);
+#ifdef NOX_NNI_CONTAINERS
     api->register_function(rt, "build_list", fn_build_list);
     api->register_function(rt, "build_dict", fn_build_dict);
+#endif
     return NOX_OK;
 }
 
+#ifdef NOX_NNI_CONTAINERS
 static NoxStatus fn_build_list(const NoxApiV1* api, NoxRuntime* rt, const NoxValue* args, size_t argc, NoxValue* out) {
     (void)args;
     (void)argc;
@@ -122,6 +127,7 @@ static NoxStatus fn_build_dict(const NoxApiV1* api, NoxRuntime* rt, const NoxVal
     out->u.h = h;
     return NOX_OK;
 }
+#endif
 
 /* Plugin API v1: isteğe bağlı yaşam döngüsü kancası — test için bir işaret dosyasına yazar. */
 NOX_EXPORT void nox_plugin_shutdown_v1(const NoxApiV1* api, NoxRuntime* rt) {

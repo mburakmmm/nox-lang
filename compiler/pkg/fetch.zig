@@ -331,6 +331,53 @@ fn runGit(a: Allocator, io: Io, argv_tail: []const []const u8, cwd_path: ?[]cons
 /// "main" varsayımına GERİ DÜŞMELİDİR — bu YÜZDEN dönüş tipi `!` (çağıran
 /// `catch` İLE ele alır), asla `noxc install`i eskiye göre DAHA KIRILGAN
 /// hale GETİRMEZ.
+pub const EmbeddedRef = struct {
+    repo: []const u8,
+    ref: ?[]const u8 = null,
+};
+
+/// `noxc install github.com/org/repo@v1.2.3` biçimi. `git@host:yol` içindeki
+/// ilk `@` SSH kullanıcısıdır; etiket ancak ondan sonraki `@` ile ayrılır.
+/// `https://` adresleri bölünmez (kullanıcı bilgisi `@` taşıyabilir).
+pub fn splitEmbeddedRef(spec: []const u8) EmbeddedRef {
+    if (std.mem.startsWith(u8, spec, "https://") or std.mem.startsWith(u8, spec, "http://")) {
+        return .{ .repo = spec };
+    }
+    const at = std.mem.lastIndexOfScalar(u8, spec, '@') orelse return .{ .repo = spec };
+    if (std.mem.startsWith(u8, spec, "git@") and at == 3) return .{ .repo = spec };
+    const repo = spec[0..at];
+    const ref = spec[at + 1 ..];
+    if (repo.len == 0 or ref.len == 0) return .{ .repo = spec };
+    if (std.mem.indexOfScalar(u8, ref, '/') != null or std.mem.indexOfScalar(u8, ref, ':') != null) {
+        return .{ .repo = spec };
+    }
+    const repo_has_path = std.mem.indexOfScalar(u8, repo, '/') != null or std.mem.indexOfScalar(u8, repo, ':') != null;
+    if (!repo_has_path) return .{ .repo = spec };
+    return .{ .repo = repo, .ref = ref };
+}
+
+test "install repo@ref ayirir, git@ ve https adresine dokunmaz" {
+    const tagged = splitEmbeddedRef("github.com/mburakmmm/aether@v0.8.1");
+    try std.testing.expectEqualStrings("github.com/mburakmmm/aether", tagged.repo);
+    try std.testing.expectEqualStrings("v0.8.1", tagged.ref.?);
+
+    const plain = splitEmbeddedRef("github.com/mburakmmm/aether");
+    try std.testing.expectEqualStrings("github.com/mburakmmm/aether", plain.repo);
+    try std.testing.expect(plain.ref == null);
+
+    const ssh = splitEmbeddedRef("git@github.com:mburakmmm/aether");
+    try std.testing.expectEqualStrings("git@github.com:mburakmmm/aether", ssh.repo);
+    try std.testing.expect(ssh.ref == null);
+
+    const ssh_tag = splitEmbeddedRef("git@github.com:mburakmmm/aether@v0.8.1");
+    try std.testing.expectEqualStrings("git@github.com:mburakmmm/aether", ssh_tag.repo);
+    try std.testing.expectEqualStrings("v0.8.1", ssh_tag.ref.?);
+
+    const https = splitEmbeddedRef("https://github.com/mburakmmm/aether");
+    try std.testing.expectEqualStrings("https://github.com/mburakmmm/aether", https.repo);
+    try std.testing.expect(https.ref == null);
+}
+
 pub fn resolveDefaultRef(a: Allocator, io: Io, repo: []const u8, policy: FetchPolicy) ![]const u8 {
     const clone_url = try resolveCloneUrl(a, repo, policy.allow_insecure_transport);
     const out = try runGit(a, io, &.{ "ls-remote", "--symref", clone_url, "HEAD" }, null, policy);

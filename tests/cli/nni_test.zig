@@ -17,7 +17,7 @@ test "NNI v1: gercek bir C eklentisi yuklenir, cagrilir, hata ve iplik olaylari 
     const so_path = try std.fmt.allocPrint(gpa, "{s}/libnni_test.so", .{dir});
     defer gpa.free(so_path);
     const cc = try std.process.run(gpa, io, .{
-        .argv = &.{ "cc", "-shared", "-fPIC", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" },
+        .argv = &.{ "cc", "-shared", "-fPIC", "-DNOX_NNI_CONTAINERS", "-I", "include", "-o", so_path, "tests/compat/nni_ext/plugin.c", "-lpthread" },
     });
     defer gpa.free(cc.stdout);
     defer gpa.free(cc.stderr);

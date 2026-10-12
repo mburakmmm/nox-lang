@@ -716,16 +716,27 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         }
     }
     const pkg = pkg_arg orelse {
-        std.debug.print("usage: noxc install <package-name|repo> [--ref <ref>]\n", .{});
+        std.debug.print("usage: noxc install <package-name|repo[@ref]> [--ref <ref>]\n", .{});
         std.process.exit(1);
     };
+
+    // `repo@ref` (`github.com/org/name@v1.2.3`). `--ref` verilmişse o kazanır
+    // ve gömülü etiket yok sayılır; aksi halde varsayılan dal sorgusu atlanır.
+    const embedded = fetch.splitEmbeddedRef(pkg);
+    const pkg_repo = embedded.repo;
+    if (!ref_explicit) {
+        if (embedded.ref) |embedded_ref| {
+            ref = embedded_ref;
+            ref_explicit = true;
+        }
+    }
 
     // Bare bir kayit-defteri ismi mi (`/` ICERMIYOR — "nyx" gibi) yoksa
     // dogrudan bir repo/yerel yol mu (`add`in "iki pozisyonel argüman"
     // yerine tek argümanın İÇERİĞİNE bakan, daha basit bir ayrım — bkz.
     // bu fonksiyonun belge notu).
-    const looks_like_repo = std.mem.indexOfScalar(u8, pkg, '/') != null;
-    const repo: []const u8 = if (looks_like_repo) pkg else blk: {
+    const looks_like_repo = std.mem.indexOfScalar(u8, pkg_repo, '/') != null or std.mem.startsWith(u8, pkg_repo, "git@");
+    const repo: []const u8 = if (looks_like_repo) pkg_repo else blk: {
         const index_arg = registry_policy.index_url;
         const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
         const idx = if (is_url)

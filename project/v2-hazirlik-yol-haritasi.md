@@ -84,7 +84,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [x] **6.1 (v2.0.2, matris v2.0.8)** ASAP closure-effect: func tipli bir yerel tam olarak bir kez, gövdesi bilinen bir fonksiyona veya iç içe `def`e bağlıysa o gövdenin parametre kaçışı çağrı yerine taşınır. Birden fazla yazım, parametre olarak gelen func, takma ad zinciri veya taranmamış gövde ARC kalır. Aynı nesnenin özyinelemeli geçişi ARC, `spawn` her zaman ARC. `try` codegen'de kanıtı düşürür.
 - [x] **6.2 (GG.24/25 worklist zaten kapatmıştı; v1.171.1 fiber içi golden testi)** `genClassRelease` özyinelemesi 256 KiB fiber yığınında sınırda (STACK_SIZE küçültülmedi).
 - [x] **6.3** `nox.binary` artık `Span` üzerinde de çalışır — v1.166.0 (`span_reader`/`span_writer`; tam generic sınıf yerine geriye uyumlu yardımcı).
-- [x] **6.4 (sınır, v2.0.8)** Aether/Nyx bu depoda `external-fixtures.yml` ile pinli (Aether v0.7.2, Nyx v0.21.0). `is_stopping` + `HttpRequest` Aether deposunda kalır; burada sahte test yok.
+- [x] **6.4 (sınır, v2.0.8)** Aether/Nyx bu depoda `external-fixtures.yml` ile pinli (Aether v0.7.2, Nyx v0.22.0). `is_stopping` + `HttpRequest` Aether deposunda kalır; burada sahte test yok.
 - [x] **6.5** Eski async-istisna notları düzeltildi — v1.158.0.
 
 ## 7. Performans (engelleyici değil)

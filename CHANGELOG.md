@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.9]
+
+### Düzeltildi
+
+- **Plugin API testi.** `build_list` / `build_dict` paylaşılan eklentide her zaman kayıtlıydı; manifest beş işlev beklediği için `load_plugin` `PluginError` ile düşüyordu. Bu iki işlev yalnızca `-DNOX_NNI_CONTAINERS` ile kayıt edilir.
+- **Nyx fixture pini `v0.22.0`.** `v0.21.0` SMTP testi İngilizce stdlib metnine uymuyordu. Aether pini `v0.7.2` (o iş yeşildi).
+- **`noxc install repo@ref`.** `github.com/org/name@v1.2.3` etiketi ref olur. `git@host:yol` ve `https://` bölünmez. `--ref` kazanır.
+
 ## [2.0.8]
 
 ### Düzeltildi

@@ -53,7 +53,7 @@ A bare `noxc file.nox` builds `file`; it does not run it (use `noxc run`).
 | `noxc delete <alias>` | remove a dependency from `nox.json` and `nox.lock` |
 | `noxc search <query>` | search the central index; `noxc search <index.json\|url> <query>` searches another index |
 | `noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c]` | submit package metadata to the central index (awaits admin approval) |
-| `noxc install <name\|repo> [--ref <ref>]` | globally install a package that declares a `bin` entry point |
+| `noxc install <name\|repo[@ref]> [--ref <ref>]` | globally install a package that declares a `bin` entry point. `github.com/org/name@v1.2.3` sets the ref; `--ref` overrides it. `git@host:path` is not split on the first `@` |
 | `noxc uninstall <command>` | remove a globally installed command |
 | `noxc list` | list globally installed packages |
 | `noxc cache prune [--dry-run] [--all]` | delete stale package-cache directories |

@@ -29021,4 +29021,8 @@ CI işi `riscv64-smoke`: `class_list_spawn` `--target linux-riscv64` ile bağlan
 
 ## 3.295 Harici çerçeve sınırı (v2.0.8)
 
-Aether ve Nyx bu deponun dışında, pinli etiketlerle `.github/workflows/external-fixtures.yml` üzerinden sınanır (Aether v0.7.2, Nyx v0.21.0, kendi `tests/*.nox` paketleri). `HttpRequest` üzerinde `is_stopping` Aether deposunun işidir; burada yeniden yazılmaz ve sahte bir entegrasyon testi eklenmez. Pin, framework'ün kendi gelecek commit'i bu CI'yi sessizce kırmasın diye elle ilerler.
+Aether ve Nyx bu deponun dışında, pinli etiketlerle `.github/workflows/external-fixtures.yml` üzerinden sınanır (Aether v0.7.2, Nyx v0.22.0, kendi `tests/*.nox` paketleri). `HttpRequest` üzerinde `is_stopping` Aether deposunun işidir; burada yeniden yazılmaz ve sahte bir entegrasyon testi eklenmez. Pin, framework'ün kendi gelecek commit'i bu CI'yi sessizce kırmasın diye elle ilerler.
+
+## 3.296 `noxc install` gömülü ref (v2.0.9)
+
+`noxc install github.com/org/name@v1.2.3` ref'i etiketten alır; `--ref` verilmişse o kazanır. `git@host:yol` adresindeki ilk `@` SSH kullanıcısıdır ve bölünmez. `http://` / `https://` bölünmez. Liste ve sözlük örnek işlevleri (`build_list`, `build_dict`) paylaşılan test eklentisinde yalnızca `-DNOX_NNI_CONTAINERS` ile kayıt edilir; Plugin API manifest testi beş işlevde kalır.
