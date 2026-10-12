@@ -22,7 +22,7 @@ Both back ends run the whole golden corpus and must agree on program output, inc
 | Linux x86-64 | yes (LLVM or QBE) | full test suite |
 | Linux aarch64 | yes | full test suite |
 | Windows x86-64 | yes — LLVM (`zig cc`) and QBE are smoke-tested end to end (classes, lists, dictionaries, tasks, f-strings, exceptions, TLS and WebSocket) | front-end tests and end-to-end smoke tests (the full suite does not run on Windows) |
-| riscv64 | **not supported** | none (freestanding assembly output only) |
+| riscv64 | hosted Linux (`--target linux-riscv64`, static musl, QEMU user-mode smoke: class, list, one `spawn`/`await`). Freestanding is still assembly only | not in CI |
 
 macOS x86-64 is expected to work (`macos-x64`) but is not part of CI or the release matrix.
 
@@ -41,7 +41,7 @@ macOS x86-64 is expected to work (`macos-x64`) but is not part of CI or the rele
 
 1. **No bundled C compiler.** `clang` is not shipped; the driver falls back to `zig cc` and then to QBE.
 2. **Windows** lacks a full-suite CI run; the smoke tests cover the language end to end.
-3. **riscv64** has no hosted runtime.
+3. **riscv64 freestanding** still has no boot-tested runtime. Hosted Linux is `--target linux-riscv64`.
 4. **Multi-core parallelism** is a property of the LLVM back end; QBE programs run tasks on one thread.
 5. `extern def`, `lowlevel`, NNI plugins and dependencies with native code run with full authority ([Security](security.md)).
 

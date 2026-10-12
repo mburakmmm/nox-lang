@@ -3,9 +3,10 @@
 //! gibi: her `Fiber` kendi SABİT boyutlu yığınını alır; bağlam değişimi
 //! elle yazılmış montaj rutinleriyle yapılır (Zig'in kendisi 0.11'den beri
 //! dilde async/await İÇERMEDİĞİNDEN) — aarch64 İÇİN `swap_aarch64.S`,
-//! x86-64 İÇİN `swap_x86_64.S` (Faz R.2, bkz. o dosyanın belge notu).
+//! x86-64 İÇİN `swap_x86_64.S` (Faz R.2, bkz. o dosyanın belge notu),
+//! riscv64 İÇİN `swap_riscv64.S` (v2.0.4, Linux LP64D).
 //!
-//! **Kapsam (v0.1: aarch64 + x86-64, Faz R.2):** bu katman TEK BAŞINA
+//! **Kapsam (aarch64 + x86-64 + riscv64):** bu katman TEK BAŞINA
 //! "eşzamanlı çalıştırma" sağlamaz — yalnızca "iki bağlam arasında elle
 //! geçiş" ilkelini sağlar. Zamanlanma (hangi fiber'ın ne zaman çalışacağı),
 //! `Task`/`Channel` semantiği ve deadlock tespiti `scheduler.zig`dedir.
@@ -13,6 +14,7 @@
 //! **Faz R.2 mimari notu — `Context`in mimariye göre KÖKTEN FARKLI şekli:**
 //! aarch64'te callee-saved (çağrı-korumalı) yazmaçlar (x19-x28, fp, lr,
 //! d8-d15) `Context`in DÜZ alanlarında SAKLANIR (bkz. `swap_aarch64.S`).
+//! riscv64'te s0–s11, ra, sp ve fs0–fs11 düz alanlardadır (`swap_riscv64.S`).
 //! x86-64'te İSE SysV ABI'nin callee-saved yazmaçları (rbx, rbp, r12-r15)
 //! GELENEKSEL OLARAK yığın üzerinden `push`/`pop` edilir (bkz. `swap_x86_64.
 //! S`nin belge notu) — `Context` bu yüzden yalnızca TEK bir alan (`sp`)
@@ -34,8 +36,8 @@ const builtin = @import("builtin");
 const diag_sink = @import("diag_sink");
 
 comptime {
-    if (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64) {
-        @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2, a v0.1 limitation)");
+    if (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64 and builtin.cpu.arch != .riscv64) {
+        @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64/riscv64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2 and §3.290)");
     }
 }
 
@@ -104,7 +106,37 @@ pub const Context = switch (builtin.cpu.arch) {
     .x86_64 => extern struct {
         sp: usize = 0,
     },
-    else => @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2, a v0.1 limitation)"),
+    // `swap_riscv64.S` ofsetleriyle bire bir. s1, ilk açılışta `self`
+    // işaretçisini trampoline'a taşır (aarch64'teki x19 ile aynı rol).
+    .riscv64 => extern struct {
+        s1: usize = 0,
+        s2: usize = 0,
+        s3: usize = 0,
+        s4: usize = 0,
+        s5: usize = 0,
+        s6: usize = 0,
+        s7: usize = 0,
+        s8: usize = 0,
+        s9: usize = 0,
+        s10: usize = 0,
+        s11: usize = 0,
+        fp: usize = 0,
+        ra: usize = 0,
+        sp: usize = 0,
+        fs0: u64 = 0,
+        fs1: u64 = 0,
+        fs2: u64 = 0,
+        fs3: u64 = 0,
+        fs4: u64 = 0,
+        fs5: u64 = 0,
+        fs6: u64 = 0,
+        fs7: u64 = 0,
+        fs8: u64 = 0,
+        fs9: u64 = 0,
+        fs10: u64 = 0,
+        fs11: u64 = 0,
+    },
+    else => @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64/riscv64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2 and §3.290)"),
 };
 
 extern fn nox_swap_context(old: *Context, new: *Context) void;
@@ -550,6 +582,11 @@ pub const Fiber = struct {
                     self.ctx.sp = frame_base;
                 }
             },
+            .riscv64 => {
+                self.ctx.sp = stack_top_aligned;
+                self.ctx.ra = @intFromPtr(&trampoline);
+                self.ctx.s1 = @intFromPtr(self);
+            },
             else => comptime unreachable,
         }
         return self;
@@ -607,8 +644,8 @@ pub const Fiber = struct {
 
 /// Bir fiber İLK KEZ resume edildiğinde atlanan nokta. aarch64'te x19,
 /// x86-64'te rbx `Fiber.create`/`createWithStack` tarafından yerleştirilen
-/// `self` işaretçisini taşır (bkz. yukarısı — İKİ mimaride de callee-saved
-/// bir yazmaç, "kaçak" taşıma İÇİN seçildi).
+/// `self` işaretçisini taşır (bkz. yukarısı — callee-saved bir yazmaç,
+/// "kaçak" taşıma İÇİN seçildi). riscv64'te bu yazmaç s1'dir (x9).
 fn trampoline() callconv(.c) noreturn {
     const self_addr = switch (builtin.cpu.arch) {
         .aarch64 => asm volatile (""
@@ -616,6 +653,9 @@ fn trampoline() callconv(.c) noreturn {
         ),
         .x86_64 => asm volatile (""
             : [ret] "={rbx}" (-> usize),
+        ),
+        .riscv64 => asm volatile (""
+            : [ret] "={x9}" (-> usize),
         ),
         else => comptime unreachable,
     };

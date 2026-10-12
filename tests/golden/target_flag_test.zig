@@ -25,6 +25,7 @@ const build_options = @import("build_options");
 
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
+const EM_RISCV: u16 = 243;
 
 fn elfMachine(bytes: []const u8) u16 {
     return std.mem.readInt(u16, bytes[18..20], .little);
@@ -98,6 +99,34 @@ test "v2.0 madde 8: --target linux-arm64 dogru e_machine'li bir ELF uretir" {
     defer allocator.free(bin_bytes);
     try std.testing.expect(std.mem.eql(u8, bin_bytes[0..4], "\x7fELF"));
     try std.testing.expectEqual(EM_AARCH64, elfMachine(bin_bytes));
+}
+
+test "v2.0.4: --target linux-riscv64 dogru e_machine'li statik bir ELF uretir" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+    try writeTrivialFixture(io, tmp.dir, "t.nox");
+    const src_path = try std.fmt.allocPrint(allocator, "{s}/t.nox", .{dir_path});
+    defer allocator.free(src_path);
+    const out_path = try std.fmt.allocPrint(allocator, "{s}/out_linux_riscv64", .{dir_path});
+    defer allocator.free(out_path);
+
+    const result = try runNoxcBuild(allocator, io, &.{ "--target", "linux-riscv64" }, src_path, out_path);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        std.debug.print("noxc build --target linux-riscv64 basarisiz: {s}\n", .{result.stderr});
+        return error.NoxcBuildFailed;
+    }
+
+    const bin_bytes = try tmp.dir.readFileAlloc(io, "out_linux_riscv64", allocator, .limited(64 * 1024 * 1024));
+    defer allocator.free(bin_bytes);
+    try std.testing.expect(std.mem.eql(u8, bin_bytes[0..4], "\x7fELF"));
+    try std.testing.expectEqual(EM_RISCV, elfMachine(bin_bytes));
 }
 
 test "v2.0 madde 8: --target x86_64 --profile freestanding dogru e_machine'li bir ELF uretir" {

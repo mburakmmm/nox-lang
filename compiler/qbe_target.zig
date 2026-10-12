@@ -68,9 +68,9 @@ pub fn nameForArch(arch_name: []const u8) ?[]const u8 {
 
 /// v2.0 madde 8 (bkz. nox-teknik-spesifikasyon.md §3.196): kamuya açık
 /// `--target <isim>` bayrağının HOSTED (varsayılan profil) tarafı —
-/// `.github/workflows/release.yml`nin GERÇEK, sevk edilen 4 platform
-/// isminin (`macos-arm64`/`linux-x64`/`linux-arm64`/`windows-x64`)
-/// BİREBİR AYNISI (YENİ bir isimlendirme İCAT EDİLMEDİ). `qbe_target`,
+/// `.github/workflows/release.yml`nin sevk edilen 4 platform ismi
+/// (`macos-arm64`/`linux-x64`/`linux-arm64`/`windows-x64`) artı hosted
+/// `linux-riscv64` (v2.0.4, musl). `qbe_target`,
 /// `runtime_object_name` (`build.zig`nin AYNI isimle kurduğu `noxrt-
 /// <isim>.o`) VE `zig_triple` (`zig cc -target`in beklediği, `swap_asm`
 /// çapraz-derlemesinde de kullanılan üçlü) döner.
@@ -86,5 +86,6 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
     if (std.mem.eql(u8, target_name, "linux-x64")) return .{ .qbe_target = "amd64_sysv", .runtime_object_name = "noxrt-linux-x64", .zig_triple = "x86_64-linux-gnu", .is_windows = false };
     if (std.mem.eql(u8, target_name, "linux-arm64")) return .{ .qbe_target = "arm64", .runtime_object_name = "noxrt-linux-arm64", .zig_triple = "aarch64-linux-gnu", .is_windows = false };
     if (std.mem.eql(u8, target_name, "windows-x64")) return .{ .qbe_target = "amd64_win", .runtime_object_name = "noxrt-windows-x64", .zig_triple = "x86_64-windows-gnu", .is_windows = true };
+    if (std.mem.eql(u8, target_name, "linux-riscv64")) return .{ .qbe_target = "rv64", .runtime_object_name = "noxrt-linux-riscv64", .zig_triple = "riscv64-linux-musl", .is_windows = false };
     return null;
 }

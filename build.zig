@@ -152,6 +152,7 @@ fn addHostedRuntimeChain(
     const swap_src: []const u8 = switch (arch) {
         .aarch64 => "runtime/async_rt/swap_aarch64.S",
         .x86_64 => "runtime/async_rt/swap_x86_64.S",
+        .riscv64 => "runtime/async_rt/swap_riscv64.S",
         else => @panic("addHostedRuntimeChain: desteklenmeyen mimari"),
     };
     // Faz LL.6'nın AYNI kural: Windows (COFF) hedefinde `swap_asm.o`
@@ -699,6 +700,9 @@ pub fn build(b: *std.Build) void {
     _ = addHostedRuntimeChain(b, optimize, .x86_64, .linux, .gnu, "noxrt-linux-x64");
     _ = addHostedRuntimeChain(b, optimize, .aarch64, .linux, .gnu, "noxrt-linux-arm64");
     _ = addHostedRuntimeChain(b, optimize, .x86_64, .windows, .gnu, "noxrt-windows-x64");
+    // v2.0.4: hosted riscv64. musl, qemu-user'ın sysroot'suz çalıştırabildiği
+    // statik ikili için. Freestanding riscv64 zinciri yok (boot kanıtı yok).
+    _ = addHostedRuntimeChain(b, optimize, .riscv64, .linux, .musl, "noxrt-linux-riscv64");
 
     // `boot.S` (Multiboot1 header + 32-bit boot stub + long-mode geçişi +
     // GDT + ISR trambolinleri) — `noxrt_kernel_mod`nin PARÇASI DEĞİL, ayrı

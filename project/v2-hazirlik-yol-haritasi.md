@@ -63,7 +63,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
   düşülüyor (not basılıyor). Kalıcı çözüm: `zig cc` ya da paketlenmiş clang değerlendir.
 - [x] **3.3 aarch64 stack-smash (son 40 CI koşusunda test hatası YOK; kök neden x86-64 ile aynı, v1.142.3/21):** kök neden aarch64 için DOĞRULANMADI (x86-64 muadili v1.142.3'te bulundu).
   `allow_failure` v1.142.21'de kaldırıldı; v1.142.24 CI temiz. Birkaç koşu daha izle; çıkarsa kök nedeni araştır.
-- [~] **3.4 riscv64 hosted** desteği yok (yalnızca freestanding `--emit-asm`).
+- [x] **3.4 riscv64 hosted (v2.0.4):** `swap_riscv64.S`, `--target linux-riscv64` (musl, statik). QEMU user-mode dumanı: sınıf, liste, bir `spawn`/`await`. Freestanding riscv64 hâlâ yalnızca `--emit-asm`. Tam CI paritesi yok.
 
 ## 4. Dokümantasyon
 

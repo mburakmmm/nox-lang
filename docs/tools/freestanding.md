@@ -16,7 +16,7 @@ noxc build --profile freestanding --target riscv64 --emit-asm kernel.nox   # ass
 
 - `--profile freestanding` restricts imports to modules that need no capability, checked at compile time ([capabilities](../stdlib/index.md#capabilities)). `nox.mem`, `nox.bits`, `nox.buffer`, `nox.binary`, `nox.mathx`,
   `nox.collections`, `nox.strings`, `nox.console`, `nox.json`, `nox.csv` and the other pure modules are allowed; `nox.fs`, `nox.http`, `nox.thread`, `nox.time`'s clock functions and similar are rejected.
-- `--target` selects the architecture (`x86_64`, `aarch64`; `riscv64` can only emit assembly because its runtime context-switch is not implemented). The result is linked with `zig cc` against the freestanding runtime
+- `--target` selects the architecture (`x86_64`, `aarch64`; `riscv64` can only emit assembly — there is no freestanding boot chain). Hosted riscv64 is a separate target, `linux-riscv64`. The result is linked with `zig cc` against the freestanding runtime
   object (`noxrt-freestanding-generic-<arch>.o`).
 
 ## The allocator interface

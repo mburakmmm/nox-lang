@@ -1,0 +1,17 @@
+class Box:
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+async def worker(x: int) -> int:
+    return x + 1
+
+b: Box = Box(3)
+xs: list[int] = [10, 20, 30]
+t: Task[int] = spawn worker(6)
+s: int = 0
+i: int = 0
+while i < len(xs):
+    s = s + xs[i]
+    i = i + 1
+got: int = await t
+print(b.n + s + got)

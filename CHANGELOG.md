@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.4]
+
+### Eklendi
+
+- **Hosted riscv64.** `noxc build --target linux-riscv64` statik bir musl ikilisi üretir (`qemu-riscv64` ile çalışır). Bağlam değişimi `swap_riscv64.S` (LP64D, s0–s11, ra, sp, fs0–fs11). Duman: sınıf, liste, bir `spawn`/`await` (`class_list_spawn`, çıktı `70`). Freestanding riscv64 hâlâ yalnızca `--emit-asm`.
+
 ## [2.0.3]
 
 ### Değişti

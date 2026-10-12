@@ -28972,3 +28972,11 @@ Apple M4, ReleaseFast `noxrt`, `benchmarks/cross_lang` (5 tekrar ortanca, saniye
 **dict tabanı.** `dict[int,int]` değer deposu + ayrı `HashMap` (§3.244). `d[k]` önce `contains` sonra `get` çağırır; benchmark ayrıca `contains` yazar. C tek açık-adresli aramadır. Fark ~2.5x (önceki tur ~2.8x). Sıra ve hash-flooding tohumu bozulmadan kapanmaz; uydurma hız iddiası yok.
 
 Golden: `list_row_hoist` (QBE ve LLVM). Liste indeksinin ölçeği değiştiği için IR anlık görüntüleri yenilendi.
+
+## 3.290 Hosted riscv64 (v2.0.4)
+
+`runtime/async_rt/fiber.zig` riscv64'te derlenir. `swap_riscv64.S`, Linux LP64D'nin çağrı-korumalı yazmaçlarını kaydeder: s0–s11, ra, sp, fs0–fs11. gp ve tp aynı iş parçacığında değişmediği için kaydedilmez. İlk açılışta ra `trampoline`, s1 `Fiber` işaretçisidir (aarch64'teki x19 ile aynı rol). Yığın tepesi 16 bayt hizalıdır; `ret` trampoline'a fonksiyon giriş hizalamasıyla düşer.
+
+`--target linux-riscv64` QBE `rv64` üretir ve `noxrt-linux-riscv64.o` ile `zig cc -target riscv64-linux-musl -static` bağlar. musl, qemu-user'ın sysroot olmadan çalıştırabildiği statik ikili içindir. Freestanding riscv64 zinciri yoktur: boot kanıtı yok, `--emit-asm` durur.
+
+Duman (QEMU user-mode): `class_list_spawn` — `Box`, `list[int]`, bir `spawn`/`await`, çıktı `70`. Aynı program iki backend'de golden'dır. Tam CI paritesi bu turda yok.

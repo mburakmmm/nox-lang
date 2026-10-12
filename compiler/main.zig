@@ -2287,14 +2287,14 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target <isim>` — `profile`e göre YORUMLANIR: `.freestanding`
     // İKEN `nameForArch`in çıplak mimari adları (x86_64/aarch64/riscv64),
     // `.hosted` İKEN `hostedTargetInfo`nin platform isimleri (macos-arm64/
-    // linux-x64/linux-arm64/windows-x64) — İKİ sözlük ASLA ÇAKIŞMAZ, bu
+    // linux-x64/linux-arm64/linux-riscv64/windows-x64) — İKİ sözlük ASLA ÇAKIŞMAZ, bu
     // YÜZDEN YANLIŞ profil İçİn bir isim vermek DOĞAL olarak (AYRI bir
     // uyuşmazlık kontrolüne GEREK KALMADAN) "bilinmeyen hedef" hatasına
     // düşer. Eski, dâhilî `NOX_FREESTANDING_KERNEL_ARCH` TAMAMEN SİLİNDİ —
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, linux-x64, linux-arm64, windows-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, linux-x64, linux-arm64, linux-riscv64, windows-x64)\n", .{target.?});
             std.process.exit(1);
         })
     else
@@ -2317,7 +2317,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // OLMADAN) AÇIK bir hatayla reddedilir. `--emit-asm` İLE (SADECE ham
     // `.s`, linksiz) YİNE de çalışır.
     if (profile == .freestanding and target != null and std.mem.eql(u8, target.?, "riscv64") and !emit_asm) {
-        printErr("--target riscv64: there is no freestanding runtime yet (fiber.zig's context-switch implementation does not support riscv64) - only a raw .s file can be produced with --emit-asm\n", .{});
+        printErr("--target riscv64: there is no freestanding runtime yet (no boot chain) - hosted riscv64 is 'noxc build --target linux-riscv64'; freestanding can only emit a raw .s file with --emit-asm\n", .{});
         std.process.exit(1);
     }
 
@@ -2411,6 +2411,8 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         resource_dirs.noxrt_path;
     if (hosted_target) |ht| {
         try cc_argv.appendSlice(a, &.{ "zig", "cc", "-target", ht.zig_triple });
+        // musl üçlüsü statik bağlanır: qemu-user sysroot olmadan çalıştırır.
+        if (std.mem.endsWith(u8, ht.zig_triple, "musl")) try cc_argv.append(a, "-static");
     } else {
         try cc_argv.append(a, "cc");
     }
