@@ -115,6 +115,10 @@ pub const Candidate = union(enum) {
 /// carve-out'una gerek YOK, SADECE boyut/bütçe aşımı YÜZÜNDEN stack
 /// yerine arenaya düşer).
 pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.VarDecl, running_total: *usize, class_params: []const inlining.ClassParam) CodegenError!?Candidate {
+    // Tek hedefli func yereli, bu gövdenin tamamından okunur (`f = g`
+    // bildirimi, adayın kendisinden ÖNCE de olabilir). `current_fn_params`
+    // çağıran tarafından bu gövdenin parametrelerine kurulmuş olmalıdır.
+    try inlining.rebuildUniqueFuncTargets(self, body);
     switch (v.value) {
         .list_lit => |elems| {
             if (simpleLiteralListQtype(elems)) |qt| {
@@ -321,9 +325,10 @@ fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
             },
             .raise_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false,
             .del_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false,
-            // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
-            // riskli bölge, TÜM analiz GÜVENLİ tarafta kalmak İçin İPTAL edilir.
-            .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
+            // İç içe `def`in gövdesi biliniyor: adı kullanmıyorsa yakalama
+            // yoktur. `try`/`lowlevel`/`with`/`defer` hâlâ iptal eder.
+            .func_def => |fd| if (!stmtsSafeForLocal(self, fd.body, name, class_params)) return false,
+            .try_stmt, .lowlevel_stmt, .with_stmt, .defer_stmt => return false,
             .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
     }
@@ -404,6 +409,13 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             for (c.args, 0..) |a, arg_idx| {
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn and !inlining.externRetainsArg(extern_sig, arg_idx)) {
                     continue; // Faz FFI.1/FFI.4: extern def kontratı — retains(...) İLE İŞARETLENMEDİĞİ SÜRECE argüman ÇAĞRI-SONRASI saklanmaz.
+                }
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name)) {
+                    if (inlining.provenIndirectTarget(self, c.callee.*, arg_idx)) |target| {
+                        if (!self.escaping_params.contains(.{ .func = target, .index = @intCast(arg_idx) })) {
+                            continue;
+                        }
+                    }
                 }
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     if (!self.escaping_params.contains(.{ .func = c.callee.identifier, .index = @intCast(arg_idx) })) {
@@ -538,7 +550,8 @@ fn stmtsSafeForGrowableLocal(self: *const Codegen, stmts: []const ast.Stmt, name
             },
             .raise_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
             .del_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
-            .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
+            .func_def => |fd| if (!stmtsSafeForGrowableLocal(self, fd.body, name)) return false,
+            .try_stmt, .lowlevel_stmt, .with_stmt, .defer_stmt => return false,
             .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
     }
@@ -718,6 +731,7 @@ pub fn constructNodeKey(v: ast.VarDecl) usize {
 /// tablosu) bir `alloc8` slotu, `.growable_arena` DÖNERSE (GG.18)
 /// `self.arena_local_construct_sites`e bir arena-tutamağı KAYDEDER.
 pub fn registerLocalStackSlots(self: *Codegen, body: []const ast.Stmt, params: []const ast.Param) CodegenError!void {
+    self.current_fn_params = params;
     self.stack_local_names.clearRetainingCapacity();
     self.growable_arena_names.clearRetainingCapacity();
     // GG.18/19: BİR ÖNCEKİ fonksiyondan kalan bir arena tutamağı/aggregate

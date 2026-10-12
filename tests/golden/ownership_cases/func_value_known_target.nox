@@ -1,0 +1,39 @@
+class Point:
+    def __init__(self: Point, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+def observe(p: Point) -> int:
+    return p.x
+
+def keep(p: Point) -> Point:
+    return p
+
+def use_known() -> int:
+    f: (Point) -> int = observe
+    pt: Point = Point(1, 2)
+    return f(pt)
+
+def use_closure() -> int:
+    def inner(p: Point) -> int:
+        return p.x
+    f: (Point) -> int = inner
+    pt: Point = Point(3, 4)
+    return f(pt)
+
+def use_ambiguous(flag: bool) -> int:
+    f: (Point) -> int = observe
+    if flag:
+        f = observe
+    pt: Point = Point(5, 6)
+    return f(pt)
+
+def use_param(f: (Point) -> int) -> int:
+    pt: Point = Point(7, 8)
+    return f(pt)
+
+def use_keeps() -> int:
+    f: (Point) -> Point = keep
+    pt: Point = Point(9, 10)
+    kept: Point = f(pt)
+    return kept.x

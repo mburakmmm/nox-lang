@@ -240,9 +240,169 @@ pub fn computeParamEscapes(self: *Codegen, module: ast.Module, extra_functions: 
 }
 
 fn scanParamEscapesFunc(self: *Codegen, fd: ast.FuncDef, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) CodegenError!void {
+    try self.scanned_param_funcs.put(self.allocator, fd.name, @intCast(fd.params.len));
+    // İç içe gövdeler ÖNCE taranır: ebeveynin kenarı, hedefin kümede
+    // olduğunu görsün. Çocuk taraması ebeveynin haritasını geri yükler.
+    try scanNestedFuncBodies(self, fd.body, seeds, reverse_edges);
+    const saved_map = self.unique_func_targets;
+    const saved_params = self.current_fn_params;
+    self.unique_func_targets = .{};
+    self.current_fn_params = fd.params;
+    defer {
+        self.unique_func_targets.deinit(self.allocator);
+        self.unique_func_targets = saved_map;
+        self.current_fn_params = saved_params;
+    }
+    try rebuildUniqueFuncTargets(self, fd.body);
     const class_params = try collectClassParams(self, self.allocator, fd.params);
     for (fd.params, 0..) |p, idx| {
         try scanParamEscapesStmts(self, fd.name, @intCast(idx), p.name, fd.body, class_params, seeds, reverse_edges);
+    }
+}
+
+const FuncWrite = struct {
+    count: u32 = 0,
+    direct: ?[]const u8 = null,
+    pending_ident: ?[]const u8 = null,
+};
+
+fn isCurrentParam(self: *const Codegen, name: []const u8) bool {
+    for (self.current_fn_params) |p| {
+        if (std.mem.eql(u8, p.name, name)) return true;
+    }
+    return false;
+}
+
+fn bumpFuncWrite(self: *Codegen, writes: *std.StringHashMapUnmanaged(FuncWrite), name: []const u8, direct: ?[]const u8, pending: ?[]const u8) CodegenError!void {
+    const gop = try writes.getOrPut(self.allocator, name);
+    if (!gop.found_existing) gop.value_ptr.* = .{};
+    gop.value_ptr.count += 1;
+    if (gop.value_ptr.count == 1) {
+        gop.value_ptr.direct = direct;
+        gop.value_ptr.pending_ident = pending;
+    } else {
+        gop.value_ptr.direct = null;
+        gop.value_ptr.pending_ident = null;
+    }
+}
+
+/// `id` bir kez yazılmış iç içe `def`in kendi adıysa onun gövde anahtarını,
+/// hiç yazılmamış bir modül fonksiyonuysa o adı döndürür. Başka bir func
+/// yerelinin üzerinden zincir izlemez.
+fn resolveDirectFunc(self: *const Codegen, writes: *const std.StringHashMapUnmanaged(FuncWrite), id: []const u8) ?[]const u8 {
+    if (isCurrentParam(self, id)) return null;
+    if (writes.get(id)) |w| {
+        if (w.count == 1) return w.direct;
+        return null;
+    }
+    if (self.func_defs.contains(id)) return id;
+    return null;
+}
+
+fn noteFuncValueWrite(self: *Codegen, writes: *std.StringHashMapUnmanaged(FuncWrite), name: []const u8, value: *const ast.Expr) CodegenError!void {
+    switch (value.*) {
+        .identifier => |id| try bumpFuncWrite(self, writes, name, null, id),
+        .lambda => try bumpFuncWrite(self, writes, name, try std.fmt.allocPrint(self.allocator, "lambda@{x}", .{@intFromPtr(value)}), null),
+        else => try bumpFuncWrite(self, writes, name, null, null),
+    }
+}
+
+fn collectFuncWrites(self: *Codegen, stmts: []const ast.Stmt, writes: *std.StringHashMapUnmanaged(FuncWrite)) CodegenError!void {
+    for (stmts) |*stmt| {
+        switch (stmt.kind) {
+            .var_decl => |*v| try noteFuncValueWrite(self, writes, v.name, &v.value),
+            .assign => |*a| {
+                if (a.target == .identifier) try noteFuncValueWrite(self, writes, a.target.identifier, &a.value);
+            },
+            .func_def => |*fd| {
+                const key = try std.fmt.allocPrint(self.allocator, "nested@{x}", .{@intFromPtr(fd)});
+                try bumpFuncWrite(self, writes, fd.name, key, null);
+            },
+            .if_stmt => |f| {
+                try collectFuncWrites(self, f.then_body, writes);
+                for (f.elif_clauses) |ec| try collectFuncWrites(self, ec.body, writes);
+                if (f.else_body) |eb| try collectFuncWrites(self, eb, writes);
+            },
+            .while_stmt => |w| try collectFuncWrites(self, w.body, writes),
+            .for_stmt => |f| try collectFuncWrites(self, f.body, writes),
+            .try_stmt => |t| {
+                try collectFuncWrites(self, t.try_body, writes);
+                for (t.except_clauses) |ec| try collectFuncWrites(self, ec.body, writes);
+                if (t.finally_body) |fb| try collectFuncWrites(self, fb, writes);
+            },
+            .with_stmt => |w| try collectFuncWrites(self, w.body, writes),
+            .lowlevel_stmt => |ll| try collectFuncWrites(self, ll.body, writes),
+            else => {},
+        }
+    }
+}
+
+/// Func tipli bir yerel tam olarak bir kez, gövdesi bilinen bir fonksiyon
+/// veya iç içe `def`e (closure) bağlanmışsa haritaya girer. İkinci yazım,
+/// parametre olarak gelen func veya gövdesi yoksa girmez — çağrı ARC kalır.
+pub fn rebuildUniqueFuncTargets(self: *Codegen, body: []const ast.Stmt) CodegenError!void {
+    self.unique_func_targets.clearRetainingCapacity();
+    var writes: std.StringHashMapUnmanaged(FuncWrite) = .empty;
+    defer writes.deinit(self.allocator);
+    try collectFuncWrites(self, body, &writes);
+    var it = writes.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.count != 1) continue;
+        if (isCurrentParam(self, e.key_ptr.*)) continue;
+        if (e.value_ptr.direct) |d| {
+            try self.unique_func_targets.put(self.allocator, e.key_ptr.*, d);
+            continue;
+        }
+        if (e.value_ptr.pending_ident) |id| {
+            if (resolveDirectFunc(self, &writes, id)) |d| {
+                try self.unique_func_targets.put(self.allocator, e.key_ptr.*, d);
+            }
+        }
+    }
+}
+
+/// `callee` bu gövbede tek hedefli bir func yereliyse, hedefin parametre
+/// anahtarını döndürür. Hedef taranmamışsa ve `func_defs`te de yoksa null
+/// — yokluk "kaçmıyor" değildir.
+pub fn provenIndirectTarget(self: *const Codegen, callee: ast.Expr, arg_idx: usize) ?[]const u8 {
+    if (callee != .identifier) return null;
+    const target = self.unique_func_targets.get(callee.identifier) orelse return null;
+    if (self.scanned_param_funcs.get(target)) |n| {
+        if (arg_idx >= n) return null;
+        return target;
+    }
+    if (self.func_defs.get(target)) |fd| {
+        if (arg_idx >= fd.params.len) return null;
+        return target;
+    }
+    return null;
+}
+
+fn scanNestedFuncBodies(self: *Codegen, stmts: []const ast.Stmt, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) CodegenError!void {
+    for (stmts) |*stmt| {
+        switch (stmt.kind) {
+            .func_def => |*fd| {
+                const key = try std.fmt.allocPrint(self.allocator, "nested@{x}", .{@intFromPtr(fd)});
+                var child = fd.*;
+                child.name = key;
+                try scanParamEscapesFunc(self, child, seeds, reverse_edges);
+            },
+            .if_stmt => |f| {
+                try scanNestedFuncBodies(self, f.then_body, seeds, reverse_edges);
+                for (f.elif_clauses) |ec| try scanNestedFuncBodies(self, ec.body, seeds, reverse_edges);
+                if (f.else_body) |eb| try scanNestedFuncBodies(self, eb, seeds, reverse_edges);
+            },
+            .while_stmt => |w| try scanNestedFuncBodies(self, w.body, seeds, reverse_edges),
+            .for_stmt => |f| try scanNestedFuncBodies(self, f.body, seeds, reverse_edges),
+            .try_stmt => |t| {
+                try scanNestedFuncBodies(self, t.try_body, seeds, reverse_edges);
+                for (t.except_clauses) |ec| try scanNestedFuncBodies(self, ec.body, seeds, reverse_edges);
+                if (t.finally_body) |fb| try scanNestedFuncBodies(self, fb, seeds, reverse_edges);
+            },
+            .with_stmt => |w| try scanNestedFuncBodies(self, w.body, seeds, reverse_edges),
+            .lowlevel_stmt => |ll| try scanNestedFuncBodies(self, ll.body, seeds, reverse_edges),
+            else => {},
+        }
     }
 }
 
@@ -453,6 +613,12 @@ fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name:
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn and !externRetainsArg(extern_sig, arg_idx)) {
                     continue; // Faz FFI.1/FFI.4: extern def kontratı — retains(...) İLE İŞARETLENMEDİĞİ SÜRECE argüman ÇAĞRI-SONRASI saklanmaz.
                 }
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name)) {
+                    if (provenIndirectTarget(self, c.callee.*, arg_idx)) |target| {
+                        try addEscapeEdge(self, target, @intCast(arg_idx), fname, param_idx, reverse_edges);
+                        continue;
+                    }
+                }
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     try addEscapeEdge(self, c.callee.identifier, @intCast(arg_idx), fname, param_idx, reverse_edges);
                     continue;
@@ -581,6 +747,9 @@ pub fn registerInlineSite(self: *Codegen, call_ptr: usize, callee: ast.FuncDef) 
     // SONUÇTA AYNI fiziksel QBE çerçevesine `alloc8` ekliyor, bu YÜZDEN
     // AYNI aggregate bütçeyi PAYLAŞMALILAR.
     var construct_sites: std.ArrayListUnmanaged(InlineConstructSite) = .empty;
+    const saved_params = self.current_fn_params;
+    self.current_fn_params = callee.params;
+    defer self.current_fn_params = saved_params;
     const callee_class_params = try collectClassParams(self, self.allocator, callee.params);
     for (callee.body, 0..) |stmt, i| {
         if (stmt.kind != .var_decl) continue;
@@ -961,7 +1130,17 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
 /// yol açabilir) BİLİNÇLİ bir GÜVENLİK ilkesidir, sadece bir kolaylık
 /// DEĞİL — güvenli-şekiller listesini BURADAN AYRI, bilinçli takip
 /// işleri/YENİ golden testler OLMADAN GENİŞLETME.
-fn paramNeverEscapes(self: *const Codegen, fd: ast.FuncDef, param_name: []const u8, class_params: []const ClassParam) bool {
+fn paramNeverEscapes(self: *Codegen, fd: ast.FuncDef, param_name: []const u8, class_params: []const ClassParam) bool {
+    const saved_map = self.unique_func_targets;
+    const saved_params = self.current_fn_params;
+    self.unique_func_targets = .{};
+    self.current_fn_params = fd.params;
+    defer {
+        self.unique_func_targets.deinit(self.allocator);
+        self.unique_func_targets = saved_map;
+        self.current_fn_params = saved_params;
+    }
+    rebuildUniqueFuncTargets(self, fd.body) catch return false;
     return stmtsSafeForParam(self, fd.body, param_name, class_params);
 }
 
@@ -1076,6 +1255,13 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             for (c.args, 0..) |a, arg_idx| {
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn and !externRetainsArg(extern_sig, arg_idx)) {
                     continue; // Faz FFI.1/FFI.4: extern def kontratı — retains(...) İLE İŞARETLENMEDİĞİ SÜRECE argüman ÇAĞRI-SONRASI saklanmaz.
+                }
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name)) {
+                    if (provenIndirectTarget(self, c.callee.*, arg_idx)) |target| {
+                        if (!self.escaping_params.contains(.{ .func = target, .index = @intCast(arg_idx) })) {
+                            continue;
+                        }
+                    }
                 }
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     if (!self.escaping_params.contains(.{ .func = c.callee.identifier, .index = @intCast(arg_idx) })) {

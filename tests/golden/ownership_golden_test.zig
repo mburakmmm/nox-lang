@@ -117,6 +117,13 @@ test "golden(ownership): v2.0/2.1 — retains(...) OLMAYAN extern çağrı argü
     );
 }
 
+test "golden(ownership): tek hedefli func değeri kaçmayan gövdeye ASAP, belirsiz veya parametre ARC" {
+    try expectGolden(
+        @embedFile("ownership_cases/func_value_known_target.nox"),
+        @embedFile("ownership_cases/func_value_known_target.expected"),
+    );
+}
+
 test "golden(ownership): v2.0/2.1 — retains(...) İLE işaretli extern çağrı argümanı kaçar -> ARC" {
     try expectGolden(
         @embedFile("ownership_cases/extern_retains_escape.nox"),

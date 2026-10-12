@@ -81,7 +81,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 ## 6. Teknik borç
 
-- [ ] **6.1** ASAP closure-effect genişletmesi (araştırıldı, uygulanmadı).
+- [x] **6.1 (v2.0.2)** ASAP closure-effect: func tipli bir yerel tam olarak bir kez, gövdesi bilinen bir fonksiyona veya iç içe `def`e bağlıysa o gövdenin parametre kaçışı çağrı yerine taşınır. Birden fazla yazım, parametre olarak gelen func veya taranmamış gövde ARC kalır. `spawn` bu kanıta girmez.
 - [x] **6.2 (GG.24/25 worklist zaten kapatmıştı; v1.171.1 fiber içi golden testi)** `genClassRelease` özyinelemesi 256 KiB fiber yığınında sınırda (STACK_SIZE küçültülmedi).
 - [x] **6.3** `nox.binary` artık `Span` üzerinde de çalışır — v1.166.0 (`span_reader`/`span_writer`; tam generic sınıf yerine geriye uyumlu yardımcı).
 - [ ] **6.4** Aether `is_stopping()` + `HttpRequest` uyumu (Aether deposunda yapılacak).

@@ -1,0 +1,53 @@
+[module]
+  (no heap-typed binding)
+[method Point.__init__]
+  self: Point (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function observe]
+  p: Point (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function keep]
+  p: Point (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function use_known]
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  pt: Point -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+[function use_closure]
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  pt: Point -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+[function use_ambiguous]
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: reassignment
+    free: end of scope
+  pt: Point -> ARC (because it is passed as an argument to a call)
+    allocation: var_decl
+    free: end of scope
+[function use_param]
+  f: func (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+  pt: Point -> ARC (because it is passed as an argument to a call)
+    allocation: var_decl
+    free: end of scope
+[function use_keeps]
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  pt: Point -> ARC (because it is passed as an argument to a call)
+    allocation: var_decl
+    free: end of scope
+  kept: Point -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope

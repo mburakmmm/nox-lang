@@ -1132,6 +1132,17 @@ pub const Codegen = struct {
     /// fonksiyonları (GG.17/18/19) BUNU KULLANARAK "argüman-olarak-geçiş
     /// HER ZAMAN kaçış" katı kuralını İLK KEZ gevşetir.
     escaping_params: effect_graph.NodeSet = .{},
+    /// Tek atamayla bilinen bir gövdeye bağlanan func yerelinin adı → o
+    /// gövdenin `escaping_params` anahtarı. `rebuildUniqueFuncTargets`
+    /// her fonksiyon gövdesi için yeniden kurar. Birden fazla yazım,
+    /// parametre veya gövdesi olmayan hedef buraya girmez.
+    unique_func_targets: std.StringHashMapUnmanaged([]const u8) = .empty,
+    /// `computeParamEscapes`in taradığı gövdeler → parametre sayısı.
+    /// Kümede olmayan bir anahtar "kaçmıyor" sayılmaz; yokluk kanıt değildir.
+    scanned_param_funcs: std.StringHashMapUnmanaged(u32) = .empty,
+    /// `rebuildUniqueFuncTargets`in parametre adlarını modül fonksiyonu
+    /// sanmaması için, o an taranan gövdenin parametreleri.
+    current_fn_params: []const ast.Param = &.{},
     /// `extern def` bildirimleri — AYRI bir tablo (normal `functions`dan
     /// bağımsız): çağrı sitesi kodgen'i temelde farklıdır (bkz. `genCall`) —
     /// extern fonksiyonlar Nox'un `rt` bağlamını (İlke #6'nın gerektirdiği
@@ -1660,6 +1671,9 @@ pub const ExplainOptions = struct {
 /// `alloc8`/`nox_arena_create` YERİNE `local_escape.explainVarDecl`nin
 /// SALT-OKUNUR raporunu SINK'e EKLER.
 fn collectExplainForBody(gen: *Codegen, allocator: std.mem.Allocator, sink: *std.ArrayListUnmanaged(local_escape.ExplainRecord), body: []const ast.Stmt, params: []const ast.Param, running_total: *usize) CodegenError!void {
+    const saved_params = gen.current_fn_params;
+    gen.current_fn_params = params;
+    defer gen.current_fn_params = saved_params;
     const class_params = try inlining.collectClassParams(gen, allocator, params);
     for (body, 0..) |stmt, i| {
         if (stmt.kind != .var_decl) continue;

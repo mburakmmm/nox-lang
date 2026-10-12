@@ -19,6 +19,8 @@
 //!       * `self.<alan> = <ad>` ile bir sınıf alanına atanma
 //!       * `[..., <ad>, ...]` ile bir liste literaline eklenme
 //!       * bir fonksiyon/metod çağrısına argüman ya da metod alıcısı olarak geçme
+//!         (istisna: func yerel tek bir kez gövdesi bilinen bir fonksiyona veya
+//!         iç içe `def`e bağlıysa ve o gövde argümanı kaçırmıyorsa)
 //!
 //! Kapsam dışı (v0.1, bilinçli sınırlama — bkz. nox-teknik-spesifikasyon.md §3.3):
 //!   - `for x in <iterable>:` döngü değişkenleri bu analize dahil değildir.
@@ -51,6 +53,19 @@ pub const Report = struct {
 
 const BindingMap = std.StringHashMapUnmanaged(usize);
 
+const KnownFunc = struct {
+    params: []const ast.Param,
+    body: []const ast.Stmt,
+};
+
+const ParamMemo = enum { visiting, escapes, stays };
+
+const FuncWrite = struct {
+    count: u32 = 0,
+    direct: ?[]const u8 = null,
+    pending_ident: ?[]const u8 = null,
+};
+
 pub const Analyzer = struct {
     allocator: std.mem.Allocator,
     /// v2.0 stabilizasyon yol haritası, madde 2.1 (bkz. nox-teknik-
@@ -67,6 +82,12 @@ pub const Analyzer = struct {
     /// "her zaman kaçış" davranışını KORUR (bu pass'in KENDİ, borrow/move
     /// analizi OLMAYAN tasarımı gereği).
     extern_retains: std.StringHashMapUnmanaged([]const bool) = .empty,
+    /// Modül fonksiyonu adı veya `nested@{ptr}` → gövde. Tek hedefli func
+    /// yerelinin kaçış kararı bu gövdeye bakarak verilir.
+    known_funcs: std.StringHashMapUnmanaged(KnownFunc) = .empty,
+    active_targets: std.StringHashMapUnmanaged([]const u8) = .empty,
+    param_memo: std.StringHashMapUnmanaged(ParamMemo) = .empty,
+    scope_params: []const ast.Param = &.{},
 
     pub fn init(allocator: std.mem.Allocator) Analyzer {
         return .{ .allocator = allocator };
@@ -106,6 +127,16 @@ pub const Analyzer = struct {
                 try self.extern_retains.put(self.allocator, ed.name, retains_arr);
             }
         }
+
+        for (module.body) |*stmt| {
+            switch (stmt.kind) {
+                .func_def => |*fd| try self.indexFunc(fd.name, fd.params, fd.body),
+                .class_def => |*cd| for (cd.methods) |*m| try self.indexNested(m.body),
+                else => {},
+            }
+        }
+        for (extra_functions) |*fd| try self.indexFunc(fd.name, fd.params, fd.body);
+        for (extra_classes) |*cd| for (cd.methods) |*m| try self.indexNested(m.body);
 
         var loose: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         defer loose.deinit(self.allocator);
@@ -177,6 +208,17 @@ pub const Analyzer = struct {
             try scope.bindings.items[scope.bindings.items.len - 1].free_events.append(self.allocator, "end of scope");
             try index_of.put(self.allocator, p.name, scope.bindings.items.len - 1);
         }
+
+        const saved_targets = self.active_targets;
+        const saved_params = self.scope_params;
+        self.active_targets = .{};
+        self.scope_params = params;
+        defer {
+            self.active_targets.deinit(self.allocator);
+            self.active_targets = saved_targets;
+            self.scope_params = saved_params;
+        }
+        try self.buildTargets(body);
 
         try self.collectVarDecls(&scope, &index_of, body);
         try self.scanStmts(&scope, &index_of, body);
@@ -376,7 +418,12 @@ pub const Analyzer = struct {
                 else
                     null;
                 for (c.args, 0..) |a, i| {
-                    const retained = if (extern_retains_arr) |arr| (i < arr.len and arr[i]) else true;
+                    var retained = if (extern_retains_arr) |arr| (i < arr.len and arr[i]) else true;
+                    if (retained and c.callee.* == .identifier) {
+                        if (self.active_targets.get(c.callee.identifier)) |target| {
+                            if (!self.funcParamEscapes(target, i)) retained = false;
+                        }
+                    }
                     if (!is_print and retained) markEscapeIfIdentifier(scope, index_of, a, "because it is passed as an argument to a call");
                     self.scanExprEscapes(scope, index_of, a);
                 }
@@ -439,9 +486,324 @@ pub const Analyzer = struct {
             // sahiplenmez/tüketmez), bu yüzden operandının kendisi kaçış
             // olarak işaretlenmez — normal bir ikili işlem okuması gibi.
             .await_expr => |operand| self.scanExprEscapes(scope, index_of, operand.*),
-            .spawn_expr => |operand| self.scanExprEscapes(scope, index_of, operand.*),
+            .spawn_expr => |operand| {
+                // spawn çapraz-fiber: hedefin gövdesi argümanı kaçırmasa da
+                // çağıran çerçeve bitmeden görev sürebilir. Her zaman kaçış.
+                if (operand.* == .call) {
+                    for (operand.call.args) |a| {
+                        markEscapeIfIdentifier(scope, index_of, a, "because it is passed as an argument to a call");
+                    }
+                }
+                self.scanExprEscapes(scope, index_of, operand.*);
+            },
             .generic_construct => |g| {
                 for (g.args) |a| self.scanExprEscapes(scope, index_of, a);
+            },
+        }
+    }
+
+    fn indexFunc(self: *Analyzer, key: []const u8, params: []const ast.Param, body: []const ast.Stmt) error{OutOfMemory}!void {
+        try self.known_funcs.put(self.allocator, key, .{ .params = params, .body = body });
+        try self.indexNested(body);
+    }
+
+    fn indexNested(self: *Analyzer, stmts: []const ast.Stmt) error{OutOfMemory}!void {
+        for (stmts) |*stmt| {
+            switch (stmt.kind) {
+                .func_def => |*fd| {
+                    const key = try std.fmt.allocPrint(self.allocator, "nested@{x}", .{@intFromPtr(fd)});
+                    try self.indexFunc(key, fd.params, fd.body);
+                },
+                .if_stmt => |f| {
+                    try self.indexNested(f.then_body);
+                    for (f.elif_clauses) |ec| try self.indexNested(ec.body);
+                    if (f.else_body) |eb| try self.indexNested(eb);
+                },
+                .while_stmt => |w| try self.indexNested(w.body),
+                .for_stmt => |f| try self.indexNested(f.body),
+                .try_stmt => |t| {
+                    try self.indexNested(t.try_body);
+                    for (t.except_clauses) |ec| try self.indexNested(ec.body);
+                    if (t.finally_body) |fb| try self.indexNested(fb);
+                },
+                .with_stmt => |w| try self.indexNested(w.body),
+                .lowlevel_stmt => |ll| try self.indexNested(ll.body),
+                else => {},
+            }
+        }
+    }
+
+    fn isScopeParam(self: *const Analyzer, name: []const u8) bool {
+        for (self.scope_params) |p| {
+            if (std.mem.eql(u8, p.name, name)) return true;
+        }
+        return false;
+    }
+
+    fn bumpFuncWrite(self: *Analyzer, writes: *std.StringHashMapUnmanaged(FuncWrite), name: []const u8, direct: ?[]const u8, pending: ?[]const u8) !void {
+        const gop = try writes.getOrPut(self.allocator, name);
+        if (!gop.found_existing) gop.value_ptr.* = .{};
+        gop.value_ptr.count += 1;
+        if (gop.value_ptr.count == 1) {
+            gop.value_ptr.direct = direct;
+            gop.value_ptr.pending_ident = pending;
+        } else {
+            gop.value_ptr.direct = null;
+            gop.value_ptr.pending_ident = null;
+        }
+    }
+
+    fn resolveDirectFunc(self: *const Analyzer, writes: *const std.StringHashMapUnmanaged(FuncWrite), id: []const u8) ?[]const u8 {
+        if (self.isScopeParam(id)) return null;
+        if (writes.get(id)) |w| {
+            if (w.count == 1) return w.direct;
+            return null;
+        }
+        if (self.known_funcs.contains(id)) return id;
+        return null;
+    }
+
+    fn buildTargets(self: *Analyzer, body: []const ast.Stmt) !void {
+        self.active_targets.clearRetainingCapacity();
+        var writes: std.StringHashMapUnmanaged(FuncWrite) = .empty;
+        defer writes.deinit(self.allocator);
+        try self.collectFuncWrites(body, &writes);
+        var it = writes.iterator();
+        while (it.next()) |e| {
+            if (e.value_ptr.count != 1) continue;
+            if (self.isScopeParam(e.key_ptr.*)) continue;
+            if (e.value_ptr.direct) |d| {
+                try self.active_targets.put(self.allocator, e.key_ptr.*, d);
+                continue;
+            }
+            if (e.value_ptr.pending_ident) |id| {
+                if (self.resolveDirectFunc(&writes, id)) |d| {
+                    try self.active_targets.put(self.allocator, e.key_ptr.*, d);
+                }
+            }
+        }
+    }
+
+    fn collectFuncWrites(self: *Analyzer, stmts: []const ast.Stmt, writes: *std.StringHashMapUnmanaged(FuncWrite)) !void {
+        for (stmts) |*stmt| {
+            switch (stmt.kind) {
+                .var_decl => |*v| {
+                    switch (v.value) {
+                        .identifier => |id| try self.bumpFuncWrite(writes, v.name, null, id),
+                        else => try self.bumpFuncWrite(writes, v.name, null, null),
+                    }
+                },
+                .assign => |*a| {
+                    if (a.target == .identifier) {
+                        switch (a.value) {
+                            .identifier => |id| try self.bumpFuncWrite(writes, a.target.identifier, null, id),
+                            else => try self.bumpFuncWrite(writes, a.target.identifier, null, null),
+                        }
+                    }
+                },
+                .func_def => |*fd| {
+                    const key = try std.fmt.allocPrint(self.allocator, "nested@{x}", .{@intFromPtr(fd)});
+                    try self.bumpFuncWrite(writes, fd.name, key, null);
+                },
+                .if_stmt => |f| {
+                    try self.collectFuncWrites(f.then_body, writes);
+                    for (f.elif_clauses) |ec| try self.collectFuncWrites(ec.body, writes);
+                    if (f.else_body) |eb| try self.collectFuncWrites(eb, writes);
+                },
+                .while_stmt => |w| try self.collectFuncWrites(w.body, writes),
+                .for_stmt => |f| try self.collectFuncWrites(f.body, writes),
+                .try_stmt => |t| {
+                    try self.collectFuncWrites(t.try_body, writes);
+                    for (t.except_clauses) |ec| try self.collectFuncWrites(ec.body, writes);
+                    if (t.finally_body) |fb| try self.collectFuncWrites(fb, writes);
+                },
+                .with_stmt => |w| try self.collectFuncWrites(w.body, writes),
+                .lowlevel_stmt => |ll| try self.collectFuncWrites(ll.body, writes),
+                else => {},
+            }
+        }
+    }
+
+    fn funcParamEscapes(self: *Analyzer, func_key: []const u8, arg_index: usize) bool {
+        const kf = self.known_funcs.get(func_key) orelse return true;
+        if (arg_index >= kf.params.len) return true;
+        const memo_key = std.fmt.allocPrint(self.allocator, "{s}#{d}", .{ func_key, arg_index }) catch return true;
+        if (self.param_memo.get(memo_key)) |m| {
+            if (m == .visiting) return true;
+            return m == .escapes;
+        }
+        self.param_memo.put(self.allocator, memo_key, .visiting) catch return true;
+        const saved_targets = self.active_targets;
+        const saved_params = self.scope_params;
+        self.active_targets = .{};
+        self.scope_params = kf.params;
+        const escapes = blk: {
+            self.buildTargets(kf.body) catch break :blk true;
+            break :blk self.nameEscapesStmts(kf.body, kf.params[arg_index].name);
+        };
+        self.active_targets.deinit(self.allocator);
+        self.active_targets = saved_targets;
+        self.scope_params = saved_params;
+        self.param_memo.put(self.allocator, memo_key, if (escapes) .escapes else .stays) catch return true;
+        return escapes;
+    }
+
+    fn nameEscapesStmts(self: *Analyzer, stmts: []const ast.Stmt, name: []const u8) bool {
+        for (stmts) |stmt| {
+            switch (stmt.kind) {
+                .var_decl => |v| {
+                    if (v.value == .identifier and std.mem.eql(u8, v.value.identifier, name)) return true;
+                    if (self.nameEscapesExpr(v.value, name)) return true;
+                },
+                .assign => |a| {
+                    if (a.value == .identifier and std.mem.eql(u8, a.value.identifier, name)) return true;
+                    if (a.target == .attribute) {
+                        const attr = a.target.attribute;
+                        if (attr.obj.* == .identifier and std.mem.eql(u8, attr.obj.identifier, "self") and a.value == .identifier and std.mem.eql(u8, a.value.identifier, name)) return true;
+                    }
+                    if (self.nameEscapesExpr(a.target, name)) return true;
+                    if (self.nameEscapesExpr(a.value, name)) return true;
+                },
+                .expr_stmt => |e| if (self.nameEscapesExpr(e, name)) return true,
+                .if_stmt => |f| {
+                    if (self.nameEscapesExpr(f.cond, name)) return true;
+                    if (self.nameEscapesStmts(f.then_body, name)) return true;
+                    for (f.elif_clauses) |ec| {
+                        if (self.nameEscapesExpr(ec.cond, name)) return true;
+                        if (self.nameEscapesStmts(ec.body, name)) return true;
+                    }
+                    if (f.else_body) |eb| if (self.nameEscapesStmts(eb, name)) return true;
+                },
+                .while_stmt => |w| {
+                    if (self.nameEscapesExpr(w.cond, name)) return true;
+                    if (self.nameEscapesStmts(w.body, name)) return true;
+                },
+                .for_stmt => |f| {
+                    if (self.nameEscapesExpr(f.iterable, name)) return true;
+                    if (self.nameEscapesStmts(f.body, name)) return true;
+                },
+                .return_stmt => |r| {
+                    if (r) |e| {
+                        if (e == .identifier and std.mem.eql(u8, e.identifier, name)) return true;
+                        if (self.nameEscapesExpr(e, name)) return true;
+                    }
+                },
+                .raise_stmt => |e| {
+                    if (e == .identifier and std.mem.eql(u8, e.identifier, name)) return true;
+                    if (self.nameEscapesExpr(e, name)) return true;
+                },
+                .del_stmt => |e| if (self.nameEscapesExpr(e, name)) return true,
+                .try_stmt => |t| {
+                    if (self.nameEscapesStmts(t.try_body, name)) return true;
+                    for (t.except_clauses) |ec| if (self.nameEscapesStmts(ec.body, name)) return true;
+                    if (t.finally_body) |fb| if (self.nameEscapesStmts(fb, name)) return true;
+                },
+                .with_stmt => |w| {
+                    if (w.ctx_expr == .identifier and std.mem.eql(u8, w.ctx_expr.identifier, name)) return true;
+                    if (self.nameEscapesExpr(w.ctx_expr, name)) return true;
+                    if (self.nameEscapesStmts(w.body, name)) return true;
+                },
+                .defer_stmt => |d| if (self.nameEscapesExpr(.{ .call = d.call }, name)) return true,
+                .func_def => |fd| if (self.nameEscapesStmts(fd.body, name)) return true,
+                .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .lowlevel_stmt, .import_stmt, .from_import_stmt => {},
+            }
+        }
+        return false;
+    }
+
+    fn nameEscapesExpr(self: *Analyzer, expr: ast.Expr, name: []const u8) bool {
+        switch (expr) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => return false,
+            .list_lit => |elems| {
+                for (elems) |el| {
+                    if (el == .identifier and std.mem.eql(u8, el.identifier, name)) return true;
+                    if (self.nameEscapesExpr(el, name)) return true;
+                }
+                return false;
+            },
+            .tuple_lit => |elems| {
+                for (elems) |el| {
+                    if (el == .identifier and std.mem.eql(u8, el.identifier, name)) return true;
+                    if (self.nameEscapesExpr(el, name)) return true;
+                }
+                return false;
+            },
+            .dict_lit => |pairs| {
+                for (pairs) |p| {
+                    if (p.key == .identifier and std.mem.eql(u8, p.key.identifier, name)) return true;
+                    if (p.value == .identifier and std.mem.eql(u8, p.value.identifier, name)) return true;
+                    if (self.nameEscapesExpr(p.key, name)) return true;
+                    if (self.nameEscapesExpr(p.value, name)) return true;
+                }
+                return false;
+            },
+            .call => |c| {
+                const is_print = c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "print");
+                const extern_retains_arr: ?[]const bool = if (c.callee.* == .identifier) self.extern_retains.get(c.callee.identifier) else null;
+                for (c.args, 0..) |a, i| {
+                    if (a == .identifier and std.mem.eql(u8, a.identifier, name)) {
+                        var retained = if (extern_retains_arr) |arr| (i < arr.len and arr[i]) else true;
+                        if (retained and c.callee.* == .identifier) {
+                            if (self.active_targets.get(c.callee.identifier)) |target| {
+                                if (!self.funcParamEscapes(target, i)) retained = false;
+                            }
+                        }
+                        if (!is_print and retained) return true;
+                    } else if (self.nameEscapesExpr(a, name)) return true;
+                }
+                switch (c.callee.*) {
+                    .attribute => |attr| {
+                        if (attr.obj.* == .identifier and std.mem.eql(u8, attr.obj.identifier, name)) return true;
+                        return self.nameEscapesExpr(attr.obj.*, name);
+                    },
+                    else => return self.nameEscapesExpr(c.callee.*, name),
+                }
+            },
+            .kwarg => |k| return self.nameEscapesExpr(k.value.*, name),
+            .ternary => |t| return self.nameEscapesExpr(t.cond.*, name) or self.nameEscapesExpr(t.then_expr.*, name) or self.nameEscapesExpr(t.else_expr.*, name),
+            .binary => |b| return self.nameEscapesExpr(b.left.*, name) or self.nameEscapesExpr(b.right.*, name),
+            .unary => |u| return self.nameEscapesExpr(u.operand.*, name),
+            .attribute => |a| return self.nameEscapesExpr(a.obj.*, name),
+            .list_comp => |lc| {
+                if (self.nameEscapesExpr(lc.elem.*, name)) return true;
+                for (lc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| if (self.nameEscapesExpr(fc.iterable, name)) return true,
+                    .if_clause => |ce| if (self.nameEscapesExpr(ce, name)) return true,
+                };
+                return false;
+            },
+            .dict_comp => |dc| {
+                if (self.nameEscapesExpr(dc.key.*, name)) return true;
+                if (self.nameEscapesExpr(dc.value.*, name)) return true;
+                for (dc.clauses) |cl| switch (cl) {
+                    .for_clause => |fc| if (self.nameEscapesExpr(fc.iterable, name)) return true,
+                    .if_clause => |ce| if (self.nameEscapesExpr(ce, name)) return true,
+                };
+                return false;
+            },
+            .lambda => |lam| return self.nameEscapesExpr(lam.body.*, name),
+            .slice => |sl| {
+                if (self.nameEscapesExpr(sl.obj.*, name)) return true;
+                if (sl.lo) |x| if (self.nameEscapesExpr(x.*, name)) return true;
+                if (sl.hi) |x| if (self.nameEscapesExpr(x.*, name)) return true;
+                if (sl.step) |x| if (self.nameEscapesExpr(x.*, name)) return true;
+                return false;
+            },
+            .index => |idx| return self.nameEscapesExpr(idx.obj.*, name) or self.nameEscapesExpr(idx.index.*, name),
+            .await_expr => |operand| return self.nameEscapesExpr(operand.*, name),
+            .spawn_expr => |operand| {
+                if (operand.* == .call) {
+                    for (operand.call.args) |a| {
+                        if (a == .identifier and std.mem.eql(u8, a.identifier, name)) return true;
+                        if (self.nameEscapesExpr(a, name)) return true;
+                    }
+                    return self.nameEscapesExpr(operand.call.callee.*, name);
+                }
+                return self.nameEscapesExpr(operand.*, name);
+            },
+            .generic_construct => |g| {
+                for (g.args) |a| if (self.nameEscapesExpr(a, name)) return true;
+                return false;
             },
         }
     }

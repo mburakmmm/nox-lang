@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.2]
+
+### Eklendi
+
+- **Tek hedefli func değerinin kaçış etkisi çağrı yerine taşınır.** Bir func yerel tam olarak bir kez, gövdesi bilinen bir fonksiyona veya iç içe fonksiyona bağlanmışsa, o gövdenin parametre kaçışı çağrı yerindeki argümana uygulanır. Hedef argümanı saklamıyorsa yerel ASAP (sabit boyutlu sınıf/liste yığına alınabilir). İkinci atama, parametre olarak gelen func veya gövdesi olmayan hedef bugünkü gibi ARC kalır. `spawn` bu kanıta girmez. Golden `func_value_known_target`, QBE ve LLVM.
+
 ## [2.0.1]
 
 Derleyici tanılamaları, standart kütüphane istisna metinleri ve `noxc` durum satırları İngilizce. `noxc --help` yerel dilde kalır (`LC_ALL` / `LC_MESSAGES` / `LANG` `tr` ile başlıyorsa Türkçe).
