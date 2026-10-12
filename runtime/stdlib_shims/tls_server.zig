@@ -83,21 +83,21 @@ fn openLib() ?LibHandle {
     if (std.c.getenv("NOX_OPENSSL_LIB")) |override_path| {
         if (builtin.os.tag == .windows) {
             if (Kernel32.LoadLibraryA(override_path)) |h| return h;
-            std.debug.print("nox_tls_server: NOX_OPENSSL_LIB LoadLibraryA basarisiz: {s} (GetLastError={d})\n", .{ override_path, Kernel32.GetLastError() });
+            std.debug.print("nox_tls_server: NOX_OPENSSL_LIB LoadLibraryA failed: {s} (GetLastError={d})\n", .{ override_path, Kernel32.GetLastError() });
         } else if (std.DynLib.open(std.mem.span(override_path))) |lib| {
             return lib;
         } else |err| {
-            std.debug.print("nox_tls_server: NOX_OPENSSL_LIB dlopen basarisiz: {s} ({t})\n", .{ override_path, err });
+            std.debug.print("nox_tls_server: NOX_OPENSSL_LIB dlopen failed: {s} ({t})\n", .{ override_path, err });
         }
     }
     for (libraryCandidates()) |name| {
         if (builtin.os.tag == .windows) {
             if (Kernel32.LoadLibraryA(name)) |h| return h;
-            std.debug.print("nox_tls_server: LoadLibraryA basarisiz: {s} (GetLastError={d})\n", .{ name, Kernel32.GetLastError() });
+            std.debug.print("nox_tls_server: LoadLibraryA failed: {s} (GetLastError={d})\n", .{ name, Kernel32.GetLastError() });
         } else if (std.DynLib.open(name)) |lib| {
             return lib;
         } else |err| {
-            std.debug.print("nox_tls_server: dlopen basarisiz: {s} ({t})\n", .{ name, err });
+            std.debug.print("nox_tls_server: dlopen failed: {s} ({t})\n", .{ name, err });
         }
     }
     return null;
@@ -128,7 +128,7 @@ fn openLib() ?LibHandle {
 fn openCryptoLibWindows() ?*anyopaque {
     if (Kernel32.LoadLibraryA("libcrypto-3-x64.dll")) |h| return h;
     if (Kernel32.LoadLibraryA("libcrypto-1_1-x64.dll")) |h| return h;
-    std.debug.print("nox_tls_server: libcrypto-*.dll (BIO_* sembolleri icin) bulunamadi (GetLastError={d})\n", .{Kernel32.GetLastError()});
+    std.debug.print("nox_tls_server: libcrypto-*.dll (for the BIO_* symbols) not found (GetLastError={d})\n", .{Kernel32.GetLastError()});
     return null;
 }
 
@@ -136,13 +136,13 @@ fn lookupSym(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
     if (builtin.os.tag == .windows) {
         const handle = lib.* orelse return null;
         const addr = Kernel32.GetProcAddress(handle, name) orelse {
-            std.debug.print("nox_tls_server: sembol bulunamadi: {s}\n", .{name});
+            std.debug.print("nox_tls_server: symbol not found: {s}\n", .{name});
             return null;
         };
         return @ptrCast(addr);
     }
     return lib.lookup(T, name) orelse {
-        std.debug.print("nox_tls_server: sembol bulunamadi: {s}\n", .{name});
+        std.debug.print("nox_tls_server: symbol not found: {s}\n", .{name});
         return null;
     };
 }

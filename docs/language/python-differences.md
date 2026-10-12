@@ -64,7 +64,7 @@ mini-language is fully supported in f-strings, `format()` and `str.format`.
 
 Exceptions are classes, `except Base:` catches subclasses, and `e.message`/`e.line` are available. There is no traceback object — an uncaught
 exception prints the class and source line. Resources are released by `with`, `defer` and `finally`; there is no `__del__` and no `weakref`.
-The text of built-in errors is currently Turkish.
+Built-in error text is English; match the exception class, not the wording.
 
 ## Modules
 

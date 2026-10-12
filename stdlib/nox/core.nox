@@ -99,7 +99,7 @@ def __nox_str_rfind[T](s: T, sub: T) -> int:
 def __nox_str_rindex[T](s: T, sub: T) -> int:
     i: int = __nox_str_rfind(s, sub)
     if i < 0:
-        raise ValueError("str.rindex(sub): alt dize bulunamadi")
+        raise ValueError("str.rindex(sub): substring not found")
     return i
 
 # NOT: dönüş tipinde tuple olan prelude işlevleri GENERİK olmalıdır (`T` = str): jenerik olmayanlar, tuple sınıfları örneklenmeden
@@ -268,17 +268,17 @@ extern def nox_format_str_raw(v: str, spec: str) -> str from "zig-out/lib/noxrt.
 
 def __nox_format_int(v: int, spec: str) -> str:
     if nox_format_spec_check(0, spec) == 0:
-        raise ValueError("gecersiz bicim belirteci: " + spec)
+        raise ValueError("invalid format specifier: " + spec)
     return nox_format_int_raw(v, spec)
 
 def __nox_format_float(v: float, spec: str) -> str:
     if nox_format_spec_check(1, spec) == 0:
-        raise ValueError("gecersiz bicim belirteci: " + spec)
+        raise ValueError("invalid format specifier: " + spec)
     return nox_format_float_raw(v, spec)
 
 def __nox_format_str(v: str, spec: str) -> str:
     if nox_format_spec_check(2, spec) == 0:
-        raise ValueError("gecersiz bicim belirteci: " + spec)
+        raise ValueError("invalid format specifier: " + spec)
     return nox_format_str_raw(v, spec)
 
 def chr(cp: int) -> str:
@@ -287,7 +287,7 @@ def chr(cp: int) -> str:
 def ord(s: str) -> int:
     n: int = nox_ord_raw(s)
     if n < 0:
-        raise ValueError("ord() bos bir str alamaz")
+        raise ValueError("ord() cannot take an empty str")
     return n
 
 def any(xs: list[bool]) -> bool:
@@ -398,7 +398,7 @@ def __nox_sort_key_inplace[T, K](xs: list[T], key: (T) -> K, reverse: bool = Fal
 # `max(xs)` / `min(xs)` (tek liste argümanı) ve `max(xs, key=f)` / `min(xs, key=f)` bu fonksiyonlara yönlendirilir (checker).
 def __nox_max_list[T](xs: list[T]) -> T:
     if len(xs) == 0:
-        raise ValueError("max() bos bir diziyle cagrildi")
+        raise ValueError("max() called with an empty sequence")
     best: T = xs[0]
     for x in xs:
         if x > best:
@@ -407,7 +407,7 @@ def __nox_max_list[T](xs: list[T]) -> T:
 
 def __nox_min_list[T](xs: list[T]) -> T:
     if len(xs) == 0:
-        raise ValueError("min() bos bir diziyle cagrildi")
+        raise ValueError("min() called with an empty sequence")
     best: T = xs[0]
     for x in xs:
         if x < best:
@@ -416,7 +416,7 @@ def __nox_min_list[T](xs: list[T]) -> T:
 
 def __nox_max_key[T, K](xs: list[T], key: (T) -> K) -> T:
     if len(xs) == 0:
-        raise ValueError("max() bos bir diziyle cagrildi")
+        raise ValueError("max() called with an empty sequence")
     best: T = xs[0]
     best_k: K = key(best)
     for x in xs:
@@ -428,7 +428,7 @@ def __nox_max_key[T, K](xs: list[T], key: (T) -> K) -> T:
 
 def __nox_min_key[T, K](xs: list[T], key: (T) -> K) -> T:
     if len(xs) == 0:
-        raise ValueError("min() bos bir diziyle cagrildi")
+        raise ValueError("min() called with an empty sequence")
     best: T = xs[0]
     best_k: K = key(best)
     for x in xs:
@@ -503,7 +503,7 @@ class __nox_Set[T]:
 
     def remove(self, v: T) -> None:
         if v not in self._d:
-            raise KeyError("set.remove(x): x kümede yok")
+            raise KeyError("set.remove(x): x is not in the set")
         del self._d[v]
 
     def discard(self, v: T) -> None:
@@ -513,7 +513,7 @@ class __nox_Set[T]:
     def pop(self) -> T:
         ks: list[T] = list(self._d)
         if len(ks) == 0:
-            raise KeyError("boş kümeden pop")
+            raise KeyError("pop from an empty set")
         v: T = ks[0]
         del self._d[v]
         return v

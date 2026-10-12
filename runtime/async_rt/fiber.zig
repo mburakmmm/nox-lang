@@ -35,7 +35,7 @@ const diag_sink = @import("diag_sink");
 
 comptime {
     if (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64) {
-        @compileError("runtime/async_rt şu an yalnızca aarch64/x86-64 için uygulandı (bkz. nox-teknik-spesifikasyon.md §3.21/Faz R.2, v0.1 sınırlaması)");
+        @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2, a v0.1 limitation)");
     }
 }
 
@@ -104,7 +104,7 @@ pub const Context = switch (builtin.cpu.arch) {
     .x86_64 => extern struct {
         sp: usize = 0,
     },
-    else => @compileError("runtime/async_rt şu an yalnızca aarch64/x86-64 için uygulandı (bkz. nox-teknik-spesifikasyon.md §3.21/Faz R.2, v0.1 sınırlaması)"),
+    else => @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2, a v0.1 limitation)"),
 };
 
 extern fn nox_swap_context(old: *Context, new: *Context) void;

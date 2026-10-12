@@ -115,7 +115,7 @@ pub const Analyzer = struct {
                 else => try loose.append(self.allocator, stmt),
             }
         }
-        try report.scopes.append(self.allocator, try self.analyzeScope("modül", &.{}, loose.items));
+        try report.scopes.append(self.allocator, try self.analyzeScope("module", &.{}, loose.items));
 
         for (module.body) |stmt| {
             switch (stmt.kind) {
@@ -127,7 +127,7 @@ pub const Analyzer = struct {
                 // analiz edilir.
                 .func_def => |fd| {
                     if (fd.type_params.len > 0 or containsName(generic_template_names, fd.name)) continue;
-                    const label = try std.fmt.allocPrint(self.allocator, "fonksiyon {s}", .{fd.name});
+                    const label = try std.fmt.allocPrint(self.allocator, "function {s}", .{fd.name});
                     try report.scopes.append(self.allocator, try self.analyzeScope(label, fd.params, fd.body));
                 },
                 // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı):
@@ -138,7 +138,7 @@ pub const Analyzer = struct {
                 .class_def => |cd| {
                     if (cd.type_params.len > 0 or containsName(generic_class_template_names, cd.name)) continue;
                     for (cd.methods) |m| {
-                        const label = try std.fmt.allocPrint(self.allocator, "metod {s}.{s}", .{ cd.name, m.name });
+                        const label = try std.fmt.allocPrint(self.allocator, "method {s}.{s}", .{ cd.name, m.name });
                         try report.scopes.append(self.allocator, try self.analyzeScope(label, m.params, m.body));
                     }
                 },
@@ -146,12 +146,12 @@ pub const Analyzer = struct {
             }
         }
         for (extra_functions) |fd| {
-            const label = try std.fmt.allocPrint(self.allocator, "fonksiyon {s}", .{fd.name});
+            const label = try std.fmt.allocPrint(self.allocator, "function {s}", .{fd.name});
             try report.scopes.append(self.allocator, try self.analyzeScope(label, fd.params, fd.body));
         }
         for (extra_classes) |cd| {
             for (cd.methods) |m| {
-                const label = try std.fmt.allocPrint(self.allocator, "metod {s}.{s}", .{ cd.name, m.name });
+                const label = try std.fmt.allocPrint(self.allocator, "method {s}.{s}", .{ cd.name, m.name });
                 try report.scopes.append(self.allocator, try self.analyzeScope(label, m.params, m.body));
             }
         }
@@ -171,10 +171,10 @@ pub const Analyzer = struct {
                 .type_name = type_name,
                 .is_param = true,
                 .decision = .arc,
-                .reason = "parametre: fonksiyon sınırını zaten geçti",
-                .alloc_desc = "parametre",
+                .reason = "parameter: it already crossed the function boundary",
+                .alloc_desc = "parameter",
             });
-            try scope.bindings.items[scope.bindings.items.len - 1].free_events.append(self.allocator, "kapsam sonu");
+            try scope.bindings.items[scope.bindings.items.len - 1].free_events.append(self.allocator, "end of scope");
             try index_of.put(self.allocator, p.name, scope.bindings.items.len - 1);
         }
 
@@ -182,7 +182,7 @@ pub const Analyzer = struct {
         try self.scanStmts(&scope, &index_of, body);
 
         for (scope.bindings.items) |*b| {
-            if (!b.is_param) try b.free_events.append(self.allocator, "kapsam sonu");
+            if (!b.is_param) try b.free_events.append(self.allocator, "end of scope");
         }
 
         return scope;
@@ -194,7 +194,7 @@ pub const Analyzer = struct {
                 .var_decl => |v| {
                     if (!isHeapTypeExpr(v.type_expr)) continue;
                     if (index_of.get(v.name)) |idx| {
-                        try scope.bindings.items[idx].free_events.append(self.allocator, "yeniden tanımlama (var_decl)");
+                        try scope.bindings.items[idx].free_events.append(self.allocator, "redefinition (var_decl)");
                         continue;
                     }
                     const type_name = try typeExprName(self.allocator, v.type_expr);
@@ -203,7 +203,7 @@ pub const Analyzer = struct {
                         .type_name = type_name,
                         .is_param = false,
                         .decision = .asap,
-                        .reason = "kapsam içinde kalıyor (kaçış tespit edilmedi)",
+                        .reason = "stays in scope (no escape detected)",
                         .alloc_desc = "var_decl",
                     });
                     try index_of.put(self.allocator, v.name, scope.bindings.items.len - 1);
@@ -232,7 +232,7 @@ pub const Analyzer = struct {
                                     .type_name = ec.class_name.?,
                                     .is_param = false,
                                     .decision = .asap,
-                                    .reason = "kapsam içinde kalıyor (kaçış tespit edilmedi)",
+                                    .reason = "stays in scope (no escape detected)",
                                     .alloc_desc = "except ... as",
                                 });
                                 try index_of.put(self.allocator, bn, scope.bindings.items.len - 1);
@@ -266,20 +266,20 @@ pub const Analyzer = struct {
                     // `ys: T = xs` gibi bir takma ad (alias) durumu, `xs`'in ömrünü
                     // `ys` ile dolaştırır; bu da başlı başına bir kaçıştır (İlke #8:
                     // muhafazakâr olmak zorunda — aksi kanıtlanamaz).
-                    markEscapeIfIdentifier(scope, index_of, v.value, "başka bir değişkene (isimle) atandığı için (takma ad)");
+                    markEscapeIfIdentifier(scope, index_of, v.value, "because it is assigned to another variable by name (alias)");
                     self.scanExprEscapes(scope, index_of, v.value);
                 },
                 .assign => |a| {
                     switch (a.target) {
                         .identifier => |name| {
                             if (index_of.get(name)) |idx| {
-                                try scope.bindings.items[idx].free_events.append(self.allocator, "yeniden atama");
+                                try scope.bindings.items[idx].free_events.append(self.allocator, "reassignment");
                             }
-                            markEscapeIfIdentifier(scope, index_of, a.value, "başka bir değişkene (isimle) atandığı için (takma ad)");
+                            markEscapeIfIdentifier(scope, index_of, a.value, "because it is assigned to another variable by name (alias)");
                         },
                         .attribute => |attr| {
                             if (attr.obj.* == .identifier and std.mem.eql(u8, attr.obj.identifier, "self")) {
-                                markEscapeIfIdentifier(scope, index_of, a.value, "bir sınıf alanına atandığı için (self.<alan>)");
+                                markEscapeIfIdentifier(scope, index_of, a.value, "because it is assigned to a class field (self.<field>)");
                             }
                         },
                         else => {},
@@ -306,12 +306,12 @@ pub const Analyzer = struct {
                 },
                 .return_stmt => |r| {
                     if (r) |e| {
-                        markEscapeIfIdentifier(scope, index_of, e, "fonksiyondan döndürüldüğü için");
+                        markEscapeIfIdentifier(scope, index_of, e, "because it is returned from the function");
                         self.scanExprEscapes(scope, index_of, e);
                     }
                 },
                 .raise_stmt => |e| {
-                    markEscapeIfIdentifier(scope, index_of, e, "raise ile fırlatıldığı için");
+                    markEscapeIfIdentifier(scope, index_of, e, "because it is thrown with raise");
                     self.scanExprEscapes(scope, index_of, e);
                 },
                 .del_stmt => |e| self.scanExprEscapes(scope, index_of, e),
@@ -325,7 +325,7 @@ pub const Analyzer = struct {
                 // modülün ASAP/ARC karar alanının bir parçası değiller (bkz.
                 // nox-teknik-spesifikasyon.md §3.8).
                 .with_stmt => |w| {
-                    markEscapeIfIdentifier(scope, index_of, w.ctx_expr, "bir with bloğunun bağlamı olarak kullanıldığı için");
+                    markEscapeIfIdentifier(scope, index_of, w.ctx_expr, "because it is used as the context of a with block");
                     self.scanExprEscapes(scope, index_of, w.ctx_expr);
                     try self.scanStmts(scope, index_of, w.body);
                 },
@@ -343,21 +343,21 @@ pub const Analyzer = struct {
         switch (expr) {
             .list_lit => |elems| {
                 for (elems) |el| {
-                    markEscapeIfIdentifier(scope, index_of, el, "bir liste literaline eklendiği için");
+                    markEscapeIfIdentifier(scope, index_of, el, "because it is added to a list literal");
                     self.scanExprEscapes(scope, index_of, el);
                 }
             },
             .tuple_lit => |elems| {
                 for (elems) |el| {
-                    markEscapeIfIdentifier(scope, index_of, el, "bir liste literaline eklendiği için");
+                    markEscapeIfIdentifier(scope, index_of, el, "because it is added to a list literal");
                     self.scanExprEscapes(scope, index_of, el);
                 }
             },
             .dict_lit => |pairs| {
                 for (pairs) |p| {
-                    markEscapeIfIdentifier(scope, index_of, p.key, "bir dict literaline anahtar olarak eklendiği için");
+                    markEscapeIfIdentifier(scope, index_of, p.key, "because it is added to a dict literal as a key");
                     self.scanExprEscapes(scope, index_of, p.key);
-                    markEscapeIfIdentifier(scope, index_of, p.value, "bir dict literaline değer olarak eklendiği için");
+                    markEscapeIfIdentifier(scope, index_of, p.value, "because it is added to a dict literal as a value");
                     self.scanExprEscapes(scope, index_of, p.value);
                 }
             },
@@ -377,12 +377,12 @@ pub const Analyzer = struct {
                     null;
                 for (c.args, 0..) |a, i| {
                     const retained = if (extern_retains_arr) |arr| (i < arr.len and arr[i]) else true;
-                    if (!is_print and retained) markEscapeIfIdentifier(scope, index_of, a, "bir çağrıya argüman olarak geçildiği için");
+                    if (!is_print and retained) markEscapeIfIdentifier(scope, index_of, a, "because it is passed as an argument to a call");
                     self.scanExprEscapes(scope, index_of, a);
                 }
                 switch (c.callee.*) {
                     .attribute => |a| {
-                        markEscapeIfIdentifier(scope, index_of, a.obj.*, "bir metod çağrısının alıcısı olduğu için");
+                        markEscapeIfIdentifier(scope, index_of, a.obj.*, "because it is the receiver of a method call");
                         self.scanExprEscapes(scope, index_of, a.obj.*);
                     },
                     else => self.scanExprEscapes(scope, index_of, c.callee.*),
@@ -390,8 +390,8 @@ pub const Analyzer = struct {
             },
             .kwarg => |k| self.scanExprEscapes(scope, index_of, k.value.*),
             .ternary => |t| {
-                markEscapeIfIdentifier(scope, index_of, t.then_expr.*, "bir üçlü ifadenin dalı olduğu için");
-                markEscapeIfIdentifier(scope, index_of, t.else_expr.*, "bir üçlü ifadenin dalı olduğu için");
+                markEscapeIfIdentifier(scope, index_of, t.then_expr.*, "because it is a branch of a ternary expression");
+                markEscapeIfIdentifier(scope, index_of, t.else_expr.*, "because it is a branch of a ternary expression");
                 self.scanExprEscapes(scope, index_of, t.cond.*);
                 self.scanExprEscapes(scope, index_of, t.then_expr.*);
                 self.scanExprEscapes(scope, index_of, t.else_expr.*);
@@ -517,19 +517,19 @@ pub fn dumpReport(writer: *std.Io.Writer, report: Report) std.Io.Writer.Error!vo
     for (report.scopes.items) |scope| {
         try writer.print("[{s}]\n", .{scope.label});
         if (scope.bindings.items.len == 0) {
-            try writer.writeAll("  (heap tipli bağlama yok)\n");
+            try writer.writeAll("  (no heap-typed binding)\n");
         }
         for (scope.bindings.items) |b| {
             try writer.print("  {s}: {s}{s} -> {s} ({s})\n", .{
                 b.name,
                 b.type_name,
-                if (b.is_param) " (parametre)" else "",
+                if (b.is_param) " (parameter)" else "",
                 if (b.decision == .asap) "ASAP" else "ARC",
                 b.reason,
             });
-            try writer.print("    tahsis: {s}\n", .{b.alloc_desc});
+            try writer.print("    allocation: {s}\n", .{b.alloc_desc});
             for (b.free_events.items) |fe| {
-                try writer.print("    serbest: {s}\n", .{fe});
+                try writer.print("    free: {s}\n", .{fe});
             }
         }
     }

@@ -461,7 +461,7 @@ pub export fn nox_format_str_raw(rt: ?*anyopaque, v: ?[*:0]const u8, spec: ?[*:0
     return finish(rt, r);
 }
 
-test "format: tamsayı" {
+test "format: integer" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();

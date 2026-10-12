@@ -1,19 +1,19 @@
-[modül]
-  (heap tipli bağlama yok)
-[fonksiyon process]
-  item: str (parametre) -> ARC (parametre: fonksiyon sınırını zaten geçti)
-    tahsis: parametre
-    serbest: kapsam sonu
-[fonksiyon build]
-  a: str -> ARC (bir liste literaline eklendiği için)
-    tahsis: var_decl
-    serbest: kapsam sonu
-  xs: list[str] -> ASAP (kapsam içinde kalıyor (kaçış tespit edilmedi))
-    tahsis: var_decl
-    serbest: kapsam sonu
-  b: str -> ARC (bir çağrıya argüman olarak geçildiği için)
-    tahsis: var_decl
-    serbest: kapsam sonu
-  c: str -> ASAP (kapsam içinde kalıyor (kaçış tespit edilmedi))
-    tahsis: var_decl
-    serbest: kapsam sonu
+[module]
+  (no heap-typed binding)
+[function process]
+  item: str (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function build]
+  a: str -> ARC (because it is added to a list literal)
+    allocation: var_decl
+    free: end of scope
+  xs: list[str] -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  b: str -> ARC (because it is passed as an argument to a call)
+    allocation: var_decl
+    free: end of scope
+  c: str -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope

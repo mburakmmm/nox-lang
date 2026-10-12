@@ -30,7 +30,7 @@ You never free memory yourself ([Memory](../language/memory.md)).
 
 **Where do packages come from?** Git repositories, listed in `nox.json` and pinned in `nox.lock`; the central index at <https://noxpkg.noxlang.com> helps you find them ([Packages](../tools/packages.md)).
 
-**Why are error messages in Turkish?** The project began with Turkish diagnostics; English diagnostics are the next step. The error *kind* and exit codes are stable today, so tools should not parse message text ([Versioning](versioning.md)).
+**Can I parse error text?** No. Diagnostics and library messages are English, but only the error *kind* and the exit status are stable ([Versioning](versioning.md)). `noxc --help` is Turkish when `LANG` starts with `tr`.
 
 ## Performance
 

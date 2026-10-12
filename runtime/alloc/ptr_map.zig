@@ -112,7 +112,7 @@ pub fn PtrMap(comptime V: type) type {
             const key: usize = switch (@typeInfo(@TypeOf(ptr))) {
                 .pointer => @intFromPtr(ptr),
                 .int, .comptime_int => ptr,
-                else => @compileError("PtrMap anahtarı işaretçi/usize olmalı"),
+                else => @compileError("PtrMap key must be a pointer/usize"),
             };
             std.debug.assert(key > TOMBSTONE);
             return key;

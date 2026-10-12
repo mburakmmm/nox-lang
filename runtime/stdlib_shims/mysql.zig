@@ -201,7 +201,7 @@ pub export fn nox_mysql_status_ok_raw(conn: ?*anyopaque) callconv(.c) i64 {
 }
 
 pub export fn nox_mysql_errmsg_raw(rt: ?*anyopaque, conn: ?*anyopaque) callconv(.c) ?[*:0]u8 {
-    if (!ensureLoaded()) return dupeToNoxStr(rt, "libmysqlclient yuklenemedi (sistemde kurulu degil olabilir)");
+    if (!ensureLoaded()) return dupeToNoxStr(rt, "could not load libmysqlclient (it may not be installed on the system)");
     const msg = g_funcs.err(conn) orelse return dupeEmpty(rt);
     return dupeToNoxStr(rt, std.mem.span(msg));
 }

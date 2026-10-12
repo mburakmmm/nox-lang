@@ -280,7 +280,7 @@ pub fn internPinnedStringConst(self: *Codegen, s: []const u8) CodegenError![]con
 /// değişkeni/fonksiyon bulamadığı bir iç tutarsızlıktır — ör. modül-global ilklendiricisinde terfi
 /// etmemiş bir üst düzey değişken).
 noinline fn unresolvedIdentifier(self: *Codegen, name: []const u8) CodegenError {
-    std.debug.print("codegen: '{s}' adı bu noktada çözümlenemedi (satır {d}): ne bir yerel/parametre, ne bir modül değişkeni, ne de üst düzey bir fonksiyon olarak codegen'e görünür. Modül-global ilklendiricilerinde bu, adın terfi etmemiş bir üst düzey değişkene işaret etmesi anlamına gelebilir\n", .{ name, self.current_raise_line });
+    std.debug.print("codegen: name '{s}' could not be resolved at this point (line {d}): it is not visible to codegen as a local/parameter, a module variable or a top-level function. In module-global initialisers this can mean the name refers to an unpromoted top-level variable\n", .{ name, self.current_raise_line });
     return error.Unsupported;
 }
 
@@ -602,7 +602,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         const cold_start = self.beginCold();
         try self.qbeLabel(err_label);
 
-        const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
+        const msg_value = try self.emitStringLiteral("list index out of range");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
         try self.emitExceptionLineStore(ie_obj.text, "IndexError", self.current_raise_line);
@@ -703,7 +703,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         const cold_start = self.beginCold();
         try self.qbeLabel(err_label);
 
-        const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
+        const msg_value = try self.emitStringLiteral("str index out of range");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
         try self.emitExceptionLineStore(ie_obj.text, "IndexError", self.current_raise_line);
@@ -1924,7 +1924,7 @@ pub fn genCheckedShift(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) C
     const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
 
-    const msg_value = try self.emitStringLiteral("kaydirma miktari gecersiz (negatif ya da tipin bit genisligini asiyor)");
+    const msg_value = try self.emitStringLiteral("invalid shift amount (negative or exceeds the type's bit width)");
     const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
     const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
     try self.emitExceptionLineStore(ve_obj.text, "ValueError", self.current_raise_line);
@@ -2401,6 +2401,17 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
             return;
         }
     }
+    // v2.0: kendine gönderme yapan sınıf (ör. `JsonValue`: `list[JsonValue]` alanı) satır içi açılımda SONSUZ özyinelerdi
+    // (derleyici yığın taşması/SIGSEGV). Yazdırma yığınında zaten bulunan sınıf `Ad(...)` ile kısaltılır (Python'un `...`'ı gibi).
+    for (self.print_class_stack.items) |active| {
+        if (std.mem.eql(u8, active, class_name)) {
+            const elided = try self.internFmtString(try std.fmt.allocPrint(self.allocator, "{s}(...)", .{class_name}));
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = elided }});
+            return;
+        }
+    }
+    try self.print_class_stack.append(self.allocator, class_name);
+    defer _ = self.print_class_stack.pop();
     const open_sym = try self.internFmtString(try std.fmt.allocPrint(self.allocator, "{s}(", .{class_name}));
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = open_sym }});
     for (cinfo.fields.items, 0..) |f, i| {

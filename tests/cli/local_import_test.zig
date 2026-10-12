@@ -302,7 +302,7 @@ test "U.2: gercekten var olmayan proje-ici modul acik hata mesajiyla basarisiz o
     defer std.testing.allocator.free(result.stderr);
 
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "bilinmeyen alias") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unknown alias") != null);
 }
 
 // Bulundu (task_32f43efe, bkz. proje belleği "noxc add/delete/publish +
@@ -411,7 +411,7 @@ test "U.2: nox.json olmadan (manifestsiz) proje-ici import ESKI davranisla basar
     defer std.testing.allocator.free(result.stderr);
 
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "stdlib modülü bulunamadı") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "stdlib module not found") != null);
 }
 
 // Bulundu (bkz. `.github/workflows/external-fixtures.yml`nin Nyx işi, HER

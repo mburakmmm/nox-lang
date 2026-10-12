@@ -139,14 +139,14 @@ fn strPtrToPayload(ptr: [*:0]const u8) i64 {
 fn childThreadMain(ctx: *ChildCtx) void {
     defer std.heap.page_allocator.destroy(ctx);
 
-    const child_rt = asap.nox_runtime_init() orelse @panic("nox.thread: RuntimeState baslatilamadi");
+    const child_rt = asap.nox_runtime_init() orelse @panic("nox.thread: RuntimeState could not be started");
     bridge.nox_async_init(child_rt);
 
     const closure = std.heap.page_allocator.create(ThreadEntryClosure) catch @panic("OOM: nox.thread closure");
     defer std.heap.page_allocator.destroy(closure);
     closure.rt = child_rt;
     if (ctx.arg_is_str_bytes) |bytes| {
-        const cloned = str_mod.nox_str_from_bytes(child_rt, bytes) orelse @panic("OOM: nox.thread arg klonu");
+        const cloned = str_mod.nox_str_from_bytes(child_rt, bytes) orelse @panic("OOM: nox.thread arg clone");
         std.heap.page_allocator.free(bytes);
         closure.payload = strPtrToPayload(cloned);
     } else {
@@ -160,7 +160,7 @@ fn childThreadMain(ctx: *ChildCtx) void {
 
     if (ctx.result_is_str) {
         const result_ptr = payloadToStrPtr(result_payload);
-        const bytes_copy = std.heap.page_allocator.dupe(u8, std.mem.span(result_ptr)) catch @panic("OOM: nox.thread sonuc hazirligi");
+        const bytes_copy = std.heap.page_allocator.dupe(u8, std.mem.span(result_ptr)) catch @panic("OOM: nox.thread result preparation");
         str_mod.nox_str_release(child_rt, @constCast(result_ptr));
         ctx.handle.result_is_str_bytes = bytes_copy;
     } else {

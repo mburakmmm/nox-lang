@@ -87,7 +87,7 @@ def parse(s: str) -> URL:
 
     scheme_sep_idx: int = nox.strings.index_of(rest, "://")
     if scheme_sep_idx < 0:
-        raise UrlError("URL'de sema (scheme://) yok: " + s)
+        raise UrlError("no scheme (scheme://) in the URL: " + s)
     scheme: str = _substr(rest, 0, scheme_sep_idx)
     after_scheme: str = _substr(rest, scheme_sep_idx + 3, len(rest))
 
@@ -114,7 +114,7 @@ def parse(s: str) -> URL:
         try:
             port = int(port_str)
         except ValueError:
-            raise UrlError("gecersiz port: " + port_str)
+            raise UrlError("invalid port: " + port_str)
 
     query: dict[str, str] = query_decode(query_str)
     return URL(scheme, userinfo, host, port, path, query, fragment)
@@ -184,7 +184,7 @@ def _hex_val(ch: str) -> int:
         return 14
     if ch == "f" or ch == "F":
         return 15
-    raise UrlError("gecersiz hex basamak: " + ch)
+    raise UrlError("invalid hex digit: " + ch)
 
 # `%XX` dizilerini gerçek baytlara çözer (`nox.strings.char_from_byte`
 # İLE) — ardışık `%XX`ler (ör. "é" İçin "%C3%A9") baytları TEK TEK
@@ -199,7 +199,7 @@ def percent_decode(s: str) -> str:
         ch: str = s[i]
         if ch == "%":
             if i + 2 >= n:
-                raise UrlError("eksik percent-encoding: " + s)
+                raise UrlError("incomplete percent-encoding: " + s)
             hi: int = _hex_val(s[i + 1])
             lo: int = _hex_val(s[i + 2])
             out = out + nox.strings.char_from_byte(hi * 16 + lo)
@@ -231,12 +231,12 @@ def query_encode(params: dict[str, str]) -> str:
 # YAZMAK ZORUNDA KALMAZ, TEK bir hata TÜRÜ yeterlidir.
 def query_int(q: dict[str, str], key: str) -> int:
     if not q.contains(key):
-        raise ValueError("sorgu parametresi eksik: " + key)
+        raise ValueError("missing query parameter: " + key)
     return int(q[key])
 
 def query_float(q: dict[str, str], key: str) -> float:
     if not q.contains(key):
-        raise ValueError("sorgu parametresi eksik: " + key)
+        raise ValueError("missing query parameter: " + key)
     return float(q[key])
 
 # `"true"`/`"1"` -> `True`, `"false"`/`"0"` -> `False` — BAŞKA HERHANGİ
@@ -245,13 +245,13 @@ def query_float(q: dict[str, str], key: str) -> float:
 # bir YAZIM hatasını GİZLEMEMEK İçİn bilinçli bir seçim).
 def query_bool(q: dict[str, str], key: str) -> bool:
     if not q.contains(key):
-        raise ValueError("sorgu parametresi eksik: " + key)
+        raise ValueError("missing query parameter: " + key)
     v: str = q[key]
     if v == "true" or v == "1":
         return True
     if v == "false" or v == "0":
         return False
-    raise ValueError("sorgu parametresi gecersiz bool degeri: " + key + "=" + v)
+    raise ValueError("invalid bool value for query parameter: " + key + "=" + v)
 
 def query_decode(s: str) -> dict[str, str]:
     result: dict[str, str] = {}

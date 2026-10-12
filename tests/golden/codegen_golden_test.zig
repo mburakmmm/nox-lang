@@ -1472,7 +1472,7 @@ test "codegen: darboğaz #4 — `List_priml_eq`nin gövdesinde ARTIK `alloc8` (�
 // hesaplı keyfi bir ifade OLABİLİYORDU — `runtime/hpy_bridge/loader.zig`nin
 // doğrulamasız `std.DynLib.open`ı ile birleşince bu, SIRADAN Nox kodundan
 // ulaşılabilen bir "keyfi native kütüphane yükle" ilkeliydi. Checker artık
-// bu üçünün DERLEME-ZAMANI string LİTERALİ olmasını ZORUNLU kılıyor.
+// bu üçünün DERLEME-ZAMANI string LITERAL olmasını ZORUNLU kılıyor.
 test "codegen: Güvenlik H-1 — hpy_call'ın yol argümanı çalışma-zamanı değişkeniyse REDDEDİLİR (yalnızca string literali)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1485,7 +1485,7 @@ test "codegen: Güvenlik H-1 — hpy_call'ın yol argümanı çalışma-zamanı 
         .ok => return error.ExpectedTypeErrorButGotOk,
         .err => |e| {
             try std.testing.expectEqual(error.TypeMismatch, e.code);
-            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LİTERALİ") != null);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LITERAL") != null);
         },
     }
 }
@@ -1505,13 +1505,13 @@ test "codegen: Güvenlik H-1 — hpy_open'ın yol argümanı çalışma-zamanı 
         .ok => return error.ExpectedTypeErrorButGotOk,
         .err => |e| {
             try std.testing.expectEqual(error.TypeMismatch, e.code);
-            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LİTERALİ") != null);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LITERAL") != null);
         },
     }
 }
 
 // Faz 16: `hpy_call_on`nin `fonksiyon_adı` argümanı da (`hpy_call`nin AYNI
-// TUTARLILIK kararıyla) SADECE string LİTERALİ olabilir.
+// TUTARLILIK kararıyla) SADECE string LITERAL olabilir.
 test "codegen: hpy_call_on'ın fonksiyon_adı argümanı çalışma-zamanı değişkeniyse REDDEDİLİR (yalnızca string literali)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1524,7 +1524,7 @@ test "codegen: hpy_call_on'ın fonksiyon_adı argümanı çalışma-zamanı değ
         .ok => return error.ExpectedTypeErrorButGotOk,
         .err => |e| {
             try std.testing.expectEqual(error.TypeMismatch, e.code);
-            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LİTERALİ") != null);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LITERAL") != null);
         },
     }
 }
@@ -1545,7 +1545,7 @@ test "codegen: hpy_call_on'a list[list[int]] (iç içe konteyner) argümanı RED
         .ok => return error.ExpectedTypeErrorButGotOk,
         .err => |e| {
             try std.testing.expectEqual(error.TypeMismatch, e.code);
-            try std.testing.expect(std.mem.indexOf(u8, e.message, "marshal EDİLEMEZ") != null);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "CANNOT be marshalled") != null);
         },
     }
 }
@@ -1566,7 +1566,7 @@ test "codegen: hpy_call_on'a nested-alanlı bir class argümanı REDDEDİLİR" {
         .ok => return error.ExpectedTypeErrorButGotOk,
         .err => |e| {
             try std.testing.expectEqual(error.TypeMismatch, e.code);
-            try std.testing.expect(std.mem.indexOf(u8, e.message, "marshal EDİLEMEZ") != null);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "CANNOT be marshalled") != null);
         },
     }
 }

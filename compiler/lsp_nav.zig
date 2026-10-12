@@ -61,29 +61,29 @@ const BuiltinDoc = struct { name: []const u8, detail: []const u8 };
 // checker'ın KENDİ yerleşik listesiyle senkron TUTULMALIDIR (bu dosyanın
 // TEK elle-bakım gerektiren yeri).
 const builtins = [_]BuiltinDoc{
-    .{ .name = "print", .detail = "def print(*args) -> None  (yerlesik)" },
-    .{ .name = "len", .detail = "def len(x) -> int  (yerlesik)" },
-    .{ .name = "input", .detail = "def input(prompt: str = \"\") -> str  (yerlesik)" },
-    .{ .name = "abs", .detail = "def abs(x)  (yerlesik, sayisal tipi korur)" },
-    .{ .name = "min", .detail = "def min(*args)  (yerlesik, sayisal tipi korur)" },
-    .{ .name = "max", .detail = "def max(*args)  (yerlesik, sayisal tipi korur)" },
-    .{ .name = "round", .detail = "def round(x: float) -> int  (yerlesik)" },
-    .{ .name = "sum", .detail = "def sum(xs: list[...])  (yerlesik)" },
-    .{ .name = "sorted", .detail = "def sorted(xs, key=None, reverse=False) -> list  (yerlesik)" },
-    .{ .name = "reversed", .detail = "def reversed(xs) -> list  (yerlesik)" },
-    .{ .name = "list", .detail = "def list(iterable) -> list  (yerlesik: list/str/dict/range)" },
-    .{ .name = "bool", .detail = "def bool(x) -> bool  (yerlesik)" },
-    .{ .name = "any", .detail = "def any(xs: list[bool]) -> bool  (yerlesik)" },
-    .{ .name = "all", .detail = "def all(xs: list[bool]) -> bool  (yerlesik)" },
-    .{ .name = "divmod", .detail = "def divmod(a: int, b: int) -> tuple[int, int]  (yerlesik)" },
-    .{ .name = "chr", .detail = "def chr(cp: int) -> str  (yerlesik)" },
-    .{ .name = "ord", .detail = "def ord(s: str) -> int  (yerlesik)" },
-    .{ .name = "map", .detail = "def map(f, xs) -> list  (yerlesik, tembel degil)" },
-    .{ .name = "filter", .detail = "def filter(f, xs) -> list  (yerlesik, tembel degil)" },
-    .{ .name = "enumerate", .detail = "def enumerate(xs) -> list[tuple[int, T]]  (yerlesik)" },
-    .{ .name = "set", .detail = "def set(iterable) -> set[T]  (yerlesik; set() icin tip bildirin)" },
-    .{ .name = "repr", .detail = "def repr(x) -> str  (yerlesik)" },
-    .{ .name = "zip", .detail = "def zip(a, b) -> list[tuple]  (yerlesik)" },
+    .{ .name = "print", .detail = "def print(*args) -> None  (builtin)" },
+    .{ .name = "len", .detail = "def len(x) -> int  (builtin)" },
+    .{ .name = "input", .detail = "def input(prompt: str = \"\") -> str  (builtin)" },
+    .{ .name = "abs", .detail = "def abs(x)  (builtin, keeps the numeric type)" },
+    .{ .name = "min", .detail = "def min(*args)  (builtin, keeps the numeric type)" },
+    .{ .name = "max", .detail = "def max(*args)  (builtin, keeps the numeric type)" },
+    .{ .name = "round", .detail = "def round(x: float) -> int  (builtin)" },
+    .{ .name = "sum", .detail = "def sum(xs: list[...])  (builtin)" },
+    .{ .name = "sorted", .detail = "def sorted(xs, key=None, reverse=False) -> list  (builtin)" },
+    .{ .name = "reversed", .detail = "def reversed(xs) -> list  (builtin)" },
+    .{ .name = "list", .detail = "def list(iterable) -> list  (builtin: list/str/dict/range)" },
+    .{ .name = "bool", .detail = "def bool(x) -> bool  (builtin)" },
+    .{ .name = "any", .detail = "def any(xs: list[bool]) -> bool  (builtin)" },
+    .{ .name = "all", .detail = "def all(xs: list[bool]) -> bool  (builtin)" },
+    .{ .name = "divmod", .detail = "def divmod(a: int, b: int) -> tuple[int, int]  (builtin)" },
+    .{ .name = "chr", .detail = "def chr(cp: int) -> str  (builtin)" },
+    .{ .name = "ord", .detail = "def ord(s: str) -> int  (builtin)" },
+    .{ .name = "map", .detail = "def map(f, xs) -> list  (builtin, not lazy)" },
+    .{ .name = "filter", .detail = "def filter(f, xs) -> list  (builtin, not lazy)" },
+    .{ .name = "enumerate", .detail = "def enumerate(xs) -> list[tuple[int, T]]  (builtin)" },
+    .{ .name = "set", .detail = "def set(iterable) -> set[T]  (builtin; declare the type for set())" },
+    .{ .name = "repr", .detail = "def repr(x) -> str  (builtin)" },
+    .{ .name = "zip", .detail = "def zip(a, b) -> list[tuple]  (builtin)" },
 };
 
 const keywords = [_][]const u8{
@@ -202,7 +202,7 @@ fn collectTopLevel(a: std.mem.Allocator, module: ast.Module, out: *std.StringHas
                 try out.put(a, fd.name, .{ .name = fd.name, .kind = .function, .detail = try funcSignature(a, fd), .span = s.span });
             },
             .class_def => |cd| {
-                const detail = try std.fmt.allocPrint(a, "class {s}  ({d} metod)", .{ cd.name, cd.methods.len });
+                const detail = try std.fmt.allocPrint(a, "class {s}  ({d} methods)", .{ cd.name, cd.methods.len });
                 try out.put(a, cd.name, .{ .name = cd.name, .kind = .class, .detail = detail, .span = s.span });
                 for (cd.methods) |m| {
                     try out.put(a, m.name, .{ .name = m.name, .kind = .function, .detail = try funcSignature(a, m), .span = spanOfBody(m.body) });
@@ -231,7 +231,7 @@ fn collectScopeAt(a: std.mem.Allocator, body: []const ast.Stmt, line1: u32, syms
             .func_def => |fd| {
                 if (lineInSpan(s.span, line1)) {
                     for (fd.params) |p| {
-                        const detail = try std.fmt.allocPrint(a, "{s}: {s}  (parametre)", .{ p.name, try typeExprToString(a, p.type_expr) });
+                        const detail = try std.fmt.allocPrint(a, "{s}: {s}  (parameter)", .{ p.name, try typeExprToString(a, p.type_expr) });
                         try syms.put(a, p.name, .{ .name = p.name, .kind = .parameter, .detail = detail, .span = s.span });
                     }
                     try collectScopeAt(a, fd.body, line1, syms);
@@ -242,7 +242,7 @@ fn collectScopeAt(a: std.mem.Allocator, body: []const ast.Stmt, line1: u32, syms
                     const mspan = spanOfBody(m.body);
                     if (lineInSpan(mspan, line1)) {
                         for (m.params) |p| {
-                            const detail = try std.fmt.allocPrint(a, "{s}: {s}  (parametre)", .{ p.name, try typeExprToString(a, p.type_expr) });
+                            const detail = try std.fmt.allocPrint(a, "{s}: {s}  (parameter)", .{ p.name, try typeExprToString(a, p.type_expr) });
                             try syms.put(a, p.name, .{ .name = p.name, .kind = .parameter, .detail = detail, .span = mspan });
                         }
                         try collectScopeAt(a, m.body, line1, syms);
@@ -256,7 +256,7 @@ fn collectScopeAt(a: std.mem.Allocator, body: []const ast.Stmt, line1: u32, syms
             },
             .while_stmt => |w| try collectScopeAt(a, w.body, line1, syms),
             .for_stmt => |f| {
-                const detail = try std.fmt.allocPrint(a, "{s}  (for degiskeni)", .{f.var_name});
+                const detail = try std.fmt.allocPrint(a, "{s}  (for variable)", .{f.var_name});
                 try syms.put(a, f.var_name, .{ .name = f.var_name, .kind = .local_var, .detail = detail, .span = s.span });
                 try collectScopeAt(a, f.body, line1, syms);
             },
@@ -264,7 +264,7 @@ fn collectScopeAt(a: std.mem.Allocator, body: []const ast.Stmt, line1: u32, syms
                 try collectScopeAt(a, t.try_body, line1, syms);
                 for (t.except_clauses) |ec| {
                     if (ec.bind_name) |bn| {
-                        const detail = try std.fmt.allocPrint(a, "{s}  (except degiskeni)", .{bn});
+                        const detail = try std.fmt.allocPrint(a, "{s}  (except variable)", .{bn});
                         try syms.put(a, bn, .{ .name = bn, .kind = .local_var, .detail = detail, .span = s.span });
                     }
                     try collectScopeAt(a, ec.body, line1, syms);
@@ -308,7 +308,7 @@ pub fn resolveAt(a: std.mem.Allocator, module: ast.Module, line1: u32, name: []c
         if (std.mem.eql(u8, b.name, name)) return .{ .detail = b.detail, .span = .{} };
     }
     for (keywords) |kw| {
-        if (std.mem.eql(u8, kw, name)) return .{ .detail = "anahtar kelime", .span = .{} };
+        if (std.mem.eql(u8, kw, name)) return .{ .detail = "keyword", .span = .{} };
     }
     return null;
 }
@@ -332,6 +332,6 @@ pub fn completionItems(a: std.mem.Allocator, module: ast.Module, line1: u32) ![]
         if (!scope.contains(entry.key_ptr.*)) try out.append(a, entry.value_ptr.*);
     }
     for (builtins) |b| try out.append(a, .{ .name = b.name, .kind = .builtin, .detail = b.detail });
-    for (keywords) |kw| try out.append(a, .{ .name = kw, .kind = .keyword, .detail = "anahtar kelime" });
+    for (keywords) |kw| try out.append(a, .{ .name = kw, .kind = .keyword, .detail = "keyword" });
     return out.toOwnedSlice(a);
 }

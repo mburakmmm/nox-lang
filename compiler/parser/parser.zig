@@ -1058,7 +1058,7 @@ pub const Parser = struct {
                 _ = self.advance();
                 const negated = self.match(.kw_not);
                 if (!self.check(.kw_none)) {
-                    self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "'is' yalnızca 'None' ile kullanılabilir (x is None / x is not None)" };
+                    self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "'is' can only be used with 'None' (x is None / x is not None)" };
                     return error.UnexpectedToken;
                 }
                 _ = self.advance();
@@ -1658,9 +1658,9 @@ pub const Parser = struct {
                     i += 2;
                     continue;
                 }
-                const close = std.mem.indexOfScalarPos(u8, lit, i + 1, '}') orelse return bad.at(self, "str.format: kapanmamış '{' alanı");
+                const close = std.mem.indexOfScalarPos(u8, lit, i + 1, '}') orelse return bad.at(self, "str.format: unclosed '{' field");
                 const field = lit[i + 1 .. close];
-                if (std.mem.indexOfScalar(u8, field, '{') != null) return bad.at(self, "str.format: iç içe '{}' alanları desteklenmiyor");
+                if (std.mem.indexOfScalar(u8, field, '{') != null) return bad.at(self, "str.format: nested '{}' fields are not supported");
                 var name_end = field.len;
                 var spec: []const u8 = "";
                 if (std.mem.indexOfScalar(u8, field, ':')) |ci| {
@@ -1670,30 +1670,30 @@ pub const Parser = struct {
                 var name = field[0..name_end];
                 if (std.mem.indexOfScalar(u8, name, '!')) |bi| {
                     const conv = name[bi + 1 ..];
-                    if (!std.mem.eql(u8, conv, "s")) return bad.at(self, "str.format: '!r'/'!a' dönüşümü desteklenmiyor");
+                    if (!std.mem.eql(u8, conv, "s")) return bad.at(self, "str.format: the '!r'/'!a' conversion is not supported");
                     name = name[0..bi];
                 }
-                if (std.mem.indexOfAny(u8, name, ".[") != null) return bad.at(self, "str.format: öznitelik/indeks alanları desteklenmiyor — f-string kullanın");
+                if (std.mem.indexOfAny(u8, name, ".[") != null) return bad.at(self, "str.format: attribute/index fields are not supported — use an f-string");
                 var arg_expr: ast.Expr = undefined;
                 if (name.len == 0 or (name[0] >= '0' and name[0] <= '9')) {
                     const idx: usize = if (name.len == 0) blk: {
                         const k = next_auto;
                         next_auto += 1;
                         break :blk k;
-                    } else std.fmt.parseInt(usize, name, 10) catch return bad.at(self, "str.format: geçersiz alan indeksi");
-                    if (idx >= positional.items.len) return bad.at(self, "str.format: yeterli konumsal argüman yok");
+                    } else std.fmt.parseInt(usize, name, 10) catch return bad.at(self, "str.format: invalid field index");
+                    if (idx >= positional.items.len) return bad.at(self, "str.format: not enough positional arguments");
                     uses_pos[idx] += 1;
                     arg_expr = positional.items[idx];
-                    if (uses_pos[idx] > 1 and !isPureExpr(arg_expr)) return bad.at(self, "str.format: aynı argüman birden çok alanda kullanılıyorsa yan etkisiz olmalı");
+                    if (uses_pos[idx] > 1 and !isPureExpr(arg_expr)) return bad.at(self, "str.format: an argument used by several fields must be free of side effects");
                 } else {
                     var found: ?usize = null;
                     for (kw_names.items, 0..) |kn, ki| {
                         if (std.mem.eql(u8, kn, name)) found = ki;
                     }
-                    const ki = found orelse return bad.at(self, "str.format: bilinmeyen adlı alan");
+                    const ki = found orelse return bad.at(self, "str.format: unknown named field");
                     uses_kw[ki] += 1;
                     arg_expr = kw_vals.items[ki];
-                    if (uses_kw[ki] > 1 and !isPureExpr(arg_expr)) return bad.at(self, "str.format: aynı argüman birden çok alanda kullanılıyorsa yan etkisiz olmalı");
+                    if (uses_kw[ki] > 1 and !isPureExpr(arg_expr)) return bad.at(self, "str.format: an argument used by several fields must be free of side effects");
                 }
                 if (lit_buf.items.len > 0) {
                     try pieces.append(self.allocator, .{ .string_lit = try lit_buf.toOwnedSlice(self.allocator) });
@@ -1714,7 +1714,7 @@ pub const Parser = struct {
                     i += 2;
                     continue;
                 }
-                return bad.at(self, "str.format: eşleşmemiş '}'");
+                return bad.at(self, "str.format: unmatched '}'");
             }
             try lit_buf.append(self.allocator, ch);
             i += 1;
@@ -1845,13 +1845,13 @@ pub const Parser = struct {
                     if (conv == 's') {
                         expr_text = expr_text[0 .. expr_text.len - 2];
                     } else if (conv == 'r' or conv == 'a') {
-                        self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "f-string '!r'/'!a' dönüşümü desteklenmiyor — str() ya da açık biçimlendirme kullanın" };
+                        self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "f-string '!r'/'!a' conversion is not supported — use str() or explicit formatting" };
                         return error.UnexpectedToken;
                     }
                 }
                 if (fmt_spec) |fs| {
                     if (std.mem.indexOfScalar(u8, fs, '{') != null) {
-                        self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "f-string biçim belirtecinde iç içe `{}` alanı desteklenmiyor" };
+                        self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "nested `{}` fields are not supported in an f-string format spec" };
                         return error.UnexpectedToken;
                     }
                     if (fs.len == 0) fmt_spec = null;

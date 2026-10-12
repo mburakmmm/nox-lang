@@ -56,7 +56,7 @@ generator expressions (eager), `set[T]`, `__iter__`, generic methods and classes
 ## 4. Known limits that may matter when porting
 
 `*args`/`**kwargs`, multiple inheritance, class-level attributes, annotated `self.x: T = v`, empty `[]`/`{}` literals nested inside other literals, and `list[Task[T]]` are not supported; a protocol cannot be an element type
-(`list[Protocol]`); `set` elements are `int`, `float`, `bool` or `str`; generator expressions are evaluated eagerly; diagnostics and library messages are currently Turkish. See [Differences from Python](../language/python-differences.md).
+(`list[Protocol]`); `set` elements are `int`, `float`, `bool` or `str`; generator expressions are evaluated eagerly. See [Differences from Python](../language/python-differences.md).
 
 ## 5. Checklist
 

@@ -481,7 +481,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
 
-    const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
+    const msg_value = try self.emitStringLiteral("list index out of range");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
     try self.emitExceptionLineStore(ie_obj.text, "IndexError", self.current_raise_line);
@@ -617,7 +617,7 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     try self.qbeJnz(contains_t, ok_label, err_label);
     try self.qbeLabel(err_label);
 
-    const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
+    const msg_value = try self.emitStringLiteral("key not found");
     const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
     const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
     try self.emitExceptionLineStore(ke_obj.text, "KeyError", self.current_raise_line);
@@ -954,7 +954,7 @@ pub fn genDel(self: *Codegen, e: ast.Expr) CodegenError!void {
     const ok_label = try self.newLabel("dict_del_ok");
     try self.qbeJnz(removed, ok_label, err_label);
     try self.qbeLabel(err_label);
-    const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
+    const msg_value = try self.emitStringLiteral("key not found");
     const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
     const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
     try self.emitExceptionLineStore(ke_obj.text, "KeyError", self.current_raise_line);
@@ -1081,7 +1081,7 @@ pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenEr
         try self.qbeJnzCold(zero_t, zerr_label, zok_label);
         const cold_start = self.beginCold();
         try self.qbeLabel(zerr_label);
-        const zmsg = try self.emitStringLiteral("range() adimi sifir olamaz");
+        const zmsg = try self.emitStringLiteral("range() step cannot be zero");
         const zve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
         const zve_obj = try self.genConstructFromValues("ValueError", zve_cinfo, &.{zmsg}, null);
         try self.emitExceptionLineStore(zve_obj.text, "ValueError", self.current_raise_line);

@@ -71,19 +71,11 @@ pub fn isDirOnPath(path_env: []const u8, bin_dir_path: []const u8) bool {
 /// OTOMATİK DÜZENLEMEZ (bkz. modül üstü not, "kalıcı yapılandırma
 /// değişikliği" — rustup/`go install`in varsayılan davranışıyla TUTARLI,
 /// pipx'in `ensurepath`ının AKSİNE).
-pub fn printPathHint(bin_dir_path: []const u8, is_tr: bool) void {
+pub fn printPathHint(bin_dir_path: []const u8) void {
     if (builtin.os.tag == .windows) {
-        if (is_tr) {
-            std.debug.print("not: '{s}' PATH'inizde gorunmuyor — kalici olarak eklemek icin: setx PATH \"{s};%PATH%\"\n", .{ bin_dir_path, bin_dir_path });
-        } else {
-            std.debug.print("note: '{s}' is not on your PATH — to add it permanently: setx PATH \"{s};%PATH%\"\n", .{ bin_dir_path, bin_dir_path });
-        }
+        std.debug.print("note: '{s}' is not on your PATH — to add it permanently: setx PATH \"{s};%PATH%\"\n", .{ bin_dir_path, bin_dir_path });
     } else {
-        if (is_tr) {
-            std.debug.print("not: '{s}' PATH'inizde gorunmuyor — shell profilinize ekleyin:\n  export PATH=\"{s}:$PATH\"\n", .{ bin_dir_path, bin_dir_path });
-        } else {
-            std.debug.print("note: '{s}' is not on your PATH — add this to your shell profile:\n  export PATH=\"{s}:$PATH\"\n", .{ bin_dir_path, bin_dir_path });
-        }
+        std.debug.print("note: '{s}' is not on your PATH — add this to your shell profile:\n  export PATH=\"{s}:$PATH\"\n", .{ bin_dir_path, bin_dir_path });
     }
 }
 

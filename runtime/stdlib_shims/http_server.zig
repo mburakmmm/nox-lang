@@ -343,12 +343,12 @@ export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyo
 /// TUTARLI) YİNE DE "sunucu hiçbir şey yapmadan döner" olarak kalır.
 fn logTlsCtxFailure(reason: tls_server.CtxError) void {
     const msg = switch (reason) {
-        .lib_load_failed => "libssl yuklenemedi (kurulu degil olabilir, ya da NOX_OPENSSL_LIB/PATH uzerinden bulunamadi)",
-        .cert_file_failed => "sertifika dosyasi kullanilamadi (yol yanlis olabilir ya da PEM formatinda degil)",
-        .key_file_failed => "anahtar dosyasi kullanilamadi (yol yanlis olabilir ya da PEM formatinda degil)",
-        .key_mismatch => "anahtar sertifikayla eslesmiyor",
+        .lib_load_failed => "could not load libssl (it may not be installed, or it was not found via NOX_OPENSSL_LIB/PATH)",
+        .cert_file_failed => "could not use the certificate file (the path may be wrong or it is not in PEM format)",
+        .key_file_failed => "could not use the key file (the path may be wrong or it is not in PEM format)",
+        .key_mismatch => "the key does not match the certificate",
     };
-    std.debug.print("nox.http.serve_tls: TLS baglami olusturulamadi: {s}\n", .{msg});
+    std.debug.print("nox.http.serve_tls: could not create the TLS context: {s}\n", .{msg});
 }
 
 /// Faz "sunucu-tarafı TLS": `nox_http_server_listen`in AYNISI, AMA

@@ -7,12 +7,12 @@ noxc test
 ```
 
 ```text
-GECTI: /path/mathutil_test.nox
+PASSED: /path/mathutil_test.nox
 
-1 gecti, 0 basarisiz (1 toplam)
+1 passed, 0 failed (1 total)
 ```
 
-(`GECTI`/`gecti` = "passed", `basarisiz` = "failed"; the wording is currently Turkish, the exit status is the contract: `0` when every file passes, `1` otherwise.)
+(`PASSED` / `FAILED`; the exit status is the contract: `0` when every file passes, `1` otherwise.)
 
 ## Writing tests
 

@@ -17,21 +17,21 @@ for a in "$@"; do
     case "$a" in
         --tag) do_tag=1 ;;
         --stress) do_stress=1 ;;
-        *) echo "bilinmeyen bayrak: $a" >&2; exit 2 ;;
+        *) echo "unknown flag: $a" >&2; exit 2 ;;
     esac
 done
 
-fail() { echo "SÜRÜM KAPISI KIRMIZI: $*" >&2; exit 1; }
+fail() { echo "RELEASE GATE RED: $*" >&2; exit 1; }
 step() { echo; echo "== $* =="; }
 
 step "1/7 sürüm tutarlılığı"
 version="$(grep -o '\.version = "[^"]*"' build.zig.zon | sed -E 's/\.version = "([^"]*)"/\1/')"
-[ -n "$version" ] || fail "build.zig.zon'da .version yok"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || fail "geçersiz semver: $version"
-grep -q "^## \[$version\]" CHANGELOG.md || fail "CHANGELOG.md'de '## [$version]' bölümü yok"
-if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then fail "v$version etiketi zaten var"; fi
-[ -z "$(git status --porcelain)" ] || fail "çalışma ağacı temiz değil (önce commit edin)"
-echo "sürüm: $version"
+[ -n "$version" ] || fail "no .version in build.zig.zon"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || fail "invalid semver: $version"
+grep -q "^## \[$version\]" CHANGELOG.md || fail "CHANGELOG.md has no '## [$version]' section"
+if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then fail "tag v$version already exists"; fi
+[ -z "$(git status --porcelain)" ] || fail "the working tree is not clean (commit first)"
+echo "version: $version"
 
 step "2/7 zig fmt --check"
 zig fmt --check compiler runtime tests build.zig || fail "zig fmt"
@@ -41,10 +41,10 @@ zig build || fail "zig build"
 
 step "4/7 zig build test (IR anlık görüntüleri değişirse ilk koşu onları yeniden üretir, ikinci koşu doğrular)"
 zig build test --summary all || fail "zig build test"
-[ -z "$(git status --porcelain tests/golden/ir_snapshots)" ] || fail "IR anlık görüntüleri değişti; inceleyip commit edin"
+[ -z "$(git status --porcelain tests/golden/ir_snapshots)" ] || fail "IR snapshots changed; review and commit them"
 
 step "5/7 QBE/LLVM fark testi"
-zig build backend-differential-corpus-test || fail "backend fark testi"
+zig build backend-differential-corpus-test || fail "backend differential test"
 
 if [ "$do_stress" = 1 ]; then
     step "6/7 yoğun testler (opt-in)"
@@ -61,7 +61,7 @@ if [ "$do_tag" = 1 ]; then
     git tag "v$version"
     git push origin main
     git push origin "v$version"
-    echo "v$version etiketlendi ve itildi. release.yml ci-gate, CI yeşil olunca yayımlar."
+    echo "v$version was tagged and pushed. The release.yml ci-gate publishes once CI is green."
 else
-    echo "kuru koşu: tüm kontroller yeşil. Etiketlemek için: scripts/release.sh --tag"
+    echo "dry run: all checks are green. To tag: scripts/release.sh --tag"
 fi

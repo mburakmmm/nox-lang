@@ -696,9 +696,9 @@ pub const Checker = struct {
 
     fn fail(self: *Checker, err: TypeError, comptime fmt: []const u8, args: anytype) TypeError {
         const msg = std.fmt.allocPrint(self.allocator, fmt, args) catch
-            "(tanılama mesajı oluşturulamadı: bellek yetersiz)";
+            "(could not build the diagnostic message: out of memory)";
         self.diagnostic = if (self.current_line > 0)
-            std.fmt.allocPrint(self.allocator, "satır {d}: {s}", .{ self.current_line, msg }) catch msg
+            std.fmt.allocPrint(self.allocator, "line {d}: {s}", .{ self.current_line, msg }) catch msg
         else
             msg;
         return err;
@@ -716,7 +716,7 @@ pub const Checker = struct {
     fn enterExprRecursion(self: *Checker) TypeError!void {
         self.expr_depth += 1;
         if (self.expr_depth > MAX_EXPR_DEPTH) {
-            return self.fail(error.TooDeeplyNested, "ifade çok derin iç içe geçmiş (izin verilen en fazla derinlik: {d})", .{MAX_EXPR_DEPTH});
+            return self.fail(error.TooDeeplyNested, "expression nested too deeply (maximum allowed depth: {d})", .{MAX_EXPR_DEPTH});
         }
     }
 
@@ -730,7 +730,7 @@ pub const Checker = struct {
     /// (bir `lowlevel:` bloğunun DIŞINDayız) `LowlevelRequired` hatası verir.
     fn requireLowlevel(self: *Checker, builtin_name: []const u8) TypeError!void {
         if (self.in_lowlevel_depth == 0) {
-            return self.fail(error.LowlevelRequired, "'{s}' yalnızca bir 'lowlevel:' bloğu içinde kullanılabilir", .{builtin_name});
+            return self.fail(error.LowlevelRequired, "'{s}' can only be used inside a 'lowlevel:' block", .{builtin_name});
         }
     }
 
@@ -748,7 +748,7 @@ pub const Checker = struct {
         try self.diagnostics.append(self.allocator, .{
             .code = err,
             .line = self.current_line,
-            .message = self.diagnostic orelse "(mesaj yok)",
+            .message = self.diagnostic orelse "(no message)",
             .span = self.current_span,
         });
     }
@@ -788,12 +788,12 @@ pub const Checker = struct {
                 if (self.from_imports.get(name)) |mangled| {
                     if (self.classes.contains(mangled)) return .{ .class = mangled };
                 }
-                return self.fail(error.UnknownType, "bilinmeyen tip: {s}", .{name});
+                return self.fail(error.UnknownType, "unknown type: {s}", .{name});
             },
             .generic => |g| {
                 // v1.157.0: `tuple[T1, T2, ...]` — sentezlenmiş `tuple__...` sınıfına çözülür (bkz. `instantiateTupleClass`).
                 if (std.mem.eql(u8, g.name, "tuple")) {
-                    if (g.args.len == 0) return self.fail(error.UnknownType, "'tuple' en az bir tip argümanı alır", .{});
+                    if (g.args.len == 0) return self.fail(error.UnknownType, "'tuple' takes at least one type argument", .{});
                     const ts = try self.allocator.alloc(Type, g.args.len);
                     for (g.args, 0..) |ga, i| ts[i] = try self.typeExprToType(ga);
                     return self.instantiateTupleClass(ts);
@@ -806,7 +806,7 @@ pub const Checker = struct {
                 // `dict[K,V]`nin K/V izin-listesi GİBİ).
                 if (std.mem.eql(u8, g.name, "ptr")) {
                     if (g.args.len != 1) {
-                        return self.fail(error.UnknownType, "'ptr' tam olarak bir tip argümanı alır", .{});
+                        return self.fail(error.UnknownType, "'ptr' takes exactly one type argument", .{});
                     }
                     const elem = try self.typeExprToType(g.args[0]);
                     const boxed = try self.allocator.create(Type);
@@ -815,7 +815,7 @@ pub const Checker = struct {
                 }
                 if (std.mem.eql(u8, g.name, "list") or std.mem.eql(u8, g.name, "Task") or std.mem.eql(u8, g.name, "Channel") or std.mem.eql(u8, g.name, "ThreadHandle") or std.mem.eql(u8, g.name, "ThreadChannel") or std.mem.eql(u8, g.name, "TaskLocal")) {
                     if (g.args.len != 1) {
-                        return self.fail(error.UnknownType, "'{s}' tam olarak bir tip argümanı alır", .{g.name});
+                        return self.fail(error.UnknownType, "'{s}' takes exactly one type argument", .{g.name});
                     }
                     const elem = try self.typeExprToType(g.args[0]);
                     // Faz OO.2: `TaskLocal[T]`nin `T`si — `checkGenericConstruct`nin
@@ -823,7 +823,7 @@ pub const Checker = struct {
                     // `TaskLocal[int]` DEĞİŞKEN/ALAN TİPİ bildirimi İçin de)
                     // GEÇERLİDİR.
                     if (std.mem.eql(u8, g.name, "TaskLocal") and (elem == .int or elem == .float or elem == .boolean)) {
-                        return self.fail(error.TypeMismatch, "'TaskLocal[T]'nin T'si bir sınıf/str/list/dict olmalıdır (çıplak int/float/bool v1 kapsamı dışı)", .{});
+                        return self.fail(error.TypeMismatch, "the T of 'TaskLocal[T]' must be a class/str/list/dict (a bare int/float/bool is outside the v1 scope)", .{});
                     }
                     const boxed = try self.allocator.create(Type);
                     boxed.* = elem;
@@ -841,14 +841,14 @@ pub const Checker = struct {
                 // — bkz. nox-teknik-spesifikasyon.md §3.28).
                 if (std.mem.eql(u8, g.name, "dict")) {
                     if (g.args.len != 2) {
-                        return self.fail(error.UnknownType, "'dict' tam olarak iki tip argümanı alır (K, V)", .{});
+                        return self.fail(error.UnknownType, "'dict' takes exactly two type arguments (K, V)", .{});
                     }
                     const key_t = try self.typeExprToType(g.args[0]);
                     const value_t = try self.typeExprToType(g.args[1]);
                     // v1.152.0 (roadmap 1.6b): `float` anahtar eklendi (bit deseniyle hash/eşitlik; 0.0 ve -0.0 AYRI anahtardır,
                     // NaN anahtar kullanılmamalıdır).
                     if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float) {
-                        return self.fail(error.UnknownType, "'dict' anahtar tipi yalnızca int/float/bool/str olabilir", .{});
+                        return self.fail(error.UnknownType, "the 'dict' key type can only be int/float/bool/str", .{});
                     }
                     // Faz OO.4 (bkz. nox-teknik-spesifikasyon.md §3.85):
                     // `.class` DEĞER OLARAK KABUL EDİLİR — `nox_class_
@@ -861,7 +861,7 @@ pub const Checker = struct {
                     // AYRI, DAHA ZOR bir problem — bilinçli kapsam DIŞI).
                     // v1.152.0 (roadmap 1.6b): `list[T]` ve `dict[K2, V2]` değerler eklendi (sözlük `Dict.value_release` ile bırakır).
                     if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .class and value_t != .list and value_t != .dict) {
-                        return self.fail(error.UnknownType, "'dict' değer tipi yalnızca int/float/bool/str/sınıf/list/dict olabilir", .{});
+                        return self.fail(error.UnknownType, "the 'dict' value type can only be int/float/bool/str/class/list/dict", .{});
                     }
                     const key_boxed = try self.allocator.create(Type);
                     key_boxed.* = key_t;
@@ -893,7 +893,7 @@ pub const Checker = struct {
                     for (g.args, 0..) |a, i| bound[i] = try self.typeExprToType(a);
                     return try self.instantiateGenericClass(gcd, bound);
                 }
-                return self.fail(error.UnknownType, "bilinmeyen generic tip: {s}", .{g.name});
+                return self.fail(error.UnknownType, "unknown generic type: {s}", .{g.name});
             },
             // Faz U.4: `(int, int) -> int` — birinci-sınıf fonksiyon/closure
             // tip ifadesi (bkz. nox-teknik-spesifikasyon.md §3.23).
@@ -911,7 +911,7 @@ pub const Checker = struct {
             .optional => |inner_te| {
                 const inner = try self.typeExprToType(inner_te.*);
                 if (inner == .none or inner == .optional) {
-                    return self.fail(error.UnknownType, "'None | None' ya da iç içe Optional geçersizdir", .{});
+                    return self.fail(error.UnknownType, "'None | None' or a nested Optional is invalid", .{});
                 }
                 const boxed = try self.allocator.create(Type);
                 boxed.* = inner;
@@ -928,15 +928,15 @@ pub const Checker = struct {
             .qualified => |raw_segments| {
                 const segments = try self.substituteAlias(raw_segments);
                 if (segments.len < 2) {
-                    return self.fail(error.UnknownType, "gecersiz nitelikli tip adi", .{});
+                    return self.fail(error.UnknownType, "invalid qualified type name", .{});
                 }
                 const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
                 if (!self.imported_modules.contains(module_path)) {
-                    return self.fail(error.UnknownType, "bilinmeyen modul: {s}", .{module_path});
+                    return self.fail(error.UnknownType, "unknown module: {s}", .{module_path});
                 }
                 const mangled = try self.joinSegments(segments, '_');
                 if (self.classes.contains(mangled)) return .{ .class = mangled };
-                return self.fail(error.UnknownType, "'{s}' modulunun '{s}' adli bir sinifi yok", .{ module_path, segments[segments.len - 1] });
+                return self.fail(error.UnknownType, "module '{s}' has no class named '{s}'", .{ module_path, segments[segments.len - 1] });
             },
         }
     }
@@ -1015,7 +1015,7 @@ pub const Checker = struct {
     /// Optional ASLA "otomatik" daraltılmaz.
     fn requireNotOptional(self: *Checker, t: Type, what: []const u8) TypeError!void {
         if (t == .optional) {
-            return self.fail(error.OptionalNotNarrowed, "'{s}' için Optional (T | None) bir değer kullanılamaz — önce 'if ... != None:' ile daraltın", .{what});
+            return self.fail(error.OptionalNotNarrowed, "an Optional (T | None) value cannot be used for '{s}' — narrow it first with 'if ... != None:'", .{what});
         }
     }
 
@@ -1215,15 +1215,15 @@ pub const Checker = struct {
         if (segments.len < 2 or !std.mem.eql(u8, segments[0], "nox")) return;
         const caps = moduleCapabilities(segments[1]) orelse {
             if (self.profile == .freestanding) {
-                return self.fail(error.FreestandingModuleForbidden, "'nox.{s}' modülü 'freestanding' profilinde kullanılamaz (henüz sınıflandırılmamış bir stdlib modülü — güvenli varsayılan: reddet)", .{segments[1]});
+                return self.fail(error.FreestandingModuleForbidden, "module 'nox.{s}' cannot be used in the 'freestanding' profile (a stdlib module that has not been classified yet — safe default: reject)", .{segments[1]});
             }
             return;
         };
         for (caps) |cap| {
             if (profileGrants(self.profile, cap)) continue;
             return switch (self.profile) {
-                .freestanding => self.fail(error.FreestandingModuleForbidden, "'nox.{s}' modülü 'freestanding' profilinde kullanılamaz (gerekli capability: '{s}' — bu profil sağlamıyor)", .{ segments[1], cap.label() }),
-                .hosted => self.fail(error.HostedModuleForbidden, "'nox.{s}' modülü 'hosted' profilinde kullanılamaz (gerekli capability: '{s}' — bu profil sağlamıyor; yalnızca 'freestanding'de kullanılabilir)", .{ segments[1], cap.label() }),
+                .freestanding => self.fail(error.FreestandingModuleForbidden, "module 'nox.{s}' cannot be used in the 'freestanding' profile (required capability: '{s}' — this profile does not provide it)", .{ segments[1], cap.label() }),
+                .hosted => self.fail(error.HostedModuleForbidden, "module 'nox.{s}' cannot be used in the 'hosted' profile (required capability: '{s}' — this profile does not provide it; it is only available in 'freestanding')", .{ segments[1], cap.label() }),
             };
         }
     }
@@ -1336,7 +1336,7 @@ pub const Checker = struct {
             if (stmt.kind == .class_def) {
                 const cd = stmt.kind.class_def;
                 if (self.classes.contains(cd.name) or self.generic_classes.contains(cd.name)) {
-                    return self.fail(error.DuplicateDefinition, "sınıf zaten tanımlı: {s}", .{cd.name});
+                    return self.fail(error.DuplicateDefinition, "class already defined: {s}", .{cd.name});
                 }
                 // v2.0 madde 5 (bkz. nox-teknik-spesifikasyon.md §3.19X):
                 // `@repr("C")`/`@packed` ARTIK tanınan İKİ sınıf decorator'ı
@@ -1365,7 +1365,7 @@ pub const Checker = struct {
                     // (bilerek, generic+kalıtım DESTEKLENMEDİĞİNDEN),
                     // bunu SESSİZCE DÜŞÜRMEK YERİNE burada AÇIKÇA reddedilir.
                     if (cd.base != null) {
-                        return self.fail(error.TypeMismatch, "generic bir sınıfın ('{s}') taban sınıfı olamaz (generic + kalıtım v1 kapsamında desteklenmiyor)", .{cd.name});
+                        return self.fail(error.TypeMismatch, "a generic class ('{s}') cannot have a base class (generic + inheritance is not supported in v1)", .{cd.name});
                     }
                     try self.generic_classes.put(self.allocator, cd.name, cd);
                 } else {
@@ -1452,7 +1452,7 @@ pub const Checker = struct {
         if (cd.type_params.len > 0) return; // generic şablon — registerClassSignatures ZATEN erken döner
         if (self.class_sig_registered.contains(cd.name)) return;
         if (self.class_sig_in_progress.contains(cd.name)) {
-            return self.fail(error.TypeMismatch, "sınıflar arasında döngüsel kalıtım tespit edildi: {s}", .{cd.name});
+            return self.fail(error.TypeMismatch, "cyclic inheritance between classes detected: {s}", .{cd.name});
         }
         try self.class_sig_in_progress.put(self.allocator, cd.name, {});
         if (cd.base) |base_name| {
@@ -1478,10 +1478,10 @@ pub const Checker = struct {
     /// bir bellek düzeni dayatır (bkz. nox-teknik-spesifikasyon.md §3.20).
     fn registerExternFunc(self: *Checker, ed: ast.ExternDef) TypeError!void {
         for (ed.params) |p| {
-            if (p.default != null) return self.fail(error.TypeMismatch, "'extern def {s}': parametre '{s}' için varsayılan değer verilemez", .{ ed.name, p.name });
+            if (p.default != null) return self.fail(error.TypeMismatch, "'extern def {s}': parameter '{s}' cannot have a default value", .{ ed.name, p.name });
         }
         if (self.functions.contains(ed.name) or self.generic_functions.contains(ed.name)) {
-            return self.fail(error.DuplicateDefinition, "fonksiyon zaten tanımlı: {s}", .{ed.name});
+            return self.fail(error.DuplicateDefinition, "function already defined: {s}", .{ed.name});
         }
         const params = try self.allocator.alloc(Type, ed.params.len);
         for (ed.params, 0..) |p, i| {
@@ -1497,13 +1497,13 @@ pub const Checker = struct {
             // DOĞRUDAN OKUYABİLİR, İNŞA ETMEK ZORUNDA DEĞİL) PARAMETRE
             // yönünde de AYNEN geçerlidir.
             if (!isFfiSafeType(pt) and !isFfiSafeListType(pt)) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': parametre '{s}' desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str]/list[int] v0.1'de C ABI sınırında geçirilebilir)", .{ ed.name, p.name });
+                return self.fail(error.TypeMismatch, "extern function '{s}': parameter '{s}' has an unsupported type (only int/float/bool/str/None/list[str]/list[int] can cross the C ABI boundary in v0.1)", .{ ed.name, p.name });
             }
             params[i] = pt;
         }
         const ret = try self.typeExprToType(ed.return_type);
         if (!isFfiSafeType(ret) and !isFfiSafeListType(ret) and !isFfiSafeClassReturnType(ret)) {
-            return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': dönüş tipi desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str]/list[int]/sınıf v0.1'de C ABI sınırında geçirilebilir)", .{ed.name});
+            return self.fail(error.TypeMismatch, "extern function '{s}': the return type is unsupported (only int/float/bool/str/None/list[str]/list[int]/class can cross the C ABI boundary in v0.1)", .{ed.name});
         }
         // Faz FFI.4 (bkz. nox-teknik-spesifikasyon.md §3.150): `retains(...)`
         // yan tümcesindeki HER isim GERÇEK bir parametre adıyla EŞLEŞMELİDİR
@@ -1532,13 +1532,13 @@ pub const Checker = struct {
             // — bkz. `registerCapabilityDecorator`).
             const is_capability = std.mem.eql(u8, dec.name, "capability.requires");
             if (!is_escape and !is_noescape and !is_callback and !is_capability) {
-                return self.fail(error.UnknownExternDecorator, "extern fonksiyon '{s}': bilinmeyen decorator '@{s}' (yalnızca @ffi.escape/@ffi.noescape/@ffi.callback/@capability.requires geçerlidir)", .{ ed.name, dec.name });
+                return self.fail(error.UnknownExternDecorator, "extern function '{s}': unknown decorator '@{s}' (only @ffi.escape/@ffi.noescape/@ffi.callback/@capability.requires are valid)", .{ ed.name, dec.name });
             }
             if (is_capability) {
                 const arg_values = try self.allocator.alloc([]const u8, dec.args.len);
                 for (dec.args, 0..) |a, i| {
                     if (a != .string_lit) {
-                        return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@capability.requires' argümanı {d} yalnızca bir string LİTERALİ olabilir", .{ ed.name, i + 1 });
+                        return self.fail(error.TypeMismatch, "extern function '{s}': argument {d} of '@capability.requires' must be a string LITERAL", .{ ed.name, i + 1 });
                     }
                     arg_values[i] = a.string_lit;
                 }
@@ -1547,7 +1547,7 @@ pub const Checker = struct {
             if (is_escape) {
                 for (dec.args, 0..) |a, i| {
                     if (a != .string_lit) {
-                        return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.escape' argümanı {d} yalnızca bir string LİTERALİ olabilir", .{ ed.name, i + 1 });
+                        return self.fail(error.TypeMismatch, "extern function '{s}': argument {d} of '@ffi.escape' must be a string LITERAL", .{ ed.name, i + 1 });
                     }
                     try escape_names.append(self.allocator, a.string_lit);
                 }
@@ -1562,14 +1562,14 @@ pub const Checker = struct {
                 }
             }
             if (!found) {
-                return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': 'retains/@ffi.escape(\"{s}\")' bilinmeyen bir parametre adı içeriyor", .{ ed.name, ename });
+                return self.fail(error.UnknownRetainedParam, "extern function '{s}': 'retains/@ffi.escape(\"{s}\")' names an unknown parameter", .{ ed.name, ename });
             }
         }
         for (ed.decorators) |dec| {
             if (!std.mem.eql(u8, dec.name, "ffi.noescape")) continue;
             for (dec.args, 0..) |a, i| {
                 if (a != .string_lit) {
-                    return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.noescape' argümanı {d} yalnızca bir string LİTERALİ olabilir", .{ ed.name, i + 1 });
+                    return self.fail(error.TypeMismatch, "extern function '{s}': argument {d} of '@ffi.noescape' must be a string LITERAL", .{ ed.name, i + 1 });
                 }
                 const pname = a.string_lit;
                 var found = false;
@@ -1580,11 +1580,11 @@ pub const Checker = struct {
                     }
                 }
                 if (!found) {
-                    return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': '@ffi.noescape(\"{s}\")' bilinmeyen bir parametre adı içeriyor", .{ ed.name, pname });
+                    return self.fail(error.UnknownRetainedParam, "extern function '{s}': '@ffi.noescape(\"{s}\")' names an unknown parameter", .{ ed.name, pname });
                 }
                 for (escape_names.items) |ename| {
                     if (std.mem.eql(u8, ename, pname)) {
-                        return self.fail(error.ConflictingEscapeAnnotation, "extern fonksiyon '{s}': parametre '{s}' hem kaçan (retains/@ffi.escape) HEM kaçmayan (@ffi.noescape) olarak işaretlendi", .{ ed.name, pname });
+                        return self.fail(error.ConflictingEscapeAnnotation, "extern function '{s}': parameter '{s}' is marked both as escaping (retains/@ffi.escape) AND as non-escaping (@ffi.noescape)", .{ ed.name, pname });
                     }
                 }
             }
@@ -1604,7 +1604,7 @@ pub const Checker = struct {
         for (ed.decorators) |dec| {
             if (!std.mem.eql(u8, dec.name, "ffi.callback")) continue;
             if (dec.args.len < 1 or dec.args.len > 2 or dec.args[0] != .string_lit) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' en az \"param_adi\" (callback parametresi) VE opsiyonel bir \"context_param=...\" argümanı bekler", .{ed.name});
+                return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.callback' expects at least \"param_name\" (the callback parameter) AND an optional \"context_param=...\" argument", .{ed.name});
             }
             const callback_param_name = dec.args[0].string_lit;
             var callback_idx: ?usize = null;
@@ -1615,17 +1615,17 @@ pub const Checker = struct {
                 }
             }
             const cb_idx = callback_idx orelse {
-                return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': '@ffi.callback(\"{s}\")' bilinmeyen bir parametre adı içeriyor", .{ ed.name, callback_param_name });
+                return self.fail(error.UnknownRetainedParam, "extern function '{s}': '@ffi.callback(\"{s}\")' names an unknown parameter", .{ ed.name, callback_param_name });
             };
             if (params[cb_idx] != .func) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}' bir fonksiyon TİPİNDE değil", .{ ed.name, callback_param_name });
+                return self.fail(error.TypeMismatch, "extern function '{s}': the '@ffi.callback' target '{s}' is not of a function TYPE", .{ ed.name, callback_param_name });
             }
             const cb_func = params[cb_idx].func;
             if (!isFfiSafeCallbackType(cb_func)) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}'nin İMZASI FFI-güvenli değil (yalnızca int/float/bool/ptr parametreler VE int/float/bool/ptr/None dönüş)", .{ ed.name, callback_param_name });
+                return self.fail(error.TypeMismatch, "extern function '{s}': the SIGNATURE of the '@ffi.callback' target '{s}' is not FFI-safe (only int/float/bool/ptr parameters AND an int/float/bool/ptr/None return)", .{ ed.name, callback_param_name });
             }
             if (dec.args.len != 2 or dec.args[1] != .string_lit) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': v1'de '@ffi.callback' bir \"context_param\" argümanı OLMADAN desteklenmez (userdata yuvası taşımayan C API'leri v1 kapsamı dışındadır)", .{ed.name});
+                return self.fail(error.TypeMismatch, "extern function '{s}': in v1 '@ffi.callback' is not supported WITHOUT a \"context_param\" argument (C APIs without a userdata slot are outside the v1 scope)", .{ed.name});
             }
             const context_param_name = dec.args[1].string_lit;
             var context_idx: ?usize = null;
@@ -1636,19 +1636,19 @@ pub const Checker = struct {
                 }
             }
             const ctx_idx = context_idx orelse {
-                return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': '@ffi.callback' context_param'ı '{s}' bilinmeyen bir parametre adı içeriyor", .{ ed.name, context_param_name });
+                return self.fail(error.UnknownRetainedParam, "extern function '{s}': the '@ffi.callback' context_param '{s}' names an unknown parameter", .{ ed.name, context_param_name });
             };
             if (ctx_idx == cb_idx) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' context_param'ı callback parametresinin KENDİSİYLE AYNI olamaz", .{ed.name});
+                return self.fail(error.TypeMismatch, "extern function '{s}': the '@ffi.callback' context_param cannot be the SAME as the callback parameter itself", .{ed.name});
             }
             if (params[ctx_idx] != .ptr) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' context_param'ı '{s}' bir 'ptr' tipinde değil", .{ ed.name, context_param_name });
+                return self.fail(error.TypeMismatch, "extern function '{s}': the '@ffi.callback' context_param '{s}' is not of type 'ptr'", .{ ed.name, context_param_name });
             }
             if (cb_func.params.len == 0) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}'nin İMZASI en az bir parametre (SON parametre 'userdata' yuvası SAYILIR) içermeli", .{ ed.name, callback_param_name });
+                return self.fail(error.TypeMismatch, "extern function '{s}': the SIGNATURE of the '@ffi.callback' target '{s}' must have at least one parameter (the LAST parameter COUNTS as the 'userdata' slot)", .{ ed.name, callback_param_name });
             }
             if (cb_func.params[cb_func.params.len - 1] != .ptr) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}'nin İMZASININ SON parametresi (userdata yuvası) bir 'ptr' tipinde olmalı", .{ ed.name, callback_param_name });
+                return self.fail(error.TypeMismatch, "extern function '{s}': the LAST parameter of the SIGNATURE of the '@ffi.callback' target '{s}' (the userdata slot) must be of type 'ptr'", .{ ed.name, callback_param_name });
             }
             try self.extern_callbacks.put(self.allocator, ed.name, .{ .param_idx = cb_idx, .context_idx = ctx_idx, .callback_type = cb_func });
         }
@@ -1877,7 +1877,7 @@ pub const Checker = struct {
         for (params) |p| {
             const d = p.default orelse {
                 if (seen_default) {
-                    return self.fail(error.TypeMismatch, "'{s}': varsayılan değerli bir parametreden sonra varsayılansız parametre ('{s}') olamaz", .{ fname, p.name });
+                    return self.fail(error.TypeMismatch, "'{s}': a parameter without a default value ('{s}') cannot follow a parameter with a default value", .{ fname, p.name });
                 }
                 continue;
             };
@@ -1888,14 +1888,14 @@ pub const Checker = struct {
                 .bool_lit => .boolean,
                 .string_lit => .str,
                 .none_lit => .none,
-                .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) Type.int else if (u.op == .neg and u.operand.* == .float_lit) Type.float else return self.fail(error.TypeMismatch, "'{s}' parametresi '{s}': varsayılan değer yalnızca bir sabit literal olabilir", .{ fname, p.name }),
-                else => return self.fail(error.TypeMismatch, "'{s}' parametresi '{s}': varsayılan değer yalnızca bir sabit literal (int/float/bool/str/None, negatif sayı) olabilir", .{ fname, p.name }),
+                .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) Type.int else if (u.op == .neg and u.operand.* == .float_lit) Type.float else return self.fail(error.TypeMismatch, "function '{s}', parameter '{s}': the default value can only be a constant literal", .{ fname, p.name }),
+                else => return self.fail(error.TypeMismatch, "function '{s}', parameter '{s}': the default value can only be a constant literal (int/float/bool/str/None, a negative number)", .{ fname, p.name }),
             };
             if (skip_types) continue;
             const pt = try self.typeExprToType(p.type_expr);
             const ok = if (lit_t == .none) pt == .optional else self.assignable(pt, lit_t);
             if (!ok) {
-                return self.fail(error.TypeMismatch, "'{s}' parametresi '{s}': varsayılan değerin tipi parametre tipiyle uyuşmuyor", .{ fname, p.name });
+                return self.fail(error.TypeMismatch, "function '{s}', parameter '{s}': the type of the default value does not match the parameter type", .{ fname, p.name });
             }
         }
     }
@@ -1916,11 +1916,11 @@ pub const Checker = struct {
                         break;
                     }
                 }
-                const j = found orelse return self.fail(error.ArgumentCountMismatch, "'{s}' fonksiyonunun '{s}' adlı bir parametresi yok", .{ name, a.kwarg.name });
-                if (slots[j] != null) return self.fail(error.ArgumentCountMismatch, "'{s}' çağrısında '{s}' parametresi birden fazla kez verildi", .{ name, a.kwarg.name });
+                const j = found orelse return self.fail(error.ArgumentCountMismatch, "function '{s}' has no parameter named '{s}'", .{ name, a.kwarg.name });
+                if (slots[j] != null) return self.fail(error.ArgumentCountMismatch, "in the call to '{s}', parameter '{s}' was given more than once", .{ name, a.kwarg.name });
                 slots[j] = a.kwarg.value.*;
             } else {
-                if (i >= n) return self.fail(error.ArgumentCountMismatch, "'{s}' en fazla {d} argüman alır, {d} verildi", .{ name, n, args.len });
+                if (i >= n) return self.fail(error.ArgumentCountMismatch, "'{s}' takes at most {d} arguments, {d} were given", .{ name, n, args.len });
                 slots[i] = a;
             }
         }
@@ -1950,7 +1950,7 @@ pub const Checker = struct {
             }
             if (ambiguous) {
                 if (self.in_spawn_operand) {
-                    return self.fail(error.ArgumentCountMismatch, "'{s}': 'spawn' çağrısında yan etkili keyword argümanlar parametre sırasıyla yazılmalıdır", .{name});
+                    return self.fail(error.ArgumentCountMismatch, "'{s}': keyword arguments with side effects in a 'spawn' call must be written in parameter order", .{name});
                 }
                 const order = try self.allocator.alloc(u8, n);
                 var k: usize = 0;
@@ -1975,7 +1975,7 @@ pub const Checker = struct {
         }
         const out = try self.allocator.alloc(ast.Expr, n);
         for (decl, 0..) |p, j| {
-            out[j] = slots[j] orelse (p.default orelse return self.fail(error.ArgumentCountMismatch, "'{s}' çağrısında '{s}' argümanı eksik", .{ name, p.name }));
+            out[j] = slots[j] orelse (p.default orelse return self.fail(error.ArgumentCountMismatch, "in the call to '{s}', argument '{s}' is missing", .{ name, p.name }));
         }
         return out;
     }
@@ -2017,7 +2017,7 @@ pub const Checker = struct {
         if (!has_kw and (sig.decl == null or args.len >= sig.params.len)) {
             return self.checkArgs(ctx, sig.params, args, name);
         }
-        const decl = sig.decl orelse return self.fail(error.TypeMismatch, "'{s}' keyword argüman/varsayılan değer desteklemiyor", .{name});
+        const decl = sig.decl orelse return self.fail(error.TypeMismatch, "'{s}' does not support keyword arguments/default values", .{name});
         const expanded = try self.expandCallArgs(decl, args, name);
         try self.call_expansions.put(self.allocator, key, expanded);
         if (self.last_eval_order) |o| try self.call_orders.put(self.allocator, key, o);
@@ -2096,10 +2096,10 @@ pub const Checker = struct {
         // fark edilmeden ULAŞIYORDU (GERÇEKTEN gözlemlendi). Burada ERKEN
         // VE açık bir tanılamayla reddedilir.
         if (std.mem.eql(u8, fd.name, "main")) {
-            return self.fail(error.DuplicateDefinition, "'main' ayrılmış bir isimdir: Nox'ta 'def main()' sözleşmesi yok, üst düzey deyimler zaten programın giriş noktasıdır — bu fonksiyonu başka bir adla tanımlayın", .{});
+            return self.fail(error.DuplicateDefinition, "'main' is a reserved name: Nox has no 'def main()' convention, top-level statements are already the program's entry point — define this function under another name", .{});
         }
         if (self.functions.contains(fd.name) or self.generic_functions.contains(fd.name)) {
-            return self.fail(error.DuplicateDefinition, "fonksiyon zaten tanımlı: {s}", .{fd.name});
+            return self.fail(error.DuplicateDefinition, "function already defined: {s}", .{fd.name});
         }
         // Generic bir fonksiyonun (açık `[T]` VEYA bir protokol tipli
         // parametre/dönüş aracılığıyla ÖRTÜK) parametre/dönüş tipleri somut
@@ -2127,7 +2127,7 @@ pub const Checker = struct {
             // maliyetli bir taşımadır, ekstra paketleme gerekmez).
             for (fd.params, 0..) |p, i| {
                 if (!self.isSpawnParamSafeType(params[i])) {
-                    return self.fail(error.TypeMismatch, "'async def {s}': parametre '{s}' desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parametreleri paketleyebilir, --release altında ayrıca list/class/dict)", .{ fd.name, p.name });
+                    return self.fail(error.TypeMismatch, "'async def {s}': parameter '{s}' has an unsupported type (only int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parameters can be packed, and additionally list/class/dict under --release)", .{ fd.name, p.name });
                 }
             }
         }
@@ -2158,9 +2158,9 @@ pub const Checker = struct {
         };
         for (table) |e| {
             if (!std.mem.eql(u8, name, e.name)) continue;
-            if (c.args.len != e.argc) return self.fail(error.ArgumentCountMismatch, "'{s}' tam olarak {d} argüman alır", .{ e.name, e.argc });
+            if (c.args.len != e.argc) return self.fail(error.ArgumentCountMismatch, "'{s}' takes exactly {d} arguments", .{ e.name, e.argc });
             for (c.args, 0..) |arg, i| {
-                if (try self.checkExpr(ctx, arg) != .int) return self.fail(error.TypeMismatch, "'{s}' argümanı {d} int olmalıdır", .{ e.name, i + 1 });
+                if (try self.checkExpr(ctx, arg) != .int) return self.fail(error.TypeMismatch, "'{s}' argument {d} must be an int", .{ e.name, i + 1 });
             }
             return e.ret;
         }
@@ -2182,13 +2182,13 @@ pub const Checker = struct {
                     const strs = try self.allocator.alloc([]const u8, items.len);
                     for (items, 0..) |it, k| {
                         if (it != .string_lit) {
-                            return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d}: liste yalnızca string literalleri içerebilir (hedef: {s})", .{ dec.name, i + 1, target });
+                            return self.fail(error.TypeMismatch, "decorator '@{s}' argument {d}: a list can only contain string literals (target: {s})", .{ dec.name, i + 1, target });
                         }
                         strs[k] = it.string_lit;
                     }
                     break :blk DecoratorArg{ .list_str = strs };
                 },
-                else => return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d} yalnızca string/int/bool literali ya da string listesi olabilir (hedef: {s})", .{ dec.name, i + 1, target }),
+                else => return self.fail(error.TypeMismatch, "decorator '@{s}' argument {d} can only be a string/int/bool literal or a list of strings (target: {s})", .{ dec.name, i + 1, target }),
             };
         }
         return arg_values;
@@ -2244,7 +2244,7 @@ pub const Checker = struct {
                 for (arg_values, 0..) |v, i| {
                     str_args[i] = switch (v) {
                         .string => |s| s,
-                        else => return self.fail(error.TypeMismatch, "'@capability.requires' argümanı {d} yalnızca bir string LİTERALİ olabilir (fonksiyon: {s})", .{ i + 1, fd.name }),
+                        else => return self.fail(error.TypeMismatch, "argument {d} of '@capability.requires' must be a string LITERAL (function: {s})", .{ i + 1, fd.name }),
                     };
                 }
                 try self.registerCapabilityDecorator(fd.name, dec.name, str_args);
@@ -2273,12 +2273,12 @@ pub const Checker = struct {
     fn registerCapabilityDecorator(self: *Checker, func_name: []const u8, dec_name: []const u8, arg_values: []const []const u8) TypeError!void {
         if (!std.mem.eql(u8, dec_name, "capability.requires")) return;
         if (arg_values.len == 0) {
-            return self.fail(error.TypeMismatch, "'@capability.requires' en az bir capability adı bekler (fonksiyon: {s})", .{func_name});
+            return self.fail(error.TypeMismatch, "'@capability.requires' expects at least one capability name (function: {s})", .{func_name});
         }
         const caps = try self.allocator.alloc(Capability, arg_values.len);
         for (arg_values, 0..) |name, i| {
             caps[i] = Capability.fromName(name) orelse
-                return self.fail(error.TypeMismatch, "'@capability.requires(\"{s}\")': bilinmeyen capability adı (fonksiyon: {s})", .{ name, func_name });
+                return self.fail(error.TypeMismatch, "'@capability.requires(\"{s}\")': unknown capability name (function: {s})", .{ name, func_name });
         }
         try self.capability_functions.put(self.allocator, func_name, caps);
     }
@@ -2295,7 +2295,7 @@ pub const Checker = struct {
         const caps = self.capability_functions.get(name) orelse return;
         for (caps) |cap| {
             if (profileGrants(self.profile, cap)) continue;
-            return self.fail(error.CapabilityNotGranted, "'{s}' çağrısı '{s}' profilinde reddedildi (gerekli capability: '{s}' — bu profil sağlamıyor)", .{ name, @tagName(self.profile), cap.label() });
+            return self.fail(error.CapabilityNotGranted, "the call to '{s}' was rejected in the '{s}' profile (required capability: '{s}' — this profile does not provide it)", .{ name, @tagName(self.profile), cap.label() });
         }
     }
 
@@ -2427,7 +2427,7 @@ pub const Checker = struct {
         }
         if (self.functions.get(mangled)) |sig| {
             if (self.async_functions.contains(mangled)) {
-                return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, yalnızca 'spawn' ile başlatılabilir", .{mangled});
+                return self.fail(error.TypeMismatch, "'{s}' is an 'async def' function and can only be started with 'spawn'", .{mangled});
             }
             try self.checkArgsDecl(ctx, sig, c.args, mangled, @intFromPtr(c.callee));
             try self.checkCapabilityCall(mangled);
@@ -2466,7 +2466,7 @@ pub const Checker = struct {
         if (!self.imported_modules.contains(module_path)) return null;
 
         const mangled = try self.joinSegments(segments, '_');
-        const not_found_msg = try std.fmt.allocPrint(self.allocator, "'{s}' modülünün '{s}' adlı bir üyesi yok", .{ module_path, segments[segments.len - 1] });
+        const not_found_msg = try std.fmt.allocPrint(self.allocator, "module '{s}' has no member named '{s}'", .{ module_path, segments[segments.len - 1] });
         return try self.resolveMangledCall(ctx, c, mangled, not_found_msg);
     }
 
@@ -2494,21 +2494,21 @@ pub const Checker = struct {
             if (!is_local) return self.validateNamedHttpHandler(fn_label, n);
         }
         if (!allow_closure) {
-            return self.fail(error.NotCallable, "'{s}': 'handle' doğrudan bir fonksiyon adı olmalı (closure handler bu varyantta DESTEKLENMEZ: varsayılan derlemede multicore worker'ları AYRI RuntimeState kullanır, ana çalışma zamanındaki bir closure oraya aktarılamaz)", .{fn_label});
+            return self.fail(error.NotCallable, "'{s}': 'handle' must be a plain function name (a closure handler is NOT supported in this variant: in the default build the multicore workers use a SEPARATE RuntimeState, so a closure from the main runtime cannot be passed to them)", .{fn_label});
         }
         const t = try self.checkExpr(ctx, handle_expr);
         const ft = switch (t) {
             .func => |f| f,
-            else => return self.fail(error.NotCallable, "'{s}': 'handle' bir fonksiyon adı ya da '(HttpRequest) -> HttpResponse' tipli bir closure olmalı", .{fn_label}),
+            else => return self.fail(error.NotCallable, "'{s}': 'handle' must be a function name or a closure of type '(HttpRequest) -> HttpResponse'", .{fn_label}),
         };
         if (ft.params.len != 1) {
-            return self.fail(error.TypeMismatch, "'{s}': 'handle' TAM OLARAK bir parametre almalı (bir HttpRequest)", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' must take EXACTLY one parameter (an HttpRequest)", .{fn_label});
         }
         if (ft.params[0] != .class or !std.mem.eql(u8, ft.params[0].class, "nox_http_HttpRequest")) {
-            return self.fail(error.TypeMismatch, "'{s}': 'handle'in parametresi 'HttpRequest' olmalı", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': the parameter of 'handle' must be 'HttpRequest'", .{fn_label});
         }
         if (ft.return_type.* != .class or !std.mem.eql(u8, ft.return_type.class, "nox_http_HttpResponse")) {
-            return self.fail(error.TypeMismatch, "'{s}': 'handle' bir 'HttpResponse' döndürmeli", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' must return an 'HttpResponse'", .{fn_label});
         }
     }
 
@@ -2516,26 +2516,26 @@ pub const Checker = struct {
     /// gövdesi DEĞİŞMEDEN taşındı.
     fn validateNamedHttpHandler(self: *Checker, fn_label: []const u8, handle_name: []const u8) TypeError!void {
         if (self.async_functions.contains(handle_name)) {
-            return self.fail(error.TypeMismatch, "'{s}': 'handle' ('{s}') bir 'async def' OLAMAZ (bağlantı işleyicisi zaten kendi fiber'ında senkron çalışır)", .{ fn_label, handle_name });
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' ('{s}') CANNOT be an 'async def' (the connection handler already runs synchronously in its own fiber)", .{ fn_label, handle_name });
         }
         const sig = self.functions.get(handle_name) orelse
-            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{handle_name});
+            return self.fail(error.UndefinedFunction, "undefined function: {s}", .{handle_name});
         if (sig.params.len != 1) {
-            return self.fail(error.TypeMismatch, "'{s}': 'handle' TAM OLARAK bir parametre almalı (bir HttpRequest)", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' must take EXACTLY one parameter (an HttpRequest)", .{fn_label});
         }
         const req_class = switch (sig.params[0]) {
             .class => |n| n,
-            else => return self.fail(error.TypeMismatch, "'{s}': 'handle'in parametresi 'HttpRequest' olmalı", .{fn_label}),
+            else => return self.fail(error.TypeMismatch, "'{s}': the parameter of 'handle' must be 'HttpRequest'", .{fn_label}),
         };
         if (!std.mem.eql(u8, req_class, "nox_http_HttpRequest")) {
-            return self.fail(error.TypeMismatch, "'{s}': 'handle'in parametresi 'HttpRequest' olmalı", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': the parameter of 'handle' must be 'HttpRequest'", .{fn_label});
         }
         const resp_class = switch (sig.return_type) {
             .class => |n| n,
-            else => return self.fail(error.TypeMismatch, "'{s}': 'handle' bir 'HttpResponse' döndürmeli", .{fn_label}),
+            else => return self.fail(error.TypeMismatch, "'{s}': 'handle' must return an 'HttpResponse'", .{fn_label}),
         };
         if (!std.mem.eql(u8, resp_class, "nox_http_HttpResponse")) {
-            return self.fail(error.TypeMismatch, "'{s}': 'handle' bir 'HttpResponse' döndürmeli", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' must return an 'HttpResponse'", .{fn_label});
         }
     }
 
@@ -2551,14 +2551,14 @@ pub const Checker = struct {
         if (!(try self.matchesNoxHttpCall(c, "serve"))) return null;
 
         if (c.args.len != 2 and c.args.len != 3) {
-            return self.fail(error.ArgumentCountMismatch, "'nox.http.serve' 2 ya da 3 argüman alır: (port, handle[, max_connections])", .{});
+            return self.fail(error.ArgumentCountMismatch, "'nox.http.serve' takes 2 or 3 arguments: (port, handle[, max_connections])", .{});
         }
         if (try self.checkExpr(ctx, c.args[0]) != .int) {
-            return self.fail(error.TypeMismatch, "'nox.http.serve': 'port' bir 'int' olmalı", .{});
+            return self.fail(error.TypeMismatch, "'nox.http.serve': 'port' must be an 'int'", .{});
         }
         if (c.args.len == 3) {
             if (try self.checkExpr(ctx, c.args[2]) != .int) {
-                return self.fail(error.TypeMismatch, "'nox.http.serve': 'max_connections' bir 'int' olmalı", .{});
+                return self.fail(error.TypeMismatch, "'nox.http.serve': 'max_connections' must be an 'int'", .{});
             }
         }
         try self.validateHttpHandler(ctx, "nox.http.serve", c.args[1], true);
@@ -2576,14 +2576,14 @@ pub const Checker = struct {
         if (!(try self.matchesNoxHttpCall(c, "serve_fd"))) return null;
 
         if (c.args.len != 2 and c.args.len != 3) {
-            return self.fail(error.ArgumentCountMismatch, "'nox.http.serve_fd' 2 ya da 3 argüman alır: (fd, handle[, max_connections])", .{});
+            return self.fail(error.ArgumentCountMismatch, "'nox.http.serve_fd' takes 2 or 3 arguments: (fd, handle[, max_connections])", .{});
         }
         if (try self.checkExpr(ctx, c.args[0]) != .int) {
-            return self.fail(error.TypeMismatch, "'nox.http.serve_fd': 'fd' bir 'int' olmalı", .{});
+            return self.fail(error.TypeMismatch, "'nox.http.serve_fd': 'fd' must be an 'int'", .{});
         }
         if (c.args.len == 3) {
             if (try self.checkExpr(ctx, c.args[2]) != .int) {
-                return self.fail(error.TypeMismatch, "'nox.http.serve_fd': 'max_connections' bir 'int' olmalı", .{});
+                return self.fail(error.TypeMismatch, "'nox.http.serve_fd': 'max_connections' must be an 'int'", .{});
             }
         }
         try self.validateHttpHandler(ctx, "nox.http.serve_fd", c.args[1], true);
@@ -2613,17 +2613,17 @@ pub const Checker = struct {
         if (!(try self.matchesNoxHttpCall(c, "serve_multicore"))) return null;
 
         if (c.args.len != 3 and c.args.len != 4) {
-            return self.fail(error.ArgumentCountMismatch, "'nox.http.serve_multicore' 3 ya da 4 argüman alır: (port, handle, num_threads[, max_connections])", .{});
+            return self.fail(error.ArgumentCountMismatch, "'nox.http.serve_multicore' takes 3 or 4 arguments: (port, handle, num_threads[, max_connections])", .{});
         }
         if (try self.checkExpr(ctx, c.args[0]) != .int) {
-            return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'port' bir 'int' olmalı", .{});
+            return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'port' must be an 'int'", .{});
         }
         if (try self.checkExpr(ctx, c.args[2]) != .int) {
-            return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'num_threads' bir 'int' olmalı", .{});
+            return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'num_threads' must be an 'int'", .{});
         }
         if (c.args.len == 4) {
             if (c.args[3] != .int_lit) {
-                return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'max_connections' sabit bir tamsayı olmalı (bir DEĞİŞKEN/ifade değil — derleme zamanında TÜM worker fonksiyonlarına gömülür)", .{});
+                return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'max_connections' must be a constant integer (not a VARIABLE/expression — it is embedded in ALL worker functions at compile time)", .{});
             }
         }
         try self.validateHttpHandler(ctx, "nox.http.serve_multicore", c.args[1], false);
@@ -2639,25 +2639,25 @@ pub const Checker = struct {
     fn validateWsHandler(self: *Checker, fn_label: []const u8, handle_expr: ast.Expr) TypeError!void {
         const handle_name = switch (handle_expr) {
             .identifier => |n| n,
-            else => return self.fail(error.NotCallable, "'{s}': 'ws_handle' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{fn_label}),
+            else => return self.fail(error.NotCallable, "'{s}': 'ws_handle' must be a plain function name (methods/lambdas are not supported yet)", .{fn_label}),
         };
         if (self.async_functions.contains(handle_name)) {
-            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' ('{s}') bir 'async def' OLAMAZ (WS oturumu zaten kendi fiber'ında senkron çalışır)", .{ fn_label, handle_name });
+            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' ('{s}') CANNOT be an 'async def' (the WS session already runs synchronously in its own fiber)", .{ fn_label, handle_name });
         }
         const sig = self.functions.get(handle_name) orelse
-            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{handle_name});
+            return self.fail(error.UndefinedFunction, "undefined function: {s}", .{handle_name});
         if (sig.params.len != 1) {
-            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' TAM OLARAK bir parametre almalı (bir WebSocketServerConn)", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' must take EXACTLY one parameter (a WebSocketServerConn)", .{fn_label});
         }
         const conn_class = switch (sig.params[0]) {
             .class => |n| n,
-            else => return self.fail(error.TypeMismatch, "'{s}': 'ws_handle'in parametresi 'WebSocketServerConn' olmalı", .{fn_label}),
+            else => return self.fail(error.TypeMismatch, "'{s}': the parameter of 'ws_handle' must be 'WebSocketServerConn'", .{fn_label}),
         };
         if (!std.mem.eql(u8, conn_class, "nox_websocket_WebSocketServerConn")) {
-            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle'in parametresi 'WebSocketServerConn' olmalı", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': the parameter of 'ws_handle' must be 'WebSocketServerConn'", .{fn_label});
         }
         if (sig.return_type != .none) {
-            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' 'None' döndürmeli", .{fn_label});
+            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' must return 'None'", .{fn_label});
         }
     }
 
@@ -2703,32 +2703,32 @@ pub const Checker = struct {
         const max_args = next + 1;
 
         if (c.args.len != min_args and c.args.len != max_args) {
-            return self.fail(error.ArgumentCountMismatch, "'{s}' {d} ya da {d} argüman alır", .{ fn_label, min_args, max_args });
+            return self.fail(error.ArgumentCountMismatch, "'{s}' takes {d} or {d} arguments", .{ fn_label, min_args, max_args });
         }
         if (try self.checkExpr(ctx, c.args[0]) != .int) {
-            return self.fail(error.TypeMismatch, "'{s}': '{s}' bir 'int' olmalı", .{ fn_label, if (is_multicore) "port" else "port/fd" });
+            return self.fail(error.TypeMismatch, "'{s}': '{s}' must be an 'int'", .{ fn_label, if (is_multicore) "port" else "port/fd" });
         }
         if (num_threads_idx) |i| {
             if (try self.checkExpr(ctx, c.args[i]) != .int) {
-                return self.fail(error.TypeMismatch, "'{s}': 'num_threads' bir 'int' olmalı", .{fn_label});
+                return self.fail(error.TypeMismatch, "'{s}': 'num_threads' must be an 'int'", .{fn_label});
             }
         }
         if (c.args.len == max_args) {
             const max_idx = max_args - 1;
             if (is_multicore) {
                 if (c.args[max_idx] != .int_lit) {
-                    return self.fail(error.TypeMismatch, "'{s}': 'max_connections' sabit bir tamsayı olmalı (derleme zamanında worker fonksiyonlarına gömülür)", .{fn_label});
+                    return self.fail(error.TypeMismatch, "'{s}': 'max_connections' must be a constant integer (it is embedded in the worker functions at compile time)", .{fn_label});
                 }
             } else if (try self.checkExpr(ctx, c.args[max_idx]) != .int) {
-                return self.fail(error.TypeMismatch, "'{s}': 'max_connections' bir 'int' olmalı", .{fn_label});
+                return self.fail(error.TypeMismatch, "'{s}': 'max_connections' must be an 'int'", .{fn_label});
             }
         }
         if (cert_idx) |ci| {
             if (try self.checkExpr(ctx, c.args[ci]) != .str) {
-                return self.fail(error.TypeMismatch, "'{s}': 'cert_path' bir 'str' olmalı", .{fn_label});
+                return self.fail(error.TypeMismatch, "'{s}': 'cert_path' must be a 'str'", .{fn_label});
             }
             if (try self.checkExpr(ctx, c.args[key_idx.?]) != .str) {
-                return self.fail(error.TypeMismatch, "'{s}': 'key_path' bir 'str' olmalı", .{fn_label});
+                return self.fail(error.TypeMismatch, "'{s}': 'key_path' must be a 'str'", .{fn_label});
             }
         }
         try self.validateHttpHandler(ctx, fn_label, c.args[1], !is_multicore);
@@ -2869,34 +2869,34 @@ pub const Checker = struct {
         if (!(try self.matchesNoxAttrCall(c, "thread", "start"))) return null;
 
         if (c.args.len != 2) {
-            return self.fail(error.ArgumentCountMismatch, "'nox.thread.start' tam olarak 2 argüman alır: (entry, arg)", .{});
+            return self.fail(error.ArgumentCountMismatch, "'nox.thread.start' takes exactly 2 arguments: (entry, arg)", .{});
         }
         const entry_name = switch (c.args[0]) {
             .identifier => |n| n,
-            else => return self.fail(error.NotCallable, "'nox.thread.start': 'entry' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{}),
+            else => return self.fail(error.NotCallable, "'nox.thread.start': 'entry' must be a plain function name (methods/lambdas are not supported yet)", .{}),
         };
         // ÖNCE "tanımlı mı" (net bir UndefinedFunction hatası İÇİN), SONRA
         // "async mı" — aksi TAKDİRDE tanımsız bir isim YANLIŞLIKLA "async
         // def olmalı" hatasına DÜŞERDİ (`async_functions.contains` tanımsız
         // bir isim İÇİN de sessizce `false` döner).
         const sig = self.functions.get(entry_name) orelse
-            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{entry_name});
+            return self.fail(error.UndefinedFunction, "undefined function: {s}", .{entry_name});
         if (!self.async_functions.contains(entry_name)) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry' ('{s}') bir 'async def' OLMALI (kendi bağımsız iş parçacığının tek üst-düzey görevi olarak çalışır)", .{entry_name});
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry' ('{s}') MUST be an 'async def' (it runs as the single top-level task of its own independent thread)", .{entry_name});
         }
         if (sig.params.len != 1) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry' TAM OLARAK bir parametre almalı", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry' must take EXACTLY one parameter", .{});
         }
         if (!self.isThreadTransferSafeType(sig.params[0])) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry'in parametre tipi iş parçacıkları arası güvenli değil (yalnızca int/float/bool/str/None/ptr, --release altında ayrıca task/channel/list/class/dict)", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.start': the parameter type of 'entry' is not safe across threads (only int/float/bool/str/None/ptr, and additionally task/channel/list/class/dict under --release)", .{});
         }
         if (!self.isThreadTransferSafeType(sig.return_type)) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry'in dönüş tipi iş parçacıkları arası güvenli değil (yalnızca int/float/bool/str/None/ptr, --release altında ayrıca task/channel/list/class/dict)", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.start': the return type of 'entry' is not safe across threads (only int/float/bool/str/None/ptr, and additionally task/channel/list/class/dict under --release)", .{});
         }
 
         const arg_t = try self.checkExpr(ctx, c.args[1]);
         if (!self.assignable(sig.params[0], arg_t)) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': 'arg' tipi 'entry'in parametre tipiyle uyuşmuyor", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.start': the type of 'arg' does not match the parameter type of 'entry'", .{});
         }
 
         const boxed = try self.allocator.create(Type);
@@ -2919,26 +2919,26 @@ pub const Checker = struct {
         if (!(try self.matchesNoxAttrCall(c, "thread", "pool_run"))) return null;
 
         if (c.args.len != 2) {
-            return self.fail(error.ArgumentCountMismatch, "'nox.thread.pool_run' tam olarak 2 argüman alır: (num_workers, entry)", .{});
+            return self.fail(error.ArgumentCountMismatch, "'nox.thread.pool_run' takes exactly 2 arguments: (num_workers, entry)", .{});
         }
         const num_workers_t = try self.checkExpr(ctx, c.args[0]);
         if (num_workers_t != .int) {
-            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'num_workers' int olmalıdır", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'num_workers' must be an int", .{});
         }
         const entry_name = switch (c.args[1]) {
             .identifier => |n| n,
-            else => return self.fail(error.NotCallable, "'nox.thread.pool_run': 'entry' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{}),
+            else => return self.fail(error.NotCallable, "'nox.thread.pool_run': 'entry' must be a plain function name (methods/lambdas are not supported yet)", .{}),
         };
         const sig = self.functions.get(entry_name) orelse
-            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{entry_name});
+            return self.fail(error.UndefinedFunction, "undefined function: {s}", .{entry_name});
         if (!self.async_functions.contains(entry_name)) {
-            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' ('{s}') bir 'async def' OLMALI (havuzun tek sürücü worker'ının tek üst-düzey görevi olarak çalışır)", .{entry_name});
+            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' ('{s}') MUST be an 'async def' (it runs as the single top-level task of the pool's single driver worker)", .{entry_name});
         }
         if (sig.params.len != 0) {
-            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' SIFIR parametre almalıdır", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' must take ZERO parameters", .{});
         }
         if (sig.return_type != .none) {
-            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' hiçbir şey döndürmemelidir (-> None)", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' must not return anything (-> None)", .{});
         }
 
         return .none;
@@ -2977,12 +2977,12 @@ pub const Checker = struct {
         for (cd.decorators) |dec| {
             if (std.mem.eql(u8, dec.name, "repr")) {
                 if (dec.args.len != 1 or dec.args[0] != .string_lit or !std.mem.eql(u8, dec.args[0].string_lit, "C")) {
-                    return self.fail(error.TypeMismatch, "@repr yalnızca tek bir \"C\" string argümanını destekler: sınıf {s}", .{cd.name});
+                    return self.fail(error.TypeMismatch, "@repr only supports a single \"C\" string argument: class {s}", .{cd.name});
                 }
                 saw_repr_c = true;
             } else if (std.mem.eql(u8, dec.name, "packed")) {
                 if (dec.args.len != 0) {
-                    return self.fail(error.TypeMismatch, "@packed hiçbir argüman almaz: sınıf {s}", .{cd.name});
+                    return self.fail(error.TypeMismatch, "@packed takes no arguments: class {s}", .{cd.name});
                 }
                 saw_packed = true;
             }
@@ -3014,13 +3014,13 @@ pub const Checker = struct {
         // çıkarım YOK) — ikinci bir metod-kopyalama adımına GEREK yoktur.
         if (info.base) |base_name| {
             const base_info = self.classes.get(base_name) orelse
-                return self.fail(error.UndefinedClass, "sınıf '{s}' bilinmeyen bir taban sınıfa sahip: {s}", .{ cd.name, base_name });
+                return self.fail(error.UndefinedClass, "class '{s}' has an unknown base class: {s}", .{ cd.name, base_name });
             // v2.0 madde 5: taban-sınıf layout-tutarlılık kontrolü —
             // `base_info`nin GÜVENLE (varlığı ZATEN doğrulanmış) burada
             // olması BEKLENDİĞİNDEN, yukarıdaki `layout_mode` hesabından
             // SONRA, AMA bu güvenli fetch'İN HEMEN ARDINDAN yapılır.
             if (info.layout_mode != base_info.layout_mode) {
-                return self.fail(error.TypeMismatch, "sınıf '{s}'in @repr/@packed durumu taban sınıfı '{s}' ile eşleşmiyor (bir sınıf hiyerarşisindeki TÜM sınıflar aynı layout modunu paylaşmalıdır)", .{ cd.name, base_name });
+                return self.fail(error.TypeMismatch, "the @repr/@packed state of class '{s}' does not match its base class '{s}' (ALL classes in a class hierarchy must share the same layout mode)", .{ cd.name, base_name });
             }
             var field_it = base_info.fields.iterator();
             while (field_it.next()) |e| try info.fields.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
@@ -3041,9 +3041,9 @@ pub const Checker = struct {
         for (cd.fields) |fd| {
             if (info.fields.contains(fd.name)) {
                 if (cd.base != null) {
-                    return self.fail(error.DuplicateDefinition, "sınıf '{s}'in '{s}' alanı zaten bildirilmiş (belki de bir taban sınıfta)", .{ cd.name, fd.name });
+                    return self.fail(error.DuplicateDefinition, "class '{s}': field '{s}' is already declared (perhaps in a base class)", .{ cd.name, fd.name });
                 }
-                return self.fail(error.DuplicateDefinition, "sınıf '{s}'in '{s}' alanı zaten bildirilmiş", .{ cd.name, fd.name });
+                return self.fail(error.DuplicateDefinition, "class '{s}': field '{s}' is already declared", .{ cd.name, fd.name });
             }
             const ft = try self.typeExprToType(fd.type_expr);
             try info.fields.put(self.allocator, fd.name, ft);
@@ -3052,15 +3052,15 @@ pub const Checker = struct {
         var own_init_meta: ?[]const ParamMeta = null;
         for (cd.methods) |m| {
             if (m.type_params.len > 0) {
-                return self.fail(error.TypeMismatch, "metodlar generic olamaz: {s}.{s} (Faz 10 yalnızca serbest fonksiyonları destekler)", .{ cd.name, m.name });
+                return self.fail(error.TypeMismatch, "methods cannot be generic: {s}.{s} (Phase 10 only supports free functions)", .{ cd.name, m.name });
             }
             if (m.params.len == 0 or !std.mem.eql(u8, m.params[0].name, "self")) {
-                return self.fail(error.TypeMismatch, "metod '{s}.{s}' ilk parametre olarak 'self' almalı", .{ cd.name, m.name });
+                return self.fail(error.TypeMismatch, "method '{s}.{s}' must take 'self' as its first parameter", .{ cd.name, m.name });
             }
             const self_type_ok = m.params[0].type_expr == .simple and
                 std.mem.eql(u8, m.params[0].type_expr.simple, cd.name);
             if (!self_type_ok) {
-                return self.fail(error.TypeMismatch, "metod '{s}.{s}' içinde 'self' tipi '{s}' olmalıdır", .{ cd.name, m.name, cd.name });
+                return self.fail(error.TypeMismatch, "inside method '{s}.{s}', the type of 'self' must be '{s}'", .{ cd.name, m.name, cd.name });
             }
             const params = try self.allocator.alloc(Type, m.params.len - 1);
             for (m.params[1..], 0..) |p, i| params[i] = try self.typeExprToType(p.type_expr);
@@ -3081,7 +3081,7 @@ pub const Checker = struct {
                 // `types.eql` kuralıyla AYNI gerekçe).
                 if (info.methods.get(m.name)) |inherited| {
                     if (!funcSigEqlIgnoringSelf(inherited, sig)) {
-                        return self.fail(error.TypeMismatch, "metod '{s}.{s}' taban sınıftaki imzayla eşleşmiyor (override tam imza eşleşmesi gerektirir)", .{ cd.name, m.name });
+                        return self.fail(error.TypeMismatch, "method '{s}.{s}' does not match the signature in the base class (an override requires an exact signature match)", .{ cd.name, m.name });
                     }
                 }
                 try info.methods.put(self.allocator, m.name, sig);
@@ -3125,7 +3125,7 @@ pub const Checker = struct {
                     const arg_values = try self.allocator.alloc([]const u8, dec.args.len);
                     for (dec.args, 0..) |arg, i| {
                         if (arg != .string_lit) {
-                            return self.fail(error.TypeMismatch, "'@capability.requires' argümanı {d} yalnızca bir string LİTERALİ olabilir (metod: {s}.{s})", .{ i + 1, cd.name, m.name });
+                            return self.fail(error.TypeMismatch, "argument {d} of '@capability.requires' must be a string LITERAL (method: {s}.{s})", .{ i + 1, cd.name, m.name });
                         }
                         arg_values[i] = arg.string_lit;
                     }
@@ -3306,23 +3306,23 @@ pub const Checker = struct {
             if (stmt.kind != .protocol_def) continue;
             const pd = stmt.kind.protocol_def;
             if (self.protocols.contains(pd.name)) {
-                return self.fail(error.DuplicateDefinition, "protokol zaten tanımlı: {s}", .{pd.name});
+                return self.fail(error.DuplicateDefinition, "protocol already defined: {s}", .{pd.name});
             }
             const methods = try self.allocator.alloc(ProtocolMethod, pd.methods.len);
             for (pd.methods, 0..) |m, i| {
                 if (m.type_params.len > 0) {
-                    return self.fail(error.TypeMismatch, "protokol metodları generic olamaz: {s}.{s}", .{ pd.name, m.name });
+                    return self.fail(error.TypeMismatch, "protocol methods cannot be generic: {s}.{s}", .{ pd.name, m.name });
                 }
                 if (m.params.len == 0 or !std.mem.eql(u8, m.params[0].name, "self")) {
-                    return self.fail(error.TypeMismatch, "protokol metodu '{s}.{s}' ilk parametre olarak 'self' almalı", .{ pd.name, m.name });
+                    return self.fail(error.TypeMismatch, "protocol method '{s}.{s}' must take 'self' as its first parameter", .{ pd.name, m.name });
                 }
                 const self_type_ok = m.params[0].type_expr == .simple and
                     std.mem.eql(u8, m.params[0].type_expr.simple, pd.name);
                 if (!self_type_ok) {
-                    return self.fail(error.TypeMismatch, "protokol metodu '{s}.{s}' içinde 'self' tipi '{s}' olmalıdır", .{ pd.name, m.name, pd.name });
+                    return self.fail(error.TypeMismatch, "inside protocol method '{s}.{s}', the type of 'self' must be '{s}'", .{ pd.name, m.name, pd.name });
                 }
                 if (m.body.len != 1 or m.body[0].kind != .pass_stmt) {
-                    return self.fail(error.TypeMismatch, "protokol metodu '{s}.{s}' yalnızca 'pass' gövdesine sahip olabilir (yalnızca imza)", .{ pd.name, m.name });
+                    return self.fail(error.TypeMismatch, "protocol method '{s}.{s}' can only have a 'pass' body (signature only)", .{ pd.name, m.name });
                 }
                 const params = try self.allocator.alloc(Type, m.params.len - 1);
                 for (m.params[1..], 0..) |p, j| params[j] = try self.typeExprToType(p.type_expr);
@@ -4076,7 +4076,7 @@ pub const Checker = struct {
                         if (self.resolveExprSharedType(av, params)) |r| {
                             if (r.ty == .list or r.ty == .dict or r.ty == .class) {
                                 if (self.mutates_params.contains(.{ .func = c.callee.identifier, .index = @intCast(idx) })) {
-                                    return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada '{s}' üzerinden transitif olarak değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param, c.callee.identifier });
+                                    return self.fail(error.SpawnSharedMutation, "since function '{s}' is a 'spawn' target, its shared parameter '{s}' cannot be mutated transitively here through '{s}' (unsynchronised mutation across concurrent workers causes a data race) — make a local copy first", .{ fd_name, r.root_param, c.callee.identifier });
                                 }
                             }
                         }
@@ -4087,7 +4087,7 @@ pub const Checker = struct {
                                 // HER ZAMAN 0'DADIR — bkz. scanMutatesGraphExpr'in
                                 // AYNI +1 KAYDIRMASININ belge notu.
                                 if (self.mutates_params.contains(.{ .func = owner_symbol, .index = @intCast(idx + 1) })) {
-                                    return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada '{s}' metodu üzerinden transitif olarak değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param, method_name_for_msg });
+                                    return self.fail(error.SpawnSharedMutation, "since function '{s}' is a 'spawn' target, its shared parameter '{s}' cannot be mutated transitively here through the method '{s}' (unsynchronised mutation across concurrent workers causes a data race) — make a local copy first", .{ fd_name, r.root_param, method_name_for_msg });
                                 }
                             }
                         }
@@ -4147,12 +4147,12 @@ pub const Checker = struct {
                     switch (a.target) {
                         .index => |ix| if (self.resolveExprSharedType(ix.obj.*, params)) |r| {
                             if (r.ty == .list or r.ty == .dict) {
-                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
+                                return self.fail(error.SpawnSharedMutation, "since function '{s}' is a 'spawn' target, its shared parameter '{s}' cannot be mutated here (unsynchronised mutation across concurrent workers causes a data race) — make a local copy first", .{ fd_name, r.root_param });
                             }
                         },
                         .attribute => |at| if (self.resolveExprSharedType(at.obj.*, params)) |r| {
                             if (r.ty == .class) {
-                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
+                                return self.fail(error.SpawnSharedMutation, "since function '{s}' is a 'spawn' target, its shared parameter '{s}' cannot be mutated here (unsynchronised mutation across concurrent workers causes a data race) — make a local copy first", .{ fd_name, r.root_param });
                             }
                         },
                         else => {},
@@ -4170,7 +4170,7 @@ pub const Checker = struct {
                             if (isMutatingContainerMethod(at.attr)) {
                                 if (self.resolveExprSharedType(at.obj.*, params)) |r| {
                                     if (r.ty == .list or r.ty == .dict) {
-                                        return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
+                                        return self.fail(error.SpawnSharedMutation, "since function '{s}' is a 'spawn' target, its shared parameter '{s}' cannot be mutated here (unsynchronised mutation across concurrent workers causes a data race) — make a local copy first", .{ fd_name, r.root_param });
                                     }
                                 }
                             }
@@ -4234,10 +4234,10 @@ pub const Checker = struct {
         switch (stmt.kind) {
             .assign => |a| switch (a.target) {
                 .index => |ix| if (ix.obj.* == .identifier and isResourceOwned(points_to, resource_owners, ix.obj.identifier)) {
-                    return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{ix.obj.identifier});
+                    return self.fail(error.SpawnSharedMutation, "'{s}' cannot be mutated here after being passed as a shared argument to a 'spawn' call and before it is awaited (unsynchronised mutation across concurrent workers causes a data race) — 'await' first or use a local copy", .{ix.obj.identifier});
                 },
                 .attribute => |at| if (at.obj.* == .identifier and isResourceOwned(points_to, resource_owners, at.obj.identifier)) {
-                    return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{at.obj.identifier});
+                    return self.fail(error.SpawnSharedMutation, "'{s}' cannot be mutated here after being passed as a shared argument to a 'spawn' call and before it is awaited (unsynchronised mutation across concurrent workers causes a data race) — 'await' first or use a local copy", .{at.obj.identifier});
                 },
                 else => {},
             },
@@ -4247,7 +4247,7 @@ pub const Checker = struct {
                     const at = c.callee.attribute;
                     if (at.obj.* == .identifier and isResourceOwned(points_to, resource_owners, at.obj.identifier)) {
                         if (isMutatingContainerMethod(at.attr)) {
-                            return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{at.obj.identifier});
+                            return self.fail(error.SpawnSharedMutation, "'{s}' cannot be mutated here after being passed as a shared argument to a 'spawn' call and before it is awaited (unsynchronised mutation across concurrent workers causes a data race) — 'await' first or use a local copy", .{at.obj.identifier});
                         }
                     }
                 }
@@ -4941,7 +4941,7 @@ pub const Checker = struct {
         var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async, .path = fd.name };
         for (fd.body) |s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(fd.body)) {
-            return self.fail(error.MissingReturn, "fonksiyon '{s}' tüm yollarda değer döndürmüyor", .{fd.name});
+            return self.fail(error.MissingReturn, "function '{s}' does not return a value on all paths", .{fd.name});
         }
     }
 
@@ -5019,7 +5019,7 @@ pub const Checker = struct {
             const info = self.classes.getPtr(cd.name).?;
             var it = info.declared_unassigned.keyIterator();
             while (it.next()) |name| {
-                try self.recordDiagnostic(self.fail(error.UnassignedField, "sınıf '{s}'in bildirilen '{s}' alanı __init__ içinde hiç atanmıyor", .{ cd.name, name.* }));
+                try self.recordDiagnostic(self.fail(error.UnassignedField, "class '{s}': the declared field '{s}' is never assigned in __init__", .{ cd.name, name.* }));
             }
         }
         for (cd.methods) |m| {
@@ -5039,7 +5039,7 @@ pub const Checker = struct {
         var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .self_class = class_name, .is_init = is_init, .path = path };
         for (m.body) |s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(m.body)) {
-            return self.fail(error.MissingReturn, "metod '{s}.{s}' tüm yollarda değer döndürmüyor", .{ class_name, m.name });
+            return self.fail(error.MissingReturn, "method '{s}.{s}' does not return a value on all paths", .{ class_name, m.name });
         }
     }
 
@@ -5087,7 +5087,7 @@ pub const Checker = struct {
             // (`except A as e` ... `except B as e`).
             const both_classes = existing == .class and ty == .class;
             if (!types.eql(existing, ty) and !both_classes) {
-                return self.fail(error.TypeMismatch, "'{s}' bu kapsamda zaten '{s}' tipiyle tanımlı; '{s}' tipiyle yeniden tanımlanamaz (farklı bir ad kullanın)", .{ name, try self.typeText(existing), try self.typeText(ty) });
+                return self.fail(error.TypeMismatch, "'{s}' is already defined in this scope with type '{s}'; it cannot be redefined with type '{s}' (use a different name)", .{ name, try self.typeText(existing), try self.typeText(ty) });
             }
         }
         try ctx.scope.declare(self.allocator, name, ty);
@@ -5113,14 +5113,14 @@ pub const Checker = struct {
                 const declared = try self.typeExprToType(v.type_expr);
                 const value_t = try self.checkExprExpected(ctx, v.value, declared);
                 if (!self.assignable(declared, value_t)) {
-                    return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{v.name});
+                    return self.fail(error.TypeMismatch, "type mismatch for '{s}'", .{v.name});
                 }
                 try self.declareVar(ctx, v.name, declared);
             },
             .assign => |a| try self.checkAssign(ctx, a),
             .if_stmt => |f| {
                 const ct = try self.checkExpr(ctx, f.cond);
-                if (ct != .boolean) return self.fail(error.TypeMismatch, "'if' koşulu bool olmalıdır", .{});
+                if (ct != .boolean) return self.fail(error.TypeMismatch, "the 'if' condition must be a bool", .{});
                 // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): DAR,
                 // örüntü-tabanlı daraltma — yalnızca `if x != None:`/`if x
                 // == None:` (KENDİ scope'unun DOĞRUDAN bir YERELİ olan `x`
@@ -5137,14 +5137,14 @@ pub const Checker = struct {
                 try self.checkNarrowedBlock(ctx, &then_n, f.then_body);
                 for (f.elif_clauses) |ec| {
                     const ect = try self.checkExpr(ctx, ec.cond);
-                    if (ect != .boolean) return self.fail(error.TypeMismatch, "'elif' koşulu bool olmalıdır", .{});
+                    if (ect != .boolean) return self.fail(error.TypeMismatch, "the 'elif' condition must be a bool", .{});
                     for (ec.body) |s| try self.checkStmt(ctx, s);
                 }
                 if (f.else_body) |eb| try self.checkNarrowedBlock(ctx, &else_n, eb);
             },
             .while_stmt => |w| {
                 const ct = try self.checkExpr(ctx, w.cond);
-                if (ct != .boolean) return self.fail(error.TypeMismatch, "'while' koşulu bool olmalıdır", .{});
+                if (ct != .boolean) return self.fail(error.TypeMismatch, "the 'while' condition must be a bool", .{});
                 ctx.loop_depth += 1;
                 defer ctx.loop_depth -= 1;
                 // Faz FF.6: `while x != None:` — `if`in AYNI DAR
@@ -5177,42 +5177,42 @@ pub const Checker = struct {
             // değişken olarak BAĞLAR.
             .func_def => |fd| {
                 if (fd.type_params.len > 0) {
-                    return self.fail(error.TypeMismatch, "iç içe fonksiyon tanımı generic OLAMAZ: {s}", .{fd.name});
+                    return self.fail(error.TypeMismatch, "a nested function definition CANNOT be generic: {s}", .{fd.name});
                 }
                 if (fd.is_async) {
-                    return self.fail(error.TypeMismatch, "iç içe fonksiyon tanımı 'async def' OLAMAZ: {s}", .{fd.name});
+                    return self.fail(error.TypeMismatch, "a nested function definition CANNOT be 'async def': {s}", .{fd.name});
                 }
                 const func_type = try self.checkNestedFuncDef(ctx, fd);
                 try ctx.scope.declare(self.allocator, fd.name, func_type);
             },
-            .class_def => return self.fail(error.TypeMismatch, "sınıf tanımı yalnızca modül seviyesinde olabilir", .{}),
-            .protocol_def => return self.fail(error.TypeMismatch, "protokol tanımı yalnızca modül seviyesinde olabilir", .{}),
-            .extern_def => return self.fail(error.TypeMismatch, "'extern def' yalnızca modül seviyesinde olabilir", .{}),
-            .import_stmt => return self.fail(error.TypeMismatch, "'import' yalnızca modül seviyesinde olabilir", .{}),
-            .from_import_stmt => return self.fail(error.TypeMismatch, "'from ... import' yalnızca modül seviyesinde olabilir", .{}),
+            .class_def => return self.fail(error.TypeMismatch, "a class definition is only allowed at module level", .{}),
+            .protocol_def => return self.fail(error.TypeMismatch, "a protocol definition is only allowed at module level", .{}),
+            .extern_def => return self.fail(error.TypeMismatch, "'extern def' is only allowed at module level", .{}),
+            .import_stmt => return self.fail(error.TypeMismatch, "'import' is only allowed at module level", .{}),
+            .from_import_stmt => return self.fail(error.TypeMismatch, "'from ... import' is only allowed at module level", .{}),
             .return_stmt => |r| {
                 const expected = ctx.expected_return orelse
-                    return self.fail(error.TypeMismatch, "'return' yalnızca fonksiyon/metod içinde kullanılabilir", .{});
+                    return self.fail(error.TypeMismatch, "'return' can only be used inside a function/method", .{});
                 if (r) |e| {
                     const rt = try self.checkExprExpected(ctx, e, expected);
-                    if (!self.assignable(expected, rt)) return self.fail(error.TypeMismatch, "dönüş tipi uyuşmuyor", .{});
+                    if (!self.assignable(expected, rt)) return self.fail(error.TypeMismatch, "return type mismatch", .{});
                 } else if (expected != .none) {
-                    return self.fail(error.TypeMismatch, "fonksiyon bir değer döndürmelidir", .{});
+                    return self.fail(error.TypeMismatch, "the function must return a value", .{});
                 }
             },
             .raise_stmt => |e| {
                 const t = try self.checkExpr(ctx, e);
-                if (t != .class) return self.fail(error.TypeMismatch, "'raise' yalnızca bir sınıf örneği alabilir", .{});
+                if (t != .class) return self.fail(error.TypeMismatch, "'raise' can only take a class instance", .{});
             },
             // v1.149.0: `del d[k]` — hedef `dict[K, V]` indeksi (anahtar tipi K); liste `del xs[i]` roadmap 1.7.
             .del_stmt => |e| {
-                if (e != .index) return self.fail(error.TypeMismatch, "'del' yalnızca bir indeks hedefi alır (del d[anahtar])", .{});
+                if (e != .index) return self.fail(error.TypeMismatch, "'del' only takes an index target (del d[key])", .{});
                 const obj_t = try self.checkExpr(ctx, e.index.obj.*);
                 const idx_t = try self.checkExpr(ctx, e.index.index.*);
                 switch (obj_t) {
-                    .dict => |d| if (!types.eql(idx_t, d.key.*)) return self.fail(error.TypeMismatch, "'del' anahtarı dict'in anahtar tipiyle uyuşmuyor", .{}),
-                    .list => if (idx_t != .int) return self.fail(error.TypeMismatch, "'del' liste indeksi 'int' olmalıdır", .{}),
-                    else => return self.fail(error.TypeMismatch, "'del' yalnızca list[i] ya da dict[anahtar] üzerinde çalışır", .{}),
+                    .dict => |d| if (!types.eql(idx_t, d.key.*)) return self.fail(error.TypeMismatch, "the 'del' key does not match the dict's key type", .{}),
+                    .list => if (idx_t != .int) return self.fail(error.TypeMismatch, "the 'del' list index must be an 'int'", .{}),
+                    else => return self.fail(error.TypeMismatch, "'del' only works on list[i] or dict[key]", .{}),
                 }
             },
             .try_stmt => |t| try self.checkTry(ctx, t),
@@ -5251,8 +5251,8 @@ pub const Checker = struct {
                 for (to_remove.items) |name| _ = ctx.scope.vars.remove(name);
             },
             .pass_stmt => {},
-            .break_stmt => if (ctx.loop_depth == 0) return self.fail(error.TypeMismatch, "'break' yalnızca bir 'while'/'for' döngüsü içinde kullanılabilir", .{}),
-            .continue_stmt => if (ctx.loop_depth == 0) return self.fail(error.TypeMismatch, "'continue' yalnızca bir 'while'/'for' döngüsü içinde kullanılabilir", .{}),
+            .break_stmt => if (ctx.loop_depth == 0) return self.fail(error.TypeMismatch, "'break' can only be used inside a 'while'/'for' loop", .{}),
+            .continue_stmt => if (ctx.loop_depth == 0) return self.fail(error.TypeMismatch, "'continue' can only be used inside a 'while'/'for' loop", .{}),
         }
     }
 
@@ -5287,7 +5287,7 @@ pub const Checker = struct {
             else
                 null;
             const class_name = resolved_class_name orelse
-                return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{ec_class_name});
+                return self.fail(error.UndefinedClass, "unknown class: {s}", .{ec_class_name});
             if (ec.bind_name) |bn| {
                 try self.declareVar(ctx, bn, .{ .class = class_name });
             }
@@ -5307,22 +5307,22 @@ pub const Checker = struct {
         const ctx_t = try self.checkExpr(ctx, w.ctx_expr);
         const class_name = switch (ctx_t) {
             .class => |n| n,
-            else => return self.fail(error.TypeMismatch, "'with' yalnızca bir sınıf örneği üzerinde çalışır", .{}),
+            else => return self.fail(error.TypeMismatch, "'with' only works on a class instance", .{}),
         };
         const info = self.classes.getPtr(class_name) orelse
-            return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
+            return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         const enter_sig = info.methods.get("__enter__") orelse
-            return self.fail(error.UndefinedMethod, "'{s}' sınıfının '__enter__' metodu yok ('with' için gerekli)", .{class_name});
+            return self.fail(error.UndefinedMethod, "class '{s}' has no '__enter__' method (required for 'with')", .{class_name});
         if (enter_sig.params.len != 0) {
-            return self.fail(error.TypeMismatch, "'{s}.__enter__' hiçbir argüman ALMAMALIDIR", .{class_name});
+            return self.fail(error.TypeMismatch, "'{s}.__enter__' MUST NOT take any arguments", .{class_name});
         }
         const exit_sig = info.methods.get("__exit__") orelse
-            return self.fail(error.UndefinedMethod, "'{s}' sınıfının '__exit__' metodu yok ('with' için gerekli)", .{class_name});
+            return self.fail(error.UndefinedMethod, "class '{s}' has no '__exit__' method (required for 'with')", .{class_name});
         if (exit_sig.params.len != 0) {
-            return self.fail(error.TypeMismatch, "'{s}.__exit__' hiçbir argüman ALMAMALIDIR", .{class_name});
+            return self.fail(error.TypeMismatch, "'{s}.__exit__' MUST NOT take any arguments", .{class_name});
         }
         if (exit_sig.return_type != .none) {
-            return self.fail(error.TypeMismatch, "'{s}.__exit__' None DÖNMELİDİR", .{class_name});
+            return self.fail(error.TypeMismatch, "'{s}.__exit__' MUST return None", .{class_name});
         }
         if (w.binding) |bn| {
             try self.declareVar(ctx, bn, enter_sig.return_type);
@@ -5342,7 +5342,7 @@ pub const Checker = struct {
     /// belge notu — codegen'in `genDeferStmt`i AYNI anahtarla okur).
     fn checkDeferStmt(self: *Checker, ctx: *FnCtx, d: ast.DeferStmt) TypeError!void {
         if (ctx.expected_return == null) {
-            return self.fail(error.TypeMismatch, "'defer' yalnızca fonksiyon/metod içinde kullanılabilir", .{});
+            return self.fail(error.TypeMismatch, "'defer' can only be used inside a function/method", .{});
         }
         self.defer_counter += 1;
         const synthetic_name = try std.fmt.allocPrint(self.allocator, "__defer${d}", .{self.defer_counter});
@@ -5383,7 +5383,7 @@ pub const Checker = struct {
         };
         for (fd.body) |s| try self.checkStmt(&inner_ctx, s);
         if (ret != .none and !alwaysReturns(fd.body)) {
-            return self.fail(error.MissingReturn, "iç içe fonksiyon '{s}' tüm yollarda değer döndürmüyor", .{fd.name});
+            return self.fail(error.MissingReturn, "nested function '{s}' does not return a value on all paths", .{fd.name});
         }
 
         var capture_list: std.ArrayListUnmanaged(CaptureVar) = .empty;
@@ -5410,7 +5410,7 @@ pub const Checker = struct {
                     // olarak YALNIZCA OKUNABİLİR (bkz. nox-teknik-spesifikasyon.md
                     // §3.23, "mutasyon-görünür closure YOK" kararı).
                     if (ctx.scope.parent != null and ctx.scope.existsInChain(name)) {
-                        return self.fail(error.TypeMismatch, "'{s}' iç içe fonksiyonun DIŞINDAN yakalanan bir değişkendir, yalnızca OKUNABİLİR (atama desteklenmiyor)", .{name});
+                        return self.fail(error.TypeMismatch, "'{s}' is a variable captured from OUTSIDE the nested function and can only be READ (assignment is not supported)", .{name});
                     }
                     // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
                     // planı): yerel BAŞARISIZ olursa (VE bir yakalama da
@@ -5420,11 +5420,11 @@ pub const Checker = struct {
                     // hatası ÖNCELİKLİ kalır (capture'lar zaten mutasyona
                     // KAPALI, bu değişmiyor).
                     if (self.module_globals.get(name)) |gt| break :blk gt;
-                    return self.fail(error.UndefinedVariable, "tanımsız değişken: {s} (ilk atamada tip belirtin: `{s}: <tip> = ...`)", .{ name, name });
+                    return self.fail(error.UndefinedVariable, "undefined variable: {s} (give the type on first assignment: `{s}: <type> = ...`)", .{ name, name });
                 };
                 const value_t = try self.checkExprExpected(ctx, a.value, existing);
                 if (!self.assignable(existing, value_t)) {
-                    return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{name});
+                    return self.fail(error.TypeMismatch, "type mismatch for '{s}'", .{name});
                 }
                 // Faz FF.6: yeniden atama, daraltma DURUMUNU geçersiz kılar
                 // (bkz. `FnCtx.narrowed`in belge notu) — İÇİNDE bulunulan
@@ -5446,7 +5446,7 @@ pub const Checker = struct {
                 try self.requireNotOptional(obj_t, attr.attr);
                 const class_name = switch (obj_t) {
                     .class => |n| n,
-                    else => return self.fail(error.TypeMismatch, "'.{s}' yalnızca sınıf örneklerinde kullanılabilir", .{attr.attr}),
+                    else => return self.fail(error.TypeMismatch, "'.{s}' can only be used on class instances", .{attr.attr}),
                 };
                 const is_self = attr.obj.* == .identifier and std.mem.eql(u8, attr.obj.identifier, "self");
                 const info = self.classes.getPtr(class_name).?;
@@ -5459,7 +5459,7 @@ pub const Checker = struct {
                 const value_t = try self.checkExprExpected(ctx, a.value, existing_field_t);
                 if (existing_field_t) |existing_t| {
                     if (!self.assignable(existing_t, value_t)) {
-                        return self.fail(error.TypeMismatch, "'{s}.{s}' için tip uyuşmazlığı", .{ class_name, attr.attr });
+                        return self.fail(error.TypeMismatch, "type mismatch for '{s}.{s}'", .{ class_name, attr.attr });
                     }
                     // Faz FF.5: AÇIKÇA bildirilen bir alan (`registerClassSignatures`
                     // tarafından ÖNCEDEN `info.fields`e YERLEŞTİRİLMİŞ) BURADA
@@ -5468,7 +5468,7 @@ pub const Checker = struct {
                     _ = info.declared_unassigned.remove(attr.attr);
                 } else {
                     if (!(is_self and ctx.is_init)) {
-                        return self.fail(error.UndefinedAttribute, "'{s}' sınıfının '{s}' alanı yalnızca __init__ içinde 'self.{s} = ...' ile tanımlanabilir", .{ class_name, attr.attr, attr.attr });
+                        return self.fail(error.UndefinedAttribute, "in class '{s}', field '{s}' can only be defined in __init__ with 'self.{s} = ...'", .{ class_name, attr.attr, attr.attr });
                     }
                     try info.fields.put(self.allocator, attr.attr, value_t);
                 }
@@ -5489,27 +5489,27 @@ pub const Checker = struct {
                 if (obj_t == .list) {
                     const key_t = try self.checkExpr(ctx, idx.index.*);
                     if (key_t != .int) {
-                        return self.fail(error.TypeMismatch, "liste indeksi 'int' olmalı", .{});
+                        return self.fail(error.TypeMismatch, "the list index must be an 'int'", .{});
                     }
                     const value_t = try self.checkExprExpected(ctx, a.value, obj_t.list.*);
                     if (!self.assignable(obj_t.list.*, value_t)) {
-                        return self.fail(error.TypeMismatch, "indeksli atamada tip uyuşmazlığı: listenin eleman tipiyle uyuşmuyor", .{});
+                        return self.fail(error.TypeMismatch, "type mismatch in indexed assignment: it does not match the list's element type", .{});
                     }
                     return;
                 }
                 if (obj_t != .dict) {
-                    return self.fail(error.TypeMismatch, "indeksli atama yalnızca 'list'/'dict' üzerinde çalışır", .{});
+                    return self.fail(error.TypeMismatch, "indexed assignment only works on 'list'/'dict'", .{});
                 }
                 const key_t = try self.checkExpr(ctx, idx.index.*);
                 if (!types.eql(key_t, obj_t.dict.key.*)) {
-                    return self.fail(error.TypeMismatch, "dict indeksi anahtar tipiyle uyuşmuyor", .{});
+                    return self.fail(error.TypeMismatch, "the dict index does not match the key type", .{});
                 }
                 const value_t = try self.checkExprExpected(ctx, a.value, obj_t.dict.value.*);
                 if (!self.assignable(obj_t.dict.value.*, value_t)) {
-                    return self.fail(error.TypeMismatch, "dict değeri değer tipiyle uyuşmuyor", .{});
+                    return self.fail(error.TypeMismatch, "the dict value does not match the value type", .{});
                 }
             },
-            else => return self.fail(error.TypeMismatch, "geçersiz atama hedefi", .{}),
+            else => return self.fail(error.TypeMismatch, "invalid assignment target", .{}),
         }
     }
 
@@ -5522,13 +5522,13 @@ pub const Checker = struct {
             std.mem.eql(u8, iterable.call.callee.identifier, "range"))
         {
             const c = iterable.call;
-            if (c.args.len < 1 or c.args.len > 3) return self.fail(error.ArgumentCountMismatch, "'range' 1, 2 ya da 3 argüman alır (bitiş | başlangıç, bitiş | başlangıç, bitiş, adım)", .{});
+            if (c.args.len < 1 or c.args.len > 3) return self.fail(error.ArgumentCountMismatch, "'range' takes 1, 2 or 3 arguments (stop | start, stop | start, stop, step)", .{});
             for (c.args) |a| {
                 const at = try self.checkExpr(ctx, a);
-                if (at != .int) return self.fail(error.TypeMismatch, "'range' bir int argüman bekler", .{});
+                if (at != .int) return self.fail(error.TypeMismatch, "'range' expects an int argument", .{});
             }
             if (c.args.len == 3 and c.args[2] == .int_lit and c.args[2].int_lit == 0) {
-                return self.fail(error.TypeMismatch, "'range' adımı sıfır olamaz", .{});
+                return self.fail(error.TypeMismatch, "the 'range' step cannot be zero", .{});
             }
             return .int;
         }
@@ -5544,7 +5544,7 @@ pub const Checker = struct {
             .list => |elem| elem.*,
             .str => .str,
             .dict => |d| d.key.*,
-            else => return self.fail(error.NotIterable, "bu ifade üzerinde 'for' çalıştırılamaz (list/str/dict/range ya da `__iter__` olan sınıf olmalı)", .{}),
+            else => return self.fail(error.NotIterable, "'for' cannot iterate over this expression (it must be a list/str/dict/range or a class with `__iter__`)", .{}),
         };
         // Yeniden yazılacak iterable ifadesi (str/dict → liste) ve hoist (gizli yerel) gereksinimi.
         var new_iterable: ?ast.Expr = dunder_iter;
@@ -5605,7 +5605,7 @@ pub const Checker = struct {
     /// (`n.val if n != None else 0`).
     fn checkTernary(self: *Checker, ctx: *FnCtx, t: ast.Ternary, expected: ?Type) TypeError!Type {
         const ct = try self.checkExpr(ctx, t.cond.*);
-        if (ct != .boolean) return self.fail(error.TypeMismatch, "üçlü ifadenin koşulu bool olmalıdır", .{});
+        if (ct != .boolean) return self.fail(error.TypeMismatch, "the condition of a ternary expression must be a bool", .{});
         var then_t: Type = undefined;
         var else_t: Type = undefined;
         var then_n: NarrowList = .{};
@@ -5624,10 +5624,10 @@ pub const Checker = struct {
         }
         switch (then_t) {
             .int, .float, .boolean, .str, .fixed_int, .list, .dict, .class => {},
-            else => return self.fail(error.TypeMismatch, "üçlü ifadenin dallarının tipi desteklenmiyor (int/float/bool/str/list/dict/sınıf olmalı)", .{}),
+            else => return self.fail(error.TypeMismatch, "the type of the ternary expression's branches is not supported (it must be int/float/bool/str/list/dict/class)", .{}),
         }
         if (!types.eql(then_t, else_t)) {
-            return self.fail(error.TypeMismatch, "üçlü ifadenin iki dalı AYNI tipte olmalıdır (int ile float karışımı için dalı açıkça dönüştürün)", .{});
+            return self.fail(error.TypeMismatch, "both branches of a ternary expression MUST have the SAME type (to mix int and float, convert a branch explicitly)", .{});
         }
         return then_t;
     }
@@ -5657,7 +5657,7 @@ pub const Checker = struct {
                     for (expr.list_lit) |el| {
                         const t = try self.checkExprExpected(ctx, el, exp.list.*);
                         if (!self.assignable(exp.list.*, t)) {
-                            return self.fail(error.TypeMismatch, "liste elemanı beklenen fonksiyon tipiyle uyuşmuyor", .{});
+                            return self.fail(error.TypeMismatch, "the list element does not match the expected function type", .{});
                         }
                     }
                     return exp;
@@ -5670,7 +5670,7 @@ pub const Checker = struct {
                     for (expr.list_lit) |el| {
                         const t = try self.checkExpr(ctx, el);
                         if (!self.assignable(exp.list.*, t)) {
-                            return self.fail(error.TypeMismatch, "liste elemanı beklenen sınıf tipiyle uyuşmuyor", .{});
+                            return self.fail(error.TypeMismatch, "the list element does not match the expected class type", .{});
                         }
                     }
                     return exp;
@@ -5698,7 +5698,7 @@ pub const Checker = struct {
                     }
                 };
             }
-            return self.fail(error.UnknownType, "set() için eleman tipi çıkarılamıyor — `s: set[int] = set()` biçiminde tipi bildirin", .{});
+            return self.fail(error.UnknownType, "the element type of set() cannot be inferred — declare the type as `s: set[int] = set()`", .{});
         }
         // Faz F.3: `adopt(p) -> T` — `T`, Nox'ta tiplerin birinci-sınıf
         // değer OLMADIĞINDAN bir argüman olarak GEÇİRİLEMEZ; bunun yerine
@@ -5707,10 +5707,10 @@ pub const Checker = struct {
         if (expr == .call and expr.call.callee.* == .identifier and std.mem.eql(u8, expr.call.callee.identifier, "adopt")) {
             const c = expr.call;
             try self.requireLowlevel("adopt");
-            if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'adopt' tam olarak 1 argüman alır", .{});
+            if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'adopt' takes exactly 1 argument", .{});
             const p_t = try self.checkExpr(ctx, c.args[0]);
-            if (p_t != .ptr) return self.fail(error.TypeMismatch, "'adopt' bir ptr alır", .{});
-            const exp = expected orelse return self.fail(error.UnknownType, "'adopt' yalnızca beklenen tipi bilinen bir bağlamda (var_decl/return/atama/argüman) kullanılabilir", .{});
+            if (p_t != .ptr) return self.fail(error.TypeMismatch, "'adopt' takes a ptr", .{});
+            const exp = expected orelse return self.fail(error.UnknownType, "'adopt' can only be used in a context whose expected type is known (var_decl/return/assignment/argument)", .{});
             return exp;
         }
         // v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192): `x: u8 =
@@ -5729,7 +5729,7 @@ pub const Checker = struct {
                 if (exp == .fixed_int) {
                     const kind = exp.fixed_int;
                     if (!kind.fitsValue(expr.int_lit)) {
-                        return self.fail(error.TypeMismatch, "{d} değeri '{s}' aralığına sığmıyor", .{ expr.int_lit, kind.name() });
+                        return self.fail(error.TypeMismatch, "the value {d} does not fit in the range of '{s}'", .{ expr.int_lit, kind.name() });
                     }
                     return exp;
                 }
@@ -5747,11 +5747,11 @@ pub const Checker = struct {
                 if (exp == .fixed_int) {
                     const kind = exp.fixed_int;
                     if (!kind.isSigned()) {
-                        return self.fail(error.TypeMismatch, "negatif bir değer işaretsiz '{s}' tipine atanamaz", .{kind.name()});
+                        return self.fail(error.TypeMismatch, "a negative value cannot be assigned to the unsigned type '{s}'", .{kind.name()});
                     }
                     const neg_val = -expr.unary.operand.int_lit;
                     if (!kind.fitsValue(neg_val)) {
-                        return self.fail(error.TypeMismatch, "{d} değeri '{s}' aralığına sığmıyor", .{ neg_val, kind.name() });
+                        return self.fail(error.TypeMismatch, "the value {d} does not fit in the range of '{s}'", .{ neg_val, kind.name() });
                     }
                     return exp;
                 }
@@ -5785,7 +5785,7 @@ pub const Checker = struct {
     /// DEĞİŞMEZ.
     noinline fn resolveIdentifierAsFunctionValue(self: *Checker, name: []const u8) TypeError!Type {
         if (self.generic_functions.contains(name)) {
-            return self.fail(error.TypeMismatch, "generic fonksiyon '{s}' bir değer olarak kullanılamaz (yalnızca çağrılabilir)", .{name});
+            return self.fail(error.TypeMismatch, "the generic function '{s}' cannot be used as a value (it can only be called)", .{name});
         }
         // Faz KK.1 (task_32f43efe): `checkCall`nin `.identifier` dalıyla
         // (satır ~2289, `resolveMangledCall`) AYNI `from_imports` geri
@@ -5812,14 +5812,14 @@ pub const Checker = struct {
         if (resolved_name) |rn| {
             const sig = self.functions.get(rn).?;
             if (self.async_functions.contains(rn)) {
-                return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, bir değer olarak kullanılamaz", .{name});
+                return self.fail(error.TypeMismatch, "'{s}' is an 'async def' function and cannot be used as a value", .{name});
             }
             try self.functions_used_as_value.put(self.allocator, rn, {});
             const ret_boxed = try self.allocator.create(Type);
             ret_boxed.* = sig.return_type;
             return .{ .func = .{ .params = sig.params, .return_type = ret_boxed } };
         }
-        return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name});
+        return self.fail(error.UndefinedVariable, "undefined variable: {s}", .{name});
     }
 
     fn checkExpr(self: *Checker, ctx: *FnCtx, expr: ast.Expr) TypeError!Type {
@@ -5854,7 +5854,7 @@ pub const Checker = struct {
                 }
                 switch (u.op) {
                     .neg => {
-                        if (!types.isNumeric(t)) return self.fail(error.TypeMismatch, "unary '-' yalnızca sayısal tiplere uygulanabilir", .{});
+                        if (!types.isNumeric(t)) return self.fail(error.TypeMismatch, "unary '-' can only be applied to numeric types", .{});
                         // v2.0 madde 4 (§5): işaretsiz sabit-genişlikli
                         // kind'ler İçİn `-x` derleme-zamanı hatası —
                         // negatif BARE literalin (`-5`) `checkExprExpected`
@@ -5862,19 +5862,19 @@ pub const Checker = struct {
                         // bir DEĞİŞKEN/ifadeye uygulanan unary eksinin
                         // GENEL reddi).
                         if (t == .fixed_int and !t.fixed_int.isSigned()) {
-                            return self.fail(error.TypeMismatch, "unary '-' işaretsiz bir tipe ('{s}') uygulanamaz", .{t.fixed_int.name()});
+                            return self.fail(error.TypeMismatch, "unary '-' cannot be applied to an unsigned type ('{s}')", .{t.fixed_int.name()});
                         }
                         break :blk t;
                     },
                     .not_ => {
-                        if (t != .boolean) return self.fail(error.TypeMismatch, "'not' yalnızca bool ile kullanılabilir", .{});
+                        if (t != .boolean) return self.fail(error.TypeMismatch, "'not' can only be used with bool", .{});
                         break :blk .boolean;
                     },
                     // v3 madde 2 (bitwise operatörler): bkz. `types.
                     // isBitwiseEligible`in belge notu (nox-lang'in KENDİ
                     // HPy köprüsündeki emsalin genişlemesi).
                     .invert => {
-                        if (!types.isBitwiseEligible(t)) return self.fail(error.TypeMismatch, "unary '~' yalnızca int/sabit-genişlikli tamsayı tiplerine uygulanabilir (float/bool desteklenmez — bool için önce 'int(...)' ile dönüştürün)", .{});
+                        if (!types.isBitwiseEligible(t)) return self.fail(error.TypeMismatch, "unary '~' can only be applied to int/fixed-width integer types (float/bool are not supported — for bool, convert with 'int(...)' first)", .{});
                         break :blk if (t == .fixed_int) t else .int;
                     },
                 }
@@ -5882,11 +5882,11 @@ pub const Checker = struct {
             .binary => |b| try self.checkBinary(ctx, b),
             .list_comp => |lc| try self.checkListComp(ctx, lc),
             .dict_comp => |dc| try self.checkDictComp(ctx, dc),
-            .lambda => return self.fail(error.TypeMismatch, "'lambda' yalnızca beklenen fonksiyon tipinin bilindiği bağlamlarda kullanılabilir (fonksiyon-tipli parametre/değişken/dönüş)", .{}),
+            .lambda => return self.fail(error.TypeMismatch, "'lambda' can only be used where the expected function type is known (a function-typed parameter/variable/return)", .{}),
             .slice => |sl| try self.checkSlice(ctx, sl),
             .tuple_lit => |elems| try self.checkTupleLit(ctx, elems, null),
             .ternary => |t| try self.checkTernary(ctx, t, null),
-            .kwarg => return self.fail(error.TypeMismatch, "keyword argüman (ad=değer) yalnızca bir fonksiyon/metod çağrısının argüman listesinde kullanılabilir", .{}),
+            .kwarg => return self.fail(error.TypeMismatch, "a keyword argument (name=value) can only be used in the argument list of a function/method call", .{}),
             .call => |c| try self.checkCall(ctx, c),
             .attribute => |a| try self.checkAttribute(ctx, a),
             .index => |idx| blk: {
@@ -5901,12 +5901,12 @@ pub const Checker = struct {
                     const ets = self.tuple_elem_types.get(obj_t.class).?;
                     const k: i64 = switch (idx.index.*) {
                         .int_lit => |v| v,
-                        .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) -u.operand.int_lit else return self.fail(error.TypeMismatch, "tuple indeksi sabit bir int literali olmalıdır", .{}),
-                        else => return self.fail(error.TypeMismatch, "tuple indeksi sabit bir int literali olmalıdır", .{}),
+                        .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) -u.operand.int_lit else return self.fail(error.TypeMismatch, "a tuple index must be a constant int literal", .{}),
+                        else => return self.fail(error.TypeMismatch, "a tuple index must be a constant int literal", .{}),
                     };
                     const n: i64 = @intCast(ets.len);
                     const ki = if (k < 0) k + n else k;
-                    if (ki < 0 or ki >= n) return self.fail(error.TypeMismatch, "tuple indeksi aralık dışı (tuple {d} eleman içeriyor)", .{n});
+                    if (ki < 0 or ki >= n) return self.fail(error.TypeMismatch, "tuple index out of range (the tuple has {d} elements)", .{n});
                     const attr = try std.fmt.allocPrint(self.allocator, "f{d}", .{ki});
                     try self.expr_rewrites.put(self.allocator, @intFromPtr(idx.index), .{ .attribute = .{ .obj = idx.obj, .attr = attr } });
                     break :blk ets[@intCast(ki)];
@@ -5914,7 +5914,7 @@ pub const Checker = struct {
                 if (obj_t == .dict) {
                     const idx_t = try self.checkExpr(ctx, idx.index.*);
                     if (!types.eql(idx_t, obj_t.dict.key.*)) {
-                        return self.fail(error.TypeMismatch, "dict indeksi anahtar tipiyle uyuşmuyor", .{});
+                        return self.fail(error.TypeMismatch, "the dict index does not match the key type", .{});
                     }
                     break :blk obj_t.dict.value.*;
                 }
@@ -5925,22 +5925,22 @@ pub const Checker = struct {
                 // burada yalnızca TİP kontrolü yapılır.
                 if (obj_t == .str) {
                     const idx_t = try self.checkExpr(ctx, idx.index.*);
-                    if (idx_t != .int) return self.fail(error.TypeMismatch, "str indeksi int olmalıdır", .{});
+                    if (idx_t != .int) return self.fail(error.TypeMismatch, "a str index must be an int", .{});
                     break :blk .str;
                 }
                 const idx_t = try self.checkExpr(ctx, idx.index.*);
-                if (idx_t != .int) return self.fail(error.TypeMismatch, "liste indeksi int olmalıdır", .{});
+                if (idx_t != .int) return self.fail(error.TypeMismatch, "a list index must be an int", .{});
                 break :blk switch (obj_t) {
                     .list => |elem| elem.*,
-                    else => return self.fail(error.TypeMismatch, "indeksleme yalnızca 'list'/'dict'/'str' üzerinde çalışır", .{}),
+                    else => return self.fail(error.TypeMismatch, "indexing only works on 'list'/'dict'/'str'", .{}),
                 };
             },
             .list_lit => |elems| blk: {
-                if (elems.len == 0) return self.fail(error.UnknownType, "boş liste literalinin tipi çıkarılamaz", .{});
+                if (elems.len == 0) return self.fail(error.UnknownType, "the type of an empty list literal cannot be inferred", .{});
                 const first = try self.checkExpr(ctx, elems[0]);
                 for (elems[1..]) |el| {
                     const t = try self.checkExpr(ctx, el);
-                    if (!types.eql(t, first)) return self.fail(error.TypeMismatch, "liste elemanları aynı tipte olmalıdır", .{});
+                    if (!types.eql(t, first)) return self.fail(error.TypeMismatch, "list elements must have the same type", .{});
                 }
                 const boxed = try self.allocator.create(Type);
                 boxed.* = first;
@@ -5952,20 +5952,20 @@ pub const Checker = struct {
                 // biliniyorsa `checkExprExpected` (bkz. onun belge notu)
                 // bunu ÖNCEDEN ele alır; buraya YALNIZCA bağlamsız (ör.
                 // başka bir literalin içine gömülü) bir boş `{}` düşer.
-                if (pairs.len == 0) return self.fail(error.UnknownType, "boş dict literalinin tipi çıkarılamaz", .{});
+                if (pairs.len == 0) return self.fail(error.UnknownType, "the type of an empty dict literal cannot be inferred", .{});
                 const first_key = try self.checkExpr(ctx, pairs[0].key);
                 const first_value = try self.checkExpr(ctx, pairs[0].value);
                 if (first_key != .int and first_key != .boolean and first_key != .str and first_key != .float) {
-                    return self.fail(error.TypeMismatch, "'dict' anahtar tipi yalnızca int/float/bool/str olabilir", .{});
+                    return self.fail(error.TypeMismatch, "the 'dict' key type can only be int/float/bool/str", .{});
                 }
                 if (first_value != .int and first_value != .float and first_value != .boolean and first_value != .str and first_value != .class and first_value != .list and first_value != .dict) {
-                    return self.fail(error.TypeMismatch, "'dict' değer tipi yalnızca int/float/bool/str/sınıf/list/dict olabilir", .{});
+                    return self.fail(error.TypeMismatch, "the 'dict' value type can only be int/float/bool/str/class/list/dict", .{});
                 }
                 for (pairs[1..]) |p| {
                     const kt = try self.checkExpr(ctx, p.key);
                     const vt = try self.checkExpr(ctx, p.value);
-                    if (!types.eql(kt, first_key)) return self.fail(error.TypeMismatch, "dict anahtarları aynı tipte olmalıdır", .{});
-                    if (!types.eql(vt, first_value)) return self.fail(error.TypeMismatch, "dict değerleri aynı tipte olmalıdır", .{});
+                    if (!types.eql(kt, first_key)) return self.fail(error.TypeMismatch, "dict keys must have the same type", .{});
+                    if (!types.eql(vt, first_value)) return self.fail(error.TypeMismatch, "dict values must have the same type", .{});
                 }
                 const key_boxed = try self.allocator.create(Type);
                 key_boxed.* = first_key;
@@ -5974,7 +5974,7 @@ pub const Checker = struct {
                 break :blk .{ .dict = .{ .key = key_boxed, .value = value_boxed } };
             },
             .await_expr => |operand_ptr| blk: {
-                if (!ctx.in_async) return self.fail(error.TypeMismatch, "'await' yalnızca 'async def' gövdesi içinde kullanılabilir", .{});
+                if (!ctx.in_async) return self.fail(error.TypeMismatch, "'await' can only be used inside an 'async def' body", .{});
                 const operand = operand_ptr.*;
                 const t = try self.checkExpr(ctx, operand);
                 if (t == .task) break :blk t.task.*;
@@ -5991,7 +5991,7 @@ pub const Checker = struct {
                 const is_channel_op = switch (operand) {
                     .call => |c| switch (c.callee.*) {
                         .attribute => |a| blk2: {
-                            const recv_t = self.checkExpr(ctx, a.obj.*) catch return self.fail(error.TypeMismatch, "'await' ifadesinin alıcısı çözümlenemedi", .{});
+                            const recv_t = self.checkExpr(ctx, a.obj.*) catch return self.fail(error.TypeMismatch, "the receiver of the 'await' expression could not be resolved", .{});
                             if ((std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) and (recv_t == .channel or recv_t == .thread_channel)) break :blk2 true;
                             if (std.mem.eql(u8, a.attr, "join") and recv_t == .thread_handle) break :blk2 true;
                             break :blk2 false;
@@ -6000,21 +6000,21 @@ pub const Checker = struct {
                     },
                     else => false,
                 };
-                if (!is_channel_op) return self.fail(error.TypeMismatch, "'await' yalnızca bir Task değeri, bir Channel.send/recv, bir ThreadChannel.send/recv ya da bir ThreadHandle.join() çağrısı üzerinde kullanılabilir", .{});
+                if (!is_channel_op) return self.fail(error.TypeMismatch, "'await' can only be used on a Task value, a Channel.send/recv, a ThreadChannel.send/recv or a ThreadHandle.join() call", .{});
                 break :blk t;
             },
             .spawn_expr => |operand_ptr| blk: {
                 const operand = operand_ptr.*;
                 const call = switch (operand) {
                     .call => |c| c,
-                    else => return self.fail(error.NotCallable, "'spawn' yalnızca bir çağrı ifadesini sarmalayabilir", .{}),
+                    else => return self.fail(error.NotCallable, "'spawn' can only wrap a call expression", .{}),
                 };
                 const fn_name = switch (call.callee.*) {
                     .identifier => |n| n,
-                    else => return self.fail(error.NotCallable, "'spawn' yalnızca doğrudan bir fonksiyon çağrısını sarmalayabilir (metod/kurucu çağrıları henüz desteklenmiyor)", .{}),
+                    else => return self.fail(error.NotCallable, "'spawn' can only wrap a direct function call (method/constructor calls are not supported yet)", .{}),
                 };
                 if (!self.async_functions.contains(fn_name)) {
-                    return self.fail(error.TypeMismatch, "'spawn' yalnızca 'async def' fonksiyonlarını başlatabilir: '{s}' async değil", .{fn_name});
+                    return self.fail(error.TypeMismatch, "'spawn' can only start 'async def' functions: '{s}' is not async", .{fn_name});
                 }
                 const sig = self.functions.get(fn_name).?; // async_functions'a girdiyse functions'ta da vardır
                 self.in_spawn_operand = true;
@@ -6053,14 +6053,14 @@ pub const Checker = struct {
         if (std.mem.eql(u8, g.name, "ptr")) {
             try self.requireLowlevel("ptr");
             if (g.type_args.len != 1) {
-                return self.fail(error.UnknownType, "'ptr' tam olarak bir tip argümanı alır", .{});
+                return self.fail(error.UnknownType, "'ptr' takes exactly one type argument", .{});
             }
             const elem_t = try self.typeExprToType(g.type_args[0]);
             if (g.args.len != 1) {
-                return self.fail(error.ArgumentCountMismatch, "'ptr' kurucusu tam olarak 1 argüman (addr: int) alır", .{});
+                return self.fail(error.ArgumentCountMismatch, "the 'ptr' constructor takes exactly 1 argument (addr: int)", .{});
             }
             if (try self.checkExpr(ctx, g.args[0]) != .int) {
-                return self.fail(error.TypeMismatch, "'ptr' kurucusunun argümanı (addr) int olmalıdır", .{});
+                return self.fail(error.TypeMismatch, "the argument (addr) of the 'ptr' constructor must be an int", .{});
             }
             const boxed = try self.allocator.create(Type);
             boxed.* = elem_t;
@@ -6074,17 +6074,17 @@ pub const Checker = struct {
         // iş-parçacığı olduğundan HERHANGİ bir `T`yi kabul eder).
         if (std.mem.eql(u8, g.name, "ThreadChannel")) {
             if (g.type_args.len != 1) {
-                return self.fail(error.UnknownType, "'ThreadChannel' tam olarak bir tip argümanı alır", .{});
+                return self.fail(error.UnknownType, "'ThreadChannel' takes exactly one type argument", .{});
             }
             const elem_t = try self.typeExprToType(g.type_args[0]);
             if (!self.isThreadTransferSafeType(elem_t)) {
-                return self.fail(error.TypeMismatch, "'ThreadChannel' eleman tipi yalnızca int/float/bool/str/None/ptr olabilir (--release altında ayrıca task/channel/list/class/dict)", .{});
+                return self.fail(error.TypeMismatch, "the 'ThreadChannel' element type can only be int/float/bool/str/None/ptr (and additionally task/channel/list/class/dict under --release)", .{});
             }
             if (g.args.len != 1) {
-                return self.fail(error.ArgumentCountMismatch, "'ThreadChannel' kurucusu tam olarak 1 argüman (capacity: int) alır", .{});
+                return self.fail(error.ArgumentCountMismatch, "the 'ThreadChannel' constructor takes exactly 1 argument (capacity: int)", .{});
             }
             if (try self.checkExpr(ctx, g.args[0]) != .int) {
-                return self.fail(error.TypeMismatch, "'ThreadChannel' kurucusunun argümanı (capacity) int olmalıdır", .{});
+                return self.fail(error.TypeMismatch, "the argument (capacity) of the 'ThreadChannel' constructor must be an int", .{});
             }
             const boxed = try self.allocator.create(Type);
             boxed.* = elem_t;
@@ -6119,7 +6119,7 @@ pub const Checker = struct {
         // İçİn BAŞLANGIÇTA BOŞ bir yuva).
         if (std.mem.eql(u8, g.name, "TaskLocal")) {
             if (g.type_args.len != 1) {
-                return self.fail(error.UnknownType, "'TaskLocal' tam olarak bir tip argümanı alır", .{});
+                return self.fail(error.UnknownType, "'TaskLocal' takes exactly one type argument", .{});
             }
             const elem_t = try self.typeExprToType(g.type_args[0]);
             // **Bilinçli v1 kısıtlaması:** `T` bir sınıf/`str`/`list`/`dict`
@@ -6134,10 +6134,10 @@ pub const Checker = struct {
             // DIŞINDA bırakıldı (nyx'in GERÇEK kullanım örneği ZATEN her
             // zaman bir SINIF örneğidir).
             if (elem_t == .int or elem_t == .float or elem_t == .boolean) {
-                return self.fail(error.TypeMismatch, "'TaskLocal[T]'nin T'si bir sınıf/str/list/dict olmalıdır (çıplak int/float/bool v1 kapsamı dışı — Optional[int] gibi kutulama gerektirir)", .{});
+                return self.fail(error.TypeMismatch, "the T of 'TaskLocal[T]' must be a class/str/list/dict (a bare int/float/bool is outside the v1 scope — it requires boxing such as Optional[int])", .{});
             }
             if (g.args.len != 0) {
-                return self.fail(error.ArgumentCountMismatch, "'TaskLocal' kurucusu argüman almaz", .{});
+                return self.fail(error.ArgumentCountMismatch, "the 'TaskLocal' constructor takes no arguments", .{});
             }
             const boxed = try self.allocator.create(Type);
             boxed.* = elem_t;
@@ -6146,17 +6146,17 @@ pub const Checker = struct {
         // v0.1'de diğer tanınan yerleşik generic kurucu: `Channel[T](
         // capacity)`.
         if (!std.mem.eql(u8, g.name, "Channel")) {
-            return self.fail(error.UnknownType, "bilinmeyen generic kurucu: {s}", .{g.name});
+            return self.fail(error.UnknownType, "unknown generic constructor: {s}", .{g.name});
         }
         if (g.type_args.len != 1) {
-            return self.fail(error.UnknownType, "'Channel' tam olarak bir tip argümanı alır", .{});
+            return self.fail(error.UnknownType, "'Channel' takes exactly one type argument", .{});
         }
         const elem_t = try self.typeExprToType(g.type_args[0]);
         if (g.args.len != 1) {
-            return self.fail(error.ArgumentCountMismatch, "'Channel' kurucusu tam olarak 1 argüman (capacity: int) alır", .{});
+            return self.fail(error.ArgumentCountMismatch, "the 'Channel' constructor takes exactly 1 argument (capacity: int)", .{});
         }
         if (try self.checkExpr(ctx, g.args[0]) != .int) {
-            return self.fail(error.TypeMismatch, "'Channel' kurucusunun argümanı (capacity) int olmalıdır", .{});
+            return self.fail(error.TypeMismatch, "the argument (capacity) of the 'Channel' constructor must be an int", .{});
         }
         const boxed = try self.allocator.create(Type);
         boxed.* = elem_t;
@@ -6227,7 +6227,7 @@ pub const Checker = struct {
             if (!self.hasDunder(r, "__contains__")) return null;
             const call = try self.mkDunderCall(b.right.*, "__contains__", &.{b.left.*});
             const rt = try self.checkExpr(ctx, call);
-            if (rt != .boolean) return self.fail(error.TypeMismatch, "'__contains__' bool döndürmelidir", .{});
+            if (rt != .boolean) return self.fail(error.TypeMismatch, "'__contains__' must return bool", .{});
             try self.expr_rewrites.put(self.allocator, @intFromPtr(b.left), if (b.op == .in_) call else try self.notOf(call));
             return .boolean;
         }
@@ -6256,13 +6256,13 @@ pub const Checker = struct {
         };
         if (lc and self.hasDunder(l, name)) {
             const rt = try self.rewriteExprTo(ctx, @intFromPtr(b.left), try self.mkDunderCall(b.left.*, name, &.{b.right.*}));
-            if (rt != .boolean) return self.fail(error.TypeMismatch, "'{s}' bool döndürmelidir", .{name});
+            if (rt != .boolean) return self.fail(error.TypeMismatch, "'{s}' must return bool", .{name});
             return .boolean;
         }
         if (b.op == .ne and lc and self.hasDunder(l, "__eq__")) {
             const neg = try self.notOf(try self.mkDunderCall(b.left.*, "__eq__", &.{b.right.*}));
             const rt = try self.rewriteExprTo(ctx, @intFromPtr(b.left), neg);
-            if (rt != .boolean) return self.fail(error.TypeMismatch, "'__eq__' bool döndürmelidir", .{});
+            if (rt != .boolean) return self.fail(error.TypeMismatch, "'__eq__' must return bool", .{});
             return .boolean;
         }
         // Yansıyan karşılaştırma: `a > b` → `b.__lt__(a)` (a'da `__gt__` yoksa). Not: işlenen değerlendirme sırası değişir (yalnızca yan etkili işlenenlerde fark eder).
@@ -6276,7 +6276,7 @@ pub const Checker = struct {
         if (refl_name) |rn| {
             if (rc and self.hasDunder(r, rn)) {
                 const rt = try self.rewriteExprTo(ctx, @intFromPtr(b.left), try self.mkDunderCall(b.right.*, rn, &.{b.left.*}));
-                if (rt != .boolean) return self.fail(error.TypeMismatch, "'{s}' bool döndürmelidir", .{rn});
+                if (rt != .boolean) return self.fail(error.TypeMismatch, "'{s}' must return bool", .{rn});
                 return .boolean;
             }
         }
@@ -6296,7 +6296,7 @@ pub const Checker = struct {
                 if (l == .str and r == .str) break :blk .str;
                 // v1.150.0: `list[T] + list[T]` — yeni bir liste (eleman tipleri birebir aynı olmalı).
                 if (l == .list and r == .list) {
-                    if (!types.eql(l, r)) return self.fail(error.TypeMismatch, "'+' iki liste için eleman tipleri aynı olmalıdır", .{});
+                    if (!types.eql(l, r)) return self.fail(error.TypeMismatch, "'+' requires the element types of the two lists to be the same", .{});
                     break :blk l;
                 }
                 break :blk try self.numericPromote(l, r);
@@ -6322,13 +6322,13 @@ pub const Checker = struct {
             .mod, .floordiv, .pow => blk: {
                 const result = try self.numericPromote(l, r);
                 if (result == .fixed_int) {
-                    return self.fail(error.TypeMismatch, "'%'/'//' /'**' sabit-genişlikli tamsayı tipleriyle henüz desteklenmiyor — 'int'e dönüştürüp kullanın", .{});
+                    return self.fail(error.TypeMismatch, "'%'/'//'/'**' are not supported with fixed-width integer types yet — convert to 'int' first", .{});
                 }
                 break :blk result;
             },
             .div => blk: {
                 if (!types.isNumeric(l) or !types.isNumeric(r)) {
-                    return self.fail(error.TypeMismatch, "'/' yalnızca sayısal tiplerde kullanılabilir", .{});
+                    return self.fail(error.TypeMismatch, "'/' can only be used with numeric types", .{});
                 }
                 // v2.0 madde 4: `/` HER ZAMAN `.float` döner (Python'un
                 // KENDİ `/`si GİBİ, `int`in bugünkü davranışı DEĞİŞMEZ) —
@@ -6350,20 +6350,20 @@ pub const Checker = struct {
                 // karşılaştırmak (daraltmanın ÖN KOŞULU, bkz. `detectNarrowing`)
                 // HER ZAMAN geçerlidir.
                 if ((l == .optional and r == .none) or (l == .none and r == .optional)) break :blk .boolean;
-                return self.fail(error.TypeMismatch, "karşılaştırılan tipler uyuşmuyor", .{});
+                return self.fail(error.TypeMismatch, "the compared types do not match", .{});
             },
             .lt, .le, .gt, .ge => blk: {
                 // v1.153.0: `str < str` — bayt (UTF-8 ⇒ codepoint) sırasına göre sözlükbilimsel karşılaştırma.
                 if (l == .str and r == .str) break :blk .boolean;
                 if (!types.isNumeric(l) or !types.isNumeric(r)) {
-                    return self.fail(error.TypeMismatch, "sıralama karşılaştırmaları yalnızca sayısal tiplerde ya da iki str arasında çalışır", .{});
+                    return self.fail(error.TypeMismatch, "ordering comparisons only work on numeric types or between two strs", .{});
                 }
                 _ = try self.requireSameFixedIntOrNone(l, r);
                 break :blk .boolean;
             },
             .and_, .or_ => blk: {
                 if (l != .boolean or r != .boolean) {
-                    return self.fail(error.TypeMismatch, "'and'/'or' yalnızca bool ile kullanılabilir", .{});
+                    return self.fail(error.TypeMismatch, "'and'/'or' can only be used with bool", .{});
                 }
                 break :blk .boolean;
             },
@@ -6375,20 +6375,20 @@ pub const Checker = struct {
                         // Eleman eşitliği `==`in desteklediği tiplerle sınırlı (codegen `emitValueEq`).
                         switch (et) {
                             .int, .float, .boolean, .str, .fixed_int, .class, .list => {},
-                            else => return self.fail(error.TypeMismatch, "'in' için liste eleman tipi desteklenmiyor (int/float/bool/str/sınıf/list olmalı)", .{}),
+                            else => return self.fail(error.TypeMismatch, "the list element type is not supported for 'in' (it must be int/float/bool/str/class/list)", .{}),
                         }
                         _ = try self.requireSameFixedIntOrNone(l, et);
                         if (!((types.isNumeric(l) and types.isNumeric(et)) or types.eql(l, et))) {
-                            return self.fail(error.TypeMismatch, "'in' sol işleneni liste eleman tipiyle uyuşmuyor", .{});
+                            return self.fail(error.TypeMismatch, "the left operand of 'in' does not match the list element type", .{});
                         }
                     },
                     .dict => |d| {
-                        if (!types.eql(l, d.key.*)) return self.fail(error.TypeMismatch, "'in' sol işleneni dict anahtar tipiyle uyuşmuyor", .{});
+                        if (!types.eql(l, d.key.*)) return self.fail(error.TypeMismatch, "the left operand of 'in' does not match the dict key type", .{});
                     },
                     .str => {
-                        if (l != .str) return self.fail(error.TypeMismatch, "'in' ile bir str içinde yalnızca str aranabilir", .{});
+                        if (l != .str) return self.fail(error.TypeMismatch, "only a str can be searched for inside a str with 'in'", .{});
                     },
-                    else => return self.fail(error.TypeMismatch, "'in'/'not in' yalnızca list, dict ve str üzerinde kullanılabilir", .{}),
+                    else => return self.fail(error.TypeMismatch, "'in'/'not in' can only be used on list, dict and str", .{}),
                 }
                 break :blk .boolean;
             },
@@ -6415,10 +6415,10 @@ pub const Checker = struct {
             .bit_and, .bit_or, .bit_xor => blk: {
                 if (l == .boolean and r == .boolean) break :blk .boolean;
                 if (l == .boolean or r == .boolean) {
-                    return self.fail(error.TypeMismatch, "'&'/'|'/'^' bool'u int/sabit-genişlikli tamsayıyla örtük karıştırmaz — açık dönüşüm kullanın", .{});
+                    return self.fail(error.TypeMismatch, "'&'/'|'/'^' do not implicitly mix bool with int/fixed-width integers — use an explicit conversion", .{});
                 }
                 if (!types.isBitwiseEligible(l) or !types.isBitwiseEligible(r)) {
-                    return self.fail(error.TypeMismatch, "'&'/'|'/'^' yalnızca int/sabit-genişlikli tamsayı tiplerinde kullanılabilir (float desteklenmez)", .{});
+                    return self.fail(error.TypeMismatch, "'&'/'|'/'^' can only be used on int/fixed-width integer types (float is not supported)", .{});
                 }
                 const fk = try self.requireSameFixedIntOrNone(l, r);
                 break :blk if (fk) |k| Type{ .fixed_int = k } else .int;
@@ -6431,10 +6431,10 @@ pub const Checker = struct {
             // yapılır çünkü miktar keyfi bir ifade olabilir).
             .shl, .shr => blk: {
                 if (!types.isBitwiseEligible(l)) {
-                    return self.fail(error.TypeMismatch, "'<<'/'>>' sol işleneni yalnızca int/sabit-genişlikli tamsayı olabilir (float/bool desteklenmez — bool için önce 'int(...)' ile dönüştürün)", .{});
+                    return self.fail(error.TypeMismatch, "the left operand of '<<'/'>>' can only be an int/fixed-width integer (float/bool are not supported — for bool, convert with 'int(...)' first)", .{});
                 }
                 if (r != .int) {
-                    return self.fail(error.TypeMismatch, "'<<'/'>>' kaydırma miktarı 'int' olmalı", .{});
+                    return self.fail(error.TypeMismatch, "the shift amount of '<<'/'>>' must be an 'int'", .{});
                 }
                 break :blk if (l == .fixed_int) l else .int;
             },
@@ -6548,12 +6548,12 @@ pub const Checker = struct {
         const r_fi: ?types.FixedIntKind = if (r == .fixed_int) r.fixed_int else null;
         if (l_fi == null and r_fi == null) return null;
         if (l_fi != null and r_fi != null and l_fi.? == r_fi.?) return l_fi.?;
-        return self.fail(error.TypeMismatch, "sabit-genişlikli tamsayılar farklı türlerle ya da int/float ile örtük karışmaz — açık dönüşüm kullanın", .{});
+        return self.fail(error.TypeMismatch, "fixed-width integers do not implicitly mix with other kinds or with int/float — use an explicit conversion", .{});
     }
 
     fn numericPromote(self: *Checker, l: Type, r: Type) TypeError!Type {
         if (!types.isNumeric(l) or !types.isNumeric(r)) {
-            return self.fail(error.TypeMismatch, "aritmetik işlem yalnızca sayısal tiplerde çalışır", .{});
+            return self.fail(error.TypeMismatch, "arithmetic only works on numeric types", .{});
         }
         if (try self.requireSameFixedIntOrNone(l, r)) |kind| return .{ .fixed_int = kind };
         if (l == .float or r == .float) return .float;
@@ -6566,23 +6566,23 @@ pub const Checker = struct {
     /// (closure alıcıyı yakalar, bkz. codegen `genBindMethod`).
     fn checkBindMethod(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
         if (c.args.len != 2 or c.args[1] != .string_lit) {
-            return self.fail(error.ArgumentCountMismatch, "'__nox_bind_method' (dahili) tam olarak (nesne, \"ad\") alır", .{});
+            return self.fail(error.ArgumentCountMismatch, "'__nox_bind_method' (internal) takes exactly (object, \"name\")", .{});
         }
         const attr = c.args[1].string_lit;
         const obj_t = try self.checkExpr(ctx, c.args[0]);
         try self.requireNotOptional(obj_t, attr);
         const class_name = switch (obj_t) {
             .class => |n| n,
-            else => return self.fail(error.TypeMismatch, "'.{s}' yalnızca sınıf örneklerinde kullanılabilir", .{attr}),
+            else => return self.fail(error.TypeMismatch, "'.{s}' can only be used on class instances", .{attr}),
         };
         const info = self.classes.getPtr(class_name) orelse
-            return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
+            return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         if (info.fields.get(attr)) |ft| return ft;
         if (info.methods.get(attr)) |msig| {
             if (self.class_defs_by_name.get(class_name)) |cd| {
                 for (cd.methods) |m| {
                     if (m.is_async and std.mem.eql(u8, m.name, attr)) {
-                        return self.fail(error.TypeMismatch, "'async' metod '{s}.{s}' bağlı bir değer olarak kullanılamaz", .{ class_name, attr });
+                        return self.fail(error.TypeMismatch, "the 'async' method '{s}.{s}' cannot be used as a bound value", .{ class_name, attr });
                     }
                 }
             }
@@ -6593,7 +6593,7 @@ pub const Checker = struct {
             ret.* = msig.return_type;
             return .{ .func = .{ .params = msig.params, .return_type = ret } };
         }
-        return self.fail(error.UndefinedAttribute, "'{s}' sınıfının '{s}' alanı yok", .{ class_name, attr });
+        return self.fail(error.UndefinedAttribute, "class '{s}' has no field '{s}'", .{ class_name, attr });
     }
 
     fn checkAttribute(self: *Checker, ctx: *FnCtx, a: ast.Attribute) TypeError!Type {
@@ -6601,12 +6601,12 @@ pub const Checker = struct {
         try self.requireNotOptional(obj_t, a.attr);
         const class_name = switch (obj_t) {
             .class => |n| n,
-            else => return self.fail(error.TypeMismatch, "'.{s}' yalnızca sınıf örneklerinde kullanılabilir", .{a.attr}),
+            else => return self.fail(error.TypeMismatch, "'.{s}' can only be used on class instances", .{a.attr}),
         };
         const info = self.classes.getPtr(class_name) orelse
-            return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
+            return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         if (info.fields.get(a.attr)) |ft| return ft;
-        return self.fail(error.UndefinedAttribute, "'{s}' sınıfının '{s}' alanı yok", .{ class_name, a.attr });
+        return self.fail(error.UndefinedAttribute, "class '{s}' has no field '{s}'", .{ class_name, a.attr });
     }
 
     /// v1.162.0: Python tarzı yerleşik biçimlerin prelude'a yönlendirilmesi — `list(x)`, `bool(x)`, `max(xs)`/`min(xs)` (liste biçimi),
@@ -6681,7 +6681,7 @@ pub const Checker = struct {
                         args[0] = arg0;
                         break :blk .{ .call = .{ .callee = callee, .args = args } };
                     },
-                    else => return self.fail(error.TypeMismatch, "'list' yalnızca list/str/dict/range üzerinde çalışır", .{}),
+                    else => return self.fail(error.TypeMismatch, "'list' only works on list/str/dict/range", .{}),
                 }
             };
             const rt = try self.checkExpr(ctx, repl);
@@ -6740,7 +6740,7 @@ pub const Checker = struct {
                     }
                     break :blk .{ .bool_lit = true };
                 },
-                else => return self.fail(error.TypeMismatch, "'bool' yalnızca bool/int/float/str/list/dict/sınıf üzerinde çalışır", .{}),
+                else => return self.fail(error.TypeMismatch, "'bool' only works on bool/int/float/str/list/dict/class", .{}),
             };
             _ = try self.checkExpr(ctx, repl);
             try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
@@ -6764,7 +6764,7 @@ pub const Checker = struct {
             // `format(x, spec)` / f-string `{x:spec}` → tür-bazlı biçimlendirici (bkz. `runtime/format.zig`).
             const at = try self.checkExpr(ctx, c.args[0]);
             const st = try self.checkExpr(ctx, c.args[1]);
-            if (st != .str) return self.fail(error.TypeMismatch, "'format' ikinci argümanı (belirteç) str olmalıdır", .{});
+            if (st != .str) return self.fail(error.TypeMismatch, "the second argument of 'format' (the spec) must be a str", .{});
             const empty_spec = c.args[1] == .string_lit and c.args[1].string_lit.len == 0;
             switch (at) {
                 .int => c.callee.* = .{ .identifier = "__nox_format_int" },
@@ -6799,9 +6799,9 @@ pub const Checker = struct {
                         try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
                         return rt;
                     }
-                    return self.fail(error.TypeMismatch, "'format' sınıf değerleri için `__str__` ve boş belirteç gerektirir", .{});
+                    return self.fail(error.TypeMismatch, "'format' for class values requires `__str__` and an empty spec", .{});
                 },
-                else => return self.fail(error.TypeMismatch, "'format' yalnızca int/float/str/bool (ve `__str__` olan sınıflar) için çalışır", .{}),
+                else => return self.fail(error.TypeMismatch, "'format' only works for int/float/str/bool (and classes that have `__str__`)", .{}),
             }
             return null;
         }
@@ -6850,19 +6850,19 @@ pub const Checker = struct {
                 // v1.142.20: dahili karma ilkeli (`nox.collections` Set/Counter/OrderedDict) — int/bool/
                 // sabit-genişlikli/float/str için gerçek karma, diğer tüm tipler için 0 (doğrusal geri düşüş).
                 if (std.mem.eql(u8, name, "__nox_str_chars")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_str_chars' (dahili) tam olarak 1 argüman alır", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'__nox_str_chars' (dahili) bir str bekler", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_str_chars' (internal) takes exactly 1 argument", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'__nox_str_chars' (internal) expects a str", .{});
                     const boxed = try self.allocator.create(Type);
                     boxed.* = .str;
                     return .{ .list = boxed };
                 }
                 if (std.mem.eql(u8, name, "__nox_hash")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_hash' (dahili) tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_hash' (internal) takes exactly 1 argument", .{});
                     _ = try self.checkExpr(ctx, c.args[0]);
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "super")) {
-                    return self.fail(error.TypeMismatch, "'super()' yalnızca 'super().metod(...)' ya da 'super().__init__(...)' kalıbında, doğrudan bir metod çağrısının alıcısı olarak kullanılabilir", .{});
+                    return self.fail(error.TypeMismatch, "'super()' can only be used in the 'super().method(...)' or 'super().__init__(...)' form, directly as the receiver of a method call", .{});
                 }
                 if (std.mem.eql(u8, name, "print")) {
                     // v1.156.0: `print(a, b, c)` (boşlukla ayrılmış), `print()` (boş satır), `sep=`/`end=` str anahtar argümanları.
@@ -6873,12 +6873,12 @@ pub const Checker = struct {
                             saw_kw = true;
                             const k = arg.kwarg;
                             if (!std.mem.eql(u8, k.name, "sep") and !std.mem.eql(u8, k.name, "end")) {
-                                return self.fail(error.TypeMismatch, "'print' yalnızca 'sep=' ve 'end=' anahtar argümanlarını kabul eder", .{});
+                                return self.fail(error.TypeMismatch, "'print' only accepts the 'sep=' and 'end=' keyword arguments", .{});
                             }
                             const kt = try self.checkExpr(ctx, k.value.*);
-                            if (kt != .str) return self.fail(error.TypeMismatch, "'print' '{s}=' argümanı str olmalıdır", .{k.name});
+                            if (kt != .str) return self.fail(error.TypeMismatch, "the '{s}=' argument of 'print' must be a str", .{k.name});
                         } else {
-                            if (saw_kw) return self.fail(error.TypeMismatch, "'print' konumsal argümanları anahtar argümanlardan önce gelmelidir", .{});
+                            if (saw_kw) return self.fail(error.TypeMismatch, "positional arguments of 'print' must come before keyword arguments", .{});
                             const pt = try self.checkExpr(ctx, arg);
                             // v1.163.0: `print(obj)` → `print(obj.__str__())` (sınıfta `__str__` tanımlıysa).
                             if (self.hasDunder(pt, "__str__")) {
@@ -6907,7 +6907,7 @@ pub const Checker = struct {
                 // çağrısı olarak kalır, bkz. `.attribute` dalındaki `dict`
                 // özel işlemesi).
                 if (std.mem.eql(u8, name, "len")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'len' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'len' takes exactly 1 argument", .{});
                     const t = try self.checkExpr(ctx, c.args[0]);
                     // v1.157.0: `len(tuple)` derleme zamanı sabiti.
                     if (t == .class and isTupleClassName(t.class)) {
@@ -6918,11 +6918,11 @@ pub const Checker = struct {
                     // v1.163.0: `len(obj)` → `obj.__len__()`.
                     if (self.hasDunder(t, "__len__")) {
                         const rt = try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkDunderCall(c.args[0], "__len__", &.{}));
-                        if (rt != .int) return self.fail(error.TypeMismatch, "'__len__' int döndürmelidir", .{});
+                        if (rt != .int) return self.fail(error.TypeMismatch, "'__len__' must return an int", .{});
                         return .int;
                     }
                     if (t != .str and t != .list and t != .dict) {
-                        return self.fail(error.TypeMismatch, "'len' yalnızca str/list/dict/tuple üzerinde çalışır (sınıflar için `__len__` tanımlayın)", .{});
+                        return self.fail(error.TypeMismatch, "'len' only works on str/list/dict/tuple (define `__len__` for classes)", .{});
                     }
                     return .int;
                 }
@@ -6936,13 +6936,13 @@ pub const Checker = struct {
                 // `raise` eder (bkz. codegen.zig'in `genCall`ı,
                 // `nox_str_is_valid_int`/`float` + `nox_raise`).
                 if (std.mem.eql(u8, name, "repr") and !self.functions.contains("repr")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'repr' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'repr' takes exactly 1 argument", .{});
                     const t = try self.checkExpr(ctx, c.args[0]);
-                    if (t == .func or t == .none) return self.fail(error.TypeMismatch, "'repr' fonksiyon/None değerleri için çalışmaz", .{});
+                    if (t == .func or t == .none) return self.fail(error.TypeMismatch, "'repr' does not work on function/None values", .{});
                     return .str;
                 }
                 if (std.mem.eql(u8, name, "str")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'str' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'str' takes exactly 1 argument", .{});
                     const t = try self.checkExpr(ctx, c.args[0]);
                     // Bulundu (bkz. proje belleği "f-string + augmented
                     // atama" görevi): f-string desugarı (`f"{x}"` →
@@ -6957,18 +6957,18 @@ pub const Checker = struct {
                     // v1.163.0: `str(obj)` → `obj.__str__()` (sınıfta tanımlıysa).
                     if (self.hasDunder(t, "__str__")) {
                         const rt = try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkDunderCall(c.args[0], "__str__", &.{}));
-                        if (rt != .str) return self.fail(error.TypeMismatch, "'__str__' str döndürmelidir", .{});
+                        if (rt != .str) return self.fail(error.TypeMismatch, "'__str__' must return a str", .{});
                         return .str;
                     }
                     // v1.167.0: liste/sözlük/sınıf (yapısal) — `print`in biçimiyle; `Optional` için önce `None` olmadığını daraltın.
                     if (t == .list or t == .dict or t == .class) return .str;
                     if (t != .int and t != .float and t != .str and t != .boolean and t != .fixed_int) {
-                        return self.fail(error.TypeMismatch, "'str' int/float/str/bool/list/dict/sınıf üzerinde çalışır (Optional için önce None olmadığını daraltın)", .{});
+                        return self.fail(error.TypeMismatch, "'str' works on int/float/str/bool/list/dict/class (for an Optional, narrow out None first)", .{});
                     }
                     return .str;
                 }
                 if (std.mem.eql(u8, name, "int")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'int' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'int' takes exactly 1 argument", .{});
                     // `round()` builtin'i (bkz. core.nox) `int(x + 0.5)`
                     // İLE float->int TRUNCATE ETMEYE ihtiyaç duyar — Python'ın
                     // `int(3.9) == 3` davranışıyla AYNI, `str` ayrıştırmasına
@@ -6977,17 +6977,17 @@ pub const Checker = struct {
                     // v2.0: `int(bool)` ve `int(<sabit-genişlikli>)` — açık, aralık-kontrollü genişletme (u64/usize > i64 en büyük
                     // değerde tuzak; diğer her kaynak kayıpsızdır). Önceden sabit-genişlikli bir değerden düz `int`e DÖNÜŞ YOLU yoktu.
                     if (t != .str and t != .float and t != .boolean and t != .fixed_int) {
-                        return self.fail(error.TypeMismatch, "'int' yalnızca str/float/bool/sabit-genişlikli tamsayı üzerinde çalışır", .{});
+                        return self.fail(error.TypeMismatch, "'int' only works on str/float/bool/fixed-width integers", .{});
                     }
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "float")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'float' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'float' takes exactly 1 argument", .{});
                     // v1.151.0: `float(int)` / `float(float)` / `float(bool)` / `float(u8…)` — açık sayısal dönüşüm
                     // (`float(str)` ayrıştırması ValueError fırlatabilir, sayısal kaynaklar fırlatmaz).
                     const ft = try self.checkExpr(ctx, c.args[0]);
                     if (ft != .str and ft != .int and ft != .float and ft != .boolean and ft != .fixed_int) {
-                        return self.fail(error.TypeMismatch, "'float' yalnızca str/int/float/bool/sabit-genişlikli tamsayı üzerinde çalışır", .{});
+                        return self.fail(error.TypeMismatch, "'float' only works on str/int/float/bool/fixed-width integers", .{});
                     }
                     return .float;
                 }
@@ -7001,10 +7001,10 @@ pub const Checker = struct {
                 // Kabul edilen kaynak: `int` + diğer 9 kind + `float`
                 // (`int(float)`nin ZATEN yaptığı kesme deseniyle AYNI).
                 if (std.meta.stringToEnum(types.FixedIntKind, name)) |target_kind| {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' tam olarak 1 argüman alır", .{name});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' takes exactly 1 argument", .{name});
                     const t = try self.checkExpr(ctx, c.args[0]);
                     if (t != .int and t != .float and t != .fixed_int) {
-                        return self.fail(error.TypeMismatch, "'{s}' yalnızca int/float/sabit-genişlikli tamsayı tiplerinde çalışır", .{name});
+                        return self.fail(error.TypeMismatch, "'{s}' only works on int/float/fixed-width integer types", .{name});
                     }
                     return .{ .fixed_int = target_kind };
                 }
@@ -7022,20 +7022,20 @@ pub const Checker = struct {
                 // `genCall`ı — GERÇEK sayı orada, sınıfların bayt-doğru
                 // `ClassInfo`sinden hesaplanır).
                 if (std.mem.eql(u8, name, "sizeof") or std.mem.eql(u8, name, "alignof")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' tam olarak 1 argüman alır", .{name});
-                    if (c.args[0] != .identifier) return self.fail(error.TypeMismatch, "'{s}' argümanı bir tip adı (çıplak tanımlayıcı) olmalıdır", .{name});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' takes exactly 1 argument", .{name});
+                    if (c.args[0] != .identifier) return self.fail(error.TypeMismatch, "the argument of '{s}' must be a type name (a bare identifier)", .{name});
                     _ = try self.typeExprToType(.{ .simple = c.args[0].identifier });
                     return .{ .fixed_int = .usize };
                 }
                 if (std.mem.eql(u8, name, "offsetof")) {
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'offsetof' tam olarak 2 argüman alır (Sınıf, \"alan\")", .{});
-                    if (c.args[0] != .identifier) return self.fail(error.TypeMismatch, "'offsetof' argümanı 1 bir sınıf adı (çıplak tanımlayıcı) olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'offsetof' takes exactly 2 arguments (Class, \"field\")", .{});
+                    if (c.args[0] != .identifier) return self.fail(error.TypeMismatch, "argument 1 of 'offsetof' must be a class name (a bare identifier)", .{});
                     const t = try self.typeExprToType(.{ .simple = c.args[0].identifier });
-                    if (t != .class) return self.fail(error.TypeMismatch, "'offsetof' yalnızca bir sınıf tipi üzerinde çalışır: {s}", .{c.args[0].identifier});
-                    if (c.args[1] != .string_lit) return self.fail(error.TypeMismatch, "'offsetof' argümanı 2 yalnızca bir string LİTERALİ olabilir", .{});
-                    const cinfo = self.classes.get(t.class) orelse return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{t.class});
+                    if (t != .class) return self.fail(error.TypeMismatch, "'offsetof' only works on a class type: {s}", .{c.args[0].identifier});
+                    if (c.args[1] != .string_lit) return self.fail(error.TypeMismatch, "argument 2 of 'offsetof' can only be a string LITERAL", .{});
+                    const cinfo = self.classes.get(t.class) orelse return self.fail(error.UndefinedClass, "unknown class: {s}", .{t.class});
                     if (!cinfo.fields.contains(c.args[1].string_lit)) {
-                        return self.fail(error.UndefinedAttribute, "'{s}' sınıfının '{s}' alanı yok", .{ t.class, c.args[1].string_lit });
+                        return self.fail(error.UndefinedAttribute, "class '{s}' has no field '{s}'", .{ t.class, c.args[1].string_lit });
                     }
                     return .{ .fixed_int = .usize };
                 }
@@ -7046,12 +7046,12 @@ pub const Checker = struct {
                 // §3.14.
                 if (std.mem.eql(u8, name, "hpy_call")) {
                     if (c.args.len != 4) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_call' tam olarak 4 argüman alır (yol: str, uzantı_adı: str, fonksiyon_adı: str, argüman: int)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_call' takes exactly 4 arguments (path: str, extension_name: str, function_name: str, argument: int)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'hpy_call' argümanı 1 (yol) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_call' argümanı 2 (uzantı adı) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_call' argümanı 3 (fonksiyon adı) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "'hpy_call' argümanı 4 (argüman) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_call' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_call' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (function name) of 'hpy_call' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "argument 4 (argument) of 'hpy_call' must be an int", .{});
                     // Güvenlik bulgusu H-1 (bkz. güvenlik raporu) —
                     // DÜZELTİLDİ: `yol`/`uzantı_adı`/`fonksiyon_adı` ÖNCEDEN
                     // yalnızca TİPÇE `str` olmak zorundaydı, DEĞER olarak
@@ -7070,13 +7070,13 @@ pub const Checker = struct {
                     // dilbilgisi SEVİYESİNDE yalnızca bir string TOKEN'I
                     // kabul etmesiyle AYNI ilke).
                     if (c.args[0] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call' argümanı 1 (yol) yalnızca bir string LİTERALİ olabilir (güvenlik: çalışma-zamanı hesaplı bir yoldan keyfi native kütüphane yüklenmesi önlenir)", .{});
+                        return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_call' can only be a string LITERAL (security: loading an arbitrary native library from a path computed at run time is prevented)", .{});
                     }
                     if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call' argümanı 2 (uzantı adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_call' can only be a string LITERAL", .{});
                     }
                     if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call' argümanı 3 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 3 (function name) of 'hpy_call' can only be a string LITERAL", .{});
                     }
                     return .int;
                 }
@@ -7088,22 +7088,22 @@ pub const Checker = struct {
                 // POZİSYONEL-TEK-ARGÜMAN (anahtar kelime YOK) olarak çağırır.
                 if (std.mem.eql(u8, name, "hpy_call_str")) {
                     if (c.args.len != 4) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_str' tam olarak 4 argüman alır (yol: str, uzantı_adı: str, fonksiyon_adı: str, argüman: str)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_str' takes exactly 4 arguments (path: str, extension_name: str, function_name: str, argument: str)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 1 (yol) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 2 (uzantı adı) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 3 (fonksiyon adı) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[3]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 4 (argüman) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_call_str' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_call_str' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (function name) of 'hpy_call_str' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[3]) != .str) return self.fail(error.TypeMismatch, "argument 4 (argument) of 'hpy_call_str' must be a str", .{});
                     // Güvenlik bulgusu H-1'in AYNI düzeltmesi — bkz. `hpy_call`nin
                     // belge notu.
                     if (c.args[0] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 1 (yol) yalnızca bir string LİTERALİ olabilir (güvenlik: çalışma-zamanı hesaplı bir yoldan keyfi native kütüphane yüklenmesi önlenir)", .{});
+                        return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_call_str' can only be a string LITERAL (security: loading an arbitrary native library from a path computed at run time is prevented)", .{});
                     }
                     if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 2 (uzantı adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_call_str' can only be a string LITERAL", .{});
                     }
                     if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 3 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 3 (function name) of 'hpy_call_str' can only be a string LITERAL", .{});
                     }
                     return .str;
                 }
@@ -7120,15 +7120,15 @@ pub const Checker = struct {
                 // BURADA da GEÇERLİDİR.
                 if (std.mem.eql(u8, name, "hpy_open")) {
                     if (c.args.len != 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_open' tam olarak 2 argüman alır (yol: str, uzantı_adı: str)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_open' takes exactly 2 arguments (path: str, extension_name: str)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'hpy_open' argümanı 1 (yol) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_open' argümanı 2 (uzantı adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_open' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_open' must be a str", .{});
                     if (c.args[0] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_open' argümanı 1 (yol) yalnızca bir string LİTERALİ olabilir (güvenlik: çalışma-zamanı hesaplı bir yoldan keyfi native kütüphane yüklenmesi önlenir)", .{});
+                        return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_open' can only be a string LITERAL (security: loading an arbitrary native library from a path computed at run time is prevented)", .{});
                     }
                     if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_open' argümanı 2 (uzantı adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_open' can only be a string LITERAL", .{});
                     }
                     return .ptr;
                 }
@@ -7149,17 +7149,17 @@ pub const Checker = struct {
                 // AYNI arg-doğrulama şeklini paylaşır.
                 if (std.mem.eql(u8, name, "hpy_call_on") or std.mem.eql(u8, name, "hpy_call_str_on") or std.mem.eql(u8, name, "hpy_call_float_on") or std.mem.eql(u8, name, "hpy_call_bool_on") or std.mem.eql(u8, name, "hpy_call_obj_on")) {
                     if (c.args.len < 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'{s}' en az 2 argüman alır (tutamac: ptr, fonksiyon_adı: str, [argüman, ...])", .{name});
+                        return self.fail(error.ArgumentCountMismatch, "'{s}' takes at least 2 arguments (handle: ptr, function_name: str, [argument, ...])", .{name});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'{s}' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{name});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'{s}' argümanı 2 (fonksiyon adı) str olmalıdır", .{name});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of '{s}' must be a ptr (the return value of 'hpy_open')", .{name});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (function name) of '{s}' must be a str", .{name});
                     if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'{s}' argümanı 2 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{name});
+                        return self.fail(error.TypeMismatch, "argument 2 (function name) of '{s}' can only be a string LITERAL", .{name});
                     }
                     for (c.args[2..], 2..) |*arg_expr, idx| {
                         const arg_ty = try self.checkExpr(ctx, arg_expr.*);
                         if (!self.isHpyMarshalableArgType(arg_ty)) {
-                            return self.fail(error.TypeMismatch, "'{s}' argümanı {d} marshal EDİLEMEZ — yalnızca int/float/bool/str, SKALER elemanlı list[T]/dict[K,V], TÜM alanları skaler olan sınıflar, VE (BAŞKA bir 'hpy_call_obj_on'dan alınan) opak 'ptr' tutamaçları HPy'ye geçirilebilir", .{ name, idx + 1 });
+                            return self.fail(error.TypeMismatch, "'{s}' argument {d} CANNOT be marshalled — only int/float/bool/str, list[T]/dict[K,V] with SCALAR elements, classes whose fields are ALL scalar, AND opaque 'ptr' handles (obtained from ANOTHER 'hpy_call_obj_on') can be passed to HPy", .{ name, idx + 1 });
                         }
                         // Faz 19: `ptr`-tipli bir argüman, codegen'in HİÇBİR
                         // `Value` alanından (`.ptr` `int` İLE BİREBİR AYNI
@@ -7190,9 +7190,9 @@ pub const Checker = struct {
                 }
                 if (std.mem.eql(u8, name, "hpy_close")) {
                     if (c.args.len != 1) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_close' tam olarak 1 argüman alır (tutamac: ptr)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_close' takes exactly 1 argument (handle: ptr)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close' argümanı (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "the argument (handle) of 'hpy_close' must be a ptr (the return value of 'hpy_open')", .{});
                     return .none;
                 }
                 // Faz 19: `hpy_close_obj` — `hpy_call_obj_on`nin döndürdüğü
@@ -7200,10 +7200,10 @@ pub const Checker = struct {
                 // KENDİ `tp_destroy`sunu tetikleyebilir).
                 if (std.mem.eql(u8, name, "hpy_close_obj")) {
                     if (c.args.len != 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_close_obj' tam olarak 2 argüman alır (tutamac: ptr, nesne: ptr)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_close_obj' takes exactly 2 arguments (handle: ptr, object: ptr)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close_obj' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close_obj' argümanı 2 (nesne) ptr olmalıdır ('hpy_call_obj_on'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_close_obj' must be a ptr (the return value of 'hpy_open')", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_close_obj' must be a ptr (the return value of 'hpy_call_obj_on')", .{});
                     return .none;
                 }
                 // Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası +
@@ -7216,17 +7216,17 @@ pub const Checker = struct {
                 // adı" YERİNE "sınıf adı" DEMESİ İçİn), dönüş `.ptr`.
                 if (std.mem.eql(u8, name, "hpy_new_on")) {
                     if (c.args.len < 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_on' en az 2 argüman alır (tutamac: ptr, sınıf_adı: str, [argüman, ...])", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_on' takes at least 2 arguments (handle: ptr, class_name: str, [argument, ...])", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_new_on' argümanı 2 (sınıf adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_new_on' must be a ptr (the return value of 'hpy_open')", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (class name) of 'hpy_new_on' must be a str", .{});
                     if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_new_on' argümanı 2 (sınıf adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 2 (class name) of 'hpy_new_on' can only be a string LITERAL", .{});
                     }
                     for (c.args[2..], 2..) |*arg_expr, idx| {
                         const arg_ty = try self.checkExpr(ctx, arg_expr.*);
                         if (!self.isHpyMarshalableArgType(arg_ty)) {
-                            return self.fail(error.TypeMismatch, "'hpy_new_on' argümanı {d} marshal EDİLEMEZ — yalnızca int/float/bool/str, SKALER elemanlı list[T]/dict[K,V], TÜM alanları skaler olan sınıflar, VE (BAŞKA bir 'hpy_call_obj_on'dan alınan) opak 'ptr' tutamaçları HPy'ye geçirilebilir", .{idx + 1});
+                            return self.fail(error.TypeMismatch, "argument {d} of 'hpy_new_on' CANNOT be marshalled — only int/float/bool/str, list[T]/dict[K,V] with SCALAR elements, classes whose fields are ALL scalar, AND opaque 'ptr' handles (obtained from ANOTHER 'hpy_call_obj_on') can be passed to HPy", .{idx + 1});
                         }
                         if (arg_ty == .ptr) {
                             const inner = try self.allocator.create(ast.Expr);
@@ -7244,27 +7244,27 @@ pub const Checker = struct {
                 // arity, DEĞİŞKEN argüman YOK (marshalling zinciri gerekmez).
                 if (std.mem.eql(u8, name, "hpy_getattr_int_on")) {
                     if (c.args.len != 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_getattr_int_on' tam olarak 3 argüman alır (tutamac: ptr, nesne: ptr, attribute_adı: str)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_getattr_int_on' takes exactly 3 arguments (handle: ptr, object: ptr, attribute_name: str)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getattr_int_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getattr_int_on' argümanı 2 (nesne) ptr olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_getattr_int_on' argümanı 3 (attribute adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_getattr_int_on' must be a ptr (the return value of 'hpy_open')", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_getattr_int_on' must be a ptr", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_getattr_int_on' must be a str", .{});
                     if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_getattr_int_on' argümanı 3 (attribute adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_getattr_int_on' can only be a string LITERAL", .{});
                     }
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "hpy_setattr_int_on")) {
                     if (c.args.len != 4) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_setattr_int_on' tam olarak 4 argüman alır (tutamac: ptr, nesne: ptr, attribute_adı: str, değer: int)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_setattr_int_on' takes exactly 4 arguments (handle: ptr, object: ptr, attribute_name: str, value: int)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 2 (nesne) ptr olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 3 (attribute adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_setattr_int_on' must be a ptr (the return value of 'hpy_open')", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_setattr_int_on' must be a ptr", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_setattr_int_on' must be a str", .{});
                     if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 3 (attribute adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_setattr_int_on' can only be a string LITERAL", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 4 (değer) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "argument 4 (value) of 'hpy_setattr_int_on' must be an int", .{});
                     return .none;
                 }
                 // Faz 21: `hpy_call_attr_on` — `obj`nin (bir örnek tutamacı)
@@ -7273,18 +7273,18 @@ pub const Checker = struct {
                 // ŞEKLİNİ paylaşır (SIFIR VEYA DAHA FAZLA argüman).
                 if (std.mem.eql(u8, name, "hpy_call_attr_on")) {
                     if (c.args.len < 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_attr_on' en az 3 argüman alır (tutamac: ptr, nesne: ptr, attribute_adı: str, [argüman, ...])", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_attr_on' takes at least 3 arguments (handle: ptr, object: ptr, attribute_name: str, [argument, ...])", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı 2 (nesne) ptr olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı 3 (attribute adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_call_attr_on' must be a ptr (the return value of 'hpy_open')", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_call_attr_on' must be a ptr", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_call_attr_on' must be a str", .{});
                     if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı 3 (attribute adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_call_attr_on' can only be a string LITERAL", .{});
                     }
                     for (c.args[3..], 3..) |*arg_expr, idx| {
                         const arg_ty = try self.checkExpr(ctx, arg_expr.*);
                         if (!self.isHpyMarshalableArgType(arg_ty)) {
-                            return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı {d} marshal EDİLEMEZ — yalnızca int/float/bool/str, SKALER elemanlı list[T]/dict[K,V], TÜM alanları skaler olan sınıflar, VE (BAŞKA bir 'hpy_call_obj_on'dan alınan) opak 'ptr' tutamaçları HPy'ye geçirilebilir", .{idx + 1});
+                            return self.fail(error.TypeMismatch, "argument {d} of 'hpy_call_attr_on' CANNOT be marshalled — only int/float/bool/str, list[T]/dict[K,V] with SCALAR elements, classes whose fields are ALL scalar, AND opaque 'ptr' handles (obtained from ANOTHER 'hpy_call_obj_on') can be passed to HPy", .{idx + 1});
                         }
                         if (arg_ty == .ptr) {
                             const inner = try self.allocator.create(ast.Expr);
@@ -7305,9 +7305,9 @@ pub const Checker = struct {
                 // eklenebilir) — SADECE `handle:ptr` alır.
                 if (std.mem.eql(u8, name, "hpy_new_object_on")) {
                     if (c.args.len != 1) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_object_on' tam olarak 1 argüman alır (tutamac: ptr)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_object_on' takes exactly 1 argument (handle: ptr)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_object_on' argümanı (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "the argument (handle) of 'hpy_new_object_on' must be a ptr (the return value of 'hpy_open')", .{});
                     return .ptr;
                 }
                 // Faz 22: `hpy_getitem_int_on` — bir opak `.list_`/`.tuple_`
@@ -7315,11 +7315,11 @@ pub const Checker = struct {
                 // tuple'ının) `index`teki elemanını `int` olarak okur.
                 if (std.mem.eql(u8, name, "hpy_getitem_int_on")) {
                     if (c.args.len != 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_getitem_int_on' tam olarak 3 argüman alır (tutamac: ptr, nesne: ptr, index: int)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_getitem_int_on' takes exactly 3 arguments (handle: ptr, object: ptr, index: int)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getitem_int_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getitem_int_on' argümanı 2 (nesne) ptr olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_getitem_int_on' argümanı 3 (index) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_getitem_int_on' must be a ptr (the return value of 'hpy_open')", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_getitem_int_on' must be a ptr", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "argument 3 (index) of 'hpy_getitem_int_on' must be an int", .{});
                     return .int;
                 }
                 // Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/
@@ -7328,19 +7328,19 @@ pub const Checker = struct {
                 // handle:ptr), SADECE `.io_writer_` İNŞA eder.
                 if (std.mem.eql(u8, name, "hpy_new_string_writer_on")) {
                     if (c.args.len != 1) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_string_writer_on' tam olarak 1 argüman alır (tutamac: ptr)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_string_writer_on' takes exactly 1 argument (handle: ptr)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_string_writer_on' argümanı (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "the argument (handle) of 'hpy_new_string_writer_on' must be a ptr (the return value of 'hpy_open')", .{});
                     return .ptr;
                 }
                 // Faz 24: `hpy_writer_get_str_on` — bir `.io_writer_`
                 // tutamacının BİRİKMİŞ İÇERİĞİNİ `str` olarak okur.
                 if (std.mem.eql(u8, name, "hpy_writer_get_str_on")) {
                     if (c.args.len != 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_writer_get_str_on' tam olarak 2 argüman alır (tutamac: ptr, writer: ptr)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_writer_get_str_on' takes exactly 2 arguments (handle: ptr, writer: ptr)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_writer_get_str_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_writer_get_str_on' argümanı 2 (writer) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_writer_get_str_on' must be a ptr (the return value of 'hpy_open')", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (writer) of 'hpy_writer_get_str_on' must be a ptr", .{});
                     return .str;
                 }
                 // Faz 24: `hpy_new_string_reader_on` — `content`i (HERHANGİ
@@ -7350,10 +7350,10 @@ pub const Checker = struct {
                 // İnşa eder.
                 if (std.mem.eql(u8, name, "hpy_new_string_reader_on")) {
                     if (c.args.len != 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_string_reader_on' tam olarak 2 argüman alır (tutamac: ptr, content: str)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_string_reader_on' takes exactly 2 arguments (handle: ptr, content: str)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_string_reader_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_new_string_reader_on' argümanı 2 (content) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_new_string_reader_on' must be a ptr (the return value of 'hpy_open')", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (content) of 'hpy_new_string_reader_on' must be a str", .{});
                     return .ptr;
                 }
                 // Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in
@@ -7366,13 +7366,13 @@ pub const Checker = struct {
                 // SADECE codegen'in `in_lowlevel_depth`inde vardı).
                 if (std.mem.eql(u8, name, "ptr_from_int")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_from_int' tam olarak 1 argüman alır", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'ptr_from_int' bir int alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_from_int' takes exactly 1 argument", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'ptr_from_int' takes an int", .{});
                     return .ptr;
                 }
                 if (std.mem.eql(u8, name, "ptr_to_int")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_to_int' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_to_int' takes exactly 1 argument", .{});
                     // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md
                     // §3.2xx): ÖNCEDEN SADECE çıplak `ptr` kabul edilirdi —
                     // `ptr[T]` (`.typed_ptr`) ÇALIŞMA ZAMANINDA TAMAMEN AYNI
@@ -7383,53 +7383,53 @@ pub const Checker = struct {
                     // ÇAKIŞMA (overlap) yönünü belirlemek İçİn adres
                     // KARŞILAŞTIRMASI GEREKTİRDİĞİNDEN.
                     const pt = try self.checkExpr(ctx, c.args[0]);
-                    if (pt != .ptr and pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_to_int' bir ptr ya da ptr[T] alır", .{});
+                    if (pt != .ptr and pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_to_int' takes a ptr or ptr[T]", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "ptr_add")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_add' tam olarak 2 argüman alır (p: ptr, n: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_add' argümanı 1 (p) ptr olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'ptr_add' argümanı 2 (n) int olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_add' takes exactly 2 arguments (p: ptr, n: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (p) of 'ptr_add' must be a ptr", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (n) of 'ptr_add' must be an int", .{});
                     return .ptr;
                 }
                 if (std.mem.eql(u8, name, "ptr_read_int")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_int' tam olarak 1 argüman alır", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_int' bir ptr alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_int' takes exactly 1 argument", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_int' takes a ptr", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "ptr_read_float")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_float' tam olarak 1 argüman alır", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_float' bir ptr alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_float' takes exactly 1 argument", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_float' takes a ptr", .{});
                     return .float;
                 }
                 if (std.mem.eql(u8, name, "ptr_read_bool")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_bool' tam olarak 1 argüman alır", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_bool' bir ptr alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_bool' takes exactly 1 argument", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_bool' takes a ptr", .{});
                     return .boolean;
                 }
                 if (std.mem.eql(u8, name, "ptr_write_int")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_int' tam olarak 2 argüman alır (p: ptr, v: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_int' argümanı 1 (p) ptr olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'ptr_write_int' argümanı 2 (v) int olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_int' takes exactly 2 arguments (p: ptr, v: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (p) of 'ptr_write_int' must be a ptr", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (v) of 'ptr_write_int' must be an int", .{});
                     return .none;
                 }
                 if (std.mem.eql(u8, name, "ptr_write_float")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_float' tam olarak 2 argüman alır (p: ptr, v: float)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_float' argümanı 1 (p) ptr olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .float) return self.fail(error.TypeMismatch, "'ptr_write_float' argümanı 2 (v) float olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_float' takes exactly 2 arguments (p: ptr, v: float)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (p) of 'ptr_write_float' must be a ptr", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .float) return self.fail(error.TypeMismatch, "argument 2 (v) of 'ptr_write_float' must be a float", .{});
                     return .none;
                 }
                 if (std.mem.eql(u8, name, "ptr_write_bool")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_bool' tam olarak 2 argüman alır (p: ptr, v: bool)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_bool' argümanı 1 (p) ptr olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .boolean) return self.fail(error.TypeMismatch, "'ptr_write_bool' argümanı 2 (v) bool olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_bool' takes exactly 2 arguments (p: ptr, v: bool)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (p) of 'ptr_write_bool' must be a ptr", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .boolean) return self.fail(error.TypeMismatch, "argument 2 (v) of 'ptr_write_bool' must be a bool", .{});
                     return .none;
                 }
                 // v2.0 madde 6: `ptr_offset(p: ptr[T], n: int) -> ptr[T]` —
@@ -7439,10 +7439,10 @@ pub const Checker = struct {
                 // olmayan YENİ bir desen olurdu (bkz. plan dosyası §3).
                 if (std.mem.eql(u8, name, "ptr_offset")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_offset' tam olarak 2 argüman alır (p: ptr[T], n: int)", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_offset' takes exactly 2 arguments (p: ptr[T], n: int)", .{});
                     const pt = try self.checkExpr(ctx, c.args[0]);
-                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_offset' argümanı 1 (p) bir ptr[T] olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'ptr_offset' argümanı 2 (n) int olmalıdır", .{});
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "argument 1 (p) of 'ptr_offset' must be a ptr[T]", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (n) of 'ptr_offset' must be an int", .{});
                     return pt;
                 }
                 // v2.0 madde 6: `ptr_read(p: ptr[T]) -> T` / `ptr_write(p:
@@ -7451,18 +7451,18 @@ pub const Checker = struct {
                 // Model B).
                 if (std.mem.eql(u8, name, "ptr_read")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read' takes exactly 1 argument", .{});
                     const pt = try self.checkExpr(ctx, c.args[0]);
-                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_read' bir ptr[T] alır", .{});
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_read' takes a ptr[T]", .{});
                     return pt.typed_ptr.*;
                 }
                 if (std.mem.eql(u8, name, "ptr_write")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write' tam olarak 2 argüman alır (p: ptr[T], v: T)", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write' takes exactly 2 arguments (p: ptr[T], v: T)", .{});
                     const pt = try self.checkExpr(ctx, c.args[0]);
-                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_write' argümanı 1 (p) bir ptr[T] olmalıdır", .{});
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "argument 1 (p) of 'ptr_write' must be a ptr[T]", .{});
                     const vt = try self.checkExpr(ctx, c.args[1]);
-                    if (!types.eql(vt, pt.typed_ptr.*)) return self.fail(error.TypeMismatch, "'ptr_write' argümanı 2 (v) p'nin T'siyle AYNI tipte olmalıdır", .{});
+                    if (!types.eql(vt, pt.typed_ptr.*)) return self.fail(error.TypeMismatch, "argument 2 (v) of 'ptr_write' must have the SAME type as the T of p", .{});
                     return .none;
                 }
                 // v2.0 madde 7 (bkz. plan dosyası §5): `ptr_read_volatile`/
@@ -7473,30 +7473,30 @@ pub const Checker = struct {
                 // (volatile niteleyicisi) TAMAMEN codegen'de.
                 if (std.mem.eql(u8, name, "ptr_read_volatile")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_volatile' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_volatile' takes exactly 1 argument", .{});
                     const pt = try self.checkExpr(ctx, c.args[0]);
-                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_read_volatile' bir ptr[T] alır", .{});
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_read_volatile' takes a ptr[T]", .{});
                     return pt.typed_ptr.*;
                 }
                 if (std.mem.eql(u8, name, "ptr_write_volatile")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_volatile' tam olarak 2 argüman alır (p: ptr[T], v: T)", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_volatile' takes exactly 2 arguments (p: ptr[T], v: T)", .{});
                     const pt = try self.checkExpr(ctx, c.args[0]);
-                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_write_volatile' argümanı 1 (p) bir ptr[T] olmalıdır", .{});
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "argument 1 (p) of 'ptr_write_volatile' must be a ptr[T]", .{});
                     const vt = try self.checkExpr(ctx, c.args[1]);
-                    if (!types.eql(vt, pt.typed_ptr.*)) return self.fail(error.TypeMismatch, "'ptr_write_volatile' argümanı 2 (v) p'nin T'siyle AYNI tipte olmalıdır", .{});
+                    if (!types.eql(vt, pt.typed_ptr.*)) return self.fail(error.TypeMismatch, "argument 2 (v) of 'ptr_write_volatile' must have the SAME type as the T of p", .{});
                     return .none;
                 }
                 // v2.0 madde 7 (bkz. plan dosyası §2): `memory_fence()`/
                 // `compiler_fence()` — argümansız sıralama bariyerleri.
                 if (std.mem.eql(u8, name, "memory_fence")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'memory_fence' argüman almaz", .{});
+                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'memory_fence' takes no arguments", .{});
                     return .none;
                 }
                 if (std.mem.eql(u8, name, "compiler_fence")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'compiler_fence' argüman almaz", .{});
+                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'compiler_fence' takes no arguments", .{});
                     return .none;
                 }
                 // `detach(x) -> ptr`: `x` ÇIPLAK bir yerel değişken adı
@@ -7505,14 +7505,14 @@ pub const Checker = struct {
                 // tutmak için). Tipi list/dict/class/str olmalıdır.
                 if (std.mem.eql(u8, name, "detach")) {
                     try self.requireLowlevel(name);
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'detach' tam olarak 1 argüman alır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'detach' takes exactly 1 argument", .{});
                     if (c.args[0] != .identifier) {
-                        return self.fail(error.TypeMismatch, "'detach' yalnızca düz bir yerel değişkene uygulanabilir — bir sınıf alanına/ifadenin sonucuna değil", .{});
+                        return self.fail(error.TypeMismatch, "'detach' can only be applied to a plain local variable — not to a class field or the result of an expression", .{});
                     }
                     const t = try self.checkExpr(ctx, c.args[0]);
                     switch (t) {
                         .list, .dict, .class, .str => {},
-                        else => return self.fail(error.TypeMismatch, "'detach' yalnızca list/dict/class/str tipli bir değişkene uygulanabilir", .{}),
+                        else => return self.fail(error.TypeMismatch, "'detach' can only be applied to a variable of type list/dict/class/str", .{}),
                     }
                     return .ptr;
                 }
@@ -7522,7 +7522,7 @@ pub const Checker = struct {
                 // bu YÜZDEN BURAYA ulaşan bir `adopt` çağrısı HER ZAMAN
                 // "beklenen tipsiz bağlam" anlamına gelir.
                 if (std.mem.eql(u8, name, "adopt")) {
-                    return self.fail(error.UnknownType, "'adopt' yalnızca beklenen tipi bilinen bir bağlamda (var_decl/return/atama/argüman) kullanılabilir", .{});
+                    return self.fail(error.UnknownType, "'adopt' can only be used in a context whose expected type is known (var_decl/return/assignment/argument)", .{});
                 }
                 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
                 // metadata-tabanlı metaprogramming"): `stdlib/nox/reflect.
@@ -7533,28 +7533,28 @@ pub const Checker = struct {
                 // öneki taşır (yalnızca `reflect.nox` bunları çağırır —
                 // kullanıcı KODU DOĞRUDAN çağırmaz).
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_count")) {
-                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_count' hiçbir argüman almaz", .{});
+                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_count' takes no arguments", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_target_name")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_target_name' tam olarak 1 argüman alır (i: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_target_name' argümanı int olmalıdır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_target_name' takes exactly 1 argument (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "the argument of '__nox_reflect_decorator_target_name' must be an int", .{});
                     return .str;
                 }
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_name")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_name' tam olarak 1 argüman alır (i: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_name' argümanı int olmalıdır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_name' takes exactly 1 argument (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "the argument of '__nox_reflect_decorator_name' must be an int", .{});
                     return .str;
                 }
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_count")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_count' tam olarak 1 argüman alır (i: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_count' argümanı int olmalıdır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_count' takes exactly 1 argument (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "the argument of '__nox_reflect_decorator_arg_count' must be an int", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg")) {
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg' tam olarak 2 argüman alır (i: int, j: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg' argümanı 1 (i) int olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg' argümanı 2 (j) int olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg' takes exactly 2 arguments (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "argument 1 (i) of '__nox_reflect_decorator_arg' must be an int", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (j) of '__nox_reflect_decorator_arg' must be an int", .{});
                     return .str;
                 }
                 if (try self.checkReflectMetaIntrinsic(ctx, c, name)) |t| return t;
@@ -7562,34 +7562,34 @@ pub const Checker = struct {
                 // decorator_arg`in int/bool/string-listesi eşdeğerleri — HEPSİ
                 // AYNI (i, j) indeksleme sözleşmesini paylaşır.
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_kind")) {
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_kind' tam olarak 2 argüman alır (i: int, j: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_kind' argümanı 1 (i) int olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_kind' argümanı 2 (j) int olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_kind' takes exactly 2 arguments (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "argument 1 (i) of '__nox_reflect_decorator_arg_kind' must be an int", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (j) of '__nox_reflect_decorator_arg_kind' must be an int", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_int")) {
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_int' tam olarak 2 argüman alır (i: int, j: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_int' argümanı 1 (i) int olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_int' argümanı 2 (j) int olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_int' takes exactly 2 arguments (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "argument 1 (i) of '__nox_reflect_decorator_arg_int' must be an int", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (j) of '__nox_reflect_decorator_arg_int' must be an int", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_bool")) {
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_bool' tam olarak 2 argüman alır (i: int, j: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_bool' argümanı 1 (i) int olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_bool' argümanı 2 (j) int olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_bool' takes exactly 2 arguments (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "argument 1 (i) of '__nox_reflect_decorator_arg_bool' must be an int", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (j) of '__nox_reflect_decorator_arg_bool' must be an int", .{});
                     return .boolean;
                 }
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_list_len")) {
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_list_len' tam olarak 2 argüman alır (i: int, j: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_len' argümanı 1 (i) int olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_len' argümanı 2 (j) int olmalıdır", .{});
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_list_len' takes exactly 2 arguments (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "argument 1 (i) of '__nox_reflect_decorator_arg_list_len' must be an int", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (j) of '__nox_reflect_decorator_arg_list_len' must be an int", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_list_item")) {
-                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_list_item' tam olarak 3 argüman alır (i: int, j: int, k: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_item' argümanı 1 (i) int olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_item' argümanı 2 (j) int olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_item' argümanı 3 (k) int olmalıdır", .{});
+                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_list_item' takes exactly 3 arguments (i: int, j: int, k: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "argument 1 (i) of '__nox_reflect_decorator_arg_list_item' must be an int", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "argument 2 (j) of '__nox_reflect_decorator_arg_list_item' must be an int", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "argument 3 (k) of '__nox_reflect_decorator_arg_list_item' must be an int", .{});
                     return .str;
                 }
                 // `i`nin kaydı "handler-şekilli" mi (bkz. `registerDecorators`
@@ -7600,8 +7600,8 @@ pub const Checker = struct {
                 // `handler` NULL/0 döner — bkz. `decorators.zig`nin
                 // `genReflectDecoratorHandler`ı).
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_is_handler")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_is_handler' tam olarak 1 argüman alır (i: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_is_handler' argümanı int olmalıdır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_is_handler' takes exactly 1 argument (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "the argument of '__nox_reflect_decorator_is_handler' must be an int", .{});
                     return .boolean;
                 }
                 // Dönüş tipi `(Context) -> HttpResponse` — BİLİNÇLİ OLARAK
@@ -7616,8 +7616,8 @@ pub const Checker = struct {
                 // İSE `registerDecorators`in AYNI mangled-isim gerekçesiyle
                 // (`self.from_imports` ÜZERİNDEN) çözülür.
                 if (std.mem.eql(u8, name, "__nox_reflect_decorator_handler")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_handler' tam olarak 1 argüman alır (i: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_handler' argümanı int olmalıdır", .{});
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_handler' takes exactly 1 argument (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "the argument of '__nox_reflect_decorator_handler' must be an int", .{});
                     const context_name = self.from_imports.get("Context") orelse "Context";
                     const http_response_name = self.from_imports.get("HttpResponse") orelse "HttpResponse";
                     const params = try self.allocator.alloc(Type, 1);
@@ -7628,11 +7628,11 @@ pub const Checker = struct {
                 }
                 if (std.mem.eql(u8, name, "wasm_call")) {
                     if (c.args.len != 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'wasm_call' tam olarak 3 argüman alır (yol: str, fonksiyon_adı: str, argüman: int)", .{});
+                        return self.fail(error.ArgumentCountMismatch, "'wasm_call' takes exactly 3 arguments (path: str, function_name: str, argument: int)", .{});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'wasm_call' argümanı 1 (yol) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'wasm_call' argümanı 2 (fonksiyon adı) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'wasm_call' argümanı 3 (argüman) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (path) of 'wasm_call' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (function name) of 'wasm_call' must be a str", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "argument 3 (argument) of 'wasm_call' must be an int", .{});
                     return .int;
                 }
                 // GG.22 (bkz. plan dosyası "checkCall gölgeleme-çözümleme
@@ -7656,7 +7656,7 @@ pub const Checker = struct {
                         try self.checkArgs(ctx, vt.func.params, c.args, name);
                         return vt.func.return_type.*;
                     }
-                    return self.fail(error.TypeMismatch, "'{s}' bir fonksiyon değildir, çağrılamaz", .{name});
+                    return self.fail(error.TypeMismatch, "'{s}' is not a function and cannot be called", .{name});
                 }
                 if (self.generic_functions.get(name)) |gfd| {
                     return try self.instantiateGeneric(ctx, gfd, c);
@@ -7667,7 +7667,7 @@ pub const Checker = struct {
                     // yalnızca `spawn` bunu sağlar (bkz. `.spawn_expr` dalı,
                     // nox-teknik-spesifikasyon.md §3.21).
                     if (self.async_functions.contains(name)) {
-                        return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, yalnızca 'spawn' ile başlatılabilir", .{name});
+                        return self.fail(error.TypeMismatch, "'{s}' is an 'async def' function and can only be started with 'spawn'", .{name});
                     }
                     // v2.0 madde 2.3: `@ffi.callback` taşıyan bir extern def
                     // çağrısı — özel arity/argüman doğrulaması (bkz.
@@ -7691,10 +7691,10 @@ pub const Checker = struct {
                 // (YUKARIDAKİ dallar) HER ZAMAN ÖNCELİKLİDİR, bu dal yalnızca
                 // NORMAL çözümleme başarısız olduğunda denenir.
                 if (self.from_imports.get(name)) |mangled| {
-                    const not_found_msg = try std.fmt.allocPrint(self.allocator, "'{s}' içe aktarılamadı (kaynak modülde '{s}' adlı bir üye yok)", .{ name, mangled });
+                    const not_found_msg = try std.fmt.allocPrint(self.allocator, "'{s}' could not be imported (the source module has no member named '{s}')", .{ name, mangled });
                     return try self.resolveMangledCall(ctx, c, mangled, not_found_msg);
                 }
-                return self.fail(error.UndefinedFunction, "tanımsız fonksiyon veya sınıf: {s}", .{name});
+                return self.fail(error.UndefinedFunction, "undefined function or class: {s}", .{name});
             },
             .attribute => |a| {
                 // v1.32.0 (bkz. nox-teknik-spesifikasyon.md §3.98): ESKİDEN
@@ -7754,11 +7754,11 @@ pub const Checker = struct {
                 // ele alınır.
                 if (isSuperCallExpr(a.obj.*)) {
                     const self_class = ctx.self_class orelse
-                        return self.fail(error.TypeMismatch, "'super()' yalnızca bir metod gövdesi içinde kullanılabilir", .{});
+                        return self.fail(error.TypeMismatch, "'super()' can only be used inside a method body", .{});
                     const self_info = self.classes.get(self_class) orelse
-                        return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{self_class});
+                        return self.fail(error.UndefinedClass, "unknown class: {s}", .{self_class});
                     const base_name = self_info.base orelse
-                        return self.fail(error.TypeMismatch, "'{s}' sınıfının bir taban sınıfı yok, 'super()' kullanılamaz", .{self_class});
+                        return self.fail(error.TypeMismatch, "class '{s}' has no base class, so 'super()' cannot be used", .{self_class});
                     const base_info = self.classes.get(base_name).?;
                     if (std.mem.eql(u8, a.attr, "__init__")) {
                         const init_sig = base_info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
@@ -7771,7 +7771,7 @@ pub const Checker = struct {
                         try self.checkMethodCapabilityCall(owner, a.attr);
                         return sig.return_type;
                     }
-                    return self.fail(error.UndefinedMethod, "'{s}' taban sınıfının '{s}' metodu yok", .{ base_name, a.attr });
+                    return self.fail(error.UndefinedMethod, "base class '{s}' has no method '{s}'", .{ base_name, a.attr });
                 }
 
                 const obj_t = try self.checkExpr(ctx, a.obj.*);
@@ -7789,24 +7789,24 @@ pub const Checker = struct {
                 // `.await_expr` dalı/`genAwaitExpr`).
                 if (obj_t == .task) {
                     if (std.mem.eql(u8, a.attr, "cancel")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'cancel' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'cancel' takes no arguments", .{});
                         return .none;
                     }
-                    return self.fail(error.UndefinedMethod, "Task'ın '{s}' metodu yok (yalnızca cancel)", .{a.attr});
+                    return self.fail(error.UndefinedMethod, "Task has no method '{s}' (only cancel)", .{a.attr});
                 }
                 if (obj_t == .channel) {
                     const elem_t = obj_t.channel.*;
                     if (std.mem.eql(u8, a.attr, "send")) {
-                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'send' tam olarak 1 argüman alır", .{});
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'send' takes exactly 1 argument", .{});
                         const at = try self.checkExpr(ctx, c.args[0]);
-                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'send' argümanı kanalın eleman tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "the argument of 'send' does not match the channel's element type", .{});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "recv")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'recv' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'recv' takes no arguments", .{});
                         return elem_t;
                     }
-                    return self.fail(error.UndefinedMethod, "Channel'ın '{s}' metodu yok (yalnızca send/recv)", .{a.attr});
+                    return self.fail(error.UndefinedMethod, "Channel has no method '{s}' (only send/recv)", .{a.attr});
                 }
                 // `TaskLocal[T]`in yerleşik `get`/`set`/`clear`i — Faz OO.2
                 // (bkz. nox-teknik-spesifikasyon.md §3.83), `Channel` İLE
@@ -7816,22 +7816,22 @@ pub const Checker = struct {
                 if (obj_t == .task_local) {
                     const elem_t = obj_t.task_local.*;
                     if (std.mem.eql(u8, a.attr, "get")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'get' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'get' takes no arguments", .{});
                         const boxed = try self.allocator.create(Type);
                         boxed.* = elem_t;
                         return .{ .optional = boxed };
                     }
                     if (std.mem.eql(u8, a.attr, "set")) {
-                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'set' tam olarak 1 argüman alır", .{});
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'set' takes exactly 1 argument", .{});
                         const at = try self.checkExpr(ctx, c.args[0]);
-                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'set' argümanı TaskLocal'ın eleman tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "the argument of 'set' does not match the TaskLocal's element type", .{});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "clear")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'clear' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'clear' takes no arguments", .{});
                         return .none;
                     }
-                    return self.fail(error.UndefinedMethod, "TaskLocal'ın '{s}' metodu yok (yalnızca get/set/clear)", .{a.attr});
+                    return self.fail(error.UndefinedMethod, "TaskLocal has no method '{s}' (only get/set/clear)", .{a.attr});
                 }
                 // `ThreadHandle[T]`in yerleşik `join`i — Faz BB.3, `Channel`
                 // İLE AYNI desen (bir kullanıcı sınıfı DEĞİL, burada özel
@@ -7839,10 +7839,10 @@ pub const Checker = struct {
                 // DEĞİL, `.await_expr` dalında denetlenir.
                 if (obj_t == .thread_handle) {
                     if (std.mem.eql(u8, a.attr, "join")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'join' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'join' takes no arguments", .{});
                         return obj_t.thread_handle.*;
                     }
-                    return self.fail(error.UndefinedMethod, "ThreadHandle'ın '{s}' metodu yok (yalnızca join)", .{a.attr});
+                    return self.fail(error.UndefinedMethod, "ThreadHandle has no method '{s}' (only join)", .{a.attr});
                 }
                 // `ThreadChannel[T]`in yerleşik `send`/`recv`i — Faz BB.6,
                 // `Channel` İLE BİREBİR AYNI desen/sözleşme (İKİSİ de
@@ -7855,16 +7855,16 @@ pub const Checker = struct {
                 if (obj_t == .thread_channel) {
                     const elem_t = obj_t.thread_channel.*;
                     if (std.mem.eql(u8, a.attr, "send")) {
-                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'send' tam olarak 1 argüman alır", .{});
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'send' takes exactly 1 argument", .{});
                         const at = try self.checkExpr(ctx, c.args[0]);
-                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'send' argümanı kanalın eleman tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "the argument of 'send' does not match the channel's element type", .{});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "recv")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'recv' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'recv' takes no arguments", .{});
                         return elem_t;
                     }
-                    return self.fail(error.UndefinedMethod, "ThreadChannel'ın '{s}' metodu yok (yalnızca send/recv)", .{a.attr});
+                    return self.fail(error.UndefinedMethod, "ThreadChannel has no method '{s}' (only send/recv)", .{a.attr});
                 }
                 // `dict[K, V]`in yerleşik `contains`/`len`i — `Channel`le AYNI
                 // desen: bir kullanıcı sınıfı DEĞİL, burada özel işlenir
@@ -7872,7 +7872,7 @@ pub const Checker = struct {
                 if (obj_t == .dict) {
                     // v1.157.0: `d.items()` → `list[tuple[K, V]]` — `__nox_dict_items(d)` (core.nox) çağrısına yeniden yazılır.
                     if (std.mem.eql(u8, a.attr, "items")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'items' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'items' takes no arguments", .{});
                         const callee = try self.allocator.create(ast.Expr);
                         callee.* = .{ .identifier = "__nox_dict_items" };
                         const call_args = try self.allocator.alloc(ast.Expr, 1);
@@ -7883,13 +7883,13 @@ pub const Checker = struct {
                         return rt;
                     }
                     if (std.mem.eql(u8, a.attr, "contains")) {
-                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'contains' tam olarak 1 argüman alır", .{});
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'contains' takes exactly 1 argument", .{});
                         const kt = try self.checkExpr(ctx, c.args[0]);
-                        if (!types.eql(kt, obj_t.dict.key.*)) return self.fail(error.TypeMismatch, "'contains' argümanı dict'in anahtar tipiyle uyuşmuyor", .{});
+                        if (!types.eql(kt, obj_t.dict.key.*)) return self.fail(error.TypeMismatch, "the argument of 'contains' does not match the dict's key type", .{});
                         return .boolean;
                     }
                     if (std.mem.eql(u8, a.attr, "len")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'len' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'len' takes no arguments", .{});
                         return .int;
                     }
                     // Faz III.6 (bkz. nox-teknik-spesifikasyon.md §3.69) —
@@ -7897,22 +7897,22 @@ pub const Checker = struct {
                     // `items()` (çift/`DictEntry` tipi gerektirir) BİLİNÇLİ
                     // olarak KAPSAM DIŞI (bkz. planın "Kapsam DIŞI" bölümü).
                     if (std.mem.eql(u8, a.attr, "keys")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'keys' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'keys' takes no arguments", .{});
                         return Type{ .list = obj_t.dict.key };
                     }
                     if (std.mem.eql(u8, a.attr, "values")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'values' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'values' takes no arguments", .{});
                         return Type{ .list = obj_t.dict.value };
                     }
                     // v1.149.0: get/pop/setdefault/clear/update/copy (bkz. spec §3.266).
                     const vt: Type = obj_t.dict.value.*;
                     if (std.mem.eql(u8, a.attr, "get") or std.mem.eql(u8, a.attr, "pop")) {
-                        if (c.args.len < 1 or c.args.len > 2) return self.fail(error.ArgumentCountMismatch, "'{s}' 1 ya da 2 argüman alır (anahtar[, varsayılan])", .{a.attr});
+                        if (c.args.len < 1 or c.args.len > 2) return self.fail(error.ArgumentCountMismatch, "'{s}' takes 1 or 2 arguments (key[, default])", .{a.attr});
                         const kt = try self.checkExpr(ctx, c.args[0]);
-                        if (!types.eql(kt, obj_t.dict.key.*)) return self.fail(error.TypeMismatch, "'{s}' anahtarı dict'in anahtar tipiyle uyuşmuyor", .{a.attr});
+                        if (!types.eql(kt, obj_t.dict.key.*)) return self.fail(error.TypeMismatch, "the key of '{s}' does not match the dict's key type", .{a.attr});
                         if (c.args.len == 2) {
                             const dt = try self.checkExprExpected(ctx, c.args[1], vt);
-                            if (!self.assignable(vt, dt)) return self.fail(error.TypeMismatch, "'{s}' varsayılan değeri dict'in değer tipiyle uyuşmuyor", .{a.attr});
+                            if (!self.assignable(vt, dt)) return self.fail(error.TypeMismatch, "the default value of '{s}' does not match the dict's value type", .{a.attr});
                             return vt;
                         }
                         // `get(k)` → `V | None`; `pop(k)` → `V` (anahtar yoksa KeyError).
@@ -7922,28 +7922,28 @@ pub const Checker = struct {
                         return Type{ .optional = boxed };
                     }
                     if (std.mem.eql(u8, a.attr, "setdefault")) {
-                        if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'setdefault' tam olarak 2 argüman alır (anahtar, varsayılan)", .{});
+                        if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'setdefault' takes exactly 2 arguments (key, default)", .{});
                         const kt = try self.checkExpr(ctx, c.args[0]);
-                        if (!types.eql(kt, obj_t.dict.key.*)) return self.fail(error.TypeMismatch, "'setdefault' anahtarı dict'in anahtar tipiyle uyuşmuyor", .{});
+                        if (!types.eql(kt, obj_t.dict.key.*)) return self.fail(error.TypeMismatch, "the key of 'setdefault' does not match the dict's key type", .{});
                         const dt = try self.checkExprExpected(ctx, c.args[1], vt);
-                        if (!self.assignable(vt, dt)) return self.fail(error.TypeMismatch, "'setdefault' varsayılan değeri dict'in değer tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(vt, dt)) return self.fail(error.TypeMismatch, "the default value of 'setdefault' does not match the dict's value type", .{});
                         return vt;
                     }
                     if (std.mem.eql(u8, a.attr, "clear")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'clear' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'clear' takes no arguments", .{});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "copy")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'copy' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'copy' takes no arguments", .{});
                         return obj_t;
                     }
                     if (std.mem.eql(u8, a.attr, "update")) {
-                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'update' tam olarak 1 argüman alır", .{});
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'update' takes exactly 1 argument", .{});
                         const ot = try self.checkExpr(ctx, c.args[0]);
-                        if (!types.eql(ot, obj_t)) return self.fail(error.TypeMismatch, "'update' argümanı aynı dict[K, V] tipinde olmalıdır", .{});
+                        if (!types.eql(ot, obj_t)) return self.fail(error.TypeMismatch, "the argument of 'update' must be of the same dict[K, V] type", .{});
                         return .none;
                     }
-                    return self.fail(error.UndefinedMethod, "dict'in '{s}' metodu yok (contains/len/keys/values/get/pop/setdefault/clear/copy/update)", .{a.attr});
+                    return self.fail(error.UndefinedMethod, "dict has no method '{s}' (contains/len/keys/values/get/pop/setdefault/clear/copy/update)", .{a.attr});
                 }
                 // `list[T]`in yerleşik `append`i — Faz U.1, `dict`in AYNI
                 // deseni. **Bilinçli v1 sınırlaması:** alıcı (`a.obj.*`)
@@ -7967,9 +7967,9 @@ pub const Checker = struct {
                         // reddedilir: büyüme-geri-yazması + geçici-release
                         // sıralaması ayrı bir risk kategorisidir.
                         try self.checkGrowableListRecv(ctx, a, "append", "xs.append(v)");
-                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' tam olarak 1 argüman alır", .{});
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' takes exactly 1 argument", .{});
                         const vt = try self.checkExpr(ctx, c.args[0]);
-                        if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "'append' argümanı listenin eleman tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "the argument of 'append' does not match the list's element type", .{});
                         return .none;
                     }
                     // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) —
@@ -7989,7 +7989,7 @@ pub const Checker = struct {
                             var has_key = false;
                             for (c.args) |ka| {
                                 if (ka != .kwarg or !(std.mem.eql(u8, ka.kwarg.name, "key") or std.mem.eql(u8, ka.kwarg.name, "reverse"))) {
-                                    return self.fail(error.ArgumentCountMismatch, "'sort' yalnızca 'key=' ve 'reverse=' anahtar argümanlarını alır", .{});
+                                    return self.fail(error.ArgumentCountMismatch, "'sort' only takes the 'key=' and 'reverse=' keyword arguments", .{});
                                 }
                                 if (std.mem.eql(u8, ka.kwarg.name, "key")) has_key = true;
                             }
@@ -8005,7 +8005,7 @@ pub const Checker = struct {
                         }
                         switch (obj_t.list.*) {
                             .int, .float, .str => {},
-                            else => return self.fail(error.TypeMismatch, "'sort' yalnızca list[int]/list[float]/list[str] üzerinde çağrılabilir", .{}),
+                            else => return self.fail(error.TypeMismatch, "'sort' can only be called on list[int]/list[float]/list[str]", .{}),
                         }
                         return .none;
                     }
@@ -8014,50 +8014,50 @@ pub const Checker = struct {
                     // `codegen_qbe/calls.zig`nin `genListPop`ı), alıcının SLOTUNA geri yazma GEREKMEZ. Boş listede ya da
                     // aralık dışı indekste `IndexError` (bkz. `core.nox`) fırlatılır. v1.150.0: isteğe bağlı `int` indeksi.
                     if (std.mem.eql(u8, a.attr, "pop")) {
-                        if (c.args.len > 1) return self.fail(error.ArgumentCountMismatch, "'pop' 0 ya da 1 (indeks) argüman alır", .{});
+                        if (c.args.len > 1) return self.fail(error.ArgumentCountMismatch, "'pop' takes 0 or 1 (index) arguments", .{});
                         if (c.args.len == 1) {
                             const it = try self.checkExpr(ctx, c.args[0]);
-                            if (it != .int) return self.fail(error.TypeMismatch, "'pop' indeksi 'int' olmalıdır", .{});
+                            if (it != .int) return self.fail(error.TypeMismatch, "the index of 'pop' must be an 'int'", .{});
                         }
                         return obj_t.list.*;
                     }
                     // v1.150.0 (bkz. nox-teknik-spesifikasyon.md §3.267): `reverse`/`clear`/`copy`/`insert`/`remove`/`index`/`count`
                     // (`extend` yalnızca ifade deyimi olarak — bkz. `tryCheckExtendStmt`).
                     if (std.mem.eql(u8, a.attr, "reverse") or std.mem.eql(u8, a.attr, "clear")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'{s}' hiç argüman almaz", .{a.attr});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'{s}' takes no arguments", .{a.attr});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "copy")) {
-                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'copy' hiç argüman almaz", .{});
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'copy' takes no arguments", .{});
                         return obj_t;
                     }
                     if (std.mem.eql(u8, a.attr, "insert")) {
                         try self.checkGrowableListRecv(ctx, a, "insert", "xs.insert(i, v)");
-                        if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'insert' tam olarak 2 argüman alır (indeks, değer)", .{});
+                        if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'insert' takes exactly 2 arguments (index, value)", .{});
                         const it = try self.checkExpr(ctx, c.args[0]);
-                        if (it != .int) return self.fail(error.TypeMismatch, "'insert' indeksi 'int' olmalıdır", .{});
+                        if (it != .int) return self.fail(error.TypeMismatch, "the index of 'insert' must be an 'int'", .{});
                         const vt = try self.checkExpr(ctx, c.args[1]);
-                        if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "'insert' değeri listenin eleman tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "the value of 'insert' does not match the list's element type", .{});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "extend")) {
-                        return self.fail(error.TypeMismatch, "'extend' yalnızca bir ifade deyimi olarak kullanılabilir (xs.extend(ys)); değer üretmez", .{});
+                        return self.fail(error.TypeMismatch, "'extend' can only be used as an expression statement (xs.extend(ys)); it produces no value", .{});
                     }
                     if (std.mem.eql(u8, a.attr, "remove") or std.mem.eql(u8, a.attr, "index") or std.mem.eql(u8, a.attr, "count")) {
-                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' tam olarak 1 argüman alır", .{a.attr});
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' takes exactly 1 argument", .{a.attr});
                         const xt = try self.checkExpr(ctx, c.args[0]);
                         try self.requireListElemComparable(obj_t.list.*, xt, a.attr);
                         return if (std.mem.eql(u8, a.attr, "remove")) .none else .int;
                     }
-                    return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (append/extend/insert/pop/remove/clear/index/count/sort/reverse/copy)", .{a.attr});
+                    return self.fail(error.UndefinedMethod, "list has no method '{s}' (append/extend/insert/pop/remove/clear/index/count/sort/reverse/copy)", .{a.attr});
                 }
                 if (obj_t == .str) return self.checkStrMethod(ctx, a, c);
                 const class_name = switch (obj_t) {
                     .class => |n| n,
-                    else => return self.fail(error.TypeMismatch, "metod çağrısı yalnızca sınıf örneklerinde geçerlidir", .{}),
+                    else => return self.fail(error.TypeMismatch, "a method call is only valid on class instances", .{}),
                 };
                 const info = self.classes.getPtr(class_name) orelse
-                    return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
+                    return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
                 if (info.methods.get(a.attr)) |sig| {
                     try self.checkArgsDecl(ctx, sig, c.args, a.attr, @intFromPtr(c.callee));
                     const owner = info.method_owners.get(a.attr) orelse class_name;
@@ -8077,9 +8077,9 @@ pub const Checker = struct {
                         try self.checkArgs(ctx, ft.func.params, c.args, a.attr);
                         return ft.func.return_type.*;
                     }
-                    return self.fail(error.TypeMismatch, "'{s}' bir fonksiyon değildir, çağrılamaz", .{a.attr});
+                    return self.fail(error.TypeMismatch, "'{s}' is not a function and cannot be called", .{a.attr});
                 }
-                return self.fail(error.UndefinedMethod, "'{s}' sınıfının '{s}' metodu yok", .{ class_name, a.attr });
+                return self.fail(error.UndefinedMethod, "class '{s}' has no method '{s}'", .{ class_name, a.attr });
             },
             // Faz U.4.5: `xs[i](...)` — `xs`nin ELEMAN tipi `.func` İSE
             // (`list[(T)->U]`, bkz. `stdlib/nox/router.nox`nin `self.
@@ -8089,15 +8089,15 @@ pub const Checker = struct {
             .index => |idx| {
                 const obj_t = try self.checkExpr(ctx, idx.obj.*);
                 try self.requireNotOptional(obj_t, "[]");
-                if (obj_t != .list) return self.fail(error.NotCallable, "bu ifade çağrılabilir değil", .{});
+                if (obj_t != .list) return self.fail(error.NotCallable, "this expression is not callable", .{});
                 const idx_t = try self.checkExpr(ctx, idx.index.*);
-                if (idx_t != .int) return self.fail(error.TypeMismatch, "liste indeksi 'int' olmalıdır", .{});
+                if (idx_t != .int) return self.fail(error.TypeMismatch, "the list index must be an 'int'", .{});
                 const elem_t = obj_t.list.*;
-                if (elem_t != .func) return self.fail(error.NotCallable, "bu ifade çağrılabilir değil", .{});
-                try self.checkArgs(ctx, elem_t.func.params, c.args, "<liste elemanı>");
+                if (elem_t != .func) return self.fail(error.NotCallable, "this expression is not callable", .{});
+                try self.checkArgs(ctx, elem_t.func.params, c.args, "<list element>");
                 return elem_t.func.return_type.*;
             },
-            else => return self.fail(error.NotCallable, "bu ifade çağrılabilir değil", .{}),
+            else => return self.fail(error.NotCallable, "this expression is not callable", .{}),
         }
     }
 
@@ -8114,7 +8114,7 @@ pub const Checker = struct {
             else => false,
         };
         if (!recv_ok) {
-            return self.fail(error.TypeMismatch, "'{s}' yalnızca bir değişken ya da 'isim.alan[.alan...]' üzerinde çağrılabilir (ör. '{s}', 'self.items.append(v)')", .{ what, example });
+            return self.fail(error.TypeMismatch, "'{s}' can only be called on a variable or on 'name.field[.field...]' (e.g. '{s}', 'self.items.append(v)')", .{ what, example });
         }
     }
 
@@ -8122,11 +8122,11 @@ pub const Checker = struct {
     fn requireListElemComparable(self: *Checker, et: Type, xt: Type, method: []const u8) TypeError!void {
         switch (et) {
             .int, .float, .boolean, .str, .fixed_int, .class, .list => {},
-            else => return self.fail(error.TypeMismatch, "'{s}' için liste eleman tipi desteklenmiyor (int/float/bool/str/sınıf/list olmalı)", .{method}),
+            else => return self.fail(error.TypeMismatch, "the list element type is not supported for '{s}' (it must be int/float/bool/str/class/list)", .{method}),
         }
         _ = try self.requireSameFixedIntOrNone(xt, et);
         if (!((types.isNumeric(xt) and types.isNumeric(et)) or types.eql(xt, et))) {
-            return self.fail(error.TypeMismatch, "'{s}' argümanı liste eleman tipiyle uyuşmuyor", .{method});
+            return self.fail(error.TypeMismatch, "the argument of '{s}' does not match the list element type", .{method});
         }
     }
 
@@ -8145,7 +8145,7 @@ pub const Checker = struct {
                 },
                 .if_clause => |ce| {
                     const t = try self.checkExpr(ctx, ce);
-                    if (t != .boolean) return self.fail(error.TypeMismatch, "comprehension 'if' koşulu bool olmalıdır", .{});
+                    if (t != .boolean) return self.fail(error.TypeMismatch, "the comprehension 'if' condition must be a bool", .{});
                 },
             }
         }
@@ -8173,7 +8173,7 @@ pub const Checker = struct {
         try self.checkCompClauses(ctx, lc.clauses, &saved);
         const elem_t = try self.checkExpr(ctx, lc.elem.*);
         restoreCompScope(ctx, &saved);
-        if (elem_t == .none) return self.fail(error.TypeMismatch, "comprehension elemanı bir değer üretmelidir", .{});
+        if (elem_t == .none) return self.fail(error.TypeMismatch, "the comprehension element must produce a value", .{});
         const boxed = try self.allocator.create(Type);
         boxed.* = elem_t;
         const result: Type = .{ .list = boxed };
@@ -8192,10 +8192,10 @@ pub const Checker = struct {
         const value_t = try self.checkExpr(ctx, dc.value.*);
         restoreCompScope(ctx, &saved);
         if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float) {
-            return self.fail(error.TypeMismatch, "'dict' anahtar tipi yalnızca int/float/bool/str olabilir", .{});
+            return self.fail(error.TypeMismatch, "the 'dict' key type can only be int/float/bool/str", .{});
         }
         if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .class and value_t != .list and value_t != .dict) {
-            return self.fail(error.TypeMismatch, "'dict' değer tipi yalnızca int/float/bool/str/sınıf/list/dict olabilir", .{});
+            return self.fail(error.TypeMismatch, "the 'dict' value type can only be int/float/bool/str/class/list/dict", .{});
         }
         const kb = try self.allocator.create(Type);
         kb.* = key_t;
@@ -8262,7 +8262,7 @@ pub const Checker = struct {
 
     /// `(a, b, ...)` — eleman tipleri (varsa beklenen tuple tipinin eleman tipleriyle denetlenerek) çıkarılır; ifade `tuple__...` kurucu çağrısına yeniden yazılır.
     fn checkTupleLit(self: *Checker, ctx: *FnCtx, elems: []const ast.Expr, expected: ?Type) TypeError!Type {
-        if (elems.len == 0) return self.fail(error.TypeMismatch, "boş tuple desteklenmiyor", .{});
+        if (elems.len == 0) return self.fail(error.TypeMismatch, "an empty tuple is not supported", .{});
         var exp_fields: ?[]const Type = null;
         if (expected) |ex| {
             if (ex == .class and isTupleClassName(ex.class)) {
@@ -8274,7 +8274,7 @@ pub const Checker = struct {
         const ts = try self.allocator.alloc(Type, elems.len);
         for (elems, 0..) |el, i| {
             const et = try self.checkExprExpected(ctx, el, if (exp_fields) |ef| ef[i] else null);
-            if (et == .none) return self.fail(error.TypeMismatch, "tuple elemanı bir değer üretmelidir", .{});
+            if (et == .none) return self.fail(error.TypeMismatch, "a tuple element must produce a value", .{});
             ts[i] = if (exp_fields) |ef| (if (self.assignable(ef[i], et)) ef[i] else et) else et;
         }
         const t = try self.instantiateTupleClass(ts);
@@ -8288,13 +8288,13 @@ pub const Checker = struct {
     /// `__nox_tup_N_K` gizli yereli (tuple açma): değer bir tuple olmalı ve K hedefle eleman sayısı eşleşmeli. Diğer `__infer` bildirimleri: tip değerden çıkarılır.
     fn checkInferVarDecl(self: *Checker, ctx: *FnCtx, v: ast.VarDecl) TypeError!void {
         const t = try self.checkExpr(ctx, v.value);
-        if (t == .none) return self.fail(error.TypeMismatch, "'{s}' için değer bir tip üretmiyor", .{v.name});
+        if (t == .none) return self.fail(error.TypeMismatch, "the value for '{s}' does not produce a type", .{v.name});
         if (std.mem.startsWith(u8, v.name, "__nox_tup_")) {
             const us = std.mem.lastIndexOfScalar(u8, v.name, '_').?;
             const want = std.fmt.parseInt(usize, v.name[us + 1 ..], 10) catch 0;
-            if (t != .class or !isTupleClassName(t.class)) return self.fail(error.TypeMismatch, "tuple açma: sağ taraf bir tuple olmalıdır", .{});
+            if (t != .class or !isTupleClassName(t.class)) return self.fail(error.TypeMismatch, "tuple unpacking: the right-hand side must be a tuple", .{});
             const have = self.tuple_elem_types.get(t.class).?.len;
-            if (have != want) return self.fail(error.TypeMismatch, "tuple açma: {d} hedef var ama değer {d} eleman içeriyor", .{ want, have });
+            if (have != want) return self.fail(error.TypeMismatch, "tuple unpacking: there are {d} targets but the value has {d} elements", .{ want, have });
         }
         var declared = t;
         if (ctx.scope.lookupLocal(v.name)) |existing| {
@@ -8309,12 +8309,12 @@ pub const Checker = struct {
     /// beklenen fonksiyon tipidir. `call_expand_apply` ifadeyi yükseltilmiş `def` adıyla değiştirir (fonksiyon içinde: deyimden önce iç içe
     /// `def`; modül üst düzeyinde: üst-düzey fonksiyon).
     fn checkLambda(self: *Checker, ctx: *FnCtx, lam: ast.Lambda, expected: ?Type) TypeError!Type {
-        const exp = expected orelse return self.fail(error.TypeMismatch, "'lambda' yalnızca beklenen fonksiyon tipinin bilindiği bağlamlarda kullanılabilir (fonksiyon-tipli parametre/değişken/dönüş)", .{});
-        if (exp != .func) return self.fail(error.TypeMismatch, "'lambda' yalnızca fonksiyon tipi beklenen bir bağlamda kullanılabilir", .{});
+        const exp = expected orelse return self.fail(error.TypeMismatch, "'lambda' can only be used where the expected function type is known (a function-typed parameter/variable/return)", .{});
+        if (exp != .func) return self.fail(error.TypeMismatch, "'lambda' can only be used where a function type is expected", .{});
         if (exp.func.params.len != lam.params.len) {
-            return self.fail(error.ArgumentCountMismatch, "lambda {d} parametre alıyor, beklenen fonksiyon tipi {d} parametre bekliyor", .{ lam.params.len, exp.func.params.len });
+            return self.fail(error.ArgumentCountMismatch, "the lambda takes {d} parameters but the expected function type takes {d} parameters", .{ lam.params.len, exp.func.params.len });
         }
-        if (self.comp_depth > 0) return self.fail(error.TypeMismatch, "'lambda' comprehension içinde desteklenmiyor — önce bir değişkene alın", .{});
+        if (self.comp_depth > 0) return self.fail(error.TypeMismatch, "'lambda' is not supported inside a comprehension — assign it to a variable first", .{});
         self.lambda_counter += 1;
         const name = try std.fmt.allocPrint(self.allocator, "__nox_lambda_{d}", .{self.lambda_counter});
         const params = try self.allocator.alloc(ast.Param, lam.params.len);
@@ -8332,7 +8332,7 @@ pub const Checker = struct {
             if (self.closure_infos.get(inner_path)) |ci| {
                 for (ci.captures) |cv| {
                     if (!self.module_globals.contains(cv.name)) {
-                        return self.fail(error.TypeMismatch, "modül düzeyindeki bir lambda, bir döngü/blok içinde tanımlı '{s}' yerel değişkenini yakalayamaz — lambda'yı bir fonksiyon içinde kullanın ya da değişkeni üst düzeyde tanımlayın", .{cv.name});
+                        return self.fail(error.TypeMismatch, "a module-level lambda cannot capture the local variable '{s}' defined inside a loop/block — use the lambda inside a function, or define the variable at the top level", .{cv.name});
                     }
                 }
             }
@@ -8392,15 +8392,15 @@ pub const Checker = struct {
                 ps[0] = lt;
                 break :blk .{ .name = m, .params = ps, .ret = str_t };
             }
-            return self.fail(error.UndefinedMethod, "str'in '{s}' metodu yok (upper/lower/strip/lstrip/rstrip/split/join/replace/startswith/endswith/find/index/count/isdigit/isalpha/isalnum/isspace/isupper/islower/ljust/rjust/center/zfill)", .{m});
+            return self.fail(error.UndefinedMethod, "str has no method '{s}' (upper/lower/strip/lstrip/rstrip/split/join/replace/startswith/endswith/find/index/count/isdigit/isalpha/isalnum/isspace/isupper/islower/ljust/rjust/center/zfill)", .{m});
         };
         const min_args = if (sig.optional_last) sig.params.len - 1 else sig.params.len;
         if (args.len < min_args or args.len > sig.params.len) {
-            return self.fail(error.ArgumentCountMismatch, "str.{s} {d} argüman bekler, {d} verildi", .{ m, sig.params.len, args.len });
+            return self.fail(error.ArgumentCountMismatch, "str.{s} expects {d} arguments, {d} were given", .{ m, sig.params.len, args.len });
         }
         for (args, 0..) |arg, i| {
             const at = try self.checkExprExpected(ctx, arg, sig.params[i]);
-            if (!self.assignable(sig.params[i], at)) return self.fail(error.TypeMismatch, "str.{s} argüman {d} tipi uyuşmuyor", .{ m, i + 1 });
+            if (!self.assignable(sig.params[i], at)) return self.fail(error.TypeMismatch, "str.{s} argument {d} has a mismatched type", .{ m, i + 1 });
         }
         return sig.ret;
     }
@@ -8411,17 +8411,17 @@ pub const Checker = struct {
         const obj_t = try self.checkExpr(ctx, sl.obj.*);
         try self.requireNotOptional(obj_t, "[:]");
         if (obj_t != .list and obj_t != .str) {
-            return self.fail(error.TypeMismatch, "dilimleme ('[a:b]') yalnızca list/str üzerinde çalışır", .{});
+            return self.fail(error.TypeMismatch, "slicing ('[a:b]') only works on list/str", .{});
         }
         inline for (.{ sl.lo, sl.hi, sl.step }) |maybe| {
             if (maybe) |x| {
                 const t = try self.checkExpr(ctx, x.*);
-                if (t != .int) return self.fail(error.TypeMismatch, "dilim sınırları/adımı 'int' olmalıdır", .{});
+                if (t != .int) return self.fail(error.TypeMismatch, "slice bounds/step must be 'int'", .{});
             }
         }
         if (sl.step) |st| {
-            if (st.* == .int_lit and st.int_lit == 0) return self.fail(error.TypeMismatch, "dilim adımı sıfır olamaz", .{});
-            if (st.* == .unary and st.unary.op == .neg and st.unary.operand.* == .int_lit and st.unary.operand.int_lit == 0) return self.fail(error.TypeMismatch, "dilim adımı sıfır olamaz", .{});
+            if (st.* == .int_lit and st.int_lit == 0) return self.fail(error.TypeMismatch, "the slice step cannot be zero", .{});
+            if (st.* == .unary and st.unary.op == .neg and st.unary.operand.* == .int_lit and st.unary.operand.int_lit == 0) return self.fail(error.TypeMismatch, "the slice step cannot be zero", .{});
         }
         return obj_t;
     }
@@ -8451,7 +8451,7 @@ pub const Checker = struct {
         const recv_t = try self.checkExpr(ctx, a.obj.*);
         if (recv_t != .list) return false;
         if (!isDuplicableExpr(a.obj.*)) {
-            return self.fail(error.TypeMismatch, "'{s}' elemanın üzerinde yalnızca yan etkisiz bir indeks ifadesiyle çağrılabilir (ör. 'grup[anahtar].append(v)'); önce bir değişkene alın", .{a.attr});
+            return self.fail(error.TypeMismatch, "'{s}' can only be called on an element through an index expression without side effects (e.g. 'group[key].append(v)'); assign it to a variable first", .{a.attr});
         }
         self.extend_counter += 1;
         const tmp_name = try std.fmt.allocPrint(self.allocator, "__nox_el_{d}", .{self.extend_counter});
@@ -8482,9 +8482,9 @@ pub const Checker = struct {
         const obj_t = try self.checkExpr(ctx, a.obj.*);
         if (obj_t != .list) return false;
         try self.checkGrowableListRecv(ctx, a, "extend", "xs.extend(ys)");
-        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'extend' tam olarak 1 argüman alır", .{});
+        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'extend' takes exactly 1 argument", .{});
         const ot = try self.checkExpr(ctx, c.args[0]);
-        if (!types.eql(ot, obj_t)) return self.fail(error.TypeMismatch, "'extend' argümanı aynı list[T] tipinde olmalıdır", .{});
+        if (!types.eql(ot, obj_t)) return self.fail(error.TypeMismatch, "the argument of 'extend' must be of the same list[T] type", .{});
 
         self.extend_counter += 1;
         const var_name = try std.fmt.allocPrint(self.allocator, "__nox_ext_{d}", .{self.extend_counter});
@@ -8514,7 +8514,7 @@ pub const Checker = struct {
 
     fn checkArgs(self: *Checker, ctx: *FnCtx, params: []const Type, args: []const ast.Expr, name: []const u8) TypeError!void {
         if (params.len != args.len) {
-            return self.fail(error.ArgumentCountMismatch, "'{s}' {d} argüman bekler, {d} verildi", .{ name, params.len, args.len });
+            return self.fail(error.ArgumentCountMismatch, "'{s}' expects {d} arguments, {d} were given", .{ name, params.len, args.len });
         }
         for (params, args, 0..) |pt, ae, i| {
             const at = try self.checkExprExpected(ctx, ae, pt);
@@ -8536,7 +8536,7 @@ pub const Checker = struct {
                 // `ast.Module.expr_spans`nin belge notu) deyim-seviyesi
                 // span'a ZARARSIZCA GERİ DÜŞÜLÜR.
                 if (self.module_expr_spans.get(@intFromPtr(&args[i]))) |sp| self.current_span = sp;
-                return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{name});
+                return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{name});
             }
         }
     }
@@ -8551,7 +8551,7 @@ pub const Checker = struct {
     fn checkExternCallbackArgs(self: *Checker, ctx: *FnCtx, params: []const Type, args: []const ast.Expr, name: []const u8, cfg: ExternCallbackConfig) TypeError!void {
         const expected_arity = params.len - 1;
         if (args.len != expected_arity) {
-            return self.fail(error.ArgumentCountMismatch, "'{s}' {d} argüman bekler ({d}. parametre '@ffi.callback'in context_param'ıdır, çağrı sitesinde YAZILMAZ — derleyici otomatik doldurur), {d} verildi", .{ name, expected_arity, cfg.context_idx + 1, args.len });
+            return self.fail(error.ArgumentCountMismatch, "'{s}' expects {d} arguments (parameter {d} is the '@ffi.callback' context_param and is NOT written at the call site — the compiler fills it in automatically), {d} were given", .{ name, expected_arity, cfg.context_idx + 1, args.len });
         }
         var arg_i: usize = 0;
         for (params, 0..) |pt, pi| {
@@ -8564,7 +8564,7 @@ pub const Checker = struct {
             }
             const at = try self.checkExprExpected(ctx, ae, pt);
             if (!self.assignable(pt, at)) {
-                return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{name});
+                return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{name});
             }
         }
     }
@@ -8580,35 +8580,35 @@ pub const Checker = struct {
     /// SON parametresi (userdata yuvası) HARİÇ kalanıyla TAM eşleşmelidir.
     fn checkCallbackTargetArg(self: *Checker, ctx: *FnCtx, ae: ast.Expr, cb_type: types.FuncType, extern_name: []const u8) TypeError!void {
         if (ae != .identifier) {
-            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi yalnızca üst-düzey bir fonksiyonun ÇIPLAK adı olabilir (lambda/bağlı metod/yakalayan closure KABUL EDİLMEZ)", .{extern_name});
+            return self.fail(error.TypeMismatch, "'{s}': the '@ffi.callback' target can only be the BARE name of a top-level function (lambdas/bound methods/capturing closures are NOT ACCEPTED)", .{extern_name});
         }
         const target_name = ae.identifier;
         // Yerel bir değişken/parametre AYNI adı TAŞIYORSA (gölgeleme)
         // HEDEF O'DUR, üst-düzey fonksiyon DEĞİL — GG.22'nin AYNI
         // gölgeleme-öncelik kuralı (bkz. `checkCall`in `.identifier` dalı).
         if (try ctx.scope.lookup(self.allocator, target_name)) |_| {
-            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}' yerel bir değişkeni gölgeliyor, üst-düzey bir fonksiyon OLMALI", .{ extern_name, target_name });
+            return self.fail(error.TypeMismatch, "'{s}': the '@ffi.callback' target '{s}' shadows a local variable, it MUST be a top-level function", .{ extern_name, target_name });
         }
         if (self.extern_func_names.contains(target_name)) {
-            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}' bir 'extern def' — yalnızca sıradan (Nox gövdeli) üst-düzey fonksiyonlar callback hedefi olabilir", .{ extern_name, target_name });
+            return self.fail(error.TypeMismatch, "'{s}': the '@ffi.callback' target '{s}' is an 'extern def' — only ordinary top-level functions (with a Nox body) can be callback targets", .{ extern_name, target_name });
         }
         if (self.async_functions.contains(target_name)) {
-            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}' bir 'async def' — callback hedefleri senkron olmalı", .{ extern_name, target_name });
+            return self.fail(error.TypeMismatch, "'{s}': the '@ffi.callback' target '{s}' is an 'async def' — callback targets must be synchronous", .{ extern_name, target_name });
         }
         const sig = self.functions.get(target_name) orelse {
-            return self.fail(error.UndefinedFunction, "'{s}': '@ffi.callback' hedefi tanımsız bir fonksiyon: {s}", .{ extern_name, target_name });
+            return self.fail(error.UndefinedFunction, "'{s}': the '@ffi.callback' target is an undefined function: {s}", .{ extern_name, target_name });
         };
         const expected_params = cb_type.params[0 .. cb_type.params.len - 1];
         if (sig.params.len != expected_params.len) {
-            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}'nin parametre SAYISI callback imzasıyla eşleşmiyor ({d} bekleniyor, {d} bulundu)", .{ extern_name, target_name, expected_params.len, sig.params.len });
+            return self.fail(error.TypeMismatch, "'{s}': the parameter COUNT of the '@ffi.callback' target '{s}' does not match the callback signature ({d} expected, {d} found)", .{ extern_name, target_name, expected_params.len, sig.params.len });
         }
         for (sig.params, expected_params, 0..) |pt, ept, i| {
             if (!scalarTypeEql(pt, ept)) {
-                return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}'nin {d}. parametre tipi callback imzasıyla eşleşmiyor", .{ extern_name, target_name, i + 1 });
+                return self.fail(error.TypeMismatch, "'{s}': the '@ffi.callback' target '{s}': the type of parameter {d} does not match the callback signature", .{ extern_name, target_name, i + 1 });
             }
         }
         if (!scalarTypeEql(sig.return_type, cb_type.return_type.*)) {
-            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}'nin dönüş tipi callback imzasıyla eşleşmiyor", .{ extern_name, target_name });
+            return self.fail(error.TypeMismatch, "'{s}': the return type of the '@ffi.callback' target '{s}' does not match the callback signature", .{ extern_name, target_name });
         }
         try self.callback_targets.put(self.allocator, target_name, {});
     }
@@ -8686,7 +8686,7 @@ pub const Checker = struct {
                 if (isTypeParam(name, type_params)) {
                     if (bindings.get(name)) |existing| {
                         if (!types.eql(existing, actual)) {
-                            return self.fail(error.TypeMismatch, "'{s}' çağrısında tip parametresi '{s}' çelişkili tiplere çözümlendi", .{ fn_name, name });
+                            return self.fail(error.TypeMismatch, "in the call to '{s}', the type parameter '{s}' resolved to conflicting types", .{ fn_name, name });
                         }
                     } else {
                         // `name` bir protokolse, İLK bağlama anında somut
@@ -8702,14 +8702,14 @@ pub const Checker = struct {
                 }
                 const declared = try self.typeExprToType(te);
                 if (!self.assignable(declared, actual)) {
-                    return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name});
+                    return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{fn_name});
                 }
             },
             .generic => |g| {
                 if (std.mem.eql(u8, g.name, "list") and g.args.len == 1) {
                     switch (actual) {
                         .list => |elem| try self.unifyTypeExpr(g.args[0], elem.*, type_params, bindings, fn_name),
-                        else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                        else => return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{fn_name}),
                     }
                     return;
                 }
@@ -8730,7 +8730,7 @@ pub const Checker = struct {
                             try self.unifyTypeExpr(g.args[0], d.key.*, type_params, bindings, fn_name);
                             try self.unifyTypeExpr(g.args[1], d.value.*, type_params, bindings, fn_name);
                         },
-                        else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                        else => return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{fn_name}),
                     }
                     return;
                 }
@@ -8744,17 +8744,17 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, g.name, "ptr") and g.args.len == 1) {
                     switch (actual) {
                         .typed_ptr => |elem| try self.unifyTypeExpr(g.args[0], elem.*, type_params, bindings, fn_name),
-                        else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                        else => return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{fn_name}),
                     }
                     return;
                 }
-                return self.fail(error.UnknownType, "bilinmeyen generic tip: {s}", .{g.name});
+                return self.fail(error.UnknownType, "unknown generic type: {s}", .{g.name});
             },
             // v1.162.0: fonksiyon-tipli parametreler artık generic fonksiyonlarda da çıkarılır (`map`/`filter`/`sorted(key=...)` tarzı
             // yüksek-dereceli API'ler): `actual` bir fonksiyon tipi olmalı; parametre/dönüş tipleri özyinelemeli birleştirilir.
             .func_type => |ft| {
                 if (actual != .func or actual.func.params.len != ft.params.len) {
-                    return self.fail(error.TypeMismatch, "'{s}' çağrısında fonksiyon tipi argüman beklenen imzayla uyuşmuyor", .{fn_name});
+                    return self.fail(error.TypeMismatch, "in the call to '{s}', the function-typed argument does not match the expected signature", .{fn_name});
                 }
                 for (ft.params, actual.func.params) |pte, pat| try self.unifyTypeExpr(pte, pat, type_params, bindings, fn_name);
                 try self.unifyTypeExpr(ft.return_type.*, actual.func.return_type.*, type_params, bindings, fn_name);
@@ -8767,7 +8767,7 @@ pub const Checker = struct {
             .optional => |inner_te| {
                 switch (actual) {
                     .optional => |elem| try self.unifyTypeExpr(inner_te.*, elem.*, type_params, bindings, fn_name),
-                    else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                    else => return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{fn_name}),
                 }
             },
             // Nitelikli (`pkg.module.X`) bir tip adı ASLA bir tip
@@ -8777,7 +8777,7 @@ pub const Checker = struct {
             .qualified => {
                 const declared = try self.typeExprToType(te);
                 if (!self.assignable(declared, actual)) {
-                    return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name});
+                    return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{fn_name});
                 }
             },
         }
@@ -8793,7 +8793,7 @@ pub const Checker = struct {
             .class => |n| n,
             else => return self.fail(
                 error.TypeMismatch,
-                "'{s}' çağrısında '{s}' yalnızca sınıf örnekleriyle eşleşebilir",
+                "in the call to '{s}', '{s}' can only match class instances",
                 .{ fn_name, protocol_name },
             ),
         };
@@ -8802,13 +8802,13 @@ pub const Checker = struct {
         for (proto.methods) |pm| {
             const cm = cinfo.methods.get(pm.name) orelse return self.fail(
                 error.TypeMismatch,
-                "'{s}' sınıfı '{s}' protokolünü karşılamıyor: '{s}' metodu eksik",
+                "class '{s}' does not satisfy protocol '{s}': method '{s}' is missing",
                 .{ class_name, protocol_name, pm.name },
             );
             if (cm.params.len != pm.params.len) {
                 return self.fail(
                     error.TypeMismatch,
-                    "'{s}' sınıfının '{s}' metodu '{s}' protokolüyle uyuşmuyor (parametre sayısı)",
+                    "class '{s}': method '{s}' does not match protocol '{s}' (parameter count)",
                     .{ class_name, pm.name, protocol_name },
                 );
             }
@@ -8816,7 +8816,7 @@ pub const Checker = struct {
                 if (!types.eql(ct, pt)) {
                     return self.fail(
                         error.TypeMismatch,
-                        "'{s}' sınıfının '{s}' metodu '{s}' protokolüyle uyuşmuyor (parametre tipi)",
+                        "class '{s}': method '{s}' does not match protocol '{s}' (parameter type)",
                         .{ class_name, pm.name, protocol_name },
                     );
                 }
@@ -8824,7 +8824,7 @@ pub const Checker = struct {
             if (!types.eql(cm.return_type, pm.return_type)) {
                 return self.fail(
                     error.TypeMismatch,
-                    "'{s}' sınıfının '{s}' metodu '{s}' protokolüyle uyuşmuyor (dönüş tipi)",
+                    "class '{s}': method '{s}' does not match protocol '{s}' (return type)",
                     .{ class_name, pm.name, protocol_name },
                 );
             }
@@ -9328,7 +9328,7 @@ pub const Checker = struct {
     /// — bkz. `substituteExpr`in belge notu.
     fn instantiateGenericClass(self: *Checker, gcd: ast.ClassDef, bound_types: []const Type) TypeError!Type {
         if (bound_types.len != gcd.type_params.len) {
-            return self.fail(error.ArgumentCountMismatch, "'{s}' {d} tip argümanı bekler, {d} verildi", .{ gcd.name, gcd.type_params.len, bound_types.len });
+            return self.fail(error.ArgumentCountMismatch, "'{s}' expects {d} type arguments, {d} were given", .{ gcd.name, gcd.type_params.len, bound_types.len });
         }
 
         const mangled = try self.mangleName(gcd.name, bound_types);
@@ -9391,7 +9391,7 @@ pub const Checker = struct {
                     if (m.type_params.len == 0) continue;
                     self.current_line = stmt.line;
                     self.current_span = stmt.span;
-                    return self.fail(error.TypeMismatch, "generic sınıfın generic metodu desteklenmiyor: {s}.{s} (v1: yalnızca generic OLMAYAN sınıflarda generic metod)", .{ cd.name, m.name });
+                    return self.fail(error.TypeMismatch, "a generic method of a generic class is not supported: {s}.{s} (v1: generic methods only in NON-generic classes)", .{ cd.name, m.name });
                 }
                 continue;
             }
@@ -9411,14 +9411,14 @@ pub const Checker = struct {
                     continue;
                 }
                 if (m.type_params.len != 1) {
-                    return self.fail(error.TypeMismatch, "generic metod '{s}.{s}' tek tip parametresi alabilir (v1: `obj.metod[T](...)` tek tip argümanı)", .{ cd.name, m.name });
+                    return self.fail(error.TypeMismatch, "generic method '{s}.{s}' can take a single type parameter (v1: `obj.method[T](...)` with a single type argument)", .{ cd.name, m.name });
                 }
                 if (std.mem.startsWith(u8, m.name, "__")) {
-                    return self.fail(error.TypeMismatch, "özel metod '{s}.{s}' generic olamaz", .{ cd.name, m.name });
+                    return self.fail(error.TypeMismatch, "special method '{s}.{s}' cannot be generic", .{ cd.name, m.name });
                 }
                 const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ cd.name, m.name });
                 if (self.generic_methods.contains(key)) {
-                    return self.fail(error.DuplicateDefinition, "generic metod '{s}.{s}' zaten tanımlı", .{ cd.name, m.name });
+                    return self.fail(error.DuplicateDefinition, "generic method '{s}.{s}' is already defined", .{ cd.name, m.name });
                 }
                 try self.generic_methods.put(self.allocator, key, .{ .fd = m, .class_stmt = stmt });
                 try self.generic_method_names.put(self.allocator, m.name, {});
@@ -9479,7 +9479,7 @@ pub const Checker = struct {
         const gfd = gm.fd;
 
         if (gfd.params.len != c.args.len + 1) {
-            return self.fail(error.ArgumentCountMismatch, "'{s}.{s}' {d} argüman bekler, {d} verildi", .{ def_class, gfd.name, gfd.params.len - 1, c.args.len });
+            return self.fail(error.ArgumentCountMismatch, "'{s}.{s}' expects {d} arguments, {d} were given", .{ def_class, gfd.name, gfd.params.len - 1, c.args.len });
         }
 
         var bindings: std.StringHashMapUnmanaged(Type) = .{};
@@ -9488,7 +9488,7 @@ pub const Checker = struct {
         if (explicit) {
             const ix = c.callee.index;
             const te = (try self.indexExprToTypeExpr(ix.index.*)) orelse
-                return self.fail(error.TypeMismatch, "'{s}.{s}' tip argümanı çözülemedi (yalnızca tip adı ya da tek-argümanlı generic tip)", .{ def_class, gfd.name });
+                return self.fail(error.TypeMismatch, "the type argument of '{s}.{s}' could not be resolved (only a type name or a single-argument generic type)", .{ def_class, gfd.name });
             try bindings.put(self.allocator, tp, try self.typeExprToType(te));
         } else {
             for (gfd.params[1..], c.args) |p, arg| {
@@ -9503,7 +9503,7 @@ pub const Checker = struct {
         }
         const bound = bindings.get(tp) orelse return self.fail(
             error.TypeMismatch,
-            "'{s}.{s}' için tip parametresi '{s}' çıkarılamadı (açıkça `obj.{s}[Tip](...)` yazın)",
+            "for '{s}.{s}', the type parameter '{s}' could not be inferred (write `obj.{s}[Type](...)` explicitly)",
             .{ def_class, gfd.name, tp, gfd.name },
         );
 
@@ -9569,7 +9569,7 @@ pub const Checker = struct {
             c.args = expanded;
         }
         if (gfd.params.len != c.args.len) {
-            return self.fail(error.ArgumentCountMismatch, "'{s}' {d} argüman bekler, {d} verildi", .{ gfd.name, gfd.params.len, c.args.len });
+            return self.fail(error.ArgumentCountMismatch, "'{s}' expects {d} arguments, {d} were given", .{ gfd.name, gfd.params.len, c.args.len });
         }
 
         var bindings: std.StringHashMapUnmanaged(Type) = .{};
@@ -9605,12 +9605,12 @@ pub const Checker = struct {
             const ft = p.type_expr.func_type;
             const actual: Type = if (arg == .lambda) blk: {
                 if (arg.lambda.params.len != ft.params.len) {
-                    return self.fail(error.ArgumentCountMismatch, "lambda {d} parametre alıyor, '{s}' {d} parametreli bir fonksiyon bekliyor", .{ arg.lambda.params.len, gfd.name, ft.params.len });
+                    return self.fail(error.ArgumentCountMismatch, "the lambda takes {d} parameters, '{s}' expects a function with {d} parameters", .{ arg.lambda.params.len, gfd.name, ft.params.len });
                 }
                 const ptypes = try self.allocator.alloc(Type, ft.params.len);
                 for (ft.params, 0..) |pte, i| {
                     const sub = try self.substituteTypeExpr(pte, &bindings);
-                    ptypes[i] = self.typeExprToType(sub) catch return self.fail(error.TypeMismatch, "'{s}' çağrısında lambda parametre tipi çıkarılamadı — önce tip parametresini bağlayan bir argüman verin (ör. liste)", .{gfd.name});
+                    ptypes[i] = self.typeExprToType(sub) catch return self.fail(error.TypeMismatch, "in the call to '{s}', the lambda parameter type could not be inferred — first pass an argument that binds the type parameter (e.g. a list)", .{gfd.name});
                 }
                 const ret_t = try self.inferLambdaReturnType(ctx, arg.lambda, ptypes);
                 const rb = try self.allocator.create(Type);
@@ -9624,7 +9624,7 @@ pub const Checker = struct {
         for (gfd.type_params, 0..) |tp, i| {
             bound_types[i] = bindings.get(tp) orelse return self.fail(
                 error.TypeMismatch,
-                "'{s}' için tip parametresi '{s}' çıkarılamadı (yalnızca argüman tiplerinden çıkarım destekleniyor)",
+                "for '{s}', the type parameter '{s}' could not be inferred (only inference from argument types is supported)",
                 .{ gfd.name, tp },
             );
         }
@@ -9724,7 +9724,7 @@ pub fn check(allocator: std.mem.Allocator, module: ast.Module) CheckOutcome {
     checker.checkModule(module) catch |e| {
         return .{ .err = .{
             .code = e,
-            .message = checker.diagnostic orelse "(mesaj yok)",
+            .message = checker.diagnostic orelse "(no message)",
             .all = checker.diagnostics.items,
         } };
     };

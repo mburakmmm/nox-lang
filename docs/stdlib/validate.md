@@ -42,8 +42,7 @@ are not silently ignored:
 | `validate(v, schema)` | validates a parsed `JsonValue`; returns the list of problems |
 | `validate_json_str(s, schema)` | parses `s` first; invalid JSON yields a single problem |
 
-Problem messages name the field by its full path — `address.city`, `tags[1]`. The wording of the messages is currently Turkish; test for emptiness or count, and show
-the list to the user rather than matching text.
+Problem messages name the field by its full path — `address.city`, `tags[1]`. They are English. Test for emptiness or count, and show the list to the user rather than matching text.
 
 ```nox
 import nox.validate

@@ -142,7 +142,7 @@ pub export fn nox_memory_fence() void {
         .x86_64 => asm volatile ("mfence" ::: .{ .memory = true }),
         .aarch64 => asm volatile ("dmb ish" ::: .{ .memory = true }),
         .riscv64 => asm volatile ("fence rw, rw" ::: .{ .memory = true }),
-        else => @compileError("nox_memory_fence: desteklenmeyen mimari"),
+        else => @compileError("nox_memory_fence: unsupported architecture"),
     }
 }
 

@@ -19,7 +19,7 @@ class CryptoError(Exception):
 def sha256(data: str) -> str:
     result: str = nox_crypto_sha256_hex_raw(data)
     if result == "":
-        raise CryptoError("sha256 basarisiz")
+        raise CryptoError("sha256 failed")
     return result
 
 # Faz III.9 (bkz. nox-teknik-spesifikasyon.md §3.69) — `sha256` İLE AYNI
@@ -36,13 +36,13 @@ extern def nox_crypto_sha512_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o
 def sha1(data: str) -> str:
     result: str = nox_crypto_sha1_hex_raw(data)
     if result == "":
-        raise CryptoError("sha1 basarisiz")
+        raise CryptoError("sha1 failed")
     return result
 
 def sha512(data: str) -> str:
     result: str = nox_crypto_sha512_hex_raw(data)
     if result == "":
-        raise CryptoError("sha512 basarisiz")
+        raise CryptoError("sha512 failed")
     return result
 
 # Güvenlik bulguları M-4/M-5/M-6 (bkz. güvenlik raporu) — DÜZELTİLDİ:
@@ -59,7 +59,7 @@ extern def nox_crypto_secure_random_hex_raw(n_bytes: int) -> str from "zig-out/l
 def hmac_sha256(key: str, data: str) -> str:
     result: str = nox_crypto_hmac_sha256_hex_raw(key, data)
     if result == "":
-        raise CryptoError("hmac_sha256 basarisiz")
+        raise CryptoError("hmac_sha256 failed")
     return result
 
 # İKİ dizeyi ZAMAN-SABİT (constant-time) karşılaştırır — bir belirteç/
@@ -83,7 +83,7 @@ def constant_time_eq(a: str, b: str) -> bool:
 @capability.requires("entropy")
 def secure_random_hex(n_bytes: int) -> str:
     if n_bytes <= 0:
-        raise CryptoError("n_bytes pozitif olmali")
+        raise CryptoError("n_bytes must be positive")
     return nox_crypto_secure_random_hex_raw(n_bytes)
 
 # Parola hash'leme (argon2id/bcrypt/scrypt) — Zig'in KENDİ `std.crypto.
@@ -116,7 +116,7 @@ extern def nox_crypto_scrypt_verify_raw(hash: str, password: str) -> int from "z
 def argon2_hash(password: str) -> str:
     result: str = nox_crypto_argon2_hash_raw(password)
     if result == "":
-        raise CryptoError("argon2_hash basarisiz")
+        raise CryptoError("argon2_hash failed")
     return result
 
 # `argon2_hash`nin ürettiği bir hash'e karşı bir parolayı doğrular. Yanlış
@@ -133,7 +133,7 @@ def argon2_verify(hash: str, password: str) -> bool:
 def bcrypt_hash(password: str) -> str:
     result: str = nox_crypto_bcrypt_hash_raw(password)
     if result == "":
-        raise CryptoError("bcrypt_hash basarisiz")
+        raise CryptoError("bcrypt_hash failed")
     return result
 
 def bcrypt_verify(hash: str, password: str) -> bool:
@@ -147,7 +147,7 @@ def bcrypt_verify(hash: str, password: str) -> bool:
 def scrypt_hash(password: str) -> str:
     result: str = nox_crypto_scrypt_hash_raw(password)
     if result == "":
-        raise CryptoError("scrypt_hash basarisiz")
+        raise CryptoError("scrypt_hash failed")
     return result
 
 def scrypt_verify(hash: str, password: str) -> bool:

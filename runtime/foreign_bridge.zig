@@ -128,7 +128,7 @@ pub export fn nox_hpy_call(
     const fnm = func_name orelse return 0;
 
     var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch |e| {
-        setHpyError("HPy modülü açılamadı: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
+        setHpyError("could not open the HPy module: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
         return 0;
     };
     defer mod.deinit();
@@ -140,12 +140,12 @@ pub export fn nox_hpy_call(
     const method_o = mod.findMethodO(std.mem.span(fnm));
     const method_noargs = if (method_o == null) mod.findMethodNoArgs(std.mem.span(fnm)) else null;
     if (method_o == null and method_noargs == null) {
-        setHpyError("'{s}' bulunamadı", .{std.mem.span(fnm)});
+        setHpyError("'{s}' not found", .{std.mem.span(fnm)});
         return 0;
     }
 
     const ctx = hpy_bridge.context.createContext(allocator) catch {
-        setHpyError("HPy context oluşturulamadı", .{});
+        setHpyError("could not create the HPy context", .{});
         return 0;
     };
     defer hpy_bridge.context.destroyContext(allocator, ctx);
@@ -168,7 +168,7 @@ pub export fn nox_hpy_call(
     defer ctx.ctx_Close.?(ctx, h_result);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' bir istisna fırlattı", .{std.mem.span(fnm)});
+        setHpyError("'{s}' raised an exception", .{std.mem.span(fnm)});
         return 0;
     }
     return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
@@ -202,18 +202,18 @@ pub export fn nox_hpy_call_str(
     const arg_h = arg orelse return str_mod.nox_str_from_bytes(rt, "");
 
     var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch |e| {
-        setHpyError("HPy modülü açılamadı: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
+        setHpyError("could not open the HPy module: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
         return str_mod.nox_str_from_bytes(rt, "");
     };
     defer mod.deinit();
 
     const method = mod.findMethodKeywords(std.mem.span(fnm)) orelse {
-        setHpyError("'{s}' bulunamadı", .{std.mem.span(fnm)});
+        setHpyError("'{s}' not found", .{std.mem.span(fnm)});
         return str_mod.nox_str_from_bytes(rt, "");
     };
 
     const ctx = hpy_bridge.context.createContext(allocator) catch {
-        setHpyError("HPy context oluşturulamadı", .{});
+        setHpyError("could not create the HPy context", .{});
         return str_mod.nox_str_from_bytes(rt, "");
     };
     defer hpy_bridge.context.destroyContext(allocator, ctx);
@@ -233,7 +233,7 @@ pub export fn nox_hpy_call_str(
 
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' bir istisna fırlattı", .{std.mem.span(fnm)});
+        setHpyError("'{s}' raised an exception", .{std.mem.span(fnm)});
         return str_mod.nox_str_from_bytes(rt, "");
     }
 
@@ -270,13 +270,13 @@ const PersistentHpyHandle = struct {
 /// döner.
 fn setupModuleObject(ctx: *hpy_bridge.context.HPyContext, mod: *const hpy_bridge.loader.LoadedModule) ?hpy_bridge.context.HPy {
     const m = hpy_bridge.context.createModuleObject(ctx) catch {
-        setHpyError("modül nesnesi oluşturulamadı", .{});
+        setHpyError("could not create the module object", .{});
         return null;
     };
     if (mod.findModExecSlot()) |exec_fn| {
         if (exec_fn(ctx, m) != 0) {
             ctx.ctx_Err_Clear.?(ctx);
-            setHpyError("modül exec (HPy_mod_exec) başarısız oldu", .{});
+            setHpyError("module exec (HPy_mod_exec) failed", .{});
             ctx.ctx_Close.?(ctx, m);
             return null;
         }
@@ -301,12 +301,12 @@ pub export fn nox_hpy_open(
     const en = ext_name orelse return null;
 
     var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch |e| {
-        setHpyError("HPy modülü açılamadı: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
+        setHpyError("could not open the HPy module: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
         return null;
     };
     const ctx = hpy_bridge.context.createContext(allocator) catch {
         mod.deinit();
-        setHpyError("HPy context oluşturulamadı", .{});
+        setHpyError("could not create the HPy context", .{});
         return null;
     };
     const module_obj = setupModuleObject(ctx, &mod) orelse {
@@ -318,7 +318,7 @@ pub export fn nox_hpy_open(
         ctx.ctx_Close.?(ctx, module_obj);
         hpy_bridge.context.destroyContext(allocator, ctx);
         mod.deinit();
-        setHpyError("bellek yetersiz", .{});
+        setHpyError("out of memory", .{});
         return null;
     };
     handle.* = .{ .mod = mod, .ctx = ctx, .module_obj = module_obj };
@@ -492,7 +492,7 @@ pub export fn nox_hpy_args_begin(rt: ?*anyopaque, handle_ptr: ?*anyopaque) ?*any
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const allocator = state.allocator();
     const hp = handle_ptr orelse {
-        setHpyError("geçersiz (açılamamış) HPy tutamacı", .{});
+        setHpyError("invalid (unopened) HPy handle", .{});
         return null;
     };
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(hp));
@@ -514,11 +514,11 @@ pub export fn nox_hpy_args_begin_for_obj(rt: ?*anyopaque, handle_ptr: ?*anyopaqu
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const allocator = state.allocator();
     const hp = handle_ptr orelse {
-        setHpyError("geçersiz (açılamamış) HPy tutamacı", .{});
+        setHpyError("invalid (unopened) HPy handle", .{});
         return null;
     };
     const op = obj_ptr orelse {
-        setHpyError("geçersiz nesne", .{});
+        setHpyError("invalid object", .{});
         return null;
     };
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(hp));
@@ -731,7 +731,7 @@ fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.H
     const n = mc.args.items.len;
     var stack_buf: [PACKED_ARGS_INLINE_CAP]hpy_bridge.context.HPy = undefined;
     const packed_result = packArgs(mc, &stack_buf) catch {
-        setHpyError("bellek yetersiz", .{});
+        setHpyError("out of memory", .{});
         return null;
     };
     defer if (packed_result.heap) |h| mc.allocator.free(h);
@@ -767,13 +767,13 @@ fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.H
                 break :blk method(ctx, module_obj);
             }
         }
-        setHpyError("'{s}' bulunamadı", .{func_name});
+        setHpyError("'{s}' not found", .{func_name});
         return null;
     };
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Close.?(ctx, h_result);
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' bir istisna fırlattı", .{func_name});
+        setHpyError("'{s}' raised an exception", .{func_name});
         return null;
     }
     return h_result;
@@ -799,7 +799,7 @@ fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.H
 fn checkUnmarshalErr(ctx: *hpy_bridge.context.HPyContext, func_name: []const u8) bool {
     if (ctx.ctx_Err_Occurred.?(ctx) == 0) return false;
     ctx.ctx_Err_Clear.?(ctx);
-    setHpyError("'{s}' beklenen tipte bir değer döndürmedi", .{func_name});
+    setHpyError("'{s}' did not return a value of the expected type", .{func_name});
     return true;
 }
 
@@ -912,14 +912,14 @@ pub export fn nox_hpy_new_finish(mc_ptr: ?*anyopaque, class_name: ?[*:0]const u8
     const cls_h = ctx.ctx_GetAttr_s.?(ctx, mc.handle.module_obj, cn);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' modülde bulunamadı", .{cn});
+        setHpyError("'{s}' not found in the module", .{cn});
         return null;
     }
     defer ctx.ctx_Close.?(ctx, cls_h);
     const n = mc.args.items.len;
     var stack_buf: [PACKED_ARGS_INLINE_CAP]hpy_bridge.context.HPy = undefined;
     const packed_result = packArgs(mc, &stack_buf) catch {
-        setHpyError("bellek yetersiz", .{});
+        setHpyError("out of memory", .{});
         return null;
     };
     defer if (packed_result.heap) |h| mc.allocator.free(h);
@@ -928,7 +928,7 @@ pub export fn nox_hpy_new_finish(mc_ptr: ?*anyopaque, class_name: ?[*:0]const u8
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Close.?(ctx, h_result);
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' inşa edilemedi", .{cn});
+        setHpyError("'{s}' could not be constructed", .{cn});
         return null;
     }
     const raw: usize = @bitCast(h_result._i);
@@ -943,7 +943,7 @@ pub export fn nox_hpy_new_finish(mc_ptr: ?*anyopaque, class_name: ?[*:0]const u8
 pub export fn nox_hpy_getattr_int(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque, attr_name: ?[*:0]const u8) i64 {
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return 0));
     const op = obj_ptr orelse {
-        setHpyError("geçersiz nesne", .{});
+        setHpyError("invalid object", .{});
         return 0;
     };
     const an = attr_name orelse return 0;
@@ -952,7 +952,7 @@ pub export fn nox_hpy_getattr_int(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque,
     const h_result = ctx.ctx_GetAttr_s.?(ctx, obj_h, an);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' attribute'u bulunamadı", .{an});
+        setHpyError("attribute '{s}' not found", .{an});
         return 0;
     }
     defer ctx.ctx_Close.?(ctx, h_result);
@@ -965,7 +965,7 @@ pub export fn nox_hpy_getattr_int(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque,
 pub export fn nox_hpy_setattr_int(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque, attr_name: ?[*:0]const u8, value: i64) void {
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return));
     const op = obj_ptr orelse {
-        setHpyError("geçersiz nesne", .{});
+        setHpyError("invalid object", .{});
         return;
     };
     const an = attr_name orelse return;
@@ -975,7 +975,7 @@ pub export fn nox_hpy_setattr_int(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque,
     defer ctx.ctx_Close.?(ctx, h_val);
     if (ctx.ctx_SetAttr_s.?(ctx, obj_h, an, h_val) < 0) {
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' attribute'u ayarlanamadı", .{an});
+        setHpyError("attribute '{s}' could not be set", .{an});
     }
 }
 
@@ -993,14 +993,14 @@ pub export fn nox_hpy_call_attr_int_finish(mc_ptr: ?*anyopaque, attr_name: ?[*:0
     const method_h = ctx.ctx_GetAttr_s.?(ctx, target, an);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' bulunamadı", .{an});
+        setHpyError("'{s}' not found", .{an});
         return 0;
     }
     defer ctx.ctx_Close.?(ctx, method_h);
     const n = mc.args.items.len;
     var stack_buf: [PACKED_ARGS_INLINE_CAP]hpy_bridge.context.HPy = undefined;
     const packed_result = packArgs(mc, &stack_buf) catch {
-        setHpyError("bellek yetersiz", .{});
+        setHpyError("out of memory", .{});
         return 0;
     };
     defer if (packed_result.heap) |h| mc.allocator.free(h);
@@ -1009,7 +1009,7 @@ pub export fn nox_hpy_call_attr_int_finish(mc_ptr: ?*anyopaque, attr_name: ?[*:0
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Close.?(ctx, h_result);
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' bir istisna fırlattı", .{an});
+        setHpyError("'{s}' raised an exception", .{an});
         return 0;
     }
     defer ctx.ctx_Close.?(ctx, h_result);
@@ -1026,7 +1026,7 @@ pub export fn nox_hpy_call_attr_int_finish(mc_ptr: ?*anyopaque, attr_name: ?[*:0
 pub export fn nox_hpy_new_object(handle_ptr: ?*anyopaque) ?*anyopaque {
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
     const h = hpy_bridge.context.createModuleObject(handle.ctx) catch {
-        setHpyError("bellek yetersiz", .{});
+        setHpyError("out of memory", .{});
         return null;
     };
     const raw: usize = @bitCast(h._i);
@@ -1040,7 +1040,7 @@ pub export fn nox_hpy_new_object(handle_ptr: ?*anyopaque) ?*anyopaque {
 pub export fn nox_hpy_getitem_int(handle_ptr: ?*anyopaque, container_ptr: ?*anyopaque, index: i64) i64 {
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return 0));
     const op = container_ptr orelse {
-        setHpyError("geçersiz nesne", .{});
+        setHpyError("invalid object", .{});
         return 0;
     };
     const ctx = handle.ctx;
@@ -1048,7 +1048,7 @@ pub export fn nox_hpy_getitem_int(handle_ptr: ?*anyopaque, container_ptr: ?*anyo
     const h_result = ctx.ctx_GetItem_i.?(ctx, container_h, @intCast(index));
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("indeks {d} okunamadı", .{index});
+        setHpyError("index {d} could not be read", .{index});
         return 0;
     }
     defer ctx.ctx_Close.?(ctx, h_result);
@@ -1064,7 +1064,7 @@ pub export fn nox_hpy_getitem_int(handle_ptr: ?*anyopaque, container_ptr: ?*anyo
 pub export fn nox_hpy_new_string_writer(handle_ptr: ?*anyopaque) ?*anyopaque {
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
     const h = hpy_bridge.context.createStringWriter(handle.ctx) catch {
-        setHpyError("bellek yetersiz", .{});
+        setHpyError("out of memory", .{});
         return null;
     };
     const raw: usize = @bitCast(h._i);
@@ -1093,7 +1093,7 @@ pub export fn nox_hpy_new_string_reader(handle_ptr: ?*anyopaque, content: ?[*:0]
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
     const slice = str_mod.nox_str_slice(content orelse "");
     const h = hpy_bridge.context.createStringReader(handle.ctx, slice) catch {
-        setHpyError("bellek yetersiz", .{});
+        setHpyError("out of memory", .{});
         return null;
     };
     const raw: usize = @bitCast(h._i);

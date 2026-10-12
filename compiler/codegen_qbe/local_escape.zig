@@ -184,53 +184,53 @@ pub fn explainVarDecl(self: *Codegen, allocator: std.mem.Allocator, body: []cons
         .list_lit => |elems| {
             if (simpleLiteralListQtype(elems)) |qt| {
                 const size = LIST_HEADER_SIZE + qbeSizeOf(qt) * elems.len;
-                try reasons.append(allocator, try std.fmt.allocPrint(allocator, "sabit-boyutlu literal liste ({d} bayt)", .{size}));
+                try reasons.append(allocator, try std.fmt.allocPrint(allocator, "fixed-size literal list ({d} bytes)", .{size}));
                 if (size > MAX_STACK_ALLOC_SIZE) {
-                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "nesne-başına tavanı aşıyor ({d} > {d} bayt)", .{ size, MAX_STACK_ALLOC_SIZE }));
+                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "exceeds the per-object cap ({d} > {d} bytes)", .{ size, MAX_STACK_ALLOC_SIZE }));
                 } else if (budget_before + size > MAX_PROMOTED_FRAME_SIZE) {
-                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "çerçeve bütçesini aşıyor ({d} + {d} > {d} bayt)", .{ budget_before, size, MAX_PROMOTED_FRAME_SIZE }));
+                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "exceeds the frame budget ({d} + {d} > {d} bytes)", .{ budget_before, size, MAX_PROMOTED_FRAME_SIZE }));
                 } else if (!localNeverEscapes(self, body, v.name, i + 1, class_params)) {
-                    try reasons.append(allocator, "kaçıyor (yerel, bildirimden SONRA güvensiz bir şekilde kullanılıyor)");
+                    try reasons.append(allocator, "escapes (the local is used unsafely after its declaration)");
                 } else {
-                    try reasons.append(allocator, "kaçmıyor, boyut/bütçe İçinde -> stack");
+                    try reasons.append(allocator, "does not escape, within size/budget -> stack");
                 }
             } else {
-                try reasons.append(allocator, "literal olmayan/karışık elemanlı liste (basit-literal DEĞİL)");
+                try reasons.append(allocator, "not a literal or has mixed elements (not a simple literal)");
             }
             if (candidate == null or candidate.? != .fixed_stack) {
                 if (!(try elemTypeIsScalar(self, v.type_expr))) {
-                    try reasons.append(allocator, "eleman tipi skaler değil (büyüyebilir-arena YALNIZCA int/float/bool eleman tipini destekler)");
+                    try reasons.append(allocator, "element type is not a scalar (the growable arena supports only int/float/bool elements)");
                 } else if (!localNeverEscapesGrowable(self, body, v.name, i + 1)) {
-                    try reasons.append(allocator, "büyüyebilir-arena yolu İçİn de kaçıyor -> ARC");
+                    try reasons.append(allocator, "escapes on the growable-arena path too -> ARC");
                 } else {
-                    try reasons.append(allocator, "büyüyebilir-arena adayı (skaler eleman, .append() güvenli) -> arena");
+                    try reasons.append(allocator, "growable-arena candidate (scalar elements, .append() is safe) -> arena");
                 }
             }
         },
         .call => |c| {
             if (c.callee.* == .identifier) {
                 if (self.classes.get(c.callee.identifier)) |cinfo| {
-                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "sınıf kurucusu çağrısı ({s}, {d} bayt)", .{ c.callee.identifier, cinfo.total_size }));
+                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "class constructor call ({s}, {d} bytes)", .{ c.callee.identifier, cinfo.total_size }));
                     if (!classSafeForStackAlloc(&cinfo)) {
-                        try reasons.append(allocator, "heap-yönetimli (str/list/dict/class) bir alan İçeriyor -> stack/arena GÜVENLİ DEĞİL, ARC");
+                        try reasons.append(allocator, "contains a heap-managed (str/list/dict/class) field -> stack/arena is NOT SAFE, ARC");
                     } else if (!localNeverEscapes(self, body, v.name, i + 1, class_params)) {
-                        try reasons.append(allocator, "kaçıyor (yerel, bildirimden SONRA güvensiz bir şekilde kullanılıyor) -> ARC");
+                        try reasons.append(allocator, "escapes (the local is used unsafely after its declaration) -> ARC");
                     } else if (cinfo.total_size > MAX_STACK_ALLOC_SIZE) {
-                        try reasons.append(allocator, try std.fmt.allocPrint(allocator, "nesne-başına tavanı aşıyor ({d} > {d} bayt) -> arena", .{ cinfo.total_size, MAX_STACK_ALLOC_SIZE }));
+                        try reasons.append(allocator, try std.fmt.allocPrint(allocator, "exceeds the per-object cap ({d} > {d} bytes) -> arena", .{ cinfo.total_size, MAX_STACK_ALLOC_SIZE }));
                     } else if (budget_before + cinfo.total_size > MAX_PROMOTED_FRAME_SIZE) {
-                        try reasons.append(allocator, try std.fmt.allocPrint(allocator, "çerçeve bütçesini aşıyor ({d} + {d} > {d} bayt) -> arena", .{ budget_before, cinfo.total_size, MAX_PROMOTED_FRAME_SIZE }));
+                        try reasons.append(allocator, try std.fmt.allocPrint(allocator, "exceeds the frame budget ({d} + {d} > {d} bytes) -> arena", .{ budget_before, cinfo.total_size, MAX_PROMOTED_FRAME_SIZE }));
                     } else {
-                        try reasons.append(allocator, "kaçmıyor, boyut/bütçe İçinde -> stack");
+                        try reasons.append(allocator, "does not escape, within size/budget -> stack");
                     }
                 } else {
-                    try reasons.append(allocator, "bilinmeyen çağrı hedefi (sınıf kurucusu DEĞİL) -> ARC");
+                    try reasons.append(allocator, "unknown call target (not a class constructor) -> ARC");
                 }
             } else {
-                try reasons.append(allocator, "doğrudan bir isim olmayan çağrı hedefi -> ARC");
+                try reasons.append(allocator, "call target is not a plain name -> ARC");
             }
         },
         else => {
-            try reasons.append(allocator, "yalnızca liste literalleri VE sınıf kurucu çağrıları stack/arena adayı olabilir -> ARC");
+            try reasons.append(allocator, "only list literals and class constructor calls can be stack/arena candidates -> ARC");
         },
     }
 

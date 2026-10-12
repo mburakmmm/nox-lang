@@ -129,19 +129,19 @@ export fn nox_exception_take(rt: ?*anyopaque) ?*anyopaque {
 /// SABİT OFSETTE taşıdığı GARANTİ edildiğinde) EKLENECEK.
 export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse {
-        diag_sink.report(null, "nox: yakalanmamış istisna — program sonlandırılıyor\n", .{});
+        diag_sink.report(null, "nox: uncaught exception — terminating the program\n", .{});
         haltProcess();
     }));
     const pe = pendingException(state);
     const line = pe.line.*;
-    var class_name: [*:0]const u8 = "bilinmeyen sinif";
+    var class_name: [*:0]const u8 = "unknown class";
     if (pe.obj.*) |obj| {
         const tag: *const i64 = @ptrCast(@alignCast(obj));
         if (dispatch_registry.classNameFn()) |f| {
             class_name = f(rt, tag.*, obj);
         }
     }
-    diag_sink.report(rt, "nox: yakalanmamış istisna: {s} (satır {d}) — program sonlandırılıyor\n", .{ class_name, line });
+    diag_sink.report(rt, "nox: uncaught exception: {s} (line {d}) — terminating the program\n", .{ class_name, line });
     haltProcess();
 }
 
@@ -187,7 +187,7 @@ test "nox_int_pow: tam sayi us alma, sarma ve negatif us" {
 
 export fn nox_int_overflow_trap(rt: ?*anyopaque, kind_name: ?[*:0]const u8) noreturn {
     const name = kind_name orelse "?";
-    diag_sink.report(rt, "nox: '{s}' tipinde tamsayı taşması — program sonlandırılıyor\n", .{name});
+    diag_sink.report(rt, "nox: integer overflow in type '{s}' — terminating the program\n", .{name});
     haltProcess();
 }
 

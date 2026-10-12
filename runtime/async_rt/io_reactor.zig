@@ -80,7 +80,7 @@ comptime {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux and builtin.os.tag != .windows and
         builtin.os.tag != .freestanding and builtin.os.tag != .other)
     {
-        @compileError("io_reactor.zig şu an yalnızca macOS (kqueue), Linux (epoll), Windows (WSAPoll) ve freestanding/other (NullReactor stub'ı, bkz. Faz F.0.7) için uygulandı (bkz. modül üstü not)");
+        @compileError("io_reactor.zig is currently implemented only for macOS (kqueue), Linux (epoll), Windows (WSAPoll) and freestanding/other (the NullReactor stub, see Phase F.0.7) (see the module header note)");
     }
 }
 
@@ -92,7 +92,7 @@ comptime {
 /// AÇIKÇA belirttiği ayrım) — `dumpCurrentStackTrace()` YOKLUĞU BURADA
 /// güvenlik İçİn DEĞİL, SADECE freestanding-uyumluluğu İçİndir.
 fn unexpectedErrnoSafe(e: posix.E) error{Unexpected} {
-    diag_sink.report(null, "beklenmeyen errno (reactor baglaminda): {d}\n", .{@intFromEnum(e)});
+    diag_sink.report(null, "unexpected errno (in reactor context): {d}\n", .{@intFromEnum(e)});
     return error.Unexpected;
 }
 
@@ -760,7 +760,7 @@ else if (builtin.os.tag == .windows)
 else if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
     NullReactor
 else
-    @compileError("desteklenmeyen platform (bkz. modül üstü comptime denetimi)");
+    @compileError("unsupported platform (see the module-level comptime check)");
 
 const MarkReadySpy = struct {
     marked: ?*Fiber = null,

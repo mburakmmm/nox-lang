@@ -26,11 +26,11 @@ pub const Error = error{ SyntaxError, OutOfMemory };
 /// Bir simge türünün kullanıcıya gösterilen adı (`beklenen ...` kısmı için).
 fn kindName(kind: TokenKind) []const u8 {
     return switch (kind) {
-        .int_lit => "tamsayı",
-        .float_lit => "ondalık sayı",
-        .string_lit => "dize",
-        .fstring_lit => "f-dize",
-        .identifier => "tanımlayıcı",
+        .int_lit => "integer",
+        .float_lit => "float",
+        .string_lit => "string",
+        .fstring_lit => "f-string",
+        .identifier => "identifier",
         .colon => "':'",
         .comma => "','",
         .dot => "'.'",
@@ -42,10 +42,10 @@ fn kindName(kind: TokenKind) []const u8 {
         .r_brace => "'}'",
         .arrow => "'->'",
         .assign => "'='",
-        .newline => "satır sonu",
-        .indent => "girinti",
-        .dedent => "girinti azalması",
-        .eof => "dosya sonu",
+        .newline => "end of line",
+        .indent => "indent",
+        .dedent => "dedent",
+        .eof => "end of file",
         .kw_in => "'in'",
         .kw_else => "'else'",
         .kw_import => "'import'",
@@ -74,7 +74,7 @@ fn lineText(source: []const u8, line: u32) []const u8 {
 }
 
 fn report(source: []const u8, label: []const u8, line: u32, col: u32, comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("{s}:{d}:{d}: sözdizimi hatası: " ++ fmt ++ "\n", .{ label, line, col } ++ args);
+    std.debug.print("{s}:{d}:{d}: syntax error: " ++ fmt ++ "\n", .{ label, line, col } ++ args);
     if (line == 0) return;
     const text = lineText(source, line);
     std.debug.print("    {s}\n", .{text});
@@ -92,10 +92,10 @@ pub fn parseSource(a: std.mem.Allocator, source: []const u8, label: []const u8) 
         const err = lexed.err.?;
         if (err == error.OutOfMemory) return error.OutOfMemory;
         const msg: []const u8 = switch (err) {
-            error.UnexpectedCharacter => "beklenmeyen karakter",
-            error.UnterminatedString => "kapanmamış dize",
-            error.InconsistentIndentation => "tutarsız girinti",
-            error.TabsNotAllowed => "girintide sekme (tab) kullanılamaz — boşluk kullanın",
+            error.UnexpectedCharacter => "unexpected character",
+            error.UnterminatedString => "unterminated string",
+            error.InconsistentIndentation => "inconsistent indentation",
+            error.TabsNotAllowed => "tab used in indentation — use spaces",
             error.OutOfMemory => unreachable,
         };
         report(source, label, lexed.err_span.start_line, lexed.err_span.start_col, "{s}", .{msg});
@@ -125,14 +125,14 @@ pub fn parseSource(a: std.mem.Allocator, source: []const u8, label: []const u8) 
             if (d.note) |note| {
                 report(source, label, d.span.start_line, d.span.start_col, "{s}", .{note});
             } else if (d.expected) |exp| {
-                report(source, label, d.span.start_line, d.span.start_col, "beklenmeyen {s}{s}{s} (beklenen {s})", .{ quote, found, quote, kindName(exp) });
+                report(source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s} (expected {s})", .{ quote, found, quote, kindName(exp) });
             } else {
-                report(source, label, d.span.start_line, d.span.start_col, "beklenmeyen {s}{s}{s}", .{ quote, found, quote });
+                report(source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s}", .{ quote, found, quote });
             }
         } else switch (e) {
-            error.InvalidNumberLiteral => report(source, label, 0, 0, "geçersiz sayı değişmezi", .{}),
-            error.RecursionLimitExceeded => report(source, label, 0, 0, "ifade çok derin iç içe", .{}),
-            else => report(source, label, 0, 0, "ayrıştırma hatası ({t})", .{e}),
+            error.InvalidNumberLiteral => report(source, label, 0, 0, "invalid number literal", .{}),
+            error.RecursionLimitExceeded => report(source, label, 0, 0, "expression nested too deeply", .{}),
+            else => report(source, label, 0, 0, "parse error ({t})", .{e}),
         }
         return error.SyntaxError;
     };

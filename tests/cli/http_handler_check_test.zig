@@ -41,7 +41,7 @@ test "nox.http.serve_multicore: closure handler derleme zamaninda reddedilir (ay
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited != 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "closure handler bu varyantta DESTEKLENMEZ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "a closure handler is NOT supported") != null);
 }
 
 test "nox.http.serve: yanlis imzali closure handler reddedilir" {
@@ -64,5 +64,5 @@ test "nox.http.serve: yanlis imzali closure handler reddedilir" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited != 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "'handle'in parametresi 'HttpRequest' olmalı") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "the parameter of 'handle' must be 'HttpRequest'") != null);
 }

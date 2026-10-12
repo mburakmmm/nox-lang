@@ -163,7 +163,7 @@ pub fn main(init: std.process.Init) !void {
         var msg_arena = std.heap.ArenaAllocator.init(gpa);
         defer msg_arena.deinit();
         handleMessage(&server, msg_arena.allocator(), body, w) catch |e| {
-            std.debug.print("noxlsp: mesaj isleme hatasi: {t}\n", .{e});
+            std.debug.print("noxlsp: message handling error: {t}\n", .{e});
         };
     }
 }
@@ -195,7 +195,7 @@ fn readMessage(gpa: std.mem.Allocator, r: *std.Io.Reader) ![]u8 {
 
 fn handleMessage(server: *Server, ma: std.mem.Allocator, body: []const u8, w: *std.Io.Writer) !void {
     var parsed = std.json.parseFromSlice(std.json.Value, ma, body, .{}) catch |e| {
-        std.debug.print("noxlsp: JSON ayristirma hatasi: {t}\n", .{e});
+        std.debug.print("noxlsp: JSON parse error: {t}\n", .{e});
         return;
     };
     defer parsed.deinit();
@@ -574,7 +574,7 @@ fn computeDiagnostics(a: std.mem.Allocator, stdlib_dir: ?[]const u8, nox_home: [
 
     var checker_state = checker.Checker.init(a);
     checker_state.checkModule(module) catch {
-        try diags.append(a, diagnosticFromSpan(checker_state.current_span, 0, checker_state.diagnostic orelse "bilinmeyen tip hatasi"));
+        try diags.append(a, diagnosticFromSpan(checker_state.current_span, 0, checker_state.diagnostic orelse "unknown type error"));
         return diags.toOwnedSlice(a);
     };
     for (checker_state.diagnostics.items) |d| {
@@ -616,20 +616,20 @@ fn diagnosticFromSpan(span: Span, line0_fallback: u32, message: []const u8) LspD
 
 fn lexErrorMessage(e: lexer.LexError) []const u8 {
     return switch (e) {
-        error.UnexpectedCharacter => "sozdizimi hatasi: beklenmeyen karakter",
-        error.UnterminatedString => "sozdizimi hatasi: sonlandirilmamis string literali",
-        error.InconsistentIndentation => "sozdizimi hatasi: tutarsiz girinti",
-        error.TabsNotAllowed => "sozdizimi hatasi: TAB girintisi desteklenmiyor (yalnizca bosluk kullanin)",
-        error.OutOfMemory => "noxlsp: bellek yetersiz",
+        error.UnexpectedCharacter => "syntax error: unexpected character",
+        error.UnterminatedString => "syntax error: unterminated string literal",
+        error.InconsistentIndentation => "syntax error: inconsistent indentation",
+        error.TabsNotAllowed => "syntax error: TAB indentation is not supported (use spaces only)",
+        error.OutOfMemory => "noxlsp: out of memory",
     };
 }
 
 fn parseErrorMessage(e: parser.ParseError) []const u8 {
     return switch (e) {
-        error.UnexpectedToken => "sozdizimi hatasi: beklenmeyen token",
-        error.InvalidNumberLiteral => "sozdizimi hatasi: gecersiz sayi literali",
-        error.OutOfMemory => "noxlsp: bellek yetersiz",
-        error.RecursionLimitExceeded => "sozdizimi hatasi: ifade cok derin ic ice (guvenlik siniri asildi)",
+        error.UnexpectedToken => "syntax error: unexpected token",
+        error.InvalidNumberLiteral => "syntax error: invalid number literal",
+        error.OutOfMemory => "noxlsp: out of memory",
+        error.RecursionLimitExceeded => "syntax error: expression nested too deeply (safety limit exceeded)",
     };
 }
 
@@ -724,7 +724,7 @@ fn respondNull(ma: std.mem.Allocator, w: *std.Io.Writer, id_opt: ?std.json.Value
 fn respondMethodNotFound(ma: std.mem.Allocator, w: *std.Io.Writer, id: std.json.Value) !void {
     const ErrObj = struct {
         code: i32 = -32601,
-        message: []const u8 = "yontem bulunamadi (noxlsp yalniz tanilama destekler)",
+        message: []const u8 = "method not found (noxlsp supports diagnostics only)",
     };
     const Msg = struct {
         jsonrpc: []const u8 = "2.0",

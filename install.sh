@@ -23,12 +23,12 @@ INSTALL_DIR="${NOX_INSTALL_DIR:-$HOME/.nox-lang}"
 log() { printf '\033[1;32m==>\033[0m %s\n' "$1"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$1" >&2; }
 die() {
-    printf '\033[1;31mhata:\033[0m %s\n' "$1" >&2
+    printf '\033[1;31merror:\033[0m %s\n' "$1" >&2
     exit 1
 }
 
-command -v curl >/dev/null 2>&1 || die "curl bulunamadı — kurulum için gerekli."
-command -v tar >/dev/null 2>&1 || die "tar bulunamadı — kurulum için gerekli."
+command -v curl >/dev/null 2>&1 || die "curl not found — it is required for installation."
+command -v tar >/dev/null 2>&1 || die "tar not found — it is required for installation."
 
 detect_asset() {
     local os arch
@@ -38,18 +38,18 @@ detect_asset() {
         Darwin)
             case "$arch" in
                 arm64) echo "macos-arm64" ;;
-                *) die "Desteklenmeyen macOS mimarisi: $arch (yalnızca Apple Silicon/arm64 önceden derlenmiş paket sağlanır — Intel Mac için kaynaktan derleyin: bkz. CONTRIBUTING.md)." ;;
+                *) die "Unsupported macOS architecture: $arch (a prebuilt package is provided only for Apple silicon/arm64 — on an Intel Mac, build from source: see https://noxlang.com/docs/internals/contributing/)." ;;
             esac
             ;;
         Linux)
             case "$arch" in
                 x86_64) echo "linux-x64" ;;
                 aarch64 | arm64) echo "linux-arm64" ;;
-                *) die "Desteklenmeyen Linux mimarisi: $arch" ;;
+                *) die "Unsupported Linux architecture: $arch" ;;
             esac
             ;;
         *)
-            die "Desteklenmeyen işletim sistemi: $os (Windows için install.ps1 kullanın: irm https://raw.githubusercontent.com/${REPO}/main/install.ps1 | iex)."
+            die "Unsupported operating system: $os (on Windows use install.ps1: irm https://noxlang.com/install.ps1 | iex)."
             ;;
     esac
 }
@@ -70,7 +70,7 @@ resolve_version() {
     local response tag
     response="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)"
     tag="$(printf '%s' "$response" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)"
-    [ -n "$tag" ] || die "en son sürüm etiketi çözülemedi — henüz bir GitHub Release yayımlanmamış olabilir ya da GitHub API'sine erişilemiyor. Belirli bir sürümü elle kurmak için: NOX_VERSION=v1.0.0 sh install.sh (ya da curl çıktısını NOX_VERSION=... ile pipe'layın)."
+    [ -n "$tag" ] || die "could not resolve the latest release tag — no GitHub Release may have been published yet, or the GitHub API is unreachable. To install a specific version by hand: NOX_VERSION=v1.0.0 sh install.sh (or set NOX_VERSION=... on the shell that runs it)."
     echo "$tag"
 }
 
@@ -79,12 +79,12 @@ VERSION="$(resolve_version)"
 STAGE="nox-lang-${VERSION}-${ASSET}"
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${STAGE}.tar.gz"
 
-log "Nox ${VERSION} (${ASSET}) indiriliyor..."
+log "Downloading Nox ${VERSION} (${ASSET})..."
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-curl -fsSL -o "$TMP_DIR/${STAGE}.tar.gz" "$URL" || die "indirilemedi: $URL"
+curl -fsSL -o "$TMP_DIR/${STAGE}.tar.gz" "$URL" || die "download failed: $URL"
 
-log "Açılıyor -> ${INSTALL_DIR}"
+log "Unpacking -> ${INSTALL_DIR}"
 rm -rf "${INSTALL_DIR:?}"
 mkdir -p "$INSTALL_DIR"
 tar xzf "$TMP_DIR/${STAGE}.tar.gz" -C "$TMP_DIR"
@@ -92,11 +92,11 @@ cp -R "$TMP_DIR/${STAGE}/." "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/bin/"*
 
 if ! command -v cc >/dev/null 2>&1; then
-    warn "'cc' (C derleyicisi) bulunamadı — noxc DERLENEN programları linklerken buna ihtiyaç duyar."
+    warn "'cc' (a C compiler) not found — noxc needs it to link the programs it compiles."
     warn "macOS: xcode-select --install   |   Debian/Ubuntu: sudo apt install build-essential"
 fi
 
-log "Kuruldu: ${INSTALL_DIR}"
+log "Installed: ${INSTALL_DIR}"
 
 SHELL_RC=""
 case "${SHELL:-}" in
@@ -107,9 +107,9 @@ esac
 PATH_LINE="export PATH=\"$INSTALL_DIR/bin:\$PATH\""
 if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ] && ! grep -qF "$INSTALL_DIR/bin" "$SHELL_RC" 2>/dev/null; then
     printf '\n# Nox (nox-lang)\n%s\n' "$PATH_LINE" >>"$SHELL_RC"
-    log "PATH, ${SHELL_RC} dosyasına eklendi — yeni bir terminal açın ya da şunu çalıştırın:"
+    log "PATH was added to ${SHELL_RC} — open a new terminal or run:"
 else
-    log "PATH'e eklemek için shell yapılandırmanıza şunu ekleyin:"
+    log "To add it to your PATH, add this to your shell configuration:"
 fi
 printf '\n    %s\n\n' "$PATH_LINE"
-log "Doğrulama: noxc --version   (yeni bir terminalde, ya da yukarıdaki komutu çalıştırdıktan sonra)"
+log "Verify with: noxc --version   (in a new terminal, or after running the command above)"

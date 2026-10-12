@@ -150,7 +150,7 @@ fn payloadToPlainCStr(payload: i64) [*:0]u8 {
 /// Gönderenin baytlarını DÜZ (ARC-dışı) bir NUL-sonlandırılmış arabelleğe
 /// kopyalar — bkz. modül üstü not, "str transferi".
 fn dupeToPlainCStr(bytes: []const u8) [*:0]u8 {
-    const buf = std.heap.page_allocator.alloc(u8, bytes.len + 1) catch @panic("OOM: ThreadChannel str klonu");
+    const buf = std.heap.page_allocator.alloc(u8, bytes.len + 1) catch @panic("OOM: ThreadChannel str clone");
     @memcpy(buf[0..bytes.len], bytes);
     buf[bytes.len] = 0;
     return @ptrCast(buf.ptr);
@@ -251,7 +251,7 @@ export fn nox_threadchannel_recv_str(rt: ?*anyopaque, handle: ?*anyopaque) callc
     const tc: *ThreadChannel = @ptrCast(@alignCast(handle.?));
     const payload = recvPayload(tc);
     const ptr = payloadToPlainCStr(payload);
-    const cloned = str_mod.nox_str_from_bytes(rt, std.mem.span(ptr)) orelse @panic("OOM: ThreadChannel str alim klonu");
+    const cloned = str_mod.nox_str_from_bytes(rt, std.mem.span(ptr)) orelse @panic("OOM: ThreadChannel str receive clone");
     freePlainCStr(ptr);
     return ptrToPayload(cloned);
 }
@@ -279,7 +279,7 @@ test "nox_threadchannel: iki gerçek OS iş parçacığı arasında N değer gö
         }
     };
 
-    const t = std.Thread.spawn(.{}, Fn.sender, .{tc}) catch @panic("thread spawn basarisiz");
+    const t = std.Thread.spawn(.{}, Fn.sender, .{tc}) catch @panic("thread spawn failed");
 
     var i: i64 = 0;
     while (i < 100) : (i += 1) {
@@ -304,7 +304,7 @@ test "nox_threadchannel: kapasite-sinirli tampon, gonderen dolu tamponda GERÇEK
             args.flag.store(true, .release);
         }
     };
-    const t = std.Thread.spawn(.{}, Fn.sender, .{SenderArgs{ .c = tc, .flag = &sent_all }}) catch @panic("thread spawn basarisiz");
+    const t = std.Thread.spawn(.{}, Fn.sender, .{SenderArgs{ .c = tc, .flag = &sent_all }}) catch @panic("thread spawn failed");
 
     // Gönderici SADECE 2 (kapasite) öğe iterken, biz HENÜZ hiç `recv`
     // ÇAĞIRMADIK — kısa bir gerçek bekleyişten SONRA göndericinin TÜMÜNÜ
@@ -335,18 +335,18 @@ test "nox_threadchannel: str payload, iki BAĞIMSIZ RuntimeState arasinda, sizin
 
     const Fn = struct {
         fn sender(c: *anyopaque) void {
-            const child_rt = asap.nox_runtime_init() orelse @panic("child RuntimeState baslatilamadi");
+            const child_rt = asap.nox_runtime_init() orelse @panic("child RuntimeState could not be started");
             defer asap.nox_runtime_deinit(child_rt);
 
             const names = [_][*:0]const u8{ "bir", "iki", "üç" };
             for (names) |n| {
-                const s = str_mod.nox_str_from_bytes(child_rt, std.mem.span(n)) orelse @panic("concat basarisiz");
+                const s = str_mod.nox_str_from_bytes(child_rt, std.mem.span(n)) orelse @panic("concat failed");
                 defer str_mod.nox_str_release(child_rt, s);
                 nox_threadchannel_send_str(child_rt, c, ptrToPayload(s));
             }
         }
     };
-    const t = std.Thread.spawn(.{}, Fn.sender, .{tc}) catch @panic("thread spawn basarisiz");
+    const t = std.Thread.spawn(.{}, Fn.sender, .{tc}) catch @panic("thread spawn failed");
 
     const expected = [_][]const u8{ "bir", "iki", "üç" };
     for (expected) |exp| {

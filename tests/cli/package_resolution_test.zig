@@ -170,7 +170,7 @@ test "ucdan uca: bilinmeyen alias acik hata mesajiyla basarisiz olur" {
     defer std.testing.allocator.free(result.stderr);
 
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "bilinmeyen alias") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unknown alias") != null);
 }
 
 // Faz O §P.7 (bkz. plan dosyası "Faz O" bölümü, nox-teknik-spesifikasyon.md
@@ -512,7 +512,7 @@ test "noxc fetch: bagimliligi getirip nox.lock yazar, ikinci calistirmada onbell
         std.debug.print("fetch basarisiz, stderr: {s}\n", .{fetch1.stderr});
     }
     try std.testing.expect(fetch1.term == .exited and fetch1.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, fetch1.stderr, "getirildi: mypkg") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fetch1.stderr, "fetched: mypkg") != null);
     try proj.dir.access(io, "nox.lock", .{});
 
     // Fixture repo'nun `.git`i SİLİNİR — ikinci `fetch` `git`e HİÇ
@@ -526,7 +526,7 @@ test "noxc fetch: bagimliligi getirip nox.lock yazar, ikinci calistirmada onbell
     defer std.testing.allocator.free(fetch2.stdout);
     defer std.testing.allocator.free(fetch2.stderr);
     try std.testing.expect(fetch2.term == .exited and fetch2.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, fetch2.stderr, "zaten guncel: mypkg") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fetch2.stderr, "already up to date: mypkg") != null);
 }
 
 // `noxc update`, `fetch`in AKSİNE HER bağımlılığı `ref`den KOŞULSUZ
@@ -593,7 +593,7 @@ test "noxc update: dal ilerleyince nox.lock'taki kilitli SHA yeni commit'e gunce
         std.debug.print("update basarisiz, stderr: {s}\n", .{update_result.stderr});
     }
     try std.testing.expect(update_result.term == .exited and update_result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, update_result.stderr, "guncellendi: mypkg") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_result.stderr, "updated: mypkg") != null);
 
     const lock_after_update = try proj.dir.readFileAlloc(io, "nox.lock", a, .limited(4096));
     try std.testing.expect(std.mem.indexOf(u8, lock_after_update, sha2) != null);
@@ -679,7 +679,7 @@ test "noxc fetch: onbellek silinse bile kilitli SHA'dan sapmaz (dal ilerlemis ol
     try std.testing.expect(fetch2.term == .exited and fetch2.term.exited == 0);
     // Yeni `.recached` DepAction'in KENDI mesaji basilmali (bkz. `DepAction.recached`in belge notu) —
     // `.fetched`/`.updated` DEGIL (kilitli SHA DEGISMEDI, sadece YENIDEN onbelleklendi).
-    try std.testing.expect(std.mem.indexOf(u8, fetch2.stderr, "onbellek yeniden olusturuldu") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fetch2.stderr, "cache rebuilt") != null);
 
     const lock_after_fetch2 = try proj.dir.readFileAlloc(io, "nox.lock", a, .limited(4096));
     try std.testing.expect(std.mem.indexOf(u8, lock_after_fetch2, sha1) != null);

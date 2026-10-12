@@ -28,20 +28,19 @@ What this means for you in practice:
 
 ## Seeing the compiler's decisions: `noxc explain`
 
-`noxc explain file.nox` prints, for every local variable, where it will be allocated and why. The output labels are currently Turkish
-(`tahsis` = allocation, `gerekce` = reason):
+`noxc explain file.nox` prints, for every local variable, where it will be allocated and why:
 
 ```text
 mm1.nox:13  xs
-  tahsis: stack (40 bayt)
-  gerekce:
-    - sabit-boyutlu literal liste (40 bayt)
-    - kaçmıyor, boyut/bütçe İçinde -> stack
-  çerçeve bütçesi: 40 / 24576 bayt (önce: 0)
+  allocation: stack (40 bytes)
+  reasons:
+    - fixed-size literal list (40 bytes)
+    - does not escape, within size/budget -> stack
+  frame budget: 40 / 24576 bytes (before: 0)
 mm1.nox:19  h
-  tahsis: ARC (heap, referans-sayımlı)
-  gerekce:
-    - bilinmeyen çağrı hedefi (sınıf kurucusu DEĞİL) -> ARC
+  allocation: ARC (heap, reference-counted)
+  reasons:
+    - unknown call target (not a class constructor) -> ARC
 ```
 
 A small literal list that does not escape is kept on the stack; a class instance returned from a function, stored in a field or captured

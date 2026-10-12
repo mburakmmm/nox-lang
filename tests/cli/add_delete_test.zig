@@ -51,7 +51,7 @@ test "noxc add: acik repo argumaniyla requires[]e ekler" {
         std.debug.print("add basarisiz, stderr: {s}\n", .{result.stderr});
     }
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "eklendi: nyx") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "added: nyx") != null);
 
     const nox_json = try proj.dir.readFileAlloc(io, "nox.json", a, .limited(64 * 1024));
     try std.testing.expect(std.mem.indexOf(u8, nox_json, "\"alias\": \"nyx\"") != null);
@@ -158,7 +158,7 @@ test "noxc add: alias indekste yok ve repo verilmedi -> hata, cikis 1" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "bulunamadi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "not found") != null);
 }
 
 test "noxc add: rezerve 'nox' alias'i reddedilir" {
@@ -204,7 +204,7 @@ test "noxc add: ayni alias'a ikinci cagri upsert yapar (requires.len degismez, r
     defer std.testing.allocator.free(r2.stdout);
     defer std.testing.allocator.free(r2.stderr);
     try std.testing.expect(r2.term == .exited and r2.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, r2.stderr, "guncellendi: nyx") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r2.stderr, "updated: nyx") != null);
 
     const nox_json = try proj.dir.readFileAlloc(io, "nox.json", a, .limited(64 * 1024));
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, nox_json, "\"alias\":"));
@@ -236,7 +236,7 @@ test "noxc delete: var olan alias'i cikarir, olmayan icin hata verir" {
         defer std.testing.allocator.free(r2.stdout);
         defer std.testing.allocator.free(r2.stderr);
         try std.testing.expect(r2.term == .exited and r2.term.exited == 0);
-        try std.testing.expect(std.mem.indexOf(u8, r2.stderr, "silindi: nyx") != null);
+        try std.testing.expect(std.mem.indexOf(u8, r2.stderr, "removed: nyx") != null);
     }
     const nox_json = try proj.dir.readFileAlloc(io, "nox.json", a, .limited(64 * 1024));
     try std.testing.expect(std.mem.indexOf(u8, nox_json, "nyx") == null);
@@ -245,7 +245,7 @@ test "noxc delete: var olan alias'i cikarir, olmayan icin hata verir" {
     defer std.testing.allocator.free(r3.stdout);
     defer std.testing.allocator.free(r3.stderr);
     try std.testing.expect(r3.term == .exited and r3.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, r3.stderr, "bulunamadi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r3.stderr, "not found") != null);
 }
 
 test "noxc delete: eslesen nox.lock girdisini de budar" {
@@ -299,11 +299,11 @@ test "noxc add/delete: proje disinda calistirilirsa hata verir" {
         defer std.testing.allocator.free(r1.stdout);
         defer std.testing.allocator.free(r1.stderr);
         try std.testing.expect(r1.term == .exited and r1.term.exited == 1);
-        try std.testing.expect(std.mem.indexOf(u8, r1.stderr, "nox.json bulunamadi") != null);
+        try std.testing.expect(std.mem.indexOf(u8, r1.stderr, "nox.json not found") != null);
     }
     const r2 = try runNoxc(a, io, noxc_abs, outside_path, &.{ "delete", "nyx" });
     defer std.testing.allocator.free(r2.stdout);
     defer std.testing.allocator.free(r2.stderr);
     try std.testing.expect(r2.term == .exited and r2.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, r2.stderr, "nox.json bulunamadi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r2.stderr, "nox.json not found") != null);
 }

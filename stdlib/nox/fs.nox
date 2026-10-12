@@ -37,20 +37,20 @@ extern def nox_fs_create_dir_raw(path: str) -> None from "zig-out/lib/noxrt.o"
 def read_to_string(path: str) -> str:
     content: str = nox_fs_read_to_string_raw(path)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("dosya okunamadi: " + path)
+        raise FsError("could not read file: " + path)
     return content
 
 def write_string(path: str, content: str) -> None:
     nox_fs_write_string_raw(path, content)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("dosya yazilamadi: " + path)
+        raise FsError("could not write file: " + path)
 
 # Faz III.3 — `write_string`nin AKSİNE dosyayı KISALTMAZ, `content`i
 # SONUNA ekler.
 def append_string(path: str, content: str) -> None:
     nox_fs_append_string_raw(path, content)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("dosyaya eklenemedi: " + path)
+        raise FsError("could not append to file: " + path)
 
 def exists(path: str) -> bool:
     return nox_fs_exists_raw(path) != 0
@@ -73,7 +73,7 @@ class FileMetadata:
 def metadata(path: str) -> FileMetadata:
     nox_fs_stat_raw(path)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("meta veri okunamadi: " + path)
+        raise FsError("could not read metadata: " + path)
     return FileMetadata(nox_fs_stat_size_raw(), nox_fs_stat_mtime_ms_raw())
 
 # `.`/`..` HARİÇ dizin girdi ADLARI (tam yol DEĞİL — Python'un
@@ -81,25 +81,25 @@ def metadata(path: str) -> FileMetadata:
 def read_dir(path: str) -> list[str]:
     entries: list[str] = nox_fs_read_dir_raw(path)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("dizin okunamadi: " + path)
+        raise FsError("could not read directory: " + path)
     return entries
 
 def copy(src: str, dst: str) -> None:
     nox_fs_copy_raw(src, dst)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("kopyalanamadi: " + src + " -> " + dst)
+        raise FsError("could not copy: " + src + " -> " + dst)
 
 def rename(old: str, new: str) -> None:
     nox_fs_rename_raw(old, new)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("yeniden adlandirilamadi: " + old + " -> " + new)
+        raise FsError("could not rename: " + old + " -> " + new)
 
 def remove_file(path: str) -> None:
     nox_fs_remove_file_raw(path)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("silinemedi: " + path)
+        raise FsError("could not delete: " + path)
 
 def create_dir(path: str) -> None:
     nox_fs_create_dir_raw(path)
     if nox_fs_last_op_ok() == 0:
-        raise FsError("dizin olusturulamadi: " + path)
+        raise FsError("could not create directory: " + path)

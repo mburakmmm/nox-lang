@@ -43,7 +43,7 @@ const builtin = @import("builtin");
 pub fn ChaseLevDeque(comptime T: type, comptime capacity: usize) type {
     comptime {
         if (capacity == 0 or (capacity & (capacity - 1)) != 0) {
-            @compileError("ChaseLevDeque: capacity bir 2'nin kuvveti olmalı");
+            @compileError("ChaseLevDeque: capacity must be a power of 2");
         }
     }
     return struct {

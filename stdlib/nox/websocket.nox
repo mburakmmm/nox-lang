@@ -56,10 +56,10 @@ class WebSocketClient:
 
     def send_text(self: WebSocketClient, data: str) -> int:
         if self.closed:
-            raise WebSocketError("baglanti zaten kapatildi")
+            raise WebSocketError("the connection is already closed")
         n: int = nox_ws_send_text_raw(self.handle, data, len(data))
         if n < 0:
-            raise WebSocketError("gonderme basarisiz: " + nox_ws_errmsg_raw(self.handle))
+            raise WebSocketError("send failed: " + nox_ws_errmsg_raw(self.handle))
         return n
 
     # Bir sonraki METİN/İKİLİ payload'ı okur (PING/PONG dahili olarak ele
@@ -67,7 +67,7 @@ class WebSocketClient:
     # döner (`is_open()` ARTIK `False` döner).
     def recv(self: WebSocketClient) -> str:
         if self.closed:
-            raise WebSocketError("baglanti zaten kapatildi")
+            raise WebSocketError("the connection is already closed")
         return nox_ws_recv_raw(self.handle)
 
     def is_open(self: WebSocketClient) -> bool:
@@ -96,7 +96,7 @@ class WebSocketServerConn:
     def send_text(self: WebSocketServerConn, data: str) -> int:
         n: int = nox_ws_server_send_text_raw(self.handle, data, len(data))
         if n < 0:
-            raise WebSocketError("gonderme basarisiz: " + nox_ws_server_errmsg_raw(self.handle))
+            raise WebSocketError("send failed: " + nox_ws_server_errmsg_raw(self.handle))
         return n
 
     # `WebSocketClient.recv`in AYNI davranışı (PING/PONG dahili, bağlantı
@@ -129,9 +129,9 @@ def connect(url: str) -> WebSocketClient:
         use_tls_int = 1
     handle: ptr = nox_ws_connect_raw(u.host, port, path, use_tls_int)
     if nox_ws_is_null_ptr(handle) != 0:
-        raise WebSocketError("bellek yetersiz")
+        raise WebSocketError("out of memory")
     if nox_ws_ok_raw(handle) == 0:
         msg: str = nox_ws_errmsg_raw(handle)
         nox_ws_close_raw(handle)
-        raise WebSocketError("baglanti/el sikisma basarisiz: " + msg)
+        raise WebSocketError("connection/handshake failed: " + msg)
     return WebSocketClient(handle)

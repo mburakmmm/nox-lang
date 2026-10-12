@@ -22,9 +22,7 @@ filled in automatically). Built-in subclasses:
 
 Standard-library modules define their own subclasses (`JsonError`, `SqliteError`, `NativeError`, `PluginError`, …).
 
-> **Diagnostics language.** The text of messages produced by the compiler and by built-in runtime errors (`e.message` of an
-> `IndexError`, the uncaught-exception report, type errors) is currently written in Turkish. Programs should branch on the exception
-> *class*, never on built-in message text. User-raised messages are, of course, whatever you write.
+> **Diagnostics language.** Compiler diagnostics, built-in runtime errors (`e.message` of an `IndexError`, the uncaught-exception report, type errors) are English. Programs should branch on the exception *class*, never on built-in message text. User-raised messages are whatever you write.
 
 ## Raising and defining exceptions
 

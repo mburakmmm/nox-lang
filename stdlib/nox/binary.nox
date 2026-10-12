@@ -60,7 +60,7 @@ class BinaryReader:
 
     def read_u8(self: BinaryReader) -> u8:
         if self._pos < 0 or self._pos >= self._limit:
-            raise IndexError("BinaryReader okuma konumu sinirlarin disinda")
+            raise IndexError("BinaryReader read position out of bounds")
         v: u8 = self._buf.get(self._base + self._pos)
         self._pos = self._pos + 1
         return v
@@ -189,7 +189,7 @@ class BinaryWriter:
 
     def write_u8(self: BinaryWriter, v: u8) -> None:
         if self._pos < 0 or self._pos >= self._limit:
-            raise IndexError("BinaryWriter yazma konumu sinirlarin disinda")
+            raise IndexError("BinaryWriter write position out of bounds")
         self._buf.set(self._base + self._pos, v)
         self._pos = self._pos + 1
 

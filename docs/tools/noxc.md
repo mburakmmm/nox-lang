@@ -8,9 +8,7 @@ noxc <file.nox>               compile the file to an executable (shortcut for bu
 noxc <subcommand> [options]
 ```
 
-> **Message language.** `noxc` chooses the language of its *help* from your locale (`LC_ALL`, `LC_MESSAGES`, `LANG`; Turkish if it starts with `tr`, English otherwise). Compiler diagnostics and
-> status lines (`derlendi: …` = "built", `tip hatasi …` = "type error …", `GECTI` = "passed") are currently Turkish regardless of locale; their *kind* is stable, their wording is not.
-> Branch on exit codes, not on message text.
+> **Message language.** `noxc --help` follows your locale (`LC_ALL`, `LC_MESSAGES`, `LANG`; Turkish if the value starts with `tr`, English otherwise). Compiler diagnostics, standard-library exception text and every other `noxc` status line are English. Their *kind* is stable; their wording is not. Branch on exit codes, not on message text.
 
 ## Exit status
 

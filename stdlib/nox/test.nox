@@ -11,15 +11,15 @@ class AssertionError(Exception):
 
 def assert_eq_int(actual: int, expected: int, msg: str) -> None:
     if actual != expected:
-        raise AssertionError(msg + ": beklenen " + str(expected) + ", alinan " + str(actual))
+        raise AssertionError(msg + ": expected " + str(expected) + ", got " + str(actual))
 
 def assert_eq_str(actual: str, expected: str, msg: str) -> None:
     if actual != expected:
-        raise AssertionError(msg + ": beklenen \"" + expected + "\", alinan \"" + actual + "\"")
+        raise AssertionError(msg + ": expected \"" + expected + "\", got \"" + actual + "\"")
 
 def assert_eq_float(actual: float, expected: float, msg: str) -> None:
     if actual != expected:
-        raise AssertionError(msg + ": beklenen " + str(expected) + ", alinan " + str(actual))
+        raise AssertionError(msg + ": expected " + str(expected) + ", got " + str(actual))
 
 def assert_true(cond: bool, msg: str) -> None:
     if not cond:
@@ -75,19 +75,19 @@ class TestSuite:
         if actual == expected:
             self._record(case_name, True, "")
         else:
-            self._record(case_name, False, case_name + ": beklenen " + str(expected) + ", alinan " + str(actual))
+            self._record(case_name, False, case_name + ": expected " + str(expected) + ", got " + str(actual))
 
     def check_eq_str(self: TestSuite, case_name: str, actual: str, expected: str) -> None:
         if actual == expected:
             self._record(case_name, True, "")
         else:
-            self._record(case_name, False, case_name + ": beklenen \"" + expected + "\", alinan \"" + actual + "\"")
+            self._record(case_name, False, case_name + ": expected \"" + expected + "\", got \"" + actual + "\"")
 
     def check_eq_float(self: TestSuite, case_name: str, actual: float, expected: float) -> None:
         if actual == expected:
             self._record(case_name, True, "")
         else:
-            self._record(case_name, False, case_name + ": beklenen " + str(expected) + ", alinan " + str(actual))
+            self._record(case_name, False, case_name + ": expected " + str(expected) + ", got " + str(actual))
 
     def check_true(self: TestSuite, case_name: str, cond: bool) -> None:
         if cond:

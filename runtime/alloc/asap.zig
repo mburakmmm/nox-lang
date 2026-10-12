@@ -78,7 +78,7 @@ fn freestandingUnreachableAlloc(ctx: *anyopaque, len: usize, alignment: std.mem.
     _ = len;
     _ = alignment;
     _ = ret_addr;
-    @panic("freestanding: varsayilan bootstrap/injected allocator cagrilmamaliydi (nox_runtime_init_with_allocator kullanin)");
+    @panic("freestanding: the default bootstrap/injected allocator must not be called (use nox_runtime_init_with_allocator)");
 }
 fn freestandingUnreachableResize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
     _ = ctx;
@@ -827,7 +827,7 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     const bootstrap_allocator = state.bootstrap_allocator;
     if (use_debug_allocator) {
         if (state.debug_gpa.deinit() == .leak) {
-            diag_sink.report(rt, "nox runtime: bellek sızıntısı tespit edildi\n", .{});
+            diag_sink.report(rt, "nox runtime: memory leak detected\n", .{});
         }
     }
     bootstrap_allocator.destroy(state);

@@ -31,21 +31,21 @@ pub fn name(is_freestanding: bool) []const u8 {
             .aarch64 => "arm64",
             .x86_64 => "amd64_sysv",
             .riscv64 => "rv64",
-            else => @compileError("qbe: desteklenmeyen mimari"),
+            else => @compileError("qbe: unsupported architecture"),
         };
     }
     return switch (builtin.os.tag) {
         .macos => switch (builtin.cpu.arch) {
             .aarch64 => "arm64_apple",
             .x86_64 => "amd64_apple",
-            else => @compileError("qbe: desteklenmeyen macOS mimarisi"),
+            else => @compileError("qbe: unsupported macOS architecture"),
         },
         .windows => "amd64_win",
         else => switch (builtin.cpu.arch) {
             .aarch64 => "arm64",
             .x86_64 => "amd64_sysv",
             .riscv64 => "rv64",
-            else => @compileError("qbe: desteklenmeyen mimari"),
+            else => @compileError("qbe: unsupported architecture"),
         },
     };
 }

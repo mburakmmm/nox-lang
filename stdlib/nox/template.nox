@@ -61,11 +61,11 @@ def _render_impl(tmpl: str, context: dict[str, str], escape: bool) -> str:
             after_open: str = _substr_from(rest, rel_start + 2)
             rel_end: int = nox.strings.index_of(after_open, "}}")
             if rel_end < 0:
-                raise TemplateError("kapatilmamis '{{': " + rest)
+                raise TemplateError("unclosed '{{': " + rest)
             raw_key: str = _substr(after_open, 0, rel_end)
             key: str = nox.strings.trim(raw_key)
             if not context.contains(key):
-                raise TemplateError("tanimsiz sablon degiskeni: '" + key + "'")
+                raise TemplateError("undefined template variable: '" + key + "'")
             value: str = context[key]
             if escape:
                 out = out + escape_html(value)

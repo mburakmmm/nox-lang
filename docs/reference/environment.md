@@ -10,7 +10,7 @@
 | `NOX_PUBLISH_API_BASE` | `publish` | base URL of the registry's publish API (default `https://noxpkg.noxlang.com`) |
 | `NOX_UPGRADE_API_BASE`, `NOX_UPGRADE_DOWNLOAD_BASE` | `upgrade` | override where releases are looked up and downloaded (for mirrors and tests) |
 | `NOX_ALLOW_INSECURE_TRANSPORT` | package/upgrade fetches | permit non-TLS transports (testing only; never in production) |
-| `LC_ALL`, `LC_MESSAGES`, `LANG` | `noxc` | a value starting with `tr` selects Turkish for `noxc --help`; anything else English |
+| `LC_ALL`, `LC_MESSAGES`, `LANG` | `noxc --help` | a value starting with `tr` selects Turkish help; diagnostics and status lines stay English |
 
 ## Installer
 

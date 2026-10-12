@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.1]
+
+Derleyici tanılamaları, standart kütüphane istisna metinleri ve `noxc` durum satırları İngilizce. `noxc --help` yerel dilde kalır (`LC_ALL` / `LC_MESSAGES` / `LANG` `tr` ile başlıyorsa Türkçe).
+
+### Düzeltildi
+
+- **Kendine gönderme yapan bir sınıfın `print`i derleyiciyi çökertiyordu.** Alan tipi sınıfın kendisine dönen bir değer (ör. `list[Node]`, `print(nox.json.parse(...))`) `print` kod üretiminde sonsuz özyinelemeydi. Yazdırma yığınında zaten açık olan sınıf `Ad(...)` olarak kısaltılır. Golden `print_self_referential_class`, QBE ve LLVM.
+
+2.0.0'ın bilinen iki konusu (Türkçe iletiler, `print` döngüsü) bu yamada kapandı.
+
 ## [2.0.0]
 
 **Nox 2.0 kararlı sürümü.** rc.1–rc.5 sürüm adaylarının tamamını içerir (ayrıntılar aşağıda); rc.3/rc.4/rc.5 ayrı yayımlanmadı.

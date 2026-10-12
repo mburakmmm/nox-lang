@@ -160,7 +160,7 @@ pub fn setTcpNodelay(fd: posix.fd_t) void {
 /// `dumpCurrentStackTrace()`i ASLA çağırmaz.
 fn fiberSafeUnexpectedErrno(scheduler: *Scheduler, e: posix.E) error{Unexpected} {
     if (std.options.unexpected_error_tracing) {
-        diag_sink.report(scheduler.rt, "beklenmeyen errno (fiber baglaminda, yigin izi GUVENLIK icin ATLANDI): {d}\n", .{@intFromEnum(e)});
+        diag_sink.report(scheduler.rt, "unexpected errno (in fiber context, stack trace SKIPPED for SAFETY): {d}\n", .{@intFromEnum(e)});
     }
     return error.Unexpected;
 }

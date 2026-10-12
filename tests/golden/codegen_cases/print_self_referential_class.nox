@@ -1,0 +1,14 @@
+# v2.0: a class whose field type mentions itself (list[Node]) used to recurse forever
+# inside print codegen. The nested occurrence is printed as Node(...).
+class Node:
+    name: str
+    kids: list[Node]
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.kids = []
+
+root: Node = Node("root")
+child: Node = Node("child")
+root.kids.append(child)
+print(root)

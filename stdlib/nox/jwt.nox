@@ -36,7 +36,7 @@ def _hex_digit_value(c: int) -> int:
         return c - 87
     if c >= 65 and c <= 70:
         return c - 55
-    raise JwtError("gecersiz hex basamagi")
+    raise JwtError("invalid hex digit")
 
 # `nox.crypto.hmac_sha256`nin HEX-kodlu çıktısını HAM baytlara çevirir —
 # JWT imzası HAM baytların base64url'i olmalıdır, hex METNİNİN DEĞİL.
@@ -74,15 +74,15 @@ def sign(payload_json: str, secret: str) -> str:
 def verify(token: str, secret: str) -> str:
     parts: list[str] = nox.strings.split(token, ".")
     if len(parts) != 3:
-        raise JwtError("gecersiz JWT bicimi (3 nokta-ayrilmis bolum bekleniyor)")
+        raise JwtError("invalid JWT format (3 dot-separated sections expected)")
     header_b64: str = parts[0]
     payload_b64: str = parts[1]
     sig_b64: str = parts[2]
     if nox.base64.decode(header_b64) != _header():
-        raise JwtError("desteklenmeyen veya gecersiz JWT basligi (yalnizca HS256 desteklenir)")
+        raise JwtError("unsupported or invalid JWT header (only HS256 is supported)")
     signing_input: str = header_b64 + "." + payload_b64
     expected_sig_raw: str = _hex_to_raw(nox.crypto.hmac_sha256(secret, signing_input))
     expected_sig_b64: str = nox.base64.encode_url(expected_sig_raw)
     if not nox.crypto.constant_time_eq(sig_b64, expected_sig_b64):
-        raise JwtError("JWT imzasi dogrulanamadi")
+        raise JwtError("JWT signature could not be verified")
     return nox.base64.decode(payload_b64)

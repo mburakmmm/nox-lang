@@ -1446,6 +1446,9 @@ pub const Codegen = struct {
     /// notu) — her zaman kontrol edilirler, bu yüzden bu alan yalnızca
     /// serbest fonksiyon/kurucu sembolleri içerir.
     must_not_raise: std.StringHashMapUnmanaged(void) = .empty,
+    /// v2.0: `print` için o an açılmakta olan sınıf adları (kendine gönderme yapan sınıflarda — ör. `JsonValue` — sonsuz
+    /// satır içi özyinelemeyi keser; bkz. `genPrintClass`).
+    print_class_stack: std.ArrayListUnmanaged([]const u8) = .empty,
     /// v1.142.15: yığın NESNELERİNİ (alan/eleman/dict ataması, mutasyonlu metod, bilinmeyen/
     /// IO çağrıları) HİÇ DEĞİŞTİRMEDİĞİ KANITLANAN (geçişli) fonksiyon/metod sembolleri —
     /// bkz. `markBorrowedAliasLocals`.

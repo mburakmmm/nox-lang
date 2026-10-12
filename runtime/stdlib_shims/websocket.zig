@@ -191,11 +191,11 @@ pub export fn nox_ws_connect_raw(host: ?[*:0]const u8, port: i64, path: ?[*:0]co
     const conn = gpa.create(WsConn) catch return null;
     conn.* = .{ .gpa = gpa, .io = http_client.sharedClientIo(), .stream = undefined };
     const h = host orelse {
-        conn.errmsg = "host bos olamaz";
+        conn.errmsg = "host cannot be empty";
         return conn;
     };
     const p = path orelse {
-        conn.errmsg = "path bos olamaz";
+        conn.errmsg = "path cannot be empty";
         return conn;
     };
     connectInner(conn, str_mod.nox_str_slice(h), port, str_mod.nox_str_slice(p), use_tls != 0) catch |err| {

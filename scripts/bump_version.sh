@@ -21,14 +21,14 @@ kind="${1:-}"
 case "$kind" in
     patch|minor|major) ;;
     *)
-        echo "kullanım: $0 {patch|minor|major}" >&2
+        echo "usage: $0 {patch|minor|major}" >&2
         exit 1
         ;;
 esac
 
 zon_file="$(dirname "$0")/../build.zig.zon"
 current="$(grep -o '\.version = "[^"]*"' "$zon_file" | sed -E 's/\.version = "([^"]*)"/\1/')"
-[ -n "$current" ] || { echo "build.zig.zon'da .version alanı bulunamadı" >&2; exit 1; }
+[ -n "$current" ] || { echo "no .version field found in build.zig.zon" >&2; exit 1; }
 
 # `-dev`/herhangi bir `-...` ön-sürüm son ekini at, TEMEL X.Y.Z'yi al.
 base="${current%%-*}"

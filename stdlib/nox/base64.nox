@@ -54,7 +54,7 @@ def _char_value(c: int) -> int:
         return 62
     if c == 47 or c == 95:
         return 63
-    raise Base64Error("gecersiz base64 karakteri")
+    raise Base64Error("invalid base64 character")
 
 def _encode_impl(data: str, url_safe: bool) -> str:
     n: int = nox.strings.byte_len(data)
@@ -124,7 +124,7 @@ def decode(s: str) -> str:
         i = i + 4
     remaining: int = eff_len - i
     if remaining == 1:
-        raise Base64Error("gecersiz base64 uzunlugu")
+        raise Base64Error("invalid base64 length")
     elif remaining == 2:
         v0: int = _char_value(nox.strings.byte_at(s, i))
         v1: int = _char_value(nox.strings.byte_at(s, i + 1))

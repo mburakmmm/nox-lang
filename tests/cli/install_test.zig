@@ -279,7 +279,7 @@ test "noxc refresh <paket>: yeni bir commit SONRASI guncel kodu ceker ve yeniden
         std.debug.print("refresh basarisiz (stderr): {s}\n", .{refresh_result.stderr});
         return error.RefreshFailed;
     }
-    try std.testing.expect(std.mem.indexOf(u8, refresh_result.stderr, "guncellendi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, refresh_result.stderr, "updated") != null);
 
     const run_after = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
     defer gpa.free(run_after.stdout);
@@ -565,7 +565,7 @@ test "noxc cache prune: --dry-run silmez; varsayilan en yeni+kurulu korur; --all
         defer gpa.free(r.stdout);
         defer gpa.free(r.stderr);
         try std.testing.expectEqual(@as(u8, 0), r.term.exited);
-        try std.testing.expect(std.mem.indexOf(u8, r.stdout, "silinecek:") != null);
+        try std.testing.expect(std.mem.indexOf(u8, r.stdout, "would remove:") != null);
         try std.testing.expect(std.mem.indexOf(u8, r.stdout, "dry-run") != null);
     }
     try std.testing.expect(dirExists(io, home_dir.dir, old_sha));

@@ -382,7 +382,7 @@ pub const Scheduler = struct {
         // YÜZDEN çağrıyı TAMAMEN atlamak DAVRANIŞI DEĞİŞTİRMEZ.
         const is_foreign = if (comptime is_freestanding) false else self.pool_live_count != null and std.Thread.getCurrentId() != self.owner_tid;
         self.ready_lock.lock();
-        self.ready.append(self.allocator, fiber) catch @panic("OOM: zamanlayıcı hazır kuyruğu büyütülemedi");
+        self.ready.append(self.allocator, fiber) catch @panic("OOM: could not grow the scheduler ready queue");
         self.ready_lock.unlock();
         if (is_foreign) {
             // Faz MN.8, Bulgu B: çapraz-worker bir uyandırma — BİR
@@ -417,7 +417,7 @@ pub const Scheduler = struct {
     pub fn suspendForIo(self: *Scheduler, fd: std.posix.fd_t, filter: io_reactor.Filter) void {
         const fiber = self.current.?;
         var ctx: io_reactor.WaitCtx = .{ .fiber = fiber };
-        self.reactor.register(fd, filter, &ctx) catch @panic("kqueue register basarisiz");
+        self.reactor.register(fd, filter, &ctx) catch @panic("kqueue register failed");
         self.waiting_on_io += 1;
         if (self.pool_waiting_on_io) |pwio| _ = pwio.fetchAdd(1, .monotonic);
         fiber.yield();
@@ -436,7 +436,7 @@ pub const Scheduler = struct {
     pub fn suspendForIoOrTimeout(self: *Scheduler, fd: std.posix.fd_t, filter: io_reactor.Filter, timeout_ms: u32) io_reactor.WaitResult {
         const fiber = self.current.?;
         var ctx: io_reactor.WaitCtx = .{ .fiber = fiber };
-        self.reactor.registerWithTimeout(fd, filter, timeout_ms, &ctx) catch @panic("kqueue register basarisiz");
+        self.reactor.registerWithTimeout(fd, filter, timeout_ms, &ctx) catch @panic("kqueue register failed");
         self.waiting_on_io += 1;
         if (self.pool_waiting_on_io) |pwio| _ = pwio.fetchAdd(1, .monotonic);
         fiber.yield();
@@ -745,7 +745,7 @@ pub const Scheduler = struct {
                         // ile AYNI zamanlayıcı KAYDOLUR/uyandırılır, bkz.
                         // onun belge notu — bir fiber PINLENDIKTEN sonra
                         // KENDİ G/Ç uyandırması HİÇ göç ETMEZ).
-                        _ = self.reactor.poll(self) catch @panic("kqueue poll basarisiz");
+                        _ = self.reactor.poll(self) catch @panic("kqueue poll failed");
                         continue;
                     }
                     if (self.poolWideDeadlockCheck()) {
@@ -769,7 +769,7 @@ pub const Scheduler = struct {
                 // davranış, SIFIR değişiklik.
                 if (self.live_count == 0) return;
                 if (self.waiting_on_io > 0) {
-                    _ = self.reactor.poll(self) catch @panic("kqueue poll basarisiz");
+                    _ = self.reactor.poll(self) catch @panic("kqueue poll failed");
                     continue;
                 }
                 return error.Deadlock;
@@ -1557,7 +1557,7 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
         }
 
         fn workerBody(shared: *Shared, own_slot: usize) void {
-            var sched = Scheduler.init(std.testing.allocator) catch @panic("zamanlayici baslatilamadi");
+            var sched = Scheduler.init(std.testing.allocator) catch @panic("the scheduler could not be started");
             defer sched.deinit();
             sched.attachToPool(.{
                 .own_slot = own_slot,

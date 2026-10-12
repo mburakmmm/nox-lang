@@ -143,20 +143,20 @@ def _mysql_execute(stmt: Statement) -> int:
     sql: str = _mysql_build_sql(stmt)
     rc: int = nox_mysql_query_raw(stmt.handle, sql)
     if rc != 0:
-        raise MysqlError("deyim basarisiz: " + nox_mysql_errmsg_raw(stmt.handle))
+        raise MysqlError("statement failed: " + nox_mysql_errmsg_raw(stmt.handle))
     return nox_mysql_affected_rows_raw(stmt.handle)
 
 def _mysql_query(stmt: Statement) -> list[Row]:
     sql: str = _mysql_build_sql(stmt)
     rc: int = nox_mysql_query_raw(stmt.handle, sql)
     if rc != 0:
-        raise MysqlError("sorgu basarisiz: " + nox_mysql_errmsg_raw(stmt.handle))
+        raise MysqlError("query failed: " + nox_mysql_errmsg_raw(stmt.handle))
     ncols: int = nox_mysql_field_count_raw(stmt.handle)
     if ncols == 0:
         return []
     res: ptr = nox_mysql_store_result_raw(stmt.handle)
     if nox_mysql_is_null_ptr(res) != 0:
-        raise MysqlError("sonuc alinamadi: " + nox_mysql_errmsg_raw(stmt.handle))
+        raise MysqlError("could not fetch the result: " + nox_mysql_errmsg_raw(stmt.handle))
     rows: list[Row] = _read_rows(res, ncols)
     nox_mysql_free_result_raw(res)
     return rows
@@ -173,19 +173,19 @@ class Connection:
     def execute(self: Connection, sql: str) -> int:
         rc: int = nox_mysql_query_raw(self.handle, sql)
         if rc != 0:
-            raise MysqlError("deyim basarisiz: " + nox_mysql_errmsg_raw(self.handle))
+            raise MysqlError("statement failed: " + nox_mysql_errmsg_raw(self.handle))
         return nox_mysql_affected_rows_raw(self.handle)
 
     def query(self: Connection, sql: str) -> list[Row]:
         rc: int = nox_mysql_query_raw(self.handle, sql)
         if rc != 0:
-            raise MysqlError("sorgu basarisiz: " + nox_mysql_errmsg_raw(self.handle))
+            raise MysqlError("query failed: " + nox_mysql_errmsg_raw(self.handle))
         ncols: int = nox_mysql_field_count_raw(self.handle)
         if ncols == 0:
             return []
         res: ptr = nox_mysql_store_result_raw(self.handle)
         if nox_mysql_is_null_ptr(res) != 0:
-            raise MysqlError("sonuc alinamadi: " + nox_mysql_errmsg_raw(self.handle))
+            raise MysqlError("could not fetch the result: " + nox_mysql_errmsg_raw(self.handle))
         rows: list[Row] = _read_rows(res, ncols)
         nox_mysql_free_result_raw(res)
         return rows
@@ -226,9 +226,9 @@ def open_url(conn_url: str) -> Connection:
         port = 3306
     handle: ptr = nox_mysql_connect_raw(u.host, user, passwd, dbname, port)
     if nox_mysql_is_null_ptr(handle) != 0:
-        raise MysqlError("baglanti kurulamadi (libmysqlclient yuklenemedi olabilir): " + conn_url)
+        raise MysqlError("could not connect (libmysqlclient may have failed to load): " + conn_url)
     if nox_mysql_status_ok_raw(handle) == 0:
         msg: str = nox_mysql_errmsg_raw(handle)
         nox_mysql_close_raw(handle)
-        raise MysqlError("baglanti basarisiz: " + msg)
+        raise MysqlError("connection failed: " + msg)
     return Connection(handle)

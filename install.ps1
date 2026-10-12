@@ -30,7 +30,7 @@ function Write-Warn([string]$Message) {
     Write-Host $Message
 }
 function Die([string]$Message) {
-    Write-Host "hata: " -ForegroundColor Red -NoNewline
+    Write-Host "error: " -ForegroundColor Red -NoNewline
     Write-Host $Message
     exit 1
 }
@@ -39,7 +39,7 @@ function Die([string]$Message) {
 # windows-x64 işi) — ARM64 Windows İçin kaynaktan derleme GEREKİR.
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -ne "AMD64") {
-    Die "Desteklenmeyen Windows mimarisi: $arch (yalnızca x86_64/AMD64 önceden derlenmiş paket sağlanır — ARM64 için kaynaktan derleyin: bkz. CONTRIBUTING.md)."
+    Die "Unsupported Windows architecture: $arch (a prebuilt package is provided only for x86_64/AMD64 — on ARM64, build from source: see https://noxlang.com/docs/internals/contributing/)."
 }
 $Asset = "windows-x64"
 
@@ -54,14 +54,14 @@ function Resolve-Version {
     } catch {
         # Aşağıdaki Die'a düşülür.
     }
-    Die ("en son sürüm etiketi çözülemedi — henüz bir GitHub Release yayımlanmamış olabilir ya da GitHub API'sine erişilemiyor. Belirli bir sürümü elle kurmak için önce şunu çalıştırın: " + '$env:NOX_VERSION = "v1.0.0"' + " (sonra betiği tekrar çalıştırın).")
+    Die ("could not resolve the latest release tag — no GitHub Release may have been published yet, or the GitHub API is unreachable. To install a specific version by hand, first run: " + '$env:NOX_VERSION = "v1.0.0"' + " (then run the script again).")
 }
 
 $Version = Resolve-Version
 $Stage = "nox-lang-$Version-$Asset"
 $Url = "https://github.com/$Repo/releases/download/$Version/$Stage.zip"
 
-Write-Log "Nox $Version ($Asset) indiriliyor..."
+Write-Log "Downloading Nox $Version ($Asset)..."
 $TmpDir = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
 try {
@@ -69,10 +69,10 @@ try {
     try {
         Invoke-WebRequest -Uri $Url -OutFile $ZipPath
     } catch {
-        Die "indirilemedi: $Url"
+        Die "download failed: $Url"
     }
 
-    Write-Log "Açılıyor -> $InstallDir"
+    Write-Log "Unpacking -> $InstallDir"
     if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Expand-Archive -Path $ZipPath -DestinationPath $TmpDir
@@ -84,22 +84,22 @@ try {
 $ccFound = Get-Command cc -ErrorAction SilentlyContinue
 if (-not $ccFound) { $ccFound = Get-Command gcc -ErrorAction SilentlyContinue }
 if (-not $ccFound) {
-    Write-Warn "'cc'/'gcc' (MinGW-w64 C derleyicisi) bulunamadı — noxc DERLENEN programları linklerken buna ihtiyaç duyar."
-    Write-Warn "Kurulum için: https://www.msys2.org/ (MSYS2 üzerinden 'pacman -S mingw-w64-x86_64-gcc') ya da https://github.com/skeeto/w64devkit"
+    Write-Warn "'cc'/'gcc' (a MinGW-w64 C compiler) not found — noxc needs one (or 'zig') to link the programs it compiles."
+    Write-Warn "To install one: https://www.msys2.org/ ('pacman -S mingw-w64-x86_64-gcc' via MSYS2), https://github.com/skeeto/w64devkit, or https://ziglang.org/download/"
 }
 
-Write-Log "Kuruldu: $InstallDir"
+Write-Log "Installed: $InstallDir"
 
 $BinDir = Join-Path $InstallDir "bin"
 $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 if ($UserPath -notlike "*$BinDir*") {
     $NewPath = if ($UserPath) { "$UserPath;$BinDir" } else { $BinDir }
     [Environment]::SetEnvironmentVariable("PATH", $NewPath, "User")
-    Write-Log "PATH'e eklendi (kalıcı, kullanıcı ortam değişkeni) — YENİ bir terminal açın:"
+    Write-Log "Added to PATH (persistent, user environment variable) — open a NEW terminal:"
 } else {
-    Write-Log "PATH zaten şunu içeriyor:"
+    Write-Log "PATH already contains:"
 }
 Write-Host ""
 Write-Host "    $BinDir"
 Write-Host ""
-Write-Log "Doğrulama: noxc --version   (yeni bir terminalde)"
+Write-Log "Verify with: noxc --version   (in a new terminal)"

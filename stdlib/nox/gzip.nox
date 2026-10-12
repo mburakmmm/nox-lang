@@ -21,21 +21,21 @@ extern def nox_gzip_last_op_ok() -> int from "zig-out/lib/noxrt.o"
 def compress_bytes(data: list[int]) -> list[int]:
     result: list[int] = nox_gzip_compress_bytes_raw(data)
     if nox_gzip_last_op_ok() == 0:
-        raise GzipError("sikistirma basarisiz (gecersiz bayt listesi ya da bellek yetersiz)")
+        raise GzipError("compression failed (invalid byte list or out of memory)")
     return result
 
 # gzip-sıkıştırılmış `list[int]`i ORİJİNAL (keyfi ikili) baytlara açar.
 def decompress_bytes(data: list[int]) -> list[int]:
     result: list[int] = nox_gzip_decompress_bytes_raw(data)
     if nox_gzip_last_op_ok() == 0:
-        raise GzipError("gecersiz gzip verisi")
+        raise GzipError("invalid gzip data")
     return result
 
 # Bir metni gzip formatında sıkıştırıp `list[int]` olarak döner.
 def compress(text: str) -> list[int]:
     result: list[int] = nox_gzip_compress_str_raw(text)
     if nox_gzip_last_op_ok() == 0:
-        raise GzipError("sikistirma basarisiz (bellek yetersiz olabilir)")
+        raise GzipError("compression failed (possibly out of memory)")
     return result
 
 # gzip-sıkıştırılmış `list[int]`i AÇIP bir `str`e çevirir — açılan verinin
@@ -44,5 +44,5 @@ def compress(text: str) -> list[int]:
 def decompress(data: list[int]) -> str:
     result: str = nox_gzip_decompress_to_str_raw(data)
     if nox_gzip_last_op_ok() == 0:
-        raise GzipError("gecersiz gzip verisi veya sonuc metin-guvenli degil (gomulu NUL bayt icerebilir)")
+        raise GzipError("invalid gzip data, or the result is not text-safe (it may contain an embedded NUL byte)")
     return result

@@ -87,8 +87,7 @@ test "uctan uca: initialize + didOpen/didChange tanilama dongusu + shutdown" {
     const diag1 = try readMessage(a, r);
     try std.testing.expect(std.mem.indexOf(u8, diag1, "publishDiagnostics") != null);
     try std.testing.expect(std.mem.indexOf(u8, diag1, bad_uri) != null);
-    try std.testing.expect(std.mem.indexOf(u8, diag1, "tan\\u0131ms\\u0131z de\\u011fi\\u015fken: y") != null or
-        std.mem.indexOf(u8, diag1, "tanımsız değişken: y") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diag1, "undefined variable: y") != null);
     // Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
     // yapılandırılmış tanılamalar") — Aşama 7 kabul kriteri: `range` ARTIK
     // ESKİDEN OLDUĞU GİBİ "TÜM SATIR" (`character:10000`) DEĞİL, `"x: int
@@ -105,7 +104,7 @@ test "uctan uca: initialize + didOpen/didChange tanilama dongusu + shutdown" {
         "\"contentChanges\":[{\"text\":\"x = 1\\ny = \\\"abc\\n\"}]}}");
     const diag_syntax = try readMessage(a, r);
     try std.testing.expect(std.mem.indexOf(u8, diag_syntax, "publishDiagnostics") != null);
-    try std.testing.expect(std.mem.indexOf(u8, diag_syntax, "sonlandirilmamis string") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diag_syntax, "unterminated string") != null);
     // Açılış tırnağı 2. satırda (0-tabanlı satır 1), sütun 4'te (0-tabanlı) —
     // ESKİDEN OLDUĞU GİBİ satır 0'a SABİTLENMEZ.
     try std.testing.expect(std.mem.indexOf(u8, diag_syntax, "\"line\":1") != null);

@@ -136,7 +136,7 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
     // reaktörün `kqueue()`sini açtığından fallible — bu, `nox_rc_alloc`ın
     // `null` dönmesi kadar SON DERECE nadir bir kaynak tükenmesi senaryosudur
     // (bkz. `markReady`in AYNI gerekçeyle kullandığı `@panic`).
-    GSchedulerSlot.value = scheduler_mod.Scheduler.init(allocatorFromRt(rt)) catch @panic("async zamanlayici baslatilamadi (kqueue)");
+    GSchedulerSlot.value = scheduler_mod.Scheduler.init(allocatorFromRt(rt)) catch @panic("the async scheduler could not be started (kqueue)");
     // Faz MN.9.1: `scheduler.zig`nin standalone `currentScheduler()`ıyla
     // eşitlenir — bkz. onun belge notu (`Channel[T]`nin çapraz-worker
     // düzeltmesi BUNA dayanır).
@@ -367,7 +367,7 @@ pub export fn nox_async_run_to_completion(rt: ?*anyopaque) i32 {
 /// desen: net bir mesaj basıp sıfırdan farklı bir kodla sonlandırır (Nox'un
 /// TAM istisna mekanizmasına entegrasyon bu fazın kapsamı DIŞI, bkz. spec).
 pub export fn nox_async_deadlock_abort(rt: ?*anyopaque) noreturn {
-    diag_sink.report(rt, "nox: kilitlenme (deadlock) tespit edildi — tüm görevler bloke, hiçbiri ilerleyemiyor\n", .{});
+    diag_sink.report(rt, "nox: deadlock detected — all tasks are blocked, none can make progress\n", .{});
     // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
     // `std.process.exit` freestanding'de HİÇ TANIMLI DEĞİL (syscall
     // KAVRAMI YOK) — `handle.zig`nin `HaltProvider`ıyla AYNI ilke,

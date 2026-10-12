@@ -126,7 +126,7 @@ def _pg_execute(stmt: Statement) -> int:
     if nox_pg_result_ok_raw(res) == 0:
         msg: str = nox_pg_result_errmsg_raw(res)
         nox_pg_clear_raw(res)
-        raise PostgresError("deyim basarisiz: " + msg)
+        raise PostgresError("statement failed: " + msg)
     n: int = nox_pg_changes_raw(res)
     nox_pg_clear_raw(res)
     return n
@@ -136,7 +136,7 @@ def _pg_query(stmt: Statement) -> list[Row]:
     if nox_pg_result_ok_raw(res) == 0:
         msg: str = nox_pg_result_errmsg_raw(res)
         nox_pg_clear_raw(res)
-        raise PostgresError("sorgu basarisiz: " + msg)
+        raise PostgresError("query failed: " + msg)
     rows: list[Row] = _read_rows(res)
     nox_pg_clear_raw(res)
     return rows
@@ -181,7 +181,7 @@ class Connection:
         if nox_pg_result_ok_raw(res) == 0:
             msg: str = nox_pg_result_errmsg_raw(res)
             nox_pg_clear_raw(res)
-            raise PostgresError("deyim basarisiz: " + msg)
+            raise PostgresError("statement failed: " + msg)
         n: int = nox_pg_changes_raw(res)
         nox_pg_clear_raw(res)
         return n
@@ -191,7 +191,7 @@ class Connection:
         if nox_pg_result_ok_raw(res) == 0:
             msg: str = nox_pg_result_errmsg_raw(res)
             nox_pg_clear_raw(res)
-            raise PostgresError("sorgu basarisiz: " + msg)
+            raise PostgresError("query failed: " + msg)
         rows: list[Row] = _read_rows(res)
         nox_pg_clear_raw(res)
         return rows
@@ -202,9 +202,9 @@ class Connection:
 def open(conninfo: str) -> Connection:
     handle: ptr = nox_pg_connect_raw(conninfo)
     if nox_pg_is_null_ptr(handle) != 0:
-        raise PostgresError("baglanti kurulamadi (libpq yuklenemedi olabilir): " + conninfo)
+        raise PostgresError("could not connect (libpq may have failed to load): " + conninfo)
     if nox_pg_status_ok_raw(handle) == 0:
         msg: str = nox_pg_errmsg_raw(handle)
         nox_pg_finish_raw(handle)
-        raise PostgresError("baglanti basarisiz: " + msg)
+        raise PostgresError("connection failed: " + msg)
     return Connection(handle)

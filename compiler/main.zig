@@ -51,12 +51,6 @@ const build_options = @import("build_options");
 // ÜZERİNDEN yapılır.
 var g_use_color: bool = false;
 
-/// `g_use_color` İLE AYNI "main() başında BİR KEZ hesapla, süreç-geneli
-/// oku" deseni — bkz. `detectTurkishLocale`nin belge notu. `buildOne`nin
-/// dosya-bulunamadı İPUCU mesajı (bkz. onun belge notu) GİBİ, sinyali
-/// HER çağıran fonksiyonun imzasına AYRI AYRI eklemek yerine BURADAN okur.
-var g_is_tr: bool = false;
-
 fn detectUseColor(io: std.Io, environ_map: *const std.process.Environ.Map) bool {
     if (environ_map.get("NO_COLOR")) |v| {
         if (v.len > 0) return false;
@@ -293,7 +287,6 @@ fn realMain(init: std.process.Init) !void {
     };
 
     const is_tr = detectTurkishLocale(init.environ_map);
-    g_is_tr = is_tr;
 
     // `noxc upgrade` (bkz. `pkg/upgrade.zig`nin modül üstü notu) — YALNIZCA-
     // TEST override'ları, `NOX_HOME`/`NOX_RESOURCE_DIR` İLE AYNI "BİR KEZ
@@ -351,8 +344,8 @@ fn realMain(init: std.process.Init) !void {
     const rest: []const []const u8 = if (sub == .legacy or all_args.items.len == 0) all_args.items else all_args.items[1..];
 
     switch (sub) {
-        .build => try cmdBuild(gpa, io, a, rest, "kullanim: noxc build [--dump|-v] [-o <cikti>] <dosya.nox>\n", nox_home, resource_dirs, fetch_policy),
-        .legacy => try cmdBuild(gpa, io, a, rest, "kullanim: noxc [--dump|-v] <dosya.nox>  (komutlar icin: noxc --help)\n", nox_home, resource_dirs, fetch_policy),
+        .build => try cmdBuild(gpa, io, a, rest, "usage: noxc build [--dump|-v] [-o <output>] <file.nox>\n", nox_home, resource_dirs, fetch_policy),
+        .legacy => try cmdBuild(gpa, io, a, rest, "usage: noxc [--dump|-v] <file.nox>  (for commands: noxc --help)\n", nox_home, resource_dirs, fetch_policy),
         .help => printHelp(is_tr),
         .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
@@ -368,11 +361,11 @@ fn realMain(init: std.process.Init) !void {
         .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .expand => try cmdExpand(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .explain => try cmdExplain(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
-        .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, is_tr, nox_home),
-        .install => try cmdInstall(gpa, io, a, rest, nox_home, resource_dirs, registry_policy, fetch_policy, init.environ_map, is_tr),
+        .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, nox_home),
+        .install => try cmdInstall(gpa, io, a, rest, nox_home, resource_dirs, registry_policy, fetch_policy, init.environ_map),
         .uninstall => try cmdUninstall(io, a, rest, nox_home),
         .list_installed => try cmdListInstalled(io, a, nox_home),
-        .refresh => try cmdRefresh(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, init.environ_map, is_tr),
+        .refresh => try cmdRefresh(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, init.environ_map),
         .cache => try cmdCache(io, a, rest, nox_home),
     }
 }
@@ -383,7 +376,7 @@ fn realMain(init: std.process.Init) !void {
 /// GitHub'ın "latest release"i çözülür. `--check`, kurulum/indirmeyi
 /// ATLAYIP yalnızca mevcut/en-son sürümü KARŞILAŞTIRIP raporlar (script'ler
 /// İçin: güncelse çıkış 0, YENİ bir sürüm VARSA çıkış 1).
-fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resource_dir_override: ?[]const u8, policy: upgrade_mod.UpgradePolicy, fetch_policy: fetch.FetchPolicy, is_tr: bool, nox_home: []const u8) !void {
+fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resource_dir_override: ?[]const u8, policy: upgrade_mod.UpgradePolicy, fetch_policy: fetch.FetchPolicy, nox_home: []const u8) !void {
     var check_only = false;
     var explicit_version: ?[]const u8 = null;
     for (args) |arg| {
@@ -395,7 +388,7 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
     }
 
     const target_tag = upgrade_mod.resolveTargetVersion(a, io, explicit_version, policy, fetch_policy) catch |err| {
-        if (is_tr) printErr("surum cozulemedi ({t})\n", .{err}) else printErr("failed to resolve version ({t})\n", .{err});
+        printErr("failed to resolve version ({t})\n", .{err});
         std.process.exit(1);
     };
 
@@ -411,14 +404,10 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
     if (check_only) {
         const current = upgrade_mod.currentVersionTag(a) catch "?";
         if (up_to_date) {
-            if (is_tr) printOk("zaten guncel: {s}\n", .{current}) else printOk("already up to date: {s}\n", .{current});
+            printOk("already up to date: {s}\n", .{current});
             std.process.exit(0);
         }
-        if (is_tr) {
-            std.debug.print("mevcut surum: {s}\nen son surum: {s}\n", .{ current, target_tag });
-        } else {
-            std.debug.print("current version: {s}\nlatest version: {s}\n", .{ current, target_tag });
-        }
+        std.debug.print("current version: {s}\nlatest version: {s}\n", .{ current, target_tag });
         std.process.exit(1);
     }
 
@@ -428,27 +417,23 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
     // edilir (`rustup`/`brew`nin "reinstall" semantiğiyle TUTARLI).
     if (up_to_date and explicit_version == null) {
         const current = upgrade_mod.currentVersionTag(a) catch target_tag;
-        if (is_tr) printOk("zaten guncel: {s}\n", .{current}) else printOk("already up to date: {s}\n", .{current});
+        printOk("already up to date: {s}\n", .{current});
         return;
     }
 
     const asset = upgrade_mod.currentPlatformAsset() orelse {
-        if (is_tr) {
-            printErr("bu platform icin onceden derlenmis bir surum yok -- kaynaktan derleyin: bkz. CONTRIBUTING.md\n", .{});
-        } else {
-            printErr("no prebuilt release for this platform -- build from source: see CONTRIBUTING.md\n", .{});
-        }
+        printErr("no prebuilt release for this platform -- build from source: see https://noxlang.com/docs/internals/contributing/\n", .{});
         std.process.exit(1);
     };
 
     const install_root = try project.resolveInstallRoot(a, io, resource_dir_override);
     upgrade_mod.performUpgrade(a, io, target_tag, asset, install_root, policy, fetch_policy) catch |err| {
-        if (is_tr) printErr("guncelleme basarisiz ({t})\n", .{err}) else printErr("upgrade failed ({t})\n", .{err});
+        printErr("upgrade failed ({t})\n", .{err});
         std.process.exit(1);
     };
-    if (is_tr) printOk("guncellendi: {s}\n", .{target_tag}) else printOk("upgraded to: {s}\n", .{target_tag});
+    printOk("upgraded to: {s}\n", .{target_tag});
     // Eski paket-önbelleği SHA'larını süpür (en iyi çaba — hata sessizce yutulur).
-    autoPruneCache(io, a, nox_home, null, is_tr);
+    autoPruneCache(io, a, nox_home, null);
 }
 
 /// Faz Y.1: `noxc search <indeks-dosyasi.json> [sorgu]` — hafif, statik
@@ -471,7 +456,7 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
 /// search <indeks> ""` İLE İFADE edilebilir.
 fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
     if (args.len == 0) {
-        std.debug.print("kullanim: noxc search <sorgu> | noxc search <indeks-dosyasi.json|https://...> <sorgu>\n", .{});
+        std.debug.print("usage: noxc search <query> | noxc search <index-file.json|https://...> <query>\n", .{});
         std.process.exit(1);
     }
     const index_arg, const query = if (args.len == 1) .{ registry_policy.index_url, args[0] } else .{ args[0], args[1] };
@@ -484,12 +469,12 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registr
     const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
     const idx = if (is_url)
         pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
-            printErr("search: indeks getirilemedi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+            printErr("search: could not fetch/parse the index ({t}): {s}\n", .{ e, index_arg });
             std.process.exit(1);
         }
     else
         pkg_index.loadIndexFromFile(a, io, index_arg) catch |e| {
-            printErr("search: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+            printErr("search: could not read/parse the index ({t}): {s}\n", .{ e, index_arg });
             std.process.exit(1);
         };
 
@@ -504,7 +489,7 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registr
         try w.print("{s} — {s}\n", .{ pkg.name, pkg.repo });
         if (pkg.description.len > 0) try w.print("    {s}\n", .{pkg.description});
         if (pkg.tags.len > 0) {
-            try w.writeAll("    etiketler: ");
+            try w.writeAll("    tags: ");
             for (pkg.tags, 0..) |t, i| {
                 if (i > 0) try w.writeAll(", ");
                 try w.writeAll(t);
@@ -512,7 +497,7 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registr
             try w.writeAll("\n");
         }
     }
-    if (found == 0) try w.writeAll("eslesen paket bulunamadi\n");
+    if (found == 0) try w.writeAll("no matching packages found\n");
     try w.flush();
 }
 
@@ -530,7 +515,7 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
         if (std.mem.eql(u8, args[i], "--ref")) {
             i += 1;
             if (i >= args.len) {
-                printErr("add: --ref bir deger bekliyor\n", .{});
+                printErr("add: --ref expects a value\n", .{});
                 std.process.exit(1);
             }
             ref = args[i];
@@ -540,7 +525,7 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
         }
     }
     if (positionals.items.len == 0) {
-        std.debug.print("kullanim: noxc add <alias> [repo] [--ref <ref>]\n", .{});
+        std.debug.print("usage: noxc add <alias> [repo] [--ref <ref>]\n", .{});
         std.process.exit(1);
     }
     const alias = positionals.items[0];
@@ -550,16 +535,16 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
         const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
         const idx = if (is_url)
             pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
-                printErr("add: indeks getirilemedi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+                printErr("add: could not fetch/parse the index ({t}): {s}\n", .{ e, index_arg });
                 std.process.exit(1);
             }
         else
             pkg_index.loadIndexFromFile(a, io, index_arg) catch |e| {
-                printErr("add: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+                printErr("add: could not read/parse the index ({t}): {s}\n", .{ e, index_arg });
                 std.process.exit(1);
             };
         const entry = registry.findByAlias(idx, alias) orelse {
-            printErr("add: '{s}' indekste bulunamadi ({s}) — repo'yu acikca belirtin: noxc add {s} <repo>\n", .{ alias, index_arg, alias });
+            printErr("add: '{s}' not found in the index ({s}) — give the repo explicitly: noxc add {s} <repo>\n", .{ alias, index_arg, alias });
             std.process.exit(1);
         };
         break :blk entry.repo;
@@ -593,17 +578,17 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
 
     const new_manifest: project.Manifest = .{ .name = manifest.name, .entry = manifest.entry, .bin = manifest.bin, .requires = new_requires.items };
     project.validateManifest(new_manifest) catch |e| {
-        printErr("add: gecersiz alias '{s}' ({t})\n", .{ alias, e });
+        printErr("add: invalid alias '{s}' ({t})\n", .{ alias, e });
         std.process.exit(1);
     };
     try project.saveManifest(a, io, root, new_manifest);
 
     if (existing_idx != null) {
-        printOk("guncellendi: {s} -> {s}@{s}\n", .{ alias, repo, ref });
+        printOk("updated: {s} -> {s}@{s}\n", .{ alias, repo, ref });
     } else {
-        printOk("eklendi: {s} -> {s}@{s}\n", .{ alias, repo, ref });
+        printOk("added: {s} -> {s}@{s}\n", .{ alias, repo, ref });
     }
-    std.debug.print("sonraki adim: 'noxc fetch' calistirin\n", .{});
+    std.debug.print("next step: run 'noxc fetch'\n", .{});
 }
 
 /// `noxc delete <alias>` — `requires[]`den çıkarır VE `nox.lock`taki
@@ -611,7 +596,7 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
 /// girdisi KALMASIN).
 fn cmdDelete(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
     const alias = if (args.len > 0) args[0] else {
-        std.debug.print("kullanim: noxc delete <alias>\n", .{});
+        std.debug.print("usage: noxc delete <alias>\n", .{});
         std.process.exit(1);
     };
 
@@ -628,7 +613,7 @@ fn cmdDelete(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
         try new_requires.append(a, req);
     }
     if (!found) {
-        printErr("delete: '{s}' requires[] icinde bulunamadi\n", .{alias});
+        printErr("delete: '{s}' not found in requires[]\n", .{alias});
         std.process.exit(1);
     }
 
@@ -649,7 +634,7 @@ fn cmdDelete(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
         try project.saveLockfile(a, io, root, .{ .packages = new_packages.items });
     }
 
-    printOk("silindi: {s}\n", .{alias});
+    printOk("removed: {s}\n", .{alias});
 }
 
 /// `noxc publish <repo> [--ref <ref>] [--description <metin>] [--tags a,b,c]`
@@ -682,27 +667,27 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, regist
         }
     }
     const repo = repo_opt orelse {
-        std.debug.print("kullanim: noxc publish <repo> [--ref <ref>] [--description <metin>] [--tags a,b,c]\n", .{});
+        std.debug.print("usage: noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c]\n", .{});
         std.process.exit(1);
     };
 
     const root = try findProjectRootOrExit(io, a, "publish");
     const manifest = loadManifestOrExit(a, io, root);
     if (manifest.name.len == 0) {
-        printErr("publish: nox.json'da 'name' bos, publish icin gerekli\n", .{});
+        printErr("publish: 'name' in nox.json is empty, but it is required to publish\n", .{});
         std.process.exit(1);
     }
 
     const payload: registry.PublishPayload = .{ .name = manifest.name, .repo = repo, .ref = ref, .description = description, .tags = tags };
     const result = registry.submitPublish(a, io, registry_policy.publish_api_base, payload, fetch_policy.allow_insecure_transport) catch |e| {
-        printErr("publish: gonderilemedi ({t}): {s}\n", .{ e, registry_policy.publish_api_base });
+        printErr("publish: could not submit ({t}): {s}\n", .{ e, registry_policy.publish_api_base });
         std.process.exit(1);
     };
     if (!result.ok) {
-        printErr("publish: reddedildi: {s}\n", .{result.@"error"});
+        printErr("publish: rejected: {s}\n", .{result.@"error"});
         std.process.exit(1);
     }
-    printOk("gonderildi: {s} (id={s}) — onay bekleniyor\n", .{ manifest.name, result.id });
+    printOk("submitted: {s} (id={s}) — awaiting approval\n", .{ manifest.name, result.id });
 }
 
 /// `noxc install <paket-adi|repo> [--ref <ref>]` — bkz. `pkg/install.zig`nin
@@ -712,7 +697,7 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, regist
 /// yerine burada TEK argüman var, çünkü komut ADI `add`in aksine kullanıcı
 /// tarafından SEÇİLMEZ — paketin KENDİ `nox.json`sindeki `bin.name`den
 /// GELİR.
-fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy, environ_map: *const std.process.Environ.Map, is_tr: bool) !void {
+fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy, environ_map: *const std.process.Environ.Map) !void {
     var ref: []const u8 = "main";
     var ref_explicit = false;
     var pkg_arg: ?[]const u8 = null;
@@ -721,7 +706,7 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         if (std.mem.eql(u8, args[i], "--ref")) {
             i += 1;
             if (i >= args.len) {
-                printErr("install: --ref bir deger bekliyor\n", .{});
+                printErr("install: --ref expects a value\n", .{});
                 std.process.exit(1);
             }
             ref = args[i];
@@ -731,7 +716,7 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         }
     }
     const pkg = pkg_arg orelse {
-        std.debug.print("kullanim: noxc install <paket-adi|repo> [--ref <ref>]\n", .{});
+        std.debug.print("usage: noxc install <package-name|repo> [--ref <ref>]\n", .{});
         std.process.exit(1);
     };
 
@@ -745,16 +730,16 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
         const idx = if (is_url)
             pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
-                printErr("install: indeks getirilemedi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+                printErr("install: could not fetch/parse the index ({t}): {s}\n", .{ e, index_arg });
                 std.process.exit(1);
             }
         else
             pkg_index.loadIndexFromFile(a, io, index_arg) catch |e| {
-                printErr("install: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+                printErr("install: could not read/parse the index ({t}): {s}\n", .{ e, index_arg });
                 std.process.exit(1);
             };
         const entry = registry.findByAlias(idx, pkg) orelse {
-            printErr("install: '{s}' indekste bulunamadi ({s}) — repo'yu acikca belirtin: noxc install <repo>\n", .{ pkg, index_arg });
+            printErr("install: '{s}' not found in the index ({s}) — give the repo explicitly: noxc install <repo>\n", .{ pkg, index_arg });
             std.process.exit(1);
         };
         break :blk entry.repo;
@@ -770,7 +755,7 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         ref = fetch.resolveDefaultRef(a, io, repo, fetch_policy) catch ref;
     }
 
-    installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, is_tr, repo, ref) catch std.process.exit(1);
+    installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, repo, ref) catch std.process.exit(1);
 }
 
 /// v1.33.0 (bkz. nox-teknik-spesifikasyon.md §3.100): `cmdInstall`nin (repo/
@@ -792,22 +777,21 @@ fn installOrUpdatePackage(
     resource_dirs: project.ResourceDirs,
     fetch_policy: fetch.FetchPolicy,
     environ_map: *const std.process.Environ.Map,
-    is_tr: bool,
     repo: []const u8,
     ref: []const u8,
 ) !void {
     var sig_diag: ?[]const u8 = null;
     const fetch_result = fetch.fetchToCache(a, io, nox_home, repo, ref, false, &sig_diag, fetch_policy) catch |e| {
-        printErr("install: getirilemedi ({t}): {s}@{s}\n", .{ e, repo, ref });
+        printErr("install: could not fetch ({t}): {s}@{s}\n", .{ e, repo, ref });
         return e;
     };
 
     const pkg_manifest = project.loadManifest(a, io, fetch_result.cache_dir) catch |e| {
-        printErr("install: paketin nox.json'i okunamadi/gecersiz ({s}): {t}\n", .{ fetch_result.cache_dir, e });
+        printErr("install: the package's nox.json could not be read or is invalid ({s}): {t}\n", .{ fetch_result.cache_dir, e });
         return e;
     };
     const bin_spec = pkg_manifest.bin orelse {
-        printErr("install: '{s}' global kurulum icin bir 'bin' giris noktasi tanimlamiyor\n", .{repo});
+        printErr("install: '{s}' does not define a 'bin' entry point for global installation\n", .{repo});
         return error.NoBinEntryPoint;
     };
     const bin_source_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ fetch_result.cache_dir, bin_spec.path });
@@ -852,17 +836,17 @@ fn installOrUpdatePackage(
 
     const short_sha = fetch_result.resolved_sha[0..@min(8, fetch_result.resolved_sha.len)];
     if (was_already_installed) {
-        printOk("guncellendi: {s} ({s}@{s})\n", .{ bin_spec.name, repo, short_sha });
+        printOk("updated: {s} ({s}@{s})\n", .{ bin_spec.name, repo, short_sha });
     } else {
-        printOk("kuruldu: {s} ({s}@{s})\n", .{ bin_spec.name, repo, short_sha });
+        printOk("installed: {s} ({s}@{s})\n", .{ bin_spec.name, repo, short_sha });
     }
 
     // Bu repo'nun eski (artık kurulu olmayan) SHA dizinlerini sil.
-    autoPruneCache(io, a, nox_home, repo, is_tr);
+    autoPruneCache(io, a, nox_home, repo);
 
     const path_env = environ_map.get("PATH") orelse "";
     if (!install_mod.isDirOnPath(path_env, bin_dir_path)) {
-        install_mod.printPathHint(bin_dir_path, is_tr);
+        install_mod.printPathHint(bin_dir_path);
     }
 }
 
@@ -878,29 +862,29 @@ fn installOrUpdatePackage(
 /// DİĞERLERİNİ ENGELLEMEZ (pip/cargo/apt'nin "toplu güncelleme"
 /// konvansiyonuyla TUTARLI), sadece SONUNDA (en az bir başarısızlık
 /// VARSA) `exit(1)` yapılır.
-fn cmdRefresh(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy, environ_map: *const std.process.Environ.Map, is_tr: bool) !void {
+fn cmdRefresh(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy, environ_map: *const std.process.Environ.Map) !void {
     const registry_state = project.loadInstalledRegistry(a, io, nox_home) catch |e| {
-        printErr("refresh: kurulu-paket kaydi okunamadi: {t}\n", .{e});
+        printErr("refresh: could not read the installed-package record: {t}\n", .{e});
         std.process.exit(1);
     };
 
     if (args.len > 0) {
         const command_name = args[0];
         const entry = project.findInstalled(registry_state, command_name) orelse {
-            printErr("refresh: '{s}' global kurulu degil\n", .{command_name});
+            printErr("refresh: '{s}' is not installed globally\n", .{command_name});
             std.process.exit(1);
         };
-        installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, is_tr, entry.repo, entry.ref) catch std.process.exit(1);
+        installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, entry.repo, entry.ref) catch std.process.exit(1);
         return;
     }
 
     if (registry_state.packages.len == 0) {
-        std.debug.print("refresh: hicbir paket global olarak kurulu degil\n", .{});
+        std.debug.print("refresh: no package is installed globally\n", .{});
         return;
     }
     var fail_count: usize = 0;
     for (registry_state.packages) |entry| {
-        installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, is_tr, entry.repo, entry.ref) catch {
+        installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, entry.repo, entry.ref) catch {
             fail_count += 1;
         };
     }
@@ -921,7 +905,7 @@ fn installedKeepEntries(io: std.Io, a: std.mem.Allocator, nox_home: []const u8) 
 /// önbellek (en-yeni-koruma AÇIK — projelerin güncel `nox.lock` sürümleri
 /// yeniden indirilmesin). Her hata sessizce yutulur: temizlik asla
 /// asıl komutu başarısız KILMAZ.
-fn autoPruneCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, only_repo: ?[]const u8, is_tr: bool) void {
+fn autoPruneCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, only_repo: ?[]const u8) void {
     const keep = installedKeepEntries(io, a, nox_home) catch return;
     const report = cache_prune.prune(a, io, nox_home, keep, .{
         .only_repo = only_repo,
@@ -930,7 +914,7 @@ fn autoPruneCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, only_r
     const n = report.removed_paths.len + report.removed_tmp_entries;
     if (n == 0) return;
     const size = cache_prune.formatBytes(a, report.freed_bytes) catch return;
-    if (is_tr) printOk("eski onbellek temizlendi: {d} girdi, {s}\n", .{ n, size }) else printOk("pruned old cache entries: {d}, {s}\n", .{ n, size });
+    printOk("pruned old cache entries: {d}, {s}\n", .{ n, size });
 }
 
 /// `noxc cache prune [--dry-run] [--all]` — paket önbelleğindeki (`pkg/mod`)
@@ -940,7 +924,7 @@ fn autoPruneCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, only_r
 /// hiçbir şey silmeden ne silineceğini ve ne kadar yer açılacağını yazar.
 fn cmdCache(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
     if (args.len == 0 or !std.mem.eql(u8, args[0], "prune")) {
-        std.debug.print("kullanim: noxc cache prune [--dry-run] [--all]\n", .{});
+        std.debug.print("usage: noxc cache prune [--dry-run] [--all]\n", .{});
         std.process.exit(1);
     }
     var opts: cache_prune.PruneOptions = .{};
@@ -950,25 +934,25 @@ fn cmdCache(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home
         } else if (std.mem.eql(u8, arg, "--all")) {
             opts.keep_newest_per_repo = false;
         } else {
-            printErr("cache prune: bilinmeyen secenek: {s}\n", .{arg});
+            printErr("cache prune: unknown option: {s}\n", .{arg});
             std.process.exit(1);
         }
     }
     const keep = installedKeepEntries(io, a, nox_home) catch |e| {
-        printErr("cache prune: kurulu-paket kaydi okunamadi: {t}\n", .{e});
+        printErr("cache prune: could not read the installed-package record: {t}\n", .{e});
         std.process.exit(1);
     };
     const report = cache_prune.prune(a, io, nox_home, keep, opts) catch |e| {
-        printErr("cache prune: basarisiz: {t}\n", .{e});
+        printErr("cache prune: failed: {t}\n", .{e});
         std.process.exit(1);
     };
     var stdout_buf: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
     const w = &stdout_writer.interface;
-    for (report.removed_paths) |p| try w.print("{s}{s}\n", .{ if (opts.dry_run) "silinecek: " else "silindi: ", p });
+    for (report.removed_paths) |p| try w.print("{s}{s}\n", .{ if (opts.dry_run) "would remove: " else "removed: ", p });
     const size = try cache_prune.formatBytes(a, report.freed_bytes);
-    try w.print("{s}: {d} onbellek girdisi + {d} gecici artik, {s}; korunan: {d}\n", .{
-        if (opts.dry_run) "dry-run" else "temizlendi",
+    try w.print("{s}: {d} cache entries + {d} temporary leftovers, {s}; kept: {d}\n", .{
+        if (opts.dry_run) "dry-run" else "pruned",
         report.removed_paths.len,
         report.removed_tmp_entries,
         size,
@@ -983,16 +967,16 @@ fn cmdCache(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home
 /// removeInstalled`in belge notu.
 fn cmdUninstall(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
     const command_name = if (args.len > 0) args[0] else {
-        std.debug.print("kullanim: noxc uninstall <komut-adi>\n", .{});
+        std.debug.print("usage: noxc uninstall <command-name>\n", .{});
         std.process.exit(1);
     };
 
     const registry_state = project.loadInstalledRegistry(a, io, nox_home) catch |e| {
-        printErr("uninstall: kurulu-paket kaydi okunamadi: {t}\n", .{e});
+        printErr("uninstall: could not read the installed-package record: {t}\n", .{e});
         std.process.exit(1);
     };
     const new_packages = try project.removeInstalled(a, registry_state, command_name) orelse {
-        printErr("uninstall: '{s}' global kurulu degil\n", .{command_name});
+        printErr("uninstall: '{s}' is not installed globally\n", .{command_name});
         std.process.exit(1);
     };
 
@@ -1002,14 +986,14 @@ fn cmdUninstall(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_
     std.Io.Dir.cwd().deleteFile(io, bin_file_path) catch {};
 
     try project.saveInstalledRegistry(a, io, nox_home, .{ .packages = new_packages });
-    printOk("kaldirildi: {s}\n", .{command_name});
+    printOk("uninstalled: {s}\n", .{command_name});
 }
 
 /// `noxc list` — global kurulu paketlerin insan-okunur bir tablosunu
 /// yazdırır (bkz. `project.InstalledRegistry`).
 fn cmdListInstalled(io: std.Io, a: std.mem.Allocator, nox_home: []const u8) !void {
     const registry_state = project.loadInstalledRegistry(a, io, nox_home) catch |e| {
-        printErr("list: kurulu-paket kaydi okunamadi: {t}\n", .{e});
+        printErr("list: could not read the installed-package record: {t}\n", .{e});
         std.process.exit(1);
     };
 
@@ -1018,7 +1002,7 @@ fn cmdListInstalled(io: std.Io, a: std.mem.Allocator, nox_home: []const u8) !voi
     const w = &stdout_writer.interface;
 
     if (registry_state.packages.len == 0) {
-        try w.writeAll("hicbir paket global olarak kurulu degil (bkz. 'noxc install --help')\n");
+        try w.writeAll("no package is installed globally (see 'noxc install --help')\n");
         try w.flush();
         return;
     }
@@ -1110,7 +1094,7 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
         .llvm => {
             // v2.0: `-g` (DWARF satır tablosu) yalnızca QBE yolunda üretilir; LLVM'de açıkça istenirse net bir hata ver.
             if (debug_info) {
-                printErr("-g (hata ayiklama bilgisi) yalnizca QBE backend'inde desteklenir: --backend qbe -g kullanin\n", .{});
+                printErr("-g (debug info) is only supported by the QBE backend: use --backend qbe -g\n", .{});
                 std.process.exit(1);
             }
             return true;
@@ -1125,11 +1109,7 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
     // yalnızca `clang` (genelde MSVC hedefli) olan makinede QBE + MinGW `cc` yolu korunur. `--backend llvm` her zaman zorlar.
     if (builtin.os.tag == .windows) return ccDriver(gpa, io) == .zig_cc;
     if (!clangAvailable(gpa, io)) {
-        if (g_is_tr) {
-            printErr("not: clang/zig bulunamadi, QBE backend'i kullaniliyor (varsayilan LLVM backend'i icin PATH'te clang ya da zig gerekir; --backend qbe ile bu notu kapatabilirsiniz)\n", .{});
-        } else {
-            printErr("note: neither clang nor zig found, using the QBE backend (the default LLVM backend needs clang or zig on PATH; pass --backend qbe to silence this)\n", .{});
-        }
+        printErr("note: neither clang nor zig found, using the QBE backend (the default LLVM backend needs clang or zig on PATH; pass --backend qbe to silence this)\n", .{});
         return false;
     }
     return true;
@@ -1154,7 +1134,7 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
                 } else if (std.mem.eql(u8, args[i], "llvm")) {
                     opts.backend = .llvm;
                 } else {
-                    printErr("bilinmeyen backend: '{s}' (gecerli degerler: qbe, llvm)\n", .{args[i]});
+                    printErr("unknown backend: '{s}' (valid values: qbe, llvm)\n", .{args[i]});
                     std.process.exit(1);
                 }
             }
@@ -1169,7 +1149,7 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
                 } else if (std.mem.eql(u8, args[i], "freestanding")) {
                     opts.profile = .freestanding;
                 } else {
-                    printErr("bilinmeyen profil: '{s}' (gecerli degerler: hosted, freestanding)\n", .{args[i]});
+                    printErr("unknown profile: '{s}' (valid values: hosted, freestanding)\n", .{args[i]});
                     std.process.exit(1);
                 }
             }
@@ -1203,7 +1183,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
         std.process.exit(1);
     };
     const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
-    printOk("derlendi: {s}\n", .{out});
+    printOk("built: {s}\n", .{out});
 }
 
 /// v2.0 madde 8: `opts.target` HOST'un KENDİ mimarisine/platformuna karşılık
@@ -1237,7 +1217,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     const split = splitOnDoubleDash(args);
     const opts = parseBuildOpts(split.before);
     const path_arg = opts.path orelse {
-        std.debug.print("kullanim: noxc run [--dump|-v] <dosya.nox> [-- argv...]\n", .{});
+        std.debug.print("usage: noxc run [--dump|-v] <file.nox> [-- argv...]\n", .{});
         std.process.exit(1);
     };
     // v2.0 madde 8: `--emit-asm` linklenmemiş BİR `.s` dosyası döner,
@@ -1246,12 +1226,12 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     // eski `NOX_FREESTANDING_KERNEL_ARCH`in `cmdRun` reddiyle AYNI ruh,
     // ARTIK genel.
     if (opts.emit_asm) {
-        printErr("noxc run: --emit-asm ile calistirilamaz (linklenmemis .s uretir, sadece 'noxc build' ile kullanin)\n", .{});
+        printErr("noxc run: cannot run with --emit-asm (it produces an unlinked .s file; use 'noxc build')\n", .{});
         std.process.exit(1);
     }
     if (opts.target) |t| {
         if (!isRunnableOnHost(opts.profile, t)) {
-            printErr("noxc run: --target {s} bu makinede calistirilamaz (capraz-derlenmis bir ikili) - 'noxc build' kullanin\n", .{t});
+            printErr("noxc run: --target {s} cannot run on this machine (it is a cross-compiled binary) - use 'noxc build'\n", .{t});
             std.process.exit(1);
         }
     }
@@ -1316,7 +1296,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
 
     const files = try test_runner.discoverTestFiles(a, io, walk_root);
     if (files.len == 0) {
-        std.debug.print("0 test dosyasi bulundu ({s} altinda *_test.nox aranir)\n", .{walk_root});
+        std.debug.print("found 0 test files (looking for *_test.nox under {s})\n", .{walk_root});
         return;
     }
 
@@ -1331,19 +1311,19 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
-            printOk("GECTI: {s}\n", .{file});
+            printOk("PASSED: {s}\n", .{file});
             pass_count += 1;
         } else {
-            printErr("BASARISIZ: {s}\n", .{file});
+            printErr("FAILED: {s}\n", .{file});
             fail_count += 1;
         }
     }
 
     if (fail_count > 0) {
-        printErr("\n{d} gecti, {d} basarisiz ({d} toplam)\n", .{ pass_count, fail_count, files.len });
+        printErr("\n{d} passed, {d} failed ({d} total)\n", .{ pass_count, fail_count, files.len });
         std.process.exit(1);
     }
-    printOk("\n{d} gecti, {d} basarisiz ({d} toplam)\n", .{ pass_count, fail_count, files.len });
+    printOk("\n{d} passed, {d} failed ({d} total)\n", .{ pass_count, fail_count, files.len });
 }
 
 /// Faz T.4b: `noxc fmt <dosya.nox>` — kaynağı `lexer.tokenizeWithTrivia` +
@@ -1357,7 +1337,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
 /// içeriği DEĞİL (bkz. `formatter.zig`nin modül üstü notu).
 fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
     if (args.len == 0) {
-        std.debug.print("kullanim: noxc fmt <dosya.nox>\n", .{});
+        std.debug.print("usage: noxc fmt <file.nox>\n", .{});
         std.process.exit(1);
     }
     const path_arg = args[0];
@@ -1365,11 +1345,11 @@ fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     defer gpa.free(source);
 
     const result = lexer.tokenizeWithTrivia(a, source) catch |e| {
-        printErr("fmt: lex hatasi ({t})\n", .{e});
+        printErr("fmt: lexer error ({t})\n", .{e});
         std.process.exit(1);
     };
     const module = parser.parseModule(a, result.tokens) catch |e| {
-        printErr("fmt: ayristirma hatasi ({t})\n", .{e});
+        printErr("fmt: parse error ({t})\n", .{e});
         std.process.exit(1);
     };
     const formatted = try formatter.formatModule(a, module, result.trivia);
@@ -1431,7 +1411,7 @@ fn resolveImportsForBuild(
     const root = (try project.findProjectRoot(a, io, start_dir)) orelse {
         return module_loader.resolveImportsFrom(a, io, user_module, resource_dirs.stdlib_dir) catch |e| switch (e) {
             error.ModuleNotFound => {
-                printErr("import: stdlib modülü bulunamadı ({s} altında aranır)\n", .{resource_dirs.stdlib_dir});
+                printErr("import: stdlib module not found (searched under {s})\n", .{resource_dirs.stdlib_dir});
                 std.process.exit(1);
             },
             else => |err| return err,
@@ -1439,11 +1419,11 @@ fn resolveImportsForBuild(
     };
 
     const manifest = project.loadManifest(a, io, root) catch |e| {
-        printErr("nox.json okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        printErr("nox.json could not be read or is invalid ({s}): {t}\n", .{ root, e });
         std.process.exit(1);
     };
     const lock = project.loadLockfile(a, io, root) catch |e| {
-        printErr("nox.lock okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        printErr("nox.lock could not be read or is invalid ({s}): {t}\n", .{ root, e });
         std.process.exit(1);
     };
 
@@ -1483,9 +1463,9 @@ fn resolveImportsForBuild(
             var sig_diag: ?[]const u8 = null;
             const result = fetch.fetchToCache(a, io, nox_home, req.repo, fetch_ref, req.require_signed_commit, &sig_diag, fetch_policy) catch |e| {
                 if (e == error.CommitSignatureRejected) {
-                    printErr("paket getirilemedi (alias={s}, repo={s}): commit imza dogrulamasi basarisiz:\n{s}\n", .{ req.alias, req.repo, sig_diag orelse "(git aciklama vermedi)" });
+                    printErr("could not fetch the package (alias={s}, repo={s}): commit signature verification failed:\n{s}\n", .{ req.alias, req.repo, sig_diag orelse "(git gave no explanation)" });
                 } else {
-                    printErr("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+                    printErr("could not fetch the package (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
                 }
                 std.process.exit(1);
             };
@@ -1510,11 +1490,11 @@ fn resolveImportsForBuild(
 
     return module_loader.resolveProjectImports(a, io, user_module, roots, resource_dirs.stdlib_dir, root) catch |e| switch (e) {
         error.ModuleNotFound => {
-            printErr("import: modül bulunamadı (ne 'stdlib/' altında ne bir bağımlılık dizininde)\n", .{});
+            printErr("import: module not found (neither under 'stdlib/' nor in a dependency directory)\n", .{});
             std.process.exit(1);
         },
         error.UnknownImportAlias => {
-            printErr("import: bilinmeyen alias veya proje-içi dosya bulunamadı ({s}/nox.json'daki 'requires' listesine bakın ya da '{s}' altında ilgili .nox dosyasının var olduğundan emin olun)\n", .{ root, root });
+            printErr("import: unknown alias, or project file not found (check the 'requires' list in {s}/nox.json, or make sure the .nox file exists under '{s}')\n", .{ root, root });
             std.process.exit(1);
         },
         else => |err| return err,
@@ -1528,21 +1508,21 @@ fn resolveImportsForBuild(
 fn findProjectRootOrExit(io: std.Io, a: std.mem.Allocator, cmd_name: []const u8) ![]const u8 {
     const cwd_abs = try std.process.currentPathAlloc(io, a);
     return (try project.findProjectRoot(a, io, cwd_abs)) orelse {
-        printErr("{s}: nox.json bulunamadi (proje kokunde ya da bir alt dizininde olmalisiniz)\n", .{cmd_name});
+        printErr("{s}: nox.json not found (you must be in the project root or one of its subdirectories)\n", .{cmd_name});
         std.process.exit(1);
     };
 }
 
 fn loadManifestOrExit(a: std.mem.Allocator, io: std.Io, root: []const u8) project.Manifest {
     return project.loadManifest(a, io, root) catch |e| {
-        printErr("nox.json okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        printErr("nox.json could not be read or is invalid ({s}): {t}\n", .{ root, e });
         std.process.exit(1);
     };
 }
 
 fn loadLockfileOrExit(a: std.mem.Allocator, io: std.Io, root: []const u8) project.Lockfile {
     return project.loadLockfile(a, io, root) catch |e| {
-        printErr("nox.lock okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        printErr("nox.lock could not be read or is invalid ({s}): {t}\n", .{ root, e });
         std.process.exit(1);
     };
 }
@@ -1629,9 +1609,9 @@ fn resolveDependencies(
         var sig_diag: ?[]const u8 = null;
         const result = fetch.fetchToCache(a, io, nox_home, req.repo, fetch_ref, req.require_signed_commit, &sig_diag, fetch_policy) catch |e| {
             if (e == error.CommitSignatureRejected) {
-                printErr("paket getirilemedi (alias={s}, repo={s}): commit imza dogrulamasi basarisiz:\n{s}\n", .{ req.alias, req.repo, sig_diag orelse "(git aciklama vermedi)" });
+                printErr("could not fetch the package (alias={s}, repo={s}): commit signature verification failed:\n{s}\n", .{ req.alias, req.repo, sig_diag orelse "(git gave no explanation)" });
             } else {
-                printErr("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+                printErr("could not fetch the package (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
             }
             std.process.exit(1);
         };
@@ -1672,7 +1652,7 @@ fn cmdFetch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home
     const lock = loadLockfileOrExit(a, io, root);
 
     if (manifest.requires.len == 0) {
-        std.debug.print("fetch: nox.json'da hic bagimlilik yok ('requires' bos)\n", .{});
+        std.debug.print("fetch: nox.json has no dependencies ('requires' is empty)\n", .{});
         return;
     }
 
@@ -1688,20 +1668,20 @@ fn cmdFetch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home
         switch (o.action) {
             .fetched => {
                 fetched += 1;
-                std.debug.print("getirildi: {s} ({s}@{s})\n", .{ o.alias, o.repo, shortSha(o.resolved) });
+                std.debug.print("fetched: {s} ({s}@{s})\n", .{ o.alias, o.repo, shortSha(o.resolved) });
             },
             .cached => {
                 cached += 1;
-                std.debug.print("zaten guncel: {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
+                std.debug.print("already up to date: {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
             },
             .recached => {
                 recached += 1;
-                std.debug.print("onbellek yeniden olusturuldu (kilitli SHA'dan): {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
+                std.debug.print("cache rebuilt (from the locked SHA): {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
             },
             .updated, .unchanged => unreachable, // force_refetch=false bunlari asla uretmez
         }
     }
-    std.debug.print("fetch tamamlandi: {d} getirildi, {d} zaten guncel, {d} yeniden onbelleklendi\n", .{ fetched, cached, recached });
+    std.debug.print("fetch complete: {d} fetched, {d} already up to date, {d} re-cached\n", .{ fetched, cached, recached });
 }
 
 /// `noxc update` — `fetch`in AKSİNE, HER bağımlılığı `req.ref`den
@@ -1714,7 +1694,7 @@ fn cmdUpdate(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_hom
     const lock = loadLockfileOrExit(a, io, root);
 
     if (manifest.requires.len == 0) {
-        std.debug.print("update: nox.json'da hic bagimlilik yok ('requires' bos)\n", .{});
+        std.debug.print("update: nox.json has no dependencies ('requires' is empty)\n", .{});
         return;
     }
 
@@ -1727,21 +1707,21 @@ fn cmdUpdate(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_hom
         switch (o.action) {
             .updated => {
                 updated += 1;
-                std.debug.print("guncellendi: {s} {s} -> {s}\n", .{ o.alias, shortSha(o.previous_resolved.?), shortSha(o.resolved) });
+                std.debug.print("updated: {s} {s} -> {s}\n", .{ o.alias, shortSha(o.previous_resolved.?), shortSha(o.resolved) });
             },
             .unchanged => {
                 unchanged += 1;
-                std.debug.print("degismedi: {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
+                std.debug.print("unchanged: {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
             },
             .fetched => {
                 updated += 1;
-                std.debug.print("yeni kilitlendi: {s} ({s}@{s})\n", .{ o.alias, o.repo, shortSha(o.resolved) });
+                std.debug.print("newly locked: {s} ({s}@{s})\n", .{ o.alias, o.repo, shortSha(o.resolved) });
             },
             .cached => unreachable, // force_refetch=true asla .cached uretmez
             .recached => unreachable, // force_refetch=true asla .recached uretmez (bkz. DepAction.recached'in belge notu)
         }
     }
-    std.debug.print("update tamamlandi: {d} guncellendi, {d} degismedi\n", .{ updated, unchanged });
+    std.debug.print("update complete: {d} updated, {d} unchanged\n", .{ updated, unchanged });
 }
 
 /// `dir`/`name`i birleştirir — `dir == "."` İSE (varsayılan, `noxc init`in
@@ -1769,14 +1749,14 @@ fn cmdInit(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
 
     if (has_name_arg) {
         std.Io.Dir.cwd().createDirPath(io, target_dir) catch |e| {
-            printErr("init: dizin olusturulamadi ({s}): {t}\n", .{ target_dir, e });
+            printErr("init: could not create the directory ({s}): {t}\n", .{ target_dir, e });
             std.process.exit(1);
         };
     }
 
     const manifest_path = try joinIfNeeded(a, target_dir, "nox.json");
     if (std.Io.Dir.cwd().access(io, manifest_path, .{})) |_| {
-        printErr("init: '{s}' zaten var, uzerine yazilmiyor\n", .{manifest_path});
+        printErr("init: '{s}' already exists, not overwriting\n", .{manifest_path});
         std.process.exit(1);
     } else |_| {}
 
@@ -1805,7 +1785,7 @@ fn cmdInit(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = gitignore_path, .data = ".nox/\nmain\n" });
     }
 
-    printOk("olusturuldu: {s}, {s}\n", .{ manifest_path, main_path });
+    printOk("created: {s}, {s}\n", .{ manifest_path, main_path });
 }
 
 /// `noxc check <dosya.nox>` — Faz CC.2.2: SADECE lex→parse→import
@@ -1820,7 +1800,7 @@ fn cmdInit(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
 fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const opts = parseBuildOpts(args);
     const path_arg = opts.path orelse {
-        std.debug.print("kullanim: noxc check [--profile <hosted|freestanding>] <dosya.nox>\n", .{});
+        std.debug.print("usage: noxc check [--profile <hosted|freestanding>] <file.nox>\n", .{});
         std.process.exit(1);
     };
 
@@ -1835,17 +1815,17 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     // `build` ile aynı backend'e göre denetle (checker'ın `spawn` tip kuralları backend'e bağlıdır).
     checker_state.backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm, opts.debug_info)) .llvm else .qbe;
     checker_state.checkModule(module) catch |e| {
-        printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         std.process.exit(1);
     };
     if (checker_state.diagnostics.items.len > 0) {
         for (checker_state.diagnostics.items) |d| {
-            printErr("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+            printErr("type error ({t}): {s}\n", .{ d.code, d.message });
         }
         std.process.exit(1);
     }
 
-    printOk("tip hatasi yok: {s}\n", .{path_arg});
+    printOk("no type errors: {s}\n", .{path_arg});
 }
 
 /// `noxc expand <dosya.nox>` — Faz 1 decorator (bkz. plan dosyası
@@ -1858,7 +1838,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// DOĞRU ayrıştırıldığını/geçerli argümanlar TAŞIDIĞINI DOĞRULAMASI İçİndir.
 fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const path_arg = if (args.len > 0) args[0] else {
-        std.debug.print("kullanim: noxc expand <dosya.nox>\n", .{});
+        std.debug.print("usage: noxc expand <file.nox>\n", .{});
         std.process.exit(1);
     };
 
@@ -1870,12 +1850,12 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
 
     var checker_state = checker.Checker.init(a);
     checker_state.checkModule(module) catch |e| {
-        printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         std.process.exit(1);
     };
     if (checker_state.diagnostics.items.len > 0) {
         for (checker_state.diagnostics.items) |d| {
-            printErr("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+            printErr("type error ({t}): {s}\n", .{ d.code, d.message });
         }
         std.process.exit(1);
     }
@@ -1885,9 +1865,9 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
     const w = &stdout_writer.interface;
     const decorated = checker_state.decorated_functions.items;
     if (decorated.len == 0) {
-        try w.print("decorator bulunamadi: {s}\n", .{path_arg});
+        try w.print("decorator not found: {s}\n", .{path_arg});
     } else {
-        try w.print("{d} decorator bulundu:\n", .{decorated.len});
+        try w.print("{d} decorator(s) found:\n", .{decorated.len});
         for (decorated) |d| {
             try w.print("  @{s}(", .{d.decorator_name});
             for (d.args, 0..) |arg, i| {
@@ -1931,7 +1911,7 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
 fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const opts = parseBuildOpts(args);
     const path_arg = opts.path orelse {
-        std.debug.print("kullanim: noxc explain [--release] <dosya.nox>\n", .{});
+        std.debug.print("usage: noxc explain [--release] <file.nox>\n", .{});
         std.process.exit(1);
     };
 
@@ -1945,12 +1925,12 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     var checker_state = checker.Checker.init(a);
     checker_state.backend = backend;
     checker_state.checkModule(module) catch |e| {
-        printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         std.process.exit(1);
     };
     if (checker_state.diagnostics.items.len > 0) {
         for (checker_state.diagnostics.items) |d| {
-            printErr("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+            printErr("type error ({t}): {s}\n", .{ d.code, d.message });
         }
         std.process.exit(1);
     }
@@ -1995,7 +1975,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     const user_stmt_start = module.body.len - user_module.body.len;
     var explain_sink: std.ArrayListUnmanaged(local_escape.ExplainRecord) = .empty;
     _ = codegen.generateModuleWithMeta(a, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, opts.profile, .{ .sink = &explain_sink, .user_stmt_start = user_stmt_start }, callback_targets.items, resolved_bases, checker_state.class_ctors.items) catch |err| {
-        printErr("explain: kod uretimi basarisiz ({t})\n", .{err});
+        printErr("explain: code generation failed ({t})\n", .{err});
         std.process.exit(1);
     };
 
@@ -2003,24 +1983,24 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
     const w = &stdout_writer.interface;
     if (explain_sink.items.len == 0) {
-        try w.print("tahsis kararı gerektiren bir yerel değişken bulunamadı: {s}\n", .{path_arg});
+        try w.print("no local variable needing an allocation decision was found: {s}\n", .{path_arg});
     } else {
         for (explain_sink.items) |r| {
             const verdict_label = switch (r.verdict) {
                 .stack => "stack",
                 .arena => "arena",
-                .arc => "ARC (heap, referans-sayımlı)",
+                .arc => "ARC (heap, reference-counted)",
             };
             try w.print("{s}:{d}  {s}\n", .{ path_arg, r.line, r.name });
             if (r.size) |sz| {
-                try w.print("  tahsis: {s} ({d} bayt)\n", .{ verdict_label, sz });
+                try w.print("  allocation: {s} ({d} bytes)\n", .{ verdict_label, sz });
             } else {
-                try w.print("  tahsis: {s}\n", .{verdict_label});
+                try w.print("  allocation: {s}\n", .{verdict_label});
             }
-            try w.writeAll("  gerekce:\n");
+            try w.writeAll("  reasons:\n");
             for (r.reasons) |reason| try w.print("    - {s}\n", .{reason});
             if (r.verdict == .stack) {
-                try w.print("  çerçeve bütçesi: {d} / {d} bayt (önce: {d})\n", .{ r.budget_after, inlining_mod.MAX_PROMOTED_FRAME_SIZE, r.budget_before });
+                try w.print("  frame budget: {d} / {d} bytes (before: {d})\n", .{ r.budget_after, inlining_mod.MAX_PROMOTED_FRAME_SIZE, r.budget_before });
             }
         }
     }
@@ -2078,7 +2058,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // NOKTASI (`buildOne`nin KENDİSİ) `cmdBuild`/`cmdRun`/`cmdTest`nin TÜM
     // çağrı sitelerini otomatik/ücretsiz kapsar.
     if (release and profile == .freestanding) {
-        printErr("freestanding profili su an SADECE QBE backend'ini destekler (--release ile BIRLIKTE KULLANILAMAZ — LLVM'in KENDI WorkerPool'u GERCEK OS is parcaciklari gerektirir, freestanding'de MEVCUT DEGIL)\n", .{});
+        printErr("the freestanding profile currently supports ONLY the QBE backend (it cannot be combined with --release: LLVM's own WorkerPool needs real OS threads, which do not exist in freestanding)\n", .{});
         std.process.exit(1);
     }
     // Bulundu (kullanıcı geri bildirimi): `noxc upgrade` gibi mistyped/
@@ -2091,13 +2071,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     const source = std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024)) catch |err| {
         if (err == error.FileNotFound) {
             if (std.mem.endsWith(u8, path_arg, ".nox")) {
-                if (g_is_tr) {
-                    printErr("dosya bulunamadi: {s}\n", .{path_arg});
-                } else {
-                    printErr("file not found: {s}\n", .{path_arg});
-                }
-            } else if (g_is_tr) {
-                printErr("bilinmeyen komut ya da dosya: '{s}' — komutlar icin: noxc --help\n", .{path_arg});
+                printErr("file not found: {s}\n", .{path_arg});
             } else {
                 printErr("unknown command or file: '{s}' — for commands, run: noxc --help\n", .{path_arg});
             }
@@ -2134,7 +2108,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     checker_state.backend = backend;
     checker_state.profile = profile;
     checker_state.checkModule(module) catch |e| {
-        printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         std.process.exit(1);
     };
     // Faz T.2: `checkModule` artık fonksiyon/sınıf/metod/gevşek-deyim
@@ -2143,7 +2117,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // dönüş TEK BAŞINA "tip hatasız" anlamına GELMEZ, AYRICA kontrol edilir.
     if (checker_state.diagnostics.items.len > 0) {
         for (checker_state.diagnostics.items) |d| {
-            printErr("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+            printErr("type error ({t}): {s}\n", .{ d.code, d.message });
         }
         std.process.exit(1);
     }
@@ -2227,11 +2201,11 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     const ir = codegen.generateModuleWithMeta(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, profile, null, callback_targets.items, resolved_bases, checker_state.class_ctors.items) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
-                "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++
-                    "(ör. iç içe fonksiyon/sınıf tanımı, desteklenmeyen bir " ++
-                    "tip ifadesi ya da bir for döngüsünde range()/list[T] " ++
-                    "dışında bir iterable) - bkz. nox-teknik-spesifikasyon.md " ++
-                    "§3.6 (bilinçli kapsam sınırlamaları)\n",
+                "codegen: this program contains a construct that is not supported at the moment " ++
+                    "(e.g. a nested function/class definition, an unsupported " ++
+                    "type expression, or a for loop over an iterable other than " ++
+                    "range()/list[T]) - see the language reference at " ++
+                    "https://noxlang.com/docs/language/\n",
                 .{},
             );
             std.process.exit(1);
@@ -2290,7 +2264,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
 
         const clang_result = std.process.run(gpa, io, .{ .argv = clang_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
-                printErr("clang/zig bulunamadi: LLVM backend'i icin PATH'te 'clang' ya da 'zig' gerekir (ornegin: brew install llvm); alternatif: --backend qbe\n", .{});
+                printErr("clang/zig not found: the LLVM backend needs 'clang' or 'zig' on PATH (for example: brew install llvm); alternative: --backend qbe\n", .{});
                 std.process.exit(1);
             }
             return err;
@@ -2298,7 +2272,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         defer gpa.free(clang_result.stdout);
         defer gpa.free(clang_result.stderr);
         if (clang_result.term != .exited or clang_result.term.exited != 0) {
-            printErr("{s} basarisiz:\n{s}\n", .{ if (driver == .zig_cc) "zig cc" else "clang", clang_result.stderr });
+            printErr("{s} failed:\n{s}\n", .{ if (driver == .zig_cc) "zig cc" else "clang", clang_result.stderr });
             std.process.exit(1);
         }
         return bin_path;
@@ -2320,7 +2294,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: bilinmeyen hosted hedef '{s}' (gecerli degerler: macos-arm64, linux-x64, linux-arm64, windows-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, linux-x64, linux-arm64, windows-x64)\n", .{target.?});
             std.process.exit(1);
         })
     else
@@ -2330,7 +2304,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         ht.qbe_target
     else if (profile == .freestanding and target != null)
         (qbe_target.nameForArch(target.?) orelse {
-            printErr("--target: bilinmeyen freestanding mimarisi '{s}' (gecerli degerler: x86_64, aarch64, riscv64)\n", .{target.?});
+            printErr("--target: unknown freestanding architecture '{s}' (valid values: x86_64, aarch64, riscv64)\n", .{target.?});
             std.process.exit(1);
         })
     else
@@ -2343,7 +2317,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // OLMADAN) AÇIK bir hatayla reddedilir. `--emit-asm` İLE (SADECE ham
     // `.s`, linksiz) YİNE de çalışır.
     if (profile == .freestanding and target != null and std.mem.eql(u8, target.?, "riscv64") and !emit_asm) {
-        printErr("--target riscv64: freestanding runtime'i henuz yok (fiber.zig'in context-switch implementasyonu riscv64'u desteklemiyor) - sadece --emit-asm ile ham .s uretilebilir\n", .{});
+        printErr("--target riscv64: there is no freestanding runtime yet (fiber.zig's context-switch implementation does not support riscv64) - only a raw .s file can be produced with --emit-asm\n", .{});
         std.process.exit(1);
     }
 
@@ -2353,7 +2327,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     defer gpa.free(qbe_result.stdout);
     defer gpa.free(qbe_result.stderr);
     if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
-        printErr("qbe basarisiz:\n{s}\n", .{qbe_result.stderr});
+        printErr("qbe failed:\n{s}\n", .{qbe_result.stderr});
         std.process.exit(1);
     }
 
@@ -2394,7 +2368,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
 
         const zig_result = std.process.run(gpa, io, .{ .argv = zig_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
-                printErr("zig bulunamadi: --profile freestanding icin PATH'te bir 'zig' calistirilabilir dosyasi gerekir\n", .{});
+                printErr("zig not found: --profile freestanding needs a 'zig' executable on PATH\n", .{});
                 std.process.exit(1);
             }
             return err;
@@ -2402,7 +2376,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         defer gpa.free(zig_result.stdout);
         defer gpa.free(zig_result.stderr);
         if (zig_result.term != .exited or zig_result.term.exited != 0) {
-            printErr("zig cc basarisiz:\n{s}\n", .{zig_result.stderr});
+            printErr("zig cc failed:\n{s}\n", .{zig_result.stderr});
             std.process.exit(1);
         }
         return bin_path;
@@ -2473,7 +2447,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     defer gpa.free(cc_result.stdout);
     defer gpa.free(cc_result.stderr);
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
-        printErr("cc basarisiz:\n{s}\n", .{cc_result.stderr});
+        printErr("cc failed:\n{s}\n", .{cc_result.stderr});
         std.process.exit(1);
     }
 

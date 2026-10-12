@@ -1,9 +1,18 @@
 //! Tip denetleyici golden testleri: `tests/golden/typecheck_cases/*.nox`
-//! kaynaklarını denetleyip sonucu (`OK` ya da `HATA <kod>: <mesaj>`)
+//! kaynaklarını denetleyip sonucu (`OK` ya da `ERROR <kod>: <mesaj>`)
 //! `*.expected` ile karşılaştırır. AGENTS.md İlke #7.
 
 const std = @import("std");
 const nox = @import("nox");
+
+/// Mesaj metni değiştiğinde `.expected` dosyalarını suite çıktısından yeniden üretmek için: uyuşmazlıkta eski/yeni içeriği
+/// işaretli olarak stderr'e yazar (bkz. scripts/regen_expected.py). Test yine başarısız olur.
+fn expectOutput(expected: []const u8, actual: []const u8) !void {
+    if (!std.mem.eql(u8, expected, actual)) {
+        std.debug.print("@@REGEN-BEGIN@@\n{s}@@REGEN-NEW@@\n{s}@@REGEN-END@@\n", .{ expected, actual });
+    }
+    try std.testing.expectEqualStrings(expected, actual);
+}
 
 /// v1.30.0: `expectGolden`in AYNISI, AMA `Checker.backend`i `.llvm`
 /// olarak AYARLAR — `isSpawnParamSafeType`nin `list`/`dict`/`class`ı
@@ -32,17 +41,17 @@ fn expectGoldenLlvm(comptime source: []const u8, comptime expected: []const u8) 
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     checker_state.checkModule(module) catch |e| {
-        try aw.writer.print("HATA {t}: {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
-        try std.testing.expectEqualStrings(expected, aw.written());
+        try aw.writer.print("ERROR {t}: {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        try expectOutput(expected, aw.written());
         return;
     };
     if (checker_state.diagnostics.items.len > 0) {
         const first = checker_state.diagnostics.items[0];
-        try aw.writer.print("HATA {t}: {s}\n", .{ first.code, first.message });
+        try aw.writer.print("ERROR {t}: {s}\n", .{ first.code, first.message });
     } else {
         try aw.writer.writeAll("OK\n");
     }
-    try std.testing.expectEqualStrings(expected, aw.written());
+    try expectOutput(expected, aw.written());
 }
 
 /// Faz F.2 (bkz. plan dosyası "capability sistemi"): `expectGoldenLlvm`nin
@@ -63,17 +72,17 @@ fn expectGoldenFreestanding(comptime source: []const u8, comptime expected: []co
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     checker_state.checkModule(module) catch |e| {
-        try aw.writer.print("HATA {t}: {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
-        try std.testing.expectEqualStrings(expected, aw.written());
+        try aw.writer.print("ERROR {t}: {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        try expectOutput(expected, aw.written());
         return;
     };
     if (checker_state.diagnostics.items.len > 0) {
         const first = checker_state.diagnostics.items[0];
-        try aw.writer.print("HATA {t}: {s}\n", .{ first.code, first.message });
+        try aw.writer.print("ERROR {t}: {s}\n", .{ first.code, first.message });
     } else {
         try aw.writer.writeAll("OK\n");
     }
-    try std.testing.expectEqualStrings(expected, aw.written());
+    try expectOutput(expected, aw.written());
 }
 
 fn expectGolden(comptime source: []const u8, comptime expected: []const u8) !void {
@@ -88,10 +97,10 @@ fn expectGolden(comptime source: []const u8, comptime expected: []const u8) !voi
     defer aw.deinit();
     switch (nox.checker.check(allocator, module)) {
         .ok => try aw.writer.writeAll("OK\n"),
-        .err => |e| try aw.writer.print("HATA {t}: {s}\n", .{ e.code, e.message }),
+        .err => |e| try aw.writer.print("ERROR {t}: {s}\n", .{ e.code, e.message }),
     }
 
-    try std.testing.expectEqualStrings(expected, aw.written());
+    try expectOutput(expected, aw.written());
 }
 
 test "golden(typecheck): aritmetik ve kontrol akışı" {
@@ -1062,8 +1071,8 @@ test "golden(typecheck): Faz T.2 — İKİ bağımsız fonksiyondaki hata TEK ç
     // `TypeMismatch` üretiyor — kurtarma OLMASAYDI yalnızca İLKİ (satır 2)
     // raporlanırdı, `g`nin (satır 5) hatası HİÇ görülmezdi.
     try std.testing.expectEqual(@as(usize, 2), err.all.len);
-    try std.testing.expect(std.mem.indexOf(u8, err.all[0].message, "satır 2:") != null);
-    try std.testing.expect(std.mem.indexOf(u8, err.all[1].message, "satır 5:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err.all[0].message, "line 2:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err.all[1].message, "line 5:") != null);
 }
 
 // Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
@@ -1093,7 +1102,7 @@ test "golden(typecheck): darboğaz #P0.3 — argüman tip uyuşmazlığı span'�
         .err => |e| e,
     };
     try std.testing.expectEqual(nox.checker.TypeError.TypeMismatch, err.code);
-    try std.testing.expect(std.mem.indexOf(u8, err.message, "satır 4:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err.message, "line 4:") != null);
 
     // Deyimin KENDİSİ 4. satırda BAŞLAR, ama "yanlis" (argüman) SÜTUN
     // 22'de başlar (`result: int = foo(1, "yanlis")`de `"` konumu) —

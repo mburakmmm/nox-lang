@@ -57,7 +57,7 @@ test "legacy cıplak-dosya formu: build ile birebir aynı davranış" {
     // KENDİSİNİN sabit davranışı gereği) HER ZAMAN stderr'e yazılır — bu
     // BU turdaki bir davranış DEĞİŞİKLİĞİ DEĞİL, önceki koddan MİRAS kalan
     // (ve BİLEREK korunan) bir özellik.
-    const expected_msg = try std.fmt.allocPrint(a, "derlendi: {s}\n", .{bin_path});
+    const expected_msg = try std.fmt.allocPrint(a, "built: {s}\n", .{bin_path});
     try std.testing.expectEqualStrings(expected_msg, legacy_result.stderr);
 
     const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
@@ -128,7 +128,7 @@ test "run: programi calistirir, derlendi mesaji basmaz, stdout'u yansitir" {
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
     try std.testing.expectEqualStrings("koştu\n", result.stdout);
-    try std.testing.expect(!std.mem.startsWith(u8, result.stdout, "derlendi"));
+    try std.testing.expect(!std.mem.startsWith(u8, result.stdout, "built"));
 
     // `.nox/cache/bin/hello` altına derlenmiş olmalı (kaynağın YANINA değil).
     try tmp.dir.access(io, ".nox/cache/bin/hello", .{});
@@ -200,7 +200,7 @@ test "test: *_test.nox kesfi, karisik gecen/kalan, toplam ozet + cikis kodu" {
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "ok_test.nox") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "broken_test.nox") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "1 gecti, 1 basarisiz (2 toplam)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "1 passed, 1 failed (2 total)") != null);
 }
 
 test "test: bos dizin -> 0 test dosyasi, cikis kodu 0" {
@@ -224,7 +224,7 @@ test "test: bos dizin -> 0 test dosyasi, cikis kodu 0" {
     defer std.testing.allocator.free(result.stderr);
 
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "0 test dosyasi bulundu") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "found 0 test files") != null);
 }
 
 // Faz CC.2 (bkz. nox-teknik-spesifikasyon.md §3.54): `fetch`/`update`
@@ -255,7 +255,7 @@ test "fetch/update: nox.json bulunamayan bir dizinden calistirilirsa net hatayla
         defer std.testing.allocator.free(result.stdout);
         defer std.testing.allocator.free(result.stderr);
         try std.testing.expect(result.term == .exited and result.term.exited == 1);
-        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.json bulunamadi") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.json not found") != null);
     }
 }
 
@@ -385,7 +385,7 @@ test "init: argumansiz CWD'de proje iskeleti olusturur, uretilen proje GERCEKTEN
     defer std.testing.allocator.free(init2.stdout);
     defer std.testing.allocator.free(init2.stderr);
     try std.testing.expect(init2.term == .exited and init2.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, init2.stderr, "zaten var") != null);
+    try std.testing.expect(std.mem.indexOf(u8, init2.stderr, "already exists") != null);
 }
 
 test "init: isimli cagri YENI bir alt dizin olusturup icinde baslatir" {
@@ -442,7 +442,7 @@ test "check: gecerli dosyada codegen'e HIC girmeden basarili, hatali dosyada net
         std.debug.print("check basarisiz, stderr: {s}\n", .{ok_result.stderr});
     }
     try std.testing.expect(ok_result.term == .exited and ok_result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, ok_result.stderr, "tip hatasi yok") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ok_result.stderr, "no type errors") != null);
     // `check` codegen/`qbe`/`cc`e HIC GIRMEMELI -- hicbir artifact YOK.
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "ok.ssa", .{}));
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "ok", .{}));
@@ -454,7 +454,7 @@ test "check: gecerli dosyada codegen'e HIC girmeden basarili, hatali dosyada net
     defer std.testing.allocator.free(bad_result.stdout);
     defer std.testing.allocator.free(bad_result.stderr);
     try std.testing.expect(bad_result.term == .exited and bad_result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, bad_result.stderr, "tip hatasi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_result.stderr, "type error") != null);
 }
 
 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi + metadata-tabanlı
@@ -502,7 +502,7 @@ test "expand: decorator metadata'sini stdout'a yazdirir, decoratorsuz dosyada 'b
         std.debug.print("expand basarisiz, stderr: {s}\n", .{deco_result.stderr});
     }
     try std.testing.expect(deco_result.term == .exited and deco_result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "2 decorator bulundu") != null);
+    try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "2 decorator(s) found") != null);
     try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "@get(\"/users/:id\") -> show_user") != null);
     try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "[handler: (Context) -> HttpResponse]") != null);
     try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "@admin(\"only\", \"x\") -> other") != null);
@@ -514,7 +514,7 @@ test "expand: decorator metadata'sini stdout'a yazdirir, decoratorsuz dosyada 'b
     defer std.testing.allocator.free(plain_result.stdout);
     defer std.testing.allocator.free(plain_result.stderr);
     try std.testing.expect(plain_result.term == .exited and plain_result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, plain_result.stdout, "decorator bulunamadi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plain_result.stdout, "decorator not found") != null);
 }
 
 // Faz CC.2.3 (bkz. nox-teknik-spesifikasyon.md §3.58): `noxc` çıktısı
@@ -545,6 +545,6 @@ test "renklendirme: TTY olmayan (boru hatti) ciktida HICBIR ANSI kacis dizisi si
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "tip hatasi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "type error") != null);
     try std.testing.expect(std.mem.indexOfScalar(u8, result.stderr, 0x1b) == null);
 }

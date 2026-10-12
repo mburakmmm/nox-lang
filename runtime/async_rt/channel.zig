@@ -126,7 +126,7 @@ pub fn Channel(comptime T: type) type {
         fn wakeOneSenderLocked(self: *Self) ?*SendSlot {
             if (self.send_waiters.items.len == 0) return null;
             const slot = self.send_waiters.orderedRemove(0);
-            self.buffer.append(self.scheduler.allocator, slot.value) catch @panic("OOM: kanal tamponu büyütülemedi");
+            self.buffer.append(self.scheduler.allocator, slot.value) catch @panic("OOM: could not grow the channel buffer");
             return slot;
         }
 
@@ -155,7 +155,7 @@ pub fn Channel(comptime T: type) type {
                 return slot.value;
             }
             var slot = RecvSlot{ .fiber = sched.current.?, .scheduler = sched };
-            self.recv_waiters.append(self.scheduler.allocator, &slot) catch @panic("OOM: kanal alıcı kuyruğu büyütülemedi");
+            self.recv_waiters.append(self.scheduler.allocator, &slot) catch @panic("OOM: could not grow the channel receiver queue");
             self.mutex.unlock();
             sched.suspendCurrent();
             return slot.result;
@@ -175,14 +175,14 @@ pub fn Channel(comptime T: type) type {
                 return;
             }
             if (self.buffer.items.len < self.capacity) {
-                self.buffer.append(self.scheduler.allocator, value) catch @panic("OOM: kanal tamponu büyütülemedi");
+                self.buffer.append(self.scheduler.allocator, value) catch @panic("OOM: could not grow the channel buffer");
                 self.mutex.unlock();
                 return;
             }
             // Tampon dolu (ya da kapasite 0 ve bekleyen alıcı yok) —
             // gönderici olarak bloklanır.
             var slot = SendSlot{ .fiber = sched.current.?, .scheduler = sched, .value = value };
-            self.send_waiters.append(self.scheduler.allocator, &slot) catch @panic("OOM: kanal gönderici kuyruğu büyütülemedi");
+            self.send_waiters.append(self.scheduler.allocator, &slot) catch @panic("OOM: could not grow the channel sender queue");
             self.mutex.unlock();
             sched.suspendCurrent();
         }

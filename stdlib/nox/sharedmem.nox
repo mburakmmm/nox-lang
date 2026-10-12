@@ -66,7 +66,7 @@ class SharedBuffer:
 def open(name: str, size: int) -> SharedBuffer:
     handle: ptr = nox_shm_open_raw(name, size)
     if nox_shm_is_null_ptr(handle) != 0:
-        raise SharedMemError("paylasimli bellek acilamadi: " + name)
+        raise SharedMemError("could not open shared memory: " + name)
     return SharedBuffer(handle, name, size)
 
 # `name`li bölgeyi KALICI olarak SİLER — HİÇBİR process ONU (mmap İLE)

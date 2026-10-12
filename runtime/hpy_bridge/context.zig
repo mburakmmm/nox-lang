@@ -401,7 +401,7 @@ fn ctxLongAsInt64(ctx: *HPyContext, h: HPy) callconv(.c) i64 {
         .bool_ => if (obj.payload.b) 1 else 0,
         .float_ => @intFromFloat(obj.payload.f),
         .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => blk: {
-            ctxErrSetString(ctx, ctx.h_TypeError, "int'e dönüştürülemez");
+            ctxErrSetString(ctx, ctx.h_TypeError, "cannot be converted to int");
             break :blk -1;
         },
     };
@@ -444,7 +444,7 @@ fn ctxLongAsInt32(ctx: *HPyContext, h: HPy) callconv(.c) i32 {
     const v = ctxLongAsInt64(ctx, h);
     if (ctxErrOccurred(ctx) != 0) return -1;
     if (v < std.math.minInt(i32) or v > std.math.maxInt(i32)) {
-        ctxErrSetString(ctx, ctx.h_OverflowError, "Python int'i C int32'ye sığmıyor");
+        ctxErrSetString(ctx, ctx.h_OverflowError, "Python int does not fit in a C int32");
         return -1;
     }
     return @intCast(v);
@@ -454,7 +454,7 @@ fn ctxLongAsUInt32(ctx: *HPyContext, h: HPy) callconv(.c) u32 {
     const v = ctxLongAsInt64(ctx, h);
     if (ctxErrOccurred(ctx) != 0) return std.math.maxInt(u32);
     if (v < 0 or v > std.math.maxInt(u32)) {
-        ctxErrSetString(ctx, ctx.h_OverflowError, "Python int'i C uint32'ye sığmıyor");
+        ctxErrSetString(ctx, ctx.h_OverflowError, "Python int does not fit in a C uint32");
         return std.math.maxInt(u32);
     }
     return @intCast(v);
@@ -470,7 +470,7 @@ fn ctxLongAsUInt64(ctx: *HPyContext, h: HPy) callconv(.c) u64 {
     const v = ctxLongAsInt64(ctx, h);
     if (ctxErrOccurred(ctx) != 0) return std.math.maxInt(u64);
     if (v < 0) {
-        ctxErrSetString(ctx, ctx.h_OverflowError, "negatif Python int'i C uint64'e dönüştürülemez");
+        ctxErrSetString(ctx, ctx.h_OverflowError, "a negative Python int cannot be converted to a C uint64");
         return std.math.maxInt(u64);
     }
     return @intCast(v);
@@ -486,7 +486,7 @@ fn ctxLongAsSizeT(ctx: *HPyContext, h: HPy) callconv(.c) usize {
     const v = ctxLongAsInt64(ctx, h);
     if (ctxErrOccurred(ctx) != 0) return std.math.maxInt(usize);
     if (v < 0) {
-        ctxErrSetString(ctx, ctx.h_OverflowError, "negatif Python int'i size_t'ye dönüştürülemez");
+        ctxErrSetString(ctx, ctx.h_OverflowError, "a negative Python int cannot be converted to size_t");
         return std.math.maxInt(usize);
     }
     return @intCast(v);
@@ -504,11 +504,11 @@ fn ctxLongAsVoidPtr(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
 
 fn ctxLongAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
     const obj = objOf(h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "int bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "int expected");
         return -1;
     };
     if (obj.tag != .long and obj.tag != .bool_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "int bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "int expected");
         return -1;
     }
     return @floatFromInt(ctxLongAsInt64(ctx, h));
@@ -525,7 +525,7 @@ fn ctxFloatAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
         .long => @floatFromInt(obj.payload.l),
         .bool_ => if (obj.payload.b) 1 else 0,
         .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => blk: {
-            ctxErrSetString(ctx, ctx.h_TypeError, "float'a dönüştürülemez");
+            ctxErrSetString(ctx, ctx.h_TypeError, "cannot be converted to float");
             break :blk 0;
         },
     };
@@ -579,7 +579,7 @@ fn ctxUnicodeAsUTF8AndSize(ctx: *HPyContext, h: HPy, size: ?*isize) callconv(.c)
 
 fn ctxBytesFromStringAndSize(ctx: *HPyContext, bytes: ?[*]const u8, len: isize) callconv(.c) HPy {
     if (len < 0) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "negatif uzunluk");
+        ctxErrSetString(ctx, ctx.h_ValueError, "negative length");
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
@@ -608,7 +608,7 @@ fn ctxBytesCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
 fn ctxBytesSize(ctx: *HPyContext, h: HPy) callconv(.c) isize {
     const obj = objOf(h) orelse return -1;
     if (obj.tag != .bytes_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "bytes bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "bytes expected");
         return -1;
     }
     return @intCast(obj.bytes_data.len);
@@ -617,7 +617,7 @@ fn ctxBytesSize(ctx: *HPyContext, h: HPy) callconv(.c) isize {
 fn ctxBytesAsString(ctx: *HPyContext, h: HPy) callconv(.c) ?[*:0]const u8 {
     const obj = objOf(h) orelse return null;
     if (obj.tag != .bytes_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "bytes bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "bytes expected");
         return null;
     }
     return obj.bytes_data.ptr;
@@ -639,11 +639,11 @@ fn ctxBytesAsString(ctx: *HPyContext, h: HPy) callconv(.c) ?[*:0]const u8 {
 
 fn ctxUnicodeAsUTF8String(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
     const obj = objOf(h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return HPy_NULL;
     };
     if (obj.tag != .str_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return HPy_NULL;
     }
     return ctxBytesFromStringAndSize(ctx, obj.str_data.ptr, @intCast(obj.str_data.len));
@@ -651,16 +651,16 @@ fn ctxUnicodeAsUTF8String(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
 
 fn ctxUnicodeAsASCIIString(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
     const obj = objOf(h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return HPy_NULL;
     };
     if (obj.tag != .str_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return HPy_NULL;
     }
     for (obj.str_data) |b| {
         if (b >= 0x80) {
-            ctxErrSetString(ctx, ctx.h_UnicodeEncodeError, "ASCII aralığı dışında karakter");
+            ctxErrSetString(ctx, ctx.h_UnicodeEncodeError, "character outside the ASCII range");
             return HPy_NULL;
         }
     }
@@ -669,15 +669,15 @@ fn ctxUnicodeAsASCIIString(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
 
 fn ctxUnicodeAsLatin1String(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
     const obj = objOf(h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return HPy_NULL;
     };
     if (obj.tag != .str_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return HPy_NULL;
     }
     const view = std.unicode.Utf8View.init(obj.str_data) catch {
-        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz UTF-8");
+        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "invalid UTF-8");
         return HPy_NULL;
     };
     const allocator = contextAllocator(ctx);
@@ -686,7 +686,7 @@ fn ctxUnicodeAsLatin1String(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
     var it = view.iterator();
     while (it.nextCodepoint()) |cp| {
         if (cp > 0xff) {
-            ctxErrSetString(ctx, ctx.h_UnicodeEncodeError, "Latin-1 aralığı dışında karakter");
+            ctxErrSetString(ctx, ctx.h_UnicodeEncodeError, "character outside the Latin-1 range");
             return HPy_NULL;
         }
         buf.append(allocator, @intCast(cp)) catch {
@@ -705,7 +705,7 @@ const HPyWCharT = if (builtin.os.tag == .windows) u16 else u32;
 /// (`HPyWCharT`) ele alır.
 fn ctxUnicodeFromWideChar(ctx: *HPyContext, w: ?[*]const HPyWCharT, size: isize) callconv(.c) HPy {
     if (w == null or size < 0) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "geçersiz genişletilmiş karakter dizisi");
+        ctxErrSetString(ctx, ctx.h_ValueError, "invalid wide character sequence");
         return HPy_NULL;
     }
     const units = w.?[0..@intCast(size)];
@@ -719,7 +719,7 @@ fn ctxUnicodeFromWideChar(ctx: *HPyContext, w: ?[*]const HPyWCharT, size: isize)
             const c0 = units[i];
             if (std.unicode.utf16IsHighSurrogate(c0) and i + 1 < units.len and std.unicode.utf16IsLowSurrogate(units[i + 1])) {
                 cp = std.unicode.utf16DecodeSurrogatePair(units[i .. i + 2]) catch {
-                    ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz UTF-16 vekil çifti");
+                    ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "invalid UTF-16 surrogate pair");
                     return HPy_NULL;
                 };
                 i += 2;
@@ -733,7 +733,7 @@ fn ctxUnicodeFromWideChar(ctx: *HPyContext, w: ?[*]const HPyWCharT, size: isize)
         }
         var tmp: [4]u8 = undefined;
         const n = std.unicode.utf8Encode(cp, &tmp) catch {
-            ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz kod noktası");
+            ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "invalid code point");
             return HPy_NULL;
         };
         buf.appendSlice(allocator, tmp[0..n]) catch {
@@ -750,7 +750,7 @@ fn ctxUnicodeDecodeFSDefault(ctx: *HPyContext, v: ?[*:0]const u8) callconv(.c) H
 
 fn ctxUnicodeDecodeFSDefaultAndSize(ctx: *HPyContext, v: ?[*]const u8, size: isize) callconv(.c) HPy {
     if (size < 0) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "negatif uzunluk");
+        ctxErrSetString(ctx, ctx.h_ValueError, "negative length");
         return HPy_NULL;
     }
     const src: []const u8 = if (v) |p| p[0..@intCast(size)] else &.{};
@@ -765,15 +765,15 @@ fn ctxUnicodeEncodeFSDefault(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
 /// `index`, BAYT DEĞİL, KARAKTER (kod noktası) indeksidir.
 fn ctxUnicodeReadChar(ctx: *HPyContext, h: HPy, index: isize) callconv(.c) u32 {
     const obj = objOf(h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return std.math.maxInt(u32);
     };
     if (obj.tag != .str_ or index < 0) {
-        ctxErrSetString(ctx, ctx.h_IndexError, "dizin aralık dışında");
+        ctxErrSetString(ctx, ctx.h_IndexError, "index out of range");
         return std.math.maxInt(u32);
     }
     const view = std.unicode.Utf8View.init(obj.str_data) catch {
-        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz UTF-8");
+        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "invalid UTF-8");
         return std.math.maxInt(u32);
     };
     var it = view.iterator();
@@ -782,20 +782,20 @@ fn ctxUnicodeReadChar(ctx: *HPyContext, h: HPy, index: isize) callconv(.c) u32 {
         if (i == index) return cp;
         i += 1;
     }
-    ctxErrSetString(ctx, ctx.h_IndexError, "dizin aralık dışında");
+    ctxErrSetString(ctx, ctx.h_IndexError, "index out of range");
     return std.math.maxInt(u32);
 }
 
 fn ctxUnicodeDecodeASCII(ctx: *HPyContext, ascii: ?[*]const u8, size: isize, errors: ?[*:0]const u8) callconv(.c) HPy {
     _ = errors;
     if (size < 0) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "negatif uzunluk");
+        ctxErrSetString(ctx, ctx.h_ValueError, "negative length");
         return HPy_NULL;
     }
     const src: []const u8 = if (ascii) |p| p[0..@intCast(size)] else &.{};
     for (src) |b| {
         if (b >= 0x80) {
-            ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "ASCII aralığı dışında bayt");
+            ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "byte outside the ASCII range");
             return HPy_NULL;
         }
     }
@@ -805,7 +805,7 @@ fn ctxUnicodeDecodeASCII(ctx: *HPyContext, ascii: ?[*]const u8, size: isize, err
 fn ctxUnicodeDecodeLatin1(ctx: *HPyContext, latin1: ?[*]const u8, size: isize, errors: ?[*:0]const u8) callconv(.c) HPy {
     _ = errors;
     if (size < 0) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "negatif uzunluk");
+        ctxErrSetString(ctx, ctx.h_ValueError, "negative length");
         return HPy_NULL;
     }
     const src: []const u8 = if (latin1) |p| p[0..@intCast(size)] else &.{};
@@ -831,16 +831,16 @@ fn ctxUnicodeDecodeLatin1(ctx: *HPyContext, latin1: ?[*]const u8, size: isize, e
 fn ctxUnicodeFromEncodedObject(ctx: *HPyContext, obj_h: HPy, encoding: ?[*:0]const u8, errors: ?[*:0]const u8) callconv(.c) HPy {
     _ = errors;
     const obj = objOf(obj_h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        ctxErrSetString(ctx, ctx.h_TypeError, "invalid object");
         return HPy_NULL;
     };
     if (obj.tag == .str_) {
         if (encoding == null) return ctxDup(ctx, obj_h);
-        ctxErrSetString(ctx, ctx.h_TypeError, "kodlama belirtilmiş bir str nesnesi zaten decode edilmiş");
+        ctxErrSetString(ctx, ctx.h_TypeError, "a str object with an encoding specified has already been decoded");
         return HPy_NULL;
     }
     if (obj.tag != .bytes_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "bytes-benzeri bir nesne bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "a bytes-like object is expected");
         return HPy_NULL;
     }
     const enc = std.mem.sliceTo(encoding orelse "utf-8", 0);
@@ -853,7 +853,7 @@ fn ctxUnicodeFromEncodedObject(ctx: *HPyContext, obj_h: HPy, encoding: ?[*:0]con
     if (std.ascii.eqlIgnoreCase(enc, "latin-1") or std.ascii.eqlIgnoreCase(enc, "latin1") or std.ascii.eqlIgnoreCase(enc, "iso-8859-1")) {
         return ctxUnicodeDecodeLatin1(ctx, obj.bytes_data.ptr, @intCast(obj.bytes_data.len), null);
     }
-    ctxErrSetString(ctx, ctx.h_LookupError, "bilinmeyen kodlama (yalnızca utf-8/ascii/latin-1 destekleniyor)");
+    ctxErrSetString(ctx, ctx.h_LookupError, "unknown encoding (only utf-8/ascii/latin-1 are supported)");
     return HPy_NULL;
 }
 
@@ -862,15 +862,15 @@ fn ctxUnicodeFromEncodedObject(ctx: *HPyContext, obj_h: HPy, encoding: ?[*:0]con
 /// TUTARLI.
 fn ctxUnicodeSubstring(ctx: *HPyContext, str: HPy, start: isize, end: isize) callconv(.c) HPy {
     const obj = objOf(str) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return HPy_NULL;
     };
     if (obj.tag != .str_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "str expected");
         return HPy_NULL;
     }
     const view = std.unicode.Utf8View.init(obj.str_data) catch {
-        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz UTF-8");
+        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "invalid UTF-8");
         return HPy_NULL;
     };
     const allocator = contextAllocator(ctx);
@@ -913,7 +913,7 @@ fn ctxLength(ctx: *HPyContext, h: HPy) callconv(.c) isize {
         .tuple_ => @intCast(obj.tuple_data.len),
         .dict_ => @intCast(obj.dict_data.items.len),
         .none, .bool_, .long, .float_, .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => blk: {
-            ctxErrSetString(ctx, ctx.h_TypeError, "bu tipin bir uzunluğu yok");
+            ctxErrSetString(ctx, ctx.h_TypeError, "this type has no length");
             break :blk -1;
         },
     };
@@ -1069,7 +1069,7 @@ fn appendFloatRepr(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8
 
 fn reprInto(ctx: *HPyContext, allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), obj_h: HPy) !void {
     const obj = objOf(obj_h) orelse {
-        try buf.appendSlice(allocator, "<geçersiz nesne>");
+        try buf.appendSlice(allocator, "<invalid object>");
         return;
     };
     switch (obj.tag) {
@@ -1144,7 +1144,7 @@ fn reprInto(ctx: *HPyContext, allocator: std.mem.Allocator, buf: *std.ArrayListU
 
 fn ctxRepr(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
     const obj = objOf(obj_h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        ctxErrSetString(ctx, ctx.h_TypeError, "invalid object");
         return HPy_NULL;
     };
     if (obj.tag == .instance_) {
@@ -1168,7 +1168,7 @@ fn ctxRepr(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
 /// AYNI).
 fn ctxStr(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
     const obj = objOf(obj_h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        ctxErrSetString(ctx, ctx.h_TypeError, "invalid object");
         return HPy_NULL;
     };
     if (obj.tag == .instance_) {
@@ -1241,14 +1241,14 @@ fn ctxAscii(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
 /// protokolü/buffer arayüzü HENÜZ yok — bilinçli v1 sınırlaması).
 fn ctxBytesConvert(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
     const obj = objOf(obj_h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        ctxErrSetString(ctx, ctx.h_TypeError, "invalid object");
         return HPy_NULL;
     };
     return switch (obj.tag) {
         .bytes_ => ctxDup(ctx, obj_h),
         .str_ => ctxBytesFromStringAndSize(ctx, obj.str_data.ptr, @intCast(obj.str_data.len)),
         else => blk: {
-            ctxErrSetString(ctx, ctx.h_TypeError, "bytes()'e dönüştürülemez");
+            ctxErrSetString(ctx, ctx.h_TypeError, "cannot be converted to bytes()");
             break :blk HPy_NULL;
         },
     };
@@ -1316,7 +1316,7 @@ fn hpyHashSeed() u64 {
 
 fn ctxHash(ctx: *HPyContext, obj_h: HPy) callconv(.c) isize {
     const obj = objOf(obj_h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        ctxErrSetString(ctx, ctx.h_TypeError, "invalid object");
         return -1;
     };
     if (obj.tag == .instance_) {
@@ -1342,7 +1342,7 @@ fn ctxHash(ctx: *HPyContext, obj_h: HPy) callconv(.c) isize {
         },
         .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => normalizeHash(@intCast(obj_h._i)),
         .list_, .dict_ => blk: {
-            ctxErrSetString(ctx, ctx.h_TypeError, "hashlanabilir değil");
+            ctxErrSetString(ctx, ctx.h_TypeError, "not hashable");
             break :blk -1;
         },
     };
@@ -1362,11 +1362,11 @@ fn richCompareOrder(order: std.math.Order, op: c_int) bool {
 
 fn ctxRichCompare(ctx: *HPyContext, v: HPy, w: HPy, op: c_int) callconv(.c) HPy {
     const vo = objOf(v) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        ctxErrSetString(ctx, ctx.h_TypeError, "invalid object");
         return HPy_NULL;
     };
     const wo = objOf(w) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        ctxErrSetString(ctx, ctx.h_TypeError, "invalid object");
         return HPy_NULL;
     };
     if (vo.tag == .instance_) {
@@ -1375,7 +1375,7 @@ fn ctxRichCompare(ctx: *HPyContext, v: HPy, w: HPy, op: c_int) callconv(.c) HPy 
         }
     }
     if (op < 0 or op > 5) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "geçersiz karşılaştırma operatörü");
+        ctxErrSetString(ctx, ctx.h_ValueError, "invalid comparison operator");
         return HPy_NULL;
     }
     if (isNumericTag(vo.tag) and isNumericTag(wo.tag)) {
@@ -1394,7 +1394,7 @@ fn ctxRichCompare(ctx: *HPyContext, v: HPy, w: HPy, op: c_int) callconv(.c) HPy 
         const eq = objEquals(vo, wo);
         return ctxBoolFromBool(ctx, if (op == 2) eq else !eq);
     }
-    ctxErrSetString(ctx, ctx.h_TypeError, "bu tipler sıralı karşılaştırmayı desteklemiyor");
+    ctxErrSetString(ctx, ctx.h_TypeError, "these types do not support ordered comparison");
     return HPy_NULL;
 }
 
@@ -1442,7 +1442,7 @@ fn ctxListCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
 
 fn ctxListNew(ctx: *HPyContext, len: isize) callconv(.c) HPy {
     if (len < 0) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "negatif liste uzunluğu");
+        ctxErrSetString(ctx, ctx.h_ValueError, "negative list length");
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
@@ -1465,7 +1465,7 @@ fn ctxListNew(ctx: *HPyContext, len: isize) callconv(.c) HPy {
 fn ctxListAppend(ctx: *HPyContext, h_list: HPy, h_item: HPy) callconv(.c) c_int {
     const obj = objOf(h_list) orelse return -1;
     if (obj.tag != .list_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "list bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "list expected");
         return -1;
     }
     const retained = ctxDup(ctx, h_item);
@@ -1631,7 +1631,7 @@ fn ctxTupleCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
 
 fn ctxTupleFromArray(ctx: *HPyContext, items: ?[*]HPy, n: isize) callconv(.c) HPy {
     if (n < 0) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "negatif tuple uzunluğu");
+        ctxErrSetString(ctx, ctx.h_ValueError, "negative tuple length");
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
@@ -1664,7 +1664,7 @@ fn ctxDictNew(ctx: *HPyContext) callconv(.c) HPy {
 fn ctxDictKeys(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
     const obj = objOf(h) orelse return HPy_NULL;
     if (obj.tag != .dict_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "dict bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "dict expected");
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
@@ -1691,7 +1691,7 @@ fn ctxDictKeys(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
 fn ctxDictCopy(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
     const obj = objOf(h) orelse return HPy_NULL;
     if (obj.tag != .dict_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "dict bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "dict expected");
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
@@ -1737,20 +1737,20 @@ fn ctxGetItemI(ctx: *HPyContext, obj_h: HPy, idx: isize) callconv(.c) HPy {
     switch (obj.tag) {
         .list_ => {
             const i = normalizeIndex(idx, obj.list_data.items.len) orelse {
-                ctxErrSetString(ctx, ctx.h_IndexError, "liste indeksi kapsam dışı");
+                ctxErrSetString(ctx, ctx.h_IndexError, "list index out of range");
                 return HPy_NULL;
             };
             return ctxDup(ctx, obj.list_data.items[i]);
         },
         .tuple_ => {
             const i = normalizeIndex(idx, obj.tuple_data.len) orelse {
-                ctxErrSetString(ctx, ctx.h_IndexError, "tuple indeksi kapsam dışı");
+                ctxErrSetString(ctx, ctx.h_IndexError, "tuple index out of range");
                 return HPy_NULL;
             };
             return ctxDup(ctx, obj.tuple_data[i]);
         },
         else => {
-            ctxErrSetString(ctx, ctx.h_TypeError, "bu tip tam sayı indekslemeyi desteklemiyor");
+            ctxErrSetString(ctx, ctx.h_TypeError, "this type does not support integer indexing");
             return HPy_NULL;
         },
     }
@@ -1761,7 +1761,7 @@ fn ctxSetItemI(ctx: *HPyContext, obj_h: HPy, idx: isize, value: HPy) callconv(.c
     switch (obj.tag) {
         .list_ => {
             const i = normalizeIndex(idx, obj.list_data.items.len) orelse {
-                ctxErrSetString(ctx, ctx.h_IndexError, "liste indeksi kapsam dışı");
+                ctxErrSetString(ctx, ctx.h_IndexError, "list index out of range");
                 return -1;
             };
             const old = obj.list_data.items[i];
@@ -1771,7 +1771,7 @@ fn ctxSetItemI(ctx: *HPyContext, obj_h: HPy, idx: isize, value: HPy) callconv(.c
         },
         else => {
             // Tuple'lar DAHİL — tuple değişmezdir (bkz. modül üstü not).
-            ctxErrSetString(ctx, ctx.h_TypeError, "bu tip öğe atamasını desteklemiyor");
+            ctxErrSetString(ctx, ctx.h_TypeError, "this type does not support item assignment");
             return -1;
         },
     }
@@ -1782,14 +1782,14 @@ fn ctxDelItemI(ctx: *HPyContext, obj_h: HPy, idx: isize) callconv(.c) c_int {
     switch (obj.tag) {
         .list_ => {
             const i = normalizeIndex(idx, obj.list_data.items.len) orelse {
-                ctxErrSetString(ctx, ctx.h_IndexError, "liste indeksi kapsam dışı");
+                ctxErrSetString(ctx, ctx.h_IndexError, "list index out of range");
                 return -1;
             };
             ctxClose(ctx, obj.list_data.orderedRemove(i));
             return 0;
         },
         else => {
-            ctxErrSetString(ctx, ctx.h_TypeError, "bu tip öğe silmeyi desteklemiyor");
+            ctxErrSetString(ctx, ctx.h_TypeError, "this type does not support item deletion");
             return -1;
         },
     }
@@ -1810,7 +1810,7 @@ fn ctxGetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy) callconv(.c) HPy {
                 return ctxListGetSlice(ctx, obj, key_h);
             }
             if (key.tag != .long) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "liste indeksi int olmalı");
+                ctxErrSetString(ctx, ctx.h_TypeError, "list index must be an int");
                 return HPy_NULL;
             }
             return ctxGetItemI(ctx, obj_h, key.payload.l);
@@ -1818,7 +1818,7 @@ fn ctxGetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy) callconv(.c) HPy {
         .tuple_ => {
             const key = objOf(key_h) orelse return HPy_NULL;
             if (key.tag != .long) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "tuple indeksi int olmalı");
+                ctxErrSetString(ctx, ctx.h_TypeError, "tuple index must be an int");
                 return HPy_NULL;
             }
             return ctxGetItemI(ctx, obj_h, key.payload.l);
@@ -1826,7 +1826,7 @@ fn ctxGetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy) callconv(.c) HPy {
         .dict_ => {
             const key = objOf(key_h) orelse return HPy_NULL;
             const i = findDictEntry(obj, key) orelse {
-                ctxErrSetString(ctx, ctx.h_KeyError, "anahtar bulunamadı");
+                ctxErrSetString(ctx, ctx.h_KeyError, "key not found");
                 return HPy_NULL;
             };
             return ctxDup(ctx, obj.dict_data.items[i].value);
@@ -1850,14 +1850,14 @@ fn ctxSetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy, value: HPy) callconv(.c)
                 return ctxListSetSlice(ctx, obj, key_h, value);
             }
             if (key.tag != .long) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "liste indeksi int olmalı");
+                ctxErrSetString(ctx, ctx.h_TypeError, "list index must be an int");
                 return -1;
             }
             return ctxSetItemI(ctx, obj_h, key.payload.l, value);
         },
         .tuple_ => {
             // Tuple'lar DEĞİŞMEZDİR (bkz. `ctxSetItemI`nin AYNI notu).
-            ctxErrSetString(ctx, ctx.h_TypeError, "bu tip öğe atamasını desteklemiyor");
+            ctxErrSetString(ctx, ctx.h_TypeError, "this type does not support item assignment");
             return -1;
         },
         .dict_ => {
@@ -1887,7 +1887,7 @@ fn ctxSetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy, value: HPy) callconv(.c)
             return 0;
         },
         else => {
-            ctxErrSetString(ctx, ctx.h_TypeError, "bu tip öğe atamasını desteklemiyor");
+            ctxErrSetString(ctx, ctx.h_TypeError, "this type does not support item assignment");
             return -1;
         },
     }
@@ -1899,7 +1899,7 @@ fn ctxDelItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy) callconv(.c) c_int {
         .list_ => {
             const key = objOf(key_h) orelse return -1;
             if (key.tag != .long) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "liste indeksleri int olmalı");
+                ctxErrSetString(ctx, ctx.h_TypeError, "list indices must be ints");
                 return -1;
             }
             return ctxDelItemI(ctx, obj_h, key.payload.l);
@@ -1907,7 +1907,7 @@ fn ctxDelItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy) callconv(.c) c_int {
         .dict_ => {
             const key = objOf(key_h) orelse return -1;
             const i = findDictEntry(obj, key) orelse {
-                ctxErrSetString(ctx, ctx.h_KeyError, "anahtar bulunamadı");
+                ctxErrSetString(ctx, ctx.h_KeyError, "key not found");
                 return -1;
             };
             const entry = obj.dict_data.orderedRemove(i);
@@ -1916,7 +1916,7 @@ fn ctxDelItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy) callconv(.c) c_int {
             return 0;
         },
         else => {
-            ctxErrSetString(ctx, ctx.h_TypeError, "bu tip öğe silmeyi desteklemiyor");
+            ctxErrSetString(ctx, ctx.h_TypeError, "this type does not support item deletion");
             return -1;
         },
     }
@@ -1942,13 +1942,13 @@ fn ctxContains(ctx: *HPyContext, container_h: HPy, key_h: HPy) callconv(.c) c_in
         .str_ => blk: {
             // Alt-dizge araması (`in` operatörünün str üzerindeki hâli).
             if (key.tag != .str_) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "'in' bir str bekliyor");
+                ctxErrSetString(ctx, ctx.h_TypeError, "'in' expects a str");
                 break :blk -1;
             }
             break :blk @intFromBool(std.mem.indexOf(u8, obj.str_data, key.str_data) != null);
         },
         else => blk: {
-            ctxErrSetString(ctx, ctx.h_TypeError, "bu tip 'in' operatörünü desteklemiyor");
+            ctxErrSetString(ctx, ctx.h_TypeError, "this type does not support the 'in' operator");
             break :blk -1;
         },
     };
@@ -2077,7 +2077,7 @@ fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_Spe
     _ = params;
     const s = spec orelse return HPy_NULL;
     if (s.basicsize < 0) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "geçersiz basicsize");
+        ctxErrSetString(ctx, ctx.h_ValueError, "invalid basicsize");
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
@@ -2156,7 +2156,7 @@ fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_Spe
 fn ctxNew(ctx: *HPyContext, h_type: HPy, data: ?*?*anyopaque) callconv(.c) HPy {
     const type_obj = objOf(h_type) orelse return HPy_NULL;
     if (type_obj.tag != .type_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "type expected");
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
@@ -2251,11 +2251,11 @@ fn ctxTypeCheck(ctx: *HPyContext, obj_h: HPy, type_h: HPy) callconv(.c) c_int {
 
 fn ctxTypeGetName(ctx: *HPyContext, type_h: HPy) callconv(.c) ?[*:0]const u8 {
     const obj = objOf(type_h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "type expected");
         return null;
     };
     if (obj.tag != .type_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "type expected");
         return null;
     }
     return if (obj.type_name.len > 0) obj.type_name.ptr else "object";
@@ -2269,11 +2269,11 @@ fn ctxTypeIsSubtype(ctx: *HPyContext, sub: HPy, type_h: HPy) callconv(.c) c_int 
 
 fn ctxTypeGetBuiltinShape(ctx: *HPyContext, h_type: HPy) callconv(.c) c_int {
     const obj = objOf(h_type) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "type expected");
         return -1;
     };
     if (obj.tag != .type_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "type expected");
         return -1;
     }
     return obj.type_builtin_shape;
@@ -2327,7 +2327,7 @@ fn ctxAsStructList(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
 /// KENDİLERİ genelde BAŞARISIZ OLMAMALIDIR).
 fn ctxDump(ctx: *HPyContext, h: HPy) callconv(.c) void {
     const obj = objOf(h) orelse {
-        std.debug.print("HPy_Dump: <geçersiz tutamaç>\n", .{});
+        std.debug.print("HPy_Dump: <invalid handle>\n", .{});
         return;
     };
     const repr = ctxRepr(ctx, h);
@@ -2351,11 +2351,11 @@ fn ctxDump(ctx: *HPyContext, h: HPy) callconv(.c) void {
 /// `SSIZE_MIN`e, `step>0` İSE `start` `0`/`stop` `SSIZE_MAX`e düşer.
 fn ctxSliceUnpack(ctx: *HPyContext, slice: HPy, start: ?*isize, stop: ?*isize, step: ?*isize) callconv(.c) c_int {
     const obj = objOf(slice) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "slice (3 elemanlı tuple: start, stop, step) bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "expected a slice (a 3-element tuple: start, stop, step)");
         return -1;
     };
     if (obj.tag != .tuple_ or obj.tuple_data.len != 3) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "slice (3 elemanlı tuple: start, stop, step) bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "expected a slice (a 3-element tuple: start, stop, step)");
         return -1;
     }
     const start_h = obj.tuple_data[0];
@@ -2368,7 +2368,7 @@ fn ctxSliceUnpack(ctx: *HPyContext, slice: HPy, start: ?*isize, stop: ?*isize, s
         if (so.tag == .long or so.tag == .bool_) {
             step_v = @intCast(numAsI64(so));
             if (step_v == 0) {
-                ctxErrSetString(ctx, ctx.h_ValueError, "slice step sıfır olamaz");
+                ctxErrSetString(ctx, ctx.h_ValueError, "slice step cannot be zero");
                 return -1;
             }
         }
@@ -2505,7 +2505,7 @@ fn ctxListSetSlice(ctx: *HPyContext, obj: *Obj, key_h: HPy, value: HPy) c_int {
         while (if (range.step > 0) i < range.stop else i > range.stop) : (i += range.step) count += 1;
     }
     if (count != src.len) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "genişletilmiş dilime atanan değerin uzunluğu aralıkla eşleşmiyor");
+        ctxErrSetString(ctx, ctx.h_ValueError, "the length of the value assigned to an extended slice does not match the range");
         return -1;
     }
     var i = range.start;
@@ -2572,15 +2572,15 @@ const HPY_CAPSULE_KEY_DESTRUCTOR: c_int = 3;
 
 fn ctxCapsuleGet(ctx: *HPyContext, capsule: HPy, key: c_int, utf8_name: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     const obj = objOf(capsule) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "capsule bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "capsule expected");
         return null;
     };
     if (obj.tag != .capsule_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "capsule bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "capsule expected");
         return null;
     }
     if (!capsuleNameMatches(obj, utf8_name)) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "capsule ismi eşleşmiyor");
+        ctxErrSetString(ctx, ctx.h_ValueError, "capsule name mismatch");
         return null;
     }
     return switch (key) {
@@ -2601,11 +2601,11 @@ fn ctxCapsuleIsValid(ctx: *HPyContext, capsule: HPy, utf8_name: ?[*:0]const u8) 
 
 fn ctxCapsuleSet(ctx: *HPyContext, capsule: HPy, key: c_int, value: ?*anyopaque) callconv(.c) c_int {
     const obj = objOf(capsule) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "capsule bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "capsule expected");
         return -1;
     };
     if (obj.tag != .capsule_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "capsule bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "capsule expected");
         return -1;
     }
     switch (key) {
@@ -2614,7 +2614,7 @@ fn ctxCapsuleSet(ctx: *HPyContext, capsule: HPy, key: c_int, value: ?*anyopaque)
         HPY_CAPSULE_KEY_CONTEXT => obj.capsule_context = value,
         HPY_CAPSULE_KEY_DESTRUCTOR => obj.capsule_destructor = @ptrCast(@alignCast(value)),
         else => {
-            ctxErrSetString(ctx, ctx.h_ValueError, "geçersiz capsule anahtarı");
+            ctxErrSetString(ctx, ctx.h_ValueError, "invalid capsule key");
             return -1;
         },
     }
@@ -2640,18 +2640,18 @@ fn ctxContextVarNew(ctx: *HPyContext, name: ?[*:0]const u8, default_value: HPy) 
 
 fn ctxContextVarGet(ctx: *HPyContext, context_var: HPy, default_value: HPy, result: ?*HPy) callconv(.c) i32 {
     const obj = objOf(context_var) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar expected");
         return -1;
     };
     if (obj.tag != .contextvar_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar expected");
         return -1;
     }
     const value = blk: {
         if (obj.contextvar_current._i != 0) break :blk ctxDup(ctx, obj.contextvar_current);
         if (default_value._i != 0) break :blk ctxDup(ctx, default_value);
         if (obj.contextvar_default._i != 0) break :blk ctxDup(ctx, obj.contextvar_default);
-        ctxErrSetString(ctx, ctx.h_LookupError, "ContextVar için değer yok");
+        ctxErrSetString(ctx, ctx.h_LookupError, "no value for the ContextVar");
         return -1;
     };
     if (result) |r| r.* = value else ctxClose(ctx, value);
@@ -2665,11 +2665,11 @@ fn ctxContextVarGet(ctx: *HPyContext, context_var: HPy, default_value: HPy, resu
 /// AKSİ HALDE) DÖNDÜRÜR — dürüst bir "önceki durum" göstergesi.
 fn ctxContextVarSet(ctx: *HPyContext, context_var: HPy, value: HPy) callconv(.c) HPy {
     const obj = objOf(context_var) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar expected");
         return HPy_NULL;
     };
     if (obj.tag != .contextvar_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar expected");
         return HPy_NULL;
     }
     const old = obj.contextvar_current;
@@ -2782,11 +2782,11 @@ fn attrLookup(ctx: *HPyContext, obj_h: HPy, obj: *Obj, name: []const u8) ?HPy {
 fn ioWriterWriteImpl(ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy {
     const obj = objOf(self) orelse return HPy_NULL;
     const s = objOf(arg) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "write() bir str bekler");
+        ctxErrSetString(ctx, ctx.h_TypeError, "write() expects a str");
         return HPy_NULL;
     };
     if (s.tag != .str_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "write() bir str bekler");
+        ctxErrSetString(ctx, ctx.h_TypeError, "write() expects a str");
         return HPy_NULL;
     }
     obj.io_writer_buf.appendSlice(contextAllocator(ctx), s.str_data) catch {
@@ -2837,19 +2837,19 @@ pub fn getStringWriterContent(h: HPy) ?[]const u8 {
 
 fn ctxGetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy) callconv(.c) HPy {
     const obj = objOf(obj_h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        ctxErrSetString(ctx, ctx.h_TypeError, "invalid object");
         return HPy_NULL;
     };
     const name_obj = objOf(name_h) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "attribute adı str olmalı");
+        ctxErrSetString(ctx, ctx.h_TypeError, "attribute name must be a str");
         return HPy_NULL;
     };
     if (name_obj.tag != .str_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "attribute adı str olmalı");
+        ctxErrSetString(ctx, ctx.h_TypeError, "attribute name must be a str");
         return HPy_NULL;
     }
     return attrLookup(ctx, obj_h, obj, name_obj.str_data) orelse {
-        ctxErrSetString(ctx, ctx.h_AttributeError, "böyle bir attribute yok");
+        ctxErrSetString(ctx, ctx.h_AttributeError, "no such attribute");
         return HPy_NULL;
     };
 }
@@ -2882,12 +2882,12 @@ fn ctxHasAttrS(ctx: *HPyContext, obj_h: HPy, utf8_name: ?[*:0]const u8) callconv
 fn ctxSetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy, value: HPy) callconv(.c) c_int {
     const obj = objOf(obj_h) orelse return -1;
     if (obj.tag != .instance_ and obj.tag != .type_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "bu tip attribute atamasını desteklemiyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "this type does not support attribute assignment");
         return -1;
     }
     const name_obj = objOf(name_h) orelse return -1;
     if (name_obj.tag != .str_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "attribute adı str olmalı");
+        ctxErrSetString(ctx, ctx.h_TypeError, "attribute name must be a str");
         return -1;
     }
     // Faz 21: `.instance_` İçİn, GETSET (bir veri-tanımlayıcı) `instance_
@@ -2900,7 +2900,7 @@ fn ctxSetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy, value: HPy) callconv(.c
             for (type_obj.type_getsets.items) |gs| {
                 if (std.mem.eql(u8, std.mem.sliceTo(gs.name, 0), name_obj.str_data)) {
                     if (gs.setter) |setter| return setter(ctx, obj_h, value, gs.closure);
-                    ctxErrSetString(ctx, ctx.h_AttributeError, "attribute salt-okunur (setter yok)");
+                    ctxErrSetString(ctx, ctx.h_AttributeError, "attribute is read-only (no setter)");
                     return -1;
                 }
             }
@@ -2957,22 +2957,22 @@ fn ctxSetAttrS(ctx: *HPyContext, obj_h: HPy, utf8_name: ?[*:0]const u8, value: H
 // sınırlamaya tabidir.
 fn callDispatch(ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) HPy {
     if (kwnames._i != 0) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "anahtar kelime argümanları henüz desteklenmiyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "keyword arguments are not supported yet");
         return HPy_NULL;
     }
     const obj = objOf(callable) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+        ctxErrSetString(ctx, ctx.h_TypeError, "not callable");
         return HPy_NULL;
     };
     switch (obj.tag) {
         .type_ => return constructInstance(ctx, callable, obj, args, nargs),
         .instance_ => {
             const type_obj = objOf(obj.instance_type) orelse {
-                ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                ctxErrSetString(ctx, ctx.h_TypeError, "not callable");
                 return HPy_NULL;
             };
             const call_fn = type_obj.type_tp_call orelse {
-                ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                ctxErrSetString(ctx, ctx.h_TypeError, "not callable");
                 return HPy_NULL;
             };
             return call_fn(ctx, callable, args, nargs, HPy_NULL);
@@ -2983,29 +2983,29 @@ fn callDispatch(ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usi
             // imzalı OLABİLİR (bkz. `TypeMethod`in belge notu).
             .o => {
                 if (nargs != 1 or args == null) {
-                    ctxErrSetString(ctx, ctx.h_TypeError, "bu yöntem tam olarak bir argüman alır");
+                    ctxErrSetString(ctx, ctx.h_TypeError, "this method takes exactly one argument");
                     return HPy_NULL;
                 }
                 const impl = obj.bound_method_impl_o orelse {
-                    ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                    ctxErrSetString(ctx, ctx.h_TypeError, "not callable");
                     return HPy_NULL;
                 };
                 return impl(ctx, obj.bound_method_self, args.?[0]);
             },
             .noargs => {
                 if (nargs != 0) {
-                    ctxErrSetString(ctx, ctx.h_TypeError, "bu yöntem hiçbir argüman almaz");
+                    ctxErrSetString(ctx, ctx.h_TypeError, "this method takes no arguments");
                     return HPy_NULL;
                 }
                 const impl = obj.bound_method_impl_noargs orelse {
-                    ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                    ctxErrSetString(ctx, ctx.h_TypeError, "not callable");
                     return HPy_NULL;
                 };
                 return impl(ctx, obj.bound_method_self);
             },
         },
         else => {
-            ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+            ctxErrSetString(ctx, ctx.h_TypeError, "not callable");
             return HPy_NULL;
         },
     }
@@ -3053,7 +3053,7 @@ fn constructInstance(ctx: *HPyContext, type_h: HPy, type_obj: *Obj, args: ?[*]co
             // (kötü davranan bir eklenti), sessizce boş bir hata bırakmak
             // yerine GENEL bir tane ayarla.
             if (ctxErrOccurred(ctx) == 0) {
-                ctxErrSetString(ctx, ctx.h_RuntimeError, "tp_init başarısız oldu ama istisna ayarlamadı");
+                ctxErrSetString(ctx, ctx.h_RuntimeError, "tp_init failed but did not set an exception");
             }
             ctxClose(ctx, instance);
             return HPy_NULL;
@@ -3091,17 +3091,17 @@ fn ctxCallTupleDict(ctx: *HPyContext, callable: HPy, args_tuple: HPy, kw: HPy) c
     if (kw._i != 0) {
         if (objOf(kw)) |kw_obj| {
             if (kw_obj.tag == .dict_ and kw_obj.dict_data.items.len > 0) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "anahtar kelime argümanları henüz desteklenmiyor");
+                ctxErrSetString(ctx, ctx.h_TypeError, "keyword arguments are not supported yet");
                 return HPy_NULL;
             }
         }
     }
     const args_obj = objOf(args_tuple) orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "args tuple bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "args tuple expected");
         return HPy_NULL;
     };
     if (args_obj.tag != .tuple_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "args tuple bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "args tuple expected");
         return HPy_NULL;
     }
     const items = args_obj.tuple_data;
@@ -3115,15 +3115,15 @@ fn ctxCallTupleDict(ctx: *HPyContext, callable: HPy, args_tuple: HPy, kw: HPy) c
 /// alıcı üzerinde `attrLookup` (Faz NN) İLE ARANIR — BULUNAN metod
 /// (adi bir örnek/tip DEĞİLSE, TİPİK OLARAK bir `.bound_method_`)
 /// KALAN argümanlarla `callDispatch`e delege edilir. `ctx_GetAttr`in
-/// KENDİSİ ZATEN "böyle bir attribute yok" İçin `AttributeError`
+/// KENDİSİ ZATEN "no such attribute" İçin `AttributeError`
 /// ayarladığından, BURADA AYRICA hata AYARLAMAYA gerek YOK.
 fn ctxCallMethod(ctx: *HPyContext, name_h: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy {
     if (kwnames._i != 0) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "anahtar kelime argümanları henüz desteklenmiyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "keyword arguments are not supported yet");
         return HPy_NULL;
     }
     if (nargs < 1 or args == null) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "ctx_CallMethod en az bir alıcı (self) argümanı gerektirir");
+        ctxErrSetString(ctx, ctx.h_TypeError, "ctx_CallMethod requires at least one receiver (self) argument");
         return HPy_NULL;
     }
     const receiver = args.?[0];
@@ -3147,7 +3147,7 @@ const HPyCallFunctionLocal = extern struct {
 fn ctxSetCallFunction(ctx: *HPyContext, h: HPy, func: ?*HPyCallFunctionLocal) callconv(.c) c_int {
     const obj = objOf(h) orelse return -1;
     if (obj.tag != .type_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        ctxErrSetString(ctx, ctx.h_TypeError, "type expected");
         return -1;
     }
     const f = func orelse return -1;
@@ -3172,7 +3172,7 @@ fn ctxCallRealFunctionFromTrampoline(ctx: *HPyContext, sig: c_int, func: ?*const
     _ = sig;
     _ = func;
     _ = args;
-    @panic("ctx_CallRealFunctionFromTrampoline: Nox mimarisinde gerçek bir çağrı yolu yok (bkz. modül üstü not)");
+    @panic("ctx_CallRealFunctionFromTrampoline: there is no real call path in the Nox architecture (see the module header note)");
 }
 
 // ---- Kapanış: kalan 7 fonksiyon (Faz ZZ, 180/180'e TAMAMLAYAN dilim) ----
@@ -3227,7 +3227,7 @@ fn ctxCompileS(ctx: *HPyContext, utf8_source: ?[*:0]const u8, utf8_filename: ?[*
     _ = utf8_source;
     _ = utf8_filename;
     _ = kind;
-    ctxErrSetString(ctx, ctx.h_NotImplementedError, "Nox HPy köprüsü Python kaynak kodu derlemeyi desteklemiyor (Nox ayrı, kendi başına bir dildir — gömülü bir Python derleyicisi/yorumlayıcısı taşımaz)");
+    ctxErrSetString(ctx, ctx.h_NotImplementedError, "the Nox HPy bridge does not support compiling Python source code (Nox is a separate language of its own — it does not carry an embedded Python compiler/interpreter)");
     return HPy_NULL;
 }
 
@@ -3235,13 +3235,13 @@ fn ctxEvalCode(ctx: *HPyContext, code: HPy, globals: HPy, locals: HPy) callconv(
     _ = code;
     _ = globals;
     _ = locals;
-    ctxErrSetString(ctx, ctx.h_NotImplementedError, "Nox HPy köprüsü Python kod nesnesi çalıştırmayı desteklemiyor (gömülü bir Python bayt kodu sanal makinesi yok)");
+    ctxErrSetString(ctx, ctx.h_NotImplementedError, "the Nox HPy bridge does not support running Python code objects (there is no embedded Python bytecode virtual machine)");
     return HPy_NULL;
 }
 
 fn ctxImportImportModule(ctx: *HPyContext, utf8_name: ?[*:0]const u8) callconv(.c) HPy {
     _ = utf8_name;
-    ctxErrSetString(ctx, ctx.h_ImportError, "Nox HPy köprüsü modül içe aktarmayı desteklemiyor (yalnızca dlopen ile yüklenen tek bir uzantı barındırılır, genel bir modül/sys.modules sistemi yok)");
+    ctxErrSetString(ctx, ctx.h_ImportError, "the Nox HPy bridge does not support importing modules (only a single extension loaded with dlopen is hosted, there is no general module/sys.modules system)");
     return HPy_NULL;
 }
 
@@ -3255,13 +3255,13 @@ fn ctxImportImportModule(ctx: *HPyContext, utf8_name: ?[*:0]const u8) callconv(.
 fn ctxFromPyObject(ctx: *HPyContext, obj: ?*anyopaque) callconv(.c) HPy {
     _ = ctx;
     _ = obj;
-    @panic("ctx_FromPyObject: Nox yalnızca HPY_ABI_UNIVERSAL destekler — gerçek bir cpy_PyObject* asla var olmaz (bkz. modül üstü not)");
+    @panic("ctx_FromPyObject: Nox only supports HPY_ABI_UNIVERSAL — a real cpy_PyObject* never exists (see the module header note)");
 }
 
 fn ctxAsPyObject(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
     _ = ctx;
     _ = h;
-    @panic("ctx_AsPyObject: Nox yalnızca HPY_ABI_UNIVERSAL destekler — gerçek bir cpy_PyObject* asla üretilemez (bkz. modül üstü not)");
+    @panic("ctx_AsPyObject: Nox only supports HPY_ABI_UNIVERSAL — a real cpy_PyObject* can never be produced (see the module header note)");
 }
 
 /// Nox-özel (HPy ABI'sinin bir parçası DEĞİL) bir yardımcı: bir `type_`
@@ -3315,7 +3315,7 @@ fn numericBinOp(ctx: *HPyContext, h1: HPy, h2: HPy, op: NumOp) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     const o2 = objOf(h2) orelse return HPy_NULL;
     if (!isNumericTag(o1.tag) or !isNumericTag(o2.tag)) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "desteklenmeyen işlenen tipi (yalnızca int/float/bool)");
+        ctxErrSetString(ctx, ctx.h_TypeError, "unsupported operand type (only int/float/bool)");
         return HPy_NULL;
     }
 
@@ -3324,7 +3324,7 @@ fn numericBinOp(ctx: *HPyContext, h1: HPy, h2: HPy, op: NumOp) HPy {
         const a = numAsF64(o1);
         const b = numAsF64(o2);
         if ((op == .truediv or op == .floordiv or op == .mod) and b == 0) {
-            ctxErrSetString(ctx, ctx.h_ZeroDivisionError, "sıfıra bölme");
+            ctxErrSetString(ctx, ctx.h_ZeroDivisionError, "division by zero");
             return HPy_NULL;
         }
         const r: f64 = switch (op) {
@@ -3341,7 +3341,7 @@ fn numericBinOp(ctx: *HPyContext, h1: HPy, h2: HPy, op: NumOp) HPy {
     const a = numAsI64(o1);
     const b = numAsI64(o2);
     if ((op == .floordiv or op == .mod) and b == 0) {
-        ctxErrSetString(ctx, ctx.h_ZeroDivisionError, "sıfıra bölme");
+        ctxErrSetString(ctx, ctx.h_ZeroDivisionError, "division by zero");
         return HPy_NULL;
     }
     const r: i64 = switch (op) {
@@ -3377,7 +3377,7 @@ fn ctxRemainder(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
 fn ctxNegative(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     if (!isNumericTag(o1.tag)) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "desteklenmeyen işlenen tipi");
+        ctxErrSetString(ctx, ctx.h_TypeError, "unsupported operand type");
         return HPy_NULL;
     }
     if (o1.tag == .float_) return ctxFloatFromDouble(ctx, -numAsF64(o1));
@@ -3387,7 +3387,7 @@ fn ctxNegative(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
 fn ctxAbsolute(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     if (!isNumericTag(o1.tag)) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "desteklenmeyen işlenen tipi");
+        ctxErrSetString(ctx, ctx.h_TypeError, "unsupported operand type");
         return HPy_NULL;
     }
     if (o1.tag == .float_) return ctxFloatFromDouble(ctx, @abs(numAsF64(o1)));
@@ -3417,7 +3417,7 @@ fn ctxNumberCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
 fn ctxMatrixMultiply(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
     _ = h1;
     _ = h2;
-    ctxErrSetString(ctx, ctx.h_TypeError, "@ (matris çarpımı) desteklenmiyor");
+    ctxErrSetString(ctx, ctx.h_TypeError, "@ (matrix multiplication) is not supported");
     return HPy_NULL;
 }
 
@@ -3440,14 +3440,14 @@ fn ctxPower(ctx: *HPyContext, h1: HPy, h2: HPy, h3: HPy) callconv(.c) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     const o2 = objOf(h2) orelse return HPy_NULL;
     if (!isNumericTag(o1.tag) or !isNumericTag(o2.tag)) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "desteklenmeyen işlenen tipi (yalnızca int/float/bool)");
+        ctxErrSetString(ctx, ctx.h_TypeError, "unsupported operand type (only int/float/bool)");
         return HPy_NULL;
     }
     const use_float = o1.tag == .float_ or o2.tag == .float_ or numAsF64(o2) < 0;
     if (use_float) {
         const r = std.math.pow(f64, numAsF64(o1), numAsF64(o2));
         if (h3._i != 0) {
-            ctxErrSetString(ctx, ctx.h_TypeError, "üç argümanlı pow yalnızca int taban/üs için desteklenir");
+            ctxErrSetString(ctx, ctx.h_TypeError, "three-argument pow is only supported for int base/exponent");
             return HPy_NULL;
         }
         return ctxFloatFromDouble(ctx, r);
@@ -3460,12 +3460,12 @@ fn ctxPower(ctx: *HPyContext, h1: HPy, h2: HPy, h3: HPy) callconv(.c) HPy {
     if (h3._i != 0) {
         const mod_obj = objOf(h3) orelse return HPy_NULL;
         if (!isNumericTag(mod_obj.tag)) {
-            ctxErrSetString(ctx, ctx.h_TypeError, "modulus int olmalı");
+            ctxErrSetString(ctx, ctx.h_TypeError, "modulus must be an int");
             return HPy_NULL;
         }
         const m = numAsI64(mod_obj);
         if (m == 0) {
-            ctxErrSetString(ctx, ctx.h_ValueError, "pow() 3. argüman sıfır olamaz");
+            ctxErrSetString(ctx, ctx.h_ValueError, "the 3rd argument of pow() cannot be zero");
             return HPy_NULL;
         }
         return ctxLongFromInt64(ctx, @mod(result, m));
@@ -3476,7 +3476,7 @@ fn ctxPower(ctx: *HPyContext, h1: HPy, h2: HPy, h3: HPy) callconv(.c) HPy {
 fn ctxPositive(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     if (!isNumericTag(o1.tag)) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "desteklenmeyen işlenen tipi");
+        ctxErrSetString(ctx, ctx.h_TypeError, "unsupported operand type");
         return HPy_NULL;
     }
     if (o1.tag == .float_) return ctxFloatFromDouble(ctx, numAsF64(o1));
@@ -3486,7 +3486,7 @@ fn ctxPositive(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
 fn ctxInvert(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     if (o1.tag != .long and o1.tag != .bool_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "~ yalnızca int/bool için desteklenir");
+        ctxErrSetString(ctx, ctx.h_TypeError, "~ is only supported for int/bool");
         return HPy_NULL;
     }
     return ctxLongFromInt64(ctx, ~numAsI64(o1));
@@ -3498,13 +3498,13 @@ fn bitwiseBinOp(ctx: *HPyContext, h1: HPy, h2: HPy, op: BitOp) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     const o2 = objOf(h2) orelse return HPy_NULL;
     if ((o1.tag != .long and o1.tag != .bool_) or (o2.tag != .long and o2.tag != .bool_)) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "bit işlemleri yalnızca int/bool için desteklenir");
+        ctxErrSetString(ctx, ctx.h_TypeError, "bit operations are only supported for int/bool");
         return HPy_NULL;
     }
     const a = numAsI64(o1);
     const b = numAsI64(o2);
     if ((op == .lshift or op == .rshift) and (b < 0 or b >= 64)) {
-        ctxErrSetString(ctx, ctx.h_ValueError, "negatif kaydırma sayısı ya da taşma");
+        ctxErrSetString(ctx, ctx.h_ValueError, "negative shift count or overflow");
         return HPy_NULL;
     }
     const r: i64 = switch (op) {
@@ -3539,7 +3539,7 @@ fn ctxOr(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
 fn ctxIndex(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     if (o1.tag != .long and o1.tag != .bool_) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "__index__ yalnızca int/bool için desteklenir");
+        ctxErrSetString(ctx, ctx.h_TypeError, "__index__ is only supported for int/bool");
         return HPy_NULL;
     }
     return ctxLongFromInt64(ctx, numAsI64(o1));
@@ -3549,7 +3549,7 @@ fn ctxIndex(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
 fn ctxLong(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     if (!isNumericTag(o1.tag)) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "int()'e dönüştürülemez");
+        ctxErrSetString(ctx, ctx.h_TypeError, "cannot be converted to int()");
         return HPy_NULL;
     }
     return ctxLongFromInt64(ctx, numAsI64(o1));
@@ -3559,7 +3559,7 @@ fn ctxLong(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
 fn ctxFloat(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
     const o1 = objOf(h1) orelse return HPy_NULL;
     if (!isNumericTag(o1.tag)) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "float()'a dönüştürülemez");
+        ctxErrSetString(ctx, ctx.h_TypeError, "cannot be converted to float()");
         return HPy_NULL;
     }
     return ctxFloatFromDouble(ctx, numAsF64(o1));
@@ -3675,7 +3675,7 @@ fn ctxErrExceptionMatches(ctx: *HPyContext, exc: HPy) callconv(.c) c_int {
 }
 
 fn ctxErrNoMemory(ctx: *HPyContext) callconv(.c) void {
-    ctxErrSetString(ctx, ctx.h_MemoryError, "bellek yetersiz");
+    ctxErrSetString(ctx, ctx.h_MemoryError, "out of memory");
 }
 
 // ---- Hata yönetiminin geri kalanı (Faz RR) ----
@@ -3792,7 +3792,7 @@ fn ctxErrWarnEx(ctx: *HPyContext, category: HPy, utf8_message: ?[*:0]const u8, s
     _ = category;
     _ = stack_level;
     const msg = utf8_message orelse "";
-    std.debug.print("Uyarı: {s}\n", .{std.mem.sliceTo(msg, 0)});
+    std.debug.print("Warning: {s}\n", .{std.mem.sliceTo(msg, 0)});
     return 0;
 }
 
@@ -3804,7 +3804,7 @@ fn ctxErrWarnEx(ctx: *HPyContext, category: HPy, utf8_message: ?[*:0]const u8, s
 /// SS) mesaja DAHİL EDİLMEZ — yalnızca genel bir tanılama notu yazılır.
 fn ctxErrWriteUnraisable(ctx: *HPyContext, obj: HPy) callconv(.c) void {
     _ = obj;
-    std.debug.print("İşlenemeyen istisna yok sayıldı (Err_WriteUnraisable)\n", .{});
+    std.debug.print("Unraisable exception ignored (Err_WriteUnraisable)\n", .{});
     ctxErrClear(ctx);
 }
 
@@ -4160,7 +4160,7 @@ fn ctxSliceTypeNew(ctx: *HPyContext, h_type: HPy, args: ?[*]const HPy, nargs: is
     _ = h_type;
     _ = kw;
     if (nargs != 3) {
-        ctxErrSetString(ctx, ctx.h_TypeError, "slice() tam olarak 3 argüman alır (start, stop, step)");
+        ctxErrSetString(ctx, ctx.h_TypeError, "slice() takes exactly 3 arguments (start, stop, step)");
         return HPy_NULL;
     }
     const a = args orelse return HPy_NULL;
@@ -4312,7 +4312,7 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
     state.* = .{ .allocator = allocator, .h_true_obj = h_true, .h_false_obj = h_false };
 
     ctx.* = .{
-        .name = "Nox HPy bridge (Tier 0 + Tier 1'in ilk dilimi)",
+        .name = "Nox HPy bridge (Tier 0 + the first slice of Tier 1)",
         ._private = state,
         .abi_version = 0,
         .h_None = h_none,

@@ -93,7 +93,7 @@ def create_table(conn: DbConnection, table: Table) -> None:
     try:
         conn.execute(create_table_sql(table))
     except Exception as e:
-        raise OrmError("tablo olusturulamadi: " + e.message)
+        raise OrmError("could not create the table: " + e.message)
 
 # `values`de BULUNMAYAN sütunlar (ör. otomatik-artan birincil anahtar)
 # ATLANIR — INSERT ifadesine hiç dahil edilmez.
@@ -118,7 +118,7 @@ def insert(conn: DbConnection, table: Table, values: dict[str, Value]) -> int:
             j = j + 1
         return stmt.execute()
     except Exception as e:
-        raise OrmError("ekleme basarisiz: " + e.message)
+        raise OrmError("insert failed: " + e.message)
 
 # `where_sql`e "?" placeholder'ları YAZILIR, `where_params` bunlara
 # KARŞILIK gelen `Value`leri SIRAYLA taşır (ör. `update(conn, t, vals,
@@ -150,7 +150,7 @@ def update(conn: DbConnection, table: Table, values: dict[str, Value], where_sql
             k = k + 1
         return stmt.execute()
     except Exception as e:
-        raise OrmError("guncelleme basarisiz: " + e.message)
+        raise OrmError("update failed: " + e.message)
 
 def delete(conn: DbConnection, table: Table, where_sql: str, where_params: list[Value]) -> int:
     sql: str = "DELETE FROM " + table.name
@@ -164,7 +164,7 @@ def delete(conn: DbConnection, table: Table, where_sql: str, where_params: list[
             i = i + 1
         return stmt.execute()
     except Exception as e:
-        raise OrmError("silme basarisiz: " + e.message)
+        raise OrmError("delete failed: " + e.message)
 
 def select(conn: DbConnection, table: Table, where_sql: str, where_params: list[Value]) -> list[Row]:
     sql: str = "SELECT * FROM " + table.name
@@ -178,4 +178,4 @@ def select(conn: DbConnection, table: Table, where_sql: str, where_params: list[
             i = i + 1
         return stmt.query()
     except Exception as e:
-        raise OrmError("sorgu basarisiz: " + e.message)
+        raise OrmError("query failed: " + e.message)

@@ -875,10 +875,10 @@ pub fn genClassNameDispatch(self: *Codegen, classes: []const ClassIdEntry) Codeg
     // `llvm_emit.llvmCStringConstant` KULLANILIR, KAÇAN metin (`escaped`)
     // DEĞİL HAM metin (`llvmCStringConstant` KENDİ escape'ini yapar).
     if (self.backend == .qbe) {
-        const unknown_escaped = try escapeForQbeString(self.allocator, "bilinmeyen sinif");
+        const unknown_escaped = try escapeForQbeString(self.allocator, "unknown class");
         try self.qbeRaw("data $__nox_classname_unknown = {{ b \"{s}\", b 0 }}\n", .{unknown_escaped});
     } else {
-        const line = try llvm_emit.llvmCStringConstant(self.allocator, "__nox_classname_unknown", "bilinmeyen sinif");
+        const line = try llvm_emit.llvmCStringConstant(self.allocator, "__nox_classname_unknown", "unknown class");
         try self.out.writer.writeAll(line);
     }
 

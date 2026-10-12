@@ -31,5 +31,4 @@ package index, global installs, cache pruning and self-upgrade.
 
 ## Diagnostics
 
-Type errors carry the statement line and span; the language server reuses the same front end, so the CLI and editors agree. Error *kinds* (`TypeMismatch`, `UndefinedFunction`, …) are stable identifiers; message texts
-are currently Turkish and are not part of any compatibility promise.
+Type errors carry the statement line and span; the language server reuses the same front end, so the CLI and editors agree. Error *kinds* (`TypeMismatch`, `UndefinedFunction`, …) are stable identifiers. Message texts are English and are not part of any compatibility promise.

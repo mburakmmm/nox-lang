@@ -80,7 +80,7 @@ class Command:
         h: ptr = nox_process_run_raw(self.program, self.args, self.cwd_path, self.timeout_ms)
         if nox_process_output_ok_raw(h) == 0:
             nox_process_output_free_raw(h)
-            raise ProcessError("surec calistirilamadi (bulunamadi/NUL-bayt-icerikli/zaman-asimi): " + self.program)
+            raise ProcessError("could not run the process (not found / contains a NUL byte / timed out): " + self.program)
         status: int = nox_process_output_status_raw(h)
         out: str = nox_process_output_stdout_raw(h)
         err: str = nox_process_output_stderr_raw(h)

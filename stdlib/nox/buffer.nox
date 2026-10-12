@@ -56,7 +56,7 @@ class Span:
     # KENDİ dilim [slice] kuralı) KAPSAYAN bir pencere.
     def __init__(self, buf: Buffer, start: int, end: int) -> None:
         if start < 0 or end < start or end > buf.len():
-            raise IndexError("Span araligi Buffer sinirlarinin disinda")
+            raise IndexError("Span range is outside the Buffer bounds")
         self._buf = buf
         self._start = start
         self._len = end - start
@@ -66,12 +66,12 @@ class Span:
 
     def get(self: Span, i: int) -> u8:
         if i < 0 or i >= self._len:
-            raise IndexError("Span indeksi sinirlarin disinda")
+            raise IndexError("Span index out of bounds")
         return self._buf.get(self._start + i)
 
     def set(self: Span, i: int, v: u8) -> None:
         if i < 0 or i >= self._len:
-            raise IndexError("Span indeksi sinirlarin disinda")
+            raise IndexError("Span index out of bounds")
         self._buf.set(self._start + i, v)
 
 class Buffer:

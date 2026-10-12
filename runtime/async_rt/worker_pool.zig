@@ -448,7 +448,7 @@ const StealTestCtx = struct {
 };
 
 fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
-    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
+    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("the scheduler could not be started");
     // Faz MN.6: bu test cycle-gc baskısı KURMAZ — `collect_fn` yine de
     // GERÇEK `nox_cycle_collect`e bağlanır (zararsız, HİÇ TETİKLENMEZ)
     // çünkü `PoolLink` artık ZORUNLU bir alan (bkz. `scheduler.zig`).
@@ -482,7 +482,7 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         var i: usize = 0;
         while (i < STEAL_TEST_N_TASKS) : (i += 1) {
             ctx.child_args[i] = .{ .index = i, .executed_by = &ctx.executed_by };
-            ctx.tasks[i] = scheduler_mod.spawn(&sched, i64, stealTestChildFn, &ctx.child_args[i]) catch @panic("spawn basarisiz");
+            ctx.tasks[i] = scheduler_mod.spawn(&sched, i64, stealTestChildFn, &ctx.child_args[i]) catch @panic("spawn failed");
         }
         ctx.ready.store(true, .release);
         // KRİTİK — `siblings_started` bariyeri TEK BAŞINA YETERSİZ (ELLE,
@@ -663,7 +663,7 @@ fn cycleStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *CycleStressCtx) voi
     // worker de KENDİ enjeksiyonunu YAPMIŞ OLACAĞINDAN sorun OLMAZ.
     cycle_detector.injectFakeDispatch();
 
-    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
+    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("the scheduler could not be started");
     sched.attachToPool(.{
         .own_slot = slot,
         .sibling_deques = ctx.pool.deque_list,
@@ -690,7 +690,7 @@ fn cycleStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *CycleStressCtx) voi
     var arg = CycleStressArg{ .rt = rt };
     var i: usize = 0;
     while (i < CYCLE_STRESS_TASKS_PER_WORKER) : (i += 1) {
-        ctx.tasks[slot][i] = scheduler_mod.spawn(&sched, i64, cycleStressChildFn, &arg) catch @panic("spawn basarisiz");
+        ctx.tasks[slot][i] = scheduler_mod.spawn(&sched, i64, cycleStressChildFn, &arg) catch @panic("spawn failed");
     }
 
     sched.run() catch |e| switch (e) {
@@ -777,7 +777,7 @@ fn chanStressConsumerFn(arg: *anyopaque) callconv(.c) void {
 }
 
 fn chanStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *ChanStressCtx) void {
-    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
+    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("the scheduler could not be started");
     // Faz MN.9.1: `bridge.zig`nin `nox_async_init`inin GERÇEK programlarda
     // OTOMATİK yaptığı eşitleme — BURADA (bridge.zig'i İTHAL ETMEYEN,
     // standalone bir test yardımcısı OLDUĞUNDAN) ELLE yapılır.
@@ -806,13 +806,13 @@ fn chanStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *ChanStressCtx) void 
         var i: usize = 0;
         while (i < CHAN_STRESS_N_PRODUCERS) : (i += 1) {
             ctx.producer_args[i] = .{ .chan = &ctx.chan, .value = @intCast(i) };
-            ctx.producer_tasks[i] = scheduler_mod.spawn(&sched, void, chanStressProducerFn, &ctx.producer_args[i]) catch @panic("spawn basarisiz");
+            ctx.producer_tasks[i] = scheduler_mod.spawn(&sched, void, chanStressProducerFn, &ctx.producer_args[i]) catch @panic("spawn failed");
         }
         // Tüketici de BİR GÖREV olarak spawn edilir (senkron, doğrudan
         // `recv()` ÇAĞRILAMAZ — `sched.current` BURADA `null` OLDUĞUNDAN
         // askıya alma GEÇERSİZ olurdu) — `sched.run()` AŞAĞIDA HEPSİNİ
         // (üreticiler+tüketici) çalıştırır.
-        ctx.consumer_task = scheduler_mod.spawn(&sched, void, chanStressConsumerFn, ctx) catch @panic("spawn basarisiz");
+        ctx.consumer_task = scheduler_mod.spawn(&sched, void, chanStressConsumerFn, ctx) catch @panic("spawn failed");
         ctx.ready.store(true, .release);
         var y: usize = 0;
         while (y < 8) : (y += 1) std.Thread.yield() catch {};
@@ -930,7 +930,7 @@ fn taskAwaitStressWaiterFn(arg: *anyopaque) callconv(.c) i64 {
 }
 
 fn taskAwaitStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *TaskAwaitStressCtx) void {
-    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
+    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("the scheduler could not be started");
     // v1.29.1: `bridge.zig`nin `nox_async_init`inin GERÇEK programlarda
     // OTOMATİK yaptığı eşitleme — `Task.await_()` ARTIK BUNA dayandığından
     // (bkz. `scheduler.zig`nin `Waiter`i) standalone test yardımcısı BUNU
@@ -959,9 +959,9 @@ fn taskAwaitStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *TaskAwaitStress
         var i: usize = 0;
         while (i < TASK_AWAIT_STRESS_N) : (i += 1) {
             ctx.original_args[i] = i;
-            ctx.originals[i] = scheduler_mod.spawn(&sched, i64, taskAwaitStressOriginalFn, &ctx.original_args[i]) catch @panic("spawn basarisiz (original)");
+            ctx.originals[i] = scheduler_mod.spawn(&sched, i64, taskAwaitStressOriginalFn, &ctx.original_args[i]) catch @panic("spawn failed (original)");
             ctx.waiter_args[i] = .{ .idx = i, .ctx = ctx, .original = ctx.originals[i] };
-            ctx.waiters[i] = scheduler_mod.spawn(&sched, i64, taskAwaitStressWaiterFn, &ctx.waiter_args[i]) catch @panic("spawn basarisiz (waiter)");
+            ctx.waiters[i] = scheduler_mod.spawn(&sched, i64, taskAwaitStressWaiterFn, &ctx.waiter_args[i]) catch @panic("spawn failed (waiter)");
         }
         ctx.ready.store(true, .release);
         var y: usize = 0;

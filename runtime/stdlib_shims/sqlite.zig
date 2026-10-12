@@ -204,7 +204,7 @@ pub export fn nox_sqlite_open_raw(path: ?[*:0]const u8) callconv(.c) ?*anyopaque
 }
 
 pub export fn nox_sqlite_errmsg_raw(rt: ?*anyopaque, db: ?*anyopaque) callconv(.c) ?[*:0]u8 {
-    if (!ensureLoaded()) return dupeToNoxStr(rt, "libsqlite3 yuklenemedi (sistemde kurulu degil olabilir)");
+    if (!ensureLoaded()) return dupeToNoxStr(rt, "could not load libsqlite3 (it may not be installed on the system)");
     const msg = g_funcs.errmsg(db) orelse return dupeEmpty(rt);
     return dupeToNoxStr(rt, std.mem.span(msg));
 }

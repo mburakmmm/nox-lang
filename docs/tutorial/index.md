@@ -21,8 +21,7 @@ output was run to produce it.
 ## Conventions
 
 Commands you type in a terminal are shown in `sh` blocks. Nox source is shown in `nox` blocks; when a block is followed by an `output` block,
-that is exactly what the program prints. The compiler's *error messages* are currently written in Turkish; this tutorial quotes the English
-meaning when it shows one.
+that is exactly what the program prints. Compiler error messages are English; branch on the error kind and the exit status, not on the wording.
 
 If you want to experiment as you read, save a block as `hello.nox` and run `noxc run hello.nox` (see [Install](../install/index.md) if
 `noxc` is not available yet).

@@ -150,14 +150,14 @@ def _parse_basic_string(text: str, pos: list[int]) -> str:
     closed: bool = False
     while not closed:
         if pos[0] >= n:
-            raise TomlError("sonlandirilmamis string")
+            raise TomlError("unterminated string")
         c: str = text[pos[0]]
         if c == "\"":
             pos[0] = pos[0] + 1
             closed = True
         elif c == "\\":
             if pos[0] + 1 >= n:
-                raise TomlError("sonlandirilmamis kacis dizisi")
+                raise TomlError("unterminated escape sequence")
             esc: str = text[pos[0] + 1]
             if esc == "n":
                 result = result + "\n"
@@ -192,7 +192,7 @@ def _parse_key(text: str, pos: list[int]) -> str:
         else:
             scanning = False
     if result == "":
-        raise TomlError("gecersiz (bos) anahtar")
+        raise TomlError("invalid (empty) key")
     return result
 
 def _parse_number(text: str, pos: list[int]) -> TomlValue:
@@ -217,21 +217,21 @@ def _parse_number(text: str, pos: list[int]) -> TomlValue:
             else:
                 scanning = False
     if pos[0] == start:
-        raise TomlError("gecersiz sayi")
+        raise TomlError("invalid number")
     if is_float_val:
         try:
             return _make_float(float(raw))
         except ValueError as e:
-            raise TomlError("gecersiz float: " + raw)
+            raise TomlError("invalid float: " + raw)
     try:
         return _make_int(int(raw))
     except ValueError as e:
-        raise TomlError("gecersiz integer: " + raw)
+        raise TomlError("invalid integer: " + raw)
 
 def _parse_value(text: str, pos: list[int]) -> TomlValue:
     n: int = len(text)
     if pos[0] >= n:
-        raise TomlError("beklenmeyen dosya sonu (deger bekleniyordu)")
+        raise TomlError("unexpected end of file (a value was expected)")
     c: str = text[pos[0]]
     if c == "\"":
         return _make_string(_parse_basic_string(text, pos))
@@ -246,7 +246,7 @@ def _parse_value(text: str, pos: list[int]) -> TomlValue:
     elif _is_digit(c) or c == "-" or c == "+":
         return _parse_number(text, pos)
     else:
-        raise TomlError("gecersiz deger")
+        raise TomlError("invalid value")
 
 def _parse_array(text: str, pos: list[int]) -> TomlValue:
     n: int = len(text)
@@ -256,7 +256,7 @@ def _parse_array(text: str, pos: list[int]) -> TomlValue:
     while not done:
         _skip_ws_newlines_comments(text, pos)
         if pos[0] >= n:
-            raise TomlError("sonlandirilmamis dizi")
+            raise TomlError("unterminated array")
         if text[pos[0]] == "]":
             pos[0] = pos[0] + 1
             done = True
@@ -269,14 +269,14 @@ def _parse_array(text: str, pos: list[int]) -> TomlValue:
                 pos[0] = pos[0] + 1
                 done = True
             else:
-                raise TomlError("dizi icinde ',' ya da ']' bekleniyordu")
+                raise TomlError("expected ',' or ']' inside the array")
     return _make_array(items)
 
 def _parse_table_header(text: str, pos: list[int], root: TomlValue) -> TomlValue:
     n: int = len(text)
     pos[0] = pos[0] + 1
     if _char_at_or_empty(text, pos[0], n) == "[":
-        raise TomlError("array-tablolari ([[...]]) v1'de desteklenmiyor")
+        raise TomlError("array tables ([[...]]) are not supported in v1")
     current: TomlValue = root
     done: bool = False
     while not done:
@@ -286,7 +286,7 @@ def _parse_table_header(text: str, pos: list[int], root: TomlValue) -> TomlValue
             current.tbl[key] = _make_table()
         next_val: TomlValue = current.tbl[key]
         if next_val.kind != 5:
-            raise TomlError("'" + key + "' zaten bir tablo degil")
+            raise TomlError("'" + key + "' is not a table")
         current = next_val
         _skip_inline_ws(text, pos)
         if _char_at_or_empty(text, pos[0], n) == ".":
@@ -295,7 +295,7 @@ def _parse_table_header(text: str, pos: list[int], root: TomlValue) -> TomlValue
             done = True
     _skip_inline_ws(text, pos)
     if _char_at_or_empty(text, pos[0], n) != "]":
-        raise TomlError("']' bekleniyordu")
+        raise TomlError("expected ']'")
     pos[0] = pos[0] + 1
     _skip_inline_ws(text, pos)
     if _char_at_or_empty(text, pos[0], n) == "#":
@@ -309,7 +309,7 @@ def _parse_key_value(text: str, pos: list[int], current: TomlValue) -> None:
     key: str = _parse_key(text, pos)
     _skip_inline_ws(text, pos)
     if _char_at_or_empty(text, pos[0], n) != "=":
-        raise TomlError("'=' bekleniyordu")
+        raise TomlError("expected '='")
     pos[0] = pos[0] + 1
     _skip_inline_ws(text, pos)
     value: TomlValue = _parse_value(text, pos)
@@ -320,7 +320,7 @@ def _parse_key_value(text: str, pos: list[int], current: TomlValue) -> None:
     elif _char_at_or_empty(text, pos[0], n) == "\n":
         pos[0] = pos[0] + 1
     elif pos[0] < n:
-        raise TomlError("satir sonunda beklenmeyen karakter")
+        raise TomlError("unexpected character at the end of the line")
 
 def parse(text: str) -> TomlValue:
     root: TomlValue = _make_table()
@@ -351,7 +351,7 @@ def get(root: TomlValue, dotted_path: str) -> TomlValue:
     while i < n:
         key: str = parts[i]
         if current.kind != 5 or not current.tbl.contains(key):
-            raise TomlError("yol bulunamadi: " + dotted_path)
+            raise TomlError("path not found: " + dotted_path)
         current = current.tbl[key]
         i = i + 1
     return current
@@ -400,7 +400,7 @@ def _toml_dump_scalar(v: TomlValue) -> str:
         return "false"
     if is_array(v):
         return _toml_dump_array(v)
-    raise TomlError("bir tablo degeri skaler/dizi baglaminda dump edilemez")
+    raise TomlError("a table value cannot be dumped in a scalar/array context")
 
 def _toml_dump_array(v: TomlValue) -> str:
     out: str = "["
@@ -460,6 +460,6 @@ def _toml_dump_table(v: TomlValue, prefix: str) -> list[str]:
 # aynen KORUNMAZ İDDİASI YOK — SADECE anlamsal eşitlik).
 def dump(v: TomlValue) -> str:
     if not is_table(v):
-        raise TomlError("dump yalnizca kok tablo degerini kabul eder")
+        raise TomlError("dump only accepts a root table value")
     lines: list[str] = _toml_dump_table(v, "")
     return nox.strings.join(lines, "\n") + "\n"

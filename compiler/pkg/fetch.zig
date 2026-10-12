@@ -98,7 +98,7 @@ fn verifyCommitSignature(a: Allocator, io: Io, staging_dir: []const u8, sha: []c
         // yalnızca sıfırdan farklı bir çıkış koduyla döner — bu YÜZDEN
         // `result.stderr` BOŞSA, kullanıcının BOŞ bir tanılama satırı
         // GÖRMEMESİ İçin AÇIK bir yedek mesaj kullanılır.
-        out_diagnostic.* = if (result.stderr.len > 0) result.stderr else "git verify-commit basarisiz oldu (commit imzasiz olabilir, imzalayan guvenilir anahtarlar arasinda olmayabilir, ya da 'gpg' bulunamamis olabilir)";
+        out_diagnostic.* = if (result.stderr.len > 0) result.stderr else "git verify-commit failed (the commit may be unsigned, the signer may not be among the trusted keys, or 'gpg' may not be installed)";
         return error.CommitSignatureRejected;
     }
 }

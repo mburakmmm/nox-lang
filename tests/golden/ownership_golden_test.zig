@@ -6,6 +6,14 @@
 const std = @import("std");
 const nox = @import("nox");
 
+/// Bkz. `typecheck_golden_test.zig`nin `expectOutput`u (mesaj metni değişince `.expected` dosyalarını yeniden üretmek için).
+fn expectOutput(expected: []const u8, actual: []const u8) !void {
+    if (!std.mem.eql(u8, expected, actual)) {
+        std.debug.print("@@REGEN-BEGIN@@\n{s}@@REGEN-NEW@@\n{s}@@REGEN-END@@\n", .{ expected, actual });
+    }
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
 fn expectGolden(comptime source: []const u8, comptime expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -25,7 +33,7 @@ fn expectGolden(comptime source: []const u8, comptime expected: []const u8) !voi
     const report = try nox.ownership.analyze(allocator, module, &.{}, &.{}, &.{}, &.{});
     const dump = try nox.ownership.dumpToAlloc(allocator, report);
 
-    try std.testing.expectEqualStrings(expected, dump);
+    try expectOutput(expected, dump);
 }
 
 test "golden(ownership): yerel değişken kaçmıyor -> ASAP" {

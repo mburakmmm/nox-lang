@@ -124,7 +124,7 @@ test "noxc search: eslesme yoksa acik bir mesaj basar" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
-    try std.testing.expectEqualStrings("eslesen paket bulunamadi\n", result.stdout);
+    try std.testing.expectEqualStrings("no matching packages found\n", result.stdout);
 }
 
 test "noxc search: bozuk indeks dosyasi net bir hatayla cikis kodu 1 doner" {

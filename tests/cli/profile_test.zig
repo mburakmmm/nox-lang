@@ -80,7 +80,7 @@ test "noxc build --profile freestanding: izin verilen bir stdlib modülü (nox.s
     defer gpa.free(build_result.stdout);
     defer gpa.free(build_result.stderr);
     try std.testing.expect(build_result.term == .exited and build_result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, build_result.stderr, "zig cc basarisiz") != null);
+    try std.testing.expect(std.mem.indexOf(u8, build_result.stderr, "zig cc failed") != null);
 }
 
 test "noxc build --profile freestanding: dogrudan yasakli bir modul (nox.http) reddedilir" {
@@ -101,7 +101,7 @@ test "noxc build --profile freestanding: dogrudan yasakli bir modul (nox.http) r
     defer gpa.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.http") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "kullan") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "cannot be used") != null);
 }
 
 test "noxc build --profile freestanding: TRANSITIF olarak yasakli bir modul (nox.router -> nox.http) reddedilir, hata 'nox.http'yi gosterir" {
@@ -486,5 +486,5 @@ test "noxc build --profile bilinmeyen-bir-isim: acik 'bilinmeyen profil' hatasiy
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "bilinmeyen profil") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unknown profile") != null);
 }

@@ -60,7 +60,7 @@ extern def nox_http_listen_fd(port: int) -> int from "zig-out/lib/noxrt.o" with_
 def listen(port: int) -> int:
     fd: int = nox_http_listen_fd(port)
     if fd < 0:
-        raise HttpError("dinleme basarisiz: port " + str(port))
+        raise HttpError("listen failed: port " + str(port))
     return fd
 
 # v1.142.10: OPT-IN IPv6 dinleyici (varsayılan `listen` IPv4-only KALIR).
@@ -78,14 +78,14 @@ def listen_v6(port: int, v6_only: bool) -> int:
         only = 1
     fd: int = nox_http_listen_fd_v6(port, only)
     if fd < 0:
-        raise HttpError("IPv6 dinleme basarisiz: port " + str(port))
+        raise HttpError("IPv6 listen failed: port " + str(port))
     return fd
 
 def get(url: str, headers: dict[str, str]) -> HttpResponse:
     h: ptr = nox_http_get_raw(url, headers)
     if nox_http_response_ok(h) == 0:
         nox_http_response_free(h)
-        raise HttpError("istek basarisiz: " + url)
+        raise HttpError("request failed: " + url)
     status: int = nox_http_response_status(h)
     body: str = nox_http_response_body(h)
     # Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62): `dict[K,V]` ARTIK
@@ -102,7 +102,7 @@ def post(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
     h: ptr = nox_http_post_raw(url, body, headers)
     if nox_http_response_ok(h) == 0:
         nox_http_response_free(h)
-        raise HttpError("istek basarisiz: " + url)
+        raise HttpError("request failed: " + url)
     status: int = nox_http_response_status(h)
     resp_body: str = nox_http_response_body(h)
     # Bkz. `get`in AYNI notu (Faz FF.3).

@@ -463,7 +463,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     }
                     return v;
                 }
-                const result = try self.genParseOrRaise(v, "nox_str_is_valid_int", "nox_str_to_int", .l, "int(): gecersiz sayi bicimi");
+                const result = try self.genParseOrRaise(v, "nox_str_is_valid_int", "nox_str_to_int", .l, "int(): invalid number format");
                 try self.releaseIfTemporary(c.args[0], v);
                 return result;
             }
@@ -482,7 +482,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     }
                     return self.convert(v, .d);
                 }
-                const result = try self.genParseOrRaise(v, "nox_str_is_valid_float", "nox_str_to_float", .d, "float(): gecersiz sayi bicimi");
+                const result = try self.genParseOrRaise(v, "nox_str_is_valid_float", "nox_str_to_float", .d, "float(): invalid number format");
                 try self.releaseIfTemporary(c.args[0], v);
                 return result;
             }
@@ -2049,7 +2049,7 @@ fn dictValueOf(dinfo: *const DictInfo, converted: Value) Value {
 }
 
 fn emitKeyError(self: *Codegen, release_a: ast.Expr, release_av: Value, release_b: ast.Expr, release_bv: Value) CodegenError!void {
-    const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
+    const msg_value = try self.emitStringLiteral("key not found");
     const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
     const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
     try self.emitExceptionLineStore(ke_obj.text, "KeyError", self.current_raise_line);
@@ -2613,7 +2613,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     try self.qbeJnzCold(empty_t, err_label, ok_label);
     const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
-    const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
+    const msg_value = try self.emitStringLiteral("cannot pop from an empty list");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
     try self.emitExceptionLineStore(ie_obj.text, "IndexError", self.current_raise_line);
@@ -2716,7 +2716,7 @@ fn emitListRemoveAtChecked(self: *Codegen, obj: Value, index_expr: ast.Expr, idx
     const idx = try expr_mod.normalizeNegativeIndex(self, index_expr, idx_in, len_t); // v1.161.0: negatif indeks sondan sayar
     const bad = try self.newTemp();
     try self.qbeOp2(bad, .w, "cugel", idx, len_t); // işaretsiz idx >= len (negatif de yakalanır)
-    try emitColdListError(self, bad, "IndexError", "liste indeksi aralik disi", rels);
+    try emitColdListError(self, bad, "IndexError", "list index out of range", rels);
     const elem = try self.loadListElemValueAt(obj, idx);
     const esz = try listEszLit(self, obj);
     try self.qbeCall(null, "$nox_list_remove_at", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = idx }, .{ .ty = .l, .text = esz } });
@@ -2805,7 +2805,7 @@ fn genListSearchOp(self: *Codegen, obj: Value, a: ast.Attribute, args: []const a
     const idx = try self.emitListFind(obj, x);
     const bad = try self.newTemp();
     try self.qbeOp2Imm(bad, .w, "csltl", idx, 0);
-    const msg: []const u8 = if (std.mem.eql(u8, a.attr, "remove")) "list.remove(x): x listede yok" else "list.index(x): x listede yok";
+    const msg: []const u8 = if (std.mem.eql(u8, a.attr, "remove")) "list.remove(x): x is not in the list" else "list.index(x): x is not in the list";
     try emitColdListError(self, bad, "ValueError", msg, &rels);
     if (std.mem.eql(u8, a.attr, "remove")) {
         const elem = try self.loadListElemValueAt(obj, idx);
@@ -2855,7 +2855,7 @@ pub fn genSlice(self: *Codegen, sl: ast.Slice) CodegenError!Value {
             const bad = try self.newTemp();
             try self.qbeOp2Imm(bad, .w, "ceql", bounds[2].text, 0);
             const rels = [_]RelPair{.{ .e = sl.obj.*, .v = obj }};
-            try emitColdListError(self, bad, "ValueError", "dilim adimi sifir olamaz", &rels);
+            try emitColdListError(self, bad, "ValueError", "slice step cannot be zero", &rels);
         }
     }
     const result = try self.newTemp();
@@ -2970,7 +2970,7 @@ fn genCompFor(self: *Codegen, clauses: []const ast.CompClause, i: usize, fc: ast
                     const bad = try self.newTemp();
                     try self.qbeOp2Imm(bad, .w, "ceql", step, 0);
                     const rels = [_]RelPair{};
-                    try emitColdListError(self, bad, "ValueError", "range adimi sifir olamaz", &rels);
+                    try emitColdListError(self, bad, "ValueError", "range step cannot be zero", &rels);
                 }
             }
         }
@@ -3217,7 +3217,7 @@ fn genStrMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.
             const bad = try self.newTemp();
             try self.qbeOp2Imm(bad, .w, "csltl", result, 0);
             var rels: [2]RelPair = .{ .{ .e = a.obj.*, .v = obj }, .{ .e = args[0], .v = vals[0] } };
-            try emitColdListError(self, bad, "ValueError", "str.index(sub): alt dize bulunamadi", &rels);
+            try emitColdListError(self, bad, "ValueError", "str.index(sub): substring not found", &rels);
         }
     } else if (eq(u8, m, "count")) {
         try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_str_count", &.{ s_arg, .{ .ty = .l, .text = vals[0].text } });

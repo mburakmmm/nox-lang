@@ -196,7 +196,7 @@ pub export fn nox_pg_status_ok_raw(conn: ?*anyopaque) callconv(.c) i64 {
 }
 
 pub export fn nox_pg_errmsg_raw(rt: ?*anyopaque, conn: ?*anyopaque) callconv(.c) ?[*:0]u8 {
-    if (!ensureLoaded()) return dupeToNoxStr(rt, "libpq yuklenemedi (sistemde kurulu degil olabilir)");
+    if (!ensureLoaded()) return dupeToNoxStr(rt, "could not load libpq (it may not be installed on the system)");
     const msg = g_funcs.error_message(conn) orelse return dupeEmpty(rt);
     return dupeToNoxStr(rt, std.mem.span(msg));
 }

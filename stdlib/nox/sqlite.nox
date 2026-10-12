@@ -121,7 +121,7 @@ def _sqlite_execute(stmt: Statement) -> int:
     rc: int = nox_sqlite_step_raw(stmt.handle)
     nox_sqlite_finalize_raw(stmt.handle)
     if rc != 101:
-        raise SqliteError("adim basarisiz: " + nox_sqlite_errmsg_raw(stmt.db_handle))
+        raise SqliteError("step failed: " + nox_sqlite_errmsg_raw(stmt.db_handle))
     return nox_sqlite_changes_raw(stmt.db_handle)
 
 def _sqlite_query(stmt: Statement) -> list[Row]:
@@ -132,7 +132,7 @@ def _sqlite_query(stmt: Statement) -> list[Row]:
         rc = nox_sqlite_step_raw(stmt.handle)
     nox_sqlite_finalize_raw(stmt.handle)
     if rc != 101:
-        raise SqliteError("sorgu basarisiz: " + nox_sqlite_errmsg_raw(stmt.db_handle))
+        raise SqliteError("query failed: " + nox_sqlite_errmsg_raw(stmt.db_handle))
     return rows
 
 class Connection:
@@ -142,7 +142,7 @@ class Connection:
     def prepare(self: Connection, sql: str) -> Statement:
         stmt: ptr = nox_sqlite_prepare_raw(self.handle, sql)
         if nox_sqlite_is_null_ptr(stmt) != 0:
-            raise SqliteError("hazirlama basarisiz: " + nox_sqlite_errmsg_raw(self.handle))
+            raise SqliteError("prepare failed: " + nox_sqlite_errmsg_raw(self.handle))
         return Statement(stmt, self.handle, sql, _sqlite_bind_int, _sqlite_bind_float, _sqlite_bind_str, _sqlite_bind_null, _sqlite_execute, _sqlite_query)
 
     def execute(self: Connection, sql: str) -> int:
@@ -163,8 +163,8 @@ class Connection:
 def open(path: str) -> Connection:
     handle: ptr = nox_sqlite_open_raw(path)
     if nox_sqlite_is_null_ptr(handle) != 0:
-        raise SqliteError("veritabani acilamadi: " + path)
+        raise SqliteError("could not open the database: " + path)
     msg: str = nox_sqlite_errmsg_raw(handle)
     if msg != "not an error":
-        raise SqliteError("veritabani acilamadi: " + msg)
+        raise SqliteError("could not open the database: " + msg)
     return Connection(handle)

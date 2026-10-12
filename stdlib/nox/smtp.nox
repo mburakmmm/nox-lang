@@ -49,12 +49,12 @@ class SmtpClient:
         full: str = line + "\r\n"
         n: int = nox_smtp_write_raw(self.handle, full, len(full))
         if n < 0:
-            raise SmtpError("yazma basarisiz: " + nox_smtp_errmsg_raw(self.handle))
+            raise SmtpError("write failed: " + nox_smtp_errmsg_raw(self.handle))
 
     def _read_line(self: SmtpClient) -> str:
         line: str = nox_smtp_read_line_raw(self.handle)
         if line == "":
-            raise SmtpError("okuma basarisiz: " + nox_smtp_errmsg_raw(self.handle))
+            raise SmtpError("read failed: " + nox_smtp_errmsg_raw(self.handle))
         return line
 
     # Tek VEYA çok-satırlı bir yanıtı okur, SON satırın 3 haneli kodunu
@@ -68,7 +68,7 @@ class SmtpClient:
         while not done:
             line: str = self._read_line()
             if len(line) < 3:
-                raise SmtpError("gecersiz SMTP yaniti: " + line)
+                raise SmtpError("invalid SMTP reply: " + line)
             code = int(line[0] + line[1] + line[2])
             if len(line) >= 4:
                 if line[3] == "-":
@@ -82,7 +82,7 @@ class SmtpClient:
     def _expect(self: SmtpClient, wanted: int) -> None:
         code: int = self._read_response()
         if code != wanted:
-            raise SmtpError("beklenmeyen SMTP kodu: " + str(code) + " (beklenen: " + str(wanted) + ")")
+            raise SmtpError("unexpected SMTP code: " + str(code) + " (expected: " + str(wanted) + ")")
 
     def ehlo(self: SmtpClient, domain: str) -> None:
         self._send_line("EHLO " + domain)
@@ -95,7 +95,7 @@ class SmtpClient:
         self._send_line("STARTTLS")
         self._expect(220)
         if nox_smtp_starttls_raw(self.handle) == 0:
-            raise SmtpError("TLS yukseltme basarisiz: " + nox_smtp_errmsg_raw(self.handle))
+            raise SmtpError("TLS upgrade failed: " + nox_smtp_errmsg_raw(self.handle))
 
     def auth_login(self: SmtpClient, username: str, password: str) -> None:
         self._send_line("AUTH LOGIN")
@@ -178,16 +178,16 @@ def connect(host: str, port: int, use_tls: bool) -> SmtpClient:
         use_tls_int = 1
     handle: ptr = nox_smtp_connect_raw(host, port, use_tls_int)
     if nox_smtp_is_null_ptr(handle) != 0:
-        raise SmtpError("bellek yetersiz")
+        raise SmtpError("out of memory")
     if nox_smtp_ok_raw(handle) == 0:
         msg: str = nox_smtp_errmsg_raw(handle)
         nox_smtp_close_raw(handle)
-        raise SmtpError("baglanti basarisiz: " + msg)
+        raise SmtpError("connection failed: " + msg)
     client: SmtpClient = SmtpClient(handle)
     code: int = client._read_response()
     if code != 220:
         client.close()
-        raise SmtpError("karsilama banner'i gecersiz, kod: " + str(code))
+        raise SmtpError("invalid greeting banner, code: " + str(code))
     return client
 
 # Tek bir e-postayı baştan sona gönderen kolaylık fonksiyonu — connect →

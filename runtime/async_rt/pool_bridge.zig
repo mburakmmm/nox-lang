@@ -204,7 +204,7 @@ fn pickMainWorkerCount(wants_multicore_pool: bool) usize {
 }
 
 pub export fn nox_pool_main_init(wants_multicore_pool: i32) callconv(.c) ?*anyopaque {
-    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount(wants_multicore_pool != 0)) catch @panic("OOM: $main havuzu");
+    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount(wants_multicore_pool != 0)) catch @panic("OOM: $main pool");
     return pool.rt;
 }
 
@@ -228,7 +228,7 @@ pub export fn nox_pool_main_spawn_workers(
     // TARAFINDAN AYRICA spawn edilmiştir (bkz. `genMainAsync`).
     ctx.* = .{ .entry_fn = undefined, .globals_init_fn = globals_init_fn, .globals_deinit_fn = globals_deinit_fn };
     state.main_pool_ctx = ctx;
-    pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, ctx) catch @panic("OOM: $main havuz worker'ları");
+    pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, ctx) catch @panic("OOM: $main pool workers");
 }
 
 /// `genMainAsync`nin `$nox_runtime_deinit` YERİNE (`--release` altında)
@@ -283,7 +283,7 @@ const PoolRunDriverArgs = struct {
 fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
     defer std.heap.page_allocator.destroy(args);
 
-    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.thread.pool_run havuzu");
+    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.thread.pool_run pool");
 
     bridge.nox_async_init(pool.rt);
     // Faz MN.8, Bulgu A (İKİNCİ, DAHA DERİN yarış — İLK düzeltmeden SONRA
@@ -315,7 +315,7 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
     // `>= 1`dir (`WorkerPool.create` sürücüyü ZATEN slot 0'a BAĞLADI).
     const entry_task = bridge.nox_async_spawn(pool.rt, args.ctx.entry_fn, pool.rt) orelse @panic("OOM: nox.thread.pool_run entry spawn");
 
-    pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, args.ctx) catch @panic("OOM: nox.thread.pool_run worker'ları");
+    pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, args.ctx) catch @panic("OOM: nox.thread.pool_run workers");
 
     poolWorkerRunAndCleanup(pool.rt, entry_task);
     if (args.ctx.globals_deinit_fn) |f| _ = f(pool.rt);
@@ -385,7 +385,7 @@ pub export fn nox_pool_run(
     // programının ÇALIŞMA-ZAMANI değeri) bir `num_workers` ALDIĞINDAN,
     // `assert`e GÜVENİLEMEZ, GERÇEK bir çalışma-zamanı doğrulaması GEREKİR.
     if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
-        diag_sink.report(rt, "nox: nox.thread.pool_run: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
+        diag_sink.report(rt, "nox: nox.thread.pool_run: num_workers must be in 1..{d} (got {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
         std.process.exit(1);
     }
 
@@ -492,7 +492,7 @@ fn poolServeWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolServeCtx) void {
 fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
     defer std.heap.page_allocator.destroy(args);
 
-    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.http.serve_multicore havuzu");
+    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.http.serve_multicore pool");
 
     const closure = std.heap.page_allocator.create(PoolServeClosure) catch @panic("OOM: nox.http.serve_multicore closure");
     closure.* = .{ .rt = pool.rt, .payload = args.ctx.payload };
@@ -515,7 +515,7 @@ fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
     bridge.nox_async_init(pool.rt);
     const entry_task = bridge.spawnPinnedForCurrentThread(args.ctx.entry_fn, closure) orelse @panic("OOM: nox.http.serve_multicore entry spawn");
 
-    pool.spawnWorkers(*PoolServeCtx, poolServeWorkerMain, args.ctx) catch @panic("OOM: nox.http.serve_multicore worker'ları");
+    pool.spawnWorkers(*PoolServeCtx, poolServeWorkerMain, args.ctx) catch @panic("OOM: nox.http.serve_multicore workers");
 
     poolWorkerRunAndCleanup(pool.rt, entry_task);
     pool.joinAll();
@@ -628,7 +628,7 @@ fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn 
             if (sched_ptr == null) sleepOneMs();
         }
         const sched: *scheduler_mod.Scheduler = @ptrCast(@alignCast(sched_ptr.?));
-        scheduler_mod.spawnToForeignScheduler(sched, BroadcastCtx.runOne, bctx) catch @panic("OOM: nox_pool_serve yayını");
+        scheduler_mod.spawnToForeignScheduler(sched, BroadcastCtx.runOne, bctx) catch @panic("OOM: nox_pool_serve broadcast");
     }
 
     if (bridge.currentFiberScheduler()) |scheduler| {
@@ -665,7 +665,7 @@ pub export fn nox_pool_serve(
     payload: ?*anyopaque,
 ) callconv(.c) i32 {
     if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
-        diag_sink.report(rt, "nox: nox.http.serve_multicore: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
+        diag_sink.report(rt, "nox: nox.http.serve_multicore: num_workers must be in 1..{d} (got {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
         std.process.exit(1);
     }
 

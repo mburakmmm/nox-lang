@@ -759,7 +759,7 @@ fn ensureGlobalsReady(a: std.mem.Allocator, expr: ast.Expr, reader: []const u8, 
         if (!var_index.contains(k.*)) continue;
         if (!promoted.contains(k.*)) continue;
         if (ready.contains(k.*)) continue;
-        std.debug.print("codegen: '{s}' hazırlanırken henüz bildirilmemiş modül değişkeni '{s}' okunuyor; bir fonksiyonun gördüğü modül değişkenleri bildirim sırasıyla ilklendirilir\n", .{ reader, k.* });
+        std.debug.print("codegen: while preparing '{s}', the module variable '{s}', which has not been declared yet, is read; module variables seen by a function are initialised in declaration order\n", .{ reader, k.* });
         return error.GlobalInitOrder;
     }
 }

@@ -45,9 +45,9 @@ test "noxc explain: sabit-boyutlu, kaçmayan bir sınıf örneği stack'e (doğr
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "tahsis: stack") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "kaçmıyor") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "çerçeve bütçesi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "allocation: stack") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "does not escape") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "frame budget") != null);
 }
 
 test "noxc explain: heap-yönetimli bir alan içeren sınıf örneği ARC'a tahsis edilir" {
@@ -73,8 +73,8 @@ test "noxc explain: heap-yönetimli bir alan içeren sınıf örneği ARC'a tahs
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "tahsis: ARC") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "heap-yönetimli") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "allocation: ARC") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "heap-managed") != null);
 }
 
 test "noxc explain: bir sonraki deyimde döndürülen (kaçan) bir yerel ARC'ta kalır" {
@@ -101,8 +101,8 @@ test "noxc explain: bir sonraki deyimde döndürülen (kaçan) bir yerel ARC'ta 
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "tahsis: ARC") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "kaçıyor") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "allocation: ARC") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "escapes (the local is used unsafely after its declaration)") != null);
 }
 
 test "noxc explain: .append() ile büyüyen, kaçmayan bir liste büyüyebilir-arena'ya tahsis edilir" {
@@ -128,8 +128,8 @@ test "noxc explain: .append() ile büyüyen, kaçmayan bir liste büyüyebilir-a
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "tahsis: arena") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "büyüyebilir-arena adayı") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "allocation: arena") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "growable-arena candidate") != null);
 }
 
 // HH.3'ün "regresyon-yok" kanıtı: core.nox/stdlib'in BİRLEŞTİRİLEN

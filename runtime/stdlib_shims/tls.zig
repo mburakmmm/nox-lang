@@ -145,7 +145,7 @@ pub export fn nox_tls_connect_raw(host: ?[*:0]const u8, port: i64) callconv(.c) 
     const conn = gpa.create(TlsConn) catch return null;
     conn.* = .{ .gpa = gpa, .io = http_client.sharedClientIo(), .stream = undefined };
     const h = host orelse {
-        conn.errmsg = "host bos olamaz";
+        conn.errmsg = "host cannot be empty";
         return conn;
     };
     connectInner(conn, str_mod.nox_str_slice(h), port) catch |err| {

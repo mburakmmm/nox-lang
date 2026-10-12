@@ -44,17 +44,17 @@ class TlsStream:
 
     def write(self: TlsStream, data: str) -> int:
         if self.closed:
-            raise TlsError("akis zaten kapatildi")
+            raise TlsError("the stream is already closed")
         n: int = nox_tls_write_raw(self.handle, data, len(data))
         if n < 0:
-            raise TlsError("TLS yazma basarisiz: " + nox_tls_errmsg_raw(self.handle))
+            raise TlsError("TLS write failed: " + nox_tls_errmsg_raw(self.handle))
         return n
 
     # En fazla `max_len` bayt okur — bağlantı temiz kapandıysa BOŞ dize
     # döner (hata DEĞİL, çağıran BUNU "artık veri yok" olarak yorumlamalı).
     def read(self: TlsStream, max_len: int) -> str:
         if self.closed:
-            raise TlsError("akis zaten kapatildi")
+            raise TlsError("the stream is already closed")
         return nox_tls_read_raw(self.handle, max_len)
 
     # `nox.websocket`nin `WebSocketClient.is_open()`iyle SİMETRİ İçİn
@@ -77,9 +77,9 @@ class TlsStream:
 def connect(host: str, port: int) -> TlsStream:
     handle: ptr = nox_tls_connect_raw(host, port)
     if nox_tls_is_null_ptr(handle) != 0:
-        raise TlsError("bellek yetersiz")
+        raise TlsError("out of memory")
     if nox_tls_ok_raw(handle) == 0:
         msg: str = nox_tls_errmsg_raw(handle)
         nox_tls_close_raw(handle)
-        raise TlsError("baglanti basarisiz: " + msg)
+        raise TlsError("connection failed: " + msg)
     return TlsStream(handle)
