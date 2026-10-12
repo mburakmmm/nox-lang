@@ -31,6 +31,24 @@ fn elfMachine(bytes: []const u8) u16 {
     return std.mem.readInt(u16, bytes[18..20], .little);
 }
 
+/// Bağlanan ikili ReleaseFast'te hâlâ debug bilgisi taşıyabildiği için
+/// 100 MB'ı aşabiliyor. e_ident ve e_machine başlığın ilk 64 baytında.
+fn readElfHeader(io: std.Io, dir: std.Io.Dir, sub_path: []const u8) ![64]u8 {
+    const file = try dir.openFile(io, sub_path, .{});
+    defer file.close(io);
+    var scratch: [256]u8 = undefined;
+    var reader = std.Io.File.Reader.init(file, io, &scratch);
+    var hdr: [64]u8 = undefined;
+    try reader.interface.readSliceAll(&hdr);
+    return hdr;
+}
+
+fn expectElf(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, machine: u16) !void {
+    const hdr = try readElfHeader(io, dir, sub_path);
+    try std.testing.expect(std.mem.eql(u8, hdr[0..4], "\x7fELF"));
+    try std.testing.expectEqual(machine, elfMachine(&hdr));
+}
+
 fn runNoxcBuild(allocator: std.mem.Allocator, io: std.Io, extra: []const []const u8, src_path: []const u8, out_path: []const u8) !std.process.RunResult {
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     defer argv.deinit(allocator);
@@ -67,10 +85,7 @@ test "v2.0 madde 8: --target linux-x64 dogru e_machine'li bir ELF uretir" {
         return error.NoxcBuildFailed;
     }
 
-    const bin_bytes = try tmp.dir.readFileAlloc(io, "out_linux_x64", allocator, .limited(64 * 1024 * 1024));
-    defer allocator.free(bin_bytes);
-    try std.testing.expect(std.mem.eql(u8, bin_bytes[0..4], "\x7fELF"));
-    try std.testing.expectEqual(EM_X86_64, elfMachine(bin_bytes));
+    try expectElf(io, tmp.dir, "out_linux_x64", EM_X86_64);
 }
 
 test "v2.0 madde 8: --target linux-arm64 dogru e_machine'li bir ELF uretir" {
@@ -95,10 +110,7 @@ test "v2.0 madde 8: --target linux-arm64 dogru e_machine'li bir ELF uretir" {
         return error.NoxcBuildFailed;
     }
 
-    const bin_bytes = try tmp.dir.readFileAlloc(io, "out_linux_arm64", allocator, .limited(64 * 1024 * 1024));
-    defer allocator.free(bin_bytes);
-    try std.testing.expect(std.mem.eql(u8, bin_bytes[0..4], "\x7fELF"));
-    try std.testing.expectEqual(EM_AARCH64, elfMachine(bin_bytes));
+    try expectElf(io, tmp.dir, "out_linux_arm64", EM_AARCH64);
 }
 
 test "v2.0.4: --target linux-riscv64 dogru e_machine'li statik bir ELF uretir" {
@@ -123,10 +135,7 @@ test "v2.0.4: --target linux-riscv64 dogru e_machine'li statik bir ELF uretir" {
         return error.NoxcBuildFailed;
     }
 
-    const bin_bytes = try tmp.dir.readFileAlloc(io, "out_linux_riscv64", allocator, .limited(64 * 1024 * 1024));
-    defer allocator.free(bin_bytes);
-    try std.testing.expect(std.mem.eql(u8, bin_bytes[0..4], "\x7fELF"));
-    try std.testing.expectEqual(EM_RISCV, elfMachine(bin_bytes));
+    try expectElf(io, tmp.dir, "out_linux_riscv64", EM_RISCV);
 }
 
 test "v2.0 madde 8: --target x86_64 --profile freestanding dogru e_machine'li bir ELF uretir" {
@@ -151,10 +160,7 @@ test "v2.0 madde 8: --target x86_64 --profile freestanding dogru e_machine'li bi
         return error.NoxcBuildFailed;
     }
 
-    const bin_bytes = try tmp.dir.readFileAlloc(io, "out_fs_x86_64", allocator, .limited(64 * 1024 * 1024));
-    defer allocator.free(bin_bytes);
-    try std.testing.expect(std.mem.eql(u8, bin_bytes[0..4], "\x7fELF"));
-    try std.testing.expectEqual(EM_X86_64, elfMachine(bin_bytes));
+    try expectElf(io, tmp.dir, "out_fs_x86_64", EM_X86_64);
 }
 
 test "v2.0 madde 8: --target aarch64 --profile freestanding dogru e_machine'li bir ELF uretir" {
@@ -179,10 +185,7 @@ test "v2.0 madde 8: --target aarch64 --profile freestanding dogru e_machine'li b
         return error.NoxcBuildFailed;
     }
 
-    const bin_bytes = try tmp.dir.readFileAlloc(io, "out_fs_aarch64", allocator, .limited(64 * 1024 * 1024));
-    defer allocator.free(bin_bytes);
-    try std.testing.expect(std.mem.eql(u8, bin_bytes[0..4], "\x7fELF"));
-    try std.testing.expectEqual(EM_AARCH64, elfMachine(bin_bytes));
+    try expectElf(io, tmp.dir, "out_fs_aarch64", EM_AARCH64);
 }
 
 test "v2.0 madde 8: --target windows-x64 --emit-asm ham .s uretir (tam link, bilinen amd64_win qbe hatasi yuzunden denenmez)" {
