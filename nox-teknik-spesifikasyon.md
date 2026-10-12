@@ -28954,3 +28954,21 @@ GG.20 serbest fonksiyonun adının çağrı yerinde yazıldığı durumu kanıtl
 **Karar:** yerel tam olarak bir kez yazılmışsa ve sağ taraf ya modüldeki bir fonksiyonun adı ya da bu gövdede tek `def` ile bağlanmış bir iç içe fonksiyonun adıysa, hedefin parametre kaçışı (`escaping_params`) çağrı yerine uygulanır. İkinci yazım, parametre olarak gelen func, takma ad zinciri veya taranmamış gövde kanıt sayılmaz; argüman ARC kalır. `spawn`ın argümanı her zaman kaçar (görev, çağıran çerçeveden uzun yaşayabilir). İç içe `def`in gövdesi, dış yerelin adını kullanmıyorsa o yereli kendiliğinden ARC yapmaz; kullanıyorsa yakalamadır ve kaçıştır. Arena adayları çağrı sınırını aşamaz (GG.20'deki growable kısıtı durur). Sahiplik tanısı aynı kuralı uygular; doğrudan serbest çağrı tanıda eskisi gibi kaçış sayılır.
 
 Değişmez İlkeler etkilenmez: kullanıcıya ownership sözdizimi çıkmaz, şüphede ARC, unwind tablosu yok. Golden: `func_value_known_target` (sahiplik dökümü + fixture korpusu, QBE ve LLVM). Mevcut IR anlık görüntüleri değişmedi.
+
+## 3.289 Ölçülmüş performans turu (v2.0.3)
+
+Apple M4, ReleaseFast `noxrt`, `benchmarks/cross_lang` (5 tekrar ortanca, saniye). C `clang -O2`.
+
+| Çekirdek | QBE önce | QBE sonra | LLVM | C |
+|---|---|---|---|---|
+| matmul 300³ | 0.064 | 0.049 | 0.041 | 0.020 |
+| loop 200M `%` | 0.820 | 0.820 | 0.675 | 0.530 |
+| dict 2M | 0.055 | 0.055 | 0.053 | 0.022 |
+
+**matmul inen değişiklik.** Liste eleman ölçeği 2'nin kuvvetiyse adres `mul` yerine `shl` (`mul …, 1` ise `add …, 0`). `i = 0; while i < üst: … i = i + 1` indeksinde negatif düzeltme (`sar`/`and`/`add`) atlanır; `i` i64 ve koşul `i < üst` olduğu sürece gövde taşmadan negatife inemez. `list[list[T]]` üzerinde koşulsuz `a[i][k]`, gövdede çağrı veya `a`/`i` yazımı yoksa satır işaretçisi döngü ilk kez girdiğinde bir kez yüklenir; döngü hiç dönmezse yükleme yapılmaz (boş liste + hiç girmeyen iç döngü `IndexError` basmaz). `b[k][j]` satırı `k` ile değiştiği için taşınmaz. LLVM zaten aynı aritmetiği katladığı için süresi değişmedi. Kalan fark (QBE ~2.5x, LLVM ~2.1x C) eleman başına sınır kontrolü ve liste-listesi dolaylamasıdır; sınır dalı tahmin edildiği için daha önce tek karşılaştırmaya indirmek de ölçülebilir kazanç vermemişti (§3.244).
+
+**loop inmeyen.** QBE'de yüksek çarpım (`mulh`) yok. 200M yinelemede yazılımla 64-bit yüksek çarpım 0.72 s, böleni değişken `rem` 0.64 s, clang'ın sihirli sayısı 0.54 s. Yazılım dizisi `rem`den yavaş olduğu için inmez. LLVM zaten sabit böleni çarpmaya indirger.
+
+**dict tabanı.** `dict[int,int]` değer deposu + ayrı `HashMap` (§3.244). `d[k]` önce `contains` sonra `get` çağırır; benchmark ayrıca `contains` yazar. C tek açık-adresli aramadır. Fark ~2.5x (önceki tur ~2.8x). Sıra ve hash-flooding tohumu bozulmadan kapanmaz; uydurma hız iddiası yok.
+
+Golden: `list_row_hoist` (QBE ve LLVM). Liste indeksinin ölçeği değiştiği için IR anlık görüntüleri yenilendi.

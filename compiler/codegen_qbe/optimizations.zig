@@ -570,6 +570,11 @@ pub const StrLenCacheScope = struct {
 /// Faz GG.9: bkz. `bounds_elide_ctx`in belge notu.
 pub const BoundsElideCtx = struct { list_name: []const u8, idx_var: []const u8 };
 
+/// v2.0.3: döngü girişinde bir kez yüklenen satır (`base[index]`).
+pub const HoistedRow = struct { base: []const u8, index: []const u8, value: Value };
+
+pub const RowKey = struct { base: []const u8, index: []const u8 };
+
 /// Bounds-check elemesi (`bounds_elide_ctx`) ÖNCEDEN yalnızca `for i in
 /// range(len(xs)): ... xs[i] ...` idiomunu (bkz. `detectBoundsElideCtx`)
 /// tanıyordu — elle yazılmış eşdeğer bir `while` deseni (`benchmarks/
@@ -822,6 +827,216 @@ fn whileBodyEndsWithIncrement(body: []const ast.Stmt, idx_var: []const u8) bool 
     if (b.left.* != .identifier or !std.mem.eql(u8, b.left.identifier, idx_var)) return false;
     if (b.right.* != .int_lit or b.right.int_lit != 1) return false;
     return true;
+}
+
+/// v2.0.3: `idx = 0; while idx < üst: ... idx = idx + 1`. `int` sarar ama
+/// koşul `idx < üst` (ikisi de i64) olduğu sürece gövdedeki `idx` taşmadan
+/// negatif olamaz. Kanıt yoksa `null` — negatif indeks düzeltmesi durur.
+pub fn countedNonNegIndex(self: *Codegen, stmts: []const ast.Stmt, i: usize, w: ast.WhileStmt) ?[]const u8 {
+    if (w.cond != .binary) return null;
+    const cond_b = w.cond.binary;
+    if (cond_b.op != .lt or cond_b.left.* != .identifier) return null;
+    const idx_var = cond_b.left.identifier;
+    const init = lastAssignedIntLiteral(stmts, i, idx_var) orelse return null;
+    if (init != 0) return null;
+    if (!whileBodyEndsWithIncrement(w.body, idx_var)) return null;
+    if (bodyHasNestedFuncDef(w.body)) return null;
+    var reassigned_excl_last: std.StringHashMapUnmanaged(void) = .empty;
+    defer reassigned_excl_last.deinit(self.allocator);
+    collectReassignedNames(w.body[0 .. w.body.len - 1], &reassigned_excl_last, self.allocator) catch return null;
+    if (reassigned_excl_last.contains(idx_var)) return null;
+    return idx_var;
+}
+
+pub fn indexIsNonNegative(self: *const Codegen, name: []const u8) bool {
+    var i: u32 = 0;
+    while (i < self.nonneg_len) : (i += 1) {
+        if (std.mem.eql(u8, self.nonneg_names[i], name)) return true;
+    }
+    return false;
+}
+
+/// Eleman bayt ölçeği 2'nin kuvvetiyse `shl` (QBE `mul`ı kaydırmaya
+/// indirmez; M4'te çarpma gecikmesi kaydırmadan uzundur).
+pub fn emitScaledByteOffset(self: *Codegen, dst: []const u8, index_text: []const u8, elem_size: usize) CodegenError!void {
+    if (elem_size != 0 and std.math.isPowerOfTwo(elem_size)) {
+        const shift: i64 = @intCast(@ctz(elem_size));
+        if (shift == 0) {
+            try self.qbeOp2Imm(dst, .l, "add", index_text, 0);
+        } else {
+            try self.qbeOp2Imm(dst, .l, "shl", index_text, shift);
+        }
+        return;
+    }
+    try self.qbeOp2Imm(dst, .l, "mul", index_text, @intCast(elem_size));
+}
+
+pub fn lookupHoistedRow(self: *const Codegen, base: []const u8, index: []const u8) ?Value {
+    var i: u32 = self.hoisted_len;
+    while (i > 0) {
+        i -= 1;
+        const row = self.hoisted_rows[i];
+        if (std.mem.eql(u8, row.base, base) and std.mem.eql(u8, row.index, index)) return row.value;
+    }
+    return null;
+}
+
+fn stmtBlocksRowHoist(stmt: ast.Stmt) bool {
+    switch (stmt.kind) {
+        .expr_stmt => |e| return exprBlocksRowHoist(e),
+        .var_decl => |v| return exprBlocksRowHoist(v.value),
+        .assign => |a| {
+            if (a.target != .identifier) return true;
+            return exprBlocksRowHoist(a.value);
+        },
+        .if_stmt => |f| {
+            if (exprBlocksRowHoist(f.cond)) return true;
+            if (bodyBlocksRowHoist(f.then_body)) return true;
+            for (f.elif_clauses) |ec| {
+                if (exprBlocksRowHoist(ec.cond) or bodyBlocksRowHoist(ec.body)) return true;
+            }
+            if (f.else_body) |eb| if (bodyBlocksRowHoist(eb)) return true;
+            return false;
+        },
+        .while_stmt => |w| return exprBlocksRowHoist(w.cond) or bodyBlocksRowHoist(w.body),
+        .for_stmt => |f| return exprBlocksRowHoist(f.iterable) or bodyBlocksRowHoist(f.body),
+        .raise_stmt => |e| return exprBlocksRowHoist(e),
+        .return_stmt => |e| return if (e) |ret| exprBlocksRowHoist(ret) else false,
+        .del_stmt => return true,
+        .try_stmt => |t| {
+            if (bodyBlocksRowHoist(t.try_body)) return true;
+            for (t.except_clauses) |ec| if (bodyBlocksRowHoist(ec.body)) return true;
+            if (t.finally_body) |fb| if (bodyBlocksRowHoist(fb)) return true;
+            return false;
+        },
+        .lowlevel_stmt => |ll| return bodyBlocksRowHoist(ll.body),
+        .func_def, .with_stmt, .defer_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => return true,
+        .pass_stmt, .break_stmt, .continue_stmt => return false,
+    }
+}
+
+pub fn bodyBlocksRowHoist(body: []const ast.Stmt) bool {
+    for (body) |stmt| if (stmtBlocksRowHoist(stmt)) return true;
+    return false;
+}
+
+fn exprBlocksRowHoist(e: ast.Expr) bool {
+    switch (e) {
+        .call, .spawn_expr, .await_expr, .lambda, .list_comp, .dict_comp => return true,
+        .unary => |u| return exprBlocksRowHoist(u.operand.*),
+        .binary => |b| return exprBlocksRowHoist(b.left.*) or exprBlocksRowHoist(b.right.*),
+        .attribute => |a| return exprBlocksRowHoist(a.obj.*),
+        .index => |idx| return exprBlocksRowHoist(idx.obj.*) or exprBlocksRowHoist(idx.index.*),
+        .ternary => |t| return exprBlocksRowHoist(t.cond.*) or exprBlocksRowHoist(t.then_expr.*) or exprBlocksRowHoist(t.else_expr.*),
+        .slice => |s| {
+            if (exprBlocksRowHoist(s.obj.*)) return true;
+            if (s.lo) |st| if (exprBlocksRowHoist(st.*)) return true;
+            if (s.hi) |en| if (exprBlocksRowHoist(en.*)) return true;
+            if (s.step) |st| if (exprBlocksRowHoist(st.*)) return true;
+            return false;
+        },
+        .list_lit, .tuple_lit => |elems| {
+            for (elems) |el| if (exprBlocksRowHoist(el)) return true;
+            return false;
+        },
+        .dict_lit => |pairs| {
+            for (pairs) |p| if (exprBlocksRowHoist(p.key) or exprBlocksRowHoist(p.value)) return true;
+            return false;
+        },
+        .generic_construct => |g| {
+            for (g.args) |arg| if (exprBlocksRowHoist(arg)) return true;
+            return false;
+        },
+        .kwarg => |k| return exprBlocksRowHoist(k.value.*),
+        else => return false,
+    }
+}
+
+fn noteRowsInExpr(e: ast.Expr, reassigned: *const std.StringHashMapUnmanaged(void), rows: *[8]RowKey, n: *usize) void {
+    switch (e) {
+        .index => |idx| {
+            if (idx.obj.* == .index) {
+                const inner = idx.obj.*.index;
+                if (inner.obj.* == .identifier and inner.index.* == .identifier) {
+                    const base = inner.obj.*.identifier;
+                    const iv = inner.index.*.identifier;
+                    if (!reassigned.contains(base) and !reassigned.contains(iv) and n.* < rows.len) {
+                        var seen = false;
+                        for (rows[0..n.*]) |row| {
+                            if (std.mem.eql(u8, row.base, base) and std.mem.eql(u8, row.index, iv)) seen = true;
+                        }
+                        if (!seen) {
+                            rows[n.*] = .{ .base = base, .index = iv };
+                            n.* += 1;
+                        }
+                    }
+                }
+            }
+            noteRowsInExpr(idx.obj.*, reassigned, rows, n);
+            noteRowsInExpr(idx.index.*, reassigned, rows, n);
+        },
+        .binary => |b| {
+            noteRowsInExpr(b.left.*, reassigned, rows, n);
+            noteRowsInExpr(b.right.*, reassigned, rows, n);
+        },
+        .unary => |u| noteRowsInExpr(u.operand.*, reassigned, rows, n),
+        .attribute => |a| noteRowsInExpr(a.obj.*, reassigned, rows, n),
+        .ternary => |t| {
+            noteRowsInExpr(t.cond.*, reassigned, rows, n);
+            noteRowsInExpr(t.then_expr.*, reassigned, rows, n);
+            noteRowsInExpr(t.else_expr.*, reassigned, rows, n);
+        },
+        else => {},
+    }
+}
+
+fn noteRowsInStmt(stmt: ast.Stmt, reassigned: *const std.StringHashMapUnmanaged(void), rows: *[8]RowKey, n: *usize) void {
+    switch (stmt.kind) {
+        .expr_stmt => |e| noteRowsInExpr(e, reassigned, rows, n),
+        .var_decl => |v| noteRowsInExpr(v.value, reassigned, rows, n),
+        .assign => |a| noteRowsInExpr(a.value, reassigned, rows, n),
+        else => {},
+    }
+}
+
+fn rowIsListOfLists(self: *const Codegen, base: []const u8) bool {
+    const vi = self.vars.get(base) orelse return false;
+    if (vi.heap != .list) return false;
+    const elem = vi.elem_heap_info orelse return false;
+    return elem.heap == .list;
+}
+
+/// Koşulsuz `base[idx][k]` satırları. Döngü hiç dönmezse yükleme yapılmaz
+/// (çağıran, koşul tutunca bir kez üretir).
+pub fn planInvariantRows(self: *Codegen, body: []const ast.Stmt, out: *[8]RowKey) CodegenError!usize {
+    var reassigned: std.StringHashMapUnmanaged(void) = .empty;
+    defer reassigned.deinit(self.allocator);
+    try collectReassignedNames(body, &reassigned, self.allocator);
+    var found: [8]RowKey = undefined;
+    var n: usize = 0;
+    for (body) |stmt| noteRowsInStmt(stmt, &reassigned, &found, &n);
+    var kept: usize = 0;
+    for (found[0..n]) |row| {
+        if (kept >= out.len) break;
+        if (lookupHoistedRow(self, row.base, row.index) != null) continue;
+        if (!rowIsListOfLists(self, row.base)) continue;
+        out[kept] = row;
+        kept += 1;
+    }
+    return kept;
+}
+
+pub fn emitPlannedRowHoists(self: *Codegen, rows: []const RowKey) CodegenError!void {
+    for (rows) |row| {
+        if (self.hoisted_len >= self.hoisted_rows.len) return;
+        const obj_expr = try self.allocator.create(ast.Expr);
+        obj_expr.* = .{ .identifier = row.base };
+        const idx_expr = try self.allocator.create(ast.Expr);
+        idx_expr.* = .{ .identifier = row.index };
+        const loaded = try self.genIndex(.{ .obj = obj_expr, .index = idx_expr });
+        self.hoisted_rows[self.hoisted_len] = .{ .base = row.base, .index = row.index, .value = loaded };
+        self.hoisted_len += 1;
+    }
 }
 
 /// Faz GG.5: döngüye girmeden HEMEN ÖNCE (döngü gövdesi ÜRETİLMEDEN

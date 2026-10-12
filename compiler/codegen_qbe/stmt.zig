@@ -197,6 +197,15 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
             .while_stmt => |w| {
                 const saved_bounds_ctx = self.bounds_elide_ctx;
                 self.bounds_elide_ctx = try self.detectWhileBoundsElideCtx(stmts, stmt_idx, w);
+                const nonneg = optimizations.countedNonNegIndex(self, stmts, stmt_idx, w);
+                const pushed_nonneg = nonneg != null and self.nonneg_len < self.nonneg_names.len;
+                if (pushed_nonneg) {
+                    self.nonneg_names[self.nonneg_len] = nonneg.?;
+                    self.nonneg_len += 1;
+                }
+                defer if (pushed_nonneg) {
+                    self.nonneg_len -= 1;
+                };
                 try self.genWhile(w, ret_qtype);
                 self.bounds_elide_ctx = saved_bounds_ctx;
             },
@@ -502,7 +511,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const val = try self.convert(retained, obj.elem_qtype);
 
     const byte_off = try self.newTemp();
-    try self.qbeOp2Imm(byte_off, .l, "mul", index_v.text, @intCast(qbeSizeOf(obj.elem_qtype)));
+    try optimizations.emitScaledByteOffset(self, byte_off, index_v.text, qbeSizeOf(obj.elem_qtype));
     const off16 = try self.newTemp();
     try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
     const addr = try self.newTemp();
@@ -991,23 +1000,42 @@ fn pushLoop(self: *Codegen, break_label: []const u8, continue_label: []const u8)
 }
 
 pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenError!void {
+    const hoist_mark = self.hoisted_len;
+    defer self.hoisted_len = hoist_mark;
+    var planned: [8]optimizations.RowKey = undefined;
+    const planned_n: usize = if (optimizations.bodyBlocksRowHoist(w.body)) 0 else try optimizations.planInvariantRows(self, w.body, &planned);
+
     const cond_label = try self.newLabel("while_cond");
     const body_label = try self.newLabel("while_body");
     const end_label = try self.newLabel("while_end");
+    const back_label = if (planned_n == 0) cond_label else try self.newLabel("while_back");
 
     const str_len_scope = try self.enterStrLenCacheScope(w.body);
     const mc_scope = try self.enterModCacheLoopScope(w.body);
     try self.qbeJmp(cond_label);
     try self.qbeLabel(cond_label);
     const cond_v = try self.genExpr(w.cond);
-    try self.qbeJnz(cond_v.text, body_label, end_label);
+    if (planned_n == 0) {
+        try self.qbeJnz(cond_v.text, body_label, end_label);
+    } else {
+        const first_label = try self.newLabel("while_hoist");
+        try self.qbeJnz(cond_v.text, first_label, end_label);
+        try self.qbeLabel(first_label);
+        try optimizations.emitPlannedRowHoists(self, planned[0..planned_n]);
+        try self.qbeJmp(body_label);
+    }
     try self.qbeLabel(body_label);
-    try pushLoop(self, end_label, cond_label);
+    try pushLoop(self, end_label, back_label);
     defer _ = self.loop_stack.pop();
     var while_n: NameList = .{};
     self.collectNarrowedBoxed(w.cond, true, &while_n);
     try genNarrowedStmts(self, while_n.slice(), w.body, ret_qtype);
-    try self.qbeJmp(cond_label);
+    try self.qbeJmp(back_label);
+    if (planned_n != 0) {
+        try self.qbeLabel(back_label);
+        const cond_back = try self.genExpr(w.cond);
+        try self.qbeJnz(cond_back.text, body_label, end_label);
+    }
     try self.qbeLabel(end_label);
     self.restoreModCache(mc_scope);
     self.exitStrLenCacheScope(str_len_scope);
@@ -1201,7 +1229,7 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     const byte_off = try self.newTemp();
     // v1.142.19: adım ve yükleme LİSTENİN eleman depolama tipinden (`.b` = 1 bayt), döngü değişkeni ise
     // değer tipinden (`.w`) gelir.
-    try self.qbeOp2Imm(byte_off, .l, "mul", idx_cur, @intCast(qbeSizeOf(list_info.elem_qtype)));
+    try optimizations.emitScaledByteOffset(self, byte_off, idx_cur, qbeSizeOf(list_info.elem_qtype));
     const off8 = try self.newTemp();
     try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
     const elem_addr = try self.newTemp();

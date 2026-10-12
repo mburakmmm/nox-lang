@@ -557,6 +557,7 @@ pub fn boundsElideApplies(self: *Codegen, idx: ast.Index) bool {
 /// (`i + len` hâlâ negatifse işaretsiz olarak çok büyüktür → `IndexError`).
 pub fn normalizeNegativeIndex(self: *Codegen, index_expr: ast.Expr, index_text: []const u8, len_t: []const u8) CodegenError![]const u8 {
     if (index_expr == .int_lit and index_expr.int_lit >= 0) return index_text;
+    if (index_expr == .identifier and optimizations.indexIsNonNegative(self, index_expr.identifier)) return index_text;
     const sign = try self.newTemp();
     try self.qbeOp2(sign, .l, "sar", index_text, "63");
     const add_len = try self.newTemp();
@@ -567,7 +568,14 @@ pub fn normalizeNegativeIndex(self: *Codegen, index_expr: ast.Expr, index_text: 
 }
 
 pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
-    const obj = try self.genExpr(idx.obj.*);
+    const hoisted: ?Value = if (idx.obj.* == .index) blk: {
+        const inner = idx.obj.*.index;
+        if (inner.obj.* == .identifier and inner.index.* == .identifier) {
+            break :blk optimizations.lookupHoistedRow(self, inner.obj.*.identifier, inner.index.*.identifier);
+        }
+        break :blk null;
+    } else null;
+    const obj = if (hoisted) |row| row else try self.genExpr(idx.obj.*);
     // Faz NN: `d[key]`nin taban SÖZLÜĞÜ (`obj`) TEMPORARY İSE (ör.
     // `make_dict()[key]`), `genDictGet` ÖNCEDEN yalnızca ANAHTARI serbest
     // bırakıyordu — sözlüğün KENDİSİ HİÇ serbest bırakılmıyordu (ne başarı
@@ -622,7 +630,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         try self.qbeLabel(ok_label);
     }
     const byte_off = try self.newTemp();
-    try self.qbeOp2Imm(byte_off, .l, "mul", index_v.text, @intCast(qbeSizeOf(obj.elem_qtype)));
+    try optimizations.emitScaledByteOffset(self, byte_off, index_v.text, qbeSizeOf(obj.elem_qtype));
     const off8 = try self.newTemp();
     try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
     const addr = try self.newTemp();

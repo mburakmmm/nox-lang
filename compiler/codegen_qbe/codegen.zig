@@ -278,6 +278,7 @@ const exprUsesAsync = async_thread_mod.exprUsesAsync;
 const moduleUsesMulticorePool = async_thread_mod.moduleUsesMulticorePool;
 
 const BoundsElideCtx = optimizations.BoundsElideCtx;
+const HoistedRow = optimizations.HoistedRow;
 const StrLenCacheScope = optimizations.StrLenCacheScope;
 const collectReassignedNames = optimizations.collectReassignedNames;
 const bodyHasNestedFuncDef = optimizations.bodyHasNestedFuncDef;
@@ -953,7 +954,7 @@ pub const Codegen = struct {
     /// v1.150.0: `coll[idx]`in (`idx`: `l` temp, sınır denetimi YOK) ÖDÜNÇ-okunan eleman `Value`si.
     pub fn loadListElemValueAt(self: *Codegen, coll: Value, idx: []const u8) CodegenError!Value {
         const byte_off = try self.newTemp();
-        try self.qbeOp2Imm(byte_off, .l, "mul", idx, @intCast(qbeSizeOf(coll.elem_qtype)));
+        try optimizations.emitScaledByteOffset(self, byte_off, idx, qbeSizeOf(coll.elem_qtype));
         const off8 = try self.newTemp();
         try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
         const addr = try self.newTemp();
@@ -1221,6 +1222,16 @@ pub const Codegen = struct {
     /// indekslemesi TARAFINDAN kontrol edilir — heap türünden BAĞIMSIZ TEK
     /// bir bağlam yeterlidir (`obj.heap` ZATEN o dalda BİLİNİYOR).
     bounds_elide_ctx: ?BoundsElideCtx = null,
+    /// v2.0.3: `i = 0; while i < n: ... i = i + 1` indeksinin gövde içinde
+    /// negatif olamayacağı kanıtı (`normalizeNegativeIndex` sar/and/add
+    /// dizisini atlar). İç içe döngüler yığıta itilir.
+    nonneg_names: [8][]const u8 = undefined,
+    nonneg_len: u32 = 0,
+    /// v2.0.3: döngüye girmeden bir kez yüklenen `list[list[T]]` satır
+    /// işaretçileri (`a[i]`, `i` ve `a` gövdede yeniden atanmıyorsa).
+    /// İç döngü `a[i][k]`yi bu değere indirger.
+    hoisted_rows: [8]HoistedRow = undefined,
+    hoisted_len: u32 = 0,
     /// Darboğaz analizi bulgu #3 (bkz. benchmarks/RESULTS.md, 2026-07-22):
     /// `<isim> % <tam-sayı-sabiti>` biçimindeki SAF alt-ifadelerin ORTAK-alt-
     /// ifade eliminasyonu (CSE) önbelleği — anahtar `"<slot>#<bölen>"`

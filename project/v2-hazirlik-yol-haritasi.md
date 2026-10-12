@@ -89,8 +89,9 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 ## 7. Performans (engelleyici değil)
 
-- [ ] matmul ~2x C (sınır kontrolleri + `b[k][j]` satır yüklemeleri), `loop` ~1.5x C (QBE'de sabit bölenli `%`).
-- [ ] dict kıyaslaması C'nin ~2.8x'i (Go'dan hızlı).
+- [x] **matmul (v2.0.3)** QBE 0.064→0.049 s (LLVM 0.041, C 0.020; M4, ReleaseFast). `shl` ölçek, sayılan indeksde negatif düzeltme yok, değişmeyen `list[list[T]]` satırı ilk girişte bir kez. Kalan ~2.1–2.5x sınır kontrolü + liste dolaylaması.
+- [x] **loop (v2.0.3, kod yok)** QBE 0.82 s, LLVM 0.67 s, C 0.53 s. QBE'de `mulh` yok; yazılım yüksek çarpım `rem`den yavaş (0.72 s karşı 0.64 s).
+- [x] **dict (v2.0.3, kod yok)** ~2.5x C (0.055 / 0.022 s). `entries` + `HashMap`, `d[k]` iki arama. Sıra ve tohum bozulmadan kapanmaz.
 
 ## Bitenler (bu yol haritasının öncesi, bağlam için)
 

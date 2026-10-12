@@ -1337,7 +1337,7 @@ export function l $Dispatcher_run(l %rt, l %p_self, l %p_i, l %p_x) {
     %t11 =w cugel %t10, %t7
     jnz %t11, @list_idx_err0, @list_idx_ok1
 @list_idx_ok1
-    %t21 =l mul %t10, 8
+    %t21 =l shl %t10, 3
     %t22 =l add %t21, 16
     %t23 =l add %t5, %t22
     %t24 =l loadl %t23
@@ -2184,7 +2184,7 @@ export function w $any(l %rt, l %p_xs) {
     %t6 =w csltl %t5, %t4
     jnz %t6, @forlist_body1, @forlist_end2
 @forlist_body1
-    %t7 =l mul %t5, 1
+    %t7 =l add %t5, 0
     %t8 =l add %t7, 16
     %t9 =l add %t3, %t8
     %t10 =w loadub %t9
@@ -2223,7 +2223,7 @@ export function w $all(l %rt, l %p_xs) {
     %t6 =w csltl %t5, %t4
     jnz %t6, @forlist_body1, @forlist_end2
 @forlist_body1
-    %t7 =l mul %t5, 1
+    %t7 =l add %t5, 0
     %t8 =l add %t7, 16
     %t9 =l add %t3, %t8
     %t10 =w loadub %t9
@@ -2265,7 +2265,7 @@ export function l $sum(l %rt, l %p_xs) {
     %t7 =w csltl %t6, %t5
     jnz %t7, @forlist_body1, @forlist_end2
 @forlist_body1
-    %t8 =l mul %t6, 8
+    %t8 =l shl %t6, 3
     %t9 =l add %t8, 16
     %t10 =l add %t4, %t9
     %t11 =l loadl %t10
@@ -2304,7 +2304,7 @@ export function d $sum_float(l %rt, l %p_xs) {
     %t7 =w csltl %t6, %t5
     jnz %t7, @forlist_body1, @forlist_end2
 @forlist_body1
-    %t8 =l mul %t6, 8
+    %t8 =l shl %t6, 3
     %t9 =l add %t8, 16
     %t10 =l add %t4, %t9
     %t11 =d loadd %t10
@@ -2413,67 +2413,64 @@ export function l $run_all(l %rt, l %p_handlers, l %p_n) {
     %t8 =l loadl %t0
     %t9 =l loadl %t3
     %t10 =l loadl %t8
-    %t11 =l sar %t9, 63
-    %t12 =l and %t11, %t10
-    %t13 =l add %t9, %t12
-    %t14 =w cugel %t13, %t10
-    jnz %t14, @list_idx_err3, @list_idx_ok4
+    %t11 =w cugel %t9, %t10
+    jnz %t11, @list_idx_err3, @list_idx_ok4
 @list_idx_ok4
-    %t24 =l mul %t13, 8
-    %t25 =l add %t24, 16
-    %t26 =l add %t8, %t25
-    %t27 =l loadl %t26
-    %t28 =l loadl %t27
-    %t29 =l call %t28(l %rt, l %t27, l 2)
-    %t30 =w call $nox_exception_pending(l %rt)
-    jnz %t30, @exc_propagate12, @exc_continue13
+    %t21 =l shl %t9, 3
+    %t22 =l add %t21, 16
+    %t23 =l add %t8, %t22
+    %t24 =l loadl %t23
+    %t25 =l loadl %t24
+    %t26 =l call %t25(l %rt, l %t24, l 2)
+    %t27 =w call $nox_exception_pending(l %rt)
+    jnz %t27, @exc_propagate12, @exc_continue13
 @exc_propagate12
     ret 0
 @exc_continue13
-    %t31 =l add %t7, %t29
-    storel %t31, %t2
-    %t32 =l loadl %t3
-    %t33 =l add %t32, 1
-    storel %t33, %t3
+    %t28 =l add %t7, %t26
+    storel %t28, %t2
+    %t29 =l loadl %t3
+    %t30 =l add %t29, 1
+    storel %t30, %t3
     jmp @while_cond0
 @while_end2
-    %t34 =l loadl %t2
-    ret %t34
+    %t31 =l loadl %t2
+    ret %t31
 @after_return14
 @fn_end15
     ret 0
 @list_idx_err3
-    %t15 =l add $str5, 16
-    %t16 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 10, %t16
-    %t17 =l add %t16, 8
-    storel $IndexError_vtable, %t17
-    %t18 =l add %t16, 16
-    storel 0, %t18
-    %t19 =l add %t16, 24
-    storel 0, %t19
-    call $Exception___init__(l %rt, l %t16, l %t15)
-    %t20 =w call $nox_exception_pending(l %rt)
-    jnz %t20, @ctor_init_failed5, @ctor_init_cont6
+    %t12 =l add $str5, 16
+    %t13 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 10, %t13
+    %t14 =l add %t13, 8
+    storel $IndexError_vtable, %t14
+    %t15 =l add %t13, 16
+    storel 0, %t15
+    %t16 =l add %t13, 24
+    storel 0, %t16
+    call $Exception___init__(l %rt, l %t13, l %t12)
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @ctor_init_failed5, @ctor_init_cont6
 @ctor_init_failed5
-    %t21 =w ceql %t16, 0
-    jnz %t21, @release_skip8, @release7
+    %t18 =w ceql %t13, 0
+    jnz %t18, @release_skip8, @release7
 @release7
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t16)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t13)
     jmp @release_done9
 @release_skip8
     jmp @release_done9
 @release_done9
     jmp @ctor_init_cont6
 @ctor_init_cont6
-    %t22 =w call $nox_exception_pending(l %rt)
-    jnz %t22, @exc_propagate10, @exc_continue11
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate10, @exc_continue11
 @exc_propagate10
     ret 0
 @exc_continue11
-    %t23 =l add %t16, 24
-    storel 33, %t23
-    call $nox_raise(l %rt, l %t16, l 33)
+    %t20 =l add %t13, 24
+    storel 33, %t20
+    call $nox_raise(l %rt, l %t13, l 33)
     ret 0
 }
 export function w $main(w %argc, l %argv) {
@@ -2553,7 +2550,7 @@ export function w $main(w %argc, l %argv) {
     %t33 =w cugel %t32, %t29
     jnz %t33, @list_idx_err6, @list_idx_ok7
 @list_idx_ok7
-    %t43 =l mul %t32, 8
+    %t43 =l shl %t32, 3
     %t44 =l add %t43, 16
     %t45 =l add %t27, %t44
     %t46 =l loadl %t45
@@ -2571,7 +2568,7 @@ export function w $main(w %argc, l %argv) {
     %t52 =w cugel 0, %t51
     jnz %t52, @list_idx_err17, @list_idx_ok18
 @list_idx_ok18
-    %t62 =l mul 0, 8
+    %t62 =l shl 0, 3
     %t63 =l add %t62, 16
     %t64 =l add %t50, %t63
     %t65 =l loadl %t64
@@ -2589,7 +2586,7 @@ export function w $main(w %argc, l %argv) {
     %t71 =w cugel 2, %t70
     jnz %t71, @list_idx_err28, @list_idx_ok29
 @list_idx_ok29
-    %t81 =l mul 2, 8
+    %t81 =l shl 2, 3
     %t82 =l add %t81, 16
     %t83 =l add %t69, %t82
     %t84 =l loadl %t83
@@ -2621,7 +2618,7 @@ export function w $main(w %argc, l %argv) {
     %t98 =w cugel %t97, %t94
     jnz %t98, @list_idx_err39, @list_idx_ok40
 @list_idx_ok40
-    %t108 =l mul %t97, 8
+    %t108 =l shl %t97, 3
     %t109 =l add %t108, 16
     %t110 =l add %t92, %t109
     %t111 =l loadl %t110
@@ -2632,7 +2629,7 @@ export function w $main(w %argc, l %argv) {
     %t116 =w cugel %t115, %t112
     jnz %t116, @list_idx_err48, @list_idx_ok49
 @list_idx_ok49
-    %t126 =l mul %t115, 8
+    %t126 =l shl %t115, 3
     %t127 =l add %t126, 16
     %t128 =l add %t91, %t127
     %t129 =l loadl %t128
@@ -2651,7 +2648,7 @@ export function w $main(w %argc, l %argv) {
     %t136 =w cugel 1, %t135
     jnz %t136, @list_idx_err59, @list_idx_ok60
 @list_idx_ok60
-    %t146 =l mul 1, 8
+    %t146 =l shl 1, 3
     %t147 =l add %t146, 16
     %t148 =l add %t134, %t147
     %t149 =l loadl %t148
@@ -2662,7 +2659,7 @@ export function w $main(w %argc, l %argv) {
     %t154 =w cugel %t153, %t150
     jnz %t154, @list_idx_err68, @list_idx_ok69
 @list_idx_ok69
-    %t164 =l mul %t153, 8
+    %t164 =l shl %t153, 3
     %t165 =l add %t164, 16
     %t166 =l add %t133, %t165
     %t167 =l loadl %t166

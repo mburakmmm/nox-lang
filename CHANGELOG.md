@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.3]
+
+### Değişti
+
+- **İç içe liste indekslemesi.** Eleman adresi 2'nin kuvvetiyse kaydırma ile hesaplanır. `i = 0` ile başlayıp yalnızca `i = i + 1` yapan ve koşulu `i < üst` olan döngüde negatif indeks düzeltmesi yapılmaz. `a[i][k]` satırı, `a` ve `i` döngüde yazılmıyor ve gövdede çağrı yoksa döngü ilk girdiğinde bir kez yüklenir. Apple M4, ReleaseFast: matmul 300³ QBE 0.064 s → 0.049 s (LLVM 0.041 s, C 0.020 s). Golden `list_row_hoist`.
+
+### Bilinen taban
+
+- **QBE sabit bölenli `%`.** QBE'nin yüksek çarpımı yok. 200M `loop`ta yazılımla yüksek çarpım (0.72 s) değişken `rem`den (0.64 s) yavaş; clang sihirli sayısı 0.54 s. İnen değişiklik yok. LLVM 0.67 s, C 0.53 s.
+- **`dict[int, int]`.** 2M işlem QBE 0.055 s, LLVM 0.053 s, C 0.022 s (~2.5x). Değer dizisi artı ayrı hash tablosu; `d[k]` aramayı iki kez yapar. Ekleme sırası ve hash tohumu aynı kaldığı sürece bu fark kapanmaz.
+
 ## [2.0.2]
 
 ### Eklendi
