@@ -48,7 +48,7 @@ What it adds over raw NNI:
 | `capabilities` | array of strings | no | capabilities the plugin needs; default none |
 | `functions` | array | yes | the functions the library registers, with signatures |
 
-**Platform keys:** `macos-arm64`, `linux-x64`, `linux-arm64`, `windows-x64`. A manifest with no entry for the host platform is refused. Use
+**Platform keys:** `macos-arm64`, `linux-x64`, `linux-arm64`, `linux-riscv64`, `windows-x64`. A manifest with no entry for the host platform is refused. Use
 `nox.plugin.host_platform()` to see the key of the current machine.
 
 ### Function signatures

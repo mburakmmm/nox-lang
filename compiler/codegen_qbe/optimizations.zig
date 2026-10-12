@@ -920,7 +920,7 @@ pub fn bodyBlocksRowHoist(body: []const ast.Stmt) bool {
     return false;
 }
 
-fn exprBlocksRowHoist(e: ast.Expr) bool {
+pub fn exprBlocksRowHoist(e: ast.Expr) bool {
     switch (e) {
         .call, .spawn_expr, .await_expr, .lambda, .list_comp, .dict_comp => return true,
         .unary => |u| return exprBlocksRowHoist(u.operand.*),
@@ -1006,15 +1006,76 @@ fn rowIsListOfLists(self: *const Codegen, base: []const u8) bool {
     return elem.heap == .list;
 }
 
-/// Koşulsuz `base[idx][k]` satırları. Döngü hiç dönmezse yükleme yapılmaz
-/// (çağıran, koşul tutunca bir kez üretir).
+/// Bu döngünün kalan gövdesini atlayabilen bir deyim. İç içe döngünün
+/// `break`/`continue`u dış döngüyü atlamaz; `return` ve `raise` her yerde atlar.
+fn stmtExitsThisLoop(stmt: ast.Stmt) bool {
+    switch (stmt.kind) {
+        .break_stmt, .continue_stmt, .return_stmt, .raise_stmt => return true,
+        .if_stmt => |f| {
+            if (bodyExitsThisLoop(f.then_body)) return true;
+            for (f.elif_clauses) |ec| if (bodyExitsThisLoop(ec.body)) return true;
+            if (f.else_body) |eb| if (bodyExitsThisLoop(eb)) return true;
+            return false;
+        },
+        .while_stmt => |w| return bodyContainsReturnOrRaise(w.body),
+        .for_stmt => |f| return bodyContainsReturnOrRaise(f.body),
+        .try_stmt => |t| {
+            if (bodyExitsThisLoop(t.try_body)) return true;
+            for (t.except_clauses) |ec| if (bodyExitsThisLoop(ec.body)) return true;
+            if (t.finally_body) |fb| if (bodyExitsThisLoop(fb)) return true;
+            return false;
+        },
+        .lowlevel_stmt => |ll| return bodyExitsThisLoop(ll.body),
+        else => return false,
+    }
+}
+
+fn bodyExitsThisLoop(body: []const ast.Stmt) bool {
+    for (body) |stmt| if (stmtExitsThisLoop(stmt)) return true;
+    return false;
+}
+
+fn stmtContainsReturnOrRaise(stmt: ast.Stmt) bool {
+    switch (stmt.kind) {
+        .return_stmt, .raise_stmt => return true,
+        .if_stmt => |f| {
+            if (bodyContainsReturnOrRaise(f.then_body)) return true;
+            for (f.elif_clauses) |ec| if (bodyContainsReturnOrRaise(ec.body)) return true;
+            if (f.else_body) |eb| if (bodyContainsReturnOrRaise(eb)) return true;
+            return false;
+        },
+        .while_stmt => |w| return bodyContainsReturnOrRaise(w.body),
+        .for_stmt => |f| return bodyContainsReturnOrRaise(f.body),
+        .try_stmt => |t| {
+            if (bodyContainsReturnOrRaise(t.try_body)) return true;
+            for (t.except_clauses) |ec| if (bodyContainsReturnOrRaise(ec.body)) return true;
+            if (t.finally_body) |fb| if (bodyContainsReturnOrRaise(fb)) return true;
+            return false;
+        },
+        .lowlevel_stmt => |ll| return bodyContainsReturnOrRaise(ll.body),
+        else => return false,
+    }
+}
+
+fn bodyContainsReturnOrRaise(body: []const ast.Stmt) bool {
+    for (body) |stmt| if (stmtContainsReturnOrRaise(stmt)) return true;
+    return false;
+}
+
+/// Koşulsuz `base[idx][k]` satırları. Yalnızca gövdenin düz satır önekinde
+/// not edilir: erken `break`/`continue`/`return`/`raise`tan SONRAKİ erişim
+/// taşınmaz (taşınan yükleme o deyimden ÖNCE çalışırdı). Döngü hiç dönmezse
+/// yükleme yapılmaz (çağıran, koşul tutunca bir kez üretir).
 pub fn planInvariantRows(self: *Codegen, body: []const ast.Stmt, out: *[8]RowKey) CodegenError!usize {
     var reassigned: std.StringHashMapUnmanaged(void) = .empty;
     defer reassigned.deinit(self.allocator);
     try collectReassignedNames(body, &reassigned, self.allocator);
     var found: [8]RowKey = undefined;
     var n: usize = 0;
-    for (body) |stmt| noteRowsInStmt(stmt, &reassigned, &found, &n);
+    for (body) |stmt| {
+        noteRowsInStmt(stmt, &reassigned, &found, &n);
+        if (stmtExitsThisLoop(stmt)) break;
+    }
     var kept: usize = 0;
     for (found[0..n]) |row| {
         if (kept >= out.len) break;

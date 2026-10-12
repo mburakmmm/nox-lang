@@ -12,13 +12,12 @@
 //! zig`nin modül üstü notu — bu ÜÇ yetenek, checker'ın GERÇEK tip
 //! denetim/sembol-tablosu motorunu YENİDEN KULLANMAK YERİNE (o motor tip
 //! DENETİMİ için inşa edilmiştir, konum-tabanlı sorgu İçin DEĞİL), yalnızca
-//! `ast.Stmt.span`e dayanan KASITLI DAR bir statik katmandır — YALNIZCA AYNI
-//! dosya İÇİ semboller (üst-düzey `func_def`/`class_def` + kapsayan
-//! fonksiyon/metodun parametre/yerelleri + sabit yerleşik/anahtar-kelime
-//! listesi) çözülür; `import`la GELEN semboller (stdlib/proje-içi/üçüncü-
-//! taraf) İçin goto-definition/hover ÇÖZÜLMEZ (`nav.resolveAt` `null` döner).
-//! `rename`/çapraz-dosya gezinme HÂLÂ v1 kapsamı DIŞINDA (W.2'nin "minimal"
-//! sıfatının GERİ KALANI).
+//! `ast.Stmt.span`e dayanan bir statik katmandır. Aynı dosyada üst düzey
+//! `func_def`/`class_def`, kapsayan fonksiyonun parametre/yerelleri ve sabit
+//! yerleşik listesi çözülür. `import` / `from ... import` ile gelen bir
+//! sembolün tanımı, referansları ve yeniden adlandırması hedef dosyayı ayrı
+//! ayrıştırarak proje kökünde ve açık belgelerde aranır. `rename` bir
+//! `WorkspaceEdit` döner; sunucu dosyaya kendisi yazmaz.
 //!
 //! **Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
 //! yapılandırılmış tanılamalar"):** lex/parse hataları ARTIK (bkz.
@@ -59,17 +58,21 @@ const module_loader = @import("module_loader.zig");
 const project = @import("project.zig");
 const fetch = @import("pkg/fetch.zig");
 const nav = @import("lsp_nav.zig");
+const token_mod = @import("lexer/token.zig");
 const formatter = @import("fmt/formatter.zig");
 const span_mod = @import("span.zig");
 const Span = span_mod.Span;
 
 const Position = struct { line: u32, character: u32 };
 const Range = struct { start: Position, end: Position };
+const Loc = struct { uri: []const u8, range: Range };
 const LspDiagnostic = struct {
     range: Range,
     severity: u32 = 1, // 1 = Error (LSP DiagnosticSeverity) — bkz. modül üstü not, HER tanılama bir hatadır, uyarı kategorisi v1'de yok
     source: []const u8 = "noxc",
     message: []const u8,
+    /// Yalnızca tek düzenlemesi olan tanılar (şimdilik sekme girintisi).
+    code: ?[]const u8 = null,
 };
 
 const Server = struct {
@@ -88,6 +91,9 @@ const Server = struct {
     /// `resolveModuleForLsp`nin ZATEN getirilmiş `requires[]` alias'larını
     /// bulabilmesi İÇİN okunur (bkz. onun belge notu — ASLA buraya YAZILMAZ).
     nox_home: []const u8,
+    /// `initialize` kökü. Proje içi importlar `nox.json` olmasa da bu
+    /// dizinden çözülür.
+    root_uri: ?[]const u8 = null,
     shutdown_requested: bool = false,
 
     fn deinit(self: *Server) void {
@@ -97,6 +103,7 @@ const Server = struct {
             self.gpa.free(entry.value_ptr.*);
         }
         self.documents.deinit(self.gpa);
+        if (self.root_uri) |u| self.gpa.free(u);
     }
 
     fn storeDocument(self: *Server, uri: []const u8, text: []const u8) !void {
@@ -214,6 +221,11 @@ fn handleMessage(server: *Server, ma: std.mem.Allocator, body: []const u8, w: *s
     const params_opt = obj.get("params");
 
     if (std.mem.eql(u8, method, "initialize")) {
+        if (params_opt) |p| {
+            if (getStrField(p, "rootUri")) |ru| {
+                server.root_uri = server.gpa.dupe(u8, ru) catch null;
+            }
+        }
         try respondInitialize(ma, w, id_opt);
     } else if (std.mem.eql(u8, method, "shutdown")) {
         try respondNull(ma, w, id_opt);
@@ -233,6 +245,20 @@ fn handleMessage(server: *Server, ma: std.mem.Allocator, body: []const u8, w: *s
         try handleDidClose(server, ma, params_opt, w);
     } else if (std.mem.eql(u8, method, "textDocument/formatting")) {
         try handleFormatting(server, ma, params_opt, id_opt, w);
+    } else if (std.mem.eql(u8, method, "textDocument/documentSymbol")) {
+        try handleDocumentSymbol(server, ma, params_opt, id_opt, w);
+    } else if (std.mem.eql(u8, method, "textDocument/signatureHelp")) {
+        try handleSignatureHelp(server, ma, params_opt, id_opt, w);
+    } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/full")) {
+        try handleSemanticTokens(server, ma, params_opt, id_opt, w);
+    } else if (std.mem.eql(u8, method, "textDocument/inlayHint")) {
+        try handleInlayHint(server, ma, params_opt, id_opt, w);
+    } else if (std.mem.eql(u8, method, "textDocument/references")) {
+        try handleReferences(server, ma, params_opt, id_opt, w);
+    } else if (std.mem.eql(u8, method, "textDocument/rename")) {
+        try handleRename(server, ma, params_opt, id_opt, w);
+    } else if (std.mem.eql(u8, method, "textDocument/codeAction")) {
+        try handleCodeAction(server, ma, params_opt, id_opt, w);
     } else if (id_opt) |id| {
         // Tanınmayan bir İSTEK (bildirim DEĞİL — "initialized" DAHİL diğer
         // TÜM bildirimler burada sessizce yok sayılır) — JSON-RPC 2.0
@@ -352,6 +378,12 @@ const NavQuery = struct { uri: []const u8, line1: u32, col1: u32 };
 /// {uri}, position: {line, character}}` gövdesini ayrıştırır — LSP
 /// pozisyonları 0-tabanlıdır, `line1`/`col1` (bkz. `ast.Stmt.span`/`Token`)
 /// 1-tabanlıdır (`diagnosticFromSpan`in AYNI dönüşümüyle TUTARLI).
+fn parseDocUri(params_opt: ?std.json.Value) ?[]const u8 {
+    const params = params_opt orelse return null;
+    const td = getObjField(params, "textDocument") orelse return null;
+    return getStrField(td, "uri");
+}
+
 fn parseNavQuery(params_opt: ?std.json.Value) ?NavQuery {
     const params = params_opt orelse return null;
     const td = getObjField(params, "textDocument") orelse return null;
@@ -434,26 +466,601 @@ fn handleDefinition(server: *Server, ma: std.mem.Allocator, params_opt: ?std.jso
     defer arena.deinit();
     const a = arena.allocator();
 
-    const Loc = struct { uri: []const u8, range: Range };
     var loc: ?Loc = null;
-    if (parseNavQuery(params_opt)) |q| {
-        if (try resolveNavSymbol(server, a, q)) |r| {
-            if (!r.span.isNone()) loc = .{
-                .uri = q.uri,
-                .range = .{
-                    .start = .{ .line = r.span.start_line - 1, .character = r.span.start_col - 1 },
-                    .end = .{ .line = r.span.end_line - 1, .character = r.span.end_col - 1 },
-                },
-            };
-        }
-    }
-
+    if (parseNavQuery(params_opt)) |q| loc = locateDefinition(server, a, q);
     const Msg = struct {
         jsonrpc: []const u8 = "2.0",
         id: std.json.Value,
         result: ?Loc,
     };
     try sendJson(ma, w, Msg{ .id = id, .result = loc });
+}
+
+fn spanRange(span: Span) Range {
+    if (span.isNone() or span.start_line == 0 or span.start_col == 0) {
+        return .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } };
+    }
+    return .{
+        .start = .{ .line = span.start_line - 1, .character = span.start_col - 1 },
+        .end = .{ .line = span.end_line - 1, .character = span.end_col - 1 },
+    };
+}
+
+fn locOf(uri: []const u8, span: Span) Loc {
+    return .{ .uri = uri, .range = spanRange(span) };
+}
+
+fn locateDefinition(server: *Server, a: std.mem.Allocator, q: NavQuery) ?Loc {
+    const source = server.documents.get(q.uri) orelse return null;
+    const parsed = nav.parseForNav(a, source) orelse return null;
+    const chain = nav.chainAt(a, parsed.tokens, q.line1, q.col1) catch null orelse return null;
+    if (chain.len == 0) return null;
+    if (chain.len == 1) {
+        if (nav.resolveAt(a, parsed.module, q.line1, chain[0]) catch null) |r| {
+            if (!r.span.isNone()) return locOf(q.uri, r.span);
+        }
+        if (nav.importBinding(parsed.module, chain[0])) |imp| {
+            return definitionOfImport(server, a, q.uri, imp.segments, imp.symbol);
+        }
+        return null;
+    }
+    const head = nav.importBinding(parsed.module, chain[0]) orelse return null;
+    if (head.symbol.len != 0) return definitionOfImport(server, a, q.uri, head.segments, head.symbol);
+    const prefix: usize = if (head.segments.len > 0 and std.mem.eql(u8, head.local, head.segments[0])) head.segments.len else 1;
+    if (chain.len <= prefix) return definitionOfImport(server, a, q.uri, head.segments, "");
+    return definitionOfImport(server, a, q.uri, head.segments, chain[chain.len - 1]);
+}
+
+fn definitionOfImport(server: *Server, a: std.mem.Allocator, from_uri: []const u8, segments: []const []const u8, symbol: []const u8) ?Loc {
+    const path = resolveImport(server, a, from_uri, segments) orelse return null;
+    const uri = pathToUri(a, path) catch return null;
+    const text = textOfPath(server, a, uri, path) orelse return null;
+    if (symbol.len == 0) {
+        return .{ .uri = uri, .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } } };
+    }
+    const parsed = nav.parseForNav(a, text) orelse return null;
+    for (parsed.module.body) |s| {
+        switch (s.kind) {
+            .func_def => |fd| if (std.mem.eql(u8, fd.name, symbol) and !s.span.isNone()) return locOf(uri, s.span),
+            .class_def => |cd| if (std.mem.eql(u8, cd.name, symbol) and !s.span.isNone()) return locOf(uri, s.span),
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn textOfPath(server: *Server, a: std.mem.Allocator, uri: []const u8, path: []const u8) ?[]const u8 {
+    if (server.documents.get(uri)) |open| return open;
+    return std.Io.Dir.cwd().readFileAlloc(server.io, path, a, .limited(1024 * 1024)) catch null;
+}
+
+fn resolveImport(server: *Server, a: std.mem.Allocator, from_uri: []const u8, segments: []const []const u8) ?[]const u8 {
+    const stdlib = server.stdlib_dir orelse return null;
+    var roots: std.StringHashMapUnmanaged([]const u8) = .empty;
+    const proot = fillAliasRoots(server, a, from_uri, &roots);
+    return module_loader.resolveImportFilePath(a, server.io, segments, &roots, stdlib, proot) catch null;
+}
+
+fn fillAliasRoots(server: *Server, a: std.mem.Allocator, file_uri: []const u8, roots: *std.StringHashMapUnmanaged([]const u8)) ?[]const u8 {
+    const dir = uriToDir(a, file_uri) catch null;
+    const found = if (dir) |d| (project.findProjectRoot(a, server.io, d) catch null) else null;
+    const root = found orelse blk: {
+        if (server.root_uri) |ru| break :blk uriToPath(a, ru) catch null;
+        break :blk dir;
+    };
+    const proot = root orelse return null;
+    const manifest = project.loadManifest(a, server.io, proot) catch return proot;
+    const lock = project.loadLockfile(a, server.io, proot) catch project.Lockfile{};
+    for (manifest.requires) |req| {
+        const locked = project.findLocked(lock, req.alias) orelse continue;
+        const cache_dir = fetch.cachedDirFor(a, server.nox_home, locked.repo, locked.resolved) catch continue;
+        if (std.Io.Dir.accessAbsolute(server.io, cache_dir, .{})) |_| {
+            roots.put(a, req.alias, cache_dir) catch continue;
+        } else |_| {}
+    }
+    return proot;
+}
+
+fn pathToUri(a: std.mem.Allocator, path: []const u8) ![]const u8 {
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    try buf.appendSlice(a, "file://");
+    for (path) |c| {
+        const plain = std.ascii.isAlphanumeric(c) or c == '/' or c == '.' or c == '_' or c == '-' or c == ':';
+        if (plain) {
+            try buf.append(a, c);
+        } else {
+            const esc = try std.fmt.allocPrint(a, "%{X:0>2}", .{c});
+            try buf.appendSlice(a, esc);
+        }
+    }
+    return buf.toOwnedSlice(a);
+}
+
+fn uriToPath(a: std.mem.Allocator, uri: []const u8) ![]const u8 {
+    const prefix = "file://";
+    if (!std.mem.startsWith(u8, uri, prefix)) return error.BadUri;
+    const encoded_path = uri[prefix.len..];
+    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    var i: usize = 0;
+    while (i < encoded_path.len) {
+        if (encoded_path[i] == '%' and i + 2 < encoded_path.len) {
+            const byte = std.fmt.parseInt(u8, encoded_path[i + 1 .. i + 3], 16) catch {
+                try decoded.append(a, encoded_path[i]);
+                i += 1;
+                continue;
+            };
+            try decoded.append(a, byte);
+            i += 3;
+        } else {
+            try decoded.append(a, encoded_path[i]);
+            i += 1;
+        }
+    }
+    return decoded.toOwnedSlice(a);
+}
+
+const SymOut = struct {
+    name: []const u8,
+    kind: u32,
+    range: Range,
+    selectionRange: Range,
+    children: []const SymOut = &.{},
+};
+
+fn handleDocumentSymbol(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Value, id_opt: ?std.json.Value, w: *std.Io.Writer) !void {
+    const id = id_opt orelse return;
+    var arena = std.heap.ArenaAllocator.init(server.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const empty: []const SymOut = &.{};
+    const uri = parseDocUri(params_opt) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const source = server.documents.get(uri) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const parsed = nav.parseForNav(a, source) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const items = nav.outline(a, parsed.module) catch {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    var out: std.ArrayListUnmanaged(SymOut) = .empty;
+    for (items) |it| {
+        var kids: std.ArrayListUnmanaged(SymOut) = .empty;
+        for (it.children) |c| try kids.append(a, .{
+            .name = c.name,
+            .kind = c.kind,
+            .range = spanRange(c.span),
+            .selectionRange = spanRange(c.span),
+        });
+        try out.append(a, .{
+            .name = it.name,
+            .kind = it.kind,
+            .range = spanRange(it.span),
+            .selectionRange = spanRange(it.span),
+            .children = kids.items,
+        });
+    }
+    try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = out.items });
+}
+
+const SigParamOut = struct { label: []const u8 };
+const SigInfoOut = struct {
+    label: []const u8,
+    parameters: []const SigParamOut,
+    activeParameter: u32,
+};
+const SigHelpOut = struct {
+    signatures: []const SigInfoOut,
+    activeSignature: u32 = 0,
+};
+
+fn handleSignatureHelp(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Value, id_opt: ?std.json.Value, w: *std.Io.Writer) !void {
+    const id = id_opt orelse return;
+    var arena = std.heap.ArenaAllocator.init(server.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sig = signatureLookup(server, a, params_opt);
+    const result: ?SigHelpOut = if (sig) |found| blk: {
+        var params: std.ArrayListUnmanaged(SigParamOut) = .empty;
+        for (found.params) |p| try params.append(a, .{ .label = p.name });
+        const info = SigInfoOut{
+            .label = found.label,
+            .parameters = params.items,
+            .activeParameter = found.active,
+        };
+        break :blk .{ .signatures = &.{info} };
+    } else null;
+    try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = result });
+}
+
+fn signatureLookup(server: *Server, a: std.mem.Allocator, params_opt: ?std.json.Value) ?nav.SignatureInfo {
+    const q = parseNavQuery(params_opt) orelse return null;
+    const source = server.documents.get(q.uri) orelse return null;
+    const parsed = nav.parseForNav(a, source) orelse return null;
+    if (nav.signatureAt(a, parsed.tokens, parsed.module, q.line1, q.col1) catch null) |sig| return sig;
+    const site = nav.callSiteAt(a, parsed.tokens, q.line1, q.col1) catch null orelse return null;
+    if (site.chain.len == 0) return null;
+    const head = nav.importBinding(parsed.module, site.chain[0]) orelse return null;
+    const path = resolveImport(server, a, q.uri, head.segments) orelse return null;
+    const uri = pathToUri(a, path) catch return null;
+    const text = textOfPath(server, a, uri, path) orelse return null;
+    const foreign = nav.parseForNav(a, text) orelse return null;
+    const lookup: []const []const u8 = if (head.symbol.len > 0)
+        &.{head.symbol}
+    else if (site.chain.len > 1)
+        site.chain[site.chain.len - 1 ..]
+    else
+        return null;
+    return nav.signatureFor(a, foreign.module, lookup, site.active) catch null;
+}
+
+const TokResult = struct { data: []const u32 };
+
+fn handleSemanticTokens(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Value, id_opt: ?std.json.Value, w: *std.Io.Writer) !void {
+    const id = id_opt orelse return;
+    var arena = std.heap.ArenaAllocator.init(server.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const empty = TokResult{ .data = &.{} };
+    const uri = parseDocUri(params_opt) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const source = server.documents.get(uri) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const parsed = nav.parseForNav(a, source) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const data = nav.semanticTokens(a, parsed.tokens, parsed.module) catch {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = TokResult{ .data = data } });
+}
+
+const HintOut = struct {
+    position: Position,
+    label: []const u8,
+    paddingLeft: bool = false,
+    paddingRight: bool = true,
+};
+
+fn handleInlayHint(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Value, id_opt: ?std.json.Value, w: *std.Io.Writer) !void {
+    const id = id_opt orelse return;
+    var arena = std.heap.ArenaAllocator.init(server.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const empty: []const HintOut = &.{};
+    const uri = parseDocUri(params_opt) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const source = server.documents.get(uri) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const parsed = nav.parseForNav(a, source) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const hints = nav.parameterInlays(a, parsed.tokens, parsed.module) catch {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    var out: std.ArrayListUnmanaged(HintOut) = .empty;
+    for (hints) |h| try out.append(a, .{
+        .position = .{ .line = h.line0, .character = h.character0 },
+        .label = h.label,
+    });
+    try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = out.items });
+}
+
+fn handleReferences(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Value, id_opt: ?std.json.Value, w: *std.Io.Writer) !void {
+    const id = id_opt orelse return;
+    var arena = std.heap.ArenaAllocator.init(server.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const locs = if (parseNavQuery(params_opt)) |q| collectRefs(server, a, q) else &.{};
+    try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = locs });
+}
+
+const RefHit = struct { uri: []const u8, span: Span };
+
+fn collectRefs(server: *Server, a: std.mem.Allocator, q: NavQuery) []const Loc {
+    var hits: std.ArrayListUnmanaged(RefHit) = .empty;
+    const source = server.documents.get(q.uri) orelse return &.{};
+    const parsed = nav.parseForNav(a, source) orelse return &.{};
+    const chain = (nav.chainAt(a, parsed.tokens, q.line1, q.col1) catch return &.{}) orelse return &.{};
+    if (chain.len == 0) return &.{};
+    if (chain.len == 1) {
+        if (nav.resolveAt(a, parsed.module, q.line1, chain[0]) catch null) |r| {
+            if (r.span.isNone()) return &.{};
+            const uses = nav.usesOfSpan(a, parsed.tokens, parsed.module, r.span) catch return &.{};
+            for (uses) |s| hits.append(a, .{ .uri = q.uri, .span = s }) catch return &.{};
+        } else if (nav.importBinding(parsed.module, chain[0])) |imp| {
+            if (imp.symbol.len == 0) return &.{};
+            refsOfSymbol(server, a, q.uri, imp.segments, imp.symbol, &hits) catch return &.{};
+        }
+    } else if (nav.importBinding(parsed.module, chain[0])) |head| {
+        if (head.symbol.len != 0) {
+            refsOfSymbol(server, a, q.uri, head.segments, head.symbol, &hits) catch return &.{};
+        } else {
+            const prefix: usize = if (head.segments.len > 0 and std.mem.eql(u8, head.local, head.segments[0])) head.segments.len else 1;
+            if (chain.len > prefix) refsOfSymbol(server, a, q.uri, head.segments, chain[chain.len - 1], &hits) catch return &.{};
+        }
+    }
+    var out: std.ArrayListUnmanaged(Loc) = .empty;
+    for (hits.items) |h| {
+        if (h.span.isNone()) continue;
+        out.append(a, locOf(h.uri, h.span)) catch return &.{};
+    }
+    return out.items;
+}
+
+fn refsOfSymbol(server: *Server, a: std.mem.Allocator, from_uri: []const u8, segments: []const []const u8, symbol: []const u8, hits: *std.ArrayListUnmanaged(RefHit)) !void {
+    const path = resolveImport(server, a, from_uri, segments) orelse return;
+    const def_uri = pathToUri(a, path) catch return;
+    if (textOfPath(server, a, def_uri, path)) |text| {
+        if (nav.parseForNav(a, text)) |parsed| {
+            var def_span: Span = .{};
+            for (parsed.module.body) |s| {
+                switch (s.kind) {
+                    .func_def => |fd| {
+                        if (std.mem.eql(u8, fd.name, symbol)) def_span = s.span;
+                    },
+                    .class_def => |cd| {
+                        if (std.mem.eql(u8, cd.name, symbol)) def_span = s.span;
+                    },
+                    else => {},
+                }
+            }
+            if (!def_span.isNone()) {
+                const uses = nav.usesOfSpan(a, parsed.tokens, parsed.module, def_span) catch &[_]Span{};
+                for (uses) |u| try hits.append(a, .{ .uri = def_uri, .span = u });
+            }
+        }
+    }
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    try seen.put(a, def_uri, {});
+    var docs = server.documents.iterator();
+    while (docs.next()) |entry| {
+        try seen.put(a, entry.key_ptr.*, {});
+        try refsInText(a, entry.value_ptr.*, entry.key_ptr.*, segments, symbol, hits);
+    }
+    var unused_roots: std.StringHashMapUnmanaged([]const u8) = .empty;
+    const root = fillAliasRoots(server, a, from_uri, &unused_roots) orelse return;
+    var files: std.ArrayListUnmanaged([]const u8) = .empty;
+    walkNox(a, server.io, root, &files);
+    for (files.items) |fp| {
+        const furi = pathToUri(a, fp) catch continue;
+        if (seen.contains(furi)) continue;
+        const text = std.Io.Dir.cwd().readFileAlloc(server.io, fp, a, .limited(1024 * 1024)) catch continue;
+        try refsInText(a, text, furi, segments, symbol, hits);
+    }
+}
+
+fn refsInText(a: std.mem.Allocator, text: []const u8, uri: []const u8, segments: []const []const u8, symbol: []const u8, hits: *std.ArrayListUnmanaged(RefHit)) !void {
+    const parsed = nav.parseForNav(a, text) orelse return;
+    if (importedLocal(parsed.module, segments, symbol)) |local| {
+        for (parsed.tokens) |t| {
+            if (t.kind != .identifier or !std.mem.eql(u8, t.lexeme, local)) continue;
+            if (nav.resolveAt(a, parsed.module, t.line, t.lexeme) catch null) |r| {
+                if (!r.span.isNone()) continue;
+            }
+            try hits.append(a, .{ .uri = uri, .span = tokenSpan(t) });
+        }
+    }
+    if (importedModuleLocal(parsed.module, segments)) |local| {
+        const tokens = parsed.tokens;
+        var i: usize = 0;
+        while (i + 2 < tokens.len) : (i += 1) {
+            if (tokens[i].kind != .identifier or !std.mem.eql(u8, tokens[i].lexeme, local)) continue;
+            if (tokens[i + 1].kind != .dot) continue;
+            if (tokens[i + 2].kind != .identifier or !std.mem.eql(u8, tokens[i + 2].lexeme, symbol)) continue;
+            try hits.append(a, .{ .uri = uri, .span = tokenSpan(tokens[i + 2]) });
+        }
+    }
+}
+
+fn tokenSpan(t: token_mod.Token) Span {
+    return .{
+        .start_line = t.line,
+        .start_col = t.col,
+        .end_line = t.end_line,
+        .end_col = t.end_col,
+    };
+}
+
+fn importedModuleLocal(module: ast.Module, segments: []const []const u8) ?[]const u8 {
+    for (module.body) |s| {
+        switch (s.kind) {
+            .import_stmt => |imp| {
+                if (!segmentsEql(imp.segments, segments)) continue;
+                if (imp.alias) |al| return al;
+                if (imp.segments.len == 0) return null;
+                return imp.segments[imp.segments.len - 1];
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn importedLocal(module: ast.Module, segments: []const []const u8, symbol: []const u8) ?[]const u8 {
+    for (module.body) |s| {
+        switch (s.kind) {
+            .from_import_stmt => |fi| {
+                if (!segmentsEql(fi.segments, segments)) continue;
+                for (fi.names) |n| {
+                    if (std.mem.eql(u8, n.name, symbol)) return n.alias orelse n.name;
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn segmentsEql(left: []const []const u8, right: []const []const u8) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |x, y| if (!std.mem.eql(u8, x, y)) return false;
+    return true;
+}
+
+fn walkNox(a: std.mem.Allocator, io: std.Io, root: []const u8, out: *std.ArrayListUnmanaged([]const u8)) void {
+    var dir = std.Io.Dir.openDirAbsolute(io, root, .{ .iterate = true }) catch return;
+    defer dir.close(io);
+    var walker = dir.walk(a) catch return;
+    defer walker.deinit();
+    var count: usize = 0;
+    while (walker.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.basename, ".nox")) continue;
+        if (count > 400) return;
+        var skip = false;
+        var part_start: usize = 0;
+        var depth: u8 = 0;
+        for (entry.path, 0..) |c, i| {
+            if (c != '/') continue;
+            const part = entry.path[part_start..i];
+            if (part.len > 0 and (part[0] == '.' or std.mem.eql(u8, part, "zig-out") or std.mem.eql(u8, part, "zig-cache"))) skip = true;
+            depth += 1;
+            part_start = i + 1;
+        }
+        if (skip or depth > 6) continue;
+        const full = std.fmt.allocPrint(a, "{s}/{s}", .{ root, entry.path }) catch continue;
+        out.append(a, full) catch {};
+        count += 1;
+    }
+}
+
+fn handleRename(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Value, id_opt: ?std.json.Value, w: *std.Io.Writer) !void {
+    const id = id_opt orelse return;
+    var arena = std.heap.ArenaAllocator.init(server.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const q = parseNavQuery(params_opt) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = null });
+        return;
+    };
+    const new_name = if (params_opt) |p| (getStrField(p, "newName") orelse "") else "";
+    if (!isIdent(new_name)) {
+        try sendError(ma, w, id, -32602, "new name is not an identifier");
+        return;
+    }
+    if (renameRejected(server, a, q)) {
+        try sendError(ma, w, id, -32602, "cannot rename this symbol");
+        return;
+    }
+    const locs = collectRefs(server, a, q);
+    if (locs.len == 0) {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = null });
+        return;
+    }
+    var changes: std.json.ObjectMap = .empty;
+    for (locs) |loc| {
+        const edit = try editValue(a, loc.range, new_name);
+        const gop = try changes.getOrPut(a, loc.uri);
+        if (!gop.found_existing) gop.value_ptr.* = .{ .array = std.json.Array.init(a) };
+        try gop.value_ptr.array.append(edit);
+    }
+    var result_obj: std.json.ObjectMap = .empty;
+    try result_obj.put(a, "changes", .{ .object = changes });
+    try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = std.json.Value{ .object = result_obj } });
+}
+
+fn renameRejected(server: *Server, a: std.mem.Allocator, q: NavQuery) bool {
+    const source = server.documents.get(q.uri) orelse return true;
+    const parsed = nav.parseForNav(a, source) orelse return true;
+    const chain = (nav.chainAt(a, parsed.tokens, q.line1, q.col1) catch return true) orelse return true;
+    if (chain.len != 1) return false;
+    if (nav.importBinding(parsed.module, chain[0]) != null) return false;
+    if (nav.resolveAt(a, parsed.module, q.line1, chain[0]) catch null) |r| return r.span.isNone();
+    return true;
+}
+
+fn isIdent(name: []const u8) bool {
+    if (name.len == 0) return false;
+    const c0 = name[0];
+    if (!(std.ascii.isAlphabetic(c0) or c0 == '_')) return false;
+    for (name[1..]) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_')) return false;
+    return true;
+}
+
+fn editValue(a: std.mem.Allocator, range: Range, text: []const u8) !std.json.Value {
+    var obj: std.json.ObjectMap = .empty;
+    try obj.put(a, "range", try rangeValue(a, range));
+    try obj.put(a, "newText", .{ .string = text });
+    return .{ .object = obj };
+}
+
+fn rangeValue(a: std.mem.Allocator, range: Range) !std.json.Value {
+    var obj: std.json.ObjectMap = .empty;
+    try obj.put(a, "start", try posValue(a, range.start));
+    try obj.put(a, "end", try posValue(a, range.end));
+    return .{ .object = obj };
+}
+
+fn posValue(a: std.mem.Allocator, pos: Position) !std.json.Value {
+    var obj: std.json.ObjectMap = .empty;
+    try obj.put(a, "line", .{ .integer = pos.line });
+    try obj.put(a, "character", .{ .integer = pos.character });
+    return .{ .object = obj };
+}
+
+fn handleCodeAction(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Value, id_opt: ?std.json.Value, w: *std.Io.Writer) !void {
+    const id = id_opt orelse return;
+    var arena = std.heap.ArenaAllocator.init(server.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const empty: []const std.json.Value = &.{};
+    const uri = parseFormattingQuery(params_opt) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    const source = server.documents.get(uri) orelse {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    };
+    var wants = false;
+    if (params_opt) |p| {
+        if (getObjField(p, "context")) |ctx| {
+            if (getArrField(ctx, "diagnostics")) |ds| {
+                for (ds.items) |d| {
+                    const msg = getStrField(d, "message") orelse "";
+                    const code = getStrField(d, "code") orelse "";
+                    if (std.mem.eql(u8, code, "tabs") or std.mem.indexOf(u8, msg, "TAB indentation") != null) wants = true;
+                }
+            }
+        }
+    }
+    if (!wants or std.mem.indexOfScalar(u8, source, '\t') == null) {
+        try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = empty });
+        return;
+    }
+    const replaced = try std.mem.replaceOwned(u8, a, source, "\t", "    ");
+    var changes: std.json.ObjectMap = .empty;
+    var edits: std.json.Array = .init(a);
+    try edits.append(try editValue(a, wholeDocumentRange(source), replaced));
+    try changes.put(a, uri, .{ .array = edits });
+    var edit: std.json.ObjectMap = .empty;
+    try edit.put(a, "changes", .{ .object = changes });
+    var action: std.json.ObjectMap = .empty;
+    try action.put(a, "title", .{ .string = "Replace tab indentation with spaces" });
+    try action.put(a, "kind", .{ .string = "quickfix" });
+    try action.put(a, "edit", .{ .object = edit });
+    var actions: std.json.Array = .init(a);
+    try actions.append(.{ .object = action });
+    try sendJson(ma, w, .{ .jsonrpc = "2.0", .id = id, .result = std.json.Value{ .array = actions } });
 }
 
 fn publishDiagnostics(server: *Server, ma: std.mem.Allocator, w: *std.Io.Writer, uri: []const u8) !void {
@@ -558,7 +1165,9 @@ fn computeDiagnostics(a: std.mem.Allocator, stdlib_dir: ?[]const u8, nox_home: [
     // hataları "TÜM SATIRI" işaretler (bkz. AŞAĞIDAKİ `diagnosticFromSpan`).
     const lex_result = lexer.tokenizeCapturingSpan(a, source);
     if (lex_result.err) |e| {
-        try diags.append(a, diagnosticFromSpan(lex_result.err_span, 0, lexErrorMessage(e)));
+        var d = diagnosticFromSpan(lex_result.err_span, 0, lexErrorMessage(e));
+        if (e == error.TabsNotAllowed) d.code = "tabs";
+        try diags.append(a, d);
         return diags.toOwnedSlice(a);
     }
     const tokens = lex_result.tokens.?;
@@ -680,6 +1289,17 @@ fn sendJson(ma: std.mem.Allocator, w: *std.Io.Writer, value: anytype) !void {
 fn respondInitialize(ma: std.mem.Allocator, w: *std.Io.Writer, id_opt: ?std.json.Value) !void {
     const id = id_opt orelse return;
     const EmptyObj = struct {};
+    const SigHelp = struct {
+        triggerCharacters: []const []const u8 = &.{ "(", "," },
+    };
+    const SemLegend = struct {
+        tokenTypes: []const []const u8 = &.{ "function", "class", "parameter", "variable" },
+        tokenModifiers: []const []const u8 = &.{},
+    };
+    const SemTok = struct {
+        legend: SemLegend = .{},
+        full: bool = true,
+    };
     const Capabilities = struct {
         // 1 = TextDocumentSyncKind.Full — HER değişiklikte TAM belge metni
         // gönderilir (bkz. `handleDidChange`in belge notu); artımlı (range
@@ -694,6 +1314,13 @@ fn respondInitialize(ma: std.mem.Allocator, w: *std.Io.Writer, id_opt: ?std.json
         // `formatter.formatModule` zincirini (lex→parse→format) yeniden
         // kullanır — bkz. `handleFormatting`.
         documentFormattingProvider: bool = true,
+        documentSymbolProvider: bool = true,
+        referencesProvider: bool = true,
+        renameProvider: bool = true,
+        codeActionProvider: bool = true,
+        inlayHintProvider: bool = true,
+        signatureHelpProvider: SigHelp = .{},
+        semanticTokensProvider: SemTok = .{},
     };
     const ServerInfo = struct {
         name: []const u8 = "noxlsp",
@@ -719,6 +1346,16 @@ fn respondNull(ma: std.mem.Allocator, w: *std.Io.Writer, id_opt: ?std.json.Value
         result: std.json.Value = .null,
     };
     try sendJson(ma, w, Msg{ .id = id });
+}
+
+fn sendError(ma: std.mem.Allocator, w: *std.Io.Writer, id: std.json.Value, code: i32, message: []const u8) !void {
+    const ErrObj = struct { code: i32, message: []const u8 };
+    const Msg = struct {
+        jsonrpc: []const u8 = "2.0",
+        id: std.json.Value,
+        @"error": ErrObj,
+    };
+    try sendJson(ma, w, Msg{ .id = id, .@"error" = .{ .code = code, .message = message } });
 }
 
 fn respondMethodNotFound(ma: std.mem.Allocator, w: *std.Io.Writer, id: std.json.Value) !void {

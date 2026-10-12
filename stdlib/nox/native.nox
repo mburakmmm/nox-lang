@@ -28,6 +28,11 @@ extern def nox_native_result_kind_raw(h: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_native_result_int_raw(h: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_native_result_float_raw(h: int) -> float from "zig-out/lib/noxrt.o"
 extern def nox_native_result_str_raw(h: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_native_result_list_len_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_result_list_at_raw(h: int, i: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_result_dict_len_raw(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_native_result_dict_key_raw(h: int, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_native_result_dict_at_raw(h: int, i: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_native_event_poll_raw(h: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_native_event_value_kind_raw(h: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_native_event_int_raw(h: int) -> int from "zig-out/lib/noxrt.o"
@@ -44,6 +49,8 @@ VALUE_FLOAT: int = 2
 VALUE_BOOL: int = 3
 VALUE_STRING: int = 4
 VALUE_BYTES: int = 5
+VALUE_LIST: int = 6
+VALUE_DICT: int = 7
 
 class Event:
     kind: int
@@ -105,6 +112,36 @@ class Plugin:
     def call_str(self, name: str) -> str:
         self.call(name)
         return nox_native_result_str_raw(self.handle)
+
+    # NNI v1.x: eklentinin döndürdüğü i64 listesini Nox listesine kopyalar.
+    def call_int_list(self, name: str) -> list[int]:
+        self.call(name)
+        if self.result_kind() != VALUE_LIST:
+            raise NativeError(name + ": result is not an int list")
+        n: int = nox_native_result_list_len_raw(self.handle)
+        if n < 0:
+            raise NativeError(name + ": int list result is invalid")
+        out: list[int] = []
+        i: int = 0
+        while i < n:
+            out.append(nox_native_result_list_at_raw(self.handle, i))
+            i = i + 1
+        return out
+
+    # NNI v1.x: eklentinin döndürdüğü str->int sözlüğünü Nox sözlüğüne kopyalar.
+    def call_str_int_dict(self, name: str) -> dict[str, int]:
+        self.call(name)
+        if self.result_kind() != VALUE_DICT:
+            raise NativeError(name + ": result is not a str-int dict")
+        n: int = nox_native_result_dict_len_raw(self.handle)
+        if n < 0:
+            raise NativeError(name + ": str-int dict result is invalid")
+        out: dict[str, int] = {}
+        i: int = 0
+        while i < n:
+            out[nox_native_result_dict_key_raw(self.handle, i)] = nox_native_result_dict_at_raw(self.handle, i)
+            i = i + 1
+        return out
 
     # Son çağrının sonuç türü (VALUE_*).
     def result_kind(self) -> int:

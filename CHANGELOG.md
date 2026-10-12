@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.8]
+
+### Düzeltildi
+
+- **Satır taşıma.** `a[i][k]` satırı, döngünün düz ön ekinde `break`/`continue`/`return`/`raise` varsa veya `if`/`try` bu döngüyü terk edebiliyorsa taşınmaz. Koşul çağrısı da taşımayı kapatır. İç içe döngünün `break`/`continue`'u sayılmaz. Matmul taşıması durur. Golden `list_row_hoist`, QBE ve LLVM.
+
+### Eklendi
+
+- **Tek hedefli func değerinin sınırları kilitlendi.** Kapanış, yeniden atama, özyineleme (yeni nesne ASAP, aynı nesne ARC), `try` (tanı ASAP, kod üretimi ARC), takma ad zinciri ve `spawn` golden `func_value_known_target` ile sabit. QBE ve LLVM.
+- **`nox.plugin.host_platform` RISC-V anahtarı `linux-riscv64`.** Bilinmeyen mimari `other` kalır.
+- **CI dumanı `riscv64-smoke`.** `class_list_spawn` (`70`) `qemu-user` altında. Tam korpus değil; freestanding riscv64 hâlâ yalnızca `--emit-asm`.
+- **NNI v1.x liste ve sözlük.** `list_new` / `list_append_int` / `list_len` / `list_get_int` ve `dict_new` / `dict_set_int` / `dict_len` / `dict_get_int` donmuş önekin sonuna eklendi. Eski eklenti yeni konağı yükler. `invoke_callback` yok. `Plugin.call_int_list` ve `Plugin.call_str_int_dict`.
+- **Çapraz dosya gezinti.** `import` / `from` ile gelen tanım, referans ve yeniden adlandırma hedef dosyanın kendi kaynağında çözülür. Birleştirilmiş modül kullanılmaz.
+
+### Bilinen sınır
+
+- **Aura / Nyx / Aether.** Bu depodaki doğrulama sabitlenmiş `external-fixtures` işidir (Aether v0.7.2, Nyx v0.21.0, `tests/*.nox`). `is_stopping` ve `HttpRequest` Aether deposunda kalır.
+
 ## [2.0.7]
 
 ### Düzeltildi

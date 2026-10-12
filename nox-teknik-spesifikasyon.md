@@ -7694,6 +7694,8 @@ temizlenmeli).
 
 `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
+**Sonraki gezinme (editör tamamlama):** `textDocument/documentSymbol`, `signatureHelp`, `semanticTokens/full`, `inlayHint` (yalnızca parametre adı), `references`, `rename` (`WorkspaceEdit`; sunucu dosyaya yazmaz) ve tek kod eylemi (sekme girintisini dört boşluğa çevirme) eklendi. Çapraz dosya tanım, `module_loader.resolveImportFilePath` ile hedef dosyayı ayrı ayrıştırır; birleşik modülün span'leri kullanılmaz.
+
 ---
 
 ## 3.37 Faz W.3 — DAP/Debugger Entegrasyonu (`editors/vscode-nox`)
@@ -7724,8 +7726,10 @@ etmek anlamına gelirdi.
 2. `.vscode/tasks.json.example` — `preLaunchTask` olarak `noxc build -g
    ${file}` çalıştıran görev tanımı.
 3. `README.md` — kurulum + T.3'ten DEVRALINAN (YENİ bir kısıt DEĞİL)
-   sınırlamaların (yalnızca satır-düzeyi/değişken YOK, macOS bağlı ikili
+   sınırlamaların (yalnızca satır-düzeyi, macOS bağlı ikili
    DWARF taşımıyor, çoklu-dosya yanlış atıf) AÇIKÇA belgelenmesi.
+   Skaler yerel adları sonradan `.debug_str`e yazılır; QBE yuva ofsetini
+   korumadığı için Değişkenler paneli hâlâ değer gösteremez.
 
 **Doğrulama — ham DAP protokolü üzerinden, GERÇEK `lldb-dap`e karşı:**
 Bu makinede (macOS/aarch64) HALİHAZIRDA kurulu olan (Xcode Command Line
@@ -28971,7 +28975,7 @@ Apple M4, ReleaseFast `noxrt`, `benchmarks/cross_lang` (5 tekrar ortanca, saniye
 
 **dict tabanı.** `dict[int,int]` değer deposu + ayrı `HashMap` (§3.244). `d[k]` önce `contains` sonra `get` çağırır; benchmark ayrıca `contains` yazar. C tek açık-adresli aramadır. Fark ~2.5x (önceki tur ~2.8x). Sıra ve hash-flooding tohumu bozulmadan kapanmaz; uydurma hız iddiası yok.
 
-Golden: `list_row_hoist` (QBE ve LLVM). Liste indeksinin ölçeği değiştiği için IR anlık görüntüleri yenilendi.
+Golden: `list_row_hoist` (QBE ve LLVM). Liste indeksinin ölçeği değiştiği için IR anlık görüntüleri yenilendi. v2.0.8 bu satır taşımayı daralttı (§3.291): matmul döngüsü (çağrısız koşul, erken çıkış yok) aynı kalır.
 
 ## 3.290 Hosted riscv64 (v2.0.4)
 
@@ -28980,3 +28984,41 @@ Golden: `list_row_hoist` (QBE ve LLVM). Liste indeksinin ölçeği değiştiği 
 `--target linux-riscv64` QBE `rv64` üretir ve `noxrt-linux-riscv64.o` ile `zig cc -target riscv64-linux-musl -static` bağlar. musl, qemu-user'ın sysroot olmadan çalıştırabildiği statik ikili içindir. Freestanding riscv64 zinciri yoktur: boot kanıtı yok, `--emit-asm` durur.
 
 Duman (QEMU user-mode): `class_list_spawn` — `Box`, `list[int]`, bir `spawn`/`await`, çıktı `70`. Aynı program iki backend'de golden'dır. Tam CI paritesi bu turda yok.
+
+## 3.291 Satır taşımanın güvenlik sınırı (v2.0.8)
+
+v2.0.3'ün `list[list[T]]` satır taşıması, satırı koşul ilk kez tutunca, gövdeden ÖNCE bir kez yüklüyordu. Gövdedeki `break`/`continue`/`return` taşımayı engellemiyordu; `a[i][k]` onlardan sonra da planlanıyordu. Koşuldaki çağrı da engellemiyordu: geri kenar çağrıyı yeniden çalıştırıyor, taşınan işaretçi ilk satırda kalıyordu.
+
+v2.0.8 kuralı:
+
+- Koşul çağrı, `spawn`, `await`, lambda veya comprehension içeriyorsa satır taşınmaz.
+- Satır yalnızca gövdenin düz satır önekindeki üst düzey ifade, değişken ve atamalardan not edilir. Bu döngünün kalanını atlayabilen bir deyimden (`break`, `continue`, `return`, `raise`, ya da bunları içeren `if`/`try`) sonraki erişim not edilmez.
+- İç içe `while`/`for`un `break`/`continue`u dış döngüyü atlamaz. İçerideki `return` ve `raise` atlar.
+- Erken çıkıştan ÖNCE çalışan `a[i][k]` taşınmaya devam eder. `while k < 3` gibi çağrısız matmul döngüsü de taşınır.
+
+Golden `list_row_hoist`: matmul `570`, hiç girmeyen döngü `1`, erken `break`/`return`/`continue`/`raise` boş listede `IndexError` basmaz, koşuldaki `bump` satırı değiştirince toplam `16` (taşınmış eski satır `14` değildir). İki backend.
+
+## 3.292 Tek hedefli func matrisinin kilidi (v2.0.8)
+
+v2.0.2'nin kuralı (`func_value_known_target`) şu sınırlarla kilitlendi. Sahiplik tanısı:
+
+- Özyineleme yeni bir `Point` üretiyorsa (`rec`) çağıran yerelin noktası ASAP kalır. Aynı nesne özyinelemeli geçiyorsa (`rec_same`) ARC.
+- `raise` edilen nesne noktanın kendisi değilse ve gövde noktayı saklamıyorsa, `try` içindeki dolaylı çağrı tanıda ASAP kalır. Codegen, gövdesinde `try` olan bir fonksiyonun yerelini yine ARC sayar (`stmtsSafeForLocal` `try` görünce kanıtı bırakır). Tanı daha keskin, codegen daha tutucu; ikisi de noktayı erken serbest bırakmaz.
+- Takma ad zinciri (`g = observe`, `f = g`) kanıt değildir: `g` ARC (isimle atama), `pt` ARC.
+- `spawn`ın argümanı, hedefin gövdesi değeri okumasa da ARC. QBE sınıf parametresini `spawn`'a paketlemediği için kilit `str` üzerindedir.
+
+Çalışma zamanı (iki backend): `6`, `4`, `5`, `9`, `2`, `1`.
+
+## 3.293 Plugin platform anahtarı ve riscv64 dumanı (v2.0.8)
+
+`nox_native_platform_raw` riscv64'te `linux-riscv64` döner (önce `linux-other`). Manifest `library` tablosu bu anahtarla seçilir. Bilinen diğer anahtarlar durur: `macos-arm64`, `linux-x64`, `linux-arm64`, `windows-x64`.
+
+CI işi `riscv64-smoke`: `class_list_spawn` `--target linux-riscv64` ile bağlanır ve `qemu-riscv64` altında `70` basar. Tam korpus paritesi değildir. Freestanding riscv64 hâlâ yalnızca `--emit-asm`.
+
+## 3.294 NNI v1.x sona ekleme (v2.0.8)
+
+`NoxApiV1`'in v1 öneki (`post_event` dahil, 64-bit'te 96 bayt) yerinde durur. Yeni üyeler yalnızca sona eklenir: `list_new` / `list_append_int` / `list_len` / `list_get_int` ve `dict_new` / `dict_set_int` / `dict_len` / `dict_get_int`. Bunlar Nox'un liste/dict belleği değildir; host'un kendi kodlamasıdır. Dönüş `NOX_V_LIST` (6) veya `NOX_V_DICT` (7) olunca host baytları kopyalar, tutamacı bırakır ve `nox.native` gerçek `list[int]` / `dict[str, int]` kurar. Eski eklenti `struct_size` küçükse bu üyeleri okumaz. `invoke_callback` (Nox closure'ının C işlev işaretçisi olması) bu tabloya girmedi.
+
+## 3.295 Harici çerçeve sınırı (v2.0.8)
+
+Aether ve Nyx bu deponun dışında, pinli etiketlerle `.github/workflows/external-fixtures.yml` üzerinden sınanır (Aether v0.7.2, Nyx v0.21.0, kendi `tests/*.nox` paketleri). `HttpRequest` üzerinde `is_stopping` Aether deposunun işidir; burada yeniden yazılmaz ve sahte bir entegrasyon testi eklenmez. Pin, framework'ün kendi gelecek commit'i bu CI'yi sessizce kırmasın diye elle ilerler.

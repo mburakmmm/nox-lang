@@ -18,6 +18,7 @@ from nox.native import open_plugin, Plugin, Event, NativeError
 | `Plugin.clear_args()` | discards pushed arguments |
 | `Plugin.call(name)` | calls the native function `name` with the pushed arguments, ignoring the result |
 | `Plugin.call_int(name)`, `call_float(name)`, `call_bool(name)`, `call_str(name)` | calls and returns the result as that type |
+| `Plugin.call_int_list(name)`, `call_str_int_dict(name)` | NNI v1.x: copies a host-built `list[int]` or `dict[str, int]` into a Nox value |
 | `Plugin.result_kind()` | the kind of the last result (`VALUE_NONE`=0, `VALUE_INT`=1, `VALUE_FLOAT`=2, `VALUE_BOOL`=3, `VALUE_STRING`=4, `VALUE_BYTES`=5) |
 | `Plugin.poll_event()` | the next queued event from a native thread, or `None` |
 | `Plugin.wait_event(timeout_ms)` | waits up to `timeout_ms` for an event; `None` on timeout |

@@ -52,7 +52,9 @@ enum {
     NOX_V_FLOAT = 2,
     NOX_V_BOOL = 3,
     NOX_V_STRING = 4, /* u.h: handle to a UTF-8 string */
-    NOX_V_BYTES = 5   /* u.h: handle to a byte buffer */
+    NOX_V_BYTES = 5,  /* u.h: handle to a byte buffer */
+    NOX_V_LIST = 6,   /* u.h: host-built list of int64; not a Nox list object */
+    NOX_V_DICT = 7    /* u.h: host-built dict[str, int64]; not a Nox dict object */
 };
 
 typedef struct NoxValue {
@@ -99,6 +101,17 @@ struct NoxApiV1 {
     /* Thread-safe: callable from ANY thread. String/bytes payloads are copied. Nox drains events with
      * `nox.native.poll_event()` on its own scheduler. `kind` must be >= 0. */
     NoxStatus (*post_event)(NoxRuntime* rt, int64_t kind, const NoxValue* payload);
+
+    /* Appended in NNI v1.x. An older plugin must not read these unless struct_size covers them.
+     * The bytes behind a list/dict handle are the host's private encoding, never a Nox object. */
+    NoxHandle (*list_new)(NoxRuntime* rt);
+    NoxStatus (*list_append_int)(NoxRuntime* rt, NoxHandle h, int64_t v);
+    NoxStatus (*list_len)(NoxRuntime* rt, NoxHandle h, int64_t* out_len);
+    NoxStatus (*list_get_int)(NoxRuntime* rt, NoxHandle h, int64_t index, int64_t* out);
+    NoxHandle (*dict_new)(NoxRuntime* rt);
+    NoxStatus (*dict_set_int)(NoxRuntime* rt, NoxHandle h, const uint8_t* key, size_t key_len, int64_t v);
+    NoxStatus (*dict_len)(NoxRuntime* rt, NoxHandle h, int64_t* out_len);
+    NoxStatus (*dict_get_int)(NoxRuntime* rt, NoxHandle h, const uint8_t* key, size_t key_len, int64_t* out);
 };
 
 /* Every plugin exports this symbol. Return NOX_ABI_UNSUPPORTED if `api->abi_version` is too old. */

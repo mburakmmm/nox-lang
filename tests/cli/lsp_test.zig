@@ -341,3 +341,176 @@ test "uctan uca: nox.json'lu bir projede proje-ici (requires'siz) import gercekt
     const term = try child.wait(io);
     try std.testing.expect(term == .exited and term.exited == 0);
 }
+
+test "uctan uca: anahat, imza, anlamsal belirtec, parametre ipucu, referans, yeniden adlandirma, sekme eylemi" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{noxlspPath()},
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    var stdin_buf: [4096]u8 = undefined;
+    var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
+    const w = &stdin_writer.interface;
+    var stdout_buf: [1 << 16]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const r = &stdout_reader.interface;
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+    const init_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, init_resp, "\"documentSymbolProvider\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, init_resp, "\"signatureHelpProvider\"") != null);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+
+    const uri = "file:///tmp/noxlsp_nav2.nox";
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\",\"languageId\":\"nox\",\"version\":1," ++
+        "\"text\":\"def double(x: int) -> int:\\n    return x * 2\\n\\ny: int = double(21)\\n\"}}}");
+    _ = try readMessage(a, r);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/documentSymbol\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"}}}");
+    const sym = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, sym, "\"name\":\"double\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sym, "\"kind\":12") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/signatureHelp\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":3,\"character\":16}}}");
+    const sig = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, sig, "double(x)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sig, "\"label\":\"x\"") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/semanticTokens/full\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"}}}");
+    const sem = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, sem, "\"data\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sem, "\"data\":[]") == null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/inlayHint\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":4,\"character\":0}}}}");
+    const hint = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, hint, "\"label\":\"x:\"") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/references\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":3,\"character\":9},\"context\":{\"includeDeclaration\":true}}}");
+    const refs = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, refs, "\"line\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, refs, "\"line\":3") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/rename\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":3,\"character\":9},\"newName\":\"triple\"}}");
+    const renamed = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, renamed, "\"newText\":\"triple\"") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"textDocument/rename\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":3,\"character\":9},\"newName\":\"1bad\"}}");
+    const bad = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, bad, "not an identifier") != null);
+
+    const tab_uri = "file:///tmp/noxlsp_tabs.nox";
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ tab_uri ++ "\",\"languageId\":\"nox\",\"version\":1," ++
+        "\"text\":\"def f() -> int:\\n\\treturn 1\\n\"}}}");
+    const tab_diag = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, tab_diag, "\"code\":\"tabs\"") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"textDocument/codeAction\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ tab_uri ++ "\"},\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":1}}," ++
+        "\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":1}}," ++
+        "\"message\":\"syntax error: TAB indentation is not supported (use spaces only)\",\"code\":\"tabs\"}]}}}");
+    const action = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, action, "Replace tab indentation with spaces") != null);
+    try std.testing.expect(std.mem.indexOf(u8, action, "    return 1") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"shutdown\",\"params\":null}");
+    _ = try readMessage(a, r);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited and term.exited == 0);
+}
+
+test "uctan uca: import edilen fonksiyonun tanimi ve imzasi hedef dosyadan gelir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "helper.nox",
+        .data =
+        \\def double(x: int) -> int:
+        \\    return x * 2
+        \\
+        ,
+    });
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+    const main_uri = try std.fmt.allocPrint(a, "file://{s}/main.nox", .{proj_path});
+    const root_uri = try std.fmt.allocPrint(a, "file://{s}", .{proj_path});
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{noxlspPath()},
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    var stdin_buf: [4096]u8 = undefined;
+    var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
+    const w = &stdin_writer.interface;
+    var stdout_buf: [1 << 16]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const r = &stdout_reader.interface;
+
+    const init = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"rootUri\":\"{s}\"}}}}", .{root_uri});
+    try writeMessage(w, init);
+    _ = try readMessage(a, r);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+
+    const did_open = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"nox\",\"version\":1," ++
+        "\"text\":\"import helper\\n\\ny: int = helper.double(21)\\n\"}}}}}}", .{main_uri});
+    try writeMessage(w, did_open);
+    _ = try readMessage(a, r);
+
+    const def_req = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":2,\"character\":18}}}}}}", .{main_uri});
+    try writeMessage(w, def_req);
+    const def_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, def_resp, "helper.nox") != null);
+    try std.testing.expect(std.mem.indexOf(u8, def_resp, "\"start\":{\"line\":0,\"character\":0}") != null);
+
+    const sig_req = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/signatureHelp\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":2,\"character\":25}}}}}}", .{main_uri});
+    try writeMessage(w, sig_req);
+    const sig_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, sig_resp, "double(x)") != null);
+
+    const ref_req = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/references\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":2,\"character\":18}},\"context\":{{\"includeDeclaration\":true}}}}}}", .{main_uri});
+    try writeMessage(w, ref_req);
+    const ref_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, ref_resp, "helper.nox") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ref_resp, "main.nox") != null);
+
+    const ren_req = try std.fmt.allocPrint(a, "{{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/rename\",\"params\":" ++
+        "{{\"textDocument\":{{\"uri\":\"{s}\"}},\"position\":{{\"line\":2,\"character\":18}},\"newName\":\"triple\"}}}}", .{main_uri});
+    try writeMessage(w, ren_req);
+    const ren_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, ren_resp, "\"newText\":\"triple\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ren_resp, "helper.nox") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ren_resp, "main.nox") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\",\"params\":null}");
+    _ = try readMessage(a, r);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited and term.exited == 0);
+}

@@ -18,7 +18,7 @@ The complete specification — the manifest schema, types, capabilities, errors 
 | `PLUGIN_API_VERSION` | the Plugin API version this runtime implements (`1`) |
 | `load_plugin(manifest_path, allowed)` | reads and validates the manifest, checks every declared capability against `allowed` (`"*"` grants all), loads the library, runs init, cross-checks the registered functions and returns a `LoadedPlugin` |
 | `read_manifest(manifest_path)` | parses and validates a manifest and returns a `PluginManifest` without loading anything |
-| `host_platform()` | the platform key (`"macos-arm64"`, `"linux-x64"`, `"linux-arm64"`, `"windows-x64"`) |
+| `host_platform()` | the platform key (`"macos-arm64"`, `"linux-x64"`, `"linux-arm64"`, `"linux-riscv64"`, `"windows-x64"`) |
 | `capability_granted(cap, allowed)` | whether `cap` is permitted by the list `allowed` |
 | `obj_get(v, key)`, `dir_of(path)`, `kind_ok(kind)`, `require_string(v, key, what)` | internal helpers used by the manifest reader; they are public but not part of the stable API |
 

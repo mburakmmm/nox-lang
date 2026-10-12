@@ -51,3 +51,68 @@
   kept: Point -> ASAP (stays in scope (no escape detected))
     allocation: var_decl
     free: end of scope
+[function rec]
+  p: Point (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function use_rec]
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  pt: Point -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+[function rec_same]
+  p: Point (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function use_rec_same]
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  pt: Point -> ARC (because it is passed as an argument to a call)
+    allocation: var_decl
+    free: end of scope
+[method Neg.__init__]
+  self: Neg (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function maybe]
+  p: Point (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function use_except]
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  pt: Point -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+[function use_except_raise]
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  pt: Point -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+[function use_alias]
+  g: func -> ARC (because it is assigned to another variable by name (alias))
+    allocation: var_decl
+    free: end of scope
+  f: func -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope
+  pt: Point -> ARC (because it is passed as an argument to a call)
+    allocation: var_decl
+    free: end of scope
+[function worker_s]
+  s: str (parameter) -> ARC (parameter: it already crossed the function boundary)
+    allocation: parameter
+    free: end of scope
+[function use_spawn]
+  s: str -> ARC (because it is passed as an argument to a call)
+    allocation: var_decl
+    free: end of scope
+  t: Task[int] -> ASAP (stays in scope (no escape detected))
+    allocation: var_decl
+    free: end of scope

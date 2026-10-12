@@ -144,6 +144,40 @@ fn fileExistsAbsolute(io: std.Io, path: []const u8) bool {
     if (std.Io.Dir.accessAbsolute(io, path, .{})) |_| return true else |_| return false;
 }
 
+/// `loadImportsRecursive`in dosya yolu seçimi, birleştirmeden AYRI.
+/// LSP çapraz-dosya gezinmesi bunu kullanır: span'ler hedef dosyanın
+/// KENDİ kaynağına aittir. `alias_roots == null` iken yalnızca stdlib
+/// denenir; dolu (boş harita DAHİL) iken proje kökü de denenir.
+pub fn resolveImportFilePath(
+    a: std.mem.Allocator,
+    io: std.Io,
+    segments: []const []const u8,
+    alias_roots: ?*const std.StringHashMapUnmanaged([]const u8),
+    stdlib_root: []const u8,
+    project_root: ?[]const u8,
+) LoadError![]const u8 {
+    if (segments.len == 0) return error.ModuleNotFound;
+    const is_nox_stdlib = std.mem.eql(u8, segments[0], "nox");
+    if (alias_roots) |roots| {
+        if (!is_nox_stdlib) {
+            if (roots.get(segments[0])) |root| {
+                const rest = try joinWith(a, segments[1..], '/');
+                return std.fmt.allocPrint(a, "{s}/{s}.nox", .{ root, rest });
+            }
+            if (project_root) |proot| {
+                const rel_path = try joinWith(a, segments, '/');
+                const candidate = try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ proot, rel_path });
+                if (fileExistsAbsolute(io, candidate)) return candidate;
+            }
+            return error.UnknownImportAlias;
+        }
+    }
+    const rel_path = try joinWith(a, segments, '/');
+    const path = try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ stdlib_root, rel_path });
+    if (!fileExistsAbsolute(io, path)) return error.ModuleNotFound;
+    return path;
+}
+
 /// Faz NN.3 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması",
 /// limitasyon #5): `current_own_name`/`current_own_root` — ŞU AN gövdesi
 /// işlenmekte olan paketin KENDİ `nox.json`ından okunan `name` alanı VE bu

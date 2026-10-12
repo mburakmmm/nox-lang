@@ -1003,7 +1003,8 @@ pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenErr
     const hoist_mark = self.hoisted_len;
     defer self.hoisted_len = hoist_mark;
     var planned: [8]optimizations.RowKey = undefined;
-    const planned_n: usize = if (optimizations.bodyBlocksRowHoist(w.body)) 0 else try optimizations.planInvariantRows(self, w.body, &planned);
+    const blocked = optimizations.exprBlocksRowHoist(w.cond) or optimizations.bodyBlocksRowHoist(w.body);
+    const planned_n: usize = if (blocked) 0 else try optimizations.planInvariantRows(self, w.body, &planned);
 
     const cond_label = try self.newLabel("while_cond");
     const body_label = try self.newLabel("while_body");

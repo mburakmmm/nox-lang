@@ -94,6 +94,16 @@ struct NoxApiV1 {
     NoxStatus (*error_set)(NoxRuntime* rt, int32_t code, const uint8_t* msg, size_t len);
     NoxStatus (*register_function)(NoxRuntime* rt, const char* name, NoxNativeFn fn);
     NoxStatus (*post_event)(NoxRuntime* rt, int64_t kind, const NoxValue* payload);
+
+    /* Appended in v1.x. Do not read these unless struct_size covers them. */
+    NoxHandle (*list_new)(NoxRuntime* rt);
+    NoxStatus (*list_append_int)(NoxRuntime* rt, NoxHandle h, int64_t v);
+    NoxStatus (*list_len)(NoxRuntime* rt, NoxHandle h, int64_t* out_len);
+    NoxStatus (*list_get_int)(NoxRuntime* rt, NoxHandle h, int64_t index, int64_t* out);
+    NoxHandle (*dict_new)(NoxRuntime* rt);
+    NoxStatus (*dict_set_int)(NoxRuntime* rt, NoxHandle h, const uint8_t* key, size_t key_len, int64_t v);
+    NoxStatus (*dict_len)(NoxRuntime* rt, NoxHandle h, int64_t* out_len);
+    NoxStatus (*dict_get_int)(NoxRuntime* rt, NoxHandle h, const uint8_t* key, size_t key_len, int64_t* out);
 };
 ```
 
@@ -105,6 +115,8 @@ struct NoxApiV1 {
 | `error_set` | records a message for the *current call* and returns `NOX_ERROR`; use as `return api->error_set(rt, code, msg, len);` |
 | `register_function` | valid **only during** `nox_plugin_init_v1`; registers a callable by name |
 | `post_event` | thread-safe, callable from **any** thread; copies string/bytes payloads; `kind` must be `>= 0` |
+| `list_new`, `list_append_int`, `list_len`, `list_get_int` | appended in v1.x; a private list of `int64`, not a Nox list object. Returning `NOX_V_LIST` transfers the handle to the host |
+| `dict_new`, `dict_set_int`, `dict_len`, `dict_get_int` | appended in v1.x; a private `dict[str, int64]`. Returning `NOX_V_DICT` transfers the handle to the host |
 
 ## Native functions
 
@@ -140,8 +152,7 @@ New members are **only ever appended** to the end of `NoxApiV1`. A plugin built 
 
 Direct list/dictionary/object memory access, class layouts, reflection ABI, GC hooks, Nox closures as C function pointers and
 precompiled Nox-to-Nox binary linking. Keeping these out is what lets the runtime change its reference-counting scheme, arenas or object layout
-without ever breaking a plugin. A richer data-structure API (list/dictionary builders, an optional `invoke_callback`) is planned as appended
-members for NNI v1.x.
+without ever breaking a plugin. v1.x appends integer list and string-key integer dict builders (`list_*`, `dict_*`). They store a private host encoding and are copied into a Nox `list[int]` or `dict[str, int]` only when the call returns. `invoke_callback` (a Nox closure as a C function pointer) stays out of this table.
 
 ## Platform notes
 

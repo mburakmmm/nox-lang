@@ -81,6 +81,9 @@ static NoxStatus fn_start_thread(const NoxApiV1* api, NoxRuntime* rt, const NoxV
     return NOX_OK;
 }
 
+static NoxStatus fn_build_list(const NoxApiV1* api, NoxRuntime* rt, const NoxValue* args, size_t argc, NoxValue* out);
+static NoxStatus fn_build_dict(const NoxApiV1* api, NoxRuntime* rt, const NoxValue* args, size_t argc, NoxValue* out);
+
 NOX_EXPORT NoxStatus nox_plugin_init_v1(const NoxApiV1* api, NoxRuntime* rt) {
     if (api->abi_version < 1 || api->struct_size < sizeof(NoxApiV1)) return NOX_ABI_UNSUPPORTED;
     g_api = api;
@@ -90,6 +93,33 @@ NOX_EXPORT NoxStatus nox_plugin_init_v1(const NoxApiV1* api, NoxRuntime* rt) {
     api->register_function(rt, "greet", fn_greet);
     api->register_function(rt, "fail", fn_fail);
     api->register_function(rt, "start_thread", fn_start_thread);
+    api->register_function(rt, "build_list", fn_build_list);
+    api->register_function(rt, "build_dict", fn_build_dict);
+    return NOX_OK;
+}
+
+static NoxStatus fn_build_list(const NoxApiV1* api, NoxRuntime* rt, const NoxValue* args, size_t argc, NoxValue* out) {
+    (void)args;
+    (void)argc;
+    NoxHandle h = api->list_new(rt);
+    if (!h) return NOX_OUT_OF_MEMORY;
+    if (api->list_append_int(rt, h, 10) != NOX_OK) return NOX_ERROR;
+    if (api->list_append_int(rt, h, 20) != NOX_OK) return NOX_ERROR;
+    if (api->list_append_int(rt, h, 30) != NOX_OK) return NOX_ERROR;
+    out->kind = NOX_V_LIST;
+    out->u.h = h;
+    return NOX_OK;
+}
+
+static NoxStatus fn_build_dict(const NoxApiV1* api, NoxRuntime* rt, const NoxValue* args, size_t argc, NoxValue* out) {
+    (void)args;
+    (void)argc;
+    NoxHandle h = api->dict_new(rt);
+    if (!h) return NOX_OUT_OF_MEMORY;
+    if (api->dict_set_int(rt, h, (const uint8_t*)"a", 1, 1) != NOX_OK) return NOX_ERROR;
+    if (api->dict_set_int(rt, h, (const uint8_t*)"b", 1, 2) != NOX_OK) return NOX_ERROR;
+    out->kind = NOX_V_DICT;
+    out->u.h = h;
     return NOX_OK;
 }
 

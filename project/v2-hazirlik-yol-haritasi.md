@@ -63,7 +63,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
   düşülüyor (not basılıyor). Kalıcı çözüm: `zig cc` ya da paketlenmiş clang değerlendir.
 - [x] **3.3 aarch64 stack-smash (son 40 CI koşusunda test hatası YOK; kök neden x86-64 ile aynı, v1.142.3/21):** kök neden aarch64 için DOĞRULANMADI (x86-64 muadili v1.142.3'te bulundu).
   `allow_failure` v1.142.21'de kaldırıldı; v1.142.24 CI temiz. Birkaç koşu daha izle; çıkarsa kök nedeni araştır.
-- [x] **3.4 riscv64 hosted (v2.0.4):** `swap_riscv64.S`, `--target linux-riscv64` (musl, statik). QEMU user-mode dumanı: sınıf, liste, bir `spawn`/`await`. Freestanding riscv64 hâlâ yalnızca `--emit-asm`. Tam CI paritesi yok.
+- [x] **3.4 riscv64 hosted (v2.0.4, duman CI v2.0.8):** `swap_riscv64.S`, `--target linux-riscv64` (musl, statik). CI `riscv64-smoke` `class_list_spawn` çıktısını `70` diye kilitler. Freestanding riscv64 hâlâ yalnızca `--emit-asm`. Tam korpus paritesi yok.
 
 ## 4. Dokümantasyon
 
@@ -81,10 +81,10 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 ## 6. Teknik borç
 
-- [x] **6.1 (v2.0.2)** ASAP closure-effect: func tipli bir yerel tam olarak bir kez, gövdesi bilinen bir fonksiyona veya iç içe `def`e bağlıysa o gövdenin parametre kaçışı çağrı yerine taşınır. Birden fazla yazım, parametre olarak gelen func veya taranmamış gövde ARC kalır. `spawn` bu kanıta girmez.
+- [x] **6.1 (v2.0.2, matris v2.0.8)** ASAP closure-effect: func tipli bir yerel tam olarak bir kez, gövdesi bilinen bir fonksiyona veya iç içe `def`e bağlıysa o gövdenin parametre kaçışı çağrı yerine taşınır. Birden fazla yazım, parametre olarak gelen func, takma ad zinciri veya taranmamış gövde ARC kalır. Aynı nesnenin özyinelemeli geçişi ARC, `spawn` her zaman ARC. `try` codegen'de kanıtı düşürür.
 - [x] **6.2 (GG.24/25 worklist zaten kapatmıştı; v1.171.1 fiber içi golden testi)** `genClassRelease` özyinelemesi 256 KiB fiber yığınında sınırda (STACK_SIZE küçültülmedi).
 - [x] **6.3** `nox.binary` artık `Span` üzerinde de çalışır — v1.166.0 (`span_reader`/`span_writer`; tam generic sınıf yerine geriye uyumlu yardımcı).
-- [ ] **6.4** Aether `is_stopping()` + `HttpRequest` uyumu (Aether deposunda yapılacak).
+- [x] **6.4 (sınır, v2.0.8)** Aether/Nyx bu depoda `external-fixtures.yml` ile pinli (Aether v0.7.2, Nyx v0.21.0). `is_stopping` + `HttpRequest` Aether deposunda kalır; burada sahte test yok.
 - [x] **6.5** Eski async-istisna notları düzeltildi — v1.158.0.
 
 ## 7. Performans (engelleyici değil)

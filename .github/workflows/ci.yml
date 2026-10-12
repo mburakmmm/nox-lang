@@ -732,3 +732,38 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "'$name' derlemesi basarisiz (exit $LASTEXITCODE)" }
             Write-Host "'$name' derlemesi basarili."
           }
+
+  # v2.0.8: hosted riscv64 dumanı. Tam dil korpusu değil; sınıf, liste ve bir
+  # spawn/await (`class_list_spawn`, çıktı 70) qemu-user altında çalışır.
+  riscv64-smoke:
+    name: linux-riscv64 qemu-user duman
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - name: qbe kur (kaynaktan derle)
+        run: |
+          curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz
+          tar xf /tmp/qbe.tar.xz -C /tmp
+          make -C /tmp/qbe-1.3 -j"$(nproc)"
+          sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
+      - name: qemu-user kur
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+      - name: noxc ve riscv64 runtime
+        run: zig build
+      - name: class_list_spawn
+        run: |
+          set -euo pipefail
+          zig-out/bin/noxc build --target linux-riscv64 tests/golden/codegen_cases/class_list_spawn.nox -o /tmp/nox-riscv-smoke
+          qemu=qemu-riscv64-static
+          if ! command -v "$qemu" >/dev/null 2>&1; then
+            qemu=qemu-riscv64
+          fi
+          out="$("$qemu" /tmp/nox-riscv-smoke)"
+          test "$out" = "70"

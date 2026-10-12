@@ -38,6 +38,10 @@ pub const V_FLOAT: i32 = 2;
 pub const V_BOOL: i32 = 3;
 pub const V_STRING: i32 = 4;
 pub const V_BYTES: i32 = 5;
+/// v1.x sona ekleme: Nox liste belleği değil, host'un kendi i64 dizisi.
+pub const V_LIST: i32 = 6;
+/// v1.x sona ekleme: anahtar uzunluğu + bayt + i64 değer kayıtları.
+pub const V_DICT: i32 = 7;
 
 pub const NoxValue = extern struct {
     kind: i32 = V_NONE,
@@ -62,6 +66,15 @@ pub const NoxApiV1 = extern struct {
     error_set: *const fn (rt: *NoxRuntime, code: i32, msg: [*]const u8, len: usize) callconv(.c) NoxStatus,
     register_function: *const fn (rt: *NoxRuntime, name: [*:0]const u8, f: NoxNativeFn) callconv(.c) NoxStatus,
     post_event: *const fn (rt: *NoxRuntime, kind: i64, payload: ?*const NoxValue) callconv(.c) NoxStatus,
+    // v1.x: yalnızca sona eklenir. Eski eklenti `struct_size` ile bu üyeleri okumaz.
+    list_new: *const fn (rt: *NoxRuntime) callconv(.c) NoxHandle,
+    list_append_int: *const fn (rt: *NoxRuntime, h: NoxHandle, v: i64) callconv(.c) NoxStatus,
+    list_len: *const fn (rt: *NoxRuntime, h: NoxHandle, out_len: *i64) callconv(.c) NoxStatus,
+    list_get_int: *const fn (rt: *NoxRuntime, h: NoxHandle, index: i64, out: *i64) callconv(.c) NoxStatus,
+    dict_new: *const fn (rt: *NoxRuntime) callconv(.c) NoxHandle,
+    dict_set_int: *const fn (rt: *NoxRuntime, h: NoxHandle, key: [*]const u8, key_len: usize, v: i64) callconv(.c) NoxStatus,
+    dict_len: *const fn (rt: *NoxRuntime, h: NoxHandle, out_len: *i64) callconv(.c) NoxStatus,
+    dict_get_int: *const fn (rt: *NoxRuntime, h: NoxHandle, key: [*]const u8, key_len: usize, out: *i64) callconv(.c) NoxStatus,
 };
 
 const PluginInitFn = *const fn (api: *const NoxApiV1, rt: *NoxRuntime) callconv(.c) NoxStatus;
@@ -267,6 +280,127 @@ fn apiPostEvent(rt: *NoxRuntime, kind: i64, payload: ?*const NoxValue) callconv(
     return NOX_OK;
 }
 
+fn apiListNew(rt: *NoxRuntime) callconv(.c) NoxHandle {
+    const host = hostFrom(rt);
+    const empty: [0]u8 = .{};
+    return newEntry(host, V_LIST, &empty, 0);
+}
+
+fn apiListAppendInt(rt: *NoxRuntime, h: NoxHandle, v: i64) callconv(.c) NoxStatus {
+    const host = hostFrom(rt);
+    host.lock.lock();
+    defer host.lock.unlock();
+    const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
+    if (e.kind != V_LIST) return NOX_ERROR;
+    const neu = host.allocator.alloc(u8, e.data.len + 8) catch return NOX_OUT_OF_MEMORY;
+    @memcpy(neu[0..e.data.len], e.data);
+    std.mem.writeInt(i64, neu[e.data.len..][0..8], v, .little);
+    if (e.data.len != 0) host.allocator.free(e.data);
+    e.data = neu;
+    return NOX_OK;
+}
+
+fn apiListLen(rt: *NoxRuntime, h: NoxHandle, out_len: *i64) callconv(.c) NoxStatus {
+    const host = hostFrom(rt);
+    host.lock.lock();
+    defer host.lock.unlock();
+    const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
+    if (e.kind != V_LIST or e.data.len % 8 != 0) return NOX_ERROR;
+    out_len.* = @intCast(e.data.len / 8);
+    return NOX_OK;
+}
+
+fn apiListGetInt(rt: *NoxRuntime, h: NoxHandle, index: i64, out: *i64) callconv(.c) NoxStatus {
+    const host = hostFrom(rt);
+    host.lock.lock();
+    defer host.lock.unlock();
+    const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
+    if (e.kind != V_LIST or index < 0) return NOX_ERROR;
+    const i: usize = @intCast(index);
+    if (i >= e.data.len / 8) return NOX_NOT_FOUND;
+    out.* = std.mem.readInt(i64, e.data[i * 8 ..][0..8], .little);
+    return NOX_OK;
+}
+
+fn dictWalk(data: []const u8, key: []const u8) ?usize {
+    var i: usize = 0;
+    while (i + 4 <= data.len) {
+        const n = std.mem.readInt(u32, data[i..][0..4], .little);
+        i += 4;
+        if (n > data.len - i or i + n + 8 > data.len) return null;
+        if (n == key.len and std.mem.eql(u8, data[i..][0..n], key)) return i + n;
+        i += n + 8;
+    }
+    return null;
+}
+
+fn dictCount(data: []const u8) ?usize {
+    var i: usize = 0;
+    var nrec: usize = 0;
+    while (i + 4 <= data.len) {
+        const n = std.mem.readInt(u32, data[i..][0..4], .little);
+        i += 4;
+        if (n > data.len - i or i + n + 8 > data.len) return null;
+        i += n + 8;
+        nrec += 1;
+    }
+    if (i != data.len) return null;
+    return nrec;
+}
+
+fn apiDictNew(rt: *NoxRuntime) callconv(.c) NoxHandle {
+    const host = hostFrom(rt);
+    const empty: [0]u8 = .{};
+    return newEntry(host, V_DICT, &empty, 0);
+}
+
+fn apiDictSetInt(rt: *NoxRuntime, h: NoxHandle, key: [*]const u8, key_len: usize, v: i64) callconv(.c) NoxStatus {
+    const host = hostFrom(rt);
+    if (key_len > 1024 * 1024) return NOX_ERROR;
+    host.lock.lock();
+    defer host.lock.unlock();
+    const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
+    if (e.kind != V_DICT) return NOX_ERROR;
+    const k = key[0..key_len];
+    if (dictWalk(e.data, k)) |at| {
+        std.mem.writeInt(i64, e.data[at..][0..8], v, .little);
+        return NOX_OK;
+    }
+    const neu = host.allocator.alloc(u8, e.data.len + 4 + key_len + 8) catch return NOX_OUT_OF_MEMORY;
+    @memcpy(neu[0..e.data.len], e.data);
+    var o = e.data.len;
+    std.mem.writeInt(u32, neu[o..][0..4], @intCast(key_len), .little);
+    o += 4;
+    @memcpy(neu[o..][0..key_len], k);
+    o += key_len;
+    std.mem.writeInt(i64, neu[o..][0..8], v, .little);
+    if (e.data.len != 0) host.allocator.free(e.data);
+    e.data = neu;
+    return NOX_OK;
+}
+
+fn apiDictLen(rt: *NoxRuntime, h: NoxHandle, out_len: *i64) callconv(.c) NoxStatus {
+    const host = hostFrom(rt);
+    host.lock.lock();
+    defer host.lock.unlock();
+    const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
+    if (e.kind != V_DICT) return NOX_ERROR;
+    const n = dictCount(e.data) orelse return NOX_ERROR;
+    out_len.* = @intCast(n);
+    return NOX_OK;
+}
+
+fn apiDictGetInt(rt: *NoxRuntime, h: NoxHandle, key: [*]const u8, key_len: usize, out: *i64) callconv(.c) NoxStatus {
+    const host = hostFrom(rt);
+    host.lock.lock();
+    defer host.lock.unlock();
+    const e = lookupEntry(host, h) orelse return NOX_BAD_HANDLE;
+    if (e.kind != V_DICT) return NOX_ERROR;
+    const at = dictWalk(e.data, key[0..key_len]) orelse return NOX_NOT_FOUND;
+    out.* = std.mem.readInt(i64, e.data[at..][0..8], .little);
+    return NOX_OK;
+}
+
 const api_v1: NoxApiV1 = .{
     .abi_version = 1,
     .struct_size = @sizeOf(NoxApiV1),
@@ -281,6 +415,14 @@ const api_v1: NoxApiV1 = .{
     .error_set = apiErrorSet,
     .register_function = apiRegister,
     .post_event = apiPostEvent,
+    .list_new = apiListNew,
+    .list_append_int = apiListAppendInt,
+    .list_len = apiListLen,
+    .list_get_int = apiListGetInt,
+    .dict_new = apiDictNew,
+    .dict_set_int = apiDictSetInt,
+    .dict_len = apiDictLen,
+    .dict_get_int = apiDictGetInt,
 };
 
 // ---- Nox tarafı (extern def) kabuğu ----
@@ -357,7 +499,16 @@ export fn nox_native_func_name_raw(rt: ?*anyopaque, h: i64, i: i64) callconv(.c)
     return str_mod.allocStr(rt, host.funcs.items[@intCast(i)].name, str_mod.ASCII_UNKNOWN);
 }
 
-/// Plugin API v1: ana makine anahtarı ("macos-arm64", "linux-x64", ...). Manifestin `library` tablosunu seçmek için.
+fn archToken(arch: std.Target.Cpu.Arch) []const u8 {
+    return switch (arch) {
+        .aarch64 => "arm64",
+        .x86_64 => "x64",
+        .riscv64 => "riscv64",
+        else => "other",
+    };
+}
+
+/// Plugin API v1: ana makine anahtarı ("macos-arm64", "linux-x64", "linux-riscv64", ...). Manifestin `library` tablosunu seçmek için.
 export fn nox_native_platform_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     const os_name = switch (builtin.os.tag) {
         .macos => "macos",
@@ -365,11 +516,7 @@ export fn nox_native_platform_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
         .windows => "windows",
         else => "other",
     };
-    const arch_name = switch (builtin.cpu.arch) {
-        .aarch64 => "arm64",
-        .x86_64 => "x64",
-        else => "other",
-    };
+    const arch_name = archToken(builtin.cpu.arch);
     var buf: [32]u8 = undefined;
     const key = std.fmt.bufPrint(&buf, "{s}-{s}", .{ os_name, arch_name }) catch "other";
     return str_mod.allocStr(rt, key, str_mod.ASCII_TRUE);
@@ -475,7 +622,7 @@ export fn nox_native_call_raw(h: i64, name: ?[*:0]const u8) callconv(.c) i64 {
     const st = fun(&api_v1, @ptrCast(host), tmp.items.ptr, tmp.items.len, &out);
     for (made.items) |hh| apiRelease(@ptrCast(host), hh);
     nox_native_args_clear_raw(h);
-    if (st == NOX_OK and (out.kind == V_STRING or out.kind == V_BYTES)) {
+    if (st == NOX_OK and (out.kind == V_STRING or out.kind == V_BYTES or out.kind == V_LIST or out.kind == V_DICT)) {
         host.lock.lock();
         const e = lookupEntry(host, out.u.h);
         if (e) |ent| host.result_bytes = host.allocator.dupe(u8, ent.data) catch &.{};
@@ -505,6 +652,55 @@ export fn nox_native_result_float_raw(h: i64) callconv(.c) f64 {
 export fn nox_native_result_str_raw(rt: ?*anyopaque, h: i64) callconv(.c) ?[*:0]u8 {
     const host = hostFromInt(h) orelse return str_mod.allocStr(rt, "", str_mod.ASCII_TRUE);
     return str_mod.allocStr(rt, host.result_bytes, str_mod.ASCII_UNKNOWN);
+}
+
+fn dictNth(data: []const u8, index: usize) ?struct { key: []const u8, at: usize } {
+    var i: usize = 0;
+    var seen: usize = 0;
+    while (i + 4 <= data.len) {
+        const n = std.mem.readInt(u32, data[i..][0..4], .little);
+        i += 4;
+        if (n > data.len - i or i + n + 8 > data.len) return null;
+        if (seen == index) return .{ .key = data[i..][0..n], .at = i + n };
+        i += n + 8;
+        seen += 1;
+    }
+    return null;
+}
+
+export fn nox_native_result_list_len_raw(h: i64) callconv(.c) i64 {
+    const host = hostFromInt(h) orelse return -1;
+    if (host.result.kind != V_LIST or host.result_bytes.len % 8 != 0) return -1;
+    return @intCast(host.result_bytes.len / 8);
+}
+
+export fn nox_native_result_list_at_raw(h: i64, index: i64) callconv(.c) i64 {
+    const host = hostFromInt(h) orelse return 0;
+    if (host.result.kind != V_LIST or index < 0) return 0;
+    const i: usize = @intCast(index);
+    if (i >= host.result_bytes.len / 8) return 0;
+    return std.mem.readInt(i64, host.result_bytes[i * 8 ..][0..8], .little);
+}
+
+export fn nox_native_result_dict_len_raw(h: i64) callconv(.c) i64 {
+    const host = hostFromInt(h) orelse return -1;
+    if (host.result.kind != V_DICT) return -1;
+    const n = dictCount(host.result_bytes) orelse return -1;
+    return @intCast(n);
+}
+
+export fn nox_native_result_dict_key_raw(rt: ?*anyopaque, h: i64, index: i64) callconv(.c) ?[*:0]u8 {
+    const host = hostFromInt(h) orelse return str_mod.allocStr(rt, "", str_mod.ASCII_TRUE);
+    if (host.result.kind != V_DICT or index < 0) return str_mod.allocStr(rt, "", str_mod.ASCII_TRUE);
+    const rec = dictNth(host.result_bytes, @intCast(index)) orelse return str_mod.allocStr(rt, "", str_mod.ASCII_TRUE);
+    return str_mod.allocStr(rt, rec.key, str_mod.ASCII_UNKNOWN);
+}
+
+export fn nox_native_result_dict_at_raw(h: i64, index: i64) callconv(.c) i64 {
+    const host = hostFromInt(h) orelse return 0;
+    if (host.result.kind != V_DICT or index < 0) return 0;
+    const rec = dictNth(host.result_bytes, @intCast(index)) orelse return 0;
+    return std.mem.readInt(i64, host.result_bytes[rec.at..][0..8], .little);
 }
 
 /// Kuyruktaki bir sonraki olayı alır: olay türünü döner, kuyruk boşsa `-1` (negatif türler eklenti tarafından kullanılamaz).
@@ -557,4 +753,45 @@ test "NNI tutamac tablosu: uretec sayaci eski tutamaci gecersiz kilar" {
     try std.testing.expect(h2 != h1);
     apiRelease(rt, h2);
     try std.testing.expectEqual(@as(NoxHandle, 0), apiStringNew(rt, "\xff\xfe", 2));
+}
+
+test "NNI v1.x: liste ve sozluk kuruculari sona eklenir, eski onek durur" {
+    if (@sizeOf(usize) == 8) {
+        try std.testing.expectEqual(@as(usize, 96), @offsetOf(NoxApiV1, "list_new"));
+    }
+    var host: Host = .{ .allocator = std.testing.allocator, .lib = undefined };
+    defer {
+        for (host.entries.items) |*e| if (e.in_use) std.testing.allocator.free(e.data);
+        host.entries.deinit(std.testing.allocator);
+    }
+    const rt: *NoxRuntime = @ptrCast(&host);
+    const list = apiListNew(rt);
+    try std.testing.expectEqual(NOX_OK, apiListAppendInt(rt, list, 10));
+    try std.testing.expectEqual(NOX_OK, apiListAppendInt(rt, list, 20));
+    var n: i64 = 0;
+    try std.testing.expectEqual(NOX_OK, apiListLen(rt, list, &n));
+    try std.testing.expectEqual(@as(i64, 2), n);
+    var got: i64 = 0;
+    try std.testing.expectEqual(NOX_OK, apiListGetInt(rt, list, 1, &got));
+    try std.testing.expectEqual(@as(i64, 20), got);
+    const dict = apiDictNew(rt);
+    const ka = "a";
+    const kb = "b";
+    try std.testing.expectEqual(NOX_OK, apiDictSetInt(rt, dict, ka, ka.len, 1));
+    try std.testing.expectEqual(NOX_OK, apiDictSetInt(rt, dict, kb, kb.len, 2));
+    try std.testing.expectEqual(NOX_OK, apiDictSetInt(rt, dict, ka, ka.len, 3));
+    try std.testing.expectEqual(NOX_OK, apiDictGetInt(rt, dict, ka, ka.len, &got));
+    try std.testing.expectEqual(@as(i64, 3), got);
+    try std.testing.expectEqual(NOX_OK, apiDictLen(rt, dict, &n));
+    try std.testing.expectEqual(@as(i64, 2), n);
+    apiRelease(rt, list);
+    apiRelease(rt, dict);
+}
+
+test "plugin platform anahtari riscv64'u linux-riscv64 yapar" {
+    var buf: [32]u8 = undefined;
+    const key = std.fmt.bufPrint(&buf, "{s}-{s}", .{ "linux", archToken(.riscv64) }) catch unreachable;
+    try std.testing.expectEqualStrings("linux-riscv64", key);
+    try std.testing.expectEqualStrings("arm64", archToken(.aarch64));
+    try std.testing.expectEqualStrings("x64", archToken(.x86_64));
 }

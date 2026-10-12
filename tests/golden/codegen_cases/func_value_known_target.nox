@@ -38,8 +38,75 @@ def use_keeps() -> int:
     kept: Point = f(pt)
     return kept.x
 
+def rec(p: Point) -> int:
+    if p.x <= 0:
+        return 0
+    return p.x + rec(Point(p.x - 1, p.y))
+
+def use_rec() -> int:
+    f: (Point) -> int = rec
+    pt: Point = Point(3, 1)
+    return f(pt)
+
+def rec_same(p: Point, n: int) -> int:
+    if n <= 0:
+        return p.x
+    return rec_same(p, n - 1)
+
+def use_rec_same() -> int:
+    f: (Point, int) -> int = rec_same
+    pt: Point = Point(4, 0)
+    return f(pt, 3)
+
+class Neg:
+    def __init__(self) -> None:
+        pass
+
+def maybe(p: Point) -> int:
+    if p.x < 0:
+        raise Neg()
+    return p.x
+
+def use_except() -> int:
+    f: (Point) -> int = maybe
+    pt: Point = Point(5, 0)
+    try:
+        return f(pt)
+    except Neg:
+        return 0
+
+def use_except_raise() -> int:
+    f: (Point) -> int = maybe
+    pt: Point = Point(-1, 0)
+    try:
+        return f(pt)
+    except Neg:
+        return 9
+
+def use_alias() -> int:
+    g: (Point) -> int = observe
+    f: (Point) -> int = g
+    pt: Point = Point(2, 0)
+    return f(pt)
+
+async def worker_s(s: str) -> int:
+    return 1
+
+async def use_spawn() -> int:
+    s: str = "nox"
+    t: Task[int] = spawn worker_s(s)
+    return await t
+
 print(use_known())
 print(use_closure())
 print(use_ambiguous(False))
 print(use_param(observe))
 print(use_keeps())
+print(use_rec())
+print(use_rec_same())
+print(use_except())
+print(use_except_raise())
+print(use_alias())
+t_spawn: Task[int] = spawn use_spawn()
+spawn_got: int = await t_spawn
+print(spawn_got)
