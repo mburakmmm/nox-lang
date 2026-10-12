@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.7]
+
+### Düzeltildi
+
+- 2.0.6'nın changelog girdisi bu commit'te. Release kapısı, etiketin `build.zig.zon` ve `## [sürüm]` ile aynı olmasını şart koşuyor.
+
+## [2.0.6]
+
+### Düzeltildi
+
+- `--target` ELF testi ikilinin tamamını 64 MB sınırla okuyordu. ReleaseFast riscv64 musl ikilisi debug bilgisiyle ~100 MB olduğu için test iz bırakmadan düşüyordu. Artık yalnızca ELF başlığı okunuyor.
+
 ## [2.0.5]
 
 ### Düzeltildi
