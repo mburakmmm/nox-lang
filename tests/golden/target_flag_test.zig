@@ -21,6 +21,7 @@
 //! SESSİZCE `SkipZigTest` İLE atlanır (bu ailenin AYNI ilkesi).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const build_options = @import("build_options");
 
 const EM_X86_64: u16 = 62;
@@ -33,8 +34,17 @@ fn elfMachine(bytes: []const u8) u16 {
 
 /// Bağlanan ikili ReleaseFast'te hâlâ debug bilgisi taşıyabildiği için
 /// 100 MB'ı aşabiliyor. e_ident ve e_machine başlığın ilk 64 baytında.
+fn openBuilt(io: std.Io, dir: std.Io.Dir, sub_path: []const u8) !std.Io.File {
+    return dir.openFile(io, sub_path, .{}) catch |err| {
+        if (builtin.os.tag != .windows) return err;
+        const exe_name = try std.fmt.allocPrint(std.testing.allocator, "{s}.exe", .{sub_path});
+        defer std.testing.allocator.free(exe_name);
+        return dir.openFile(io, exe_name, .{});
+    };
+}
+
 fn readElfHeader(io: std.Io, dir: std.Io.Dir, sub_path: []const u8) ![64]u8 {
-    const file = try dir.openFile(io, sub_path, .{});
+    const file = try openBuilt(io, dir, sub_path);
     defer file.close(io);
     var scratch: [256]u8 = undefined;
     var reader = std.Io.File.Reader.init(file, io, &scratch);
@@ -325,6 +335,11 @@ test "v2.0 madde 8: --target VERILMEDEN (varsayilan) davranis DEGISMEZ" {
         std.debug.print("noxc build (varsayilan) basarisiz: {s}\n", .{result.stderr});
         return error.NoxcBuildFailed;
     }
-    const stat = try std.Io.Dir.cwd().statFile(io, out_path, .{});
+    const stat = std.Io.Dir.cwd().statFile(io, out_path, .{}) catch |err| blk: {
+        if (builtin.os.tag != .windows) return err;
+        const exe_path = try std.fmt.allocPrint(allocator, "{s}.exe", .{out_path});
+        defer allocator.free(exe_path);
+        break :blk try std.Io.Dir.cwd().statFile(io, exe_path, .{});
+    };
     try std.testing.expect(stat.size > 0);
 }

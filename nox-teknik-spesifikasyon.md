@@ -29041,7 +29041,7 @@ Aether ve Nyx bu deponun dışında, pinli etiketlerle `.github/workflows/extern
 
 ## 3.299 Doğruluk turu (v2.0.10)
 
-Bu tur `2.0.10` yamasıdır. Yayımlanmış `v2.0.8` ve `v2.0.9` etiketlerine dokunulmaz. Değişmez ilkelerden hiçbiri ihlal edilmedi. Release kapısı CI'yi 100 dakika bekler: v2.0.9'da Linux işi 43 dakika sürdüğü için 35 dakikalık kapı sürümü varlıksız bırakmıştı.
+Bu tur `2.0.10` yamasıdır. Yayımlanmış `v2.0.8` ve `v2.0.9` etiketlerine dokunulmaz. Değişmez ilkelerden hiçbiri ihlal edilmedi. Release kapısı CI'yi 200 dakika bekler. Windows tam test işinin süresi 180 dakikadır. v2.0.9'da 35 dakikalık kapı, yeşil Linux işi bitmeden kesilmişti.
 
 **Hata sırası.** `while` gövdesinde değişmeyen `base[idx][k]` satırı, değerlendirme sırasında kendinden önce hata üretebilecek bir ifade varken taşınmaz. Hata üretenler indeks, dilim, nitelik erişimi, çağrı ve `.div` / `.floordiv` / `.mod` / `.pow` / `.shl` / `.shr` işlemleridir. `and` / `or` sağ tarafı taşınmaz. İç `if` ve iç döngüdeki satır taşınmaz; o deyim hata üretebiliyorsa sonraki satırlar da taşınmaz. Erken `break` / `return` / `raise` öneki keser. `s = s + a[i][k] * b[k][j]` içinde yalnızca `i` değişmiyorsa `a[i]` taşınır; matmul toplamı bozulmaz. İki backend golden'ı bölme önceyken `zero`, indeks önceyken `index` basar.
 

@@ -74,7 +74,7 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     }
 
     const cc_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "cc", "-rdynamic", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = &.{ "cc", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
     });
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         std.debug.print("cc basarisiz: {s}\n", .{cc_result.stderr});

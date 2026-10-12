@@ -101,7 +101,7 @@ fn compileToBinaryLlvm(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, s
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ll", .data = ir });
 
     const clang_result = std.process.run(allocator, io, .{
-        .argv = &.{ "clang", "-O2", "-rdynamic", "-o", bin_path, ll_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = &.{ "clang", "-O2", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, ll_path, "zig-out/lib/noxrt.o", "-lm" },
     }) catch |err| {
         if (err == error.FileNotFound) {
             std.debug.print("clang bulunamadi (PATH'te yok) - bu test 'brew install llvm' gerektirir\n", .{});

@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.11]
+
+### Düzeltildi
+
+- **Doküman denetimi.** `return_ok` `docs/stdlib/plugin.md` içinde geçiyor. `"list"` ve `"dict"` yalnızca dönüş türüdür.
+- **Windows test korpusu.** MinGW `-rdynamic` tanımaz; bağlama `-Wl,--export-all-symbols` kullanır. `printf` satır sonu `\n` kalır. `zig cc` çıktısının `.exe` adı ve Nox kaynağına gömülen ters bölü yolları düzeltilir. Windows işinin süresi 180 dakika, release kapısı 200 dakikadır.
+
 ## [2.0.10]
 
 ### Düzeltildi

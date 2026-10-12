@@ -784,6 +784,16 @@ pub export fn nox_runtime_init() ?*anyopaque {
     // (KENDİ allocator'ıyla) çağırmalıdır — BU YÜZDEN freestanding'de
     // KOŞULSUZ `null` döner (asla GERÇEKTEN çağrılmaması BEKLENİR).
     if (comptime is_freestanding) return null;
+    // Windows CRT `printf("\n")` metin kipinde `\r\n` yazar. Nox satır sonu
+    // her platformda `\n` dir; stdout/stderr ikili kipe alınır.
+    if (comptime builtin.os.tag == .windows) {
+        const crt = struct {
+            extern "c" fn _setmode(fd: c_int, mode: c_int) c_int;
+        };
+        const o_binary: c_int = 0x8000;
+        _ = crt._setmode(1, o_binary);
+        _ = crt._setmode(2, o_binary);
+    }
     const state = std.heap.page_allocator.create(RuntimeState) catch return null;
     state.* = .{ .debug_gpa = if (use_debug_allocator) .init else {} };
     return @ptrCast(state);

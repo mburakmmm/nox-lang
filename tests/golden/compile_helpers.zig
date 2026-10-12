@@ -93,7 +93,7 @@ pub fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.proc
     // ana programın KENDİ sembollerini dinamik sembol tablosunda bulmayı
     // gerektirir (bkz. `compiler/main.zig`nin AYNI satırı).
     const cc_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "cc", "-rdynamic", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = &.{ "cc", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
     });
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         std.debug.print("cc basarisiz: {s}\n", .{cc_result.stderr});
@@ -170,7 +170,7 @@ pub fn compileAndRunLlvm(allocator: std.mem.Allocator, source: []const u8) !std.
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ll", .data = ir });
 
     const clang_result = std.process.run(allocator, io, .{
-        .argv = &.{ "clang", "-O2", "-rdynamic", "-o", bin_path, ll_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = &.{ "clang", "-O2", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, ll_path, "zig-out/lib/noxrt.o", "-lm" },
     }) catch |err| {
         if (err == error.FileNotFound) {
             std.debug.print("clang bulunamadi (PATH'te yok) - bu test 'brew install llvm' gerektirir\n", .{});

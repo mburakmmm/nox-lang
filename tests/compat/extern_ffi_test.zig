@@ -85,7 +85,7 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     // bağlandığından tutarlılık İÇİN eklendi.
     const cc_result = try std.process.run(allocator, io, .{
         .argv = &.{
-            "cc",                      "-rdynamic",
+            "cc",                      if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic",
             "-o",                      bin_path,
             asm_path,                  "zig-out/lib/noxrt.o",
             "-lm",                     build_options.mathutil_o_path,

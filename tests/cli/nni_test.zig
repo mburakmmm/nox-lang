@@ -14,6 +14,7 @@ test "NNI v1: gercek bir C eklentisi yuklenir, cagrilir, hata ve iplik olaylari 
     var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(io, &path_buf);
     const dir = path_buf[0..dir_len];
+    std.mem.replaceScalar(u8, dir, '\\', '/');
 
     const lib_name = if (builtin.os.tag == .windows) "libnni_test.dll" else "libnni_test.so";
     const so_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, lib_name });
@@ -113,6 +114,7 @@ test "NNI v1 oneki: eski baslik yeni hostta skaler cagri yapar" {
     var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(io, &path_buf);
     const dir = path_buf[0..dir_len];
+    std.mem.replaceScalar(u8, dir, '\\', '/');
 
     const lib_name = if (builtin.os.tag == .windows) "libnni_prefix.dll" else "libnni_prefix.so";
     const so_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, lib_name });

@@ -13,6 +13,7 @@ test "Plugin API v1: manifest, imza denetimi, yetenek onayi, shutdown" {
     var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(io, &path_buf);
     const dir = path_buf[0..dir_len];
+    std.mem.replaceScalar(u8, dir, '\\', '/');
 
     const lib_name = if (builtin.os.tag == .windows) "libplug.dll" else "libplug.so";
     const so_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, lib_name });
@@ -185,6 +186,7 @@ test "Plugin API: manifest list ve dict donus turlerini denetler" {
     var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(io, &path_buf);
     const dir = path_buf[0..dir_len];
+    std.mem.replaceScalar(u8, dir, '\\', '/');
 
     const lib_name = if (builtin.os.tag == .windows) "libplug.dll" else "libplug.so";
     const so_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, lib_name });
