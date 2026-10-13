@@ -492,11 +492,14 @@ pub fn build(b: *std.Build) void {
     // Faz LL.6: `swap_asm.o`nun Windows'taki AYRI kurulumu — bkz. yukarıdaki
     // belge notu. `compiler/project.zig`nin `ResourceDirs.swap_asm_path`ıyla
     // EŞLEŞİR.
-    if (target.result.os.tag == .windows) {
+    // `zig build test`, `getInstallStep`ten bağımsızdır. Windows golden
+    // testleri `swap_asm.o`yu ayrıca bağlar; kurulum adımı teste de bağlıdır.
+    const swap_asm_install_step: ?*std.Build.Step = if (target.result.os.tag == .windows) blk: {
         const install_swap_asm = b.addInstallFile(b.path(swap_asm_o_path), "lib/swap_asm.o");
         install_swap_asm.step.dependOn(&compile_swap_asm.step);
         b.getInstallStep().dependOn(&install_swap_asm.step);
-    }
+        break :blk &install_swap_asm.step;
+    } else null;
 
     // Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
     // tamamlanması"): host'un KENDİ mimarisi + freestanding OS İçİn,
@@ -830,6 +833,7 @@ pub fn build(b: *std.Build) void {
     // codegen golden testleri, üretilen binary'leri `zig-out/lib/noxrt.o`'ya
     // karşı linklemek için bu adımın önceden tamamlanmış olmasına ihtiyaç duyar.
     test_step.dependOn(&install_noxrt.step);
+    if (swap_asm_install_step) |swap_step| test_step.dependOn(swap_step);
     // Faz R.3+F.1 tamamlama: `noxrt-freestanding.o`nun HER `zig build test`
     // çağrısında GERÇEKTEN derlendiğinden emin olmak İçİn (bkz. yukarıdaki
     // `install_noxrt_freestanding`nin belge notu — F.0.7'nin manuel

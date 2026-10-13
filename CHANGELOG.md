@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.12]
+
+### Düzeltildi
+
+- **Windows test bağlaması.** Golden testler `noxrt.o`yu `noxc` ile aynı kuyrukla bağlar: `swap_asm.o`, `-lntdll`, `-lws2_32`, `-lcrypt32`. `zig build test` bu nesneyi kurar.
+- **Release kapısı.** İş süresi 210 dakikadır. 200 dakikalık bekleme, 40 dakikalık iş sınırında kesilmez.
+
 ## [2.0.11]
 
 ### Düzeltildi

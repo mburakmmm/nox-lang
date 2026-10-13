@@ -13,6 +13,7 @@
 const std = @import("std");
 const sys = @import("sys_compat");
 const nox = @import("nox");
+const compile_helpers = @import("../golden/compile_helpers.zig");
 const child_watchdog = @import("child_watchdog.zig");
 
 const cert_path = "tests/fixtures/tls/test_cert.pem";
@@ -72,8 +73,10 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
         return error.QbeFailed;
     }
 
+    const link_argv = try compile_helpers.hostLinkArgv(allocator, &.{ "cc", compile_helpers.hostLinkVisibility() }, bin_path, asm_path, &.{});
+    defer allocator.free(link_argv);
     const cc_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "cc", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = link_argv,
     });
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         std.debug.print("cc basarisiz: {s}\n", .{cc_result.stderr});

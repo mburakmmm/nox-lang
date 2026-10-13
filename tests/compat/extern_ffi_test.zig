@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const nox = @import("nox");
+const compile_helpers = @import("../golden/compile_helpers.zig");
 const build_options = @import("build_options");
 
 fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
@@ -83,14 +84,14 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     // notu (`nox.json`nin `dlsym` deseni GEREKTİRİYOR, bkz. `compiler/
     // main.zig`) — bu test `nox.json` KULLANMASA BİLE, AYNI `noxrt.o`ya
     // bağlandığından tutarlılık İÇİN eklendi.
+    const link_argv = try compile_helpers.hostLinkArgv(allocator, &.{ "cc", compile_helpers.hostLinkVisibility() }, bin_path, asm_path, &.{
+        build_options.mathutil_o_path,
+        build_options.util_o_path,
+        build_options.counter_o_path,
+    });
+    defer allocator.free(link_argv);
     const cc_result = try std.process.run(allocator, io, .{
-        .argv = &.{
-            "cc",                      if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic",
-            "-o",                      bin_path,
-            asm_path,                  "zig-out/lib/noxrt.o",
-            "-lm",                     build_options.mathutil_o_path,
-            build_options.util_o_path, build_options.counter_o_path,
-        },
+        .argv = link_argv,
     });
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         std.debug.print("cc basarisiz: {s}\n", .{cc_result.stderr});

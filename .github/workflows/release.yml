@@ -51,11 +51,11 @@ jobs:
     # AYRI bir workflow) 17-30 DAKİKA sürüyor — bu YÜZDEN gate HER ZAMAN
     # (v1.80.2'DEN v1.95.0'A KADAR, 15 SÜRÜM BOYUNCA, İSTİSNASIZ) "ci.yml
     # HENÜZ tamamlanmadı" İLE 6-8 SANİYEDE BAŞARISIZ oluyordu — CI'nin
-    # GERÇEKTEN yeşil OLUP OLMAMASINDAN TAMAMEN BAĞIMSIZ OLARAK. `timeout-
-    # minutes`, ci.yml'nin KENDİ HER-İşteki 30-dakikalık sınırının ÜZERİNDE
-    # CÖMERT bir pay İLE ayarlanır (job'un KENDİSİ hiçbir iş YAPMADAN
-    # BEKLEDİĞİNDEN ucuz).
-    timeout-minutes: 40
+    # GERÇEKTEN yeşil OLUP OLMAMASINDAN TAMAMEN BAĞIMSIZ OLARAK. Job sınırı,
+    # alttaki `max_wait_s` poll'undan uzun olmalıdır. v2.0.11'de poll 200
+    # dakikaydı, job 40 dakikada kesildi ve varlık adımları hiç başlamadı.
+    # Windows tam test işi 180 dakikadır.
+    timeout-minutes: 210
     steps:
       # v2.0 madde 8: etiket (vX.Y.Z[-rc.N]) ile build.zig.zon sürümü VE CHANGELOG girişi tutarlı olmalı; aksi halde release durur.
       - uses: actions/checkout@v4

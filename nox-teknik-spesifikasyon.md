@@ -29058,3 +29058,9 @@ Bu tur `2.0.10` yamasıdır. Yayımlanmış `v2.0.8` ve `v2.0.9` etiketlerine do
 **RISC-V dumanı.** `riscv64-smoke` aynı runtime ile dört program çalıştırır: mevcut `class_list_spawn`, fibonacci, bir sözlük golden'ı ve hata sırası programı. Dördünün stdout'u `qemu-user` altında beklenen dosyayla doğrulanır. Tam korpus değildir.
 
 **Aura.** `github.com/mburakmmm/aura` etiketi `v1.0.0` vardır ve `tests/*.nox` paketi durur. Bu paket `native/libaura_host.dylib` bağlar; `WidgetTester` yolu `aura.runtime.frame` üzerinden o Skia host'una iner. Aether ve Nyx işleri salt `noxc test tests/*.nox` çalıştırır ve host derlemez. Skia derleyen veya test alt kümesi uyduran bir iş eklenmedi.
+
+## 3.300 Windows test bağlaması ve release kapısı (v2.0.12)
+
+Golden testlerin `cc`/`clang` satırı `noxc` ile aynı kuyruğu kullanır. Windows'ta bu kuyruk `zig-out/lib/swap_asm.o`, `-lntdll`, `-lws2_32` ve `-lcrypt32` içerir. `swap_asm.o` kurulumu `zig build test` adımına bağlıdır; `getInstallStep` tek başına yetmez. `tests/golden/compile_helpers.zig` içindeki `hostLinkArgv` bu kuyruğun tek yeridir.
+
+Release `ci-gate` işinin `timeout-minutes` değeri 210'dur. Poll hâlâ 200 dakika bekler. v2.0.11'de iş 40 dakikada kesildiği için varlık adımları başlamadı. Windows tam test işi 180 dakika kalır.

@@ -45,6 +45,7 @@
 const std = @import("std");
 const sys = @import("sys_compat");
 const nox = @import("nox");
+const compile_helpers = @import("../golden/compile_helpers.zig");
 const child_watchdog = @import("child_watchdog.zig");
 
 fn compileToBinaryLlvm(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8) ![]const u8 {
@@ -100,8 +101,10 @@ fn compileToBinaryLlvm(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, s
 
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ll", .data = ir });
 
+    const link_argv = try compile_helpers.hostLinkArgv(allocator, &.{ "clang", "-O2", compile_helpers.hostLinkVisibility() }, bin_path, ll_path, &.{});
+    defer allocator.free(link_argv);
     const clang_result = std.process.run(allocator, io, .{
-        .argv = &.{ "clang", "-O2", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, ll_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = link_argv,
     }) catch |err| {
         if (err == error.FileNotFound) {
             std.debug.print("clang bulunamadi (PATH'te yok) - bu test 'brew install llvm' gerektirir\n", .{});

@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const nox = @import("nox");
+const compile_helpers = @import("compile_helpers.zig");
 
 fn formatSource(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     const result = try nox.lexer.tokenizeWithTrivia(allocator, source);
@@ -182,8 +183,10 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
         return error.QbeFailed;
     }
 
+    const link_argv = try compile_helpers.hostLinkArgv(allocator, &.{ "cc", compile_helpers.hostLinkVisibility() }, bin_path, asm_path, &.{});
+    defer allocator.free(link_argv);
     const cc_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "cc", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = link_argv,
     });
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         std.debug.print("cc basarisiz: {s}\n", .{cc_result.stderr});

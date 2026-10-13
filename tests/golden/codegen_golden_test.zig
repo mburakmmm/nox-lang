@@ -16,6 +16,33 @@ const compile_helpers = @import("compile_helpers.zig");
 /// değişti — AYNI fonksiyon gövdesi, SADECE YERİ değişti.
 const compileAndRun = compile_helpers.compileAndRun;
 
+test "hostLinkArgv noxc ile ayni runtime kuyrugunu ekler" {
+    const gpa = std.testing.allocator;
+    const argv = try compile_helpers.hostLinkArgv(gpa, &.{ "cc", compile_helpers.hostLinkVisibility() }, "out", "in.s", &.{"extra.o"});
+    defer gpa.free(argv);
+    try std.testing.expectEqualStrings("cc", argv[0]);
+    try std.testing.expectEqualStrings(compile_helpers.hostLinkVisibility(), argv[1]);
+    try std.testing.expectEqualStrings("-o", argv[2]);
+    try std.testing.expectEqualStrings("out", argv[3]);
+    try std.testing.expectEqualStrings("in.s", argv[4]);
+    try std.testing.expectEqualStrings("zig-out/lib/noxrt.o", argv[5]);
+    if (@import("builtin").os.tag == .windows) {
+        try std.testing.expectEqualStrings("-Wl,--export-all-symbols", argv[1]);
+        try std.testing.expectEqualStrings("zig-out/lib/swap_asm.o", argv[6]);
+        try std.testing.expectEqualStrings("extra.o", argv[7]);
+        try std.testing.expectEqualStrings("-lm", argv[8]);
+        try std.testing.expectEqualStrings("-lntdll", argv[9]);
+        try std.testing.expectEqualStrings("-lws2_32", argv[10]);
+        try std.testing.expectEqualStrings("-lcrypt32", argv[11]);
+        try std.testing.expectEqual(@as(usize, 12), argv.len);
+    } else {
+        try std.testing.expectEqualStrings("-rdynamic", argv[1]);
+        try std.testing.expectEqualStrings("extra.o", argv[6]);
+        try std.testing.expectEqualStrings("-lm", argv[7]);
+        try std.testing.expectEqual(@as(usize, 8), argv.len);
+    }
+}
+
 fn expectGolden(source: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

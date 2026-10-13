@@ -18,7 +18,34 @@
 //! KATARDI — AYNI testler BİRDEN FAZLA KEZ çalışırdı.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const nox = @import("nox");
+
+/// Host `cc`/`clang` görünürlük bayrağı. MinGW `-rdynamic` tanımaz.
+pub fn hostLinkVisibility() []const u8 {
+    return if (builtin.os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic";
+}
+
+/// `compiler/main.zig`nin host bağlama kuyruğu. Windows'ta `swap_asm.o`
+/// `noxrt.o`nun dışındadır; `ntdll`/`ws2_32`/`crypt32` MinGW'nin varsayılan
+/// kütüphaneleri değildir. Dönüş `allocator`a aittir.
+pub fn hostLinkArgv(
+    allocator: std.mem.Allocator,
+    prefix: []const []const u8,
+    out_path: []const u8,
+    input_path: []const u8,
+    extra_objects: []const []const u8,
+) ![]const []const u8 {
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    errdefer argv.deinit(allocator);
+    try argv.appendSlice(allocator, prefix);
+    try argv.appendSlice(allocator, &.{ "-o", out_path, input_path, "zig-out/lib/noxrt.o" });
+    if (builtin.os.tag == .windows) try argv.append(allocator, "zig-out/lib/swap_asm.o");
+    try argv.appendSlice(allocator, extra_objects);
+    try argv.append(allocator, "-lm");
+    if (builtin.os.tag == .windows) try argv.appendSlice(allocator, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
+    return try argv.toOwnedSlice(allocator);
+}
 
 /// Kaynağı QBE İLE derler, native bir binary üretir ve çalıştırır; ham
 /// `RunResult`'ı döner (çıkış kodu/stderr üzerindeki iddialar çağırana
@@ -92,8 +119,10 @@ pub fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.proc
     // `-rdynamic` ZORUNLUDUR — `runtime/stdlib_shims/json.zig`nin `dlsym`i
     // ana programın KENDİ sembollerini dinamik sembol tablosunda bulmayı
     // gerektirir (bkz. `compiler/main.zig`nin AYNI satırı).
+    const link_argv = try hostLinkArgv(allocator, &.{ "cc", hostLinkVisibility() }, bin_path, asm_path, &.{});
+    defer allocator.free(link_argv);
     const cc_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "cc", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = link_argv,
     });
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         std.debug.print("cc basarisiz: {s}\n", .{cc_result.stderr});
@@ -169,8 +198,10 @@ pub fn compileAndRunLlvm(allocator: std.mem.Allocator, source: []const u8) !std.
 
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ll", .data = ir });
 
+    const link_argv = try hostLinkArgv(allocator, &.{ "clang", "-O2", hostLinkVisibility() }, bin_path, ll_path, &.{});
+    defer allocator.free(link_argv);
     const clang_result = std.process.run(allocator, io, .{
-        .argv = &.{ "clang", "-O2", if (@import("builtin").os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic", "-o", bin_path, ll_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = link_argv,
     }) catch |err| {
         if (err == error.FileNotFound) {
             std.debug.print("clang bulunamadi (PATH'te yok) - bu test 'brew install llvm' gerektirir\n", .{});
