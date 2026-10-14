@@ -45,7 +45,7 @@
 const std = @import("std");
 const sys = @import("sys_compat");
 const nox = @import("nox");
-const compile_helpers = @import("../golden/compile_helpers.zig");
+const host_link = @import("host_link");
 const child_watchdog = @import("child_watchdog.zig");
 
 fn compileToBinaryLlvm(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8) ![]const u8 {
@@ -101,7 +101,7 @@ fn compileToBinaryLlvm(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, s
 
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ll", .data = ir });
 
-    const link_argv = try compile_helpers.hostLinkArgv(allocator, &.{ "clang", "-O2", compile_helpers.hostLinkVisibility() }, bin_path, ll_path, &.{});
+    const link_argv = try host_link.hostLinkArgv(allocator, &.{ "clang", "-O2", host_link.hostLinkVisibility() }, bin_path, ll_path, &.{});
     defer allocator.free(link_argv);
     const clang_result = std.process.run(allocator, io, .{
         .argv = link_argv,

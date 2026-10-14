@@ -29064,3 +29064,7 @@ Bu tur `2.0.10` yamasıdır. Yayımlanmış `v2.0.8` ve `v2.0.9` etiketlerine do
 Golden testlerin `cc`/`clang` satırı `noxc` ile aynı kuyruğu kullanır. Windows'ta bu kuyruk `zig-out/lib/swap_asm.o`, `-lntdll`, `-lws2_32` ve `-lcrypt32` içerir. `swap_asm.o` kurulumu `zig build test` adımına bağlıdır; `getInstallStep` tek başına yetmez. `tests/golden/compile_helpers.zig` içindeki `hostLinkArgv` bu kuyruğun tek yeridir.
 
 Release `ci-gate` işinin `timeout-minutes` değeri 210'dur. Poll hâlâ 200 dakika bekler. v2.0.11'de iş 40 dakikada kesildiği için varlık adımları başlamadı. Windows tam test işi 180 dakika kalır.
+
+## 3.301 Paylaşılan bağlama kuyruğu (v2.0.13)
+
+`hostLinkArgv` `shared/host_link.zig` içindedir ve testlere `host_link` adlı modül olarak verilir. `tests/compat` bir `tests/golden` dosyasını relative import edemez. Windows `clang` çağrısı `x86_64-w64-windows-gnu` hedefindedir.

@@ -15,7 +15,7 @@
 
 const std = @import("std");
 const nox = @import("nox");
-const compile_helpers = @import("../golden/compile_helpers.zig");
+const host_link = @import("host_link");
 const build_options = @import("build_options");
 
 fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
@@ -84,7 +84,7 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     // notu (`nox.json`nin `dlsym` deseni GEREKTİRİYOR, bkz. `compiler/
     // main.zig`) — bu test `nox.json` KULLANMASA BİLE, AYNI `noxrt.o`ya
     // bağlandığından tutarlılık İÇİN eklendi.
-    const link_argv = try compile_helpers.hostLinkArgv(allocator, &.{ "cc", compile_helpers.hostLinkVisibility() }, bin_path, asm_path, &.{
+    const link_argv = try host_link.hostLinkArgv(allocator, &.{ "cc", host_link.hostLinkVisibility() }, bin_path, asm_path, &.{
         build_options.mathutil_o_path,
         build_options.util_o_path,
         build_options.counter_o_path,

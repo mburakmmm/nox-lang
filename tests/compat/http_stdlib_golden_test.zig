@@ -13,7 +13,7 @@
 const std = @import("std");
 const sys = @import("sys_compat");
 const nox = @import("nox");
-const compile_helpers = @import("../golden/compile_helpers.zig");
+const host_link = @import("host_link");
 
 fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
     const io = std.testing.io;
@@ -64,7 +64,7 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
         return error.QbeFailed;
     }
 
-    const link_argv = try compile_helpers.hostLinkArgv(allocator, &.{ "cc", compile_helpers.hostLinkVisibility() }, bin_path, asm_path, &.{});
+    const link_argv = try host_link.hostLinkArgv(allocator, &.{ "cc", host_link.hostLinkVisibility() }, bin_path, asm_path, &.{});
     defer allocator.free(link_argv);
     const cc_result = try std.process.run(allocator, io, .{
         .argv = link_argv,

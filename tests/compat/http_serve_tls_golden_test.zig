@@ -13,7 +13,7 @@
 const std = @import("std");
 const sys = @import("sys_compat");
 const nox = @import("nox");
-const compile_helpers = @import("../golden/compile_helpers.zig");
+const host_link = @import("host_link");
 const child_watchdog = @import("child_watchdog.zig");
 
 const cert_path = "tests/fixtures/tls/test_cert.pem";
@@ -73,7 +73,7 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
         return error.QbeFailed;
     }
 
-    const link_argv = try compile_helpers.hostLinkArgv(allocator, &.{ "cc", compile_helpers.hostLinkVisibility() }, bin_path, asm_path, &.{});
+    const link_argv = try host_link.hostLinkArgv(allocator, &.{ "cc", host_link.hostLinkVisibility() }, bin_path, asm_path, &.{});
     defer allocator.free(link_argv);
     const cc_result = try std.process.run(allocator, io, .{
         .argv = link_argv,

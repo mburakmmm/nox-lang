@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.13]
+
+### Düzeltildi
+
+- **Test modül sınırı.** Bağlama kuyruğu `shared/host_link.zig` üzerinden named module'dür. Compat testleri golden dosyasını relative import etmez.
+- **Windows clang.** LLVM golden bağlaması `x86_64-w64-windows-gnu` hedefini kullanır.
+
 ## [2.0.12]
 
 ### Düzeltildi

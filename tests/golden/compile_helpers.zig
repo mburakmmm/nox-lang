@@ -18,34 +18,11 @@
 //! KATARDI — AYNI testler BİRDEN FAZLA KEZ çalışırdı.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const nox = @import("nox");
+const host_link = @import("host_link");
 
-/// Host `cc`/`clang` görünürlük bayrağı. MinGW `-rdynamic` tanımaz.
-pub fn hostLinkVisibility() []const u8 {
-    return if (builtin.os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic";
-}
-
-/// `compiler/main.zig`nin host bağlama kuyruğu. Windows'ta `swap_asm.o`
-/// `noxrt.o`nun dışındadır; `ntdll`/`ws2_32`/`crypt32` MinGW'nin varsayılan
-/// kütüphaneleri değildir. Dönüş `allocator`a aittir.
-pub fn hostLinkArgv(
-    allocator: std.mem.Allocator,
-    prefix: []const []const u8,
-    out_path: []const u8,
-    input_path: []const u8,
-    extra_objects: []const []const u8,
-) ![]const []const u8 {
-    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    errdefer argv.deinit(allocator);
-    try argv.appendSlice(allocator, prefix);
-    try argv.appendSlice(allocator, &.{ "-o", out_path, input_path, "zig-out/lib/noxrt.o" });
-    if (builtin.os.tag == .windows) try argv.append(allocator, "zig-out/lib/swap_asm.o");
-    try argv.appendSlice(allocator, extra_objects);
-    try argv.append(allocator, "-lm");
-    if (builtin.os.tag == .windows) try argv.appendSlice(allocator, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
-    return try argv.toOwnedSlice(allocator);
-}
+pub const hostLinkVisibility = host_link.hostLinkVisibility;
+pub const hostLinkArgv = host_link.hostLinkArgv;
 
 /// Kaynağı QBE İLE derler, native bir binary üretir ve çalıştırır; ham
 /// `RunResult`'ı döner (çıkış kodu/stderr üzerindeki iddialar çağırana

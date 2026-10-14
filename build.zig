@@ -274,6 +274,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    // Golden ve compat testleri ayrı modül kökleridir. Bağlama kuyruğu
+    // relative import ile paylaşılmaz (`diag_sink` ile aynı gerekçe).
+    const host_link_mod = b.createModule(.{
+        .root_source_file = b.path("shared/host_link.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     // Faz F.0.3 (bkz. plan dosyası "Panik/tanı çıktısı enjeksiyonu"):
     // `abi_layout_mod` İLE AYNI gerekçe — `runtime/errors/diag_sink.zig`
@@ -1016,10 +1023,17 @@ pub fn build(b: *std.Build) void {
             // YÜZDEN dosya-başına özel durum AYIRT ETMEK yerine TÜMÜNE
             // uygulanır.
             .link_libc = true,
-            .imports = &.{
-                .{ .name = "nox", .module = nox_mod },
-                .{ .name = "sys_compat", .module = sys_compat_mod },
-            },
+            .imports = if (std.mem.endsWith(u8, path, "fmt_golden_test.zig") or std.mem.endsWith(u8, path, "llvm_golden_test.zig") or std.mem.endsWith(u8, path, "backend_conformance_test.zig"))
+                &.{
+                    .{ .name = "nox", .module = nox_mod },
+                    .{ .name = "sys_compat", .module = sys_compat_mod },
+                    .{ .name = "host_link", .module = host_link_mod },
+                }
+            else
+                &.{
+                    .{ .name = "nox", .module = nox_mod },
+                    .{ .name = "sys_compat", .module = sys_compat_mod },
+                },
         });
         const t = b.addTest(.{ .root_module = mod });
         test_step.dependOn(&b.addRunArtifact(t).step);
@@ -1038,6 +1052,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const codegen_test = b.addTest(.{ .root_module = codegen_test_mod });
@@ -1111,6 +1126,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "nox", .module = nox_mod },
                     .{ .name = "sys_compat", .module = sys_compat_mod },
+                    .{ .name = "host_link", .module = host_link_mod },
                 },
             });
             const hpy_call_golden_test = b.addTest(.{ .root_module = hpy_call_golden_mod });
@@ -1238,6 +1254,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
             .{ .name = "build_options", .module = ffi_build_options.createModule() },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const ffi_test = b.addTest(.{ .root_module = ffi_test_mod });
@@ -1262,6 +1279,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const http_stdlib_test = b.addTest(.{ .root_module = http_stdlib_test_mod });
@@ -1327,6 +1345,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const http_serve_test = b.addTest(.{ .root_module = http_serve_test_mod });
@@ -1345,6 +1364,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const router_module_state_test = b.addTest(.{ .root_module = router_module_state_test_mod });
@@ -1362,6 +1382,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const http_serve_multicore_test = b.addTest(.{ .root_module = http_serve_multicore_test_mod });
@@ -1382,6 +1403,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const http_serve_multicore_pool_test = b.addTest(.{ .root_module = http_serve_multicore_pool_test_mod });
@@ -1400,6 +1422,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const http_serve_tls_test = b.addTest(.{ .root_module = http_serve_tls_test_mod });
@@ -1414,6 +1437,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const http_serve_ws_test = b.addTest(.{ .root_module = http_serve_ws_test_mod });
@@ -1634,6 +1658,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
+            .{ .name = "host_link", .module = host_link_mod },
         },
     });
     const backend_differential_corpus_test = b.addTest(.{ .root_module = backend_differential_corpus_test_mod });
