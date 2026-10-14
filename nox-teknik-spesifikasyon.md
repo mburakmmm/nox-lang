@@ -29068,3 +29068,15 @@ Release `ci-gate` işinin `timeout-minutes` değeri 210'dur. Poll hâlâ 200 dak
 ## 3.301 Paylaşılan bağlama kuyruğu (v2.0.13)
 
 `hostLinkArgv` `shared/host_link.zig` içindedir ve testlere `host_link` adlı modül olarak verilir. `tests/compat` bir `tests/golden` dosyasını relative import edemez. Windows `clang` çağrısı `x86_64-w64-windows-gnu` hedefindedir.
+
+## 3.302 Windows yol sözdizimi ve test zaman aşımı (v2.0.14)
+
+`nox.path` dize işlemleri her konakta `/` üretir. `\` yalnızca girdi ayracıdır. `is_absolute("/a/b")` doğrudur; `"a/b"` yanlıştır. Windows'ta `C:/a` ve `C:\a` da mutlaktır. `basename`, `dirname`, `extension` ve `components` POSIX kurallarını kullanır, bu yüzden `/a/b/c.txt` bileşenleri `a`, `b`, `c.txt` olur.
+
+`canonicalize` olmayan yolda başarısız olur. Windows `GetFullPathNameA` ardından `GetFileAttributesA` bakar; dosya yoksa `PathError` döner. Sembolik bağ çözümü Windows'ta yoktur; bu v1 farkı durur. `/usr` Windows'ta yoktur. Golden, çalışma dizininde gerçek bir dosya oluşturup yalnızca `basename` basar.
+
+MinGW, uzantısız `-o` adına `.exe` ekler. `noxc` bunu zaten bilir. CLI testleri aynı adı açar. `nox.json` içine gömülen ve `noxc install`'a verilen yollar `/` kullanır; `D:\...` JSON kaçışı olur ve kayıt defteri adı sanılır. `noxc install` `\` ve sürücü harfini de yerel yol sayar.
+
+Eklenti kapanış işareti `fopen` ikili kipte yazılır. Metin kipi Windows'ta `\n` yazısını `\r\n` yapardı.
+
+HTTP golden testlerinin bekçi iş parçacığı Windows'ta da çalışır. Süre dolunca süreç tutamacı `NtTerminateProcess` ile kapanır. Bekleme `kernel32.Sleep` kullanır. Sunucu `accept`te kalırsa iş 180 dakikada iptal edilmez; test kendi zaman aşımında düşer.

@@ -1,6 +1,9 @@
+import nox.fs
 import nox.path
 
-print(nox.path.canonicalize("/usr/../usr"))
+nox.fs.write_string("nox_canon_marker.txt", "x")
+canon: str = nox.path.canonicalize("nox_canon_marker.txt")
+print(nox.path.basename(canon))
 print(nox.path.strip_prefix("/a/b/c.txt", "/a/b"))
 print(nox.path.strip_prefix("/a/b/c.txt", "/x/y"))
 comps: list[str] = nox.path.components("/a/b/c.txt")

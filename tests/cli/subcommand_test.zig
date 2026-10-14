@@ -9,6 +9,14 @@
 //! olduğundan `zig build test` çalıştırıldığında ZATEN garanti edilir).
 
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// MinGW `-o stem` dosyayı `stem.exe` olarak yazar. `noxc` de aynı eki
+/// `built:` satırına ve çalıştırdığı yola koyar.
+fn outputPath(a: std.mem.Allocator, dir: []const u8, stem: []const u8) ![]const u8 {
+    if (builtin.os.tag == .windows) return std.fmt.allocPrint(a, "{s}/{s}.exe", .{ dir, stem });
+    return std.fmt.allocPrint(a, "{s}/{s}", .{ dir, stem });
+}
 
 fn noxcPath(a: std.mem.Allocator) ![]const u8 {
     // `build.zig`nin `test_step`i `install_noxrt`e (dolayısıyla `noxc`nin
@@ -45,7 +53,7 @@ test "legacy cıplak-dosya formu: build ile birebir aynı davranış" {
 
     const noxc = try noxcPath(a);
     const src_path = try std.fmt.allocPrint(a, "{s}/hello.nox", .{dir_path});
-    const bin_path = try std.fmt.allocPrint(a, "{s}/hello", .{dir_path});
+    const bin_path = try outputPath(a, dir_path, "hello");
 
     const legacy_result = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxc, src_path },
@@ -92,7 +100,7 @@ test "build -o: cikti yolu ozellestirilebilir" {
 
     const noxc = try noxcPath(a);
     const src_path = try std.fmt.allocPrint(a, "{s}/hello.nox", .{dir_path});
-    const custom_bin = try std.fmt.allocPrint(a, "{s}/custom_out", .{dir_path});
+    const custom_bin = try outputPath(a, dir_path, "custom_out");
 
     const result = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxc, "build", "-o", custom_bin, src_path },
@@ -101,7 +109,8 @@ test "build -o: cikti yolu ozellestirilebilir" {
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
 
-    try tmp.dir.access(io, "custom_out", .{});
+    const custom_name = if (builtin.os.tag == .windows) "custom_out.exe" else "custom_out";
+    try tmp.dir.access(io, custom_name, .{});
 }
 
 test "run: programi calistirir, derlendi mesaji basmaz, stdout'u yansitir" {

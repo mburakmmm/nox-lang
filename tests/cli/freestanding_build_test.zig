@@ -14,6 +14,7 @@
 //! linker script YOK, bkz. planın "Kapsam Dışı" bölümü — Faz F.4'ün işi).
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
@@ -30,7 +31,12 @@ fn writeTempSource(gpa: std.mem.Allocator, io: std.Io, source: []const u8, tmp: 
 /// hand-rolled ELF header doğrulaması — magic bytes + `e_type == ET_EXEC`
 /// (statik, çalıştırılabilir bir ikili, PIE/paylaşımlı nesne DEĞİL).
 fn expectRealElfExecutable(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !void {
-    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(16 * 1024 * 1024));
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(16 * 1024 * 1024)) catch |err| blk: {
+        if (builtin.os.tag != .windows or err != error.FileNotFound) return err;
+        const exe_path = try std.fmt.allocPrint(gpa, "{s}.exe", .{path});
+        defer gpa.free(exe_path);
+        break :blk try std.Io.Dir.cwd().readFileAlloc(io, exe_path, gpa, .limited(16 * 1024 * 1024));
+    };
     defer gpa.free(bytes);
     try std.testing.expect(bytes.len >= 18);
     try std.testing.expectEqualSlices(u8, "\x7fELF", bytes[0..4]);

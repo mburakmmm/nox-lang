@@ -135,7 +135,9 @@ NOX_EXPORT void nox_plugin_shutdown_v1(const NoxApiV1* api, NoxRuntime* rt) {
     (void)rt;
     const char* marker = getenv("NOX_NNI_TEST_MARKER");
     if (marker) {
-        FILE* f = fopen(marker, "a");
+        /* "a" metin kipidir: Windows `\n` yazısını `\r\n` yapar. İşaret
+           dosyası `shutdown\n` bekler, bu yüzden ikili ekleme kipi. */
+        FILE* f = fopen(marker, "ab");
         if (f) {
             fputs("shutdown\n", f);
             fclose(f);

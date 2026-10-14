@@ -13,6 +13,30 @@ const abi_layout = @import("abi_layout");
 const bridge = @import("../async_rt/bridge.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
+/// Dize API'si her konakta `/` üretir. `\` yalnızca girdi ayracıdır.
+const path_cap = 4096;
+
+fn isPathSep(c: u8) bool {
+    return c == '/' or c == '\\';
+}
+
+fn copyAsPosix(dst: []u8, src: []const u8) void {
+    for (src, 0..) |c, i| dst[i] = if (c == '\\') '/' else c;
+}
+
+fn posixPath(buf: *[path_cap]u8, slice: []const u8) []const u8 {
+    if (std.mem.indexOfScalar(u8, slice, '\\') == null) return slice;
+    const n = @min(slice.len, buf.len);
+    copyAsPosix(buf[0..n], slice[0..n]);
+    return buf[0..n];
+}
+
+fn extensionPosix(path: []const u8) []const u8 {
+    const filename = std.fs.path.basenamePosix(path);
+    const index = std.mem.lastIndexOfScalar(u8, filename, '.') orelse return path[path.len..];
+    if (index == 0) return path[path.len..];
+    return filename[index..];
+}
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
@@ -53,8 +77,8 @@ export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u
     if (a_slice.len == 0) return dupeToNoxStr(rt, b_slice);
     if (b_slice.len == 0) return dupeToNoxStr(rt, a_slice);
 
-    const a_ends_sep = std.fs.path.isSep(a_slice[a_slice.len - 1]);
-    const b_starts_sep = std.fs.path.isSep(b_slice[0]);
+    const a_ends_sep = isPathSep(a_slice[a_slice.len - 1]);
+    const b_starts_sep = isPathSep(b_slice[0]);
     const need_sep = !a_ends_sep and !b_starts_sep;
     const b_adjusted = if (a_ends_sep and b_starts_sep) b_slice[1..] else b_slice;
 
@@ -64,13 +88,13 @@ export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u
     const header: *align(1) i64 = @ptrCast(base);
     header.* = abi_layout.packStrHeader(total_len, abi_layout.STR_ASCII_UNKNOWN);
     const data = base + STR_HEADER_SIZE;
-    @memcpy(data[0..a_slice.len], a_slice);
+    copyAsPosix(data[0..a_slice.len], a_slice);
     var off: usize = a_slice.len;
     if (need_sep) {
-        data[off] = std.fs.path.sep;
+        data[off] = '/';
         off += 1;
     }
-    @memcpy(data[off..][0..b_adjusted.len], b_adjusted);
+    copyAsPosix(data[off..][0..b_adjusted.len], b_adjusted);
     off += b_adjusted.len;
     data[off] = 0;
     return @ptrCast(data);
@@ -78,7 +102,8 @@ export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u
 
 export fn nox_path_basename_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const slice = str_mod.nox_str_slice(p orelse return null);
-    return dupeToNoxStr(rt, std.fs.path.basename(slice));
+    var buf: [path_cap]u8 = undefined;
+    return dupeToNoxStr(rt, std.fs.path.basenamePosix(posixPath(&buf, slice)));
 }
 
 /// `std.fs.path.dirname` bir üst dizin YOKSA (ör. `"foo.txt"`) `null`
@@ -86,13 +111,15 @@ export fn nox_path_basename_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c)
 /// dize (`""`) döndürülür (belgelenen, kasıtlı bir varsayılan).
 export fn nox_path_dirname_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const slice = str_mod.nox_str_slice(p orelse return null);
-    const d = std.fs.path.dirname(slice) orelse "";
+    var buf: [path_cap]u8 = undefined;
+    const d = std.fs.path.dirnamePosix(posixPath(&buf, slice)) orelse "";
     return dupeToNoxStr(rt, d);
 }
 
 export fn nox_path_extension_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const slice = str_mod.nox_str_slice(p orelse return null);
-    return dupeToNoxStr(rt, std.fs.path.extension(slice));
+    var buf: [path_cap]u8 = undefined;
+    return dupeToNoxStr(rt, extensionPosix(posixPath(&buf, slice)));
 }
 
 /// Diğer "sonuç" extern'lerin (`nox_fs_last_op_ok` vb.) AYNI kuralı —
@@ -101,7 +128,11 @@ export fn nox_path_extension_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c
 /// yol DEĞİL, `-> int` İSE HER YERDE KANITLANMIŞ).
 export fn nox_path_is_absolute_raw(p: ?[*:0]const u8) callconv(.c) i32 {
     const slice = str_mod.nox_str_slice(p orelse return 0);
-    return if (std.fs.path.isAbsolute(slice)) 1 else 0;
+    // Golden `"/a/b"`yi mutlak sayar. Windows `isAbsolute` sürücü
+    // biçimini de tanır; kök `/` her iki tarafta da mutlaktır.
+    const abs = std.fs.path.isAbsolutePosix(slice) or
+        (builtin.os.tag == .windows and std.fs.path.isAbsoluteWindows(slice));
+    return if (abs) 1 else 0;
 }
 
 // Faz III.4 (bkz. nox-teknik-spesifikasyon.md §3.69) — `canonicalize`
@@ -131,9 +162,13 @@ export fn nox_path_last_op_ok() callconv(.c) i32 {
 /// v1 farkı:** `realpath(3)`in AKSİNE sembolik LİNKLERİ ÇÖZMEZ, yalnızca
 /// `.`/`..`yi normalize edip MUTLAK yola çevirir (Windows'ta sembolik
 /// link kullanımı ZATEN NADİR VE ek yönetici izni GEREKTİRİR — bu proje
-/// İçin YETERLİ bir yaklaşım).
+/// İçin YETERLİ bir yaklaşım). Olmayan yol `realpath` gibi BAŞARISIZ
+/// olur (`GetFileAttributesA`). Sonuçtaki `\` ayraçları `/` yapılır;
+/// golden biçim her iki konakta da aynıdır.
 const WinPath = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn GetFullPathNameA(lpFileName: [*:0]const u8, nBufferLength: u32, lpBuffer: [*]u8, lpFilePart: ?*?[*:0]u8) callconv(.c) u32;
+    extern "kernel32" fn GetFileAttributesA(lpFileName: [*:0]const u8) callconv(.c) u32;
+    const invalid_attributes: u32 = 0xffffffff;
 } else struct {};
 
 export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
@@ -148,6 +183,12 @@ export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv
             pathLastOkPtr().* = false;
             return dupeToNoxStr(rt, "");
         }
+        buf[len] = 0;
+        if (WinPath.GetFileAttributesA(@ptrCast(&buf)) == WinPath.invalid_attributes) {
+            pathLastOkPtr().* = false;
+            return dupeToNoxStr(rt, "");
+        }
+        std.mem.replaceScalar(u8, buf[0..len], '\\', '/');
         pathLastOkPtr().* = true;
         return dupeToNoxStr(rt, buf[0..len]);
     }
@@ -170,7 +211,7 @@ export fn nox_path_strip_prefix_raw(rt: ?*anyopaque, p: ?[*:0]const u8, prefix: 
     const pre = str_mod.nox_str_slice(prefix orelse return null);
     if (!std.mem.startsWith(u8, slice, pre)) return dupeToNoxStr(rt, slice);
     var rest = slice[pre.len..];
-    if (rest.len > 0 and std.fs.path.isSep(rest[0])) rest = rest[1..];
+    if (rest.len > 0 and isPathSep(rest[0])) rest = rest[1..];
     return dupeToNoxStr(rt, rest);
 }
 
@@ -183,7 +224,9 @@ export fn nox_path_components_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.
 
     var names: std.ArrayListUnmanaged([]const u8) = .empty;
     defer names.deinit(std.heap.page_allocator);
-    var it = std.fs.path.componentIterator(slice);
+    var norm_buf: [path_cap]u8 = undefined;
+    const It = std.fs.path.ComponentIterator(.posix, u8);
+    var it = It.init(posixPath(&norm_buf, slice));
     while (it.next()) |comp| {
         names.append(std.heap.page_allocator, comp.name) catch return null;
     }
@@ -290,6 +333,11 @@ test "nox_path_is_absolute_raw mutlak/goreli yollari dogru ayirt eder" {
 
     try std.testing.expectEqual(@as(i32, 1), nox_path_is_absolute_raw(abs));
     try std.testing.expectEqual(@as(i32, 0), nox_path_is_absolute_raw(rel));
+    if (builtin.os.tag == .windows) {
+        const drive = makeTestStr(rt, "C:/a");
+        defer str.nox_str_release(rt, drive);
+        try std.testing.expectEqual(@as(i32, 1), nox_path_is_absolute_raw(drive));
+    }
 }
 
 test "Faz III.4: nox_path_canonicalize_raw sembolik link/./.. cozer, olmayan yolda basarisiz olur" {
@@ -305,13 +353,29 @@ test "Faz III.4: nox_path_canonicalize_raw sembolik link/./.. cozer, olmayan yol
     // bir dizindir (sembolik link DEĞİL) — bu YÜZDEN beklenen değer
     // GERÇEK CI'de bulunan bir platform farkıyla (bkz. nox-teknik-
     // spesifikasyon.md §3.71) platform-koşullu hale getirildi.
-    const expected_tmp = if (builtin.os.tag == .macos) "/private/tmp" else "/tmp";
-    const tmp_dotdot = makeTestStr(rt, "/tmp/../tmp");
-    defer str.nox_str_release(rt, tmp_dotdot);
-    const c = nox_path_canonicalize_raw(rt, tmp_dotdot) orelse return error.Failed;
-    defer str.nox_str_release(rt, c);
-    try std.testing.expectEqualStrings(expected_tmp, std.mem.sliceTo(c, 0));
-    try std.testing.expect(pathLastOkPtr().*);
+    if (builtin.os.tag == .windows) {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "f.txt", .data = "x" });
+        var path_buf: [path_cap]u8 = undefined;
+        const n = try tmp.dir.realPath(std.testing.io, &path_buf);
+        const src = makeTestStr(rt, path_buf[0..n]);
+        defer str.nox_str_release(rt, src);
+        const c = nox_path_canonicalize_raw(rt, src) orelse return error.Failed;
+        defer str.nox_str_release(rt, c);
+        try std.testing.expect(pathLastOkPtr().*);
+        const got = std.mem.sliceTo(c, 0);
+        try std.testing.expect(std.mem.indexOfScalar(u8, got, '\\') == null);
+        try std.testing.expect(std.mem.endsWith(u8, got, "/f.txt"));
+    } else {
+        const expected_tmp = if (builtin.os.tag == .macos) "/private/tmp" else "/tmp";
+        const tmp_dotdot = makeTestStr(rt, "/tmp/../tmp");
+        defer str.nox_str_release(rt, tmp_dotdot);
+        const c = nox_path_canonicalize_raw(rt, tmp_dotdot) orelse return error.Failed;
+        defer str.nox_str_release(rt, c);
+        try std.testing.expectEqualStrings(expected_tmp, std.mem.sliceTo(c, 0));
+        try std.testing.expect(pathLastOkPtr().*);
+    }
 
     const missing_path = makeTestStr(rt, "/definitely/does/not/exist/nox_iii4_test");
     defer str.nox_str_release(rt, missing_path);

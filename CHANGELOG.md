@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.14]
+
+### Düzeltildi
+
+- **Windows yol sözdizimi.** `nox.path` her konakta `/` üretir. `\` girdi ayracıdır. `canonicalize` olmayan yolda `PathError` döner. Sembolik bağ çözümü Windows'ta yoktur.
+- **Windows CLI testleri.** Çıktı adı `.exe` ile açılır. Manifest ve `install` yolları `/` kullanır. `noxc install` `D:\...` biçimini yerel yol sayar.
+- **Satır sonu.** Eklenti kapanış işareti ikili kipte yazılır.
+- **Asılı sunucu.** HTTP testlerinin bekçi iş parçacığı Windows'ta süreci zaman aşımında sonlandırır.
+
 ## [2.0.13]
 
 ### Düzeltildi

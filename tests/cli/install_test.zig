@@ -15,6 +15,8 @@ fn noxcPath() []const u8 {
 
 fn absPath(io: std.Io, dir: std.Io.Dir, buf: []u8) ![]const u8 {
     const len = try dir.realPath(io, buf);
+    // `D:\...` kayıt defteri adı sanılır (`/` yoktur) ve JSON'da kaçıştır.
+    std.mem.replaceScalar(u8, buf[0..len], '\\', '/');
     return buf[0..len];
 }
 

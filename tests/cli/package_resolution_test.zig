@@ -8,6 +8,7 @@
 //! disiplini, `compiler/pkg/fetch.zig`nin `fetchToCache`i).
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
@@ -27,7 +28,15 @@ fn noxcAbsPath(io: std.Io, a: std.mem.Allocator) ![]const u8 {
 
 fn absPath(io: std.Io, dir: std.Io.Dir, buf: []u8) ![]const u8 {
     const len = try dir.realPath(io, buf);
+    // `nox.json` içine gömülen `\` JSON kaçışıdır (`\a`, `\t`). Git ve
+    // `noxc` `D:/...` biçimini de yol sayar.
+    std.mem.replaceScalar(u8, buf[0..len], '\\', '/');
     return buf[0..len];
+}
+
+fn builtBin(a: std.mem.Allocator, dir: []const u8) ![]const u8 {
+    const name = if (builtin.os.tag == .windows) "main.exe" else "main";
+    return std.fmt.allocPrint(a, "{s}/{s}", .{ dir, name });
 }
 
 fn initFixtureRepo(io: std.Io, allocator: std.mem.Allocator, dir_path: []const u8) !void {
@@ -100,7 +109,7 @@ test "ucdan uca: nox.json requires ile ucuncu-taraf paket cozumlenir, build+run 
     try env_map.put("NOX_HOME", home_path);
 
     const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
-    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+    const bin_path = try builtBin(a, proj_path);
 
     const build_result = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxcPath(), "build", main_path },
@@ -124,7 +133,8 @@ test "ucdan uca: nox.json requires ile ucuncu-taraf paket cozumlenir, build+run 
     // 5) Kaynak fixture repo YOK EDILSE BILE (lock+onbellek sayesinde)
     // IKINCI bir build TAMAMEN offline basarili olmali.
     try pkg.dir.deleteTree(io, ".git");
-    try proj.dir.deleteFile(io, "main");
+    const built_name = if (builtin.os.tag == .windows) "main.exe" else "main";
+    try proj.dir.deleteFile(io, built_name);
 
     const second_build = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxcPath(), "build", main_path },
@@ -243,7 +253,7 @@ test "P.7: iki farkli paket ayni adli fonksiyonu ihrac ederse mangling CAKISMAZ"
     try env_map.put("NOX_HOME", home_path);
 
     const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
-    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+    const bin_path = try builtBin(a, proj_path);
 
     const build_result = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxcPath(), "build", main_path },
@@ -328,7 +338,7 @@ test "ucdan uca: nitelikli (pkg.module.Sinif) tip adi var_decl/parametre/donus t
     try env_map.put("NOX_HOME", home_path);
 
     const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
-    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+    const bin_path = try builtBin(a, proj_path);
 
     const build_result = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxcPath(), "build", main_path },
@@ -414,7 +424,7 @@ test "ucdan uca: paketin kendi ic import'u KENDI adiyla cozulur (tuketici FARKLI
     try env_map.put("NOX_HOME", home_path);
 
     const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
-    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+    const bin_path = try builtBin(a, proj_path);
 
     const build_result = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxcPath(), "build", main_path },
@@ -763,7 +773,7 @@ test "ucdan uca: capraz-modul sinif kalitimi (from pkg import Base; class D(Base
     try env_map.put("NOX_HOME", home_path);
 
     const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
-    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+    const bin_path = try builtBin(a, proj_path);
 
     const build_result = try std.process.run(std.testing.allocator, io, .{
         .argv = &.{ noxcPath(), "build", main_path },

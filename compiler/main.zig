@@ -733,11 +733,16 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         }
     }
 
-    // Bare bir kayit-defteri ismi mi (`/` ICERMIYOR — "nyx" gibi) yoksa
-    // dogrudan bir repo/yerel yol mu (`add`in "iki pozisyonel argüman"
-    // yerine tek argümanın İÇERİĞİNE bakan, daha basit bir ayrım — bkz.
-    // bu fonksiyonun belge notu).
-    const looks_like_repo = std.mem.indexOfScalar(u8, pkg_repo, '/') != null or std.mem.startsWith(u8, pkg_repo, "git@");
+    // Bare bir kayit-defteri ismi mi (`/` ve `\` ICERMIYOR, surucu
+    // harfi de yok — "nyx" gibi) yoksa dogrudan bir repo/yerel yol mu
+    // (`add`in "iki pozisyonel argüman" yerine tek argümanın İÇERİĞİNE
+    // bakan, daha basit bir ayrım — bkz. bu fonksiyonun belge notu).
+    // Windows yerel yolu `D:\...` biçimindedir: `/` yoktur, `\` ya da
+    // sürücü harfi vardır. Bunlar da kayıt defteri adı değildir.
+    const looks_like_repo = std.mem.indexOfScalar(u8, pkg_repo, '/') != null or
+        std.mem.indexOfScalar(u8, pkg_repo, '\\') != null or
+        std.mem.startsWith(u8, pkg_repo, "git@") or
+        (pkg_repo.len >= 3 and pkg_repo[1] == ':');
     const repo: []const u8 = if (looks_like_repo) pkg_repo else blk: {
         const index_arg = registry_policy.index_url;
         const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
