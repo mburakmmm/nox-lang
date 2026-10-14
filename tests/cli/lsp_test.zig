@@ -18,6 +18,7 @@
 //! temiz kapanış (çıkış kodu 0) doğrulanır.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 fn noxlspPath() []const u8 {
     return "zig-out/bin/noxlsp";
@@ -32,6 +33,57 @@ fn writeMessage(w: *std.Io.Writer, json_text: []const u8) !void {
 /// `lsp_main.zig`nin `readMessage`iyle KASITLI olarak AYNI çerçeveleme
 /// mantığı — bkz. modül üstü not (BAĞIMSIZ kopya, GERÇEK istemci davranışını
 /// taklit eder).
+/// `noxlsp` yanıt vermezse `readMessage` pipe kapanana kadar bekler.
+/// Süre dolunca süreç sonlanır, okuma hata döner, test düşer.
+const LspWatchdog = struct {
+    done: std.atomic.Value(bool) = .init(false),
+    thread: std.Thread = undefined,
+    active: bool = false,
+
+    fn arm(self: *LspWatchdog, child: *const std.process.Child, timeout_ms: u32) !void {
+        const id = child.id orelse return error.ProcessNotRunning;
+        self.thread = try std.Thread.spawn(.{}, run, .{ self, id, timeout_ms });
+        self.active = true;
+    }
+
+    fn run(self: *LspWatchdog, id: std.process.Child.Id, timeout_ms: u32) void {
+        const step_ms: u32 = 200;
+        var waited: u32 = 0;
+        while (waited < timeout_ms) : (waited += step_ms) {
+            if (self.done.load(.acquire)) return;
+            sleepMs(step_ms);
+        }
+        if (self.done.load(.acquire)) return;
+        switch (builtin.os.tag) {
+            .windows => _ = std.os.windows.ntdll.NtTerminateProcess(id, @enumFromInt(1)),
+            else => std.posix.kill(id, .KILL) catch {},
+        }
+    }
+
+    fn disarm(self: *LspWatchdog) void {
+        if (!self.active) return;
+        self.done.store(true, .release);
+        self.thread.join();
+    }
+};
+
+const WinSleep = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(.c) void;
+} else struct {};
+
+fn sleepMs(ms: u32) void {
+    switch (builtin.os.tag) {
+        .windows => WinSleep.Sleep(ms),
+        else => {
+            const ts: std.c.timespec = .{
+                .sec = ms / std.time.ms_per_s,
+                .nsec = (ms % std.time.ms_per_s) * std.time.ns_per_ms,
+            };
+            _ = std.c.nanosleep(&ts, null);
+        },
+    }
+}
+
 fn readMessage(gpa: std.mem.Allocator, r: *std.Io.Reader) ![]u8 {
     var content_length: ?usize = null;
     while (true) {
@@ -61,6 +113,9 @@ test "uctan uca: initialize + didOpen/didChange tanilama dongusu + shutdown" {
         .stdout = .pipe,
         .stderr = .inherit,
     });
+    var lsp_watchdog: LspWatchdog = .{};
+    try lsp_watchdog.arm(&child, 45_000);
+    defer lsp_watchdog.disarm();
 
     var stdin_buf: [4096]u8 = undefined;
     var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
@@ -146,6 +201,9 @@ test "uctan uca: hover/definition/completion ayni-dosya sembolleri gercekten coz
         .stdout = .pipe,
         .stderr = .inherit,
     });
+    var lsp_watchdog: LspWatchdog = .{};
+    try lsp_watchdog.arm(&child, 45_000);
+    defer lsp_watchdog.disarm();
 
     var stdin_buf: [4096]u8 = undefined;
     var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
@@ -223,6 +281,9 @@ test "uctan uca: textDocument/formatting kotu bicimli AMA gecerli bir kaynagi ye
         .stdout = .pipe,
         .stderr = .inherit,
     });
+    var lsp_watchdog: LspWatchdog = .{};
+    try lsp_watchdog.arm(&child, 45_000);
+    defer lsp_watchdog.disarm();
 
     var stdin_buf: [4096]u8 = undefined;
     var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
@@ -313,6 +374,9 @@ test "uctan uca: nox.json'lu bir projede proje-ici (requires'siz) import gercekt
         .stdout = .pipe,
         .stderr = .inherit,
     });
+    var lsp_watchdog: LspWatchdog = .{};
+    try lsp_watchdog.arm(&child, 45_000);
+    defer lsp_watchdog.disarm();
 
     var stdin_buf: [4096]u8 = undefined;
     var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
@@ -354,6 +418,9 @@ test "uctan uca: anahat, imza, anlamsal belirtec, parametre ipucu, referans, yen
         .stdout = .pipe,
         .stderr = .inherit,
     });
+    var lsp_watchdog: LspWatchdog = .{};
+    try lsp_watchdog.arm(&child, 45_000);
+    defer lsp_watchdog.disarm();
     var stdin_buf: [4096]u8 = undefined;
     var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
     const w = &stdin_writer.interface;
@@ -462,6 +529,9 @@ test "uctan uca: import edilen fonksiyonun tanimi ve imzasi hedef dosyadan gelir
         .stdout = .pipe,
         .stderr = .inherit,
     });
+    var lsp_watchdog: LspWatchdog = .{};
+    try lsp_watchdog.arm(&child, 45_000);
+    defer lsp_watchdog.disarm();
     var stdin_buf: [4096]u8 = undefined;
     var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
     const w = &stdin_writer.interface;
@@ -624,6 +694,9 @@ test "from import as: sembol adi, takma ad ve golge ayri yeniden adlandirilir" {
         .stdout = .pipe,
         .stderr = .inherit,
     });
+    var lsp_watchdog: LspWatchdog = .{};
+    try lsp_watchdog.arm(&child, 45_000);
+    defer lsp_watchdog.disarm();
     var stdin_buf: [8192]u8 = undefined;
     var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
     const w = &stdin_writer.interface;

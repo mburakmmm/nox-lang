@@ -81,8 +81,11 @@ const Win = struct {
         extern "ws2_32" fn recv(s: SOCKET, buf: [*]u8, len: i32, flags: i32) callconv(.c) i32;
         extern "ws2_32" fn closesocket(s: SOCKET) callconv(.c) i32;
         extern "ws2_32" fn setsockopt(s: SOCKET, level: i32, optname: i32, optval: ?*const anyopaque, optlen: i32) callconv(.c) i32;
+        extern "ws2_32" fn getsockopt(s: SOCKET, level: i32, optname: i32, optval: *anyopaque, optlen: *i32) callconv(.c) i32;
         extern "ws2_32" fn getsockname(s: SOCKET, addr: *ws2.sockaddr.in, namelen: *i32) callconv(.c) i32;
         extern "ws2_32" fn WSAPoll(fds: [*]PollFd, nfds: u32, timeout_ms: i32) callconv(.c) i32;
+        extern "ws2_32" fn ioctlsocket(s: SOCKET, cmd: i32, argp: *u32) callconv(.c) i32;
+        extern "ws2_32" fn WSAGetLastError() callconv(.c) i32;
         extern "kernel32" fn Sleep(ms: u32) callconv(.c) void;
         extern "kernel32" fn GetSystemTimePreciseFileTime(out: *i64) callconv(.c) void;
         extern "kernel32" fn QueryPerformanceCounter(count: *i64) callconv(.c) i32;
@@ -101,10 +104,18 @@ const Win = struct {
     };
     pub const SO = struct {
         pub const REUSEADDR: i32 = 0x0004;
+        pub const SNDTIMEO: i32 = 0x1005;
+        pub const RCVTIMEO: i32 = 0x1006;
+        pub const ERROR: i32 = 0x1007;
     };
     pub const POLL = struct {
         pub const IN: i16 = 0x0100;
+        pub const OUT: i16 = 0x0010;
     };
+    /// `ioctlsocket` FIONBIO. Tek bir `connect` TCP yeniden denemesinde
+    /// onlarca saniye bekleyemesin diye bağlantı bu sürede kesilir.
+    const fionbio: i32 = @bitCast(@as(u32, 0x8004667e));
+    const io_timeout_ms: u32 = 15_000;
     pub const ClockId = enum { REALTIME, MONOTONIC };
     pub const sockaddr = struct {
         pub const in = ws2.sockaddr.in;
@@ -129,6 +140,11 @@ const Win = struct {
         startup();
         const fd = api.socket(af, socket_type, protocol);
         if (fd == INVALID_SOCKET) return bad_fd;
+        // Bloklayan `recv`/`send` sunucu kapanmazsa testi sonsuza kadar
+        // tutar. Süre dolunca çağrı hata döner, test düşer.
+        var ms: u32 = io_timeout_ms;
+        _ = api.setsockopt(fd, @This().SOL.SOCKET, @This().SO.RCVTIMEO, &ms, @sizeOf(u32));
+        _ = api.setsockopt(fd, @This().SOL.SOCKET, @This().SO.SNDTIMEO, &ms, @sizeOf(u32));
         return fd;
     }
 
@@ -153,7 +169,34 @@ const Win = struct {
     pub fn connect(sock: fd_t, address: ?*const anyopaque, address_len: usize) i32 {
         _ = address_len;
         const addr: *const ws2.sockaddr.in = @ptrCast(@alignCast(address));
-        return api.connect(sock, addr, @sizeOf(ws2.sockaddr.in));
+        var nonblock: u32 = 1;
+        if (api.ioctlsocket(sock, fionbio, &nonblock) != 0) return -1;
+        const rc = api.connect(sock, addr, @sizeOf(ws2.sockaddr.in));
+        if (rc != 0) {
+            const err = api.WSAGetLastError();
+            const pending = err == 10035 or err == 10036 or err == 10037;
+            if (!pending) {
+                nonblock = 0;
+                _ = api.ioctlsocket(sock, fionbio, &nonblock);
+                return -1;
+            }
+            var pfd = [_]PollFd{.{ .fd = sock, .events = @This().POLL.IN | @This().POLL.OUT, .revents = 0 }};
+            if (api.WSAPoll(&pfd, 1, 200) <= 0) {
+                nonblock = 0;
+                _ = api.ioctlsocket(sock, fionbio, &nonblock);
+                return -1;
+            }
+            var so_error: i32 = 0;
+            var so_len: i32 = @sizeOf(i32);
+            if (api.getsockopt(sock, @This().SOL.SOCKET, @This().SO.ERROR, &so_error, &so_len) != 0 or so_error != 0) {
+                nonblock = 0;
+                _ = api.ioctlsocket(sock, fionbio, &nonblock);
+                return -1;
+            }
+        }
+        nonblock = 0;
+        if (api.ioctlsocket(sock, fionbio, &nonblock) != 0) return -1;
+        return 0;
     }
 
     pub fn close(sock: fd_t) i32 {

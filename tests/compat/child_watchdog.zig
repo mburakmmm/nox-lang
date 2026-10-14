@@ -35,7 +35,7 @@ pub const ChildWatchdog = struct {
         }
         if (self.done.load(.acquire)) return;
         switch (builtin.os.tag) {
-            .windows => _ = std.os.windows.ntdll.NtTerminateProcess(id, 1),
+            .windows => _ = std.os.windows.ntdll.NtTerminateProcess(id, @enumFromInt(1)),
             else => std.posix.kill(id, .KILL) catch {},
         }
     }

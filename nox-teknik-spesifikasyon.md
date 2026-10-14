@@ -29080,3 +29080,9 @@ MinGW, uzantısız `-o` adına `.exe` ekler. `noxc` bunu zaten bilir. CLI testle
 Eklenti kapanış işareti `fopen` ikili kipte yazılır. Metin kipi Windows'ta `\n` yazısını `\r\n` yapardı.
 
 HTTP golden testlerinin bekçi iş parçacığı Windows'ta da çalışır. Süre dolunca süreç tutamacı `NtTerminateProcess` ile kapanır. Bekleme `kernel32.Sleep` kullanır. Sunucu `accept`te kalırsa iş 180 dakikada iptal edilmez; test kendi zaman aşımında düşer.
+
+## 3.303 IR anlık görüntüsü ve Windows soket zaman aşımı (v2.0.15)
+
+`path_new_operations` golden'ı gerçek bir dosya oluşturduğu için QBE metni değişti. `tests/golden/ir_snapshots/codegen_cases/path_new_operations.ssa` bu metinle yenilendi. Linux ve macOS `zig build test` bu yüzden düşüyordu.
+
+Windows test istemcisi `connect` çağrısını en fazla 200 ms bekler. `recv` ve `send` 15 saniye sonra döner. `noxlsp` uçtan uca testleri, sunucu yanıt vermezse 45 saniyede süreci sonlandırır. Pipe kapanınca okuma hata döner. İş, `accept` veya LSP okumasında 180 dakika beklemez.

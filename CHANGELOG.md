@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.15]
+
+### Düzeltildi
+
+- **IR anlık görüntüsü.** `path_new_operations` kaynağı değişince QBE metni de yenilendi. Linux ve macOS bu yüzden kırmızıydı.
+- **Windows test kilitlenmesi.** Test soketi `connect`/`recv` üzerinde sonsuza kadar beklemez. `noxlsp` yanıt vermezse süreç 45 saniyede sonlanır.
+
 ## [2.0.14]
 
 ### Düzeltildi
