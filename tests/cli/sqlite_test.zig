@@ -10,9 +10,22 @@
 //! gerçek `noxc`yi çağırır.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
+}
+
+/// Nox dize literali `\n` `\t` `\r` çözer. Windows yolu `D:\a\nox-lang\...`
+/// kaynağa gömülünce `\n` satır sonu, `\t` sekme olur ve sqlite çöker.
+/// Eğik çizgi hem SQLite hem Win32 `CreateFile` için geçerlidir.
+fn noxLiteralPath(path: []u8) []u8 {
+    if (builtin.os.tag == .windows) {
+        for (path) |*c| {
+            if (c.* == '\\') c.* = '/';
+        }
+    }
+    return path;
 }
 
 test "nox.sqlite: tablo olustur + parametreli INSERT (int/float/str/NULL) + SELECT + tip/NULL dogrulama" {
@@ -59,7 +72,7 @@ test "nox.sqlite: tablo olustur + parametreli INSERT (int/float/str/NULL) + SELE
         \\    i = i + 1
         \\conn.close()
         \\
-    , .{db_path});
+    , .{noxLiteralPath(db_path)});
     defer gpa.free(source);
 
     const nox_path = try std.fmt.allocPrint(gpa, "{s}/prog.nox", .{path_buf[0..dir_len]});
@@ -111,7 +124,7 @@ test "nox.sqlite: bozuk SQL SqliteError firlatir, try/except yakalar; bos tablo 
         \\print(len(rows))
         \\conn.close()
         \\
-    , .{db_path});
+    , .{noxLiteralPath(db_path)});
     defer gpa.free(source);
 
     const nox_path = try std.fmt.allocPrint(gpa, "{s}/prog2.nox", .{path_buf[0..dir_len]});
@@ -163,7 +176,7 @@ test "nox.db.DbConnection protokolu nox.sqlite.Connection'i yapisal olarak karsi
         \\close_via_protocol(conn)
         \\print("kapatildi")
         \\
-    , .{db_path});
+    , .{noxLiteralPath(db_path)});
     defer gpa.free(source);
 
     const nox_path = try std.fmt.allocPrint(gpa, "{s}/prog3.nox", .{path_buf[0..dir_len]});

@@ -129,7 +129,9 @@ fn ensureDriveTmp() void {
     if (@import("builtin").os.tag != .windows) return;
     var cwd_buf: [4096]u8 = undefined;
     const cwd_z = std.c.getcwd(&cwd_buf, cwd_buf.len) orelse return;
-    const cwd = std.mem.span(cwd_z);
+    // Windows CRT `getcwd` bu Zig sürümünde `[*]u8` döner (POSIX `[:0]u8`).
+    // `span` sentinel tipi ister; `sliceTo` her iki imzada da NUL'u bulur.
+    const cwd = std.mem.sliceTo(cwd_z, 0);
     if (cwd.len < 2 or cwd[1] != ':') return;
     var path_buf: [16]u8 = undefined;
     const path = std.fmt.bufPrintZ(&path_buf, "{c}:\\tmp", .{cwd[0]}) catch return;

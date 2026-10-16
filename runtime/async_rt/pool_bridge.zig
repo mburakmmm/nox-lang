@@ -711,19 +711,37 @@ pub export fn nox_pool_serve(
 
 // ---- Birim testleri (Nox tavan hızı, Madde 3) --------------------------
 
-extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
-extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+/// Test sürecinin ortamını ayarlar. Windows CRT'sinde `setenv`/`unsetenv`
+/// yoktur; `SetEnvironmentVariableA(ad, null)` değişkeni siler.
+fn setTestEnv(name: [*:0]const u8, value: ?[*:0]const u8) void {
+    if (builtin.os.tag == .windows) {
+        const k = struct {
+            extern "kernel32" fn SetEnvironmentVariableA(lpName: [*:0]const u8, lpValue: ?[*:0]const u8) callconv(.c) i32;
+        };
+        _ = k.SetEnvironmentVariableA(name, value);
+        return;
+    }
+    const c = struct {
+        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+        extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+    };
+    if (value) |v| {
+        _ = c.setenv(name, v, 1);
+    } else {
+        _ = c.unsetenv(name);
+    }
+}
 
 test "pickMainWorkerCount: multicore-olmayan $main küçük sabit worker sayısı kullanır, multicore CPU sayısını kullanmaya devam eder" {
-    _ = unsetenv("NOX_POOL_WORKERS");
+    setTestEnv("NOX_POOL_WORKERS", null);
     try std.testing.expectEqual(@as(usize, SMALL_MAIN_POOL_DEFAULT), pickMainWorkerCount(false));
     const cpu = std.Thread.getCpuCount() catch 1;
     try std.testing.expectEqual(std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS), pickMainWorkerCount(true));
 }
 
 test "pickMainWorkerCount: NOX_POOL_WORKERS HER İKİ dalı da (multicore/multicore-olmayan) EZER" {
-    _ = setenv("NOX_POOL_WORKERS", "5", 1);
-    defer _ = unsetenv("NOX_POOL_WORKERS");
+    setTestEnv("NOX_POOL_WORKERS", "5");
+    defer setTestEnv("NOX_POOL_WORKERS", null);
     try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(false));
     try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(true));
 }

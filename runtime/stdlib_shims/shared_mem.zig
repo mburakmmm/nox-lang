@@ -39,25 +39,30 @@ const HEADER_SIZE: usize = 16; // [lock: i32][pad: i32][used_size: i64]
 const LOCK_OFFSET: usize = 0;
 
 const Kernel32 = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn CreateFileA(lpFileName: [*:0]const u8, dwDesiredAccess: u32, dwShareMode: u32, lpSecurityAttributes: ?*anyopaque, dwCreationDisposition: u32, dwFlagsAndAttributes: u32, hTemplateFile: ?*anyopaque) callconv(.c) ?*anyopaque;
     extern "kernel32" fn CreateFileMappingA(
         hFile: ?*anyopaque,
         lpAttributes: ?*anyopaque,
         flProtect: u32,
         dwMaximumSizeHigh: u32,
         dwMaximumSizeLow: u32,
-        lpName: [*:0]const u8,
+        lpName: ?[*:0]const u8,
     ) callconv(.c) ?*anyopaque;
-    extern "kernel32" fn OpenFileMappingA(dwDesiredAccess: u32, bInheritHandle: i32, lpName: [*:0]const u8) callconv(.c) ?*anyopaque;
     extern "kernel32" fn MapViewOfFile(hFileMappingObject: ?*anyopaque, dwDesiredAccess: u32, dwFileOffsetHigh: u32, dwFileOffsetLow: u32, dwNumberOfBytesToMap: usize) callconv(.c) ?*anyopaque;
     extern "kernel32" fn UnmapViewOfFile(lpBaseAddress: ?*anyopaque) callconv(.c) i32;
     extern "kernel32" fn CloseHandle(hObject: ?*anyopaque) callconv(.c) i32;
-    extern "kernel32" fn GetLastError() callconv(.c) u32;
+    extern "kernel32" fn GetFileSizeEx(hFile: ?*anyopaque, lpFileSize: *i64) callconv(.c) i32;
+    extern "kernel32" fn SetFilePointerEx(hFile: ?*anyopaque, liDistanceToMove: i64, lpNewFilePointer: ?*i64, dwMoveMethod: u32) callconv(.c) i32;
+    extern "kernel32" fn SetEndOfFile(hFile: ?*anyopaque) callconv(.c) i32;
+    extern "kernel32" fn GetTempPathA(nBufferLength: u32, lpBuffer: [*]u8) callconv(.c) u32;
+    extern "kernel32" fn DeleteFileA(lpFileName: [*:0]const u8) callconv(.c) i32;
 } else struct {};
 
 const ShmHandle = struct {
     map_ptr: []align(std.heap.page_size_min) u8,
     size: usize,
     win_mapping: if (builtin.os.tag == .windows) ?*anyopaque else void = if (builtin.os.tag == .windows) null else {},
+    win_file: if (builtin.os.tag == .windows) ?*anyopaque else void = if (builtin.os.tag == .windows) null else {},
     posix_fd: if (builtin.os.tag == .windows) void else std.posix.fd_t = if (builtin.os.tag == .windows) {} else -1,
 
     fn data(self: *ShmHandle) []u8 {
@@ -127,32 +132,64 @@ fn openPosix(name: []const u8, size: usize) !*ShmHandle {
     return h;
 }
 
+/// Sayfa dosyasına dayalı isimli eşleme, son handle kapanınca yok olur.
+/// POSIX `shm_open` ise `close`ten sonra `unlink`e kadar yaşar. Windows'ta
+/// aynı ömrü temp dizindeki paylaşılan bir dosya verir.
+fn windowsShmPath(buf: *[384]u8, name: []const u8) ![:0]u8 {
+    if (builtin.os.tag != .windows) unreachable;
+    var tmp: [260]u8 = undefined;
+    const n = Kernel32.GetTempPathA(tmp.len, &tmp);
+    if (n == 0 or n >= tmp.len) return error.TempPathFailed;
+    return std.fmt.bufPrintZ(buf, "{s}noxshm_{s}.bin", .{ tmp[0..n], name });
+}
+
 fn openWindows(name: []const u8, size: usize) !*ShmHandle {
     if (builtin.os.tag != .windows) unreachable;
-    var name_buf: [256]u8 = undefined;
-    const win_name = try std.fmt.bufPrintZ(&name_buf, "noxshm_{s}", .{name});
+    var path_buf: [384]u8 = undefined;
+    const path = try windowsShmPath(&path_buf, name);
     const total_size: usize = HEADER_SIZE + size;
 
-    const PAGE_READWRITE: u32 = 0x04;
-    const mapping = Kernel32.CreateFileMappingA(
-        @ptrFromInt(0xFFFFFFFFFFFFFFFF), // INVALID_HANDLE_VALUE: sayfalama dosyası destekli
+    const GENERIC_READ: u32 = 0x80000000;
+    const GENERIC_WRITE: u32 = 0x40000000;
+    const FILE_SHARE_READ: u32 = 0x01;
+    const FILE_SHARE_WRITE: u32 = 0x02;
+    const FILE_SHARE_DELETE: u32 = 0x04;
+    const OPEN_ALWAYS: u32 = 4;
+    const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+    const file = Kernel32.CreateFileA(
+        path,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         null,
-        PAGE_READWRITE,
-        0,
-        @intCast(total_size),
-        win_name,
-    ) orelse return error.CreateFileMappingFailed;
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        null,
+    );
+    if (file == null or @intFromPtr(file) == std.math.maxInt(usize)) return error.CreateFileFailed;
+    errdefer _ = Kernel32.CloseHandle(file);
+
+    var existing: i64 = 0;
+    if (Kernel32.GetFileSizeEx(file, &existing) == 0) return error.GetFileSizeFailed;
+    if (existing < @as(i64, @intCast(total_size))) {
+        if (Kernel32.SetFilePointerEx(file, @intCast(total_size), null, 0) == 0) return error.SetFilePointerFailed;
+        if (Kernel32.SetEndOfFile(file) == 0) return error.SetEndOfFileFailed;
+    }
+
+    const PAGE_READWRITE: u32 = 0x04;
+    const mapping = Kernel32.CreateFileMappingA(file, null, PAGE_READWRITE, 0, @intCast(total_size), null) orelse {
+        return error.CreateFileMappingFailed;
+    };
+    errdefer _ = Kernel32.CloseHandle(mapping);
 
     const FILE_MAP_ALL_ACCESS: u32 = 0xF001F;
     const view = Kernel32.MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, total_size) orelse {
-        _ = Kernel32.CloseHandle(mapping);
         return error.MapViewOfFileFailed;
     };
 
     const bytes: [*]align(std.heap.page_size_min) u8 = @ptrCast(@alignCast(view));
     const gpa = std.heap.page_allocator;
     const h = try gpa.create(ShmHandle);
-    h.* = .{ .map_ptr = bytes[0..total_size], .size = total_size, .win_mapping = mapping };
+    h.* = .{ .map_ptr = bytes[0..total_size], .size = total_size, .win_mapping = mapping, .win_file = file };
     return h;
 }
 
@@ -250,6 +287,7 @@ pub export fn nox_shm_close_raw(handle: ?*anyopaque) callconv(.c) void {
     if (builtin.os.tag == .windows) {
         _ = Kernel32.UnmapViewOfFile(h.map_ptr.ptr);
         if (h.win_mapping) |m| _ = Kernel32.CloseHandle(m);
+        if (h.win_file) |f| _ = Kernel32.CloseHandle(f);
     } else {
         std.posix.munmap(h.map_ptr);
         _ = std.c.close(h.posix_fd);
@@ -257,12 +295,17 @@ pub export fn nox_shm_close_raw(handle: ?*anyopaque) callconv(.c) void {
     std.heap.page_allocator.destroy(h);
 }
 
-/// Segmenti KALICI olarak SİLER (POSIX: `shm_unlink` — Windows'ta İSİMLİ
-/// eşlemeler SON handle kapandığında KENDİLİĞİNDEN silinir, bu YÜZDEN
-/// Windows'ta bu fonksiyon bilinçli bir NO-OP'tur).
+/// Segmenti kalıcı olarak siler. POSIX `shm_unlink`; Windows temp dosyasını
+/// `DeleteFileA` ile kaldırır (paylaşım `FILE_SHARE_DELETE` olduğu için açık
+/// eşleme varken de ad silinir).
 pub export fn nox_shm_unlink_raw(name: ?[*:0]const u8) callconv(.c) void {
-    if (builtin.os.tag == .windows) return;
     const n = name orelse return;
+    if (builtin.os.tag == .windows) {
+        var path_buf: [384]u8 = undefined;
+        const path = windowsShmPath(&path_buf, str_mod.nox_str_slice(n)) catch return;
+        _ = Kernel32.DeleteFileA(path);
+        return;
+    }
     var name_buf: [256]u8 = undefined;
     const shm_name = std.fmt.bufPrintZ(&name_buf, "/{s}", .{str_mod.nox_str_slice(n)}) catch return;
     _ = std.c.shm_unlink(shm_name);

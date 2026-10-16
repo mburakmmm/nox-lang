@@ -892,7 +892,26 @@ pub fn build(b: *std.Build) void {
     frontend_test_step.dependOn(&b.addRunArtifact(lib_test).step);
 
     // Zig runtime'ının kendi içindeki testler (bkz. runtime/alloc/asap.zig).
-    const noxrt_test = b.addTest(.{ .root_module = noxrt_mod });
+    // Windows'ta `noxrt_mod`a `addObjectFile` EKLENMEZ: COFF `build-obj`
+    // ham nesne varken Zig kodunu sessizce atar (Faz LL.6). Test ikilisi
+    // ise `nox_swap_context`i bağlamak zorunda; bu yüzden AYRI bir modül.
+    const noxrt_test_mod = if (target.result.os.tag == .windows) blk: {
+        const m = b.createModule(.{
+            .root_source_file = b.path("runtime/lib.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
+                .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+                .{ .name = "abi_layout", .module = abi_layout_mod },
+                .{ .name = "diag_sink", .module = diag_sink_mod },
+            },
+        });
+        m.addObjectFile(b.path(swap_asm_o_path));
+        break :blk m;
+    } else noxrt_mod;
+    const noxrt_test = b.addTest(.{ .root_module = noxrt_test_mod });
     noxrt_test.step.dependOn(&compile_swap_asm.step);
     test_step.dependOn(&b.addRunArtifact(noxrt_test).step);
     // Faz MN.8: `worker-pool-test`/`async-rt-test` İLE AYNI desen — SADECE

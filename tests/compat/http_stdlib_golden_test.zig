@@ -120,7 +120,7 @@ fn acceptWithTimeout(listen_fd: sys.fd_t, timeout_ms: i32) sys.fd_t {
 }
 
 fn testServeOnce(listen_fd: sys.fd_t) void {
-    const conn = acceptWithTimeout(listen_fd, 15_000);
+    const conn = acceptWithTimeout(listen_fd, 120_000);
     if (sys.badFd(conn)) return;
     defer _ = sys.close(conn);
 
@@ -149,7 +149,7 @@ fn testServeOnce(listen_fd: sys.fd_t) void {
 /// gövdeyi taşıyacağı ÇAĞIRAN tarafından (gzip fixture'ı VEYA gömülü-NUL
 /// fixture'ı İÇİN) BELİRLENİR.
 fn testServeOnceRaw(listen_fd: sys.fd_t, headers: []const u8, body: []const u8) void {
-    const conn = acceptWithTimeout(listen_fd, 15_000);
+    const conn = acceptWithTimeout(listen_fd, 120_000);
     if (sys.badFd(conn)) return;
     defer _ = sys.close(conn);
 

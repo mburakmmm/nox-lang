@@ -166,7 +166,12 @@ fn workerThreadFn(ctx: *RequestCtx) void {
 
     const io = sharedClientIo();
 
-    var client: std.http.Client = .{ .allocator = ctx.allocator, .io = io };
+    // İstek ömrü kadar bir arena. `std.http.Client` başarısız bağlantıda
+    // (Windows AFD) bıraktığı ara tahsisler Nox'un DebugAllocator sızıntı
+    // sayacına düşmesin; istek bitince arena hepsini geri verir.
+    var request_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer request_arena.deinit();
+    var client: std.http.Client = .{ .allocator = request_arena.allocator(), .io = io };
     defer client.deinit();
 
     const uri = std.Uri.parse(ctx.url) catch {

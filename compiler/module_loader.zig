@@ -25,6 +25,7 @@
 //! gibi önekli) adlandırmalıdır — bu bir dil garantisi değil, bir kural.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const lexer = @import("lexer/lexer.zig");
 const syntax_report = @import("syntax_report.zig");
 const parser = @import("parser/parser.zig");
@@ -144,6 +145,17 @@ fn fileExistsAbsolute(io: std.Io, path: []const u8) bool {
     if (std.Io.Dir.accessAbsolute(io, path, .{})) |_| return true else |_| return false;
 }
 
+/// Windows NT nesne adı `/` kabul etmez (`OBJECT_NAME_INVALID` paniği).
+/// Aday yollar burada ters eğik çizgiye çevrilir; diğer sistemlerde aynı dilim döner.
+fn toNativePath(a: std.mem.Allocator, path: []const u8) ![]const u8 {
+    if (builtin.os.tag != .windows) return path;
+    const out = try a.dupe(u8, path);
+    for (out) |*c| {
+        if (c.* == '/') c.* = '\\';
+    }
+    return out;
+}
+
 /// `loadImportsRecursive`in dosya yolu seçimi, birleştirmeden AYRI.
 /// LSP çapraz-dosya gezinmesi bunu kullanır: span'ler hedef dosyanın
 /// KENDİ kaynağına aittir. `alias_roots == null` iken yalnızca stdlib
@@ -162,18 +174,18 @@ pub fn resolveImportFilePath(
         if (!is_nox_stdlib) {
             if (roots.get(segments[0])) |root| {
                 const rest = try joinWith(a, segments[1..], '/');
-                return std.fmt.allocPrint(a, "{s}/{s}.nox", .{ root, rest });
+                return toNativePath(a, try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ root, rest }));
             }
             if (project_root) |proot| {
                 const rel_path = try joinWith(a, segments, '/');
-                const candidate = try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ proot, rel_path });
+                const candidate = try toNativePath(a, try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ proot, rel_path }));
                 if (fileExistsAbsolute(io, candidate)) return candidate;
             }
             return error.UnknownImportAlias;
         }
     }
     const rel_path = try joinWith(a, segments, '/');
-    const path = try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ stdlib_root, rel_path });
+    const path = try toNativePath(a, try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ stdlib_root, rel_path }));
     if (!fileExistsAbsolute(io, path)) return error.ModuleNotFound;
     return path;
 }

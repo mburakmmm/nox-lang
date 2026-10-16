@@ -7,9 +7,21 @@
 //! → update → delete akışını uçtan uca doğrular.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
+}
+
+/// Nox dize literali `\n` `\t` `\r` çözer. Windows yolu kaynağa gömülünce
+/// `\n` satır sonuna dönüşür. Eğik çizgi SQLite ve Win32 için geçerlidir.
+fn noxLiteralPath(path: []u8) []u8 {
+    if (builtin.os.tag == .windows) {
+        for (path) |*c| {
+            if (c.* == '\\') c.* = '/';
+        }
+    }
+    return path;
 }
 
 test "nox.orm: Table/Column tanimla + create_table + parametreli insert/select/update/delete" {
@@ -71,7 +83,7 @@ test "nox.orm: Table/Column tanimla + create_table + parametreli insert/select/u
         \\print(len(remaining))
         \\conn.close()
         \\
-    , .{db_path});
+    , .{noxLiteralPath(db_path)});
     defer gpa.free(source);
 
     const nox_path = try std.fmt.allocPrint(gpa, "{s}/prog.nox", .{path_buf[0..dir_len]});

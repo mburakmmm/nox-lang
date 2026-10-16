@@ -640,12 +640,16 @@ fn fillAliasRoots(server: *Server, a: std.mem.Allocator, file_uri: []const u8, r
 fn pathToUri(a: std.mem.Allocator, path: []const u8) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     try buf.appendSlice(a, "file://");
+    // `file:///D:/...` — sürücü harfinden önce üçüncü eğik çizgi. Ters eğik
+    // çizgi JSON ve NT adında kaçış sayılır; açık belgeler eğik çizgiyle anahtarlanır.
+    if (builtin.os.tag == .windows and path.len >= 2 and path[1] == ':') try buf.append(a, '/');
     for (path) |c| {
-        const plain = std.ascii.isAlphanumeric(c) or c == '/' or c == '.' or c == '_' or c == '-' or c == ':';
+        const ch: u8 = if (c == '\\') '/' else c;
+        const plain = std.ascii.isAlphanumeric(ch) or ch == '/' or ch == '.' or ch == '_' or ch == '-' or ch == ':';
         if (plain) {
-            try buf.append(a, c);
+            try buf.append(a, ch);
         } else {
-            const esc = try std.fmt.allocPrint(a, "%{X:0>2}", .{c});
+            const esc = try std.fmt.allocPrint(a, "%{X:0>2}", .{ch});
             try buf.appendSlice(a, esc);
         }
     }
@@ -671,6 +675,22 @@ fn uriToPath(a: std.mem.Allocator, uri: []const u8) ![]const u8 {
             try decoded.append(a, encoded_path[i]);
             i += 1;
         }
+    }
+    if (builtin.os.tag != .windows) return decoded.toOwnedSlice(a);
+    const path = decoded.items;
+    var start: usize = 0;
+    if (std.mem.startsWith(u8, path, "//?/") or std.mem.startsWith(u8, path, "\\\\?\\")) start = 4;
+    // `file:///D:/foo` çözülünce `/D:/foo`. Sürücüden önceki eğik çizgi NT'de geçersizdir.
+    if (path.len >= start + 3 and path[start] == '/' and std.ascii.isAlphabetic(path[start + 1]) and path[start + 2] == ':') {
+        start += 1;
+    }
+    var j = start;
+    while (j < path.len) : (j += 1) {
+        if (decoded.items[j] == '/') decoded.items[j] = '\\';
+    }
+    if (start != 0) {
+        std.mem.copyForwards(u8, decoded.items[0 .. decoded.items.len - start], decoded.items[start..]);
+        decoded.shrinkRetainingCapacity(decoded.items.len - start);
     }
     return decoded.toOwnedSlice(a);
 }
@@ -1133,15 +1153,19 @@ fn moduleSegments(server: *Server, a: std.mem.Allocator, uri: []const u8) []cons
     var rel = path;
     if (std.mem.startsWith(u8, path, proot) and path.len >= proot.len) {
         rel = path[proot.len..];
-        if (rel.len > 0 and rel[0] == '/') rel = rel[1..];
+        if (rel.len > 0 and (rel[0] == '/' or rel[0] == '\\')) rel = rel[1..];
     }
     if (std.mem.endsWith(u8, rel, ".nox")) rel = rel[0 .. rel.len - 4];
     if (rel.len == 0) return &.{};
     var parts: std.ArrayListUnmanaged([]const u8) = .empty;
-    var it = std.mem.splitScalar(u8, rel, '/');
-    while (it.next()) |part| {
-        if (part.len == 0) continue;
-        parts.append(a, part) catch return &.{};
+    var start: usize = 0;
+    var k: usize = 0;
+    while (k <= rel.len) : (k += 1) {
+        if (k == rel.len or rel[k] == '/' or rel[k] == '\\') {
+            const part = rel[start..k];
+            if (part.len != 0) parts.append(a, part) catch return &.{};
+            start = k + 1;
+        }
     }
     return parts.items;
 }
@@ -1166,7 +1190,7 @@ fn walkNox(a: std.mem.Allocator, io: std.Io, root: []const u8, out: *std.ArrayLi
         var part_start: usize = 0;
         var depth: u8 = 0;
         for (entry.path, 0..) |c, i| {
-            if (c != '/') continue;
+            if (c != '/' and c != '\\') continue;
             const part = entry.path[part_start..i];
             if (part.len > 0 and (part[0] == '.' or std.mem.eql(u8, part, "zig-out") or std.mem.eql(u8, part, "zig-cache"))) skip = true;
             depth += 1;
@@ -1322,42 +1346,8 @@ fn publishDiagnostics(server: *Server, ma: std.mem.Allocator, w: *std.Io.Writer,
 /// `%20`) TEK katman çözülür — LSP istemcilerinin (VSCode DAHİL) ÜRETTİĞİ
 /// URI'ler bunun ÖTESİNDE bir kodlama İÇERMEZ.
 fn uriToDir(a: std.mem.Allocator, uri: []const u8) !?[]const u8 {
-    const prefix = "file://";
-    if (!std.mem.startsWith(u8, uri, prefix)) return null;
-    const encoded_path = uri[prefix.len..];
-    if (encoded_path.len == 0) return null;
-
-    var decoded: std.ArrayListUnmanaged(u8) = .empty;
-    var i: usize = 0;
-    while (i < encoded_path.len) {
-        if (encoded_path[i] == '%' and i + 2 < encoded_path.len) {
-            const byte = std.fmt.parseInt(u8, encoded_path[i + 1 .. i + 3], 16) catch {
-                try decoded.append(a, encoded_path[i]);
-                i += 1;
-                continue;
-            };
-            try decoded.append(a, byte);
-            i += 3;
-        } else {
-            try decoded.append(a, encoded_path[i]);
-            i += 1;
-        }
-    }
-    const path = decoded.items;
-    if (builtin.os.tag == .windows) {
-        var start: usize = 0;
-        if (std.mem.startsWith(u8, path, "//?/") or std.mem.startsWith(u8, path, "\\\\?\\")) start = 4;
-        // `file:///D:/foo` → kod çözülünce `/D:/foo`. Sürücü harfinden
-        // önceki eğik çizgi NT yolunu geçersiz kılar.
-        if (path.len >= start + 3 and path[start] == '/' and std.ascii.isAlphabetic(path[start + 1]) and path[start + 2] == ':') {
-            start += 1;
-        }
-        var j = start;
-        while (j < path.len) : (j += 1) {
-            if (decoded.items[j] == '/') decoded.items[j] = '\\';
-        }
-        return std.fs.path.dirname(decoded.items[start..]);
-    }
+    const path = uriToPath(a, uri) catch return null;
+    if (path.len == 0) return null;
     return std.fs.path.dirname(path);
 }
 
