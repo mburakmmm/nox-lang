@@ -21,6 +21,7 @@
 const std = @import("std");
 const arc = @import("alloc/arc.zig");
 const abi_layout = @import("abi_layout");
+const diag_sink = @import("diag_sink");
 
 const STR_HEADER_SIZE = abi_layout.STR_HEADER_SIZE;
 pub const ASCII_UNKNOWN = abi_layout.STR_ASCII_UNKNOWN;
@@ -240,6 +241,39 @@ pub export fn nox_str_concat(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const 
     @memcpy(data[len_a..][0..len_b], pb[0..len_b]);
     data[total_len] = 0;
     return @ptrCast(data);
+}
+
+/// Sınıf `__str__`/`__repr__` sonucunu stdout'a yazar. QBE'nin Windows
+/// variadic `printf("%s", p)` çağrısı yerine uzunluğu başlıktan okur;
+/// `null` ve boş dize bir şey yazmaz (Windows CRT `printf("%s", NULL)`
+/// erişim ihlali yapar). Satır sonu EKLEMEZ.
+pub export fn nox_print_str(s: ?[*:0]const u8) void {
+    const p = s orelse return;
+    const bytes = nox_str_slice(p);
+    if (bytes.len == 0) return;
+    const builtin = @import("builtin");
+    // Freestanding'de libc yok; `printf("%s")` ile aynı tanı çıkışına yazılır.
+    // Hosted'de QBE'nin kendi `printf` çağrılarıyla AYNI stdio tamponu
+    // kullanılmalı — ham `write` tamponu atlar ve `[` köşeli parantezi
+    // metinden SONRA görünür.
+    if (comptime builtin.os.tag == .freestanding or builtin.os.tag == .other) {
+        diag_sink.diagSink()(null, bytes.ptr, bytes.len);
+        return;
+    }
+    const c = struct {
+        extern "c" fn printf(fmt: [*:0]const u8, ...) c_int;
+    };
+    _ = c.printf("%s", p);
+}
+
+test "nox_print_str null ve bos dizide yazmadan doner" {
+    nox_print_str(null);
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const empty = allocStr(rt, "", ASCII_TRUE) orelse return error.AllocFailed;
+    defer nox_str_release(rt, empty);
+    nox_print_str(empty);
 }
 
 /// v1.142.17: `s = s + x` (yerel `s`, `x` ifadelerinde `s` geçmiyor) için yerinde büyütme. `a`

@@ -120,6 +120,22 @@ export fn nox_strings_trim_end_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(
     return dupeToNoxStr(rt, trimmed);
 }
 
+/// Satır başındaki girinti bir TAB içeriyorsa 1 döner. Boşlukları atlar;
+/// ilk boşluk olmayan bayt TAB değilse 0 döner. Değerin içindeki TAB
+/// (ör. `a:\tb`) girinti sayılmaz. `nox.yaml` bu kontrolü `_tokenize`
+/// içinde, iç içe girinti yardımcısına girmeden yapar: Windows'ta o
+/// yardımcının istisna kenarı boş stderr ile düşüyordu, aynı mesajı
+/// üreten `---` yolu ise geçiyordu.
+export fn nox_strings_leading_tab_raw(s: ?[*:0]const u8) callconv(.c) i64 {
+    const slice = str_mod.nox_str_slice(s orelse return 0);
+    for (slice) |c| {
+        if (c == ' ') continue;
+        if (c == '\t') return 1;
+        return 0;
+    }
+    return 0;
+}
+
 /// Faz III.2 — `split`in AKSİNE EN FAZLA `n` parça üretir (SONUNCU parça
 /// KALANIN TAMAMIdır — Rust'ın `str::splitn`iyle TUTARLI). `n<=1` VEYA
 /// boş `sep` (`split`in KENDİ v1 basitleştirmesiyle AYNI ilke) TÜM `s`i
@@ -627,4 +643,28 @@ test "v1.156.0: nox_strings_split_ws_raw boşluk dizilerini böler, boşları at
         str_mod.nox_str_release(rt, @ptrFromInt(p));
     }
     arc.nox_rc_release(rt, l, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 3);
+}
+
+test "nox_strings_leading_tab_raw yalnızca girintideki TAB'ı yakalar" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const tab_indent = str_mod.nox_str_from_bytes(rt, "\tb: 1") orelse return error.Failed;
+    defer str_mod.nox_str_release(rt, tab_indent);
+    const spaced = str_mod.nox_str_from_bytes(rt, "  \tx") orelse return error.Failed;
+    defer str_mod.nox_str_release(rt, spaced);
+    const spaces = str_mod.nox_str_from_bytes(rt, "  a: 1") orelse return error.Failed;
+    defer str_mod.nox_str_release(rt, spaces);
+    const value_tab = str_mod.nox_str_from_bytes(rt, "a:\tb") orelse return error.Failed;
+    defer str_mod.nox_str_release(rt, value_tab);
+    const empty = str_mod.nox_str_from_bytes(rt, "") orelse return error.Failed;
+    defer str_mod.nox_str_release(rt, empty);
+
+    try std.testing.expectEqual(@as(i64, 1), nox_strings_leading_tab_raw(tab_indent));
+    try std.testing.expectEqual(@as(i64, 1), nox_strings_leading_tab_raw(spaced));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_leading_tab_raw(spaces));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_leading_tab_raw(value_tab));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_leading_tab_raw(empty));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_leading_tab_raw(null));
 }

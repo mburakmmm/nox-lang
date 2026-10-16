@@ -403,8 +403,14 @@ export fn nox_fs_stat_mtime_ms_raw() callconv(.c) i64 {
 /// API'si, `path\*` joker deseni GEREKTİRİR).
 fn collectDirNames(path: [*:0]const u8, names: *std.ArrayListUnmanaged([]const u8)) !void {
     if (builtin.os.tag == .windows) {
-        var pattern_buf: [std.c.PATH_MAX + 4]u8 = undefined;
-        const pattern = std.fmt.bufPrintZ(&pattern_buf, "{s}/*", .{str_mod.nox_str_slice(path)}) catch return error.PathTooLong;
+        // `path` bu fonksiyonun C sözleşmesidir: Linux `opendir` gibi HAM
+        // bir NUL-sonlu dizgi. `nox_str_slice` işaretçinin 8 bayt ÖNCESİNİ
+        // uzunluk başlığı sanır; Zig testleri ve `std.c` yolları başlıksız
+        // geçtiği için bu, Windows'ta yanlış bir dizini (ya da taşan bir
+        // kalıbı) listeler. Nox `str` yükü de NUL ile biter, `span` ikisine
+        // de uyar.
+        var pattern_buf: [4096]u8 = undefined;
+        const pattern = std.fmt.bufPrintZ(&pattern_buf, "{s}/*", .{std.mem.span(path)}) catch return error.PathTooLong;
         var data: WinFile.WIN32_FIND_DATAA = undefined;
         const h = WinFile.FindFirstFileA(pattern.ptr, &data);
         if (h == WinFile.INVALID_HANDLE_VALUE) return error.OpenDirFailed;
@@ -559,6 +565,12 @@ fn testTmpPrefix() []const u8 {
     return "/tmp";
 }
 
+/// GitHub Actions Windows `TEMP` değeri
+/// `C:\Users\runneradmin\AppData\Local\Temp` (39 bayt). Sonek + pid + NUL
+/// 64 baytlık bir tamponu aşar (`NoSpaceLeft`). 512, bu önekleri ve
+/// `max_path` altındaki test yollarını karşılar.
+const test_path_cap = 512;
+
 test "nox_fs_exists/is_file/is_dir_raw dogru sonuc doner" {
     const asap = @import("../alloc/asap.zig");
     const str = @import("../str.zig");
@@ -594,7 +606,7 @@ test "Faz III.3: nox_fs_read_to_string_raw (fstat-tabanli tek-tahsis) dogru cali
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    var full_buf: [64]u8 = undefined;
+    var full_buf: [test_path_cap]u8 = undefined;
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_read_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
@@ -615,7 +627,7 @@ test "Faz III.3: nox_fs_append_string_raw dosyayi KISALTMAZ, SONUNA ekler" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    var full_buf: [64]u8 = undefined;
+    var full_buf: [test_path_cap]u8 = undefined;
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_append_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
@@ -638,7 +650,7 @@ test "Faz III.3: nox_fs_stat_raw boyut/mtime dogru doner" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    var full_buf: [64]u8 = undefined;
+    var full_buf: [test_path_cap]u8 = undefined;
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_stat_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
@@ -660,7 +672,7 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    var dir_buf: [64]u8 = undefined;
+    var dir_buf: [test_path_cap]u8 = undefined;
     const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_readdir_{d}", .{ testTmpPrefix(), hostPid() });
     _ = std.c.mkdir(dir_path.ptr, 0o755);
     defer _ = std.c.rmdir(dir_path.ptr);
@@ -670,12 +682,12 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     const y_content = str.nox_str_from_bytes(rt, "y") orelse return error.AllocFailed;
     defer str.nox_str_release(rt, y_content);
 
-    var f1_buf: [80]u8 = undefined;
+    var f1_buf: [test_path_cap]u8 = undefined;
     const f1_path = try std.fmt.bufPrintZ(&f1_buf, "{s}/nox_iii3_readdir_{d}/a.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(f1_path.ptr);
     nox_fs_write_string_raw(null, f1_path.ptr, x_content);
 
-    var f2_buf: [80]u8 = undefined;
+    var f2_buf: [test_path_cap]u8 = undefined;
     const f2_path = try std.fmt.bufPrintZ(&f2_buf, "{s}/nox_iii3_readdir_{d}/b.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(f2_path.ptr);
     nox_fs_write_string_raw(null, f2_path.ptr, y_content);
@@ -683,7 +695,6 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     const list_ptr = nox_fs_read_dir_raw(rt, dir_path.ptr) orelse return error.Failed;
     const bytes: [*]u8 = @ptrCast(list_ptr);
     const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
-    try std.testing.expectEqual(@as(usize, 2), count);
 
     var saw_a = false;
     var saw_b = false;
@@ -696,7 +707,10 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
         if (std.mem.eql(u8, name, "a.txt")) saw_a = true;
         if (std.mem.eql(u8, name, "b.txt")) saw_b = true;
     }
+    // Sayım tutmazsa `expectEqual` döner; listeyi ÖNCE bırakmak sızıntı
+    // raporunun asıl hatayı örtmesini engeller.
     arc.nox_rc_release(rt, list_ptr, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count);
+    try std.testing.expectEqual(@as(usize, 2), count);
     try std.testing.expect(saw_a);
     try std.testing.expect(saw_b);
 }
@@ -707,11 +721,11 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
     defer asap.nox_runtime_deinit(rt);
 
     const str = @import("../str.zig");
-    var src_buf: [64]u8 = undefined;
+    var src_buf: [test_path_cap]u8 = undefined;
     const src_path = try std.fmt.bufPrintZ(&src_buf, "{s}/nox_iii3_copy_src_{d}.txt", .{ testTmpPrefix(), hostPid() });
-    var dst_buf: [64]u8 = undefined;
+    var dst_buf: [test_path_cap]u8 = undefined;
     const dst_path = try std.fmt.bufPrintZ(&dst_buf, "{s}/nox_iii3_copy_dst_{d}.txt", .{ testTmpPrefix(), hostPid() });
-    var ren_buf: [64]u8 = undefined;
+    var ren_buf: [test_path_cap]u8 = undefined;
     const ren_path = try std.fmt.bufPrintZ(&ren_buf, "{s}/nox_iii3_copy_ren_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(src_path.ptr);
     defer _ = std.c.unlink(dst_path.ptr);
@@ -738,7 +752,7 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
     try std.testing.expect(fsLastOkPtr().*);
     try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(src_path.ptr));
 
-    var dir_buf: [64]u8 = undefined;
+    var dir_buf: [test_path_cap]u8 = undefined;
     const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_mkdir_{d}", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.rmdir(dir_path.ptr);
     nox_fs_create_dir_raw(dir_path.ptr);
@@ -761,7 +775,7 @@ test "g_last_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak
     // Bu dosya ZATEN "ham libc çağrıları" katmanında (bkz. modül üstü not) —
     // `std.testing.tmpDir`/`std.Io.Dir` KARMAŞIKLIĞINDAN kaçınmak İÇİN
     // `/tmp` altında PID'e göre BENZERSİZ bir yol DOĞRUDAN inşa edilir.
-    var full_buf: [64]u8 = undefined;
+    var full_buf: [test_path_cap]u8 = undefined;
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_bb1_fs_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 

@@ -2403,8 +2403,12 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
                 const plain = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, mname });
                 if (!self.must_not_raise.contains(plain)) try self.emitExceptionCheck();
             }
-            const pct_s = try self.internFmtString("%s");
-            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = pct_s }}, &.{.{ .ty = .l, .text = res }});
+            // Windows CRT `printf("%s", NULL)` erişim ihlali yapar ve QBE'nin
+            // variadic çağrısı bu sonucu gölge alana yazmaz. Yazım, uzunluğu
+            // başlıktan okuyan ve `null`'u yutan `nox_print_str` üzerinden gider.
+            // `str()` / f-string biriktiricisi açıkken `qbeCall` bu çağrıyı
+            // stdout yerine birikime ekler.
+            try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = res }});
             try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = res } });
             return;
         }

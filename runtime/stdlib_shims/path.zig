@@ -177,7 +177,9 @@ export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv
         return dupeToNoxStr(rt, "");
     };
     if (builtin.os.tag == .windows) {
-        var buf: [std.c.PATH_MAX]u8 = undefined;
+        // `std.c.PATH_MAX` Windows'ta 260'dır. Çalıştırıcı geçici dizinleri
+        // (`C:\Users\runneradmin\AppData\Local\Temp\...`) buna sığmayabilir.
+        var buf: [4096]u8 = undefined;
         const len = WinPath.GetFullPathNameA(path, buf.len, &buf, null);
         if (len == 0 or len >= buf.len) {
             pathLastOkPtr().* = false;
@@ -359,7 +361,11 @@ test "Faz III.4: nox_path_canonicalize_raw sembolik link/./.. cozer, olmayan yol
         try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "f.txt", .data = "x" });
         var path_buf: [path_cap]u8 = undefined;
         const n = try tmp.dir.realPath(std.testing.io, &path_buf);
-        const src = makeTestStr(rt, path_buf[0..n]);
+        // `realPath` DİZİNİ döner. Beklenen sonek yazılan dosyadır.
+        const suffix = "/f.txt";
+        if (n + suffix.len >= path_buf.len) return error.NameTooLong;
+        @memcpy(path_buf[n..][0..suffix.len], suffix);
+        const src = makeTestStr(rt, path_buf[0 .. n + suffix.len]);
         defer str.nox_str_release(rt, src);
         const c = nox_path_canonicalize_raw(rt, src) orelse return error.Failed;
         defer str.nox_str_release(rt, c);

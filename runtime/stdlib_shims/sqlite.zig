@@ -51,7 +51,11 @@ fn libraryFileName() [:0]const u8 {
 /// karakter dönüşümüne GEREK YOK).
 const Kernel32 = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn LoadLibraryA(lpLibFileName: [*:0]const u8) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn LoadLibraryExA(lpLibFileName: [*:0]const u8, hFile: ?*anyopaque, dwFlags: u32) callconv(.c) ?*anyopaque;
     extern "kernel32" fn GetProcAddress(hModule: ?*anyopaque, lpProcName: [*:0]const u8) callconv(.c) ?*anyopaque;
+    /// Yalnızca System32. PATH'teki `sqlite3.dll` (Python vb.) DllMain'de
+    /// çökmeden önce denenmez.
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x00000800;
 } else struct {};
 
 /// Windows'ta ham bir kütüphane handle'ı (`kernel32.LoadLibraryA`nın
@@ -64,11 +68,19 @@ const LibHandle = if (builtin.os.tag == .windows) ?*anyopaque else std.DynLib;
 
 fn openLib() ?LibHandle {
     if (builtin.os.tag == .windows) {
-        // Önce açık kurulum (`sqlite3.dll`). Yoksa Windows 10+ ile gelen
-        // `winsqlite3.dll` (aynı `sqlite3_*` dışa aktarımları). İkisi de
-        // yoksa çağıran `SqliteError` fırlatır.
-        if (Kernel32.LoadLibraryA(libraryFileName())) |handle| return handle;
-        return Kernel32.LoadLibraryA("winsqlite3.dll");
+        // `LoadLibraryA("sqlite3.dll")` önce exe dizinine, sonra System32'ye,
+        // sonra PATH'e bakar. GitHub `windows-2025` imajı PATH'e Python
+        // koyar; o ağaçtaki `sqlite3.dll` kendi `python3xx.dll`ine bağlıdır
+        // ve DllMain'i Nox bir `SqliteError` basamadan süreci düşürür
+        // (boş stderr, çıkış kodu erişim ihlali). Windows 10+ System32'deki
+        // `winsqlite3.dll` aynı `sqlite3_*` adlarını dışa aktarır ve bir
+        // konak çalışma zamanına bağlı değildir. Bayrak eski bir çekirdekte
+        // reddedilirse düz `LoadLibraryA("winsqlite3.dll")` aynı dosyayı
+        // standart aramayla dener. Kullanıcının kurduğu `sqlite3.dll` son
+        // çaredir.
+        if (Kernel32.LoadLibraryExA("winsqlite3.dll", null, Kernel32.LOAD_LIBRARY_SEARCH_SYSTEM32)) |handle| return handle;
+        if (Kernel32.LoadLibraryA("winsqlite3.dll")) |handle| return handle;
+        return Kernel32.LoadLibraryA(libraryFileName());
     }
     return std.DynLib.open(libraryFileName()) catch null;
 }
@@ -76,7 +88,7 @@ fn openLib() ?LibHandle {
 fn lookupSym(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
     if (builtin.os.tag == .windows) {
         const handle = lib.* orelse return null;
-        const addr = Kernel32.GetProcAddress(handle, name) orelse return null;
+        const addr = Kernel32.GetProcAddress(handle, name.ptr) orelse return null;
         return @ptrCast(addr);
     }
     return lib.lookup(T, name);
@@ -209,83 +221,98 @@ pub export fn nox_sqlite_open_raw(path: ?[*:0]const u8) callconv(.c) ?*anyopaque
 
 pub export fn nox_sqlite_errmsg_raw(rt: ?*anyopaque, db: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     if (!ensureLoaded()) return dupeToNoxStr(rt, "could not load libsqlite3 (it may not be installed on the system)");
-    const msg = g_funcs.errmsg(db) orelse return dupeEmpty(rt);
+    const opened = db orelse return dupeToNoxStr(rt, "sqlite database is not open");
+    const msg = g_funcs.errmsg(opened) orelse return dupeEmpty(rt);
     return dupeToNoxStr(rt, std.mem.span(msg));
 }
 
 pub export fn nox_sqlite_prepare_raw(db: ?*anyopaque, sql: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const opened = db orelse return null;
     const s = sql orelse return null;
     if (!ensureLoaded()) return null;
     var stmt: ?*anyopaque = null;
-    _ = g_funcs.prepare_v2(db, s, -1, &stmt, null);
+    _ = g_funcs.prepare_v2(opened, s, -1, &stmt, null);
     return stmt;
 }
 
 pub export fn nox_sqlite_step_raw(stmt: ?*anyopaque) callconv(.c) i64 {
+    const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1; // SQLITE_ERROR
-    return g_funcs.step(stmt);
+    return g_funcs.step(active);
 }
 
 pub export fn nox_sqlite_finalize_raw(stmt: ?*anyopaque) callconv(.c) i64 {
+    const active = stmt orelse return 0;
     if (!ensureLoaded()) return 1;
-    return g_funcs.finalize(stmt);
+    return g_funcs.finalize(active);
 }
 
 pub export fn nox_sqlite_close_raw(db: ?*anyopaque) callconv(.c) i64 {
+    const opened = db orelse return 0;
     if (!ensureLoaded()) return 1;
-    return g_funcs.close(db);
+    return g_funcs.close(opened);
 }
 
 pub export fn nox_sqlite_column_count_raw(stmt: ?*anyopaque) callconv(.c) i64 {
+    const active = stmt orelse return 0;
     if (!ensureLoaded()) return 0;
-    return g_funcs.column_count(stmt);
+    return g_funcs.column_count(active);
 }
 
 pub export fn nox_sqlite_column_type_raw(stmt: ?*anyopaque, i: i64) callconv(.c) i64 {
+    const active = stmt orelse return 5;
     if (!ensureLoaded()) return 5; // SQLITE_NULL
-    return g_funcs.column_type(stmt, @intCast(i));
+    return g_funcs.column_type(active, @intCast(i));
 }
 
 pub export fn nox_sqlite_bind_int_raw(stmt: ?*anyopaque, idx: i64, val: i64) callconv(.c) i64 {
+    const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
-    return g_funcs.bind_int64(stmt, @intCast(idx), val);
+    return g_funcs.bind_int64(active, @intCast(idx), val);
 }
 
 pub export fn nox_sqlite_bind_double_raw(stmt: ?*anyopaque, idx: i64, val: f64) callconv(.c) i64 {
+    const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
-    return g_funcs.bind_double(stmt, @intCast(idx), val);
+    return g_funcs.bind_double(active, @intCast(idx), val);
 }
 
 pub export fn nox_sqlite_bind_text_raw(stmt: ?*anyopaque, idx: i64, value: ?[*:0]const u8) callconv(.c) i64 {
+    const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
     const v = value orelse "";
-    return g_funcs.bind_text(stmt, @intCast(idx), v, -1, SQLITE_TRANSIENT);
+    return g_funcs.bind_text(active, @intCast(idx), v, -1, SQLITE_TRANSIENT);
 }
 
 pub export fn nox_sqlite_bind_null_raw(stmt: ?*anyopaque, idx: i64) callconv(.c) i64 {
+    const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
-    return g_funcs.bind_null(stmt, @intCast(idx));
+    return g_funcs.bind_null(active, @intCast(idx));
 }
 
 pub export fn nox_sqlite_changes_raw(db: ?*anyopaque) callconv(.c) i64 {
+    const opened = db orelse return 0;
     if (!ensureLoaded()) return 0;
-    return g_funcs.changes(db);
+    return g_funcs.changes(opened);
 }
 
 pub export fn nox_sqlite_last_insert_rowid_raw(db: ?*anyopaque) callconv(.c) i64 {
+    const opened = db orelse return 0;
     if (!ensureLoaded()) return 0;
-    return g_funcs.last_insert_rowid(db);
+    return g_funcs.last_insert_rowid(opened);
 }
 
 pub export fn nox_sqlite_column_text_raw(rt: ?*anyopaque, stmt: ?*anyopaque, i: i64) callconv(.c) ?[*:0]u8 {
+    const active = stmt orelse return dupeEmpty(rt);
     if (!ensureLoaded()) return dupeEmpty(rt);
-    const txt = g_funcs.column_text(stmt, @intCast(i)) orelse return dupeEmpty(rt);
+    const txt = g_funcs.column_text(active, @intCast(i)) orelse return dupeEmpty(rt);
     return dupeToNoxStr(rt, std.mem.span(txt));
 }
 
 pub export fn nox_sqlite_column_name_raw(rt: ?*anyopaque, stmt: ?*anyopaque, i: i64) callconv(.c) ?[*:0]u8 {
+    const active = stmt orelse return dupeEmpty(rt);
     if (!ensureLoaded()) return dupeEmpty(rt);
-    const name = g_funcs.column_name(stmt, @intCast(i)) orelse return dupeEmpty(rt);
+    const name = g_funcs.column_name(active, @intCast(i)) orelse return dupeEmpty(rt);
     return dupeToNoxStr(rt, std.mem.span(name));
 }
 

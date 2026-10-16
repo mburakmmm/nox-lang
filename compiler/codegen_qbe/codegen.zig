@@ -918,6 +918,9 @@ pub const Codegen = struct {
     }
     pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []const QbeArg) CodegenError!void {
         if (self.print_acc != null and args.len >= 1 and std.mem.eql(u8, func_text, "$printf")) return self.sinkPrintf(args[0].text, &.{});
+        // `str()`/f-string biriktiricisi açıkken sınıf metni stdout'a değil
+        // birikime eklenir (`$printf("%s")`nin sinkPrintf yolu ile aynı).
+        if (self.print_acc != null and args.len == 1 and std.mem.eql(u8, func_text, "$nox_print_str")) return self.sinkAppendStr(args[0].text);
         if (hpy_sigs.declared(func_text)) {
             const ret: ?QbeType = if (dst) |d| d.ty else null;
             hpy_sigs.require(func_text, ret) catch return error.HpySignature;

@@ -29093,6 +29093,8 @@ Nox, `nox-hpy-host-v1` profilindeki bir aHPy Universal paketini yükler. Sözle�
 
 Windows `zig build test -Dwin-test-timeout=300` her test ikilisini `tests/support/win_test_timeout.zig` ile çalıştırır. Koşucu testin adını başlamadan yazar. Süre dolunca `TIMEOUT: <ad>` basıp çıkar. Linux ve macOS Zig'in kendi koşucusunu kullanır.
 
+`nox.sqlite` Windows'ta önce System32'deki `winsqlite3.dll` dosyasını (`LOAD_LIBRARY_SEARCH_SYSTEM32`) yükler. Bu bayrak reddedilirse aynı dosya standart aramayla denenir. PATH üzerindeki `sqlite3.dll` son çaredir. Çalıştırıcı imajındaki Python kopyası, süreç `SqliteError` basamadan düşüyordu. İkisi de yoksa `open` `SqliteError` fırlatır. Boş bir veritabanı veya deyim tutamacı sqlite çağrısına girmez.
+
 ## 3.304 Windows test derlemesi ve yol URI'si (v2.0.16)
 
 Barındırılan Windows `zig test -fllvm`, freestanding `printf` gövdesindeki `@cVaStart`i derlemez. Gerçek gövde yalnızca freestanding x86_64 çekirdektedir.
@@ -29101,7 +29103,7 @@ Barındırılan Windows `zig test -fllvm`, freestanding `printf` gövdesindeki `
 
 `HPyType_Spec.flags` `unsigned long`dır. Windows x64'te bu alan 4 bayttır; yapının boyu 48, macOS ve Linux'ta 56'dır. İki düzen de o hedefin C derleyicisiyle aynıdır.
 
-`nox.sqlite` önce `sqlite3.dll` arar, bulamazsa Windows'un `winsqlite3.dll` dosyasını yükler. İkisi de yoksa `open` `SqliteError` fırlatır.
+`nox.sqlite` önce `sqlite3.dll` arar, bulamazsa Windows'un `winsqlite3.dll` dosyasını yükler. İkisi de yoksa `open` `SqliteError` fırlatır. Bu sıra §3.305'te değişti.
 
 `file:///D:/...` URI'si sürücü yoluna çevrilir. `nox.json` araması işletim sisteminin ayırıcısını kullanır. Reddedilen bir bağlantının Zig hata izi, Nox programının stderr'ine yazılmaz; program kendi istisnasını fırlatır.
 

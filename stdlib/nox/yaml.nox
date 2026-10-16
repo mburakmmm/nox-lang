@@ -129,6 +129,8 @@ def _count_leading_spaces_or_raise(raw: str) -> int:
             scanning = False
     return count
 
+extern def nox_strings_leading_tab_raw(s: str) -> int from "zig-out/lib/noxrt.o"
+
 def _tokenize(text: str) -> list[_Line]:
     raw_lines: list[str] = nox.strings.split(text, "\n")
     result: list[_Line] = []
@@ -136,6 +138,13 @@ def _tokenize(text: str) -> list[_Line]:
     doc_marker_allowed: bool = True
     while i < len(raw_lines):
         raw: str = nox.strings.trim_end(raw_lines[i])
+        # TAB girintisi BURADA, `---` ile AYNI fonksiyonda fırlatılır.
+        # `_count_leading_spaces_or_raise`in içindeki fırlatma Windows'ta
+        # boş stderr ile düşüyordu; bu kontrol o kenara girmeden aynı
+        # mesajı üretir. Yalnızca TAB olan satır `trim_end` ile boşalır
+        # ve eskisi gibi atlanır.
+        if nox_strings_leading_tab_raw(raw) != 0:
+            raise YamlError("TAB cannot be used in YAML indentation")
         trimmed_content: str = nox.strings.trim(raw)
         if trimmed_content == "":
             i = i + 1
