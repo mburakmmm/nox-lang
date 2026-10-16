@@ -13,7 +13,10 @@ test "HPyContext ofsetleri sampleext.c ile kilitli" {
     try std.testing.expectEqual(@as(usize, 1280), @offsetOf(context.HPyContext, "ctx_SetAttr_s"));
     try std.testing.expectEqual(@as(usize, 1384), @offsetOf(context.HPyContext, "ctx_New"));
     try std.testing.expectEqual(@as(usize, 1368), @offsetOf(context.HPyContext, "ctx_AsStruct_Object"));
-    try std.testing.expectEqual(@as(usize, 56), @sizeOf(context.HPyType_Spec));
+    // LP64'te `c_ulong` 8 bayt, `HPyType_Spec` 56 bayt. LLP64'te (Windows)
+    // `c_ulong` 4 bayt ve doğal dolgu ile boyut 48'dir.
+    const spec_size: usize = if (@sizeOf(c_ulong) == 8) 56 else 48;
+    try std.testing.expectEqual(spec_size, @sizeOf(context.HPyType_Spec));
     try std.testing.expectEqual(@as(usize, 1496), @offsetOf(context.HPyContext, "ctx_Bytes_FromStringAndSize"));
     try std.testing.expectEqual(@as(usize, 1472), @offsetOf(context.HPyContext, "ctx_Bytes_AsString"));
     try std.testing.expectEqual(@as(usize, 1456), @offsetOf(context.HPyContext, "ctx_Bytes_Size"));

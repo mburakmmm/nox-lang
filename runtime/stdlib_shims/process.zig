@@ -48,6 +48,25 @@ fn containsNul(s: []const u8) bool {
     return std.mem.indexOfScalar(u8, s, 0) != null;
 }
 
+/// Windows `CreateProcess` `/tmp`yi geçerli bir dizin saymaz. Golden
+/// sözleşmesi mutlak POSIX yolunu geçerli sürücünün köküne bağlar:
+/// `/tmp` → `X:\tmp`.
+fn windowsCwd(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    if (comptime builtin.os.tag != .windows) return allocator.dupe(u8, path);
+    if (!(path.len > 0 and (path[0] == '/' or path[0] == '\\'))) return allocator.dupe(u8, path);
+    const k = struct {
+        extern "kernel32" fn GetCurrentDirectoryA(nBufferLength: u32, lpBuffer: [*]u8) callconv(.c) u32;
+    };
+    var drive_buf: [260]u8 = undefined;
+    const n = k.GetCurrentDirectoryA(drive_buf.len, &drive_buf);
+    const drive: u8 = if (n >= 2 and drive_buf[1] == ':') drive_buf[0] else 'C';
+    const out = try allocator.alloc(u8, 2 + path.len);
+    out[0] = drive;
+    out[1] = ':';
+    for (path, 0..) |c, i| out[2 + i] = if (c == '/') '\\' else c;
+    return out;
+}
+
 /// `list[str]` argümanının HAM payload'ını (bkz. `strings.zig`nin
 /// `nox_strings_join_raw`ıYLA AYNI düzen: [8 bayt count][8 baytlık
 /// işaretçi yuvası]*count) okuyup HER elemanın KENDİ (ebeveynden
@@ -150,24 +169,33 @@ export fn nox_process_run_raw(
     const prog = program orelse return null;
 
     const ctx = gpa.create(RunCtx) catch return null;
-    errdefer gpa.destroy(ctx);
 
-    const fds = http_client.makeSelfPipe() orelse return null;
+    const fds = http_client.makeSelfPipe() orelse {
+        gpa.destroy(ctx);
+        return null;
+    };
 
     const extra_args = copyStrList(gpa, args) catch {
         http_client.closeFd(fds[0]);
         http_client.closeFd(fds[1]);
+        gpa.destroy(ctx);
         return null;
     };
     var argv = gpa.alloc([:0]u8, extra_args.len + 1) catch {
+        for (extra_args) |a| gpa.free(a);
+        if (extra_args.len > 0) gpa.free(extra_args);
         http_client.closeFd(fds[0]);
         http_client.closeFd(fds[1]);
+        gpa.destroy(ctx);
         return null;
     };
     argv[0] = gpa.dupeZ(u8, str_mod.nox_str_slice(prog)) catch {
         gpa.free(argv);
+        for (extra_args) |a| gpa.free(a);
+        if (extra_args.len > 0) gpa.free(extra_args);
         http_client.closeFd(fds[0]);
         http_client.closeFd(fds[1]);
+        gpa.destroy(ctx);
         return null;
     };
     for (extra_args, 0..) |a, i| argv[i + 1] = a;
@@ -175,7 +203,9 @@ export fn nox_process_run_raw(
 
     const cwd_copy: ?[]u8 = if (cwd) |c| blk: {
         const s = str_mod.nox_str_slice(c);
-        break :blk if (s.len == 0) null else (gpa.dupe(u8, s) catch null);
+        if (s.len == 0) break :blk null;
+        if (builtin.os.tag == .windows) break :blk windowsCwd(gpa, s) catch null;
+        break :blk gpa.dupe(u8, s) catch null;
     } else null;
 
     ctx.* = .{

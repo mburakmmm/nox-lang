@@ -185,18 +185,29 @@ fn poolWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolRunCtx) void {
 /// belge notu).
 const SMALL_MAIN_POOL_DEFAULT: usize = 2;
 
+fn poolWorkersOverride() ?usize {
+    if (builtin.os.tag == .windows) {
+        // `setTestEnv` `SetEnvironmentVariableA` kullanır. Windows CRT
+        // `getenv` önbelleği bu yazmayı görmez; okuma da Win32'den olmalı.
+        const k = struct {
+            extern "kernel32" fn GetEnvironmentVariableA(lpName: [*:0]const u8, lpBuffer: [*]u8, nSize: u32) callconv(.c) u32;
+        };
+        var buf: [32]u8 = undefined;
+        const n = k.GetEnvironmentVariableA("NOX_POOL_WORKERS", &buf, buf.len);
+        if (n == 0 or n >= buf.len) return null;
+        return std.fmt.parseInt(usize, buf[0..n], 10) catch null;
+    }
+    const s = std.c.getenv("NOX_POOL_WORKERS") orelse return null;
+    return std.fmt.parseInt(usize, std.mem.span(s), 10) catch null;
+}
+
 fn pickMainWorkerCount(wants_multicore_pool: bool) usize {
     // Kaçış kapısı — küçük/gecikme-duyarlı `--release` betikleri İçİn
     // `NOX_POOL_WORKERS=1` TAM opt-out sağlar. `std.process`nin YENİ
     // `Environ` API'si `main`in KENDİ ortam-bloğunu GEREKTİRDİĞİNDEN
-    // (BURADA, `main`in DIŞINDA, YOK) DOĞRUDAN `std.c.getenv` (ham libc,
-    // `runtime/stdlib_shims`nin BAŞKA yerlerde ZATEN kullandığı desen)
-    // kullanılır.
-    if (std.c.getenv("NOX_POOL_WORKERS")) |s| {
-        const slice = std.mem.span(s);
-        if (std.fmt.parseInt(usize, slice, 10)) |n| {
-            return std.math.clamp(n, @as(usize, 1), asap.MAX_POOL_WORKERS);
-        } else |_| {}
+    // (BURADA, `main`in DIŞINDA, YOK) süreç ortamı doğrudan okunur.
+    if (poolWorkersOverride()) |n| {
+        return std.math.clamp(n, @as(usize, 1), asap.MAX_POOL_WORKERS);
     }
     if (!wants_multicore_pool) return SMALL_MAIN_POOL_DEFAULT;
     const cpu = std.Thread.getCpuCount() catch 1;

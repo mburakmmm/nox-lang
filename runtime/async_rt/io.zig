@@ -74,6 +74,24 @@ pub const WinSock = if (builtin.os.tag == .windows) struct {
     pub const TCP_NODELAY: i32 = 1;
 } else struct {};
 
+/// `ws2_32.socket` `WSAStartup` çağrılmadan `INVALID_SOCKET` döner.
+/// Sunucu yolu bunu reaktör kurulumunda yapar; istemci ve `nox.process`
+/// self-pipe'ı reaktörden önce açtığı için aynı kurulumu burada da ister.
+pub fn ensureWinsock() void {
+    if (comptime builtin.os.tag != .windows) return;
+    const state = struct {
+        var once = std.atomic.Value(u8).init(0);
+        extern "ws2_32" fn WSAStartup(version_requested: u16, data: *[512]u8) callconv(.c) i32;
+    };
+    if (state.once.cmpxchgStrong(0, 1, .acq_rel, .monotonic) != null) {
+        while (state.once.load(.acquire) != 2) std.Thread.yield() catch {};
+        return;
+    }
+    var data: [512]u8 = undefined;
+    _ = state.WSAStartup(0x0202, &data);
+    state.once.store(2, .release);
+}
+
 /// Bir soketi non-blocking yapar — idempotenttir (zaten non-blocking olan
 /// bir fd üzerinde tekrar çağrılması güvenlidir).
 ///

@@ -21,11 +21,14 @@ jobs:
           set -euo pipefail
           cat > /tmp/hpy-host-leak.c << 'EOF'
           #include <stdlib.h>
-          static volatile void *keep;
-          int main(void) {
+          __attribute__((noinline)) static void leak_once(void) {
               void *p = malloc(16);
-              if (p == 0) return 2;
-              keep = p;
+              if (p == 0) return;
+              volatile char *byte = (volatile char *)p;
+              *byte = 1;
+          }
+          int main(void) {
+              leak_once();
               return 0;
           }
           EOF
@@ -63,8 +66,8 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/hpy_width.nox << 'EOF'
-          def probe(path: str, ext: str) -> int:
-              h: ptr = hpy_open(path, ext)
+          def probe() -> int:
+              h: ptr = hpy_open("/tmp/missing.hpy0", "missing")
               hpy_close(h)
               return 0
           EOF

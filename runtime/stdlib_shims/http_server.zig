@@ -260,6 +260,7 @@ fn bindAndListen(port: i64, reuse_port: bool) ?posix.fd_t {
         // ÇAĞIRAN (`nox_http_server_listen_multicore_worker*`) Windows'ta
         // KENDİ süreç-geneli önbelleğiyle PAYLAŞIM sağlar (bkz. AŞAĞIDAKİ
         // `windows_listen_cache`).
+        io_mod.ensureWinsock();
         const ws = io_mod.WinSock;
         const fd = ws.socket(ws.AF_INET, ws.SOCK_STREAM, 0);
         if (fd == ws.INVALID_SOCKET) return null;
@@ -1687,7 +1688,6 @@ const FdWatchdog = struct {
     active: bool = false,
 
     fn arm(self: *FdWatchdog, fd: posix.fd_t, timeout_ms: u32) !void {
-        if (builtin.os.tag == .windows) return; // bu ic testler zaten Windows CI'de calismiyor
         self.thread = try std.Thread.spawn(.{}, run, .{ self, fd, timeout_ms });
         self.active = true;
     }
@@ -1726,8 +1726,23 @@ fn sleepMs(ms: i64) void {
     _ = std.c.nanosleep(&ts, null);
 }
 
+fn testWrite(fd: posix.fd_t, bytes: []const u8) isize {
+    if (builtin.os.tag == .windows) {
+        return io_mod.WinSock.send(@intFromPtr(fd), bytes.ptr, @intCast(bytes.len), 0);
+    }
+    return std.c.write(fd, bytes.ptr, bytes.len);
+}
+
+fn testRead(fd: posix.fd_t, buf: []u8) isize {
+    if (builtin.os.tag == .windows) {
+        return io_mod.WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
+    }
+    return std.c.read(fd, buf.ptr, buf.len);
+}
+
 fn testConnect(port: u16) !posix.fd_t {
     if (builtin.os.tag == .windows) {
+        io_mod.ensureWinsock();
         const ws = io_mod.WinSock;
         const fd = ws.socket(ws.AF_INET, ws.SOCK_STREAM, 0);
         if (fd == ws.INVALID_SOCKET) return error.SocketFailed;
@@ -1759,7 +1774,7 @@ fn testSendGet(fd: posix.fd_t, path: []const u8) void {
     const req = std.fmt.bufPrint(&buf, "GET {s} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", .{path}) catch unreachable;
     var off: usize = 0;
     while (off < req.len) {
-        const n = std.c.write(fd, req[off..].ptr, req.len - off);
+        const n = testWrite(fd, req[off..]);
         if (n <= 0) break;
         off += @intCast(n);
     }
@@ -1768,7 +1783,7 @@ fn testSendGet(fd: posix.fd_t, path: []const u8) void {
 fn testReadAll(fd: posix.fd_t) void {
     var buf: [256]u8 = undefined;
     while (true) {
-        const n = std.c.read(fd, &buf, buf.len);
+        const n = testRead(fd, &buf);
         if (n <= 0) break;
     }
 }
@@ -1822,13 +1837,13 @@ fn testSendPost(fd: posix.fd_t, path: []const u8, body: []const u8) void {
     const header = std.fmt.bufPrint(&header_buf, "POST {s} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ path, body.len }) catch unreachable;
     var off: usize = 0;
     while (off < header.len) {
-        const n = std.c.write(fd, header[off..].ptr, header.len - off);
+        const n = testWrite(fd, header[off..]);
         if (n <= 0) return;
         off += @intCast(n);
     }
     off = 0;
     while (off < body.len) {
-        const n = std.c.write(fd, body[off..].ptr, body.len - off);
+        const n = testWrite(fd, body[off..]);
         if (n <= 0) return;
         off += @intCast(n);
     }
@@ -1837,7 +1852,7 @@ fn testSendPost(fd: posix.fd_t, path: []const u8, body: []const u8) void {
 fn testReadResponse(fd: posix.fd_t, buf: []u8) usize {
     var total: usize = 0;
     while (total < buf.len) {
-        const n = std.c.read(fd, buf[total..].ptr, buf.len - total);
+        const n = testRead(fd, buf[total..]);
         if (n <= 0) break;
         total += @intCast(n);
     }
@@ -1898,7 +1913,7 @@ test "Performans: needs_headers=false iken header kopyalama döngüsü GERÇEKTE
             const req = std.fmt.bufPrint(&buf, "GET /hello HTTP/1.1\r\nHost: 127.0.0.1\r\nX-A: 1\r\nX-B: 2\r\nX-C: 3\r\nConnection: close\r\n\r\n", .{}) catch unreachable;
             var off: usize = 0;
             while (off < req.len) {
-                const n = std.c.write(fd, req[off..].ptr, req.len - off);
+                const n = testWrite(fd, req[off..]);
                 if (n <= 0) break;
                 off += @intCast(n);
             }
@@ -2213,7 +2228,7 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP ya
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
             var buf: [16]u8 = undefined;
-            const n = std.c.read(fd, &buf, buf.len);
+            const n = testRead(fd, &buf);
             rejected.* = (n <= 0);
         }
     }.run, .{ port, &fast_rejected });
@@ -2267,7 +2282,7 @@ test "Faz HH.7: baglanti HICBIR sey gondermezse okuma zaman asimiyla sessizce ka
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
             var buf: [16]u8 = undefined;
-            const n = std.c.read(fd, &buf, buf.len);
+            const n = testRead(fd, &buf);
             out.* = (n <= 0);
         }
     }.run, .{ port, &timed_out });

@@ -35,6 +35,7 @@ const io_mod = @import("io.zig");
 /// "hazır-olma bildirimi alınabilen bir fd" sözleşmesini AYNEN karşılar.
 pub fn makeSelfPipe() ?[2]posix.fd_t {
     if (builtin.os.tag == .windows) {
+        io_mod.ensureWinsock();
         const ws = io_mod.WinSock;
         const a = ws.socket(ws.AF_INET, 2, 17); // SOCK_DGRAM=2, IPPROTO_UDP=17
         if (a == ws.INVALID_SOCKET) return null;

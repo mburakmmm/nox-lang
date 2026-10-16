@@ -159,6 +159,21 @@ fn sleepMs(ms: u32) void {
     _ = std.c.nanosleep(&ts, null);
 }
 
+/// `std.testing.fuzz`, fuzz modu kapalıyken kökteki bu fonksiyonu çağırır.
+/// Korpusu bir kez çalıştırır; korpus yoksa boş girdiyle duman testi yapar.
+pub fn fuzz(
+    context: anytype,
+    comptime testOne: fn (context: @TypeOf(context), *std.testing.Smith) anyerror!void,
+    options: std.testing.FuzzInputOptions,
+) anyerror!void {
+    for (options.corpus) |input| {
+        var smith: std.testing.Smith = .{ .in = input };
+        try testOne(context, &smith);
+    }
+    var smith: std.testing.Smith = .{ .in = "" };
+    try testOne(context, &smith);
+}
+
 fn writeAll(bytes: []const u8) void {
     if (builtin.os.tag == .windows) {
         const k = struct {

@@ -282,6 +282,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     var decompress: std.http.Decompress = undefined;
     const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
     var body_out: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer body_out.deinit();
     _ = reader.streamRemaining(&body_out.writer) catch {
         ctx.failed = true;
         return;
@@ -375,13 +376,16 @@ fn doRequest(
     const u = url orelse return null;
 
     const ctx = gpa.create(RequestCtx) catch return null;
-    errdefer gpa.destroy(ctx);
 
-    const fds = makeSelfPipe() orelse return null;
+    const fds = makeSelfPipe() orelse {
+        gpa.destroy(ctx);
+        return null;
+    };
 
     const url_copy = gpa.dupeZ(u8, str_mod.nox_str_slice(u)) catch {
         closeFd(fds[0]);
         closeFd(fds[1]);
+        gpa.destroy(ctx);
         return null;
     };
     const body_copy: ?[]const u8 = if (body) |b| (gpa.dupe(u8, str_mod.nox_str_slice(b)) catch null) else null;
@@ -389,8 +393,11 @@ fn doRequest(
     // belge notu) İSTEĞİN TAMAMI reddedilerek ele alınır — `url_copy`
     // başarısızlığıyla AYNI "temizle, `null` dön" deseni.
     const headers_copy = copyHeaders(gpa, headers_dict) catch {
+        gpa.free(url_copy);
+        if (body_copy) |b| gpa.free(b);
         closeFd(fds[0]);
         closeFd(fds[1]);
+        gpa.destroy(ctx);
         return null;
     };
 
@@ -515,6 +522,7 @@ export fn nox_http_response_free(h: ?*anyopaque) callconv(.c) void {
 
 fn testListenerOn127001(port_out: *u16) !posix.fd_t {
     if (builtin.os.tag == .windows) {
+        io_mod.ensureWinsock();
         const ws = io_mod.WinSock;
         const fd = ws.socket(ws.AF_INET, ws.SOCK_STREAM, 0);
         if (fd == ws.INVALID_SOCKET) return error.SocketFailed;
@@ -582,10 +590,29 @@ fn testServeOnce(listen_fd: posix.fd_t) void {
 /// (BAŞKA fiber'a GEÇİŞ OLMADAN) tek seferde TAMAMLANIYORDU, "sıra kanıtı"
 /// testinin (bkz. aşağıdaki test) BEKLEDİĞİ "diger fiber calisti" ÖNCE
 /// gelir garantisini BOZUYORDU.
+fn windowsAccept(listen: usize, timeout_ms: i32) usize {
+    switch (comptime builtin.os.tag) {
+        .windows => {
+            const poll = struct {
+                const Fd = extern struct {
+                    fd: usize,
+                    events: i16,
+                    revents: i16,
+                };
+                extern "ws2_32" fn WSAPoll(fds: [*]Fd, nfds: u32, timeout: i32) callconv(.c) i32;
+            };
+            var pfd = [1]poll.Fd{.{ .fd = listen, .events = 0x0100, .revents = 0 }};
+            if (poll.WSAPoll(&pfd, 1, timeout_ms) <= 0) return io_mod.WinSock.INVALID_SOCKET;
+            return io_mod.WinSock.accept(listen, null, null);
+        },
+        else => unreachable,
+    }
+}
+
 fn testServeOnceDelayed(listen_fd: posix.fd_t, delay_ms: i64) void {
     if (builtin.os.tag == .windows) {
         const ws = io_mod.WinSock;
-        const conn = ws.accept(@intFromPtr(listen_fd), null, null);
+        const conn = windowsAccept(@intFromPtr(listen_fd), 15_000);
         if (conn == ws.INVALID_SOCKET) return;
         defer _ = ws.closesocket(conn);
 
