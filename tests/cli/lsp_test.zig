@@ -339,6 +339,21 @@ fn absPath(io: std.Io, dir: std.Io.Dir, buf: []u8) ![]const u8 {
     return buf[0..len];
 }
 
+/// JSON içine gömülecek `file://` URI. Windows yollarındaki `\` JSON
+/// kaçışı sayılır (`\t`, `\u`…); eğik çizgi kullanılır. Sürücü harfi
+/// `file:///D:/...` biçimindedir.
+fn fileUri(a: std.mem.Allocator, path: []const u8, suffix: []const u8) ![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.appendSlice(a, "file://");
+    if (builtin.os.tag == .windows and path.len >= 2 and path[1] == ':') try out.append(a, '/');
+    for (path) |c| try out.append(a, if (c == '\\') '/' else c);
+    if (suffix.len != 0) {
+        if (out.items.len == 0 or out.items[out.items.len - 1] != '/') try out.append(a, '/');
+        try out.appendSlice(a, suffix);
+    }
+    return out.toOwnedSlice(a);
+}
+
 // P1.3: `lsp_main.zig`nin `resolveModuleForLsp`i (bkz. onun belge notu) —
 // `nox.json` İÇEREN bir fixture proje kökünde, `requires[]`e HİÇ İHTİYAÇ
 // DUYMADAN proje-içi (`helper.nox`) bir import'un ARTIK GERÇEKTEN
@@ -366,7 +381,7 @@ test "uctan uca: nox.json'lu bir projede proje-ici (requires'siz) import gercekt
 
     var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const proj_path = try absPath(io, proj.dir, &proj_buf);
-    const main_uri = try std.fmt.allocPrint(a, "file://{s}/main.nox", .{proj_path});
+    const main_uri = try fileUri(a, proj_path, "main.nox");
 
     var child = try std.process.spawn(io, .{
         .argv = &.{noxlspPath()},
@@ -520,8 +535,8 @@ test "uctan uca: import edilen fonksiyonun tanimi ve imzasi hedef dosyadan gelir
     });
     var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const proj_path = try absPath(io, proj.dir, &proj_buf);
-    const main_uri = try std.fmt.allocPrint(a, "file://{s}/main.nox", .{proj_path});
-    const root_uri = try std.fmt.allocPrint(a, "file://{s}", .{proj_path});
+    const main_uri = try fileUri(a, proj_path, "main.nox");
+    const root_uri = try fileUri(a, proj_path, "");
 
     var child = try std.process.spawn(io, .{
         .argv = &.{noxlspPath()},
@@ -675,10 +690,10 @@ test "from import as: sembol adi, takma ad ve golge ayri yeniden adlandirilir" {
     try proj.dir.writeFile(io, .{ .sub_path = "shadow.nox", .data = shadow_src });
     var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const proj_path = try absPath(io, proj.dir, &proj_buf);
-    const main_uri = try std.fmt.allocPrint(a, "file://{s}/main.nox", .{proj_path});
-    const helper_uri = try std.fmt.allocPrint(a, "file://{s}/helper.nox", .{proj_path});
-    const shadow_uri = try std.fmt.allocPrint(a, "file://{s}/shadow.nox", .{proj_path});
-    const root_uri = try std.fmt.allocPrint(a, "file://{s}", .{proj_path});
+    const main_uri = try fileUri(a, proj_path, "main.nox");
+    const helper_uri = try fileUri(a, proj_path, "helper.nox");
+    const shadow_uri = try fileUri(a, proj_path, "shadow.nox");
+    const root_uri = try fileUri(a, proj_path, "");
 
     const alias_pos = try posOf(main_src, "twice");
     const use_pos = try posOfNth(main_src, "twice", 1);

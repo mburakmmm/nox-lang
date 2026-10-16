@@ -64,7 +64,11 @@ const LibHandle = if (builtin.os.tag == .windows) ?*anyopaque else std.DynLib;
 
 fn openLib() ?LibHandle {
     if (builtin.os.tag == .windows) {
-        return Kernel32.LoadLibraryA(libraryFileName());
+        // Önce açık kurulum (`sqlite3.dll`). Yoksa Windows 10+ ile gelen
+        // `winsqlite3.dll` (aynı `sqlite3_*` dışa aktarımları). İkisi de
+        // yoksa çağıran `SqliteError` fırlatır.
+        if (Kernel32.LoadLibraryA(libraryFileName())) |handle| return handle;
+        return Kernel32.LoadLibraryA("winsqlite3.dll");
     }
     return std.DynLib.open(libraryFileName()) catch null;
 }

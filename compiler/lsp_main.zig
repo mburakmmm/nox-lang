@@ -50,6 +50,7 @@
 //! yalnızca BU sunucunun GERÇEKTEN işlediği alanlar okunur/üretilir.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
@@ -1343,6 +1344,20 @@ fn uriToDir(a: std.mem.Allocator, uri: []const u8) !?[]const u8 {
         }
     }
     const path = decoded.items;
+    if (builtin.os.tag == .windows) {
+        var start: usize = 0;
+        if (std.mem.startsWith(u8, path, "//?/") or std.mem.startsWith(u8, path, "\\\\?\\")) start = 4;
+        // `file:///D:/foo` → kod çözülünce `/D:/foo`. Sürücü harfinden
+        // önceki eğik çizgi NT yolunu geçersiz kılar.
+        if (path.len >= start + 3 and path[start] == '/' and std.ascii.isAlphabetic(path[start + 1]) and path[start + 2] == ':') {
+            start += 1;
+        }
+        var j = start;
+        while (j < path.len) : (j += 1) {
+            if (decoded.items[j] == '/') decoded.items[j] = '\\';
+        }
+        return std.fs.path.dirname(decoded.items[start..]);
+    }
     return std.fs.path.dirname(path);
 }
 

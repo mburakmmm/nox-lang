@@ -2,6 +2,15 @@
 //! bağlanır. `export fn` ile işaretli semboller C-ABI üzerinden QBE'nin
 //! ürettiği makine kodundan çağrılabilir.
 
+const std = @import("std");
+
+/// Reddedilen bir TCP bağlantısı Zig'in Debug izini stderr'e basar.
+/// Nox bu hatayı kendi istisnasına çevirir; iz, programın stderr'ini
+/// kirletmesin.
+pub const std_options: std.Options = .{
+    .unexpected_error_tracing = false,
+};
+
 pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const dispatch_registry = @import("alloc/dispatch_registry.zig");

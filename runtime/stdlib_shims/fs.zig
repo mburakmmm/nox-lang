@@ -546,6 +546,11 @@ export fn nox_fs_create_dir_raw(path: ?[*:0]const u8) callconv(.c) void {
 /// yazılabilir geçici dizin `%TEMP%` ortam değişkenidir (Windows'un
 /// KENDİSİ HER ZAMAN AYARLAR). Diğer platformlarda DOKUNULMADAN `/tmp`
 /// döner.
+fn hostPid() u32 {
+    if (builtin.os.tag == .windows) return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
+}
+
 fn testTmpPrefix() []const u8 {
     if (builtin.os.tag == .windows) {
         if (std.c.getenv("TEMP")) |t| return std.mem.span(t);
@@ -561,7 +566,7 @@ test "nox_fs_exists/is_file/is_dir_raw dogru sonuc doner" {
     defer asap.nox_runtime_deinit(rt);
 
     var full_buf: [128]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_ee1_fs_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_ee1_fs_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw("/definitely/does/not/exist/nox_ee1_test"));
@@ -590,7 +595,7 @@ test "Faz III.3: nox_fs_read_to_string_raw (fstat-tabanli tek-tahsis) dogru cali
     defer asap.nox_runtime_deinit(rt);
 
     var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_read_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_read_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     const str = @import("../str.zig");
@@ -611,7 +616,7 @@ test "Faz III.3: nox_fs_append_string_raw dosyayi KISALTMAZ, SONUNA ekler" {
     defer asap.nox_runtime_deinit(rt);
 
     var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_append_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_append_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     const str = @import("../str.zig");
@@ -634,7 +639,7 @@ test "Faz III.3: nox_fs_stat_raw boyut/mtime dogru doner" {
     defer asap.nox_runtime_deinit(rt);
 
     var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_stat_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_stat_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     const digits = str.nox_str_from_bytes(rt, "12345") orelse return error.AllocFailed;
@@ -656,7 +661,7 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     defer asap.nox_runtime_deinit(rt);
 
     var dir_buf: [64]u8 = undefined;
-    const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_readdir_{d}", .{ testTmpPrefix(), std.c.getpid() });
+    const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_readdir_{d}", .{ testTmpPrefix(), hostPid() });
     _ = std.c.mkdir(dir_path.ptr, 0o755);
     defer _ = std.c.rmdir(dir_path.ptr);
 
@@ -666,12 +671,12 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     defer str.nox_str_release(rt, y_content);
 
     var f1_buf: [80]u8 = undefined;
-    const f1_path = try std.fmt.bufPrintZ(&f1_buf, "{s}/nox_iii3_readdir_{d}/a.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const f1_path = try std.fmt.bufPrintZ(&f1_buf, "{s}/nox_iii3_readdir_{d}/a.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(f1_path.ptr);
     nox_fs_write_string_raw(null, f1_path.ptr, x_content);
 
     var f2_buf: [80]u8 = undefined;
-    const f2_path = try std.fmt.bufPrintZ(&f2_buf, "{s}/nox_iii3_readdir_{d}/b.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const f2_path = try std.fmt.bufPrintZ(&f2_buf, "{s}/nox_iii3_readdir_{d}/b.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(f2_path.ptr);
     nox_fs_write_string_raw(null, f2_path.ptr, y_content);
 
@@ -703,11 +708,11 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
 
     const str = @import("../str.zig");
     var src_buf: [64]u8 = undefined;
-    const src_path = try std.fmt.bufPrintZ(&src_buf, "{s}/nox_iii3_copy_src_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const src_path = try std.fmt.bufPrintZ(&src_buf, "{s}/nox_iii3_copy_src_{d}.txt", .{ testTmpPrefix(), hostPid() });
     var dst_buf: [64]u8 = undefined;
-    const dst_path = try std.fmt.bufPrintZ(&dst_buf, "{s}/nox_iii3_copy_dst_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const dst_path = try std.fmt.bufPrintZ(&dst_buf, "{s}/nox_iii3_copy_dst_{d}.txt", .{ testTmpPrefix(), hostPid() });
     var ren_buf: [64]u8 = undefined;
-    const ren_path = try std.fmt.bufPrintZ(&ren_buf, "{s}/nox_iii3_copy_ren_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const ren_path = try std.fmt.bufPrintZ(&ren_buf, "{s}/nox_iii3_copy_ren_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(src_path.ptr);
     defer _ = std.c.unlink(dst_path.ptr);
     defer _ = std.c.unlink(ren_path.ptr);
@@ -734,7 +739,7 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
     try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(src_path.ptr));
 
     var dir_buf: [64]u8 = undefined;
-    const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_mkdir_{d}", .{ testTmpPrefix(), std.c.getpid() });
+    const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_mkdir_{d}", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.rmdir(dir_path.ptr);
     nox_fs_create_dir_raw(dir_path.ptr);
     try std.testing.expect(fsLastOkPtr().*);
@@ -757,7 +762,7 @@ test "g_last_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak
     // `std.testing.tmpDir`/`std.Io.Dir` KARMAŞIKLIĞINDAN kaçınmak İÇİN
     // `/tmp` altında PID'e göre BENZERSİZ bir yol DOĞRUDAN inşa edilir.
     var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_bb1_fs_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_bb1_fs_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     // `content` GEÇERLİ bir Nox `str` başlığı GEREKTİRDİĞİNDEN (bkz.

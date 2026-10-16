@@ -29086,3 +29086,17 @@ HTTP golden testlerinin bekçi iş parçacığı Windows'ta da çalışır. Sür
 `path_new_operations` golden'ı gerçek bir dosya oluşturduğu için QBE metni değişti. `tests/golden/ir_snapshots/codegen_cases/path_new_operations.ssa` bu metinle yenilendi. Linux ve macOS `zig build test` bu yüzden düşüyordu.
 
 Windows test istemcisi `connect` çağrısını en fazla 200 ms bekler. `recv` ve `send` 15 saniye sonra döner. `noxlsp` uçtan uca testleri, sunucu yanıt vermezse 45 saniyede süreci sonlandırır. Pipe kapanınca okuma hata döner. İş, `accept` veya LSP okumasında 180 dakika beklemez.
+
+## 3.304 Windows test derlemesi ve yol URI'si (v2.0.16)
+
+Barındırılan Windows `zig test -fllvm`, freestanding `printf` gövdesindeki `@cVaStart`i derlemez. Gerçek gövde yalnızca freestanding x86_64 çekirdektedir.
+
+`std.c.getpid` Windows'ta `HANDLE` döndürür. Testler süreç numarasını `GetCurrentProcessId` ile alır. `std.c.time_t` bu hedefte `void` olduğu için test uykuları `std.Thread.sleep` kullanır.
+
+`HPyType_Spec.flags` `unsigned long`dır. Windows x64'te bu alan 4 bayttır; yapının boyu 48, macOS ve Linux'ta 56'dır. İki düzen de o hedefin C derleyicisiyle aynıdır.
+
+`nox.sqlite` önce `sqlite3.dll` arar, bulamazsa Windows'un `winsqlite3.dll` dosyasını yükler. İkisi de yoksa `open` `SqliteError` fırlatır.
+
+`file:///D:/...` URI'si sürücü yoluna çevrilir. `nox.json` araması işletim sisteminin ayırıcısını kullanır. Reddedilen bir bağlantının Zig hata izi, Nox programının stderr'ine yazılmaz; program kendi istisnasını fırlatır.
+
+`nox.os.current_dir` Windows'ta sürücü harfiyle başlar. Golden, ilk karakter yerine yolun mutlak olduğunu yazdırır. `/tmp` golden'ları, test başlamadan geçerli sürücünün `\tmp` dizini oluşturulmuşken çalışır.

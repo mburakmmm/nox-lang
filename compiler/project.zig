@@ -123,7 +123,7 @@ pub fn saveManifest(a: Allocator, io: Io, dir_path: []const u8, manifest: Manife
 pub fn findProjectRoot(a: Allocator, io: Io, start_dir: []const u8) Allocator.Error!?[]const u8 {
     var current: []const u8 = try a.dupe(u8, start_dir);
     while (true) {
-        const candidate = try std.fmt.allocPrint(a, "{s}/nox.json", .{current});
+        const candidate = try std.fmt.allocPrint(a, "{s}{c}nox.json", .{ current, std.fs.path.sep });
         if (std.Io.Dir.accessAbsolute(io, candidate, .{})) |_| {
             return current;
         } else |_| {}

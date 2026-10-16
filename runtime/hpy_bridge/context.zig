@@ -4855,17 +4855,27 @@ test "GetItem_s/SetItem_s: str anahtarlı kısayol" {
 }
 
 test "HPyType_Spec/HPyType_SpecParam/HPySlot bayt düzeni gerçek `cc offsetof` çıktısıyla eşleşiyor" {
-    // bkz. modül üstü not — bu sayılar `cc -DHPY_ABI_UNIVERSAL` ile
-    // GERÇEKTEN derlenip `offsetof`la ölçüldü (Faz 12'nin aynı yöntemi).
-    try std.testing.expectEqual(@as(usize, 56), @sizeOf(HPyType_Spec));
+    // LP64 (macOS/Linux): `unsigned long` 8 bayt, yapı 56 bayt.
+    // LLP64 (Windows x64): `unsigned long` 4 bayt, `flags` ile
+    // `builtin_shape` bitişik durur, sonraki gösterici 8'e hizalanır,
+    // yapı 48 bayt. İkisi de MinGW/`cc` `offsetof` ile aynıdır.
+    if (@sizeOf(c_ulong) == 8) {
+        try std.testing.expectEqual(@as(usize, 56), @sizeOf(HPyType_Spec));
+        try std.testing.expectEqual(@as(usize, 24), @offsetOf(HPyType_Spec, "builtin_shape"));
+        try std.testing.expectEqual(@as(usize, 32), @offsetOf(HPyType_Spec, "legacy_slots"));
+        try std.testing.expectEqual(@as(usize, 40), @offsetOf(HPyType_Spec, "defines"));
+        try std.testing.expectEqual(@as(usize, 48), @offsetOf(HPyType_Spec, "doc"));
+    } else {
+        try std.testing.expectEqual(@as(usize, 48), @sizeOf(HPyType_Spec));
+        try std.testing.expectEqual(@as(usize, 20), @offsetOf(HPyType_Spec, "builtin_shape"));
+        try std.testing.expectEqual(@as(usize, 24), @offsetOf(HPyType_Spec, "legacy_slots"));
+        try std.testing.expectEqual(@as(usize, 32), @offsetOf(HPyType_Spec, "defines"));
+        try std.testing.expectEqual(@as(usize, 40), @offsetOf(HPyType_Spec, "doc"));
+    }
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(HPyType_Spec, "name"));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(HPyType_Spec, "basicsize"));
     try std.testing.expectEqual(@as(usize, 12), @offsetOf(HPyType_Spec, "itemsize"));
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(HPyType_Spec, "flags"));
-    try std.testing.expectEqual(@as(usize, 24), @offsetOf(HPyType_Spec, "builtin_shape"));
-    try std.testing.expectEqual(@as(usize, 32), @offsetOf(HPyType_Spec, "legacy_slots"));
-    try std.testing.expectEqual(@as(usize, 40), @offsetOf(HPyType_Spec, "defines"));
-    try std.testing.expectEqual(@as(usize, 48), @offsetOf(HPyType_Spec, "doc"));
 
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(HPyType_SpecParam));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(HPyType_SpecParam, "kind"));

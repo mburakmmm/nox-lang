@@ -35,7 +35,8 @@ test "discoverTestFiles: ic ice dizinlerde *_test.nox bulunur, digerleri yok say
     var found_b = false;
     for (files) |f| {
         if (std.mem.endsWith(u8, f, "a_test.nox")) found_a = true;
-        if (std.mem.endsWith(u8, f, "sub/nested/b_test.nox")) found_b = true;
+        const nested = "sub" ++ std.fs.path.sep_str ++ "nested" ++ std.fs.path.sep_str ++ "b_test.nox";
+        if (std.mem.endsWith(u8, f, nested)) found_b = true;
     }
     try std.testing.expect(found_a);
     try std.testing.expect(found_b);

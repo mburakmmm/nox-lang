@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.16]
+
+### Düzeltildi
+
+- **Windows derlemesi.** Freestanding `printf` gövdesi barındırılan Windows testinde derlenmez. Test uykuları `Sleep` kullanır. Süreç numarası `GetCurrentProcessId` ile alınır.
+- **HPy düzeni.** Windows x64'te `HPyType_Spec` 48 bayttır. macOS ve Linux'ta 56 bayt kalır.
+- **SQLite.** `sqlite3.dll` yoksa `winsqlite3.dll` yüklenir.
+- **LSP yolu.** `file:///D:/...` URI'si sürücü yoluna çevrilir. JSON içindeki yol eğik çizgi kullanır.
+- **Golden.** `current_dir` mutlaklığı yazdırır. Windows'ta `/tmp` geçerli sürücünün `\tmp` dizinidir. `nox.process` Windows'ta `cmd.exe` ile doğrulanır. Reddedilen bağlantının Zig izi stderr'e yazılmaz.
+
 ## [2.0.15]
 
 ### Düzeltildi

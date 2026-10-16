@@ -9,6 +9,12 @@
 //! çağrısıyla (biri YAZAR biri OKUR) çalıştırılır.
 
 const std = @import("std");
+const builtin = @import("builtin");
+
+fn hostPid() u32 {
+    if (builtin.os.tag == .windows) return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
+}
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
@@ -27,7 +33,7 @@ test "nox.sharedmem: iki BAGIMSIZ noxc run process'i AYNI isimli paylasimli bell
     // Her test çalıştırmasında ÇAKIŞMayı önlemek İçin PID'e göre BENZERSİZ
     // bir segment adı kullan (paralel test çalıştırmaları / önceki başarısız
     // bir çalıştırmadan kalan bir segment İLE ÇAKIŞMAMASI İçin).
-    const shm_name = try std.fmt.allocPrint(gpa, "nox_test_shm_cli_{d}", .{std.c.getpid()});
+    const shm_name = try std.fmt.allocPrint(gpa, "nox_test_shm_cli_{d}", .{hostPid()});
     defer gpa.free(shm_name);
 
     const writer_source = try std.fmt.allocPrint(gpa,
@@ -113,7 +119,7 @@ test "nox.sharedmem: var olmayan bir segment acilirsa bos/sifir baslar (O_CREAT 
     const dir_len = try tmp.dir.realPath(io, &path_buf);
     const dir_path = path_buf[0..dir_len];
 
-    const shm_name = try std.fmt.allocPrint(gpa, "nox_test_shm_fresh_{d}", .{std.c.getpid()});
+    const shm_name = try std.fmt.allocPrint(gpa, "nox_test_shm_fresh_{d}", .{hostPid()});
     defer gpa.free(shm_name);
 
     const source = try std.fmt.allocPrint(gpa,

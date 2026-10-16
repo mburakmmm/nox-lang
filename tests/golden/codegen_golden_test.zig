@@ -123,7 +123,21 @@ fn runOneFixture(fx: *const Fixture, result: *FixtureResult) void {
     result.* = .{ .ok = true };
 }
 
+/// Windows'ta `/tmp/...` geçerli sürücünün kökündeki `\tmp` olur.
+/// Golden'lar bu dizinin var olduğunu varsayar.
+fn ensureDriveTmp() void {
+    if (@import("builtin").os.tag != .windows) return;
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_z = std.c.getcwd(&cwd_buf, cwd_buf.len) orelse return;
+    const cwd = std.mem.span(cwd_z);
+    if (cwd.len < 2 or cwd[1] != ':') return;
+    var path_buf: [16]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&path_buf, "{c}:\\tmp", .{cwd[0]}) catch return;
+    std.Io.Dir.createDirAbsolute(std.testing.io, path, .default_dir) catch {};
+}
+
 test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı paralelliğiyle)" {
+    ensureDriveTmp();
     const results = try std.testing.allocator.alloc(FixtureResult, fixtures.len);
     defer std.testing.allocator.free(results);
     @memset(results, .{});
@@ -578,7 +592,54 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // TEK satır DIŞINDA platform-bağımsız olan bir testi Linux'ta HER ZAMAN
 // BAŞARISIZ kılıyordu. Düzeltme: bu satırı AYRI doğrula (iki bilinen
 // GERÇEK çözünürlükten biriyle eşleşmeli), geri kalanı TAM eşleştir.
+fn expectWindowsProcess() !void {
+    ensureDriveTmp();
+    const source =
+        \\from nox.process import Command, Output, ProcessError
+        \\
+        \\out1: Output = Command("cmd.exe").arg("/c").arg("echo merhaba_dunya").run()
+        \\print(out1.stdout)
+        \\print(out1.status)
+        \\print(out1.success())
+        \\
+        \\out2: Output = Command("cmd.exe").arg("/c").arg("echo hata-mesaji 1>&2& exit /b 7").run()
+        \\print(out2.status)
+        \\print(out2.stderr)
+        \\print(out2.success())
+        \\
+        \\out3: Output = Command("cmd.exe").arg("/c").arg("cd").set_cwd("/tmp").run()
+        \\print(out3.stdout)
+        \\
+        \\try:
+        \\    bad: Output = Command("bu-program-kesinlikle-yok-xyz123").run()
+        \\except ProcessError:
+        \\    print("ProcessError yakalandi")
+        \\
+    ;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const run_result = try compileAndRun(arena.allocator(), source);
+    if (run_result.term != .exited or run_result.term.exited != 0) {
+        std.debug.print("program basarisiz cikti (stderr): {s}\n", .{run_result.stderr});
+        return error.ProgramFailed;
+    }
+    if (run_result.stderr.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı: {s}\n", .{run_result.stderr});
+        return error.UnexpectedStderrOutput;
+    }
+    const out = run_result.stdout;
+    if (std.mem.indexOf(u8, out, "merhaba_dunya") == null) return error.UnexpectedOutput;
+    if (std.mem.indexOf(u8, out, "\n0\n") == null) return error.UnexpectedOutput;
+    if (std.mem.indexOf(u8, out, "True") == null) return error.UnexpectedOutput;
+    if (std.mem.indexOf(u8, out, "\n7\n") == null) return error.UnexpectedOutput;
+    if (std.mem.indexOf(u8, out, "hata-mesaji") == null) return error.UnexpectedOutput;
+    if (std.mem.indexOf(u8, out, "False") == null) return error.UnexpectedOutput;
+    if (std.mem.indexOf(u8, out, ":\\tmp") == null and std.mem.indexOf(u8, out, ":/tmp") == null) return error.UnexpectedCwdLine;
+    if (!std.mem.endsWith(u8, out, "ProcessError yakalandi\n")) return error.UnexpectedOutput;
+}
+
 test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/ProcessError" {
+    if (@import("builtin").os.tag == .windows) return try expectWindowsProcess();
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();

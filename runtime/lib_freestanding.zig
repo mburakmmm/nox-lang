@@ -242,7 +242,11 @@ export fn strcmp(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) c_int {
 /// `nox_stdin_read_line_raw`nin AYNI "SADECE linklemeyi sağlayan no-op"
 /// ilkesiyle, aarch64 host'ta printf ARTIK OLDUĞU GİBİ (F.0.7-ÖNCESİ,
 /// SADECE bir linkleme-kanıtı) KALIR.
-const printf_real = builtin.cpu.arch == .x86_64;
+/// Windows'ta barındırılan `zig test -fllvm` de `@cVaStart`i aynı
+/// "disabled due to miscompilations" hatasıyla reddeder. Gerçek gövde
+/// yalnızca freestanding x86_64 çekirdek içindir; Windows test kökü
+/// linkleme kanıtı olarak kalır.
+const printf_real = builtin.cpu.arch == .x86_64 and builtin.os.tag != .windows;
 
 fn printfReal(f: [*:0]const u8, ap_ptr: *std.builtin.VaList) usize {
     var buf: [1024]u8 = undefined;

@@ -1710,7 +1710,15 @@ const FdWatchdog = struct {
     }
 };
 
+const WinSleep = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(.c) void;
+} else struct {};
+
 fn sleepMs(ms: i64) void {
+    if (builtin.os.tag == .windows) {
+        WinSleep.Sleep(@intCast(ms));
+        return;
+    }
     const ts: posix.timespec = .{
         .sec = @divTrunc(ms, std.time.ms_per_s),
         .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,
@@ -1960,8 +1968,7 @@ test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzama
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
-            const req_ts: posix.timespec = .{ .sec = 0, .nsec = 150 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&req_ts, null);
+            sleepMs(150);
             testSendGet(fd, "/slow");
             testReadAll(fd);
         }
@@ -2186,8 +2193,7 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP ya
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
-            const ts: posix.timespec = .{ .sec = 0, .nsec = 150 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            sleepMs(150);
             testSendGet(fd, "/slow");
             testReadAll(fd);
         }
@@ -2196,8 +2202,7 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP ya
     // Sunucunun "slow" bağlantıyı kabul edip sayacı 1'e çıkarmasını beklemek
     // İÇİN kısa bir emniyet payı (kabul döngüsü mikrosaniyeler içinde tepki
     // verir — 30ms fazlasıyla yeterli).
-    const settle_ts: posix.timespec = .{ .sec = 0, .nsec = 30 * std.time.ns_per_ms };
-    _ = std.c.nanosleep(&settle_ts, null);
+    sleepMs(30);
 
     // "fast" istemci: `max_concurrent = 1` ZATEN DOLU olduğundan reddedilmesi
     // BEKLENİR — bağlantı HİÇBİR HTTP yanıtı ALMADAN (sıfır bayt okuyarak,
@@ -2311,8 +2316,7 @@ test "Faz HH.7: zaman asimi ICINDE tamamlanan normal bir istek YANLIS-POZITIF ol
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
-            const ts: posix.timespec = .{ .sec = 0, .nsec = 200 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            sleepMs(200);
             testSendGet(fd, "/normal");
             testReadAll(fd);
         }

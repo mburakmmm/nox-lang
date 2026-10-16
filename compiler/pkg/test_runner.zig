@@ -39,7 +39,7 @@ pub fn discoverTestFiles(a: std.mem.Allocator, io: std.Io, root: []const u8) ![]
         if (entry.kind != .file) continue;
         if (pathHasSkippedDir(entry.path)) continue;
         if (!std.mem.endsWith(u8, entry.basename, "_test.nox")) continue;
-        const full = try std.fmt.allocPrint(a, "{s}/{s}", .{ root, entry.path });
+        const full = try std.fs.path.join(a, &.{ root, entry.path });
         try files.append(a, full);
     }
     return files.items;

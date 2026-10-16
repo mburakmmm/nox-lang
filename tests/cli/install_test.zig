@@ -8,6 +8,7 @@
 //! bir geçici dizine yönlendirilir (gerçek `~/.nox`a ASLA dokunulmaz).
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 fn noxcPath() []const u8 {
     return "zig-out/bin/noxc";
@@ -543,12 +544,49 @@ fn dirExists(io: std.Io, dir: std.Io.Dir, sub_path: []const u8) bool {
     return true;
 }
 
+fn setModifyTime(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, mtime_ns: i96) !void {
+    if (builtin.os.tag != .windows) {
+        try dir.setTimestamps(io, sub_path, .{ .modify_timestamp = .{ .new = std.Io.Timestamp.fromNanoseconds(mtime_ns) } });
+        return;
+    }
+    // Zig 0.16 `dirSetTimestamps` Windows'ta kasıtlı olarak panikler.
+    // Dizin damgası `SetFileTime` ile yazılır.
+    var child = try dir.openDir(io, sub_path, .{});
+    defer child.close(io);
+    var path_buf: [std.Io.Dir.max_path_bytes:0]u8 = undefined;
+    const n = try child.realPath(io, &path_buf);
+    path_buf[n] = 0;
+
+    const Win = struct {
+        extern "kernel32" fn CreateFileA(name: [*:0]const u8, access: u32, share: u32, sec: ?*anyopaque, disp: u32, flags: u32, template: ?*anyopaque) callconv(.c) ?*anyopaque;
+        extern "kernel32" fn SetFileTime(file: ?*anyopaque, create: ?*const std.os.windows.FILETIME, access_time: ?*const std.os.windows.FILETIME, write: ?*const std.os.windows.FILETIME) callconv(.c) i32;
+        extern "kernel32" fn CloseHandle(handle: ?*anyopaque) callconv(.c) i32;
+    };
+    const handle = Win.CreateFileA(
+        path_buf[0..n :0],
+        0x0100, // FILE_WRITE_ATTRIBUTES
+        0x7, // FILE_SHARE_READ | WRITE | DELETE
+        null,
+        3, // OPEN_EXISTING
+        0x02000000, // FILE_FLAG_BACKUP_SEMANTICS (dizin)
+        null,
+    );
+    if (handle == null or handle == @as(?*anyopaque, @ptrFromInt(std.math.maxInt(usize)))) return error.FileNotFound;
+    defer _ = Win.CloseHandle(handle);
+    const ticks: u64 = @intCast(@divTrunc(mtime_ns, 100) + 11_644_473_600 * 10_000_000);
+    const ft: std.os.windows.FILETIME = .{
+        .dwLowDateTime = @truncate(ticks),
+        .dwHighDateTime = @truncate(ticks >> 32),
+    };
+    if (Win.SetFileTime(handle, null, null, &ft) == 0) return error.FileNotFound;
+}
+
 fn plantFakeSha(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, mtime_ns: i96) !void {
     try dir.createDirPath(io, sub_path);
     var buf: [256]u8 = undefined;
     const file_path = try std.fmt.bufPrint(&buf, "{s}/payload.txt", .{sub_path});
     try dir.writeFile(io, .{ .sub_path = file_path, .data = "x" ** 2048 });
-    try dir.setTimestamps(io, sub_path, .{ .modify_timestamp = .{ .new = std.Io.Timestamp.fromNanoseconds(mtime_ns) } });
+    try setModifyTime(io, dir, sub_path, mtime_ns);
 }
 
 test "noxc refresh: eski SHA onbellek dizini otomatik temizlenir, kurulu SHA korunur" {
@@ -631,7 +669,7 @@ test "noxc cache prune: --dry-run silmez; varsayilan en yeni+kurulu korur; --all
     try plantFakeSha(io, home_dir.dir, old_sha, old_ns);
     try plantFakeSha(io, home_dir.dir, new_sha, old_ns + 10_000_000_000);
     try home_dir.dir.createDirPath(io, "pkg/tmp/stage-stale");
-    try home_dir.dir.setTimestamps(io, "pkg/tmp/stage-stale", .{ .modify_timestamp = .{ .new = std.Io.Timestamp.fromNanoseconds(old_ns) } });
+    try setModifyTime(io, home_dir.dir, "pkg/tmp/stage-stale", old_ns);
     try home_dir.dir.createDirPath(io, "pkg/tmp/stage-fresh");
 
     // 1) --dry-run: hiçbir şey silinmez.
