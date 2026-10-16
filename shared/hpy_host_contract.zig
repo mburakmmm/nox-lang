@@ -127,19 +127,23 @@ pub const Manifest = struct {
 };
 
 pub const Accepted = struct {
-    parsed: std.json.Parsed(Manifest),
+    arena: *std.heap.ArenaAllocator,
+    value: Manifest,
     artifact_index: usize,
 
     pub fn deinit(self: *Accepted) void {
-        self.parsed.deinit();
+        const arena = self.arena;
+        const parent = arena.child_allocator;
+        arena.deinit();
+        parent.destroy(arena);
     }
 
     pub fn manifest(self: Accepted) Manifest {
-        return self.parsed.value;
+        return self.value;
     }
 
     pub fn artifact(self: Accepted) Artifact {
-        return self.parsed.value.artifacts[self.artifact_index];
+        return self.value.artifacts[self.artifact_index];
     }
 };
 
@@ -171,10 +175,16 @@ pub fn hasRequiredCapability(name: []const u8) bool {
 }
 
 pub fn validateText(allocator: std.mem.Allocator, text: []const u8, target: []const u8) union(enum) { ok: Accepted, reject: Reject } {
-    const parsed = std.json.parseFromSlice(Manifest, allocator, text, .{ .allocate = .alloc_always }) catch {
+    const holder = allocator.create(std.heap.ArenaAllocator) catch {
         return .{ .reject = .{ .code = .schema, .message = "nox-hpy.json yapısal olarak şemaya uymuyor" } };
     };
-    var accepted: Accepted = .{ .parsed = parsed, .artifact_index = 0 };
+    holder.* = std.heap.ArenaAllocator.init(allocator);
+    const value = parseManifest(holder.allocator(), text) catch {
+        holder.deinit();
+        allocator.destroy(holder);
+        return .{ .reject = .{ .code = .schema, .message = "nox-hpy.json yapısal olarak şemaya uymuyor" } };
+    };
+    var accepted: Accepted = .{ .arena = holder, .value = value, .artifact_index = 0 };
     if (semantic(accepted.manifest(), target)) |rej| {
         accepted.deinit();
         return .{ .reject = rej };
@@ -184,6 +194,461 @@ pub fn validateText(allocator: std.mem.Allocator, text: []const u8, target: []co
         return .{ .reject = .{ .code = .target, .message = "bu hedef için artefakt yok" } };
     };
     return .{ .ok = accepted };
+}
+
+const ParseError = error{ Bad, OutOfMemory };
+
+const Parser = struct {
+    text: []const u8,
+    i: usize,
+    arena: std.mem.Allocator,
+
+    fn skip(self: *Parser) void {
+        while (self.i < self.text.len) {
+            switch (self.text[self.i]) {
+                ' ', '\t', '\n', '\r' => self.i += 1,
+                else => return,
+            }
+        }
+    }
+
+    fn peek(self: *Parser) ?u8 {
+        if (self.i >= self.text.len) return null;
+        return self.text[self.i];
+    }
+
+    fn eat(self: *Parser, c: u8) bool {
+        if (self.peek() != c) return false;
+        self.i += 1;
+        return true;
+    }
+
+    fn expect(self: *Parser, c: u8) ParseError!void {
+        if (!self.eat(c)) return error.Bad;
+    }
+
+    fn parseI64(self: *Parser) ParseError!i64 {
+        self.skip();
+        const neg = self.eat('-');
+        const start = self.i;
+        if (self.peek() == null or !digit(self.peek().?)) return error.Bad;
+        if (self.text[start] == '0' and start + 1 < self.text.len and digit(self.text[start + 1])) return error.Bad;
+        var n: i64 = 0;
+        while (self.peek()) |c| {
+            if (!digit(c)) break;
+            const d: i64 = c - '0';
+            if (n > @divTrunc(std.math.maxInt(i64) - d, 10)) return error.Bad;
+            n = n * 10 + d;
+            self.i += 1;
+        }
+        if (self.i == start) return error.Bad;
+        if (self.peek()) |c| {
+            if (c == '.' or c == 'e' or c == 'E') return error.Bad;
+        }
+        if (!neg) return n;
+        if (n == 0) return 0;
+        return -n;
+    }
+
+    fn parseString(self: *Parser) ParseError![]const u8 {
+        self.skip();
+        try self.expect('"');
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
+        while (self.peek()) |c| {
+            if (c == '"') {
+                self.i += 1;
+                return buf.toOwnedSlice(self.arena);
+            }
+            if (c == '\\') {
+                self.i += 1;
+                const esc = self.peek() orelse return error.Bad;
+                self.i += 1;
+                switch (esc) {
+                    '"', '\\', '/' => try buf.append(self.arena, esc),
+                    'b' => try buf.append(self.arena, 0x08),
+                    'f' => try buf.append(self.arena, 0x0c),
+                    'n' => try buf.append(self.arena, '\n'),
+                    'r' => try buf.append(self.arena, '\r'),
+                    't' => try buf.append(self.arena, '\t'),
+                    'u' => try self.appendUnicode(&buf),
+                    else => return error.Bad,
+                }
+                continue;
+            }
+            if (c < 0x20) return error.Bad;
+            try buf.append(self.arena, c);
+            self.i += 1;
+        }
+        return error.Bad;
+    }
+
+    fn appendUnicode(self: *Parser, buf: *std.ArrayListUnmanaged(u8)) ParseError!void {
+        const cp = try self.hex4();
+        const full: u21 = if (cp >= 0xD800 and cp <= 0xDBFF) blk: {
+            if (!self.eat('\\') or !self.eat('u')) return error.Bad;
+            const low = try self.hex4();
+            if (low < 0xDC00 or low > 0xDFFF) return error.Bad;
+            break :blk @intCast(0x10000 + ((@as(u21, cp) - 0xD800) << 10) + (@as(u21, low) - 0xDC00));
+        } else if (cp >= 0xDC00 and cp <= 0xDFFF) {
+            return error.Bad;
+        } else @intCast(cp);
+        var tmp: [4]u8 = undefined;
+        const n = std.unicode.utf8Encode(full, &tmp) catch return error.Bad;
+        try buf.appendSlice(self.arena, tmp[0..n]);
+    }
+
+    fn hex4(self: *Parser) ParseError!u16 {
+        var n: u16 = 0;
+        var k: usize = 0;
+        while (k < 4) : (k += 1) {
+            const c = self.peek() orelse return error.Bad;
+            const d: u16 = switch (c) {
+                '0'...'9' => c - '0',
+                'a'...'f' => c - 'a' + 10,
+                'A'...'F' => c - 'A' + 10,
+                else => return error.Bad,
+            };
+            n = (n << 4) | d;
+            self.i += 1;
+        }
+        return n;
+    }
+
+    fn parseStringList(self: *Parser) ParseError![][]const u8 {
+        self.skip();
+        try self.expect('[');
+        var list: std.ArrayListUnmanaged([]const u8) = .empty;
+        self.skip();
+        if (self.eat(']')) return list.toOwnedSlice(self.arena);
+        while (true) {
+            try list.append(self.arena, try self.parseString());
+            self.skip();
+            if (self.eat(']')) return list.toOwnedSlice(self.arena);
+            try self.expect(',');
+        }
+    }
+
+    fn parseManifest(self: *Parser) ParseError!Manifest {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 7;
+        var schema_version: i64 = 0;
+        var package: @FieldType(Manifest, "package") = .{ .name = "", .version = "" };
+        var producer: @FieldType(Manifest, "producer") = .{ .ahpy_version = "", .cython_base = "", .source_digest = "", .compiler_options_digest = "" };
+        var host: @FieldType(Manifest, "host") = .{ .profile = "", .hpy_abi = "", .hpy_version = "", .required_capabilities = &.{} };
+        var module: @FieldType(Manifest, "module") = .{ .name = "", .init_symbol = "" };
+        var exports: []Export = &.{};
+        var artifacts: []Artifact = &.{};
+        self.skip();
+        if (!self.eat('}')) {
+            while (true) {
+                const field = try self.parseString();
+                self.skip();
+                try self.expect(':');
+                const idx: ?usize = if (std.mem.eql(u8, field, "schema_version")) 0 else if (std.mem.eql(u8, field, "package")) 1 else if (std.mem.eql(u8, field, "producer")) 2 else if (std.mem.eql(u8, field, "host")) 3 else if (std.mem.eql(u8, field, "module")) 4 else if (std.mem.eql(u8, field, "exports")) 5 else if (std.mem.eql(u8, field, "artifacts")) 6 else null;
+                const slot = idx orelse return error.Bad;
+                if (seen[slot]) return error.Bad;
+                seen[slot] = true;
+                switch (slot) {
+                    0 => schema_version = try self.parseI64(),
+                    1 => package = try self.parsePackage(),
+                    2 => producer = try self.parseProducer(),
+                    3 => host = try self.parseHost(),
+                    4 => module = try self.parseModule(),
+                    5 => exports = try self.parseExports(),
+                    6 => artifacts = try self.parseArtifacts(),
+                    else => unreachable,
+                }
+                self.skip();
+                if (self.eat('}')) break;
+                try self.expect(',');
+            }
+        }
+        for (seen) |ok| if (!ok) return error.Bad;
+        self.skip();
+        if (self.i != self.text.len) return error.Bad;
+        return .{
+            .schema_version = schema_version,
+            .package = package,
+            .producer = producer,
+            .host = host,
+            .module = module,
+            .exports = exports,
+            .artifacts = artifacts,
+        };
+    }
+
+    fn parsePackage(self: *Parser) ParseError!@FieldType(Manifest, "package") {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 2;
+        var name: []const u8 = "";
+        var version: []const u8 = "";
+        try self.fillTwo("name", "version", &seen, &name, &version);
+        if (!seen[0] or !seen[1]) return error.Bad;
+        return .{ .name = name, .version = version };
+    }
+
+    fn parseProducer(self: *Parser) ParseError!@FieldType(Manifest, "producer") {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 4;
+        var ahpy_version: []const u8 = "";
+        var cython_base: []const u8 = "";
+        var source_digest: []const u8 = "";
+        var compiler_options_digest: []const u8 = "";
+        self.skip();
+        if (!self.eat('}')) {
+            while (true) {
+                const key = try self.fieldKey();
+                const idx: ?usize = field4(key, "ahpy_version", "cython_base", "source_digest", "compiler_options_digest");
+                const slot = idx orelse return error.Bad;
+                if (seen[slot]) return error.Bad;
+                seen[slot] = true;
+                const value = try self.parseString();
+                switch (slot) {
+                    0 => ahpy_version = value,
+                    1 => cython_base = value,
+                    2 => source_digest = value,
+                    3 => compiler_options_digest = value,
+                    else => unreachable,
+                }
+                if (try self.endObject()) break;
+            }
+        }
+        for (seen) |ok| if (!ok) return error.Bad;
+        return .{ .ahpy_version = ahpy_version, .cython_base = cython_base, .source_digest = source_digest, .compiler_options_digest = compiler_options_digest };
+    }
+
+    fn parseHost(self: *Parser) ParseError!@FieldType(Manifest, "host") {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 4;
+        var profile_s: []const u8 = "";
+        var abi: []const u8 = "";
+        var version: []const u8 = "";
+        var caps: [][]const u8 = &.{};
+        self.skip();
+        if (!self.eat('}')) {
+            while (true) {
+                const key = try self.fieldKey();
+                const idx: ?usize = field4(key, "profile", "hpy_abi", "hpy_version", "required_capabilities");
+                const slot = idx orelse return error.Bad;
+                if (seen[slot]) return error.Bad;
+                seen[slot] = true;
+                switch (slot) {
+                    0 => profile_s = try self.parseString(),
+                    1 => abi = try self.parseString(),
+                    2 => version = try self.parseString(),
+                    3 => caps = try self.parseStringList(),
+                    else => unreachable,
+                }
+                if (try self.endObject()) break;
+            }
+        }
+        for (seen) |ok| if (!ok) return error.Bad;
+        return .{ .profile = profile_s, .hpy_abi = abi, .hpy_version = version, .required_capabilities = caps };
+    }
+
+    fn parseModule(self: *Parser) ParseError!@FieldType(Manifest, "module") {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 2;
+        var name: []const u8 = "";
+        var init_symbol: []const u8 = "";
+        try self.fillTwo("name", "init_symbol", &seen, &name, &init_symbol);
+        if (!seen[0] or !seen[1]) return error.Bad;
+        return .{ .name = name, .init_symbol = init_symbol };
+    }
+
+    fn parseExports(self: *Parser) ParseError![]Export {
+        self.skip();
+        try self.expect('[');
+        var list: std.ArrayListUnmanaged(Export) = .empty;
+        self.skip();
+        if (self.eat(']')) return list.toOwnedSlice(self.arena);
+        while (true) {
+            try list.append(self.arena, try self.parseExport());
+            self.skip();
+            if (self.eat(']')) return list.toOwnedSlice(self.arena);
+            try self.expect(',');
+        }
+    }
+
+    fn parseExport(self: *Parser) ParseError!Export {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 4;
+        var kind: []const u8 = "";
+        var name: []const u8 = "";
+        var parameters: []Parameter = &.{};
+        var result: Result = .{ .kind = "", .ownership = "" };
+        self.skip();
+        if (!self.eat('}')) {
+            while (true) {
+                const key = try self.fieldKey();
+                const idx: ?usize = field4(key, "kind", "name", "parameters", "result");
+                const slot = idx orelse return error.Bad;
+                if (seen[slot]) return error.Bad;
+                seen[slot] = true;
+                switch (slot) {
+                    0 => kind = try self.parseString(),
+                    1 => name = try self.parseString(),
+                    2 => parameters = try self.parseParameters(),
+                    3 => result = try self.parseResult(),
+                    else => unreachable,
+                }
+                if (try self.endObject()) break;
+            }
+        }
+        for (seen) |ok| if (!ok) return error.Bad;
+        return .{ .kind = kind, .name = name, .parameters = parameters, .result = result };
+    }
+
+    fn parseParameters(self: *Parser) ParseError![]Parameter {
+        self.skip();
+        try self.expect('[');
+        var list: std.ArrayListUnmanaged(Parameter) = .empty;
+        self.skip();
+        if (self.eat(']')) return list.toOwnedSlice(self.arena);
+        while (true) {
+            try list.append(self.arena, try self.parseParameter());
+            self.skip();
+            if (self.eat(']')) return list.toOwnedSlice(self.arena);
+            try self.expect(',');
+        }
+    }
+
+    fn parseParameter(self: *Parser) ParseError!Parameter {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 4;
+        var name: []const u8 = "";
+        var kind: []const u8 = "";
+        var call_kind: []const u8 = "";
+        var ownership: []const u8 = "";
+        self.skip();
+        if (!self.eat('}')) {
+            while (true) {
+                const key = try self.fieldKey();
+                const idx: ?usize = field4(key, "name", "kind", "call_kind", "ownership");
+                const slot = idx orelse return error.Bad;
+                if (seen[slot]) return error.Bad;
+                seen[slot] = true;
+                const value = try self.parseString();
+                switch (slot) {
+                    0 => name = value,
+                    1 => kind = value,
+                    2 => call_kind = value,
+                    3 => ownership = value,
+                    else => unreachable,
+                }
+                if (try self.endObject()) break;
+            }
+        }
+        for (seen) |ok| if (!ok) return error.Bad;
+        return .{ .name = name, .kind = kind, .call_kind = call_kind, .ownership = ownership };
+    }
+
+    fn parseResult(self: *Parser) ParseError!Result {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 2;
+        var kind: []const u8 = "";
+        var ownership: []const u8 = "";
+        try self.fillTwo("kind", "ownership", &seen, &kind, &ownership);
+        if (!seen[0] or !seen[1]) return error.Bad;
+        return .{ .kind = kind, .ownership = ownership };
+    }
+
+    fn parseArtifacts(self: *Parser) ParseError![]Artifact {
+        self.skip();
+        try self.expect('[');
+        var list: std.ArrayListUnmanaged(Artifact) = .empty;
+        self.skip();
+        if (self.eat(']')) return list.toOwnedSlice(self.arena);
+        while (true) {
+            try list.append(self.arena, try self.parseArtifact());
+            self.skip();
+            if (self.eat(']')) return list.toOwnedSlice(self.arena);
+            try self.expect(',');
+        }
+    }
+
+    fn parseArtifact(self: *Parser) ParseError!Artifact {
+        self.skip();
+        try self.expect('{');
+        var seen = [_]bool{false} ** 4;
+        var target: []const u8 = "";
+        var path: []const u8 = "";
+        var sha256: []const u8 = "";
+        var size: i64 = 0;
+        self.skip();
+        if (!self.eat('}')) {
+            while (true) {
+                const key = try self.fieldKey();
+                const idx: ?usize = field4(key, "target", "path", "sha256", "size");
+                const slot = idx orelse return error.Bad;
+                if (seen[slot]) return error.Bad;
+                seen[slot] = true;
+                switch (slot) {
+                    0 => target = try self.parseString(),
+                    1 => path = try self.parseString(),
+                    2 => sha256 = try self.parseString(),
+                    3 => size = try self.parseI64(),
+                    else => unreachable,
+                }
+                if (try self.endObject()) break;
+            }
+        }
+        for (seen) |ok| if (!ok) return error.Bad;
+        return .{ .target = target, .path = path, .sha256 = sha256, .size = size };
+    }
+
+    fn fillTwo(self: *Parser, a: []const u8, b: []const u8, seen: *[2]bool, left: *[]const u8, right: *[]const u8) ParseError!void {
+        self.skip();
+        if (self.eat('}')) return;
+        while (true) {
+            const key = try self.fieldKey();
+            const slot: usize = if (std.mem.eql(u8, key, a)) 0 else if (std.mem.eql(u8, key, b)) 1 else return error.Bad;
+            if (seen[slot]) return error.Bad;
+            seen[slot] = true;
+            const value = try self.parseString();
+            if (slot == 0) left.* = value else right.* = value;
+            if (try self.endObject()) return;
+        }
+    }
+
+    fn fieldKey(self: *Parser) ParseError![]const u8 {
+        const name = try self.parseString();
+        self.skip();
+        try self.expect(':');
+        return name;
+    }
+
+    fn endObject(self: *Parser) ParseError!bool {
+        self.skip();
+        if (self.eat('}')) return true;
+        try self.expect(',');
+        return false;
+    }
+};
+
+fn digit(c: u8) bool {
+    return c >= '0' and c <= '9';
+}
+
+fn field4(key: []const u8, a: []const u8, b: []const u8, c: []const u8, d: []const u8) ?usize {
+    if (std.mem.eql(u8, key, a)) return 0;
+    if (std.mem.eql(u8, key, b)) return 1;
+    if (std.mem.eql(u8, key, c)) return 2;
+    if (std.mem.eql(u8, key, d)) return 3;
+    return null;
+}
+
+fn parseManifest(allocator: std.mem.Allocator, text: []const u8) ParseError!Manifest {
+    var parser: Parser = .{ .text = text, .i = 0, .arena = allocator };
+    return parser.parseManifest();
 }
 
 fn semantic(m: Manifest, target: []const u8) ?Reject {
@@ -578,17 +1043,27 @@ fn kernel32_get_cwd(buf: [*]u16, n: usize) u32 {
 }
 
 fn appendNtPrefix(allocator: std.mem.Allocator, wide: *std.ArrayListUnmanaged(u16), text: []const u8) !void {
-    const w = std.os.windows;
     const prefix = [_]u16{ '\\', '?', '?', '\\' };
     try wide.appendSlice(allocator, &prefix);
-    if (std.mem.eql(u8, text, ".")) {
-        var cwd: [w.MAX_PATH + 1]u16 = undefined;
-        const n = kernel32_get_cwd(&cwd, cwd.len);
-        if (n == 0 or n >= cwd.len) return error.RejectedPath;
-        try wide.appendSlice(allocator, cwd[0..n]);
+    if (windowsAbsolute(text)) {
+        try appendUtf16(allocator, wide, text);
         return;
     }
+    var cwd: [4096]u16 = undefined;
+    const n = kernel32_get_cwd(&cwd, cwd.len);
+    if (n == 0 or n >= cwd.len) return error.RejectedPath;
+    try wide.appendSlice(allocator, cwd[0..n]);
+    if (std.mem.eql(u8, text, ".")) return;
+    if (n > 0 and cwd[n - 1] != '\\') try wide.append(allocator, '\\');
     try appendUtf16(allocator, wide, text);
+}
+
+fn windowsAbsolute(text: []const u8) bool {
+    if (text.len >= 3 and text[1] == ':' and (text[2] == '\\' or text[2] == '/')) {
+        const c = text[0];
+        if ((c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z')) return true;
+    }
+    return text.len >= 2 and text[0] == '\\' and text[1] == '\\';
 }
 
 fn appendUtf16(allocator: std.mem.Allocator, wide: *std.ArrayListUnmanaged(u16), text: []const u8) !void {
@@ -774,7 +1249,7 @@ test "bozuk sürüm, yanlış hedef ve eksik yetenek initten önce düşer" {
     switch (ok) {
         .ok => |*accepted| {
             defer accepted.deinit();
-            try std.testing.expectEqualStrings("artifacts/sample.hpy0", accepted.artifact().path);
+            try std.testing.expectEqualStrings("artifacts/sample-linux-x86_64.hpy0", accepted.artifact().path);
             try std.testing.expect(callAllowed(accepted.manifest(), "answer", "int64", 0, false) == null);
             try std.testing.expect(callAllowed(accepted.manifest(), "answer", "list", 0, false) != null);
         },

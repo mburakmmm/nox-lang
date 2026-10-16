@@ -133,14 +133,23 @@ test "kesilen kurulum son artefaktı seçmez, tamamlanan kurulum seçer" {
     const a = arena.allocator();
     var entry: project.LockedPackage = .{ .alias = "sampleext", .repo = "local", .ref = "main", .resolved = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
     try annotateLock(a, io, "tests/compat/hpy_host", &entry);
+    const manifest = try readManifest(a, io, "tests/compat/hpy_host");
+    var decision = contract.validateText(a, manifest, contract.hostTarget());
+    const rel = switch (decision) {
+        .reject => return error.HpyRejected,
+        .ok => |*acc| blk: {
+            defer acc.deinit();
+            break :blk try a.dupe(u8, acc.artifact().path);
+        },
+    };
 
     var parent = std.testing.tmpDir(.{});
     defer parent.cleanup();
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const parent_path = try dirReal(io, parent.dir, &buf);
     const bin_path = try std.fmt.allocPrint(a, "{s}/app", .{parent_path});
-    const staged = try std.fmt.allocPrint(a, "{s}/hpy/sampleext/artifacts/sample.hpy0", .{parent_path});
-    const leftover = try std.fmt.allocPrint(a, "{s}/hpy/sampleext/artifacts/sample.hpy0.deadbeef.partial", .{parent_path});
+    const staged = try std.fmt.allocPrint(a, "{s}/hpy/sampleext/{s}", .{ parent_path, rel });
+    const leftover = try std.fmt.allocPrint(a, "{s}/hpy/sampleext/{s}.deadbeef.partial", .{ parent_path, rel });
 
     try Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(leftover).?);
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = leftover, .data = "kesildi" });
