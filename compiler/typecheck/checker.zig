@@ -1139,6 +1139,7 @@ pub const Checker = struct {
         .{ .name = "db", .caps = &.{} },
         .{ .name = "fs", .caps = &.{.filesystem} },
         .{ .name = "gzip", .caps = &.{} },
+        .{ .name = "hpy", .caps = &.{.filesystem} },
         .{ .name = "http", .caps = &.{.network} },
         .{ .name = "json", .caps = &.{} },
         .{ .name = "log", .caps = &.{.clock} },
@@ -3699,7 +3700,7 @@ pub const Checker = struct {
     }
 
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "hpy_package_open", "hpy_package_close", "hpy_package_close_obj", "hpy_package_call_int", "hpy_package_call_int_arg", "hpy_package_call_bool", "hpy_package_call_float", "hpy_package_call_str", "hpy_package_call_obj", "hpy_package_call_str_arg", "hpy_package_call_float_arg", "hpy_package_method_int", "hpy_package_call_method", "hpy_package_new", "hpy_package_call_bytes", "hpy_package_call_int_keyword", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -7130,6 +7131,79 @@ pub const Checker = struct {
                     if (c.args[1] != .string_lit) {
                         return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_open' can only be a string LITERAL", .{});
                     }
+                    return .ptr;
+                }
+                // Paket yolu. `hpy_open`in literali burada aranmaz; manifest
+                // doğrulaması runtime'da, `HPyInit_*` çağrısından önce yapılır.
+                if (std.mem.eql(u8, name, "hpy_package_open")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'hpy_package_open' takes exactly 1 argument (package_root: str)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (package root) of 'hpy_package_open' must be a str", .{});
+                    return .ptr;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_close")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'hpy_package_close' takes exactly 1 argument (handle: ptr)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 of 'hpy_package_close' must be a ptr", .{});
+                    return .none;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_close_obj")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'hpy_package_close_obj' takes exactly 2 arguments (handle: ptr, object: ptr)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_package_close_obj' arguments must be ptr", .{});
+                    return .none;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_call_int") or std.mem.eql(u8, name, "hpy_package_call_bool") or std.mem.eql(u8, name, "hpy_package_call_float") or std.mem.eql(u8, name, "hpy_package_call_str") or std.mem.eql(u8, name, "hpy_package_call_obj")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'{s}' takes exactly 2 arguments (handle: ptr, name: str)", .{name});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 of '{s}' must be a ptr", .{name});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 of '{s}' must be a str", .{name});
+                    if (std.mem.eql(u8, name, "hpy_package_call_bool")) return .boolean;
+                    if (std.mem.eql(u8, name, "hpy_package_call_float")) return .float;
+                    if (std.mem.eql(u8, name, "hpy_package_call_str")) return .str;
+                    if (std.mem.eql(u8, name, "hpy_package_call_obj")) return .ptr;
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_call_int_arg")) {
+                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_int_arg' takes exactly 3 arguments (handle: ptr, name: str, arg: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_package_call_int_arg' expects ptr, str, int", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_call_float_arg")) {
+                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_float_arg' takes exactly 3 arguments (handle: ptr, name: str, arg: float)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .float) return self.fail(error.TypeMismatch, "'hpy_package_call_float_arg' expects ptr, str, float", .{});
+                    return .float;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_call_str_arg")) {
+                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_str_arg' takes exactly 3 arguments (handle: ptr, name: str, arg: str)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_package_call_str_arg' expects ptr, str, str", .{});
+                    return .str;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_call_bytes")) {
+                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_bytes' takes exactly 3 arguments (handle: ptr, name: str, arg: list[int])", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_package_call_bytes' expects ptr, str, list[int]", .{});
+                    switch (try self.checkExpr(ctx, c.args[2])) {
+                        .list => |elem| if (elem.* != .int) return self.fail(error.TypeMismatch, "'hpy_package_call_bytes' expects ptr, str, list[int]", .{}),
+                        else => return self.fail(error.TypeMismatch, "'hpy_package_call_bytes' expects ptr, str, list[int]", .{}),
+                    }
+                    const boxed = try self.allocator.create(Type);
+                    boxed.* = .int;
+                    return .{ .list = boxed };
+                }
+                if (std.mem.eql(u8, name, "hpy_package_call_int_keyword")) {
+                    if (c.args.len != 4) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_int_keyword' takes exactly 4 arguments (handle: ptr, name: str, key: str, arg: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .str or try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "'hpy_package_call_int_keyword' expects ptr, str, str, int", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_call_method")) {
+                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_method' takes exactly 3 arguments (handle: ptr, object: ptr, name: str)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .ptr or try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_package_call_method' expects ptr, ptr, str", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_method_int")) {
+                    if (c.args.len != 4) return self.fail(error.ArgumentCountMismatch, "'hpy_package_method_int' takes exactly 4 arguments (handle: ptr, object: ptr, name: str, arg: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .ptr or try self.checkExpr(ctx, c.args[2]) != .str or try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "'hpy_package_method_int' expects ptr, ptr, str, int", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "hpy_package_new")) {
+                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_new' takes exactly 3 arguments (handle: ptr, class_name: str, arg: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_package_new' expects ptr, str, int", .{});
                     return .ptr;
                 }
                 // Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına

@@ -99,6 +99,20 @@ fn setHpyError(comptime fmt: []const u8, args: anytype) void {
     g_hpy_last_error = std.heap.page_allocator.dupeZ(u8, msg) catch null;
 }
 
+fn setHpyErrorText(text: []const u8) void {
+    if (g_hpy_last_error) |old| std.heap.page_allocator.free(old);
+    g_hpy_last_error = std.heap.page_allocator.dupeZ(u8, text) catch null;
+}
+
+fn raisePending(ctx: *hpy_bridge.context.HPyContext, fallback: []const u8) void {
+    if (hpy_bridge.context.takePendingText(ctx, std.heap.page_allocator)) |text| {
+        defer std.heap.page_allocator.free(text);
+        setHpyErrorText(text);
+        return;
+    }
+    setHpyErrorText(fallback);
+}
+
 /// `g_hpy_last_error`i (VARSA) GERÇEK bir Nox `str`ine (`nox_str_from_bytes`)
 /// çevirip DÖNER VE yuvayı TEMİZLER (`nox_exception_take`nin AYNI "bir kez
 /// tüket" deseni); hata YOKSA `null`. Codegen HER `hpy_*` çağrısından
@@ -246,6 +260,11 @@ pub export fn nox_hpy_call_str(
 /// paylaştığı, `rt`nin allocator'ında yaşayan opak tutamaç — `nox_hpy_open`
 /// TARAFINDAN yaratılır, Nox tarafında `ptr` OLARAK taşınır (İçİNE
 /// BAKILMAZ), `nox_hpy_close` TARAFINDAN yok edilir.
+const PackageBinding = struct {
+    accepted: hpy_bridge.host_contract.Accepted,
+    objects: std.ArrayListUnmanaged(usize) = .empty,
+};
+
 const PersistentHpyHandle = struct {
     mod: hpy_bridge.loader.LoadedModule,
     ctx: *hpy_bridge.context.HPyContext,
@@ -258,6 +277,11 @@ const PersistentHpyHandle = struct {
     /// OLARAK saklar — `self = HPy_NULL` GEÇİRİLİRSE `HPy_GetAttr_s`
     /// BAŞARISIZ olur.
     module_obj: hpy_bridge.context.HPy,
+    /// Paket yolunda dolu. Güvensiz `hpy_open` bunu boş bırakır ve paket
+    /// yükleyicisini çağırmaz.
+    package: ?*PackageBinding = null,
+    closed: bool = false,
+    is_package: bool = false,
 };
 
 /// Faz 20: `mod`nin KENDİ modül nesnesini (`context.createModuleObject`)
@@ -325,6 +349,328 @@ pub export fn nox_hpy_open(
     return handle;
 }
 
+fn kindName(code: i32) []const u8 {
+    return switch (code) {
+        1 => "int64",
+        2 => "bool",
+        3 => "float64",
+        4 => "unicode",
+        5 => "opaque-object",
+        6 => "void",
+        7 => "bytes",
+        8 => "none",
+        else => "unknown",
+    };
+}
+
+fn extNameFromInit(init_symbol: []const u8) []const u8 {
+    const prefix = "HPyInit_";
+    if (std.mem.startsWith(u8, init_symbol, prefix)) return init_symbol[prefix.len..];
+    return init_symbol;
+}
+
+/// Paket kökündeki `nox-hpy.json`u doğrular. Uyuşmazlıkta `HPyInit_*` çağrılmaz.
+pub export fn nox_hpy_open_package(rt: ?*anyopaque, root: ?[*:0]const u8) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse {
+        setHpyError("AHPY_NOX003: runtime yok", .{});
+        return null;
+    }));
+    const allocator = state.allocator();
+    const root_z = root orelse {
+        setHpyError("AHPY_NOX003: paket kökü yok", .{});
+        return null;
+    };
+    if (hpy_bridge.host_contract.rootRejected(std.mem.span(root_z))) {
+        setHpyError("AHPY_NOX002: paket kökü dizin dışına çıkıyor", .{});
+        return null;
+    }
+    const text = hpy_bridge.host_contract.readPackageFile(allocator, root_z, "nox-hpy.json", 1024 * 1024) catch {
+        setHpyError("AHPY_NOX003: nox-hpy.json okunamadı", .{});
+        return null;
+    };
+    defer allocator.free(text);
+    const decision = hpy_bridge.host_contract.validateText(allocator, text, hpy_bridge.host_contract.hostTarget());
+    var accepted = switch (decision) {
+        .reject => |rej| {
+            setHpyError("{s}: {s}", .{ rej.code.label(), rej.message });
+            return null;
+        },
+        .ok => |acc| acc,
+    };
+    const art = accepted.artifact();
+    const bytes = hpy_bridge.host_contract.readPackageFile(allocator, root_z, art.path, 64 * 1024 * 1024) catch {
+        accepted.deinit();
+        setHpyError("AHPY_NOX002: artefakt okunamadı", .{});
+        return null;
+    };
+    defer allocator.free(bytes);
+    if (!hpy_bridge.host_contract.digestMatches(bytes, art.sha256, art.size)) {
+        accepted.deinit();
+        setHpyError("AHPY_NOX002: artefakt özeti uyuşmuyor", .{});
+        return null;
+    }
+    if (hpy_bridge.host_contract.imageRejected(hpy_bridge.host_contract.hostTarget(), bytes)) {
+        accepted.deinit();
+        setHpyError("AHPY_NOX006: artefakt bu 64-bit hedefe ait değil", .{});
+        return null;
+    }
+    if (hpy_bridge.host_contract.rootRejected(std.mem.span(root_z))) {
+        accepted.deinit();
+        setHpyError("AHPY_NOX002: paket kökü dizin dışına çıkıyor", .{});
+        return null;
+    }
+    const joined = std.fmt.allocPrint(allocator, "{s}/{s}", .{ std.mem.span(root_z), art.path }) catch {
+        accepted.deinit();
+        setHpyError("AHPY_NOX002: artefakt yolu kurulamadı", .{});
+        return null;
+    };
+    defer allocator.free(joined);
+    const full = allocator.dupeZ(u8, joined) catch {
+        accepted.deinit();
+        setHpyError("AHPY_NOX002: artefakt yolu kurulamadı", .{});
+        return null;
+    };
+    defer allocator.free(full);
+    const ext_name = extNameFromInit(accepted.manifest().module.init_symbol);
+    var mod = hpy_bridge.loader.load(full, ext_name) catch |e| {
+        accepted.deinit();
+        setHpyError("could not open the HPy module: {s} ({s}): {t}", .{ full, ext_name, e });
+        return null;
+    };
+    const ctx = hpy_bridge.context.createContext(allocator) catch {
+        accepted.deinit();
+        mod.deinit();
+        setHpyError("could not create the HPy context", .{});
+        return null;
+    };
+    const module_obj = setupModuleObject(ctx, &mod) orelse {
+        accepted.deinit();
+        hpy_bridge.context.destroyContext(allocator, ctx);
+        mod.deinit();
+        return null;
+    };
+    const binding = allocator.create(PackageBinding) catch {
+        accepted.deinit();
+        ctx.ctx_Close.?(ctx, module_obj);
+        hpy_bridge.context.destroyContext(allocator, ctx);
+        mod.deinit();
+        setHpyError("out of memory", .{});
+        return null;
+    };
+    binding.* = .{ .accepted = accepted, .objects = .empty };
+    const handle = allocator.create(PersistentHpyHandle) catch {
+        binding.accepted.deinit();
+        allocator.destroy(binding);
+        ctx.ctx_Close.?(ctx, module_obj);
+        hpy_bridge.context.destroyContext(allocator, ctx);
+        mod.deinit();
+        setHpyError("out of memory", .{});
+        return null;
+    };
+    handle.* = .{ .mod = mod, .ctx = ctx, .module_obj = module_obj, .package = binding, .is_package = true };
+    return handle;
+}
+
+pub export fn nox_hpy_package_allow(handle_ptr: ?*anyopaque, name: ?[*:0]const u8, result_kind: i32, argc: i32) i32 {
+    return packageAllow(handle_ptr, name, result_kind, argc, false);
+}
+
+pub export fn nox_hpy_package_allow_kw(handle_ptr: ?*anyopaque, name: ?[*:0]const u8, result_kind: i32, argc: i32) i32 {
+    return packageAllow(handle_ptr, name, result_kind, argc, true);
+}
+
+fn packageAllow(handle_ptr: ?*anyopaque, name: ?[*:0]const u8, result_kind: i32, argc: i32, keyword: bool) i32 {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse {
+        setHpyError("AHPY_NOX003: tutamaç yok", .{});
+        return 0;
+    }));
+    if (handle.closed) {
+        setHpyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı", .{});
+        return 0;
+    }
+    const pkg = handle.package orelse {
+        setHpyError("AHPY_NOX003: tutamaç paket yolundan açılmadı", .{});
+        return 0;
+    };
+    const fnm = name orelse {
+        setHpyError("AHPY_NOX003: fonksiyon adı yok", .{});
+        return 0;
+    };
+    if (!hpy_bridge.host_contract.unicodeOk(std.mem.span(fnm))) {
+        setHpyError("AHPY_NOX008: unicode NUL veya vekil içeriyor", .{});
+        return 0;
+    }
+    if (argc < 0) {
+        setHpyError("AHPY_NOX007: argüman sayısı geçersiz", .{});
+        return 0;
+    }
+    if (hpy_bridge.host_contract.callAllowed(pkg.accepted.manifest(), std.mem.span(fnm), kindName(result_kind), @intCast(argc), keyword)) |rej| {
+        setHpyError("{s}: {s}", .{ rej.code.label(), rej.message });
+        return 0;
+    }
+    return 1;
+}
+
+pub export fn nox_hpy_package_check_str(text: ?[*:0]const u8) void {
+    const value = text orelse {
+        setHpyError("AHPY_NOX008: metin yok", .{});
+        return;
+    };
+    if (!hpy_bridge.host_contract.unicodeOk(std.mem.span(value))) {
+        setHpyError("AHPY_NOX008: unicode NUL veya vekil içeriyor", .{});
+    }
+}
+
+pub export fn nox_hpy_package_check_float(value: f64) void {
+    if (!hpy_bridge.host_contract.floatOk(value)) {
+        setHpyError("AHPY_NOX008: float64 sonlu değil", .{});
+    }
+}
+
+fn listLen(list_ptr: ?*anyopaque) ?usize {
+    const p = list_ptr orelse return null;
+    const base: [*]const u8 = @ptrCast(p);
+    const len = @as(*align(1) const i64, @ptrCast(base)).*;
+    if (len < 0) return null;
+    return @intCast(len);
+}
+
+pub export fn nox_hpy_args_add_bytes(mc_ptr: ?*anyopaque, list_ptr: ?*anyopaque) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const len = listLen(list_ptr) orelse {
+        setHpyError("AHPY_NOX008: bytes listesi yok", .{});
+        return;
+    };
+    const raw = mc.allocator.alloc(u8, len) catch {
+        setHpyError("out of memory", .{});
+        return;
+    };
+    defer mc.allocator.free(raw);
+    const base: [*]const u8 = @ptrCast(list_ptr.?);
+    for (0..len) |i| {
+        const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + i * abi_layout.FIELD_SLOT_SIZE);
+        if (slot.* < 0 or slot.* > 255) {
+            setHpyError("AHPY_NOX008: bytes değeri 0-255 dışında", .{});
+            return;
+        }
+        raw[i] = @intCast(slot.*);
+    }
+    const ctx = mc.handle.ctx;
+    const h = ctx.ctx_Bytes_FromStringAndSize.?(ctx, raw.ptr, @intCast(raw.len));
+    mc.args.append(mc.allocator, .{ .h = h, .owned = true }) catch {
+        ctx.ctx_Close.?(ctx, h);
+        setHpyError("out of memory", .{});
+    };
+}
+
+fn buildIntList(rt: ?*anyopaque, bytes: []const u8) ?*anyopaque {
+    const raw = arc_mod.nox_rc_alloc(rt, abi_layout.LIST_HEADER_SIZE + abi_layout.FIELD_SLOT_SIZE * bytes.len) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(base)).* = @intCast(bytes.len);
+    @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(bytes.len);
+    for (bytes, 0..) |b, i| {
+        const slot = base + abi_layout.LIST_HEADER_SIZE + abi_layout.FIELD_SLOT_SIZE * i;
+        @as(*align(1) i64, @ptrCast(slot)).* = @intCast(b);
+    }
+    return @ptrCast(base);
+}
+
+pub export fn nox_hpy_call_bytes_finish(rt: ?*anyopaque, mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) ?*anyopaque {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return null));
+    defer freeMarshalCtx(mc);
+    if (g_hpy_last_error != null) return null;
+    const fnm = func_name orelse return null;
+    const ctx = mc.handle.ctx;
+    const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return null;
+    defer ctx.ctx_Close.?(ctx, h_result);
+    const n = ctx.ctx_Bytes_Size.?(ctx, h_result);
+    const p = ctx.ctx_Bytes_AsString.?(ctx, h_result);
+    if (n < 0 or p == null) {
+        setHpyError("AHPY_NOX008: dönüş bytes değil", .{});
+        return null;
+    }
+    return buildIntList(rt, p.?[0..@intCast(n)]);
+}
+
+pub export fn nox_hpy_call_int_keyword_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8, key_name: ?[*:0]const u8) i64 {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return 0));
+    defer freeMarshalCtx(mc);
+    const fnm = func_name orelse return 0;
+    const key = key_name orelse return 0;
+    const pkg = mc.handle.package orelse {
+        setHpyError("AHPY_NOX003: tutamaç paket yolundan açılmadı", .{});
+        return 0;
+    };
+    if (!hpy_bridge.host_contract.unicodeOk(std.mem.span(key))) {
+        setHpyError("AHPY_NOX008: unicode NUL veya vekil içeriyor", .{});
+        return 0;
+    }
+    if (!hpy_bridge.host_contract.keywordArgOk(pkg.accepted.manifest(), std.mem.span(fnm), std.mem.span(key))) {
+        setHpyError("AHPY_NOX007: anahtar manifestteki parametre değil", .{});
+        return 0;
+    }
+    const ctx = mc.handle.ctx;
+    const name_h = ctx.ctx_Unicode_FromString.?(ctx, key);
+    defer ctx.ctx_Close.?(ctx, name_h);
+    var names = [_]hpy_bridge.context.HPy{name_h};
+    const kw = ctx.ctx_Tuple_FromArray.?(ctx, &names, 1);
+    defer ctx.ctx_Close.?(ctx, kw);
+    const n = mc.args.items.len;
+    var stack_buf: [PACKED_ARGS_INLINE_CAP]hpy_bridge.context.HPy = undefined;
+    const packed_result = packArgs(mc, &stack_buf) catch {
+        setHpyError("out of memory", .{});
+        return 0;
+    };
+    defer if (packed_result.heap) |h| mc.allocator.free(h);
+    const method = mc.handle.mod.findMethodKeywords(std.mem.span(fnm)) orelse {
+        setHpyError("AHPY_NOX007: anahtarlı çağrı imzası yok", .{});
+        return 0;
+    };
+    const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_result.items.ptr else null;
+    const h_result = method(ctx, mc.handle.module_obj, args_ptr, n, kw);
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Close.?(ctx, h_result);
+        raisePending(ctx, "HPy exception");
+        return 0;
+    }
+    defer ctx.ctx_Close.?(ctx, h_result);
+    const v = ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+    if (checkUnmarshalErr(ctx, std.mem.span(fnm))) return 0;
+    return v;
+}
+
+pub export fn nox_hpy_package_close_obj(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque) void {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return));
+    if (handle.closed) {
+        setHpyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı", .{});
+        return;
+    }
+    const pkg = handle.package orelse {
+        setHpyError("AHPY_NOX003: tutamaç paket yolundan açılmadı", .{});
+        return;
+    };
+    const op = obj_ptr orelse {
+        setHpyError("AHPY_NOX002: nesne tutamacı yok", .{});
+        return;
+    };
+    const raw = @intFromPtr(op);
+    var found: ?usize = null;
+    for (pkg.objects.items, 0..) |item, i| {
+        if (item == raw) {
+            found = i;
+            break;
+        }
+    }
+    const index = found orelse {
+        setHpyError("AHPY_NOX002: nesne zaten kapatıldı", .{});
+        return;
+    };
+    _ = pkg.objects.swapRemove(index);
+    const ctx = handle.ctx;
+    const h: hpy_bridge.context.HPy = .{ ._i = @bitCast(raw) };
+    ctx.ctx_Close.?(ctx, h);
+}
+
 /// `handle`nin modül nesnesini VE context'ini yok eder, kütüphaneyi
 /// kapatır, tutamaç struct'ının KENDİSİNİ serbest bırakır. `handle_ptr
 /// == null` İSE (ör. `hpy_open` BAŞARISIZ olduysa) SESSİZCE hiçbir şey
@@ -333,10 +679,40 @@ pub export fn nox_hpy_close(rt: ?*anyopaque, handle_ptr: ?*anyopaque) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const allocator = state.allocator();
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return));
+    if (handle.is_package) {
+        if (handle.closed) {
+            setHpyError("AHPY_NOX002: modül zaten kapatıldı", .{});
+            return;
+        }
+        handle.closed = true;
+        if (handle.package) |pkg| {
+            const ctx = handle.ctx;
+            for (pkg.objects.items) |raw| {
+                const h: hpy_bridge.context.HPy = .{ ._i = @bitCast(raw) };
+                ctx.ctx_Close.?(ctx, h);
+            }
+            pkg.objects.deinit(std.heap.page_allocator);
+            pkg.accepted.deinit();
+            allocator.destroy(pkg);
+            handle.package = null;
+        }
+        handle.ctx.ctx_Close.?(handle.ctx, handle.module_obj);
+        hpy_bridge.context.destroyContext(allocator, handle.ctx);
+        handle.mod.deinit();
+        allocator.destroy(handle);
+        return;
+    }
     handle.ctx.ctx_Close.?(handle.ctx, handle.module_obj);
     hpy_bridge.context.destroyContext(allocator, handle.ctx);
     handle.mod.deinit();
     allocator.destroy(handle);
+}
+
+fn notePackageObject(handle: *PersistentHpyHandle, ptr: *anyopaque) void {
+    const pkg = handle.package orelse return;
+    pkg.objects.append(std.heap.page_allocator, @intFromPtr(ptr)) catch {
+        setHpyError("out of memory", .{});
+    };
 }
 
 /// Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına çoklu-
@@ -772,8 +1148,7 @@ fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.H
     };
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Close.?(ctx, h_result);
-        ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' raised an exception", .{func_name});
+        raisePending(ctx, "HPy exception");
         return null;
     }
     return h_result;
@@ -879,6 +1254,7 @@ pub export fn nox_hpy_call_obj_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]cons
     const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return null;
     const raw: usize = @bitCast(h_result._i);
     if (raw == 0) return null;
+    notePackageObject(mc.handle, @ptrFromInt(raw));
     return @ptrFromInt(raw);
 }
 
@@ -927,12 +1303,12 @@ pub export fn nox_hpy_new_finish(mc_ptr: ?*anyopaque, class_name: ?[*:0]const u8
     const h_result = ctx.ctx_Call.?(ctx, cls_h, args_ptr, n, hpy_bridge.context.HPy_NULL);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Close.?(ctx, h_result);
-        ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' could not be constructed", .{cn});
+        raisePending(ctx, "constructor failed");
         return null;
     }
     const raw: usize = @bitCast(h_result._i);
     if (raw == 0) return null;
+    notePackageObject(mc.handle, @ptrFromInt(raw));
     return @ptrFromInt(raw);
 }
 
@@ -1008,8 +1384,7 @@ pub export fn nox_hpy_call_attr_int_finish(mc_ptr: ?*anyopaque, attr_name: ?[*:0
     const h_result = ctx.ctx_Call.?(ctx, method_h, args_ptr, n, hpy_bridge.context.HPy_NULL);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Close.?(ctx, h_result);
-        ctx.ctx_Err_Clear.?(ctx);
-        setHpyError("'{s}' raised an exception", .{an});
+        raisePending(ctx, "method failed");
         return 0;
     }
     defer ctx.ctx_Close.?(ctx, h_result);

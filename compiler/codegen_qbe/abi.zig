@@ -18,6 +18,9 @@ pub const CodegenError = error{
     /// SONRA bildirilen (henüz ilklendirilmemiş) bir modül değişkenini okuyor.
     /// Sessiz sıfır/çökme yerine derleme zamanında reddedilir.
     GlobalInitOrder,
+    /// `$nox_hpy_*` çağrısı imza tablosunda yok ya da dönüş genişliği
+    /// tabloyla uyuşmuyor. İki arka uç da aynı tabloyu kullanır.
+    HpySignature,
 } || std.Io.Writer.Error;
 
 /// Faz U.4.3: `Codegen.current_path`i (checker'ın `FnCtx.path`iyle AYNI

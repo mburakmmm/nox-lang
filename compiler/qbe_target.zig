@@ -70,7 +70,8 @@ pub fn nameForArch(arch_name: []const u8) ?[]const u8 {
 /// `--target <isim>` bayrağının HOSTED (varsayılan profil) tarafı —
 /// `.github/workflows/release.yml`nin sevk edilen 4 platform ismi
 /// (`macos-arm64`/`linux-x64`/`linux-arm64`/`windows-x64`) artı hosted
-/// `linux-riscv64` (v2.0.4, musl). `qbe_target`,
+/// `linux-riscv64` (v2.0.4, musl) ve HPy sözleşmesinin `macos-x86_64`
+/// satırı için `macos-x64` (QBE `amd64_apple`, Rosetta). `qbe_target`,
 /// `runtime_object_name` (`build.zig`nin AYNI isimle kurduğu `noxrt-
 /// <isim>.o`) VE `zig_triple` (`zig cc -target`in beklediği, `swap_asm`
 /// çapraz-derlemesinde de kullanılan üçlü) döner.
@@ -83,6 +84,7 @@ pub const HostedTargetInfo = struct {
 
 pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
     if (std.mem.eql(u8, target_name, "macos-arm64")) return .{ .qbe_target = "arm64_apple", .runtime_object_name = "noxrt-macos-arm64", .zig_triple = "aarch64-macos", .is_windows = false };
+    if (std.mem.eql(u8, target_name, "macos-x64")) return .{ .qbe_target = "amd64_apple", .runtime_object_name = "noxrt-macos-x64", .zig_triple = "x86_64-macos", .is_windows = false };
     if (std.mem.eql(u8, target_name, "linux-x64")) return .{ .qbe_target = "amd64_sysv", .runtime_object_name = "noxrt-linux-x64", .zig_triple = "x86_64-linux-gnu", .is_windows = false };
     if (std.mem.eql(u8, target_name, "linux-arm64")) return .{ .qbe_target = "arm64", .runtime_object_name = "noxrt-linux-arm64", .zig_triple = "aarch64-linux-gnu", .is_windows = false };
     if (std.mem.eql(u8, target_name, "windows-x64")) return .{ .qbe_target = "amd64_win", .runtime_object_name = "noxrt-windows-x64", .zig_triple = "x86_64-windows-gnu", .is_windows = true };

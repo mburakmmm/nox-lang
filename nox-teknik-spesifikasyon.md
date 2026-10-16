@@ -29087,6 +29087,12 @@ HTTP golden testlerinin bekçi iş parçacığı Windows'ta da çalışır. Sür
 
 Windows test istemcisi `connect` çağrısını en fazla 200 ms bekler. `recv` ve `send` 15 saniye sonra döner. `noxlsp` uçtan uca testleri, sunucu yanıt vermezse 45 saniyede süreci sonlandırır. Pipe kapanınca okuma hata döner. İş, `accept` veya LSP okumasında 180 dakika beklemez.
 
+## 3.305 aHPy host v1 ve Windows test zaman aşımı (v2.0.17)
+
+Nox, `nox-hpy-host-v1` profilindeki bir aHPy Universal paketini yükler. Sözleşme `nox-hpy.json`, hedef imajı ve `nox.hpy` cephesidir. Cephe ham `PyObject*` veya Nox nesne adresi vermez. QBE ve LLVM aynı sayısal fikstürü beş üçlüde geçti. Windows imajındaki `HPyType_Spec` gerçek HPy düzenidir: `unsigned long` 4 bayt, `defines` ofset 32. Fazladan pad `Box.value` metodunu gizler.
+
+Windows `zig build test -Dwin-test-timeout=300` her test ikilisini `tests/support/win_test_timeout.zig` ile çalıştırır. Koşucu testin adını başlamadan yazar. Süre dolunca `TIMEOUT: <ad>` basıp çıkar. Linux ve macOS Zig'in kendi koşucusunu kullanır.
+
 ## 3.304 Windows test derlemesi ve yol URI'si (v2.0.16)
 
 Barındırılan Windows `zig test -fllvm`, freestanding `printf` gövdesindeki `@cVaStart`i derlemez. Gerçek gövde yalnızca freestanding x86_64 çekirdektedir.

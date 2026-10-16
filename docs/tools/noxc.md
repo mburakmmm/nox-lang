@@ -35,7 +35,7 @@ normally).
 | `--backend <llvm\|qbe>` | code-generation backend. Default `llvm`; `qbe` is chosen automatically for freestanding builds, `--target`, `--emit-asm`, `-g`, and when neither `clang` nor `zig` is installed ([Backends](backends.md)) |
 | `--release` | the old name for `--backend llvm` |
 | `--profile <hosted\|freestanding>` | which standard-library modules may be imported (default `hosted`; [Freestanding](freestanding.md)) |
-| `--target <name>` | cross-compile: hosted targets `macos-arm64`, `linux-x64`, `linux-arm64`, `linux-riscv64` (static musl; run with `qemu-riscv64`), `windows-x64`; freestanding architectures `x86_64`, `aarch64`, `riscv64` (assembly only) |
+| `--target <name>` | cross-compile: hosted targets `macos-arm64`, `macos-x64` (not a release asset; runs under Rosetta), `linux-x64`, `linux-arm64`, `linux-riscv64` (static musl; run with `qemu-riscv64`), `windows-x64`; freestanding architectures `x86_64`, `aarch64`, `riscv64` (assembly only) |
 | `--emit-asm` | stop after producing assembly (`.s`) |
 | `-g` | emit DWARF line tables for debugging — QBE backend only, selected automatically ([Debugging](debugging.md)) |
 | `--dump`, `-v` | verbose output: dump the AST and compiler decisions |

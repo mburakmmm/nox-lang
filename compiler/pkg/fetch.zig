@@ -21,6 +21,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const project_mod = @import("../project.zig");
+const hpy_mod = @import("hpy_host.zig");
 
 pub const FetchResult = struct {
     resolved_sha: []const u8,
@@ -107,13 +109,18 @@ fn verifyCommitSignature(a: Allocator, io: Io, staging_dir: []const u8, sha: []c
 /// AMA testlerde GERÇEK ağa dokunmamak İÇİN yerel bir dosya yolu/`file://`
 /// URL'si DE olabilir) ve `ref`i (tag/branch/commit SHA'sı) alıp, `$nox_home/
 /// pkg/mod/<sanitize edilmiş repo>/<çözülmüş sha>/` altına GETİRİR
-/// (ZATEN önbellekteyse yeniden İNDİRMEZ). Döndürülen `cache_dir`, o
+/// (tam 40 hex SHA ve önbellek dizini duruyorsa `git` çağrılmaz; dal
+/// adında SHA'yı çözmek için klon gerekir, çözülen SHA önbellekteyse
+/// klon atılır). Döndürülen `cache_dir`, o
 /// dizinin İÇİNDEKİ (repo'nun KENDİ kök dizini gibi davranan) tam yoldur.
 /// Faz P2.4: `require_signed_commit` İSE `resolved_sha` hesaplandıktan
 /// SONRA, önbelleğe TAŞINMADAN ÖNCE (böylece BAŞARISIZ bir doğrulama
 /// ASLA önbelleği KİRLETMEZ) `verifyCommitSignature` çağrılır;
 /// başarısızlığı `signature_diagnostic`e YAZAR.
 pub fn fetchToCache(a: Allocator, io: Io, nox_home: []const u8, repo: []const u8, ref: []const u8, require_signed_commit: bool, signature_diagnostic: *?[]const u8, policy: FetchPolicy) !FetchResult {
+    if (ref.len == 40 and isAllHex(ref)) {
+        if (try reuseCachedSha(a, io, nox_home, repo, ref)) |hit| return hit;
+    }
     const clone_url = try resolveCloneUrl(a, repo, policy.allow_insecure_transport);
 
     var suffix_bytes: [8]u8 = undefined;
@@ -148,15 +155,37 @@ pub fn fetchToCache(a: Allocator, io: Io, nox_home: []const u8, repo: []const u8
 
     const cache_dir = try cachedDirFor(a, nox_home, repo, resolved_sha);
 
+    var created = false;
     if (std.Io.Dir.accessAbsolute(io, cache_dir, .{})) |_| {
         // Önbellekte ZATEN var — staging klonu GEREKSİZ, at.
         std.Io.Dir.cwd().deleteTree(io, staging_dir) catch {};
     } else |_| {
         try std.Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(cache_dir).?);
         try std.Io.Dir.renameAbsolute(staging_dir, cache_dir, io);
+        created = true;
     }
+    // HPy manifesti varsa özeti tutmayan artefakt önbelleğe girmez.
+    // Manifest yoksa bu sıradan bir Nox paketidir.
+    var probe: project_mod.LockedPackage = .{ .alias = "", .repo = "", .ref = "", .resolved = resolved_sha };
+    hpy_mod.annotateLock(a, io, cache_dir, &probe) catch |e| {
+        if (created) std.Io.Dir.cwd().deleteTree(io, cache_dir) catch {};
+        return e;
+    };
 
     return .{ .resolved_sha = resolved_sha, .cache_dir = cache_dir };
+}
+
+/// Tam SHA önbellekte ve manifest (varsa) özetle uyumluysa uzak depoya
+/// dokunmadan döner. Bozuk bir önbellek dizini silinir; çağıran yeniden klonlar.
+fn reuseCachedSha(a: Allocator, io: Io, nox_home: []const u8, repo: []const u8, sha: []const u8) !?FetchResult {
+    const cache_dir = try cachedDirFor(a, nox_home, repo, sha);
+    std.Io.Dir.accessAbsolute(io, cache_dir, .{}) catch return null;
+    var probe: project_mod.LockedPackage = .{ .alias = "", .repo = "", .ref = "", .resolved = sha };
+    hpy_mod.annotateLock(a, io, cache_dir, &probe) catch {
+        std.Io.Dir.cwd().deleteTree(io, cache_dir) catch {};
+        return null;
+    };
+    return .{ .resolved_sha = try a.dupe(u8, sha), .cache_dir = cache_dir };
 }
 
 /// Güvenlik bulgusu M-8 (bkz. güvenlik raporu, 20 Temmuz 2026) — bkz.

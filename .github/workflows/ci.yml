@@ -730,9 +730,11 @@ jobs:
           }
 
       # Linux ve macOS ile aynı `zig build test` korpusu. qbe PATH'te,
-      # OpenSSL kurulu. Süre, tam golden + CLI + runtime paketini kapsar.
+      # OpenSSL kurulu. `-Dwin-test-timeout=300` her testin adını basar ve
+      # 300 saniyede bitmeyen testi `TIMEOUT: <ad>` ile düşürür. İşin 180
+      # dakikalık sınırı, koşucunun kendisi asılırsa yedektir.
       - name: zig build test (Debug)
-        run: zig build test
+        run: zig build test -Dwin-test-timeout=300
 
   # v2.0.8: hosted riscv64 dumanı. Tam dil korpusu değil. Sınıf/liste/spawn,
   # fibonacci, sözlük yazdırma ve satır taşıma hata sırası qemu-user altında çalışır.

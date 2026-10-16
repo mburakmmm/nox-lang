@@ -1,0 +1,118 @@
+schema_version = 1
+contract_version = 1
+status = "planned"
+direction = "ahpy-universal-to-nox"
+reverse_direction_supported = false
+silent_fallback_allowed = false
+partial_package_allowed = false
+nox_source_mutation_allowed = false
+required_documents = [
+  "AGENTTODO.md",
+  "NOX-INTEGRATION-TODO.md",
+  "TODO.md",
+  "docs/ahpy/adr/0016-nox-consumer-package-contract.md",
+  "docs/ahpy/audits/m12-nox-integration-baseline.md",
+  "production-todo.md",
+]
+
+[artifacts]
+package_manifest = "nox.json"
+integration_manifest = "nox-hpy.json"
+integration_schema = "tests/ahpy/nox-hpy-package.schema.json"
+facade_suffix = ".nox"
+extension_suffix = ".hpy0"
+hash_algorithm = "sha256"
+path_mode = "package-relative"
+serialization = "canonical-json-utf8"
+reproducible = true
+provenance_required = true
+
+[host]
+profile = "nox-hpy-host-v1"
+hpy_abi = "universal"
+hpy_version = "0.9"
+minimum_nox_release = "unreleased"
+support_status = "blocked"
+capability_query_required = true
+preload_validation_required = true
+required_capabilities = [
+  "call-positional",
+  "error-take",
+  "extension-object",
+  "module-close",
+  "module-open",
+  "object-close",
+]
+optional_capabilities = [
+  "bytes",
+  "call-keywords",
+  "hpy-debug",
+  "hpy-trace",
+]
+
+[ownership]
+ahpy = [
+  "artifact-build",
+  "artifact-validation",
+  "export-analysis",
+  "facade-generation",
+  "manifest-generation",
+  "package-assembly",
+]
+nox = [
+  "backend-correctness",
+  "dynamic-loading",
+  "host-abi",
+  "lifetime-safety",
+  "package-resolution",
+  "runtime-error-translation",
+]
+
+[types]
+required = ["bool", "float64", "int64", "none", "opaque-object", "unicode", "void"]
+conditional = ["bytes"]
+blocked = [
+  "c-pointer",
+  "callback",
+  "container",
+  "fused-type",
+  "memoryview",
+  "python-c-api-object",
+]
+
+[calls]
+required = ["constructor", "method", "module-function", "positional-only"]
+conditional = ["keyword-only", "positional-or-keyword"]
+blocked = ["callback", "overload", "variadic"]
+
+[diagnostics]
+ambiguous_ownership = "AHPY_NOX001"
+artifact_integrity = "AHPY_NOX002"
+incompatible_schema = "AHPY_NOX003"
+missing_capability = "AHPY_NOX004"
+name_collision = "AHPY_NOX005"
+target_unavailable = "AHPY_NOX006"
+unsupported_call = "AHPY_NOX007"
+unsupported_type = "AHPY_NOX008"
+
+[targets]
+status = "planned"
+artifact_selection = "exact-target"
+declared = [
+  "linux-aarch64",
+  "linux-x86_64",
+  "macos-aarch64",
+  "macos-x86_64",
+  "windows-x86_64",
+]
+
+[baseline]
+observed_on = "2026-10-16"
+analyzed_nox_commit = "6a33eaa50bf5ce29505dc1e75695fd27ec9505e4"
+analyzed_nox_release = "v2.0.16"
+installed_nox_release = "v2.0.9"
+qbe_status = "local-probe-pass"
+llvm_status = "local-probe-fail"
+llvm_failure_id = "nox-llvm-hpy-error-width"
+support_claim = false
+retained_hosted_evidence = false

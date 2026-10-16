@@ -3656,6 +3656,49 @@ fn ctxErrSetObject(ctx: *HPyContext, h_type: HPy, h_value: HPy) callconv(.c) voi
     };
 }
 
+fn pendingLabel(ctx: *HPyContext, h_type: HPy) []const u8 {
+    if (h_type._i == ctx.h_ValueError._i) return "ValueError";
+    if (h_type._i == ctx.h_TypeError._i) return "TypeError";
+    if (h_type._i == ctx.h_RuntimeError._i) return "RuntimeError";
+    if (h_type._i == ctx.h_IndexError._i) return "IndexError";
+    if (h_type._i == ctx.h_KeyError._i) return "KeyError";
+    if (h_type._i == ctx.h_AttributeError._i) return "AttributeError";
+    if (h_type._i == ctx.h_OverflowError._i) return "OverflowError";
+    if (h_type._i == ctx.h_ZeroDivisionError._i) return "ZeroDivisionError";
+    if (h_type._i == ctx.h_MemoryError._i) return "MemoryError";
+    if (h_type._i == ctx.h_StopIteration._i) return "StopIteration";
+    if (h_type._i == ctx.h_NotImplementedError._i) return "NotImplementedError";
+    if (h_type._i == ctx.h_ImportError._i) return "ImportError";
+    if (h_type._i == ctx.h_OSError._i) return "OSError";
+    if (h_type._i == ctx.h_SystemError._i) return "SystemError";
+    return "Exception";
+}
+
+/// Bekleyen HPy hatasının tür adını ve metnini çağıranın allocator'ına
+/// kopyalar, yuvayı temizler. Hata yoksa `null`.
+pub fn takePendingText(ctx: *HPyContext, allocator: std.mem.Allocator) ?[:0]u8 {
+    const state = contextState(ctx);
+    const pe = state.pending_error orelse return null;
+    const body = std.fmt.allocPrint(allocator, "{s}: {s}", .{ pendingLabel(ctx, pe.h_type), pe.message }) catch {
+        state.allocator.free(pe.message);
+        if (pe.value._i != 0) ctxClose(ctx, pe.value);
+        state.pending_error = null;
+        return null;
+    };
+    const owned = allocator.dupeZ(u8, body) catch {
+        allocator.free(body);
+        state.allocator.free(pe.message);
+        if (pe.value._i != 0) ctxClose(ctx, pe.value);
+        state.pending_error = null;
+        return null;
+    };
+    allocator.free(body);
+    state.allocator.free(pe.message);
+    if (pe.value._i != 0) ctxClose(ctx, pe.value);
+    state.pending_error = null;
+    return owned;
+}
+
 fn ctxErrOccurred(ctx: *HPyContext) callconv(.c) c_int {
     return @intFromBool(contextState(ctx).pending_error != null);
 }

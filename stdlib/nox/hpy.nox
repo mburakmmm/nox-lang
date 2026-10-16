@@ -1,0 +1,117 @@
+# nox.hpy — nox-hpy-host-v1 paket cephesi.
+#
+# Üretilen `.nox` cephesi yalnızca bu modülü çağırır. Ham `hpy_open` ve
+# `hpy_*` yerleşikleri güvensiz geliştirici kapısıdır; paket yükleyicisini
+# çağırmaz. Kullanıcı sözdiziminde `owned` / `borrowed` yoktur. Kapanış
+# `with` ile kapsam çıkışında, hata ve erken dönüşte aynı `__exit__`
+# yolunu kullanır. Çağrı çağıran fiber üzerinde senkrondur. Bir `Module`
+# işletim sistemi iş parçacıkları arasında paylaşılmaz. `bytes` Nox'ta
+# `list[int]`tir (0-255, gömülü NUL dahil) ve ancak manifest `bytes`
+# yeteneğini taşıyorsa geçerlidir. Anahtarlı çağrı `call_int_keyword`dir.
+
+def host_profile() -> str:
+    return "nox-hpy-host-v1"
+
+def host_abi() -> str:
+    return "universal"
+
+class Object:
+    def __init__(self: Object, handle: ptr, obj: ptr) -> None:
+        self.handle = handle
+        self.obj = obj
+        self.closed = False
+
+    def close(self: Object) -> None:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: nesne zaten kapatıldı")
+        hpy_package_close_obj(self.handle, self.obj)
+        self.closed = True
+
+    def call(self: Object, name: str) -> int:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: nesne kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_method(self.handle, self.obj, name)
+
+    def call_int(self: Object, name: str, arg: int) -> int:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: nesne kapatıldıktan sonra kullanıldı")
+        return hpy_package_method_int(self.handle, self.obj, name, arg)
+
+class Module:
+    def __init__(self: Module, handle: ptr) -> None:
+        self.handle = handle
+        self.closed = False
+
+    def close(self: Module) -> None:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül zaten kapatıldı")
+        hpy_package_close(self.handle)
+        self.closed = True
+
+    def __enter__(self: Module) -> Module:
+        return self
+
+    def __exit__(self: Module) -> None:
+        if not self.closed:
+            self.close()
+
+    def call_int(self: Module, name: str) -> int:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_int(self.handle, name)
+
+    def call_int_arg(self: Module, name: str, arg: int) -> int:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_int_arg(self.handle, name, arg)
+
+    def call_bool(self: Module, name: str) -> bool:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_bool(self.handle, name)
+
+    def call_float(self: Module, name: str) -> float:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_float(self.handle, name)
+
+    def call_float_arg(self: Module, name: str, arg: float) -> float:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_float_arg(self.handle, name, arg)
+
+    def call_str(self: Module, name: str) -> str:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_str(self.handle, name)
+
+    def call_str_arg(self: Module, name: str, arg: str) -> str:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_str_arg(self.handle, name, arg)
+
+    def call_bytes(self: Module, name: str, arg: list[int]) -> list[int]:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_bytes(self.handle, name, arg)
+
+    def call_int_keyword(self: Module, name: str, key: str, arg: int) -> int:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        return hpy_package_call_int_keyword(self.handle, name, key, arg)
+
+    def call_object(self: Module, name: str) -> Object:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        obj: ptr = hpy_package_call_obj(self.handle, name)
+        return Object(self.handle, obj)
+
+    def construct(self: Module, class_name: str, arg: int) -> Object:
+        if self.closed:
+            raise HPyError("AHPY_NOX002: modül kapatıldıktan sonra kullanıldı")
+        obj: ptr = hpy_package_new(self.handle, class_name, arg)
+        return Object(self.handle, obj)
+
+def load_package(root: str) -> Module:
+    handle: ptr = hpy_package_open(root)
+    return Module(handle)

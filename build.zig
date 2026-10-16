@@ -22,6 +22,30 @@ const EXPECTED_ZIG_VERSION = std.SemanticVersion{ .major = 0, .minor = 16, .patc
 /// `-Doptimize` moduna göre dosya-sistemi-güvenli bir etiket — `zig-out/
 /// <slug>/` altında HER modun KENDİ, izole kaynak-kökünü adlandırmak İçİn
 /// (bkz. `pub fn build`in `install_*_tagged` adımları).
+/// Windows CI'de `-Dwin-test-timeout=N` verilmişse test ikilisini
+/// `tests/support/win_test_timeout.zig` ile çalıştırır. Koşucu her testin
+/// adını basar ve `N` saniye dolunca `TIMEOUT: <ad>` ile çıkar. Seçenek
+/// yoksa ya da hedef Windows değilse Zig'in kendi koşucusu durur.
+fn addTimedTestRun(
+    b: *std.Build,
+    exe: *std.Build.Step.Compile,
+    timeout_s: u64,
+) *std.Build.Step.Run {
+    const arm = timeout_s != 0 and exe.rootModuleTarget().os.tag == .windows;
+    if (arm) {
+        exe.test_runner = .{
+            .path = b.path("tests/support/win_test_timeout.zig"),
+            .mode = .simple,
+        };
+    }
+    const run = b.addRunArtifact(exe);
+    if (arm) {
+        run.expectExitCode(0);
+        run.setEnvironmentVariable("NOX_WIN_TEST_TIMEOUT_SEC", b.fmt("{d}", .{timeout_s}));
+    }
+    return run;
+}
+
 fn optimizeModeSlug(mode: std.builtin.OptimizeMode) []const u8 {
     return switch (mode) {
         .Debug => "debug",
@@ -122,11 +146,20 @@ fn addHostedRuntimeChain(
         .target = os_target,
         .optimize = optimize,
     });
+    const hpy_contract_mod = b.createModule(.{
+        .root_source_file = b.path("shared/hpy_host_contract.zig"),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
     const hpy_bridge_mod = b.createModule(.{
         .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
         .target = os_target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            .{ .name = "hpy_contract", .module = hpy_contract_mod },
+        },
     });
     const wasm_bridge_mod = b.createModule(.{
         .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
@@ -202,6 +235,11 @@ pub fn build(b: *std.Build) void {
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const win_test_timeout_s = b.option(
+        u64,
+        "win-test-timeout",
+        "Windows: bir test bu kadar saniyede bitmezse adiyla dusurulur (0 kapali)",
+    ) orelse 0;
 
     // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): Windows'un
     // KENDİ, ZATEN kanıtlanmış `target.result.os.tag == .windows` deseniyle
@@ -299,12 +337,22 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const hpy_contract_mod = b.addModule("hpy_contract", .{
+        .root_source_file = b.path("shared/hpy_host_contract.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = !is_freestanding,
+    });
     const nox_mod = b.addModule("nox", .{
         .root_source_file = b.path("compiler/lib.zig"),
         .target = target,
         .optimize = optimize,
+        // `compiler/pkg/hpy_host.zig` paket artefaktını `openat(O_NOFOLLOW)`
+        // ile okur. Derleyici testi bu libc sembollerini bağlar.
+        .link_libc = true,
         .imports = &.{
             .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "hpy_contract", .module = hpy_contract_mod },
         },
     });
 
@@ -328,6 +376,7 @@ pub fn build(b: *std.Build) void {
         // sağlanması gerekir (`nox_mod`a eklemek YETERLİ DEĞİLDİR).
         .imports = &.{
             .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "hpy_contract", .module = hpy_contract_mod },
         },
     });
 
@@ -360,6 +409,11 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("compiler/lsp_main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "hpy_contract", .module = hpy_contract_mod },
+        },
     });
     const noxlsp = b.addExecutable(.{
         .name = "noxlsp",
@@ -403,6 +457,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = !is_freestanding,
+        .imports = &.{
+            .{ .name = "hpy_contract", .module = hpy_contract_mod },
+        },
     });
     const wasm_bridge_mod = b.addModule("wasm_bridge", .{
         .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
@@ -691,11 +748,10 @@ pub fn build(b: *std.Build) void {
     _ = addFreestandingRuntimeChain(b, optimize, .x86_64, "noxrt-freestanding-generic-x86_64");
     _ = addFreestandingRuntimeChain(b, optimize, .aarch64, "noxrt-freestanding-generic-aarch64");
 
-    // v2.0 madde 8: kamuya açık `--target` bayrağının hosted tarafı —
-    // `.github/workflows/release.yml`nin GERÇEK, sevk edilen 4 platformuyla
-    // BİREBİR AYNI isimler (`macos-arm64`/`linux-x64`/`linux-arm64`/
-    // `windows-x64` — `macos-x64` GİBİ sevk EDİLMEYEN bir kombinasyon
-    // İCAT EDİLMEZ, bkz. plan dosyasının "Kapsam DIŞI" notu).
+    // v2.0 madde 8: kamuya açık `--target` bayrağının hosted tarafı.
+    // Sürüm varlığı hâlâ `macos-arm64`/`linux-x64`/`linux-arm64`/
+    // `windows-x64`. `macos-x64` bir sürüm varlığı değil; HPy sözleşmesinin
+    // `macos-x86_64` satırını Rosetta altında çalıştırmak için derleyici hedefi.
     // NOT (BU turda GERÇEK bir derlemeyle ÖLÇÜLEREK bulundu): `.gnu` ABI'si
     // (glibc, VERSİYON PİNLENMEDEN) Zig'in VARSAYILAN, GENİŞ-uyumluluk
     // glibc TABANINDA `arc4random_buf`i (glibc 2.36'da EKLENDİ) TAŞIMIYOR —
@@ -707,6 +763,7 @@ pub fn build(b: *std.Build) void {
     // GENİŞ bir uyumluluk tabanı, native CI derlemeleriyle (glibc, dinamik)
     // AYNI ABI/bağlama biçimini KORUR).
     _ = addHostedRuntimeChain(b, optimize, .aarch64, .macos, .none, "noxrt-macos-arm64");
+    _ = addHostedRuntimeChain(b, optimize, .x86_64, .macos, .none, "noxrt-macos-x64");
     _ = addHostedRuntimeChain(b, optimize, .x86_64, .linux, .gnu, "noxrt-linux-x64");
     _ = addHostedRuntimeChain(b, optimize, .aarch64, .linux, .gnu, "noxrt-linux-arm64");
     _ = addHostedRuntimeChain(b, optimize, .x86_64, .windows, .gnu, "noxrt-windows-x64");
@@ -882,14 +939,14 @@ pub fn build(b: *std.Build) void {
 
     // "nox" modülünün kendi içindeki (lexer/parser dosyalarına gömülü) testler.
     const lib_test = b.addTest(.{ .root_module = nox_mod });
-    test_step.dependOn(&b.addRunArtifact(lib_test).step);
+    test_step.dependOn(&addTimedTestRun(b, lib_test, win_test_timeout_s).step);
 
     // Faz LL.1: `lib_test` (yukarıda) `compiler/lib.zig`nin (lexer/parser/
     // checker/module_loader) testleridir — bunlar da (noxc/noxlsp gibi)
     // runtime'a bağımlı DEĞİL, Windows'ta İLKE OLARAK çalışabilir. `ci.yml`nin
     // `windows-frontend` işinin `zig build frontend-test` İLE çağırdığı budur.
     const frontend_test_step = b.step("frontend-test", "Yalnızca derleyici ön-ucu (lexer/parser/checker) testlerini çalıştırır — runtime'a bağımlı DEĞİL");
-    frontend_test_step.dependOn(&b.addRunArtifact(lib_test).step);
+    frontend_test_step.dependOn(&addTimedTestRun(b, lib_test, win_test_timeout_s).step);
 
     // Zig runtime'ının kendi içindeki testler (bkz. runtime/alloc/asap.zig).
     // Windows'ta `noxrt_mod`a `addObjectFile` EKLENMEZ: COFF `build-obj`
@@ -913,13 +970,13 @@ pub fn build(b: *std.Build) void {
     } else noxrt_mod;
     const noxrt_test = b.addTest(.{ .root_module = noxrt_test_mod });
     noxrt_test.step.dependOn(&compile_swap_asm.step);
-    test_step.dependOn(&b.addRunArtifact(noxrt_test).step);
+    test_step.dependOn(&addTimedTestRun(b, noxrt_test, win_test_timeout_s).step);
     // Faz MN.8: `worker-pool-test`/`async-rt-test` İLE AYNI desen — SADECE
     // `noxrt_test`i (pool_bridge.zig/scheduler.zig/http_server.zig DAHİL
     // TÜM Zig-seviyesi runtime testleri) TAM takımın 700+ saniyelik golden/
     // codegen fixture'larını BEKLEMEDEN hızlı yineleme İçİn.
     const noxrt_test_step = b.step("noxrt-test", "Yalnızca noxrt_test'i (runtime/ altındaki TÜM Zig-seviyesi testler) çalıştırır (hızlı yineleme İçİn)");
-    noxrt_test_step.dependOn(&b.addRunArtifact(noxrt_test).step);
+    noxrt_test_step.dependOn(&addTimedTestRun(b, noxrt_test, win_test_timeout_s).step);
 
     // v2.0 madde 9 (bkz. plan dosyası "Freestanding Allocator ABI"):
     // `lib_freestanding.zig`, `noxrt_freestanding_mod`/`noxrt_kernel_mod`
@@ -978,9 +1035,9 @@ pub fn build(b: *std.Build) void {
     // bir varargs fonksiyonu.
     if (alloc_abi_swap_arch == .x86_64) alloc_abi_test.use_llvm = true;
     alloc_abi_test.step.dependOn(&compile_alloc_abi_swap_asm.step);
-    test_step.dependOn(&b.addRunArtifact(alloc_abi_test).step);
+    test_step.dependOn(&addTimedTestRun(b, alloc_abi_test, win_test_timeout_s).step);
     const alloc_abi_test_step = b.step("alloc-abi-test", "Yalnızca freestanding allocator ABI'sinin (nox_allocator_install) host-natif testini çalıştırır (hızlı yineleme İçİn)");
-    alloc_abi_test_step.dependOn(&b.addRunArtifact(alloc_abi_test).step);
+    alloc_abi_test_step.dependOn(&addTimedTestRun(b, alloc_abi_test, win_test_timeout_s).step);
 
     // "nox" modülünü dışarıdan tüketen ayrı test dosyaları (tests/unit, tests/golden).
     const external_test_files = [_][]const u8{
@@ -1055,7 +1112,7 @@ pub fn build(b: *std.Build) void {
                 },
         });
         const t = b.addTest(.{ .root_module = mod });
-        test_step.dependOn(&b.addRunArtifact(t).step);
+        test_step.dependOn(&addTimedTestRun(b, t, win_test_timeout_s).step);
     }
 
     // `codegen_golden_test.zig` ayrıca (Faz 14'ten beri) `hpy_call`/
@@ -1075,7 +1132,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     const codegen_test = b.addTest(.{ .root_module = codegen_test_mod });
-    const codegen_test_run = b.addRunArtifact(codegen_test);
+    const codegen_test_run = addTimedTestRun(b, codegen_test, win_test_timeout_s);
     test_step.dependOn(&codegen_test_run.step);
 
     // ---- Faz 12: HPy köprüsü (Tier 0) uyumluluk testi ----
@@ -1088,7 +1145,11 @@ pub fn build(b: *std.Build) void {
     // önceden oluşturulmuş olmasını gerektirir; yoksa bu test adımı
     // (yalnızca bu adım) sessizce atlanır, ana test takımı etkilenmez.
     const hpy_bridge_test = b.addTest(.{ .root_module = hpy_bridge_mod });
-    test_step.dependOn(&b.addRunArtifact(hpy_bridge_test).step);
+    test_step.dependOn(&addTimedTestRun(b, hpy_bridge_test, win_test_timeout_s).step);
+    const hpy_host_test_step = b.step("hpy-host-test", "nox-hpy-host-v1 sözleşme, imza tablosu ve codegen testleri");
+    hpy_host_test_step.dependOn(&addTimedTestRun(b, lib_test, win_test_timeout_s).step);
+    hpy_host_test_step.dependOn(&codegen_test_run.step);
+    hpy_host_test_step.dependOn(&addTimedTestRun(b, hpy_bridge_test, win_test_timeout_s).step);
 
     const io = b.graph.io;
     if (b.build_root.handle.access(io, ".hpy-venv/lib", .{})) |_| {
@@ -1129,7 +1190,7 @@ pub fn build(b: *std.Build) void {
             });
             const compat_test = b.addTest(.{ .root_module = compat_mod });
             compat_test.step.dependOn(&compile_ext.step);
-            test_step.dependOn(&b.addRunArtifact(compat_test).step);
+            test_step.dependOn(&addTimedTestRun(b, compat_test, win_test_timeout_s).step);
 
             // Faz 14: `hpy_call` yerleşiğinin gerçek bir .nox programından
             // GERÇEK bir HPy eklentisini çağırdığını doğrulayan golden test.
@@ -1151,7 +1212,7 @@ pub fn build(b: *std.Build) void {
             const hpy_call_golden_test = b.addTest(.{ .root_module = hpy_call_golden_mod });
             hpy_call_golden_test.step.dependOn(&compile_ext.step);
             hpy_call_golden_test.step.dependOn(&install_noxrt.step);
-            test_step.dependOn(&b.addRunArtifact(hpy_call_golden_test).step);
+            test_step.dependOn(&addTimedTestRun(b, hpy_call_golden_test, win_test_timeout_s).step);
         }
     } else |_| {}
 
@@ -1164,7 +1225,7 @@ pub fn build(b: *std.Build) void {
     // zorunlu bir araç) `wasm32-freestanding` hedefine derlenmiş GERÇEK bir
     // `.wasm` ikilisidir — WABT/wasmtime gibi ek bir araç GEREKMEZ.
     const wasm_bridge_test = b.addTest(.{ .root_module = wasm_bridge_mod });
-    test_step.dependOn(&b.addRunArtifact(wasm_bridge_test).step);
+    test_step.dependOn(&addTimedTestRun(b, wasm_bridge_test, win_test_timeout_s).step);
 
     // Faz X.2: `wasm_bridge.module.parse`nin fuzz hedefi (bkz. tests/fuzz/
     // wasm_parser_fuzz.zig'in modül üstü notu) — `wasm_bridge_mod`ü
@@ -1181,7 +1242,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     const wasm_fuzz_test = b.addTest(.{ .root_module = wasm_fuzz_mod });
-    test_step.dependOn(&b.addRunArtifact(wasm_fuzz_test).step);
+    test_step.dependOn(&addTimedTestRun(b, wasm_fuzz_test, win_test_timeout_s).step);
 
     const wasm_out_path = "tests/compat/wasm_ext/addone.wasm";
     const compile_wasm = b.addSystemCommand(&.{
@@ -1216,7 +1277,7 @@ pub fn build(b: *std.Build) void {
     });
     const wasm_compat_test = b.addTest(.{ .root_module = wasm_compat_mod });
     wasm_compat_test.step.dependOn(&compile_wasm.step);
-    test_step.dependOn(&b.addRunArtifact(wasm_compat_test).step);
+    test_step.dependOn(&addTimedTestRun(b, wasm_compat_test, win_test_timeout_s).step);
 
     // ---- Planlanan Faz 20: Zig/C ABI FFI (`extern def`) uyumluluk testi ----
     //
@@ -1281,7 +1342,7 @@ pub fn build(b: *std.Build) void {
     ffi_test.step.dependOn(&compile_zig_ext.step);
     ffi_test.step.dependOn(&compile_counter_ext.step);
     ffi_test.step.dependOn(&install_noxrt.step);
-    test_step.dependOn(&b.addRunArtifact(ffi_test).step);
+    test_step.dependOn(&addTimedTestRun(b, ffi_test, win_test_timeout_s).step);
 
     // ---- Stdlib fazı §D.1.5: `stdlib/nox/http.nox` uçtan uca golden
     // testleri — yalnızca `zig-out/lib/noxrt.o`ya ihtiyaç duyar (EK bir
@@ -1303,7 +1364,7 @@ pub fn build(b: *std.Build) void {
     });
     const http_stdlib_test = b.addTest(.{ .root_module = http_stdlib_test_mod });
     http_stdlib_test.step.dependOn(&install_noxrt.step);
-    test_step.dependOn(&b.addRunArtifact(http_stdlib_test).step);
+    test_step.dependOn(&addTimedTestRun(b, http_stdlib_test, win_test_timeout_s).step);
 
     // Bulundu (bkz. proje belleği "f-string + augmented atama" görevi):
     // `noxc search`in YENİ `loadIndexFromUrl` yolunu GERÇEK bir yerel HTTP
@@ -1319,7 +1380,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const search_test = b.addTest(.{ .root_module = search_test_mod });
-    test_step.dependOn(&b.addRunArtifact(search_test).step);
+    test_step.dependOn(&addTimedTestRun(b, search_test, win_test_timeout_s).step);
 
     // `noxc upgrade` (bkz. `compiler/pkg/upgrade.zig`nin modül üstü notu)
     // uçtan uca testleri — `search_test_mod` İLE AYNI gerekçeyle (`std.c.
@@ -1333,7 +1394,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const upgrade_test = b.addTest(.{ .root_module = upgrade_test_mod });
-    test_step.dependOn(&b.addRunArtifact(upgrade_test).step);
+    test_step.dependOn(&addTimedTestRun(b, upgrade_test, win_test_timeout_s).step);
 
     // `noxc publish` (bkz. `compiler/pkg/registry.zig`nin modül üstü notu)
     // uçtan uca testleri — `search_test_mod`/`upgrade_test_mod` İLE AYNI
@@ -1346,7 +1407,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{.{ .name = "sys_compat", .module = sys_compat_mod }},
     });
     const publish_test = b.addTest(.{ .root_module = publish_test_mod });
-    test_step.dependOn(&b.addRunArtifact(publish_test).step);
+    test_step.dependOn(&addTimedTestRun(b, publish_test, win_test_timeout_s).step);
 
     // ---- Stdlib fazı §D.1.6: `nox.http.serve` özel yerleşiğinin uçtan uca
     // golden testi — `http_stdlib_test` İLE AYNI bağımlılık (yalnızca
@@ -1369,7 +1430,7 @@ pub fn build(b: *std.Build) void {
     });
     const http_serve_test = b.addTest(.{ .root_module = http_serve_test_mod });
     http_serve_test.step.dependOn(&install_noxrt.step);
-    test_step.dependOn(&b.addRunArtifact(http_serve_test).step);
+    test_step.dependOn(&addTimedTestRun(b, http_serve_test, win_test_timeout_s).step);
 
     // ---- `stdlib/nox/router.nox` + `nox.http.serve*` etkileşiminin
     // regresyon testi (bkz. router_module_state_golden_test.zig'in modül
@@ -1388,7 +1449,7 @@ pub fn build(b: *std.Build) void {
     });
     const router_module_state_test = b.addTest(.{ .root_module = router_module_state_test_mod });
     router_module_state_test.step.dependOn(&install_noxrt.step);
-    test_step.dependOn(&b.addRunArtifact(router_module_state_test).step);
+    test_step.dependOn(&addTimedTestRun(b, router_module_state_test, win_test_timeout_s).step);
 
     // ---- Faz DD.1: çok-çekirdekli `nox.http.serve` uçtan uca golden
     // testleri — `http_serve_test` İLE AYNI bağımlılık/model, AYRI bir
@@ -1406,7 +1467,7 @@ pub fn build(b: *std.Build) void {
     });
     const http_serve_multicore_test = b.addTest(.{ .root_module = http_serve_multicore_test_mod });
     http_serve_multicore_test.step.dependOn(&install_noxrt.step);
-    test_step.dependOn(&b.addRunArtifact(http_serve_multicore_test).step);
+    test_step.dependOn(&addTimedTestRun(b, http_serve_multicore_test, win_test_timeout_s).step);
 
     // ---- Faz MN.7b: `nox.http.serve_multicore`nin havuz-tabanlı
     // (`--release`/LLVM) lowering'i İçİn AYNI uçtan uca golden desen —
@@ -1427,7 +1488,7 @@ pub fn build(b: *std.Build) void {
     });
     const http_serve_multicore_pool_test = b.addTest(.{ .root_module = http_serve_multicore_pool_test_mod });
     http_serve_multicore_pool_test.step.dependOn(&install_noxrt.step);
-    test_step.dependOn(&b.addRunArtifact(http_serve_multicore_pool_test).step);
+    test_step.dependOn(&addTimedTestRun(b, http_serve_multicore_pool_test, win_test_timeout_s).step);
 
     // ---- Faz "sunucu-tarafı TLS terminasyonu + WebSocket Upgrade" —
     // `nox.http.serve_tls`/`serve_ws` uçtan uca golden testleri — `http_
@@ -1446,7 +1507,7 @@ pub fn build(b: *std.Build) void {
     });
     const http_serve_tls_test = b.addTest(.{ .root_module = http_serve_tls_test_mod });
     http_serve_tls_test.step.dependOn(&install_noxrt.step);
-    test_step.dependOn(&b.addRunArtifact(http_serve_tls_test).step);
+    test_step.dependOn(&addTimedTestRun(b, http_serve_tls_test, win_test_timeout_s).step);
 
     const http_serve_ws_test_mod = b.createModule(.{
         .root_source_file = b.path("tests/compat/http_serve_ws_golden_test.zig"),
@@ -1461,7 +1522,7 @@ pub fn build(b: *std.Build) void {
     });
     const http_serve_ws_test = b.addTest(.{ .root_module = http_serve_ws_test_mod });
     http_serve_ws_test.step.dependOn(&install_noxrt.step);
-    test_step.dependOn(&b.addRunArtifact(http_serve_ws_test).step);
+    test_step.dependOn(&addTimedTestRun(b, http_serve_ws_test, win_test_timeout_s).step);
 
     // ---- Faz 21 standalone testleri (`runtime/async_rt`, `noxrt.o`dan
     // BAĞIMSIZ doğrulama — bkz. bu dosyanın başındaki `compile_swap_asm`) ----
@@ -1477,7 +1538,7 @@ pub fn build(b: *std.Build) void {
     fiber_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const fiber_test = b.addTest(.{ .root_module = fiber_test_mod });
     fiber_test.step.dependOn(&compile_swap_asm.step);
-    test_step.dependOn(&b.addRunArtifact(fiber_test).step);
+    test_step.dependOn(&addTimedTestRun(b, fiber_test, win_test_timeout_s).step);
 
     // ---- Planlanan Faz 21, aşama 2: zamanlayıcı + Task[T] ----
     //
@@ -1496,7 +1557,7 @@ pub fn build(b: *std.Build) void {
     scheduler_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const scheduler_test = b.addTest(.{ .root_module = scheduler_test_mod });
     scheduler_test.step.dependOn(&compile_swap_asm.step);
-    test_step.dependOn(&b.addRunArtifact(scheduler_test).step);
+    test_step.dependOn(&addTimedTestRun(b, scheduler_test, win_test_timeout_s).step);
 
     // ---- Planlanan Faz 21, aşama 3: Channel[T] + deadlock tespiti ----
     const channel_test_mod = b.createModule(.{
@@ -1511,7 +1572,7 @@ pub fn build(b: *std.Build) void {
     channel_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const channel_test = b.addTest(.{ .root_module = channel_test_mod });
     channel_test.step.dependOn(&compile_swap_asm.step);
-    test_step.dependOn(&b.addRunArtifact(channel_test).step);
+    test_step.dependOn(&addTimedTestRun(b, channel_test, win_test_timeout_s).step);
 
     // ---- D.0: Async I/O reaktörü (kqueue) + non-blocking soket ilkelleri
     // (bkz. nox-teknik-spesifikasyon.md §3.29) — `io.zig`, `scheduler.zig`
@@ -1532,7 +1593,7 @@ pub fn build(b: *std.Build) void {
     io_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const io_test = b.addTest(.{ .root_module = io_test_mod });
     io_test.step.dependOn(&compile_swap_asm.step);
-    test_step.dependOn(&b.addRunArtifact(io_test).step);
+    test_step.dependOn(&addTimedTestRun(b, io_test, win_test_timeout_s).step);
 
     // Faz LL.2/LL.3 (bkz. nox-teknik-spesifikasyon.md §3.71): `fiber_test`/
     // `scheduler_test`/`channel_test`/`io_test` (yukarıda) `runtime/
@@ -1544,10 +1605,10 @@ pub fn build(b: *std.Build) void {
     // GERÇEKTEN çalıştığını doğrulayan İZOLE bir adım — `windows-frontend`
     // CI işinin `zig build async-rt-test` İLE çağırdığı TAM OLARAK budur.
     const async_rt_test_step = b.step("async-rt-test", "Yalnızca runtime/async_rt testlerini çalıştırır (stdlib_shims'e bağımlı DEĞİL)");
-    async_rt_test_step.dependOn(&b.addRunArtifact(fiber_test).step);
-    async_rt_test_step.dependOn(&b.addRunArtifact(scheduler_test).step);
-    async_rt_test_step.dependOn(&b.addRunArtifact(channel_test).step);
-    async_rt_test_step.dependOn(&b.addRunArtifact(io_test).step);
+    async_rt_test_step.dependOn(&addTimedTestRun(b, fiber_test, win_test_timeout_s).step);
+    async_rt_test_step.dependOn(&addTimedTestRun(b, scheduler_test, win_test_timeout_s).step);
+    async_rt_test_step.dependOn(&addTimedTestRun(b, channel_test, win_test_timeout_s).step);
+    async_rt_test_step.dependOn(&addTimedTestRun(b, io_test, win_test_timeout_s).step);
 
     // Faz MN.3b: `worker_pool.zig`nin KENDİ eşzamanlı stres testi — `noxrt`in
     // TAMAMINI (TÜM stdlib_shims) BEKLEMEDEN hızlı yineleme İçİn AYRI, DAR
@@ -1568,8 +1629,8 @@ pub fn build(b: *std.Build) void {
     const worker_pool_test = b.addTest(.{ .root_module = worker_pool_test_mod });
     worker_pool_test.step.dependOn(&compile_swap_asm.step);
     const worker_pool_test_step = b.step("worker-pool-test", "Yalnızca Faz MN.3b'nin worker_pool.zig testini çalıştırır (hızlı yineleme İçİn)");
-    worker_pool_test_step.dependOn(&b.addRunArtifact(worker_pool_test).step);
-    test_step.dependOn(&b.addRunArtifact(worker_pool_test).step);
+    worker_pool_test_step.dependOn(&addTimedTestRun(b, worker_pool_test, win_test_timeout_s).step);
+    test_step.dependOn(&addTimedTestRun(b, worker_pool_test, win_test_timeout_s).step);
 
     // v1.31.0 (bkz. plan dosyası "Eşzamanlılık stres-test altyapısı"):
     // `worker_pool.zig`nin ZATEN kanıtlanmış İKİ 20-tekrarlı çapraz-worker
@@ -1583,7 +1644,7 @@ pub fn build(b: *std.Build) void {
     // push'ta çalışan hızlı paketi YAVAŞLATMADAN, gecelik bir CI cron
     // işinin (`.github/workflows/stress.yml`) çağırması İçİndir.
     const stress_rounds = b.option(usize, "stress-rounds", "stress-test adımının çapraz-worker Channel/Task stres tur sayısı (varsayılan: 2000)") orelse 2000;
-    const stress_run = b.addRunArtifact(worker_pool_test);
+    const stress_run = addTimedTestRun(b, worker_pool_test, win_test_timeout_s);
     stress_run.setEnvironmentVariable("NOX_STRESS_ROUNDS", b.fmt("{d}", .{stress_rounds}));
     const stress_test_step = b.step("stress-test", "worker_pool.zig'in çapraz-worker Channel/Task stres testlerini ÇOK DAHA FAZLA tur (-Dstress-rounds, varsayılan 2000) İLE çalıştırır — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
     stress_test_step.dependOn(&stress_run.step);
@@ -1608,7 +1669,7 @@ pub fn build(b: *std.Build) void {
     http_soak_test.step.dependOn(b.getInstallStep());
 
     const soak_seconds = b.option(u32, "soak-seconds", "http-soak-test adımının süresi (saniye, varsayılan: 5)") orelse 5;
-    const soak_run = b.addRunArtifact(http_soak_test);
+    const soak_run = addTimedTestRun(b, http_soak_test, win_test_timeout_s);
     soak_run.setEnvironmentVariable("NOX_SOAK_SECONDS", b.fmt("{d}", .{soak_seconds}));
     const http_soak_test_step = b.step("http-soak-test", "nox.http.serve_multicore/serve_tls soak testi (-Dsoak-seconds, varsayılan 5) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
     http_soak_test_step.dependOn(&soak_run.step);
@@ -1631,7 +1692,7 @@ pub fn build(b: *std.Build) void {
 
     const torture_seed_count = b.option(u32, "torture-seed-count", "concurrency-torture-test adımının deneyeceği seed sayısı (varsayılan: 3)") orelse 3;
     const torture_tasks = b.option(u32, "torture-tasks", "concurrency-torture-test adımının seed başına görev sayısı (varsayılan: 3000)") orelse 3000;
-    const torture_run = b.addRunArtifact(concurrency_torture_test);
+    const torture_run = addTimedTestRun(b, concurrency_torture_test, win_test_timeout_s);
     torture_run.setEnvironmentVariable("NOX_TORTURE_SEED_COUNT", b.fmt("{d}", .{torture_seed_count}));
     torture_run.setEnvironmentVariable("NOX_TORTURE_TASKS", b.fmt("{d}", .{torture_tasks}));
     const concurrency_torture_test_step = b.step("concurrency-torture-test", "seed-tabanlı eşzamanlılık torture testi (-Dtorture-seed-count/-Dtorture-tasks) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
@@ -1655,7 +1716,7 @@ pub fn build(b: *std.Build) void {
 
     const torture2_seed_count = b.option(u32, "torture2-seed-count", "concurrency-torture2-test adımının deneyeceği seed sayısı (varsayılan: 3)") orelse 3;
     const torture2_tasks = b.option(u32, "torture2-tasks", "concurrency-torture2-test adımının seed başına görev sayısı (varsayılan: 300)") orelse 300;
-    const torture2_run = b.addRunArtifact(concurrency_torture2_test);
+    const torture2_run = addTimedTestRun(b, concurrency_torture2_test, win_test_timeout_s);
     torture2_run.setEnvironmentVariable("NOX_TORTURE2_SEED_COUNT", b.fmt("{d}", .{torture2_seed_count}));
     torture2_run.setEnvironmentVariable("NOX_TORTURE2_TASKS", b.fmt("{d}", .{torture2_tasks}));
     const concurrency_torture2_test_step = b.step("concurrency-torture2-test", "ThreadChannel[T]/Channel[T]/list[T]-transfer seed-tabanlı torture testi (-Dtorture2-seed-count/-Dtorture2-tasks) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
@@ -1683,7 +1744,7 @@ pub fn build(b: *std.Build) void {
     const backend_differential_corpus_test = b.addTest(.{ .root_module = backend_differential_corpus_test_mod });
     backend_differential_corpus_test.step.dependOn(b.getInstallStep());
     const backend_differential_corpus_test_step = b.step("backend-differential-corpus-test", "codegen_cases korpusunun TAMAMını QBE/LLVM'de çalıştırıp fark testine tabi tutar — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
-    backend_differential_corpus_test_step.dependOn(&b.addRunArtifact(backend_differential_corpus_test).step);
+    backend_differential_corpus_test_step.dependOn(&addTimedTestRun(b, backend_differential_corpus_test, win_test_timeout_s).step);
 
     // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): QBE'nin çıktısı
     // freestanding, statik bir ELF olarak linklenebiliyor mu deneyini
@@ -1703,7 +1764,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     const freestanding_link_test = b.addTest(.{ .root_module = freestanding_link_mod });
-    test_step.dependOn(&b.addRunArtifact(freestanding_link_test).step);
+    test_step.dependOn(&addTimedTestRun(b, freestanding_link_test, win_test_timeout_s).step);
 
     // Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri (x86_64)"):
     // `freestanding_link_test`in AYNI `b.addOptions()` deseni — GERÇEK QEMU
@@ -1735,7 +1796,7 @@ pub fn build(b: *std.Build) void {
     kernel_boot_test.step.dependOn(&install_noxrt_kernel.step);
     kernel_boot_test.step.dependOn(&compile_boot_x86_64.step);
     kernel_boot_test.step.dependOn(&install_stdlib.step);
-    const kernel_boot_test_run = b.addRunArtifact(kernel_boot_test);
+    const kernel_boot_test_run = addTimedTestRun(b, kernel_boot_test, win_test_timeout_s);
     test_step.dependOn(&kernel_boot_test_run.step);
     // Faz F.5'in (gelecekteki, AYRI bir tur) İhtiyaç duyacağı TEK çağrı
     // noktası — CI'ye qemu KURULMADAN BU adım ZATEN test_step İçİnde
@@ -1770,7 +1831,7 @@ pub fn build(b: *std.Build) void {
     dogfood_test.step.dependOn(&install_noxrt_kernel.step);
     dogfood_test.step.dependOn(&compile_boot_x86_64.step);
     dogfood_test.step.dependOn(&install_stdlib.step);
-    const dogfood_test_run = b.addRunArtifact(dogfood_test);
+    const dogfood_test_run = addTimedTestRun(b, dogfood_test, win_test_timeout_s);
     test_step.dependOn(&dogfood_test_run.step);
     const dogfood_test_step = b.step("freestanding-dogfood-test", "Faz C'nin paylaşılan dogfood korpusunu HEM hosted HEM GERÇEK QEMU'da çalıştırıp karşılaştırır — qemu/qbe PATH'te olmalı");
     dogfood_test_step.dependOn(&dogfood_test_run.step);
@@ -1794,5 +1855,5 @@ pub fn build(b: *std.Build) void {
     // İHTİYAÇ DUYAR — `run_noxc`nin AYNI "TAM kurulum adımına bağımlı ol"
     // deseni (satır ~754).
     target_flag_test.step.dependOn(b.getInstallStep());
-    test_step.dependOn(&b.addRunArtifact(target_flag_test).step);
+    test_step.dependOn(&addTimedTestRun(b, target_flag_test, win_test_timeout_s).step);
 }

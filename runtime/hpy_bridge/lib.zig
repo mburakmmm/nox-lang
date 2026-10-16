@@ -5,8 +5,11 @@
 
 pub const context = @import("context.zig");
 pub const loader = @import("loader.zig");
+pub const host_contract = @import("hpy_contract");
 
 comptime {
     _ = context;
     _ = loader;
+    _ = host_contract;
+    _ = @import("abi_dump.zig");
 }

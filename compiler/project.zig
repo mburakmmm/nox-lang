@@ -201,6 +201,14 @@ pub const LockedPackage = struct {
     repo: []const u8,
     ref: []const u8,
     resolved: []const u8,
+    /// HPy paketi değilse boş kalır. Eski kilitler bu alanlar olmadan açılır.
+    hpy_schema: i64 = 0,
+    hpy_ahpy_version: []const u8 = "",
+    hpy_source_commit: []const u8 = "",
+    hpy_abi: []const u8 = "",
+    hpy_target: []const u8 = "",
+    hpy_sha256: []const u8 = "",
+    hpy_module: []const u8 = "",
 };
 
 /// Kilit dosyası (`nox.lock`, `nox.json`nin YANINDA, VCS'e commit EDİLİR

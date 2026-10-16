@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.17]
+
+### Eklendi
+
+- **nox-hpy-host-v1.** aHPy Universal paketi `nox-hpy.json` ve hedefe özel `.hpy0` ile yüklenir. `nox.hpy` ham işaretçi göstermez. QBE ve LLVM `42 42 7 9 1 0 255 42` satırını macOS ARM64, macOS x64, Linux ARM64, Linux x64 ve Windows x64 üzerinde bastı.
+- **Windows test zaman aşımı.** `zig build test -Dwin-test-timeout=300` her testin adını yazar. 300 saniyede bitmeyen test `TIMEOUT: <ad>` ile düşer.
+
+### Düzeltildi
+
+- **Windows HPy tipi.** `HPyType_Spec` fazladan pad taşımıyor. `defines` Windows'ta 32. bayttadır; `Box.value` bulunur.
+- **Linux aarch64.** Dizin açma bayrakları aarch64 sabitlerini kullanır.
+- **Paket önbelleği.** Tam SHA önbellekteyse yeniden klonlanmaz. LLVM derlemesi de `hpy/` ağacını sahneye koyar.
+
 ## [2.0.16]
 
 ### Düzeltildi

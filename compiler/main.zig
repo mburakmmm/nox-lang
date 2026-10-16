@@ -33,6 +33,7 @@ const project = @import("project.zig");
 const qbe_target = @import("qbe_target.zig");
 const test_runner = @import("pkg/test_runner.zig");
 const fetch = @import("pkg/fetch.zig");
+const hpy_host_mod = @import("pkg/hpy_host.zig");
 const pkg_index = @import("pkg/index.zig");
 const upgrade_mod = @import("pkg/upgrade.zig");
 const registry = @import("pkg/registry.zig");
@@ -628,6 +629,7 @@ fn cmdDelete(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
     for (lock.packages) |pkg| {
         if (std.mem.eql(u8, pkg.alias, alias)) {
             lock_changed = true;
+            hpy_host_mod.forgetStaged(a, io, root, pkg.hpy_module);
             continue;
         }
         try new_packages.append(a, pkg);
@@ -1665,9 +1667,8 @@ fn resolveImportsForBuild(
                 if (std.mem.eql(u8, locked.repo, req.repo)) fetch_ref = locked.resolved;
             }
             // İlk kez GÖRÜLÜYOR YA DA önbellek dizini KAYBOLMUŞ — GERÇEKTEN
-            // getir (bkz. `fetch.fetchToCache`'in belge notu — bu fonksiyon
-            // `git`i HER ZAMAN çağırır, "zaten kilitliyse hiç dokunma"
-            // kısayolu TAM OLARAK BURADA, bu bloğun ÜZERİNDE uygulanır).
+            // getir. Kilitli tam SHA önbellekte duruyorsa `fetchToCache`
+            // `git` çağırmaz. Dal adı SHA'yı çözmek için klon ister.
             var sig_diag: ?[]const u8 = null;
             const result = fetch.fetchToCache(a, io, nox_home, req.repo, fetch_ref, req.require_signed_commit, &sig_diag, fetch_policy) catch |e| {
                 if (e == error.CommitSignatureRejected) {
@@ -1686,7 +1687,11 @@ fn resolveImportsForBuild(
                     break;
                 }
             }
-            const new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
+            var new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
+            hpy_host_mod.annotateLock(a, io, result.cache_dir, &new_entry) catch |e| {
+                printErr("HPy package rejected before install (alias={s}): {t}\n", .{ req.alias, e });
+                return error.BuildFailed;
+            };
             if (found_idx) |i| new_packages.items[i] = new_entry else try new_packages.append(a, new_entry);
             lock_changed = true;
         }
@@ -1796,6 +1801,15 @@ fn resolveDependencies(
             if (locked_opt) |locked| {
                 const cache_dir = try fetch.cachedDirFor(a, nox_home, locked.repo, locked.resolved);
                 if (std.Io.Dir.accessAbsolute(io, cache_dir, .{})) |_| {
+                    var check = locked;
+                    hpy_host_mod.annotateLock(a, io, cache_dir, &check) catch |e| {
+                        printErr("HPy package rejected before use (alias={s}): {t}\n", .{ req.alias, e });
+                        return e;
+                    };
+                    if (check.hpy_module.len != 0 and !hpy_host_mod.requireComplete(locked, true)) {
+                        printErr("HPy package is locked without a digest (alias={s})\n", .{req.alias});
+                        return error.HpyRejected;
+                    }
                     try outcomes.append(a, .{ .alias = req.alias, .repo = req.repo, .action = .cached, .resolved = locked.resolved, .previous_resolved = null });
                     continue;
                 } else |_| {}
@@ -1831,7 +1845,11 @@ fn resolveDependencies(
                 break;
             }
         }
-        const new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
+        var new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
+        hpy_host_mod.annotateLock(a, io, result.cache_dir, &new_entry) catch |e| {
+            printErr("HPy package rejected before install (alias={s}): {t}\n", .{ req.alias, e });
+            return e;
+        };
         if (found_idx) |i| new_packages.items[i] = new_entry else try new_packages.append(a, new_entry);
 
         const same_as_before = if (previous) |p| std.mem.eql(u8, p, result.resolved_sha) else false;
@@ -1841,6 +1859,10 @@ fn resolveDependencies(
         try outcomes.append(a, .{ .alias = req.alias, .repo = req.repo, .action = action, .resolved = result.resolved_sha, .previous_resolved = previous });
     }
 
+    if (hpy_host_mod.findConflict(new_packages.items)) {
+        printErr("HPy module name is locked to two different artifacts\n", .{});
+        return error.HpyRejected;
+    }
     return .{ .packages = new_packages.items, .outcomes = outcomes.items, .changed = changed };
 }
 
@@ -2255,6 +2277,73 @@ fn computeLinkerVisibilityArgs() []const []const u8 {
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
+fn isScalarSlotType(te: ast.TypeExpr) bool {
+    const name = switch (te) {
+        .simple => |n| n,
+        else => return false,
+    };
+    return std.mem.eql(u8, name, "int") or std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "float") or
+        std.mem.eql(u8, name, "i8") or std.mem.eql(u8, name, "i16") or std.mem.eql(u8, name, "i32") or
+        std.mem.eql(u8, name, "i64") or std.mem.eql(u8, name, "isize") or std.mem.eql(u8, name, "u8") or
+        std.mem.eql(u8, name, "u16") or std.mem.eql(u8, name, "u32") or std.mem.eql(u8, name, "u64") or
+        std.mem.eql(u8, name, "usize");
+}
+
+fn collectFunctionScalars(a: std.mem.Allocator, body: []const ast.Stmt, out: *std.ArrayListUnmanaged([]const u8)) !void {
+    for (body) |s| {
+        if (s.kind != .var_decl) continue;
+        const vd = s.kind.var_decl;
+        if (!isScalarSlotType(vd.type_expr)) continue;
+        var seen = false;
+        for (out.items) |existing| {
+            if (std.mem.eql(u8, existing, vd.name)) seen = true;
+        }
+        if (!seen) try out.append(a, vd.name);
+    }
+}
+
+fn collectScalarLocalNames(a: std.mem.Allocator, module: ast.Module, out: *std.ArrayListUnmanaged([]const u8)) !void {
+    for (module.body) |s| {
+        switch (s.kind) {
+            .func_def => |fd| try collectFunctionScalars(a, fd.body, out),
+            .class_def => |cd| {
+                for (cd.methods) |m| try collectFunctionScalars(a, m.body, out);
+            },
+            else => {},
+        }
+    }
+}
+
+/// Kullanıcı dosyasındaki skaler yerel adlarını `.debug_str`e ekler.
+/// Birleştirilmiş modül kullanılmaz: stdlib satırları kullanıcının
+/// kaynak ofsetleriyle örtüşmez.
+fn appendScalarLocalNames(io: std.Io, a: std.mem.Allocator, asm_path: []const u8, qbe_arch: []const u8, user_module: ast.Module) !void {
+    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    try collectScalarLocalNames(a, user_module, &names);
+    if (names.items.len == 0) return;
+
+    const apple = std.mem.indexOf(u8, qbe_arch, "apple") != null;
+    const win = std.mem.eql(u8, qbe_arch, "amd64_win");
+    var extra: std.ArrayListUnmanaged(u8) = .empty;
+    try extra.appendSlice(a, "\n");
+    if (apple) {
+        try extra.appendSlice(a, ".section __DWARF,__debug_str,regular,debug\n");
+    } else if (win) {
+        try extra.appendSlice(a, ".section .debug_str,\"dr\"\n");
+    } else {
+        try extra.appendSlice(a, ".section .debug_str,\"MS\",@progbits,1\n");
+    }
+    for (names.items) |name| {
+        try extra.appendSlice(a, ".asciz \"");
+        try extra.appendSlice(a, name);
+        try extra.appendSlice(a, "\"\n");
+    }
+
+    const existing = try std.Io.Dir.cwd().readFileAlloc(io, asm_path, a, .limited(32 * 1024 * 1024));
+    const combined = try std.mem.concat(a, u8, &.{ existing, extra.items });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = asm_path, .data = combined });
+}
+
 fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, backend_choice: BackendChoice, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy, target: ?[]const u8, emit_asm: bool) ![]const u8 {
     const release = resolveRelease(gpa, io, backend_choice, profile, target, emit_asm, debug_info);
     // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--release` (LLVM) yolu
@@ -2483,6 +2572,10 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             printErr("{s} failed:\n{s}\n", .{ if (driver == .zig_cc) "zig cc" else "clang", clang_result.stderr });
             return error.BuildFailed;
         }
+        stageProjectHpy(a, io, path_arg, bin_path, nox_home) catch |e| {
+            printErr("HPy artifacts were not staged: {t}\n", .{e});
+            return error.BuildFailed;
+        };
         return bin_path;
     }
 
@@ -2502,7 +2595,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, linux-x64, linux-arm64, linux-riscv64, windows-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64)\n", .{target.?});
             return error.BuildFailed;
         })
     else
@@ -2538,6 +2631,12 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         printErr("qbe failed:\n{s}\n", .{qbe_result.stderr});
         return error.BuildFailed;
     }
+
+    // `-g`: QBE değişken yönergesi bilmez. Fonksiyon gövdesinin en üstündeki
+    // skaler yereller tek bir `alloc` yuvasında durur; adları hedefe uygun
+    // `.debug_str` bölümüne yazılır. macOS `ld` bu bölümü bağlı ikiliden
+    // düşürmeye devam eder (bkz. docs/tools/debugging.md).
+    if (debug_info) try appendScalarLocalNames(io, a, asm_path, qbe_arch_name, user_module);
 
     // v2.0 madde 8: `--emit-asm` — `qbe -t ...` çalıştırıldıktan HEMEN
     // SONRA linkleme TAMAMEN ATLANIR, ham `.s` yolu döner (eski `kernel_
@@ -2661,7 +2760,33 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         return error.BuildFailed;
     }
 
+    stageProjectHpy(a, io, path_arg, bin_path, nox_home) catch |e| {
+        printErr("HPy artifacts were not staged: {t}\n", .{e});
+        return error.BuildFailed;
+    };
     return bin_path;
+}
+
+fn stageProjectHpy(a: std.mem.Allocator, io: std.Io, path_arg: []const u8, bin_path: []const u8, nox_home: []const u8) !void {
+    const start_rel = std.fs.path.dirname(path_arg) orelse ".";
+    const start = if (std.fs.path.isAbsolute(start_rel))
+        start_rel
+    else if (std.mem.eql(u8, start_rel, "."))
+        try std.process.currentPathAlloc(io, a)
+    else
+        try std.fs.path.join(a, &.{ try std.process.currentPathAlloc(io, a), start_rel });
+    const root = try project.findProjectRoot(a, io, start) orelse return;
+    const lock = project.loadLockfile(a, io, root) catch return;
+    if (hpy_host_mod.findConflict(lock.packages)) return error.HpyRejected;
+    const bin_dir = std.fs.path.dirname(bin_path) orelse ".";
+    const staged_root = try std.fmt.allocPrint(a, "{s}/hpy", .{bin_dir});
+    std.Io.Dir.cwd().deleteTree(io, staged_root) catch {};
+    for (lock.packages) |pkg| {
+        if (pkg.hpy_module.len == 0) continue;
+        if (!hpy_host_mod.requireComplete(pkg, true)) return error.HpyRejected;
+        const cache_dir = try fetch.cachedDirFor(a, nox_home, pkg.repo, pkg.resolved);
+        try hpy_host_mod.stageBesideBinary(a, io, cache_dir, bin_path, pkg);
+    }
 }
 
 fn stemOf(path: []const u8) []const u8 {

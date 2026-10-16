@@ -221,6 +221,7 @@ const registration = @import("registration.zig");
 const decorators_mod = @import("decorators.zig");
 const qbe_emit = @import("qbe_emit.zig");
 const llvm_emit = @import("llvm_emit.zig");
+const hpy_sigs = @import("hpy_sigs.zig");
 const effect_graph = @import("../effect_graph.zig");
 
 pub const CodegenError = abi.CodegenError;
@@ -416,6 +417,8 @@ pub const Codegen = struct {
     pub const genCall = calls.genCall;
     pub const genParseOrRaise = calls.genParseOrRaise;
     pub const emitHpyErrorCheckOrRaise = calls.emitHpyErrorCheckOrRaise;
+    pub const genHpyPackageCall = calls.genHpyPackageCall;
+    pub const emitPackageAllow = calls.emitPackageAllow;
     pub const genHpyMarshalTrailingArgs = calls.genHpyMarshalTrailingArgs;
     pub const releaseTemporaryArgs = calls.releaseTemporaryArgs;
     pub const genExternCallEmit = calls.genExternCallEmit;
@@ -915,6 +918,10 @@ pub const Codegen = struct {
     }
     pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []const QbeArg) CodegenError!void {
         if (self.print_acc != null and args.len >= 1 and std.mem.eql(u8, func_text, "$printf")) return self.sinkPrintf(args[0].text, &.{});
+        if (hpy_sigs.declared(func_text)) {
+            const ret: ?QbeType = if (dst) |d| d.ty else null;
+            hpy_sigs.require(func_text, ret) catch return error.HpySignature;
+        }
         return switch (self.backend) {
             .qbe => qbe_emit.qbeCall(self, dst, func_text, args),
             .llvm => llvm_emit.qbeCall(self, dst, func_text, args),

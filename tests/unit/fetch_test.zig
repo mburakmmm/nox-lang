@@ -207,6 +207,39 @@ test "fetchToCache: file:// şeması (yalnızca mutlak yol İLE DEĞİL, AÇIK �
     try std.testing.expect(result.resolved_sha.len > 0);
 }
 
+test "fetchToCache: tam SHA önbellekteyse kaynak silinse de aynı kimlik döner" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var src = std.testing.tmpDir(.{});
+    defer src.cleanup();
+    try src.dir.writeFile(io, .{ .sub_path = "lib.nox", .data = "print(\"cevrimdisi\")\n" });
+    var src_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const src_path = try absPath(io, src.dir, &src_buf);
+    try initFixtureRepo(io, std.testing.allocator, src_path);
+    const expected_sha = try revParseHead(io, a, src_path);
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home.dir, &home_buf);
+
+    var sig_diag: ?[]const u8 = null;
+    const first = try nox.fetch.fetchToCache(a, io, home_path, src_path, "main", false, &sig_diag, try testFetchPolicy(a));
+    try std.testing.expectEqualStrings(expected_sha, first.resolved_sha);
+    const cached = try std.Io.Dir.cwd().readFileAlloc(io, try std.fmt.allocPrint(a, "{s}/lib.nox", .{first.cache_dir}), a, .limited(4096));
+    try src.dir.deleteFile(io, "lib.nox");
+    try src.dir.deleteTree(io, ".git");
+
+    var sig_diag2: ?[]const u8 = null;
+    const second = try nox.fetch.fetchToCache(a, io, home_path, src_path, expected_sha, false, &sig_diag2, try testFetchPolicy(a));
+    try std.testing.expectEqualStrings(expected_sha, second.resolved_sha);
+    const again = try std.Io.Dir.cwd().readFileAlloc(io, try std.fmt.allocPrint(a, "{s}/lib.nox", .{second.cache_dir}), a, .limited(4096));
+    try std.testing.expectEqualStrings(cached, again);
+}
+
 test "fetchToCache: ayni repo+ref icin iki kez cagirmak ayni sonucu uretir (idempotent)" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

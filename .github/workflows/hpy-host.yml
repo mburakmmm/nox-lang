@@ -1,0 +1,120 @@
+name: HPy host
+
+# Pinli nox-hpy-host-v1 fikstürü. Asıl davranış `zig build test` içindeki
+# host sözleşmesi ve codegen testlerindedir. Bu iş, dedektörün kapalı
+# olduğu bir koşuyu yeşil saymaz: kasıtlı sızıntı AddressSanitizer
+# tarafından yakalanmazsa adım düşer.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  sanitizer-positive-control:
+    name: sanitizer pozitif kontrol
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: kasıtlı sızıntı yakalanmalı
+        run: |
+          set -euo pipefail
+          cat > /tmp/hpy-host-leak.c << 'EOF'
+          #include <stdlib.h>
+          int main(void) {
+              void *p = malloc(16);
+              if (p == 0) return 2;
+              return 0;
+          }
+          EOF
+          clang -fsanitize=address -g -O1 -o /tmp/hpy-host-leak /tmp/hpy-host-leak.c
+          set +e
+          /tmp/hpy-host-leak
+          code=$?
+          set -e
+          test "$code" -ne 0
+      - name: pin dosyası aHPy commit'ini taşır
+        run: |
+          set -euo pipefail
+          grep -q 'ahpy_commit=1eb0abc7b7198ea589daeb0e0f747cefb78a1df0' tests/compat/hpy_host/PIN
+          grep -q 'profile=nox-hpy-host-v1' tests/compat/hpy_host/PIN
+          grep -q 'noxc_version=2.0.17' tests/compat/hpy_host/PIN
+          test -f tests/compat/hpy_host/nox-hpy.json
+          test -f tests/compat/hpy_host/artifacts/sample.hpy0
+
+  both-backends:
+    name: QBE ve LLVM hata genişliği
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig 0.16.0
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar -C /tmp -xf /tmp/zig.tar.xz
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - name: sözleşme testleri
+        run: zig test shared/hpy_host_contract.zig -lc
+      - name: derleyici
+        run: zig build
+      - name: iki arka uçta take_error i64
+        run: |
+          set -euo pipefail
+          cat > /tmp/hpy_width.nox << 'EOF'
+          def probe(path: str, ext: str) -> int:
+              h: ptr = hpy_open(path, ext)
+              hpy_close(h)
+              return 0
+          EOF
+          zig-out/bin/noxc build -o /tmp/hpy_width /tmp/hpy_width.nox || true
+          zig-out/bin/noxc build --backend qbe -o /tmp/hpy_width_qbe /tmp/hpy_width.nox || true
+          grep -n 'call i64 @nox_hpy_take_error' /tmp/hpy_width.ll
+          grep -n 'icmp ne i64' /tmp/hpy_width.ll
+          grep -n '=l call $nox_hpy_take_error' /tmp/hpy_width_qbe.ssa
+          if grep -n 'icmp ne i32 %' /tmp/hpy_width.ll | grep -q 'take_error'; then
+            echo "LLVM hata dalı i32'ye daraldı"
+            exit 1
+          fi
+      - name: bu platformda sampleext sayısal fikstürü
+        run: |
+          set -euo pipefail
+          clang -shared -fPIC -O2 -o /tmp/sample.hpy0 tests/compat/hpy_host/sampleext.c
+          python3 - << 'PY'
+          import hashlib, json, pathlib, shutil
+          src = pathlib.Path("tests/compat/hpy_host")
+          dest = pathlib.Path("/tmp/hpy-pkg")
+          art = dest / "artifacts"
+          art.mkdir(parents=True)
+          blob = pathlib.Path("/tmp/sample.hpy0").read_bytes()
+          (art / "sample.hpy0").write_bytes(blob)
+          manifest = json.loads((src / "nox-hpy.json").read_text())
+          digest = hashlib.sha256(blob).hexdigest()
+          for item in manifest["artifacts"]:
+              if item["target"] == "linux-x86_64":
+                  item["path"] = "artifacts/sample.hpy0"
+                  item["sha256"] = digest
+                  item["size"] = len(blob)
+          (dest / "nox-hpy.json").write_text(json.dumps(manifest))
+          PY
+          cat > /tmp/hpy_run.nox << 'EOF'
+          from nox.hpy import Module, load_package, Object
+
+          def show() -> None:
+              m: Module = load_package("/tmp/hpy-pkg")
+              with m:
+                  a: int = m.call_int("answer")
+                  b: int = m.call_int_arg("add_c", 41)
+                  c: int = m.call_int_arg("identity", 7)
+                  box: Object = m.construct("Box", 9)
+                  d: int = box.call("value")
+                  blob: list[int] = m.call_bytes("echo_bytes", [1, 0, 255])
+                  k: int = m.call_int_keyword("twice", "n", 21)
+                  print(str(a) + " " + str(b) + " " + str(c) + " " + str(d) + " " + str(blob[0]) + " " + str(blob[1]) + " " + str(blob[2]) + " " + str(k))
+
+          show()
+          EOF
+          zig-out/bin/noxc build -o /tmp/hpy_run /tmp/hpy_run.nox || true
+          test -f /tmp/hpy_run.ll
+          zig cc -O2 -Wno-override-module -o /tmp/hpy_run /tmp/hpy_run.ll zig-out/lib/noxrt.o -lm
+          out=$(/tmp/hpy_run)
+          test "$out" = "42 42 7 9 1 0 255 42"

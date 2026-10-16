@@ -64,7 +64,9 @@ pub fn emitHpyErrorCheckOrRaise(self: *Codegen) CodegenError!void {
     try self.qbeCall(.{ .name = err_t, .ty = .l }, "$nox_hpy_take_error", &.{.{ .ty = .l, .text = RT_PARAM }});
     const err_label = try self.newLabel("hpy_err");
     const ok_label = try self.newLabel("hpy_ok");
-    try self.qbeJnz(err_t, err_label, ok_label);
+    // Dönüş bir işaretçi (`l` / i64). `qbeJnz` LLVM'de `icmp ne i32` basar
+    // ve bu temp'i daraltır (`nox-llvm-hpy-error-width`). QBE SSA aynı kalır.
+    try self.qbeJnzL(err_t, err_label, ok_label);
     try self.qbeLabel(err_label);
     const he_cinfo = self.classes.get("HPyError") orelse return error.Unsupported;
     const msg_value: Value = .{ .text = err_t, .qtype = .l, .heap = .str };
@@ -74,6 +76,140 @@ pub fn emitHpyErrorCheckOrRaise(self: *Codegen) CodegenError!void {
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = he_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     try self.emitRaisePropagate();
     try self.qbeLabel(ok_label);
+}
+
+pub fn emitPackageAllow(self: *Codegen, handle: []const u8, name: []const u8, kind_lit: []const u8, argc_lit: []const u8) CodegenError!void {
+    const allow_t = try self.newTemp();
+    try self.qbeCall(.{ .name = allow_t, .ty = .w }, "$nox_hpy_package_allow", &.{
+        .{ .ty = .l, .text = handle },
+        .{ .ty = .l, .text = name },
+        .{ .ty = .w, .text = kind_lit },
+        .{ .ty = .w, .text = argc_lit },
+    });
+    try self.emitHpyErrorCheckOrRaise();
+}
+
+/// Paket cephesinin çağrıları. Liste/sözlük marshalling'i bu yola girmez.
+pub fn genHpyPackageCall(self: *Codegen, name: []const u8, c: ast.Call) CodegenError!?Value {
+    if (std.mem.eql(u8, name, "hpy_package_open")) {
+        const root_v = try self.genExpr(c.args[0]);
+        const result_temp = try self.newTemp();
+        try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_open_package", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = root_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .l };
+    }
+    if (std.mem.eql(u8, name, "hpy_package_close")) {
+        const handle_v = try self.genExpr(c.args[0]);
+        try self.qbeCall(null, "$nox_hpy_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = "0", .qtype = .w };
+    }
+    if (std.mem.eql(u8, name, "hpy_package_close_obj")) {
+        const handle_v = try self.genExpr(c.args[0]);
+        const obj_v = try self.genExpr(c.args[1]);
+        try self.qbeCall(null, "$nox_hpy_package_close_obj", &.{ .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = obj_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = "0", .qtype = .w };
+    }
+    const zero = std.mem.eql(u8, name, "hpy_package_call_int") or std.mem.eql(u8, name, "hpy_package_call_bool") or std.mem.eql(u8, name, "hpy_package_call_float") or std.mem.eql(u8, name, "hpy_package_call_str") or std.mem.eql(u8, name, "hpy_package_call_obj");
+    const int_arg = std.mem.eql(u8, name, "hpy_package_call_int_arg") or std.mem.eql(u8, name, "hpy_package_new");
+    const str_arg = std.mem.eql(u8, name, "hpy_package_call_str_arg");
+    const float_arg = std.mem.eql(u8, name, "hpy_package_call_float_arg");
+    const bytes_arg = std.mem.eql(u8, name, "hpy_package_call_bytes");
+    const keyword_int = std.mem.eql(u8, name, "hpy_package_call_int_keyword");
+    const method = std.mem.eql(u8, name, "hpy_package_method_int");
+    const method0 = std.mem.eql(u8, name, "hpy_package_call_method");
+    if (!zero and !int_arg and !str_arg and !float_arg and !bytes_arg and !keyword_int and !method and !method0) return null;
+
+    const handle_v = try self.genExpr(c.args[0]);
+    const name_index: usize = if (method or method0) 2 else 1;
+    const name_v = try self.genExpr(c.args[name_index]);
+    const kind_lit: []const u8 = if (std.mem.eql(u8, name, "hpy_package_call_bool")) "2" else if (std.mem.eql(u8, name, "hpy_package_call_float") or float_arg) "3" else if (std.mem.eql(u8, name, "hpy_package_call_str") or str_arg) "4" else if (std.mem.eql(u8, name, "hpy_package_call_obj") or std.mem.eql(u8, name, "hpy_package_new")) "5" else if (bytes_arg) "7" else "1";
+    const argc_lit: []const u8 = if (zero or method0) "0" else "1";
+    if (keyword_int) {
+        const allow_t = try self.newTemp();
+        try self.qbeCall(.{ .name = allow_t, .ty = .w }, "$nox_hpy_package_allow_kw", &.{
+            .{ .ty = .l, .text = handle_v.text },
+            .{ .ty = .l, .text = name_v.text },
+            .{ .ty = .w, .text = kind_lit },
+            .{ .ty = .w, .text = argc_lit },
+        });
+        try self.emitHpyErrorCheckOrRaise();
+    } else try self.emitPackageAllow(handle_v.text, name_v.text, kind_lit, argc_lit);
+
+    const mc_temp = try self.newTemp();
+    if (method or method0) {
+        const obj_v = try self.genExpr(c.args[1]);
+        try self.qbeCall(.{ .name = mc_temp, .ty = .l }, "$nox_hpy_args_begin_for_obj", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = obj_v.text } });
+    } else {
+        try self.qbeCall(.{ .name = mc_temp, .ty = .l }, "$nox_hpy_args_begin", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text } });
+    }
+    if (int_arg or method) {
+        const arg_v = try self.genExpr(c.args[c.args.len - 1]);
+        try self.qbeCall(null, "$nox_hpy_args_add_int", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = arg_v.text } });
+    } else if (str_arg) {
+        const arg_v = try self.genExpr(c.args[2]);
+        try self.qbeCall(null, "$nox_hpy_package_check_str", &.{.{ .ty = .l, .text = arg_v.text }});
+        try self.emitHpyErrorCheckOrRaise();
+        try self.qbeCall(null, "$nox_hpy_args_add_str", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = arg_v.text } });
+    } else if (float_arg) {
+        const arg_v = try self.genExpr(c.args[2]);
+        try self.qbeCall(null, "$nox_hpy_package_check_float", &.{.{ .ty = .d, .text = arg_v.text }});
+        try self.emitHpyErrorCheckOrRaise();
+        try self.qbeCall(null, "$nox_hpy_args_add_float", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .d, .text = arg_v.text } });
+    } else if (bytes_arg) {
+        const arg_v = try self.genExpr(c.args[2]);
+        try self.qbeCall(null, "$nox_hpy_args_add_bytes", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = arg_v.text } });
+    } else if (keyword_int) {
+        const arg_v = try self.genExpr(c.args[3]);
+        try self.qbeCall(null, "$nox_hpy_args_add_int", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = arg_v.text } });
+    }
+
+    const result_temp = try self.newTemp();
+    if (std.mem.eql(u8, name, "hpy_package_new")) {
+        try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_new_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .l };
+    }
+    if (method or method0) {
+        try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_attr_int_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .l };
+    }
+    if (std.mem.eql(u8, name, "hpy_package_call_float") or float_arg) {
+        try self.qbeCall(.{ .name = result_temp, .ty = .d }, "$nox_hpy_call_float_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .d };
+    }
+    if (std.mem.eql(u8, name, "hpy_package_call_bool")) {
+        try self.qbeCall(.{ .name = result_temp, .ty = .w }, "$nox_hpy_call_bool_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .w };
+    }
+    if (std.mem.eql(u8, name, "hpy_package_call_str") or str_arg) {
+        try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str_finish", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .l, .heap = .str };
+    }
+    if (std.mem.eql(u8, name, "hpy_package_call_obj")) {
+        try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_obj_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .l };
+    }
+    if (bytes_arg) {
+        try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_bytes_finish", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .l, .heap = .list, .elem_qtype = .l };
+    }
+    if (keyword_int) {
+        const key_v = try self.genExpr(c.args[2]);
+        try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_int_keyword_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text }, .{ .ty = .l, .text = key_v.text } });
+        try self.emitHpyErrorCheckOrRaise();
+        return .{ .text = result_temp, .qtype = .l };
+    }
+    try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_int_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = name_v.text } });
+    try self.emitHpyErrorCheckOrRaise();
+    return .{ .text = result_temp, .qtype = .l };
 }
 
 /// Faz U.4.5: `closure_ptr`in (ZATEN yüklenmiş/değerlendirilmiş bir QBE
@@ -572,6 +708,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.emitHpyErrorCheckOrRaise();
                 return .{ .text = result_temp, .qtype = .l };
             }
+            if (try self.genHpyPackageCall(name, c)) |value| return value;
             // Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına
             // çoklu-argüman + list/dict/class marshalling"): `hpy_call_on`/
             // `hpy_call_str_on`/`hpy_call_float_on`/`hpy_call_bool_on`

@@ -17,6 +17,7 @@ pub const syntax_report = @import("syntax_report.zig");
 pub const project = @import("project.zig");
 pub const test_runner = @import("pkg/test_runner.zig");
 pub const fetch = @import("pkg/fetch.zig");
+pub const hpy_host = @import("pkg/hpy_host.zig");
 pub const pkg_index = @import("pkg/index.zig");
 pub const upgrade = @import("pkg/upgrade.zig");
 pub const install = @import("pkg/install.zig");
