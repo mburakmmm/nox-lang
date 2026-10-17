@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.18]
+
+### Düzeltildi
+
+- **HPy manifesti.** Paket bildirimi `std.json` olmadan okunur.
+- **Windows testleri.** HTTP sunucu ve istemci, `NOX_POOL_WORKERS`, süreç dizini ve erken boş bırakılan tutamaçlar kilitlenmez. `HPyType_Spec` Windows düzeni doğrulanır.
+- **YAML.** Girintideki TAB `YamlError` fırlatır. Değerin içindeki TAB kabul edilir.
+- **Yazdırma.** Sınıf `__str__` / `__repr__` sonucu boşsa Windows süreci düşmez. f-string ve `str()` metni yerinde kalır.
+- **SQLite.** Windows önce System32 `winsqlite3.dll` yükler. Boş tutamaç sqlite çağrısına girmez.
+- **Yollar.** Uzun geçici dizinde dosya testleri ve `canonicalize` sığar. Dizin listesi doğru sayılır.
+
 ## [2.0.17]
 
 ### Eklendi

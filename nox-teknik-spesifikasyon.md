@@ -29095,6 +29095,16 @@ Windows `zig build test -Dwin-test-timeout=300` her test ikilisini `tests/suppor
 
 `nox.sqlite` Windows'ta önce System32'deki `winsqlite3.dll` dosyasını (`LOAD_LIBRARY_SEARCH_SYSTEM32`) yükler. Bu bayrak reddedilirse aynı dosya standart aramayla denenir. PATH üzerindeki `sqlite3.dll` son çaredir. Çalıştırıcı imajındaki Python kopyası, süreç `SqliteError` basamadan düşüyordu. İkisi de yoksa `open` `SqliteError` fırlatır. Boş bir veritabanı veya deyim tutamacı sqlite çağrısına girmez.
 
+## 3.306 Windows YAML, yazdırma ve yol tamponu (v2.0.18)
+
+YAML girintisindeki TAB `_tokenize` içinde, satır kırpılmadan önce `YamlError` olur. Mesaj `TAB cannot be used in YAML indentation`. Değerin içindeki TAB girinti değildir. Yalnızca TAB olan satır boş sayılır ve atlanır.
+
+Sınıf `__str__` ve `__repr__` sonucu `nox_print_str` ile yazılır. `null` ve boş dizi bir şey basmaz. `str()` ve f-string bu metni stdout yerine biriktirir.
+
+`nox.fs` dizin listesi yolun sonundaki NUL baytını keser. `canonicalize` Windows tamponu 4096 bayttır. Test yolları uzun `TEMP` dizinine sığar.
+
+HPy paket bildirimi `std.json` kullanmaz. Windows HTTP, havuz ve süreç testleri kilitlenmeden düşer. SQLite yükleme sırası §3.305'tedir ve bu sürümle yayımlanır.
+
 ## 3.304 Windows test derlemesi ve yol URI'si (v2.0.16)
 
 Barındırılan Windows `zig test -fllvm`, freestanding `printf` gövdesindeki `@cVaStart`i derlemez. Gerçek gövde yalnızca freestanding x86_64 çekirdektedir.
