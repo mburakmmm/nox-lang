@@ -29,6 +29,7 @@ const http_client = @import("http_client.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
 const bridge = @import("../async_rt/bridge.zig");
+const embed = @import("../embed.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
@@ -109,6 +110,63 @@ fn filetimeToUnix(ft: std.os.windows.FILETIME) struct { sec: i64, nsec: i64 } {
     return .{ .sec = @divFloor(unix_100ns, 10_000_000), .nsec = @mod(unix_100ns, 10_000_000) * 100 };
 }
 
+fn androidFstat(fd: c_int) ?FileInfo {
+    var buf: std.os.linux.Statx = undefined;
+    const mask: std.os.linux.STATX = .{ .SIZE = true, .MTIME = true };
+    const flags: u32 = std.os.linux.AT.EMPTY_PATH;
+    const rc = std.os.linux.statx(fd, "", flags, mask, &buf);
+    const signed: isize = @bitCast(rc);
+    if (signed == 0) {
+        return .{ .size = buf.size, .mtime_sec = buf.mtime.sec, .mtime_nsec = buf.mtime.nsec };
+    }
+    const Ts = extern struct { sec: i64, nsec: i64 };
+    const St = switch (builtin.cpu.arch) {
+        .aarch64 => extern struct {
+            dev: u64,
+            ino: u64,
+            mode: u32,
+            nlink: u32,
+            uid: u32,
+            gid: u32,
+            rdev: u64,
+            pad1: u64,
+            size: i64,
+            blksize: i32,
+            pad2: i32,
+            blocks: i64,
+            atim: Ts,
+            mtim: Ts,
+            ctim: Ts,
+            unused4: u32,
+            unused5: u32,
+        },
+        .x86_64 => extern struct {
+            dev: u64,
+            ino: u64,
+            nlink: u64,
+            mode: u32,
+            uid: u32,
+            gid: u32,
+            pad0: u32,
+            rdev: u64,
+            size: i64,
+            blksize: i64,
+            blocks: i64,
+            atim: Ts,
+            mtim: Ts,
+            ctim: Ts,
+            pad3: [3]i64,
+        },
+        else => unreachable,
+    };
+    var st: St = undefined;
+    const fstat_rc = struct {
+        extern "c" fn fstat(fd_arg: c_int, out: *St) c_int;
+    }.fstat(fd, &st);
+    if (fstat_rc != 0) return null;
+    return .{ .size = @intCast(st.size), .mtime_sec = st.mtim.sec, .mtime_nsec = st.mtim.nsec };
+}
+
 fn fstatCompat(fd: c_int) ?FileInfo {
     if (builtin.os.tag == .windows) {
         const size = WinFile._filelengthi64(fd);
@@ -120,6 +178,7 @@ fn fstatCompat(fd: c_int) ?FileInfo {
         return .{ .size = @intCast(size), .mtime_sec = t.sec, .mtime_nsec = t.nsec };
     }
     if (builtin.os.tag == .linux) {
+        if (comptime builtin.abi.isAndroid()) return androidFstat(fd);
         var buf: std.os.linux.Statx = undefined;
         const mask: std.os.linux.STATX = .{ .SIZE = true, .MTIME = true };
         const rc = std.c.statx(fd, "", std.os.linux.AT.EMPTY_PATH, mask, &buf);
@@ -202,6 +261,10 @@ export fn nox_fs_last_op_ok() callconv(.c) i32 {
 /// okuma SIRASINDA BÜYÜRSE/küçülürse (nadir yarış) `fstat` ANINDAKİ
 /// boyut ESAS alınır — bilinçli v1 basitleştirmesi.
 export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    if (!embed.allowsPath(path)) {
+        fsLastOkPtr().* = false;
+        return dupeToNoxStr(rt, "");
+    }
     const p = path orelse {
         fsLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
@@ -264,6 +327,10 @@ fn writeAllToFile(append: bool, path: [*:0]const u8, content: [*:0]const u8) voi
 
 export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content: ?[*:0]const u8) callconv(.c) void {
     _ = rt;
+    if (!embed.allowsPath(path)) {
+        fsLastOkPtr().* = false;
+        return;
+    }
     const p = path orelse {
         fsLastOkPtr().* = false;
         return;
@@ -281,6 +348,10 @@ export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content
 /// `write_string` gibi).
 export fn nox_fs_append_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content: ?[*:0]const u8) callconv(.c) void {
     _ = rt;
+    if (!embed.allowsPath(path)) {
+        fsLastOkPtr().* = false;
+        return;
+    }
     const p = path orelse {
         fsLastOkPtr().* = false;
         return;
@@ -305,6 +376,7 @@ export fn nox_fs_append_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, conten
 /// TAM bir `stat` yapısına gerek OLMADAN "var mı"/"dizin mi" sorularını
 /// yanıtlamaya YETERLİ.
 export fn nox_fs_exists_raw(path: ?[*:0]const u8) callconv(.c) i32 {
+    if (!embed.allowsPath(path)) return 0;
     const p = path orelse return 0;
     return if (std.c.access(p, std.c.F_OK) == 0) 1 else 0;
 }
@@ -317,6 +389,7 @@ export fn nox_fs_exists_raw(path: ?[*:0]const u8) callconv(.c) i32 {
 /// `GetFileAttributesA` (TEK bir Win32 çağrısı, `FILE_ATTRIBUTE_DIRECTORY`
 /// bitini KONTROL eder) KULLANILIR.
 export fn nox_fs_is_dir_raw(path: ?[*:0]const u8) callconv(.c) i32 {
+    if (!embed.allowsPath(path)) return 0;
     const p = path orelse return 0;
     if (builtin.os.tag == .windows) {
         const attrs = WinFile.GetFileAttributesA(p);
@@ -334,6 +407,7 @@ export fn nox_fs_is_dir_raw(path: ?[*:0]const u8) callconv(.c) i32 {
 /// link/özel dosya AYRIMI yapılmaz — `nox.fs`in ZATEN belgelenen v1
 /// basitleştirmeleriyle TUTARLI, bkz. bu dosyanın modül-üstü notu).
 export fn nox_fs_is_file_raw(path: ?[*:0]const u8) callconv(.c) i32 {
+    if (!embed.allowsPath(path)) return 0;
     const p = path orelse return 0;
     if (std.c.access(p, std.c.F_OK) != 0) return 0;
     return if (nox_fs_is_dir_raw(p) == 0) 1 else 0;
@@ -363,6 +437,10 @@ fn fsLastMtimePtr() *i64 {
 }
 
 export fn nox_fs_stat_raw(path: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(path)) {
+        fsLastOkPtr().* = false;
+        return;
+    }
     const p = path orelse {
         fsLastOkPtr().* = false;
         return;
@@ -436,6 +514,10 @@ fn collectDirNames(path: [*:0]const u8, names: *std.ArrayListUnmanaged([]const u
 }
 
 export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    if (!embed.allowsPath(path)) {
+        fsLastOkPtr().* = false;
+        return null;
+    }
     const p = path orelse {
         fsLastOkPtr().* = false;
         return null;
@@ -474,6 +556,10 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
 /// kaynağı OKUYUP hedefe YAZAR, 4096-baytlık parçalar hâlinde (Nox `str`
 /// yuvarlağına HİÇ GİRMEDEN — ARC tahsisi GEREKMEZ).
 export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(src) or !embed.allowsPath(dst)) {
+        fsLastOkPtr().* = false;
+        return;
+    }
     const s = src orelse {
         fsLastOkPtr().* = false;
         return;
@@ -520,6 +606,10 @@ export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c)
 }
 
 export fn nox_fs_rename_raw(old: ?[*:0]const u8, new: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(old) or !embed.allowsPath(new)) {
+        fsLastOkPtr().* = false;
+        return;
+    }
     const o = old orelse {
         fsLastOkPtr().* = false;
         return;
@@ -532,6 +622,10 @@ export fn nox_fs_rename_raw(old: ?[*:0]const u8, new: ?[*:0]const u8) callconv(.
 }
 
 export fn nox_fs_remove_file_raw(path: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(path)) {
+        fsLastOkPtr().* = false;
+        return;
+    }
     const p = path orelse {
         fsLastOkPtr().* = false;
         return;
@@ -540,6 +634,10 @@ export fn nox_fs_remove_file_raw(path: ?[*:0]const u8) callconv(.c) void {
 }
 
 export fn nox_fs_create_dir_raw(path: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(path)) {
+        fsLastOkPtr().* = false;
+        return;
+    }
     const p = path orelse {
         fsLastOkPtr().* = false;
         return;

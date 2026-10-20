@@ -1,0 +1,65 @@
+name: mobile
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ios-simulator:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig 0.16.0
+        run: |
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+      - name: Build noxc
+        run: zig build -Doptimize=Debug
+      - name: Simulator runtime
+        run: zig build mobile-rt-simulator -Doptimize=Debug
+      - name: Boot the simulator and run the stdlib suite
+        run: |
+          chmod +x scripts/mobile_simulator_ci.sh scripts/mobile_simulator_suite.sh
+          scripts/mobile_simulator_ci.sh
+      - name: iOS library checks
+        run: |
+          zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "qbe is rejected"
+          zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "simulator triple"
+          zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "mobile mask"
+          zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "answers 42"
+          zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "void program"
+          zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "compiles async"
+      - name: Stable gate
+        run: python3 scripts/check_mobile_stable.py
+      - name: Docs
+        run: |
+          python3 -m venv "$RUNNER_TEMP/docs-venv"
+          "$RUNNER_TEMP/docs-venv/bin/pip" install PyYAML
+          "$RUNNER_TEMP/docs-venv/bin/python" scripts/check_docs.py
+
+  android-library:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig 0.16.0
+        run: |
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+      - name: NDK
+        run: |
+          curl -sSL -o /tmp/ndk.zip "https://dl.google.com/android/repository/android-ndk-r28c-linux.zip"
+          unzip -q /tmp/ndk.zip -d "$RUNNER_TEMP"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r28c" >> "$GITHUB_ENV"
+      - name: Build noxc
+        run: zig build -Doptimize=Debug
+      - name: Android shared library and 16 KiB alignment
+        run: zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "android shared"
+      - name: Stable gate
+        run: python3 scripts/check_mobile_stable.py

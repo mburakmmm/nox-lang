@@ -1796,12 +1796,18 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     // kodgen yolu YOK, argv'yi HİÇ kullanmayan programlar İÇİN bu
     // parametreler yalnızca kullanılmadan geçilir, sıfıra yakın
     // maliyet).
-    try self.qbeFuncHeaderStart(.w, "$main");
-    try self.qbeFuncParam(.w, "%argc", true);
-    try self.qbeFuncParam(.l, "%argv", false);
-    try self.qbeFuncHeaderEnd();
-    try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, runtimeInitSymbol(self), &.{});
-    try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
+    if (self.library_mode) {
+        try self.qbeFuncHeaderStart(null, "$nox_embed_user_entry");
+        try self.qbeFuncParam(.l, RT_PARAM, true);
+        try self.qbeFuncHeaderEnd();
+    } else {
+        try self.qbeFuncHeaderStart(.w, "$main");
+        try self.qbeFuncParam(.w, "%argc", true);
+        try self.qbeFuncParam(.l, "%argv", false);
+        try self.qbeFuncHeaderEnd();
+        try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, runtimeInitSymbol(self), &.{});
+        try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
+    }
     try emitDispatchTableRegistration(self);
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // üst-düzey `var_decl`ların initializer'ları, KALAN gevşek deyimler
@@ -1829,11 +1835,28 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     if (self.module_globals.count() > 0) {
         try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
-    try self.qbeCall(null, "$nox_runtime_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
+    if (!self.library_mode) {
+        try self.qbeCall(null, "$nox_runtime_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
+    }
     const end_label = try self.newLabel("fn_end");
     try self.qbeLabel(end_label);
-    try self.qbeRet("0");
+    if (self.library_mode) {
+        try self.qbeRet(null);
+    } else {
+        try self.qbeRet("0");
+    }
     try self.qbeFuncEnd();
+    if (self.library_mode) {
+        try self.qbeFuncHeaderStart(null, "$nox_embed_bind");
+        try self.qbeFuncParam(.l, "%app", true);
+        try self.qbeFuncHeaderEnd();
+        try self.qbeCall(null, "$nox_app_set_entry", &.{
+            .{ .ty = .l, .text = "%app" },
+            .{ .ty = .l, .text = "$nox_embed_user_entry" },
+        });
+        try self.qbeRet(null);
+        try self.qbeFuncEnd();
+    }
 }
 
 /// `moduleUsesAsync` `true` döndüğünde `genMain` yerine kullanılır —
@@ -1889,6 +1912,54 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     try self.qbeLabel(end_label);
     try self.qbeRet("0");
     try self.qbeFuncEnd();
+
+    if (self.library_mode) {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+        self.mod_cache.deinit(self.allocator);
+        self.mod_cache = .empty;
+        self.current_ret_qtype = .none;
+        self.in_main = true;
+        try self.qbeFuncHeaderStart(null, "$nox_embed_user_entry");
+        try self.qbeFuncParam(.l, RT_PARAM, true);
+        try self.qbeFuncHeaderEnd();
+        try emitDispatchTableRegistration(self);
+        try self.qbeCall(null, "$nox_async_init", &.{.{ .ty = .l, .text = RT_PARAM }});
+        if (self.module_globals.count() > 0) {
+            try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+        }
+        const closure_t = try self.newTemp();
+        try self.qbeCall(.{ .name = closure_t, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });
+        try self.qbeStoreL(RT_PARAM, closure_t);
+        const task_t = try self.newTemp();
+        try self.qbeCall(.{ .name = task_t, .ty = .l }, "$nox_async_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "$main_body" }, .{ .ty = .l, .text = closure_t } });
+        const run_result_t = try self.newTemp();
+        try self.qbeCall(.{ .name = run_result_t, .ty = .w }, "$nox_async_run_to_completion", &.{.{ .ty = .l, .text = RT_PARAM }});
+        const deadlock_label = try self.newLabel("deadlock");
+        const ok_label = try self.newLabel("no_deadlock");
+        try self.qbeJnz(run_result_t, deadlock_label, ok_label);
+        try self.qbeLabel(deadlock_label);
+        try self.qbeCall(null, "$nox_async_deadlock_abort", &.{.{ .ty = .l, .text = RT_PARAM }});
+        try self.qbeRet(null);
+        try self.qbeLabel(ok_label);
+        try self.qbeCall(null, "$nox_async_destroy_task", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_t } });
+        try self.qbeCall(null, "$nox_async_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
+        if (self.module_globals.count() > 0) {
+            try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+        }
+        try self.qbeRet(null);
+        try self.qbeFuncEnd();
+        try self.qbeFuncHeaderStart(null, "$nox_embed_bind");
+        try self.qbeFuncParam(.l, "%app", true);
+        try self.qbeFuncHeaderEnd();
+        try self.qbeCall(null, "$nox_app_set_entry", &.{
+            .{ .ty = .l, .text = "%app" },
+            .{ .ty = .l, .text = "$nox_embed_user_entry" },
+        });
+        try self.qbeRet(null);
+        try self.qbeFuncEnd();
+        return;
+    }
 
     // `$main` — gerçek C ABI girişi: çalışma zamanını/zamanlayıcıyı
     // başlatır, üst düzey kodu (`$main_body`) TEK bir görev olarak

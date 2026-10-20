@@ -828,7 +828,7 @@ fn installOrUpdatePackage(
     defer std.Io.Dir.cwd().deleteTree(io, scratch_dir_path) catch {};
     const scratch_bin_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ scratch_dir_path, bin_spec.name });
 
-    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, .auto, .hosted, fetch_policy, null, false);
+    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, .auto, .hosted, fetch_policy, null, false, .exe);
 
     const bin_dir_path = try project.resolveGlobalBinDir(a, nox_home);
     try std.Io.Dir.cwd().createDirPath(io, bin_dir_path);
@@ -1064,7 +1064,11 @@ const BuildOpts = struct {
     /// İKİ SORUMLULUĞUNUN İKİNCİSİ — ARTIK profile/target-nötr, AÇIKÇA
     /// adlandırılmış BAĞIMSIZ bir bayrak.
     emit_asm: bool = false,
+    /// Mobil kütüphane biçimi. `.exe` masaüstü yoludur.
+    emit: EmitKind = .exe,
 };
+
+const EmitKind = enum { exe, obj, static_lib, shared_lib };
 
 const BackendChoice = enum { auto, qbe, llvm };
 
@@ -1109,6 +1113,25 @@ fn clangAvailable(gpa: std.mem.Allocator, io: std.Io) bool {
 /// PATH'te bulunmaması (bu son durumda tek satırlık bir not basılır — checker'ın `spawn` tip kuralları
 /// backend'e göre farklıdır, sessiz düşüş şaşırtıcı olurdu).
 fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, profile: codegen.Profile, target: ?[]const u8, emit_asm: bool, debug_info: bool) bool {
+    if (target) |t| {
+        if (qbe_target.hostedTargetInfo(t)) |info| {
+            if (info.isMobile()) {
+                if (choice == .qbe) {
+                    printErr("--backend qbe does not support mobile target '{s}' (this ABI is LLVM-only until the same fixtures pass on QBE)\n", .{t});
+                    std.process.exit(1);
+                }
+                if (emit_asm or debug_info) {
+                    printErr("mobile target '{s}' uses the LLVM backend; --emit-asm and -g are not supported\n", .{t});
+                    std.process.exit(1);
+                }
+                if (!clangAvailable(gpa, io)) {
+                    printErr("mobile target '{s}' needs clang or zig on PATH\n", .{t});
+                    std.process.exit(1);
+                }
+                return true;
+            }
+        }
+    }
     switch (choice) {
         .qbe => return false,
         .llvm => {
@@ -1178,11 +1201,25 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             if (i < args.len) opts.target = args[i];
         } else if (std.mem.eql(u8, arg, "--emit-asm")) {
             opts.emit_asm = true;
+        } else if (std.mem.eql(u8, arg, "--emit-obj")) {
+            setEmit(&opts, .obj);
+        } else if (std.mem.eql(u8, arg, "--emit-static-lib")) {
+            setEmit(&opts, .static_lib);
+        } else if (std.mem.eql(u8, arg, "--emit-shared-lib")) {
+            setEmit(&opts, .shared_lib);
         } else if (opts.path == null) {
             opts.path = arg;
         }
     }
     return opts;
+}
+
+fn setEmit(opts: *BuildOpts, kind: EmitKind) void {
+    if (opts.emit != .exe) {
+        printErr("only one of --emit-obj, --emit-static-lib, --emit-shared-lib may be set\n", .{});
+        std.process.exit(1);
+    }
+    opts.emit = kind;
 }
 
 /// `args`i İLK `--` argümanında ikiye böler (`run`in çocuk sürece iletilecek
@@ -1202,7 +1239,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
     };
-    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm, opts.emit);
     printOk("built: {s}\n", .{out});
 }
 
@@ -1242,8 +1279,8 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     // (HOST'tan FARKLI) İSE üretilen ikili BU makinede ÇALIŞTIRILAMAZ —
     // eski `NOX_FREESTANDING_KERNEL_ARCH`in `cmdRun` reddiyle AYNI ruh,
     // ARTIK genel.
-    if (opts.emit_asm) {
-        printErr("noxc run: cannot run with --emit-asm (it produces an unlinked .s file; use 'noxc build')\n", .{});
+    if (opts.emit_asm or opts.emit != .exe) {
+        printErr("noxc run: cannot run with --emit-asm or a library emit (use 'noxc build')\n", .{});
         std.process.exit(1);
     }
     if (opts.target) |t| {
@@ -1256,7 +1293,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     const tool_stamp = try toolchainStamp(io, a, resource_dirs);
     const slot = try prepareRunCache(io, a, nox_home, path_arg, opts, null, tool_stamp);
     const bin_path = if (slot.hit) slot.bin_path else blk: {
-        const built = try buildOne(gpa, io, a, path_arg, opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+        const built = try buildOne(gpa, io, a, path_arg, opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm, opts.emit);
         try commitRunCache(io, a, slot);
         break :blk built;
     };
@@ -1294,7 +1331,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const tool_stamp = try toolchainStamp(io, a, resource_dirs);
         const slot = try prepareRunCache(io, a, nox_home, selectors[0], opts, null, tool_stamp);
         const bin_path = if (slot.hit) slot.bin_path else blk: {
-            const built = try buildOne(gpa, io, a, selectors[0], opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm);
+            const built = try buildOne(gpa, io, a, selectors[0], opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm, opts.emit);
             try commitRunCache(io, a, slot);
             break :blk built;
         };
@@ -1364,7 +1401,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
             fail_count += 1;
             continue;
         };
-        const bin_path = if (slot.hit) slot.bin_path else buildOne(gpa, io, fa, file, opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm) catch {
+        const bin_path = if (slot.hit) slot.bin_path else buildOne(gpa, io, fa, file, opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm, opts.emit) catch {
             printErr("FAILED: {s}\n", .{file});
             fail_count += 1;
             continue;
@@ -2042,6 +2079,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 
     var checker_state = checker.Checker.init(a);
     checker_state.profile = opts.profile;
+    checker_state.mobile_mask = mobileMaskOf(if (opts.profile == .hosted and opts.target != null) qbe_target.hostedTargetInfo(opts.target.?) else null);
     // `build` ile aynı backend'e göre denetle (checker'ın `spawn` tip kuralları backend'e bağlıdır).
     checker_state.backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm, opts.debug_info)) .llvm else .qbe;
     checker_state.checkModule(module) catch |e| {
@@ -2204,7 +2242,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     // hesaplanır.
     const user_stmt_start = module.body.len - user_module.body.len;
     var explain_sink: std.ArrayListUnmanaged(local_escape.ExplainRecord) = .empty;
-    _ = codegen.generateModuleWithMeta(a, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, opts.profile, .{ .sink = &explain_sink, .user_stmt_start = user_stmt_start }, callback_targets.items, resolved_bases, checker_state.class_ctors.items) catch |err| {
+    _ = codegen.generateModuleWithMeta(a, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, opts.profile, .{ .sink = &explain_sink, .user_stmt_start = user_stmt_start }, callback_targets.items, resolved_bases, checker_state.class_ctors.items, false, "") catch |err| {
         printErr("explain: code generation failed ({t})\n", .{err});
         std.process.exit(1);
     };
@@ -2344,8 +2382,203 @@ fn appendScalarLocalNames(io: std.Io, a: std.mem.Allocator, asm_path: []const u8
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = asm_path, .data = combined });
 }
 
-fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, backend_choice: BackendChoice, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy, target: ?[]const u8, emit_asm: bool) ![]const u8 {
+fn mobileMaskOf(info: ?qbe_target.HostedTargetInfo) checker.MobileMask {
+    const ht = info orelse return .none;
+    return switch (ht.mobile) {
+        .none => .none,
+        .ios_device, .ios_simulator => .ios,
+        .android => .android,
+    };
+}
+
+fn stripOneExt(path: []const u8) []const u8 {
+    const slash = std.mem.lastIndexOfScalar(u8, path, '/');
+    const dot = std.mem.lastIndexOfScalar(u8, path, '.') orelse return path;
+    if (slash) |s| {
+        if (dot < s) return path;
+    }
+    return path[0..dot];
+}
+
+fn runTool(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8) !void {
+    const result = std.process.run(gpa, io, .{ .argv = argv }) catch |err| {
+        if (err == error.FileNotFound) {
+            printErr("command not found: {s}\n", .{argv[0]});
+            return error.BuildFailed;
+        }
+        return err;
+    };
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        printErr("{s} failed:\n{s}\n", .{ argv[0], result.stderr });
+        return error.BuildFailed;
+    }
+}
+
+fn appleSdkPath(gpa: std.mem.Allocator, io: std.Io, sdk: []const u8) ![]u8 {
+    const result = std.process.run(gpa, io, .{ .argv = &.{ "xcrun", "--sdk", sdk, "--show-sdk-path" } }) catch {
+        printErr("xcrun not found: an Apple SDK is required for {s}\n", .{sdk});
+        return error.BuildFailed;
+    };
+    defer gpa.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        gpa.free(result.stdout);
+        printErr("xcrun --sdk {s} failed:\n{s}\n", .{ sdk, result.stderr });
+        return error.BuildFailed;
+    }
+    const trimmed = std.mem.trim(u8, result.stdout, " \t\r\n");
+    if (trimmed.len == 0) {
+        gpa.free(result.stdout);
+        printErr("xcrun --sdk {s} returned an empty SDK path\n", .{sdk});
+        return error.BuildFailed;
+    }
+    const owned = try gpa.dupe(u8, trimmed);
+    gpa.free(result.stdout);
+    return owned;
+}
+
+fn commandSucceeds(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8) bool {
+    const result = std.process.run(gpa, io, .{ .argv = argv }) catch return false;
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    return result.term == .exited and result.term.exited == 0;
+}
+
+fn findNdkClang(gpa: std.mem.Allocator, io: std.Io) ?[]u8 {
+    const hosts = [_][]const u8{ "darwin-arm64", "darwin-x86_64", "linux-aarch64", "linux-x86_64", "windows-x86_64" };
+    var root_buf: [3]?[]const u8 = .{ null, null, null };
+    var owned_parent: ?[]u8 = null;
+    defer if (owned_parent) |p| gpa.free(p);
+    if (std.c.getenv("ANDROID_NDK_HOME")) |p| root_buf[0] = std.mem.span(p);
+    if (std.c.getenv("ANDROID_NDK_ROOT")) |p| root_buf[1] = std.mem.span(p);
+    if (std.c.getenv("HOME")) |home| {
+        owned_parent = std.fmt.allocPrint(gpa, "{s}/Library/Android/sdk/ndk", .{std.mem.span(home)}) catch null;
+        if (owned_parent) |parent| {
+            if (commandSucceeds(gpa, io, &.{ "test", "-d", parent })) {
+                const listed = std.process.run(gpa, io, .{ .argv = &.{ "ls", "-1", parent } }) catch null;
+                if (listed) |result| {
+                    defer gpa.free(result.stdout);
+                    defer gpa.free(result.stderr);
+                    var last: ?[]const u8 = null;
+                    var lines = std.mem.splitScalar(u8, result.stdout, '\n');
+                    while (lines.next()) |line| {
+                        if (line.len > 0) last = line;
+                    }
+                    if (last) |name| {
+                        root_buf[2] = std.fmt.allocPrint(gpa, "{s}/{s}", .{ parent, name }) catch null;
+                    }
+                }
+            }
+        }
+    }
+    defer if (root_buf[2]) |p| gpa.free(p);
+    for (root_buf) |maybe| {
+        const root = maybe orelse continue;
+        for (hosts) |host| {
+            const path = std.fmt.allocPrint(gpa, "{s}/toolchains/llvm/prebuilt/{s}/bin/clang", .{ root, host }) catch continue;
+            if (commandSucceeds(gpa, io, &.{ "test", "-x", path })) return path;
+            gpa.free(path);
+        }
+    }
+    return null;
+}
+
+fn linkMobile(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []const u8, ir: []const u8, info: qbe_target.HostedTargetInfo, emit: EmitKind, output_override: ?[]const u8, resource_dirs: project.ResourceDirs) ![]const u8 {
+    const base = stripOneExt(output_override orelse stem);
+    const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{base});
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
+    const obj_path = if (emit == .obj and output_override != null) output_override.? else try std.fmt.allocPrint(a, "{s}.o", .{base});
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var sdk_owned: ?[]u8 = null;
+    defer if (sdk_owned) |s| gpa.free(s);
+    var ndk_owned: ?[]u8 = null;
+    defer if (ndk_owned) |p| gpa.free(p);
+    if (info.apple_sdk.len > 0) {
+        const sdk = try appleSdkPath(gpa, io, info.apple_sdk);
+        sdk_owned = sdk;
+        try argv.appendSlice(a, &.{ "clang", "-c", "-O2", "-Wno-override-module", "-fPIC", "-target", info.llvmTriple(), "-isysroot", sdk, "-o", obj_path, ll_path });
+    } else {
+        const ndk = findNdkClang(gpa, io) orelse {
+            printErr("Android target '{s}' needs the NDK clang (set ANDROID_NDK_HOME)\n", .{info.llvmTriple()});
+            return error.BuildFailed;
+        };
+        ndk_owned = ndk;
+        try argv.appendSlice(a, &.{ ndk, "-c", "-O2", "-Wno-override-module", "-fPIC", "-target", info.llvmTriple(), "-o", obj_path, ll_path });
+    }
+    try runTool(gpa, io, argv.items);
+    if (emit == .obj) return if (output_override) |p| p else obj_path;
+    const rt_path = try std.fmt.allocPrint(a, "{s}/lib/{s}.o", .{ resource_dirs.install_root, info.runtime_object_name });
+    if (std.Io.Dir.accessAbsolute(io, rt_path, .{})) |_| {} else |_| {
+        printErr("mobile runtime '{s}' is missing; build it with: zig build mobile-rt\n", .{rt_path});
+        return error.BuildFailed;
+    }
+    if (emit == .static_lib) {
+        const archive = output_override orelse try std.fmt.allocPrint(a, "{s}.a", .{base});
+        if (info.apple_sdk.len > 0) {
+            try runTool(gpa, io, &.{ "libtool", "-static", "-o", archive, obj_path, rt_path });
+        } else {
+            try runTool(gpa, io, &.{ "ar", "rcs", archive, obj_path, rt_path });
+        }
+        return archive;
+    }
+    const shared = output_override orelse try std.fmt.allocPrint(a, "{s}.so", .{base});
+    const ndk = ndk_owned orelse {
+        printErr("Android shared library needs the NDK clang (set ANDROID_NDK_HOME)\n", .{});
+        return error.BuildFailed;
+    };
+    const page = try std.fmt.allocPrint(a, "-Wl,-z,max-page-size={d}", .{info.min_page});
+    const base_argv = [_][]const u8{ ndk, "-shared", "-fPIC", "-target", info.llvmTriple(), page, "-o", shared, obj_path, rt_path, "-lm", "-ldl", "-llog" };
+    var strict: std.ArrayListUnmanaged([]const u8) = .empty;
+    try strict.appendSlice(a, base_argv[0..6]);
+    try strict.append(a, "-Wl,--no-undefined");
+    try strict.appendSlice(a, base_argv[6..]);
+    const strict_result = std.process.run(gpa, io, .{ .argv = strict.items }) catch return error.BuildFailed;
+    defer gpa.free(strict_result.stdout);
+    defer gpa.free(strict_result.stderr);
+    if (strict_result.term == .exited and strict_result.term.exited == 0) return shared;
+    // x86_64 Bionic, API 29'dan önce `__tls_get_addr`ı libc'de değil
+    // dinamik bağlayıcıda tanımlar. Başka çözülmemiş sembol varsa bağ hata verir.
+    if (onlyUndefinedSymbol(strict_result.stderr, "__tls_get_addr")) {
+        try runTool(gpa, io, &base_argv);
+        return shared;
+    }
+    printErr("{s} failed:\n{s}\n", .{ ndk, strict_result.stderr });
+    return error.BuildFailed;
+}
+
+fn onlyUndefinedSymbol(stderr: []const u8, name: []const u8) bool {
+    var seen = false;
+    var it = std.mem.splitScalar(u8, stderr, '\n');
+    while (it.next()) |line| {
+        const marker = "undefined symbol: ";
+        const at = std.mem.indexOf(u8, line, marker) orelse continue;
+        const sym = std.mem.trim(u8, line[at + marker.len ..], " \r");
+        if (!std.mem.eql(u8, sym, name)) return false;
+        seen = true;
+    }
+    return seen;
+}
+
+fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, backend_choice: BackendChoice, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy, target: ?[]const u8, emit_asm: bool, emit: EmitKind) ![]const u8 {
     const release = resolveRelease(gpa, io, backend_choice, profile, target, emit_asm, debug_info);
+    const hosted_info: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null) qbe_target.hostedTargetInfo(target.?) else null;
+    if (hosted_info) |ht| {
+        if (ht.isMobile()) {
+            if (emit == .exe) {
+                printErr("mobile target '{s}' does not emit an executable; pass --emit-obj, --emit-static-lib, or --emit-shared-lib\n", .{target.?});
+                return error.BuildFailed;
+            }
+            if (ht.mobile != .android and emit == .shared_lib) {
+                printErr("mobile target '{s}' emits a static library; --emit-shared-lib is for Android\n", .{target.?});
+                return error.BuildFailed;
+            }
+        }
+    }
+    if (emit != .exe and (hosted_info == null or !hosted_info.?.isMobile())) {
+        printErr("--emit-obj, --emit-static-lib and --emit-shared-lib require a mobile --target\n", .{});
+        return error.BuildFailed;
+    }
     // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--release` (LLVM) yolu
     // GERÇEK OS iş parçacıklarına dayanan paylaşılan bir `WorkerPool`
     // kurar (Task[T]/Channel[T] DAHİL, TÜM `spawn`lar İçİn) — freestanding
@@ -2404,6 +2637,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     var checker_state = checker.Checker.init(a);
     checker_state.backend = backend;
     checker_state.profile = profile;
+    checker_state.mobile_mask = mobileMaskOf(hosted_info);
     checker_state.checkModule(module) catch |e| {
         printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         return error.BuildFailed;
@@ -2495,7 +2729,9 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
 
-    const ir = codegen.generateModuleWithMeta(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, profile, null, callback_targets.items, resolved_bases, checker_state.class_ctors.items) catch |err| switch (err) {
+    const library_mode = emit != .exe;
+    const llvm_triple: []const u8 = if (hosted_info) |ht| (if (ht.isMobile()) ht.llvmTriple() else "") else "";
+    const ir = codegen.generateModuleWithMeta(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, profile, null, callback_targets.items, resolved_bases, checker_state.class_ctors.items, library_mode, llvm_triple) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: this program contains a construct that is not supported at the moment " ++
@@ -2536,6 +2772,11 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // MinGW-özel bağlama argümanları (`swap_asm_path`/`-lntdll` vb.) bu
     // yola EKLENMEDİ.
     if (release) {
+        if (hosted_info) |ht| {
+            if (ht.isMobile()) {
+                return linkMobile(gpa, io, a, stem, ir, ht, emit, output_override, resource_dirs);
+            }
+        }
         const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{stem});
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
 
@@ -2595,7 +2836,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
             return error.BuildFailed;
         })
     else

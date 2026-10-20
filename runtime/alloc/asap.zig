@@ -508,6 +508,11 @@ pub const RuntimeState = struct {
     /// bkz. `pool_ever_active`nin belge notu).
     pool_ext: ?*PoolExtension = null,
 
+    /// Mobil gömme. Masaüstünde `false`. Kökler host'un ödünç verdiği
+    /// UTF-8 dizelerdir; `nox_app_destroy` onları serbest bırakmaz.
+    embed_active: bool = false,
+    embed_roots: [4]?[*:0]const u8 = .{ null, null, null, null },
+
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
         return self.injected_allocator;

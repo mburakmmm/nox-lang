@@ -91,6 +91,8 @@ fn generateIr(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?[]
         callback_targets.items,
         .empty,
         checker_state.class_ctors.items,
+        false,
+        "",
     ) catch return null;
 
     return ir;

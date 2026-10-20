@@ -82,8 +82,67 @@ const ShmHandle = struct {
 /// olarak) tanımlı, `fd` üzerinde ÇAĞRILAMAZ — Linux'ta `std.c.statx`
 /// (KOŞULSUZ bir `extern "c"` bildirimi, GERÇEK bir glibc sembolüne
 /// bağlı KALIR) `AT.EMPTY_PATH` bayrağıyla (boş göreli yol) KULLANILIR.
+fn androidFstat(fd: std.posix.fd_t) ?i64 {
+    var buf: std.os.linux.Statx = undefined;
+    const mask: std.os.linux.STATX = .{ .SIZE = true };
+    const flags: u32 = std.os.linux.AT.EMPTY_PATH;
+    const rc = std.os.linux.statx(fd, "", flags, mask, &buf);
+    const signed: isize = @bitCast(rc);
+    if (signed == 0) return @intCast(buf.size);
+    const Ts = extern struct { sec: i64, nsec: i64 };
+    const St = switch (builtin.cpu.arch) {
+        .aarch64 => extern struct {
+            dev: u64,
+            ino: u64,
+            mode: u32,
+            nlink: u32,
+            uid: u32,
+            gid: u32,
+            rdev: u64,
+            pad1: u64,
+            size: i64,
+            blksize: i32,
+            pad2: i32,
+            blocks: i64,
+            atim: Ts,
+            mtim: Ts,
+            ctim: Ts,
+            unused4: u32,
+            unused5: u32,
+        },
+        .x86_64 => extern struct {
+            dev: u64,
+            ino: u64,
+            nlink: u64,
+            mode: u32,
+            uid: u32,
+            gid: u32,
+            pad0: u32,
+            rdev: u64,
+            size: i64,
+            blksize: i64,
+            blocks: i64,
+            atim: Ts,
+            mtim: Ts,
+            ctim: Ts,
+            pad3: [3]i64,
+        },
+        else => unreachable,
+    };
+    var st: St = undefined;
+    const fstat_rc = struct {
+        extern "c" fn fstat(fd_arg: c_int, out: *St) c_int;
+    }.fstat(fd, &st);
+    if (fstat_rc != 0) return null;
+    return st.size;
+}
+
 fn fstatSize(fd: std.posix.fd_t) ?i64 {
     if (builtin.os.tag == .linux) {
+        if (comptime builtin.abi.isAndroid()) {
+            const info = androidFstat(fd) orelse return null;
+            return info;
+        }
         var buf: std.os.linux.Statx = undefined;
         const mask: std.os.linux.STATX = .{ .SIZE = true };
         const rc = std.c.statx(fd, "", std.os.linux.AT.EMPTY_PATH, mask, &buf);
@@ -96,6 +155,9 @@ fn fstatSize(fd: std.posix.fd_t) ?i64 {
 }
 
 fn openPosix(name: []const u8, size: usize) !*ShmHandle {
+    // Bionic bu NDK'da `shm_open` ihraç etmez. Mobil maske `shared_memory`
+    // vermez; çağrı yine de çökmeden hata döner.
+    if (comptime builtin.abi.isAndroid()) return error.ShmOpenFailed;
     var name_buf: [256]u8 = undefined;
     const shm_name = try std.fmt.bufPrintZ(&name_buf, "/{s}", .{name});
 
@@ -306,6 +368,7 @@ pub export fn nox_shm_unlink_raw(name: ?[*:0]const u8) callconv(.c) void {
         _ = Kernel32.DeleteFileA(path);
         return;
     }
+    if (comptime builtin.abi.isAndroid()) return;
     var name_buf: [256]u8 = undefined;
     const shm_name = std.fmt.bufPrintZ(&name_buf, "/{s}", .{str_mod.nox_str_slice(n)}) catch return;
     _ = std.c.shm_unlink(shm_name);

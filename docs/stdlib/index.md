@@ -22,7 +22,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `mem`, `test`, `uuid`, `crypto`*, `time`* |
+| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `sqlite` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql` |
 | `process` | the process and its children | `os`, `process` |
@@ -32,7 +32,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 | `libc_math` | the C math library | `math` |
 | `entropy` | operating-system randomness | the salt-generating functions of `crypto` |
 
-`base64`, `jwt`, `native` and `plugin` are hosted-only (they are not on the freestanding allow-list). See [Freestanding](../tools/freestanding.md).
+`native` and `plugin` are hosted-only (they are not on the freestanding allow-list). `nox.base64` and `nox.jwt` are pure Nox and are available on freestanding and on a mobile target. On a mobile target, `nox.mysql` and `nox.postgres` are rejected because they load a host shared library, and `nox.http.serve_tls` (including the file-descriptor and multicore TLS variants) and `nox.http.serve_ws_tls` are rejected because they load libssl. The HTTP client, `nox.tls`, `nox.websocket` and `nox.smtp` stay available. `nox.hpy` is a preview package profile (`nox-hpy-host-v1`); it is not part of the stable 2.x API yet. See [HPy host v1](../internals/hpy-wasm.md) and [Freestanding](../tools/freestanding.md).
 
 ## The prelude
 

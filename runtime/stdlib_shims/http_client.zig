@@ -147,6 +147,98 @@ const RequestCtx = struct {
     }
 };
 
+fn loadIosCa(client: *std.http.Client) bool {
+    const apple_roots = @import("apple_roots.zig");
+    const io = client.io;
+    var bundle: std.crypto.Certificate.Bundle = .empty;
+    defer bundle.deinit(client.allocator);
+    const now = std.Io.Clock.real.now(io);
+    if (!apple_roots.fill(&bundle, client.allocator, io, now)) return false;
+    client.ca_bundle_lock.lock(io) catch return false;
+    defer client.ca_bundle_lock.unlock(io);
+    client.now = now;
+    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
+    return true;
+}
+
+fn ensureClientCa(client: *std.http.Client) bool {
+    const io = client.io;
+    {
+        client.ca_bundle_lock.lockShared(io) catch return false;
+        defer client.ca_bundle_lock.unlockShared(io);
+        if (client.now != null) return true;
+    }
+    var bundle: std.crypto.Certificate.Bundle = .empty;
+    defer bundle.deinit(client.allocator);
+    const now = std.Io.Clock.real.now(io);
+    bundle.rescan(client.allocator, io, now) catch return false;
+    client.ca_bundle_lock.lock(io) catch return false;
+    defer client.ca_bundle_lock.unlock(io);
+    client.now = now;
+    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
+    return true;
+}
+
+fn androidIpv4Text(host: []const u8, port: u16, ip_storage: []u8) ?[]const u8 {
+    if (host.len > std.Io.net.HostName.max_len) return null;
+    var host_z: [std.Io.net.HostName.max_len + 1]u8 = undefined;
+    @memcpy(host_z[0..host.len], host);
+    host_z[host.len] = 0;
+    var service_buf: [8]u8 = undefined;
+    const service = std.fmt.bufPrintZ(&service_buf, "{d}", .{port}) catch return null;
+    var hints = std.mem.zeroes(std.c.addrinfo);
+    hints.family = std.c.AF.INET;
+    hints.socktype = std.c.SOCK.STREAM;
+    var list: ?*std.c.addrinfo = null;
+    if (@intFromEnum(std.c.getaddrinfo(host_z[0..host.len :0], service.ptr, &hints, &list)) != 0) return null;
+    const first = list orelse return null;
+    defer std.c.freeaddrinfo(first);
+    const formatted = struct {
+        extern "c" fn inet_ntop(af: c_int, src: *const anyopaque, dst: [*]u8, size: u32) ?[*:0]u8;
+    };
+    const src: *const anyopaque = @ptrFromInt(@intFromPtr(first.addr.?) + 4);
+    const ip_z = formatted.inet_ntop(std.c.AF.INET, src, ip_storage.ptr, @intCast(ip_storage.len)) orelse return null;
+    return std.mem.span(ip_z);
+}
+
+/// Android'de Zig `HostName.connect` `/etc/resolv.conf` okur. Bionic bu
+/// dosyayı tutmaz. Sistem çözümlemesi `getaddrinfo` ile yapılır, TCP
+/// adresi IP literali olur. TLS sunucu adı çağıranın verdiği konak olarak
+/// kalır.
+pub fn connectTcp(io: std.Io, host: []const u8, port: u16) !std.Io.net.Stream {
+    if (comptime builtin.abi.isAndroid()) {
+        var ip_storage: [64]u8 = undefined;
+        const ip = androidIpv4Text(host, port, &ip_storage) orelse return error.DnsFailed;
+        const literal = try std.Io.net.HostName.init(ip);
+        return literal.connect(io, port, .{ .mode = .stream });
+    }
+    const host_name = try std.Io.net.HostName.init(host);
+    return host_name.connect(io, port, .{ .mode = .stream });
+}
+
+test "connectTcp fails on a closed local port" {
+    const connected = connectTcp(std.testing.io, "127.0.0.1", 1);
+    if (connected) |stream| {
+        stream.close(std.testing.io);
+        return error.UnexpectedConnect;
+    } else |_| {}
+}
+
+fn androidDial(client: *std.http.Client, uri: std.Uri, host_storage: *[std.Io.net.HostName.max_len]u8, ip_storage: []u8) ?*std.http.Client.Connection {
+    const host = uri.getHost(host_storage) catch return null;
+    const port = uri.port orelse if (std.mem.eql(u8, uri.scheme, "https")) @as(u16, 443) else @as(u16, 80);
+    const ip_text = androidIpv4Text(host.bytes, port, ip_storage) orelse return null;
+    const protocol: std.http.Client.Protocol = if (std.mem.eql(u8, uri.scheme, "https")) .tls else .plain;
+    if (protocol == .tls and !ensureClientCa(client)) return null;
+    return client.connectTcpOptions(.{
+        .host = .{ .bytes = ip_text },
+        .port = port,
+        .protocol = protocol,
+        .proxied_host = host,
+        .proxied_port = port,
+    }) catch null;
+}
+
 fn workerThreadFn(ctx: *RequestCtx) void {
     // `write_fd` BURADA (fonksiyon GİRİŞİNDE) YEREL bir değişkene
     // KOPYALANIR — GERÇEK bir yarış durumu (Linux/x86-64 CI'de bir
@@ -179,10 +271,34 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         return;
     };
 
+    if (comptime builtin.os.tag == .ios) {
+        if (!loadIosCa(&client)) {
+            ctx.failed = true;
+            return;
+        }
+    }
+
+    // Android'de Zig ad çözümlemesi `/etc/resolv.conf` okur. Bionic bu dosyayı
+    // tutmaz; sistem çözümlemesi `getaddrinfo` ile netd'ye gider. TLS sunucu
+    // adı URL'deki konak olarak kalır, sertifika doğrulaması kapanmaz.
+    var android_host: [std.Io.net.HostName.max_len]u8 = undefined;
+    var android_ip: [64]u8 = undefined;
+    const dialed: ?*std.http.Client.Connection = if (comptime builtin.abi.isAndroid())
+        androidDial(&client, uri, &android_host, android_ip[0..])
+    else
+        null;
+
     var req = client.request(ctx.method, uri, .{
         .extra_headers = ctx.request_headers,
         .redirect_behavior = .unhandled,
-    }) catch {
+        .connection = dialed,
+    }) catch |err| {
+        if (comptime (builtin.abi.isAndroid() or builtin.os.tag == .ios) and builtin.mode == .Debug) {
+            const c = struct {
+                extern "c" fn nox_host_log_debug(text: [*:0]const u8) void;
+            };
+            c.nox_host_log_debug(@errorName(err));
+        }
         ctx.failed = true;
         return;
     };

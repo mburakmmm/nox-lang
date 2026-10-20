@@ -46,7 +46,8 @@ var g_ca_lock: std.Io.RwLock = .init;
 fn ensureCaBundle(io: std.Io) bool {
     if (g_ca_state.cmpxchgStrong(.uninit, .initializing, .acquire, .monotonic) == null) {
         const now = std.Io.Timestamp.now(io, .real);
-        const ok = if (g_ca_bundle.rescan(std.heap.page_allocator, io, now)) |_| true else |_| false;
+        const tls_mod = @import("tls.zig");
+        const ok = tls_mod.loadSystemCas(&g_ca_bundle, io, now);
         g_ca_state.store(if (ok) .ready else .failed, .release);
     } else {
         while (true) {
@@ -122,8 +123,7 @@ fn upgradeToTls(conn: *SmtpConn) !void {
 fn connectInner(conn: *SmtpConn, host: []const u8, port: i64, use_tls: bool) !void {
     const io = conn.io;
     conn.host = try conn.gpa.dupe(u8, host);
-    const host_name = try std.Io.net.HostName.init(host);
-    conn.stream = try host_name.connect(io, @intCast(port), .{ .mode = .stream });
+    conn.stream = try http_client.connectTcp(io, host, @intCast(port));
     conn.stream_reader = conn.stream.reader(io, &conn.sock_read_buf);
     conn.stream_writer = conn.stream.writer(io, &conn.sock_write_buf);
     if (use_tls) try upgradeToTls(conn);

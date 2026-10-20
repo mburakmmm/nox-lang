@@ -25,6 +25,7 @@
 //! thread` KULLANILABİLİR).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const http_client = @import("http_client.zig");
@@ -50,10 +51,18 @@ var g_ca_state: std.atomic.Value(LoadState) = .init(.uninit);
 var g_ca_bundle: std.crypto.Certificate.Bundle = .empty;
 var g_ca_lock: std.Io.RwLock = .init;
 
+pub fn loadSystemCas(bundle: *std.crypto.Certificate.Bundle, io: std.Io, now: std.Io.Timestamp) bool {
+    if (builtin.os.tag == .ios) {
+        const apple_roots = @import("apple_roots.zig");
+        return apple_roots.fill(bundle, std.heap.page_allocator, io, now);
+    }
+    return if (bundle.rescan(std.heap.page_allocator, io, now)) |_| true else |_| false;
+}
+
 fn ensureCaBundle(io: std.Io) bool {
     if (g_ca_state.cmpxchgStrong(.uninit, .initializing, .acquire, .monotonic) == null) {
         const now = std.Io.Timestamp.now(io, .real);
-        const ok = if (g_ca_bundle.rescan(std.heap.page_allocator, io, now)) |_| true else |_| false;
+        const ok = loadSystemCas(&g_ca_bundle, io, now);
         g_ca_state.store(if (ok) .ready else .failed, .release);
     } else {
         while (true) {
@@ -104,15 +113,10 @@ const TlsConn = struct {
 fn connectInner(conn: *TlsConn, host: []const u8, port: i64) !void {
     const io = conn.io;
     if (!ensureCaBundle(io)) return error.CaBundleLoadFailed;
-    // Bulundu: `std.Io.net.IpAddress.resolve` GERÇEK bir DNS/hostname
-    // çözümleyicisi DEĞİLDİR — SADECE IP LİTERALLERİNİ (`"1.2.3.4"`/IPv6
-    // metni) ayrıştırır, gerçek bir hostname'de (`"example.com"`) HER ZAMAN
-    // `error.ParseFailed` verir (GERÇEK bir tekrar-üretimle, example.com'a
-    // karşı, DOĞRULANDI — `std.http.Client`nin KENDİSİ `HostName.connect`i
-    // kullanır, `IpAddress.resolve`i DEĞİL). Gerçek DNS çözümlemesi İçin
-    // `HostName.connect` GEREKİR.
-    const host_name = try std.Io.net.HostName.init(host);
-    conn.stream = try host_name.connect(io, @intCast(port), .{ .mode = .stream });
+    // Gerçek DNS `http_client.connectTcp` içindedir. Android Bionic
+    // `/etc/resolv.conf` tutmadığı için orada `getaddrinfo` kullanılır.
+    // TLS sunucu adı aşağıdaki `explicit` konak olarak kalır.
+    conn.stream = try http_client.connectTcp(io, host, @intCast(port));
     conn.stream_reader = conn.stream.reader(io, &conn.sock_read_buf);
     conn.stream_writer = conn.stream.writer(io, &conn.sock_write_buf);
     var random_buffer: [TlsClient.Options.entropy_len]u8 = undefined;

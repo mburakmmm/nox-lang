@@ -223,6 +223,138 @@ fn addHostedRuntimeChain(
     }
 }
 
+/// Mobil hosted runtime. Masaüstü `zig build` bu nesnelere bağlı değildir;
+/// `zig build mobile-rt` dört üçlüyü de üretir ve SDK/libc hatasını yutmaz.
+fn addMobileRuntimeChain(
+    b: *std.Build,
+    optimize: std.builtin.OptimizeMode,
+    query: std.Target.Query,
+    cc_target: []const u8,
+    log_target: []const u8,
+    apple_sdk: []const u8,
+    install_name: []const u8,
+) *std.Build.Step {
+    const arch = query.cpu_arch orelse @panic("addMobileRuntimeChain: cpu_arch");
+    const os_target = b.resolveTargetQuery(query);
+    const abi_layout_mod = b.createModule(.{
+        .root_source_file = b.path("shared/abi_layout.zig"),
+        .target = os_target,
+        .optimize = optimize,
+    });
+    const diag_sink_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .target = os_target,
+        .optimize = optimize,
+    });
+    const hpy_contract_mod = b.createModule(.{
+        .root_source_file = b.path("shared/hpy_host_contract.zig"),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const hpy_bridge_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "hpy_contract", .module = hpy_contract_mod },
+        },
+    });
+    const wasm_bridge_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
+        },
+    });
+    const mod = b.createModule(.{
+        .root_source_file = b.path("runtime/lib.zig"),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
+            .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
+    });
+    const swap_src: []const u8 = switch (arch) {
+        .aarch64 => "runtime/async_rt/swap_aarch64.S",
+        .x86_64 => "runtime/async_rt/swap_x86_64.S",
+        else => @panic("addMobileRuntimeChain: desteklenmeyen mimari"),
+    };
+    const swap_o_path = b.fmt("runtime/async_rt/swap_{s}_{s}.o", .{ @tagName(arch), install_name });
+    const compile_swap = b.addSystemCommand(&.{
+        b.graph.zig_exe, "cc",
+        "-target",       cc_target,
+        "-c",            "-o",
+        swap_o_path,     swap_src,
+    });
+    mod.addObjectFile(b.path(swap_o_path));
+    const log_src: []const u8 = if (query.os_tag == .ios) "runtime/mobile/log_apple.c" else "runtime/mobile/log_android.c";
+    const log_o = b.fmt("runtime/mobile/{s}.o", .{install_name});
+    const compile_log = if (query.os_tag == .ios)
+        b.addSystemCommand(&.{ "xcrun", "--sdk", apple_sdk, "clang", "-c", "-target", log_target, "-o", log_o, log_src })
+    else
+        b.addSystemCommand(&.{
+            "sh", "-c",
+            \\set -eu
+            \\ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-$HOME/Library/Android/sdk/ndk}}"
+            \\if [ -d "$ndk" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/darwin-arm64/bin/clang" ]; then
+            \\  ndk=$(ls -1d "$ndk"/* | tail -n 1)
+            \\fi
+            \\clang=""
+            \\for pre in darwin-arm64 darwin-x86_64 linux-aarch64 linux-x86_64 windows-x86_64; do
+            \\  cand="$ndk/toolchains/llvm/prebuilt/$pre/bin/clang"
+            \\  if [ -x "$cand" ]; then clang="$cand"; break; fi
+            \\done
+            \\test -n "$clang"
+            \\"$clang" -c -target "$1" -o "$2" "$3"
+            ,
+            "ndk",
+            log_target,
+            log_o,
+            log_src,
+        });
+    mod.addObjectFile(b.path(log_o));
+    const compile_sqlite: ?*std.Build.Step.Run = if (query.abi != .android) null else blk: {
+        const sqlite_o = b.fmt("third_party/sqlite/{s}.o", .{install_name});
+        const step = b.addSystemCommand(&.{
+            "sh", "-c",
+            \\set -eu
+            \\ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-$HOME/Library/Android/sdk/ndk}}"
+            \\if [ -d "$ndk" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/darwin-arm64/bin/clang" ]; then
+            \\  ndk=$(ls -1d "$ndk"/* | tail -n 1)
+            \\fi
+            \\clang=""
+            \\for pre in darwin-arm64 darwin-x86_64 linux-aarch64 linux-x86_64 windows-x86_64; do
+            \\  cand="$ndk/toolchains/llvm/prebuilt/$pre/bin/clang"
+            \\  if [ -x "$cand" ]; then clang="$cand"; break; fi
+            \\done
+            \\test -n "$clang"
+            \\"$clang" -c -fPIC -O2 -DSQLITE_OMIT_LOAD_EXTENSION=1 -DSQLITE_THREADSAFE=1 -target "$1" -o "$2" "$3"
+            ,
+            "ndk",
+            log_target,
+            sqlite_o,
+            "third_party/sqlite/sqlite3.c",
+        });
+        mod.addObjectFile(b.path(sqlite_o));
+        break :blk step;
+    };
+    const obj = b.addObject(.{ .name = install_name, .root_module = mod });
+    obj.step.dependOn(&compile_swap.step);
+    obj.step.dependOn(&compile_log.step);
+    if (compile_sqlite) |step| obj.step.dependOn(&step.step);
+    const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
+    install.step.dependOn(&obj.step);
+    return &install.step;
+}
+
 pub fn build(b: *std.Build) void {
     if (builtin.zig_version.order(EXPECTED_ZIG_VERSION) != .eq) {
         std.debug.print(
@@ -771,6 +903,38 @@ pub fn build(b: *std.Build) void {
     // statik ikili için. Freestanding riscv64 zinciri yok (boot kanıtı yok).
     _ = addHostedRuntimeChain(b, optimize, .riscv64, .linux, .musl, "noxrt-linux-riscv64");
 
+    // Mobil runtime nesneleri varsayılan kuruluma bağlı değildir. Üç masaüstü
+    // CI'ı Xcode veya NDK istemez. `zig build mobile-rt` dördünü de üretir.
+    const ios_min: std.Target.Query.OsVersion = .{ .semver = .{ .major = 17, .minor = 0, .patch = 0 } };
+    const mobile_rt_step = b.step("mobile-rt", "Build noxrt objects for the four mobile triples");
+    mobile_rt_step.dependOn(addMobileRuntimeChain(b, optimize, .{
+        .cpu_arch = .aarch64,
+        .os_tag = .ios,
+        .abi = .none,
+        .os_version_min = ios_min,
+    }, "aarch64-ios-none", "arm64-apple-ios17.0", "iphoneos", "noxrt-ios-arm64"));
+    const simulator_rt = addMobileRuntimeChain(b, optimize, .{
+        .cpu_arch = .aarch64,
+        .os_tag = .ios,
+        .abi = .simulator,
+        .os_version_min = ios_min,
+    }, "aarch64-ios-simulator", "arm64-apple-ios17.0-simulator", "iphonesimulator", "noxrt-ios-simulator-arm64");
+    mobile_rt_step.dependOn(simulator_rt);
+    mobile_rt_step.dependOn(addMobileRuntimeChain(b, optimize, .{
+        .cpu_arch = .aarch64,
+        .os_tag = .linux,
+        .abi = .android,
+        .android_api_level = 24,
+    }, "aarch64-linux-android", "aarch64-linux-android24", "", "noxrt-android-arm64"));
+    mobile_rt_step.dependOn(addMobileRuntimeChain(b, optimize, .{
+        .cpu_arch = .x86_64,
+        .os_tag = .linux,
+        .abi = .android,
+        .android_api_level = 24,
+    }, "x86_64-linux-android", "x86_64-linux-android24", "", "noxrt-android-x64"));
+    const mobile_rt_simulator = b.step("mobile-rt-simulator", "Build the iOS simulator noxrt object");
+    mobile_rt_simulator.dependOn(simulator_rt);
+
     // `boot.S` (Multiboot1 header + 32-bit boot stub + long-mode geçişi +
     // GDT + ISR trambolinleri) — `noxrt_kernel_mod`nin PARÇASI DEĞİL, ayrı
     // derlenip `kernel_boot_x86_64_test.zig`nin KENDİ, SONRAKİ link adımında
@@ -1062,6 +1226,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/explain_test.zig",
         "tests/cli/profile_test.zig",
         "tests/cli/backend_default_test.zig",
+        "tests/cli/mobile_target_test.zig",
         "tests/cli/zig_cc_fallback_test.zig",
         "tests/cli/plugin_test.zig",
         "tests/cli/freestanding_build_test.zig",

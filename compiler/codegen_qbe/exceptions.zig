@@ -1159,9 +1159,10 @@ fn emitPropagateBody(self: *Codegen, except_name: ?[]const u8) CodegenError!void
         try self.drainDeferIfSet();
         // `nox_unhandled_exception` `noreturn`dur (process.exit çağırır),
         // ama QBE bunu bilmez — bloğun bir sonlandırıcıyla bitmesi için
-        // savunmacı (asla çalışmayacak) bir `ret` gerekir.
+        // savunmacı (asla çalışmayacak) bir `ret` gerekir. Kütüphane
+        // girişi `void` döner; `ret void 0` geçersiz LLVM'dir.
         try self.qbeCall(null, "$nox_unhandled_exception", &.{.{ .ty = .l, .text = RT_PARAM }});
-        try self.qbeRet("0");
+        try self.emitDefaultReturn(self.current_ret_qtype);
     } else {
         try self.drainFinally(self.current_ret_qtype);
         try self.drainArenas();

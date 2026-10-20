@@ -75,11 +75,34 @@ pub fn nameForArch(arch_name: []const u8) ?[]const u8 {
 /// `runtime_object_name` (`build.zig`nin AYNI isimle kurduğu `noxrt-
 /// <isim>.o`) VE `zig_triple` (`zig cc -target`in beklediği, `swap_asm`
 /// çapraz-derlemesinde de kullanılan üçlü) döner.
+pub const MobileKind = enum { none, ios_device, ios_simulator, android };
+
+pub const LibraryForm = enum { exe, static_lib, shared_lib };
+
 pub const HostedTargetInfo = struct {
     qbe_target: []const u8,
     runtime_object_name: []const u8,
     zig_triple: []const u8,
     is_windows: bool,
+    /// Boşsa `zig_triple` kullanılır. Mobil hedefler LLVM üçlüsünü burada kilitler.
+    llvm_triple: []const u8 = "",
+    mobile: MobileKind = .none,
+    min_page: u32 = 4096,
+    library: LibraryForm = .exe,
+    /// Apple SDK adı (`iphoneos` / `iphonesimulator`). Android'de boş.
+    apple_sdk: []const u8 = "",
+    /// Apple'ın kurulu SDK'sındaki `RecommendedDeploymentTarget`. Sayı
+    /// `docs/internals/mobile-toolchain.md`de kayıtlıdır.
+    deployment_target: []const u8 = "",
+
+    pub fn llvmTriple(self: HostedTargetInfo) []const u8 {
+        if (self.llvm_triple.len > 0) return self.llvm_triple;
+        return self.zig_triple;
+    }
+
+    pub fn isMobile(self: HostedTargetInfo) bool {
+        return self.mobile != .none;
+    }
 };
 
 pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
@@ -89,5 +112,72 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
     if (std.mem.eql(u8, target_name, "linux-arm64")) return .{ .qbe_target = "arm64", .runtime_object_name = "noxrt-linux-arm64", .zig_triple = "aarch64-linux-gnu", .is_windows = false };
     if (std.mem.eql(u8, target_name, "windows-x64")) return .{ .qbe_target = "amd64_win", .runtime_object_name = "noxrt-windows-x64", .zig_triple = "x86_64-windows-gnu", .is_windows = true };
     if (std.mem.eql(u8, target_name, "linux-riscv64")) return .{ .qbe_target = "rv64", .runtime_object_name = "noxrt-linux-riscv64", .zig_triple = "riscv64-linux-musl", .is_windows = false };
+    if (std.mem.eql(u8, target_name, "ios-arm64")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-ios-arm64",
+        .zig_triple = "aarch64-ios",
+        .is_windows = false,
+        .llvm_triple = "arm64-apple-ios17.0",
+        .mobile = .ios_device,
+        .min_page = 16384,
+        .library = .static_lib,
+        .apple_sdk = "iphoneos",
+        .deployment_target = "17.0",
+    };
+    if (std.mem.eql(u8, target_name, "ios-simulator-arm64")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-ios-simulator-arm64",
+        .zig_triple = "aarch64-ios-simulator",
+        .is_windows = false,
+        .llvm_triple = "arm64-apple-ios17.0-simulator",
+        .mobile = .ios_simulator,
+        .min_page = 16384,
+        .library = .static_lib,
+        .apple_sdk = "iphonesimulator",
+        .deployment_target = "17.0",
+    };
+    if (std.mem.eql(u8, target_name, "android-arm64")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-android-arm64",
+        .zig_triple = "aarch64-linux-android",
+        .is_windows = false,
+        .llvm_triple = "aarch64-linux-android24",
+        .mobile = .android,
+        .min_page = 16384,
+        .library = .shared_lib,
+    };
+    if (std.mem.eql(u8, target_name, "android-x64")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-android-x64",
+        .zig_triple = "x86_64-linux-android",
+        .is_windows = false,
+        .llvm_triple = "x86_64-linux-android24",
+        .mobile = .android,
+        .min_page = 16384,
+        .library = .shared_lib,
+    };
     return null;
+}
+
+test "mobile llvm triples stay locked" {
+    const locked = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/golden/mobile_abi_triples.txt", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(locked);
+    try std.testing.expect(std.mem.indexOf(u8, locked, "ios-arm64 arm64-apple-ios17.0\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, locked, "ios-simulator-arm64 arm64-apple-ios17.0-simulator\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, locked, "android-arm64 aarch64-linux-android24\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, locked, "android-x64 x86_64-linux-android24\n") != null);
+    const ios = hostedTargetInfo("ios-arm64").?;
+    try std.testing.expectEqualStrings("arm64-apple-ios17.0", ios.llvmTriple());
+    try std.testing.expect(ios.library == .static_lib);
+    try std.testing.expectEqual(@as(u32, 16384), ios.min_page);
+    const sim = hostedTargetInfo("ios-simulator-arm64").?;
+    try std.testing.expectEqualStrings("arm64-apple-ios17.0-simulator", sim.llvmTriple());
+    try std.testing.expect(sim.mobile == .ios_simulator);
+    const arm = hostedTargetInfo("android-arm64").?;
+    try std.testing.expectEqualStrings("aarch64-linux-android24", arm.llvmTriple());
+    try std.testing.expect(arm.library == .shared_lib);
+    const x64 = hostedTargetInfo("android-x64").?;
+    try std.testing.expectEqualStrings("x86_64-linux-android24", x64.llvmTriple());
+    try std.testing.expect(hostedTargetInfo("macos-arm64").?.mobile == .none);
+    try std.testing.expect(hostedTargetInfo("ios-simulator-x64") == null);
 }

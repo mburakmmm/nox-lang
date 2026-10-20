@@ -77,8 +77,8 @@ const Fiber = @import("fiber.zig").Fiber;
 const diag_sink = @import("diag_sink");
 
 comptime {
-    if (builtin.os.tag != .macos and builtin.os.tag != .linux and builtin.os.tag != .windows and
-        builtin.os.tag != .freestanding and builtin.os.tag != .other)
+    if (builtin.os.tag != .macos and builtin.os.tag != .ios and builtin.os.tag != .linux and
+        builtin.os.tag != .windows and builtin.os.tag != .freestanding and builtin.os.tag != .other)
     {
         @compileError("io_reactor.zig is currently implemented only for macOS (kqueue), Linux (epoll), Windows (WSAPoll) and freestanding/other (the NullReactor stub, see Phase F.0.7) (see the module header note)");
     }
@@ -142,7 +142,7 @@ pub const WaitCtx = struct {
 /// **Kqueue (macOS).** Yalnızca `builtin.os.tag == .macos` İKEN GERÇEK
 /// gövdesiyle derlenir — Linux'ta bu `struct {}`e (boş, hiçbir OS-özgü tip
 /// REFERANSI OLMAYAN) indirgenir, bkz. modül üstü not.
-const KqueueReactor = if (builtin.os.tag == .macos) struct {
+const KqueueReactor = if (builtin.os.tag == .macos or builtin.os.tag == .ios) struct {
     kq: posix.fd_t,
 
     /// Zig'in std'sinde `kqueue()`/`kevent()` İÇİN yüksek seviye (hata
@@ -751,7 +751,7 @@ const NullReactor = if (builtin.os.tag == .freestanding or builtin.os.tag == .ot
     }
 } else struct {};
 
-pub const IoReactor = if (builtin.os.tag == .macos)
+pub const IoReactor = if (builtin.os.tag == .macos or builtin.os.tag == .ios)
     KqueueReactor
 else if (builtin.os.tag == .linux)
     EpollReactor

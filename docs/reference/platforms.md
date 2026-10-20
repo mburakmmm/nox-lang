@@ -8,7 +8,8 @@ What is supported, what is tested, and the known gaps.
 |---|---|
 | macOS or Linux, hosted, `clang` **or `zig`** on `PATH` | **LLVM** (`.ll` → `clang -O2`, or `zig cc -O2`), the default |
 | `--backend qbe` | QBE (`.ssa` → `qbe` → `cc`) |
-| freestanding profile, `--target`, `--emit-asm`, `-g` | QBE (automatic) |
+| freestanding profile, desktop `--target`, `--emit-asm`, `-g` | QBE (automatic) |
+| `ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64` | LLVM only; `--backend qbe` is an error |
 | Windows | **LLVM** through `zig cc -target x86_64-windows-gnu` when `zig` is on `PATH` (default); QBE with MinGW `cc` otherwise |
 | neither `clang` nor `zig` installed | QBE (automatic, with a note) |
 
@@ -23,6 +24,8 @@ Both back ends run the whole golden corpus and must agree on program output, inc
 | Linux aarch64 | yes | full test suite |
 | Windows x86-64 | yes — LLVM (`zig cc`) and QBE are smoke-tested end to end (classes, lists, dictionaries, tasks, f-strings, exceptions, TLS and WebSocket) | front-end tests and end-to-end smoke tests (the full suite does not run on Windows) |
 | riscv64 | hosted Linux (`--target linux-riscv64`, static musl, QEMU user-mode smoke: class, list, one `spawn`/`await`). Freestanding is still assembly only | not in CI |
+| iOS arm64 and iOS Simulator arm64 | library only (`--emit-obj` or `--emit-static-lib`). Not a third profile | experimental; not `supported` |
+| Android arm64 and Android x64 | `libnoxapp.so`, 16 KiB ELF alignment | experimental; not `supported` |
 
 macOS x86-64 is expected to work (`macos-x64`) but is not part of CI or the release matrix.
 

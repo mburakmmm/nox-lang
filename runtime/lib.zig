@@ -3,6 +3,14 @@
 //! ürettiği makine kodundan çağrılabilir.
 
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// iOS, `_dyld_get_image_header_containing_address` sembolünü vermez
+/// (`__API_UNAVAILABLE(ios)`). Zig'in Mach-O öz-bilgisi bu sembole bağlıdır.
+/// iOS'ta yığın izi sembolize edilmez; panik yine de çalışır.
+pub const debug = if (builtin.os.tag == .ios) struct {
+    pub const SelfInfo = void;
+} else struct {};
 
 /// Reddedilen bir TCP bağlantısı Zig'in Debug izini stderr'e basar.
 /// Nox bu hatayı kendi istisnasına çevirir; iz, programın stderr'ini
@@ -12,6 +20,7 @@ pub const std_options: std.Options = .{
 };
 
 pub const asap = @import("alloc/asap.zig");
+pub const embed = @import("embed.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const dispatch_registry = @import("alloc/dispatch_registry.zig");
 pub const diag_sink = @import("diag_sink");
@@ -97,6 +106,7 @@ comptime {
     _ = dict;
     _ = list_sort;
     _ = list_ops;
+    _ = embed;
     _ = http_client;
     _ = http_server;
     _ = strings_shim;

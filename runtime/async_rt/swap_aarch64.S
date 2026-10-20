@@ -19,6 +19,11 @@
  *   104:d8 112:d9 120:d10 128:d11 136:d12 144:d13 152:d14 160:d15
  *   168:x18 (v1.99.1 — bkz. fiber.zig'in Context.x18 belge notu)
  *
+ * iOS: x18 platform yazmacıdır ve burada saklanır/geri yükler. Apple
+ * hedefinde kayıtlı dönüş adresi `xpaclri` ile ham adrese indirilir;
+ * `ret` bu ham adrese döner. Çağıranın kendi yığın çerçevesindeki
+ * imzalı x30'a dokunulmaz. Android dizisi imzasız kalır.
+ *
  * Faz R.1 (bkz. docs/uretim-hazirlik-analizi.md): bu dosya `.S` (BÜYÜK
  * harf) uzantısına sahiptir ki `cc`/`zig cc` onu C ÖN İŞLEMCİSİNDEN
  * GEÇİRSİN — `SYM(...)` makrosu, Mach-O (macOS, sembol adının BAŞINA `_`
@@ -52,6 +57,9 @@ SYM(nox_swap_context):
     str x27, [x0, #64]
     str x28, [x0, #72]
     str x29, [x0, #80]
+#if defined(__APPLE__)
+    xpaclri
+#endif
     str x30, [x0, #88]
     str d8,  [x0, #104]
     str d9,  [x0, #112]

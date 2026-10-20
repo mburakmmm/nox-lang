@@ -19,6 +19,7 @@ const std = @import("std");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const http_client = @import("http_client.zig");
+const bridge = @import("../async_rt/bridge.zig");
 /// `std.crypto.tls.Client` DEĞİL — `certificate_request` düzeltmesi İçEREN
 /// yamalı kopya (bkz. `runtime/vendor/tls_client.zig`nin başlık yorumu).
 const TlsClient = @import("../vendor/tls_client.zig");
@@ -39,7 +40,8 @@ var g_ca_lock: std.Io.RwLock = .init;
 fn ensureCaBundle(io: std.Io) bool {
     if (g_ca_state.cmpxchgStrong(.uninit, .initializing, .acquire, .monotonic) == null) {
         const now = std.Io.Timestamp.now(io, .real);
-        const ok = if (g_ca_bundle.rescan(std.heap.page_allocator, io, now)) |_| true else |_| false;
+        const tls_mod = @import("tls.zig");
+        const ok = tls_mod.loadSystemCas(&g_ca_bundle, io, now);
         g_ca_state.store(if (ok) .ready else .failed, .release);
     } else {
         while (true) {
@@ -102,8 +104,7 @@ const WsConn = struct {
 
 fn connectInner(conn: *WsConn, host: []const u8, port: i64, path: []const u8, use_tls: bool) !void {
     const io = conn.io;
-    var host_name = try std.Io.net.HostName.init(host);
-    conn.stream = try host_name.connect(io, @intCast(port), .{ .mode = .stream });
+    conn.stream = try http_client.connectTcp(io, host, @intCast(port));
     conn.stream_reader = conn.stream.reader(io, &conn.sock_read_buf);
     conn.stream_writer = conn.stream.writer(io, &conn.sock_write_buf);
     conn.use_tls = use_tls;
@@ -186,6 +187,25 @@ fn connectInner(conn: *WsConn, host: []const u8, port: i64, path: []const u8, us
     if (!accept_ok) return error.HandshakeAcceptMismatch;
 }
 
+fn connectOffFiber(conn: *WsConn, host: []const u8, port: i64, path: []const u8, use_tls: bool) !void {
+    // TLS doğrulaması fiber yığınını (192 KiB) aşıp koruma sayfasına düşer.
+    // El sıkışma bu yüzden işletim sistemi iş parçacığında çalışır.
+    if (bridge.currentFiberScheduler() == null) return connectInner(conn, host, port, path, use_tls);
+    const Job = struct {
+        fn entry(c: *WsConn, h: []const u8, p: i64, path_arg: []const u8, tls: bool, slot: *?anyerror) void {
+            connectInner(c, h, p, path_arg, tls) catch |err| {
+                slot.* = err;
+            };
+        }
+    };
+    var slot: ?anyerror = null;
+    const thread = std.Thread.spawn(.{}, Job.entry, .{ conn, host, port, path, use_tls, &slot }) catch {
+        return connectInner(conn, host, port, path, use_tls);
+    };
+    thread.join();
+    if (slot) |err| return err;
+}
+
 pub export fn nox_ws_connect_raw(host: ?[*:0]const u8, port: i64, path: ?[*:0]const u8, use_tls: i64) callconv(.c) ?*anyopaque {
     const gpa = std.heap.page_allocator;
     const conn = gpa.create(WsConn) catch return null;
@@ -198,7 +218,7 @@ pub export fn nox_ws_connect_raw(host: ?[*:0]const u8, port: i64, path: ?[*:0]co
         conn.errmsg = "path cannot be empty";
         return conn;
     };
-    connectInner(conn, str_mod.nox_str_slice(h), port, str_mod.nox_str_slice(p), use_tls != 0) catch |err| {
+    connectOffFiber(conn, str_mod.nox_str_slice(h), port, str_mod.nox_str_slice(p), use_tls != 0) catch |err| {
         conn.errmsg = @errorName(err);
         conn.connected = false;
         return conn;
@@ -225,7 +245,7 @@ pub export fn nox_ws_send_text_raw(handle: ?*anyopaque, data: ?[*]const u8, len:
     if (!conn.connected) return -1;
     const d = data orelse return -1;
     const payload = d[0..@intCast(len)];
-    sendFrame(conn, 0x1, payload) catch |err| {
+    sendOffFiber(conn, payload) catch |err| {
         conn.errmsg = @errorName(err);
         return -1;
     };
@@ -265,6 +285,21 @@ fn sendFrame(conn: *WsConn, opcode: u8, payload: []const u8) !void {
     try conn.stream_writer.interface.flush();
 }
 
+fn sendOffFiber(conn: *WsConn, payload: []const u8) !void {
+    if (bridge.currentFiberScheduler() == null) return sendFrame(conn, 0x1, payload);
+    const Job = struct {
+        fn entry(c: *WsConn, bytes: []const u8, slot: *?anyerror) void {
+            sendFrame(c, 0x1, bytes) catch |err| {
+                slot.* = err;
+            };
+        }
+    };
+    var slot: ?anyerror = null;
+    const thread = std.Thread.spawn(.{}, Job.entry, .{ conn, payload, &slot }) catch return sendFrame(conn, 0x1, payload);
+    thread.join();
+    if (slot) |err| return err;
+}
+
 /// Bir sonraki frame'i OKUR (sunucu çerçeveleri MASKELENMEZ, RFC 6455) —
 /// `PING` otomatik olarak `PONG` İLE yanıtlanır (kullanıcıya HİÇ
 /// gösterilmez), `CLOSE` alınırsa BOŞ dize döner (`nox_ws_ok_raw` ARTIK
@@ -284,7 +319,7 @@ pub export fn nox_ws_recv_raw(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c)
     const conn: *WsConn = @ptrCast(@alignCast(handle orelse return dupeEmpty(rt)));
     if (!conn.connected) return dupeEmpty(rt);
     while (true) {
-        const result = recvFrameInner(conn) catch |err| {
+        const result = recvOffFiber(conn) catch |err| {
             conn.errmsg = @errorName(err);
             conn.connected = false;
             return dupeEmpty(rt);
@@ -302,6 +337,20 @@ pub export fn nox_ws_recv_raw(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c)
             .skip => continue,
         }
     }
+}
+
+fn recvOffFiber(conn: *WsConn) !RecvResult {
+    if (bridge.currentFiberScheduler() == null) return recvFrameInner(conn);
+    const Slot = struct { result: anyerror!RecvResult = error.Unexpected };
+    const Job = struct {
+        fn entry(c: *WsConn, slot: *Slot) void {
+            slot.result = recvFrameInner(c);
+        }
+    };
+    var slot: Slot = .{};
+    const thread = std.Thread.spawn(.{}, Job.entry, .{ conn, &slot }) catch return recvFrameInner(conn);
+    thread.join();
+    return slot.result;
 }
 
 fn recvFrameInner(conn: *WsConn) !RecvResult {

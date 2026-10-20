@@ -209,6 +209,13 @@ pub fn allocStr(rt: ?*anyopaque, bytes: []const u8, ascii_state: u64) ?[*:0]u8 {
     return @ptrCast(data);
 }
 
+/// Host'un düz bir C dizisinden Nox `str`'i üretmesi için. Dönüş refcount 1
+/// taşır; çağıran `nox_str_release` ile bırakır. `null` girdi `null` döner.
+pub export fn nox_str_from_cstr(rt: ?*anyopaque, s: ?[*:0]const u8) ?[*:0]u8 {
+    const p = s orelse return null;
+    return allocStr(rt, std.mem.span(p), ASCII_UNKNOWN);
+}
+
 /// `a`+`b`nin birleşimi olan YENİ, sıfırla-sonlanan bir dize tahsis eder
 /// (refcount 1 ile başlar, `nox_rc_alloc` üzerinden — ARC havuzundan
 /// faydalanır). `a`/`b` NE değiştirilir NE serbest bırakılır — çağıranın
@@ -264,6 +271,19 @@ pub export fn nox_print_str(s: ?[*:0]const u8) void {
         extern "c" fn printf(fmt: [*:0]const u8, ...) c_int;
     };
     _ = c.printf("%s", p);
+}
+
+test "nox_str_from_cstr baslikli bir str uretir" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const copied = nox_str_from_cstr(rt, "nox") orelse return error.AllocFailed;
+    defer nox_str_release(rt, copied);
+    const suffix = nox_str_from_cstr(rt, "/suite.txt") orelse return error.AllocFailed;
+    defer nox_str_release(rt, suffix);
+    const joined = nox_str_concat(rt, copied, suffix) orelse return error.AllocFailed;
+    defer nox_str_release(rt, joined);
+    try std.testing.expectEqualStrings("nox/suite.txt", std.mem.span(joined));
 }
 
 test "nox_print_str null ve bos dizide yazmadan doner" {

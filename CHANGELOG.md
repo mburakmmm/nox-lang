@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.19]
+
+### Eklendi
+
+- **Mobil hedefler, deneysel.** `ios-arm64`, `ios-simulator-arm64`, `android-arm64` ve `android-x64` LLVM kütüphane hedefleridir. Üçüncü bir profil yoktur. Hiçbiri `supported` değildir.
+- **Gömme ABI.** Kütüphane `$main` üretmez. Giriş `nox_embed_user_entry`dir. Sözleşme `include/nox_embed.h` dosyasındadır.
+- **Çalışma zamanı.** `nox.base64` ve `nox.jwt` mobil hedefte geçerlidir. `async def`, `spawn`, `await` ve `nox.thread.start` kütüphane girişinde çalışır. `nox.tls` iOS köklerini yükler. Android adı `getaddrinfo` ile çözülür. WebSocket el sıkışması fiber yığınını aştığı için işletim sistemi iş parçacığında yürür.
+
+### Düzeltildi
+
+- **Mobil maske.** `nox.mysql` ve `nox.postgres` konak paylaşılan kütüphanesini açtığı için reddedilir. `nox.http` TLS sunucu çağrıları `libssl` açtığı için reddedilir. `nox.process`, `nox.sharedmem`, `nox.hpy`, `nox.native` ve `nox.plugin` kapalı kalır.
+
 ## [2.0.18]
 
 ### Düzeltildi
@@ -258,7 +270,7 @@ noxlang.com sitesi, birleşik dağıtım yığını, noxpkg yedekleme ve alan ad
 ### Düzeltildi
 
 - **`services/noxpkg`** 2.0'da kaldırılan `nox.json.decode/encode_pretty/encode_string` adlarını kullanıyordu (üretim imajı yeniden derlenirken yakalandı); `parse`/`dump_pretty`/`dump_string`e taşındı. CI'ın `docs` işi artık noxpkg ve noxlang-site'ı tip denetler.
-- Site derleyicisi çıktı izinlerini normalleştirir (kaynak dosyadaki 0600 mod, root olmayan konteynerde okunamayıp başlatıcıda istisnaya yol açıyordu). `.dockerignore` yerel önbellek dizinlerini (`**/.nox`, `.claude`) dışlar.
+- Site derleyicisi çıktı izinlerini normalleştirir (kaynak dosyadaki 0600 mod, root olmayan konteynerde okunamayıp başlatıcıda istisnaya yol açıyordu). `.dockerignore` yerel önbellek dizinlerini (`**/.nox` ve ajan oturum dizini) dışlar.
 
 ### Bilinen konular
 
@@ -2367,7 +2379,7 @@ teşhis bloğu + 45s watchdog zaman aşımı).
 
 ## [1.96.0]
 
-### Düzeltildi (GPT-5.6 incelemesinde bulunup DOĞRULANAN iki GERÇEK hata)
+### Düzeltildi (dış incelemede bulunup DOĞRULANAN iki GERÇEK hata)
 
 - **Release paketi freestanding runtime nesnesini TAŞIMIYORDU**: `zig
   build` HER platformda KOŞULSUZ olarak `zig-out/lib/noxrt-freestanding.o`
@@ -3784,7 +3796,7 @@ kullanıcı-alanı/SMP/gerçek donanım doğrulaması.
   return helper(xs)` GİBİ TEK bir dolaylı katman BİLE `ys = wrapper(xs)`nin
   `xs`in TRANSİTİF bir takma adı OLDUĞUNU YAKALAYAMIYORDU (`spawn
   worker(xs)` SONRASI `ys[0] = 42` SESSİZCE derleniyordu — GERÇEK bir
-  veri-yarışı senaryosu). Harici bir (GPT-5.6) inceleme BU açığı YENİDEN
+  veri-yarışı senaryosu). Harici bir inceleme BU açığı YENİDEN
   gündeme getirdi VE bu turda GERÇEK bir repro İLE (doğrudan `noxc`ye
   karşı derlenip) DOĞRULANDI. **Düzeltme**: `computeReturnAliasEffects`
   TEK-geçişten Gauss-Seidel bir fixpoint döngüsüne (`MAX_RETURN_ALIAS_
@@ -5336,7 +5348,7 @@ kullanıcı-alanı/SMP/gerçek donanım doğrulaması.
 
 ### Eklendi
 - **GG.20 — interprocedural escape/mutasyon analizi (ASAP güçlendirmesi,
-  Tur 4)**: harici bir (GPT-5.6) incelemenin işaret ettiği ORTAK kök
+  Tur 4)**: harici bir incelemenin işaret ettiği ORTAK kök
   neden (`checker.zig`nin `SpawnSharedMutation`ı bir yardımcı fonksiyon
   ÜZERİNDEN mutasyonu yakalayamıyordu; ASAP'in KENDİ "argüman-olarak-
   geçiş HER ZAMAN kaçış" katı kuralı AYNI nedenden geliyordu) İçİn TEK,
@@ -5362,7 +5374,7 @@ kullanıcı-alanı/SMP/gerçek donanım doğrulaması.
 
 ### Eklendi
 - **GG.19 — aggregate stack-promotion bütçesi + inline/ASAP'in birlikte
-  çalışması**: harici bir (GPT-5.6) incelemenin bulduğu İKİ maddenin
+  çalışması**: harici bir incelemenin bulduğu İKİ maddenin
   düzeltmesi. (1) `MAX_STACK_ALLOC_SIZE` (4096 bayt) ARTIK SADECE nesne-
   başına DEĞİL — YENİ `MAX_PROMOTED_FRAME_SIZE` (32 KiB) bir fonksiyonun
   TÜM stack-promotable yerellerinin TOPLAMINI da sınırlıyor (aşan bir
@@ -5775,7 +5787,7 @@ kullanıcı-alanı/SMP/gerçek donanım doğrulaması.
   (`Task.detached` yarışı, `Channel`/`Task`ın sarkan-işaretçi SIGSEGV'i,
   work-stealing livelock'ları, ECONNRESET çökmesi, fiber-bağlamlı
   segfault-döngüsü riski) AD-HOC bir yöntemle bulunmuştu (kullanıcının
-  KENDİ `wrk` yük testi, harici bir ChatGPT incelemesi, ya da manuel
+  KENDİ `wrk` yük testi, harici bir inceleme, ya da manuel
   `lldb` reprodüksiyonları) — HİÇBİRİ `zig build test`in KENDİ, HER
   push'ta çalışan hızlı test paketinden yakalanmamıştı VE olamazdı da:
   `runtime/async_rt/worker_pool.zig`nin KENDİ, kanıtlanmış "çapraz-worker
@@ -5900,7 +5912,7 @@ kullanıcı-alanı/SMP/gerçek donanım doğrulaması.
 
 ### Düzeltildi
 - **`Task[T]`/`Channel[T]`ye GERÇEK atomik referans sayımı eklendi —
-  ChatGPT'nin M:N incelemesindeki İKİNCİ (v1.29.11'in kapsam dışı
+  Dış M:N incelemesindeki İKİNCİ (v1.29.11'in kapsam dışı
   bıraktığı) bulgunun canlı bir SIGSEGV REPRODÜKSİYONUYLA doğrulanıp
   düzeltilmesi.** `Task[T]`/`Channel[T]` (`isHeapManaged`in DIŞINDA,
   ARC/refcount başlığı YOK) bir `spawn`e argüman olarak GEÇİLDİĞİNDE
@@ -5950,7 +5962,7 @@ kullanıcı-alanı/SMP/gerçek donanım doğrulaması.
 
 ### Düzeltildi
 - **`Task[T].detached` veri yarışı, atomik `state` protokolüne taşındı —
-  ChatGPT'nin M:N incelemesinde işaret ettiği bir bulgunun doğrulanıp
+  Dış M:N incelemesinde işaret ettiği bir bulgunun doğrulanıp
   düzeltilmesi.** `runtime/async_rt/scheduler.zig`nin `Task(T)` struct'ı
   tamamlanma durumu İçİn ZATEN doğru bir atomik `state` protokolü
   kullanıyordu (Faz MN.8, Bulgu B — `PENDING`/`COMPLETED`/bir `*Waiter`
@@ -6295,7 +6307,7 @@ kullanıcı-alanı/SMP/gerçek donanım doğrulaması.
 
 ### Düzeltildi
 - **`Task[T]` çapraz-worker `await_()` yarışı** — harici bir teknik
-  değerlendirmenin (ChatGPT) İŞARET ETTİĞİ, DOĞRUDAN kaynak okumasıyla
+  değerlendirmenin İŞARET ETTİĞİ, DOĞRUDAN kaynak okumasıyla
   BAĞIMSIZ olarak DOĞRULANMIŞ GERÇEK bir hata: `checker.zig` `Task[T]`yi
   bir `spawn`e argüman OLARAK ZATEN İZİN VERİYORDU (MN.9'dan ÖNCE de) —
   bir fiber KENDİ oluşturduğu bir `Task`ı BAŞKA bir spawn edilmiş

@@ -120,6 +120,16 @@ extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
 /// v2.0 madde 8: `runtime/collections/dict.zig`nin AYNI-isimli fonksiyonuyla
 /// AYNI gerekçe/keşif — bkz. onun belge notu.
 fn linuxGetRandom(buf: []u8) void {
+    if (comptime builtin.abi.isAndroid()) {
+        var filled: usize = 0;
+        while (filled < buf.len) {
+            const rc = std.os.linux.getrandom(buf.ptr + filled, buf.len - filled, 0);
+            const n: isize = @bitCast(rc);
+            if (n <= 0) return;
+            filled += @intCast(n);
+        }
+        return;
+    }
     var filled: usize = 0;
     while (filled < buf.len) {
         const n = std.c.getrandom(buf.ptr + filled, buf.len - filled, 0);

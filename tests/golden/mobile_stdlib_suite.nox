@@ -1,0 +1,90 @@
+import nox.base64
+import nox.crypto
+import nox.fs
+import nox.http
+import nox.json
+import nox.jwt
+import nox.sqlite
+import nox.time
+import nox.tls
+from nox.db import Row
+from nox.fs import FsError
+from nox.http import HttpResponse
+from nox.sqlite import Connection, SqliteError
+from nox.tls import TlsError, TlsStream
+
+extern def nox_log_debug_raw(msg: str) -> None from "zig-out/lib/noxrt.o" with_rt
+
+def denied_write() -> int:
+    try:
+        nox.fs.write_string("/etc/nox-mobile-deny", "x")
+        return 1
+    except FsError:
+        return 0
+
+def memory_db() -> int:
+    try:
+        opened: Connection = nox.sqlite.open(":memory:")
+        opened.close()
+        return 1
+    except SqliteError:
+        return 0
+
+def tls_handshake() -> int:
+    try:
+        stream: TlsStream = nox.tls.connect("example.com", 443)
+        stream.close()
+        return 0
+    except TlsError:
+        return 1
+
+def mobile_suite(root: str) -> int:
+    text: str = "no" + "xç"
+    if text != "noxç":
+        return 1
+    parsed: JsonValue = nox.json.parse("{\"n\":7}")
+    if nox.json.as_number(nox.json.object_value(parsed, 0)) != 7.0:
+        return 2
+    digest: str = nox.crypto.sha256("nox")
+    if digest != "b076d0643d8294e911d8e3e67c6bdf2a7668dcafa8558a4d36b7442783d4b055":
+        return 3
+    rnd: str = nox.crypto.secure_random_hex(8)
+    if rnd == "":
+        return 4
+    start: int = nox.time.instant_now().ms
+    later: int = nox.time.instant_now().ms
+    if later < start:
+        return 5
+    path: str = root + "/suite.txt"
+    nox.fs.write_string(path, "nox")
+    got: str = nox.fs.read_to_string(path)
+    if got != "nox":
+        return 6
+    if denied_write() != 0:
+        return 7
+    if memory_db() != 0:
+        return 8
+    db: Connection = nox.sqlite.open(root + "/suite.db")
+    ignored: int = db.execute("drop table if exists t")
+    ignored = db.execute("create table t(n integer)")
+    ignored = db.execute("insert into t(n) values (7)")
+    rows: list[Row] = db.query("select n from t")
+    if rows[0].get_int(0) != 7:
+        return 9
+    db.close()
+    if ignored < 0:
+        return 11
+    resp: HttpResponse = nox.http.get("https://example.com/", {})
+    if resp.status != 200:
+        return 10
+    if tls_handshake() != 0:
+        return 12
+    if nox.base64.encode("foo") != "Zm9v":
+        return 13
+    if nox.base64.decode("Zm9v") != "foo":
+        return 14
+    token: str = nox.jwt.sign("{\"sub\":\"1234\"}", "secret")
+    if nox.jwt.verify(token, "secret") != "{\"sub\":\"1234\"}":
+        return 15
+    nox_log_debug_raw("mobile-suite")
+    return 0

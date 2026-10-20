@@ -31,9 +31,9 @@ const str_mod = @import("../str.zig");
 
 fn libraryFileName() [:0]const u8 {
     return switch (builtin.os.tag) {
-        .macos => "libsqlite3.dylib",
+        .macos, .ios => "libsqlite3.dylib",
         .windows => "sqlite3.dll",
-        else => "libsqlite3.so.0",
+        else => if (builtin.abi.isAndroid()) "libsqlite.so" else "libsqlite3.so.0",
     };
 }
 
@@ -89,7 +89,7 @@ fn lookupSym(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
     if (builtin.os.tag == .windows) {
         const handle = lib.* orelse return null;
         const addr = Kernel32.GetProcAddress(handle, name.ptr) orelse return null;
-        return @ptrCast(addr);
+        return @ptrCast(@alignCast(addr));
     }
     return lib.lookup(T, name);
 }
@@ -140,6 +140,49 @@ var g_lib: LibHandle = undefined;
 var g_funcs: Funcs = undefined;
 
 fn loadAll() bool {
+    if (comptime builtin.abi.isAndroid()) {
+        // Sistem libsqlite.so uygulama ad alanında libandroidicu ister ve
+        // yüklenmez. Android çalışma zamanı sqlite birleştirmesini kendi
+        // nesnesine bağlar; dlopen yoktur.
+        const linked = struct {
+            extern "c" fn sqlite3_open(filename: [*:0]const u8, ppDb: *?*anyopaque) callconv(.c) c_int;
+            extern "c" fn sqlite3_close(db: ?*anyopaque) callconv(.c) c_int;
+            extern "c" fn sqlite3_errmsg(db: ?*anyopaque) callconv(.c) ?[*:0]const u8;
+            extern "c" fn sqlite3_prepare_v2(db: ?*anyopaque, sql: [*:0]const u8, nbyte: c_int, ppStmt: *?*anyopaque, pzTail: ?*?[*:0]const u8) callconv(.c) c_int;
+            extern "c" fn sqlite3_step(stmt: ?*anyopaque) callconv(.c) c_int;
+            extern "c" fn sqlite3_finalize(stmt: ?*anyopaque) callconv(.c) c_int;
+            extern "c" fn sqlite3_column_count(stmt: ?*anyopaque) callconv(.c) c_int;
+            extern "c" fn sqlite3_column_type(stmt: ?*anyopaque, i: c_int) callconv(.c) c_int;
+            extern "c" fn sqlite3_column_text(stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
+            extern "c" fn sqlite3_column_name(stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
+            extern "c" fn sqlite3_bind_int64(stmt: ?*anyopaque, idx: c_int, val: i64) callconv(.c) c_int;
+            extern "c" fn sqlite3_bind_double(stmt: ?*anyopaque, idx: c_int, val: f64) callconv(.c) c_int;
+            extern "c" fn sqlite3_bind_text(stmt: ?*anyopaque, idx: c_int, text: [*:0]const u8, nbyte: c_int, destructor: ?*const anyopaque) callconv(.c) c_int;
+            extern "c" fn sqlite3_bind_null(stmt: ?*anyopaque, idx: c_int) callconv(.c) c_int;
+            extern "c" fn sqlite3_changes(db: ?*anyopaque) callconv(.c) c_int;
+            extern "c" fn sqlite3_last_insert_rowid(db: ?*anyopaque) callconv(.c) i64;
+        };
+        g_lib = undefined;
+        g_funcs = .{
+            .open = linked.sqlite3_open,
+            .close = linked.sqlite3_close,
+            .errmsg = linked.sqlite3_errmsg,
+            .prepare_v2 = linked.sqlite3_prepare_v2,
+            .step = linked.sqlite3_step,
+            .finalize = linked.sqlite3_finalize,
+            .column_count = linked.sqlite3_column_count,
+            .column_type = linked.sqlite3_column_type,
+            .column_text = linked.sqlite3_column_text,
+            .column_name = linked.sqlite3_column_name,
+            .bind_int64 = linked.sqlite3_bind_int64,
+            .bind_double = linked.sqlite3_bind_double,
+            .bind_text = linked.sqlite3_bind_text,
+            .bind_null = linked.sqlite3_bind_null,
+            .changes = linked.sqlite3_changes,
+            .last_insert_rowid = linked.sqlite3_last_insert_rowid,
+        };
+        return true;
+    }
     var lib = openLib() orelse return false;
     const open_fn = lookupSym(&lib, OpenFn, "sqlite3_open") orelse return false;
     const close_fn = lookupSym(&lib, CloseFn, "sqlite3_close") orelse return false;
@@ -212,6 +255,8 @@ fn dupeEmpty(rt: ?*anyopaque) ?[*:0]u8 {
 const SQLITE_TRANSIENT: ?*const anyopaque = @ptrFromInt(std.math.maxInt(usize));
 
 pub export fn nox_sqlite_open_raw(path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const embed = @import("../embed.zig");
+    if (!embed.allowsPath(path)) return null;
     const p = path orelse return null;
     if (!ensureLoaded()) return null;
     var db: ?*anyopaque = null;

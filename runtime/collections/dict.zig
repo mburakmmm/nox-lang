@@ -199,6 +199,18 @@ extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
 /// da (≤256 bayt), döngü GENEL doğruluk İçİn (`nox.crypto`nin BÜYÜK
 /// istekleri DAHİL) tutulur.
 fn linuxGetRandom(buf: []u8) void {
+    // Bionic, `getrandom` libc sarmalayıcısını API 28'de ekler. Mobil hedef
+    // API 24'tür; ham `getrandom` sistem çağrısı bu seviyede vardır.
+    if (comptime builtin.abi.isAndroid()) {
+        var filled: usize = 0;
+        while (filled < buf.len) {
+            const rc = std.os.linux.getrandom(buf.ptr + filled, buf.len - filled, 0);
+            const n: isize = @bitCast(rc);
+            if (n <= 0) return;
+            filled += @intCast(n);
+        }
+        return;
+    }
     var filled: usize = 0;
     while (filled < buf.len) {
         const n = std.c.getrandom(buf.ptr + filled, buf.len - filled, 0);

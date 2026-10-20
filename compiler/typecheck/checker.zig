@@ -113,7 +113,7 @@ pub const TypeError = error{
     /// KENDİSİ HER profilde import EDİLEBİLİR ama `secure_random_hex(...)`
     /// ÇAĞRISI 'freestanding'de BU hatayla reddedilir.
     CapabilityNotGranted,
-    /// v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179 — GPT-5.6 incelemesinin
+    /// v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179 — dış incelemenin
     /// buldu, DOĞRULANDI): `ptr_from_int`/`ptr_to_int`/`ptr_add`/`ptr_read_*`/
     /// `ptr_write_*`/`detach`/`adopt` DAHA ÖNCE bir `lowlevel:` bloğu
     /// DIŞINDA KOŞULSUZ TİP olarak kabul EDİLİYORDU ("yalnızca lowlevel:
@@ -383,6 +383,8 @@ const FnCtx = struct {
     narrowed: std.StringHashMapUnmanaged(Type) = .{},
 };
 
+pub const MobileMask = enum { none, ios, android };
+
 pub const Checker = struct {
     allocator: std.mem.Allocator,
     functions: std.StringHashMapUnmanaged(FuncSig) = .{},
@@ -477,7 +479,7 @@ pub const Checker = struct {
     /// bloğu DIŞINDA da SESSİZCE kabul edip, SADECE `noxc build`nin
     /// codegen aşamasında GENEL bir "desteklenmeyen yapı" hatasıyla
     /// reddetmesine yol açıyordu — GERÇEK bir `check`/`build` semantik
-    /// tutarsızlığı, GPT-5.6 incelemesinde bulunup DOĞRULANDI).
+    /// tutarsızlığı, dış incelemede bulunup DOĞRULANDI).
     in_lowlevel_depth: usize = 0,
     /// Faz U.4.5 (bkz. `checkExpr`nin `.identifier` dalı): üst-düzey
     /// (non-generic) bir `def`in BARE adı, ÇAĞRI DIŞINDA bir bağlamda
@@ -689,6 +691,10 @@ pub const Checker = struct {
     /// SIFIR davranış değişikliği (MEVCUT TÜM çağrı siteleri/testler
     /// `.hosted` VARSAYILANINI KULLANIR).
     profile: types.Profile = .hosted,
+
+    /// `.none` masaüstüdür. Mobil maske üçüncü bir profil değildir:
+    /// `hosted` grant'inden `process`, `shared_memory` ve `dynamic_code` düşer.
+    mobile_mask: MobileMask = .none,
 
     pub fn init(allocator: std.mem.Allocator) Checker {
         return .{ .allocator = allocator };
@@ -1064,6 +1070,8 @@ pub const Checker = struct {
         // GERİ GETİRİLDİ.
         libc_math,
         arch_x86_64,
+        /// `nox.native` / `nox.plugin` / `nox.hpy`: indirilen kod ve `dlopen`.
+        dynamic_code,
 
         fn label(self: Capability) []const u8 {
             return switch (self) {
@@ -1076,6 +1084,7 @@ pub const Checker = struct {
                 .shared_memory => "shared_memory",
                 .libc_math => "libc_math",
                 .arch_x86_64 => "arch_x86_64",
+                .dynamic_code => "dynamic_code",
             };
         }
 
@@ -1100,6 +1109,15 @@ pub const Checker = struct {
         };
     }
 
+    fn grantsCapability(self: *const Checker, cap: Capability) bool {
+        if (!profileGrants(self.profile, cap)) return false;
+        if (self.mobile_mask == .none) return true;
+        return switch (cap) {
+            .process, .shared_memory, .dynamic_code => false,
+            else => true,
+        };
+    }
+
     const ModuleCaps = struct { name: []const u8, caps: []const Capability };
 
     /// TÜM 37 `nox.*` stdlib modülünün (`stdlib/nox/*.nox` + `arch/x86_64.nox`)
@@ -1119,6 +1137,8 @@ pub const Checker = struct {
         // Faz B.1: `nox.atomic` — page_allocator + OS thread atomikleri,
         // anlamlı olması İçin `threads` gerektirir (freestanding'de yok).
         .{ .name = "atomic", .caps = &.{.threads} },
+        // Saf Nox. Capability istemez; freestanding ve mobil hedefte de geçerlidir.
+        .{ .name = "base64", .caps = &.{} },
         // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
         // `nox.bits` — SAF bitwise operatör sarmalayıcısı, `nox.mem`in
         // AYNI gerekçeyle HİÇBİR OS/libc bağımlılığı TAŞIMAZ.
@@ -1139,9 +1159,11 @@ pub const Checker = struct {
         .{ .name = "db", .caps = &.{} },
         .{ .name = "fs", .caps = &.{.filesystem} },
         .{ .name = "gzip", .caps = &.{} },
-        .{ .name = "hpy", .caps = &.{.filesystem} },
+        .{ .name = "hpy", .caps = &.{ .filesystem, .dynamic_code } },
         .{ .name = "http", .caps = &.{.network} },
         .{ .name = "json", .caps = &.{} },
+        // Saf Nox (`nox.base64` ve `nox.crypto` üzerine). Mobil hedefte de geçerlidir.
+        .{ .name = "jwt", .caps = &.{} },
         .{ .name = "log", .caps = &.{.clock} },
         // v4 Faz B madde 1 SONRASI semver düzeltmesi (bkz. nox-teknik-
         // spesifikasyon.md ilgili bölüm): v1.119.0 BU modülü GEÇİCİ olarak
@@ -1162,9 +1184,13 @@ pub const Checker = struct {
         // ÇEKİRDEK dil özelliği OLDUĞUNDAN, KULLANILABİLİR).
         .{ .name = "mem", .caps = &.{} },
         .{ .name = "mysql", .caps = &.{.network} },
+        .{ .name = "native", .caps = &.{.dynamic_code} },
         .{ .name = "orm", .caps = &.{} },
-        .{ .name = "os", .caps = &.{.process} },
+        // `nox.os` arg/getenv/exit/cwd does not spawn a process. Process
+        // creation stays on `nox.process`, which the mobile mask denies.
+        .{ .name = "os", .caps = &.{} },
         .{ .name = "path", .caps = &.{} },
+        .{ .name = "plugin", .caps = &.{.dynamic_code} },
         .{ .name = "postgres", .caps = &.{.network} },
         .{ .name = "process", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },
@@ -1202,6 +1228,12 @@ pub const Checker = struct {
         return null;
     }
 
+    fn mobileLoadsHostLibrary(name: []const u8) bool {
+        // `nox.mysql` ve `nox.postgres` masaüstünde `libmysqlclient` / `libpq`
+        // açar. iOS ve Android uygulamasında bu dosyalar yoktur.
+        return std.mem.eql(u8, name, "mysql") or std.mem.eql(u8, name, "postgres");
+    }
+
     /// ESKİ `checkFreestandingImportAllowed`/`checkHostedImportAllowed`
     /// İKİLİSİNİN YERİNE — capability SİMETRİK olduğundan (bir modül bir
     /// capability GEREKTİRİR, bir profil ONU YA SAĞLAR YA DA SAĞLAMAZ) TEK
@@ -1218,10 +1250,19 @@ pub const Checker = struct {
             if (self.profile == .freestanding) {
                 return self.fail(error.FreestandingModuleForbidden, "module 'nox.{s}' cannot be used in the 'freestanding' profile (a stdlib module that has not been classified yet — safe default: reject)", .{segments[1]});
             }
+            if (self.mobile_mask != .none) {
+                return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on a mobile target (it has not been classified for the mobile capability mask)", .{segments[1]});
+            }
             return;
         };
+        if (self.mobile_mask != .none and mobileLoadsHostLibrary(segments[1])) {
+            return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on a mobile target (it loads a host shared library that is not part of the mobile runtime)", .{segments[1]});
+        }
         for (caps) |cap| {
-            if (profileGrants(self.profile, cap)) continue;
+            if (self.grantsCapability(cap)) continue;
+            if (self.mobile_mask != .none and profileGrants(self.profile, cap)) {
+                return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on a mobile target (required capability: '{s}')", .{ segments[1], cap.label() });
+            }
             return switch (self.profile) {
                 .freestanding => self.fail(error.FreestandingModuleForbidden, "module 'nox.{s}' cannot be used in the 'freestanding' profile (required capability: '{s}' — this profile does not provide it)", .{ segments[1], cap.label() }),
                 .hosted => self.fail(error.HostedModuleForbidden, "module 'nox.{s}' cannot be used in the 'hosted' profile (required capability: '{s}' — this profile does not provide it; it is only available in 'freestanding')", .{ segments[1], cap.label() }),
@@ -2295,7 +2336,10 @@ pub const Checker = struct {
     fn checkCapabilityCall(self: *Checker, name: []const u8) TypeError!void {
         const caps = self.capability_functions.get(name) orelse return;
         for (caps) |cap| {
-            if (profileGrants(self.profile, cap)) continue;
+            if (self.grantsCapability(cap)) continue;
+            if (self.mobile_mask != .none and profileGrants(self.profile, cap)) {
+                return self.fail(error.CapabilityNotGranted, "the call to '{s}' was rejected on a mobile target (required capability: '{s}')", .{ name, cap.label() });
+            }
             return self.fail(error.CapabilityNotGranted, "the call to '{s}' was rejected in the '{s}' profile (required capability: '{s}' — this profile does not provide it)", .{ name, @tagName(self.profile), cap.label() });
         }
     }
@@ -2682,6 +2726,12 @@ pub const Checker = struct {
     ) TypeError!?Type {
         if (!(try self.matchesNoxHttpCall(c, name))) return null;
         const fn_label = try std.fmt.allocPrint(self.allocator, "nox.http.{s}", .{name});
+        // `serve*_tls` OpenSSL `libssl` açar. Mobil çalışma zamanında bu
+        // kütüphane yoktur. İstemci `nox.http` / `nox.tls` Zig TLS kullanır
+        // ve bu reddin dışındadır.
+        if (want_tls and self.mobile_mask != .none) {
+            return self.fail(error.CapabilityNotGranted, "the call to '{s}' was rejected on a mobile target (it loads libssl, which is not part of the mobile runtime)", .{fn_label});
+        }
 
         var next: usize = 2;
         const num_threads_idx: ?usize = if (is_multicore) blk: {

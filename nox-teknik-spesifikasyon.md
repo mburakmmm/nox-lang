@@ -3801,8 +3801,7 @@ boz → kırmızıyı doğrula → düzelt" ritüeliyle doğrulandı.
 D.1 (`nox.http`, istemci+sunucu) TAMAMLANDI ve bir verim ölçümüyle
 doğrulandı (`benchmarks/http_bench.zig`, ReleaseFast'ta ~8-10k istek/sn).
 Kullanıcıyla "geri kalan stdlib" için yeni bir planlama turu yapıldı —
-tam yol haritası `/Users/melihburakmemis/.claude/plans/witty-cuddling-nebula.md`nin
-"Alt-Faz E–L" bölümünde: E (tip dönüşümleri) → F (list dönen extern def) →
+tam yol haritası (Alt-Faz E–L): E (tip dönüşümleri) → F (list dönen extern def) →
 G (string indeksleme) → H (nox.strings) → I (nox.math, bağımsız) → J
 (nox.os+nox.fs) → K (nox.time+nox.test) → L (nox.json, TAM kapsam — kullanıcı
 "tam olarak yapalım" dedi, kısıtlı sürüm DEĞİL — roadmap'in en büyük/riskli
@@ -4320,8 +4319,7 @@ yeşil — **stdlib fazının E'den L'ye TÜM yol haritası TAMAMLANDI.**
 başlatılan bir **dil stabilizasyonu** aşaması — derleyicinin/çalışma
 zamanının HER AŞAMASINDA darboğaz analizi + optimizasyon (Faz M) VE
 stdlib kütüphanelerinin (özellikle `nox.http`) benchmark'lanması (Faz N).
-Tam sıra/gerekçe İÇİN bkz. plan dosyası (`/Users/melihburakmemis/.claude/
-plans/witty-cuddling-nebula.md`, "Faz M–N" bölümü) — bu bölüm YALNIZCA
+Tam sıra bu belgenin Faz M–N kayıtlarındadır — bu bölüm YALNIZCA
 TAMAMLANAN alt-fazların doğrulama kayıtlarını tutar, her alt-faz kendi
 numaralı alt bölümüne (§3.5.1, §3.5.2, ...) sahiptir.
 
@@ -4660,8 +4658,7 @@ paket sistemi şimdilik SADECE merkeziyetsiz (merkezi registry SUNUCUSU
 İLERİDE eklenebilir bir tasarım noktası olarak bırakılıyor, ŞİMDİ
 kurulmuyor); backend sorusu İÇİN önce bir araştırma/tasarım turu
 (implementasyon DEĞİL) yapıldı. Tam tasarım kararları ve alt-faz
-sıralaması `/Users/melihburakmemis/.claude/plans/witty-cuddling-nebula.md`
-dosyasının "Faz O" ve "Faz P" bölümlerinde — bu bölüm yalnızca Faz P'nin
+sıralaması "Faz O" ve "Faz P" bölümlerindedir — bu bölüm yalnızca Faz P'nin
 (backend araştırması) SONUCUNU özetler, çünkü Faz P bir "araştırıldı,
 ŞİMDİLİK ertelendi" KARARIdır, kod değişikliği İÇERMEZ (Faz O'nun P.1-P.8
 alt-fazları AYRICA, her biri KENDİ İlke #7 doğrulamasıyla, uygulanacak).
@@ -9174,8 +9171,8 @@ eklenerek. Üçüncü-taraf eylem YERİNE resmi kaynağa DOĞRUDAN, sabit bir
 URL şablonuyla bağlanmak — `qbe`nin kaynaktan derleme adımıyla TUTARLI
 bir mimari karar. `v1.0.0` etiketi (henüz HİÇBİR YERE yayımlanmamış
 OLDUĞUNDAN, dış bir tüketicisi OLMADAN) düzeltilmiş commit'e TAŞINDI
-(kullanıcı onayıyla — uzak bir etiketi silmek Claude Code'un otomatik
-sınıflandırıcısı TARAFINDAN AÇIKÇA onay GEREKTİREN bir işlem olarak
+(kullanıcı onayıyla — uzak bir etiketi silmek otomatik
+sınıflandırıcı TARAFINDAN AÇIKÇA onay GEREKTİREN bir işlem olarak
 İŞARETLENDİ, doğru bir güvenlik DAVRANIŞI), `release.yml` BAŞARIYLA
 çalışıp 3 platform İÇİN 6 varlık (`.tar.gz` + `.sha256`) yayımladı.
 
@@ -9886,7 +9883,7 @@ dizin DEĞİL" olarak TANIMLANIR (sembolik link/özel dosya AYRIMI yapılmaz —
 
 ## 3.62 Faz FF.3 — `dict[K,V]` Sallanan-İşaretçi Güvenlik Açığının Kapatılması
 
-**Kaynak:** kullanıcının, harici bir ChatGPT incelemesinin bulgularını
+**Kaynak:** kullanıcının, harici bir incelemenin bulgularını
 "düşük öncelikli görülenler DAHİL, sırayla HEPSİNİ düzelt" talimatıyla
 (gerekçe: "projenin başındayız çözelim sonra çok başımız ağrır")
 başlattığı Faz FF listesinin ÜÇÜNCÜ maddesi — incelemenin TEK "kritik"
@@ -10012,7 +10009,7 @@ paylaşabilir).
 
 ## 3.63 Faz FF.4 — `self` Parametresi İçin Tip Çıkarımı
 
-**Kaynak:** ChatGPT incelemesinin "dil yüzeyinde değiştireceğim noktalar"
+**Kaynak:** Dış incelemenin "dil yüzeyinde değiştireceğim noktalar"
 listesindeki bir madde — her metodun `def m(self: Counter, ...)` şeklinde
 `self`i AÇIKÇA tiplemesi gereksiz tekrar; `def m(self, ...)` da GEÇERLİ
 olmalı, tipi otomatik kapsayan sınıfa/protokole çözülmeli. Faz FF listesinin
@@ -10112,7 +10109,7 @@ de `parseFuncDef`i AYNI şekilde çağırır, checker'daki self-doğrulama
 
 ## 3.64 Faz FF.5 — Açık Sınıf Alan Bildirimleri
 
-**Kaynak:** ChatGPT incelemesinin "dil yüzeyinde değiştireceğim noktalar"
+**Kaynak:** Dış incelemenin "dil yüzeyinde değiştireceğim noktalar"
 listesindeki bir madde — bir sınıfın alan tipleri TAMAMEN `__init__`den
 ÇIKARILIYORDU, sözdiziminde AYRICA bildirilemiyordu. Faz FF listesinin
 BEŞİNCİ maddesi (FF.1-FF.4 TAMAMLANDI). FF.4'ün (§3.63) AKSİNE, burada
@@ -10223,7 +10220,7 @@ kapatılamayan, BİLİNÇLİ kabul edilen bir artık boşluktur.
 
 ## 3.65 Faz FF.6 — `T | None` (Optional) Tip Desteği
 
-**Kaynak:** ChatGPT incelemesinin Faz FF listesinin ALTINCI VE EN BÜYÜK
+**Kaynak:** Dış incelemenin Faz FF listesinin ALTINCI VE EN BÜYÜK
 maddesi — dilde GERÇEK bir nullable/Optional DEĞER kavramı YOKTU (`None`
 yalnızca "değer yok", yani void dönüş tipi anlamına geliyordu). Bu boşluk,
 spec'in KENDİSİNİN birden fazla yerde AÇIKÇA itiraf ettiği bir eksikti
@@ -13776,7 +13773,7 @@ OLMAYAN komut reddi + boş-liste mesajı. Tam `zig build test
 
 ## 3.75 `nox.json.decode()` paylaşılan-boş-nesne optimizasyonu
 
-Kullanıcının ChatGPT'nin `nox.json`ye "FFI maliyeti" olduğu iddiasını
+Kullanıcının, dış incelemenin `nox.json`ye "FFI maliyeti" olduğu iddiasını
 sorgulaması ÜZERİNE yapılan araştırma — İDDİA YANLIŞ karakterize edilmişti
 (`json.zig` `noxrt.o`ya STATİK bağlanır, `nox.sqlite`nin AKSİNE HİÇBİR
 `std.DynLib`/harici kütüphane sınırı YOK, QBE→Zig çağrısı düz bir `call
@@ -14008,7 +14005,7 @@ ihtiyacı, GEREKTİĞİNDE ayrı bir görev olarak ele alınabilir.
 
 Kullanıcı, Nox üzerinde ExpressJS/NestJS-tarzı bir API/microservice web
 framework'ü geliştirmek istedi — bunun İçİN decorator (`@get("/:id")`
-gibi) sözdizimine İHTİYAÇ duyuldu. Daha önceki bir ChatGPT analizinin
+gibi) sözdizimine İHTİYAÇ duyuldu. Daha önceki bir dış analizin
 önerdiği "decorator+metaprogramming ekle, SONRA dil yüzeyini dondurup
 stabilizasyona geç" planının, kullanıcının BİLİNÇLİ SEÇİMİYLE, sırası
 bu şekilde belirlendi.
@@ -15253,7 +15250,7 @@ YENİ "failed" adımı YOK).
 
 ## 3.93 `Task[T].detached` veri yarışı — dış incelemenin doğrulanıp düzeltilmesi (v1.29.11)
 
-Kullanıcı, Nox'un M:N/concurrency tarafına dair harici (ChatGPT) bir
+Kullanıcı, Nox'un M:N/concurrency tarafına dair harici bir
 incelemeyi paylaştı. İncelemedeki İKİ ana teknik iddiayı (Task.detached
 yarışı, Task/Channel'ın spawn'a "borrow" edilmesi) doğrudan kodda
 DOĞRULADIM (bir Explore ajanıyla, DÜŞMANCA/şüpheci bir tavırla — iddiaları
@@ -15338,8 +15335,8 @@ BAŞKA bir fiber'e HİÇ geçmediği) `spawn`/`await` akışı DEĞİŞMEDEN ça
 
 ## 3.94 `Task[T]`/`Channel[T]`ye GERÇEK atomik referans sayımı (v1.29.12)
 
-§3.93'te (v1.29.11) `Task.detached` yarışı çözüldükten SONRA, ChatGPT
-incelemesinin İKİNCİ iddiasını (Task/Channel'ın spawn'a "borrow" edilmesi,
+§3.93'te (v1.29.11) `Task.detached` yarışı çözüldükten SONRA, dış
+incelemenin İKİNCİ iddiasını (Task/Channel'ın spawn'a "borrow" edilmesi,
 ARC-yönetimli OLMAMASI) — v1.29.11'in "Kapsam DIŞI" bıraktığı KONU —
 DOĞRUDAN bir kod reprodüksiyonuyla test ettim:
 
@@ -15587,8 +15584,8 @@ M:N zamanlayıcı/async runtime'ında bulunan HER GERÇEK veri yarışı
 (`Task.detached` yarışı — §3.93, `Channel`/`Task`ın sarkan-işaretçi
 SIGSEGV'i — §3.94, work-stealing livelock'ları, ECONNRESET çökmesi —
 §3.91, fiber-bağlamlı segfault-döngüsü riski — §3.92) **AD-HOC bir
-yöntemle** bulundu: kullanıcının KENDİ `wrk` yük testi, harici bir ChatGPT
-incelemesi, ya da manuel `lldb` reprodüksiyonları. HİÇBİRİ `zig build
+yöntemle** bulundu: kullanıcının KENDİ `wrk` yük testi, harici bir
+inceleme, ya da manuel `lldb` reprodüksiyonları. HİÇBİRİ `zig build
 test`in KENDİ, HER push'ta çalışan hızlı test paketinden YAKALANMADI VE
 olamazdı da: `runtime/async_rt/worker_pool.zig`nin KENDİ, kanıtlanmış
 "çapraz-worker çalma"yı zorlayan İKİ 20-tekrarlı stres testi (`"...
@@ -15849,7 +15846,7 @@ DİĞER paketin GÜNCELLENMESİNİ ENGELLEMEDİĞİNİ kanıtlayan testler. MEVC
 
 ## 3.101 `SpawnSharedMutation`ı iç içe (nested) alan erişimine genelleştirme (v1.34.0)
 
-Harici bir kod incelemesinin ("Nox'a dair GPT-5.6 analizi" — kullanıcının
+Harici bir kod incelemesinin (kullanıcının
 paylaştığı, bağımsızca doğrulanan bir değerlendirme) önerdiği 6 maddelik
 takip listesinin İLKİ. v1.30.0'ın (§3.95) `SpawnSharedMutation` kontrolü
 BİLİNÇLİ olarak SADECE doğrudan parametre mutasyonunu yakalıyordu —
@@ -16492,7 +16489,7 @@ RESULTS.md`).
 
 ## 3.109 GG.19 — aggregate stack bütçesi + inline/ASAP'in birlikte çalışması (ASAP güçlendirmesi, Tur 3) (v1.43.0)
 
-v1.42.0 SONRASI kullanıcı harici bir (GPT-5.6) incelemeyi paylaştı.
+v1.42.0 SONRASI kullanıcı harici bir incelemeyi paylaştı.
 İncelemenin ÇOĞU teknik gözlemi DOĞRU/isabetliydi — kendi doğrulamamla
 (`git worktree` İLE İKİ AYRI ölçüm) TEYİT edildi: GG.17'nin KENDİ Tur-1
 benchmark'ı v1.42.0'ın hotfix'inden HİÇ ETKİLENMEMİŞTİ (`helper()`'ın
@@ -16565,7 +16562,7 @@ stress-test` (ReleaseFast) TEMİZ.
 
 ## 3.110 GG.20 — interprocedural escape/mutasyon analizi: PAYLAŞILAN bir "fonksiyon etkisi" motoru (ASAP güçlendirmesi, Tur 4) (v1.44.0)
 
-v1.43.0 SONRASI kullanıcı harici bir (GPT-5.6) incelemeyi PAYLAŞTI —
+v1.43.0 SONRASI kullanıcı harici bir incelemeyi PAYLAŞTI —
 inceleme, `checker.zig`nin `SpawnSharedMutation`ının (bir `spawn` hedefi
 fonksiyonun paylaşılan parametresini BAŞKA bir yardımcı fonksiyon
 ÜZERİNDEN — `mutate(xs)` gibi — mutasyona uğratmasını YAKALAYAMAMASI)
@@ -16693,7 +16690,7 @@ düşmemesinden (bkz. `benchmarks/RESULTS.md`).
 v1.44.0 (GG.20) SADECE ÇÖZÜLEBİLİR SERBEST fonksiyon çağrılarını
 interprocedural kanıta DAHİL ETMİŞTİ — HER METOD çağrısı (`obj.method(...)`)
 BİLİNÇLİ olarak KOŞULSUZ kaçış/mutasyon sayılmaya DEVAM ETMİŞTİ. v1.44.0
-SONRASI kullanıcı harici bir (GPT-5.6) incelemeyi PAYLAŞTI — inceleme BUNU
+SONRASI kullanıcı harici bir incelemeyi PAYLAŞTI — inceleme BUNU
 "sonraki doğal expansion" olarak İŞARET ETTİ (KENDİ ÖNCELİK önerisi fiber
 stack ayak izi deneyleri OLSA da), kullanıcı sunulan seçeneklerden "Method/
 dolaylı-çağrı effect genişletmesi"NI seçti.
@@ -16786,7 +16783,7 @@ değişikliği, Tur 3'ün SADECE çağrı-mekaniği kazancından FARKLI).
 
 ## 3.112 GG.22 — checkCall gölgeleme-çözümleme düzeltmesi + spawn-sonrası çağıran-tarafı mutasyon koruması (v1.46.0)
 
-v1.45.0 (GG.21) SONRASI harici bir (GPT-5.6) incelemesi TEKRAR paylaşıldı
+v1.45.0 (GG.21) SONRASI harici bir incelemesi TEKRAR paylaşıldı
 (bir versiyon GERİDE, v1.44.0 dönemine ait) — kullanıcı bu incelemenin
 KENDİ önerdiği fiber-stack-ayak-izi yönünü SEÇMEDİ, bunun YERİNE ÜÇ aday
 alanı (fiber stack ayak izi, closure/function-value effect genişletmesi,
@@ -17061,7 +17058,7 @@ test, postgres-gerektiren HARİÇ) TAM test paketleri YENİ noxc İLE
 ## 3.115 GG.25.1 — STACK_SIZE'ın gözden kaçan riski: sıradan kullanıcı özyinelemesi (v1.49.0)
 
 §3.114'ün (v1.48.0) YAYIMLANMASINDAN HEMEN SONRA, harici bir inceleme
-(kullanıcının paylaştığı bir GPT-5.6 değerlendirmesi) "kullanıcı-kodu
+(kullanıcının paylaştığı bir değerlendirme) "kullanıcı-kodu
 özyineleme İçİn AYRI bir stack-overflow regresyon paketi eksik" bulgusunu
 işaret etti. Bu, DOĞRUDAN TEST EDİLİP DOĞRULANDI — §3.114'ün ÖLÇTÜĞÜ
 DÖRT senaryonun (regex/JSON/sınıf-zinciri release'i/Aether-Nyx) HEPSİ
@@ -17128,7 +17125,7 @@ YÜKSEK/JSON: hedefin SADECE ~%9'u). Gerçek-dünya son doğrulama: Aether
 
 ## 3.116 HH.1 — QBE↔LLVM backend conformance suite (v1.50.0)
 
-v1.49.0 (GG.25.1) SONRASI kullanıcı harici bir (GPT-5.6) incelemeyi
+v1.49.0 (GG.25.1) SONRASI kullanıcı harici bir incelemeyi
 PAYLAŞTI — 6 maddelik bir öneri listesi, kullanıcı "hepsini sırayla
 yapalım" DEDİ. Bu, listenin İLK maddesi.
 
@@ -19803,7 +19800,7 @@ OLDUĞUNU doğruladı.
 
 ## 3.149 Faz HH.11 — return-alias etkilerinin TRANSİTİF/fixpoint çözümlenmesi (v1.79.4)
 
-Harici bir (GPT-5.6) inceleme, v1.59.0'ın (HH.10) KENDİSİNİN BİLİNÇLİ
+Harici bir inceleme, v1.59.0'ın (HH.10) KENDİSİNİN BİLİNÇLİ
 olarak ERTELEDİĞİ bir soundness açığını YENİDEN gündeme getirdi: bir
 fonksiyonun dönüş değeri BAŞKA bir fonksiyonu ÇAĞIRARAK (transitif
 olarak) BİR spawn-paylaşımlı kaynağın takma adı olabiliyor, AMA
@@ -21408,7 +21405,7 @@ KULLANILAMAZ hale getirilmesi — v1 SADECE release-emisyonunu durdurur).
 
 ## 3.170 `.github/workflows/external-fixtures.yml`nin v1.81.0'dan bu yana HER push'ta başarısız olması — zincirli yeniden-vihraç (re-export) çözümleme hatası (v1.89.1)
 
-`.github/workflows/external-fixtures.yml` (§3.104'te, GPT-5.6 incelemesinin
+`.github/workflows/external-fixtures.yml` (§3.104'te, dış incelemenin
 4. maddesi olarak eklenmişti) kaynaktan derlenen GÜNCEL `noxc`ye karşı
 Nyx (v0.17.0) VE Aether (v0.6.5)'in KENDİ GERÇEK test paketlerini
 çalıştırır — TANITILDIĞI v1.81.0'dan (Faz F.0.1) GÜNÜMÜZE (v1.89.0)
@@ -22571,13 +22568,13 @@ poll-döngüsüne çevrilir, YENİ `timeout-minutes: 40`).
 
 ---
 
-## 3.179 GPT-5.6'nın v1.89.1-v1.92.0 (Freestanding Nox) incelemesi — DOĞRULANAN 2 GERÇEK hata + 2 madde (v1.96.0)
+## 3.179 v1.89.1-v1.92.0 (Freestanding Nox) incelemesi — DOĞRULANAN 2 GERÇEK hata + 2 madde (v1.96.0)
 
 ### Context
 
 Kullanıcı, `main`in v1.92.0'DAN v1.95.1'E İLERLEDİĞİ (STW-bariyeri/test-
 flake/release-gate düzeltmeleri ARASINDA) bir dönemde yazılmış, harici
-bir (GPT-5.6) freestanding-Nox incelemesini paylaştı — 22 maddelik, DETAYLI
+bir freestanding-Nox incelemesini paylaştı — 22 maddelik, DETAYLI
 bir analiz, SONUNDA 9 maddelik bir öncelik listesi ÖNERİYORDU. Bu inceleme
 DOĞRUDAN uygulanmadan ÖNCE HER somut/doğrulanabilir İDDİASI KODUN KENDİSİNE
 karşı KONTROL EDİLDİ (bu projenin "ölç, varsayma" disipliniyle TUTARLI):
@@ -23392,8 +23389,8 @@ gereksiz PRINT (`cancel()`nin ZATEN yutacağı BİR hata İçİn) KALKTI.
 
 ## 3.187 v2.0 stabilizasyon yol haritası, madde 1 — Concurrency Torture Suite
 
-Kullanıcı, harici bir GPT-5.6 stratejik analizinin önerdiği 10 maddelik
-"v2.0'a doğru stabilizasyon" yol haritasını, Claude'un ÖNERDİĞİ yeniden
+Kullanıcı, harici bir stratejik analizin önerdiği 10 maddelik
+"v2.0'a doğru stabilizasyon" yol haritasını, önerilen yeniden
 sıralamayla ONAYLADI (2026-09-24): önce UCUZ/DÜŞÜK-mimari-riskli işler
 (bu madde — torture suite, sonra FFI kaçış sözleşmeleri, sonra genişletilmiş
 QBE↔LLVM uygunluk testi), SONRA daha GENİŞ-dokunuşlu/riskli işler (sabit-
@@ -23504,7 +23501,7 @@ stress.yml` (YENİ `concurrency-torture` job'u).
 ## 3.188 v2.0 stabilizasyon yol haritası, madde 2 (2.1+2.2) — Explicit FFI Escape Contracts
 
 Roadmap'in 2. maddesi (`@ffi.noescape`/`@ffi.escape(N)`/`@ffi.callback`
-decorator'ları) araştırılırken, ORİJİNAL (harici GPT-5.6 analizinin)
+decorator'ları) araştırılırken, ORİJİNAL (harici analizin)
 öncülünün KISMEN YANLIŞ olduğu bulundu: "extern def'ler için derleyicinin
 BUGÜNKÜ 'her şeyi kaçış say' varsayımını daraltır" gerekçesi, GERÇEK
 codegen'i (`compiler/codegen_qbe/{local_escape.zig,inlining.zig}`) DEĞİL,
@@ -24630,7 +24627,7 @@ x86_64_test.zig` (YENİ assert).
 **Bağlam:** Nox'ta bu maddeye KADAR bitwise operatör YOKTU (lexer'ın
 `TokenKind`ı DOĞRULANDI — `&`/`^`/`~`/`<<`/`>>` HİÇBİR ŞEKİLDE
 TANINMIYORDU, `|` yalnızca `T | None` tip sözdiziminde kullanılıyordu).
-Bu, dış (GPT 5.6 atıflı) bir strateji analizinin ÖNERDİĞİ, kullanıcının
+Bu, dış bir strateji analizinin ÖNERDİĞİ, kullanıcının
 ONAYLADIĞI 12 maddelik "v3 sertleştirme yol haritası"nın 2. maddesidir
 (1. madde — aarch64 stack-smash — kullanıcı kararıyla AÇIK bırakıldı).
 
@@ -25698,7 +25695,7 @@ DÖNÜK DEĞİŞMEYECEĞİ GARANTİSİDİR, YENİ ekleme YASAĞI DEĞİL.
 ## 3.208 v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 1 — Capability modeli
 
 **Bağlam:** v3 yol haritası TAMAMEN BİTTİKTEN (§3.207) HEMEN SONRA,
-kullanıcı harici bir analizin (pasted content, "GPT 5.6 SOL" atıflı)
+kullanıcı harici bir analizin
 önerdiği "stdlib'i `Core`/`Systems`/`Hosted` KATMANLARINA ayırma" fikrini
 paylaştı. Önerinin TAMAMI v3'ün TÜMÜNDEN BÜYÜK olduğundan, YALNIZCA
 "Faz A" (temel/foundation, 7 madde) somut bir görev listesine ÇEVRİLDİ —
@@ -26718,10 +26715,10 @@ GERÇEKTEN ÇALIŞIR hâle getirdi — bu, projenin "ölç, varsayma" kültürü
 (AGENTS.md İlke #7) EN NET örneklerinden biridir: dogfood'un KENDİSİ
 olmasaydı bu 3 hata muhtemelen UZUN SÜRE keşfedilmeyecekti.
 
-## 3.220 v4 Faz C SONRASI — dış incelemenin (GPT-5.6) doğru tespit ettiği 4 madde
+## 3.220 v4 Faz C SONRASI — dış incelemenin doğru tespit ettiği 4 madde
 
 **Bağlam:** v1.122.0'ın (§3.219) dışarıdan bir incelemesi (kullanıcı
-tarafından yapıştırılan, GPT-5.6 etiketli bir analiz — kod okunarak
+tarafından yapıştırılan dış bir analiz — kod okunarak
 TEK TEK doğrulandı, hiçbiri KÖRLEMESİNE kabul EDİLMEDİ) 4 madde tespit
 etti: (1) dogfood testinin checkpoint SIRALAMASINI DOĞRULAMAMASI (sadece
 VARLIĞI kontrol ediyordu), (2) `Instant.elapsed_ms()`/`elapsed()`nin
@@ -26794,7 +26791,7 @@ import eden HER fixture) kasıtlı olarak YENİDEN OLUŞTURULDU.
 
 ### Madde 3 — `nox.random`ın threadlocal fallback'i (proaktif, BULUNAN EK bir hata)
 
-GPT-5.6'nın TESPİT ETMEDİĞİ, kod okunurken BAĞIMSIZ olarak bulunan bir
+Dış incelemenin TESPİT ETMEDİĞİ, kod okunurken BAĞIMSIZ olarak bulunan bir
 madde: `runtime/stdlib_shims/random.zig`nin `g_prng_fallback`/`g_seeded_
 fallback`si §3.219'un `g_scheduler` hatasıyla (bkz. ilgili bölüm) AYNI
 sınıftan bir `threadlocal var` kullanıyordu — freestanding'in `boot.S`'si
@@ -28080,9 +28077,9 @@ doğrulanamıyor). Testler: `formatPeerAddr6` birim testi, dual-stack kabul (`::
 `127.0.0.1` peer biçimleri) ve `v6_only` reddi Zig testleri (IPv6 yoksa atlanır),
 golden `http_listen_v6`; elle uçtan uca curl doğrulaması yapıldı.
 
-## 3.249 GPT-5.6 red-team bulguları: iç içe döngü sızıntısı + bağlı-metod ad çakışması (v1.142.11)
+## 3.249 Dış inceleme bulguları: iç içe döngü sızıntısı + bağlı-metod ad çakışması (v1.142.11)
 
-Dış inceleme (GPT-5.6, v1.142.3) iki olası correctness açığı işaret etti; ikisi de
+Dış inceleme (v1.142.3) iki olası correctness açığı işaret etti; ikisi de
 çalıştırılarak DOĞRULANDI ve düzeltildi.
 
 **1) İç içe `list[list[Sınıf]]` alanlı döngüler sızıyordu.** `genClassRelease`in
@@ -28771,7 +28768,7 @@ keşfedilip 3 GERÇEK hata/eksiklik (TLS/`threadlocal` çökmesi +
 fiber-stack-provider) düzeltildi — ARTIK GERÇEKTEN çalışıyor. §3.214'ün
 bulgu #1'i (generic sınıf + çapraz-modül tip parametresi codegen hatası)
 §3.216'da DÜZELTİLDİ — ARTIK AÇIK bulgu YOK. Faz C SONRASI, dışarıdan bir
-incelemenin (GPT-5.6) tespit ettiği 4 madde (§3.220) TAMAMEN ÇÖZÜLDÜ:
+incelemenin tespit ettiği 4 madde (§3.220) TAMAMEN ÇÖZÜLDÜ:
 dogfood checkpoint sıralaması ZORUNLU hale getirildi, capability kontrolü
 METOD çağrılarını da KAPSAYACAK şekilde genişletildi, `nox.random`ın
 threadlocal fallback'i PROAKTİF olarak sertleştirildi, VE `nox.math`nin
@@ -28924,7 +28921,7 @@ Golden: `kwarg_source_order_eval` (iki backend), `err_kwarg_effect_order` (spawn
 
 ## 3.285 Nox Native Interface (NNI) v1 ve API katmanları (v1.170.0)
 
-Kullanıcı/GPT-5.6 önerisi üzerine genel (public) yerel arayüz ile iç runtime ABI'si AYRI tutuldu. **Genel:** `include/nox_nni.h` (+ belgelenmiş `extern def` C ABI). **İç:** `nox_*` runtime sembolleri, ARC başlığı, `RuntimeState`,
+Kullanıcı önerisi üzerine genel (public) yerel arayüz ile iç runtime ABI'si AYRI tutuldu. **Genel:** `include/nox_nni.h` (+ belgelenmiş `extern def` C ABI). **İç:** `nox_*` runtime sembolleri, ARC başlığı, `RuntimeState`,
 liste/dict/str/sınıf düzenleri — özel ve kararsız (docs/NATIVE-API.md §3). Host (`runtime/stdlib_shims/native.zig`): her yüklenen eklenti için `Host` bağlamı (runtime allocator'ı ile tahsis; gizli global yok),
 `NoxHandle = (gen<<32)|(idx+1)` tutamaç tablosu (kilitli; bayat tutamaç `NOX_BAD_HANDLE`), `NoxApiV1` sabit tablosu (yalnızca sona ekleme + `struct_size` ile sürümleme), `register_function`, kopyalayan thread-güvenli `post_event`.
 Nox yüzü `nox.native` (argümanlar `Plugin.arg_*` ile biriktirilir, `call_*` ile çağrılır; hata `NativeError`). Çağrı sözleşmesi: yerel işlev çağıran iş parçacığında senkron; hata sınırından unwind yok.
@@ -29104,6 +29101,12 @@ Sınıf `__str__` ve `__repr__` sonucu `nox_print_str` ile yazılır. `null` ve 
 `nox.fs` dizin listesi yolun sonundaki NUL baytını keser. `canonicalize` Windows tamponu 4096 bayttır. Test yolları uzun `TEMP` dizinine sığar.
 
 HPy paket bildirimi `std.json` kullanmaz. Windows HTTP, havuz ve süreç testleri kilitlenmeden düşer. SQLite yükleme sırası §3.305'tedir ve bu sürümle yayımlanır.
+
+## 3.307 Mobil hedef (v2.0.19, experimental)
+
+Dört hedef adı vardır: `ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64`. Backend LLVM'dir. `--backend qbe`, `--emit-asm` ve `-g` bu adlarda reddedilir. Masaüstü `--target` adları QBE yolunda kalır. Üçüncü bir profil eklenmez. Mobil maske `process`, `shared_memory` ve `dynamic_code` vermez. `nox.os` süreç başlatmadığı için bu maskede kullanılabilir; `nox.process` kullanılamaz. `nox.base64` ve `nox.jwt` saf Nox olduğu için mobil hedefte geçerlidir. `nox.mysql` ve `nox.postgres` konak paylaşılan kütüphanesini açtığı için reddedilir. `nox.http.serve_tls` ve `serve_ws_tls` ile onların dosya tanımlayıcılı ve çok çekirdekli TLS kardeşleri `libssl` açtığı için reddedilir. `nox.http` istemcisi, `nox.tls`, `nox.websocket` ve `nox.smtp` Zig TLS kullandığı için açık kalır. `async def`, `spawn` ve `await` mobil hedefte de geçerlidir. Kütüphane girişi üst düzey kodu tek iş parçacığındaki fiber zamanlayıcısında çalıştırır. Apple fiber çevirisi kayıtlı dönüş adresini `xpaclri` ile ham adrese indirir. Android'de `nox.tls`, `nox.websocket` ve `nox.smtp` TCP bağlantısı `getaddrinfo` ile kurulur; Bionic `/etc/resolv.conf` tutmaz. Bir fiber içinden yapılan WebSocket el sıkışması, gönderme ve alma işletim sistemi iş parçacığında çalışır; fiber yığını TLS doğrulamasına yetmez.
+
+Kütüphane modu `$main` üretmez. Gömme ABI'si `include/nox_embed.h` dosyasındadır ve NNI'den ayrıdır. Host bir slot sahiplenir. Dosya ve sqlite yolları, gömme oturumu açıkken hostun verdiği dört kökün altında kalır. Bu hedefler `supported` sayılmaz. Ayrıntı `docs/internals/mobile-matrix.md` ve ADR-MOB-001..008.
 
 ## 3.304 Windows test derlemesi ve yol URI'si (v2.0.16)
 
