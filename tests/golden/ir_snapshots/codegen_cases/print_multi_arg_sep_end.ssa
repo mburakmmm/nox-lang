@@ -2028,14 +2028,14 @@ export function w $main(w %argc, l %argv) {
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
     storel 0, %t0
     %t1 =l add $str4, 16
-    call $printf(l $fmt_lit0, ..., l %t1)
-    call $printf(l $fmt_lit1)
+    call $nox_print_str(l %t1)
+    call $printf(l $fmt_lit0)
     call $printf(l $fmt_int_frag, ..., l 1)
-    call $printf(l $fmt_lit1)
+    call $printf(l $fmt_lit0)
     %t2 =l call $nox_float_to_str(l %rt, d d_2.5)
-    call $printf(l $fmt_lit3, ..., l %t2)
+    call $nox_print_str(l %t2)
     call $nox_str_release(l %rt, l %t2)
-    call $printf(l $fmt_lit1)
+    call $printf(l $fmt_lit0)
     jnz 1, @print_true0, @print_false1
 @print_true0
     call $printf(l $fmt_bool_true_frag)
@@ -2044,31 +2044,31 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false_frag)
     jmp @print_done2
 @print_done2
-    call $printf(l $fmt_lit2)
-    call $printf(l $fmt_lit6)
+    call $printf(l $fmt_lit1)
+    call $printf(l $fmt_lit3)
     %t3 =l add $str5, 16
     %t4 =l add $str6, 16
     %t5 =l add $str7, 16
-    call $printf(l $fmt_lit7, ..., l %t3)
-    call $printf(l $fmt_lit7, ..., l %t5)
-    call $printf(l $fmt_lit7, ..., l %t4)
-    call $printf(l $fmt_lit9)
+    call $nox_print_str(l %t3)
+    call $nox_print_str(l %t5)
+    call $nox_print_str(l %t4)
+    call $printf(l $fmt_lit5)
     %t6 =l add $str8, 16
     %t7 =l add $str9, 16
-    call $printf(l $fmt_lit10, ..., l %t6)
-    call $printf(l $fmt_lit10, ..., l %t7)
+    call $nox_print_str(l %t6)
+    call $nox_print_str(l %t7)
     %t8 =l add $str10, 16
     %t9 =l add $str11, 16
-    call $printf(l $fmt_lit13, ..., l %t8)
-    call $printf(l $fmt_lit13, ..., l %t9)
+    call $nox_print_str(l %t8)
+    call $nox_print_str(l %t9)
     %t10 =l add $str12, 16
     %t11 =l add $str13, 16
     call $printf(l $fmt_int_frag, ..., l 1)
-    call $printf(l $fmt_lit16, ..., l %t10)
+    call $nox_print_str(l %t10)
     call $printf(l $fmt_int_frag, ..., l 2)
-    call $printf(l $fmt_lit16, ..., l %t10)
+    call $nox_print_str(l %t10)
     call $printf(l $fmt_int_frag, ..., l 3)
-    call $printf(l $fmt_lit16, ..., l %t11)
+    call $nox_print_str(l %t11)
     %t12 =l call $nox_rc_alloc(l %rt, l 32)
     storel 2, %t12
     %t13 =l add %t12, 8
@@ -2107,12 +2107,12 @@ export function w $main(w %argc, l %argv) {
     %t27 =l loadl %t0
     %t28 =l loadl %t0
     %t29 =l loadl %t28
-    call $printf(l $fmt_lit19, ..., l %t26)
-    call $printf(l $fmt_lit20)
+    call $nox_print_str(l %t26)
+    call $printf(l $fmt_lit12)
     %t30 =w ceql %t27, 0
     jnz %t30, @print_none9, @print_some10
 @print_none9
-    call $printf(l $fmt_lit22)
+    call $printf(l $fmt_lit14)
     jmp @print_opt_done11
 @print_some10
     call $printf(l $fmt_lbracket)
@@ -2142,15 +2142,15 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_rbracket)
     jmp @print_opt_done11
 @print_opt_done11
-    call $printf(l $fmt_lit20)
+    call $printf(l $fmt_lit12)
     call $printf(l $fmt_int_frag, ..., l %t29)
-    call $printf(l $fmt_lit21)
+    call $printf(l $fmt_lit13)
     %t41 =l add $str15, 16
     %t42 =l add $str16, 16
-    call $printf(l $fmt_lit23, ..., l %t41)
-    call $printf(l $fmt_lit24)
-    call $printf(l $fmt_lit23, ..., l %t42)
-    call $printf(l $fmt_lit25)
+    call $nox_print_str(l %t41)
+    call $printf(l $fmt_lit15)
+    call $nox_print_str(l %t42)
+    call $printf(l $fmt_lit16)
     %t43 =l loadl %t0
     %t44 =w ceql %t43, 0
     jnz %t44, @release_skip18, @release17
@@ -2550,29 +2550,20 @@ data $str16 = { l 1073741824, l 4611686018427387906, b "ü", b 0 }
 data $str17 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str18 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str19 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $fmt_lit0 = { b "%s", b 0 }
-data $fmt_lit1 = { b " ", b 0 }
-data $fmt_lit2 = { b "\n", b 0 }
-data $fmt_lit3 = { b "%s", b 0 }
-data $fmt_lit4 = { b "%s", b 0 }
-data $fmt_lit5 = { b " ", b 0 }
-data $fmt_lit6 = { b "\n", b 0 }
-data $fmt_lit7 = { b "%s", b 0 }
+data $fmt_lit0 = { b " ", b 0 }
+data $fmt_lit1 = { b "\n", b 0 }
+data $fmt_lit2 = { b " ", b 0 }
+data $fmt_lit3 = { b "\n", b 0 }
+data $fmt_lit4 = { b " ", b 0 }
+data $fmt_lit5 = { b "\n", b 0 }
+data $fmt_lit6 = { b " ", b 0 }
+data $fmt_lit7 = { b "\n", b 0 }
 data $fmt_lit8 = { b " ", b 0 }
 data $fmt_lit9 = { b "\n", b 0 }
-data $fmt_lit10 = { b "%s", b 0 }
-data $fmt_lit11 = { b " ", b 0 }
-data $fmt_lit12 = { b "\n", b 0 }
-data $fmt_lit13 = { b "%s", b 0 }
-data $fmt_lit14 = { b " ", b 0 }
-data $fmt_lit15 = { b "\n", b 0 }
-data $fmt_lit16 = { b "%s", b 0 }
-data $fmt_lit17 = { b " ", b 0 }
-data $fmt_lit18 = { b "\n", b 0 }
-data $fmt_lit19 = { b "%s", b 0 }
-data $fmt_lit20 = { b " ", b 0 }
-data $fmt_lit21 = { b "\n", b 0 }
-data $fmt_lit22 = { b "None", b 0 }
-data $fmt_lit23 = { b "%s", b 0 }
-data $fmt_lit24 = { b " ", b 0 }
-data $fmt_lit25 = { b "\n", b 0 }
+data $fmt_lit10 = { b " ", b 0 }
+data $fmt_lit11 = { b "\n", b 0 }
+data $fmt_lit12 = { b " ", b 0 }
+data $fmt_lit13 = { b "\n", b 0 }
+data $fmt_lit14 = { b "None", b 0 }
+data $fmt_lit15 = { b " ", b 0 }
+data $fmt_lit16 = { b "\n", b 0 }

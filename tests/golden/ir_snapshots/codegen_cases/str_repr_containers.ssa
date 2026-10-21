@@ -2809,12 +2809,12 @@ export function w $main(w %argc, l %argv) {
     jmp @print_opt_done39
 @print_opt_done39
     %t206 =l loadl %t142
-    call $printf(l $fmt_lit9, ..., l %t101)
-    call $printf(l $fmt_lit10)
-    call $printf(l $fmt_lit9, ..., l %t140)
-    call $printf(l $fmt_lit10)
-    call $printf(l $fmt_lit9, ..., l %t206)
+    call $nox_print_str(l %t101)
     call $printf(l $fmt_lit11)
+    call $nox_print_str(l %t140)
+    call $printf(l $fmt_lit11)
+    call $nox_print_str(l %t206)
+    call $printf(l $fmt_lit12)
     %t207 =w ceql %t101, 0
     jnz %t207, @release_skip57, @release56
 @release56
@@ -3260,11 +3260,12 @@ export function w $main(w %argc, l %argv) {
     %t400 =w ceql %t389, 0
     jnz %t400, @print_none154, @print_some155
 @print_none154
-    call $printf(l $fmt_lit21)
+    call $printf(l $fmt_lit24)
     call $printf(l $fmt_newline)
     jmp @print_opt_done156
 @print_some155
-    call $printf(l $fmt_str, ..., l %t389)
+    call $nox_print_str(l %t389)
+    call $printf(l $fmt_newline)
     jmp @print_opt_done156
 @print_opt_done156
     %t401 =w ceql %t389, 0
@@ -3481,18 +3482,18 @@ export function w $main(w %argc, l %argv) {
 @release_skip186
     jmp @release_done187
 @release_done187
-    call $printf(l $fmt_lit27, ..., l %t421)
-    call $printf(l $fmt_lit28)
-    call $printf(l $fmt_lit27, ..., l %t427)
-    call $printf(l $fmt_lit28)
-    call $printf(l $fmt_lit27, ..., l %t433)
-    call $printf(l $fmt_lit28)
-    call $printf(l $fmt_lit27, ..., l %t442)
-    call $printf(l $fmt_lit28)
-    call $printf(l $fmt_lit27, ..., l %t472)
-    call $printf(l $fmt_lit28)
-    call $printf(l $fmt_lit27, ..., l %t505)
+    call $nox_print_str(l %t421)
     call $printf(l $fmt_lit29)
+    call $nox_print_str(l %t427)
+    call $printf(l $fmt_lit29)
+    call $nox_print_str(l %t433)
+    call $printf(l $fmt_lit29)
+    call $nox_print_str(l %t442)
+    call $printf(l $fmt_lit29)
+    call $nox_print_str(l %t472)
+    call $printf(l $fmt_lit29)
+    call $nox_print_str(l %t505)
+    call $printf(l $fmt_lit30)
     %t515 =w ceql %t421, 0
     jnz %t515, @release_skip192, @release191
 @release191
@@ -3849,11 +3850,12 @@ export function w $main(w %argc, l %argv) {
     %t672 =w ceql %t661, 0
     jnz %t672, @print_none265, @print_some266
 @print_none265
-    call $printf(l $fmt_lit40)
+    call $printf(l $fmt_lit42)
     call $printf(l $fmt_newline)
     jmp @print_opt_done267
 @print_some266
-    call $printf(l $fmt_str, ..., l %t661)
+    call $nox_print_str(l %t661)
+    call $printf(l $fmt_newline)
     jmp @print_opt_done267
 @print_opt_done267
     %t673 =w ceql %t661, 0
@@ -4047,10 +4049,10 @@ export function w $main(w %argc, l %argv) {
 @release_skip304
     jmp @release_done305
 @release_done305
-    call $printf(l $fmt_lit47, ..., l %t743)
-    call $printf(l $fmt_lit48)
+    call $nox_print_str(l %t743)
+    call $printf(l $fmt_lit50)
     call $printf(l $fmt_int_frag, ..., l %t774)
-    call $printf(l $fmt_lit49)
+    call $printf(l $fmt_lit51)
     %t780 =w ceql %t743, 0
     jnz %t780, @release_skip310, @release309
 @release309
@@ -4223,11 +4225,12 @@ export function w $main(w %argc, l %argv) {
     %t863 =w ceql %t862, 0
     jnz %t863, @print_none337, @print_some338
 @print_none337
-    call $printf(l $fmt_lit53)
+    call $printf(l $fmt_lit56)
     call $printf(l $fmt_newline)
     jmp @print_opt_done339
 @print_some338
-    call $printf(l $fmt_str, ..., l %t862)
+    call $nox_print_str(l %t862)
+    call $printf(l $fmt_newline)
     jmp @print_opt_done339
 @print_opt_done339
     %t864 =w ceql %t862, 0
@@ -5081,55 +5084,58 @@ data $str149 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
 data $fmt_lit1 = { b "None", b 0 }
 data $fmt_lit2 = { b "None", b 0 }
-data $fmt_lit3 = { b "None", b 0 }
-data $fmt_lit4 = { b "{", b 0 }
-data $fmt_lit5 = { b "None", b 0 }
-data $fmt_lit6 = { b ": ", b 0 }
-data $fmt_lit7 = { b "None", b 0 }
-data $fmt_lit8 = { b "}", b 0 }
-data $fmt_lit9 = { b "%s", b 0 }
-data $fmt_lit10 = { b " ", b 0 }
-data $fmt_lit11 = { b "\n", b 0 }
-data $fmt_lit12 = { b "None", b 0 }
+data $fmt_lit3 = { b "'", b 0 }
+data $fmt_lit4 = { b "None", b 0 }
+data $fmt_lit5 = { b "{", b 0 }
+data $fmt_lit6 = { b "None", b 0 }
+data $fmt_lit7 = { b "'", b 0 }
+data $fmt_lit8 = { b ": ", b 0 }
+data $fmt_lit9 = { b "None", b 0 }
+data $fmt_lit10 = { b "}", b 0 }
+data $fmt_lit11 = { b " ", b 0 }
+data $fmt_lit12 = { b "\n", b 0 }
 data $fmt_lit13 = { b "None", b 0 }
 data $fmt_lit14 = { b "None", b 0 }
 data $fmt_lit15 = { b "None", b 0 }
-data $fmt_lit16 = { b "{", b 0 }
+data $fmt_lit16 = { b "'", b 0 }
 data $fmt_lit17 = { b "None", b 0 }
-data $fmt_lit18 = { b ": ", b 0 }
+data $fmt_lit18 = { b "{", b 0 }
 data $fmt_lit19 = { b "None", b 0 }
-data $fmt_lit20 = { b "}", b 0 }
-data $fmt_lit21 = { b "None", b 0 }
+data $fmt_lit20 = { b "'", b 0 }
+data $fmt_lit21 = { b ": ", b 0 }
 data $fmt_lit22 = { b "None", b 0 }
-data $fmt_lit23 = { b "%s", b 0 }
+data $fmt_lit23 = { b "}", b 0 }
 data $fmt_lit24 = { b "None", b 0 }
 data $fmt_lit25 = { b "None", b 0 }
-data $fmt_lit26 = { b "%s", b 0 }
-data $fmt_lit27 = { b "%s", b 0 }
-data $fmt_lit28 = { b " ", b 0 }
-data $fmt_lit29 = { b "\n", b 0 }
-data $fmt_lit30 = { b "None", b 0 }
+data $fmt_lit26 = { b "'", b 0 }
+data $fmt_lit27 = { b "None", b 0 }
+data $fmt_lit28 = { b "None", b 0 }
+data $fmt_lit29 = { b " ", b 0 }
+data $fmt_lit30 = { b "\n", b 0 }
 data $fmt_lit31 = { b "None", b 0 }
-data $fmt_lit32 = { b "P(", b 0 }
-data $fmt_lit33 = { b "x=", b 0 }
-data $fmt_lit34 = { b "name=", b 0 }
-data $fmt_lit35 = { b "None", b 0 }
+data $fmt_lit32 = { b "None", b 0 }
+data $fmt_lit33 = { b "P(", b 0 }
+data $fmt_lit34 = { b "x=", b 0 }
+data $fmt_lit35 = { b "name=", b 0 }
 data $fmt_lit36 = { b "None", b 0 }
-data $fmt_lit37 = { b "(", b 0 }
+data $fmt_lit37 = { b "'", b 0 }
 data $fmt_lit38 = { b "None", b 0 }
-data $fmt_lit39 = { b "%s", b 0 }
+data $fmt_lit39 = { b "(", b 0 }
 data $fmt_lit40 = { b "None", b 0 }
-data $fmt_lit41 = { b "None", b 0 }
-data $fmt_lit42 = { b "P(", b 0 }
-data $fmt_lit43 = { b "x=", b 0 }
-data $fmt_lit44 = { b "name=", b 0 }
-data $fmt_lit45 = { b "None", b 0 }
-data $fmt_lit46 = { b "None", b 0 }
-data $fmt_lit47 = { b "%s", b 0 }
-data $fmt_lit48 = { b " ", b 0 }
-data $fmt_lit49 = { b "\n", b 0 }
-data $fmt_lit50 = { b "None", b 0 }
-data $fmt_lit51 = { b "None", b 0 }
+data $fmt_lit41 = { b "'", b 0 }
+data $fmt_lit42 = { b "None", b 0 }
+data $fmt_lit43 = { b "None", b 0 }
+data $fmt_lit44 = { b "P(", b 0 }
+data $fmt_lit45 = { b "x=", b 0 }
+data $fmt_lit46 = { b "name=", b 0 }
+data $fmt_lit47 = { b "None", b 0 }
+data $fmt_lit48 = { b "'", b 0 }
+data $fmt_lit49 = { b "None", b 0 }
+data $fmt_lit50 = { b " ", b 0 }
+data $fmt_lit51 = { b "\n", b 0 }
 data $fmt_lit52 = { b "None", b 0 }
 data $fmt_lit53 = { b "None", b 0 }
 data $fmt_lit54 = { b "None", b 0 }
+data $fmt_lit55 = { b "'", b 0 }
+data $fmt_lit56 = { b "None", b 0 }
+data $fmt_lit57 = { b "None", b 0 }

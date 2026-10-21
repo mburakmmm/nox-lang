@@ -2250,7 +2250,8 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_newline)
     jmp @print_opt_done22
 @print_some21
-    call $printf(l $fmt_str, ..., l %t20)
+    call $nox_print_str(l %t20)
+    call $printf(l $fmt_newline)
     jmp @print_opt_done22
 @print_opt_done22
     %t27 =w ceql %t20, 0
@@ -2345,12 +2346,12 @@ export function w $main(w %argc, l %argv) {
     %t64 =l add %t63, 24
     %t65 =l loadl %t64
     %t66 =w csgtl %t65, 0
-    call $printf(l $fmt_lit1, ..., l %t33)
-    call $printf(l $fmt_lit2)
-    call $printf(l $fmt_lit1, ..., l %t54)
-    call $printf(l $fmt_lit2)
-    call $printf(l $fmt_lit1, ..., l %t62)
-    call $printf(l $fmt_lit2)
+    call $nox_print_str(l %t33)
+    call $printf(l $fmt_lit1)
+    call $nox_print_str(l %t54)
+    call $printf(l $fmt_lit1)
+    call $nox_print_str(l %t62)
+    call $printf(l $fmt_lit1)
     jnz %t66, @print_true45, @print_false46
 @print_true45
     call $printf(l $fmt_bool_true_frag)
@@ -2359,7 +2360,7 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false_frag)
     jmp @print_done47
 @print_done47
-    call $printf(l $fmt_lit3)
+    call $printf(l $fmt_lit2)
     %t67 =w ceql %t33, 0
     jnz %t67, @release_skip49, @release48
 @release48
@@ -2507,11 +2508,12 @@ export function w $main(w %argc, l %argv) {
     %t109 =w ceql %t103, 0
     jnz %t109, @print_none90, @print_some91
 @print_none90
-    call $printf(l $fmt_lit4)
+    call $printf(l $fmt_lit3)
     call $printf(l $fmt_newline)
     jmp @print_opt_done92
 @print_some91
-    call $printf(l $fmt_str, ..., l %t103)
+    call $nox_print_str(l %t103)
+    call $printf(l $fmt_newline)
     jmp @print_opt_done92
 @print_opt_done92
     %t110 =w ceql %t103, 0
@@ -2620,10 +2622,10 @@ export function w $main(w %argc, l %argv) {
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue126
-    call $printf(l $fmt_lit5, ..., l %t150)
-    call $printf(l $fmt_lit6)
-    call $printf(l $fmt_lit5, ..., l %t152)
-    call $printf(l $fmt_lit7)
+    call $nox_print_str(l %t150)
+    call $printf(l $fmt_lit4)
+    call $nox_print_str(l %t152)
+    call $printf(l $fmt_lit5)
     %t158 =w ceql %t152, 0
     jnz %t158, @release_skip128, @release127
 @release127
@@ -3091,10 +3093,8 @@ data $str10 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str11 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str12 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
-data $fmt_lit1 = { b "%s", b 0 }
-data $fmt_lit2 = { b " ", b 0 }
-data $fmt_lit3 = { b "\n", b 0 }
-data $fmt_lit4 = { b "None", b 0 }
-data $fmt_lit5 = { b "%s", b 0 }
-data $fmt_lit6 = { b " ", b 0 }
-data $fmt_lit7 = { b "\n", b 0 }
+data $fmt_lit1 = { b " ", b 0 }
+data $fmt_lit2 = { b "\n", b 0 }
+data $fmt_lit3 = { b "None", b 0 }
+data $fmt_lit4 = { b " ", b 0 }
+data $fmt_lit5 = { b "\n", b 0 }

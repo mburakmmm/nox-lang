@@ -3287,23 +3287,22 @@ fn genPrintGeneral(self: *Codegen, args: []const ast.Expr) CodegenError!Value {
     for (pos.items, 0..) |e, i| values[i] = if (e == .none_lit) Value{ .text = "0", .qtype = .none } else try self.genExpr(e);
     const sep_v: ?Value = if (sep_expr) |e| try self.genExpr(e) else null;
     const end_v: ?Value = if (end_expr) |e| try self.genExpr(e) else null;
-    const fmt_s = try self.internFmtString("%s");
     const fmt_sp = try self.internFmtString(" ");
     const fmt_nl = try self.internFmtString("\n");
     for (values, 0..) |v, i| {
         if (i > 0) {
             if (sep_v) |sv| {
-                try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt_s }}, &.{.{ .ty = .l, .text = sv.text }});
+                try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = sv.text }});
             } else try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = fmt_sp }});
         }
         if (v.qtype == .none) {
             try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = try self.internFmtString("None") }});
         } else if (v.heap == .str) {
-            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt_s }}, &.{.{ .ty = .l, .text = v.text }});
+            try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = v.text }});
         } else try self.genPrintFragment(v);
     }
     if (end_v) |ev| {
-        try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt_s }}, &.{.{ .ty = .l, .text = ev.text }});
+        try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = ev.text }});
     } else try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = fmt_nl }});
     for (pos.items, values) |e, v| try self.releaseIfTemporary(e, v);
     if (sep_expr) |e| try self.releaseIfTemporary(e, sep_v.?);

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.25]
+
+### Düzeltildi
+
+- **Windows x64 dize yazdırması (variadic printf gölgeleme giderimi).** `genPrintRaw`, `genPrintFragmentRaw`, `genPrintGeneral` ve `genPrintFloat` içinde dinamik `str` değerlerini basarken variadic `$printf("%s\n")` / `$printf("'%s'")` çağrıları yerine doğrudan `$nox_print_str` ve gerekirse `$fmt_newline` kullanılır. QBE amd64_win backend'inde variadic printf çağrılarındaki register/shadow space uyuşmazlığından kaynaklanan 0xC0000005 (ACCESS_VIOLATION) çökmesi kalıcı olarak giderildi. Tüm IR anlık görüntüleri güncellendi.
+
 ## [2.0.24]
 
 ### Düzeltildi

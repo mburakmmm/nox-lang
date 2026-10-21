@@ -2078,10 +2078,10 @@ export function l $safe_div(l %rt, l %p_a, l %p_b) {
     %t33 =l loadl %t2
     %t34 =l add %t33, 16
     %t35 =l loadl %t34
-    call $printf(l $fmt_lit0, ..., l %t32)
+    call $nox_print_str(l %t32)
+    call $printf(l $fmt_lit0)
+    call $nox_print_str(l %t35)
     call $printf(l $fmt_lit1)
-    call $printf(l $fmt_lit0, ..., l %t35)
-    call $printf(l $fmt_lit2)
     %t36 =l neg 1
     %t37 =l loadl %t2
     %t38 =w ceql %t37, 0
@@ -2241,10 +2241,10 @@ export function l $safe_mod(l %rt, l %p_a, l %p_b) {
     %t39 =l loadl %t2
     %t40 =l add %t39, 16
     %t41 =l loadl %t40
-    call $printf(l $fmt_lit3, ..., l %t38)
-    call $printf(l $fmt_lit4)
-    call $printf(l $fmt_lit3, ..., l %t41)
-    call $printf(l $fmt_lit5)
+    call $nox_print_str(l %t38)
+    call $printf(l $fmt_lit2)
+    call $nox_print_str(l %t41)
+    call $printf(l $fmt_lit3)
     %t42 =l neg 1
     %t43 =l loadl %t2
     %t44 =w ceql %t43, 0
@@ -2357,11 +2357,11 @@ export function w $main(w %argc, l %argv) {
     ret 0
 @exc_continue5
     call $printf(l $fmt_int_frag, ..., l %t3)
-    call $printf(l $fmt_lit7)
+    call $printf(l $fmt_lit4)
     call $printf(l $fmt_int_frag, ..., l %t6)
-    call $printf(l $fmt_lit7)
+    call $printf(l $fmt_lit4)
     call $printf(l $fmt_int_frag, ..., l %t8)
-    call $printf(l $fmt_lit8)
+    call $printf(l $fmt_lit5)
     %t10 =l call $safe_mod(l %rt, l 7, l 3)
     %t11 =w call $nox_exception_pending(l %rt)
     jnz %t11, @exc_propagate6, @exc_continue7
@@ -2385,11 +2385,11 @@ export function w $main(w %argc, l %argv) {
     ret 0
 @exc_continue11
     call $printf(l $fmt_int_frag, ..., l %t10)
-    call $printf(l $fmt_lit10)
+    call $printf(l $fmt_lit6)
     call $printf(l $fmt_int_frag, ..., l %t13)
-    call $printf(l $fmt_lit10)
+    call $printf(l $fmt_lit6)
     call $printf(l $fmt_int_frag, ..., l %t15)
-    call $printf(l $fmt_lit11)
+    call $printf(l $fmt_lit7)
     storel 0, %t0
     storel 10, %t1
     %t17 =l loadl %t1
@@ -2418,13 +2418,13 @@ export function w $main(w %argc, l %argv) {
     %t38 =d mul %t37, d_2
     %t39 =d add %t31, %t38
     %t40 =l call $nox_float_to_str(l %rt, d %t30)
-    call $printf(l $fmt_lit15, ..., l %t40)
+    call $nox_print_str(l %t40)
     call $nox_str_release(l %rt, l %t40)
-    call $printf(l $fmt_lit13)
+    call $printf(l $fmt_lit8)
     %t41 =l call $nox_float_to_str(l %rt, d %t39)
-    call $printf(l $fmt_lit16, ..., l %t41)
+    call $nox_print_str(l %t41)
     call $nox_str_release(l %rt, l %t41)
-    call $printf(l $fmt_lit14)
+    call $printf(l $fmt_lit9)
     %t42 =l div 10, 3
     %t43 =l mul %t42, 3
     %t44 =l sub 10, %t43
@@ -2440,9 +2440,9 @@ export function w $main(w %argc, l %argv) {
     %t54 =l and %t53, 3
     %t55 =l add %t52, %t54
     call $printf(l $fmt_int_frag, ..., l %t51)
-    call $printf(l $fmt_lit18)
+    call $printf(l $fmt_lit10)
     call $printf(l $fmt_int_frag, ..., l %t55)
-    call $printf(l $fmt_lit19)
+    call $printf(l $fmt_lit11)
     %t56 =l loadl %t0
     %t57 =w ceql %t56, 0
     jnz %t57, @list_err15, @list_ok16
@@ -2483,8 +2483,8 @@ export function w $main(w %argc, l %argv) {
     %t84 =l add %t83, 24
     %t85 =l loadl %t84
     %t86 =w csgtl %t85, 0
-    call $printf(l $fmt_lit20, ..., l %t82)
-    call $printf(l $fmt_lit21)
+    call $nox_print_str(l %t82)
+    call $printf(l $fmt_lit12)
     jnz %t86, @print_true30, @print_false31
 @print_true30
     call $printf(l $fmt_bool_true_frag)
@@ -2493,7 +2493,7 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false_frag)
     jmp @print_done32
 @print_done32
-    call $printf(l $fmt_lit22)
+    call $printf(l $fmt_lit13)
     jmp @try_after13
 @except_reraise26
     call $nox_raise(l %rt, l %t77, l 26)
@@ -2510,7 +2510,8 @@ export function w $main(w %argc, l %argv) {
     %t89 =d sltof 2
     %t90 =d div %t88, %t89
     %t91 =l call $nox_float_to_str(l %rt, d %t90)
-    call $printf(l $fmt_str, ..., l %t91)
+    call $nox_print_str(l %t91)
+    call $printf(l $fmt_newline)
     call $nox_str_release(l %rt, l %t91)
     %t92 =l loadl %t2
     %t93 =w ceql %t92, 0
@@ -2922,26 +2923,17 @@ data $str9 = { l 1073741824, l 2305843009213693958, b "caught", b 0 }
 data $str10 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str11 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str12 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $fmt_lit0 = { b "%s", b 0 }
-data $fmt_lit1 = { b " ", b 0 }
-data $fmt_lit2 = { b "\n", b 0 }
-data $fmt_lit3 = { b "%s", b 0 }
+data $fmt_lit0 = { b " ", b 0 }
+data $fmt_lit1 = { b "\n", b 0 }
+data $fmt_lit2 = { b " ", b 0 }
+data $fmt_lit3 = { b "\n", b 0 }
 data $fmt_lit4 = { b " ", b 0 }
 data $fmt_lit5 = { b "\n", b 0 }
-data $fmt_lit6 = { b "%s", b 0 }
-data $fmt_lit7 = { b " ", b 0 }
-data $fmt_lit8 = { b "\n", b 0 }
-data $fmt_lit9 = { b "%s", b 0 }
+data $fmt_lit6 = { b " ", b 0 }
+data $fmt_lit7 = { b "\n", b 0 }
+data $fmt_lit8 = { b " ", b 0 }
+data $fmt_lit9 = { b "\n", b 0 }
 data $fmt_lit10 = { b " ", b 0 }
 data $fmt_lit11 = { b "\n", b 0 }
-data $fmt_lit12 = { b "%s", b 0 }
-data $fmt_lit13 = { b " ", b 0 }
-data $fmt_lit14 = { b "\n", b 0 }
-data $fmt_lit15 = { b "%s", b 0 }
-data $fmt_lit16 = { b "%s", b 0 }
-data $fmt_lit17 = { b "%s", b 0 }
-data $fmt_lit18 = { b " ", b 0 }
-data $fmt_lit19 = { b "\n", b 0 }
-data $fmt_lit20 = { b "%s", b 0 }
-data $fmt_lit21 = { b " ", b 0 }
-data $fmt_lit22 = { b "\n", b 0 }
+data $fmt_lit12 = { b " ", b 0 }
+data $fmt_lit13 = { b "\n", b 0 }

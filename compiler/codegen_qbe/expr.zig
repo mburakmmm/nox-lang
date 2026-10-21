@@ -2136,12 +2136,13 @@ pub fn genReprString(self: *Codegen, v: Value) CodegenError!Value {
     return .{ .text = result, .qtype = .l, .heap = .str };
 }
 
-/// v1.160.0: `float` Python `repr` biçiminde basılır (bkz. `runtime/str.zig` `formatFloatRepr`): geçici bir `str`e
-/// çevrilip `fmt` (`%s\n` ya da yalın `%s`) ile yazılır, sonra serbest bırakılır.
-fn genPrintFloat(self: *Codegen, v: Value, fmt: []const u8) CodegenError!void {
+/// v1.160.0 / v2.0.25: `float` Python `repr` biçiminde basılır (bkz. `runtime/str.zig` `formatFloatRepr`): geçici bir `str`e
+/// çevrilip `nox_print_str` ile yazılır, sonra serbest bırakılır. Variadic printf Windows x64 register gölgelemesini önler.
+fn genPrintFloat(self: *Codegen, v: Value, newline: bool) CodegenError!void {
     const s = try self.newTemp();
     try self.qbeCall(.{ .name = s, .ty = .l }, "$nox_float_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .d, .text = v.text } });
-    try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt }}, &.{.{ .ty = .l, .text = s }});
+    try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = s }});
+    if (newline) try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
     try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = s } });
 }
 
@@ -2158,11 +2159,11 @@ fn genPrintRaw(self: *Codegen, v: Value) CodegenError!void {
         return;
     }
     switch (v.qtype) {
-        .l => if (v.heap == .str)
-            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_str" }}, &.{.{ .ty = .l, .text = v.text }})
-        else
-            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int" }}, &.{.{ .ty = .l, .text = v.text }}),
-        .d => try genPrintFloat(self, v, "$fmt_str"),
+        .l => if (v.heap == .str) {
+            try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = v.text }});
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
+        } else try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int" }}, &.{.{ .ty = .l, .text = v.text }}),
+        .d => try genPrintFloat(self, v, true),
         .w => {
             const true_label = try self.newLabel("print_true");
             const false_label = try self.newLabel("print_false");
@@ -2206,11 +2207,13 @@ fn genPrintFragmentRaw(self: *Codegen, v: Value) CodegenError!void {
         return;
     }
     switch (v.qtype) {
-        .l => if (v.heap == .str)
-            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_str_frag" }}, &.{.{ .ty = .l, .text = v.text }})
-        else
-            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int_frag" }}, &.{.{ .ty = .l, .text = v.text }}),
-        .d => try genPrintFloat(self, v, try self.internFmtString("%s")),
+        .l => if (v.heap == .str) {
+            const quote = try self.internFmtString("'");
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = quote }});
+            try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = v.text }});
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = quote }});
+        } else try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int_frag" }}, &.{.{ .ty = .l, .text = v.text }}),
+        .d => try genPrintFloat(self, v, false),
         .w => {
             const true_label = try self.newLabel("print_true");
             const false_label = try self.newLabel("print_false");

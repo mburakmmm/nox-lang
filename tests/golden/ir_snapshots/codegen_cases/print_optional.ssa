@@ -2551,7 +2551,8 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_newline)
     jmp @print_opt_done7
 @print_some6
-    call $printf(l $fmt_str, ..., l %t24)
+    call $nox_print_str(l %t24)
+    call $printf(l $fmt_newline)
     jmp @print_opt_done7
 @print_opt_done7
     %t26 =w ceql %t24, 0
@@ -2597,7 +2598,8 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_newline)
     jmp @print_opt_done21
 @print_some20
-    call $printf(l $fmt_str, ..., l %t34)
+    call $nox_print_str(l %t34)
+    call $printf(l $fmt_newline)
     jmp @print_opt_done21
 @print_opt_done21
     %t36 =w ceql %t34, 0
@@ -2902,7 +2904,8 @@ export function w $main(w %argc, l %argv) {
 @print_some94
     %t122 =d loadd %t120
     %t123 =l call $nox_float_to_str(l %rt, d %t122)
-    call $printf(l $fmt_str, ..., l %t123)
+    call $nox_print_str(l %t123)
+    call $printf(l $fmt_newline)
     call $nox_str_release(l %rt, l %t123)
     jmp @print_opt_done95
 @print_opt_done95
@@ -2952,7 +2955,8 @@ export function w $main(w %argc, l %argv) {
 @print_some108
     %t134 =d loadd %t132
     %t135 =l call $nox_float_to_str(l %rt, d %t134)
-    call $printf(l $fmt_str, ..., l %t135)
+    call $nox_print_str(l %t135)
+    call $printf(l $fmt_newline)
     call $nox_str_release(l %rt, l %t135)
     jmp @print_opt_done109
 @print_opt_done109
@@ -3273,17 +3277,19 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_lit20)
     jmp @print_opt_done194
 @print_some193
-    call $printf(l $fmt_str_frag, ..., l %t223)
+    call $printf(l $fmt_lit21)
+    call $nox_print_str(l %t223)
+    call $printf(l $fmt_lit21)
     jmp @print_opt_done194
 @print_opt_done194
     call $printf(l $fmt_comma_sp)
-    call $printf(l $fmt_lit21)
+    call $printf(l $fmt_lit22)
     %t225 =l add %t216, 16
     %t226 =l loadl %t225
     %t227 =w ceql %t226, 0
     jnz %t227, @print_none195, @print_some196
 @print_none195
-    call $printf(l $fmt_lit22)
+    call $printf(l $fmt_lit23)
     jmp @print_opt_done197
 @print_some196
     %t228 =l loadl %t226
@@ -3315,31 +3321,33 @@ export function w $main(w %argc, l %argv) {
     %t235 =w ceql %t230, 0
     jnz %t235, @print_none201, @print_some202
 @print_none201
-    call $printf(l $fmt_lit23)
+    call $printf(l $fmt_lit24)
     call $printf(l $fmt_newline)
     jmp @print_opt_done203
 @print_some202
-    call $printf(l $fmt_lit24)
     call $printf(l $fmt_lit25)
+    call $printf(l $fmt_lit26)
     %t236 =l add %t230, 8
     %t237 =l loadl %t236
     %t238 =w ceql %t237, 0
     jnz %t238, @print_none204, @print_some205
 @print_none204
-    call $printf(l $fmt_lit26)
+    call $printf(l $fmt_lit27)
     jmp @print_opt_done206
 @print_some205
-    call $printf(l $fmt_str_frag, ..., l %t237)
+    call $printf(l $fmt_lit28)
+    call $nox_print_str(l %t237)
+    call $printf(l $fmt_lit28)
     jmp @print_opt_done206
 @print_opt_done206
     call $printf(l $fmt_comma_sp)
-    call $printf(l $fmt_lit27)
+    call $printf(l $fmt_lit29)
     %t239 =l add %t230, 16
     %t240 =l loadl %t239
     %t241 =w ceql %t240, 0
     jnz %t241, @print_none207, @print_some208
 @print_none207
-    call $printf(l $fmt_lit28)
+    call $printf(l $fmt_lit30)
     jmp @print_opt_done209
 @print_some208
     %t242 =l loadl %t240
@@ -3765,11 +3773,13 @@ data $fmt_lit17 = { b "None", b 0 }
 data $fmt_lit18 = { b "Q(", b 0 }
 data $fmt_lit19 = { b "name=", b 0 }
 data $fmt_lit20 = { b "None", b 0 }
-data $fmt_lit21 = { b "n=", b 0 }
-data $fmt_lit22 = { b "None", b 0 }
+data $fmt_lit21 = { b "'", b 0 }
+data $fmt_lit22 = { b "n=", b 0 }
 data $fmt_lit23 = { b "None", b 0 }
-data $fmt_lit24 = { b "Q(", b 0 }
-data $fmt_lit25 = { b "name=", b 0 }
-data $fmt_lit26 = { b "None", b 0 }
-data $fmt_lit27 = { b "n=", b 0 }
-data $fmt_lit28 = { b "None", b 0 }
+data $fmt_lit24 = { b "None", b 0 }
+data $fmt_lit25 = { b "Q(", b 0 }
+data $fmt_lit26 = { b "name=", b 0 }
+data $fmt_lit27 = { b "None", b 0 }
+data $fmt_lit28 = { b "'", b 0 }
+data $fmt_lit29 = { b "n=", b 0 }
+data $fmt_lit30 = { b "None", b 0 }

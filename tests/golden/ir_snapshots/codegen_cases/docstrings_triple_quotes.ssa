@@ -2174,18 +2174,19 @@ export function w $main(w %argc, l %argv) {
     jmp @release_done10
 @release_done10
     call $printf(l $fmt_int_frag, ..., l %t17)
-    call $printf(l $fmt_lit1)
+    call $printf(l $fmt_lit0)
     call $printf(l $fmt_int_frag, ..., l %t21)
-    call $printf(l $fmt_lit2)
+    call $printf(l $fmt_lit1)
     %t23 =l loadl %t0
     %t24 =w ceql %t23, 0
     jnz %t24, @print_none11, @print_some12
 @print_none11
-    call $printf(l $fmt_lit3)
+    call $printf(l $fmt_lit2)
     call $printf(l $fmt_newline)
     jmp @print_opt_done13
 @print_some12
-    call $printf(l $fmt_str, ..., l %t23)
+    call $nox_print_str(l %t23)
+    call $printf(l $fmt_newline)
     jmp @print_opt_done13
 @print_opt_done13
     %t25 =l loadl %t0
@@ -2581,7 +2582,6 @@ data $str8 = { l 1073741824, l 2305843009213693992, b "Return the sum.\n\n    Lo
 data $str9 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str10 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str11 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $fmt_lit0 = { b "%s", b 0 }
-data $fmt_lit1 = { b " ", b 0 }
-data $fmt_lit2 = { b "\n", b 0 }
-data $fmt_lit3 = { b "None", b 0 }
+data $fmt_lit0 = { b " ", b 0 }
+data $fmt_lit1 = { b "\n", b 0 }
+data $fmt_lit2 = { b "None", b 0 }
