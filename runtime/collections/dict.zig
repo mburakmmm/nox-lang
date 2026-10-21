@@ -578,6 +578,24 @@ pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
     return @intCast(d.entries.items.len);
 }
 
+/// v2.0.23: Sözlüğün `idx` indisindeki (ekleme sırası) anahtarının 8-baytlık ham payload'ını döner (borrowed okuma).
+pub export fn nox_dict_entry_key(dp: ?*anyopaque, idx: i64) i64 {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    if (idx < 0) return 0;
+    const i: usize = @intCast(idx);
+    if (i >= d.entries.items.len) return 0;
+    return d.entries.items[i].key;
+}
+
+/// v2.0.23: Sözlüğün `idx` indisindeki (ekleme sırası) değerinin 8-baytlık ham payload'ını döner (borrowed okuma).
+pub export fn nox_dict_entry_value(dp: ?*anyopaque, idx: i64) i64 {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    if (idx < 0) return 0;
+    const i: usize = @intCast(idx);
+    if (i >= d.entries.items.len) return 0;
+    return d.entries.items[i].value;
+}
+
 /// Faz III.6 (bkz. nox-teknik-spesifikasyon.md §3.69) — `keys()`/`values()`
 /// ORTAK yardımcısı: `entries`i (SIRALI, `nox_dict_len`in saydığı AYNI
 /// eleman sayısınca) `list[T]`nin ham bayt düzenine (`nox_fs_read_dir_raw`
@@ -1046,4 +1064,29 @@ test "v1.152.0: value_release — set/remove/clear/release değerleri sözlüğ�
     nox_dict_release(rt, d, 0, 0, 1);
     // e'nin tek değeri (0x3000) sahte işaretçi: release'te bırakılmasın diye bayrak 0.
     nox_dict_release(rt, e, 0, 0, 0);
+}
+
+test "v2.0.23: nox_dict_entry_key / nox_dict_entry_value ekleme sirasina gore dogru borrowed okuma yapar" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    nox_dict_set(rt, d, 0, 0, 0, 10, 100);
+    nox_dict_set(rt, d, 0, 0, 0, 20, 200);
+    nox_dict_set(rt, d, 0, 0, 0, 30, 300);
+
+    try std.testing.expectEqual(@as(i64, 3), nox_dict_len(d));
+    try std.testing.expectEqual(@as(i64, 10), nox_dict_entry_key(d, 0));
+    try std.testing.expectEqual(@as(i64, 100), nox_dict_entry_value(d, 0));
+    try std.testing.expectEqual(@as(i64, 20), nox_dict_entry_key(d, 1));
+    try std.testing.expectEqual(@as(i64, 200), nox_dict_entry_value(d, 1));
+    try std.testing.expectEqual(@as(i64, 30), nox_dict_entry_key(d, 2));
+    try std.testing.expectEqual(@as(i64, 300), nox_dict_entry_value(d, 2));
+
+    // Sinir kontrolleri (gecersiz indeks 0 doner)
+    try std.testing.expectEqual(@as(i64, 0), nox_dict_entry_key(d, -1));
+    try std.testing.expectEqual(@as(i64, 0), nox_dict_entry_value(d, -1));
+    try std.testing.expectEqual(@as(i64, 0), nox_dict_entry_key(d, 3));
+    try std.testing.expectEqual(@as(i64, 0), nox_dict_entry_value(d, 3));
+
+    nox_dict_release(rt, d, 0, 0, 0);
 }

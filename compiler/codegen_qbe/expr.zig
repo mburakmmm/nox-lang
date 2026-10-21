@@ -2300,73 +2300,35 @@ pub fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_rbracket" }});
 }
 
-/// v1.161.0: `dict[K, V]` Python gibi `{k: v, ...}` (ekleme sırası; `str` anahtar/değerler tırnaklı) basılır — `keys()`/`values()`
-/// listeleri üretilip paralel gezilir, sonra serbest bırakılır (boş sözlük `{}`).
+/// v1.161.0 / v2.0.23: `dict[K, V]` Python gibi `{k: v, ...}` (ekleme sırası; `str` anahtar/değerler tırnaklı) basılır.
+/// Geçici liste tahsis etmeden doğrudan `nox_dict_entry_key` / `nox_dict_entry_value` ile sıfır ek yükle basılır (boş sözlük `{}`).
 fn genPrintDict(self: *Codegen, v: Value) CodegenError!void {
     const dinfo = v.dict_info orelse return error.Unsupported;
-    const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
-    const key_storage = abi.elemStorageQtype(dinfo.key_qtype, null, .none);
-    const key_elem_size = qbeSizeOf(key_storage);
-    const keys_res = try self.newTemp();
-    try self.qbeCall(.{ .name = keys_res, .ty = .l }, "$nox_dict_keys", &.{
-        .{ .ty = .l, .text = RT_PARAM },
-        .{ .ty = .l, .text = v.text },
-        .{ .ty = .w, .text = key_is_str_lit },
-        .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{key_elem_size}) },
-    });
-    var key_heap_info: ?*const ElemHeapInfo = null;
-    if (dinfo.key_is_str) {
-        const info = try self.allocator.create(ElemHeapInfo);
-        info.* = .{ .heap = .str };
-        key_heap_info = info;
-    }
-    const keys: Value = .{ .text = keys_res, .qtype = .l, .heap = .list, .elem_qtype = key_storage, .elem_heap_info = key_heap_info, .elem_is_str = dinfo.key_is_str };
 
-    const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-    const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
-    const value_storage = abi.elemStorageQtype(dinfo.value_qtype, null, .none);
-    const val_elem_size = qbeSizeOf(value_storage);
-    const vals_res = try self.newTemp();
-    try self.qbeCall(.{ .name = vals_res, .ty = .l }, "$nox_dict_values", &.{
-        .{ .ty = .l, .text = RT_PARAM },
-        .{ .ty = .l, .text = v.text },
-        .{ .ty = .w, .text = value_is_str_lit },
-        .{ .ty = .w, .text = value_is_class_lit },
-        .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{val_elem_size}) },
-    });
-    var val_heap_info: ?*const ElemHeapInfo = null;
-    if (dinfo.value_is_str) {
-        const info = try self.allocator.create(ElemHeapInfo);
-        info.* = .{ .heap = .str };
-        val_heap_info = info;
-    } else if (dinfo.value_is_class) {
-        const info = try self.allocator.create(ElemHeapInfo);
-        info.* = .{ .heap = .class, .class_name = dinfo.value_class_name };
-        val_heap_info = info;
-    } else if (dinfo.value_ti) |ti| {
-        const info = try self.allocator.create(ElemHeapInfo);
-        info.* = .{ .heap = ti.heap, .elem_qtype = ti.elem_qtype, .nested = ti.elem_heap_info, .elem_is_str = ti.elem_is_str, .dict_info = ti.dict_info };
-        val_heap_info = info;
-    }
-    const vals: Value = .{ .text = vals_res, .qtype = .l, .heap = .list, .elem_qtype = value_storage, .elem_heap_info = val_heap_info, .elem_is_str = dinfo.value_is_str };
     const lb = try self.internFmtString("{");
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = lb }});
 
     const len_t = try self.newTemp();
-    try self.qbeLoadL(len_t, keys.text);
+    try self.qbeCall(.{ .name = len_t, .ty = .l }, "$nox_dict_len", &.{.{ .ty = .l, .text = v.text }});
+
     const idx_slot = try self.newTemp();
     try self.qbeAlloc(idx_slot, .eight, 8);
     try self.qbeStoreImmL(0, idx_slot);
+
     const cond_label = try self.newLabel("printdict_cond");
     const body_label = try self.newLabel("printdict_body");
     const end_label = try self.newLabel("printdict_end");
+
     try self.qbeJmp(cond_label);
     try self.qbeLabel(cond_label);
+
     const idx_cur = try self.newTemp();
     try self.qbeLoadL(idx_cur, idx_slot);
+
     const cont = try self.newTemp();
     try self.qbeOp2(cont, .w, "csltl", idx_cur, len_t);
     try self.qbeJnz(cont, body_label, end_label);
+
     try self.qbeLabel(body_label);
 
     const not_first = try self.newTemp();
@@ -2379,22 +2341,40 @@ fn genPrintDict(self: *Codegen, v: Value) CodegenError!void {
     try self.qbeJmp(skip_label);
     try self.qbeLabel(skip_label);
 
-    const kv = try self.loadListElemValueAt(keys, idx_cur);
+    const key_raw = try self.newTemp();
+    try self.qbeCall(.{ .name = key_raw, .ty = .l }, "$nox_dict_entry_key", &.{
+        .{ .ty = .l, .text = v.text },
+        .{ .ty = .l, .text = idx_cur },
+    });
+    const key_converted = try self.fromPayload(.{ .text = key_raw, .qtype = .l }, dinfo.key_qtype);
+    const kv: Value = .{
+        .text = key_converted.text,
+        .qtype = key_converted.qtype,
+        .heap = if (dinfo.key_is_str) .str else .none,
+    };
     try self.genPrintFragment(kv);
+
     const colon = try self.internFmtString(": ");
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = colon }});
-    const vv = try self.loadListElemValueAt(vals, idx_cur);
+
+    const val_raw = try self.newTemp();
+    try self.qbeCall(.{ .name = val_raw, .ty = .l }, "$nox_dict_entry_value", &.{
+        .{ .ty = .l, .text = v.text },
+        .{ .ty = .l, .text = idx_cur },
+    });
+    const val_converted = try self.fromPayload(.{ .text = val_raw, .qtype = .l }, dinfo.value_qtype);
+    const vv = abi.dictValueValue(dinfo, val_converted.text, val_converted.qtype);
     try self.genPrintFragment(vv);
 
     const idx_next = try self.newTemp();
     try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);
     try self.qbeStoreL(idx_next, idx_slot);
     try self.qbeJmp(cond_label);
+
     try self.qbeLabel(end_label);
+
     const rb = try self.internFmtString("}");
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = rb }});
-    try self.releaseValueIfSet(keys.text, keys.heap, keys.elem_qtype, keys.class_name, keys.elem_heap_info, keys.dict_info);
-    try self.releaseValueIfSet(vals.text, vals.heap, vals.elem_qtype, vals.class_name, vals.elem_heap_info, vals.dict_info);
 }
 
 /// Sınıf görüntülemesi — `ClassName(alan1=değer1, alan2=değer2, ...)`.
