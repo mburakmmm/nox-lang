@@ -57,8 +57,8 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 
 > v1.166.0: durum ve kısıtlar `docs/PLATFORMS.md`te BELGELENDİ ([~] = belgelendi, kalıcı çözüm açık). Windows LLVM / paketlenmiş clang ve aarch64 kök neden hâlâ yapılacak.
 
-- [x] **3.1 Windows (v1.171.1/2: LLVM `zig cc` ile CI'da uçtan uca doğrulandı, `zig` varsa varsayılan):** LLVM yolunda MinGW bağlama argümanları yok → Windows'ta QBE'ye düşülüyor. CI'da Windows işi
-  "yalnızca derleyici ön-ucu". LLVM'i Windows'ta çalıştır VEYA belgeli kısıt olarak bırak.
+- [x] **3.1 Windows (v1.171.1/2: LLVM `zig cc` ile CI'da uçtan uca doğrulandı; v2.0.27: QBE `DebugAllocator` SEH/RtlVirtualUnwind çökmesi çözüldü):** LLVM yolunda MinGW bağlama argümanları yok → Windows'ta QBE'ye düşülüyor. CI'da Windows işi
+  "yalnızca derleyici ön-ucu"ydu, artık QBE ile derlenen ikililer de `DebugAllocatorConfig.stack_trace_frames = 0` sayesinde ntdll SEH çökmesi olmadan kusursuz çalışıyor.
 - [x] **3.2 `clang` bağımlılığı (v1.171.1: clang → `zig cc` → QBE; `tests/cli/zig_cc_fallback_test.zig`; paketlenmiş toolchain 2.x):** release paketi `qbe` içeriyor, `clang` içermiyor; clang yoksa sessizce QBE'ye
   düşülüyor (not basılıyor). Kalıcı çözüm: `zig cc` ya da paketlenmiş clang değerlendir.
 - [x] **3.3 aarch64 stack-smash (son 40 CI koşusunda test hatası YOK; kök neden x86-64 ile aynı, v1.142.3/21):** kök neden aarch64 için DOĞRULANMADI (x86-64 muadili v1.142.3'te bulundu).

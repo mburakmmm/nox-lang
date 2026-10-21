@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.27]
+
+### Düzeltildi
+
+- **Windows x64 QBE ikililerinde `DebugAllocator` SEH / yığın çözme çökmesi (0xC0000005).** QBE amd64_win backend'i PE SEH (`.pdata`/`.xdata`) yığın çözme tabloları üretmediği için, `DebugAllocator`'ın her bellek tahsis ve serbest bırakmasında çağırdığı `captureCurrentStackTrace` (`ntdll!RtlVirtualUnwind`), QBE yığın çerçevelerine ulaştığında yaprak fonksiyon varsayıp gölge alandaki değeri dönüş adresi olarak okuyarak `ntdll!RtlpUnwindPrologue` içinde erişim ihlali (0xC0000005) ile çöküyordu. Windows için `.stack_trace_frames = 0` yapılarak bellek güvenliği/sızıntı denetimi (`.safety = true`) tam korunurken çökme kalıcı olarak giderildi. Windows CI'da `container_custom_repr.nox` dahil tüm testler yeşile döndü.
+
 ## [2.0.26]
 
 ### Düzeltildi

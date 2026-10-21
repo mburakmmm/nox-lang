@@ -210,8 +210,23 @@ pub const OwnerPool = struct {
 /// SIFIR değişiklik GÖRÜR.
 pub const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
 
+pub const debug_gpa_config: std.heap.DebugAllocatorConfig = .{
+    // Windows x64'te QBE backend'i SEH (.pdata/.xdata) yığın çözme tabloları
+    // ÜRETMEZ — `stack_trace_frames > 0` (varsayılan 6) iken her tahsis/serbest
+    // bırakmada `DebugAllocator`'ın çağırdığı `captureCurrentStackTrace`
+    // (`RtlVirtualUnwind`), QBE yığın çerçevelerine ulaştığında yaprak fonksiyon
+    // varsayıp gölge alandaki çöpü dönüş adresi okur ve `ntdll!RtlpUnwindPrologue`
+    // içinde 0xC0000005 ile çöker (Faz QBE-Win). Çerçeve izleme 0 yapılarak
+    // sızıntı/UAF/çift-serbest güvenlik denetimleri (.safety = true) TAMAMEN
+    // KORUNURKEN Windows'ta yığın-yürütme çökmesi önlenir.
+    .stack_trace_frames = if (builtin.os.tag == .windows) 0 else switch (builtin.mode) {
+        .Debug => if (std.debug.sys_can_stack_trace) 6 else 0,
+        else => 0,
+    },
+};
+
 pub const RuntimeState = struct {
-    debug_gpa: if (use_debug_allocator) std.heap.DebugAllocator(.{}) else void,
+    debug_gpa: if (use_debug_allocator) std.heap.DebugAllocator(debug_gpa_config) else void,
     /// Faz F.0.2 (bkz. plan dosyası "Allocator enjeksiyonu") — `RuntimeState`in
     /// KENDİ bootstrap tahsisinde (`backing.create(RuntimeState)`) KULLANILAN
     /// allocator — `nox_runtime_deinit`in SON `destroy(state)` çağrısı BUNU
@@ -822,7 +837,9 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     nox_cycle_collect(rt);
     nox_cycle_deinit(rt);
     if (comptime !is_freestanding) {
-        const crt = struct { extern "c" fn fflush(stream: ?*anyopaque) c_int; };
+        const crt = struct {
+            extern "c" fn fflush(stream: ?*anyopaque) c_int;
+        };
         _ = crt.fflush(null);
     }
     // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
