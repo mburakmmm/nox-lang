@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.26]
+
+### Düzeltildi
+
+- **IR anlık görüntüsü tutarsızlığı (tüm POSIX CI işleri).** `tests/golden/ir_snapshots/codegen_cases/template_render_and_escaping.ssa`, commit'lenmemiş yerel `template.nox` düzenlemeleriyle üretilmişti; temiz kaynakta `codegen_ir_diff_test` `error.IrTextChanged` veriyordu. Anlık görüntü commit'li kaynaktan yeniden üretildi.
+
 ## [2.0.25]
 
 ### Düzeltildi
