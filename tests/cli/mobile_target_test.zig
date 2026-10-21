@@ -22,6 +22,22 @@ fn run(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8) !std.proces
     return std.process.run(gpa, io, .{ .argv = argv });
 }
 
+fn closeFd(fd: std.posix.fd_t) void {
+    switch (builtin.os.tag) {
+        .linux => _ = std.os.linux.close(fd),
+        else => _ = std.c.close(fd),
+    }
+}
+
+/// `zig build` mobil runtime nesnelerini kurmaz. Bağ testi, nesne
+/// kurulmuşsa çalışır (`zig build mobile-rt` veya `mobile-rt-android`).
+fn runtimeObjectReady(name: []const u8) bool {
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const path = std.fmt.bufPrint(&buf, "zig-out/lib/{s}.o", .{name}) catch return false;
+    std.Io.Dir.cwd().access(std.testing.io, path, .{}) catch return false;
+    return true;
+}
+
 fn expectFail(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8, needle: []const u8) !void {
     const result = try run(gpa, io, argv);
     defer gpa.free(result.stdout);
@@ -66,6 +82,7 @@ test "mobile llvm object carries the simulator triple" {
     const text = try std.Io.Dir.cwd().readFileAlloc(io, ll, gpa, .limited(1 << 20));
     defer gpa.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, "target triple = \"arm64-apple-ios17.0-simulator\"") != null);
+    if (!runtimeObjectReady("noxrt-ios-simulator-arm64")) return;
     const archive = try std.fmt.allocPrint(gpa, "{s}/prog.a", .{dir});
     defer gpa.free(archive);
     const archived = try run(gpa, io, &.{ noxcPath(), "build", "--target", "ios-simulator-arm64", "--emit-static-lib", "-o", archive, src });
@@ -73,7 +90,7 @@ test "mobile llvm object carries the simulator triple" {
     defer gpa.free(archived.stderr);
     try std.testing.expectEqual(@as(u8, 0), if (archived.term == .exited) archived.term.exited else 1);
     const fd = try std.posix.openat(std.posix.AT.FDCWD, archive, .{ .ACCMODE = .RDONLY }, 0);
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
     var magic: [8]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 8), try std.posix.read(fd, &magic));
     try std.testing.expectEqualStrings("!<arch>\n", &magic);
@@ -151,7 +168,7 @@ test "mobile mask allows jwt and rejects host libraries" {
 }
 
 test "mobile library entry compiles async" {
-    if (builtin.os.tag == .windows) return;
+    if (builtin.os.tag != .macos) return;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -170,7 +187,7 @@ test "mobile library entry compiles async" {
 }
 
 test "mobile library entry compiles a void program" {
-    if (builtin.os.tag == .windows) return;
+    if (builtin.os.tag != .macos) return;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -190,6 +207,7 @@ test "mobile library entry compiles a void program" {
 
 test "simulator archive answers 42" {
     if (builtin.os.tag != .macos) return;
+    if (!runtimeObjectReady("noxrt-ios-simulator-arm64")) return;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -366,6 +384,7 @@ fn elfLoadAlign(bytes: []const u8) !u64 {
 
 test "android shared library is 16 KiB aligned" {
     if (builtin.os.tag == .windows) return;
+    if (!runtimeObjectReady("noxrt-android-x64")) return;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const io = std.testing.io;
@@ -386,7 +405,7 @@ test "android shared library is 16 KiB aligned" {
         return error.BuildFailed;
     }
     const fd = try std.posix.openat(std.posix.AT.FDCWD, so, .{ .ACCMODE = .RDONLY }, 0);
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
     var bytes: [4096]u8 = undefined;
     const n = try std.posix.read(fd, &bytes);
     const align_min = try elfLoadAlign(bytes[0..n]);

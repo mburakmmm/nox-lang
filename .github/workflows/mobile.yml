@@ -59,6 +59,8 @@ jobs:
           echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r28c" >> "$GITHUB_ENV"
       - name: Build noxc
         run: zig build -Doptimize=Debug
+      - name: Android runtime
+        run: zig build mobile-rt-android -Doptimize=Debug
       - name: Android shared library and 16 KiB alignment
         run: zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "android shared"
       - name: Stable gate

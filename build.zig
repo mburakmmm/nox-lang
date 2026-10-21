@@ -301,7 +301,7 @@ fn addMobileRuntimeChain(
         b.addSystemCommand(&.{ "xcrun", "--sdk", apple_sdk, "clang", "-c", "-target", log_target, "-o", log_o, log_src })
     else
         b.addSystemCommand(&.{
-            "sh", "-c",
+            "sh",  "-c",
             \\set -eu
             \\ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-$HOME/Library/Android/sdk/ndk}}"
             \\if [ -d "$ndk" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/darwin-arm64/bin/clang" ]; then
@@ -315,16 +315,14 @@ fn addMobileRuntimeChain(
             \\test -n "$clang"
             \\"$clang" -c -target "$1" -o "$2" "$3"
             ,
-            "ndk",
-            log_target,
-            log_o,
-            log_src,
+            "ndk", log_target,
+            log_o, log_src,
         });
     mod.addObjectFile(b.path(log_o));
     const compile_sqlite: ?*std.Build.Step.Run = if (query.abi != .android) null else blk: {
         const sqlite_o = b.fmt("third_party/sqlite/{s}.o", .{install_name});
         const step = b.addSystemCommand(&.{
-            "sh", "-c",
+            "sh",     "-c",
             \\set -eu
             \\ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-$HOME/Library/Android/sdk/ndk}}"
             \\if [ -d "$ndk" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ] && [ ! -x "$ndk/toolchains/llvm/prebuilt/darwin-arm64/bin/clang" ]; then
@@ -338,10 +336,8 @@ fn addMobileRuntimeChain(
             \\test -n "$clang"
             \\"$clang" -c -fPIC -O2 -DSQLITE_OMIT_LOAD_EXTENSION=1 -DSQLITE_THREADSAFE=1 -target "$1" -o "$2" "$3"
             ,
-            "ndk",
-            log_target,
-            sqlite_o,
-            "third_party/sqlite/sqlite3.c",
+            "ndk",    log_target,
+            sqlite_o, "third_party/sqlite/sqlite3.c",
         });
         mod.addObjectFile(b.path(sqlite_o));
         break :blk step;
@@ -920,20 +916,25 @@ pub fn build(b: *std.Build) void {
         .os_version_min = ios_min,
     }, "aarch64-ios-simulator", "arm64-apple-ios17.0-simulator", "iphonesimulator", "noxrt-ios-simulator-arm64");
     mobile_rt_step.dependOn(simulator_rt);
-    mobile_rt_step.dependOn(addMobileRuntimeChain(b, optimize, .{
+    const android_arm64_rt = addMobileRuntimeChain(b, optimize, .{
         .cpu_arch = .aarch64,
         .os_tag = .linux,
         .abi = .android,
         .android_api_level = 24,
-    }, "aarch64-linux-android", "aarch64-linux-android24", "", "noxrt-android-arm64"));
-    mobile_rt_step.dependOn(addMobileRuntimeChain(b, optimize, .{
+    }, "aarch64-linux-android", "aarch64-linux-android24", "", "noxrt-android-arm64");
+    const android_x64_rt = addMobileRuntimeChain(b, optimize, .{
         .cpu_arch = .x86_64,
         .os_tag = .linux,
         .abi = .android,
         .android_api_level = 24,
-    }, "x86_64-linux-android", "x86_64-linux-android24", "", "noxrt-android-x64"));
+    }, "x86_64-linux-android", "x86_64-linux-android24", "", "noxrt-android-x64");
+    mobile_rt_step.dependOn(android_arm64_rt);
+    mobile_rt_step.dependOn(android_x64_rt);
     const mobile_rt_simulator = b.step("mobile-rt-simulator", "Build the iOS simulator noxrt object");
     mobile_rt_simulator.dependOn(simulator_rt);
+    const mobile_rt_android = b.step("mobile-rt-android", "Build the Android noxrt objects");
+    mobile_rt_android.dependOn(android_arm64_rt);
+    mobile_rt_android.dependOn(android_x64_rt);
 
     // `boot.S` (Multiboot1 header + 32-bit boot stub + long-mode geçişi +
     // GDT + ISR trambolinleri) — `noxrt_kernel_mod`nin PARÇASI DEĞİL, ayrı

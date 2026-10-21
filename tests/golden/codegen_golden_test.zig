@@ -48,7 +48,7 @@ fn expectGolden(source: []const u8, expected: []const u8) !void {
     defer arena.deinit();
     const run_result = try compileAndRun(arena.allocator(), source);
     if (run_result.term != .exited or run_result.term.exited != 0) {
-        std.debug.print("program basarisiz cikti (stderr): {s}\n", .{run_result.stderr});
+        std.debug.print("program basarisiz cikti term={any}\nstdout:{s}\nstderr:{s}\n", .{ run_result.term, run_result.stdout, run_result.stderr });
         return error.ProgramFailed;
     }
     // AGENTS.md §13: bellek yönetimiyle ilgili değişikliklerde leak testi
