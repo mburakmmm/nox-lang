@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.24]
+
+### Düzeltildi
+
+- **HPy ana makine sözleşmesi ve sürüm senkronizasyonu.** `shared/hpy_host_contract.zig` sürüm sabiti `2.0.24` olarak güncellendi ve sözleşme testi doğrulandı.
+
+## [2.0.23]
+
+### Düzeltildi
+
+- **Sözlük yazdırması (zero-allocation).** `genPrintDict` artık geçici `keys`/`values` listesi tahsis etmeden doğrudan `nox_dict_entry_key` ve `nox_dict_entry_value` ile elemanları okur. Geçici nesne retain/release çakışmaları ve Windows x64 üzerindeki bellek erişim hatası kökten giderildi.
+
 ## [2.0.22]
 
 ### Düzeltildi
