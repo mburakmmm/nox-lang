@@ -29112,6 +29112,10 @@ Kütüphane modu `$main` üretmez. Gömme ABI'si `include/nox_embed.h` dosyasın
 
 Konteyner içindeki `__repr__` veya `__str__` sonucu, QBE'nin Windows x64 çağırma kuralındaki variadic register gölgeleme hatalarını ve CRT erişim ihlalini önlemek amacıyla doğrudan `$nox_print_str` ile yazılır. `null` veya boş dizede `nox_print_str` yazmadan döner. `str()` ve f-string biriktiricisi (`print_acc`) bu çağrıyı yakalar ve stdout yerine birikime ekler (`sinkAppendStr`). Sözlük yazdırması (`genPrintDict`), alıcıyı erken serbest bırakma riski taşımayan doğrudan `$nox_dict_keys` ve `$nox_dict_values` çağrılarıyla çalışır.
 
+## 3.309 HPy sözleşme sürümü ve Windows CRT tampon temizliği (v2.0.22)
+
+`shared/hpy_host_contract.zig` içindeki `noxc_version` sabiti `scripts/bump_version.sh` tarafından `build.zig.zon` ile birlikte otomatik senkronize edilir. Bu sayede her sürüm artışında `HPy host` sözleşme testi tutarlı kalır. Windows CRT üzerinde stdio tamponunda verilerin takılı kalmasını ve süreç çökmelerinde tanı çıktılarının kaybolmasını önlemek için `asap.zig` runtime init/deinit ve `str.zig` `nox_print_str` sonrasında `fflush(NULL)` çağrılır.
+
 ## 3.304 Windows test derlemesi ve yol URI'si (v2.0.16)
 
 Barındırılan Windows `zig test -fllvm`, freestanding `printf` gövdesindeki `@cVaStart`i derlemez. Gerçek gövde yalnızca freestanding x86_64 çekirdektedir.

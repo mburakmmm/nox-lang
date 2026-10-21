@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.22]
+
+### Düzeltildi
+
+- **HPy sözleşmesi ve CI otomasyonu.** `shared/hpy_host_contract.zig` içindeki `noxc_version` sabiti `scripts/bump_version.sh` tarafından `build.zig.zon` ile birlikte otomatik güncellenir.
+- **Windows stdout tamponlaması.** `asap.zig` runtime init ve deinit aşamalarında ile `str.zig` içindeki `nox_print_str` sonrasında `fflush(NULL)` çağrılarak stdio çıktılarının tamponda takılması önlenir.
+
+## [2.0.21]
+
+### Düzeltildi
+
+- **Konteyner içi sınıf yazdırması.** `genPrintClass` variadic `$printf` yerine güvenli `$nox_print_str` çağırır. Sözlük yazdırması (`genPrintDict`), geçici alıcıyı erken serbest bırakmayan `$nox_dict_keys` ve `$nox_dict_values` çağrılarıyla çalışır.
+
+## [2.0.20]
+
+### Düzeltildi
+
+- **Windows x64 çağırma kuralı ve SSA anlık görüntüleri.** Konteyner içi `__repr__` / `__str__` yöntemleri ve sözlük yazdırma IR düzeni güncellendi.
+
 ## [2.0.19]
 
 ### Eklendi

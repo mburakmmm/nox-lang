@@ -47,4 +47,12 @@ tmp_file="$(mktemp)"
 sed -E "s/\.version = \"[^\"]*\"/.version = \"${new_version}\"/" "$zon_file" > "$tmp_file"
 mv "$tmp_file" "$zon_file"
 
+# `shared/hpy_host_contract.zig` içindeki noxc_version sabitini de senkronize et
+hpy_file="$(dirname "$0")/../shared/hpy_host_contract.zig"
+if [ -f "$hpy_file" ]; then
+    tmp_hpy="$(mktemp)"
+    sed -E "s/pub const noxc_version = \"[^\"]*\";/pub const noxc_version = \"${new_version}\";/" "$hpy_file" > "$tmp_hpy"
+    mv "$tmp_hpy" "$hpy_file"
+fi
+
 echo "$new_version"

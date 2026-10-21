@@ -269,8 +269,10 @@ pub export fn nox_print_str(s: ?[*:0]const u8) void {
     }
     const c = struct {
         extern "c" fn printf(fmt: [*:0]const u8, ...) c_int;
+        extern "c" fn fflush(stream: ?*anyopaque) c_int;
     };
     _ = c.printf("%s", p);
+    _ = c.fflush(null);
 }
 
 test "nox_str_from_cstr baslikli bir str uretir" {

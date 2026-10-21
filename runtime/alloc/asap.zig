@@ -794,10 +794,12 @@ pub export fn nox_runtime_init() ?*anyopaque {
     if (comptime builtin.os.tag == .windows) {
         const crt = struct {
             extern "c" fn _setmode(fd: c_int, mode: c_int) c_int;
+            extern "c" fn fflush(stream: ?*anyopaque) c_int;
         };
         const o_binary: c_int = 0x8000;
         _ = crt._setmode(1, o_binary);
         _ = crt._setmode(2, o_binary);
+        _ = crt.fflush(null);
     }
     const state = std.heap.page_allocator.create(RuntimeState) catch return null;
     state.* = .{ .debug_gpa = if (use_debug_allocator) .init else {} };
@@ -819,6 +821,10 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // serbest-bırakma yazımı olurdu).
     nox_cycle_collect(rt);
     nox_cycle_deinit(rt);
+    if (comptime !is_freestanding) {
+        const crt = struct { extern "c" fn fflush(stream: ?*anyopaque) c_int; };
+        _ = crt.fflush(null);
+    }
     // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
     // düzeltme"): `pool_ext` (VARSA) `state.allocator()` İLE (`WorkerPool.
     // create()`ın KULLANDIĞI AYNI allocator — bkz. onun belge notu)
