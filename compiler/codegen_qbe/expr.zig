@@ -2303,9 +2303,52 @@ pub fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
 /// v1.161.0: `dict[K, V]` Python gibi `{k: v, ...}` (ekleme sırası; `str` anahtar/değerler tırnaklı) basılır — `keys()`/`values()`
 /// listeleri üretilip paralel gezilir, sonra serbest bırakılır (boş sözlük `{}`).
 fn genPrintDict(self: *Codegen, v: Value) CodegenError!void {
-    var none_expr: ast.Expr = .none_lit;
-    const keys = try self.genDictMethod(v, .{ .obj = &none_expr, .attr = "keys" }, &.{});
-    const vals = try self.genDictMethod(v, .{ .obj = &none_expr, .attr = "values" }, &.{});
+    const dinfo = v.dict_info orelse return error.Unsupported;
+    const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+    const key_storage = abi.elemStorageQtype(dinfo.key_qtype, null, .none);
+    const key_elem_size = qbeSizeOf(key_storage);
+    const keys_res = try self.newTemp();
+    try self.qbeCall(.{ .name = keys_res, .ty = .l }, "$nox_dict_keys", &.{
+        .{ .ty = .l, .text = RT_PARAM },
+        .{ .ty = .l, .text = v.text },
+        .{ .ty = .w, .text = key_is_str_lit },
+        .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{key_elem_size}) },
+    });
+    var key_heap_info: ?*const ElemHeapInfo = null;
+    if (dinfo.key_is_str) {
+        const info = try self.allocator.create(ElemHeapInfo);
+        info.* = .{ .heap = .str };
+        key_heap_info = info;
+    }
+    const keys: Value = .{ .text = keys_res, .qtype = .l, .heap = .list, .elem_qtype = key_storage, .elem_heap_info = key_heap_info, .elem_is_str = dinfo.key_is_str };
+
+    const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+    const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
+    const value_storage = abi.elemStorageQtype(dinfo.value_qtype, null, .none);
+    const val_elem_size = qbeSizeOf(value_storage);
+    const vals_res = try self.newTemp();
+    try self.qbeCall(.{ .name = vals_res, .ty = .l }, "$nox_dict_values", &.{
+        .{ .ty = .l, .text = RT_PARAM },
+        .{ .ty = .l, .text = v.text },
+        .{ .ty = .w, .text = value_is_str_lit },
+        .{ .ty = .w, .text = value_is_class_lit },
+        .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{val_elem_size}) },
+    });
+    var val_heap_info: ?*const ElemHeapInfo = null;
+    if (dinfo.value_is_str) {
+        const info = try self.allocator.create(ElemHeapInfo);
+        info.* = .{ .heap = .str };
+        val_heap_info = info;
+    } else if (dinfo.value_is_class) {
+        const info = try self.allocator.create(ElemHeapInfo);
+        info.* = .{ .heap = .class, .class_name = dinfo.value_class_name };
+        val_heap_info = info;
+    } else if (dinfo.value_ti) |ti| {
+        const info = try self.allocator.create(ElemHeapInfo);
+        info.* = .{ .heap = ti.heap, .elem_qtype = ti.elem_qtype, .nested = ti.elem_heap_info, .elem_is_str = ti.elem_is_str, .dict_info = ti.dict_info };
+        val_heap_info = info;
+    }
+    const vals: Value = .{ .text = vals_res, .qtype = .l, .heap = .list, .elem_qtype = value_storage, .elem_heap_info = val_heap_info, .elem_is_str = dinfo.value_is_str };
     const lb = try self.internFmtString("{");
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = lb }});
 
@@ -2403,20 +2446,10 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
                 const plain = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, mname });
                 if (!self.must_not_raise.contains(plain)) try self.emitExceptionCheck();
             }
-            // `null` sonuç hiçbir şey basmaz (`None` de basılmaz). Windows CRT
-            // `printf("%s", NULL)` erişim ihlali yapar. Metin, diğer dizelerle
-            // aynı variadic `%s` çağrısıdır; `str()` / f-string biriktiricisi
-            // bu çağrıyı stdout yerine birikime çevirir.
-            const is_null = try self.newTemp();
-            try self.qbeOp2Imm(is_null, .w, "ceql", res, 0);
-            const print_label = try self.newLabel("print_repr");
-            const release_label = try self.newLabel("print_repr_release");
-            try self.qbeJnz(is_null, release_label, print_label);
-            try self.qbeLabel(print_label);
-            const fmt = try self.internFmtString("%s");
-            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt }}, &.{.{ .ty = .l, .text = res }});
-            try self.qbeJmp(release_label);
-            try self.qbeLabel(release_label);
+            // `nox_print_str` null/boş kontrolünü ve Windows CRT güvenliğini
+            // (variadic register gölgeleme olmaksızın doğrudan) üstlenir;
+            // f-string biriktiricisi açıkken metni stdout yerine birikime ekler.
+            try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = res }});
             try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = res } });
             return;
         }

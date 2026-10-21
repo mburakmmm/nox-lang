@@ -29108,9 +29108,9 @@ Dört hedef adı vardır: `ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `
 
 Kütüphane modu `$main` üretmez. Gömme ABI'si `include/nox_embed.h` dosyasındadır ve NNI'den ayrıdır. Host bir slot sahiplenir. Dosya ve sqlite yolları, gömme oturumu açıkken hostun verdiği dört kökün altında kalır. Bu hedefler `supported` sayılmaz. Ayrıntı `docs/internals/mobile-matrix.md` ve ADR-MOB-001..008.
 
-## 3.308 Konteyner içinde sınıf metni (v2.0.19 sonrası)
+## 3.308 Konteyner içinde sınıf metni (v2.0.21)
 
-Konteyner içindeki `__repr__` veya `__str__` sonucu, diğer dizelerle aynı variadic `%s` çağrısıyla yazılır. `null` atlanır ve `None` basılmaz. Boş dizi bir şey basmaz. `str()` ve f-string bu metni stdout yerine biriktirir. `nox_print_str` durur; konteyner yazıcısı onu çağırmaz.
+Konteyner içindeki `__repr__` veya `__str__` sonucu, QBE'nin Windows x64 çağırma kuralındaki variadic register gölgeleme hatalarını ve CRT erişim ihlalini önlemek amacıyla doğrudan `$nox_print_str` ile yazılır. `null` veya boş dizede `nox_print_str` yazmadan döner. `str()` ve f-string biriktiricisi (`print_acc`) bu çağrıyı yakalar ve stdout yerine birikime ekler (`sinkAppendStr`). Sözlük yazdırması (`genPrintDict`), alıcıyı erken serbest bırakma riski taşımayan doğrudan `$nox_dict_keys` ve `$nox_dict_values` çağrılarıyla çalışır.
 
 ## 3.304 Windows test derlemesi ve yol URI'si (v2.0.16)
 
