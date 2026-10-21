@@ -2403,12 +2403,20 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
                 const plain = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, mname });
                 if (!self.must_not_raise.contains(plain)) try self.emitExceptionCheck();
             }
-            // Windows CRT `printf("%s", NULL)` erişim ihlali yapar ve QBE'nin
-            // variadic çağrısı bu sonucu gölge alana yazmaz. Yazım, uzunluğu
-            // başlıktan okuyan ve `null`'u yutan `nox_print_str` üzerinden gider.
-            // `str()` / f-string biriktiricisi açıkken `qbeCall` bu çağrıyı
-            // stdout yerine birikime ekler.
-            try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = res }});
+            // `null` sonuç hiçbir şey basmaz (`None` de basılmaz). Windows CRT
+            // `printf("%s", NULL)` erişim ihlali yapar. Metin, diğer dizelerle
+            // aynı variadic `%s` çağrısıdır; `str()` / f-string biriktiricisi
+            // bu çağrıyı stdout yerine birikime çevirir.
+            const is_null = try self.newTemp();
+            try self.qbeOp2Imm(is_null, .w, "ceql", res, 0);
+            const print_label = try self.newLabel("print_repr");
+            const release_label = try self.newLabel("print_repr_release");
+            try self.qbeJnz(is_null, release_label, print_label);
+            try self.qbeLabel(print_label);
+            const fmt = try self.internFmtString("%s");
+            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt }}, &.{.{ .ty = .l, .text = res }});
+            try self.qbeJmp(release_label);
+            try self.qbeLabel(release_label);
             try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = res } });
             return;
         }

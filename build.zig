@@ -18,6 +18,13 @@ const builtin = @import("builtin");
 /// sürümleri (ör. 0.16.1) çoğunlukla GERİYE UYUMLUDUR).
 const EXPECTED_ZIG_VERSION = std.SemanticVersion{ .major = 0, .minor = 16, .patch = 0 };
 
+fn pathFromRootCompat(b: *std.Build, path: []const u8) []const u8 {
+    if (comptime @hasDecl(std.Build, "pathFromRoot")) {
+        return b.pathFromRoot(path);
+    }
+    return path;
+}
+
 /// Faz HH.4 (bkz. nox-teknik-spesifikasyon.md, "build artifact izolasyonu"):
 /// `-Doptimize` moduna göre dosya-sistemi-güvenli bir etiket — `zig-out/
 /// <slug>/` altında HER modun KENDİ, izole kaynak-kökünü adlandırmak İçİn
@@ -995,7 +1002,9 @@ pub fn build(b: *std.Build) void {
 
     const run_noxc = b.addRunArtifact(noxc);
     run_noxc.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_noxc.addArgs(args);
+    if (comptime @hasField(std.Build, "args")) {
+        if (@field(b, "args")) |args| run_noxc.addArgs(args);
+    }
     const run_step = b.step("run", "noxc'yi çalıştır");
     run_step.dependOn(&run_noxc.step);
 
@@ -1278,7 +1287,12 @@ pub fn build(b: *std.Build) void {
                 },
         });
         const t = b.addTest(.{ .root_module = mod });
-        test_step.dependOn(&addTimedTestRun(b, t, win_test_timeout_s).step);
+        const run_t = addTimedTestRun(b, t, win_test_timeout_s);
+        test_step.dependOn(&run_t.step);
+        if (std.mem.endsWith(u8, path, "codegen_ir_diff_test.zig")) {
+            const ir_diff = b.step("ir-diff-test", "Compare golden QBE text to the checked-in snapshots");
+            ir_diff.dependOn(&run_t.step);
+        }
     }
 
     // `codegen_golden_test.zig` ayrıca (Faz 14'ten beri) `hpy_call`/
@@ -1318,8 +1332,9 @@ pub fn build(b: *std.Build) void {
     hpy_host_test_step.dependOn(&addTimedTestRun(b, hpy_bridge_test, win_test_timeout_s).step);
 
     const io = b.graph.io;
-    if (b.build_root.handle.access(io, ".hpy-venv/lib", .{})) |_| {
-        var venv_lib_dir = b.build_root.handle.openDir(io, ".hpy-venv/lib", .{ .iterate = true }) catch unreachable;
+    const build_root_handle = if (comptime @hasField(std.Build, "build_root")) b.build_root.handle else b.root.root_dir.handle;
+    if (build_root_handle.access(io, ".hpy-venv/lib", .{})) |_| {
+        var venv_lib_dir = build_root_handle.openDir(io, ".hpy-venv/lib", .{ .iterate = true }) catch unreachable;
         defer venv_lib_dir.close(io);
         var it = venv_lib_dir.iterate();
         const python_dir_name = blk: {
@@ -1343,7 +1358,7 @@ pub fn build(b: *std.Build) void {
             });
 
             const build_options = b.addOptions();
-            build_options.addOption([]const u8, "noxtest_so_path", b.pathFromRoot(so_path));
+            build_options.addOption([]const u8, "noxtest_so_path", pathFromRootCompat(b, so_path));
 
             const compat_mod = b.createModule(.{
                 .root_source_file = b.path("tests/compat/hpy_tier0_test.zig"),
@@ -1429,7 +1444,7 @@ pub fn build(b: *std.Build) void {
     codegen_test_run.step.dependOn(&compile_wasm.step);
 
     const wasm_build_options = b.addOptions();
-    wasm_build_options.addOption([]const u8, "addone_wasm_path", b.pathFromRoot(wasm_out_path));
+    wasm_build_options.addOption([]const u8, "addone_wasm_path", pathFromRootCompat(b, wasm_out_path));
 
     const wasm_compat_mod = b.createModule(.{
         .root_source_file = b.path("tests/compat/wasm_tier0_test.zig"),
@@ -1488,9 +1503,9 @@ pub fn build(b: *std.Build) void {
     });
 
     const ffi_build_options = b.addOptions();
-    ffi_build_options.addOption([]const u8, "mathutil_o_path", b.pathFromRoot(c_ext_o_path));
-    ffi_build_options.addOption([]const u8, "util_o_path", b.pathFromRoot(zig_ext_o_path));
-    ffi_build_options.addOption([]const u8, "counter_o_path", b.pathFromRoot(counter_ext_o_path));
+    ffi_build_options.addOption([]const u8, "mathutil_o_path", pathFromRootCompat(b, c_ext_o_path));
+    ffi_build_options.addOption([]const u8, "util_o_path", pathFromRootCompat(b, zig_ext_o_path));
+    ffi_build_options.addOption([]const u8, "counter_o_path", pathFromRootCompat(b, counter_ext_o_path));
 
     const ffi_test_mod = b.createModule(.{
         .root_source_file = b.path("tests/compat/extern_ffi_test.zig"),

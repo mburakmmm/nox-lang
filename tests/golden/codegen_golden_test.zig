@@ -1600,6 +1600,35 @@ test "codegen: Güvenlik H-1 — hpy_open'ın yol argümanı çalışma-zamanı 
     }
 }
 
+// `nox_hpy_take_error` bir işaretçi döndürür. LLVM bu dalı `icmp ne i64`
+// ile kurar; QBE SSA'daki `=l call` aynı kalır (`nox-llvm-hpy-error-width`).
+test "codegen: HPy hata dalı iki arka uçta da i64 işaretçi genişliğindedir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source =
+        \\def probe() -> int:
+        \\    h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\    hpy_close(h)
+        \\    return 0
+        \\
+    ;
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    const module = try nox.module_loader.resolveImports(allocator, std.testing.io, user_module);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const qbe_ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, .hosted, null, &.{}, .empty);
+    try std.testing.expect(std.mem.indexOf(u8, qbe_ir, "=l call $nox_hpy_take_error") != null);
+    try std.testing.expect(std.mem.indexOf(u8, qbe_ir, "$nox_hpy_open(") != null);
+    try std.testing.expect(std.mem.indexOf(u8, qbe_ir, "$nox_hpy_open_package") == null);
+    const llvm_ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .llvm, .hosted, null, &.{}, .empty);
+    try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "icmp ne i64") != null);
+    try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "call $nox_hpy_take_error") != null or std.mem.indexOf(u8, llvm_ir, "@nox_hpy_take_error") != null);
+}
+
 // Faz 16: `hpy_call_on`nin `fonksiyon_adı` argümanı da (`hpy_call`nin AYNI
 // TUTARLILIK kararıyla) SADECE string LITERAL olabilir.
 test "codegen: hpy_call_on'ın fonksiyon_adı argümanı çalışma-zamanı değişkeniyse REDDEDİLİR (yalnızca string literali)" {
