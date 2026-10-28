@@ -1,9 +1,10 @@
 {
-  "name": "nox",
-  "displayName": "Nox",
-  "description": "Nox language support: syntax highlighting and a language-server client (noxlsp: diagnostics, completion, go to definition, hover, formatting)",
-  "version": "0.1.0",
+  "name": "noxlang",
+  "displayName": "Nox Programming Language",
+  "description": "Nox language support: syntax highlighting, language server, tests and CodeLLDB debugging",
+  "version": "0.1.3",
   "publisher": "nox-lang",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -11,7 +12,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:nox"
+    "onLanguage:nox",
+    "workspaceContains:**/*_test.nox"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -25,7 +27,11 @@
         "extensions": [
           ".nox"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/icon.png",
+          "dark": "./images/icon.png"
+        }
       }
     ],
     "grammars": [
@@ -33,8 +39,47 @@
         "language": "nox",
         "scopeName": "source.nox",
         "path": "./syntaxes/nox.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.nox.codeblock",
+        "path": "./syntaxes/nox-markdown.json",
+        "injectTo": ["text.html.markdown"],
+        "embeddedLanguages": {
+          "meta.embedded.block.nox": "nox"
+        }
       }
     ],
+    "snippets": [
+      {
+        "language": "nox",
+        "path": "./snippets/nox.code-snippets"
+      }
+    ],
+    "commands": [
+      { "command": "nox.runFile", "title": "Nox: Run File", "category": "Nox" },
+      { "command": "nox.checkFile", "title": "Nox: Check File", "category": "Nox" },
+      { "command": "nox.test", "title": "Nox: Test", "category": "Nox" },
+      { "command": "nox.runTestFile", "title": "Nox: Run Test File", "category": "Nox" },
+      { "command": "nox.refreshTests", "title": "Nox: Refresh Tests", "category": "Nox" },
+      { "command": "nox.debugFile", "title": "Nox: Debug File", "category": "Nox" },
+      { "command": "nox.openInstall", "title": "Nox: Open Install Instructions", "category": "Nox" }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "nox",
+        "required": ["task"],
+        "properties": {
+          "task": { "type": "string", "description": "Nox task id." }
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "[nox]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.defaultFormatter": "nox-lang.noxlang"
+      }
+    },
     "configuration": {
       "title": "Nox",
       "properties": {
@@ -47,15 +92,16 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "compile": "tsc -p ./ --noEmit && esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap --watch",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
-    "typescript": "^5.4.0",
-    "@vscode/vsce": "^2.24.0"
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.4.0"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"

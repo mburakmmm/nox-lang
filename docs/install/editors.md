@@ -4,9 +4,13 @@
 
 The `vscode-nox` extension (in the repository's `editors/vscode-nox`) provides:
 
-- syntax highlighting (TextMate grammar);
-- the language server: live diagnostics, completion, hover, go to definition and format-on-save ([language server](../tools/lsp.md));
-- debugging through CodeLLDB using `noxc build -g` ([Debugging](../tools/debugging.md)).
+- syntax highlighting (TextMate grammar), including `nox` fences in Markdown;
+- a file icon for `.nox` in icon themes that show language icons (the default Seti theme does; Minimal and None do not);
+- indentation folding, Enter-to-indent after `:`, and snippets (`def`, `class`, `for`, `while`, `if`, `try`, `protocol`);
+- the language server: diagnostics, completion, hover, go to definition (including imports), references, rename, outline, signature help, semantic tokens, parameter-name hints and formatting ([language server](../tools/lsp.md));
+- a Testing view for `*_test.nox` files (`noxc test`) and a **Run test** CodeLens on `def test_`;
+- command-palette actions **Nox: Run File**, **Nox: Check File** and **Nox: Test** (`noxc` in an integrated terminal);
+- debugging through CodeLLDB using `noxc build -g` ([Debugging](../tools/debugging.md)). **Nox: Debug File** adds the launch configuration; install CodeLLDB first.
 
 Build and try it from a checkout:
 
@@ -14,11 +18,11 @@ Build and try it from a checkout:
 cd editors/vscode-nox
 npm install
 npm run compile
-# open the folder in VS Code and press F5 to launch an Extension Development Host
-npx @vscode/vsce package          # produce a .vsix to install
+# open this folder in VS Code and press F5 to launch an Extension Development Host
+npx @vscode/vsce package
 ```
 
-The extension runs `noxlsp`, which must be on `PATH` (it is in the release archive); set **`nox.languageServerPath`** if it lives elsewhere.
+`vsce package` writes `noxlang-<version>.vsix` in this directory. Install it with **Extensions: Install from VSIX...**, or upload that file on the [Marketplace management page](https://marketplace.visualstudio.com/manage) under the publisher `nox-lang` (the `publisher` field in `package.json` must match). The language client is bundled into the package. `noxlsp` is not: the extension looks on `PATH`, then in `~/.nox-lang/bin` (`%USERPROFILE%\.nox-lang\bin` on Windows). Set **`nox.languageServerPath`** to skip that search. If the binary is missing, the error offers a link to the install page.
 
 ## Any LSP-capable editor
 
