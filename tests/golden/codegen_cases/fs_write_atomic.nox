@@ -1,0 +1,31 @@
+import nox.fs
+from nox.fs import FsError
+
+base: str = "/tmp/nox_fs_atomic_test"
+if not nox.fs.exists(base):
+    nox.fs.create_dir(base)
+path: str = base + "/data.txt"
+
+nox.fs.write_string(path, "eski")
+nox.fs.write_string_atomic(path, "yeni icerik")
+print(nox.fs.read_to_string(path))
+print(nox.fs.exists(path + ".nox-tmp"))
+
+# Var olmayan dizine atomik yazma başarısız olur; hedef ve geçici dosya oluşmaz
+try:
+    nox.fs.write_string_atomic(base + "/yok/data.txt", "x")
+    print("beklenmeyen")
+except FsError:
+    print("yazilamadi")
+print(nox.fs.exists(base + "/yok"))
+
+# Başarısızlık eski içeriği bozmaz: hedef bir DİZİN ise rename başarısız olur
+if not nox.fs.exists(base + "/dizin"):
+    nox.fs.create_dir(base + "/dizin")
+try:
+    nox.fs.write_string_atomic(base + "/dizin", "x")
+    print("beklenmeyen")
+except FsError:
+    print("degistirilemedi")
+print(nox.fs.exists(base + "/dizin.nox-tmp"))
+print(nox.fs.read_to_string(path))

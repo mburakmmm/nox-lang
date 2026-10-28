@@ -45,6 +45,19 @@ def write_string(path: str, content: str) -> None:
     if nox_fs_last_op_ok() == 0:
         raise FsError("could not write file: " + path)
 
+# Atomik yazma: içerik önce `path + ".nox-tmp"` dosyasına yazılır, sonra `rename` ile hedefin yerine geçer. Yazma yarıda kalırsa
+# (disk dolu, izin, çökme) hedefin ESKİ içeriği bozulmaz; başarısızlıkta geçici dosya silinir ve `FsError` yükselir. Aynı dizinde
+# (aynı dosya sisteminde) `rename` atomiktir; mobil sandbox'ta hem geçici dosya hem hedef izinli kökte olmalıdır.
+def write_string_atomic(path: str, content: str) -> None:
+    tmp: str = path + ".nox-tmp"
+    nox_fs_write_string_raw(tmp, content)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("could not write file: " + path)
+    nox_fs_rename_raw(tmp, path)
+    if nox_fs_last_op_ok() == 0:
+        nox_fs_remove_file_raw(tmp)
+        raise FsError("could not replace file atomically: " + path)
+
 # Faz III.3 — `write_string`nin AKSİNE dosyayı KISALTMAZ, `content`i
 # SONUNA ekler.
 def append_string(path: str, content: str) -> None:

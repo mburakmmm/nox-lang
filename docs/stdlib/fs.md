@@ -19,6 +19,7 @@ from nox.fs import FsError, FileMetadata
 |---|---|
 | `read_to_string(path)` | the whole file as a `str`; raises `FsError` if it cannot be read |
 | `write_string(path, content)` | creates or **truncates** the file and writes `content` |
+| `write_string_atomic(path, content)` | writes to `path + ".nox-tmp"` and renames it over `path`: a failed write leaves the old contents intact and removes the temporary file |
 | `append_string(path, content)` | appends `content`, creating the file if needed |
 
 Files are read and written as text bytes; `content` is written exactly as given (no newline translation).

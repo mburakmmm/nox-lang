@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.42]
+
+### Eklendi
+
+- `nox.fs.write_string_atomic(path, content)`: gecici dosyaya yazip `rename` ile yerine gecirir; yazma/rename basarisiz olursa eski icerik bozulmaz, gecici dosya silinir, `FsError` yukselir. Iki backend golden testi (`fs_write_atomic`).
+
 ## [2.0.41]
 
 WASM yorumlayicisi: i32 sayisal komutlar.
