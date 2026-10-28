@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.28]
+
+Çalışma ağacı hijyeni: kaynak kontrolünde olmayan işler izlenmeye alındı. Derleyici/runtime davranışı değişmedi.
+
+### Eklendi
+
+- **`services/frameworks-site/`** (Nyx uygulaması) ve `scripts/build_framework_sites.py`: `nyx.noxlang.com`, `aether.noxlang.com`, `aura.noxlang.com` kılavuz siteleri; `deploy/web` ingress + compose girdileri ve `docs/internals/deployment.md` bölümü. (Siteler daha önce canlıya alınmıştı ama kaynakları git'te yoktu.)
+- **noxpkg** hesap, yorum ve hata bildirimi; durum SQLite `noxpkg.db`; `scripts/backup_noxpkg.sh` `.backup` + bütünlük denetimine uyarlandı (`scripts/test_backup.sh` genişletildi).
+- **VS Code eklentisi:** LSP istemcisi genişletmeleri, snippet'ler, markdown kod bloğu sözdizimi, README/LICENSE, `.vsix` paketleme notları.
+- **Belgeler:** `project/nox-ana-todo.md` (ana yürütme kuyruğu) ve `project/aura-mobil-eksiklikleri.md` (Aura devri); mobil yol haritası ve platform/debug belge düzeltmeleri.
+
+### Değişti
+
+- Kaynak yorumlarındaki üçüncü taraf model adı atıfları nötr "dış inceleme" ifadesine çevrildi (yalnızca yorum satırları).
+- `.gitignore`: kök dizindeki yerel derleme artifaktları ve HPy Windows yan ürünleri (`*.pdb`, `*.lib`) artık yutulur.
+
 ## [2.0.27]
 
 ### Düzeltildi
