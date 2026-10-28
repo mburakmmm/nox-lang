@@ -46,7 +46,7 @@ Ada has 150
 - **Fast by default.** Programs compile to native code through LLVM (QBE is an alternative back end); numeric loops run at C speed.
 - **Concurrency without colour wars.** Lightweight tasks, typed channels, and a work-stealing scheduler that uses every core — the same source runs correctly on one thread or many.
 - **Batteries included.** An HTTP server and client with TLS and WebSockets, JSON/TOML/YAML/CSV, SQLite/PostgreSQL/MySQL, regular expressions, cryptography, a router, templates, testing and more.
-- **A real native boundary.** `extern def` for C, the Nox Native Interface for stable plugins in C/C++/Rust/Zig, a Plugin API with manifests and capability consent, Python C extensions through HPy, and WebAssembly modules.
+- **A real native boundary.** `extern def` for C, the Nox Native Interface for stable plugins in C/C++/Rust/Zig, a Plugin API with manifests and capability consent, the preview `nox-hpy-host-v1` package profile, and WebAssembly modules.
 - **From web service to kernel.** The same language compiles a freestanding kernel with a kernel-provided allocator.
 
 ## Quick links

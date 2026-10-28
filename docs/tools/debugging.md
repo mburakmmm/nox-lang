@@ -16,8 +16,8 @@ noxc build -g -o app main.nox       # QBE backend; DWARF line tables
 `-g` emits DWARF **line tables** (the QBE backend generates them; asking for LLVM together with `-g` is an error). A debugger can then set breakpoints and step by source line. Limits:
 
 - **Linux:** breakpoints and stepping work with `gdb`/`lldb`.
-- **macOS:** the linker drops the debug map, so breakpoints are not verified by the debugger.
-- **Locals are not inspectable** — the Variables pane is empty; only line-level control is available.
+- **macOS:** the linker drops debug sections from the linked binary, so breakpoints are not verified and the Variables pane stays empty. Names are still in the `.s` from `noxc build -g --emit-asm`.
+- **Scalar locals** (`int`, `bool`, `float` and the fixed-width integers) declared at the top of a function are named in a `.debug_str` section appended after QBE. QBE has no variable directive and often keeps the value in a register, so a debugger has no frame offset to show the value.
 - Steps into standard-library code can show the wrong file for the line.
 
 VS Code: install the CodeLLDB extension, use `noxc build -g` as the pre-launch task and launch the produced binary; no Nox-specific debug adapter is needed because DAP works from DWARF.

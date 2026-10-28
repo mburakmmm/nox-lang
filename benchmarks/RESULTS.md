@@ -533,7 +533,7 @@ TAM OLARAK BUNU YAKALAMASI amaçlanan senaryo, VE gerçekten yakaladı.
 
 ### GG.20 SONRASI ölçüm (2026-08-31, bkz. §3.110) — ASAP güçlendirmesi Tur 4 (interprocedural escape/mutasyon analizi)
 
-Harici bir (GPT-5.6) incelemenin işaret ettiği ORTAK kök neden (checker'ın
+Harici bir incelemenin işaret ettiği ORTAK kök neden (checker'ın
 SpawnSharedMutation'ı VE ASAP'in "argüman-geçişi = kaçış" katı kuralı
 İKİSİ de interprocedural analiz EKSİKLİĞİNDEN geliyordu) İçİn PAYLAŞILAN
 bir motor (`compiler/effect_graph.zig`) eklendi — Tur 1-3'ün İLK KEZ,
@@ -569,7 +569,7 @@ arena çerçevesi görev HÂLÂ ÇALIŞIRKEN yok edilebilir).
 
 ### GG.19 SONRASI ölçüm (2026-08-31, bkz. §3.109) — ASAP güçlendirmesi Tur 3 (aggregate bütçe + inline/ASAP birlikte çalışması)
 
-Harici bir (GPT-5.6) incelemenin bulduğu, kullanıcının seçtiği İKİ
+Harici bir incelemenin bulduğu, kullanıcının seçtiği İKİ
 madde: (1) aggregate stack-promotion bütçesi (`MAX_PROMOTED_FRAME_SIZE`,
 32 KiB) — SAF bir correctness/güvenlik düzeltmesi, performans kazancı
 BEKLENMEZ (SADECE ÖNCEDEN teorik olarak fiber stack'ini AŞABİLECEK bir
@@ -1055,7 +1055,7 @@ FastAPI 21K→9K/25K→10K) HEPSİ AŞAĞI — yalnızca Zig KABACA aynı kaldı
 (18.8K→21.5K/7.4K→15.9K, gürültü payında). TÜM sunucuların AYNI ANDA,
 AYNI YÖNDE düşmesi (Zig hariç, ki O ZATEN en YAVAŞ/en BASİT mimari
 olduğundan paylaşımlı yükten en AZ etkilenir) bu makinenin BU oturumda
-(Claude Code'un KENDİSİ + editör/tarayıcı gibi ARKA PLAN uygulamaları
+(editör ve tarayıcı gibi ARKA PLAN uygulamaları
 İLE) HH-sonrası turun "sessiz" ortamına GÖRE paylaşımlı bir CPU yükü
 ALTINDA olduğuna işaret ediyor — Nox'ta/Go'da/FastAPI'de bir GERİLEME
 DEĞİL. **Kritik olan, sunucular ARASI SIRALAMA/ORAN BU turda da
@@ -1121,12 +1121,11 @@ bir soğuma süresi TANINDI. Ortam: Apple M4 (10 çekirdek), macOS,
   KORUNMUYOR.
 
 **Kullanıcının sorusu ÜZERİNE ("arkada başka bir benchmark koşturmuş
-Cursor tam da Nox'un testleri sırasında etkilemiş midir") DOĞRUDAN
-test edildi:** `ps aux` İLE Cursor.app'ın YUKARIDAKİ turun BAŞINDAN
-BERİ (11:20'den İTİBAREN) çalıştığı VE `extension-host (retrieval)`/
-`extension-host (always-local)` GİBİ periyodik İNDEKSLEME/embedding işi
+editör tam da Nox'un testleri sırasında etkilemiş midir") DOĞRUDAN
+test edildi:** `ps aux` İLE editörün YUKARIDAKİ turun BAŞINDAN
+BERİ (11:20'den İTİBAREN) çalıştığı VE periyodik indeksleme/embedding işi
 yapan alt süreçlere sahip olduğu DOĞRULANDI — GERÇEK bir aday. Kullanıcı
-Cursor'u KAPATTIKTAN SONRA (crashpad watchdog HARİÇ TÜM Cursor süreçleri
+editörü KAPATTIKTAN SONRA (crashpad watchdog HARİÇ TÜM editör süreçleri
 `ps` İLE doğrulanarak KAYBOLDUĞU teyit edilip) AYNI 5-sunucu turu
 BİREBİR AYNI metodolojiyle (3 koşum, ORTANCA, `lsof`/`pkill` temizliği
 + soğuma) YENİDEN çalıştırıldı:
@@ -1139,18 +1138,18 @@ BİREBİR AYNI metodolojiyle (3 koşum, ORTANCA, `lsof`/`pkill` temizliği
 | Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 0.1 | 10,472 |
 | FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 11,289 | 12,476 |
 
-**Sonuç: HİPOTEZ DOĞRULANDI.** Cursor kapatılınca Nox (QBE) Go'yu HER
+**Sonuç: HİPOTEZ DOĞRULANDI.** Editör kapatılınca Nox (QBE) Go'yu HER
 İKİ eşzamanlılık seviyesinde de YENİDEN GEÇTİ (163K/176K vs 153K/151K)
 — 2026-07-25 turunun "Nox Go'yu geçiyor" bulgusuyla TUTARLI, bir ÖNCEKİ
-(Cursor AÇIKKEN ölçülen) turun "Go önde" sonucu Cursor'un arka plan
+(editör AÇIKKEN ölçülen) turun "Go önde" sonucu editörün arka plan
 YÜKÜNÜN GERÇEKTEN bir ÇARPITMA yarattığını GÖSTERİYOR. **Ama TAM olarak
 kullanıcının sorduğu "yalnızca Nox'un penceresinde mi vurdu" sorusuna
 KESİN bir CEVAP VERİLEMEZ** — serverler SIRAYLA (eş zamanlı DEĞİL)
 test edildiğinden VE ölçüm SIRASINDA eş zamanlı bir CPU örneklemesi
-ALINMADIĞINDAN, Cursor'un yükünün TÜM turlar boyunca (SADECE Nox'unkinde
+ALINMADIĞINDAN, editörün yükünün TÜM turlar boyunca (SADECE Nox'unkinde
 DEĞİL) genel bir aşağı-çekme etkisi mi yaptığı, YOKSA GERÇEKTEN
 SEÇİCİ olarak Nox'un penceresine mi İSABET ETTİĞİ AYIRT EDİLEMEZ —
-gözlemlenebilen TEK şey NET SONUÇ (Cursor AÇIKKEN Go önde, KAPALIYKEN
+gözlemlenebilen TEK şey NET SONUÇ (editör AÇIKKEN Go önde, KAPALIYKEN
 Nox önde). `nox_release` (LLVM/MN.9) BU turda QBE'DEN VE Go'dan BELİRGİN
 şekilde YAVAŞ (135K/131K) — İLK turdaki "c=100'de QBE'yi bile GEÇİYOR"
 bulgusuYLA ÇELİŞİYOR, bu da `--release`in `clang -O2` toolchain-çağrısı
@@ -1159,7 +1158,7 @@ BASİT paylaşımsız modeline GÖRE run-to-run varyansa DAHA DUYARLI
 olabileceğine işaret ediyor — KESİN bir sonuç İçİn DAHA FAZLA tekrar
 (bu oturumun kapsamı DIŞINDA) gerekir. Zig'in BU turda da (c=30'da
 0.1/s'ye KADAR düşen) AŞIRI gürültüsü, ÖNCEKİ turla TUTARLI, KENDİ
-mimari kırılganlığının Cursor'DAN BAĞIMSIZ olduğunu doğruluyor.
+mimari kırılganlığının editörden BAĞIMSIZ olduğunu doğruluyor.
 
 ### 2026-08 — `setNonBlocking`'in her okuma/yazmada gereksiz tekrarı (bkz. nox-teknik-spesifikasyon.md §3.106)
 

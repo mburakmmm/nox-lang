@@ -1,5 +1,10 @@
 # Nox 2.0 öncesi yol haritası
 
+> **2.0 sonrası aktif çalışma listesi:**
+> [`project/nox-ana-todo.md`](nox-ana-todo.md). Bu dosya tamamlanmış 2.0
+> hazırlık kararlarının tarihsel ve kalıcı kaydı olarak korunur; yeni açık
+> işler aktif listede yürütülür.
+
 Bu dosya, 2.0 yayınlanmadan ÖNCE yapılması gereken işlerin KALICI kaydıdır (2026-10-07, v1.143.1 itibarıyla,
 kullanıcıyla birlikte çıkarıldı). Bir ajan yeni bir göreve başlamadan önce bu dosyaya bakmalı; bir madde
 bittiğinde ya da yeni bir eksik bulunduğunda BURASI güncellenmelidir. Sıra = öncelik. Durum: `[ ]` açık,

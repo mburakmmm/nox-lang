@@ -8,8 +8,11 @@
 > **Hazırlanma tarihi:** 20 Ekim 2026\
 > **Başlangıç durumu:** Nox 2.0.x; Aura 1.0 masaüstü tamamlanmış, mobil
 > 1.1--1.5 planlanmış\
-> **Durum:** Önerilen plan --- aşağıdaki görevler uygulanmış kabul
-> edilmez.\
+> **Durum:** v2.0.19'da Nox tarafının önemli bir deneysel alt kümesi
+> uygulandı; hedeflerin hiçbiri `supported` değildir. Güncel açık iş ve
+> bağımlılık sırası `project/nox-ana-todo.md`, Aura'ya devredilen işler ise
+> `project/aura-mobil-eksiklikleri.md` dosyasındadır. Aşağıdaki boş kutular
+> tek başına güncel uygulama durumunu göstermez.\
 > **Kapsam:** Öncelikle Nox deposu; Aura'ya ait sınırlar ayrıca
 > işaretlenmiştir.
 
@@ -48,6 +51,31 @@ sözleşmesidir.
     ve mağaza dağıtımı test edilir.
 12. Her sürüm sonunda Nox kaynak kodu, Aura mobil örnekleri ve gerçek
     cihaz/simülatör testlerinin sonuçları birlikte raporlanır.
+
+### 0.1 Güncel uygulama özeti (25 Ekim 2026)
+
+Bu tablo, aşağıdaki 190 maddelik kabul sözleşmesini değiştirmez; hangi kısmın
+Nox'ta uygulandığını ve kalan işin hangi aktif listede yürütüldüğünü gösterir.
+`Kısmi`, ilgili fazın bazı kaynak/testleri bulunduğu fakat kendi kabul kapısının
+tamamı geçmediği anlamına gelir.
+
+| Faz | Nox durumu | Kalan işin sahibi / kanıt |
+|---|---|---|
+| M0 — ADR/envanter | Büyük ölçüde tamam | ADR-MOB-001..008 ve toolchain/matrix mevcut; temiz/tagli baseline ve ayrıntılı durum takibi `project/nox-ana-todo.md` Faz 0 |
+| M1 — target/AOT | Kısmi | Dört LLVM target ve library output var; iOS device run ve Android x64 run yok. Nox TODO Faz 3–4 |
+| M2 — embed runtime | Kısmi | Versioned lifecycle/event ABI ve 10.000 döngü testi var; açık runtime/allocator state, exception/OOM ve cihaz sanitizer kapıları açık. Nox TODO Faz 1 ve 3 |
+| M3 — mobil stdlib | Kısmi | Capability mask, FS/SQLite kökleri, TLS/HTTP/crypto/thread smoke var; sandbox ve ağ hata matrisi tamam değil. Nox TODO Faz 3 |
+| M4 — iOS preview | Kısmi | Simulator çalıştırıldı; fiziksel cihaz, signed IPA ve TestFlight yok. Nox target işi ana TODO'da, host işi Aura devir belgesinde |
+| M5 — Android preview | Kısmi | ARM64 emulator çalıştırıldı; x64 run, fiziksel cihaz, release APK/AAB ve Play yok. Sorumluluk bölünümü M4 ile aynı |
+| M6 — Aura parity | Aura'ya devredildi | `project/aura-mobil-eksiklikleri.md` A3–A4 |
+| M7 — DX/paketleme | Kısmi | Nox target/output CLI var; Aura doctor/create/run/build ve signed packaging Aura A5'te |
+| M8 — üretim kalitesi | Açık | Nox runtime/security kapıları ana TODO Faz 3/7; UI/store/performance Aura A4/A6 |
+| M9 — CI/lab | Kısmi | iOS simulator ve Android library CI var; emulator/device/nightly/release kanıtları açık |
+| M10 — stable | Kapalı | `mobile-evidence/dod.txt` signed IPA/APK/AAB ve device lab için `no`; bütün target'lar `experimental` |
+
+Nox'un yürütme sırası [`project/nox-ana-todo.md`](project/nox-ana-todo.md),
+Aura teslimleri [`project/aura-mobil-eksiklikleri.md`](project/aura-mobil-eksiklikleri.md)
+dosyasındadır. Tarihli ham kanıt `mobile-evidence/` altında tutulur.
 
 ## 1. Kaynak denetimi: bugün doğrulanmış olanlar
 

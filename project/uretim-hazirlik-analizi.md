@@ -1,5 +1,12 @@
 # Nox — Üretim Hazırlık Analizi ve MVP Sonrası Yol Haritası
 
+> **Tarihsel belge:** Bu analiz 13 Temmuz 2026'daki repo durumunu kaydeder.
+> CI, platform, paket sistemi, dokümantasyon ve runtime hakkındaki açıkların
+> önemli bölümü daha sonraki 1.x/2.0 sürümlerinde kapatılmıştır. Güncel iş
+> sırası için [`project/nox-ana-todo.md`](nox-ana-todo.md), güncel davranış
+> için kod + testler + public belgeler esas alınmalıdır. Bu dosyadaki bulgular
+> yeni bir görevin güncel TODO listesi olarak kullanılmaz.
+
 **Tarih:** 13 Temmuz 2026
 **Kapsam:** Derleyici (`compiler/`), çalışma zamanı (`runtime/`), standart kütüphane (`stdlib/`), CLI+paket sistemi (Faz O), araç zinciri ve süreç olgunluğu.
 **Yöntem:** Üç paralel, bağımsız kod incelemesi (dil/derleyici tamamlanmışlığı; çalışma zamanı+güvenlik+altyapı; araç ekosistemi+dokümantasyon), bulgular çapraz kontrol edilip tek bir önceliklendirilmiş envanterde birleştirildi.
