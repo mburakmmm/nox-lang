@@ -289,12 +289,15 @@ const PoolRunDriverArgs = struct {
     num_workers: usize,
     ctx: *PoolRunCtx,
     done_write_fd: posix.fd_t,
+    /// Çağıranın mobil sandbox politikasının spawn anında alınmış kopyası; havuzun `rt`si devralır.
+    policy: asap.EmbedPolicy = .{},
 };
 
 fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
     defer std.heap.page_allocator.destroy(args);
 
     const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.thread.pool_run pool");
+    asap.adoptEmbedPolicy(pool.rt, &args.policy);
 
     bridge.nox_async_init(pool.rt);
     // Faz MN.8, Bulgu A (İKİNCİ, DAHA DERİN yarış — İLK düzeltmeden SONRA
@@ -400,20 +403,32 @@ pub export fn nox_pool_run(
         std.process.exit(1);
     }
 
-    const fds = completion_pipe.makeSelfPipe() orelse return 1;
+    var policy = asap.snapshotEmbedPolicy(rt, std.heap.page_allocator) catch return 1;
 
-    const ctx = std.heap.page_allocator.create(PoolRunCtx) catch return 1;
+    const fds = completion_pipe.makeSelfPipe() orelse {
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
+        return 1;
+    };
+
+    const ctx = std.heap.page_allocator.create(PoolRunCtx) catch {
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
+        return 1;
+    };
     ctx.* = .{ .entry_fn = entry_fn, .globals_init_fn = globals_init_fn, .globals_deinit_fn = globals_deinit_fn };
 
     const driver_args = std.heap.page_allocator.create(PoolRunDriverArgs) catch {
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
         std.heap.page_allocator.destroy(ctx);
         completion_pipe.closeFd(fds[0]);
         completion_pipe.closeFd(fds[1]);
         return 1;
     };
-    driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1] };
+    driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1], .policy = policy };
 
     const driver_thread = std.Thread.spawn(.{}, poolRunDriverThreadMain, .{driver_args}) catch {
+        asap.freeEmbedPolicy(&driver_args.policy, std.heap.page_allocator);
         std.heap.page_allocator.destroy(driver_args);
         std.heap.page_allocator.destroy(ctx);
         completion_pipe.closeFd(fds[0]);
@@ -488,6 +503,8 @@ const PoolServeDriverArgs = struct {
     num_workers: usize,
     ctx: *PoolServeCtx,
     done_write_fd: posix.fd_t,
+    /// Çağıranın mobil sandbox politikasının spawn anında alınmış kopyası; havuzun `rt`si devralır.
+    policy: asap.EmbedPolicy = .{},
 };
 
 fn poolServeWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolServeCtx) void {
@@ -504,6 +521,7 @@ fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
     defer std.heap.page_allocator.destroy(args);
 
     const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.http.serve_multicore pool");
+    asap.adoptEmbedPolicy(pool.rt, &args.policy);
 
     const closure = std.heap.page_allocator.create(PoolServeClosure) catch @panic("OOM: nox.http.serve_multicore closure");
     closure.* = .{ .rt = pool.rt, .payload = args.ctx.payload };
@@ -685,20 +703,32 @@ pub export fn nox_pool_serve(
         if (state.worker_pool != null) return poolServeFlattened(rt_ptr, num_workers, entry_fn, payload);
     }
 
-    const fds = completion_pipe.makeSelfPipe() orelse return 1;
+    var policy = asap.snapshotEmbedPolicy(rt, std.heap.page_allocator) catch return 1;
 
-    const ctx = std.heap.page_allocator.create(PoolServeCtx) catch return 1;
+    const fds = completion_pipe.makeSelfPipe() orelse {
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
+        return 1;
+    };
+
+    const ctx = std.heap.page_allocator.create(PoolServeCtx) catch {
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
+        return 1;
+    };
     ctx.* = .{ .entry_fn = entry_fn, .payload = payload };
 
     const driver_args = std.heap.page_allocator.create(PoolServeDriverArgs) catch {
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
         std.heap.page_allocator.destroy(ctx);
         completion_pipe.closeFd(fds[0]);
         completion_pipe.closeFd(fds[1]);
         return 1;
     };
-    driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1] };
+    driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1], .policy = policy };
 
     const driver_thread = std.Thread.spawn(.{}, poolServeDriverThreadMain, .{driver_args}) catch {
+        asap.freeEmbedPolicy(&driver_args.policy, std.heap.page_allocator);
         std.heap.page_allocator.destroy(driver_args);
         std.heap.page_allocator.destroy(ctx);
         completion_pipe.closeFd(fds[0]);

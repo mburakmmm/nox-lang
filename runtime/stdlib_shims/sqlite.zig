@@ -254,9 +254,9 @@ fn dupeEmpty(rt: ?*anyopaque) ?[*:0]u8 {
 /// makrosu).
 const SQLITE_TRANSIENT: ?*const anyopaque = @ptrFromInt(std.math.maxInt(usize));
 
-pub export fn nox_sqlite_open_raw(path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+pub export fn nox_sqlite_open_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     const embed = @import("../embed.zig");
-    if (!embed.allowsPath(path)) return null;
+    if (!embed.allowsPath(rt, path)) return null;
     const p = path orelse return null;
     if (!ensureLoaded()) return null;
     var db: ?*anyopaque = null;

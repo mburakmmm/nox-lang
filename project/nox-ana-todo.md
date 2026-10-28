@@ -82,7 +82,7 @@ Debug ve ReleaseFast baseline sonucu kayıtlı.
 
 Bu faz diğer bütün yeni özelliklerden önce gelir.
 
-- [!] **1.1 Runtime context tasarımını onaylat.** `runtime/embed.zig` içindeki
+- [x] **1.1 Runtime context tasarımını onaylat.** (Onaylandı 2026-10-28, uygulandı v2.0.29.) `runtime/embed.zig` içindeki
   `threadlocal active_rt`, mobil FS/SQLite sandbox köklerini gizli mutable
   state üzerinden seçiyor. Bu, `AGENTS.md` §2.6 ile çelişme riski taşır.
   Önerilen ve onay bekleyen yön:
@@ -99,7 +99,7 @@ Bu faz diğer bütün yeni özelliklerden önce gelir.
      testleri eklenir.
   Bu private runtime ABI değişikliği olsa da public embed ABI bump'ı gerektirmez;
   uygulamaya geçmek kullanıcı onayı gerektirir.
-- [ ] **1.2 Mobil sandbox durumunu açık taşı.** `embed.allowsPath` ve bütün
+- [x] **1.2 Mobil sandbox durumunu açık taşı.** (v2.0.29: `zig build test` Debug yeşil — embed.zig 6 yeni birim testi + thread_bridge çocuk-politika testi + 9 IR anlık görüntüsü her iki backend fixture korpusunda.) `embed.allowsPath` ve bütün
   FS/SQLite çağrılarını doğru `RuntimeState`/app context ile ilişkilendir;
   iki eşzamanlı uygulama ve iki OS thread'i birbirinin köklerini göremesin.
 - [ ] **1.3 Embed allocator sözleşmesini düzelt.** `nox_app_create` şu anda

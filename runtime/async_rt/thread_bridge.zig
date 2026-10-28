@@ -86,6 +86,9 @@ const ChildCtx = struct {
     arg_is_str_bytes: ?[]u8,
     result_is_str: bool,
     handle: *ThreadHandle,
+    /// Ebeveynin mobil sandbox politikasının spawn anında alınmış, ebeveynden bağımsız kopyası
+    /// (masaüstünde `active == false`). Çocuk `RuntimeState`i kurulunca devralır.
+    policy: asap.EmbedPolicy = .{},
 };
 
 pub const ThreadHandle = struct {
@@ -147,6 +150,7 @@ fn childThreadMain(ctx: *ChildCtx) void {
     defer std.heap.page_allocator.destroy(ctx);
 
     const child_rt = asap.nox_runtime_init() orelse @panic("nox.thread: RuntimeState could not be started");
+    asap.adoptEmbedPolicy(child_rt, &ctx.policy);
     bridge.nox_async_init(child_rt);
 
     const closure = std.heap.page_allocator.create(ThreadEntryClosure) catch @panic("OOM: nox.thread closure");
@@ -199,15 +203,20 @@ export fn nox_thread_spawn(
     arg_is_str: i32,
     result_is_str: i32,
 ) callconv(.c) ?*anyopaque {
-    _ = rt; // Bilinçli olarak KULLANILMAZ — bkz. modül üstü not, `ThreadHandle`
-    // `page_allocator` üzerinden tahsis edilir, `rt`ye BAĞIMLI DEĞİLDİR.
+    // `ThreadHandle`/`ChildCtx` `page_allocator` üzerinden tahsis edilir, `rt`ye BAĞIMLI DEĞİLDİR; `rt` yalnızca
+    // mobil sandbox politikasının çocuğa kopyalanması için okunur (çocuk, ebeveynden bağımsız bir kopya alır).
+    var policy = asap.snapshotEmbedPolicy(rt, std.heap.page_allocator) catch return null;
 
-    const fds = completion_pipe.makeSelfPipe() orelse return null;
+    const fds = completion_pipe.makeSelfPipe() orelse {
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
+        return null;
+    };
 
     var arg_bytes: ?[]u8 = null;
     if (arg_is_str != 0) {
         const src = payloadToStrPtr(arg_payload);
         arg_bytes = std.heap.page_allocator.dupe(u8, std.mem.span(src)) catch {
+            asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
             completion_pipe.closeFd(fds[0]);
             completion_pipe.closeFd(fds[1]);
             return null;
@@ -215,6 +224,7 @@ export fn nox_thread_spawn(
     }
 
     const handle = std.heap.page_allocator.create(ThreadHandle) catch {
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
         completion_pipe.closeFd(fds[0]);
         completion_pipe.closeFd(fds[1]);
         return null;
@@ -223,6 +233,7 @@ export fn nox_thread_spawn(
 
     const ctx = std.heap.page_allocator.create(ChildCtx) catch {
         std.heap.page_allocator.destroy(handle);
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
         completion_pipe.closeFd(fds[0]);
         completion_pipe.closeFd(fds[1]);
         return null;
@@ -233,11 +244,14 @@ export fn nox_thread_spawn(
         .arg_is_str_bytes = arg_bytes,
         .result_is_str = result_is_str != 0,
         .handle = handle,
+        .policy = policy,
     };
 
     const thread = std.Thread.spawn(.{}, childThreadMain, .{ctx}) catch {
+        asap.freeEmbedPolicy(&ctx.policy, std.heap.page_allocator);
         std.heap.page_allocator.destroy(ctx);
         std.heap.page_allocator.destroy(handle);
+        asap.freeEmbedPolicy(&policy, std.heap.page_allocator);
         completion_pipe.closeFd(fds[0]);
         completion_pipe.closeFd(fds[1]);
         return null;
@@ -307,6 +321,33 @@ test "nox_thread_spawn/join: int payload uctan uca" {
     nox_thread_destroy(rt, handle);
 
     try std.testing.expectEqual(@as(i64, 42), result);
+}
+
+test "nox_thread_spawn: çocuk, ebeveynin mobil sandbox politikasını bağımsız bir kopya olarak devralır" {
+    const embed = @import("../embed.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    state.embed_active = true;
+    state.embed_roots[0] = "/sandbox";
+
+    const Entry = struct {
+        fn probe(arg: *anyopaque) callconv(.c) i64 {
+            const closure: *ThreadEntryClosure = @ptrCast(@alignCast(arg));
+            const inside: i64 = if (embed.allowsPath(closure.rt, "/sandbox/a.txt")) 1 else 0;
+            const outside: i64 = if (embed.allowsPath(closure.rt, "/etc/passwd")) 10 else 0;
+            return inside + outside;
+        }
+    };
+
+    const handle = nox_thread_spawn(rt, Entry.probe, 0, 0, 0).?;
+    // Ebeveyn politikası çocuk başlamadan sonra bile değişse çocuğun kopyası etkilenmez.
+    const result = nox_thread_join(rt, handle);
+    nox_thread_destroy(rt, handle);
+    state.embed_active = false;
+
+    // 1 = kök içi izinli, 10 eksik = kök dışı reddedildi (politika çocukta da etkin).
+    try std.testing.expectEqual(@as(i64, 1), result);
 }
 
 test "nox_thread_spawn/join: str payload, ebeveynin orijinal str'i HEMEN serbest bırakılabilir (sızıntı/UAF yok)" {

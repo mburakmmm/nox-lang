@@ -74,10 +74,11 @@ const App = struct {
     events: [EVENT_CAP]Event,
 };
 
-threadlocal var active_rt: ?*asap.RuntimeState = null;
-
-pub fn allowsPath(path: ?[*:0]const u8) bool {
-    const state = active_rt orelse return true;
+/// Sandbox kararı, çağıranın taşıdığı `rt`nin politikasına bakar (gizli/thread-local seçim YOK, AGENTS §2.6):
+/// aynı süreçteki iki uygulama ve `nox.thread` çocukları birbirinin köklerini göremez. `rt == null`
+/// yalnızca runtime'sız birim testleri içindir; derlenmiş programlar `with_rt` ile daima geçerli `rt` verir.
+pub fn allowsPath(rt: ?*anyopaque, path: ?[*:0]const u8) bool {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return true));
     if (!state.embed_active) return true;
     const raw = path orelse return false;
     return underRoots(state.embed_roots, std.mem.span(raw));
@@ -109,7 +110,6 @@ fn installRoots(app: *App) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(app.rt orelse return));
     state.embed_active = true;
     state.embed_roots = app.roots;
-    active_rt = state;
 }
 
 fn clearRoots(app: *App) void {
@@ -117,7 +117,6 @@ fn clearRoots(app: *App) void {
         const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
         state.embed_active = false;
         state.embed_roots = .{ null, null, null, null };
-        if (active_rt == state) active_rt = null;
     }
 }
 
@@ -289,13 +288,91 @@ test "embed path stays inside the host roots" {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
     state.embed_active = true;
     state.embed_roots[0] = "/app/documents";
-    active_rt = state;
-    defer active_rt = null;
-    try std.testing.expect(allowsPath("/app/documents"));
-    try std.testing.expect(allowsPath("/app/documents/notes.txt"));
-    try std.testing.expect(!allowsPath("/app/documents/../secret"));
-    try std.testing.expect(!allowsPath("/tmp/other"));
-    try std.testing.expect(!allowsPath(":memory:"));
+    try std.testing.expect(allowsPath(rt, "/app/documents"));
+    try std.testing.expect(allowsPath(rt, "/app/documents/notes.txt"));
+    try std.testing.expect(!allowsPath(rt, "/app/documents/../secret"));
+    try std.testing.expect(!allowsPath(rt, "/tmp/other"));
+    try std.testing.expect(!allowsPath(rt, ":memory:"));
+}
+
+test "embed policy is per runtime: two apps never see each other's roots" {
+    const a = asap.nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(a);
+    const b = asap.nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(b);
+    const sa: *asap.RuntimeState = @ptrCast(@alignCast(a));
+    const sb: *asap.RuntimeState = @ptrCast(@alignCast(b));
+    sa.embed_active = true;
+    sa.embed_roots[0] = "/apps/a/documents";
+    sb.embed_active = true;
+    sb.embed_roots[0] = "/apps/b/documents";
+    try std.testing.expect(allowsPath(a, "/apps/a/documents/x"));
+    try std.testing.expect(!allowsPath(a, "/apps/b/documents/x"));
+    try std.testing.expect(allowsPath(b, "/apps/b/documents/x"));
+    try std.testing.expect(!allowsPath(b, "/apps/a/documents/x"));
+}
+
+test "embed policy does not depend on the calling OS thread" {
+    const rt = asap.nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    state.embed_active = true;
+    state.embed_roots[0] = "/app/documents";
+    const Probe = struct {
+        rt: ?*anyopaque,
+        inside: bool = false,
+        outside: bool = true,
+        fn run(self: *@This()) void {
+            self.inside = allowsPath(self.rt, "/app/documents/ok.txt");
+            self.outside = allowsPath(self.rt, "/etc/passwd");
+        }
+    };
+    var probe: Probe = .{ .rt = rt };
+    const t = try std.Thread.spawn(.{}, Probe.run, .{&probe});
+    t.join();
+    try std.testing.expect(probe.inside);
+    try std.testing.expect(!probe.outside);
+}
+
+test "child runtime inherits an independent, owned copy of the policy" {
+    const parent = asap.nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    const ps: *asap.RuntimeState = @ptrCast(@alignCast(parent));
+    ps.embed_active = true;
+    ps.embed_roots[0] = "/app/documents";
+    ps.embed_roots[1] = "/app/cache";
+
+    var policy = try asap.snapshotEmbedPolicy(parent, std.testing.allocator);
+    const child = asap.nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    asap.adoptEmbedPolicy(child, &policy);
+
+    // Ebeveyn yok edildikten sonra bile çocuğun politikası geçerli kalır (kendi kopyası var).
+    asap.nox_runtime_deinit(parent);
+    try std.testing.expect(allowsPath(child, "/app/documents/a.txt"));
+    try std.testing.expect(allowsPath(child, "/app/cache/b"));
+    try std.testing.expect(!allowsPath(child, "/app/other"));
+    asap.nox_runtime_deinit(child); // testing.allocator sızıntı yakalar: sahip olunan kökler serbest kalmalı
+}
+
+test "child of a non-embedded runtime stays unrestricted and allocates nothing" {
+    const parent = asap.nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(parent);
+    var policy = try asap.snapshotEmbedPolicy(parent, std.testing.allocator);
+    try std.testing.expect(!policy.active);
+    const child = asap.nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(child);
+    asap.adoptEmbedPolicy(child, &policy);
+    try std.testing.expect(allowsPath(child, "/anywhere/at/all"));
+}
+
+test "an unadopted policy snapshot can be released without leaking" {
+    const parent = asap.nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(parent);
+    const ps: *asap.RuntimeState = @ptrCast(@alignCast(parent));
+    ps.embed_active = true;
+    ps.embed_roots[2] = "/app/support";
+    var policy = try asap.snapshotEmbedPolicy(parent, std.testing.allocator);
+    asap.freeEmbedPolicy(&policy, std.testing.allocator);
+    try std.testing.expect(!policy.active);
 }
 
 test "embed rejects a second create, reentry, and a double destroy" {

@@ -523,10 +523,13 @@ pub const RuntimeState = struct {
     /// bkz. `pool_ever_active`nin belge notu).
     pool_ext: ?*PoolExtension = null,
 
-    /// Mobil gömme. Masaüstünde `false`. Kökler host'un ödünç verdiği
-    /// UTF-8 dizelerdir; `nox_app_destroy` onları serbest bırakmaz.
+    /// Mobil gömme. Masaüstünde `false`. Kökler, ana uygulama çalışma zamanında host'un ödünç verdiği
+    /// UTF-8 dizelerdir (`nox_app_destroy` onları serbest bırakmaz); bir ÇOCUK çalışma zamanında
+    /// (`nox.thread.start`, havuz) ise `embed_roots_owned == true` ve kökler `bootstrap_allocator`
+    /// ile ayrılmış, `nox_runtime_deinit`in serbest bıraktığı KOPYALARDIR.
     embed_active: bool = false,
     embed_roots: [4]?[*:0]const u8 = .{ null, null, null, null },
+    embed_roots_owned: bool = false,
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
@@ -759,6 +762,60 @@ pub fn setArcOwnerPoolCapacity(state: *RuntimeState, capacity: usize) void {
     state.arc_owner_pool.capacity = capacity;
 }
 
+/// Mobil sandbox politikasının, ebeveyn çalışma zamanından BAĞIMSIZ bir anlık görüntüsü (bkz. `snapshotEmbedPolicy`).
+/// Kök dizeleri `allocator` ile ayrılmış KOPYALARDIR; sahiplik `adoptEmbedPolicy` ile çocuğa geçer ya da
+/// `freeEmbedPolicy` ile bırakılır. `active == false` ise (masaüstü) hiçbir şey ayrılmaz.
+pub const EmbedPolicy = struct {
+    active: bool = false,
+    roots: [4]?[:0]u8 = .{ null, null, null, null },
+};
+
+/// `parent`in sandbox politikasını (`embed_active` + kökler) kopyalar. Çağıran, `parent` HENÜZ yaşıyorken
+/// (örn. `nox_thread_spawn` içinde, çocuk başlamadan önce) çağırmalıdır; sonuç ebeveynden bağımsızdır.
+pub fn snapshotEmbedPolicy(parent: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!EmbedPolicy {
+    const p: *RuntimeState = @ptrCast(@alignCast(parent orelse return .{}));
+    if (!p.embed_active) return .{};
+    var out: EmbedPolicy = .{ .active = true };
+    errdefer freeEmbedPolicy(&out, allocator);
+    for (p.embed_roots, 0..) |root, i| {
+        const r = root orelse continue;
+        out.roots[i] = try allocator.dupeZ(u8, std.mem.span(r));
+    }
+    return out;
+}
+
+pub fn freeEmbedPolicy(policy: *EmbedPolicy, allocator: std.mem.Allocator) void {
+    for (&policy.roots) |*slot| {
+        if (slot.*) |r| allocator.free(r);
+        slot.* = null;
+    }
+    policy.active = false;
+}
+
+/// Anlık görüntüyü çocuğa devreder (sahiplik çocuğa geçer; `nox_runtime_deinit` serbest bırakır).
+/// Çocuğun `bootstrap_allocator`ı, anlık görüntüyü ayıran allocator ile AYNI olmalıdır.
+pub fn adoptEmbedPolicy(child: ?*anyopaque, policy: *EmbedPolicy) void {
+    const c: *RuntimeState = @ptrCast(@alignCast(child orelse return));
+    if (!policy.active) return;
+    c.embed_active = true;
+    c.embed_roots_owned = true;
+    for (policy.roots, 0..) |root, i| c.embed_roots[i] = if (root) |r| r.ptr else null;
+    policy.* = .{};
+}
+
+/// Çocuk çalışma zamanı: yeni bir `RuntimeState` kurar ve `parent`in sandbox politikasını devralır.
+/// Masaüstünde (`parent` gömme dışı) `nox_runtime_init` ile birebir aynıdır.
+pub fn nox_runtime_init_child(parent: ?*anyopaque) ?*anyopaque {
+    const rt = nox_runtime_init() orelse return null;
+    const state: *RuntimeState = @ptrCast(@alignCast(rt));
+    var policy = snapshotEmbedPolicy(parent, state.bootstrap_allocator) catch {
+        nox_runtime_deinit(rt);
+        return null;
+    };
+    adoptEmbedPolicy(rt, &policy);
+    return rt;
+}
+
 /// Faz F.0.2: GERÇEK allocator enjeksiyonu İçİn YENİ, AYRI bir giriş
 /// noktası — `backing`i HEM `RuntimeState`in KENDİ bootstrap tahsisi
 /// (`bootstrap_allocator`) HEM `debug_gpa`nın backing'i (Debug) HEM
@@ -863,6 +920,13 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // HER ZAMAN `page_allocator`dır (bkz. `bootstrap_allocator`nın belge
     // notu), `state`i BOOTSTRAP EDEN allocator'IN AYNISIYLA yok etmek İçİn.
     const bootstrap_allocator = state.bootstrap_allocator;
+    if (state.embed_roots_owned) {
+        for (&state.embed_roots) |*slot| {
+            if (slot.*) |r| bootstrap_allocator.free(std.mem.span(r));
+            slot.* = null;
+        }
+        state.embed_roots_owned = false;
+    }
     if (use_debug_allocator) {
         if (state.debug_gpa.deinit() == .leak) {
             diag_sink.report(rt, "nox runtime: memory leak detected\n", .{});

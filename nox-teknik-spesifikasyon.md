@@ -29129,3 +29129,9 @@ Barındırılan Windows `zig test -fllvm`, freestanding `printf` gövdesindeki `
 `file:///D:/...` URI'si sürücü yoluna çevrilir. `nox.json` araması işletim sisteminin ayırıcısını kullanır. Reddedilen bir bağlantının Zig hata izi, Nox programının stderr'ine yazılmaz; program kendi istisnasını fırlatır.
 
 `nox.os.current_dir` Windows'ta sürücü harfiyle başlar. Golden, ilk karakter yerine yolun mutlak olduğunu yazdırır. `/tmp` golden'ları, test başlamadan geçerli sürücünün `\tmp` dizini oluşturulmuşken çalışır.
+
+## 3.310 Gömme sandbox'ı açık runtime bağlamıyla (v2.0.29)
+
+Mobil sandbox kökleri artık `threadlocal` bir işaretçiyle seçilmez (AGENTS §2.6). `embed.allowsPath(rt, path)` kararı, çağıranın taşıdığı `RuntimeState`in politikasından (`embed_active`, `embed_roots`) okur. `nox.fs` ve `nox.sqlite`ın özel `*_raw` giriş noktaları `with_rt` ile gizli `rt` argümanını alır. Genel `nox_embed.h` ABI'si değişmedi.
+
+`nox.thread.start`, `nox.thread.pool_run` ve `nox.http.serve_multicore` yeni bir `RuntimeState` kurar. Önceki sürümde bu çocuklar politikasız doğuyordu ve sandbox'ı aşabiliyordu. Artık çağıran, spawn anında politikanın ebeveynden bağımsız bir kopyasını alır (`snapshotEmbedPolicy`); çocuk onu `adoptEmbedPolicy` ile devralır, kök dizeleri çocuğun `bootstrap_allocator`ıyla ayrılır ve `nox_runtime_deinit` onları serbest bırakır. `nox_runtime_init_child(parent)` aynı yolu tek çağrıda sunar. Masaüstünde (`embed_active == false`) hiçbir şey kopyalanmaz.

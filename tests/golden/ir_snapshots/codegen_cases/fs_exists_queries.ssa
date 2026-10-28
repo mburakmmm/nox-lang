@@ -2538,7 +2538,7 @@ export function w $nox_fs_exists(l %rt, l %p_path) {
     %t0 =l alloc8 8
     storel %p_path, %t0
     %t1 =l loadl %t0
-    %t2 =l call $nox_fs_exists_raw(l %t1)
+    %t2 =l call $nox_fs_exists_raw(l %rt, l %t1)
     %t3 =w cnel %t2, 0
     ret %t3
 @after_return0
@@ -2550,7 +2550,7 @@ export function w $nox_fs_is_file(l %rt, l %p_path) {
     %t0 =l alloc8 8
     storel %p_path, %t0
     %t1 =l loadl %t0
-    %t2 =l call $nox_fs_is_file_raw(l %t1)
+    %t2 =l call $nox_fs_is_file_raw(l %rt, l %t1)
     %t3 =w cnel %t2, 0
     ret %t3
 @after_return0
@@ -2562,7 +2562,7 @@ export function w $nox_fs_is_dir(l %rt, l %p_path) {
     %t0 =l alloc8 8
     storel %p_path, %t0
     %t1 =l loadl %t0
-    %t2 =l call $nox_fs_is_dir_raw(l %t1)
+    %t2 =l call $nox_fs_is_dir_raw(l %rt, l %t1)
     %t3 =w cnel %t2, 0
     ret %t3
 @after_return0
@@ -2574,7 +2574,7 @@ export function l $nox_fs_metadata(l %rt, l %p_path) {
     %t0 =l alloc8 8
     storel %p_path, %t0
     %t1 =l loadl %t0
-    call $nox_fs_stat_raw(l %t1)
+    call $nox_fs_stat_raw(l %rt, l %t1)
     %t2 =l call $nox_fs_last_op_ok()
     %t3 =w ceql %t2, 0
     jnz %t3, @if_then1, @if_end0
@@ -2781,7 +2781,7 @@ export function $nox_fs_copy(l %rt, l %p_src, l %p_dst) {
     storel %p_dst, %t1
     %t2 =l loadl %t0
     %t3 =l loadl %t1
-    call $nox_fs_copy_raw(l %t2, l %t3)
+    call $nox_fs_copy_raw(l %rt, l %t2, l %t3)
     %t4 =l call $nox_fs_last_op_ok()
     %t5 =w ceql %t4, 0
     jnz %t5, @if_then1, @if_end0
@@ -2898,7 +2898,7 @@ export function $nox_fs_rename(l %rt, l %p_old, l %p_new) {
     storel %p_new, %t1
     %t2 =l loadl %t0
     %t3 =l loadl %t1
-    call $nox_fs_rename_raw(l %t2, l %t3)
+    call $nox_fs_rename_raw(l %rt, l %t2, l %t3)
     %t4 =l call $nox_fs_last_op_ok()
     %t5 =w ceql %t4, 0
     jnz %t5, @if_then1, @if_end0
@@ -3012,7 +3012,7 @@ export function $nox_fs_remove_file(l %rt, l %p_path) {
     %t0 =l alloc8 8
     storel %p_path, %t0
     %t1 =l loadl %t0
-    call $nox_fs_remove_file_raw(l %t1)
+    call $nox_fs_remove_file_raw(l %rt, l %t1)
     %t2 =l call $nox_fs_last_op_ok()
     %t3 =w ceql %t2, 0
     jnz %t3, @if_then1, @if_end0
@@ -3084,7 +3084,7 @@ export function $nox_fs_create_dir(l %rt, l %p_path) {
     %t0 =l alloc8 8
     storel %p_path, %t0
     %t1 =l loadl %t0
-    call $nox_fs_create_dir_raw(l %t1)
+    call $nox_fs_create_dir_raw(l %rt, l %t1)
     %t2 =l call $nox_fs_last_op_ok()
     %t3 =w ceql %t2, 0
     jnz %t3, @if_then1, @if_end0
@@ -3173,7 +3173,7 @@ export function w $main(w %argc, l %argv) {
     %t14 =l add $str15, 16
     storel %t14, %t0
     %t15 =l loadl %t0
-    %t16 =l call $nox_fs_exists_raw(l %t15)
+    %t16 =l call $nox_fs_exists_raw(l %rt, l %t15)
     %t17 =w cnel %t16, 0
     storew %t17, %t1
     jmp @inline_done0
@@ -3192,7 +3192,7 @@ export function w $main(w %argc, l %argv) {
     %t19 =l add $str16, 16
     storel %t19, %t2
     %t20 =l loadl %t2
-    %t21 =l call $nox_fs_is_dir_raw(l %t20)
+    %t21 =l call $nox_fs_is_dir_raw(l %rt, l %t20)
     %t22 =w cnel %t21, 0
     storew %t22, %t3
     jmp @inline_done5
@@ -3211,7 +3211,7 @@ export function w $main(w %argc, l %argv) {
     %t24 =l add $str17, 16
     storel %t24, %t4
     %t25 =l loadl %t4
-    %t26 =l call $nox_fs_is_file_raw(l %t25)
+    %t26 =l call $nox_fs_is_file_raw(l %rt, l %t25)
     %t27 =w cnel %t26, 0
     storew %t27, %t5
     jmp @inline_done10
@@ -3230,7 +3230,7 @@ export function w $main(w %argc, l %argv) {
     %t29 =l add $str18, 16
     storel %t29, %t6
     %t30 =l loadl %t6
-    %t31 =l call $nox_fs_exists_raw(l %t30)
+    %t31 =l call $nox_fs_exists_raw(l %rt, l %t30)
     %t32 =w cnel %t31, 0
     storew %t32, %t7
     jmp @inline_done15
@@ -3258,7 +3258,7 @@ export function w $main(w %argc, l %argv) {
     %t37 =l add $str21, 16
     storel %t37, %t8
     %t38 =l loadl %t8
-    %t39 =l call $nox_fs_exists_raw(l %t38)
+    %t39 =l call $nox_fs_exists_raw(l %rt, l %t38)
     %t40 =w cnel %t39, 0
     storew %t40, %t9
     jmp @inline_done22
@@ -3277,7 +3277,7 @@ export function w $main(w %argc, l %argv) {
     %t42 =l add $str22, 16
     storel %t42, %t10
     %t43 =l loadl %t10
-    %t44 =l call $nox_fs_is_file_raw(l %t43)
+    %t44 =l call $nox_fs_is_file_raw(l %rt, l %t43)
     %t45 =w cnel %t44, 0
     storew %t45, %t11
     jmp @inline_done27
@@ -3296,7 +3296,7 @@ export function w $main(w %argc, l %argv) {
     %t47 =l add $str23, 16
     storel %t47, %t12
     %t48 =l loadl %t12
-    %t49 =l call $nox_fs_is_dir_raw(l %t48)
+    %t49 =l call $nox_fs_is_dir_raw(l %rt, l %t48)
     %t50 =w cnel %t49, 0
     storew %t50, %t13
     jmp @inline_done32

@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.29]
+
+Mobil sandbox artık gizli thread-local durum yerine açık runtime bağlamıyla çalışır.
+
+### Düzeltildi
+
+- **Sandbox atlatma:** `nox.thread.start`, `nox.thread.pool_run` ve `nox.http.serve_multicore` çocuk runtime'ları mobil FS/SQLite köklerini devralmıyordu; gömme oturumunda bu çocuklar kök dışına erişebiliyordu. Çocuklar artık ebeveynin politikasının bağımsız, kendilerine ait bir kopyasını alır.
+- Aynı süreçteki iki gömme uygulaması ve OS thread değişimi artık birbirinin köklerini etkileyemez (`threadlocal active_rt` kaldırıldı).
+
+### Değişti
+
+- `embed.allowsPath(rt, path)` runtime'ı açık parametre alır; `nox.fs`/`nox.sqlite` özel `*_raw` extern'leri `with_rt` kullanır (genel `nox_embed.h` ABI'si değişmedi; IR anlık görüntüleri güncellendi).
+- `asap.nox_runtime_init_child`, `snapshotEmbedPolicy`, `adoptEmbedPolicy`, `freeEmbedPolicy` eklendi.
+
 ## [2.0.28]
 
 Çalışma ağacı hijyeni: kaynak kontrolünde olmayan işler izlenmeye alındı. Derleyici/runtime davranışı değişmedi.

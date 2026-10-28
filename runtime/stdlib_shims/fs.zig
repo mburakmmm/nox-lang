@@ -261,7 +261,7 @@ export fn nox_fs_last_op_ok() callconv(.c) i32 {
 /// okuma SIRASINDA BÜYÜRSE/küçülürse (nadir yarış) `fstat` ANINDAKİ
 /// boyut ESAS alınır — bilinçli v1 basitleştirmesi.
 export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    if (!embed.allowsPath(path)) {
+    if (!embed.allowsPath(rt, path)) {
         fsLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
     }
@@ -326,8 +326,7 @@ fn writeAllToFile(append: bool, path: [*:0]const u8, content: [*:0]const u8) voi
 }
 
 export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content: ?[*:0]const u8) callconv(.c) void {
-    _ = rt;
-    if (!embed.allowsPath(path)) {
+    if (!embed.allowsPath(rt, path)) {
         fsLastOkPtr().* = false;
         return;
     }
@@ -347,8 +346,7 @@ export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content
 /// ekler (`APPEND` — VAR OLMAYAN dosya İçin `CREAT` İLE OLUŞTURULUR, tıpkı
 /// `write_string` gibi).
 export fn nox_fs_append_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content: ?[*:0]const u8) callconv(.c) void {
-    _ = rt;
-    if (!embed.allowsPath(path)) {
+    if (!embed.allowsPath(rt, path)) {
         fsLastOkPtr().* = false;
         return;
     }
@@ -375,8 +373,8 @@ export fn nox_fs_append_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, conten
 /// keşfedildi). `access`/`open` İSE HER platformda DOĞRUDAN bağlı,
 /// TAM bir `stat` yapısına gerek OLMADAN "var mı"/"dizin mi" sorularını
 /// yanıtlamaya YETERLİ.
-export fn nox_fs_exists_raw(path: ?[*:0]const u8) callconv(.c) i32 {
-    if (!embed.allowsPath(path)) return 0;
+export fn nox_fs_exists_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) i32 {
+    if (!embed.allowsPath(rt, path)) return 0;
     const p = path orelse return 0;
     return if (std.c.access(p, std.c.F_OK) == 0) 1 else 0;
 }
@@ -388,8 +386,8 @@ export fn nox_fs_exists_raw(path: ?[*:0]const u8) callconv(.c) i32 {
 /// `std.c.O` zaten Windows'ta `void` — bkz. `WinFile`nin belge notu) —
 /// `GetFileAttributesA` (TEK bir Win32 çağrısı, `FILE_ATTRIBUTE_DIRECTORY`
 /// bitini KONTROL eder) KULLANILIR.
-export fn nox_fs_is_dir_raw(path: ?[*:0]const u8) callconv(.c) i32 {
-    if (!embed.allowsPath(path)) return 0;
+export fn nox_fs_is_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) i32 {
+    if (!embed.allowsPath(rt, path)) return 0;
     const p = path orelse return 0;
     if (builtin.os.tag == .windows) {
         const attrs = WinFile.GetFileAttributesA(p);
@@ -406,11 +404,11 @@ export fn nox_fs_is_dir_raw(path: ?[*:0]const u8) callconv(.c) i32 {
 /// "Dosya" burada "var VE dizin DEĞİL" olarak TANIMLANIR (sembolik
 /// link/özel dosya AYRIMI yapılmaz — `nox.fs`in ZATEN belgelenen v1
 /// basitleştirmeleriyle TUTARLI, bkz. bu dosyanın modül-üstü notu).
-export fn nox_fs_is_file_raw(path: ?[*:0]const u8) callconv(.c) i32 {
-    if (!embed.allowsPath(path)) return 0;
+export fn nox_fs_is_file_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) i32 {
+    if (!embed.allowsPath(rt, path)) return 0;
     const p = path orelse return 0;
     if (std.c.access(p, std.c.F_OK) != 0) return 0;
-    return if (nox_fs_is_dir_raw(p) == 0) 1 else 0;
+    return if (nox_fs_is_dir_raw(rt, p) == 0) 1 else 0;
 }
 
 // Faz III.3 (bkz. nox-teknik-spesifikasyon.md §3.69) — `metadata()`nin
@@ -436,8 +434,8 @@ fn fsLastMtimePtr() *i64 {
     return &g_fs_last_mtime_ms_fallback;
 }
 
-export fn nox_fs_stat_raw(path: ?[*:0]const u8) callconv(.c) void {
-    if (!embed.allowsPath(path)) {
+export fn nox_fs_stat_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(rt, path)) {
         fsLastOkPtr().* = false;
         return;
     }
@@ -514,7 +512,7 @@ fn collectDirNames(path: [*:0]const u8, names: *std.ArrayListUnmanaged([]const u
 }
 
 export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-    if (!embed.allowsPath(path)) {
+    if (!embed.allowsPath(rt, path)) {
         fsLastOkPtr().* = false;
         return null;
     }
@@ -555,8 +553,8 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
 /// Faz III.3 — TAŞINABİLİR (macOS'a-özgü `copyfile()` KULLANILMAZ):
 /// kaynağı OKUYUP hedefe YAZAR, 4096-baytlık parçalar hâlinde (Nox `str`
 /// yuvarlağına HİÇ GİRMEDEN — ARC tahsisi GEREKMEZ).
-export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c) void {
-    if (!embed.allowsPath(src) or !embed.allowsPath(dst)) {
+export fn nox_fs_copy_raw(rt: ?*anyopaque, src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(rt, src) or !embed.allowsPath(rt, dst)) {
         fsLastOkPtr().* = false;
         return;
     }
@@ -605,8 +603,8 @@ export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c)
     fsLastOkPtr().* = true;
 }
 
-export fn nox_fs_rename_raw(old: ?[*:0]const u8, new: ?[*:0]const u8) callconv(.c) void {
-    if (!embed.allowsPath(old) or !embed.allowsPath(new)) {
+export fn nox_fs_rename_raw(rt: ?*anyopaque, old: ?[*:0]const u8, new: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(rt, old) or !embed.allowsPath(rt, new)) {
         fsLastOkPtr().* = false;
         return;
     }
@@ -621,8 +619,8 @@ export fn nox_fs_rename_raw(old: ?[*:0]const u8, new: ?[*:0]const u8) callconv(.
     fsLastOkPtr().* = std.c.rename(o, n) == 0;
 }
 
-export fn nox_fs_remove_file_raw(path: ?[*:0]const u8) callconv(.c) void {
-    if (!embed.allowsPath(path)) {
+export fn nox_fs_remove_file_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(rt, path)) {
         fsLastOkPtr().* = false;
         return;
     }
@@ -633,8 +631,8 @@ export fn nox_fs_remove_file_raw(path: ?[*:0]const u8) callconv(.c) void {
     fsLastOkPtr().* = std.c.unlink(p) == 0;
 }
 
-export fn nox_fs_create_dir_raw(path: ?[*:0]const u8) callconv(.c) void {
-    if (!embed.allowsPath(path)) {
+export fn nox_fs_create_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(rt, path)) {
         fsLastOkPtr().* = false;
         return;
     }
@@ -679,7 +677,7 @@ test "nox_fs_exists/is_file/is_dir_raw dogru sonuc doner" {
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_ee1_fs_test_{d}.txt", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.unlink(full_path.ptr);
 
-    try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw("/definitely/does/not/exist/nox_ee1_test"));
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(null, "/definitely/does/not/exist/nox_ee1_test"));
 
     // `content` (`path` DEĞİL — bkz. dosya başındaki `writeAllToFile`nin
     // AYRIMI) `nox_str_slice`den GEÇTİĞİNDEN GEÇERLİ bir Nox `str` başlığı
@@ -688,15 +686,15 @@ test "nox_fs_exists/is_file/is_dir_raw dogru sonuc doner" {
     const hi = str.nox_str_from_bytes(rt, "hi") orelse return error.AllocFailed;
     defer str.nox_str_release(rt, hi);
     nox_fs_write_string_raw(null, full_path.ptr, hi);
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(full_path.ptr));
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_file_raw(full_path.ptr));
-    try std.testing.expectEqual(@as(i32, 0), nox_fs_is_dir_raw(full_path.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(null, full_path.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_file_raw(null, full_path.ptr));
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_is_dir_raw(null, full_path.ptr));
 
     const tmp_z = try std.fmt.allocPrintSentinel(std.heap.page_allocator, "{s}", .{testTmpPrefix()}, 0);
     defer std.heap.page_allocator.free(tmp_z);
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(tmp_z.ptr));
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_dir_raw(tmp_z.ptr));
-    try std.testing.expectEqual(@as(i32, 0), nox_fs_is_file_raw(tmp_z.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(null, tmp_z.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_dir_raw(null, tmp_z.ptr));
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_is_file_raw(null, tmp_z.ptr));
 }
 
 test "Faz III.3: nox_fs_read_to_string_raw (fstat-tabanli tek-tahsis) dogru calisir" {
@@ -755,12 +753,12 @@ test "Faz III.3: nox_fs_stat_raw boyut/mtime dogru doner" {
     const digits = str.nox_str_from_bytes(rt, "12345") orelse return error.AllocFailed;
     defer str.nox_str_release(rt, digits);
     nox_fs_write_string_raw(null, full_path.ptr, digits);
-    nox_fs_stat_raw(full_path.ptr);
+    nox_fs_stat_raw(null, full_path.ptr);
     try std.testing.expect(fsLastOkPtr().*);
     try std.testing.expectEqual(@as(i64, 5), nox_fs_stat_size_raw());
     try std.testing.expect(nox_fs_stat_mtime_ms_raw() > 0);
 
-    nox_fs_stat_raw("/definitely/does/not/exist/nox_iii3_test");
+    nox_fs_stat_raw(null, "/definitely/does/not/exist/nox_iii3_test");
     try std.testing.expect(!fsLastOkPtr().*);
 }
 
@@ -832,30 +830,30 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
     const copy_me = str.nox_str_from_bytes(rt, "copy me") orelse return error.AllocFailed;
     defer str.nox_str_release(rt, copy_me);
     nox_fs_write_string_raw(rt, src_path.ptr, copy_me);
-    nox_fs_copy_raw(src_path.ptr, dst_path.ptr);
+    nox_fs_copy_raw(null, src_path.ptr, dst_path.ptr);
     try std.testing.expect(fsLastOkPtr().*);
     {
         const content = nox_fs_read_to_string_raw(rt, dst_path.ptr) orelse return error.Failed;
         defer str.nox_str_release(rt, content);
         try std.testing.expectEqualStrings("copy me", std.mem.sliceTo(content, 0));
     }
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(src_path.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(null, src_path.ptr));
 
-    nox_fs_rename_raw(dst_path.ptr, ren_path.ptr);
+    nox_fs_rename_raw(null, dst_path.ptr, ren_path.ptr);
     try std.testing.expect(fsLastOkPtr().*);
-    try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(dst_path.ptr));
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(ren_path.ptr));
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(null, dst_path.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(null, ren_path.ptr));
 
-    nox_fs_remove_file_raw(src_path.ptr);
+    nox_fs_remove_file_raw(null, src_path.ptr);
     try std.testing.expect(fsLastOkPtr().*);
-    try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(src_path.ptr));
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(null, src_path.ptr));
 
     var dir_buf: [test_path_cap]u8 = undefined;
     const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_mkdir_{d}", .{ testTmpPrefix(), hostPid() });
     defer _ = std.c.rmdir(dir_path.ptr);
-    nox_fs_create_dir_raw(dir_path.ptr);
+    nox_fs_create_dir_raw(null, dir_path.ptr);
     try std.testing.expect(fsLastOkPtr().*);
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_dir_raw(dir_path.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_dir_raw(null, dir_path.ptr));
 }
 
 // Faz BB.1: `g_last_ok`nin `threadlocal` OLMASININ, İKİ GERÇEK OS iş
