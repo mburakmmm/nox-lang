@@ -1,0 +1,40 @@
+import nox.regex
+from nox.regex import RegexError
+
+def show(m: nox.regex.Match | None) -> str:
+    if m is None:
+        return "None"
+    return m.whole() + "@" + str(m.start) + "-" + str(m.end) + str(m.groups())
+
+print(show(nox.regex.search("(\\d+)-(\\d+)", "tel 555-1234 x")))
+print(show(nox.regex.search("(?P<a>x)|(?P<b>y)", "zzy")))
+print(show(nox.regex.search("(a|ab)(c|bcd)(d*)", "abcd")))
+print(show(nox.regex.search("^(\\w+)\\s+\\1$", "hey hey")))
+print(show(nox.regex.search("^(\\w+)\\s+\\1$", "hey you")))
+print(show(nox.regex.match("ab", "abab")), show(nox.regex.match("b", "abab")))
+print(show(nox.regex.full_match("a+b", "aaab")), show(nox.regex.full_match("a+", "aaab")))
+print(nox.regex.find_all("\\b\\w", "the quick brown fox"))
+print(nox.regex.find_all("a*", "baac"))
+print(nox.regex.find_all("(?m)^\\w+", "one two\nthree four\nfive"))
+print(len(nox.regex.find_all("(?s)a.b", "a\nb a-b")))
+print(nox.regex.find_all("a.b", "a\nb a-b"))
+print(nox.regex.find_all("\\$\\d+\\.\\d{2}", "cost $12.50 or $3.5 or $100.00"))
+print(nox.regex.find_all("[\\w.+-]+@[\\w-]+\\.[\\w.]+", "mail ada@lovelace.org, bob.smith+x@ex-ample.co.uk!"))
+print(nox.regex.replace("(\\d+)", "<\\1>", "a1b22c333"))
+print(nox.regex.replace("(?P<k>\\w)=(?P<v>\\d)", "\\g<v>=\\g<k>", "a=1,b=2"))
+print(nox.regex.replace("x*", "-", "abxd"))
+print(nox.regex.replace("\\s+", " ", "a   b \t c"))
+print(nox.regex.split("[,;]\\s*", "a, b;c,   d"))
+print(nox.regex.split("\\d", "a1b2c"))
+print(nox.regex.find_all("foo(?=bar)", "foobar foobaz"), nox.regex.find_all("foo(?!bar)", "foobar foobaz"))
+print(nox.regex.find_all("(?i)hello", "Hello HELLO hello"))
+print(nox.regex.find_all("(?i)straße", "STRASSE Straße straße"))
+print(nox.regex.find_all("<.+?>", "<a><b>"), nox.regex.find_all("<.+>", "<a><b>"))
+print(nox.regex.find_all("(ab)*c", "ababc abc c"))
+print(nox.regex.find_all("\\w+", "öğrenci çağrı x"))
+print(nox.regex.search("(a+)+b", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaac") is None)
+try:
+    nox.regex.search("(ab", "x")
+except RegexError as e:
+    print("error")
+print(nox.regex.is_match("a(", "a("), nox.regex.escape("1+1=2?"))

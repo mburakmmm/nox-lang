@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.57]
+
+### Eklendi
+
+- `nox.regex` tam motor: yakalama/adli gruplar, alternation, `{m,n}` ve tembel tekrar, `\d \w \s \b`, geri basvuru, ileri bakis, bayraklar (`IGNORECASE`/`MULTILINE`/`DOTALL`, `(?i)`). Yeni API: `search`/`match`/`full_match`/`find_matches`/`find_all`/`replace`/`split`/`escape`, `Match` sinifi, `RegexError`. Eski `is_match`/`find` ayni kaldi. Motor acik yigin kullanir ve adim siniri vardir.
+
+### Duzeltildi
+
+- Modul yukleyici (import edilen moduller) `self.x: T = v` anotasyonunu dusuruyordu.
+
 ## [2.0.56]
 
 ### Eklendi

@@ -109,6 +109,36 @@ pub fn mapInto(s: []const u8, mode: Mode, buf: ?[]u8) usize {
     return n;
 }
 
+pub fn isAlpha(cp: u32) bool {
+    return inRanges(&data.alpha, cp);
+}
+
+pub fn isDecimal(cp: u32) bool {
+    return inRanges(&data.decimal, cp);
+}
+
+pub fn isNumeric(cp: u32) bool {
+    return inRanges(&data.numeric, cp);
+}
+
+pub fn isSpace(cp: u32) bool {
+    return inRanges(&data.space, cp);
+}
+
+/// Tek kod noktasına basit katlama (regex büyük/küçük harf duyarsız eşleşme); çok karakterli katlamalar kendisini döner.
+pub fn foldSimple(cp: u32) u32 {
+    if (cp < 0x80) return std.ascii.toLower(@intCast(cp));
+    if (lookup(&data.casefold_map, cp)) |m| if (m[1] == 0) return m[0];
+    return cp;
+}
+
+/// Tek kod noktasına basit büyük harf eşlemesi.
+pub fn upperSimple(cp: u32) u32 {
+    if (cp < 0x80) return std.ascii.toUpper(@intCast(cp));
+    if (lookup(&data.upper_map, cp)) |m| if (m[1] == 0) return m[0];
+    return cp;
+}
+
 /// `nox_str_char_class` Unicode yolu: `true` ise tüm koşullar sağlanır (boş dize → `false`).
 pub fn charClass(s: []const u8, kind: Kind) bool {
     if (s.len == 0) return false;

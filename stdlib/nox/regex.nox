@@ -1,21 +1,209 @@
-# Stdlib fazı V.6 — nox.regex: temel bir regex/desen-eşleştirme alt kümesi.
-# `runtime/stdlib_shims/regex.zig`ye sarar (Kernighan'ın KLASİK minimal
-# backtracking regex algoritmasının genişletilmiş bir versiyonu — bkz.
-# onun belge notu, TAM bir regex motoru DEĞİL).
-#
-# Desteklenenler: literal karakterler, `.`, `*`/`+`/`?`, `^`/`$`,
-# `[abc]`/`[a-z]`/`[^abc]`. Desteklenmeyenler (bilinçli v1 kapsam DIŞI):
-# gruplama `(...)`, yakalama grupları, alternasyon `a|b`, geri-referanslar,
-# `{m,n}`, escape dizileri (`\d`/`\w` vb.).
+# TODO 8.8 — nox.regex: Python `re` alt kümesi (grup, alternation, {m,n}, \d\w\s\b, geri başvuru, ileri bakış).
+# Motor `runtime/stdlib_shims/regex.zig`dedir (açık yığınlı geri-izleme VM'i); bu dosya Python benzeri yüzeyi kurar.
+# Konumlar BAYT indeksidir (`Match.start`/`end`); `Match.text`/`group()` alt dizeleri doğru verir.
 extern def nox_regex_is_match_raw(pattern: str, text: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_regex_find_raw(pattern: str, text: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_regex_error_raw(pattern: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_regex_group_count_raw(pattern: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_regex_group_names_raw(pattern: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_regex_exec_all_raw(pattern: str, text: str, start: int, flags: int, limit: int) -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_regex_slice_raw(text: str, start: int, end: int) -> str from "zig-out/lib/noxrt.o" with_rt
 
-# `pattern`in `text` içinde HERHANGİ bir yerde eşleşip eşleşmediğini
-# (`pattern` `^` ile BAŞLIYORSA yalnızca BAŞTAN) döner.
+IGNORECASE: int = 1
+MULTILINE: int = 2
+DOTALL: int = 4
+ANCHORED: int = 8
+FULL: int = 16
+_END: int = 4611686018427387904
+
+class RegexError(Exception):
+    pass
+
+class Match:
+    def __init__(self, text: str, spans: list[int], names: list[str]) -> None:
+        self.text: str = text
+        self.spans: list[int] = spans
+        self.names: list[str] = names
+        self.start: int = spans[0]
+        self.end: int = spans[1]
+
+    def count(self) -> int:
+        return len(self.spans) // 2 - 1
+
+    def matched(self, i: int) -> bool:
+        if i < 0 or i * 2 + 1 >= len(self.spans):
+            return False
+        return self.spans[i * 2] >= 0
+
+    def group(self, i: int) -> str:
+        if i < 0 or i * 2 + 1 >= len(self.spans):
+            raise IndexError("no such group")
+        if self.spans[i * 2] < 0:
+            return ""
+        return nox_regex_slice_raw(self.text, self.spans[i * 2], self.spans[i * 2 + 1])
+
+    def index_of(self, name: str) -> int:
+        i: int = 0
+        while i < len(self.names):
+            if self.names[i] == name:
+                return i + 1
+            i += 1
+        return -1
+
+    def named(self, name: str) -> str:
+        k: int = self.index_of(name)
+        if k < 0:
+            raise IndexError("no such group")
+        return self.group(k)
+
+    def groups(self) -> list[str]:
+        out: list[str] = []
+        i: int = 1
+        while i <= self.count():
+            out.append(self.group(i))
+            i += 1
+        return out
+
+    def whole(self) -> str:
+        return self.group(0)
+
+def _check(pattern: str) -> None:
+    msg: str = nox_regex_error_raw(pattern)
+    if len(msg) > 0:
+        raise RegexError("invalid regular expression '" + pattern + "': " + msg)
+
+def _names(pattern: str) -> list[str]:
+    raw: str = nox_regex_group_names_raw(pattern)
+    if nox_regex_group_count_raw(pattern) == 0:
+        return []
+    return raw.split("\n")
+
+def _matches(pattern: str, text: str, start: int, flags: int, limit: int) -> list[Match]:
+    _check(pattern)
+    flat: list[int] = nox_regex_exec_all_raw(pattern, text, start, flags, limit)
+    names: list[str] = _names(pattern)
+    per: int = (nox_regex_group_count_raw(pattern) + 1) * 2
+    out: list[Match] = []
+    i: int = 0
+    while i + per <= len(flat):
+        out.append(Match(text, flat[i:i + per], names))
+        i += per
+    return out
+
+# `pattern` metnin HERHANGİ bir yerinde eşleşirse ilk eşleşmeyi, yoksa None döner.
+def search(pattern: str, text: str, flags: int = 0) -> Match | None:
+    ms: list[Match] = _matches(pattern, text, 0, flags, 1)
+    if len(ms) == 0:
+        return None
+    return ms[0]
+
+# Yalnızca metnin BAŞINDA eşleşme (Python `re.match`).
+def match(pattern: str, text: str, flags: int = 0) -> Match | None:
+    ms: list[Match] = _matches(pattern, text, 0, flags | 8, 1)
+    if len(ms) == 0:
+        return None
+    return ms[0]
+
+# Tüm metnin eşleşmesi gerekir (Python `re.fullmatch`).
+def full_match(pattern: str, text: str, flags: int = 0) -> Match | None:
+    ms: list[Match] = _matches(pattern, text, 0, flags | 8 | 16, 1)
+    if len(ms) == 0:
+        return None
+    return ms[0]
+
+def is_full_match(pattern: str, text: str, flags: int = 0) -> bool:
+    return full_match(pattern, text, flags) is not None
+
+# Eski API: geçersiz desende istisna FIRLATMAZ (false/-1).
 def is_match(pattern: str, text: str) -> bool:
     return nox_regex_is_match_raw(pattern, text) != 0
 
-# İlk eşleşmenin BAŞLADIĞI 0-tabanlı bayt indeksini döner, eşleşme YOKSA
-# `-1`.
 def find(pattern: str, text: str) -> int:
     return nox_regex_find_raw(pattern, text)
+
+def find_matches(pattern: str, text: str, flags: int = 0) -> list[Match]:
+    return _matches(pattern, text, 0, flags, 0)
+
+# Tüm eşleşmelerin metinleri (grup 0).
+def find_all(pattern: str, text: str, flags: int = 0) -> list[str]:
+    out: list[str] = []
+    for m in _matches(pattern, text, 0, flags, 0):
+        out.append(m.group(0))
+    return out
+
+def split(pattern: str, text: str, flags: int = 0) -> list[str]:
+    out: list[str] = []
+    last: int = 0
+    for m in _matches(pattern, text, 0, flags, 0):
+        if m.end == m.start and m.start == 0:
+            continue
+        out.append(nox_regex_slice_raw(text, last, m.start))
+        last = m.end
+    out.append(nox_regex_slice_raw(text, last, _END))
+    return out
+
+def _expand(repl: str, m: Match) -> str:
+    out: str = ""
+    i: int = 0
+    n: int = len(repl)
+    while i < n:
+        ch: str = repl[i]
+        if ch != "\\" or i + 1 >= n:
+            out = out + ch
+            i += 1
+            continue
+        nx: str = repl[i + 1]
+        if nx.isdigit():
+            j: int = i + 1
+            num: int = 0
+            digits: int = 0
+            while j < n and repl[j].isdigit() and digits < 2:
+                num = num * 10 + int(repl[j])
+                j += 1
+                digits += 1
+            out = out + m.group(num)
+            i = j
+        elif nx == "g" and i + 2 < n and repl[i + 2] == "<":
+            rest: str = repl[i + 3:]
+            off: int = rest.find(">")
+            if off < 0:
+                raise RegexError("bad group reference in replacement")
+            close: int = i + 3 + off
+            ref: str = repl[i + 3:close]
+            if len(ref) > 0 and ref.isdigit():
+                out = out + m.group(int(ref))
+            else:
+                out = out + m.named(ref)
+            i = close + 1
+        elif nx == "n":
+            out = out + "\n"
+            i += 2
+        elif nx == "t":
+            out = out + "\t"
+            i += 2
+        elif nx == "\\":
+            out = out + "\\"
+            i += 2
+        else:
+            out = out + ch + nx
+            i += 2
+    return out
+
+# `repl` içinde `\1`, `\g<ad>`, `\g<1>`, `\\`, `\n`, `\t` kullanılabilir. `count > 0` ise en çok `count` eşleşme değiştirilir.
+def replace(pattern: str, repl: str, text: str, flags: int = 0, count: int = 0) -> str:
+    out: str = ""
+    last: int = 0
+    for m in _matches(pattern, text, 0, flags, count):
+        out = out + nox_regex_slice_raw(text, last, m.start) + _expand(repl, m)
+        last = m.end
+    return out + nox_regex_slice_raw(text, last, _END)
+
+# Desendeki özel karakterleri kaçışlar (düz metni desen olarak kullanmak için).
+def escape(s: str) -> str:
+    out: str = ""
+    for ch in s:
+        if ch in "\\.^$*+?{}[]|()-":
+            out = out + "\\" + ch
+        else:
+            out = out + ch
+    return out

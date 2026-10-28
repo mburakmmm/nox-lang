@@ -609,7 +609,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
     const kind: ast.StmtKind = switch (s.kind) {
         .expr_stmt => |e| .{ .expr_stmt = try renameExpr(a, e, map) },
         .var_decl => |v| .{ .var_decl = .{ .name = v.name, .type_expr = try renameTypeExpr(a, v.type_expr, map), .value = try renameExpr(a, v.value, map) } },
-        .assign => |asg| .{ .assign = .{ .target = try renameExpr(a, asg.target, map), .value = try renameExpr(a, asg.value, map) } },
+        .assign => |asg| .{ .assign = .{ .target = try renameExpr(a, asg.target, map), .value = try renameExpr(a, asg.value, map), .ann = if (asg.ann) |ann| try renameTypeExpr(a, ann, map) else null } },
         .if_stmt => |f| blk: {
             const elifs = try a.alloc(ast.ElifClause, f.elif_clauses.len);
             for (f.elif_clauses, 0..) |ec, i| elifs[i] = .{ .cond = try renameExpr(a, ec.cond, map), .body = try renameStmts(a, ec.body, map) };
