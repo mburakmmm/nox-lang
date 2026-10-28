@@ -54,6 +54,8 @@ pub const Param = struct {
     variadic: bool = false,
     /// `**kwargs: T`: `var_kw == true` iken `type_expr` her zaman `dict[str, T]`dir; eşleşmeyen anahtar-kelime argümanları çağrı yerinde bir sözlük literaline paketlenir.
     var_kw: bool = false,
+    /// Anahtar-sözcüğe-özel parametre: çıplak `*` ya da `*args`tan SONRA gelen parametreler yalnızca `ad=değer` ile verilebilir.
+    kw_only: bool = false,
     type_expr: TypeExpr,
     /// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): `true` İSE bu,
     /// bir sınıf/protokol metodunun `self` parametresidir VE kullanıcı

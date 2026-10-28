@@ -1460,6 +1460,20 @@ test "golden(typecheck): **kwargs yalnızca anahtar-kelime alır; fazladan konum
     );
 }
 
+test "golden(typecheck): anahtar-sözcüğe-özel parametreye konumsal argüman verilemez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_keyword_only_positional.nox"),
+        @embedFile("typecheck_cases/err_keyword_only_positional.expected"),
+    );
+}
+
+test "golden(typecheck): *liste açma yalnızca *args parametresine bağlanır" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_star_call_without_varargs.nox"),
+        @embedFile("typecheck_cases/err_star_call_without_varargs.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

@@ -313,7 +313,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 Bu maddeler doğruluk açığı değil, belgelenmiş kapsam genişletmeleridir. Her biri
 ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
 
-- [~] **8.1 `*args` / `**kwargs`, keyword-only ve call-site unpacking.** (v2.0.49: `*args: T` UYGULANDI — fonksiyon/metod/generic şablon, gövdede `list[T]`, boş çağrı boş liste, anahtar kelimeyle verilemez, son parametre olmalı, formatter korur; iki backend golden + 2 typecheck hatası. v2.0.51: `**kwargs: T` da eklendi (dict[str, T], *args ile birlikte, iki backend golden + 2 hata). Açık: `f(*xs)` çağrı yerinde açma (yeni ifade türü gerekir), anahtar-sözcüğe-özel parametre.)
+- [~] **8.1 `*args` / `**kwargs`, keyword-only ve call-site unpacking.** (v2.0.49: `*args: T` UYGULANDI — fonksiyon/metod/generic şablon, gövdede `list[T]`, boş çağrı boş liste, anahtar kelimeyle verilemez, son parametre olmalı, formatter korur; iki backend golden + 2 typecheck hatası. v2.0.52: anahtar-sözcüğe-özel parametreler (`*` ve `*args` sonrası) ve çağrıda `f(*xs)` açma eklendi (liste kopyalanır; iki backend golden + 2 hata). v2.0.51: `**kwargs: T` da eklendi (dict[str, T], *args ile birlikte, iki backend golden + 2 hata). Açık: `f(**d)` sözlük açma, yalnızca-konumsal `/` işaretçisi.)
 - [!] **8.2 Çoklu kalıtım.** MRO, field layout, protocol ve ARC etkisi.
 - [~] **8.3 Class-level attributes ve static/class/property yüzeyi.** (v2.0.47: sınıf düzeyi SABİTLER uygulandı — `NAME: T = literal`, `Sınıf.NAME`/`self.NAME` okuması literal değere katlanır, miras alınır, atama/ifade/çift tanım net hata verir; formatter korur; iki backend golden + 4 typecheck hatası. Açık: değişebilir sınıf özniteliği, static/classmethod, property.)
 - [~] **8.4 Annotated `self.x: T = v` ve nested empty literal inference.** (v2.0.39: `self.x: T = v` UYGULANDI — alanı tanımlar, boş literal/Optional için beklenen tip verir, formatter yüzey biçimini korur, iki backend golden + 2 typecheck hatası; `__init__` dışında yeni alan reddedilir. Açık: iç içe boş literal çıkarımı (`list[list[int]]` içinde `[]`).)
@@ -343,11 +343,11 @@ ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
   uygulama günlüğü korunurken güncel dil sözleşmesine tek, indeksli giriş
   sağlanmalı.
 
-## Faz 10 — Nox kodunu WASM'a derleme (ÖNERİ, kullanıcı kararı bekliyor)
+## Faz 10 — Nox kodunu WASM'a derleme (ONAYLANDI; Faz 8 bittikten sonra)
 
 **Çelişki:** `AGENTS.md` değişmez ilke #5 ("WASM entegrasyonu bir derleme hedefi değildir, yalnızca bir kütüphane içe aktarma mekanizmasıdır") ve §11 bu özelliği açıkça yasaklar. Kullanıcı (2026-10-29) "Nox kodu LLVM üzerinden WASM'a derlenebilsin, tam eksiksiz" istedi. Ajan ilkeyi tek başına değiştiremez (AGENTS §2): önce kullanıcı ilke #5'in yeni metnini onaylamalıdır. Önerilen yeni metin: "WASM, LLVM backend'i üzerinden bir DERLEME HEDEFİDİR (`--target wasm32-wasi`, ileride `wasm32-freestanding`); QBE'ye WASM backend'i eklenmez. Gömülü WASM yorumlayıcısı (kütüphane içe aktarma) ayrı bir mekanizma olarak kalır."
 
-- [!] **10.1 İlke #5 ve §11 değişikliğini onayla.** AGENTS.md, nox-teknik-spesifikasyon.md ve `docs/internals/hpy-wasm.md` birlikte güncellenir.
+- [x] **10.1 İlke #5 ve §11 değişikliğini onayla.** (2026-10-29 kullanıcı onayı: ilke #5 güncellendi — WASM LLVM üzerinden derleme hedefidir, QBE'ye WASM eklenmez. Sıra: önce Faz 8 biter, sonra Faz 10. Kullanıcı isteği: asenkron mümkün olduğunca simüle edilerek hatasız çalışsın.) AGENTS.md, nox-teknik-spesifikasyon.md ve `docs/internals/hpy-wasm.md` birlikte güncellenir.
 - [ ] **10.2 Hedef tanımı.** `--target wasm32-wasi` (WASI preview1: dosya, saat, rastgelelik, argv/env, stdout) ve `wasm32-freestanding` (tarayıcı/gömülü: host ithalatları). Yalnızca LLVM backend; QBE reddedilir (mobil hedeflerle aynı desen).
 - [ ] **10.3 Runtime taşıması.** Zig runtime'ı `wasm32-wasi` için derle: fiber değiştirme (`swap_*.S` WASM'da yok: stack switching yok, ya `asyncify` benzeri dönüşüm ya da fiber'ları tek yığında devam-geçiş stiline çevirme gerekir; en büyük risk), `nox.thread`/M:N havuz yok, ağ/soket yok (WASI preview1), `dlopen` tabanlı sürücüler (sqlite/postgres/mysql/tls_server) yok.
 - [ ] **10.4 Yetenek maskesi.** Mobil maskesine benzer `wasm` maskesi: `nox.process`, `nox.thread`, `nox.http` sunucu, `nox.mysql/postgres/sqlite`, `nox.tls`, HPy/extern def (yerel kütüphane) reddedilir; saf hesap, `fs`/`os`/`time`/`random` WASI üzerinden açılır.

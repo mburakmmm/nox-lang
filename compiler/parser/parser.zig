@@ -552,10 +552,21 @@ pub const Parser = struct {
         _ = try self.expect(.l_paren);
 
         var params = std.ArrayList(ast.Param).empty;
+        var kw_only_mode = false;
         if (!self.check(.r_paren)) {
             try params.append(self.allocator, try self.parseFirstParam(enclosing_name));
+            if (params.items[0].variadic) kw_only_mode = true;
             while (self.match(.comma)) {
-                try params.append(self.allocator, try self.parseParam());
+                // çıplak `*`: sonraki parametreler anahtar-sözcüğe-özeldir
+                if (self.check(.star) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .comma) {
+                    _ = self.advance();
+                    kw_only_mode = true;
+                    continue;
+                }
+                var np = try self.parseParam();
+                if (kw_only_mode and !np.variadic and !np.var_kw) np.kw_only = true;
+                if (np.variadic) kw_only_mode = true;
+                try params.append(self.allocator, np);
             }
         }
         _ = try self.expect(.r_paren);
@@ -565,9 +576,11 @@ pub const Parser = struct {
                 self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "a '**kwargs' parameter must be the last parameter" };
                 return error.UnexpectedToken;
             }
-            if (pp.variadic and (pi + 1 != params.items.len and !(pi + 2 == params.items.len and params.items[pi + 1].var_kw))) {
-                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "a '*args' parameter must be the last parameter (keyword-only parameters are not supported)" };
-                return error.UnexpectedToken;
+            if (pp.variadic) {
+                for (params.items[0..pi]) |earlier| if (earlier.variadic) {
+                    self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "only one '*args' parameter is allowed" };
+                    return error.UnexpectedToken;
+                };
             }
         }
         _ = try self.expect(.arrow);
@@ -664,6 +677,16 @@ pub const Parser = struct {
     /// Bir çağrının TEK argümanı: `ifade` ya da `ad=ifade` (keyword). Python kuralı: bir keyword argümandan SONRA
     /// konumsal argüman gelemez (`saw_kw` bunu izler).
     fn parseCallArg(self: *Parser, saw_kw: *bool) ParseError!ast.Expr {
+        // `*liste`: konumsal açma; içsel olarak `Kwarg{ name = "*" }` olarak taşınır (checker `*args` parametresine bağlar).
+        if (self.check(.star)) {
+            if (saw_kw.*) {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()) };
+                return error.UnexpectedToken;
+            }
+            _ = self.advance();
+            const inner = try self.parseExpr();
+            return .{ .kwarg = .{ .name = "*", .value = try self.box(inner) } };
+        }
         if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .assign) {
             const name = self.advance().lexeme;
             _ = self.advance(); // `=`

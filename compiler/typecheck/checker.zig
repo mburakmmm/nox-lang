@@ -2127,7 +2127,7 @@ pub const Checker = struct {
     /// v1.147.0: keyword (`ad=değer`) ve eksik (varsayılanlı) argümanları parametre sırasına dizip TAM konumsal bir argüman
     /// listesi üretir. Argümanlar parametre SIRASIYLA değerlendirilir (yazılış sırasıyla değil).
     fn anyVariadic(decl: []const ast.Param) bool {
-        for (decl) |p| if (p.variadic or p.var_kw) return true;
+        for (decl) |p| if (p.variadic or p.var_kw or p.kw_only) return true;
         return false;
     }
 
@@ -2150,7 +2150,23 @@ pub const Checker = struct {
         };
         var kw_pairs: std.ArrayListUnmanaged(ast.DictPair) = .empty;
         defer kw_pairs.deinit(self.allocator);
+        // Konumsal kapasite: ilk "konumsal olmayan" parametrenin (anahtar-sözcüğe-özel, `*args`, `**kwargs`) indeksi.
+        var pos_cap: usize = n;
+        for (decl, 0..) |p, j| if (p.kw_only or p.variadic or p.var_kw) {
+            pos_cap = @min(pos_cap, j);
+        };
+        var star_value: ?ast.Expr = null;
         for (args, 0..) |a, i| {
+            if (a == .kwarg and std.mem.eql(u8, a.kwarg.name, "*")) {
+                // `f(*xs)`: yalnızca `*args` parametresi tam bu konumdaysa ve ondan önceki tüm konumsallar doldurulmuşsa geçerlidir.
+                if (variadic_idx == null or i != variadic_idx.? or star_value != null) {
+                    return self.fail(error.ArgumentCountMismatch, "'{s}': '*' unpacking in a call needs a '*args' parameter exactly at that position", .{name});
+                }
+                const copy_callee = try self.allocator.create(ast.Expr);
+                copy_callee.* = .{ .attribute = .{ .obj = a.kwarg.value, .attr = "copy" } };
+                star_value = .{ .call = .{ .callee = copy_callee, .args = &.{} } };
+                continue;
+            }
             if (a == .kwarg) {
                 var found: ?usize = null;
                 for (decl, 0..) |p, j| {
@@ -2168,8 +2184,9 @@ pub const Checker = struct {
                 if (variadic_idx != null and j == variadic_idx.?) return self.fail(error.ArgumentCountMismatch, "'{s}': the '*{s}' parameter takes positional arguments only", .{ name, a.kwarg.name });
                 if (slots[j] != null) return self.fail(error.ArgumentCountMismatch, "in the call to '{s}', parameter '{s}' was given more than once", .{ name, a.kwarg.name });
                 slots[j] = a.kwarg.value.*;
-            } else if (variadic_idx != null and i >= variadic_idx.? or (kw_idx != null and variadic_idx == null and i >= kw_idx.?)) {
-                if (variadic_idx == null) return self.fail(error.ArgumentCountMismatch, "'{s}' takes at most {d} positional arguments, {d} were given", .{ name, kw_idx.?, args.len });
+            } else if (i >= pos_cap) {
+                if (variadic_idx == null) return self.fail(error.ArgumentCountMismatch, "'{s}' takes at most {d} positional arguments, {d} were given", .{ name, pos_cap, args.len });
+                if (star_value != null) return self.fail(error.ArgumentCountMismatch, "'{s}': positional arguments after a '*' unpacking are not supported", .{name});
                 try extras.append(self.allocator, a);
             } else {
                 if (i >= n) return self.fail(error.ArgumentCountMismatch, "'{s}' takes at most {d} arguments, {d} were given", .{ name, n, args.len });
@@ -2177,7 +2194,7 @@ pub const Checker = struct {
             }
         }
         if (variadic_idx) |vi| {
-            slots[vi] = .{ .list_lit = try self.allocator.dupe(ast.Expr, extras.items) };
+            slots[vi] = star_value orelse ast.Expr{ .list_lit = try self.allocator.dupe(ast.Expr, extras.items) };
         }
         if (kw_idx) |ki| {
             slots[ki] = .{ .dict_lit = try self.allocator.dupe(ast.DictPair, kw_pairs.items) };
@@ -2192,6 +2209,7 @@ pub const Checker = struct {
             var last_effect_slot: ?usize = null;
             for (args, 0..) |a, i| {
                 var slot_idx: usize = if (variadic_idx) |vi| @min(i, vi) else i;
+                if (a == .kwarg and std.mem.eql(u8, a.kwarg.name, "*")) continue;
                 var val = a;
                 if (a == .kwarg) {
                     for (decl, 0..) |p, j| {

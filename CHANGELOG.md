@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.52]
+
+### Eklendi
+
+- Anahtar-sozcuge-ozel parametreler: cipak `*` ya da `*args` sonrasi parametreler yalnizca `ad=deger` ile verilir. Cagri yerinde `f(a, *xs)` listeyi `*args` parametresine acar (liste kopyalanir). `noxc fmt` korur. `f(**d)` ve `/` isaretcisi yok.
+
 ## [2.0.51]
 
 ### Eklendi

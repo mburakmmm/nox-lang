@@ -622,8 +622,16 @@ const Printer = struct {
     }
 
     fn printParams(self: *Printer, params: []const ast.Param) FormatError!void {
+        var star_printed = false;
+        for (params) |q| if (q.variadic) {
+            star_printed = true;
+        };
         for (params, 0..) |p, idx| {
             if (idx > 0) try self.writer.writeAll(", ");
+            if (p.kw_only and !star_printed) {
+                try self.writer.writeAll("*, ");
+                star_printed = true;
+            }
             // Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): kullanıcı
             // çıplak `self` YAZDIYSA (`self_inferred`), formatlayıcı bunu
             // `self: ClassName`e "GENİŞLETMEZ" — `type_expr` parser
@@ -790,6 +798,11 @@ const Printer = struct {
                 if (need_parens) try self.writer.writeAll(")");
             },
             .kwarg => |k| {
+                if (std.mem.eql(u8, k.name, "*")) {
+                    try self.writer.writeAll("*");
+                    try self.printExpr(k.value.*);
+                    return;
+                }
                 try self.writer.print("{s}=", .{k.name});
                 try self.printExpr(k.value.*);
             },

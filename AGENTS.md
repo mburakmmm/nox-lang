@@ -29,7 +29,7 @@ Bu kurallar hiçbir görev, optimizasyon veya "geçici çözüm" gerekçesiyle i
 2. **Tip sistemi her yerde zorunlu ve statiktir — `lowlevel` blok dahil.** `lowlevel`, yalnızca bellek tahsis stratejisini (Arena/pool/raw pointer) gevşetir; hiçbir zaman bir dinamik tipleme kaçış kapısı olarak kullanılmaz.
 3. **QBE çıktısında hiçbir zaman unwind tablosu / landing pad üretilmez.** Hata yayılımı yalnızca örtük error-union dönüş zinciriyle yapılır.
 4. **C eklentilerine hiçbir zaman ham `PyObject*` veya Nox nesnesinin bellek adresi verilmez.** Tüm dış erişim opaque handle üzerinden geçer.
-5. **WASM entegrasyonu bir derleme hedefi değildir**, yalnızca bir kütüphane içe aktarma mekanizmasıdır. QBE'ye WASM backend'i eklemeye çalışan kod bu depoya kabul edilmez.
+5. **WASM, LLVM backend'i üzerinden bir DERLEME HEDEFİDİR** (`--target wasm32-wasi`, ardından `wasm32-freestanding`; kullanıcı kararı, 2026-10-29: dil oturduğu için ilk aşama kısıtı kaldırıldı). **QBE'ye WASM backend'i eklenmez** ve bu hedefte de diğer ilkeler (örtük hata zinciri, unwind tablosu yok, opak handle) aynen geçerlidir. Gömülü WASM yorumlayıcısı (WASM modüllerini Nox'a kütüphane gibi içe aktarma) ayrı bir mekanizma olarak kalır.
 6. **Global/gizli mutable state yasak.** Runtime, allocator'ları her zaman açıkça parametre olarak alır (Zig idiomu). **Dar, belgelenmiş istisna:** freestanding runtime'ın kendi tek-seferlik bootstrap durumu (ör. `lib_freestanding.zig`'in `g_kernel_fba_ready`/`g_kernel_alloc_fn`/`g_kernel_free_fn`'i, bkz. §3.197) bu yasağın kapsadığı genel/gizli runtime durumu DEĞİLDİR — `nox_freestanding_early_init`in `main`e atlanmadan ÖNCE, KOŞULSUZ ve tam olarak bir kez çalıştırdığı, dışa açık/belgelenmiş bir kurulum adımıdır.
 7. **Her yeni dil özelliği, en az bir "golden test" (kaynak → beklenen QBE IR/davranış) ile birlikte gelir.**
 
@@ -242,7 +242,7 @@ Hedef: **mümkün olan en geniş HPy/CPython API desteği**, önceliklendirilmi�
 
 - Gömülü WASM runtime seçimi (wasmtime/wasmer C API veya native Zig yorumlayıcı) `/runtime/wasm_bridge` altında izole edilir; derleyici bu seçimden habersizdir.
 - WASM modül export'ları, §10'daki aynı opaque handle sistemi üzerinden Nox'a sunulur — **iki ayrı FFI mekanizması yoktur, tek bir handle soyutlaması vardır.**
-- QBE'ye WASM backend eklemeye çalışan hiçbir görev kabul edilmez (bkz. İlke #5).
+- QBE'ye WASM backend eklemeye çalışan hiçbir görev kabul edilmez (bkz. İlke #5). Nox kodunu WASM'a derleme LLVM backend'iyle yapılır (`project/nox-ana-todo.md` Faz 10).
 
 ---
 
