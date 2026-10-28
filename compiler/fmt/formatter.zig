@@ -272,6 +272,10 @@ const Printer = struct {
             .assign => |a| {
                 try self.indentTo(depth);
                 try self.printExpr(a.target);
+                if (a.ann) |ann| {
+                    try self.writer.writeAll(": ");
+                    try self.printType(ann);
+                }
                 // v1.162.0: birleşik atama (`x += 1`) yüzey biçimini koru (parser `x = x + 1`e indirgemişti).
                 if (a.value == .binary and a.value.binary.is_form and isAugOp(a.value.binary.op)) {
                     try self.writer.print(" {s}= ", .{binOpStr(a.value.binary.op)});

@@ -270,6 +270,15 @@ pub const Parser = struct {
             }
             return .{ .var_decl = .{ .name = tmp_name, .type_expr = .{ .simple = "__infer" }, .value = rhs } };
         }
+        // `self.x: T = v` — açıklamalı alan atamasi (yalnızca `obj.alan` hedefi).
+        if (expr == .attribute and self.check(.colon)) {
+            _ = self.advance();
+            const ann = try self.parseTypeExpr();
+            _ = try self.expect(.assign);
+            const value = try self.parseExprOrTuple();
+            _ = try self.expect(.newline);
+            return .{ .assign = .{ .target = expr, .value = value, .ann = ann } };
+        }
         if (self.match(.assign)) {
             const value = try self.parseExprOrTuple();
             _ = try self.expect(.newline);

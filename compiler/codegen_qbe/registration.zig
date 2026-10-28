@@ -536,7 +536,8 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
                 }
             }
             if (exists) continue;
-            const ftype = try self.inferFieldType(cd.name, init.params[1..], a.value);
+            // `self.x: T = v`: bildirilen tip değerden çıkarılana (boş literal, çağrı vb.) tercih edilir.
+            const ftype = if (a.ann) |ann| try self.resolveType(ann) else try self.inferFieldType(cd.name, init.params[1..], a.value);
             const offset = if (info.layout_mode == .default)
                 field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE
             else

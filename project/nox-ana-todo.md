@@ -256,7 +256,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [x] **5.2 Windows belge/CI gerçeğini eşleştir.** (v2.0.37: `platforms.md`, `stability.md`, `releasing.md`, `faq.md` aynı ifadeyi kullanır: Debug `zig build test` korpusu + uçtan uca smoke; Release modları Windows'ta koşmaz.) CI tam `zig build test`
   çalıştırırken platform belgesi hâlâ yalnız smoke/full-suite yok diyor;
   gerçek kapsam ölçülüp tek doğru ifade kullanılmalı.
-- [ ] **5.3 macOS x86-64 CI ekle veya açıkça destek dışına çıkar.** Bugünkü
+- [x] **5.3 macOS x86-64 CI ekle veya açıkça destek dışına çıkar.** (v2.0.39 KARAR: destek matrisinin dışında; `platforms.md` "çalışması beklenir, CI/release matrisinde yok" der ve `scripts/check_doc_contracts.py` hedefin belgede geçmesini denetler. CI eklemek runner maliyeti ister.) Bugünkü
   durum “çalışması bekleniyor”, release matrisi yok.
 - [ ] **5.4 Hosted riscv64 korpusunu genişlet.** Dört smoke fixture yerine
   temsilî dil/runtime/exception/ARC/async matrisi ve düzenli CI.
@@ -269,19 +269,19 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 
 ## Faz 6 — P2 FFI, HPy, WASM ve native ekosistem
 
-- [!] **6.1 HPy profilinin ürün hedefini seç.** `nox-hpy-host-v1` çalışıyor
+- [x] **6.1 HPy profilinin ürün hedefini seç.** (v2.0.39 KARAR: `nox-hpy-host-v1` PREVIEW kalır; ölçütler `docs/internals/hpy-tier-gap.md`.) `nox-hpy-host-v1` çalışıyor
   fakat public stdlib'de preview. Stabilize etme ölçütleri ve sürüm politikası
   belirlenmeli.
-- [ ] **6.2 AGENTS HPy Tier tablosuyla gap matrisi çıkar.** Tier 0–3 API'leri
+- [x] **6.2 AGENTS HPy Tier tablosuyla gap matrisi çıkar.** (v2.0.39: `docs/internals/hpy-tier-gap.md` — var olan: HPy 0.9 Universal ABI host (180 ctx_*), paket akışı, gerçek fixture; YOK: `cpython_compat` katmanı, Tier 1-3 CPython emülasyonu.) Tier 0–3 API'leri
   mevcut host surface ile tek tek karşılaştır; destek iddiasını gerçek C
   extension fixture'larına bağla.
 - [ ] **6.3 HPy container/call surface'i genişlet.** List/tuple/dict,
   defaults/overload/variadic ve gelişmiş buffer davranışları yalnız ownership
   sözleşmesi ve gerçek extension testiyle eklenir.
-- [ ] **6.4 CPython uyumluluk iddiasını dürüstçe sınırla.** NumPy/Pandas
+- [x] **6.4 CPython uyumluluk iddiasını dürüstçe sınırla.** (v2.0.39: aynı sayfa; NumPy/Pandas desteklenmez, "as-is çalışır" denmez; AGENTS Tier tablosu yol haritası olarak işaretlendi.) NumPy/Pandas
   hedefi için gereken gerçek API matrisi, eksik semboller ve test programı
   hazırlanmalı; “as-is çalışır” denmemeli.
-- [ ] **6.5 WASM interpreter kapsam matrisi çıkar.** Bugünkü parser/interpreter
+- [~] **6.5 WASM interpreter kapsam matrisi çıkar.** (v2.0.39: `docs/internals/wasm-coverage.md` matrisi ve hedef yüzey sırası yazıldı; sonraki adım i32 sayısal komutları — ayrı sürüm.) Bugünkü parser/interpreter
   yalnız sınırlı instruction/value türlerini destekliyor. İstenen WASM
   surface'i belirle, trap/error ve fuzz korpusunu genişlet. WASM backend
   kesinlikle eklenmez.
@@ -291,16 +291,16 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 
 ## Faz 7 — P2 güvenlik ve tedarik zinciri
 
-- [!] **7.1 Paket imzalama tasarımı.** `nox.lock` commit/hash pinler ancak
+- [!] **7.1 Paket imzalama tasarımı.** (Ajan önerisi 2026-10-28, uygulanmadı: yayıncı başına ed25519 anahtarı noxpkg hesabına bağlanır, `nox.lock` imzayı ve anahtar parmak izini saklar, iptal listesi indeksle birlikte sunulur; ilk kullanımda güven (TOFU) + çevrimdışı doğrulama. Hesap altyapısı (noxpkg hesapları v2.0.28) hazır; trust root ve anahtar yenileme politikası kullanıcı kararı.) `nox.lock` commit/hash pinler ancak
   paket imzası/audit yoktur. Trust root, key rotation, revocation ve offline
   doğrulama ADR'si gerekir.
-- [!] **7.2 Capability enforcement tasarımı.** Plugin capability'leri bugün
+- [!] **7.2 Capability enforcement tasarımı.** (Ajan önerisi: önce Linux seccomp/macOS sandbox profilini `noxc run --sandbox` olarak ayrı süreç başlatıcıda dene; `extern def`e yarım mod ekleme. İşletim sistemi başına ayrı tasarım gerekir.) Plugin capability'leri bugün
   consent metadata'sıdır, sandbox değildir. OS-level enforcement ayrı tasarım
   olmadan vaat edilmez.
-- [!] **7.3 Untrusted source çalışma modeli.** `noxc run` tam süreç yetkisiyle
+- [!] **7.3 Untrusted source çalışma modeli.** (Ajan önerisi: 7.2 ile aynı başlatıcı; kapsayıcı imajı + salt-okunur kök + ağsız varsayılan. Ürün yüzeyi kararı kullanıcıda.) `noxc run` tam süreç yetkisiyle
   çalışır. İstenirse container/seccomp/sandbox launcher ayrı ürün yüzeyi
   olarak tasarlanır; `extern def`e yarım “safe mode” eklenmez.
-- [ ] **7.4 Registry güvenlik kapılarını genişlet.** Metadata approval,
+- [~] **7.4 Registry güvenlik kapılarını genişlet.** (v2.0.39: moderasyon, "metadata onayı kod incelemesi değildir", kilit dosyası = provenance, olay müdahale adımları `docs/reference/security.md`de. Açık: otomatik tarama, yayıncı imzası, üretilmiş SBOM — 7.1 tasarımına bağlı.) Metadata approval,
   malware/native-code uyarısı, provenance/SBOM ve incident response akışı
   belgelenip test edilmeli.
 - [~] **7.5 FFI sınır fuzzing'i ekle.** (v2.0.37: embed ABI için 300 turluk deterministik rastgele çağrı dizisi + bozuk yapılandırma/UTF-8/uzunluk fuzz testi; WASM ayrıştırıcı ve lexer/parser fuzz önceden vardı. Açık: NNI, Plugin API, HPy sınırı.) NNI, Plugin API, HPy, WASM ve embed
@@ -314,7 +314,7 @@ ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
 - [!] **8.1 `*args` / `**kwargs`, keyword-only ve call-site unpacking.**
 - [!] **8.2 Çoklu kalıtım.** MRO, field layout, protocol ve ARC etkisi.
 - [!] **8.3 Class-level attributes ve static/class/property yüzeyi.**
-- [!] **8.4 Annotated `self.x: T = v` ve nested empty literal inference.**
+- [~] **8.4 Annotated `self.x: T = v` ve nested empty literal inference.** (v2.0.39: `self.x: T = v` UYGULANDI — alanı tanımlar, boş literal/Optional için beklenen tip verir, formatter yüzey biçimini korur, iki backend golden + 2 typecheck hatası; `__init__` dışında yeni alan reddedilir. Açık: iç içe boş literal çıkarımı (`list[list[int]]` içinde `[]`).)
 - [!] **8.5 Closure içinde dış değişkene yazma (`nonlocal` eşdeğeri).**
 - [!] **8.6 Lazy generator/yield ve arbitrary await/async iteration.**
 - [!] **8.7 Unicode genişletmesi.** ASCII-only identifiers/case işlemleri,
@@ -325,10 +325,10 @@ ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
 
 ## Faz 9 — P3 performans, gözlemlenebilirlik ve belge doğruluğu
 
-- [ ] **9.1 Benchmark baseline'ını v2.0.27 ile yenile.** Güncel sonuç dosyası
+- [x] **9.1 Benchmark baseline'ını v2.0.27 ile yenile.** (v2.0.39: v2.0.38 ile koşuldu, 30/30+10/10+8/8+4/4; metadata RESULTS.md başında; bayat beklentiler ve kaldırılmış json API düzeltildi.) Güncel sonuç dosyası
   hâlâ eski `noxc 1.26.6` metadata'sı taşıyor. Makine, Zig, backend ve
   min/avg/max aynı koşuda kaydedilmeli.
-- [ ] **9.2 QBE/LLVM/C farklarını yeniden ölç.** Debug sonuç kullanılmaz;
+- [x] **9.2 QBE/LLVM/C farklarını yeniden ölç.** (v2.0.39: `cross_lang` 5 tekrar ortanca, ReleaseFast; gerileme yok; en büyük açıklar sieve/matmul/dict.) Debug sonuç kullanılmaz;
   ReleaseFast, uzun çalışan kernel ve istatistiksel tekrar zorunlu.
 - [ ] **9.3 Dict iki-lookup maliyetini incele.** Insertion order ve hash seed
   semantiğini bozmadan tek-lookup tasarımının değeri ölçülür.

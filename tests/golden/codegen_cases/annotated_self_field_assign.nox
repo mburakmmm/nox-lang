@@ -1,0 +1,31 @@
+class Node:
+    value: int
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+class Bag:
+    def __init__(self, label: str) -> None:
+        self.label: str = label
+        self.items: list[int] = []
+        self.index: dict[str, int] = {}
+        self.first: Node | None = None
+        self.total: float = 0
+        self.count: int = 0
+
+    def add(self, name: str, n: int) -> None:
+        self.items.append(n)
+        self.index[name] = n
+        self.total += n
+        self.count += 1
+        if self.first == None:
+            self.first = Node(n)
+
+b: Bag = Bag("bag")
+b.add("a", 3)
+b.add("b", 4)
+print(b.label)
+print(len(b.items))
+print(b.index["b"])
+print(b.total)
+print(b.count)
+print(b.first == None)

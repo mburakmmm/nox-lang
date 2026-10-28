@@ -5691,6 +5691,23 @@ pub const Checker = struct {
                 // (bkz. `checkExprExpected`in belge notu) — bu YÜZDEN
                 // ÖNCE bakılır, `checkExpr` ÇAĞRILMADAN.
                 const existing_field_t = info.fields.get(attr.attr);
+                // `self.x: T = v`: bildirilen tip alanı tanımlar (değerden çıkarılmaz) ve boş literal için beklenen tipi verir.
+                if (a.ann) |ann_te| {
+                    const declared_t = try self.typeExprToType(ann_te);
+                    if (existing_field_t) |ex| {
+                        if (!types.eql(ex, declared_t)) {
+                            return self.fail(error.TypeMismatch, "the annotation of '{s}.{s}' does not match the declared field type", .{ class_name, attr.attr });
+                        }
+                    } else if (!(is_self and ctx.is_init)) {
+                        return self.fail(error.UndefinedAttribute, "in class '{s}', field '{s}' can only be defined in __init__ with 'self.{s}: T = ...'", .{ class_name, attr.attr, attr.attr });
+                    }
+                    const ann_value_t = try self.checkExprExpected(ctx, a.value, declared_t);
+                    if (!try self.assignableOrCoerce(declared_t, ann_value_t, &a.value)) {
+                        return self.fail(error.TypeMismatch, "type mismatch for '{s}.{s}'", .{ class_name, attr.attr });
+                    }
+                    if (existing_field_t == null) try info.fields.put(self.allocator, attr.attr, declared_t) else _ = info.declared_unassigned.remove(attr.attr);
+                    return;
+                }
                 const value_t = try self.checkExprExpected(ctx, a.value, existing_field_t);
                 if (existing_field_t) |existing_t| {
                     if (!try self.assignableOrCoerce(existing_t, value_t, &a.value)) {

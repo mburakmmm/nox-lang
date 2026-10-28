@@ -361,6 +361,8 @@ pub const VarDecl = struct {
 pub const Assign = struct {
     target: Expr,
     value: Expr,
+    /// `self.x: T = v` (yalnızca alan hedefi): alanın bildirilen tipi. Alanı tanımlar (tipi değerden çıkarılmaz) ve boş literal için beklenen tipi verir.
+    ann: ?TypeExpr = null,
 };
 
 pub const ExceptClause = struct {

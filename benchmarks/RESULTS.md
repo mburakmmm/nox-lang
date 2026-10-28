@@ -4,15 +4,14 @@
 
 **Faz P2.5 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi" planı):** `run.zig` artık HER koşunun başında makine/derleyici-sürümü bilgisini (OS/mimari/CPU çekirdek sayısı, `zig` sürümü, derleme modu, `noxc --version`) basıyor — bu dosyanın AŞAĞIDAKİ tabloları BU metadata EKLENMEDEN ÖNCEKİ koşulardan alındığından geriye dönük olarak eklenmedi (bkz. git geçmişi/orijinal koşu ortamı bilinmiyor); BUNDAN SONRAKİ her yeni koşu çıktısının EN ÜSTÜNDE bu bilgi otomatik olarak yer alacak. Her satır ayrıca artık yalnızca `min` DEĞİL, `min`/`max`/`ort` (ortalama) üçünü de raporluyor — bir sayının GERÇEKTEN istikrarlı mı yoksa gürültülü mü olduğunu (ör. `min=5ms` ama `max=50ms` olabilir) görünür kılmak için.
 
-**En güncel koşu metadata'sı (Faz GG.16, bkz. §3.66 — `list_traversal`in
-çağrı-sınırı ötesi yığın slotu genellemesi SONRASI):**
-`ortam: macos-aarch64 (apple_m4), 10 mantıksal çekirdek` —
-`derleyici: zig 0.16.0` — `derleme modu: ReleaseFast` — `noxc: noxc 1.26.6`.
+**En güncel koşu (v2.0.38, 2026-10-28, TODO 9.1):** `ortam: macos-aarch64 (apple_m4), 10 mantıksal çekirdek` — `derleyici: zig 0.16.0` — `derleme modu: ReleaseFast` — `noxc: noxc 2.0.38` — varsayılan backend LLVM. `zig build bench -Doptimize=ReleaseFast` çıktısı bu dosyanın SONUNDAKİ "Ham çıktı" bölümündedir (min/max/ort, 30/30 stres, 10/10 karşılaştırma, 8/8 Rust stdlib, 4/4 Rust crate geçti).
+
+**Bu koşudan çıkan düzeltmeler:** (1) beklenen çıktılar bayattı: float yazımı `%g`den Python repr biçimine geçtiğinden (`2e+14` yerine `200000421327199.94`) dört beklenti güncellendi ve artık Python/Rust beklentileriyle aynıdır; (2) `json_bench` ve `http_compare/nox_json_server` kaldırılmış `nox.json.decode/encode` adlarını kullanıyordu, `parse/dump`a taşındı. **Tarihsel tablolar uyarısı:** aşağıdaki Bölüm 1-5 tabloları QBE dönemindeki eski koşulardandır ve güncel koşuyla KARŞILAŞTIRILAMAZ: varsayılan LLVM -O2 `tight_loop_arithmetic` gibi saf hesap döngülerini sabit değere indirger (501 ms yerine ~2.4 ms). Gerçek hız karşılaştırması için çapraz-dil kernel'lerine (aşağı) bakın.
 
 **Çapraz-dil benchmark (v1.142.5):** uzun çalışan 10 kernel'in Nox/C/Go/Node/Python karşılaştırması
 `benchmarks/cross_lang/` altında (README + `build.sh` + `run.py`); aşağıdaki `zig build bench`
 bölümleri kısa iş yüklerinde süreç başlangıcıyla bulanıktır, gerçek hız için oraya bakın.
-C'ye göre geometrik ortalama: Nox QBE 2.45×, Nox LLVM 2.17×, Go 1.28×, Node 5.43×, Python 23.2×.
+C'ye göre geometrik ortalama (v1.158.0): Nox QBE 2.45×, Nox LLVM 2.17×, Go 1.28×, Node 5.43×, Python 23.2×. v2.0.38 yeniden ölçümü `benchmarks/cross_lang/README.md`de: tablodaki her kernel v1.158.0 değerlerinin ±%8'i içinde, gerileme yok.
 
 ## Bölüm 1 — Stres testleri (yalnızca Nox, büyük N)
 
@@ -1470,3 +1469,253 @@ madde BİLİNÇLİ olarak kapsam DIŞI bırakıldı (unutulmadı — her biri KE
 planlama/tasarım turunu HAK EDEN AYRI bir görev): `nox.regex` tam motor,
 `nox.strings` StringBuilder/UTF-8 farkındalığı, `nox.json` Serialize/
 Deserialize, `dict.remove()`, `nox.os` süreç oluşturma.
+
+## Ham çıktı — `zig build bench -Doptimize=ReleaseFast` (v2.0.38)
+
+```text
+nox benchmark suite
+====================
+ortam: macos-aarch64 (apple_m4), 10 mantiksal cekirdek
+derleyici: zig 0.16.0
+derleme modu: ReleaseFast
+noxc: noxc 2.0.38
+
+not: Debug modunda çalışma zamanı `std.heap.DebugAllocator` kullanır
+(sızıntı tespiti açık, ama yüksek hacimli tahsis/serbest bırakma
+döngülerinde YAPAY OLARAK YAVAŞ). `-Doptimize=ReleaseFast` ile
+derlenirse `std.heap.smp_allocator`a (üretim kalitesinde, sızıntı
+tespiti kapalı) geçilir — gerçekçi/karşılaştırmalı sayılar için bunu
+kullanın (bkz. runtime/alloc/asap.zig, nox-teknik-spesifikasyon.md).
+
+-- Bölüm 1: stres testleri (yalnızca Nox, büyük N) --
+
+  [numeric_recursion] derleniyor...
+  OK  min=17.7ms  max=19.3ms  ort=18.6ms  (5 koşu)
+  [tight_loop_arithmetic] derleniyor...
+  OK  min=2.2ms  max=2.8ms  ort=2.4ms  (5 koşu)
+  [list_traversal] derleniyor...
+  OK  min=2.2ms  max=2.7ms  ort=2.4ms  (5 koşu)
+  [oop_arc_churn] derleniyor...
+  OK  min=2.3ms  max=3.0ms  ort=2.6ms  (5 koşu)
+  [generics_protocols] derleniyor...
+  OK  min=32.8ms  max=40.7ms  ort=35.4ms  (5 koşu)
+  [exceptions_control_flow] derleniyor...
+  OK  min=2.5ms  max=3.1ms  ort=2.8ms  (5 koşu)
+  [lowlevel_arena] derleniyor...
+  OK  min=2.4ms  max=2.7ms  ort=2.5ms  (5 koşu)
+  [string_passing] derleniyor...
+  OK  min=63.8ms  max=66.3ms  ort=64.7ms  (5 koşu)
+  [deep_equality] derleniyor...
+  OK  min=7.3ms  max=8.5ms  ort=7.8ms  (5 koşu)
+  [list_class_field] derleniyor...
+  OK  min=3.7ms  max=4.4ms  ort=4.0ms  (5 koşu)
+  [async_task_churn] derleniyor...
+  OK  min=69.1ms  max=81.1ms  ort=74.1ms  (5 koşu)
+  [dict_bench] derleniyor...
+  OK  min=2.2ms  max=2.7ms  ort=2.4ms  (5 koşu)
+  [json_bench] derleniyor...
+  OK  min=8.4ms  max=13.3ms  ort=10.0ms  (5 koşu)
+  [strings_bench] derleniyor...
+  OK  min=3.2ms  max=4.1ms  ort=3.5ms  (5 koşu)
+  [math_bench] derleniyor...
+  OK  min=2.4ms  max=2.7ms  ort=2.6ms  (5 koşu)
+  [os_fs_bench] derleniyor...
+  OK  min=2.4ms  max=2.9ms  ort=2.6ms  (5 koşu)
+  [time_bench] derleniyor...
+  OK  min=5.0ms  max=6.2ms  ort=5.4ms  (5 koşu)
+  [method_call_elision] derleniyor...
+  OK  min=2.4ms  max=2.7ms  ort=2.5ms  (5 koşu)
+  [for_loop_method_elision] derleniyor...
+  OK  min=39.5ms  max=40.7ms  ort=39.9ms  (5 koşu)
+  [exception_check_overhead] derleniyor...
+  OK  min=300.7ms  max=312.0ms  ort=303.6ms  (5 koşu)
+  [str_index_loop_licm] derleniyor...
+  OK  min=14.4ms  max=16.1ms  ort=14.9ms  (5 koşu)
+  [str_len_many_strings] derleniyor...
+  OK  min=14.9ms  max=15.3ms  ort=15.1ms  (5 koşu)
+  [list_release_overhead] derleniyor...
+  OK  min=192.7ms  max=201.8ms  ort=199.5ms  (5 koşu)
+  [bounds_check_elision] derleniyor...
+  OK  min=21.3ms  max=24.2ms  ort=23.0ms  (5 koşu)
+  [strings_perf_bench] derleniyor...
+  OK  min=12.1ms  max=13.1ms  ort=12.5ms  (5 koşu)
+  [path_bench] derleniyor...
+  OK  min=8.3ms  max=10.2ms  ort=9.1ms  (5 koşu)
+  [random_bench] derleniyor...
+  OK  min=7.1ms  max=7.5ms  ort=7.3ms  (5 koşu)
+  [regex_bench] derleniyor...
+  OK  min=4.5ms  max=5.1ms  ort=4.8ms  (5 koşu)
+  [crypto_bench] derleniyor...
+  OK  min=3.2ms  max=3.6ms  ort=3.5ms  (5 koşu)
+  [fs_bench] derleniyor...
+  OK  min=204.8ms  max=216.7ms  ort=211.1ms  (5 koşu)
+
+30/30 stres testi başarıyla tamamlandı.
+
+-- Bölüm 2: Python karşılaştırması (aynı algoritma, küçültülmüş N) --
+
+[numeric_recursion]
+  [  nox] derleniyor...
+  OK  min=12.2ms  max=13.3ms  ort=12.6ms  (3 koşu)
+  python  min=325.7ms  max=326.2ms  ort=326.0ms  (3 koşu)
+  c       min=11.8ms  max=13.8ms  ort=12.7ms  (3 koşu)
+  hızlanma (nox / python): 26.7x
+  yavaşlama (nox / c): 1.03x
+
+[tight_loop_arithmetic]
+  [  nox] derleniyor...
+  OK  min=2.1ms  max=2.5ms  ort=2.3ms  (3 koşu)
+  python  min=2098.0ms  max=2148.4ms  ort=2126.7ms  (3 koşu)
+  c       min=2.0ms  max=2.3ms  ort=2.1ms  (3 koşu)
+  hızlanma (nox / python): 996.8x
+  yavaşlama (nox / c): 1.07x
+
+[list_traversal]
+  [  nox] derleniyor...
+  OK  min=17.8ms  max=18.9ms  ort=18.4ms  (3 koşu)
+  python  min=1148.2ms  max=1163.9ms  ort=1154.1ms  (3 koşu)
+  c       min=1.8ms  max=2.3ms  ort=2.0ms  (3 koşu)
+  hızlanma (nox / python): 64.7x
+  yavaşlama (nox / c): 9.63x
+
+[oop_arc_churn]
+  [  nox] derleniyor...
+  OK  min=41.8ms  max=47.8ms  ort=44.6ms  (3 koşu)
+  python  min=465.8ms  max=475.5ms  ort=471.7ms  (3 koşu)
+  c       min=35.5ms  max=36.5ms  ort=36.2ms  (3 koşu)
+  hızlanma (nox / python): 11.1x
+  yavaşlama (nox / c): 1.18x
+
+[generics_protocols]
+  [  nox] derleniyor...
+  OK  min=26.5ms  max=26.9ms  ort=26.7ms  (3 koşu)
+  python  min=1474.2ms  max=1503.2ms  ort=1489.9ms  (3 koşu)
+  c       min=26.2ms  max=30.3ms  ort=27.6ms  (3 koşu)
+  hızlanma (nox / python): 55.6x
+  yavaşlama (nox / c): 1.01x
+
+[exceptions_control_flow]
+  [  nox] derleniyor...
+  OK  min=20.0ms  max=21.4ms  ort=20.6ms  (3 koşu)
+  python  min=684.9ms  max=691.5ms  ort=688.7ms  (3 koşu)
+  c       min=4.5ms  max=5.1ms  ort=4.7ms  (3 koşu)
+  hızlanma (nox / python): 34.3x
+  yavaşlama (nox / c): 4.45x
+
+[lowlevel_arena]
+  [  nox] derleniyor...
+  OK  min=8.3ms  max=9.2ms  ort=8.7ms  (3 koşu)
+  python  min=1226.9ms  max=1245.0ms  ort=1234.6ms  (3 koşu)
+  c       min=1.9ms  max=2.1ms  ort=2.0ms  (3 koşu)
+  hızlanma (nox / python): 148.6x
+  yavaşlama (nox / c): 4.29x
+
+[string_passing]
+  [  nox] derleniyor...
+  OK  min=48.4ms  max=48.5ms  ort=48.5ms  (3 koşu)
+  python  min=1245.4ms  max=1287.9ms  ort=1260.0ms  (3 koşu)
+  c       min=7.0ms  max=8.0ms  ort=7.4ms  (3 koşu)
+  hızlanma (nox / python): 25.7x
+  yavaşlama (nox / c): 6.87x
+
+[deep_equality]
+  [  nox] derleniyor...
+  OK  min=3.7ms  max=4.4ms  ort=4.0ms  (3 koşu)
+  python  min=51.4ms  max=51.6ms  ort=51.5ms  (3 koşu)
+  c       min=1.9ms  max=2.2ms  ort=2.0ms  (3 koşu)
+  hızlanma (nox / python): 14.0x
+  yavaşlama (nox / c): 1.95x
+
+[list_class_field]
+  [  nox] derleniyor...
+  OK  min=2.9ms  max=3.2ms  ort=3.0ms  (3 koşu)
+  python  min=42.0ms  max=42.7ms  ort=42.4ms  (3 koşu)
+  c       min=2.0ms  max=2.4ms  ort=2.2ms  (3 koşu)
+  hızlanma (nox / python): 14.7x
+  yavaşlama (nox / c): 1.40x
+
+10/10 karşılaştırma çifti başarıyla tamamlandı.
+
+-- Bölüm 4: Rust stdlib karşılaştırması (nox.* modülleri) --
+
+[strings_bench]
+  [  nox] derleniyor...
+  OK  min=3.3ms  max=3.7ms  ort=3.5ms  (3 koşu)
+  rust    min=3.0ms  max=3.4ms  ort=3.1ms  (3 koşu)
+  yavaşlama (nox / rust): 1.11x
+
+[math_bench]
+  [  nox] derleniyor...
+  OK  min=2.5ms  max=2.8ms  ort=2.7ms  (3 koşu)
+  rust    min=3.9ms  max=5.9ms  ort=4.9ms  (3 koşu)
+  yavaşlama (nox / rust): 0.65x
+
+[os_fs_bench]
+  [  nox] derleniyor...
+  OK  min=2.6ms  max=3.0ms  ort=2.8ms  (3 koşu)
+  rust    min=3.5ms  max=3.9ms  ort=3.7ms  (3 koşu)
+  yavaşlama (nox / rust): 0.73x
+
+[time_bench]
+  [  nox] derleniyor...
+  OK  min=5.4ms  max=6.1ms  ort=5.8ms  (3 koşu)
+  rust    min=6.7ms  max=7.7ms  ort=7.2ms  (3 koşu)
+  yavaşlama (nox / rust): 0.80x
+
+[dict_bench]
+  [  nox] derleniyor...
+  OK  min=2.8ms  max=3.0ms  ort=2.8ms  (3 koşu)
+  rust    min=2.4ms  max=2.8ms  ort=2.6ms  (3 koşu)
+  yavaşlama (nox / rust): 1.17x
+
+[strings_perf_bench]
+  [  nox] derleniyor...
+  OK  min=11.9ms  max=13.6ms  ort=12.8ms  (3 koşu)
+  rust    min=12.0ms  max=13.3ms  ort=12.6ms  (3 koşu)
+  yavaşlama (nox / rust): 1.00x
+
+[path_bench]
+  [  nox] derleniyor...
+  OK  min=8.9ms  max=10.1ms  ort=9.4ms  (3 koşu)
+  rust    min=14.7ms  max=16.8ms  ort=15.4ms  (3 koşu)
+  yavaşlama (nox / rust): 0.60x
+
+[fs_bench]
+  [  nox] derleniyor...
+  OK  min=203.5ms  max=204.6ms  ort=204.2ms  (3 koşu)
+  rust    min=160.8ms  max=161.5ms  ort=161.2ms  (3 koşu)
+  yavaşlama (nox / rust): 1.27x
+
+8/8 Rust stdlib karşılaştırma çifti başarıyla tamamlandı.
+
+-- Bölüm 5: Rust crate karşılaştırması (json/random/regex/crypto) --
+
+[cargo build --release] benchmarks/rust_crates deniyor...
+[json_bench]
+  [  nox] derleniyor...
+  OK  min=8.1ms  max=9.2ms  ort=8.7ms  (3 koşu)
+  rust    min=6.8ms  max=9.9ms  ort=8.3ms  (3 koşu)
+  yavaşlama (nox / rust): 1.19x
+
+[random_bench]
+  [  nox] derleniyor...
+  OK  min=7.4ms  max=8.4ms  ort=8.0ms  (3 koşu)
+  rust    min=8.3ms  max=10.0ms  ort=9.1ms  (3 koşu)
+  yavaşlama (nox / rust): 0.90x
+
+[regex_bench]
+  [  nox] derleniyor...
+  OK  min=4.9ms  max=5.7ms  ort=5.3ms  (3 koşu)
+  rust    min=6.5ms  max=7.9ms  ort=7.1ms  (3 koşu)
+  yavaşlama (nox / rust): 0.76x
+
+[crypto_bench]
+  [  nox] derleniyor...
+  OK  min=3.3ms  max=3.7ms  ort=3.4ms  (3 koşu)
+  rust    min=12.8ms  max=16.2ms  ort=14.4ms  (3 koşu)
+  yavaşlama (nox / rust): 0.26x
+
+4/4 Rust crate karşılaştırma çifti başarıyla tamamlandı.
+
+Toplam: 30/30 stres testi, 10/10 karşılaştırma çifti, 8/8 Rust stdlib çifti, 4/4 Rust crate çifti geçti.
+```

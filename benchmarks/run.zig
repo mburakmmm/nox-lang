@@ -43,7 +43,7 @@ const stress_benchmarks = [_]Benchmark{
     .{ .name = "tight_loop_arithmetic", .path = "benchmarks/tight_loop_arithmetic.nox", .expected = "2838615082755021824\n" },
     .{ .name = "list_traversal", .path = "benchmarks/list_traversal.nox", .expected = "1455000\n" },
     .{ .name = "oop_arc_churn", .path = "benchmarks/oop_arc_churn.nox", .expected = "49995000\n" },
-    .{ .name = "generics_protocols", .path = "benchmarks/generics_protocols.nox", .expected = "2e+14\n" },
+    .{ .name = "generics_protocols", .path = "benchmarks/generics_protocols.nox", .expected = "200000421327199.94\n" },
     .{ .name = "exceptions_control_flow", .path = "benchmarks/exceptions_control_flow.nox", .expected = "8333316667\n" },
     .{ .name = "lowlevel_arena", .path = "benchmarks/lowlevel_arena.nox", .expected = "25180000\n" },
     .{ .name = "string_passing", .path = "benchmarks/string_passing.nox", .expected = "6666667\n" },
@@ -75,7 +75,7 @@ const stress_benchmarks = [_]Benchmark{
     // gelecekteki regresyonları YAKALAMAK VE (özellikle `nox.math` İÇİN)
     // "darboğaz YOK" bulgusunu somutlaştırmak için eklendi.
     .{ .name = "strings_bench", .path = "benchmarks/strings_bench.nox", .expected = "160000\n" },
-    .{ .name = "math_bench", .path = "benchmarks/math_bench.nox", .expected = "1.49791e+10\n" },
+    .{ .name = "math_bench", .path = "benchmarks/math_bench.nox", .expected = "14979067797.026188\n" },
     .{ .name = "os_fs_bench", .path = "benchmarks/os_fs_bench.nox", .expected = "30000\n" },
     .{ .name = "time_bench", .path = "benchmarks/time_bench.nox", .expected = "200000\n" },
     // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-spesifikasyon.md §3.59):
@@ -229,7 +229,7 @@ const stdlib_compare_pairs = [_]StdlibComparePair{
     .{
         .name = "math_bench",
         .nox_path = "benchmarks/math_bench.nox",
-        .nox_expected = "1.49791e+10\n",
+        .nox_expected = "14979067797.026188\n",
         .rust_path = "benchmarks/math_bench.rs",
         .rust_expected = "14979067797.026188\n",
     },
@@ -374,7 +374,7 @@ const compare_pairs = [_]ComparePair{
     .{
         .name = "generics_protocols",
         .nox_path = "benchmarks/compare/generics_protocols.nox",
-        .nox_expected = "1.125e+14\n",
+        .nox_expected = "112500315995399.97\n",
         .py_path = "benchmarks/compare/generics_protocols.py",
         .py_expected = "112500315995399.97\n",
         .c_path = "benchmarks/compare/generics_protocols.c",

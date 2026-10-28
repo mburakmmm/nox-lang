@@ -6,10 +6,11 @@ and no dynamic attribute creation.
 
 ## Fields
 
-A class's fields are fixed. They can be established two ways, and both may be used in the same class:
+A class's fields are fixed. They can be established three ways, and all may be used in the same class:
 
 1. **Implicitly**, by the first `self.name = expr` assignment inside `__init__` (the type is inferred from the expression), or
-2. **Explicitly**, with a bare `name: type` line in the class body (no initialiser — the assignment itself still happens in `__init__`).
+2. **With an annotation**, `self.name: type = expr` inside `__init__`: the declared type is the field's type, so an empty `[]` or `{}` or a `None` needs no further hint (`self.items: list[int] = []`), or
+3. **Explicitly**, with a bare `name: type` line in the class body (no initialiser — the assignment itself still happens in `__init__`).
 
 If a field is declared explicitly it must actually be assigned in `__init__`; an unassigned declared field is a compile error, never a
 zeroed value. Fields can only be *created* in `__init__`: assigning a new `self.name` from another method is a compile error. There

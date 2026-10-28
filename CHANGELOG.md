@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.39]
+
+Açıklamalı alan ataması, benchmark yenilemesi, WASM/HPy durum belgeleri.
+
+### Eklendi
+
+- `self.x: T = v` (`__init__` içinde): alanın tipini bildirir; boş `[]`/`{}`/`None` için ek ipucu gerekmez. `__init__` dışında yeni alan tanımı ve tip uyuşmazlığı net hata verir. `noxc fmt` yüzey biçimini korur.
+- `docs/internals/wasm-coverage.md` (WASM yorumlayıcının gerçek kapsamı ve hedef yüzey sırası), `docs/internals/hpy-tier-gap.md` (CPython emülasyon katmanı yok; HPy preview ölçütleri), `docs/reference/security.md` registry kapıları ve olay müdahale adımları.
+
+### Düzeltildi
+
+- `benchmarks/`: float yazım biçimi değiştiği için bayat dört beklenti güncellendi; kaldırılmış `nox.json.decode/encode` kullanan `json_bench` ve `http_compare/nox_json_server` `parse/dump`a taşındı. v2.0.38 ile yeniden ölçüldü (30/30 stres, 10/10 karşılaştırma, 8/8 Rust stdlib, 4/4 crate); çapraz-dil kernel'lerinde gerileme yok.
+
 ## [2.0.38]
 
 Generic sınıflarda generic metod.

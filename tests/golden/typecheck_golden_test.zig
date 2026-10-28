@@ -1390,6 +1390,20 @@ test "golden(typecheck): imzası başka protokol içeren protokol değer tipi ol
     );
 }
 
+test "golden(typecheck): açıklamalı alan ataması değer tipi uyuşmazlığı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_annotated_field_mismatch.nox"),
+        @embedFile("typecheck_cases/err_annotated_field_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): açıklamalı yeni alan __init__ dışında tanımlanamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_annotated_field_outside_init.nox"),
+        @embedFile("typecheck_cases/err_annotated_field_outside_init.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

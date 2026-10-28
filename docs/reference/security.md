@@ -41,6 +41,14 @@ exact commit of every dependency and `require_signed_commit` can demand a signed
 4. Load plugins only from sources you trust; declare and grant the minimum capabilities.
 5. Keep secrets out of source control; read them from the environment.
 
+## Registry gates and incident response
+
+What the registry does today: a submission is moderated before it appears in the index; approval covers the *metadata* (name, repository, description), not the code; the index carries no version, so what you install is decided by your `nox.json` and pinned by `nox.lock` (git commit and SHA-256 of the tree). The lock file is the provenance record of a build: it names exactly which commit of which repository was used.
+
+If a package is found to be malicious or compromised: (1) the maintainers remove or hide the entry from the index, which stops new installs through `noxc add` and `noxc search`; (2) existing projects keep working from their lock file, so the advisory names the affected repository and commits and tells users to update the lock; (3) the fix and the advisory are published in the `CHANGELOG` and the repository's security advisories. A package that declares `extern def` or a `bin` entry runs native code with your authority (see the trust boundary above); read it before adding it.
+
+Not yet built: automatic malware or native-code scanning, publisher signatures, and a generated SBOM. They need the design described under "Not in 2.0".
+
 ## Reporting vulnerabilities
 
 Please report security problems privately to the maintainers (see the repository's security policy and contact on GitHub) rather than in a public issue.
