@@ -191,10 +191,10 @@ kuralı bu istisna için kullanıcı kararıyla aşıldı. Her madde ÖNCE kodda
 - [x] **2.3 Protokol değerleri için ownership analizi ekle.** (v2.0.34: kutu/taban sıradan sınıf olduğundan ASAP/ARC/döngü çözücü/istisna/closure yolları değişmeden çalışır; 2000 turluk kutulama-bırakma döngüsü ve istisna yolu golden'da, Debug allocator sızıntı raporlamadı. Sınır: imzası başka protokol içeren protokol değer tipi olamaz.) Container'a
   girme/çıkma, closure, return, exception ve cycle collector davranışını
   doğrula; belirsizlikte sessiz ARC fallback kullan.
-- [!] **2.4 Generic sınıfta generic metod kararını ver.** Güncel sınır
+- [x] **2.4 Generic sınıfta generic metod kararını ver.** (v2.0.38: KARAR: desteklenir. Somut sınıf örneği oluşturulurken metodun kendi tip parametresi serbest bırakılıp `generic_methods`e taşınır, çağrı sitesinde bağlanır (açık/çıkarımlı); anahtar `Box__int.map_to`. Tek tip parametresi sınırı sürer; lambda argümanı açık biçimi ister.) Güncel sınır
   `Box[T].map_to[U]` desteğinin olmamasıdır. Monomorphization anahtarı ve
   type-argument inference tasarımı onay ister.
-- [!] **2.5 Task/Channel koleksiyonları kararını ver.** `list[Task[T]]`
+- [x] **2.5 Task/Channel koleksiyonları kararını ver.** (v2.0.38: KARAR: `list[Task[T]]`/`dict[..., Channel[T]]` DESTEKLENMEZ. Gerekçe: görev tutamacının yaşam süresi ve işçiler-arası sahiplik kanıtlanmadan koleksiyon yüzeyi açmak ARC dengesini (tutamaç `await` ile bir kez tüketilir) bozar; dilin kendi kuralı "kanıtlanmadan yüzey eklenmez". Yol: görevleri bir sınıf alanında tek tek tut ya da `Channel`la sonuçları topla. Kalıcı ret `docs/language/concurrency.md` sınırları arasında kalır.) `list[Task[T]]`
   desteklenmiyor. Runtime handle yaşam süresi ve cross-worker ownership
   kanıtlanmadan yüzey eklenmez.
 
@@ -240,10 +240,10 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
   ölçümü değil, uyumlu emulator/device açılışı ve bağımlı bütün `.so`lar.
 - [ ] **4.5 Mobil CI matrisini tamamla.** PR'da iOS simulator run + Android
   emulator smoke; nightly sanitizer/lifecycle/network; watchdog ve cleanup.
-- [ ] **4.6 Kanıt zincirini sertleştir.** Kanıt dosyası temiz/tagli Nox ve
+- [~] **4.6 Kanıt zincirini sertleştir.** (v2.0.38: stable iddiasında kanıt dosyası temiz Nox ağacından olmalı (`nox_tree=clean`), `nox_head` git'te bulunmalı, `date`/`backend` yazılmalı, imzalı artifact'lar için SHA-256 şart. Açık: Aura commit'i ve toolchain alanlarının zorunluluğu — Aura deposu ayrı.) Kanıt dosyası temiz/tagli Nox ve
   Aura commit'i, toolchain, target, backend, run/build ayrımı ve artifact
   SHA-256 taşısın. Bayat/kirli kanıt stable kapısını açamasın.
-- [ ] **4.7 Stable gate'i fail-closed yap.** Zorunlu anahtar eksikliği de
+- [x] **4.7 Stable gate'i fail-closed yap.** (v2.0.38: `scripts/check_mobile_stable.py` zorunlu 8 anahtarı arar, eksik anahtar `=no` gibi hata; `--self-test` CI'da (mobile.yml). `supported` yazmak için cihaz laboratuvarı/imzalı IPA-APK-AAB kanıtı yine `[!]` kullanıcıda.) Zorunlu anahtar eksikliği de
   `=no` gibi hata olsun; signed IPA/APK/AAB ve device lab olmadan
   `supported` yazılamasın.
 - [!] **4.8 Destek seviyesi yükseltme kararı.** Bütün kapılar yeşil olduktan

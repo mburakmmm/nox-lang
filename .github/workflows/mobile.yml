@@ -35,7 +35,9 @@ jobs:
           zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "void program"
           zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "compiles async"
       - name: Stable gate
-        run: python3 scripts/check_mobile_stable.py
+        run: |
+          python3 scripts/check_mobile_stable.py --self-test
+          python3 scripts/check_mobile_stable.py
       - name: Docs
         run: |
           python3 -m venv "$RUNNER_TEMP/docs-venv"

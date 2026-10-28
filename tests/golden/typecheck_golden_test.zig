@@ -835,10 +835,10 @@ test "golden(typecheck): bağlam yoksa boş liste literalinin tipi HÂLÂ çıka
     );
 }
 
-test "golden(typecheck): generic sınıfın generic metodu reddedilir (v1 kapsam dışı)" {
+test "golden(typecheck): generic sınıfın generic metodu kabul edilir (v2.0.38)" {
     try expectGolden(
-        @embedFile("typecheck_cases/err_generic_method_rejected.nox"),
-        @embedFile("typecheck_cases/err_generic_method_rejected.expected"),
+        @embedFile("typecheck_cases/ok_generic_method_on_generic_class.nox"),
+        @embedFile("typecheck_cases/ok_generic_method_on_generic_class.expected"),
     );
 }
 

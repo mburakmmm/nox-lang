@@ -1,0 +1,25 @@
+class Box[T]:
+    value: T
+    def __init__(self, value: T) -> None:
+        self.value = value
+    def get(self) -> T:
+        return self.value
+    def map_to[U](self, f: (T) -> U) -> Box[U]:
+        return Box[U](f(self.value))
+    def pair[U](self, other: U) -> int:
+        return 1
+
+def to_str(n: int) -> str:
+    return "n=" + str(n)
+
+def twice(n: int) -> int:
+    return n * 2
+
+b: Box[int] = Box[int](21)
+c: Box[str] = b.map_to[str](to_str)
+print(c.get())
+d: Box[int] = b.map_to(twice)
+print(d.get())
+e: Box[float] = b.map_to[float](lambda x: x / 2.0)
+print(e.get())
+print(b.pair("x") + b.pair(1.5))

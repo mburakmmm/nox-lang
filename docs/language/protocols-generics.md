@@ -92,8 +92,32 @@ print(k.pick[int](1, 2), k.pick("x", "y"))
 1 x
 ```
 
-Current limits: a generic method on a **generic** class (`Box[T].map_to[U]`) is not supported — write a free generic function that
-takes the box instead.
+A generic class can have generic methods too. The class parameter is fixed by the receiver (`Box[int]`), the method parameter is bound at the call, explicitly or by inference from the arguments:
+
+```nox
+class Box[T]:
+    value: T
+    def __init__(self, value: T) -> None:
+        self.value = value
+    def get(self) -> T:
+        return self.value
+    def map_to[U](self, f: (T) -> U) -> Box[U]:
+        return Box[U](f(self.value))
+
+def label(n: int) -> str:
+    return "n=" + str(n)
+
+b: Box[int] = Box[int](21)
+print(b.map_to[str](label).get())
+print(b.map_to(label).get())
+```
+
+```output
+n=21
+n=21
+```
+
+A generic method takes one type parameter. A lambda argument needs the explicit form (`map_to[str](lambda ...)`), because its parameter types are not known until `U` is.
 
 ## Protocols
 

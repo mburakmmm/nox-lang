@@ -231,7 +231,10 @@ pub const DecoratedFuncInfo = struct {
 
 const GenericMethod = struct {
     fd: ast.FuncDef,
-    class_stmt: *ast.Stmt,
+    /// Üst-düzey (generic OLMAYAN) sınıfın AST deyimi; generic sınıfın somut örneğinde `null` ve `class_inst_index` kullanılır.
+    class_stmt: ?*ast.Stmt = null,
+    /// `class_instantiations` içindeki somut sınıfın sırası (generic sınıf örneği, `Box__int`).
+    class_inst_index: usize = 0,
 };
 
 const ClassInfo = struct {
@@ -9662,20 +9665,33 @@ pub const Checker = struct {
         for (gcd.fields, 0..) |f, i| {
             fields[i] = .{ .name = f.name, .type_expr = try self.substituteTypeExpr(f.type_expr, &bindings), .line = f.line };
         }
-        const methods = try self.allocator.alloc(ast.FuncDef, gcd.methods.len);
-        for (gcd.methods, 0..) |m, i| {
+        var generic_method_count: usize = 0;
+        for (gcd.methods) |m| {
+            if (m.type_params.len > 0) generic_method_count += 1;
+        }
+        const methods = try self.allocator.alloc(ast.FuncDef, gcd.methods.len - generic_method_count);
+        var deferred_generic: std.ArrayListUnmanaged(ast.FuncDef) = .empty;
+        var mi: usize = 0;
+        for (gcd.methods) |m| {
             const params = try self.allocator.alloc(ast.Param, m.params.len);
             for (m.params, 0..) |p, j| {
                 params[j] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings), .self_inferred = p.self_inferred, .default = p.default };
             }
-            methods[i] = .{
+            const converted: ast.FuncDef = .{
                 .name = m.name,
-                .type_params = &.{},
+                // Sınıfın `T`si bağlandı; metodun KENDİ tip parametresi (`U`) serbest kalır ve çağrı sitesinde bağlanır.
+                .type_params = m.type_params,
                 .params = params,
                 .return_type = try self.substituteTypeExpr(m.return_type, &bindings),
                 .body = try self.substituteStmts(m.body, &bindings),
                 .is_async = m.is_async,
             };
+            if (m.type_params.len > 0) {
+                try deferred_generic.append(self.allocator, converted);
+            } else {
+                methods[mi] = converted;
+                mi += 1;
+            }
         }
         const concrete: ast.ClassDef = .{ .name = mangled, .type_params = &.{}, .methods = methods, .fields = fields };
 
@@ -9685,7 +9701,19 @@ pub const Checker = struct {
         try self.putClass(mangled);
         try self.class_type_args.put(self.allocator, mangled, try self.allocator.dupe(Type, bound_types));
         try self.registerClassSignatures(concrete);
+        const inst_index = self.class_instantiations.items.len;
         try self.class_instantiations.append(self.allocator, concrete);
+        for (deferred_generic.items) |gm| {
+            if (gm.type_params.len != 1) {
+                return self.fail(error.TypeMismatch, "generic method '{s}.{s}' can take a single type parameter", .{ gcd.name, gm.name });
+            }
+            if (std.mem.startsWith(u8, gm.name, "__")) {
+                return self.fail(error.TypeMismatch, "special method '{s}.{s}' cannot be generic", .{ gcd.name, gm.name });
+            }
+            const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ mangled, gm.name });
+            try self.generic_methods.put(self.allocator, key, .{ .fd = gm, .class_inst_index = inst_index });
+            try self.generic_method_names.put(self.allocator, gm.name, {});
+        }
         try self.checkClassBody(concrete);
         return .{ .class = mangled };
     }
@@ -9700,15 +9728,8 @@ pub const Checker = struct {
         for (module.body) |*stmt| {
             if (stmt.kind != .class_def) continue;
             const cd = &stmt.kind.class_def;
-            if (cd.type_params.len > 0) {
-                for (cd.methods) |m| {
-                    if (m.type_params.len == 0) continue;
-                    self.current_line = stmt.line;
-                    self.current_span = stmt.span;
-                    return self.fail(error.TypeMismatch, "a generic method of a generic class is not supported: {s}.{s} (v1: generic methods only in NON-generic classes)", .{ cd.name, m.name });
-                }
-                continue;
-            }
+            // Generic sınıfın generic metodları şablonda kalır; somut örnek (`instantiateGenericClass`) oluşturulurken `generic_methods`e taşınır.
+            if (cd.type_params.len > 0) continue;
             var generic_count: usize = 0;
             for (cd.methods) |m| {
                 if (m.type_params.len > 0) generic_count += 1;
@@ -9851,7 +9872,7 @@ pub const Checker = struct {
             }
             // Sınıfın AST'sine YERİNDE ekle — codegen/sahiplik analizleri
             // somutlaştırılmış metodu sıradan bir metod olarak görür.
-            const cd = &gm.class_stmt.kind.class_def;
+            const cd: *ast.ClassDef = if (gm.class_stmt) |stmt_ptr| &stmt_ptr.kind.class_def else &self.class_instantiations.items[gm.class_inst_index];
             const grown = try self.allocator.alloc(ast.FuncDef, cd.methods.len + 1);
             @memcpy(grown[0..cd.methods.len], cd.methods);
             grown[cd.methods.len] = concrete;

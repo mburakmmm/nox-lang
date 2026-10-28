@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.38]
+
+Generic sınıflarda generic metod.
+
+### Eklendi
+
+- `Box[T].map_to[U](f: (T) -> U) -> Box[U]` gibi generic sınıfın generic metodları: sınıf parametresi alıcıyla (`Box[int]`) sabitlenir, metodun parametresi çağrıda (açık `b.map_to[str](f)` ya da argümanlardan çıkarım) bağlanır. Tek tip parametresi sınırı sürer; lambda argümanı açık biçimi ister.
+
+### Düzeltildi
+
+- Mobil stable kapısı fail-closed: eksik zorunlu anahtar `=no` gibi hata, kirli ağaç/bilinmeyen commit/eksik SHA-256 reddedilir; `--self-test` CI'da koşar.
+
+### Değişti
+
+- Önceki "generic sınıfın generic metodu desteklenmiyor" hatası kaldırıldı (eski typecheck testi olumlu teste çevrildi).
+- TODO 2.5 kararı: `list[Task[T]]` desteklenmez (gerekçe `project/nox-ana-todo.md`).
+
 ## [2.0.37]
 
 Belge doğruluğu ve FFI sınır fuzzing (yalnızca test/belge/CI; çalışma zamanı davranışı değişmedi).
