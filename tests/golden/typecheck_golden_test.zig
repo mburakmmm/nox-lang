@@ -1446,6 +1446,20 @@ test "golden(typecheck): *args parametresi anahtar kelimeyle verilemez" {
     );
 }
 
+test "golden(typecheck): **kwargs değer tipi uyuşmazlığı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_kwargs_value_type.nox"),
+        @embedFile("typecheck_cases/err_kwargs_value_type.expected"),
+    );
+}
+
+test "golden(typecheck): **kwargs yalnızca anahtar-kelime alır; fazladan konumsal reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_kwargs_extra_positional.nox"),
+        @embedFile("typecheck_cases/err_kwargs_extra_positional.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

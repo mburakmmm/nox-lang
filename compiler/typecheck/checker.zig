@@ -2127,7 +2127,7 @@ pub const Checker = struct {
     /// v1.147.0: keyword (`ad=değer`) ve eksik (varsayılanlı) argümanları parametre sırasına dizip TAM konumsal bir argüman
     /// listesi üretir. Argümanlar parametre SIRASIYLA değerlendirilir (yazılış sırasıyla değil).
     fn anyVariadic(decl: []const ast.Param) bool {
-        for (decl) |p| if (p.variadic) return true;
+        for (decl) |p| if (p.variadic or p.var_kw) return true;
         return false;
     }
 
@@ -2143,20 +2143,33 @@ pub const Checker = struct {
         };
         var extras: std.ArrayListUnmanaged(ast.Expr) = .empty;
         defer extras.deinit(self.allocator);
+        // `**kwargs` parametresi (son sırada): eşleşmeyen anahtar-kelime argümanları bir sözlük literaline paketlenir.
+        var kw_idx: ?usize = null;
+        for (decl, 0..) |p, j| if (p.var_kw) {
+            kw_idx = j;
+        };
+        var kw_pairs: std.ArrayListUnmanaged(ast.DictPair) = .empty;
+        defer kw_pairs.deinit(self.allocator);
         for (args, 0..) |a, i| {
             if (a == .kwarg) {
                 var found: ?usize = null;
                 for (decl, 0..) |p, j| {
+                    if (p.var_kw) continue;
                     if (std.mem.eql(u8, p.name, a.kwarg.name)) {
                         found = j;
                         break;
                     }
                 }
+                if (found == null and kw_idx != null) {
+                    try kw_pairs.append(self.allocator, .{ .key = .{ .string_lit = a.kwarg.name }, .value = a.kwarg.value.* });
+                    continue;
+                }
                 const j = found orelse return self.fail(error.ArgumentCountMismatch, "function '{s}' has no parameter named '{s}'", .{ name, a.kwarg.name });
                 if (variadic_idx != null and j == variadic_idx.?) return self.fail(error.ArgumentCountMismatch, "'{s}': the '*{s}' parameter takes positional arguments only", .{ name, a.kwarg.name });
                 if (slots[j] != null) return self.fail(error.ArgumentCountMismatch, "in the call to '{s}', parameter '{s}' was given more than once", .{ name, a.kwarg.name });
                 slots[j] = a.kwarg.value.*;
-            } else if (variadic_idx != null and i >= variadic_idx.?) {
+            } else if (variadic_idx != null and i >= variadic_idx.? or (kw_idx != null and variadic_idx == null and i >= kw_idx.?)) {
+                if (variadic_idx == null) return self.fail(error.ArgumentCountMismatch, "'{s}' takes at most {d} positional arguments, {d} were given", .{ name, kw_idx.?, args.len });
                 try extras.append(self.allocator, a);
             } else {
                 if (i >= n) return self.fail(error.ArgumentCountMismatch, "'{s}' takes at most {d} arguments, {d} were given", .{ name, n, args.len });
@@ -2165,6 +2178,9 @@ pub const Checker = struct {
         }
         if (variadic_idx) |vi| {
             slots[vi] = .{ .list_lit = try self.allocator.dupe(ast.Expr, extras.items) };
+        }
+        if (kw_idx) |ki| {
+            slots[ki] = .{ .dict_lit = try self.allocator.dupe(ast.DictPair, kw_pairs.items) };
         }
         // v1.169.0: değerlendirme sırası. Bağlama parametre sırasıyla yapılır, AMA yan etkili (çağrı/await/spawn/kurucu içeren) argümanlar KAYNAK sırasıyla
         // değerlendirilir: göreli sıraları değişen iki yan etkili argüman varsa `last_eval_order` permütasyonu kaydedilir (codegen uygular).
@@ -2190,7 +2206,7 @@ pub const Checker = struct {
                 }
                 last_effect_slot = slot_idx;
             }
-            if (ambiguous and variadic_idx != null) {
+            if (ambiguous and (variadic_idx != null or kw_idx != null)) {
                 return self.fail(error.ArgumentCountMismatch, "'{s}': keyword arguments with side effects cannot be reordered in a call that also uses '*args'; write them in parameter order", .{name});
             }
             if (ambiguous) {

@@ -561,7 +561,11 @@ pub const Parser = struct {
         _ = try self.expect(.r_paren);
         // Değişken sayıda konumsal parametre yalnızca SON parametre olabilir (anahtar-sözcüğe-özel parametre yok).
         for (params.items, 0..) |pp, pi| {
-            if (pp.variadic and pi + 1 != params.items.len) {
+            if (pp.var_kw and pi + 1 != params.items.len) {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "a '**kwargs' parameter must be the last parameter" };
+                return error.UnexpectedToken;
+            }
+            if (pp.variadic and (pi + 1 != params.items.len and !(pi + 2 == params.items.len and params.items[pi + 1].var_kw))) {
                 self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "a '*args' parameter must be the last parameter (keyword-only parameters are not supported)" };
                 return error.UnexpectedToken;
             }
@@ -639,6 +643,15 @@ pub const Parser = struct {
             const args = try self.allocator.alloc(ast.TypeExpr, 1);
             args[0] = elem;
             return .{ .name = vname, .variadic = true, .type_expr = .{ .generic = .{ .name = "list", .args = args } } };
+        }
+        if (self.match(.star_star)) {
+            const kname = (try self.expect(.identifier)).lexeme;
+            _ = try self.expect(.colon);
+            const elem = try self.parseTypeExpr();
+            const kargs = try self.allocator.alloc(ast.TypeExpr, 2);
+            kargs[0] = .{ .simple = "str" };
+            kargs[1] = elem;
+            return .{ .name = kname, .var_kw = true, .type_expr = .{ .generic = .{ .name = "dict", .args = kargs } } };
         }
         const name = (try self.expect(.identifier)).lexeme;
         _ = try self.expect(.colon);

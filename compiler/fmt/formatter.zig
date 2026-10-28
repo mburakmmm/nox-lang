@@ -633,6 +633,11 @@ const Printer = struct {
                 try self.writer.print("{s}", .{p.name});
                 continue;
             }
+            if (p.var_kw and p.type_expr == .generic and p.type_expr.generic.args.len == 2) {
+                try self.writer.print("**{s}: ", .{p.name});
+                try self.printType(p.type_expr.generic.args[1]);
+                continue;
+            }
             if (p.variadic and p.type_expr == .generic and p.type_expr.generic.args.len == 1) {
                 try self.writer.print("*{s}: ", .{p.name});
                 try self.printType(p.type_expr.generic.args[0]);

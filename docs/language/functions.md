@@ -73,7 +73,7 @@ eval x
 xy
 ```
 
-A function can take a variable number of positional arguments with a trailing `*name: T`. Inside the body `name` is a `list[T]`; extra arguments at the call are collected into it (none gives an empty list). It must be the last parameter, cannot be passed by keyword, and every extra argument must be a `T`. There is no `**kwargs`, no call-site unpacking (`f(*xs)`) and no keyword-only or positional-only parameter marker in 2.0.
+A function can take a variable number of positional arguments with a trailing `*name: T`. Inside the body `name` is a `list[T]`; extra arguments at the call are collected into it (none gives an empty list). It must be the last positional parameter, cannot be passed by keyword, and every extra argument must be a `T`. A trailing `**name: T` collects keyword arguments that match no declared parameter into a `dict[str, T]` (names that match a declared parameter bind to it as usual); it must be the very last parameter and takes no extra positional arguments. There is no call-site unpacking (`f(*xs)`) and no keyword-only or positional-only parameter marker in 2.0.
 
 ```nox
 def total(first: int, *rest: int) -> int:

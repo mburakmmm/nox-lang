@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.51]
+
+### Eklendi
+
+- `**kwargs: T`: hicbir bildirilmis parametreyle eslesmeyen anahtar-kelime argumanlari `dict[str, T]` olarak paketlenir (`*args` ile birlikte kullanilabilir; en son parametre olmali, fazladan konumsal arguman almaz). `noxc fmt` korur.
+
 ## [2.0.50]
 
 ### Duzeltildi

@@ -52,6 +52,8 @@ pub const Param = struct {
     /// `*args: T` değişken sayıda konumsal parametre: `variadic == true` iken `type_expr` her zaman `list[T]`dir (gövde ve imza bunu liste görür);
     /// çağrı yerinde fazladan konumsal argümanlar checker'da bir liste literaline paketlenir (`expandCallArgs`).
     variadic: bool = false,
+    /// `**kwargs: T`: `var_kw == true` iken `type_expr` her zaman `dict[str, T]`dir; eşleşmeyen anahtar-kelime argümanları çağrı yerinde bir sözlük literaline paketlenir.
+    var_kw: bool = false,
     type_expr: TypeExpr,
     /// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): `true` İSE bu,
     /// bir sınıf/protokol metodunun `self` parametresidir VE kullanıcı
