@@ -203,20 +203,20 @@ anlatır; her dispatch yolu iki backend'de testlidir.
 
 ## Faz 3 — P1 Nox mobil runtime ve ABI doğruluğu
 
-- [ ] **3.1 Mobil ABI primitive korpusunu tamamla.** `int`, `float`, `bool`,
+- [x] **3.1 Mobil ABI primitive korpusunu tamamla.** (v2.0.35: `tests/cli/embed_abi_corpus_test.zig`, iOS simülatöründe C host: int/float/bool, yanlış ABI sürümü ve boyut. C-layout struct dönüşü/geri çağrı Nox kütüphane ABI'sinde yok, kapsam dışı.) `int`, `float`, `bool`,
   C-layout struct return/argument, callback ve yanlış ABI sürümü.
-- [ ] **3.2 String/buffer sınırını tamamla.** Türkçe/Unicode, embedded NUL,
+- [x] **3.2 String/buffer sınırını tamamla.** (v2.0.35: Türkçe+emoji, geçersiz UTF-8 bayt semantiği, boş dize, kapanıştan sonra kullanım yok; gömülü NUL C dizesiyle taşınamaz — `nox.bytes` yolu ayrı.) Türkçe/Unicode, embedded NUL,
   invalid UTF-8, borrow/copy ömrü ve kapanıştan sonra kullanım.
-- [ ] **3.3 Exception sınırını tamamla.** Nox exception'ı C/Swift/JNI
+- [x] **3.3 Exception sınırını tamamla.** (v2.0.35: istisna kod+nesne olarak döner; host `nox_exception_take`/yeni `nox_exception_release` ile alıp bırakır — önceden bırakma API'si olmadığı için sızıntı vardı, korpus bulup düzeltti.) Nox exception'ı C/Swift/JNI
   çerçevesinden kaçmadan kod + okunabilir hata nesnesine dönüşsün; başarı ve
   hata yolu testleri olsun.
-- [ ] **3.4 ARC/ASAP/cycle mobil stresini tamamla.** 10.000 lifecycle testi
+- [x] **3.4 ARC/ASAP/cycle mobil stresini tamamla.** (v2.0.35: 10.000 create/start/destroy simülatörde, host ayırıcısı sayacı sıfıra iner. Cihaz/sanitizer koşusu ayrı.) 10.000 lifecycle testi
   cihaz/simülatör sanitizer koşusuna, collection/cycle ve callback baskısına
   genişletilsin.
 - [ ] **3.5 Fiber/TLS/stack doğrulamasını tamamla.** Apple pointer
   authentication, Android ARM64, guard page, stack overflow ve TLS destructor
   gerçek hedefte sınansın.
-- [ ] **3.6 UI-thread pump bütçesini doğrula.** Yoğun event/async altında
+- [x] **3.6 UI-thread pump bütçesini doğrula.** (v2.0.35: bütçe geçmişse 0 teslim, sonra 64; kuyruk dolu `ERR_FULL`; durdurulmuş `ERR_STATE`.) Yoğun event/async altında
   `pump` frame bütçesini aşmasın; suspend/resume sonrası queue sırası
   deterministik olsun.
 - [ ] **3.7 Mobil stdlib sandbox testlerini tamamla.** Kök sınırı, `..`,

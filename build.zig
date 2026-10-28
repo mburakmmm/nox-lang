@@ -1237,6 +1237,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/profile_test.zig",
         "tests/cli/backend_default_test.zig",
         "tests/cli/mobile_target_test.zig",
+        "tests/cli/embed_abi_corpus_test.zig",
         "tests/cli/zig_cc_fallback_test.zig",
         "tests/cli/plugin_test.zig",
         "tests/cli/freestanding_build_test.zig",

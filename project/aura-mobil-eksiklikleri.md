@@ -39,9 +39,9 @@ edilmemelidir.
 
 ## A0 — Repo ve mimari kapısı
 
-- [ ] Untracked mobil çalışmayı ayrı branch/worktree'de güvenceye al.
-- [ ] Her dosyayı kaynak, üretilmiş artifact veya yerel ortam girdisi olarak
-  sınıflandır; yalnız gerçek kaynakları izle.
+- [x] Untracked mobil çalışmayı ayrı branch/worktree'de güvenceye al. (2026-10-28: Aura deposunda `mobile-sources` dalı, commit `2cb8177`; `main` ve çalışma ağacı dokunulmadı, itilmedi.)
+- [x] Her dosyayı kaynak, üretilmiş artifact veya yerel ortam girdisi olarak
+  sınıflandır; yalnız gerçek kaynakları izle. (18 dosya, ~130 KB, hepsi metin kaynağı: c/m/h/java/xml/md/sh/nox; ikili veya üretilmiş dosya yok. Yerel yol varsayılanı yalnız `scripts/build_*_app.sh` içinde: `NOX_ROOT` ve NDK sürümü — A0 5. maddesi açık.)
 - [ ] Aura `AGENTS.md` invariant'larını mobil kod üzerinde denetle:
   Widget ≠ Element ≠ RenderObject; platform katmanı widget import etmez;
   olaylar kuyruktan akar.

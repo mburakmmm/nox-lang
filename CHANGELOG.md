@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.35]
+
+Gömme ABI kabul korpusu ve istisna nesnesi sahipliği.
+
+### Eklendi
+
+- `nox_exception_release(rt, exception)` (`nox_embed.h`): `nox_exception_take` nesnesinin sahibi host'tur ve artık onu bırakabilir. Önceden bırakma API'si yoktu, alınan her istisna sızardı.
+- `tests/cli/embed_abi_corpus_test.zig` (iOS simülatöründe C host): primitive imzalar, Unicode ve geçersiz UTF-8 str'ler, istisna sınırı, 10.000 create/destroy, host ayırıcısı denge sayacı, olay kuyruğu ve pump bütçesi, dosya sandbox'ı (`/etc/passwd` ve `..` reddi), yanlış ABI sürümü/boyutu. `.github/workflows/mobile.yml` çalıştırır.
+
 ## [2.0.34]
 
 Heterojen protokol koleksiyonları (AGENTS §12).

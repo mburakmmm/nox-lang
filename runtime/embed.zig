@@ -6,6 +6,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const asap = @import("alloc/asap.zig");
 const errors_handle = @import("errors/handle.zig");
+const dispatch_registry = @import("alloc/dispatch_registry.zig");
 
 fn monoNs() u64 {
     if (comptime builtin.os.tag == .windows) {
@@ -238,6 +239,15 @@ pub fn createWith(allocator: std.mem.Allocator, config: ?*const HostConfig, out:
     slot.app = app;
     out.?.* = app;
     return OK;
+}
+
+/// `nox_exception_take`in döndürdüğü istisna nesnesini bırakır (host nesnenin sahibidir). Sınıf etiketi nesnenin ilk sekiz baytıdır;
+/// bırakma, programın kayıtlı sınıf-bırakma tablosuyla yapılır. `null` zararsızdır.
+export fn nox_exception_release(rt: ?*anyopaque, exception: ?*anyopaque) callconv(.c) void {
+    const obj = exception orelse return;
+    const f = dispatch_registry.classReleaseFn() orelse return;
+    const tag: *const i64 = @ptrCast(@alignCast(obj));
+    f(rt, tag.*, obj);
 }
 
 export fn nox_embed_abi_version() callconv(.c) i32 {

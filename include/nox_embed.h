@@ -86,6 +86,8 @@ char *nox_str_from_cstr(void *rt, const char *text);
 void nox_str_release(void *rt, char *text);
 int32_t nox_exception_pending(void *rt);
 void *nox_exception_take(void *rt);
+/* nox_exception_take nesnesinin sahibi host'tur; işi bitince bırakır (NULL zararsız). */
+void nox_exception_release(void *rt, void *exception);
 
 #ifdef __cplusplus
 }
