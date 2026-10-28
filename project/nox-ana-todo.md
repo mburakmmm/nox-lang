@@ -281,7 +281,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [x] **6.4 CPython uyumluluk iddiasını dürüstçe sınırla.** (v2.0.39: aynı sayfa; NumPy/Pandas desteklenmez, "as-is çalışır" denmez; AGENTS Tier tablosu yol haritası olarak işaretlendi.) NumPy/Pandas
   hedefi için gereken gerçek API matrisi, eksik semboller ve test programı
   hazırlanmalı; “as-is çalışır” denmemeli.
-- [~] **6.5 WASM interpreter kapsam matrisi çıkar.** (v2.0.39: `docs/internals/wasm-coverage.md` matrisi ve hedef yüzey sırası yazıldı; v2.0.41: i32 karşılaştırma/bölme/bit/kaydırma/select/drop eklendi, trap ve taşma testli. Sıradaki: yapılandırılmış kontrol akışı.) Bugünkü parser/interpreter
+- [~] **6.5 WASM interpreter kapsam matrisi çıkar.** (v2.0.39: `docs/internals/wasm-coverage.md` matrisi ve hedef yüzey sırası yazıldı; v2.0.41: i32 karşılaştırma/bölme/bit/kaydırma/select/drop eklendi, trap ve taşma testli. v2.0.44: block/loop/if/else/br/br_if + yakıt sınırı (50M komut) eklendi. Açık: bellek, i64, br_table.) Bugünkü parser/interpreter
   yalnız sınırlı instruction/value türlerini destekliyor. İstenen WASM
   surface'i belirle, trap/error ve fuzz korpusunu genişlet. WASM backend
   kesinlikle eklenmez.

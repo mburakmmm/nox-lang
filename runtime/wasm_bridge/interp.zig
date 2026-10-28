@@ -106,18 +106,142 @@ pub fn callFunc(allocator: std.mem.Allocator, module: *const Module, func_index:
     return result orelse error.StackUnderflow;
 }
 
+/// Bir fonksiyon çağrısı başına yürütülebilecek en fazla komut: sonsuz döngülü bir modülün (DoS) süreci kilitlemesini önler. Aşılırsa `Trap`.
+const MAX_STEPS: u64 = 50_000_000;
+const MAX_LABELS = 64;
+
+/// Yapılandırılmış kontrol bloğunun etiketi: `br` hedefi. `loop` için hedef döngü başıdır (kollar değer taşımaz), `block`/`if` için bloğun `end`inden sonraki konum.
+const Label = struct { is_loop: bool, target: usize, height: usize, arity: u1 };
+
+const BlockEnds = struct { else_pos: ?usize, end_pos: usize };
+
+/// `start`tan (blok tipi baytından SONRA) bu bloğun eşleşen `else` ve `end` konumlarını bulur; iç içe blokları atlar.
+fn findBlockEnds(code: []const u8, start: usize) InterpError!BlockEnds {
+    var p = start;
+    var depth: usize = 0;
+    var else_pos: ?usize = null;
+    while (p < code.len) {
+        const op = code[p];
+        p += 1;
+        switch (op) {
+            0x02, 0x03, 0x04 => {
+                p += 1;
+                depth += 1;
+            },
+            0x05 => if (depth == 0) {
+                else_pos = p;
+            },
+            0x0b => {
+                if (depth == 0) return .{ .else_pos = else_pos, .end_pos = p - 1 };
+                depth -= 1;
+            },
+            0x0c, 0x0d, 0x10, 0x20, 0x21, 0x22 => _ = try readVarU32At(code, &p),
+            0x41 => _ = try readVarI32At(code, &p),
+            0x00, 0x01, 0x0f, 0x1a, 0x1b, 0x45...0x4f, 0x6a...0x76 => {},
+            else => return error.UnsupportedInstruction,
+        }
+    }
+    return error.UnexpectedEof;
+}
+
+fn blockArity(bt: u8) InterpError!u1 {
+    return switch (bt) {
+        0x40 => 0,
+        0x7f => 1,
+        else => error.UnsupportedInstruction,
+    };
+}
+
 fn execCode(allocator: std.mem.Allocator, module: *const Module, code: []const u8, locals: []i32) InterpError!?i32 {
     var stack: [MAX_STACK]i32 = undefined;
     var sp: usize = 0;
     var pos: usize = 0;
+    var labels: [MAX_LABELS]Label = undefined;
+    var nlabels: usize = 0;
+    var steps: u64 = 0;
 
     while (pos < code.len) {
+        steps += 1;
+        if (steps > MAX_STEPS) return error.Trap; // yakıt tükendi
         const op = code[pos];
         pos += 1;
         switch (op) {
             0x00 => return error.Trap, // unreachable
             0x01 => {}, // nop
-            0x0b, 0x0f => break, // end / return — düz çizgi kod için eşdeğer
+            0x02, 0x03 => { // block / loop
+                if (pos >= code.len) return error.UnexpectedEof;
+                const arity = try blockArity(code[pos]);
+                pos += 1;
+                if (nlabels >= MAX_LABELS) return error.StackOverflow;
+                if (op == 0x03) {
+                    labels[nlabels] = .{ .is_loop = true, .target = pos, .height = sp, .arity = 0 };
+                } else {
+                    const ends = try findBlockEnds(code, pos);
+                    labels[nlabels] = .{ .is_loop = false, .target = ends.end_pos + 1, .height = sp, .arity = arity };
+                }
+                nlabels += 1;
+            },
+            0x04 => { // if
+                if (sp < 1) return error.StackUnderflow;
+                if (pos >= code.len) return error.UnexpectedEof;
+                const arity = try blockArity(code[pos]);
+                pos += 1;
+                sp -= 1;
+                const cond = stack[sp] != 0;
+                const ends = try findBlockEnds(code, pos);
+                if (nlabels >= MAX_LABELS) return error.StackOverflow;
+                labels[nlabels] = .{ .is_loop = false, .target = ends.end_pos + 1, .height = sp, .arity = arity };
+                nlabels += 1;
+                if (!cond) {
+                    if (ends.else_pos) |e| {
+                        pos = e;
+                    } else {
+                        pos = ends.end_pos + 1;
+                        nlabels -= 1;
+                    }
+                }
+            },
+            0x05 => { // else: then-kolu bitti, bloğun sonuna atla
+                if (nlabels == 0) return error.Trap;
+                nlabels -= 1;
+                pos = labels[nlabels].target;
+            },
+            0x0c, 0x0d => { // br / br_if
+                const depth = try readVarU32At(code, &pos);
+                if (op == 0x0d) {
+                    if (sp < 1) return error.StackUnderflow;
+                    sp -= 1;
+                    if (stack[sp] == 0) continue;
+                }
+                if (depth >= nlabels) { // fonksiyon düzeyi: return gibi
+                    if (sp == 0) return null;
+                    return stack[sp - 1];
+                }
+                const label = labels[nlabels - 1 - depth];
+                if (label.is_loop) {
+                    sp = label.height;
+                    nlabels = nlabels - depth; // etiket korunur, içindekiler atılır
+                    pos = label.target;
+                } else {
+                    if (label.arity == 1) {
+                        if (sp < 1) return error.StackUnderflow;
+                        const v = stack[sp - 1];
+                        sp = label.height;
+                        stack[sp] = v;
+                        sp += 1;
+                    } else {
+                        sp = label.height;
+                    }
+                    nlabels = nlabels - 1 - depth;
+                    pos = label.target;
+                }
+            },
+            0x0b => { // end: blok sonu ya da fonksiyon sonu
+                if (nlabels > 0) {
+                    nlabels -= 1;
+                } else break;
+            },
+            0x0f => break, // return
             0x10 => { // call
                 const callee_idx = try readVarU32At(code, &pos);
                 const callee_type = module.typeOf(callee_idx);
@@ -354,4 +478,40 @@ test "i32 bölme: sıfıra bölme ve INT_MIN / -1 trap, yığın yetersizliği h
     try std.testing.expectEqual(@as(?i32, 0), try runOps(&.{ 0x41, 0x80, 0x80, 0x80, 0x80, 0x78, 0x41, 0x7f, 0x6f, 0x0b }, &.{}));
     try std.testing.expectError(error.StackUnderflow, runOps(&.{ 0x41, 1, 0x71 }, &.{})); // 0x71 and, tek işlenen
     try std.testing.expectError(error.StackUnderflow, runOps(&.{0x1b}, &.{}));
+}
+
+test "yapılandırılmış kontrol akışı: loop + br_if ile toplama, block sonucu, if/else, iç içe br" {
+    // toplam = 5 + 4 + 3 + 2 + 1: local0 sayaç, local1 toplam
+    var locals = [_]i32{ 5, 0 };
+    const sum = [_]u8{
+        0x02, 0x40, // block
+        0x03, 0x40, // loop
+        0x20, 0, 0x45, 0x0d, 1, // n == 0 ise bloktan çık
+        0x20, 1, 0x20, 0, 0x6a, 0x21, 1, // toplam += n
+        0x20, 0, 0x41, 1, 0x6b, 0x21, 0, // n -= 1
+        0x0c, 0, // döngü başına dön
+        0x0b, // loop end
+        0x0b, // block end
+        0x20, 1, 0x0b, // sonuç = toplam
+    };
+    try std.testing.expectEqual(@as(?i32, 15), try runOps(&sum, &locals));
+
+    // if/else sonuçlu: koşul 1 -> 10, 0 -> 20
+    try std.testing.expectEqual(@as(?i32, 10), try runOps(&.{ 0x41, 1, 0x04, 0x7f, 0x41, 10, 0x05, 0x41, 20, 0x0b, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 20), try runOps(&.{ 0x41, 0, 0x04, 0x7f, 0x41, 10, 0x05, 0x41, 20, 0x0b, 0x0b }, &.{}));
+    // else'siz if, koşul 0: gövde atlanır; sonuç yığında önceden duran değer
+    try std.testing.expectEqual(@as(?i32, 4), try runOps(&.{ 0x41, 4, 0x41, 0, 0x04, 0x40, 0x41, 99, 0x1a, 0x0b, 0x0b }, &.{}));
+    // block sonuçlu br: br'den sonraki komutlar çalışmaz
+    try std.testing.expectEqual(@as(?i32, 7), try runOps(&.{ 0x02, 0x7f, 0x41, 7, 0x0c, 0, 0x41, 9, 0x0b, 0x0b }, &.{}));
+    // iç içe: br 1 dıştaki bloğa atlar
+    try std.testing.expectEqual(@as(?i32, 3), try runOps(&.{ 0x02, 0x7f, 0x02, 0x40, 0x41, 3, 0x0c, 1, 0x0b, 0x41, 8, 0x0b, 0x0b }, &.{}));
+    // fonksiyon düzeyi br (derinlik >= etiket sayısı) return gibi davranır
+    try std.testing.expectEqual(@as(?i32, 5), try runOps(&.{ 0x41, 5, 0x0c, 0, 0x41, 6, 0x0b }, &.{}));
+}
+
+test "yakıt sınırı: sonsuz döngü Trap ile biter; hatalı blok tipi ve eksik end reddedilir" {
+    try std.testing.expectError(error.Trap, runOps(&.{ 0x03, 0x40, 0x0c, 0, 0x0b, 0x0b }, &.{}));
+    try std.testing.expectError(error.UnsupportedInstruction, runOps(&.{ 0x02, 0x7e, 0x0b, 0x0b }, &.{}));
+    try std.testing.expectError(error.UnexpectedEof, runOps(&.{ 0x02, 0x40, 0x41, 1 }, &.{}));
+    try std.testing.expectError(error.StackUnderflow, runOps(&.{ 0x04, 0x40, 0x0b, 0x0b }, &.{}));
 }

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.44]
+
+### Eklendi
+
+- WASM yorumlayicisi: `block`, `loop`, `if`/`else`, `br`, `br_if` (i32 sonuclu bloklar dahil). Cagri basina 50 milyon komut ve 64 ic ice blok siniri asilirsa `Trap`: sonsuz donguli modul sureci kilitleyemez. Testler dongu toplami, sonuclu blok/if, ic ice br, fonksiyon duzeyi br ve yakit tukenmesini kapsar.
+
 ## [2.0.43]
 
 Guvenlik: guvenilmeyen kaynak icin sandbox ve `nox.lock` imzalama (TODO 7.1-7.3).
