@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.49]
+
+### Eklendi
+
+- `*args: T` degisken sayida konumsal parametre (fonksiyon, metod, generic sablon): govdede `list[T]`, cagri yerinde fazladan argumanlar listeye paketlenir, bos cagri bos liste verir. Son parametre olmali, anahtar kelimeyle verilemez, eleman tipi denetlenir. `noxc fmt` korur. `**kwargs`, `f(*xs)` ve anahtar-sozcuge-ozel parametre henuz yok.
+
 ## [2.0.48]
 
 ### Duzeltildi

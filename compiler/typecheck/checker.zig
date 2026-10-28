@@ -2126,11 +2126,23 @@ pub const Checker = struct {
 
     /// v1.147.0: keyword (`ad=değer`) ve eksik (varsayılanlı) argümanları parametre sırasına dizip TAM konumsal bir argüman
     /// listesi üretir. Argümanlar parametre SIRASIYLA değerlendirilir (yazılış sırasıyla değil).
+    fn anyVariadic(decl: []const ast.Param) bool {
+        for (decl) |p| if (p.variadic) return true;
+        return false;
+    }
+
     fn expandCallArgs(self: *Checker, decl: []const ast.Param, args: []const ast.Expr, name: []const u8) TypeError![]ast.Expr {
         const n = decl.len;
         const slots = try self.allocator.alloc(?ast.Expr, n);
         defer self.allocator.free(slots);
         @memset(slots, null);
+        // `*args` parametresi (en fazla bir, son sırada): fazladan konumsal argümanlar bir liste literaline paketlenir.
+        var variadic_idx: ?usize = null;
+        for (decl, 0..) |p, j| if (p.variadic) {
+            variadic_idx = j;
+        };
+        var extras: std.ArrayListUnmanaged(ast.Expr) = .empty;
+        defer extras.deinit(self.allocator);
         for (args, 0..) |a, i| {
             if (a == .kwarg) {
                 var found: ?usize = null;
@@ -2141,12 +2153,18 @@ pub const Checker = struct {
                     }
                 }
                 const j = found orelse return self.fail(error.ArgumentCountMismatch, "function '{s}' has no parameter named '{s}'", .{ name, a.kwarg.name });
+                if (variadic_idx != null and j == variadic_idx.?) return self.fail(error.ArgumentCountMismatch, "'{s}': the '*{s}' parameter takes positional arguments only", .{ name, a.kwarg.name });
                 if (slots[j] != null) return self.fail(error.ArgumentCountMismatch, "in the call to '{s}', parameter '{s}' was given more than once", .{ name, a.kwarg.name });
                 slots[j] = a.kwarg.value.*;
+            } else if (variadic_idx != null and i >= variadic_idx.?) {
+                try extras.append(self.allocator, a);
             } else {
                 if (i >= n) return self.fail(error.ArgumentCountMismatch, "'{s}' takes at most {d} arguments, {d} were given", .{ name, n, args.len });
                 slots[i] = a;
             }
+        }
+        if (variadic_idx) |vi| {
+            slots[vi] = .{ .list_lit = try self.allocator.dupe(ast.Expr, extras.items) };
         }
         // v1.169.0: değerlendirme sırası. Bağlama parametre sırasıyla yapılır, AMA yan etkili (çağrı/await/spawn/kurucu içeren) argümanlar KAYNAK sırasıyla
         // değerlendirilir: göreli sıraları değişen iki yan etkili argüman varsa `last_eval_order` permütasyonu kaydedilir (codegen uygular).
@@ -2157,7 +2175,7 @@ pub const Checker = struct {
             var ambiguous = false;
             var last_effect_slot: ?usize = null;
             for (args, 0..) |a, i| {
-                var slot_idx: usize = i;
+                var slot_idx: usize = if (variadic_idx) |vi| @min(i, vi) else i;
                 var val = a;
                 if (a == .kwarg) {
                     for (decl, 0..) |p, j| {
@@ -2171,6 +2189,9 @@ pub const Checker = struct {
                     if (slot_idx < prev) ambiguous = true;
                 }
                 last_effect_slot = slot_idx;
+            }
+            if (ambiguous and variadic_idx != null) {
+                return self.fail(error.ArgumentCountMismatch, "'{s}': keyword arguments with side effects cannot be reordered in a call that also uses '*args'; write them in parameter order", .{name});
             }
             if (ambiguous) {
                 if (self.in_spawn_operand) {
@@ -2238,7 +2259,7 @@ pub const Checker = struct {
         for (args) |a| if (a == .kwarg) {
             has_kw = true;
         };
-        if (!has_kw and (sig.decl == null or args.len >= sig.params.len)) {
+        if (!has_kw and (sig.decl == null or (args.len >= sig.params.len and !anyVariadic(sig.decl.?)))) {
             return self.checkArgs(ctx, sig.params, args, name);
         }
         const decl = sig.decl orelse return self.fail(error.TypeMismatch, "'{s}' does not support keyword arguments/default values", .{name});
@@ -9970,7 +9991,7 @@ pub const Checker = struct {
         for (c0.args) |a| if (a == .kwarg) {
             has_kw = true;
         };
-        if (has_kw or c0.args.len < gfd.params.len) {
+        if (has_kw or c0.args.len < gfd.params.len or anyVariadic(gfd.params)) {
             const expanded = try self.expandCallArgs(gfd.params, c0.args, gfd.name);
             try self.call_expansions.put(self.allocator, @intFromPtr(c0.callee), expanded);
             if (self.last_eval_order) |o| try self.call_orders.put(self.allocator, @intFromPtr(c0.callee), o);

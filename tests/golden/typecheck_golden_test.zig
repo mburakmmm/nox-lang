@@ -1432,6 +1432,20 @@ test "golden(typecheck): sınıf sabitine atama reddedilir" {
     );
 }
 
+test "golden(typecheck): *args eleman tipi uyuşmazlığı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_variadic_element_type.nox"),
+        @embedFile("typecheck_cases/err_variadic_element_type.expected"),
+    );
+}
+
+test "golden(typecheck): *args parametresi anahtar kelimeyle verilemez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_variadic_by_keyword.nox"),
+        @embedFile("typecheck_cases/err_variadic_by_keyword.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

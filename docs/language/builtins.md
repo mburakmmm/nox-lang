@@ -104,5 +104,5 @@ are built in ([Concurrency](concurrency.md)).
 
 ## What is not built in
 
-`isinstance`, `type`, `id`, `hash`, `open`, `getattr`/`setattr`, `eval`/`exec`, `iter`/`next`, `*args`-style functions, `print(file=…)`, and
+`isinstance`, `type`, `id`, `hash`, `open`, `getattr`/`setattr`, `eval`/`exec`, `iter`/`next`, `print(file=…)`, and
 `%` string formatting. File access is [`nox.fs`](../stdlib/fs.md); dynamic attribute access does not exist by design.

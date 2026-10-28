@@ -1,0 +1,32 @@
+def total(first: int, *rest: int) -> int:
+    t: int = first
+    for r in rest:
+        t += r
+    return t
+
+def join(sep: str, *parts: str) -> str:
+    out: str = ""
+    i: int = 0
+    for p in parts:
+        if i > 0:
+            out += sep
+        out += p
+        i += 1
+    return out
+
+class Acc:
+    base: int
+    def __init__(self, base: int) -> None:
+        self.base = base
+    def add(self, *xs: int) -> int:
+        s: int = self.base
+        for x in xs:
+            s += x
+        return s
+
+print(total(1))
+print(total(1, 2, 3, 4))
+print(join(",", "a", "b", "c"))
+print(join("-"))
+print(Acc(10).add())
+print(Acc(10).add(1, 2, 3))

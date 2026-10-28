@@ -559,6 +559,13 @@ pub const Parser = struct {
             }
         }
         _ = try self.expect(.r_paren);
+        // Değişken sayıda konumsal parametre yalnızca SON parametre olabilir (anahtar-sözcüğe-özel parametre yok).
+        for (params.items, 0..) |pp, pi| {
+            if (pp.variadic and pi + 1 != params.items.len) {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "a '*args' parameter must be the last parameter (keyword-only parameters are not supported)" };
+                return error.UnexpectedToken;
+            }
+        }
         _ = try self.expect(.arrow);
         const return_type = try self.parseTypeExpr();
         _ = try self.expect(.colon);
@@ -624,6 +631,15 @@ pub const Parser = struct {
     }
 
     fn parseParam(self: *Parser) ParseError!ast.Param {
+        // `*ad: T` — değişken sayıda konumsal argüman; gövdede `list[T]` olarak görünür.
+        if (self.match(.star)) {
+            const vname = (try self.expect(.identifier)).lexeme;
+            _ = try self.expect(.colon);
+            const elem = try self.parseTypeExpr();
+            const args = try self.allocator.alloc(ast.TypeExpr, 1);
+            args[0] = elem;
+            return .{ .name = vname, .variadic = true, .type_expr = .{ .generic = .{ .name = "list", .args = args } } };
+        }
         const name = (try self.expect(.identifier)).lexeme;
         _ = try self.expect(.colon);
         const type_expr = try self.parseTypeExpr();

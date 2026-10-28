@@ -73,7 +73,21 @@ eval x
 xy
 ```
 
-There is no `*args`/`**kwargs` and no keyword-only or positional-only parameter marker in 2.0.
+A function can take a variable number of positional arguments with a trailing `*name: T`. Inside the body `name` is a `list[T]`; extra arguments at the call are collected into it (none gives an empty list). It must be the last parameter, cannot be passed by keyword, and every extra argument must be a `T`. There is no `**kwargs`, no call-site unpacking (`f(*xs)`) and no keyword-only or positional-only parameter marker in 2.0.
+
+```nox
+def total(first: int, *rest: int) -> int:
+    t: int = first
+    for r in rest:
+        t += r
+    return t
+
+print(total(1), total(1, 2, 3, 4))
+```
+
+```output
+1 10
+```
 
 ## Functions are values
 

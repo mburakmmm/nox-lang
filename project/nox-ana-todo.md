@@ -313,7 +313,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 Bu maddeler doğruluk açığı değil, belgelenmiş kapsam genişletmeleridir. Her biri
 ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
 
-- [!] **8.1 `*args` / `**kwargs`, keyword-only ve call-site unpacking.**
+- [~] **8.1 `*args` / `**kwargs`, keyword-only ve call-site unpacking.** (v2.0.49: `*args: T` UYGULANDI — fonksiyon/metod/generic şablon, gövdede `list[T]`, boş çağrı boş liste, anahtar kelimeyle verilemez, son parametre olmalı, formatter korur; iki backend golden + 2 typecheck hatası. Açık: `**kwargs`, `f(*xs)` çağrı yerinde açma, anahtar-sözcüğe-özel parametre.)
 - [!] **8.2 Çoklu kalıtım.** MRO, field layout, protocol ve ARC etkisi.
 - [~] **8.3 Class-level attributes ve static/class/property yüzeyi.** (v2.0.47: sınıf düzeyi SABİTLER uygulandı — `NAME: T = literal`, `Sınıf.NAME`/`self.NAME` okuması literal değere katlanır, miras alınır, atama/ifade/çift tanım net hata verir; formatter korur; iki backend golden + 4 typecheck hatası. Açık: değişebilir sınıf özniteliği, static/classmethod, property.)
 - [~] **8.4 Annotated `self.x: T = v` ve nested empty literal inference.** (v2.0.39: `self.x: T = v` UYGULANDI — alanı tanımlar, boş literal/Optional için beklenen tip verir, formatter yüzey biçimini korur, iki backend golden + 2 typecheck hatası; `__init__` dışında yeni alan reddedilir. Açık: iç içe boş literal çıkarımı (`list[list[int]]` içinde `[]`).)
@@ -342,6 +342,20 @@ ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
 - [x] **9.6 Tarihsel spesifikasyonu normatif başvurudan ayır.** (v2.0.37: spesifikasyon başına "tarihsel, normatif değil" bildirimi ve `docs/` indeksi; çelişkide öncelik sırası yazıldı.) Kronolojik
   uygulama günlüğü korunurken güncel dil sözleşmesine tek, indeksli giriş
   sağlanmalı.
+
+## Faz 10 — Nox kodunu WASM'a derleme (ÖNERİ, kullanıcı kararı bekliyor)
+
+**Çelişki:** `AGENTS.md` değişmez ilke #5 ("WASM entegrasyonu bir derleme hedefi değildir, yalnızca bir kütüphane içe aktarma mekanizmasıdır") ve §11 bu özelliği açıkça yasaklar. Kullanıcı (2026-10-29) "Nox kodu LLVM üzerinden WASM'a derlenebilsin, tam eksiksiz" istedi. Ajan ilkeyi tek başına değiştiremez (AGENTS §2): önce kullanıcı ilke #5'in yeni metnini onaylamalıdır. Önerilen yeni metin: "WASM, LLVM backend'i üzerinden bir DERLEME HEDEFİDİR (`--target wasm32-wasi`, ileride `wasm32-freestanding`); QBE'ye WASM backend'i eklenmez. Gömülü WASM yorumlayıcısı (kütüphane içe aktarma) ayrı bir mekanizma olarak kalır."
+
+- [!] **10.1 İlke #5 ve §11 değişikliğini onayla.** AGENTS.md, nox-teknik-spesifikasyon.md ve `docs/internals/hpy-wasm.md` birlikte güncellenir.
+- [ ] **10.2 Hedef tanımı.** `--target wasm32-wasi` (WASI preview1: dosya, saat, rastgelelik, argv/env, stdout) ve `wasm32-freestanding` (tarayıcı/gömülü: host ithalatları). Yalnızca LLVM backend; QBE reddedilir (mobil hedeflerle aynı desen).
+- [ ] **10.3 Runtime taşıması.** Zig runtime'ı `wasm32-wasi` için derle: fiber değiştirme (`swap_*.S` WASM'da yok: stack switching yok, ya `asyncify` benzeri dönüşüm ya da fiber'ları tek yığında devam-geçiş stiline çevirme gerekir; en büyük risk), `nox.thread`/M:N havuz yok, ağ/soket yok (WASI preview1), `dlopen` tabanlı sürücüler (sqlite/postgres/mysql/tls_server) yok.
+- [ ] **10.4 Yetenek maskesi.** Mobil maskesine benzer `wasm` maskesi: `nox.process`, `nox.thread`, `nox.http` sunucu, `nox.mysql/postgres/sqlite`, `nox.tls`, HPy/extern def (yerel kütüphane) reddedilir; saf hesap, `fs`/`os`/`time`/`random` WASI üzerinden açılır.
+- [ ] **10.5 Bağlama ve çıktı.** `wasm-ld`/`zig cc -target wasm32-wasi` ile `.wasm` üretimi; `noxc run --target wasm32-wasi` için `wasmtime` varsa çalıştırma.
+- [ ] **10.6 Test.** Fixture korpusunun WASI'de çalışabilen alt kümesi `wasmtime` ile (CI'da kurulur), golden çıktılar masaüstü ile aynı.
+- [ ] **10.7 Belge.** `platforms.md`, `backends.md`, `hpy-wasm.md`, ADR-012.
+
+**Dürüst kapsam notu:** "tam eksiksiz" mümkün değildir: WASM'ın iş parçacığı/soket/dlopen/yığın değiştirme eksikleri yüzünden `async`/`spawn`, `nox.thread`, ağ sunucusu ve yerel kütüphane bağlama bu hedefte yoktur ya da farklı çalışır. Hedefin değeri saf hesap, dosya/ortam ve (WASI soketleri gelince) istemci tarafıdır.
 
 ## Her görev için kapanış şablonu
 
