@@ -293,7 +293,7 @@ pub export fn nox_list_shallow_gc_free(rt: ?*anyopaque, ptr: ?*anyopaque) void {
     nox_rc_free_payload(rt, p, list_header_size + cap * 8);
 }
 
-/// v1.142.11 (GPT-5.6 red-team: iç içe `list[list[Sınıf]]` alanları döngü
+/// v1.142.11 (dış inceleme: iç içe `list[list[Sınıf]]` alanları döngü
 /// çözücüye GÖRÜNMÜYORDU): `depth` seviye iç içe bir `list[...[Sınıf]]`nin
 /// yaprak sınıf işaretçilerini sayar/doldurur/sığ-serbest bırakır. Liste
 /// düzeni her seviyede aynıdır (`{len@0, cap@8, işaretçi elemanlar@16...}`).

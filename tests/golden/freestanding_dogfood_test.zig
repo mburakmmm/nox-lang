@@ -208,7 +208,7 @@ pub fn expectFreestandingBoot(
     errdefer std.debug.print("QEMU stdout:\n{s}\nQEMU stderr:\n{s}\n", .{ stdout_data, stderr_data });
 
     // Bulundu (bkz. nox-teknik-spesifikasyon.md §3.219 SONRASI incelemesi,
-    // dış bir GPT-5.6 incelemesinin doğru tespiti): `indexOf(stdout_data,
+    // dış bir incelemenin doğru tespiti): `indexOf(stdout_data,
     // cp)` HER checkpoint'i BAĞIMSIZ/SIRASIZ arıyordu — "A/B/C/D" BEKLENİP
     // QEMU "D/A/C/B" BASSA (VEYA bir checkpoint YANLIŞLIKLA TEKRARLANSA)
     // test YİNE de GEÇERDİ, ÇÜNKÜ HER cp stdout'UN HERHANGİ bir yerinde

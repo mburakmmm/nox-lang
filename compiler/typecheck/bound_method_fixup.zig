@@ -81,7 +81,7 @@ const Fixer = struct {
     }
 
     fn isMethodCandidate(self: *Fixer, name: []const u8) bool {
-        // v1.142.11 (GPT-5.6 red-team): modül-global `field_names` dışlaması
+        // v1.142.11 (dış inceleme): modül-global `field_names` dışlaması
         // KALDIRILDI — ilgisiz bir sınıfın aynı adlı ALANI, başka bir sınıfın
         // metodunun bağlı-değer olarak kullanımını reddettiriyordu
         // (`a.value` → "'A' sınıfının 'value' alanı yok"). Ayrım zaten

@@ -2,7 +2,7 @@
 //! katman'a genişletilmesi") — kırmızı-takım: `ptr_read_int`/`detach`/
 //! `adopt`nin `lowlevel:` DIŞINDA kullanıldığı bir program REDDEDİLİR.
 //!
-//! v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179 — GPT-5.6 incelemesinde
+//! v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179 — dış incelemede
 //! bulunup DOĞRULANAN GERÇEK bir hata): DAHA ÖNCE bu kısıtlama SADECE
 //! codegen'in `in_lowlevel_depth`inde uygulanıyordu — `noxc check` bu
 //! programları TÜR olarak GEÇERLİ sayıp SESSİZCE kabul ediyordu, SADECE

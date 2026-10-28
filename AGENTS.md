@@ -1,6 +1,6 @@
 # AGENTS.md — Nox Programlama Dili
 
-Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm AI kodlama ajanları (Claude Code, Cursor, Fable 5 vb.) için bağlayıcı referanstır. Bir ajan bu depoda herhangi bir değişiklik yapmadan önce bu dosyayı ve `nox-teknik-spesifikasyon.md`'yi (repo kökünde) okumuş olmalıdır. Çelişki durumunda **bu dosyadaki değişmez ilkeler her zaman kazanır.**
+Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm kodlama ajanları için bağlayıcı referanstır. Bir ajan bu depoda herhangi bir değişiklik yapmadan önce bu dosyayı ve `nox-teknik-spesifikasyon.md`'yi (repo kökünde) okumuş olmalıdır. Çelişki durumunda **bu dosyadaki değişmez ilkeler her zaman kazanır.**
 
 ---
 

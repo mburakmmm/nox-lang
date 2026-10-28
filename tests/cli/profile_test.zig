@@ -339,7 +339,7 @@ test "noxc build --profile freestanding: nox.time SAF takvim aritmetigi GERÇEKT
 }
 
 // Bulundu (bkz. nox-teknik-spesifikasyon.md §3.219 SONRASI incelemesi,
-// dış bir GPT-5.6 incelemesinin doğru tespiti): `instant_now()`nin KENDİ
+// dış bir incelemenin doğru tespiti): `instant_now()`nin KENDİ
 // `@capability.requires("clock")` kapısı `Instant(0)` GİBİ DOĞRUDAN bir
 // inşayı HİÇ ENGELLEMİYORDU — `Instant.elapsed_ms()`/`elapsed()` ÖNCEDEN
 // HİÇBİR capability kontrolünden GEÇMEDEN (checker SADECE SERBEST
