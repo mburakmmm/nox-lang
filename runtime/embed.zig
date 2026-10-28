@@ -5,6 +5,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const asap = @import("alloc/asap.zig");
+const errors_handle = @import("errors/handle.zig");
 
 fn monoNs() u64 {
     if (comptime builtin.os.tag == .windows) {
@@ -32,6 +33,11 @@ pub const ERR_STATE: i32 = -4;
 pub const ERR_REENTRANT: i32 = -5;
 pub const ERR_NOMEM: i32 = -6;
 pub const ERR_UTF8: i32 = -7;
+/// Olay kuyruğu dolu (`post_event`); olay KOPYALANMADI, host sonra yeniden deneyebilir. Önceden `ERR_STATE` dönüyordu.
+pub const ERR_FULL: i32 = -8;
+/// Kullanıcı kodu (giriş ya da olay işleyicisi) dönerken bekleyen bir Nox istisnası var. Nesne bekleyen durumda kalır:
+/// host `nox_exception_take` ile alır. `pump`ta kuyrukta kalan olaylar yerinde durur.
+pub const ERR_EXCEPTION: i32 = -9;
 
 pub const ABI: i32 = 1;
 const EVENT_CAP: u32 = 64;
@@ -42,6 +48,27 @@ pub const Slot = extern struct {
     app: ?*anyopaque,
 };
 
+/// Host'un çalışma zamanına verdiği bellek ayırıcısı (isteğe bağlı). `alloc` `alignment` hizalı, en az `len` baytlık bellek
+/// döner (sıfırlanmış olması GEREKMEZ), yetersizse `NULL`; `free` aynı `len`/`alignment` ile bırakır. Çağrılar farklı iş
+/// parçacıklarından gelebilir: host ayırıcısı iş parçacığı-güvenli olmalı ve uygulama yok edilene kadar yaşamalıdır.
+pub const HostAllocator = extern struct {
+    size: u32,
+    ctx: ?*anyopaque,
+    alloc: ?*const fn (?*anyopaque, usize, usize) callconv(.c) ?*anyopaque,
+    free: ?*const fn (?*anyopaque, ?*anyopaque, usize, usize) callconv(.c) void,
+};
+
+/// `size` alanı sürüm ayrımını taşır: eski düzen (`allocator` alanı yok) ve genişletilmiş düzen kabul edilir (ABI numarası 1 kalır).
+pub const HostConfigV1 = extern struct {
+    size: u32,
+    abi_version: u32,
+    slot: ?*Slot,
+    documents: ?[*:0]const u8,
+    support: ?[*:0]const u8,
+    cache: ?[*:0]const u8,
+    temp_dir: ?[*:0]const u8,
+};
+
 pub const HostConfig = extern struct {
     size: u32,
     abi_version: u32,
@@ -50,6 +77,8 @@ pub const HostConfig = extern struct {
     support: ?[*:0]const u8,
     cache: ?[*:0]const u8,
     temp_dir: ?[*:0]const u8,
+    /// `null`: sistem ayırıcısı. Aksi halde çalışma zamanının yönetilen heap'i (liste/sözlük/ARC/RuntimeState) buradan beslenir.
+    allocator: ?*const HostAllocator,
 };
 
 const State = enum(u8) { created, started, stopped, destroyed };
@@ -69,10 +98,64 @@ const App = struct {
     event_fn: ?*const fn (?*anyopaque, i32, [*]const u8, u32) callconv(.c) void,
     slot: *Slot,
     roots: [4]?[*:0]const u8,
+    /// Host ayırıcısının kopyası (`null`: sistem ayırıcısı). `hostAllocator()` bunu bir `std.mem.Allocator`a bağlar.
+    host_alloc: ?HostAllocator,
     count: u32,
     head: u32,
     events: [EVENT_CAP]Event,
 };
+
+const host_alloc_vtable: std.mem.Allocator.VTable = .{
+    .alloc = hostAlloc,
+    .resize = hostResize,
+    .remap = hostRemap,
+    .free = hostFree,
+};
+
+fn hostAlloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+    _ = ret_addr;
+    const app: *App = @ptrCast(@alignCast(ctx));
+    const h = app.host_alloc orelse return null;
+    const align_bytes = alignment.toByteUnits();
+    const raw = h.alloc.?(h.ctx, len, align_bytes) orelse return null;
+    // Sözleşme ihlali (hizasız bellek) çalışma zamanını bozmasın: reddet ve geri ver.
+    if (@intFromPtr(raw) % align_bytes != 0) {
+        h.free.?(h.ctx, raw, len, align_bytes);
+        return null;
+    }
+    return @ptrCast(raw);
+}
+
+fn hostResize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+    _ = ctx;
+    _ = memory;
+    _ = alignment;
+    _ = new_len;
+    _ = ret_addr;
+    return false;
+}
+
+fn hostRemap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+    _ = ctx;
+    _ = memory;
+    _ = alignment;
+    _ = new_len;
+    _ = ret_addr;
+    return null;
+}
+
+fn hostFree(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+    _ = ret_addr;
+    const app: *App = @ptrCast(@alignCast(ctx));
+    const h = app.host_alloc orelse return;
+    h.free.?(h.ctx, memory.ptr, memory.len, alignment.toByteUnits());
+}
+
+/// `app`in çalışma zamanı için ayırıcı: host verdiyse onu, yoksa sistem ayırıcısını.
+fn runtimeAllocator(app: *App) ?std.mem.Allocator {
+    if (app.host_alloc == null) return null;
+    return .{ .ptr = app, .vtable = &host_alloc_vtable };
+}
 
 /// Sandbox kararı, çağıranın taşıdığı `rt`nin politikasına bakar (gizli/thread-local seçim YOK, AGENTS §2.6):
 /// aynı süreçteki iki uygulama ve `nox.thread` çocukları birbirinin köklerini göremez. `rt == null`
@@ -122,7 +205,17 @@ fn clearRoots(app: *App) void {
 
 pub fn createWith(allocator: std.mem.Allocator, config: ?*const HostConfig, out: ?*?*anyopaque) i32 {
     const cfg = config orelse return ERR_INVAL;
-    if (cfg.size != @sizeOf(HostConfig) or cfg.abi_version != ABI) return ERR_VERSION;
+    if (cfg.abi_version != ABI) return ERR_VERSION;
+    // `size`: eski (allocator alanı yok) ya da genişletilmiş düzen; ikisi de ABI 1.
+    const has_allocator_field = cfg.size == @sizeOf(HostConfig);
+    if (cfg.size != @sizeOf(HostConfigV1) and !has_allocator_field) return ERR_VERSION;
+    var host_alloc: ?HostAllocator = null;
+    if (has_allocator_field) {
+        if (cfg.allocator) |a| {
+            if (a.size != @sizeOf(HostAllocator) or a.alloc == null or a.free == null) return ERR_INVAL;
+            host_alloc = a.*;
+        }
+    }
     const slot = cfg.slot orelse return ERR_INVAL;
     if (slot.abi_version != ABI) return ERR_VERSION;
     if (out == null) return ERR_INVAL;
@@ -137,6 +230,7 @@ pub fn createWith(allocator: std.mem.Allocator, config: ?*const HostConfig, out:
         .event_fn = null,
         .slot = slot,
         .roots = .{ cfg.documents, cfg.support, cfg.cache, cfg.temp_dir },
+        .host_alloc = host_alloc,
         .count = 0,
         .head = 0,
         .events = undefined,
@@ -191,7 +285,7 @@ export fn nox_app_start(app_ptr: ?*anyopaque) callconv(.c) i32 {
     const app = appFrom(app_ptr) orelse return ERR_STATE;
     if (app.in_user) return ERR_REENTRANT;
     if (app.state != .created) return ERR_STATE;
-    const rt = asap.nox_runtime_init() orelse {
+    const rt = (if (runtimeAllocator(app)) |a| asap.nox_runtime_init_with_allocator(a) else asap.nox_runtime_init()) orelse {
         return ERR_NOMEM;
     };
     app.rt = rt;
@@ -201,6 +295,7 @@ export fn nox_app_start(app_ptr: ?*anyopaque) callconv(.c) i32 {
         app.in_user = true;
         entry(rt);
         app.in_user = false;
+        if (errors_handle.nox_exception_pending(rt) != 0) return ERR_EXCEPTION;
     }
     return OK;
 }
@@ -216,7 +311,7 @@ export fn nox_app_post_event(app_ptr: ?*anyopaque, kind: i32, bytes: ?[*]const u
     if (len > EVENT_BYTES) return ERR_INVAL;
     const slice = if (len == 0) "" else (bytes orelse return ERR_INVAL)[0..len];
     if (len > 0 and !std.unicode.utf8ValidateSlice(slice)) return ERR_UTF8;
-    if (app.count == EVENT_CAP) return ERR_STATE;
+    if (app.count == EVENT_CAP) return ERR_FULL;
     const index: usize = (app.head + app.count) % EVENT_CAP;
     app.events[index].kind = kind;
     app.events[index].len = len;
@@ -240,6 +335,7 @@ export fn nox_app_pump(app_ptr: ?*anyopaque, monotonic_time_ns: u64) callconv(.c
             app.in_user = true;
             function(app.rt, event.kind, &event.bytes, event.len);
             app.in_user = false;
+            if (errors_handle.nox_exception_pending(app.rt) != 0) return ERR_EXCEPTION;
         }
     }
     return delivered;
@@ -279,7 +375,109 @@ fn sampleConfig(slot: *Slot, documents: ?[*:0]const u8) HostConfig {
         .support = null,
         .cache = null,
         .temp_dir = null,
+        .allocator = null,
     };
+}
+
+/// Test host ayırıcısı: `std.testing.allocator` üzerinden ayırır, canlı/toplam sayısını tutar, istenince başarısız olur.
+const TrackingHost = struct {
+    live: usize = 0,
+    total: usize = 0,
+    fail: bool = false,
+
+    fn alloc(ctx: ?*anyopaque, len: usize, alignment: usize) callconv(.c) ?*anyopaque {
+        const self: *TrackingHost = @ptrCast(@alignCast(ctx.?));
+        if (self.fail) return null;
+        const a = std.mem.Alignment.fromByteUnits(alignment);
+        const p = std.testing.allocator.rawAlloc(len, a, @returnAddress()) orelse return null;
+        self.live += 1;
+        self.total += 1;
+        return p;
+    }
+
+    fn free(ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize, alignment: usize) callconv(.c) void {
+        const self: *TrackingHost = @ptrCast(@alignCast(ctx.?));
+        const a = std.mem.Alignment.fromByteUnits(alignment);
+        std.testing.allocator.rawFree(@as([*]u8, @ptrCast(ptr.?))[0..len], a, @returnAddress());
+        self.live -= 1;
+    }
+
+    fn descriptor(self: *TrackingHost) HostAllocator {
+        return .{ .size = @sizeOf(HostAllocator), .ctx = self, .alloc = alloc, .free = free };
+    }
+};
+
+test "host ayırıcısı çalışma zamanının tüm yönetilen belleğini karşılar ve destroy hepsini geri verir" {
+    var host: TrackingHost = .{};
+    const descriptor = host.descriptor();
+    var slot: Slot = .{ .abi_version = ABI, .app = null };
+    var config = sampleConfig(&slot, "/app/documents");
+    config.allocator = &descriptor;
+
+    var out: ?*anyopaque = null;
+    try std.testing.expectEqual(OK, createWith(std.testing.allocator, &config, &out));
+    const app = out.?;
+    try std.testing.expectEqual(@as(usize, 0), host.total); // henüz çalışma zamanı yok
+    try std.testing.expectEqual(OK, nox_app_start(app));
+    try std.testing.expect(host.total > 0);
+
+    // Çalışma zamanı üzerinden bir str ayır: host sayacı artmalı.
+    const rt = nox_app_runtime(app);
+    const before = host.total;
+    const text = @import("str.zig").nox_str_from_bytes(rt, "merhaba") orelse return error.AllocFailed;
+    try std.testing.expect(host.total > before);
+    @import("str.zig").nox_str_release(rt, text);
+
+    try std.testing.expectEqual(OK, nox_app_destroy(app));
+    try std.testing.expectEqual(@as(usize, 0), host.live); // sızıntı yok (testing.allocator da denetler)
+}
+
+test "host ayırıcısı bellek vermezse start ERR_NOMEM döner, uygulama created kalır ve sızıntısız yok edilir" {
+    var host: TrackingHost = .{ .fail = true };
+    const descriptor = host.descriptor();
+    var slot: Slot = .{ .abi_version = ABI, .app = null };
+    var config = sampleConfig(&slot, "/app/documents");
+    config.allocator = &descriptor;
+
+    var out: ?*anyopaque = null;
+    try std.testing.expectEqual(OK, createWith(std.testing.allocator, &config, &out));
+    try std.testing.expectEqual(ERR_NOMEM, nox_app_start(out));
+    try std.testing.expect(nox_app_runtime(out) == null);
+    try std.testing.expectEqual(OK, nox_app_destroy(out));
+    try std.testing.expectEqual(@as(usize, 0), host.live);
+}
+
+test "geçersiz host ayırıcısı ERR_INVAL, eski (allocator alanı olmayan) düzen kabul edilir" {
+    var slot: Slot = .{ .abi_version = ABI, .app = null };
+    var out: ?*anyopaque = null;
+
+    var bad_size: HostAllocator = .{ .size = 1, .ctx = null, .alloc = TrackingHost.alloc, .free = TrackingHost.free };
+    var config = sampleConfig(&slot, "/app/documents");
+    config.allocator = &bad_size;
+    try std.testing.expectEqual(ERR_INVAL, createWith(std.testing.allocator, &config, &out));
+    try std.testing.expect(slot.app == null);
+
+    var no_alloc: HostAllocator = .{ .size = @sizeOf(HostAllocator), .ctx = null, .alloc = null, .free = TrackingHost.free };
+    config.allocator = &no_alloc;
+    try std.testing.expectEqual(ERR_INVAL, createWith(std.testing.allocator, &config, &out));
+
+    // Eski host: HostConfigV1 boyutu, sistem ayırıcısı.
+    const v1: HostConfigV1 = .{
+        .size = @sizeOf(HostConfigV1),
+        .abi_version = ABI,
+        .slot = &slot,
+        .documents = "/app/documents",
+        .support = null,
+        .cache = null,
+        .temp_dir = null,
+    };
+    try std.testing.expectEqual(OK, createWith(std.testing.allocator, @ptrCast(&v1), &out));
+    try std.testing.expectEqual(OK, nox_app_destroy(out));
+
+    // Tanınmayan boyut hâlâ ERR_VERSION.
+    var weird = sampleConfig(&slot, "/app/documents");
+    weird.size = @sizeOf(HostConfig) + 8;
+    try std.testing.expectEqual(ERR_VERSION, createWith(std.testing.allocator, &weird, &out));
 }
 
 test "embed path stays inside the host roots" {
@@ -430,4 +628,99 @@ test "embed create start stop destroy ten thousand times" {
         try std.testing.expectEqual(OK, nox_app_destroy(slot.app));
         try std.testing.expectEqual(OK, nox_app_destroy(slot.app));
     }
+}
+
+fn raisingEntry(rt: ?*anyopaque) callconv(.c) void {
+    errors_handle.nox_raise(rt, @ptrFromInt(0x1000), 7);
+}
+
+var delivered_kinds: [8]i32 = undefined;
+var delivered_count: usize = 0;
+
+fn recordingEvent(rt: ?*anyopaque, kind: i32, bytes: [*]const u8, len: u32) callconv(.c) void {
+    _ = bytes;
+    _ = len;
+    _ = rt;
+    delivered_kinds[delivered_count] = kind;
+    delivered_count += 1;
+}
+
+fn raiseOnSecondEvent(rt: ?*anyopaque, kind: i32, bytes: [*]const u8, len: u32) callconv(.c) void {
+    recordingEvent(rt, kind, bytes, len);
+    if (delivered_count == 2) errors_handle.nox_raise(rt, @ptrFromInt(0x2000), 9);
+}
+
+test "giriş noktasından kaçan Nox istisnası start'ta ERR_EXCEPTION olur; nesne bekleyen kalır ve alınabilir" {
+    var slot: Slot = .{ .abi_version = ABI, .app = null };
+    const config = sampleConfig(&slot, "/app/documents");
+    var out: ?*anyopaque = null;
+    try std.testing.expectEqual(OK, createWith(std.testing.allocator, &config, &out));
+    nox_app_set_entry(out, raisingEntry);
+    try std.testing.expectEqual(ERR_EXCEPTION, nox_app_start(out));
+    const rt = nox_app_runtime(out);
+    try std.testing.expectEqual(@as(i32, 1), errors_handle.nox_exception_pending(rt));
+    try std.testing.expect(errors_handle.nox_exception_take(rt) == @as(?*anyopaque, @ptrFromInt(0x1000)));
+    try std.testing.expectEqual(@as(i32, 0), errors_handle.nox_exception_pending(rt));
+    // Uygulama başlamış sayılır: olay kabul eder.
+    try std.testing.expectEqual(OK, nox_app_post_event(out, 1, null, 0));
+    try std.testing.expectEqual(OK, nox_app_destroy(out));
+}
+
+test "olay işleyicisi istisna bırakırsa pump durur (ERR_EXCEPTION), kalan olaylar kuyrukta kalır" {
+    var slot: Slot = .{ .abi_version = ABI, .app = null };
+    const config = sampleConfig(&slot, "/app/documents");
+    var out: ?*anyopaque = null;
+    try std.testing.expectEqual(OK, createWith(std.testing.allocator, &config, &out));
+    nox_app_set_event_fn(out, raiseOnSecondEvent);
+    try std.testing.expectEqual(OK, nox_app_start(out));
+    delivered_count = 0;
+    for ([_]i32{ 10, 11, 12 }) |kind| try std.testing.expectEqual(OK, nox_app_post_event(out, kind, null, 0));
+
+    try std.testing.expectEqual(ERR_EXCEPTION, nox_app_pump(out, 0));
+    try std.testing.expectEqual(@as(usize, 2), delivered_count);
+    try std.testing.expectEqual(@as(i32, 11), delivered_kinds[1]);
+    const rt = nox_app_runtime(out);
+    try std.testing.expect(errors_handle.nox_exception_take(rt) == @as(?*anyopaque, @ptrFromInt(0x2000)));
+
+    // Host istisnayı aldıktan sonra kalan olay (12) teslim edilir.
+    nox_app_set_event_fn(out, recordingEvent);
+    try std.testing.expectEqual(@as(i32, 1), nox_app_pump(out, 0));
+    try std.testing.expectEqual(@as(i32, 12), delivered_kinds[2]);
+    try std.testing.expectEqual(OK, nox_app_destroy(out));
+}
+
+test "dolu kuyrukta post_event ERR_FULL döner ve durdurulmuş uygulamada ERR_STATE" {
+    var slot: Slot = .{ .abi_version = ABI, .app = null };
+    const config = sampleConfig(&slot, "/app/documents");
+    var out: ?*anyopaque = null;
+    try std.testing.expectEqual(OK, createWith(std.testing.allocator, &config, &out));
+    try std.testing.expectEqual(OK, nox_app_start(out));
+    var i: u32 = 0;
+    while (i < EVENT_CAP) : (i += 1) try std.testing.expectEqual(OK, nox_app_post_event(out, 1, null, 0));
+    try std.testing.expectEqual(ERR_FULL, nox_app_post_event(out, 1, null, 0));
+    try std.testing.expectEqual(OK, nox_app_request_stop(out));
+    try std.testing.expectEqual(ERR_STATE, nox_app_post_event(out, 1, null, 0)); // durdurulduktan sonra
+    try std.testing.expectEqual(ERR_STATE, nox_app_pump(out, 0));
+    try std.testing.expectEqual(OK, nox_app_destroy(out));
+}
+
+test "create bellek yetersizliğinde ERR_NOMEM döner ve slota dokunmaz; start başarısızlığı yeniden denenebilir" {
+    var slot: Slot = .{ .abi_version = ABI, .app = null };
+    const config = sampleConfig(&slot, "/app/documents");
+    var out: ?*anyopaque = null;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    try std.testing.expectEqual(ERR_NOMEM, createWith(failing.allocator(), &config, &out));
+    try std.testing.expect(slot.app == null and out == null);
+
+    // Kısmi başlatma: host ayırıcısı önce başarısız olur, sonra düzelir.
+    var host: TrackingHost = .{ .fail = true };
+    const descriptor = host.descriptor();
+    var cfg2 = sampleConfig(&slot, "/app/documents");
+    cfg2.allocator = &descriptor;
+    try std.testing.expectEqual(OK, createWith(std.testing.allocator, &cfg2, &out));
+    try std.testing.expectEqual(ERR_NOMEM, nox_app_start(out));
+    host.fail = false;
+    try std.testing.expectEqual(OK, nox_app_start(out)); // state hâlâ created
+    try std.testing.expectEqual(OK, nox_app_destroy(out));
+    try std.testing.expectEqual(@as(usize, 0), host.live);
 }

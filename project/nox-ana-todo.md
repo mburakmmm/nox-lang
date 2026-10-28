@@ -109,17 +109,17 @@ Bu faz diğer bütün yeni özelliklerden önce gelir.
 - [x] **1.2 Mobil sandbox durumunu açık taşı.** (v2.0.29: `zig build test` Debug yeşil — embed.zig 6 yeni birim testi + thread_bridge çocuk-politika testi + 9 IR anlık görüntüsü her iki backend fixture korpusunda.) `embed.allowsPath` ve bütün
   FS/SQLite çağrılarını doğru `RuntimeState`/app context ile ilişkilendir;
   iki eşzamanlı uygulama ve iki OS thread'i birbirinin köklerini göremesin.
-- [ ] **1.3 Embed allocator sözleşmesini düzelt.** `nox_app_create` şu anda
+- [x] **1.3 Embed allocator sözleşmesini düzelt.** (v2.0.32: `NoxHostAllocator` + `size`-ayrımlı config, ABI 1 kalır; ADR-MOB-009; 3 birim testi.) `nox_app_create` şu anda
   içeride `std.heap.page_allocator` seçiyor. Host allocator'ı veya runtime
   allocator'ının nasıl açık taşınacağı ADR ve sürümlü ABI ile belirlenmeli.
-- [ ] **1.4 Global/gizli state ve allocator denetimi yap.** İlk taramada
+- [x] **1.4 Global/gizli state ve allocator denetimi yap.** (v2.0.32: 82 bildirim sınıflandırıldı, `docs/internals/global-state-audit.md`; CI kapısı `scripts/check_global_state.py`; tek açık borç `tl-errno` -> 1.5 ölçer.) İlk taramada
   `compiler/` + `runtime/` altında 32 dosyada `page_allocator`, 15 dosyada
   `threadlocal var` bulundu. Test-only, immutable/provider registry ve gerçek
   invariant ihlallerini ayır; gerçek ihlalleri küçük, testli dilimlerle kaldır.
 - [ ] **1.5 Çoklu runtime izolasyon korpusu ekle.** Allocator, hata durumu,
   JSON/FS sonuç durumu, HPy context, entropy ve scheduler state için iki
   runtime + çoklu thread stres testi oluştur.
-- [ ] **1.6 Embed hata/OOM sözleşmesini tamamla.** Kısmi init, host callback
+- [x] **1.6 Embed hata/OOM sözleşmesini tamamla.** (v2.0.32: `ERR_FULL`, `ERR_EXCEPTION`, start OOM yeniden denenebilir; 4 birim testi, testing.allocator sızıntı denetimli.) Kısmi init, host callback
   hatası, Nox exception çevirisi, queue doluluğu, stop sırasında olay ve OOM
   yollarının tamamı açık hata kodu ve leak/double-free testi taşısın.
 

@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.32]
+
+Gömme (embed) ABI'si: host ayırıcısı ve tamamlanmış hata sözleşmesi (ABI numarası 1 kalır).
+
+### Eklendi
+
+- `NoxHostAllocator` ve `NoxHostConfig.allocator`: host, çalışma zamanının yönetilen heap'ini kendi ayırıcısından besleyebilir. `size` alanı eski (`NoxHostConfigV1`) ve genişletilmiş düzeni ayırır; eski host'lar değişmeden çalışır.
+- `NOX_EMBED_ERR_EXCEPTION`: giriş noktası veya olay işleyicisi bekleyen bir Nox istisnasıyla döndüğünde `start`/`pump` döner; nesne `nox_exception_take` ile alınır.
+
+### Eklendi (denetim)
+
+- `docs/internals/global-state-audit.md`, `project/global-state-allowlist.tsv` ve CI kapısı `scripts/check_global_state.py`: `runtime/` altına onaysız yeni global/threadlocal durum eklenemez.
+
+### Değişti
+
+- Kuyruk dolu iken `nox_app_post_event` artık `NOX_EMBED_ERR_FULL` (-8) döner (önceden `ERR_STATE`).
+- Host `alloc`ı `NULL` verirse `nox_app_start` `ERR_NOMEM` döner ve uygulama `created` kalır; yeniden denenebilir.
+
 ## [2.0.31]
 
 `nox.http` istemcisi: genel metod, gerçek zaman aşımı, ikili gövde (Nova geri bildirimi N.1–N.3, N.5).

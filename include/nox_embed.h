@@ -1,6 +1,7 @@
 #ifndef NOX_EMBED_H
 #define NOX_EMBED_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -17,11 +18,39 @@ extern "C" {
 #define NOX_EMBED_ERR_REENTRANT (-5)
 #define NOX_EMBED_ERR_NOMEM (-6)
 #define NOX_EMBED_ERR_UTF8 (-7)
+/* post_event: kuyruk dolu, olay kopyalanmadı; sonra yeniden denenebilir (eskiden ERR_STATE dönerdi). */
+#define NOX_EMBED_ERR_FULL (-8)
+/* start/pump: kullanıcı kodu dönerken bekleyen bir Nox istisnası var. Nesne nox_exception_take ile alınır; pump'ta kalan
+   olaylar kuyrukta durur. */
+#define NOX_EMBED_ERR_EXCEPTION (-9)
 
 typedef struct NoxEmbedSlot {
     int32_t abi_version;
     void *app;
 } NoxEmbedSlot;
+
+/* İsteğe bağlı host ayırıcısı. alloc: en az len bayt, alignment hizalı bellek döner (sıfırlı olması gerekmez), yetersizse NULL.
+   free: aynı len/alignment ile bırakır. Çağrılar farklı iş parçacıklarından gelebilir; ayırıcı iş parçacığı-güvenli olmalı ve
+   nox_app_destroy dönene kadar yaşamalıdır. Nox yönetilen heap'i (liste/sözlük/ARC/RuntimeState) buradan ayırır; nox.thread
+   çocukları ve havuz iş parçacıkları sistem ayırıcısını kullanmaya devam eder. */
+typedef struct NoxHostAllocator {
+    uint32_t size; /* sizeof(NoxHostAllocator) */
+    void *ctx;
+    void *(*alloc)(void *ctx, size_t len, size_t alignment);
+    void (*free)(void *ctx, void *ptr, size_t len, size_t alignment);
+} NoxHostAllocator;
+
+/* size alanı düzeni ayırır; ABI numarası 1 kalır. Eski host sizeof(NoxHostConfigV1) verir ve sistem ayırıcısı kullanılır;
+   yeni host sizeof(NoxHostConfig) verir ve allocator alanını (NULL olabilir) doldurur. */
+typedef struct NoxHostConfigV1 {
+    uint32_t size;
+    uint32_t abi_version;
+    NoxEmbedSlot *slot;
+    const char *documents;
+    const char *support;
+    const char *cache;
+    const char *temp_dir;
+} NoxHostConfigV1;
 
 typedef struct NoxHostConfig {
     uint32_t size;
@@ -31,6 +60,7 @@ typedef struct NoxHostConfig {
     const char *support;
     const char *cache;
     const char *temp_dir;
+    const NoxHostAllocator *allocator; /* NULL: sistem ayırıcısı */
 } NoxHostConfig;
 
 typedef void (*NoxEmbedEntry)(void *rt);

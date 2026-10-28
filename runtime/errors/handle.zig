@@ -83,7 +83,7 @@ fn pendingException(state: *asap.RuntimeState) PendingException {
 /// işaretler. Faz OO.3: `line` — `raise` deyiminin (ya da örtük IndexError/
 /// KeyError/ValueError'ın) KAYNAK satırı — yalnızca `nox_unhandled_
 /// exception`ın raporlaması İçİn saklanır, akış kontrolünü ETKİLEMEZ.
-export fn nox_raise(rt: ?*anyopaque, obj: ?*anyopaque, line: i64) void {
+pub export fn nox_raise(rt: ?*anyopaque, obj: ?*anyopaque, line: i64) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const pe = pendingException(state);
     pe.obj.* = obj;
@@ -92,14 +92,14 @@ export fn nox_raise(rt: ?*anyopaque, obj: ?*anyopaque, line: i64) void {
 
 /// Şu an bekleyen bir istisna olup olmadığını bildirir (0/1 — QBE `w` ile
 /// çağrılır; ABI belirsizliğinden kaçınmak için `bool` yerine `i32` kullanılır).
-export fn nox_exception_pending(rt: ?*anyopaque) i32 {
+pub export fn nox_exception_pending(rt: ?*anyopaque) i32 {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return 0));
     return if (pendingException(state).obj.* != null) 1 else 0;
 }
 
 /// Bekleyen istisnayı döndürür ve durumu temizler (bir `except` onu yakaladığında
 /// ya da yeniden fırlatmadan önce çağrılır).
-export fn nox_exception_take(rt: ?*anyopaque) ?*anyopaque {
+pub export fn nox_exception_take(rt: ?*anyopaque) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const pe = pendingException(state);
     const obj = pe.obj.*;

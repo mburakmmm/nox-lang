@@ -29149,3 +29149,7 @@ Parser `\xHH` kaçışında tam iki onaltılık basamak ister. `\x80`–`\xFF` k
 `timeout_ms > 0` için `Shared` (page_allocator, iki referans) ile bir bekçi iş parçacığı başlar. İşçi bağlantı açılınca soket tutamacını `Shared`e yazar ve `req.deinit` öncesinde geri alır; bekçi süre dolunca kilit altında `shutdown(RDWR)` çağırır. Bloklanmış okuma hata ile döner ve istek `err_kind = 1` ile biter. `std.http.Client` connect aşamasında zaman aşımı seçeneği sunmadığından DNS/TCP connect bu mekanizmayla iptal edilemez.
 
 Yanıt gövdesindeki `\0` artık isteği başarısız saymaz: `str` uzunluğu başlıkta taşır (§str ABI), `nox_str_from_bytes` baytları aynen kopyalar.
+
+## 3.313 Gömme ayırıcısı ve hata sözleşmesi (v2.0.32)
+
+Bkz. `docs/internals/adr/009-embed-allocator.md`. `HostConfig` (`runtime/embed.zig`) `HostConfigV1` düzenine bir `allocator` işaretçisi ekler; `size` hangisinin geldiğini söyler. Host ayırıcısı `std.mem.Allocator` vtable'ına bağlanır (`resize` her zaman reddedilir, `remap` yoktur) ve `nox_runtime_init_with_allocator` ile çalışma zamanına verilir. `nox_app_start` `nox_exception_pending`i giriş noktasından sonra ve her olay işleyicisinden sonra denetler. `nox_raise`, `nox_exception_pending`, `nox_exception_take` Zig tarafından çağrılabilsin diye `pub export` yapıldı.

@@ -126,6 +126,9 @@ jobs:
         run: zig build
       - name: Dokümanları denetle
         run: python3 scripts/check_docs.py
+      # AGENTS §2.6: runtime/ altına onaysız yeni global/threadlocal durum eklenemez (bkz. project/global-state-allowlist.tsv).
+      - name: Global durum denetimi
+        run: python3 scripts/check_global_state.py
       # v2.0: hizmetler (noxpkg, noxlang-site) derleyiciyle birlikte tip denetiminden geçmeli. (rc.3'te noxpkg'nin kaldırılan
       # `nox.json.decode/encode_*` adlarını kullandığı ancak üretim imajı yeniden derlenirken fark edildi.)
       - name: Hizmetleri tip denetle (noxpkg + noxlang-site)
