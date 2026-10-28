@@ -1,18 +1,27 @@
-# store — noxpkg'in `data/index.json`/`data/inbox.json` kalıcılığı.
+# store — noxpkg'in SQLite kalıcılığı.
 #
-# **Bilinçli olarak DURUMSUZ (bkz. `auth.nox`nin AYNI belge notu):**
-# modül-düzeyi durum HİÇBİR fonksiyonun İÇİNDEN görülemediğinden burada
-# TEK bir global `Store` örneği YOK — her fonksiyon `path` argümanından
-# DOSYAYI OKUYUP/YAZAR, hiçbir bellek-içi ÖNBELLEK TAŞIMAZ. `main.nox`nin
-# `num_threads=1`i bu round-trip'leri YARIŞ-KOŞULUNDAN korur.
+# Kaynak `data/noxpkg.db`dir. `GET /index.json` bu tablodan üretilir ve
+# `compiler/pkg/index.zig`nin `Index{packages:[{name,repo,description,tags}]}`
+# şemasıyla birebir kalır — `noxc search` / `noxc add` değişmez.
 #
-# `index.json`, `compiler/pkg/index.zig`nin `Index{packages:[{name,repo,
-# description,tags}]}` ŞEMASIYLA BİREBİR AYNIDIR (`ref` TAŞIMAZ) — bu
-# SAYEDE `noxc search`/`noxc add` SIFIR CLI DEĞİŞİKLİĞİYLE ÇALIŞIR.
+# İlk açılışta, daha önce içe aktarılmamışsa, yanındaki `index.json` ve
+# `inbox.json` bir kez okunur. Dosyalar SİLİNMEZ: her yazımdan sonra
+# veritabanındaki katalog aynı iki dosyaya atomik olarak geri yazılır.
+# Hesap, yorum ve hata bildirimi yalnızca `noxpkg.db`dedir; yedek betiği
+# bu dosyayı `sqlite3 .backup` ile alır ve JSON'u o kopyadan üretir.
+# Bağlantı her çağrıda açılıp kapanır. `main.nox` tek iş parçacığında
+# kaldığı için rate-limit dosyasıyla birlikte yarış yoktur.
 import nox.json
 import nox.fs
+import nox.os
+import nox.sqlite
+import nox.crypto
 import nox.uuid
 import nox.time
+import nox.strings
+from nox.os import OsError
+from nox.sqlite import Connection, SqliteError
+from nox.db import Row, Statement
 
 class IndexEntry:
     def __init__(self: IndexEntry, name: str, repo: str, description: str, tags: list[str]) -> None:
@@ -31,17 +40,62 @@ class Submission:
         self.tags = tags
         self.submitted_at_ms = submitted_at_ms
 
-def _json_str(s: str) -> JsonValue:
-    empty_arr: list[JsonValue] = []
-    empty_keys: list[str] = []
-    empty_vals: list[JsonValue] = []
-    return nox_json_make_json_value(3, False, 0.0, s, empty_arr, empty_keys, empty_vals)
+class Viewer:
+    def __init__(self: Viewer, user_id: int, username: str, role: str) -> None:
+        self.user_id = user_id
+        self.username = username
+        self.role = role
+
+class Comment:
+    def __init__(self: Comment, username: str, body: str, created_at_ms: int) -> None:
+        self.username = username
+        self.body = body
+        self.created_at_ms = created_at_ms
+
+class Report:
+    def __init__(self: Report, id: int, package_name: str, username: str, title: str, body: str, status: str, created_at_ms: int) -> None:
+        self.id = id
+        self.package_name = package_name
+        self.username = username
+        self.title = title
+        self.body = body
+        self.status = status
+        self.created_at_ms = created_at_ms
+
+def _db_path() -> str:
+    return "data/noxpkg.db"
+
+def _index_json_path() -> str:
+    return "data/index.json"
+
+def _inbox_json_path() -> str:
+    return "data/inbox.json"
+
+def _env(name: str) -> str:
+    try:
+        return nox.os.getenv(name)
+    except OsError:
+        return ""
+
+def _max_pending() -> int:
+    return 500
+
+# Eksik kullanıcıda da argon2 çalışsın diye sabit bir hash. Parola
+# "noxpkg-timing-pad"dir; eşleşse bile kullanıcı satırı yoktur.
+def _timing_hash() -> str:
+    return "$argon2id$v=19$m=19456,t=2,p=1$9blQ7Y6q4hFchvekOozwyWSx0KXffRPDqC0vHvIJex8$Ke99DFbIK/nsdRxLU9Uio4le28RQGAC26yJWQP8+O6A"
 
 def _json_num(n: float) -> JsonValue:
     empty_arr: list[JsonValue] = []
     empty_keys: list[str] = []
     empty_vals: list[JsonValue] = []
     return nox_json_make_json_value(2, False, n, "", empty_arr, empty_keys, empty_vals)
+
+def _json_str(s: str) -> JsonValue:
+    empty_arr: list[JsonValue] = []
+    empty_keys: list[str] = []
+    empty_vals: list[JsonValue] = []
+    return nox_json_make_json_value(3, False, 0.0, s, empty_arr, empty_keys, empty_vals)
 
 def _json_array(items: list[JsonValue]) -> JsonValue:
     empty_keys: list[str] = []
@@ -78,198 +132,461 @@ def _json_to_str_array(v: JsonValue) -> list[str]:
         i = i + 1
     return out
 
-def _index_entry_to_json(e: IndexEntry) -> JsonValue:
-    keys: list[str] = ["name", "repo", "description", "tags"]
-    vals: list[JsonValue] = [_json_str(e.name), _json_str(e.repo), _json_str(e.description), _str_array_to_json(e.tags)]
-    return _json_object(keys, vals)
+def _tags_dump(tags: list[str]) -> str:
+    return nox.json.dump(_str_array_to_json(tags))
 
-def _json_to_index_entry(v: JsonValue) -> IndexEntry:
-    name: str = ""
-    repo: str = ""
-    description: str = ""
-    tags: list[str] = []
-    name_v: JsonValue | None = _object_get(v, "name")
-    if name_v != None:
-        name = nox.json.as_string(name_v)
-    repo_v: JsonValue | None = _object_get(v, "repo")
-    if repo_v != None:
-        repo = nox.json.as_string(repo_v)
-    desc_v: JsonValue | None = _object_get(v, "description")
-    if desc_v != None:
-        description = nox.json.as_string(desc_v)
-    tags_v: JsonValue | None = _object_get(v, "tags")
-    if tags_v != None:
-        tags = _json_to_str_array(tags_v)
-    return IndexEntry(name, repo, description, tags)
+def _tags_parse(raw: str) -> list[str]:
+    if len(raw) == 0:
+        return []
+    v: JsonValue = nox.json.parse(raw)
+    return _json_to_str_array(v)
 
-def load_index(path: str) -> list[IndexEntry]:
+def _entry_from_row(row: Row) -> IndexEntry:
+    return IndexEntry(row.get_str(0), row.get_str(1), row.get_str(2), _tags_parse(row.get_str(3)))
+
+def _exec(db: Connection, sql: str) -> None:
+    db.execute(sql)
+
+def _ensure(db: Connection) -> None:
+    _exec(db, "PRAGMA foreign_keys=ON")
+    _exec(db, "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL, created_at_ms INTEGER NOT NULL)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS packages (name TEXT PRIMARY KEY, repo TEXT NOT NULL, description TEXT NOT NULL, tags TEXT NOT NULL, created_at_ms INTEGER NOT NULL)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS submissions (id TEXT PRIMARY KEY, name TEXT NOT NULL, repo TEXT NOT NULL, ref TEXT NOT NULL, description TEXT NOT NULL, tags TEXT NOT NULL, submitted_at_ms INTEGER NOT NULL)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, package_name TEXT NOT NULL REFERENCES packages(name) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id), body TEXT NOT NULL, created_at_ms INTEGER NOT NULL)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, package_name TEXT NOT NULL REFERENCES packages(name) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id), title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, created_at_ms INTEGER NOT NULL)")
+    _import_json_once(db)
+    _sync_admin(db)
+    _mirror(db)
+
+def _meta_get(db: Connection, key: str) -> str:
+    st: Statement = db.prepare("SELECT value FROM meta WHERE key = ?")
+    st.bind_str(0, key)
+    rows: list[Row] = st.query()
+    if len(rows) == 0:
+        return ""
+    return rows[0].get_str(0)
+
+def _import_json_once(db: Connection) -> None:
+    if _meta_get(db, "imported_json") == "1":
+        return
+    if nox.fs.exists(_index_json_path()):
+        entries: list[IndexEntry] = _read_index_file(_index_json_path())
+        i: int = 0
+        while i < len(entries):
+            e: IndexEntry = entries[i]
+            st: Statement = db.prepare("INSERT OR IGNORE INTO packages (name, repo, description, tags, created_at_ms) VALUES (?, ?, ?, ?, ?)")
+            st.bind_str(0, e.name)
+            st.bind_str(1, e.repo)
+            st.bind_str(2, e.description)
+            st.bind_str(3, _tags_dump(e.tags))
+            st.bind_int(4, nox.time.now_ms())
+            st.execute()
+            i = i + 1
+    if nox.fs.exists(_inbox_json_path()):
+        subs: list[Submission] = _read_inbox_file(_inbox_json_path())
+        j: int = 0
+        while j < len(subs):
+            s: Submission = subs[j]
+            st2: Statement = db.prepare("INSERT OR IGNORE INTO submissions (id, name, repo, ref, description, tags, submitted_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            st2.bind_str(0, s.id)
+            st2.bind_str(1, s.name)
+            st2.bind_str(2, s.repo)
+            st2.bind_str(3, s.ref)
+            st2.bind_str(4, s.description)
+            st2.bind_str(5, _tags_dump(s.tags))
+            st2.bind_int(6, s.submitted_at_ms)
+            st2.execute()
+            j = j + 1
+    mark: Statement = db.prepare("INSERT INTO meta (key, value) VALUES ('imported_json', '1')")
+    mark.execute()
+    _mirror(db)
+
+def _sync_admin(db: Connection) -> None:
+    hash: str = _env("NOXPKG_ADMIN_PASSWORD_HASH")
+    if len(hash) == 0:
+        return
+    username: str = _env("NOXPKG_ADMIN_USERNAME")
+    if len(username) == 0:
+        username = "admin"
+    st: Statement = db.prepare("SELECT id FROM users WHERE username = ?")
+    st.bind_str(0, username)
+    rows: list[Row] = st.query()
+    now: int = nox.time.now_ms()
+    if len(rows) == 0:
+        ins: Statement = db.prepare("INSERT INTO users (username, password_hash, role, created_at_ms) VALUES (?, ?, 'admin', ?)")
+        ins.bind_str(0, username)
+        ins.bind_str(1, hash)
+        ins.bind_int(2, now)
+        ins.execute()
+        return
+    upd: Statement = db.prepare("UPDATE users SET password_hash = ?, role = 'admin' WHERE username = ?")
+    upd.bind_str(0, hash)
+    upd.bind_str(1, username)
+    upd.execute()
+
+def _open() -> Connection:
+    db: Connection = nox.sqlite.open(_db_path())
+    _ensure(db)
+    return db
+
+def _read_index_file(path: str) -> list[IndexEntry]:
     out: list[IndexEntry] = []
-    if not nox.fs.exists(path):
-        return out
     v: JsonValue = nox.json.parse(nox.fs.read_to_string(path))
     packages_v: JsonValue | None = _object_get(v, "packages")
     if packages_v != None:
         i: int = 0
         n: int = nox.json.array_len(packages_v)
         while i < n:
-            out.append(_json_to_index_entry(nox.json.array_get(packages_v, i)))
+            item: JsonValue = nox.json.array_get(packages_v, i)
+            name: str = ""
+            repo: str = ""
+            description: str = ""
+            tags: list[str] = []
+            name_v: JsonValue | None = _object_get(item, "name")
+            if name_v != None:
+                name = nox.json.as_string(name_v)
+            repo_v: JsonValue | None = _object_get(item, "repo")
+            if repo_v != None:
+                repo = nox.json.as_string(repo_v)
+            desc_v: JsonValue | None = _object_get(item, "description")
+            if desc_v != None:
+                description = nox.json.as_string(desc_v)
+            tags_v: JsonValue | None = _object_get(item, "tags")
+            if tags_v != None:
+                tags = _json_to_str_array(tags_v)
+            out.append(IndexEntry(name, repo, description, tags))
             i = i + 1
     return out
 
-def save_index(path: str, entries: list[IndexEntry]) -> None:
-    entry_vals: list[JsonValue] = []
-    i: int = 0
-    while i < len(entries):
-        entry_vals.append(_index_entry_to_json(entries[i]))
-        i = i + 1
-    keys: list[str] = ["packages"]
-    vals: list[JsonValue] = [_json_array(entry_vals)]
-    root: JsonValue = _json_object(keys, vals)
-    content: str = nox.json.dump_pretty(root, 2)
-    tmp: str = path + ".tmp"
-    nox.fs.write_string(tmp, content)
-    nox.fs.rename(tmp, path)
-
-def _submission_to_json(s: Submission) -> JsonValue:
-    keys: list[str] = ["id", "name", "repo", "ref", "description", "tags", "submitted_at_ms"]
-    vals: list[JsonValue] = [_json_str(s.id), _json_str(s.name), _json_str(s.repo), _json_str(s.ref), _json_str(s.description), _str_array_to_json(s.tags), _json_num(s.submitted_at_ms * 1.0)]
-    return _json_object(keys, vals)
-
-def _json_to_submission(v: JsonValue) -> Submission:
-    id_v: JsonValue | None = _object_get(v, "id")
-    name_v: JsonValue | None = _object_get(v, "name")
-    repo_v: JsonValue | None = _object_get(v, "repo")
-    ref_v: JsonValue | None = _object_get(v, "ref")
-    desc_v: JsonValue | None = _object_get(v, "description")
-    tags_v: JsonValue | None = _object_get(v, "tags")
-    at_v: JsonValue | None = _object_get(v, "submitted_at_ms")
-    id: str = ""
-    name: str = ""
-    repo: str = ""
-    ref: str = "main"
-    description: str = ""
-    tags: list[str] = []
-    at: int = 0
-    if id_v != None:
-        id = nox.json.as_string(id_v)
-    if name_v != None:
-        name = nox.json.as_string(name_v)
-    if repo_v != None:
-        repo = nox.json.as_string(repo_v)
-    if ref_v != None:
-        ref = nox.json.as_string(ref_v)
-    if desc_v != None:
-        description = nox.json.as_string(desc_v)
-    if tags_v != None:
-        tags = _json_to_str_array(tags_v)
-    if at_v != None:
-        at_f: float = nox.json.as_number(at_v)
-        at = int(at_f)
-    return Submission(id, name, repo, ref, description, tags, at)
-
-def load_inbox(path: str) -> list[Submission]:
+def _read_inbox_file(path: str) -> list[Submission]:
     out: list[Submission] = []
-    if not nox.fs.exists(path):
-        return out
     v: JsonValue = nox.json.parse(nox.fs.read_to_string(path))
     subs_v: JsonValue | None = _object_get(v, "submissions")
-    if subs_v != None:
-        i: int = 0
-        n: int = nox.json.array_len(subs_v)
-        while i < n:
-            out.append(_json_to_submission(nox.json.array_get(subs_v, i)))
-            i = i + 1
+    if subs_v == None:
+        return out
+    i: int = 0
+    n: int = nox.json.array_len(subs_v)
+    while i < n:
+        item: JsonValue = nox.json.array_get(subs_v, i)
+        id_v: JsonValue | None = _object_get(item, "id")
+        name_v: JsonValue | None = _object_get(item, "name")
+        repo_v: JsonValue | None = _object_get(item, "repo")
+        ref_v: JsonValue | None = _object_get(item, "ref")
+        desc_v: JsonValue | None = _object_get(item, "description")
+        tags_v: JsonValue | None = _object_get(item, "tags")
+        at_v: JsonValue | None = _object_get(item, "submitted_at_ms")
+        id: str = ""
+        name: str = ""
+        repo: str = ""
+        ref: str = "main"
+        description: str = ""
+        tags: list[str] = []
+        at: int = 0
+        if id_v != None:
+            id = nox.json.as_string(id_v)
+        if name_v != None:
+            name = nox.json.as_string(name_v)
+        if repo_v != None:
+            repo = nox.json.as_string(repo_v)
+        if ref_v != None:
+            ref = nox.json.as_string(ref_v)
+        if desc_v != None:
+            description = nox.json.as_string(desc_v)
+        if tags_v != None:
+            tags = _json_to_str_array(tags_v)
+        if at_v != None:
+            at = int(nox.json.as_number(at_v))
+        out.append(Submission(id, name, repo, ref, description, tags, at))
+        i = i + 1
     return out
 
-def save_inbox(path: str, subs: list[Submission]) -> None:
-    sub_vals: list[JsonValue] = []
+def load_packages() -> list[IndexEntry]:
+    db: Connection = _open()
+    rows: list[Row] = db.query("SELECT name, repo, description, tags FROM packages ORDER BY name")
+    db.close()
+    out: list[IndexEntry] = []
     i: int = 0
-    while i < len(subs):
-        sub_vals.append(_submission_to_json(subs[i]))
+    while i < len(rows):
+        out.append(_entry_from_row(rows[i]))
         i = i + 1
-    keys: list[str] = ["submissions"]
-    vals: list[JsonValue] = [_json_array(sub_vals)]
-    root: JsonValue = _json_object(keys, vals)
-    content: str = nox.json.dump_pretty(root, 2)
+    return out
+
+def find_package(name: str) -> IndexEntry | None:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT name, repo, description, tags FROM packages WHERE name = ?")
+    st.bind_str(0, name)
+    rows: list[Row] = st.query()
+    db.close()
+    if len(rows) == 0:
+        return None
+    return _entry_from_row(rows[0])
+
+def _write_atomic(path: str, content: str) -> None:
     tmp: str = path + ".tmp"
     nox.fs.write_string(tmp, content)
     nox.fs.rename(tmp, path)
 
-# `inbox.json`e KABA bir tavan (spam savunması, bkz. plan) — bunun
-# ÜZERİNDE yeni gönderiler SESSİZCE reddedilir (`False` döner). Üst-düzey
-# `var_decl`lar fonksiyon İÇİNDEN GÖRÜLEMEDİĞİNDEN (bkz. auth.nox'un
-# belge notu) bir sabit YERİNE sıfır-argümanlı bir fonksiyon.
-def _max_pending_submissions() -> int:
-    return 500
-
-def add_submission(path: str, name: str, repo: str, ref: str, description: str, tags: list[str]) -> bool:
-    subs: list[Submission] = load_inbox(path)
-    if len(subs) >= _max_pending_submissions():
-        return False
-    id: str = nox.uuid.uuid4()
-    subs.append(Submission(id, name, repo, ref, description, tags, nox.time.now_ms()))
-    save_inbox(path, subs)
-    return True
-
-def approve_submission(index_path: str, inbox_path: str, id: str) -> bool:
-    subs: list[Submission] = load_inbox(inbox_path)
-    found: Submission | None = None
-    remaining: list[Submission] = []
-    i: int = 0
-    while i < len(subs):
-        if subs[i].id == id:
-            found = subs[i]
-        else:
-            remaining.append(subs[i])
-        i = i + 1
-    if found != None:
-        entries: list[IndexEntry] = load_index(index_path)
-        new_entry: IndexEntry = IndexEntry(found.name, found.repo, found.description, found.tags)
-        new_entries: list[IndexEntry] = []
-        replaced: bool = False
-        j: int = 0
-        while j < len(entries):
-            if entries[j].name == found.name:
-                new_entries.append(new_entry)
-                replaced = True
-            else:
-                new_entries.append(entries[j])
-            j = j + 1
-        if not replaced:
-            new_entries.append(new_entry)
-        save_index(index_path, new_entries)
-        save_inbox(inbox_path, remaining)
-        return True
-    return False
-
-def reject_submission(inbox_path: str, id: str) -> bool:
-    subs: list[Submission] = load_inbox(inbox_path)
-    remaining: list[Submission] = []
-    found: bool = False
-    i: int = 0
-    while i < len(subs):
-        if subs[i].id == id:
-            found = True
-        else:
-            remaining.append(subs[i])
-        i = i + 1
-    if not found:
-        return False
-    save_inbox(inbox_path, remaining)
-    return True
-
-def remove_index_entry(index_path: str, name: str) -> bool:
-    entries: list[IndexEntry] = load_index(index_path)
-    remaining: list[IndexEntry] = []
-    found: bool = False
+def _index_document(entries: list[IndexEntry]) -> str:
+    vals: list[JsonValue] = []
     i: int = 0
     while i < len(entries):
-        if entries[i].name == name:
-            found = True
-        else:
-            remaining.append(entries[i])
+        e: IndexEntry = entries[i]
+        keys: list[str] = ["name", "repo", "description", "tags"]
+        fields: list[JsonValue] = [_json_str(e.name), _json_str(e.repo), _json_str(e.description), _str_array_to_json(e.tags)]
+        vals.append(_json_object(keys, fields))
         i = i + 1
-    if not found:
+    root_keys: list[str] = ["packages"]
+    root_vals: list[JsonValue] = [_json_array(vals)]
+    return nox.json.dump(_json_object(root_keys, root_vals))
+
+def _inbox_document(subs: list[Submission]) -> str:
+    vals: list[JsonValue] = []
+    i: int = 0
+    while i < len(subs):
+        s: Submission = subs[i]
+        keys: list[str] = ["id", "name", "repo", "ref", "description", "tags", "submitted_at_ms"]
+        fields: list[JsonValue] = [_json_str(s.id), _json_str(s.name), _json_str(s.repo), _json_str(s.ref), _json_str(s.description), _str_array_to_json(s.tags), _json_num(s.submitted_at_ms * 1.0)]
+        vals.append(_json_object(keys, fields))
+        i = i + 1
+    root_keys: list[str] = ["submissions"]
+    root_vals: list[JsonValue] = [_json_array(vals)]
+    return nox.json.dump(_json_object(root_keys, root_vals))
+
+def _entries_of(db: Connection) -> list[IndexEntry]:
+    rows: list[Row] = db.query("SELECT name, repo, description, tags FROM packages ORDER BY name")
+    out: list[IndexEntry] = []
+    i: int = 0
+    while i < len(rows):
+        out.append(_entry_from_row(rows[i]))
+        i = i + 1
+    return out
+
+def _subs_of(db: Connection) -> list[Submission]:
+    rows: list[Row] = db.query("SELECT id, name, repo, ref, description, tags, submitted_at_ms FROM submissions ORDER BY submitted_at_ms")
+    out: list[Submission] = []
+    i: int = 0
+    while i < len(rows):
+        row: Row = rows[i]
+        out.append(Submission(row.get_str(0), row.get_str(1), row.get_str(2), row.get_str(3), row.get_str(4), _tags_parse(row.get_str(5)), row.get_int(6)))
+        i = i + 1
+    return out
+
+# Katalog aynası. Hesaplar ve yorumlar bu dosyalara YAZILMAZ; onlar
+# `noxpkg.db` yedeğiyle gider. Yazma geçici dosya + rename'dir.
+def _mirror(db: Connection) -> None:
+    _write_atomic(_index_json_path(), _index_document(_entries_of(db)))
+    _write_atomic(_inbox_json_path(), _inbox_document(_subs_of(db)))
+
+def render_index_json() -> str:
+    entries: list[IndexEntry] = load_packages()
+    return _index_document(entries)
+
+def load_inbox() -> list[Submission]:
+    db: Connection = _open()
+    rows: list[Row] = db.query("SELECT id, name, repo, ref, description, tags, submitted_at_ms FROM submissions ORDER BY submitted_at_ms")
+    db.close()
+    out: list[Submission] = []
+    i: int = 0
+    while i < len(rows):
+        row: Row = rows[i]
+        out.append(Submission(row.get_str(0), row.get_str(1), row.get_str(2), row.get_str(3), row.get_str(4), _tags_parse(row.get_str(5)), row.get_int(6)))
+        i = i + 1
+    return out
+
+def add_submission(name: str, repo: str, ref: str, description: str, tags: list[str]) -> bool:
+    db: Connection = _open()
+    count_rows: list[Row] = db.query("SELECT COUNT(*) FROM submissions")
+    n: int = count_rows[0].get_int(0)
+    if n >= _max_pending():
+        db.close()
         return False
-    save_index(index_path, remaining)
+    st: Statement = db.prepare("INSERT INTO submissions (id, name, repo, ref, description, tags, submitted_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    st.bind_str(0, nox.uuid.uuid4())
+    st.bind_str(1, name)
+    st.bind_str(2, repo)
+    st.bind_str(3, ref)
+    st.bind_str(4, description)
+    st.bind_str(5, _tags_dump(tags))
+    st.bind_int(6, nox.time.now_ms())
+    st.execute()
+    _mirror(db)
+    db.close()
     return True
+
+def latest_submission_id(name: str, repo: str) -> str:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT id FROM submissions WHERE name = ? AND repo = ? ORDER BY submitted_at_ms DESC LIMIT 1")
+    st.bind_str(0, name)
+    st.bind_str(1, repo)
+    rows: list[Row] = st.query()
+    db.close()
+    if len(rows) == 0:
+        return ""
+    return rows[0].get_str(0)
+
+def approve_submission(id: str) -> bool:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT name, repo, description, tags FROM submissions WHERE id = ?")
+    st.bind_str(0, id)
+    rows: list[Row] = st.query()
+    if len(rows) == 0:
+        db.close()
+        return False
+    row: Row = rows[0]
+    up: Statement = db.prepare("INSERT INTO packages (name, repo, description, tags, created_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET repo = excluded.repo, description = excluded.description, tags = excluded.tags")
+    up.bind_str(0, row.get_str(0))
+    up.bind_str(1, row.get_str(1))
+    up.bind_str(2, row.get_str(2))
+    up.bind_str(3, row.get_str(3))
+    up.bind_int(4, nox.time.now_ms())
+    up.execute()
+    rm: Statement = db.prepare("DELETE FROM submissions WHERE id = ?")
+    rm.bind_str(0, id)
+    rm.execute()
+    _mirror(db)
+    db.close()
+    return True
+
+def reject_submission(id: str) -> bool:
+    db: Connection = _open()
+    st: Statement = db.prepare("DELETE FROM submissions WHERE id = ?")
+    st.bind_str(0, id)
+    n: int = st.execute()
+    if n > 0:
+        _mirror(db)
+    db.close()
+    return n > 0
+
+def remove_package(name: str) -> bool:
+    db: Connection = _open()
+    st: Statement = db.prepare("DELETE FROM packages WHERE name = ?")
+    st.bind_str(0, name)
+    n: int = st.execute()
+    if n > 0:
+        _mirror(db)
+    db.close()
+    return n > 0
+
+def _username_ok(name: str) -> bool:
+    if len(name) < 3 or len(name) > 32:
+        return False
+    i: int = 0
+    while i < len(name):
+        c: str = name[i]
+        letter: bool = (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or (c >= "0" and c <= "9") or c == "_"
+        if not letter:
+            return False
+        i = i + 1
+    return True
+
+def register_user(username: str, password: str) -> str:
+    name: str = nox.strings.trim(username)
+    if not _username_ok(name):
+        return "Kullanıcı adı 3-32 karakter olmalı; harf, rakam ve alt çizgi."
+    if len(password) < 8 or len(password) > 200:
+        return "Parola en az 8 karakter olmalı."
+    db: Connection = _open()
+    hash: str = nox.crypto.argon2_hash(password)
+    st: Statement = db.prepare("INSERT INTO users (username, password_hash, role, created_at_ms) VALUES (?, ?, 'user', ?)")
+    st.bind_str(0, name)
+    st.bind_str(1, hash)
+    st.bind_int(2, nox.time.now_ms())
+    try:
+        st.execute()
+    except SqliteError:
+        db.close()
+        return "Bu kullanıcı adı alınmış."
+    db.close()
+    return ""
+
+def authenticate(username: str, password: str) -> Viewer | None:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT id, username, password_hash, role FROM users WHERE username = ?")
+    st.bind_str(0, nox.strings.trim(username))
+    rows: list[Row] = st.query()
+    db.close()
+    hash: str = _timing_hash()
+    viewer: Viewer | None = None
+    if len(rows) > 0:
+        row: Row = rows[0]
+        hash = row.get_str(2)
+        viewer = Viewer(row.get_int(0), row.get_str(1), row.get_str(3))
+    if not nox.crypto.argon2_verify(hash, password):
+        return None
+    return viewer
+
+def find_user(user_id: int) -> Viewer | None:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT id, username, role FROM users WHERE id = ?")
+    st.bind_int(0, user_id)
+    rows: list[Row] = st.query()
+    db.close()
+    if len(rows) == 0:
+        return None
+    row: Row = rows[0]
+    return Viewer(row.get_int(0), row.get_str(1), row.get_str(2))
+
+def add_comment(package_name: str, user_id: int, body: str) -> bool:
+    if find_package(package_name) == None:
+        return False
+    db: Connection = _open()
+    st: Statement = db.prepare("INSERT INTO comments (package_name, user_id, body, created_at_ms) VALUES (?, ?, ?, ?)")
+    st.bind_str(0, package_name)
+    st.bind_int(1, user_id)
+    st.bind_str(2, body)
+    st.bind_int(3, nox.time.now_ms())
+    st.execute()
+    db.close()
+    return True
+
+def load_comments(package_name: str) -> list[Comment]:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT users.username, comments.body, comments.created_at_ms FROM comments JOIN users ON users.id = comments.user_id WHERE comments.package_name = ? ORDER BY comments.id")
+    st.bind_str(0, package_name)
+    rows: list[Row] = st.query()
+    db.close()
+    out: list[Comment] = []
+    i: int = 0
+    while i < len(rows):
+        row: Row = rows[i]
+        out.append(Comment(row.get_str(0), row.get_str(1), row.get_int(2)))
+        i = i + 1
+    return out
+
+def add_report(package_name: str, user_id: int, title: str, body: str) -> bool:
+    if find_package(package_name) == None:
+        return False
+    db: Connection = _open()
+    st: Statement = db.prepare("INSERT INTO reports (package_name, user_id, title, body, status, created_at_ms) VALUES (?, ?, ?, ?, 'open', ?)")
+    st.bind_str(0, package_name)
+    st.bind_int(1, user_id)
+    st.bind_str(2, title)
+    st.bind_str(3, body)
+    st.bind_int(4, nox.time.now_ms())
+    st.execute()
+    db.close()
+    return True
+
+def load_reports() -> list[Report]:
+    db: Connection = _open()
+    rows: list[Row] = db.query("SELECT reports.id, reports.package_name, users.username, reports.title, reports.body, reports.status, reports.created_at_ms FROM reports JOIN users ON users.id = reports.user_id ORDER BY reports.id DESC")
+    db.close()
+    out: list[Report] = []
+    i: int = 0
+    while i < len(rows):
+        row: Row = rows[i]
+        out.append(Report(row.get_int(0), row.get_str(1), row.get_str(2), row.get_str(3), row.get_str(4), row.get_str(5), row.get_int(6)))
+        i = i + 1
+    return out
+
+def set_report_status(id: int, status: str) -> bool:
+    if status != "open" and status != "closed":
+        return False
+    db: Connection = _open()
+    st: Statement = db.prepare("UPDATE reports SET status = ? WHERE id = ?")
+    st.bind_str(0, status)
+    st.bind_int(1, id)
+    n: int = st.execute()
+    db.close()
+    return n > 0

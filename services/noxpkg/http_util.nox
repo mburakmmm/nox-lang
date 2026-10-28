@@ -37,5 +37,8 @@ def parse_cookies(cookie_header: str) -> dict[str, str]:
         i = i + 1
     return result
 
-def build_set_cookie(name: str, value: str, max_age_seconds: int) -> str:
-    return name + "=" + value + "; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=" + str(max_age_seconds)
+def build_set_cookie(name: str, value: str, max_age_seconds: int, secure: bool) -> str:
+    flags: str = "HttpOnly; SameSite=Lax; Path=/; Max-Age=" + str(max_age_seconds)
+    if secure:
+        flags = "HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=" + str(max_age_seconds)
+    return name + "=" + value + "; " + flags

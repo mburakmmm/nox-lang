@@ -27,35 +27,45 @@ class Session:
     def _sign(self: Session, session_id: str, issued_at: str, suffix: str) -> str:
         return nox.crypto.hmac_sha256(self.secret, session_id + "." + issued_at + suffix)
 
-    def mint_cookie_value(self: Session) -> str:
-        session_id: str = nox.crypto.secure_random_hex(16)
+    def _payload(self: Session, user_id: str, role: str, issued_at: str) -> str:
+        return user_id + "." + role + "." + issued_at
+
+    def mint_cookie_value(self: Session, user_id: int, role: str) -> str:
         issued_at: str = str(nox.time.now_ms() // 1000)
-        sig: str = self._sign(session_id, issued_at, "")
-        return session_id + "." + issued_at + "." + sig
+        uid: str = str(user_id)
+        sig: str = nox.crypto.hmac_sha256(self.secret, self._payload(uid, role, issued_at))
+        return self._payload(uid, role, issued_at) + "." + sig
+
+    def _parts(self: Session, cookie_value: str) -> list[str]:
+        return nox.strings.splitn(cookie_value, ".", 4)
 
     def is_valid(self: Session, cookie_value: str) -> bool:
-        parts: list[str] = nox.strings.splitn(cookie_value, ".", 3)
-        if len(parts) != 3:
+        parts: list[str] = self._parts(cookie_value)
+        if len(parts) != 4:
             return False
-        session_id: str = parts[0]
-        issued_at: str = parts[1]
-        sig: str = parts[2]
-        expected: str = self._sign(session_id, issued_at, "")
-        if not nox.crypto.constant_time_eq(sig, expected):
+        role: str = parts[1]
+        if role != "user" and role != "admin":
             return False
-        issued_at_s: int = int(issued_at)
+        expected: str = nox.crypto.hmac_sha256(self.secret, self._payload(parts[0], role, parts[2]))
+        if not nox.crypto.constant_time_eq(parts[3], expected):
+            return False
+        issued_at_s: int = int(parts[2])
         now_s: int = nox.time.now_ms() // 1000
         if now_s - issued_at_s > 43200:
             return False
         return True
 
+    def user_id(self: Session, cookie_value: str) -> int:
+        parts: list[str] = self._parts(cookie_value)
+        if len(parts) != 4:
+            return 0
+        return int(parts[0])
+
     def csrf_token(self: Session, cookie_value: str) -> str:
-        parts: list[str] = nox.strings.splitn(cookie_value, ".", 3)
-        if len(parts) != 3:
+        parts: list[str] = self._parts(cookie_value)
+        if len(parts) != 4:
             return ""
-        session_id: str = parts[0]
-        issued_at: str = parts[1]
-        return self._sign(session_id, issued_at, ".csrf")
+        return nox.crypto.hmac_sha256(self.secret, self._payload(parts[0], parts[1], parts[2]) + ".csrf")
 
     def verify_csrf(self: Session, cookie_value: str, submitted_token: str) -> bool:
         expected: str = self.csrf_token(cookie_value)

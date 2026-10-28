@@ -1,28 +1,12 @@
 # main — noxpkg sunucusunun giriş noktası.
 #
-# **BULUNDU, GERÇEK bir İKİNCİ dil kısıtı** (`auth.nox`nin belge
-# notundaki "modül-üstü durum GÖRÜLEMEZ" bulgusuna EK): birinci-sınıf
-# fonksiyon-değer mekanizması (Faz U.4.5) yalnızca AYNI dosyada
-# TANIMLANMIŞ üst-düzey fonksiyonlar İçin çalışır — `from handlers_
-# public import index_json` İLE alınan bir fonksiyonu DOĞRUDAN
-# `router.get(...)`e DEĞER olarak vermek `UndefinedVariable` verir
-# (minimal, İKİ dosyalık bir örnekle DOĞRULANDI). Çözüm: HER handler
-# İçin, `handlers_public`/`handlers_admin`i SIRADAN bir NİTELENDİRİLMİŞ
-# ÇAĞRIYLA (bu ÇALIŞIYOR — yalnızca "değer olarak alma" BOZUK) saran
-# İNCE, AYNI-dosya sarmalayıcılar (`h_*`) — BUNLAR birinci-sınıf değer
-# olarak kullanılabilir.
+# Birinci-sınıf fonksiyon değeri yalnızca AYNI dosyada tanımlı üst-düzey
+# fonksiyonlar için çalışır. Her işleyici bu yüzden ince bir `h_*`
+# sarmalayıcıdır.
 #
-# `router`, modül-seviyesi global durum ARTIK desteklendiğinden (bkz.
-# proje belleği "modül-seviyesi global durum" planı) script top-level'da
-# BİR KEZ inşa edilir — ÖNCEDEN (v1.9.0'a KADAR) `handle` HER İSTEKTE
-# `build_router()`u SIFIRDAN çağırmak ZORUNDAYDI (saf `list.append`,
-# G/Ç YOK, İHMAL EDİLEBİLİR maliyetliydi ama GEREKSİZDİ). `PORT` SABİT
-# `8080` (env-yapılandırılabilir
-# DEĞİL, gerekirse Docker katmanında remap edilir). `num_threads=1` —
-# TÜM dosya-tabanlı durumun (`data/index.json`/`data/inbox.json`/
-# `data/ratelimit.txt`) YARIŞ-KOŞULSUZ round-trip yapabilmesi İçin
-# (bkz. `auth.nox`/`store.nox`nin AYNI belge notu) BİLİNÇLİ bir
-# tasarım kararı, performans kısıtı DEĞİL.
+# `num_threads=1` bilinçli: rate-limit dosyası ve SQLite yazıları tek
+# iş parçacığında yarışmasın. `PORT` 8080. Durum `data/noxpkg.db`dedir;
+# `GET /index.json` bu veritabanından üretilir.
 import nox.http
 from nox.http import HttpRequest, HttpResponse
 from nox.router import Router, Context
@@ -38,10 +22,37 @@ def h_index_json(ctx: Context) -> HttpResponse:
 def h_publish(ctx: Context) -> HttpResponse:
     return handlers_public.publish(ctx)
 
+def h_css(ctx: Context) -> HttpResponse:
+    return handlers_public.css(ctx)
+
+def h_js(ctx: Context) -> HttpResponse:
+    return handlers_public.js(ctx)
+
 def h_login_page(ctx: Context) -> HttpResponse:
-    return handlers_admin.login_page(ctx)
+    return handlers_public.login_page(ctx)
 
 def h_login_submit(ctx: Context) -> HttpResponse:
+    return handlers_public.login_submit(ctx)
+
+def h_register(ctx: Context) -> HttpResponse:
+    return handlers_public.register_submit(ctx)
+
+def h_logout(ctx: Context) -> HttpResponse:
+    return handlers_public.logout(ctx)
+
+def h_package(ctx: Context) -> HttpResponse:
+    return handlers_public.package_page(ctx)
+
+def h_comment(ctx: Context) -> HttpResponse:
+    return handlers_public.post_comment(ctx)
+
+def h_report(ctx: Context) -> HttpResponse:
+    return handlers_public.post_report(ctx)
+
+def h_admin_login_page(ctx: Context) -> HttpResponse:
+    return handlers_admin.login_page(ctx)
+
+def h_admin_login_submit(ctx: Context) -> HttpResponse:
     return handlers_admin.login_submit(ctx)
 
 def h_dashboard(ctx: Context) -> HttpResponse:
@@ -56,7 +67,10 @@ def h_reject(ctx: Context) -> HttpResponse:
 def h_remove_entry(ctx: Context) -> HttpResponse:
     return handlers_admin.remove_entry(ctx)
 
-def h_logout(ctx: Context) -> HttpResponse:
+def h_close_report(ctx: Context) -> HttpResponse:
+    return handlers_admin.close_report(ctx)
+
+def h_admin_logout(ctx: Context) -> HttpResponse:
     return handlers_admin.logout(ctx)
 
 def h_require_admin_session(ctx: Context) -> HttpResponse | None:
@@ -66,20 +80,34 @@ def build_router() -> Router:
     router: Router = Router()
     router.get("/", h_home)
     router.get("/index.json", h_index_json)
+    router.get("/pkg.css", h_css)
+    router.get("/pkg.js", h_js)
+    router.get("/giris", h_login_page)
+    router.post("/giris", h_login_submit)
+    router.post("/kayit", h_register)
+    router.post("/cikis", h_logout)
+    router.get("/p/:name", h_package)
+    router.post("/p/:name/yorum", h_comment)
+    router.post("/p/:name/hata", h_report)
     router.post("/api/publish", h_publish)
-    router.get("/admin/login", h_login_page)
-    router.post("/admin/login", h_login_submit)
+    router.get("/admin/login", h_admin_login_page)
+    router.post("/admin/login", h_admin_login_submit)
     router.get("/admin", h_dashboard)
     router.post("/admin/approve/:id", h_approve)
     router.post("/admin/reject/:id", h_reject)
     router.post("/admin/index/remove", h_remove_entry)
-    router.post("/admin/logout", h_logout)
+    router.post("/admin/reports/:id/close", h_close_report)
+    router.post("/admin/logout", h_admin_logout)
     router.use_before(h_require_admin_session)
     return router
 
 router: Router = build_router()
 
 def handle(req: HttpRequest) -> HttpResponse:
-    return router.dispatch(req)
+    try:
+        return router.dispatch(req)
+    except Exception as e:
+        print(e.message)
+        return HttpResponse(500, e.message, {"Content-Type": "text/plain; charset=utf-8"})
 
 nox.http.serve_multicore(8080, handle, 1, 0)

@@ -1,81 +1,106 @@
-# templates — noxpkg'in minimal/profesyonel HTML sayfaları. `nox.
-# template.render` (varsayılan HTML-kaçırma) İLE `{{ isim }}` yer-
-# tutucuları doldurulur; TEKRARLANAN satırlar (bekleyen gönderiler/index
-# girdileri) `handlers_admin.nox`de bir Nox döngüsüyle ÖNCEDEN inşa
-# edilip (HER PARÇA ZATEN `render` İLE kaçırılmış olduğundan) `render_
-# unescaped` İLE tek bir yer-tutucuya GEÇİRİLİR.
-#
-# **BİLİNÇLİ güvenlik kararı:** `id`/`name`/`repo` (`noxc publish` İLE
-# GÖNDERİLEN, GÜVENİLMEYEN girdi) HİÇBİR ZAMAN doğrudan bir inline JS
-# string literal'inin İÇİNE gömülmez (`onclick="...'{{ deger }}'..."`)
-# — `nox.template.render`in HTML-kaçırması yalnızca HTML ÖZNİTELİK
-# AYRIŞTIRMASINI korur, TARAYICI özniteliği ÇÖZÜP JS'e VERDİKTEN SONRA
-# (ör. `&#39;` -> `'`) o değer HÂLÂ bir JS string literal'inin İÇİNDEYSE
-# tırnak-kırma enjeksiyonu HÂLÂ MÜMKÜNDÜR. Bunun yerine TÜM dinamik
-# değerler `data-*` özniteliklerine yazılır, JS TARAFINDAN `.dataset`
-# ÜZERİNDEN (düz METİN olarak, ASLA kod olarak yeniden ayrıştırılmadan)
-# okunur — TEK paylaşımlı `<script>` (event delegation, satır-içi
-# `onclick` YOK) `dashboard_template`in KENDİSİNDE.
+# templates — noxpkg sayfaları. Kullanıcı metni `render` ile kaçırılır;
+# birleştirilmiş HTML `render_unescaped` ile gövdeye girer. Dinamik
+# değerler JS string literali içine gömülmez; `data-*` ve form alanı
+# olarak kalır.
 import nox.template
 
-# Üst-düzey `var_decl`lar fonksiyon İÇİNDEN GÖRÜLEMEDİĞİNDEN (bkz.
-# auth.nox'un belge notu) TÜM şablon SABİTLERİ sıfır-argümanlı
-# fonksiyonlardır — fonksiyonlar (var_decl'ların AKSİNE) HER YERDEN
-# çağrılabilir.
-def _style() -> str:
-    return "body{font-family:-apple-system,system-ui,sans-serif;max-width:760px;margin:60px auto;padding:0 20px;color:#1a1a1a}h1{font-size:1.4rem}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{text-align:left;padding:8px;border-bottom:1px solid #e0e0e0;font-size:0.9rem}th{color:#666;font-weight:600}button{padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer}button.danger{border-color:#c00;color:#c00}input[type=password]{width:100%;padding:10px;margin:8px 0;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}.err{color:#b00;margin:8px 0;font-size:0.9rem}.muted{color:#888;font-size:0.85rem}"
+def _page_template() -> str:
+    return "<!doctype html><html lang=\"tr\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{{ title }}</title><link rel=\"stylesheet\" href=\"/pkg.css\"><script>try{var t=localStorage.getItem(\"nox-theme\");if(t===\"light\"||t===\"dark\")document.documentElement.setAttribute(\"data-theme\",t);}catch(e){}</script>{{ csrf_meta }}</head><body><header class=\"topbar\"><a class=\"brand\" href=\"https://noxlang.com\"><span class=\"mark\">N</span><span>Nox</span></a><nav class=\"topnav\" aria-label=\"Birincil\"><a href=\"/\" aria-current=\"page\">Packages</a><a href=\"https://noxlang.com/docs/tutorial/\">Tutorial</a><a href=\"https://noxlang.com/docs/stdlib/\">Stdlib</a></nav><div class=\"topright\">{{ account }}<button class=\"icon-btn\" id=\"theme\" type=\"button\" aria-label=\"Tema\">◐</button></div></header><main class=\"wrap\">{{ main }}<p class=\"footer\"><a href=\"/admin/login\">Yönetim</a></p></main><script src=\"/pkg.js\"></script></body></html>"
 
-def _login_template() -> str:
-    return "<!doctype html><html><head><meta charset=\"utf-8\"><title>noxpkg</title><style>{{ style }}</style></head><body><h1>noxpkg</h1>{{ error_html }}<form id=\"f\"><input type=\"password\" id=\"pw\" placeholder=\"sifre\" autocomplete=\"current-password\" autofocus><button type=\"submit\" id=\"btn\">Giris</button><p class=\"err\" id=\"jserr\" style=\"display:none\"></p></form><script>var f=document.getElementById('f');var btn=document.getElementById('btn');var jserr=document.getElementById('jserr');function showErr(msg){jserr.textContent=msg;jserr.style.display='';btn.disabled=false;btn.textContent='Giris';}f.addEventListener('submit',function(e){e.preventDefault();btn.disabled=true;btn.textContent='giris yapiliyor...';jserr.style.display='none';fetch('/admin/login',{method:'POST',body:document.getElementById('pw').value}).then(function(r){if(r.ok){window.location='/admin';}else if(r.status===429){window.location='/admin/login?err=locked';}else{window.location='/admin/login?err=1';}}).catch(function(){showErr('baglanti hatasi, tekrar deneyin');});});</script></body></html>"
+def page(title: str, account_html: str, main_html: str, csrf: str) -> str:
+    csrf_meta: str = ""
+    if len(csrf) > 0:
+        meta_ctx: dict[str, str] = {"token": csrf}
+        csrf_meta = nox.template.render("<meta name=\"csrf\" content=\"{{ token }}\">", meta_ctx)
+    ctx: dict[str, str] = {"title": title, "account": account_html, "main": main_html, "csrf_meta": csrf_meta}
+    return nox.template.render_unescaped(_page_template(), ctx)
 
-def login_page(error_message: str) -> str:
-    error_html: str = ""
-    if len(error_message) > 0:
-        ctx: dict[str, str] = {"msg": error_message}
-        error_html = nox.template.render("<div class=\"err\">{{ msg }}</div>", ctx)
-    ctx2: dict[str, str] = {"style": _style(), "error_html": error_html}
-    return nox.template.render_unescaped(_login_template(), ctx2)
+def account_bar(username: str, role: str) -> str:
+    if len(username) == 0:
+        return "<a class=\"btn\" href=\"/giris\">Giriş yap</a>"
+    who_ctx: dict[str, str] = {"name": username}
+    who: str = nox.template.render("<span class=\"who\">{{ name }}</span>", who_ctx)
+    admin: str = ""
+    if role == "admin":
+        admin = "<a class=\"btn btn-ghost\" href=\"/admin\">Yönetim</a>"
+    return who + admin + "<button class=\"btn btn-ghost\" id=\"logout\" type=\"button\">Çıkış</button>"
 
-# `data-csrf` KENDİSİ de bir öznitelik (JS string literal İÇİNDE DEĞİL)
-# — `<meta>` üzerinden okunur, hiçbir zaman kod olarak yeniden ayrıştırılmaz.
-def _dashboard_template() -> str:
-    return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"csrf\" content=\"{{ csrf }}\"><title>noxpkg admin</title><style>{{ style }}</style></head><body><h1>noxpkg admin</h1><p class=\"muted\"><button id=\"logout\">cikis yap</button></p><h2>Bekleyen gonderiler</h2><table id=\"pending\"><tr><th>isim</th><th>repo</th><th>ref</th><th>aciklama</th><th></th></tr>{{ pending_rows }}</table><h2>Yayinda</h2><table id=\"idx\"><tr><th>isim</th><th>repo</th><th>aciklama</th><th></th></tr>{{ index_rows }}</table><script>function csrf(){return document.querySelector('meta[name=csrf]').content;}function post(url){return fetch(url,{method:'POST',body:csrf()});}document.getElementById('logout').addEventListener('click',function(){post('/admin/logout').then(function(){window.location='/admin/login';});});document.getElementById('pending').addEventListener('click',function(e){var tr=e.target.closest('tr');if(!tr||!tr.dataset.id)return;var id=tr.dataset.id;if(e.target.classList.contains('approve')){post('/admin/approve/'+encodeURIComponent(id)).then(function(){window.location.reload();});}else if(e.target.classList.contains('reject')){post('/admin/reject/'+encodeURIComponent(id)).then(function(){window.location.reload();});}});document.getElementById('idx').addEventListener('click',function(e){var tr=e.target.closest('tr');if(!tr||!tr.dataset.name)return;if(!e.target.classList.contains('remove'))return;fetch('/admin/index/remove',{method:'POST',body:csrf()+'\\n'+tr.dataset.name}).then(function(){window.location.reload();});});</script></body></html>"
+def _card_template() -> str:
+    return "<a class=\"card\" href=\"/p/{{ name }}\" data-name=\"{{ name }}\" data-repo=\"{{ repo }}\" data-description=\"{{ description }}\" data-tags=\"{{ tags }}\"><h2>{{ name }}</h2><p>{{ description }}</p><span class=\"tags\">{{ tag_html }}</span></a>"
 
-def dashboard(pending_rows_html: str, index_rows_html: str, csrf_token: str) -> str:
-    ctx: dict[str, str] = {"style": _style(), "pending_rows": pending_rows_html, "index_rows": index_rows_html, "csrf": csrf_token}
-    return nox.template.render_unescaped(_dashboard_template(), ctx)
+def _tag_template() -> str:
+    return "<span class=\"tag\">{{ tag }}</span>"
 
-def _pending_row_template() -> str:
-    return "<tr data-id=\"{{ id }}\"><td>{{ name }}</td><td>{{ repo }}</td><td>{{ ref }}</td><td>{{ description }}</td><td><button class=\"approve\">onayla</button> <button class=\"danger reject\">reddet</button></td></tr>"
+def package_card(name: str, repo: str, description: str, tags: list[str]) -> str:
+    tag_html: str = ""
+    i: int = 0
+    while i < len(tags):
+        one: dict[str, str] = {"tag": tags[i]}
+        tag_html = tag_html + nox.template.render(_tag_template(), one)
+        i = i + 1
+    joined: str = ""
+    j: int = 0
+    while j < len(tags):
+        if j > 0:
+            joined = joined + " "
+        joined = joined + tags[j]
+        j = j + 1
+    ctx: dict[str, str] = {"name": nox.template.escape_html(name), "repo": nox.template.escape_html(repo), "description": nox.template.escape_html(description), "tags": nox.template.escape_html(joined), "tag_html": tag_html}
+    return nox.template.render_unescaped(_card_template(), ctx)
+
+def home_main(cards_html: str) -> str:
+    ctx: dict[str, str] = {"cards": cards_html}
+    tmpl: str = "<p class=\"kicker\">Registry</p><h1>Packages</h1><p class=\"lead\">Nox paket indeksi. <code>noxc search</code> ile ara, <code>noxc add</code> ile projene ekle.</p><input class=\"search\" id=\"q\" type=\"search\" placeholder=\"Paket ara\" autofocus><div class=\"grid\" id=\"pkgs\">{{ cards }}</div><p class=\"empty\" id=\"empty\" hidden>Eşleşen paket yok.</p>"
+    return nox.template.render_unescaped(tmpl, ctx)
+
+def _comment_template() -> str:
+    return "<article class=\"comment\"><header><strong>{{ username }}</strong><span>{{ when }}</span></header><p>{{ body }}</p></article>"
+
+def comment_block(username: str, body: str, when: str) -> str:
+    ctx: dict[str, str] = {"username": username, "body": body, "when": when}
+    return nox.template.render(_comment_template(), ctx)
+
+def package_main(name: str, repo_href: str, repo_label: str, description: str, tags_html: str, install: str, comments_html: str, composer_html: str) -> str:
+    ctx: dict[str, str] = {"name": nox.template.escape_html(name), "repo_href": nox.template.escape_html(repo_href), "repo_label": nox.template.escape_html(repo_label), "description": nox.template.escape_html(description), "tags": tags_html, "install": nox.template.escape_html(install), "comments": comments_html, "composer": composer_html}
+    tmpl: str = "<p class=\"kicker\"><a href=\"/\">Packages</a></p><div class=\"pkg-head\"><div><h1>{{ name }}</h1><p class=\"lead\">{{ description }}</p><div class=\"tags\">{{ tags }}</div></div><div><p class=\"install\">noxc add {{ install }}</p><p><a href=\"{{ repo_href }}\" rel=\"noopener noreferrer\">{{ repo_label }}</a></p></div></div><section class=\"panel\"><h2>Yorumlar</h2>{{ comments }}{{ composer }}</section>"
+    return nox.template.render_unescaped(tmpl, ctx)
+
+def guest_composer() -> str:
+    return "<p class=\"callout\">Yorum yazmak ve hata bildirmek için <a href=\"/giris\">giriş yap</a>.</p>"
+
+def member_composer(name: str) -> str:
+    ctx: dict[str, str] = {"name": name}
+    tmpl: str = "<form data-post=\"/p/{{ name }}/yorum\"><label for=\"body\">Yorum</label><textarea id=\"body\" name=\"body\" maxlength=\"2000\" required></textarea><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Gönder</button></form><form data-post=\"/p/{{ name }}/hata\"><label for=\"title\">Hata başlığı</label><input id=\"title\" name=\"title\" type=\"text\" maxlength=\"120\" required><label for=\"report\">Ne oldu</label><textarea id=\"report\" name=\"body\" maxlength=\"4000\" required></textarea><p class=\"err\" hidden></p><button class=\"btn btn-ghost\" type=\"submit\">Hata bildir</button></form>"
+    return nox.template.render(tmpl, ctx)
+
+def auth_main() -> str:
+    return "<p class=\"kicker\">Hesap</p><h1>Giriş yap</h1><p class=\"lead\">Yorum ve hata bildirimi için bir hesap yeter. Paket onaylamak yönetim kapısındadır.</p><div class=\"auth-grid\"><section class=\"panel\"><h2>Giriş yap</h2><form data-post=\"/giris\" data-next=\"/\"><label for=\"user\">Kullanıcı adı</label><input id=\"user\" name=\"username\" type=\"text\" autocomplete=\"username\" required><label for=\"pw\">Parola</label><input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Giriş yap</button></form></section><section class=\"panel\"><h2>Kayıt ol</h2><form data-post=\"/kayit\" data-next=\"/\"><label for=\"new-user\">Kullanıcı adı</label><input id=\"new-user\" name=\"username\" type=\"text\" autocomplete=\"username\" required><label for=\"new-pw\">Parola</label><input id=\"new-pw\" name=\"password\" type=\"password\" autocomplete=\"new-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Kayıt ol</button></form></section></div>"
+
+def admin_login_main() -> str:
+    return "<p class=\"kicker\">Yönetim</p><h1>Yönetici girişi</h1><p class=\"lead\">Paket onayları ve hata bildirimleri bu kapının arkasında.</p><section class=\"panel\"><form data-post=\"/admin/login\" data-next=\"/admin\"><label for=\"user\">Kullanıcı adı</label><input id=\"user\" name=\"username\" type=\"text\" autocomplete=\"username\" value=\"admin\" required><label for=\"pw\">Parola</label><input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Giriş yap</button></form></section>"
+
+def _pending_row() -> str:
+    return "<tr><td>{{ name }}</td><td>{{ repo }}</td><td>{{ ref }}</td><td>{{ description }}</td><td><button class=\"btn\" type=\"button\" data-admin-post=\"/admin/approve/{{ id }}\">Onayla</button> <button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/reject/{{ id }}\">Reddet</button></td></tr>"
 
 def pending_row(id: str, name: str, repo: str, ref: str, description: str) -> str:
     ctx: dict[str, str] = {"id": id, "name": name, "repo": repo, "ref": ref, "description": description}
-    return nox.template.render(_pending_row_template(), ctx)
+    return nox.template.render(_pending_row(), ctx)
 
-def _index_row_template() -> str:
-    return "<tr data-name=\"{{ name }}\"><td>{{ name }}</td><td>{{ repo }}</td><td>{{ description }}</td><td><button class=\"danger remove\">cikar</button></td></tr>"
+def _index_row() -> str:
+    return "<tr><td>{{ name }}</td><td>{{ repo }}</td><td>{{ description }}</td><td><button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/index/remove\" data-extra=\"{{ name }}\">Çıkar</button></td></tr>"
 
 def index_row(name: str, repo: str, description: str) -> str:
     ctx: dict[str, str] = {"name": name, "repo": repo, "description": description}
-    return nox.template.render(_index_row_template(), ctx)
+    return nox.template.render(_index_row(), ctx)
 
-# Herkese açık anasayfa — yayındaki paketleri listeler + arama kutusu.
-# `dashboard_template`in AYNI güvenlik deseni: dinamik değerler `data-*`
-# özniteliklerine yazılır, arama JS'i yalnızca `.dataset` (düz METİN)
-# okur, hiçbir sunucu-taraflı sorgu-string ayrıştırıcısı GEREKMEZ
-# (bkz. http_util.nox'un belge notu — stdlib'de HENÜZ YOK) — bu YÜZDEN
-# arama TAMAMEN istemci tarafında, sayfa TEK seferde yüklenen satırlar
-# üzerinde satır göster/gizle yapar.
-def _home_template() -> str:
-    return "<!doctype html><html><head><meta charset=\"utf-8\"><title>noxpkg</title><style>{{ style }}</style></head><body><h1>noxpkg</h1><p class=\"muted\">Nox paket indeksi &mdash; <code>noxc search &lt;isim&gt;</code> ile ara, <code>noxc add &lt;isim&gt;</code> ile projene ekle.</p><input type=\"text\" id=\"q\" placeholder=\"paket ara...\" autofocus><table id=\"pkgs\"><tr><th>isim</th><th>repo</th><th>aciklama</th><th>etiketler</th></tr>{{ rows }}</table><p class=\"muted\" id=\"empty\" style=\"display:none\">eslesen paket yok</p><p class=\"muted\"><a href=\"/admin/login\">admin</a></p><script>var q=document.getElementById('q');var rows=Array.prototype.slice.call(document.querySelectorAll('#pkgs tr[data-name]'));var empty=document.getElementById('empty');q.addEventListener('input',function(){var v=q.value.toLowerCase();var shown=0;rows.forEach(function(r){var hay=(r.dataset.name+' '+r.dataset.repo+' '+r.dataset.description+' '+r.dataset.tags).toLowerCase();var vis=hay.indexOf(v)!==-1;r.style.display=vis?'':'none';if(vis)shown++;});empty.style.display=shown===0?'':'none';});</script></body></html>"
+def _report_row() -> str:
+    return "<tr><td>{{ package }}</td><td>{{ username }}</td><td>{{ title }}</td><td>{{ body }}</td><td>{{ status }}</td><td><button class=\"btn btn-ghost\" type=\"button\" data-admin-post=\"/admin/reports/{{ id }}/close\">Kapat</button></td></tr>"
 
-def home(rows_html: str) -> str:
-    ctx: dict[str, str] = {"style": _style(), "rows": rows_html}
-    return nox.template.render_unescaped(_home_template(), ctx)
+def report_row(id: str, package_name: str, username: str, title: str, body: str, status: str) -> str:
+    ctx: dict[str, str] = {"id": id, "package": package_name, "username": username, "title": title, "body": body, "status": status}
+    return nox.template.render(_report_row(), ctx)
 
-def _package_row_template() -> str:
-    return "<tr data-name=\"{{ name }}\" data-repo=\"{{ repo }}\" data-description=\"{{ description }}\" data-tags=\"{{ tags }}\"><td>{{ name }}</td><td><a href=\"{{ repo }}\" target=\"_blank\" rel=\"noopener noreferrer\">{{ repo }}</a></td><td>{{ description }}</td><td>{{ tags }}</td></tr>"
-
-def package_row(name: str, repo: str, description: str, tags: str) -> str:
-    ctx: dict[str, str] = {"name": name, "repo": repo, "description": description, "tags": tags}
-    return nox.template.render(_package_row_template(), ctx)
+def dashboard_main(pending_html: str, index_html: str, report_html: str) -> str:
+    ctx: dict[str, str] = {"pending": pending_html, "index": index_html, "reports": report_html}
+    tmpl: str = "<p class=\"kicker\">Yönetim</p><h1>Kayıt</h1><section class=\"panel\"><h2>Bekleyen gönderiler</h2><div class=\"table-wrap\"><table><tr><th>İsim</th><th>Repo</th><th>Ref</th><th>Açıklama</th><th></th></tr>{{ pending }}</table></div></section><section class=\"panel\"><h2>Yayında</h2><div class=\"table-wrap\"><table><tr><th>İsim</th><th>Repo</th><th>Açıklama</th><th></th></tr>{{ index }}</table></div></section><section class=\"panel\"><h2>Hata bildirimleri</h2><div class=\"table-wrap\"><table><tr><th>Paket</th><th>Kullanıcı</th><th>Başlık</th><th>Gövde</th><th>Durum</th><th></th></tr>{{ reports }}</table></div></section>"
+    return nox.template.render_unescaped(tmpl, ctx)

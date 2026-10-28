@@ -1,10 +1,11 @@
 #!/bin/sh
 # noxpkg veri yedeği: saatlik yerel anlık görüntü + (isteğe bağlı) restic ile Cloudflare R2'ye şifreli kopya.
 #
-# noxpkg'nin durumu BİRKAÇ KÜÇÜK JSON dosyasıdır (`index.json`, `inbox.json`, `ratelimit.txt`); SQLite YOKTUR.
-# Sunucu her dosyayı geçici dosya + `rename` ile ATOMİK yazar, bu yüzden tek tek okunan her dosya tutarlıdır.
-# (`approve` önce indeksi sonra gelen kutusunu yazar; iki dosyanın aynı anda alınması beklenmez — en kötü durumda
-# bir onay iki anlık görüntüye bölünür ve bir sonraki saat düzelir.)
+# noxpkg'nin durumu `noxpkg.db`dir. Hesap, yorum ve hata bildirimi yalnızca oradadır.
+# `index.json` / `inbox.json` sunucunun sildiği bir kaynak DEĞİL, katalog aynasıdır;
+# arşivdeki kopya canlı dosyadan DEĞİL, `.backup` ile alınan veritabanından üretilir.
+# Böylece yedek, o anki katalogla birebir kalır. `ratelimit.txt` varsa yanında gider.
+# Off-site kopya da bu arşivin kendisidir, canlı dosyanın yarım kopyası değil.
 #
 # Kullanım:
 #   backup_noxpkg.sh once                   tek anlık görüntü al (+ rotasyon + varsa R2'ye gönder)
@@ -25,7 +26,7 @@ KEEP_HOURLY="${KEEP_HOURLY:-48}"
 KEEP_DAILY="${KEEP_DAILY:-30}"
 KEEP_WEEKLY="${KEEP_WEEKLY:-12}"
 BACKUP_INTERVAL_SECONDS="${BACKUP_INTERVAL_SECONDS:-3600}"
-FILES="index.json inbox.json ratelimit.txt"
+FILES="index.json inbox.json ratelimit.txt noxpkg.db"
 
 log() { printf '%s backup: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() { log "HATA: $*" >&2; exit 1; }
@@ -42,6 +43,63 @@ validate_dir() {
             head -c 1 "$dir/$f" | grep -q '[{[]' || return 1
         fi
     done
+    return 0
+}
+
+# SQLite dosyası varsa başlığı ve (sqlite3 kuruluysa) bütünlük denetimini geçmelidir.
+validate_sqlite() {
+    dir="$1"
+    [ -f "$dir/noxpkg.db" ] || return 0
+    magic=$(head -c 15 "$dir/noxpkg.db" 2>/dev/null || true)
+    [ "$magic" = "SQLite format 3" ] || return 1
+    if command -v sqlite3 >/dev/null 2>&1; then
+        out=$(sqlite3 "$dir/noxpkg.db" "PRAGMA integrity_check;" 2>/dev/null || echo fail)
+        [ "$out" = "ok" ] || return 1
+    fi
+    return 0
+}
+
+copy_sqlite() {
+    stage="$1"
+    [ -f "$DATA_DIR/noxpkg.db" ] || return 0
+    if command -v sqlite3 >/dev/null 2>&1; then
+        sqlite3 -cmd ".timeout 8000" "$DATA_DIR/noxpkg.db" ".backup '$stage/noxpkg.db'" || return 1
+    else
+        cp "$DATA_DIR/noxpkg.db" "$stage/noxpkg.db" || return 1
+    fi
+    return 0
+}
+
+# Aynayı yedeklenen veritabanından yazar. Canlı JSON bayatsa arşive girmez.
+# `packages` tablosu yoksa (eski/yabancı dosya) dokunulmaz.
+export_catalog() {
+    db="$1"
+    dest="$2"
+    command -v sqlite3 >/dev/null 2>&1 || return 0
+    has=$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='packages';")
+    [ "$has" = "1" ] || return 0
+    sqlite3 "$db" "SELECT json_object('packages', IFNULL((SELECT json_group_array(json_object('name', name, 'repo', repo, 'description', description, 'tags', json(tags))) FROM (SELECT name, repo, description, tags FROM packages ORDER BY name)), json('[]')));" > "$dest/index.json.tmp" || return 1
+    sqlite3 "$db" "SELECT json_object('submissions', IFNULL((SELECT json_group_array(json_object('id', id, 'name', name, 'repo', repo, 'ref', ref, 'description', description, 'tags', json(tags), 'submitted_at_ms', submitted_at_ms)) FROM (SELECT id, name, repo, ref, description, tags, submitted_at_ms FROM submissions ORDER BY submitted_at_ms)), json('[]')));" > "$dest/inbox.json.tmp" || return 1
+    mv "$dest/index.json.tmp" "$dest/index.json"
+    mv "$dest/inbox.json.tmp" "$dest/inbox.json"
+    return 0
+}
+
+# Veritabanındaki paket ve gönderi kimlikleri JSON aynasıyla aynı mı.
+catalog_matches() {
+    dir="$1"
+    [ -f "$dir/noxpkg.db" ] || return 0
+    command -v sqlite3 >/dev/null 2>&1 || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    has=$(sqlite3 "$dir/noxpkg.db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='packages';")
+    [ "$has" = "1" ] || return 0
+    [ -f "$dir/index.json" ] && [ -f "$dir/inbox.json" ] || return 1
+    db_names=$(sqlite3 "$dir/noxpkg.db" "SELECT name FROM packages ORDER BY name;")
+    json_names=$(jq -r '.packages[].name' "$dir/index.json" | sort)
+    [ "$db_names" = "$json_names" ] || return 1
+    db_ids=$(sqlite3 "$dir/noxpkg.db" "SELECT id FROM submissions ORDER BY id;")
+    json_ids=$(jq -r '.submissions[].id' "$dir/inbox.json" | sort)
+    [ "$db_ids" = "$json_ids" ] || return 1
     return 0
 }
 
@@ -98,17 +156,29 @@ snapshot() {
     stage=$(mktemp -d "$BACKUP_DIR/.stage.XXXXXX")
     trap 'rm -rf "$stage"' EXIT
     present=""
-    for f in $FILES; do
-        if [ -f "$DATA_DIR/$f" ]; then cp "$DATA_DIR/$f" "$stage/$f"; present="$present $f"; fi
-    done
+    if [ -f "$DATA_DIR/noxpkg.db" ]; then
+        copy_sqlite "$stage" || die "SQLite yedeği alınamadı"
+        export_catalog "$stage/noxpkg.db" "$stage" || die "katalog aynası veritabanından üretilemedi"
+        present="noxpkg.db"
+        [ -f "$stage/index.json" ] && present="$present index.json"
+        [ -f "$stage/inbox.json" ] && present="$present inbox.json"
+        if [ -f "$DATA_DIR/ratelimit.txt" ]; then cp "$DATA_DIR/ratelimit.txt" "$stage/ratelimit.txt"; present="$present ratelimit.txt"; fi
+    else
+        for f in index.json inbox.json ratelimit.txt; do
+            if [ -f "$DATA_DIR/$f" ]; then cp "$DATA_DIR/$f" "$stage/$f"; present="$present $f"; fi
+        done
+    fi
     [ -n "$present" ] || die "yedeklenecek dosya yok ($DATA_DIR)"
     validate_dir "$stage" || die "JSON doğrulaması başarısız — bozuk veri YEDEKLENMEDİ"
+    validate_sqlite "$stage" || die "SQLite doğrulaması başarısız — bozuk veri YEDEKLENMEDİ"
+    catalog_matches "$stage" || die "katalog aynası veritabanıyla uyuşmuyor — yedeklenmedi"
     ts=$(date -u +%Y%m%dT%H%M%SZ)
     out="$BACKUP_DIR/noxpkg-$ts.tar.gz"
     tmp="$out.partial"
     # shellcheck disable=SC2086
     tar -czf "$tmp" -C "$stage" $present
     mv "$tmp" "$out"
+    printf '%s\n' "$out" > "$BACKUP_DIR/.last_snapshot"
     ( cd "$BACKUP_DIR" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
     rm -rf "$stage"; trap - EXIT
     log "anlık görüntü: $out ($(wc -c < "$out") bayt)"
@@ -123,7 +193,10 @@ offsite() {
     fi
     command -v restic >/dev/null 2>&1 || { log "UYARI: restic yok, off-site atlandı"; return 1; }
     restic snapshots >/dev/null 2>&1 || { log "restic deposu başlatılıyor"; restic init >/dev/null || return 1; }
-    restic backup "$DATA_DIR" --tag noxpkg --quiet || return 1
+    target="$BACKUP_DIR"
+    if [ -f "$BACKUP_DIR/.last_snapshot" ]; then target=$(cat "$BACKUP_DIR/.last_snapshot"); fi
+    [ -f "$target" ] || { log "UYARI: off-site için arşiv yok"; return 1; }
+    restic backup "$target" --tag noxpkg --quiet || return 1
     restic forget --tag noxpkg --keep-hourly "$KEEP_HOURLY" --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly 12 --prune --quiet || return 1
     log "off-site (restic/R2) tamam"
 }
@@ -139,6 +212,8 @@ restore() {
     mkdir -p "$dest"
     tar -xzf "$src" -C "$dest"
     validate_dir "$dest" || die "geri yüklenen veri doğrulanamadı"
+    validate_sqlite "$dest" || die "geri yüklenen SQLite doğrulanamadı"
+    catalog_matches "$dest" || die "geri yüklenen katalog veritabanıyla uyuşmuyor"
     log "geri yüklendi: $src -> $dest"
 }
 

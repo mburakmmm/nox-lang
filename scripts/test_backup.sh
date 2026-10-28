@@ -59,4 +59,37 @@ snap=$(ls "$BACKUP_DIR"/noxpkg-*.tar.gz | tail -n 1)
 printf 'corrupt' >> "$snap"
 if sh "$HERE/backup_noxpkg.sh" restore latest "$T/restore2" >/dev/null 2>&1; then fail "bozuk arşiv kabul edildi"; fi
 ok "bozuk arşiv sağlama toplamıyla reddedildi"
+
+# 5) SQLite: tutarlı kopya, bozuk dosya reddi
+if command -v sqlite3 >/dev/null 2>&1; then
+    rm -f "$DATA_DIR/index.json" "$DATA_DIR/inbox.json" "$DATA_DIR/ratelimit.txt"
+    rm -rf "$BACKUP_DIR"; mkdir -p "$BACKUP_DIR"
+    sqlite3 "$DATA_DIR/noxpkg.db" "CREATE TABLE t(x TEXT); INSERT INTO t VALUES ('nyx');"
+    sh "$HERE/backup_noxpkg.sh" once >/dev/null || fail "sqlite anlık görüntüsü alınamadı"
+    mkdir -p "$T/restore-db"
+    sh "$HERE/backup_noxpkg.sh" restore latest "$T/restore-db" >/dev/null || fail "sqlite restore başarısız"
+    got=$(sqlite3 "$T/restore-db/noxpkg.db" "SELECT x FROM t;")
+    [ "$got" = "nyx" ] || fail "geri yüklenen sqlite satırı: '$got'"
+    printf 'nope' > "$DATA_DIR/noxpkg.db"
+    if sh "$HERE/backup_noxpkg.sh" once >/dev/null 2>&1; then fail "bozuk sqlite yedeklendi"; fi
+    ok "sqlite yedek + bozuk dosya reddi"
+
+    # 6) Bayat JSON arşive girmez; katalog yedekteki veritabanından üretilir.
+    rm -rf "$BACKUP_DIR"; mkdir -p "$BACKUP_DIR"
+    rm -f "$DATA_DIR/noxpkg.db"
+    sqlite3 "$DATA_DIR/noxpkg.db" "CREATE TABLE packages (name TEXT PRIMARY KEY, repo TEXT, description TEXT, tags TEXT, created_at_ms INTEGER); CREATE TABLE submissions (id TEXT PRIMARY KEY, name TEXT, repo TEXT, ref TEXT, description TEXT, tags TEXT, submitted_at_ms INTEGER); INSERT INTO packages VALUES ('nyx','github.com/mburakmmm/nyx','web','[\"web\"]',1); INSERT INTO submissions VALUES ('abc','aura','github.com/mburakmmm/aura','main','ui','[\"ui\"]',2);"
+    printf '%s\n' '{"packages":[{"name":"gone","repo":"x","description":"","tags":[]}]}' > "$DATA_DIR/index.json"
+    printf '%s\n' '{"submissions":[]}' > "$DATA_DIR/inbox.json"
+    sh "$HERE/backup_noxpkg.sh" once >/dev/null || fail "katalog yedeği alınamadı"
+    mkdir -p "$T/restore-cat"
+    sh "$HERE/backup_noxpkg.sh" restore latest "$T/restore-cat" >/dev/null || fail "katalog restore başarısız"
+    name=$(jq -r '.packages[0].name' "$T/restore-cat/index.json")
+    sid=$(jq -r '.submissions[0].id' "$T/restore-cat/inbox.json")
+    [ "$name" = "nyx" ] || fail "bayat JSON arşive girdi: $name"
+    [ "$sid" = "abc" ] || fail "gönderi kayboldu: $sid"
+    [ "$(sqlite3 "$T/restore-cat/noxpkg.db" "SELECT name FROM packages;")" = "nyx" ] || fail "veritabanındaki paket kayboldu"
+    ok "bayat JSON yok sayıldı, katalog veritabanından üretildi"
+else
+    echo "atlandı - sqlite3 yok"
+fi
 echo "tüm yedekleme testleri geçti"

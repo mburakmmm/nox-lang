@@ -1,54 +1,272 @@
-# handlers_public — kimlik doğrulama GEREKTİRMEYEN uç noktalar: genel
-# index (`noxc search`/`noxc add`nin tükettiği) + `noxc publish`in
-# gönderi-kutusu.
+# handlers_public — indeks, paket sayfası, kayıt ve giriş.
+# Yorum ve hata bildirimi oturum ister. Paket onayı bu dosyada yoktur.
 import nox.fs
 import nox.json
+import nox.os
+import nox.template
 import nox.validate
+import nox.strings
+import nox.time
 from nox.validate import Schema
+from nox.json import JsonError
 from nox.router import Context
 from nox.http import HttpResponse
 import store
-from store import Submission, IndexEntry
+from store import IndexEntry, Comment, Viewer
 import templates
+import auth
+from auth import Session, RateLimiter
+import http_util
 
-# Üst-düzey `var_decl`lar fonksiyon İÇİNDEN GÖRÜLEMEDİĞİNDEN (bkz.
-# auth.nox'un belge notu) yol sabitleri sıfır-argümanlı fonksiyonlardır.
-def _index_path() -> str:
-    return "data/index.json"
+def _secret() -> str:
+    return nox.os.getenv("NOXPKG_SESSION_SECRET")
 
-def _inbox_path() -> str:
-    return "data/inbox.json"
+def _ratelimit_path() -> str:
+    return "data/ratelimit.txt"
+
+def _cookie_value(ctx: Context) -> str:
+    if not ctx.request.headers.contains("Cookie"):
+        return ""
+    cookies: dict[str, str] = http_util.parse_cookies(ctx.request.headers["Cookie"])
+    if not cookies.contains("noxpkg_session"):
+        return ""
+    return cookies["noxpkg_session"]
+
+def _client_key(ctx: Context) -> str:
+    if ctx.request.headers.contains("CF-Connecting-IP"):
+        return ctx.request.headers["CF-Connecting-IP"]
+    return "unknown"
+
+def _https(ctx: Context) -> bool:
+    if not ctx.request.headers.contains("X-Forwarded-Proto"):
+        return False
+    return ctx.request.headers["X-Forwarded-Proto"] == "https"
+
+def current_viewer(ctx: Context) -> Viewer | None:
+    session: Session = Session(_secret())
+    cv: str = _cookie_value(ctx)
+    if len(cv) == 0 or not session.is_valid(cv):
+        return None
+    return store.find_user(session.user_id(cv))
+
+def _csrf(ctx: Context) -> str:
+    session: Session = Session(_secret())
+    cv: str = _cookie_value(ctx)
+    if len(cv) == 0 or not session.is_valid(cv):
+        return ""
+    return session.csrf_token(cv)
+
+def _account(ctx: Context) -> str:
+    viewer: Viewer | None = current_viewer(ctx)
+    if viewer == None:
+        return templates.account_bar("", "")
+    return templates.account_bar(viewer.username, viewer.role)
+
+def _html(ctx: Context, title: str, main_html: str) -> HttpResponse:
+    html: str = templates.page(title, _account(ctx), main_html, _csrf(ctx))
+    return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
+
+def _json_msg(status: int, ok: bool, message: str) -> HttpResponse:
+    flag: str = "false"
+    if ok:
+        flag = "true"
+    body: str = "{\"ok\": " + flag + ", \"error\": " + nox.json.dump_string(message) + "}"
+    return HttpResponse(status, body, {"Content-Type": "application/json"})
+
+def _field(body: str, key: str) -> str:
+    v: JsonValue = nox.json.parse(body)
+    i: int = 0
+    n: int = nox.json.object_len(v)
+    while i < n:
+        if nox.json.object_key(v, i) == key:
+            return nox.json.as_string(nox.json.object_value(v, i))
+        i = i + 1
+    return ""
+
+def _locked(ctx: Context, prefix: str, window_ms: int, max_attempts: int) -> bool:
+    rl: RateLimiter = RateLimiter()
+    rl.load(_ratelimit_path())
+    return rl.is_locked(prefix + _client_key(ctx), window_ms, max_attempts)
+
+def _hit(ctx: Context, prefix: str, window_ms: int) -> None:
+    rl: RateLimiter = RateLimiter()
+    rl.load(_ratelimit_path())
+    rl.record_failure(prefix + _client_key(ctx), window_ms)
+    rl.save(_ratelimit_path())
+
+def _clear_hits(ctx: Context, prefix: str) -> None:
+    rl: RateLimiter = RateLimiter()
+    rl.load(_ratelimit_path())
+    rl.reset(prefix + _client_key(ctx))
+    rl.save(_ratelimit_path())
+
+def _static(name: str, content_type: str) -> HttpResponse:
+    path: str = "static/" + name
+    if not nox.fs.exists(path):
+        path = "services/noxpkg/static/" + name
+    if not nox.fs.exists(path):
+        return HttpResponse(404, "", {})
+    body: str = nox.fs.read_to_string(path)
+    return HttpResponse(200, body, {"Content-Type": content_type, "Cache-Control": "public, max-age=300"})
+
+def css(ctx: Context) -> HttpResponse:
+    return _static("pkg.css", "text/css; charset=utf-8")
+
+def js(ctx: Context) -> HttpResponse:
+    return _static("pkg.js", "text/javascript; charset=utf-8")
 
 def index_json(ctx: Context) -> HttpResponse:
-    path: str = _index_path()
-    if not nox.fs.exists(path):
-        return HttpResponse(200, "{\"packages\": []}", {"Content-Type": "application/json"})
-    content: str = nox.fs.read_to_string(path)
-    return HttpResponse(200, content, {"Content-Type": "application/json"})
+    return HttpResponse(200, store.render_index_json(), {"Content-Type": "application/json"})
 
-def _join_tags(tags: list[str]) -> str:
-    result: str = ""
-    i: int = 0
-    while i < len(tags):
-        if i > 0:
-            result = result + ", "
-        result = result + tags[i]
-        i = i + 1
-    return result
-
-# Herkese açık anasayfa — `GET /`. `data/index.json`i (`index_json`YLE
-# AYNI dosyayı, `store.load_index` ÜZERİNDEN yapılandırılmış olarak)
-# okuyup `templates.home`e satır satır geçirir.
 def home(ctx: Context) -> HttpResponse:
-    entries: list[IndexEntry] = store.load_index(_index_path())
-    rows_html: str = ""
+    entries: list[IndexEntry] = store.load_packages()
+    cards: str = ""
     i: int = 0
     while i < len(entries):
         e: IndexEntry = entries[i]
-        rows_html = rows_html + templates.package_row(e.name, e.repo, e.description, _join_tags(e.tags))
+        cards = cards + templates.package_card(e.name, e.repo, e.description, e.tags)
         i = i + 1
-    html: str = templates.home(rows_html)
-    return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
+    return _html(ctx, "Packages — Nox", templates.home_main(cards))
+
+def _repo_href(repo: str) -> str:
+    if nox.strings.starts_with(repo, "https://") or nox.strings.starts_with(repo, "http://"):
+        return repo
+    return "https://" + repo
+
+def _tags_html(tags: list[str]) -> str:
+    html: str = ""
+    i: int = 0
+    while i < len(tags):
+        ctx: dict[str, str] = {"tag": tags[i]}
+        html = html + nox.template.render("<span class=\"tag\">{{ tag }}</span>", ctx)
+        i = i + 1
+    return html
+
+def package_page(ctx: Context) -> HttpResponse:
+    name: str = ctx.param("name")
+    entry: IndexEntry | None = store.find_package(name)
+    if entry == None:
+        return _html(ctx, "Paket yok — Nox", "<h1>Paket yok</h1><p class=\"lead\"><a href=\"/\">Paketlere dön</a></p>")
+    comments: list[Comment] = store.load_comments(name)
+    blocks: str = ""
+    if len(comments) == 0:
+        blocks = "<p class=\"callout\">Henüz yorum yok.</p>"
+    i: int = 0
+    while i < len(comments):
+        c: Comment = comments[i]
+        when: str = nox.time.from_epoch_ms(c.created_at_ms).to_str()
+        blocks = blocks + templates.comment_block(c.username, c.body, when)
+        i = i + 1
+    composer: str = templates.guest_composer()
+    if current_viewer(ctx) != None:
+        composer = templates.member_composer(name)
+    main_html: str = templates.package_main(entry.name, _repo_href(entry.repo), entry.repo, entry.description, _tags_html(entry.tags), entry.name, blocks, composer)
+    return _html(ctx, entry.name + " — Packages", main_html)
+
+def login_page(ctx: Context) -> HttpResponse:
+    return _html(ctx, "Giriş yap — Nox", templates.auth_main())
+
+def _session_cookie(ctx: Context, viewer: Viewer) -> str:
+    session: Session = Session(_secret())
+    return http_util.build_set_cookie("noxpkg_session", session.mint_cookie_value(viewer.user_id, viewer.role), 43200, _https(ctx))
+
+def login_submit(ctx: Context) -> HttpResponse:
+    if _locked(ctx, "login:", 900000, 5):
+        return _json_msg(429, False, "Çok fazla deneme.")
+    username: str = ""
+    password: str = ""
+    try:
+        username = _field(ctx.request.body, "username")
+        password = _field(ctx.request.body, "password")
+    except JsonError:
+        return _json_msg(400, False, "İstek okunamadı.")
+    viewer: Viewer | None = store.authenticate(username, password)
+    if viewer == None:
+        _hit(ctx, "login:", 900000)
+        return _json_msg(401, False, "Kullanıcı adı veya parola yanlış.")
+    _clear_hits(ctx, "login:")
+    return HttpResponse(200, "{\"ok\": true, \"error\": \"\"}", {"Content-Type": "application/json", "Set-Cookie": _session_cookie(ctx, viewer)})
+
+def register_submit(ctx: Context) -> HttpResponse:
+    if _locked(ctx, "reg:", 900000, 5):
+        return _json_msg(429, False, "Çok fazla deneme.")
+    username: str = ""
+    password: str = ""
+    try:
+        username = _field(ctx.request.body, "username")
+        password = _field(ctx.request.body, "password")
+    except JsonError:
+        return _json_msg(400, False, "İstek okunamadı.")
+    _hit(ctx, "reg:", 900000)
+    message: str = store.register_user(username, password)
+    if len(message) > 0:
+        return _json_msg(400, False, message)
+    viewer: Viewer | None = store.authenticate(username, password)
+    if viewer == None:
+        return _json_msg(500, False, "Hesap açıldı ama oturum kurulamadı.")
+    return HttpResponse(200, "{\"ok\": true, \"error\": \"\"}", {"Content-Type": "application/json", "Set-Cookie": _session_cookie(ctx, viewer)})
+
+def logout(ctx: Context) -> HttpResponse:
+    token: str = ""
+    try:
+        token = _field(ctx.request.body, "csrf")
+    except JsonError:
+        return _json_msg(400, False, "İstek okunamadı.")
+    session: Session = Session(_secret())
+    if not session.verify_csrf(_cookie_value(ctx), token):
+        return _json_msg(403, False, "Oturum doğrulanamadı.")
+    cleared: str = http_util.build_set_cookie("noxpkg_session", "", 0, _https(ctx))
+    return HttpResponse(200, "{\"ok\": true, \"error\": \"\"}", {"Content-Type": "application/json", "Set-Cookie": cleared})
+
+def _require_user(ctx: Context) -> Viewer | None:
+    token: str = ""
+    try:
+        token = _field(ctx.request.body, "csrf")
+    except JsonError:
+        return None
+    session: Session = Session(_secret())
+    cv: str = _cookie_value(ctx)
+    if not session.verify_csrf(cv, token):
+        return None
+    return current_viewer(ctx)
+
+def post_comment(ctx: Context) -> HttpResponse:
+    viewer: Viewer | None = _require_user(ctx)
+    if viewer == None:
+        return _json_msg(403, False, "Giriş yap.")
+    if _locked(ctx, "cmt:" + str(viewer.user_id), 600000, 20):
+        return _json_msg(429, False, "Çok fazla yorum.")
+    body: str = ""
+    try:
+        body = nox.strings.trim(_field(ctx.request.body, "body"))
+    except JsonError:
+        return _json_msg(400, False, "İstek okunamadı.")
+    if len(body) == 0 or len(body) > 2000:
+        return _json_msg(400, False, "Yorum 1-2000 karakter olmalı.")
+    _hit(ctx, "cmt:" + str(viewer.user_id), 600000)
+    if not store.add_comment(ctx.param("name"), viewer.user_id, body):
+        return _json_msg(404, False, "Paket yok.")
+    return _json_msg(200, True, "")
+
+def post_report(ctx: Context) -> HttpResponse:
+    viewer: Viewer | None = _require_user(ctx)
+    if viewer == None:
+        return _json_msg(403, False, "Giriş yap.")
+    if _locked(ctx, "rpt:" + str(viewer.user_id), 3600000, 10):
+        return _json_msg(429, False, "Çok fazla bildirim.")
+    title: str = ""
+    body: str = ""
+    try:
+        title = nox.strings.trim(_field(ctx.request.body, "title"))
+        body = nox.strings.trim(_field(ctx.request.body, "body"))
+    except JsonError:
+        return _json_msg(400, False, "İstek okunamadı.")
+    if len(title) == 0 or len(title) > 120 or len(body) == 0 or len(body) > 4000:
+        return _json_msg(400, False, "Başlık 1-120, açıklama 1-4000 karakter olmalı.")
+    _hit(ctx, "rpt:" + str(viewer.user_id), 3600000)
+    if not store.add_report(ctx.param("name"), viewer.user_id, title, body):
+        return _json_msg(404, False, "Paket yok.")
+    return _json_msg(200, True, "")
 
 def _publish_schema() -> Schema:
     s: Schema = Schema()
@@ -73,25 +291,24 @@ def publish(ctx: Context) -> HttpResponse:
     if len(errors) > 0:
         body: str = "{\"ok\": false, \"error\": " + nox.json.dump_string(errors[0]) + "}"
         return HttpResponse(400, body, {"Content-Type": "application/json"})
-
     v: JsonValue = nox.json.parse(ctx.request.body)
     name: str = ""
+    repo: str = ""
+    ref: str = "main"
+    description: str = ""
+    tags: list[str] = []
     name_v: JsonValue | None = _opt_field(v, "name")
     if name_v != None:
         name = nox.json.as_string(name_v)
-    repo: str = ""
     repo_v: JsonValue | None = _opt_field(v, "repo")
     if repo_v != None:
         repo = nox.json.as_string(repo_v)
-    ref: str = "main"
     ref_v: JsonValue | None = _opt_field(v, "ref")
     if ref_v != None:
         ref = nox.json.as_string(ref_v)
-    description: str = ""
     desc_v: JsonValue | None = _opt_field(v, "description")
     if desc_v != None:
         description = nox.json.as_string(desc_v)
-    tags: list[str] = []
     tags_v: JsonValue | None = _opt_field(v, "tags")
     if tags_v != None:
         i: int = 0
@@ -99,18 +316,8 @@ def publish(ctx: Context) -> HttpResponse:
         while i < n:
             tags.append(nox.json.as_string(nox.json.array_get(tags_v, i)))
             i = i + 1
-
-    inbox_path: str = _inbox_path()
-    ok: bool = store.add_submission(inbox_path, name, repo, ref, description, tags)
-    if not ok:
+    if not store.add_submission(name, repo, ref, description, tags):
         return HttpResponse(429, "{\"ok\": false, \"error\": \"cok fazla bekleyen gonderi\"}", {"Content-Type": "application/json"})
-
-    subs: list[Submission] = store.load_inbox(inbox_path)
-    id: str = ""
-    i2: int = 0
-    while i2 < len(subs):
-        if subs[i2].name == name and subs[i2].repo == repo:
-            id = subs[i2].id
-        i2 = i2 + 1
+    id: str = store.latest_submission_id(name, repo)
     body2: str = "{\"ok\": true, \"id\": " + nox.json.dump_string(id) + "}"
     return HttpResponse(200, body2, {"Content-Type": "application/json"})

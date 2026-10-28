@@ -1,33 +1,16 @@
-# handlers_admin — şifre-korumalı admin paneli: giriş, dashboard, onay/
-# red/çıkarma, çıkış. `require_admin_session`, `main.nox`nin `Router.
-# use_before`una bağlanır (yalnızca `/admin` ÖNEKLİ rotaları GATE'ler).
-import nox.os
-import nox.crypto
+# handlers_admin — yönetim kapısı. Kayıt olan hesap buraya giremez;
+# rol veritabanından okunur. Onay, çıkarma ve hata kapatma CSRF ister.
 import nox.strings
-import nox.time
 import store
-from store import Submission, IndexEntry
+from store import Submission, IndexEntry, Report, Viewer
 from nox.router import Context
 from nox.http import HttpResponse
+from nox.json import JsonError
 import http_util
 import auth
-from auth import Session, RateLimiter
+from auth import Session
 import templates
-
-def _admin_password_hash() -> str:
-    return nox.os.getenv("NOXPKG_ADMIN_PASSWORD_HASH")
-
-def _session_secret() -> str:
-    return nox.os.getenv("NOXPKG_SESSION_SECRET")
-
-def _ratelimit_path() -> str:
-    return "data/ratelimit.txt"
-
-def _index_path() -> str:
-    return "data/index.json"
-
-def _inbox_path() -> str:
-    return "data/inbox.json"
+import handlers_public
 
 def _cookie_value(ctx: Context) -> str:
     if not ctx.request.headers.contains("Cookie"):
@@ -37,114 +20,87 @@ def _cookie_value(ctx: Context) -> str:
         return ""
     return cookies["noxpkg_session"]
 
-def _query_param(target: str, name: str) -> str:
-    parts: list[str] = nox.strings.splitn(target, "?", 2)
-    if len(parts) < 2:
-        return ""
-    pairs: list[str] = nox.strings.split(parts[1], "&")
-    i: int = 0
-    while i < len(pairs):
-        kv: list[str] = nox.strings.splitn(pairs[i], "=", 2)
-        if kv[0] == name and len(kv) > 1:
-            return kv[1]
-        i = i + 1
-    return ""
-
-def _client_key(ctx: Context) -> str:
-    if ctx.request.headers.contains("CF-Connecting-IP"):
-        return ctx.request.headers["CF-Connecting-IP"]
-    return "unknown"
-
-# `Router.use_before`a bağlanır — YALNIZCA `/admin` ÖNEKLİ rotaları
-# GATE'ler (`/admin/login` HARİÇ, oturum ÖNCESİ erişilebilir olmalı).
 def require_admin_session(ctx: Context) -> HttpResponse | None:
     target: str = ctx.request.target
     if not nox.strings.starts_with(target, "/admin"):
         return None
     if nox.strings.starts_with(target, "/admin/login"):
         return None
-    session: Session = Session(_session_secret())
-    cv: str = _cookie_value(ctx)
-    if len(cv) == 0 or not session.is_valid(cv):
+    viewer: Viewer | None = handlers_public.current_viewer(ctx)
+    if viewer == None:
+        return HttpResponse(302, "", {"Location": "/admin/login"})
+    if viewer.role != "admin":
         return HttpResponse(302, "", {"Location": "/admin/login"})
     return None
 
 def login_page(ctx: Context) -> HttpResponse:
-    err: str = _query_param(ctx.request.target, "err")
-    message: str = ""
-    if err == "locked":
-        message = "cok fazla basarisiz deneme, birazdan tekrar deneyin"
-    elif err == "1":
-        message = "yanlis sifre"
-    html: str = templates.login_page(message)
+    html: str = templates.page("Yönetim — Nox", templates.account_bar("", ""), templates.admin_login_main(), "")
     return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
 
 def login_submit(ctx: Context) -> HttpResponse:
-    key: str = _client_key(ctx)
-    rl_path: str = _ratelimit_path()
-    rl: RateLimiter = RateLimiter()
-    rl.load(rl_path)
-    if rl.is_locked(key, 900000, 5):
-        return HttpResponse(429, "", {})
+    if handlers_public._locked(ctx, "admin:", 900000, 5):
+        return handlers_public._json_msg(429, False, "Çok fazla deneme.")
+    username: str = ""
+    password: str = ""
+    try:
+        username = handlers_public._field(ctx.request.body, "username")
+        password = handlers_public._field(ctx.request.body, "password")
+    except JsonError:
+        return handlers_public._json_msg(400, False, "İstek okunamadı.")
+    viewer: Viewer | None = store.authenticate(username, password)
+    if viewer == None:
+        handlers_public._hit(ctx, "admin:", 900000)
+        return handlers_public._json_msg(401, False, "Yönetici girişi reddedildi.")
+    if viewer.role != "admin":
+        handlers_public._hit(ctx, "admin:", 900000)
+        return handlers_public._json_msg(401, False, "Yönetici girişi reddedildi.")
+    handlers_public._clear_hits(ctx, "admin:")
+    return HttpResponse(200, "{\"ok\": true, \"error\": \"\"}", {"Content-Type": "application/json", "Set-Cookie": handlers_public._session_cookie(ctx, viewer)})
 
-    password: str = ctx.request.body
-    hash: str = _admin_password_hash()
-    if not nox.crypto.argon2_verify(hash, password):
-        rl.record_failure(key, 900000)
-        rl.save(rl_path)
-        return HttpResponse(401, "", {})
-
-    rl.reset(key)
-    rl.save(rl_path)
-    session: Session = Session(_session_secret())
-    cv: str = session.mint_cookie_value()
-    set_cookie: str = http_util.build_set_cookie("noxpkg_session", cv, 43200)
-    return HttpResponse(200, "", {"Set-Cookie": set_cookie})
+def _csrf_ok(ctx: Context, submitted: str) -> bool:
+    session: Session = Session(handlers_public._secret())
+    return session.verify_csrf(_cookie_value(ctx), submitted)
 
 def dashboard(ctx: Context) -> HttpResponse:
-    session: Session = Session(_session_secret())
-    cv: str = _cookie_value(ctx)
-    csrf: str = session.csrf_token(cv)
-
-    subs: list[Submission] = store.load_inbox(_inbox_path())
+    subs: list[Submission] = store.load_inbox()
     pending_html: str = ""
     i: int = 0
     while i < len(subs):
         s: Submission = subs[i]
         pending_html = pending_html + templates.pending_row(s.id, s.name, s.repo, s.ref, s.description)
         i = i + 1
-
-    entries: list[IndexEntry] = store.load_index(_index_path())
+    entries: list[IndexEntry] = store.load_packages()
     index_html: str = ""
     j: int = 0
     while j < len(entries):
         e: IndexEntry = entries[j]
         index_html = index_html + templates.index_row(e.name, e.repo, e.description)
         j = j + 1
-
-    html: str = templates.dashboard(pending_html, index_html, csrf)
+    reports: list[Report] = store.load_reports()
+    report_html: str = ""
+    k: int = 0
+    while k < len(reports):
+        r: Report = reports[k]
+        report_html = report_html + templates.report_row(str(r.id), r.package_name, r.username, r.title, r.body, r.status)
+        k = k + 1
+    viewer: Viewer | None = handlers_public.current_viewer(ctx)
+    account: str = templates.account_bar("", "")
+    if viewer != None:
+        account = templates.account_bar(viewer.username, viewer.role)
+    html: str = templates.page("Yönetim — Nox", account, templates.dashboard_main(pending_html, index_html, report_html), handlers_public._csrf(ctx))
     return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
 
-def _verify_csrf_from_body(ctx: Context, submitted: str) -> bool:
-    session: Session = Session(_session_secret())
-    cv: str = _cookie_value(ctx)
-    return session.verify_csrf(cv, submitted)
-
 def approve(ctx: Context) -> HttpResponse:
-    if not _verify_csrf_from_body(ctx, ctx.request.body):
+    if not _csrf_ok(ctx, ctx.request.body):
         return HttpResponse(403, "", {})
-    id: str = ctx.param("id")
-    ok: bool = store.approve_submission(_index_path(), _inbox_path(), id)
-    if not ok:
+    if not store.approve_submission(ctx.param("id")):
         return HttpResponse(404, "", {})
     return HttpResponse(200, "", {})
 
 def reject(ctx: Context) -> HttpResponse:
-    if not _verify_csrf_from_body(ctx, ctx.request.body):
+    if not _csrf_ok(ctx, ctx.request.body):
         return HttpResponse(403, "", {})
-    id: str = ctx.param("id")
-    ok: bool = store.reject_submission(_inbox_path(), id)
-    if not ok:
+    if not store.reject_submission(ctx.param("id")):
         return HttpResponse(404, "", {})
     return HttpResponse(200, "", {})
 
@@ -152,17 +108,18 @@ def remove_entry(ctx: Context) -> HttpResponse:
     parts: list[str] = nox.strings.splitn(ctx.request.body, "\n", 2)
     if len(parts) != 2:
         return HttpResponse(400, "", {})
-    submitted_csrf: str = parts[0]
-    name: str = parts[1]
-    if not _verify_csrf_from_body(ctx, submitted_csrf):
+    if not _csrf_ok(ctx, parts[0]):
         return HttpResponse(403, "", {})
-    ok: bool = store.remove_index_entry(_index_path(), name)
-    if not ok:
+    if not store.remove_package(parts[1]):
+        return HttpResponse(404, "", {})
+    return HttpResponse(200, "", {})
+
+def close_report(ctx: Context) -> HttpResponse:
+    if not _csrf_ok(ctx, ctx.request.body):
+        return HttpResponse(403, "", {})
+    if not store.set_report_status(int(ctx.param("id")), "closed"):
         return HttpResponse(404, "", {})
     return HttpResponse(200, "", {})
 
 def logout(ctx: Context) -> HttpResponse:
-    if not _verify_csrf_from_body(ctx, ctx.request.body):
-        return HttpResponse(403, "", {})
-    set_cookie: str = http_util.build_set_cookie("noxpkg_session", "", 0)
-    return HttpResponse(200, "", {"Set-Cookie": set_cookie})
+    return handlers_public.logout(ctx)

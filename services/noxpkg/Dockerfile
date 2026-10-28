@@ -38,12 +38,12 @@ RUN mkdir -p /app && /src/zig-out/bin/noxc build -o /app/noxpkg main.nox
 
 # ---- Çalışma zamanı imajı ----
 FROM debian:bookworm-slim AS runtime
-# Ekstra apt paketi GEREKMEZ: düz-JSON depolama (bkz. store.nox'un belge
-# notu) `nox.sqlite`yi HİÇ import etmediğinden `libsqlite3` bağımlılığı
-# YOK; `noxc build`in `cc -rdynamic` bağlantısının TEK gerçek çalışma
-# zamanı bağımlılıkları (glibc/libm/libpthread/libgcc_s) taban imajda
-# ZATEN mevcut.
+# `nox.sqlite` libsqlite3'ü ilk `open()` çağrısında yükler. Derleme
+# `-lsqlite3` eklemez; kütüphane imajda hazır olmalıdır.
+RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=toolchain /app/noxpkg /app/noxpkg
+COPY services/noxpkg/static /app/static
 COPY services/noxpkg/data/index.example.json /app/data/index.example.json
 WORKDIR /app
 EXPOSE 8080
