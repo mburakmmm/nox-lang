@@ -224,7 +224,7 @@ anlatır; her dispatch yolu iki backend'de testlidir.
   davranışı.
 - [ ] **3.8 Mobil ağ matrisini tamamla.** DNS IPv4/IPv6, offline, timeout,
   TLS sertifika reddi, ağ değişimi ve background/resume.
-- [ ] **3.9 Entropy/clock/log sözleşmesini tamamla.** Güvenli RNG, monotonic
+- [~] **3.9 Entropy/clock/log sözleşmesini tamamla.** (v2.0.45: `nox.log.redact`/`mask_assignments` ile gizli değer maskeleme, iki backend golden. Zaten var: `nox.crypto.secure_random_hex` (OS CSPRNG), `nox.time.Instant` (monotonic), debug-only `nox_log_debug_raw`. Açık: askıya alma farkı ölçümü (cihaz gerekir), log seviye filtresi.) Güvenli RNG, monotonic
   saat, suspend farkı, debug/release log ayrımı ve secret redaction.
 
 **Faz 3 çıkış kapısı:** Nox mobil runtime/stdlib kabul korpusu simülatör ve

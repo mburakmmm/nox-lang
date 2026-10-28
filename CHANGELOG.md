@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.45]
+
+### Eklendi
+
+- `nox.log.redact(mesaj, gizliler)` ve `nox.log.mask_assignments(mesaj, anahtarlar)`: gunluge parola/token sizmasini onler (`password=p4ss` -> `password=***`, kelime sinirina saygili, UTF-8 guvenli). Iki backend golden testi.
+
 ## [2.0.44]
 
 ### Eklendi

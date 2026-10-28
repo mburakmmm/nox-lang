@@ -17,6 +17,7 @@
 # (zaman damgasını İÇEREN ama BASMAYAN) `nox.strings` İLE İNCELENEBİLİR,
 # deterministik bir doğrulama sağlar.
 import nox.time
+import nox.strings
 
 def format(level: str, message: str) -> str:
     ts: int = nox.time.now_ms()
@@ -33,3 +34,57 @@ def warn(message: str) -> None:
 
 def error(message: str) -> None:
     print(format("ERROR", message))
+
+# --- Gizli bilgi maskeleme (TODO 3.9) ---------------------------------------------------------------------------------------------
+# Günlüğe parola/token/anahtar sızmasını önlemek için iki yardımcı. İkisi de SAF string işlemidir; `format`/`info`... çağrısından ÖNCE
+# mesaja uygulanır: `log.info(log.redact(msg, [token]))`.
+
+# `secrets` içindeki her (boş olmayan) değerin `message` içindeki TÜM geçişlerini `***` ile değiştirir.
+def redact(message: str, secrets: list[str]) -> str:
+    out: str = message
+    for secret in secrets:
+        if len(secret) > 0:
+            out = nox.strings.replace(out, secret, "***")
+    return out
+
+def _ends_value(b: int) -> bool:
+    # boşluk, sekme, satır sonu, `&`, `,`, `;`, `"`, `'`
+    return b == 32 or b == 9 or b == 10 or b == 13 or b == 38 or b == 44 or b == 59 or b == 34 or b == 39
+
+def _starts_at(s: str, pos: int, needle: str) -> bool:
+    n: int = nox.strings.byte_len(needle)
+    if pos + n > nox.strings.byte_len(s):
+        return False
+    k: int = 0
+    while k < n:
+        if nox.strings.byte_at(s, pos + k) != nox.strings.byte_at(needle, k):
+            return False
+        k = k + 1
+    return True
+
+def _is_word(b: int) -> bool:
+    return (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 95
+
+# `anahtar=değer` biçimindeki atamalarda (URL sorgusu, ortam değişkeni dökümü, `password=...`) `keys` içindeki her anahtarın değerini `***`
+# yapar; anahtarın kendisi ve diğer metin korunur. Anahtar bir kelime sınırında başlamalıdır (`xpassword=` eşleşmez). Değer boşluk, `&`, `,`,
+# `;` veya tırnakta biter.
+def mask_assignments(message: str, keys: list[str]) -> str:
+    out: str = ""
+    n: int = nox.strings.byte_len(message)
+    i: int = 0
+    while i < n:
+        matched: bool = False
+        if i == 0 or not _is_word(nox.strings.byte_at(message, i - 1)):
+            for key in keys:
+                needle: str = key + "="
+                if len(key) > 0 and _starts_at(message, i, needle):
+                    out = out + needle + "***"
+                    i = i + nox.strings.byte_len(needle)
+                    while i < n and not _ends_value(nox.strings.byte_at(message, i)):
+                        i = i + 1
+                    matched = True
+                    break
+        if not matched:
+            out = out + nox.strings.char_from_byte(nox.strings.byte_at(message, i))
+            i = i + 1
+    return out

@@ -13,6 +13,8 @@ import nox.log
 | Function | Description |
 |---|---|
 | `format(level, message)` | builds `"[LEVEL] [timestamp_ms] message"` without printing; the timestamp is milliseconds since the Unix epoch |
+| `redact(message, secrets)` | replaces every occurrence of each non-empty secret with `***` |
+| `mask_assignments(message, keys)` | masks the value of `key=value` pairs (`password=p4ss` → `password=***`); the key must start at a word boundary, the value ends at whitespace, `&`, `,`, `;` or a quote |
 | `debug(message)`, `info(message)`, `warn(message)`, `error(message)` | prints the formatted line to standard output |
 
 Output looks like:
