@@ -1,0 +1,67 @@
+class Temp:
+    SCALE: int = 10
+    count: int
+
+    def __init__(self, c: int) -> None:
+        self.c = c
+        self.count = 0
+
+    @staticmethod
+    def clamp(x: int, lo: int, hi: int) -> int:
+
+        if x < lo:
+            return lo
+        if x > hi:
+            return hi
+        return x
+
+    @classmethod
+    def zero(cls) -> Temp:
+
+        return cls(0)
+
+    @classmethod
+    def scaled(cls, v: int) -> Temp:
+
+        return cls(v * cls.SCALE)
+
+    @property
+    def kelvin(self) -> int:
+
+        return self.c + 273
+
+    @property
+    def level(self) -> int:
+
+        return self.c
+
+    @level.setter
+    def level(self, v: int) -> None:
+
+        self.c = Temp.clamp(v, 0, 100)
+
+    def bump(self) -> int:
+
+        return self.clamp(self.c + 500, 0, 100)
+
+class Hot(Temp):
+    @classmethod
+    def boiling(cls) -> Temp:
+        return cls(100)
+
+t: Temp = Temp.scaled(4)
+print(t.c)
+print(t.kelvin)
+t.level = 250
+print(t.level)
+t.level = 7
+print(t.c)
+print(Temp.clamp(5, 10, 20))
+print(t.clamp(50, 10, 20))
+print(t.bump())
+z: Temp = Temp.zero()
+print(z.kelvin)
+h: Temp = Hot.zero()
+print(h.c)
+b: Temp = Hot.boiling()
+print(b.level + 1)

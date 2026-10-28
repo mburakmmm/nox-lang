@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.53]
+
+### Eklendi
+
+- `@staticmethod`, `@classmethod` ve `@property` (+ `@ad.setter`). Static/classmethod serbest fonksiyona somutlasir (`Sinif.f(...)`, `nesne.f(...)`, `cls(...)`, `cls.SABIT`); classmethod'da `cls` cagrilan sinifa statik baglanir (`Alt.yap()` bir `Alt` uretir). Ayarlayicisiz property salt okunurdur.
+
+### Duzeltildi
+
+- `noxc fmt` tum decorator'lari (`@get(...)`, `@staticmethod`, sinif/extern decorator'lari) sessizce siliyordu; artik korunuyor.
+
 ## [2.0.52]
 
 ### Eklendi

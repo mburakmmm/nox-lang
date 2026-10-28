@@ -388,7 +388,12 @@ const FnCtx = struct {
     /// tercih, TypeScript'in "reassignment invalidates narrowing"ıyla
     /// AYNI gerekçe).
     narrowed: std.StringHashMapUnmanaged(Type) = .{},
+    /// `@classmethod` gövdesinde `cls`nin STATİK olarak bağlandığı sınıf adı (alıcı sınıfa göre klonlanır; bkz. `ensureStaticInst`).
+    cls_alias: ?[]const u8 = null,
 };
+
+/// `@staticmethod` / `@classmethod`: sınıftan ÇIKARILIP serbest fonksiyon olarak (ilk çağrıda ya da modül sonunda) somutlaştırılır.
+const StaticMethod = struct { fd: ast.FuncDef, owner: []const u8, is_class: bool };
 
 pub const MobileMask = enum { none, ios, android };
 
@@ -561,6 +566,13 @@ pub const Checker = struct {
     /// somutlaştırılmış metodu YERİNDE ekler.
     generic_methods: std.StringHashMapUnmanaged(GenericMethod) = .{},
     generic_method_names: std.StringHashMapUnmanaged(void) = .{},
+    /// `"Sınıf.ad"` → `@staticmethod`/`@classmethod` tanımı (`extractStaticMethods`).
+    static_methods: std.StringHashMapUnmanaged(StaticMethod) = .{},
+    static_method_names: std.StringHashMapUnmanaged(void) = .{},
+    /// `"Sınıf.ad"` → özelliğin (`@property`) ayarlayıcısı (`@ad.setter`, `__setprop_ad`) var mı.
+    properties: std.StringHashMapUnmanaged(bool) = .{},
+    /// Klonlanmış classmethod fonksiyonu (örn. `__cls_Alt_yap`) → `cls`nin bağlı olduğu sınıf.
+    cls_alias_by_func: std.StringHashMapUnmanaged([]const u8) = .{},
     /// Faz 7 (tekli kalıtım): `collectClassNames` tarafından doldurulur —
     /// `ensureClassBodyChecked`in bir sınıfın ADINDAN kendi `ast.ClassDef`ine
     /// (taban zincirini YUKARI doğru YÜRÜMEK İçin) geri gitmesi İçin.
@@ -3529,6 +3541,7 @@ pub const Checker = struct {
         _ = try bound_method_fixup.run(self.allocator, module.body);
         // Faz C.2: generic metod şablonlarını sınıflardan ÇIKAR.
         try self.extractGenericMethods(module);
+        try self.extractStaticMethods(module);
         // Bulundu (bkz. `resolveReExportChains`in belge notu): sınıf-tabanlı
         // zincirlerin (BÜYÜK ÇOĞUNLUK — bir TİP konumunda YALNIZCA bir sınıf
         // geçerlidir) `registerSignatures`DEN (Geçiş 2, fonksiyon parametre/
@@ -3615,6 +3628,14 @@ pub const Checker = struct {
         // `checkFunctionBody`nin AYNI YENİ kontrolü, BOŞ bir parametre
         // dilimiyle (üst-düzeyin parametresi YOK).
         self.checkNoPostSpawnCallerMutation(module.body, &.{}) catch |e| try self.recordDiagnostic(e);
+        // Hiç çağrılmayan static/classmethod'ların gövdeleri de denetlenir (hatalar yutulmasın).
+        if (self.static_methods.count() > 0) {
+            var sm_it = self.static_methods.iterator();
+            while (sm_it.next()) |entry| {
+                const sm = entry.value_ptr.*;
+                _ = self.ensureStaticInst(sm.owner, sm.owner, sm) catch |e| try self.recordDiagnostic(e);
+            }
+        }
         self.applyCallExpansions(module);
     }
 
@@ -5269,7 +5290,7 @@ pub const Checker = struct {
         // geçirilir (bkz. `checkNoPostSpawnCallerMutation`nin belge notu).
         try self.checkNoPostSpawnCallerMutation(fd.body, fd.params);
         const ret = try self.typeExprToType(fd.return_type);
-        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async, .path = fd.name };
+        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async, .path = fd.name, .cls_alias = self.cls_alias_by_func.get(fd.name) };
         for (fd.body) |*s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(fd.body)) {
             return self.fail(error.MissingReturn, "function '{s}' does not return a value on all paths", .{fd.name});
@@ -5790,6 +5811,17 @@ pub const Checker = struct {
                 // (bkz. `checkExprExpected`in belge notu) — bu YÜZDEN
                 // ÖNCE bakılır, `checkExpr` ÇAĞRILMADAN.
                 const existing_field_t = info.fields.get(attr.attr);
+                // `@property` ayarlayıcısı: `nesne.ad = v` → `nesne.__setprop_ad(v)`.
+                if (existing_field_t == null and a.ann == null and self.properties.count() > 0) {
+                    if (self.findProperty(class_name, attr.attr)) |has_setter| {
+                        if (!has_setter) return self.fail(error.TypeMismatch, "property '{s}.{s}' is read-only (it has no '@{s}.setter')", .{ class_name, attr.attr, attr.attr });
+                        const setter_name = try std.fmt.allocPrint(self.allocator, "__setprop_{s}", .{attr.attr});
+                        const call = try self.mkDunderCall(attr.obj.*, setter_name, &.{a.value});
+                        _ = try self.checkExpr(ctx, call);
+                        try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(attr.obj), .{ .expr_stmt = call });
+                        return;
+                    }
+                }
                 // `self.x: T = v`: bildirilen tip alanı tanımlar (değerden çıkarılmaz) ve boş literal için beklenen tipi verir.
                 if (a.ann) |ann_te| {
                     const declared_t = try self.typeExprToType(ann_te);
@@ -6936,6 +6968,9 @@ pub const Checker = struct {
         const info = self.classes.get(class_name) orelse
             return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         if (info.fields.get(attr)) |ft| return ft;
+        if (self.properties.count() > 0 and self.findProperty(class_name, attr) != null) {
+            return self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkDunderCall(c.args[0], attr, &.{}));
+        }
         if (info.methods.get(attr)) |msig| {
             if (self.class_defs_by_name.get(class_name)) |cd| {
                 for (cd.methods) |m| {
@@ -6956,8 +6991,8 @@ pub const Checker = struct {
 
     fn checkAttribute(self: *Checker, ctx: *FnCtx, a: ast.Attribute) TypeError!Type {
         // `Sınıf.SABİT`: obj bir DEĞİŞKEN olmayan sınıf adıdır; okuma literal değere yeniden yazılır.
-        if (a.obj.* == .identifier and self.classes.contains(a.obj.identifier) and (try ctx.scope.lookup(self.allocator, a.obj.identifier)) == null and !self.module_globals.contains(a.obj.identifier)) {
-            if (self.classes.get(a.obj.identifier).?.consts.get(a.attr)) |k| {
+        if (try self.receiverClassName(ctx, a.obj.*)) |rc| {
+            if (self.classes.get(rc).?.consts.get(a.attr)) |k| {
                 try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), k.value);
                 return k.ty;
             }
@@ -6971,6 +7006,10 @@ pub const Checker = struct {
         const info = self.classes.get(class_name) orelse
             return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         if (info.fields.get(a.attr)) |ft| return ft;
+        // `@property`: `nesne.ad` → `nesne.ad()` (okuyucu metodu).
+        if (self.properties.count() > 0 and self.findProperty(class_name, a.attr) != null) {
+            return self.rewriteExprTo(ctx, @intFromPtr(a.obj), try self.mkDunderCall(a.obj.*, a.attr, &.{}));
+        }
         // `self.SABİT` / `nesne.SABİT`: örnek üzerinden okunan sınıf sabiti.
         if (info.consts.get(a.attr)) |k| {
             try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), k.value);
@@ -7199,6 +7238,13 @@ pub const Checker = struct {
         // metod çağrısı — callee YERİNDE somut metod adına yeniden yazılır,
         // AŞAĞIDAKİ normal metod-çağrısı yolu aynen devam eder.
         if (self.generic_method_names.count() > 0) try self.tryResolveGenericMethodCall(ctx, c);
+        if (self.static_method_names.count() > 0) try self.tryResolveStaticMethodCall(ctx, c);
+        // `cls(...)` (classmethod gövdesi): çağrı, alıcı sınıfın kurucusuna yeniden yazılır.
+        if (ctx.cls_alias) |al| {
+            if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "cls") and (try ctx.scope.lookup(self.allocator, "cls")) == null) {
+                c.callee.* = .{ .identifier = al };
+            }
+        }
         if (c.callee.* == .identifier) {
             if (try self.tryDesugarPreludeCall(ctx, c)) |t| return t;
         }
@@ -9852,6 +9898,177 @@ pub const Checker = struct {
     /// (sınıf × metod tip-argümanı çarpımı) kapsam DIŞI — o durum
     /// `registerClassSignatures`in mevcut "metodlar generic olamaz"
     /// reddine düşer.
+    /// `@staticmethod` / `@classmethod` / `@property` / `@ad.setter` metodlarını sınıf gövdesinden ÇIKARIR (ya da yeniden adlandırır):
+    /// static/classmethod → `static_methods` (çağrıda serbest fonksiyona somutlaşır); getter normal metod kalır
+    /// (`properties` okuma/yazmayı yeniden yazar); setter `__setprop_ad` adlı normal metod olur.
+    fn extractStaticMethods(self: *Checker, module: ast.Module) TypeError!void {
+        const eq = std.mem.eql;
+        for (module.body) |*stmt| {
+            if (stmt.kind != .class_def) continue;
+            const cd = &stmt.kind.class_def;
+            var touched = false;
+            for (cd.methods) |m| {
+                for (m.decorators) |d| {
+                    if (eq(u8, d.name, "staticmethod") or eq(u8, d.name, "classmethod") or eq(u8, d.name, "property") or std.mem.endsWith(u8, d.name, ".setter")) touched = true;
+                }
+            }
+            if (!touched) continue;
+            self.current_line = stmt.line;
+            self.current_span = stmt.span;
+            if (cd.type_params.len > 0) {
+                return self.fail(error.TypeMismatch, "'@staticmethod'/'@classmethod'/'@property' are not supported in generic classes: {s}", .{cd.name});
+            }
+            var kept: std.ArrayListUnmanaged(ast.FuncDef) = .empty;
+            for (cd.methods) |m| {
+                var kind: enum { plain, static, class, getter, setter } = .plain;
+                var setter_of: []const u8 = "";
+                var others: usize = 0;
+                for (m.decorators) |d| {
+                    if (eq(u8, d.name, "staticmethod")) kind = .static else if (eq(u8, d.name, "classmethod")) kind = .class else if (eq(u8, d.name, "property")) kind = .getter else if (std.mem.endsWith(u8, d.name, ".setter")) {
+                        kind = .setter;
+                        setter_of = d.name[0 .. d.name.len - ".setter".len];
+                    } else others += 1;
+                }
+                if (kind == .plain) {
+                    try kept.append(self.allocator, m);
+                    continue;
+                }
+                if (others > 0 or m.decorators.len > 1) {
+                    return self.fail(error.TypeMismatch, "'{s}.{s}': '@staticmethod'/'@classmethod'/'@property' cannot be combined with other decorators", .{ cd.name, m.name });
+                }
+                if (m.type_params.len > 0) return self.fail(error.TypeMismatch, "'{s}.{s}' cannot be generic", .{ cd.name, m.name });
+                const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ cd.name, kind_key(kind == .setter, m.name, setter_of) });
+                switch (kind) {
+                    .static, .class => {
+                        if (kind == .class) {
+                            if (m.params.len == 0 or !eq(u8, m.params[0].name, "cls")) {
+                                return self.fail(error.TypeMismatch, "'@classmethod' '{s}.{s}' must take 'cls' as its first parameter", .{ cd.name, m.name });
+                            }
+                        } else if (m.params.len > 0 and (eq(u8, m.params[0].name, "self") or eq(u8, m.params[0].name, "cls"))) {
+                            return self.fail(error.TypeMismatch, "'@staticmethod' '{s}.{s}' cannot take '{s}' as a parameter", .{ cd.name, m.name, m.params[0].name });
+                        }
+                        if (self.static_methods.contains(key)) return self.fail(error.DuplicateDefinition, "method '{s}.{s}' is already defined", .{ cd.name, m.name });
+                        for (cd.methods) |other| {
+                            if (other.decorators.len == 0 and eq(u8, other.name, m.name)) return self.fail(error.DuplicateDefinition, "method '{s}.{s}' is already defined", .{ cd.name, m.name });
+                        }
+                        var fd = m;
+                        fd.decorators = &.{};
+                        if (kind == .class) fd.params = m.params[1..];
+                        try self.static_methods.put(self.allocator, key, .{ .fd = fd, .owner = cd.name, .is_class = kind == .class });
+                        try self.static_method_names.put(self.allocator, m.name, {});
+                    },
+                    .getter => {
+                        var fd = m;
+                        fd.decorators = &.{};
+                        if (!self.properties.contains(key)) try self.properties.put(self.allocator, key, false);
+                        try kept.append(self.allocator, fd);
+                    },
+                    .setter => {
+                        var fd = m;
+                        fd.decorators = &.{};
+                        fd.name = try std.fmt.allocPrint(self.allocator, "__setprop_{s}", .{setter_of});
+                        if (fd.params.len != 2) return self.fail(error.TypeMismatch, "the setter '{s}.{s}' must take (self, value)", .{ cd.name, m.name });
+                        try self.properties.put(self.allocator, key, true);
+                        try kept.append(self.allocator, fd);
+                    },
+                    .plain => unreachable,
+                }
+            }
+            // Ayarlayıcı için okuyucu şart.
+            var pit = self.properties.iterator();
+            while (pit.next()) |e| {
+                const prefix = try std.fmt.allocPrint(self.allocator, "{s}.", .{cd.name});
+                if (!std.mem.startsWith(u8, e.key_ptr.*, prefix)) continue;
+                const pname = e.key_ptr.*[prefix.len..];
+                var has_getter = false;
+                for (kept.items) |km| if (eq(u8, km.name, pname)) {
+                    has_getter = true;
+                };
+                if (!has_getter) return self.fail(error.TypeMismatch, "property '{s}.{s}' has a setter but no '@property' getter", .{ cd.name, pname });
+            }
+            cd.methods = try kept.toOwnedSlice(self.allocator);
+        }
+    }
+
+    fn kind_key(is_setter: bool, name: []const u8, setter_of: []const u8) []const u8 {
+        return if (is_setter) setter_of else name;
+    }
+
+    /// `ifade` bir değişken olmayan sınıf adıysa (ya da classmethod içindeki `cls` ise) sınıf adını verir.
+    fn receiverClassName(self: *Checker, ctx: *FnCtx, e: ast.Expr) TypeError!?[]const u8 {
+        if (e != .identifier) return null;
+        const name = e.identifier;
+        if (ctx.cls_alias) |al| {
+            if (std.mem.eql(u8, name, "cls") and (try ctx.scope.lookup(self.allocator, name)) == null) return al;
+        }
+        if (self.classes.contains(name) and (try ctx.scope.lookup(self.allocator, name)) == null and !self.module_globals.contains(name)) return name;
+        return null;
+    }
+
+    /// `class_name` (ya da tabanları) üzerinde `@property` `attr` varsa ayarlayıcısı olup olmadığını döner.
+    fn findProperty(self: *Checker, class_name: []const u8, attr: []const u8) ?bool {
+        var cur: ?[]const u8 = class_name;
+        while (cur) |n| {
+            const key = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ n, attr }) catch return null;
+            if (self.properties.get(key)) |has_setter| return has_setter;
+            cur = if (self.classes.get(n)) |ci| ci.base else null;
+        }
+        return null;
+    }
+
+    /// static/classmethod'u serbest fonksiyon olarak somutlaştırır (ilk çağrıda); `recv` classmethod için `cls`nin bağlandığı sınıftır.
+    fn ensureStaticInst(self: *Checker, owner: []const u8, recv: []const u8, sm: StaticMethod) TypeError![]const u8 {
+        const mangled = if (sm.is_class)
+            try std.fmt.allocPrint(self.allocator, "__cls_{s}_{s}", .{ recv, sm.fd.name })
+        else
+            try std.fmt.allocPrint(self.allocator, "__static_{s}_{s}", .{ owner, sm.fd.name });
+        if (self.functions.contains(mangled)) return mangled;
+        var empty: std.StringHashMapUnmanaged(Type) = .{};
+        const concrete: ast.FuncDef = .{
+            .name = mangled,
+            .params = sm.fd.params,
+            .return_type = sm.fd.return_type,
+            .body = try self.substituteStmts(sm.fd.body, &empty),
+            .is_async = sm.fd.is_async,
+        };
+        try self.registerFunc(concrete);
+        try self.instantiations.append(self.allocator, concrete);
+        if (sm.is_class) try self.cls_alias_by_func.put(self.allocator, mangled, recv);
+        try self.checkFunctionBody(concrete);
+        return mangled;
+    }
+
+    /// `Sınıf.f(...)` / `nesne.f(...)` / `cls.f(...)` ile static/classmethod çağrısını serbest fonksiyon çağrısına yeniden yazar.
+    fn tryResolveStaticMethodCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!void {
+        if (c.callee.* != .attribute) return;
+        const at = c.callee.attribute;
+        if (!self.static_method_names.contains(at.attr)) return;
+        if (at.obj.* == .call and at.obj.call.callee.* == .identifier and std.mem.eql(u8, at.obj.call.callee.identifier, "super")) return;
+        var recv: []const u8 = undefined;
+        if (try self.receiverClassName(ctx, at.obj.*)) |rc| {
+            recv = rc;
+        } else {
+            const t = try self.checkExpr(ctx, at.obj.*);
+            recv = switch (t) {
+                .class => |n| n,
+                else => return,
+            };
+            if (exprHasEffects(at.obj.*)) {
+                return self.fail(error.TypeMismatch, "call the static/class method '{s}' through the class name ('{s}.{s}(...)'): the receiver expression has side effects and would not be evaluated", .{ at.attr, recv, at.attr });
+            }
+        }
+        var cur: ?[]const u8 = recv;
+        while (cur) |n| {
+            const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ n, at.attr });
+            if (self.static_methods.get(key)) |sm| {
+                const mangled = try self.ensureStaticInst(n, recv, sm);
+                c.callee.* = .{ .identifier = mangled };
+                return;
+            }
+            cur = if (self.classes.get(n)) |ci| ci.base else null;
+        }
+    }
+
     fn extractGenericMethods(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |*stmt| {
             if (stmt.kind != .class_def) continue;

@@ -716,9 +716,13 @@ pub const Parser = struct {
     /// `parseParam()`e (kolon + tip ZORUNLU) DÜŞÜLÜR — DEĞİŞMEYEN yol.
     fn parseFirstParam(self: *Parser, enclosing_name: ?[]const u8) ParseError!ast.Param {
         if (enclosing_name) |en| {
-            if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "self") and self.tokens[self.pos + 1].kind != .colon) {
+            const first_is_self = self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "self");
+            // `@classmethod`un çıplak `cls` parametresi (checker `cls`yi statik olarak sınıfa bağlar).
+            const first_is_cls = self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "cls");
+            if ((first_is_self or first_is_cls) and self.tokens[self.pos + 1].kind != .colon) {
+                const pname = self.cur().lexeme;
                 _ = self.advance();
-                return .{ .name = "self", .type_expr = .{ .simple = en }, .self_inferred = true };
+                return .{ .name = pname, .type_expr = .{ .simple = en }, .self_inferred = true };
             }
         }
         return self.parseParam();

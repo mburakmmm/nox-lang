@@ -1474,6 +1474,27 @@ test "golden(typecheck): *liste açma yalnızca *args parametresine bağlanır" 
     );
 }
 
+test "golden(typecheck): ayarlayıcısız @property atanamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_property_read_only.nox"),
+        @embedFile("typecheck_cases/err_property_read_only.expected"),
+    );
+}
+
+test "golden(typecheck): @staticmethod self alamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_staticmethod_self.nox"),
+        @embedFile("typecheck_cases/err_staticmethod_self.expected"),
+    );
+}
+
+test "golden(typecheck): @classmethod ilk parametre cls olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_classmethod_no_cls.nox"),
+        @embedFile("typecheck_cases/err_classmethod_no_cls.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

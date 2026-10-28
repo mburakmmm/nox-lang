@@ -218,7 +218,56 @@ Item(name='pen', qty=3) [Item(name='ink', qty=1)] Item(name='x', qty=0)
 `offsetof(T, "field")` query layouts. They exist for [foreign-function interfaces](ffi.md); a class instance additionally carries a small
 runtime header, which `offsetof` accounts for. Un-decorated classes have an unspecified internal layout.
 
+## Static methods, class methods and properties
+
+`@staticmethod` is a function that lives in the class namespace: it takes no `self`, and is called as `Account.cap(x)` (or through an instance,
+`acc.cap(x)`, as long as the receiver expression has no side effects). `@classmethod` takes `cls` as its first (un-annotated) parameter; inside the
+body `cls(...)` constructs an instance and `cls.NAME` reads a class constant. `cls` is bound at compile time to the class the method is
+called through, so `Sub.empty()` builds a `Sub`. `@property` turns a method into an attribute read (`acc.pretty`), and an `@name.setter` method
+makes `acc.name = value` call it; a property without a setter is read-only.
+
+```nox
+class Account:
+    LIMIT: int = 1000
+
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+
+    @staticmethod
+    def cap(x: int) -> int:
+        if x > Account.LIMIT:
+            return Account.LIMIT
+        return x
+
+    @classmethod
+    def empty(cls) -> Account:
+        return cls(0)
+
+    @property
+    def pretty(self) -> str:
+        return "$" + str(self.balance)
+
+    @property
+    def amount(self) -> int:
+        return self.balance
+
+    @amount.setter
+    def amount(self, v: int) -> None:
+        self.balance = Account.cap(v)
+
+acc: Account = Account.empty()
+acc.amount = 5000
+print(acc.pretty, Account.cap(12))
+```
+
+```output
+$1000 12
+```
+
+These decorators cannot be combined with other decorators, are not available in generic classes, and a static/class method cannot be used as a
+first-class value (`f = Account.cap`). There are no mutable class-level attributes.
+
 ## What classes do not have
 
-Class-level attributes and constants, `@staticmethod`/`@classmethod`/`@property`, multiple inheritance, metaclasses, `__slots__`,
+Mutable class-level attributes, multiple inheritance, metaclasses, `__slots__`,
 `__getattr__`/`__setattr__`, `isinstance`/`type`, and `__call__`. Attributes cannot be added to an instance at run time.

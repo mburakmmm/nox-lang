@@ -76,6 +76,10 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
         if (stmt.kind == .assign and stmt.kind.assign.target == .index) {
             if (map.stmt_fors.get(@intFromPtr(stmt.kind.assign.target.index.index))) |rw| stmt.kind = rw;
         }
+        // `nesne.ad = v` (`@property` ayarlayıcısı) → `nesne.__setprop_ad(v)` (anahtar: nitelik nesnesi kutusu).
+        if (stmt.kind == .assign and stmt.kind.assign.target == .attribute) {
+            if (map.stmt_fors.get(@intFromPtr(stmt.kind.assign.target.attribute.obj))) |rw| stmt.kind = rw;
+        }
         switch (stmt.kind) {
             .expr_stmt => |*e| expr(e, map),
             .var_decl => |*v| {

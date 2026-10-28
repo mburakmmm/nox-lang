@@ -353,6 +353,7 @@ const Printer = struct {
             },
             .func_def => |fd| try self.printFuncDef(fd, depth, stmt.line),
             .class_def => |c| {
+                try self.printDecorators(c.decorators, depth);
                 try self.indentTo(depth);
                 if (c.base) |b| {
                     try self.writer.print("class {s}({s}):", .{ c.name, b });
@@ -432,6 +433,7 @@ const Printer = struct {
                 }
             },
             .extern_def => |ed| {
+                try self.printDecorators(ed.decorators, depth);
                 try self.indentTo(depth);
                 try self.writer.print("extern def {s}(", .{ed.name});
                 try self.printParams(ed.params);
@@ -582,7 +584,26 @@ const Printer = struct {
         }
     }
 
+    /// `@isim` / `@isim(arg, ...)` satırları (her biri kendi satırında); ÖNCEDEN formatlayıcı bunları sessizce SİLİYORDU.
+    fn printDecorators(self: *Printer, decorators: []const ast.Decorator, depth: usize) FormatError!void {
+        for (decorators) |dec| {
+            try self.indentTo(depth);
+            try self.writer.print("@{s}", .{dec.name});
+            if (dec.args.len > 0) {
+                try self.writer.writeAll("(");
+                for (dec.args, 0..) |arg, i| {
+                    if (i > 0) try self.writer.writeAll(", ");
+                    try self.printExpr(arg);
+                }
+                try self.writer.writeAll(")");
+            }
+            try self.writer.writeAll("\n");
+            self.last_was_blank = false;
+        }
+    }
+
     fn printFuncDef(self: *Printer, fd: ast.FuncDef, depth: usize, source_line: u32) FormatError!void {
+        try self.printDecorators(fd.decorators, depth);
         try self.indentTo(depth);
         try self.printFuncHeader(fd);
         try self.line(source_line);
@@ -596,6 +617,7 @@ const Printer = struct {
     /// ATLANIR (metod gövdesinin İLK deyiminin ÖNÜNDEKİ trivia YİNE DE
     /// standalone olarak doğru basılır).
     fn printFuncDefNoLeading(self: *Printer, fd: ast.FuncDef, depth: usize) FormatError!void {
+        try self.printDecorators(fd.decorators, depth);
         try self.indentTo(depth);
         try self.printFuncHeader(fd);
         try self.writer.writeAll("\n");
