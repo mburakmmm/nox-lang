@@ -21,9 +21,41 @@
     b.addEventListener("click", function () { document.body.classList.toggle("menu-open"); });
   });
   document.addEventListener("click", function (e) {
-    if (document.body.classList.contains("menu-open") && !e.target.closest(".sidebar") && !e.target.closest("[data-menu-toggle]")) {
+    if (document.body.classList.contains("menu-open") && !e.target.closest(".sidebar") && !e.target.closest(".topnav") && !e.target.closest("[data-menu-toggle]")) {
       document.body.classList.remove("menu-open");
     }
+  });
+
+  function closeDrops() {
+    document.querySelectorAll("[data-navdrop]").forEach(function (drop) {
+      var btn = drop.querySelector(".navdrop-btn");
+      var panel = drop.querySelector(".navdrop-panel");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+      if (panel) panel.hidden = true;
+    });
+  }
+  document.querySelectorAll("[data-navdrop]").forEach(function (drop) {
+    var btn = drop.querySelector(".navdrop-btn");
+    var panel = drop.querySelector(".navdrop-panel");
+    if (!btn || !panel) return;
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var open = btn.getAttribute("aria-expanded") === "true";
+      closeDrops();
+      if (!open) { btn.setAttribute("aria-expanded", "true"); panel.hidden = false; }
+    });
+    btn.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        btn.setAttribute("aria-expanded", "true");
+        panel.hidden = false;
+        var first = panel.querySelector("a");
+        if (first) first.focus();
+      }
+    });
+  });
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest("[data-navdrop]")) closeDrops();
   });
 
   // ---- kod kopyalama ----
@@ -153,7 +185,27 @@
   }
   document.addEventListener("keydown", function (e) {
     var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "");
-    if (e.key === "Escape") close();
+    if (e.key === "Escape") { closeDrops(); close(); }
     else if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) { e.preventDefault(); open(); }
   });
+
+  if (document.querySelector("[data-release], [data-release-tag]")) {
+    fetch("/releases.json").then(function (r) { return r.ok ? r.json() : null; }).then(function (rel) {
+      if (!rel) return;
+      document.querySelectorAll("[data-release]").forEach(function (el) {
+        var v = rel[el.getAttribute("data-release")];
+        if (v) el.textContent = v;
+      });
+      document.querySelectorAll("[data-release-tag]").forEach(function (el) {
+        var v = rel[el.getAttribute("data-release-tag")];
+        if (!v) return;
+        el.textContent = "v" + v;
+        var box = el.closest("[data-copy]");
+        if (box) {
+          var prefix = box.getAttribute("data-copy").replace(/@v[^@\s]*$/, "@");
+          box.setAttribute("data-copy", prefix + "v" + v);
+        }
+      });
+    }).catch(function () {});
+  }
 })();

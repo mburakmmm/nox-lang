@@ -1,7 +1,7 @@
 # noxlang.com + noxpkg.noxlang.com — Mac mini M4 (OrbStack) üretim yığını. Depo KÖKÜNDEN çalıştırılır:
 #   docker compose -f deploy/web/docker-compose.yml --env-file deploy/web/.env up -d --build
 #
-# Tek Cloudflare Tüneli (noxpkg tüneli) iki ana makineyi de karşılar; ingress deploy/web/cloudflared.yml'dedir.
+# Tek Cloudflare Tüneli (noxpkg tüneli) siteleri ve kayıt defterini karşılar; ingress deploy/web/cloudflared.yml'dedir.
 # Konteynerler yalnızca 127.0.0.1'e yayınlanır; dış dünyaya YALNIZCA tünel açılır (host 80/443 yok).
 name: nox-web
 services:
@@ -23,6 +23,34 @@ services:
       NYX_CSP: "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
     ports:
       - "127.0.0.1:8081:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q 200"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frameworks-site:
+    build:
+      context: ../..
+      dockerfile: services/frameworks-site/Dockerfile
+    environment:
+      NYX_ENV: production
+      NYX_SECRET_KEY: ${NYX_SECRET_KEY:?NYX_SECRET_KEY ayarlanmali (en az 32 karakter)}
+      NYX_PORT: "8080"
+      NYX_DB_PATH: ":memory:"
+      NYX_JOBS_DB_PATH: ":memory:"
+      NYX_AUTO_MIGRATE: "false"
+      NYX_SESSION: "false"
+      NYX_CSRF: "false"
+      NYX_LOG_REQUESTS: "true"
+      NYX_TRUST_X_FORWARDED_FOR: "true"
+      NYX_CSP: "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+    ports:
+      - "127.0.0.1:8082:8080"
     read_only: true
     tmpfs:
       - /tmp
@@ -66,7 +94,7 @@ services:
       - ${NOXPKG_DATA_DIR:-../../services/noxpkg/data}:/data:ro
       - ${BACKUP_DIR:-../../services/noxpkg/backups}:/backups
       - ../../scripts/backup_noxpkg.sh:/usr/local/bin/backup_noxpkg.sh:ro
-    entrypoint: ["/bin/sh", "-c", "apk add --no-cache restic tar gzip jq >/dev/null && exec /usr/local/bin/backup_noxpkg.sh loop"]
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache restic tar gzip jq sqlite >/dev/null && exec /usr/local/bin/backup_noxpkg.sh loop"]
     restart: unless-stopped
     healthcheck:
       # son başarılı anlık görüntü aralığın 2 katından eskiyse "unhealthy"
@@ -86,4 +114,5 @@ services:
       - ${HOME}/.cloudflared/10d2b429-9912-44a6-8615-11ef5910ba74.json:/etc/cloudflared/tunnel.json:ro
     depends_on:
       - noxlang-site
+      - frameworks-site
       - noxpkg

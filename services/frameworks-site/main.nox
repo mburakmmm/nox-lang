@@ -1,0 +1,240 @@
+# frameworks-site — nyx / aether / aura.noxlang.com
+#
+# Üç statik ağacı (scripts/build_framework_sites.py) Host başlığına göre sunar.
+# Aynı Cloudflare tüneli, Mac mini'deki bu süreç. İçerik işçi başına bir kez,
+# ilk istekte yüklenir; sözlükler başlatıcıda boş kalır.
+import nox.http
+import nox.fs
+from nox.fs import FsError
+import nox.os
+import nox.strings
+import nox.json
+import nox.time
+from nox.os import OsError
+from nox.http import HttpRequest, HttpResponse, HttpError
+from nox.json import JsonError
+from nox.router import Context
+import nyx.app
+import nyx.config
+from nyx.app import Application
+from nyx.config import Config
+
+def site_root() -> str:
+    try:
+        v: str = nox.os.getenv("SITE_ROOT")
+        if len(v) > 0:
+            return v
+    except OsError:
+        return "public"
+    return "public"
+
+files: dict[str, str] = {}
+meta: dict[str, str] = {}
+rel: dict[str, str] = {}
+stamp: list[int] = []
+cfg: Config = nyx.config.load()
+apps: list[Application] = []
+
+def github_body(url: str) -> str:
+    headers: dict[str, str] = {}
+    headers["User-Agent"] = "noxlang-frameworks"
+    headers["Accept"] = "application/vnd.github+json"
+    try:
+        resp: HttpResponse = nox.http.get(url, headers)
+    except HttpError:
+        return ""
+    if resp.status != 200:
+        return ""
+    return resp.body
+
+def json_string_field(body: str, key: str) -> str:
+    try:
+        v: JsonValue = nox.json.parse(body)
+    except JsonError:
+        return ""
+    if nox.json.is_array(v):
+        if nox.json.array_len(v) == 0:
+            return ""
+        v = nox.json.array_get(v, 0)
+    if nox.json.is_object(v) == False:
+        return ""
+    i: int = 0
+    n: int = nox.json.object_len(v)
+    while i < n:
+        if nox.json.object_key(v, i) == key:
+            found: JsonValue = nox.json.object_value(v, i)
+            if nox.json.is_string(found):
+                return nox.json.as_string(found)
+            return ""
+        i = i + 1
+    return ""
+
+def bare_version(tag: str) -> str:
+    if nox.strings.starts_with(tag, "v"):
+        i: int = 1
+        out: str = ""
+        n: int = nox.strings.byte_len(tag)
+        while i < n:
+            out = out + nox.strings.char_from_byte(nox.strings.byte_at(tag, i))
+            i = i + 1
+        return out
+    return tag
+
+def safe_version(s: str) -> str:
+    i: int = 0
+    n: int = nox.strings.byte_len(s)
+    if n == 0:
+        return ""
+    while i < n:
+        b: int = nox.strings.byte_at(s, i)
+        if (b < 48 or b > 57) and b != 46:
+            return ""
+        i = i + 1
+    return s
+
+def version_of(repo: str) -> str:
+    latest: str = github_body("https://api.github.com/repos/mburakmmm/" + repo + "/releases/latest")
+    tag: str = json_string_field(latest, "tag_name")
+    if len(tag) == 0:
+        tags: str = github_body("https://api.github.com/repos/mburakmmm/" + repo + "/tags?per_page=1")
+        tag = json_string_field(tags, "name")
+    return safe_version(bare_version(tag))
+
+def load_baked() -> None:
+    try:
+        raw: str = nox.fs.read_to_string(site_root() + "/releases.json")
+        v: JsonValue = nox.json.parse(raw)
+        if nox.json.is_object(v) == False:
+            return
+        i: int = 0
+        n: int = nox.json.object_len(v)
+        while i < n:
+            key: str = nox.json.object_key(v, i)
+            found: JsonValue = nox.json.object_value(v, i)
+            if nox.json.is_string(found):
+                ver: str = safe_version(nox.json.as_string(found))
+                if len(ver) > 0:
+                    rel[key] = ver
+            i = i + 1
+    except (FsError, JsonError):
+        return
+
+def ensure_releases() -> None:
+    now: int = nox.time.now_ms()
+    if len(stamp) == 1 and len(rel) >= 3 and now - stamp[0] < 900000:
+        return
+    nyx_v: str = version_of("nyx")
+    aether_v: str = version_of("aether")
+    aura_v: str = version_of("aura")
+    if len(nyx_v) > 0 and len(aether_v) > 0 and len(aura_v) > 0:
+        rel["nyx"] = nyx_v
+        rel["aether"] = aether_v
+        rel["aura"] = aura_v
+        if len(stamp) == 0:
+            stamp.append(now)
+        else:
+            stamp[0] = now
+        return
+    if len(rel) == 0:
+        load_baked()
+
+def releases_json() -> HttpResponse:
+    ensure_releases()
+    headers: dict[str, str] = {}
+    headers["Content-Type"] = "application/json; charset=utf-8"
+    headers["Cache-Control"] = "public, max-age=300"
+    if len(rel) < 3:
+        return HttpResponse(503, "{}", headers)
+    body: str = "{\"nyx\":\"" + rel["nyx"] + "\",\"aether\":\"" + rel["aether"] + "\",\"aura\":\"" + rel["aura"] + "\"}"
+    return HttpResponse(200, body, headers)
+
+def load_site(name: str) -> None:
+    root: str = site_root() + "/" + name
+    manifest: str = nox.fs.read_to_string(root + "/manifest.tsv")
+    for line in nox.strings.split(manifest, "\n"):
+        if len(line) == 0:
+            continue
+        cols: list[str] = nox.strings.split(line, "\t")
+        if len(cols) != 4:
+            continue
+        key: str = name + "|" + cols[0]
+        files[key] = nox.fs.read_to_string(root + "/" + cols[1])
+        meta[key] = cols[2] + "|" + cols[3]
+
+def ensure_content() -> None:
+    if len(files) == 0:
+        load_site("nyx")
+        load_site("aether")
+        load_site("aura")
+
+def respond(key: str, status: int) -> HttpResponse:
+    parts: list[str] = nox.strings.split(meta[key], "|")
+    headers: dict[str, str] = {}
+    headers["Content-Type"] = parts[0]
+    headers["Cache-Control"] = parts[1]
+    return HttpResponse(status, files[key], headers)
+
+def serve_site(name: str, path: str) -> HttpResponse:
+    ensure_content()
+    key: str = name + "|" + path
+    if key in files:
+        return respond(key, 200)
+    slash: str = name + "|" + path + "/"
+    if slash in files:
+        headers: dict[str, str] = {}
+        headers["Location"] = path + "/"
+        return HttpResponse(301, "", headers)
+    return respond(name + "|/404.html", 404)
+
+def site_of(host: str) -> str:
+    name: str = nox.strings.lower(host)
+    if nox.strings.contains(name, ":"):
+        name = nox.strings.split(name, ":")[0]
+    if name == "aether.noxlang.com":
+        return "aether"
+    if name == "aura.noxlang.com":
+        return "aura"
+    if name == "nyx.noxlang.com":
+        return "nyx"
+    try:
+        chosen: str = nox.os.getenv("SITE_NAME")
+        if chosen == "aether" or chosen == "aura" or chosen == "nyx":
+            return chosen
+    except OsError:
+        return "nyx"
+    return "nyx"
+
+def setup(application: Application) -> None:
+    def page(ctx: Context) -> HttpResponse:
+        path: str = ctx.request.target
+        if nox.strings.contains(path, "?"):
+            path = nox.strings.split(path, "?")[0]
+        if path == "/releases.json":
+            return releases_json()
+        return serve_site(site_of(host_of(ctx.request)), path)
+
+    patterns: list[str] = ["/", "/:a", "/:a/:b", "/:a/:b/:c", "/:a/:b/:c/:d", "/:a/:b/:c/:d/:e"]
+    for pattern in patterns:
+        application.router.get(pattern, page)
+        application.router.add("HEAD", pattern, page)
+
+def app() -> Application:
+    if len(apps) == 0:
+        apps.append(nyx.app.boot(cfg, setup))
+    return apps[0]
+
+def host_of(req: HttpRequest) -> str:
+    try:
+        return req.headers["Host"]
+    except KeyError:
+        d: int = 0
+    try:
+        return req.headers["host"]
+    except KeyError:
+        return ""
+
+def handle(req: HttpRequest) -> HttpResponse:
+    return nyx.app.dispatch(app(), req)
+
+port: int = nyx.config.load().port
+nox.http.serve(port, handle)

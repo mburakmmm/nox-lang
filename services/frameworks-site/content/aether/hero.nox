@@ -1,0 +1,32 @@
+import nox.http
+from nox.http import HttpRequest, HttpResponse
+import aether.application
+import aether.server
+import aether.config
+from aether.application import Application
+from aether.config import Config
+from aether.module import ModuleBuilder
+from aether.context import HttpContext
+from aether.response import json_ok
+
+class HealthModule:
+    def configure(self: HealthModule, m: ModuleBuilder) -> None:
+        m.get("/healthz", self._health())
+
+    def _health(self: HealthModule) -> (HttpContext) -> HttpResponse:
+        def health(ctx: HttpContext) -> HttpResponse:
+            return json_ok("{\"status\":\"ok\"}")
+        return health
+
+def build(app: Application) -> None:
+    HealthModule().configure(app.module())
+
+cfg: Config = aether.config.load()
+aether.application.boot_for_serve(cfg, build)
+
+def handle(req: HttpRequest) -> HttpResponse:
+    return aether.application.dispatch_from_parts(
+        req.method, req.target, req.body, req.headers, req.peer_addr, cfg, build
+    )
+
+nox.http.serve(cfg.port, handle)

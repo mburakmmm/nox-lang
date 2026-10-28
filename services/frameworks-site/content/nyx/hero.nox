@@ -1,0 +1,28 @@
+import nox.http
+from nox.http import HttpRequest, HttpResponse
+from nox.router import Context
+import nyx.app
+import nyx.config
+import nyx.ctrl
+import nyx.ctx
+from nyx.app import Application
+from nyx.config import Config
+from nyx.ctx import AppContext
+
+def setup(application: Application) -> None:
+    def home(ctx: Context) -> HttpResponse:
+        ac: AppContext = nyx.ctx.wrap(application, ctx)
+        context: dict[str, str] = {}
+        context["title"] = "Hello"
+        context["env"] = ac.config().env
+        return nyx.ctrl.render(200, "app/views/home.html", context)
+
+    application.router.get("/", home)
+
+cfg: Config = nyx.config.load()
+application: Application = nyx.app.boot(cfg, setup)
+
+def handle(req: HttpRequest) -> HttpResponse:
+    return nyx.app.dispatch(application, req)
+
+nox.http.serve(8080, handle)

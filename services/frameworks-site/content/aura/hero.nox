@@ -1,0 +1,21 @@
+from aura.controls import Button
+from aura.layout import Center, Column
+from aura.text import Text
+from aura.widgets import BuildContext, Signal, State, StatefulWidget, Widget
+
+class CounterState(State):
+    count: Signal
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.count = Signal(0)
+
+    def increment(self) -> None:
+        self.count.set(self.count.get() + 1)
+
+    def build(self, context: BuildContext) -> Widget:
+        return Center(Column([
+            Text("Aura", font_size=32.0),
+            Text(str(self.count.get()), font_size=48.0),
+            Button("Continue", self.increment),
+        ]))

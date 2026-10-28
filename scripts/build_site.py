@@ -280,6 +280,14 @@ HEADER = """<header class="topbar">
     <a href="/docs/stdlib/">Stdlib</a>
     <a href="/docs/apis/">APIs</a>
     <a href="/docs/tools/noxc/">Tools</a>
+    <div class="navdrop" data-navdrop>
+      <button class="navdrop-btn" type="button" aria-expanded="false" aria-haspopup="true" aria-controls="frameworks-menu">Frameworks<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.2 4.2L6 8l3.8-3.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="navdrop-panel" id="frameworks-menu" role="menu" hidden>
+        <a role="menuitem" href="https://nyx.noxlang.com"><strong>Nyx</strong><span>Full-stack web apps</span></a>
+        <a role="menuitem" href="https://aether.noxlang.com"><strong>Aether</strong><span>HTTP APIs and workers</span></a>
+        <a role="menuitem" href="https://aura.noxlang.com"><strong>Aura</strong><span>Declarative desktop UI</span></a>
+      </div>
+    </div>
     <a href="{pkg}" rel="noopener">Packages</a>
   </nav>
   <div class="topright">
@@ -309,7 +317,7 @@ FOOTER = """<footer class="footer">
     <nav class="footer-cols" aria-label="Footer">
       <div><h4>Learn</h4><a href="/docs/install/">Install</a><a href="/docs/tutorial/">Tutorial</a><a href="/docs/language/">Language reference</a><a href="/docs/stdlib/">Standard library</a></div>
       <div><h4>Build on Nox</h4><a href="/docs/apis/">The three APIs</a><a href="/docs/apis/nni/">Native interface (NNI)</a><a href="/docs/apis/plugin-api/">Plugin API</a><a href="/docs/tools/noxpkg/">Publish a package</a></div>
-      <div><h4>Project</h4><a href="{repo}" rel="noopener">GitHub</a><a href="{pkg}" rel="noopener">noxpkg registry</a><a href="/docs/whatsnew/2.0/">What’s new in 2.0</a><a href="/docs/reference/versioning/">Versioning policy</a></div>
+      <div><h4>Project</h4><a href="{repo}" rel="noopener">GitHub</a><a href="{pkg}" rel="noopener">noxpkg registry</a><a href="https://nyx.noxlang.com">Nyx</a><a href="https://aether.noxlang.com">Aether</a><a href="https://aura.noxlang.com">Aura</a><a href="/docs/whatsnew/2.0/">What’s new in 2.0</a><a href="/docs/reference/versioning/">Versioning policy</a></div>
     </nav>
   </div>
   <div class="footer-base"><span>© Melih Burak Memiş and Nox contributors · MIT License</span><span>noxlang.com is served by a Nyx app written in Nox.</span></div>

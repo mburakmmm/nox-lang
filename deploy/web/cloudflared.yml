@@ -2,6 +2,9 @@
 #
 # Yönlendirme:
 #   noxlang.com, www.noxlang.com   → noxlang-site (Nyx uygulaması, :8080)
+#   nyx.noxlang.com                → frameworks-site (Nyx kılavuzu)
+#   aether.noxlang.com             → frameworks-site (Aether kılavuzu)
+#   aura.noxlang.com               → frameworks-site (Aura kılavuzu)
 #   noxpkg.noxlang.com             → noxpkg       (indeks + yönetim paneli, :8080)
 #   noxpkg.2mtechnology.org        → noxpkg       (ESKİ ad; eski `noxc` sürümleri çalışsın diye korunur)
 #
@@ -11,6 +14,9 @@
 #   CNAME  noxlang.com    (apex; Cloudflare CNAME flattening kullanır)
 #   CNAME  www            noxlang.com yönlendirmesi için
 #   CNAME  noxpkg         (noxpkg.noxlang.com)
+#   CNAME  nyx            (nyx.noxlang.com)
+#   CNAME  aether         (aether.noxlang.com)
+#   CNAME  aura           (aura.noxlang.com)
 tunnel: 10d2b429-9912-44a6-8615-11ef5910ba74
 credentials-file: /etc/cloudflared/tunnel.json
 
@@ -28,6 +34,18 @@ ingress:
     service: http://noxlang-site:8080
     originRequest:
       httpHostHeader: www.noxlang.com
+  - hostname: nyx.noxlang.com
+    service: http://frameworks-site:8080
+    originRequest:
+      httpHostHeader: nyx.noxlang.com
+  - hostname: aether.noxlang.com
+    service: http://frameworks-site:8080
+    originRequest:
+      httpHostHeader: aether.noxlang.com
+  - hostname: aura.noxlang.com
+    service: http://frameworks-site:8080
+    originRequest:
+      httpHostHeader: aura.noxlang.com
   - hostname: noxpkg.noxlang.com
     service: http://noxpkg:8080
     originRequest:

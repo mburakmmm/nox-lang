@@ -9,11 +9,32 @@ is needed to *use* Nox; it is for maintainers.
 |---|---|---|
 | `noxlang.com` | `noxlang-site` | A [Nyx](https://github.com/mburakmmm/nyx) application (`services/noxlang-site/`) that serves the generated site |
 | `www.noxlang.com` | `noxlang-site` | Redirects (301) to `noxlang.com` |
+| `nyx.noxlang.com` | `frameworks-site` | The Nyx guide. Same process as the two rows below; the `Host` header picks the tree |
+| `aether.noxlang.com` | `frameworks-site` | The Aether guide |
+| `aura.noxlang.com` | `frameworks-site` | The Aura guide |
 | `noxpkg.noxlang.com` | `noxpkg` | The package index and admin panel (`services/noxpkg/`) |
 | `noxpkg.2mtechnology.org` | `noxpkg` | The registry's **previous** name, kept so older `noxc` releases keep working |
 
-The stack is described by one Compose file, `deploy/web/docker-compose.yml`, with four services: `noxlang-site`, `noxpkg`, `noxpkg-backup` and `cloudflared`. Containers publish only to `127.0.0.1`; the tunnel is the only way in, and
-the host has no open ports 80 or 443.
+The stack is described by one Compose file, `deploy/web/docker-compose.yml`, with five services: `noxlang-site`, `frameworks-site`, `noxpkg`, `noxpkg-backup` and `cloudflared`. Containers publish only to `127.0.0.1`; the tunnel is the only way in, and
+the host has no open ports 80 or 443. It is the same tunnel as before (`10d2b429-9912-44a6-8615-11ef5910ba74`); the framework hostnames are extra ingress rules, not a second tunnel.
+
+## Framework sites
+
+`services/frameworks-site/` is one Nyx application. `scripts/build_framework_sites.py` writes three static trees, `public/nyx`, `public/aether` and `public/aura`, from `services/frameworks-site/content/`. They reuse the noxlang.com stylesheet and script. `html[data-site]` swaps the brand color. Every page’s top bar links to `https://noxlang.com`, and the Nox site’s Frameworks menu links back.
+
+The process reads `Host` (`nyx.noxlang.com`, `aether.noxlang.com`, `aura.noxlang.com`) and serves that tree. `SITE_NAME=nyx|aether|aura` is the override for a request that arrives without one of those names (a local `curl` to `127.0.0.1:8082`). Content is loaded on the first request, once per worker, from each tree’s `manifest.tsv`.
+
+```sh
+python3 scripts/build_framework_sites.py
+```
+
+DNS for the three names is a proxied `CNAME` to the **existing** tunnel, created in the Cloudflare dashboard before the new ingress will answer:
+
+```text
+nyx     CNAME  <tunnel-id>.cfargotunnel.com
+aether  CNAME  <tunnel-id>.cfargotunnel.com
+aura    CNAME  <tunnel-id>.cfargotunnel.com
+```
 
 ## How the site is built
 
@@ -40,7 +61,7 @@ Copy `deploy/web/.env.example` to `deploy/web/.env` and fill it in. Docker Compo
 | `NYX_SECRET_KEY` | secret for the site's Nyx app, at least 32 characters |
 | `NOXPKG_ADMIN_PASSWORD_HASH` | Argon2id hash of the registry admin password (`noxc run services/noxpkg/scripts/gen_admin_hash.nox -- '<password>'`) |
 | `NOXPKG_SESSION_SECRET` | secret for the registry's session cookie |
-| `NOXPKG_DATA_DIR` | directory with the registry's JSON files (default `services/noxpkg/data`) |
+| `NOXPKG_DATA_DIR` | directory with the registry database `noxpkg.db` (default `services/noxpkg/data`) |
 | `BACKUP_DIR` | where local snapshots are kept (default `services/noxpkg/backups`) |
 | `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | optional off-site backup to an S3-compatible bucket such as Cloudflare R2 |
 
@@ -52,6 +73,9 @@ Copy `deploy/web/.env.example` to `deploy/web/.env` and fill it in. Docker Compo
 noxlang.com   CNAME  <tunnel-id>.cfargotunnel.com    (apex; Cloudflare flattens it)
 www           CNAME  <tunnel-id>.cfargotunnel.com
 noxpkg        CNAME  <tunnel-id>.cfargotunnel.com
+nyx           CNAME  <tunnel-id>.cfargotunnel.com
+aether        CNAME  <tunnel-id>.cfargotunnel.com
+aura          CNAME  <tunnel-id>.cfargotunnel.com
 ```
 
 ## Deploying
@@ -68,12 +92,11 @@ commit and run the same command again.
 
 ## Backups
 
-The registry's state is a few small JSON files (`index.json`, `inbox.json`, `ratelimit.txt`). The server writes each one atomically (a temporary file, then a rename), so a file read at any moment is complete. There is no database to
-snapshot.
+The registry's state is `noxpkg.db`. Accounts, comments and bug reports live only there. The package catalog and the publish inbox are mirrored to `index.json` and `inbox.json` after every write (a temporary file, then a rename). Those JSON files are never deleted: the first boot imports them once, and later writes refresh them from the database. `GET /index.json` is rendered from the database in the shape `noxc search` and `noxc add` already read. `ratelimit.txt` is still a small text file.
 
 `scripts/backup_noxpkg.sh` runs in the `noxpkg-backup` container:
 
-1. **Every hour** it validates the JSON and writes `noxpkg-<UTC timestamp>.tar.gz` with a `.sha256` next to it. Corrupt data is refused rather than backed up over a good snapshot.
+1. **Every hour** it copies `noxpkg.db` with SQLite's online `.backup`, then writes `index.json` and `inbox.json` from that copy so the archive cannot contain a stale catalog. It checks integrity and that the JSON names match the database, then writes `noxpkg-<UTC timestamp>.tar.gz` with a `.sha256` next to it. A bad copy is refused; the previous snapshot stays. The off-site restic copy is that archive, not a live read of the data directory. Before the database exists, the script still archives the JSON files on disk.
 2. **Rotation** keeps the newest 48 snapshots, the newest one per day for 30 days, and the newest one per week for 12 weeks (`KEEP_HOURLY`, `KEEP_DAILY`, `KEEP_WEEKLY`).
 3. **Off-site (optional):** when the four `RESTIC_*`/`AWS_*` variables are set, each run also pushes the data to a [restic](https://restic.net) repository. restic encrypts and de-duplicates it, so the bucket holds only ciphertext.
 
