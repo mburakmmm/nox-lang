@@ -1344,8 +1344,8 @@ fn runSandboxed(io: std.Io, a: std.mem.Allocator, bin_path: []const u8, argv_tai
     var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
     var tmp_path: []const u8 = std.mem.trimEnd(u8, tmp_env, "/");
     if (tmp_path.len == 0) tmp_path = "/tmp";
-    // `/tmp` ve `$TMPDIR` macOS'ta sembolik bağlardır; profil kanonik yolu ister.
-    {
+    // `/tmp` ve `$TMPDIR` macOS'ta sembolik bağlardır; profil kanonik yolu ister. (Windows'ta sandbox yok: `buildArgv` zaten `Unsupported` döner.)
+    if (comptime builtin.os.tag != .windows) {
         var z: [std.posix.PATH_MAX:0]u8 = undefined;
         if (tmp_path.len < z.len) {
             @memcpy(z[0..tmp_path.len], tmp_path);
@@ -3205,7 +3205,7 @@ fn cmdSign(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home:
         const kp = try signing.publicKeyOf(seed);
         const seed_hex = std.fmt.bytesToHex(seed, .lower);
         const pub_hex = std.fmt.bytesToHex(kp.public_key.toBytes(), .lower);
-        try cwd.writeFile(io, .{ .sub_path = key_path, .data = &seed_hex, .flags = .{ .permissions = .fromMode(0o600) } });
+        try cwd.writeFile(io, .{ .sub_path = key_path, .data = &seed_hex, .flags = .{ .permissions = if (builtin.os.tag == .windows) .default_file else .fromMode(0o600) } });
         try cwd.writeFile(io, .{ .sub_path = pub_path, .data = &pub_hex });
         std.debug.print("key: {s}\npublic key: {s}\nfingerprint: {s}\nKeep the .key file secret; share the .pub file with consumers.\n", .{ key_path, pub_path, signing.fingerprint(kp.public_key.toBytes()) });
         return;

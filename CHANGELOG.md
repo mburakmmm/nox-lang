@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.50]
+
+### Duzeltildi
+
+- Windows'ta `noxc` derlenmiyordu (v2.0.43'ten beri): `noxc sign keygen` anahtar dosyasi izni (`fromMode`) ve `noxc run --sandbox` icindeki `realpath` POSIX'e ozeldi. Windows'ta varsayilan izin ve sandbox yolu derlenmez. `zig build noxc -Dtarget=x86_64-windows-gnu` ve linux hedefleri temiz.
+
 ## [2.0.49]
 
 ### Eklendi
