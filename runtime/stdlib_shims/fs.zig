@@ -616,6 +616,15 @@ export fn nox_fs_rename_raw(rt: ?*anyopaque, old: ?[*:0]const u8, new: ?[*:0]con
         fsLastOkPtr().* = false;
         return;
     };
+    if (comptime builtin.os.tag == .windows) {
+        // C `rename` Windows'ta var olan hedefin üzerine YAZMAZ (POSIX'ten farklı); `write_string_atomic` ve `rename` aynı anlamı taşısın diye
+        // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH kullanılır. Hedef bir dizinse yine başarısız olur.
+        const w = struct {
+            extern "kernel32" fn MoveFileExA(existing: [*:0]const u8, new_name: [*:0]const u8, flags: u32) callconv(.c) i32;
+        };
+        fsLastOkPtr().* = w.MoveFileExA(o, n, 0x1 | 0x8) != 0;
+        return;
+    }
     fsLastOkPtr().* = std.c.rename(o, n) == 0;
 }
 

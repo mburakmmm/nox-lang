@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.48]
+
+### Duzeltildi
+
+- Windows'ta `nox.fs.rename` var olan hedefin uzerine yazmiyordu (C `rename` Windows'ta basarisiz olur), bu yuzden `write_string_atomic` Windows CI'da kirmiziydi. Windows'ta `MoveFileExA(REPLACE_EXISTING | WRITE_THROUGH)` kullanilir; hedef dizinse yine basarisiz olur (POSIX ile ayni anlam).
+
 ## [2.0.47]
 
 ### Eklendi
