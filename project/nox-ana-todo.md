@@ -253,7 +253,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 
 - [ ] **5.1 Windows guard-page repro testini ekle.** Fiber testi bugün
   Windows'ta TODO ile skip ediliyor.
-- [ ] **5.2 Windows belge/CI gerçeğini eşleştir.** CI tam `zig build test`
+- [x] **5.2 Windows belge/CI gerçeğini eşleştir.** (v2.0.37: `platforms.md`, `stability.md`, `releasing.md`, `faq.md` aynı ifadeyi kullanır: Debug `zig build test` korpusu + uçtan uca smoke; Release modları Windows'ta koşmaz.) CI tam `zig build test`
   çalıştırırken platform belgesi hâlâ yalnız smoke/full-suite yok diyor;
   gerçek kapsam ölçülüp tek doğru ifade kullanılmalı.
 - [ ] **5.3 macOS x86-64 CI ekle veya açıkça destek dışına çıkar.** Bugünkü
@@ -303,7 +303,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [ ] **7.4 Registry güvenlik kapılarını genişlet.** Metadata approval,
   malware/native-code uyarısı, provenance/SBOM ve incident response akışı
   belgelenip test edilmeli.
-- [ ] **7.5 FFI sınır fuzzing'i ekle.** NNI, Plugin API, HPy, WASM ve embed
+- [~] **7.5 FFI sınır fuzzing'i ekle.** (v2.0.37: embed ABI için 300 turluk deterministik rastgele çağrı dizisi + bozuk yapılandırma/UTF-8/uzunluk fuzz testi; WASM ayrıştırıcı ve lexer/parser fuzz önceden vardı. Açık: NNI, Plugin API, HPy sınırı.) NNI, Plugin API, HPy, WASM ve embed
   ABI için length/null/version/ownership girdileri fuzz edilmelidir.
 
 ## Faz 8 — P3 dil/stdlib kapsam kararları
@@ -334,10 +334,10 @@ ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
   semantiğini bozmadan tek-lookup tasarımının değeri ölçülür.
 - [ ] **9.4 Matmul/list dolaylama ve bounds-check maliyetini profille.** Ancak
   ölçüm ve iki-backend semantik testi sonrası optimizasyon yapılır.
-- [ ] **9.5 Doküman sözleşme testi ekle.** Platform destek tablosu, CLI target
+- [x] **9.5 Doküman sözleşme testi ekle.** (v2.0.37: `scripts/check_doc_contracts.py` CI'da: `--target` değerleri, mobil matris, varsayılan backend ve üç yerdeki sürüm çapraz doğrulanır.) Platform destek tablosu, CLI target
   listesi, backend seçimi, versiyon ve mobile matrix koddan türetilmeli veya
   CI'da çapraz doğrulanmalı.
-- [ ] **9.6 Tarihsel spesifikasyonu normatif başvurudan ayır.** Kronolojik
+- [x] **9.6 Tarihsel spesifikasyonu normatif başvurudan ayır.** (v2.0.37: spesifikasyon başına "tarihsel, normatif değil" bildirimi ve `docs/` indeksi; çelişkide öncelik sırası yazıldı.) Kronolojik
   uygulama günlüğü korunurken güncel dil sözleşmesine tek, indeksli giriş
   sağlanmalı.
 

@@ -815,3 +815,66 @@ test "sembolik bağ ile kökten kaçış reddedilir, kök içi ve henüz olmayan
     const via_missing_under_link = try std.fmt.bufPrintZ(&p, "{s}/root/escape/olmayan/x.txt", .{base});
     try std.testing.expect(!allowsPath(rt, via_missing_under_link.ptr));
 }
+
+test "fuzz: rastgele çağrı dizileri ve bozuk girdiler çökertmez, durum makinesi tutarlı kalır (TODO 7.5)" {
+    var prng = std.Random.DefaultPrng.init(0x4e6f78);
+    const rand = prng.random();
+    var host: TrackingHost = .{};
+    const descriptor = host.descriptor();
+    var round: usize = 0;
+    while (round < 300) : (round += 1) {
+        var slot: Slot = .{ .abi_version = ABI, .app = null };
+        var config = sampleConfig(&slot, "/app/documents");
+        // Bazı turlarda bozuk yapılandırma: yanlış boyut/sürüm, null slot, bozuk ayırıcı tanımı.
+        var bad_alloc: HostAllocator = .{ .size = rand.int(u32), .ctx = null, .alloc = null, .free = null };
+        switch (rand.uintLessThan(u8, 8)) {
+            0 => config.size = rand.int(u32),
+            1 => config.abi_version = rand.int(u32),
+            2 => config.slot = null,
+            3 => config.allocator = &bad_alloc,
+            4 => config.allocator = &descriptor,
+            else => {},
+        }
+        var out: ?*anyopaque = null;
+        const rc = createWith(std.testing.allocator, &config, &out);
+        if (rc != OK) {
+            try std.testing.expect(slot.app == null);
+            try std.testing.expect(out == null);
+            continue;
+        }
+        const app = out;
+        var step: usize = 0;
+        while (step < 40) : (step += 1) {
+            switch (rand.uintLessThan(u8, 7)) {
+                0 => _ = nox_app_start(app),
+                1 => {
+                    // Rastgele uzunluk ve içerik: sınır (256), bozuk UTF-8, null işaretçi ile sıfırdan farklı uzunluk.
+                    var bytes: [300]u8 = undefined;
+                    rand.bytes(&bytes);
+                    const len: u32 = rand.uintLessThan(u32, 320);
+                    const ptr: ?[*]const u8 = if (rand.boolean()) &bytes else null;
+                    const r = nox_app_post_event(app, rand.int(i32), ptr, len);
+                    try std.testing.expect(r == OK or r == ERR_STATE or r == ERR_INVAL or r == ERR_UTF8 or r == ERR_FULL);
+                },
+                2 => {
+                    const r = nox_app_pump(app, if (rand.boolean()) 0 else rand.int(u64));
+                    try std.testing.expect(r >= 0 or r == ERR_STATE or r == ERR_REENTRANT or r == ERR_EXCEPTION);
+                },
+                3 => _ = nox_app_request_stop(app),
+                4 => _ = nox_app_runtime(app),
+                5 => nox_app_set_event_fn(app, if (rand.boolean()) recordingEvent else null),
+                else => {},
+            }
+        }
+        // Her durumda destroy başarılı olmalı, ikinci destroy güvenli kalmalı, slot boşalmalı.
+        try std.testing.expectEqual(OK, nox_app_destroy(app));
+        try std.testing.expect(slot.app == null);
+    }
+    try std.testing.expectEqual(@as(usize, 0), host.live);
+    // null uygulama işaretçisiyle hiçbir giriş noktası çökmez.
+    try std.testing.expectEqual(ERR_STATE, nox_app_start(null));
+    try std.testing.expectEqual(ERR_STATE, nox_app_pump(null, 0));
+    try std.testing.expectEqual(ERR_STATE, nox_app_post_event(null, 0, null, 0));
+    try std.testing.expectEqual(OK, nox_app_destroy(null));
+    try std.testing.expect(nox_app_runtime(null) == null);
+}

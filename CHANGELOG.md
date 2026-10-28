@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.37]
+
+Belge doğruluğu ve FFI sınır fuzzing (yalnızca test/belge/CI; çalışma zamanı davranışı değişmedi).
+
+### Eklendi
+
+- `scripts/check_doc_contracts.py` (CI): `--target` değerleri, mobil matris tablosu, varsayılan backend ve `build.zig.zon`/`hpy_host_contract.zig`/`CHANGELOG.md` sürümü çapraz doğrulanır.
+- Gömme ABI fuzz testi: 300 tur deterministik rastgele çağrı dizisi, bozuk yapılandırma, bozuk UTF-8, aşırı uzunluk, null işaretçiler; durum makinesi tutarlı kalır ve ayırıcı dengesi korunur.
+
+### Düzeltildi
+
+- Windows CI kapsamı belgelerde tek ifadeyle anlatılıyor (Debug `zig build test` korpusu + uçtan uca smoke); `releasing.md`/`stability.md`/`faq.md` eski "yalnız smoke" ifadesini taşıyordu.
+- `nox-teknik-spesifikasyon.md` başına "tarihsel günlük, normatif değil" bildirimi ve `docs/` yönlendirmesi eklendi.
+
 ## [2.0.36]
 
 Gömme sandbox'ında sembolik bağ kaçışı kapatıldı (güvenlik).

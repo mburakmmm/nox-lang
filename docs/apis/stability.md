@@ -43,7 +43,7 @@ single-threaded under QBE) and to the argument/result types allowed for `spawn`;
 
 ## Platforms
 
-Tier 1 (tested in CI on every commit): macOS arm64, Linux x86-64, Linux arm64. Windows x86-64 builds and is smoke-tested end to end. See [Platforms](../reference/platforms.md).
+Tier 1 (tested in CI on every commit): macOS arm64, Linux x86-64, Linux arm64. Windows x86-64 runs the Debug `zig build test` corpus and end-to-end LLVM/QBE smoke tests on every commit (Release modes are not run there). See [Platforms](../reference/platforms.md).
 
 ## What this means for you
 

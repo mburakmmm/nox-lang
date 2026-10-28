@@ -20,7 +20,7 @@ You never free memory yourself ([Memory](../language/memory.md)).
 
 ## Tools and platforms
 
-**Which platforms are supported?** macOS arm64, Linux x86-64 and aarch64 are fully tested; Windows x86-64 is supported and smoke-tested ([Platforms](platforms.md)).
+**Which platforms are supported?** macOS arm64, Linux x86-64 and aarch64 are fully tested; Windows x86-64 runs the Debug test corpus and end-to-end smoke tests ([Platforms](platforms.md)).
 
 **Do I need clang?** Not required. The compiler uses `clang`, or `zig cc`, or falls back to its bundled QBE back end ([Backends](../tools/backends.md)).
 

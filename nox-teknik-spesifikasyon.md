@@ -1,12 +1,15 @@
 # Nox Programlama Dili — Teknik Spesifikasyon
 
-**Versiyon:** 1.1.0-dev (bkz. `CHANGELOG.md` — `v1.0.0` yayımlandı VE
-etiketlendi; bu belge main dalındaki, HENÜZ yayımlanmamış devam eden
-geliştirmeyi de İÇEREN en güncel durumu yansıtır — bkz. `VERSIONING.md`)
-**Tarih:** 22 Temmuz 2026 (son önemli güncelleme)
+> **Bu dosya TARİHSEL bir uygulama günlüğüdür, normatif başvuru DEĞİLDİR.** Bölümler kronolojik (faz/sürüm sırasıyla) eklenir; bir
+> davranış sonraki bir bölümde değiştirilmiş olabilir ve eski bölüm düzeltilmez. Güncel dil ve API sözleşmesi için **`docs/`** altına
+> bakın (CI, kod bloklarını derleyiciye karşı doğrular): dil için [`docs/language/`](docs/language/index.md), standart kütüphane için
+> [`docs/stdlib/`](docs/stdlib/index.md), kararlılık garantileri için [`docs/apis/stability.md`](docs/apis/stability.md), platformlar için
+> [`docs/reference/platforms.md`](docs/reference/platforms.md), mobil için [`docs/internals/mobile-matrix.md`](docs/internals/mobile-matrix.md)
+> ve ADR'ler, iç mimari için [`docs/internals/`](docs/internals/architecture.md). Değişmez ilkeler `AGENTS.md`dedir. Bir çelişkide sıra:
+> `AGENTS.md` > `docs/` > bu dosyanın EN SON bölümü > eski bölümler.
+
+**Sürüm:** bu başlıktaki ve aşağıdaki tarih/sürüm satırları tarihseldir; güncel sürüm `build.zig.zon` ve `CHANGELOG.md`dedir.
 **Dosya Uzantısı:** `.nox`
-**Durum:** `v1.0.0` üretim sürümü YAYIMLANDI — aktif geliştirme devam
-ediyor (bkz. `CHANGELOG.md`nin `[Yayımlanmamış]` bölümü)
 
 ---
 

@@ -29,7 +29,7 @@ scripts/release.sh --tag --stress
 
 ## CI
 
-On every push to `main`, `ci.yml` runs the full suite on Linux x86-64, Linux aarch64 and macOS arm64 (all required) and a Windows job (front-end tests plus end-to-end smoke tests of both back ends). Extra workflows run the opt-in stress
+On every push to `main`, `ci.yml` runs the full suite on Linux x86-64, Linux aarch64 and macOS arm64 (all required) and a Windows job (the Debug `zig build test` corpus plus end-to-end smoke tests of both back ends). Extra workflows run the opt-in stress
 suites and the external-integration fixtures (the Aether and Nyx frameworks compiled against the new compiler).
 
 ## Publishing
