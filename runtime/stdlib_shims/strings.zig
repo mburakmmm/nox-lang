@@ -21,6 +21,7 @@ const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
+const unicode = @import("../unicode.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: `list[T]` başlığının bayt boyutu — `../../shared/abi_layout.zig`den
@@ -214,18 +215,35 @@ export fn nox_strings_eq_ignore_case_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) c
     return if (std.ascii.eqlIgnoreCase(a_slice, b_slice)) 1 else 0;
 }
 
-export fn nox_strings_upper_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+/// ASCII hızlı yolu + Unicode tam eşleme (`unicode.zig`): `ß`.upper() == `SS` gibi eşlemeler çıktı uzunluğunu değiştirebilir.
+fn caseMapRaw(rt: ?*anyopaque, s: ?[*:0]const u8, mode: unicode.Mode) ?[*:0]u8 {
     const slice = str_mod.nox_str_slice(s orelse return null);
-    const buf = str_mod.nox_str_alloc_buf(rt, slice.len) orelse return null;
-    for (slice, 0..) |c, i| buf[i] = std.ascii.toUpper(c);
+    var ascii = true;
+    for (slice) |c| if (c >= 0x80) {
+        ascii = false;
+        break;
+    };
+    if (ascii) {
+        const buf = str_mod.nox_str_alloc_buf(rt, slice.len) orelse return null;
+        for (slice, 0..) |c, i| buf[i] = if (mode == .upper) std.ascii.toUpper(c) else std.ascii.toLower(c);
+        return @ptrCast(buf);
+    }
+    const n = unicode.mapInto(slice, mode, null);
+    const buf = str_mod.nox_str_alloc_buf(rt, n) orelse return null;
+    _ = unicode.mapInto(slice, mode, buf[0..n]);
     return @ptrCast(buf);
 }
 
+export fn nox_strings_upper_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    return caseMapRaw(rt, s, .upper);
+}
+
 export fn nox_strings_lower_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = str_mod.nox_str_slice(s orelse return null);
-    const buf = str_mod.nox_str_alloc_buf(rt, slice.len) orelse return null;
-    for (slice, 0..) |c, i| buf[i] = std.ascii.toLower(c);
-    return @ptrCast(buf);
+    return caseMapRaw(rt, s, .lower);
+}
+
+export fn nox_strings_casefold_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    return caseMapRaw(rt, s, .casefold);
 }
 
 /// `old` BOŞSA (v1 bilinçli basitleştirmesi — sonsuz/anlamsız bir

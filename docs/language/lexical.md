@@ -63,8 +63,19 @@ print(p.x + p.y)
 
 ## Identifiers
 
-An identifier is a letter or `_` followed by letters, digits or `_`. **Identifiers are ASCII-only**; non-ASCII letters are a
-syntax error (non-ASCII text is fully supported inside string literals). Identifiers are case sensitive.
+An identifier is a letter or `_` followed by letters, digits or `_`. Letters are Unicode letters in the XID_Start/XID_Continue
+sense (as in Python): `größe`, `Öğrenci` and `名前` are valid names. Identifiers are compared by code point (there is no NFKC
+normalization) and are case sensitive.
+
+```nox
+größe: int = 3
+名前: str = "x"
+print(größe, 名前)
+```
+
+```output
+3 x
+```
 
 A leading double underscore names a *special method* when used as a method name (`__init__`, `__add__`, …; see
 [Classes](classes.md)). Names beginning with `__nox_` are reserved for the compiler's prelude and are not part of the language

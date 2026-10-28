@@ -105,6 +105,7 @@ comptime {
     _ = chase_lev_deque;
     _ = worker_pool;
     _ = str;
+    _ = @import("unicode.zig");
     _ = format;
     _ = dict;
     _ = list_sort;

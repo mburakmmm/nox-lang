@@ -319,8 +319,7 @@ ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
 - [~] **8.4 Annotated `self.x: T = v` ve nested empty literal inference.** (v2.0.39: `self.x: T = v` UYGULANDI — alanı tanımlar, boş literal/Optional için beklenen tip verir, formatter yüzey biçimini korur, iki backend golden + 2 typecheck hatası; `__init__` dışında yeni alan reddedilir. v2.0.55: iç içe boş literal çıkarımı UYGULANDI (`[[], [1]]`, `{"a": []}`, 3 düzeye kadar; bildirim/dönüş/argüman/alan ataması; iki backend golden).)
 - [x] **8.5 Closure içinde dış değişkene yazma (`nonlocal` eşdeğeri).** (v2.0.54: `nonlocal a, b` — değişken tek elemanlı bir hücreye (liste) çevrilir (`nonlocal_desugar.zig`), checker/sahiplik/iki backend yeni bir şey bilmez; formatter korur; iki backend golden + 2 hata. Yan bulgular düzeltildi: iç içe `def`in kendi adıyla DOĞRUDAN çağrılması codegen'de desteklenmiyordu; closure'a yakalanan liste yığın/arena'ya terfi edip `Unsupported` veriyordu; modül yükleyici `*args`/`**kwargs`/anahtar-sözcüğe-özel bayraklarını düşürüyordu.)
 - [!] **8.6 Lazy generator/yield ve arbitrary await/async iteration.**
-- [!] **8.7 Unicode genişletmesi.** ASCII-only identifiers/case işlemleri,
-  shaping/normalization kapsamı ayrı ayrı seçilmeli.
+- [~] **8.7 Unicode genişletmesi.** (v2.0.56: Unicode tanımlayıcılar (XID_Start/Continue, sembol adları `.xHH` ile kaçışlanır), tam `upper/lower/casefold` (ß→SS, son sigma), `isalpha/isdigit/isdecimal/isnumeric/isspace/isupper/islower` Unicode; tablolar `scripts/gen_unicode_tables.py` ile Python'dan üretilir, çıktı Python ile birebir doğrulandı; iki backend golden. Açık: normalizasyon (NFC/NFD), locale'e özgü eşleme, şekillendirme — kapsam dışı, belgelenmiş.)
 - [!] **8.8 Regex/TOML/YAML tamlık hedefleri.** Mevcut belgeli subset'ler
   “tam standart” diye sunulmaz; ihtiyaç halinde ayrı uyumluluk matrisleriyle
   genişletilir.

@@ -2,6 +2,7 @@
 //! Python tokenizer'ındaki INDENT/DEDENT modeli referans alınmıştır.
 
 const std = @import("std");
+const unicode_ident = @import("unicode_ident.zig");
 const token_mod = @import("token.zig");
 pub const Token = token_mod.Token;
 pub const TokenKind = token_mod.TokenKind;
@@ -330,9 +331,17 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
             continue;
         }
 
-        if (isIdentStart(c)) {
+        if (isIdentStart(c) or (c >= 0x80 and uniIdentLen(source, i, true) > 0)) {
             const start = i;
-            while (i < source.len and isIdentCont(source[i])) : (i += 1) {}
+            while (i < source.len) {
+                if (isIdentCont(source[i])) {
+                    i += 1;
+                } else if (source[i] >= 0x80) {
+                    const n = uniIdentLen(source, i, false);
+                    if (n == 0) break;
+                    i += n;
+                } else break;
+            }
             const word = source[start..i];
             const kind = token_mod.lookupKeyword(word) orelse .identifier;
             try tokens.append(allocator, mkToken(kind, word, line, col, start));
@@ -632,6 +641,16 @@ fn isIdentStart(c: u8) bool {
 
 fn isIdentCont(c: u8) bool {
     return isIdentStart(c) or isDigit(c);
+}
+
+/// `source[i..]` bir Unicode tanımlayıcı karakteriyle (`start`: başlangıç, aksi halde devam) başlıyorsa UTF-8 bayt uzunluğunu, yoksa 0 döner.
+/// Python gibi XID_Start/XID_Continue (tablolar `unicode_ident.zig`); NFKC normalizasyonu YAPILMAZ (kod noktası eşitliği).
+fn uniIdentLen(source: []const u8, i: usize, start: bool) usize {
+    const l = std.unicode.utf8ByteSequenceLength(source[i]) catch return 0;
+    if (i + l > source.len) return 0;
+    const cp = std.unicode.utf8Decode(source[i..][0..l]) catch return 0;
+    const ok = if (start) unicode_ident.isStart(cp) else unicode_ident.isCont(cp);
+    return if (ok) l else 0;
 }
 
 fn tokenizeExpectKinds(source: []const u8, expected: []const TokenKind) !void {

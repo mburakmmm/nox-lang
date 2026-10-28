@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.56]
+
+### Eklendi
+
+- Unicode tanimlayicilar (`größe`, `Öğrenci`, `名前`): XID_Start/XID_Continue; QBE/LLVM sembol adlarinda `.xHH` ile kacislanir.
+- `str` yontemleri Unicode: `upper`/`lower`/`casefold` tam esleme (`ß`→`SS`, son sigma), `isalpha`/`isdigit`/`isalnum`/`isspace`/`isupper`/`islower`, yeni `isdecimal`/`isnumeric`. Tablolar `scripts/gen_unicode_tables.py` ile uretilir (Unicode 17).
+
 ## [2.0.55]
 
 ### Eklendi

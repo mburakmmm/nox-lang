@@ -2181,5 +2181,39 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
         try gen.out.writer.writeAll("!0 = !{!\"branch_weights\", i32 1, i32 4000}\n");
     }
 
-    return gen.out.toOwnedSlice();
+    return mangleNonAsciiSymbols(allocator, try gen.out.toOwnedSlice());
+}
+
+/// Unicode tanımlayıcılar (`größe`, `Öğrenci`) QBE/LLVM sembol adlarında geçerli değildir: tırnak DIŞINDAki her UTF-8 baytı `.xHH`
+/// olarak kaçışlanır (tırnak içindeki dize verileri aynen kalır). Salt-ASCII çıktı bit-bit aynı kalır (kopya yok).
+fn mangleNonAsciiSymbols(allocator: std.mem.Allocator, ir: []u8) CodegenError![]u8 {
+    var any = false;
+    for (ir) |c| if (c >= 0x80) {
+        any = true;
+        break;
+    };
+    if (!any) return ir;
+    var out = std.ArrayList(u8).empty;
+    var in_quote = false;
+    var i: usize = 0;
+    while (i < ir.len) : (i += 1) {
+        const c = ir[i];
+        if (in_quote) {
+            try out.append(allocator, c);
+            if (c == '\\' and i + 1 < ir.len) {
+                i += 1;
+                try out.append(allocator, ir[i]);
+            } else if (c == '"') in_quote = false;
+            continue;
+        }
+        if (c == '"') {
+            in_quote = true;
+            try out.append(allocator, c);
+        } else if (c >= 0x80) {
+            const hex = "0123456789abcdef";
+            try out.appendSlice(allocator, &.{ '.', 'x', hex[c >> 4], hex[c & 15] });
+        } else try out.append(allocator, c);
+    }
+    allocator.free(ir);
+    return out.toOwnedSlice(allocator);
 }

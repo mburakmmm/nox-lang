@@ -22,6 +22,7 @@ const std = @import("std");
 const arc = @import("alloc/arc.zig");
 const abi_layout = @import("abi_layout");
 const diag_sink = @import("diag_sink");
+const unicode = @import("unicode.zig");
 
 const STR_HEADER_SIZE = abi_layout.STR_HEADER_SIZE;
 pub const ASCII_UNKNOWN = abi_layout.STR_ASCII_UNKNOWN;
@@ -1273,10 +1274,17 @@ pub export fn nox_str_count(s: ?[*:0]const u8, needle: ?[*:0]const u8) i64 {
     return n;
 }
 
-/// `s.isdigit()`(0) / `isalpha()`(1) / `isalnum()`(2) / `isspace()`(3) / `isupper()`(4) / `islower()`(5) — ASCII; boş dize → 0.
+/// `s.isdigit()`(0) / `isalpha()`(1) / `isalnum()`(2) / `isspace()`(3) / `isupper()`(4) / `islower()`(5) / `isdecimal()`(6) /
+/// `isnumeric()`(7); boş dize → 0. ASCII dizelerde hızlı yol, aksi halde Unicode sınıflandırması (`unicode.zig`).
 pub export fn nox_str_char_class(s: ?[*:0]const u8, kind: i32) i64 {
     const bytes = nox_str_slice(s orelse return 0);
     if (bytes.len == 0) return 0;
+    var non_ascii = kind >= 6;
+    if (!non_ascii) for (bytes) |c| if (c >= 0x80) {
+        non_ascii = true;
+        break;
+    };
+    if (non_ascii) return if (unicode.charClass(bytes, @enumFromInt(kind))) 1 else 0;
     var cased = false;
     for (bytes) |c| {
         const ok = switch (kind) {

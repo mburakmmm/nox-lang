@@ -47,8 +47,9 @@ ababab True True True abcd
 
 ## Methods
 
-All methods return new strings; case and whitespace rules are **ASCII-based** (`"héllo".upper()` is `"HéLLO"`), while positions are
-code points.
+All methods return new strings. Case mapping and character classes follow Unicode (the same results as Python's `str`;
+Unicode 17): `"Straße".upper()` is `"STRASSE"`, `"ΟΔΟΣ".lower()` ends in the final sigma `ς`, `"é".isalpha()` is `True`. Not
+included: normalization (NFC/NFD), locale-specific mappings (Turkish `i`) and text shaping. Positions are code points.
 
 | Method | Result |
 |---|---|

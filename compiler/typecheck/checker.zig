@@ -7254,7 +7254,7 @@ pub const Checker = struct {
     }
 
     fn isCoreStrMethod(m: []const u8) bool {
-        const core = [_][]const u8{ "upper", "lower", "strip", "lstrip", "rstrip", "split", "join", "replace", "startswith", "endswith", "find", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "isupper", "islower", "ljust", "rjust", "center", "zfill" };
+        const core = [_][]const u8{ "upper", "lower", "casefold", "strip", "lstrip", "rstrip", "split", "join", "replace", "startswith", "endswith", "find", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "isupper", "islower", "isdecimal", "isnumeric", "ljust", "rjust", "center", "zfill" };
         for (core) |n| if (std.mem.eql(u8, n, m)) return true;
         return false;
     }
@@ -8893,8 +8893,8 @@ pub const Checker = struct {
         const sig: Sig = blk: {
             const none_p: []const Type = &.{};
             const one_str: []const Type = &.{str_t};
-            if (eq(u8, m, "upper") or eq(u8, m, "lower") or eq(u8, m, "strip") or eq(u8, m, "lstrip") or eq(u8, m, "rstrip")) break :blk .{ .name = m, .params = none_p, .ret = str_t };
-            if (eq(u8, m, "isdigit") or eq(u8, m, "isalpha") or eq(u8, m, "isalnum") or eq(u8, m, "isspace") or eq(u8, m, "isupper") or eq(u8, m, "islower")) break :blk .{ .name = m, .params = none_p, .ret = .boolean };
+            if (eq(u8, m, "upper") or eq(u8, m, "lower") or eq(u8, m, "casefold") or eq(u8, m, "strip") or eq(u8, m, "lstrip") or eq(u8, m, "rstrip")) break :blk .{ .name = m, .params = none_p, .ret = str_t };
+            if (eq(u8, m, "isdigit") or eq(u8, m, "isalpha") or eq(u8, m, "isalnum") or eq(u8, m, "isspace") or eq(u8, m, "isupper") or eq(u8, m, "islower") or eq(u8, m, "isdecimal") or eq(u8, m, "isnumeric")) break :blk .{ .name = m, .params = none_p, .ret = .boolean };
             if (eq(u8, m, "startswith") or eq(u8, m, "endswith")) break :blk .{ .name = m, .params = one_str, .ret = .boolean };
             if (eq(u8, m, "find") or eq(u8, m, "count") or eq(u8, m, "index")) break :blk .{ .name = m, .params = one_str, .ret = int_t };
             if (eq(u8, m, "replace")) break :blk .{ .name = m, .params = &.{ str_t, str_t }, .ret = str_t };

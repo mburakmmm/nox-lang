@@ -3324,8 +3324,8 @@ fn genStrMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.
     const s_arg: codegen.QbeArg = .{ .ty = .l, .text = obj.text };
     const result = try self.newTemp();
     var ret: Value = .{ .text = result, .qtype = .l, .heap = .str };
-    if (eq(u8, m, "upper") or eq(u8, m, "lower") or eq(u8, m, "strip") or eq(u8, m, "lstrip") or eq(u8, m, "rstrip")) {
-        const sym: []const u8 = if (eq(u8, m, "upper")) "$nox_strings_upper_raw" else if (eq(u8, m, "lower")) "$nox_strings_lower_raw" else if (eq(u8, m, "strip")) "$nox_strings_trim_raw" else if (eq(u8, m, "lstrip")) "$nox_strings_trim_start_raw" else "$nox_strings_trim_end_raw";
+    if (eq(u8, m, "upper") or eq(u8, m, "lower") or eq(u8, m, "casefold") or eq(u8, m, "strip") or eq(u8, m, "lstrip") or eq(u8, m, "rstrip")) {
+        const sym: []const u8 = if (eq(u8, m, "upper")) "$nox_strings_upper_raw" else if (eq(u8, m, "lower")) "$nox_strings_lower_raw" else if (eq(u8, m, "casefold")) "$nox_strings_casefold_raw" else if (eq(u8, m, "strip")) "$nox_strings_trim_raw" else if (eq(u8, m, "lstrip")) "$nox_strings_trim_start_raw" else "$nox_strings_trim_end_raw";
         try self.qbeCall(.{ .name = result, .ty = .l }, sym, &.{ rt_arg, s_arg });
     } else if (eq(u8, m, "replace")) {
         try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_strings_replace_raw", &.{ rt_arg, s_arg, .{ .ty = .l, .text = vals[0].text }, .{ .ty = .l, .text = vals[1].text } });
@@ -3358,8 +3358,8 @@ fn genStrMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.
     } else if (eq(u8, m, "count")) {
         try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_str_count", &.{ s_arg, .{ .ty = .l, .text = vals[0].text } });
         ret = .{ .text = result, .qtype = .l };
-    } else if (eq(u8, m, "isdigit") or eq(u8, m, "isalpha") or eq(u8, m, "isalnum") or eq(u8, m, "isspace") or eq(u8, m, "isupper") or eq(u8, m, "islower")) {
-        const kind: []const u8 = if (eq(u8, m, "isdigit")) "0" else if (eq(u8, m, "isalpha")) "1" else if (eq(u8, m, "isalnum")) "2" else if (eq(u8, m, "isspace")) "3" else if (eq(u8, m, "isupper")) "4" else "5";
+    } else if (eq(u8, m, "isdigit") or eq(u8, m, "isalpha") or eq(u8, m, "isalnum") or eq(u8, m, "isspace") or eq(u8, m, "isupper") or eq(u8, m, "islower") or eq(u8, m, "isdecimal") or eq(u8, m, "isnumeric")) {
+        const kind: []const u8 = if (eq(u8, m, "isdigit")) "0" else if (eq(u8, m, "isalpha")) "1" else if (eq(u8, m, "isalnum")) "2" else if (eq(u8, m, "isspace")) "3" else if (eq(u8, m, "isupper")) "4" else if (eq(u8, m, "isdecimal")) "6" else if (eq(u8, m, "isnumeric")) "7" else "5";
         const raw = try self.newTemp();
         try self.qbeCall(.{ .name = raw, .ty = .l }, "$nox_str_char_class", &.{ s_arg, .{ .ty = .w, .text = kind } });
         try self.qbeOp2Imm(result, .w, "cnel", raw, 0);
