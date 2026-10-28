@@ -4707,6 +4707,60 @@ test "yerleşik tip tekilleri (h_LongType/h_FloatType/vb.) HPy_Type ile eşleşi
     try std.testing.expectEqual(ctx.h_UnicodeType._i, ctxType(ctx, str_h)._i);
 }
 
+test "fuzz: rastgele geçerli ctx işlem dizileri değerleri korur ve sızdırmaz (TODO 7.5)" {
+    var prng = std.Random.DefaultPrng.init(0x48507900);
+    const rand = prng.random();
+    var round: usize = 0;
+    while (round < 200) : (round += 1) {
+        const ctx = try createContext(std.testing.allocator);
+        defer destroyContext(std.testing.allocator, ctx);
+        // Havuz: (handle, beklenen int değeri ya da -1 = str). Her işlemde invariants doğrulanır.
+        const Slot = struct { h: HPy, kind: enum { long, float, text }, long_v: i64 = 0, float_v: f64 = 0, text_len: isize = 0 };
+        var pool: [24]?Slot = @splat(null);
+        var step: usize = 0;
+        while (step < 120) : (step += 1) {
+            const i = rand.uintLessThan(usize, pool.len);
+            switch (rand.uintLessThan(u8, 6)) {
+                0 => if (pool[i] == null) {
+                    const v = rand.int(i64);
+                    pool[i] = .{ .h = ctxLongFromInt64(ctx, v), .kind = .long, .long_v = v };
+                },
+                1 => if (pool[i] == null) {
+                    const v = @as(f64, @floatFromInt(rand.int(i32))) / 8.0;
+                    pool[i] = .{ .h = ctxFloatFromDouble(ctx, v), .kind = .float, .float_v = v };
+                },
+                2 => if (pool[i] == null) {
+                    var buf: [16:0]u8 = undefined;
+                    const n = rand.uintLessThan(usize, 12);
+                    for (buf[0..n]) |*c| c.* = 'a' + rand.uintLessThan(u8, 26);
+                    buf[n] = 0;
+                    pool[i] = .{ .h = ctxUnicodeFromString(ctx, &buf), .kind = .text, .text_len = @intCast(n) };
+                },
+                3 => if (pool[i]) |sl| { // dup + close çifti refcount'u değiştirmez, değer okunabilir kalır
+                    const d = ctxDup(ctx, sl.h);
+                    ctxClose(ctx, d);
+                },
+                4 => if (pool[i]) |sl| {
+                    switch (sl.kind) {
+                        .long => try std.testing.expectEqual(sl.long_v, ctxLongAsInt64(ctx, sl.h)),
+                        .float => try std.testing.expectEqual(sl.float_v, ctxFloatAsDouble(ctx, sl.h)),
+                        .text => {
+                            var size: isize = -1;
+                            _ = ctxUnicodeAsUTF8AndSize(ctx, sl.h, &size);
+                            try std.testing.expectEqual(sl.text_len, size);
+                        },
+                    }
+                },
+                else => if (pool[i]) |sl| {
+                    ctxClose(ctx, sl.h);
+                    pool[i] = null;
+                },
+            }
+        }
+        for (pool) |maybe| if (maybe) |sl| ctxClose(ctx, sl.h);
+    }
+}
+
 test "ctxUnicodeFromString/Check/AsUTF8AndSize round-trip" {
     const ctx = try createContext(std.testing.allocator);
     defer destroyContext(std.testing.allocator, ctx);

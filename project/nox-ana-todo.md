@@ -251,20 +251,20 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 
 ## Faz 5 — P2 masaüstü ve mimari platform kapsaması
 
-- [ ] **5.1 Windows guard-page repro testini ekle.** Fiber testi bugün
+- [!] **5.1 Windows guard-page repro testini ekle.** (v2.0.46 değerlendirme: yalnız Windows'ta doğrulanabilir; bu makinede çalıştırılamayan bir test körlemesine eklenmedi. Gereken: `guard_overflow_repro.zig`nin Windows derlemesi + `VirtualAlloc/PAGE_GUARD` davranışı CI'da denenerek.) Fiber testi bugün
   Windows'ta TODO ile skip ediliyor.
 - [x] **5.2 Windows belge/CI gerçeğini eşleştir.** (v2.0.37: `platforms.md`, `stability.md`, `releasing.md`, `faq.md` aynı ifadeyi kullanır: Debug `zig build test` korpusu + uçtan uca smoke; Release modları Windows'ta koşmaz.) CI tam `zig build test`
   çalıştırırken platform belgesi hâlâ yalnız smoke/full-suite yok diyor;
   gerçek kapsam ölçülüp tek doğru ifade kullanılmalı.
 - [x] **5.3 macOS x86-64 CI ekle veya açıkça destek dışına çıkar.** (v2.0.39 KARAR: destek matrisinin dışında; `platforms.md` "çalışması beklenir, CI/release matrisinde yok" der ve `scripts/check_doc_contracts.py` hedefin belgede geçmesini denetler. CI eklemek runner maliyeti ister.) Bugünkü
   durum “çalışması bekleniyor”, release matrisi yok.
-- [ ] **5.4 Hosted riscv64 korpusunu genişlet.** Dört smoke fixture yerine
+- [!] **5.4 Hosted riscv64 korpusunu genişlet.** (v2.0.46 değerlendirme: bu makinede `qemu-riscv64` (user-mode) yok, yalnız `qemu-system-*`; korpus yerelde doğrulanamaz. CI'daki dört smoke fixture'a ekleme CI-körü olurdu.) Dört smoke fixture yerine
   temsilî dil/runtime/exception/ARC/async matrisi ve düzenli CI.
-- [!] **5.5 Freestanding riscv64 hedefini kararlaştır.** Şu anda assembly
+- [x] **5.5 Freestanding riscv64 hedefini kararlaştır.** (v2.0.46 KARAR: assembly-only KALIR, boot zinciri yapılmaz; `platforms.md` ve `freestanding.md` bunu zaten söylüyor. Gerekçe: x86-64 zinciri bir QEMU kapısıyla kanıtlı; riscv64 için ayrı linker betiği/UART/SBI ve test kapısı ayrı bir proje.) Şu anda assembly
   only; boot zinciri isteniyorsa linker/runtime/QEMU kapıları tasarlanmalı.
-- [ ] **5.6 Freestanding aarch64 boot kanıtını tamamla.** ELF üretimi ile
+- [~] **5.6 Freestanding aarch64 boot kanıtını tamamla.** (v2.0.46: belgeler ELF üretimi ile boot kanıtını ayırıyor (yalnız x86-64 boot edilir). aarch64 için boot kodu, linker betiği ve `qemu-system-aarch64` kapısı yazılmadı: ayrı proje; QEMU yerelde mevcut.) ELF üretimi ile
   gerçek QEMU/device boot kanıtını ayır.
-- [!] **5.7 LLVM debug-info politikasını kararlaştır.** `-g` yalnız QBE'de;
+- [x] **5.7 LLVM debug-info politikasını kararlaştır.** (v2.0.46 KARAR: `-g` QBE'de kalır ve otomatik QBE seçer; `noxc.md` bunu açıkça yazıyor. LLVM DWARF/CodeView ayrı tasarım; kullanıcı sorunu çıkarsa açılır.) `-g` yalnız QBE'de;
   LLVM DWARF/CodeView desteği ayrı tasarım ve test ister.
 
 ## Faz 6 — P2 FFI, HPy, WASM ve native ekosistem
@@ -275,7 +275,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [x] **6.2 AGENTS HPy Tier tablosuyla gap matrisi çıkar.** (v2.0.39: `docs/internals/hpy-tier-gap.md` — var olan: HPy 0.9 Universal ABI host (180 ctx_*), paket akışı, gerçek fixture; YOK: `cpython_compat` katmanı, Tier 1-3 CPython emülasyonu.) Tier 0–3 API'leri
   mevcut host surface ile tek tek karşılaştır; destek iddiasını gerçek C
   extension fixture'larına bağla.
-- [ ] **6.3 HPy container/call surface'i genişlet.** List/tuple/dict,
+- [!] **6.3 HPy container/call surface'i genişlet.** (v2.0.46 değerlendirme: liste/demet/sözlük için sahiplik sözleşmesi ve GERÇEK bir üçüncü-taraf uzantı fixture'ı şart (`hpy-tier-gap.md` ölçütü 3); ikisi de yok, ertelendi.) List/tuple/dict,
   defaults/overload/variadic ve gelişmiş buffer davranışları yalnız ownership
   sözleşmesi ve gerçek extension testiyle eklenir.
 - [x] **6.4 CPython uyumluluk iddiasını dürüstçe sınırla.** (v2.0.39: aynı sayfa; NumPy/Pandas desteklenmez, "as-is çalışır" denmez; AGENTS Tier tablosu yol haritası olarak işaretlendi.) NumPy/Pandas
@@ -285,7 +285,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
   yalnız sınırlı instruction/value türlerini destekliyor. İstenen WASM
   surface'i belirle, trap/error ve fuzz korpusunu genişlet. WASM backend
   kesinlikle eklenmez.
-- [!] **6.6 Asenkron native callback tasarımını kararlaştır.** Mevcut callback
+- [x] **6.6 Asenkron native callback tasarımını kararlaştır.** (v2.0.46 KARAR: callback yalnız senkron ve primitive imzalı KALIR; zamanlayıcı/olay döngüsü callback'i handle ömrü ve yeniden giriş tasarımı olmadan açılmaz. Gerekçe: ARC sahipliği çok iş parçacıklı M:N havuzla çarpışır.) Mevcut callback
   yalnız senkron ve primitive imzalıdır; timer/event-loop callback'leri ayrı
   handle/lifetime/reentrancy tasarımı olmadan açılmaz.
 
@@ -303,10 +303,12 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [~] **7.4 Registry güvenlik kapılarını genişlet.** (v2.0.39: moderasyon, "metadata onayı kod incelemesi değildir", kilit dosyası = provenance, olay müdahale adımları `docs/reference/security.md`de. Açık: otomatik tarama, yayıncı imzası, üretilmiş SBOM — 7.1 tasarımına bağlı.) Metadata approval,
   malware/native-code uyarısı, provenance/SBOM ve incident response akışı
   belgelenip test edilmeli.
-- [~] **7.5 FFI sınır fuzzing'i ekle.** (v2.0.37: embed ABI için 300 turluk deterministik rastgele çağrı dizisi + bozuk yapılandırma/UTF-8/uzunluk fuzz testi; WASM ayrıştırıcı ve lexer/parser fuzz önceden vardı. Açık: NNI, Plugin API, HPy sınırı.) NNI, Plugin API, HPy, WASM ve embed
+- [~] **7.5 FFI sınır fuzzing'i ekle.** (v2.0.46: HPy tutamaç tablosu için 200 turluk rastgele geçerli ctx dizisi eklendi. (v2.0.37: embed ABI için 300 turluk deterministik rastgele çağrı dizisi + bozuk yapılandırma/UTF-8/uzunluk fuzz testi; WASM ayrıştırıcı ve lexer/parser fuzz önceden vardı. Açık: NNI, Plugin API, HPy sınırı.) NNI, Plugin API, HPy, WASM ve embed
   ABI için length/null/version/ownership girdileri fuzz edilmelidir.
 
 ## Faz 8 — P3 dil/stdlib kapsam kararları
+
+**v2.0.46 değerlendirmesi:** 8.1, 8.2, 8.3, 8.5, 8.6, 8.7 ve 8.8 her biri yeni bir dil özelliği ya da dil semantiği değişikliğidir (parser + checker + sahiplik + iki backend + belge). Bu turda uygulanmadılar: her biri tek başına çok dokunuşlu, ve mevcut belgeler (`functions.md`, `builtins.md`, `classes.md`) sınırı zaten dürüstçe yazıyor. 8.4'ün `self.x: T = v` kısmı yapıldı. Kalan maddelerin sırası önerisi: 8.3 (class-level sabitler: en çok istenen, en küçük), 8.1, 8.5, 8.6, 8.2.
 
 Bu maddeler doğruluk açığı değil, belgelenmiş kapsam genişletmeleridir. Her biri
 ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
@@ -330,9 +332,9 @@ ayrı kullanıcı kararı ve dil özelliği süreci gerektirir.
   min/avg/max aynı koşuda kaydedilmeli.
 - [x] **9.2 QBE/LLVM/C farklarını yeniden ölç.** (v2.0.39: `cross_lang` 5 tekrar ortanca, ReleaseFast; gerileme yok; en büyük açıklar sieve/matmul/dict.) Debug sonuç kullanılmaz;
   ReleaseFast, uzun çalışan kernel ve istatistiksel tekrar zorunlu.
-- [ ] **9.3 Dict iki-lookup maliyetini incele.** Insertion order ve hash seed
+- [!] **9.3 Dict iki-lookup maliyetini incele.** (v2.0.46: ölçüm var — dict kerneli C'den ~2.7× yavaş (RESULTS.md) — ama güvenli bir tek-lookup tasarımı sıralama/tohum semantiğini korumak için profil (Instruments/perf) gerektirir; spekülatif değişiklik yapılmadı.) Insertion order ve hash seed
   semantiğini bozmadan tek-lookup tasarımının değeri ölçülür.
-- [ ] **9.4 Matmul/list dolaylama ve bounds-check maliyetini profille.** Ancak
+- [!] **9.4 Matmul/list dolaylama ve bounds-check maliyetini profille.** (v2.0.46: sieve'de `append` yerine `[True] * (n+1)` ön ayırması zamanı DEĞİŞTİRMEDİ (ölçüldü); fark sınır denetimi/yerleşimde olabilir, kanıt için komut düzeyi profil gerekir.) Ancak
   ölçüm ve iki-backend semantik testi sonrası optimizasyon yapılır.
 - [x] **9.5 Doküman sözleşme testi ekle.** (v2.0.37: `scripts/check_doc_contracts.py` CI'da: `--target` değerleri, mobil matris, varsayılan backend ve üç yerdeki sürüm çapraz doğrulanır.) Platform destek tablosu, CLI target
   listesi, backend seçimi, versiyon ve mobile matrix koddan türetilmeli veya

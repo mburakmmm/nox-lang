@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.46]
+
+### Eklendi
+
+- HPy tutamac tablosu icin 200 turluk rastgele gecerli ctx dizisi fuzz testi (deger korunumu, refcount, sizinti denetimi).
+
+### Degisti
+
+- `project/nox-ana-todo.md`: kalan maddeler gercek durumlariyla siniflandirildi (5.5/5.7/6.6 karari, 5.1/5.4/6.3/9.3/9.4 ortam ya da profil gerektirdigi icin acik, Faz 8 notu).
+
 ## [2.0.45]
 
 ### Eklendi
