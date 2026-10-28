@@ -4628,6 +4628,34 @@ test "ctxLongFromInt64/ctxLongAsInt64 round-trip" {
     try std.testing.expectEqual(@as(i64, 42), ctxLongAsInt64(ctx, h));
 }
 
+test "iki HPyContext bağımsızdır: eşzamanlı iş parçacıklarında nesne değerleri ve sızıntı denetimi karışmaz (TODO 1.5)" {
+    const Worker = struct {
+        base: i64,
+        ok: bool = true,
+
+        fn run(self: *@This()) void {
+            const ctx = createContext(std.testing.allocator) catch {
+                self.ok = false;
+                return;
+            };
+            defer destroyContext(std.testing.allocator, ctx);
+            var i: i64 = 0;
+            while (i < 500) : (i += 1) {
+                const h = ctxLongFromInt64(ctx, self.base + i);
+                if (ctxLongAsInt64(ctx, h) != self.base + i) self.ok = false;
+                const d = ctxDup(ctx, h);
+                ctxClose(ctx, d);
+                ctxClose(ctx, h);
+            }
+        }
+    };
+    var workers: [3]Worker = .{ .{ .base = 1_000 }, .{ .base = 2_000_000 }, .{ .base = 3_000_000_000 } };
+    var threads: [3]std.Thread = undefined;
+    for (&threads, 0..) |*t, i| t.* = try std.Thread.spawn(.{}, Worker.run, .{&workers[i]});
+    for (threads) |t| t.join();
+    for (workers) |w| try std.testing.expect(w.ok);
+}
+
 test "ctxDup/ctxClose refcount doğru artar/azalır" {
     const ctx = try createContext(std.testing.allocator);
     defer destroyContext(std.testing.allocator, ctx);

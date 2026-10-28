@@ -116,7 +116,7 @@ Bu faz diğer bütün yeni özelliklerden önce gelir.
   `compiler/` + `runtime/` altında 32 dosyada `page_allocator`, 15 dosyada
   `threadlocal var` bulundu. Test-only, immutable/provider registry ve gerçek
   invariant ihlallerini ayır; gerçek ihlalleri küçük, testli dilimlerle kaldır.
-- [ ] **1.5 Çoklu runtime izolasyon korpusu ekle.** Allocator, hata durumu,
+- [x] **1.5 Çoklu runtime izolasyon korpusu ekle.** (v2.0.33: `runtime/multi_runtime_test.zig` — allocator/istisna/entropi/sandbox/zamanlayıcı, 4 iş parçacığı stres + HPy context iş parçacıklı testi; JSON/FS `last_op_ok` YALNIZCA belgeli `tl-errno` borcu olarak kaldı, ölçüm bunu doğrular: aynı iş parçacığındaki iki runtime fiber dışında paylaşır.) Allocator, hata durumu,
   JSON/FS sonuç durumu, HPy context, entropy ve scheduler state için iki
   runtime + çoklu thread stres testi oluştur.
 - [x] **1.6 Embed hata/OOM sözleşmesini tamamla.** (v2.0.32: `ERR_FULL`, `ERR_EXCEPTION`, start OOM yeniden denenebilir; 4 birim testi, testing.allocator sızıntı denetimli.) Kısmi init, host callback

@@ -21,6 +21,8 @@ pub const std_options: std.Options = .{
 
 pub const asap = @import("alloc/asap.zig");
 pub const embed = @import("embed.zig");
+/// TODO 1.5: çoklu-runtime izolasyon korpusu (yalnızca test keşfi için kayıtlı).
+pub const multi_runtime_test = @import("multi_runtime_test.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const dispatch_registry = @import("alloc/dispatch_registry.zig");
 pub const diag_sink = @import("diag_sink");
@@ -85,6 +87,7 @@ pub const smtp_shim = @import("stdlib_shims/smtp.zig");
 // (her zaman emit edilir) devreye girmesini sağlar.
 comptime {
     _ = asap;
+    _ = multi_runtime_test;
     _ = arc;
     _ = dispatch_registry;
     _ = diag_sink;

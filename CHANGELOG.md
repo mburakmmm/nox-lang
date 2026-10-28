@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.33]
+
+Çoklu runtime izolasyon korpusu (yalnızca test; çalışma zamanı davranışı değişmedi).
+
+### Eklendi
+
+- `runtime/multi_runtime_test.zig`: iki runtime'ın bekçi istisnası, sözlük hash tohumu (entropi) ve gömme sandbox politikası bağımsızdır; 4 iş parçacığı kendi runtime'ında str/istisna/sandbox döngüsü çalıştırır; 3 runtime'ın zamanlayıcısı eşzamanlı bağımsız çalışır. İki HPyContext iş parçacıklı testle ayrıldı. Hepsi `testing.allocator` ile sızıntı/çift-serbest denetimlidir.
+
 ## [2.0.32]
 
 Gömme (embed) ABI'si: host ayırıcısı ve tamamlanmış hata sözleşmesi (ABI numarası 1 kalır).
