@@ -37,7 +37,7 @@ exact commit of every dependency and `require_signed_commit` can demand a signed
 
 1. Treat `extern def` and every dependency that contains one like a C dependency: review, pin and prefer small, audited ones.
 2. Keep native calls behind a narrow Nox wrapper that validates arguments (lengths, ranges, UTF-8) before crossing the boundary.
-3. Run untrusted Nox *source* only inside an OS-level sandbox (container, a separate user, seccomp) — `noxc run` executes it with your authority.
+3. Run untrusted Nox *source* with `noxc run --sandbox` (no network, writes only to `$TMPDIR`, no access to your home directory; [ADR-010](../internals/adr/010-sandbox.md)). Plain `noxc run` executes it with your authority.
 4. Load plugins only from sources you trust; declare and grant the minimum capabilities.
 5. Keep secrets out of source control; read them from the environment.
 
@@ -47,7 +47,7 @@ What the registry does today: a submission is moderated before it appears in the
 
 If a package is found to be malicious or compromised: (1) the maintainers remove or hide the entry from the index, which stops new installs through `noxc add` and `noxc search`; (2) existing projects keep working from their lock file, so the advisory names the affected repository and commits and tells users to update the lock; (3) the fix and the advisory are published in the `CHANGELOG` and the repository's security advisories. A package that declares `extern def` or a `bin` entry runs native code with your authority (see the trust boundary above); read it before adding it.
 
-Not yet built: automatic malware or native-code scanning, publisher signatures, and a generated SBOM. They need the design described under "Not in 2.0".
+Not yet built: automatic malware or native-code scanning, registry-side publisher keys, and a generated SBOM.
 
 ## Reporting vulnerabilities
 
@@ -55,4 +55,4 @@ Please report security problems privately to the maintainers (see the repository
 
 ## Not in 2.0
 
-Automatic sandboxing of `extern def`, package signing and a capability system each need a dedicated security design and are not added ad hoc; they are candidates for a future 2.x design.
+`extern def` has no in-process sandbox: the boundary is the operating system (`noxc run --sandbox`). Plugin capabilities are consent metadata, not enforcement. `nox.lock` can be signed and verified offline (`noxc sign`, [ADR-011](../internals/adr/011-lock-signing.md)); `noxc fetch` does not yet require a signature, and the registry does not yet bind publisher keys to accounts.

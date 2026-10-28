@@ -18,6 +18,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const sandbox = @import("sandbox.zig");
+const signing = @import("pkg/signing.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const syntax_report = @import("syntax_report.zig");
@@ -306,7 +308,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, expand, explain, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
+    const Subcommand = enum { sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, expand, explain, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -316,6 +318,7 @@ fn realMain(init: std.process.Init) !void {
         // "geriye dönük uyumlu tekil-dosya" sözleşmesini BOZMAZ.
         if (all_args.items.len == 0) break :blk .help;
         const first = all_args.items[0];
+        if (std.mem.eql(u8, first, "sign")) break :blk .sign;
         if (std.mem.eql(u8, first, "build")) break :blk .build;
         if (std.mem.eql(u8, first, "run")) break :blk .run;
         if (std.mem.eql(u8, first, "test")) break :blk .test_cmd;
@@ -350,6 +353,7 @@ fn realMain(init: std.process.Init) !void {
         .build => try cmdBuild(gpa, io, a, rest, "usage: noxc build [--dump|-v] [-o <output>] <file.nox>\n", nox_home, resource_dirs, fetch_policy),
         .legacy => try cmdBuild(gpa, io, a, rest, "usage: noxc [--dump|-v] <file.nox>  (for commands: noxc --help)\n", nox_home, resource_dirs, fetch_policy),
         .help => printHelp(is_tr),
+        .sign => try cmdSign(io, a, rest, nox_home),
         .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .fmt => try cmdFmt(gpa, io, a, rest),
@@ -1269,7 +1273,32 @@ fn isRunnableOnHost(profile: codegen.Profile, target: []const u8) bool {
 /// MİRAS ALARAK çalıştırır, çocuğun çıkış kodunu AYNEN yansıtır.
 fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const split = splitOnDoubleDash(args);
-    const opts = parseBuildOpts(split.before);
+    // `--sandbox` ailesi (ADR-010): bayraklar derleme seçeneklerinden AYRILIR, yalnızca ikilinin çalıştırılmasına uygulanır.
+    var sandboxed = false;
+    var policy: sandbox.Policy = .{};
+    var kept: std.ArrayListUnmanaged([]const u8) = .empty;
+    var writes: std.ArrayListUnmanaged([]const u8) = .empty;
+    var reads: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (split.before) |arg| {
+        if (std.mem.eql(u8, arg, "--sandbox")) {
+            sandboxed = true;
+        } else if (std.mem.eql(u8, arg, "--allow-net")) {
+            policy.allow_net = true;
+        } else if (std.mem.startsWith(u8, arg, "--allow-write=")) {
+            try writes.append(a, arg["--allow-write=".len..]);
+        } else if (std.mem.startsWith(u8, arg, "--allow-read=")) {
+            try reads.append(a, arg["--allow-read=".len..]);
+        } else {
+            try kept.append(a, arg);
+        }
+    }
+    if (!sandboxed and (policy.allow_net or writes.items.len > 0 or reads.items.len > 0)) {
+        printErr("noxc run: --allow-net/--allow-write/--allow-read only apply together with --sandbox\n", .{});
+        std.process.exit(1);
+    }
+    policy.allow_write = writes.items;
+    policy.allow_read = reads.items;
+    const opts = parseBuildOpts(kept.items);
     const path_arg = opts.path orelse {
         std.debug.print("usage: noxc run [--dump|-v] <file.nox> [-- argv...]\n", .{});
         std.process.exit(1);
@@ -1298,8 +1327,52 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
         break :blk built;
     };
 
+    if (sandboxed) {
+        const code = try runSandboxed(io, a, bin_path, split.after, policy);
+        std.process.exit(code);
+    }
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
+}
+
+/// `bin_path`i işletim sistemi sandbox'ı içinde çalıştırır (bkz. `sandbox.zig`, ADR-010). Araç yoksa ya da platform desteklenmiyorsa
+/// çalıştırmaz, açık bir hata verir: "sandbox istendi ama uygulanamadı" durumunda kısıtsız çalıştırmak güvenli DEĞİLDİR.
+fn runSandboxed(io: std.Io, a: std.mem.Allocator, bin_path: []const u8, argv_tail: []const []const u8, policy: sandbox.Policy) !u8 {
+    const cwd = try std.process.currentPathAlloc(io, a);
+    const tmp_raw = std.c.getenv("TMPDIR");
+    const tmp_env: []const u8 = if (tmp_raw) |t| std.mem.span(t) else "/tmp";
+    var tmp_buf: [std.posix.PATH_MAX]u8 = undefined;
+    var tmp_path: []const u8 = std.mem.trimEnd(u8, tmp_env, "/");
+    if (tmp_path.len == 0) tmp_path = "/tmp";
+    // `/tmp` ve `$TMPDIR` macOS'ta sembolik bağlardır; profil kanonik yolu ister.
+    {
+        var z: [std.posix.PATH_MAX:0]u8 = undefined;
+        if (tmp_path.len < z.len) {
+            @memcpy(z[0..tmp_path.len], tmp_path);
+            z[tmp_path.len] = 0;
+            if (std.c.realpath(&z, &tmp_buf)) |p| tmp_path = std.mem.span(p);
+        }
+    }
+    const argv = sandbox.buildArgv(a, builtin.os.tag, bin_path, argv_tail, cwd, tmp_path, policy) catch |e| switch (e) {
+        error.Unsupported => {
+            printErr("noxc run --sandbox: not supported on this operating system (macOS and Linux with bubblewrap only)\n", .{});
+            std.process.exit(1);
+        },
+        error.InvalidPath => {
+            printErr("noxc run --sandbox: --allow-read/--allow-write paths must be absolute and contain no quotes, parentheses or backslashes\n", .{});
+            std.process.exit(1);
+        },
+        else => return e,
+    };
+    var child = std.process.spawn(io, .{ .argv = argv }) catch {
+        printErr("noxc run --sandbox: could not start '{s}' (install it: macOS has sandbox-exec built in, Linux needs bubblewrap)\n", .{argv[0]});
+        std.process.exit(1);
+    };
+    const term = try child.wait(io);
+    return switch (term) {
+        .exited => |c| c,
+        else => 1,
+    };
 }
 
 /// `bin_path`i (`argv_tail` argümanları AYRICA iletilerek) çalıştırır,
@@ -3073,4 +3146,180 @@ fn appendExternLinkArgs(allocator: std.mem.Allocator, argv: *std.ArrayListUnmana
             try argv.append(allocator, try std.fmt.allocPrint(allocator, "-l{s}", .{from_lib}));
         }
     }
+}
+
+// ---- `noxc sign` (ADR-011): nox.lock imzalama ---------------------------------------------------------------------------------------
+
+fn readHexFile(io: std.Io, a: std.mem.Allocator, path: []const u8, out: []u8) !void {
+    const text = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(4096)) catch {
+        printErr("noxc sign: cannot read {s}\n", .{path});
+        std.process.exit(1);
+    };
+    const trimmed = std.mem.trim(u8, text, " \r\n\t");
+    _ = std.fmt.hexToBytes(out, trimmed) catch {
+        printErr("noxc sign: {s} is not valid hex of the expected length\n", .{path});
+        std.process.exit(1);
+    };
+    if (trimmed.len != out.len * 2) {
+        printErr("noxc sign: {s} is not valid hex of the expected length\n", .{path});
+        std.process.exit(1);
+    }
+}
+
+fn cmdSign(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+    const usage =
+        "usage: noxc sign keygen <name>                create an Ed25519 key pair in $NOX_HOME/keys\n" ++
+        "       noxc sign lock [--key <name|file>] [dir]  sign dir/nox.lock -> dir/nox.lock.sig\n" ++
+        "       noxc sign trust <pubkey-file>          trust a publisher key (verification then accepts it)\n" ++
+        "       noxc sign revoke <fingerprint>         never trust that key again\n" ++
+        "       noxc sign verify [dir]                 verify dir/nox.lock.sig offline (exit 0 only when valid)\n";
+    if (args.len == 0) {
+        std.debug.print("{s}", .{usage});
+        std.process.exit(1);
+    }
+    const cwd = std.Io.Dir.cwd();
+    const keys_dir = try std.fmt.allocPrint(a, "{s}/keys", .{nox_home});
+    const trusted_dir = try std.fmt.allocPrint(a, "{s}/trusted", .{nox_home});
+    const revoked_path = try std.fmt.allocPrint(a, "{s}/revoked.txt", .{nox_home});
+    const sub = args[0];
+
+    if (std.mem.eql(u8, sub, "keygen")) {
+        if (args.len < 2) {
+            std.debug.print("{s}", .{usage});
+            std.process.exit(1);
+        }
+        const name = args[1];
+        for (name) |c| if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_')) {
+            printErr("noxc sign keygen: the name may only contain letters, digits, '-' and '_'\n", .{});
+            std.process.exit(1);
+        };
+        try cwd.createDirPath(io, keys_dir);
+        const key_path = try std.fmt.allocPrint(a, "{s}/{s}.key", .{ keys_dir, name });
+        const pub_path = try std.fmt.allocPrint(a, "{s}/{s}.pub", .{ keys_dir, name });
+        if (cwd.access(io, key_path, .{})) |_| {
+            printErr("noxc sign keygen: {s} already exists (it is never overwritten)\n", .{key_path});
+            std.process.exit(1);
+        } else |_| {}
+        var seed: [32]u8 = undefined;
+        try io.randomSecure(&seed);
+        const kp = try signing.publicKeyOf(seed);
+        const seed_hex = std.fmt.bytesToHex(seed, .lower);
+        const pub_hex = std.fmt.bytesToHex(kp.public_key.toBytes(), .lower);
+        try cwd.writeFile(io, .{ .sub_path = key_path, .data = &seed_hex, .flags = .{ .permissions = .fromMode(0o600) } });
+        try cwd.writeFile(io, .{ .sub_path = pub_path, .data = &pub_hex });
+        std.debug.print("key: {s}\npublic key: {s}\nfingerprint: {s}\nKeep the .key file secret; share the .pub file with consumers.\n", .{ key_path, pub_path, signing.fingerprint(kp.public_key.toBytes()) });
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "lock")) {
+        var key_arg: ?[]const u8 = null;
+        var dir: []const u8 = ".";
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--key") and i + 1 < args.len) {
+                key_arg = args[i + 1];
+                i += 1;
+            } else dir = args[i];
+        }
+        const key_path = if (key_arg) |k| (if (std.mem.indexOfScalar(u8, k, '/') != null) k else try std.fmt.allocPrint(a, "{s}/{s}.key", .{ keys_dir, k })) else {
+            printErr("noxc sign lock: pass --key <name|file> (create one with 'noxc sign keygen <name>')\n", .{});
+            std.process.exit(1);
+        };
+        var seed: [32]u8 = undefined;
+        try readHexFile(io, a, key_path, &seed);
+        const lock_path = try std.fmt.allocPrint(a, "{s}/nox.lock", .{dir});
+        const lock_bytes = cwd.readFileAlloc(io, lock_path, a, .limited(4 * 1024 * 1024)) catch {
+            printErr("noxc sign lock: cannot read {s} (run 'noxc fetch' first)\n", .{lock_path});
+            std.process.exit(1);
+        };
+        const sig_text = try signing.signLock(a, seed, lock_bytes);
+        const sig_path = try std.fmt.allocPrint(a, "{s}/nox.lock.sig", .{dir});
+        try cwd.writeFile(io, .{ .sub_path = sig_path, .data = sig_text });
+        std.debug.print("signed {s} -> {s}\n", .{ lock_path, sig_path });
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "trust")) {
+        if (args.len < 2) {
+            std.debug.print("{s}", .{usage});
+            std.process.exit(1);
+        }
+        var pub_bytes: [32]u8 = undefined;
+        try readHexFile(io, a, args[1], &pub_bytes);
+        const fp = signing.fingerprint(pub_bytes);
+        try cwd.createDirPath(io, trusted_dir);
+        const dest = try std.fmt.allocPrint(a, "{s}/{s}.pub", .{ trusted_dir, fp });
+        const hex = std.fmt.bytesToHex(pub_bytes, .lower);
+        try cwd.writeFile(io, .{ .sub_path = dest, .data = &hex });
+        std.debug.print("trusted key {s}\n", .{fp});
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "revoke")) {
+        if (args.len < 2 or args[1].len != 32) {
+            printErr("noxc sign revoke: pass the 32-character fingerprint\n", .{});
+            std.process.exit(1);
+        }
+        const existing = cwd.readFileAlloc(io, revoked_path, a, .limited(1024 * 1024)) catch "";
+        const updated = try std.fmt.allocPrint(a, "{s}{s}\n", .{ existing, args[1] });
+        try cwd.createDirPath(io, nox_home);
+        try cwd.writeFile(io, .{ .sub_path = revoked_path, .data = updated });
+        std.debug.print("revoked {s}\n", .{args[1]});
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "verify")) {
+        const dir: []const u8 = if (args.len > 1) args[1] else ".";
+        const lock_path = try std.fmt.allocPrint(a, "{s}/nox.lock", .{dir});
+        const sig_path = try std.fmt.allocPrint(a, "{s}/nox.lock.sig", .{dir});
+        const lock_bytes = cwd.readFileAlloc(io, lock_path, a, .limited(4 * 1024 * 1024)) catch {
+            printErr("noxc sign verify: cannot read {s}\n", .{lock_path});
+            std.process.exit(1);
+        };
+        const sig_text = cwd.readFileAlloc(io, sig_path, a, .limited(4096)) catch {
+            printErr("noxc sign verify: {s} is missing (the lock file is not signed)\n", .{sig_path});
+            std.process.exit(1);
+        };
+        var trusted: std.ArrayListUnmanaged(signing.Trusted) = .empty;
+        if (cwd.openDir(io, trusted_dir, .{ .iterate = true })) |td_const| {
+            var td = td_const;
+            defer td.close(io);
+            var it = td.iterate();
+            while (try it.next(io)) |entry| {
+                if (!std.mem.endsWith(u8, entry.name, ".pub")) continue;
+                const path = try std.fmt.allocPrint(a, "{s}/{s}", .{ trusted_dir, entry.name });
+                var kb: [32]u8 = undefined;
+                try readHexFile(io, a, path, &kb);
+                try trusted.append(a, .{ .fingerprint = signing.fingerprint(kb), .key = kb });
+            }
+        } else |_| {}
+        var revoked: std.ArrayListUnmanaged([]const u8) = .empty;
+        const revoked_text = cwd.readFileAlloc(io, revoked_path, a, .limited(1024 * 1024)) catch "";
+        var lines = std.mem.splitScalar(u8, revoked_text, '\n');
+        while (lines.next()) |l| if (l.len > 0) try revoked.append(a, l);
+        const verdict = signing.verifyLock(sig_text, lock_bytes, trusted.items, revoked.items);
+        switch (verdict) {
+            .ok => std.debug.print("ok: {s} is signed by a trusted key\n", .{lock_path}),
+            .malformed => {
+                printErr("noxc sign verify: {s} is malformed\n", .{sig_path});
+                std.process.exit(1);
+            },
+            .revoked => {
+                printErr("noxc sign verify: the signing key has been revoked\n", .{});
+                std.process.exit(1);
+            },
+            .untrusted_signer => {
+                printErr("noxc sign verify: the signer is not trusted (use 'noxc sign trust <pubkey-file>' after checking the fingerprint with the publisher)\n", .{});
+                std.process.exit(1);
+            },
+            .bad_signature => {
+                printErr("noxc sign verify: the signature does not match nox.lock (the file changed after signing, or the key is wrong)\n", .{});
+                std.process.exit(1);
+            },
+        }
+        return;
+    }
+
+    std.debug.print("{s}", .{usage});
+    std.process.exit(1);
 }

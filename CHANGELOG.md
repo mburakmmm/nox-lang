@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.43]
+
+Guvenlik: guvenilmeyen kaynak icin sandbox ve `nox.lock` imzalama (TODO 7.1-7.3).
+
+### Eklendi
+
+- `noxc run --sandbox [--allow-net] [--allow-write=DIR] [--allow-read=DIR]`: derlenen programi isletim sistemi sandbox'inda calistirir (macOS `sandbox-exec`, Linux `bwrap`). Varsayilan: ag yok, yazma yalniz `$TMPDIR`, ev dizini okunamaz. Arac yoksa kisitsiz calistirmaz, hata verir. `nox.http/tls/smtp/websocket` kapali agi temiz baglanti hatasina cevirir (`NOX_SANDBOX_NO_NET`). ADR-010.
+- `noxc sign keygen|lock|trust|revoke|verify`: `nox.lock` icin Ed25519 ayrik imza, acik guven, iptal listesi, cevrimdisi dogrulama. ADR-011.
+
 ## [2.0.42]
 
 ### Eklendi

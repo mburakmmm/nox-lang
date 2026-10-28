@@ -288,7 +288,16 @@ fn androidIpv4Text(host: []const u8, port: u16, ip_storage: []u8) ?[]const u8 {
 /// dosyayı tutmaz. Sistem çözümlemesi `getaddrinfo` ile yapılır, TCP
 /// adresi IP literali olur. TLS sunucu adı çağıranın verdiği konak olarak
 /// kalır.
+/// `noxc run --sandbox` ağı kapalı başlatır (ADR-010) ve `NOX_SANDBOX_NO_NET=1` ayarlar. İşletim sistemi `connect`i zaten reddeder, ama
+/// Zig'in `std.Io` katmanı beklenmeyen `EPERM`i programcı hatası sayıp süreci düşürür; bu denetim reddi temiz bir bağlantı hatasına çevirir.
+pub fn networkDenied() bool {
+    if (builtin.os.tag == .windows or builtin.os.tag == .freestanding) return false;
+    const v = std.c.getenv("NOX_SANDBOX_NO_NET") orelse return false;
+    return v[0] == '1';
+}
+
 pub fn connectTcp(io: std.Io, host: []const u8, port: u16) !std.Io.net.Stream {
+    if (networkDenied()) return error.AccessDenied;
     if (comptime builtin.abi.isAndroid()) {
         var ip_storage: [64]u8 = undefined;
         const ip = androidIpv4Text(host, port, &ip_storage) orelse return error.DnsFailed;
@@ -346,6 +355,11 @@ fn workerThreadFn(ctx: *RequestCtx) void {
             x.done.store(true, .release);
             x.release();
         }
+    }
+
+    if (networkDenied()) {
+        ctx.failed = true;
+        return;
     }
 
     const io = sharedClientIo();

@@ -291,13 +291,13 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 
 ## Faz 7 — P2 güvenlik ve tedarik zinciri
 
-- [!] **7.1 Paket imzalama tasarımı.** (Ajan önerisi 2026-10-28, uygulanmadı: yayıncı başına ed25519 anahtarı noxpkg hesabına bağlanır, `nox.lock` imzayı ve anahtar parmak izini saklar, iptal listesi indeksle birlikte sunulur; ilk kullanımda güven (TOFU) + çevrimdışı doğrulama. Hesap altyapısı (noxpkg hesapları v2.0.28) hazır; trust root ve anahtar yenileme politikası kullanıcı kararı.) `nox.lock` commit/hash pinler ancak
+- [x] **7.1 Paket imzalama tasarımı.** (v2.0.43, kullanıcı onayladı: ADR-011 + `noxc sign keygen/lock/trust/revoke/verify`, Ed25519 ayrık imza, açık güven, iptal listesi, çevrimdışı doğrulama; birim + uçtan uca CLI testi. Açık: `fetch` imzayı zorunlu kılsın, noxpkg yayıncı anahtarını hesaba bağlasın.) (Ajan önerisi 2026-10-28: (Ajan önerisi 2026-10-28, uygulanmadı: yayıncı başına ed25519 anahtarı noxpkg hesabına bağlanır, `nox.lock` imzayı ve anahtar parmak izini saklar, iptal listesi indeksle birlikte sunulur; ilk kullanımda güven (TOFU) + çevrimdışı doğrulama. Hesap altyapısı (noxpkg hesapları v2.0.28) hazır; trust root ve anahtar yenileme politikası kullanıcı kararı.) `nox.lock` commit/hash pinler ancak
   paket imzası/audit yoktur. Trust root, key rotation, revocation ve offline
   doğrulama ADR'si gerekir.
-- [!] **7.2 Capability enforcement tasarımı.** (Ajan önerisi: önce Linux seccomp/macOS sandbox profilini `noxc run --sandbox` olarak ayrı süreç başlatıcıda dene; `extern def`e yarım mod ekleme. İşletim sistemi başına ayrı tasarım gerekir.) Plugin capability'leri bugün
+- [x] **7.2 Capability enforcement tasarımı.** (v2.0.43, kullanıcı onayladı: ADR-010; `noxc run --sandbox` OS düzeyinde uygular, `extern def`e yarım mod eklenmedi.) (Ajan önerisi: (Ajan önerisi: önce Linux seccomp/macOS sandbox profilini `noxc run --sandbox` olarak ayrı süreç başlatıcıda dene; `extern def`e yarım mod ekleme. İşletim sistemi başına ayrı tasarım gerekir.) Plugin capability'leri bugün
   consent metadata'sıdır, sandbox değildir. OS-level enforcement ayrı tasarım
   olmadan vaat edilmez.
-- [!] **7.3 Untrusted source çalışma modeli.** (Ajan önerisi: 7.2 ile aynı başlatıcı; kapsayıcı imajı + salt-okunur kök + ağsız varsayılan. Ürün yüzeyi kararı kullanıcıda.) `noxc run` tam süreç yetkisiyle
+- [x] **7.3 Untrusted source çalışma modeli.** (v2.0.43, kullanıcı onayladı: aynı başlatıcı; varsayılan ağsız + yalnız TMPDIR yazma + ev dizini okunamaz, macOS testli, Linux bwrap birim testli.) (Ajan önerisi: (Ajan önerisi: 7.2 ile aynı başlatıcı; kapsayıcı imajı + salt-okunur kök + ağsız varsayılan. Ürün yüzeyi kararı kullanıcıda.) `noxc run` tam süreç yetkisiyle
   çalışır. İstenirse container/seccomp/sandbox launcher ayrı ürün yüzeyi
   olarak tasarlanır; `extern def`e yarım “safe mode” eklenmez.
 - [~] **7.4 Registry güvenlik kapılarını genişlet.** (v2.0.39: moderasyon, "metadata onayı kod incelemesi değildir", kilit dosyası = provenance, olay müdahale adımları `docs/reference/security.md`de. Açık: otomatik tarama, yayıncı imzası, üretilmiş SBOM — 7.1 tasarımına bağlı.) Metadata approval,

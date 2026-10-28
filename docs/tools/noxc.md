@@ -20,6 +20,8 @@ normally).
 | Command | Description |
 |---|---|
 | `noxc build [options] <file.nox>` | compile to a native executable named after the file (or `-o`) |
+| `noxc sign keygen <name>`, `sign lock --key <name> [dir]`, `sign trust <pub>`, `sign revoke <fp>`, `sign verify [dir]` | Ed25519 signing of `nox.lock` ([ADR-011](../internals/adr/011-lock-signing.md)); `verify` exits 0 only for a valid signature by a trusted, non-revoked key |
+| `noxc run --sandbox [--allow-net] [--allow-write=DIR] [--allow-read=DIR] <file.nox>` | run the compiled program under an OS sandbox: no network, writes only to `$TMPDIR` ([ADR-010](../internals/adr/010-sandbox.md)); macOS `sandbox-exec`, Linux `bwrap` |
 | `noxc run [options] <file.nox> [-- args…]` | compile into `$NOX_HOME/cache/run/` (keyed by path, source contents, the `noxc` binary, `noxrt.o`, and the installed stdlib) and run; a matching cache entry is not rebuilt. Everything after `--` goes to the program (`nox.os.arg(1)`, …) |
 | `noxc check [options] <file.nox>` | parse and type-check only — fast, no code generation. Exit status 0 means "no type errors" |
 | `noxc test [name\|path …]` | run every `*_test.nox` under the current directory, or only those whose file name contains `name`, or the given directory. A compile error is a failed file; the rest still run ([Testing](testing.md)) |
