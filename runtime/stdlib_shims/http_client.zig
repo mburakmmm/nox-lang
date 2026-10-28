@@ -26,13 +26,15 @@
 //! yüzden gövde `Response.readerDecompressing` İLE `Content-Encoding`e göre
 //! ÇÖZÜLEREK okunur (düz `Response.reader`, GERÇEK DÜNYADA -- Cloudflare/
 //! GitHub/Google DAHİL -- neredeyse HER sunucuda HAM/sıkıştırılmış bayt
-//! döndürür; bu baytlar bir Nox `str`ine (NUL-sonlandırmalı, bkz. `str.zig`)
-//! kopyalandığında GÖMÜLÜ bir `\0` baytı `len()`i BOZAR ve `nox_str_free_
-//! now`ın `strlen()` tabanlı boyut hesabı `DebugAllocator`in yakaladığı bir
-//! `Invalid free` çökmesine yol açar — GERÇEKTEN gözlemlendi, bkz. plan
-//! dosyası). `containsNul`, DIŞARIDAN gelen HERHANGİ bir gövdenin (ör.
-//! standart-dışı bir sunucunun `identity` kodlamalı ama ikili içerik
-//! döndürmesi) AYNI çökmeyi tetiklememesi İÇİN son bir savunma hattıdır.
+//! döndürür). Gövde ikili de olabilir: `str` uzunluğu başlıkta tutar, gömülü `\0`
+//! ve geçersiz UTF-8 aynen kopyalanır (v2.0.31 öncesi böyle bir gövde isteği
+//! başarısız sayıyordu).
+//!
+//! **Zaman aşımı (v2.0.31):** `nox_http_request_raw`ın `timeout_ms > 0` değeri için bir
+//! bekçi iş parçacığı süre dolunca açık soketi `shutdown` eder (bkz. `Shared`). DNS çözümleme
+//! ve TCP bağlantı aşaması `std.http.Client` içinde olduğundan bu aşama bekçiyle iptal edilemez
+//! (işletim sisteminin kendi bağlantı süresiyle sınırlıdır); bağlantı kurulduktan sonraki
+//! gönderme, başlık ve gövde okuma süresi sınırlıdır.
 //!
 //! **BİLİNÇLİ kapsam dışı (ziglang/zig#19521):** bu dosya `std.http.Client`ı
 //! (dolayısıyla Zig'in KENDİ, orijinal `std.crypto.tls.Client`ını, `nox.tls`/
@@ -119,6 +121,82 @@ pub fn sharedClientIo() std.Io {
     return g_client_io_storage.io();
 }
 
+/// İstek zaman aşımı için, arka plan iş parçacığı (`workerThreadFn`) ile bekçi iş parçacığı (`watchdogThreadFn`)
+/// arasında paylaşılan küçük durum. `page_allocator` ile ayrılır (rt'den bağımsız); iki taraf da işini bitirince
+/// `release` çağırır, son çağıran serbest bırakır. Bekçi, süre dolunca açık soketi `shutdown` eder: bloklanmış okuma/yazma
+/// hata ile döner, yani zaman aşımı GERÇEK bir bağlantı iptalidir (istek bittikten sonra süre ölçen sahte bir kontrol değil).
+const Shared = struct {
+    lock: asap.SpinLock = .{},
+    /// Açık bağlantının soket tutamacı (`handle_set` iken geçerli); `lock` altında okunur/yazılır.
+    handle: usize = 0,
+    handle_set: bool = false,
+    done: std.atomic.Value(bool) = .init(false),
+    timed_out: std.atomic.Value(bool) = .init(false),
+    refs: std.atomic.Value(u32) = .init(2),
+
+    fn release(self: *Shared) void {
+        if (self.refs.fetchSub(1, .acq_rel) == 1) std.heap.page_allocator.destroy(self);
+    }
+
+    fn setHandle(self: *Shared, h: usize) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        self.handle = h;
+        self.handle_set = true;
+    }
+
+    /// Bağlantı kapanmadan ÖNCE çağrılır: bekçinin kapanmış (belki yeniden kullanılmış) bir tutamaca dokunmasını önler.
+    fn clearHandle(self: *Shared) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        self.handle_set = false;
+    }
+
+    fn abortConnection(self: *Shared) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        if (!self.handle_set) return;
+        if (builtin.os.tag == .windows) {
+            const w = struct {
+                extern "ws2_32" fn shutdown(s: usize, how: i32) callconv(.c) i32;
+            };
+            _ = w.shutdown(self.handle, 2);
+        } else {
+            _ = std.c.shutdown(@intCast(self.handle), 2);
+        }
+    }
+};
+
+fn sleepMs(ms: u32) void {
+    if (builtin.os.tag == .windows) {
+        winSleep(ms);
+        return;
+    }
+    const ts: posix.timespec = .{ .sec = @divTrunc(ms, 1000), .nsec = @as(isize, @intCast(ms % 1000)) * std.time.ns_per_ms };
+    _ = std.c.nanosleep(&ts, null);
+}
+
+fn socketHandleToUsize(h: anytype) usize {
+    return switch (@typeInfo(@TypeOf(h))) {
+        .pointer => @intFromPtr(h),
+        else => @intCast(h),
+    };
+}
+
+fn watchdogThreadFn(shared: *Shared, timeout_ms: u64) void {
+    defer shared.release();
+    var elapsed: u64 = 0;
+    while (!shared.done.load(.acquire)) {
+        sleepMs(5);
+        elapsed += 5;
+        if (elapsed >= timeout_ms) {
+            shared.timed_out.store(true, .release);
+            // Bağlantı henüz kurulmamış olabilir (DNS/connect aşaması): tutamaç belirince tekrar denenir.
+            shared.abortConnection();
+        }
+    }
+}
+
 const RequestCtx = struct {
     allocator: std.mem.Allocator,
     url: [:0]const u8,
@@ -131,10 +209,15 @@ const RequestCtx = struct {
     request_headers: []const std.http.Header,
     write_fd: posix.fd_t,
 
+    /// > 0 ise bekçi iş parçacığı bu süre (ms) dolunca bağlantıyı iptal eder (bkz. `Shared`).
+    shared: ?*Shared = null,
+
     status: u16 = 0,
     response_body: []u8 = &.{},
     response_headers: []std.http.Header = &.{},
     failed: bool = false,
+    /// `failed` iken: 1 = zaman aşımı, 2 = diğer (DNS/bağlantı/protokol/gövde okuma).
+    err_kind: u8 = 0,
 
     fn destroyOwned(self: *RequestCtx) void {
         self.allocator.free(self.url);
@@ -255,6 +338,15 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         signalSelfPipe(write_fd);
         closeFd(write_fd);
     }
+    // Bu defer, yukarıdakinden ÖNCE çalışır (LIFO): sinyalden sonra `ctx`ye dokunulmaz.
+    defer {
+        const sh = ctx.shared;
+        if (ctx.failed) ctx.err_kind = if (sh) |x| (if (x.timed_out.load(.acquire)) @as(u8, 1) else 2) else 2;
+        if (sh) |x| {
+            x.done.store(true, .release);
+            x.release();
+        }
+    }
 
     const io = sharedClientIo();
 
@@ -303,6 +395,11 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         return;
     };
     defer req.deinit();
+    // Zaman aşımı bekçisi için açık soketi yayınla; bağlantı kapanmadan ÖNCE geri al (LIFO: req.deinit'ten önce çalışır).
+    if (ctx.shared) |sh| {
+        if (req.connection) |conn| sh.setHandle(socketHandleToUsize(conn.stream_reader.stream.socket.handle));
+    }
+    defer if (ctx.shared) |sh| sh.clearHandle();
 
     if (ctx.body) |b| {
         req.transfer_encoding = .{ .content_length = b.len };
@@ -371,6 +468,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
             ctx.allocator.free(header.value);
         }
         if (ctx.response_headers.len > 0) ctx.allocator.free(ctx.response_headers);
+        ctx.response_headers = &.{};
     };
 
     var transfer_buffer: [1024]u8 = undefined;
@@ -405,23 +503,10 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     };
     const body: []u8 = body_out.toOwnedSlice() catch &.{};
 
-    // İkinci savunma hattı (bkz. plan dosyası) — `str` NUL-sonlandırmalı VE
-    // uzunluğunu SAKLAMAZ (bkz. `str.zig`nin modül belge notu); gövdede
-    // GÖMÜLÜ bir `\0` baytı (gzip/deflate çözümünden SONRA bile, standart-dışı
-    // bir sunucunun `identity` kodlamalı ikili içerik döndürmesi GİBİ nadir
-    // durumlarda) `len()`i bozar VE serbest bırakmada boyut/işaretçi
-    // uyuşmazlığına (`Invalid free`) yol açar — burada TEMİZ reddedilir.
-    if (containsNul(body)) {
-        ctx.allocator.free(body);
-        ctx.failed = true;
-        return;
-    }
+    // Gövde ikili olabilir (gömülü `\0`, geçersiz UTF-8): `str` uzunluğu başlıkta taşıdığı için
+    // `nox_str_from_bytes` hepsini aynen kopyalar; gövde reddedilmez.
     ctx.response_body = body;
     headers_committed = true;
-}
-
-fn containsNul(s: []const u8) bool {
-    return std.mem.indexOfScalar(u8, s, 0) != null;
 }
 
 /// Güvenlik bulgusu M-1 (bkz. güvenlik raporu) — `std.http`nin KENDİ
@@ -486,6 +571,9 @@ fn doRequest(
     url: ?[*:0]const u8,
     body: ?[*:0]const u8,
     headers_dict: ?*anyopaque,
+    timeout_ms: i64,
+    /// `true` ise başarısız bir istek de (`ok == 0`, `error_kind` ile) tutamaç olarak döner; `false` ise `null` (eski davranış).
+    keep_failed: bool,
 ) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const gpa = state.allocator();
@@ -526,7 +614,33 @@ fn doRequest(
         .write_fd = fds[1],
     };
 
+    if (timeout_ms > 0) {
+        const shared = std.heap.page_allocator.create(Shared) catch {
+            ctx.destroyOwned();
+            gpa.destroy(ctx);
+            closeFd(fds[0]);
+            closeFd(fds[1]);
+            return null;
+        };
+        shared.* = .{};
+        const watchdog = std.Thread.spawn(.{}, watchdogThreadFn, .{ shared, @as(u64, @intCast(timeout_ms)) }) catch {
+            std.heap.page_allocator.destroy(shared);
+            ctx.destroyOwned();
+            gpa.destroy(ctx);
+            closeFd(fds[0]);
+            closeFd(fds[1]);
+            return null;
+        };
+        watchdog.detach();
+        ctx.shared = shared;
+    }
+
     const thread = std.Thread.spawn(.{}, workerThreadFn, .{ctx}) catch {
+        if (ctx.shared) |sh| {
+            // İşçi hiç başlamadı: kendi payını bırak, bekçi `done` görünce çıkıp kendi payını bırakır.
+            sh.done.store(true, .release);
+            sh.release();
+        }
         ctx.destroyOwned();
         gpa.destroy(ctx);
         closeFd(fds[0]);
@@ -549,7 +663,7 @@ fn doRequest(
     }
     closeFd(fds[0]);
 
-    if (ctx.failed) {
+    if (ctx.failed and !keep_failed) {
         ctx.destroyOwned();
         gpa.destroy(ctx);
         return null;
@@ -557,12 +671,53 @@ fn doRequest(
     return ctx;
 }
 
+fn parseMethod(name: []const u8) ?std.http.Method {
+    const table = [_]struct { name: []const u8, method: std.http.Method }{
+        .{ .name = "GET", .method = .GET },
+        .{ .name = "POST", .method = .POST },
+        .{ .name = "PUT", .method = .PUT },
+        .{ .name = "PATCH", .method = .PATCH },
+        .{ .name = "DELETE", .method = .DELETE },
+        .{ .name = "HEAD", .method = .HEAD },
+        .{ .name = "OPTIONS", .method = .OPTIONS },
+    };
+    for (table) |e| if (std.mem.eql(u8, name, e.name)) return e.method;
+    return null;
+}
+
 export fn nox_http_get_raw(rt: ?*anyopaque, url: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return doRequest(rt, .GET, url, null, headers);
+    return doRequest(rt, .GET, url, null, headers, 0, false);
 }
 
 export fn nox_http_post_raw(rt: ?*anyopaque, url: ?[*:0]const u8, body: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return doRequest(rt, .POST, url, body, headers);
+    return doRequest(rt, .POST, url, body, headers, 0, false);
+}
+
+/// Genel istek: `method` GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS (büyük harf) olmalıdır; bilinmeyen ad sessizce GET'e
+/// DÜŞMEZ, `null` döner. `timeout_ms > 0` ise bağlantı kurulduktan sonra gerçek bir zaman aşımı uygulanır (bkz. modül
+/// notu). Başarısız istek de bir tutamaç döner (`nox_http_response_ok == 0`, `nox_http_response_error_kind` ile neden).
+/// `has_body != 0` yalnızca POST/PUT/PATCH ile geçerlidir; GET/HEAD/DELETE/OPTIONS + gövde `null` döner.
+export fn nox_http_request_raw(
+    rt: ?*anyopaque,
+    method: ?[*:0]const u8,
+    url: ?[*:0]const u8,
+    body: ?[*:0]const u8,
+    has_body: i32,
+    headers: ?*anyopaque,
+    timeout_ms: i64,
+) callconv(.c) ?*anyopaque {
+    const m = parseMethod(str_mod.nox_str_slice(method orelse return null)) orelse return null;
+    // `std.http` yalnızca POST/PUT/PATCH'te gövde gönderebilir; diğer metodlarda gövde SESSİZCE düşürülmez, istek reddedilir.
+    if (has_body != 0 and !m.requestHasBody()) return null;
+    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true);
+}
+
+/// 0 = başarılı, 1 = zaman aşımı, 2 = diğer hata, 3 = geçersiz istek (tutamaç `null`: bilinmeyen metod, gövdesiz metodda gövde,
+/// bozuk başlık, tahsis hatası).
+export fn nox_http_response_error_kind(h: ?*anyopaque) callconv(.c) i64 {
+    const ctx: *RequestCtx = @ptrCast(@alignCast(h orelse return 3));
+    if (!ctx.failed) return 0;
+    return ctx.err_kind;
 }
 
 export fn nox_http_response_ok(h: ?*anyopaque) callconv(.c) i32 {
@@ -958,4 +1113,150 @@ test "Güvenlik M-1: copyHeaders normal (CR/LF'siz) başlıklarda HÂLÂ doğru 
     try std.testing.expectEqual(@as(usize, 1), headers.len);
     try std.testing.expectEqualStrings("X-Normal", headers[0].name);
     try std.testing.expectEqualStrings("deger1", headers[0].value);
+}
+
+// ---- v2.0.31: genel metod, gerçek zaman aşımı, ikili gövde ---------------
+
+const CustomMode = enum { echo_method, stall, binary };
+
+/// Tek bağlantı kabul edip isteği (başlık sonuna kadar) okur; `mode`a göre yanıt verir. Yalnızca POSIX (testler Windows'ta atlanır).
+fn testServeCustom(listen_fd: posix.fd_t, mode: CustomMode) void {
+    const conn = acceptWithTimeout(listen_fd, 15_000);
+    if (conn < 0) return;
+    defer _ = std.c.close(conn);
+
+    var req_buf: [4096]u8 = undefined;
+    var total: usize = 0;
+    while (total < req_buf.len) {
+        const n = std.c.read(conn, req_buf[total..].ptr, req_buf.len - total);
+        if (n <= 0) break;
+        total += @intCast(n);
+        if (std.mem.indexOf(u8, req_buf[0..total], "\r\n\r\n") != null) break;
+    }
+    const head = req_buf[0..total];
+
+    switch (mode) {
+        .stall => {
+            // İstemci bağlantıyı iptal edene (EOF) kadar yanıt vermeden bekle; üst sınır `read` blokajı + istemci kapanışıdır.
+            var scratch: [64]u8 = undefined;
+            while (true) {
+                const n = std.c.read(conn, &scratch, scratch.len);
+                if (n <= 0) break;
+            }
+        },
+        .echo_method => {
+            const method = head[0 .. std.mem.indexOfScalar(u8, head, ' ') orelse 0];
+            var out: [256]u8 = undefined;
+            const is_head = std.mem.eql(u8, method, "HEAD");
+            const text = std.fmt.bufPrint(&out, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nX-Method: {s}\r\nConnection: close\r\n\r\n{s}", .{ method.len, method, if (is_head) "" else method }) catch return;
+            _ = std.c.write(conn, text.ptr, text.len);
+        },
+        .binary => {
+            const body = [_]u8{ 0x00, 0xff, 0x80, 'a', 0x00 };
+            const header = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n";
+            _ = std.c.write(conn, header.ptr, header.len);
+            _ = std.c.write(conn, &body, body.len);
+        },
+    }
+}
+
+fn testUrl(rt: ?*anyopaque, port: u16, buf: []u8) !?[*:0]u8 {
+    const slice = try std.fmt.bufPrint(buf, "http://127.0.0.1:{d}/x", .{port});
+    return str_mod.nox_str_from_bytes(rt, slice);
+}
+
+test "nox_http_request_raw: PUT/PATCH/DELETE/OPTIONS/HEAD gerçek metodla gider, bilinmeyen metod reddedilir" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const methods = [_][]const u8{ "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD" };
+    for (methods) |m| {
+        var port: u16 = 0;
+        const listen_fd = try testListenerOn127001(&port);
+        defer closeFd(listen_fd);
+        const server = try std.Thread.spawn(.{}, testServeCustom, .{ listen_fd, CustomMode.echo_method });
+        defer server.join();
+
+        var url_buf: [64]u8 = undefined;
+        const url = (try testUrl(rt, port, &url_buf)) orelse return error.AllocFailed;
+        defer str_mod.nox_str_release(rt, url);
+        const method = str_mod.nox_str_from_bytes(rt, m) orelse return error.AllocFailed;
+        defer str_mod.nox_str_release(rt, method);
+        const body = str_mod.nox_str_from_bytes(rt, "payload") orelse return error.AllocFailed;
+        defer str_mod.nox_str_release(rt, body);
+
+        const sends_body = std.mem.eql(u8, m, "PUT") or std.mem.eql(u8, m, "PATCH");
+        if (!sends_body) try std.testing.expect(nox_http_request_raw(rt, method, url, body, 1, null, 0) == null);
+        const resp = nox_http_request_raw(rt, method, url, body, if (sends_body) 1 else 0, null, 0) orelse return error.RequestFailed;
+        defer nox_http_response_free(resp);
+        try std.testing.expectEqual(@as(i32, 1), nox_http_response_ok(resp));
+        try std.testing.expectEqual(@as(i64, 200), nox_http_response_status(resp));
+        const got = nox_http_response_body(rt, resp) orelse return error.NoBody;
+        defer str_mod.nox_str_release(rt, got);
+        if (std.mem.eql(u8, m, "HEAD")) {
+            try std.testing.expectEqualStrings("", str_mod.nox_str_slice(got));
+        } else {
+            try std.testing.expectEqualStrings(m, str_mod.nox_str_slice(got));
+        }
+    }
+
+    const bad = str_mod.nox_str_from_bytes(rt, "FETCH") orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, bad);
+    const url = str_mod.nox_str_from_bytes(rt, "http://127.0.0.1:1/") orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, url);
+    try std.testing.expect(nox_http_request_raw(rt, bad, url, null, 0, null, 0) == null);
+}
+
+test "nox_http_request_raw: sessiz sunucuda timeout_ms gerçek zaman aşımı verir (error_kind 1), bağlantı iptal edilir" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer closeFd(listen_fd);
+    const server = try std.Thread.spawn(.{}, testServeCustom, .{ listen_fd, CustomMode.stall });
+    defer server.join();
+
+    var url_buf: [64]u8 = undefined;
+    const url = (try testUrl(rt, port, &url_buf)) orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, url);
+    const method = str_mod.nox_str_from_bytes(rt, "GET") orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, method);
+
+    var t0: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &t0);
+    const resp = nox_http_request_raw(rt, method, url, null, 0, null, 300) orelse return error.RequestFailed;
+    defer nox_http_response_free(resp);
+    var t1: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &t1);
+    const elapsed_ms: i64 = (t1.sec - t0.sec) * 1000 + @divTrunc(t1.nsec - t0.nsec, 1_000_000);
+
+    try std.testing.expectEqual(@as(i32, 0), nox_http_response_ok(resp));
+    try std.testing.expectEqual(@as(i64, 1), nox_http_response_error_kind(resp));
+    try std.testing.expect(elapsed_ms >= 250);
+    try std.testing.expect(elapsed_ms < 5000);
+}
+
+test "nox_http_request_raw: ikili gövde (gömülü NUL, 0x80+ baytlar) reddedilmez, aynen döner" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer closeFd(listen_fd);
+    const server = try std.Thread.spawn(.{}, testServeCustom, .{ listen_fd, CustomMode.binary });
+    defer server.join();
+
+    var url_buf: [64]u8 = undefined;
+    const url = (try testUrl(rt, port, &url_buf)) orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, url);
+
+    const resp = nox_http_get_raw(rt, url, null) orelse return error.RequestFailed;
+    defer nox_http_response_free(resp);
+    const got = nox_http_response_body(rt, resp) orelse return error.NoBody;
+    defer str_mod.nox_str_release(rt, got);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0xff, 0x80, 'a', 0x00 }, str_mod.nox_str_slice(got));
 }

@@ -29141,3 +29141,11 @@ Mobil sandbox kökleri artık `threadlocal` bir işaretçiyle seçilmez (AGENTS 
 `nox.url.parse` `[` ile başlayan host'ta eşleşen `]`dan sonraki `:`ı port ayırıcı sayar; `host` köşeli parantezlerle kalır. `int()`/`float()` ayrıştırması baştaki ve sondaki `" \t\n\r\x0b\x0c"` karakterlerini atar. `checkBinary`, `and` için sol operandın `collectNarrows(sol, true)`, `or` için `collectNarrows(sol, false)` sonucunu yalnızca sağ operand denetlenirken uygular; ifade bitince geri alır.
 
 Parser `\xHH` kaçışında tam iki onaltılık basamak ister. `\x80`–`\xFF` kabul edilmez, çünkü tek bir ham bayt `str`in UTF-8 değişmezini bozar. Gömülü `\x00` desteklenir (`str` uzunluğu başlıkta tutulur). QBE string verisinde `\x00`–`\x1f` ve `\x7f` üç basamaklı sekizlik kaçışla yazılır; onaltılık `\xNN` bitişik basamağı yuttuğu için kullanılmaz.
+
+## 3.312 `nox.http` istemcisi: genel metod, zaman aşımı, ikili gövde (v2.0.31)
+
+`nox_http_request_raw(rt, method, url, body, has_body, headers, timeout_ms)` yedi metodu kabul eder; bilinmeyen ad ve gövdesiz metodda (GET/HEAD/DELETE/OPTIONS) gövde `null` döner (`error_kind == 3`). `std.http` yalnızca POST/PUT/PATCH'te gövde gönderebilir; gövde sessizce düşürülmez. Başarısız istek bu girişte tutamaç olarak döner (`ok == 0`, `nox_http_response_error_kind`: 1 zaman aşımı, 2 diğer, 3 geçersiz istek); eski `get_raw/post_raw` `null` dönmeye devam eder.
+
+`timeout_ms > 0` için `Shared` (page_allocator, iki referans) ile bir bekçi iş parçacığı başlar. İşçi bağlantı açılınca soket tutamacını `Shared`e yazar ve `req.deinit` öncesinde geri alır; bekçi süre dolunca kilit altında `shutdown(RDWR)` çağırır. Bloklanmış okuma hata ile döner ve istek `err_kind = 1` ile biter. `std.http.Client` connect aşamasında zaman aşımı seçeneği sunmadığından DNS/TCP connect bu mekanizmayla iptal edilemez.
+
+Yanıt gövdesindeki `\0` artık isteği başarısız saymaz: `str` uzunluğu başlıkta taşır (§str ABI), `nox_str_from_bytes` baytları aynen kopyalar.

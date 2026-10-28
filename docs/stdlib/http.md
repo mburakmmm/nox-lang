@@ -45,8 +45,11 @@ What a handler returns and what the client functions return.
 |---|---|
 | `get(url, headers)` | issues a GET and returns the `HttpResponse`; `http://` and `https://` are supported |
 | `post(url, body, headers)` | issues a POST with `body` |
+| `put(url, body, headers)`, `patch(url, body, headers)` | PUT / PATCH with `body` |
+| `delete(url, headers)`, `head(url, headers)`, `options(url, headers)` | bodyless requests |
+| `request(method, url, body, headers, timeout_ms=0)` | any of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; optional timeout |
 
-`headers` are *added* to the request (the client also sends its own `Host`, `User-Agent`, `Accept-Encoding` …). Redirects are followed, gzip/deflate response bodies are decoded
+`headers` are *added* to the request (the client also sends its own `Host`, `User-Agent`, `Accept-Encoding` …). Redirects are **not** followed: a 3xx response is returned as it is, so you decide whether to follow `Location` (and whether to forward `Authorization`). gzip/deflate response bodies are decoded
 automatically. A non-2xx status is **not** an error: inspect `status`. `HttpError` is raised when the request could not be made at all (connection refused, DNS failure, TLS failure).
 
 ```nox
@@ -67,6 +70,21 @@ print(fetch("http://127.0.0.1:1/"))
 
 ```output
 unreachable
+```
+
+### Methods, timeouts and binary bodies
+
+`request` accepts exactly `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` and `OPTIONS` (upper case). Any other name raises `HttpError`; it is never turned into a GET. A request body
+can only be sent with `POST`, `PUT` and `PATCH`.
+
+`timeout_ms > 0` limits the time spent sending the request and reading the response once the connection is open: when it runs out the connection is aborted and `HttpTimeoutError`
+(a subclass of `HttpError`) is raised. DNS resolution and the TCP connect are bounded by the operating system, not by `timeout_ms`.
+
+A response body may be binary. `resp.body` keeps every byte (including `\x00` and bytes that are not valid UTF-8); `nox.bytes.from_str(resp.body)` copies them into a `Buffer`.
+
+```text
+r: HttpResponse = nox.http.request("PUT", "http://127.0.0.1:8080/items/1", "{\"n\": 2}", {"Content-Type": "application/json"}, 5000)
+png: Buffer = nox.bytes.from_str(nox.http.get("http://127.0.0.1:8080/logo.png", {}).body)
 ```
 
 ## Server

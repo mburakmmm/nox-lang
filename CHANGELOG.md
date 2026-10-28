@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.31]
+
+`nox.http` istemcisi: genel metod, gerçek zaman aşımı, ikili gövde (Nova geri bildirimi N.1–N.3, N.5).
+
+### Eklendi
+
+- `nox.http.request(method, url, body, headers, timeout_ms=0)` ve `put`/`patch`/`delete`/`head`/`options`. Bilinmeyen metod `HttpError` verir; gövde yalnızca POST/PUT/PATCH ile gönderilir.
+- Gerçek istek zaman aşımı: `timeout_ms > 0` iken süre dolunca bağlantı `shutdown` ile iptal edilir ve `HttpTimeoutError` (HttpError alt sınıfı) fırlar. DNS/TCP bağlantı aşaması OS süresiyle sınırlıdır.
+- `nox.bytes.from_str(s) -> Buffer` (ikili HTTP gövdesi için: `from_str(resp.body)`).
+
+### Düzeltildi
+
+- Gövdesinde `\0` bulunan (ikili) yanıtlar artık isteği başarısız saymıyor; `resp.body` bayt-doğru (gömülü NUL, geçersiz UTF-8) döner.
+- `docs/stdlib/http.md` istemcinin yönlendirmeleri izlediğini söylüyordu; istemci izlemez (3xx olduğu gibi döner). Belge düzeltildi.
+
 ## [2.0.30]
 
 Nova (HTTP istemci çerçevesi) geri bildirimlerinden dil/stdlib düzeltmeleri.

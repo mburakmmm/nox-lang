@@ -289,12 +289,9 @@ test "nox.http.get: gzip Content-Encoding dogru cozulur (Duzeltme 1 — onceden 
     try expectGolden(source, "200\nmerhaba sikistirilmis dunya\n");
 }
 
-// Düzeltme 2 (bkz. plan dosyası): `identity` kodlamalı ama gövdesinde HAM
-// bir `\0` baytı bulunan bir yanıt, sessizce bir Nox `str`ine kopyalanıp
-// (`str`, `strlen()` tabanlı boyut hesabı YÜZÜNDEN gömülü NUL'a GÜVENSİZ,
-// bkz. `str.zig`nin modül belge notu) `Invalid free` çökmesine yol AÇMAK
-// yerine TEMİZ bir `HttpError` olarak reddedilmeli.
-test "nox.http.get: govdede gomulu NUL bayti varsa temiz HttpError (Duzeltme 2 — sessiz heap bozulmasi degil)" {
+// Düzeltme 2 (eski): gövdede HAM bir `\0` bulunan yanıt `strlen()` tabanlı `str` yüzünden reddediliyordu. `str` artık
+// uzunluğu başlıkta taşıdığından (v1.18.0 ABI) gövde reddedilmez ve bayt-doğru döner (v2.0.31).
+test "nox.http.get: govdede gomulu NUL bayti varsa gövde reddedilmez, bayt-dogru doner (v2.0.31; str uzunlugu basliktadir)" {
     const allocator = std.testing.allocator;
 
     const body_with_nul = "onc" ++ [_]u8{0} ++ "esi";
@@ -319,11 +316,12 @@ test "nox.http.get: govdede gomulu NUL bayti varsa temiz HttpError (Duzeltme 2 �
         \\try:
         \\    resp: nox_http_HttpResponse = nox.http.get("http://127.0.0.1:{d}/hello", headers)
         \\    print(resp.status)
+        \\    print(len(resp.body))
         \\except nox_http_HttpError as e:
         \\    print("hata yakalandi")
         \\
     , .{port});
     defer allocator.free(source);
 
-    try expectGolden(source, "hata yakalandi\n");
+    try expectGolden(source, "200\n7\n");
 }

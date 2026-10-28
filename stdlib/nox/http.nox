@@ -1,6 +1,10 @@
 class HttpError(Exception):
     pass
 
+# `request(..., timeout_ms)` süre dolduğunda fırlatır (bağlantı gerçekten iptal edilir); `except HttpError` bunu da yakalar.
+class HttpTimeoutError(HttpError):
+    pass
+
 class HttpResponse:
     def __init__(self: HttpResponse, status: int, body: str, headers: dict[str, str]) -> None:
         self.status = status
@@ -29,6 +33,8 @@ class HttpRequest:
 
 extern def nox_http_get_raw(url: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_post_raw(url: str, body: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_request_raw(method: str, url: str, body: str, has_body: int, headers: dict[str, str], timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_response_error_kind(h: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_response_ok(h: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_response_status(h: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_response_body(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -109,3 +115,41 @@ def post(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
     resp: HttpResponse = HttpResponse(status, resp_body, nox_http_response_headers(h))
     nox_http_response_free(h)
     return resp
+
+# Genel HTTP isteği. `method`: GET, POST, PUT, PATCH, DELETE, HEAD veya OPTIONS (büyük harf); başka bir ad HttpError verir,
+# sessizce GET'e dönüşmez. Gövde yalnızca POST/PUT/PATCH ile gönderilebilir. `timeout_ms > 0` ise bağlantı kurulduktan sonraki
+# gönderme/okuma bu süreyi aşarsa bağlantı iptal edilir ve HttpTimeoutError fırlar (DNS ve TCP bağlantı aşaması işletim
+# sisteminin kendi süresiyle sınırlıdır). `timeout_ms = 0`: sınırsız.
+def request(method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 0) -> HttpResponse:
+    has_body: int = 0
+    if method == "POST" or method == "PUT" or method == "PATCH":
+        has_body = 1
+    h: ptr = nox_http_request_raw(method, url, body, has_body, headers, timeout_ms)
+    if nox_http_response_ok(h) == 0:
+        kind: int = nox_http_response_error_kind(h)
+        nox_http_response_free(h)
+        if kind == 3:
+            raise HttpError("invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): " + method + " " + url)
+        if kind == 1:
+            raise HttpTimeoutError("request timed out: " + method + " " + url)
+        raise HttpError("request failed: " + method + " " + url)
+    status: int = nox_http_response_status(h)
+    resp_body: str = nox_http_response_body(h)
+    resp: HttpResponse = HttpResponse(status, resp_body, nox_http_response_headers(h))
+    nox_http_response_free(h)
+    return resp
+
+def put(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
+    return request("PUT", url, body, headers)
+
+def patch(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
+    return request("PATCH", url, body, headers)
+
+def delete(url: str, headers: dict[str, str]) -> HttpResponse:
+    return request("DELETE", url, "", headers)
+
+def head(url: str, headers: dict[str, str]) -> HttpResponse:
+    return request("HEAD", url, "", headers)
+
+def options(url: str, headers: dict[str, str]) -> HttpResponse:
+    return request("OPTIONS", url, "", headers)

@@ -1,0 +1,17 @@
+# nox.bytes — `str` ile ham bayt arabelleği arasındaki köprü (yalnızca hosted).
+#
+# `str` UTF-8 tutar ama uzunluğu başlıkta taşıdığı için gömülü `\x00` ve geçersiz UTF-8 baytlarını da aynen saklar (ikili
+# HTTP gövdesi, dosya içeriği). `from_str` bu baytları bir `Buffer`a kopyalar. Bu modül `nox.buffer`a eklenmedi: `buffer`
+# serbest-duran (freestanding) çekirdekte de kullanılır ve `nox.strings`in runtime sembollerine bağlanmamalıdır.
+import nox.strings
+import nox.buffer
+from nox.buffer import Buffer
+
+def from_str(s: str) -> Buffer:
+    n: int = nox.strings.byte_len(s)
+    out: Buffer = Buffer(n)
+    i: int = 0
+    while i < n:
+        out.set(i, u8(nox.strings.byte_at(s, i)))
+        i = i + 1
+    return out

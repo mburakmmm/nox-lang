@@ -61,6 +61,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.bits`](bits.md) | rotations, byte swaps, endianness, single-bit helpers |
 | [`nox.buffer`](buffer.md) | fixed-size byte buffers and spans |
 | [`nox.binary`](binary.md) | cursor-based binary readers and writers |
+| [`nox.bytes`](bytes.md) | `str` to `Buffer` byte conversion (hosted) |
 
 ### Files, processes and the environment
 

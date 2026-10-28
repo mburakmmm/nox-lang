@@ -1,0 +1,46 @@
+import nox.http
+from nox.http import HttpResponse, HttpError, HttpTimeoutError
+
+h: dict[str, str] = {}
+
+# Bilinmeyen metod sessizce GET'e dönüşmez
+try:
+    r1: HttpResponse = nox.http.request("FETCH", "http://127.0.0.1:1/", "", h)
+    print("unexpected")
+except HttpError:
+    print("unknown method rejected")
+
+# Gövde yalnızca POST/PUT/PATCH ile gönderilir; DELETE sarmalayıcısı gövdesizdir ve kapalı porta bağlanamaz
+try:
+    r2: HttpResponse = nox.http.delete("http://127.0.0.1:1/x", h)
+    print("unexpected")
+except HttpError:
+    print("delete connect failed")
+
+# HttpTimeoutError, HttpError'ın alt sınıfıdır (kapalı porta bağlanma zaman aşımı değil, bağlantı hatasıdır)
+try:
+    r3: HttpResponse = nox.http.request("PUT", "http://127.0.0.1:1/x", "data", h, 200)
+    print("unexpected")
+except HttpTimeoutError:
+    print("timeout")
+except HttpError:
+    print("put connect failed")
+
+# CR/LF içeren başlık bütün isteği reddeder
+bad: dict[str, str] = {}
+bad["X-Bad"] = "a\r\nSet-Cookie: x=1"
+try:
+    r4: HttpResponse = nox.http.request("GET", "http://127.0.0.1:1/", "", bad)
+    print("unexpected")
+except HttpError:
+    print("bad header rejected")
+
+# İkili gövde: gömülü NUL aynen korunur, nox.bytes.from_str ham baytları verir
+import nox.bytes
+from nox.buffer import Buffer
+bin_resp: HttpResponse = HttpResponse(200, "a\x00b\x7f", h)
+bb: Buffer = nox.bytes.from_str(bin_resp.body)
+print(bb.len())
+print(bb.get(0))
+print(bb.get(1))
+print(bb.get(3))

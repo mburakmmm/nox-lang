@@ -136,19 +136,27 @@ bağımsızdır (embed ABI/allocator durumuna dokunmaz). Faz 1'in "her şeyden �
 kuralı bu istisna için kullanıcı kararıyla aşıldı. Her madde ÖNCE kodda doğrulanır
 (belgedeki iddialar bayat çıkabiliyor); yanlış/bayat iddia olduğu gibi kapatılır.
 
-- [ ] **N.1 Genel HTTP metodu: `nox.http.request(method, url, body, headers)`.**
+- [x] **N.1 Genel HTTP metodu: `nox.http.request(method, url, body, headers)`.**
   Zig `doRequest` zaten tüm metodları çalıştırabiliyor; yalnız GET/POST export
   ediliyor. `nox_http_request_raw` + `request` + `put/patch/delete/head/options`
   sarmalayıcıları; bilinmeyen metod adı sessizce GET'e düşmez, `HttpError` verir.
-- [ ] **N.2 Gerçek istek zaman aşımı.** `timeout_ms` soket seviyesinde
+  (v2.0.31: `nox_http_request_raw` + `request/put/patch/delete/head/options`; gövde yalnızca
+  POST/PUT/PATCH — `std.http` kısıtı, diğerlerinde gövde `HttpError`.)
+- [x] **N.2 Gerçek istek zaman aşımı.** `timeout_ms` soket seviyesinde
   (`SO_RCVTIMEO`/`SO_SNDTIMEO` veya poll'lu bekleme); dönüşten sonra süre ölçen
   sahte timeout YASAK. Zaman aşımı ayrı bir `HttpTimeoutError` ile bildirilir.
-- [ ] **N.3 İkili (bayt) yanıt gövdesi.** `str` NUL-sonlandırmalı olduğundan
+  (v2.0.31: bekçi iş parçacığı süre dolunca açık soketi `shutdown` eder; DNS/TCP
+  connect aşaması `std.http.Client` içinde olduğundan OS süresiyle sınırlı kalır —
+  N.2b olarak açık, `std.http.Client` fork'u gerektirir.)
+- [x] **N.3 İkili (bayt) yanıt gövdesi.** `str` NUL-sonlandırmalı olduğundan
   gömülü `\0` kesiliyor/boyut uyuşmazlığı doğuruyor. Önce kodda doğrula; sonra
   `nox.buffer`/bayt tabanlı ikinci erişimci. Gzip/PNG/protobuf fixture'ı ile test.
+  (v2.0.31: `str` gömülü NUL/geçersiz UTF-8'i zaten taşıyor; asıl hata gövdede NUL varsa
+  isteğin BAŞARISIZ sayılmasıydı — kaldırıldı; `nox.bytes.from_str(s) -> Buffer` eklendi.
+  Zig testi + gerçek sunucuyla iki-backend doğrulaması.)
 - [!] **N.4 Akışlı indirme/yükleme (streaming).** Yeni API yüzeyi + handle ömrü
   tasarımı gerekir (N.3'ten sonra kısa tasarım sunulacak).
-- [!] **N.5 Yönlendirme politikası.** Belgedeki iddia büyük olasılıkla BAYAT:
+- [x] **N.5 Yönlendirme politikası.** (v2.0.31: iddia BAYAT çıktı, kapatıldı; docs'taki "yönlendirmeler izlenir" cümlesi YANLIŞTI, düzeltildi.) Belgedeki iddia büyük olasılıkla BAYAT:
   istemci `redirect_behavior = .unhandled` ile hiç yönlendirme takip etmez (3xx
   olduğu gibi döner), dolayısıyla çapraz-origin başlık sızıntısı yok. Doğrula ve
   kapat; `max_redirects` takibi YENİ bir özelliktir (Authorization/Cookie'yi
