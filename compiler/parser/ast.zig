@@ -271,8 +271,18 @@ pub const FieldDecl = struct {
     line: u32 = 0,
 };
 
+/// Sınıf düzeyi sabit: `LIMIT: int = 5` (yalnızca sınıf gövdesinde, değer bir sabit literal). Çalışma zamanında alan DEĞİLDİR; `Sınıf.LIMIT`
+/// ve `self.LIMIT` okumaları checker'da literal değere yeniden yazılır (derleme zamanı katlama).
+pub const ConstDecl = struct {
+    name: []const u8,
+    type_expr: TypeExpr,
+    value: Expr,
+    line: u32 = 0,
+};
+
 pub const ClassDef = struct {
     name: []const u8,
+    consts: []const ConstDecl = &.{},
     /// v1.164.1: sınıf docstring'i (yalnızca formatter için korunur).
     doc: ?[]const u8 = null,
     /// Faz 7 (basit tek-kalıtım): `class Derived(Base):` — boşsa

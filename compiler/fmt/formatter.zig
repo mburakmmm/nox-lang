@@ -375,6 +375,15 @@ const Printer = struct {
                 // bildirimlerini SESSİZCE SİLERDİ (dosya HÂLÂ parse OLURDU,
                 // yalnızca çıkarım-only semantiğe SESSİZCE geri dönerdi) —
                 // bu yüzden bu dal BLOCKING'dir, isteğe bağlı DEĞİL.
+                for (c.consts) |kd| {
+                    try self.emitLeadingTrivia(depth + 1, kd.line);
+                    try self.indentTo(depth + 1);
+                    try self.writer.print("{s}: ", .{kd.name});
+                    try self.printType(kd.type_expr);
+                    try self.writer.writeAll(" = ");
+                    try self.printExpr(kd.value);
+                    try self.line(kd.line);
+                }
                 for (c.fields) |fd| {
                     try self.emitLeadingTrivia(depth + 1, fd.line);
                     try self.indentTo(depth + 1);
@@ -396,14 +405,14 @@ const Printer = struct {
                 // aksi halde bu trivia, `__init__`in gövdesindeki İLK
                 // deyimin KENDİ `emitLeadingTrivia`sına SIZAR (GERÇEKTEN
                 // gözlemlenen bir biçimlendirme hatasıydı).
-                if (c.fields.len > 0 and c.methods.len > 0 and c.methods[0].body.len > 0) {
+                if ((c.fields.len + c.consts.len) > 0 and c.methods.len > 0 and c.methods[0].body.len > 0) {
                     const next_line = c.methods[0].body[0].line;
                     while (self.trivia_idx < self.trivia.len and self.trivia[self.trivia_idx].line < next_line) {
                         self.trivia_idx += 1;
                     }
                 }
                 for (c.methods, 0..) |m, idx| {
-                    if (idx > 0 or c.fields.len > 0) {
+                    if (idx > 0 or (c.fields.len + c.consts.len) > 0) {
                         try self.writer.writeAll("\n");
                         self.last_was_blank = true;
                     }

@@ -237,6 +237,8 @@ const GenericMethod = struct {
     class_inst_index: usize = 0,
 };
 
+const ClassConst = struct { ty: Type, value: ast.Expr };
+
 const ClassInfo = struct {
     /// Faz 7 (tekli kalıtım): `class Derived(Base):` — `ast.ClassDef.base`nin
     /// AYNISI, `registerClassSignatures` tarafından KOPYALANIR. `fields`/
@@ -266,6 +268,8 @@ const ClassInfo = struct {
     /// reddeder — bildirilen bir alanın HİÇ atanmadan (ör. heap-tipli İSE
     /// sallanan/null bir işaretçi OLARAK) kalmasını ÖNLER.
     declared_unassigned: std.StringHashMapUnmanaged(void) = .{},
+    /// Sınıf düzeyi sabitler (`LIMIT: int = 5`): okumalar literal değere yeniden yazılır. Taban sınıfın sabitleri kopyalanır.
+    consts: std.StringHashMapUnmanaged(ClassConst) = .{},
     /// v2.0 madde 5: `@repr("C")`/`@packed`in ÇÖZÜLMÜŞ sonucu —
     /// `registerClassSignatures` tarafından doldurulur (bkz. onun belge
     /// notu). `codegen_qbe`nin KENDİ (bayt-doğru) `ClassInfo`si BUNU
@@ -3260,6 +3264,43 @@ pub const Checker = struct {
             var owner_it = base_info.method_owners.iterator();
             while (owner_it.next()) |e| try info.method_owners.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
             info.init_sig = base_info.init_sig;
+            var const_it = base_info.consts.iterator();
+            while (const_it.next()) |e| try info.consts.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
+        }
+        // Sınıf düzeyi sabitler: değer bir SABİT literal olmalı, tip bildirimiyle uyuşmalı, alan/sabit adlarıyla çakışmamalı.
+        for (cd.consts) |kd| {
+            self.current_line = if (kd.line != 0) kd.line else self.current_line;
+            const declared = try self.typeExprToType(kd.type_expr);
+            const lit: ast.Expr = switch (kd.value) {
+                .int_lit, .float_lit, .bool_lit, .string_lit => kd.value,
+                .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) ast.Expr{ .int_lit = -u.operand.int_lit } else if (u.op == .neg and u.operand.* == .float_lit) ast.Expr{ .float_lit = -u.operand.float_lit } else return self.fail(error.TypeMismatch, "class '{s}': the value of constant '{s}' must be a constant literal (int/float/bool/str)", .{ cd.name, kd.name }),
+                else => return self.fail(error.TypeMismatch, "class '{s}': the value of constant '{s}' must be a constant literal (int/float/bool/str)", .{ cd.name, kd.name }),
+            };
+            const lit_t: Type = switch (lit) {
+                .int_lit => .int,
+                .float_lit => .float,
+                .bool_lit => .boolean,
+                else => .str,
+            };
+            if (!self.assignable(declared, lit_t)) {
+                return self.fail(error.TypeMismatch, "class '{s}': the value of constant '{s}' does not match its declared type", .{ cd.name, kd.name });
+            }
+            if (declared != .int and declared != .float and declared != .boolean and declared != .str) {
+                return self.fail(error.TypeMismatch, "class '{s}': constant '{s}' must be int, float, bool or str", .{ cd.name, kd.name });
+            }
+            var same_name: usize = 0;
+            for (cd.consts) |other| if (std.mem.eql(u8, other.name, kd.name)) {
+                same_name += 1;
+            };
+            if (same_name > 1) {
+                return self.fail(error.DuplicateDefinition, "class '{s}': constant '{s}' is declared twice", .{ cd.name, kd.name });
+            }
+            for (cd.fields) |fd| if (std.mem.eql(u8, fd.name, kd.name)) {
+                return self.fail(error.DuplicateDefinition, "class '{s}': '{s}' is both a field and a constant", .{ cd.name, kd.name });
+            };
+            // `float` bildirilen sabitte int literal, float değere dönüştürülür (okuma tipi float'tır).
+            const stored: ast.Expr = if (declared == .float and lit == .int_lit) .{ .float_lit = @floatFromInt(lit.int_lit) } else lit;
+            try info.consts.put(self.allocator, kd.name, .{ .ty = declared, .value = stored });
         }
         // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
         // bildirilen alanlar, metod imza döngüsünden ÖNCE `info.fields`e
@@ -5677,6 +5718,9 @@ pub const Checker = struct {
                 // biçiminde VE `__init__` içinde olmaya mecburdur — aksi halde
                 // bir sınıfın alan kümesi çağrı sitesine göre değişken olurdu
                 // (AGENTS.md §5'in yasakladığı dinamik alan ekleme).
+                if (attr.obj.* == .identifier and self.classes.contains(attr.obj.identifier) and (try ctx.scope.lookup(self.allocator, attr.obj.identifier)) == null and !self.module_globals.contains(attr.obj.identifier)) {
+                    return self.fail(error.TypeMismatch, "'{s}.{s}' cannot be assigned: class-level constants are read-only (and a class has no assignable class-level attributes)", .{ attr.obj.identifier, attr.attr });
+                }
                 const obj_t = try self.checkExpr(ctx, attr.obj.*);
                 try self.requireNotOptional(obj_t, attr.attr);
                 const class_name = switch (obj_t) {
@@ -6856,6 +6900,13 @@ pub const Checker = struct {
     }
 
     fn checkAttribute(self: *Checker, ctx: *FnCtx, a: ast.Attribute) TypeError!Type {
+        // `Sınıf.SABİT`: obj bir DEĞİŞKEN olmayan sınıf adıdır; okuma literal değere yeniden yazılır.
+        if (a.obj.* == .identifier and self.classes.contains(a.obj.identifier) and (try ctx.scope.lookup(self.allocator, a.obj.identifier)) == null and !self.module_globals.contains(a.obj.identifier)) {
+            if (self.classes.get(a.obj.identifier).?.consts.get(a.attr)) |k| {
+                try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), k.value);
+                return k.ty;
+            }
+        }
         const obj_t = try self.checkExpr(ctx, a.obj.*);
         try self.requireNotOptional(obj_t, a.attr);
         const class_name = switch (obj_t) {
@@ -6865,6 +6916,11 @@ pub const Checker = struct {
         const info = self.classes.get(class_name) orelse
             return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         if (info.fields.get(a.attr)) |ft| return ft;
+        // `self.SABİT` / `nesne.SABİT`: örnek üzerinden okunan sınıf sabiti.
+        if (info.consts.get(a.attr)) |k| {
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), k.value);
+            return k.ty;
+        }
         return self.fail(error.UndefinedAttribute, "class '{s}' has no field '{s}'", .{ class_name, a.attr });
     }
 

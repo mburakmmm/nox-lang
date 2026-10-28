@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.47]
+
+### Eklendi
+
+- Sinif duzeyi sabitler: `LIMIT: int = 5` (int/float/bool/str, sabit literal). `Sinif.LIMIT`, `self.LIMIT` ve `nesne.LIMIT` okumalari derleme zamaninda literal degere katlanir; alt siniflar miras alir. Atama, ifade degeri, tip uyumsuzlugu ve cift tanim net hata verir. `noxc fmt` korur. Onceden govdede `ad: tip = deger` soz dizimi hatasiydi.
+
 ## [2.0.46]
 
 ### Eklendi

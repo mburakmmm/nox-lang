@@ -194,7 +194,14 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
             expr(c.callee, map);
             for (c.args) |*a| expr(a, map);
         },
-        .attribute => |*a| expr(a.obj, map),
+        .attribute => |*a| {
+            // Sınıf sabiti okuması (`Sınıf.SABİT`, `self.SABİT`): anahtar `obj` kutusunun adresi; özgün ifade literal değerle değişir.
+            if (map.exprs.get(@intFromPtr(a.obj))) |r| {
+                e.* = r;
+                return;
+            }
+            expr(a.obj, map);
+        },
         .list_comp => |*lc| {
             expr(lc.elem, map);
             applyClauses(lc.clauses, map);

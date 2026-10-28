@@ -1404,6 +1404,34 @@ test "golden(typecheck): açıklamalı yeni alan __init__ dışında tanımlanam
     );
 }
 
+test "golden(typecheck): sınıf sabiti sabit literal olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_const_not_literal.nox"),
+        @embedFile("typecheck_cases/err_class_const_not_literal.expected"),
+    );
+}
+
+test "golden(typecheck): sınıf sabiti tip uyuşmazlığı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_const_type_mismatch.nox"),
+        @embedFile("typecheck_cases/err_class_const_type_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): sınıf sabiti iki kez bildirilemez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_const_duplicate.nox"),
+        @embedFile("typecheck_cases/err_class_const_duplicate.expected"),
+    );
+}
+
+test "golden(typecheck): sınıf sabitine atama reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_const_assign.nox"),
+        @embedFile("typecheck_cases/err_class_const_assign.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

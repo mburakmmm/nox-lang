@@ -14,7 +14,30 @@ A class's fields are fixed. They can be established three ways, and all may be u
 
 If a field is declared explicitly it must actually be assigned in `__init__`; an unassigned declared field is a compile error, never a
 zeroed value. Fields can only be *created* in `__init__`: assigning a new `self.name` from another method is a compile error. There
-are no class-level attributes with initialisers (`LIMIT: int = 5` in a class body is a syntax error) — use a module-level constant.
+are no mutable class-level attributes.
+
+### Class constants
+
+`NAME: type = literal` in a class body declares a **constant**: `int`, `float`, `bool` or `str`, with a literal value (a leading `-` is allowed). It is not a field and takes no space in an instance. Read it as `ClassName.NAME`, `self.NAME` or `obj.NAME`; the compiler replaces the read with the literal. Subclasses inherit constants. A constant cannot be assigned, is not mutable, and cannot be an expression (`N: int = 1 + 2` is an error).
+
+```nox
+class Limits:
+    MAX: int = 5
+    RATE: float = 2
+    count: int
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def room(self) -> int:
+        return Limits.MAX - self.count
+
+print(Limits.MAX, Limits().room())
+```
+
+```output
+5 5
+```
 
 ```nox
 class Account:

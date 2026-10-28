@@ -708,6 +708,7 @@ pub const Parser = struct {
 
         var methods = std.ArrayList(ast.FuncDef).empty;
         var fields = std.ArrayList(ast.FieldDecl).empty;
+        var consts = std.ArrayList(ast.ConstDecl).empty;
         var class_doc: ?[]const u8 = null;
         // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): sınıf gövdesi
         // ARTIK deyim-BAŞINA dispatch eder — `parseSimpleStmt`in AYNI
@@ -738,7 +739,11 @@ pub const Parser = struct {
                 _ = try self.expect(.newline);
                 if (class_doc == null and methods.items.len == 0 and fields.items.len == 0) class_doc = text;
             } else if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
-                try fields.append(self.allocator, try self.parseClassFieldDecl());
+                const member = try self.parseClassFieldOrConst();
+                switch (member) {
+                    .field => |f| try fields.append(self.allocator, f),
+                    .constant => |k| try consts.append(self.allocator, k),
+                }
             } else if (self.check(.at_sign)) {
                 // Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin
                 // §3.219 SONRASI incelemesi): BU dal ÖNCEDEN HİÇ YOKTU —
@@ -763,6 +768,7 @@ pub const Parser = struct {
             .type_params = try type_params.toOwnedSlice(self.allocator),
             .methods = try methods.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),
+            .consts = try consts.toOwnedSlice(self.allocator),
             .doc = class_doc,
         } };
     }
@@ -771,6 +777,21 @@ pub const Parser = struct {
     /// İLE AYNI ileriye-bakma deseninden ÇAĞRILIR (bkz. `parseClassDef`),
     /// ama `parseSimpleStmt`nin AKSİNE `=`/initializer BEKLEMEZ (bkz.
     /// `ast.FieldDecl`nin belge notu — atama HÂLÂ `__init__`de yapılır).
+    /// `ad: tip` bir alan bildirimidir; `ad: tip = değer` bir sınıf sabitidir (değerin sabit literal olması checker'da doğrulanır).
+    fn parseClassFieldOrConst(self: *Parser) ParseError!union(enum) { field: ast.FieldDecl, constant: ast.ConstDecl } {
+        const line = self.cur().line;
+        const name = self.advance().lexeme;
+        _ = try self.expect(.colon);
+        const type_expr = try self.parseTypeExpr();
+        if (self.match(.assign)) {
+            const value = try self.parseExpr();
+            _ = try self.expect(.newline);
+            return .{ .constant = .{ .name = name, .type_expr = type_expr, .value = value, .line = line } };
+        }
+        _ = try self.expect(.newline);
+        return .{ .field = .{ .name = name, .type_expr = type_expr, .line = line } };
+    }
+
     fn parseClassFieldDecl(self: *Parser) ParseError!ast.FieldDecl {
         const line = self.cur().line;
         const name = self.advance().lexeme;
