@@ -29153,3 +29153,9 @@ Yanıt gövdesindeki `\0` artık isteği başarısız saymaz: `str` uzunluğu ba
 ## 3.313 Gömme ayırıcısı ve hata sözleşmesi (v2.0.32)
 
 Bkz. `docs/internals/adr/009-embed-allocator.md`. `HostConfig` (`runtime/embed.zig`) `HostConfigV1` düzenine bir `allocator` işaretçisi ekler; `size` hangisinin geldiğini söyler. Host ayırıcısı `std.mem.Allocator` vtable'ına bağlanır (`resize` her zaman reddedilir, `remap` yoktur) ve `nox_runtime_init_with_allocator` ile çalışma zamanına verilir. `nox_app_start` `nox_exception_pending`i giriş noktasından sonra ve her olay işleyicisinden sonra denetler. `nox_raise`, `nox_exception_pending`, `nox_exception_take` Zig tarafından çağrılabilsin diye `pub export` yapıldı.
+
+## 3.314 Heterojen protokol değerleri (v2.0.34)
+
+Değer tipi konumundaki protokol adı `typeExprToType` içinde `P__Base` sınıfına çözülür (`ensureProtocolBase`): protokolün her metodu için gövdesi `ValueError` fırlatan (önsöz yoksa kendine çağrı olan) soyut bir sınıf. `assignableOrCoerce`, `P__Base` bekleyen yere `P`yi yapısal olarak karşılayan ve `P__Base`ten türemeyen bir sınıf `C` atandığında ifade yuvasını `P__Box_C(<ifade>)` çağrısına yeniden yazmayı `coerce_rewrites`e kaydeder (`call_expand_apply.expr` yuva adresine göre uygular); `ensureProtocolBox` kutuyu bir kez sentezler (`inner: C`, `__init__`, delege eden override'lar). Kutu sıradan bir alt sınıf olduğundan vtable dispatch (Faz 7), ARC, ASAP ve döngü çözücü değişmeden çalışır. Codegen'de yalnızca `resolveType` `P`yi `P__Base`e eşler.
+
+`checkStmt` artık `*const ast.Stmt` alır (yuva adresleri için). Örtük tip parametresi aday listesi yalnızca parametrelerden toplanır. Generic şablonun protokol-tipli parametresi, değişim analizi ve boş literal sondalarında hâlâ çözülemeyen sayılır. İmzası başka bir protokol içeren protokol değer tipi olamaz (hata: `cannot be used as a value type`). Gelecek optimizasyon: kutu başına tahsis yerine iki-kelimelik gerçek fat-pointer.

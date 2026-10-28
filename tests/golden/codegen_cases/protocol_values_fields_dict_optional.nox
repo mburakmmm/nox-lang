@@ -1,0 +1,75 @@
+protocol Animal:
+    def sound(self) -> str:
+        pass
+    def legs(self) -> int:
+        pass
+    def feed(self, amount: int, label: str) -> int:
+        pass
+
+class Dog:
+    fed: int
+    def __init__(self) -> None:
+        self.fed = 0
+    def sound(self) -> str:
+        return "woof"
+    def legs(self) -> int:
+        return 4
+    def feed(self, amount: int, label: str) -> int:
+        self.fed = self.fed + amount
+        return self.fed
+
+class Bird:
+    def __init__(self) -> None:
+        pass
+    def sound(self) -> str:
+        return "tweet"
+    def legs(self) -> int:
+        return 2
+    def feed(self, amount: int, label: str) -> int:
+        if amount > 100:
+            raise ValueError("too much " + label)
+        return amount
+
+class Zoo:
+    star: Animal
+    pets: list[Animal]
+    by_name: dict[str, Animal]
+    def __init__(self, star: Animal) -> None:
+        self.star = star
+        self.pets = []
+        self.by_name = {}
+    def adopt(self, a: Animal) -> None:
+        self.pets.append(a)
+    def total_legs(self) -> int:
+        n: int = 0
+        for p in self.pets:
+            n += p.legs()
+        return n
+
+def make(kind: int) -> Animal:
+    if kind == 0:
+        return Dog()
+    return Bird()
+
+d: Dog = Dog()
+zoo: Zoo = Zoo(d)
+zoo.adopt(Bird())
+zoo.adopt(d)
+zoo.pets.append(make(1))
+zoo.by_name["rex"] = d
+zoo.by_name["tweety"] = Bird()
+zoo.star = Bird()
+print(zoo.star.sound())
+print(zoo.total_legs())
+print(zoo.by_name["rex"].feed(5, "a"))
+print(d.fed)
+maybe: Animal | None = None
+if maybe == None:
+    maybe = d
+if maybe != None:
+    print(maybe.sound())
+try:
+    zoo.by_name["tweety"].feed(500, "big")
+except ValueError:
+    print("caught")
+print(make(0).sound())

@@ -1,0 +1,58 @@
+protocol Shape:
+    def area(self) -> float:
+        pass
+    def name(self) -> str:
+        pass
+    def scale(self, k: float) -> None:
+        pass
+
+class Square:
+    s: float
+    def __init__(self, s: float) -> None:
+        self.s = s
+    def area(self) -> float:
+        return self.s * self.s
+    def name(self) -> str:
+        return "square"
+    def scale(self, k: float) -> None:
+        self.s = self.s * k
+
+class Circle:
+    r: float
+    def __init__(self, r: float) -> None:
+        self.r = r
+    def area(self) -> float:
+        return 3.0 * self.r * self.r
+    def name(self) -> str:
+        return "circle"
+    def scale(self, k: float) -> None:
+        self.r = self.r * k
+
+def describe(shape: Shape) -> None:
+    print(shape.name())
+
+shapes: list[Shape] = [Square(2.0), Circle(1.0)]
+sq: Square = Square(3.0)
+shapes.append(sq)
+total: float = 0.0
+for s in shapes:
+    total += s.area()
+    describe(s)
+print(total)
+sq.scale(2.0)
+print(shapes[2].area())
+one: Shape = Circle(2.0)
+print(one.area())
+
+# Statik somut tip biliniyorsa monomorphize yol (dispatch'siz) çalışmaya devam eder
+describe(Circle(5.0))
+describe(sq)
+
+# Çok sayıda kutulama/bırakma: ARC dengesi (sızıntı olsaydı Debug allocator rapor ederdi)
+i: int = 0
+acc: float = 0.0
+while i < 2000:
+    tmp: list[Shape] = [Square(1.0), Circle(2.0), sq]
+    acc += tmp[0].area() + tmp[1].area()
+    i += 1
+print(acc)

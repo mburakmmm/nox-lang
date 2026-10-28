@@ -1369,6 +1369,27 @@ test "golden(typecheck): and/or sağ operandındaki daraltma ifade dışına sı
     );
 }
 
+test "golden(typecheck): protokol değer tipi: list[P]/değişken somut sınıfla doldurulur" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_protocol_value_types.nox"),
+        @embedFile("typecheck_cases/ok_protocol_value_types.expected"),
+    );
+}
+
+test "golden(typecheck): protokolü karşılamayan sınıf list[P] elemanı olamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_protocol_value_class_does_not_satisfy.nox"),
+        @embedFile("typecheck_cases/err_protocol_value_class_does_not_satisfy.expected"),
+    );
+}
+
+test "golden(typecheck): imzası başka protokol içeren protokol değer tipi olamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_protocol_value_self_referential_signature.nox"),
+        @embedFile("typecheck_cases/err_protocol_value_self_referential_signature.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

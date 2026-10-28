@@ -2232,7 +2232,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     var resolved_bases: std.StringHashMapUnmanaged([]const u8) = .empty;
     var class_base_it = checker_state.classes.iterator();
     while (class_base_it.next()) |e| {
-        if (e.value_ptr.base) |b| try resolved_bases.put(a, e.key_ptr.*, b);
+        if (e.value_ptr.*.base) |b| try resolved_bases.put(a, e.key_ptr.*, b);
     }
 
     // `module`, `core.nox`/import edilen TÜM stdlib dosyalarını KULLANICININ
@@ -2684,7 +2684,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     var resolved_bases: std.StringHashMapUnmanaged([]const u8) = .empty;
     var class_base_it = checker_state.classes.iterator();
     while (class_base_it.next()) |e| {
-        if (e.value_ptr.base) |b| try resolved_bases.put(a, e.key_ptr.*, b);
+        if (e.value_ptr.*.base) |b| try resolved_bases.put(a, e.key_ptr.*, b);
     }
 
     // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı): `instantiations`/

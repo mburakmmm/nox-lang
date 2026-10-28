@@ -39,6 +39,8 @@ pub const InferMap = std.AutoHashMapUnmanaged(usize, ast.TypeExpr);
 
 pub const Ctx = struct {
     exprs: *const ExprRewriteMap,
+    /// Protokol değeri dönüşümleri (anahtar: ifade YUVASININ adresi). Bkz. `checker.assignableOrCoerce`.
+    coerce: *const ExprRewriteMap,
     infers: *const InferMap,
     calls: *const Map,
     orders: *const OrderMap,
@@ -150,6 +152,10 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
 }
 
 pub fn expr(e: *ast.Expr, map: *const Ctx) void {
+    // Yuva-anahtarlı protokol sarmalama: özgün ifade kurucunun argümanına taşınır; çocukları bu çağrıda yeniden işlenir (arama tekrarlanmaz).
+    if (map.coerce.count() > 0) {
+        if (map.coerce.get(@intFromPtr(e))) |r| e.* = r;
+    }
     switch (e.*) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
         .unary => |*u| {

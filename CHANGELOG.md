@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.34]
+
+Heterojen protokol koleksiyonları (AGENTS §12).
+
+### Eklendi
+
+- Protokol artık değer tipi olabilir: `shapes: list[Shape] = [Square(2.0), Circle(1.0)]`, `x: Shape = Square(1.0)`, protokol tipli alan, `dict[str, Shape]`, `Shape | None`, `-> Shape` dönüşü. Somut sınıf protokol tipli yere atanırken (atama, liste literali, `append`/`insert`, çağrı argümanı, `return`) derleyici ifadeyi sentezlenen `Shape__Box_C(...)` kutusuna sarar; kutu, `Shape__Base` soyut sınıfının alt sınıfıdır ve her protokol metodunu nesneye devreder. Nesne paylaşılır (kopyalanmaz). Dispatch dinamiktir; parametre konumundaki protokol hâlâ monomorphize edilir. Kullanıcı sözdizimi değişmedi.
+
+### Değişti
+
+- Sınıf bilgileri checker'da yığında sabit adreste tutulur (`*ClassInfo`): sınıf kaydı sırasında alan tipi çözümü yeni sınıf sentezleyebilir (generic, tuple, protokol) ve eski tablo yeniden hash'lenince tutulan işaretçiler geçersizleşiyordu.
+- `-> Protocol` yalnızca dönüş tipinde geçtiğinde artık "tip parametresi çıkarılamadı" hatası vermez, değer tipi olur.
+
 ## [2.0.33]
 
 Çoklu runtime izolasyon korpusu (yalnızca test; çalışma zamanı davranışı değişmedi).

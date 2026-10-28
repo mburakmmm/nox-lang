@@ -140,43 +140,63 @@ method:
 'B' class does not satisfy protocol 'Named': method 'name' missing
 ```
 
-### Protocols and collections
+### Protocols as value types
 
-Protocol types are parameter types: a `list[Shape]` holding instances of different concrete classes is **not** supported in 2.0. For a
-genuinely heterogeneous collection, give the classes a common base class (single inheritance, virtual dispatch — see
-[Classes](classes.md#inheritance)) and use `list[Base]` (annotate the list: a literal mixing subclasses has no common element type without the annotation):
+A protocol can also be the type of a variable, a field, a function result or a collection element. This is how a `list[Shape]` holds instances of **different** classes:
 
 ```nox
-class Shape2:
+protocol Shape:
     def area(self) -> float:
-        return 0.0
+        pass
+    def name(self) -> str:
+        pass
 
-class Rect(Shape2):
-    w: float
-    h: float
-    def __init__(self, w: float, h: float) -> None:
-        self.w = w
-        self.h = h
+class Square:
+    s: float
+    def __init__(self, s: float) -> None:
+        self.s = s
     def area(self) -> float:
-        return self.w * self.h
+        return self.s * self.s
+    def name(self) -> str:
+        return "square"
 
-class Disc(Shape2):
+class Circle:
     r: float
     def __init__(self, r: float) -> None:
         self.r = r
     def area(self) -> float:
         return 3.0 * self.r * self.r
+    def name(self) -> str:
+        return "circle"
 
-shapes: list[Shape2] = [Rect(2.0, 3.0), Disc(1.0)]
+def describe(shape: Shape) -> None:
+    print(shape.name())
+
+shapes: list[Shape] = [Square(2.0), Circle(1.0)]
+sq: Square = Square(3.0)
+shapes.append(sq)
 total: float = 0.0
 for s in shapes:
     total += s.area()
+    describe(s)
 print(total)
 ```
 
 ```output
-9.0
+square
+circle
+square
+16.0
 ```
+
+Nothing changes in the syntax: you write the protocol name where a type goes and assign any class that has the right methods. The compiler picks the representation:
+
+- A parameter of protocol type (`def describe(shape: Shape)`) is still compiled once per concrete type, with direct calls (monomorphisation). `describe(Circle(5.0))` costs the same as before.
+- A value that is *stored* as a protocol (a list element, a field, a variable, a function result) holds the object together with a table of its protocol methods. Calls through it are dynamic, like calls on a base class. The object is shared, not copied: a change made through `sq` is visible through `shapes[2]`.
+
+The conversion happens where a value flows into a protocol-typed place: assignments, list literals, `append`/`insert`, call arguments, `return`. A class that lacks a method is a compile error at that point. A protocol whose methods mention another protocol in their signatures cannot be used as a value type (parameters of such a protocol still work).
+
+If you prefer an explicit hierarchy, a common base class gives the same result: see [Classes](classes.md#inheritance).
 
 ## Choosing between them
 
@@ -185,4 +205,4 @@ print(total)
 | One algorithm over `int`, `str`, user types… with the same operations | a generic function (`[T]`) |
 | A container parameterised by element type | a generic class |
 | "Anything with these methods" for a function parameter | a protocol |
-| A heterogeneous list with run-time dispatch | a base class and subclasses |
+| A heterogeneous list with run-time dispatch | a protocol (`list[Shape]`), or a base class and subclasses |

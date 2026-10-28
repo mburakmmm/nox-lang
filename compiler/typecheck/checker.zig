@@ -388,7 +388,10 @@ pub const MobileMask = enum { none, ios, android };
 pub const Checker = struct {
     allocator: std.mem.Allocator,
     functions: std.StringHashMapUnmanaged(FuncSig) = .{},
-    classes: std.StringHashMapUnmanaged(ClassInfo) = .{},
+    /// Sınıf bilgileri HEAP'te sabit adreste tutulur (`*ClassInfo`): bir sınıf kaydedilirken (`registerClassSignatures`) alan tipi çözümü yeni bir
+    /// sınıf sentezleyebilir (generic örnekleme, tuple, protokol taban/kutu sınıfı); tabloya değer olarak saklansaydı `put` yeniden hash'leyip
+    /// elde tutulan `*ClassInfo` işaretçilerini geçersiz kılardı.
+    classes: std.StringHashMapUnmanaged(*ClassInfo) = .{},
     diagnostic: ?[]const u8 = null,
     /// Faz T.1: `fail`in tanılama mesajına EKLEDİĞİ "şu an hangi DEYİMİ
     /// işliyoruz" satır numarası (1-tabanlı, bkz. `ast.Stmt.line`) — DEYİM
@@ -586,6 +589,12 @@ pub const Checker = struct {
     /// davranır, ama ek olarak YAPISAL EŞLEŞME (`satisfiesProtocol`) ile
     /// doğrulanır.
     protocols: std.StringHashMapUnmanaged(ProtocolInfo) = .{},
+    /// Protokol bildirimleri (AST); heterojen protokol değerleri için sentezlenen sınıfların (bkz. `ensureProtocolBase`) kaynağı.
+    protocol_defs: std.StringHashMapUnmanaged(ast.ProtocolDef) = .{},
+    /// Sentezlenen soyut taban sınıf adı (`Shape__Base`) → protokol adı (`Shape`).
+    protocol_bases: std.StringHashMapUnmanaged([]const u8) = .{},
+    /// Protokol değeri dönüşümleri (anahtar: dönüştürülen ifade yuvasının adresi, değer: `Shape__Box_C(<özgün ifade>)` çağrısı).
+    coerce_rewrites: call_expand_apply.ExprRewriteMap = .empty,
     /// `import nox.http` gibi bir deyimle içeri alınan modül yollarının
     /// kümesi — noktalarla birleştirilmiş TAM yol (`"nox.http"`) olarak
     /// saklanır (bkz. `checkModule`in `.import_stmt` kolu). `checkCall`in
@@ -794,6 +803,10 @@ pub const Checker = struct {
                 if (self.from_imports.get(name)) |mangled| {
                     if (self.classes.contains(mangled)) return .{ .class = mangled };
                 }
+                // Bir protokol adı değer tipi konumunda (liste elemanı, alan, değişken): sentezlenen soyut taban sınıfa çözülür
+                // (heterojen protokol koleksiyonları, bkz. `ensureProtocolBase`). Parametre konumundaki çıplak protokol adı
+                // yine örtük tip parametresidir (monomorphization) ve buraya hiç gelmez.
+                if (self.protocol_defs.contains(name)) return self.ensureProtocolBase(name);
                 return self.fail(error.UnknownType, "unknown type: {s}", .{name});
             },
             .generic => |g| {
@@ -947,6 +960,168 @@ pub const Checker = struct {
         }
     }
 
+    // ===== Heterojen protokol değerleri (AGENTS §12, TODO 2.1-2.3) =====
+    //
+    // Değer tipi konumundaki (`list[Shape]`, alan, değişken) bir protokol `Shape`, sentezlenen soyut `Shape__Base` sınıfına çözülür.
+    // Somut bir sınıf `C` bu konuma atandığında ifade, sentezlenen `Shape__Box_C(<ifade>)` kurucu çağrısına yeniden yazılır: `Shape__Box_C`,
+    // `Shape__Base`in alt sınıfıdır, `inner: C` taşır ve her protokol metodunu `inner`a devreder. Böylece fat-pointer (nesne + vtable) mevcut
+    // tekli-kalıtım vtable altyapısıyla temsil edilir; yeni codegen gerekmez. Statik olarak somut tip bilinen çağrılar (örtük tip
+    // parametresi olan fonksiyonlar) eskisi gibi monomorphize edilir.
+
+    /// `te` bir protokol adı içeriyor mu (örtük tip parametresi adayı).
+    fn mentionsProtocol(self: *Checker, te: ast.TypeExpr) TypeError!bool {
+        var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer names.deinit(self.allocator);
+        try self.collectProtocolNames(te, &names);
+        return names.items.len > 0;
+    }
+
+    fn requireValueSafeProtocol(self: *Checker, pd: ast.ProtocolDef) TypeError!void {
+        for (pd.methods) |m| {
+            var names: std.ArrayListUnmanaged([]const u8) = .empty;
+            defer names.deinit(self.allocator);
+            for (m.params[1..]) |p| try self.collectProtocolNames(p.type_expr, &names);
+            try self.collectProtocolNames(m.return_type, &names);
+            if (names.items.len > 0) {
+                return self.fail(error.TypeMismatch, "protocol '{s}' cannot be used as a value type: method '{s}' mentions the protocol type '{s}' in its signature (not supported)", .{ pd.name, m.name, names.items[0] });
+            }
+        }
+    }
+
+    fn ensureProtocolBase(self: *Checker, proto_name: []const u8) TypeError!Type {
+        const base_name = try std.fmt.allocPrint(self.allocator, "{s}__Base", .{proto_name});
+        if (self.classes.contains(base_name)) return .{ .class = base_name };
+        const pd = self.protocol_defs.get(proto_name).?;
+        try self.requireValueSafeProtocol(pd);
+        const methods = try self.allocator.alloc(ast.FuncDef, pd.methods.len);
+        for (pd.methods, 0..) |m, i| {
+            const params = try self.allocator.alloc(ast.Param, m.params.len);
+            params[0] = .{ .name = "self", .type_expr = .{ .simple = base_name }, .self_inferred = true };
+            for (m.params[1..], 1..) |p, j| params[j] = .{ .name = p.name, .type_expr = p.type_expr };
+            const body = try self.allocator.alloc(ast.Stmt, 1);
+            if (self.classes.contains("ValueError")) {
+                const msg = try std.fmt.allocPrint(self.allocator, "abstract protocol method {s}.{s} was called", .{ proto_name, m.name });
+                const callee = try self.allocator.create(ast.Expr);
+                callee.* = .{ .identifier = "ValueError" };
+                const args = try self.allocator.alloc(ast.Expr, 1);
+                args[0] = .{ .string_lit = msg };
+                body[0] = .{ .kind = .{ .raise_stmt = .{ .call = .{ .callee = callee, .args = args } } }, .line = self.current_line, .span = self.current_span };
+            } else {
+                // Önsöz (prelude) birleştirilmemiş test koşumlarında `ValueError` yoktur: gövde, her dönüş tipiyle geçerli ve hiçbir zaman
+                // çalıştırılmayan (kutu sınıfı her metodu override eder) bir kendine çağrıdır.
+                const self_ref = try self.allocator.create(ast.Expr);
+                self_ref.* = .{ .identifier = "self" };
+                const callee = try self.allocator.create(ast.Expr);
+                callee.* = .{ .attribute = .{ .obj = self_ref, .attr = m.name } };
+                const args = try self.allocator.alloc(ast.Expr, m.params.len - 1);
+                for (m.params[1..], 0..) |p, j| args[j] = .{ .identifier = p.name };
+                const call: ast.Expr = .{ .call = .{ .callee = callee, .args = args } };
+                const returns_none = m.return_type == .simple and std.mem.eql(u8, m.return_type.simple, "None");
+                body[0] = .{ .kind = if (returns_none) .{ .expr_stmt = call } else .{ .return_stmt = call }, .line = self.current_line, .span = self.current_span };
+            }
+            methods[i] = .{ .name = m.name, .params = params, .return_type = m.return_type, .body = body };
+        }
+        const cd: ast.ClassDef = .{ .name = base_name, .methods = methods, .fields = &.{} };
+        try self.registerSyntheticClass(cd);
+        try self.protocol_bases.put(self.allocator, base_name, proto_name);
+        return .{ .class = base_name };
+    }
+
+    /// `Shape__Box_C` sentezler (bir kez): `Shape__Base`in alt sınıfı, `inner: C` alanı, `__init__(self, inner)` ve her protokol metodu için `inner`a devreden override.
+    fn ensureProtocolBox(self: *Checker, proto_name: []const u8, class_name: []const u8) TypeError![]const u8 {
+        const base_t = try self.ensureProtocolBase(proto_name);
+        const box_name = try std.fmt.allocPrint(self.allocator, "{s}__Box_{s}", .{ proto_name, class_name });
+        if (self.classes.contains(box_name)) return box_name;
+        const pd = self.protocol_defs.get(proto_name).?;
+
+        const fields = try self.allocator.alloc(ast.FieldDecl, 1);
+        fields[0] = .{ .name = "inner", .type_expr = .{ .simple = class_name } };
+
+        const methods = try self.allocator.alloc(ast.FuncDef, pd.methods.len + 1);
+        const init_params = try self.allocator.alloc(ast.Param, 2);
+        init_params[0] = .{ .name = "self", .type_expr = .{ .simple = box_name }, .self_inferred = true };
+        init_params[1] = .{ .name = "inner", .type_expr = .{ .simple = class_name } };
+        const init_self = try self.allocator.create(ast.Expr);
+        init_self.* = .{ .identifier = "self" };
+        const init_body = try self.allocator.alloc(ast.Stmt, 1);
+        init_body[0] = .{ .kind = .{ .assign = .{ .target = .{ .attribute = .{ .obj = init_self, .attr = "inner" } }, .value = .{ .identifier = "inner" } } }, .line = self.current_line, .span = self.current_span };
+        methods[0] = .{ .name = "__init__", .params = init_params, .return_type = .{ .simple = "None" }, .body = init_body };
+
+        for (pd.methods, 0..) |m, i| {
+            const params = try self.allocator.alloc(ast.Param, m.params.len);
+            params[0] = .{ .name = "self", .type_expr = .{ .simple = box_name }, .self_inferred = true };
+            for (m.params[1..], 1..) |p, j| params[j] = .{ .name = p.name, .type_expr = p.type_expr };
+            const call_args = try self.allocator.alloc(ast.Expr, m.params.len - 1);
+            for (m.params[1..], 0..) |p, j| call_args[j] = .{ .identifier = p.name };
+            const self_ref = try self.allocator.create(ast.Expr);
+            self_ref.* = .{ .identifier = "self" };
+            const inner_ref = try self.allocator.create(ast.Expr);
+            inner_ref.* = .{ .attribute = .{ .obj = self_ref, .attr = "inner" } };
+            const callee = try self.allocator.create(ast.Expr);
+            callee.* = .{ .attribute = .{ .obj = inner_ref, .attr = m.name } };
+            const call: ast.Expr = .{ .call = .{ .callee = callee, .args = call_args } };
+            const returns_none = m.return_type == .simple and std.mem.eql(u8, m.return_type.simple, "None");
+            const body = try self.allocator.alloc(ast.Stmt, 1);
+            body[0] = .{ .kind = if (returns_none) .{ .expr_stmt = call } else .{ .return_stmt = call }, .line = self.current_line, .span = self.current_span };
+            methods[i + 1] = .{ .name = m.name, .params = params, .return_type = m.return_type, .body = body };
+        }
+        const cd: ast.ClassDef = .{ .name = box_name, .base = base_t.class, .methods = methods, .fields = fields };
+        try self.registerSyntheticClass(cd);
+        return box_name;
+    }
+
+    /// `instantiateTupleClass`ın sonundaki kayıt dizisi: yer tutucu + imzalar + codegen'e ek sınıf + gövde denetimi.
+    fn registerSyntheticClass(self: *Checker, cd: ast.ClassDef) TypeError!void {
+        const saved_line = self.current_line;
+        const saved_span = self.current_span;
+        defer {
+            self.current_line = saved_line;
+            self.current_span = saved_span;
+        }
+        try self.putClass(cd.name);
+        try self.registerClassSignatures(cd);
+        try self.class_instantiations.append(self.allocator, cd);
+        try self.checkClassBody(cd);
+    }
+
+    /// `class_name` sınıfı `proto_name` protokolünü yapısal olarak karşılar mı (`satisfiesProtocol`ın hata üretmeyen sürümü).
+    fn classSatisfiesProtocol(self: *Checker, class_name: []const u8, proto_name: []const u8) bool {
+        const proto = self.protocols.get(proto_name) orelse return false;
+        const cinfo = self.classes.get(class_name) orelse return false;
+        for (proto.methods) |pm| {
+            const cm = cinfo.methods.get(pm.name) orelse return false;
+            if (cm.params.len != pm.params.len) return false;
+            for (cm.params, pm.params) |ct, pt| if (!types.eql(ct, pt)) return false;
+            if (!types.eql(cm.return_type, pm.return_type)) return false;
+        }
+        return true;
+    }
+
+    /// `assignable`, ek olarak: `declared` sentezlenen bir protokol taban sınıfıysa (ya da `T | None` ise onun içi) ve `value` o protokolü
+    /// yapısal olarak karşılayan, taban sınıftan türemeyen bir sınıfsa, `slot` ifadesini `Shape__Box_C(<ifade>)` çağrısına yeniden yazmayı
+    /// kaydeder ve `true` döner. `slot`, apply geçişinin de göreceği gerçek AST yuvasıdır (`call_expand_apply.expr`).
+    fn assignableOrCoerce(self: *Checker, declared: Type, value: Type, slot: *const ast.Expr) TypeError!bool {
+        if (self.assignable(declared, value)) return true;
+        const target: Type = if (declared == .optional) declared.optional.* else declared;
+        if (target != .class or value != .class) return false;
+        const proto_name = self.protocol_bases.get(target.class) orelse return false;
+        if (!self.classSatisfiesProtocol(value.class, proto_name)) return false;
+        const box_name = try self.ensureProtocolBox(proto_name, value.class);
+        const callee = try self.allocator.create(ast.Expr);
+        callee.* = .{ .identifier = box_name };
+        const args = try self.allocator.alloc(ast.Expr, 1);
+        args[0] = slot.*;
+        try self.coerce_rewrites.put(self.allocator, @intFromPtr(slot), .{ .call = .{ .callee = callee, .args = args } });
+        return true;
+    }
+
+    /// Yeni (boş) bir `ClassInfo`yu sabit adreste kaydeder (bkz. `classes` alanının belge notu).
+    fn putClass(self: *Checker, name: []const u8) TypeError!void {
+        const info = try self.allocator.create(ClassInfo);
+        info.* = .{};
+        try self.classes.put(self.allocator, name, info);
+    }
+
     fn assignable(self: *Checker, declared: Type, value: Type) bool {
         if (types.eql(declared, value)) return true;
         if (declared == .float and value == .int) return true;
@@ -993,7 +1168,7 @@ pub const Checker = struct {
         while (it.next()) |entry| {
             if (std.mem.eql(u8, entry.key_ptr.*, class_name)) continue;
             if (!self.isSubclassOf(entry.key_ptr.*, class_name)) continue;
-            if (entry.value_ptr.method_owners.get(method_name)) |owner| {
+            if (entry.value_ptr.*.method_owners.get(method_name)) |owner| {
                 if (std.mem.eql(u8, owner, entry.key_ptr.*)) return false;
             }
         }
@@ -1411,7 +1586,7 @@ pub const Checker = struct {
                     }
                     try self.generic_classes.put(self.allocator, cd.name, cd);
                 } else {
-                    try self.classes.put(self.allocator, cd.name, .{});
+                    try self.putClass(cd.name);
                     try self.class_defs_by_name.put(self.allocator, cd.name, cd);
                 }
             }
@@ -2078,12 +2253,13 @@ pub const Checker = struct {
 
     /// Checker bitince, kaydedilen genişletmeleri AST'ye yazar (bkz. `call_expand_apply.zig`).
     fn applyCallExpansions(self: *Checker, module: ast.Module) void {
-        if (self.call_expansions.count() == 0 and self.call_orders.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0 and self.lambda_defs.count() == 0 and self.expr_rewrites.count() == 0 and self.infer_types.count() == 0) return;
+        if (self.call_expansions.count() == 0 and self.call_orders.count() == 0 and self.for_rewrites.count() == 0 and self.stmt_for_rewrites.count() == 0 and self.comp_types.count() == 0 and self.lambda_defs.count() == 0 and self.expr_rewrites.count() == 0 and self.coerce_rewrites.count() == 0 and self.infer_types.count() == 0) return;
         var pending: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         var lifted: std.ArrayListUnmanaged(ast.FuncDef) = .empty;
         var in_func: u32 = 0;
         const cx: call_expand_apply.Ctx = .{
             .exprs = &self.expr_rewrites,
+            .coerce = &self.coerce_rewrites,
             .infers = &self.infer_types,
             .calls = &self.call_expansions,
             .orders = &self.call_orders,
@@ -2372,7 +2548,8 @@ pub const Checker = struct {
         var names: std.ArrayListUnmanaged([]const u8) = .empty;
         for (fd.type_params) |tp| try names.append(self.allocator, tp);
         for (fd.params) |p| try self.collectProtocolNames(p.type_expr, &names);
-        try self.collectProtocolNames(fd.return_type, &names);
+        // Yalnızca DÖNÜŞ tipinde geçen bir protokol adı çıkarılamayan bir tip parametresi olurdu; bu durumda değer tipidir
+        // (`Shape__Base`, bkz. `ensureProtocolBase`). Parametrede de geçiyorsa yukarıda zaten tip parametresidir.
         return names.toOwnedSlice(self.allocator);
     }
 
@@ -3002,7 +3179,7 @@ pub const Checker = struct {
         // Somut (monomorphize edilmiş, `type_params = &.{}`) bir çağrı BU
         // erken dönüşten ETKİLENMEZ.
         if (cd.type_params.len > 0) return;
-        const info = self.classes.getPtr(cd.name).?; // collectClassNames'de eklendi
+        const info = self.classes.get(cd.name).?; // collectClassNames'de eklendi
         // Bulundu (Aether NOX_LIMITATIONS.md madde 13 — çapraz-modül sınıf
         // kalıtımı): `cd.base` ÇIPLAK bir isimse (ör. `from pkg.mod import
         // Injectable` İLE bağlanan "Injectable") VE `self.classes`te BÖYLE
@@ -3284,7 +3461,7 @@ pub const Checker = struct {
         // `main`i bir fiber'a sarmalayarak bunu gerçekleştirir, bkz.
         // codegen.zig, `moduleUsesAsync`).
         var top_ctx: FnCtx = .{ .scope = &top_scope, .expected_return = null, .in_async = true };
-        for (module.body) |stmt| {
+        for (module.body) |*stmt| {
             self.current_line = stmt.line;
             self.current_span = stmt.span;
             switch (stmt.kind) {
@@ -3381,6 +3558,7 @@ pub const Checker = struct {
                 methods[i] = .{ .name = m.name, .params = params, .return_type = ret };
             }
             try self.protocols.put(self.allocator, pd.name, .{ .methods = methods });
+            try self.protocol_defs.put(self.allocator, pd.name, pd);
         }
     }
 
@@ -3815,7 +3993,10 @@ pub const Checker = struct {
     fn scanMutatesGraphFunc(self: *Checker, fname: []const u8, params: []const ast.Param, body: []const ast.Stmt, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) TypeError!void {
         var shared: std.ArrayListUnmanaged(SharedParam) = .empty;
         defer shared.deinit(self.allocator);
+        const is_template = self.generic_functions.contains(fname);
         for (params) |p| {
+            // Generic şablonun protokol-tipli parametresi hâlâ çözümlenemeyen bir tip parametresidir (değer tipi çözümü yalnızca somut konumlar içindir).
+            if (is_template and try self.mentionsProtocol(p.type_expr)) continue;
             const pt = self.typeExprToType(p.type_expr) catch continue;
             switch (pt) {
                 .list, .dict, .class => try shared.append(self.allocator, .{ .name = p.name, .ty = pt }),
@@ -4990,7 +5171,7 @@ pub const Checker = struct {
         try self.checkNoPostSpawnCallerMutation(fd.body, fd.params);
         const ret = try self.typeExprToType(fd.return_type);
         var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async, .path = fd.name };
-        for (fd.body) |s| try self.checkStmt(&ctx, s);
+        for (fd.body) |*s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(fd.body)) {
             return self.fail(error.MissingReturn, "function '{s}' does not return a value on all paths", .{fd.name});
         }
@@ -5038,7 +5219,7 @@ pub const Checker = struct {
                 // VAR olan bir alanın ÜZERİNE YAZILMAZ — türetilenin KENDİ
                 // AÇIKÇA bildirdiği/ÇIKARSADIĞI bir alan HER ZAMAN ÖNCELİKLİDİR).
                 const base_info = self.classes.get(base_name).?;
-                const info = self.classes.getPtr(cd.name).?;
+                const info = self.classes.get(cd.name).?;
                 var field_it = base_info.fields.iterator();
                 while (field_it.next()) |e| {
                     if (!info.fields.contains(e.key_ptr.*)) {
@@ -5067,7 +5248,7 @@ pub const Checker = struct {
         // "atanmadı" tanısı EKLEMEK YERİNE atlanır (bkz. modül üstü not,
         // "AYNI birim İÇİNDE İKİNCİ hata raporlanMAZ" kuralıyla TUTARLI).
         if (self.diagnostics.items.len == diagnostics_before_init) {
-            const info = self.classes.getPtr(cd.name).?;
+            const info = self.classes.get(cd.name).?;
             var it = info.declared_unassigned.keyIterator();
             while (it.next()) |name| {
                 try self.recordDiagnostic(self.fail(error.UnassignedField, "class '{s}': the declared field '{s}' is never assigned in __init__", .{ cd.name, name.* }));
@@ -5088,7 +5269,7 @@ pub const Checker = struct {
         const ret = try self.typeExprToType(m.return_type);
         const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ class_name, m.name });
         var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .self_class = class_name, .is_init = is_init, .path = path };
-        for (m.body) |s| try self.checkStmt(&ctx, s);
+        for (m.body) |*s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(m.body)) {
             return self.fail(error.MissingReturn, "method '{s}.{s}' does not return a value on all paths", .{ class_name, m.name });
         }
@@ -5144,14 +5325,14 @@ pub const Checker = struct {
         try ctx.scope.declare(self.allocator, name, ty);
     }
 
-    fn checkStmt(self: *Checker, ctx: *FnCtx, stmt: ast.Stmt) TypeError!void {
+    fn checkStmt(self: *Checker, ctx: *FnCtx, stmt: *const ast.Stmt) TypeError!void {
         // Faz T.1: `fail`in okuduğu "şu an neredeyiz" konumu — bkz.
         // `ast.Stmt`in belge notu (DEYİM granülerliği). Bu, `checkStmt`in
         // TEK, özyinelemeli dağıtım noktası olması SAYESİNDE HER iç içe
         // deyim (if/while/for gövdeleri DAHİL) İÇİN otomatik doğru çalışır.
         self.current_line = stmt.line;
         self.current_span = stmt.span;
-        self.synthetic_followup = isSyntheticUnpackRead(stmt);
+        self.synthetic_followup = isSyntheticUnpackRead(stmt.*);
         switch (stmt.kind) {
             .expr_stmt => |e| {
                 if (try self.tryCheckElementGrowStmt(ctx, e)) return;
@@ -5163,12 +5344,12 @@ pub const Checker = struct {
                 if (v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer")) return self.checkInferVarDecl(ctx, v);
                 const declared = try self.typeExprToType(v.type_expr);
                 const value_t = try self.checkExprExpected(ctx, v.value, declared);
-                if (!self.assignable(declared, value_t)) {
+                if (!try self.assignableOrCoerce(declared, value_t, &stmt.kind.var_decl.value)) {
                     return self.fail(error.TypeMismatch, "type mismatch for '{s}'", .{v.name});
                 }
                 try self.declareVar(ctx, v.name, declared);
             },
-            .assign => |a| try self.checkAssign(ctx, a),
+            .assign => try self.checkAssign(ctx, &stmt.kind.assign),
             .if_stmt => |f| {
                 const ct = try self.checkExpr(ctx, f.cond);
                 if (ct != .boolean) return self.fail(error.TypeMismatch, "the 'if' condition must be a bool", .{});
@@ -5189,7 +5370,7 @@ pub const Checker = struct {
                 for (f.elif_clauses) |ec| {
                     const ect = try self.checkExpr(ctx, ec.cond);
                     if (ect != .boolean) return self.fail(error.TypeMismatch, "the 'elif' condition must be a bool", .{});
-                    for (ec.body) |s| try self.checkStmt(ctx, s);
+                    for (ec.body) |*s| try self.checkStmt(ctx, s);
                 }
                 if (f.else_body) |eb| try self.checkNarrowedBlock(ctx, &else_n, eb);
             },
@@ -5217,7 +5398,7 @@ pub const Checker = struct {
                 try self.declareVar(ctx, f.var_name, elem_t);
                 ctx.loop_depth += 1;
                 defer ctx.loop_depth -= 1;
-                for (f.body) |s| try self.checkStmt(ctx, s);
+                for (f.body) |*s| try self.checkStmt(ctx, s);
             },
             // Faz U.4.2: iç içe `def` artık KISITLI bir biçimde
             // desteklenir — yalnızca GENERIC OLMAYAN, `async` OLMAYAN
@@ -5246,7 +5427,7 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "'return' can only be used inside a function/method", .{});
                 if (r) |e| {
                     const rt = try self.checkExprExpected(ctx, e, expected);
-                    if (!self.assignable(expected, rt)) return self.fail(error.TypeMismatch, "return type mismatch", .{});
+                    if (!try self.assignableOrCoerce(expected, rt, &stmt.kind.return_stmt.?)) return self.fail(error.TypeMismatch, "return type mismatch", .{});
                 } else if (expected != .none) {
                     return self.fail(error.TypeMismatch, "the function must return a value", .{});
                 }
@@ -5291,7 +5472,7 @@ pub const Checker = struct {
                 // `lowlevel:` GEÇERLİ VE derinlik DOĞAL olarak ARTAR).
                 self.in_lowlevel_depth += 1;
                 defer self.in_lowlevel_depth -= 1;
-                for (ll.body) |s| try self.checkStmt(ctx, s);
+                for (ll.body) |*s| try self.checkStmt(ctx, s);
 
                 var to_remove: std.ArrayListUnmanaged([]const u8) = .empty;
                 defer to_remove.deinit(self.allocator);
@@ -5308,7 +5489,7 @@ pub const Checker = struct {
     }
 
     fn checkTry(self: *Checker, ctx: *FnCtx, t: ast.TryStmt) TypeError!void {
-        for (t.try_body) |s| try self.checkStmt(ctx, s);
+        for (t.try_body) |*s| try self.checkStmt(ctx, s);
         for (t.except_clauses) |ec| {
             // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
             // incelemesi", P5): ÇIPLAK `except:` (`ec.class_name == null`,
@@ -5316,7 +5497,7 @@ pub const Checker = struct {
             // GARANTİ ettiği) — sınıf çözümlemesi TAMAMEN ATLANIR, HİÇBİR
             // isim BAĞLANMAZ, gövde doğrudan denetlenir.
             const ec_class_name = ec.class_name orelse {
-                for (ec.body) |s| try self.checkStmt(ctx, s);
+                for (ec.body) |*s| try self.checkStmt(ctx, s);
                 continue;
             };
             // Bulundu (bkz. proje belleği "from-import class type
@@ -5342,9 +5523,9 @@ pub const Checker = struct {
             if (ec.bind_name) |bn| {
                 try self.declareVar(ctx, bn, .{ .class = class_name });
             }
-            for (ec.body) |s| try self.checkStmt(ctx, s);
+            for (ec.body) |*s| try self.checkStmt(ctx, s);
         }
-        if (t.finally_body) |fb| for (fb) |s| try self.checkStmt(ctx, s);
+        if (t.finally_body) |fb| for (fb) |*s| try self.checkStmt(ctx, s);
     }
 
     /// Faz U.5: `with EXPR as NAME:` — `EXPR` bir `__enter__(self) -> T`/
@@ -5360,7 +5541,7 @@ pub const Checker = struct {
             .class => |n| n,
             else => return self.fail(error.TypeMismatch, "'with' only works on a class instance", .{}),
         };
-        const info = self.classes.getPtr(class_name) orelse
+        const info = self.classes.get(class_name) orelse
             return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         const enter_sig = info.methods.get("__enter__") orelse
             return self.fail(error.UndefinedMethod, "class '{s}' has no '__enter__' method (required for 'with')", .{class_name});
@@ -5378,7 +5559,7 @@ pub const Checker = struct {
         if (w.binding) |bn| {
             try self.declareVar(ctx, bn, enter_sig.return_type);
         }
-        for (w.body) |s| try self.checkStmt(ctx, s);
+        for (w.body) |*s| try self.checkStmt(ctx, s);
     }
 
     /// Go-tarzı `defer CALL` (bkz. `ast.DeferStmt`nin belge notu) — `CALL`i
@@ -5432,7 +5613,7 @@ pub const Checker = struct {
             .in_async = false,
             .path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ctx.path, fd.name }),
         };
-        for (fd.body) |s| try self.checkStmt(&inner_ctx, s);
+        for (fd.body) |*s| try self.checkStmt(&inner_ctx, s);
         if (ret != .none and !alwaysReturns(fd.body)) {
             return self.fail(error.MissingReturn, "nested function '{s}' does not return a value on all paths", .{fd.name});
         }
@@ -5451,7 +5632,7 @@ pub const Checker = struct {
         return Type{ .func = .{ .params = params, .return_type = ret_boxed } };
     }
 
-    fn checkAssign(self: *Checker, ctx: *FnCtx, a: ast.Assign) TypeError!void {
+    fn checkAssign(self: *Checker, ctx: *FnCtx, a: *const ast.Assign) TypeError!void {
         switch (a.target) {
             .identifier => |name| {
                 const existing = ctx.scope.lookupLocal(name) orelse blk: {
@@ -5474,7 +5655,7 @@ pub const Checker = struct {
                     return self.fail(error.UndefinedVariable, "undefined variable: {s} (give the type on first assignment: `{s}: <type> = ...`)", .{ name, name });
                 };
                 const value_t = try self.checkExprExpected(ctx, a.value, existing);
-                if (!self.assignable(existing, value_t)) {
+                if (!try self.assignableOrCoerce(existing, value_t, &a.value)) {
                     return self.fail(error.TypeMismatch, "type mismatch for '{s}'", .{name});
                 }
                 // Faz FF.6: yeniden atama, daraltma DURUMUNU geçersiz kılar
@@ -5500,7 +5681,7 @@ pub const Checker = struct {
                     else => return self.fail(error.TypeMismatch, "'.{s}' can only be used on class instances", .{attr.attr}),
                 };
                 const is_self = attr.obj.* == .identifier and std.mem.eql(u8, attr.obj.identifier, "self");
-                const info = self.classes.getPtr(class_name).?;
+                const info = self.classes.get(class_name).?;
                 // Faz P2.2: alan ZATEN bildirilmişse (Faz FF.5 — AÇIKÇA
                 // tipli bir `FieldDecl`) kendi tipi, boş bir liste literali
                 // (`self.items = []`) İçin `expected` olarak KULLANILIR
@@ -5509,7 +5690,7 @@ pub const Checker = struct {
                 const existing_field_t = info.fields.get(attr.attr);
                 const value_t = try self.checkExprExpected(ctx, a.value, existing_field_t);
                 if (existing_field_t) |existing_t| {
-                    if (!self.assignable(existing_t, value_t)) {
+                    if (!try self.assignableOrCoerce(existing_t, value_t, &a.value)) {
                         return self.fail(error.TypeMismatch, "type mismatch for '{s}.{s}'", .{ class_name, attr.attr });
                     }
                     // Faz FF.5: AÇIKÇA bildirilen bir alan (`registerClassSignatures`
@@ -5543,7 +5724,7 @@ pub const Checker = struct {
                         return self.fail(error.TypeMismatch, "the list index must be an 'int'", .{});
                     }
                     const value_t = try self.checkExprExpected(ctx, a.value, obj_t.list.*);
-                    if (!self.assignable(obj_t.list.*, value_t)) {
+                    if (!try self.assignableOrCoerce(obj_t.list.*, value_t, &a.value)) {
                         return self.fail(error.TypeMismatch, "type mismatch in indexed assignment: it does not match the list's element type", .{});
                     }
                     return;
@@ -5556,7 +5737,7 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "the dict index does not match the key type", .{});
                 }
                 const value_t = try self.checkExprExpected(ctx, a.value, obj_t.dict.value.*);
-                if (!self.assignable(obj_t.dict.value.*, value_t)) {
+                if (!try self.assignableOrCoerce(obj_t.dict.value.*, value_t, &a.value)) {
                     return self.fail(error.TypeMismatch, "the dict value does not match the value type", .{});
                 }
             },
@@ -5718,9 +5899,9 @@ pub const Checker = struct {
         if (expr == .list_lit and expr.list_lit.len > 0) {
             if (expected) |exp| {
                 if (exp == .list and exp.list.* == .class) {
-                    for (expr.list_lit) |el| {
+                    for (expr.list_lit, 0..) |el, li| {
                         const t = try self.checkExpr(ctx, el);
-                        if (!self.assignable(exp.list.*, t)) {
+                        if (!try self.assignableOrCoerce(exp.list.*, t, &expr.list_lit[li])) {
                             return self.fail(error.TypeMismatch, "the list element does not match the expected class type", .{});
                         }
                     }
@@ -6223,7 +6404,7 @@ pub const Checker = struct {
 
     fn dunderClassInfo(self: *Checker, t: Type) ?*ClassInfo {
         if (t != .class or isTupleClassName(t.class)) return null;
-        return self.classes.getPtr(t.class);
+        return self.classes.get(t.class);
     }
 
     fn hasDunder(self: *Checker, t: Type, name: []const u8) bool {
@@ -6567,7 +6748,7 @@ pub const Checker = struct {
     fn checkNarrowedBlock(self: *Checker, ctx: *FnCtx, list: *const NarrowList, body: []const ast.Stmt) TypeError!void {
         const saved = try self.applyNarrows(ctx, list);
         defer self.restoreNarrows(ctx, list, saved);
-        for (body) |s| try self.checkStmt(ctx, s);
+        for (body) |*s| try self.checkStmt(ctx, s);
     }
 
     /// Yalnızca TAM OLARAK `<isim> != None` / `<isim> == None` (VE
@@ -6633,7 +6814,7 @@ pub const Checker = struct {
             .class => |n| n,
             else => return self.fail(error.TypeMismatch, "'.{s}' can only be used on class instances", .{attr}),
         };
-        const info = self.classes.getPtr(class_name) orelse
+        const info = self.classes.get(class_name) orelse
             return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         if (info.fields.get(attr)) |ft| return ft;
         if (info.methods.get(attr)) |msig| {
@@ -6661,7 +6842,7 @@ pub const Checker = struct {
             .class => |n| n,
             else => return self.fail(error.TypeMismatch, "'.{s}' can only be used on class instances", .{a.attr}),
         };
-        const info = self.classes.getPtr(class_name) orelse
+        const info = self.classes.get(class_name) orelse
             return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         if (info.fields.get(a.attr)) |ft| return ft;
         return self.fail(error.UndefinedAttribute, "class '{s}' has no field '{s}'", .{ class_name, a.attr });
@@ -8100,7 +8281,7 @@ pub const Checker = struct {
                         try self.checkGrowableListRecv(ctx, a, "append", "xs.append(v)");
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' takes exactly 1 argument", .{});
                         const vt = try self.checkExpr(ctx, c.args[0]);
-                        if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "the argument of 'append' does not match the list's element type", .{});
+                        if (!try self.assignableOrCoerce(obj_t.list.*, vt, &c.args[0])) return self.fail(error.TypeMismatch, "the argument of 'append' does not match the list's element type", .{});
                         return .none;
                     }
                     // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) —
@@ -8168,7 +8349,7 @@ pub const Checker = struct {
                         const it = try self.checkExpr(ctx, c.args[0]);
                         if (it != .int) return self.fail(error.TypeMismatch, "the index of 'insert' must be an 'int'", .{});
                         const vt = try self.checkExpr(ctx, c.args[1]);
-                        if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "the value of 'insert' does not match the list's element type", .{});
+                        if (!try self.assignableOrCoerce(obj_t.list.*, vt, &c.args[1])) return self.fail(error.TypeMismatch, "the value of 'insert' does not match the list's element type", .{});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "extend")) {
@@ -8187,7 +8368,7 @@ pub const Checker = struct {
                     .class => |n| n,
                     else => return self.fail(error.TypeMismatch, "a method call is only valid on class instances", .{}),
                 };
-                const info = self.classes.getPtr(class_name) orelse
+                const info = self.classes.get(class_name) orelse
                     return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
                 if (info.methods.get(a.attr)) |sig| {
                     try self.checkArgsDecl(ctx, sig, c.args, a.attr, @intFromPtr(c.callee));
@@ -8384,7 +8565,7 @@ pub const Checker = struct {
             self.current_line = saved_line;
             self.current_span = saved_span;
         }
-        try self.classes.put(self.allocator, mangled, .{});
+        try self.putClass(mangled);
         try self.registerClassSignatures(concrete);
         try self.class_instantiations.append(self.allocator, concrete);
         try self.checkClassBody(concrete);
@@ -8595,7 +8776,8 @@ pub const Checker = struct {
         body[1] = .{ .kind = .{ .expr_stmt = .{ .call = .{ .callee = op_callee, .args = c.args } } }, .line = self.current_line, .span = self.current_span };
         body[2] = .{ .kind = .{ .assign = .{ .target = a.obj.*, .value = .{ .identifier = tmp_name } } }, .line = self.current_line, .span = self.current_span };
         const if_stmt: ast.IfStmt = .{ .cond = .{ .bool_lit = true }, .then_body = body, .elif_clauses = &.{}, .else_body = null };
-        try self.checkStmt(ctx, .{ .kind = .{ .if_stmt = if_stmt }, .line = self.current_line, .span = self.current_span });
+        const synth_if: ast.Stmt = .{ .kind = .{ .if_stmt = if_stmt }, .line = self.current_line, .span = self.current_span };
+        try self.checkStmt(ctx, &synth_if);
         try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .if_stmt = if_stmt });
         return true;
     }
@@ -8638,7 +8820,8 @@ pub const Checker = struct {
         const body = try self.allocator.alloc(ast.Stmt, 1);
         body[0] = .{ .kind = .{ .expr_stmt = .{ .call = .{ .callee = append_callee, .args = arg_slot } } }, .line = self.current_line, .span = self.current_span };
         const fs: ast.ForStmt = .{ .var_name = var_name, .iterable = iterable, .body = body };
-        try self.checkStmt(ctx, .{ .kind = .{ .for_stmt = fs }, .line = self.current_line, .span = self.current_span });
+        const synth_for: ast.Stmt = .{ .kind = .{ .for_stmt = fs }, .line = self.current_line, .span = self.current_span };
+        try self.checkStmt(ctx, &synth_for);
         try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .for_stmt = fs });
         return true;
     }
@@ -8649,7 +8832,7 @@ pub const Checker = struct {
         }
         for (params, args, 0..) |pt, ae, i| {
             const at = try self.checkExprExpected(ctx, ae, pt);
-            if (!self.assignable(pt, at)) {
+            if (!try self.assignableOrCoerce(pt, at, &args[i])) {
                 // Gerçek span sistemi (bkz. plan dosyası "Gerçek span
                 // sistemi + yapılandırılmış tanılamalar"): mümkünse
                 // `recordDiagnostic`nin (BU hata YUKARI doğru YAYILDIKTAN
@@ -8929,7 +9112,7 @@ pub const Checker = struct {
             ),
         };
         const proto = self.protocols.get(protocol_name).?;
-        const cinfo = self.classes.getPtr(class_name).?;
+        const cinfo = self.classes.get(class_name).?;
         for (proto.methods) |pm| {
             const cm = cinfo.methods.get(pm.name) orelse return self.fail(
                 error.TypeMismatch,
@@ -9499,7 +9682,7 @@ pub const Checker = struct {
         // Önce yer tutucuyu kaydet (olası öz-başvurulu/özyinelemeli generic
         // sınıflar AYNI somutlaştırmayı YENİDEN bulsun diye — `instantiateGeneric`in
         // AYNI yorumuyla TUTARLI), SONRA gövdeyi denetle.
-        try self.classes.put(self.allocator, mangled, .{});
+        try self.putClass(mangled);
         try self.class_type_args.put(self.allocator, mangled, try self.allocator.dupe(Type, bound_types));
         try self.registerClassSignatures(concrete);
         try self.class_instantiations.append(self.allocator, concrete);
@@ -9624,7 +9807,7 @@ pub const Checker = struct {
         } else {
             for (gfd.params[1..], c.args) |p, arg| {
                 const at_t: Type = blk: {
-                    if ((arg == .list_lit and arg.list_lit.len == 0) or (arg == .dict_lit and arg.dict_lit.len == 0)) {
+                    if (((arg == .list_lit and arg.list_lit.len == 0) or (arg == .dict_lit and arg.dict_lit.len == 0)) and !(try self.mentionsProtocol(p.type_expr))) {
                         if (self.typeExprToType(p.type_expr)) |resolved| break :blk resolved else |_| {}
                     }
                     break :blk try self.checkExpr(ctx, arg);
@@ -9639,7 +9822,7 @@ pub const Checker = struct {
         );
 
         const mangled = try self.mangleName(gfd.name, &.{bound});
-        const def_info_ptr = self.classes.getPtr(def_class).?;
+        const def_info_ptr = self.classes.get(def_class).?;
         if (!def_info_ptr.methods.contains(mangled)) {
             const params = try self.allocator.alloc(ast.Param, gfd.params.len);
             for (gfd.params, 0..) |p, i| {
@@ -9663,8 +9846,8 @@ pub const Checker = struct {
             var cls_it = self.classes.iterator();
             while (cls_it.next()) |e| {
                 if (!self.isSubclassOf(e.key_ptr.*, def_class)) continue;
-                try e.value_ptr.methods.put(self.allocator, mangled, sig);
-                try e.value_ptr.method_owners.put(self.allocator, mangled, def_class);
+                try e.value_ptr.*.methods.put(self.allocator, mangled, sig);
+                try e.value_ptr.*.method_owners.put(self.allocator, mangled, def_class);
             }
             // Sınıfın AST'sine YERİNDE ekle — codegen/sahiplik analizleri
             // somutlaştırılmış metodu sıradan bir metod olarak görür.
@@ -9722,7 +9905,7 @@ pub const Checker = struct {
             // İçEREN bir liste/dict GİBİ) NORMAL `checkExpr` yoluna DÜŞÜLÜR
             // (MEVCUT davranış, DEĞİŞMEDEN).
             const at: Type = blk: {
-                if ((arg == .list_lit and arg.list_lit.len == 0) or (arg == .dict_lit and arg.dict_lit.len == 0)) {
+                if (((arg == .list_lit and arg.list_lit.len == 0) or (arg == .dict_lit and arg.dict_lit.len == 0)) and !(try self.mentionsProtocol(p.type_expr))) {
                     if (self.typeExprToType(p.type_expr)) |resolved| break :blk resolved else |_| {}
                 }
                 break :blk try self.checkExpr(ctx, arg);

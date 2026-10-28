@@ -174,6 +174,10 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             if (self.from_imports.get(name)) |mangled| {
                 if (self.classes.contains(mangled)) return .{ .qtype = .l, .heap = .class, .class_name = mangled };
             }
+            // Değer tipi konumundaki bir protokol adı (`list[Shape]`, `x: Shape`): checker onu sentezlenen soyut taban sınıfa
+            // (`Shape__Base`, bkz. `checker.ensureProtocolBase`) çözmüştür; sınıf kaydı ek sınıf olarak buradadır.
+            const base_name = try std.fmt.allocPrint(self.allocator, "{s}__Base", .{name});
+            if (self.classes.contains(base_name)) return .{ .qtype = .l, .heap = .class, .class_name = base_name };
             return error.Unsupported;
         },
         .generic => |g| {

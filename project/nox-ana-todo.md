@@ -181,14 +181,14 @@ kuralı bu istisna için kullanıcı kararıyla aşıldı. Her madde ÖNCE kodda
 
 ## Faz 2 — P1 tip sistemi ve AGENTS sözleşmesi boşlukları
 
-- [ ] **2.1 Heterojen protokol koleksiyonunu tasarla.** (Tasarım ONAYLANDI 2026-10-28: iki kelimeli fat-pointer `(nesne*, vtable*)`, vtable statik veri, kullanıcı sözdizimi değişmez; ARC nesne yarısı üzerinden; değer protokol tipli saklandığında fat-pointer, statik somut tipte monomorphization.) `AGENTS.md` §12,
+- [x] **2.1 Heterojen protokol koleksiyonunu tasarla.** (Tasarım ONAYLANDI 2026-10-28: iki kelimeli fat-pointer `(nesne*, vtable*)`, vtable statik veri, kullanıcı sözdizimi değişmez; ARC nesne yarısı üzerinden; değer protokol tipli saklandığında fat-pointer, statik somut tipte monomorphization.) `AGENTS.md` §12,
   `list[Shape]` için örtük fat-pointer/vtable fallback ister; güncel belgeler
   protokol tipli koleksiyonları reddediyor. Temsil, ARC davranışı, ABI ve
   dispatch seçimi onaylanmadan uygulanmaz.
-- [ ] **2.2 Protokol dispatch'in iki yolunu tamamla.** Tek/az somut tipte
+- [x] **2.2 Protokol dispatch'in iki yolunu tamamla.** (v2.0.34: temsil = sentezlenen `P__Base` soyut sınıfı + dönüşümde sentezlenen delege eden `P__Box_C` alt sınıfı; yani fat-pointer mevcut tekli-kalıtım vtable altyapısıyla temsil edilir, yeni codegen yok. Statik-somut çağrılar monomorphize kalır. Golden: `protocol_heterogeneous_list` (iki yol yan yana) ve `protocol_values_fields_dict_optional`, QBE+LLVM; typecheck golden'ları.) Tek/az somut tipte
   monomorphization; gerçekten heterojen koleksiyonda fat-pointer fallback.
   Her protokol için iki backend'de iki yolun golden testi zorunlu.
-- [ ] **2.3 Protokol değerleri için ownership analizi ekle.** Container'a
+- [x] **2.3 Protokol değerleri için ownership analizi ekle.** (v2.0.34: kutu/taban sıradan sınıf olduğundan ASAP/ARC/döngü çözücü/istisna/closure yolları değişmeden çalışır; 2000 turluk kutulama-bırakma döngüsü ve istisna yolu golden'da, Debug allocator sızıntı raporlamadı. Sınır: imzası başka protokol içeren protokol değer tipi olamaz.) Container'a
   girme/çıkma, closure, return, exception ve cycle collector davranışını
   doğrula; belirsizlikte sessiz ARC fallback kullan.
 - [!] **2.4 Generic sınıfta generic metod kararını ver.** Güncel sınır

@@ -31,8 +31,9 @@ lambdas was added. A lambda that captures variables lifts to a closure; a module
 ## Generics
 
 Free functions are instantiated per distinct argument types (`first__int`, `first__str`); classes per type-argument tuple (`Box__int`); methods of non-generic classes per explicit/inferred type argument. Mangled names are computed in
-**one** place and shared with code generation — computing them twice (once in the checker, once in codegen) was the source of an earlier cross-module bug. Limits: a generic method on a generic class is not supported;
-protocol-typed collections are not supported (use a base class).
+**one** place and shared with code generation — computing them twice (once in the checker, once in codegen) was the source of an earlier cross-module bug. Limits: a generic method on a generic class is not supported.
+
+A protocol used as a value type (`list[Shape]`, a field, a variable, a return type) resolves to a synthesized abstract class `Shape__Base` whose methods raise. Assigning a concrete class `C` that satisfies the protocol rewrites the expression to `Shape__Box_C(<expr>)`: a synthesized subclass of `Shape__Base` with an `inner: C` field whose overrides delegate to `inner`. The fat pointer (object plus method table) is therefore an ordinary single-inheritance class hierarchy, and ownership analysis, ARC, the cycle collector and both backends needed no change. The rewrite is keyed by the address of the expression slot (`assignableOrCoerce` and `call_expand_apply.expr`), so generic instantiations are rewritten independently. Class infos are heap-stable (`*ClassInfo`) because resolving a field type can synthesize another class while a registration still holds a pointer.
 
 ## The prelude
 
