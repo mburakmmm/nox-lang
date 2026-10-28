@@ -119,8 +119,8 @@ print(ops[1](4))
 ### Closures
 
 A nested function or lambda may **read** variables of the enclosing function. The captured variables stay alive as long as the closure
-does. Assigning to a captured variable from the nested function is a compile error — return a new value or use a one-field object
-if shared mutation is needed.
+does. To **assign** to a variable of the enclosing function, declare it `nonlocal` in the nested function (see below); without it,
+assigning to a captured variable is a compile error.
 
 ```nox
 def make_adder(k: int) -> (int) -> int:
@@ -140,6 +140,30 @@ print(add5(1))
 5
 30
 6
+```
+
+### `nonlocal`
+
+`nonlocal name` lets a nested function assign to a variable that belongs to an enclosing function. The variable must be declared with an
+explicit type (or be a typed parameter) in the enclosing function, and it cannot be a `for` loop variable. Internally such a variable
+lives in a shared one-element cell, so every closure sees the same value.
+
+```nox
+def make_counter() -> int:
+    hits: int = 0
+    def hit() -> None:
+        nonlocal hits
+        hits += 1
+    hit()
+    hit()
+    hit()
+    return hits
+
+print(make_counter())
+```
+
+```output
+3
 ```
 
 ### Bound methods

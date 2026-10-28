@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.54]
+
+### Eklendi
+
+- `nonlocal a, b`: iç ice `def`, cevreleyen fonksiyonun degiskenine yazabilir. Degisken tek elemanli bir hucreye (liste) cevrilir; `noxc fmt` korur.
+
+### Duzeltildi
+
+- Ic ice `def`in kendi adiyla DOGRUDAN cagrilmasi (`inc(1)`) codegen'de "desteklenmiyor" hatasi veriyordu.
+- Bir closure'a yakalanan yerel liste (`xs: list[int] = [s]`) yigin/arena'ya terfi edip derlemeyi `Unsupported` ile dusuruyordu.
+- Modul yukleyici (import edilen moduller) `*args`, `**kwargs` ve anahtar-sozcuge-ozel parametre bayraklarini dusuruyordu.
+
 ## [2.0.53]
 
 ### Eklendi

@@ -46,6 +46,7 @@ const types = @import("types.zig");
 const call_expand_apply = @import("call_expand_apply.zig");
 const index_call_fixup = @import("index_call_fixup.zig");
 const guard_normalize = @import("guard_normalize.zig");
+const nonlocal_desugar = @import("nonlocal_desugar.zig");
 const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
@@ -3517,6 +3518,11 @@ pub const Checker = struct {
 
     pub fn checkModule(self: *Checker, module: ast.Module) TypeError!void {
         self.module_expr_spans = module.expr_spans;
+        // TODO 8.5: `nonlocal` → hücre (tek elemanlı liste) dönüşümü; diğer tüm geçişlerden ÖNCE.
+        if (try nonlocal_desugar.run(self.allocator, module.body)) |d| {
+            self.current_line = d.line;
+            return self.fail(error.TypeMismatch, "{s}", .{d.message});
+        }
         // v1.156.0: koruma tarzı Optional daraltma (`if x is None: return` + kalan deyimler → `else`), bkz. `guard_normalize.zig`.
         try guard_normalize.run(self.allocator, module.body);
         try self.collectImports(module);

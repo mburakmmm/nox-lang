@@ -45,6 +45,8 @@ pub const Parser = struct {
     depth: usize = 0,
     /// Bkz. `ParserDiagnostic`in belge notu.
     last_diagnostic: ?ParserDiagnostic = null,
+    /// Şu an ayrıştırılan fonksiyon gövdesinin `nonlocal` adları (`null`: fonksiyon dışı).
+    cur_nonlocals: ?*std.ArrayList([]const u8) = null,
     /// Bkz. `ast.Module.expr_spans`nin belge notu — `parseModule` SONUNDA
     /// döndürülen `Module`a TAŞINIR.
     expr_spans: std.AutoHashMapUnmanaged(usize, Span) = .empty,
@@ -144,11 +146,26 @@ pub const Parser = struct {
         _ = try self.expect(.indent);
         var stmts = std.ArrayList(ast.Stmt).empty;
         while (!self.check(.dedent)) {
+            if (try self.tryParseNonlocal()) continue;
             try stmts.append(self.allocator, try self.parseStmt());
             try self.drainExtraStmts(&stmts);
         }
         _ = try self.expect(.dedent);
         return stmts.toOwnedSlice(self.allocator);
+    }
+
+    /// `nonlocal a, b` (bağlamsal anahtar kelime): adlar çevreleyen fonksiyonun `nonlocals` listesine toplanır, AST'de deyim bırakılmaz.
+    fn tryParseNonlocal(self: *Parser) ParseError!bool {
+        if (!(self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "nonlocal") and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .identifier)) return false;
+        const list = self.cur_nonlocals orelse {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "'nonlocal' can only be used inside a function" };
+            return error.UnexpectedToken;
+        };
+        _ = self.advance();
+        try list.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        while (self.match(.comma)) try list.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        _ = try self.expect(.newline);
+        return true;
     }
 
     /// Faz T.1: TÜM deyim ayrıştırmasının TEK dağıtım noktası — `ast.Stmt`in
@@ -586,6 +603,10 @@ pub const Parser = struct {
         _ = try self.expect(.arrow);
         const return_type = try self.parseTypeExpr();
         _ = try self.expect(.colon);
+        var nonlocals = std.ArrayList([]const u8).empty;
+        const saved_nonlocals = self.cur_nonlocals;
+        self.cur_nonlocals = &nonlocals;
+        defer self.cur_nonlocals = saved_nonlocals;
         const body = try self.parseBlock();
 
         return .{
@@ -595,6 +616,7 @@ pub const Parser = struct {
             .return_type = return_type,
             .body = body,
             .is_async = is_async,
+            .nonlocals = try nonlocals.toOwnedSlice(self.allocator),
         };
     }
 

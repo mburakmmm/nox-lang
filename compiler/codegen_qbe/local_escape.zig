@@ -53,6 +53,7 @@ const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
 const inlining = @import("inlining.zig");
+const registration = @import("registration.zig");
 
 const Codegen = codegen.Codegen;
 const QbeType = types.QbeType;
@@ -78,6 +79,15 @@ const isHeapManaged = abi.isHeapManaged;
 /// AMA GG.17'nin yalnızca EN DIŞTAKİ `var_decl`in KENDİ inşasını stack'e
 /// alması, İÇ İÇE argüman ifadelerinin (`B(42)` GİBİ) TAMAMEN NORMAL ARC
 /// yolunda KALMASI anlamına gelir. **Düzeltme**: v1'de bu optimizasyon
+/// İç içe `def`/lambda gövdesi `name`i HERHANGİ bir biçimde anıyorsa o değer closure bloğuna yakalanır (retain + ömür closure'a bağlanır):
+/// yığın/arena terfisi ve `append`-büyütme güvenli DEĞİLDİR — gövdedeki kullanımın "güvenli yerel kullanım" görünmesi bunu değiştirmez.
+fn closureBodyMentions(self: *const codegen.Codegen, stmts: ?[]const ast.Stmt, expr: ?ast.Expr, name: []const u8) bool {
+    var used: std.StringHashMapUnmanaged(void) = .empty;
+    if (stmts) |b| registration.collectIdentifierNamesStmts(self.allocator, b, &used) catch return true;
+    if (expr) |e| registration.collectIdentifierNamesExpr(self.allocator, e, &used) catch return true;
+    return used.contains(name);
+}
+
 /// SADECE HİÇBİR alanı heap-yönetimli (list/dict/class/str/closure/
 /// boxed_scalar) OLMAYAN sınıflara UYGULANIR — böyle bir sınıfın HİÇBİR
 /// alanı release GEREKTİRMEDİĞİNDEN, tüm release'i atlamak GÜVENLİDİR.
@@ -327,7 +337,7 @@ fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
             .del_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false,
             // İç içe `def`in gövdesi biliniyor: adı kullanmıyorsa yakalama
             // yoktur. `try`/`lowlevel`/`with`/`defer` hâlâ iptal eder.
-            .func_def => |fd| if (!stmtsSafeForLocal(self, fd.body, name, class_params)) return false,
+            .func_def => |fd| if (closureBodyMentions(self, fd.body, null, name) or !stmtsSafeForLocal(self, fd.body, name, class_params)) return false,
             .try_stmt, .lowlevel_stmt, .with_stmt, .defer_stmt => return false,
             .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
@@ -469,7 +479,7 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             }
             break :blk false;
         },
-        .lambda => |lam| exprHasUnsafeLocalUse(self, lam.body.*, name, class_params),
+        .lambda => |lam| closureBodyMentions(self, null, lam.body.*, name) or exprHasUnsafeLocalUse(self, lam.body.*, name, class_params),
         .slice => |sl| exprHasUnsafeLocalUse(self, sl.obj.*, name, class_params) or (if (sl.lo) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false) or (if (sl.hi) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false) or (if (sl.step) |x| exprHasUnsafeLocalUse(self, x.*, name, class_params) else false),
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
@@ -550,7 +560,7 @@ fn stmtsSafeForGrowableLocal(self: *const Codegen, stmts: []const ast.Stmt, name
             },
             .raise_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
             .del_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
-            .func_def => |fd| if (!stmtsSafeForGrowableLocal(self, fd.body, name)) return false,
+            .func_def => |fd| if (closureBodyMentions(self, fd.body, null, name) or !stmtsSafeForGrowableLocal(self, fd.body, name)) return false,
             .try_stmt, .lowlevel_stmt, .with_stmt, .defer_stmt => return false,
             .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
@@ -639,7 +649,7 @@ fn exprHasUnsafeGrowableLocalUse(self: *const Codegen, expr: ast.Expr, name: []c
             }
             break :blk false;
         },
-        .lambda => |lam| exprHasUnsafeGrowableLocalUse(self, lam.body.*, name),
+        .lambda => |lam| closureBodyMentions(self, null, lam.body.*, name) or exprHasUnsafeGrowableLocalUse(self, lam.body.*, name),
         .slice => |sl| exprHasUnsafeGrowableLocalUse(self, sl.obj.*, name) or (if (sl.lo) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false) or (if (sl.hi) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false) or (if (sl.step) |x| exprHasUnsafeGrowableLocalUse(self, x.*, name) else false),
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);

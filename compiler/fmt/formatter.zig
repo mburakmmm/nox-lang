@@ -607,6 +607,7 @@ const Printer = struct {
         try self.indentTo(depth);
         try self.printFuncHeader(fd);
         try self.line(source_line);
+        try self.printNonlocals(fd, depth + 1);
         try self.printStmts(fd.body, depth + 1);
     }
 
@@ -622,7 +623,20 @@ const Printer = struct {
         try self.printFuncHeader(fd);
         try self.writer.writeAll("\n");
         self.last_was_blank = false;
+        try self.printNonlocals(fd, depth + 1);
         try self.printStmts(fd.body, depth + 1);
+    }
+
+    fn printNonlocals(self: *Printer, fd: ast.FuncDef, depth: usize) FormatError!void {
+        if (fd.nonlocals.len == 0) return;
+        try self.indentTo(depth);
+        try self.writer.writeAll("nonlocal ");
+        for (fd.nonlocals, 0..) |n, i| {
+            if (i > 0) try self.writer.writeAll(", ");
+            try self.writer.writeAll(n);
+        }
+        try self.writer.writeAll("\n");
+        self.last_was_blank = false;
     }
 
     fn printFuncHeader(self: *Printer, fd: ast.FuncDef) FormatError!void {

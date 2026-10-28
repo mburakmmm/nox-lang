@@ -1495,6 +1495,20 @@ test "golden(typecheck): @classmethod ilk parametre cls olmalı" {
     );
 }
 
+test "golden(typecheck): nonlocal çevreleyen fonksiyonda bağlanmamış ad" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_nonlocal_no_binding.nox"),
+        @embedFile("typecheck_cases/err_nonlocal_no_binding.expected"),
+    );
+}
+
+test "golden(typecheck): nonlocal değişken for döngü değişkeni olamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_nonlocal_for_var.nox"),
+        @embedFile("typecheck_cases/err_nonlocal_for_var.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

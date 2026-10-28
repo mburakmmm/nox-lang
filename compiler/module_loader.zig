@@ -507,7 +507,10 @@ fn renameStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, map: *const Rename
 /// tip ifadeleri VE gövde YENİDEN adlandırılır (bkz. modül üstü not).
 fn renameMethodDef(a: std.mem.Allocator, m: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
     const params = try a.alloc(ast.Param, m.params.len);
-    for (m.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map), .self_inferred = p.self_inferred, .default = p.default };
+    for (m.params, 0..) |p, i| {
+        params[i] = p;
+        params[i].type_expr = try renameTypeExpr(a, p.type_expr, map);
+    }
     return .{
         .name = m.name,
         .type_params = m.type_params,
@@ -515,6 +518,7 @@ fn renameMethodDef(a: std.mem.Allocator, m: ast.FuncDef, map: *const RenameMap) 
         .return_type = try renameTypeExpr(a, m.return_type, map),
         .body = try renameStmts(a, m.body, map),
         .is_async = m.is_async,
+        .nonlocals = m.nonlocals,
         // Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin §3.219
         // SONRASI incelemesi — `Instant.elapsed_ms` üzerindeki `@capability.
         // requires("clock")` bulgusu): `renameTopLevelFuncDef`in Faz A
@@ -535,7 +539,10 @@ fn renameMethodDef(a: std.mem.Allocator, m: ast.FuncDef, map: *const RenameMap) 
 /// üst-düzey tanımlar için çağrılır — bkz. `loadImportsRecursive`).
 fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
     const params = try a.alloc(ast.Param, fd.params.len);
-    for (fd.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map), .default = p.default };
+    for (fd.params, 0..) |p, i| {
+        params[i] = p;
+        params[i].type_expr = try renameTypeExpr(a, p.type_expr, map);
+    }
     return .{
         .name = map.get(fd.name).?,
         .type_params = fd.type_params,
@@ -543,6 +550,7 @@ fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rena
         .return_type = try renameTypeExpr(a, fd.return_type, map),
         .body = try renameStmts(a, fd.body, map),
         .is_async = fd.is_async,
+        .nonlocals = fd.nonlocals,
         // v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx):
         // GERÇEK, önceden keşfedilmemiş bir hata — BU struct-literal
         // `fd.decorators`i HİÇ KOPYALAMIYORDU, `ast.FuncDef.decorators`in
@@ -566,7 +574,10 @@ fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rena
 /// bakarak bu iki fonksiyon arasında dispatch eder.
 fn renameNestedFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
     const params = try a.alloc(ast.Param, fd.params.len);
-    for (fd.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map), .default = p.default };
+    for (fd.params, 0..) |p, i| {
+        params[i] = p;
+        params[i].type_expr = try renameTypeExpr(a, p.type_expr, map);
+    }
     return .{
         .name = fd.name,
         .type_params = fd.type_params,
@@ -574,6 +585,7 @@ fn renameNestedFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rename
         .return_type = try renameTypeExpr(a, fd.return_type, map),
         .body = try renameStmts(a, fd.body, map),
         .is_async = fd.is_async,
+        .nonlocals = fd.nonlocals,
         // `renameTopLevelFuncDef`in AYNI düzeltmesi (bkz. onun belge notu).
         .decorators = fd.decorators,
     };

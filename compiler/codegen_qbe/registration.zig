@@ -1027,7 +1027,7 @@ fn collectBoundNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, out: *s
 /// ismini (HEM okuma HEM `.assign` hedefi konumunda — `ast.Assign.target`
 /// KENDİSİ bir `Expr` olduğundan, `.identifier` varyantı İKİSİNİ de
 /// KAPSAR) `out`a ekler.
-fn collectIdentifierNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+pub fn collectIdentifierNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
     for (stmts) |stmt| {
         switch (stmt.kind) {
             .expr_stmt => |e| try collectIdentifierNamesExpr(a, e, out),
@@ -1074,7 +1074,7 @@ fn collectIdentifierNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, ou
     }
 }
 
-fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+pub fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
     switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
         .identifier => |name| try out.put(a, name, {}),
@@ -1423,7 +1423,12 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
             .func_def => |fd| {
                 const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.current_path, fd.name });
                 const mangled = try sanitizePathToSymbol(self.allocator, path);
-                try locals.append(self.allocator, .{ .name = fd.name, .info = .{ .qtype = .l, .heap = .closure, .class_name = mangled } });
+                // Statik imza: iç içe `def`in KENDİ adıyla DOĞRUDAN çağrılması (`inc(1)`) dolaylı-çağrı yolundan geçer ve `func_sig` ister.
+                const sig_params = try self.allocator.alloc(TypeInfo, fd.params.len);
+                for (fd.params, 0..) |prm, pi| sig_params[pi] = try self.resolveType(prm.type_expr);
+                const nested_sig = try self.allocator.create(FuncSigInfo);
+                nested_sig.* = .{ .params = sig_params, .ret = try self.resolveType(fd.return_type) };
+                try locals.append(self.allocator, .{ .name = fd.name, .info = .{ .qtype = .l, .heap = .closure, .class_name = mangled, .func_sig = nested_sig } });
             },
             // Faz U.5: `with EXPR as NAME:` — İKİ gizli/örtük yerel
             // GEREKİR: (1) `EXPR`in değerini TUTAN, fonksiyon-genelinde

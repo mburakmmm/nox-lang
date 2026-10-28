@@ -255,6 +255,9 @@ pub const FuncDef = struct {
     /// Faz 1 decorator: `def` HEMEN ÖNCESİNDE ayrıştırılan sıfır-veya-daha
     /// fazla `@isim(...)` satırı — boşsa (varsayılan) HİÇBİR decorator YOK.
     decorators: []const Decorator = &.{},
+    /// İç içe `def` gövdesindeki `nonlocal a, b` bildirimi (kaynakta sıra serbest; AST'de gövde başına toplanır). Checker öncesi
+    /// `nonlocal_desugar.zig` bu adları bir hücreye (tek elemanlı liste) çevirir.
+    nonlocals: []const []const u8 = &.{},
 };
 
 /// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): bir sınıf gövdesinde
