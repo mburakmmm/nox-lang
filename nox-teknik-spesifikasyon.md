@@ -29135,3 +29135,9 @@ Barındırılan Windows `zig test -fllvm`, freestanding `printf` gövdesindeki `
 Mobil sandbox kökleri artık `threadlocal` bir işaretçiyle seçilmez (AGENTS §2.6). `embed.allowsPath(rt, path)` kararı, çağıranın taşıdığı `RuntimeState`in politikasından (`embed_active`, `embed_roots`) okur. `nox.fs` ve `nox.sqlite`ın özel `*_raw` giriş noktaları `with_rt` ile gizli `rt` argümanını alır. Genel `nox_embed.h` ABI'si değişmedi.
 
 `nox.thread.start`, `nox.thread.pool_run` ve `nox.http.serve_multicore` yeni bir `RuntimeState` kurar. Önceki sürümde bu çocuklar politikasız doğuyordu ve sandbox'ı aşabiliyordu. Artık çağıran, spawn anında politikanın ebeveynden bağımsız bir kopyasını alır (`snapshotEmbedPolicy`); çocuk onu `adoptEmbedPolicy` ile devralır, kök dizeleri çocuğun `bootstrap_allocator`ıyla ayrılır ve `nox_runtime_deinit` onları serbest bırakır. `nox_runtime_init_child(parent)` aynı yolu tek çağrıda sunar. Masaüstünde (`embed_active == false`) hiçbir şey kopyalanmaz.
+
+## 3.311 Nova geri bildirimleri: URL IPv6, sayı ayrıştırma, daraltma, `\x` (v2.0.30)
+
+`nox.url.parse` `[` ile başlayan host'ta eşleşen `]`dan sonraki `:`ı port ayırıcı sayar; `host` köşeli parantezlerle kalır. `int()`/`float()` ayrıştırması baştaki ve sondaki `" \t\n\r\x0b\x0c"` karakterlerini atar. `checkBinary`, `and` için sol operandın `collectNarrows(sol, true)`, `or` için `collectNarrows(sol, false)` sonucunu yalnızca sağ operand denetlenirken uygular; ifade bitince geri alır.
+
+Parser `\xHH` kaçışında tam iki onaltılık basamak ister. `\x80`–`\xFF` kabul edilmez, çünkü tek bir ham bayt `str`in UTF-8 değişmezini bozar. Gömülü `\x00` desteklenir (`str` uzunluğu başlıkta tutulur). QBE string verisinde `\x00`–`\x1f` ve `\x7f` üç basamaklı sekizlik kaçışla yazılır; onaltılık `\xNN` bitişik basamağı yuttuğu için kullanılmaz.

@@ -1,0 +1,29 @@
+import nox.strings
+
+a: str = "a\x41b"
+print(a)
+print(len(a))
+
+# Bitişik onaltılık benzeri harf, kaçışın parçası SAYILMAZ: \x1f + 'b'
+c: str = "a\x1fb"
+print(len(c))
+print(nox.strings.byte_at(c, 1))
+print(nox.strings.byte_at(c, 2))
+
+# Kontrol baytları (SOH, DEL) ve tırnak/ters bölü için kaçış
+d: str = "v\x01w\x7fz\x22q\x5c"
+print(len(d))
+print(nox.strings.byte_at(d, 1))
+print(nox.strings.byte_at(d, 3))
+print(d[5])
+print(d[7])
+
+e: str = f"<\x42>{1 + 1}"
+print(e)
+
+# Gömülü NUL: uzunluk alanı sayesinde dize NUL'da kesilmez
+z: str = "a\x00b"
+print(len(z))
+print(nox.strings.byte_at(z, 1))
+print(nox.strings.byte_at(z, 2))
+print(len(z + "c"))

@@ -32,6 +32,13 @@
 7. Bilinçli Nox tasarımı olan dinamik tip reddi, ownership sözdiziminin
    olmaması ve WASM'in backend olmaması birer eksik değildir.
 
+8. **Sıra kararı (2026-10-28, kullanıcı "sen karar ver" dedi):** Faz 1A (Nova) →
+   Faz 1.3–1.6 → Faz 2.1–2.3 (onaylı) → Aura A0/A3/A5'in cihazsız kısımları
+   (`aura-mobil-eksiklikleri.md`). Gerekçe: Aura gömme ABI'sini tüketir; 1.3
+   (allocator sözleşmesi) ve 1.6 (hata/OOM sözleşmesi) ABI'yi değiştirebilir,
+   bu yüzden Aura işi bunlardan SONRA yapılır. Aura A1/A2/A6'nın fiziksel
+   cihaz/signing/TestFlight/Play kısımları `[!]` olarak kullanıcıda kalır.
+
 ## Doğrulanmış başlangıç durumu
 
 - Masaüstü Nox 2.0 yayınlanmış ve ana dil/stdlib yol haritası kapanmıştır.
@@ -119,9 +126,54 @@ Bu faz diğer bütün yeni özelliklerden önce gelir.
 **Faz 1 çıkış kapısı:** Mobil/embed yolu gizli runtime seçimine dayanmaz;
 allocator sahipliği açık; iki runtime izolasyon ve sanitizer testleri yeşil.
 
+## Faz 1A — Nova (HTTP istemci çerçevesi) gereksinimleri
+
+Kaynak: `~/Documents/nox-packages/nova/NOX_LIMITATIONS.md` (kullanıcı talebi,
+2026-10-28: "TODO'ya uygun yerlere ekle, gerçekleştirelim"). Sıra kararı
+(kullanıcı "sen karar ver" dedi): bu şerit Faz 1'in kalanından (1.3–1.6) ÖNCE
+yürütülür, çünkü Nova aktif olarak bunlar yüzünden engelli, işler küçük ve
+bağımsızdır (embed ABI/allocator durumuna dokunmaz). Faz 1'in "her şeyden önce"
+kuralı bu istisna için kullanıcı kararıyla aşıldı. Her madde ÖNCE kodda doğrulanır
+(belgedeki iddialar bayat çıkabiliyor); yanlış/bayat iddia olduğu gibi kapatılır.
+
+- [ ] **N.1 Genel HTTP metodu: `nox.http.request(method, url, body, headers)`.**
+  Zig `doRequest` zaten tüm metodları çalıştırabiliyor; yalnız GET/POST export
+  ediliyor. `nox_http_request_raw` + `request` + `put/patch/delete/head/options`
+  sarmalayıcıları; bilinmeyen metod adı sessizce GET'e düşmez, `HttpError` verir.
+- [ ] **N.2 Gerçek istek zaman aşımı.** `timeout_ms` soket seviyesinde
+  (`SO_RCVTIMEO`/`SO_SNDTIMEO` veya poll'lu bekleme); dönüşten sonra süre ölçen
+  sahte timeout YASAK. Zaman aşımı ayrı bir `HttpTimeoutError` ile bildirilir.
+- [ ] **N.3 İkili (bayt) yanıt gövdesi.** `str` NUL-sonlandırmalı olduğundan
+  gömülü `\0` kesiliyor/boyut uyuşmazlığı doğuruyor. Önce kodda doğrula; sonra
+  `nox.buffer`/bayt tabanlı ikinci erişimci. Gzip/PNG/protobuf fixture'ı ile test.
+- [!] **N.4 Akışlı indirme/yükleme (streaming).** Yeni API yüzeyi + handle ömrü
+  tasarımı gerekir (N.3'ten sonra kısa tasarım sunulacak).
+- [!] **N.5 Yönlendirme politikası.** Belgedeki iddia büyük olasılıkla BAYAT:
+  istemci `redirect_behavior = .unhandled` ile hiç yönlendirme takip etmez (3xx
+  olduğu gibi döner), dolayısıyla çapraz-origin başlık sızıntısı yok. Doğrula ve
+  kapat; `max_redirects` takibi YENİ bir özelliktir (Authorization/Cookie'yi
+  çapraz-origin'de silme dahil) — istenirse ayrıca onaylanır.
+- [x] **N.6 `nox.url.parse` IPv6 literal hatası.** `http://[::1]:8080/` host:port
+  ayrımı `[`'li host'ta eşleşen `]`dan SONRAKİ `:`'ı aramalı. Bayat olabilir
+  (v1.142.x opt-in IPv6 turu); önce reproducer, sonra düzelt + golden. (v2.0.30: `nox.url.parse` köşeli parantezli host + port ayrımı; golden `url_parse_ipv6_literal`, iki backend.)
+- [x] **N.7 `int(" 5 ")` / `int("5\n")` boşluk toleransı.** Python gibi baştaki/
+  sondaki ASCII boşlukları yok say. Yalnız bu sınır; `float()` tutarlılığı da
+  bakılır. İki backend golden'ı. (v2.0.30: `int()`/`float()` ASCII boşluğu yok sayar; golden `int_float_parse_whitespace` + birim testi.)
+- [x] **N.8 Bileşik koşulda Optional daraltması.** `x is not None and x.f()`
+  sağ operandda daraltılmış tiple denetlensin (`and` sol → sağ; `or` için
+  `x is None or ...`). Yalnız kanıtlanabilir yerel değişken/alan yolları;
+  belirsizse eski davranış. Checker testleri + iki backend golden'ı. (v2.0.30: `checkBinary` sağ operandı `collectNarrows` ile daraltır; golden `optional_narrowing_and_or_operand` + sızıntı-yok typecheck testi.)
+- [x] **N.9 `\xHH` kaçış dizisi.** (v2.0.30: `\x00`–`\x7F` çözülür, gömülü NUL çalışır, QBE kontrol baytlarını sekizlik kaçışla yazar; `\x80`–`\xFF` ve bozuk `\x` net derleme hatasıdır — ham bayt kararı kullanıcıya bırakıldı.) `\x00`–`\x7F` Python gibi tek bayt/kod noktası.
+  `\x80`–`\xFF` için karar GEREKİR [!]: Python semantiği kod noktası (UTF-8'de 2
+  bayt) iken Nova ham bayt istiyor — `str` UTF-8 farkında olduğundan ham bayt
+  geçersiz UTF-8 üretir. Gömülü `\x00` yalnız `str` uzunluk-alanı gömülü NUL'a
+  izin veriyorsa kabul edilir (doğrulanacak); aksi halde derleme hatası.
+- [x] **N.10 `def f(x: dict[str,str] = {})` yasağı korunur.** Belgedeki "C" maddesi
+  bilinçli tasarımdır (değişmez varsayılan paylaşımı); değişiklik YOK.
+
 ## Faz 2 — P1 tip sistemi ve AGENTS sözleşmesi boşlukları
 
-- [!] **2.1 Heterojen protokol koleksiyonunu tasarla.** `AGENTS.md` §12,
+- [ ] **2.1 Heterojen protokol koleksiyonunu tasarla.** (Tasarım ONAYLANDI 2026-10-28: iki kelimeli fat-pointer `(nesne*, vtable*)`, vtable statik veri, kullanıcı sözdizimi değişmez; ARC nesne yarısı üzerinden; değer protokol tipli saklandığında fat-pointer, statik somut tipte monomorphization.) `AGENTS.md` §12,
   `list[Shape]` için örtük fat-pointer/vtable fallback ister; güncel belgeler
   protokol tipli koleksiyonları reddediyor. Temsil, ARC davranışı, ABI ve
   dispatch seçimi onaylanmadan uygulanmaz.

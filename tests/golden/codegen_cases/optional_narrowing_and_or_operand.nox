@@ -1,0 +1,33 @@
+class Policy:
+    limit: int
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+    def should_retry(self, attempt: int) -> bool:
+        return attempt < self.limit
+
+def retry_and(p: Policy | None, attempt: int) -> bool:
+    if p != None and p.should_retry(attempt):
+        return True
+    return False
+
+def retry_or(p: Policy | None, attempt: int) -> bool:
+    # `or`: sağ operand yalnızca sol YANLIŞ iken (p != None) değerlendirilir
+    if p == None or p.limit > attempt:
+        return True
+    return False
+
+def chain(p: Policy | None, q: Policy | None) -> int:
+    if p != None and q != None and p.limit > q.limit:
+        return p.limit - q.limit
+    return -1
+
+none_policy: Policy | None = None
+print(retry_and(Policy(3), 1))
+print(retry_and(Policy(3), 5))
+print(retry_and(none_policy, 1))
+print(retry_or(none_policy, 0))
+print(retry_or(Policy(2), 5))
+print(retry_or(Policy(9), 5))
+print(chain(Policy(5), Policy(2)))
+print(chain(Policy(5), none_policy))
+print(chain(none_policy, Policy(1)))

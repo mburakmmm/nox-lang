@@ -1581,6 +1581,40 @@ pub const Parser = struct {
         return self.decodeEscapes(lexeme[1 .. lexeme.len - 1]);
     }
 
+    /// `inner[i] == '\\'` konumundaki TEK kaçış dizisini çözüp `out`a ekler; tüketilen bayt sayısını döner.
+    /// `\n \t \r \\ \' \"` ve `\xHH` (tam iki onaltılık basamak, `\x00`–`\x7F`) desteklenir. `\x80`–`\xFF` ve
+    /// bozuk `\x` BİLİNÇLİ olarak derleme hatasıdır: `str` geçerli UTF-8 tutar, tek bir ham bayt bunu bozar.
+    /// Tanınmayan diğer kaçışlar eskisi gibi harfin kendisine düşer.
+    fn decodeEscapeAt(self: *Parser, inner: []const u8, i: usize, out: *std.ArrayList(u8)) ParseError!usize {
+        const esc = inner[i + 1];
+        if (esc == 'x') {
+            const hi = if (i + 2 < inner.len) std.fmt.charToDigit(inner[i + 2], 16) catch null else null;
+            const lo = if (i + 3 < inner.len) std.fmt.charToDigit(inner[i + 3], 16) catch null else null;
+            if (hi == null or lo == null) {
+                self.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "invalid '\\x' escape: it needs exactly two hexadecimal digits (for example \\x41)" };
+                return error.UnexpectedToken;
+            }
+            const value: u8 = hi.? * 16 + lo.?;
+            if (value > 0x7F) {
+                self.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "'\\x80'-'\\xFF' escapes are not supported: a str holds valid UTF-8, so write the character itself (for example \"é\")" };
+                return error.UnexpectedToken;
+            }
+            try out.append(self.allocator, value);
+            return 4;
+        }
+        const decoded: u8 = switch (esc) {
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '\\' => '\\',
+            '\'' => '\'',
+            '"' => '"',
+            else => esc,
+        };
+        try out.append(self.allocator, decoded);
+        return 2;
+    }
+
     /// `decodeString`in ÇEKİRDEK döngüsü — ZATEN tırnaksız (`inner`) bir
     /// dilim üzerinde çalışır. `decodeString` (düz string literalleri) VE
     /// `parseFStringLit` (f-string literal segment'leri, bkz. onun belge
@@ -1590,18 +1624,7 @@ pub const Parser = struct {
         var i: usize = 0;
         while (i < inner.len) {
             if (inner[i] == '\\' and i + 1 < inner.len) {
-                const esc = inner[i + 1];
-                const decoded: u8 = switch (esc) {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '\\' => '\\',
-                    '\'' => '\'',
-                    '"' => '"',
-                    else => esc,
-                };
-                try out.append(self.allocator, decoded);
-                i += 2;
+                i += try self.decodeEscapeAt(inner, i, &out);
             } else {
                 try out.append(self.allocator, inner[i]);
                 i += 1;
@@ -1752,18 +1775,7 @@ pub const Parser = struct {
         while (i < inner.len) {
             const ch = inner[i];
             if (ch == '\\' and i + 1 < inner.len) {
-                const esc = inner[i + 1];
-                const decoded: u8 = switch (esc) {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '\\' => '\\',
-                    '\'' => '\'',
-                    '"' => '"',
-                    else => esc,
-                };
-                try literal_buf.append(self.allocator, decoded);
-                i += 2;
+                i += try self.decodeEscapeAt(inner, i, &literal_buf);
                 continue;
             }
             if (ch == '{') {
@@ -1935,6 +1947,16 @@ const lexer_mod = @import("../lexer/lexer.zig");
 fn parseSource(allocator: std.mem.Allocator, source: []const u8) !ast.Module {
     const tokens = try lexer_mod.tokenize(allocator, source);
     return parseModule(allocator, tokens);
+}
+
+test "\\xHH kaçışı: geçerli çözülür, \\x80+ ve bozuk biçim reddedilir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const ok = try parseSource(arena.allocator(), "s: str = \"a\\x41\\x00\\x7f\"\n");
+    try std.testing.expectEqualStrings("aA\x00\x7f", ok.body[0].kind.var_decl.value.string_lit);
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\x80\"\n"));
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\xg1\"\n"));
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\x4\"\n"));
 }
 
 test "değişken tanımı ve aritmetik ifade ayrıştırılır" {

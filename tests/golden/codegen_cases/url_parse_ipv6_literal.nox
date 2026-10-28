@@ -1,0 +1,31 @@
+import nox.url
+from nox.url import URL, UrlError
+
+a: URL = nox.url.parse("http://[::1]:8080/api")
+print(a.host)
+print(a.port)
+print(a.path)
+
+b: URL = nox.url.parse("https://[2001:db8::7]/x?k=v")
+print(b.host)
+print(b.port)
+print(b.query["k"])
+
+c: URL = nox.url.parse("http://user:pw@[fe80::1]:9000/")
+print(c.userinfo)
+print(c.host)
+print(c.port)
+
+try:
+    nox.url.parse("http://[::1/x")
+except UrlError:
+    print("unterminated")
+
+try:
+    nox.url.parse("http://[::1]x/")
+except UrlError:
+    print("junk after literal")
+
+d: URL = nox.url.parse("http://example.com:81/")
+print(d.host)
+print(d.port)

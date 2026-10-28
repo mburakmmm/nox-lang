@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.30]
+
+Nova (HTTP istemci çerçevesi) geri bildirimlerinden dil/stdlib düzeltmeleri.
+
+### Düzeltildi
+
+- `nox.url.parse`: `http://[::1]:8080/` gibi IPv6 literal'leri artık çözülür (host köşeli parantezlerle saklanır, port `]`dan sonraki `:`dan okunur); bozuk literal `UrlError` verir.
+- `int()` ve `float()` baştaki/sondaki ASCII boşluğunu (`" 5 "`, `"5\n"`) Python gibi yok sayar; iç boşluk ve boş dize hâlâ `ValueError`.
+- `x != None and x.f()` / `x is not None and ...` ve `x == None or ...`: sağ operand sol operandın kanıtladığı daraltmayla denetlenir (`OptionalNotNarrowed` hatası kalktı). Daraltma ifadenin dışına sızmaz.
+
+### Eklendi
+
+- `\xHH` kaçış dizisi (`\x00`–`\x7F`); gömülü NUL desteklenir. `\x80`–`\xFF` ve bozuk `\x` anlaşılır derleme hatası verir (`str` geçerli UTF-8 tutar).
+- QBE backend'i kontrol baytlarını string verisine sekizlik kaçışla yazar.
+
 ## [2.0.29]
 
 Mobil sandbox artık gizli thread-local durum yerine açık runtime bağlamıyla çalışır.

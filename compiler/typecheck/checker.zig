@@ -6336,7 +6336,14 @@ pub const Checker = struct {
 
     fn checkBinary(self: *Checker, ctx: *FnCtx, b: ast.Binary) TypeError!Type {
         const l = try self.checkExpr(ctx, b.left.*);
-        const r = try self.checkExpr(ctx, b.right.*);
+        // Kısa devre: `x != None and <sağ>` ile `x == None or <sağ>` ifadelerinde sağ operand,
+        // sol operandın kanıtladığı daraltmayla denetlenir (aynı `collectNarrows` kuralları `if` koşuluyla ortaktır).
+        var right_n: NarrowList = .{};
+        if (b.op == .and_ or b.op == .or_) collectNarrows(b.left.*, ctx.scope, b.op == .and_, &right_n);
+        const right_saved = try self.applyNarrows(ctx, &right_n);
+        const r_res = self.checkExpr(ctx, b.right.*);
+        self.restoreNarrows(ctx, &right_n, right_saved);
+        const r = try r_res;
         if (try self.tryOperatorOverload(ctx, b, l, r)) |t| return t;
         return switch (b.op) {
             // `str + str` — birleştirme (bkz. stdlib fazı §B, codegen.zig'in

@@ -243,6 +243,13 @@ pub fn escapeForQbeString(allocator: std.mem.Allocator, s: []const u8) CodegenEr
             '\n' => try out.appendSlice(allocator, "\\n"),
             '\t' => try out.appendSlice(allocator, "\\t"),
             '\r' => try out.appendSlice(allocator, "\\r"),
+            // Diğer kontrol baytları (`\x00`–`\x1f`, `\x7f`) ham yazılmaz: tam üç basamaklı sekizlik kaçış
+            // (`\001`) bitişik basamaktan etkilenmez (onaltılık `\xNN` etkilenirdi — yukarıdaki not).
+            0...8, 11, 12, 14...31, 127 => {
+                var buf: [4]u8 = undefined;
+                const oct = std.fmt.bufPrint(&buf, "\\{o:0>3}", .{c}) catch unreachable;
+                try out.appendSlice(allocator, oct);
+            },
             else => try out.append(allocator, c),
         }
     }

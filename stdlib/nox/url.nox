@@ -107,7 +107,18 @@ def parse(s: str) -> URL:
 
     host: str = host_port
     port: int = _default_port(scheme)
+    # IPv6 literal (`[::1]:8080`): host KÖŞELİ PARANTEZLERLE birlikte saklanır
+    # ve port ayrımı eşleşen `]`dan SONRAKİ `:`da yapılır (RFC 3986 §3.2.2).
     colon_idx: int = nox.strings.index_of(host_port, ":")
+    if len(host_port) > 0 and _substr(host_port, 0, 1) == "[":
+        close_idx: int = nox.strings.index_of(host_port, "]")
+        if close_idx < 0:
+            raise UrlError("unterminated IPv6 literal in the URL: " + s)
+        colon_idx = -1
+        if close_idx + 1 < len(host_port):
+            if _substr(host_port, close_idx + 1, close_idx + 2) != ":":
+                raise UrlError("unexpected text after the IPv6 literal: " + host_port)
+            colon_idx = close_idx + 1
     if colon_idx >= 0:
         host = _substr(host_port, 0, colon_idx)
         port_str: str = _substr(host_port, colon_idx + 1, len(host_port))

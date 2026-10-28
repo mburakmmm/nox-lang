@@ -1362,6 +1362,13 @@ test "golden(typecheck): Faz FF.6 — daraltılmamış Optional'a alan erişimi 
     );
 }
 
+test "golden(typecheck): and/or sağ operandındaki daraltma ifade dışına sızmaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_optional_narrowing_does_not_leak_past_and.nox"),
+        @embedFile("typecheck_cases/err_optional_narrowing_does_not_leak_past_and.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

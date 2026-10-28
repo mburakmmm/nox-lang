@@ -586,26 +586,32 @@ test "formatFloatRepr Python repr ile birebir" {
     }
 }
 
+/// `int()`/`float()` ayrıştırması, Python gibi baştaki/sondaki ASCII boşluğu (`" \t\n\r\x0b\x0c"`)
+/// yok sayar; iç boşluk ve boş dize hâlâ geçersizdir.
+fn trimNumberWs(bytes: []const u8) []const u8 {
+    return std.mem.trim(u8, bytes, " \t\n\r\x0b\x0c");
+}
+
 pub export fn nox_str_is_valid_int(s: ?[*:0]const u8) i32 {
     const p = s orelse return 0;
-    _ = std.fmt.parseInt(i64, nox_str_slice(p), 10) catch return 0;
+    _ = std.fmt.parseInt(i64, trimNumberWs(nox_str_slice(p)), 10) catch return 0;
     return 1;
 }
 
 pub export fn nox_str_to_int(s: ?[*:0]const u8) i64 {
     const p = s orelse return 0;
-    return std.fmt.parseInt(i64, nox_str_slice(p), 10) catch 0;
+    return std.fmt.parseInt(i64, trimNumberWs(nox_str_slice(p)), 10) catch 0;
 }
 
 pub export fn nox_str_is_valid_float(s: ?[*:0]const u8) i32 {
     const p = s orelse return 0;
-    _ = std.fmt.parseFloat(f64, nox_str_slice(p)) catch return 0;
+    _ = std.fmt.parseFloat(f64, trimNumberWs(nox_str_slice(p))) catch return 0;
     return 1;
 }
 
 pub export fn nox_str_to_float(s: ?[*:0]const u8) f64 {
     const p = s orelse return 0;
-    return std.fmt.parseFloat(f64, nox_str_slice(p)) catch 0;
+    return std.fmt.parseFloat(f64, trimNumberWs(nox_str_slice(p))) catch 0;
 }
 
 /// v1.142.18: 128 ASCII karakterin ÖNCEDEN kurulmuş, PINNED (`PINNED_REFCOUNT`) tek karakterlik
@@ -979,6 +985,36 @@ test "nox_int_to_str/nox_float_to_str dogru bicimlendirir" {
     const s3 = nox_float_to_str(rt, 3.5) orelse return error.ConvFailed;
     defer nox_str_release(rt, s3);
     try std.testing.expectEqualStrings("3.5", std.mem.sliceTo(s3, 0));
+}
+
+test "int()/float() baştaki ve sondaki ASCII boşluğunu yok sayar, iç boşluğu reddeder" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const Case = struct { text: []const u8, valid: bool, int_value: i64 = 0 };
+    const cases = [_]Case{
+        .{ .text = " 5 ", .valid = true, .int_value = 5 },
+        .{ .text = "5\n", .valid = true, .int_value = 5 },
+        .{ .text = "\t-42\r\n", .valid = true, .int_value = -42 },
+        .{ .text = "1 2", .valid = false },
+        .{ .text = "   ", .valid = false },
+        .{ .text = "", .valid = false },
+    };
+    for (cases) |c| {
+        const str = allocStr(rt, c.text, ASCII_UNKNOWN) orelse return error.AllocFailed;
+        defer nox_str_release(rt, str);
+        try std.testing.expectEqual(@as(i32, if (c.valid) 1 else 0), nox_str_is_valid_int(str));
+        if (c.valid) try std.testing.expectEqual(c.int_value, nox_str_to_int(str));
+    }
+
+    const f = allocStr(rt, " 2.5\n", ASCII_UNKNOWN) orelse return error.AllocFailed;
+    defer nox_str_release(rt, f);
+    try std.testing.expectEqual(@as(i32, 1), nox_str_is_valid_float(f));
+    try std.testing.expectEqual(@as(f64, 2.5), nox_str_to_float(f));
+    const g = allocStr(rt, "2 .5", ASCII_UNKNOWN) orelse return error.AllocFailed;
+    defer nox_str_release(rt, g);
+    try std.testing.expectEqual(@as(i32, 0), nox_str_is_valid_float(g));
 }
 
 test "nox_str_is_valid_int/nox_str_to_int gecerli/gecersiz girdiyi ayirt eder" {
