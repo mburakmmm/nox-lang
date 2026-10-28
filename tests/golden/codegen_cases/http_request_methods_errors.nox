@@ -17,9 +17,10 @@ try:
 except HttpError:
     print("delete connect failed")
 
-# HttpTimeoutError, HttpError'ın alt sınıfıdır (kapalı porta bağlanma zaman aşımı değil, bağlantı hatasıdır)
+# HttpTimeoutError, HttpError'ın alt sınıfıdır. Kapalı porta bağlanma bir bağlantı hatasıdır; süre sınırı YOK (bağlantı reddi
+# süresi işletim sistemine bağlıdır, Windows'ta saniyeler sürer: sınırlı çağrıda sonuç zamanlamaya bağlı olurdu).
 try:
-    r3: HttpResponse = nox.http.request("PUT", "http://127.0.0.1:1/x", "data", h, 200)
+    r3: HttpResponse = nox.http.request("PUT", "http://127.0.0.1:1/x", "data", h)
     print("unexpected")
 except HttpTimeoutError:
     print("timeout")

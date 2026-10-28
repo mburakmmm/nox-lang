@@ -238,6 +238,28 @@ pub export fn nox_rc_predecrement(ptr: ?*anyopaque) i32 {
 /// alloc`nin AYNI notu), sadece nesnenin geri dönüştürüleceği HAVUZ
 /// satırını DEĞİŞTİRİR (bkz. `asap.zig`nin `pool_free_lists` belge notu,
 /// "bilinçli kabul edilen ödünleşim").
+/// Release modunda havuzlanan (bkz. `use_pool`) serbest ARC bloklarını genel ayırıcıya geri verir. `nox_runtime_deinit` çağırır:
+/// havuz hiçbir zaman boşaltılmazsa, enjekte edilmiş bir ayırıcı (host ayırıcısı, `testing.allocator`) bu blokları çalışma zamanı
+/// yok edildikten sonra bile "canlı" görür. Yalnızca serbest listelerdeki bloklar bırakılır; hâlâ canlı nesneler (uygulama hatası) etkilenmez.
+pub export fn nox_rc_pool_drain(rt: ?*anyopaque) void {
+    if (!use_pool) return;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    var slot: usize = 0;
+    const slots: usize = if (state.pool_ext != null) asap.MAX_POOL_WORKERS else 1;
+    while (slot < slots) : (slot += 1) {
+        const row = asap.poolFreeListsRow(state, slot);
+        var idx: usize = 0;
+        while (idx < asap.POOL_NUM_CLASSES) : (idx += 1) {
+            var cur = row.classes[idx];
+            row.classes[idx] = null;
+            while (cur) |node| {
+                cur = node.next;
+                asap.nox_free(rt, @ptrCast(node), poolClassSize(idx));
+            }
+        }
+    }
+}
+
 pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_size: usize) void {
     const p = ptr orelse return;
     // Faz X.3 — bkz. `nox_rc_alloc`nin AYNI notu.

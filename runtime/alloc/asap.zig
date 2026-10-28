@@ -148,6 +148,8 @@ extern fn nox_arena_destroy(rt: ?*anyopaque, arena_ptr: ?*anyopaque) callconv(.c
 /// modunun arena-havuzunda KALAN (HİÇ yeniden kullanılmadan runtime'ın
 /// KENDİSİ sona eren) `ArenaHandle`leri TOPLU serbest bırakan fonksiyon.
 extern fn nox_arena_pool_drain(rt: ?*anyopaque) callconv(.c) void;
+/// Release modunda havuzlanan serbest ARC bloklarını bırakır (bkz. `arc.zig`nin `nox_rc_pool_drain`i).
+extern fn nox_rc_pool_drain(rt: ?*anyopaque) callconv(.c) void;
 
 /// ARC nesneleri (bkz. `runtime/alloc/arc.zig`) için sabit büyüklük-sınıflı
 /// serbest liste havuzunun sınıf sayısı — performans fazında (benchmark
@@ -904,6 +906,8 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // create()`ın KULLANDIĞI AYNI allocator — bkz. onun belge notu)
     // tahsis edilmişti; `debug_gpa.deinit()`DEN ÖNCE serbest bırakılmalı
     // (aksi halde Debug modunda deinit SONRASI bir kullanım olurdu).
+    // Havuzlanmış serbest ARC blokları `pool_ext` satırlarında da durabilir: önce onları bırak, sonra uzantıyı yık.
+    nox_rc_pool_drain(rt);
     if (state.pool_ext) |ext| state.allocator().destroy(ext);
     // Faz F.0.2: AYNI gerekçe — Release modunun arena-havuzunda KALAN
     // `ArenaHandle`ler de `debug_gpa.deinit()`DEN ÖNCE serbest bırakılmalı

@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.40]
+
+Release derlemelerinde ayirici sizintisi ve CI duzeltmeleri.
+
+### Duzeltildi
+
+- Release modunda havuzlanan serbest ARC bloklari `nox_runtime_deinit` sirasinda hic geri verilmiyordu; host ayiricisi (`NoxHostAllocator`) ve `testing.allocator` bu bloklari yok edilmis calisma zamanindan sonra bile canli goruyordu. `arc.nox_rc_pool_drain` blogu geri verir.
+- `http_request_methods_errors` fixture'i Windows'ta baglanti reddi suresine bagli oldugundan kirmiziydi; sureli cagri kaldirildi.
+
 ## [2.0.39]
 
 Açıklamalı alan ataması, benchmark yenilemesi, WASM/HPy durum belgeleri.
