@@ -15,3 +15,7 @@ Hata kodları: `NOX_EMBED_ERR_FULL` kuyruk doluyken `post_event` döner (olay ko
 ## Reddedilen
 
 Host ayırıcısını sürüm 2'ye taşıyıp ABI numarasını artırmak: eski host'ları kırar. Tüm çocuk çalışma zamanlarına host ayırıcısını yaymak: çağrıların hangi iş parçacığından geldiği host sözleşmesine eklenmeliydi; ayrı görev olarak açık.
+
+## Dosya sandbox'ı: kanonik yol
+
+Gömme oturumunda `nox.fs` ve `nox.sqlite` yolu, metinsel denetimden sonra `realpath` ile kanonikleştirilip kanonik köklere karşı yeniden denetlenir. Sembolik bağ kökün dışını gösteriyorsa yol reddedilir. Henüz olmayan hedefte var olan en uzun önek çözülür. Kanonikleştirilemeyen yol reddedilir.

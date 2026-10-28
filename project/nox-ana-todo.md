@@ -219,7 +219,7 @@ anlatır; her dispatch yolu iki backend'de testlidir.
 - [x] **3.6 UI-thread pump bütçesini doğrula.** (v2.0.35: bütçe geçmişse 0 teslim, sonra 64; kuyruk dolu `ERR_FULL`; durdurulmuş `ERR_STATE`.) Yoğun event/async altında
   `pump` frame bütçesini aşmasın; suspend/resume sonrası queue sırası
   deterministik olsun.
-- [ ] **3.7 Mobil stdlib sandbox testlerini tamamla.** Kök sınırı, `..`,
+- [~] **3.7 Mobil stdlib sandbox testlerini tamamla.** (v2.0.36: kök sınırı, `..`, SEMBOLİK BAĞ kaçışı (gerçek açık, kapatıldı) ve kanonik yol testli. Açık: atomik yazma, disk dolu, SQLite cache/temp davranışı.) Kök sınırı, `..`,
   symlink/canonical path, atomic write, disk-full, SQLite ve cache/temp
   davranışı.
 - [ ] **3.8 Mobil ağ matrisini tamamla.** DNS IPv4/IPv6, offline, timeout,

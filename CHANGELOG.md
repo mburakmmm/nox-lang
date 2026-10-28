@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.36]
+
+Gömme sandbox'ında sembolik bağ kaçışı kapatıldı (güvenlik).
+
+### Düzeltildi
+
+- Gömme oturumunda `nox.fs`/`nox.sqlite` yol denetimi yalnızca metinseldi: kök içindeki bir sembolik bağ kökün dışını gösterirse (`documents/escape -> ../outside`) yol denetimi geçiyor ve dosya kökün dışında açılıyordu. Yol artık `realpath` ile kanonikleştirilir (var olan en uzun önek çözülür, olmayan bileşenler eklenir), kökler de kanonikleştirilir (`/tmp` -> `/private/tmp`); kanonikleştirilemeyen yol reddedilir. Birim testi: bağ üzerinden dosya, bağ dizini, bağ altındaki olmayan dosya reddedilir; kök içi ve olmayan hedef kabul edilir.
+
 ## [2.0.35]
 
 Gömme ABI kabul korpusu ve istisna nesnesi sahipliği.

@@ -165,7 +165,52 @@ pub fn allowsPath(rt: ?*anyopaque, path: ?[*:0]const u8) bool {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return true));
     if (!state.embed_active) return true;
     const raw = path orelse return false;
-    return underRoots(state.embed_roots, std.mem.span(raw));
+    const text = std.mem.span(raw);
+    if (!underRoots(state.embed_roots, text)) return false;
+    return canonicalUnderRoots(state.embed_roots, text);
+}
+
+/// Metinsel kök denetimini geçen yolun sembolik bağlar çözüldükten sonra da bir kökün altında kaldığını doğrular: kök içindeki
+/// bir bağ dışarıyı gösterebilir. Var olan en uzun önek `realpath` ile çözülür, kalan (henüz olmayan) bileşenler eklenir; kökler de
+/// kanonikleştirilir (`/tmp` -> `/private/tmp`). Kanonikleştirilemeyen yol reddedilir (fail-closed). Windows'ta gömme hedefi yoktur.
+fn canonicalUnderRoots(roots: [4]?[*:0]const u8, path: []const u8) bool {
+    if (comptime builtin.os.tag == .windows) return true;
+    var resolved_buf: [std.posix.PATH_MAX]u8 = undefined;
+    const resolved = canonicalize(path, &resolved_buf) orelse return false;
+    for (roots) |root_z| {
+        const root = std.mem.span(root_z orelse continue);
+        if (root.len == 0) continue;
+        var root_buf: [std.posix.PATH_MAX]u8 = undefined;
+        const canon_root = canonicalize(root, &root_buf) orelse continue;
+        if (std.mem.eql(u8, resolved, canon_root)) return true;
+        if (std.mem.startsWith(u8, resolved, canon_root) and resolved.len > canon_root.len and resolved[canon_root.len] == '/') return true;
+    }
+    return false;
+}
+
+fn canonicalize(path: []const u8, out: *[std.posix.PATH_MAX]u8) ?[]const u8 {
+    var z_buf: [std.posix.PATH_MAX]u8 = undefined;
+    var end = path.len;
+    if (end >= z_buf.len) return null;
+    // Var olan en uzun öneki bul: sondan başlayıp `/` sınırlarında kısalt.
+    while (true) {
+        @memcpy(z_buf[0..end], path[0..end]);
+        z_buf[end] = 0;
+        const rp = std.c.realpath(@ptrCast(&z_buf), @ptrCast(out));
+        if (rp != null) {
+            const base = std.mem.sliceTo(out, 0);
+            const rest = path[end..];
+            if (base.len + rest.len >= out.len) return null;
+            @memmove(out[base.len .. base.len + rest.len], rest);
+            return out[0 .. base.len + rest.len];
+        }
+        // Önek bulunamadı: bir bileşen yukarı çık (kök `/` bile çözülemezse reddet).
+        const slash = std.mem.lastIndexOfScalar(u8, path[0..end], '/') orelse return null;
+        if (slash == 0) {
+            if (end == 1) return null;
+            end = 1;
+        } else end = slash;
+    }
 }
 
 fn underRoots(roots: [4]?[*:0]const u8, path: []const u8) bool {
@@ -733,4 +778,40 @@ test "create bellek yetersizliğinde ERR_NOMEM döner ve slota dokunmaz; start b
     try std.testing.expectEqual(OK, nox_app_start(out)); // state hâlâ created
     try std.testing.expectEqual(OK, nox_app_destroy(out));
     try std.testing.expectEqual(@as(usize, 0), host.live);
+}
+
+test "sembolik bağ ile kökten kaçış reddedilir, kök içi ve henüz olmayan dosyalar kabul edilir" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDir(io, "root", .default_dir);
+    try tmp.dir.createDir(io, "outside", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "outside/secret.txt", .data = "x" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "root/inside.txt", .data = "x" });
+    try tmp.dir.symLink(io, "../outside", "root/escape", .{ .is_directory = true });
+    var base_buf: [std.posix.PATH_MAX]u8 = undefined;
+    const base_len = try tmp.dir.realPath(io, &base_buf);
+    const base = base_buf[0..base_len];
+
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    var root_z: [std.posix.PATH_MAX]u8 = undefined;
+    const root = try std.fmt.bufPrintZ(&root_z, "{s}/root", .{base});
+    state.embed_active = true;
+    state.embed_roots[0] = root.ptr;
+    defer state.embed_active = false;
+
+    var p: [std.posix.PATH_MAX]u8 = undefined;
+    const inside = try std.fmt.bufPrintZ(&p, "{s}/root/inside.txt", .{base});
+    try std.testing.expect(allowsPath(rt, inside.ptr));
+    const missing = try std.fmt.bufPrintZ(&p, "{s}/root/yeni/dosya.txt", .{base});
+    try std.testing.expect(allowsPath(rt, missing.ptr)); // henüz olmayan hedef: önek kök altında
+    const via_link = try std.fmt.bufPrintZ(&p, "{s}/root/escape/secret.txt", .{base});
+    try std.testing.expect(!allowsPath(rt, via_link.ptr)); // bağ kökün dışına çıkıyor
+    const link_dir = try std.fmt.bufPrintZ(&p, "{s}/root/escape", .{base});
+    try std.testing.expect(!allowsPath(rt, link_dir.ptr));
+    const via_missing_under_link = try std.fmt.bufPrintZ(&p, "{s}/root/escape/olmayan/x.txt", .{base});
+    try std.testing.expect(!allowsPath(rt, via_missing_under_link.ptr));
 }
