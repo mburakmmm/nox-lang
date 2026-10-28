@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.41]
+
+WASM yorumlayicisi: i32 sayisal komutlar.
+
+### Eklendi
+
+- `runtime/wasm_bridge`: `i32.eqz`/karsilastirmalar, `div_s/div_u/rem_s/rem_u` (sifira bolme ve `INT_MIN / -1` trap), `and/or/xor/shl/shr_s/shr_u`, `select`, `drop`. Birim testleri sinir degerleri ve yigin yetersizligini kapsar. WASM bir derleme hedefi degildir.
+
 ## [2.0.40]
 
 Release derlemelerinde ayirici sizintisi ve CI duzeltmeleri.

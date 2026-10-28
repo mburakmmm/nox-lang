@@ -174,6 +174,77 @@ fn execCode(allocator: std.mem.Allocator, module: *const Module, code: []const u
                 stack[sp - 2] = stack[sp - 2] *% stack[sp - 1];
                 sp -= 1;
             },
+            0x1a => { // drop
+                if (sp < 1) return error.StackUnderflow;
+                sp -= 1;
+            },
+            0x1b => { // select: [a, b, c] -> c != 0 ? a : b
+                if (sp < 3) return error.StackUnderflow;
+                const chosen = if (stack[sp - 1] != 0) stack[sp - 3] else stack[sp - 2];
+                sp -= 2;
+                stack[sp - 1] = chosen;
+            },
+            0x45 => { // i32.eqz
+                if (sp < 1) return error.StackUnderflow;
+                stack[sp - 1] = @intFromBool(stack[sp - 1] == 0);
+            },
+            0x46...0x4f => { // i32 karşılaştırmaları: eq ne lt_s lt_u gt_s gt_u le_s le_u ge_s ge_u
+                if (sp < 2) return error.StackUnderflow;
+                const a = stack[sp - 2];
+                const b = stack[sp - 1];
+                const ua: u32 = @bitCast(a);
+                const ub: u32 = @bitCast(b);
+                const r = switch (op) {
+                    0x46 => a == b,
+                    0x47 => a != b,
+                    0x48 => a < b,
+                    0x49 => ua < ub,
+                    0x4a => a > b,
+                    0x4b => ua > ub,
+                    0x4c => a <= b,
+                    0x4d => ua <= ub,
+                    0x4e => a >= b,
+                    else => ua >= ub,
+                };
+                sp -= 1;
+                stack[sp - 1] = @intFromBool(r);
+            },
+            0x6d...0x70 => { // div_s div_u rem_s rem_u: sıfıra bölme ve INT_MIN / -1 taşması trap'tir
+                if (sp < 2) return error.StackUnderflow;
+                const a = stack[sp - 2];
+                const b = stack[sp - 1];
+                if (b == 0) return error.Trap;
+                const ua: u32 = @bitCast(a);
+                const ub: u32 = @bitCast(b);
+                const r: i32 = switch (op) {
+                    0x6d => blk: {
+                        if (a == std.math.minInt(i32) and b == -1) return error.Trap;
+                        break :blk @divTrunc(a, b);
+                    },
+                    0x6e => @bitCast(ua / ub),
+                    0x6f => if (b == -1) 0 else @rem(a, b), // INT_MIN rem -1 sonucu 0'dır (trap DEĞİL)
+                    else => @bitCast(ua % ub),
+                };
+                sp -= 1;
+                stack[sp - 1] = r;
+            },
+            0x71...0x76 => { // and or xor shl shr_s shr_u (kaydırma sayısı mod 32)
+                if (sp < 2) return error.StackUnderflow;
+                const a = stack[sp - 2];
+                const b = stack[sp - 1];
+                const ua: u32 = @bitCast(a);
+                const sh: u5 = @truncate(@as(u32, @bitCast(b)));
+                const r: i32 = switch (op) {
+                    0x71 => a & b,
+                    0x72 => a | b,
+                    0x73 => a ^ b,
+                    0x74 => @bitCast(ua << sh),
+                    0x75 => a >> sh,
+                    else => @bitCast(ua >> sh),
+                };
+                sp -= 1;
+                stack[sp - 1] = r;
+            },
             else => return error.UnsupportedInstruction,
         }
     }
@@ -246,4 +317,41 @@ test "readVarU32At/readVarI32At: Faz X.1 — 6+ devam baytı taşma sınırına 
 
     var pos2: usize = 0;
     try std.testing.expectError(error.Trap, readVarI32At(bytes1, &pos2));
+}
+
+fn runOps(code: []const u8, locals: []i32) InterpError!?i32 {
+    const m: Module = .{ .allocator = std.testing.allocator, .types = &.{}, .func_type_indices = &.{}, .exports = &.{}, .bodies = &.{} };
+    return execCode(std.testing.allocator, &m, code, locals);
+}
+
+test "i32 sayısal komutlar: karşılaştırma, bölme/kalan, bit işlemleri, kaydırma, select, drop" {
+    // 7 / 2 = 3, -7 / 2 = -3 (sıfıra doğru), 7 rem -2 = 1
+    try std.testing.expectEqual(@as(?i32, 3), try runOps(&.{ 0x41, 7, 0x41, 2, 0x6d, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, -3), try runOps(&.{ 0x41, 0x79, 0x41, 2, 0x6d, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 1), try runOps(&.{ 0x41, 7, 0x41, 0x7e, 0x6f, 0x0b }, &.{}));
+    // karşılaştırma: -1 < 1 işaretli doğru, işaretsiz yanlış
+    try std.testing.expectEqual(@as(?i32, 1), try runOps(&.{ 0x41, 0x7f, 0x41, 1, 0x48, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 0), try runOps(&.{ 0x41, 0x7f, 0x41, 1, 0x49, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 1), try runOps(&.{ 0x41, 0, 0x45, 0x0b }, &.{})); // eqz
+    // bit işlemleri ve kaydırma: 12 & 10 = 8, 12 | 10 = 14, 12 ^ 10 = 6, 1 << 33 = 2 (mod 32), -8 >> 1 = -4, -8 >>> 28 = 15
+    try std.testing.expectEqual(@as(?i32, 8), try runOps(&.{ 0x41, 12, 0x41, 10, 0x71, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 14), try runOps(&.{ 0x41, 12, 0x41, 10, 0x72, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 6), try runOps(&.{ 0x41, 12, 0x41, 10, 0x73, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 2), try runOps(&.{ 0x41, 1, 0x41, 33, 0x74, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, -4), try runOps(&.{ 0x41, 0x78, 0x41, 1, 0x75, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 15), try runOps(&.{ 0x41, 0x78, 0x41, 28, 0x76, 0x0b }, &.{}));
+    // select ve drop: [10, 20, 1] -> 10; [10, 20, 0] -> 20; drop atılan değeri bırakır
+    try std.testing.expectEqual(@as(?i32, 10), try runOps(&.{ 0x41, 10, 0x41, 20, 0x41, 1, 0x1b, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 20), try runOps(&.{ 0x41, 10, 0x41, 20, 0x41, 0, 0x1b, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 5), try runOps(&.{ 0x41, 5, 0x41, 9, 0x1a, 0x0b }, &.{}));
+}
+
+test "i32 bölme: sıfıra bölme ve INT_MIN / -1 trap, yığın yetersizliği hata verir" {
+    try std.testing.expectError(error.Trap, runOps(&.{ 0x41, 1, 0x41, 0, 0x6d, 0x0b }, &.{}));
+    try std.testing.expectError(error.Trap, runOps(&.{ 0x41, 1, 0x41, 0, 0x6f, 0x0b }, &.{}));
+    // INT_MIN = -2147483648 (LEB128 80 80 80 80 78), -1
+    try std.testing.expectError(error.Trap, runOps(&.{ 0x41, 0x80, 0x80, 0x80, 0x80, 0x78, 0x41, 0x7f, 0x6d, 0x0b }, &.{}));
+    try std.testing.expectEqual(@as(?i32, 0), try runOps(&.{ 0x41, 0x80, 0x80, 0x80, 0x80, 0x78, 0x41, 0x7f, 0x6f, 0x0b }, &.{}));
+    try std.testing.expectError(error.StackUnderflow, runOps(&.{ 0x41, 1, 0x71 }, &.{})); // 0x71 and, tek işlenen
+    try std.testing.expectError(error.StackUnderflow, runOps(&.{0x1b}, &.{}));
 }

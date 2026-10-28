@@ -17,7 +17,7 @@ Value types: `i32` only in the interpreter. A module that declares `i64`, `f32` 
 
 ## Instructions (straight-line code, `i32`)
 
-`unreachable` (traps), `nop`, `end`/`return`, `call`, `local.get`, `local.set`, `local.tee`, `i32.const`, `i32.add`, `i32.sub`, `i32.mul`. Every other opcode is `UnsupportedInstruction`. There is no `block`/`loop`/`if`/`br` (no control flow), no memory access, no tables, no imports, no `i64`/floats.
+`unreachable` (traps), `nop`, `end`/`return`, `call`, `drop`, `select`, `local.get`, `local.set`, `local.tee`, `i32.const`; arithmetic `i32.add`, `sub`, `mul`, `div_s`, `div_u`, `rem_s`, `rem_u` (division by zero and `INT_MIN / -1` trap; `INT_MIN rem -1` is 0); comparisons `i32.eqz`, `eq`, `ne`, `lt_s`, `lt_u`, `gt_s`, `gt_u`, `le_s`, `le_u`, `ge_s`, `ge_u`; bitwise `and`, `or`, `xor`, `shl`, `shr_s`, `shr_u` (shift count modulo 32). Every other opcode is `UnsupportedInstruction`. There is no `block`/`loop`/`if`/`br` (no control flow), no memory access, no tables, no imports, no `i64`/floats.
 
 ## Errors and limits
 
@@ -25,4 +25,4 @@ Value types: `i32` only in the interpreter. A module that declares `i64`, `f32` 
 
 ## Decided target surface
 
-The next steps, in this order, each with its own golden/fuzz tests: (1) the rest of the `i32` numeric instructions (comparisons, division with trap on zero and overflow, bitwise, shifts, `select`, `drop`); (2) structured control flow (`block`, `loop`, `if`/`else`, `br`, `br_if`); (3) linear memory with bounds-checked `load`/`store`; (4) `i64`. Floats, tables, imports and multi-value are out of scope until a real module needs them. A WASM back end for Nox is never added.
+The next steps, in this order, each with its own golden/fuzz tests: (1) ~~the rest of the `i32` numeric instructions~~ (done in 2.0.41; `clz`/`ctz`/`popcnt`/`rotl`/`rotr` remain); (2) structured control flow (`block`, `loop`, `if`/`else`, `br`, `br_if`); (3) linear memory with bounds-checked `load`/`store`; (4) `i64`. Floats, tables, imports and multi-value are out of scope until a real module needs them. A WASM back end for Nox is never added.
