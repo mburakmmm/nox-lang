@@ -88,6 +88,9 @@ print(names, table, pair, len(unique))
 ['ada'] {'ada': 1} ('ada', 1) 2
 ```
 
+The same holds for empty literals nested inside a literal whose type is known: `grid: list[list[int]] = [[], [1, 2]]` and
+`index: dict[str, list[int]] = {"a": []}` are accepted.
+
 See [Expressions](expressions.md) and [Built-in functions](builtins.md) for the operations on collections.
 
 ## Class and protocol types

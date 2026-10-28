@@ -15,6 +15,7 @@ const calls = @import("calls.zig");
 
 const Codegen = codegen.Codegen;
 const Value = types.Value;
+const TypeInfo = types.TypeInfo;
 const QbeType = types.QbeType;
 const HeapKind = types.HeapKind;
 const ElemHeapInfo = types.ElemHeapInfo;
@@ -107,6 +108,17 @@ pub fn genExprForTarget(self: *Codegen, expr: ast.Expr, target: anytype) Codegen
             .elem_is_str = target.elem_is_str,
             .dict_info = target.dict_info,
         };
+    }
+    // İç içe boş literal (`[[], [1]]`, `{"a": []}`): hedefin eleman/değer tipi iç literallere hedef olarak iletilir.
+    if (expr == .list_lit and target.heap == .list and target.elem_heap_info != null and literalHasEmpty(expr)) {
+        const ei = target.elem_heap_info.?;
+        if (ei.heap == .list or ei.heap == .dict) {
+            const elem_target: TypeInfo = .{ .qtype = .l, .heap = ei.heap, .elem_qtype = ei.elem_qtype, .class_name = ei.class_name, .elem_heap_info = ei.nested, .elem_is_str = ei.elem_is_str, .dict_info = ei.dict_info, .func_sig = ei.func_sig };
+            return genListLitHint(self, expr.list_lit, elem_target);
+        }
+    }
+    if (expr == .dict_lit and target.heap == .dict and target.dict_info != null and literalHasEmpty(expr)) {
+        if (target.dict_info.?.value_ti) |vti| return genDictLitHint(self, expr.dict_lit, vti.*);
     }
     const v0 = try self.genExpr(expr);
     // Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): hedef
@@ -826,7 +838,29 @@ fn genEmptyListLit(self: *Codegen, target: anytype) CodegenError!Value {
     };
 }
 
+/// Bir liste/dict literalinin (iç içe dahil) içinde boş `[]`/`{}` var mı — varsa tipi yalnızca hedeften öğrenilebilir.
+fn literalHasEmpty(e: ast.Expr) bool {
+    switch (e) {
+        .list_lit => |items| {
+            if (items.len == 0) return true;
+            for (items) |it| if (literalHasEmpty(it)) return true;
+            return false;
+        },
+        .dict_lit => |pairs| {
+            if (pairs.len == 0) return true;
+            for (pairs) |p| if (literalHasEmpty(p.value)) return true;
+            return false;
+        },
+        else => return false,
+    }
+}
+
 pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
+    return genListLitHint(self, elems, null);
+}
+
+/// `genListLit`; `elem_hint` verilirse her eleman o hedefle üretilir (boş iç literaller için).
+fn genListLitHint(self: *Codegen, elems: []const ast.Expr, elem_hint: ?TypeInfo) CodegenError!Value {
     if (elems.len == 0) return error.Unsupported; // checker zaten reddeder; savunmacı
 
     // Darboğaz analizi (bkz. benchmarks/RESULTS.md, 2026-07-22): TÜM
@@ -846,7 +880,7 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
     // rekabetçi DEĞİL. Değiştirilmeden BIRAKILDI.
     const values = try self.allocator.alloc(Value, elems.len);
     for (elems, 0..) |el, i| {
-        const v0 = try self.genExpr(el);
+        const v0 = if (elem_hint) |h| try genExprForTarget(self, el, h) else try self.genExpr(el);
         // checker.zig burada tip düzeyinde kısıtlamıyor (bir `list_lit`
         // ifadesinin kendisi, isimlendirilmiş bir `list[T]` bildirimi
         // gerektirmeden `list[Sınıf]` olarak da tiplenebilir). Faz 21
@@ -971,6 +1005,10 @@ fn genEmptyDictLit(self: *Codegen, target: anytype) CodegenError!Value {
 /// GİBİ (ek bir retain OLMADAN) depolar — sahiplik ÇAĞIRANDAN (buradan)
 /// devralınır.
 pub fn genDictLit(self: *Codegen, pairs: []const ast.DictPair) CodegenError!Value {
+    return genDictLitHint(self, pairs, null);
+}
+
+fn genDictLitHint(self: *Codegen, pairs: []const ast.DictPair, value_hint: ?TypeInfo) CodegenError!Value {
     if (pairs.len == 0) return error.Unsupported; // checker zaten reddeder; savunmacı
 
     const key_values = try self.allocator.alloc(Value, pairs.len);
@@ -979,7 +1017,7 @@ pub fn genDictLit(self: *Codegen, pairs: []const ast.DictPair) CodegenError!Valu
         const k0 = try self.genExpr(p.key);
         try self.checkNoLowlevelEscape(k0);
         key_values[i] = try self.retainIfAliasing(p.key, k0);
-        const v0 = try self.genExpr(p.value);
+        const v0 = if (value_hint) |h| try genExprForTarget(self, p.value, h) else try self.genExpr(p.value);
         try self.checkNoLowlevelEscape(v0);
         value_values[i] = try self.retainIfAliasing(p.value, v0);
     }

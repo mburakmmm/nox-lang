@@ -6071,6 +6071,32 @@ pub const Checker = struct {
                 if (exp == .dict) return exp;
             }
         }
+        // İç içe boş literal çıkarımı: `list[list[T]]` / `list[dict[K, V]]` / `dict[K, list/dict]` beklenirken her eleman/değer BEKLENEN
+        // eleman tipiyle denetlenir (`[[], [1]]`, `{"a": []}`); böylece en dıştaki değil, iç içe `[]`/`{}` de tipini alır.
+        if (expr == .list_lit and expr.list_lit.len > 0) {
+            if (expected) |exp| {
+                if (exp == .list and (exp.list.* == .list or exp.list.* == .dict)) {
+                    for (expr.list_lit) |el| {
+                        const t = try self.checkExprExpected(ctx, el, exp.list.*);
+                        if (!types.eql(t, exp.list.*)) return self.fail(error.TypeMismatch, "list elements must have the same type", .{});
+                    }
+                    return exp;
+                }
+            }
+        }
+        if (expr == .dict_lit and expr.dict_lit.len > 0) {
+            if (expected) |exp| {
+                if (exp == .dict and (exp.dict.value.* == .list or exp.dict.value.* == .dict)) {
+                    for (expr.dict_lit) |pr| {
+                        const kt = try self.checkExpr(ctx, pr.key);
+                        if (!types.eql(kt, exp.dict.key.*)) return self.fail(error.TypeMismatch, "dict keys must have the same type", .{});
+                        const vt = try self.checkExprExpected(ctx, pr.value, exp.dict.value.*);
+                        if (!types.eql(vt, exp.dict.value.*)) return self.fail(error.TypeMismatch, "dict values must have the same type", .{});
+                    }
+                    return exp;
+                }
+            }
+        }
         // v1.168.0: `set()` — eleman tipi beklenen `set[T]` tipinden alınır.
         if (expr == .call and expr.call.callee.* == .identifier and std.mem.eql(u8, expr.call.callee.identifier, "set") and expr.call.args.len == 0 and !self.functions.contains("set")) {
             if (expected) |exp| {

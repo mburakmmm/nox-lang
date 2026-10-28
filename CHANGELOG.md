@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.55]
+
+### Eklendi
+
+- Ic ice bos literal cikarimi: `grid: list[list[int]] = [[], [1, 2]]`, `index: dict[str, list[int]] = {"a": []}` gibi, tipi bilinen bir literalin icindeki `[]`/`{}` artik hedef tipinden tiplenir.
+
 ## [2.0.54]
 
 ### Eklendi
