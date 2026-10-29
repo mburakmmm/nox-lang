@@ -1,0 +1,42 @@
+def log(msg: str, level: int, /, **fields: str) -> str:
+    out: str = msg + ":" + str(level)
+    for k in fields.keys():
+        out = out + " " + k + "=" + fields[k]
+    return out
+
+def tag(name: str, **attrs: int) -> int:
+    t: int = 0
+    for k in attrs.keys():
+        t += attrs[k]
+    return t
+
+extra: dict[str, str] = {"user": "ada", "ip": "1"}
+print(log("hi", 2))
+print(log("hi", 2, **extra))
+print(log("hi", 2, host="h", **extra))
+more: dict[str, str] = {"z": "9"}
+print(log("hi", 2, **extra, **more))
+print(log("hi", 2, msg="shadow"))
+nums: dict[str, int] = {"a": 1, "b": 2}
+print(tag("x", **nums))
+try:
+    print(log("hi", 2, user="u", **extra))
+except ValueError as e:
+    print("dup")
+try:
+    print(tag("name", **{"name": 1}))
+except ValueError as e:
+    print("reserved")
+
+def conf(name: str = "x", level: int = 1, *, retries: int, **extra: int) -> str:
+    return name + str(level) + str(retries) + str(len(extra))
+
+print(conf(retries=3))
+print(conf("a", 2, retries=4, z=1))
+d2: dict[str, int] = {"z": 1, "w": 2}
+print(conf("b", retries=5, **d2))
+bad: dict[str, int] = {"level": 9}
+try:
+    print(conf("c", retries=1, **bad))
+except ValueError as e:
+    print("collision")

@@ -672,6 +672,7 @@ const Printer = struct {
         };
         for (params, 0..) |p, idx| {
             if (idx > 0) try self.writer.writeAll(", ");
+            if (idx > 0 and params[idx - 1].pos_only and !p.pos_only) try self.writer.writeAll("/, ");
             if (p.kw_only and !star_printed) {
                 try self.writer.writeAll("*, ");
                 star_printed = true;
@@ -702,6 +703,7 @@ const Printer = struct {
                 try self.printExpr(d);
             }
         }
+        if (params.len > 0 and params[params.len - 1].pos_only) try self.writer.writeAll(", /");
     }
 
     fn printType(self: *Printer, t: ast.TypeExpr) FormatError!void {
@@ -842,8 +844,8 @@ const Printer = struct {
                 if (need_parens) try self.writer.writeAll(")");
             },
             .kwarg => |k| {
-                if (std.mem.eql(u8, k.name, "*")) {
-                    try self.writer.writeAll("*");
+                if (std.mem.eql(u8, k.name, "*") or std.mem.eql(u8, k.name, "**")) {
+                    try self.writer.writeAll(k.name);
                     try self.printExpr(k.value.*);
                     return;
                 }

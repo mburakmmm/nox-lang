@@ -248,6 +248,23 @@ def round(x: float) -> int:
     return int(nox_float_round_digits_raw(x, 0))
 
 # `round(x, nd)` çağrısı checker tarafından bu fonksiyona yönlendirilir (`float` döner, Python gibi).
+# `f(**d)` (checker `**kwargs` parametresine bağlar): `d`nin anahtarlarından biri çağrıda adıyla bağlanan bir parametrenin adıysa
+# (`reserved`) Python'daki "multiple values for argument" hatası ValueError olarak fırlatılır; aksi halde `d`nin kopyası döner.
+def __nox_kw_unpack[V](d: dict[str, V], reserved: list[str]) -> dict[str, V]:
+    for name in reserved:
+        if d.contains(name):
+            raise ValueError("got multiple values for argument '" + name + "'")
+    return d.copy()
+
+# Birden çok `**d` ya da `**d` + açık anahtar-kelime argümanı: yinelenen anahtar ValueError.
+def __nox_kw_merge[V](a: dict[str, V], b: dict[str, V]) -> dict[str, V]:
+    out: dict[str, V] = a.copy()
+    for k in b.keys():
+        if out.contains(k):
+            raise ValueError("got multiple values for keyword argument '" + k + "'")
+        out[k] = b[k]
+    return out
+
 def __nox_round_digits(x: float, nd: int) -> float:
     return nox_float_round_digits_raw(x, nd)
 

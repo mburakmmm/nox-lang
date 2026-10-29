@@ -73,7 +73,24 @@ eval x
 xy
 ```
 
-A function can take a variable number of positional arguments with a trailing `*name: T`. Inside the body `name` is a `list[T]`; extra arguments at the call are collected into it (none gives an empty list). It must be the last positional parameter, cannot be passed by keyword, and every extra argument must be a `T`. A trailing `**name: T` collects keyword arguments that match no declared parameter into a `dict[str, T]` (names that match a declared parameter bind to it as usual); it must be the very last parameter and takes no extra positional arguments. Parameters after a bare `*` or after `*args` are **keyword-only**: they can only be given as `name=value` (`def conf(name: str, *, retries: int = 3)`). A call can unpack a list into a `*args` parameter with `f(a, *xs)`; the list is copied, and the `*xs` must sit exactly at the position of the `*args` parameter (no positional argument may follow it). There is no `f(**d)` dictionary unpacking and no positional-only marker (`/`) in 2.0.
+A function can take a variable number of positional arguments with a trailing `*name: T`. Inside the body `name` is a `list[T]`; extra arguments at the call are collected into it (none gives an empty list). It must be the last positional parameter, cannot be passed by keyword, and every extra argument must be a `T`. A trailing `**name: T` collects keyword arguments that match no declared parameter into a `dict[str, T]` (names that match a declared parameter bind to it as usual); it must be the very last parameter and takes no extra positional arguments. Parameters after a bare `*` or after `*args` are **keyword-only**: they can only be given as `name=value` (`def conf(name: str, *, retries: int = 3)`). A call can unpack a list into a `*args` parameter with `f(a, *xs)`; the list is copied, and the `*xs` must sit exactly at the position of the `*args` parameter (no positional argument may follow it). A call can unpack a `dict[str, T]` into a `**kwargs: T` parameter with `f(a, **d)` (several `**` and explicit keywords may be mixed; the callee must have a `**kwargs` parameter). Because the keys are only known at run time, a key never binds a named parameter: a key that equals the name of one raises `ValueError` ("got multiple values"), and a key given twice raises `ValueError` too. A bare `/` in the parameter list makes every parameter before it **positional-only** (`def log(msg: str, level: int, /, **fields: str)`): it cannot be passed by keyword, and `log("x", 1, msg="y")` puts `msg` into `fields`. Keyword-only, `*args` and `**kwargs` parameters may follow defaulted ones without a default of their own.
+
+```nox
+def log(msg: str, level: int, /, **fields: str) -> str:
+    out: str = msg + ":" + str(level)
+    for k in fields.keys():
+        out = out + " " + k + "=" + fields[k]
+    return out
+
+extra: dict[str, str] = {"user": "ada"}
+print(log("hi", 2, host="h", **extra))
+print(log("hi", 2, msg="shadow"))
+```
+
+```output
+hi:2 host=h user=ada
+hi:2 msg=shadow
+```
 
 ```nox
 def total(first: int, *rest: int) -> int:

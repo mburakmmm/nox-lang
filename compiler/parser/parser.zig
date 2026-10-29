@@ -591,6 +591,7 @@ pub const Parser = struct {
 
         var params = std.ArrayList(ast.Param).empty;
         var kw_only_mode = false;
+        var saw_slash = false;
         if (!self.check(.r_paren)) {
             try params.append(self.allocator, try self.parseFirstParam(enclosing_name));
             if (params.items[0].variadic) kw_only_mode = true;
@@ -599,6 +600,18 @@ pub const Parser = struct {
                 if (self.check(.star) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .comma) {
                     _ = self.advance();
                     kw_only_mode = true;
+                    continue;
+                }
+                // çıplak `/`: önceki tüm parametreler yalnızca-konumsaldır
+                if (self.check(.slash)) {
+                    const bad_note: ?[]const u8 = if (kw_only_mode) "'/' must come before '*' and '*args'" else if (saw_slash) "only one '/' is allowed" else null;
+                    if (bad_note) |note| {
+                        self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = note };
+                        return error.UnexpectedToken;
+                    }
+                    _ = self.advance();
+                    saw_slash = true;
+                    for (params.items) |*pp| pp.pos_only = true;
                     continue;
                 }
                 var np = try self.parseParam();
@@ -729,6 +742,13 @@ pub const Parser = struct {
             _ = self.advance();
             const inner = try self.parseExpr();
             return .{ .kwarg = .{ .name = "*", .value = try self.box(inner) } };
+        }
+        // `**sözlük`: anahtar-kelime açma; içsel olarak `Kwarg{ name = "**" }` (checker `**kwargs` parametresine bağlar).
+        if (self.check(.star_star)) {
+            _ = self.advance();
+            const inner = try self.parseExpr();
+            saw_kw.* = true;
+            return .{ .kwarg = .{ .name = "**", .value = try self.box(inner) } };
         }
         if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .assign) {
             const name = self.advance().lexeme;
@@ -2233,4 +2253,40 @@ test "decorator: bir METOD üzerinde de PARSE edilir" {
     try std.testing.expectEqual(@as(usize, 1), m.decorators.len);
     try std.testing.expectEqualStrings("capability.requires", m.decorators[0].name);
     try std.testing.expectEqualStrings("clock", m.decorators[0].args[0].string_lit);
+}
+
+test "yalnızca-konumsal '/': önceki parametreler pos_only olur, sonrakiler olmaz" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parseSource(arena.allocator(),
+        \\def f(a: int, b: int, /, c: int) -> int:
+        \\    return a
+        \\
+    );
+    const ps = module.body[0].kind.func_def.params;
+    try std.testing.expect(ps[0].pos_only and ps[1].pos_only and !ps[2].pos_only);
+}
+
+test "'/' çıplak '*' ya da '*args'tan sonra gelemez" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(),
+        \\def f(*args: int, a: int, /) -> int:
+        \\    return a
+        \\
+    ));
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(),
+        \\def f(a: int, /, b: int, /) -> int:
+        \\    return a
+        \\
+    ));
+}
+
+test "çağrıda '**sözlük' Kwarg{ name = \"**\" } olarak ayrıştırılır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parseSource(arena.allocator(), "f(1, **d)\n");
+    const call = module.body[0].kind.expr_stmt.call;
+    try std.testing.expectEqual(@as(usize, 2), call.args.len);
+    try std.testing.expectEqualStrings("**", call.args[1].kwarg.name);
 }

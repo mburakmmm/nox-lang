@@ -2115,7 +2115,8 @@ pub const Checker = struct {
         var seen_default = false;
         for (params) |p| {
             const d = p.default orelse {
-                if (seen_default) {
+                // `*args`, `**kwargs` ve anahtar-sözcüğe-özel parametreler varsayılan-sırası kuralına tabi değildir (Python ile aynı).
+                if (seen_default and !p.variadic and !p.var_kw and !p.kw_only) {
                     return self.fail(error.TypeMismatch, "'{s}': a parameter without a default value ('{s}') cannot follow a parameter with a default value", .{ fname, p.name });
                 }
                 continue;
@@ -2171,7 +2172,15 @@ pub const Checker = struct {
             pos_cap = @min(pos_cap, j);
         };
         var star_value: ?ast.Expr = null;
+        // `f(**d)`: sözlük açma yalnızca `**kwargs` parametresini besler (anahtarlar çalışma zamanında bilinir).
+        var dstars: std.ArrayListUnmanaged(ast.Expr) = .empty;
+        defer dstars.deinit(self.allocator);
         for (args, 0..) |a, i| {
+            if (a == .kwarg and std.mem.eql(u8, a.kwarg.name, "**")) {
+                if (kw_idx == null) return self.fail(error.ArgumentCountMismatch, "'{s}': '**' unpacking in a call needs a '**kwargs' parameter", .{name});
+                try dstars.append(self.allocator, a.kwarg.value.*);
+                continue;
+            }
             if (a == .kwarg and std.mem.eql(u8, a.kwarg.name, "*")) {
                 // `f(*xs)`: yalnızca `*args` parametresi tam bu konumdaysa ve ondan önceki tüm konumsallar doldurulmuşsa geçerlidir.
                 if (variadic_idx == null or i != variadic_idx.? or star_value != null) {
@@ -2185,11 +2194,16 @@ pub const Checker = struct {
             if (a == .kwarg) {
                 var found: ?usize = null;
                 for (decl, 0..) |p, j| {
-                    if (p.var_kw) continue;
+                    if (p.var_kw or p.pos_only) continue;
                     if (std.mem.eql(u8, p.name, a.kwarg.name)) {
                         found = j;
                         break;
                     }
+                }
+                if (found == null and kw_idx == null) {
+                    for (decl) |p| if (p.pos_only and std.mem.eql(u8, p.name, a.kwarg.name)) {
+                        return self.fail(error.ArgumentCountMismatch, "'{s}': parameter '{s}' is positional-only and cannot be given by keyword", .{ name, a.kwarg.name });
+                    };
                 }
                 if (found == null and kw_idx != null) {
                     try kw_pairs.append(self.allocator, .{ .key = .{ .string_lit = a.kwarg.name }, .value = a.kwarg.value.* });
@@ -2212,7 +2226,35 @@ pub const Checker = struct {
             slots[vi] = star_value orelse ast.Expr{ .list_lit = try self.allocator.dupe(ast.Expr, extras.items) };
         }
         if (kw_idx) |ki| {
-            slots[ki] = .{ .dict_lit = try self.allocator.dupe(ast.DictPair, kw_pairs.items) };
+            if (dstars.items.len == 0) {
+                slots[ki] = .{ .dict_lit = try self.allocator.dupe(ast.DictPair, kw_pairs.items) };
+            } else {
+                // Bir sözlük anahtarı adıyla bir parametreye BAĞLANMAZ: adı bir parametreyle çakışan anahtar çalışma zamanında ValueError verir.
+                var reserved: std.ArrayListUnmanaged(ast.Expr) = .empty;
+                defer reserved.deinit(self.allocator);
+                for (decl) |p| {
+                    if (p.variadic or p.var_kw) continue;
+                    if (!p.pos_only) try reserved.append(self.allocator, .{ .string_lit = p.name });
+                }
+                var acc: ?ast.Expr = if (kw_pairs.items.len > 0) ast.Expr{ .dict_lit = try self.allocator.dupe(ast.DictPair, kw_pairs.items) } else null;
+                for (dstars.items) |d| {
+                    const ucallee = try self.allocator.create(ast.Expr);
+                    ucallee.* = .{ .identifier = "__nox_kw_unpack" };
+                    const uargs = try self.allocator.alloc(ast.Expr, 2);
+                    uargs[0] = d;
+                    uargs[1] = .{ .list_lit = try self.allocator.dupe(ast.Expr, reserved.items) };
+                    const unpacked: ast.Expr = .{ .call = .{ .callee = ucallee, .args = uargs } };
+                    if (acc) |prev| {
+                        const mcallee = try self.allocator.create(ast.Expr);
+                        mcallee.* = .{ .identifier = "__nox_kw_merge" };
+                        const margs = try self.allocator.alloc(ast.Expr, 2);
+                        margs[0] = prev;
+                        margs[1] = unpacked;
+                        acc = .{ .call = .{ .callee = mcallee, .args = margs } };
+                    } else acc = unpacked;
+                }
+                slots[ki] = acc.?;
+            }
         }
         // v1.169.0: değerlendirme sırası. Bağlama parametre sırasıyla yapılır, AMA yan etkili (çağrı/await/spawn/kurucu içeren) argümanlar KAYNAK sırasıyla
         // değerlendirilir: göreli sıraları değişen iki yan etkili argüman varsa `last_eval_order` permütasyonu kaydedilir (codegen uygular).
@@ -2224,7 +2266,7 @@ pub const Checker = struct {
             var last_effect_slot: ?usize = null;
             for (args, 0..) |a, i| {
                 var slot_idx: usize = if (variadic_idx) |vi| @min(i, vi) else i;
-                if (a == .kwarg and std.mem.eql(u8, a.kwarg.name, "*")) continue;
+                if (a == .kwarg and (std.mem.eql(u8, a.kwarg.name, "*") or std.mem.eql(u8, a.kwarg.name, "**"))) continue;
                 var val = a;
                 if (a == .kwarg) {
                     for (decl, 0..) |p, j| {

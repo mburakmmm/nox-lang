@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.62]
+
+### Eklendi
+
+- Cagrida sozluk acma `f(a, **d)` (`**kwargs` parametresini besler; adi bir parametreyle cakisan ya da yinelenen anahtar `ValueError`).
+- Yalnizca-konumsal parametre isaretcisi `/` (`def f(a, b, /, c)`).
+
+### Duzeltildi
+
+- `def f(a, b=2, **kw)` ve `def f(a=1, *, k: int)` gibi tanimlar "varsayilansiz parametre varsayilanliyi izleyemez" diye yanlislikla reddediliyordu.
+- `docs/language/python-differences.md` hala `*args`/`**kwargs` yok diyordu.
+
 ## [2.0.61]
 
 ### Eklendi

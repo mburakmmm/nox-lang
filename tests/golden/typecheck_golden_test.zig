@@ -1516,6 +1516,20 @@ test "golden(typecheck): yield içeren fonksiyon Iterator[T] ile işaretlenmeli"
     );
 }
 
+test "golden(typecheck): sözlük açma için **kwargs parametresi gerekir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_dstar_without_kwargs_param.nox"),
+        @embedFile("typecheck_cases/err_dstar_without_kwargs_param.expected"),
+    );
+}
+
+test "golden(typecheck): yalnızca-konumsal parametre anahtar kelimeyle verilemez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_keyword_to_positional_only.nox"),
+        @embedFile("typecheck_cases/err_keyword_to_positional_only.expected"),
+    );
+}
+
 test "golden(typecheck): bilinmeyen mixin tabanı reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_unknown_mixin_base.nox"),
