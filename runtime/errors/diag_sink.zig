@@ -19,6 +19,10 @@ const builtin = @import("builtin");
 /// DERLENEMEYEN bir I/O katmanına dayanır.
 const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
 
+/// wasm32-freestanding (ADR-013): stderr `nox_host.write(2, ...)` ile yazılır. (`wasm_host.zig` bu modülün kök dizini dışında; aynı import burada yinelenir.)
+const is_wasm_freestanding = builtin.cpu.arch.isWasm() and builtin.os.tag == .freestanding;
+extern "nox_host" fn write(fd: i32, ptr: [*]const u8, len: usize) i32;
+
 /// `rt` (VARSA — bazı siteler `null` geçer, ör. reactor/erken-bootstrap
 /// bağlamları), ÖNCEDEN biçimlendirilmiş `bytes[0..len]` bir tanı
 /// mesajıdır (satır sonu DAHİL, HER ZAMAN `\n` İLE biter — MEVCUT TÜM
@@ -29,6 +33,10 @@ var g_diag_sink: std.atomic.Value(?DiagSinkFn) = .init(null);
 
 fn defaultStderrSink(rt: ?*anyopaque, bytes: [*]const u8, len: usize) callconv(.c) void {
     _ = rt;
+    if (comptime is_wasm_freestanding) {
+        _ = write(2, bytes, len);
+        return;
+    }
     if (comptime is_freestanding) {
         // Freestanding'de GERÇEK bir stderr/`std.debug.print` I/O katmanı
         // YOK — GERÇEK bir freestanding host HER ZAMAN `nox_register_diag_

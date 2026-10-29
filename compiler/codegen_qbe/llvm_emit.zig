@@ -858,6 +858,11 @@ pub fn isWasm(self: *const Codegen) bool {
     return std.mem.startsWith(u8, self.llvm_triple, "wasm32");
 }
 
+/// `wasm32-freestanding` (üçlü `wasm32-unknown-unknown`): WASI/libc yok, host `nox_host` import'larıdır (ADR-013).
+pub fn isWasmFreestanding(self: *const Codegen) bool {
+    return std.mem.eql(u8, self.llvm_triple, "wasm32-unknown-unknown");
+}
+
 /// libc sembolleri (wasi-libc, 32-bit): Nox'un `calls.zig`/`print` kodunun doğrudan çağırdıkları. Runtime'ın `export fn` tablosunda yoktur.
 const libc_abi = std.StaticStringMap(wasm_abi.Entry).initComptime(.{
     .{ "printf", wasm_abi.Entry{ .params = "P", .ret = 'W' } },

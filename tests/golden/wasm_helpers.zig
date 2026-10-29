@@ -1,5 +1,5 @@
-//! Faz 10 (WASM): `wasm_target_test.zig` ve `wasm_corpus_test.zig`nin ortak yardımcıları — `noxc build --target wasm32-wasi` ile derleyip
-//! Node'un WASI'siyle (`wasm_run.mjs`) çalıştırır.
+//! Faz 10 (WASM): `wasm_target_test.zig` ve `wasm_corpus_test.zig`nin ortak yardımcıları — `noxc build --target wasm32-wasi|wasm32-freestanding` ile derleyip
+//! `compiler/wasm_host.mjs` (Node) ile çalıştırır.
 //!
 //! **KRİTİK** (bkz. `compile_helpers.zig`nin AYNI notu): bu dosyada HİÇBİR `test` bloğu OLMAMALIDIR.
 
@@ -16,7 +16,16 @@ pub const Outcome = union(enum) {
 };
 
 /// `source`u geçici bir dizinde `.wasm`a derler ve çalıştırır. `noxc_path`/`runner_path` göreli ya da mutlak olabilir.
-pub fn buildAndRun(allocator: std.mem.Allocator, noxc_path: []const u8, runner_path: []const u8, source: []const u8) !Outcome {
+pub const Target = enum { wasi, freestanding };
+
+pub fn targetName(t: Target) []const u8 {
+    return switch (t) {
+        .wasi => "wasm32-wasi",
+        .freestanding => "wasm32-freestanding",
+    };
+}
+
+pub fn buildAndRun(allocator: std.mem.Allocator, noxc_path: []const u8, runner_path: []const u8, target: Target, source: []const u8) !Outcome {
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -30,7 +39,7 @@ pub fn buildAndRun(allocator: std.mem.Allocator, noxc_path: []const u8, runner_p
     defer allocator.free(wasm_path);
 
     const build = std.process.run(allocator, io, .{
-        .argv = &.{ noxc_path, "build", "--target", "wasm32-wasi", src_path, "-o", wasm_path },
+        .argv = &.{ noxc_path, "build", "--target", targetName(target), src_path, "-o", wasm_path },
     }) catch |err| {
         if (err == error.FileNotFound) return .tool_missing;
         return err;
@@ -41,7 +50,7 @@ pub fn buildAndRun(allocator: std.mem.Allocator, noxc_path: []const u8, runner_p
             allocator.free(build.stderr);
             return .tool_missing;
         }
-        if (std.mem.indexOf(u8, build.stderr, "wasm32-wasi target") != null) return .{ .rejected = build.stderr };
+        if (std.mem.indexOf(u8, build.stderr, "wasm32-wasi target") != null or std.mem.indexOf(u8, build.stderr, "wasm32-freestanding target") != null) return .{ .rejected = build.stderr };
         return .{ .build_failed = build.stderr };
     }
     allocator.free(build.stderr);

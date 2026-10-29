@@ -19,6 +19,7 @@
 //! değildir).
 
 const std = @import("std");
+const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 const abi_ptr = @import("../abi_ptr.zig");
 const asap = @import("../alloc/asap.zig");
@@ -50,6 +51,7 @@ fn haltProcess() noreturn {
     if (g_halt_provider.load(.monotonic)) |p| {
         p.vtable.halt(p.ctx);
     }
+    if (comptime wasm_host.is_freestanding_wasm) wasm_host.exit(1);
     if (comptime is_freestanding) {
         // Sağlayıcı KAYITLI DEĞİLSE freestanding'de HERHANGİ bir donanıma/
         // OS'a bağımlı OLMAYAN, HER ZAMAN GEÇERLİ bir "dur" ilkeli.

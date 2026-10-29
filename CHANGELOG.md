@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.77]
+
+### Eklendi
+
+- `wasm32-freestanding` hedefi: `noxc build --target wasm32-freestanding prog.nox` WASI'siz ve libc'siz bir `.wasm` üretir; dış dünya yalnızca `nox_host` import'larıdır (`write`, `read`, `clock_ms`, `random_fill`, `sleep_ms`, `exit`; ABI sürüm 1). Tarayıcıda ya da gömülü host'ta çalışır. `noxc run --target wasm32-freestanding` modülü `node` ile çalıştırır. Ayrıntı: ADR-013, `docs/tools/wasm.md`.
+- `compiler/wasm_host.mjs`: tek dosyalık, bağımlılıksız çalıştırıcı/host kütüphanesi (Node CLI + tarayıcı için `createHost`/`runNox`); hem WASI hem `nox_host` modüllerini çalıştırır, `noxc` içine gömülüdür.
+- `zig build wasm-test` (iki hedefte duman testleri) ve `wasm-corpus-test` iki hedefte tüm korpusu çalıştırır.
+
+### Değişti
+
+- `noxc run --target wasm32-wasi` artık gömülü `wasm_host.mjs` ile `node` kullanır (wasmtime/wasmer varsa onlar önceliklidir).
+
 ## [2.0.76]
 
 ### Eklendi

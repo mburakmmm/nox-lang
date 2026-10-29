@@ -20,6 +20,7 @@
 //! (data race) olurdu — `threadlocal` HER iş parçacığına KENDİ BAĞIMSIZ
 //! PRNG durumunu VERİR, SIFIR ek senkronizasyon MALİYETİYLE.
 const std = @import("std");
+const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 const bridge = @import("../async_rt/bridge.zig");
 
@@ -83,6 +84,13 @@ fn ensureSeeded() void {
         // `nox.time`in AYNI `clock_gettime` deseni (bkz. `time.zig`'in
         // `nox_time_now_ms_raw`ı) — bu Zig sürümünde `std.time.milliTimestamp`
         // KULLANILAMADIĞINDAN (kaldırılmış/taşınmış).
+        if (comptime wasm_host.is_freestanding_wasm) {
+            var seed_bytes: [8]u8 = undefined;
+            wasm_host.random_fill(&seed_bytes, seed_bytes.len);
+            prng.* = std.Random.DefaultPrng.init(@bitCast(seed_bytes));
+            seeded.* = true;
+            return;
+        }
         var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(.REALTIME, &ts);
         const seed: u64 = @bitCast(@as(i64, ts.sec) *% 1_000_000_000 +% ts.nsec);

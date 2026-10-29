@@ -757,6 +757,8 @@ pub const Checker = struct {
     mobile_mask: MobileMask = .none,
     /// `--target wasm32-wasi` (bkz. `WASM_UNAVAILABLE_MODULES`).
     wasm_target: bool = false,
+    /// `--target wasm32-freestanding`: `wasm_target`e ek olarak dosya sistemi yoktur (ADR-013).
+    wasm_freestanding: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Checker {
         return .{ .allocator = allocator };
@@ -1493,6 +1495,9 @@ pub const Checker = struct {
     /// `.hosted`de (varsayılan, İZİN VEREN profil) sorun DEĞİLDİR.
     fn checkModuleCapabilitiesAllowed(self: *Checker, segments: []const []const u8) TypeError!void {
         if (segments.len < 2 or !std.mem.eql(u8, segments[0], "nox")) return;
+        if (self.wasm_target and self.wasm_freestanding and std.mem.eql(u8, segments[1], "fs")) {
+            return self.fail(error.CapabilityNotGranted, "module 'nox.fs' cannot be used on the wasm32-freestanding target (there is no file system; use wasm32-wasi)", .{});
+        }
         if (self.wasm_target) {
             for (WASM_UNAVAILABLE_MODULES) |m| {
                 if (std.mem.eql(u8, m.name, segments[1])) {

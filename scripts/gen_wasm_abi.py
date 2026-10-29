@@ -12,6 +12,8 @@ import re, sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC_DIRS = ["runtime"]
 OUT = ROOT / "compiler/codegen_qbe/wasm_abi_table.zig"
+# libc yerine geçen `wasm_libc.zig` (printf/strcmp/_start) ve lib_*.zig kökleri tabloya girmez: libc imzaları `llvm_emit.zig`nin `libc_abi` tablosundadır.
+SKIP_FILES = {"wasm_libc.zig", "lib_wasm.zig", "lib_wasm_freestanding.zig", "lib_freestanding.zig", "lib_freestanding_kernel.zig"}
 SKIP_DIRS = {"vendor", "freestanding", "mobile", "hpy_bridge", "wasm_bridge", "cpython_compat"}
 
 def split_params(s):
@@ -76,6 +78,7 @@ def main():
     for d in SRC_DIRS:
         for p in sorted((ROOT / d).rglob("*.zig")):
             if SKIP_DIRS & set(p.relative_to(ROOT / d).parts): continue
+            if p.name in SKIP_FILES: continue
             if p.name.endswith("_test.zig") or p.name == "lib_freestanding.zig" or p.name == "lib_freestanding_kernel.zig": continue
             for name, params, ret, src in parse_file(p):
                 if "?" in params or ret == "?":

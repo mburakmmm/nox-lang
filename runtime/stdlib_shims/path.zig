@@ -5,6 +5,7 @@
 //! (saf string işlemleri), bu yüzden `.nox` tarafında `raise` YOLU YOKTUR.
 
 const std = @import("std");
+const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("shim_util.zig");
@@ -193,6 +194,11 @@ export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv
         std.mem.replaceScalar(u8, buf[0..len], '\\', '/');
         pathLastOkPtr().* = true;
         return dupeToNoxStr(rt, buf[0..len]);
+    }
+    if (comptime wasm_host.is_freestanding_wasm) {
+        // freestanding: dosya sistemi yok; `realpath` hep başarısız.
+        pathLastOkPtr().* = false;
+        return dupeToNoxStr(rt, "");
     }
     var buf: [std.c.PATH_MAX]u8 = undefined;
     const resolved = std.c.realpath(path, &buf) orelse {

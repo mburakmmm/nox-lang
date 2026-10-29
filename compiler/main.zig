@@ -1347,7 +1347,8 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             printErr("noxc run --sandbox: not supported with --target wasm32-wasi (the WASI runtime is the sandbox)\n", .{});
             std.process.exit(1);
         }
-        const code = try runWasi(gpa, io, a, bin_path, split.after);
+        const is_free = if (opts.target) |t| (if (qbe_target.hostedTargetInfo(t)) |info| info.wasm_freestanding else false) else false;
+        const code = try runWasi(gpa, io, a, bin_path, is_free, split.after);
         std.process.exit(code);
     }
     if (sandboxed) {
@@ -1398,32 +1399,24 @@ fn runSandboxed(io: std.Io, a: std.mem.Allocator, bin_path: []const u8, argv_tai
     };
 }
 
-/// Düğümün WASI'siyle `.wasm` çalıştıran küçük sürücü (`tests/golden/wasm_run.mjs` ile aynı). `wasmtime`/`wasmer` yoksa `noxc run --target wasm32-wasi` bunu kullanır.
-const NODE_WASI_RUNNER =
-    \\import { readFile } from 'node:fs/promises';
-    \\import { WASI } from 'node:wasi';
-    \\const file = process.argv[2];
-    \\const wasi = new WASI({ version: 'preview1', args: [file, ...process.argv.slice(3)], env: process.env, preopens: { '.': '.', '/tmp': '/tmp' }, returnOnExit: true });
-    \\const mod = await WebAssembly.compile(await readFile(file));
-    \\const inst = await WebAssembly.instantiate(mod, wasi.getImportObject());
-    \\process.exitCode = wasi.start(inst);
-    \\
-;
+/// `compiler/wasm_host.mjs`: hem WASI (`wasm32-wasi`) hem `nox_host` (`wasm32-freestanding`) modüllerini Node'da çalıştıran tek dosyalık sürücü.
+/// `noxc run --target wasm32-*` bunu çalışma önbelleğine yazar ve `node` ile çalıştırır (`wasmtime`/`wasmer` yalnızca WASI modülleri için).
+const WASM_HOST_JS = @embedFile("wasm_host.mjs");
 
-/// `noxc run --target wasm32-wasi`: `.wasm`ı bulunan ilk WASI çalıştırıcısıyla çalıştırır (`wasmtime`, `wasmer`, `node`).
-/// Çalışma dizini ve `/tmp` programa açılır. Çalıştırıcı yoksa açık hata verir.
-fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, argv_tail: []const []const u8) !u8 {
+/// `noxc run --target wasm32-wasi|wasm32-freestanding`: `.wasm`ı çalıştırır. WASI modülleri için bulunan ilk çalıştırıcı (`wasmtime`, `wasmer`, `node`),
+/// freestanding (`nox_host`) için her zaman `node`. Çalışma dizini ve `/tmp` WASI programına açılır. Çalıştırıcı yoksa açık hata verir.
+fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, argv_tail: []const []const u8) !u8 {
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    if (probeOk(gpa, io, &.{ "wasmtime", "--version" })) {
+    if (!freestanding and probeOk(gpa, io, &.{ "wasmtime", "--version" })) {
         try argv.appendSlice(a, &.{ "wasmtime", "run", "--dir", ".", "--dir", "/tmp", wasm_path, "--" });
-    } else if (probeOk(gpa, io, &.{ "wasmer", "--version" })) {
+    } else if (!freestanding and probeOk(gpa, io, &.{ "wasmer", "--version" })) {
         try argv.appendSlice(a, &.{ "wasmer", "run", "--dir", ".", wasm_path, "--" });
     } else if (probeOk(gpa, io, &.{ "node", "--version" })) {
         const runner_path = try std.fmt.allocPrint(a, "{s}.run.mjs", .{wasm_path});
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = runner_path, .data = NODE_WASI_RUNNER });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = runner_path, .data = WASM_HOST_JS });
         try argv.appendSlice(a, &.{ "node", "--no-warnings", runner_path, wasm_path });
     } else {
-        printErr("noxc run --target wasm32-wasi: no WASI runtime found on PATH (install wasmtime, wasmer or node), or use 'noxc build' and run the .wasm yourself\n", .{});
+        printErr("noxc run --target wasm32-*: no runtime found on PATH ({s}), or use 'noxc build' and run the .wasm yourself\n", .{if (freestanding) "install node" else "install wasmtime, wasmer or node"});
         std.process.exit(1);
     }
     try argv.appendSlice(a, argv_tail);
@@ -2224,6 +2217,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     checker_state.profile = opts.profile;
     checker_state.mobile_mask = mobileMaskOf(if (opts.profile == .hosted and opts.target != null) qbe_target.hostedTargetInfo(opts.target.?) else null);
     checker_state.wasm_target = if (opts.profile == .hosted and opts.target != null) (if (qbe_target.hostedTargetInfo(opts.target.?)) |ht| ht.wasm else false) else false;
+    checker_state.wasm_freestanding = if (opts.profile == .hosted and opts.target != null) (if (qbe_target.hostedTargetInfo(opts.target.?)) |ht| ht.wasm_freestanding else false) else false;
     // `build` ile aynı backend'e göre denetle (checker'ın `spawn` tip kuralları backend'e bağlıdır).
     checker_state.backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm, opts.debug_info)) .llvm else .qbe;
     checker_state.checkModule(module) catch |e| {
@@ -2704,7 +2698,19 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
     }
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.appendSlice(a, &.{ "zig", "cc", "-target", info.zig_triple, "-O2", "-Wno-override-module", "-Wl,-z,stack-size=8388608", "-o", out_path, ll_path, rt_path });
-    try appendExternLinkArgs(a, &argv, module);
+    // wasm32-freestanding: libc/WASI başlangıcı yok; giriş `_start` (runtime/wasm_libc.zig), host import'ları `nox_host` ad alanından.
+    if (info.wasm_freestanding) try argv.appendSlice(a, &.{ "-Wl,--no-entry", "-Wl,--export=_start", "-Wl,--export=nox_host_abi_version" });
+    if (info.wasm_freestanding) {
+        // libc/libm yok: `from "m"` bildirimleri çalışma zamanındaki (`wasm_libc.zig`/compiler-rt) tanımlara çözülür; `-lm` verilmez.
+        var tmp: std.ArrayListUnmanaged([]const u8) = .empty;
+        try appendExternLinkArgs(a, &tmp, module);
+        for (tmp.items) |arg| {
+            if (std.mem.eql(u8, arg, "-lm")) continue;
+            try argv.append(a, arg);
+        }
+    } else {
+        try appendExternLinkArgs(a, &argv, module);
+    }
     const result = std.process.run(gpa, io, .{ .argv = argv.items }) catch |err| {
         if (err == error.FileNotFound) {
             printErr("zig not found: --target wasm32-wasi needs 'zig' on PATH\n", .{});
@@ -2816,6 +2822,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     checker_state.profile = profile;
     checker_state.mobile_mask = mobileMaskOf(hosted_info);
     checker_state.wasm_target = if (hosted_info) |ht| ht.wasm else false;
+    checker_state.wasm_freestanding = if (hosted_info) |ht| ht.wasm_freestanding else false;
     checker_state.checkModule(module) catch |e| {
         printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         return error.BuildFailed;
@@ -3015,7 +3022,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
             return error.BuildFailed;
         })
     else

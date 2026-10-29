@@ -17,6 +17,7 @@
 //! bağımsız stdin-leftover tamponu OLMALIDIR.
 
 const std = @import("std");
+const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 const http_client = @import("shim_util.zig");
 const bridge = @import("../async_rt/bridge.zig");
@@ -32,6 +33,7 @@ fn readStdinChunk(buf: []u8) isize {
         const n = WinIo._read(0, buf.ptr, @intCast(@min(buf.len, std.math.maxInt(c_uint))));
         return @intCast(n);
     }
+    if (comptime wasm_host.is_freestanding_wasm) return wasm_host.read(0, buf.ptr, buf.len);
     return std.c.read(0, buf.ptr, buf.len);
 }
 

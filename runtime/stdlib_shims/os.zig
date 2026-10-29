@@ -18,6 +18,7 @@
 //! KENDİSİ, sıradan `if`/`raise` İLE) istisna fırlatır.
 
 const std = @import("std");
+const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 const http_client = @import("shim_util.zig");
 
@@ -53,26 +54,62 @@ export fn nox_os_arg_raw(rt: ?*anyopaque, i: i64) callconv(.c) ?[*:0]u8 {
     return dupeToNoxStr(rt, std.mem.span(arg));
 }
 
+/// wasm32-freestanding (ADR-013): işletim sistemi ortamı yoktur; `set_var`/`getenv` modüle özel, başlangıçta BOŞ bir tabloyla çalışır (modül başına tek örnek).
+const FreeEnv = struct {
+    var map: std.StringHashMapUnmanaged([]u8) = .empty;
+
+    fn get(name: []const u8) ?[]const u8 {
+        return map.get(name);
+    }
+
+    fn set(name: []const u8, value: []const u8) void {
+        const a = std.heap.wasm_allocator;
+        const v = a.dupe(u8, value) catch return;
+        if (map.getPtr(name)) |slot| {
+            a.free(slot.*);
+            slot.* = v;
+            return;
+        }
+        const k = a.dupe(u8, name) catch {
+            a.free(v);
+            return;
+        };
+        map.put(a, k, v) catch {
+            a.free(k);
+            a.free(v);
+        };
+    }
+};
+
 export fn nox_os_has_env(name: ?[*:0]const u8) callconv(.c) i32 {
     const n = name orelse return 0;
+    if (comptime wasm_host.is_freestanding_wasm) return if (FreeEnv.get(std.mem.span(n)) != null) 1 else 0;
     return if (std.c.getenv(n) != null) 1 else 0;
 }
 
 export fn nox_os_getenv_raw(rt: ?*anyopaque, name: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const n = name orelse return dupeToNoxStr(rt, "");
+    if (comptime wasm_host.is_freestanding_wasm) return dupeToNoxStr(rt, FreeEnv.get(std.mem.span(n)) orelse "");
     const v = std.c.getenv(n) orelse return dupeToNoxStr(rt, "");
     return dupeToNoxStr(rt, std.mem.span(v));
 }
 
 export fn nox_os_exit_raw(code: i64) callconv(.c) noreturn {
-    std.process.exit(@intCast(code));
+    wasm_host.exitProcess(@intCast(code));
 }
 
 // Faz III.5 (bkz. nox-teknik-spesifikasyon.md §3.69) — `setenv` bu Zig
 // sürümünün `std.c`sinde YOK (`getenv`nin AKSİNE) — `runtime/foreign_
 // bridge.zig`nin AYNI "std.c'de eksikse ham `extern \"c\" fn` bildir"
 // deseniyle DOĞRUDAN bağlanır.
-extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+const setenv = if (wasm_host.is_freestanding_wasm) struct {
+    fn f(name: [*:0]const u8, value: [*:0]const u8, _: c_int) c_int {
+        FreeEnv.set(std.mem.span(name), std.mem.span(value));
+        return 0;
+    }
+}.f else struct {
+    extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+}.setenv;
 /// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows'un MinGW
 /// CRT'si `setenv`i (POSIX) DEĞİL, `_putenv_s`i (ISO C uyumlu isimlendirme)
 /// sağlar — imzası da farklıdır (`overwrite` bayrağı YOK, HER ZAMAN
@@ -91,6 +128,7 @@ export fn nox_os_set_var_raw(name: ?[*:0]const u8, value: ?[*:0]const u8) callco
 }
 
 export fn nox_os_current_dir_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    if (comptime wasm_host.is_freestanding_wasm) return dupeToNoxStr(rt, "/");
     var buf: [std.c.PATH_MAX]u8 = undefined;
     const result = std.c.getcwd(&buf, buf.len) orelse return dupeToNoxStr(rt, "");
     const z: [*:0]u8 = @ptrCast(result);

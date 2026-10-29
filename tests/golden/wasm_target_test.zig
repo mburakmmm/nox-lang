@@ -4,6 +4,7 @@
 //! döngü çözücü, iz arabelleği, async üreteç (iç içe çalıştırma benzetimi), kapanış yakalamada Channel retain'i, JSON, fs/regex/gzip/crypto kabukları,
 //! çoklu kalıtım vtable'ları. Ayrıca wasm'de olmayan modüllerin DERLEME ZAMANINDA açık iletiyle reddedildiği doğrulanır.
 //!
+//! Her fixture HEM `wasm32-wasi` HEM `wasm32-freestanding` (ADR-013, `nox_host` import'ları) hedefinde çalışır.
 //! `node`/`zig` PATH'te yoksa test SESSİZCE atlanır. Tüm korpus için opt-in `zig build wasm-corpus-test`.
 
 const std = @import("std");
@@ -11,25 +12,29 @@ const build_options = @import("build_options");
 const wasm_helpers = @import("wasm_helpers.zig");
 
 fn expectGolden(name: []const u8, source: []const u8, expected: []const u8) !void {
+    inline for (.{ wasm_helpers.Target.wasi, wasm_helpers.Target.freestanding }) |t| try expectGoldenOn(t, name, source, expected);
+}
+
+fn expectGoldenOn(target: wasm_helpers.Target, name: []const u8, source: []const u8, expected: []const u8) !void {
     const allocator = std.testing.allocator;
-    const outcome = try wasm_helpers.buildAndRun(allocator, build_options.noxc_path, build_options.runner_path, source);
+    const outcome = try wasm_helpers.buildAndRun(allocator, build_options.noxc_path, build_options.runner_path, target, source);
     switch (outcome) {
         .tool_missing => return error.SkipZigTest,
         .rejected => |msg| {
             defer allocator.free(msg);
-            std.debug.print("{s}: wasm hedefinde reddedildi: {s}\n", .{ name, msg });
+            std.debug.print("{s} [{s}]: wasm hedefinde reddedildi: {s}\n", .{ name, wasm_helpers.targetName(target), msg });
             return error.UnexpectedlyRejected;
         },
         .build_failed => |msg| {
             defer allocator.free(msg);
-            std.debug.print("{s}: wasm derlemesi basarisiz: {s}\n", .{ name, msg });
+            std.debug.print("{s} [{s}]: wasm derlemesi basarisiz: {s}\n", .{ name, wasm_helpers.targetName(target), msg });
             return error.BuildFailed;
         },
         .ran => |r| {
             defer allocator.free(r.stdout);
             defer allocator.free(r.stderr);
             if (r.term != .exited or r.term.exited != 0) {
-                std.debug.print("{s}: wasm programi basarisiz (stderr): {s}\n", .{ name, r.stderr });
+                std.debug.print("{s} [{s}]: wasm programi basarisiz (stderr): {s}\n", .{ name, wasm_helpers.targetName(target), r.stderr });
                 return error.ProgramFailed;
             }
             try std.testing.expectEqualStrings(expected, r.stdout);
@@ -38,8 +43,13 @@ fn expectGolden(name: []const u8, source: []const u8, expected: []const u8) !voi
 }
 
 fn expectRejected(source: []const u8, needle: []const u8) !void {
+    try expectRejectedOn(.wasi, source, needle);
+    try expectRejectedOn(.freestanding, source, needle);
+}
+
+fn expectRejectedOn(target: wasm_helpers.Target, source: []const u8, needle: []const u8) !void {
     const allocator = std.testing.allocator;
-    const outcome = try wasm_helpers.buildAndRun(allocator, build_options.noxc_path, build_options.runner_path, source);
+    const outcome = try wasm_helpers.buildAndRun(allocator, build_options.noxc_path, build_options.runner_path, target, source);
     switch (outcome) {
         .tool_missing => return error.SkipZigTest,
         .rejected => |msg| {
@@ -93,7 +103,7 @@ test "wasm32-wasi: JSON, regex, gzip, sha256, fs kabukları" {
     try expectGolden("regex_engine", @embedFile("codegen_cases/regex_engine.nox"), @embedFile("codegen_cases/regex_engine.expected"));
     try expectGolden("gzip_roundtrip", @embedFile("codegen_cases/gzip_compress_decompress_str_roundtrip.nox"), @embedFile("codegen_cases/gzip_compress_decompress_str_roundtrip.expected"));
     try expectGolden("crypto_sha256", @embedFile("codegen_cases/crypto_sha256_known_vectors.nox"), @embedFile("codegen_cases/crypto_sha256_known_vectors.expected"));
-    try expectGolden("fs_read_write_roundtrip", @embedFile("codegen_cases/fs_read_write_roundtrip.nox"), @embedFile("codegen_cases/fs_read_write_roundtrip.expected"));
+    try expectGoldenOn(.wasi, "fs_read_write_roundtrip", @embedFile("codegen_cases/fs_read_write_roundtrip.nox"), @embedFile("codegen_cases/fs_read_write_roundtrip.expected"));
 }
 
 test "wasm32-wasi: soket gerektiren modül derleme zamanında açık iletiyle reddedilir" {
@@ -103,4 +113,15 @@ test "wasm32-wasi: soket gerektiren modül derleme zamanında açık iletiyle re
 
 test "wasm32-wasi: HPy/WASM köprü yerleşikleri reddedilir" {
     try expectRejected("print(wasm_call(\"a.wasm\", \"f\", 1))\n", "cannot be used on the wasm32-wasi target");
+}
+
+test "wasm32-freestanding: nox_host stdout/stderr, ortam tablosu, argv[0], libm" {
+    // Yalnızca freestanding'e özgü davranışlar: boş başlangıç ortamı + modüle özel set_var, argv[0] = "nox", math (compiler-rt + atan2).
+    try expectGoldenOn(.freestanding, "os_new_operations", @embedFile("codegen_cases/os_new_operations.nox"), @embedFile("codegen_cases/os_new_operations.expected"));
+    try expectGoldenOn(.freestanding, "os_args_basic", @embedFile("codegen_cases/os_args_basic.nox"), @embedFile("codegen_cases/os_args_basic.expected"));
+    try expectGoldenOn(.freestanding, "mathx_basic", @embedFile("codegen_cases/mathx_basic.nox"), @embedFile("codegen_cases/mathx_basic.expected"));
+}
+
+test "wasm32-freestanding: nox.fs derleme zamanında reddedilir (dosya sistemi yok), wasi'de çalışır" {
+    try expectRejectedOn(.freestanding, "import nox.fs\nprint(1)\n", "cannot be used on the wasm32-freestanding target");
 }

@@ -15,6 +15,7 @@
 //! deseni.
 
 const std = @import("std");
+const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 
 /// v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.time`
@@ -70,6 +71,7 @@ const WinTime = if (builtin.os.tag == .windows) struct {
 } else struct {};
 
 export fn nox_time_now_ms_raw() callconv(.c) i64 {
+    if (comptime wasm_host.is_freestanding_wasm) return wasm_host.clock_ms(0);
     if (comptime is_freestanding) return 0;
     if (builtin.os.tag == .windows) return WinTime.nowMs();
     var ts: std.c.timespec = undefined;
@@ -82,6 +84,7 @@ export fn nox_time_now_ms_raw() callconv(.c) i64 {
 /// saati GERİYE/İLERİYE ayarlansa BİLE ASLA geri sıçramaz — `Instant.
 /// elapsed_ms`in DOĞRULUĞU İÇİN ZORUNLU, `now_ms`nin duvar-saati AKSİNE).
 export fn nox_time_monotonic_ms_raw() callconv(.c) i64 {
+    if (comptime wasm_host.is_freestanding_wasm) return wasm_host.clock_ms(1);
     if (comptime is_freestanding) return 0;
     if (builtin.os.tag == .windows) return WinTime.monotonicMs();
     var ts: std.c.timespec = undefined;
@@ -90,6 +93,10 @@ export fn nox_time_monotonic_ms_raw() callconv(.c) i64 {
 }
 
 export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
+    if (comptime wasm_host.is_freestanding_wasm) {
+        if (ms > 0) wasm_host.sleep_ms(ms);
+        return;
+    }
     if (comptime is_freestanding) return;
     if (ms <= 0) return;
     if (builtin.os.tag == .windows) {

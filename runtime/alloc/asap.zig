@@ -862,6 +862,8 @@ pub export fn nox_runtime_init() ?*anyopaque {
     // bir freestanding host HER ZAMAN `nox_runtime_init_with_allocator`i
     // (KENDİ allocator'ıyla) çağırmalıdır — BU YÜZDEN freestanding'de
     // KOŞULSUZ `null` döner (asla GERÇEKTEN çağrılmaması BEKLENİR).
+    // wasm32-freestanding (ADR-013): `memory.grow` tabanlı `wasm_allocator` ÇALIŞIR (çıplak donanım değil); çekirdek-ayırıcı enjeksiyonu yoluyla kurulur.
+    if (comptime is_freestanding and builtin.cpu.arch.isWasm()) return nox_runtime_init_with_allocator(std.heap.wasm_allocator);
     if (comptime is_freestanding) return null;
     // Windows CRT `printf("\n")` metin kipinde `\r\n` yazar. Nox satır sonu
     // her platformda `\n` dir; stdout/stderr ikili kipe alınır.

@@ -16,6 +16,7 @@ const asap = @import("../alloc/asap.zig");
 const fiber_mod = @import("fiber.zig");
 const diag_sink = @import("diag_sink");
 const abi_ptr = @import("../abi_ptr.zig");
+const wasm_host = @import("../wasm_host.zig");
 
 /// wasm32'de zamanlayıcı yoktur; çağıranlar `?*Scheduler` bekler ama her zaman `null` alır.
 pub const Scheduler = opaque {};
@@ -148,7 +149,7 @@ fn runOne(rt: ?*anyopaque) bool {
 
 fn deadlock(rt: ?*anyopaque, what: []const u8) noreturn {
     diag_sink.report(rt, "nox: deadlock detected ({s}) — on wasm, tasks run nested on one stack and cannot be suspended; the awaited result can only come from a task that is blocked below this one\n", .{what});
-    std.process.exit(1);
+    wasm_host.exitProcess(1);
 }
 
 pub export fn nox_async_await(rt: ?*anyopaque, task: ?*anyopaque) i64 {
@@ -199,7 +200,7 @@ pub export fn nox_async_run_to_completion(rt: ?*anyopaque) i32 {
 
 pub export fn nox_async_deadlock_abort(rt: ?*anyopaque) noreturn {
     diag_sink.report(rt, "nox: deadlock detected — all tasks are blocked, none can make progress\n", .{});
-    std.process.exit(1);
+    wasm_host.exitProcess(1);
 }
 
 export fn nox_channel_new(rt: ?*anyopaque, capacity: i64) ?*anyopaque {

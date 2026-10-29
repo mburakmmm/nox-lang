@@ -19,6 +19,7 @@
 //! İçin "kamuya açık işaretçi" İLE "arc payload işaretçisi" AYNI DEĞİLDİR.
 
 const std = @import("std");
+const wasm_host = @import("wasm_host.zig");
 const arc = @import("alloc/arc.zig");
 const abi_layout = @import("abi_layout");
 const diag_sink = @import("diag_sink");
@@ -264,6 +265,11 @@ pub export fn nox_print_str(s: ?[*:0]const u8) void {
     // Hosted'de QBE'nin kendi `printf` çağrılarıyla AYNI stdio tamponu
     // kullanılmalı — ham `write` tamponu atlar ve `[` köşeli parantezi
     // metinden SONRA görünür.
+    if (comptime wasm_host.is_freestanding_wasm) {
+        // wasm32-freestanding (ADR-013): stdout `nox_host.write(1, ...)`.
+        _ = wasm_host.write(1, bytes.ptr, bytes.len);
+        return;
+    }
     if (comptime builtin.os.tag == .freestanding or builtin.os.tag == .other) {
         diag_sink.diagSink()(null, bytes.ptr, bytes.len);
         return;

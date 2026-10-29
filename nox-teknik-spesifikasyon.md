@@ -29173,3 +29173,9 @@ Bu çalışmada bulunan ve aynı sürümde düzeltilen gerçek hata: bir `Channe
 
 Doğrulama: `tests/golden/wasm_target_test.zig` (`zig build test`), tüm korpus için `zig build wasm-corpus-test` (428 fixture çalışır, 13'ü wasm'de olmayan modül yüzünden derleme zamanında reddedilir, 3 bilinçli denylist).
 
+## 3.316 `wasm32-freestanding` ve `nox_host` (v2.0.77)
+
+Bkz. `docs/internals/adr/013-wasm-host.md`. `--target wasm32-freestanding` (LLVM, `zig cc -target wasm32-freestanding`, `noxrt-wasm32-freestanding.o` = `runtime/lib_wasm_freestanding.zig`): libc ve WASI yok; dış dünya `nox_host` import'ları (`write`, `read`, `clock_ms`, `random_fill`, `sleep_ms`, `exit`; sürüm 1, `nox_host_abi_version`). Giriş `_start` (`wasm_libc.zig`). Çekirdek `std.heap.wasm_allocator` ile `nox_runtime_init_with_allocator` yoluyla kurulur. `printf`/`strcmp`/`atan2`/`tan` `wasm_libc.zig`de; ortam tablosu modüle özel ve boş; `nox.fs` derleme zamanında reddedilir. Tek dosyalık çalıştırıcı `compiler/wasm_host.mjs` (Node CLI + tarayıcı `createHost`/`runNox`), `noxc` içine gömülür; `noxc run --target wasm32-freestanding` onu `node` ile çalıştırır.
+
+Doğrulama: `wasm_target_test` her duman fixture'ını iki hedefte çalıştırır (`zig build wasm-test`), `zig build wasm-corpus-test` tüm korpusu iki hedefte (freestanding'de 420 fixture çalışır).
+

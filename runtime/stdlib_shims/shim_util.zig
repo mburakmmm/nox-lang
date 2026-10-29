@@ -10,8 +10,28 @@ pub fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
     return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
-/// wasm32-wasi'de (tek iş parçacıklı) `std.Io` örneği: `http_client.sharedClientIo` (iş parçacığı havuzlu `Threaded`) yerine geçer.
+const wasm_host = @import("../wasm_host.zig");
+
+fn hostRandom(_: ?*anyopaque, buffer: []u8) void {
+    wasm_host.random_fill(buffer.ptr, buffer.len);
+}
+
+fn hostRandomSecure(_: ?*anyopaque, buffer: []u8) std.Io.RandomSecureError!void {
+    wasm_host.random_fill(buffer.ptr, buffer.len);
+}
+
+/// wasm32-freestanding'de `std.Io`: hiçbir işletim sistemi G/Ç'si yok (`std.Io.failing`), ama entropi `nox_host.random_fill`den gelir (parola özetleri tuz için ister).
+const host_io_vtable = blk: {
+    var v = std.Io.failing.vtable.*;
+    v.random = hostRandom;
+    v.randomSecure = hostRandomSecure;
+    break :blk v;
+};
+
+/// wasm32'de (tek iş parçacıklı) `std.Io` örneği: `http_client.sharedClientIo` (iş parçacığı havuzlu `Threaded`) yerine geçer. wasi: `Threaded.global_single_threaded`;
+/// freestanding: yukarıdaki entropi kancalı `failing` varyantı.
 pub fn sharedClientIo() std.Io {
+    if (comptime wasm_host.is_freestanding_wasm) return .{ .userdata = null, .vtable = &host_io_vtable };
     return std.Io.Threaded.global_single_threaded.io();
 }
 

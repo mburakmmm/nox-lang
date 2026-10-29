@@ -92,6 +92,8 @@ pub const HostedTargetInfo = struct {
     /// Apple SDK adı (`iphoneos` / `iphonesimulator`). Android'de boş.
     /// `wasm32-wasi`: LLVM üzerinden WASM derleme hedefi (QBE'ye WASM arka ucu eklenmez, AGENTS İlke #5).
     wasm: bool = false,
+    /// `wasm32-freestanding`: WASI/libc YOK, dış dünya `nox_host` import'ları (ADR-013).
+    wasm_freestanding: bool = false,
     apple_sdk: []const u8 = "",
     /// Apple'ın kurulu SDK'sındaki `RecommendedDeploymentTarget`. Sayı
     /// `docs/internals/mobile-toolchain.md`de kayıtlıdır.
@@ -126,6 +128,15 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
         .is_windows = false,
         .llvm_triple = "wasm32-unknown-wasi",
         .wasm = true,
+    };
+    if (std.mem.eql(u8, target_name, "wasm32-freestanding")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-wasm32-freestanding",
+        .zig_triple = "wasm32-freestanding",
+        .is_windows = false,
+        .llvm_triple = "wasm32-unknown-unknown",
+        .wasm = true,
+        .wasm_freestanding = true,
     };
     if (std.mem.eql(u8, target_name, "ios-arm64")) return .{
         .qbe_target = "",

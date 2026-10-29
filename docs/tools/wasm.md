@@ -22,3 +22,25 @@ Dilin tamamı: sınıflar, kalıtım (çoklu dahil), jeneratörler, `async`/`awa
 - **Matematik** işlevleri (`exp`, `sin`, ...) wasi-libc'den gelir; son basamakta platform libm'den ayrılabilir (ör. `exp(1.0)`).
 
 Ayrıntı ve gerekçe: [ADR-012](../internals/adr/012-wasm-target.md). Bir WASM modülünü Nox'a *içe aktarmak* (`wasm_call`) ayrı bir mekanizmadır: [HPy ve WebAssembly](../internals/hpy-wasm.md).
+
+## `wasm32-freestanding` ve `nox_host`
+
+```bash
+noxc build --target wasm32-freestanding prog.nox -o prog.wasm
+noxc run   --target wasm32-freestanding prog.nox          # node ile (compiler/wasm_host.mjs)
+```
+
+WASI ve libc olmadan, tarayıcıya ya da gömülü bir host'a uygun bir modül üretir. Modül dış dünyayı yalnızca `nox_host` import'larıyla görür: `write`, `read`, `clock_ms`, `random_fill`, `sleep_ms`, `exit` ([ADR-013](../internals/adr/013-wasm-host.md)). Dil ve stdlib `wasm32-wasi` ile aynıdır; farklar: `nox.fs` yok (dosya sistemi yok), ortam değişkenleri boş başlar (`set_var` modüle özel), `arg(0)` `"nox"`.
+
+Tarayıcıda ya da kendi host'unda çalıştırmak için `compiler/wasm_host.mjs` içindeki `createHost` kullanılır:
+
+```js
+import { runNox } from './wasm_host.mjs';
+const code = await runNox(await (await fetch('prog.wasm')).arrayBuffer(), {
+  write: (fd, bytes) => { (fd === 2 ? console.error : console.log)(new TextDecoder().decode(bytes)); return bytes.length; },
+  read: () => 0,
+  clockMs: (kind) => (kind === 0 ? Date.now() : performance.now()),
+  randomFill: (bytes) => crypto.getRandomValues(bytes),
+  sleepMs: () => {},
+});
+```

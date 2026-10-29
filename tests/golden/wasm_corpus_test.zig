@@ -24,6 +24,14 @@ fn isDenylisted(source: []const u8) bool {
 }
 
 test "wasm(korpus): tüm codegen_cases fixture'ları wasm32-wasi'de native ile aynı çıktıyı verir" {
+    try runCorpus(.wasi);
+}
+
+test "wasm(korpus): tüm codegen_cases fixture'ları wasm32-freestanding'de (nox_host) native ile aynı çıktıyı verir" {
+    try runCorpus(.freestanding);
+}
+
+fn runCorpus(target: wasm_helpers.Target) !void {
     const allocator = std.testing.allocator;
     var failures: usize = 0;
     var ran: usize = 0;
@@ -34,7 +42,7 @@ test "wasm(korpus): tüm codegen_cases fixture'ları wasm32-wasi'de native ile a
             skipped += 1;
             continue;
         }
-        const outcome = try wasm_helpers.buildAndRun(allocator, build_options.noxc_path, build_options.runner_path, fx.source);
+        const outcome = try wasm_helpers.buildAndRun(allocator, build_options.noxc_path, build_options.runner_path, target, fx.source);
         switch (outcome) {
             .tool_missing => return error.SkipZigTest,
             .rejected => |msg| {
@@ -43,7 +51,7 @@ test "wasm(korpus): tüm codegen_cases fixture'ları wasm32-wasi'de native ile a
             },
             .build_failed => |msg| {
                 defer allocator.free(msg);
-                std.debug.print("FARK (derleme): '{s}': {s}\n", .{ fx.name, msg });
+                std.debug.print("FARK (derleme) [{s}]: '{s}': {s}\n", .{ wasm_helpers.targetName(target), fx.name, msg });
                 failures += 1;
             },
             .ran => |r| {
@@ -59,6 +67,6 @@ test "wasm(korpus): tüm codegen_cases fixture'ları wasm32-wasi'de native ile a
             },
         }
     }
-    std.debug.print("wasm(korpus): {d} calistirildi, {d} reddedildi (wasm'de olmayan modul), {d} atlandi (denylist), {d} FARK\n", .{ ran, rejected, skipped, failures });
+    std.debug.print("wasm(korpus) [{s}]: {d} calistirildi, {d} reddedildi (hedefte olmayan modul), {d} atlandi (denylist), {d} FARK\n", .{ wasm_helpers.targetName(target), ran, rejected, skipped, failures });
     try std.testing.expectEqual(@as(usize, 0), failures);
 }
