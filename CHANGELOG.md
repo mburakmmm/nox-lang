@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.64]
+
+### Eklendi
+
+- `nox.unicode`: Unicode normalizasyonu (`normalize`, `is_normalized`; NFC/NFD/NFKC/NFKD) ve Turkce/Azerice `upper_tr`/`lower_tr`. Tablolar Python `unicodedata`dan uretilir (`scripts/gen_unicode_tables.py norm`).
+- `chr(0)` NUL karakterini verir (eskiden bos dize; `str` artik uzunluk basligi tasiyor). Gecersiz kod noktalari bos dize vermeye devam eder.
+- Dize kacislari `\uHHHH` ve `\UHHHHHHHH` (belge bunlari vaat ediyordu, ayristirici sessizce `u` harfine dusuruyordu).
+
 ## [2.0.63]
 
 ### Eklendi

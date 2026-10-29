@@ -130,10 +130,10 @@ String literals use single quotes, double quotes, or triple quotes (which may sp
 |---|---|
 | `\n`, `\t`, `\r` | newline, tab, carriage return |
 | `\\`, `\"`, `\'` | backslash, double quote, single quote |
-| `\uXXXX` | the code point U+XXXX (four hex digits) |
+| `\xHH` | the ASCII character `00`–`7F` (two hex digits; `\x80`–`\xFF` is an error because a `str` holds valid UTF-8) |
+| `\uXXXX`, `\UXXXXXXXX` | the code point U+XXXX / U+XXXXXXXX (exactly four / eight hex digits; surrogates and values above 10FFFF are errors) |
 
-An unrecognised escape keeps the character after the backslash (`"\q"` is `"q"`). There are no raw strings, no `\x` or `\U`
-escapes, and adjacent literals are not concatenated implicitly — write `"a" + "b"`. Prefixing a literal with `f` makes an
+An unrecognised escape keeps the character after the backslash (`"\q"` is `"q"`). There are no raw strings, and adjacent literals are not concatenated implicitly — write `"a" + "b"`. Prefixing a literal with `f` makes an
 *f-string* (see [Strings](strings.md#f-strings)).
 
 ```nox

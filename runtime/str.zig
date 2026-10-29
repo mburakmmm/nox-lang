@@ -921,7 +921,8 @@ pub export fn nox_char_from_byte(rt: ?*anyopaque, b: i64) ?[*:0]u8 {
 
 /// v1.162.0: `chr(n)` — Unicode kod noktasını (0..0x10FFFF, vekil aralığı hariç) UTF-8 `str`e çevirir; geçersizse boş `str`.
 pub export fn nox_chr_raw(rt: ?*anyopaque, cp: i64) ?[*:0]u8 {
-    if (cp <= 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) return allocStr(rt, &.{}, ASCII_TRUE);
+    // `chr(0)` NUL karakteridir (`str` uzunluk başlığı taşır, NUL içerebilir); geçersiz kod noktaları boş dize verir.
+    if (cp < 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) return allocStr(rt, &.{}, ASCII_TRUE);
     var buf: [4]u8 = undefined;
     const n = std.unicode.utf8Encode(@intCast(cp), &buf) catch return allocStr(rt, &.{}, ASCII_TRUE);
     return allocStr(rt, buf[0..n], if (cp < 0x80) ASCII_TRUE else ASCII_FALSE);

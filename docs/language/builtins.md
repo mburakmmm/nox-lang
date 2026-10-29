@@ -32,7 +32,7 @@ a-b!
 | `repr(x)` | like `str`, with strings quoted (uses `__repr__`) |
 | `bool(x)` | truthiness of `bool`, `int`, `float`, `str`, `list`, `dict` or a class (`__bool__`, `__len__`) |
 | `list(x)` | a new list from `range(...)`, a list (copy), a `str` (its characters) or a `dict` (its keys) |
-| `chr(cp)`, `ord(s)` | code point ↔ one-character string |
+| `chr(cp)`, `ord(s)` | code point ↔ one-character string (`chr(0)` is the NUL character; a negative, surrogate or out-of-range `cp` gives `""`) |
 | `u8(x)`, `i32(x)`, … | fixed-width integer conversions (range-checked) |
 | `format(value, spec)` | formats one value with the [format mini-language](strings.md#the-format-mini-language) |
 

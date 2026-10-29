@@ -1,0 +1,31 @@
+# TODO 8.7 — nox.unicode: Unicode normalizasyonu (NFC/NFD/NFKC/NFKD, UAX #15) ve Türkçe/Azerice yerel büyük-küçük harf eşlemesi.
+# Normalizasyon `runtime/stdlib_shims/unicode.zig`dedir (tablolar Python `unicodedata`dan üretilir); yerel eşleme saf Nox'tur.
+# Capability gerektirmez.
+import nox.strings
+
+extern def nox_unicode_normalize_raw(s: str, form: int) -> str from "zig-out/lib/noxrt.o" with_rt
+
+def _form_index(form: str) -> int:
+    if form == "NFC":
+        return 0
+    if form == "NFD":
+        return 1
+    if form == "NFKC":
+        return 2
+    if form == "NFKD":
+        return 3
+    raise ValueError("invalid normalization form: " + form + " (expected NFC, NFD, NFKC or NFKD)")
+
+# `form`: "NFC", "NFD", "NFKC" ya da "NFKD" (Python `unicodedata.normalize` ile aynı anlam).
+def normalize(s: str, form: str = "NFC") -> str:
+    return nox_unicode_normalize_raw(s, _form_index(form))
+
+def is_normalized(s: str, form: str = "NFC") -> bool:
+    return nox_unicode_normalize_raw(s, _form_index(form)) == s
+
+# Türkçe/Azerice: i ↔ İ ve ı ↔ I çiftleri (varsayılan `str.upper/lower` bunları yerel olmayan kurala göre eşler).
+def upper_tr(s: str) -> str:
+    return nox.strings.replace(nox.strings.replace(s, "i", "İ"), "ı", "I").upper()
+
+def lower_tr(s: str) -> str:
+    return nox.strings.replace(nox.strings.replace(s, "I", "ı"), "İ", "i").lower()

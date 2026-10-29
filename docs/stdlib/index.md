@@ -22,7 +22,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
+| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `sqlite` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql` |
 | `process` | the process and its children | `os`, `process` |
@@ -51,6 +51,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.random`](random.md) | pseudo-random numbers and shuffling |
 | [`nox.time`](time.md) | wall clock, sleeping, calendar date-times, monotonic intervals |
 | [`nox.regex`](regex.md) | regular expressions (groups, alternation, captures) |
+| [`nox.unicode`](unicode.md) | Unicode normalization (NFC/NFD/NFKC/NFKD) and Turkish case mapping |
 | [`nox.template`](template.md) | `{{ name }}` text templates, HTML-escaped by default |
 
 ### Data structures and binary data

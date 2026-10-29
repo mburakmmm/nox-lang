@@ -3,7 +3,8 @@
 
 Kullanım:
   python3 scripts/gen_unicode_tables.py > runtime/unicode_data.zig
-  python3 scripts/gen_unicode_tables.py ident > compiler/lexer/unicode_ident.zig   (Unicode tanımlayıcı tabloları: XID_Start/XID_Continue)
+  python3 scripts/gen_unicode_tables.py norm > runtime/unicode_norm_data.zig   (NFC/NFD/NFKC/NFKD: ccc, ayrışım, birleştirme çiftleri)
+  python3 scripts/gen_unicode_tables.py ident | zig fmt --stdin > compiler/lexer/unicode_ident.zig   (Unicode tanımlayıcı tabloları: XID_Start/XID_Continue)
 
 Üretilen tablolar `str.upper/lower/casefold` (tam eşlemeler) ve `isalpha/isdigit/isdecimal/isnumeric/isspace/isupper/islower` için
 Python'un kendi tanımlarını (CPython `str` yöntemleri) birebir yansıtır; Unicode sürümü dosya başlığında yazılır.
@@ -64,6 +65,52 @@ def emit_ranges(name, rs):
     print("};\n")
 
 
+NORM_TAIL = r'''
+fn bsearch(comptime T: type, table: []const T, key: u32, comptime field: []const u8) ?usize {
+    var lo: usize = 0;
+    var hi: usize = table.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        const k = @field(table[mid], field);
+        if (key < k) {
+            hi = mid;
+        } else if (key > k) {
+            lo = mid + 1;
+        } else return mid;
+    }
+    return null;
+}
+
+pub fn combiningClass(cp: u32) u8 {
+    const i = bsearch(Ccc, &ccc, cp, "cp") orelse return 0;
+    return ccc[i].v;
+}
+
+/// Tam (özyinelemeli) kanonik ya da (compat=true) uyumluluk ayrışımı; yoksa null.
+pub fn decomposition(cp: u32, compat: bool) ?[]const u32 {
+    if (compat) {
+        if (bsearch(Decomp, &compat_map, cp, "cp")) |i| return data[compat_map[i].off..][0..compat_map[i].len];
+    }
+    if (bsearch(Decomp, &canon_map, cp, "cp")) |i| return data[canon_map[i].off..][0..canon_map[i].len];
+    return null;
+}
+
+pub fn composePair(a: u32, b: u32) ?u32 {
+    var lo: usize = 0;
+    var hi: usize = pairs.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        const p = pairs[mid];
+        if (a < p.a or (a == p.a and b < p.b)) {
+            hi = mid;
+        } else if (a > p.a or (a == p.a and b > p.b)) {
+            lo = mid + 1;
+        } else return p.c;
+    }
+    return null;
+}
+'''
+
 IDENT_TAIL = r'''fn inRanges(table: []const Range, cp: u32) bool {
     var lo: usize = 0;
     var hi: usize = table.len;
@@ -86,6 +133,64 @@ pub fn isStart(cp: u32) bool {
 pub fn isCont(cp: u32) bool {
     return inRanges(&cont, cp);
 }'''
+
+if len(sys.argv) > 1 and sys.argv[1] == "norm":
+    print("// ÜRETİLMİŞ DOSYA — scripts/gen_unicode_tables.py norm ile üretilir, elle DÜZENLEME.")
+    print(f'pub const unicode_version = "{unicodedata.unidata_version}";\n')
+    print("pub const Ccc = struct { cp: u32, v: u8 };")
+    print("pub const Decomp = struct { cp: u32, off: u32, len: u32 };")
+    print("pub const Pair = struct { a: u32, b: u32, c: u32 };\n")
+    flat = []
+    canon = []
+    compat = []
+    cccs = []
+    pairs = []
+    for cp in range(MAX):
+        if 0xD800 <= cp <= 0xDFFF or 0xAC00 <= cp <= 0xD7A3:
+            continue
+        ch = chr(cp)
+        c = unicodedata.combining(ch)
+        if c:
+            cccs.append((cp, c))
+        d = unicodedata.normalize("NFD", ch)
+        k = unicodedata.normalize("NFKD", ch)
+        if d != ch:
+            canon.append((cp, len(flat), len(d)))
+            flat.extend(ord(x) for x in d)
+        if k != d:
+            compat.append((cp, len(flat), len(k)))
+            flat.extend(ord(x) for x in k)
+        dec = unicodedata.decomposition(ch)
+        if dec and not dec.startswith("<"):
+            parts = dec.split()
+            if len(parts) == 2 and unicodedata.normalize("NFC", ch) == ch:
+                pairs.append((int(parts[0], 16), int(parts[1], 16), cp))
+    pairs.sort()
+    print("pub const data = [_]u32{")
+    line = "   "
+    for v in flat:
+        item = f" 0x{v:X},"
+        if len(line) + len(item) > 140:
+            print(line)
+            line = "   "
+        line += item
+    print(line)
+    print("};\n")
+    print("pub const ccc = [_]Ccc{")
+    for cp, v in cccs:
+        print(f"    .{{ .cp = 0x{cp:X}, .v = {v} }},")
+    print("};\n")
+    for name, rows in (("canon_map", canon), ("compat_map", compat)):
+        print(f"pub const {name} = [_]Decomp{{")
+        for cp, off, ln in rows:
+            print(f"    .{{ .cp = 0x{cp:X}, .off = {off}, .len = {ln} }},")
+        print("};\n")
+    print("pub const pairs = [_]Pair{")
+    for a_, b_, c_ in pairs:
+        print(f"    .{{ .a = 0x{a_:X}, .b = 0x{b_:X}, .c = 0x{c_:X} }},")
+    print("};\n")
+    print(NORM_TAIL)
+    sys.exit(0)
 
 if len(sys.argv) > 1 and sys.argv[1] == "ident":
     print("// ÜRETİLMİŞ DOSYA — scripts/gen_unicode_tables.py ident ile üretilir, elle DÜZENLEME.")

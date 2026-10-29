@@ -1772,7 +1772,7 @@ pub const Parser = struct {
     }
 
     /// `inner[i] == '\\'` konumundaki TEK kaçış dizisini çözüp `out`a ekler; tüketilen bayt sayısını döner.
-    /// `\n \t \r \\ \' \"` ve `\xHH` (tam iki onaltılık basamak, `\x00`–`\x7F`) desteklenir. `\x80`–`\xFF` ve
+    /// `\n \t \r \\ \' \"`, `\xHH` (tam iki onaltılık basamak, `\x00`–`\x7F`) ve `\uHHHH`/`\UHHHHHHHH` (Unicode kod noktası) desteklenir. `\x80`–`\xFF` ve
     /// bozuk `\x` BİLİNÇLİ olarak derleme hatasıdır: `str` geçerli UTF-8 tutar, tek bir ham bayt bunu bozar.
     /// Tanınmayan diğer kaçışlar eskisi gibi harfin kendisine düşer.
     fn decodeEscapeAt(self: *Parser, inner: []const u8, i: usize, out: *std.ArrayList(u8)) ParseError!usize {
@@ -1791,6 +1791,29 @@ pub const Parser = struct {
             }
             try out.append(self.allocator, value);
             return 4;
+        }
+        if (esc == 'u' or esc == 'U') {
+            // `\uHHHH` / `\UHHHHHHHH`: Unicode kod noktası (UTF-8 olarak yazılır); vekil çiftler ve 0x10FFFF üstü reddedilir.
+            const digits: usize = if (esc == 'u') 4 else 8;
+            var cp: u32 = 0;
+            var ok = i + 2 + digits <= inner.len;
+            if (ok) {
+                for (inner[i + 2 ..][0..digits]) |h| {
+                    const d = std.fmt.charToDigit(h, 16) catch {
+                        ok = false;
+                        break;
+                    };
+                    cp = cp * 16 + d;
+                }
+            }
+            if (!ok or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) {
+                self.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "invalid '\\u'/'\\U' escape: it needs exactly 4 (\\u) or 8 (\\U) hexadecimal digits naming a Unicode scalar value (not a surrogate, at most 10FFFF)" };
+                return error.UnexpectedToken;
+            }
+            var buf: [4]u8 = undefined;
+            const l = std.unicode.utf8Encode(@intCast(cp), &buf) catch unreachable;
+            try out.appendSlice(self.allocator, buf[0..l]);
+            return 2 + digits;
         }
         const decoded: u8 = switch (esc) {
             'n' => '\n',
@@ -2327,4 +2350,15 @@ test "çağrıda '**sözlük' Kwarg{ name = \"**\" } olarak ayrıştırılır" {
     const call = module.body[0].kind.expr_stmt.call;
     try std.testing.expectEqual(@as(usize, 2), call.args.len);
     try std.testing.expectEqualStrings("**", call.args[1].kwarg.name);
+}
+
+test "\\uHHHH ve \\UHHHHHHHH kaçışları UTF-8'e çözülür; vekil/aralık dışı/eksik basamak reddedilir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const ok = try parseSource(arena.allocator(), "s: str = \"\\u00e9|\\U0001f600|\\u0301\"\n");
+    try std.testing.expectEqualStrings("\u{E9}|\u{1F600}|\u{301}", ok.body[0].kind.var_decl.value.string_lit);
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\ud800\"\n"));
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\U00110000\"\n"));
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\u12\"\n"));
+    try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\u12zz\"\n"));
 }

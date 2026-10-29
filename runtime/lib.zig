@@ -65,6 +65,7 @@ pub const json_shim = @import("stdlib_shims/json.zig");
 pub const random_shim = @import("stdlib_shims/random.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const regex_shim = @import("stdlib_shims/regex.zig");
+pub const unicode_shim = @import("stdlib_shims/unicode.zig");
 pub const io_shim = @import("stdlib_shims/io.zig");
 pub const sqlite_shim = @import("stdlib_shims/sqlite.zig");
 pub const process_shim = @import("stdlib_shims/process.zig");
@@ -106,6 +107,7 @@ comptime {
     _ = worker_pool;
     _ = str;
     _ = @import("unicode.zig");
+    _ = @import("unicode_norm.zig");
     _ = format;
     _ = dict;
     _ = list_sort;
@@ -123,6 +125,7 @@ comptime {
     _ = random_shim;
     _ = crypto_shim;
     _ = regex_shim;
+    _ = unicode_shim;
     _ = io_shim;
     _ = sqlite_shim;
     _ = process_shim;

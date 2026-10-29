@@ -30,7 +30,7 @@ Integer `//` and `%` by zero raise `ZeroDivisionError`; float division never rai
   constant literals.
 - `yield` generators are **eager** (the function returns a `list[T]`, see [Functions](functions.md#generators-yield)); there are no lazy iterators. Generator expressions are accepted only as a call argument and are evaluated eagerly into a list.
 - No `global`/`nonlocal`: module-level names are assigned directly from functions; a nested function may only **read** captured variables.
-- No raw strings (`r"…"`), no adjacent-literal concatenation, no `\x`/`\U` escapes, no `%` formatting, no `!r` in f-strings. Identifiers are compared by code point (no NFKC normalization).
+- No raw strings (`r"…"`), no adjacent-literal concatenation, no `%` formatting, no `!r` in f-strings. `\xHH` is limited to ASCII; use `\uHHHH`/`\UHHHHHHHH` for other characters. Identifiers are compared by code point (no NFKC normalization; see [`nox.unicode`](../stdlib/unicode.md) for normalizing text).
 - No `try … else`, no `for … else`/`while … else`, no bare `raise` (use `raise e`), no `raise … from …`, no multi-item `with`.
 - No `async with`/`async for`/`await` on arbitrary expressions: `await` takes a `Task` or a channel operation.
 - No `del name` (only `del xs[i]` and `del d[k]`), no `pass`-only protocol bodies other than `pass` itself.
