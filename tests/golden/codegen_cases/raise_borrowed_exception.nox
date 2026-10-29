@@ -1,0 +1,31 @@
+# Parametre / global / alan olarak ödünç alınmış bir istisna nesnesini `raise` etmek: nesne retain edilir, çağıranın referansı ve yakalayan
+# birbirinden bağımsız serbest bırakılır (önceden kullanım-sonrası-serbest bırakma).
+class Holder:
+    def __init__(self, err: ValueError) -> None:
+        self.err = err
+
+def rethrow(e: Exception) -> None:
+    raise e
+
+def from_holder(h: Holder) -> None:
+    raise h.err
+
+try:
+    rethrow(ValueError("temp"))
+except ValueError as k:
+    print(k.message)
+
+v: ValueError = ValueError("kept")
+try:
+    rethrow(v)
+except ValueError as k:
+    print(k.message)
+print(v.message)
+
+h: Holder = Holder(ValueError("held"))
+for i in range(3):
+    try:
+        from_holder(h)
+    except ValueError as k:
+        print(k.message + " " + str(i))
+print(h.err.message)

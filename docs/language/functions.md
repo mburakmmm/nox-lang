@@ -283,8 +283,32 @@ close tmp
 ['tmp:0', 'tmp:1', 'tmp:2']
 ```
 
+`g.throw(error)` raises `error` at the generator's current `yield`. A `try`/`except` around that `yield` can catch it and the generator carries on (the call returns the
+next yielded value, or raises `StopIteration` if the generator then ends); if nothing catches it, the exception reaches the caller and the generator is finished. Throwing into
+a generator that has not started, or has finished, raises the exception directly.
+
+```nox
+def worker() -> Iterator[int]:
+    n: int = 0
+    while True:
+        try:
+            yield n
+            n += 1
+        except ValueError as e:
+            print("caught", e.message)
+            n = 100
+
+w: Iterator[int] = worker()
+print(next(w), next(w), w.throw(ValueError("reset")), next(w))
+```
+
+```output
+caught reset
+0 1 100 101
+```
+
 A generator is compiled to a resumable state machine, so a few things are not allowed: `yield` inside an `except` or `finally` block or inside
-`lowlevel`; a local variable of function type that lives across a `yield`; `return value`; and `throw()`. `Iterable[T]` stays a plain
+`lowlevel`; a local variable of function type that lives across a `yield`; and `return value`. `Iterable[T]` stays a plain
 `list[T]` (use it for parameters that take a finished sequence). `async def` generators are covered in
 [Concurrency](concurrency.md#async-generators-and-async-for).
 

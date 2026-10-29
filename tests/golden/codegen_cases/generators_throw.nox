@@ -1,0 +1,89 @@
+# `g.throw(e)`: askıdaki jeneratörün yield noktasında istisna fırlatır. Yakalanırsa jeneratör sürer, yakalanmazsa çağırana yükselir.
+class Res:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __enter__(self) -> Res:
+        print("enter " + self.name)
+        return self
+
+    def __exit__(self) -> None:
+        print("exit " + self.name)
+
+def worker() -> Iterator[int]:
+    n: int = 0
+    while True:
+        try:
+            yield n
+            n = n + 1
+        except ValueError as e:
+            print("caught " + e.message)
+            n = 100
+
+def guarded() -> Iterator[int]:
+    with Res("g") as r:
+        yield 1
+        yield 2
+
+def once() -> Iterator[int]:
+    try:
+        yield 1
+    except KeyError:
+        print("handled")
+    print("tail")
+
+def plain() -> Iterator[int]:
+    yield 1
+    yield 2
+
+def echo() -> Generator[int, int]:
+    total: int = 0
+    while True:
+        try:
+            got: int = yield total
+            total = total + got
+        except ValueError:
+            total = -1
+
+g: Iterator[int] = worker()
+print(next(g))
+print(next(g))
+print(g.throw(ValueError("one")))
+print(next(g))
+g.close()
+
+h: Iterator[int] = guarded()
+print(next(h))
+try:
+    h.throw(KeyError("k"))
+except KeyError as e:
+    print("propagated " + e.message)
+print(next(h, -1))
+
+o: Iterator[int] = once()
+print(next(o))
+try:
+    o.throw(KeyError("x"))
+except StopIteration:
+    print("stop")
+
+p: Iterator[int] = plain()
+try:
+    p.throw(ValueError("early"))
+except ValueError as e:
+    print("early " + e.message)
+print(next(p, -1))
+
+q: Iterator[int] = plain()
+print(next(q))
+try:
+    q.throw(KeyError("mid"))
+except KeyError as e:
+    print("mid " + e.message)
+print(next(q, -1))
+
+s: Generator[int, int] = echo()
+print(next(s))
+print(s.send(5))
+print(s.throw(ValueError("reset")))
+print(s.send(2))

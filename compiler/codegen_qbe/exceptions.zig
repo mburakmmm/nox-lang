@@ -55,8 +55,18 @@ pub fn emitExceptionLineStore(self: *Codegen, obj_text: []const u8, class_name: 
 }
 
 pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
-    const obj = try self.genExpr(expr);
+    var obj = try self.genExpr(expr);
     if (obj.heap != .class) return error.Unsupported;
+    // v2.0.72: `nox_raise` işaretçiyi RETAIN ETMEDEN bekleyen-istisna yuvasına yazar; sahiplik yakalayana geçer. Bir yerel adı
+    // (`raise e`) sahipliği TAŞIR (aşağıda slotu sıfırlanır), ama ödünç bir değer (parametre, global, alan, indeks) çağıranın/sahibinin
+    // referansıdır: retain edilmezse sahibi ve yakalayan AYNI nesneyi iki kez serbest bırakır (`def f(e): raise e` çağıran geçici
+    // nesneyi bıraktıktan sonra `except` bloğu kullanım-sonrası-serbest yapıyordu).
+    const moves_local = blk: {
+        if (expr != .identifier) break :blk false;
+        const info = self.vars.get(expr.identifier) orelse break :blk false;
+        break :blk !info.is_param and !info.arena and isHeapManaged(info.heap);
+    };
+    if (!moves_local) obj = try self.retainIfAliasing(expr, obj);
     // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-spesifikasyon.md
     // ilgili bölüm): **DÜZELTME (GERÇEK, bir kaçış-taramasında BULUNAN bir
     // hata)** — `return`/`.attribute` ataması GİBİ diğer TÜM "bu değer artık
@@ -109,10 +119,21 @@ pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
 /// içi (inline) üretir — `return_stmt` tarafından gerçek `ret`ten hemen
 /// önce çağrılır (bkz. `finally_stack` alanının belge notu).
 pub fn drainFinally(self: *Codegen, ret_qtype: QbeType) CodegenError!void {
-    var i = self.finally_stack.items.len;
+    // v2.0.72: `drainFinallyDownTo` ile aynı gerekçe — bir `finally` gövdesi üretilirken yığından çıkarılır; gövdenin içindeki bir çağrının
+    // istisna kontrolü (örn. bir `except` gövdesindeki ya da `finally` içindeki liste indeksi atamasının sınır kontrolü) kendi `finally`sini
+    // TEKRAR boşaltıp derleme zamanında sonsuz özyinelemeye girmesin ve içindeki bir hata yalnızca DIŞ `finally`lere gitsin.
+    if (self.finally_stack.items.len == 0) return;
+    const saved = try self.allocator.dupe([]const ast.Stmt, self.finally_stack.items);
+    defer self.allocator.free(saved);
+    defer {
+        self.finally_stack.clearRetainingCapacity();
+        self.finally_stack.appendSlice(self.allocator, saved) catch unreachable;
+    }
+    var i = saved.len;
     while (i > 0) {
         i -= 1;
-        try self.genStmts(self.finally_stack.items[i], ret_qtype);
+        self.finally_stack.shrinkRetainingCapacity(i);
+        try self.genStmts(saved[i], ret_qtype);
     }
 }
 

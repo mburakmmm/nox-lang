@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.72]
+
+### Eklendi
+
+- Jeneratörlerde `g.throw(hata)`: yield noktasında istisna fırlatır; çevreleyen `try/except` yakalarsa jeneratör sürer, yakalamazsa çağırana yükselir; hiç başlamamış/bitmiş jeneratörde doğrudan yükselir (`Generator[Y, S]` dahil).
+
+### Duzeltildi
+
+- `except` gövdesinde ya da `finally` içinde liste indeksi ataması (sınır kontrolü yolu) derleyicide sonsuz özyinelemeye (yığın taşması) yol açıyordu; `try: yield ... except E: x = ...` biçimli jeneratörler bu yüzden derleyiciyi çökertiyordu.
+- Ödünç alınmış bir istisna nesnesini (parametre, alan, global) `raise` etmek (`def f(e): raise e`) kullanım-sonrası-serbest bırakmaya yol açıyordu; nesne artık retain edilir.
+
 ## [2.0.71]
 
 ### Eklendi

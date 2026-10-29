@@ -57,6 +57,8 @@ const Pass = struct {
     done: []const u8 = "",
     /// `try`/`with` içinde `yield` varsa: `close()`un yield noktasında `GeneratorExit` fırlattırdığı bayrak hücresi ("" = gerek yok).
     closing: []const u8 = "",
+    /// `closing` varsa: `g.throw(e)`nin yield noktasında fırlattırdığı istisnayı taşıyan `Exception | None` hücresi (null = gerek yok).
+    thrown: ?Binding = null,
     /// Etkin listelerin doğrudan elemanı olan iç içe `def`ler: her adımda tanımlı olmaları için adım başına taşınır.
     lifted: std.ArrayListUnmanaged(ast.Stmt) = .empty,
 
@@ -552,6 +554,19 @@ const Pass = struct {
                 var chk = self.ifStmt(cond, try self.single(self.stmt(.{ .raise_stmt = exit_ctor })));
                 chk.line = stmts[i].line;
                 try out.append(self.a, chk);
+                // `g.throw(e)`: bu yield noktasından devam edilirken bekleyen istisnayı fırlat (çevreleyen `try/except` yakalayabilir)
+                const tb = self.thrown.?;
+                const has_thrown = try self.bin(.ne, try self.idx0(tb.cell), .none_lit);
+                const throw_cond = try self.bin(.and_, has_thrown, resumed);
+                self.uid += 1;
+                const tmp = try std.fmt.allocPrint(self.a, "__nox_th_{d}", .{self.uid});
+                var tbody: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+                try tbody.append(self.a, self.stmt(.{ .var_decl = .{ .name = tmp, .type_expr = .{ .simple = "__infer" }, .value = try self.readOf(tb) } }));
+                try tbody.append(self.a, self.assign(try self.idx0(tb.cell), .none_lit));
+                try tbody.append(self.a, self.stmt(.{ .raise_stmt = id(tmp) }));
+                var tchk = self.ifStmt(throw_cond, try tbody.toOwnedSlice(self.a));
+                tchk.line = stmts[i].line;
+                try out.append(self.a, tchk);
             }
             i += 1;
         }
@@ -940,6 +955,8 @@ const Pass = struct {
         }
         self.done = try self.boolCell("done", false);
         self.closing = if (hasCleanup(fd.body)) try self.boolCell("closing", false) else "";
+        self.thrown = null;
+        if (self.closing.len > 0) self.thrown = try self.typedCell("thrown", .{ .simple = "Exception" });
         self.sent = null;
         var sender_def: ?ast.FuncDef = null;
         if (is_gens) {
@@ -980,16 +997,23 @@ const Pass = struct {
                 closing_name = try self.newName("noclose");
                 try body.append(self.a, self.stmt(.{ .var_decl = .{ .name = closing_name, .type_expr = try self.listOf(.{ .simple = "bool" }), .value = .{ .list_lit = &.{} } } }));
             }
-            const gargs = try self.a.alloc(ast.Expr, 3);
+            var thrown_name: []const u8 = if (self.thrown) |tb| tb.cell else "";
+            if (thrown_name.len == 0) {
+                thrown_name = try self.newName("nothrow");
+                try body.append(self.a, self.stmt(.{ .var_decl = .{ .name = thrown_name, .type_expr = try self.listOf(try self.optionalOf(.{ .simple = "Exception" })), .value = .{ .list_lit = &.{} } } }));
+            }
+            const gargs = try self.a.alloc(ast.Expr, 4);
             gargs[0] = id(step_name);
             gargs[1] = id(closing_name);
-            gargs[2] = id("__nox_send");
+            gargs[2] = id(thrown_name);
+            gargs[3] = id("__nox_send");
             const gcall: ast.Expr = .{ .call = .{ .callee = try self.box(id("__nox_gens_from_step")), .args = gargs } };
             try body.append(self.a, self.stmt(.{ .return_stmt = gcall }));
         } else if (self.closing.len > 0) {
-            const gargs = try self.a.alloc(ast.Expr, 2);
+            const gargs = try self.a.alloc(ast.Expr, 3);
             gargs[0] = id(step_name);
             gargs[1] = id(self.closing);
+            gargs[2] = id(self.thrown.?.cell);
             const gcall: ast.Expr = .{ .call = .{ .callee = try self.box(id("__nox_gen_from_step_closable")), .args = gargs } };
             try body.append(self.a, self.stmt(.{ .return_stmt = gcall }));
         } else {

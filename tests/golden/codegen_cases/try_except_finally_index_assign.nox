@@ -1,0 +1,27 @@
+# `except` gövdesi ya da `finally` içindeki liste indeksi ataması (sınır kontrolü yolu) derleyicide sonsuz özyinelemeye yol açıyordu.
+def f() -> int:
+    xs: list[int] = [0]
+    try:
+        xs[0] = 1
+        return xs[0]
+    except ValueError:
+        xs[0] = 100
+    finally:
+        xs[0] = 2
+    return xs[0]
+
+def g(flag: bool) -> int:
+    xs: list[int] = [0, 0]
+    try:
+        if flag:
+            raise ValueError("bad")
+        xs[1] = 7
+    except ValueError:
+        xs[0] = 100
+    finally:
+        xs[1] = xs[1] + 1
+    return xs[0] * 1000 + xs[1]
+
+print(f())
+print(g(False))
+print(g(True))
