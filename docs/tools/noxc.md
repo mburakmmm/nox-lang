@@ -37,7 +37,7 @@ normally).
 | `--backend <llvm\|qbe>` | code-generation backend. Default `llvm`; `qbe` is chosen automatically for freestanding builds, desktop `--target`, `--emit-asm`, `-g`, and when neither `clang` nor `zig` is installed. Mobile targets stay on LLVM ([Backends](backends.md)) |
 | `--release` | the old name for `--backend llvm` |
 | `--profile <hosted\|freestanding>` | which standard-library modules may be imported (default `hosted`; [Freestanding](freestanding.md)) |
-| `--target <name>` | cross-compile. Desktop hosted names stay on QBE: `macos-arm64`, `macos-x64`, `linux-x64`, `linux-arm64`, `linux-riscv64`, `windows-x64`. Freestanding: `x86_64`, `aarch64`, `riscv64`. Mobile names are LLVM libraries: `ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64` |
+| `--target <name>` | cross-compile. Desktop hosted names stay on QBE: `macos-arm64`, `macos-x64`, `linux-x64`, `linux-arm64`, `linux-riscv64`, `windows-x64`. Freestanding: `x86_64`, `aarch64`, `riscv64`. Mobile names are LLVM libraries: `ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64`. `wasm32-wasi` is an LLVM-only WebAssembly command ([WebAssembly](wasm.md)) |
 | `--emit-asm` | stop after producing assembly (`.s`). Not valid for a mobile target |
 | `--emit-obj`, `--emit-static-lib`, `--emit-shared-lib` | mobile library output. iOS is a static archive. Android's packaged form is `--emit-shared-lib`. One flag only |
 | `-g` | emit DWARF line tables for debugging — QBE backend only, selected automatically ([Debugging](debugging.md)) |

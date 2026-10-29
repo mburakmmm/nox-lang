@@ -63,8 +63,8 @@ export fn nox_tasklocal_destroy(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.
 export fn nox_tasklocal_get(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c) ?*anyopaque {
     _ = rt;
     const h = handle orelse return null;
-    const fiber = bridge.currentFiber() orelse return null;
-    return fiber.task_locals.get(h) orelse null;
+    const locals = bridge.currentTaskLocals() orelse return null;
+    return locals.get(h) orelse null;
 }
 
 /// Şu an çalışan fiber'ın BU handle İçİn sakladığı değeri YENİ değerle
@@ -81,10 +81,10 @@ export fn nox_tasklocal_get(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c) ?
 /// fiber İÇİNDE çağrılır).
 export fn nox_tasklocal_set(rt: ?*anyopaque, handle: ?*anyopaque, new_value: ?*anyopaque) callconv(.c) ?*anyopaque {
     const h = handle orelse return null;
-    const fiber = bridge.currentFiber() orelse return null;
+    const locals = bridge.currentTaskLocals() orelse return null;
     const allocator = allocatorFromRt(rt);
-    const old = fiber.task_locals.get(h) orelse null;
-    fiber.task_locals.put(allocator, h, new_value) catch @panic("OOM: TaskLocal.set");
+    const old = locals.get(h) orelse null;
+    locals.put(allocator, h, new_value) catch @panic("OOM: TaskLocal.set");
     return old;
 }
 
@@ -94,7 +94,7 @@ export fn nox_tasklocal_set(rt: ?*anyopaque, handle: ?*anyopaque, new_value: ?*a
 export fn nox_tasklocal_clear(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c) ?*anyopaque {
     _ = rt;
     const h = handle orelse return null;
-    const fiber = bridge.currentFiber() orelse return null;
-    if (fiber.task_locals.fetchRemove(h)) |kv| return kv.value;
+    const locals = bridge.currentTaskLocals() orelse return null;
+    if (locals.fetchRemove(h)) |kv| return kv.value;
     return null;
 }

@@ -10,6 +10,7 @@ What is supported, what is tested, and the known gaps.
 | `--backend qbe` | QBE (`.ssa` → `qbe` → `cc`) |
 | freestanding profile, desktop `--target`, `--emit-asm`, `-g` | QBE (automatic) |
 | `ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64` | LLVM only; `--backend qbe` is an error |
+| `wasm32-wasi` | LLVM only (`zig cc -target wasm32-wasi`); `--backend qbe`, `--emit-asm` and `-g` are errors ([WebAssembly](../tools/wasm.md)) |
 | Windows | **LLVM** through `zig cc -target x86_64-windows-gnu` when `zig` is on `PATH` (default); QBE with MinGW `cc` otherwise |
 | neither `clang` nor `zig` installed | QBE (automatic, with a note) |
 
@@ -24,6 +25,7 @@ Both back ends run the whole golden corpus and must agree on program output, inc
 | Linux aarch64 | yes | full test suite |
 | Windows x86-64 | yes — LLVM (`zig cc`) and QBE are smoke-tested end to end (classes, lists, dictionaries, tasks, f-strings, exceptions, TLS and WebSocket) | the Debug `zig build test` corpus plus end-to-end LLVM/QBE smoke tests |
 | riscv64 | hosted Linux (`--target linux-riscv64`, static musl, QEMU user-mode smoke: class, list, dictionary, loop ordering and `spawn`/`await`). Freestanding is still assembly only | QEMU user-mode smoke CI; not the full corpus |
+| WebAssembly (`wasm32-wasi`) | `.wasm` WASI command; no sockets, processes, threads or native libraries ([WebAssembly](../tools/wasm.md)). Smoke tests in `zig build test`, the whole corpus under `zig build wasm-corpus-test` (Node WASI) | smoke tests; corpus is opt-in |
 | iOS arm64 and iOS Simulator arm64 | library only (`--emit-obj` or `--emit-static-lib`). Not a third profile | experimental; not `supported` |
 | Android arm64 and Android x64 | `libnoxapp.so`, 16 KiB ELF alignment | experimental; not `supported` |
 

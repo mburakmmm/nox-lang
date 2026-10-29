@@ -163,7 +163,7 @@ fn setStrAsciiState(str_ptr: [*:0]const u8, state: u64) void {
 /// stdlib_shims/`nin `std.mem.span(nox_str_param)` (bir tam `strlen`
 /// taraması) yerine kullanması İçin dışa açılır.
 pub fn nox_str_slice(str_ptr: [*:0]const u8) []const u8 {
-    return str_ptr[0..strByteLen(str_ptr)];
+    return str_ptr[0..@intCast(strByteLen(str_ptr))];
 }
 
 /// Paketlenmiş ascii-durumunu OKUR; "bilinmiyor" İSE (artık O(1) BİLİNEN
@@ -240,14 +240,14 @@ pub export fn nox_str_concat(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const 
         break :blk ASCII_UNKNOWN;
     };
 
-    const raw = arc.nox_rc_alloc(rt, STR_HEADER_SIZE + total_len + 1) orelse return null;
+    const raw = arc.nox_rc_alloc(rt, @intCast(STR_HEADER_SIZE + total_len + 1)) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
     const header: *align(1) i64 = @ptrCast(base);
     header.* = abi_layout.packStrHeader(total_len, ascii_state);
     const data = base + STR_HEADER_SIZE;
-    @memcpy(data[0..len_a], pa[0..len_a]);
-    @memcpy(data[len_a..][0..len_b], pb[0..len_b]);
-    data[total_len] = 0;
+    @memcpy(data[0..@intCast(len_a)], pa[0..@intCast(len_a)]);
+    @memcpy(data[@intCast(len_a)..][0..@intCast(len_b)], pb[0..@intCast(len_b)]);
+    data[@intCast(total_len)] = 0;
     return @ptrCast(data);
 }
 
@@ -701,12 +701,12 @@ pub export fn nox_str_chars(rt: ?*anyopaque, s: ?[*:0]const u8) ?*anyopaque {
                 @ptrCast(&nox_ascii_chars[slice[0]].ch)
             else
                 allocStr(rt, slice, ASCII_FALSE);
-            @as(*align(1) i64, @ptrCast(base + 16 + 8 * out_i)).* = @bitCast(@as(isize, @intCast(@intFromPtr(elem))));
+            @as(*align(1) i64, @ptrCast(base + 16 + 8 * out_i)).* = @bitCast(@as(u64, @intCast(@intFromPtr(elem))));
         }
     } else {
         for (bytes, 0..) |b, i| {
             const elem: ?[*:0]u8 = if (b < 0x80) @ptrCast(&nox_ascii_chars[b].ch) else allocStr(rt, bytes[i..][0..1], ASCII_FALSE);
-            @as(*align(1) i64, @ptrCast(base + 16 + 8 * i)).* = @bitCast(@as(isize, @intCast(@intFromPtr(elem))));
+            @as(*align(1) i64, @ptrCast(base + 16 + 8 * i)).* = @bitCast(@as(u64, @intCast(@intFromPtr(elem))));
         }
     }
     return raw;

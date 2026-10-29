@@ -1,6 +1,6 @@
 # WebAssembly coverage
 
-`runtime/wasm_bridge/` is a **library import**, not a compilation target (AGENTS invariant 5). This page lists exactly what it accepts today. Anything not listed is rejected with a named error, never silently ignored.
+`runtime/wasm_bridge/` is a **library import** (an embedded interpreter that loads WASM modules into a Nox program). Compiling Nox *to* WebAssembly is a separate feature: [WebAssembly](../tools/wasm.md). This page lists exactly what it accepts today. Anything not listed is rejected with a named error, never silently ignored.
 
 ## Module format
 

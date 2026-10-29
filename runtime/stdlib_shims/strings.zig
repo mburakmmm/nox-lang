@@ -18,7 +18,7 @@
 
 const std = @import("std");
 const arc = @import("../alloc/arc.zig");
-const http_client = @import("http_client.zig");
+const http_client = @import("shim_util.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
 const unicode = @import("../unicode.zig");
@@ -52,7 +52,7 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
         @as(*align(1) i64, @ptrCast(bytes)).* = 1;
         @as(*align(1) i64, @ptrCast(bytes + 8)).* = 1;
         const dup = dupeToNoxStr(rt, s_slice) orelse return null;
-        @as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+        @as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
         return @ptrCast(bytes);
     }
 
@@ -72,7 +72,7 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
     while (it.next()) |part| {
         const dup = dupeToNoxStr(rt, part) orelse return null;
         const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
-        @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+        @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
         i += 1;
     }
     return @ptrCast(bytes);
@@ -95,7 +95,7 @@ export fn nox_strings_split_ws_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(
     while (it.next()) |part| {
         const dup = dupeToNoxStr(rt, part) orelse return null;
         const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
-        @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+        @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
         i += 1;
     }
     return @ptrCast(bytes);
@@ -298,7 +298,7 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
     var total_len: usize = 0;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]const u8 = @ptrFromInt(addr);
         total_len += std.mem.len(p);
         if (i + 1 < count) total_len += sep_slice.len;
@@ -308,7 +308,7 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
     var off: usize = 0;
     i = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]const u8 = @ptrFromInt(addr);
         const slice = str_mod.nox_str_slice(p);
         @memcpy(buf[off..][0..slice.len], slice);
@@ -446,7 +446,7 @@ test "nox_strings_split_raw temel bolme" {
 
     var i: usize = 0;
     while (i < 3) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         if (i == 0) try std.testing.expectEqualStrings("a", std.mem.sliceTo(p, 0));
@@ -552,7 +552,7 @@ fn expectStrListAndRelease(rt: ?*anyopaque, list_ptr: *anyopaque, expected: []co
     try std.testing.expectEqual(expected.len, count);
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         try std.testing.expectEqualStrings(expected[i], std.mem.sliceTo(p, 0));
@@ -598,7 +598,7 @@ fn buildStrList(rt: ?*anyopaque, parts: []const []const u8) ?*anyopaque {
     for (parts, 0..) |part, i| {
         const dup = dupeToNoxStr(rt, part) orelse return null;
         const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
-        @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+        @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
     }
     return @ptrCast(bytes);
 }

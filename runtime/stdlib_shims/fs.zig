@@ -25,7 +25,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
-const http_client = @import("http_client.zig");
+const http_client = if (@import("builtin").cpu.arch.isWasm()) @import("shim_util.zig") else @import("http_client.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
 const bridge = @import("../async_rt/bridge.zig");
@@ -196,10 +196,29 @@ fn fstatCompat(fd: c_int) ?FileInfo {
 /// aç/oku/yaz/kapat katmanı — Windows'ta `WinFile`nin ham `_open`/`_read`/
 /// `_write`/`_close`sini, diğer platformlarda DOKUNULMADAN `std.c.open`/
 /// `read`/`write`/`close`i çağırır.
+/// `std.c.O` erişim kipi alanı platforma göre değişir (wasi: `.read`/`.write` bitleri, diğerleri: `ACCMODE`). `extra` yalnızca her platformda ortak olan
+/// `CREAT`/`TRUNC`/`APPEND`/`DIRECTORY` bitlerini taşır.
+const OExtra = struct { CREAT: bool = false, TRUNC: bool = false, APPEND: bool = false, DIRECTORY: bool = false };
+
+fn oFlagsRead(extra: OExtra) std.c.O {
+    var o: std.c.O = .{};
+    if (comptime builtin.os.tag == .wasi) o.read = true else o.ACCMODE = .RDONLY;
+    o.DIRECTORY = extra.DIRECTORY;
+    return o;
+}
+
+fn oFlagsWrite(extra: OExtra) std.c.O {
+    var o: std.c.O = .{};
+    if (comptime builtin.os.tag == .wasi) o.write = true else o.ACCMODE = .WRONLY;
+    o.CREAT = extra.CREAT;
+    o.TRUNC = extra.TRUNC;
+    o.APPEND = extra.APPEND;
+    return o;
+}
+
 fn openFileRead(path: [*:0]const u8) c_int {
     if (builtin.os.tag == .windows) return WinFile._open(path, WinFile.O_RDONLY | WinFile.O_BINARY, 0);
-    const o: std.c.O = .{ .ACCMODE = .RDONLY };
-    return std.c.open(path, o, @as(c_uint, 0));
+    return std.c.open(path, oFlagsRead(.{}), @as(c_uint, 0));
 }
 
 fn openFileWrite(path: [*:0]const u8, append: bool) c_int {
@@ -207,10 +226,7 @@ fn openFileWrite(path: [*:0]const u8, append: bool) c_int {
         const flags = WinFile.O_WRONLY | WinFile.O_CREAT | WinFile.O_BINARY | (if (append) WinFile.O_APPEND else WinFile.O_TRUNC);
         return WinFile._open(path, flags, 0o644);
     }
-    const o: std.c.O = if (append)
-        .{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true }
-    else
-        .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true };
+    const o = if (append) oFlagsWrite(.{ .CREAT = true, .APPEND = true }) else oFlagsWrite(.{ .CREAT = true, .TRUNC = true });
     return std.c.open(path, o, @as(c_uint, 0o644));
 }
 
@@ -395,7 +411,7 @@ export fn nox_fs_is_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) 
         if (attrs == WinFile.INVALID_FILE_ATTRIBUTES) return 0;
         return if ((attrs & WinFile.FILE_ATTRIBUTE_DIRECTORY) != 0) 1 else 0;
     }
-    const o_dir: std.c.O = .{ .ACCMODE = .RDONLY, .DIRECTORY = true };
+    const o_dir = oFlagsRead(.{ .DIRECTORY = true });
     const fd = std.c.open(p, o_dir, @as(c_uint, 0));
     if (fd < 0) return 0;
     _ = std.c.close(fd);
@@ -505,7 +521,11 @@ fn collectDirNames(path: [*:0]const u8, names: *std.ArrayListUnmanaged([]const u
     const dir = std.c.opendir(path) orelse return error.OpenDirFailed;
     defer _ = std.c.closedir(dir);
     while (std.c.readdir(dir)) |entry| {
-        const name = std.mem.sliceTo(&entry.name, 0);
+        // wasi-libc: `struct dirent { ino_t d_ino; unsigned char d_type; char d_name[]; }` — Zig'in wasi `dirent` türü boştur.
+        const name = if (comptime builtin.os.tag == .wasi)
+            std.mem.sliceTo(@as([*:0]const u8, @ptrCast(@as([*]const u8, @ptrCast(entry)) + 9)), 0)
+        else
+            std.mem.sliceTo(&entry.name, 0);
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
         const owned = try std.heap.page_allocator.dupe(u8, name);
         try names.append(std.heap.page_allocator, owned);
@@ -545,7 +565,7 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
             return null;
         };
         const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
-        @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+        @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
     }
     fsLastOkPtr().* = true;
     return @ptrCast(bytes);
@@ -994,7 +1014,7 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     var saw_b = false;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         const name = std.mem.sliceTo(p, 0);

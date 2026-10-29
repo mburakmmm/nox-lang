@@ -36,7 +36,7 @@ const builtin = @import("builtin");
 const diag_sink = @import("diag_sink");
 
 comptime {
-    if (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64 and builtin.cpu.arch != .riscv64) {
+    if (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64 and builtin.cpu.arch != .riscv64 and !builtin.cpu.arch.isWasm()) {
         @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64/riscv64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2 and §3.290)");
     }
 }
@@ -136,6 +136,8 @@ pub const Context = switch (builtin.cpu.arch) {
         fs10: u64 = 0,
         fs11: u64 = 0,
     },
+    // wasm32: yığın değiştirme yoktur; `bridge_wasm.zig` fiber KULLANMAZ (bağlam yalnızca tür uyumu için).
+    .wasm32, .wasm64 => struct { sp: usize = 0 },
     else => @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64/riscv64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2 and §3.290)"),
 };
 

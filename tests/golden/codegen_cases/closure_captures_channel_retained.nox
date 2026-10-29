@@ -1,0 +1,32 @@
+# Kapanış (async üreteç dahil) bir Channel/Task parametresini yakalarken kendi referansını almalı: yakalamada retain yoktu ama kapanışın _release'i
+# destroy çağırıyordu — üreteç bitince kanal serbest bırakılıp sonraki send/recv sarkan bir işaretçiye dokunuyordu (wasm32'nin taşma denetimi yakaladı).
+async def from_channel(ch: Channel[int], n: int) -> AsyncIterator[int]:
+    k: int = 0
+    while k < n:
+        v: int = await ch.recv()
+        yield v
+        k += 1
+
+async def feeder(ch: Channel[int], n: int) -> None:
+    for i in range(n):
+        await ch.send(i + 10)
+
+async def run_all() -> None:
+    ch: Channel[int] = Channel[int](4)
+    unused: list[int] = []
+    async for z in from_channel(ch, 0):
+        unused.append(z)
+    print(len(unused))
+    f: Task[None] = spawn feeder(ch, 3)
+    got: list[int] = []
+    async for g in from_channel(ch, 3):
+        got.append(g)
+    await f
+    print(got)
+    # üreteç tükenip serbest bırakıldıktan sonra kanal hâlâ kullanılabilir olmalı
+    await ch.send(99)
+    last: int = await ch.recv()
+    print(last)
+
+t: Task[None] = spawn run_all()
+await t

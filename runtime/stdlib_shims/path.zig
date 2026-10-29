@@ -7,7 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
-const http_client = @import("http_client.zig");
+const http_client = @import("shim_util.zig");
 const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
 const bridge = @import("../async_rt/bridge.zig");
@@ -240,7 +240,7 @@ export fn nox_path_components_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.
     for (names.items, 0..) |name, i| {
         const dup = dupeToNoxStr(rt, name) orelse return null;
         const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
-        @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+        @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
     }
     return @ptrCast(bytes);
 }
@@ -428,7 +428,7 @@ test "Faz III.4: nox_path_components_raw yol bilesenlerini dogru sirada doner" {
     const expected = [_][]const u8{ "a", "b", "c.txt" };
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         try std.testing.expectEqualStrings(expected[i], std.mem.sliceTo(p, 0));

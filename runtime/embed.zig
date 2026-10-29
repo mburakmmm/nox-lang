@@ -6,6 +6,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const asap = @import("alloc/asap.zig");
 const errors_handle = @import("errors/handle.zig");
+const abi_ptr = @import("abi_ptr.zig");
 const dispatch_registry = @import("alloc/dispatch_registry.zig");
 
 fn monoNs() u64 {
@@ -292,7 +293,7 @@ export fn nox_exception_release(rt: ?*anyopaque, exception: ?*anyopaque) callcon
     const obj = exception orelse return;
     const f = dispatch_registry.classReleaseFn() orelse return;
     const tag: *const i64 = @ptrCast(@alignCast(obj));
-    f(rt, tag.*, obj);
+    f(abi_ptr.arg(rt), tag.*, abi_ptr.arg(obj));
 }
 
 export fn nox_embed_abi_version() callconv(.c) i32 {

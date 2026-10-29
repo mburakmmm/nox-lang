@@ -8,7 +8,7 @@
 //! `dupeToNoxStr`ı, AYNI ARC-str üretim deseni).
 const std = @import("std");
 const builtin = @import("builtin");
-const http_client = @import("http_client.zig");
+const http_client = if (@import("builtin").cpu.arch.isWasm()) @import("shim_util.zig") else @import("http_client.zig");
 const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
@@ -111,6 +111,8 @@ fn secureRandomBuf(buf: []u8) void {
         _ = SystemFunction036(buf.ptr, @intCast(buf.len));
     } else if (builtin.os.tag == .linux) {
         linuxGetRandom(buf);
+    } else if (comptime builtin.os.tag == .wasi) {
+        _ = std.os.wasi.random_get(buf.ptr, buf.len);
     } else {
         std.c.arc4random_buf(buf.ptr, buf.len);
     }

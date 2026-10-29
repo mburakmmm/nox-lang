@@ -171,4 +171,4 @@ Nox deliberately has no "safe mode" for `extern def` in 2.0 — a sandbox needs 
   ([NNI](../apis/nni.md), [Plugin API](../apis/plugin-api.md)).
 - **HPy / CPython extensions** — Python C extensions load through an opaque-handle compatibility layer; a raw `PyObject*` never crosses
   ([Internals](../internals/hpy-wasm.md)).
-- **WebAssembly** — a WASM module can be imported like a native library; WASM is an *import* mechanism, never a compilation target.
+- **WebAssembly** — a WASM module can be imported like a native library; importing a WASM module is separate from compiling Nox *to* WASM (`--target wasm32-wasi`, [WebAssembly](../tools/wasm.md)).

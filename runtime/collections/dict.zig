@@ -53,6 +53,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const abi_ptr = @import("../abi_ptr.zig");
 const asap = @import("../alloc/asap.zig");
 const str_mod = @import("../str.zig");
 const arc = @import("../alloc/arc.zig");
@@ -77,24 +78,24 @@ const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 fn releaseValuePayload(rt: ?*anyopaque, d: *const Dict, payload: i64) void {
     if (payload == 0) return;
     if (d.value_release) |f| {
-        f(rt, @ptrFromInt(@as(usize, @bitCast(payload))));
+        f(abi_ptr.arg(rt), abi_ptr.arg(@as(*anyopaque, @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(payload))))))));
         return;
     }
     releaseClassPayload(rt, payload);
 }
 
 /// Codegen, değeri `list[T]`/`dict[K, V]` olan bir sözlüğü kurarken çağırır (bkz. `Dict.value_release`).
-pub export fn nox_dict_set_value_release(dp: ?*anyopaque, f: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void) void {
+pub export fn nox_dict_set_value_release(dp: ?*anyopaque, f: ?*const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void) void {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return));
     d.value_release = f;
 }
 
 fn releaseClassPayload(rt: ?*anyopaque, payload: i64) void {
     if (payload == 0) return;
-    const p: *anyopaque = @ptrFromInt(@as(usize, @bitCast(payload)));
+    const p: *anyopaque = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(payload)))));
     const f = dispatch_registry.classReleaseFn() orelse return;
     const tag: *const i64 = @ptrCast(@alignCast(p));
-    f(rt, tag.*, p);
+    f(abi_ptr.arg(rt), tag.*, abi_ptr.arg(p));
 }
 
 /// `pub` — stdlib fazı §D.1 (Keşif 4): `nox.http`in Zig kabuğu, bir
@@ -109,8 +110,8 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
     if (!key_is_str) return a == b;
     if (a == b) return true;
     if (a == 0 or b == 0) return false;
-    const pa: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(a)));
-    const pb: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(b)));
+    const pa: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(a)))));
+    const pb: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(b)))));
     return std.mem.orderZ(u8, pa, pb) == .eq;
 }
 
@@ -182,6 +183,8 @@ fn secureRandomBuf(buf: []u8) void {
         _ = SystemFunction036(buf.ptr, @intCast(buf.len));
     } else if (builtin.os.tag == .linux) {
         linuxGetRandom(buf);
+    } else if (builtin.os.tag == .wasi) {
+        _ = std.os.wasi.random_get(buf.ptr, buf.len);
     } else {
         std.c.arc4random_buf(buf.ptr, buf.len);
     }
@@ -275,7 +278,7 @@ const StrOrIntContext = struct {
     pub fn hash(self: @This(), key: i64) u64 {
         if (!self.key_is_str) return mixInt(hashSeed(self.rt), key);
         if (key == 0) return 0;
-        const p: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(key)));
+        const p: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(key)))));
         return std.hash.Wyhash.hash(hashSeed(self.rt), std.mem.sliceTo(p, 0));
     }
 
@@ -371,12 +374,12 @@ pub const Dict = struct {
     /// v1.152.0 (roadmap 1.6b): değerleri `list[T]`/`dict[K, V]` olan sözlüklerde bu değerlerin SOMUT serbest bırakma
     /// fonksiyonu (codegen kurulumda `nox_dict_set_value_release` ile yazar; `value_is_class` bayrağı bu durumda "ARC
     /// işaretçisi" demektir). `null` ise `value_is_class` değerleri sınıf etiket-dağıtımıyla (`releaseClassPayload`) bırakılır.
-    value_release: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void = null,
+    value_release: ?*const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void = null,
 };
 
 fn payloadToStrPtr(v: i64) ?[*:0]u8 {
     if (v == 0) return null;
-    return @ptrFromInt(@as(usize, @bitCast(v)));
+    return @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(v)))));
 }
 
 /// `index_built` DEĞİLKEN `entries`i DOĞRUSAL tarar (bkz. `SMALL_MAP_
@@ -1019,15 +1022,15 @@ test "v1.142.16: kompakt indeks tablosu + son-arama önbelleği — rastgele iş
 /// `dict[K, dict[K2, V2]]` değer serbest bırakıcıları: iç sözlüğün (anahtar-str, değer-str, değer-ARC) bayrak üçlüsüne göre
 /// 8 sabit `fn(rt, ptr)` — `Dict.value_release` olarak yazılır. İç sözlüğün KENDİ `value_release`i (iç değerler list/dict ise)
 /// iç sözlüğün yapısında durur.
-fn dictReleaseWrapper(comptime combo: u3) *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void {
+fn dictReleaseWrapper(comptime combo: u3) *const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void {
     return &struct {
-        fn f(rt: ?*anyopaque, p: ?*anyopaque) callconv(.c) void {
-            nox_dict_release(rt, p, @intFromBool(combo & 4 != 0), @intFromBool(combo & 2 != 0), @intFromBool(combo & 1 != 0));
+        fn f(rt: abi_ptr.Arg, p: abi_ptr.Arg) callconv(.c) void {
+            nox_dict_release(abi_ptr.ptr(?*anyopaque, rt), abi_ptr.ptr(?*anyopaque, p), @intFromBool(combo & 4 != 0), @intFromBool(combo & 2 != 0), @intFromBool(combo & 1 != 0));
         }
     }.f;
 }
 
-pub const dict_release_wrappers = [8]*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void{
+pub const dict_release_wrappers = [8]*const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void{
     dictReleaseWrapper(0), dictReleaseWrapper(1), dictReleaseWrapper(2), dictReleaseWrapper(3),
     dictReleaseWrapper(4), dictReleaseWrapper(5), dictReleaseWrapper(6), dictReleaseWrapper(7),
 };

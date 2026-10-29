@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.76]
+
+### Eklendi
+
+- WASM derleme hedefi: `noxc build --target wasm32-wasi prog.nox` LLVM üzerinden bir WASI `.wasm` üretir (`zig cc -target wasm32-wasi`; QBE'ye WASM arka ucu eklenmedi). `noxc run --target wasm32-wasi` onu `wasmtime`, `wasmer` ya da `node` ile çalıştırır. Dil bütünüyle çalışır (sınıf, çoklu kalıtım, jeneratör, `async`/`await`/`Channel`, istisna, `with`, `__del__`); stdlib'den `fs`, `regex`, `gzip`, `crypto`, `json` dahil. Asenkron, aynı yığında iç içe çalıştırma benzetimiyle FIFO ve deterministik çalışır. Ayrıntı: `docs/tools/wasm.md`, ADR-012.
+- Soket, süreç, `dlopen`, paylaşılan bellek ve HPy/WASM köprüsü gerektiren modüller (`nox.http`, `tls`, `websocket`, `smtp`, `sqlite`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy`, `transfer`, `reflect`, `router`) ile `hpy_*`/`wasm_call` yerleşikleri bu hedefte derleme zamanında açık iletiyle reddedilir.
+- `zig build wasm-rt` (çalışma zamanı nesnesi), `zig build wasm-corpus-test` (tüm korpus, opt-in), `wasm_target_test` (`zig build test` içinde duman kümesi), `scripts/gen_wasm_abi.py --check`.
+
+### Düzeltildi
+
+- Bir `Channel[T]`/`Task[T]` parametresini yakalayan kapanış (async üreteç dahil) yakalamada retain etmiyordu ama `_release`i `destroy` çağırıyordu: üreteç bitince kanal serbest bırakılıp sonraki `send`/`recv` sarkan işaretçiye dokunuyordu. Yerel hedeflerde maskelenmişti; wasm32'nin taşma denetimi yakaladı.
+- `nox.json` değerleri, iz arabelleği ve iç içe liste yaprakları gibi 8 baytlık nesne yuvaları artık 32-bit işaretçili hedeflerde de 8 bayt okunup yazılır.
+
 ## [2.0.75]
 
 ### Eklendi

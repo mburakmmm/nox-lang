@@ -23,8 +23,8 @@ export fn nox_list_sort_float(data: [*]f64, len: i64) callconv(.c) void {
 /// karşılaştırıcı ONU bir işaretçiye GERİ yorumlayıp GERÇEK bayt
 /// içeriklerini (`std.mem.order`) karşılaştırır.
 fn lessThanStr(_: void, a: i64, b: i64) bool {
-    const pa: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(a)));
-    const pb: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(b)));
+    const pa: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(a)))));
+    const pb: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(b)))));
     return std.mem.order(u8, std.mem.span(pa), std.mem.span(pb)) == .lt;
 }
 

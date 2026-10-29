@@ -33,11 +33,11 @@ Nox, Python'un sözdizimsel tanıdıklığını sistem programlama dillerinin pe
 | Derleyici arka ucu | QBE | amd64, arm64, riscv64, amd64_win hedefleri |
 | Çalışma zamanı / allocator | Zig | ASAP/ARC mekanizması, GC yok |
 | C eklenti köprüsü | HPy tarzı opaque handle | CPython C-API uyumluluk katmanı ile desteklenir |
-| WASM entegrasyonu | Gömülü WASM runtime (Zig içinde) | QBE'nin kendisi WASM'ı hedeflemez |
+| WASM entegrasyonu | Gömülü WASM runtime (Zig içinde) + `--target wasm32-wasi` (LLVM) | QBE'nin kendisi WASM'ı hedeflemez; WASM'a derleme LLVM üzerinden (§3.315) |
 
 Nox kaynak kodu doğrudan QBE IR'ına çevrilir ve QBE, hedef platform için native assembly üretir. Çalışma zamanı, bellek tahsisi, hata yayılımı ve C/WASM köprüleme mantığını yönetmek için Zig ile yazılmış statik olarak bağlanan bir kütüphanedir.
 
-> **Not (QBE sınırlaması):** QBE şu an doğrudan WASM hedeflemiyor; WASM'a derleme, QBE'nin kontrol akış grafiğinden yapılandırılmış kontrol akışı (structured control flow) çıkarmayı gerektirir ve bu ayrı bir ikincil backend projesidir. Nox'un WASM ile ilişkisi derleme hedefi değil, **içe aktarma/kütüphane kullanımı** yönünde kurgulanmıştır (bkz. Bölüm 6).
+> **Not (QBE sınırlaması):** QBE şu an doğrudan WASM hedeflemiyor; WASM'a derleme, QBE'nin kontrol akış grafiğinden yapılandırılmış kontrol akışı (structured control flow) çıkarmayı gerektirir ve bu ayrı bir ikincil backend projesidir. **Güncelleme (v2.0.76):** QBE'ye WASM arka ucu hâlâ eklenmez; Nox kodu WASM'a LLVM arka ucu üzerinden `--target wasm32-wasi` ile derlenir (bkz. §3.315, ADR-012). Gömülü WASM yorumlayıcısı (içe aktarma/kütüphane kullanımı, Bölüm 6) ayrı bir mekanizma olarak kalır.
 
 ---
 
@@ -29162,3 +29162,14 @@ Bkz. `docs/internals/adr/009-embed-allocator.md`. `HostConfig` (`runtime/embed.z
 Değer tipi konumundaki protokol adı `typeExprToType` içinde `P__Base` sınıfına çözülür (`ensureProtocolBase`): protokolün her metodu için gövdesi `ValueError` fırlatan (önsöz yoksa kendine çağrı olan) soyut bir sınıf. `assignableOrCoerce`, `P__Base` bekleyen yere `P`yi yapısal olarak karşılayan ve `P__Base`ten türemeyen bir sınıf `C` atandığında ifade yuvasını `P__Box_C(<ifade>)` çağrısına yeniden yazmayı `coerce_rewrites`e kaydeder (`call_expand_apply.expr` yuva adresine göre uygular); `ensureProtocolBox` kutuyu bir kez sentezler (`inner: C`, `__init__`, delege eden override'lar). Kutu sıradan bir alt sınıf olduğundan vtable dispatch (Faz 7), ARC, ASAP ve döngü çözücü değişmeden çalışır. Codegen'de yalnızca `resolveType` `P`yi `P__Base`e eşler.
 
 `checkStmt` artık `*const ast.Stmt` alır (yuva adresleri için). Örtük tip parametresi aday listesi yalnızca parametrelerden toplanır. Generic şablonun protokol-tipli parametresi, değişim analizi ve boş literal sondalarında hâlâ çözülemeyen sayılır. İmzası başka bir protokol içeren protokol değer tipi olamaz (hata: `cannot be used as a value type`). Gelecek optimizasyon: kutu başına tahsis yerine iki-kelimelik gerçek fat-pointer.
+
+## 3.315 WASM derleme hedefi: `--target wasm32-wasi` (v2.0.76)
+
+Bkz. `docs/internals/adr/012-wasm-target.md` ve `docs/tools/wasm.md`. Yol: tiplenmiş IR → LLVM `.ll` → `zig cc -target wasm32-wasi` + `noxrt-wasm32-wasi.o` (`zig build wasm-rt`, kök `runtime/lib_wasm.zig`) → `.wasm`. `--backend qbe`, `--emit-asm`, `-g` hatadır.
+
+Nox kodunun 64-bit sözcük modeli wasm32'nin 32-bit işaretçileriyle şöyle bağdaştırılır: (1) `scripts/gen_wasm_abi.py` `export fn` imzalarından `wasm_abi_table.zig`yi üretir, `llvm_emit.zig` çağrı noktasında argümanları `trunc`, sonuçları `zext` eder; (2) derlenmiş kodun runtime'a verdiği geri-çağrı tipleri `abi_ptr.Arg` (`u64`), 8 baytlık nesne/liste/iz yuvaları `abi_ptr.Slot` ile okunur; (3) vtable/metadata sabitleri `{ i32, i32 }` çiftleri; (4) ARC düz yükle-topla-sakla; (5) `__main_argc_argv` sarmalayıcısı. Asenkron, `bridge_wasm.zig`deki iç içe çalıştırma benzetimiyle çalışır (tek yığın, FIFO). Soket/süreç/`dlopen`/HPy/WASM köprüsü gerektiren modüller ve yerleşikler `Checker.wasm_target` ile derleme zamanında reddedilir.
+
+Bu çalışmada bulunan ve aynı sürümde düzeltilen gerçek hata: bir `Channel[T]`/`Task[T]` parametresini yakalayan kapanış (async üreteç dahil) yakalamada retain etmiyor ama `_release`i `destroyNonArcValue` çağırıyordu (aşırı serbest bırakma; yerel hedeflerde sarkan işaretçiyle maskelenmişti, wasm32'nin taşma denetimi yakaladı). `closures.zig` artık `retainNonArcValue` çağırır.
+
+Doğrulama: `tests/golden/wasm_target_test.zig` (`zig build test`), tüm korpus için `zig build wasm-corpus-test` (428 fixture çalışır, 13'ü wasm'de olmayan modül yüzünden derleme zamanında reddedilir, 3 bilinçli denylist).
+

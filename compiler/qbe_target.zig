@@ -90,6 +90,8 @@ pub const HostedTargetInfo = struct {
     min_page: u32 = 4096,
     library: LibraryForm = .exe,
     /// Apple SDK adı (`iphoneos` / `iphonesimulator`). Android'de boş.
+    /// `wasm32-wasi`: LLVM üzerinden WASM derleme hedefi (QBE'ye WASM arka ucu eklenmez, AGENTS İlke #5).
+    wasm: bool = false,
     apple_sdk: []const u8 = "",
     /// Apple'ın kurulu SDK'sındaki `RecommendedDeploymentTarget`. Sayı
     /// `docs/internals/mobile-toolchain.md`de kayıtlıdır.
@@ -98,6 +100,11 @@ pub const HostedTargetInfo = struct {
     pub fn llvmTriple(self: HostedTargetInfo) []const u8 {
         if (self.llvm_triple.len > 0) return self.llvm_triple;
         return self.zig_triple;
+    }
+
+    /// Yalnızca LLVM yoluyla derlenen hedefler (mobil + wasm): `qbe_target` boştur.
+    pub fn llvmOnly(self: HostedTargetInfo) bool {
+        return self.mobile != .none or self.wasm;
     }
 
     pub fn isMobile(self: HostedTargetInfo) bool {
@@ -112,6 +119,14 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
     if (std.mem.eql(u8, target_name, "linux-arm64")) return .{ .qbe_target = "arm64", .runtime_object_name = "noxrt-linux-arm64", .zig_triple = "aarch64-linux-gnu", .is_windows = false };
     if (std.mem.eql(u8, target_name, "windows-x64")) return .{ .qbe_target = "amd64_win", .runtime_object_name = "noxrt-windows-x64", .zig_triple = "x86_64-windows-gnu", .is_windows = true };
     if (std.mem.eql(u8, target_name, "linux-riscv64")) return .{ .qbe_target = "rv64", .runtime_object_name = "noxrt-linux-riscv64", .zig_triple = "riscv64-linux-musl", .is_windows = false };
+    if (std.mem.eql(u8, target_name, "wasm32-wasi")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-wasm32-wasi",
+        .zig_triple = "wasm32-wasi",
+        .is_windows = false,
+        .llvm_triple = "wasm32-unknown-wasi",
+        .wasm = true,
+    };
     if (std.mem.eql(u8, target_name, "ios-arm64")) return .{
         .qbe_target = "",
         .runtime_object_name = "noxrt-ios-arm64",

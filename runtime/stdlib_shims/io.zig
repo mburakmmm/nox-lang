@@ -18,7 +18,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const http_client = @import("http_client.zig");
+const http_client = @import("shim_util.zig");
 const bridge = @import("../async_rt/bridge.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;

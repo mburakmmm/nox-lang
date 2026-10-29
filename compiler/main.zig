@@ -1119,6 +1119,21 @@ fn clangAvailable(gpa: std.mem.Allocator, io: std.Io) bool {
 fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, profile: codegen.Profile, target: ?[]const u8, emit_asm: bool, debug_info: bool) bool {
     if (target) |t| {
         if (qbe_target.hostedTargetInfo(t)) |info| {
+            if (info.wasm) {
+                if (choice == .qbe) {
+                    printErr("--backend qbe does not support target '{s}' (WASM is only compiled through the LLVM backend; AGENTS invariant #5)\n", .{t});
+                    std.process.exit(1);
+                }
+                if (emit_asm or debug_info) {
+                    printErr("target '{s}' uses the LLVM backend; --emit-asm and -g are not supported\n", .{t});
+                    std.process.exit(1);
+                }
+                if (ccDriver(gpa, io) != .zig_cc and !probeOk(gpa, io, &.{ "zig", "version" })) {
+                    printErr("target '{s}' needs zig on PATH (zig cc links wasi-libc)\n", .{t});
+                    std.process.exit(1);
+                }
+                return true;
+            }
             if (info.isMobile()) {
                 if (choice == .qbe) {
                     printErr("--backend qbe does not support mobile target '{s}' (this ABI is LLVM-only until the same fixtures pass on QBE)\n", .{t});
@@ -1313,7 +1328,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
         std.process.exit(1);
     }
     if (opts.target) |t| {
-        if (!isRunnableOnHost(opts.profile, t)) {
+        if (!isRunnableOnHost(opts.profile, t) and !isWasmTarget(opts.profile, t)) {
             printErr("noxc run: --target {s} cannot run on this machine (it is a cross-compiled binary) - use 'noxc build'\n", .{t});
             std.process.exit(1);
         }
@@ -1327,6 +1342,14 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
         break :blk built;
     };
 
+    if (isWasmTarget(opts.profile, opts.target)) {
+        if (sandboxed) {
+            printErr("noxc run --sandbox: not supported with --target wasm32-wasi (the WASI runtime is the sandbox)\n", .{});
+            std.process.exit(1);
+        }
+        const code = try runWasi(gpa, io, a, bin_path, split.after);
+        std.process.exit(code);
+    }
     if (sandboxed) {
         const code = try runSandboxed(io, a, bin_path, split.after, policy);
         std.process.exit(code);
@@ -1373,6 +1396,53 @@ fn runSandboxed(io: std.Io, a: std.mem.Allocator, bin_path: []const u8, argv_tai
         .exited => |c| c,
         else => 1,
     };
+}
+
+/// Düğümün WASI'siyle `.wasm` çalıştıran küçük sürücü (`tests/golden/wasm_run.mjs` ile aynı). `wasmtime`/`wasmer` yoksa `noxc run --target wasm32-wasi` bunu kullanır.
+const NODE_WASI_RUNNER =
+    \\import { readFile } from 'node:fs/promises';
+    \\import { WASI } from 'node:wasi';
+    \\const file = process.argv[2];
+    \\const wasi = new WASI({ version: 'preview1', args: [file, ...process.argv.slice(3)], env: process.env, preopens: { '.': '.', '/tmp': '/tmp' }, returnOnExit: true });
+    \\const mod = await WebAssembly.compile(await readFile(file));
+    \\const inst = await WebAssembly.instantiate(mod, wasi.getImportObject());
+    \\process.exitCode = wasi.start(inst);
+    \\
+;
+
+/// `noxc run --target wasm32-wasi`: `.wasm`ı bulunan ilk WASI çalıştırıcısıyla çalıştırır (`wasmtime`, `wasmer`, `node`).
+/// Çalışma dizini ve `/tmp` programa açılır. Çalıştırıcı yoksa açık hata verir.
+fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, argv_tail: []const []const u8) !u8 {
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (probeOk(gpa, io, &.{ "wasmtime", "--version" })) {
+        try argv.appendSlice(a, &.{ "wasmtime", "run", "--dir", ".", "--dir", "/tmp", wasm_path, "--" });
+    } else if (probeOk(gpa, io, &.{ "wasmer", "--version" })) {
+        try argv.appendSlice(a, &.{ "wasmer", "run", "--dir", ".", wasm_path, "--" });
+    } else if (probeOk(gpa, io, &.{ "node", "--version" })) {
+        const runner_path = try std.fmt.allocPrint(a, "{s}.run.mjs", .{wasm_path});
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = runner_path, .data = NODE_WASI_RUNNER });
+        try argv.appendSlice(a, &.{ "node", "--no-warnings", runner_path, wasm_path });
+    } else {
+        printErr("noxc run --target wasm32-wasi: no WASI runtime found on PATH (install wasmtime, wasmer or node), or use 'noxc build' and run the .wasm yourself\n", .{});
+        std.process.exit(1);
+    }
+    try argv.appendSlice(a, argv_tail);
+    var child = std.process.spawn(io, .{ .argv = argv.items }) catch {
+        printErr("noxc run: could not start '{s}'\n", .{argv.items[0]});
+        std.process.exit(1);
+    };
+    const term = try child.wait(io);
+    return switch (term) {
+        .exited => |c| c,
+        else => 1,
+    };
+}
+
+fn isWasmTarget(profile: codegen.Profile, target: ?[]const u8) bool {
+    if (profile != .hosted) return false;
+    const t = target orelse return false;
+    const info = qbe_target.hostedTargetInfo(t) orelse return false;
+    return info.wasm;
 }
 
 /// `bin_path`i (`argv_tail` argümanları AYRICA iletilerek) çalıştırır,
@@ -2153,6 +2223,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     var checker_state = checker.Checker.init(a);
     checker_state.profile = opts.profile;
     checker_state.mobile_mask = mobileMaskOf(if (opts.profile == .hosted and opts.target != null) qbe_target.hostedTargetInfo(opts.target.?) else null);
+    checker_state.wasm_target = if (opts.profile == .hosted and opts.target != null) (if (qbe_target.hostedTargetInfo(opts.target.?)) |ht| ht.wasm else false) else false;
     // `build` ile aynı backend'e göre denetle (checker'ın `spawn` tip kuralları backend'e bağlıdır).
     checker_state.backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm, opts.debug_info)) .llvm else .qbe;
     checker_state.checkModule(module) catch |e| {
@@ -2620,6 +2691,39 @@ fn linkMobile(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []
     return error.BuildFailed;
 }
 
+/// `--target wasm32-wasi`: LLVM IR'ı `zig cc -target wasm32-wasi` ile wasi-libc + `noxrt-wasm32-wasi.o`ya bağlar, `.wasm` üretir.
+fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []const u8, ir: []const u8, info: qbe_target.HostedTargetInfo, output_override: ?[]const u8, resource_dirs: project.ResourceDirs, module: ast.Module) ![]const u8 {
+    const base = stripOneExt(output_override orelse stem);
+    const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{base});
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
+    const out_path = output_override orelse try std.fmt.allocPrint(a, "{s}.wasm", .{base});
+    const rt_path = try std.fmt.allocPrint(a, "{s}/lib/{s}.o", .{ resource_dirs.install_root, info.runtime_object_name });
+    if (std.Io.Dir.accessAbsolute(io, rt_path, .{})) |_| {} else |_| {
+        printErr("wasm runtime '{s}' is missing; build it with: zig build wasm-rt\n", .{rt_path});
+        return error.BuildFailed;
+    }
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    try argv.appendSlice(a, &.{ "zig", "cc", "-target", info.zig_triple, "-O2", "-Wno-override-module", "-Wl,-z,stack-size=8388608", "-o", out_path, ll_path, rt_path });
+    try appendExternLinkArgs(a, &argv, module);
+    const result = std.process.run(gpa, io, .{ .argv = argv.items }) catch |err| {
+        if (err == error.FileNotFound) {
+            printErr("zig not found: --target wasm32-wasi needs 'zig' on PATH\n", .{});
+            return error.BuildFailed;
+        }
+        return err;
+    };
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        printErr("zig cc failed:\n{s}\n", .{result.stderr});
+        if (std.mem.indexOf(u8, result.stderr, "undefined symbol") != null) {
+            printErr("note: the wasm32-wasi runtime does not provide every native symbol; an `extern def` from a native library cannot be linked into a .wasm (see docs/tools/platforms.md)\n", .{});
+        }
+        return error.BuildFailed;
+    }
+    return out_path;
+}
+
 fn onlyUndefinedSymbol(stderr: []const u8, name: []const u8) bool {
     var seen = false;
     var it = std.mem.splitScalar(u8, stderr, '\n');
@@ -2711,6 +2815,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     checker_state.backend = backend;
     checker_state.profile = profile;
     checker_state.mobile_mask = mobileMaskOf(hosted_info);
+    checker_state.wasm_target = if (hosted_info) |ht| ht.wasm else false;
     checker_state.checkModule(module) catch |e| {
         printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         return error.BuildFailed;
@@ -2803,7 +2908,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
 
     const library_mode = emit != .exe;
-    const llvm_triple: []const u8 = if (hosted_info) |ht| (if (ht.isMobile()) ht.llvmTriple() else "") else "";
+    const llvm_triple: []const u8 = if (hosted_info) |ht| (if (ht.llvmOnly()) ht.llvmTriple() else "") else "";
     const ir = codegen.generateModuleWithMeta(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, profile, null, callback_targets.items, resolved_bases, checker_state.class_ctors.items, library_mode, llvm_triple) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
@@ -2849,6 +2954,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             if (ht.isMobile()) {
                 return linkMobile(gpa, io, a, stem, ir, ht, emit, output_override, resource_dirs);
             }
+            if (ht.wasm) return linkWasm(gpa, io, a, stem, ir, ht, output_override, resource_dirs, module);
         }
         const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{stem});
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
@@ -2909,7 +3015,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
             return error.BuildFailed;
         })
     else

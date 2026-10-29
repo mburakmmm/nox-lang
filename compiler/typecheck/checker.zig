@@ -404,6 +404,26 @@ const StaticMethod = struct { fd: ast.FuncDef, owner: []const u8, is_class: bool
 
 pub const MobileMask = enum { none, ios, android };
 
+/// `--target wasm32-wasi`: çalışma zamanında soket, süreç, `dlopen` ve gömülü HPy/WASM köprüsü yoktur; bu modüller derleme zamanında reddedilir
+/// (aksi halde bağlayıcı tanımsız `nox_*` sembolleriyle hata verirdi). Gerekçe `nox_*` sembollerinin `runtime/lib_wasm.zig`de bulunmamasıdır.
+const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }{
+    .{ .name = "http", .why = "it needs sockets" },
+    .{ .name = "transfer", .why = "it needs sockets" },
+    .{ .name = "reflect", .why = "it depends on nox.http" },
+    .{ .name = "router", .why = "it depends on nox.http" },
+    .{ .name = "tls", .why = "it needs sockets" },
+    .{ .name = "websocket", .why = "it needs sockets" },
+    .{ .name = "smtp", .why = "it needs sockets" },
+    .{ .name = "sqlite", .why = "it loads a host shared library" },
+    .{ .name = "postgres", .why = "it loads a host shared library" },
+    .{ .name = "mysql", .why = "it loads a host shared library" },
+    .{ .name = "process", .why = "WASI has no child processes" },
+    .{ .name = "sharedmem", .why = "WASI has no shared memory" },
+    .{ .name = "native", .why = "WASI has no dynamic loading" },
+    .{ .name = "plugin", .why = "WASI has no dynamic loading" },
+    .{ .name = "hpy", .why = "the HPy bridge is not part of the wasm runtime" },
+};
+
 pub const Checker = struct {
     allocator: std.mem.Allocator,
     functions: std.StringHashMapUnmanaged(FuncSig) = .{},
@@ -735,6 +755,8 @@ pub const Checker = struct {
     /// `.none` masaüstüdür. Mobil maske üçüncü bir profil değildir:
     /// `hosted` grant'inden `process`, `shared_memory` ve `dynamic_code` düşer.
     mobile_mask: MobileMask = .none,
+    /// `--target wasm32-wasi` (bkz. `WASM_UNAVAILABLE_MODULES`).
+    wasm_target: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Checker {
         return .{ .allocator = allocator };
@@ -1471,6 +1493,13 @@ pub const Checker = struct {
     /// `.hosted`de (varsayılan, İZİN VEREN profil) sorun DEĞİLDİR.
     fn checkModuleCapabilitiesAllowed(self: *Checker, segments: []const []const u8) TypeError!void {
         if (segments.len < 2 or !std.mem.eql(u8, segments[0], "nox")) return;
+        if (self.wasm_target) {
+            for (WASM_UNAVAILABLE_MODULES) |m| {
+                if (std.mem.eql(u8, m.name, segments[1])) {
+                    return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on the wasm32-wasi target ({s})", .{ segments[1], m.why });
+                }
+            }
+        }
         const caps = moduleCapabilities(segments[1]) orelse {
             if (self.profile == .freestanding) {
                 return self.fail(error.FreestandingModuleForbidden, "module 'nox.{s}' cannot be used in the 'freestanding' profile (a stdlib module that has not been classified yet — safe default: reject)", .{segments[1]});
@@ -7892,6 +7921,9 @@ pub const Checker = struct {
                         return self.fail(error.UndefinedAttribute, "class '{s}' has no field '{s}'", .{ t.class, c.args[1].string_lit });
                     }
                     return .{ .fixed_int = .usize };
+                }
+                if (self.wasm_target and (std.mem.startsWith(u8, name, "hpy_") or std.mem.eql(u8, name, "wasm_call"))) {
+                    return self.fail(error.CapabilityNotGranted, "the builtin '{s}' cannot be used on the wasm32-wasi target (the HPy/WASM foreign bridges are not part of the wasm runtime)", .{name});
                 }
                 // Faz 14: `hpy_call`/`wasm_call` — Faz 12/13'ün köprülerini
                 // (bkz. runtime/foreign_bridge.zig) Nox kaynağından

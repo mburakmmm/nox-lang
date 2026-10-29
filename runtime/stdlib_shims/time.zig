@@ -97,8 +97,8 @@ export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
         return;
     }
     const ts: std.c.timespec = .{
-        .sec = @divTrunc(ms, std.time.ms_per_s),
-        .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,
+        .sec = @intCast(@divTrunc(ms, std.time.ms_per_s)),
+        .nsec = @intCast(@mod(ms, std.time.ms_per_s) * std.time.ns_per_ms),
     };
     _ = std.c.nanosleep(&ts, null);
 }

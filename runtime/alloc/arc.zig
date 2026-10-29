@@ -47,6 +47,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const abi_ptr = @import("../abi_ptr.zig");
 const asap = @import("asap.zig");
 const lowlevel = @import("lowlevel.zig");
 const dispatch_registry = @import("dispatch_registry.zig");
@@ -194,6 +195,11 @@ pub export fn nox_raw_memcpy(dst: ?*anyopaque, src: ?*anyopaque, len: usize) voi
 /// tek-iş-parçacıklı bir bağlamda hiçbir şeyi BOZMAZ).
 pub export fn nox_rc_retain(ptr: ?*anyopaque) void {
     const p = ptr orelse return;
+    if (comptime builtin.cpu.arch.isWasm()) {
+        // wasm32 (tek iş parçacıklı): 64-bit atomik RMW yok; düz yükle-artır-yaz yeterli.
+        refcountOf(p).* += 1;
+        return;
+    }
     const rc: *std.atomic.Value(i64) = @ptrCast(refcountOf(p));
     _ = rc.fetchAdd(1, .acq_rel);
 }
@@ -214,10 +220,17 @@ pub export fn nox_rc_release(rt: ?*anyopaque, ptr: ?*anyopaque, payload_size: us
 /// `nox_rc_release`'den ayrıştırılmış olarak kullanır.
 pub export fn nox_rc_predecrement(ptr: ?*anyopaque) i32 {
     const p = ptr orelse return 0;
-    const rc: *std.atomic.Value(i64) = @ptrCast(refcountOf(p));
     // `fetchSub` işlem-ÖNCESİ değeri döner (`old`); eski kodun `rc.* <= 0`
     // (post-decrement) karşılaştırması `old <= 1`e denk düşer.
-    const old = rc.fetchSub(1, .acq_rel);
+    const old = if (comptime builtin.cpu.arch.isWasm()) blk: {
+        // wasm32 (tek iş parçacıklı): düz yükle-azalt-yaz.
+        const cur = refcountOf(p).*;
+        refcountOf(p).* = cur - 1;
+        break :blk cur;
+    } else blk: {
+        const rc: *std.atomic.Value(i64) = @ptrCast(refcountOf(p));
+        break :blk rc.fetchSub(1, .acq_rel);
+    };
     // v1.142.14: döngü çözücünün bayrakları (kök yuvası/renk/buffered) başlık
     // kelimesinin YÜKSEK 32 bitinde yaşar (bkz. `cycle_detector.zig` modül üstü
     // notu) — sıfır testi yalnızca refcount'u (düşük 32 bit) görmelidir.
@@ -320,8 +333,8 @@ pub export fn nox_list_shallow_gc_free(rt: ?*anyopaque, ptr: ?*anyopaque) void {
 /// yaprak sınıf işaretçilerini sayar/doldurur/sığ-serbest bırakır. Liste
 /// düzeni her seviyede aynıdır (`{len@0, cap@8, işaretçi elemanlar@16...}`).
 fn nestedListElem(bytes: [*]u8, i: usize) ?*anyopaque {
-    const slot: *align(1) const ?*anyopaque = @ptrCast(bytes + abi_layout.LIST_HEADER_SIZE + i * 8);
-    return slot.*;
+    const slot: *align(1) const abi_ptr.Slot = @ptrCast(bytes + abi_layout.LIST_HEADER_SIZE + i * 8);
+    return abi_ptr.slotPtr(slot.*);
 }
 
 fn nestedListLen(bytes: [*]u8) usize {
@@ -352,8 +365,8 @@ pub export fn nox_list_nested_fill(ptr: ?*anyopaque, depth: i64, buf: ?*anyopaqu
     while (i < n) : (i += 1) {
         const e = nestedListElem(bytes, i);
         if (depth <= 1) {
-            const slot: *align(1) ?*anyopaque = @ptrCast(out + abi_layout.TRACE_BUF_LEN_SIZE + @as(usize, @intCast(idx)) * abi_layout.TRACE_BUF_SLOT_SIZE);
-            slot.* = e;
+            const slot: *align(1) abi_ptr.Slot = @ptrCast(out + abi_layout.TRACE_BUF_LEN_SIZE + @as(usize, @intCast(idx)) * abi_layout.TRACE_BUF_SLOT_SIZE);
+            slot.* = abi_ptr.slot(e);
             idx += 1;
         } else {
             idx = nox_list_nested_fill(e, depth - 1, buf, idx);
@@ -498,7 +511,7 @@ fn releaseWorklistReadTag(p: *anyopaque) i64 {
 /// program-başlangıcında BİR KEZ kaydedilen tablosu KULLANILIR.
 fn dispatchClassRelease(rt: ?*anyopaque, tag: i64, p: *anyopaque) void {
     const f = dispatch_registry.classReleaseFn() orelse return;
-    f(rt, tag, p);
+    f(abi_ptr.arg(rt), tag, abi_ptr.arg(p));
 }
 
 /// `rt`den (`RuntimeState`) BU OS iş parçacığının KENDİ release-durumunu
@@ -573,17 +586,17 @@ fn enqueueAndMaybePump(rt: ?*anyopaque, tag: i64, ptr: *anyopaque, rs: *asap.Rel
 /// RELEASE_DEPTH` seviye İçİn (worklist pompası ZATEN aktif DEĞİLSE)
 /// BUGÜNKÜ GİBİ DOĞRUDAN çağırır (SIFIR ek yük) — SADECE eşik AŞILDIĞINDA
 /// (VEYA worklist ZATEN drenajdaysa) `enqueueAndMaybePump`e düşer.
-pub export fn nox_rc_release_enqueue_fixed(rt: ?*anyopaque, ptr: ?*anyopaque, release_fn: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void) void {
+pub export fn nox_rc_release_enqueue_fixed(rt: ?*anyopaque, ptr: ?*anyopaque, release_fn: ?*const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void) void {
     const p = ptr orelse return;
     const f = release_fn orelse return;
     const rs = releaseStateForRt(rt) orelse {
-        f(rt, p); // rt=null (izole test) — izleme YOK, doğrudan çağır.
+        f(abi_ptr.arg(rt), abi_ptr.arg(p)); // rt=null (izole test) — izleme YOK, doğrudan çağır.
         return;
     };
     if (!rs.pump_active and rs.depth < MAX_DIRECT_RELEASE_DEPTH) {
         rs.depth += 1;
         defer rs.depth -= 1;
-        f(rt, p);
+        f(abi_ptr.arg(rt), abi_ptr.arg(p));
         return;
     }
     enqueueAndMaybePump(rt, releaseWorklistReadTag(p), p, rs);

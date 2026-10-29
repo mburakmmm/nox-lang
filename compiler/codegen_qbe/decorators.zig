@@ -489,7 +489,7 @@ fn emitMetaPairs(self: *Codegen, params: []const checker_mod.ParamMeta, out: *st
 /// sembolün HER ZAMAN çözülmesi için tek bir `0` kelimesi yazar.
 fn emitDataWords(self: *Codegen, sym: []const u8, words: []const []const u8) CodegenError!void {
     if (self.backend == .llvm) {
-        const line = try llvm_emit.llvmWordArrayConstant(self.allocator, sym, words);
+        const line = try llvm_emit.llvmWordArrayConstant(self.allocator, sym, words, self.isWasmTarget());
         try self.out.writer.writeAll(line);
         return;
     }

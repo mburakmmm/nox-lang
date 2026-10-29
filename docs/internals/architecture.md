@@ -39,7 +39,7 @@ include/     nox_nni.h — the public native interface header
 2. **Static typing everywhere — including `lowlevel`.** `lowlevel` relaxes only the allocation strategy.
 3. **No unwind tables or landing pads** in generated code. Error propagation is an implicit error-union return chain.
 4. **No raw `PyObject*` and no Nox heap address ever reaches a C extension.** Everything crosses through opaque handles.
-5. **WebAssembly is a library-import mechanism, not a compilation target.** There is no WASM back end.
+5. **WebAssembly is a compilation target through LLVM, never through QBE.** `--target wasm32-wasi` compiles Nox to a `.wasm` ([WebAssembly](../tools/wasm.md)); there is no QBE WASM back end. Importing a WASM module into a Nox program is a separate library-import mechanism.
 6. **No global or hidden mutable state.** The runtime takes its allocator explicitly; the runtime state is threaded through generated code as a hidden first parameter. (One narrow, documented exception: the freestanding runtime's one-time bootstrap state.)
 7. **Every language feature ships with at least one golden test.**
 

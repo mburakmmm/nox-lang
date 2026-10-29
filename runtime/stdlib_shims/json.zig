@@ -66,7 +66,7 @@
 const std = @import("std");
 const arc = @import("../alloc/arc.zig");
 const dispatch_registry = @import("../alloc/dispatch_registry.zig");
-const http_client = @import("http_client.zig");
+const http_client = @import("shim_util.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
 const bridge = @import("../async_rt/bridge.zig");
@@ -76,6 +76,7 @@ const dupeToNoxStr = http_client.dupeToNoxStr;
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 const TAG_SIZE = abi_layout.TAG_SIZE;
+const abi_ptr = @import("../abi_ptr.zig");
 
 /// `stdlib/nox/core.nox`nin `nox_json_make_json_value` fonksiyonu — ismi
 /// core.nox'ta SABİT (mangle EDİLMEZ) yazıldığından ("nox_json_make_json_value").
@@ -96,7 +97,7 @@ fn nox_json_make_json_value(
     vals: ?*anyopaque,
 ) ?*anyopaque {
     const f = dispatch_registry.makeJsonValueFn() orelse return null;
-    return f(rt, kind, b, n, s, arr, keys, vals);
+    return abi_ptr.ptr(?*anyopaque, f(abi_ptr.arg(rt), kind, b, n, abi_ptr.arg(s), abi_ptr.arg(arr), abi_ptr.arg(keys), abi_ptr.arg(vals)));
 }
 
 // Faz BB.1: `nox.fs`nin `g_last_ok`ıyla AYNI gerekçeyle `threadlocal`.
@@ -166,7 +167,7 @@ fn buildPtrList(rt: ?*anyopaque, items: []const ?*anyopaque) ?*anyopaque {
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(items.len);
     for (items, 0..) |it, i| {
         const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
-        @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(it))));
+        @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(it))));
     }
     return @ptrCast(bytes);
 }
@@ -312,10 +313,10 @@ fn makeJsonValueDirect(
     @as(*align(1) i64, @ptrCast(bytes + FIELD_SLOT_SIZE * 1)).* = kind;
     @as(*align(1) i64, @ptrCast(bytes + FIELD_SLOT_SIZE * 2)).* = if (b) 1 else 0;
     @as(*align(1) f64, @ptrCast(bytes + FIELD_SLOT_SIZE * 3)).* = n;
-    @as(*align(1) ?[*:0]const u8, @ptrCast(bytes + FIELD_SLOT_SIZE * 4)).* = s;
-    @as(*align(1) ?*anyopaque, @ptrCast(bytes + FIELD_SLOT_SIZE * 5)).* = arr;
-    @as(*align(1) ?*anyopaque, @ptrCast(bytes + FIELD_SLOT_SIZE * 6)).* = keys;
-    @as(*align(1) ?*anyopaque, @ptrCast(bytes + FIELD_SLOT_SIZE * 7)).* = vals;
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 4)).* = abi_ptr.slot(s);
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 5)).* = abi_ptr.slot(arr);
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 6)).* = abi_ptr.slot(keys);
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 7)).* = abi_ptr.slot(vals);
     return raw;
 }
 

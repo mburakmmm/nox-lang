@@ -124,7 +124,14 @@ pub fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u
         }
         const v = try self.newTemp();
         try self.qbeLoad(v, src_slot.qtype, src_slot.qtype, src_slot.slot);
-        if (isHeapManaged(c.info.heap)) try self.emitInlineRetain(v, c.info.heap);
+        if (isHeapManaged(c.info.heap)) {
+            try self.emitInlineRetain(v, c.info.heap);
+        } else if (self.isSpawnRefcountedType(c.info.heap)) {
+            // Task/Channel kapanışa girerken KENDİ referansını alır: kapanışın `_release`i (aşağıda) `destroyNonArcValue` çağırır; retain'siz bu
+            // aşırı serbest bırakma olurdu (ör. bir `Channel[T]` parametresini yakalayan async üreteç; yerel çalışma zamanında sarkan işaretçi ile
+            // maskeleniyordu, wasm32'nin taşma denetimi onu yakaladı).
+            try self.retainNonArcValue(v, c.info.heap);
+        }
         try self.qbeStore(src_slot.qtype, v, addr);
     }
 

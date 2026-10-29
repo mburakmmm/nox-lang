@@ -76,7 +76,7 @@ pub fn genClassVtable(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
             syms[i] = if (s) |entry| try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ entry.owner, entry.name }) else "";
         }
         const vtable_name = try std.fmt.allocPrint(self.allocator, "{s}_vtable", .{class_name});
-        const line = try llvm_emit.llvmPtrArrayConstant(self.allocator, vtable_name, syms);
+        const line = try llvm_emit.llvmPtrArrayConstant(self.allocator, vtable_name, syms, self.isWasmTarget());
         try self.out.writer.writeAll(line);
     }
 }

@@ -73,6 +73,7 @@ const CodegenError = abi.CodegenError;
 const QbeArg = qbe_emit.QbeArg;
 const QbeCallDst = qbe_emit.QbeCallDst;
 const QbeAllocSize = qbe_emit.QbeAllocSize;
+const wasm_abi = @import("wasm_abi_table.zig");
 
 fn llvmTypeName(ty: QbeType) []const u8 {
     return switch (ty) {
@@ -145,6 +146,15 @@ pub fn llvmStrHeaderConstant(allocator: std.mem.Allocator, name: []const u8, pin
     );
 }
 
+fn wasmWordStruct(allocator: std.mem.Allocator, name: []const u8, n_i32: usize, items: []const u8) ![]const u8 {
+    var tys: std.ArrayListUnmanaged(u8) = .empty;
+    for (0..n_i32) |i| {
+        if (i != 0) try tys.appendSlice(allocator, ", ");
+        try tys.appendSlice(allocator, "i32");
+    }
+    return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr constant <{{ {s} }}> <{{ {s} }}>, align 8\n", .{ name, tys.items, items });
+}
+
 /// `syms`i (sembol adları, `$`/`@` ÖN-EKİ OLMADAN) fonksiyon-işaretçisi-
 /// olarak-`i64` DİZİSİNE çeviren bir LLVM GLOBAL sabiti üretir — `layout.
 /// zig`nin `genClassVtable`ı (bkz. onun belge notu, Faz 7 vtable) İçin,
@@ -154,7 +164,17 @@ pub fn llvmStrHeaderConstant(allocator: std.mem.Allocator, name: []const u8, pin
 /// birleşimi YÜZÜNDEN) tetiklendiğinden, `qbeX` seam'İNİN "İSİMLİ metot"
 /// deseninin DIŞINDA, `generateModule`nin direkt-yazıcı ÖRNEĞİYLE TUTARLI
 /// bir "hazırlık yardımcısı" olarak sunulur.
-pub fn llvmPtrArrayConstant(allocator: std.mem.Allocator, name: []const u8, syms: []const []const u8) ![]const u8 {
+pub fn llvmPtrArrayConstant(allocator: std.mem.Allocator, name: []const u8, syms: []const []const u8, wasm: bool) ![]const u8 {
+    if (wasm) {
+        // wasm32: `ptrtoint ... to i64` statik ilklendiricide desteklenmez (R_WASM_*_I64 yalnızca wasm64); her kelime `{ i32 adres, i32 0 }` çifti.
+        var packed_items: std.ArrayListUnmanaged(u8) = .empty;
+        for (syms, 0..) |sym, i| {
+            if (i != 0) try packed_items.appendSlice(allocator, ", ");
+            const entry = if (sym.len == 0) try allocator.dupe(u8, "i32 0, i32 0") else try std.fmt.allocPrint(allocator, "i32 ptrtoint (ptr @{s} to i32), i32 0", .{sym});
+            try packed_items.appendSlice(allocator, entry);
+        }
+        return wasmWordStruct(allocator, name, syms.len * 2, packed_items.items);
+    }
     var items: std.ArrayListUnmanaged(u8) = .empty;
     for (syms, 0..) |sym, i| {
         if (i != 0) try items.appendSlice(allocator, ", ");
@@ -169,7 +189,29 @@ pub fn llvmPtrArrayConstant(allocator: std.mem.Allocator, name: []const u8, syms
 /// `[N x i64]` GLOBAL sabiti — QBE'nin `data $name = { l w1, l w2, ... }`inin
 /// LLVM karşılığı (`decorators.zig` metadata tabloları). Boş liste tek bir
 /// `0` kelimesi yazar.
-pub fn llvmWordArrayConstant(allocator: std.mem.Allocator, name: []const u8, words: []const []const u8) ![]const u8 {
+pub fn llvmWordArrayConstant(allocator: std.mem.Allocator, name: []const u8, words: []const []const u8, wasm: bool) ![]const u8 {
+    if (wasm) {
+        var packed_items: std.ArrayListUnmanaged(u8) = .empty;
+        if (words.len == 0) try packed_items.appendSlice(allocator, "i32 0, i32 0");
+        for (words, 0..) |w, i| {
+            if (i != 0) try packed_items.appendSlice(allocator, ", ");
+            if (w.len > 0 and w[0] == '$') {
+                const body = w[1..];
+                const entry = if (std.mem.indexOfScalar(u8, body, '+')) |plus|
+                    try std.fmt.allocPrint(allocator, "i32 ptrtoint (ptr getelementptr (i8, ptr @{s}, i32 {s}) to i32), i32 0", .{ body[0..plus], body[plus + 1 ..] })
+                else
+                    try std.fmt.allocPrint(allocator, "i32 ptrtoint (ptr @{s} to i32), i32 0", .{body});
+                try packed_items.appendSlice(allocator, entry);
+            } else {
+                // 64-bit sabit: düşük/yüksek 32-bit (little-endian)
+                const v = std.fmt.parseInt(i64, w, 0) catch std.debug.panic("llvmWordArrayConstant: tamsayı olmayan sözcük '{s}'", .{w});
+                const u: u64 = @bitCast(v);
+                const entry = try std.fmt.allocPrint(allocator, "i32 {d}, i32 {d}", .{ @as(i32, @bitCast(@as(u32, @truncate(u)))), @as(i32, @bitCast(@as(u32, @truncate(u >> 32)))) });
+                try packed_items.appendSlice(allocator, entry);
+            }
+        }
+        return wasmWordStruct(allocator, name, (if (words.len == 0) 1 else words.len) * 2, packed_items.items);
+    }
     var items: std.ArrayListUnmanaged(u8) = .empty;
     if (words.len == 0) {
         try items.appendSlice(allocator, "i64 0");
@@ -516,6 +558,14 @@ fn resolveAddrPtr(self: *Codegen, addr: []const u8) CodegenError![]const u8 {
 pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
     const ptr_reg = try resolveAddrPtr(self, addr);
     const old = try self.newTemp();
+    if (isWasm(self)) {
+        // wasm32-wasi tek iş parçacıklıdır (atomics/threads yok): düz yükle-topla-sakla (bkz. runtime/alloc/arc.zig'in wasm kolu).
+        try self.out.writer.print("    {s} = load i64, ptr {s}, align 8\n", .{ old, ptr_reg });
+        const sum = try self.newTemp();
+        try self.out.writer.print("    {s} = add i64 {s}, {d}\n", .{ sum, old, imm });
+        try self.out.writer.print("    store i64 {s}, ptr {s}, align 8\n", .{ sum, ptr_reg });
+        return sum;
+    }
     try self.out.writer.print("    {s} = atomicrmw add ptr {s}, i64 {d} acq_rel\n", .{ old, ptr_reg, imm });
     const new = try self.newTemp();
     try self.out.writer.print("    {s} = add i64 {s}, {d}\n", .{ new, old, imm });
@@ -526,6 +576,13 @@ pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]c
 pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
     const ptr_reg = try resolveAddrPtr(self, addr);
     const old = try self.newTemp();
+    if (isWasm(self)) {
+        try self.out.writer.print("    {s} = load i64, ptr {s}, align 8\n", .{ old, ptr_reg });
+        const diff = try self.newTemp();
+        try self.out.writer.print("    {s} = sub i64 {s}, {d}\n", .{ diff, old, imm });
+        try self.out.writer.print("    store i64 {s}, ptr {s}, align 8\n", .{ diff, ptr_reg });
+        return diff;
+    }
     try self.out.writer.print("    {s} = atomicrmw sub ptr {s}, i64 {d} acq_rel\n", .{ old, ptr_reg, imm });
     const new = try self.newTemp();
     try self.out.writer.print("    {s} = sub i64 {s}, {d}\n", .{ new, old, imm });
@@ -796,6 +853,52 @@ fn renderOperand(self: *Codegen, text: []const u8) CodegenError![]const u8 {
     return text;
 }
 
+/// wasm32 hedefi mi? (`--target wasm32-wasi`; üçlü `wasm32-` ile başlar.)
+pub fn isWasm(self: *const Codegen) bool {
+    return std.mem.startsWith(u8, self.llvm_triple, "wasm32");
+}
+
+/// libc sembolleri (wasi-libc, 32-bit): Nox'un `calls.zig`/`print` kodunun doğrudan çağırdıkları. Runtime'ın `export fn` tablosunda yoktur.
+const libc_abi = std.StaticStringMap(wasm_abi.Entry).initComptime(.{
+    .{ "printf", wasm_abi.Entry{ .params = "P", .ret = 'W' } },
+    .{ "strcmp", wasm_abi.Entry{ .params = "PP", .ret = 'W' } },
+});
+
+/// wasm32'de `$name` çağrısının GERÇEK (32-bit işaretçili) imzası; native hedeflerde ve tabloda olmayan sembollerde `null` (çağrı noktası tipleri aynen kullanılır).
+fn wasmEntry(self: *const Codegen, name: []const u8) ?wasm_abi.Entry {
+    if (!isWasm(self)) return null;
+    return wasm_abi.table.get(name) orelse libc_abi.get(name);
+}
+
+fn wasmClassType(cls: u8) []const u8 {
+    return switch (cls) {
+        'P', 'U', 'W' => "i32",
+        'L' => "i64",
+        'D' => "double",
+        'F' => "float",
+        else => "void",
+    };
+}
+
+/// Bir argümanı çağrılanın gerçek wasm32 sınıfına uyarlar: `i64 -> i32` kırpma (işaretçi/usize/32-bit), `i32 -> i64` işaretli genişletme.
+/// Dönüş: `"<tip> <değer>"` metni. Ek komutlar çağrı satırından ÖNCE yazılır (bkz. `qbeCall`in Faz LLVM.8 notu).
+fn wasmArgText(self: *Codegen, cls: u8, ty: QbeType, rendered: []const u8) CodegenError![]const u8 {
+    const want = wasmClassType(cls);
+    const have = llvmTypeName(ty);
+    if (std.mem.eql(u8, want, have)) return std.fmt.allocPrint(self.allocator, "{s} {s}", .{ want, rendered });
+    if (std.mem.eql(u8, want, "i32") and std.mem.eql(u8, have, "i64")) {
+        const t = try self.newTemp();
+        try self.out.writer.print("    {s} = trunc i64 {s} to i32\n", .{ t, rendered });
+        return std.fmt.allocPrint(self.allocator, "i32 {s}", .{t});
+    }
+    if (std.mem.eql(u8, want, "i64") and std.mem.eql(u8, have, "i32")) {
+        const t = try self.newTemp();
+        try self.out.writer.print("    {s} = sext i32 {s} to i64\n", .{ t, rendered });
+        return std.fmt.allocPrint(self.allocator, "i64 {s}", .{t});
+    }
+    return std.fmt.allocPrint(self.allocator, "{s} {s}", .{ have, rendered });
+}
+
 /// `self.functions`de (BU modülün KENDİSİNİN `define` edeceği üst-düzey
 /// Nox fonksiyonları) KAYITLI OLMAYAN, HENÜZ declare EDİLMEMİŞ direkt-
 /// sembol çağrıları İçin BİR `declare` üretip `llvm_pending_declares`e
@@ -803,15 +906,18 @@ fn renderOperand(self: *Codegen, text: []const u8) CodegenError![]const u8 {
 fn ensureDeclared(self: *Codegen, name: []const u8, ret_str: []const u8, fixed_args: []const QbeArg, variadic: bool) CodegenError!void {
     if (self.llvm_declared_externs.contains(name)) return;
     var params_buf: std.ArrayListUnmanaged(u8) = .empty;
+    const entry = wasmEntry(self, name);
+    const use_entry = if (entry) |e| e.params.len == fixed_args.len else false;
     for (fixed_args, 0..) |arg, i| {
         if (i != 0) try params_buf.appendSlice(self.allocator, ", ");
-        try params_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
+        try params_buf.appendSlice(self.allocator, if (use_entry) wasmClassType(entry.?.params[i]) else llvmTypeName(arg.ty));
     }
     if (variadic) {
         if (fixed_args.len != 0) try params_buf.appendSlice(self.allocator, ", ");
         try params_buf.appendSlice(self.allocator, "...");
     }
-    const decl_line = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_str, name, params_buf.items });
+    const real_ret = if (use_entry) wasmClassType(entry.?.ret) else ret_str;
+    const decl_line = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ real_ret, name, params_buf.items });
     try self.llvm_pending_declares.append(self.allocator, .{ .name = name, .line = decl_line });
     try self.llvm_declared_externs.put(self.allocator, name, {});
 }
@@ -831,12 +937,48 @@ fn resolveCallee(self: *Codegen, func_text: []const u8) CodegenError![]const u8 
     return ptr_reg;
 }
 
+/// Çağrı sonucunu (`entry.ret` sınıfında gerçek wasm32 tipi) Nox'un `dst.ty`sine geri genişletir. `dst` yoksa sonuç atılır.
+fn wasmCallLine(self: *Codegen, dst: ?QbeCallDst, entry: wasm_abi.Entry, callee_text: []const u8, args_text: []const u8, fixed_types: ?[]const u8) CodegenError!void {
+    const real_ret = wasmClassType(entry.ret);
+    const sig = if (fixed_types) |ft| try std.fmt.allocPrint(self.allocator, "{s} ({s}, ...) ", .{ real_ret, ft }) else try std.fmt.allocPrint(self.allocator, "{s} ", .{real_ret});
+    if (dst == null or std.mem.eql(u8, real_ret, "void")) {
+        if (std.mem.eql(u8, real_ret, "void")) {
+            try self.out.writer.print("    call {s}{s}({s})\n", .{ sig, callee_text, args_text });
+        } else {
+            const t = try self.newTemp();
+            try self.out.writer.print("    {s} = call {s}{s}({s})\n", .{ t, sig, callee_text, args_text });
+        }
+        return;
+    }
+    const d = dst.?;
+    const want = llvmTypeName(d.ty);
+    if (std.mem.eql(u8, want, real_ret)) {
+        try self.out.writer.print("    {s} = call {s}{s}({s})\n", .{ d.name, sig, callee_text, args_text });
+        return;
+    }
+    const raw = try self.newTemp();
+    try self.out.writer.print("    {s} = call {s}{s}({s})\n", .{ raw, sig, callee_text, args_text });
+    if (std.mem.eql(u8, real_ret, "i32") and std.mem.eql(u8, want, "i64")) {
+        try self.out.writer.print("    {s} = zext i32 {s} to i64\n", .{ d.name, raw });
+    } else if (std.mem.eql(u8, real_ret, "i64") and std.mem.eql(u8, want, "i32")) {
+        try self.out.writer.print("    {s} = trunc i64 {s} to i32\n", .{ d.name, raw });
+    } else {
+        return error.Unsupported;
+    }
+}
+
 pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []const QbeArg) CodegenError!void {
+    // wasm32'de variadic `printf` imzası `(i32, i32)`dir (ikinci parametre vararg arabelleği): değişken argümansız çağrılar da variadic imzayla yazılmalı.
+    if (isWasm(self) and std.mem.eql(u8, func_text, "$printf")) return qbeCallVariadic(self, dst, func_text, args, &.{});
     if (func_text.len > 0 and func_text[0] == '$') {
         const ret_str = if (dst) |d| llvmTypeName(d.ty) else "void";
         try ensureDeclared(self, func_text[1..], ret_str, args, false);
     }
     const callee_text = try resolveCallee(self, func_text);
+
+    // wasm32: çalışma zamanı sembollerinin gerçek 32-bit işaretçili imzasına uyarla.
+    const entry: ?wasm_abi.Entry = if (func_text.len > 0 and func_text[0] == '$') wasmEntry(self, func_text[1..]) else null;
+    const adapt = if (entry) |e| e.params.len == args.len else false;
 
     // Faz LLVM.8 (bkz. `qbeAlloc`nin belge notu): argümanlar `call ...(`
     // AÇILIŞ satırı YAZILMADAN ÖNCE render EDİLİR — `renderOperand`nin
@@ -849,11 +991,16 @@ pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []
     for (args, 0..) |arg, i| {
         if (i != 0) try args_buf.appendSlice(self.allocator, ", ");
         const rendered = try renderOperand(self, arg.text);
-        try args_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
-        try args_buf.append(self.allocator, ' ');
-        try args_buf.appendSlice(self.allocator, rendered);
+        if (adapt) {
+            try args_buf.appendSlice(self.allocator, try wasmArgText(self, entry.?.params[i], arg.ty, rendered));
+        } else {
+            try args_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
+            try args_buf.append(self.allocator, ' ');
+            try args_buf.appendSlice(self.allocator, rendered);
+        }
     }
 
+    if (adapt) return wasmCallLine(self, dst, entry.?, callee_text, args_buf.items, null);
     if (dst) |d| {
         try self.out.writer.print("    {s} = call {s} {s}({s})\n", .{ d.name, llvmTypeName(d.ty), callee_text, args_buf.items });
     } else {
@@ -871,24 +1018,30 @@ pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, 
         try ensureDeclared(self, func_text[1..], ret_str, fixed, true);
     }
     const callee_text = try resolveCallee(self, func_text);
+    const entry: ?wasm_abi.Entry = if (func_text.len > 0 and func_text[0] == '$') wasmEntry(self, func_text[1..]) else null;
+    const adapt = if (entry) |e| e.params.len == fixed.len else false;
 
     var fixed_types_buf: std.ArrayListUnmanaged(u8) = .empty;
     for (fixed, 0..) |arg, i| {
         if (i != 0) try fixed_types_buf.appendSlice(self.allocator, ", ");
-        try fixed_types_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
+        try fixed_types_buf.appendSlice(self.allocator, if (adapt) wasmClassType(entry.?.params[i]) else llvmTypeName(arg.ty));
     }
 
     // Faz LLVM.8 (bkz. `qbeCall`nin AYNI belge notu): argümanlar `call
     // (...) ...(` AÇILIŞ satırı YAZILMADAN ÖNCE render EDİLİR.
     var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     var first = true;
-    for (fixed) |arg| {
+    for (fixed, 0..) |arg, i| {
         if (!first) try args_buf.appendSlice(self.allocator, ", ");
         first = false;
         const rendered = try renderOperand(self, arg.text);
-        try args_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
-        try args_buf.append(self.allocator, ' ');
-        try args_buf.appendSlice(self.allocator, rendered);
+        if (adapt) {
+            try args_buf.appendSlice(self.allocator, try wasmArgText(self, entry.?.params[i], arg.ty, rendered));
+        } else {
+            try args_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
+            try args_buf.append(self.allocator, ' ');
+            try args_buf.appendSlice(self.allocator, rendered);
+        }
     }
     for (variadic) |arg| {
         if (!first) try args_buf.appendSlice(self.allocator, ", ");
@@ -899,6 +1052,7 @@ pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, 
         try args_buf.appendSlice(self.allocator, rendered);
     }
 
+    if (adapt) return wasmCallLine(self, dst, entry.?, callee_text, args_buf.items, fixed_types_buf.items);
     if (dst) |d| {
         try self.out.writer.print("    {s} = call {s} ({s}, ...) {s}({s})\n", .{ d.name, ret_str, fixed_types_buf.items, callee_text, args_buf.items });
     } else {

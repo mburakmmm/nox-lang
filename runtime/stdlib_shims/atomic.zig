@@ -20,8 +20,34 @@
 //! erişimciler onu güvenle yok sayar (`load` → 0, diğerleri no-op).
 
 const std = @import("std");
+const builtin = @import("builtin");
 
-const Cell = std.atomic.Value(i64);
+/// wasm32-wasi tek iş parçacıklıdır ve 64-bit atomik işlem yoktur: düz bir hücre aynı arayüzü verir.
+const PlainCell = struct {
+    v: i64,
+
+    fn init(x: i64) PlainCell {
+        return .{ .v = x };
+    }
+    fn load(self: *const PlainCell, _: std.builtin.AtomicOrder) i64 {
+        return self.v;
+    }
+    fn store(self: *PlainCell, x: i64, _: std.builtin.AtomicOrder) void {
+        self.v = x;
+    }
+    fn fetchAdd(self: *PlainCell, d: i64, _: std.builtin.AtomicOrder) i64 {
+        const old = self.v;
+        self.v = old +% d;
+        return old;
+    }
+    fn cmpxchgStrong(self: *PlainCell, expected: i64, desired: i64, _: std.builtin.AtomicOrder, _: std.builtin.AtomicOrder) ?i64 {
+        if (self.v != expected) return self.v;
+        self.v = desired;
+        return null;
+    }
+};
+
+const Cell = if (builtin.cpu.arch.isWasm()) PlainCell else std.atomic.Value(i64);
 
 fn cellFromHandle(h: i64) ?*Cell {
     if (h == 0) return null;

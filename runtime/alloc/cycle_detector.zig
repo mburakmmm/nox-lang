@@ -83,7 +83,7 @@ const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .ot
 /// çağrılmadıysa, ör. `noxrt_test`) "çocuğu yok" OLARAK GÜVENLE yorumlanır.
 fn nox_trace_dispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) ?*anyopaque {
     const f = dispatch_registry.traceFn() orelse return null;
-    return f(rt, tag, p);
+    return abi_ptr.ptr(?*anyopaque, f(abi_ptr.arg(rt), tag, abi_ptr.arg(p)));
 }
 
 /// `$ClassName_gc_free(rt, p)`ye dağıtır (bkz. codegen.zig, `genClassGcFree`)
@@ -95,7 +95,7 @@ fn nox_trace_dispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) ?*anyopaque {
 /// bırakır. AYNI `dispatch_registry` gerekçesi (bkz. yukarısı).
 fn nox_gc_free_dispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) void {
     const f = dispatch_registry.gcFreeFn() orelse return;
-    f(rt, tag, p);
+    f(abi_ptr.arg(rt), tag, abi_ptr.arg(p));
 }
 
 // Faz P1.2: ÖNCEDEN buradaki TEK `HEADER_SIZE` sabiti (sayısal olarak
@@ -122,6 +122,21 @@ const COLOR_SHIFT: u6 = 60;
 const COLOR_MASK: u64 = @as(u64, 3) << COLOR_SHIFT;
 const BUFFERED_BIT: u64 = @as(u64, 1) << 62;
 const FLAG_MASK: u64 = IDX_MASK | COLOR_MASK | BUFFERED_BIT;
+
+// wasm32 tek iş parçacıklıdır ve 64-bit atomik işlem sunmaz: düz yükleme/yazma kullanılır.
+const wasm_plain = builtin.cpu.arch.isWasm();
+
+fn hdrLoad(h: *u64) u64 {
+    return if (comptime wasm_plain) h.* else @atomicLoad(u64, h, .monotonic);
+}
+
+fn hdrAnd(h: *u64, m: u64) void {
+    if (comptime wasm_plain) h.* &= m else _ = @atomicRmw(u64, h, .And, m, .monotonic);
+}
+
+fn hdrOr(h: *u64, m: u64) void {
+    if (comptime wasm_plain) h.* |= m else _ = @atomicRmw(u64, h, .Or, m, .monotonic);
+}
 
 fn hdrWord(p: *anyopaque) *u64 {
     const bytes: [*]u8 = @ptrCast(p);
@@ -207,7 +222,7 @@ fn readTag(p: *anyopaque) i64 {
 }
 
 const ChildrenBuf = struct {
-    items: []?*anyopaque,
+    items: []abi_ptr.Slot,
     raw_len: usize,
 
     fn deinit(self: ChildrenBuf, state: *asap.RuntimeState) void {
@@ -268,7 +283,7 @@ fn traceChildren(rt: ?*anyopaque, p: *anyopaque) ChildrenBuf {
     // aritmetiği `len == 0` İÇİN de GEÇERLİDİR, çünkü `children_ptr` yine
     // de `buf + TRACE_BUF_LEN_SIZE`e işaret eder — hiç DEREFERANS edilmese
     // bile).
-    const children_ptr: [*]?*anyopaque = @ptrFromInt(@intFromPtr(buf) + TRACE_BUF_LEN_SIZE);
+    const children_ptr: [*]abi_ptr.Slot = @ptrFromInt(@intFromPtr(buf) + TRACE_BUF_LEN_SIZE);
     return .{ .items = children_ptr[0..len], .raw_len = TRACE_BUF_LEN_SIZE + len * TRACE_BUF_SLOT_SIZE };
 }
 
@@ -305,7 +320,7 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     // Aynı nesne kısa aralıklarla tekrar tekrar bırakılırken (ör. yerel alias'ların
     // kapsam sonu release'i) global kilit + dizi eklemesi tamamen atlanır.
     {
-        const w0 = @atomicLoad(u64, hdrWord(ptr), .monotonic);
+        const w0 = hdrLoad(hdrWord(ptr));
         if (w0 & BUFFERED_BIT != 0 and (w0 & COLOR_MASK) == (@as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT)) return;
     }
     state.cycle_gc_lock.lock();
@@ -318,8 +333,8 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
         // Zaten tamponda (toplamalar arasında buffered ⇒ mor; savunmacı olarak
         // atomik olarak mora çek — başka bir iş parçacığı refcount'u aynı kelimede
         // eşzamanlı değiştiriyor olabilir).
-        _ = @atomicRmw(u64, h, .And, ~COLOR_MASK, .monotonic);
-        _ = @atomicRmw(u64, h, .Or, @as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT, .monotonic);
+        hdrAnd(h, ~COLOR_MASK);
+        hdrOr(h, @as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT);
         return;
     }
     const idx = gc.roots.items.len;
@@ -327,7 +342,7 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     // Refcount'u eşzamanlı artıran/azaltan iş parçacıklarıyla (atomik ARC) çakışmamak
     // için tek atomik OR: renk=mor, buffered, yuva indeksi.
     const set: u64 = BUFFERED_BIT | (@as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT) | ((@as(u64, @intCast(idx)) << IDX_SHIFT) & IDX_MASK);
-    _ = @atomicRmw(u64, h, .Or, set, .monotonic);
+    hdrOr(h, set);
 
     gc.possible_roots_since_collect += 1;
     // Faz MN.6: havuzsuz İSE (BUGÜNKÜ gibi) DOĞRUDAN, SENKRON collect —
@@ -472,7 +487,7 @@ fn markGray(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *any
         var children = traceChildren(rt, ptr);
         defer children.deinit(state);
         for (children.items) |maybe_child| {
-            const child = maybe_child orelse continue;
+            const child = abi_ptr.slotPtr(maybe_child) orelse continue;
             hdrWord(child).* -%= 1;
             if (getColor(child) == .gray) continue;
             setColor(child, .gray);
@@ -505,7 +520,7 @@ fn scan(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaq
         var children = traceChildren(rt, ptr);
         defer children.deinit(state);
         for (children.items) |maybe_child| {
-            const child = maybe_child orelse continue;
+            const child = abi_ptr.slotPtr(maybe_child) orelse continue;
             if (getColor(child) != .gray) continue; // zaten işlenmiş (beyaz/siyah)
             stack.append(state.allocator(), child) catch continue;
         }
@@ -527,7 +542,7 @@ fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, root: *anyopaque) void 
         var children = traceChildren(rt, ptr);
         defer children.deinit(state);
         for (children.items) |maybe_child| {
-            const child = maybe_child orelse continue;
+            const child = abi_ptr.slotPtr(maybe_child) orelse continue;
             hdrWord(child).* +%= 1;
             if (getColor(child) != .black) {
                 stack.append(state.allocator(), child) catch continue;
@@ -565,7 +580,7 @@ fn collectRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
             var children = traceChildren(rt, cur);
             defer children.deinit(state);
             for (children.items) |maybe_child| {
-                const child = maybe_child orelse continue;
+                const child = abi_ptr.slotPtr(maybe_child) orelse continue;
                 if (getColor(child) != .white) continue;
                 setColor(child, .black);
                 stack.append(state.allocator(), child) catch continue;
@@ -610,13 +625,13 @@ fn fakeTraceDispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) ?*a
     // Sahte nesnenin TEK alanı, etiketten (`TAG_SIZE`) HEMEN SONRA oturur —
     // bu, ARC başlığı/trace-buffer'la SAYISAL olarak ÇAKIŞSA da AYRI bir
     // ABI gerçeğidir (bkz. `abi_layout.TAG_SIZE`nin belge notu).
-    const field_addr: *const ?*anyopaque = @ptrFromInt(@intFromPtr(p.?) + TAG_SIZE);
+    const field_addr: *const abi_ptr.Slot = @ptrFromInt(@intFromPtr(p.?) + TAG_SIZE);
     // `ChildrenBuf.deinit`in (asap.nox_alloc_alignment İLE) serbest
     // bıraktığı AYNI hizalama İLE tahsis edilmeli.
     const buf = state.allocator().alignedAlloc(u8, asap.nox_alloc_alignment, TRACE_BUF_LEN_SIZE + TRACE_BUF_SLOT_SIZE) catch return null;
     const len_ptr: *i64 = @ptrCast(@alignCast(buf.ptr));
     len_ptr.* = 1;
-    const child_ptr: *?*anyopaque = @ptrFromInt(@intFromPtr(buf.ptr) + TRACE_BUF_LEN_SIZE);
+    const child_ptr: *abi_ptr.Slot = @ptrFromInt(@intFromPtr(buf.ptr) + TRACE_BUF_LEN_SIZE);
     child_ptr.* = field_addr.*;
     return buf.ptr;
 }
@@ -657,8 +672,8 @@ pub fn injectFakeDispatch() void {
 /// stres testi de BU sahte A<->B döngü kurma desenini yeniden kullanır.
 pub fn wireField(p: *anyopaque, child: *anyopaque) void {
     arc.nox_rc_retain(child);
-    const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
-    field_addr.* = child;
+    const field_addr: *abi_ptr.Slot = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
+    field_addr.* = abi_ptr.slot(child);
 }
 
 /// Faz MN.3b: `pub` — bkz. `FAKE_PAYLOAD_SIZE`in belge notu.
@@ -666,8 +681,8 @@ pub fn newFakeObject(rt: ?*anyopaque) *anyopaque {
     const p = arc.nox_rc_alloc(rt, FAKE_PAYLOAD_SIZE).?;
     const tag_ptr: *i64 = @ptrCast(@alignCast(p));
     tag_ptr.* = 99; // keyfi, `fakeTraceDispatch` tag'e hiç BAKMIYOR
-    const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
-    field_addr.* = null;
+    const field_addr: *abi_ptr.Slot = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
+    field_addr.* = abi_ptr.slot(@as(?*anyopaque, null));
     return p;
 }
 
@@ -720,8 +735,8 @@ pub const FAKE_PAYLOAD_SIZE_2: usize = TAG_SIZE + 2 * FIELD_SLOT_SIZE;
 /// alanına `child`i yazar (retain EDEREK).
 fn wireFieldAt(p: *anyopaque, slot: usize, child: *anyopaque) void {
     arc.nox_rc_retain(child);
-    const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE + slot * FIELD_SLOT_SIZE);
-    field_addr.* = child;
+    const field_addr: *abi_ptr.Slot = @ptrFromInt(@intFromPtr(p) + TAG_SIZE + slot * FIELD_SLOT_SIZE);
+    field_addr.* = abi_ptr.slot(child);
 }
 
 /// `newFakeObject`in 2-alanlı kardeşi — `tag=2` (aşağıdaki `fakeTraceDispatchDiamond`/
@@ -733,8 +748,8 @@ fn newFakeObject2(rt: ?*anyopaque) *anyopaque {
     tag_ptr.* = 2;
     var i: usize = 0;
     while (i < 2) : (i += 1) {
-        const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE + i * FIELD_SLOT_SIZE);
-        field_addr.* = null;
+        const field_addr: *abi_ptr.Slot = @ptrFromInt(@intFromPtr(p) + TAG_SIZE + i * FIELD_SLOT_SIZE);
+        field_addr.* = abi_ptr.slot(@as(?*anyopaque, null));
     }
     return p;
 }
@@ -752,10 +767,10 @@ fn fakeTraceDispatchDiamond(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(
     const buf = state.allocator().alignedAlloc(u8, asap.nox_alloc_alignment, TRACE_BUF_LEN_SIZE + n_fields * TRACE_BUF_SLOT_SIZE) catch return null;
     const len_ptr: *i64 = @ptrCast(@alignCast(buf.ptr));
     len_ptr.* = @intCast(n_fields);
-    const children_ptr: [*]?*anyopaque = @ptrFromInt(@intFromPtr(buf.ptr) + TRACE_BUF_LEN_SIZE);
+    const children_ptr: [*]abi_ptr.Slot = @ptrFromInt(@intFromPtr(buf.ptr) + TRACE_BUF_LEN_SIZE);
     var i: usize = 0;
     while (i < n_fields) : (i += 1) {
-        const field_addr: *const ?*anyopaque = @ptrFromInt(@intFromPtr(p.?) + TAG_SIZE + i * FIELD_SLOT_SIZE);
+        const field_addr: *const abi_ptr.Slot = @ptrFromInt(@intFromPtr(p.?) + TAG_SIZE + i * FIELD_SLOT_SIZE);
         children_ptr[i] = field_addr.*;
     }
     return buf.ptr;
@@ -789,6 +804,7 @@ fn simulateRelease(rt: ?*anyopaque, p: *anyopaque) void {
 }
 
 const builtin = @import("builtin");
+const abi_ptr = @import("../abi_ptr.zig");
 
 fn deinitRuntimeExpectNoLeak(rt: ?*anyopaque) !void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));

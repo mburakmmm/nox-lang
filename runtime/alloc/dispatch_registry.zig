@@ -17,11 +17,12 @@ const std = @import("std");
 /// alanlar `null` KALIR, HER tüketici BUNU ESKİ dlsym'in "bulunamadı"
 /// durumuyla BİREBİR AYNI şekilde (sessiz no-op/güvenli varsayılan) ele
 /// alır — SIFIR davranış değişikliği.
-pub const TraceFn = *const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) ?*anyopaque;
-pub const GcFreeFn = *const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void;
-pub const ClassReleaseFn = *const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void;
-pub const ClassNameFn = *const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) [*:0]const u8;
-pub const MakeJsonValueFn = *const fn (rt: ?*anyopaque, kind: i64, b: i32, n: f64, s: ?[*:0]const u8, arr: ?*anyopaque, keys: ?*anyopaque, vals: ?*anyopaque) callconv(.c) ?*anyopaque;
+const abi_ptr = @import("../abi_ptr.zig");
+pub const TraceFn = *const fn (abi_ptr.Arg, i64, abi_ptr.Arg) callconv(.c) abi_ptr.Arg;
+pub const GcFreeFn = *const fn (abi_ptr.Arg, i64, abi_ptr.Arg) callconv(.c) void;
+pub const ClassReleaseFn = *const fn (abi_ptr.Arg, i64, abi_ptr.Arg) callconv(.c) void;
+pub const ClassNameFn = *const fn (abi_ptr.Arg, i64, abi_ptr.Arg) callconv(.c) if (abi_ptr.is_wasm) u64 else [*:0]const u8;
+pub const MakeJsonValueFn = *const fn (rt: abi_ptr.Arg, kind: i64, b: i32, n: f64, s: abi_ptr.Arg, arr: abi_ptr.Arg, keys: abi_ptr.Arg, vals: abi_ptr.Arg) callconv(.c) abi_ptr.Arg;
 
 // Faz F.0.1: `pool_ever_active`/`fiber_ever_active`nin (bkz. `asap.zig`)
 // AYNI, ZATEN kanıtlanmış "TEK yazma, HERHANGİ bir fiber/iş parçacığı

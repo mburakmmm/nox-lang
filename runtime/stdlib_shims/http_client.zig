@@ -55,6 +55,7 @@ const dict_mod = @import("../collections/dict.zig");
 const bridge = @import("../async_rt/bridge.zig");
 const io_mod = @import("../async_rt/io.zig");
 const str_mod = @import("../str.zig");
+const shim_util = @import("shim_util.zig");
 /// Faz F.0.6 (bkz. plan dosyası "gizli http_client.zig bağımlılığının
 /// KESİLMESİ"): `makeSelfPipe`/`closeFd`/`signalSelfPipe`/`readSelfPipe`
 /// ÖNCEDEN BURADA tanımlıydı — `async_rt/thread_channel.zig`/`thread_
@@ -583,8 +584,8 @@ pub fn copyHeaders(allocator: std.mem.Allocator, headers_dict: ?*anyopaque) ![]s
         allocator.free(h.value);
     };
     for (d.entries.items) |e| {
-        const key_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(e.key)));
-        const value_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(e.value)));
+        const key_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(e.key)))));
+        const value_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(e.value)))));
         const key = str_mod.nox_str_slice(key_ptr);
         const value = str_mod.nox_str_slice(value_ptr);
         if (containsCrOrLf(key) or containsCrOrLf(value)) return error.InvalidHeaderValue;
@@ -786,7 +787,7 @@ export fn nox_http_response_headers(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c
     for (ctx.response_headers) |header| {
         const key_str = dupeToNoxStr(rt, header.name) orelse continue;
         const value_str = dupeToNoxStr(rt, header.value) orelse continue;
-        dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(key_str)), @bitCast(@intFromPtr(value_str)));
+        dict_mod.nox_dict_set(rt, d, 1, 1, 0, @as(i64, @bitCast(@as(u64, @intFromPtr(key_str)))), @as(i64, @bitCast(@as(u64, @intFromPtr(value_str)))));
         // `nox_dict_set` KENDİ kopyasını SAKLAR (str'i doğrudan payload
         // olarak depolar, bkz. onun belge notu — "sahiplik ÇAĞIRANDAN
         // devralınır") — `dupeToNoxStr`nin ürettiği YENİ referans artık
@@ -795,13 +796,8 @@ export fn nox_http_response_headers(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c
     return d;
 }
 
-/// Bir C bayt dizisini YENİ, sıfırla-sonlanan, paketlenmiş uzunluk+ascii
-/// başlıklı bir Nox `str`ine kopyalar — `runtime/str.zig`nin KANONİK
-/// `nox_str_from_bytes` sarmalayıcısı (bkz. onun belge notu — `str`e
-/// uzunluk alanı + ASCII bayrağı eklenmesinden BERİ TEK doğru yol).
-pub fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
-    return str_mod.nox_str_from_bytes(rt, bytes);
-}
+/// Bkz. `shim_util.zig` — yeniden dışa aktarım (eski çağıranlar için).
+pub const dupeToNoxStr = shim_util.dupeToNoxStr;
 
 /// Tutamacı VE İÇİNDEKİ TÜM (henüz `nox_http_response_body`/`headers`
 /// aracılığıyla Nox'a devredilmemiş dahi olsa) ham arabellekleri serbest

@@ -78,7 +78,7 @@ const diag_sink = @import("diag_sink");
 
 comptime {
     if (builtin.os.tag != .macos and builtin.os.tag != .ios and builtin.os.tag != .linux and
-        builtin.os.tag != .windows and builtin.os.tag != .freestanding and builtin.os.tag != .other)
+        builtin.os.tag != .windows and builtin.os.tag != .freestanding and builtin.os.tag != .other and builtin.os.tag != .wasi)
     {
         @compileError("io_reactor.zig is currently implemented only for macOS (kqueue), Linux (epoll), Windows (WSAPoll) and freestanding/other (the NullReactor stub, see Phase F.0.7) (see the module header note)");
     }
@@ -722,7 +722,7 @@ const WindowsReactor = if (builtin.os.tag == .windows) struct {
 /// (bkz. plan dosyasının "Araştırma bulguları"). `init` BAŞARILI dönmelidir
 /// (`Scheduler.init`in KENDİSİ BAŞARISIZ OLMASIN diye) — diğer TÜM metodlar
 /// `error.Unsupported` döner (asla GERÇEKTEN çağrılamayacakları KANITLANDI).
-const NullReactor = if (builtin.os.tag == .freestanding or builtin.os.tag == .other) struct {
+const NullReactor = if (builtin.os.tag == .freestanding or builtin.os.tag == .other or builtin.os.tag == .wasi) struct {
     pub fn init() !@This() {
         return .{};
     }
@@ -757,7 +757,7 @@ else if (builtin.os.tag == .linux)
     EpollReactor
 else if (builtin.os.tag == .windows)
     WindowsReactor
-else if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
+else if (builtin.os.tag == .freestanding or builtin.os.tag == .other or builtin.os.tag == .wasi)
     NullReactor
 else
     @compileError("unsupported platform (see the module-level comptime check)");

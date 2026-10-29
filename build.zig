@@ -232,6 +232,36 @@ fn addHostedRuntimeChain(
 
 /// Mobil hosted runtime. Masaüstü `zig build` bu nesnelere bağlı değildir;
 /// `zig build mobile-rt` dört üçlüyü de üretir ve SDK/libc hatasını yutmaz.
+/// v2.0.76 (Faz 10, WASM): `noxrt-wasm32-wasi.o` — LLVM backend'in `wasm32-wasi` hedefi için çalışma zamanı. Kök `runtime/lib_wasm.zig`
+/// (OS iş parçacığı / soket / dlopen / fiber yığın değiştirme İÇERMEZ; async, aynı yığında yuvalanmış bir benzetimle çalışır).
+fn addWasmRuntimeChain(b: *std.Build, optimize: std.builtin.OptimizeMode, root: []const u8, install_name: []const u8) *std.Build.Step {
+    const os_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .wasi, .abi = .musl });
+    const abi_layout_mod = b.createModule(.{
+        .root_source_file = b.path("shared/abi_layout.zig"),
+        .target = os_target,
+        .optimize = optimize,
+    });
+    const diag_sink_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .target = os_target,
+        .optimize = optimize,
+    });
+    const mod = b.createModule(.{
+        .root_source_file = b.path(root),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
+    });
+    const obj = b.addObject(.{ .name = install_name, .root_module = mod });
+    const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
+    install.step.dependOn(&obj.step);
+    return &install.step;
+}
+
 fn addMobileRuntimeChain(
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
@@ -937,6 +967,8 @@ pub fn build(b: *std.Build) void {
     }, "x86_64-linux-android", "x86_64-linux-android24", "", "noxrt-android-x64");
     mobile_rt_step.dependOn(android_arm64_rt);
     mobile_rt_step.dependOn(android_x64_rt);
+    const wasm_rt_step = b.step("wasm-rt", "Build the noxrt object for wasm32-wasi");
+    wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi"));
     const mobile_rt_simulator = b.step("mobile-rt-simulator", "Build the iOS simulator noxrt object");
     mobile_rt_simulator.dependOn(simulator_rt);
     const mobile_rt_android = b.step("mobile-rt-android", "Build the Android noxrt objects");
@@ -2040,4 +2072,36 @@ pub fn build(b: *std.Build) void {
     // deseni (satır ~754).
     target_flag_test.step.dependOn(b.getInstallStep());
     test_step.dependOn(&addTimedTestRun(b, target_flag_test, win_test_timeout_s).step);
+
+    // Faz 10 (WASM): `--target wasm32-wasi` uçtan uca — hem hızlı bir duman kümesi (`test`in parçası; `node`/`zig` yoksa atlar) hem TÜM korpus
+    // (opt-in, yavaş: `zig build wasm-corpus-test`).
+    const wasm_options = b.addOptions();
+    wasm_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
+    wasm_options.addOption([]const u8, "runner_path", "tests/golden/wasm_run.mjs");
+    const wasm_target_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/wasm_target_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = wasm_options.createModule() },
+        },
+    });
+    const wasm_target_test = b.addTest(.{ .root_module = wasm_target_mod });
+    wasm_target_test.step.dependOn(b.getInstallStep());
+    wasm_target_test.step.dependOn(wasm_rt_step);
+    test_step.dependOn(&addTimedTestRun(b, wasm_target_test, win_test_timeout_s).step);
+
+    const wasm_corpus_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/wasm_corpus_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = wasm_options.createModule() },
+        },
+    });
+    const wasm_corpus_test = b.addTest(.{ .root_module = wasm_corpus_mod });
+    wasm_corpus_test.step.dependOn(b.getInstallStep());
+    wasm_corpus_test.step.dependOn(wasm_rt_step);
+    const wasm_corpus_test_step = b.step("wasm-corpus-test", "codegen_cases korpusunun TAMAMINI wasm32-wasi'de (Node WASI) çalıştırıp native .expected ile karşılaştırır — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
+    wasm_corpus_test_step.dependOn(&addTimedTestRun(b, wasm_corpus_test, win_test_timeout_s).step);
 }

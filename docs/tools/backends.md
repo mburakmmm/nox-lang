@@ -16,7 +16,7 @@ Nox compiles the typed program to one of two back ends, which are tested against
 
 `--backend llvm` and `--backend qbe` always win. Otherwise (`auto`):
 
-1. **freestanding** builds, desktop `--target`, `--emit-asm` and `-g` → QBE. Mobile names (`ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64`) stay on LLVM; `--backend qbe` is an error;
+1. **freestanding** builds, desktop `--target`, `--emit-asm` and `-g` → QBE. Mobile names (`ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64`) and `wasm32-wasi` stay on LLVM; `--backend qbe` is an error;
 2. on **Windows**, LLVM when `zig` is installed (it links with `zig cc -target x86_64-windows-gnu`), otherwise QBE with MinGW `cc`;
 3. on macOS and Linux, LLVM when `clang` or `zig` is on `PATH`; with neither, QBE and a one-line note;
 4. otherwise LLVM.
@@ -42,7 +42,7 @@ Both back ends implement exactly the language in the [reference](../language/ind
 |---|---|
 | Parallelism: tasks run on a worker pool (LLVM) or interleave on one thread (QBE) | write tasks that are correct under both; communicate with channels |
 | `spawn`/`nox.thread.start` argument types are wider on LLVM | stay within the QBE set for portable code ([Concurrency](../language/concurrency.md#the-scheduler)) |
-| `-g`, desktop `--target`, `--emit-asm`, freestanding exist only on QBE | choose `--backend qbe` for those. Mobile targets are LLVM |
+| `-g`, desktop `--target`, `--emit-asm`, freestanding exist only on QBE | choose `--backend qbe` for those. Mobile targets and `wasm32-wasi` are LLVM |
 | speed | LLVM is faster; neither is a semantic choice |
 
 Both back ends are run over the entire golden corpus on every change, and a differential test compares their output.

@@ -30,7 +30,7 @@ A breaking manifest needs a new schema version. An older reader rejects that ver
 
 ## WebAssembly
 
-WASM remains a library import, not a compilation target. Exports go through the same opaque-handle rule as other foreign calls. `runtime/wasm_bridge/` holds the parser and the runtime glue. That bridge is not part of the `nox-hpy-host-v1` package profile.
+WASM as a *library import* is separate from WASM as a *compilation target*. Importing a module goes through the embedded interpreter; compiling Nox itself to WebAssembly is `--target wasm32-wasi` ([WebAssembly](../tools/wasm.md)). Exports go through the same opaque-handle rule as other foreign calls. `runtime/wasm_bridge/` holds the parser and the runtime glue. That bridge is not part of the `nox-hpy-host-v1` package profile.
 
 ## Host contract policy
 

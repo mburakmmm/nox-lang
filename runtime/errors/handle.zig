@@ -20,6 +20,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const abi_ptr = @import("../abi_ptr.zig");
 const asap = @import("../alloc/asap.zig");
 const abi_layout = @import("abi_layout");
 const bridge = @import("../async_rt/bridge.zig");
@@ -138,7 +139,7 @@ export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
     if (pe.obj.*) |obj| {
         const tag: *const i64 = @ptrCast(@alignCast(obj));
         if (dispatch_registry.classNameFn()) |f| {
-            class_name = f(rt, tag.*, obj);
+            class_name = abi_ptr.cstr(f(abi_ptr.arg(rt), tag.*, abi_ptr.arg(obj)));
         }
     }
     diag_sink.report(rt, "nox: uncaught exception: {s} (line {d}) — terminating the program\n", .{ class_name, line });

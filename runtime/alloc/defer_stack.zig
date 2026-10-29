@@ -27,16 +27,17 @@
 const std = @import("std");
 const asap = @import("asap.zig");
 
-const PTR_SIZE: usize = @sizeOf(?*anyopaque);
+const abi_ptr = @import("../abi_ptr.zig");
+const PTR_SIZE: usize = @sizeOf(abi_ptr.Slot);
 const INITIAL_CAP: usize = 4;
 
 /// Closure çağrı imzası — `genClosureFunc`nin ürettiği GERÇEK fonksiyonlarla
 /// (gizli `%env` parametresi, RT_PARAM'dan HEMEN SONRA) VE `genClosureRelease`nin
 /// ürettiği `$<mangled>_release(rt, p)` İLE AYNI: `(rt, closure_ptr) -> void`.
-const ClosureFn = *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void;
+const ClosureFn = *const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void;
 
 pub const DeferStack = extern struct {
-    items: ?[*]?*anyopaque = null,
+    items: ?[*]abi_ptr.Slot = null,
     len: usize = 0,
     cap: usize = 0,
 };
@@ -58,7 +59,7 @@ export fn nox_defer_stack_push(rt: ?*anyopaque, stack_ptr: ?*anyopaque, closure_
     if (stack.len == stack.cap) {
         const new_cap: usize = if (stack.cap == 0) INITIAL_CAP else stack.cap * 2;
         const new_raw = asap.nox_alloc(rt, new_cap * PTR_SIZE) orelse return;
-        const new_items: [*]?*anyopaque = @ptrCast(@alignCast(new_raw));
+        const new_items: [*]abi_ptr.Slot = @ptrCast(@alignCast(new_raw));
         if (stack.items) |old| {
             @memcpy(new_items[0..stack.len], old[0..stack.len]);
             asap.nox_free(rt, @ptrCast(old), stack.cap * PTR_SIZE);
@@ -66,7 +67,7 @@ export fn nox_defer_stack_push(rt: ?*anyopaque, stack_ptr: ?*anyopaque, closure_
         stack.items = new_items;
         stack.cap = new_cap;
     }
-    stack.items.?[stack.len] = closure_ptr;
+    stack.items.?[stack.len] = abi_ptr.slot(closure_ptr);
     stack.len += 1;
 }
 
@@ -81,12 +82,12 @@ export fn nox_defer_stack_run_all(rt: ?*anyopaque, stack_ptr: ?*anyopaque) callc
     var i = stack.len;
     while (i > 0) {
         i -= 1;
-        const closure = stack.items.?[i] orelse continue;
-        const header: [*]?*anyopaque = @ptrCast(@alignCast(closure));
-        const call_fn: ClosureFn = @ptrCast(@alignCast(header[0]));
-        call_fn(rt, closure);
-        const release_fn: ClosureFn = @ptrCast(@alignCast(header[1]));
-        release_fn(rt, closure);
+        const closure = abi_ptr.slotPtr(stack.items.?[i]) orelse continue;
+        const header: [*]abi_ptr.Slot = @ptrCast(@alignCast(closure));
+        const call_fn: ClosureFn = abi_ptr.ptr(ClosureFn, header[0]);
+        call_fn(abi_ptr.arg(rt), abi_ptr.arg(closure));
+        const release_fn: ClosureFn = abi_ptr.ptr(ClosureFn, header[1]);
+        release_fn(abi_ptr.arg(rt), abi_ptr.arg(closure));
     }
     if (stack.items) |items| asap.nox_free(rt, @ptrCast(items), stack.cap * PTR_SIZE);
     asap.nox_free(rt, stack, @sizeOf(DeferStack));
