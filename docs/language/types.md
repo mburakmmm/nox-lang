@@ -89,7 +89,16 @@ print(names, table, pair, len(unique))
 ```
 
 The same holds for empty literals nested inside a literal whose type is known: `grid: list[list[int]] = [[], [1, 2]]` and
-`index: dict[str, list[int]] = {"a": []}` are accepted.
+`index: dict[str, list[int]] = {"a": []}` are accepted. The type also flows into these places:
+
+- assignment to an optional variable: `found: list[str] | None = None` then `found = []`;
+- the element of a comprehension whose result type is known: `rows: list[list[int]] = [[] for i in range(3)]`, `table: dict[str, list[int]] = {k: [] for k in keys}`;
+- the argument of `append`, `insert` and `extend` on a typed list: `grid.append([])`;
+- the right operand of `+` / `+=` on lists: `grid += [[]]`;
+- both branches of a conditional expression: `r: list[int] = [] if empty else [1]`;
+- the default of `get`: `table.get("k", [])`.
+
+An empty literal with no surrounding type (`len([])`) is still an error: declare the type first.
 
 See [Expressions](expressions.md) and [Built-in functions](builtins.md) for the operations on collections.
 

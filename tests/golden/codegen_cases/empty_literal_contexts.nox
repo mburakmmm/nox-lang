@@ -1,0 +1,54 @@
+# Boş `[]` / `{}` literallerinin tipi bağlamdan gelir: Optional'a atama, liste/sözlük üreteci elemanı, append/insert argümanı,
+# `+`/`+=` sağ operandı, üçlü ifade dalları ve `d.get(k, [])` varsayılanı.
+class Box:
+    def __init__(self, items: list[list[int]], tags: dict[str, list[str]]) -> None:
+        self.items = items
+        self.tags = tags
+
+    def add(self, extra: list[int]) -> None:
+        self.items.append(extra)
+        self.items.append([])
+        self.items.insert(0, [])
+
+def pick(flag: bool) -> list[list[int]]:
+    return [] if flag else [[], [1]]
+
+o: list[str] | None = None
+print(o is None)
+o = []
+print(o is not None)
+if o is not None:
+    print(len(o))
+
+grid: list[list[int]] = [[] for i in range(3)]
+grid[1].append(7)
+print(len(grid), len(grid[0]), len(grid[1]))
+table: dict[str, list[int]] = {k: [] for k in ["a", "b"]}
+print(len(table), len(table["a"]))
+
+xs: list[list[int]] = []
+xs.append([])
+xs.append([1, 2])
+xs.insert(0, [])
+print(len(xs), len(xs[1]), len(xs[2]))
+xs += [[]]
+xs = xs + [[3], []]
+print(len(xs))
+
+r: list[int] = [] if len(xs) == 0 else [1]
+print(len(r))
+print(len(pick(True)), len(pick(False)))
+
+b: Box = Box([[]], {"a": []})
+b.add([])
+b.add([4])
+print(len(b.items))
+
+d: dict[str, list[int]] = {}
+d["k"] = [1]
+print(d["k"][0], len(d.get("z", [])), len(d.get("k", [])))
+
+rows: list[dict[str, list[int]]] = []
+rows.append({})
+rows.append({"q": []})
+print(len(rows), len(rows[1]))

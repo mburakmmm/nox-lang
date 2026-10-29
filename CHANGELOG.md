@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.70]
+
+### Eklendi
+
+- Boş `[]` / `{}` literallerinin tipi artık şu bağlamlardan da çıkarılır: Optional değişkene atama (`y = []`), liste/sözlük üreteci elemanı (`[[] for i in range(3)]`), `append`/`insert`/`extend` argümanı, listelerde `+`/`+=` sağ operandı, üçlü ifade dalları ve `d.get(k, [])` varsayılanı (Faz 8.4 kapandı).
+
 ## [2.0.69]
 
 ### Eklendi

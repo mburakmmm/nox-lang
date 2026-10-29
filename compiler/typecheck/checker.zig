@@ -6235,7 +6235,18 @@ pub const Checker = struct {
         return then_t;
     }
 
-    fn checkExprExpected(self: *Checker, ctx: *FnCtx, expr: ast.Expr, expected: ?Type) TypeError!Type {
+    fn checkExprExpected(self: *Checker, ctx: *FnCtx, expr: ast.Expr, expected_in: ?Type) TypeError!Type {
+        var expected = expected_in;
+        // `y: list[str] | None = []` / `y = []`: boş (ya da iç içe boş içeren) literal Optional'ın taşıdığı tipten beklenen tip alır.
+        if (expected) |exp| {
+            if (exp == .optional and (expr == .list_lit or expr == .dict_lit or expr == .list_comp or expr == .dict_comp) and
+                (exp.optional.* == .list or exp.optional.* == .dict))
+            {
+                expected = exp.optional.*;
+            }
+        }
+        if (expr == .list_comp) if (expected) |exp| if (exp == .list) return self.checkListCompExpected(ctx, expr.list_comp, exp.list.*);
+        if (expr == .dict_comp) if (expected) |exp| if (exp == .dict) return self.checkDictCompExpected(ctx, expr.dict_comp, exp.dict.value.*);
         if (expr == .lambda) return self.checkLambda(ctx, expr.lambda, expected);
         if (expr == .tuple_lit) return self.checkTupleLit(ctx, expr.tuple_lit, expected);
         if (expr == .ternary) return self.checkTernary(ctx, expr.ternary, expected);
@@ -6919,7 +6930,8 @@ pub const Checker = struct {
         var right_n: NarrowList = .{};
         if (b.op == .and_ or b.op == .or_) collectNarrows(b.left.*, ctx.scope, b.op == .and_, &right_n);
         const right_saved = try self.applyNarrows(ctx, &right_n);
-        const r_res = self.checkExpr(ctx, b.right.*);
+        // `xs + [[]]` / `xs += [[]]`: sağdaki liste literali sol operandın tipini beklenen tip olarak alır (boş/iç içe boş literaller için).
+        const r_res = if (b.op == .add and l == .list and b.right.* == .list_lit) self.checkExprExpected(ctx, b.right.*, l) else self.checkExpr(ctx, b.right.*);
         self.restoreNarrows(ctx, &right_n, right_saved);
         const r = try r_res;
         if (try self.tryOperatorOverload(ctx, b, l, r)) |t| return t;
@@ -8797,7 +8809,7 @@ pub const Checker = struct {
                         // sıralaması ayrı bir risk kategorisidir.
                         try self.checkGrowableListRecv(ctx, a, "append", "xs.append(v)");
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' takes exactly 1 argument", .{});
-                        const vt = try self.checkExpr(ctx, c.args[0]);
+                        const vt = try self.checkExprExpected(ctx, c.args[0], obj_t.list.*);
                         if (!try self.assignableOrCoerce(obj_t.list.*, vt, &c.args[0])) return self.fail(error.TypeMismatch, "the argument of 'append' does not match the list's element type", .{});
                         return .none;
                     }
@@ -8865,7 +8877,7 @@ pub const Checker = struct {
                         if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'insert' takes exactly 2 arguments (index, value)", .{});
                         const it = try self.checkExpr(ctx, c.args[0]);
                         if (it != .int) return self.fail(error.TypeMismatch, "the index of 'insert' must be an 'int'", .{});
-                        const vt = try self.checkExpr(ctx, c.args[1]);
+                        const vt = try self.checkExprExpected(ctx, c.args[1], obj_t.list.*);
                         if (!try self.assignableOrCoerce(obj_t.list.*, vt, &c.args[1])) return self.fail(error.TypeMismatch, "the value of 'insert' does not match the list's element type", .{});
                         return .none;
                     }
@@ -8995,12 +9007,17 @@ pub const Checker = struct {
 
     /// v1.154.0: `[elem for x in it if c ...]` → `list[T]`.
     fn checkListComp(self: *Checker, ctx: *FnCtx, lc: ast.ListComp) TypeError!Type {
+        return self.checkListCompExpected(ctx, lc, null);
+    }
+
+    /// `elem_expected`: bağlamdan gelen eleman tipi (`n: list[list[int]] = [[] for i in range(3)]`: boş `[]` tipini buradan alır).
+    fn checkListCompExpected(self: *Checker, ctx: *FnCtx, lc: ast.ListComp, elem_expected: ?Type) TypeError!Type {
         var saved: std.ArrayListUnmanaged(SavedCompVar) = .empty;
         defer saved.deinit(self.allocator);
         self.comp_depth += 1;
         defer self.comp_depth -= 1;
         try self.checkCompClauses(ctx, lc.clauses, &saved);
-        const elem_t = try self.checkExpr(ctx, lc.elem.*);
+        const elem_t = try self.checkExprExpected(ctx, lc.elem.*, elem_expected);
         restoreCompScope(ctx, &saved);
         if (elem_t == .none) return self.fail(error.TypeMismatch, "the comprehension element must produce a value", .{});
         const boxed = try self.allocator.create(Type);
@@ -9012,13 +9029,17 @@ pub const Checker = struct {
 
     /// v1.154.0: `{k: v for x in it if c ...}` → `dict[K, V]` (anahtar/değer tipleri `dict[K, V]` kurallarıyla aynı).
     fn checkDictComp(self: *Checker, ctx: *FnCtx, dc: ast.DictComp) TypeError!Type {
+        return self.checkDictCompExpected(ctx, dc, null);
+    }
+
+    fn checkDictCompExpected(self: *Checker, ctx: *FnCtx, dc: ast.DictComp, value_expected: ?Type) TypeError!Type {
         var saved: std.ArrayListUnmanaged(SavedCompVar) = .empty;
         defer saved.deinit(self.allocator);
         self.comp_depth += 1;
         defer self.comp_depth -= 1;
         try self.checkCompClauses(ctx, dc.clauses, &saved);
         const key_t = try self.checkExpr(ctx, dc.key.*);
-        const value_t = try self.checkExpr(ctx, dc.value.*);
+        const value_t = try self.checkExprExpected(ctx, dc.value.*, value_expected);
         restoreCompScope(ctx, &saved);
         if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float) {
             return self.fail(error.TypeMismatch, "the 'dict' key type can only be int/float/bool/str", .{});
@@ -9313,7 +9334,7 @@ pub const Checker = struct {
         if (obj_t != .list) return false;
         try self.checkGrowableListRecv(ctx, a, "extend", "xs.extend(ys)");
         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'extend' takes exactly 1 argument", .{});
-        const ot = try self.checkExpr(ctx, c.args[0]);
+        const ot = try self.checkExprExpected(ctx, c.args[0], obj_t);
         if (!types.eql(ot, obj_t)) return self.fail(error.TypeMismatch, "the argument of 'extend' must be of the same list[T] type", .{});
 
         self.extend_counter += 1;

@@ -487,6 +487,7 @@ pub const Codegen = struct {
     pub const genBinary = expr_mod.genBinary;
     pub const genTernary = expr_mod.genTernary;
     pub const genTernaryBranch = expr_mod.genTernaryBranch;
+    pub const genTernaryBranchForTarget = expr_mod.genTernaryBranchForTarget;
     pub const genIn = expr_mod.genIn;
     pub const emitListFind = expr_mod.emitListFind;
     pub const emitListCount = expr_mod.emitListCount;

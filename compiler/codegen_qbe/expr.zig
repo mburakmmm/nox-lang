@@ -69,6 +69,7 @@ pub fn genExprForTarget(self: *Codegen, expr: ast.Expr, target: anytype) Codegen
     // eleman GEREKTİRİR (elemanın QBE tipini/heap-bilgisini SADECE İLK
     // elemandan ÇIKARABİLDİĞİNDEN) — bu YÜZDEN `.none_lit`in AYNI "hedefin
     // ÇÖZÜLMÜŞ TypeInfo'sunu kullan" desenini İZLER.
+    if (expr == .ternary and (target.heap == .list or target.heap == .dict)) return genTernaryImpl(self, expr.ternary, target, true);
     if (expr == .list_lit and expr.list_lit.len == 0 and target.heap == .list) {
         return genEmptyListLit(self, target);
     }
@@ -1586,13 +1587,22 @@ pub fn genIn(self: *Codegen, b: ast.Binary) CodegenError!Value {
 /// bir sonuç ÖDÜNÇ ise (`identifier`/alan/eleman okuması) retain edilir — böylece ternary'nin sonucu HER ZAMAN
 /// sahipli (+1) bir değerdir (`isTemporaryExpr(.ternary) == true`).
 pub fn genTernaryBranch(self: *Codegen, branch: ast.Expr, narrowed: []const []const u8) CodegenError!Value {
+    return ternaryBranchImpl(self, branch, narrowed, {}, false);
+}
+
+/// `genTernaryBranch`in hedef tipli biçimi (`d.get(k, [])`: boş literal varsayılanı sözlük değer tipini alır).
+pub fn genTernaryBranchForTarget(self: *Codegen, branch: ast.Expr, narrowed: []const []const u8, target: anytype) CodegenError!Value {
+    return ternaryBranchImpl(self, branch, narrowed, target, true);
+}
+
+fn ternaryBranchImpl(self: *Codegen, branch: ast.Expr, narrowed: []const []const u8, target: anytype, comptime use_target: bool) CodegenError!Value {
     const mc_snap = try self.snapshotModCache();
     var was: [8]bool = .{false} ** 8;
     for (narrowed, 0..) |n, i| {
         was[i] = self.narrowed_unbox.contains(n);
         try self.narrowed_unbox.put(self.allocator, n, {});
     }
-    var v = try self.genExpr(branch);
+    var v = if (use_target) try genExprForTarget(self, branch, target) else try self.genExpr(branch);
     for (narrowed, 0..) |n, i| if (!was[i]) {
         _ = self.narrowed_unbox.remove(n);
     };
@@ -1608,6 +1618,11 @@ pub fn genTernaryBranch(self: *Codegen, branch: ast.Expr, narrowed: []const []co
 /// v1.146.0: `then if cond else else_` — yalnızca seçilen dal değerlendirilir. `phi` ile birleşir (`and`/`or`
 /// ile aynı desen: öncül etiket `current_label`dir, çünkü dal ifadesi kendi blokları üretmiş olabilir).
 pub fn genTernary(self: *Codegen, t: ast.Ternary) CodegenError!Value {
+    return genTernaryImpl(self, t, {}, false);
+}
+
+/// `target`: bağlamdan gelen beklenen tip (`r: list[int] = [] if c else [1]`: boş literal dalı tipini buradan alır).
+fn genTernaryImpl(self: *Codegen, t: ast.Ternary, target: anytype, comptime use_target: bool) CodegenError!Value {
     const cond = try self.genExpr(t.cond.*);
     const then_label = try self.newLabel("tern_then");
     const else_label = try self.newLabel("tern_else");
@@ -1619,12 +1634,12 @@ pub fn genTernary(self: *Codegen, t: ast.Ternary) CodegenError!Value {
     self.collectNarrowedBoxed(t.cond.*, true, &then_n);
     self.collectNarrowedBoxed(t.cond.*, false, &else_n);
     try self.qbeLabel(then_label);
-    const vt = try genTernaryBranch(self, t.then_expr.*, then_n.slice());
+    const vt = try ternaryBranchImpl(self, t.then_expr.*, then_n.slice(), target, use_target);
     const then_pred = self.current_label;
     try self.qbeJmp(end_label);
 
     try self.qbeLabel(else_label);
-    const ve = try genTernaryBranch(self, t.else_expr.*, else_n.slice());
+    const ve = try ternaryBranchImpl(self, t.else_expr.*, else_n.slice(), target, use_target);
     const else_pred = self.current_label;
     try self.qbeJmp(end_label);
 
@@ -1724,7 +1739,11 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     if (b.op == .in_ or b.op == .not_in) return self.genIn(b);
 
     const l0 = try self.genExpr(b.left.*);
-    const r0 = try self.genExpr(b.right.*);
+    // v2.0.70: `xs + [[]]` — sağdaki liste literali sol operandın tipini hedef alır (boş/iç içe boş literal çözülür).
+    const r0 = if (b.op == .add and l0.heap == .list and b.right.* == .list_lit)
+        try self.genExprForTarget(b.right.*, abi.typeInfoOfValue(l0))
+    else
+        try self.genExpr(b.right.*);
 
     // `str == str` / `str != str` — GERÇEK içerik karşılaştırması
     // (`strcmp`, çünkü `str` her zaman sıfırla-sonlanan bir C dizesidir).

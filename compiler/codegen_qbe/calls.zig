@@ -2285,7 +2285,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
         miss_text = "0";
         try self.releaseIfTemporary(key_expr, key_v0);
     } else {
-        const dv0 = try self.genTernaryBranch(args[1], &.{});
+        const dv0 = try self.genTernaryBranchForTarget(args[1], &.{}, abi.typeInfoOfValue(abi.dictValueValue(dinfo, "0", dinfo.value_qtype)));
         const dv = try self.convert(dv0, dinfo.value_qtype);
         miss_text = dv.text;
         if (std.mem.eql(u8, a.attr, "setdefault")) {
@@ -2502,7 +2502,8 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         },
     };
 
-    const v0 = try self.genExpr(args[0]);
+    // v2.0.70: `xs.append([])` — hedef eleman tipi biliniyor, boş literal çözülür.
+    const v0 = try self.genExprForTarget(args[0], abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int)));
     try self.checkNoLowlevelEscape(v0);
     const retained = try self.retainIfAliasing(args[0], v0);
     const val = try self.convert(retained, obj.elem_qtype);
@@ -3030,7 +3031,7 @@ pub fn genSlice(self: *Codegen, sl: ast.Slice) CodegenError!Value {
 // ===== v1.154.0: list/dict comprehension — iç içe döngüler satır içi (ifade bağlamında) üretilir =====
 
 const CompTarget = union(enum) {
-    list: struct { elem: ast.Expr, esz: []const u8 },
+    list: struct { elem: ast.Expr, esz: []const u8, elem_target: types.TypeInfo },
     dict: struct { key: ast.Expr, value: ast.Expr, dinfo: *const DictInfo },
 };
 
@@ -3190,7 +3191,8 @@ fn isRangeCallExpr(e: ast.Expr) bool {
 fn genCompLeaf(self: *Codegen, st: *const CompState) CodegenError!void {
     switch (st.target) {
         .list => |t| {
-            const ev0 = try self.genExpr(t.elem);
+            // v2.0.70: `[[] for _ in ...]` — hedef eleman tipi biliniyorsa boş `[]`/`{}` çözülür.
+            const ev0 = try self.genExprForTarget(t.elem, t.elem_target);
             try self.checkNoLowlevelEscape(ev0);
             const ev = try self.retainIfAliasing(t.elem, ev0);
             const payload = try self.toPayload(ev);
@@ -3204,7 +3206,7 @@ fn genCompLeaf(self: *Codegen, st: *const CompState) CodegenError!void {
             const k0 = try self.genExpr(t.key);
             try self.checkNoLowlevelEscape(k0);
             const kv = try self.retainIfAliasing(t.key, k0);
-            const v0 = try self.genExpr(t.value);
+            const v0 = try self.genExprForTarget(t.value, abi.typeInfoOfValue(abi.dictValueValue(t.dinfo, "0", t.dinfo.value_qtype)));
             try self.checkNoLowlevelEscape(v0);
             const vv = try self.retainIfAliasing(t.value, v0);
             const kp = try self.toPayload(kv);
@@ -3235,7 +3237,7 @@ pub fn genListComp(self: *Codegen, lc: ast.ListComp) CodegenError!Value {
     const empty = try self.newTemp();
     try self.qbeCall(.{ .name = empty, .ty = .l }, "$nox_list_empty", &.{.{ .ty = .l, .text = RT_PARAM }});
     try self.qbeStoreL(empty, res_slot);
-    const st: CompState = .{ .res_slot = res_slot, .target = .{ .list = .{ .elem = lc.elem.*, .esz = try std.fmt.allocPrint(self.allocator, "{d}", .{qbeSizeOf(ti.elem_qtype)}) } } };
+    const st: CompState = .{ .res_slot = res_slot, .target = .{ .list = .{ .elem = lc.elem.*, .esz = try std.fmt.allocPrint(self.allocator, "{d}", .{qbeSizeOf(ti.elem_qtype)}), .elem_target = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", ti.elem_qtype, ti.elem_heap_info, ti.elem_is_str, ti.elem_fixed_int)) } } };
     try genCompClauses(self, lc.clauses, 0, &st);
     const res = try self.newTemp();
     try self.qbeLoadL(res, res_slot);
