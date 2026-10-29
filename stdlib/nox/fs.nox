@@ -33,6 +33,13 @@ extern def nox_fs_copy_raw(src: str, dst: str) -> None from "zig-out/lib/noxrt.o
 extern def nox_fs_rename_raw(old: str, new: str) -> None from "zig-out/lib/noxrt.o" with_rt
 extern def nox_fs_remove_file_raw(path: str) -> None from "zig-out/lib/noxrt.o" with_rt
 extern def nox_fs_create_dir_raw(path: str) -> None from "zig-out/lib/noxrt.o" with_rt
+# v2.0.69 (Nova N.4) — akışlı dosya G/Ç: açık dosya tanımlayıcısı saf `int`tir (işaretçi değil).
+extern def nox_fs_open_raw(path: str, mode: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_fs_read_chunk_raw(fd: int, n: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_fs_write_fd_raw(fd: int, content: str) -> None from "zig-out/lib/noxrt.o"
+extern def nox_fs_seek_raw(fd: int, offset: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_fs_fd_size_raw(fd: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_fs_close_raw(fd: int) -> None from "zig-out/lib/noxrt.o"
 
 def read_to_string(path: str) -> str:
     content: str = nox_fs_read_to_string_raw(path)
@@ -116,3 +123,113 @@ def create_dir(path: str) -> None:
     nox_fs_create_dir_raw(path)
     if nox_fs_last_op_ok() == 0:
         raise FsError("could not create directory: " + path)
+
+# ---- Akışlı dosya G/Ç (v2.0.69, Nova N.4) ----
+#
+# `read_to_string`/`write_string` bütün dosyayı belleğe alır; GB ölçeğindeki dosyalar için `open_read`/`open_write`/`open_append`
+# açık bir dosya döner ve içerik PARÇA PARÇA işlenir — bellek kullanımı parça boyutuyla sınırlıdır:
+#
+#     with open_read("big.bin") as f:
+#         while True:
+#             chunk: str = f.read_chunk(65536)
+#             if len(chunk) == 0:       # dosya sonu
+#                 break
+#             ...
+#
+# Parça bir `str`tir ve ham baytları taşır (gömülü NUL ve geçersiz UTF-8 dahil, bkz. `nox.bytes.from_str`); bu yüzden bir parça
+# çok baytlı bir UTF-8 karakterinin ortasında bitebilir ve `len(chunk)` bayt değil kod noktası sayar — bayt sayısı için
+# `nox.strings.byte_len` kullanılır. `read_chunk(n)` dosya sonuna gelinmedikçe tam `n` bayt döner; dosya sonunda kalan baytları,
+# sonra boş `str` döner.
+#
+# `FileReader`/`FileWriter` işletim sistemi dosya tanımlayıcısını tutar ve ARC ile kendiliğinden KAPATILMAZ: `with` kullanın
+# ya da `close()` çağırın (`close` iki kez çağrılabilir, ikincisi etkisizdir). Kapatılmış dosyaya erişim `FsError` verir.
+# `path` için bu dosyanın başındaki güvenlik uyarısı aynen geçerlidir.
+
+class FileReader:
+    def __init__(self: FileReader, fd: int, path: str) -> None:
+        self.fd = fd
+        self.path = path
+        self.closed = False
+
+    def read_chunk(self: FileReader, n: int) -> str:
+        if self.closed:
+            raise FsError("file is closed: " + self.path)
+        if n <= 0:
+            raise FsError("read_chunk needs a positive size: " + self.path)
+        chunk: str = nox_fs_read_chunk_raw(self.fd, n)
+        if nox_fs_last_op_ok() == 0:
+            raise FsError("could not read file: " + self.path)
+        return chunk
+
+    # Dosyanın başından `offset` bayt sonrasına gider (kısmi indirme / devam ettirme için).
+    def seek(self: FileReader, offset: int) -> None:
+        if self.closed:
+            raise FsError("file is closed: " + self.path)
+        nox_fs_seek_raw(self.fd, offset)
+        if nox_fs_last_op_ok() == 0:
+            raise FsError("could not seek: " + self.path)
+
+    # Dosyanın şimdiki boyutu (bayt).
+    def size(self: FileReader) -> int:
+        if self.closed:
+            raise FsError("file is closed: " + self.path)
+        n: int = nox_fs_fd_size_raw(self.fd)
+        if nox_fs_last_op_ok() == 0:
+            raise FsError("could not read metadata: " + self.path)
+        return n
+
+    def close(self: FileReader) -> None:
+        if not self.closed:
+            self.closed = True
+            nox_fs_close_raw(self.fd)
+
+    def __enter__(self: FileReader) -> FileReader:
+        return self
+
+    def __exit__(self: FileReader) -> None:
+        self.close()
+
+class FileWriter:
+    def __init__(self: FileWriter, fd: int, path: str) -> None:
+        self.fd = fd
+        self.path = path
+        self.closed = False
+
+    # `content`in tüm baytlarını yazar. Yazma tamponlanmaz: her çağrı doğrudan işletim sistemine gider.
+    def write(self: FileWriter, content: str) -> None:
+        if self.closed:
+            raise FsError("file is closed: " + self.path)
+        nox_fs_write_fd_raw(self.fd, content)
+        if nox_fs_last_op_ok() == 0:
+            raise FsError("could not write file: " + self.path)
+
+    def close(self: FileWriter) -> None:
+        if not self.closed:
+            self.closed = True
+            nox_fs_close_raw(self.fd)
+
+    def __enter__(self: FileWriter) -> FileWriter:
+        return self
+
+    def __exit__(self: FileWriter) -> None:
+        self.close()
+
+def open_read(path: str) -> FileReader:
+    fd: int = nox_fs_open_raw(path, 0)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("could not read file: " + path)
+    return FileReader(fd, path)
+
+# Dosyayı oluşturur ya da KISALTIR.
+def open_write(path: str) -> FileWriter:
+    fd: int = nox_fs_open_raw(path, 1)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("could not write file: " + path)
+    return FileWriter(fd, path)
+
+# Dosyanın SONUNA ekler (yoksa oluşturur).
+def open_append(path: str) -> FileWriter:
+    fd: int = nox_fs_open_raw(path, 2)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("could not append to file: " + path)
+    return FileWriter(fd, path)

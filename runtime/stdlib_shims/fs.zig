@@ -93,6 +93,7 @@ const WinFile = if (builtin.os.tag == .windows) struct {
     extern "c" fn _write(fd: c_int, buf: [*]const u8, count: c_uint) callconv(.c) c_int;
     extern "c" fn _close(fd: c_int) callconv(.c) c_int;
     extern "c" fn _filelengthi64(fd: c_int) callconv(.c) i64;
+    extern "c" fn _lseeki64(fd: c_int, offset: i64, origin: c_int) callconv(.c) i64;
     extern "c" fn _get_osfhandle(fd: c_int) callconv(.c) isize;
     extern "kernel32" fn GetFileTime(h: isize, creation: ?*std.os.windows.FILETIME, access: ?*std.os.windows.FILETIME, write: ?*std.os.windows.FILETIME) callconv(.c) i32;
     extern "kernel32" fn GetFileAttributesA(path: [*:0]const u8) callconv(.c) u32;
@@ -652,6 +653,123 @@ export fn nox_fs_create_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(
     fsLastOkPtr().* = std.c.mkdir(p, 0o755) == 0;
 }
 
+/// Akışlı dosya G/Ç (v2.0.69, Nova N.4): `read_to_string`/`write_string` bütün dosyayı belleğe alır; büyük dosyalar için
+/// açık bir dosya tanımlayıcısı (`fd`) saf bir `int` olarak Nox tarafına verilir ve parça parça okunur/yazılır. `fd` bir
+/// işaretçi DEĞİL, işletim sistemi tanımlayıcısıdır: Nox sınıfı (`FileReader`/`FileWriter`) onu tek sahip olarak tutar, çift
+/// kapatmayı sınıf engeller. `nox_fs_last_op_ok` bu çağrılarda da son işlemin sonucunu bildirir.
+///
+/// `mode`: 0 = oku, 1 = yaz (kısalt/oluştur), 2 = sonuna ekle (oluştur). Başarısızlıkta `-1` döner.
+export fn nox_fs_open_raw(rt: ?*anyopaque, path: ?[*:0]const u8, mode: i64) callconv(.c) i64 {
+    if (!embed.allowsPath(rt, path)) {
+        fsLastOkPtr().* = false;
+        return -1;
+    }
+    const p = path orelse {
+        fsLastOkPtr().* = false;
+        return -1;
+    };
+    const fd: c_int = switch (mode) {
+        0 => openFileRead(p),
+        1 => openFileWrite(p, false),
+        2 => openFileWrite(p, true),
+        else => -1,
+    };
+    if (fd < 0) {
+        fsLastOkPtr().* = false;
+        return -1;
+    }
+    fsLastOkPtr().* = true;
+    return fd;
+}
+
+/// En fazla `n` bayt okur; dosya sonuna gelinmedikçe tam `n` bayt döner (kısa okumalar içeride tamamlanır), dosya sonunda
+/// kalan baytlar, daha sonra boş `str`. `n` en çok 64 MiB'tır (daha büyük istek bu sınıra kırpılır). Okuma hatasında boş
+/// `str` ve `nox_fs_last_op_ok() == 0`.
+export fn nox_fs_read_chunk_raw(rt: ?*anyopaque, fd: i64, n: i64) callconv(.c) ?[*:0]u8 {
+    const max_chunk: i64 = 64 * 1024 * 1024;
+    if (fd < 0 or n <= 0) {
+        fsLastOkPtr().* = fd >= 0;
+        return dupeToNoxStr(rt, "");
+    }
+    const want: usize = @intCast(@min(n, max_chunk));
+    var stack_buf: [64 * 1024]u8 = undefined;
+    const heap_buf: ?[]u8 = if (want > stack_buf.len) (std.heap.page_allocator.alloc(u8, want) catch null) else null;
+    defer if (heap_buf) |b| std.heap.page_allocator.free(b);
+    if (want > stack_buf.len and heap_buf == null) {
+        fsLastOkPtr().* = false;
+        return dupeToNoxStr(rt, "");
+    }
+    const buf: []u8 = if (heap_buf) |b| b else stack_buf[0..want];
+    var total: usize = 0;
+    while (total < want) {
+        const got = readFd(@intCast(fd), buf[total..want]);
+        if (got < 0) {
+            fsLastOkPtr().* = false;
+            return dupeToNoxStr(rt, "");
+        }
+        if (got == 0) break;
+        total += @intCast(got);
+    }
+    fsLastOkPtr().* = true;
+    return dupeToNoxStr(rt, buf[0..total]);
+}
+
+/// `content`in TÜM baytlarını (gömülü NUL dahil) `fd`ye yazar.
+export fn nox_fs_write_fd_raw(fd: i64, content: ?[*:0]const u8) callconv(.c) void {
+    const c = content orelse {
+        fsLastOkPtr().* = false;
+        return;
+    };
+    if (fd < 0) {
+        fsLastOkPtr().* = false;
+        return;
+    }
+    const bytes = str_mod.nox_str_slice(c);
+    var off: usize = 0;
+    while (off < bytes.len) {
+        const n = writeFd(@intCast(fd), bytes[off..]);
+        if (n <= 0) {
+            fsLastOkPtr().* = false;
+            return;
+        }
+        off += @intCast(n);
+    }
+    fsLastOkPtr().* = true;
+}
+
+/// Mutlak konuma (dosya başından `offset` bayt) gider; yeni konumu döner, hata `-1`.
+export fn nox_fs_seek_raw(fd: i64, offset: i64) callconv(.c) i64 {
+    if (fd < 0 or offset < 0) {
+        fsLastOkPtr().* = false;
+        return -1;
+    }
+    const pos: i64 = if (builtin.os.tag == .windows)
+        WinFile._lseeki64(@intCast(fd), offset, 0)
+    else
+        @intCast(std.c.lseek(@intCast(fd), @intCast(offset), std.c.SEEK.SET));
+    fsLastOkPtr().* = pos >= 0;
+    return pos;
+}
+
+/// Açık dosyanın şimdiki boyutu (bayt); hata `-1`.
+export fn nox_fs_fd_size_raw(fd: i64) callconv(.c) i64 {
+    if (fd < 0) {
+        fsLastOkPtr().* = false;
+        return -1;
+    }
+    const info = fstatCompat(@intCast(fd)) orelse {
+        fsLastOkPtr().* = false;
+        return -1;
+    };
+    fsLastOkPtr().* = true;
+    return @intCast(info.size);
+}
+
+export fn nox_fs_close_raw(fd: i64) callconv(.c) void {
+    if (fd < 0) return;
+    closeFd(@intCast(fd));
+}
+
 /// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): testler `/tmp`i
 /// SABİT bir yol olarak varsayıyordu — Windows'ta `/tmp` YOKTUR, GERÇEK
 /// yazılabilir geçici dizin `%TEMP%` ortam değişkenidir (Windows'un
@@ -747,6 +865,77 @@ test "Faz III.3: nox_fs_append_string_raw dosyayi KISALTMAZ, SONUNA ekler" {
     const content = nox_fs_read_to_string_raw(rt, full_path.ptr) orelse return error.Failed;
     defer str.nox_str_release(rt, content);
     try std.testing.expectEqualStrings("abcdef", std.mem.sliceTo(content, 0));
+}
+
+test "v2.0.69: akisli okuma/yazma — parcali okuma, gomulu NUL, seek, buyuk parca, ekleme" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const str = @import("../str.zig");
+
+    var full_buf: [test_path_cap]u8 = undefined;
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_stream_fs_test_{d}.bin", .{ testTmpPrefix(), hostPid() });
+    defer _ = std.c.unlink(full_path.ptr);
+
+    // 200 KiB'lık, gömülü NUL içeren desen; 64 KiB yığın tamponunu aşan parça yolunu da sınar.
+    const total: usize = 200 * 1024;
+    const pattern = try std.testing.allocator.alloc(u8, total);
+    defer std.testing.allocator.free(pattern);
+    for (pattern, 0..) |*b, i| b.* = @intCast((i * 31 + 7) % 256);
+
+    const wfd = nox_fs_open_raw(rt, full_path.ptr, 1);
+    try std.testing.expect(wfd >= 0);
+    var off: usize = 0;
+    while (off < total) {
+        const end = @min(off + 50_000, total);
+        const piece = str.nox_str_from_bytes(rt, pattern[off..end]) orelse return error.AllocFailed;
+        defer str.nox_str_release(rt, piece);
+        nox_fs_write_fd_raw(wfd, piece);
+        try std.testing.expect(fsLastOkPtr().*);
+        off = end;
+    }
+    try std.testing.expectEqual(@as(i64, @intCast(total)), nox_fs_fd_size_raw(wfd));
+    nox_fs_close_raw(wfd);
+
+    const rfd = nox_fs_open_raw(rt, full_path.ptr, 0);
+    try std.testing.expect(rfd >= 0);
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(std.testing.allocator);
+    while (true) {
+        const chunk = nox_fs_read_chunk_raw(rt, rfd, 70_000) orelse return error.Failed;
+        defer str.nox_str_release(rt, chunk);
+        const bytes = str.nox_str_slice(chunk);
+        if (bytes.len == 0) break;
+        try std.testing.expect(bytes.len <= 70_000);
+        try got.appendSlice(std.testing.allocator, bytes);
+    }
+    try std.testing.expectEqualSlices(u8, pattern, got.items);
+
+    // seek + yeniden okuma
+    try std.testing.expectEqual(@as(i64, 1000), nox_fs_seek_raw(rfd, 1000));
+    const tail = nox_fs_read_chunk_raw(rt, rfd, 16) orelse return error.Failed;
+    defer str.nox_str_release(rt, tail);
+    try std.testing.expectEqualSlices(u8, pattern[1000..1016], str.nox_str_slice(tail));
+    nox_fs_close_raw(rfd);
+
+    // olmayan dosya ve geçersiz tanımlayıcı
+    try std.testing.expectEqual(@as(i64, -1), nox_fs_open_raw(rt, "/definitely/does/not/exist/nox_stream", 0));
+    try std.testing.expect(!fsLastOkPtr().*);
+    const bad = nox_fs_read_chunk_raw(rt, -1, 10) orelse return error.Failed;
+    defer str.nox_str_release(rt, bad);
+    try std.testing.expectEqual(@as(usize, 0), str.nox_str_slice(bad).len);
+    try std.testing.expect(!fsLastOkPtr().*);
+
+    // ekleme kipi
+    const afd = nox_fs_open_raw(rt, full_path.ptr, 2);
+    try std.testing.expect(afd >= 0);
+    const extra = str.nox_str_from_bytes(rt, "END") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, extra);
+    nox_fs_write_fd_raw(afd, extra);
+    nox_fs_close_raw(afd);
+    const sfd = nox_fs_open_raw(rt, full_path.ptr, 0);
+    try std.testing.expectEqual(@as(i64, @intCast(total + 3)), nox_fs_fd_size_raw(sfd));
+    nox_fs_close_raw(sfd);
 }
 
 test "Faz III.3: nox_fs_stat_raw boyut/mtime dogru doner" {

@@ -54,6 +54,7 @@ pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
 pub const list_ops = @import("collections/list_ops.zig");
 pub const http_client = @import("stdlib_shims/http_client.zig");
+pub const http_stream = @import("stdlib_shims/http_stream.zig");
 pub const http_server = @import("stdlib_shims/http_server.zig");
 pub const strings_shim = @import("stdlib_shims/strings.zig");
 pub const math_shim = @import("stdlib_shims/math.zig");
@@ -114,6 +115,7 @@ comptime {
     _ = list_ops;
     _ = embed;
     _ = http_client;
+    _ = http_stream;
     _ = http_server;
     _ = strings_shim;
     _ = math_shim;

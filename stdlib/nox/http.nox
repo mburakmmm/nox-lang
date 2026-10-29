@@ -153,3 +153,125 @@ def head(url: str, headers: dict[str, str]) -> HttpResponse:
 
 def options(url: str, headers: dict[str, str]) -> HttpResponse:
     return request("OPTIONS", url, "", headers)
+
+# ---- Akışlı istemci (v2.0.69, Nova N.4) ----
+#
+# `get`/`post`/`request` yanıt gövdesinin TAMAMINI belleğe alır. Büyük gövdeler için `stream` (indirme) ve `stream_upload` (yükleme)
+# bir `HttpStream` döner; gövde parça parça okunur/yazılır, bellek kullanımı parça boyutuyla sınırlıdır ve okuma çekme tabanlıdır
+# (yalnızca `read_chunk` çağrıldıkça ağdan okunur).
+#
+#     with stream("GET", url, {}) as s:
+#         if s.status == 200:
+#             while True:
+#                 chunk: str = s.read_chunk(65536)
+#                 if len(chunk) == 0:       # gövde sonu
+#                     break
+#                 ...
+#
+# Parça ham baytları taşıyan bir `str`tir (ikili veri, gömülü NUL dahil); bir parça çok baytlı bir UTF-8 karakterinin ortasında
+# bitebilir. `read_chunk(n)` en az bir bayt hazır olunca döner (en çok `n`); dosya gibi tam `n` doldurmaz. Gövde `Content-Encoding`e
+# göre (gzip/deflate) çözülerek verilir. `timeout_ms > 0`: HER işlem (bağlanma sonrası başlık beklemesi, her `read_chunk`/`write`)
+# için en çok bu kadar boşta beklenir, aşılırsa bağlantı iptal edilir ve `HttpTimeoutError` fırlar (toplam süre değil).
+#
+# `HttpStream` işletim sistemi bağlantısını tutar ve kendiliğinden KAPATILMAZ: `with` kullanın ya da `close()` çağırın
+# (iki kez çağrılabilir). Yönlendirmeler izlenmez; gövde yalnızca POST/PUT/PATCH ile gönderilebilir (`request` ile aynı).
+extern def nox_http_stream_open_raw(method: str, url: str, headers: dict[str, str], body: str, has_body: int, upload_len: int, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_stream_error_kind(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_stream_ok(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_stream_status(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_stream_headers(h: ptr) -> dict[str, str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_stream_read_raw(h: ptr, n: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_stream_write_raw(h: ptr, content: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_stream_finish_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_stream_close_raw(h: ptr) -> None from "zig-out/lib/noxrt.o"
+
+class HttpStream:
+    def __init__(self: HttpStream, handle: ptr, label: str, uploading: bool, status: int, headers: dict[str, str]) -> None:
+        self.handle = handle
+        self.label = label
+        self.uploading = uploading
+        self.closed = False
+        self.status = status
+        self.headers = headers
+
+    # İşlem başarısızsa akışı kapatıp doğru istisnayı fırlatır.
+    def _fail(self: HttpStream, what: str) -> None:
+        kind: int = nox_http_stream_error_kind(self.handle)
+        self.close()
+        if kind == 1:
+            raise HttpTimeoutError("request timed out: " + self.label)
+        raise HttpError(what + ": " + self.label)
+
+    def read_chunk(self: HttpStream, n: int) -> str:
+        if self.closed:
+            raise HttpError("stream is closed: " + self.label)
+        if self.uploading:
+            raise HttpError("finish() the upload before reading the response: " + self.label)
+        if n <= 0:
+            raise HttpError("read_chunk needs a positive size: " + self.label)
+        chunk: str = nox_http_stream_read_raw(self.handle, n)
+        if nox_http_stream_ok(self.handle) == 0:
+            self._fail("could not read the response body")
+        return chunk
+
+    # Yükleme parçası gönderir (`stream_upload` ile açılmış akışlar).
+    def write(self: HttpStream, content: str) -> None:
+        if self.closed:
+            raise HttpError("stream is closed: " + self.label)
+        if not self.uploading:
+            raise HttpError("this stream is not an upload: " + self.label)
+        if nox_http_stream_write_raw(self.handle, content) == 0:
+            self._fail("could not send the request body")
+
+    # Yüklemeyi bitirir ve yanıt başlığını okur; sonrasında `status`/`headers` dolar ve gövde `read_chunk` ile okunur.
+    def finish(self: HttpStream) -> None:
+        if self.closed:
+            raise HttpError("stream is closed: " + self.label)
+        if not self.uploading:
+            raise HttpError("this stream is not an upload: " + self.label)
+        if nox_http_stream_finish_raw(self.handle) == 0:
+            self._fail("could not finish the upload")
+        self.uploading = False
+        self.status = nox_http_stream_status(self.handle)
+        self.headers = nox_http_stream_headers(self.handle)
+
+    def close(self: HttpStream) -> None:
+        if not self.closed:
+            self.closed = True
+            nox_http_stream_close_raw(self.handle)
+
+    def __enter__(self: HttpStream) -> HttpStream:
+        return self
+
+    def __exit__(self: HttpStream) -> None:
+        self.close()
+
+def _open_stream(method: str, url: str, body: str, has_body: int, headers: dict[str, str], upload_len: int, timeout_ms: int) -> HttpStream:
+    h: ptr = nox_http_stream_open_raw(method, url, headers, body, has_body, upload_len, timeout_ms)
+    if nox_http_stream_ok(h) == 0:
+        kind: int = nox_http_stream_error_kind(h)
+        nox_http_stream_close_raw(h)
+        if kind == 3:
+            raise HttpError("invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): " + method + " " + url)
+        if kind == 1:
+            raise HttpTimeoutError("request timed out: " + method + " " + url)
+        raise HttpError("request failed: " + method + " " + url)
+    return HttpStream(h, method + " " + url, upload_len != -2, nox_http_stream_status(h), nox_http_stream_headers(h))
+
+# İsteği gönderir, yanıt başlığını bekler ve gövdeyi parça parça okunacak şekilde döner. `body` (isteğe bağlı bellek-içi gövde)
+# yalnızca POST/PUT/PATCH ile geçerlidir.
+def stream(method: str, url: str, headers: dict[str, str], body: str = "", timeout_ms: int = 0) -> HttpStream:
+    has_body: int = 0
+    if body != "":
+        has_body = 1
+    return _open_stream(method, url, body, has_body, headers, -2, timeout_ms)
+
+# Akışlı yükleme: `write` ile gövdeyi parça parça gönderin, `finish()` ile bitirip yanıtı okuyun. `content_length >= 0` sabit
+# Content-Length ile gönderir (toplam yazılan bayt tam eşit olmalı), `-1` chunked transfer encoding kullanır. Yalnızca POST/PUT/PATCH.
+def stream_upload(method: str, url: str, headers: dict[str, str], content_length: int = -1, timeout_ms: int = 0) -> HttpStream:
+    if content_length < -1:
+        raise HttpError("content_length must be -1 (chunked) or a non-negative size")
+    return _open_stream(method, url, "", 0, headers, content_length, timeout_ms)
+
+# Dosyaya/dosyadan akış yardımcıları (`download_to_file`, `upload_file`) bu modülde DEĞİL, `nox.transfer`dedir: onlar hem ağ hem dosya sistemi
+# yeteneği ister, `nox.http` ise yalnızca `network` ister.

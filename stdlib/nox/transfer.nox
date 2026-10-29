@@ -1,0 +1,61 @@
+# nox.transfer — HTTP gövdelerini dosyalara/dosyalardan akıtma (v2.0.69, Nova N.4).
+#
+# `nox.http.stream`/`stream_upload` ile `nox.fs.open_read`/`open_write` üzerine kurulu iki kolaylık fonksiyonu. Bu modül hem ağa hem dosya
+# sistemine eriştiği için iki yetenek ister (`network` + `filesystem`); `nox.http` yalnızca `network`, `nox.fs` yalnızca `filesystem` ister.
+# Bellek kullanımı 64 KiB'lik parça boyutuyla sınırlıdır (dosya GB ölçeğinde olabilir). `path` için `nox.fs`in güvenlik uyarısı geçerlidir.
+import nox.http
+import nox.fs
+import nox.strings
+
+# `url`yi `path`e indirir ve durum kodunu döner. Dosya yalnızca 2xx cevapta, bütün gövde alındıktan sonra atomik olarak yerine geçer
+# (`path + ".nox-part"` geçici dosyası + rename); başka durumda ya da hata/zaman aşımında `path`e dokunulmaz ve geçici dosya silinir.
+# `timeout_ms > 0`: işlem başına boşta kalma zaman aşımı (bkz. `nox.http.stream`).
+def download_to_file(url: str, path: str, headers: dict[str, str], timeout_ms: int = 0) -> int:
+    part: str = path + ".nox-part"
+    s: nox.http.HttpStream = nox.http.stream("GET", url, headers, "", timeout_ms)
+    status: int = s.status
+    if status < 200 or status > 299:
+        s.close()
+        return status
+    out: nox.fs.FileWriter = nox.fs.open_write(part)
+    done: bool = False
+    try:
+        while True:
+            chunk: str = s.read_chunk(65536)
+            if len(chunk) == 0:
+                break
+            out.write(chunk)
+        done = True
+    finally:
+        out.close()
+        s.close()
+        if not done:
+            nox.fs.remove_file(part)
+    nox.fs.rename(part, path)
+    return status
+
+# `path` dosyasını `method` (POST/PUT/PATCH) ile gövde olarak yükler (Content-Length dosya boyutundan, dosya parça parça okunur) ve
+# yanıtı döner (yanıt gövdesi belleğe alınır; büyük yanıt için `nox.http.stream_upload` kullanın).
+def upload_file(method: str, url: str, path: str, headers: dict[str, str], timeout_ms: int = 0) -> nox.http.HttpResponse:
+    src: nox.fs.FileReader = nox.fs.open_read(path)
+    size: int = src.size()
+    s: nox.http.HttpStream = nox.http.stream_upload(method, url, headers, size, timeout_ms)
+    body: str = ""
+    try:
+        sent: int = 0
+        while sent < size:
+            chunk: str = src.read_chunk(65536)
+            if len(chunk) == 0:
+                raise nox.http.HttpError("file shrank while uploading: " + path)
+            s.write(chunk)
+            sent = sent + nox.strings.byte_len(chunk)
+        s.finish()
+        while True:
+            piece: str = s.read_chunk(65536)
+            if len(piece) == 0:
+                break
+            body = body + piece
+        return nox.http.HttpResponse(s.status, body, s.headers)
+    finally:
+        src.close()
+        s.close()

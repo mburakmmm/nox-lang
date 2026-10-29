@@ -154,8 +154,8 @@ kuralı bu istisna için kullanıcı kararıyla aşıldı. Her madde ÖNCE kodda
   (v2.0.31: `str` gömülü NUL/geçersiz UTF-8'i zaten taşıyor; asıl hata gövdede NUL varsa
   isteğin BAŞARISIZ sayılmasıydı — kaldırıldı; `nox.bytes.from_str(s) -> Buffer` eklendi.
   Zig testi + gerçek sunucuyla iki-backend doğrulaması.)
-- [!] **N.4 Akışlı indirme/yükleme (streaming).** Yeni API yüzeyi + handle ömrü
-  tasarımı gerekir (N.3'ten sonra kısa tasarım sunulacak).
+- [x] **N.4 Akışlı indirme/yükleme (streaming).** (v2.0.69: tasarım kullanıcı onayıyla uygulandı. `nox.fs`: `open_read/open_write/open_append` → `FileReader`/`FileWriter` (`read_chunk`, `seek`, `size`, `write`, `close`, `with`); `nox.http`: `stream`/`stream_upload` → `HttpStream` (`read_chunk`, `write`, `finish`, `close`, `with`), çekme tabanlı okuma, işlem başına boşta zaman aşımı, gzip çözme, chunked/sabit Content-Length yükleme; yeni `nox.transfer`: `download_to_file` (2xx'te atomik rename) + `upload_file`. 400 MB indirme 8 MB zirve bellekle, 400 MB yükleme sha256'sı sunucuyla birebir doğrulandı. Yan bulgular: `with open_x(...) as f` (fonksiyon çağrısı bağlam ifadesi) codegen'de `Unsupported`'dı, düzeltildi; kesik gövde (Content-Length/chunked tamamlanmadan kapanan bağlantı) `get/post/request`te SESSİZ BAŞARI sayılıyordu, artık `HttpError`.)
+  Yeni API yüzeyi + handle ömrü tasarımı gerekir.
 - [x] **N.5 Yönlendirme politikası.** (v2.0.31: iddia BAYAT çıktı, kapatıldı; docs'taki "yönlendirmeler izlenir" cümlesi YANLIŞTI, düzeltildi.) Belgedeki iddia büyük olasılıkla BAYAT:
   istemci `redirect_behavior = .unhandled` ile hiç yönlendirme takip etmez (3xx
   olduğu gibi döner), dolayısıyla çapraz-origin başlık sızıntısı yok. Doğrula ve

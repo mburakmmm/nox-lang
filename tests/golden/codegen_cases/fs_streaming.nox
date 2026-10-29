@@ -1,0 +1,71 @@
+import nox.fs
+import nox.strings
+from nox.fs import FileReader, FileWriter, FsError, open_read, open_write, open_append
+
+path: str = "/tmp/nox_golden_fs_stream_probe.bin"
+
+# Yaz: 20000 satır, 3000 baytlık parçalar halinde; sonra NUL içeren bir kuyruk ekle.
+with open_write(path) as w:
+    i: int = 0
+    part: str = ""
+    while i < 20000:
+        part = part + "row " + str(i) + "\n"
+        if i % 500 == 499:
+            w.write(part)
+            part = ""
+        i = i + 1
+    w.write(part)
+
+tail: FileWriter = open_append(path)
+tail.write("TAIL\x00END")
+tail.close()
+tail.close()
+
+# Oku: 7000 baytlık parçalar, toplam bayt ve basit sağlama.
+r: FileReader = open_read(path)
+print(r.size())
+total: int = 0
+chunks: int = 0
+check: int = 0
+while True:
+    c: str = r.read_chunk(7000)
+    n: int = nox.strings.byte_len(c)
+    if n == 0:
+        break
+    j: int = 0
+    while j < n:
+        check = (check * 31 + nox.strings.byte_at(c, j)) % 1000003
+        j = j + 1
+    total = total + n
+    chunks = chunks + 1
+print(total)
+print(chunks)
+print(check)
+
+# Konumlandır ve yeniden oku.
+r.seek(4)
+print(r.read_chunk(6))
+r.close()
+r.close()
+
+try:
+    r.read_chunk(1)
+except FsError:
+    print("closed read")
+
+# with gövdesinde istisna: dosya yine de kapanır, yeniden açılabilir.
+try:
+    with open_read(path) as f2:
+        print(f2.read_chunk(3))
+        raise FsError("boom")
+except FsError:
+    print("caught")
+again: FileReader = open_read(path)
+print(again.read_chunk(3))
+again.close()
+
+try:
+    open_read("/nonexistent/nox_stream_missing")
+except FsError:
+    print("missing")
+nox.fs.remove_file(path)

@@ -50,7 +50,7 @@ What a handler returns and what the client functions return.
 | `request(method, url, body, headers, timeout_ms=0)` | any of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; optional timeout |
 
 `headers` are *added* to the request (the client also sends its own `Host`, `User-Agent`, `Accept-Encoding` …). Redirects are **not** followed: a 3xx response is returned as it is, so you decide whether to follow `Location` (and whether to forward `Authorization`). gzip/deflate response bodies are decoded
-automatically. A non-2xx status is **not** an error: inspect `status`. `HttpError` is raised when the request could not be made at all (connection refused, DNS failure, TLS failure).
+automatically. A non-2xx status is **not** an error: inspect `status`. `HttpError` is raised when the request could not be made at all (connection refused, DNS failure, TLS failure) or when the body arrives incomplete (the connection closed before the announced `Content-Length`).
 
 ```nox
 import nox.http
@@ -86,6 +86,50 @@ A response body may be binary. `resp.body` keeps every byte (including `\x00` an
 r: HttpResponse = nox.http.request("PUT", "http://127.0.0.1:8080/items/1", "{\"n\": 2}", {"Content-Type": "application/json"}, 5000)
 png: Buffer = nox.bytes.from_str(nox.http.get("http://127.0.0.1:8080/logo.png", {}).body)
 ```
+
+### Streaming large bodies
+
+`get`, `post` and `request` keep the whole response body in memory. For large downloads and uploads use a stream: the body moves in chunks, memory use is bounded by the chunk size,
+and reading is pull-based (the network is read only when you ask for the next chunk, so a slow consumer applies back-pressure to the server).
+
+| Function / method | Description |
+|---|---|
+| `stream(method, url, headers, body="", timeout_ms=0)` | sends the request, waits for the response head and returns an `HttpStream` whose `status` and `headers` are set; `body` (optional, POST/PUT/PATCH only) is sent from memory |
+| `stream_upload(method, url, headers, content_length=-1, timeout_ms=0)` | opens a streamed **request** body (POST/PUT/PATCH): `content_length >= 0` sends a fixed `Content-Length` (you must write exactly that many bytes), `-1` uses chunked transfer encoding |
+| `s.read_chunk(n)` | up to `n` bytes of the response body as a `str`; returns as soon as at least one byte is available, `""` at the end of the body |
+| `s.write(chunk)` | sends one piece of an uploaded body |
+| `s.finish()` | ends the upload and reads the response head; afterwards `s.status`/`s.headers` are set and the response body is read with `read_chunk` |
+| `s.close()` | closes the connection (calling it twice is harmless) |
+
+```text
+from nox.http import HttpStream
+
+with nox.http.stream("GET", "https://example.com/big.iso", {}) as s:
+    if s.status == 200:
+        while True:
+            chunk: str = s.read_chunk(65536)
+            if len(chunk) == 0:        # end of the body
+                break
+            ...                        # write it somewhere, hash it, …
+
+up: HttpStream = nox.http.stream_upload("PUT", "https://example.com/data", {}, 11)
+up.write("hello ")
+up.write("world")
+up.finish()
+print(up.status, up.read_chunk(100))
+up.close()
+```
+
+To move a body straight to or from a file, see [`nox.transfer`](transfer.md) (`download_to_file`, `upload_file`).
+
+Details:
+
+- A chunk is a `str` carrying **raw bytes** (binary data, `\x00` and invalid UTF-8 included; see [`nox.bytes`](bytes.md)); it can end in the middle of a multi-byte UTF-8 character and `len(chunk)` counts code points, so use `nox.strings.byte_len`.
+- The body is decoded according to `Content-Encoding` (gzip/deflate) as it is read.
+- A server that closes the connection before sending the whole `Content-Length` / chunked body makes `read_chunk` raise `HttpError`; a truncated body is never reported as a complete one. (`get`/`post`/`request` apply the same check.)
+- `timeout_ms > 0` is an **idle** timeout per operation (waiting for the response head, each `read_chunk`, each `write`), not a limit on the whole transfer; when it runs out the connection is aborted and `HttpTimeoutError` is raised. After any failure the stream is closed and further calls raise `HttpError`.
+- An `HttpStream` owns a network connection and a helper thread and is **not** closed automatically: use `with` or call `close()`.
+- Redirects are not followed, as for `request`. Streams can be read from lightweight tasks: waiting suspends only the calling task.
 
 ## Server
 

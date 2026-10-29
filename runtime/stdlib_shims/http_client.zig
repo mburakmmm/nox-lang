@@ -125,7 +125,7 @@ pub fn sharedClientIo() std.Io {
 /// arasında paylaşılan küçük durum. `page_allocator` ile ayrılır (rt'den bağımsız); iki taraf da işini bitirince
 /// `release` çağırır, son çağıran serbest bırakır. Bekçi, süre dolunca açık soketi `shutdown` eder: bloklanmış okuma/yazma
 /// hata ile döner, yani zaman aşımı GERÇEK bir bağlantı iptalidir (istek bittikten sonra süre ölçen sahte bir kontrol değil).
-const Shared = struct {
+pub const Shared = struct {
     lock: asap.SpinLock = .{},
     /// Açık bağlantının soket tutamacı (`handle_set` iken geçerli); `lock` altında okunur/yazılır.
     handle: usize = 0,
@@ -133,12 +133,16 @@ const Shared = struct {
     done: std.atomic.Value(bool) = .init(false),
     timed_out: std.atomic.Value(bool) = .init(false),
     refs: std.atomic.Value(u32) = .init(2),
+    /// Akışlı istekler (`http_stream.zig`): bir işlem sürerken `true`; bekçi yalnızca bu süre içinde sayar (işlem başına boşta kalma zaman aşımı).
+    armed: std.atomic.Value(bool) = .init(false),
+    /// Her yeni işlemde artar; bekçi değişimi görünce sayacı sıfırlar.
+    epoch: std.atomic.Value(u32) = .init(0),
 
-    fn release(self: *Shared) void {
+    pub fn release(self: *Shared) void {
         if (self.refs.fetchSub(1, .acq_rel) == 1) std.heap.page_allocator.destroy(self);
     }
 
-    fn setHandle(self: *Shared, h: usize) void {
+    pub fn setHandle(self: *Shared, h: usize) void {
         self.lock.lock();
         defer self.lock.unlock();
         self.handle = h;
@@ -146,13 +150,13 @@ const Shared = struct {
     }
 
     /// Bağlantı kapanmadan ÖNCE çağrılır: bekçinin kapanmış (belki yeniden kullanılmış) bir tutamaca dokunmasını önler.
-    fn clearHandle(self: *Shared) void {
+    pub fn clearHandle(self: *Shared) void {
         self.lock.lock();
         defer self.lock.unlock();
         self.handle_set = false;
     }
 
-    fn abortConnection(self: *Shared) void {
+    pub fn abortConnection(self: *Shared) void {
         self.lock.lock();
         defer self.lock.unlock();
         if (!self.handle_set) return;
@@ -167,7 +171,7 @@ const Shared = struct {
     }
 };
 
-fn sleepMs(ms: u32) void {
+pub fn sleepMs(ms: u32) void {
     if (builtin.os.tag == .windows) {
         winSleep(ms);
         return;
@@ -176,7 +180,7 @@ fn sleepMs(ms: u32) void {
     _ = std.c.nanosleep(&ts, null);
 }
 
-fn socketHandleToUsize(h: anytype) usize {
+pub fn socketHandleToUsize(h: anytype) usize {
     return switch (@typeInfo(@TypeOf(h))) {
         .pointer => @intFromPtr(h),
         else => @intCast(h),
@@ -230,7 +234,7 @@ const RequestCtx = struct {
     }
 };
 
-fn loadIosCa(client: *std.http.Client) bool {
+pub fn loadIosCa(client: *std.http.Client) bool {
     const apple_roots = @import("apple_roots.zig");
     const io = client.io;
     var bundle: std.crypto.Certificate.Bundle = .empty;
@@ -316,7 +320,7 @@ test "connectTcp fails on a closed local port" {
     } else |_| {}
 }
 
-fn androidDial(client: *std.http.Client, uri: std.Uri, host_storage: *[std.Io.net.HostName.max_len]u8, ip_storage: []u8) ?*std.http.Client.Connection {
+pub fn androidDial(client: *std.http.Client, uri: std.Uri, host_storage: *[std.Io.net.HostName.max_len]u8, ip_storage: []u8) ?*std.http.Client.Connection {
     const host = uri.getHost(host_storage) catch return null;
     const port = uri.port orelse if (std.mem.eql(u8, uri.scheme, "https")) @as(u16, 443) else @as(u16, 80);
     const ip_text = androidIpv4Text(host.bytes, port, ip_storage) orelse return null;
@@ -329,6 +333,20 @@ fn androidDial(client: *std.http.Client, uri: std.Uri, host_storage: *[std.Io.ne
         .proxied_host = host,
         .proxied_port = port,
     }) catch null;
+}
+
+/// Sunucu Content-Length/chunked gövdesini tamamlamadan bağlantıyı kapattı mı? `std.http` bunu temiz bir gövde sonundan ayırmaz;
+/// bağlantı durumundan anlaşılır. Gövdesi olmayan yanıtlar (HEAD, 1xx/204/304) Content-Length taşısa da eksik sayılmaz.
+pub fn responseBodyTruncated(req: *std.http.Client.Request, method: std.http.Method, status: std.http.Status) bool {
+    if (method == .HEAD) return false;
+    switch (status) {
+        .no_content, .not_modified => return false,
+        else => if (@intFromEnum(status) < 200) return false,
+    }
+    return switch (req.reader.state) {
+        .body_remaining_content_length, .body_remaining_chunk_len => true,
+        else => false,
+    };
 }
 
 fn workerThreadFn(ctx: *RequestCtx) void {
@@ -515,6 +533,12 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         ctx.failed = true;
         return;
     };
+    // Sunucu Content-Length/chunked gövdesini tamamlamadan bağlantıyı kapattıysa `streamRemaining` bunu temiz bir gövde sonu
+    // sayar; eksik gövde sessizce başarı olarak dönmesin (v2.0.69).
+    if (responseBodyTruncated(&req, ctx.method, response.head.status)) {
+        ctx.failed = true;
+        return;
+    }
     const body: []u8 = body_out.toOwnedSlice() catch &.{};
 
     // Gövde ikili olabilir (gömülü `\0`, geçersiz UTF-8): `str` uzunluğu başlıkta taşıdığı için
@@ -685,7 +709,7 @@ fn doRequest(
     return ctx;
 }
 
-fn parseMethod(name: []const u8) ?std.http.Method {
+pub fn parseMethod(name: []const u8) ?std.http.Method {
     const table = [_]struct { name: []const u8, method: std.http.Method }{
         .{ .name = "GET", .method = .GET },
         .{ .name = "POST", .method = .POST },

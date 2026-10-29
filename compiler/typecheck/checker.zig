@@ -1418,6 +1418,8 @@ pub const Checker = struct {
         .{ .name = "time", .caps = &.{} },
         .{ .name = "tls", .caps = &.{.network} },
         .{ .name = "toml", .caps = &.{} },
+        // v2.0.69: `nox.http` akışı + `nox.fs` dosyaları; ikisinin yeteneğini de ister.
+        .{ .name = "transfer", .caps = &.{ .network, .filesystem } },
         .{ .name = "url", .caps = &.{} },
         .{ .name = "uuid", .caps = &.{} },
         .{ .name = "validate", .caps = &.{} },

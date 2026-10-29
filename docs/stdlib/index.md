@@ -25,6 +25,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 | none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `sqlite` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql` |
+| `network` + `filesystem` | both | `transfer` |
 | `process` | the process and its children | `os`, `process` |
 | `threads` | native threads | `thread`, `atomic` |
 | `clock` | reading the system clock | `log` (and the clock functions of `time`) |
@@ -95,6 +96,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | Module | Purpose |
 |---|---|
 | [`nox.http`](http.md) | HTTP client and server (TLS and WebSocket upgrade included) |
+| [`nox.transfer`](transfer.md) | stream HTTP bodies to and from files |
 | [`nox.router`](router.md) | path routing and middleware |
 | [`nox.websocket`](websocket.md) | WebSocket client and server connection |
 | [`nox.tls`](tls.md) | client TLS streams |

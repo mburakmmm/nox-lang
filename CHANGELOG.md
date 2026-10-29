@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.69]
+
+### Eklendi
+
+- Akışlı dosya G/Ç (Nova N.4): `nox.fs.open_read/open_write/open_append` ile `FileReader`/`FileWriter` (`read_chunk(n)`, `seek`, `size`, `write`, `close`, `with`); bellek parça boyutuyla sınırlı, ham bayt (gömülü NUL dahil) taşır.
+- Akışlı HTTP: `nox.http.stream` (indirme) ve `stream_upload` (sabit Content-Length ya da chunked yükleme) ile `HttpStream` (`read_chunk`, `write`, `finish`, `close`, `with`). Okuma çekme tabanlıdır (geri basınç), gzip/deflate çözülür, `timeout_ms` işlem başına boşta zaman aşımıdır, lightweight task'larda bekleme yalnızca çağıran task'ı askıya alır.
+- Yeni `nox.transfer` modülü (`network` + `filesystem`): `download_to_file` (yalnızca 2xx ve tam gövdede atomik rename, aksi halde hedefe dokunmaz) ve `upload_file`.
+- Bağlam ifadesi olarak sınıf döndüren serbest fonksiyon çağrısı: `with open_read(path) as f:`.
+
+### Duzeltildi
+
+- Content-Length ya da chunked gövdesi tamamlanmadan kapanan bağlantı `get/post/request`te sessizce başarı sayılıyordu (kesik indirme); artık `HttpError`. HEAD/204/304 yanıtları etkilenmez.
+
 ## [2.0.68]
 
 ### Eklendi

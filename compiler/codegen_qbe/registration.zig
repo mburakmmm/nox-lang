@@ -1474,7 +1474,8 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
 /// desenden çıkarır: doğrudan bir `ClassAdı(...)` kurucu çağrısı (ör.
 /// `with FileHandle("x.txt") as f:`) ya da ZATEN bilinen (önceden
 /// `locals`e eklenmiş) bir sınıf tipli yerelin adı (ör. `with existing_
-/// resource:`). Başka HİÇBİR ifade şekli (alan okuması, metod çağrısı,
+/// resource:`) ya da sınıf döndüren bir serbest fonksiyon çağrısı
+/// (`with open_read(path) as f:`, v2.0.69). Başka HİÇBİR ifade şekli (alan okuması, metod çağrısı,
 /// indeksleme...) v1 kapsamında DESTEKLENMEZ — `inferFieldType`in AYNI
 /// bilinçli dar kapsamıyla TUTARLI.
 pub fn inferWithCtxClassName(self: *Codegen, ctx_expr: ast.Expr, locals: []const LocalDecl) CodegenError![]const u8 {
@@ -1482,8 +1483,13 @@ pub fn inferWithCtxClassName(self: *Codegen, ctx_expr: ast.Expr, locals: []const
         .call => |c| {
             if (c.callee.* != .identifier) return error.Unsupported;
             const name = c.callee.identifier;
-            if (!self.classes.contains(name)) return error.Unsupported;
-            return name;
+            if (self.classes.contains(name)) return name;
+            // v2.0.69: `with open_read(path) as f:` — sınıf döndüren serbest bir fonksiyon (Python'un `with open(...)` idiomu).
+            // Dönüş tipi statik imzadan okunur; sınıf dışı dönüş desteklenmez.
+            if (self.functions.get(name)) |sig| {
+                if (sig.ret.heap == .class) return sig.ret.class_name orelse return error.Unsupported;
+            }
+            return error.Unsupported;
         },
         .identifier => |name| {
             const info = Codegen.findLocal(locals, name) orelse return error.Unsupported;
