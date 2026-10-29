@@ -27,7 +27,7 @@ Integer `//` and `%` by zero raise `ZeroDivisionError`; float division never rai
 - No semicolons, no one-line compound statements (`if x: y()` must be two lines), no walrus `:=`, no `lambda` with statements.
 - No `*args`/`**kwargs`, no keyword-only (`*`) or positional-only (`/`) markers, no argument unpacking at call sites, no star-assignment
   (`a, *b = xs`). Default values must be constant literals.
-- No `yield`/generators/iterators; generator expressions are accepted only as a call argument and are evaluated **eagerly** into a list.
+- `yield` generators are **eager** (the function returns a `list[T]`, see [Functions](functions.md#generators-yield)); there are no lazy iterators. Generator expressions are accepted only as a call argument and are evaluated eagerly into a list.
 - No `global`/`nonlocal`: module-level names are assigned directly from functions; a nested function may only **read** captured variables.
 - No raw strings (`r"…"`), no adjacent-literal concatenation, no `\x`/`\U` escapes, no `%` formatting, no `!r` in f-strings. Identifiers are compared by code point (no NFKC normalization).
 - No `try … else`, no `for … else`/`while … else`, no bare `raise` (use `raise e`), no `raise … from …`, no multi-item `with`.

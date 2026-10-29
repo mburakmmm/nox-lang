@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.60]
+
+### Eklendi
+
+- `yield` / `yield from` ile jeneratorler (`-> Iterator[T]`, `Generator[T]`, `Iterable[T]`). EAGER'dir: govde cagrida sonuna kadar calisir, deger listesi (`list[T]`) doner; sonlu uretimler icin dogrudur, sonsuz jenerator donmez. `noxc fmt` tipi `list[T]` olarak yazar.
+
 ## [2.0.59]
 
 ### Eklendi

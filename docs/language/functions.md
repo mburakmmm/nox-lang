@@ -142,6 +142,38 @@ print(add5(1))
 6
 ```
 
+### Generators (`yield`)
+
+A function whose body contains `yield` (or `yield from`) and whose return type is `Iterator[T]` (`Generator[T]` and `Iterable[T]` are
+accepted too) produces a sequence of values:
+
+```nox
+def squares(n: int) -> Iterator[int]:
+    for i in range(n):
+        yield i * i
+
+def numbered(names: list[str]) -> Iterator[str]:
+    k: int = 1
+    for name in names:
+        yield str(k) + ". " + name
+        k += 1
+
+for line in numbered(["ada", "grace"]):
+    print(line)
+print(squares(5), sum(squares(4)))
+```
+
+```output
+1. ada
+2. grace
+[0, 1, 4, 9, 16] 14
+```
+
+**Generators are eager.** `Iterator[T]` is simply `list[T]`: the whole body runs when the function is called and every yielded value is
+collected into the returned list (`noxc fmt` writes the type as `list[T]`). This is right for any finite sequence, but an infinite
+generator never returns and a consumer that stops early does not stop the producer. A bare `return` ends the generator, a `return value`
+is an error, and `x = yield` / `send()` are not supported.
+
 ### `nonlocal`
 
 `nonlocal name` lets a nested function assign to a variable that belongs to an enclosing function. The variable must be declared with an

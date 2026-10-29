@@ -256,6 +256,12 @@ const Printer = struct {
                     try self.writer.writeAll("\"\"\"");
                     try self.writer.writeAll(e.string_lit);
                     try self.writer.writeAll("\"\"\"");
+                } else if (e == .call and e.call.callee.* == .identifier and e.call.args.len == 1 and
+                    (std.mem.eql(u8, e.call.callee.identifier, "__nox_yield") or std.mem.eql(u8, e.call.callee.identifier, "__nox_yield_from")))
+                {
+                    // `yield e` / `yield from e` yüzey biçimi (parser `__nox_yield(e)` çağrısına indirgemişti).
+                    try self.writer.writeAll(if (std.mem.eql(u8, e.call.callee.identifier, "__nox_yield")) "yield " else "yield from ");
+                    try self.printExpr(e.call.args[0]);
                 } else {
                     try self.printExpr(e);
                 }

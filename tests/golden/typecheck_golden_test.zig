@@ -1509,6 +1509,20 @@ test "golden(typecheck): nonlocal değişken for döngü değişkeni olamaz" {
     );
 }
 
+test "golden(typecheck): yield içeren fonksiyon Iterator[T] ile işaretlenmeli" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_yield_without_iterator_annotation.nox"),
+        @embedFile("typecheck_cases/err_yield_without_iterator_annotation.expected"),
+    );
+}
+
+test "golden(typecheck): jeneratör değer döndüremez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_generator_return_value.nox"),
+        @embedFile("typecheck_cases/err_generator_return_value.expected"),
+    );
+}
+
 test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),

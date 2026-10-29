@@ -236,6 +236,25 @@ pub const Parser = struct {
             return .{ .var_decl = .{ .name = name, .type_expr = type_expr, .value = value } };
         }
 
+        // `yield <ifade>` / `yield from <ifade>` (bağlamsal anahtar kelime): `__nox_yield(e)` / `__nox_yield_from(e)` çağrı deyimi olarak
+        // temsil edilir; `generator_desugar.zig` bunları checker'dan ÖNCE `list` biriktirmeye çevirir.
+        if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "yield") and self.pos + 1 < self.tokens.len) {
+            const nk = self.tokens[self.pos + 1].kind;
+            if (nk != .assign and nk != .dot and nk != .colon and nk != .comma and nk != .newline and nk != .r_paren) {
+                _ = self.advance();
+                var fname: []const u8 = "__nox_yield";
+                if (self.check(.kw_from)) {
+                    _ = self.advance();
+                    fname = "__nox_yield_from";
+                }
+                const arg = try self.parseExpr();
+                _ = try self.expect(.newline);
+                const callee = try self.box(.{ .identifier = fname });
+                const cargs = try self.allocator.alloc(ast.Expr, 1);
+                cargs[0] = arg;
+                return .{ .expr_stmt = .{ .call = .{ .callee = callee, .args = cargs } } };
+            }
+        }
         // v1.162.0: `assert koşul[, "mesaj"]` → `if not koşul: raise AssertionError(mesaj)` (her zaman açık).
         if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "assert") and self.pos + 1 < self.tokens.len) {
             const nk = self.tokens[self.pos + 1].kind;
@@ -393,7 +412,9 @@ pub const Parser = struct {
             }
             _ = try self.expect(.r_bracket);
             // v1.168.0: `set[T]` → prelude'daki generic `__nox_Set[T]` sınıfı (yüzey adı `set`; formatter geri çevirir).
-            const gname: []const u8 = if (std.mem.eql(u8, name, "set") and args.items.len == 1) "__nox_Set" else name;
+            var gname: []const u8 = if (std.mem.eql(u8, name, "set") and args.items.len == 1) "__nox_Set" else name;
+            // `Iterator[T]` / `Generator[T]` / `Iterable[T]` (jeneratör imzaları): eager jeneratörler `list[T]` döndürdüğü için yüzey adı `list`e iner.
+            if (args.items.len == 1 and (std.mem.eql(u8, name, "Iterator") or std.mem.eql(u8, name, "Generator") or std.mem.eql(u8, name, "Iterable"))) gname = "list";
             return .{ .generic = .{ .name = gname, .args = try args.toOwnedSlice(self.allocator) } };
         }
         // Faz NN.2: `pkg.module.ClassName` — nitelikli tip adı (bkz.

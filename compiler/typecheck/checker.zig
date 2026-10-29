@@ -47,6 +47,7 @@ const call_expand_apply = @import("call_expand_apply.zig");
 const index_call_fixup = @import("index_call_fixup.zig");
 const guard_normalize = @import("guard_normalize.zig");
 const nonlocal_desugar = @import("nonlocal_desugar.zig");
+const generator_desugar = @import("generator_desugar.zig");
 const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
@@ -3518,6 +3519,11 @@ pub const Checker = struct {
 
     pub fn checkModule(self: *Checker, module: ast.Module) TypeError!void {
         self.module_expr_spans = module.expr_spans;
+        // TODO 8.6: `yield` → liste biriktirme (eager jeneratör).
+        if (try generator_desugar.run(self.allocator, module.body)) |d| {
+            self.current_line = d.line;
+            return self.fail(error.TypeMismatch, "{s}", .{d.message});
+        }
         // TODO 8.5: `nonlocal` → hücre (tek elemanlı liste) dönüşümü; diğer tüm geçişlerden ÖNCE.
         if (try nonlocal_desugar.run(self.allocator, module.body)) |d| {
             self.current_line = d.line;
