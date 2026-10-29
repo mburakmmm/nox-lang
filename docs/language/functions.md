@@ -220,8 +220,8 @@ arguments of `print` are evaluated, before the line is printed.)
 - A bare `return` ends the generator. An exception raised inside it propagates to the consumer and ends it (later pulls produce nothing).
 - A generator that is not run to the end simply stops being referenced; its state is released with it.
 
-A generator is compiled to a resumable state machine, so a few things are not allowed: `yield` inside `try`, `with` or `lowlevel` (put the
-`try` around code that does not yield), `yield` in an `async def`, a generic generator function (`def f[T](...)`), a local variable of
+A generator is compiled to a resumable state machine, so a few things are not allowed (an `async def` generator is covered in [Concurrency](concurrency.md#async-generators-and-async-for)): `yield` inside `try`, `with` or `lowlevel` (put the
+`try` around code that does not yield), a generic generator function (`def f[T](...)`), a local variable of
 function type that lives across a `yield`, `return value`, and `x = yield` / `send()`. `Iterable[T]` stays a plain `list[T]` (use it for
 parameters that take a finished sequence).
 

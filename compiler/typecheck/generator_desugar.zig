@@ -732,7 +732,9 @@ const Pass = struct {
 
     fn lower(self: *Pass, fd: *ast.FuncDef, line: u32) Error!void {
         self.line = line;
-        if (fd.is_async) return self.fail("'yield' is not supported in an 'async def'", .{});
+        // `async def` + `yield` = ASYNC jeneratör: çağrı bir görev başlatmaz, jeneratör nesnesi döner (işlev eşzamanlı olur); `await`ler adım
+        // fonksiyonunda çalışır (tüketicinin fiber'ında), bu yüzden adım `allow_await` taşır.
+        const was_async = fd.is_async;
         if (fd.type_params.len > 0) return self.fail("a generator function cannot be generic", .{});
         if (fd.return_type != .generic or !std.mem.eql(u8, fd.return_type.generic.name, "__nox_Gen") or fd.return_type.generic.args.len != 1) {
             return self.fail("a function containing 'yield' must be annotated '-> Iterator[T]' (or Generator[T])", .{});
@@ -774,12 +776,14 @@ const Pass = struct {
             .params = &.{},
             .return_type = try self.optionalOf(self.ytype),
             .body = try step_body.toOwnedSlice(self.a),
+            .allow_await = was_async,
         };
         var body: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         try body.appendSlice(self.a, self.prelude.items);
         try body.append(self.a, self.stmt(.{ .func_def = step_def }));
         try body.append(self.a, self.stmt(.{ .return_stmt = try self.call1("__nox_gen_from_step", id(step_name)) }));
         fd.body = try body.toOwnedSlice(self.a);
+        fd.is_async = false;
     }
 
     // ---- gezinti ----

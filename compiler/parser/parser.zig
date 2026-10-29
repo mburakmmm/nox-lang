@@ -219,7 +219,17 @@ pub const Parser = struct {
             .kw_if => try self.parseIf(),
             .kw_while => try self.parseWhile(),
             .kw_for => try self.parseFor(),
-            .kw_def, .kw_async => .{ .func_def = try self.parseFuncDef(null) },
+            .kw_def => .{ .func_def = try self.parseFuncDef(null) },
+            .kw_async => blk: {
+                // `async for x in agen:` (async jeneratör tüketimi) ya da `async def`
+                if (self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .kw_for) {
+                    _ = self.advance();
+                    var k = try self.parseFor();
+                    k.for_stmt.is_async = true;
+                    break :blk k;
+                }
+                break :blk .{ .func_def = try self.parseFuncDef(null) };
+            },
             .kw_extern => try self.parseExternDef(),
             .kw_class => try self.parseClassDef(),
             .at_sign => try self.parseDecoratedDef(),
@@ -454,7 +464,7 @@ pub const Parser = struct {
             // `Iterable[T]` (yalnızca PARAMETRE/liste anlamında): yüzey adı `list`e iner.
             if (args.items.len == 1 and std.mem.eql(u8, name, "Iterable")) gname = "list";
             // `Iterator[T]` / `Generator[T]`: tembel jeneratör tipi (prelude'daki generic `__nox_Gen[T]`; formatter geri çevirir).
-            if (args.items.len == 1 and (std.mem.eql(u8, name, "Iterator") or std.mem.eql(u8, name, "Generator"))) gname = "__nox_Gen";
+            if (args.items.len == 1 and (std.mem.eql(u8, name, "Iterator") or std.mem.eql(u8, name, "Generator") or std.mem.eql(u8, name, "AsyncIterator") or std.mem.eql(u8, name, "AsyncGenerator"))) gname = "__nox_Gen";
             return .{ .generic = .{ .name = gname, .args = try args.toOwnedSlice(self.allocator) } };
         }
         // Faz NN.2: `pkg.module.ClassName` — nitelikli tip adı (bkz.

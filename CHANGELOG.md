@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.67]
+
+### Eklendi
+
+- Async jeneratorler: `async def` + `yield` (cagri gorev baslatmaz, tembel `AsyncIterator[T]` doner, govde `await` edebilir) ve `async for`. `AsyncIterator[T]`/`AsyncGenerator[T]` tip adlari.
+
+### Duzeltildi
+
+- `await spawn f(...)` her kullanimda bir Task sizdiriyordu (taze Task tutamagi hic serbest birakilmiyordu); hata yolunda da.
+
 ## [2.0.66]
 
 ### Eklendi

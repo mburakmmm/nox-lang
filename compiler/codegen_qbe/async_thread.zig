@@ -1044,6 +1044,9 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     try self.qbeLabel(proceed_label);
     const payload_t = try self.newTemp();
     try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_async_await", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text } });
+    // `await spawn f(...)`: Task tutamağı TAZE bir geçicidir (hiçbir değişken sahibi değil) — sonuç alındıktan sonra burada yıkılır; aksi halde her
+    // çağrıda bir Task sızardı. İstisna denetiminden ÖNCE yapılır ki hata yolu da serbest bırakmış olsun.
+    if (operand == .spawn_expr and task_val.heap == .task) try self.destroyNonArcValue(task_val.text, .task);
     // Faz SC.1: `nox_async_await` (bkz. `runtime/async_rt/bridge.zig`)
     // ARTIK sarmalanan `async def` gövdesinde YAKALANMAMIŞ bir istisna
     // VARSA çağıranın bağlamına YENİDEN fırlatır (`nox_raise`) — sıradan

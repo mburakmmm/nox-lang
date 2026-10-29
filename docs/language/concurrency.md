@@ -87,6 +87,47 @@ await t0
 worker cancelled
 ```
 
+### Async generators and `async for`
+
+An `async def` whose body contains `yield` is an **async generator**. Calling it does not start a task (it is not `spawn`ed): it returns a
+lazy `AsyncIterator[T]` — the same type as the [`Iterator[T]`](functions.md#generators-yield) of an ordinary generator — and its body may
+`await`. Consume it with `async for`, which is allowed inside an `async def` and at the top level:
+
+```nox
+async def double(n: int) -> int:
+    return n * 2
+
+async def numbers(n: int) -> AsyncIterator[int]:
+    for i in range(n):
+        d: int = await spawn double(i)
+        yield d
+
+async def total() -> int:
+    t: int = 0
+    async for v in numbers(5):
+        t += v
+    return t
+
+async for x in numbers(3):
+    print("got", x)
+r: Task[int] = spawn total()
+print(await r)
+```
+
+```output
+got 0
+got 2
+got 4
+20
+```
+
+Each value is produced when the loop asks for it, in the loop's own task: the generator's `await`s suspend that task, so a `break` also stops
+the producer. `async for` needs an async iterator (a generator), not a list; the other limits of generators apply (no `yield` inside `try`/`with`,
+no `send()`). Because an async generator is not itself a task, it can be passed around like any value, but a *task* (`spawn`ed `async def`)
+still takes only simple parameters on the QBE backend, so consume generators inside the task that creates them.
+
+`await` also works inside list and dict comprehensions (`[await spawn f(i) for i in range(3)]`); the awaits run one after another.
+
 ## Channels
 
 `Channel[T](capacity)` is a typed queue connecting tasks. `await ch.send(v)` suspends while the channel is full; `await ch.recv()` suspends

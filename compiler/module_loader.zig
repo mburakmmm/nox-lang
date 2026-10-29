@@ -647,7 +647,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
             } };
         },
         .while_stmt => |w| .{ .while_stmt = .{ .cond = try renameExpr(a, w.cond, map), .body = try renameStmts(a, w.body, map) } },
-        .for_stmt => |f| .{ .for_stmt = .{ .var_name = f.var_name, .iterable = try renameExpr(a, f.iterable, map), .body = try renameStmts(a, f.body, map) } },
+        .for_stmt => |f| .{ .for_stmt = .{ .var_name = f.var_name, .iterable = try renameExpr(a, f.iterable, map), .body = try renameStmts(a, f.body, map), .is_async = f.is_async } },
         // Faz U.4.2: `fd.name`in `map`de olup OLMAMASI, bu deyimin ÜST-DÜZEY
         // (mangled edilmeli) mi YOKSA İÇ İÇE/nested (mangled EDİLMEMELİ,
         // bkz. `renameNestedFuncDef`in belge notu) bir `func_def` mi

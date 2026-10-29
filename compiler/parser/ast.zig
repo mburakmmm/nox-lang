@@ -227,6 +227,8 @@ pub const ForStmt = struct {
     iterable: Expr,
     body: []Stmt,
     hoist: ?ForHoist = null,
+    /// `async for x in agen:` (TODO 8.6): yalnızca async bağlamda ve bir `Iterator`/`AsyncIterator` (tembel jeneratör) üzerinde geçerlidir.
+    is_async: bool = false,
 };
 
 /// `@isim` / `@isim(arg1, arg2, ...)` — Faz 1 decorator (bkz. nox-teknik-
@@ -260,6 +262,8 @@ pub const FuncDef = struct {
     /// İç içe `def` gövdesindeki `nonlocal a, b` bildirimi (kaynakta sıra serbest; AST'de gövde başına toplanır). Checker öncesi
     /// `nonlocal_desugar.zig` bu adları bir hücreye (tek elemanlı liste) çevirir.
     nonlocals: []const []const u8 = &.{},
+    /// `generator_desugar.zig`nin `async def` jeneratörü için ürettiği ADIM fonksiyonunda `await`e izin verir (adım, tüketicinin fiber'ında çalışır).
+    allow_await: bool = false,
 };
 
 /// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): bir sınıf gövdesinde

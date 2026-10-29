@@ -344,6 +344,7 @@ const Printer = struct {
                 try self.indentTo(depth);
                 // v1.157.0: `for a, b in X:` desugarı (gizli tuple değişkeni + gövde başında K tip-çıkarımlı bildirim) geri çevrilir.
                 if (forUnpackCount(f)) |k| {
+                    if (f.is_async) try self.writer.writeAll("async ");
                     try self.writer.writeAll("for ");
                     for (f.body[0..k], 0..) |d, j| {
                         if (j > 0) try self.writer.writeAll(", ");
@@ -356,6 +357,7 @@ const Printer = struct {
                     try self.printStmts(f.body[k..], depth + 1);
                     return;
                 }
+                if (f.is_async) try self.writer.writeAll("async ");
                 try self.writer.print("for {s} in ", .{f.var_name});
                 try self.printExpr(f.iterable);
                 try self.writer.writeAll(":");

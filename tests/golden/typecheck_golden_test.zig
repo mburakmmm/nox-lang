@@ -1593,17 +1593,17 @@ test "golden(typecheck): err_generator_optional_yield" {
     );
 }
 
-test "golden(typecheck): err_generator_async" {
+test "golden(typecheck): err_async_for_in_sync_function" {
     try expectGolden(
-        @embedFile("typecheck_cases/err_generator_async.nox"),
-        @embedFile("typecheck_cases/err_generator_async.expected"),
+        @embedFile("typecheck_cases/err_async_for_in_sync_function.nox"),
+        @embedFile("typecheck_cases/err_async_for_in_sync_function.expected"),
     );
 }
 
-test "golden(typecheck): err_await_in_comprehension" {
+test "golden(typecheck): err_async_for_over_list" {
     try expectGolden(
-        @embedFile("typecheck_cases/err_await_in_comprehension.nox"),
-        @embedFile("typecheck_cases/err_await_in_comprehension.expected"),
+        @embedFile("typecheck_cases/err_async_for_over_list.nox"),
+        @embedFile("typecheck_cases/err_async_for_over_list.expected"),
     );
 }
 

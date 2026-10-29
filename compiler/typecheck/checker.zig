@@ -5594,7 +5594,9 @@ pub const Checker = struct {
             },
             .for_stmt => |f| {
                 self.lazy_for_iter = null;
+                if (f.is_async and !ctx.in_async) return self.fail(error.TypeMismatch, "'async for' can only be used inside an 'async def' body or at the top level", .{});
                 const elem_t = try self.checkForIterable(ctx, f.iterable, @intFromPtr(f.body.ptr));
+                if (f.is_async and self.lazy_for_iter == null) return self.fail(error.TypeMismatch, "'async for' needs an async iterator (an 'AsyncIterator[T]' returned by an async generator)", .{});
                 if (self.lazy_for_iter) |lazy_t| {
                     self.lazy_for_iter = null;
                     try self.checkLazyFor(ctx, f, lazy_t);
@@ -5815,7 +5817,7 @@ pub const Checker = struct {
         var inner_ctx: FnCtx = .{
             .scope = &inner_scope,
             .expected_return = ret,
-            .in_async = false,
+            .in_async = fd.allow_await,
             .path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ctx.path, fd.name }),
         };
         for (fd.body) |*s| try self.checkStmt(&inner_ctx, s);
@@ -6536,7 +6538,6 @@ pub const Checker = struct {
             },
             .await_expr => |operand_ptr| blk: {
                 if (!ctx.in_async) return self.fail(error.TypeMismatch, "'await' can only be used inside an 'async def' body", .{});
-                if (self.comp_depth > 0) return self.fail(error.TypeMismatch, "'await' inside a comprehension is not supported: write a 'for' loop that appends the awaited values", .{});
                 const operand = operand_ptr.*;
                 const t = try self.checkExpr(ctx, operand);
                 if (t == .task) break :blk t.task.*;

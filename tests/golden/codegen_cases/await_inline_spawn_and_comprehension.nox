@@ -1,0 +1,24 @@
+async def sq(n: int) -> int:
+    return n * n
+
+async def bad() -> int:
+    raise ValueError("boom")
+
+async def run_all() -> None:
+    x: int = await spawn sq(3)
+    print(x, [await spawn sq(i) for i in range(4)])
+    print({i: await spawn sq(i) for i in range(3)})
+    out: list[int] = []
+    for i in range(3):
+        out.append(await spawn sq(i + 1))
+    print(out, sum([await spawn sq(i) for i in range(5) if i % 2 == 1]))
+    try:
+        v: int = await spawn bad()
+        print(v)
+    except ValueError as e:
+        print("caught", e.message)
+
+t: Task[None] = spawn run_all()
+await t
+y: int = await spawn sq(5)
+print(y)

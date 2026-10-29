@@ -1,0 +1,73 @@
+async def double(n: int) -> int:
+    return n * 2
+
+async def feeder(ch: Channel[int], n: int) -> None:
+    for i in range(n):
+        await ch.send(i * i)
+
+async def from_channel(ch: Channel[int], n: int) -> AsyncIterator[int]:
+    k: int = 0
+    while k < n:
+        v: int = await ch.recv()
+        yield v
+        k += 1
+
+async def pipeline(src: AsyncIterator[int]) -> AsyncIterator[int]:
+    async for v in src:
+        d: int = await spawn double(v)
+        yield d
+        if d > 20:
+            yield -1
+
+async def evens(n: int) -> AsyncIterator[str]:
+    for i in range(n):
+        if i % 2 == 0:
+            x: int = await spawn double(i)
+            yield "e" + str(x)
+        else:
+            yield "o" + str(i)
+
+class Source:
+    def __init__(self, base: int) -> None:
+        self.base: int = base
+
+    async def count(self, n: int) -> AsyncIterator[int]:
+        for i in range(n):
+            self.base += await spawn double(1)
+            yield self.base
+
+async def nested(n: int) -> AsyncIterator[str]:
+    for i in range(n):
+        async for s in evens(i + 1):
+            yield str(i) + ":" + s
+
+async def run_all() -> None:
+    ch: Channel[int] = Channel[int](2)
+    f: Task[None] = spawn feeder(ch, 6)
+    got: list[int] = []
+    async for g in pipeline(from_channel(ch, 6)):
+        got.append(g)
+    await f
+    print(got)
+    words: list[str] = []
+    async for w in evens(5):
+        words.append(w)
+    print(words)
+    s: Source = Source(10)
+    counted: list[int] = []
+    async for c in s.count(3):
+        counted.append(c)
+    print(counted, s.base)
+    first: list[str] = []
+    async for item in nested(3):
+        first.append(item)
+        if len(first) >= 5:
+            break
+    print(first)
+    none_left: list[int] = []
+    async for z in from_channel(ch, 0):
+        none_left.append(z)
+    print(len(none_left))
+
+t: Task[None] = spawn run_all()
+await t
