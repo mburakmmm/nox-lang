@@ -55,7 +55,7 @@ mini-language is fully supported in f-strings, `format()` and `str.format`.
 
 ## Classes
 
-- Single inheritance plus compile-time mixins (`class C(A, B)`, see [Classes](classes.md#several-bases-mixins)); class attributes are shared storage assigned only through the declaring class (`Cls.X = v`, never `self.X = v`); no metaclasses, `__slots__`, `__getattr__`, `__call__` or `isinstance`.
+- Multiple inheritance (`class C(A, B)`: `C` is a subtype of every base, see [Classes](classes.md#several-bases-multiple-inheritance)); class attributes are shared storage assigned only through the declaring class (`Cls.X = v`, never `self.X = v`); no metaclasses, `__slots__`, `__getattr__`, `__call__` or `isinstance`.
 - Fields are fixed: created in `__init__` (or declared in the class body) and never added later. `self` may be left unannotated.
 - `==` on two instances compares fields structurally unless you define `__eq__`; `is` is only for `None`.
 - Operator overloading uses the usual dunder names; `x += y` calls `__add__`.

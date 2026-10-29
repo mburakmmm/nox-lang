@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.75]
+
+### Eklendi
+
+- Gerçek çoklu kalıtım: `class C(A, B)` artık `C`yi her tabanın ALT TİPİ yapar. `C` değeri `B` tipli parametreye/listeye/alana verilebilir; `B` tipli çağrılar ve alan erişimleri `C`nin geçersiz kılmalarına ve ortak durumuna ulaşır; `except B:` bir `C`yi yakalar (`class Timeout(Retryable, Fatal)`). İşaretçi kimliği korunur (adaptör/ofset ayarı yok): kalıtım bileşeninde alan ve metod adları bileşen-geneli renklendirilir; mixin içermeyen bileşenler eski düzeni korur.
+- Ortak ad denetimi: bir alan adı ya da metod adı iki tabanda varsa tip/imza aynı olmak zorundadır (aksi derleme hatası).
+- Mixin'siz sınıflarda da `Taban.__init__(self, ...)` (doğrudan tabana açık çağrı) çalışır; mixin `__init__`i kendi tabanını açıkça başlatabilir.
+
 ## [2.0.74]
 
 ### Eklendi

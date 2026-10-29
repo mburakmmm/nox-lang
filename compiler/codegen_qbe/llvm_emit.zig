@@ -158,7 +158,8 @@ pub fn llvmPtrArrayConstant(allocator: std.mem.Allocator, name: []const u8, syms
     var items: std.ArrayListUnmanaged(u8) = .empty;
     for (syms, 0..) |sym, i| {
         if (i != 0) try items.appendSlice(allocator, ", ");
-        const entry = try std.fmt.allocPrint(allocator, "i64 ptrtoint (ptr @{s} to i64)", .{sym});
+        // boş sembol = boş vtable slotu (çoklu kalıtımın renklendirilmiş slotları)
+        const entry = if (sym.len == 0) try allocator.dupe(u8, "i64 0") else try std.fmt.allocPrint(allocator, "i64 ptrtoint (ptr @{s} to i64)", .{sym});
         try items.appendSlice(allocator, entry);
     }
     return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr constant [{d} x i64] [{s}]\n", .{ name, syms.len, items.items });

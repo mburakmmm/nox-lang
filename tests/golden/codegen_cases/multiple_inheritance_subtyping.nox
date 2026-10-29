@@ -1,0 +1,70 @@
+class Named:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def label(self) -> str:
+        return "N:" + self.name
+
+    def rename(self, n: str) -> None:
+        self.name = n
+
+class Counted:
+    def __init__(self) -> None:
+        self.count = 0
+        self.tags: list[str] = []
+
+    def bump(self) -> int:
+        self.count += 1
+        return self.count
+
+    def tag(self, t: str) -> None:
+        self.tags.append(t)
+
+    def describe(self) -> str:
+        return "counted " + str(self.count)
+
+class Item(Named, Counted):
+    def __init__(self, name: str) -> None:
+        Named.__init__(self, name)
+        Counted.__init__(self)
+        self.price = 10
+
+    def describe(self) -> str:
+        return "item " + self.name + " " + str(self.count)
+
+class Special(Item):
+    def label(self) -> str:
+        return "S:" + self.name
+
+def show(n: Named) -> str:
+    return n.label() + "/" + n.name
+
+def tick(c: Counted) -> str:
+    c.bump()
+    c.tag("t" + str(c.count))
+    return c.describe() + " " + str(len(c.tags))
+
+def rename_all(xs: list[Named]) -> None:
+    i: int = 0
+    while i < len(xs):
+        xs[i].rename("R" + str(i))
+        i += 1
+
+items: list[Named] = [Item("a"), Named("plain"), Special("sp")]
+for x in items:
+    print(show(x))
+rename_all(items)
+for x in items:
+    print(x.name)
+it: Item = Item("pen")
+print(tick(it))
+print(tick(it))
+sp: Special = Special("sp2")
+print(tick(sp))
+print(show(sp))
+cs: list[Counted] = [it, sp, Counted()]
+total: int = 0
+for c in cs:
+    total += c.bump()
+print(total)
+print(it.count, sp.count, it.price)

@@ -217,6 +217,7 @@ const exceptions = @import("exceptions.zig");
 const calls = @import("calls.zig");
 const expr_mod = @import("expr.zig");
 const stmt_mod = @import("stmt.zig");
+const mi_layout = @import("mi_layout.zig");
 const registration = @import("registration.zig");
 const decorators_mod = @import("decorators.zig");
 const qbe_emit = @import("qbe_emit.zig");
@@ -1329,6 +1330,8 @@ pub const Codegen = struct {
     /// tarafından, HERHANGİ bir sınıf kaydedilmeden ÖNCE BİR KEZ doldurulur
     /// — bkz. onun belge notu ("ileri bilgi problemi"nin çözümü).
     inheriting_classes: std.StringHashMapUnmanaged(void) = .empty,
+    /// Çoklu kalıtım bileşenlerinin alan/vtable renklendirmesi (bkz. `mi_layout.zig`); mixin yoksa boş.
+    mi: mi_layout.MiInfo = .{},
     /// v1.142.0 (bkz. nox-teknik-spesifikasyon.md §3.240): referans
     /// döngüsüne KATILABİLEN (tip-düzeyi graf üzerinde kendisine dönen bir
     /// yol OLAN) sınıfların adları — `layout.computeCyclicClasses`
@@ -1710,6 +1713,19 @@ fn collectExplainForBody(gen: *Codegen, allocator: std.mem.Allocator, sink: *std
     }
 }
 
+/// `anc`, `cls`nin (taban zinciri VE mixin tabanlarıyla, transitif) atası mı? (`anc != cls`.)
+fn isAncestorOf(gen: *const Codegen, anc: []const u8, cls: []const u8, depth: usize) bool {
+    if (depth > 64) return false;
+    const ci = gen.classes.get(cls) orelse return false;
+    if (ci.base) |b| {
+        if (std.mem.eql(u8, b, anc) or isAncestorOf(gen, anc, b, depth + 1)) return true;
+    }
+    for (ci.mixins) |m| {
+        if (std.mem.eql(u8, m, anc) or isAncestorOf(gen, anc, m, depth + 1)) return true;
+    }
+    return false;
+}
+
 pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8)) CodegenError![]u8 {
     return generateModuleWithMeta(allocator, module, extra_functions, generic_template_names, extra_classes, generic_class_template_names, debug_source_path, closure_infos, defer_synthetic_names, from_imports, functions_used_as_value, module_aliases, decorated_functions, backend, profile, explain_opts, callback_targets, resolved_bases, &.{}, false, "");
 }
@@ -1824,6 +1840,7 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
     }
     for (extra_classes) |cd| try class_defs_to_register.append(gen.allocator, cd);
     gen.inheriting_classes = try registration.computeInheritingClasses(gen.allocator, class_defs_to_register.items, gen.resolved_bases);
+    gen.mi = try mi_layout.compute(gen.allocator, class_defs_to_register.items, gen.resolved_bases);
     try gen.registerClassesInOrder(class_defs_to_register.items);
     try gen.computeCyclicClasses();
 
@@ -1840,14 +1857,7 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
             var it2 = gen.classes.iterator();
             while (it2.next()) |e2| {
                 if (std.mem.eql(u8, e2.key_ptr.*, entry.key_ptr.*)) continue;
-                var cur: ?[]const u8 = e2.value_ptr.base;
-                while (cur) |c| {
-                    if (std.mem.eql(u8, c, entry.key_ptr.*)) {
-                        try ids.append(gen.allocator, e2.value_ptr.class_id);
-                        break;
-                    }
-                    cur = if (gen.classes.get(c)) |ci| ci.base else null;
-                }
+                if (isAncestorOf(&gen, entry.key_ptr.*, e2.key_ptr.*, 0)) try ids.append(gen.allocator, e2.value_ptr.class_id);
             }
             entry.value_ptr.descendant_class_ids = try ids.toOwnedSlice(gen.allocator);
         }

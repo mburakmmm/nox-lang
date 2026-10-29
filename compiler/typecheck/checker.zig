@@ -253,6 +253,8 @@ const ClassInfo = struct {
     /// ARAMALARI HİÇBİR YERDE bu zinciri KENDİLERİ YÜRÜMEZ (bkz. Faz 7
     /// tasarım notu: "en az invaziv strateji" — kayıt-zamanında düzleştirme).
     base: ?[]const u8 = null,
+    /// `class C(A, B)`nin mixin tabanları (`ast.ClassDef.mixins`, çözülmüş adlar): `C` bunların alt tipidir (`isSubclassOf`).
+    mixins: []const []const u8 = &.{},
     fields: std.StringHashMapUnmanaged(Type) = .{},
     methods: std.StringHashMapUnmanaged(FuncSig) = .{},
     /// GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"): `methods`
@@ -1194,6 +1196,8 @@ pub const Checker = struct {
         while (cur) |name| {
             if (std.mem.eql(u8, name, sup)) return true;
             const info = self.classes.get(name) orelse return false;
+            // çoklu kalıtım: mixin tabanlarının her biri de (kendi zinciriyle) bir atadır
+            for (info.mixins) |m| if (self.isSubclassOf(m, sup)) return true;
             cur = info.base;
         }
         return false;
@@ -3337,6 +3341,7 @@ pub const Checker = struct {
             (if (self.classes.contains(b)) b else self.from_imports.get(b) orelse b)
         else
             null;
+        info.mixins = cd.mixins;
         // v2.0 madde 5: `@repr("C")`/`@packed` arg şekli doğrulaması +
         // `layout_mode` çözümü. `collectClassNames` (Geçiş 1) SADECE
         // izin-listesindeki adları (`repr`/`packed`) erken doğruladı —
@@ -5442,7 +5447,37 @@ pub const Checker = struct {
                 }
             }
         }
+        // çoklu kalıtım: mixin gövdeleri de tamamlansın (çıkarsanmış alanlar dahil), sonra uyum denetlenir
+        for (cd.mixins) |mn| if (self.class_defs_by_name.get(mn)) |mcd| try self.ensureClassBodyChecked(mcd);
         self.checkClassBody(cd) catch |e| try self.recordDiagnostic(e);
+        self.validateMixinCompat(cd) catch |e| try self.recordDiagnostic(e);
+    }
+
+    /// Çoklu kalıtım: sınıf her mixin tipinin alt tipidir; mixin tipli kod, ortak adlı alanı/metodu MIXIN'in tipleriyle/imzasıyla kullanır. Bu yüzden ortak her ad
+    /// (alan tipi, metod imzası) sınıfta ve mixin'de AYNI olmalıdır — aksi halde mixin tipli bir çağrı yanlış ABI ile çalışırdı.
+    fn validateMixinCompat(self: *Checker, cd: ast.ClassDef) TypeError!void {
+        if (cd.mixins.len == 0) return;
+        const info = self.classes.get(cd.name) orelse return;
+        for (cd.mixins) |mn| {
+            const mi = self.classes.get(mn) orelse continue;
+            var mit = mi.methods.iterator();
+            while (mit.next()) |e| {
+                const mname = e.key_ptr.*;
+                if (std.mem.startsWith(u8, mname, "__nox_")) continue;
+                const csig = info.methods.get(mname) orelse continue;
+                const msig = e.value_ptr.*;
+                var same = csig.params.len == msig.params.len and types.eql(csig.return_type, msig.return_type);
+                if (same) for (csig.params, msig.params) |a, b| {
+                    if (!types.eql(a, b)) same = false;
+                };
+                if (!same) return self.fail(error.TypeMismatch, "class '{s}': method '{s}' has a different signature in its base '{s}' than in the class itself; a mixin type must be able to call the shared method", .{ cd.name, mname, mn });
+            }
+            var fit = mi.fields.iterator();
+            while (fit.next()) |e| {
+                const ct = info.fields.get(e.key_ptr.*) orelse continue;
+                if (!types.eql(ct, e.value_ptr.*)) return self.fail(error.TypeMismatch, "class '{s}': field '{s}' has a different type in its base '{s}' than in the class itself", .{ cd.name, e.key_ptr.*, mn });
+            }
+        }
     }
 
     /// `__nox_init_<Mixin>`: mixin düzleştirmesinin (bkz. `mixin_flatten.zig`) `Mixin.__init__` kopyası — `__init__` gibi alan oluşturabilir.

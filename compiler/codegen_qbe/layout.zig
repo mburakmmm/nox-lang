@@ -62,15 +62,18 @@ pub fn genClassVtable(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
             // Her slot HER ZAMAN bir metod TARAFINDAN doldurulmuş OLMALIDIR —
             // `registerClass` HER hiyerarşi seviyesinde TÜM önceki slotları
             // (miras yoluyla) KORUR, hiçbiri asla BOŞ kalmaz.
-            const entry = s.?;
-            try self.qbeRaw("l ${s}_{s}", .{ entry.owner, entry.name });
+            // Çoklu kalıtımda (renklendirilmiş slotlar) bu sınıfın doldurmadığı slotlar boştur.
+            if (s) |entry| {
+                try self.qbeRaw("l ${s}_{s}", .{ entry.owner, entry.name });
+            } else {
+                try self.qbeRawAll("l 0");
+            }
         }
         try self.qbeRawAll(" }\n");
     } else {
         const syms = try self.allocator.alloc([]const u8, slots.len);
         for (slots, 0..) |s, i| {
-            const entry = s.?;
-            syms[i] = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ entry.owner, entry.name });
+            syms[i] = if (s) |entry| try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ entry.owner, entry.name }) else "";
         }
         const vtable_name = try std.fmt.allocPrint(self.allocator, "{s}_vtable", .{class_name});
         const line = try llvm_emit.llvmPtrArrayConstant(self.allocator, vtable_name, syms);
@@ -119,13 +122,20 @@ pub fn computeCyclicClasses(self: *Codegen) CodegenError!void {
     }
     for (subtree) |*l| l.* = .empty;
     for (names.items, 0..) |nm, i| {
-        var cur: ?[]const u8 = nm;
-        var guard: usize = 0;
-        while (cur) |c| : (guard += 1) {
-            if (guard > n) break; // savunmacı: bozuk (döngüsel) kalıtım
-            const ci = index_of.get(c) orelse break;
+        // sınıfın kendisi + tüm atalarının (taban zinciri VE mixin tabanları) alt ağacına katılır
+        var seen: std.AutoHashMapUnmanaged(usize, void) = .empty;
+        defer seen.deinit(a);
+        var stack: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer stack.deinit(a);
+        try stack.append(a, nm);
+        while (stack.pop()) |c| {
+            const ci = index_of.get(c) orelse continue;
+            if (seen.contains(ci)) continue; // aynı atayı iki yoldan görmek (elmas) ya da bozuk döngü
+            try seen.put(a, ci, {});
             try subtree[ci].append(a, i);
-            cur = self.classes.get(c).?.base;
+            const info = self.classes.get(c).?;
+            if (info.base) |b| try stack.append(a, b);
+            for (info.mixins) |m| try stack.append(a, m);
         }
     }
 

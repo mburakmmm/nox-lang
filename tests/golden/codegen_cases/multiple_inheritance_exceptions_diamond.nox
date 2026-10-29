@@ -1,0 +1,70 @@
+class Retryable(Exception):
+    def hint(self) -> str:
+        return "retry"
+
+class Fatal(Exception):
+    def hint(self) -> str:
+        return "fatal"
+
+class Timeout(Retryable, Fatal):
+    def __init__(self, msg: str, secs: int) -> None:
+        Retryable.__init__(self, msg)
+        self.secs = secs
+
+class Plain(Retryable):
+    pass
+
+def risky(kind: int) -> None:
+    if kind == 0:
+        raise Timeout("slow", 5)
+    if kind == 1:
+        raise Plain("plain")
+    if kind == 2:
+        raise Fatal("boom")
+
+for k in range(3):
+    try:
+        risky(k)
+    except Retryable as e:
+        print("retryable", e.message, e.hint())
+    except Fatal as e:
+        print("fatal", e.message, e.hint())
+
+try:
+    risky(0)
+except Fatal as e:
+    print("as fatal:", e.message, e.hint())
+
+class Base:
+    def __init__(self) -> None:
+        self.id = 7
+
+    def ident(self) -> int:
+        return self.id
+
+class Left(Base):
+    def left(self) -> str:
+        return "L" + str(self.id)
+
+class Right(Base):
+    def __init__(self) -> None:
+        Base.__init__(self)
+        self.extra = "x"
+
+    def right(self) -> str:
+        return "R" + self.extra
+
+class Both(Left, Right):
+    def __init__(self) -> None:
+        Left.__init__(self)
+        Right.__init__(self)
+
+def use_left(l: Left) -> str:
+    return l.left()
+
+def use_right(r: Right) -> str:
+    r.id = r.id + 1
+    return r.right() + str(r.ident())
+
+b: Both = Both()
+print(use_left(b), use_right(b), b.ident(), b.id)

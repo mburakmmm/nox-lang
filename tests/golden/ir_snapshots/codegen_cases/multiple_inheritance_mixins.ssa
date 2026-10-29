@@ -1653,13 +1653,13 @@ export function $Animal_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 24)
     ret
 }
-data $Animal_vtable = { l $Animal_speak }
+data $Animal_vtable = { l $Animal_speak, l 0, l 0, l 0 }
 export function $Swimmer___init__(l %rt, l %p_self) {
 @start
     %t0 =l alloc8 8
     storel %p_self, %t0
     %t1 =l loadl %t0
-    %t2 =l add %t1, 8
+    %t2 =l add %t1, 24
     storel 0, %t2
 @fn_end0
     ret
@@ -1670,7 +1670,7 @@ export function l $Swimmer_swim(l %rt, l %p_self) {
     storel %p_self, %t0
     %t1 =l add $str1, 16
     %t2 =l loadl %t0
-    %t3 =l add %t2, 8
+    %t3 =l add %t2, 24
     %t4 =l loadl %t3
     %t5 =l call $nox_int_to_str(l %rt, l %t4)
     %t6 =l call $nox_str_concat(l %rt, l %t1, l %t5)
@@ -1718,15 +1718,15 @@ export function $Swimmer_release(l %rt, l %p) {
     %t3 =w ceql %t4, 0
     jnz %t3, @release_free0, @release_done1
 @release_free0
-    call $nox_rc_free_payload(l %rt, l %p, l 16)
+    call $nox_rc_free_payload(l %rt, l %p, l 32)
     jmp @release_done1
 @release_done1
     ret
 }
 export function w $Swimmer_eq(l %rt, l %a, l %b) {
 @start
-    %t0 =l add %a, 8
-    %t1 =l add %b, 8
+    %t0 =l add %a, 24
+    %t1 =l add %b, 24
     %t2 =l loadl %t0
     %t3 =l loadl %t1
     %t4 =w ceql %t2, %t3
@@ -1744,15 +1744,16 @@ export function l $Swimmer_trace(l %rt, l %p) {
 }
 export function $Swimmer_gc_free(l %rt, l %p) {
 @start
-    call $nox_rc_free_payload(l %rt, l %p, l 16)
+    call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+data $Swimmer_vtable = { l 0, l $Swimmer_swim, l $Swimmer_describe, l 0 }
 export function $Flyer___init__(l %rt, l %p_self) {
 @start
     %t0 =l alloc8 8
     storel %p_self, %t0
     %t1 =l loadl %t0
-    %t2 =l add %t1, 8
+    %t2 =l add %t1, 32
     storel 0, %t2
 @fn_end0
     ret
@@ -1763,7 +1764,7 @@ export function l $Flyer_fly(l %rt, l %p_self) {
     storel %p_self, %t0
     %t1 =l add $str3, 16
     %t2 =l loadl %t0
-    %t3 =l add %t2, 8
+    %t3 =l add %t2, 32
     %t4 =l loadl %t3
     %t5 =l call $nox_int_to_str(l %rt, l %t4)
     %t6 =l call $nox_str_concat(l %rt, l %t1, l %t5)
@@ -1872,15 +1873,15 @@ export function $Flyer_release(l %rt, l %p) {
     %t3 =w ceql %t4, 0
     jnz %t3, @release_free0, @release_done1
 @release_free0
-    call $nox_rc_free_payload(l %rt, l %p, l 16)
+    call $nox_rc_free_payload(l %rt, l %p, l 40)
     jmp @release_done1
 @release_done1
     ret
 }
 export function w $Flyer_eq(l %rt, l %a, l %b) {
 @start
-    %t0 =l add %a, 8
-    %t1 =l add %b, 8
+    %t0 =l add %a, 32
+    %t1 =l add %b, 32
     %t2 =l loadl %t0
     %t3 =l loadl %t1
     %t4 =w ceql %t2, %t3
@@ -1898,9 +1899,10 @@ export function l $Flyer_trace(l %rt, l %p) {
 }
 export function $Flyer_gc_free(l %rt, l %p) {
 @start
-    call $nox_rc_free_payload(l %rt, l %p, l 16)
+    call $nox_rc_free_payload(l %rt, l %p, l 40)
     ret
 }
+data $Flyer_vtable = { l 0, l 0, l $Flyer_describe, l $Flyer_fly }
 export function $Duck___init__(l %rt, l %p_self, l %p_name) {
 @start
     %t0 =l alloc8 8

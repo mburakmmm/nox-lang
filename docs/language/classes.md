@@ -1,6 +1,6 @@
 # Classes
 
-A `class` declares a new reference type with fields and methods. Nox supports single inheritance plus [mixins](#several-bases-mixins), special ("dunder") methods
+A `class` declares a new reference type with fields and methods. Nox supports [multiple inheritance](#several-bases-multiple-inheritance), special ("dunder") methods
 for operators and protocols, and structural [protocols](protocols-generics.md). There are no metaclasses and no dynamic attribute creation.
 
 ## Fields
@@ -163,11 +163,15 @@ this is tiny bit barks
 
 There is no `isinstance` and no run-time type test; use a protocol, a virtual method, or an `except` clause for dispatch on type.
 
-### Several bases (mixins)
+### Several bases (multiple inheritance)
 
-`class C(A, B, D):` is allowed. The **first** base is the real base class (vtable dispatch, `super()`, `except A:`). The others are
-**mixins**: their methods, declared fields and constants are copied into `C` at compile time. Name resolution follows Python's order:
+`class C(A, B, D):` is allowed. The **first** base is the primary base class (vtable dispatch, `super()`). Methods, declared fields and constants of the other
+bases are compiled into `C` (so `C` has its own copy of each method, bound to `C`'s layout). Name resolution follows Python's order:
 `C`'s own members, then `A` and its bases, then `B`, then `D`.
+
+`C` is a **subtype of every base**: a `C` can be passed or stored wherever an `A`, a `B` or a `D` is expected (parameters, `list[B]`, fields, returns), the calls and
+field accesses on that `B` reach the `C`'s own methods and state (overrides included), and `except B:` catches a `C` when the bases are exception classes
+(`class Timeout(Retryable, Fatal)`). All bases see the same object: there are no pointer adjustments or wrapper objects.
 
 As in Python, a mixin's `__init__` runs only when you call it, and you call a base's method explicitly with `Base.method(self, ...)`.
 The compiler turns `Mixin.method(self, args)` into a call of a private copy of that method, and `A.method(self, args)` on the real base
@@ -208,10 +212,14 @@ Donald quacks, then Donald makes a sound
 swims to 3, lap 1 | swims to 3, lap 2 2
 ```
 
-A mixin may instead declare its state as a class-level field (`depth: int`); then `C.__init__` must assign it. Limits: `super()` is an
-error inside a mixin method (the method is copied into `C`); `except B:` does not match a `C` for a mixin `B` (there is no `isinstance`
-either; use a [protocol](protocols-generics.md) to accept any class with the right methods); a value of type `C` cannot be passed where
-the mixin type `B` is expected; generic classes cannot be mixins.
+A mixin may instead declare its state as a class-level field (`depth: int`); then `C.__init__` must assign it. The shared-name rules of Python apply: a field
+or method name that appears in two bases is **one** attribute of `C`, so the two definitions must agree: the same field type and the same method signature
+(a mismatch is a compile-time error). `Base.__init__(self, ...)` works for the direct base in any class and in a mixin's `__init__`.
+
+The object layout of every class in an inheritance family that contains multiple inheritance is arranged so that each field keeps one storage slot across the
+family (fields that are never present together share slots, so the cost is small); families without multiple inheritance keep the ordinary layout. Limits:
+`super()` is an error inside a mixin method (the method is copied into `C`); generic classes cannot be bases of a multiple-inheritance class; `@repr("C")` and
+`@packed` classes cannot take part.
 
 ## Special methods
 

@@ -1621,6 +1621,20 @@ test "golden(typecheck): err_del_signature" {
     );
 }
 
+test "golden(typecheck): err_mixin_method_signature" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_mixin_method_signature.nox"),
+        @embedFile("typecheck_cases/err_mixin_method_signature.expected"),
+    );
+}
+
+test "golden(typecheck): err_mixin_field_type" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_mixin_field_type.nox"),
+        @embedFile("typecheck_cases/err_mixin_field_type.expected"),
+    );
+}
+
 test "golden(typecheck): err_async_with_in_sync_function" {
     try expectGolden(
         @embedFile("typecheck_cases/err_async_with_in_sync_function.nox"),

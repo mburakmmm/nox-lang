@@ -7,8 +7,9 @@
 //! Python'daki AÇIK taban çağrısı desteklenir: `C`nin (ya da kopyalanan bir mixin metodunun) gövdesindeki `B.metod(self, args)`, `B`nin o metodunun
 //! adlandırılmış bir kopyasına (`self.__nox_mx_B_metod(args)`) çevrilir; `B.__init__(self, args)` ise `__nox_init_B` kopyasına gider. `__nox_init_*`
 //! metodları `__init__` gibi alan OLUŞTURABİLİR (checker): mixin durumu kendi `__init__`inde kurulur, `C`de yeniden atamak gerekmez.
-//! SINIRLAR (belgelenmiş): mixin `__init__`i yalnızca açık çağrıldığında çalışır (Python'daki gibi); `super()` mixin metodunda kullanılamaz (hata);
-//! `isinstance(c, B)` / `except B` mixin için tutmaz (dilde `isinstance` yok; yapısal protokoller çalışır); generic mixin yok.
+//! `C`, her mixin tipinin ALT TİPİDİR (`cd.mixins`): `C` değeri `B` tipli yere verilebilir, `except B` yakalar; nesne düzeni/vtable bileşen-geneli renklendirilir
+//! (`codegen_qbe/mi_layout.zig`). SINIRLAR (belgelenmiş): mixin `__init__`i yalnızca açık çağrıldığında çalışır (Python'daki gibi); `super()` mixin metodunda
+//! kullanılamaz (hata); generic mixin yok.
 
 const std = @import("std");
 const ast = @import("../parser/ast.zig");
@@ -316,7 +317,29 @@ const Pass = struct {
             }
         }
         // Açık taban çağrıları: `B.metod(self, ...)` → adlandırılmış kopya (yeni kopyaların gövdeleri de taranır).
-        self.scan_mixins = cd.extra_bases;
+        // Açık taban çağrısı hedefleri: doğrudan mixin'ler + onların (taban zinciri / kendi mixin'leri üzerinden) tüm ataları — bir mixin'in `__init__`i
+        // kendi tabanını `Taban.__init__(self)` ile başlatabilir; kopyalandığında o çağrı ana sınıftaki adlandırılmış kopyaya gider.
+        var scan_names: std.ArrayListUnmanaged([]const u8) = .empty;
+        for (cd.extra_bases) |mn| try scan_names.append(self.a, mn);
+        var si: usize = 0;
+        while (si < scan_names.items.len and scan_names.items.len < 256) : (si += 1) {
+            const mc = self.resolve(scan_names.items[si]) orelse continue;
+            if (mc.base) |b| {
+                var dup = false;
+                for (scan_names.items) |e| if (std.mem.eql(u8, e, b)) {
+                    dup = true;
+                };
+                if (!dup) try scan_names.append(self.a, b);
+            }
+            for (mc.mixins) |m2| {
+                var dup = false;
+                for (scan_names.items) |e| if (std.mem.eql(u8, e, m2)) {
+                    dup = true;
+                };
+                if (!dup) try scan_names.append(self.a, m2);
+            }
+        }
+        self.scan_mixins = scan_names.items;
         self.scan_base = cd.base;
         var scanned: usize = 0;
         var seen: std.StringHashMapUnmanaged(void) = .empty;
@@ -345,6 +368,13 @@ const Pass = struct {
         cd.methods = try methods.toOwnedSlice(self.a);
         cd.fields = try fields.toOwnedSlice(self.a);
         cd.consts = try consts.toOwnedSlice(self.a);
+        var resolved_mixins: std.ArrayListUnmanaged([]const u8) = .empty;
+        for (cd.extra_bases) |mn| {
+            const mixin = self.resolve(mn).?;
+            if (cd.base != null and mixin.name.ptr == (self.resolve(cd.base.?) orelse mixin).name.ptr) continue;
+            try resolved_mixins.append(self.a, mixin.name);
+        }
+        cd.mixins = try resolved_mixins.toOwnedSlice(self.a);
         cd.extra_bases = &.{};
         try self.done.put(self.a, cd.name, {});
     }
@@ -353,7 +383,7 @@ const Pass = struct {
 /// Modüldeki tüm sınıfları YERİNDE düzleştirir; hata varsa tanılamayı döner.
 pub fn run(allocator: std.mem.Allocator, body: []ast.Stmt, from_imports: *const std.StringHashMapUnmanaged([]const u8)) Error!?Diagnostic {
     var any = false;
-    for (body) |st| if (st.kind == .class_def and st.kind.class_def.extra_bases.len > 0) {
+    for (body) |st| if (st.kind == .class_def and (st.kind.class_def.extra_bases.len > 0 or st.kind.class_def.base != null)) {
         any = true;
         break;
     };
@@ -365,6 +395,21 @@ pub fn run(allocator: std.mem.Allocator, body: []ast.Stmt, from_imports: *const 
     };
     for (body) |*st| if (st.kind == .class_def) {
         try pass.flatten(&st.kind.class_def);
+        if (pass.diag) |d| return d;
+    };
+    // Mixin'siz sınıflarda da Python'un açık taban çağrısı `Taban.metod(self, ...)` (örn. `Taban.__init__(self)`) `super()` çağrısına çevrilir. Bu geçiş
+    // düzleştirmeden SONRA yapılır: bir sınıf başka bir sınıfa mixin olarak kopyalanacaksa gövdesi kopyalanana kadar açık biçimde kalmalıdır.
+    for (body) |*st| if (st.kind == .class_def) {
+        const cd = &st.kind.class_def;
+        if (cd.base == null or cd.mixins.len > 0) continue;
+        pass.scan_mixins = &.{};
+        pass.scan_base = cd.base;
+        pass.scan_from_mixin = false;
+        pass.scan_line = pass.lines.get(cd.name) orelse 0;
+        for (cd.methods) |m| {
+            if (std.mem.startsWith(u8, m.name, "__nox_")) continue;
+            try pass.walkStmts(m.body);
+        }
         if (pass.diag) |d| return d;
     };
     return null;

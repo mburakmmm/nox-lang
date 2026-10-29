@@ -568,6 +568,8 @@ pub const ClassInfo = struct {
     /// v2.0.74: `__del__(self) -> None`i TAŞIYAN sınıf (kendisi ya da en yakın atası; `null` = yok). `$Sınıf_release` refcount sıfıra
     /// düşünce alanları serbest bırakmadan ÖNCE onu çağırır. `__del__`li sınıflar yığına/arenaya terfi ettirilmez (release hiç çalışmazdı).
     del_owner: ?[]const u8 = null,
+    /// Çoklu kalıtım: `ast.ClassDef.mixins` (çözülmüş adlar) — bu sınıf her mixin tipinin alt tipidir (bkz. `mi_layout.zig`).
+    mixins: []const []const u8 = &.{},
 };
 
 /// v2.0 madde 5: bkz. `ClassInfo.layout_mode`in belge notu.

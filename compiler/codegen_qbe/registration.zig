@@ -432,7 +432,10 @@ pub fn registerClassesInOrder(self: *Codegen, class_defs: []const ast.ClassDef) 
         while (i < remaining.items.len) {
             const cd = remaining.items[i];
             const base_name = resolveClassBase(self.resolved_bases, cd);
-            const ready = base_name == null or processed.contains(base_name.?);
+            var ready = base_name == null or processed.contains(base_name.?);
+            for (cd.mixins) |m| if (!processed.contains(m)) {
+                ready = false;
+            };
             if (ready) {
                 try self.registerClass(cd);
                 try processed.put(self.allocator, cd.name, {});
@@ -460,6 +463,11 @@ pub fn computeInheritingClasses(allocator: std.mem.Allocator, class_defs: []cons
             try set.put(allocator, cd.name, {});
             try set.put(allocator, b, {});
         }
+        // çoklu kalıtım: sınıf ve her mixin tabanı kalıtıma katılır (vptr + dinamik release/dispatch)
+        for (cd.mixins) |m| {
+            try set.put(allocator, cd.name, {});
+            try set.put(allocator, m, {});
+        }
     }
     return set;
 }
@@ -482,11 +490,52 @@ fn registerInitFields(self: *Codegen, cd: ast.ClassDef, init: ast.FuncDef, info:
         if (exists) continue;
         // `self.x: T = v`: bildirilen tip değerden çıkarılana (boş literal, çağrı vb.) tercih edilir.
         const ftype = if (a.ann) |ann| try self.resolveType(ann) else try self.inferFieldType(cd.name, init.params[1..], a.value);
-        const offset = if (info.layout_mode == .default)
+        const offset = if (miFieldOffset(self, cd.name, attr.attr, field_base_offset)) |o|
+            o
+        else if (info.layout_mode == .default)
             field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE
         else
             abi.nextFieldOffset(layout_cursor, info.layout_mode, ftype);
         try info.fields.append(self.allocator, .{ .name = attr.attr, .info = ftype, .offset = offset });
+    }
+}
+
+/// Çoklu kalıtım bileşenindeki bir sınıfın `name` alanının renklendirilmiş ofseti (bkz. `mi_layout.zig`); mixin içermeyen sınıflar için `null`.
+fn miFieldOffset(self: *Codegen, class_name: []const u8, name: []const u8, field_base_offset: usize) ?usize {
+    const comp = self.mi.comp_of.get(class_name) orelse return null;
+    const slot = self.mi.fieldSlot(self.allocator, comp, name) orelse return null;
+    return field_base_offset + slot * FIELD_SLOT_SIZE;
+}
+
+/// `registerClass`ın toplam boyutu: çoklu kalıtım sınıflarında alan ofsetleri seyrek olabilir (renklendirme), boyut en yüksek ofseti kapsar.
+fn classTotalSize(info: *const types.ClassInfo, is_mi: bool, field_base_offset: usize, layout_cursor: usize) usize {
+    if (is_mi) {
+        var end: usize = field_base_offset;
+        for (info.fields.items) |f| end = @max(end, f.offset + FIELD_SLOT_SIZE);
+        return end;
+    }
+    return if (info.layout_mode == .default)
+        field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE
+    else
+        layout_cursor;
+}
+
+/// Çoklu kalıtım: sınıf, her mixin tabanının TÜM alanlarına sahip olmalıdır (mixin tipli kod bu alanları bu nesnede, mixin'in kendi ofsetlerinde okur/yazar).
+/// Zaten varsa tipleri aynı olmalıdır (aksi halde mixin tipli kod yanlış tipte okurdu).
+fn addMixinFields(self: *Codegen, cd: ast.ClassDef, info: *types.ClassInfo, field_base_offset: usize) CodegenError!void {
+    for (cd.mixins) |mn| {
+        const mi = self.classes.get(mn) orelse continue;
+        for (mi.fields.items) |mf| {
+            var found = false;
+            for (info.fields.items) |f| {
+                if (!std.mem.eql(u8, f.name, mf.name)) continue;
+                found = true;
+                if (f.offset != mf.offset or f.info.qtype != mf.info.qtype or f.info.heap != mf.info.heap) return error.Unsupported;
+                break;
+            }
+            if (found) continue;
+            try info.fields.append(self.allocator, .{ .name = mf.name, .info = mf.info, .offset = miFieldOffset(self, cd.name, mf.name, field_base_offset) orelse return error.Unsupported });
+        }
     }
 }
 
@@ -499,6 +548,9 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     var info: types.ClassInfo = .{};
     info.base = resolveClassBase(self.resolved_bases, cd);
     info.has_vtable = self.inheriting_classes.contains(cd.name);
+    info.mixins = cd.mixins;
+    const mi_comp: ?usize = self.mi.comp_of.get(cd.name);
+    const is_mi = mi_comp != null;
     const field_base_offset = TAG_SIZE + (if (info.has_vtable) types.VTABLE_PTR_SIZE else 0);
     // v2.0 madde 5: `cd.decorators`i BAĞIMSIZ olarak yeniden ayrıştırır
     // (checker.zig'in `registerClassSignatures`ıyla AYNI mantık, arg
@@ -550,7 +602,9 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     // OTOMATİK olarak ATLAR — `inferFieldType`e HİÇ uğramazlar.
     for (cd.fields) |fd| {
         const ft = try self.resolveType(fd.type_expr);
-        const offset = if (info.layout_mode == .default)
+        const offset = if (miFieldOffset(self, cd.name, fd.name, field_base_offset)) |o|
+            o
+        else if (info.layout_mode == .default)
             field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE
         else
             abi.nextFieldOffset(&layout_cursor, info.layout_mode, ft);
@@ -561,12 +615,11 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         if (!std.mem.startsWith(u8, mi.name, "__nox_init_")) continue;
         try registerInitFields(self, cd, mi, &info, &layout_cursor, field_base_offset);
     }
+    if (is_mi and info.layout_mode != .default) return error.Unsupported;
     if (init_fd) |init| {
         try registerInitFields(self, cd, init, &info, &layout_cursor, field_base_offset);
-        info.total_size = if (info.layout_mode == .default)
-            field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE
-        else
-            layout_cursor;
+        try addMixinFields(self, cd, &info, field_base_offset);
+        info.total_size = classTotalSize(&info, is_mi, field_base_offset, layout_cursor);
 
         const iparams = try self.allocator.alloc(TypeInfo, init.params.len - 1);
         for (init.params[1..], 0..) |p, i| iparams[i] = try self.resolveType(p.type_expr);
@@ -582,10 +635,8 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         info.has_init = bi.has_init;
         info.init_params = bi.init_params;
         info.init_owner = bi.init_owner;
-        info.total_size = if (info.layout_mode == .default)
-            field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE
-        else
-            layout_cursor;
+        try addMixinFields(self, cd, &info, field_base_offset);
+        info.total_size = classTotalSize(&info, is_mi, field_base_offset, layout_cursor);
     } else {
         // `__init__`i olmayan (VE taban sınıfı da OLMAYAN) sınıf (bkz.
         // `ClassInfo.has_init`in belge notu): kurucu 0 argüman alır —
@@ -599,10 +650,8 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         // yalnızca savunmacı tutarlılık İçin `total_size` yine de
         // alanları HESABA katar.
         info.has_init = false;
-        info.total_size = if (info.layout_mode == .default)
-            field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE
-        else
-            layout_cursor;
+        try addMixinFields(self, cd, &info, field_base_offset);
+        info.total_size = classTotalSize(&info, is_mi, field_base_offset, layout_cursor);
     }
     info.class_id = self.next_class_id;
     self.next_class_id += 1;
@@ -623,7 +672,10 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         for (m.params[1..], 0..) |p, i| params[i] = try self.resolveType(p.type_expr);
         const ret = try self.resolveType(m.return_type);
         var slot: usize = 0;
-        if (info.has_vtable) {
+        if (mi_comp) |comp| {
+            // çoklu kalıtım: slot, bileşen-geneli renklendirmedeki metod adına aittir (aynı ad her sınıfta aynı slot)
+            slot = self.mi.methodSlot(self.allocator, comp, m.name) orelse return error.Unsupported;
+        } else if (info.has_vtable) {
             if (info.methods.get(m.name)) |inherited| {
                 slot = inherited.slot; // override: AYNI slot (checker ZATEN imzanın TAM eşleştiğini doğruladı)
             } else {
@@ -633,7 +685,7 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         }
         try info.methods.put(self.allocator, m.name, .{ .sig = .{ .params = params, .ret = ret }, .owner = cd.name, .slot = slot });
     }
-    info.next_vtable_slot = next_slot;
+    info.next_vtable_slot = if (mi_comp) |comp| self.mi.method_count.items[comp] else next_slot;
     if (info.methods.get("__del__")) |dm| info.del_owner = dm.owner;
 
     try self.classes.put(self.allocator, cd.name, info);
