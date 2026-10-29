@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.73]
+
+### Eklendi
+
+- Jeneratörlerde `yield` artık `except` işleyicilerinde ve `finally` bloklarında da kullanılabilir. Yield eden bir `finally` korunan bölgeden sonra çalışır ve bekleyen istisnayı bitince yeniden fırlatır; `close()` sırasında yield ederse Python gibi `RuntimeError` verir. `try`yi terk eden `return`/`break`/`continue` ile yield eden `finally` birleşimi net bir derleme hatasıdır.
+- Jeneratörde yield boyunca yaşayan fonksiyon tipli yereller, parametreler ve `for f in fonksiyon_listesi` döngü değişkeni.
+- `RuntimeError` istisna sınıfı (prelude).
+
+### Duzeltildi
+
+- Bir döngü içindeki `try` gövdesinde (iç döngü/`yield` askıdayken) fırlayan ve yakalanan istisnadan sonra jeneratör iç döngünün/yineleyicinin eski durumundan sürüyor ve SESSİZCE YANLIŞ SONUÇ veriyordu; yeniden-giriş durum hücreleri artık sıfırlanıyor.
+
 ## [2.0.72]
 
 ### Eklendi

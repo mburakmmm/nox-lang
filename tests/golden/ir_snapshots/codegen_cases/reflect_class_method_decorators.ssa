@@ -352,6 +352,95 @@ export function $IndexError_gc_free(l %rt, l %p) {
     ret
 }
 data $IndexError_vtable = { l $Exception___str__ }
+export function $RuntimeError_release(l %rt, l %p) {
+@start
+    %t0 =l sub %p, 8
+    %t1 =l loadl %t0
+    %t2 =l sub %t1, 1
+    storel %t2, %t0
+    %t4 =l and %t2, 4294967295
+    %t3 =w ceql %t4, 0
+    jnz %t3, @release_free0, @release_done1
+@release_free0
+    %t5 =l add %p, 16
+    %t6 =l loadl %t5
+    %t7 =w ceql %t6, 0
+    jnz %t7, @release_skip3, @release2
+@release2
+    %t8 =l sub %t6, 16
+    %t9 =l loadl %t8
+    %t10 =l sub %t9, 1
+    storel %t10, %t8
+    %t11 =w cslel %t10, 0
+    jnz %t11, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t6)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    call $nox_rc_free_payload(l %rt, l %p, l 32)
+    jmp @release_done1
+@release_done1
+    ret
+}
+export function w $RuntimeError_eq(l %rt, l %a, l %b) {
+@start
+    %t0 =l add %a, 16
+    %t1 =l add %b, 16
+    %t2 =l loadl %t0
+    %t3 =l loadl %t1
+    %t4 =w call $strcmp(l %t2, l %t3)
+    jnz %t4, @classeq_mismatch0, @eqcmp_cont1
+@eqcmp_cont1
+    %t5 =l add %a, 24
+    %t6 =l add %b, 24
+    %t7 =l loadl %t5
+    %t8 =l loadl %t6
+    %t9 =w ceql %t7, %t8
+    jnz %t9, @eqcmp_cont2, @classeq_mismatch0
+@eqcmp_cont2
+    ret 1
+@classeq_mismatch0
+    ret 0
+}
+export function l $RuntimeError_trace(l %rt, l %p) {
+@start
+    %t0 =l call $nox_trace_buf_alloc(l %rt, l 8)
+    storel 0, %t0
+    ret %t0
+}
+export function $RuntimeError_gc_free(l %rt, l %p) {
+@start
+    %t0 =l add %p, 16
+    %t1 =l loadl %t0
+    %t2 =w ceql %t1, 0
+    jnz %t2, @release_skip1, @release0
+@release0
+    %t3 =l sub %t1, 16
+    %t4 =l loadl %t3
+    %t5 =l sub %t4, 1
+    storel %t5, %t3
+    %t6 =w cslel %t5, 0
+    jnz %t6, @str_free3, @str_free_skip4
+@str_free3
+    call $nox_str_free_now(l %rt, l %t1)
+    jmp @str_free_done5
+@str_free_skip4
+    jmp @str_free_done5
+@str_free_done5
+    jmp @release_done2
+@release_skip1
+    jmp @release_done2
+@release_done2
+    call $nox_rc_free_payload(l %rt, l %p, l 32)
+    ret
+}
+data $RuntimeError_vtable = { l $Exception___str__ }
 export function $AssertionError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -2361,7 +2450,7 @@ export function $nox_http_HttpStream__fail(l %rt, l %p_self, l %p_what) {
     %t13 =l loadl %t12
     %t14 =l call $nox_str_concat(l %rt, l %t10, l %t13)
     %t15 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 22, %t15
+    storel 23, %t15
     %t16 =l add %t15, 8
     storel $nox_http_HttpTimeoutError_vtable, %t16
     %t17 =l add %t15, 16
@@ -7147,7 +7236,7 @@ export function l $nox_router_Router_dispatch(l %rt, l %p_self, l %p_req) {
 @list_idx_err12
     %t40 =l add $str17, 16
     %t41 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t41
+    storel 22, %t41
     %t42 =l add %t41, 8
     storel $IndexError_vtable, %t42
     %t43 =l add %t41, 16
@@ -7384,7 +7473,7 @@ export function l $nox_router_Router_dispatch(l %rt, l %p_self, l %p_req) {
 @list_idx_err227
     %t245 =l add $str18, 16
     %t246 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t246
+    storel 22, %t246
     %t247 =l add %t246, 8
     storel $IndexError_vtable, %t247
     %t248 =l add %t246, 16
@@ -7621,7 +7710,7 @@ export function l $nox_router_Router_dispatch(l %rt, l %p_self, l %p_req) {
 @list_idx_err378
     %t392 =l add $str19, 16
     %t393 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t393
+    storel 22, %t393
     %t394 =l add %t393, 8
     storel $IndexError_vtable, %t394
     %t395 =l add %t393, 16
@@ -7858,7 +7947,7 @@ export function l $nox_router_Router_dispatch(l %rt, l %p_self, l %p_req) {
 @list_idx_err488
     %t496 =l add $str20, 16
     %t497 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t497
+    storel 22, %t497
     %t498 =l add %t497, 8
     storel $IndexError_vtable, %t498
     %t499 =l add %t497, 16
@@ -8492,129 +8581,135 @@ export function l $nox_trace_dispatch(l %rt, l %tag, l %p) {
     %t3 =l call $ValueError_trace(l %rt, l %p)
     ret %t3
 @trace_next3
-    %t4 =w ceql %tag, 21
+    %t4 =w ceql %tag, 22
     jnz %t4, @trace_case4, @trace_next5
 @trace_case4
     %t5 =l call $IndexError_trace(l %rt, l %p)
     ret %t5
 @trace_next5
-    %t6 =w ceql %tag, 20
+    %t6 =w ceql %tag, 21
     jnz %t6, @trace_case6, @trace_next7
 @trace_case6
-    %t7 =l call $AssertionError_trace(l %rt, l %p)
+    %t7 =l call $RuntimeError_trace(l %rt, l %p)
     ret %t7
 @trace_next7
-    %t8 =w ceql %tag, 19
+    %t8 =w ceql %tag, 20
     jnz %t8, @trace_case8, @trace_next9
 @trace_case8
-    %t9 =l call $ZeroDivisionError_trace(l %rt, l %p)
+    %t9 =l call $AssertionError_trace(l %rt, l %p)
     ret %t9
 @trace_next9
-    %t10 =w ceql %tag, 18
+    %t10 =w ceql %tag, 19
     jnz %t10, @trace_case10, @trace_next11
 @trace_case10
-    %t11 =l call $KeyError_trace(l %rt, l %p)
+    %t11 =l call $ZeroDivisionError_trace(l %rt, l %p)
     ret %t11
 @trace_next11
-    %t12 =w ceql %tag, 17
+    %t12 =w ceql %tag, 18
     jnz %t12, @trace_case12, @trace_next13
 @trace_case12
-    %t13 =l call $StopIteration_trace(l %rt, l %p)
+    %t13 =l call $KeyError_trace(l %rt, l %p)
     ret %t13
 @trace_next13
-    %t14 =w ceql %tag, 16
+    %t14 =w ceql %tag, 17
     jnz %t14, @trace_case14, @trace_next15
 @trace_case14
-    %t15 =l call $GeneratorExit_trace(l %rt, l %p)
+    %t15 =l call $StopIteration_trace(l %rt, l %p)
     ret %t15
 @trace_next15
-    %t16 =w ceql %tag, 15
+    %t16 =w ceql %tag, 16
     jnz %t16, @trace_case16, @trace_next17
 @trace_case16
-    %t17 =l call $HPyError_trace(l %rt, l %p)
+    %t17 =l call $GeneratorExit_trace(l %rt, l %p)
     ret %t17
 @trace_next17
-    %t18 =w ceql %tag, 14
+    %t18 =w ceql %tag, 15
     jnz %t18, @trace_case18, @trace_next19
 @trace_case18
-    %t19 =l call $CancelledError_trace(l %rt, l %p)
+    %t19 =l call $HPyError_trace(l %rt, l %p)
     ret %t19
 @trace_next19
-    %t20 =w ceql %tag, 13
+    %t20 =w ceql %tag, 14
     jnz %t20, @trace_case20, @trace_next21
 @trace_case20
-    %t21 =l call $JsonValue_trace(l %rt, l %p)
+    %t21 =l call $CancelledError_trace(l %rt, l %p)
     ret %t21
 @trace_next21
-    %t22 =w ceql %tag, 12
+    %t22 =w ceql %tag, 13
     jnz %t22, @trace_case22, @trace_next23
 @trace_case22
-    %t23 =l call $nox_http_HttpError_trace(l %rt, l %p)
+    %t23 =l call $JsonValue_trace(l %rt, l %p)
     ret %t23
 @trace_next23
-    %t24 =w ceql %tag, 22
+    %t24 =w ceql %tag, 12
     jnz %t24, @trace_case24, @trace_next25
 @trace_case24
-    %t25 =l call $nox_http_HttpTimeoutError_trace(l %rt, l %p)
+    %t25 =l call $nox_http_HttpError_trace(l %rt, l %p)
     ret %t25
 @trace_next25
-    %t26 =w ceql %tag, 10
+    %t26 =w ceql %tag, 23
     jnz %t26, @trace_case26, @trace_next27
 @trace_case26
-    %t27 =l call $nox_http_HttpResponse_trace(l %rt, l %p)
+    %t27 =l call $nox_http_HttpTimeoutError_trace(l %rt, l %p)
     ret %t27
 @trace_next27
-    %t28 =w ceql %tag, 9
+    %t28 =w ceql %tag, 10
     jnz %t28, @trace_case28, @trace_next29
 @trace_case28
-    %t29 =l call $nox_http_HttpRequest_trace(l %rt, l %p)
+    %t29 =l call $nox_http_HttpResponse_trace(l %rt, l %p)
     ret %t29
 @trace_next29
-    %t30 =w ceql %tag, 8
+    %t30 =w ceql %tag, 9
     jnz %t30, @trace_case30, @trace_next31
 @trace_case30
-    %t31 =l call $nox_http_HttpStream_trace(l %rt, l %p)
+    %t31 =l call $nox_http_HttpRequest_trace(l %rt, l %p)
     ret %t31
 @trace_next31
-    %t32 =w ceql %tag, 7
+    %t32 =w ceql %tag, 8
     jnz %t32, @trace_case32, @trace_next33
 @trace_case32
-    %t33 =l call $nox_url_UrlError_trace(l %rt, l %p)
+    %t33 =l call $nox_http_HttpStream_trace(l %rt, l %p)
     ret %t33
 @trace_next33
-    %t34 =w ceql %tag, 6
+    %t34 =w ceql %tag, 7
     jnz %t34, @trace_case34, @trace_next35
 @trace_case34
-    %t35 =l call $nox_url_URL_trace(l %rt, l %p)
+    %t35 =l call $nox_url_UrlError_trace(l %rt, l %p)
     ret %t35
 @trace_next35
-    %t36 =w ceql %tag, 5
+    %t36 =w ceql %tag, 6
     jnz %t36, @trace_case36, @trace_next37
 @trace_case36
-    %t37 =l call $nox_router_Context_trace(l %rt, l %p)
+    %t37 =l call $nox_url_URL_trace(l %rt, l %p)
     ret %t37
 @trace_next37
-    %t38 =w ceql %tag, 4
+    %t38 =w ceql %tag, 5
     jnz %t38, @trace_case38, @trace_next39
 @trace_case38
-    %t39 =l call $nox_router_Route_trace(l %rt, l %p)
+    %t39 =l call $nox_router_Context_trace(l %rt, l %p)
     ret %t39
 @trace_next39
-    %t40 =w ceql %tag, 3
+    %t40 =w ceql %tag, 4
     jnz %t40, @trace_case40, @trace_next41
 @trace_case40
-    %t41 =l call $nox_router_Router_trace(l %rt, l %p)
+    %t41 =l call $nox_router_Route_trace(l %rt, l %p)
     ret %t41
 @trace_next41
-    %t42 =w ceql %tag, 2
+    %t42 =w ceql %tag, 3
     jnz %t42, @trace_case42, @trace_next43
 @trace_case42
-    %t43 =l call $UserController_trace(l %rt, l %p)
+    %t43 =l call $nox_router_Router_trace(l %rt, l %p)
     ret %t43
 @trace_next43
-    %t44 =l call $nox_trace_buf_alloc(l %rt, l 8)
-    storel 0, %t44
-    ret %t44
+    %t44 =w ceql %tag, 2
+    jnz %t44, @trace_case44, @trace_next45
+@trace_case44
+    %t45 =l call $UserController_trace(l %rt, l %p)
+    ret %t45
+@trace_next45
+    %t46 =l call $nox_trace_buf_alloc(l %rt, l 8)
+    storel 0, %t46
+    ret %t46
 }
 export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
 @start
@@ -8630,126 +8725,132 @@ export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
     call $ValueError_gc_free(l %rt, l %p)
     ret
 @gc_free_next3
-    %t2 =w ceql %tag, 21
+    %t2 =w ceql %tag, 22
     jnz %t2, @gc_free_case4, @gc_free_next5
 @gc_free_case4
     call $IndexError_gc_free(l %rt, l %p)
     ret
 @gc_free_next5
-    %t3 =w ceql %tag, 20
+    %t3 =w ceql %tag, 21
     jnz %t3, @gc_free_case6, @gc_free_next7
 @gc_free_case6
-    call $AssertionError_gc_free(l %rt, l %p)
+    call $RuntimeError_gc_free(l %rt, l %p)
     ret
 @gc_free_next7
-    %t4 =w ceql %tag, 19
+    %t4 =w ceql %tag, 20
     jnz %t4, @gc_free_case8, @gc_free_next9
 @gc_free_case8
-    call $ZeroDivisionError_gc_free(l %rt, l %p)
+    call $AssertionError_gc_free(l %rt, l %p)
     ret
 @gc_free_next9
-    %t5 =w ceql %tag, 18
+    %t5 =w ceql %tag, 19
     jnz %t5, @gc_free_case10, @gc_free_next11
 @gc_free_case10
-    call $KeyError_gc_free(l %rt, l %p)
+    call $ZeroDivisionError_gc_free(l %rt, l %p)
     ret
 @gc_free_next11
-    %t6 =w ceql %tag, 17
+    %t6 =w ceql %tag, 18
     jnz %t6, @gc_free_case12, @gc_free_next13
 @gc_free_case12
-    call $StopIteration_gc_free(l %rt, l %p)
+    call $KeyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next13
-    %t7 =w ceql %tag, 16
+    %t7 =w ceql %tag, 17
     jnz %t7, @gc_free_case14, @gc_free_next15
 @gc_free_case14
-    call $GeneratorExit_gc_free(l %rt, l %p)
+    call $StopIteration_gc_free(l %rt, l %p)
     ret
 @gc_free_next15
-    %t8 =w ceql %tag, 15
+    %t8 =w ceql %tag, 16
     jnz %t8, @gc_free_case16, @gc_free_next17
 @gc_free_case16
-    call $HPyError_gc_free(l %rt, l %p)
+    call $GeneratorExit_gc_free(l %rt, l %p)
     ret
 @gc_free_next17
-    %t9 =w ceql %tag, 14
+    %t9 =w ceql %tag, 15
     jnz %t9, @gc_free_case18, @gc_free_next19
 @gc_free_case18
-    call $CancelledError_gc_free(l %rt, l %p)
+    call $HPyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next19
-    %t10 =w ceql %tag, 13
+    %t10 =w ceql %tag, 14
     jnz %t10, @gc_free_case20, @gc_free_next21
 @gc_free_case20
-    call $JsonValue_gc_free(l %rt, l %p)
+    call $CancelledError_gc_free(l %rt, l %p)
     ret
 @gc_free_next21
-    %t11 =w ceql %tag, 12
+    %t11 =w ceql %tag, 13
     jnz %t11, @gc_free_case22, @gc_free_next23
 @gc_free_case22
-    call $nox_http_HttpError_gc_free(l %rt, l %p)
+    call $JsonValue_gc_free(l %rt, l %p)
     ret
 @gc_free_next23
-    %t12 =w ceql %tag, 22
+    %t12 =w ceql %tag, 12
     jnz %t12, @gc_free_case24, @gc_free_next25
 @gc_free_case24
-    call $nox_http_HttpTimeoutError_gc_free(l %rt, l %p)
+    call $nox_http_HttpError_gc_free(l %rt, l %p)
     ret
 @gc_free_next25
-    %t13 =w ceql %tag, 10
+    %t13 =w ceql %tag, 23
     jnz %t13, @gc_free_case26, @gc_free_next27
 @gc_free_case26
-    call $nox_http_HttpResponse_gc_free(l %rt, l %p)
+    call $nox_http_HttpTimeoutError_gc_free(l %rt, l %p)
     ret
 @gc_free_next27
-    %t14 =w ceql %tag, 9
+    %t14 =w ceql %tag, 10
     jnz %t14, @gc_free_case28, @gc_free_next29
 @gc_free_case28
-    call $nox_http_HttpRequest_gc_free(l %rt, l %p)
+    call $nox_http_HttpResponse_gc_free(l %rt, l %p)
     ret
 @gc_free_next29
-    %t15 =w ceql %tag, 8
+    %t15 =w ceql %tag, 9
     jnz %t15, @gc_free_case30, @gc_free_next31
 @gc_free_case30
-    call $nox_http_HttpStream_gc_free(l %rt, l %p)
+    call $nox_http_HttpRequest_gc_free(l %rt, l %p)
     ret
 @gc_free_next31
-    %t16 =w ceql %tag, 7
+    %t16 =w ceql %tag, 8
     jnz %t16, @gc_free_case32, @gc_free_next33
 @gc_free_case32
-    call $nox_url_UrlError_gc_free(l %rt, l %p)
+    call $nox_http_HttpStream_gc_free(l %rt, l %p)
     ret
 @gc_free_next33
-    %t17 =w ceql %tag, 6
+    %t17 =w ceql %tag, 7
     jnz %t17, @gc_free_case34, @gc_free_next35
 @gc_free_case34
-    call $nox_url_URL_gc_free(l %rt, l %p)
+    call $nox_url_UrlError_gc_free(l %rt, l %p)
     ret
 @gc_free_next35
-    %t18 =w ceql %tag, 5
+    %t18 =w ceql %tag, 6
     jnz %t18, @gc_free_case36, @gc_free_next37
 @gc_free_case36
-    call $nox_router_Context_gc_free(l %rt, l %p)
+    call $nox_url_URL_gc_free(l %rt, l %p)
     ret
 @gc_free_next37
-    %t19 =w ceql %tag, 4
+    %t19 =w ceql %tag, 5
     jnz %t19, @gc_free_case38, @gc_free_next39
 @gc_free_case38
-    call $nox_router_Route_gc_free(l %rt, l %p)
+    call $nox_router_Context_gc_free(l %rt, l %p)
     ret
 @gc_free_next39
-    %t20 =w ceql %tag, 3
+    %t20 =w ceql %tag, 4
     jnz %t20, @gc_free_case40, @gc_free_next41
 @gc_free_case40
-    call $nox_router_Router_gc_free(l %rt, l %p)
+    call $nox_router_Route_gc_free(l %rt, l %p)
     ret
 @gc_free_next41
-    %t21 =w ceql %tag, 2
+    %t21 =w ceql %tag, 3
     jnz %t21, @gc_free_case42, @gc_free_next43
 @gc_free_case42
-    call $UserController_gc_free(l %rt, l %p)
+    call $nox_router_Router_gc_free(l %rt, l %p)
     ret
 @gc_free_next43
+    %t22 =w ceql %tag, 2
+    jnz %t22, @gc_free_case44, @gc_free_next45
+@gc_free_case44
+    call $UserController_gc_free(l %rt, l %p)
+    ret
+@gc_free_next45
     ret
 }
 export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
@@ -8766,132 +8867,139 @@ export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
     call $ValueError_release(l %rt, l %p)
     ret
 @class_release_next3
-    %t2 =w ceql %tag, 21
+    %t2 =w ceql %tag, 22
     jnz %t2, @class_release_case4, @class_release_next5
 @class_release_case4
     call $IndexError_release(l %rt, l %p)
     ret
 @class_release_next5
-    %t3 =w ceql %tag, 20
+    %t3 =w ceql %tag, 21
     jnz %t3, @class_release_case6, @class_release_next7
 @class_release_case6
-    call $AssertionError_release(l %rt, l %p)
+    call $RuntimeError_release(l %rt, l %p)
     ret
 @class_release_next7
-    %t4 =w ceql %tag, 19
+    %t4 =w ceql %tag, 20
     jnz %t4, @class_release_case8, @class_release_next9
 @class_release_case8
-    call $ZeroDivisionError_release(l %rt, l %p)
+    call $AssertionError_release(l %rt, l %p)
     ret
 @class_release_next9
-    %t5 =w ceql %tag, 18
+    %t5 =w ceql %tag, 19
     jnz %t5, @class_release_case10, @class_release_next11
 @class_release_case10
-    call $KeyError_release(l %rt, l %p)
+    call $ZeroDivisionError_release(l %rt, l %p)
     ret
 @class_release_next11
-    %t6 =w ceql %tag, 17
+    %t6 =w ceql %tag, 18
     jnz %t6, @class_release_case12, @class_release_next13
 @class_release_case12
-    call $StopIteration_release(l %rt, l %p)
+    call $KeyError_release(l %rt, l %p)
     ret
 @class_release_next13
-    %t7 =w ceql %tag, 16
+    %t7 =w ceql %tag, 17
     jnz %t7, @class_release_case14, @class_release_next15
 @class_release_case14
-    call $GeneratorExit_release(l %rt, l %p)
+    call $StopIteration_release(l %rt, l %p)
     ret
 @class_release_next15
-    %t8 =w ceql %tag, 15
+    %t8 =w ceql %tag, 16
     jnz %t8, @class_release_case16, @class_release_next17
 @class_release_case16
-    call $HPyError_release(l %rt, l %p)
+    call $GeneratorExit_release(l %rt, l %p)
     ret
 @class_release_next17
-    %t9 =w ceql %tag, 14
+    %t9 =w ceql %tag, 15
     jnz %t9, @class_release_case18, @class_release_next19
 @class_release_case18
-    call $CancelledError_release(l %rt, l %p)
+    call $HPyError_release(l %rt, l %p)
     ret
 @class_release_next19
-    %t10 =w ceql %tag, 13
+    %t10 =w ceql %tag, 14
     jnz %t10, @class_release_case20, @class_release_next21
 @class_release_case20
-    call $JsonValue_release(l %rt, l %p)
+    call $CancelledError_release(l %rt, l %p)
     ret
 @class_release_next21
-    %t11 =w ceql %tag, 12
+    %t11 =w ceql %tag, 13
     jnz %t11, @class_release_case22, @class_release_next23
 @class_release_case22
-    call $nox_http_HttpError_release(l %rt, l %p)
+    call $JsonValue_release(l %rt, l %p)
     ret
 @class_release_next23
-    %t12 =w ceql %tag, 22
+    %t12 =w ceql %tag, 12
     jnz %t12, @class_release_case24, @class_release_next25
 @class_release_case24
-    call $nox_http_HttpTimeoutError_release(l %rt, l %p)
+    call $nox_http_HttpError_release(l %rt, l %p)
     ret
 @class_release_next25
-    %t13 =w ceql %tag, 10
+    %t13 =w ceql %tag, 23
     jnz %t13, @class_release_case26, @class_release_next27
 @class_release_case26
-    call $nox_http_HttpResponse_release(l %rt, l %p)
+    call $nox_http_HttpTimeoutError_release(l %rt, l %p)
     ret
 @class_release_next27
-    %t14 =w ceql %tag, 9
+    %t14 =w ceql %tag, 10
     jnz %t14, @class_release_case28, @class_release_next29
 @class_release_case28
-    call $nox_http_HttpRequest_release(l %rt, l %p)
+    call $nox_http_HttpResponse_release(l %rt, l %p)
     ret
 @class_release_next29
-    %t15 =w ceql %tag, 8
+    %t15 =w ceql %tag, 9
     jnz %t15, @class_release_case30, @class_release_next31
 @class_release_case30
-    call $nox_http_HttpStream_release(l %rt, l %p)
+    call $nox_http_HttpRequest_release(l %rt, l %p)
     ret
 @class_release_next31
-    %t16 =w ceql %tag, 7
+    %t16 =w ceql %tag, 8
     jnz %t16, @class_release_case32, @class_release_next33
 @class_release_case32
-    call $nox_url_UrlError_release(l %rt, l %p)
+    call $nox_http_HttpStream_release(l %rt, l %p)
     ret
 @class_release_next33
-    %t17 =w ceql %tag, 6
+    %t17 =w ceql %tag, 7
     jnz %t17, @class_release_case34, @class_release_next35
 @class_release_case34
-    call $nox_url_URL_release(l %rt, l %p)
+    call $nox_url_UrlError_release(l %rt, l %p)
     ret
 @class_release_next35
-    %t18 =w ceql %tag, 5
+    %t18 =w ceql %tag, 6
     jnz %t18, @class_release_case36, @class_release_next37
 @class_release_case36
-    call $nox_router_Context_release(l %rt, l %p)
+    call $nox_url_URL_release(l %rt, l %p)
     ret
 @class_release_next37
-    %t19 =w ceql %tag, 4
+    %t19 =w ceql %tag, 5
     jnz %t19, @class_release_case38, @class_release_next39
 @class_release_case38
-    call $nox_router_Route_release(l %rt, l %p)
+    call $nox_router_Context_release(l %rt, l %p)
     ret
 @class_release_next39
-    %t20 =w ceql %tag, 3
+    %t20 =w ceql %tag, 4
     jnz %t20, @class_release_case40, @class_release_next41
 @class_release_case40
-    call $nox_router_Router_release(l %rt, l %p)
+    call $nox_router_Route_release(l %rt, l %p)
     ret
 @class_release_next41
-    %t21 =w ceql %tag, 2
+    %t21 =w ceql %tag, 3
     jnz %t21, @class_release_case42, @class_release_next43
 @class_release_case42
-    call $UserController_release(l %rt, l %p)
+    call $nox_router_Router_release(l %rt, l %p)
     ret
 @class_release_next43
+    %t22 =w ceql %tag, 2
+    jnz %t22, @class_release_case44, @class_release_next45
+@class_release_case44
+    call $UserController_release(l %rt, l %p)
+    ret
+@class_release_next45
     ret
 }
 data $__nox_classname_unknown = { b "unknown class", b 0 }
 data $__nox_classname_Exception = { b "Exception", b 0 }
 data $__nox_classname_ValueError = { b "ValueError", b 0 }
 data $__nox_classname_IndexError = { b "IndexError", b 0 }
+data $__nox_classname_RuntimeError = { b "RuntimeError", b 0 }
 data $__nox_classname_AssertionError = { b "AssertionError", b 0 }
 data $__nox_classname_ZeroDivisionError = { b "ZeroDivisionError", b 0 }
 data $__nox_classname_KeyError = { b "KeyError", b 0 }
@@ -8923,106 +9031,111 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_case2
     ret $__nox_classname_ValueError
 @class_name_next3
-    %t2 =w ceql %tag, 21
+    %t2 =w ceql %tag, 22
     jnz %t2, @class_name_case4, @class_name_next5
 @class_name_case4
     ret $__nox_classname_IndexError
 @class_name_next5
-    %t3 =w ceql %tag, 20
+    %t3 =w ceql %tag, 21
     jnz %t3, @class_name_case6, @class_name_next7
 @class_name_case6
-    ret $__nox_classname_AssertionError
+    ret $__nox_classname_RuntimeError
 @class_name_next7
-    %t4 =w ceql %tag, 19
+    %t4 =w ceql %tag, 20
     jnz %t4, @class_name_case8, @class_name_next9
 @class_name_case8
-    ret $__nox_classname_ZeroDivisionError
+    ret $__nox_classname_AssertionError
 @class_name_next9
-    %t5 =w ceql %tag, 18
+    %t5 =w ceql %tag, 19
     jnz %t5, @class_name_case10, @class_name_next11
 @class_name_case10
-    ret $__nox_classname_KeyError
+    ret $__nox_classname_ZeroDivisionError
 @class_name_next11
-    %t6 =w ceql %tag, 17
+    %t6 =w ceql %tag, 18
     jnz %t6, @class_name_case12, @class_name_next13
 @class_name_case12
-    ret $__nox_classname_StopIteration
+    ret $__nox_classname_KeyError
 @class_name_next13
-    %t7 =w ceql %tag, 16
+    %t7 =w ceql %tag, 17
     jnz %t7, @class_name_case14, @class_name_next15
 @class_name_case14
-    ret $__nox_classname_GeneratorExit
+    ret $__nox_classname_StopIteration
 @class_name_next15
-    %t8 =w ceql %tag, 15
+    %t8 =w ceql %tag, 16
     jnz %t8, @class_name_case16, @class_name_next17
 @class_name_case16
-    ret $__nox_classname_HPyError
+    ret $__nox_classname_GeneratorExit
 @class_name_next17
-    %t9 =w ceql %tag, 14
+    %t9 =w ceql %tag, 15
     jnz %t9, @class_name_case18, @class_name_next19
 @class_name_case18
-    ret $__nox_classname_CancelledError
+    ret $__nox_classname_HPyError
 @class_name_next19
-    %t10 =w ceql %tag, 13
+    %t10 =w ceql %tag, 14
     jnz %t10, @class_name_case20, @class_name_next21
 @class_name_case20
-    ret $__nox_classname_JsonValue
+    ret $__nox_classname_CancelledError
 @class_name_next21
-    %t11 =w ceql %tag, 12
+    %t11 =w ceql %tag, 13
     jnz %t11, @class_name_case22, @class_name_next23
 @class_name_case22
-    ret $__nox_classname_nox_http_HttpError
+    ret $__nox_classname_JsonValue
 @class_name_next23
-    %t12 =w ceql %tag, 22
+    %t12 =w ceql %tag, 12
     jnz %t12, @class_name_case24, @class_name_next25
 @class_name_case24
-    ret $__nox_classname_nox_http_HttpTimeoutError
+    ret $__nox_classname_nox_http_HttpError
 @class_name_next25
-    %t13 =w ceql %tag, 10
+    %t13 =w ceql %tag, 23
     jnz %t13, @class_name_case26, @class_name_next27
 @class_name_case26
-    ret $__nox_classname_nox_http_HttpResponse
+    ret $__nox_classname_nox_http_HttpTimeoutError
 @class_name_next27
-    %t14 =w ceql %tag, 9
+    %t14 =w ceql %tag, 10
     jnz %t14, @class_name_case28, @class_name_next29
 @class_name_case28
-    ret $__nox_classname_nox_http_HttpRequest
+    ret $__nox_classname_nox_http_HttpResponse
 @class_name_next29
-    %t15 =w ceql %tag, 8
+    %t15 =w ceql %tag, 9
     jnz %t15, @class_name_case30, @class_name_next31
 @class_name_case30
-    ret $__nox_classname_nox_http_HttpStream
+    ret $__nox_classname_nox_http_HttpRequest
 @class_name_next31
-    %t16 =w ceql %tag, 7
+    %t16 =w ceql %tag, 8
     jnz %t16, @class_name_case32, @class_name_next33
 @class_name_case32
-    ret $__nox_classname_nox_url_UrlError
+    ret $__nox_classname_nox_http_HttpStream
 @class_name_next33
-    %t17 =w ceql %tag, 6
+    %t17 =w ceql %tag, 7
     jnz %t17, @class_name_case34, @class_name_next35
 @class_name_case34
-    ret $__nox_classname_nox_url_URL
+    ret $__nox_classname_nox_url_UrlError
 @class_name_next35
-    %t18 =w ceql %tag, 5
+    %t18 =w ceql %tag, 6
     jnz %t18, @class_name_case36, @class_name_next37
 @class_name_case36
-    ret $__nox_classname_nox_router_Context
+    ret $__nox_classname_nox_url_URL
 @class_name_next37
-    %t19 =w ceql %tag, 4
+    %t19 =w ceql %tag, 5
     jnz %t19, @class_name_case38, @class_name_next39
 @class_name_case38
-    ret $__nox_classname_nox_router_Route
+    ret $__nox_classname_nox_router_Context
 @class_name_next39
-    %t20 =w ceql %tag, 3
+    %t20 =w ceql %tag, 4
     jnz %t20, @class_name_case40, @class_name_next41
 @class_name_case40
-    ret $__nox_classname_nox_router_Router
+    ret $__nox_classname_nox_router_Route
 @class_name_next41
-    %t21 =w ceql %tag, 2
+    %t21 =w ceql %tag, 3
     jnz %t21, @class_name_case42, @class_name_next43
 @class_name_case42
-    ret $__nox_classname_UserController
+    ret $__nox_classname_nox_router_Router
 @class_name_next43
+    %t22 =w ceql %tag, 2
+    jnz %t22, @class_name_case44, @class_name_next45
+@class_name_case44
+    ret $__nox_classname_UserController
+@class_name_next45
     ret $__nox_classname_unknown
 }
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
@@ -9165,8 +9278,8 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue14
     %t20 =l add %t8, 24
-    storel 442, %t20
-    call $nox_raise(l %rt, l %t8, l 442)
+    storel 456, %t20
+    call $nox_raise(l %rt, l %t8, l 456)
     %t21 =w call $nox_exception_pending(l %rt)
     jnz %t21, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -9243,8 +9356,8 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     ret 0
 @exc_continue14
     %t20 =l add %t8, 24
-    storel 447, %t20
-    call $nox_raise(l %rt, l %t8, l 447)
+    storel 461, %t20
+    call $nox_raise(l %rt, l %t8, l 461)
     %t21 =w call $nox_exception_pending(l %rt)
     jnz %t21, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -9321,8 +9434,8 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue14
     %t20 =l add %t8, 24
-    storel 452, %t20
-    call $nox_raise(l %rt, l %t8, l 452)
+    storel 466, %t20
+    call $nox_raise(l %rt, l %t8, l 466)
     %t21 =w call $nox_exception_pending(l %rt)
     jnz %t21, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -9390,8 +9503,8 @@ export function l $ord(l %rt, l %p_s) {
     ret 0
 @exc_continue8
     %t14 =l add %t7, 24
-    storel 461, %t14
-    call $nox_raise(l %rt, l %t7, l 461)
+    storel 475, %t14
+    call $nox_raise(l %rt, l %t7, l 475)
     %t15 =w call $nox_exception_pending(l %rt)
     jnz %t15, @exc_propagate9, @exc_continue10
 @exc_propagate9
@@ -10583,7 +10696,7 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     jmp @release_done67
 @release_done67
     %t106 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 22, %t106
+    storel 23, %t106
     %t107 =l add %t106, 8
     storel $nox_http_HttpTimeoutError_vtable, %t107
     %t108 =l add %t106, 16
@@ -11283,7 +11396,7 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     jmp @release_done41
 @release_done41
     %t75 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 22, %t75
+    storel 23, %t75
     %t76 =l add %t75, 8
     storel $nox_http_HttpTimeoutError_vtable, %t76
     %t77 =l add %t75, 16
@@ -12239,7 +12352,7 @@ export function l $nox_url__substr(l %rt, l %p_s, l %p_start, l %p_end) {
 @str_idx_err9
     %t25 =l add $str60, 16
     %t26 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t26
+    storel 22, %t26
     %t27 =l add %t26, 8
     storel $IndexError_vtable, %t27
     %t28 =l add %t26, 16
@@ -20107,7 +20220,7 @@ export function l $nox_url__hex_digit(l %rt, l %p_n) {
 @list_idx_err3
     %t45 =l add $str101, 16
     %t46 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t46
+    storel 22, %t46
     %t47 =l add %t46, 8
     storel $IndexError_vtable, %t47
     %t48 =l add %t46, 16
@@ -21359,7 +21472,7 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @str_idx_err9
     %t30 =l add $str128, 16
     %t31 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t31
+    storel 22, %t31
     %t32 =l add %t31, 8
     storel $IndexError_vtable, %t32
     %t33 =l add %t31, 16
@@ -21476,7 +21589,7 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @str_idx_err95
     %t133 =l add $str131, 16
     %t134 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t134
+    storel 22, %t134
     %t135 =l add %t134, 8
     storel $IndexError_vtable, %t135
     %t136 =l add %t134, 16
@@ -21593,7 +21706,7 @@ export function l $nox_url_percent_decode(l %rt, l %p_s) {
 @str_idx_err151
     %t200 =l add $str132, 16
     %t201 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t201
+    storel 22, %t201
     %t202 =l add %t201, 8
     storel $IndexError_vtable, %t202
     %t203 =l add %t201, 16
@@ -24895,7 +25008,7 @@ export function l $nox_router__drop_first_char(l %rt, l %p_s) {
 @str_idx_err9
     %t23 =l add $str162, 16
     %t24 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t24
+    storel 22, %t24
     %t25 =l add %t24, 8
     storel $IndexError_vtable, %t25
     %t26 =l add %t24, 16
@@ -26081,7 +26194,7 @@ export function l $nox_router__match_path(l %rt, l %p_pattern, l %p_target) {
 @list_idx_err55
     %t90 =l add $str169, 16
     %t91 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 21, %t91
+    storel 22, %t91
     %t92 =l add %t91, 8
     storel $IndexError_vtable, %t92
     %t93 =l add %t91, 16
@@ -28913,8 +29026,8 @@ export function l $__nox_reflect_decorator_handler(l %rt, l %i) {
 }
 data $__nox_dec_sigs = { l 1, l 0, l $str206+16, l 2, l $str207+16, l 2, l 1, l $str212+16, l 2, l $str213+16, l 2, l 3, l $str218+16, l 2, l $str219+16, l 1, l 5, l $str222+16, l 1, l $str223+16, l 1, l 6, l $str226+16, l 0, l $str227+16 }
 data $__nox_dec_sig_params = { l $str204+16, l $str205+16, l $str208+16, l $str209+16, l $str210+16, l $str211+16, l $str214+16, l $str215+16, l $str216+16, l $str217+16, l $str220+16, l $str221+16, l $str224+16, l $str225+16 }
-data $__nox_class_table = { l $str230+16, l 1, l 0, l $str233+16, l 1, l 1, l $str236+16, l 1, l 2, l $str239+16, l 1, l 3, l $str242+16, l 1, l 4, l $str245+16, l 1, l 5, l $str248+16, l 1, l 6, l $str251+16, l 1, l 7, l $str254+16, l 1, l 8, l $str257+16, l 1, l 9, l $str272+16, l 7, l 10, l $str275+16, l 1, l 17, l $str278+16, l 1, l 18, l $str285+16, l 3, l 19, l $str296+16, l 5, l 22, l $str307+16, l 5, l 27, l $str310+16, l 1, l 32, l $str325+16, l 7, l 33, l $str330+16, l 2, l 40, l $str337+16, l 3, l 42, l $str338+16, l 0, l 45, l $str341+16, l 1, l 45 }
-data $__nox_class_params = { l $str228+16, l $str229+16, l $str231+16, l $str232+16, l $str234+16, l $str235+16, l $str237+16, l $str238+16, l $str240+16, l $str241+16, l $str243+16, l $str244+16, l $str246+16, l $str247+16, l $str249+16, l $str250+16, l $str252+16, l $str253+16, l $str255+16, l $str256+16, l $str258+16, l $str259+16, l $str260+16, l $str261+16, l $str262+16, l $str263+16, l $str264+16, l $str265+16, l $str266+16, l $str267+16, l $str268+16, l $str269+16, l $str270+16, l $str271+16, l $str273+16, l $str274+16, l $str276+16, l $str277+16, l $str279+16, l $str280+16, l $str281+16, l $str282+16, l $str283+16, l $str284+16, l $str286+16, l $str287+16, l $str288+16, l $str289+16, l $str290+16, l $str291+16, l $str292+16, l $str293+16, l $str294+16, l $str295+16, l $str297+16, l $str298+16, l $str299+16, l $str300+16, l $str301+16, l $str302+16, l $str303+16, l $str304+16, l $str305+16, l $str306+16, l $str308+16, l $str309+16, l $str311+16, l $str312+16, l $str313+16, l $str314+16, l $str315+16, l $str316+16, l $str317+16, l $str318+16, l $str319+16, l $str320+16, l $str321+16, l $str322+16, l $str323+16, l $str324+16, l $str326+16, l $str327+16, l $str328+16, l $str329+16, l $str331+16, l $str332+16, l $str333+16, l $str334+16, l $str335+16, l $str336+16, l $str339+16, l $str340+16 }
+data $__nox_class_table = { l $str230+16, l 1, l 0, l $str233+16, l 1, l 1, l $str236+16, l 1, l 2, l $str239+16, l 1, l 3, l $str242+16, l 1, l 4, l $str245+16, l 1, l 5, l $str248+16, l 1, l 6, l $str251+16, l 1, l 7, l $str254+16, l 1, l 8, l $str257+16, l 1, l 9, l $str260+16, l 1, l 10, l $str275+16, l 7, l 11, l $str278+16, l 1, l 18, l $str281+16, l 1, l 19, l $str288+16, l 3, l 20, l $str299+16, l 5, l 23, l $str310+16, l 5, l 28, l $str313+16, l 1, l 33, l $str328+16, l 7, l 34, l $str333+16, l 2, l 41, l $str340+16, l 3, l 43, l $str341+16, l 0, l 46, l $str344+16, l 1, l 46 }
+data $__nox_class_params = { l $str228+16, l $str229+16, l $str231+16, l $str232+16, l $str234+16, l $str235+16, l $str237+16, l $str238+16, l $str240+16, l $str241+16, l $str243+16, l $str244+16, l $str246+16, l $str247+16, l $str249+16, l $str250+16, l $str252+16, l $str253+16, l $str255+16, l $str256+16, l $str258+16, l $str259+16, l $str261+16, l $str262+16, l $str263+16, l $str264+16, l $str265+16, l $str266+16, l $str267+16, l $str268+16, l $str269+16, l $str270+16, l $str271+16, l $str272+16, l $str273+16, l $str274+16, l $str276+16, l $str277+16, l $str279+16, l $str280+16, l $str282+16, l $str283+16, l $str284+16, l $str285+16, l $str286+16, l $str287+16, l $str289+16, l $str290+16, l $str291+16, l $str292+16, l $str293+16, l $str294+16, l $str295+16, l $str296+16, l $str297+16, l $str298+16, l $str300+16, l $str301+16, l $str302+16, l $str303+16, l $str304+16, l $str305+16, l $str306+16, l $str307+16, l $str308+16, l $str309+16, l $str311+16, l $str312+16, l $str314+16, l $str315+16, l $str316+16, l $str317+16, l $str318+16, l $str319+16, l $str320+16, l $str321+16, l $str322+16, l $str323+16, l $str324+16, l $str325+16, l $str326+16, l $str327+16, l $str329+16, l $str330+16, l $str331+16, l $str332+16, l $str334+16, l $str335+16, l $str336+16, l $str337+16, l $str338+16, l $str339+16, l $str342+16, l $str343+16 }
 export function l $__nox_reflect_decorator_param_count(l %rt, l %i) {
 @start
     %t0 =l mul %i, 40
@@ -28956,7 +29069,7 @@ export function l $__nox_reflect_decorator_param_name(l %rt, l %i, l %k) {
     %t4 =w cultl %k, %t3
     jnz %t4, @meta_pair_ok0, @meta_pair_bad1
 @meta_pair_bad1
-    %t5 =l add $str342, 16
+    %t5 =l add $str345, 16
     ret %t5
 @meta_pair_ok0
     %t6 =l add %t1, 8
@@ -28977,7 +29090,7 @@ export function l $__nox_reflect_decorator_param_type(l %rt, l %i, l %k) {
     %t4 =w cultl %k, %t3
     jnz %t4, @meta_pair_ok0, @meta_pair_bad1
 @meta_pair_bad1
-    %t5 =l add $str343, 16
+    %t5 =l add $str346, 16
     ret %t5
 @meta_pair_ok0
     %t6 =l add %t1, 8
@@ -28991,7 +29104,7 @@ export function l $__nox_reflect_decorator_param_type(l %rt, l %i, l %k) {
 }
 export function l $__nox_reflect_class_count(l %rt) {
 @start
-    ret 22
+    ret 23
 }
 export function l $__nox_reflect_class_name(l %rt, l %i) {
 @start
@@ -29018,7 +29131,7 @@ export function l $__nox_reflect_class_init_param_name(l %rt, l %i, l %k) {
     %t4 =w cultl %k, %t3
     jnz %t4, @meta_pair_ok0, @meta_pair_bad1
 @meta_pair_bad1
-    %t5 =l add $str344, 16
+    %t5 =l add $str347, 16
     ret %t5
 @meta_pair_ok0
     %t6 =l add %t1, 16
@@ -29039,7 +29152,7 @@ export function l $__nox_reflect_class_init_param_type(l %rt, l %i, l %k) {
     %t4 =w cultl %k, %t3
     jnz %t4, @meta_pair_ok0, @meta_pair_bad1
 @meta_pair_bad1
-    %t5 =l add $str345, 16
+    %t5 =l add $str348, 16
     ret %t5
 @meta_pair_ok0
     %t6 =l add %t1, 16
@@ -29290,113 +29403,116 @@ data $str235 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
 data $str236 = { l 1073741824, l 2305843009213693962, b "IndexError", b 0 }
 data $str237 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str238 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str239 = { l 1073741824, l 2305843009213693966, b "AssertionError", b 0 }
+data $str239 = { l 1073741824, l 2305843009213693964, b "RuntimeError", b 0 }
 data $str240 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str241 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str242 = { l 1073741824, l 2305843009213693969, b "ZeroDivisionError", b 0 }
+data $str242 = { l 1073741824, l 2305843009213693966, b "AssertionError", b 0 }
 data $str243 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str244 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str245 = { l 1073741824, l 2305843009213693960, b "KeyError", b 0 }
+data $str245 = { l 1073741824, l 2305843009213693969, b "ZeroDivisionError", b 0 }
 data $str246 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str247 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str248 = { l 1073741824, l 2305843009213693965, b "StopIteration", b 0 }
+data $str248 = { l 1073741824, l 2305843009213693960, b "KeyError", b 0 }
 data $str249 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str250 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str251 = { l 1073741824, l 2305843009213693965, b "GeneratorExit", b 0 }
+data $str251 = { l 1073741824, l 2305843009213693965, b "StopIteration", b 0 }
 data $str252 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str253 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str254 = { l 1073741824, l 2305843009213693960, b "HPyError", b 0 }
+data $str254 = { l 1073741824, l 2305843009213693965, b "GeneratorExit", b 0 }
 data $str255 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str256 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str257 = { l 1073741824, l 2305843009213693966, b "CancelledError", b 0 }
-data $str258 = { l 1073741824, l 2305843009213693956, b "kind", b 0 }
-data $str259 = { l 1073741824, l 2305843009213693955, b "int", b 0 }
-data $str260 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
-data $str261 = { l 1073741824, l 2305843009213693956, b "bool", b 0 }
-data $str262 = { l 1073741824, l 2305843009213693953, b "n", b 0 }
-data $str263 = { l 1073741824, l 2305843009213693957, b "float", b 0 }
-data $str264 = { l 1073741824, l 2305843009213693953, b "s", b 0 }
-data $str265 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str266 = { l 1073741824, l 2305843009213693955, b "arr", b 0 }
-data $str267 = { l 1073741824, l 2305843009213693967, b "list[JsonValue]", b 0 }
-data $str268 = { l 1073741824, l 2305843009213693956, b "keys", b 0 }
-data $str269 = { l 1073741824, l 2305843009213693961, b "list[str]", b 0 }
-data $str270 = { l 1073741824, l 2305843009213693956, b "vals", b 0 }
-data $str271 = { l 1073741824, l 2305843009213693967, b "list[JsonValue]", b 0 }
-data $str272 = { l 1073741824, l 2305843009213693961, b "JsonValue", b 0 }
-data $str273 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
-data $str274 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str275 = { l 1073741824, l 2305843009213693970, b "nox_http_HttpError", b 0 }
+data $str257 = { l 1073741824, l 2305843009213693960, b "HPyError", b 0 }
+data $str258 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
+data $str259 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str260 = { l 1073741824, l 2305843009213693966, b "CancelledError", b 0 }
+data $str261 = { l 1073741824, l 2305843009213693956, b "kind", b 0 }
+data $str262 = { l 1073741824, l 2305843009213693955, b "int", b 0 }
+data $str263 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
+data $str264 = { l 1073741824, l 2305843009213693956, b "bool", b 0 }
+data $str265 = { l 1073741824, l 2305843009213693953, b "n", b 0 }
+data $str266 = { l 1073741824, l 2305843009213693957, b "float", b 0 }
+data $str267 = { l 1073741824, l 2305843009213693953, b "s", b 0 }
+data $str268 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str269 = { l 1073741824, l 2305843009213693955, b "arr", b 0 }
+data $str270 = { l 1073741824, l 2305843009213693967, b "list[JsonValue]", b 0 }
+data $str271 = { l 1073741824, l 2305843009213693956, b "keys", b 0 }
+data $str272 = { l 1073741824, l 2305843009213693961, b "list[str]", b 0 }
+data $str273 = { l 1073741824, l 2305843009213693956, b "vals", b 0 }
+data $str274 = { l 1073741824, l 2305843009213693967, b "list[JsonValue]", b 0 }
+data $str275 = { l 1073741824, l 2305843009213693961, b "JsonValue", b 0 }
 data $str276 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str277 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str278 = { l 1073741824, l 2305843009213693977, b "nox_http_HttpTimeoutError", b 0 }
-data $str279 = { l 1073741824, l 2305843009213693958, b "status", b 0 }
-data $str280 = { l 1073741824, l 2305843009213693955, b "int", b 0 }
-data $str281 = { l 1073741824, l 2305843009213693956, b "body", b 0 }
-data $str282 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str283 = { l 1073741824, l 2305843009213693959, b "headers", b 0 }
-data $str284 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
-data $str285 = { l 1073741824, l 2305843009213693973, b "nox_http_HttpResponse", b 0 }
-data $str286 = { l 1073741824, l 2305843009213693958, b "method", b 0 }
-data $str287 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str288 = { l 1073741824, l 2305843009213693958, b "target", b 0 }
-data $str289 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str290 = { l 1073741824, l 2305843009213693956, b "body", b 0 }
-data $str291 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str292 = { l 1073741824, l 2305843009213693959, b "headers", b 0 }
-data $str293 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
-data $str294 = { l 1073741824, l 2305843009213693961, b "peer_addr", b 0 }
-data $str295 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str296 = { l 1073741824, l 2305843009213693972, b "nox_http_HttpRequest", b 0 }
-data $str297 = { l 1073741824, l 2305843009213693958, b "handle", b 0 }
-data $str298 = { l 1073741824, l 2305843009213693955, b "ptr", b 0 }
-data $str299 = { l 1073741824, l 2305843009213693957, b "label", b 0 }
-data $str300 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str301 = { l 1073741824, l 2305843009213693961, b "uploading", b 0 }
-data $str302 = { l 1073741824, l 2305843009213693956, b "bool", b 0 }
-data $str303 = { l 1073741824, l 2305843009213693958, b "status", b 0 }
-data $str304 = { l 1073741824, l 2305843009213693955, b "int", b 0 }
-data $str305 = { l 1073741824, l 2305843009213693959, b "headers", b 0 }
-data $str306 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
-data $str307 = { l 1073741824, l 2305843009213693971, b "nox_http_HttpStream", b 0 }
-data $str308 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
-data $str309 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str310 = { l 1073741824, l 2305843009213693968, b "nox_url_UrlError", b 0 }
-data $str311 = { l 1073741824, l 2305843009213693958, b "scheme", b 0 }
+data $str278 = { l 1073741824, l 2305843009213693970, b "nox_http_HttpError", b 0 }
+data $str279 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
+data $str280 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str281 = { l 1073741824, l 2305843009213693977, b "nox_http_HttpTimeoutError", b 0 }
+data $str282 = { l 1073741824, l 2305843009213693958, b "status", b 0 }
+data $str283 = { l 1073741824, l 2305843009213693955, b "int", b 0 }
+data $str284 = { l 1073741824, l 2305843009213693956, b "body", b 0 }
+data $str285 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str286 = { l 1073741824, l 2305843009213693959, b "headers", b 0 }
+data $str287 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
+data $str288 = { l 1073741824, l 2305843009213693973, b "nox_http_HttpResponse", b 0 }
+data $str289 = { l 1073741824, l 2305843009213693958, b "method", b 0 }
+data $str290 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str291 = { l 1073741824, l 2305843009213693958, b "target", b 0 }
+data $str292 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str293 = { l 1073741824, l 2305843009213693956, b "body", b 0 }
+data $str294 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str295 = { l 1073741824, l 2305843009213693959, b "headers", b 0 }
+data $str296 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
+data $str297 = { l 1073741824, l 2305843009213693961, b "peer_addr", b 0 }
+data $str298 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str299 = { l 1073741824, l 2305843009213693972, b "nox_http_HttpRequest", b 0 }
+data $str300 = { l 1073741824, l 2305843009213693958, b "handle", b 0 }
+data $str301 = { l 1073741824, l 2305843009213693955, b "ptr", b 0 }
+data $str302 = { l 1073741824, l 2305843009213693957, b "label", b 0 }
+data $str303 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str304 = { l 1073741824, l 2305843009213693961, b "uploading", b 0 }
+data $str305 = { l 1073741824, l 2305843009213693956, b "bool", b 0 }
+data $str306 = { l 1073741824, l 2305843009213693958, b "status", b 0 }
+data $str307 = { l 1073741824, l 2305843009213693955, b "int", b 0 }
+data $str308 = { l 1073741824, l 2305843009213693959, b "headers", b 0 }
+data $str309 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
+data $str310 = { l 1073741824, l 2305843009213693971, b "nox_http_HttpStream", b 0 }
+data $str311 = { l 1073741824, l 2305843009213693959, b "message", b 0 }
 data $str312 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str313 = { l 1073741824, l 2305843009213693960, b "userinfo", b 0 }
-data $str314 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str315 = { l 1073741824, l 2305843009213693956, b "host", b 0 }
-data $str316 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str317 = { l 1073741824, l 2305843009213693956, b "port", b 0 }
-data $str318 = { l 1073741824, l 2305843009213693955, b "int", b 0 }
-data $str319 = { l 1073741824, l 2305843009213693956, b "path", b 0 }
-data $str320 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str321 = { l 1073741824, l 2305843009213693957, b "query", b 0 }
-data $str322 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
-data $str323 = { l 1073741824, l 2305843009213693960, b "fragment", b 0 }
-data $str324 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str325 = { l 1073741824, l 2305843009213693963, b "nox_url_URL", b 0 }
-data $str326 = { l 1073741824, l 2305843009213693959, b "request", b 0 }
-data $str327 = { l 1073741824, l 2305843009213693972, b "nox_http_HttpRequest", b 0 }
-data $str328 = { l 1073741824, l 2305843009213693958, b "params", b 0 }
-data $str329 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
-data $str330 = { l 1073741824, l 2305843009213693970, b "nox_router_Context", b 0 }
-data $str331 = { l 1073741824, l 2305843009213693958, b "method", b 0 }
-data $str332 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str333 = { l 1073741824, l 2305843009213693959, b "pattern", b 0 }
-data $str334 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str335 = { l 1073741824, l 2305843009213693959, b "handler", b 0 }
-data $str336 = { l 1073741824, l 2305843009213693997, b "(nox_router_Context) -> nox_http_HttpResponse", b 0 }
-data $str337 = { l 1073741824, l 2305843009213693968, b "nox_router_Route", b 0 }
-data $str338 = { l 1073741824, l 2305843009213693969, b "nox_router_Router", b 0 }
-data $str339 = { l 1073741824, l 2305843009213693958, b "prefix", b 0 }
-data $str340 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
-data $str341 = { l 1073741824, l 2305843009213693966, b "UserController", b 0 }
-data $str342 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str343 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str344 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str313 = { l 1073741824, l 2305843009213693968, b "nox_url_UrlError", b 0 }
+data $str314 = { l 1073741824, l 2305843009213693958, b "scheme", b 0 }
+data $str315 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str316 = { l 1073741824, l 2305843009213693960, b "userinfo", b 0 }
+data $str317 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str318 = { l 1073741824, l 2305843009213693956, b "host", b 0 }
+data $str319 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str320 = { l 1073741824, l 2305843009213693956, b "port", b 0 }
+data $str321 = { l 1073741824, l 2305843009213693955, b "int", b 0 }
+data $str322 = { l 1073741824, l 2305843009213693956, b "path", b 0 }
+data $str323 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str324 = { l 1073741824, l 2305843009213693957, b "query", b 0 }
+data $str325 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
+data $str326 = { l 1073741824, l 2305843009213693960, b "fragment", b 0 }
+data $str327 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str328 = { l 1073741824, l 2305843009213693963, b "nox_url_URL", b 0 }
+data $str329 = { l 1073741824, l 2305843009213693959, b "request", b 0 }
+data $str330 = { l 1073741824, l 2305843009213693972, b "nox_http_HttpRequest", b 0 }
+data $str331 = { l 1073741824, l 2305843009213693958, b "params", b 0 }
+data $str332 = { l 1073741824, l 2305843009213693966, b "dict[str, str]", b 0 }
+data $str333 = { l 1073741824, l 2305843009213693970, b "nox_router_Context", b 0 }
+data $str334 = { l 1073741824, l 2305843009213693958, b "method", b 0 }
+data $str335 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str336 = { l 1073741824, l 2305843009213693959, b "pattern", b 0 }
+data $str337 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str338 = { l 1073741824, l 2305843009213693959, b "handler", b 0 }
+data $str339 = { l 1073741824, l 2305843009213693997, b "(nox_router_Context) -> nox_http_HttpResponse", b 0 }
+data $str340 = { l 1073741824, l 2305843009213693968, b "nox_router_Route", b 0 }
+data $str341 = { l 1073741824, l 2305843009213693969, b "nox_router_Router", b 0 }
+data $str342 = { l 1073741824, l 2305843009213693958, b "prefix", b 0 }
+data $str343 = { l 1073741824, l 2305843009213693955, b "str", b 0 }
+data $str344 = { l 1073741824, l 2305843009213693966, b "UserController", b 0 }
 data $str345 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str346 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str347 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str348 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
 data $fmt_lit1 = { b "None", b 0 }
 data $fmt_lit2 = { b "None", b 0 }

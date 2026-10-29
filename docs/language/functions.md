@@ -307,8 +307,31 @@ caught reset
 0 1 100 101
 ```
 
-A generator is compiled to a resumable state machine, so a few things are not allowed: `yield` inside an `except` or `finally` block or inside
-`lowlevel`; a local variable of function type that lives across a `yield`; and `return value`. `Iterable[T]` stays a plain
+`yield` may also appear in an `except` handler and in a `finally` block (a `finally` that yields runs after the protected region and re-raises a pending exception
+once it ends; calling `close()` on a generator that yields from such a `finally` raises `RuntimeError`, as in Python). A local variable or parameter of function type
+may live across a `yield`.
+
+```nox
+def retry(attempts: int) -> Iterator[str]:
+    for i in range(attempts):
+        try:
+            if i < 2:
+                raise ValueError("fail " + str(i))
+            yield "ok " + str(i)
+        except ValueError as e:
+            yield "handler " + e.message
+        finally:
+            yield "cleanup " + str(i)
+
+print(list(retry(3)))
+```
+
+```output
+['handler fail 0', 'cleanup 0', 'handler fail 1', 'cleanup 1', 'ok 2', 'cleanup 2']
+```
+
+A generator is compiled to a resumable state machine, so a few things are not allowed: `yield` inside `lowlevel`; `return value`; and a `return`, `break` or
+`continue` that leaves a `try` whose `finally` contains a `yield` (the `finally` would be skipped, so this is a compile-time error). `Iterable[T]` stays a plain
 `list[T]` (use it for parameters that take a finished sequence). `async def` generators are covered in
 [Concurrency](concurrency.md#async-generators-and-async-for).
 

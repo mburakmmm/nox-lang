@@ -37,6 +37,9 @@ const Frame = struct {
 
 const Ctx = struct { top: bool, loop_depth: u32 = 0 };
 
+const ResetKind = enum { zero, false_, none };
+const ResetCell = struct { cell: []const u8, kind: ResetKind };
+
 const Pass = struct {
     a: std.mem.Allocator,
     /// Temizlik (`try`/`with`) içeren jeneratör fonksiyonlarının adları (`f` ya da `Sınıf.metod`): checker bunların TAZE çağrıları üzerindeki
@@ -61,6 +64,10 @@ const Pass = struct {
     thrown: ?Binding = null,
     /// Etkin listelerin doğrudan elemanı olan iç içe `def`ler: her adımda tanımlı olmaları için adım başına taşınır.
     lifted: std.ArrayListUnmanaged(ast.Stmt) = .empty,
+    /// Yeniden-giriş DURUMU taşıyan hücreler (program sayaçları, seçiciler, döngü yineleyicileri, bağlam yöneticileri). Bir `try` gövdesinde
+    /// fırlayan istisna yakalanıp jeneratör sürerse, gövdenin içinde askıda kalmış bu hücreler sıfırlanmalıdır; aksi halde `try` yeniden
+    /// girildiğinde (örn. bir döngü içinde) eski yineleyiciden/sayaçtan devam eder.
+    resets: std.ArrayListUnmanaged(ResetCell) = .empty,
 
     fn fail(self: *Pass, comptime fmt: []const u8, args: anytype) Error!void {
         if (self.diag == null) self.diag = .{ .message = try std.fmt.allocPrint(self.a, fmt, args), .line = self.line };
@@ -112,9 +119,9 @@ const Pass = struct {
             self.line = st.line;
             switch (st.kind) {
                 .try_stmt => |s| {
-                    for (s.except_clauses) |ec| if (listHasYield(ec.body)) try self.fail("'yield' inside an 'except' clause is not supported in a generator; yield from the 'try' body instead", .{});
-                    if (s.finally_body) |fb| if (listHasYield(fb)) try self.fail("'yield' inside a 'finally' block is not supported in a generator", .{});
                     try self.unsupportedYield(s.try_body);
+                    for (s.except_clauses) |ec| try self.unsupportedYield(ec.body);
+                    if (s.finally_body) |fb| try self.unsupportedYield(fb);
                 },
                 .with_stmt => |s| try self.unsupportedYield(s.body),
                 .lowlevel_stmt => if (stmtHasYield(st)) try self.fail("'yield' inside 'lowlevel' is not supported in a generator", .{}),
@@ -191,6 +198,24 @@ const Pass = struct {
 
     // ---- hücreler ----
 
+    fn regReset(self: *Pass, cell: []const u8, kind: ResetKind) Error!void {
+        try self.resets.append(self.a, .{ .cell = cell, .kind = kind });
+    }
+
+    /// `mark`tan beri kaydedilen durum hücrelerini başlangıç değerlerine döndüren atamalar.
+    fn resetSince(self: *Pass, mark: usize) Error![]ast.Stmt {
+        var out: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        for (self.resets.items[mark..]) |rc| {
+            const v: ast.Expr = switch (rc.kind) {
+                .zero => .{ .int_lit = 0 },
+                .false_ => .{ .bool_lit = false },
+                .none => .none_lit,
+            };
+            try out.append(self.a, self.assign(try self.idx0(rc.cell), v));
+        }
+        return out.toOwnedSlice(self.a);
+    }
+
     /// `name: list[int] = [v]` hücresini önbilgiye ekler.
     fn intCell(self: *Pass, base: []const u8, v: i64) Error![]const u8 {
         const name = try self.newName(base);
@@ -228,8 +253,10 @@ const Pass = struct {
     fn typedCell(self: *Pass, name: []const u8, t: ast.TypeExpr) Error!Binding {
         const cell = try self.newName(name);
         if (t == .func_type) {
-            try self.fail("variable '{s}' has a function type and cannot be kept across a 'yield'", .{name});
-            return .{ .cell = cell, .boxed = false };
+            // fonksiyon tipli yerel: `Optional[func]` yazılamadığından hücre jenerik `__nox_FnBox[F]` kutusunu taşır (yazmalar checker'da kutulanır, `__nox_get` `.f`yi okur)
+            const targs = try self.a.alloc(ast.TypeExpr, 1);
+            targs[0] = t;
+            return self.typedCell(name, .{ .generic = .{ .name = "__nox_FnBox", .args = targs } });
         }
         if (t == .generic and (std.mem.eql(u8, t.generic.name, "list") or std.mem.eql(u8, t.generic.name, "dict"))) {
             // `append`/indeksli yazma alıcısı bir değişken ya da `hücre[0]` olmalı: düz hücre, iç içe boş literal başlangıcı
@@ -520,6 +547,7 @@ const Pass = struct {
     /// Yield içeren bir deyim listesini durum makinesine çevirir. `loop`: bu liste bir döngü gövdesi; `sel`: bir `if` kolu.
     fn emitList(self: *Pass, stmts: []ast.Stmt, loop: bool, sel: ?[]const u8) Error!struct { pc: []const u8, code: []ast.Stmt } {
         const pc = try self.intCell("pc", 0);
+        try self.regReset(pc, .zero);
         try self.frames.append(self.a, .{ .pc = pc, .sel = sel, .is_loop = loop });
         try self.idxs.append(self.a, 0);
         try self.pushScope();
@@ -614,6 +642,7 @@ const Pass = struct {
 
     fn emitIf(self: *Pass, s: ast.IfStmt, st: ast.Stmt) Error![]ast.Stmt {
         const sel = try self.intCell("sel", 0);
+        try self.regReset(sel, .zero);
         var out: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         // seçim (yalnızca taze girişte): koşullar bir kez değerlendirilir
         var cond0 = s.cond;
@@ -662,28 +691,158 @@ const Pass = struct {
         return self.ifStmt(cond, code);
     }
 
-    /// `try`/`except`/`finally` (yield yalnızca `try` gövdesinde): gövde etkin listedir; işleyiciler ve `finally` düz kalır. Her adım girişinde `try`
-    /// yeniden kurulur (yan etkisizdir) ve gövde sayaçla kaldığı yere atlar. Bir `yield` adımdan `return` ettiğinde `finally` ÇALIŞMAMALI:
-    /// `done` yalnızca yield'de temizlenir, bu yüzden kullanıcı `finally`si `if done:` ile korunur; gövde sayacı da orada sıfırlanır.
+    /// Bir deyim listesinde, çevreleyen `try`nin DIŞINA çıkan `return`/`break`/`continue` var mı? (`loop_depth`: listenin kendi içindeki döngüler.)
+    fn hasEscapingJump(stmts: []const ast.Stmt, loop_depth: u32) bool {
+        for (stmts) |st| {
+            switch (st.kind) {
+                .return_stmt => return true,
+                .break_stmt, .continue_stmt => if (loop_depth == 0) return true,
+                .if_stmt => |s| {
+                    if (hasEscapingJump(s.then_body, loop_depth)) return true;
+                    for (s.elif_clauses) |ec| if (hasEscapingJump(ec.body, loop_depth)) return true;
+                    if (s.else_body) |eb| if (hasEscapingJump(eb, loop_depth)) return true;
+                },
+                .while_stmt => |s| if (hasEscapingJump(s.body, loop_depth + 1)) return true,
+                .for_stmt => |s| if (hasEscapingJump(s.body, loop_depth + 1)) return true,
+                .try_stmt => |s| {
+                    if (hasEscapingJump(s.try_body, loop_depth)) return true;
+                    for (s.except_clauses) |ec| if (hasEscapingJump(ec.body, loop_depth)) return true;
+                    if (s.finally_body) |fb| if (hasEscapingJump(fb, loop_depth)) return true;
+                },
+                .with_stmt => |s| if (hasEscapingJump(s.body, loop_depth)) return true,
+                .lowlevel_stmt => |s| if (hasEscapingJump(s.body, loop_depth)) return true,
+                else => {},
+            }
+        }
+        return false;
+    }
+
+    /// `try`/`except`/`finally`. Yield `try` gövdesinde, `except` işleyicilerinde ve/veya `finally`de olabilir.
+    ///
+    /// Gövde etkin listedir; her adım girişinde `try` yeniden kurulur (yan etkisizdir) ve gövde sayaçla kaldığı yere atlar. Bir `yield` adımdan
+    /// `return` ettiğinde `finally` ÇALIŞMAMALI: `done` yalnızca yield'de temizlenir, bu yüzden kullanıcı `finally`si `if done:` ile korunur.
+    ///
+    /// `yield` içeren bir `except` işleyicisi gerçek `except` içinde ÇALIŞTIRILAMAZ (yeniden girişte istisna artık yoktur): gerçek `except` yalnızca
+    /// hangi işleyicinin seçildiğini (`which`) ve istisna nesnesini bir hücreye yazar; işleyici gövdesi aynı `try` bloğunun içinde, iç `try`den SONRA
+    /// etkin liste olarak çalışır (`which == k` iken, kendi sayacıyla yeniden girilebilir). Böylece işleyicideki bir hata hâlâ `finally`ye gider.
+    ///
+    /// `yield` içeren bir `finally` gerçek `finally` olamaz (istisna beklerken yield, istisnayı yutardı): korunan bölge bir yakala-hepsini ile bekleyen
+    /// istisnayı (`pend`) saklar, `finally` gövdesi etkin liste olarak bölgeden SONRA çalışır, bitince bekleyen istisna yeniden fırlatılır. Bu modda
+    /// `try`yi terk eden `return`/`break`/`continue` desteklenmez (`finally` çalışmadan çıkardı): net hata verilir.
     fn emitTry(self: *Pass, s: ast.TryStmt, st: ast.Stmt) Error![]ast.Stmt {
+        var deferred = false;
+        for (s.except_clauses) |ec| if (listHasYield(ec.body)) {
+            deferred = true;
+        };
+        const fin_yield = if (s.finally_body) |fb| listHasYield(fb) else false;
+        if (fin_yield) {
+            var jumps = hasEscapingJump(s.try_body, 0);
+            for (s.except_clauses) |ec| if (hasEscapingJump(ec.body, 0)) {
+                jumps = true;
+            };
+            if (jumps or hasEscapingJump(s.finally_body.?, 0)) {
+                try self.fail("'return', 'break' or 'continue' that leaves a 'try' whose 'finally' contains 'yield' is not supported in a generator (the 'finally' would be skipped)", .{});
+                return &.{};
+            }
+        }
+        const mark = self.resets.items.len;
         const body = try self.emitList(s.try_body, false, null);
+        const body_resets = try self.resetSince(mark);
+        const which: []const u8 = if (deferred) try self.intCell("which", 0) else "";
+        if (deferred) try self.regReset(which, .zero);
+
         const ecs = try self.a.alloc(ast.ExceptClause, s.except_clauses.len);
+        const Deferred = struct { k: usize, bind: ?Binding, list_code: []ast.Stmt };
+        var defs: std.ArrayListUnmanaged(Deferred) = .empty;
         for (s.except_clauses, 0..) |ec, k| {
             try self.pushScope();
             defer self.popScope();
-            if (ec.bind_name) |bn| try self.bind(bn, null);
             ecs[k] = ec;
-            ecs[k].body = try self.plainBlock(ec.body, .{ .top = true });
+            if (listHasYield(ec.body)) {
+                var b: ?Binding = null;
+                var clause_body: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+                try clause_body.appendSlice(self.a, body_resets);
+                try clause_body.append(self.a, try self.setCell(which, @intCast(k + 1)));
+                if (ec.bind_name) |bn| {
+                    const cn = ec.class_name orelse "Exception";
+                    const nb = try self.typedCell(bn, .{ .simple = cn });
+                    try self.regReset(nb.cell, .none);
+                    try clause_body.append(self.a, self.assign(try self.idx0(nb.cell), id(bn)));
+                    try self.bind(bn, nb);
+                    b = nb;
+                }
+                ecs[k].body = try clause_body.toOwnedSlice(self.a);
+                const hl = try self.emitList(ec.body, false, which);
+                try defs.append(self.a, .{ .k = k, .bind = b, .list_code = hl.code });
+            } else {
+                if (ec.bind_name) |bn| try self.bind(bn, null);
+                var clause_body: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+                try clause_body.appendSlice(self.a, body_resets);
+                try clause_body.appendSlice(self.a, try self.plainBlock(ec.body, .{ .top = true }));
+                ecs[k].body = try clause_body.toOwnedSlice(self.a);
+            }
         }
-        var fin: std.ArrayListUnmanaged(ast.Stmt) = .empty;
-        if (s.finally_body) |fb| {
-            const user = try self.plainBlock(fb, .{ .top = true });
-            try fin.appendSlice(self.a, user);
+        const inner: ast.Stmt = .{ .kind = .{ .try_stmt = .{ .try_body = body.code, .except_clauses = ecs, .finally_body = null } }, .line = st.line };
+
+        // korunan bölge: (which == 0 iken) iç try + seçilen ertelenmiş işleyici
+        var region: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        if (deferred) {
+            var first = self.ifStmt(try self.bin(.eq, try self.idx0(which), .{ .int_lit = 0 }), try self.single(inner));
+            first.line = st.line;
+            try region.append(self.a, first);
+            for (defs.items) |d| {
+                var blk: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+                try blk.appendSlice(self.a, d.list_code);
+                if (d.bind) |bnd| try blk.append(self.a, self.assign(try self.idx0(bnd.cell), .none_lit));
+                var chk = self.ifStmt(try self.bin(.eq, try self.idx0(which), .{ .int_lit = @intCast(d.k + 1) }), try blk.toOwnedSlice(self.a));
+                chk.line = st.line;
+                try region.append(self.a, chk);
+            }
+            try region.append(self.a, try self.setCell(which, 0));
+        } else try region.append(self.a, inner);
+
+        if (!fin_yield) {
+            var fin: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+            if (s.finally_body) |fb| try fin.appendSlice(self.a, try self.plainBlock(fb, .{ .top = true }));
+            try fin.appendSlice(self.a, try self.resetSince(mark));
+            const guarded = self.ifStmt(try self.idx0(self.done), try fin.toOwnedSlice(self.a));
+            const t: ast.Stmt = .{ .kind = .{ .try_stmt = .{ .try_body = try region.toOwnedSlice(self.a), .except_clauses = &.{}, .finally_body = try self.single(guarded) } }, .line = st.line };
+            return self.single(t);
         }
-        try fin.append(self.a, try self.setCell(body.pc, 0));
-        const guarded = self.ifStmt(try self.idx0(self.done), try fin.toOwnedSlice(self.a));
-        const t: ast.Stmt = .{ .kind = .{ .try_stmt = .{ .try_body = body.code, .except_clauses = ecs, .finally_body = try self.single(guarded) } }, .line = st.line };
-        return self.single(t);
+
+        // yield içeren finally
+        const fst = try self.intCell("fst", 0);
+        try self.regReset(fst, .zero);
+        const pend = try self.typedCell("pend", .{ .simple = "Exception" });
+        try self.regReset(pend.cell, .none);
+        const fl = try self.emitList(s.finally_body.?, false, null);
+        var catch_body: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        try catch_body.appendSlice(self.a, try self.resetSince(mark));
+        try catch_body.append(self.a, self.assign(try self.idx0(pend.cell), id("__nox_pending")));
+        const catch_all = try self.a.alloc(ast.ExceptClause, 1);
+        catch_all[0] = .{ .class_name = "Exception", .bind_name = "__nox_pending", .body = try catch_body.toOwnedSlice(self.a) };
+        const protected: ast.Stmt = .{ .kind = .{ .try_stmt = .{ .try_body = try region.toOwnedSlice(self.a), .except_clauses = catch_all, .finally_body = null } }, .line = st.line };
+        var enter_blk: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        try enter_blk.append(self.a, protected);
+        try enter_blk.append(self.a, try self.setCell(fst, 1));
+        var out: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        var enter_if = self.ifStmt(try self.bin(.eq, try self.idx0(fst), .{ .int_lit = 0 }), try enter_blk.toOwnedSlice(self.a));
+        enter_if.line = st.line;
+        try out.append(self.a, enter_if);
+        var fin_blk: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        try fin_blk.appendSlice(self.a, fl.code);
+        try fin_blk.append(self.a, try self.setCell(fst, 0));
+        self.uid += 1;
+        const tmp = try std.fmt.allocPrint(self.a, "__nox_pe_{d}", .{self.uid});
+        var rethrow: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        try rethrow.append(self.a, self.stmt(.{ .var_decl = .{ .name = tmp, .type_expr = .{ .simple = "__infer" }, .value = try self.readOf(pend) } }));
+        try rethrow.append(self.a, self.assign(try self.idx0(pend.cell), .none_lit));
+        try rethrow.append(self.a, self.stmt(.{ .raise_stmt = id(tmp) }));
+        try fin_blk.append(self.a, self.ifStmt(try self.bin(.ne, try self.idx0(pend.cell), .none_lit), try rethrow.toOwnedSlice(self.a)));
+        var fin_if = self.ifStmt(try self.bin(.eq, try self.idx0(fst), .{ .int_lit = 1 }), try fin_blk.toOwnedSlice(self.a));
+        fin_if.line = st.line;
+        try out.append(self.a, fin_if);
+        return out.toOwnedSlice(self.a);
     }
 
     /// `with ctx as b: gövde` ≡ yöneticiyi bir kez (taze girişte) kur + `__enter__`, gövdeyi `try` içinde sürdür, çıkışta (yield DEĞİL) `__exit__`.
@@ -692,6 +851,7 @@ const Pass = struct {
         try self.rename(&ctx_e);
         var out: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         const mgr = try self.inferredCell("mgr", ctx_e);
+        try self.regReset(mgr.cell, .none);
         try self.pushScope();
         defer self.popScope();
         var binding_cell: ?Binding = null;
@@ -759,6 +919,7 @@ const Pass = struct {
             const stop = try self.intCell("stop", 0);
             const step = try self.intCell("step", 1);
             const started = try self.boolCell("started", false);
+            try self.regReset(started, .false_);
             const var_cell = try self.intCell(s.var_name, 0);
             try self.bind(s.var_name, .{ .cell = var_cell, .boxed = false });
             const args = iterable.call.args;
@@ -792,6 +953,7 @@ const Pass = struct {
         }
         // genel yinelenebilir: tembel `__nox_Gen[E]` yineleyicisi + kutulu döngü değişkeni (tipleri checker bulur)
         const it_b = try self.inferredCell("it", try self.call1("__nox_for_iter", iterable));
+        try self.regReset(it_b.cell, .none);
         const elem_src = try self.call1("__nox_elem_of", iterable);
         const v_b = try self.inferredCell(s.var_name, elem_src);
         try self.bind(s.var_name, v_b);
@@ -937,6 +1099,7 @@ const Pass = struct {
         if (self.diag != null) return;
 
         self.prelude = .empty;
+        self.resets = .empty;
         self.lifted = .empty;
         self.frames = .empty;
         self.idxs = .empty;

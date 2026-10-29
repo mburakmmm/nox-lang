@@ -135,7 +135,16 @@ fn appendMangledTypeExprName(self: *Codegen, buf: *std.ArrayListUnmanaged(u8), t
         // generic tip argümanının func-tipi/Optional OLMASINI reddeder —
         // bu dal PRATİKTE tetiklenmez, yalnızca exhaustive switch
         // GEREKSİNİMİNİ karşılar.
-        .func_type, .optional => return error.Unsupported,
+        // v2.0.73: `__nox_FnBox[(int) -> int]` (yields boyunca yaşayan fonksiyon tipli yereller) — checker'ın `appendMangledType`inin `.func` dalıyla BİREBİR.
+        .func_type => |f| {
+            try buf.appendSlice(self.allocator, "func_");
+            for (f.params) |p| {
+                try appendMangledTypeExprName(self, buf, p);
+                try buf.appendSlice(self.allocator, "_");
+            }
+            try appendMangledTypeExprName(self, buf, f.return_type.*);
+        },
+        .optional => return error.Unsupported,
         // Faz NN.2: `Box[pkg.module.Foo]` gibi bir generic tip ARGÜMANI —
         // checker'ın `appendMangledType`inin `.class` dalı ZATEN ÇÖZÜLMÜŞ
         // mangled isimle çalıştığından, BURADA da AYNI mangled ismi

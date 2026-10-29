@@ -1,0 +1,118 @@
+# `yield` `except` işleyicilerinde ve `finally` bloklarında; yakalanan istisnadan sonra döngü durumu (stale pc/yineleyici) temizlenir.
+class Res:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __enter__(self) -> Res:
+        print("enter " + self.name)
+        return self
+
+    def __exit__(self) -> None:
+        print("exit " + self.name)
+
+def retry(attempts: int) -> Iterator[str]:
+    for i in range(attempts):
+        try:
+            if i < 2:
+                raise ValueError("fail " + str(i))
+            yield "ok " + str(i)
+        except ValueError as e:
+            yield "handler " + e.message
+            yield "again " + e.message
+        yield "after " + str(i)
+
+def stale_state() -> Iterator[int]:
+    for outer in range(3):
+        try:
+            for x in range(5):
+                yield outer * 10 + x
+                if x == 1:
+                    raise ValueError("stop")
+        except ValueError:
+            pass
+        yield 100 + outer
+
+def fin() -> Iterator[int]:
+    try:
+        yield 1
+        yield 2
+    finally:
+        yield 10
+        yield 11
+    yield 3
+
+def fin_raise() -> Iterator[int]:
+    try:
+        yield 1
+        raise KeyError("boom")
+    finally:
+        yield 99
+
+def both() -> Iterator[str]:
+    try:
+        raise ValueError("v")
+    except ValueError:
+        yield "h"
+    finally:
+        yield "f"
+    yield "end"
+
+def handler_loop() -> Iterator[int]:
+    for i in range(4):
+        try:
+            if i % 2 == 0:
+                raise KeyError(str(i))
+            yield i
+        except KeyError as e:
+            if i == 2:
+                continue
+            yield 1000 + i
+            yield 2000 + i
+        yield -i
+
+def handler_break() -> Iterator[int]:
+    for i in range(5):
+        try:
+            raise ValueError("x")
+        except ValueError:
+            yield i
+            if i == 1:
+                break
+    yield 77
+
+def with_handler() -> Iterator[str]:
+    with Res("w") as r:
+        try:
+            raise KeyError("k")
+        except KeyError as e:
+            yield "caught " + e.message
+        yield "body"
+
+def closing() -> Iterator[int]:
+    try:
+        yield 1
+    finally:
+        print("cleanup")
+        yield 2
+
+print(list(retry(4)))
+print(list(stale_state()))
+print(list(fin()))
+g: Iterator[int] = fin_raise()
+print(next(g))
+print(next(g))
+try:
+    next(g)
+except KeyError as e:
+    print("reraised " + e.message)
+print(list(both()))
+print(list(handler_loop()))
+print(list(handler_break()))
+print(list(with_handler()))
+c: Iterator[int] = closing()
+print(next(c))
+try:
+    c.close()
+except RuntimeError:
+    print("RuntimeError")
+print("done")

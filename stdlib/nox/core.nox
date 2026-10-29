@@ -37,6 +37,10 @@ class ValueError(Exception):
 class IndexError(Exception):
     pass
 
+# Python'daki gibi: çalışma zamanı sözleşme ihlalleri (örn. `close()` edilen jeneratörün `GeneratorExit`e yield ile karşılık vermesi).
+class RuntimeError(Exception):
+    pass
+
 # `assert koşul, "mesaj"` deyimi başarısız olursa fırlatılır (parser `if not koşul: raise AssertionError(mesaj)`e indirger).
 class AssertionError(Exception):
     pass
@@ -312,10 +316,15 @@ class __nox_Gen[T]:
         if self.started and len(self.closing) > 0 and len(self.steps) > 0:
             self.closing[0] = True
             f: () -> T | None = self.steps[0]
+            ignored: bool = False
             try:
-                f()
+                r: T | None = f()
+                if r is not None:
+                    ignored = True
             except GeneratorExit as e:
                 pass
+            if ignored:
+                raise RuntimeError("generator ignored GeneratorExit")
 
     # `g.throw(e)`: askıdaki jeneratörün yield noktasında `e` fırlatılır; jeneratör yakalayıp yeni bir değer verirse o değer döner, bitirirse
     # `StopIteration`, yakalamazsa `e` çağırana yükselir. Hiç başlamamış ya da bitmiş jeneratörde `e` doğrudan yükselir ve jeneratör biter.
@@ -399,6 +408,11 @@ def __nox_gens_from_step[T, S](step: () -> T | None, closing: list[bool], thrown
     items: list[T] = []
     senders: list[(S) -> None] = [sender]
     return __nox_GenS[T, S](__nox_Gen[T](steps, items, 0, closing, thrown), senders)
+
+# Yields boyunca yaşayan FONKSİYON tipli yereller (`f: (int) -> int = ...`) için kutu: Optional fonksiyon tipi söz diziminde ifade edilemediğinden değer `f` alanında tutulur.
+class __nox_FnBox[F]:
+    def __init__(self, f: F) -> None:
+        self.f: F = f
 
 # Jeneratör yereli `int | None` gibi OPTIONAL SKALER ise (liste elemanı olamaz) hücre bu yuvanın tek elemanıdır.
 class __nox_Slot[T]:

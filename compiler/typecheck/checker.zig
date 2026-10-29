@@ -1132,6 +1132,21 @@ pub const Checker = struct {
     fn assignableOrCoerce(self: *Checker, declared: Type, value: Type, slot: *const ast.Expr) TypeError!bool {
         if (self.assignable(declared, value)) return true;
         const target: Type = if (declared == .optional) declared.optional.* else declared;
+        // yields boyunca yaşayan fonksiyon tipli yereller: `F` değeri `__nox_FnBox[F]` kutusuna sarılır (bkz. `generator_desugar.zig`)
+        if (target == .class and value == .func and std.mem.startsWith(u8, target.class, "__nox_FnBox__")) {
+            if (self.class_type_args.get(target.class)) |targs| {
+                if (targs.len == 1 and types.eql(targs[0], value)) {
+                    const targ_exprs = try self.allocator.alloc(ast.TypeExpr, 1);
+                    targ_exprs[0] = try self.typeToTypeExpr(value);
+                    const cargs = try self.allocator.alloc(ast.Expr, 1);
+                    cargs[0] = slot.*;
+                    const resolved = try self.allocator.create(?[]const u8);
+                    resolved.* = target.class;
+                    try self.coerce_rewrites.put(self.allocator, @intFromPtr(slot), .{ .generic_construct = .{ .name = "__nox_FnBox", .type_args = targ_exprs, .args = cargs, .resolved_class_name = resolved } });
+                    return true;
+                }
+            }
+        }
         if (target != .class or value != .class) return false;
         const proto_name = self.protocol_bases.get(target.class) orelse return false;
         if (!self.classSatisfiesProtocol(value.class, proto_name)) return false;
@@ -6237,6 +6252,15 @@ pub const Checker = struct {
 
     fn checkExprExpected(self: *Checker, ctx: *FnCtx, expr: ast.Expr, expected_in: ?Type) TypeError!Type {
         var expected = expected_in;
+        // fonksiyon tipli yerellerin kutusu (`__nox_FnBox[F] | None`): değer (özellikle lambda) `F` beklenen tipiyle denetlenir, kutulama atamada yapılır
+        if (expected) |exp0| {
+            const bt: Type = if (exp0 == .optional) exp0.optional.* else exp0;
+            if (bt == .class and std.mem.startsWith(u8, bt.class, "__nox_FnBox__")) {
+                if (self.class_type_args.get(bt.class)) |targs| {
+                    if (targs.len == 1 and targs[0] == .func) expected = targs[0];
+                }
+            }
+        }
         // `y: list[str] | None = []` / `y = []`: boş (ya da iç içe boş içeren) literal Optional'ın taşıdığı tipten beklenen tip alır.
         if (expected) |exp| {
             if (exp == .optional and (expr == .list_lit or expr == .dict_lit or expr == .list_comp or expr == .dict_comp) and
@@ -7341,9 +7365,23 @@ pub const Checker = struct {
                 .str => .{ .string_lit = "" },
                 .list => .{ .list_lit = &.{} },
                 .dict => .{ .dict_lit = &.{} },
-                .func => return self.fail(error.TypeMismatch, "a variable of function type cannot be kept across a 'yield' in a generator", .{}),
                 else => null,
             };
+            // fonksiyon tipli değişken: hücre `__nox_FnBox[F] | None` taşır (Optional fonksiyon tipi söz diziminde yoktur); yazmalar `assignableOrCoerce`
+            // ile kutulanır, `__nox_get` okuması `.f`yi alır.
+            if (inner_t == .func) {
+                const targs = try self.allocator.alloc(ast.TypeExpr, 1);
+                targs[0] = try self.typeToTypeExpr(inner_t);
+                const box_t = try self.typeExprToType(.{ .generic = .{ .name = "__nox_FnBox", .args = targs } });
+                const bi = try self.allocator.create(Type);
+                bi.* = box_t;
+                const items = try self.allocator.alloc(ast.Expr, 1);
+                items[0] = .none_lit;
+                const elem = try self.allocator.create(Type);
+                elem.* = .{ .optional = bi };
+                try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .list_lit = items });
+                return .{ .list = elem };
+            }
             const items = try self.allocator.alloc(ast.Expr, 1);
             const elem = try self.allocator.create(Type);
             if (zero) |z| {
@@ -7372,7 +7410,14 @@ pub const Checker = struct {
                 ucallee.* = .{ .identifier = "__nox_unwrap" };
                 const uargs = try self.allocator.alloc(ast.Expr, 1);
                 uargs[0] = read;
-                break :blk .{ .call = .{ .callee = ucallee, .args = uargs } };
+                const unwrapped: ast.Expr = .{ .call = .{ .callee = ucallee, .args = uargs } };
+                if (ct.list.optional.* == .class and std.mem.startsWith(u8, ct.list.optional.class, "__nox_FnBox__")) {
+                    // fonksiyon tipli yerel: kutunun `f` alanı
+                    const obj = try self.allocator.create(ast.Expr);
+                    obj.* = unwrapped;
+                    break :blk .{ .attribute = .{ .obj = obj, .attr = "f" } };
+                }
+                break :blk unwrapped;
             } else read;
             const rt = try self.checkExpr(ctx, repl);
             try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
@@ -8937,6 +8982,17 @@ pub const Checker = struct {
                 if (elem_t != .func) return self.fail(error.NotCallable, "this expression is not callable", .{});
                 try self.checkArgs(ctx, elem_t.func.params, c.args, "<list element>");
                 return elem_t.func.return_type.*;
+            },
+            // `generator_desugar.zig`nin ürettiği `__nox_get(hücre)(...)`: yields boyunca yaşayan FONKSİYON tipli yerelin çağrısı. `__nox_get` bu hücre
+            // için `__nox_unwrap(hücre[0]).f` ifadesine yeniden yazılır; çağrı alan-çağrısı olarak üretilir.
+            .call => |ic| {
+                if (ic.callee.* == .identifier and std.mem.eql(u8, ic.callee.identifier, "__nox_get") and ic.args.len == 1) {
+                    const ct = try self.checkExpr(ctx, c.callee.*);
+                    if (ct != .func) return self.fail(error.NotCallable, "this expression is not callable", .{});
+                    try self.checkArgs(ctx, ct.func.params, c.args, "<generator local>");
+                    return ct.func.return_type.*;
+                }
+                return self.fail(error.NotCallable, "this expression is not callable", .{});
             },
             else => return self.fail(error.NotCallable, "this expression is not callable", .{}),
         }

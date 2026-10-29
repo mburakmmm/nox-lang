@@ -1,0 +1,60 @@
+# yield boyunca yaşayan fonksiyon tipli yereller/parametreler (`__nox_FnBox` kutusu).
+def twice(n: int) -> int:
+    return n * 2
+
+def pipeline(xs: list[int], f: (int) -> int) -> Iterator[int]:
+    for x in xs:
+        yield f(x)
+        if x == 2:
+            f = twice
+    yield f(100)
+
+def over_funcs(fs: list[(int) -> int]) -> Iterator[int]:
+    for f in fs:
+        yield f(1)
+        yield f(2)
+
+def with_offset(base: int) -> Iterator[int]:
+    adder: (int) -> int = lambda a: a + base
+    k: int = 0
+    while k < 3:
+        yield adder(k)
+        k += 1
+        if k == 2:
+            base = 50
+            adder = lambda a: a + base
+
+class Gen:
+    def __init__(self, scale: int) -> None:
+        self.scale = scale
+
+    def run(self, n: int) -> Iterator[int]:
+        mul: (int) -> int = lambda a: a * self.scale
+        for i in range(n):
+            yield mul(i)
+            mul = lambda a: a + 1000
+
+def apply_all_fn(xs: list[int]) -> Iterator[int]:
+    f: (int) -> int = lambda x: x + 1
+    for x in xs:
+        yield f(x)
+        if x == 2:
+            f = lambda x: x * 100
+    g: () -> int = lambda: 7
+    yield g()
+
+def counter_fn() -> Iterator[int]:
+    n: int = 0
+    step: (int) -> int = lambda a: a + 1
+    while n < 5:
+        n = step(n)
+        yield n
+        if n == 2:
+            step = lambda a: a + 2
+
+print(list(pipeline([1, 2, 3], lambda v: v + 1)))
+print(list(with_offset(10)))
+print(list(Gen(3).run(3)))
+print(list(apply_all_fn([1, 2, 3, 4])))
+print(list(counter_fn()))
+print(list(over_funcs([lambda x: x + 1, lambda x: x * 5])))

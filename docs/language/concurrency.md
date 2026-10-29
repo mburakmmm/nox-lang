@@ -122,7 +122,7 @@ got 4
 ```
 
 Each value is produced when the loop asks for it, in the loop's own task: the generator's `await`s suspend that task, so a `break` also stops
-the producer. `async for` needs an async iterator (a generator), not a list; the other limits of generators apply (no `yield` inside an `except`/`finally` block)). Because an async generator is not itself a task, it can be passed around like any value, but a *task* (`spawn`ed `async def`)
+the producer. `async for` needs an async iterator (a generator), not a list; the other limits of generators apply). Because an async generator is not itself a task, it can be passed around like any value, but a *task* (`spawn`ed `async def`)
 still takes only simple parameters on the QBE backend, so consume generators inside the task that creates them.
 
 ### `async with`
