@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.58]
+
+### Eklendi
+
+- `nox.toml` TOML 1.0: tablo dizileri (`[[a]]`), satir ici tablolar, noktali anahtarlar, literal ve cok satirli dizeler, `\\u`/`\\U` kacislari, `0x`/`0o`/`0b` sayilar, `inf`/`nan`, tarih/saat degerleri (`is_datetime`), yinelenen anahtar ve iki kez tanimli tablo hatalari. `dump` tablo dizilerini `[[a]]` olarak yazar.
+
 ## [2.0.57]
 
 ### Eklendi

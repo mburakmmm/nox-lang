@@ -1,0 +1,64 @@
+import nox.toml
+from nox.toml import TomlValue, TomlError
+
+doc: str = """# full document
+title = "TOML Example"
+owner.name = "Tom"
+owner.dob = 1979-05-27T07:32:00-08:00
+ints = [ 99, 0xDEADBEEF, 0o755, 0b1101, 1_000 ]
+floats = [ 3.14, -2e-2, inf, 6.626e-34 ]
+mixed = [ 1, "two", [3, 4], { k = 5 } ]
+lit = 'C:\\Users\\nox'
+ml = \"\"\"
+Roses
+  are \\
+   red\"\"\"
+mll = '''
+raw \\n text'''
+uni = "caf\\u00e9 \\U0001F600"
+inline = { x = 1, y = { z = "deep" }, "q r" = true }
+
+[database]
+enabled = true
+ports = [ 8000, 8001 ]
+
+[database.limits]
+max = 5
+
+[[products]]
+name = "Hammer"
+sku = 738594937
+
+[[products]]
+name = "Nail"
+
+[products.dims]
+w = 2
+
+[[products]]
+name = "Saw"
+"""
+t: TomlValue = nox.toml.parse(doc)
+print(nox.toml.get(t, "title").s, nox.toml.get(t, "owner.name").s, nox.toml.get(t, "owner.dob").s, nox.toml.is_datetime(nox.toml.get(t, "owner.dob")))
+ints: TomlValue = nox.toml.get(t, "ints")
+print(ints.arr[0].i, ints.arr[1].i, ints.arr[2].i, ints.arr[3].i, ints.arr[4].i)
+fl: TomlValue = nox.toml.get(t, "floats")
+print(fl.arr[0].f, fl.arr[1].f, fl.arr[2].f, fl.arr[3].f)
+mx: TomlValue = nox.toml.get(t, "mixed")
+print(mx.arr[0].i, mx.arr[1].s, len(mx.arr[2].arr), mx.arr[3].tbl["k"].i)
+print(nox.toml.get(t, "lit").s)
+print(nox.toml.get(t, "ml").s)
+print(nox.toml.get(t, "mll").s)
+print(nox.toml.get(t, "uni").s)
+print(nox.toml.get(t, "inline.y.z").s, nox.toml.get(t, "inline.q r").b)
+p: TomlValue = nox.toml.get(t, "products")
+print(len(p.arr), p.arr[0].tbl["name"].s, p.arr[1].tbl["name"].s, p.arr[1].tbl["dims"].tbl["w"].i, p.arr[2].tbl["name"].s)
+print(nox.toml.get(t, "database.limits.max").i)
+back: TomlValue = nox.toml.parse(nox.toml.dump(t))
+print(nox.toml.dump(back) == nox.toml.dump(t))
+for bad in ["a = 1\na = 2\n", "[t]\n[t]\n", "x = \n", "a = 'unterminated", "[[a]]\n[a]\n", "a.b = 1\na = 2\n", "n = 1__0\n", "d = \"\\q\"\n"]:
+    try:
+        nox.toml.parse(bad)
+        print("accepted", bad)
+    except TomlError as e:
+        print("error")
