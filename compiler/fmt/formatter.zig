@@ -216,6 +216,11 @@ const Printer = struct {
         var i: usize = 0;
         while (i < stmts.len) {
             const stmt = stmts[i];
+            // TODO 8.3: sınıf sabiti için parser'ın eklediği sentetik depo değişkeni yüzey sözdiziminde yoktur.
+            if (stmt.kind == .var_decl and stmt.kind.var_decl.class_attr != null) {
+                i += 1;
+                continue;
+            }
             try self.emitLeadingTrivia(depth, stmt.line);
             // v1.157.0: tuple açma desugarı (`__nox_tup_N_K: __infer = <değer>` + K okuma) kullanıcının yazdığı `a, b = <değer>` biçimine geri çevrilir.
             if (tupleTempCount(stmt)) |k| {

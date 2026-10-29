@@ -124,7 +124,11 @@ const Pass = struct {
                         have = true;
                         break;
                     };
-                    if (!have) try consts.append(self.a, k);
+                    if (have) continue;
+                    // Kopya, özgün sınıfın (sentetik depo değişkeninin sahibi) adını taşır.
+                    var copy = k;
+                    if (copy.owner == null) copy.owner = sc.name;
+                    try consts.append(self.a, copy);
                 }
                 src = if (sc.base) |b| self.resolve(b) else null;
             }

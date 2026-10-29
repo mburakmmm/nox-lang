@@ -1,0 +1,28 @@
+class Counter:
+    count: int = 0
+    LIMIT: int = 3
+    name: str = "ctr"
+
+    def __init__(self) -> None:
+        Counter.count += 1
+
+    def total(self) -> int:
+        return self.count
+
+    @staticmethod
+    def reset() -> None:
+        Counter.count = 0
+
+class Sub(Counter):
+    def extra(self) -> int:
+        return self.count * 10
+
+a: Counter = Counter()
+b: Counter = Counter()
+print(Counter.count, a.total(), b.count, Counter.LIMIT, Counter.name)
+s: Sub = Sub()
+print(Counter.count, Sub.count, s.extra())
+Counter.count = 100
+print(a.total(), s.extra())
+Counter.reset()
+print(Counter.count)

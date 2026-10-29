@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.63]
+
+### Eklendi
+
+- Degisebilir sinif oznitelikleri: `Sinif.ad = ...` / `Sinif.ad += 1` ile atanan sinif sabiti sentetik bir modul degiskenine yukseltilir (sinif, alt siniflar ve ornekler arasinda ortak depo); atanmayanlar sabit olarak katlanmaya devam eder. Moduller arasi okuma/atama (`from m import C`, `import m`, takma ad). `self.ad = ...` ve `AltSinif.ad = ...` net hata verir.
+
+### Duzeltildi
+
+- `from pkg.mod import Cls` ile `Cls.SABIT` / `Cls.statik()` kullanimi derleyiciyi cokertiyordu (nitelikli sinif adi cozumlenmiyordu).
+
 ## [2.0.62]
 
 ### Eklendi

@@ -290,6 +290,10 @@ pub const ConstDecl = struct {
     type_expr: TypeExpr,
     value: Expr,
     line: u32 = 0,
+    /// Sabitin bildirildiği sınıf (mixin düzleştirmesiyle kopyalanmışsa özgün sınıf); `null` = içinde bulunduğu sınıf.
+    owner: ?[]const u8 = null,
+    /// Checker ön-taraması: `Sınıf.NAME = ...` ile atanıyor → sabit katlanmaz, sentetik modül değişkeni okunur/yazılır.
+    promoted: bool = false,
 };
 
 pub const ClassDef = struct {
@@ -380,7 +384,12 @@ pub const VarDecl = struct {
     name: []const u8,
     type_expr: TypeExpr,
     value: Expr,
+    /// Parser'ın bir sınıf sabiti (`NAME: T = literal`) için eklediği SENTETİK modül değişkeni (değişebilir sınıf özniteliği deposu, TODO 8.3).
+    /// `Sınıf.NAME = ...` ile atanmayan sabitlerin değişkeni checker'da `pass`e çevrilir; formatter bu deyimleri yazmaz.
+    class_attr: ?ClassAttrRef = null,
 };
+
+pub const ClassAttrRef = struct { class: []const u8, name: []const u8 };
 
 pub const Assign = struct {
     target: Expr,

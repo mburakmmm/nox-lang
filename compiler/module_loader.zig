@@ -511,7 +511,7 @@ fn renameNames(a: std.mem.Allocator, names: []const []const u8, map: *const Rena
 fn renameConsts(a: std.mem.Allocator, consts: []const ast.ConstDecl, map: *const RenameMap) std.mem.Allocator.Error![]const ast.ConstDecl {
     if (consts.len == 0) return consts;
     const out = try a.alloc(ast.ConstDecl, consts.len);
-    for (consts, 0..) |c, i| out[i] = .{ .name = c.name, .type_expr = try renameTypeExpr(a, c.type_expr, map), .value = try renameExpr(a, c.value, map), .line = c.line };
+    for (consts, 0..) |c, i| out[i] = .{ .name = c.name, .type_expr = try renameTypeExpr(a, c.type_expr, map), .value = try renameExpr(a, c.value, map), .line = c.line, .owner = if (c.owner) |o| (map.get(o) orelse o) else null, .promoted = c.promoted };
     return out;
 }
 
@@ -622,7 +622,19 @@ fn renameFieldDecls(a: std.mem.Allocator, fields: []const ast.FieldDecl, map: *c
 fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.Allocator.Error!ast.Stmt {
     const kind: ast.StmtKind = switch (s.kind) {
         .expr_stmt => |e| .{ .expr_stmt = try renameExpr(a, e, map) },
-        .var_decl => |v| .{ .var_decl = .{ .name = v.name, .type_expr = try renameTypeExpr(a, v.type_expr, map), .value = try renameExpr(a, v.value, map) } },
+        .var_decl => |v| blk: {
+            // Sınıf sabiti deposu: ad, (yeniden adlandırılmış) sınıf adından türetilir ki modüller arası çakışmasın.
+            if (v.class_attr) |ca| {
+                const cls = map.get(ca.class) orelse ca.class;
+                break :blk .{ .var_decl = .{
+                    .name = try std.fmt.allocPrint(a, "__nox_cls_{s}_{s}", .{ cls, ca.name }),
+                    .type_expr = try renameTypeExpr(a, v.type_expr, map),
+                    .value = try renameExpr(a, v.value, map),
+                    .class_attr = .{ .class = cls, .name = ca.name },
+                } };
+            }
+            break :blk .{ .var_decl = .{ .name = v.name, .type_expr = try renameTypeExpr(a, v.type_expr, map), .value = try renameExpr(a, v.value, map) } };
+        },
         .assign => |asg| .{ .assign = .{ .target = try renameExpr(a, asg.target, map), .value = try renameExpr(a, asg.value, map), .ann = if (asg.ann) |ann| try renameTypeExpr(a, ann, map) else null } },
         .if_stmt => |f| blk: {
             const elifs = try a.alloc(ast.ElifClause, f.elif_clauses.len);

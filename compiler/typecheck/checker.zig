@@ -49,6 +49,7 @@ const guard_normalize = @import("guard_normalize.zig");
 const nonlocal_desugar = @import("nonlocal_desugar.zig");
 const generator_desugar = @import("generator_desugar.zig");
 const mixin_flatten = @import("mixin_flatten.zig");
+const class_attr_promote = @import("class_attr_promote.zig");
 const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
@@ -240,7 +241,8 @@ const GenericMethod = struct {
     class_inst_index: usize = 0,
 };
 
-const ClassConst = struct { ty: Type, value: ast.Expr };
+/// `global`: değişebilir (atanan) sınıf özniteliğinin sentetik modül değişkeni; `null` ise sabit literal olarak katlanır.
+const ClassConst = struct { ty: Type, value: ast.Expr, global: ?[]const u8 = null, owner: []const u8 = "" };
 
 const ClassInfo = struct {
     /// Faz 7 (tekli kalıtım): `class Derived(Base):` — `ast.ClassDef.base`nin
@@ -3412,7 +3414,9 @@ pub const Checker = struct {
             };
             // `float` bildirilen sabitte int literal, float değere dönüştürülür (okuma tipi float'tır).
             const stored: ast.Expr = if (declared == .float and lit == .int_lit) .{ .float_lit = @floatFromInt(lit.int_lit) } else lit;
-            try info.consts.put(self.allocator, kd.name, .{ .ty = declared, .value = stored });
+            const owner_name = kd.owner orelse cd.name;
+            const gname: ?[]const u8 = if (kd.promoted) try class_attr_promote.globalName(self.allocator, owner_name, kd.name) else null;
+            try info.consts.put(self.allocator, kd.name, .{ .ty = declared, .value = stored, .global = gname, .owner = owner_name });
         }
         // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
         // bildirilen alanlar, metod imza döngüsünden ÖNCE `info.fields`e
@@ -3580,6 +3584,8 @@ pub const Checker = struct {
             self.current_line = d.line;
             return self.fail(error.TypeMismatch, "{s}", .{d.message});
         }
+        // TODO 8.3: `Sınıf.NAME = ...` ile atanan sınıf sabitleri değişebilir sınıf özniteliğine (sentetik modül değişkeni) yükseltilir.
+        try class_attr_promote.run(self.allocator, module.body, &self.from_imports, &self.module_aliases);
         try self.collectClassNames(module);
         // Faz C.6 (bkz. `index_call_fixup.zig`nin belge notu): `name[i](y)`
         // belirsizliği — `generic_classes` kurulduktan SONRA, HERHANGİ bir
@@ -5854,8 +5860,21 @@ pub const Checker = struct {
                 // biçiminde VE `__init__` içinde olmaya mecburdur — aksi halde
                 // bir sınıfın alan kümesi çağrı sitesine göre değişken olurdu
                 // (AGENTS.md §5'in yasakladığı dinamik alan ekleme).
-                if (attr.obj.* == .identifier and self.classes.contains(attr.obj.identifier) and (try ctx.scope.lookup(self.allocator, attr.obj.identifier)) == null and !self.module_globals.contains(attr.obj.identifier)) {
-                    return self.fail(error.TypeMismatch, "'{s}.{s}' cannot be assigned: class-level constants are read-only (and a class has no assignable class-level attributes)", .{ attr.obj.identifier, attr.attr });
+                if (try self.receiverClassName(ctx, attr.obj.*)) |recv_cls| {
+                    // Atanan sınıf sabiti = değişebilir sınıf özniteliği: atama sentetik modül değişkenine yönlendirilir.
+                    const rc_info = self.classes.get(recv_cls).?;
+                    if (rc_info.consts.get(attr.attr)) |k| if (k.global) |g| {
+                        if (!std.mem.eql(u8, k.owner, recv_cls)) {
+                            return self.fail(error.TypeMismatch, "'{s}.{s}' is declared in class '{s}': assign it as '{s}.{s}' (a subclass has no copy of a class attribute)", .{ recv_cls, attr.attr, k.owner, k.owner, attr.attr });
+                        }
+                        const vt = try self.checkExprExpected(ctx, a.value, k.ty);
+                        if (!try self.assignableOrCoerce(k.ty, vt, &a.value)) {
+                            return self.fail(error.TypeMismatch, "type mismatch for '{s}.{s}'", .{ recv_cls, attr.attr });
+                        }
+                        try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(attr.obj), .{ .assign = .{ .target = .{ .identifier = g }, .value = a.value } });
+                        return;
+                    };
+                    return self.fail(error.TypeMismatch, "'{s}.{s}' cannot be assigned: it is not a class attribute (class attributes are declared in the class body as 'NAME: T = literal')", .{ recv_cls, attr.attr });
                 }
                 const obj_t = try self.checkExpr(ctx, attr.obj.*);
                 try self.requireNotOptional(obj_t, attr.attr);
@@ -5910,6 +5929,9 @@ pub const Checker = struct {
                     // (bildirilMEMİŞ/çıkarım-only alanlar İÇİN ZARARSIZ no-op).
                     _ = info.declared_unassigned.remove(attr.attr);
                 } else {
+                    if (info.consts.get(attr.attr)) |k| {
+                        return self.fail(error.TypeMismatch, "'{s}.{s}' is a class attribute and cannot be assigned through an instance: assign it as '{s}.{s} = ...' (instances have no copy of a class attribute)", .{ if (is_self) "self" else class_name, attr.attr, k.owner, attr.attr });
+                    }
                     if (!(is_self and ctx.is_init)) {
                         return self.fail(error.UndefinedAttribute, "in class '{s}', field '{s}' can only be defined in __init__ with 'self.{s} = ...'", .{ class_name, attr.attr, attr.attr });
                     }
@@ -7079,7 +7101,7 @@ pub const Checker = struct {
         // `Sınıf.SABİT`: obj bir DEĞİŞKEN olmayan sınıf adıdır; okuma literal değere yeniden yazılır.
         if (try self.receiverClassName(ctx, a.obj.*)) |rc| {
             if (self.classes.get(rc).?.consts.get(a.attr)) |k| {
-                try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), k.value);
+                try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), if (k.global) |g| ast.Expr{ .identifier = g } else k.value);
                 return k.ty;
             }
         }
@@ -7098,7 +7120,7 @@ pub const Checker = struct {
         }
         // `self.SABİT` / `nesne.SABİT`: örnek üzerinden okunan sınıf sabiti.
         if (info.consts.get(a.attr)) |k| {
-            try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), k.value);
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), if (k.global) |g| ast.Expr{ .identifier = g } else k.value);
             return k.ty;
         }
         return self.fail(error.UndefinedAttribute, "class '{s}' has no field '{s}'", .{ class_name, a.attr });
@@ -10082,12 +10104,27 @@ pub const Checker = struct {
 
     /// `ifade` bir değişken olmayan sınıf adıysa (ya da classmethod içindeki `cls` ise) sınıf adını verir.
     fn receiverClassName(self: *Checker, ctx: *FnCtx, e: ast.Expr) TypeError!?[]const u8 {
+        if (e == .attribute) {
+            // `pkg.mod.Cls` / `alias.Cls`: içe aktarılmış modülün sınıfı (kökün yerel bir değişken olmaması şartıyla).
+            var raw: std.ArrayListUnmanaged([]const u8) = .empty;
+            if (!(try self.flattenDottedPath(e, &raw)) or raw.items.len < 2) return null;
+            if ((try ctx.scope.lookup(self.allocator, raw.items[0])) != null or self.module_globals.contains(raw.items[0])) return null;
+            const segments = try self.substituteAlias(raw.items);
+            const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
+            if (!self.imported_modules.contains(module_path)) return null;
+            const mangled = try self.joinSegments(segments, '_');
+            return if (self.classes.contains(mangled)) mangled else null;
+        }
         if (e != .identifier) return null;
         const name = e.identifier;
         if (ctx.cls_alias) |al| {
             if (std.mem.eql(u8, name, "cls") and (try ctx.scope.lookup(self.allocator, name)) == null) return al;
         }
         if (self.classes.contains(name) and (try ctx.scope.lookup(self.allocator, name)) == null and !self.module_globals.contains(name)) return name;
+        // `from pkg.mod import Cls`: çıplak ad, içe aktarılan (yeniden adlandırılmış) sınıfa çözülür.
+        if (self.from_imports.get(name)) |q| {
+            if (self.classes.contains(q) and (try ctx.scope.lookup(self.allocator, name)) == null and !self.module_globals.contains(name)) return q;
+        }
         return null;
     }
 

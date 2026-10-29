@@ -132,7 +132,45 @@ pub const Parser = struct {
             try stmts.append(self.allocator, try self.parseStmt());
             try self.drainExtraStmts(&stmts);
         }
-        return .{ .body = try stmts.toOwnedSlice(self.allocator), .expr_spans = self.expr_spans };
+        return .{ .body = try self.injectClassAttrStorage(try stmts.toOwnedSlice(self.allocator)), .expr_spans = self.expr_spans };
+    }
+
+    /// TODO 8.3: her sınıf sabiti (`NAME: T = literal`) için sınıfın HEMEN ÖNÜNE sentetik bir modül değişkeni ekler
+    /// (`__nox_cls_<Sınıf>_<NAME>`). Değişebilir sınıf özniteliklerinin deposudur; kullanılmayanlar checker'da `pass`e çevrilir.
+    /// Gövde dilimi uzunluğu yalnızca burada değişebildiği için ekleme ayrıştırma zamanındadır.
+    fn injectClassAttrStorage(self: *Parser, body: []ast.Stmt) ParseError![]ast.Stmt {
+        var need = false;
+        for (body) |st| if (st.kind == .class_def and st.kind.class_def.consts.len > 0) {
+            need = true;
+            break;
+        };
+        if (!need) return body;
+        var out = std.ArrayList(ast.Stmt).empty;
+        for (body) |st| {
+            if (st.kind == .class_def) {
+                const cd = st.kind.class_def;
+                for (cd.consts) |kd| {
+                    const lit_ok = switch (kd.value) {
+                        .int_lit, .float_lit, .bool_lit, .string_lit => true,
+                        .unary => |u| u.op == .neg and (u.operand.* == .int_lit or u.operand.* == .float_lit),
+                        else => false,
+                    };
+                    if (!lit_ok) continue;
+                    try out.append(self.allocator, .{
+                        .kind = .{ .var_decl = .{
+                            .name = try std.fmt.allocPrint(self.allocator, "__nox_cls_{s}_{s}", .{ cd.name, kd.name }),
+                            .type_expr = kd.type_expr,
+                            .value = kd.value,
+                            .class_attr = .{ .class = cd.name, .name = kd.name },
+                        } },
+                        .line = st.line,
+                        .span = st.span,
+                    });
+                }
+            }
+            try out.append(self.allocator, st);
+        }
+        return out.toOwnedSlice(self.allocator);
     }
 
     /// `parseSimpleStmt`in (tuple açma) ek deyimlerini ana deyimin HEMEN ardına ekler.

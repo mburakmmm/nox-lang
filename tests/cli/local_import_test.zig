@@ -510,3 +510,51 @@ test "bulundu: iki-katmanli YENIDEN VIHRAC zinciri (from a import X; from b impo
     defer std.testing.allocator.free(run_result.stderr);
     try std.testing.expectEqualStrings("42\n", run_result.stdout);
 }
+
+test "8.3: degisebilir sinif ozniteligi moduller arasi (from-import, import, alias) okunur ve atanir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.createDirPath(io, "cfg");
+    try proj.dir.writeFile(io, .{
+        .sub_path = "cfg/settings.nox",
+        .data = "class Settings:\n    debug: bool = False\n    retries: int = 3\n    LIMIT: int = 7\n\ndef describe() -> str:\n    return \"debug=\" + str(Settings.debug) + \" retries=\" + str(Settings.retries)\n",
+    });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data = "import cfg.settings as cs\nfrom cfg.settings import Settings, describe\n\nprint(describe())\nSettings.debug = True\nSettings.retries += 2\ncs.Settings.retries = cs.Settings.retries * 2\nprint(describe(), Settings.LIMIT, cs.Settings.LIMIT)\n",
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "build", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("debug=False retries=3\ndebug=True retries=10 7 7\n", run_result.stdout);
+}

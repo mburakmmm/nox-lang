@@ -1425,10 +1425,31 @@ test "golden(typecheck): sınıf sabiti iki kez bildirilemez" {
     );
 }
 
-test "golden(typecheck): sınıf sabitine atama reddedilir" {
+test "golden(typecheck): sınıf özniteliği alt sınıf üzerinden atanamaz" {
     try expectGolden(
-        @embedFile("typecheck_cases/err_class_const_assign.nox"),
-        @embedFile("typecheck_cases/err_class_const_assign.expected"),
+        @embedFile("typecheck_cases/err_class_attr_assigned_via_subclass.nox"),
+        @embedFile("typecheck_cases/err_class_attr_assigned_via_subclass.expected"),
+    );
+}
+
+test "golden(typecheck): sınıf özniteliği örnek üzerinden atanamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_attr_assigned_via_self.nox"),
+        @embedFile("typecheck_cases/err_class_attr_assigned_via_self.expected"),
+    );
+}
+
+test "golden(typecheck): sınıf özniteliğine yanlış tipte atama reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_attr_wrong_type.nox"),
+        @embedFile("typecheck_cases/err_class_attr_wrong_type.expected"),
+    );
+}
+
+test "golden(typecheck): sınıf sabiti olmayan ada Sınıf.ad ataması reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_attr_unknown_name.nox"),
+        @embedFile("typecheck_cases/err_class_attr_unknown_name.expected"),
     );
 }
 

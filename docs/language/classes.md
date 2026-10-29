@@ -12,12 +12,18 @@ A class's fields are fixed. They can be established three ways, and all may be u
 3. **Explicitly**, with a bare `name: type` line in the class body (no initialiser — the assignment itself still happens in `__init__`).
 
 If a field is declared explicitly it must actually be assigned in `__init__`; an unassigned declared field is a compile error, never a
-zeroed value. Fields can only be *created* in `__init__`: assigning a new `self.name` from another method is a compile error. There
-are no mutable class-level attributes.
+zeroed value. Fields can only be *created* in `__init__`: assigning a new `self.name` from another method is a compile error. Values shared by
+the whole class are [class attributes](#class-attributes-and-constants).
 
-### Class constants
+### Class attributes and constants
 
-`NAME: type = literal` in a class body declares a **constant**: `int`, `float`, `bool` or `str`, with a literal value (a leading `-` is allowed). It is not a field and takes no space in an instance. Read it as `ClassName.NAME`, `self.NAME` or `obj.NAME`; the compiler replaces the read with the literal. Subclasses inherit constants. A constant cannot be assigned, is not mutable, and cannot be an expression (`N: int = 1 + 2` is an error).
+`NAME: type = literal` in a class body declares a **constant**: `int`, `float`, `bool` or `str`, with a literal value (a leading `-` is allowed). It is not a field and takes no space in an instance. Read it as `ClassName.NAME`, `self.NAME` or `obj.NAME`; the compiler replaces the read with the literal. Subclasses inherit them. The value cannot be an expression (`N: int = 1 + 2` is an error).
+
+If the program **assigns** the name anywhere (`ClassName.NAME = value`, `ClassName.NAME += 1`, in a method, a function or another module), it is a
+**mutable class attribute** instead: one storage shared by the class, its subclasses and every instance, held like a module-level variable, and
+reads see the latest value. Names that are never assigned stay compile-time constants. Assign through the declaring class: `self.NAME = v` and
+`Sub.NAME = v` are compile errors (instances and subclasses have no copy of a class attribute). Mixins share the attribute with the class that
+declares it.
 
 ```nox
 class Limits:
@@ -36,6 +42,30 @@ print(Limits.MAX, Limits().room())
 
 ```output
 5 5
+```
+
+```nox
+class Counter:
+    count: int = 0
+    LIMIT: int = 3
+
+    def __init__(self) -> None:
+        Counter.count += 1
+
+    @staticmethod
+    def reset() -> None:
+        Counter.count = 0
+
+a: Counter = Counter()
+b: Counter = Counter()
+print(Counter.count, a.count, Counter.LIMIT)
+Counter.reset()
+print(b.count)
+```
+
+```output
+2 2 3
+0
 ```
 
 ```nox
@@ -304,9 +334,9 @@ $1000 12
 ```
 
 These decorators cannot be combined with other decorators, are not available in generic classes, and a static/class method cannot be used as a
-first-class value (`f = Account.cap`). There are no mutable class-level attributes.
+first-class value (`f = Account.cap`).
 
 ## What classes do not have
 
-Mutable class-level attributes, full multiple inheritance (only mixins), metaclasses, `__slots__`,
+Per-instance or per-subclass copies of class attributes, full multiple inheritance (only mixins), metaclasses, `__slots__`,
 `__getattr__`/`__setattr__`, `isinstance`/`type`, and `__call__`. Attributes cannot be added to an instance at run time.
