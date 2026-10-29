@@ -549,7 +549,8 @@ fn aliasBorrowEligible(v: ast.VarDecl, locals: []const LocalDecl, full_body: []c
     return true;
 }
 
-pub fn collectLoopInvariantStrBases(self: *Codegen, body: []const ast.Stmt) CodegenError!std.StringHashMapUnmanaged(void) {
+/// `loop_var`: `for x in ...` döngüsünün değişkeni — her yinelemede yeniden atandığı için ASLA döngü-değişmez DEĞİLDİR.
+pub fn collectLoopInvariantStrBases(self: *Codegen, body: []const ast.Stmt, loop_var: ?[]const u8) CodegenError!std.StringHashMapUnmanaged(void) {
     var result: std.StringHashMapUnmanaged(void) = .empty;
     if (bodyHasNestedFuncDef(body)) return result;
     var candidates: std.StringHashMapUnmanaged(void) = .empty;
@@ -558,6 +559,7 @@ pub fn collectLoopInvariantStrBases(self: *Codegen, body: []const ast.Stmt) Code
     try collectReassignedNames(body, &reassigned, self.allocator);
     var it = candidates.keyIterator();
     while (it.next()) |k| {
+        if (loop_var) |lv| if (std.mem.eql(u8, lv, k.*)) continue;
         if (!reassigned.contains(k.*)) try result.put(self.allocator, k.*, {});
     }
     return result;
@@ -1237,8 +1239,8 @@ pub fn emitPlannedRowHoists(self: *Codegen, rows: []const RowKey) CodegenError!v
 /// GERÇEKTEN eklediği isimler `added_names`e kaydedilir (`exitStrLen
 /// CacheScope`in yalnızca KENDİ eklediklerini silmesi İÇİN — dıştaki
 /// döngünün girişini YANLIŞLIKLA SİLMEMEK KRİTİKTİR).
-pub fn enterStrLenCacheScope(self: *Codegen, body: []const ast.Stmt) CodegenError!StrLenCacheScope {
-    var invariants = try self.collectLoopInvariantStrBases(body);
+pub fn enterStrLenCacheScope(self: *Codegen, body: []const ast.Stmt, loop_var: ?[]const u8) CodegenError!StrLenCacheScope {
+    var invariants = try self.collectLoopInvariantStrBases(body, loop_var);
     defer invariants.deinit(self.allocator);
     var added: std.ArrayListUnmanaged([]const u8) = .empty;
     var it = invariants.keyIterator();

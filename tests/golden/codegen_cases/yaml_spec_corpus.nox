@@ -1,0 +1,103 @@
+import nox.yaml
+from nox.yaml import YamlValue, YamlError
+
+def esc(s: str) -> str:
+    out: str = ""
+    for c in s:
+        if c == "\"":
+            out = out + "\\\""
+        elif c == "\\":
+            out = out + "\\\\"
+        elif c == "\n":
+            out = out + "\\n"
+        elif c == "\t":
+            out = out + "\\t"
+        else:
+            out = out + c
+    return "\"" + esc_done(out) + "\""
+
+def esc_done(s: str) -> str:
+    return s
+
+def show(v: YamlValue) -> str:
+    if nox.yaml.is_null(v):
+        return "null"
+    if nox.yaml.is_bool(v):
+        if v.b:
+            return "true"
+        return "false"
+    if nox.yaml.is_int(v):
+        return str(v.i)
+    if nox.yaml.is_float(v):
+        return str(v.f)
+    if nox.yaml.is_string(v):
+        return esc(v.s)
+    if nox.yaml.is_sequence(v):
+        parts: list[str] = []
+        for x in v.arr:
+            parts.append(show(x))
+        return "[" + ",".join(parts) + "]"
+    parts2: list[str] = []
+    for k in v.mapping.keys():
+        parts2.append(esc(k) + ":" + show(v.mapping[k]))
+    return "{" + ",".join(parts2) + "}"
+
+docs: list[str] = [
+    "a: 1\nb: two\nc: [1, 2, 3]\nd: {x: 1, y: [a, b]}\n",
+    "- a\n- b\n- - c\n  - d\n- k: v\n  l: w\n",
+    "key: value # c\nother: 'it''s' # c2\nq: \"a#b\" # c3\nurl: http://x.org/p#frag\n",
+    "text: |\n  line1\n  line2\n\n  line4\nafter: x\n",
+    "text: |-\n  a\n  b\n\n\nnext: 1\n",
+    "text: |+\n  a\n  b\n\n\nnext: 1\n",
+    "text: >\n  folded line one\n  continues here\n\n  new paragraph\n    indented more\n  back\nnext: 2\n",
+    "text: >-\n  a\n  b\n",
+    "seq:\n  - |\n    block in seq\n    two\n  - >\n    fold\n    me\n  - plain\n",
+    "m:\n  - k: |\n      inner\n      text\n    z: 1\n",
+    "base: &b\n  x: 1\n  y: 2\nuse:\n  <<: *b\n  y: 3\n  z: 4\nref: *b\n",
+    "list: &l [1, 2]\nagain: *l\nitems:\n  - &one a\n  - *one\n",
+    "a: !!str 123\nb: !!int \"42\"\nc: !!float 1\nd: !!null x\ne: !custom hello\n",
+    "multi: this is a\n  folded plain\n  scalar\nk: v\n",
+    "q: \"line one\n  line two\n\n  line four\"\nr: 'single\n  multi'\n",
+    "flow: [1, 2,\n  3, {a: b,\n  c: d}]\nz: 1\n",
+    "\"quoted key\": 1\n'single key': 2\nplain key: 3\n",
+    "esc: \"tab\\there \\u00e9 \\x41 \\\\ \\\"q\\\" \\n end\"\n",
+    "---\na: 1\n",
+    "# only comment\n\n",
+    "- a\n- b\n",
+    "scalar document\n",
+    "key:\n- a\n- b\nother:\n  - c\n",
+    "empty_seq: []\nempty_map: {}\n",
+    "a:\n  b:\n    c:\n      d: deep\n  e: 1\n",
+    "- [a, b]\n- {c: d}\n- 'x'\n- \"y\"\n- 3\n- ~\n-\n- - n1\n  - n2\n",
+    "k: 'a: b'\nj: \"x: y\"\nl: a:b\n",
+    "- name: A\n  tags: [x, y]\n  meta:\n    k: v\n- name: B\n  tags: []\n",
+    "v: &x 1\nw: *x\n",
+    "list:\n  - &item\n    n: 1\n  - *item\n",
+    "emoji: \"😀 café\"\nplain_uni: ünï\n",
+    "a: |2\n    indented two extra\n   one extra\n",
+    "x: 'don''t'\ny: \"say \\\"hi\\\"\"\n",
+    "version: '3.8'\nx-common: &common\n  restart: always\n  environment:\n    - A=1\n    - B=2\nservices:\n  web:\n    <<: *common\n    image: nginx\n    ports:\n      - \"80:80\"\n  db:\n    <<: *common\n    image: postgres\n",
+    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  labels:\n    app: demo\ndata:\n  config.yaml: |\n    server:\n      port: 8080\n    debug: false\n  script.sh: |-\n    #!/bin/sh\n    echo hi\n",
+    "- name: a\n  items:\n  - 1\n  - 2\n- name: b\n  items: []\n",
+    "root:\n  - id: 1\n    child:\n      - id: 2\n      - id: 3\n  - id: 4\n",
+    "k1: v1\n\n# comment between\n\nk2:\n\n  # indented comment\n  sub: 1\n",
+    "title: \"A \\\"quoted\\\" title\"\nsingle: 'It''s here'\nempty: \"\"\nempty2: ''\nspace: \" padded \"\n",
+    "matrix:\n  - [1, 2, 3]\n  - [4, 5, 6]\nmap_in_seq:\n  - {a: 1}\n  - {b: [x, y]}\n",
+    "long: >\n  This is a very long\n  description that wraps\n\n  And a second paragraph.\nkeep: |+\n  text\n\nlast: end\n",
+    "k: v\nk2: |\n  has # hash\n  and: colon\n",
+    "- &a {x: 1}\n- *a\n- <<: *a\n  y: 2\n",
+    "a: [x: 1, y: 2]\n",
+    "a: 1\n b: 2\n",
+    "a: [1, 2\n",
+    "a: *missing\n",
+    "- a\nb: 1\n",
+    "a: 'unterminated\n",
+    "? complex\n: v\n",
+    "a: 1\n---\nb: 2\n",
+    "a:\n\tb: 1\n",
+]
+for d in docs:
+    try:
+        print(show(nox.yaml.parse(d)))
+    except YamlError as e:
+        print("ERR")

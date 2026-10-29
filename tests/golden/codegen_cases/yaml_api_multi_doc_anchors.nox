@@ -1,0 +1,19 @@
+import nox.yaml
+from nox.yaml import YamlValue, YamlError
+
+docs: list[YamlValue] = nox.yaml.parse_all("---\nname: first\n...\n---\nname: second\nitems: [1, 2]\n---\n- x\n- y\n")
+print(len(docs), nox.yaml.get(docs[0], "name").s, nox.yaml.get(docs[1], "items.1").i, nox.yaml.is_sequence(docs[2]))
+print(nox.yaml.dump_all(docs))
+
+cfg: YamlValue = nox.yaml.parse("base: &b\n  retries: 3\n  host: localhost\nprod:\n  <<: *b\n  host: example.org\nlist:\n  - &first one\n  - *first\n  - 0x10\n  - .inf\nmsg: |\n  hello\n  world\nfold: >-\n  a\n  b\n")
+print(nox.yaml.get(cfg, "prod.retries").i, nox.yaml.get(cfg, "prod.host").s, nox.yaml.get(cfg, "list.1").s, nox.yaml.get(cfg, "list.2").i, nox.yaml.get(cfg, "list.3").f)
+print(nox.yaml.get(cfg, "msg").s == "hello\nworld\n", nox.yaml.get(cfg, "fold").s)
+back: YamlValue = nox.yaml.parse(nox.yaml.dump(cfg))
+print(nox.yaml.dump(back) == nox.yaml.dump(cfg))
+
+for bad in ["a: *nope\n", "? k\n: v\n", "a: [1, 2\n", "x:\n\ty: 1\n", "a: 1\nb\n"]:
+    try:
+        nox.yaml.parse(bad)
+        print("accepted")
+    except YamlError as e:
+        print("error")

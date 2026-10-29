@@ -1,28 +1,14 @@
-# nox.yaml — Faz STD.5 (bkz. plan dosyası "nox.yaml"): daraltılmış bir v1
-# alt-kümesiyle SAF Nox'ta YAML ayrıştırma. `nox.toml`nin AYNI "saf Nox,
-# kendi elle-yazılmış ayrıştırıcı" felsefesi, AMA YAML'ın (TOML'DAN
-# FARKLI olarak) GİRİNTİ-DUYARLI/SATIR-TABANLI yapısına UYARLANMIŞ.
+# nox.yaml — YAML 1.2 (çekirdek şema) ayrıştırma ve yazma, saf Nox. Satır-tabanlı, girinti-duyarlı ayrıştırıcı (TODO 8.8).
 #
-# **Kapsam (BİLİNÇLİ, DAR bir v1)**: blok-stili eşlemeler (`key: value`,
-# girintiyle iç içe), blok-stili diziler (`- item`, girintiyle iç içe,
-# `- key: value` gibi satır-içi eşleme-başlatan dizi elemanları DAHİL),
-# akış-stili diziler/eşlemeler (`[1, 2, 3]`/`{a: 1, b: 2}`, iç içe
-# geçebilir), skalerler: düz (tırnaksız, int/float/bool/null'a otomatik
-# dönüştürülmeye çalışılır, aksi halde düz string), çift-tırnaklı (kaçış
-# dizileriyle), tek-tırnaklı, TAM-SATIR yorumlar (#...), boş satırlar,
-# TEK bir opsiyonel baştaki "---".
+# Kapsam: blok eşlemeler/diziler (girintiyle iç içe, `- key: value` dahil); akış dizileri/eşlemeleri (çok satırlı, iç içe); düz,
+# çift-tırnaklı (kaçışlar: \n \t \r \0 \" \\ \/ \xHH \uHHHH \UHHHHHHHH), tek-tırnaklı skalerler; çok satırlı düz/tırnaklı skalerler
+# (satır katlama); blok skalerleri `|` ve `>` (kırpma işaretleri `-`/`+`, girinti göstergesi); satır içi (sondaki) yorumlar;
+# çapalar `&a`, takma adlar `*a`, birleştirme anahtarı `<<`; etiketler `!!str !!int !!float !!bool !!null` (diğer etiketler yok sayılır);
+# çok belgeli akışlar (`---`/`...`, bkz. `parse_all`); %YAML/%TAG yönergeleri atlanır.
+# Eşleme anahtarları her zaman `str` olarak saklanır (skaler anahtarlar metinleriyle). Açık anahtar sözdizimi (`? key`) ve akış koleksiyonu
+# anahtarları desteklenmez (YamlError).
 #
-# **Kapsam DIŞI**: satır-içi (trailing) yorumlar, çapa/takma-ad (&/*),
-# etiketler (!!str), birleştirme anahtarları (<<), blok skalerleri
-# (|/>), ÇOKLU-belge YAML (İKİNCİ bir "---"/HERHANGİ bir "..." AÇIKÇA
-# YamlError ile reddedilir), string-DIŞI eşleme anahtarları (anahtarlar
-# HER ZAMAN str olarak saklanır), açık anahtar sözdizimi (? key).
-#
-# **KRİTİK, `nox.toml`den (Faz STD.3) devralınan İKİ güvenlik dersi**:
-# (1) Nox'ta `and`/`or` KISA-DEVRE YAPMAZ — bir bounds-kontrolü İLE bir
-# indeksleme AYNI ifadede BİRLEŞTİRİLMEZ; (2) bir fonksiyondan ÇIPLAK
-# `return s[i]` bir ARC sızıntısına yol açar — `_char_at_or_empty`
-# `return "" + s[pos]` desenini kullanır.
+# Güvenlik dersleri (nox.toml'dan): çıplak `return s[i]` ARC sızıntısı yapar → `"" + s[i]`; özyinelemeli yardımcılar `list[str]` döndürür.
 
 import nox.strings
 
@@ -83,9 +69,21 @@ def is_mapping(v: YamlValue) -> bool:
     return v.kind == 6
 
 class _Line:
-    def __init__(self: _Line, indent: int, content: str) -> None:
-        self.indent = indent
-        self.content = content
+    def __init__(self, indent: int, content: str) -> None:
+        self.indent: int = indent
+        self.content: str = content
+
+# Ayrıştırma bağlamı: çapa tablosu (`&ad` → değer).
+class _Ctx:
+    def __init__(self) -> None:
+        self.anchors: dict[str, YamlValue] = {}
+
+# `&çapa` / `!etiket` önekleri ayrılmış değer metni.
+class _Props:
+    def __init__(self, anchor: str, tag: str, rest: str) -> None:
+        self.anchor: str = anchor
+        self.tag: str = tag
+        self.rest: str = rest
 
 def _char_at_or_empty(s: str, pos: int, n: int) -> str:
     if pos < n:
@@ -100,6 +98,92 @@ def _substr(s: str, start: int, end: int) -> str:
         i = i + 1
     return result
 
+def _is_digit_char(c: str) -> bool:
+    b: int = nox.strings.byte_at(c, 0)
+    return b >= 48 and b <= 57
+
+def _is_all_digits(s: str) -> bool:
+    if len(s) == 0:
+        return False
+    for c in s:
+        if not _is_digit_char(c):
+            return False
+    return True
+
+# ---- satır yardımcıları: yorum kırpma, anahtar ayracı, değer başlangıcı ----
+
+# Bir tırnağın AÇILABİLECEĞİ konum: değer başı, boşluk ya da `[ { , :` sonrası ("it's" içindeki ' tırnak açmaz).
+def _can_open_quote(s: str, i: int) -> bool:
+    if i == 0:
+        return True
+    p: str = s[i - 1]
+    return p == " " or p == "[" or p == "{" or p == "," or p == ":" or p == "-" or p == "\t"
+
+# Tırnak dışındaki ` #` yorumunu keser (sondaki boşluk da atılır).
+def _strip_comment(s: str) -> str:
+    n: int = len(s)
+    i: int = 0
+    quote: str = ""
+    while i < n:
+        c: str = s[i]
+        if quote == "\"":
+            if c == "\\":
+                i = i + 1
+            elif c == "\"":
+                quote = ""
+        elif quote == "'":
+            if c == "'":
+                if _char_at_or_empty(s, i + 1, n) == "'":
+                    i = i + 1
+                else:
+                    quote = ""
+        elif c == "#" and (i == 0 or s[i - 1] == " " or s[i - 1] == "\t"):
+            return nox.strings.trim_end(_substr(s, 0, i))
+        elif (c == "\"" or c == "'") and _can_open_quote(s, i):
+            quote = c
+        i = i + 1
+    return nox.strings.trim_end(s)
+
+# Anahtarı bitiren `:`nın indeksi (ardından boşluk ya da satır sonu gelen, tırnak dışı ilk `:`), yoksa -1.
+def _find_key_sep(content: str) -> int:
+    n: int = len(content)
+    if n == 0:
+        return -1
+    first: str = content[0]
+    i: int = 0
+    if first == "\"":
+        i = 1
+        while i < n and content[i] != "\"":
+            if content[i] == "\\":
+                i = i + 1
+            i = i + 1
+        i = i + 1
+        if i < n and content[i] == ":" and (i + 1 == n or content[i + 1] == " "):
+            return i
+        return -1
+    if first == "'":
+        i = 1
+        closed: bool = False
+        while i < n and not closed:
+            if content[i] == "'":
+                if _char_at_or_empty(content, i + 1, n) == "'":
+                    i = i + 2
+                else:
+                    closed = True
+            else:
+                i = i + 1
+        i = i + 1
+        if i < n and content[i] == ":" and (i + 1 == n or content[i + 1] == " "):
+            return i
+        return -1
+    if first == "[" or first == "{":
+        return -1
+    while i < n:
+        if content[i] == ":" and (i + 1 == n or content[i + 1] == " "):
+            return i
+        i = i + 1
+    return -1
+
 def _is_sequence_line(content: str) -> bool:
     if len(content) == 0:
         return False
@@ -110,11 +194,9 @@ def _is_sequence_line(content: str) -> bool:
     return content[1] == " "
 
 def _is_mapping_line(content: str) -> bool:
-    if nox.strings.index_of(content, ": ") >= 0:
-        return True
-    return nox.strings.ends_with(content, ":")
+    return _find_key_sep(content) >= 0
 
-def _count_leading_spaces_or_raise(raw: str) -> int:
+def _count_leading_spaces(raw: str) -> int:
     count: int = 0
     n: int = len(raw)
     scanning: bool = True
@@ -123,65 +205,351 @@ def _count_leading_spaces_or_raise(raw: str) -> int:
             scanning = False
         elif raw[count] == " ":
             count = count + 1
-        elif raw[count] == "\t":
-            raise YamlError("TAB cannot be used in YAML indentation")
         else:
             scanning = False
     return count
 
 extern def nox_strings_leading_tab_raw(s: str) -> int from "zig-out/lib/noxrt.o"
 
-def _tokenize(text: str) -> list[_Line]:
-    raw_lines: list[str] = nox.strings.split(text, "\n")
-    result: list[_Line] = []
+# ---- blok skalerleri ve çok satırlı değerler için ön işleme ----
+
+def _escape_for_double_quotes(s: str) -> str:
+    out: str = ""
+    for c in s:
+        if c == "\"":
+            out = out + "\\\""
+        elif c == "\\":
+            out = out + "\\\\"
+        elif c == "\n":
+            out = out + "\\n"
+        elif c == "\t":
+            out = out + "\\t"
+        elif nox.strings.byte_at(c, 0) == 13:
+            out = out + "\\r"
+        else:
+            out = out + c
+    return out
+
+class _BlockHeader:
+    def __init__(self, found: bool, prefix: str, style: str, chomp: str, explicit: int) -> None:
+        self.found: bool = found
+        self.prefix: str = prefix
+        self.style: str = style
+        self.chomp: str = chomp
+        self.explicit: int = explicit
+
+# `key: |-`, `- >`, `- k: |2+` ... başlığını tanır; `prefix` başlık işaretinden öncesi (örn. "key: ").
+def _block_header(content: str) -> _BlockHeader:
+    none: _BlockHeader = _BlockHeader(False, "", "", "", 0)
+    n: int = len(content)
+    if n == 0:
+        return none
+    sp: int = n - 1
+    while sp >= 0 and content[sp] != " ":
+        sp = sp - 1
+    token: str = _substr(content, sp + 1, n)
+    if len(token) == 0 or (token[0] != "|" and token[0] != ">"):
+        return none
+    chomp: str = ""
+    explicit: int = 0
+    j: int = 1
+    while j < len(token):
+        c: str = token[j]
+        if c == "+" or c == "-":
+            chomp = c
+        elif _is_digit_char(c):
+            explicit = nox.strings.byte_at(c, 0) - 48
+        else:
+            return none
+        j = j + 1
+    prefix: str = _substr(content, 0, sp + 1)
+    trimmed_prefix: str = nox.strings.trim_end(prefix)
+    if sp < 0:
+        # satırın tamamı yalnızca `|` (belge kökü blok skaleri)
+        return _BlockHeader(True, "", _substr(token, 0, 1), chomp, explicit)
+    if len(trimmed_prefix) == 0:
+        return none
+    last: str = trimmed_prefix[len(trimmed_prefix) - 1]
+    if last != ":" and last != "-" and last != "&" and last != "!":
+        # `key: &a |` gibi önekler: son sözcük `&ad` / `!etiket` ise de başlıktır
+        words: list[str] = nox.strings.split(trimmed_prefix, " ")
+        lastw: str = words[len(words) - 1]
+        if len(lastw) == 0 or (lastw[0] != "&" and lastw[0] != "!"):
+            return none
+    return _BlockHeader(True, prefix, _substr(token, 0, 1), chomp, explicit)
+
+def _fold_block(lines: list[str]) -> str:
+    out: str = ""
+    prev: int = 0
+    breaks: int = 0
+    for ln in lines:
+        if ln == "":
+            breaks = breaks + 1
+        else:
+            more: bool = ln[0] == " " or ln[0] == "\t"
+            if prev == 0:
+                out = nox.strings.repeat("\n", breaks) + ln
+            else:
+                if prev == 1 and not more:
+                    if breaks == 0:
+                        out = out + " " + ln
+                    else:
+                        out = out + nox.strings.repeat("\n", breaks) + ln
+                else:
+                    out = out + nox.strings.repeat("\n", breaks + 1) + ln
+            if more:
+                prev = 2
+            else:
+                prev = 1
+            breaks = 0
+    return out
+
+# Başlıktan sonraki satırları (raw_lines[start:]) tüketir; (metin, tüketilen satır sayısı) yerine metni döndürür ve
+# tüketilen son indeksi `consumed[0]`a yazar.
+def _read_block_scalar(raw_lines: list[str], start: int, parent_indent: int, hdr: _BlockHeader, consumed: list[int]) -> str:
+    block_indent: int = -1
+    if hdr.explicit > 0:
+        block_indent = parent_indent + hdr.explicit
+    collected: list[str] = []
+    j: int = start
+    scanning: bool = True
+    while scanning:
+        if j >= len(raw_lines):
+            scanning = False
+        else:
+            raw: str = nox.strings.trim_end(raw_lines[j])
+            if raw == "":
+                collected.append("")
+                j = j + 1
+            else:
+                ind: int = _count_leading_spaces(raw)
+                if block_indent < 0:
+                    if ind > parent_indent:
+                        block_indent = ind
+                if block_indent < 0 or ind < block_indent:
+                    scanning = False
+                else:
+                    collected.append(_substr(raw, block_indent, len(raw)))
+                    j = j + 1
+    # sondaki boş satırları ayır (kırpma kuralı için)
+    trailing: int = 0
+    while len(collected) > 0 and collected[len(collected) - 1] == "":
+        collected.pop()
+        trailing = trailing + 1
+    # tüketilen sondaki boş satırlar tamamen blok sonundadır
+    consumed[0] = j
+    body: str = ""
+    if hdr.style == "|":
+        body = nox.strings.join(collected, "\n")
+    else:
+        body = _fold_block(collected)
+    if len(collected) == 0:
+        if hdr.chomp == "+":
+            return nox.strings.repeat("\n", trailing)
+        return ""
+    if hdr.chomp == "-":
+        return body
+    if hdr.chomp == "+":
+        return body + nox.strings.repeat("\n", trailing + 1)
+    return body + "\n"
+
+# Çift/tek tırnaklı ya da akış değeri satır sonunda açık kaldıysa true.
+def _value_start(content: str) -> int:
     i: int = 0
-    doc_marker_allowed: bool = True
-    while i < len(raw_lines):
+    n: int = len(content)
+    while i + 1 < n and content[i] == "-" and content[i + 1] == " ":
+        i = i + 2
+        while i < n and content[i] == " ":
+            i = i + 1
+    rest: str = _substr(content, i, n)
+    sep: int = _find_key_sep(rest)
+    if sep >= 0:
+        j: int = i + sep + 1
+        while j < n and content[j] == " ":
+            j = j + 1
+        return j
+    return i
+
+class _Open:
+    def __init__(self, quote: str, depth: int) -> None:
+        self.quote: str = quote
+        self.depth: int = depth
+
+def _open_state(s: str, start: int) -> _Open:
+    n: int = len(s)
+    # başlıklar: `&a`, `!t` önekleri atlanır
+    i: int = start
+    while i < n and (s[i] == "&" or s[i] == "!"):
+        while i < n and s[i] != " ":
+            i = i + 1
+        while i < n and s[i] == " ":
+            i = i + 1
+    if i >= n:
+        return _Open("", 0)
+    first: str = s[i]
+    if first == "\"":
+        k: int = i + 1
+        while k < n:
+            if s[k] == "\\":
+                k = k + 2
+            elif s[k] == "\"":
+                return _Open("", 0)
+            else:
+                k = k + 1
+        return _Open("\"", 0)
+    if first == "'":
+        k2: int = i + 1
+        while k2 < n:
+            if s[k2] == "'":
+                if _char_at_or_empty(s, k2 + 1, n) == "'":
+                    k2 = k2 + 2
+                else:
+                    return _Open("", 0)
+            else:
+                k2 = k2 + 1
+        return _Open("'", 0)
+    if first == "[" or first == "{":
+        depth: int = 0
+        quote: str = ""
+        k3: int = i
+        while k3 < n:
+            c: str = s[k3]
+            if quote == "\"":
+                if c == "\\":
+                    k3 = k3 + 1
+                elif c == "\"":
+                    quote = ""
+            elif quote == "'":
+                if c == "'":
+                    quote = ""
+            elif (c == "\"" or c == "'") and _can_open_quote(s, k3):
+                quote = c
+            elif c == "[" or c == "{":
+                depth = depth + 1
+            elif c == "]" or c == "}":
+                depth = depth - 1
+            k3 = k3 + 1
+        return _Open(quote, depth)
+    return _Open("", 0)
+
+def _is_open(st: _Open) -> bool:
+    return st.quote != "" or st.depth > 0
+
+# Ham metni belgelere/satırlara böler; blok skalerlerini ve çok satırlı değerleri tek satıra indirger.
+def _tokenize_docs(text: str) -> list[list[_Line]]:
+    raw_lines: list[str] = nox.strings.split(text, "\n")
+    docs: list[list[_Line]] = []
+    current: list[_Line] = []
+    doc_open: bool = False
+    i: int = 0
+    n_lines: int = len(raw_lines)
+    while i < n_lines:
         raw: str = nox.strings.trim_end(raw_lines[i])
-        # TAB girintisi BURADA, `---` ile AYNI fonksiyonda fırlatılır.
-        # `_count_leading_spaces_or_raise`in içindeki fırlatma Windows'ta
-        # boş stderr ile düşüyordu; bu kontrol o kenara girmeden aynı
-        # mesajı üretir. Yalnızca TAB olan satır `trim_end` ile boşalır
-        # ve eskisi gibi atlanır.
         if nox_strings_leading_tab_raw(raw) != 0:
             raise YamlError("TAB cannot be used in YAML indentation")
         trimmed_content: str = nox.strings.trim(raw)
-        if trimmed_content == "":
+        if trimmed_content == "" or nox.strings.starts_with(trimmed_content, "#"):
             i = i + 1
-        elif nox.strings.starts_with(trimmed_content, "#"):
+        elif nox.strings.starts_with(raw, "%") and not doc_open and len(current) == 0:
             i = i + 1
-        elif trimmed_content == "---":
-            if doc_marker_allowed:
-                doc_marker_allowed = False
-                i = i + 1
-            else:
-                raise YamlError("multi-document YAML (separated by '---') is not supported in v1")
-        elif trimmed_content == "...":
-            raise YamlError("multi-document YAML (terminated by '...') is not supported in v1")
+        elif raw == "---" or nox.strings.starts_with(raw, "--- ") or nox.strings.starts_with(raw, "---\t"):
+            if doc_open or len(current) > 0:
+                docs.append(current)
+                current = []
+            doc_open = True
+            rest: str = _strip_comment(nox.strings.trim(_substr(raw, 3, len(raw))))
+            i = i + 1
+            if rest != "":
+                hdr0: _BlockHeader = _block_header(rest)
+                if hdr0.found and hdr0.prefix == "":
+                    consumed0: list[int] = [i]
+                    body0: str = _read_block_scalar(raw_lines, i, -1, hdr0, consumed0)
+                    current.append(_Line(0, "\"" + _escape_for_double_quotes(body0) + "\""))
+                    i = consumed0[0]
+                else:
+                    current.append(_Line(0, rest))
+        elif raw == "..." or nox.strings.starts_with(raw, "... "):
+            if doc_open or len(current) > 0:
+                docs.append(current)
+            current = []
+            doc_open = False
+            i = i + 1
         else:
-            doc_marker_allowed = False
-            indent: int = _count_leading_spaces_or_raise(raw)
-            content: str = _substr(raw, indent, len(raw))
-            result.append(_Line(indent, content))
+            indent: int = _count_leading_spaces(raw)
+            content: str = _strip_comment(_substr(raw, indent, len(raw)))
             i = i + 1
-    return result
+            hdr: _BlockHeader = _block_header(content)
+            if hdr.found:
+                consumed: list[int] = [i]
+                body: str = _read_block_scalar(raw_lines, i, indent + _parent_offset(hdr.prefix), hdr, consumed)
+                i = consumed[0]
+                content = hdr.prefix + "\"" + _escape_for_double_quotes(body) + "\""
+            else:
+                vs: int = _value_start(content)
+                st: _Open = _open_state(content, vs)
+                joined_blank: bool = False
+                while _is_open(st):
+                    if i >= n_lines:
+                        raise YamlError("unterminated quoted string or flow collection")
+                    nxt: str = _strip_comment(nox.strings.trim(raw_lines[i]))
+                    i = i + 1
+                    if st.quote == "\"" and nxt == "":
+                        content = content + "\\n"
+                        joined_blank = True
+                    elif st.quote == "'" and nxt == "":
+                        content = content + "\n"
+                        joined_blank = True
+                    elif joined_blank:
+                        content = content + nxt
+                        joined_blank = False
+                    else:
+                        content = content + " " + nxt
+                    st = _open_state(content, vs)
+            current.append(_Line(indent, content))
+    if doc_open or len(current) > 0:
+        docs.append(current)
+    return docs
 
-def _strip_quotes_if_present(s: str) -> str:
-    # NOT: `s[0] == X and nox.strings.ends_with(...)` GİBİ, HAM bir string
-    # indekslemeyi (`s[0]`) İNLİNE EDİLEBİLİR bir fonksiyon çağrısıyla
-    # (`nox.strings.ends_with`) TEK bir `and` ifadesinde BİRLEŞTİRMEK,
-    # GERÇEK bir QBE codegen hatasına (`predecessors not matched in phi`)
-    # yol AÇIYOR — `and`in kısa-devre dalının, ÇAĞRI İNLİNE EDİLDİĞİNDE
-    # YANLIŞ bir phi-öncülü ÜRETMESİ (bir derleyici hatası, bkz. flaglenen
-    # takip görevi). BU YÜZDEN İç İçe `if`lerle AYRI tutulur.
-    if len(s) >= 2:
-        if s[0] == "\"":
-            if nox.strings.ends_with(s, "\""):
-                return _parse_double_quoted(s)
-        if s[0] == "'":
-            if nox.strings.ends_with(s, "'"):
-                return _parse_single_quoted(s)
-    return s
+# Blok skaleri üst düğüm girintisi: `key: |` için 0, `- |` için 0, `- key: |` için "- " genişliği, `- - k: |` için ...
+def _parent_offset(prefix: str) -> int:
+    off: int = 0
+    k: int = 0
+    n: int = len(prefix)
+    while k + 1 < n and prefix[k] == "-" and prefix[k + 1] == " ":
+        off = off + 2
+        k = k + 2
+        while k < n and prefix[k] == " ":
+            off = off + 1
+            k = k + 1
+    # `- |` : yalnızca tire öneki → üst düğüm tirenin kendi girintisi (0 ek)
+    if k >= n:
+        return 0
+    return off
+
+# ---- skalerler ----
+
+def _hex_digit_value(c: str) -> int:
+    b: int = nox.strings.byte_at(c, 0)
+    if b >= 48 and b <= 57:
+        return b - 48
+    if b >= 97 and b <= 102:
+        return b - 97 + 10
+    if b >= 65 and b <= 70:
+        return b - 65 + 10
+    return -1
+
+def _hex_run(s: str, start: int, count: int, n: int) -> int:
+    if start + count > n:
+        raise YamlError("incomplete escape sequence")
+    v: int = 0
+    k: int = 0
+    while k < count:
+        d: int = _hex_digit_value(s[start + k])
+        if d < 0:
+            raise YamlError("invalid hex digit in an escape sequence")
+        v = v * 16 + d
+        k = k + 1
+    return v
 
 def _parse_double_quoted(s: str) -> str:
     inner: str = _substr(s, 1, len(s) - 1)
@@ -192,25 +560,46 @@ def _parse_double_quoted(s: str) -> str:
         c: str = inner[i]
         if c == "\\":
             nxt: str = _char_at_or_empty(inner, i + 1, n)
+            i = i + 2
             if nxt == "n":
                 result = result + "\n"
             elif nxt == "t":
                 result = result + "\t"
-            elif nxt == "\"":
-                result = result + "\""
-            elif nxt == "\\":
-                result = result + "\\"
+            elif nxt == "r":
+                result = result + chr(13)
+            elif nxt == "0":
+                result = result + chr(0)
+            elif nxt == "a":
+                result = result + chr(7)
+            elif nxt == "b":
+                result = result + chr(8)
+            elif nxt == "e":
+                result = result + chr(27)
+            elif nxt == "f":
+                result = result + chr(12)
+            elif nxt == "v":
+                result = result + chr(11)
+            elif nxt == "x":
+                result = result + chr(_hex_run(inner, i, 2, n))
+                i = i + 2
+            elif nxt == "u":
+                result = result + chr(_hex_run(inner, i, 4, n))
+                i = i + 4
+            elif nxt == "U":
+                result = result + chr(_hex_run(inner, i, 8, n))
+                i = i + 8
+            elif nxt == "N":
+                result = result + chr(133)
+            elif nxt == "_":
+                result = result + chr(160)
             else:
                 result = result + nxt
-            i = i + 2
         else:
             result = result + c
             i = i + 1
     return result
 
 def _parse_single_quoted(s: str) -> str:
-    # YAML tek-tirnak kacisi: '' -> tek bir literal tirnak (backslash
-    # kacis dizisi YOK).
     inner: str = _substr(s, 1, len(s) - 1)
     result: str = ""
     i: int = 0
@@ -230,22 +619,173 @@ def _parse_single_quoted(s: str) -> str:
             i = i + 1
     return result
 
+def _strip_quotes_if_present(s: str) -> str:
+    # `s[0] == X and nox.strings.ends_with(...)` tek bir `and`da birleştirilmez (eski QBE phi hatası) → iç içe if.
+    if len(s) >= 2:
+        if s[0] == "\"":
+            if nox.strings.ends_with(s, "\""):
+                return _parse_double_quoted(s)
+        if s[0] == "'":
+            if nox.strings.ends_with(s, "'"):
+                return _parse_single_quoted(s)
+    return s
+
+def _is_int_text(s: str) -> bool:
+    n: int = len(s)
+    if n == 0:
+        return False
+    start: int = 0
+    if s[0] == "-" or s[0] == "+":
+        start = 1
+    if start >= n:
+        return False
+    i: int = start
+    while i < n:
+        if not _is_digit_char(s[i]):
+            return False
+        i = i + 1
+    return True
+
+def _is_radix_text(s: str, prefix: str, base: int) -> bool:
+    if len(s) <= 2 or not nox.strings.starts_with(s, prefix):
+        return False
+    i: int = 2
+    while i < len(s):
+        d: int = _hex_digit_value(s[i])
+        if d < 0 or d >= base:
+            return False
+        i = i + 1
+    return True
+
+def _radix_value(s: str, base: int) -> int:
+    v: int = 0
+    i: int = 2
+    while i < len(s):
+        v = v * base + _hex_digit_value(s[i])
+        i = i + 1
+    return v
+
+def _is_float_text(s: str) -> bool:
+    n: int = len(s)
+    i: int = 0
+    if n == 0:
+        return False
+    if s[0] == "-" or s[0] == "+":
+        i = 1
+    int_digits: int = 0
+    while i < n and _is_digit_char(s[i]):
+        i = i + 1
+        int_digits = int_digits + 1
+    frac_digits: int = 0
+    if i < n and s[i] == ".":
+        i = i + 1
+        while i < n and _is_digit_char(s[i]):
+            i = i + 1
+            frac_digits = frac_digits + 1
+    if int_digits == 0 and frac_digits == 0:
+        return False
+    if i < n and (s[i] == "e" or s[i] == "E"):
+        i = i + 1
+        if i < n and (s[i] == "-" or s[i] == "+"):
+            i = i + 1
+        exp_digits: int = 0
+        while i < n and _is_digit_char(s[i]):
+            i = i + 1
+            exp_digits = exp_digits + 1
+        if exp_digits == 0:
+            return False
+    return i == n
+
 def _parse_plain_scalar(s: str) -> YamlValue:
-    if s == "null" or s == "Null" or s == "NULL" or s == "~":
+    if s == "null" or s == "Null" or s == "NULL" or s == "~" or s == "":
         return _make_null()
     if s == "true" or s == "True" or s == "TRUE":
         return _make_bool(True)
     if s == "false" or s == "False" or s == "FALSE":
         return _make_bool(False)
-    try:
-        return _make_int(int(s))
-    except ValueError as e:
-        pass
-    try:
-        return _make_float(float(s))
-    except ValueError as e:
-        pass
+    if s == ".inf" or s == ".Inf" or s == ".INF" or s == "+.inf" or s == "+.Inf" or s == "+.INF":
+        return _make_float(float("inf"))
+    if s == "-.inf" or s == "-.Inf" or s == "-.INF":
+        return _make_float(float("-inf"))
+    if s == ".nan" or s == ".NaN" or s == ".NAN":
+        return _make_float(float("nan"))
+    if _is_int_text(s):
+        try:
+            return _make_int(int(s))
+        except ValueError as e:
+            return _make_float(float(s))
+    if _is_radix_text(s, "0x", 16):
+        return _make_int(_radix_value(s, 16))
+    if _is_radix_text(s, "0o", 8):
+        return _make_int(_radix_value(s, 8))
+    if _is_float_text(s):
+        try:
+            return _make_float(float(s))
+        except ValueError as e:
+            pass
     return _make_string(s)
+
+# ---- çapalar, etiketler ----
+
+def _take_props(raw: str) -> _Props:
+    anchor: str = ""
+    tag: str = ""
+    rest: str = nox.strings.trim(raw)
+    scanning: bool = True
+    while scanning:
+        if len(rest) > 0 and rest[0] == "&":
+            sp: int = nox.strings.index_of(rest, " ")
+            if sp < 0:
+                anchor = _substr(rest, 1, len(rest))
+                rest = ""
+            else:
+                anchor = _substr(rest, 1, sp)
+                rest = nox.strings.trim_start(_substr(rest, sp, len(rest)))
+        elif len(rest) > 0 and rest[0] == "!":
+            sp2: int = nox.strings.index_of(rest, " ")
+            if sp2 < 0:
+                tag = _substr(rest, 0, len(rest))
+                rest = ""
+            else:
+                tag = _substr(rest, 0, sp2)
+                rest = nox.strings.trim_start(_substr(rest, sp2, len(rest)))
+        else:
+            scanning = False
+    return _Props(anchor, tag, rest)
+
+def _apply_tag(tag: str, v: YamlValue, was_quoted: bool, raw_text: str) -> YamlValue:
+    if tag == "!!str":
+        if v.kind == 0:
+            return v
+        return _make_string(raw_text)
+    if tag == "!!int":
+        if v.kind == 1:
+            return v
+        raise YamlError("cannot convert to !!int: " + raw_text)
+    if tag == "!!float":
+        if v.kind == 2:
+            return v
+        if v.kind == 1:
+            return _make_float(float(v.i))
+        raise YamlError("cannot convert to !!float: " + raw_text)
+    if tag == "!!bool":
+        if v.kind == 3:
+            return v
+        raise YamlError("cannot convert to !!bool: " + raw_text)
+    if tag == "!!null":
+        return _make_null()
+    return v
+
+def _register_anchor(ctx: _Ctx, anchor: str, v: YamlValue) -> None:
+    if anchor != "":
+        ctx.anchors[anchor] = v
+
+def _lookup_alias(ctx: _Ctx, name: str) -> YamlValue:
+    if not ctx.anchors.contains(name):
+        raise YamlError("unknown alias: *" + name)
+    return ctx.anchors[name]
+
+# ---- akış koleksiyonları ----
 
 def _split_flow_items(inner: str) -> list[str]:
     if nox.strings.trim(inner) == "":
@@ -271,10 +811,10 @@ def _split_flow_items(inner: str) -> list[str]:
             current = current + c
             if c == "'":
                 in_single = False
-        elif c == "\"":
+        elif c == "\"" and _can_open_quote(inner, i):
             in_double = True
             current = current + c
-        elif c == "'":
+        elif c == "'" and _can_open_quote(inner, i):
             in_single = True
             current = current + c
         elif c == "[" or c == "{":
@@ -289,10 +829,29 @@ def _split_flow_items(inner: str) -> list[str]:
         else:
             current = current + c
         i = i + 1
-    parts.append(nox.strings.trim(current))
+    last: str = nox.strings.trim(current)
+    if last != "":
+        parts.append(last)
     return parts
 
-def _parse_flow_sequence(s: str) -> YamlValue:
+def _merge_into(target: YamlValue, source: YamlValue) -> None:
+    for k in source.mapping.keys():
+        if not target.mapping.contains(k):
+            target.mapping[k] = source.mapping[k]
+
+# `<<` değeri: bir eşleme ya da eşlemeler dizisi.
+def _apply_merge(target: YamlValue, merged: YamlValue) -> None:
+    if merged.kind == 6:
+        _merge_into(target, merged)
+    elif merged.kind == 5:
+        for m in merged.arr:
+            if m.kind != 6:
+                raise YamlError("a merge key '<<' needs mappings")
+            _merge_into(target, m)
+    else:
+        raise YamlError("a merge key '<<' needs a mapping or a sequence of mappings")
+
+def _parse_flow_sequence(s: str, ctx: _Ctx) -> YamlValue:
     if not nox.strings.ends_with(s, "]"):
         raise YamlError("invalid flow sequence (missing ']'): " + s)
     inner: str = _substr(s, 1, len(s) - 1)
@@ -300,11 +859,19 @@ def _parse_flow_sequence(s: str) -> YamlValue:
     items: list[YamlValue] = []
     i: int = 0
     while i < len(parts):
-        items.append(_parse_scalar_or_flow(parts[i]))
+        part: str = parts[i]
+        sep: int = _find_key_sep(part)
+        if sep >= 0:
+            # `[a: 1]` → tek çiftli eşleme
+            single: YamlValue = _make_mapping()
+            single.mapping[_strip_quotes_if_present(nox.strings.trim(_substr(part, 0, sep)))] = _parse_scalar_or_flow(nox.strings.trim(_substr(part, sep + 1, len(part))), ctx)
+            items.append(single)
+        else:
+            items.append(_parse_scalar_or_flow(part, ctx))
         i = i + 1
     return _make_sequence(items)
 
-def _parse_flow_mapping(s: str) -> YamlValue:
+def _parse_flow_mapping(s: str, ctx: _Ctx) -> YamlValue:
     if not nox.strings.ends_with(s, "}"):
         raise YamlError("invalid flow mapping (missing '}'): " + s)
     inner: str = _substr(s, 1, len(s) - 1)
@@ -313,50 +880,124 @@ def _parse_flow_mapping(s: str) -> YamlValue:
     i: int = 0
     while i < len(parts):
         part: str = parts[i]
-        sep_idx: int = nox.strings.index_of(part, ":")
-        if sep_idx < 0:
-            raise YamlError("invalid flow mapping entry: " + part)
-        key: str = _strip_quotes_if_present(nox.strings.trim(_substr(part, 0, sep_idx)))
-        val_raw: str = nox.strings.trim(_substr(part, sep_idx + 1, len(part)))
-        result.mapping[key] = _parse_scalar_or_flow(val_raw)
+        sep_idx: int = _find_key_sep(part)
+        key: str = ""
+        val_raw: str = ""
+        if sep_idx >= 0:
+            key = _strip_quotes_if_present(nox.strings.trim(_substr(part, 0, sep_idx)))
+            val_raw = nox.strings.trim(_substr(part, sep_idx + 1, len(part)))
+        elif _find_flow_colon(part) >= 0:
+            fc: int = _find_flow_colon(part)
+            key = _strip_quotes_if_present(nox.strings.trim(_substr(part, 0, fc)))
+            val_raw = nox.strings.trim(_substr(part, fc + 1, len(part)))
+        else:
+            key = _strip_quotes_if_present(part)
+            val_raw = ""
+        v: YamlValue = _parse_scalar_or_flow(val_raw, ctx)
+        if key == "<<":
+            _apply_merge(result, v)
+        else:
+            result.mapping[key] = v
         i = i + 1
     return result
 
-def _parse_scalar_or_flow(raw: str) -> YamlValue:
-    trimmed: str = nox.strings.trim(raw)
-    if trimmed == "":
-        return _make_null()
-    first: str = _char_at_or_empty(trimmed, 0, len(trimmed))
-    if first == "[":
-        return _parse_flow_sequence(trimmed)
-    if first == "{":
-        return _parse_flow_mapping(trimmed)
-    if first == "\"":
-        return _make_string(_parse_double_quoted(trimmed))
-    if first == "'":
-        return _make_string(_parse_single_quoted(trimmed))
-    return _parse_plain_scalar(trimmed)
+# Akış eşlemesinde `"key":value` (boşluksuz) biçimi için: tırnaklı anahtardan hemen sonra gelen `:`.
+def _find_flow_colon(part: str) -> int:
+    n: int = len(part)
+    if n < 3:
+        return -1
+    if part[0] == "\"":
+        i: int = 1
+        while i < n and part[i] != "\"":
+            if part[i] == "\\":
+                i = i + 1
+            i = i + 1
+        if i + 1 < n and part[i + 1] == ":":
+            return i + 1
+    return -1
 
-# `pos[0] < len(lines) and lines[pos[0]].indent > indent` GİBİ bir
-# ifadeyi TEK bir `and`da BİRLEŞTİRMEK YERİNE ayrı bir yardımcıya
-# ÇIKARILDI — HEM DRY (2 çağrı sitesi) HEM `and`/`or`in HAM bir liste-
-# indekslemesiyle (`lines[pos[0]]`) BİRLEŞTİRİLDİĞİNDE bulunan GERÇEK
-# QBE codegen hatasından (`predecessors not matched in phi`, bkz.
-# flaglenen takip görevi) KAÇINMAK İçİn.
+def _parse_scalar_or_flow(raw: str, ctx: _Ctx) -> YamlValue:
+    props: _Props = _take_props(raw)
+    trimmed: str = props.rest
+    value: YamlValue = _make_null()
+    quoted: bool = False
+    text_form: str = trimmed
+    if trimmed == "":
+        value = _make_null()
+    else:
+        first: str = _char_at_or_empty(trimmed, 0, len(trimmed))
+        if first == "*":
+            if props.anchor != "" or props.tag != "":
+                raise YamlError("an alias cannot have an anchor or tag: " + raw)
+            return _lookup_alias(ctx, _substr(trimmed, 1, len(trimmed)))
+        if first == "[":
+            value = _parse_flow_sequence(trimmed, ctx)
+        elif first == "{":
+            value = _parse_flow_mapping(trimmed, ctx)
+        elif first == "\"":
+            if not nox.strings.ends_with(trimmed, "\"") or len(trimmed) < 2:
+                raise YamlError("unterminated double-quoted string: " + trimmed)
+            text_form = _parse_double_quoted(trimmed)
+            value = _make_string(text_form)
+            quoted = True
+        elif first == "'":
+            if not nox.strings.ends_with(trimmed, "'") or len(trimmed) < 2:
+                raise YamlError("unterminated single-quoted string: " + trimmed)
+            text_form = _parse_single_quoted(trimmed)
+            value = _make_string(text_form)
+            quoted = True
+        else:
+            value = _parse_plain_scalar(trimmed)
+    value = _apply_tag(props.tag, value, quoted, text_form)
+    _register_anchor(ctx, props.anchor, value)
+    return value
+
+# ---- blok yapı ----
+
 def _has_deeper_next_line(lines: list[_Line], pos: list[int], indent: int) -> bool:
     if pos[0] >= len(lines):
         return False
     return lines[pos[0]].indent > indent
 
-def _parse_block(lines: list[_Line], pos: list[int], indent: int) -> YamlValue:
+def _parse_block(lines: list[_Line], pos: list[int], indent: int, ctx: _Ctx) -> YamlValue:
     if pos[0] >= len(lines):
         return _make_null()
     line: _Line = lines[pos[0]]
     if _is_sequence_line(line.content):
-        return _parse_sequence(lines, pos, indent)
-    return _parse_mapping(lines, pos, indent)
+        return _parse_sequence(lines, pos, indent, ctx)
+    if _is_mapping_line(line.content):
+        return _parse_mapping(lines, pos, indent, ctx)
+    # tek (çok satırlı) düz skaler blok
+    text: str = line.content
+    pos[0] = pos[0] + 1
+    text = _fold_plain_continuation(lines, pos, indent - 1, text)
+    return _parse_scalar_or_flow(text, ctx)
 
-def _parse_mapping(lines: list[_Line], pos: list[int], indent: int) -> YamlValue:
+def _is_plain_text(raw: str) -> bool:
+    t: str = nox.strings.trim(raw)
+    if t == "":
+        return False
+    c: str = t[0]
+    return c != "\"" and c != "'" and c != "[" and c != "{" and c != "&" and c != "*" and c != "!" and c != "|" and c != ">"
+
+# Düz skalerin sonraki daha girintili satırlara devamı (satır katlama); bir anahtar/dizi satırı görünce hata.
+def _fold_plain_continuation(lines: list[_Line], pos: list[int], indent: int, first: str) -> str:
+    text: str = first
+    if not _is_plain_text(first):
+        return text
+    scanning: bool = True
+    while scanning:
+        if not _has_deeper_next_line(lines, pos, indent):
+            scanning = False
+        else:
+            nxt: _Line = lines[pos[0]]
+            if _is_mapping_line(nxt.content):
+                raise YamlError("mapping values are not allowed here: " + nxt.content)
+            text = text + " " + nxt.content
+            pos[0] = pos[0] + 1
+    return text
+
+def _parse_mapping(lines: list[_Line], pos: list[int], indent: int, ctx: _Ctx) -> YamlValue:
     result: YamlValue = _make_mapping()
     scanning: bool = True
     while scanning:
@@ -364,31 +1005,50 @@ def _parse_mapping(lines: list[_Line], pos: list[int], indent: int) -> YamlValue
             scanning = False
         elif lines[pos[0]].indent != indent:
             scanning = False
+        elif _is_sequence_line(lines[pos[0]].content):
+            scanning = False
         else:
             line: _Line = lines[pos[0]]
-            key: str = ""
-            raw_value: str = ""
-            sep_idx: int = nox.strings.index_of(line.content, ": ")
-            if sep_idx >= 0:
-                key = nox.strings.trim(_substr(line.content, 0, sep_idx))
-                raw_value = nox.strings.trim(_substr(line.content, sep_idx + 2, len(line.content)))
-            elif nox.strings.ends_with(line.content, ":"):
-                key = nox.strings.trim(_substr(line.content, 0, len(line.content) - 1))
-                raw_value = ""
-            else:
+            if nox.strings.starts_with(line.content, "? "):
+                raise YamlError("explicit keys ('? key') are not supported")
+            sep_idx: int = _find_key_sep(line.content)
+            if sep_idx < 0:
                 raise YamlError("invalid mapping line: " + line.content)
-            key = _strip_quotes_if_present(key)
+            key: str = _strip_quotes_if_present(nox.strings.trim(_substr(line.content, 0, sep_idx)))
+            raw_value: str = nox.strings.trim(_substr(line.content, sep_idx + 1, len(line.content)))
             pos[0] = pos[0] + 1
-            if raw_value == "":
-                if _has_deeper_next_line(lines, pos, indent):
-                    result.mapping[key] = _parse_block(lines, pos, lines[pos[0]].indent)
-                else:
-                    result.mapping[key] = _make_null()
+            value: YamlValue = _parse_block_value(lines, pos, indent, raw_value, ctx, True)
+            if key == "<<":
+                _apply_merge(result, value)
             else:
-                result.mapping[key] = _parse_scalar_or_flow(raw_value)
+                result.mapping[key] = value
     return result
 
-def _parse_sequence(lines: list[_Line], pos: list[int], indent: int) -> YamlValue:
+# `anahtar:` / `- ` sonrası değer: satır içi değer ya da (boşsa) daha girintili blok; `&çapa`/`!etiket` önekleri burada çözülür.
+def _parse_block_value(lines: list[_Line], pos: list[int], indent: int, raw_value: str, ctx: _Ctx, same_indent_seq: bool) -> YamlValue:
+    props: _Props = _take_props(raw_value)
+    if props.rest == "":
+        value: YamlValue = _make_null()
+        if _has_deeper_next_line(lines, pos, indent):
+            value = _parse_block(lines, pos, lines[pos[0]].indent, ctx)
+        elif same_indent_seq and _same_indent_sequence_follows(lines, pos, indent):
+            value = _parse_sequence(lines, pos, indent, ctx)
+        value = _apply_tag(props.tag, value, False, "")
+        _register_anchor(ctx, props.anchor, value)
+        return value
+    text: str = raw_value
+    if _is_plain_text(props.rest):
+        text = _fold_plain_continuation(lines, pos, indent, raw_value)
+    return _parse_scalar_or_flow(text, ctx)
+
+# `key:` ardından AYNI girintide `- x` dizisi (YAML'ın yaygın biçimi).
+def _same_indent_sequence_follows(lines: list[_Line], pos: list[int], indent: int) -> bool:
+    if pos[0] >= len(lines):
+        return False
+    nxt: _Line = lines[pos[0]]
+    return nxt.indent == indent and _is_sequence_line(nxt.content)
+
+def _parse_sequence(lines: list[_Line], pos: list[int], indent: int, ctx: _Ctx) -> YamlValue:
     items: list[YamlValue] = []
     scanning: bool = True
     while scanning:
@@ -396,72 +1056,81 @@ def _parse_sequence(lines: list[_Line], pos: list[int], indent: int) -> YamlValu
             scanning = False
         elif lines[pos[0]].indent != indent:
             scanning = False
+        elif not _is_sequence_line(lines[pos[0]].content):
+            scanning = False
         else:
             line: _Line = lines[pos[0]]
             after_dash: str = nox.strings.trim_start(_substr(line.content, 1, len(line.content)))
+            item_indent: int = indent + (len(line.content) - len(after_dash))
+            props: _Props = _take_props(after_dash)
             if after_dash == "":
                 pos[0] = pos[0] + 1
-                if _has_deeper_next_line(lines, pos, indent):
-                    items.append(_parse_block(lines, pos, lines[pos[0]].indent))
-                else:
-                    items.append(_make_null())
-            elif _is_mapping_line(after_dash):
-                item_indent: int = indent + (len(line.content) - len(after_dash))
-                lines[pos[0]] = _Line(item_indent, after_dash)
-                items.append(_parse_mapping(lines, pos, item_indent))
+                items.append(_parse_block_value(lines, pos, indent, "", ctx, False))
+            elif _is_sequence_line(props.rest) and props.rest != "":
+                # iç içe dizi: `- - a`
+                lines[pos[0]] = _Line(item_indent + (len(after_dash) - len(props.rest)), props.rest)
+                nested: YamlValue = _parse_sequence(lines, pos, lines[pos[0]].indent, ctx)
+                nested = _apply_tag(props.tag, nested, False, "")
+                _register_anchor(ctx, props.anchor, nested)
+                items.append(nested)
+            elif _is_mapping_line(props.rest) and not nox.strings.starts_with(props.rest, "*"):
+                map_indent: int = item_indent + (len(after_dash) - len(props.rest))
+                lines[pos[0]] = _Line(map_indent, props.rest)
+                m: YamlValue = _parse_mapping(lines, pos, map_indent, ctx)
+                m = _apply_tag(props.tag, m, False, "")
+                _register_anchor(ctx, props.anchor, m)
+                items.append(m)
             else:
-                items.append(_parse_scalar_or_flow(after_dash))
                 pos[0] = pos[0] + 1
+                items.append(_parse_block_value(lines, pos, indent, after_dash, ctx, False))
     return _make_sequence(items)
 
-def parse(text: str) -> YamlValue:
-    lines: list[_Line] = _tokenize(text)
+def _parse_doc(lines: list[_Line]) -> YamlValue:
     if len(lines) == 0:
         return _make_null()
+    ctx: _Ctx = _Ctx()
     pos: list[int] = [0]
     first: _Line = lines[0]
-    value: YamlValue = _make_null()
-    is_single_bare_scalar: bool = False
-    if len(lines) == 1:
-        if not _is_mapping_line(first.content):
-            if not _is_sequence_line(first.content):
-                is_single_bare_scalar = True
-    if is_single_bare_scalar:
-        value = _parse_scalar_or_flow(first.content)
-        pos[0] = 1
-    else:
-        value = _parse_block(lines, pos, first.indent)
+    value: YamlValue = _parse_block(lines, pos, first.indent, ctx)
     if pos[0] != len(lines):
         raise YamlError("unexpected or badly indented line: " + lines[pos[0]].content)
     return value
 
-# "a.b.c" gibi noktali bir yolu, SADECE ESLEME anahtarlari ÜZERİNDEN
-# (nox.toml'un get()'i İLE AYNI ilke — dizi-indeksleme BU yardimcinin
-# KAPSAMI DIŞINDA, `.arr[i]` DOĞRUDAN kullanilmalidir) çözer.
+# Tek belge. Birden fazla belge varsa `YamlError` (hepsi için `parse_all`).
+def parse(text: str) -> YamlValue:
+    docs: list[list[_Line]] = _tokenize_docs(text)
+    if len(docs) == 0:
+        return _make_null()
+    if len(docs) > 1:
+        raise YamlError("multiple YAML documents: use parse_all")
+    return _parse_doc(docs[0])
+
+# `---` ile ayrılmış tüm belgeler.
+def parse_all(text: str) -> list[YamlValue]:
+    docs: list[list[_Line]] = _tokenize_docs(text)
+    out: list[YamlValue] = []
+    for d in docs:
+        out.append(_parse_doc(d))
+    return out
+
+# "a.b.c" gibi noktalı yol; eşleme anahtarları ve dizi indeksleri (`servers.0.name`) üzerinden yürür.
 def get(root: YamlValue, dotted_path: str) -> YamlValue:
     parts: list[str] = nox.strings.split(dotted_path, ".")
     current: YamlValue = root
     i: int = 0
     while i < len(parts):
         key: str = parts[i]
-        if current.kind != 6 or not current.mapping.contains(key):
+        if current.kind == 6 and current.mapping.contains(key):
+            current = current.mapping[key]
+        elif current.kind == 5 and _is_all_digits(key) and int(key) < len(current.arr):
+            current = current.arr[int(key)]
+        else:
             raise YamlError("path not found: " + dotted_path)
-        current = current.mapping[key]
         i = i + 1
     return current
 
-# v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
-# ilgili bölüm, stdlib/API denetimi) — `dump`: `parse`nin TERS yönü,
-# ÖNCEDEN HİÇ YOKTU. BLOK-stili çıktı üretir (`parse`nin desteklediği AYNI
-# alt-küme — akış-stili DEĞİL, en OKUNAKLI/standart YAML biçimi). String
-# skalerler HER ZAMAN çift-tırnaklı yazılır (`nox.json`nin AYNI
-# "belirsizlikten KAÇIN" ilkesi — plain/tırnaksız bir skalerin `true`/
-# `123`/`null` İLE YANLIŞLIKLA karışması RİSKİNİ TAMAMEN ortadan kaldırır,
-# `_parse_plain_scalar`nin TAM DA çözdüğü belirsizliğe YENİDEN
-# DÜŞMEMEK İçİn). `Set.union` GİBİ metotlarda BULUNAN AYNI derleyici
-# sınırlaması (bkz. `toml.nox`nin `_toml_dump_table`ının notu) BURADA da
-# GEÇERLİ — TÜM özyinelemeli yardımcılar `list[str]` DÖNER, bir `out`
-# parametresini MUTASYONA UĞRATMAZ.
+# ---- yazma ----
+
 def _yaml_dump_escape(s: str) -> str:
     out: str = "\""
     i: int = 0
@@ -493,13 +1162,33 @@ def _yaml_dump_scalar(v: YamlValue) -> str:
     if is_int(v):
         return str(v.i)
     if is_float(v):
-        return str(v.f)
+        s: str = str(v.f)
+        if s == "inf":
+            return ".inf"
+        if s == "-inf":
+            return "-.inf"
+        if s == "nan":
+            return ".nan"
+        return s
     if is_string(v):
         return _yaml_dump_escape(v.s)
     raise YamlError("a sequence/mapping cannot be dumped in a scalar context")
 
 def _yaml_indent(level: int) -> str:
     return nox.strings.repeat("  ", level)
+
+# Anahtar: yalnızca güvenli düz karakterlerse olduğu gibi, değilse çift tırnaklı.
+def _yaml_dump_key(k: str) -> str:
+    if k == "":
+        return "\"\""
+    for c in k:
+        b: int = nox.strings.byte_at(c, 0)
+        ok: bool = (b >= 97 and b <= 122) or (b >= 65 and b <= 90) or (b >= 48 and b <= 57) or b == 95 or b == 45 or b == 46 or b >= 128
+        if not ok:
+            return _yaml_dump_escape(k)
+    if _parse_plain_scalar(k).kind != 0:
+        return _yaml_dump_escape(k)
+    return k
 
 def _yaml_dump_mapping(v: YamlValue, level: int) -> list[str]:
     lines: list[str] = []
@@ -508,8 +1197,8 @@ def _yaml_dump_mapping(v: YamlValue, level: int) -> list[str]:
     i: int = 0
     n: int = len(keys)
     while i < n:
-        k: str = keys[i]
-        val: YamlValue = v.mapping[k]
+        k: str = _yaml_dump_key(keys[i])
+        val: YamlValue = v.mapping[keys[i]]
         if is_mapping(val):
             child: list[str] = _yaml_dump_mapping(val, level + 1)
             if len(child) == 0:
@@ -535,10 +1224,6 @@ def _yaml_dump_mapping(v: YamlValue, level: int) -> list[str]:
         i = i + 1
     return lines
 
-# Bir dizi elemanının KENDİSİ bir eşleme/dizi İSE, YAML'ın KENDİ kuralı
-# ("- " işaretinin İLK satıra, ONUN KENDİ girintisinin YERİNE geçmesi,
-# SONRAKİ satırların "- " İLE AYNI GENİŞLİKTE [2 karakter] EK girinti
-# alması) burada elle uygulanır.
 def _yaml_dump_sequence(v: YamlValue, level: int) -> list[str]:
     lines: list[str] = []
     base: str = _yaml_indent(level)
@@ -547,10 +1232,6 @@ def _yaml_dump_sequence(v: YamlValue, level: int) -> list[str]:
     while i < n:
         item: YamlValue = v.arr[i]
         if is_mapping(item):
-            # `level + 1` DEĞİL `level`: "- " ÖNEKİNİN KENDİSİ (aşağıdaki
-            # `"  " + child[j]`) zaten BİR seviyelik görsel kaymayı
-            # SAĞLIYOR — `level + 1` geçmek bunu İKİ KEZ uygulayıp yanlış
-            # (fazla) girinti ÜRETİRDİ (GERÇEKTEN denenip DÜZELTİLDİ).
             child: list[str] = _yaml_dump_mapping(item, level)
             if len(child) == 0:
                 lines.append(base + "- {}")
@@ -577,10 +1258,7 @@ def _yaml_dump_sequence(v: YamlValue, level: int) -> list[str]:
         i = i + 1
     return lines
 
-# `v` (KÖK bir mapping YA DA sequence — `parse`nin döndürebileceği İKİ
-# olası kök şekli) YAML metnine çevrilir. `nox.yaml.parse(nox.yaml.
-# dump(v))` bir round-trip'te DEĞERCE eşit bir ağaç ÜRETİR (anahtar SIRASI/
-# biçimlendirme aynen KORUNMAZ İDDİASI YOK — SADECE anlamsal eşitlik).
+# Kök bir eşleme ya da dizi (ya da skaler) YAML metnine çevrilir; `parse(dump(v))` değerce eşittir.
 def dump(v: YamlValue) -> str:
     if is_mapping(v):
         lines: list[str] = _yaml_dump_mapping(v, 0)
@@ -592,4 +1270,11 @@ def dump(v: YamlValue) -> str:
         if len(lines2) == 0:
             return "[]\n"
         return nox.strings.join(lines2, "\n") + "\n"
-    raise YamlError("dump only accepts a root mapping/sequence value")
+    return _yaml_dump_scalar(v) + "\n"
+
+# Birden çok belgeyi `---` ile ayırarak yazar.
+def dump_all(docs: list[YamlValue]) -> str:
+    out: str = ""
+    for d in docs:
+        out = out + "---\n" + dump(d)
+    return out

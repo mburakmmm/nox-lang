@@ -1011,7 +1011,7 @@ pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenErr
     const end_label = try self.newLabel("while_end");
     const back_label = if (planned_n == 0) cond_label else try self.newLabel("while_back");
 
-    const str_len_scope = try self.enterStrLenCacheScope(w.body);
+    const str_len_scope = try self.enterStrLenCacheScope(w.body, null);
     const mc_scope = try self.enterModCacheLoopScope(w.body);
     try self.qbeJmp(cond_label);
     try self.qbeLabel(cond_label);
@@ -1126,7 +1126,7 @@ pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenEr
     // `continue` artırma adımına gider (v1.144.0).
     const step_label = try self.newLabel("for_step");
 
-    const str_len_scope = try self.enterStrLenCacheScope(f.body);
+    const str_len_scope = try self.enterStrLenCacheScope(f.body, f.var_name);
     // `f.var_name`in artışı (aşağıda) BİR `.assign` AST düğümünü
     // BAYPAS EDER (DOĞRUDAN QBE yayını) — `collectReassignedNames`
     // (AŞAĞIDAKİ `enterModCacheLoopScope`) bunu YAKALAYAMAZ, bu YÜZDEN
@@ -1211,7 +1211,7 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     const end_label = try self.newLabel("forlist_end");
     const step_label = try self.newLabel("forlist_step");
 
-    const str_len_scope = try self.enterStrLenCacheScope(f.body);
+    const str_len_scope = try self.enterStrLenCacheScope(f.body, f.var_name);
     // `loop_var`e HER yinelemede öğenin DEĞERİ yazılır (aşağıda) —
     // bu da BİR `.assign` AST düğümünü BAYPAS EDER, bu YÜZDEN AYRICA
     // geçersiz kılınır (bkz. `genForRange`nin AYNI notu — SIRA AYNI

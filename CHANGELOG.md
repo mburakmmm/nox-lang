@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.59]
+
+### Eklendi
+
+- `nox.yaml` YAML 1.2: blok skalerler (`|`, `>`, `-`/`+`), capalar/takma adlar/birlestirme (`<<`), etiketler, sondaki yorumlar, cok satirli duz ve tirnakli skalerler, cok satirli akis koleksiyonlari, cok belgeli akislar (`parse_all`, `dump_all`), `get` ile dizi indeksi, `.inf`/`.nan`/`0x`/`0o`. 52 belgelik PyYAML korpusuyla dogrulandi.
+
+### Duzeltildi
+
+- `for ln in liste: ... ln[0]`: dongu degiskeni string indekslemesi dongu-degismez sanilip dongunun ONUNE tasiniyordu (calisma zamani cokmesi / QBE "tanimsiz temp").
+
 ## [2.0.58]
 
 ### Eklendi
