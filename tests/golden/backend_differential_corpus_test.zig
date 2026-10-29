@@ -64,6 +64,9 @@ const DENYLISTED_SOURCES = [_][]const u8{
     @embedFile("codegen_cases/async_deadlock.nox"),
     @embedFile("codegen_cases/thread_spawn_ordering.nox"),
     @embedFile("codegen_cases/task_reassignment_frees_old.nox"),
+    // `task_local_basic`: iki işçi `go` sinyalinden sonra BAĞIMSIZ yazdırır; M:1 (QBE) sırayı sabit tutar, M:N (LLVM) iş-çalan havuz iki işçiyi aynı anda
+    // yürütebilir, yazdırma sırası zamanlayıcıya bağlıdır (testin amacı per-fiber izolasyon, çıktı sırası değil).
+    @embedFile("codegen_cases/task_local_basic.nox"),
 };
 
 fn isDenylistedSource(source: []const u8) bool {
