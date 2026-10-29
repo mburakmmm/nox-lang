@@ -715,7 +715,7 @@ const Printer = struct {
         switch (t) {
             .simple => |s| try self.writer.writeAll(s),
             .generic => |g| {
-                try self.writer.print("{s}[", .{if (std.mem.eql(u8, g.name, "__nox_Set")) "set" else g.name});
+                try self.writer.print("{s}[", .{if (std.mem.eql(u8, g.name, "__nox_Set")) "set" else if (std.mem.eql(u8, g.name, "__nox_Gen")) "Iterator" else g.name});
                 for (g.args, 0..) |a, idx| {
                     if (idx > 0) try self.writer.writeAll(", ");
                     try self.printType(a);

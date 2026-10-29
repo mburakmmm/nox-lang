@@ -91,7 +91,7 @@ print(i)
 ## `for`
 
 `for target in iterable:` iterates a `range(...)`, any `list[T]` expression, a `str` (one `str` per character), a `dict` (its keys in
-insertion order), or a `set[T]`, and any object whose class defines `__iter__` returning a list. A tuple target unpacks pairs:
+insertion order), or a `set[T]`, and any object whose class defines `__iter__` returning a list, or `__next__() -> T | None` (pulled lazily: `None` ends the loop; generators are such objects). A tuple target unpacks pairs:
 
 ```nox
 for i in range(2, 10, 3):          # 2 5 8   (a negative step counts down)

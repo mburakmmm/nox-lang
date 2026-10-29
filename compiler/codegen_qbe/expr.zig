@@ -109,6 +109,18 @@ pub fn genExprForTarget(self: *Codegen, expr: ast.Expr, target: anytype) Codegen
             .dict_info = target.dict_info,
         };
     }
+    // `[None]` (Optional-elemanlı liste hücresi, bkz. `generator_desugar.zig`): `None` elemanı hedefin eleman tipiyle üretilir.
+    if (expr == .list_lit and expr.list_lit.len > 0 and target.heap == .list and target.elem_heap_info != null) {
+        var all_none = true;
+        for (expr.list_lit) |el| if (el != .none_lit) {
+            all_none = false;
+        };
+        if (all_none) {
+            const ei = target.elem_heap_info.?;
+            const elem_target: TypeInfo = .{ .qtype = .l, .heap = ei.heap, .elem_qtype = ei.elem_qtype, .class_name = ei.class_name, .elem_heap_info = ei.nested, .elem_is_str = ei.elem_is_str, .dict_info = ei.dict_info, .func_sig = ei.func_sig };
+            return genListLitHint(self, expr.list_lit, elem_target);
+        }
+    }
     // İç içe boş literal (`[[], [1]]`, `{"a": []}`): hedefin eleman/değer tipi iç literallere hedef olarak iletilir.
     if (expr == .list_lit and target.heap == .list and target.elem_heap_info != null and literalHasEmpty(expr)) {
         const ei = target.elem_heap_info.?;

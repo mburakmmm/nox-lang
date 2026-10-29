@@ -80,6 +80,10 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
         if (stmt.kind == .assign and stmt.kind.assign.target == .attribute) {
             if (map.stmt_fors.get(@intFromPtr(stmt.kind.assign.target.attribute.obj))) |rw| stmt.kind = rw;
         }
+        // TODO 8.6: tembel `for x in g:` → `if True:` bloğu (anahtar: döngü gövdesinin ilk deyim işaretçisi).
+        if (stmt.kind == .for_stmt and stmt.kind.for_stmt.body.len > 0) {
+            if (map.stmt_fors.get(@intFromPtr(stmt.kind.for_stmt.body.ptr))) |rw| stmt.kind = rw;
+        }
         switch (stmt.kind) {
             .expr_stmt => |*e| expr(e, map),
             .var_decl => |*v| {

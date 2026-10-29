@@ -1,0 +1,28 @@
+def noisy(n: int) -> Iterator[int]:
+    print("start")
+    for i in range(n):
+        print("make", i)
+        yield i
+        print("resumed after", i)
+    print("end")
+
+def pipeline(src: Iterator[int]) -> Iterator[int]:
+    for v in src:
+        print("map", v)
+        yield v * 10
+
+g: Iterator[int] = noisy(3)
+print("created")
+for x in g:
+    print("use", x)
+    if x == 1:
+        break
+print("after break")
+for y in g:
+    print("second loop", y)
+print("exhausted:", list(g))
+for z in pipeline(noisy(2)):
+    print("final", z)
+h: Iterator[int] = noisy(0)
+print(list(h), list(h))
+print(sum(pipeline(noisy(2))))

@@ -161,35 +161,69 @@ print(add5(1))
 
 ### Generators (`yield`)
 
-A function whose body contains `yield` (or `yield from`) and whose return type is `Iterator[T]` (`Generator[T]` and `Iterable[T]` are
-accepted too) produces a sequence of values:
+A function whose body contains `yield` (or `yield from`) and whose return type is `Iterator[T]` (`Generator[T]` is the same type) is a
+**generator**: calling it runs nothing yet, and each value is produced only when the consumer asks for it.
 
 ```nox
 def squares(n: int) -> Iterator[int]:
     for i in range(n):
+        print("making", i)
         yield i * i
 
-def numbered(names: list[str]) -> Iterator[str]:
-    k: int = 1
-    for name in names:
-        yield str(k) + ". " + name
-        k += 1
+def naturals() -> Iterator[int]:
+    n: int = 0
+    while True:
+        n += 1
+        yield n
 
-for line in numbered(["ada", "grace"]):
-    print(line)
-print(squares(5), sum(squares(4)))
+for v in squares(3):
+    print("using", v)
+    if v >= 1:
+        break
+
+total: int = 0
+for k in naturals():
+    total += k
+    if total > 20:
+        break
+print(total, list(squares(3)), sum(squares(4)))
+
+g: Iterator[int] = squares(2)
+print(next(g), next(g), next(g, -1))
 ```
 
 ```output
-1. ada
-2. grace
-[0, 1, 4, 9, 16] 14
+making 0
+using 0
+making 1
+using 1
+making 0
+making 1
+making 2
+making 0
+making 1
+making 2
+making 3
+21 [0, 1, 4] 14
+making 0
+making 1
+0 1 -1
 ```
 
-**Generators are eager.** `Iterator[T]` is simply `list[T]`: the whole body runs when the function is called and every yielded value is
-collected into the returned list (`noxc fmt` writes the type as `list[T]`). This is right for any finite sequence, but an infinite
-generator never returns and a consumer that stops early does not stop the producer. A bare `return` ends the generator, a `return value`
-is an error, and `x = yield` / `send()` are not supported.
+The producer and the loop alternate (`making 0`, `using 0`, `making 1`, …), `break` stops the producer for good, and an infinite generator
+such as `naturals` is fine as long as the consumer stops. (`list(squares(3))` and `sum(squares(4))` run their generators to the end while the
+arguments of `print` are evaluated, before the line is printed.)
+
+- `for x in g` pulls values one at a time. `list(g)`, `sum(g)`, `sorted(g)`, `max(g)`, `enumerate(g)`, … drain what is left of the generator.
+- `next(g)` returns the next value and raises `StopIteration` when the generator is exhausted; `next(g, default)` returns `default` instead.
+- `yield from xs` yields every element of a list, a `range(...)` or another generator, lazily.
+- A bare `return` ends the generator. An exception raised inside it propagates to the consumer and ends it (later pulls produce nothing).
+- A generator that is not run to the end simply stops being referenced; its state is released with it.
+
+A generator is compiled to a resumable state machine, so a few things are not allowed: `yield` inside `try`, `with` or `lowlevel` (put the
+`try` around code that does not yield), `yield` in an `async def`, a generic generator function (`def f[T](...)`), a local variable of
+function type that lives across a `yield`, `return value`, and `x = yield` / `send()`. `Iterable[T]` stays a plain `list[T]` (use it for
+parameters that take a finished sequence).
 
 ### `nonlocal`
 

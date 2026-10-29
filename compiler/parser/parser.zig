@@ -451,8 +451,10 @@ pub const Parser = struct {
             _ = try self.expect(.r_bracket);
             // v1.168.0: `set[T]` → prelude'daki generic `__nox_Set[T]` sınıfı (yüzey adı `set`; formatter geri çevirir).
             var gname: []const u8 = if (std.mem.eql(u8, name, "set") and args.items.len == 1) "__nox_Set" else name;
-            // `Iterator[T]` / `Generator[T]` / `Iterable[T]` (jeneratör imzaları): eager jeneratörler `list[T]` döndürdüğü için yüzey adı `list`e iner.
-            if (args.items.len == 1 and (std.mem.eql(u8, name, "Iterator") or std.mem.eql(u8, name, "Generator") or std.mem.eql(u8, name, "Iterable"))) gname = "list";
+            // `Iterable[T]` (yalnızca PARAMETRE/liste anlamında): yüzey adı `list`e iner.
+            if (args.items.len == 1 and std.mem.eql(u8, name, "Iterable")) gname = "list";
+            // `Iterator[T]` / `Generator[T]`: tembel jeneratör tipi (prelude'daki generic `__nox_Gen[T]`; formatter geri çevirir).
+            if (args.items.len == 1 and (std.mem.eql(u8, name, "Iterator") or std.mem.eql(u8, name, "Generator"))) gname = "__nox_Gen";
             return .{ .generic = .{ .name = gname, .args = try args.toOwnedSlice(self.allocator) } };
         }
         // Faz NN.2: `pkg.module.ClassName` — nitelikli tip adı (bkz.

@@ -159,6 +159,10 @@ class ZeroDivisionError(Exception):
 class KeyError(Exception):
     pass
 
+# `next(g)` tükenmiş bir jeneratörde fırlatır.
+class StopIteration(Exception):
+    pass
+
 # Faz 18 (bkz. plan dosyası "HPy köprüsünü Nox'un istisna mekanizmasına
 # entegre etme"): `hpy_call`/`hpy_open`/`hpy_call_on`/vb.nin (bkz.
 # runtime/foreign_bridge.zig'in `setHpyError`/`nox_hpy_take_error`si)
@@ -248,6 +252,71 @@ def round(x: float) -> int:
     return int(nox_float_round_digits_raw(x, 0))
 
 # `round(x, nd)` çağrısı checker tarafından bu fonksiyona yönlendirilir (`float` döner, Python gibi).
+# ---- TODO 8.6: tembel jeneratörler ----
+# `Iterator[T]` / `Generator[T]` tipi `__nox_Gen[T]`dir. Üç kaynaktan biriyle kurulur: bir ADIM kapanışı (yield içeren fonksiyon, bkz.
+# `generator_desugar.zig`), bir liste (`__nox_gen_from_list`) ya da başka bir Gen. `__next__` bir sonraki değeri ya da bitince None döner;
+# `for x in g` bu protokolle TEMBEL yinelenir, `list(g)`/`sum(g)`/... ise `__iter__` ile kalanı bir listeye boşaltır.
+class __nox_Gen[T]:
+    def __init__(self, steps: list[() -> T | None], items: list[T], pos: int) -> None:
+        self.steps: list[() -> T | None] = steps
+        self.items: list[T] = items
+        self.pos: int = pos
+
+    def __next__(self) -> T | None:
+        if len(self.steps) > 0:
+            f: () -> T | None = self.steps[0]
+            return f()
+        if self.pos >= len(self.items):
+            return None
+        v: T = self.items[self.pos]
+        self.pos = self.pos + 1
+        return v
+
+    def __self__(self) -> __nox_Gen[T]:
+        return self
+
+    # `next(g)` / `next(g, varsayılan)` (checker bu yöntemlere yönlendirir)
+    def __nox_next_raise__(self) -> T:
+        v: T | None = self.__next__()
+        if v is None:
+            raise StopIteration("generator is exhausted")
+        return v
+
+    def __nox_next_or__(self, d: T) -> T:
+        v: T | None = self.__next__()
+        if v is None:
+            return d
+        return v
+
+    def __iter__(self) -> list[T]:
+        out: list[T] = []
+        while True:
+            v: T | None = self.__next__()
+            if v is None:
+                break
+            out.append(v)
+        return out
+
+def __nox_gen_from_step[T](step: () -> T | None) -> __nox_Gen[T]:
+    steps: list[() -> T | None] = [step]
+    items: list[T] = []
+    return __nox_Gen[T](steps, items, 0)
+
+def __nox_gen_from_list[T](xs: list[T]) -> __nox_Gen[T]:
+    steps: list[() -> T | None] = []
+    return __nox_Gen[T](steps, xs, 0)
+
+# Jeneratör yereli `int | None` gibi OPTIONAL SKALER ise (liste elemanı olamaz) hücre bu yuvanın tek elemanıdır.
+class __nox_Slot[T]:
+    def __init__(self, v: T | None) -> None:
+        self.v: T | None = v
+
+# Jeneratör gövdesinde "atanmadan okundu" (derleyici hatası dışında olmaması gereken) durumu.
+def __nox_unwrap[T](o: T | None) -> T:
+    if o is None:
+        raise ValueError("generator variable used before assignment")
+    return o
+
 # `f(**d)` (checker `**kwargs` parametresine bağlar): `d`nin anahtarlarından biri çağrıda adıyla bağlanan bir parametrenin adıysa
 # (`reserved`) Python'daki "multiple values for argument" hatası ValueError olarak fırlatılır; aksi halde `d`nin kopyası döner.
 def __nox_kw_unpack[V](d: dict[str, V], reserved: list[str]) -> dict[str, V]:

@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.65]
+
+### Degisti
+
+- `yield` jeneratorleri artik TEMBELDIR (v2.0.60'taki eager davranis kaldirildi): `Iterator[T]`/`Generator[T]` liste degil, `__nox_Gen[T]` tipidir. Govde yeniden-girisli bir durum makinesine cevrilir; deger yalnizca tuketici istediginde uretilir. Sonsuz jeneratorler ve erken `break` calisir. `len(g)`/`g[i]` artik yok; `list(g)` ile listeye cevirin.
+
+### Eklendi
+
+- `for` dongusu `__next__() -> T | None` protokolunu tembel yineler (kullanici siniflari dahil); `next(g)`, `next(g, varsayilan)`, `StopIteration`.
+
+### Duzeltildi
+
+- Daraltilmis `int | None` (kutulu skaler) yerelini `return v` ile skaler olarak dondurmek her cagrida bir kutu sizdiriyordu.
+- `await` bir liste uretecinin icinde kriptik bir codegen hatasi veriyordu; artik net bir tip hatasi.
+
 ## [2.0.64]
 
 ### Eklendi

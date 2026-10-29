@@ -390,6 +390,7 @@ pub const Codegen = struct {
     pub const emitListElemPlainDecrementLoop = ownership.emitListElemPlainDecrementLoop;
     pub const retainIfAliasing = ownership.retainIfAliasing;
     pub const returnNeedsRetain = ownership.returnNeedsRetain;
+    pub const returnsUnboxedScalar = ownership.returnsUnboxedScalar;
 
     pub const genRaise = exceptions.genRaise;
     pub const drainFinally = exceptions.drainFinally;

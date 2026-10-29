@@ -1558,6 +1558,41 @@ test "golden(typecheck): bilinmeyen mixin tabanı reddedilir" {
     );
 }
 
+test "golden(typecheck): err_yield_inside_try" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_yield_inside_try.nox"),
+        @embedFile("typecheck_cases/err_yield_inside_try.expected"),
+    );
+}
+
+test "golden(typecheck): err_generator_function_local" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_generator_function_local.nox"),
+        @embedFile("typecheck_cases/err_generator_function_local.expected"),
+    );
+}
+
+test "golden(typecheck): err_generator_optional_yield" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_generator_optional_yield.nox"),
+        @embedFile("typecheck_cases/err_generator_optional_yield.expected"),
+    );
+}
+
+test "golden(typecheck): err_generator_async" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_generator_async.nox"),
+        @embedFile("typecheck_cases/err_generator_async.expected"),
+    );
+}
+
+test "golden(typecheck): err_await_in_comprehension" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_await_in_comprehension.nox"),
+        @embedFile("typecheck_cases/err_await_in_comprehension.expected"),
+    );
+}
+
 test "golden(typecheck): jeneratör değer döndüremez" {
     try expectGolden(
         @embedFile("typecheck_cases/err_generator_return_value.nox"),

@@ -1,0 +1,152 @@
+class Node:
+    def __init__(self, val: int, kids: list[Node]) -> None:
+        self.val: int = val
+        self.kids: list[Node] = kids
+
+class Bag:
+    def __init__(self, xs: list[int]) -> None:
+        self.xs: list[int] = xs
+
+    def evens(self) -> Iterator[int]:
+        for x in self.xs:
+            if x % 2 == 0:
+                yield x
+
+    def pairs(self) -> Iterator[int]:
+        i: int = 0
+        while i < len(self.xs) - 1:
+            yield self.xs[i] * 100 + self.xs[i + 1]
+            i += 1
+
+def countdown(n: int) -> Iterator[int]:
+    while n > 0:
+        yield n
+        n -= 1
+
+def grid(rows: int, cols: int) -> Iterator[int]:
+    for r in range(rows):
+        for c in range(cols):
+            yield r * 10 + c
+
+def classify(n: int) -> Iterator[str]:
+    for i in range(n):
+        if i % 3 == 0:
+            yield "fizz"
+        elif i % 3 == 1:
+            yield "one"
+            yield "uno"
+        else:
+            pass
+        yield str(i)
+
+def skippy(n: int) -> Iterator[int]:
+    for i in range(n):
+        if i == 2:
+            continue
+        if i == 6:
+            break
+        yield i
+    yield -1
+
+def chain(a: list[int], b: Iterator[int]) -> Iterator[int]:
+    yield from a
+    yield from b
+    yield from range(100, 103)
+    yield 999
+
+def naturals() -> Iterator[int]:
+    n: int = 0
+    while True:
+        n += 1
+        yield n
+
+def take_while_small(limit: int) -> Iterator[int]:
+    for x in naturals():
+        if x > limit:
+            return
+        yield x
+
+def accumulate(xs: list[int]) -> Iterator[int]:
+    total: int = 0
+    for x in xs:
+        total += x
+        yield total
+
+def walk(n: Node) -> Iterator[int]:
+    yield n.val
+    for k in n.kids:
+        yield from walk(k)
+
+def words(text: str) -> Iterator[str]:
+    cur: str = ""
+    for ch in text:
+        if ch == " ":
+            if len(cur) > 0:
+                yield cur
+                cur = ""
+        else:
+            cur = cur + ch
+    if len(cur) > 0:
+        yield cur
+
+def items(d: dict[str, int]) -> Iterator[str]:
+    for k, v in d.items():
+        yield k + "=" + str(v)
+
+def flat(rows: list[list[int]]) -> Iterator[int]:
+    for row in rows:
+        for x in row:
+            yield x
+
+def empty(flag: bool) -> Iterator[int]:
+    if flag:
+        yield 1
+
+def interleave(n: int) -> Iterator[int]:
+    i: int = 0
+    while i < n:
+        j: int = 0
+        while True:
+            if j >= 2:
+                break
+            yield i * 10 + j
+            j += 1
+        i += 1
+
+def retry(limit: int) -> Iterator[int]:
+    attempts: int = 0
+    while attempts < limit:
+        attempts += 1
+        if attempts == 2:
+            yield -attempts
+            continue
+        yield attempts
+
+t: Node = Node(1, [Node(2, [Node(3, [])]), Node(4, [])])
+b: Bag = Bag([1, 2, 3, 4, 5, 6])
+print(list(countdown(4)))
+print(list(grid(2, 3)))
+print(list(classify(5)))
+print(list(skippy(9)))
+print(list(chain([1, 2], countdown(2))))
+print(list(take_while_small(4)))
+print(list(accumulate([3, 1, 4, 1, 5])))
+print(list(walk(t)))
+print(list(words("the quick  brown fox ")))
+print(list(items({"a": 1, "b": 2})))
+print(list(flat([[1, 2], [], [3]])))
+print(list(empty(True)), list(empty(False)))
+print(list(b.evens()), list(b.pairs()))
+print(list(interleave(2)))
+print(list(retry(4)))
+print(sum(countdown(5)), sorted(countdown(3)), max(grid(2, 2)))
+total: int = 0
+for x in naturals():
+    total += x
+    if total > 20:
+        break
+print(total)
+g: Iterator[int] = countdown(3)
+for a in g:
+    print("a", a)
+print(list(g))

@@ -981,6 +981,13 @@ pub fn retainIfAliasing(self: *Codegen, value: ast.Expr, v0: Value) CodegenError
 ///     serbest bırakılması) doğru dengeye ulaşır; bu ikisi birlikte
 ///     "passthrough" fonksiyonları (ör. `def identity(p): return p`)
 ///     bile güvenli kılar.
+/// `return v` ile `v` (kutulu `T | None` yerel, daraltılmış) skaler `T` olarak döndürülüyorsa değer ZATEN kutudan okunmuştur: kutunun sahipliği
+/// çağırana GEÇMEZ, yerel olarak serbest bırakılmalıdır (aksi halde her çağrıda bir kutu sızardı).
+pub fn returnsUnboxedScalar(self: *Codegen, name: []const u8, v0: Value) bool {
+    const info = self.vars.get(name) orelse return false;
+    return info.heap == .boxed_scalar and v0.heap != .boxed_scalar;
+}
+
 pub fn returnNeedsRetain(self: *Codegen, e: ast.Expr, v0: Value) bool {
     // `v0.always_fresh` (bkz. `retainIfAliasing`nin AYNI notu, satır 938):
     // `s[i]` (str char-at) gibi TABANDAN BAĞIMSIZ TAZE bir tahsis üreten

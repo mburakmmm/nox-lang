@@ -222,7 +222,7 @@ both backends need no special support.
 | `str(a)`, `print(a)`, `f"{a}"` | `__str__` |
 | `repr(a)`, and the elements of printed containers | `__repr__` (else `__str__`, else the structural form) |
 | `bool(a)` | `__bool__`, else `__len__() != 0`, else `True` |
-| `for x in a` | `__iter__` returning a `list[T]` |
+| `for x in a` | `__next__() -> T \| None` (lazy: one value per pull, `None` ends it) or `__iter__` returning a `list[T]` |
 
 Comparison methods must return `bool`, `__len__` an `int`, `__str__`/`__repr__` a `str`. `x += y` on a class value uses `__add__`; there
 is no separate in-place protocol. Comparing against `None` is never overloaded. Operand evaluation order can differ from Python only for

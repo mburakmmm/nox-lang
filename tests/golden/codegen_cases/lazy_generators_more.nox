@@ -1,0 +1,141 @@
+class Counter:
+    def __init__(self) -> None:
+        self.n: int = 0
+
+    def ticks(self, k: int) -> Iterator[int]:
+        for i in range(k):
+            self.n += 1
+            yield self.n * 10 + i
+
+def bump(n: int) -> Iterator[int]:
+    n = n + 1
+    yield n
+    n = n * 2
+    yield n
+
+def twice() -> Iterator[str]:
+    for i in range(2):
+        yield "a" + str(i)
+    for i in range(3):
+        yield "b" + str(i)
+
+def in_body(n: int) -> Iterator[int]:
+    for i in range(n):
+        sq: int = i * i
+        label: str = "L" + str(i)
+        yield sq
+        yield len(label) + sq
+
+def building() -> Iterator[list[int]]:
+    acc: list[int] = []
+    for i in range(3):
+        acc.append(i)
+        yield acc.copy()
+
+def maybe(n: int) -> Iterator[int]:
+    found: int | None = None
+    for i in range(n):
+        if i == 2:
+            found = i * 7
+        yield i
+    if found is not None:
+        yield found
+
+def floats() -> Iterator[float]:
+    x: float = 0.5
+    for i in range(3):
+        x = x * 2.0
+        yield x
+
+def risky(n: int) -> Iterator[int]:
+    for i in range(n):
+        if i == 2:
+            raise ValueError("boom")
+        yield i
+
+def guarded(n: int) -> Iterator[int]:
+    for i in range(n):
+        ok: int = 0
+        try:
+            if i == 1:
+                raise ValueError("skip")
+            ok = i
+        except ValueError as e:
+            ok = -1
+        yield ok
+
+def with_closure(n: int) -> Iterator[int]:
+    base: int = 100
+    for i in range(n):
+        def f(z: int) -> int:
+            return z + base + i
+        yield f(1)
+        base += 1
+
+def source() -> Iterator[int]:
+    yield 1
+    yield 2
+    yield 3
+
+def double(src: Iterator[int]) -> Iterator[int]:
+    for v in src:
+        yield v * 2
+
+def evens_of(src: Iterator[int]) -> Iterator[int]:
+    for v in src:
+        if v % 2 == 0:
+            yield v
+
+def outer(k: int) -> Iterator[int]:
+    def inner(m: int) -> Iterator[int]:
+        for j in range(m):
+            yield j + k
+    for r in range(2):
+        yield from inner(r + 1)
+
+def mixed(n: int) -> Iterator[str]:
+    i: int = 0
+    while i < n:
+        if i % 2 == 0:
+            for c in "ab":
+                yield c + str(i)
+        else:
+            j: int = 0
+            while j < 2:
+                j += 1
+                if j == 1:
+                    continue
+                yield "w" + str(i)
+        i += 1
+
+def sum_gen(it: Iterator[int]) -> int:
+    t: int = 0
+    for x in it:
+        t += x
+    return t
+
+c: Counter = Counter()
+print(list(c.ticks(3)), c.n, list(c.ticks(2)), c.n)
+print(list(bump(5)))
+print(list(twice()))
+print(list(in_body(3)))
+print(list(building()))
+print(list(maybe(4)))
+print(list(floats()))
+r: Iterator[int] = risky(5)
+got: list[int] = []
+try:
+    for x in r:
+        got.append(x)
+except ValueError as e:
+    print("caught", e.message, got)
+print(list(r))
+print(list(guarded(4)))
+print(list(with_closure(3)))
+print(list(double(source())), list(evens_of(double(source()))))
+print(list(outer(10)))
+print(list(mixed(4)))
+print(sum_gen(source()), sum_gen(double(double(source()))))
+gens: list[Iterator[int]] = [source(), double(source())]
+for q in gens:
+    print(list(q))

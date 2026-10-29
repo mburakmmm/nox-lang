@@ -1,0 +1,25 @@
+def three() -> Iterator[int]:
+    yield 1
+    yield 2
+    yield 3
+
+class Countdown:
+    def __init__(self, n: int) -> None:
+        self.n: int = n
+
+    def __next__(self) -> int | None:
+        if self.n <= 0:
+            return None
+        self.n -= 1
+        return self.n + 1
+
+g: Iterator[int] = three()
+print(next(g), next(g), next(g, -1), next(g, -1))
+try:
+    next(g)
+except StopIteration as e:
+    print("stop:", e.message)
+for k in Countdown(5):
+    print("count", k)
+    if k == 3:
+        break

@@ -67,7 +67,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                             try self.retainNonArcValue(v0.text, v0.heap);
                         }
                         const v = try self.convert(v0, ret_qtype);
-                        const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
+                        const except_name: ?[]const u8 = if (e == .identifier and !self.returnsUnboxedScalar(e.identifier, v0)) e.identifier else null;
                         try self.releaseNamedLocalsExcept(t.owned_names, except_name);
                         if (t.result_slot) |rs| {
                             try self.qbeStore(ret_qtype, v.text, rs);
@@ -109,7 +109,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                     try self.drainArenas();
                     try self.drainFunctionArena();
                     try self.drainDeferIfSet();
-                    const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
+                    const except_name: ?[]const u8 = if (e == .identifier and !self.returnsUnboxedScalar(e.identifier, v0)) e.identifier else null;
                     try self.releaseAllLocalsExcept(except_name);
                     try self.qbeRet(v.text);
                 } else {

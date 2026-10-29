@@ -28,7 +28,7 @@ Integer `//` and `%` by zero raise `ZeroDivisionError`; float division never rai
 - `*args`, `**kwargs`, keyword-only (`*`), positional-only (`/`) and call-site unpacking (`f(*xs)`, `f(**d)`) are supported (see
   [Functions](functions.md)); `f(**d)` never binds a named parameter by key. There is no star-assignment (`a, *b = xs`). Default values must be
   constant literals.
-- `yield` generators are **eager** (the function returns a `list[T]`, see [Functions](functions.md#generators-yield)); there are no lazy iterators. Generator expressions are accepted only as a call argument and are evaluated eagerly into a list.
+- `yield` generators are **lazy** state machines typed `Iterator[T]` (see [Functions](functions.md#generators-yield)); no `yield` inside `try`/`with`, no `send()`. Generator expressions are accepted only as a call argument and are evaluated eagerly into a list.
 - No `global`/`nonlocal`: module-level names are assigned directly from functions; a nested function may only **read** captured variables.
 - No raw strings (`r"…"`), no adjacent-literal concatenation, no `%` formatting, no `!r` in f-strings. `\xHH` is limited to ASCII; use `\uHHHH`/`\UHHHHHHHH` for other characters. Identifiers are compared by code point (no NFKC normalization; see [`nox.unicode`](../stdlib/unicode.md) for normalizing text).
 - No `try … else`, no `for … else`/`while … else`, no bare `raise` (use `raise e`), no `raise … from …`, no multi-item `with`.

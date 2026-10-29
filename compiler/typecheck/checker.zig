@@ -706,6 +706,9 @@ pub const Checker = struct {
     lambda_counter: u32 = 0,
     comp_depth: u32 = 0,
     extend_counter: u32 = 0,
+    /// TODO 8.6: `checkForIterable`, yinelenen ifadenin `__next__` (tembel) protokolünü uyguladığını bildirirse yinelenen tip burada tutulur;
+    /// `.for_stmt` bunu görünce döngüyü `while` + `__next__` çağrısına çevirir.
+    lazy_for_iter: ?Type = null,
     /// v1.147.0: çağrı sitesi → genişletilmiş (tam konumsal) argüman listesi. Bkz. `call_expand_apply.zig`.
     call_expansions: call_expand_apply.Map = .empty,
     /// v1.144.0: post-spawn akış analizi (`walkPostSpawnCallerMutation`) için `break`/`continue` noktalarındaki
@@ -5580,7 +5583,13 @@ pub const Checker = struct {
                 try self.checkNarrowedBlock(ctx, &wn, w.body);
             },
             .for_stmt => |f| {
+                self.lazy_for_iter = null;
                 const elem_t = try self.checkForIterable(ctx, f.iterable, @intFromPtr(f.body.ptr));
+                if (self.lazy_for_iter) |lazy_t| {
+                    self.lazy_for_iter = null;
+                    try self.checkLazyFor(ctx, f, lazy_t);
+                    return;
+                }
                 try self.declareVar(ctx, f.var_name, elem_t);
                 ctx.loop_depth += 1;
                 defer ctx.loop_depth -= 1;
@@ -5982,6 +5991,48 @@ pub const Checker = struct {
     /// `list[T]` ifadesi (eleman `T`); `str` (her karakter bir `str`); `dict[K, V]` (anahtarlar `K`, ekleme sırasıyla).
     /// Adlandırılmış liste değişkeni dışındaki iterable'lar için yeniden yazım `for_rewrites`a yazılır (bkz.
     /// `call_expand_apply.ForRewrite`): str/dict listeye çevrilir, liste-olmayan-isim iterable'lar gizli yerele alınır.
+    /// TODO 8.6: `for x in g:` (g bir `__next__` yineleyicisi) — döngü, gövdeyi KORUYARAK şu `if True:` bloğuna yeniden yazılır:
+    ///   it = g
+    ///   while True:
+    ///       nx = it.__next__()
+    ///       if nx != None: x = nx; <gövde>   else: break
+    /// Böylece değerler gerçekten isteğe bağlı üretilir ve `break` kalan üretimi hiç çalıştırmaz.
+    fn checkLazyFor(self: *Checker, ctx: *FnCtx, f: ast.ForStmt, it_t: Type) TypeError!void {
+        self.extend_counter += 1;
+        const it_name = try std.fmt.allocPrint(self.allocator, "__nox_lz_{d}", .{self.extend_counter});
+        const nx_name = try std.fmt.allocPrint(self.allocator, "__nox_lzv_{d}", .{self.extend_counter});
+        const infer: ast.TypeExpr = .{ .simple = "__infer" };
+        const it_ref = try self.allocator.create(ast.Expr);
+        it_ref.* = .{ .identifier = it_name };
+        const next_callee = try self.allocator.create(ast.Expr);
+        next_callee.* = .{ .attribute = .{ .obj = it_ref, .attr = "__next__" } };
+        const nx_ref_l = try self.allocator.create(ast.Expr);
+        nx_ref_l.* = .{ .identifier = nx_name };
+        const none_ref = try self.allocator.create(ast.Expr);
+        none_ref.* = .none_lit;
+        const then_body = try self.allocator.alloc(ast.Stmt, 1 + f.body.len);
+        then_body[0] = .{ .kind = .{ .var_decl = .{ .name = f.var_name, .type_expr = infer, .value = .{ .identifier = nx_name } } }, .line = self.current_line, .span = self.current_span };
+        @memcpy(then_body[1..], f.body);
+        const else_body = try self.allocator.alloc(ast.Stmt, 1);
+        else_body[0] = .{ .kind = .break_stmt, .line = self.current_line, .span = self.current_span };
+        const inner_if: ast.IfStmt = .{
+            .cond = .{ .binary = .{ .op = .ne, .left = nx_ref_l, .right = none_ref } },
+            .then_body = then_body,
+            .elif_clauses = &.{},
+            .else_body = else_body,
+        };
+        const loop_body = try self.allocator.alloc(ast.Stmt, 2);
+        loop_body[0] = .{ .kind = .{ .var_decl = .{ .name = nx_name, .type_expr = infer, .value = .{ .call = .{ .callee = next_callee, .args = &.{} } } } }, .line = self.current_line, .span = self.current_span };
+        loop_body[1] = .{ .kind = .{ .if_stmt = inner_if }, .line = self.current_line, .span = self.current_span };
+        const outer = try self.allocator.alloc(ast.Stmt, 2);
+        outer[0] = .{ .kind = .{ .var_decl = .{ .name = it_name, .type_expr = try self.typeToTypeExpr(it_t), .value = f.iterable } }, .line = self.current_line, .span = self.current_span };
+        outer[1] = .{ .kind = .{ .while_stmt = .{ .cond = .{ .bool_lit = true }, .body = loop_body } }, .line = self.current_line, .span = self.current_span };
+        const block: ast.IfStmt = .{ .cond = .{ .bool_lit = true }, .then_body = outer, .elif_clauses = &.{}, .else_body = null };
+        var synth: ast.Stmt = .{ .kind = .{ .if_stmt = block }, .line = self.current_line, .span = self.current_span };
+        try self.checkStmt(ctx, &synth);
+        try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(f.body.ptr), .{ .if_stmt = block });
+    }
+
     fn checkForIterable(self: *Checker, ctx: *FnCtx, iterable: ast.Expr, key: usize) TypeError!Type {
         if (iterable == .call and iterable.call.callee.* == .identifier and
             std.mem.eql(u8, iterable.call.callee.identifier, "range"))
@@ -5998,6 +6049,15 @@ pub const Checker = struct {
             return .int;
         }
         var t = try self.checkExpr(ctx, iterable);
+        // TODO 8.6: `__next__() -> T | None` uygulayan sınıf (tembel jeneratör / kullanıcı yineleyicisi) TEMBEL yinelenir.
+        if (self.dunderClassInfo(t)) |cinfo| {
+            if (cinfo.methods.get("__next__")) |nsig| {
+                if (nsig.return_type == .optional and nsig.params.len == 0) {
+                    self.lazy_for_iter = t;
+                    return nsig.return_type.optional.*;
+                }
+            }
+        }
         // v1.168.0: `for x in obj` — sınıfta `__iter__() -> list[T]` (ya da str/dict) tanımlıysa iterable `obj.__iter__()`e yeniden yazılır.
         var dunder_iter: ?ast.Expr = null;
         if (self.hasDunder(t, "__iter__")) {
@@ -6466,6 +6526,7 @@ pub const Checker = struct {
             },
             .await_expr => |operand_ptr| blk: {
                 if (!ctx.in_async) return self.fail(error.TypeMismatch, "'await' can only be used inside an 'async def' body", .{});
+                if (self.comp_depth > 0) return self.fail(error.TypeMismatch, "'await' inside a comprehension is not supported: write a 'for' loop that appends the awaited values", .{});
                 const operand = operand_ptr.*;
                 const t = try self.checkExpr(ctx, operand);
                 if (t == .task) break :blk t.task.*;
@@ -7168,6 +7229,100 @@ pub const Checker = struct {
                 try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
                 return rt;
             }
+        }
+        // TODO 8.6 (yalnızca `generator_desugar.zig`nin ürettiği kodda): `__nox_cell_of(e)` — `e` yalnızca TİPLENİR (çalışma zamanında
+        // değerlendirilmez); sonuç `[None]` literaliyle değiştirilen `list[tip(e) | None]` hücresidir. `e = __nox_elem_of(X)` ise tip,
+        // `X`in yineleme eleman tipidir. `__nox_for_iter(X)`: herhangi bir yinelenebilirden tembel `__nox_Gen[E]`.
+        if (eq(u8, name, "__nox_cell_of") and c.args.len == 1) {
+            const a0 = c.args[0];
+            var inner_t: Type = undefined;
+            if (a0 == .call and a0.call.callee.* == .identifier and eq(u8, a0.call.callee.identifier, "__nox_elem_of") and a0.call.args.len == 1) {
+                const key = @intFromPtr(a0.call.callee);
+                self.lazy_for_iter = null;
+                inner_t = try self.checkForIterable(ctx, a0.call.args[0], key);
+                self.lazy_for_iter = null;
+                _ = self.for_rewrites.remove(key);
+            } else inner_t = try self.checkExpr(ctx, a0);
+            if (inner_t == .optional or inner_t == .none) return self.fail(error.TypeMismatch, "a generator variable cannot have an optional or None type here; give it a plain type", .{});
+            // Skalerler düz hücre (`[0]`), diğerleri `T | None` hücre (`[None]`); okuma `__nox_get` ile uygun biçimde çözülür.
+            const zero: ?ast.Expr = switch (inner_t) {
+                .int, .fixed_int => .{ .int_lit = 0 },
+                .float => .{ .float_lit = 0.0 },
+                .boolean => .{ .bool_lit = false },
+                .str => .{ .string_lit = "" },
+                .list => .{ .list_lit = &.{} },
+                .dict => .{ .dict_lit = &.{} },
+                .func => return self.fail(error.TypeMismatch, "a variable of function type cannot be kept across a 'yield' in a generator", .{}),
+                else => null,
+            };
+            const items = try self.allocator.alloc(ast.Expr, 1);
+            const elem = try self.allocator.create(Type);
+            if (zero) |z| {
+                items[0] = z;
+                elem.* = inner_t;
+            } else {
+                items[0] = .none_lit;
+                const inner = try self.allocator.create(Type);
+                inner.* = inner_t;
+                elem.* = .{ .optional = inner };
+            }
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .list_lit = items });
+            return .{ .list = elem };
+        }
+        // `__nox_get(hücre)`: hücre elemanı Optional ise `__nox_unwrap(hücre[0])`, değilse `hücre[0]`.
+        if (eq(u8, name, "__nox_get") and c.args.len == 1) {
+            const ct = try self.checkExpr(ctx, c.args[0]);
+            if (ct != .list) return self.fail(error.TypeMismatch, "internal error: '__nox_get' needs a generator cell", .{});
+            const cell_ref = try self.allocator.create(ast.Expr);
+            cell_ref.* = c.args[0];
+            const zero_ix = try self.allocator.create(ast.Expr);
+            zero_ix.* = .{ .int_lit = 0 };
+            const read: ast.Expr = .{ .index = .{ .obj = cell_ref, .index = zero_ix } };
+            const repl: ast.Expr = if (ct.list.* == .optional) blk: {
+                const ucallee = try self.allocator.create(ast.Expr);
+                ucallee.* = .{ .identifier = "__nox_unwrap" };
+                const uargs = try self.allocator.alloc(ast.Expr, 1);
+                uargs[0] = read;
+                break :blk .{ .call = .{ .callee = ucallee, .args = uargs } };
+            } else read;
+            const rt = try self.checkExpr(ctx, repl);
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+            return rt;
+        }
+        // `next(g)` / `next(g, varsayılan)`: tembel `__nox_Gen[T]` üzerinde elle tüketim.
+        if (eq(u8, name, "next") and (c.args.len == 1 or c.args.len == 2) and positional == c.args.len and !self.functions.contains("next") and
+            (try ctx.scope.lookup(self.allocator, "next")) == null and !self.module_globals.contains("next"))
+        {
+            const at = self.checkExpr(ctx, c.args[0]) catch return null;
+            if (self.dunderClassInfo(at) != null and self.hasDunder(at, "__nox_next_raise__")) {
+                const repl: ast.Expr = if (c.args.len == 1)
+                    try self.mkDunderCall(c.args[0], "__nox_next_raise__", &.{})
+                else
+                    try self.mkDunderCall(c.args[0], "__nox_next_or__", c.args[1..]);
+                const rt = try self.checkExpr(ctx, repl);
+                try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+                return rt;
+            }
+        }
+        if (eq(u8, name, "__nox_for_iter") and c.args.len == 1) {
+            const a0 = c.args[0];
+            const at = try self.checkExpr(ctx, a0);
+            const repl: ast.Expr = if (self.dunderClassInfo(at) != null and self.hasDunder(at, "__next__"))
+                try self.mkDunderCall(a0, "__self__", &.{})
+            else blk: {
+                const lcallee = try self.allocator.create(ast.Expr);
+                lcallee.* = .{ .identifier = "list" };
+                const largs = try self.allocator.alloc(ast.Expr, 1);
+                largs[0] = a0;
+                const gcallee = try self.allocator.create(ast.Expr);
+                gcallee.* = .{ .identifier = "__nox_gen_from_list" };
+                const gargs = try self.allocator.alloc(ast.Expr, 1);
+                gargs[0] = .{ .call = .{ .callee = lcallee, .args = largs } };
+                break :blk .{ .call = .{ .callee = gcallee, .args = gargs } };
+            };
+            const rt = try self.checkExpr(ctx, repl);
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), repl);
+            return rt;
         }
         if (eq(u8, name, "list") and c.args.len == 1 and positional == 1 and !self.generic_functions.contains("list")) {
             // `list(iterable)`: range → `[v for v in range(..)]`; list → `.copy()`; str → `__nox_str_chars`; dict → `.keys()`.
