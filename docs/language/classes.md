@@ -271,6 +271,43 @@ print(a + b, a < b, -a, len(a), a[1], 2 in a, [a, b])
 Vec(4,6) True Vec(-1,-2) 2 2 True [Vec(1,2), Vec(3,4)]
 ```
 
+### Destructors: `__del__`
+
+A class may define `def __del__(self) -> None:`. It runs **once**, when the last reference to an instance goes away (end of scope, reassignment, `del`,
+the container being released, an exception unwinding the frame), before the fields are released. A subclass inherits it or overrides it; there is no automatic
+chaining to a base-class `__del__`.
+
+```nox
+class Res:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __del__(self) -> None:
+        print("closing", self.name)
+
+def work() -> None:
+    r: Res = Res("a")
+    print("working")
+
+work()
+r2: Res = Res("b")
+r2 = Res("c")
+print("end")
+```
+
+```output
+working
+closing a
+closing b
+end
+closing c
+```
+
+Rules: an exception raised inside `__del__` is swallowed (it never propagates, and a pending exception that was already unwinding is kept intact); an object that
+`__del__` stores somewhere else survives (and `__del__` does not run a second time for it); instances of a class with `__del__` are always reference counted, never
+promoted to the stack or an arena. `__del__` is **not** run for objects the cycle collector reclaims, for objects created inside a `lowlevel` block (arena memory is
+dropped as a whole), or for `ptr`/foreign handles. The order in which several objects of one scope are destroyed is unspecified.
+
 ### Default printing
 
 A class without `__str__`/`__repr__` prints structurally as `Name(field=value, ...)` — recursively and with Python-style quoting for strings

@@ -92,6 +92,8 @@ fn closureBodyMentions(self: *const codegen.Codegen, stmts: ?[]const ast.Stmt, e
 /// boxed_scalar) OLMAYAN sınıflara UYGULANIR — böyle bir sınıfın HİÇBİR
 /// alanı release GEREKTİRMEDİĞİNDEN, tüm release'i atlamak GÜVENLİDİR.
 fn classSafeForStackAlloc(cinfo: *const types.ClassInfo) bool {
+    // `__del__`li sınıfın örneği `$Sınıf_release` ile bitmelidir; yığın/arena tahsisinde release hiç çalışmaz.
+    if (cinfo.del_owner != null) return false;
     for (cinfo.fields.items) |f| {
         if (isHeapManaged(f.info.heap)) return false;
     }

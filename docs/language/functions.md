@@ -224,7 +224,9 @@ arguments of `print` are evaluated, before the line is printed.)
 `__exit__`) runs when the generator **finishes**, raises, or is closed with `g.close()` (which raises `GeneratorExit` at the paused `yield`), and
 `__enter__` runs once. A `for` loop over a *fresh call* of such a generator (`for x in lines(...)`) closes it on every exit, so a `break` cleans
 up like in CPython. A generator that is abandoned some other way (stored in a variable and dropped, or passed to another function that stops early)
-is **not** closed automatically: call `close()` when it matters.
+is closed when its last reference goes away (the generator object defines [`__del__`](classes.md#destructors-__del__)), so a `with` block or `finally`
+that was waiting at a `yield` still runs, at the moment of the last release. Objects reclaimed by the cycle collector or created inside `lowlevel`
+are the exception: call `close()` for those.
 
 A generator annotated `Generator[Y, S]` also receives values: `x = yield value` pauses with `value` and resumes with the value passed to
 `g.send(v)`. Prime it with `next(g)` first (sending to a just-started generator is a `ValueError`); `send` returns the next yielded value or

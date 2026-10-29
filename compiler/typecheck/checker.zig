@@ -3476,6 +3476,12 @@ pub const Checker = struct {
             for (m.params[1..], 0..) |p, i| params[i] = try self.typeExprToType(p.type_expr);
             const ret = try self.typeExprToType(m.return_type);
             try self.validateParamDefaults(m.name, m.params[1..], false);
+            // v2.0.74: `__del__` yok edici — refcount sıfıra düşünce çağrılır; yalnızca `self` alır, değer döndürmez.
+            if (std.mem.eql(u8, m.name, "__del__")) {
+                if (params.len != 0 or ret != .none or m.is_async) {
+                    return self.fail(error.TypeMismatch, "'{s}.__del__' must be `def __del__(self) -> None:` (no other parameters, no return value, not async)", .{cd.name});
+                }
+            }
             const sig = FuncSig{ .params = params, .return_type = ret, .decl = m.params[1..] };
             if (std.mem.eql(u8, m.name, "__init__")) {
                 info.init_sig = sig;

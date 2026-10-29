@@ -1,0 +1,81 @@
+# `__del__(self) -> None`: refcount sıfıra düşünce (kapsam sonu, yeniden atama, del, liste serbest bırakma, istisna yolu) alanlar serbest bırakılmadan
+# önce BİR KEZ çağrılır; içindeki istisna yutulur; bekleyen dış istisna korunur; nesneyi canlandırmak serbest bırakmayı atlar.
+class Res:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        print("open " + self.name)
+
+    def __del__(self) -> None:
+        print("del " + self.name)
+
+class Sub(Res):
+    pass
+
+class Own(Res):
+    def __del__(self) -> None:
+        print("own del " + self.name)
+
+class Bad:
+    def __del__(self) -> None:
+        print("bad del")
+        raise ValueError("ignored")
+
+class Keeper:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __del__(self) -> None:
+        print("keeper del " + self.name)
+        saved.append(self)
+
+saved: list[Keeper] = []
+
+def scope() -> None:
+    r: Res = Res("local")
+    print("in scope")
+
+def reassign() -> None:
+    r: Res = Res("first")
+    r = Res("second")
+    print("after reassign")
+
+def lists() -> None:
+    xs: list[Res] = [Res("a"), Res("b")]
+    del xs[0]
+    print("deleted a")
+
+def inherit_base() -> None:
+    s: Sub = Sub("sub")
+    print("inherited base")
+
+def inherit_own() -> None:
+    o: Own = Own("own")
+    print("own override")
+
+def swallowed() -> None:
+    b: Bad = Bad()
+    print("bad made")
+
+def with_pending() -> None:
+    r: Res = Res("holder")
+    raise KeyError("outer")
+
+def phoenix() -> None:
+    k: Keeper = Keeper("phoenix")
+    print("made")
+
+scope()
+reassign()
+lists()
+inherit_base()
+inherit_own()
+swallowed()
+try:
+    with_pending()
+except KeyError as e:
+    print("caught " + e.message)
+phoenix()
+print(len(saved))
+saved.pop()
+print("popped")
+print(len(saved))

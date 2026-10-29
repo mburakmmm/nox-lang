@@ -291,6 +291,7 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
         try self.qbeJnz(should_free, free_label, done_label);
     }
     try self.qbeLabel(free_label);
+    if (cinfo.del_owner) |del_owner| try emitDelHook(self, del_owner, done_label);
     if (tracks_cycles) {
         try self.qbeCall(null, "$nox_cycle_forget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
     }
@@ -321,6 +322,64 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
     try self.qbeLabel(done_label);
     try self.qbeRet(null);
     try self.qbeFuncEnd();
+}
+
+/// v2.0.74: `__del__` çağrısı (refcount sıfıra düştüğünde, alanlar serbest bırakılmadan ÖNCE). Sözleşme:
+///  - Refcount geçici olarak 1'e pinlenir: `__del__` içindeki retain/release çiftleri yeniden serbest bırakmayı tetiklemez.
+///  - Çağrı sırasında bekleyen (dışarıdan gelen) bir istisna varsa saklanır ve çağrıdan sonra geri konur; `__del__`in KENDİ istisnası yutulur
+///    (Python'daki gibi yayılmaz).
+///  - `__del__` nesneyi canlandırırsa (başka bir yerde sakladıysa) refcount 1'in üstünde kalır: serbest bırakma ATLANIR (`done_label`).
+fn emitDelHook(self: *Codegen, del_owner: []const u8, done_label: []const u8) CodegenError!void {
+    // `__del__` nesne başına EN FAZLA BİR KEZ çalışır (PEP 442): başlık kelimesinin 63. biti "sonlandırıldı" bayrağıdır (döngü çözücünün
+    // bayrakları 60-62. bitlerde, `FLAG_MASK` bu biti temizlemez; refcount düşük 32 bittir).
+    const hdr = try self.newTemp();
+    try self.qbeOp2Imm(hdr, .l, "sub", "%p", @intCast(types.ARC_HEADER_SIZE));
+    const word = try self.newTemp();
+    try self.qbeLoadL(word, hdr);
+    const fin_bits = try self.newTemp();
+    try self.qbeOp2Imm(fin_bits, .l, "and", word, std.math.minInt(i64));
+    const already = try self.newTemp();
+    try self.qbeOp2Imm(already, .w, "cnel", fin_bits, 0);
+    const run_label = try self.newLabel("del_run");
+    const proceed = try self.newLabel("del_proceed");
+    try self.qbeJnz(already, proceed, run_label);
+    try self.qbeLabel(run_label);
+    _ = try self.qbeAtomicAdd(hdr, std.math.minInt(i64)); // bayrağı kur (bit 63 daha önce 0 idi → toplama onu 1 yapar)
+    const saved = try self.newTemp();
+    try self.qbeCall(.{ .name = saved, .ty = .l }, "$nox_exception_take", &.{.{ .ty = .l, .text = RT_PARAM }});
+    _ = try self.qbeAtomicAdd(hdr, 1);
+    const del_sym = try std.fmt.allocPrint(self.allocator, "${s}___del__", .{del_owner});
+    try self.qbeCall(null, del_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
+    // `__del__` içinde yükselen istisna yutulur
+    const pending = try self.newTemp();
+    try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const swallow_label = try self.newLabel("del_swallow");
+    const after_swallow = try self.newLabel("del_after_swallow");
+    try self.qbeJnz(pending, swallow_label, after_swallow);
+    try self.qbeLabel(swallow_label);
+    const exc = try self.newTemp();
+    try self.qbeCall(.{ .name = exc, .ty = .l }, "$nox_exception_take", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeCall(null, "$nox_rc_release_enqueue_dynamic", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = exc } });
+    try self.qbeJmp(after_swallow);
+    try self.qbeLabel(after_swallow);
+    // dışarıdan gelen bekleyen istisnayı geri koy
+    const had = try self.newTemp();
+    try self.qbeOp2Imm(had, .w, "cnel", saved, 0);
+    const restore_label = try self.newLabel("del_restore");
+    const after_restore = try self.newLabel("del_after_restore");
+    try self.qbeJnz(had, restore_label, after_restore);
+    try self.qbeLabel(restore_label);
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = saved }, .{ .ty = .l, .text = "0" } });
+    try self.qbeJmp(after_restore);
+    try self.qbeLabel(after_restore);
+    // pin'i kaldır; canlandıysa serbest bırakmayı atla
+    const rc2 = try self.qbeAtomicSub(hdr, 1);
+    const masked = try self.newTemp();
+    try self.qbeOp2Imm(masked, .l, "and", rc2, 0xFFFFFFFF);
+    const alive = try self.newTemp();
+    try self.qbeOp2Imm(alive, .w, "cnel", masked, 0);
+    try self.qbeJnz(alive, done_label, proceed);
+    try self.qbeLabel(proceed);
 }
 
 /// Faz S.3: HER sınıf İÇİN `$ClassName_trace(rt, p) -> l` üretir —

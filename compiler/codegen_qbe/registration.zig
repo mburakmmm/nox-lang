@@ -634,6 +634,7 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         try info.methods.put(self.allocator, m.name, .{ .sig = .{ .params = params, .ret = ret }, .owner = cd.name, .slot = slot });
     }
     info.next_vtable_slot = next_slot;
+    if (info.methods.get("__del__")) |dm| info.del_owner = dm.owner;
 
     try self.classes.put(self.allocator, cd.name, info);
 }

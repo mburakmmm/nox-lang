@@ -1,0 +1,40 @@
+# Yarıda bırakılan (referansı kaybolan) jeneratörün askıdaki `with`/`finally` temizlikleri nesne serbest bırakılınca çalışır (`__nox_Gen.__del__`).
+class Res:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __enter__(self) -> Res:
+        print("enter " + self.name)
+        return self
+
+    def __exit__(self) -> None:
+        print("exit " + self.name)
+
+def guarded(name: str) -> Iterator[int]:
+    with Res(name) as r:
+        yield 1
+        yield 2
+
+def fin() -> Iterator[int]:
+    try:
+        yield 1
+        yield 2
+    finally:
+        print("fin cleanup")
+
+def local_drop() -> None:
+    g: Iterator[int] = guarded("local")
+    print(next(g))
+    print("leaving")
+
+local_drop()
+print("after local_drop")
+h: Iterator[int] = fin()
+print(next(h))
+h = fin()
+print("reassigned")
+print(next(h))
+x: Iterator[int] = guarded("x")
+print(next(x))
+print(list(x))
+print("done")

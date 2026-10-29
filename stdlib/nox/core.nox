@@ -309,6 +309,15 @@ class __nox_Gen[T]:
 
     # `g.close()`: askıdaki bir jeneratörün bekleyen `finally`/`with` temizliklerini çalıştırır (yield noktasında `GeneratorExit` fırlatılır)
     # ve jeneratörü bitirir. Hiç başlamamış ya da zaten bitmiş jeneratörde yapılacak bir şey yoktur.
+    # Jeneratör nesnesi serbest bırakılınca (son referans kaybolunca) askıdaki temizlikler (`finally`/`with`) çalışır — CPython'un referans sayımıyla
+    # anında kapatmasının karşılığı. Hiç başlamamış ya da bitmiş jeneratörde yapılacak bir şey yoktur; `close()` içindeki hatalar yutulur.
+    def __del__(self) -> None:
+        if self.started and not self.finished:
+            try:
+                self.close()
+            except Exception as e:
+                pass
+
     def close(self) -> None:
         if self.finished:
             return

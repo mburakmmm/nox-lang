@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.74]
+
+### Eklendi
+
+- Yok edici: bir sınıf `def __del__(self) -> None:` tanımlayabilir. Son referans kaybolunca (kapsam sonu, yeniden atama, `del`, kapsayıcının serbest bırakılması, istisna ile çerçevenin çözülmesi) alanlar serbest bırakılmadan önce nesne başına bir kez çalışır; içindeki istisna yutulur, dışarıdan bekleyen istisna korunur, nesneyi canlandırmak serbest bırakmayı atlar. `__del__`li sınıflar hep ARC'dir (yığın/arena terfisi yok). Döngü çözücünün topladığı ve `lowlevel` içindeki nesneler için çalışmaz.
+- Yarıda bırakılan jeneratörler (başka bir yerde saklanmayıp düşen) son referans kaybolunca otomatik `close()` edilir: askıdaki `with`/`finally` temizlikleri çalışır (CPython'un referans sayımıyla anında kapatması).
+
 ## [2.0.73]
 
 ### Eklendi

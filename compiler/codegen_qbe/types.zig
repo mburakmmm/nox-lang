@@ -565,6 +565,9 @@ pub const ClassInfo = struct {
     /// modda da DEĞİŞMEZ — SADECE alan kısmının düzeni değişir (bkz.
     /// plan dosyasının "açıkça ifşa edilen ödün" notu).
     layout_mode: ClassLayoutMode = .default,
+    /// v2.0.74: `__del__(self) -> None`i TAŞIYAN sınıf (kendisi ya da en yakın atası; `null` = yok). `$Sınıf_release` refcount sıfıra
+    /// düşünce alanları serbest bırakmadan ÖNCE onu çağırır. `__del__`li sınıflar yığına/arenaya terfi ettirilmez (release hiç çalışmazdı).
+    del_owner: ?[]const u8 = null,
 };
 
 /// v2.0 madde 5: bkz. `ClassInfo.layout_mode`in belge notu.
