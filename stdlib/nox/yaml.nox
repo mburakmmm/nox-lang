@@ -5,8 +5,8 @@
 # (satır katlama); blok skalerleri `|` ve `>` (kırpma işaretleri `-`/`+`, girinti göstergesi); satır içi (sondaki) yorumlar;
 # çapalar `&a`, takma adlar `*a`, birleştirme anahtarı `<<`; etiketler `!!str !!int !!float !!bool !!null` (diğer etiketler yok sayılır);
 # çok belgeli akışlar (`---`/`...`, bkz. `parse_all`); %YAML/%TAG yönergeleri atlanır.
-# Eşleme anahtarları her zaman `str` olarak saklanır (skaler anahtarlar metinleriyle). Açık anahtar sözdizimi (`? key`) ve akış koleksiyonu
-# anahtarları desteklenmez (YamlError).
+# Eşleme anahtarları her zaman `str` olarak saklanır (skaler anahtarlar metinleriyle). Açık anahtar sözdizimi (`? key` + `: value`) SKALER
+# anahtarlar için desteklenir; dizi/eşleme/akış koleksiyonu anahtarları temsil edilemediğinden net bir YamlError verir.
 #
 # Güvenlik dersleri (nox.toml'dan): çıplak `return s[i]` ARC sızıntısı yapar → `"" + s[i]`; özyinelemeli yardımcılar `list[str]` döndürür.
 
@@ -194,7 +194,14 @@ def _is_sequence_line(content: str) -> bool:
     return content[1] == " "
 
 def _is_mapping_line(content: str) -> bool:
-    return _find_key_sep(content) >= 0
+    return _is_explicit_key_line(content) or _find_key_sep(content) >= 0
+
+# Açık anahtar: `? anahtar` ya da yalnız `?`. Değer satırı: `: değer` ya da yalnız `:`.
+def _is_explicit_key_line(content: str) -> bool:
+    return content == "?" or nox.strings.starts_with(content, "? ")
+
+def _is_explicit_value_line(content: str) -> bool:
+    return content == ":" or nox.strings.starts_with(content, ": ")
 
 def _count_leading_spaces(raw: str) -> int:
     count: int = 0
@@ -270,7 +277,7 @@ def _block_header(content: str) -> _BlockHeader:
     if len(trimmed_prefix) == 0:
         return none
     last: str = trimmed_prefix[len(trimmed_prefix) - 1]
-    if last != ":" and last != "-" and last != "&" and last != "!":
+    if last != ":" and last != "-" and last != "&" and last != "!" and last != "?":
         # `key: &a |` gibi önekler: son sözcük `&ad` / `!etiket` ise de başlıktır
         words: list[str] = nox.strings.split(trimmed_prefix, " ")
         lastw: str = words[len(words) - 1]
@@ -997,6 +1004,42 @@ def _fold_plain_continuation(lines: list[_Line], pos: list[int], indent: int, fi
             pos[0] = pos[0] + 1
     return text
 
+# `? anahtar` + isteğe bağlı `: değer` girdisi. Anahtar bir SKALER olmalıdır (eşleme anahtarları `str` saklanır); dizi/eşleme/akış
+# koleksiyonu anahtarı `YamlError` verir. Değer satırı yoksa değer `null`dır.
+def _parse_explicit_entry(lines: list[_Line], pos: list[int], indent: int, ctx: _Ctx, result: YamlValue) -> None:
+    line: _Line = lines[pos[0]]
+    after_q: str = nox.strings.trim(_substr(line.content, 1, len(line.content)))
+    pos[0] = pos[0] + 1
+    if _is_sequence_line(after_q) or (after_q != "" and _is_mapping_line(after_q) and not nox.strings.starts_with(after_q, "\"") and not nox.strings.starts_with(after_q, "'")):
+        raise YamlError("collection keys are not supported: mapping keys are stored as str")
+    key_value: YamlValue = _parse_block_value(lines, pos, indent, after_q, ctx, False)
+    if key_value.kind == 5 or key_value.kind == 6:
+        raise YamlError("collection keys are not supported: mapping keys are stored as str")
+    key: str = _scalar_key_text(key_value, _take_props(after_q).rest)
+    value: YamlValue = _make_null()
+    if pos[0] < len(lines) and lines[pos[0]].indent == indent and _is_explicit_value_line(lines[pos[0]].content):
+        vline: _Line = lines[pos[0]]
+        rest: str = nox.strings.trim(_substr(vline.content, 1, len(vline.content)))
+        pos[0] = pos[0] + 1
+        if rest != "" and (_is_sequence_line(rest) or _is_mapping_line(rest)):
+            # `: - a` / `: k: v` — kompakt iç içe koleksiyon: içerik satırın içinde başlar
+            nested_indent: int = indent + (len(vline.content) - len(rest))
+            lines[pos[0] - 1] = _Line(nested_indent, rest)
+            pos[0] = pos[0] - 1
+            value = _parse_block(lines, pos, nested_indent, ctx)
+        else:
+            value = _parse_block_value(lines, pos, indent, rest, ctx, True)
+    if key == "<<":
+        _apply_merge(result, value)
+    else:
+        result.mapping[key] = value
+
+# Skaler anahtarın metni: dizeler değerleriyle, diğer skalerler (`1`, `true`, `null`) örtük anahtarlardaki gibi yazılışlarıyla.
+def _scalar_key_text(v: YamlValue, raw: str) -> str:
+    if v.kind == 0:
+        return "" + v.s
+    return _strip_quotes_if_present(nox.strings.trim(raw))
+
 def _parse_mapping(lines: list[_Line], pos: list[int], indent: int, ctx: _Ctx) -> YamlValue:
     result: YamlValue = _make_mapping()
     scanning: bool = True
@@ -1009,8 +1052,9 @@ def _parse_mapping(lines: list[_Line], pos: list[int], indent: int, ctx: _Ctx) -
             scanning = False
         else:
             line: _Line = lines[pos[0]]
-            if nox.strings.starts_with(line.content, "? "):
-                raise YamlError("explicit keys ('? key') are not supported")
+            if _is_explicit_key_line(line.content):
+                _parse_explicit_entry(lines, pos, indent, ctx, result)
+                continue
             sep_idx: int = _find_key_sep(line.content)
             if sep_idx < 0:
                 raise YamlError("invalid mapping line: " + line.content)

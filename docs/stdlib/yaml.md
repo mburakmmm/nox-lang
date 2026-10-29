@@ -71,14 +71,14 @@ missing key
 
 YAML 1.2 (core schema): block mappings and sequences (including `- key: value` items and a sequence at the same indent as its key); flow
 sequences and mappings (multi-line, nested); plain, single- and double-quoted scalars (all double-quote escapes: `\n \t \r \0 \" \\ \xHH \uHHHH \UHHHHHHHH`),
-multi-line plain and quoted scalars (line folding); block scalars `|` and `>` with chomping (`-`, `+`) and indentation indicators; trailing
+multi-line plain and quoted scalars (line folding); block scalars `|` and `>` with chomping (`-`, `+`) and indentation indicators; explicit keys (`? key` followed by `: value`, for scalar keys); trailing
 comments; anchors (`&a`), aliases (`*a`) and merge keys (`<<: *a`, `<<: [*a, *b]`); the tags `!!str`, `!!int`, `!!float`, `!!bool` and `!!null`
 (other tags are ignored); several documents in one stream (`---`, `...`, see `parse_all`); `%` directives are skipped.
 
 Plain scalars follow the 1.2 core schema: `true`/`false`, `null`/`~`, decimal and `0x`/`0o` integers, floats (`1.5e3`, `.5`), `.inf`, `-.inf` and
 `.nan`; everything else (including `yes`, `no`, `1_000` and dates) is a string. Mapping keys are always stored as strings (a scalar key by its text).
 
-**Not supported:** explicit keys (`? key`) and collection keys, complex tags and `!!binary`/`!!timestamp` types (a date stays a string), and `%TAG`
+**Not supported:** collection keys (`? [a, b]`, `? - a`): keys are stored as strings, so a sequence or mapping key raises `YamlError`; complex tags and `!!binary`/`!!timestamp` types (a date stays a string), and `%TAG`
 handles. An alias is the **same** value as its anchor, not a copy.
 
 ```nox

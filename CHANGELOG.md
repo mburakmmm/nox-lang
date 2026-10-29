@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.71]
+
+### Eklendi
+
+- `nox.yaml`: açık anahtar sözdizimi `? anahtar` + `: değer` (skaler anahtarlar; `? |` blok skaler, çok satırlı ve alıntılı anahtarlar, değersiz anahtar `null`, kompakt `: - x`). Koleksiyon (dizi/eşleme/akış) anahtarları `YamlError` verir (anahtarlar `str` saklanır). PyYAML ile birebir doğrulandı.
+
 ## [2.0.70]
 
 ### Eklendi

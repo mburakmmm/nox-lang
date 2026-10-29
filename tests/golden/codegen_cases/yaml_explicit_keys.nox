@@ -1,0 +1,22 @@
+# YAML açık anahtar sözdizimi (`? anahtar` + `: değer`): skaler anahtarlar PyYAML ile aynı yapıyı verir; koleksiyon anahtarları net hata.
+import nox.yaml
+from nox.yaml import YamlValue, YamlError
+
+def show(text: str) -> None:
+    try:
+        v: YamlValue = nox.yaml.parse(text)
+        print(nox.yaml.dump(v))
+    except YamlError as e:
+        print("ERR " + e.message)
+
+show("? a\n: 1\n? b\n: two\n")
+show("? a\n? b\n: 2\nc: 3\n")
+show("?\n  key text\n: value\n")
+show("? \"quoted key\"\n: [1, 2]\n")
+show("? 1\n: x\n? true\n: y\n")
+show("? |\n  block\n  key\n: v\n")
+show("? [a, b]\n: v\n")
+show("? - a\n  - b\n: v\n")
+show("top:\n  ? k1\n  : - x\n    - y\n  ? k2\n  : n: 1\n    m: 2\n  plain: z\n")
+show("? long\n  folded key\n: v\n")
+show("m:\n  ? a\n  : 1\n")
