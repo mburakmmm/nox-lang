@@ -122,9 +122,44 @@ got 4
 ```
 
 Each value is produced when the loop asks for it, in the loop's own task: the generator's `await`s suspend that task, so a `break` also stops
-the producer. `async for` needs an async iterator (a generator), not a list; the other limits of generators apply (no `yield` inside `try`/`with`,
-no `send()`). Because an async generator is not itself a task, it can be passed around like any value, but a *task* (`spawn`ed `async def`)
+the producer. `async for` needs an async iterator (a generator), not a list; the other limits of generators apply (no `yield` inside an `except`/`finally` block)). Because an async generator is not itself a task, it can be passed around like any value, but a *task* (`spawn`ed `async def`)
 still takes only simple parameters on the QBE backend, so consume generators inside the task that creates them.
+
+### `async with`
+
+`async with manager as name:` works like `with`, but calls the methods `__aenter__()` and `__aexit__()` of the manager, which may `await`. Declare them
+as `async def` methods; they are called directly by the `async with` statement (not spawned), so they take no arguments other than `self`. It is
+allowed inside an `async def`, at the top level and inside async generators.
+
+```nox
+async def tick(n: int) -> int:
+    return n + 1
+
+class Conn:
+    def __init__(self, name: str) -> None:
+        self.name: str = name
+
+    async def __aenter__(self) -> str:
+        t: int = await spawn tick(0)
+        print("open", self.name, t)
+        return self.name + "!"
+
+    async def __aexit__(self) -> None:
+        print("close", self.name)
+
+async def work() -> None:
+    async with Conn("db") as c:
+        print("using", c)
+
+t: Task[None] = spawn work()
+await t
+```
+
+```output
+open db 1
+using db!
+close db
+```
 
 `await` also works inside list and dict comprehensions (`[await spawn f(i) for i in range(3)]`); the awaits run one after another.
 

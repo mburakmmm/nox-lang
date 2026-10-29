@@ -71,7 +71,7 @@ pub fn stmt(a: std.mem.Allocator, s: ast.Stmt) Error!ast.Stmt {
             break :blk .{ .try_stmt = .{ .try_body = try stmts(a, t.try_body), .except_clauses = ecs, .finally_body = try optStmts(a, t.finally_body) } };
         },
         .lowlevel_stmt => |l| .{ .lowlevel_stmt = .{ .body = try stmts(a, l.body) } },
-        .with_stmt => |w| .{ .with_stmt = .{ .ctx_expr = try expr(a, w.ctx_expr), .binding = w.binding, .body = try stmts(a, w.body) } },
+        .with_stmt => |w| .{ .with_stmt = .{ .ctx_expr = try expr(a, w.ctx_expr), .binding = w.binding, .body = try stmts(a, w.body), .is_async = w.is_async } },
         .defer_stmt => |d| .{ .defer_stmt = .{ .call = try callExpr(a, d.call) } },
         .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => s.kind,
     };

@@ -228,6 +228,12 @@ pub const Parser = struct {
                     k.for_stmt.is_async = true;
                     break :blk k;
                 }
+                if (self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .kw_with) {
+                    _ = self.advance();
+                    var k = try self.parseWith();
+                    k.with_stmt.is_async = true;
+                    break :blk k;
+                }
                 break :blk .{ .func_def = try self.parseFuncDef(null) };
             },
             .kw_extern => try self.parseExternDef(),
@@ -465,6 +471,11 @@ pub const Parser = struct {
             if (args.items.len == 1 and std.mem.eql(u8, name, "Iterable")) gname = "list";
             // `Iterator[T]` / `Generator[T]`: tembel jeneratör tipi (prelude'daki generic `__nox_Gen[T]`; formatter geri çevirir).
             if (args.items.len == 1 and (std.mem.eql(u8, name, "Iterator") or std.mem.eql(u8, name, "Generator") or std.mem.eql(u8, name, "AsyncIterator") or std.mem.eql(u8, name, "AsyncGenerator"))) gname = "__nox_Gen";
+            // `Generator[Y, S]` / `Generator[Y, S, R]` (gönderilen değer tipi `S`; dönüş tipi `R` yok sayılır): `send()` destekli jeneratör.
+            if ((args.items.len == 2 or args.items.len == 3) and (std.mem.eql(u8, name, "Generator") or std.mem.eql(u8, name, "AsyncGenerator"))) {
+                gname = "__nox_GenS";
+                args.shrinkRetainingCapacity(2);
+            }
             return .{ .generic = .{ .name = gname, .args = try args.toOwnedSlice(self.allocator) } };
         }
         // Faz NN.2: `pkg.module.ClassName` — nitelikli tip adı (bkz.
@@ -1170,6 +1181,19 @@ pub const Parser = struct {
     fn parseExpr(self: *Parser) ParseError!ast.Expr {
         try self.enterRecursion();
         defer self.exitRecursion();
+        // `x = yield e` / `x: T = yield e` / `x = yield` (jeneratöre değer GÖNDERME, `g.send(v)`): `__nox_yield_expr(e)` çağrısı olarak temsil edilir;
+        // `generator_desugar.zig` bunu `yield e` + gönderilen değeri okuyan bir atamaya böler. (Deyim başındaki `yield e` ayrıca ele alınır.)
+        if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "yield") and self.pos + 1 < self.tokens.len) {
+            const nk = self.tokens[self.pos + 1].kind;
+            if (nk != .assign and nk != .dot and nk != .colon) {
+                _ = self.advance();
+                const bare = nk == .newline or nk == .r_paren or nk == .comma or nk == .r_bracket;
+                const arg: ast.Expr = if (bare) .none_lit else try self.parseExpr();
+                const cargs = try self.allocator.alloc(ast.Expr, 1);
+                cargs[0] = arg;
+                return .{ .call = .{ .callee = try self.box(.{ .identifier = "__nox_yield_expr" }), .args = cargs } };
+            }
+        }
         // v1.155.0: `lambda a, b: <ifade>` (en gevşek bağlanır; gövde tam ifadedir).
         if (self.match(.kw_lambda)) {
             var params = std.ArrayList([]const u8).empty;

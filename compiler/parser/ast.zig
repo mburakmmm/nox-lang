@@ -438,6 +438,8 @@ pub const WithStmt = struct {
     ctx_expr: Expr,
     binding: ?[]const u8,
     body: []Stmt,
+    /// `async with m as b:` (TODO 8.6): `__aenter__()`/`__aexit__()` çağrılır (içlerinde `await` edebilirler); yalnızca async bağlamda geçerlidir.
+    is_async: bool = false,
 };
 
 /// Go-tarzı `defer CALL` — CALL fonksiyonun DÖNÜŞ ANINDA (hangi yoldan

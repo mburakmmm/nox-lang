@@ -1,0 +1,93 @@
+class Res:
+    def __init__(self, name: str) -> None:
+        self.name: str = name
+
+    def __enter__(self) -> str:
+        print("enter", self.name)
+        return self.name
+
+    def __exit__(self) -> None:
+        print("exit", self.name)
+
+def simple() -> Iterator[int]:
+    try:
+        print("body")
+        yield 1
+        yield 2
+    finally:
+        print("cleanup")
+
+def guarded(n: int) -> Iterator[int]:
+    for i in range(n):
+        try:
+            if i == 1:
+                raise ValueError("bad")
+            yield i * 10
+            if i == 2:
+                raise ValueError("late")
+        except ValueError as e:
+            print("handled", e.message)
+        finally:
+            print("fin", i)
+
+def files(names: list[str]) -> Iterator[str]:
+    for n in names:
+        with Res(n) as r:
+            yield r + ":a"
+            yield r + ":b"
+
+def one_with() -> Iterator[int]:
+    with Res("solo"):
+        for i in range(3):
+            yield i
+    print("after")
+
+def early(n: int) -> Iterator[int]:
+    for i in range(n):
+        try:
+            if i == 3:
+                break
+            if i == 1:
+                continue
+            yield i
+        finally:
+            print("f", i)
+    yield 99
+
+def returning() -> Iterator[int]:
+    try:
+        yield 1
+        return
+    finally:
+        print("ret-cleanup")
+
+def holder() -> Iterator[int]:
+    with Res("outer") as o:
+        try:
+            yield 1
+            yield 2
+        finally:
+            print("inner-fin")
+        yield 3
+
+print(list(simple()))
+print(list(guarded(4)))
+print(list(files(["a", "b"])))
+print(list(one_with()))
+print(list(early(6)))
+print(list(returning()))
+g: Iterator[int] = holder()
+print(next(g))
+g.close()
+print(list(g))
+h: Iterator[int] = simple()
+print(next(h))
+h.close()
+print(list(h))
+k: Iterator[int] = simple()
+k.close()
+print("unstarted closed", list(k))
+for x in files(["z"]):
+    print("loop", x)
+    break
+print("done")

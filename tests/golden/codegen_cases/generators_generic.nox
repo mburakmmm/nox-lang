@@ -1,0 +1,36 @@
+class Pt:
+    def __init__(self, x: int) -> None:
+        self.x: int = x
+
+def take[T](it: Iterator[T], n: int) -> Iterator[T]:
+    k: int = 0
+    for x in it:
+        if k >= n:
+            break
+        yield x
+        k += 1
+
+def repeat[T](x: T, n: int) -> Iterator[T]:
+    for i in range(n):
+        yield x
+
+def pairs[T](xs: list[T]) -> Iterator[list[T]]:
+    for i in range(len(xs) - 1):
+        yield [xs[i], xs[i + 1]]
+
+def naturals() -> Iterator[int]:
+    n: int = 0
+    while True:
+        n += 1
+        yield n
+
+def mapg[T, U](it: Iterator[T], f: (T) -> U) -> Iterator[U]:
+    for x in it:
+        yield f(x)
+
+def sq(v: int) -> int:
+    return v * v
+
+print(list(take(naturals(), 4)), list(take(repeat("ab", 5), 2)))
+print(list(pairs([1, 2, 3, 4])), list(pairs(["a", "b", "c"])))
+print(list(repeat(Pt(7), 2))[1].x, list(take(mapg(naturals(), sq), 5)))

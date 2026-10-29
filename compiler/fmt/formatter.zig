@@ -583,6 +583,7 @@ const Printer = struct {
             },
             .with_stmt => |w| {
                 try self.indentTo(depth);
+                if (w.is_async) try self.writer.writeAll("async ");
                 try self.writer.writeAll("with ");
                 try self.printExpr(w.ctx_expr);
                 if (w.binding) |bn| try self.writer.print(" as {s}", .{bn});
@@ -717,7 +718,7 @@ const Printer = struct {
         switch (t) {
             .simple => |s| try self.writer.writeAll(s),
             .generic => |g| {
-                try self.writer.print("{s}[", .{if (std.mem.eql(u8, g.name, "__nox_Set")) "set" else if (std.mem.eql(u8, g.name, "__nox_Gen")) "Iterator" else g.name});
+                try self.writer.print("{s}[", .{if (std.mem.eql(u8, g.name, "__nox_Set")) "set" else if (std.mem.eql(u8, g.name, "__nox_Gen")) "Iterator" else if (std.mem.eql(u8, g.name, "__nox_GenS")) "Generator" else g.name});
                 for (g.args, 0..) |a, idx| {
                     if (idx > 0) try self.writer.writeAll(", ");
                     try self.printType(a);
@@ -897,6 +898,15 @@ const Printer = struct {
             .identifier => |name| try self.writer.writeAll(name),
             .call => |c| {
                 if (c.fstring) return self.printFString(e);
+                // `x = yield e` yüzey biçimi (parser `__nox_yield_expr(e)` çağrısına indirgemişti)
+                if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "__nox_yield_expr") and c.args.len == 1) {
+                    try self.writer.writeAll("yield");
+                    if (c.args[0] != .none_lit) {
+                        try self.writer.writeAll(" ");
+                        try self.printExpr(c.args[0]);
+                    }
+                    return;
+                }
                 // v1.168.0: küme literali/comprehension'ı yüzey biçimi.
                 if (c.set_lit and c.args.len == 1) {
                     try self.writer.writeAll("{");

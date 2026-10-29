@@ -84,6 +84,9 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
         if (stmt.kind == .for_stmt and stmt.kind.for_stmt.body.len > 0) {
             if (map.stmt_fors.get(@intFromPtr(stmt.kind.for_stmt.body.ptr))) |rw| stmt.kind = rw;
         }
+        if (stmt.kind == .with_stmt and stmt.kind.with_stmt.body.len > 0) {
+            if (map.stmt_fors.get(@intFromPtr(stmt.kind.with_stmt.body.ptr))) |rw| stmt.kind = rw;
+        }
         switch (stmt.kind) {
             .expr_stmt => |*e| expr(e, map),
             .var_decl => |*v| {

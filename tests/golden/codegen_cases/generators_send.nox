@@ -1,0 +1,57 @@
+class Msg:
+    def __init__(self, text: str) -> None:
+        self.text: str = text
+
+def accumulator() -> Generator[int, int]:
+    total: int = 0
+    while True:
+        v: int = yield total
+        total += v
+        if total > 20:
+            return
+
+def echo() -> Generator[str, str]:
+    heard: list[str] = []
+    got: str = yield "ready"
+    while got != "stop":
+        heard.append(got)
+        got = yield "heard " + str(len(heard))
+    yield "bye " + ",".join(heard)
+
+def relay() -> Generator[Msg, Msg]:
+    m: Msg = yield Msg("start")
+    n: Msg = yield Msg("got " + m.text)
+    yield Msg("and " + n.text)
+
+def moving_avg() -> Generator[float, float]:
+    xs: list[float] = []
+    avg: float = 0.0
+    while True:
+        x: float = yield avg
+        xs.append(x)
+        s: float = 0.0
+        for y in xs:
+            s += y
+        avg = s / len(xs)
+
+a: Generator[int, int] = accumulator()
+print(next(a), a.send(5), a.send(7))
+try:
+    a.send(9)
+except StopIteration as stop:
+    print("finished")
+e: Generator[str, str] = echo()
+print(next(e), e.send("a"), e.send("b"), e.send("stop"))
+r: Generator[Msg, Msg] = relay()
+print(next(r).text, r.send(Msg("one")).text, r.send(Msg("two")).text)
+m: Generator[float, float] = moving_avg()
+print(next(m), m.send(2.0), m.send(4.0), m.send(9.0))
+fresh: Generator[int, int] = accumulator()
+try:
+    fresh.send(1)
+except ValueError as ex:
+    print("not started")
+sq: Generator[int, int] = accumulator()
+next(sq)
+sq.close()
+print(list(sq.iterator()))

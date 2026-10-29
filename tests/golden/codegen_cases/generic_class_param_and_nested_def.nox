@@ -1,0 +1,13 @@
+class Box[T]:
+    def __init__(self, v: T) -> None:
+        self.v: T = v
+
+def unbox[T](b: Box[T]) -> T:
+    return b.v
+
+def mk[T](x: T) -> list[T]:
+    def inner() -> T:
+        return x
+    return [inner()]
+
+print(unbox(Box[int](5)), unbox(Box[str]("s")), mk(3), mk("a"))

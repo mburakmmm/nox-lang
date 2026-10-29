@@ -163,6 +163,10 @@ class KeyError(Exception):
 class StopIteration(Exception):
     pass
 
+# `g.close()` bir jeneratörün yield noktasında fırlatılır (bkz. `__nox_Gen.close`).
+class GeneratorExit(Exception):
+    pass
+
 # Faz 18 (bkz. plan dosyası "HPy köprüsünü Nox'un istisna mekanizmasına
 # entegre etme"): `hpy_call`/`hpy_open`/`hpy_call_on`/vb.nin (bkz.
 # runtime/foreign_bridge.zig'in `setHpyError`/`nox_hpy_take_error`si)
@@ -257,16 +261,26 @@ def round(x: float) -> int:
 # `generator_desugar.zig`), bir liste (`__nox_gen_from_list`) ya da başka bir Gen. `__next__` bir sonraki değeri ya da bitince None döner;
 # `for x in g` bu protokolle TEMBEL yinelenir, `list(g)`/`sum(g)`/... ise `__iter__` ile kalanı bir listeye boşaltır.
 class __nox_Gen[T]:
-    def __init__(self, steps: list[() -> T | None], items: list[T], pos: int) -> None:
+    def __init__(self, steps: list[() -> T | None], items: list[T], pos: int, closing: list[bool]) -> None:
         self.steps: list[() -> T | None] = steps
         self.items: list[T] = items
         self.pos: int = pos
+        self.closing: list[bool] = closing
+        self.started: bool = False
+        self.finished: bool = False
 
     def __next__(self) -> T | None:
+        if self.finished:
+            return None
+        self.started = True
         if len(self.steps) > 0:
             f: () -> T | None = self.steps[0]
-            return f()
+            r: T | None = f()
+            if r is None:
+                self.finished = True
+            return r
         if self.pos >= len(self.items):
+            self.finished = True
             return None
         v: T = self.items[self.pos]
         self.pos = self.pos + 1
@@ -288,6 +302,20 @@ class __nox_Gen[T]:
             return d
         return v
 
+    # `g.close()`: askıdaki bir jeneratörün bekleyen `finally`/`with` temizliklerini çalıştırır (yield noktasında `GeneratorExit` fırlatılır)
+    # ve jeneratörü bitirir. Hiç başlamamış ya da zaten bitmiş jeneratörde yapılacak bir şey yoktur.
+    def close(self) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        if self.started and len(self.closing) > 0 and len(self.steps) > 0:
+            self.closing[0] = True
+            f: () -> T | None = self.steps[0]
+            try:
+                f()
+            except GeneratorExit as e:
+                pass
+
     def __iter__(self) -> list[T]:
         out: list[T] = []
         while True:
@@ -300,11 +328,62 @@ class __nox_Gen[T]:
 def __nox_gen_from_step[T](step: () -> T | None) -> __nox_Gen[T]:
     steps: list[() -> T | None] = [step]
     items: list[T] = []
-    return __nox_Gen[T](steps, items, 0)
+    closing: list[bool] = []
+    return __nox_Gen[T](steps, items, 0, closing)
+
+# `try`/`with` içinde `yield` bulunan jeneratörler: `closing[0]` yield noktasında `GeneratorExit` fırlattırır.
+def __nox_gen_from_step_closable[T](step: () -> T | None, closing: list[bool]) -> __nox_Gen[T]:
+    steps: list[() -> T | None] = [step]
+    items: list[T] = []
+    return __nox_Gen[T](steps, items, 0, closing)
 
 def __nox_gen_from_list[T](xs: list[T]) -> __nox_Gen[T]:
     steps: list[() -> T | None] = []
-    return __nox_Gen[T](steps, xs, 0)
+    closing: list[bool] = []
+    return __nox_Gen[T](steps, xs, 0, closing)
+
+# `Generator[Y, S]`: `g.send(v)` ile jeneratöre değer gönderilebilen jeneratör (`x = yield e`). `Iterator[Y]`nin tüm davranışını `inner`a devreder; `Iterator[Y]`
+# beklenen yere `g.iterator()` ile verilir.
+class __nox_GenS[T, S]:
+    def __init__(self, inner: __nox_Gen[T], senders: list[(S) -> None]) -> None:
+        self.inner: __nox_Gen[T] = inner
+        self.senders: list[(S) -> None] = senders
+
+    def __next__(self) -> T | None:
+        return self.inner.__next__()
+
+    def __self__(self) -> __nox_GenS[T, S]:
+        return self
+
+    def iterator(self) -> __nox_Gen[T]:
+        return self.inner
+
+    def close(self) -> None:
+        self.inner.close()
+
+    def __iter__(self) -> list[T]:
+        return self.inner.__iter__()
+
+    def __nox_next_raise__(self) -> T:
+        return self.inner.__nox_next_raise__()
+
+    def __nox_next_or__(self, d: T) -> T:
+        return self.inner.__nox_next_or__(d)
+
+    # Değeri jeneratörün `x = yield ...` noktasına teslim eder ve bir sonraki yield'e kadar çalıştırır (bitince StopIteration).
+    # Hiç başlamamış jeneratöre değer gönderilemez (önce `next(g)`).
+    def send(self, v: S) -> T:
+        if not self.inner.started:
+            raise ValueError("can't send a value to a just-started generator: call next(g) first")
+        f: (S) -> None = self.senders[0]
+        f(v)
+        return self.inner.__nox_next_raise__()
+
+def __nox_gens_from_step[T, S](step: () -> T | None, closing: list[bool], sender: (S) -> None) -> __nox_GenS[T, S]:
+    steps: list[() -> T | None] = [step]
+    items: list[T] = []
+    senders: list[(S) -> None] = [sender]
+    return __nox_GenS[T, S](__nox_Gen[T](steps, items, 0, closing), senders)
 
 # Jeneratör yereli `int | None` gibi OPTIONAL SKALER ise (liste elemanı olamaz) hücre bu yuvanın tek elemanıdır.
 class __nox_Slot[T]:

@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.68]
+
+### Eklendi
+
+- Jeneratorlerde `try/except/finally` ve `with` icinde `yield`; `g.close()` ve `GeneratorExit`; temizlik iceren jeneratorun taze cagrisi uzerindeki `for` donguleri cikista otomatik `close()` cagirir.
+- `send()`: `x = yield deger` ve `Generator[Y, S]` tipi; `next(g)` ile hazirlanir.
+- Generic jenerator fonksiyonlari (`def take[T](it: Iterator[T], n: int) -> Iterator[T]`).
+- `async with` (`__aenter__`/`__aexit__`; async jeneratorlerin icinde de).
+
+### Duzeltildi
+
+- Generic fonksiyonda tuple acma (`x, y = b, a`) birden fazla orneklemede tipleri birbirine karistiriyor ve YANLIS SONUC veriyordu.
+- Generic fonksiyon, generic sinif tipli parametre (`def f[T](b: Box[T])`) alamiyordu; generic fonksiyon icindeki `def` `T`yi goremiyordu.
+- Generic ikame `for`'un `async`, `assign`in tip ek aciklamasini ve `assert` bayragini kaybediyordu.
+
 ## [2.0.67]
 
 ### Eklendi

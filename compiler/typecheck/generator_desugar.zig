@@ -39,6 +39,10 @@ const Ctx = struct { top: bool, loop_depth: u32 = 0 };
 
 const Pass = struct {
     a: std.mem.Allocator,
+    /// Temizlik (`try`/`with`) içeren jeneratör fonksiyonlarının adları (`f` ya da `Sınıf.metod`): checker bunların TAZE çağrıları üzerindeki
+    /// `for` döngülerinde çıkışta `close()` çağırır (CPython'un referans sayımıyla anında kapatmasının karşılığı).
+    cleanup_gens: *std.StringHashMapUnmanaged(void),
+    owner: ?[]const u8 = null,
     diag: ?Diagnostic = null,
     line: u32 = 0,
     uid: u32 = 0,
@@ -47,7 +51,12 @@ const Pass = struct {
     idxs: std.ArrayListUnmanaged(usize) = .empty,
     scopes: std.ArrayListUnmanaged(Scope) = .empty,
     ytype: ast.TypeExpr = .{ .simple = "int" },
+    /// `Generator[Y, S]`: gönderilen değerin hücresi (`x = yield e` sonrası okunur); `null` = `send` yok.
+    sent: ?Binding = null,
+    send_line: u32 = 0,
     done: []const u8 = "",
+    /// `try`/`with` içinde `yield` varsa: `close()`un yield noktasında `GeneratorExit` fırlattırdığı bayrak hücresi ("" = gerek yok).
+    closing: []const u8 = "",
     /// Etkin listelerin doğrudan elemanı olan iç içe `def`ler: her adımda tanımlı olmaları için adım başına taşınır.
     lifted: std.ArrayListUnmanaged(ast.Stmt) = .empty,
 
@@ -60,7 +69,7 @@ const Pass = struct {
     fn isYield(e: ast.Expr) ?[]const u8 {
         if (e == .call and e.call.callee.* == .identifier and e.call.args.len == 1) {
             const n = e.call.callee.identifier;
-            if (std.mem.eql(u8, n, "__nox_yield") or std.mem.eql(u8, n, "__nox_yield_from")) return n;
+            if (std.mem.eql(u8, n, "__nox_yield") or std.mem.eql(u8, n, "__nox_yield_from") or std.mem.eql(u8, n, "__nox_yield_expr")) return n;
         }
         return null;
     }
@@ -73,6 +82,8 @@ const Pass = struct {
     fn stmtHasYield(st: ast.Stmt) bool {
         return switch (st.kind) {
             .expr_stmt => |e| isYield(e) != null,
+            .var_decl => |v| isYieldExpr(v.value),
+            .assign => |a| isYieldExpr(a.value),
             .if_stmt => |s| blk: {
                 if (listHasYield(s.then_body)) break :blk true;
                 for (s.elif_clauses) |ec| if (listHasYield(ec.body)) break :blk true;
@@ -98,11 +109,12 @@ const Pass = struct {
         for (stmts) |st| {
             self.line = st.line;
             switch (st.kind) {
-                .try_stmt => |s| if (stmtHasYield(st)) {
-                    _ = s;
-                    try self.fail("'yield' inside 'try' is not supported in a generator (it runs as a resumable state machine); move the 'try' around code without 'yield'", .{});
+                .try_stmt => |s| {
+                    for (s.except_clauses) |ec| if (listHasYield(ec.body)) try self.fail("'yield' inside an 'except' clause is not supported in a generator; yield from the 'try' body instead", .{});
+                    if (s.finally_body) |fb| if (listHasYield(fb)) try self.fail("'yield' inside a 'finally' block is not supported in a generator", .{});
+                    try self.unsupportedYield(s.try_body);
                 },
-                .with_stmt => if (stmtHasYield(st)) try self.fail("'yield' inside 'with' is not supported in a generator; move the 'with' around code without 'yield'", .{}),
+                .with_stmt => |s| try self.unsupportedYield(s.body),
                 .lowlevel_stmt => if (stmtHasYield(st)) try self.fail("'yield' inside 'lowlevel' is not supported in a generator", .{}),
                 .if_stmt => |s| {
                     try self.unsupportedYield(s.then_body);
@@ -321,6 +333,10 @@ const Pass = struct {
                 try self.rename(b.right);
             },
             .call => |*c| {
+                if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "__nox_sent") and c.args.len == 0) {
+                    if (self.sent) |b| e.* = try self.readOf(b);
+                    return;
+                }
                 try self.rename(c.callee);
                 for (c.args) |*a| try self.rename(a);
             },
@@ -528,6 +544,15 @@ const Pass = struct {
             self.idxs.items[self.idxs.items.len - 1] = i;
             const code = try self.emitActive(stmts[i], i, pc);
             try out.append(self.a, try self.guard(pc, 2 * i + 1, code, stmts[i].line));
+            if (self.closing.len > 0 and stmts[i].kind == .expr_stmt) {
+                // `close()` bu yield noktasından devam ettirdiğinde (`pc == 2*i+2` ve bayrak) `GeneratorExit` fırlat: çevreleyen `try`/`with` temizlikleri çalışır
+                const resumed = try self.bin(.eq, try self.idx0(pc), .{ .int_lit = @intCast(2 * i + 2) });
+                const cond = try self.bin(.and_, try self.idx0(self.closing), resumed);
+                const exit_ctor = try self.call1("GeneratorExit", .{ .string_lit = "generator closed" });
+                var chk = self.ifStmt(cond, try self.single(self.stmt(.{ .raise_stmt = exit_ctor })));
+                chk.line = stmts[i].line;
+                try out.append(self.a, chk);
+            }
             i += 1;
         }
         try out.append(self.a, try self.setCell(pc, 0));
@@ -561,6 +586,8 @@ const Pass = struct {
                 return out.toOwnedSlice(self.a);
             },
             .if_stmt => |s| return self.emitIf(s, st),
+            .try_stmt => |s| return self.emitTry(s, st),
+            .with_stmt => |s| return self.emitWith(s, st),
             .while_stmt => |s| return self.emitWhile(s, st),
             .for_stmt => |s| return self.emitFor(s, i, pc, st),
             else => {
@@ -618,6 +645,74 @@ const Pass = struct {
         }
         const cond = try self.bin(.eq, try self.idx0(sel), .{ .int_lit = k });
         return self.ifStmt(cond, code);
+    }
+
+    /// `try`/`except`/`finally` (yield yalnızca `try` gövdesinde): gövde etkin listedir; işleyiciler ve `finally` düz kalır. Her adım girişinde `try`
+    /// yeniden kurulur (yan etkisizdir) ve gövde sayaçla kaldığı yere atlar. Bir `yield` adımdan `return` ettiğinde `finally` ÇALIŞMAMALI:
+    /// `done` yalnızca yield'de temizlenir, bu yüzden kullanıcı `finally`si `if done:` ile korunur; gövde sayacı da orada sıfırlanır.
+    fn emitTry(self: *Pass, s: ast.TryStmt, st: ast.Stmt) Error![]ast.Stmt {
+        const body = try self.emitList(s.try_body, false, null);
+        const ecs = try self.a.alloc(ast.ExceptClause, s.except_clauses.len);
+        for (s.except_clauses, 0..) |ec, k| {
+            try self.pushScope();
+            defer self.popScope();
+            if (ec.bind_name) |bn| try self.bind(bn, null);
+            ecs[k] = ec;
+            ecs[k].body = try self.plainBlock(ec.body, .{ .top = true });
+        }
+        var fin: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        if (s.finally_body) |fb| {
+            const user = try self.plainBlock(fb, .{ .top = true });
+            try fin.appendSlice(self.a, user);
+        }
+        try fin.append(self.a, try self.setCell(body.pc, 0));
+        const guarded = self.ifStmt(try self.idx0(self.done), try fin.toOwnedSlice(self.a));
+        const t: ast.Stmt = .{ .kind = .{ .try_stmt = .{ .try_body = body.code, .except_clauses = ecs, .finally_body = try self.single(guarded) } }, .line = st.line };
+        return self.single(t);
+    }
+
+    /// `with ctx as b: gövde` ≡ yöneticiyi bir kez (taze girişte) kur + `__enter__`, gövdeyi `try` içinde sürdür, çıkışta (yield DEĞİL) `__exit__`.
+    fn emitWith(self: *Pass, s: ast.WithStmt, st: ast.Stmt) Error![]ast.Stmt {
+        var ctx_e = s.ctx_expr;
+        try self.rename(&ctx_e);
+        var out: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        const mgr = try self.inferredCell("mgr", ctx_e);
+        try self.pushScope();
+        defer self.popScope();
+        var binding_cell: ?Binding = null;
+        const enter_name: []const u8 = if (s.is_async) "__aenter__" else "__enter__";
+        const exit_name: []const u8 = if (s.is_async) "__aexit__" else "__exit__";
+        if (s.binding) |bn| {
+            const enter_callee = try self.box(.{ .attribute = .{ .obj = try self.box(try self.call1("__nox_get", id(mgr.cell))), .attr = enter_name } });
+            const enter_expr: ast.Expr = .{ .call = .{ .callee = enter_callee, .args = &.{} } };
+            const b = try self.inferredCell(bn, enter_expr);
+            try self.bind(bn, b);
+            binding_cell = b;
+        }
+        // taze giriş: yöneticiyi geçici yerelde kur, `__enter__` başarılı olduktan SONRA hücreye yaz
+        self.uid += 1;
+        const tmp = try std.fmt.allocPrint(self.a, "__nox_wm_{d}", .{self.uid});
+        var fresh: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        try fresh.append(self.a, self.stmt(.{ .var_decl = .{ .name = tmp, .type_expr = .{ .simple = "__infer" }, .value = ctx_e } }));
+        const enter_on_tmp = try self.box(.{ .attribute = .{ .obj = try self.box(id(tmp)), .attr = enter_name } });
+        const enter_call: ast.Expr = .{ .call = .{ .callee = enter_on_tmp, .args = &.{} } };
+        if (binding_cell) |b| {
+            try fresh.append(self.a, self.assign(try self.writeTarget(b), enter_call));
+        } else try fresh.append(self.a, self.stmt(.{ .expr_stmt = enter_call }));
+        try fresh.append(self.a, self.assign(try self.idx0(mgr.cell), id(tmp)));
+        const unset = try self.bin(.eq, try self.idx0(mgr.cell), .none_lit);
+        var fresh_if = self.ifStmt(unset, try fresh.toOwnedSlice(self.a));
+        fresh_if.line = st.line;
+        try out.append(self.a, fresh_if);
+        const body = try self.emitList(s.body, false, null);
+        var fin: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        const exit_callee = try self.box(.{ .attribute = .{ .obj = try self.box(try self.call1("__nox_get", id(mgr.cell))), .attr = exit_name } });
+        try fin.append(self.a, self.stmt(.{ .expr_stmt = .{ .call = .{ .callee = exit_callee, .args = &.{} } } }));
+        try fin.append(self.a, self.assign(try self.idx0(mgr.cell), .none_lit));
+        try fin.append(self.a, try self.setCell(body.pc, 0));
+        const guarded = self.ifStmt(try self.idx0(self.done), try fin.toOwnedSlice(self.a));
+        try out.append(self.a, .{ .kind = .{ .try_stmt = .{ .try_body = body.code, .except_clauses = &.{}, .finally_body = try self.single(guarded) } }, .line = st.line });
+        return out.toOwnedSlice(self.a);
     }
 
     fn emitWhile(self: *Pass, s: ast.WhileStmt, st: ast.Stmt) Error![]ast.Stmt {
@@ -708,6 +803,80 @@ const Pass = struct {
 
     // ---- fonksiyon düzeyi ----
 
+    /// Etkin (yield içeren) bir `try`/`with` var mı? Varsa `close()` temizlikleri çalıştırabilmek için yield noktalarına `GeneratorExit` denetimi eklenir.
+    fn hasCleanup(stmts: []const ast.Stmt) bool {
+        for (stmts) |st| {
+            if (!stmtHasYield(st)) continue;
+            switch (st.kind) {
+                .try_stmt, .with_stmt => return true,
+                .if_stmt => |s| {
+                    if (hasCleanup(s.then_body)) return true;
+                    for (s.elif_clauses) |ec| if (hasCleanup(ec.body)) return true;
+                    if (s.else_body) |eb| if (hasCleanup(eb)) return true;
+                },
+                .while_stmt => |s| if (hasCleanup(s.body)) return true,
+                .for_stmt => |s| if (hasCleanup(s.body)) return true,
+                else => {},
+            }
+        }
+        return false;
+    }
+
+    fn isYieldExpr(e: ast.Expr) bool {
+        return e == .call and e.call.callee.* == .identifier and std.mem.eql(u8, e.call.callee.identifier, "__nox_yield_expr") and e.call.args.len == 1;
+    }
+
+    /// `x = yield e` / `x: T = yield e` deyimlerini `yield e` + `x = <gönderilen değer>` çiftine böler (tüm iç içe gövdelerde).
+    /// Başka konumdaki yield ifadesi (`f((yield 1))`) desteklenmez.
+    fn expandSend(self: *Pass, stmts: []ast.Stmt, uses_send: *bool) Error![]ast.Stmt {
+        var out: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        for (stmts) |st_in| {
+            var st = st_in;
+            self.line = st.line;
+            switch (st.kind) {
+                .assign => |a| if (isYieldExpr(a.value)) {
+                    uses_send.* = true;
+                    if (self.send_line == 0) self.send_line = st.line;
+                    try out.append(self.a, .{ .kind = .{ .expr_stmt = try self.call1("__nox_yield", a.value.call.args[0]) }, .line = st.line, .span = st.span });
+                    var s2 = st;
+                    s2.kind.assign.value = .{ .call = .{ .callee = try self.box(id("__nox_sent")), .args = &.{} } };
+                    try out.append(self.a, s2);
+                    continue;
+                },
+                .var_decl => |v| if (isYieldExpr(v.value)) {
+                    uses_send.* = true;
+                    if (self.send_line == 0) self.send_line = st.line;
+                    try out.append(self.a, .{ .kind = .{ .expr_stmt = try self.call1("__nox_yield", v.value.call.args[0]) }, .line = st.line, .span = st.span });
+                    var s2 = st;
+                    s2.kind.var_decl.value = .{ .call = .{ .callee = try self.box(id("__nox_sent")), .args = &.{} } };
+                    try out.append(self.a, s2);
+                    continue;
+                },
+                .expr_stmt => |e| if (isYieldExpr(e)) {
+                    // `yield e` ifade deyimi olarak yazılmış (parantezli) biçim: gönderilen değer atılır
+                    try out.append(self.a, .{ .kind = .{ .expr_stmt = try self.call1("__nox_yield", e.call.args[0]) }, .line = st.line, .span = st.span });
+                    continue;
+                },
+                .if_stmt => |*s| {
+                    s.then_body = try self.expandSend(s.then_body, uses_send);
+                    for (s.elif_clauses) |*ec| ec.body = try self.expandSend(ec.body, uses_send);
+                    if (s.else_body) |eb| s.else_body = try self.expandSend(eb, uses_send);
+                },
+                .while_stmt => |*s| s.body = try self.expandSend(s.body, uses_send),
+                .for_stmt => |*s| s.body = try self.expandSend(s.body, uses_send),
+                .try_stmt => |*s| {
+                    s.try_body = try self.expandSend(s.try_body, uses_send);
+                    for (s.except_clauses) |*ec| ec.body = try self.expandSend(ec.body, uses_send);
+                    if (s.finally_body) |fb| s.finally_body = try self.expandSend(fb, uses_send);
+                },
+                .with_stmt => |*s| s.body = try self.expandSend(s.body, uses_send),
+                else => {},
+            }
+            try out.append(self.a, st);
+        }
+        return out.toOwnedSlice(self.a);
+    }
+
     fn assignsName(stmts: []const ast.Stmt, name: []const u8) bool {
         for (stmts) |st| switch (st.kind) {
             .assign => |a| if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return true,
@@ -735,11 +904,19 @@ const Pass = struct {
         // `async def` + `yield` = ASYNC jeneratör: çağrı bir görev başlatmaz, jeneratör nesnesi döner (işlev eşzamanlı olur); `await`ler adım
         // fonksiyonunda çalışır (tüketicinin fiber'ında), bu yüzden adım `allow_await` taşır.
         const was_async = fd.is_async;
-        if (fd.type_params.len > 0) return self.fail("a generator function cannot be generic", .{});
-        if (fd.return_type != .generic or !std.mem.eql(u8, fd.return_type.generic.name, "__nox_Gen") or fd.return_type.generic.args.len != 1) {
-            return self.fail("a function containing 'yield' must be annotated '-> Iterator[T]' (or Generator[T])", .{});
+        const is_gens = fd.return_type == .generic and std.mem.eql(u8, fd.return_type.generic.name, "__nox_GenS") and fd.return_type.generic.args.len == 2;
+        const is_gen = fd.return_type == .generic and std.mem.eql(u8, fd.return_type.generic.name, "__nox_Gen") and fd.return_type.generic.args.len == 1;
+        if (!is_gens and !is_gen) {
+            return self.fail("a function containing 'yield' must be annotated '-> Iterator[T]' (or Generator[T], or Generator[Y, S] to receive values with send())", .{});
         }
         self.ytype = fd.return_type.generic.args[0];
+        var uses_send = false;
+        self.send_line = 0;
+        const fn_line = self.line;
+        fd.body = try self.expandSend(fd.body, &uses_send);
+        if (uses_send and !is_gens) self.line = self.send_line;
+        if (uses_send and !is_gens) return self.fail("'x = yield value' receives sent values: annotate the function '-> Generator[Y, S]' (S is the type of the values passed to send())", .{});
+        self.line = fn_line;
         if (self.ytype == .optional) return self.fail("a generator cannot yield an optional type ('T | None'); yield the plain type", .{});
         try self.unsupportedYield(fd.body);
         if (self.diag != null) return;
@@ -762,6 +939,21 @@ const Pass = struct {
             } else try self.bind(p.name, null);
         }
         self.done = try self.boolCell("done", false);
+        self.closing = if (hasCleanup(fd.body)) try self.boolCell("closing", false) else "";
+        self.sent = null;
+        var sender_def: ?ast.FuncDef = null;
+        if (is_gens) {
+            const stype = fd.return_type.generic.args[1];
+            const sb = try self.typedCell("sent", stype);
+            if (self.diag != null) return;
+            self.sent = sb;
+            // `g.send(v)` bu kapanışla değeri hücreye yazar
+            const sp = try self.a.alloc(ast.Param, 1);
+            sp[0] = .{ .name = "v", .type_expr = stype };
+            const sbody = try self.single(self.assign(try self.writeTarget(sb), id("v")));
+            sender_def = .{ .name = "__nox_send", .params = sp, .return_type = .{ .simple = "None" }, .body = sbody };
+            try self.prelude.append(self.a, self.stmt(.{ .func_def = sender_def.? }));
+        }
         const root = try self.emitList(fd.body, false, null);
         if (self.diag != null) return;
 
@@ -781,9 +973,34 @@ const Pass = struct {
         var body: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         try body.appendSlice(self.a, self.prelude.items);
         try body.append(self.a, self.stmt(.{ .func_def = step_def }));
-        try body.append(self.a, self.stmt(.{ .return_stmt = try self.call1("__nox_gen_from_step", id(step_name)) }));
+        if (is_gens) {
+            // `send` destekli jeneratör: kapanabilir değilse boş `closing` listesi geçilir
+            var closing_name = self.closing;
+            if (closing_name.len == 0) {
+                closing_name = try self.newName("noclose");
+                try body.append(self.a, self.stmt(.{ .var_decl = .{ .name = closing_name, .type_expr = try self.listOf(.{ .simple = "bool" }), .value = .{ .list_lit = &.{} } } }));
+            }
+            const gargs = try self.a.alloc(ast.Expr, 3);
+            gargs[0] = id(step_name);
+            gargs[1] = id(closing_name);
+            gargs[2] = id("__nox_send");
+            const gcall: ast.Expr = .{ .call = .{ .callee = try self.box(id("__nox_gens_from_step")), .args = gargs } };
+            try body.append(self.a, self.stmt(.{ .return_stmt = gcall }));
+        } else if (self.closing.len > 0) {
+            const gargs = try self.a.alloc(ast.Expr, 2);
+            gargs[0] = id(step_name);
+            gargs[1] = id(self.closing);
+            const gcall: ast.Expr = .{ .call = .{ .callee = try self.box(id("__nox_gen_from_step_closable")), .args = gargs } };
+            try body.append(self.a, self.stmt(.{ .return_stmt = gcall }));
+        } else {
+            try body.append(self.a, self.stmt(.{ .return_stmt = try self.call1("__nox_gen_from_step", id(step_name)) }));
+        }
         fd.body = try body.toOwnedSlice(self.a);
         fd.is_async = false;
+        if (self.closing.len > 0) {
+            const key = if (self.owner) |o| try std.fmt.allocPrint(self.a, "{s}.{s}", .{ o, fd.name }) else fd.name;
+            try self.cleanup_gens.put(self.a, key, {});
+        }
     }
 
     // ---- gezinti ----
@@ -819,12 +1036,23 @@ const Pass = struct {
 };
 
 /// Modülün tüm fonksiyonlarını (üst-düzey, metod, iç içe) YERİNDE dönüştürür; hata varsa tanılamayı döner.
-pub fn run(allocator: std.mem.Allocator, body: []ast.Stmt) Error!?Diagnostic {
-    var pass: Pass = .{ .a = allocator };
+pub fn run(allocator: std.mem.Allocator, body: []ast.Stmt, cleanup_gens: *std.StringHashMapUnmanaged(void)) Error!?Diagnostic {
+    var pass: Pass = .{ .a = allocator, .cleanup_gens = cleanup_gens };
     for (body) |*st| {
         switch (st.kind) {
             .func_def => |*fd| try pass.processFunc(fd, st.line),
-            .class_def => |*cd| for (cd.methods) |*m| try pass.processFunc(m, st.line),
+            .class_def => |*cd| {
+                pass.owner = cd.name;
+                defer pass.owner = null;
+                for (cd.methods) |*m| {
+                    // `async def __aenter__/__aexit__`: `async with` onları çağıranın fiber'ında doğrudan çağırır ve gövdeleri `await` edebilir.
+                    if (m.is_async and (std.mem.eql(u8, m.name, "__aenter__") or std.mem.eql(u8, m.name, "__aexit__"))) {
+                        m.is_async = false;
+                        m.allow_await = true;
+                    }
+                    try pass.processFunc(m, st.line);
+                }
+            },
             else => {},
         }
         if (pass.diag) |d| return d;

@@ -218,12 +218,75 @@ arguments of `print` are evaluated, before the line is printed.)
 - `next(g)` returns the next value and raises `StopIteration` when the generator is exhausted; `next(g, default)` returns `default` instead.
 - `yield from xs` yields every element of a list, a `range(...)` or another generator, lazily.
 - A bare `return` ends the generator. An exception raised inside it propagates to the consumer and ends it (later pulls produce nothing).
-- A generator that is not run to the end simply stops being referenced; its state is released with it.
+### Cleanup, `send()` and generic generators
 
-A generator is compiled to a resumable state machine, so a few things are not allowed (an `async def` generator is covered in [Concurrency](concurrency.md#async-generators-and-async-for)): `yield` inside `try`, `with` or `lowlevel` (put the
-`try` around code that does not yield), a generic generator function (`def f[T](...)`), a local variable of
-function type that lives across a `yield`, `return value`, and `x = yield` / `send()`. `Iterable[T]` stays a plain `list[T]` (use it for
-parameters that take a finished sequence).
+`yield` may appear inside a `try` body and inside a `with` block. The generator keeps its place, a `finally` clause (or the `with`'s
+`__exit__`) runs when the generator **finishes**, raises, or is closed with `g.close()` (which raises `GeneratorExit` at the paused `yield`), and
+`__enter__` runs once. A `for` loop over a *fresh call* of such a generator (`for x in lines(...)`) closes it on every exit, so a `break` cleans
+up like in CPython. A generator that is abandoned some other way (stored in a variable and dropped, or passed to another function that stops early)
+is **not** closed automatically: call `close()` when it matters.
+
+A generator annotated `Generator[Y, S]` also receives values: `x = yield value` pauses with `value` and resumes with the value passed to
+`g.send(v)`. Prime it with `next(g)` first (sending to a just-started generator is a `ValueError`); `send` returns the next yielded value or
+raises `StopIteration`. `Generator[Y, S]` is not assignable to `Iterator[Y]`; use `g.iterator()` for that. Generator functions may be generic.
+
+```nox
+class Resource:
+    def __init__(self, name: str) -> None:
+        self.name: str = name
+
+    def __enter__(self) -> str:
+        print("open", self.name)
+        return self.name
+
+    def __exit__(self) -> None:
+        print("close", self.name)
+
+def lines(name: str) -> Iterator[str]:
+    with Resource(name) as r:
+        for i in range(3):
+            yield r + ":" + str(i)
+
+def running_total() -> Generator[int, int]:
+    total: int = 0
+    while True:
+        n: int = yield total
+        total += n
+
+for line in lines("log"):
+    print(line)
+    if line == "log:1":
+        break
+g: Generator[int, int] = running_total()
+print(next(g), g.send(5), g.send(7))
+g.close()
+
+def take[T](it: Iterator[T], n: int) -> Iterator[T]:
+    count: int = 0
+    for x in it:
+        if count >= n:
+            break
+        yield x
+        count += 1
+
+print(list(take(lines("tmp"), 3)))
+```
+
+```output
+open log
+log:0
+log:1
+close log
+0 5 12
+open tmp
+close tmp
+['tmp:0', 'tmp:1', 'tmp:2']
+```
+
+A generator is compiled to a resumable state machine, so a few things are not allowed: `yield` inside an `except` or `finally` block or inside
+`lowlevel`; a local variable of function type that lives across a `yield`; `return value`; and `throw()`. `Iterable[T]` stays a plain
+`list[T]` (use it for parameters that take a finished sequence). `async def` generators are covered in
+[Concurrency](concurrency.md#async-generators-and-async-for).
 
 ### `nonlocal`
 

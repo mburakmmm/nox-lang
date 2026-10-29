@@ -730,6 +730,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
             .ctx_expr = try renameExpr(a, w.ctx_expr, map),
             .binding = w.binding,
             .body = try renameStmts(a, w.body, map),
+            .is_async = w.is_async,
         } },
         .defer_stmt => |d| blk: {
             const renamed = try renameExpr(a, .{ .call = d.call }, map);

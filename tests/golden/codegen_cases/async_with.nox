@@ -1,0 +1,49 @@
+async def tick(n: int) -> int:
+    return n + 1
+
+class Conn:
+    def __init__(self, name: str) -> None:
+        self.name: str = name
+        self.uses: int = 0
+
+    async def __aenter__(self) -> str:
+        t: int = await spawn tick(self.uses)
+        print("open", self.name, t)
+        return self.name + "!"
+
+    async def __aexit__(self) -> None:
+        t: int = await spawn tick(10)
+        print("close", self.name, t)
+
+async def work() -> int:
+    total: int = 0
+    async with Conn("db") as c:
+        print("using", c)
+        total += 1
+    async with Conn("plain"):
+        total += 10
+    try:
+        async with Conn("err") as e:
+            print("in", e)
+            raise ValueError("oops")
+    except ValueError as ex:
+        print("caught", ex.message)
+    return total
+
+async def rows() -> AsyncIterator[int]:
+    async with Conn("gen") as g:
+        for i in range(3):
+            yield i
+
+async def main_it() -> None:
+    async for r in rows():
+        print("row", r)
+        if r == 1:
+            break
+
+t: Task[int] = spawn work()
+print(await t)
+async with Conn("top") as q:
+    print("top", q)
+m: Task[None] = spawn main_it()
+await m

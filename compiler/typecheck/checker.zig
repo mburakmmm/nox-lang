@@ -709,6 +709,8 @@ pub const Checker = struct {
     /// TODO 8.6: `checkForIterable`, yinelenen ifadenin `__next__` (tembel) protokolünü uyguladığını bildirirse yinelenen tip burada tutulur;
     /// `.for_stmt` bunu görünce döngüyü `while` + `__next__` çağrısına çevirir.
     lazy_for_iter: ?Type = null,
+    /// TODO 8.6: temizlik (`try`/`with`) içeren jeneratör fonksiyonlarının/metodlarının adları (bkz. `generator_desugar.zig`).
+    cleanup_generators: std.StringHashMapUnmanaged(void) = .{},
     /// v1.147.0: çağrı sitesi → genişletilmiş (tam konumsal) argüman listesi. Bkz. `call_expand_apply.zig`.
     call_expansions: call_expand_apply.Map = .empty,
     /// v1.144.0: post-spawn akış analizi (`walkPostSpawnCallerMutation`) için `break`/`continue` noktalarındaki
@@ -3570,7 +3572,7 @@ pub const Checker = struct {
     pub fn checkModule(self: *Checker, module: ast.Module) TypeError!void {
         self.module_expr_spans = module.expr_spans;
         // TODO 8.6: `yield` → liste biriktirme (eager jeneratör).
-        if (try generator_desugar.run(self.allocator, module.body)) |d| {
+        if (try generator_desugar.run(self.allocator, module.body, &self.cleanup_generators)) |d| {
             self.current_line = d.line;
             return self.fail(error.TypeMismatch, "{s}", .{d.message});
         }
@@ -5467,7 +5469,7 @@ pub const Checker = struct {
         }
         const ret = try self.typeExprToType(m.return_type);
         const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ class_name, m.name });
-        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .self_class = class_name, .is_init = is_init, .path = path };
+        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .self_class = class_name, .is_init = is_init, .path = path, .in_async = m.allow_await };
         for (m.body) |*s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(m.body)) {
             return self.fail(error.MissingReturn, "method '{s}.{s}' does not return a value on all paths", .{ class_name, m.name });
@@ -5655,7 +5657,7 @@ pub const Checker = struct {
                 }
             },
             .try_stmt => |t| try self.checkTry(ctx, t),
-            .with_stmt => |w| try self.checkWith(ctx, w),
+            .with_stmt => |w| if (w.is_async) try self.checkAsyncWith(ctx, w) else try self.checkWith(ctx, w),
             .defer_stmt => |d| try self.checkDeferStmt(ctx, d),
             .lowlevel_stmt => |ll| {
                 // İlke #2: `lowlevel` yalnızca tahsis STRATEJİSİNİ gevşetir;
@@ -5742,6 +5744,40 @@ pub const Checker = struct {
     /// ASLA bastıramaz). `binding` VERİLDİYSE `__enter__`in DÖNÜŞ tipine
     /// bağlanır (`EXPR`in KENDİ tipine DEĞİL — Python'un KENDİ ayrımıyla
     /// TUTARLI).
+    /// `async with m as b: gövde` ≡ `m' = m; b = m'.__aenter__(); try: gövde  finally: m'.__aexit__()` (`__aenter__`/`__aexit__` bu adlı `async def` metodlardır;
+    /// `generator_desugar.zig` onları çağıranın fiber'ında doğrudan çağrılan, `await` edebilen yöntemlere çevirir). `if True:` bloğu olarak yeniden yazılıp denetlenir.
+    fn checkAsyncWith(self: *Checker, ctx: *FnCtx, w: ast.WithStmt) TypeError!void {
+        if (!ctx.in_async) return self.fail(error.TypeMismatch, "'async with' can only be used inside an 'async def' body or at the top level", .{});
+        self.extend_counter += 1;
+        const mgr_name = try std.fmt.allocPrint(self.allocator, "__nox_am_{d}", .{self.extend_counter});
+        const infer: ast.TypeExpr = .{ .simple = "__infer" };
+        const mk_call = struct {
+            fn run(c: *Checker, name: []const u8, method: []const u8) TypeError!ast.Expr {
+                const obj = try c.allocator.create(ast.Expr);
+                obj.* = .{ .identifier = name };
+                const callee = try c.allocator.create(ast.Expr);
+                callee.* = .{ .attribute = .{ .obj = obj, .attr = method } };
+                return .{ .call = .{ .callee = callee, .args = &.{} } };
+            }
+        }.run;
+        const enter = try mk_call(self, mgr_name, "__aenter__");
+        const exit_call = try mk_call(self, mgr_name, "__aexit__");
+        const outer = try self.allocator.alloc(ast.Stmt, 3);
+        outer[0] = .{ .kind = .{ .var_decl = .{ .name = mgr_name, .type_expr = infer, .value = w.ctx_expr } }, .line = self.current_line, .span = self.current_span };
+        outer[1] = if (w.binding) |bn|
+            .{ .kind = .{ .var_decl = .{ .name = bn, .type_expr = infer, .value = enter } }, .line = self.current_line, .span = self.current_span }
+        else
+            .{ .kind = .{ .expr_stmt = enter }, .line = self.current_line, .span = self.current_span };
+        const fin = try self.allocator.alloc(ast.Stmt, 1);
+        fin[0] = .{ .kind = .{ .expr_stmt = exit_call }, .line = self.current_line, .span = self.current_span };
+        outer[2] = .{ .kind = .{ .try_stmt = .{ .try_body = w.body, .except_clauses = &.{}, .finally_body = fin } }, .line = self.current_line, .span = self.current_span };
+        const block: ast.IfStmt = .{ .cond = .{ .bool_lit = true }, .then_body = outer, .elif_clauses = &.{}, .else_body = null };
+        var synth: ast.Stmt = .{ .kind = .{ .if_stmt = block }, .line = self.current_line, .span = self.current_span };
+        try self.checkStmt(ctx, &synth);
+        // sentetik blok deyimin yerine geçer (anahtar: ilk gövde deyiminin işaretçisi)
+        if (w.body.len > 0) try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(w.body.ptr), .{ .if_stmt = block });
+    }
+
     fn checkWith(self: *Checker, ctx: *FnCtx, w: ast.WithStmt) TypeError!void {
         const ctx_t = try self.checkExpr(ctx, w.ctx_expr);
         const class_name = switch (ctx_t) {
@@ -6039,10 +6075,38 @@ pub const Checker = struct {
         const outer = try self.allocator.alloc(ast.Stmt, 2);
         outer[0] = .{ .kind = .{ .var_decl = .{ .name = it_name, .type_expr = try self.typeToTypeExpr(it_t), .value = f.iterable } }, .line = self.current_line, .span = self.current_span };
         outer[1] = .{ .kind = .{ .while_stmt = .{ .cond = .{ .bool_lit = true }, .body = loop_body } }, .line = self.current_line, .span = self.current_span };
+        // Temizlik içeren bir jeneratör fonksiyonunun TAZE çağrısı üzerinde dönülüyorsa (başka kimse tutmaz), döngüden nasıl çıkılırsa çıkılsın
+        // (bitiş, `break`, `return`, istisna) jeneratör kapatılır: bekleyen `finally`/`with` temizlikleri çalışır.
+        if (try self.isFreshCleanupGeneratorCall(ctx, f.iterable)) {
+            const close_ref = try self.allocator.create(ast.Expr);
+            close_ref.* = .{ .identifier = it_name };
+            const close_callee = try self.allocator.create(ast.Expr);
+            close_callee.* = .{ .attribute = .{ .obj = close_ref, .attr = "close" } };
+            const fin = try self.allocator.alloc(ast.Stmt, 1);
+            fin[0] = .{ .kind = .{ .expr_stmt = .{ .call = .{ .callee = close_callee, .args = &.{} } } }, .line = self.current_line, .span = self.current_span };
+            const guarded = try self.allocator.alloc(ast.Stmt, 1);
+            guarded[0] = outer[1];
+            outer[1] = .{ .kind = .{ .try_stmt = .{ .try_body = guarded, .except_clauses = &.{}, .finally_body = fin } }, .line = self.current_line, .span = self.current_span };
+        }
         const block: ast.IfStmt = .{ .cond = .{ .bool_lit = true }, .then_body = outer, .elif_clauses = &.{}, .else_body = null };
         var synth: ast.Stmt = .{ .kind = .{ .if_stmt = block }, .line = self.current_line, .span = self.current_span };
         try self.checkStmt(ctx, &synth);
         try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(f.body.ptr), .{ .if_stmt = block });
+    }
+
+    fn isFreshCleanupGeneratorCall(self: *Checker, ctx: *FnCtx, e: ast.Expr) TypeError!bool {
+        if (self.cleanup_generators.count() == 0 or e != .call) return false;
+        const callee = e.call.callee.*;
+        switch (callee) {
+            .identifier => |n| return self.cleanup_generators.contains(n),
+            .attribute => |a| {
+                const ot = self.checkExpr(ctx, a.obj.*) catch return false;
+                if (ot != .class) return false;
+                const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ot.class, a.attr });
+                return self.cleanup_generators.contains(key);
+            },
+            else => return false,
+        }
     }
 
     fn checkForIterable(self: *Checker, ctx: *FnCtx, iterable: ast.Expr, key: usize) TypeError!Type {
@@ -9513,6 +9577,14 @@ pub const Checker = struct {
                     }
                     return;
                 }
+                // Jenerik SINIF örneği (`Box[T]` parametresi, `actual` = `Box__int`): tip argümanları somut sınıfın kayıtlı argümanlarıyla birleştirilir.
+                if (actual == .class) if (self.class_type_args.get(actual.class)) |targs| {
+                    const prefix = try std.fmt.allocPrint(self.allocator, "{s}__", .{g.name});
+                    if (std.mem.startsWith(u8, actual.class, prefix) and targs.len == g.args.len) {
+                        for (g.args, targs) |ate, at| try self.unifyTypeExpr(ate, at, type_params, bindings, fn_name);
+                        return;
+                    }
+                };
                 return self.fail(error.UnknownType, "unknown generic type: {s}", .{g.name});
             },
             // v1.162.0: fonksiyon-tipli parametreler artık generic fonksiyonlarda da çıkarılır (`map`/`filter`/`sorted(key=...)` tarzı
@@ -9936,14 +10008,20 @@ pub const Checker = struct {
         // sağlar (`s` DEĞİŞMEDEN döndürüldüğü `else` dalı zaten otomatik).
         const kind: ast.StmtKind = switch (s.kind) {
             .expr_stmt => |e| .{ .expr_stmt = try self.substituteExpr(e, bindings) },
-            .var_decl => |v| .{ .var_decl = .{
-                .name = v.name,
-                .type_expr = try self.substituteTypeExpr(v.type_expr, bindings),
-                .value = try self.substituteExpr(v.value, bindings),
-            } },
+            .var_decl => |v| .{
+                .var_decl = .{
+                    // Ad dizesinin İŞARETÇİSİ `infer_types` gibi yan tabloların anahtarıdır: her örnekleme KENDİ kopyasını almalı, aksi halde
+                    // `T=int` ve `T=str` örneklemelerinin `__infer` bildirimleri birbirinin tipini ezer.
+                    .name = try self.allocator.dupe(u8, v.name),
+                    .type_expr = try self.substituteTypeExpr(v.type_expr, bindings),
+                    .value = try self.substituteExpr(v.value, bindings),
+                    .class_attr = v.class_attr,
+                },
+            },
             .assign => |a| .{ .assign = .{
                 .target = try self.substituteExpr(a.target, bindings),
                 .value = try self.substituteExpr(a.value, bindings),
+                .ann = if (a.ann) |ann| try self.substituteTypeExpr(ann, bindings) else null,
             } },
             .if_stmt => |f| blk: {
                 const elifs = try self.allocator.alloc(ast.ElifClause, f.elif_clauses.len);
@@ -9955,10 +10033,23 @@ pub const Checker = struct {
                     .then_body = try self.substituteStmts(f.then_body, bindings),
                     .elif_clauses = elifs,
                     .else_body = if (f.else_body) |eb| try self.substituteStmts(eb, bindings) else null,
+                    .is_assert = f.is_assert,
                 } };
             },
             .while_stmt => |w| .{ .while_stmt = .{ .cond = try self.substituteExpr(w.cond, bindings), .body = try self.substituteStmts(w.body, bindings) } },
-            .for_stmt => |f| .{ .for_stmt = .{ .var_name = f.var_name, .iterable = try self.substituteExpr(f.iterable, bindings), .body = try self.substituteStmts(f.body, bindings) } },
+            .for_stmt => |f| .{ .for_stmt = .{ .var_name = f.var_name, .iterable = try self.substituteExpr(f.iterable, bindings), .body = try self.substituteStmts(f.body, bindings), .is_async = f.is_async } },
+            .del_stmt => |e| .{ .del_stmt = try self.substituteExpr(e, bindings) },
+            // İç içe `def`: parametre/dönüş tipleri ve gövde de kapsayan jenerik fonksiyonun tip bağlarına göre ikame edilir
+            // (örn. `def f[T](x: T)` içindeki `def inner() -> T`).
+            .func_def => |fd| blk: {
+                var c = fd;
+                const params = try self.allocator.dupe(ast.Param, fd.params);
+                for (params) |*p| p.type_expr = try self.substituteTypeExpr(p.type_expr, bindings);
+                c.params = params;
+                c.return_type = try self.substituteTypeExpr(fd.return_type, bindings);
+                c.body = try self.substituteStmts(fd.body, bindings);
+                break :blk .{ .func_def = c };
+            },
             .return_stmt => |re| .{ .return_stmt = if (re) |e| try self.substituteExpr(e, bindings) else null },
             .raise_stmt => |e| .{ .raise_stmt = try self.substituteExpr(e, bindings) },
             .try_stmt => |t| blk: {
@@ -9977,6 +10068,7 @@ pub const Checker = struct {
                 .ctx_expr = try self.substituteExpr(w.ctx_expr, bindings),
                 .binding = w.binding,
                 .body = try self.substituteStmts(w.body, bindings),
+                .is_async = w.is_async,
             } },
             .defer_stmt => |d| blk: {
                 const callee = try self.allocator.create(ast.Expr);

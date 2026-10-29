@@ -1572,13 +1572,6 @@ test "golden(typecheck): bilinmeyen mixin tabanı reddedilir" {
     );
 }
 
-test "golden(typecheck): err_yield_inside_try" {
-    try expectGolden(
-        @embedFile("typecheck_cases/err_yield_inside_try.nox"),
-        @embedFile("typecheck_cases/err_yield_inside_try.expected"),
-    );
-}
-
 test "golden(typecheck): err_generator_function_local" {
     try expectGolden(
         @embedFile("typecheck_cases/err_generator_function_local.nox"),
@@ -1604,6 +1597,34 @@ test "golden(typecheck): err_async_for_over_list" {
     try expectGolden(
         @embedFile("typecheck_cases/err_async_for_over_list.nox"),
         @embedFile("typecheck_cases/err_async_for_over_list.expected"),
+    );
+}
+
+test "golden(typecheck): err_yield_inside_except" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_yield_inside_except.nox"),
+        @embedFile("typecheck_cases/err_yield_inside_except.expected"),
+    );
+}
+
+test "golden(typecheck): err_yield_inside_finally" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_yield_inside_finally.nox"),
+        @embedFile("typecheck_cases/err_yield_inside_finally.expected"),
+    );
+}
+
+test "golden(typecheck): err_send_needs_generator_annotation" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_send_needs_generator_annotation.nox"),
+        @embedFile("typecheck_cases/err_send_needs_generator_annotation.expected"),
+    );
+}
+
+test "golden(typecheck): err_async_with_in_sync_function" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_async_with_in_sync_function.nox"),
+        @embedFile("typecheck_cases/err_async_with_in_sync_function.expected"),
     );
 }
 
