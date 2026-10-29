@@ -1551,6 +1551,20 @@ test "golden(typecheck): yalnızca-konumsal parametre anahtar kelimeyle verileme
     );
 }
 
+test "golden(typecheck): mixin metodunda super() reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_mixin_super.nox"),
+        @embedFile("typecheck_cases/err_mixin_super.expected"),
+    );
+}
+
+test "golden(typecheck): mixin'de olmayan metoda açık çağrı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_mixin_unknown_method.nox"),
+        @embedFile("typecheck_cases/err_mixin_unknown_method.expected"),
+    );
+}
+
 test "golden(typecheck): bilinmeyen mixin tabanı reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_unknown_mixin_base.nox"),

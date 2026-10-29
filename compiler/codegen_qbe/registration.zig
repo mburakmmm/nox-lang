@@ -455,6 +455,32 @@ pub fn computeInheritingClasses(allocator: std.mem.Allocator, class_defs: []cons
     return set;
 }
 
+/// `init` gövdesindeki `self.<ad> = ...` atamalarından henüz kayıtlı olmayan alanları `info`ya ekler (alan tipi: bildirimden ya da değerden çıkarım).
+fn registerInitFields(self: *Codegen, cd: ast.ClassDef, init: ast.FuncDef, info: *types.ClassInfo, layout_cursor: *usize, field_base_offset: usize) CodegenError!void {
+    for (init.body) |stmt| {
+        if (stmt.kind != .assign) continue;
+        const a = stmt.kind.assign;
+        if (a.target != .attribute) continue;
+        const attr = a.target.attribute;
+        if (attr.obj.* != .identifier or !std.mem.eql(u8, attr.obj.identifier, "self")) continue;
+        var exists = false;
+        for (info.fields.items) |f| {
+            if (std.mem.eql(u8, f.name, attr.attr)) {
+                exists = true;
+                break;
+            }
+        }
+        if (exists) continue;
+        // `self.x: T = v`: bildirilen tip değerden çıkarılana (boş literal, çağrı vb.) tercih edilir.
+        const ftype = if (a.ann) |ann| try self.resolveType(ann) else try self.inferFieldType(cd.name, init.params[1..], a.value);
+        const offset = if (info.layout_mode == .default)
+            field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE
+        else
+            abi.nextFieldOffset(layout_cursor, info.layout_mode, ftype);
+        try info.fields.append(self.allocator, .{ .name = attr.attr, .info = ftype, .offset = offset });
+    }
+}
+
 pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     var init_fd: ?ast.FuncDef = null;
     for (cd.methods) |m| {
@@ -521,29 +547,13 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
             abi.nextFieldOffset(&layout_cursor, info.layout_mode, ft);
         try info.fields.append(self.allocator, .{ .name = fd.name, .info = ft, .offset = offset });
     }
+    // Mixin başlatıcıları (`__nox_init_<Mixin>`, bkz. `mixin_flatten.zig`) da alan oluşturur: alanları `__init__`ten önce taranır.
+    for (cd.methods) |mi| {
+        if (!std.mem.startsWith(u8, mi.name, "__nox_init_")) continue;
+        try registerInitFields(self, cd, mi, &info, &layout_cursor, field_base_offset);
+    }
     if (init_fd) |init| {
-        for (init.body) |stmt| {
-            if (stmt.kind != .assign) continue;
-            const a = stmt.kind.assign;
-            if (a.target != .attribute) continue;
-            const attr = a.target.attribute;
-            if (attr.obj.* != .identifier or !std.mem.eql(u8, attr.obj.identifier, "self")) continue;
-            var exists = false;
-            for (info.fields.items) |f| {
-                if (std.mem.eql(u8, f.name, attr.attr)) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (exists) continue;
-            // `self.x: T = v`: bildirilen tip değerden çıkarılana (boş literal, çağrı vb.) tercih edilir.
-            const ftype = if (a.ann) |ann| try self.resolveType(ann) else try self.inferFieldType(cd.name, init.params[1..], a.value);
-            const offset = if (info.layout_mode == .default)
-                field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE
-            else
-                abi.nextFieldOffset(&layout_cursor, info.layout_mode, ftype);
-            try info.fields.append(self.allocator, .{ .name = attr.attr, .info = ftype, .offset = offset });
-        }
+        try registerInitFields(self, cd, init, &info, &layout_cursor, field_base_offset);
         info.total_size = if (info.layout_mode == .default)
             field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE
         else

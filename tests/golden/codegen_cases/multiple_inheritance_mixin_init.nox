@@ -1,0 +1,45 @@
+class Animal:
+    def __init__(self, name: str) -> None:
+        self.name: str = name
+
+    def speak(self) -> str:
+        return self.name + " makes a sound"
+
+class Swimmer:
+    def __init__(self, depth: int) -> None:
+        self.depth = depth
+        self.laps = 0
+
+    def swim(self) -> str:
+        self.laps += 1
+        return "swims to " + str(self.depth) + " lap " + str(self.laps)
+
+    def describe(self) -> str:
+        return "swimmer"
+
+class Flyer:
+    def __init__(self) -> None:
+        self.altitude = 10
+
+    def fly(self) -> str:
+        return "flies at " + str(self.altitude)
+
+    def describe(self) -> str:
+        return "flyer"
+
+class Duck(Animal, Swimmer, Flyer):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        Swimmer.__init__(self, 3)
+        Flyer.__init__(self)
+        self.altitude += 5
+
+    def speak(self) -> str:
+        return self.name + " quacks, then " + Animal.speak(self)
+
+    def describe(self) -> str:
+        return "duck(" + Swimmer.describe(self) + "," + Flyer.describe(self) + ")"
+
+d: Duck = Duck("Donald")
+print(d.speak())
+print(d.swim(), d.swim(), d.fly(), d.describe(), d.depth, d.altitude, d.laps)

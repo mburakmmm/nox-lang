@@ -5420,8 +5420,18 @@ pub const Checker = struct {
         self.checkClassBody(cd) catch |e| try self.recordDiagnostic(e);
     }
 
+    /// `__nox_init_<Mixin>`: mixin düzleştirmesinin (bkz. `mixin_flatten.zig`) `Mixin.__init__` kopyası — `__init__` gibi alan oluşturabilir.
+    fn isMixinInit(name: []const u8) bool {
+        return std.mem.startsWith(u8, name, "__nox_init_");
+    }
+
     fn checkClassBody(self: *Checker, cd: ast.ClassDef) TypeError!void {
         const diagnostics_before_init = self.diagnostics.items.len;
+        // Mixin başlatıcıları `__init__`ten ÖNCE denetlenir: kurdukları alanlar `__init__` gövdesinde görünür olmalı.
+        for (cd.methods) |m| {
+            if (isMixinInit(m.name))
+                self.checkMethodBody(cd.name, m, true) catch |e| try self.recordDiagnostic(e);
+        }
         for (cd.methods) |m| {
             if (std.mem.eql(u8, m.name, "__init__"))
                 self.checkMethodBody(cd.name, m, true) catch |e| try self.recordDiagnostic(e);
@@ -5444,7 +5454,7 @@ pub const Checker = struct {
             }
         }
         for (cd.methods) |m| {
-            if (!std.mem.eql(u8, m.name, "__init__"))
+            if (!std.mem.eql(u8, m.name, "__init__") and !isMixinInit(m.name))
                 self.checkMethodBody(cd.name, m, false) catch |e| try self.recordDiagnostic(e);
         }
     }

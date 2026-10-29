@@ -166,8 +166,12 @@ There is no `isinstance` and no run-time type test; use a protocol, a virtual me
 ### Several bases (mixins)
 
 `class C(A, B, D):` is allowed. The **first** base is the real base class (vtable dispatch, `super()`, `except A:`). The others are
-**mixins**: their methods (except `__init__`), declared fields and constants are copied into `C` at compile time. Name resolution follows
-Python's order: `C`'s own members, then `A` and its bases, then `B`, then `D`.
+**mixins**: their methods, declared fields and constants are copied into `C` at compile time. Name resolution follows Python's order:
+`C`'s own members, then `A` and its bases, then `B`, then `D`.
+
+As in Python, a mixin's `__init__` runs only when you call it, and you call a base's method explicitly with `Base.method(self, ...)`.
+The compiler turns `Mixin.method(self, args)` into a call of a private copy of that method, and `A.method(self, args)` on the real base
+into `super().method(args)`. A mixin's `__init__` may create fields, so the mixin keeps its own state:
 
 ```nox
 class Animal:
@@ -178,30 +182,36 @@ class Animal:
         return self.name + " makes a sound"
 
 class Swimmer:
-    depth: int
-
-    def __init__(self) -> None:
-        self.depth = 0
+    def __init__(self, depth: int) -> None:
+        self.depth = depth
+        self.laps = 0
 
     def swim(self) -> str:
-        return "swims to " + str(self.depth)
+        self.laps += 1
+        return "swims to " + str(self.depth) + ", lap " + str(self.laps)
 
 class Duck(Animal, Swimmer):
     def __init__(self, name: str) -> None:
         super().__init__(name)
-        self.depth = 3
+        Swimmer.__init__(self, 3)
+
+    def speak(self) -> str:
+        return self.name + " quacks, then " + Animal.speak(self)
 
 d: Duck = Duck("Donald")
-print(d.speak(), d.swim())
+print(d.speak())
+print(d.swim(), "|", d.swim(), d.laps)
 ```
 
 ```output
-Donald makes a sound swims to 3
+Donald quacks, then Donald makes a sound
+swims to 3, lap 1 | swims to 3, lap 2 2
 ```
 
-Limits: a mixin's state must be declared as a class-level field (`depth: int`) and is assigned again in `C.__init__` (a mixin's own
-`__init__` is not copied); `super()` does not work inside a mixin method; a value of type `C` cannot be passed where a mixin type is expected
-(use a [protocol](protocols-generics.md)); `except B:` does not match a `C` for a mixin `B`; generic classes cannot be mixins.
+A mixin may instead declare its state as a class-level field (`depth: int`); then `C.__init__` must assign it. Limits: `super()` is an
+error inside a mixin method (the method is copied into `C`); `except B:` does not match a `C` for a mixin `B` (there is no `isinstance`
+either; use a [protocol](protocols-generics.md) to accept any class with the right methods); a value of type `C` cannot be passed where
+the mixin type `B` is expected; generic classes cannot be mixins.
 
 ## Special methods
 

@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.66]
+
+### Eklendi
+
+- Mixin: `Mixin.__init__(self, ...)` ve `Mixin.metod(self, ...)` acik cagrilari (adlandirilmis kopyaya cevrilir), gercek tabana `Taban.metod(self, ...)` (`super().metod(...)`e cevrilir). Mixin durumu kendi `__init__`inde kurulabilir (`__nox_init_*` metodlari alan olusturabilir).
+- Mixin metodunda `super()` net bir hata verir.
+
+### Duzeltildi
+
+- Mixin metod govdeleri hedef siniflara paylasimli degil DERIN kopyalanir (checker'in isaretciyle anahtarli yan tablolari iki sinifin ayni dugumleri paylasmasini kaldiramazdi).
+
 ## [2.0.65]
 
 ### Degisti
