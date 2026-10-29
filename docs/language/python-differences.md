@@ -54,7 +54,7 @@ mini-language is fully supported in f-strings, `format()` and `str.format`.
 
 ## Classes
 
-- Single inheritance only; no metaclasses, `__slots__`, `__getattr__`, `__call__`, class-level attributes or `isinstance`.
+- Single inheritance plus compile-time mixins (`class C(A, B)`, see [Classes](classes.md#several-bases-mixins)); no metaclasses, `__slots__`, `__getattr__`, `__call__`, class-level attributes or `isinstance`.
 - Fields are fixed: created in `__init__` (or declared in the class body) and never added later. `self` may be left unannotated.
 - `==` on two instances compares fields structurally unless you define `__eq__`; `is` is only for `None`.
 - Operator overloading uses the usual dunder names; `x += y` calls `__add__`.

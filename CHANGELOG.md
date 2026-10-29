@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.61]
+
+### Eklendi
+
+- Coklu kalitim (mixin): `class C(A, B, D)`. Ilk taban gercek kalitimdir; digerlerinin metodlari, alan bildirimleri ve sabitleri derleme zamaninda `C`ye kopyalanir (Python MRO sirasi). Sinirlar `docs/language/classes.md`de.
+
+### Duzeltildi
+
+- Modul yukleyici, import edilen siniflarin sinif-duzeyi sabitlerini (`consts`) ve docstring'ini dusuruyordu.
+
 ## [2.0.60]
 
 ### Eklendi

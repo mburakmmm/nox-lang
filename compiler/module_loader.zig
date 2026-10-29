@@ -501,6 +501,20 @@ fn renameStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, map: *const Rename
     return out;
 }
 
+fn renameNames(a: std.mem.Allocator, names: []const []const u8, map: *const RenameMap) std.mem.Allocator.Error![]const []const u8 {
+    if (names.len == 0) return names;
+    const out = try a.alloc([]const u8, names.len);
+    for (names, 0..) |n, i| out[i] = map.get(n) orelse n;
+    return out;
+}
+
+fn renameConsts(a: std.mem.Allocator, consts: []const ast.ConstDecl, map: *const RenameMap) std.mem.Allocator.Error![]const ast.ConstDecl {
+    if (consts.len == 0) return consts;
+    const out = try a.alloc(ast.ConstDecl, consts.len);
+    for (consts, 0..) |c, i| out[i] = .{ .name = c.name, .type_expr = try renameTypeExpr(a, c.type_expr, map), .value = try renameExpr(a, c.value, map), .line = c.line };
+    return out;
+}
+
 /// Metod gövdeleri İÇİN: metodun KENDİ adı (`m.name`) hiçbir zaman yeniden
 /// adlandırılmaz (metodlar `map`e hiç GİRMEZ — yalnızca üst-düzey `func_def`/
 /// `class_def` adları girer) — ama `self: ClassName` DAHİL parametre/dönüş
@@ -663,7 +677,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
             // sınıfıdır (`Exception` GİBİ, `map`de YOKTUR, OLDUĞU GİBİ
             // KALIR) — HER İKİ durumda da checker'ın `self.classes.get(
             // base_name)`i DOĞRU sonucu BULUR.
-            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .base = if (cd.base) |b| (map.get(b) orelse b) else null, .type_params = cd.type_params, .methods = methods, .fields = fields, .decorators = cd.decorators } };
+            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .base = if (cd.base) |b| (map.get(b) orelse b) else null, .extra_bases = try renameNames(a, cd.extra_bases, map), .consts = try renameConsts(a, cd.consts, map), .doc = cd.doc, .type_params = cd.type_params, .methods = methods, .fields = fields, .decorators = cd.decorators } };
         },
         .protocol_def => |pd| blk: {
             const methods = try a.alloc(ast.FuncDef, pd.methods.len);

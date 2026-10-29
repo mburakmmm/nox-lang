@@ -362,7 +362,9 @@ const Printer = struct {
                 try self.printDecorators(c.decorators, depth);
                 try self.indentTo(depth);
                 if (c.base) |b| {
-                    try self.writer.print("class {s}({s}):", .{ c.name, b });
+                    try self.writer.print("class {s}({s}", .{ c.name, b });
+                    for (c.extra_bases) |eb| try self.writer.print(", {s}", .{eb});
+                    try self.writer.writeAll("):");
                 } else {
                     try self.writer.print("class {s}:", .{c.name});
                 }

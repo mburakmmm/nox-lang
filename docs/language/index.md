@@ -23,7 +23,7 @@ follows it, executed and compared — by the documentation test (`scripts/check_
 | [Expressions](expressions.md) | Operators, precedence, comparisons, slicing, comprehensions, lambdas |
 | [Statements](statements.md) | Assignment, control flow, `assert`, `del`, scoping |
 | [Functions](functions.md) | Parameters, defaults, keyword arguments, closures, first-class functions |
-| [Classes](classes.md) | Fields, methods, special methods, single inheritance |
+| [Classes](classes.md) | Fields, methods, special methods, inheritance and mixins |
 | [Protocols and generics](protocols-generics.md) | Structural protocols, generic functions/classes/methods |
 | [Exceptions](exceptions.md) | `raise`/`try`/`except`/`finally`, `with`, `defer`, the error model |
 | [Concurrency](concurrency.md) | `async`/`spawn`/`await`, tasks, channels, threads, the scheduler |

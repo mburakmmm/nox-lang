@@ -48,6 +48,7 @@ const index_call_fixup = @import("index_call_fixup.zig");
 const guard_normalize = @import("guard_normalize.zig");
 const nonlocal_desugar = @import("nonlocal_desugar.zig");
 const generator_desugar = @import("generator_desugar.zig");
+const mixin_flatten = @import("mixin_flatten.zig");
 const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
@@ -3532,6 +3533,11 @@ pub const Checker = struct {
         // v1.156.0: koruma tarzı Optional daraltma (`if x is None: return` + kalan deyimler → `else`), bkz. `guard_normalize.zig`.
         try guard_normalize.run(self.allocator, module.body);
         try self.collectImports(module);
+        // TODO 8.2: çoklu kalıtım → mixin düzleştirme (ilk taban gerçek, kalanlar kopyalanır).
+        if (try mixin_flatten.run(self.allocator, module.body, &self.from_imports)) |d| {
+            self.current_line = d.line;
+            return self.fail(error.TypeMismatch, "{s}", .{d.message});
+        }
         try self.collectClassNames(module);
         // Faz C.6 (bkz. `index_call_fixup.zig`nin belge notu): `name[i](y)`
         // belirsizliği — `generic_classes` kurulduktan SONRA, HERHANGİ bir

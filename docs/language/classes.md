@@ -1,8 +1,7 @@
 # Classes
 
-A `class` declares a new reference type with fields and methods. Nox supports **single inheritance**, special ("dunder") methods
-for operators and protocols, and structural [protocols](protocols-generics.md). There are no metaclasses, no multiple inheritance
-and no dynamic attribute creation.
+A `class` declares a new reference type with fields and methods. Nox supports single inheritance plus [mixins](#several-bases-mixins), special ("dunder") methods
+for operators and protocols, and structural [protocols](protocols-generics.md). There are no metaclasses and no dynamic attribute creation.
 
 ## Fields
 
@@ -133,6 +132,46 @@ this is tiny bit barks
 ```
 
 There is no `isinstance` and no run-time type test; use a protocol, a virtual method, or an `except` clause for dispatch on type.
+
+### Several bases (mixins)
+
+`class C(A, B, D):` is allowed. The **first** base is the real base class (vtable dispatch, `super()`, `except A:`). The others are
+**mixins**: their methods (except `__init__`), declared fields and constants are copied into `C` at compile time. Name resolution follows
+Python's order: `C`'s own members, then `A` and its bases, then `B`, then `D`.
+
+```nox
+class Animal:
+    def __init__(self, name: str) -> None:
+        self.name: str = name
+
+    def speak(self) -> str:
+        return self.name + " makes a sound"
+
+class Swimmer:
+    depth: int
+
+    def __init__(self) -> None:
+        self.depth = 0
+
+    def swim(self) -> str:
+        return "swims to " + str(self.depth)
+
+class Duck(Animal, Swimmer):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.depth = 3
+
+d: Duck = Duck("Donald")
+print(d.speak(), d.swim())
+```
+
+```output
+Donald makes a sound swims to 3
+```
+
+Limits: a mixin's state must be declared as a class-level field (`depth: int`) and is assigned again in `C.__init__` (a mixin's own
+`__init__` is not copied); `super()` does not work inside a mixin method; a value of type `C` cannot be passed where a mixin type is expected
+(use a [protocol](protocols-generics.md)); `except B:` does not match a `C` for a mixin `B`; generic classes cannot be mixins.
 
 ## Special methods
 
@@ -269,5 +308,5 @@ first-class value (`f = Account.cap`). There are no mutable class-level attribut
 
 ## What classes do not have
 
-Mutable class-level attributes, multiple inheritance, metaclasses, `__slots__`,
+Mutable class-level attributes, full multiple inheritance (only mixins), metaclasses, `__slots__`,
 `__getattr__`/`__setattr__`, `isinstance`/`type`, and `__call__`. Attributes cannot be added to an instance at run time.

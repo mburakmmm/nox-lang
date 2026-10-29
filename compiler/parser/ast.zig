@@ -300,6 +300,8 @@ pub const ClassDef = struct {
     /// fazla parantez-içi ad) v1 kapsamı DIŞINDA — parser TEK bir
     /// tanımlayıcı bekler.
     base: ?[]const u8 = null,
+    /// `class C(A, B, D):` — ilk taban `base`, kalanlar burada. `mixin_flatten.zig` bunları checker'dan ÖNCE `C`ye KOPYALAYIP boşaltır.
+    extra_bases: []const []const u8 = &.{},
     /// `class Name[T, U]:` — boşsa (varsayılan) sıradan (generic olmayan)
     /// bir sınıf. `FuncDef.type_params`in AYNISI (Faz P2.1, bkz. proje
     /// belleği "generic sınıflar" planı) — checker, niteliksiz `T`

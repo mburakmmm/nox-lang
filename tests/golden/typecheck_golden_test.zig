@@ -1516,6 +1516,13 @@ test "golden(typecheck): yield içeren fonksiyon Iterator[T] ile işaretlenmeli"
     );
 }
 
+test "golden(typecheck): bilinmeyen mixin tabanı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_unknown_mixin_base.nox"),
+        @embedFile("typecheck_cases/err_unknown_mixin_base.expected"),
+    );
+}
+
 test "golden(typecheck): jeneratör değer döndüremez" {
     try expectGolden(
         @embedFile("typecheck_cases/err_generator_return_value.nox"),
