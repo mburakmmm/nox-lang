@@ -6,7 +6,14 @@ const builtin = @import("builtin");
 
 pub fn handler(msg: []const u8, _: ?usize) noreturn {
     @branchHint(.cold);
-    if (comptime builtin.os.tag == .wasi) {
+    if (comptime builtin.os.tag == .freestanding) {
+        const host = struct {
+            extern "nox_host" fn write(fd: i32, ptr: [*]const u8, len: usize) i32;
+        };
+        _ = host.write(2, "panic: ", 7);
+        _ = host.write(2, msg.ptr, msg.len);
+        _ = host.write(2, "\n", 1);
+    } else if (comptime builtin.os.tag == .wasi) {
         const w = std.os.wasi;
         var pre = [_]w.ciovec_t{
             .{ .base = "panic: ", .len = 7 },

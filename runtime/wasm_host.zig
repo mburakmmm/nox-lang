@@ -28,3 +28,7 @@ pub fn exitProcess(code: u8) noreturn {
     if (comptime is_freestanding_wasm) exit(code);
     @import("std").process.exit(code);
 }
+
+/// YALNIZCA iş parçacıklı modüllerin (`wasm32-freestanding-threads`, ADR-015) içe aktardığı: yeni bir iş parçacığı başlatır; host paylaşımlı belleğe bağlı yeni bir örnekte
+/// `nox_host_thread_start(tid, arg)`ı çağırır. Dönen `tid > 0`; hata `< 0`.
+pub extern "nox_host" fn thread_spawn(arg: usize) i32;

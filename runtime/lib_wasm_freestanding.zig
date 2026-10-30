@@ -11,6 +11,17 @@ pub const std_options: std.Options = .{
     .unexpected_error_tracing = false,
 };
 
+const wasm_options = @import("wasm_options");
+
+/// İş parçacıklı kip (ADR-015): çok iş parçacıklı wasm'de Zig'in varsayılan panic işleyicisi ve `WasmAllocator`ı derlenmez; kilitli ayırıcı + minimal panic.
+pub const panic = if (wasm_options.threads) @import("wasm_panic.zig").panic else std.debug.FullPanic(std.debug.defaultPanic);
+pub const os = if (wasm_options.threads) struct {
+    pub const heap = struct {
+        pub const page_allocator = @import("wasm_mt_alloc.zig").allocator;
+    };
+} else struct {};
+pub const pool_bridge = if (wasm_options.threads) @import("async_rt/pool_bridge.zig") else struct {};
+
 pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const dispatch_registry = @import("alloc/dispatch_registry.zig");
@@ -41,6 +52,7 @@ pub const random_shim = @import("stdlib_shims/random.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 
 comptime {
+    if (wasm_options.threads) _ = pool_bridge;
     _ = asap;
     _ = arc;
     _ = dispatch_registry;

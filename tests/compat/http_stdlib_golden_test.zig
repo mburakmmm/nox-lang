@@ -289,6 +289,49 @@ test "nox.http.get: gzip Content-Encoding dogru cozulur (Duzeltme 1 — onceden 
     try expectGolden(source, "200\nmerhaba sikistirilmis dunya\n");
 }
 
+// v2.0.69 regresyonu: gzip + `Transfer-Encoding: chunked` (Cloudflare/Google gerçek dünya biçimi). Sıkıştırma çözücü kendi akışının sonunda durur, taşıma
+// katmanının son `0\r\n\r\n` parçası okunmamış kalırdı; kesik-gövde denetimi bunu yanlışlıkla HttpError sayıyordu.
+test "nox.http.get: gzip + chunked yanit kesik govde sayilmaz (son 0-chunk okunur)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "plain.txt", .data = "chunked sikistirilmis dunya" });
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const plain_path = try std.fmt.allocPrint(allocator, "{s}/plain.txt", .{path_buf[0..dir_len]});
+    defer allocator.free(plain_path);
+    const gzip_result = try std.process.run(allocator, io, .{ .argv = &.{ "gzip", "-kf", plain_path } });
+    if (gzip_result.term != .exited or gzip_result.term.exited != 0) return error.GzipFailed;
+    const gzip_body = try tmp.dir.readFileAlloc(io, "plain.txt.gz", allocator, .limited(4096));
+    defer allocator.free(gzip_body);
+
+    // Tek chunk + sonlandırıcı chunk; gövde iki yazıda gelir (çözücü son chunk'tan önce biter).
+    const chunked_body = try std.fmt.allocPrint(allocator, "{x}\r\n{s}\r\n0\r\n\r\n", .{ gzip_body.len, gzip_body });
+    defer allocator.free(chunked_body);
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer _ = sys.close(listen_fd);
+    const headers = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Encoding: gzip\r\nConnection: close\r\n\r\n";
+    const server_thread = try std.Thread.spawn(.{}, testServePartial, .{ listen_fd, headers, chunked_body, false });
+    defer server_thread.join();
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\import nox.http
+        \\
+        \\resp: nox_http_HttpResponse = nox.http.get("http://127.0.0.1:{d}/c", {{}})
+        \\print(resp.status)
+        \\print(resp.body)
+        \\
+    , .{port});
+    defer allocator.free(source);
+
+    try expectGolden(source, "200\nchunked sikistirilmis dunya\n");
+}
+
 // Düzeltme 2 (eski): gövdede HAM bir `\0` bulunan yanıt `strlen()` tabanlı `str` yüzünden reddediliyordu. `str` artık
 // uzunluğu başlıkta taşıdığından (v1.18.0 ABI) gövde reddedilmez ve bayt-doğru döner (v2.0.31).
 test "nox.http.get: govdede gomulu NUL bayti varsa gövde reddedilmez, bayt-dogru doner (v2.0.31; str uzunlugu basliktadir)" {
@@ -621,12 +664,21 @@ test "nox.transfer.download_to_file / upload_file: dosya akışla iner ve yükle
     const t3 = try std.Thread.spawn(.{}, testServeUploadEcho, .{listen_fd3});
     defer t3.join();
 
+    // `/tmp` Windows'ta yok: gerçek bir geçici dizin kullanılır; yoldaki `\` Nox string literal'inde kaçış sayılmasın diye `\\` yapılır.
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var tmp_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const tmp_len = try tmp.dir.realPath(io, &tmp_buf);
+    const tmp_lit = try std.mem.replaceOwned(u8, allocator, tmp_buf[0..tmp_len], "\\", "\\\\");
+    defer allocator.free(tmp_lit);
+
     const source = try std.fmt.allocPrint(allocator,
         \\import nox.transfer
         \\import nox.fs
         \\import nox.strings
         \\
-        \\dst: str = "/tmp/nox_stream_dl_test_{d}.bin"
+        \\dst: str = "{s}/nox_stream_dl_test.bin"
         \\print(nox.transfer.download_to_file("http://127.0.0.1:{d}/f", dst, {{}}))
         \\r: nox_fs_FileReader = nox.fs.open_read(dst)
         \\print(r.size())
@@ -652,7 +704,7 @@ test "nox.transfer.download_to_file / upload_file: dosya akışla iner ve yükle
         \\print(resp.body)
         \\nox.fs.remove_file(dst)
         \\
-    , .{ port, port, port2, port3 });
+    , .{ tmp_lit, port, port2, port3 });
     defer allocator.free(source);
 
     const expected = try std.fmt.allocPrint(allocator, "200\n70000\n{d}\n404\nFalse\nFalse\n201\nlen=70000 sum={d}\n", .{ expected_sum, expected_sum });

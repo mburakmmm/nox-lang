@@ -28,14 +28,15 @@ const builtin = @import("builtin");
 /// çağrılmamalıdır — freestanding'de HER ZAMAN TEK bir çekirdek/akış
 /// olduğundan CAS döngüsü PRATİKTE HİÇ spin ETMEZ (İLK denemede BAŞARILI
 /// olur), bu YÜZDEN `yield()` çağrısı ATLANDIĞINDA davranış DEĞİŞMEZ.
-const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+/// `+atomics` açık wasm (ADR-015) iş parçacıklı olduğundan yerel (freestanding olmayan) yolları kullanır; çıplak donanım/tek iş parçacıklı wasm "freestanding" kalır.
+const is_freestanding = (builtin.os.tag == .freestanding or builtin.os.tag == .other) and !(builtin.cpu.arch.isWasm() and std.Target.wasm.featureSetHas(builtin.cpu.features, .atomics));
 
 pub const SpinLock = struct {
     state: std.atomic.Value(u8) = .init(0),
 
     pub fn lock(self: *SpinLock) void {
         while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
-            if (comptime !is_freestanding) std.Thread.yield() catch {};
+            if (comptime !is_freestanding) @import("thread_spawn.zig").yield();
         }
     }
 

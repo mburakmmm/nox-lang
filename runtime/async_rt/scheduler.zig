@@ -34,7 +34,8 @@ const posix = std.posix;
 
 /// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `Scheduler.
 /// init`in `std.Thread.getCurrentId()` çağrısını gate'lemek İçİn.
-const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+/// `+atomics` açık wasm (ADR-015) iş parçacıklı olduğundan yerel (freestanding olmayan) yolları kullanır; çıplak donanım/tek iş parçacıklı wasm "freestanding" kalır.
+const is_freestanding = (builtin.os.tag == .freestanding or builtin.os.tag == .other) and !(builtin.cpu.arch.isWasm() and std.Target.wasm.featureSetHas(builtin.cpu.features, .atomics));
 
 const fiber_mod = @import("fiber.zig");
 const Fiber = fiber_mod.Fiber;
@@ -292,7 +293,8 @@ pub const Scheduler = struct {
         // Windows'ta `wake_write_fd == null` OLDUĞUNDAN (bkz. `self_pipe.
         // zig`) bu adım SESSİZCE ATLANIR — YENİ bir regresyon DEĞİL,
         // wake-fd mekanizmasının KENDİSİ ZATEN Windows'ta YOK.
-        if (builtin.os.tag != .windows) {
+        // wasm32'de (wasi ya da freestanding) uyandırma borusu yoktur: işçiler kısa beklemelerle yoklar (bkz. `self_pipe.zig`).
+        if (builtin.os.tag != .windows and comptime !builtin.cpu.arch.isWasm()) {
             if (self.wake_write_fd) |wfd| {
                 link.wake_fds[link.own_slot].store(@intCast(wfd), .release);
             }
@@ -1593,7 +1595,7 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
 
             var r: usize = 0;
             while (r < ROUNDS) : (r += 1) {
-                while (!shared.stw_requested.load(.acquire)) std.Thread.yield() catch {};
+                while (!shared.stw_requested.load(.acquire)) thread_spawn.yield();
                 sched.stwParticipate();
                 _ = shared.rounds_done[own_slot].fetchAdd(1, .monotonic);
             }
@@ -1632,9 +1634,9 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
         // BU test sürücüsü İSE round başına TAM BİR KEZ çağrıldığından
         // KENDİ İçİNDE tekrar etmesi GEREKİR.
         while (shared.stw_requested.cmpxchgWeak(false, true, .acq_rel, .monotonic) != null) {
-            std.Thread.yield() catch {};
+            thread_spawn.yield();
         }
-        while (shared.collect_count.load(.acquire) <= round) std.Thread.yield() catch {};
+        while (shared.collect_count.load(.acquire) <= round) thread_spawn.yield();
     }
 
     for (&threads) |t| t.join();

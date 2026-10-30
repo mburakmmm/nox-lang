@@ -60,6 +60,18 @@ const atomic_compat = @import("atomic_compat.zig");
 const thread_spawn = @import("thread_spawn.zig");
 const builtin = @import("builtin");
 const posix = std.posix;
+
+/// wasm32-freestanding (ADR-013/015): `std.process.exit`/`nanosleep`/`getenv` yok; çıkış ve uyku `nox_host`tan (modül sınırı nedeniyle burada bildirilir).
+const is_wasm_freestanding = builtin.cpu.arch.isWasm() and builtin.os.tag == .freestanding;
+const wasm_host_sleep = struct {
+    extern "nox_host" fn sleep_ms(ms: i64) void;
+    extern "nox_host" fn exit(code: i32) noreturn;
+};
+
+fn exitProcess(code: u8) noreturn {
+    if (comptime is_wasm_freestanding) wasm_host_sleep.exit(code);
+    std.process.exit(code);
+}
 const asap = @import("../alloc/asap.zig");
 const bridge = @import("bridge.zig");
 const io_mod = @import("io.zig");
@@ -199,6 +211,7 @@ fn poolWorkersOverride() ?usize {
         if (n == 0 or n >= buf.len) return null;
         return std.fmt.parseInt(usize, buf[0..n], 10) catch null;
     }
+    if (comptime is_wasm_freestanding) return null; // freestanding: ortam değişkeni yok; varsayılan işçi sayısı kullanılır
     const s = std.c.getenv("NOX_POOL_WORKERS") orelse return null;
     return std.fmt.parseInt(usize, std.mem.span(s), 10) catch null;
 }
@@ -293,7 +306,7 @@ pub export fn nox_debug_distinct_count() callconv(.c) i64 {
 const PoolRunDriverArgs = struct {
     num_workers: usize,
     ctx: *PoolRunCtx,
-    done_write_fd: posix.fd_t,
+    done_write_fd: completion_pipe.Fd,
     /// Çağıranın mobil sandbox politikasının spawn anında alınmış kopyası; havuzun `rt`si devralır.
     policy: asap.EmbedPolicy = .{},
 };
@@ -375,7 +388,7 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
 fn poolRunFlattened(rt_ptr: *anyopaque, entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64) i32 {
     const t = bridge.nox_async_spawn(rt_ptr, entry_fn, rt_ptr) orelse {
         diag_sink.report(rt_ptr, "nox: nox.thread.pool_run: OOM (ic-ice cagri)\n", .{});
-        std.process.exit(1);
+        exitProcess(1);
     };
     _ = bridge.nox_async_await(rt_ptr, t);
     bridge.nox_async_destroy_task(rt_ptr, t);
@@ -405,7 +418,7 @@ pub export fn nox_pool_run(
     // `assert`e GÜVENİLEMEZ, GERÇEK bir çalışma-zamanı doğrulaması GEREKİR.
     if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
         diag_sink.report(rt, "nox: nox.thread.pool_run: num_workers must be in 1..{d} (got {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
-        std.process.exit(1);
+        exitProcess(1);
     }
 
     var policy = asap.snapshotEmbedPolicy(rt, std.heap.page_allocator) catch return 1;
@@ -446,9 +459,13 @@ pub export fn nox_pool_run(
     // not) — bir Nox FİBER İçİNDEYSEK reaktör ÜZERİNDEN askıya alınır
     // (KARDEŞ fiber'lar BU SIRADA İLERLEYEBİLİR), fiber DIŞINDAYSAK
     // sıradan bloklayan bir `read()` YETERLİDİR.
-    if (bridge.currentFiberScheduler()) |scheduler| {
+    if (bridge.currentFiberScheduler()) |scheduler| if (comptime !builtin.cpu.arch.isWasm()) {
         var buf: [1]u8 = undefined;
         _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. completion_pipe.zig'nin AYNI notu.
+    } else {
+        // wasm: sahte fd reaktörle beklenemez; futex bayrağında bloke olunur (bkz. completion_pipe.zig).
+        var buf: [1]u8 = undefined;
+        completion_pipe.readSelfPipe(fds[0], &buf);
     } else {
         var buf: [1]u8 = undefined;
         completion_pipe.readSelfPipe(fds[0], &buf);
@@ -507,7 +524,7 @@ const PoolServeCtx = struct {
 const PoolServeDriverArgs = struct {
     num_workers: usize,
     ctx: *PoolServeCtx,
-    done_write_fd: posix.fd_t,
+    done_write_fd: completion_pipe.Fd,
     /// Çağıranın mobil sandbox politikasının spawn anında alınmış kopyası; havuzun `rt`si devralır.
     policy: asap.EmbedPolicy = .{},
 };
@@ -566,7 +583,7 @@ fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
 /// döner) `done_write_fd`ye SİNYAL gönderir.
 const BroadcastCtx = struct {
     remaining: std.atomic.Value(usize),
-    done_write_fd: posix.fd_t,
+    done_write_fd: completion_pipe.Fd,
     entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64,
     closure: *PoolServeClosure,
 
@@ -605,6 +622,10 @@ const WinSleep = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn Sleep(ms: u32) callconv(.c) void;
 } else struct {};
 fn sleepOneMs() void {
+    if (comptime is_wasm_freestanding) {
+        wasm_host_sleep.sleep_ms(1);
+        return;
+    }
     if (builtin.os.tag == .windows) {
         WinSleep.Sleep(1);
         return;
@@ -666,9 +687,13 @@ fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn 
         scheduler_mod.spawnToForeignScheduler(sched, BroadcastCtx.runOne, scheduler_mod.taskArg(bctx)) catch @panic("OOM: nox_pool_serve broadcast");
     }
 
-    if (bridge.currentFiberScheduler()) |scheduler| {
+    if (bridge.currentFiberScheduler()) |scheduler| if (comptime !builtin.cpu.arch.isWasm()) {
         var buf: [1]u8 = undefined;
         _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. completion_pipe.zig'nin AYNI notu.
+    } else {
+        // wasm: sahte fd reaktörle beklenemez; futex bayrağında bloke olunur (bkz. completion_pipe.zig).
+        var buf: [1]u8 = undefined;
+        completion_pipe.readSelfPipe(fds[0], &buf);
     } else {
         var buf: [1]u8 = undefined;
         completion_pipe.readSelfPipe(fds[0], &buf);
@@ -701,7 +726,7 @@ pub export fn nox_pool_serve(
 ) callconv(.c) i32 {
     if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
         diag_sink.report(rt, "nox: nox.http.serve_multicore: num_workers must be in 1..{d} (got {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
-        std.process.exit(1);
+        exitProcess(1);
     }
 
     if (rt) |rt_ptr| {
@@ -743,9 +768,13 @@ pub export fn nox_pool_serve(
     };
     driver_thread.detach();
 
-    if (bridge.currentFiberScheduler()) |scheduler| {
+    if (bridge.currentFiberScheduler()) |scheduler| if (comptime !builtin.cpu.arch.isWasm()) {
         var buf: [1]u8 = undefined;
         _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. completion_pipe.zig'nin AYNI notu.
+    } else {
+        // wasm: sahte fd reaktörle beklenemez; futex bayrağında bloke olunur (bkz. completion_pipe.zig).
+        var buf: [1]u8 = undefined;
+        completion_pipe.readSelfPipe(fds[0], &buf);
     } else {
         var buf: [1]u8 = undefined;
         completion_pipe.readSelfPipe(fds[0], &buf);
@@ -893,7 +922,7 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
             // 3 kardeşin de KENDİ çağrısını YAPTIĞI (dolayısıyla `run()`un
             // steal-döngüsüne ÇOK YAKIN OLDUKLARI) beklenir.
             while (workers_started.load(.acquire) < POOL_RUN_TOTAL_WORKERS) {
-                std.Thread.yield() catch {};
+                thread_spawn.yield();
             }
             var i: usize = 0;
             while (i < STEAL_TEST_N_TASKS) : (i += 1) {
@@ -1150,7 +1179,7 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
             // ÖNCE — ZATEN olmuş OLACAĞINDAN, BU EŞİK "TÜM kardeşlerin de
             // KENDİ çağrısını YAPTIĞI" anlamına gelir).
             while (workers_started.load(.acquire) < N_WORKERS) {
-                std.Thread.yield() catch {};
+                thread_spawn.yield();
             }
             var i: usize = 0;
             while (i < N_TASKS) : (i += 1) {

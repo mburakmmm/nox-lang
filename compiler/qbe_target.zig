@@ -171,6 +171,17 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
         .wasm_asyncify = true,
         .wasm_threads = true,
     };
+    if (std.mem.eql(u8, target_name, "wasm32-freestanding-threads")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-wasm32-freestanding-threads",
+        .zig_triple = "wasm32-freestanding",
+        .is_windows = false,
+        .llvm_triple = "wasm32-unknown-unknown-threads",
+        .wasm = true,
+        .wasm_freestanding = true,
+        .wasm_asyncify = true,
+        .wasm_threads = true,
+    };
     if (std.mem.eql(u8, target_name, "ios-arm64")) return .{
         .qbe_target = "",
         .runtime_object_name = "noxrt-ios-arm64",

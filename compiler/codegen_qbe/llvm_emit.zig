@@ -865,7 +865,7 @@ pub fn isWasmThreads(self: *const Codegen) bool {
 
 /// `wasm32-freestanding` (üçlü `wasm32-unknown-unknown`): WASI/libc yok, host `nox_host` import'larıdır (ADR-013).
 pub fn isWasmFreestanding(self: *const Codegen) bool {
-    return std.mem.eql(u8, self.llvm_triple, "wasm32-unknown-unknown");
+    return std.mem.eql(u8, self.llvm_triple, "wasm32-unknown-unknown") or std.mem.eql(u8, self.llvm_triple, "wasm32-unknown-unknown-threads");
 }
 
 /// libc sembolleri (wasi-libc, 32-bit): Nox'un `calls.zig`/`print` kodunun doğrudan çağırdıkları. Runtime'ın `export fn` tablosunda yoktur.

@@ -50,7 +50,8 @@ comptime {
 /// EKLENEREK, bu iki fonksiyonun gövdesi freestanding hedefte HİÇ semantik
 /// analiz EDİLMEZ (`io_reactor.zig`nin `IoReactor` seçim deseniyle AYNI
 /// "comptime-bilinen dal TAMAMEN elenir" ilkesi).
-const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+/// `+atomics` açık wasm (ADR-015) iş parçacıklı olduğundan yerel (freestanding olmayan) yolları kullanır; çıplak donanım/tek iş parçacıklı wasm "freestanding" kalır.
+const is_freestanding = (builtin.os.tag == .freestanding or builtin.os.tag == .other) and !(builtin.cpu.arch.isWasm() and std.Target.wasm.featureSetHas(builtin.cpu.features, .atomics));
 const is_wasm = builtin.cpu.arch.isWasm();
 /// wasm32'de fiber değiştirme Binaryen Asyncify ile yapılır (bkz. `asyncify.zig`, ADR-014).
 const asyncify = if (is_wasm) @import("asyncify.zig") else struct {};
@@ -368,7 +369,7 @@ fn stackPaintEnabled() bool {
     // ("dependency on libc must be explicitly specified") — bu ARAŞTIRMA
     // aracı freestanding'de ANLAMSIZDIR (env değişkeni KAVRAMI YOK),
     // KOŞULSUZ `false` (kapalı) döner.
-    if (comptime is_freestanding) return false;
+    if (comptime is_freestanding or (is_wasm and builtin.os.tag == .freestanding)) return false;
     if (!g_stack_paint_resolved.load(.monotonic)) {
         const enabled = std.c.getenv("NOX_STACK_PAINT") != null;
         g_stack_paint_enabled.store(enabled, .monotonic);

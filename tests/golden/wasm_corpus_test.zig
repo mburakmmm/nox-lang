@@ -37,7 +37,7 @@ fn isDenylisted(source: []const u8, target: wasm_helpers.Target) bool {
     const list: []const []const u8 = switch (target) {
         .wasi, .freestanding => &DENYLISTED_SOURCES,
         .wasi_asyncify, .freestanding_asyncify => &ASYNCIFY_DENYLISTED_SOURCES,
-        .wasi_threads => &THREADS_DENYLISTED_SOURCES,
+        .wasi_threads, .freestanding_threads => &THREADS_DENYLISTED_SOURCES,
     };
     for (list) |s| if (std.mem.eql(u8, s, source)) return true;
     return false;
@@ -61,6 +61,10 @@ test "wasm(korpus): --asyncify (wasm32-freestanding-asyncify): gerçek fiber, na
 
 test "wasm(korpus): --threads (wasm32-wasi-threads): gerçek paralel M:N, native --release ile aynı çıktı" {
     try runCorpus(.wasi_threads);
+}
+
+test "wasm(korpus): --threads (wasm32-freestanding-threads): nox_host.thread_spawn ile gerçek paralel M:N" {
+    try runCorpus(.freestanding_threads);
 }
 
 fn runCorpus(target: wasm_helpers.Target) !void {

@@ -18,6 +18,22 @@ const nox = @import("nox");
 const host_link = @import("host_link");
 const build_options = @import("build_options");
 
+/// `build_options`daki nesne dosyası yolları Nox kaynağına bir string literal olarak gömülür; Windows yollarındaki `\` (ör. `...\util.o` → `\u`) bir kaçış
+/// dizisi olarak okunmasın diye her `\` `\\`e çevrilir (POSIX yollarında değişiklik yok).
+fn escapeNoxLiteral(comptime s: []const u8) []const u8 {
+    comptime {
+        var out: []const u8 = "";
+        for (s) |c| out = out ++ (if (c == '\\') "\\\\" else &[_]u8{c});
+        return out;
+    }
+}
+
+const nox_lit = struct {
+    const mathutil_o_path = escapeNoxLiteral(build_options.mathutil_o_path);
+    const util_o_path = escapeNoxLiteral(build_options.util_o_path);
+    const counter_o_path = escapeNoxLiteral(build_options.counter_o_path);
+};
+
 fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
     const io = std.testing.io;
 
@@ -127,7 +143,7 @@ test "extern def: gerçek bir C kütüphanesi + gerçek bir Zig dosyası + siste
         \\print(add_two(3, 4))
         \\print(triple(7))
         \\
-    , .{ build_options.mathutil_o_path, build_options.util_o_path });
+    , .{ nox_lit.mathutil_o_path, nox_lit.util_o_path });
     defer allocator.free(source);
 
     try expectGolden(source, "4.0\n7\n21\n");
@@ -146,7 +162,7 @@ test "extern def: sabit-genişlikli dönüş tipi (u8) etiketi korunur — print
         \\print(nox_test_u8_inc(u8(1)) + u8(1))
         \\print(nox_test_u8_dirty() + u8(1))
         \\
-    , .{ build_options.util_o_path, build_options.util_o_path });
+    , .{ nox_lit.util_o_path, nox_lit.util_o_path });
     defer allocator.free(source);
 
     try expectGolden(source, "42\n42\n2!\n3\n43\n");
@@ -167,10 +183,10 @@ test "extern def: opak `ptr` tipi — gerçek bir handle-tabanlı C API (FILE*/s
         \\counter_destroy(h)
         \\
     , .{
-        build_options.counter_o_path,
-        build_options.counter_o_path,
-        build_options.counter_o_path,
-        build_options.counter_o_path,
+        nox_lit.counter_o_path,
+        nox_lit.counter_o_path,
+        nox_lit.counter_o_path,
+        nox_lit.counter_o_path,
     });
     defer allocator.free(source);
 
@@ -184,7 +200,7 @@ test "extern def with_rt: RT_PARAM gizlice geçirilir, Zig tarafı rt üzerinden
         \\
         \\print(nox_test_make_greeting("dunya"))
         \\
-    , .{build_options.util_o_path});
+    , .{nox_lit.util_o_path});
     defer allocator.free(source);
 
     try expectGolden(source, "merhaba, dunya\n");
@@ -198,7 +214,7 @@ test "extern def: dict[str, str] argüman olarak geçirilebilir (FFI-güvenli), 
         \\h: dict[str, str] = {{"greeting": "merhaba nox"}}
         \\print(nox_test_dict_lookup(h, "greeting"))
         \\
-    , .{build_options.util_o_path});
+    , .{nox_lit.util_o_path});
     defer allocator.free(source);
 
     try expectGolden(source, "merhaba nox\n");
@@ -225,7 +241,7 @@ test "extern def: geçici (taze) str argümanı, çağrı sonrası sızdırmaz (
         \\    i = i + 1
         \\print(total)
         \\
-    , .{build_options.util_o_path});
+    , .{nox_lit.util_o_path});
     defer allocator.free(source);
 
     // `"merhaba, kisi_" + str(i)` uzunluğu — `str(i)` 0..49999 İçİn 1-5
@@ -262,7 +278,7 @@ test "v2.0/2.3 @ffi.callback: C'nin trailing-userdata konvansiyonuyla Nox'a GER�
         \\
         \\print(nox_test_invoke_callback(add_ints, 3, 4))
         \\
-    , .{build_options.util_o_path});
+    , .{nox_lit.util_o_path});
     defer allocator.free(source);
 
     try expectGolden(source, "7\n");
@@ -287,7 +303,7 @@ test "extern def: list[str] dönüş tipi FFI-güvenli — indeksleme/ARC serbes
         \\print(nox_test_make_list(3)[1])
         \\print(nox_test_make_list(3)[2])
         \\
-    , .{build_options.util_o_path});
+    , .{nox_lit.util_o_path});
     defer allocator.free(source);
 
     try expectGolden(source, "item_0\nitem_1\nitem_2\n");

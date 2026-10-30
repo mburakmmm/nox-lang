@@ -47,7 +47,8 @@ const worker_pool_mod = @import("worker_pool.zig");
 /// pool_run`ı ZATEN reddettiğinden, bu blok freestanding'de HİÇ GEREKMEZ —
 /// dışarıdan bir `if (comptime !is_freestanding)` İLE SARILIR (hosted'da
 /// `is_freestanding` HER ZAMAN `false` OLDUĞUNDAN davranış SIFIR değişir).
-const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+/// `+atomics` açık wasm (ADR-015) iş parçacıklı olduğundan yerel (freestanding olmayan) yolları kullanır; çıplak donanım/tek iş parçacıklı wasm "freestanding" kalır.
+const is_freestanding = (builtin.os.tag == .freestanding or builtin.os.tag == .other) and !(builtin.cpu.arch.isWasm() and std.Target.wasm.featureSetHas(builtin.cpu.features, .atomics));
 /// Faz F.0.3: `nox_async_deadlock_abort`ın tanı mesajını enjekte
 /// edilebilir hâle getirmek İçİn (bkz. onun belge notu).
 const diag_sink = @import("diag_sink");

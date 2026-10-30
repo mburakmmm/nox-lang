@@ -26,6 +26,15 @@ pub fn currentId() Id {
 
 pub const Thread = if (is_wasm) WasmThread else std.Thread;
 
+/// İşlemciyi bırakır. Yerelde/wasi'de `std.Thread.yield`; wasm32-freestanding'de (`sched_yield` yok) kısa bir bekleme ipucu.
+pub fn yield() void {
+    if (comptime is_wasm and builtin.os.tag == .freestanding) {
+        std.atomic.spinLoopHint();
+        return;
+    }
+    std.Thread.yield() catch {};
+}
+
 pub fn spawn(comptime function: anytype, args: anytype) SpawnError!Thread {
     if (comptime is_wasm) return WasmThread.spawn(function, args);
     return std.Thread.spawn(.{}, function, args);
@@ -42,6 +51,11 @@ const WasmThread = if (is_wasm) struct {
         /// DEĞİŞMEZ: `threadStartNaked` gölge yığın işaretçisini bu alanı (ofset 0) okuyarak kurar; başka bir alanın önüne geçmemeli.
         stack_top: usize,
         state: std.atomic.Value(u32) = .init(@intFromEnum(State.running)),
+        /// İş parçacığının SON bellek yazısı (`threadStartNaked` kuyruğu, gövde döndükten sonra): 1 olunca iş parçacığı artık kendi yığınına/TLS'ine DOKUNMAZ,
+        /// blok güvenle geri verilebilir. (`state == completed` bundan birkaç komut öncedir; Debug çerçeveleri hâlâ yığını okuyor olabilir.)
+        exited: std.atomic.Value(u32) = .init(0),
+        /// Argüman paketini (tür-silinmiş) serbest bırakır.
+        free_pack: *const fn (usize) void,
         /// [TLS | yığın]; `__wasm_init_tls` bu bloğun başına, gölge yığın bloğun ÜST ucuna kurulur.
         block: []u8,
         tls_size: usize,
@@ -51,7 +65,14 @@ const WasmThread = if (is_wasm) struct {
 
     inst: *Instance,
 
-    extern "wasi" fn @"thread-spawn"(arg: *Instance) i32;
+    /// WASI-threads ABI'si (`wasi::thread-spawn`) ya da freestanding için Nox host sözleşmesi (`nox_host::thread_spawn`, ADR-013/015).
+    const is_freestanding_os = builtin.os.tag == .freestanding;
+    const spawnImport = if (is_freestanding_os) struct {
+        extern "nox_host" fn thread_spawn(arg: *Instance) i32;
+    }.thread_spawn else struct {
+        extern "wasi" fn @"thread-spawn"(arg: *Instance) i32;
+    }.@"thread-spawn";
+    const start_export_name = if (is_freestanding_os) "nox_host_thread_start" else "wasi_thread_start";
     extern fn __wasm_init_tls(memory: [*]u8) void;
 
     /// Bağlayıcının ürettiği değişmez wasm global'leri (TLS bölümünün boyutu ve hizası).
@@ -84,6 +105,11 @@ const WasmThread = if (is_wasm) struct {
         return struct {
             const Pack = struct { args: Args };
 
+            fn freePack(p: usize) void {
+                const pack: *Pack = @ptrFromInt(p);
+                std.heap.page_allocator.destroy(pack);
+            }
+
             fn thunk(p: usize) callconv(.c) i32 {
                 const pack: *Pack = @ptrFromInt(p);
                 @call(.auto, function, pack.args);
@@ -94,6 +120,7 @@ const WasmThread = if (is_wasm) struct {
 
     fn spawn(comptime function: anytype, args: anytype) SpawnError!WasmThread {
         const W = Wrapped(function, @TypeOf(args));
+        reap();
         const a = std.heap.page_allocator;
         const inst = a.create(Instance) catch return error.SystemResources;
         errdefer a.destroy(inst);
@@ -105,30 +132,67 @@ const WasmThread = if (is_wasm) struct {
         errdefer a.free(block);
         // `__wasm_init_tls` yalnızca `.tdata`yı kopyalar; `.tbss` (ve yığın) sıfırlanmış olmalıdır.
         @memset(block, 0);
-        inst.* = .{ .stack_top = @intFromPtr(block.ptr) + block.len, .block = block, .tls_size = tls_size, .entry = &W.thunk, .arg = @intFromPtr(pack) };
-        const tid = @"thread-spawn"(inst);
+        inst.* = .{ .stack_top = @intFromPtr(block.ptr) + block.len, .free_pack = &W.freePack, .block = block, .tls_size = tls_size, .entry = &W.thunk, .arg = @intFromPtr(pack) };
+        const tid = spawnImport(inst);
         if (tid < 0) return error.SystemResources;
         return .{ .inst = inst };
     }
 
-    pub fn join(self: WasmThread) void {
-        while (true) {
-            const s = self.inst.state.load(.seq_cst);
-            if (s != @intFromEnum(State.running)) break;
-            futexWait(&self.inst.state.raw, s);
-        }
-        // Bu noktada iş parçacığı bitti (son `state` yazısından sonra kendi yığınına dokunmaz); blok ve örnek geri verilir. Argüman paketi küçük, sızdırılır değil: aşağıda.
+    fn release(inst: *Instance) void {
         const a = std.heap.page_allocator;
-        a.free(self.inst.block);
-        const pack_ptr: *anyopaque = @ptrFromInt(self.inst.arg);
-        _ = pack_ptr; // paket bir tür-silinmiş küçük ayırımdır; boyutu bilinmediğinden `Instance` ile birlikte bırakılır (iş parçacığı başına birkaç bayt).
-        a.destroy(self.inst);
+        a.free(inst.block);
+        inst.free_pack(inst.arg);
+        a.destroy(inst);
+    }
+
+    pub fn join(self: WasmThread) void {
+        // `exited` iş parçacığının son yazısıdır: bundan sonra yığın/TLS bloğu güvenle geri verilebilir.
+        while (true) {
+            const e = self.inst.exited.load(.seq_cst);
+            if (e != 0) break;
+            futexWait(&self.inst.exited.raw, e);
+        }
+        release(self.inst);
+    }
+
+    /// Ayrılan (detach) iş parçacıkları: bitmemiş olanların bloğu iş parçacığı kendi yığınında çalışırken geri verilemez; örnek burada bekletilir ve sonraki `spawn`/`detach`
+    /// çağrılarında `exited` olanlar toplanır (`reap`). Tam liste durumunda en eski kayıt sızdırılır (ömürlü sürücü iş parçacıkları için pratikte hiç dolmaz).
+    var zombies: [64]?*Instance = @splat(null);
+    var zombie_lock: std.atomic.Value(u32) = .init(0);
+
+    fn zombieLock() void {
+        while (zombie_lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) futexWait(&zombie_lock.raw, 1);
+    }
+
+    fn zombieUnlock() void {
+        zombie_lock.store(0, .release);
+        futexWake(&zombie_lock.raw);
+    }
+
+    fn reap() void {
+        zombieLock();
+        defer zombieUnlock();
+        for (&zombies) |*slot| {
+            if (slot.*) |inst| {
+                if (inst.exited.load(.seq_cst) != 0) {
+                    release(inst);
+                    slot.* = null;
+                }
+            }
+        }
     }
 
     pub fn detach(self: WasmThread) void {
-        // Çalışmaya devam eden iş parçacığı bloğunu kendi yığınından geri veremez; bırakılır (bkz. modül notu).
-        const prev = self.inst.state.swap(@intFromEnum(State.detached), .seq_cst);
-        if (prev == @intFromEnum(State.completed)) self.join();
+        _ = self.inst.state.swap(@intFromEnum(State.detached), .seq_cst);
+        zombieLock();
+        for (&zombies) |*slot| {
+            if (slot.* == null) {
+                slot.* = self.inst;
+                break;
+            }
+        }
+        zombieUnlock(); // liste doluysa bu iş parçacığının bloğu sızar (bkz. yukarıdaki not)
+        reap();
     }
 
     /// Host'un çağırdığı giriş (`wasi_thread_start(tid, arg)`, WASI-threads ABI'si). YENİ bir wasm örneğinin `__stack_pointer`ı, tüm iş parçacıkları için AYNI statik
@@ -138,6 +202,7 @@ const WasmThread = if (is_wasm) struct {
     fn threadStartNaked(tid: i32, arg: *Instance) callconv(.naked) void {
         _ = tid;
         _ = arg;
+        const exited_off = std.fmt.comptimePrint("{d}", .{@offsetOf(Instance, "exited")});
         asm volatile (
             \\.functype nox_wasm_thread_main (i32, i32) -> ()
             \\local.get 1
@@ -146,6 +211,15 @@ const WasmThread = if (is_wasm) struct {
             \\local.get 0
             \\local.get 1
             \\call nox_wasm_thread_main
+            \\local.get 1
+            \\i32.const 1
+            \\i32.atomic.store 
+        ++ exited_off ++ "\n" ++
+            \\local.get 1
+            \\i32.const 1
+            \\memory.atomic.notify 
+        ++ exited_off ++ "\n" ++
+            \\drop
             \\return
         );
     }
@@ -160,7 +234,7 @@ const WasmThread = if (is_wasm) struct {
     }
 
     comptime {
-        @export(&threadStartNaked, .{ .name = "wasi_thread_start" });
+        @export(&threadStartNaked, .{ .name = start_export_name });
         @export(&threadMain, .{ .name = "nox_wasm_thread_main" });
     }
 } else struct {};

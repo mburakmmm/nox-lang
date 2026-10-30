@@ -82,3 +82,21 @@ runtime/stdlib_shims/websocket.zig	g_ca_bundle	lazy-lib	işlem-geneli TEMBEL yü
 runtime/stdlib_shims/websocket.zig	g_ca_lock	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
 runtime/collections/dict.zig	g_entropy_provider	provider	program başında bir kez kaydedilen, atomik işlev işaretçisi kaydı; değişken kullanıcı durumu değil
 runtime/collections/dict.zig	test_value_release_calls	test	yalnızca birim testlerinin sayaç/tamponu; üretim kodu okumaz
+runtime/async_rt/asyncify.zig	entry_root	tl-asyncify	wasm Asyncify sürücüsünün iş parçacığı-yerel kök kaydı (ADR-014/015); her iş parçacığı kendi fiber geçiş durumuna sahiptir
+runtime/async_rt/asyncify.zig	free_bufs	tl-asyncify	iş parçacığı-yerel Asyncify arabellek havuzu; arabellekler yalnızca askıdaki fiber'lara aittir
+runtime/async_rt/asyncify.zig	free_count	tl-asyncify	iş parçacığı-yerel Asyncify arabellek havuzu sayacı
+runtime/async_rt/asyncify.zig	g_cur_root	tl-asyncify	iş parçacığı-yerel: sürücünün şu an çalıştırdığı kök (swap bunu kaydeder)
+runtime/async_rt/asyncify.zig	g_entry	tl-asyncify	iş parçacığı-yerel: sürücüye verilen giriş işlevi
+runtime/async_rt/asyncify.zig	g_entry_arg	tl-asyncify	iş parçacığı-yerel: giriş işlevinin argümanı
+runtime/async_rt/asyncify.zig	g_next	tl-asyncify	iş parçacığı-yerel: sürücünün sıradaki akışı (swap yazar, sürücü okur)
+runtime/async_rt/asyncify.zig	g_phase	tl-asyncify	iş parçacığı-yerel Asyncify aşaması (normal/unwinding/rewinding); modülün Asyncify durumu da örnek (iş parçacığı) başınadır
+runtime/async_rt/asyncify.zig	g_rc	tl-asyncify	iş parçacığı-yerel: kök akışın dönüş kodu
+runtime/async_rt/bridge_wasm.zig	g_sched	wasm-single	tek iş parçacıklı wasm iç içe zamanlayıcısının tek örneği (wasm modülü başına tek RuntimeState; bkz. ADR-012)
+runtime/wasm_entry.zig	g_argc	tl-asyncify	iş parçacığı-yerel: Asyncify giriş köprüsünün main(argc, argv) argümanları
+runtime/wasm_entry.zig	g_argv	tl-asyncify	iş parçacığı-yerel: Asyncify giriş köprüsünün main(argc, argv) argümanları
+runtime/wasm_libc.zig	g_argv0	immutable	freestanding wasm'in argv[0]="nox" tablosu; yalnızca okunur
+runtime/wasm_mt_alloc.zig	bump_cur	wasm-alloc	iş parçacıklı wasm ayırıcısının bump bölgesi; lock_state ile korunur (ADR-015)
+runtime/wasm_mt_alloc.zig	bump_end	wasm-alloc	iş parçacıklı wasm ayırıcısının bump bölgesi; lock_state ile korunur
+runtime/wasm_mt_alloc.zig	free_heads	wasm-alloc	iş parçacıklı wasm ayırıcısının boyut sınıflı serbest listeleri; lock_state ile korunur
+runtime/wasm_mt_alloc.zig	lock_state	wasm-alloc	iş parçacıklı wasm ayırıcısının tek kilidi (futex); Zig'in WasmAllocator'ı çok iş parçacıklıda yoktur
+runtime/wasm_threads_libc.zig	lock_state	wasm-lock	iş parçacıklı wasi printf'inin çıktı kilidi; wasi-libc stdio'su iş parçacığı güvenli değildir

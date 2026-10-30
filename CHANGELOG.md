@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.81]
+
+### Eklendi
+
+- `--threads` artık `wasm32-freestanding` için de çalışır (`wasm32-freestanding-threads`): host sözleşmesine `nox_host.thread_spawn` eklendi; `compiler/wasm_host.mjs` bunu Worker'larla sağlar. Ayrıntı: ADR-013/015.
+- Ayrılmış (detach) wasm iş parçacıklarının bellek bloğu artık `exited` bayrağıyla güvenle geri kazanılır.
+
+### Düzeltildi
+
+- wasm'de Nox çekirdeğinin `round` işlevi libc/compiler-rt `round` sembolüyle çakışıyordu (bağlayıcı imza uyarısı, olası tuzak); IR son geçişinde `nox_user_round` olarak yeniden adlandırılır.
+- `nox.thread.pool_run` dış yolu wasm'de libc `pipe`'a bağlıydı (yüklemede `env.pipe` eksik); futex bayrağıyla değiştirildi.
+- `noxc run --target wasm32-*` Windows'ta `/tmp` ön-açımı yüzünden başlamıyordu (`UVWASI_ENOENT`); ön-açım gerçek geçici dizine eşlenir.
+- Kırmızı CI: global durum denetimi için yeni wasm çalışma zamanı globalleri `project/global-state-allowlist.tsv`ye gerekçeyle eklendi.
+- `nox.http.get/post/request`: gzip/deflate + `Transfer-Encoding: chunked` yanıtlar (Cloudflare, Google, example.com gibi gerçek siteler) v2.0.69'dan beri yanlışlıkla `HttpError` veriyordu — sıkıştırma çözücü kendi akışını bitirince taşıma katmanının son `0\r\n\r\n` parçası okunmamış kalıyor ve kesik-gövde denetimi bunu "bağlantı yarıda kesildi" sayıyordu. Denetim artık önce taşıma okuyucusunu boşaltır; gerçek kesilmeler yine hata verir. Mobil (iOS simülatör) kütüphane süiti bu yüzden v2.0.69'dan beri kırmızıydı. Regresyon testi: `gzip + chunked yanit kesik govde sayilmaz`.
+- Kırmızı CI (Windows): `extern_ffi_test` nesne dosyası yollarını Nox string literal'ine kaçışsız gömüyordu (`...\util.o` → `\u` geçersiz Unicode kaçışı); yollar artık kaçışlanır. `nox.transfer` testi sabit `/tmp` yerine gerçek geçici dizin kullanır.
+
 ## [2.0.80]
 
 ### Eklendi

@@ -71,7 +71,8 @@ const self_pipe = @import("../async_rt/self_pipe.zig");
 /// AYNI kök nedenle (`state.worker_pool` bir ÇALIŞMA-ZAMANI kontrolü,
 /// F.2'nin capability allowlist'i freestanding'de GERÇEK bir WorkerPool'u
 /// ZATEN İMKANSIZ kıldığından bu dal PRATİKTE hiç tetiklenmez).
-const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+/// `+atomics` açık wasm (ADR-015) iş parçacıklı olduğundan yerel (freestanding olmayan) yolları kullanır; çıplak donanım/tek iş parçacıklı wasm "freestanding" kalır.
+const is_freestanding = (builtin.os.tag == .freestanding or builtin.os.tag == .other) and !(builtin.cpu.arch.isWasm() and std.Target.wasm.featureSetHas(builtin.cpu.features, .atomics));
 
 /// Derleyicinin ÜRETTİĞİ, TÜM sınıflar için tek bir dağıtım noktası —
 /// bkz. modül üstü not. `tag`, `p`nin İLK 8 baytından (bkz. codegen.zig,
@@ -387,7 +388,7 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
                 ext.pool_stw_requested.store(true, .release);
             }
             ext.pool_stw_lock.unlock();
-            if (!already_requested and builtin.os.tag != .windows) {
+            if (!already_requested and builtin.os.tag != .windows and comptime !builtin.cpu.arch.isWasm()) {
                 for (&ext.pool_wake_fds) |*fd_atomic| {
                     const fd = fd_atomic.load(.monotonic);
                     if (fd >= 0) self_pipe.signalWakeFd(@intCast(fd));

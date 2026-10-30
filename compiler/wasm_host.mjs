@@ -23,8 +23,8 @@ export class NoxExit extends Error {
 }
 
 /** `io`: { write(fd, bytes) -> n, read(fd, bytes) -> n, clockMs(kind) -> number, randomFill(bytes), sleepMs(ms) } */
-export function createHost(io) {
-  let memory = null;
+export function createHost(io, sharedMemory = null) {
+  let memory = sharedMemory;
   const bytes = (ptr, len) => new Uint8Array(memory.buffer, ptr, len);
   const imports = {
     nox_host: {
@@ -42,7 +42,7 @@ export function createHost(io) {
     imports,
     /** Örnekleme sonrası çağır: bellek bağlanır ve ABI sürümü doğrulanır. */
     bind(instance) {
-      memory = instance.exports.memory;
+      memory = sharedMemory ?? instance.exports.memory;
       const v = instance.exports.nox_host_abi_version ? instance.exports.nox_host_abi_version() : 0;
       if (v !== NOX_HOST_ABI_VERSION) {
         throw new Error(`nox_host ABI sürümü uyuşmuyor: modül ${v}, host ${NOX_HOST_ABI_VERSION}`);
@@ -67,6 +67,28 @@ export async function runNox(wasmBytes, io) {
 
 // ---- Node CLI ----------------------------------------------------------------------------------------------------------------------------
 
+/** Node'da `nox_host` G/Ç'si (eşzamanlı fs, crypto, Atomics.wait ile uyku). */
+async function makeNodeIo() {
+  const fs = await import('node:fs');
+  const crypto = await import('node:crypto');
+  const sab = new Int32Array(new SharedArrayBuffer(4));
+  return {
+    write: (fd, b) => fs.writeSync(fd === 2 ? 2 : 1, b),
+    read: (fd, b) => {
+      try {
+        return fs.readSync(0, b, 0, b.length, null);
+      } catch (e) {
+        return e.code === 'EOF' ? 0 : -1;
+      }
+    },
+    clockMs: (kind) => (kind === 0 ? Date.now() : performance.now()),
+    randomFill: (b) => crypto.randomFillSync(b),
+    sleepMs: (ms) => {
+      if (ms > 0) Atomics.wait(sab, 0, 0, ms);
+    },
+  };
+}
+
 async function nodeMain() {
   const fs = await import('node:fs');
   const { argv } = await import('node:process');
@@ -80,24 +102,12 @@ async function nodeMain() {
   const modules = new Set(WebAssembly.Module.imports(mod).map((i) => i.module));
 
   if (modules.has('nox_host')) {
-    const crypto = await import('node:crypto');
-    const sab = new Int32Array(new SharedArrayBuffer(4));
-    const io = {
-      write: (fd, b) => fs.writeSync(fd === 2 ? 2 : 1, b),
-      read: (fd, b) => {
-        try {
-          return fs.readSync(0, b, 0, b.length, null);
-        } catch (e) {
-          return e.code === 'EOF' ? 0 : -1;
-        }
-      },
-      clockMs: (kind) => (kind === 0 ? Date.now() : performance.now()),
-      randomFill: (b) => crypto.randomFillSync(b),
-      sleepMs: (ms) => {
-        if (ms > 0) Atomics.wait(sab, 0, 0, ms);
-      },
-    };
-    process.exitCode = await runNox(bytes, io);
+    const memImportNox = findMemoryImport(bytes);
+    if (memImportNox && memImportNox.shared) {
+      process.exitCode = await runThreaded(file, mod, memImportNox, argv.slice(3), 'nox');
+      return;
+    }
+    process.exitCode = await runNox(bytes, await makeNodeIo());
     return;
   }
 
@@ -112,7 +122,7 @@ async function nodeMain() {
     version: 'preview1',
     args: [file, ...argv.slice(3)],
     env: process.env,
-    preopens: { '.': '.', '/tmp': '/tmp' },
+    preopens: await wasiPreopens(),
     returnOnExit: true,
   });
   const inst = await WebAssembly.instantiate(mod, wasi.getImportObject());
@@ -164,14 +174,14 @@ function findMemoryImport(bytes) {
  * Gözetmen (Node ana iş parçacığı): programın ana iş parçacığı da bir Worker'dır, böylece herhangi bir wasm iş parçacığı `atomic.wait` içinde bloke olsa bile gözetmenin
  * olay döngüsü açık kalır ve HERHANGİ bir iş parçacığının `proc_exit`ini (BroadcastChannel ile) alıp süreci sonlandırabilir.
  */
-async function runThreaded(file, mod, memImport, args) {
+async function runThreaded(file, mod, memImport, args, kind = 'wasi') {
   const { Worker } = await import('node:worker_threads');
   const memory = new WebAssembly.Memory({ initial: memImport.min, maximum: memImport.max ?? memImport.min, shared: true });
   const chan = new BroadcastChannel(EXIT_CHANNEL);
   const done = new Promise((resolve) => {
     chan.onmessage = (ev) => resolve(ev.data.exit);
   });
-  const w = new Worker(new URL(import.meta.url), { workerData: { main: true, mod, memory, tid: 0, arg: 0, file, args, tids: new Int32Array(new SharedArrayBuffer(4)) }, argv: [file] });
+  const w = new Worker(new URL(import.meta.url), { workerData: { main: true, kind, mod, memory, tid: 0, arg: 0, file, args, tids: new Int32Array(new SharedArrayBuffer(4)) }, argv: [file] });
   w.on('error', (e) => {
     console.error(e);
     process.exit(1);
@@ -183,46 +193,65 @@ async function runThreaded(file, mod, memImport, args) {
 
 const EXIT_CHANNEL = 'nox-wasm-exit';
 
+/** WASI ön-açımları: çalışma dizini ve geçici dizin (`/tmp` olarak). Windows'ta `/tmp` yoktur; gerçek geçici dizine eşlenir. */
+async function wasiPreopens() {
+  const os = await import('node:os');
+  return { '.': '.', '/tmp': os.tmpdir() };
+}
+
 /** Worker iş parçacığı (ana wasm iş parçacığı ya da `thread-spawn` ile açılan): paylaşımlı belleğe bağlanan bir örnek kurar. */
 async function workerMain() {
   const { workerData, Worker } = await import('node:worker_threads');
   const nodeFs = await import('node:fs');
-  const { WASI } = await import('node:wasi');
-  const { mod, memory, tid, arg, file, args, tids } = workerData;
+  const { mod, memory, tid, arg, file, args, tids, kind } = workerData;
   const chan = new BroadcastChannel(EXIT_CHANNEL);
   const exitAll = (code) => {
     chan.postMessage({ exit: code });
     chan.close();
   };
-  const wasi = new WASI({ version: 'preview1', args: [file, ...(args ?? [])], env: process.env, preopens: { '.': '.', '/tmp': '/tmp' }, returnOnExit: true });
-  const imp = {
-    ...wasi.getImportObject(),
-    env: { memory },
-    wasi: {
-      'thread-spawn': (a) => {
-        const t = Atomics.add(tids, 0, 1) + 1; // iş parçacıkları arasında benzersiz, > 0
-        const w = new Worker(new URL(import.meta.url), { workerData: { main: false, mod, memory, tid: t, arg: a, file, args, tids }, argv: [file] });
-        w.on('error', (e) => {
-          // Worker başlatma/çalışma hatası: sessizce yutulursa `join` sonsuza dek bekler.
-          nodeFs.writeSync(2, `wasm iş parçacığı hatası: ${e && e.stack ? e.stack : e}\n`);
-          exitAll(1);
-        });
-        return t;
-      },
-    },
+  const spawnThread = (a) => {
+    const t = Atomics.add(tids, 0, 1) + 1; // iş parçacıkları arasında benzersiz, > 0
+    const w = new Worker(new URL(import.meta.url), { workerData: { main: false, kind, mod, memory, tid: t, arg: a, file, args, tids }, argv: [file] });
+    w.on('error', (e) => {
+      // Worker başlatma/çalışma hatası: sessizce yutulursa `join` sonsuza dek bekler.
+      nodeFs.writeSync(2, `wasm iş parçacığı hatası: ${e && e.stack ? e.stack : e}\n`);
+      exitAll(1);
+    });
+    return t;
   };
-  imp.wasi_snapshot_preview1.proc_exit = (code) => {
-    exitAll(code);
-    throw new NoxExit(code);
-  };
-  const inst = await WebAssembly.instantiate(mod, imp);
-  wasi.finalizeBindings(inst, { memory });
+
+  let inst;
+  let startName;
+  if (kind === 'nox') {
+    // wasm32-freestanding-threads: `nox_host` import'ları + `thread_spawn`; iş parçacığı girişi `nox_host_thread_start`.
+    const host = createHost(await makeNodeIo(), memory);
+    host.imports.nox_host.thread_spawn = spawnThread;
+    host.imports.nox_host.exit = (code) => {
+      exitAll(code);
+      throw new NoxExit(code);
+    };
+    host.imports.env = { memory };
+    inst = await WebAssembly.instantiate(mod, host.imports);
+    host.bind(inst);
+    startName = 'nox_host_thread_start';
+  } else {
+    const { WASI } = await import('node:wasi');
+    const wasi = new WASI({ version: 'preview1', args: [file, ...(args ?? [])], env: process.env, preopens: await wasiPreopens(), returnOnExit: true });
+    const imp = { ...wasi.getImportObject(), env: { memory }, wasi: { 'thread-spawn': spawnThread } };
+    imp.wasi_snapshot_preview1.proc_exit = (code) => {
+      exitAll(code);
+      throw new NoxExit(code);
+    };
+    inst = await WebAssembly.instantiate(mod, imp);
+    wasi.finalizeBindings(inst, { memory });
+    startName = 'wasi_thread_start';
+  }
   try {
     if (workerData.main) {
       inst.exports._start();
       exitAll(0); // `_start` proc_exit olmadan döndü
     } else {
-      inst.exports.wasi_thread_start(tid, arg);
+      inst.exports[startName](tid, arg);
     }
   } catch (e) {
     if (!(e instanceof NoxExit)) {

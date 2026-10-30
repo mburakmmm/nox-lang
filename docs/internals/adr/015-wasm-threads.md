@@ -4,7 +4,7 @@ Durum: kabul (kullanıcı kararı: "wasi-threads tarzı gerçek M:N; host taraf�
 
 ## Karar
 
-- Hedef adı `wasm32-wasi-threads` (`--threads`, `--asyncify`i içerir): çalışma zamanı `noxrt-wasm32-wasi-threads.o` (`+atomics +bulk_memory`, `-fno-single-threaded`), bağlama `-mcpu=generic+atomics+bulk_memory -Wl,--shared-memory,--import-memory,--max-memory=1 GiB,--export=wasi_thread_start` + `wasm-opt --asyncify`. Yalnızca `wasm32-wasi`: freestanding için iş parçacığı başlatma sözleşmesi (`nox_host.thread_spawn`) henüz yok.
+- Hedef adı `wasm32-wasi-threads` (`--threads`, `--asyncify`i içerir): çalışma zamanı `noxrt-wasm32-wasi-threads.o` (`+atomics +bulk_memory`, `-fno-single-threaded`), bağlama `-mcpu=generic+atomics+bulk_memory -Wl,--shared-memory,--import-memory,--max-memory=1 GiB,--export=wasi_thread_start` + `wasm-opt --asyncify`. `wasm32-wasi` ve `wasm32-freestanding` (`wasm32-freestanding-threads`): freestanding'de başlatma `nox_host.thread_spawn(arg) -> tid` içe aktarımı ve `nox_host_thread_start(tid, arg)` dışa aktarımıdır (ADR-013); işçi sayısı varsayılan sabittir (ortam değişkeni yok).
 - **Host sözleşmesi** (WASI-threads ABI'si; wasmtime 50 `-Sthreads`ı kaldırdığından host'u Nox sağlar): modül paylaşımlı `env.memory` içe aktarır ve `wasi::thread-spawn(arg) -> tid` ister; host her çağrıda yeni bir iş parçacığında aynı belleğe bağlı yeni bir örnek kurar ve `wasi_thread_start(tid, arg)`ı çağırır. `compiler/wasm_host.mjs` bunu Node Worker'larıyla uygular (gözetmen iş parçacığı + `BroadcastChannel` ile `proc_exit`; ana wasm iş parçacığı da bir Worker'dır, böylece atomik beklemedeki bir iş parçacığı çıkışı engellemez). Başka bir host (Nexus Engine) aynı iki parçayı sağlar.
 - **Kendi iş parçacığı uygulamamız** (`async_rt/thread_spawn.zig`): Zig 0.16'nın `WasiThreadImpl`i kullanılmaz. Gölge yığın işaretçisini ayrılan yığın bölgesinin ALT ucuna kurar (yığın aşağı büyüdüğünden yalnızca 64 KiB kullanılabilir, ötesi komşu bloğu ezer) ve `std.Io.Threaded` futex'ine dayanır (Zig tip hatası). Burada blok (TLS + 1 MiB yığın) sıfırlanır (`__wasm_init_tls` yalnızca `.tdata`yı kopyalar), giriş `callconv(.naked)` yazılır — YENİ örneğin `__stack_pointer`ı tüm iş parçacıkları için aynı statik tepedir, sıradan bir Debug önsözü bu ortak bölgede çerçeve açıp `arg`ı eş zamanlı başlayan iş parçacıklarının birbirinin üstüne yazmasına yol açıyordu — ve iş parçacığı kendi Asyncify sürücüsü altında çalışır.
 - **64-bit atomikler**: Zig 0.16 wasm32'de `@atomicRmw(u64, ...)`i derlemez; ARC başlığı (64-bit) ve zamanlayıcı sayaçları `async_rt/atomic64.zig` aracılığıyla satır içi `i64.atomic.*` ile erişilir (tek iş parçacıklı wasm'de düz erişim). Üretilen Nox kodunda ARC `atomicrmw` olarak kalır (LLVM `+atomics` ile `i64.atomic.rmw.*` üretir).
@@ -19,8 +19,8 @@ Korpus (`wasm-corpus-test`) yerel `--release` M:N denylist'iyle (zamanlayıcıya
 ## Sınırlar
 
 - Tarayıcıda `SharedArrayBuffer` için COOP/COEP başlıkları gerekir; kendi host'unuz `thread-spawn` ve paylaşımlı belleği sağlamalıdır.
-- `detach` edilen iş parçacıklarının bellek bloğu geri verilmez (az sayıda sürücü iş parçacığı).
+- `detach` edilen iş parçacıkları bir hurda listesinde tutulur; iş parçacığının SON bellek yazısı (`exited`, naked giriş kuyruğu) görüldükten sonra sonraki `spawn`/`detach`te blokları geri verilir. 64 kayıttan fazla eşzamanlı ayrık iş parçacığında fazlası sızar.
 - Dosya tanıtıcıları WASI örneği başınadır (Node'da): bir iş parçacığında açılan dosya diğerinde görünmez.
-- `wasm32-freestanding` iş parçacıkları henüz yok.
+- Tamamlanma sinyali (`pool_run` dış yolu) pipe yerine futex bayrağıdır (`completion_pipe.zig`); işçileri uyandıran self-pipe wasm'de yoktur, boşta işçiler kısa beklemelerle yoklar.
 
 Geri alma: `wasm32-wasi-threads` kaydını ve `wasm-rt`teki beşinci çalışma zamanı nesnesini silmek.

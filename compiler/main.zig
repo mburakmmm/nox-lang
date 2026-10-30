@@ -1242,8 +1242,11 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
         if (std.mem.eql(u8, t, "wasm32-wasi")) {
             opts.target = "wasm32-wasi-threads";
             asyncify = false;
+        } else if (std.mem.eql(u8, t, "wasm32-freestanding")) {
+            opts.target = "wasm32-freestanding-threads";
+            asyncify = false;
         } else {
-            printErr("--threads only applies to --target wasm32-wasi (freestanding has no thread-spawn host contract yet)\n", .{});
+            printErr("--threads only applies to --target wasm32-wasi or wasm32-freestanding\n", .{});
             std.process.exit(1);
         }
     }
@@ -2733,9 +2736,11 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
     // wasm32-freestanding: libc/WASI başlangıcı yok; giriş `_start` (runtime/wasm_libc.zig), host import'ları `nox_host` ad alanından.
     if (info.wasm_threads) {
         // ADR-015: paylaşımlı bellek + atomikler; Zig'in WasiThreadImpl'i `wasi_thread_start`ı dışa aktarılmış ister, host `wasi::thread-spawn` sağlar.
-        try argv.appendSlice(a, &.{ "-mcpu=generic+atomics+bulk_memory", "-Wl,--shared-memory", "-Wl,--import-memory", "-Wl,--initial-memory=33554432", "-Wl,--max-memory=1073741824", "-Wl,--export=wasi_thread_start" });
+        try argv.appendSlice(a, &.{ "-mcpu=generic+atomics+bulk_memory", "-Wl,--shared-memory", "-Wl,--import-memory", "-Wl,--initial-memory=33554432", "-Wl,--max-memory=1073741824" });
+        if (!info.wasm_freestanding) try argv.append(a, "-Wl,--export=wasi_thread_start");
     }
     if (info.wasm_freestanding) try argv.appendSlice(a, &.{ "-Wl,--no-entry", "-Wl,--export=_start", "-Wl,--export=nox_host_abi_version" });
+    if (info.wasm_freestanding and info.wasm_threads) try argv.append(a, "-Wl,--export=nox_host_thread_start");
     if (info.wasm_freestanding) {
         // libc/libm yok: `from "m"` bildirimleri çalışma zamanındaki (`wasm_libc.zig`/compiler-rt) tanımlara çözülür; `-lm` verilmez.
         var tmp: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -3072,7 +3077,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding, wasm32-wasi-asyncify, wasm32-freestanding-asyncify, wasm32-wasi-threads, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding, wasm32-wasi-asyncify, wasm32-freestanding-asyncify, wasm32-wasi-threads, wasm32-freestanding-threads, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
             return error.BuildFailed;
         })
     else

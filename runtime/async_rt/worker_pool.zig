@@ -349,7 +349,7 @@ fn stressWorkerBody(rt: *anyopaque, slot: usize, shared: *StressShared) void {
         // ARALARDA yazdığı değerlerle ASLA KARIŞMAMALI.
         const marker: ?*anyopaque = @ptrFromInt(0x1000 + slot * 8 + @mod(i, 4));
         asap.nox_globals_set(rt, marker);
-        std.Thread.yield() catch {};
+        thread_spawn.yield();
         if (asap.nox_globals_get(rt) != marker) shared.globals_mismatch.store(true, .seq_cst);
     }
 }
@@ -486,7 +486,7 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         // `ready`i AYARLAMAYIZ (ÖNCEKİ "8 yield yeterli mi" TAHMİNİNİN
         // YERİNE GEÇEN, GERÇEK bir bariyer).
         while (ctx.siblings_started.load(.acquire) < STEAL_TEST_N_SIBLINGS) {
-            std.Thread.yield() catch {};
+            thread_spawn.yield();
         }
         var i: usize = 0;
         while (i < STEAL_TEST_N_TASKS) : (i += 1) {
@@ -555,7 +555,7 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         }
     } else {
         _ = ctx.siblings_started.fetchAdd(1, .release);
-        while (!ctx.ready.load(.acquire)) std.Thread.yield() catch {};
+        while (!ctx.ready.load(.acquire)) thread_spawn.yield();
     }
 
     sched.run() catch |e| switch (e) {
@@ -824,9 +824,9 @@ fn chanStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *ChanStressCtx) void 
         ctx.consumer_task = scheduler_mod.spawn(&sched, void, chanStressConsumerFn, ctx) catch @panic("spawn failed");
         ctx.ready.store(true, .release);
         var y: usize = 0;
-        while (y < 8) : (y += 1) std.Thread.yield() catch {};
+        while (y < 8) : (y += 1) thread_spawn.yield();
     } else {
-        while (!ctx.ready.load(.acquire)) std.Thread.yield() catch {};
+        while (!ctx.ready.load(.acquire)) thread_spawn.yield();
     }
 
     sched.run() catch |e| switch (e) {
@@ -974,9 +974,9 @@ fn taskAwaitStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *TaskAwaitStress
         }
         ctx.ready.store(true, .release);
         var y: usize = 0;
-        while (y < 8) : (y += 1) std.Thread.yield() catch {};
+        while (y < 8) : (y += 1) thread_spawn.yield();
     } else {
-        while (!ctx.ready.load(.acquire)) std.Thread.yield() catch {};
+        while (!ctx.ready.load(.acquire)) thread_spawn.yield();
     }
 
     sched.run() catch |e| switch (e) {

@@ -16,7 +16,9 @@ Durum: kabul (kullanıcı kararı: Nox'a özel import ad alanı). `--target wasm
   | `sleep_ms` | `(ms)` | tek iş parçacıklı kipte host anında dönebilir |
   | `exit` | `(code)` | dönmez |
 
-  Host, `nox_host_abi_version()`ı okuyup desteklemediği bir sürümü reddeder. Sürüm artışı kırıcı değişikliktir (yeni import eklemek değildir: bilinmeyen import host'ta tanımlı değilse modül yüklenmez, bu da açık bir hatadır).
+  İş parçacıklı modüller (`wasm32-freestanding-threads`, ADR-015) ek olarak `thread_spawn(arg) -> i32` içe aktarır ve `nox_host_thread_start(tid, arg)` dışa aktarır; paylaşımlı `env.memory` kullanırlar.
+
+Host, `nox_host_abi_version()`ı okuyup desteklemediği bir sürümü reddeder. Sürüm artışı kırıcı değişikliktir (yeni import eklemek değildir: bilinmeyen import host'ta tanımlı değilse modül yüklenmez, bu da açık bir hatadır).
 - **Çekirdek ayırıcı**: freestanding çıplak donanım değildir; `std.heap.wasm_allocator` (`memory.grow`) ile `nox_runtime_init_with_allocator` yolu kullanılır (`asap.zig`).
 - **libc yerine**: `printf` (yer tutucular `%lld %llu %d %u %s %c %g %f %%`), `strcmp`, ve eksik libm (`atan2`, `tan`) `wasm_libc.zig`dedir; kalan matematik Zig compiler-rt'den gelir. `from "m"` bildirimleri için `-lm` verilmez.
 - **Ortam**: işletim sistemi yoktur. `nox.os.getenv`/`set_var` modüle özel, başlangıçta boş bir tabloyla çalışır; `arg(0)` `"nox"`, `current_dir()` `"/"`. Dosya sistemi yoktur: `nox.fs` derleme zamanında reddedilir (ve ağ/süreç modülleri ADR-012'deki gibi).

@@ -344,6 +344,12 @@ pub fn responseBodyTruncated(req: *std.http.Client.Request, method: std.http.Met
         .no_content, .not_modified => return false,
         else => if (@intFromEnum(status) < 200) return false,
     }
+    // gzip/deflate: sıkıştırma çözücü kendi akışının sonunda durur, taşıma katmanının son `0\r\n\r\n` parçası (ya da artık baytlar) henüz okunmamış olabilir.
+    // Önce taşıma okuyucusu boşaltılır; bağlantı GERÇEKTEN kesildiyse durum yine "kalan" olarak kalır.
+    switch (req.reader.state) {
+        .body_remaining_content_length, .body_remaining_chunk_len => _ = req.reader.interface.discardRemaining() catch 0,
+        else => {},
+    }
     return switch (req.reader.state) {
         .body_remaining_content_length, .body_remaining_chunk_len => true,
         else => false,

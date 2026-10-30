@@ -984,6 +984,7 @@ pub fn build(b: *std.Build) void {
     wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi-asyncify", false, true, false));
     wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-asyncify", true, true, false));
     wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi-threads", false, true, true));
+    wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-threads", true, true, true));
     const mobile_rt_simulator = b.step("mobile-rt-simulator", "Build the iOS simulator noxrt object");
     mobile_rt_simulator.dependOn(simulator_rt);
     const mobile_rt_android = b.step("mobile-rt-android", "Build the Android noxrt objects");

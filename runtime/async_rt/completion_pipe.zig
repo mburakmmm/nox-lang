@@ -26,6 +26,9 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const io_mod = @import("io.zig");
 
+/// Tamamlanma borusunun uç tanıtıcı tipi: yerelde `Fd`; wasm32-freestanding'de (`Fd == void`) sahte fd olarak `i32`.
+pub const Fd = if (builtin.cpu.arch.isWasm() and builtin.os.tag == .freestanding) i32 else posix.fd_t;
+
 /// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `workerThreadFn`nin
 /// "tamamlanma sinyali" self-pipe'ı `std.c.pipe`ye dayanır — Windows'ta
 /// `pipe()` YOKTUR. Yerine, BAĞLANMIŞ (connected) bir UDP-loopback ÇİFTİ
@@ -33,7 +36,42 @@ const io_mod = @import("io.zig");
 /// AYNI teknik) — bir tarafa `send` edilen TEK bayt, diğer taraftan
 /// `recv` edilerek OKUNUR, `nonBlockingRead`in (D.0'ın reaktörü) BEKLEDİĞİ
 /// "hazır-olma bildirimi alınabilen bir fd" sözleşmesini AYNEN karşılar.
-pub fn makeSelfPipe() ?[2]posix.fd_t {
+/// wasm32 (ADR-015): `pipe`/`read`/`write` yok. Tamamlanma sinyali, iki "uç"un (aynı sahte fd) paylaştığı bir futex bayrağıdır: `signalSelfPipe` bayrağı kurup uyandırır,
+/// `readSelfPipe` bayrak kurulana dek iş parçacığını BLOKE eder (gerçek `read()` gibi), son `closeFd` bayrağı serbest bırakır. fd = bayrağın adresi.
+const WasmFlag = struct {
+    signaled: std.atomic.Value(u32) = .init(0),
+    refs: std.atomic.Value(u32) = .init(2),
+};
+
+const is_wasm = builtin.cpu.arch.isWasm();
+
+fn wasmFlag(fd: Fd) *WasmFlag {
+    return @ptrFromInt(@as(usize, @intCast(@as(u32, @bitCast(fd)))));
+}
+
+inline fn wasmWait(ptr: *const u32, expected: u32) void {
+    const exp: i32 = @bitCast(expected);
+    _ = asm volatile ("local.get %[ptr]\nlocal.get %[exp]\ni64.const -1\nmemory.atomic.wait32 0\nlocal.set %[ret]"
+        : [ret] "=r" (-> u32),
+        : [ptr] "r" (ptr),
+          [exp] "r" (exp),
+        : .{ .memory = true });
+}
+
+inline fn wasmWake(ptr: *const u32) void {
+    _ = asm volatile ("local.get %[ptr]\ni32.const 1\nmemory.atomic.notify 0\nlocal.set %[ret]"
+        : [ret] "=r" (-> u32),
+        : [ptr] "r" (ptr),
+        : .{ .memory = true });
+}
+
+pub fn makeSelfPipe() ?[2]Fd {
+    if (comptime is_wasm) {
+        const flag = std.heap.page_allocator.create(WasmFlag) catch return null;
+        flag.* = .{};
+        const fd: Fd = @bitCast(@as(u32, @intCast(@intFromPtr(flag))));
+        return .{ fd, fd };
+    }
     if (builtin.os.tag == .windows) {
         io_mod.ensureWinsock();
         const ws = io_mod.WinSock;
@@ -68,12 +106,17 @@ pub fn makeSelfPipe() ?[2]posix.fd_t {
         // `fds[0]`=oku/`fds[1]`=yaz sözleşmesiyle AYNI.
         return .{ @ptrFromInt(a), @ptrFromInt(b) };
     }
-    var fds: [2]posix.fd_t = undefined;
+    var fds: [2]Fd = undefined;
     if (std.c.pipe(&fds) != 0) return null;
     return fds;
 }
 
-pub fn closeFd(fd: posix.fd_t) void {
+pub fn closeFd(fd: Fd) void {
+    if (comptime is_wasm) {
+        const flag = wasmFlag(fd);
+        if (flag.refs.fetchSub(1, .acq_rel) == 1) std.heap.page_allocator.destroy(flag);
+        return;
+    }
     if (builtin.os.tag == .windows) {
         _ = io_mod.WinSock.closesocket(@intFromPtr(fd));
     } else {
@@ -81,7 +124,13 @@ pub fn closeFd(fd: posix.fd_t) void {
     }
 }
 
-pub fn signalSelfPipe(fd: posix.fd_t) void {
+pub fn signalSelfPipe(fd: Fd) void {
+    if (comptime is_wasm) {
+        const flag = wasmFlag(fd);
+        flag.signaled.store(1, .seq_cst);
+        wasmWake(&flag.signaled.raw);
+        return;
+    }
     if (builtin.os.tag == .windows) {
         var b: [1]u8 = .{1};
         _ = io_mod.WinSock.send(@intFromPtr(fd), &b, 1, 0);
@@ -91,7 +140,13 @@ pub fn signalSelfPipe(fd: posix.fd_t) void {
     }
 }
 
-pub fn readSelfPipe(fd: posix.fd_t, buf: []u8) void {
+pub fn readSelfPipe(fd: Fd, buf: []u8) void {
+    if (comptime is_wasm) {
+        const flag = wasmFlag(fd);
+        while (flag.signaled.load(.seq_cst) == 0) wasmWait(&flag.signaled.raw, 0);
+        if (buf.len > 0) buf[0] = 1;
+        return;
+    }
     if (builtin.os.tag == .windows) {
         _ = io_mod.WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
     } else {
