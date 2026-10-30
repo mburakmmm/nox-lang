@@ -21,7 +21,9 @@ Tüm korpus (`wasm-corpus-test`) her dört wasm varyantında native `.expected` 
 
 ## Maliyet
 
-Asyncify, modülün çağrı zincirini bütünüyle dönüştürür: yaklaşık %30–50 çalışma süresi ve boyut artışı; her akış değişimi, akışın çağrı derinliği ile orantılı çözme/sarma yapar. Bu yüzden varsayılan değildir. Paralellik (birden çok iş parçacığı) için ayrı bir kip gerekir (`--threads`, ayrı iş).
+Asyncify, modülün çağrı zincirini bütünüyle dönüştürür; her akış değişimi, akışın çağrı derinliği ile orantılı çözme/sarma yapar. Ölçüm (`benchmarks/wasm/RESULTS.md`, Apple M4, Node 26): CPU-bağımlı kernellerde (`fib`, `loop`, `mandel`, `collatz`) varsayılan wasm'a göre +0-4% süre ve boyut farkı yok (`wasm-opt -O2` modülü küçültür); askıya alma sıklığı yüksek yüklerde maliyet belirgindir: `async_task_churn` (500 bin spawn/await) varsayılan iç içe çalıştırma benzetimine göre 2,6x yavaş. İlk tahmindeki "%30-50" CPU-bağımlı kodda gerçekleşmedi. Yine de varsayılan değildir (`wasm-opt` bağımlılığı, askıya alma maliyeti). Paralellik (birden çok iş parçacığı) için ayrı bir kip gerekir (`--threads`, ADR-015).
+
+**Hata dersi (v2.0.84):** `swap` her askıya almada kendi gölge yığın çerçevesini sızdırıyordu (sürücü yığın işaretçisini `swap`in İÇİNDE okunan değere kuruyor, yeniden girişte önsöz/epilog simetrik çalışıyordu); ReleaseFast'te 32 bayt/askıya alma, 8 MiB gölge yığın 2^18 görev sonra taşıp `memory access out of bounds` veriyordu. Debug çalışma zamanında görünmüyordu. İşaretçi artık çağıranın içinde (satır içi) okunur ve `wasm-rt` Debug derlemede de optimize (ReleaseSafe) üretilir; `async_task_churn_long` fixture'ı (300 bin görev) hem asyncify hem threads hedeflerinde koşar.
 
 ## Reddedilen
 

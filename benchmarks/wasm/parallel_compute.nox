@@ -1,0 +1,19 @@
+# Paralel ölçekleme: dört eşit, CPU-bağımlı görev. M:N çalışma zamanında (native --release, wasm --threads) görevler ayrı işçilerde paralel koşar;
+# tek iş parçacıklı kiplerde (varsayılan, --asyncify) sıralıdır.
+async def work(seed: int) -> int:
+    s: int = 0
+    i: int = 0
+    while i < 200000000:
+        s = (s + (i * seed) % 13) % 1000003
+        i = i + 1
+    return s
+
+t1: Task[int] = spawn work(1)
+t2: Task[int] = spawn work(2)
+t3: Task[int] = spawn work(3)
+t4: Task[int] = spawn work(4)
+total: int = await t1
+total = total + await t2
+total = total + await t3
+total = total + await t4
+print(total)

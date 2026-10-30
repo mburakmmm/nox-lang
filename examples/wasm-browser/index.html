@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nox WASM tarayıcı örneği</title>
+<h1>Nox → WebAssembly</h1>
+<p>Önce bir program derleyin: <code>noxc build --target wasm32-freestanding hello.nox -o examples/wasm-browser/hello.wasm</code>
+(<code>--asyncify</code> ile gerçek fiber, <code>--target wasm32-freestanding-threads</code> ile gerçek paralel iş parçacıkları da çalışır), sonra <code>node examples/wasm-browser/serve.mjs</code> ve <code>?wasm=hello.wasm</code>.</p>
+<pre id="out"></pre>
+<script type="module">
+  import { runNox, runNoxThreads } from '../../compiler/wasm_host.mjs';
+  const out = document.getElementById('out');
+  const name = new URLSearchParams(location.search).get('wasm') || 'hello.wasm';
+  const dec = new TextDecoder();
+  const bytes = await (await fetch(name)).arrayBuffer();
+  const io = {
+    write: (fd, b) => { out.textContent += (fd === 2 ? '[stderr] ' : '') + dec.decode(b); return b.length; },
+    read: () => 0,
+    clockMs: (kind) => (kind === 0 ? Date.now() : performance.now()),
+    randomFill: (b) => crypto.getRandomValues(b),
+    sleepMs: () => {},
+  };
+  // `--threads` modülleri paylaşımlı bellek içe aktarır (env.memory); sayfa COOP/COEP ile sunulmalıdır (serve.mjs bunu yapar).
+  const threaded = WebAssembly.Module.imports(await WebAssembly.compile(bytes)).some((i) => i.module === 'env' && i.name === 'memory');
+  const code = await (threaded ? runNoxThreads(bytes, io) : runNox(bytes, io));
+  out.textContent += `\n[çıkış kodu ${code}]`;
+  document.title = `bitti ${code}`;
+</script>

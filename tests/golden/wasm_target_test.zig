@@ -135,6 +135,8 @@ test "wasm32 --asyncify: gerçek fiber askıya alma (iç içe benzetimin deadloc
         try expectGoldenOn(t, "task_local_basic", @embedFile("codegen_cases/task_local_basic.nox"), @embedFile("codegen_cases/task_local_basic.expected"));
         try expectGoldenOn(t, "thread_spawn_ordering", @embedFile("codegen_cases/thread_spawn_ordering.nox"), @embedFile("codegen_cases/thread_spawn_ordering.expected"));
         try expectGoldenOn(t, "closure_captures_channel_retained", @embedFile("codegen_cases/closure_captures_channel_retained.nox"), @embedFile("codegen_cases/closure_captures_channel_retained.expected"));
+        // v2.0.84: her swap bir çerçeve sızdırıyordu; 8 MiB gölge yığın birkaç yüz bin askıya almada taşardı.
+        try expectGoldenOn(t, "async_task_churn_long", @embedFile("codegen_cases/async_task_churn_long.nox"), @embedFile("codegen_cases/async_task_churn_long.expected"));
     }
 }
 
@@ -158,6 +160,7 @@ fn threadsSmoke(t: wasm_helpers.Target) !void {
     try expectGoldenOn(t, "atomic_shared_counter_across_threads", @embedFile("codegen_cases/atomic_shared_counter_across_threads.nox"), @embedFile("codegen_cases/atomic_shared_counter_across_threads.expected"));
     try expectGoldenOn(t, "thread_spawn_join_int", @embedFile("codegen_cases/thread_spawn_join_int.nox"), @embedFile("codegen_cases/thread_spawn_join_int.expected"));
     try expectGoldenOn(t, "thread_spawn_stress", @embedFile("codegen_cases/thread_spawn_stress.nox"), @embedFile("codegen_cases/thread_spawn_stress.expected"));
+    try expectGoldenOn(t, "async_task_churn_long", @embedFile("codegen_cases/async_task_churn_long.nox"), @embedFile("codegen_cases/async_task_churn_long.expected"));
     try expectGoldenOn(t, "thread_channel_backpressure", @embedFile("codegen_cases/thread_channel_backpressure.nox"), @embedFile("codegen_cases/thread_channel_backpressure.expected"));
     try expectGoldenOn(t, "class_reference_cycle_collected", @embedFile("codegen_cases/class_reference_cycle_collected.nox"), @embedFile("codegen_cases/class_reference_cycle_collected.expected"));
 }

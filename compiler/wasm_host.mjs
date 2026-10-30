@@ -1,6 +1,6 @@
 // Nox WASM çalıştırıcısı (Faz 10, ADR-012/ADR-013). Tek dosya, bağımlılıksız:
 //   * Node'da CLI:        node wasm_host.mjs prog.wasm [argümanlar...]
-//   * Kütüphane (Node/tarayıcı): import { createHost, runNox } from './wasm_host.mjs'
+//   * Kütüphane (Node/tarayıcı): import { createHost, runNox, runNoxThreads } from './wasm_host.mjs'
 //
 // İki modül türünü çalıştırır:
 //   - `wasm32-wasi`        → Node'un `node:wasi`si (preview1); dosya, saat, rastgelelik, argv/env.
@@ -199,6 +199,20 @@ async function wasiPreopens() {
   return { '.': '.', '/tmp': os.tmpdir() };
 }
 
+/** `wasm32-freestanding-threads` örneği: `nox_host` + `thread_spawn` + paylaşımlı `env.memory`. Node ve tarayıcı Worker'ları ortak kullanır. */
+async function instantiateNoxThread(mod, memory, io, spawnThread, exitAll) {
+  const host = createHost(io, memory);
+  host.imports.nox_host.thread_spawn = spawnThread;
+  host.imports.nox_host.exit = (code) => {
+    exitAll(code);
+    throw new NoxExit(code);
+  };
+  host.imports.env = { memory };
+  const inst = await WebAssembly.instantiate(mod, host.imports);
+  host.bind(inst);
+  return inst;
+}
+
 /** Worker iş parçacığı (ana wasm iş parçacığı ya da `thread-spawn` ile açılan): paylaşımlı belleğe bağlanan bir örnek kurar. */
 async function workerMain() {
   const { workerData, Worker } = await import('node:worker_threads');
@@ -224,15 +238,7 @@ async function workerMain() {
   let startName;
   if (kind === 'nox') {
     // wasm32-freestanding-threads: `nox_host` import'ları + `thread_spawn`; iş parçacığı girişi `nox_host_thread_start`.
-    const host = createHost(await makeNodeIo(), memory);
-    host.imports.nox_host.thread_spawn = spawnThread;
-    host.imports.nox_host.exit = (code) => {
-      exitAll(code);
-      throw new NoxExit(code);
-    };
-    host.imports.env = { memory };
-    inst = await WebAssembly.instantiate(mod, host.imports);
-    host.bind(inst);
+    inst = await instantiateNoxThread(mod, memory, await makeNodeIo(), spawnThread, exitAll);
     startName = 'nox_host_thread_start';
   } else {
     const { WASI } = await import('node:wasi');
@@ -259,6 +265,107 @@ async function workerMain() {
       exitAll(1);
     }
   }
+}
+
+// ---- Tarayıcı iş parçacıkları (wasm32-freestanding-threads) ---------------------------------------------------------------------------------
+
+const BROWSER_CHANNEL = 'nox-wasm-browser';
+
+/**
+ * Tarayıcıda `wasm32-freestanding-threads` modülünü çalıştırır; çıkış kodunu döner. Sayfa `crossOriginIsolated` olmalıdır (COOP/COEP başlıkları).
+ * Sayfanın ana iş parçacığı `Atomics.wait` yapamadığından ANA wasm iş parçacığı bir Worker'dır. TÜM Worker'ları SAYFA oluşturur (iç içe Worker DEĞİL): tarayıcılar iç içe
+ * bir Worker'ın betiğini ebeveynin olay döngüsü üzerinden yükler; ebeveyn `atomic.wait`te bloke olunca çocuk hiç başlamaz (kilitlenme). Bir wasm iş parçacığı
+ * `thread_spawn` çağırınca benzersiz kimliği hemen alır ve sayfaya bir "başlat" isteği yollar (Node'daki gibi iş parçacığı eşzamansız başlar). Worker'lar G/Ç'yi
+ * (yalnızca `write`) ve çıkışı tek bir BroadcastChannel ile iletir, böylece çıktı ile çıkış kodu sıralı gelir. `io.write` sayfada çalışır; diğer `io` alanları
+ * Worker içinde varsayılanlarla değiştirilir (okuma yok, `crypto`, `performance`).
+ */
+export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url } = {}) {
+  if (!globalThis.crossOriginIsolated) {
+    throw new Error('SharedArrayBuffer için sayfa COOP/COEP ile sunulmalı (crossOriginIsolated)');
+  }
+  const memImport = findMemoryImport(wasmBytes);
+  if (!memImport || !memImport.shared) {
+    throw new Error('modül paylaşımlı bellek içe aktarmıyor (wasm32-freestanding-threads değil)');
+  }
+  const mod = await WebAssembly.compile(wasmBytes);
+  const memory = new WebAssembly.Memory({ initial: memImport.min, maximum: memImport.max ?? memImport.min, shared: true });
+  const chan = new BroadcastChannel(BROWSER_CHANNEL);
+  const tids = new Int32Array(new SharedArrayBuffer(4));
+  const workers = [];
+  let settle;
+  const done = new Promise((resolve, reject) => {
+    settle = { resolve, reject };
+  });
+  const start = (main, tid, arg) => {
+    const w = new Worker(workerUrl, { type: 'module' });
+    workers.push(w);
+    w.onerror = (e) => settle.reject(new Error(`wasm iş parçacığı hatası: ${e.message}`));
+    w.postMessage({ noxThread: { main, mod, memory, tid, arg, tids } });
+  };
+  chan.onmessage = (ev) => {
+    const m = ev.data;
+    if (m.type === 'write') io.write(m.fd, m.bytes);
+    else if (m.type === 'exit') settle.resolve(m.code);
+    else if (m.type === 'spawn') start(false, m.tid, m.arg);
+  };
+  try {
+    start(true, 0, 0);
+    return await done;
+  } finally {
+    for (const w of workers) w.terminate();
+    chan.close();
+  }
+}
+
+/** Tarayıcı Worker'ı: ana ya da `thread_spawn` ile açılan bir wasm iş parçacığı. */
+async function browserWorkerMain({ main, mod, memory, tid, arg, tids }) {
+  const chan = new BroadcastChannel(BROWSER_CHANNEL);
+  const enc = new TextEncoder();
+  const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+  const io = {
+    // Paylaşımlı bellek üzerindeki görünüm `postMessage`/`getRandomValues`a doğrudan verilemez: kopyalanır.
+    write: (fd, b) => {
+      chan.postMessage({ type: 'write', fd, bytes: b.slice() });
+      return b.length;
+    },
+    read: () => 0,
+    clockMs: (kind) => (kind === 0 ? Date.now() : performance.now()),
+    randomFill: (b) => {
+      const tmp = new Uint8Array(b.length);
+      crypto.getRandomValues(tmp);
+      b.set(tmp);
+    },
+    sleepMs: (ms) => {
+      if (ms > 0) Atomics.wait(sleepCell, 0, 0, ms);
+    },
+  };
+  const exitAll = (code) => chan.postMessage({ type: 'exit', code });
+  const fail = (text) => {
+    io.write(2, enc.encode(`${text}\n`));
+    exitAll(1);
+  };
+  const spawnThread = (a) => {
+    const t = Atomics.add(tids, 0, 1) + 1; // iş parçacıkları arasında benzersiz, > 0
+    chan.postMessage({ type: 'spawn', tid: t, arg: a }); // Worker'ı sayfa oluşturur (bkz. `runNoxThreads`)
+    return t;
+  };
+  try {
+    const inst = await instantiateNoxThread(mod, memory, io, spawnThread, exitAll);
+    if (main) {
+      inst.exports._start();
+      exitAll(0); // `_start` exit olmadan döndü
+    } else {
+      inst.exports.nox_host_thread_start(tid, arg);
+    }
+  } catch (e) {
+    if (!(e instanceof NoxExit)) fail(e && e.stack ? e.stack : String(e));
+  }
+}
+
+if (typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlobalScope) {
+  globalThis.onmessage = (ev) => {
+    if (ev.data && ev.data.noxThread) browserWorkerMain(ev.data.noxThread);
+  };
 }
 
 if (typeof process !== 'undefined' && process.argv) {

@@ -14,11 +14,11 @@ Durum: kabul (kullanıcı kararı: "wasi-threads tarzı gerçek M:N; host taraf�
 
 ## Sonuç
 
-Korpus (`wasm-corpus-test`) yerel `--release` M:N denylist'iyle (zamanlayıcıya bağlı 4 fixture + libm farkı) 0 FARK. 4 eşit görevle (4 işçi) tek iş parçacıklı Asyncify'a göre ~2.3× hızlanma ölçüldü.
+Korpus (`wasm-corpus-test`) yerel `--release` M:N denylist'iyle (zamanlayıcıya bağlı 4 fixture + libm farkı) 0 FARK. 4 eşit görevle (4 işçi) tek iş parçacıklı Asyncify'a göre ~2,7x hızlanma ölçüldü (`benchmarks/wasm/RESULTS.md`: 3,01 sn -> 1,10 sn). Bedeli: tek işçide atomik ARC/paylaşımlı bellek yüzünden bazı yükler yavaşlar (`collatz` 0,89 -> 1,39 sn) ve boş görevlerde fazla işçi çekişme yaratır (`async_task_churn` 1 işçide 0,31 sn, 4 işçide 0,68 sn).
 
 ## Sınırlar
 
-- Tarayıcıda `SharedArrayBuffer` için COOP/COEP başlıkları gerekir; kendi host'unuz `thread-spawn` ve paylaşımlı belleği sağlamalıdır.
+- Tarayıcıda `SharedArrayBuffer` için COOP/COEP başlıkları gerekir. `wasm_host.mjs`'in `runNoxThreads`ı `wasm32-freestanding-threads` için tarayıcı host'u sağlar (Chromium'da doğrulandı). Tasarım dersi: ana wasm iş parçacığı bir Worker'dır ve tüm iş parçacığı Worker'larını SAYFA oluşturur; iç içe Worker'larda çocuğun betik yüklemesi ebeveynin olay döngüsüne bağlıdır ve ebeveyn `atomic.wait`te bloke olunca çocuk hiç başlamaz (ilk deneme böyle kilitlendi).
 - `detach` edilen iş parçacıkları bir hurda listesinde tutulur; iş parçacığının SON bellek yazısı (`exited`, naked giriş kuyruğu) görüldükten sonra sonraki `spawn`/`detach`te blokları geri verilir. Liste bağlıdır ve sınırsızdır (v2.0.82'ye kadar 64 kayıtlık sabit diziydi ve fazlası sızıyordu); 200 iş parçacığını art arda başlatıp birleştiren `thread_spawn_stress` fixture'ı her iki threads hedefinde koşar.
 - Dosya tanıtıcıları WASI örneği başınadır (Node'da): bir iş parçacığında açılan dosya diğerinde görünmez.
 - Tamamlanma sinyali (`pool_run` dış yolu) pipe yerine futex bayrağıdır (`completion_pipe.zig`); işçileri uyandıran self-pipe wasm'de yoktur, boşta işçiler kısa beklemelerle yoklar.

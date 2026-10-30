@@ -87,7 +87,15 @@ pub fn discard(ctx: *Context) void {
 }
 
 /// `old` akışını kaydedip `new` akışına geçilmesini ister. Çağıran, sürücü `new`i çalıştırıp sonunda `old`u yeniden sardığında buradan döner.
-pub noinline fn swap(old: *Context, new: *Context) void {
+///
+/// Gölge yığın işaretçisi ÇAĞIRANIN içinde (satır içi) okunur: sürücü yeniden sararken `swap` yeni bir çağrı olarak yeniden girilir ve kendi önsöz/epilogu
+/// simetrik çalışır, bu yüzden sürücü işaretçiyi `swapImpl`in İÇİNDE okunan değere değil, ÇAĞIRANIN çağrı noktasında gördüğü değere kurmalıdır. Aksi halde her
+/// askıya alma `swapImpl` çerçevesi kadar (ReleaseFast'te 32, ReleaseSafe'te 96 bayt) sızar ve 8 MiB'lık gölge yığın birkaç yüz bin `await` sonra taşar.
+pub inline fn swap(old: *Context, new: *Context) void {
+    swapImpl(old, new, getSp());
+}
+
+noinline fn swapImpl(old: *Context, new: *Context, caller_sp: usize) void {
     if (g_phase == .rewinding) {
         // `old` yeniden kuruldu: çağrı zinciri tamam, buradan normal akışa devam.
         stop_rewind();
@@ -99,7 +107,7 @@ pub noinline fn swap(old: *Context, new: *Context) void {
         return;
     }
     old.root = g_cur_root;
-    old.sp = getSp();
+    old.sp = caller_sp;
     old.buf = acquireBuf();
     const hdr: [*]usize = @ptrFromInt(old.buf);
     hdr[0] = old.buf + 2 * @sizeOf(usize); // geçerli konum

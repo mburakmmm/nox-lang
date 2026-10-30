@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.84]
+
+### Düzeltildi
+
+- **Asyncify (`--asyncify`/`--threads`): 262 144 görevden sonra çökme.** `swap`, yeniden sarmada kendi gölge yığın çerçevesini sızdırıyordu (sürücü yığın işaretçisini `swap`in içinde okunan değere kuruyordu); ReleaseFast'te her askıya alma 32 bayt, 8 MiB gölge yığın dolunca `memory access out of bounds`. Debug çalışma zamanında görünmüyordu. İşaretçi artık çağıranın içinde okunur. Regresyon: `async_task_churn_long` (300 bin görev) iki hedefte de koşar.
+- `wasm-rt` nesneleri Debug derlemede de optimize (ReleaseSafe) üretilir; Debug çalışma zamanı yalnızca optimize derlemede görünen hataları gizliyordu.
+- Varsayılan `wasm32-wasi`/`wasm32-freestanding` çıktısı çalışma zamanından gelen DWARF yüzünden ~3 MB idi; artık ~100 KB (`--strip-debug`, işlev adları korunur).
+
+### Eklendi
+
+- Tarayıcıda `wasm32-freestanding-threads`: `compiler/wasm_host.mjs` `runNoxThreads(bytes, io)` verir. Ana wasm iş parçacığı bir Worker'dır ve TÜM Worker'ları sayfa oluşturur (iç içe Worker'da çocuğun betik yüklemesi, ebeveyn `atomic.wait`te bloke olunca kilitlenir). `examples/wasm-browser/` örnek sayfa ve COOP/COEP sunucusu içerir. Chromium'da varsayılan, `--asyncify` ve `--threads` kipleri doğrulandı.
+- `scripts/wasm_corpus.py`: fixture korpusunu paralel ve motor seçilebilir (`node`/`wasmtime`) koşar. `wasm32-wasi` ve `wasm32-wasi-asyncify` korpusu wasmtime'da 0 FARK.
+- `scripts/wasm_stress.py` + `tests/stress/wasm_threads_stress.nox`: dört wasm hedefinde 90'ar sn (~2500 çalıştırma) ve 1500 turluk büyük çalıştırma, hepsi native ile birebir.
+- `benchmarks/wasm_bench.py` ve `benchmarks/wasm/RESULTS.md`: native / varsayılan / asyncify / threads maliyet ölçümü. ADR-014'ün "%30-50" tahmini CPU-bağımlı kodda gerçekleşmedi (+0-4%); `--threads` dört eşit görevde Asyncify'a göre 2,7x hızlı.
+
+### Bilinen sorun
+
+- Native `--release` (LLVM, çok işçili M:N havuz): tamponsuz `Channel[int](0)` ile üretici/tüketici (`benchmarks/wasm/channel_pingpong.nox`) ~%37 oranında takılıyor. QBE (M:1), `NOX_POOL_WORKERS=1` ve wasm threads temiz.
+
 ## [2.0.83]
 
 ### Düzeltildi

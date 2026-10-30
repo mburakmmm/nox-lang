@@ -55,6 +55,29 @@ const code = await runNox(await (await fetch('prog.wasm')).arrayBuffer(), {
 });
 ```
 
+### Doğrulama araçları
+
+`scripts/wasm_corpus.py` fixture korpusunu paralel ve motor seçilebilir koşar (`--target`, `--engine node|wasmtime`); `scripts/wasm_stress.py` karma yükü (kanal fan-in, döngüsel çöp, terk edilen jeneratörler, `nox.thread`) dört hedefte süre boyunca tekrar koşup native çıktıyla birebir karşılaştırır.
+
+### Maliyet
+
+Ölçümler `benchmarks/wasm/RESULTS.md` içindedir (`benchmarks/wasm_bench.py` ile yeniden üretilir). Özet (Apple M4, Node 26): wasm, native LLVM'e göre CPU-bağımlı kodda 1,4x, bellek-yoğun kodda 3-5x yavaştır; `--asyncify` CPU-bağımlı kodda varsayılan kipe göre +0-4% ekler ama çok sık askıya alan yüklerde (500 bin `spawn`/`await`) 2,6x yavaşlatır; `--threads` dört eşit görevde Asyncify'a göre 2,7x hızlıdır ama tek işçide atomik ARC maliyeti taşır. Modüller 60-125 KB'dır.
+
+### Tarayıcıda
+
+`createHost`/`runNox` tarayıcıda olduğu gibi çalışır; `--asyncify` modülleri de (saf wasm). İş parçacıklı `wasm32-freestanding-threads` modülleri için `runNoxThreads(bytes, io)` kullanılır: ana wasm iş parçacığı bir Worker olarak çalışır (sayfa `Atomics.wait` yapamaz), tüm Worker'ları sayfa oluşturur ve çıktı/çıkış kodu sayfaya iletilir. Sayfa `crossOriginIsolated` olmalıdır (`Cross-Origin-Opener-Policy: same-origin` ve `Cross-Origin-Embedder-Policy: require-corp`). `examples/wasm-browser/` bir örnek sayfa ve bu başlıkları ekleyen küçük bir sunucu içerir:
+
+```bash
+noxc build --target wasm32-freestanding-threads prog.nox -o examples/wasm-browser/prog.wasm
+node examples/wasm-browser/serve.mjs      # http://127.0.0.1:8123/examples/wasm-browser/index.html?wasm=prog.wasm
+```
+
+Chromium'da doğrulandı: varsayılan, `--asyncify` ve `--threads` kipleri (200 iş parçacıklı `thread_spawn_stress` ve paylaşımlı atomik sayaç dahil) native ile aynı çıktıyı verir. Firefox ve Safari denenmedi. `wasm32-wasi` modülleri tarayıcıda bir WASI dolgusu gerektirir (`nox_host` yerine WASI import'ları); `wasm_host.mjs` WASI'yi yalnızca Node'da sağlar.
+
+### Başka motorlar
+
+`wasm32-wasi` ve `wasm32-wasi-asyncify` modülleri `wasmtime` ile de çalışır (`noxc run` zaten onu tercih eder): tüm fixture korpusu `scripts/wasm_corpus.py --target wasm32-wasi --engine wasmtime` ile sıfır farkla geçer. İş parçacıklı modüller wasmtime/wasmer'da çalışmaz (wasi-threads kaldırıldı); onlar için `wasm_host.mjs` ya da `thread_spawn` sözleşmesini uygulayan bir host gerekir.
+
 ## `--asyncify`: gerçek fiber
 
 ```bash

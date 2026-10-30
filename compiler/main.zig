@@ -2733,6 +2733,9 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
     }
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.appendSlice(a, &.{ "zig", "cc", "-target", info.zig_triple, "-O2", "-Wno-override-module", "-Wl,-z,stack-size=8388608", "-o", out_path, ll_path, rt_path });
+    // Çalışma zamanı nesnesindeki DWARF ~3 MB ekler. `--strip-debug` `target_features` bölümünü de siler ve `wasm-opt` (asyncify/threads) onu okur; bu yollarda DWARF
+    // zaten `wasm-opt --strip-dwarf` ile atılır. wasm-opt kullanmayan varsayılan kip burada soyulur (v2.0.84'e kadar 3 MB, şimdi ~100 KB); işlev adları korunur.
+    if (!info.wasm_asyncify and !info.wasm_threads) try argv.append(a, "-Wl,--strip-debug");
     // wasm32-freestanding: libc/WASI başlangıcı yok; giriş `_start` (runtime/wasm_libc.zig), host import'ları `nox_host` ad alanından.
     if (info.wasm_threads) {
         // ADR-015: paylaşımlı bellek + atomikler; Zig'in WasiThreadImpl'i `wasi_thread_start`ı dışa aktarılmış ister, host `wasi::thread-spawn` sağlar.

@@ -1,0 +1,22 @@
+# Küçük görev + yüksek kanal trafiği: tamponsuz kanalda 200 bin mesaj (her mesaj bir fiber geçişidir).
+async def producer(ch: Channel[int], n: int) -> None:
+    i: int = 0
+    while i < n:
+        await ch.send(i)
+        i = i + 1
+
+async def consumer(ch: Channel[int], n: int) -> int:
+    s: int = 0
+    i: int = 0
+    while i < n:
+        v: int = await ch.recv()
+        s = s + v
+        i = i + 1
+    return s
+
+ch: Channel[int] = Channel[int](0)
+p: Task[None] = spawn producer(ch, 200000)
+c: Task[int] = spawn consumer(ch, 200000)
+total: int = await c
+await p
+print(total)

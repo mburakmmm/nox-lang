@@ -1,0 +1,107 @@
+# Faz 10.9 — uzun süreli karma yük: kanal fan-in (spawn/await), döngüsel çöp (döngü çözücü), yarıda bırakılan jeneratörler (finalizer) ve nox.thread işçileri.
+# Her turun sonucu deterministiktir; çıktı native çalıştırmayla birebir aynı olmalıdır (scripts/wasm_stress.py). Tur sayısı stdin'in ilk satırıdır (freestanding hedeflerde argv yok).
+import nox.thread
+
+class Cell:
+    def __init__(self: Cell, value: int) -> None:
+        self.value = value
+        self.next = self
+
+closed: int = 0
+
+def tracked() -> Iterator[int]:
+    try:
+        yield 1
+        yield 2
+    finally:
+        closed = closed + 1
+
+def drop_generators(n: int) -> None:
+    i: int = 0
+    while i < n:
+        g: Iterator[int] = tracked()
+        first: int = next(g)
+        i = i + first
+
+def make_cycles(n: int) -> int:
+    total: int = 0
+    i: int = 0
+    while i < n:
+        a: Cell = Cell(i)
+        b: Cell = Cell(i + 1)
+        a.next = b
+        b.next = a
+        total = total + a.next.value
+        i = i + 1
+    return total
+
+async def producer(ch: Channel[int], base: int, count: int) -> None:
+    i: int = 0
+    while i < count:
+        await ch.send(base + i)
+        i = i + 1
+
+async def consume(ch: Channel[int], total_msgs: int) -> int:
+    s: int = 0
+    i: int = 0
+    while i < total_msgs:
+        v: int = await ch.recv()
+        s = s + v
+        i = i + 1
+    return s
+
+async def fan_in() -> int:
+    ch: Channel[int] = Channel[int](4)
+    p0: Task[None] = spawn producer(ch, 0, 50)
+    p1: Task[None] = spawn producer(ch, 1000, 50)
+    p2: Task[None] = spawn producer(ch, 2000, 50)
+    p3: Task[None] = spawn producer(ch, 3000, 50)
+    p4: Task[None] = spawn producer(ch, 4000, 50)
+    p5: Task[None] = spawn producer(ch, 5000, 50)
+    p6: Task[None] = spawn producer(ch, 6000, 50)
+    p7: Task[None] = spawn producer(ch, 7000, 50)
+    c: Task[int] = spawn consume(ch, 400)
+    r: int = await c
+    await p0
+    await p1
+    await p2
+    await p3
+    await p4
+    await p5
+    await p6
+    await p7
+    return r
+
+async def thread_worker(x: int) -> int:
+    s: int = 0
+    i: int = 0
+    while i < 5000:
+        s = s + (x * i) % 7
+        i = i + 1
+    return s
+
+rounds: int = int(input())
+
+fan_total: int = 0
+cycle_total: int = 0
+thread_total: int = 0
+r: int = 0
+while r < rounds:
+    t: Task[int] = spawn fan_in()
+    fan_total = fan_total + await t
+    cycle_total = cycle_total + make_cycles(200)
+    drop_generators(20)
+    h1: ThreadHandle[int] = nox.thread.start(thread_worker, r)
+    h2: ThreadHandle[int] = nox.thread.start(thread_worker, r + 1)
+    h3: ThreadHandle[int] = nox.thread.start(thread_worker, r + 2)
+    h4: ThreadHandle[int] = nox.thread.start(thread_worker, r + 3)
+    thread_total = thread_total + await h1.join()
+    thread_total = thread_total + await h2.join()
+    thread_total = thread_total + await h3.join()
+    thread_total = thread_total + await h4.join()
+    r = r + 1
+print("rounds=" + str(rounds))
+print("fan_in=" + str(fan_total))
+print("cycles=" + str(cycle_total))
+print("generators_closed=" + str(closed))
+print("threads=" + str(thread_total))

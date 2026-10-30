@@ -978,13 +978,16 @@ pub fn build(b: *std.Build) void {
     }, "x86_64-linux-android", "x86_64-linux-android24", "", "noxrt-android-x64");
     mobile_rt_step.dependOn(android_arm64_rt);
     mobile_rt_step.dependOn(android_x64_rt);
+    // wasm çalışma zamanı nesneleri Debug derlemede de optimize (ReleaseSafe) üretilir: Asyncify gölge yığın çerçeveleri ve satır içi kararları optimizasyona bağlıdır
+    // ve kullanıcıya giden çıktı hep optimizedir. Debug çalışma zamanı, yalnızca optimize derlemede görünen hataları (v2.0.84: swap çerçeve sızıntısı) gizlerdi.
+    const wasm_optimize: std.builtin.OptimizeMode = if (optimize == .Debug) .ReleaseSafe else optimize;
     const wasm_rt_step = b.step("wasm-rt", "Build the noxrt object for wasm32-wasi");
-    wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi", false, false, false));
-    wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding", true, false, false));
-    wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi-asyncify", false, true, false));
-    wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-asyncify", true, true, false));
-    wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi-threads", false, true, true));
-    wasm_rt_step.dependOn(addWasmRuntimeChain(b, optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-threads", true, true, true));
+    wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi", false, false, false));
+    wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding", true, false, false));
+    wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi-asyncify", false, true, false));
+    wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-asyncify", true, true, false));
+    wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi-threads", false, true, true));
+    wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-threads", true, true, true));
     const mobile_rt_simulator = b.step("mobile-rt-simulator", "Build the iOS simulator noxrt object");
     mobile_rt_simulator.dependOn(simulator_rt);
     const mobile_rt_android = b.step("mobile-rt-android", "Build the Android noxrt objects");
