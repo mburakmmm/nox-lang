@@ -81,6 +81,10 @@ pub fn makeSelfPipe() ![2]posix.fd_t {
     } else {
         var fds: [2]posix.fd_t = undefined;
         if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+        // İki uç da bloklamasız: her yabancı `markReady` bir bayt yazar ve boşta işçiler arka arkaya boşaltır; bloklayan bir boru ~64 KiB (macOS)
+        // dolduğunda `write` sonsuza dek bekler (yoğun çapraz-worker uyandırmada gerçek bir kilitlenme). Dolu boruda `EAGAIN` zararsızdır: işçi zaten uyandırılmıştır.
+        setNonBlocking(fds[0]);
+        setNonBlocking(fds[1]);
         return fds;
     }
 }
@@ -118,9 +122,33 @@ pub fn drainWakeFd(fd: posix.fd_t) void {
     if (comptime is_freestanding) {
         return;
     } else if (builtin.os.tag != .windows) {
-        var buf: [1]u8 = undefined;
-        _ = std.c.read(fd, &buf, 1);
+        // Tüm bekleyen baytlar boşaltılır (bloklamasız uç `EAGAIN` ile biter): yazıcılar uyandırma başına bir bayt yazar, tek bayt okumak boruyu şişirirdi.
+        var buf: [64]u8 = undefined;
+        while (true) {
+            const n = std.c.read(fd, &buf, buf.len);
+            if (n < buf.len) break;
+        }
     }
+}
+
+/// Okuma ucunda en fazla `timeout_ms` bekler ve uç okunabilir olursa (bir uyandırma yazıldıysa) boşaltıp `true` döner. Boşta zamanlayıcı bununla `sleep` yerine
+/// bekler: çapraz-worker uyandırma 1 ms'lik uyku granülünü beklemeden anında işlenir. Sağlayıcı/Windows/freestanding'de desteklenmez (`false`, çağıran uyur).
+pub fn waitAndDrain(fd: posix.fd_t, timeout_ms: i32) bool {
+    if (g_wake_provider.load(.monotonic) != null) return false;
+    if (comptime is_freestanding or builtin.os.tag == .windows) return false;
+    var pfd = [1]std.c.pollfd{.{ .fd = fd, .events = std.c.POLL.IN, .revents = 0 }};
+    const rc = std.c.poll(&pfd, 1, timeout_ms);
+    if (rc <= 0) return rc == 0;
+    drainWakeFd(fd);
+    return true;
+}
+
+fn setNonBlocking(fd: posix.fd_t) void {
+    const current = std.c.fcntl(fd, std.c.F.GETFL);
+    if (current < 0) return;
+    var flags: std.c.O = @bitCast(@as(u32, @intCast(current)));
+    flags.NONBLOCK = true;
+    _ = std.c.fcntl(fd, std.c.F.SETFL, @as(u32, @bitCast(flags)));
 }
 
 /// `posix.fd_t` platforma göre KÖKTEN farklı bir tiptir (POSIX'te `c_int`,

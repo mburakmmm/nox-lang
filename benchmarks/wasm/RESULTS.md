@@ -22,6 +22,7 @@ Ortam: Darwin arm64, 10 mantıksal çekirdek, node v26.12.1; her hücre 3 çalı
 | sort | 0.07 | 0.26 (3.7x) | 0.26 (3.7x) | 0.27 (3.9x) | 0.27 (3.9x) |
 | collatz | 0.33 | 0.89 (2.7x) | 0.93 (2.8x) | 1.39 (4.2x) | 1.38 (4.1x) |
 | async_task_churn | 0.08 | 0.10 (1.3x) | 0.26 (3.3x) | 0.31 (4.0x) | 0.68 (8.7x) |
+| channel_pingpong | 0.01 | — | 0.14 | 0.15 | 0.16 |
 | parallel_compute | 1.39 | 3.26 (2.3x) | 3.01 (2.2x) | 3.04 (2.2x) | 1.10 (0.8x) |
 
 ## Modül boyutu
@@ -53,6 +54,6 @@ Boyutlar v2.0.84 sonrasıdır: varsayılan kip daha önce DWARF yüzünden ~3 MB
 - **wasm, native LLVM'e göre 1,4x (fib, loop) ile 5,4x (trees) arasında yavaş.** Bellek-yoğun yükler (`trees`, `dict`, `strings`, `sort`) en çok kaybeder.
 - **`--threads` tek işçide hız kaybettirir**: `collatz` 0,89 -> 1,39 sn (atomik ARC ve paylaşımlı bellek). Karşılığı: `parallel_compute` dört eşit görevle Asyncify'a göre 2,7x hızlı (3,01 -> 1,10 sn); `trees` ise ilginç biçimde daha hızlı (0,58 -> 0,31 sn): büyük olasılıkla threads kipinin boyut sınıflı ayırıcısı (`wasm_mt_alloc.zig`) varsayılan kipin `BrkAllocator`ından hızlıdır (ayırıcı ayrı ölçülmedi).
 - **Küçük görevlerde fazla işçi zarar verir**: `async_task_churn` 1 işçide 0,31 sn, 4 işçide 0,68 sn (iş çalma ve kilit çekişmesi, görevin kendisi neredeyse boş).
-- **Native çok-işçili havuzda `channel_pingpong` ~%37 oranında takıldı** (tamponsuz `Channel[int](0)`, üretici/tüketici, `noxc build --release`); bu yüzden tabloda yok. M:1 (QBE) ve `NOX_POOL_WORKERS=1` temiz, wasm threads temiz. Ayrı bir hata olarak izleniyor.
+- **`channel_pingpong`** (tamponsuz kanalda 200 bin mesaj): varsayılan wasm kipi bunu yapamaz (`—`: iç içe çalıştırma benzetimi karşılıklı beklemede kilitlenir, ADR-012); asyncify/threads ~0,15 sn. Bu iş yükü native çok-işçili havuzda hatayı ortaya çıkardı (v2.0.85): üretici/tüketici farklı işçilere oturunca boşta işçi 1 ms'lik uykuyla bekliyordu (program dakikalarca "takılıyordu") ve düzeltmeden sonra `Channel.recv`teki bir veri yarışı (göndericiyi uyandırdıktan sonra `slot.value` okuma) görünür oldu. İkisi de düzeltildi.
 
 Sınırlar: tek makine (Apple M4), tek motor (Node 26 / V8), 3 tekrarın en küçüğü; küçük iş yüklerinde (<0,1 sn) oranlar yanıltıcıdır, bu yüzden yalnızca uzun çalışan kernellerde oran verilir.

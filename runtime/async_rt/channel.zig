@@ -150,9 +150,12 @@ pub fn Channel(comptime T: type) type {
             // doğrudan bekleyen bir göndericiden AL (el ele teslim).
             if (self.send_waiters.items.len > 0) {
                 const slot = self.send_waiters.orderedRemove(0);
+                // Değer, göndericiyi uyandırmadan ÖNCE okunur: `slot` göndericinin yığınındadır; `markReady`den sonra gönderici hemen (başka bir işçide) çalışıp
+                // `send`den dönebilir ve yuva yeniden kullanılır. Sonradan okumak başka bir mesajın değerini ya da çöpü verirdi (gerçek bir veri yarışı).
+                const value = slot.value;
                 self.mutex.unlock();
                 slot.scheduler.markReady(slot.fiber);
-                return slot.value;
+                return value;
             }
             var slot = RecvSlot{ .fiber = sched.current.?, .scheduler = sched };
             self.recv_waiters.append(self.scheduler.allocator, &slot) catch @panic("OOM: could not grow the channel receiver queue");

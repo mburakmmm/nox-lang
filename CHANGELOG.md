@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.85]
+
+### Düzeltildi
+
+- **Native çok-işçili M:N havuz: üretici/tüketici farklı işçilere oturunca program "takılıyordu".** Boşta işçi `poolWideDeadlockCheck`te 1 ms'lik `sleep`le bekliyordu; yabancı bir `markReady` bir uyandırma baytı yazsa bile işçi uykusunu bitirmeden fark etmiyordu. Tamponsuz kanalda her mesaj ~1 ms olduğundan 200 bin mesajlık bir ping-pong ~%30 oranında dakikalarca sürüyordu (Debug çalışma zamanında zamanlama yüzünden görünmüyordu). Boşta işçi artık uyandırma borusunda `poll(2)` ile bekler (en çok 1 ms) ve yazılan bayt onu anında uyandırır: en kötü durum 0,55 sn.
+- Uyandırma borusunun iki ucu bloklamasız yapıldı ve `drain` tüm baytları okur. Önceden uçlar bloklayıcıydı, her yabancı uyandırma bir bayt yazıyor, `drain` bir bayt okuyordu: ~64 KiB uyandırmadan sonra `write` sonsuza dek bloklanabilirdi.
+- **`Channel.recv` veri yarışı:** bekleyen göndericiyi `markReady` ile uyandırdıktan SONRA `slot.value` okuyordu; `slot` göndericinin yığınındadır ve gönderici hemen (başka işçide) çalışıp `send`den dönebilir. Yukarıdaki 1 ms gecikme bunu gizliyordu; uyandırma hızlanınca ping-pong yanlış toplam (…000 yerine …001/…002) verdi. Değer artık uyandırmadan önce okunur.
+- Regresyon: `channel_rendezvous_pingpong` fixture'ı (200 bin mesaj, tam toplam).
+
 ## [2.0.84]
 
 ### Düzeltildi
@@ -31,7 +40,7 @@ BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
 ### Bilinen sorun
 
-- Native `--release` (LLVM, çok işçili M:N havuz): tamponsuz `Channel[int](0)` ile üretici/tüketici (`benchmarks/wasm/channel_pingpong.nox`) ~%37 oranında takılıyor. QBE (M:1), `NOX_POOL_WORKERS=1` ve wasm threads temiz.
+- Native `--release` (LLVM, çok işçili M:N havuz): tamponsuz `Channel[int](0)` ile üretici/tüketici (`benchmarks/wasm/channel_pingpong.nox`) ~%37 oranında takılıyor. QBE (M:1), `NOX_POOL_WORKERS=1` ve wasm threads temiz. **v2.0.85'te düzeltildi** (takılma değil, 1 ms'lik uyku gecikmesiydi; ayrıca bir `Channel.recv` veri yarışı bulundu).
 
 ## [2.0.83]
 

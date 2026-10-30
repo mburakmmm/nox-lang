@@ -642,7 +642,13 @@ pub const Scheduler = struct {
 
         var attempt: usize = 0;
         while (attempt < 20) : (attempt += 1) {
-            sleepMs(1);
+            // `sleepMs(1)` yerine uyandırma borusunda bekle: yabancı bir `markReady` (çapraz-worker kanal/Task uyandırması) bir bayt yazınca işçi anında kalkar.
+            // Aksi halde her el değiştirme 1 ms'lik uyku granülünü bekler ve iki işçiye yayılmış bir üretici/tüketici çifti mesaj başına ~1 ms'ye düşerdi.
+            if (comptime !is_freestanding) {
+                if (self.wake_read_fd) |wfd| {
+                    if (!self_pipe.waitAndDrain(wfd, 1)) sleepMs(1);
+                } else sleepMs(1);
+            } else sleepMs(1);
             if (self.hasLocalReadyWork()) return false;
             if (self.tryStealFromSiblings()) |f| {
                 self.markReady(f);
