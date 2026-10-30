@@ -16,12 +16,14 @@ pub const Outcome = union(enum) {
 };
 
 /// `source`u geçici bir dizinde `.wasm`a derler ve çalıştırır. `noxc_path`/`runner_path` göreli ya da mutlak olabilir.
-pub const Target = enum { wasi, freestanding };
+pub const Target = enum { wasi, freestanding, wasi_asyncify, freestanding_asyncify };
 
 pub fn targetName(t: Target) []const u8 {
     return switch (t) {
         .wasi => "wasm32-wasi",
         .freestanding => "wasm32-freestanding",
+        .wasi_asyncify => "wasm32-wasi-asyncify",
+        .freestanding_asyncify => "wasm32-freestanding-asyncify",
     };
 }
 
@@ -46,7 +48,7 @@ pub fn buildAndRun(allocator: std.mem.Allocator, noxc_path: []const u8, runner_p
     };
     defer allocator.free(build.stdout);
     if (build.term != .exited or build.term.exited != 0) {
-        if (std.mem.indexOf(u8, build.stderr, "zig not found") != null) {
+        if (std.mem.indexOf(u8, build.stderr, "zig not found") != null or std.mem.indexOf(u8, build.stderr, "needs 'wasm-opt'") != null) {
             allocator.free(build.stderr);
             return .tool_missing;
         }

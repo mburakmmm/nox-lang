@@ -51,6 +51,9 @@ comptime {
 /// analiz EDİLMEZ (`io_reactor.zig`nin `IoReactor` seçim deseniyle AYNI
 /// "comptime-bilinen dal TAMAMEN elenir" ilkesi).
 const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+const is_wasm = builtin.cpu.arch.isWasm();
+/// wasm32'de fiber değiştirme Binaryen Asyncify ile yapılır (bkz. `asyncify.zig`, ADR-014).
+const asyncify = if (is_wasm) @import("asyncify.zig") else struct {};
 
 pub const Context = switch (builtin.cpu.arch) {
     // `swap_aarch64.S`teki alan ofsetleriyle BİRE BİR eşleşmelidir — sıra
@@ -137,11 +140,13 @@ pub const Context = switch (builtin.cpu.arch) {
         fs11: u64 = 0,
     },
     // wasm32: yığın değiştirme yoktur; `bridge_wasm.zig` fiber KULLANMAZ (bağlam yalnızca tür uyumu için).
-    .wasm32, .wasm64 => struct { sp: usize = 0 },
+    .wasm32, .wasm64 => asyncify.Context,
     else => @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64/riscv64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2 and §3.290)"),
 };
 
-extern fn nox_swap_context(old: *Context, new: *Context) void;
+const nox_swap_context = if (is_wasm) asyncify.swap else struct {
+    extern fn nox_swap_context(old: *Context, new: *Context) void;
+}.nox_swap_context;
 
 // GG.25 (bkz. plan dosyası "STACK_SIZE küçültmesi"): GG.23/GG.24'ün DÖRT
 // sentetik en-kötü-durum senaryosu + GERÇEK-dünya (Aether v0.6.5/Nyx
@@ -293,7 +298,10 @@ pub fn allocGuardedStack() ![]align(STACK_ALIGN) u8 {
     if (g_stack_provider.load(.monotonic)) |p| {
         return p.vtable.alloc(p.ctx) orelse error.StackAllocFailed;
     }
-    if (comptime is_freestanding) {
+    if (comptime is_wasm) {
+        // wasm32: mmap/koruma sayfası yok; gölge yığın bellekten ayrılır (taşma koruması Asyncify arabelleği boyutundan bağımsızdır).
+        return std.heap.wasm_allocator.alignedAlloc(u8, .fromByteUnits(STACK_ALIGN), STACK_SIZE) catch error.StackAllocFailed;
+    } else if (comptime is_freestanding) {
         return error.StackAllocFailed;
     } else if (builtin.os.tag == .windows) {
         return allocGuardedStackWindows();
@@ -307,7 +315,9 @@ pub fn freeGuardedStack(stack: []align(STACK_ALIGN) u8) void {
         p.vtable.free(p.ctx, stack);
         return;
     }
-    if (comptime is_freestanding) {
+    if (comptime is_wasm) {
+        std.heap.wasm_allocator.free(stack);
+    } else if (comptime is_freestanding) {
         return;
     } else if (builtin.os.tag == .windows) {
         freeGuardedStackWindows(stack);
@@ -420,6 +430,8 @@ pub const Fiber = struct {
     entry: FiberFn,
     arg: *anyopaque,
     finished: bool = false,
+    /// wasm32: bu fiber'ın Asyncify sürücüsünden çağrılan kökü (`WasmRoot.run` -> `wasmTrampoline`).
+    wasm_root: if (is_wasm) WasmRoot else void = if (is_wasm) .{ .base = .{ .run = &WasmRoot.runFiber } } else {},
     allocator: std.mem.Allocator,
     /// Faz MN.2: eskiden `RuntimeState.pending_exception`/`pending_
     /// exception_line`di (bkz. `runtime/errors/handle.zig`) — bir istisna
@@ -589,12 +601,20 @@ pub const Fiber = struct {
                 self.ctx.ra = @intFromPtr(&trampoline);
                 self.ctx.s1 = @intFromPtr(self);
             },
+            .wasm32 => {
+                // Asyncify: ilk çalıştırmada sürücü kökü SARMADAN çağırır; gölge yığın bu fiber'ın yığınının tepesinden başlar.
+                self.wasm_root.fiber = self;
+                self.ctx.sp = stack_top_aligned;
+                self.ctx.root = &self.wasm_root.base;
+                self.ctx.fresh = true;
+            },
             else => comptime unreachable,
         }
         return self;
     }
 
     pub fn destroy(self: *Fiber) void {
+        if (comptime is_wasm) asyncify.discard(&self.ctx);
         self.task_locals.deinit(self.allocator);
         self.stdin_leftover.deinit(self.allocator);
         freeGuardedStack(self.stack);
@@ -619,6 +639,7 @@ pub const Fiber = struct {
     /// YOL AÇMAZ, yalnızca o değerin serbest bırakılmasını GECİKTİRİR/
     /// engeller).
     pub fn destroyKeepStack(self: *Fiber) []align(STACK_ALIGN) u8 {
+        if (comptime is_wasm) asyncify.discard(&self.ctx);
         self.task_locals.deinit(self.allocator);
         self.stdin_leftover.deinit(self.allocator);
         const stack = self.stack;
@@ -643,6 +664,25 @@ pub const Fiber = struct {
         nox_swap_context(&self.ctx, self.return_ctx.?);
     }
 };
+
+/// wasm32: sürücünün (`asyncify.nox_asyncify_run_main`) bir fiber için çağırdığı kök. Sarma sırasında aynı kök yeniden çağrılır; çağrı zinciri Asyncify ile kurulur.
+const WasmRoot = if (is_wasm) struct {
+    base: asyncify.Root,
+    fiber: ?*Fiber = null,
+
+    fn runFiber(base: *asyncify.Root) void {
+        const self: *WasmRoot = @fieldParentPtr("base", base);
+        wasmTrampoline(self.fiber.?);
+    }
+} else struct {};
+
+/// `trampoline`in wasm karşılığı: entry'yi çalıştırır, bitince çağırana (zamanlayıcıya) bir daha dönmemek üzere geçer.
+noinline fn wasmTrampoline(self: *Fiber) void {
+    callEntryPadded(self);
+    self.finished = true;
+    self.yield();
+    unreachable;
+}
 
 /// Bir fiber İLK KEZ resume edildiğinde atlanan nokta. aarch64'te x19,
 /// x86-64'te rbx `Fiber.create`/`createWithStack` tarafından yerleştirilen

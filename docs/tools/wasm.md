@@ -15,7 +15,7 @@ Dilin tamamı: sınıflar, kalıtım (çoklu dahil), jeneratörler, `async`/`awa
 
 ## Sınırlar
 
-- **Tek iş parçacığı.** `nox.thread` aynı yığında çalışır; gerçek paralellik yoktur. `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır. Altındaki bir görevin sonucunu bekleyen bir görev "deadlock" olarak bildirilir.
+- **Tek iş parçacığı.** `nox.thread` aynı yığında çalışır; gerçek paralellik yoktur. Varsayılan olarak `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. Bu sınır `--asyncify` ile kalkar (aşağıya bakın).
 - **Ağ ve süreç yok.** `nox.http`, `transfer`, `reflect`, `router`, `tls`, `websocket`, `smtp`, `sqlite`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.http' cannot be used on the wasm32-wasi target (it needs sockets)`.
 - **Yerel kütüphane yok.** `extern def ... from "lib"` ile bir `.wasm`a native kütüphane bağlanamaz.
 - **Dosya sistemi** çalıştırıcının WASI ön-açımlarına bağlıdır (`wasm_run.mjs` `.` ve `/tmp` açar).
@@ -44,3 +44,12 @@ const code = await runNox(await (await fetch('prog.wasm')).arrayBuffer(), {
   sleepMs: () => {},
 });
 ```
+
+## `--asyncify`: gerçek fiber
+
+```bash
+noxc build --target wasm32-wasi --asyncify prog.nox -o prog.wasm     # wasm-opt (binaryen) gerekir
+noxc run   --target wasm32-freestanding --asyncify prog.nox
+```
+
+`--asyncify` göreve bekleyen görevleri gerçekten askıya alır (yığın değiştirme): karşılıklı kanal beklemeleri, `nox.thread`/`sleep` sırası ve `async` kalıpları native zamanlayıcıyla aynı sırada çalışır, deadlock sınırı kalkar. Çıktı modül host'tan ek import istemez; her WASM motorunda çalışır. Maliyet: yaklaşık %30–50 yavaşlık/boyut ve `wasm-opt` bağımlılığı ([ADR-014](../internals/adr/014-wasm-asyncify.md)). Paralel çalışma değildir (tek iş parçacığı).

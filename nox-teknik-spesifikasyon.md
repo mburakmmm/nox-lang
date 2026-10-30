@@ -29179,3 +29179,7 @@ Bkz. `docs/internals/adr/013-wasm-host.md`. `--target wasm32-freestanding` (LLVM
 
 Doğrulama: `wasm_target_test` her duman fixture'ını iki hedefte çalıştırır (`zig build wasm-test`), `zig build wasm-corpus-test` tüm korpusu iki hedefte (freestanding'de 420 fixture çalışır).
 
+## 3.317 WASM Asyncify: gerçek fiber (v2.0.78)
+
+Bkz. `docs/internals/adr/014-wasm-asyncify.md`. `--asyncify` hedef adını `<hedef>-asyncify`e çevirir; `noxrt-<hedef>-asyncify.o` (`wasm_options.asyncify = true`) yerel `scheduler.zig`/`channel.zig`/`bridge_native.zig` M:1 zamanlayıcısını kullanır, `fiber.zig` wasm32'de `asyncify.swap` ile yığın değiştirir; bağlamadan sonra `wasm-opt --asyncify` çalışır. Sürücü `nox_asyncify_run_main` dönüşümden muaftır (`asyncify-removelist`); gölge yığın akış başına ayrıdır. Doğrulama: `wasm_target_test` (asyncify duman kümesi) ve `wasm-corpus-test` dört wasm varyantında (asyncify varyantlarında yalnızca libm farkı denylist'te).
+

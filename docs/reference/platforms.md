@@ -25,7 +25,7 @@ Both back ends run the whole golden corpus and must agree on program output, inc
 | Linux aarch64 | yes | full test suite |
 | Windows x86-64 | yes — LLVM (`zig cc`) and QBE are smoke-tested end to end (classes, lists, dictionaries, tasks, f-strings, exceptions, TLS and WebSocket) | the Debug `zig build test` corpus plus end-to-end LLVM/QBE smoke tests |
 | riscv64 | hosted Linux (`--target linux-riscv64`, static musl, QEMU user-mode smoke: class, list, dictionary, loop ordering and `spawn`/`await`). Freestanding is still assembly only | QEMU user-mode smoke CI; not the full corpus |
-| WebAssembly (`wasm32-wasi`, `wasm32-freestanding`) | `.wasm` WASI command, or a libc-free module that talks to its host through `nox_host` imports; no sockets, processes, threads or native libraries ([WebAssembly](../tools/wasm.md)). Smoke tests in `zig build test`, the whole corpus under `zig build wasm-corpus-test` (Node WASI) | smoke tests; corpus is opt-in |
+| WebAssembly (`wasm32-wasi`, `wasm32-freestanding`) | `.wasm` WASI command, or a libc-free module that talks to its host through `nox_host` imports; `--asyncify` gives real fibers through `wasm-opt`; no sockets, processes, threads or native libraries ([WebAssembly](../tools/wasm.md)). Smoke tests in `zig build test`, the whole corpus under `zig build wasm-corpus-test` (Node WASI) | smoke tests; corpus is opt-in |
 | iOS arm64 and iOS Simulator arm64 | library only (`--emit-obj` or `--emit-static-lib`). Not a third profile | experimental; not `supported` |
 | Android arm64 and Android x64 | `libnoxapp.so`, 16 KiB ELF alignment | experimental; not `supported` |
 

@@ -94,6 +94,8 @@ pub const HostedTargetInfo = struct {
     wasm: bool = false,
     /// `wasm32-freestanding`: WASI/libc YOK, dış dünya `nox_host` import'ları (ADR-013).
     wasm_freestanding: bool = false,
+    /// `<hedef>-asyncify` (ADR-014): bağlama sonrası `wasm-opt --asyncify` ile gerçek fiber (yığın değiştirme) çalışma zamanı.
+    wasm_asyncify: bool = false,
     apple_sdk: []const u8 = "",
     /// Apple'ın kurulu SDK'sındaki `RecommendedDeploymentTarget`. Sayı
     /// `docs/internals/mobile-toolchain.md`de kayıtlıdır.
@@ -137,6 +139,25 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
         .llvm_triple = "wasm32-unknown-unknown",
         .wasm = true,
         .wasm_freestanding = true,
+    };
+    if (std.mem.eql(u8, target_name, "wasm32-wasi-asyncify")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-wasm32-wasi-asyncify",
+        .zig_triple = "wasm32-wasi",
+        .is_windows = false,
+        .llvm_triple = "wasm32-unknown-wasi",
+        .wasm = true,
+        .wasm_asyncify = true,
+    };
+    if (std.mem.eql(u8, target_name, "wasm32-freestanding-asyncify")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-wasm32-freestanding-asyncify",
+        .zig_triple = "wasm32-freestanding",
+        .is_windows = false,
+        .llvm_triple = "wasm32-unknown-unknown",
+        .wasm = true,
+        .wasm_freestanding = true,
+        .wasm_asyncify = true,
     };
     if (std.mem.eql(u8, target_name, "ios-arm64")) return .{
         .qbe_target = "",

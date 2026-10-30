@@ -9,6 +9,7 @@ pub const std_options: std.Options = .{
     .unexpected_error_tracing = false,
 };
 
+pub const wasm_entry = @import("wasm_entry.zig");
 pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const dispatch_registry = @import("alloc/dispatch_registry.zig");
@@ -40,6 +41,7 @@ pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
 
 comptime {
+    _ = wasm_entry;
     _ = asap;
     _ = arc;
     _ = dispatch_registry;

@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.78]
+
+### Eklendi
+
+- `--asyncify` (wasm32-wasi ve wasm32-freestanding): Binaryen Asyncify ile gerçek fiber. Görevler iç içe benzetim yerine gerçekten askıya alınır; deadlock sınırı kalkar ve `thread_spawn_ordering`/`task_local_basic` dahil tüm korpus native ile aynı sırada çalışır. Çıktı host'tan ek import istemez. `wasm-opt` (binaryen) gerekir. Ayrıntı: ADR-014.
+- `runtime/async_rt/asyncify.zig` (fiber değiştirme + sürücü), `atomic_compat.zig` (atomiksiz wasm'de 64-bit sayaçlar), `wasm_entry.zig` (`__main_argc_argv`/`_start`).
+
+### Değişti
+
+- wasm32'de giriş köprüsü (`__main_argc_argv`) IR sarmalayıcısından çalışma zamanına taşındı. `std.heap.smp_allocator` yerine wasm'de `wasm_allocator` (ReleaseFast/ReleaseSmall çalışma zamanı artık derleniyor).
+
 ## [2.0.77]
 
 ### Eklendi

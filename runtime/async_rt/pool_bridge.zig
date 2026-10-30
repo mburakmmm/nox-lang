@@ -56,6 +56,7 @@
 //! GÜVENLİDİR.
 
 const std = @import("std");
+const atomic_compat = @import("atomic_compat.zig");
 const builtin = @import("builtin");
 const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
@@ -267,7 +268,7 @@ pub export fn nox_debug_worker_slot() callconv(.c) i64 {
     return @intCast(asap.currentWorkerSlot());
 }
 
-var debug_slot_seen: std.atomic.Value(u64) = .init(0);
+var debug_slot_seen: atomic_compat.Value(u64) = .init(0);
 
 /// ÇAĞIRAN fiber'ın O ANDA çalıştığı worker slotunu (bit olarak) PAYLAŞILAN
 /// bir bitmask'a KAYDEDER — `nox_debug_worker_slot`nin BİRDEN FAZLA

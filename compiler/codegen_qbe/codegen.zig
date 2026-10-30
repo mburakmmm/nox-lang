@@ -2189,18 +2189,6 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
     // ÖNCE bir `define` ALMIŞTIR (declare+define ÇAKIŞMASINI KESİN olarak
     // önler, `List_JsonValue_release` GİBİ TEMBEL-kaydedilen sentetik
     // yardımcılarda GERÇEK bir hata bulunup düzeltildi).
-    if (gen.isWasmTarget() and !llvm_emit.isWasmFreestanding(&gen) and gen.llvm_defined_syms.contains("main")) {
-        // wasi-libc'nin `_start`ı `__main_argc_argv(i32, i32)`yi çağırır; Nox'un `main(i32, i64)`i işaretçiyi 64-bite genişletir.
-        try gen.out.writer.writeAll(
-            \\define i32 @__main_argc_argv(i32 %argc, i32 %argv) {
-            \\start:
-            \\  %a = zext i32 %argv to i64
-            \\  %r = call i32 @main(i32 %argc, i64 %a)
-            \\  ret i32 %r
-            \\}
-            \\
-        );
-    }
     if (gen.backend == .llvm) {
         for (gen.llvm_pending_declares.items) |decl| {
             if (gen.llvm_defined_syms.contains(decl.name)) continue;

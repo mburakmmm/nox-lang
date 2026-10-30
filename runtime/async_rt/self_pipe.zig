@@ -29,7 +29,7 @@ const posix = std.posix;
 /// — VARSAYILAN (sağlayıcı KAYITLI DEĞİLKEN düşülen) gövdeler bu bayrakla
 /// SARILIR (`posix.fd_t`nin KENDİSİ freestanding'de `void`e ÇÖZÜLÜR, bu
 /// YÜZDEN fonksiyon İMZALARININ KENDİSİ DEĞİŞMEZ).
-const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other or builtin.cpu.arch.isWasm();
 
 /// Faz F.0.5 (bkz. plan dosyası "Uyandırma mekanizması soyutlaması"):
 /// `makeSelfPipe`/`closeSelfPipeFd`/`signalWakeFd`/`drainWakeFd`in

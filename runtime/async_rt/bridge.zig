@@ -4,7 +4,11 @@
 
 const builtin = @import("builtin");
 
-const impl = if (builtin.cpu.arch.isWasm()) @import("bridge_wasm.zig") else @import("bridge_native.zig");
+/// wasm32: Asyncify kipinde (`wasm_options.asyncify`, ADR-014) yerel fiber zamanlayıcısı gerçek yığın değiştirmeyle çalışır; aksi halde iç içe benzetim.
+const impl = if (builtin.cpu.arch.isWasm())
+    (if (@import("wasm_options").asyncify) @import("bridge_native.zig") else @import("bridge_wasm.zig"))
+else
+    @import("bridge_native.zig");
 
 pub const currentFiberScheduler = impl.currentFiberScheduler;
 pub const currentFiber = impl.currentFiber;

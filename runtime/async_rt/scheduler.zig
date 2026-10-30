@@ -23,6 +23,11 @@
 //! `ArrayListUnmanaged`) eklenir; bir sonraki `spawn` önce havuzu dener.
 
 const std = @import("std");
+const atomic_compat = @import("atomic_compat.zig");
+const task_arg = @import("task_arg.zig");
+/// Görev girişi argüman tipi (bkz. `task_arg.zig`).
+pub const TaskArg = task_arg.TaskArg;
+pub const taskArg = task_arg.taskArg;
 const builtin = @import("builtin");
 const posix = std.posix;
 
@@ -79,7 +84,7 @@ pub const PoolLink = struct {
     /// Faz MN.8, Bulgu B: `poolWideDeadlockCheck`nin epoch-doğrulamalı
     /// kök-neden düzeltmesi İçİn (bkz. `asap.RuntimeState`nin `pool_
     /// activity_epoch`inin AYNI belge notu).
-    activity_epoch: *std.atomic.Value(u64),
+    activity_epoch: *atomic_compat.Value(u64),
     /// Faz MN.6: STW bariyerinin ÜÇ paylaşılan atomiği (bkz. `asap.
     /// RuntimeState`nin AYNI-adlı alanlarının belge notu).
     stw_requested: *std.atomic.Value(bool),
@@ -199,7 +204,7 @@ pub const Scheduler = struct {
     pool_waiting_on_io: ?*std.atomic.Value(usize) = null,
     pool_idle_workers: ?*std.atomic.Value(usize) = null,
     /// Faz MN.8, Bulgu B: bkz. `PoolLink.activity_epoch`in belge notu.
-    pool_activity_epoch: ?*std.atomic.Value(u64) = null,
+    pool_activity_epoch: ?*atomic_compat.Value(u64) = null,
     /// Faz MN.6: STW bariyerinin ÜÇ paylaşılan atomiğine işaretçiler —
     /// `null` İSE (havuzsuz) `stwParticipate` HİÇ ÇALIŞMAZ (bkz. onun
     /// gövdesi, İLK satır).
@@ -815,14 +820,22 @@ fn sleepMs(ms: i64) void {
     // çağrıları F.2'nin capability sistemi ZATEN GERÇEK bir WorkerPool'u
     // freestanding'de İMKANSIZ kıldığından PRATİKTE hiç tetiklenmez, bu
     // YÜZDEN no-op GÜVENLİDİR.
+    if (comptime builtin.cpu.arch.isWasm() and builtin.os.tag == .freestanding) {
+        // wasm32-freestanding (ADR-013): bekleme `nox_host.sleep_ms` ile (modül sınırı nedeniyle burada yeniden bildirilir).
+        const host = struct {
+            extern "nox_host" fn sleep_ms(ms: i64) void;
+        };
+        host.sleep_ms(ms);
+        return;
+    }
     if (comptime is_freestanding) return;
     if (builtin.os.tag == .windows) {
         WinSleep.Sleep(@intCast(ms));
         return;
     }
     const ts: std.c.timespec = .{
-        .sec = @divTrunc(ms, std.time.ms_per_s),
-        .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,
+        .sec = @intCast(@divTrunc(ms, std.time.ms_per_s)),
+        .nsec = @intCast(@mod(ms, std.time.ms_per_s) * std.time.ns_per_ms),
     };
     _ = std.c.nanosleep(&ts, null);
 }
@@ -872,8 +885,8 @@ pub fn Task(comptime T: type) type {
         /// `runtime/async_rt/bridge.zig`, `nox_async_spawn`) — çağrı
         /// kuralının AÇIKÇA belirtilmesi (Zig'in imzaya göre değişebilen
         /// varsayılanına GÜVENMEK yerine) bu FFI sınırında zorunludur.
-        func: *const fn (*anyopaque) callconv(.c) T,
-        arg: *anyopaque,
+        func: *const fn (TaskArg) callconv(.c) T,
+        arg: TaskArg,
         result: T = undefined,
         /// Faz MN.8, Bulgu B — `entryTrampoline`/`await_` ARASINDAKİ
         /// "kayıp uyandırma" (lost wakeup) yarışının KÖK NEDEN düzeltmesi:
@@ -1055,7 +1068,7 @@ pub fn Task(comptime T: type) type {
 /// `func(arg)`i HEMEN bir yeşil iş parçacığında BAŞLATIR (bloklamaz),
 /// sonucu daha sonra `Task(T).await_()` ile alınabilecek bir tutamaç
 /// döner (Go'nun `go f()`si + kanal yerine doğrudan Task).
-pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaque) callconv(.c) T, arg: *anyopaque) !*Task(T) {
+pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (TaskArg) callconv(.c) T, arg: TaskArg) !*Task(T) {
     const task = try scheduler.allocator.create(Task(T));
     task.* = .{ .scheduler = scheduler, .func = func, .arg = arg };
     const stack = try scheduler.acquireStack();
@@ -1132,7 +1145,7 @@ pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaqu
 /// refcount/cancel_flag/`pool_live_count` muhasebesi BİREBİR KORUNUR —
 /// SADECE yerleştirme mekanizması değişir, dönen `Task(T)` tutamacı
 /// `await_()`/`destroy_task` İLE TAMAMEN NORMAL şekilde kullanılabilir.
-pub fn spawnPinned(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaque) callconv(.c) T, arg: *anyopaque) !*Task(T) {
+pub fn spawnPinned(scheduler: *Scheduler, comptime T: type, func: *const fn (TaskArg) callconv(.c) T, arg: TaskArg) !*Task(T) {
     const task = try scheduler.allocator.create(Task(T));
     task.* = .{ .scheduler = scheduler, .func = func, .arg = arg };
     const stack = try scheduler.acquireStack();
@@ -1175,10 +1188,10 @@ pub fn spawnPinned(scheduler: *Scheduler, comptime T: type, func: *const fn (*an
 /// "fiber.finished" dalı — HANGİ iş parçacığının enjekte ETTİĞİNDEN
 /// TAMAMEN BAĞIMSIZ çalışır, `pool_live_count`u SADECE PAYLAŞILAN,
 /// atomik sayaç OLARAK görür).
-pub fn spawnToForeignScheduler(target: *Scheduler, func: *const fn (*anyopaque) callconv(.c) i64, arg: *anyopaque) !void {
+pub fn spawnToForeignScheduler(target: *Scheduler, func: *const fn (TaskArg) callconv(.c) i64, arg: TaskArg) !void {
     const Payload = struct {
-        func: *const fn (*anyopaque) callconv(.c) i64,
-        arg: *anyopaque,
+        func: *const fn (TaskArg) callconv(.c) i64,
+        arg: TaskArg,
         allocator: std.mem.Allocator,
 
         fn trampoline(erased: *anyopaque) void {
@@ -1543,7 +1556,7 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
         live_count: std.atomic.Value(usize) = .init(0),
         waiting_on_io: std.atomic.Value(usize) = .init(0),
         idle_workers: std.atomic.Value(usize) = .init(0),
-        activity_epoch: std.atomic.Value(u64) = .init(0),
+        activity_epoch: atomic_compat.Value(u64) = .init(0),
         deques: [N]Deque = @splat(.{}),
         deque_ptrs: [N]*Deque = undefined,
         wake_fds: [N]std.atomic.Value(i32) = @splat(.init(-1)),

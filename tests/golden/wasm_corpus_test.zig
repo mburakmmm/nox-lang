@@ -18,8 +18,17 @@ const DENYLISTED_SOURCES = [_][]const u8{
     @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
 };
 
-fn isDenylisted(source: []const u8) bool {
-    for (DENYLISTED_SOURCES) |s| if (std.mem.eql(u8, s, source)) return true;
+/// Asyncify varyantlarında (gerçek fiber, ADR-014) yalnızca libm farkı kalır: zamanlayıcı/iş parçacığı sırası native ile aynıdır.
+const ASYNCIFY_DENYLISTED_SOURCES = [_][]const u8{
+    @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
+};
+
+fn isDenylisted(source: []const u8, target: wasm_helpers.Target) bool {
+    const list: []const []const u8 = switch (target) {
+        .wasi, .freestanding => &DENYLISTED_SOURCES,
+        .wasi_asyncify, .freestanding_asyncify => &ASYNCIFY_DENYLISTED_SOURCES,
+    };
+    for (list) |s| if (std.mem.eql(u8, s, source)) return true;
     return false;
 }
 
@@ -31,6 +40,14 @@ test "wasm(korpus): tüm codegen_cases fixture'ları wasm32-freestanding'de (nox
     try runCorpus(.freestanding);
 }
 
+test "wasm(korpus): --asyncify (wasm32-wasi-asyncify): gerçek fiber, native ile aynı çıktı" {
+    try runCorpus(.wasi_asyncify);
+}
+
+test "wasm(korpus): --asyncify (wasm32-freestanding-asyncify): gerçek fiber, native ile aynı çıktı" {
+    try runCorpus(.freestanding_asyncify);
+}
+
 fn runCorpus(target: wasm_helpers.Target) !void {
     const allocator = std.testing.allocator;
     var failures: usize = 0;
@@ -38,7 +55,7 @@ fn runCorpus(target: wasm_helpers.Target) !void {
     var rejected: usize = 0;
     var skipped: usize = 0;
     for (fixture_corpus.fixtures) |fx| {
-        if (isDenylisted(fx.source)) {
+        if (isDenylisted(fx.source, target)) {
             skipped += 1;
             continue;
         }

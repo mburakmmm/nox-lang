@@ -1179,6 +1179,7 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
 
 fn parseBuildOpts(args: []const []const u8) BuildOpts {
     var opts: BuildOpts = .{};
+    var asyncify = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -1218,6 +1219,8 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
         } else if (std.mem.eql(u8, arg, "--target")) {
             i += 1;
             if (i < args.len) opts.target = args[i];
+        } else if (std.mem.eql(u8, arg, "--asyncify")) {
+            asyncify = true;
         } else if (std.mem.eql(u8, arg, "--emit-asm")) {
             opts.emit_asm = true;
         } else if (std.mem.eql(u8, arg, "--emit-obj")) {
@@ -1228,6 +1231,18 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             setEmit(&opts, .shared_lib);
         } else if (opts.path == null) {
             opts.path = arg;
+        }
+    }
+    if (asyncify) {
+        // `--asyncify` (ADR-014): wasm hedefinin Asyncify çalışma zamanı varyantını seçer (`<hedef>-asyncify`).
+        const t = opts.target orelse "";
+        if (std.mem.eql(u8, t, "wasm32-wasi")) {
+            opts.target = "wasm32-wasi-asyncify";
+        } else if (std.mem.eql(u8, t, "wasm32-freestanding")) {
+            opts.target = "wasm32-freestanding-asyncify";
+        } else {
+            printErr("--asyncify only applies to --target wasm32-wasi or wasm32-freestanding\n", .{});
+            std.process.exit(1);
         }
     }
     return opts;
@@ -2727,6 +2742,14 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
         }
         return error.BuildFailed;
     }
+    if (info.wasm_asyncify) {
+        // Asyncify (ADR-014): bağlanmış modülün çağrı zinciri `wasm-opt --asyncify` ile çözülüp sarılabilir hâle getirilir. Sürücü (`nox_asyncify_run_main`) dönüşümden muaftır.
+        if (!probeOk(gpa, io, &.{ "wasm-opt", "--version" })) {
+            printErr("--asyncify needs 'wasm-opt' (binaryen) on PATH (brew install binaryen, apt install binaryen)\n", .{});
+            return error.BuildFailed;
+        }
+        try runTool(gpa, io, &.{ "wasm-opt", out_path, "--strip-dwarf", "--asyncify", "--pass-arg=asyncify-removelist@*nox_asyncify_run_main*", "--pass-arg=asyncify-ignore-imports", "-O2", "-o", out_path });
+    }
     return out_path;
 }
 
@@ -3022,7 +3045,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding (add --asyncify for real fibers), ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
             return error.BuildFailed;
         })
     else

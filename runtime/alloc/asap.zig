@@ -259,7 +259,7 @@ pub const RuntimeState = struct {
     /// KENDİ `.init` varsayılanıyla TUTARLI), Release'de `smp_allocator`
     /// (`nox_alloc`/dict/arena/vb.nin KULLANDIĞI, ~120x hız kazanımı
     /// SAĞLAYAN değer — bkz. modül üstü not).
-    injected_allocator: std.mem.Allocator = if (is_freestanding) freestanding_unreachable_allocator else if (use_debug_allocator) std.heap.page_allocator else std.heap.smp_allocator,
+    injected_allocator: std.mem.Allocator = if (is_freestanding) freestanding_unreachable_allocator else if (use_debug_allocator) std.heap.page_allocator else if (builtin.cpu.arch.isWasm()) std.heap.wasm_allocator else std.heap.smp_allocator,
     /// Faz OO.3, Faz MN.2'de fiber-affine hale GETİRİLDİ: birincil depo
     /// ARTIK `Fiber.pending_exception`dir (bkz. onun belge notu) —
     /// BURADAKİ alan SADECE fiber DIŞINDA (senkron üst-düzey kod,

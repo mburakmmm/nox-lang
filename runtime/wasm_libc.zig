@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const host = @import("wasm_host.zig");
+const entry = @import("wasm_entry.zig");
 
 export fn strcmp(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) c_int {
     const pa = a orelse return 0;
@@ -102,12 +103,10 @@ comptime {
 
 /// Derlenmiş Nox programının girişi (`main(argc, argv)`; argv işaretçisi Nox'ta 64-bit). `_start` host'un çağırdığı TEK giriştir; çıkış kodu `nox_host.exit` ile gider.
 /// `argv[0]` program adıdır ("nox"); host argüman geçirmez (ADR-013).
-extern fn main(argc: i32, argv: u64) callconv(.c) i32;
-
 var g_argv0 = [_]?[*:0]const u8{ "nox", null };
 
 export fn _start() callconv(.c) void {
-    host.exit(main(1, @intFromPtr(&g_argv0)));
+    host.exit(entry.run(1, @intFromPtr(&g_argv0)));
 }
 
 export fn nox_host_abi_version() callconv(.c) u32 {

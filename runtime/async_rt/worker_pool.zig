@@ -32,6 +32,7 @@
 //! yazar, worker'LAR ARASI KARIŞMA OLMAZ.
 
 const std = @import("std");
+const atomic_compat = @import("atomic_compat.zig");
 const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const chase_lev_deque = @import("chase_lev_deque.zig");
@@ -77,7 +78,7 @@ pub const WorkerPool = struct {
     /// Faz MN.8, Bulgu B: `state.pool_activity_epoch`e (bkz. `asap.zig`)
     /// DOĞRUDAN İŞARETÇİ — AYNI desen, `Scheduler.attachToPool`e `PoolLink.
     /// activity_epoch` OLARAK GEÇİRİLİR.
-    pool_activity_epoch: *std.atomic.Value(u64),
+    pool_activity_epoch: *atomic_compat.Value(u64),
     /// Faz MN.4/5.8: HER worker'ın `deque`ine (KENDİSİ DAHİL) İşaretçilerin
     /// ÖNCEDEN HESAPLANMIŞ dizisi — `Scheduler.attachToPool`e `sibling_
     /// deques` OLARAK GEÇİRİLİR (bkz. `scheduler.zig`nin belge notu,

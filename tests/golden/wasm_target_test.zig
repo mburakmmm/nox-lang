@@ -125,3 +125,24 @@ test "wasm32-freestanding: nox_host stdout/stderr, ortam tablosu, argv[0], libm"
 test "wasm32-freestanding: nox.fs derleme zamanında reddedilir (dosya sistemi yok), wasi'de çalışır" {
     try expectRejectedOn(.freestanding, "import nox.fs\nprint(1)\n", "cannot be used on the wasm32-freestanding target");
 }
+
+test "wasm32 --asyncify: gerçek fiber askıya alma (iç içe benzetimin deadlock sınırı yok)" {
+    // Asyncify (ADR-014): `wasm-opt --asyncify` gerekir (yoksa atlanır). Bu fixture'lar iç içe benzetimde zamanlama farkıyla ayrışır ya da kilitlenirdi.
+    inline for (.{ wasm_helpers.Target.wasi_asyncify, wasm_helpers.Target.freestanding_asyncify }) |t| {
+        try expectGoldenOn(t, "async_channel", @embedFile("codegen_cases/async_channel.nox"), @embedFile("codegen_cases/async_channel.expected"));
+        try expectGoldenOn(t, "async_generators", @embedFile("codegen_cases/async_generators.nox"), @embedFile("codegen_cases/async_generators.expected"));
+        try expectGoldenOn(t, "async_spawn_await", @embedFile("codegen_cases/async_spawn_await.nox"), @embedFile("codegen_cases/async_spawn_await.expected"));
+        try expectGoldenOn(t, "task_local_basic", @embedFile("codegen_cases/task_local_basic.nox"), @embedFile("codegen_cases/task_local_basic.expected"));
+        try expectGoldenOn(t, "thread_spawn_ordering", @embedFile("codegen_cases/thread_spawn_ordering.nox"), @embedFile("codegen_cases/thread_spawn_ordering.expected"));
+        try expectGoldenOn(t, "closure_captures_channel_retained", @embedFile("codegen_cases/closure_captures_channel_retained.nox"), @embedFile("codegen_cases/closure_captures_channel_retained.expected"));
+    }
+}
+
+test "wasm32 --asyncify: --asyncify yalnızca wasm hedeflerinde geçerlidir" {
+    const allocator = std.testing.allocator;
+    const result = std.process.run(allocator, std.testing.io, .{ .argv = &.{ build_options.noxc_path, "build", "--asyncify", "--target", "linux-x64", "x.nox" } }) catch return error.SkipZigTest;
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited != 0);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "--asyncify only applies") != null);
+}

@@ -51,6 +51,7 @@ const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .ot
 /// Faz F.0.3: `nox_async_deadlock_abort`ın tanı mesajını enjekte
 /// edilebilir hâle getirmek İçİn (bkz. onun belge notu).
 const diag_sink = @import("diag_sink");
+const wasm_host = @import("../wasm_host.zig");
 /// Faz MN.6: `nox_async_init`in havuzlu dalının `PoolLink.collect_fn`e
 /// GERÇEK `nox_cycle_collect`i BAĞLAYABİLMESİ İçİn — `scheduler.zig`nin
 /// KENDİSİ BUNU YAPAMAZ (bkz. onun belge notu, "runtime/alloc/den
@@ -215,7 +216,7 @@ pub export fn nox_async_deinit(rt: ?*anyopaque) void {
 /// tutamacı (opak işaretçi) döner. `func`, codegen'in HER `spawn` çağrı
 /// sitesi için ürettiği, argümanları paketten çıkarıp gerçek `async def`
 /// fonksiyonunu çağıran bir sarmalayıcıdır (bkz. codegen.zig, `genSpawnExpr`).
-pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (*anyopaque) callconv(.c) i64, arg: ?*anyopaque) ?*anyopaque {
+pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (scheduler_mod.TaskArg) callconv(.c) i64, arg: ?*anyopaque) ?*anyopaque {
     // Faz MN.4/5.7: `rt` BURADA KULLANILMIYOR — havuzlu/çalma-farkındalı
     // yönlendirme (yeni fiber'ı `markReady` YERİNE `Worker.deque`ye PUSH
     // etmek) `scheduler_mod.spawn`ın KENDİSİNDE, `scheduler.worker`
@@ -223,7 +224,7 @@ pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (*anyopaque) call
     // async_init`de ZATEN `attachToPool` İLE bağlandığından BURADA AYRICA
     // `rt`ye bakmaya GEREK YOK.
     _ = rt;
-    const task = scheduler_mod.spawn(&GSchedulerSlot.value.?, i64, func, arg.?) catch @panic("OOM: spawn");
+    const task = scheduler_mod.spawn(&GSchedulerSlot.value.?, i64, func, scheduler_mod.taskArg(arg.?)) catch @panic("OOM: spawn");
     return task;
 }
 
@@ -235,8 +236,8 @@ pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (*anyopaque) call
 /// GEREKEN, YAPIS AL olarak ÇALINAMAMASI gereken görevler) TARAFINDAN
 /// KULLANILIR — `pub fn` (export fn DEĞİL): codegen'in ÜRETTİĞİ HİÇBİR
 /// çağrı sitesi BUNU çağırmaz, SADECE runtime'ın KENDİ İç kullanımı İçİndir.
-pub fn spawnPinnedForCurrentThread(func: *const fn (*anyopaque) callconv(.c) i64, arg: *anyopaque) ?*anyopaque {
-    const task = scheduler_mod.spawnPinned(&GSchedulerSlot.value.?, i64, func, arg) catch @panic("OOM: spawnPinned");
+pub fn spawnPinnedForCurrentThread(func: *const fn (scheduler_mod.TaskArg) callconv(.c) i64, arg: *anyopaque) ?*anyopaque {
+    const task = scheduler_mod.spawnPinned(&GSchedulerSlot.value.?, i64, func, scheduler_mod.taskArg(arg)) catch @panic("OOM: spawnPinned");
     return task;
 }
 
@@ -379,6 +380,7 @@ pub export fn nox_async_deadlock_abort(rt: ?*anyopaque) noreturn {
     // KAVRAMI YOK) — `handle.zig`nin `HaltProvider`ıyla AYNI ilke,
     // BURADA sadece yerel `is_freestanding` bayrağıyla (döngüsel
     // bağımlılık kurmadan) uygulanır.
+    if (comptime wasm_host.is_freestanding_wasm) wasm_host.exit(1);
     if (comptime is_freestanding) {
         while (true) {}
     }
