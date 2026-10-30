@@ -3045,7 +3045,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding (add --asyncify for real fibers), ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding, wasm32-wasi-asyncify, wasm32-freestanding-asyncify, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
             return error.BuildFailed;
         })
     else

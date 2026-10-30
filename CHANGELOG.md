@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.79]
+
+### Düzeltildi
+
+- `--target` bilinmeyen-hedef iletisi ve `platforms.md`, `-asyncify` hedef adlarını da listeler (belge sözleşmesi denetimi v2.0.78'de kırıktı).
+
 ## [2.0.78]
 
 ### Eklendi

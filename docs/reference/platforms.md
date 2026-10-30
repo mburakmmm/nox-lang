@@ -10,7 +10,7 @@ What is supported, what is tested, and the known gaps.
 | `--backend qbe` | QBE (`.ssa` → `qbe` → `cc`) |
 | freestanding profile, desktop `--target`, `--emit-asm`, `-g` | QBE (automatic) |
 | `ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64` | LLVM only; `--backend qbe` is an error |
-| `wasm32-wasi`, `wasm32-freestanding` | LLVM only (`zig cc`); `--backend qbe`, `--emit-asm` and `-g` are errors ([WebAssembly](../tools/wasm.md)) |
+| `wasm32-wasi`, `wasm32-freestanding` (and their `-asyncify` variants `wasm32-wasi-asyncify`, `wasm32-freestanding-asyncify`, selected by `--asyncify`) | LLVM only (`zig cc`); `--backend qbe`, `--emit-asm` and `-g` are errors ([WebAssembly](../tools/wasm.md)) |
 | Windows | **LLVM** through `zig cc -target x86_64-windows-gnu` when `zig` is on `PATH` (default); QBE with MinGW `cc` otherwise |
 | neither `clang` nor `zig` installed | QBE (automatic, with a note) |
 
