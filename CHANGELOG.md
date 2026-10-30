@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.83]
+
+### Düzeltildi
+
+- `thread_spawn_stress` fixture'ının IR anlık görüntüsü (`tests/golden/ir_snapshots/codegen_cases/thread_spawn_stress.ssa`) v2.0.82'de commit'e girmemişti; eklendi.
+
 ## [2.0.82]
 
 ### Düzeltildi
