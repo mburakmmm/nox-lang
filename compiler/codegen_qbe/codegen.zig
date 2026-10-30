@@ -794,6 +794,11 @@ pub const Codegen = struct {
         return self.backend == .llvm and llvm_emit.isWasm(self);
     }
 
+    /// wasm32 iş parçacıklı hedef (ADR-015): yerel M:N havuz çağrıları (`nox_pool_*`) burada da üretilir.
+    pub fn isWasmThreads(self: *const Codegen) bool {
+        return self.backend == .llvm and llvm_emit.isWasm(self) and llvm_emit.isWasmThreads(self);
+    }
+
     pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
         return switch (self.backend) {
             .qbe => qbe_emit.qbeAtomicAdd(self, addr, imm),

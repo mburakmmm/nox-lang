@@ -4,6 +4,8 @@
 //
 // İki modül türünü çalıştırır:
 //   - `wasm32-wasi`        → Node'un `node:wasi`si (preview1); dosya, saat, rastgelelik, argv/env.
+//   - `wasm32-wasi-threads` → paylaşımlı bellek + `wasi::thread-spawn` (ADR-015): her yeni iş parçacığı bir Node Worker'ıdır; Worker'lar aynı `SharedArrayBuffer` belleğini
+//       paylaşır ve `wasi_thread_start(tid, arg)`ı çağırır. Başka bir host aynı iki parçayı uygular (paylaşımlı `env.memory` + `wasi.thread-spawn`).
 //   - `wasm32-freestanding` → `nox_host` import ad alanı (ADR-013). Host sözleşmesi `runtime/wasm_host.zig`de belgelidir:
 //       write(fd, ptr, len) -> i32      read(fd, ptr, len) -> i32      clock_ms(kind) -> i64 (BigInt)
 //       random_fill(ptr, len)           sleep_ms(ms)                   exit(code)  (dönmez)
@@ -99,7 +101,12 @@ async function nodeMain() {
     return;
   }
 
-  // wasm32-wasi
+  // wasm32-wasi (+ iş parçacıklı varyant: paylaşımlı bellek içe aktarımı varsa)
+  const memImport = findMemoryImport(bytes);
+  if (memImport && memImport.shared) {
+    process.exitCode = await runThreaded(file, mod, memImport, argv.slice(3));
+    return;
+  }
   const { WASI } = await import('node:wasi');
   const wasi = new WASI({
     version: 'preview1',
@@ -112,6 +119,124 @@ async function nodeMain() {
   process.exitCode = wasi.start(inst);
 }
 
-if (typeof process !== 'undefined' && process.argv && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  await nodeMain();
+// ---- Paylaşımlı bellek / iş parçacıkları (ADR-015) ---------------------------------------------------------------------------------------
+
+function readLeb(b, pos) {
+  let result = 0, shift = 0, byte;
+  do {
+    byte = b[pos.i++];
+    result |= (byte & 0x7f) << shift;
+    shift += 7;
+  } while (byte & 0x80);
+  return result >>> 0;
+}
+
+/** İçe aktarılan belleğin sınırlarını (min/max/shared) okur; WebAssembly.Module.imports sınırları vermez. */
+function findMemoryImport(bytes) {
+  const b = new Uint8Array(bytes);
+  const pos = { i: 8 };
+  while (pos.i < b.length) {
+    const id = b[pos.i++];
+    const size = readLeb(b, pos);
+    const end = pos.i + size;
+    if (id === 2) {
+      const count = readLeb(b, pos);
+      for (let n = 0; n < count; n++) {
+        const ml = readLeb(b, pos); pos.i += ml;
+        const fl = readLeb(b, pos); pos.i += fl;
+        const kind = b[pos.i++];
+        if (kind === 0) readLeb(b, pos);
+        else if (kind === 1) { pos.i++; const f = b[pos.i++]; readLeb(b, pos); if (f & 1) readLeb(b, pos); }
+        else if (kind === 2) {
+          const flags = b[pos.i++];
+          const min = readLeb(b, pos);
+          const max = (flags & 1) ? readLeb(b, pos) : undefined;
+          return { min, max, shared: !!(flags & 2) };
+        } else if (kind === 3) pos.i += 2;
+      }
+    }
+    pos.i = end;
+  }
+  return null;
+}
+
+/**
+ * Gözetmen (Node ana iş parçacığı): programın ana iş parçacığı da bir Worker'dır, böylece herhangi bir wasm iş parçacığı `atomic.wait` içinde bloke olsa bile gözetmenin
+ * olay döngüsü açık kalır ve HERHANGİ bir iş parçacığının `proc_exit`ini (BroadcastChannel ile) alıp süreci sonlandırabilir.
+ */
+async function runThreaded(file, mod, memImport, args) {
+  const { Worker } = await import('node:worker_threads');
+  const memory = new WebAssembly.Memory({ initial: memImport.min, maximum: memImport.max ?? memImport.min, shared: true });
+  const chan = new BroadcastChannel(EXIT_CHANNEL);
+  const done = new Promise((resolve) => {
+    chan.onmessage = (ev) => resolve(ev.data.exit);
+  });
+  const w = new Worker(new URL(import.meta.url), { workerData: { main: true, mod, memory, tid: 0, arg: 0, file, args, tids: new Int32Array(new SharedArrayBuffer(4)) }, argv: [file] });
+  w.on('error', (e) => {
+    console.error(e);
+    process.exit(1);
+  });
+  const code = await done;
+  chan.close();
+  process.exit(code);
+}
+
+const EXIT_CHANNEL = 'nox-wasm-exit';
+
+/** Worker iş parçacığı (ana wasm iş parçacığı ya da `thread-spawn` ile açılan): paylaşımlı belleğe bağlanan bir örnek kurar. */
+async function workerMain() {
+  const { workerData, Worker } = await import('node:worker_threads');
+  const nodeFs = await import('node:fs');
+  const { WASI } = await import('node:wasi');
+  const { mod, memory, tid, arg, file, args, tids } = workerData;
+  const chan = new BroadcastChannel(EXIT_CHANNEL);
+  const exitAll = (code) => {
+    chan.postMessage({ exit: code });
+    chan.close();
+  };
+  const wasi = new WASI({ version: 'preview1', args: [file, ...(args ?? [])], env: process.env, preopens: { '.': '.', '/tmp': '/tmp' }, returnOnExit: true });
+  const imp = {
+    ...wasi.getImportObject(),
+    env: { memory },
+    wasi: {
+      'thread-spawn': (a) => {
+        const t = Atomics.add(tids, 0, 1) + 1; // iş parçacıkları arasında benzersiz, > 0
+        const w = new Worker(new URL(import.meta.url), { workerData: { main: false, mod, memory, tid: t, arg: a, file, args, tids }, argv: [file] });
+        w.on('error', (e) => {
+          // Worker başlatma/çalışma hatası: sessizce yutulursa `join` sonsuza dek bekler.
+          nodeFs.writeSync(2, `wasm iş parçacığı hatası: ${e && e.stack ? e.stack : e}\n`);
+          exitAll(1);
+        });
+        return t;
+      },
+    },
+  };
+  imp.wasi_snapshot_preview1.proc_exit = (code) => {
+    exitAll(code);
+    throw new NoxExit(code);
+  };
+  const inst = await WebAssembly.instantiate(mod, imp);
+  wasi.finalizeBindings(inst, { memory });
+  try {
+    if (workerData.main) {
+      inst.exports._start();
+      exitAll(0); // `_start` proc_exit olmadan döndü
+    } else {
+      inst.exports.wasi_thread_start(tid, arg);
+    }
+  } catch (e) {
+    if (!(e instanceof NoxExit)) {
+      nodeFs.writeSync(2, `${e && e.stack ? e.stack : e}\n`); // eşzamanlı: gözetmen süreci hemen sonlandırabilir
+      exitAll(1);
+    }
+  }
+}
+
+if (typeof process !== 'undefined' && process.argv) {
+  const wt = await import('node:worker_threads').catch(() => null);
+  if (wt && !wt.isMainThread && wt.workerData && wt.workerData.tid !== undefined && wt.workerData.mod) {
+    await workerMain();
+  } else if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+    await nodeMain();
+  }
 }

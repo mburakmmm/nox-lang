@@ -23,7 +23,8 @@
 
 | Variable | Meaning |
 |---|---|
-| `NOX_POOL_WORKERS` | number of scheduler worker threads under the LLVM back end (overrides the compile-time default) |
+| `NOX_POOL_WORKERS` | number of scheduler worker threads under the LLVM back end and `wasm32-wasi-threads` (overrides the compile-time default) |
+| `NOX_WASM_NAMES` | with `--asyncify`/`--threads` (wasm): set to `1` to keep function names in the `.wasm`, so wasm stack traces are readable |
 | `NOX_STACK_PAINT` | when set, measures fiber stack use and prints `NOX_STACK_HWM_BYTES=<n>` at exit |
 | `NOX_OPENSSL_LIB` | full path of the OpenSSL library to load for `serve_tls` |
 | `NOX_STRESS_ROUNDS` | number of rounds for the opt-in stress test |

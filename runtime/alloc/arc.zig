@@ -48,6 +48,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const abi_ptr = @import("../abi_ptr.zig");
+const atomic64 = @import("../async_rt/atomic64.zig");
 const asap = @import("asap.zig");
 const lowlevel = @import("lowlevel.zig");
 const dispatch_registry = @import("dispatch_registry.zig");
@@ -196,8 +197,8 @@ pub export fn nox_raw_memcpy(dst: ?*anyopaque, src: ?*anyopaque, len: usize) voi
 pub export fn nox_rc_retain(ptr: ?*anyopaque) void {
     const p = ptr orelse return;
     if (comptime builtin.cpu.arch.isWasm()) {
-        // wasm32 (tek iş parçacıklı): 64-bit atomik RMW yok; düz yükle-artır-yaz yeterli.
-        refcountOf(p).* += 1;
+        // wasm32: Zig 64-bit atomik RMW'yi derlemez; `atomic64` ya satır içi `i64.atomic.*` (iş parçacıklı kip) ya da düz erişim (tek iş parçacıklı) kullanır.
+        _ = atomic64.rmw(i64, .add, refcountOf(p), 1);
         return;
     }
     const rc: *std.atomic.Value(i64) = @ptrCast(refcountOf(p));
@@ -223,10 +224,7 @@ pub export fn nox_rc_predecrement(ptr: ?*anyopaque) i32 {
     // `fetchSub` işlem-ÖNCESİ değeri döner (`old`); eski kodun `rc.* <= 0`
     // (post-decrement) karşılaştırması `old <= 1`e denk düşer.
     const old = if (comptime builtin.cpu.arch.isWasm()) blk: {
-        // wasm32 (tek iş parçacıklı): düz yükle-azalt-yaz.
-        const cur = refcountOf(p).*;
-        refcountOf(p).* = cur - 1;
-        break :blk cur;
+        break :blk atomic64.rmw(i64, .sub, refcountOf(p), 1);
     } else blk: {
         const rc: *std.atomic.Value(i64) = @ptrCast(refcountOf(p));
         break :blk rc.fetchSub(1, .acq_rel);

@@ -37,6 +37,14 @@ fn defaultStderrSink(rt: ?*anyopaque, bytes: [*]const u8, len: usize) callconv(.
         _ = write(2, bytes, len);
         return;
     }
+    if (comptime builtin.os.tag == .wasi) {
+        // WASI: stderr doğrudan `fd_write` (std.debug.print çok iş parçacıklı wasm'de derlenmez, ADR-015; tek iş parçacıklıda gereksiz).
+        const w = std.os.wasi;
+        var iov = [_]w.ciovec_t{.{ .base = bytes, .len = len }};
+        var n: usize = 0;
+        _ = w.fd_write(2, &iov, 1, &n);
+        return;
+    }
     if (comptime is_freestanding) {
         // Freestanding'de GERÇEK bir stderr/`std.debug.print` I/O katmanı
         // YOK — GERÇEK bir freestanding host HER ZAMAN `nox_register_diag_

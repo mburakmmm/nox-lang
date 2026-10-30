@@ -19,13 +19,13 @@ extern "asyncify" fn stop_unwind() void;
 extern "asyncify" fn start_rewind(data: usize) void;
 extern "asyncify" fn stop_rewind() void;
 
-inline fn getSp() usize {
+pub inline fn getSp() usize {
     return asm volatile ("global.get __stack_pointer\nlocal.set %[r]"
         : [r] "=r" (-> usize),
     );
 }
 
-inline fn setSp(v: usize) void {
+pub inline fn setSp(v: usize) void {
     asm volatile ("local.get %[v]\nglobal.set __stack_pointer"
         :
         : [v] "r" (v),
@@ -52,18 +52,18 @@ pub const BUF_SIZE: usize = 256 * 1024;
 
 const Phase = enum { normal, unwinding, rewinding };
 
-var g_phase: Phase = .normal;
-var g_cur_root: *Root = undefined;
-var g_next: *Context = undefined;
-var free_bufs: [64]usize = undefined;
-var free_count: usize = 0;
+threadlocal var g_phase: Phase = .normal;
+threadlocal var g_cur_root: *Root = undefined;
+threadlocal var g_next: *Context = undefined;
+threadlocal var free_bufs: [64]usize = undefined;
+threadlocal var free_count: usize = 0;
 
 fn acquireBuf() usize {
     if (free_count > 0) {
         free_count -= 1;
         return free_bufs[free_count];
     }
-    const mem = std.heap.wasm_allocator.alignedAlloc(u8, .@"16", BUF_SIZE) catch @panic("asyncify: arabellek ayrılamadı");
+    const mem = std.heap.page_allocator.alignedAlloc(u8, .@"16", BUF_SIZE) catch @panic("asyncify: arabellek ayrılamadı");
     return @intFromPtr(mem.ptr);
 }
 
@@ -75,7 +75,7 @@ fn releaseBuf(b: usize) void {
     }
     const p: [*]align(16) u8 = @ptrFromInt(b);
     const sl: []align(16) u8 = p[0..BUF_SIZE];
-    std.heap.wasm_allocator.free(sl);
+    std.heap.page_allocator.free(sl);
 }
 
 /// Bir fiber yok edilirken, askıdayken tuttuğu arabelleği geri verir.
@@ -109,25 +109,26 @@ pub noinline fn swap(old: *Context, new: *Context) void {
     start_unwind(old.buf);
 }
 
-var g_main_fn: *const fn (i32, u64) callconv(.c) i32 = undefined;
-var g_argc: i32 = 0;
-var g_argv: u64 = 0;
-var g_rc: i32 = 0;
+/// Sürücü köküne verilen giriş: tek `usize` argümanlı, `i32` dönen işlev (ana akış için `main`, havuz işçisi için işçi gövdesi).
+pub const EntryFn = *const fn (usize) callconv(.c) i32;
 
-fn mainRun(_: *Root) void {
-    g_rc = g_main_fn(g_argc, g_argv);
+threadlocal var g_entry: EntryFn = undefined;
+threadlocal var g_entry_arg: usize = 0;
+threadlocal var g_rc: i32 = 0;
+
+fn entryRun(_: *Root) void {
+    g_rc = g_entry(g_entry_arg);
 }
 
-var main_root: Root = .{ .run = mainRun };
+threadlocal var entry_root: Root = .{ .run = entryRun };
 
-/// Programın giriş sürücüsü (`asyncify-removelist` ile dönüşümden muaf tutulur: adında `nox_asyncify_run_main` geçer).
-/// `main_fn` ana akışın kökü; fiberler `swap` ile bu döngüye yığın açarak döner.
-pub noinline fn nox_asyncify_run_main(main_fn: *const fn (i32, u64) callconv(.c) i32, argc: i32, argv: u64) i32 {
-    g_main_fn = main_fn;
-    g_argc = argc;
-    g_argv = argv;
+/// Bir iş parçacığının (ana ya da havuz işçisi) giriş sürücüsü: `entry(arg)`yi KÖK akış olarak çalıştırır. Fiber'lar `swap` ile bu döngüye yığın açarak döner.
+/// `asyncify-removelist` ile dönüşümden muaf tutulur (adında `nox_asyncify_run` geçer). Her iş parçacığı kendi sürücü durumuna (threadlocal) sahiptir.
+pub noinline fn nox_asyncify_run(entry: EntryFn, arg: usize) i32 {
+    g_entry = entry;
+    g_entry_arg = arg;
     const entry_sp = getSp();
-    var root: *Root = &main_root;
+    var root: *Root = &entry_root;
     while (true) {
         g_cur_root = root;
         root.run(root);
@@ -145,7 +146,7 @@ pub noinline fn nox_asyncify_run_main(main_fn: *const fn (i32, u64) callconv(.c)
             }
             continue;
         }
-        if (root == &main_root) {
+        if (root == &entry_root) {
             setSp(entry_sp);
             return g_rc;
         }

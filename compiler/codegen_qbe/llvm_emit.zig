@@ -558,7 +558,7 @@ fn resolveAddrPtr(self: *Codegen, addr: []const u8) CodegenError![]const u8 {
 pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
     const ptr_reg = try resolveAddrPtr(self, addr);
     const old = try self.newTemp();
-    if (isWasm(self)) {
+    if (isWasm(self) and !isWasmThreads(self)) {
         // wasm32-wasi tek iş parçacıklıdır (atomics/threads yok): düz yükle-topla-sakla (bkz. runtime/alloc/arc.zig'in wasm kolu).
         try self.out.writer.print("    {s} = load i64, ptr {s}, align 8\n", .{ old, ptr_reg });
         const sum = try self.newTemp();
@@ -576,7 +576,7 @@ pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]c
 pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
     const ptr_reg = try resolveAddrPtr(self, addr);
     const old = try self.newTemp();
-    if (isWasm(self)) {
+    if (isWasm(self) and !isWasmThreads(self)) {
         try self.out.writer.print("    {s} = load i64, ptr {s}, align 8\n", .{ old, ptr_reg });
         const diff = try self.newTemp();
         try self.out.writer.print("    {s} = sub i64 {s}, {d}\n", .{ diff, old, imm });
@@ -856,6 +856,11 @@ fn renderOperand(self: *Codegen, text: []const u8) CodegenError![]const u8 {
 /// wasm32 hedefi mi? (`--target wasm32-wasi`; üçlü `wasm32-` ile başlar.)
 pub fn isWasm(self: *const Codegen) bool {
     return std.mem.startsWith(u8, self.llvm_triple, "wasm32");
+}
+
+/// `wasm32-wasi-threads` (ADR-015): paylaşımlı bellek + atomikler; ARC gerçek `atomicrmw`, M:N havuzu açık.
+pub fn isWasmThreads(self: *const Codegen) bool {
+    return std.mem.endsWith(u8, self.llvm_triple, "-threads");
 }
 
 /// `wasm32-freestanding` (üçlü `wasm32-unknown-unknown`): WASI/libc yok, host `nox_host` import'larıdır (ADR-013).

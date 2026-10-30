@@ -146,3 +146,23 @@ test "wasm32 --asyncify: --asyncify yalnızca wasm hedeflerinde geçerlidir" {
     try std.testing.expect(result.term == .exited and result.term.exited != 0);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "--asyncify only applies") != null);
 }
+
+test "wasm32-wasi-threads: gerçek iş parçacığı (paylaşımlı bellek + atomikler + M:N havuzu)" {
+    // ADR-015: `wasm_host.mjs` her wasm iş parçacığını bir Node Worker'ı olarak açar (`wasi::thread-spawn`). Havuz birden çok işçiyle kurulur.
+    const t = wasm_helpers.Target.wasi_threads;
+    try expectGoldenOn(t, "async_channel", @embedFile("codegen_cases/async_channel.nox"), @embedFile("codegen_cases/async_channel.expected"));
+    try expectGoldenOn(t, "async_generators", @embedFile("codegen_cases/async_generators.nox"), @embedFile("codegen_cases/async_generators.expected"));
+    try expectGoldenOn(t, "atomic_shared_counter_across_threads", @embedFile("codegen_cases/atomic_shared_counter_across_threads.nox"), @embedFile("codegen_cases/atomic_shared_counter_across_threads.expected"));
+    try expectGoldenOn(t, "thread_spawn_join_int", @embedFile("codegen_cases/thread_spawn_join_int.nox"), @embedFile("codegen_cases/thread_spawn_join_int.expected"));
+    try expectGoldenOn(t, "thread_channel_backpressure", @embedFile("codegen_cases/thread_channel_backpressure.nox"), @embedFile("codegen_cases/thread_channel_backpressure.expected"));
+    try expectGoldenOn(t, "class_reference_cycle_collected", @embedFile("codegen_cases/class_reference_cycle_collected.nox"), @embedFile("codegen_cases/class_reference_cycle_collected.expected"));
+}
+
+test "wasm32-wasi-threads: --threads yalnızca wasm32-wasi hedefinde geçerlidir" {
+    const allocator = std.testing.allocator;
+    const result = std.process.run(allocator, std.testing.io, .{ .argv = &.{ build_options.noxc_path, "build", "--threads", "--target", "wasm32-freestanding", "x.nox" } }) catch return error.SkipZigTest;
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited != 0);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "--threads only applies") != null);
+}

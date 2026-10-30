@@ -96,6 +96,8 @@ pub const HostedTargetInfo = struct {
     wasm_freestanding: bool = false,
     /// `<hedef>-asyncify` (ADR-014): bağlama sonrası `wasm-opt --asyncify` ile gerçek fiber (yığın değiştirme) çalışma zamanı.
     wasm_asyncify: bool = false,
+    /// `wasm32-wasi-threads` (ADR-015): paylaşımlı bellek + atomikler + gerçek M:N havuzu; Asyncify fiber'ları iş parçacığı başına çalışır (`wasm_asyncify` da doğrudur).
+    wasm_threads: bool = false,
     apple_sdk: []const u8 = "",
     /// Apple'ın kurulu SDK'sındaki `RecommendedDeploymentTarget`. Sayı
     /// `docs/internals/mobile-toolchain.md`de kayıtlıdır.
@@ -158,6 +160,16 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
         .wasm = true,
         .wasm_freestanding = true,
         .wasm_asyncify = true,
+    };
+    if (std.mem.eql(u8, target_name, "wasm32-wasi-threads")) return .{
+        .qbe_target = "",
+        .runtime_object_name = "noxrt-wasm32-wasi-threads",
+        .zig_triple = "wasm32-wasi",
+        .is_windows = false,
+        .llvm_triple = "wasm32-unknown-wasi-threads",
+        .wasm = true,
+        .wasm_asyncify = true,
+        .wasm_threads = true,
     };
     if (std.mem.eql(u8, target_name, "ios-arm64")) return .{
         .qbe_target = "",

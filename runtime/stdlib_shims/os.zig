@@ -63,7 +63,7 @@ const FreeEnv = struct {
     }
 
     fn set(name: []const u8, value: []const u8) void {
-        const a = std.heap.wasm_allocator;
+        const a = std.heap.page_allocator;
         const v = a.dupe(u8, value) catch return;
         if (map.getPtr(name)) |slot| {
             a.free(slot.*);

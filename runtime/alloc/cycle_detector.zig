@@ -123,19 +123,19 @@ const COLOR_MASK: u64 = @as(u64, 3) << COLOR_SHIFT;
 const BUFFERED_BIT: u64 = @as(u64, 1) << 62;
 const FLAG_MASK: u64 = IDX_MASK | COLOR_MASK | BUFFERED_BIT;
 
-// wasm32 tek iş parçacıklıdır ve 64-bit atomik işlem sunmaz: düz yükleme/yazma kullanılır.
-const wasm_plain = builtin.cpu.arch.isWasm();
+// wasm32: Zig 64-bit atomikleri derlemez; `atomic64` (iş parçacıklı kipte `i64.atomic.*`, tek iş parçacıklıda düz erişim) kullanılır.
+const wasm_hdr = builtin.cpu.arch.isWasm();
 
 fn hdrLoad(h: *u64) u64 {
-    return if (comptime wasm_plain) h.* else @atomicLoad(u64, h, .monotonic);
+    return if (comptime wasm_hdr) atomic64.load(u64, h) else @atomicLoad(u64, h, .monotonic);
 }
 
 fn hdrAnd(h: *u64, m: u64) void {
-    if (comptime wasm_plain) h.* &= m else _ = @atomicRmw(u64, h, .And, m, .monotonic);
+    if (comptime wasm_hdr) _ = atomic64.rmw(u64, .@"and", h, m) else _ = @atomicRmw(u64, h, .And, m, .monotonic);
 }
 
 fn hdrOr(h: *u64, m: u64) void {
-    if (comptime wasm_plain) h.* |= m else _ = @atomicRmw(u64, h, .Or, m, .monotonic);
+    if (comptime wasm_hdr) _ = atomic64.rmw(u64, .@"or", h, m) else _ = @atomicRmw(u64, h, .Or, m, .monotonic);
 }
 
 fn hdrWord(p: *anyopaque) *u64 {
@@ -805,6 +805,7 @@ fn simulateRelease(rt: ?*anyopaque, p: *anyopaque) void {
 
 const builtin = @import("builtin");
 const abi_ptr = @import("../abi_ptr.zig");
+const atomic64 = @import("../async_rt/atomic64.zig");
 
 fn deinitRuntimeExpectNoLeak(rt: ?*anyopaque) !void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));

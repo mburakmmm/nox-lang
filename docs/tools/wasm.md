@@ -53,3 +53,12 @@ noxc run   --target wasm32-freestanding --asyncify prog.nox
 ```
 
 `--asyncify` göreve bekleyen görevleri gerçekten askıya alır (yığın değiştirme): karşılıklı kanal beklemeleri, `nox.thread`/`sleep` sırası ve `async` kalıpları native zamanlayıcıyla aynı sırada çalışır, deadlock sınırı kalkar. Çıktı modül host'tan ek import istemez; her WASM motorunda çalışır. Maliyet: yaklaşık %30–50 yavaşlık/boyut ve `wasm-opt` bağımlılığı ([ADR-014](../internals/adr/014-wasm-asyncify.md)). Paralel çalışma değildir (tek iş parçacığı).
+
+## `--threads`: gerçek paralel M:N
+
+```bash
+noxc build --target wasm32-wasi --threads prog.nox -o prog.wasm       # wasm-opt (binaryen) ve node gerekir
+NOX_POOL_WORKERS=4 noxc run --target wasm32-wasi --threads prog.nox
+```
+
+`--threads`, yerel `--release` çalışma zamanının iş çalan M:N havuzunu WASM'a taşır: `spawn`/`await`, `Channel`, `nox.thread` birden çok iş parçacığında GERÇEKTEN paralel çalışır (paylaşımlı bellek + atomikler). Modül `env.memory` (paylaşımlı) ve `wasi::thread-spawn` içe aktarır; `compiler/wasm_host.mjs` bunları Node Worker'larıyla sağlar (wasmtime 50 `-Sthreads`ı kaldırdığından `noxc run` bu hedefte yalnızca Node kullanır). Başka bir host aynı iki içe aktarımı sağlayarak modülü çalıştırabilir. İşçi sayısı `NOX_POOL_WORKERS` ile ayarlanır. Sınırlar ve gerekçe: [ADR-015](../internals/adr/015-wasm-threads.md); freestanding için iş parçacığı yoktur.

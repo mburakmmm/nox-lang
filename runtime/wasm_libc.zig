@@ -5,6 +5,7 @@
 const std = @import("std");
 const host = @import("wasm_host.zig");
 const entry = @import("wasm_entry.zig");
+const wasm_printf = @import("wasm_printf.zig");
 
 export fn strcmp(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) c_int {
     const pa = a orelse return 0;
@@ -18,68 +19,15 @@ export fn strcmp(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) c_int {
     }
 }
 
-/// `printf`in desteklediği alt küme: `%lld %llu %ld %lu %d %u %s %c %g %f %%`. Her yer tutucu bir `i64`/`u64`/`f64`/işaretçi değişken argümanıdır;
-/// wasm32'de `long` 32-bit olduğundan Nox kodu daima `ll` ile çağırır, `%d`/`%ld` de 32-bit okunur.
-fn printfImpl(f: [*:0]const u8, ap: *std.builtin.VaList) usize {
-    var out: [1024]u8 = undefined;
-    var pos: usize = 0;
-    var i: usize = 0;
-    while (f[i] != 0) : (i += 1) {
-        const c = f[i];
-        if (c != '%') {
-            if (pos < out.len) {
-                out[pos] = c;
-                pos += 1;
-            }
-            continue;
-        }
-        i += 1;
-        var long_count: usize = 0;
-        while (f[i] == 'l') : (i += 1) long_count += 1;
-        const conv = f[i];
-        if (conv == 0) break;
-        var tmp: [64]u8 = undefined;
-        var piece: []const u8 = "";
-        switch (conv) {
-            'd', 'i' => piece = if (long_count >= 1) fmt64i(&tmp, @cVaArg(ap, i64)) else fmt64i(&tmp, @cVaArg(ap, i32)),
-            'u' => piece = if (long_count >= 1) fmt64u(&tmp, @cVaArg(ap, u64)) else fmt64u(&tmp, @cVaArg(ap, u32)),
-            'g', 'f' => piece = std.fmt.bufPrint(&tmp, "{d}", .{@cVaArg(ap, f64)}) catch "",
-            'c' => {
-                tmp[0] = @intCast(@cVaArg(ap, i32) & 0xff);
-                piece = tmp[0..1];
-            },
-            's' => {
-                const sp = @cVaArg(ap, ?[*:0]const u8);
-                if (sp) |s| piece = std.mem.span(s);
-            },
-            '%' => piece = "%",
-            else => {},
-        }
-        const n = @min(piece.len, out.len - pos);
-        @memcpy(out[pos..][0..n], piece[0..n]);
-        pos += n;
-        if (pos == out.len) {
-            _ = host.write(1, &out, pos);
-            pos = 0;
-        }
-    }
-    if (pos > 0) _ = host.write(1, &out, pos);
-    return pos;
-}
-
-fn fmt64i(buf: []u8, v: anytype) []const u8 {
-    return std.fmt.bufPrint(buf, "{d}", .{v}) catch "";
-}
-
-fn fmt64u(buf: []u8, v: anytype) []const u8 {
-    return std.fmt.bufPrint(buf, "{d}", .{v}) catch "";
+fn hostEmit(bytes: []const u8) void {
+    _ = host.write(1, bytes.ptr, bytes.len);
 }
 
 export fn printf(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
     const f = fmt orelse return 0;
     var ap = @cVaStart();
     defer @cVaEnd(&ap);
-    return @intCast(printfImpl(f, &ap));
+    return @intCast(wasm_printf.printfImpl(hostEmit, f, &ap));
 }
 
 /// libm: `nox.math`in `extern def ... from "m"` sembolleri. Zig'in compiler-rt'si `sin/cos/exp/log/pow/floor/ceil/sqrt/fmod`i zayıf sembol olarak verir;

@@ -1180,6 +1180,7 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
 fn parseBuildOpts(args: []const []const u8) BuildOpts {
     var opts: BuildOpts = .{};
     var asyncify = false;
+    var threads = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -1221,6 +1222,8 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             if (i < args.len) opts.target = args[i];
         } else if (std.mem.eql(u8, arg, "--asyncify")) {
             asyncify = true;
+        } else if (std.mem.eql(u8, arg, "--threads")) {
+            threads = true;
         } else if (std.mem.eql(u8, arg, "--emit-asm")) {
             opts.emit_asm = true;
         } else if (std.mem.eql(u8, arg, "--emit-obj")) {
@@ -1233,6 +1236,17 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             opts.path = arg;
         }
     }
+    if (threads) {
+        // `--threads` (ADR-015): wasm32-wasi'de gerçek paralel M:N (paylaşımlı bellek + atomikler + havuz; Asyncify fiber'ları içerir).
+        const t = opts.target orelse "";
+        if (std.mem.eql(u8, t, "wasm32-wasi")) {
+            opts.target = "wasm32-wasi-threads";
+            asyncify = false;
+        } else {
+            printErr("--threads only applies to --target wasm32-wasi (freestanding has no thread-spawn host contract yet)\n", .{});
+            std.process.exit(1);
+        }
+    }
     if (asyncify) {
         // `--asyncify` (ADR-014): wasm hedefinin Asyncify çalışma zamanı varyantını seçer (`<hedef>-asyncify`).
         const t = opts.target orelse "";
@@ -1240,6 +1254,8 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             opts.target = "wasm32-wasi-asyncify";
         } else if (std.mem.eql(u8, t, "wasm32-freestanding")) {
             opts.target = "wasm32-freestanding-asyncify";
+        } else if (std.mem.eql(u8, t, "wasm32-wasi-threads")) {
+            // iş parçacıklı hedef zaten Asyncify fiber'larını içerir
         } else {
             printErr("--asyncify only applies to --target wasm32-wasi or wasm32-freestanding\n", .{});
             std.process.exit(1);
@@ -1362,7 +1378,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             printErr("noxc run --sandbox: not supported with --target wasm32-wasi (the WASI runtime is the sandbox)\n", .{});
             std.process.exit(1);
         }
-        const is_free = if (opts.target) |t| (if (qbe_target.hostedTargetInfo(t)) |info| info.wasm_freestanding else false) else false;
+        const is_free = if (opts.target) |t| (if (qbe_target.hostedTargetInfo(t)) |info| (info.wasm_freestanding or info.wasm_threads) else false) else false;
         const code = try runWasi(gpa, io, a, bin_path, is_free, split.after);
         std.process.exit(code);
     }
@@ -1421,6 +1437,7 @@ const WASM_HOST_JS = @embedFile("wasm_host.mjs");
 /// `noxc run --target wasm32-wasi|wasm32-freestanding`: `.wasm`ı çalıştırır. WASI modülleri için bulunan ilk çalıştırıcı (`wasmtime`, `wasmer`, `node`),
 /// freestanding (`nox_host`) için her zaman `node`. Çalışma dizini ve `/tmp` WASI programına açılır. Çalıştırıcı yoksa açık hata verir.
 fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, argv_tail: []const []const u8) !u8 {
+    // `freestanding` = yalnızca node sürücüsü: nox_host (ADR-013) ve iş parçacıklı wasi (ADR-015; wasmtime/wasmer wasi-threads'i kaldırdı).
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     if (!freestanding and probeOk(gpa, io, &.{ "wasmtime", "--version" })) {
         try argv.appendSlice(a, &.{ "wasmtime", "run", "--dir", ".", "--dir", "/tmp", wasm_path, "--" });
@@ -2714,6 +2731,10 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.appendSlice(a, &.{ "zig", "cc", "-target", info.zig_triple, "-O2", "-Wno-override-module", "-Wl,-z,stack-size=8388608", "-o", out_path, ll_path, rt_path });
     // wasm32-freestanding: libc/WASI başlangıcı yok; giriş `_start` (runtime/wasm_libc.zig), host import'ları `nox_host` ad alanından.
+    if (info.wasm_threads) {
+        // ADR-015: paylaşımlı bellek + atomikler; Zig'in WasiThreadImpl'i `wasi_thread_start`ı dışa aktarılmış ister, host `wasi::thread-spawn` sağlar.
+        try argv.appendSlice(a, &.{ "-mcpu=generic+atomics+bulk_memory", "-Wl,--shared-memory", "-Wl,--import-memory", "-Wl,--initial-memory=33554432", "-Wl,--max-memory=1073741824", "-Wl,--export=wasi_thread_start" });
+    }
     if (info.wasm_freestanding) try argv.appendSlice(a, &.{ "-Wl,--no-entry", "-Wl,--export=_start", "-Wl,--export=nox_host_abi_version" });
     if (info.wasm_freestanding) {
         // libc/libm yok: `from "m"` bildirimleri çalışma zamanındaki (`wasm_libc.zig`/compiler-rt) tanımlara çözülür; `-lm` verilmez.
@@ -2748,7 +2769,13 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
             printErr("--asyncify needs 'wasm-opt' (binaryen) on PATH (brew install binaryen, apt install binaryen)\n", .{});
             return error.BuildFailed;
         }
-        try runTool(gpa, io, &.{ "wasm-opt", out_path, "--strip-dwarf", "--asyncify", "--pass-arg=asyncify-removelist@*nox_asyncify_run_main*", "--pass-arg=asyncify-ignore-imports", "-O2", "-o", out_path });
+        // `NOX_WASM_NAMES=1`: işlev adlarını (name section) çıktıda tutar — wasm yığın izleri adlı olur (tanılama).
+        const keep_names = std.c.getenv("NOX_WASM_NAMES") != null;
+        if (keep_names) {
+            try runTool(gpa, io, &.{ "wasm-opt", out_path, "--strip-dwarf", "--asyncify", "--pass-arg=asyncify-removelist@*nox_asyncify_run*", "--pass-arg=asyncify-ignore-imports", "-O2", "-g", "-o", out_path });
+        } else {
+            try runTool(gpa, io, &.{ "wasm-opt", out_path, "--strip-dwarf", "--asyncify", "--pass-arg=asyncify-removelist@*nox_asyncify_run*", "--pass-arg=asyncify-ignore-imports", "-O2", "-o", out_path });
+        }
     }
     return out_path;
 }
@@ -3045,7 +3072,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `--target`/`--emit-asm` YERİNİ ALDI.
     const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
         (qbe_target.hostedTargetInfo(target.?) orelse {
-            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding, wasm32-wasi-asyncify, wasm32-freestanding-asyncify, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
+            printErr("--target: unknown hosted target '{s}' (valid values: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64, wasm32-wasi, wasm32-freestanding, wasm32-wasi-asyncify, wasm32-freestanding-asyncify, wasm32-wasi-threads, ios-arm64, ios-simulator-arm64, android-arm64, android-x64)\n", .{target.?});
             return error.BuildFailed;
         })
     else

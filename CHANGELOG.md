@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.80]
+
+### Eklendi
+
+- `--threads` (`--target wasm32-wasi-threads`): WASM'da gerçek paralel M:N. Yerel iş çalan havuz ve fiber'lar paylaşımlı bellek + atomiklerle çalışır; `spawn`/`await`/`Channel`/`nox.thread` birden çok iş parçacığında paralel yürür. Host sözleşmesi WASI-threads ABI'si (`env.memory` paylaşımlı + `wasi::thread-spawn`); `compiler/wasm_host.mjs` Node Worker'larıyla sağlar (wasmtime 50 `-Sthreads`ı kaldırdı). Ayrıntı: ADR-015.
+- `runtime/async_rt/atomic64.zig` (wasm32'de `i64.atomic.*` satır içi asm), `thread_spawn.zig` (kendi iş parçacığı başlatıcısı), `wasm_mt_alloc.zig` (kilitli boyut sınıflı ayırıcı), `wasm_panic.zig`, `wasm_threads_libc.zig`.
+- `NOX_WASM_NAMES=1` (wasm çıktısında işlev adları), `zig build wasm-rt` artık beş wasm çalışma zamanı nesnesi üretir.
+
+### Değişti
+
+- wasi çalışma zamanında stderr tanı çıktısı doğrudan `fd_write` ile yazılır (`std.debug.print` yerine).
+
 ## [2.0.79]
 
 ### Düzeltildi

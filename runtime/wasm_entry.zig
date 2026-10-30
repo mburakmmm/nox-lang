@@ -7,8 +7,19 @@ const asyncify = @import("async_rt/asyncify.zig");
 
 extern fn main(argc: i32, argv: u64) callconv(.c) i32;
 
+threadlocal var g_argc: i32 = 0;
+threadlocal var g_argv: u64 = 0;
+
+fn mainThunk(_: usize) callconv(.c) i32 {
+    return main(g_argc, g_argv);
+}
+
 pub fn run(argc: i32, argv: u64) i32 {
-    if (comptime wasm_options.asyncify) return asyncify.nox_asyncify_run_main(&main, argc, argv);
+    if (comptime wasm_options.asyncify) {
+        g_argc = argc;
+        g_argv = argv;
+        return asyncify.nox_asyncify_run(&mainThunk, 0);
+    }
     return main(argc, argv);
 }
 

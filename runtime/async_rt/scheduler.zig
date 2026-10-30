@@ -24,6 +24,7 @@
 
 const std = @import("std");
 const atomic_compat = @import("atomic_compat.zig");
+const thread_spawn = @import("thread_spawn.zig");
 const task_arg = @import("task_arg.zig");
 /// Görev girişi argüman tipi (bkz. `task_arg.zig`).
 pub const TaskArg = task_arg.TaskArg;
@@ -184,7 +185,7 @@ pub const Scheduler = struct {
     /// (yerel, ÇOK SIK) YOKSA YABANCI (havuzdaki BAŞKA bir worker, NADİR)
     /// MI olduğunu ayırt etmesi İçİn — SADECE `worker != null` İKEN
     /// anlamlıdır (bkz. `markReady`).
-    owner_tid: std.Thread.Id = undefined,
+    owner_tid: thread_spawn.Id = undefined,
     /// Faz MN.4/5.8: havuzdaki KENDİ konumu (`attachToPool`in `own_slot`
     /// parametresi) — SADECE `pool_live_count != null` İKEN anlamlıdır.
     own_slot: usize = 0,
@@ -248,7 +249,7 @@ pub const Scheduler = struct {
         // `owner_tid` karşılaştırması SADECE `pool_live_count != null`
         // İKEN anlamlı — freestanding'de HİÇBİR ZAMAN GERÇEK bir havuz
         // OLAMAYACAĞINDAN bu YOL zaten ÇALIŞMAZ).
-        const tid: std.Thread.Id = if (comptime is_freestanding) 0 else std.Thread.getCurrentId();
+        const tid: thread_spawn.Id = if (comptime is_freestanding) 0 else thread_spawn.currentId();
         return .{ .allocator = allocator, .reactor = try IoReactor.init(), .owner_tid = tid };
     }
 
@@ -385,7 +386,7 @@ pub const Scheduler = struct {
         // (F.2'nin capability sistemi GERÇEK bir WorkerPool'u freestanding'de
         // İMKANSIZ kıldığından) `is_foreign` HER ZAMAN `false` olurdu, bu
         // YÜZDEN çağrıyı TAMAMEN atlamak DAVRANIŞI DEĞİŞTİRMEZ.
-        const is_foreign = if (comptime is_freestanding) false else self.pool_live_count != null and std.Thread.getCurrentId() != self.owner_tid;
+        const is_foreign = if (comptime is_freestanding) false else self.pool_live_count != null and thread_spawn.currentId() != self.owner_tid;
         self.ready_lock.lock();
         self.ready.append(self.allocator, fiber) catch @panic("OOM: could not grow the scheduler ready queue");
         self.ready_lock.unlock();

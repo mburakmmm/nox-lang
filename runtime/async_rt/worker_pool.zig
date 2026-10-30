@@ -33,6 +33,7 @@
 
 const std = @import("std");
 const atomic_compat = @import("atomic_compat.zig");
+const thread_spawn = @import("thread_spawn.zig");
 const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const chase_lev_deque = @import("chase_lev_deque.zig");
@@ -63,7 +64,7 @@ pub const WorkerPool = struct {
     /// KENDİ `std.Thread`ı YOKTUR (`serve_multicore`nin AYNI "çağıran
     /// KENDİSİ de bir worker OLUR" deseni, bkz. `compiler/codegen_qbe/
     /// http_intrinsics.zig`nin `genHttpServeMulticore`si).
-    threads: []std.Thread,
+    threads: []thread_spawn.Thread,
     allocator: std.mem.Allocator,
     /// Faz MN.4/5.8: `state.pool_live_count`/`pool_waiting_on_io`/
     /// `pool_idle_workers`e (bkz. `asap.zig`) DOĞRUDAN İŞARETÇİLER —
@@ -131,7 +132,7 @@ pub const WorkerPool = struct {
         errdefer allocator.free(deque_list);
         for (workers, 0..) |*w, i| deque_list[i] = &w.deque;
 
-        const threads = try allocator.alloc(std.Thread, n_workers - 1);
+        const threads = try allocator.alloc(thread_spawn.Thread, n_workers - 1);
         errdefer allocator.free(threads);
 
         // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
@@ -209,7 +210,7 @@ pub const WorkerPool = struct {
         };
         for (self.threads, 0..) |*t, i| {
             const slot = i + 1;
-            t.* = try std.Thread.spawn(.{}, Trampoline.run, .{Args{
+            t.* = try thread_spawn.spawn(Trampoline.run, .{Args{
                 .rt = self.rt,
                 .slot = slot,
                 .ctx = ctx,

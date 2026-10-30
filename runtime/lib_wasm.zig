@@ -9,6 +9,16 @@ pub const std_options: std.Options = .{
     .unexpected_error_tracing = false,
 };
 
+const wasm_options = @import("wasm_options");
+
+/// İş parçacıklı kip (ADR-015): Zig 0.16'nın varsayılan panic işleyicisi ve `WasmAllocator`ı çok iş parçacıklı wasm'de derlenmez; yerine minimal panic + kilitli ayırıcı.
+pub const panic = if (wasm_options.threads) @import("wasm_panic.zig").panic else std.debug.FullPanic(std.debug.defaultPanic);
+pub const os = if (wasm_options.threads) struct {
+    pub const heap = struct {
+        pub const page_allocator = @import("wasm_mt_alloc.zig").allocator;
+    };
+} else struct {};
+
 pub const wasm_entry = @import("wasm_entry.zig");
 pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
@@ -40,7 +50,16 @@ pub const regex_shim = @import("stdlib_shims/regex.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
 
+/// İş parçacıklı kipte yerel M:N havuzu (`nox_pool_*`): `pool_bridge` aracılığıyla `worker_pool`/`scheduler` zamanlayıcıları.
+pub const pool_bridge = if (wasm_options.threads) @import("async_rt/pool_bridge.zig") else struct {};
+/// İş parçacıklı kipte `printf` kilitli ve kendi biçimleyicimizle (wasi-libc stdio'su iş parçacığı güvenli değildir).
+pub const threads_libc = if (wasm_options.threads) @import("wasm_threads_libc.zig") else struct {};
+
 comptime {
+    if (wasm_options.threads) {
+        _ = pool_bridge;
+        _ = threads_libc;
+    }
     _ = wasm_entry;
     _ = asap;
     _ = arc;

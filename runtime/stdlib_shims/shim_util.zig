@@ -12,13 +12,24 @@ pub fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
 
 const wasm_host = @import("../wasm_host.zig");
 
+fn fillRandom(buffer: []u8) void {
+    if (comptime wasm_host.is_freestanding_wasm) {
+        wasm_host.random_fill(buffer.ptr, buffer.len);
+    } else {
+        _ = std.os.wasi.random_get(buffer.ptr, buffer.len);
+    }
+}
+
 fn hostRandom(_: ?*anyopaque, buffer: []u8) void {
-    wasm_host.random_fill(buffer.ptr, buffer.len);
+    fillRandom(buffer);
 }
 
 fn hostRandomSecure(_: ?*anyopaque, buffer: []u8) std.Io.RandomSecureError!void {
-    wasm_host.random_fill(buffer.ptr, buffer.len);
+    fillRandom(buffer);
 }
+
+/// Çok iş parçacıklı wasm'de `std.Io.Threaded` derlenmez (Zig 0.16 hatası): freestanding'deki entropi kancalı `failing` varyantı kullanılır.
+const use_host_io = wasm_host.is_freestanding_wasm or !@import("builtin").single_threaded;
 
 /// wasm32-freestanding'de `std.Io`: hiçbir işletim sistemi G/Ç'si yok (`std.Io.failing`), ama entropi `nox_host.random_fill`den gelir (parola özetleri tuz için ister).
 const host_io_vtable = blk: {
@@ -31,7 +42,7 @@ const host_io_vtable = blk: {
 /// wasm32'de (tek iş parçacıklı) `std.Io` örneği: `http_client.sharedClientIo` (iş parçacığı havuzlu `Threaded`) yerine geçer. wasi: `Threaded.global_single_threaded`;
 /// freestanding: yukarıdaki entropi kancalı `failing` varyantı.
 pub fn sharedClientIo() std.Io {
-    if (comptime wasm_host.is_freestanding_wasm) return .{ .userdata = null, .vtable = &host_io_vtable };
+    if (comptime use_host_io) return .{ .userdata = null, .vtable = &host_io_vtable };
     return std.Io.Threaded.global_single_threaded.io();
 }
 

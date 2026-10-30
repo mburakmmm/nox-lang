@@ -300,7 +300,7 @@ pub fn allocGuardedStack() ![]align(STACK_ALIGN) u8 {
     }
     if (comptime is_wasm) {
         // wasm32: mmap/koruma sayfası yok; gölge yığın bellekten ayrılır (taşma koruması Asyncify arabelleği boyutundan bağımsızdır).
-        return std.heap.wasm_allocator.alignedAlloc(u8, .fromByteUnits(STACK_ALIGN), STACK_SIZE) catch error.StackAllocFailed;
+        return std.heap.page_allocator.alignedAlloc(u8, .fromByteUnits(STACK_ALIGN), STACK_SIZE) catch error.StackAllocFailed;
     } else if (comptime is_freestanding) {
         return error.StackAllocFailed;
     } else if (builtin.os.tag == .windows) {
@@ -316,7 +316,7 @@ pub fn freeGuardedStack(stack: []align(STACK_ALIGN) u8) void {
         return;
     }
     if (comptime is_wasm) {
-        std.heap.wasm_allocator.free(stack);
+        std.heap.page_allocator.free(stack);
     } else if (comptime is_freestanding) {
         return;
     } else if (builtin.os.tag == .windows) {

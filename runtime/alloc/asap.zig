@@ -29,6 +29,8 @@
 //! `zig build test`in kendisiyle zaten sürekli doğrulanır).
 
 const std = @import("std");
+const atomic_compat = @import("../async_rt/atomic_compat.zig");
+const thread_spawn = @import("../async_rt/thread_spawn.zig");
 const builtin = @import("builtin");
 /// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): `nox_runtime_
 /// deinit`in süreç-çapında ölçülen fiber-stack yüksek-su-işaretini
@@ -56,7 +58,8 @@ const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .ot
 /// (aşağıya bkz.) freestanding'de HER ZAMAN `void`e düşürülür (hosted
 /// davranış — `is_freestanding` HER ZAMAN `false` OLDUĞUNDAN — SIFIR
 /// etkilenir).
-const use_debug_allocator = builtin.mode == .Debug and !is_freestanding;
+/// İş parçacıklı wasm32'de (ADR-015) `DebugAllocator` Zig 0.16'nın bozuk `Io.Threaded` futex yolunu çeker; orada kullanılmaz.
+const use_debug_allocator = builtin.mode == .Debug and !is_freestanding and !(builtin.cpu.arch.isWasm() and !builtin.single_threaded);
 
 /// Faz F.0.7 — KRİTİK bulgu: `std.heap.page_allocator`/`smp_allocator`
 /// (İKİSİ de İÇSEL olarak `std.heap.pageSize()`e bağımlı) bir struct
@@ -188,7 +191,7 @@ pub const MAX_POOL_WORKERS = 64;
 /// belirler — varsayılan 1, Faz X.3'ün ORİJİNAL "tek sahip" semantiğidir.
 pub const OwnerPool = struct {
     pub const MAX_MEMBERS = MAX_POOL_WORKERS;
-    members: [MAX_MEMBERS]std.Thread.Id = undefined,
+    members: [MAX_MEMBERS]thread_spawn.Id = undefined,
     count: usize = 0,
     capacity: usize = 1,
 };
@@ -259,7 +262,7 @@ pub const RuntimeState = struct {
     /// KENDİ `.init` varsayılanıyla TUTARLI), Release'de `smp_allocator`
     /// (`nox_alloc`/dict/arena/vb.nin KULLANDIĞI, ~120x hız kazanımı
     /// SAĞLAYAN değer — bkz. modül üstü not).
-    injected_allocator: std.mem.Allocator = if (is_freestanding) freestanding_unreachable_allocator else if (use_debug_allocator) std.heap.page_allocator else if (builtin.cpu.arch.isWasm()) std.heap.wasm_allocator else std.heap.smp_allocator,
+    injected_allocator: std.mem.Allocator = if (is_freestanding) freestanding_unreachable_allocator else if (use_debug_allocator) std.heap.page_allocator else if (builtin.cpu.arch.isWasm()) std.heap.page_allocator else std.heap.smp_allocator,
     /// Faz OO.3, Faz MN.2'de fiber-affine hale GETİRİLDİ: birincil depo
     /// ARTIK `Fiber.pending_exception`dir (bkz. onun belge notu) —
     /// BURADAKİ alan SADECE fiber DIŞINDA (senkron üst-düzey kod,
@@ -587,7 +590,7 @@ pub const PoolExtension = struct {
     /// İKİ değerin EŞİT OLDUĞUNU (yani HİÇBİR ÜRETİM olayının o pencerede
     /// GERÇEKLEŞMEDİĞİNİ) `.acquire` sıralı okumalarla KANITLAR — sadece
     /// "son anlık görüntü boş GÖRÜNDÜ" DEĞİL.
-    pool_activity_epoch: std.atomic.Value(u64) = .init(0),
+    pool_activity_epoch: atomic_compat.Value(u64) = .init(0),
     /// Faz MN.6: `runtime/async_rt/scheduler.zig`nin `stwParticipate`sinin
     /// kullandığı "sense-reversing barrier" — kooperatif dünyayı-durdur
     /// (STW) round'unun giriş kapısı. `runtime/alloc/cycle_detector.zig`nin
@@ -737,7 +740,7 @@ pub fn currentWorkerSlot() usize {
 /// YAKALANIR" testi.
 pub fn arcOwnerThreadOk(state: *RuntimeState) bool {
     if (!debug_thread_check) return true;
-    const current = std.Thread.getCurrentId();
+    const current = thread_spawn.currentId();
     // Faz MN.4/5.8: `arc_owner_pool_lock` — bkz. onun belge notu, GERÇEK
     // bir kayıp-güncelleme yarışının düzeltmesi.
     state.arc_owner_pool_lock.lock();
@@ -863,7 +866,7 @@ pub export fn nox_runtime_init() ?*anyopaque {
     // (KENDİ allocator'ıyla) çağırmalıdır — BU YÜZDEN freestanding'de
     // KOŞULSUZ `null` döner (asla GERÇEKTEN çağrılmaması BEKLENİR).
     // wasm32-freestanding (ADR-013): `memory.grow` tabanlı `wasm_allocator` ÇALIŞIR (çıplak donanım değil); çekirdek-ayırıcı enjeksiyonu yoluyla kurulur.
-    if (comptime is_freestanding and builtin.cpu.arch.isWasm()) return nox_runtime_init_with_allocator(std.heap.wasm_allocator);
+    if (comptime is_freestanding and builtin.cpu.arch.isWasm()) return nox_runtime_init_with_allocator(std.heap.page_allocator);
     if (comptime is_freestanding) return null;
     // Windows CRT `printf("\n")` metin kipinde `\r\n` yazar. Nox satır sonu
     // her platformda `\n` dir; stdout/stderr ikili kipe alınır.

@@ -16,7 +16,7 @@ pub const Outcome = union(enum) {
 };
 
 /// `source`u geçici bir dizinde `.wasm`a derler ve çalıştırır. `noxc_path`/`runner_path` göreli ya da mutlak olabilir.
-pub const Target = enum { wasi, freestanding, wasi_asyncify, freestanding_asyncify };
+pub const Target = enum { wasi, freestanding, wasi_asyncify, freestanding_asyncify, wasi_threads };
 
 pub fn targetName(t: Target) []const u8 {
     return switch (t) {
@@ -24,6 +24,7 @@ pub fn targetName(t: Target) []const u8 {
         .freestanding => "wasm32-freestanding",
         .wasi_asyncify => "wasm32-wasi-asyncify",
         .freestanding_asyncify => "wasm32-freestanding-asyncify",
+        .wasi_threads => "wasm32-wasi-threads",
     };
 }
 

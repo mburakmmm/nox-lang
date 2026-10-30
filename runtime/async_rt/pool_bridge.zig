@@ -57,6 +57,7 @@
 
 const std = @import("std");
 const atomic_compat = @import("atomic_compat.zig");
+const thread_spawn = @import("thread_spawn.zig");
 const builtin = @import("builtin");
 const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
@@ -82,7 +83,7 @@ const diag_sink = @import("diag_sink");
 /// KENDİSİ OLARAK okur (bkz. `genPoolRunWrapper`nin `%argp`i DOĞRUDAN
 /// KOPYALAMASI, `genThreadStartWrapper`nin AKSİNE `loadl` KULLANMAMASI).
 const PoolRunCtx = struct {
-    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64,
     /// Faz MN.8, Bulgu A: `null` DEĞİLSE (`module_globals.count() > 0`
     /// İKEN codegen TARAFINDAN geçilir), `poolWorkerMain`nin (sibling
     /// worker'lar — SADECE ONLAR, sürücü KENDİ globals'ını `entry_fn`
@@ -91,8 +92,8 @@ const PoolRunCtx = struct {
     /// — bkz. proje planı, Bulgu A: BUNLAR OLMADAN, çalınan bir görev
     /// bir sibling'de modül-global OKUR/YAZARSA `globals_blocks[slot]`
     /// HİÇ ilklendirilmemiş (`null`) OLDUĞUNDAN çöker.
-    globals_init_fn: ?*const fn (*anyopaque) callconv(.c) i64,
-    globals_deinit_fn: ?*const fn (*anyopaque) callconv(.c) i64,
+    globals_init_fn: ?*const fn (scheduler_mod.TaskArg) callconv(.c) i64,
+    globals_deinit_fn: ?*const fn (scheduler_mod.TaskArg) callconv(.c) i64,
 };
 
 /// `poolWorkerMain`/sürücünün ORTAK "çalıştır ve temizle" kuyruğu —
@@ -145,9 +146,9 @@ fn poolWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolRunCtx) void {
     // ayarlandığından (bkz. `worker_pool.zig`), `g_worker_slot` BURADA
     // DOĞRUDUR — HENÜZ hiçbir çalınmış görev ÇALIŞTIRILMADAN önce yapılır,
     // yarış YOK.
-    if (ctx.globals_init_fn) |f| _ = f(rt);
+    if (ctx.globals_init_fn) |f| _ = f(scheduler_mod.taskArg(rt));
     poolWorkerRunAndCleanup(rt, null);
-    if (ctx.globals_deinit_fn) |f| _ = f(rt);
+    if (ctx.globals_deinit_fn) |f| _ = f(scheduler_mod.taskArg(rt));
 }
 
 // ---- Faz MN.9.2: `--release` altında `$main`in KENDİSİNİN otomatik bir
@@ -211,9 +212,12 @@ fn pickMainWorkerCount(wants_multicore_pool: bool) usize {
         return std.math.clamp(n, @as(usize, 1), asap.MAX_POOL_WORKERS);
     }
     if (!wants_multicore_pool) return SMALL_MAIN_POOL_DEFAULT;
-    const cpu = std.Thread.getCpuCount() catch 1;
+    const cpu = if (comptime builtin.cpu.arch.isWasm()) WASM_DEFAULT_WORKERS else (std.Thread.getCpuCount() catch 1);
     return std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS);
 }
+
+/// wasm32: işlemci sayısı sorgulanamaz; havuz sabit sayıda işçiyle kurulur (`NOX_POOL_WORKERS` yoksa).
+const WASM_DEFAULT_WORKERS: usize = 4;
 
 pub export fn nox_pool_main_init(wants_multicore_pool: i32) callconv(.c) ?*anyopaque {
     const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount(wants_multicore_pool != 0)) catch @panic("OOM: $main pool");
@@ -228,8 +232,8 @@ pub export fn nox_pool_main_init(wants_multicore_pool: i32) callconv(.c) ?*anyop
 /// görevi SONSUZA KADAR kaçırabilir).
 pub export fn nox_pool_main_spawn_workers(
     rt: ?*anyopaque,
-    globals_init_fn: ?*const fn (*anyopaque) callconv(.c) i64,
-    globals_deinit_fn: ?*const fn (*anyopaque) callconv(.c) i64,
+    globals_init_fn: ?*const fn (scheduler_mod.TaskArg) callconv(.c) i64,
+    globals_deinit_fn: ?*const fn (scheduler_mod.TaskArg) callconv(.c) i64,
 ) callconv(.c) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
     const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(state.worker_pool.?));
@@ -321,7 +325,7 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
     // `poolWorkerMain`daki çağrılarla ÇAKIŞIP ÇİFT-İLKLENDİRME (VE bir
     // ÖNCEKİ bloğun SIZMASI — `$nox_init_globals` KOŞULSUZ `nox_alloc`
     // yapar, İDEMPOTENT DEĞİLDİR) YARATMAMASI İçİn.
-    if (args.ctx.globals_init_fn) |f| _ = f(pool.rt);
+    if (args.ctx.globals_init_fn) |f| _ = f(scheduler_mod.taskArg(pool.rt));
 
     // KRİTİK SIRA (bkz. `poolWorkerMain`nin belge notu, GERÇEK bir yarış
     // BULUNUP burada düzeltildi): slot 0'ın `entry()`i, DİĞER worker'lar
@@ -333,7 +337,7 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
     pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, args.ctx) catch @panic("OOM: nox.thread.pool_run workers");
 
     poolWorkerRunAndCleanup(pool.rt, entry_task);
-    if (args.ctx.globals_deinit_fn) |f| _ = f(pool.rt);
+    if (args.ctx.globals_deinit_fn) |f| _ = f(scheduler_mod.taskArg(pool.rt));
     pool.joinAll();
     pool.destroy();
 
@@ -368,7 +372,7 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
 /// multicore_pool_golden_test.zig`nin "hiçbir stderr çıktısı=sızıntı YOK"
 /// KANITINI, doğrudan İLGİSİZ bir nedenle, KIRARDI — GERÇEKTEN denenip
 /// bulundu).
-fn poolRunFlattened(rt_ptr: *anyopaque, entry_fn: *const fn (*anyopaque) callconv(.c) i64) i32 {
+fn poolRunFlattened(rt_ptr: *anyopaque, entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64) i32 {
     const t = bridge.nox_async_spawn(rt_ptr, entry_fn, rt_ptr) orelse {
         diag_sink.report(rt_ptr, "nox: nox.thread.pool_run: OOM (ic-ice cagri)\n", .{});
         std.process.exit(1);
@@ -381,9 +385,9 @@ fn poolRunFlattened(rt_ptr: *anyopaque, entry_fn: *const fn (*anyopaque) callcon
 pub export fn nox_pool_run(
     rt: ?*anyopaque,
     num_workers: i64,
-    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
-    globals_init_fn: ?*const fn (*anyopaque) callconv(.c) i64,
-    globals_deinit_fn: ?*const fn (*anyopaque) callconv(.c) i64,
+    entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64,
+    globals_init_fn: ?*const fn (scheduler_mod.TaskArg) callconv(.c) i64,
+    globals_deinit_fn: ?*const fn (scheduler_mod.TaskArg) callconv(.c) i64,
 ) callconv(.c) i32 {
     if (rt) |rt_ptr| {
         const state: *asap.RuntimeState = @ptrCast(@alignCast(rt_ptr));
@@ -428,7 +432,7 @@ pub export fn nox_pool_run(
     };
     driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1], .policy = policy };
 
-    const driver_thread = std.Thread.spawn(.{}, poolRunDriverThreadMain, .{driver_args}) catch {
+    const driver_thread = thread_spawn.spawn(poolRunDriverThreadMain, .{driver_args}) catch {
         asap.freeEmbedPolicy(&driver_args.policy, std.heap.page_allocator);
         std.heap.page_allocator.destroy(driver_args);
         std.heap.page_allocator.destroy(ctx);
@@ -487,7 +491,7 @@ const PoolServeClosure = struct {
 };
 
 const PoolServeCtx = struct {
-    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64,
     /// `nox_pool_serve` ÇAĞRILDIĞI ANDA ZATEN BİLİNEN, HAM (TEK, tüm
     /// worker'lar İçİN AYNI) değer — ör. dinlenen `fd` (bir `usize`e
     /// `@ptrFromInt` İLE gömülmüş) ya da `FdTlsPayload*`.
@@ -563,12 +567,13 @@ fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
 const BroadcastCtx = struct {
     remaining: std.atomic.Value(usize),
     done_write_fd: posix.fd_t,
-    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64,
     closure: *PoolServeClosure,
 
-    fn runOne(erased: *anyopaque) callconv(.c) i64 {
+    fn runOne(erased_arg: scheduler_mod.TaskArg) callconv(.c) i64 {
+        const erased: *anyopaque = if (comptime builtin.cpu.arch.isWasm()) @ptrFromInt(@as(usize, @intCast(erased_arg))) else erased_arg;
         const self: *BroadcastCtx = @ptrCast(@alignCast(erased));
-        _ = self.entry_fn(self.closure);
+        _ = self.entry_fn(scheduler_mod.taskArg(self.closure));
         if (self.remaining.fetchSub(1, .acq_rel) == 1) {
             completion_pipe.signalSelfPipe(self.done_write_fd);
         }
@@ -612,7 +617,7 @@ fn sleepOneMs() void {
 // notu) — `num_workers` BURADA da SESSİZCE YOK SAYILIR, HİÇBİR stderr
 // uyarısı BASILMAZ (BU YOL, Bölüm 1 SONRASI, HER `--release` `serve_
 // multicore` çağrısının KURALIDIR, İSTİSNASI DEĞİL).
-fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn (*anyopaque) callconv(.c) i64, payload: ?*anyopaque) i32 {
+fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64, payload: ?*anyopaque) i32 {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt_ptr));
     const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(state.worker_pool.?));
     // KRİTİK (GERÇEK bir hata, DENEYEREK bulundu — bkz. plan dosyasının
@@ -658,7 +663,7 @@ fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn 
             if (sched_ptr == null) sleepOneMs();
         }
         const sched: *scheduler_mod.Scheduler = @ptrCast(@alignCast(sched_ptr.?));
-        scheduler_mod.spawnToForeignScheduler(sched, BroadcastCtx.runOne, bctx) catch @panic("OOM: nox_pool_serve broadcast");
+        scheduler_mod.spawnToForeignScheduler(sched, BroadcastCtx.runOne, scheduler_mod.taskArg(bctx)) catch @panic("OOM: nox_pool_serve broadcast");
     }
 
     if (bridge.currentFiberScheduler()) |scheduler| {
@@ -691,7 +696,7 @@ fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn 
 pub export fn nox_pool_serve(
     rt: ?*anyopaque,
     num_workers: i64,
-    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    entry_fn: *const fn (scheduler_mod.TaskArg) callconv(.c) i64,
     payload: ?*anyopaque,
 ) callconv(.c) i32 {
     if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
@@ -728,7 +733,7 @@ pub export fn nox_pool_serve(
     };
     driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1], .policy = policy };
 
-    const driver_thread = std.Thread.spawn(.{}, poolServeDriverThreadMain, .{driver_args}) catch {
+    const driver_thread = thread_spawn.spawn(poolServeDriverThreadMain, .{driver_args}) catch {
         asap.freeEmbedPolicy(&driver_args.policy, std.heap.page_allocator);
         std.heap.page_allocator.destroy(driver_args);
         std.heap.page_allocator.destroy(ctx);

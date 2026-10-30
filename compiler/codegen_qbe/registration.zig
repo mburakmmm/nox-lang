@@ -2079,7 +2079,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     // OLMAYAN inline ARC retain/release YÜZÜNDEN paylaşılan-havuz MN.9
     // ailesinin TAMAMI GÜVENSİZDİR — bkz. `pool_bridge.zig`nin backend
     // sınırı notu).
-    if (self.backend == .llvm and !self.isWasmTarget()) {
+    if (self.backend == .llvm and (!self.isWasmTarget() or self.isWasmThreads())) {
         // Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 3):
         // `wants_multicore_pool` — modül `serve_multicore*`/`pool_run`
         // HİÇ ÇAĞIRMIYORSA (`moduleUsesMulticorePool`, `async_thread.zig`)
@@ -2118,7 +2118,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     // kardeş HEMEN döner VE o görevi SONSUZA KADAR kaçırabilir).
     var main_ginit_name: ?[]const u8 = null;
     var main_gdeinit_name: ?[]const u8 = null;
-    if (self.backend == .llvm and !self.isWasmTarget()) {
+    if (self.backend == .llvm and (!self.isWasmTarget() or self.isWasmThreads())) {
         var ginit_sym: []const u8 = "0";
         var gdeinit_sym: []const u8 = "0";
         if (self.module_globals.count() > 0) {
@@ -2147,7 +2147,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     if (self.module_globals.count() > 0) {
         try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
-    if (self.backend == .llvm and !self.isWasmTarget()) {
+    if (self.backend == .llvm and (!self.isWasmTarget() or self.isWasmThreads())) {
         try self.qbeCall(null, "$nox_pool_main_join_and_destroy", &.{.{ .ty = .l, .text = RT_PARAM }});
     } else {
         try self.qbeCall(null, "$nox_runtime_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});

@@ -18,6 +18,16 @@ const DENYLISTED_SOURCES = [_][]const u8{
     @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
 };
 
+/// İş parçacıklı varyant (ADR-015) yerel `--release` M:N çalışma zamanıyla aynı denylist'i paylaşır (`backend_differential_corpus_test.zig`): zamanlayıcıya bağlı sıra
+/// ya da kasıtlı deadlock senaryoları; `mathx_trig_log_constants` libm farkıdır.
+const THREADS_DENYLISTED_SOURCES = [_][]const u8{
+    @embedFile("codegen_cases/async_deadlock.nox"),
+    @embedFile("codegen_cases/thread_spawn_ordering.nox"),
+    @embedFile("codegen_cases/task_reassignment_frees_old.nox"),
+    @embedFile("codegen_cases/task_local_basic.nox"),
+    @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
+};
+
 /// Asyncify varyantlarında (gerçek fiber, ADR-014) yalnızca libm farkı kalır: zamanlayıcı/iş parçacığı sırası native ile aynıdır.
 const ASYNCIFY_DENYLISTED_SOURCES = [_][]const u8{
     @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
@@ -27,6 +37,7 @@ fn isDenylisted(source: []const u8, target: wasm_helpers.Target) bool {
     const list: []const []const u8 = switch (target) {
         .wasi, .freestanding => &DENYLISTED_SOURCES,
         .wasi_asyncify, .freestanding_asyncify => &ASYNCIFY_DENYLISTED_SOURCES,
+        .wasi_threads => &THREADS_DENYLISTED_SOURCES,
     };
     for (list) |s| if (std.mem.eql(u8, s, source)) return true;
     return false;
@@ -46,6 +57,10 @@ test "wasm(korpus): --asyncify (wasm32-wasi-asyncify): gerçek fiber, native ile
 
 test "wasm(korpus): --asyncify (wasm32-freestanding-asyncify): gerçek fiber, native ile aynı çıktı" {
     try runCorpus(.freestanding_asyncify);
+}
+
+test "wasm(korpus): --threads (wasm32-wasi-threads): gerçek paralel M:N, native --release ile aynı çıktı" {
+    try runCorpus(.wasi_threads);
 }
 
 fn runCorpus(target: wasm_helpers.Target) !void {
