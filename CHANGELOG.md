@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.86]
+
+### Düzeltildi
+
+- **Ayrılmış sembol adları (tüm hedefler, iki backend).** libc/libm/POSIX/hedef-sistem adlarını taşıyan kullanıcı fonksiyonları bağlayıcıda gerçek libc sembolünün yerine geçiyordu: `def printf(...)` `print`i sessizce bozuyor (çıktı yok), `def getenv(...)` çalışma zamanının ortam okumasını ele geçirip sızan çıktı üretiyor, `def read/write/open` çalışma zamanının G/Ç çağrılarını değiştirebiliyordu. Artık bu adların SEMBOLÜ `nox_user_<ad>` olur (Nox düzeyindeki ad ve hata iletileri aynı kalır). v2.0.81'deki yalnızca-wasm ve yalnızca-`round` IR son geçişi bu genel politikayla değiştirildi. Bkz. `docs/reference/symbols.md`, spec §3.319.
+- 469 IR anlık görüntüsü yeniden üretildi; hepsi yalnızca `nox_user_` önekinden ibaret (öneki silince eski görüntüyle byte-birebir aynı).
+
+### Eklendi
+
+- `reserved_symbol_names` fixture'ı (590 ayrılmış ad: doğrudan çağrı, işlev değeri, `spawn`, `nox.thread.start`), iki backend'de ve sekiz wasm hedefinde.
+- `scripts/check_reserved_symbols.py` (çalışma zamanı nesnelerinin libc bağımlılıkları ayrılmış listede mi; CI'da) ve `scripts/gen_reserved_symbol_fixture.py` (+ `--check`).
+
 ## [2.0.85]
 
 ### Düzeltildi

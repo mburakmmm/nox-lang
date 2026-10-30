@@ -1353,7 +1353,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const fn_args = try self.allocator.alloc(codegen.QbeArg, 1 + arg_values.len);
                 fn_args[0] = .{ .ty = .l, .text = RT_PARAM };
                 for (arg_values, 0..) |v, i| fn_args[1 + i] = .{ .ty = v.qtype, .text = v.text };
-                const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
+                const fn_sym = try self.userFnSym(name);
                 if (result_temp) |rt| {
                     try self.qbeCall(.{ .name = rt, .ty = sig.ret.qtype }, fn_sym, fn_args);
                 } else {

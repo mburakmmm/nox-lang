@@ -628,6 +628,8 @@ pub const Codegen = struct {
     pub const allocSlotEx = registration.allocSlotEx;
     pub const allocInlineSlot = registration.allocInlineSlot;
     pub const genFunction = registration.genFunction;
+    pub const userFnName = registration.userFnName;
+    pub const userFnSym = registration.userFnSym;
     pub const genMethod = registration.genMethod;
     pub const genMain = registration.genMain;
     pub const genMainAsync = registration.genMainAsync;
@@ -2204,44 +2206,7 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
     }
 
     const ir_text = try gen.out.toOwnedSlice();
-    // wasm32'de libc/compiler-rt ile AYNI adı taşıyan Nox işlevleri bağlayıcıda onların yerine geçer (imza uyuşmazlığı → çağrı tuzağa düşer); IR son geçişinde yeniden adlandırılır.
-    if (llvm_emit.isWasm(&gen)) return mangleNonAsciiSymbols(allocator, try renameWasmClashingSymbols(allocator, ir_text));
     return mangleNonAsciiSymbols(allocator, ir_text);
-}
-
-/// Nox'un çekirdek (`stdlib/nox/core.nox`) işlevlerinden wasi-libc/compiler-rt sembolleriyle çakışanlar: `round(x: float) -> int` (libm `round(double) -> double`).
-const WASM_CLASHING_SYMBOLS = [_][]const u8{"round"};
-
-/// IR metninde `@<ad>` (tam sembol, ardında tanımlayıcı karakteri OLMAYAN) geçişlerini `@nox_user_<ad>`a çevirir.
-fn renameWasmClashingSymbols(allocator: std.mem.Allocator, ir: []u8) CodegenError![]u8 {
-    var cur = ir;
-    for (WASM_CLASHING_SYMBOLS) |name| {
-        const needle = try std.fmt.allocPrint(allocator, "@{s}", .{name});
-        defer allocator.free(needle);
-        var out: std.ArrayListUnmanaged(u8) = .empty;
-        var i: usize = 0;
-        var changed = false;
-        var in_quote = false; // dize sabitleri (c"...") içindeki metne dokunulmaz; IR'da gömülü `"` kaçışlıdır (\22)
-        while (i < cur.len) {
-            if (cur[i] == '"') in_quote = !in_quote;
-            if (!in_quote and std.mem.startsWith(u8, cur[i..], needle)) {
-                const after = i + needle.len;
-                const next_is_ident = after < cur.len and (std.ascii.isAlphanumeric(cur[after]) or cur[after] == '_' or cur[after] == '.' or cur[after] >= 0x80);
-                const prev_is_ident = i > 0 and (std.ascii.isAlphanumeric(cur[i - 1]) or cur[i - 1] == '_' or cur[i - 1] == '.');
-                if (!next_is_ident and !prev_is_ident) {
-                    try out.appendSlice(allocator, "@nox_user_");
-                    try out.appendSlice(allocator, name);
-                    i = after;
-                    changed = true;
-                    continue;
-                }
-            }
-            try out.append(allocator, cur[i]);
-            i += 1;
-        }
-        if (changed) cur = try out.toOwnedSlice(allocator);
-    }
-    return cur;
 }
 
 /// Unicode tanımlayıcılar (`größe`, `Öğrenci`) QBE/LLVM sembol adlarında geçerli değildir: tırnak DIŞINDAki her UTF-8 baytı `.xHH`

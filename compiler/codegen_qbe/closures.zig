@@ -425,7 +425,7 @@ pub fn genFunctionValueTrampoline(self: *Codegen, name: []const u8) CodegenError
     for (sig.params, 0..) |p, i| {
         inner_args[1 + i] = .{ .ty = p.qtype, .text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{i}) };
     }
-    const name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
+    const name_sym = try self.userFnSym(name);
     try self.qbeCall(if (ret_temp) |rv| .{ .name = rv, .ty = sig.ret.qtype } else null, name_sym, inner_args);
     // Faz U.4.5: burada `emitExceptionCheck` GEREKMEZ — `name`nin ATTIĞI
     // bir istisna (bu çalışma zamanının paylaşılan/genel istisna

@@ -132,6 +132,11 @@ jobs:
       # TODO 9.5: koddan türetilebilen olgular (hedefler, backend varsayılanı, sürüm) belgelerle çapraz doğrulanır.
       - name: Belge sözleşmesi
         run: python3 scripts/check_doc_contracts.py
+      # v2.0.86 sembol politikası: libc/libm/POSIX adlarını taşıyan kullanıcı fonksiyonları `nox_user_` önekiyle yayılır; liste çalışma zamanının libc bağımlılıklarını kapsamalı.
+      - name: Ayrılmış semboller
+        run: |
+          python3 scripts/check_reserved_symbols.py
+          python3 scripts/gen_reserved_symbol_fixture.py --check
       # v2.0: hizmetler (noxpkg, noxlang-site) derleyiciyle birlikte tip denetiminden geçmeli. (rc.3'te noxpkg'nin kaldırılan
       # `nox.json.decode/encode_*` adlarını kullandığı ancak üretim imajı yeniden derlenirken fark edildi.)
       - name: Hizmetleri tip denetle (noxpkg + noxlang-site)

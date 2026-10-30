@@ -4,6 +4,7 @@
 //! aşaması: diğer HER şeyden (deyim/ifade codegen'i DAHİL) ÖNCE çalışır.
 
 const std = @import("std");
+const reserved_symbols = @import("reserved_symbols.zig");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
@@ -1642,6 +1643,17 @@ pub fn allocInlineSlot(self: *Codegen, orig_name: []const u8, info: TypeInfo, is
     return .{ .orig_name = orig_name, .slot = slot, .info = info };
 }
 
+/// Bir kullanıcı üst-düzey fonksiyonunun nesne dosyası sembol ADI (sigil'siz). Libc/libm/POSIX adlarıyla çakışan adlar `nox_user_` öneki alır (bkz. `reserved_symbols.zig`);
+/// çağrı yerleri, işlev değerleri, spawn/thread hedefleri, dekoratörler ve FFI geri çağrıları tanımla AYNI adı kullanmak için bunu çağırır.
+pub fn userFnName(self: *Codegen, name: []const u8) CodegenError![]const u8 {
+    return reserved_symbols.symbolName(self.allocator, name);
+}
+
+/// `userFnName` + sigil (`$`): QBE sembol metni.
+pub fn userFnSym(self: *Codegen, name: []const u8) CodegenError![]const u8 {
+    return std.fmt.allocPrint(self.allocator, "${s}", .{try self.userFnName(name)});
+}
+
 pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     self.vars.clearRetainingCapacity();
     self.narrowed_unbox.clearRetainingCapacity();
@@ -1674,7 +1686,7 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     // v1.142.15: bkz. `markBorrowedAliasLocals`.
     try self.markBorrowedAliasLocals(&locals, fd.body, fd.name);
 
-    const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fd.name});
+    const fn_sym = try self.userFnSym(fd.name);
     try self.qbeFuncHeaderStart(if (ret_info.qtype == .none) null else ret_info.qtype, fn_sym);
     try self.qbeFuncParam(.l, RT_PARAM, true);
     for (fd.params) |p| {

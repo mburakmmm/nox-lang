@@ -24,6 +24,6 @@ Durum: kabul. Nox kodu `--target wasm32-wasi` ile LLVM üzerinden WebAssembly'ye
 
 - Transandantal matematikte (`exp`, `sin`, ...) sonuçlar wasi-libc/musl'e aittir ve platform libm'den son basamakta ayrılabilir.
 - Kullanıcı `extern def` ile native kütüphane bağlayamaz; wasm32 ABI tablosunda olmayan bir sembol çağrısı 64-bit işaretçi tipleriyle kalır.
-- Nox'un çekirdeğindeki `round` fonksiyonu, wasi-libc/compiler_rt'nin `round` sembolüyle aynı ada sahiptir; bağlayıcı bir imza uyarısı verir (çağrılar Nox tarafına çözülür, runtime `@round`u kendi içinde çözer).
+- Nox'un çekirdeğindeki `round` fonksiyonu wasi-libc/compiler-rt'nin `round` sembolüyle aynı adı taşıyordu (v2.0.81'e kadar yalnızca wasm'da, yalnızca `round` için bir IR son geçişiyle yeniden adlandırılıyordu). v2.0.86'dan beri bu bir genel sembol politikasıdır (tüm hedefler, iki backend): bkz. [Sembol adları](../../reference/symbols.md).
 
 Geri alma: `qbe_target.hostedTargetInfo`daki `wasm32-wasi` kaydını ve `build.zig`deki `wasm-rt` adımını silmek.

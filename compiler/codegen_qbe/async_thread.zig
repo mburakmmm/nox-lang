@@ -514,7 +514,7 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
 
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "spawn_wrap_{d}", .{self.spawn_wrapper_counter});
     self.spawn_wrapper_counter += 1;
-    try self.spawn_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = fn_name, .sig = sig });
+    try self.spawn_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = try self.userFnName(fn_name), .sig = sig });
 
     const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
     const task_ptr = try self.newTemp();
@@ -696,7 +696,7 @@ pub fn genThreadStartExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
 
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "thread_wrap_{d}", .{self.thread_wrapper_counter});
     self.thread_wrapper_counter += 1;
-    try self.thread_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = fn_name, .sig = sig });
+    try self.thread_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = try self.userFnName(fn_name), .sig = sig });
 
     const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
     const handle_ptr = try self.newTemp();
@@ -875,7 +875,7 @@ pub fn genPoolRunExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
     }
     try self.pool_run_wrappers.append(self.allocator, .{
         .name = wrapper_name,
-        .target_fn = fn_name,
+        .target_fn = try self.userFnName(fn_name),
         .globals_init_wrapper_name = globals_init_wrapper_name,
         .globals_deinit_wrapper_name = globals_deinit_wrapper_name,
     });
