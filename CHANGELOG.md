@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.82]
+
+### Düzeltildi
+
+- wasm `--threads`: ayrılmış (detach) iş parçacıklarının hurda listesi 64 kayıtlık sabit diziydi ve fazlası sızıyordu; bağlı listeye çevrildi, artık sınırsız ve her ayrık iş parçacığı sonunda toplanır.
+
+### Değişti
+
+- `docs/tools/wasm.md`: "tek iş parçacığı" sınırı kipe bağlı olarak yeniden yazıldı ve varsayılan / `--asyncify` / `--threads` için bir destek matrisi eklendi. ADR-012'nin eski "tek iş parçacıklı" cümlesi ve `project/nox-ana-todo.md` Faz 10 notu güncellendi; kalan işler (gerçek tarayıcı/ikinci motor host testi, uzun süreli thread stres testi, maliyet ölçümü) 10.8-10.10 olarak eklendi.
+
+### Eklendi
+
+- `thread_spawn_stress` fixture'ı: 200 `nox.thread.start`/`join` art arda; yerel (QBE + LLVM) ve dört wasm threads/asyncify hedefinde koşar.
+
 ## [2.0.81]
 
 ### Eklendi

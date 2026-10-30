@@ -157,6 +157,7 @@ fn threadsSmoke(t: wasm_helpers.Target) !void {
     try expectGoldenOn(t, "async_generators", @embedFile("codegen_cases/async_generators.nox"), @embedFile("codegen_cases/async_generators.expected"));
     try expectGoldenOn(t, "atomic_shared_counter_across_threads", @embedFile("codegen_cases/atomic_shared_counter_across_threads.nox"), @embedFile("codegen_cases/atomic_shared_counter_across_threads.expected"));
     try expectGoldenOn(t, "thread_spawn_join_int", @embedFile("codegen_cases/thread_spawn_join_int.nox"), @embedFile("codegen_cases/thread_spawn_join_int.expected"));
+    try expectGoldenOn(t, "thread_spawn_stress", @embedFile("codegen_cases/thread_spawn_stress.nox"), @embedFile("codegen_cases/thread_spawn_stress.expected"));
     try expectGoldenOn(t, "thread_channel_backpressure", @embedFile("codegen_cases/thread_channel_backpressure.nox"), @embedFile("codegen_cases/thread_channel_backpressure.expected"));
     try expectGoldenOn(t, "class_reference_cycle_collected", @embedFile("codegen_cases/class_reference_cycle_collected.nox"), @embedFile("codegen_cases/class_reference_cycle_collected.expected"));
 }

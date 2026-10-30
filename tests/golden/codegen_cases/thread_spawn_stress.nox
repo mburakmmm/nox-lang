@@ -1,0 +1,18 @@
+import nox.thread
+
+async def worker(x: int) -> int:
+    return x + 1
+
+total: int = 0
+rounds: int = 0
+while rounds < 50:
+    a: ThreadHandle[int] = nox.thread.start(worker, rounds)
+    b: ThreadHandle[int] = nox.thread.start(worker, rounds + 1)
+    c: ThreadHandle[int] = nox.thread.start(worker, rounds + 2)
+    d: ThreadHandle[int] = nox.thread.start(worker, rounds + 3)
+    total = total + await a.join()
+    total = total + await b.join()
+    total = total + await c.join()
+    total = total + await d.join()
+    rounds = rounds + 1
+print(total)

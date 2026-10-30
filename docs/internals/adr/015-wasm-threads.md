@@ -19,7 +19,7 @@ Korpus (`wasm-corpus-test`) yerel `--release` M:N denylist'iyle (zamanlayıcıya
 ## Sınırlar
 
 - Tarayıcıda `SharedArrayBuffer` için COOP/COEP başlıkları gerekir; kendi host'unuz `thread-spawn` ve paylaşımlı belleği sağlamalıdır.
-- `detach` edilen iş parçacıkları bir hurda listesinde tutulur; iş parçacığının SON bellek yazısı (`exited`, naked giriş kuyruğu) görüldükten sonra sonraki `spawn`/`detach`te blokları geri verilir. 64 kayıttan fazla eşzamanlı ayrık iş parçacığında fazlası sızar.
+- `detach` edilen iş parçacıkları bir hurda listesinde tutulur; iş parçacığının SON bellek yazısı (`exited`, naked giriş kuyruğu) görüldükten sonra sonraki `spawn`/`detach`te blokları geri verilir. Liste bağlıdır ve sınırsızdır (v2.0.82'ye kadar 64 kayıtlık sabit diziydi ve fazlası sızıyordu); 200 iş parçacığını art arda başlatıp birleştiren `thread_spawn_stress` fixture'ı her iki threads hedefinde koşar.
 - Dosya tanıtıcıları WASI örneği başınadır (Node'da): bir iş parçacığında açılan dosya diğerinde görünmez.
 - Tamamlanma sinyali (`pool_run` dış yolu) pipe yerine futex bayrağıdır (`completion_pipe.zig`); işçileri uyandıran self-pipe wasm'de yoktur, boşta işçiler kısa beklemelerle yoklar.
 

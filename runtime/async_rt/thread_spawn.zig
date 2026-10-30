@@ -3,7 +3,8 @@
 //! bloğu ezer) ve `std.Io.Threaded` futex'ine dayanır (tip hatası). Burada yığın bloğu (TLS + yığın) sıfırlanmış olarak ayrılır, işaretçi doğru uca kurulur ve gövde bu iş
 //! parçacığının KENDİ Asyncify sürücüsü altında çalışır (her işçinin fiber'ları o işçiye ait `unwind/rewind` durumuyla döner).
 //!
-//! Sınır: `detach` edilen iş parçacıklarının bellek bloğu, iş parçacığı kendi yığınında çalıştığı için geri verilmez (az sayıda, ömürlü sürücü iş parçacıkları).
+//! `detach` edilen iş parçacıklarının bloğu, iş parçacığı kendi yığınında çalışırken geri verilemez; bir hurda listesinde tutulur ve iş parçacığı `exited` olunca
+//! sonraki `spawn`/`detach`te toplanır (liste sınırsızdır: bağlı liste, sabit boyutlu dizi değil).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -61,6 +62,8 @@ const WasmThread = if (is_wasm) struct {
         tls_size: usize,
         entry: *const fn (usize) callconv(.c) i32,
         arg: usize,
+        /// Hurda listesi (`zombies`) bağlantısı; yalnızca `zombie_lock` altında okunur/yazılır.
+        next_zombie: ?*Instance = null,
     };
 
     inst: *Instance,
@@ -156,8 +159,8 @@ const WasmThread = if (is_wasm) struct {
     }
 
     /// Ayrılan (detach) iş parçacıkları: bitmemiş olanların bloğu iş parçacığı kendi yığınında çalışırken geri verilemez; örnek burada bekletilir ve sonraki `spawn`/`detach`
-    /// çağrılarında `exited` olanlar toplanır (`reap`). Tam liste durumunda en eski kayıt sızdırılır (ömürlü sürücü iş parçacıkları için pratikte hiç dolmaz).
-    var zombies: [64]?*Instance = @splat(null);
+    /// çağrılarında `exited` olanlar toplanır (`reap`). Liste bağlıdır, dolmaz: detach edilen her iş parçacığı sonunda toplanır.
+    var zombies: ?*Instance = null;
     var zombie_lock: std.atomic.Value(u32) = .init(0);
 
     fn zombieLock() void {
@@ -172,12 +175,13 @@ const WasmThread = if (is_wasm) struct {
     fn reap() void {
         zombieLock();
         defer zombieUnlock();
-        for (&zombies) |*slot| {
-            if (slot.*) |inst| {
-                if (inst.exited.load(.seq_cst) != 0) {
-                    release(inst);
-                    slot.* = null;
-                }
+        var link: *?*Instance = &zombies;
+        while (link.*) |inst| {
+            if (inst.exited.load(.seq_cst) != 0) {
+                link.* = inst.next_zombie;
+                release(inst);
+            } else {
+                link = &inst.next_zombie;
             }
         }
     }
@@ -185,13 +189,9 @@ const WasmThread = if (is_wasm) struct {
     pub fn detach(self: WasmThread) void {
         _ = self.inst.state.swap(@intFromEnum(State.detached), .seq_cst);
         zombieLock();
-        for (&zombies) |*slot| {
-            if (slot.* == null) {
-                slot.* = self.inst;
-                break;
-            }
-        }
-        zombieUnlock(); // liste doluysa bu iş parçacığının bloğu sızar (bkz. yukarıdaki not)
+        self.inst.next_zombie = zombies;
+        zombies = self.inst;
+        zombieUnlock();
         reap();
     }
 

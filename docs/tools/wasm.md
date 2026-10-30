@@ -13,9 +13,19 @@ node --no-warnings tests/golden/wasm_run.mjs hello.wasm   # ya da wasmtime, wasm
 
 Dilin tamamı: sınıflar, kalıtım (çoklu dahil), jeneratörler, `async`/`await`/`Channel`, istisnalar, `with`, `__del__`, comprehension'lar, f-string, `lowlevel`. Standart kütüphaneden: `nox.strings`, `math`, `mathx`, `os`, `path`, `time`, `random`, `json`, `yaml`, `toml`, `csv`, `unicode`, `bytes`, `buffer`, `base64`, `bits`, `atomic`, `collections`, `url`, `uuid`, `validate`, `template`, `log`, `test`, `io`, **`fs`** (WASI ön-açılan dizinler), **`regex`**, **`gzip`**, **`crypto`** (hash/HMAC/parola özetleri, WASI `random_get`).
 
+## Destek matrisi
+
+| Kip | Bayrak | `spawn`/`await`/`Channel` | Gerçek fiber | Gerçek paralellik (`nox.thread`, M:N) | Bilinen sınır |
+|---|---|---|---|---|---|
+| Varsayılan | (yok) | iç içe çalıştırma benzetimi | hayır | hayır | altındaki bir görevi bekleyen görev deadlock sayılır |
+| Asyncify | `--asyncify` | fiber (M:1) | evet | hayır | Asyncify'ın boyut ve hız maliyeti ([ADR-014](../internals/adr/014-wasm-asyncify.md)) |
+| Threads | `--threads` | fiber + iş çalan havuz (M:N) | evet (Asyncify ile) | evet | paylaşımlı bellek gerekir; dosya tanıtıcıları iş parçacığı başınadır ([ADR-015](../internals/adr/015-wasm-threads.md)) |
+
+Her kip `wasm32-wasi` ve `wasm32-freestanding` için vardır. Dil ve standart kütüphane davranışı kipler arasında aynıdır; fark yalnızca eşzamanlılık modelidir. Bu eşdeğerlik `zig build wasm-corpus-test` ile sekiz hedefte de fixture korpusuyla doğrulanır; bilinen farklar (libm'in son basamağı, kipe özgü zamanlama sırası) korpus listelerinde belgelidir.
+
 ## Sınırlar
 
-- **Tek iş parçacığı.** `nox.thread` aynı yığında çalışır; gerçek paralellik yoktur. Varsayılan olarak `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. Bu sınır `--asyncify` ile kalkar (aşağıya bakın).
+- **Eşzamanlılık kipe bağlıdır** (yukarıdaki tabloya bakın). Varsayılan kipte iş parçacığı yoktur ve `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. `--asyncify` gerçek fiber verir (tek iş parçacığı, M:1); `--threads` gerçek paralellik verir (M:N).
 - **Ağ ve süreç yok.** `nox.http`, `transfer`, `reflect`, `router`, `tls`, `websocket`, `smtp`, `sqlite`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.http' cannot be used on the wasm32-wasi target (it needs sockets)`.
 - **Yerel kütüphane yok.** `extern def ... from "lib"` ile bir `.wasm`a native kütüphane bağlanamaz.
 - **Dosya sistemi** çalıştırıcının WASI ön-açımlarına bağlıdır (`wasm_run.mjs` `.` ve `/tmp` açar).
