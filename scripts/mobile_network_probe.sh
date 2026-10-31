@@ -22,16 +22,16 @@ P_OK4=$(port ok4); P_OK6=$(port ok6); P_SILENT=$(port silent); P_TRUNC=$(port tr
 
 case "$platform" in
 android)
-  rt="$root/zig-out/lib/noxrt-android-arm64.o"
+  . "$root/scripts/mobile_android_abi.sh"; rt=$android_rt
   sdk=${ANDROID_HOME:-"$HOME/Library/Android/sdk"}
   adb=${ADB:-"$sdk/platform-tools/adb"}
   ndk=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-"$sdk/ndk/$(ls -1 "$sdk/ndk" | tail -n 1)"}}
   clang=""; for h in darwin-arm64 darwin-x86_64 linux-x86_64 linux-aarch64; do c="$ndk/toolchains/llvm/prebuilt/$h/bin/clang"; [ -x "$c" ] && { clang=$c; break; }; done
   [ -n "$clang" ] && [ -f "$rt" ] || { echo "NDK clang ya da android çalışma zamanı yok" >&2; exit 1; }
   "$adb" devices | awk 'NR>1 && $2=="device" {f=1} END {exit !f}' || { echo "bağlı emülatör yok" >&2; exit 1; }
-  "$noxc" build --target android-arm64 --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_network_probe.nox" >/dev/null
-  "$clang" -c -fPIE -target aarch64-linux-android24 -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_stack_host.c"
-  "$clang" -fPIE -pie -target aarch64-linux-android24 -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+  "$noxc" build --target "$android_target" --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_network_probe.nox" >/dev/null
+  "$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_stack_host.c"
+  "$clang" -fPIE -pie -target "$android_triple" -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
   "$adb" push "$work/probe" /data/local/tmp/nox-net-probe >/dev/null; "$adb" shell chmod 755 /data/local/tmp/nox-net-probe
   for p in $P_OK4 $P_OK6 $P_SILENT $P_TRUNC $P_RESET $P_TLS; do "$adb" reverse tcp:$p tcp:$p >/dev/null 2>&1; done
   HOSTIP=127.0.0.1; DRIPHOST=10.0.2.2

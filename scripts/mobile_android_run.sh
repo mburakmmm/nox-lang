@@ -4,7 +4,7 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 noxc=${NOXC:-"$root/zig-out/bin/noxc"}
-rt="$root/zig-out/lib/noxrt-android-arm64.o"
+. "$root/scripts/mobile_android_abi.sh"; rt=$android_rt
 if [ ! -x "$noxc" ] || [ ! -f "$rt" ]; then
   echo "noxc or the android arm64 runtime is missing" >&2
   exit 1
@@ -37,8 +37,8 @@ fi
 work=/tmp/nox-android-run
 rm -rf "$work"
 mkdir -p "$work"
-"$noxc" build --target android-arm64 --emit-obj -o "$work/suite.o" "$root/tests/golden/mobile_stdlib_suite.nox"
-"$noxc" build --target android-arm64 --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_runtime_probe.nox"
+"$noxc" build --target "$android_target" --emit-obj -o "$work/suite.o" "$root/tests/golden/mobile_stdlib_suite.nox"
+"$noxc" build --target "$android_target" --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_runtime_probe.nox"
 cat > "$work/suite_host.c" << 'EOF'
 #include "nox_embed.h"
 #include <stdint.h>
@@ -80,10 +80,10 @@ int main(void) {
     return 0;
 }
 EOF
-"$clang" -c -fPIE -target aarch64-linux-android24 -I "$root/include" -o "$work/suite_host.o" "$work/suite_host.c"
-"$clang" -c -fPIE -target aarch64-linux-android24 -I "$root/include" -o "$work/probe_host.o" "$root/scripts/mobile_probe_host.c"
-"$clang" -fPIE -pie -target aarch64-linux-android24 -o "$work/suite" "$work/suite_host.o" "$work/suite.o" "$rt" -lm -ldl -llog
-"$clang" -fPIE -pie -target aarch64-linux-android24 -o "$work/probe" "$work/probe_host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+"$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/suite_host.o" "$work/suite_host.c"
+"$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/probe_host.o" "$root/scripts/mobile_probe_host.c"
+"$clang" -fPIE -pie -target "$android_triple" -o "$work/suite" "$work/suite_host.o" "$work/suite.o" "$rt" -lm -ldl -llog
+"$clang" -fPIE -pie -target "$android_triple" -o "$work/probe" "$work/probe_host.o" "$work/probe.o" "$rt" -lm -ldl -llog
 "$adb" push "$work/suite" /data/local/tmp/nox-suite
 "$adb" push "$work/probe" /data/local/tmp/nox-probe
 "$adb" shell chmod 755 /data/local/tmp/nox-suite /data/local/tmp/nox-probe

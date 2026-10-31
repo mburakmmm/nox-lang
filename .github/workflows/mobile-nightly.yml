@@ -1,0 +1,55 @@
+name: mobile nightly
+
+# TODO 4.5: PR'da `mobile.yml` hızlı korpusu (iOS simülatörü tam + Android x86_64 emülatörü smoke) çalıştırır; bu iş akışı gece, daha pahalı ve daha geniş
+# korpusu çalıştırır: Android emülatöründe tam matris (ağ, sandbox/disk-dolu, saat/entropi/log) iki API seviyesinde. Bekçi (watchdog): her adım
+# `scripts/mobile_android_ci.sh` içinde `timeout` ile sınırlıdır, iş de `timeout-minutes` ile; temizlik: betik çıkışında `adb reverse` ve cihaz artıkları silinir,
+# emülatörü `android-emulator-runner` kapatır.
+
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  android-emulator-full:
+    name: Android x86_64 emülatörü API ${{ matrix.api }} (tam matris)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 34]
+    env:
+      NOX_ANDROID_ABI: x64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig 0.16.0
+        run: |
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+      - name: NDK
+        run: |
+          curl -sSL -o /tmp/ndk.zip "https://dl.google.com/android/repository/android-ndk-r28c-linux.zip"
+          unzip -q /tmp/ndk.zip -d "$RUNNER_TEMP"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r28c" >> "$GITHUB_ENV"
+      - name: Build noxc and the Android runtime
+        run: |
+          zig build -Doptimize=Debug
+          zig build mobile-rt-android -Doptimize=Debug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the full corpus on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: scripts/mobile_android_ci.sh full

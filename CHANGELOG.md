@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.96]
+
+### Eklendi
+
+- **Android x86_64 emülatöründe gerçek çalıştırma (TODO 4.1) ve mobil CI matrisi (TODO 4.5).** `scripts/mobile_android_*.sh` betikleri `NOX_ANDROID_ABI=arm64|x64` ile hedef ABI'yi seçer (`scripts/mobile_android_abi.sh`). `scripts/mobile_android_ci.sh smoke|full`: stdlib paketi, çalışma zamanı, yığın/iş parçacığı probe'ları (smoke) + ağ matrisi, sandbox/disk-dolu, saat/entropi/log (full); her adım `timeout` ile sınırlı, çıkışta `adb reverse` ve cihaz artıkları temizlenir. `mobile.yml` her PR'da KVM'li Linux runner'da API 34 x86_64 emülatöründe smoke korpusunu çalıştırır; yeni `mobile-nightly.yml` her gece API 26 ve 34'te tam matrisi çalıştırır.
+
 ## [2.0.95]
 
 ### Düzeltildi

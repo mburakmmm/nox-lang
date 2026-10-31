@@ -26,7 +26,7 @@ check() { # mod beklenen_çıkış beklenen_stdout
 
 case "$platform" in
 android)
-  rt="$root/zig-out/lib/noxrt-android-arm64.o"
+  . "$root/scripts/mobile_android_abi.sh"; rt=$android_rt
   [ -x "$noxc" ] && [ -f "$rt" ] || { echo "noxc ya da android arm64 çalışma zamanı yok (zig build)" >&2; exit 1; }
   ndk=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
   if [ -z "$ndk" ]; then parent="$HOME/Library/Android/sdk/ndk"; ndk="$parent/$(ls -1 "$parent" | tail -n 1)"; fi
@@ -41,9 +41,9 @@ android)
     "$adb" wait-for-device
     "$adb" shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
   fi
-  "$noxc" build --target android-arm64 --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_stack_probe.nox"
-  "$clang" -c -fPIE -target aarch64-linux-android24 -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_stack_host.c"
-  "$clang" -fPIE -pie -target aarch64-linux-android24 -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+  "$noxc" build --target "$android_target" --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_stack_probe.nox"
+  "$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_stack_host.c"
+  "$clang" -fPIE -pie -target "$android_triple" -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
   "$adb" push "$work/probe" /data/local/tmp/nox-stack-probe >/dev/null
   "$adb" shell chmod 755 /data/local/tmp/nox-stack-probe
   run_probe() { "$adb" shell "NOX_STACK_MODE=$1 NOX_MOBILE_ROOT=/data/local/tmp/nox-stack /data/local/tmp/nox-stack-probe; echo EXIT=\$?"; }

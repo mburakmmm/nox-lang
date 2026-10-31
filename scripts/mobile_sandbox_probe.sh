@@ -18,15 +18,15 @@ check() { # ad beklenen alınan
 
 case "$platform" in
 android)
-  rt="$root/zig-out/lib/noxrt-android-arm64.o"
+  . "$root/scripts/mobile_android_abi.sh"; rt=$android_rt
   sdk=${ANDROID_HOME:-"$HOME/Library/Android/sdk"}
   adb=${ADB:-"$sdk/platform-tools/adb"}
   ndk=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-"$sdk/ndk/$(ls -1 "$sdk/ndk" | tail -n 1)"}}
   clang=""; for h in darwin-arm64 darwin-x86_64 linux-x86_64 linux-aarch64; do c="$ndk/toolchains/llvm/prebuilt/$h/bin/clang"; [ -x "$c" ] && { clang=$c; break; }; done
   [ -n "$clang" ] && [ -f "$rt" ] || { echo "NDK clang ya da android çalışma zamanı yok" >&2; exit 1; }
-  "$noxc" build --target android-arm64 --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_sandbox_probe.nox" >/dev/null
-  "$clang" -c -fPIE -target aarch64-linux-android24 -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_sandbox_host.c"
-  "$clang" -fPIE -pie -target aarch64-linux-android24 -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+  "$noxc" build --target "$android_target" --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_sandbox_probe.nox" >/dev/null
+  "$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_sandbox_host.c"
+  "$clang" -fPIE -pie -target "$android_triple" -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
   "$adb" push "$work/probe" /data/local/tmp/nox-sbx-probe >/dev/null; "$adb" shell chmod 755 /data/local/tmp/nox-sbx-probe
   run_probe() { # mod kök [fsize] [blok]
     "$adb" shell "rm -rf '$2'; mkdir -p '$2'; NOX_SBX_MODE=$1 NOX_MOBILE_ROOT='$2' NOX_SBX_FSIZE='${3:-}' NOX_SBX_BLOCKS=${4:-256} /data/local/tmp/nox-sbx-probe 2>/dev/null; rm -rf '$2'" | tr -d '\r' | head -1

@@ -12,15 +12,15 @@ work=/tmp/nox-clock-probe
 rm -rf "$work"; mkdir -p "$work"
 case "$platform" in
 android)
-  rt="$root/zig-out/lib/noxrt-android-arm64.o"
+  . "$root/scripts/mobile_android_abi.sh"; rt=$android_rt
   sdk=${ANDROID_HOME:-"$HOME/Library/Android/sdk"}
   adb=${ADB:-"$sdk/platform-tools/adb"}
   ndk=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-"$sdk/ndk/$(ls -1 "$sdk/ndk" | tail -n 1)"}}
   clang=""; for h in darwin-arm64 darwin-x86_64 linux-x86_64 linux-aarch64; do c="$ndk/toolchains/llvm/prebuilt/$h/bin/clang"; [ -x "$c" ] && { clang=$c; break; }; done
   [ -n "$clang" ] && [ -f "$rt" ] || { echo "NDK clang ya da android çalışma zamanı yok" >&2; exit 1; }
-  "$noxc" build --target android-arm64 --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_clock_probe.nox" >/dev/null
-  "$clang" -c -fPIE -target aarch64-linux-android24 -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_stack_host.c"
-  "$clang" -fPIE -pie -target aarch64-linux-android24 -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+  "$noxc" build --target "$android_target" --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_clock_probe.nox" >/dev/null
+  "$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_stack_host.c"
+  "$clang" -fPIE -pie -target "$android_triple" -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
   "$adb" push "$work/probe" /data/local/tmp/nox-clock-probe >/dev/null; "$adb" shell chmod 755 /data/local/tmp/nox-clock-probe
   run_probe() { "$adb" shell "NOX_MOBILE_ROOT=/data/local/tmp/nox-clock /data/local/tmp/nox-clock-probe 2>/dev/null" | tr -d '\r' | head -1; }
   pid_of() { "$adb" shell pidof nox-clock-probe | tr -d '\r'; }
