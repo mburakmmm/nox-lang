@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.98]
+
+### Düzeltildi
+
+- **HTTP zaman aşımı yavaş uykuda gerçek süreden çok uzun sürüyordu.** `nox.http.request`/`stream` bekçi iş parçacıkları `sleepMs(5)` çağrılarını SAYARAK süre topluyordu; `nanosleep(5 ms)` Android emülatöründe ~7 kat uzun sürünce 1,5 sn'lik `timeout_ms` 10-12 sn sürdü (macOS'ta fark edilmiyordu). Süre artık monoton saatle ölçülür (`http_client.monotonicMs`); yavaş uykuyu taklit eden bir birim testi eklendi. `scripts/mobile_network_probe.sh` `idle_timeout` senaryosu bunu yakaladı.
+
 ## [2.0.97]
 
 ### Düzeltildi

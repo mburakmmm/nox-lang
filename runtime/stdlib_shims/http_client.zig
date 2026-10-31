@@ -186,6 +186,19 @@ pub fn sleepMs(ms: u32) void {
     _ = std.c.nanosleep(&ts, null);
 }
 
+const WinTick = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetTickCount64() callconv(.c) u64;
+} else struct {};
+
+/// Gerçekten geçen süre için monoton saat (ms). Bekçiler `sleepMs(5)` çağrılarını SAYARAK süre toplamamalı: `nanosleep(5 ms)` emülatörde / yüklü bir CI
+/// makinesinde 5 ms'den ÇOK uzun sürebilir (Android emülatöründe ~7 katı ölçüldü; 1,5 sn'lik zaman aşımı 10 sn sürdü), sayaç ise gerçeği yansıtmaz.
+pub fn monotonicMs() u64 {
+    if (builtin.os.tag == .windows) return WinTick.GetTickCount64();
+    var ts: posix.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(@divTrunc(ts.nsec, std.time.ns_per_ms)));
+}
+
 pub fn socketHandleToUsize(h: anytype) usize {
     return switch (@typeInfo(@TypeOf(h))) {
         .pointer => @intFromPtr(h),
@@ -194,12 +207,16 @@ pub fn socketHandleToUsize(h: anytype) usize {
 }
 
 fn watchdogThreadFn(shared: *Shared, timeout_ms: u64) void {
+    watchdogLoop(shared, timeout_ms, sleepMs);
+}
+
+/// `sleepFn` yalnızca bekleme adımıdır; süre `monotonicMs` ile ölçülür (yavaş uyku zaman aşımını uzatmaz — bkz. test).
+fn watchdogLoop(shared: *Shared, timeout_ms: u64, comptime sleepFn: fn (u32) void) void {
     defer shared.release();
-    var elapsed: u64 = 0;
+    const start = monotonicMs();
     while (!shared.done.load(.acquire)) {
-        sleepMs(5);
-        elapsed += 5;
-        if (elapsed >= timeout_ms) {
+        sleepFn(5);
+        if (monotonicMs() - start >= timeout_ms) {
             shared.timed_out.store(true, .release);
             // Bağlantı henüz kurulmamış olabilir (DNS/connect aşaması): tutamaç belirince tekrar denenir.
             shared.abortConnection();
@@ -1188,6 +1205,31 @@ test "nox_http_request_raw: PUT/PATCH/DELETE/OPTIONS/HEAD gerçek metodla gider,
     const url = str_mod.nox_str_from_bytes(rt, "http://127.0.0.1:1/") orelse return error.AllocFailed;
     defer str_mod.nox_str_release(rt, url);
     try std.testing.expect(nox_http_request_raw(rt, bad, url, null, 0, null, 0) == null);
+}
+
+var test_wd_shared: ?*Shared = null;
+var test_wd_t0: u64 = 0;
+var test_wd_seen_ms: u64 = 0;
+
+/// Nominal 5 ms yerine 50 ms uyuyan yavaş bir "uyku": emülatör / yüklü CI makinesini taklit eder.
+fn testSlowSleep(_: u32) void {
+    sleepMs(50);
+    const sh = test_wd_shared.?;
+    if (sh.timed_out.load(.acquire)) {
+        test_wd_seen_ms = monotonicMs() - test_wd_t0;
+        sh.done.store(true, .release);
+    }
+}
+
+test "bekçi: yavaş uyku zaman aşımını uzatmaz (süre sayılan adımlarla değil monoton saatle ölçülür)" {
+    var shared: Shared = .{};
+    test_wd_shared = &shared;
+    test_wd_t0 = monotonicMs();
+    // Eski sayaç (`elapsed += 5`) 300 ms için 60 adım x 50 ms = ~3000 ms bekler; monoton saat ~300 ms'de tetikler.
+    watchdogLoop(&shared, 300, testSlowSleep);
+    try std.testing.expect(shared.timed_out.load(.acquire));
+    try std.testing.expect(test_wd_seen_ms >= 300);
+    try std.testing.expect(test_wd_seen_ms < 1500);
 }
 
 test "nox_http_request_raw: sessiz sunucuda timeout_ms gerçek zaman aşımı verir (error_kind 1), bağlantı iptal edilir" {

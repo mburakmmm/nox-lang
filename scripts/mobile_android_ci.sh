@@ -38,6 +38,8 @@ run_step() {
 "$adb" shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
 echo "cihaz: $("$adb" shell getprop ro.product.cpu.abi | tr -d '\r') api $("$adb" shell getprop ro.build.version.sdk | tr -d '\r') sayfa $("$adb" shell getconf PAGE_SIZE | tr -d '\r')"
 
+# Tanı (hata değil): suite `https://example.com/` ister; emülatörün DNS'i ve dış erişimi başarısızlıkta nedeni ayırt etmeyi sağlar.
+echo "ağ tanısı: dns1=$("$adb" shell getprop net.dns1 | tr -d '\r') $("$adb" shell 'ping -c 1 -W 5 example.com 2>&1 | tail -2' | tr -d '\r' | tr '\n' ' ')"
 run_step "stdlib paketi + çalışma zamanı probe'u" "$root/scripts/mobile_android_run.sh"
 run_step "yığın ve iş parçacığı probe'u" "$root/scripts/mobile_stack_probe.sh" android
 if [ "$mode" = full ]; then

@@ -424,21 +424,21 @@ fn receiveHead(
 
 fn streamWatchdog(shared: *http.Shared, timeout_ms: u64) void {
     defer shared.release();
-    var elapsed: u64 = 0;
+    // Süre `http.monotonicMs` ile ölçülür, sayılan `sleepMs(5)` adımlarıyla DEĞİL (yavaş uyku zaman aşımını uzatırdı; bkz. `http.monotonicMs`).
+    var mark: u64 = http.monotonicMs();
     var last_epoch: u32 = shared.epoch.load(.acquire);
     while (!shared.done.load(.acquire)) {
         http.sleepMs(5);
         const ep = shared.epoch.load(.acquire);
         if (ep != last_epoch) {
             last_epoch = ep;
-            elapsed = 0;
+            mark = http.monotonicMs();
         }
         if (!shared.armed.load(.acquire)) {
-            elapsed = 0;
+            mark = http.monotonicMs();
             continue;
         }
-        elapsed += 5;
-        if (elapsed >= timeout_ms) {
+        if (http.monotonicMs() - mark >= timeout_ms) {
             shared.timed_out.store(true, .release);
             shared.abortConnection();
         }
