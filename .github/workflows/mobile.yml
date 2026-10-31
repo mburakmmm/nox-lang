@@ -37,6 +37,12 @@ jobs:
           chmod +x scripts/mobile_network_probe.sh
           udid=$(xcrun simctl list devices booted | grep -Eo '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1)
           scripts/mobile_network_probe.sh ios "$udid"
+      # Faz 3.7: disk dolu (EFBIG + gerçek ENOSPC RAM diski): atomik yazma eski içeriği korur, SQLite tutarlı kalır.
+      - name: Mobil sandbox ve disk-dolu probe'u
+        run: |
+          chmod +x scripts/mobile_sandbox_probe.sh
+          udid=$(xcrun simctl list devices booted | grep -Eo '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1)
+          scripts/mobile_sandbox_probe.sh ios "$udid"
       - name: iOS library checks
         run: |
           zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "qbe is rejected"

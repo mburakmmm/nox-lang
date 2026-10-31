@@ -1,0 +1,99 @@
+# Faz 3.7: disk-dolu ve SQLite davranışı gerçek mobil hedefte. Mod `NOX_SBX_MODE`, kök dizin `NOX_MOBILE_ROOT`, yük büyüklüğü `NOX_SBX_BLOCKS` (her blok 512 bayt) (scripts/mobile_sandbox_probe.sh).
+#   baseline     sınır yokken: atomik yazma + düz yazma + SQLite büyük ekleme + TEMP tablo + büyük sıralama + VACUUM başarılı
+#   disk_full    yazma başarısız olmalı (host RLIMIT_FSIZE ya da gerçek ENOSPC): atomik yazma FsError verir ve eski içerik BOZULMAZ, `.nox-tmp` artığı kalmaz,
+#                düz yazma FsError verir, SQLite ekleme SqliteError verir ve veritabanı yeniden açılınca tutarlı kalır
+# Çıktı tek satır: "<mod> atomic=<ok|fail> intact=<yes|no> tmp_left=<yes|no> plain=<ok|fail> sqlite=<ok|fail> consistent=<yes|no> temp_sort=<ok|fail> vacuum=<ok|fail>"
+import nox.fs
+import nox.os
+import nox.sqlite
+from nox.fs import FsError
+from nox.sqlite import Connection, SqliteError
+from nox.db import Row
+
+def big_text(blocks: int) -> str:
+    block: str = "abcdefghijklmnopqrstuvwxyz012345" + "abcdefghijklmnopqrstuvwxyz012345"
+    out: str = ""
+    i: int = 0
+    while i < blocks:
+        out = out + block + block + block + block + block + block + block + block
+        i = i + 1
+    return out
+
+def yn(b: bool) -> str:
+    if b:
+        return "yes"
+    return "no"
+
+mode: str = nox.os.getenv("NOX_SBX_MODE")
+root: str = nox.os.getenv("NOX_MOBILE_ROOT")
+keep: str = root + "/keep.txt"
+nox.fs.write_string(keep, "old")
+
+payload: str = big_text(int(nox.os.getenv("NOX_SBX_BLOCKS")))
+
+# Sıra önemlidir: gerçek disk-dolu durumunda düz yazmanın bıraktığı kısmi dosya kalan alanı tüketir. Önce SQLite (veritabanı oluşturulur, büyük ekleme başarısız olur),
+# sonra atomik yazma (eski içerik korunmalı, artık dosya kalmamalı), en son düz yazma (kısmi dosya uygulama tarafından silinir).
+dbpath: str = root + "/sbx.db"
+db: Connection = nox.sqlite.open(dbpath)
+ignored: int = db.execute("drop table if exists t")
+ignored = db.execute("create table t(id integer primary key, v text)")
+ignored = db.execute("insert into t(v) values ('a')")
+ignored = db.execute("insert into t(v) values ('b')")
+committed: int = 2
+
+sqlite_state: str = "ok"
+try:
+    k: int = 0
+    while k < 40:
+        ignored = db.execute("insert into t(v) values ('" + payload + "')")
+        k = k + 1
+except SqliteError:
+    sqlite_state = "fail"
+db.close()
+
+atomic: str = "ok"
+try:
+    nox.fs.write_string_atomic(keep, payload)
+except FsError:
+    atomic = "fail"
+intact: bool = nox.fs.read_to_string(keep) == "old"
+tmp_left: bool = nox.fs.exists(keep + ".nox-tmp")
+if atomic == "ok":
+    intact = nox.fs.read_to_string(keep) == payload
+
+plain: str = "ok"
+try:
+    nox.fs.write_string(root + "/plain.txt", payload)
+except FsError:
+    plain = "fail"
+    nox.fs.remove_file(root + "/plain.txt")
+
+consistent: bool = False
+db2: Connection = nox.sqlite.open(dbpath)
+rows: list[Row] = db2.query("select count(*) from t")
+total: int = rows[0].get_int(0)
+if sqlite_state == "ok":
+    consistent = total == committed + 40
+else:
+    consistent = total >= committed and total < committed + 40
+check: list[Row] = db2.query("pragma integrity_check")
+consistent = consistent and check[0].get_str(0) == "ok"
+
+temp_sort: str = "ok"
+vacuum: str = "ok"
+if mode == "baseline":
+    try:
+        ignored = db2.execute("create temp table tmp_t(x integer)")
+        ignored = db2.execute("insert into tmp_t select id * 7919 % 10007 from t")
+        sorted_rows: list[Row] = db2.query("select v from t order by v desc, id")
+        if len(sorted_rows) != total:
+            temp_sort = "fail"
+    except SqliteError:
+        temp_sort = "fail"
+    try:
+        ignored = db2.execute("vacuum")
+    except SqliteError:
+        vacuum = "fail"
+db2.close()
+
+print(mode + " atomic=" + atomic + " intact=" + yn(intact) + " tmp_left=" + yn(tmp_left) + " plain=" + plain + " sqlite=" + sqlite_state + " consistent=" + yn(consistent) + " temp_sort=" + temp_sort + " vacuum=" + vacuum)

@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.92]
+
+### Düzeltildi
+
+- **`nox.fs.write_string_atomic`: disk dolduğunda kısmi geçici dosya kalıyordu.** Yazma yarıda kalınca `.nox-tmp` silinmeden `FsError` veriliyordu (belge "geçici dosya silinir" diyordu); zaten dolu diskte yer tutmaya devam ederdi. Artık silinir; hedefin eski içeriği bozulmaz.
+
+### Eklendi
+
+- `scripts/mobile_sandbox_probe.sh` + `tests/golden/mobile_sandbox_probe.nox` + `scripts/mobile_sandbox_host.c` (TODO 3.7): disk-dolu davranışı gerçek mobil hedefte. Atomik yazma eski içeriği korur ve artık bırakmaz, düz yazma `FsError`, SQLite büyük ekleme `SqliteError` verir ve veritabanı tutarlı kalır; sınır yokken TEMP tablo, büyük sıralama ve `VACUUM` çalışır. iOS simülatöründe `RLIMIT_FSIZE` ve gerçek ENOSPC (macOS RAM diski), android-arm64'te `RLIMIT_FSIZE`, 16 KiB Android emülatöründe bölümü doldurarak gerçek ENOSPC. iOS işi bunu CI'da koşar.
+
 ## [2.0.91]
 
 ### Düzeltildi

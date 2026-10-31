@@ -59,6 +59,8 @@ def write_string_atomic(path: str, content: str) -> None:
     tmp: str = path + ".nox-tmp"
     nox_fs_write_string_raw(tmp, content)
     if nox_fs_last_op_ok() == 0:
+        # Yazma yarıda kaldı (ör. disk doldu): kısmi geçici dosya silinir, yoksa zaten dolu diskte yer tutmaya devam eder. Hedefe dokunulmaz.
+        nox_fs_remove_file_raw(tmp)
         raise FsError("could not write file: " + path)
     nox_fs_rename_raw(tmp, path)
     if nox_fs_last_op_ok() == 0:
