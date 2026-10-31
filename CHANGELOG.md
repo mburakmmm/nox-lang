@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.100]
+
+### Düzeltildi
+
+- v2.0.99'un Docs işi `check_reserved_symbols`ta kırmızıydı: Windows `noxrt` artık `GetTickCount64` içe aktarıyor (HTTP bekçi saati); ad ayrılmış sembol listesine eklendi, fixture ve IR anlık görüntüsü yenilendi.
+
 ## [2.0.99]
 
 ### Düzeltildi
