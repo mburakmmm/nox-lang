@@ -206,16 +206,23 @@ pub fn socketHandleToUsize(h: anytype) usize {
     };
 }
 
+const RealSleeper = struct {
+    fn sleep(_: *RealSleeper, ms: u32) void {
+        sleepMs(ms);
+    }
+};
+
 fn watchdogThreadFn(shared: *Shared, timeout_ms: u64) void {
-    watchdogLoop(shared, timeout_ms, sleepMs);
+    var sleeper: RealSleeper = .{};
+    watchdogLoop(shared, timeout_ms, &sleeper);
 }
 
-/// `sleepFn` yalnızca bekleme adımıdır; süre `monotonicMs` ile ölçülür (yavaş uyku zaman aşımını uzatmaz — bkz. test).
-fn watchdogLoop(shared: *Shared, timeout_ms: u64, comptime sleepFn: fn (u32) void) void {
+/// `sleeper.sleep` yalnızca bekleme adımıdır; süre `monotonicMs` ile ölçülür (yavaş uyku zaman aşımını uzatmaz — bkz. test).
+fn watchdogLoop(shared: *Shared, timeout_ms: u64, sleeper: anytype) void {
     defer shared.release();
     const start = monotonicMs();
     while (!shared.done.load(.acquire)) {
-        sleepFn(5);
+        sleeper.sleep(5);
         if (monotonicMs() - start >= timeout_ms) {
             shared.timed_out.store(true, .release);
             // Bağlantı henüz kurulmamış olabilir (DNS/connect aşaması): tutamaç belirince tekrar denenir.
@@ -1207,29 +1214,29 @@ test "nox_http_request_raw: PUT/PATCH/DELETE/OPTIONS/HEAD gerçek metodla gider,
     try std.testing.expect(nox_http_request_raw(rt, bad, url, null, 0, null, 0) == null);
 }
 
-var test_wd_shared: ?*Shared = null;
-var test_wd_t0: u64 = 0;
-var test_wd_seen_ms: u64 = 0;
+/// Nominal 5 ms yerine 50 ms uyuyan yavaş bir "uyku": emülatör / yüklü CI makinesini taklit eder. Durum dosya düzeyinde değil, bu yapıda.
+const SlowSleeper = struct {
+    shared: *Shared,
+    t0: u64,
+    seen_ms: u64 = 0,
 
-/// Nominal 5 ms yerine 50 ms uyuyan yavaş bir "uyku": emülatör / yüklü CI makinesini taklit eder.
-fn testSlowSleep(_: u32) void {
-    sleepMs(50);
-    const sh = test_wd_shared.?;
-    if (sh.timed_out.load(.acquire)) {
-        test_wd_seen_ms = monotonicMs() - test_wd_t0;
-        sh.done.store(true, .release);
+    fn sleep(self: *SlowSleeper, _: u32) void {
+        sleepMs(50);
+        if (self.shared.timed_out.load(.acquire)) {
+            self.seen_ms = monotonicMs() - self.t0;
+            self.shared.done.store(true, .release);
+        }
     }
-}
+};
 
 test "bekçi: yavaş uyku zaman aşımını uzatmaz (süre sayılan adımlarla değil monoton saatle ölçülür)" {
     var shared: Shared = .{};
-    test_wd_shared = &shared;
-    test_wd_t0 = monotonicMs();
+    var sleeper: SlowSleeper = .{ .shared = &shared, .t0 = monotonicMs() };
     // Eski sayaç (`elapsed += 5`) 300 ms için 60 adım x 50 ms = ~3000 ms bekler; monoton saat ~300 ms'de tetikler.
-    watchdogLoop(&shared, 300, testSlowSleep);
+    watchdogLoop(&shared, 300, &sleeper);
     try std.testing.expect(shared.timed_out.load(.acquire));
-    try std.testing.expect(test_wd_seen_ms >= 300);
-    try std.testing.expect(test_wd_seen_ms < 1500);
+    try std.testing.expect(sleeper.seen_ms >= 300);
+    try std.testing.expect(sleeper.seen_ms < 1500);
 }
 
 test "nox_http_request_raw: sessiz sunucuda timeout_ms gerçek zaman aşımı verir (error_kind 1), bağlantı iptal edilir" {

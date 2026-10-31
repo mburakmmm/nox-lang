@@ -232,13 +232,13 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 
 ## Faz 4 — P1 mobil hedefler, CI ve destek seviyesi
 
-- [ ] **4.1 Android x64'ü emülatörde çalıştır.** Bugünkü kanıt link-only.
+- [x] **4.1 Android x64'ü emülatörde çalıştır.** (v2.0.98: `mobile.yml` `android-emulator` işi KVM'li Linux'ta API 34 x86_64 emülatöründe stdlib paketi, çalışma zamanı ve yığın probe'unu GERÇEKTEN çalıştırır; CI'da yeşil.) Bugünkü kanıt link-only idi.
 - [!] **4.2 Android ARM64 fiziksel cihaz kanıtı.** (2026-10-31 KULLANICI KARARI: fiziksel cihaz ve imzalı IPA/AAB şimdilik BEKLETİLİYOR; mobil hedefler `experimental` kalır, kapsam simülatör/emülatörde doğrulukla sınırlı) Cihaz laboratuvarı gerekir.
 - [!] **4.3 iOS ARM64 fiziksel cihaz kanıtı.** (2026-10-31 KULLANICI KARARI: fiziksel cihaz ve imzalı IPA/AAB şimdilik BEKLETİLİYOR; mobil hedefler `experimental` kalır, kapsam simülatör/emülatörde doğrulukla sınırlı) Apple signing/provisioning ve
   cihaz gerekir; build-only kanıt yeterli değildir.
 - [~] **4.4 Android 16 KiB'yi çalışma anında doğrula.** (v2.0.88: `scripts/mobile_android_16k.sh`; 16 KiB sayfalı Android 15 arm64 emülatöründe yığın probe'u, stdlib paketi ve çalışma zamanı probe'u geçer; Nox çalışma zamanından üretilen `.so` 16 KiB hizalıyken yüklenir, 4 KiB hizalıyken çöker. Açık: fiziksel cihaz, imzalı AAB, bağımlı üçüncü-taraf `.so`lar.) Yalnız ELF header
   ölçümü değil, uyumlu emulator/device açılışı ve bağımlı bütün `.so`lar.
-- [ ] **4.5 Mobil CI matrisini tamamla.** PR'da iOS simulator run + Android
+- [x] **4.5 Mobil CI matrisini tamamla.** (v2.0.96-98: PR'da iOS simülatörü tam korpus + Android x86_64 emülatörü smoke; `mobile-nightly.yml` API 26/34'te tam matris (ağ, sandbox/disk-dolu, saat) + AddressSanitizer yığın probe'u; her adım `timeout`, çıkışta temizlik. Açık gözlem: AddressSanitizer altında stdlib paketi SIGILL ile ölüyor (yığın probe'u geçer, neden araştırılmadı); Android'de LSan yok. Gecelik iş akışı henüz zamanlanmış koşuyla doğrulanmadı.) PR'da iOS simulator run + Android
   emulator smoke; nightly sanitizer/lifecycle/network; watchdog ve cleanup.
 - [~] **4.6 Kanıt zincirini sertleştir.** (v2.0.38: stable iddiasında kanıt dosyası temiz Nox ağacından olmalı (`nox_tree=clean`), `nox_head` git'te bulunmalı, `date`/`backend` yazılmalı, imzalı artifact'lar için SHA-256 şart. Açık: Aura commit'i ve toolchain alanlarının zorunluluğu — Aura deposu ayrı.) Kanıt dosyası temiz/tagli Nox ve
   Aura commit'i, toolchain, target, backend, run/build ayrımı ve artifact

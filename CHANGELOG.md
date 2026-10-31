@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.99]
+
+### Düzeltildi
+
+- v2.0.98'in Docs işi `check_global_state`te kırmızıydı: bekçi regresyon testi dosya düzeyi `var` kullanıyordu; durum artık `SlowSleeper` yapısında (`watchdogLoop` bir `sleeper` alır).
+
+### Belgelendi
+
+- `docs/internals/mobile-matrix.md`: mobil CI matrisi; TODO 4.1 ve 4.5 kapandı.
+
 ## [2.0.98]
 
 ### Düzeltildi
