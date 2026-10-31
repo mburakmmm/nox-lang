@@ -286,6 +286,8 @@ fn realMain(init: std.process.Init) !void {
     // OLMAYAN bir DEĞERLE) verilmedikçe `false` (düz-metin şemalar
     // VARSAYILAN olarak REDDEDİLİR).
     const allow_insecure_transport = if (init.environ_map.get("NOX_ALLOW_INSECURE_TRANSPORT")) |v| v.len > 0 else false;
+    // `noxc run/test` ikili önbelleğinin boyut tavanı (MB; `0` = tavan yok): `NOX_HOME` ile aynı "bir kez oku, açıkça ilet" disiplini.
+    const run_limits = run_cache.limitsFromEnv(init.environ_map.get("NOX_RUN_CACHE_MAX_MB"));
     const fetch_policy: fetch.FetchPolicy = .{
         .allow_insecure_transport = allow_insecure_transport,
         .parent_environ_map = init.environ_map,
@@ -354,8 +356,8 @@ fn realMain(init: std.process.Init) !void {
         .legacy => try cmdBuild(gpa, io, a, rest, "usage: noxc [--dump|-v] <file.nox>  (for commands: noxc --help)\n", nox_home, resource_dirs, fetch_policy),
         .help => printHelp(is_tr),
         .sign => try cmdSign(io, a, rest, nox_home),
-        .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
-        .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
+        .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, run_limits),
+        .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, run_limits),
         .fmt => try cmdFmt(gpa, io, a, rest),
         .search => try cmdSearch(io, a, rest, registry_policy, fetch_policy),
         .add => try cmdAdd(io, a, rest, registry_policy, fetch_policy),
@@ -373,7 +375,7 @@ fn realMain(init: std.process.Init) !void {
         .uninstall => try cmdUninstall(io, a, rest, nox_home),
         .list_installed => try cmdListInstalled(io, a, nox_home),
         .refresh => try cmdRefresh(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, init.environ_map),
-        .cache => try cmdCache(io, a, rest, nox_home),
+        .cache => try cmdCache(io, a, rest, nox_home, run_limits),
     }
 }
 
@@ -946,7 +948,7 @@ fn autoPruneCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, only_r
 /// notu). Varsayılan: `installed.json`daki SHA'lar + her repo'nun en yeni
 /// girdisi korunur; `--all` yalnızca kurulu SHA'ları korur; `--dry-run`
 /// hiçbir şey silmeden ne silineceğini ve ne kadar yer açılacağını yazar.
-fn cmdCache(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+fn cmdCache(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, run_limits: run_cache.Limits) !void {
     if (args.len == 0 or !std.mem.eql(u8, args[0], "prune")) {
         std.debug.print("usage: noxc cache prune [--dry-run] [--all]\n", .{});
         std.process.exit(1);
@@ -982,6 +984,12 @@ fn cmdCache(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home
         size,
         report.kept_entries,
     });
+    // `noxc run/test` ikili önbelleği (`cache/run`): `--all` HEPSİNİ siler (kullanımdaki son dakikalar dahil), aksi halde yaş + boyut tavanı uygulanır.
+    const now_s: i64 = @intCast(@divFloor(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
+    const run_limits_eff: run_cache.Limits = if (opts.keep_newest_per_repo) run_limits else .{ .max_bytes = 0, .max_age_s = -1, .grace_s = 0 };
+    const run_report = run_cache.prune(a, io, nox_home, run_limits_eff, now_s, opts.dry_run) catch run_cache.Report{};
+    const run_size = try cache_prune.formatBytes(a, run_report.freed_bytes);
+    try w.print("{s}: {d} run-cache binaries, {s}; kept: {d}\n", .{ if (opts.dry_run) "dry-run" else "pruned", run_report.removed, run_size, run_report.kept });
     try w.flush();
 }
 
@@ -1320,7 +1328,7 @@ fn isRunnableOnHost(profile: codegen.Profile, target: []const u8) bool {
 /// içerik özetiyle derler. Özet tutuyorsa yeniden derlemez. Çalıştırılabilir
 /// dosyayı stdio'yu
 /// MİRAS ALARAK çalıştırır, çocuğun çıkış kodunu AYNEN yansıtır.
-fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
+fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy, run_limits: run_cache.Limits) !void {
     const split = splitOnDoubleDash(args);
     // `--sandbox` ailesi (ADR-010): bayraklar derleme seçeneklerinden AYRILIR, yalnızca ikilinin çalıştırılmasına uygulanır.
     var sandboxed = false;
@@ -1373,8 +1381,10 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     const bin_path = if (slot.hit) slot.bin_path else blk: {
         const built = try buildOne(gpa, io, a, path_arg, opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm, opts.emit);
         try commitRunCache(io, a, slot);
+        pruneRunCache(io, a, nox_home, run_limits);
         break :blk built;
     };
+    if (slot.hit) run_cache.touch(io, slot.obj_dir);
 
     if (isWasmTarget(opts.profile, opts.target)) {
         if (sandboxed) {
@@ -1493,7 +1503,7 @@ fn runAndWait(io: std.Io, a: std.mem.Allocator, bin_path: []const u8, argv_tail:
 /// programın kodudur. Başka bir kelime dosya adında aranır (`smtp` →
 /// `v18_smtp_test.nox`). Derleme hatası turu kesmez; dosya FAILED sayılır
 /// ve kalan dosyalar çalışır.
-fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
+fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy, run_limits: run_cache.Limits) !void {
     const opts = parseBuildOpts(args);
     const selectors = try testSelectors(a, args);
     const cwd_abs = try std.process.currentPathAlloc(io, a);
@@ -1504,8 +1514,10 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const bin_path = if (slot.hit) slot.bin_path else blk: {
             const built = try buildOne(gpa, io, a, selectors[0], opts.verbose, slot.bin_path, nox_home, resource_dirs, opts.debug_info, opts.backend, opts.profile, fetch_policy, opts.target, opts.emit_asm, opts.emit);
             try commitRunCache(io, a, slot);
+            pruneRunCache(io, a, nox_home, run_limits);
             break :blk built;
         };
+        if (slot.hit) run_cache.touch(io, slot.obj_dir);
         const code = try runAndWait(io, a, bin_path, &.{});
         std.process.exit(code);
     }
@@ -1561,6 +1573,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
     var fail_count: usize = 0;
     var stamps: std.StringHashMapUnmanaged([]const u8) = .empty;
     const tool_stamp = toolchainStamp(io, a, resource_dirs) catch "-";
+    var built_any = false;
     for (files.items) |file| {
         var file_arena = std.heap.ArenaAllocator.init(gpa);
         defer file_arena.deinit();
@@ -1577,7 +1590,10 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
             fail_count += 1;
             continue;
         };
-        if (!slot.hit) commitRunCache(io, fa, slot) catch {};
+        if (slot.hit) run_cache.touch(io, slot.obj_dir) else {
+            commitRunCache(io, fa, slot) catch {};
+            built_any = true;
+        }
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             printOk("PASSED: {s}\n", .{file});
@@ -1588,6 +1604,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         }
     }
 
+    if (built_any) pruneRunCache(io, a, nox_home, run_limits);
     if (fail_count > 0) {
         printErr("\n{d} passed, {d} failed ({d} total)\n", .{ pass_count, fail_count, files.items.len });
         std.process.exit(1);
@@ -1649,6 +1666,7 @@ fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
 
 const RunSlot = struct {
     bin_path: []const u8,
+    obj_dir: []const u8,
     hit: bool,
     index_path: []const u8,
     content_hex: []const u8,
@@ -1709,6 +1727,7 @@ fn prepareRunCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, path_
 
     return .{
         .bin_path = bin_path,
+        .obj_dir = obj_dir,
         .hit = hit,
         .index_path = index_path,
         .content_hex = content_hex,
@@ -1721,7 +1740,14 @@ fn commitRunCache(io: std.Io, a: std.mem.Allocator, slot: RunSlot) !void {
         std.Io.Dir.cwd().deleteTree(io, dir) catch {};
     }
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = slot.index_path, .data = slot.content_hex });
-    _ = a;
+    run_cache.dropIntermediates(a, io, slot.obj_dir, std.fs.path.basename(slot.bin_path));
+    run_cache.touch(io, slot.obj_dir);
+}
+
+/// Derlemeden sonra çağrılır: eski/fazla önbellek girdilerini siler (en iyi çaba, asıl komutu asla düşürmez).
+fn pruneRunCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, limits: run_cache.Limits) void {
+    const now_s: i64 = @intCast(@divFloor(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
+    _ = run_cache.prune(a, io, nox_home, limits, now_s, false) catch {};
 }
 
 fn appendProjectSources(io: std.Io, a: std.mem.Allocator, root: []const u8, parts: *std.ArrayListUnmanaged([]const u8)) !void {

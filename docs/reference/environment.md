@@ -8,6 +8,7 @@
 | `NOX_RESOURCE_DIR` | `noxc` | use this directory instead of the one next to the executable to find the runtime object and standard library |
 | `NOX_INDEX_URL` | `search`, `add` | the package index to query: an `https://…/index.json` URL or a local file (default `https://noxpkg.noxlang.com/index.json`) |
 | `NOX_PUBLISH_API_BASE` | `publish` | base URL of the registry's publish API (default `https://noxpkg.noxlang.com`) |
+| `NOX_RUN_CACHE_MAX_MB` | `run`, `test`, `cache prune` | size cap in MB for the `noxc run`/`noxc test` binary cache under `$NOX_HOME/cache/run` (default 512; `0` = no cap). Entries unused for 14 days are removed regardless; entries used in the last 10 minutes are never removed |
 | `NOX_UPGRADE_API_BASE`, `NOX_UPGRADE_DOWNLOAD_BASE` | `upgrade` | override where releases are looked up and downloaded (for mirrors and tests) |
 | `NOX_ALLOW_INSECURE_TRANSPORT` | package/upgrade fetches | permit non-TLS transports (testing only; never in production) |
 | `LC_ALL`, `LC_MESSAGES`, `LANG` | `noxc --help` | a value starting with `tr` selects Turkish help; diagnostics and status lines stay English |

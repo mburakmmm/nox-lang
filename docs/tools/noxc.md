@@ -61,7 +61,7 @@ A bare `noxc file.nox` builds `file`; it does not run it (use `noxc run`).
 | `noxc install <name\|repo[@ref]> [--ref <ref>]` | globally install a package that declares a `bin` entry point. `github.com/org/name@v1.2.3` sets the ref; `--ref` overrides it. `git@host:path` is not split on the first `@` |
 | `noxc uninstall <command>` | remove a globally installed command |
 | `noxc list` | list globally installed packages |
-| `noxc cache prune [--dry-run] [--all]` | delete stale package-cache directories |
+| `noxc cache prune [--dry-run] [--all]` | delete stale package-cache directories and old/oversized `noxc run`/`noxc test` binaries (`--all` empties the run cache) |
 
 Details: [Packages](packages.md) and [noxpkg](noxpkg.md).
 

@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.95]
+
+### Düzeltildi
+
+- **`$NOX_HOME/cache/run` sınırsız şişiyordu (gerçek bir kurulumda 4 GB).** "Aynı kaynak yolunun eski özeti silinir" kuralı yalnızca aynı yol için işliyordu; geçici dizinlerdeki, taşınmış ya da silinmiş projelerin ikilileri ve başarısız derlemelerin boş dizinleri sonsuza kadar kalıyordu, her girdi ayrıca ara dosyaları (`bin.ll`, `bin.ssa`, `bin.s`) taşıyordu. Artık: derleme biter bitmez ikili dışındaki ara dosyalar silinir; her kullanım `used` işaretçisini günceller; her derlemeden sonra 14 gündür kullanılmayan, ikilisiz ve 512 MiB toplam tavanını aşan en eski girdiler silinir (son 10 dakikada kullanılan girdiye hiç dokunulmaz); hedefi kalmayan `paths/*` dizin dosyaları temizlenir. Tavan `NOX_RUN_CACHE_MAX_MB` ile ayarlanır (`0` = tavan yok). `noxc cache prune` artık run önbelleğini de temizler (`--all` hepsini boşaltır, `--dry-run` yalnızca raporlar).
+- **Windows'ta `noxc upgrade` "access denied" ile düşüyordu.** Çalışan `noxc.exe`/`noxlsp.exe` kenara alınırken Zig'in `Dir.rename`i kaynağı yazma erişimiyle açıyordu; çalışan bir imaj yazma için açılamadığından hata `catch {}` ile yutuluyor, ardından çalışan `.exe`nin üzerine kopyalama aynı hatayı veriyordu. Değiştirme artık `MoveFileExW` ile yapılır (yalnızca `DELETE` erişimi ister), önceki yükseltmeden kalan kilitli `.old` kopyası bir sonraki boş adla (`.old1` ...) atlatılır, kopya başarısız olursa eski dosya geri konur, `bin/` dosyaları lib'den ÖNCE değiştirilir (kilit hatasında kurulum dokunulmadan kalır) ve hata mesajı hangi dosyanın değiştirilemediğini söyler.
+
 ## [2.0.94]
 
 ### Düzeltildi

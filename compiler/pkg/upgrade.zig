@@ -60,6 +60,8 @@ pub const UpgradeError = error{
     UpgradeDownloadFailed,
     UpgradeChecksumMismatch,
     UnsupportedPlatform,
+    /// Windows: çalışan/kilitli bir dosya kenara alınamadı (bkz. `moveAside`).
+    UpgradeFileLocked,
 };
 
 /// `index.zig`nin `validateIndexUrlScheme`ıyla AYNI desen (bkz. o
@@ -291,53 +293,141 @@ const BIN_EXE_NAMES: []const []const u8 = if (builtin.os.tag == .windows)
 else
     &.{ "noxc", "noxlsp", "qbe" };
 
-/// `final_dir` (tam çıkarılmış, TEMİZ bir arşiv ağacı) İÇERİĞİNİ GERÇEK
-/// kurulum köküne (`install_dir`) GÜVENLE aktarır — bkz. modül üstü notun
-/// "Güvenli değiştirme modeli" bölümü.
-fn installFromScratch(a: Allocator, io: Io, final_dir: Io.Dir, install_dir: Io.Dir) !void {
-    // Önceki bir upgrade'den kalan `.old` dosyaları best-effort temizlenir
-    // (o an SİLİNEBİLİR olmaları BEKLENİR — ÖNCEKİ süreç ÇOKTAN çıkmıştır).
-    if (install_dir.openDir(io, "bin", .{})) |bd| {
-        var bin_dir = bd;
-        defer bin_dir.close(io);
-        for (BIN_EXE_NAMES) |name| {
-            const old_name = std.fmt.allocPrint(a, "{s}.old", .{name}) catch continue;
-            bin_dir.deleteFile(io, old_name) catch {};
-        }
-    } else |_| {}
+/// Windows'ta `src`yi `dst`nin üstüne taşır (`MOVEFILE_REPLACE_EXISTING`).
+/// **Neden `Dir.rename` DEĞİL:** Zig'in Windows `rename`i kaynağı
+/// `GENERIC_WRITE | DELETE` erişimiyle AÇAR; ÇALIŞAN bir `.exe`
+/// (veya yüklü bir DLL) yazma için AÇILAMAZ → `AccessDenied`. `MoveFileExW`
+/// yalnızca `DELETE` erişimi ister, bu yüzden çalışan imaj YENİDEN
+/// ADLANDIRILABİLİR (standart öz-güncelleyici hilesi). Eski kod bu hatayı
+/// `catch {}` ile yutuyor, ardından ÇALIŞAN `noxc.exe`nin üstüne kopyalamaya
+/// çalışıp `noxc upgrade`i "access denied" ile düşürüyordu.
+const win_move = if (builtin.os.tag == .windows) struct {
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    extern "kernel32" fn MoveFileExW(existing: [*:0]const u16, new: ?[*:0]const u16, flags: u32) callconv(.winapi) i32;
 
-    // Kilit TAŞIMAYAN her şey (lib/**, kök belgeler) — `bin/<exe>` HARİÇ,
-    // AŞAĞIDA AYRI ele alınır.
+    fn move(a: Allocator, src: []const u8, dst: []const u8) !void {
+        const src_w = try std.unicode.utf8ToUtf16LeAllocZ(a, src);
+        defer a.free(src_w);
+        const dst_w = try std.unicode.utf8ToUtf16LeAllocZ(a, dst);
+        defer a.free(dst_w);
+        if (MoveFileExW(src_w.ptr, dst_w.ptr, MOVEFILE_REPLACE_EXISTING) == 0) {
+            return switch (std.os.windows.GetLastError()) {
+                .FILE_NOT_FOUND, .PATH_NOT_FOUND => error.FileNotFound,
+                else => error.UpgradeFileLocked,
+            };
+        }
+    }
+} else struct {};
+
+/// Bir önceki yükseltmeden kalan kenara-alınmış kopya adları: `<yol>.old`,
+/// `<yol>.old1` ... `<yol>.old{ASIDE_SLOTS-1}`. Eski kopya HÂLÂ çalışıyorsa
+/// (ör. editörde açık `noxlsp.exe`) silinemez ve ADI dolu kalır; sonraki
+/// boş ad kullanılır, böylece kilitli bir artık yükseltmeyi ENGELLEMEZ.
+const ASIDE_SLOTS = 8;
+
+fn asideName(buf: []u8, rel: []const u8, slot: usize) []const u8 {
+    if (slot == 0) return std.fmt.bufPrint(buf, "{s}.old", .{rel}) catch rel;
+    return std.fmt.bufPrint(buf, "{s}.old{d}", .{ rel, slot }) catch rel;
+}
+
+/// Windows: `install_root\rel` dosyasını kenara alır (var olmayan dosya
+/// başarıdır). Döndürdüğü yol geri alma (rollback) içindir.
+fn moveAside(a: Allocator, install_root: []const u8, rel: []const u8) !?[]const u8 {
+    var slot: usize = 0;
+    while (slot < ASIDE_SLOTS) : (slot += 1) {
+        var name_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const aside_rel = asideName(&name_buf, rel, slot);
+        const src = try std.fs.path.join(a, &.{ install_root, rel });
+        defer a.free(src);
+        const dst = try std.fs.path.join(a, &.{ install_root, aside_rel });
+        win_move.move(a, src, dst) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            error.UpgradeFileLocked => continue,
+            else => |e| return e,
+        };
+        return try a.dupe(u8, dst);
+    }
+    return error.UpgradeFileLocked;
+}
+
+/// `final_dir/rel` -> `install_dir/rel`. Windows'ta `must_aside` (çalışan
+/// yürütülebilirler) için önce eski dosya kenara alınır; diğer dosyalarda
+/// düz kopya `AccessDenied` verirse AYNI yol bir kez denenir. Kopya
+/// başarısız olursa kenara alınan dosya GERİ KONUR (kurulum yarım kalmaz).
+fn replaceFile(a: Allocator, io: Io, final_dir: Io.Dir, install_dir: Io.Dir, install_root: []const u8, rel: []const u8, must_aside: bool) !void {
+    const opts: Io.Dir.CopyFileOptions = .{ .replace = true, .make_path = true };
+    if (builtin.os.tag != .windows) return final_dir.copyFile(rel, install_dir, rel, io, opts);
+
+    var aside: ?[]const u8 = null;
+    defer if (aside) |p| a.free(p);
+    if (must_aside) aside = try moveAside(a, install_root, rel);
+    final_dir.copyFile(rel, install_dir, rel, io, opts) catch |err| {
+        if (err == error.AccessDenied and aside == null) {
+            aside = try moveAside(a, install_root, rel);
+            if (final_dir.copyFile(rel, install_dir, rel, io, opts)) |_| return else |err2| return restoreAside(a, install_root, rel, aside, err2);
+        }
+        return restoreAside(a, install_root, rel, aside, err);
+    };
+}
+
+fn restoreAside(a: Allocator, install_root: []const u8, rel: []const u8, aside: ?[]const u8, err: anyerror) anyerror {
+    if (aside) |p| {
+        const dst = std.fs.path.join(a, &.{ install_root, rel }) catch return err;
+        defer a.free(dst);
+        win_move.move(a, p, dst) catch {};
+    }
+    return err;
+}
+
+/// Windows: `final_dir` içindeki her dosya için önceki yükseltmelerden kalan
+/// `.old*` artıklarını (best-effort) siler. Yalnızca YENİ ağaçta KARŞILIĞI
+/// olan yolların artıkları silinir; kullanıcıya ait `notlar.old` gibi
+/// dosyalara dokunulmaz.
+fn cleanStaleAside(a: Allocator, io: Io, final_dir: Io.Dir, install_dir: Io.Dir) void {
+    var walker = final_dir.walk(a) catch return;
+    defer walker.deinit();
+    while (walker.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        var slot: usize = 0;
+        while (slot < ASIDE_SLOTS) : (slot += 1) {
+            var name_buf: [std.fs.max_path_bytes]u8 = undefined;
+            install_dir.deleteFile(io, asideName(&name_buf, entry.path, slot)) catch {};
+        }
+    }
+}
+
+/// `final_dir` (tam çıkarılmış, TEMİZ bir arşiv ağacı) İÇERİĞİNİ GERÇEK
+/// kurulum köküne (`install_dir`, mutlak yolu `install_root`) GÜVENLE
+/// aktarır — bkz. modül üstü notun "Güvenli değiştirme modeli" bölümü.
+///
+/// Sıra: ÖNCE `bin/<exe>` (kilitlenme riski burada; başarısız olursa kurulum
+/// DOKUNULMADAN kalır), SONRA lib/**, kök belgeler.
+fn installFromScratch(a: Allocator, io: Io, final_dir: Io.Dir, install_dir: Io.Dir, install_root: []const u8) !void {
+    if (builtin.os.tag == .windows) cleanStaleAside(a, io, final_dir, install_dir);
+
+    try install_dir.createDirPath(io, "bin");
+    for (BIN_EXE_NAMES) |name| {
+        const rel = try std.fmt.allocPrint(a, "bin{c}{s}", .{ std.fs.path.sep, name });
+        defer a.free(rel);
+        replaceFile(a, io, final_dir, install_dir, install_root, rel, true) catch |err| {
+            if (err == error.FileNotFound) continue;
+            std.debug.print("upgrade: cannot replace {s} ({t}); close running noxc/noxlsp processes (editors with the Nox extension) and retry\n", .{ rel, err });
+            return err;
+        };
+    }
+
     var walker = try final_dir.walk(a);
     defer walker.deinit();
     while (try walker.next(io)) |entry| {
         if (isBinExeEntry(entry)) continue;
         switch (entry.kind) {
             .directory => try install_dir.createDirPath(io, entry.path),
-            .file => try final_dir.copyFile(entry.path, install_dir, entry.path, io, .{ .replace = true, .make_path = true }),
+            .file => replaceFile(a, io, final_dir, install_dir, install_root, entry.path, false) catch |err| {
+                std.debug.print("upgrade: cannot replace {s} ({t})\n", .{ entry.path, err });
+                return err;
+            },
             else => {},
         }
-    }
-
-    // `bin/noxc`/`noxlsp`/`qbe` (VARSA `.exe`): Windows'ta ÖNCE yeniden
-    // adlandır (ÇALIŞAN bir .exe SİLİNEMEZ/ÜZERİNE YAZILAMAZ ama YENİDEN
-    // ADLANDIRILABİLİR), SONRA kopyala; diğer platformlarda `copyFile`nin
-    // KENDİSİ (rename-tabanlı atomik değiştirme) YETERLİ.
-    try install_dir.createDirPath(io, "bin");
-    var install_bin_dir = try install_dir.openDir(io, "bin", .{});
-    defer install_bin_dir.close(io);
-    var final_bin_dir = final_dir.openDir(io, "bin", .{ .iterate = true }) catch return;
-    defer final_bin_dir.close(io);
-
-    for (BIN_EXE_NAMES) |name| {
-        if (builtin.os.tag == .windows) {
-            const old_name = try std.fmt.allocPrint(a, "{s}.old", .{name});
-            install_bin_dir.rename(name, install_bin_dir, old_name, io) catch {};
-        }
-        final_bin_dir.copyFile(name, install_bin_dir, name, io, .{ .replace = true, .make_path = true }) catch |err| {
-            if (err == error.FileNotFound) continue;
-            return err;
-        };
     }
 }
 
@@ -400,7 +490,7 @@ pub fn performUpgrade(a: Allocator, io: Io, target_tag: []const u8, asset: Platf
         try extractTarGz(io, scratch_dir, archive_name, final_dir);
     }
 
-    try installFromScratch(a, io, final_dir, install_dir);
+    try installFromScratch(a, io, final_dir, install_dir, install_root);
 }
 
 test "currentPlatformAsset: bu makinenin platformu icin dogru varlik doner" {
@@ -425,4 +515,97 @@ test "isAlreadyUpToDate: mevcut surumle ayni tag esitligi dogru tespit eder" {
     const current = try currentVersionTag(a);
     try std.testing.expect(try isAlreadyUpToDate(a, current));
     try std.testing.expect(!try isAlreadyUpToDate(a, "v0.0.0-kesinlikle-farkli"));
+}
+
+fn tmpRoot(io: Io, tmp: *std.testing.TmpDir, buf: []u8) ![]const u8 {
+    const n = try tmp.dir.realPath(io, buf);
+    return buf[0..n];
+}
+
+test "asideName: .old, .old1, .old2 ... sirasiyla uretilir" {
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("bin/noxc.old", asideName(&buf, "bin/noxc", 0));
+    try std.testing.expectEqualStrings("bin/noxc.old1", asideName(&buf, "bin/noxc", 1));
+    try std.testing.expectEqualStrings("bin/noxc.old7", asideName(&buf, "bin/noxc", 7));
+}
+
+test "installFromScratch: bin ve lib dosyalarini degistirir, kullanici dosyasina dokunmaz" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+
+    var new_tree = std.testing.tmpDir(.{ .iterate = true });
+    defer new_tree.cleanup();
+    var install = std.testing.tmpDir(.{ .iterate = true });
+    defer install.cleanup();
+
+    const exe = BIN_EXE_NAMES[0];
+    const exe_rel = try std.fmt.allocPrint(a, "bin/{s}", .{exe});
+    const stale_rel = try std.fmt.allocPrint(a, "bin/{s}.old", .{exe});
+    try new_tree.dir.createDirPath(io, "bin");
+    try new_tree.dir.createDirPath(io, "lib/nox");
+    try new_tree.dir.writeFile(io, .{ .sub_path = exe_rel, .data = "NEW-BIN" });
+    try new_tree.dir.writeFile(io, .{ .sub_path = "lib/nox/x.nox", .data = "NEW-LIB" });
+
+    try install.dir.createDirPath(io, "bin");
+    try install.dir.createDirPath(io, "lib/nox");
+    try install.dir.writeFile(io, .{ .sub_path = exe_rel, .data = "OLD-BIN" });
+    try install.dir.writeFile(io, .{ .sub_path = "lib/nox/x.nox", .data = "OLD-LIB" });
+    try install.dir.writeFile(io, .{ .sub_path = stale_rel, .data = "STALE" });
+    try install.dir.writeFile(io, .{ .sub_path = "notes.old", .data = "KEEP" });
+
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root = try tmpRoot(io, &install, &root_buf);
+    try installFromScratch(a, io, new_tree.dir, install.dir, root);
+
+    try std.testing.expectEqualStrings("NEW-BIN", try install.dir.readFileAlloc(io, exe_rel, a, .limited(1024)));
+    try std.testing.expectEqualStrings("NEW-LIB", try install.dir.readFileAlloc(io, "lib/nox/x.nox", a, .limited(1024)));
+    try std.testing.expectEqualStrings("KEEP", try install.dir.readFileAlloc(io, "notes.old", a, .limited(1024)));
+    // Önceki yükseltmeden kalan kenara-alınmış kopya kalmaz.
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectError(error.FileNotFound, install.dir.readFileAlloc(io, stale_rel, a, .limited(1024)));
+    }
+}
+
+test "replaceFile (Windows): yuklu bir imaj kilitliyken de degistirir" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    const win = struct {
+        extern "kernel32" fn LoadLibraryW(name: [*:0]const u16) callconv(.winapi) ?*anyopaque;
+        extern "kernel32" fn FreeLibrary(h: *anyopaque) callconv(.winapi) i32;
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+
+    var new_tree = std.testing.tmpDir(.{ .iterate = true });
+    defer new_tree.cleanup();
+    var install = std.testing.tmpDir(.{ .iterate = true });
+    defer install.cleanup();
+
+    const system_dll = "C:\\Windows\\System32\\winmm.dll";
+    try install.dir.createDirPath(io, "bin");
+    try new_tree.dir.createDirPath(io, "bin");
+    try new_tree.dir.writeFile(io, .{ .sub_path = "bin\\locked.dll", .data = "NEW-BIN" });
+    try std.Io.Dir.copyFileAbsolute(system_dll, try std.fs.path.join(a, &.{ try tmpRootAlloc(a, io, &install), "bin", "locked.dll" }), io, .{});
+
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root = try tmpRoot(io, &install, &root_buf);
+    const loaded_path = try std.fs.path.join(a, &.{ root, "bin", "locked.dll" });
+    const loaded_w = try std.unicode.utf8ToUtf16LeAllocZ(a, loaded_path);
+    // Yüklü imaj (çalışan .exe ile AYNI kilit): yazma için açılamaz.
+    const handle = win.LoadLibraryW(loaded_w.ptr) orelse return error.LoadLibraryFailed;
+    defer _ = win.FreeLibrary(handle);
+
+    // Önceki yükseltmeden kalan (kilitsiz) `.old` üzerine yazılır.
+    try install.dir.writeFile(io, .{ .sub_path = "bin\\locked.dll.old", .data = "BLOCKER" });
+
+    try replaceFile(a, io, new_tree.dir, install.dir, root, "bin\\locked.dll", true);
+    try std.testing.expectEqualStrings("NEW-BIN", try install.dir.readFileAlloc(io, "bin\\locked.dll", a, .limited(1024)));
+}
+
+fn tmpRootAlloc(a: Allocator, io: Io, tmp: *std.testing.TmpDir) ![]const u8 {
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    return try a.dupe(u8, try tmpRoot(io, tmp, &buf));
 }

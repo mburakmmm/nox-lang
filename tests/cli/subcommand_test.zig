@@ -157,6 +157,37 @@ test "run: programi calistirir, derlendi mesaji basmaz, stdout'u yansitir" {
     defer std.testing.allocator.free(again.stderr);
     try std.testing.expect(again.term == .exited and again.term.exited == 0);
     try std.testing.expectEqualStrings("koştu\n", again.stdout);
+
+    // Ara dosyalar (bin.ll, bin.ssa ...) kalmaz: girdide yalnızca ikili + `used` işaretçisi vardır.
+    var obj = try tmp.dir.openDir(io, "nox-home/cache/run/obj", .{ .iterate = true });
+    defer obj.close(io);
+    var entries: usize = 0;
+    var it = obj.iterate();
+    while (try it.next(io)) |entry| {
+        entries += 1;
+        var sub = try obj.openDir(io, entry.name, .{ .iterate = true });
+        defer sub.close(io);
+        var sub_it = sub.iterate();
+        while (try sub_it.next(io)) |f| {
+            const is_bin = std.mem.eql(u8, f.name, "bin") or std.mem.eql(u8, f.name, "bin.exe");
+            try std.testing.expect(is_bin or std.mem.eql(u8, f.name, "used"));
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), entries);
+
+    // `noxc cache prune --all` run önbelleğini boşaltır.
+    const pruned = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "cache", "prune", "--all" },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(pruned.stdout);
+    defer std.testing.allocator.free(pruned.stderr);
+    try std.testing.expect(pruned.term == .exited and pruned.term.exited == 0);
+    try std.testing.expect(std.mem.indexOf(u8, pruned.stdout, "1 run-cache binaries") != null);
+    var obj_after = try tmp.dir.openDir(io, "nox-home/cache/run/obj", .{ .iterate = true });
+    defer obj_after.close(io);
+    var after_it = obj_after.iterate();
+    try std.testing.expect((try after_it.next(io)) == null);
 }
 
 test "run: yakalanmamis istisna cikis kodunu sifirdan farkli yansitir" {
