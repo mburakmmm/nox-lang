@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.89]
+
+### Değişti
+
+- `project/nox-ana-todo.md`: fiziksel cihaz kanıtları (4.2, 4.3) ve imzalı IPA/AAB ile `supported` ilanı (4.8) kullanıcı kararıyla bekletildi; mobil hedefler `experimental` kalır, kapsam simülatör/emülatörde doğrulukla sınırlıdır.
+
 ## [2.0.88]
 
 ### Eklendi
