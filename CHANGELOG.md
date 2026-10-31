@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.101]
+
+### Düzeltildi
+
+- **CI'ın macOS işi ve Release iş akışı 31 Ekim'den beri çalışmıyordu.** `macos-14` runner imajı GitHub tarafından kullanımdan kaldırıldı (runner-images#13518); iş bir runner almadan iptal ediliyordu, bu yüzden `ci.yml` hiç yeşil olamıyor ve Release'in CI kapısı geçmiyordu. `ci.yml`, `release.yml` ve `stress.yml` `macos-15`e (arm64) taşındı. `macos-latest` (şu an macOS 26) bilinçli olarak seçilmedi: yerel derleme minimum macOS sürümünü ana makineden aldığından Release ikilileri yalnızca en yeni macOS'ta çalışırdı.
+
 ## [2.0.100]
 
 ### Düzeltildi
