@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.88]
+
+### Eklendi
+
+- `scripts/mobile_android_16k.sh` (TODO 4.4): Android 16 KiB sayfa boyutu ÇALIŞMA ANINDA doğrulanır, yalnızca ELF başlığı değil. 16 KiB sayfalı Android 15 arm64 emülatöründe (`google_apis_ps16k`, `getconf PAGE_SIZE` = 16384) yığın probe'u, stdlib paketi (`suite 0 pending 0`) ve çalışma zamanı probe'u (`probe 0 pending 0`) geçer. Nox çalışma zamanından üretilen paylaşılan kütüphane `-Wl,-z,max-page-size=16384` ile `dlopen` edilir; 4096 hizalı üretilen aynı kütüphane 16 KiB çekirdekte yüklenirken çöker (negatif kontrol). Fiziksel cihaz ve imzalı AAB hâlâ açık.
+
 ## [2.0.87]
 
 ### Eklendi

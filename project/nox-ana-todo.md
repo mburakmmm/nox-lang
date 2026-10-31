@@ -236,7 +236,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [!] **4.2 Android ARM64 fiziksel cihaz kanıtı.** Cihaz laboratuvarı gerekir.
 - [!] **4.3 iOS ARM64 fiziksel cihaz kanıtı.** Apple signing/provisioning ve
   cihaz gerekir; build-only kanıt yeterli değildir.
-- [ ] **4.4 Android 16 KiB'yi çalışma anında doğrula.** Yalnız ELF header
+- [~] **4.4 Android 16 KiB'yi çalışma anında doğrula.** (v2.0.88: `scripts/mobile_android_16k.sh`; 16 KiB sayfalı Android 15 arm64 emülatöründe yığın probe'u, stdlib paketi ve çalışma zamanı probe'u geçer; Nox çalışma zamanından üretilen `.so` 16 KiB hizalıyken yüklenir, 4 KiB hizalıyken çöker. Açık: fiziksel cihaz, imzalı AAB, bağımlı üçüncü-taraf `.so`lar.) Yalnız ELF header
   ölçümü değil, uyumlu emulator/device açılışı ve bağımlı bütün `.so`lar.
 - [ ] **4.5 Mobil CI matrisini tamamla.** PR'da iOS simulator run + Android
   emulator smoke; nightly sanitizer/lifecycle/network; watchdog ve cleanup.

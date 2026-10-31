@@ -17,6 +17,8 @@ Simülatörde `nox.tls` `example.com:443` el sıkışması `suite 0 pending 0` i
 
 Yığın ve iş parçacığı güvenliği (`scripts/mobile_stack_probe.sh`, `tests/golden/mobile_stack_probe.nox`): iOS simülatöründe ve `android-arm64` emülatöründe 20000 çerçevelik ana-yığın özyinelemesi, 192 KiB fiber yığınına sığan 1500 çerçevelik özyineleme ve 16 `nox.thread` iş parçacığının başlatılıp birleştirilmesi doğru sonuç verir (20000, 1500, 240). Sonsuz özyineleme fiber yığınını taşırsa süreç guard page'de sinyalle sonlanır (iOS simülatörü SIGBUS/138, Android SIGSEGV/139); sessiz bellek bozulması ya da takılma olmaz. Debug ve ReleaseFast çalışma zamanıyla ölçüldü. Ölçülmedi: arm64e işaretçi doğrulaması (yalnızca fiziksel cihazda vardır), fiziksel cihazlar, iş parçacığı-yerel yıkıcıların gözlemlenebilir yan etkisi.
 
+Android 16 KiB sayfa boyutu çalışma anında doğrulandı (`scripts/mobile_android_16k.sh`): Android 15 `google_apis_ps16k` arm64 emülatöründe (`getconf PAGE_SIZE` = 16384) yığın probe'u (20000, 1500, 240, taşma SIGSEGV), stdlib paketi (`suite 0 pending 0`) ve çalışma zamanı probe'u (`probe 0 pending 0`) çalışır. Nox çalışma zamanından üretilen paylaşılan kütüphane `-Wl,-z,max-page-size=16384` ile `dlopen` edilir; aynı kütüphane 4096 hizalı üretildiğinde 16 KiB çekirdekte yüklenirken çöker (negatif kontrol: test ayırt edicidir). Fiziksel 16 KiB cihaz ve imzalı AAB ölçülmedi.
+
 ## Stable kapısı
 
 Kapı, imzalı IPA ve AAB, 16 KiB ölçümü, simülatör ve emülatörde aynı Counter, Notes ve Chat kaynakları, erişilebilirlik, bellek baskısı ve yaşam döngüsü kanıtı durunca kapanır. Kanıt `mobile-evidence/` altındadır. İşler `|| true` ile yeşile zorlanmaz. Mağaza imza anahtarı depoya girmez.
