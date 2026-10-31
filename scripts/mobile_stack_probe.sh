@@ -18,7 +18,9 @@ check() { # mod beklenen_çıkış beklenen_stdout
   rc=$(printf '%s\n' "$out" | sed -n 's/^EXIT=//p' | tail -1)
   body=$(printf '%s\n' "$out" | grep -v '^EXIT=' | tr -d '\r' | head -3 | tr '\n' ' ' | sed 's/ *$//')
   case "$want_rc" in
-    signal) ok=0; [ "$rc" = 139 ] || [ "$rc" = 138 ] || [ "$rc" = 134 ] && ok=1; [ -z "$body" ] || ok=0 ;;
+    signal) ok=0; [ "$rc" = 139 ] || [ "$rc" = 138 ] || [ "$rc" = 134 ] && ok=1; [ -z "$body" ] || ok=0
+      # AddressSanitizer guard page SEGV'sini kendisi raporlar ve 1 ile çıkar (sinyalle ölmez).
+      [ -n "${android_env:-}" ] && [ "$rc" = 1 ] && ok=1 ;;
     *) ok=0; [ "$rc" = "$want_rc" ] && [ "$body" = "$want_out" ] && ok=1 ;;
   esac
   if [ "$ok" = 1 ]; then echo "ok   $mode (çıkış $rc ${body:+çıktı $body})"; else echo "FAIL $mode: çıkış=$rc çıktı=[$body] beklenen=$want_rc/[$want_out]"; fail=1; fi
@@ -42,11 +44,12 @@ android)
     "$adb" shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
   fi
   "$noxc" build --target "$android_target" --emit-obj -o "$work/probe.o" "$root/tests/golden/mobile_stack_probe.nox"
-  "$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_stack_host.c"
-  "$clang" -fPIE -pie -target "$android_triple" -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+  "$clang" -c -fPIE $android_cflags -target "$android_triple" -I "$root/include" -o "$work/host.o" "$root/scripts/mobile_stack_host.c"
+  "$clang" -fPIE -pie $android_cflags -target "$android_triple" -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+  android_san_push "$ndk" "$adb"
   "$adb" push "$work/probe" /data/local/tmp/nox-stack-probe >/dev/null
   "$adb" shell chmod 755 /data/local/tmp/nox-stack-probe
-  run_probe() { "$adb" shell "NOX_STACK_MODE=$1 NOX_MOBILE_ROOT=/data/local/tmp/nox-stack /data/local/tmp/nox-stack-probe; echo EXIT=\$?"; }
+  run_probe() { "$adb" shell "$android_env NOX_STACK_MODE=$1 NOX_MOBILE_ROOT=/data/local/tmp/nox-stack /data/local/tmp/nox-stack-probe; echo EXIT=\$?"; }
   ;;
 ios)
   udid=${2:?simülatör UDID}

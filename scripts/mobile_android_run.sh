@@ -80,14 +80,15 @@ int main(void) {
     return 0;
 }
 EOF
-"$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/suite_host.o" "$work/suite_host.c"
-"$clang" -c -fPIE -target "$android_triple" -I "$root/include" -o "$work/probe_host.o" "$root/scripts/mobile_probe_host.c"
-"$clang" -fPIE -pie -target "$android_triple" -o "$work/suite" "$work/suite_host.o" "$work/suite.o" "$rt" -lm -ldl -llog
-"$clang" -fPIE -pie -target "$android_triple" -o "$work/probe" "$work/probe_host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+"$clang" -c -fPIE $android_cflags -target "$android_triple" -I "$root/include" -o "$work/suite_host.o" "$work/suite_host.c"
+"$clang" -c -fPIE $android_cflags -target "$android_triple" -I "$root/include" -o "$work/probe_host.o" "$root/scripts/mobile_probe_host.c"
+"$clang" -fPIE -pie $android_cflags -target "$android_triple" -o "$work/suite" "$work/suite_host.o" "$work/suite.o" "$rt" -lm -ldl -llog
+"$clang" -fPIE -pie $android_cflags -target "$android_triple" -o "$work/probe" "$work/probe_host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+android_san_push "$ndk" "$adb"
 "$adb" push "$work/suite" /data/local/tmp/nox-suite
 "$adb" push "$work/probe" /data/local/tmp/nox-probe
 "$adb" shell chmod 755 /data/local/tmp/nox-suite /data/local/tmp/nox-probe
-"$adb" shell /data/local/tmp/nox-suite
+"$adb" shell "$android_env /data/local/tmp/nox-suite"
 "$adb" shell rm -rf /data/local/tmp/nox-mobile-probe
 "$adb" shell mkdir -p /data/local/tmp/nox-mobile-probe
-"$adb" shell NOX_MOBILE_ROOT=/data/local/tmp/nox-mobile-probe /data/local/tmp/nox-probe
+"$adb" shell "$android_env NOX_MOBILE_ROOT=/data/local/tmp/nox-mobile-probe /data/local/tmp/nox-probe"

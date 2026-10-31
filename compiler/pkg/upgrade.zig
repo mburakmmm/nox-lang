@@ -562,9 +562,9 @@ test "installFromScratch: bin ve lib dosyalarini degistirir, kullanici dosyasina
     try std.testing.expectEqualStrings("NEW-BIN", try install.dir.readFileAlloc(io, exe_rel, a, .limited(1024)));
     try std.testing.expectEqualStrings("NEW-LIB", try install.dir.readFileAlloc(io, "lib/nox/x.nox", a, .limited(1024)));
     try std.testing.expectEqualStrings("KEEP", try install.dir.readFileAlloc(io, "notes.old", a, .limited(1024)));
-    // Önceki yükseltmeden kalan kenara-alınmış kopya kalmaz.
+    // Windows: önceki yükseltmeden kalan "STALE" silinir, yerine ESKİ ikili kenara alınmış olarak durur (geri alma kopyası).
     if (builtin.os.tag == .windows) {
-        try std.testing.expectError(error.FileNotFound, install.dir.readFileAlloc(io, stale_rel, a, .limited(1024)));
+        try std.testing.expectEqualStrings("OLD-BIN", try install.dir.readFileAlloc(io, stale_rel, a, .limited(1024)));
     }
 }
 

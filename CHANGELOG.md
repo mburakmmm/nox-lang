@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.97]
+
+### Düzeltildi
+
+- v2.0.95'in Windows CI'ı iki test hatasıyla kırmızıydı: `Dir.setTimestamps` Windows'ta Zig'de uygulanmamış (panic) — run önbelleği testleri dosya düzeyi `File.setTimestamps` kullanır; `installFromScratch` testi yükseltme sonrası `.old` dosyasının ESKİ ikiliyi (geri alma kopyası) tuttuğunu doğrular.
+- `tests/golden/mobile_stdlib_suite.nox`: yakalanmayan bir istisna sessizce `suite 0 pending 1` bırakıyordu (hangi adımın ve iletinin başarısız olduğu bilinmiyordu). Artık `mobile_suite` istisnayı yakalar, iletiyi yazar ve 99 döner.
+
+### Eklendi
+
+- `NOX_ANDROID_SANITIZE=address`: `mobile_android_run.sh`/`mobile_stack_probe.sh` host+çalışma zamanını AddressSanitizer ile bağlar (NDK `libclang_rt.asan` cihaza itilir). Gecelik Android iş akışına AddressSanitizer yığın probe'u eklendi. Bilinen sınır: Android'de sızıntı denetimi (LSan) yoktur; stdlib paketi AddressSanitizer altında henüz SIGILL ile ölüyor (yığın probe'u geçer) — TODO'da açık gözlem.
+
 ## [2.0.96]
 
 ### Eklendi

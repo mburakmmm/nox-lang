@@ -252,7 +252,10 @@ fn writeEntry(io: Io, root: Io.Dir, hex: []const u8, bin_name: []const u8, bin_b
         const marker = try std.fmt.bufPrint(&pbuf, "cache/run/obj/{s}/{s}", .{ hex, used_marker });
         try root.writeFile(io, .{ .sub_path = marker, .data = "" });
         const ts = Io.Timestamp.fromNanoseconds((now_s - age) * std.time.ns_per_s);
-        try root.setTimestamps(io, marker, .{ .access_timestamp = .{ .new = ts }, .modify_timestamp = .{ .new = ts } });
+        // `Dir.setTimestamps` Windows'ta uygulanmamış (panic); dosya düzeyi çağrı çalışır.
+        var marker_file = try root.openFile(io, marker, .{ .mode = .read_write });
+        defer marker_file.close(io);
+        try marker_file.setTimestamps(io, .{ .access_timestamp = .{ .new = ts }, .modify_timestamp = .{ .new = ts } });
     }
 }
 

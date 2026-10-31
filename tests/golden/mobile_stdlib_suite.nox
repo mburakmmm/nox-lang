@@ -38,7 +38,7 @@ def tls_handshake() -> int:
     except TlsError:
         return 1
 
-def mobile_suite(root: str) -> int:
+def suite_body(root: str) -> int:
     text: str = "no" + "xç"
     if text != "noxç":
         return 1
@@ -88,3 +88,11 @@ def mobile_suite(root: str) -> int:
         return 15
     nox_log_debug_raw("mobile-suite")
     return 0
+
+# Yakalanmayan bir istisna sessizce `pending 1` olarak kalırdı (hangi adım, hangi ileti bilinmezdi): artık sıfırdan farklı kod + ileti.
+def mobile_suite(root: str) -> int:
+    try:
+        return suite_body(root)
+    except Exception as e:
+        print("suite exception: " + e.message)
+        return 99

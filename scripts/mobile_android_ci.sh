@@ -1,7 +1,7 @@
 #!/bin/sh
 # TODO 4.1/4.5: Android emülatöründe (CI: Linux x86_64 + KVM, `reactivecircus/android-emulator-runner`) çalıştırma korpusu.
 #   scripts/mobile_android_ci.sh smoke   PR: stdlib paketi + çalışma zamanı probe'u + yığın/iş parçacığı probe'u
-#   scripts/mobile_android_ci.sh full    gece: smoke + ağ matrisi + sandbox/disk-dolu + saat/entropi/log
+#   scripts/mobile_android_ci.sh full    gece: smoke + AddressSanitizer yığın probe'u + ağ matrisi + sandbox/disk-dolu + saat/entropi/log
 # NOX_ANDROID_ABI=arm64|x64 hedef ABI'yi seçer (CI'da x64, yerelde arm64). Her adım bağımsız çalışır; başarısız adım sayısı > 0 ise 1 ile çıkar, böylece tek bir
 # kırmızı adım geri kalan korpusu gizlemez. Bekçi: her adım `timeout` ile sınırlıdır (takılan bir emülatör işi sonsuza dek tutamaz). Temizlik: çıkışta
 # `adb reverse` kuralları ve cihazdaki /data/local/tmp/nox-* artıkları silinir; emülatörün kendisini çağıran iş akışı kapatır.
@@ -41,6 +41,8 @@ echo "cihaz: $("$adb" shell getprop ro.product.cpu.abi | tr -d '\r') api $("$adb
 run_step "stdlib paketi + çalışma zamanı probe'u" "$root/scripts/mobile_android_run.sh"
 run_step "yığın ve iş parçacığı probe'u" "$root/scripts/mobile_stack_probe.sh" android
 if [ "$mode" = full ]; then
+  # Sanitizer: AddressSanitizer'lı host ile yığın/iş parçacığı probe'u (Android'de sızıntı denetimi yok; taşma/UAF/çift serbest bırakma yakalanır).
+  run_step "AddressSanitizer yığın probe'u" env NOX_ANDROID_SANITIZE=address "$root/scripts/mobile_stack_probe.sh" android
   run_step "ağ matrisi" "$root/scripts/mobile_network_probe.sh" android
   run_step "sandbox ve disk-dolu probe'u" "$root/scripts/mobile_sandbox_probe.sh" android
   run_step "saat, entropi ve log probe'u" "$root/scripts/mobile_clock_probe.sh" android
