@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.90]
+
+### Düzeltildi
+
+- `project/nox-ana-todo.md`: v2.0.89'da kullanıcı kararı notu 4.2/4.3/4.8 başlıklarının içine yanlış yerleşmişti; başlıktan sonraya taşındı.
+
 ## [2.0.89]
 
 ### Değişti

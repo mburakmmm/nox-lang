@@ -13,7 +13,7 @@ pub const profile = "nox-hpy-host-v1";
 pub const hpy_abi = "universal";
 pub const hpy_version = "0.9";
 pub const ahpy_commit = "1eb0abc7b7198ea589daeb0e0f747cefb78a1df0";
-pub const noxc_version = "2.0.89";
+pub const noxc_version = "2.0.90";
 pub const nox_commit = "00a855c6a83f1edb22f181514358a9bf4cb3eac9";
 
 pub const required_capabilities = [_][]const u8{

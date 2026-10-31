@@ -233,8 +233,8 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 ## Faz 4 — P1 mobil hedefler, CI ve destek seviyesi
 
 - [ ] **4.1 Android x64'ü emülatörde çalıştır.** Bugünkü kanıt link-only.
-- [!] ** (2026-10-31 KULLANICI KARARI: fiziksel cihaz ve imzalı IPA/AAB şimdilik BEKLETİLİYOR; mobil hedefler `experimental` kalır, kapsam simülatör/emülatörde doğrulukla sınırlı)4.2 Android ARM64 fiziksel cihaz kanıtı.** Cihaz laboratuvarı gerekir.
-- [!] ** (2026-10-31 KULLANICI KARARI: fiziksel cihaz ve imzalı IPA/AAB şimdilik BEKLETİLİYOR; mobil hedefler `experimental` kalır, kapsam simülatör/emülatörde doğrulukla sınırlı)4.3 iOS ARM64 fiziksel cihaz kanıtı.** Apple signing/provisioning ve
+- [!] **4.2 Android ARM64 fiziksel cihaz kanıtı.** (2026-10-31 KULLANICI KARARI: fiziksel cihaz ve imzalı IPA/AAB şimdilik BEKLETİLİYOR; mobil hedefler `experimental` kalır, kapsam simülatör/emülatörde doğrulukla sınırlı) Cihaz laboratuvarı gerekir.
+- [!] **4.3 iOS ARM64 fiziksel cihaz kanıtı.** (2026-10-31 KULLANICI KARARI: fiziksel cihaz ve imzalı IPA/AAB şimdilik BEKLETİLİYOR; mobil hedefler `experimental` kalır, kapsam simülatör/emülatörde doğrulukla sınırlı) Apple signing/provisioning ve
   cihaz gerekir; build-only kanıt yeterli değildir.
 - [~] **4.4 Android 16 KiB'yi çalışma anında doğrula.** (v2.0.88: `scripts/mobile_android_16k.sh`; 16 KiB sayfalı Android 15 arm64 emülatöründe yığın probe'u, stdlib paketi ve çalışma zamanı probe'u geçer; Nox çalışma zamanından üretilen `.so` 16 KiB hizalıyken yüklenir, 4 KiB hizalıyken çöker. Açık: fiziksel cihaz, imzalı AAB, bağımlı üçüncü-taraf `.so`lar.) Yalnız ELF header
   ölçümü değil, uyumlu emulator/device açılışı ve bağımlı bütün `.so`lar.
@@ -246,7 +246,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [x] **4.7 Stable gate'i fail-closed yap.** (v2.0.38: `scripts/check_mobile_stable.py` zorunlu 8 anahtarı arar, eksik anahtar `=no` gibi hata; `--self-test` CI'da (mobile.yml). `supported` yazmak için cihaz laboratuvarı/imzalı IPA-APK-AAB kanıtı yine `[!]` kullanıcıda.) Zorunlu anahtar eksikliği de
   `=no` gibi hata olsun; signed IPA/APK/AAB ve device lab olmadan
   `supported` yazılamasın.
-- [!] ** (2026-10-31 KULLANICI KARARI: `supported` ilanı bekletilir, hedefler `experimental` kalır)4.8 Destek seviyesi yükseltme kararı.** Bütün kapılar yeşil olduktan
+- [!] **4.8 Destek seviyesi yükseltme kararı.** (2026-10-31 KULLANICI KARARI: `supported` ilanı bekletilir, hedefler `experimental` kalır) Bütün kapılar yeşil olduktan
   sonra her target ayrı ayrı `preview`/`supported` ilan edilir.
 
 ## Faz 5 — P2 masaüstü ve mimari platform kapsaması
