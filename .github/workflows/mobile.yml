@@ -25,6 +25,12 @@ jobs:
         run: |
           chmod +x scripts/mobile_simulator_ci.sh scripts/mobile_simulator_suite.sh
           scripts/mobile_simulator_ci.sh
+      # Faz 3.5: guard page, fiber yığın taşması ve iş parçacığı yıkımı gerçek simülatör sürecinde (yerelde aynı yolla doğrulandı).
+      - name: Yığın ve iş parçacığı probe'u
+        run: |
+          chmod +x scripts/mobile_stack_probe.sh
+          udid=$(xcrun simctl list devices booted | grep -Eo '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1)
+          scripts/mobile_stack_probe.sh ios "$udid"
       - name: iOS library checks
         run: |
           zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "qbe is rejected"

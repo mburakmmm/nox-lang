@@ -213,7 +213,7 @@ anlatır; her dispatch yolu iki backend'de testlidir.
 - [x] **3.4 ARC/ASAP/cycle mobil stresini tamamla.** (v2.0.35: 10.000 create/start/destroy simülatörde, host ayırıcısı sayacı sıfıra iner. Cihaz/sanitizer koşusu ayrı.) 10.000 lifecycle testi
   cihaz/simülatör sanitizer koşusuna, collection/cycle ve callback baskısına
   genişletilsin.
-- [ ] **3.5 Fiber/TLS/stack doğrulamasını tamamla.** Apple pointer
+- [~] **3.5 Fiber/TLS/stack doğrulamasını tamamla.** (v2.0.87: `scripts/mobile_stack_probe.sh` + `mobile_stack_probe.nox`; iOS simülatörü ve android-arm64 emülatöründe derin ana yığın, derin fiber, 16 iş parçacığı yaşam döngüsü doğru; fiber taşması guard page'de sinyalle sonlanır (138/139). iOS kısmı mobile.yml'de CI'da. Açık: arm64e işaretçi doğrulaması (fiziksel cihaz), iş parçacığı-yerel yıkıcıların gözlemlenebilir doğrulaması, fiziksel hedefler.) Apple pointer
   authentication, Android ARM64, guard page, stack overflow ve TLS destructor
   gerçek hedefte sınansın.
 - [x] **3.6 UI-thread pump bütçesini doğrula.** (v2.0.35: bütçe geçmişse 0 teslim, sonra 64; kuyruk dolu `ERR_FULL`; durdurulmuş `ERR_STATE`.) Yoğun event/async altında

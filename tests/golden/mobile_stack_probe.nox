@@ -1,0 +1,43 @@
+# Faz 3.5: fiber/yığın/TLS doğrulaması gerçek mobil hedefte. Mod `NOX_STACK_MODE` ortam değişkeniyle seçilir (scripts/mobile_stack_probe.sh):
+#   main_deep      ana (OS) yığınında 20000 çerçevelik özyineleme tamamlanır, 20000 yazar
+#   fiber_deep     fiber yığınına (192 KiB) sığan 1500 çerçevelik özyineleme tamamlanır, 1500 yazar
+#   tls_threads    16 `nox.thread` iş parçacığı başlatılıp birleştirilir (iş parçacığı yerel durumu yıkılırken çökmez), 240 yazar
+#   fiber_overflow sonsuz özyineleme fiber yığınını taşırır: guard page SIGSEGV ile sonlanmalı (sessiz bellek bozulması ya da takılma DEĞİL)
+import nox.os
+import nox.thread
+
+def deep(n: int) -> int:
+    if n == 0:
+        return 0
+    return deep(n - 1) + 1
+
+# `n - f(n + 1)`: çıkarma birleşmeli olmadığından LLVM bunu döngüye (kuyruk özyineleme eleme) çeviremez; her çerçeve gerçekten yığın tüketir.
+def runaway(n: int) -> int:
+    return n - runaway(n + 1)
+
+async def deep_task(x: int) -> int:
+    return deep(x)
+
+async def overflow_task(x: int) -> int:
+    return runaway(x)
+
+async def twice(x: int) -> int:
+    return x * 2
+
+mode: str = nox.os.getenv("NOX_STACK_MODE")
+if mode == "main_deep":
+    print(deep(20000))
+if mode == "fiber_deep":
+    r: int = await spawn deep_task(1500)
+    print(r)
+if mode == "tls_threads":
+    total: int = 0
+    i: int = 0
+    while i < 16:
+        h: ThreadHandle[int] = nox.thread.start(twice, i)
+        total = total + await h.join()
+        i = i + 1
+    print(total)
+if mode == "fiber_overflow":
+    r2: int = await spawn overflow_task(0)
+    print(r2)

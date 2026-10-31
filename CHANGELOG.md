@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.87]
+
+### Eklendi
+
+- `scripts/mobile_stack_probe.sh` + `tests/golden/mobile_stack_probe.nox` + `scripts/mobile_stack_host.c` (TODO 3.5): fiber/yığın/TLS doğrulaması gerçek mobil hedefte. iOS simülatöründe ve `android-arm64` emülatöründe derin ana yığın (20000 çerçeve), derin fiber (1500), 16 `nox.thread` iş parçacığı doğru çalışır; sonsuz özyineleme fiber yığınını taşırınca süreç guard page'de sinyalle sonlanır (iOS SIGBUS/138, Android SIGSEGV/139), sessiz bozulma ya da takılma yok. iOS simülatör işi bunu CI'da koşar.
+
 ## [2.0.86]
 
 ### Düzeltildi
