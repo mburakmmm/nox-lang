@@ -900,12 +900,7 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // serbest-bırakma yazımı olurdu).
     nox_cycle_collect(rt);
     nox_cycle_deinit(rt);
-    if (comptime !is_freestanding) {
-        const crt = struct {
-            extern "c" fn fflush(stream: ?*anyopaque) c_int;
-        };
-        _ = crt.fflush(null);
-    }
+    if (comptime !is_freestanding) @import("../stdout_flush.zig").flushStdout();
     // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
     // düzeltme"): `pool_ext` (VARSA) `state.allocator()` İLE (`WorkerPool.
     // create()`ın KULLANDIĞI AYNI allocator — bkz. onun belge notu)

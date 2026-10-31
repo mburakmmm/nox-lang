@@ -1,0 +1,29 @@
+# Faz 3.8: mobil ağ matrisi istemcisi. URL ve zaman aşımı ortamdan gelir (scripts/mobile_network_probe.sh senaryo sunucularını kurar):
+#   NOX_NET_URL, NOX_NET_TIMEOUT_MS  ana istek;  NOX_NET_AFTER_URL (isteğe bağlı)  ana istek bittikten SONRA aynı süreçte ikinci istek (toparlanma).
+# Çıktı: "<belirteç> <durum> <gövde_uzunluğu> <geçen_ms>" ve (varsa) "after <belirteç> ...". Belirteç: ok | timeout | error.
+import nox.http
+import nox.os
+import nox.time
+from nox.http import HttpResponse, HttpError, HttpTimeoutError
+
+def fetch(url: str, timeout_ms: int) -> str:
+    start: int = nox.time.instant_now().ms
+    token: str = "ok"
+    status: int = 0
+    blen: int = 0
+    try:
+        resp: HttpResponse = nox.http.request("GET", url, "", {}, timeout_ms)
+        status = resp.status
+        blen = len(resp.body)
+    except HttpTimeoutError:
+        token = "timeout"
+    except HttpError:
+        token = "error"
+    elapsed: int = nox.time.instant_now().ms - start
+    return token + " " + str(status) + " " + str(blen) + " " + str(elapsed)
+
+timeout_ms: int = int(nox.os.getenv("NOX_NET_TIMEOUT_MS"))
+print(fetch(nox.os.getenv("NOX_NET_URL"), timeout_ms))
+after_url: str = nox.os.getenv("NOX_NET_AFTER_URL")
+if after_url != "":
+    print("after " + fetch(after_url, timeout_ms))

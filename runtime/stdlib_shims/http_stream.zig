@@ -180,21 +180,18 @@ fn streamWorker(ctx: *StreamCtx) void {
             return;
         }
     }
-    var android_host: [std.Io.net.HostName.max_len]u8 = undefined;
-    var android_ip: [64]u8 = undefined;
-    const dialed: ?*std.http.Client.Connection = if (comptime builtin.abi.isAndroid())
-        http.androidDial(&client, uri, &android_host, android_ip[0..])
-    else
-        null;
-
+    // DNS + bağlanma işlem zaman aşımıyla sınırlı (bkz. `net_dial.zig`).
+    if (ctx.timeout_ms > 0) http.net_dial.begin(ctx.timeout_ms);
     var req = client.request(ctx.method, uri, .{
         .extra_headers = ctx.request_headers,
         .redirect_behavior = .unhandled,
-        .connection = dialed,
     }) catch {
+        http.net_dial.end();
+        if (http.net_dial.timedOut()) shared.timed_out.store(true, .release);
         markFailed(ctx);
         return;
     };
+    http.net_dial.end();
     defer req.deinit();
     if (req.connection) |conn| shared.setHandle(http.socketHandleToUsize(conn.stream_reader.stream.socket.handle));
     defer shared.clearHandle();

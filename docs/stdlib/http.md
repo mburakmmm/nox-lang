@@ -77,8 +77,12 @@ unreachable
 `request` accepts exactly `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` and `OPTIONS` (upper case). Any other name raises `HttpError`; it is never turned into a GET. A request body
 can only be sent with `POST`, `PUT` and `PATCH`.
 
-`timeout_ms > 0` limits the time spent sending the request and reading the response once the connection is open: when it runs out the connection is aborted and `HttpTimeoutError`
-(a subclass of `HttpError`) is raised. DNS resolution and the TCP connect are bounded by the operating system, not by `timeout_ms`.
+`timeout_ms > 0` limits the DNS lookup, the TCP connect, and then the time spent sending the request and reading the response: when it runs out the connection is aborted and
+`HttpTimeoutError` (a subclass of `HttpError`) is raised. An unresolvable name or an address that never answers therefore fails after `timeout_ms` instead of waiting for the operating
+system's own limit (30 s for DNS and 75 s for a TCP connect on macOS, similar on Android). With `timeout_ms = 0` the lookup and the connect are not bounded.
+
+Names resolve with the system resolver for both IPv4 and IPv6 (the system's address order is tried in turn, so a dead IPv6 route falls back to IPv4), and IPv6 literals such as
+`http://[::1]:8080/` work on every platform. `nox.tls.connect`, `nox.websocket.connect` and `nox.smtp.connect` bound DNS and connect at 30 seconds.
 
 A response body may be binary. `resp.body` keeps every byte (including `\x00` and bytes that are not valid UTF-8); `nox.bytes.from_str(resp.body)` copies them into a `Buffer`.
 

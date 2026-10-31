@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.91]
+
+### Düzeltildi
+
+- **`timeout_ms` DNS çözümleme ve TCP bağlanmayı kapsıyor (TODO 3.8).** Önceden yalnızca bağlantı kurulduktan sonra işliyordu; çözülemeyen bir ad (macOS'ta 30 sn) ya da cevap vermeyen bir adres (75 sn) isteği o kadar bloke ederdi. Yeni `runtime/stdlib_shims/net_dial.zig`: `std.Io` vtable'ındaki `netLookup` (sistem `getaddrinfo`su, yardımcı iş parçacığında, son tarihte vazgeçilir) ve `netConnectIp` (bloklamasız `connect` + `poll`) sınırlı sürümlerle değiştirilir. Çözülemeyen ad artık `timeout_ms` içinde `HttpTimeoutError` verir (3 sn'de ölçüldü), kara delik adres 2 sn'de (önceden 75 sn). `nox.tls`/`nox.websocket`/`nox.smtp` bağlanması 30 sn ile sınırlı.
+- **IPv6 literal URL'ler (`http://[::1]:8080/`) her platformda hata veriyordu**; artık çalışır.
+- **Android yalnızca IPv4 çözümlüyordu** (`AF_INET` ipucu): IPv6-only/DNS64 ağlarda hiçbir bağlantı kurulamazdı. Tüm hosted hedefler artık `AF_UNSPEC` ile çözümler ve sistemin adres sırasını sırayla dener (ölü IPv6 rotası IPv4'e düşer). Android'e özel `androidDial`/`androidIpv4Text` yolu kaldırıldı.
+- **Bionic'te `fflush(NULL)`**, başka bir iş parçacığı `getaddrinfo` içindeyken (resolver bir stdio akımını sorgu boyunca tutar) DNS bitene kadar bloke oluyordu: bir `print` ya da çalışma zamanı kapanışı 10 sn'ye kadar takılabilirdi. Çalışma zamanı artık yalnızca `stdout`u boşaltır (`runtime/stdout_flush.zig`).
+
+### Eklendi
+
+- `scripts/mobile_network_probe.sh` + `tests/golden/mobile_network_probe.nox` + `scripts/mobile_net_servers.py`: mobil ağ matrisi. iOS simülatörü (12 senaryo; CI'da), android-arm64 emülatörü ve 16 KiB Android emülatörü (15 senaryo; uçak modu ile çevrimdışı ve ağ değişimi dahil) hepsinde geçer. Bkz. `docs/internals/mobile-matrix.md`.
+- `net_dial.zig` birim testleri (kapalı port, kara delik son tarih, IPv6 literal/localhost çözümlemesi).
+
 ## [2.0.90]
 
 ### Düzeltildi

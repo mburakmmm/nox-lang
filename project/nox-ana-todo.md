@@ -222,7 +222,7 @@ anlatır; her dispatch yolu iki backend'de testlidir.
 - [~] **3.7 Mobil stdlib sandbox testlerini tamamla.** (v2.0.36: kök sınırı, `..`, SEMBOLİK BAĞ kaçışı (gerçek açık, kapatıldı) ve kanonik yol testli. v2.0.42: `nox.fs.write_string_atomic` (geçici dosya + rename) eklendi ve testli. Açık: gerçek disk-dolu simülasyonu, SQLite cache/temp davranışı.) Kök sınırı, `..`,
   symlink/canonical path, atomic write, disk-full, SQLite ve cache/temp
   davranışı.
-- [ ] **3.8 Mobil ağ matrisini tamamla.** DNS IPv4/IPv6, offline, timeout,
+- [x] **3.8 Mobil ağ matrisini tamamla.** (v2.0.91: `scripts/mobile_network_probe.sh`; iOS simülatörü + android-arm64 + 16 KiB Android emülatörü, 12-15 senaryo; IPv6 literal, Android IPv6, DNS+bağlanma zaman aşımı ve bionic fflush(NULL) hataları düzeltildi. Açık: gerçek hücresel geçiş.) DNS IPv4/IPv6, offline, timeout,
   TLS sertifika reddi, ağ değişimi ve background/resume.
 - [~] **3.9 Entropy/clock/log sözleşmesini tamamla.** (v2.0.45: `nox.log.redact`/`mask_assignments` ile gizli değer maskeleme, iki backend golden. Zaten var: `nox.crypto.secure_random_hex` (OS CSPRNG), `nox.time.Instant` (monotonic), debug-only `nox_log_debug_raw`. Açık: askıya alma farkı ölçümü (cihaz gerekir), log seviye filtresi.) Güvenli RNG, monotonic
   saat, suspend farkı, debug/release log ayrımı ve secret redaction.

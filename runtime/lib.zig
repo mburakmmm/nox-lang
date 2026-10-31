@@ -115,6 +115,7 @@ comptime {
     _ = list_ops;
     _ = embed;
     _ = http_client;
+    _ = @import("stdlib_shims/net_dial.zig");
     _ = http_stream;
     _ = http_server;
     _ = strings_shim;

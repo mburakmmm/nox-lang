@@ -100,3 +100,9 @@ runtime/wasm_mt_alloc.zig	bump_end	wasm-alloc	iş parçacıklı wasm ayırıcıs
 runtime/wasm_mt_alloc.zig	free_heads	wasm-alloc	iş parçacıklı wasm ayırıcısının boyut sınıflı serbest listeleri; lock_state ile korunur
 runtime/wasm_mt_alloc.zig	lock_state	wasm-alloc	iş parçacıklı wasm ayırıcısının tek kilidi (futex); Zig'in WasmAllocator'ı çok iş parçacıklıda yoktur
 runtime/wasm_threads_libc.zig	lock_state	wasm-lock	iş parçacıklı wasi printf'inin çıktı kilidi; wasi-libc stdio'su iş parçacığı güvenli değildir
+runtime/stdlib_shims/http_client.zig	g_client_io_vtable	shared-io	paylaşılan std.Io.Threaded örneğinin vtable kopyası; net_dial.install ile BİR KEZ (g_client_io_state ilklenirken) yamalanır, sonra salt okunur
+runtime/stdlib_shims/net_dial.zig	g_vtable	shared-io	install'a verilen yamalı vtable işaretçisi; Queue.close/putOne için Io değeri kurar; install'da BİR KEZ yazılır
+runtime/stdlib_shims/net_dial.zig	g_base_lookup	shared-io	std'nin özgün netLookup işlevi (son tarihsiz çağrılar için); install'da BİR KEZ yazılır, sonra salt okunur
+runtime/stdlib_shims/net_dial.zig	g_base_connect_ip	shared-io	std'nin özgün netConnectIp işlevi (son tarihsiz çağrılar için); install'da BİR KEZ yazılır, sonra salt okunur
+runtime/stdlib_shims/net_dial.zig	tl_deadline_ns	tl-net-dial	iş parçacığı-yerel DNS+bağlanma son tarihi: istek işçisi begin/end ile kurar ve temizler; std.Io vtable işlevleri argüman taşıyamadığından tek taşıma yolu (başka iş parçacığı görmez)
+runtime/stdlib_shims/net_dial.zig	tl_timed_out	tl-net-dial	iş parçacığı-yerel: son tarih aşıldı bayrağı; istek işçisi hata türünü (zaman aşımı/diğer) buradan okur

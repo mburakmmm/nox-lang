@@ -118,8 +118,9 @@ def post(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
 
 # Genel HTTP isteği. `method`: GET, POST, PUT, PATCH, DELETE, HEAD veya OPTIONS (büyük harf); başka bir ad HttpError verir,
 # sessizce GET'e dönüşmez. Gövde yalnızca POST/PUT/PATCH ile gönderilebilir. `timeout_ms > 0` ise bağlantı kurulduktan sonraki
-# gönderme/okuma bu süreyi aşarsa bağlantı iptal edilir ve HttpTimeoutError fırlar (DNS ve TCP bağlantı aşaması işletim
-# sisteminin kendi süresiyle sınırlıdır). `timeout_ms = 0`: sınırsız.
+# gönderme/okuma bu süreyi aşarsa bağlantı iptal edilir ve HttpTimeoutError fırlar. DNS çözümleme ve TCP bağlanma aşaması da
+# aynı `timeout_ms` ile sınırlıdır (v2.0.91): çözülemeyen ad ya da cevap vermeyen adres işletim sisteminin dakikalık süresini
+# beklemez. `timeout_ms = 0`: sınırsız.
 def request(method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 0) -> HttpResponse:
     has_body: int = 0
     if method == "POST" or method == "PUT" or method == "PATCH":

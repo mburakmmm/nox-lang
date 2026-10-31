@@ -49,6 +49,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
+pub const net_dial = @import("net_dial.zig");
 const asap = @import("../alloc/asap.zig");
 const arc = @import("../alloc/arc.zig");
 const dict_mod = @import("../collections/dict.zig");
@@ -102,6 +103,8 @@ fn winSleep(ms: u32) void {
 const ClientIoState = enum(u8) { uninit, initializing, ready };
 var g_client_io_state: std.atomic.Value(ClientIoState) = .init(.uninit);
 var g_client_io_storage: std.Io.Threaded = undefined;
+/// `net_dial.install` ile yamalı vtable (sınırlı DNS + bağlanma); `g_client_io_storage.io()`nun vtable'ının kopyası.
+var g_client_io_vtable: std.Io.VTable = undefined;
 
 pub fn sharedClientIo() std.Io {
     if (g_client_io_state.cmpxchgStrong(.uninit, .initializing, .acquire, .monotonic) == null) {
@@ -115,11 +118,13 @@ pub fn sharedClientIo() std.Io {
             .async_limit = .nothing,
             .concurrent_limit = .nothing,
         });
+        g_client_io_vtable = g_client_io_storage.io().vtable.*;
+        net_dial.install(&g_client_io_vtable);
         g_client_io_state.store(.ready, .release);
     } else {
         while (g_client_io_state.load(.acquire) != .ready) std.Thread.yield() catch {};
     }
-    return g_client_io_storage.io();
+    return .{ .userdata = &g_client_io_storage, .vtable = &g_client_io_vtable };
 }
 
 /// İstek zaman aşımı için, arka plan iş parçacığı (`workerThreadFn`) ile bekçi iş parçacığı (`watchdogThreadFn`)
@@ -214,8 +219,9 @@ const RequestCtx = struct {
     request_headers: []const std.http.Header,
     write_fd: posix.fd_t,
 
-    /// > 0 ise bekçi iş parçacığı bu süre (ms) dolunca bağlantıyı iptal eder (bkz. `Shared`).
+    /// > 0 ise bekçi iş parçacığı bu süre (ms) dolunca bağlantıyı iptal eder (bkz. `Shared`); DNS + bağlanma aşaması da aynı süreyle sınırlıdır (`net_dial.zig`).
     shared: ?*Shared = null,
+    timeout_ms: u64 = 0,
 
     status: u16 = 0,
     response_body: []u8 = &.{},
@@ -249,50 +255,6 @@ pub fn loadIosCa(client: *std.http.Client) bool {
     return true;
 }
 
-fn ensureClientCa(client: *std.http.Client) bool {
-    const io = client.io;
-    {
-        client.ca_bundle_lock.lockShared(io) catch return false;
-        defer client.ca_bundle_lock.unlockShared(io);
-        if (client.now != null) return true;
-    }
-    var bundle: std.crypto.Certificate.Bundle = .empty;
-    defer bundle.deinit(client.allocator);
-    const now = std.Io.Clock.real.now(io);
-    bundle.rescan(client.allocator, io, now) catch return false;
-    client.ca_bundle_lock.lock(io) catch return false;
-    defer client.ca_bundle_lock.unlock(io);
-    client.now = now;
-    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
-    return true;
-}
-
-fn androidIpv4Text(host: []const u8, port: u16, ip_storage: []u8) ?[]const u8 {
-    if (host.len > std.Io.net.HostName.max_len) return null;
-    var host_z: [std.Io.net.HostName.max_len + 1]u8 = undefined;
-    @memcpy(host_z[0..host.len], host);
-    host_z[host.len] = 0;
-    var service_buf: [8]u8 = undefined;
-    const service = std.fmt.bufPrintZ(&service_buf, "{d}", .{port}) catch return null;
-    var hints = std.mem.zeroes(std.c.addrinfo);
-    hints.family = std.c.AF.INET;
-    hints.socktype = std.c.SOCK.STREAM;
-    var list: ?*std.c.addrinfo = null;
-    if (@intFromEnum(std.c.getaddrinfo(host_z[0..host.len :0], service.ptr, &hints, &list)) != 0) return null;
-    const first = list orelse return null;
-    defer std.c.freeaddrinfo(first);
-    const formatted = struct {
-        extern "c" fn inet_ntop(af: c_int, src: *const anyopaque, dst: [*]u8, size: u32) ?[*:0]u8;
-    };
-    const src: *const anyopaque = @ptrFromInt(@intFromPtr(first.addr.?) + 4);
-    const ip_z = formatted.inet_ntop(std.c.AF.INET, src, ip_storage.ptr, @intCast(ip_storage.len)) orelse return null;
-    return std.mem.span(ip_z);
-}
-
-/// Android'de Zig `HostName.connect` `/etc/resolv.conf` okur. Bionic bu
-/// dosyayı tutmaz. Sistem çözümlemesi `getaddrinfo` ile yapılır, TCP
-/// adresi IP literali olur. TLS sunucu adı çağıranın verdiği konak olarak
-/// kalır.
 /// `noxc run --sandbox` ağı kapalı başlatır (ADR-010) ve `NOX_SANDBOX_NO_NET=1` ayarlar. İşletim sistemi `connect`i zaten reddeder, ama
 /// Zig'in `std.Io` katmanı beklenmeyen `EPERM`i programcı hatası sayıp süreci düşürür; bu denetim reddi temiz bir bağlantı hatasına çevirir.
 pub fn networkDenied() bool {
@@ -301,15 +263,15 @@ pub fn networkDenied() bool {
     return v[0] == '1';
 }
 
+/// `tls`/`websocket`/`smtp` ham TCP bağlantısı. DNS + bağlanma `CONNECT_TIMEOUT_MS` ile sınırlıdır (`net_dial.zig`): çözülemeyen ad ya da cevap vermeyen adres işletim
+/// sisteminin dakikalık süresini beklemez. IPv4/IPv6, `[::1]` literal'i ve Android dahil tüm hosted hedeflerde aynı çözümleme.
+pub const CONNECT_TIMEOUT_MS: u64 = 30_000;
+
 pub fn connectTcp(io: std.Io, host: []const u8, port: u16) !std.Io.net.Stream {
     if (networkDenied()) return error.AccessDenied;
-    if (comptime builtin.abi.isAndroid()) {
-        var ip_storage: [64]u8 = undefined;
-        const ip = androidIpv4Text(host, port, &ip_storage) orelse return error.DnsFailed;
-        const literal = try std.Io.net.HostName.init(ip);
-        return literal.connect(io, port, .{ .mode = .stream });
-    }
-    const host_name = try std.Io.net.HostName.init(host);
+    const host_name = try std.Io.net.HostName.init(if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']') host[1 .. host.len - 1] else host);
+    net_dial.begin(CONNECT_TIMEOUT_MS);
+    defer net_dial.end();
     return host_name.connect(io, port, .{ .mode = .stream });
 }
 
@@ -319,21 +281,6 @@ test "connectTcp fails on a closed local port" {
         stream.close(std.testing.io);
         return error.UnexpectedConnect;
     } else |_| {}
-}
-
-pub fn androidDial(client: *std.http.Client, uri: std.Uri, host_storage: *[std.Io.net.HostName.max_len]u8, ip_storage: []u8) ?*std.http.Client.Connection {
-    const host = uri.getHost(host_storage) catch return null;
-    const port = uri.port orelse if (std.mem.eql(u8, uri.scheme, "https")) @as(u16, 443) else @as(u16, 80);
-    const ip_text = androidIpv4Text(host.bytes, port, ip_storage) orelse return null;
-    const protocol: std.http.Client.Protocol = if (std.mem.eql(u8, uri.scheme, "https")) .tls else .plain;
-    if (protocol == .tls and !ensureClientCa(client)) return null;
-    return client.connectTcpOptions(.{
-        .host = .{ .bytes = ip_text },
-        .port = port,
-        .protocol = protocol,
-        .proxied_host = host,
-        .proxied_port = port,
-    }) catch null;
 }
 
 /// Sunucu Content-Length/chunked gövdesini tamamlamadan bağlantıyı kapattı mı? `std.http` bunu temiz bir gövde sonundan ayırmaz;
@@ -409,21 +356,14 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         }
     }
 
-    // Android'de Zig ad çözümlemesi `/etc/resolv.conf` okur. Bionic bu dosyayı
-    // tutmaz; sistem çözümlemesi `getaddrinfo` ile netd'ye gider. TLS sunucu
-    // adı URL'deki konak olarak kalır, sertifika doğrulaması kapanmaz.
-    var android_host: [std.Io.net.HostName.max_len]u8 = undefined;
-    var android_ip: [64]u8 = undefined;
-    const dialed: ?*std.http.Client.Connection = if (comptime builtin.abi.isAndroid())
-        androidDial(&client, uri, &android_host, android_ip[0..])
-    else
-        null;
-
+    // DNS + bağlanma `timeout_ms` ile sınırlı (bkz. `net_dial.zig`); bağlantı kurulunca (ya da başarısız olunca) son tarih kalkar.
+    if (ctx.timeout_ms > 0) net_dial.begin(ctx.timeout_ms);
     var req = client.request(ctx.method, uri, .{
         .extra_headers = ctx.request_headers,
         .redirect_behavior = .unhandled,
-        .connection = dialed,
     }) catch |err| {
+        net_dial.end();
+        if (net_dial.timedOut()) if (ctx.shared) |sh| sh.timed_out.store(true, .release);
         if (comptime (builtin.abi.isAndroid() or builtin.os.tag == .ios) and builtin.mode == .Debug) {
             const c = struct {
                 extern "c" fn nox_host_log_debug(text: [*:0]const u8) void;
@@ -433,6 +373,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         ctx.failed = true;
         return;
     };
+    net_dial.end();
     defer req.deinit();
     // Zaman aşımı bekçisi için açık soketi yayınla; bağlantı kapanmadan ÖNCE geri al (LIFO: req.deinit'ten önce çalışır).
     if (ctx.shared) |sh| {
@@ -657,6 +598,7 @@ fn doRequest(
         .body = body_copy,
         .request_headers = headers_copy,
         .write_fd = fds[1],
+        .timeout_ms = if (timeout_ms > 0) @intCast(timeout_ms) else 0,
     };
 
     if (timeout_ms > 0) {
