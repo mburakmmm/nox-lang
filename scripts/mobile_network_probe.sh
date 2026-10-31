@@ -75,12 +75,18 @@ scenario() {
   tok=$(printf '%s' "$first" | awk '{print $1}')
   ok=1
   printf '%s' "$tok" | grep -Eq "^($want)$" || ok=0
-  [ "$wall" -le "$max" ] || ok=0
+  # Süre sınırı Nox'un KENDİ ölçtüğü süreye (belirteç satırının 4. alanı) uygulanır; `simctl spawn`/`adb shell` başlatma gecikmesi (CI'da ilk çağrı ~10 sn) testin konusu değildir,
+  # yalnızca takılmayı yakalamak için geniş bir toplam duvar sınırı vardır.
+  elapsed=$(printf '%s' "$first" | awk '{print $4}')
+  [ -n "$elapsed" ] && [ "$elapsed" -le "$max" ] || ok=0
+  [ "$wall" -le $((max + 20000)) ] || ok=0
   if [ -n "$want_after" ]; then printf '%s' "$aft" | grep -Eq "^after ($want_after) " || ok=0; fi
   if [ $ok = 1 ]; then echo "ok   $name: $first${aft:+ | $aft} (duvar ${wall}ms)"; else echo "FAIL $name: [$first] [$aft] duvar=${wall}ms beklenen=($want)<=${max}ms ${want_after:+after=($want_after)}"; fail=$((fail+1)); fi
 }
 
 OK4="http://$HOSTIP:$P_OK4/"
+# Isınma: ilk süreç başlatması (özellikle CI'da) yavaştır; sonuç sayılmaz.
+run_probe "$OK4" 5000 "" >/dev/null 2>&1
 scenario ipv4_literal     "$OK4"                              5000 -        ok          4000
 scenario dns_dual_stack   "http://localhost:$P_OK4/"          5000 -        ok          4000
 scenario ipv6_literal     "http://[::1]:$P_OK6/"              5000 -        ok          4000
@@ -96,8 +102,9 @@ scenario connect_blackhole "http://192.0.2.1:81/"             2000 "$OK4"   "err
 # arka plana alma / geri dönme: istek sürerken süreci durdur (iOS askıya alma, Android Doze benzeri), sonra devam ettir.
 run_probe "http://$DRIPHOST:$P_DRIP/" 20000 "$OK4" >"$work/suspend.out" &
 bg=$!
+pid=""; n=0
+while [ -z "$pid" ] && [ $n -lt 80 ]; do pid=$(pid_of); [ -n "$pid" ] || { sleep 0.25; n=$((n+1)); }; done
 sleep 2.5
-pid=$(pid_of)
 if [ -n "$pid" ]; then stop_pid "$pid"; sleep 3; cont_pid "$pid"; fi
 wait $bg
 first=$(grep -v '^after ' "$work/suspend.out" | head -1); aft=$(grep '^after ' "$work/suspend.out" | head -1)

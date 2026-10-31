@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.94]
+
+### Düzeltildi
+
+- `scripts/mobile_network_probe.sh` ve `mobile_clock_probe.sh` CI'da kırılgandı: ilk `simctl spawn` soğuk başlangıcı ~10 sn sürüyor ve süre sınırı bu gecikmeyi sayıyordu (Nox'un ölçtüğü gerçek süre ~100 ms). Sınır artık Nox'un kendi ölçtüğü süreye uygulanır (geniş bir toplam duvar sınırı yalnızca takılmayı yakalar), bir ısınma çağrısı eklendi ve süreç dondurma, süreç görünene kadar bekler.
+
 ## [2.0.93]
 
 ### Düzeltildi

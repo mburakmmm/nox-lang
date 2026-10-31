@@ -45,8 +45,10 @@ esac
 
 run_probe >"$work/out.txt" &
 bg=$!
+# Süreç başlatma gecikmesi (CI'da ilk `simctl spawn` ~10 sn) test konusu değildir: süreç görünene kadar beklenir, sonra 1 sn uyku içinde dondurulur.
+pid=""; n=0
+while [ -z "$pid" ] && [ $n -lt 80 ]; do pid=$(pid_of); [ -n "$pid" ] || { sleep 0.25; n=$((n+1)); }; done
 sleep 1
-pid=$(pid_of)
 if [ -n "$pid" ]; then stop_pid "$pid"; sleep 3; cont_pid "$pid"; fi
 wait $bg
 line=$(cat "$work/out.txt")
