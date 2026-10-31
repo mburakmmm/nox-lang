@@ -2,11 +2,8 @@
 # saf Nox (nox.time.now_ms + str() + print() üzerine) — hiç Zig/extern def
 # GEREKMEZ.
 #
-# BİLİNÇLİ v1 SINIRLAMASI: çalışma zamanında yapılandırılabilir bir
-# minimum-seviye FİLTRESİ YOK (Nox'ta fonksiyonlar arası PAYLAŞILAN
-# mutable modül-düzeyi durum yok — her "loose" üst-düzey deyim yalnızca
-# `main`de bir kez çalışır) — HER çağrı KOŞULSUZ basılır. Çıktı HER ZAMAN
-# stdout'a gider (Nox'ta ayrı bir stderr yazma ilkeli HENÜZ YOK).
+# Asgari seviye filtresi (v2.0.93): modül-düzeyi `_level` (varsayılan DEBUG = hepsi basılır, eski davranış). `set_level("INFO")` ile DEBUG satırları
+# bastırılır; `"OFF"` hepsini kapatır. Çıktı HER ZAMAN stdout'a gider (Nox'ta ayrı bir stderr yazma ilkeli HENÜZ YOK).
 #
 # `format`, satırı BASMADAN döndürür — hem `debug`/`info`/`warn`/`error`nin
 # KENDİ ortak çekirdeği, hem de kullanıcının KENDİ (ör. bir dosyaya yazan)
@@ -23,17 +20,63 @@ def format(level: str, message: str) -> str:
     ts: int = nox.time.now_ms()
     return "[" + level + "] [" + str(ts) + "] " + message
 
+# Seviye sayıları: DEBUG 10, INFO 20, WARN 30, ERROR 40, OFF 100.
+_level: int = 10
+
+def _level_num(name: str) -> int:
+    if name == "DEBUG":
+        return 10
+    if name == "INFO":
+        return 20
+    if name == "WARN":
+        return 30
+    if name == "ERROR":
+        return 40
+    if name == "OFF":
+        return 100
+    return -1
+
+# Asgari seviyeyi ayarlar; bilinmeyen ad `ValueError` verir.
+def set_level(name: str) -> None:
+    n: int = _level_num(name)
+    if n < 0:
+        raise ValueError("unknown log level: " + name)
+    _level = n
+
+# Geçerli asgari seviyenin adı.
+def level() -> str:
+    if _level <= 10:
+        return "DEBUG"
+    if _level <= 20:
+        return "INFO"
+    if _level <= 30:
+        return "WARN"
+    if _level <= 40:
+        return "ERROR"
+    return "OFF"
+
+# `name` seviyesindeki bir satır şu an basılır mı? Bilinmeyen ad `False`.
+def enabled(name: str) -> bool:
+    n: int = _level_num(name)
+    if n < 0 or n >= 100:
+        return False
+    return n >= _level
+
 def debug(message: str) -> None:
-    print(format("DEBUG", message))
+    if _level <= 10:
+        print(format("DEBUG", message))
 
 def info(message: str) -> None:
-    print(format("INFO", message))
+    if _level <= 20:
+        print(format("INFO", message))
 
 def warn(message: str) -> None:
-    print(format("WARN", message))
+    if _level <= 30:
+        print(format("WARN", message))
 
 def error(message: str) -> None:
-    print(format("ERROR", message))
+    if _level <= 40:
+        print(format("ERROR", message))
 
 # --- Gizli bilgi maskeleme (TODO 3.9) ---------------------------------------------------------------------------------------------
 # Günlüğe parola/token/anahtar sızmasını önlemek için iki yardımcı. İkisi de SAF string işlemidir; `format`/`info`... çağrısından ÖNCE

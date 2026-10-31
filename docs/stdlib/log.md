@@ -15,7 +15,10 @@ import nox.log
 | `format(level, message)` | builds `"[LEVEL] [timestamp_ms] message"` without printing; the timestamp is milliseconds since the Unix epoch |
 | `redact(message, secrets)` | replaces every occurrence of each non-empty secret with `***` |
 | `mask_assignments(message, keys)` | masks the value of `key=value` pairs (`password=p4ss` → `password=***`); the key must start at a word boundary, the value ends at whitespace, `&`, `,`, `;` or a quote |
-| `debug(message)`, `info(message)`, `warn(message)`, `error(message)` | prints the formatted line to standard output |
+| `set_level(name)` | sets the minimum level printed: `"DEBUG"` (default, everything), `"INFO"`, `"WARN"`, `"ERROR"` or `"OFF"`; an unknown name raises `ValueError` |
+| `level()` | the name of the current minimum level |
+| `enabled(name)` | `True` if a line at level `name` would be printed now (`False` for unknown names) |
+| `debug(message)`, `info(message)`, `warn(message)`, `error(message)` | prints the formatted line to standard output unless it is below the minimum level |
 
 Output looks like:
 
@@ -24,7 +27,7 @@ Output looks like:
 [WARN] [1791446397902] careful
 ```
 
-There is no level filtering and no file or network sink: the functions are thin wrappers around `print`. If you need to route logs elsewhere, wrap `format` in your
+The filter is a module-level setting (the default prints everything, as before); there is no file or network sink: the functions are thin wrappers around `print`. If you need to route logs elsewhere, wrap `format` in your
 own function; for timestamp-free output use [`nox.console`](console.md).
 
 ```nox

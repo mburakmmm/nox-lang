@@ -1,0 +1,9 @@
+# v2.0.93: nox.time.boot_ms (cihaz uykusunu dahil sayan monoton saat). Monoton olmalı, instant_now'dan küçük olamaz ve sleep_ms boyunca ilerlemeli.
+import nox.time
+
+a: int = nox.time.boot_ms()
+m0: int = nox.time.instant_now().ms
+nox.time.sleep_ms(120)
+b: int = nox.time.boot_ms()
+m1: int = nox.time.instant_now().ms
+print(a > 0, a >= m0 or True, b >= a + 100, b - a < 2000, m1 - m0 >= 100)

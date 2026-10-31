@@ -452,6 +452,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_threadchannel_recv_val", Entry{ .params = "PP", .ret = 'L' } },
     .{ "nox_threadchannel_send_str", Entry{ .params = "PPL", .ret = 'v' } },
     .{ "nox_threadchannel_send_val", Entry{ .params = "PPL", .ret = 'v' } },
+    .{ "nox_time_boot_ms_raw", Entry{ .params = "", .ret = 'L' } },
     .{ "nox_time_day_raw", Entry{ .params = "L", .ret = 'L' } },
     .{ "nox_time_hour_raw", Entry{ .params = "L", .ret = 'L' } },
     .{ "nox_time_minute_raw", Entry{ .params = "L", .ret = 'L' } },

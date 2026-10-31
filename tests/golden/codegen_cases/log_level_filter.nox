@@ -1,0 +1,17 @@
+# v2.0.93: nox.log asgari seviye filtresi. Satır içeriği zaman damgası taşıdığından karar `enabled`/`level` ile sınanır; bastırılan satır hiç yazılmaz.
+import nox.log
+
+print(nox.log.level(), nox.log.enabled("DEBUG"), nox.log.enabled("ERROR"))
+nox.log.set_level("WARN")
+print(nox.log.level(), nox.log.enabled("INFO"), nox.log.enabled("WARN"), nox.log.enabled("ERROR"), nox.log.enabled("nope"))
+nox.log.debug("bastirilmali")
+nox.log.info("bastirilmali")
+nox.log.set_level("OFF")
+nox.log.error("bastirilmali")
+print(nox.log.level(), nox.log.enabled("ERROR"))
+try:
+    nox.log.set_level("LOUD")
+except ValueError:
+    print("ValueError")
+nox.log.set_level("DEBUG")
+print(nox.log.level(), nox.log.format("INFO", "x").endswith("] x"))

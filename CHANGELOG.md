@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.93]
+
+### Düzeltildi
+
+- **İçe aktarılan modülde parametre/yerel ad, aynı adlı modül düzeyi işlevi gölgelemiyordu.** Modül yükleyici yeniden adlandırması kapsam-bağımsızdı: `def format(level: str, ...)` ile aynı modülde `def level()` olunca `level` parametresi işlevin mangled adına çevrilip `arithmetic only works on numeric types` veriyordu. Parametreler, `var_decl`, `for` değişkeni, `with as`, `except as` ve iç içe `def` adları artık gövdede modül düzeyi adı gölgeler (`compiler/module_loader.zig`, `shadowedMap`).
+
+### Eklendi
+
+- `nox.log.set_level(name)`, `level()`, `enabled(name)`: asgari seviye filtresi (`DEBUG` varsayılan = eski davranış, `INFO`, `WARN`, `ERROR`, `OFF`); bilinmeyen ad `ValueError`.
+- `nox.time.boot_ms()`: cihaz uykusunu dahil sayan monoton sayaç (`CLOCK_BOOTTIME` Linux/Android, `CLOCK_MONOTONIC` Darwin). `docs/stdlib/time.md` "Clocks and device sleep": `instant_now` Linux/Android'de uykuyu saymaz, Darwin'de sayar.
+- `scripts/mobile_clock_probe.sh` + `tests/golden/mobile_clock_probe.nox` (TODO 3.9): iOS simülatörü ve android-arm64 emülatöründe süreç dondurulup sürdürülürken monoton/uyku-dahil/duvar saatleri tutarlı (4005/4005/4005 ms), CSPRNG tekrar etmez, log filtresi ve `redact` çalışır. iOS işi bunu CI'da koşar.
+- Golden testler: `log_level_filter`, `time_boot_ms_clocks`, `import_param_shadows_module_function`.
+
 ## [2.0.92]
 
 ### Düzeltildi

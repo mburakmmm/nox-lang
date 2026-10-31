@@ -14,3 +14,28 @@ class Counter:
 
 def make_counter(start: int) -> Counter:
     return Counter(start)
+
+# Parametre / yerel değişken / `for` değişkeni / `except as` adları, aynı adlı modül düzeyi işlev ve sınıfları GÖLGELER (v2.0.93; modül yükleyici yeniden adlandırması
+# bunları yanlışlıkla mangled işlev adına çeviriyordu: `nox.log`da `def level()` ile `format(level: str, ...)`).
+def shade() -> int:
+    return 7
+
+def shade_param(shade: int) -> int:
+    return shade + 1
+
+def shade_local() -> int:
+    shade: int = 40
+    return shade + 2
+
+def shade_loop() -> int:
+    total: int = 0
+    for shade in range(3):
+        total = total + shade
+    return total
+
+class Shade:
+    def __init__(self: Shade, v: int) -> None:
+        self.v = v
+
+    def bump(self: Shade, shade: int) -> int:
+        return self.v + shade

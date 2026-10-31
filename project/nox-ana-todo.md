@@ -224,7 +224,7 @@ anlatır; her dispatch yolu iki backend'de testlidir.
   davranışı.
 - [x] **3.8 Mobil ağ matrisini tamamla.** (v2.0.91: `scripts/mobile_network_probe.sh`; iOS simülatörü + android-arm64 + 16 KiB Android emülatörü, 12-15 senaryo; IPv6 literal, Android IPv6, DNS+bağlanma zaman aşımı ve bionic fflush(NULL) hataları düzeltildi. Açık: gerçek hücresel geçiş.) DNS IPv4/IPv6, offline, timeout,
   TLS sertifika reddi, ağ değişimi ve background/resume.
-- [~] **3.9 Entropy/clock/log sözleşmesini tamamla.** (v2.0.45: `nox.log.redact`/`mask_assignments` ile gizli değer maskeleme, iki backend golden. Zaten var: `nox.crypto.secure_random_hex` (OS CSPRNG), `nox.time.Instant` (monotonic), debug-only `nox_log_debug_raw`. Açık: askıya alma farkı ölçümü (cihaz gerekir), log seviye filtresi.) Güvenli RNG, monotonic
+- [x] **3.9 Entropy/clock/log sözleşmesini tamamla.** (v2.0.45: `nox.log.redact`/`mask_assignments`. v2.0.93: `nox.log.set_level/level/enabled` seviye filtresi; `nox.time.boot_ms` (uyku dahil monoton saat) + `docs/stdlib/time.md` "Clocks and device sleep" tablosu (`Instant` Linux/Android'de uykuyu saymaz, Darwin'de sayar); `scripts/mobile_clock_probe.sh` iOS simülatörü + Android emülatörü: süreç dondurulup sürdürülürken üç saat tutarlı, CSPRNG tekrar etmez, log filtresi/redact çalışır. Açık: gerçek CİHAZ uykusu (suspend) emülatörde yok.) Güvenli RNG, monotonic
   saat, suspend farkı, debug/release log ayrımı ve secret redaction.
 
 **Faz 3 çıkış kapısı:** Nox mobil runtime/stdlib kabul korpusu simülatör ve

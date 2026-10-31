@@ -15,11 +15,26 @@ available everywhere.
 | Function | Description |
 |---|---|
 | `now_ms()` | milliseconds since the Unix epoch (wall clock; can jump if the system clock is changed) |
+| `boot_ms()` | a monotonic millisecond counter that **includes time the device spent suspended**; only differences are meaningful |
 | `sleep_ms(ms)` | blocks the **current thread** for `ms` milliseconds |
 | `now()` | the current time as a `DateTime` (UTC) |
 | `from_epoch_ms(ms)` | converts epoch milliseconds to a `DateTime` (UTC) |
-| `instant_now()` | a monotonic `Instant` for measuring intervals |
+| `instant_now()` | a monotonic `Instant` for measuring intervals (see "Clocks and device sleep") |
 | `pad2(n)` | formats `n` with at least two digits (`7` → `"07"`) |
+
+## Clocks and device sleep
+
+| Clock | Source | While the device is suspended |
+|---|---|---|
+| `now_ms()` | wall clock (`CLOCK_REALTIME`) | keeps the real time of day; jumps if the system clock is changed |
+| `instant_now()` / `Instant` | `CLOCK_MONOTONIC` | **Linux and Android: not counted. macOS and iOS: counted** (`mach_continuous_time`) |
+| `boot_ms()` | `CLOCK_BOOTTIME` (Linux/Android), `CLOCK_MONOTONIC` (Darwin) | counted on every platform |
+
+The monotonic `Instant` is therefore *awake time* on Android and *elapsed time* on iOS. When you need the same answer on both — for example "how long ago did
+the user last open the app", a cache lifetime or a timeout that must expire while the phone sleeps — use `boot_ms()` differences (or the wall clock for calendar
+time). Suspending only the **process** (the app moving to the background and being frozen) does not stop any of these clocks: a 4-second sleep that is frozen for 3 seconds
+still reports about 4 seconds on all three. Real device suspend cannot be reproduced in an emulator or simulator, so the table above is the documented platform behaviour, not a
+measurement.
 
 ## `DateTime`
 

@@ -519,18 +519,79 @@ fn renameConsts(a: std.mem.Allocator, consts: []const ast.ConstDecl, map: *const
 /// adlandırılmaz (metodlar `map`e hiç GİRMEZ — yalnızca üst-düzey `func_def`/
 /// `class_def` adları girer) — ama `self: ClassName` DAHİL parametre/dönüş
 /// tip ifadeleri VE gövde YENİDEN adlandırılır (bkz. modül üstü not).
+/// Bir fonksiyon gövdesinde BAĞLANAN adlar: `var_decl`, `for` değişkeni, `with ... as`, `except ... as` ve iç içe `def` adları (iç bloklar dahil; iç
+/// fonksiyonların KENDİ yerelleri o fonksiyonun yeniden adlandırılmasında ayrıca ele alınır). Atamalar (`x = ...`) yeni ad BAĞLAMAZ (modül değişkenine yazar).
+fn collectBoundNames(a: std.mem.Allocator, stmts: []const ast.Stmt, out: *std.StringHashMapUnmanaged(void)) std.mem.Allocator.Error!void {
+    for (stmts) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| try out.put(a, v.name, {}),
+            .for_stmt => |f| {
+                try out.put(a, f.var_name, {});
+                try collectBoundNames(a, f.body, out);
+            },
+            .if_stmt => |f| {
+                try collectBoundNames(a, f.then_body, out);
+                for (f.elif_clauses) |ec| try collectBoundNames(a, ec.body, out);
+                if (f.else_body) |eb| try collectBoundNames(a, eb, out);
+            },
+            .while_stmt => |w| try collectBoundNames(a, w.body, out),
+            .func_def => |fd| try out.put(a, fd.name, {}),
+            .try_stmt => |t| {
+                try collectBoundNames(a, t.try_body, out);
+                for (t.except_clauses) |ec| {
+                    if (ec.bind_name) |n| try out.put(a, n, {});
+                    try collectBoundNames(a, ec.body, out);
+                }
+                if (t.finally_body) |fb| try collectBoundNames(a, fb, out);
+            },
+            .lowlevel_stmt => |ll| try collectBoundNames(a, ll.body, out),
+            .with_stmt => |w| {
+                if (w.binding) |n| try out.put(a, n, {});
+                try collectBoundNames(a, w.body, out);
+            },
+            else => {},
+        }
+    }
+}
+
+/// Fonksiyon parametreleri ve yerel bağlamalar, aynı adlı modül düzeyi tanımları (işlev/sınıf/değişken) GÖLGELER: gövde yeniden adlandırılırken bu adlar `map`ten
+/// çıkarılır. Aksi halde `def format(level: str)` ile modülde `def level()` birlikte bulunca `level` parametresi işlevin mangled adına çevrilirdi (v2.0.93).
+/// Gölgelenen ad yoksa `map` aynen döner (kopya yok); varsa `owned`a bir kopya kurulur.
+fn shadowedMap(a: std.mem.Allocator, map: *const RenameMap, params: []const ast.Param, body: []const ast.Stmt, owned: *?RenameMap) std.mem.Allocator.Error!*const RenameMap {
+    var bound: std.StringHashMapUnmanaged(void) = .empty;
+    defer bound.deinit(a);
+    for (params) |p| try bound.put(a, p.name, {});
+    try collectBoundNames(a, body, &bound);
+    var any = false;
+    var it = bound.keyIterator();
+    while (it.next()) |k| {
+        if (map.contains(k.*)) {
+            any = true;
+            break;
+        }
+    }
+    if (!any) return map;
+    var m = try map.clone(a);
+    it = bound.keyIterator();
+    while (it.next()) |k| _ = m.remove(k.*);
+    owned.* = m;
+    return &owned.*.?;
+}
+
 fn renameMethodDef(a: std.mem.Allocator, m: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
     const params = try a.alloc(ast.Param, m.params.len);
     for (m.params, 0..) |p, i| {
         params[i] = p;
         params[i].type_expr = try renameTypeExpr(a, p.type_expr, map);
     }
+    var owned: ?RenameMap = null;
+    const body_map = try shadowedMap(a, map, m.params, m.body, &owned);
     return .{
         .name = m.name,
         .type_params = m.type_params,
         .params = params,
         .return_type = try renameTypeExpr(a, m.return_type, map),
-        .body = try renameStmts(a, m.body, map),
+        .body = try renameStmts(a, m.body, body_map),
         .is_async = m.is_async,
         .nonlocals = m.nonlocals,
         // Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin §3.219
@@ -557,12 +618,14 @@ fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rena
         params[i] = p;
         params[i].type_expr = try renameTypeExpr(a, p.type_expr, map);
     }
+    var owned: ?RenameMap = null;
+    const body_map = try shadowedMap(a, map, fd.params, fd.body, &owned);
     return .{
         .name = map.get(fd.name).?,
         .type_params = fd.type_params,
         .params = params,
         .return_type = try renameTypeExpr(a, fd.return_type, map),
-        .body = try renameStmts(a, fd.body, map),
+        .body = try renameStmts(a, fd.body, body_map),
         .is_async = fd.is_async,
         .nonlocals = fd.nonlocals,
         // v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx):
@@ -592,12 +655,14 @@ fn renameNestedFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rename
         params[i] = p;
         params[i].type_expr = try renameTypeExpr(a, p.type_expr, map);
     }
+    var owned: ?RenameMap = null;
+    const body_map = try shadowedMap(a, map, fd.params, fd.body, &owned);
     return .{
         .name = fd.name,
         .type_params = fd.type_params,
         .params = params,
         .return_type = try renameTypeExpr(a, fd.return_type, map),
-        .body = try renameStmts(a, fd.body, map),
+        .body = try renameStmts(a, fd.body, body_map),
         .is_async = fd.is_async,
         .nonlocals = fd.nonlocals,
         // `renameTopLevelFuncDef`in AYNI düzeltmesi (bkz. onun belge notu).

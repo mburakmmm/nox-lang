@@ -92,6 +92,18 @@ export fn nox_time_monotonic_ms_raw() callconv(.c) i64 {
     return @as(i64, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
 }
 
+/// Cihaz uykusunu (suspend) DAHİL SAYAN monoton saat (`nox.time.boot_ms`). Linux/Android'de `CLOCK_BOOTTIME`; Darwin'de `CLOCK_MONOTONIC` zaten `mach_continuous_time`dır
+/// (uykuyu sayar). `nox_time_monotonic_ms_raw` ise Linux/Android'de uykuyu SAYMAZ (`CLOCK_MONOTONIC`), Darwin'de sayar: bu işlev platformlar arası tutarlı "uyku dahil" saattir.
+export fn nox_time_boot_ms_raw() callconv(.c) i64 {
+    if (comptime wasm_host.is_freestanding_wasm) return wasm_host.clock_ms(1);
+    if (comptime is_freestanding) return 0;
+    if (builtin.os.tag == .windows) return WinTime.monotonicMs();
+    var ts: std.c.timespec = undefined;
+    const clock: std.c.CLOCK = if (comptime builtin.os.tag == .linux) .BOOTTIME else .MONOTONIC;
+    _ = std.c.clock_gettime(clock, &ts);
+    return @as(i64, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
+}
+
 export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
     if (comptime wasm_host.is_freestanding_wasm) {
         if (ms > 0) wasm_host.sleep_ms(ms);

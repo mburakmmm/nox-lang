@@ -14,6 +14,7 @@
 # GERÇEK çakışma dersi).
 extern def nox_time_now_ms_raw() -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_sleep_ms_raw(ms: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_time_boot_ms_raw() -> int from "zig-out/lib/noxrt.o"
 
 # v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.time`
 # ARTIK MODÜL-seviyesinde capability-SİZ (`import nox.time` HER profilde
@@ -27,6 +28,12 @@ extern def nox_time_sleep_ms_raw(ms: int) -> None from "zig-out/lib/noxrt.o"
 @capability.requires("clock")
 def now_ms() -> int:
     return nox_time_now_ms_raw()
+
+# Cihaz uykusunu (suspend) DAHİL sayan monoton milisaniye sayacı; yalnızca farklar anlamlıdır. `Instant`/`instant_now` Linux/Android'de uykuyu SAYMAZ
+# (`CLOCK_MONOTONIC`), Darwin'de sayar; mobilde "telefon uyurken geçen süre" gerekiyorsa `boot_ms()` farkını kullan.
+@capability.requires("clock")
+def boot_ms() -> int:
+    return nox_time_boot_ms_raw()
 
 @capability.requires("clock")
 def sleep_ms(ms: int) -> None:

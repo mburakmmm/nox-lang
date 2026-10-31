@@ -1,0 +1,28 @@
+# Faz 3.9: saat/entropi/log sözleşmesi gerçek mobil hedefte (scripts/mobile_clock_probe.sh). Program 4 sn uyur; harness bu sırada süreci dondurup sürdürür
+# (SIGSTOP/SIGCONT, arka plana alma benzetimi). Üç saat de (monoton, uyku dahil monoton, duvar) tutarlı ilerlemeli; entropi tekrar etmemeli; log filtresi çalışmalı.
+# Çıktı: "mono=<ms> boot=<ms> wall=<ms> rng=<ok|bad> log=<ok|bad> redact=<ok|bad>"
+import nox.crypto
+import nox.log
+import nox.time
+
+mono0: int = nox.time.instant_now().ms
+boot0: int = nox.time.boot_ms()
+wall0: int = nox.time.now_ms()
+r1: str = nox.crypto.secure_random_hex(16)
+r2: str = nox.crypto.secure_random_hex(16)
+nox.time.sleep_ms(4000)
+mono: int = nox.time.instant_now().ms - mono0
+boot: int = nox.time.boot_ms() - boot0
+wall: int = nox.time.now_ms() - wall0
+
+rng: str = "ok"
+if r1 == r2 or len(r1) != 32 or len(r2) != 32:
+    rng = "bad"
+log: str = "ok"
+nox.log.set_level("ERROR")
+if nox.log.enabled("WARN") or not nox.log.enabled("ERROR") or nox.log.level() != "ERROR":
+    log = "bad"
+red: str = "ok"
+if nox.log.redact("token=abc123 end", ["abc123"]) != "token=*** end":
+    red = "bad"
+print("mono=" + str(mono) + " boot=" + str(boot) + " wall=" + str(wall) + " rng=" + rng + " log=" + log + " redact=" + red)
