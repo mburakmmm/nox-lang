@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs the stdlib suite and the runtime probe on the arm64 emulator.
-# Boots nox_api36 when no device is attached. android-x64 is not executed.
+# Runs the stdlib suite and the runtime probe on the attached emulator (NOX_ANDROID_ABI=arm64|x64, default arm64).
+# Boots nox_api36 when no device is attached; in CI the x86_64 emulator is provided by scripts/mobile_android_ci.sh.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 noxc=${NOXC:-"$root/zig-out/bin/noxc"}

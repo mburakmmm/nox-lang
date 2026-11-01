@@ -7,7 +7,7 @@ Hiçbir mobil hedef `supported` değildir. Stable kapısı aşağıdakilerin hep
 | ios-arm64 | statik arşiv, LLVM | cihaz laboratuvarı yok, yalnız derleme | experimental |
 | ios-simulator-arm64 | statik arşiv, LLVM | simülatörde stdlib paketi ve Aura proof/notes/chat | experimental |
 | android-arm64 | paylaşılan kütüphane, 16 KiB | arm64 emülatörde stdlib paketi ve Aura proof/notes/chat | experimental |
-| android-x64 | paylaşılan kütüphane, 16 KiB | bağlandı, çalıştırılmadı | experimental |
+| android-x64 | paylaşılan kütüphane, 16 KiB | API 34 x86_64 emülatöründe CI'da stdlib paketi, çalışma zamanı ve yığın/iş parçacığı probe'u (Aura çalıştırılmadı) | experimental |
 
 `ios-simulator-x64` ve Android 32-bit bu tabloda yoktur. Metin şekillendirme, emoji ve sağdan sola yerleşim `not supported`.
 

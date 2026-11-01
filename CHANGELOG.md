@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.102]
+
+### Düzeltildi
+
+- `docs/internals/mobile-matrix.md` üst tablosu android-x64 için hâlâ "bağlandı, çalıştırılmadı" diyordu; v2.0.96-98'den beri API 34 x86_64 emülatöründe CI'da çalışıyor. `mobile_android_run.sh` başlık yorumu da güncellendi.
+
 ## [2.0.101]
 
 ### Düzeltildi
