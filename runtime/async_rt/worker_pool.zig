@@ -591,6 +591,8 @@ test "WorkerPool: GERÇEK spawn/await, TÜM sonuçlar doğru VE kanıtlanmış �
         // görevleri BU slot spawn eder (bkz. `stealTestWorkerEntry`).
         stealTestWorkerEntry(pool.rt, 0, &ctx);
         pool.joinAll();
+        // Değişmez: tüm işçiler çıkınca hiçbir `ready` listesinde fiber kalmamalı (`pool_ready_total`, bkz. `asap.RuntimeState`); artık/eksik sayaç yanlış ya da kaçırılmış deadlock demektir.
+        try std.testing.expectEqual(@as(usize, 0), pool.pool_ready_total.load(.acquire));
 
         var stolen_count: usize = 0;
         var i: usize = 0;
@@ -724,6 +726,8 @@ test "WorkerPool: GERÇEK eş zamanlı otomatik-collect (STW bariyeri) ÇÖKMEDE
     // Çağıran iş parçacığı (slot 0) KENDİSİ de bir worker OLUR.
     cycleStressWorkerEntry(pool.rt, 0, &ctx);
     pool.joinAll();
+    // Değişmez: tüm işçiler çıkınca hiçbir `ready` listesinde fiber kalmamalı (`pool_ready_total`, bkz. `asap.RuntimeState`); artık/eksik sayaç yanlış ya da kaçırılmış deadlock demektir.
+    try std.testing.expectEqual(@as(usize, 0), pool.pool_ready_total.load(.acquire));
 
     for (ctx.tasks) |worker_tasks| {
         for (worker_tasks) |t| testing.allocator.destroy(t);
@@ -873,6 +877,8 @@ test "WorkerPool: Channel[T] çapraz-worker paylaşımı — GERÇEK çalma alt�
         try pool.spawnWorkers(*ChanStressCtx, chanStressWorkerEntry, &ctx);
         chanStressWorkerEntry(pool.rt, 0, &ctx);
         pool.joinAll();
+        // Değişmez: tüm işçiler çıkınca hiçbir `ready` listesinde fiber kalmamalı (`pool_ready_total`, bkz. `asap.RuntimeState`); artık/eksik sayaç yanlış ya da kaçırılmış deadlock demektir.
+        try std.testing.expectEqual(@as(usize, 0), pool.pool_ready_total.load(.acquire));
 
         var i: usize = 0;
         while (i < CHAN_STRESS_N_PRODUCERS) : (i += 1) {
@@ -1033,6 +1039,8 @@ test "WorkerPool: Task[T] çapraz-worker await_() — GERÇEK çalma altında so
         try pool.spawnWorkers(*TaskAwaitStressCtx, taskAwaitStressWorkerEntry, &ctx);
         taskAwaitStressWorkerEntry(pool.rt, 0, &ctx);
         pool.joinAll();
+        // Değişmez: tüm işçiler çıkınca hiçbir `ready` listesinde fiber kalmamalı (`pool_ready_total`, bkz. `asap.RuntimeState`); artık/eksik sayaç yanlış ya da kaçırılmış deadlock demektir.
+        try std.testing.expectEqual(@as(usize, 0), pool.pool_ready_total.load(.acquire));
 
         var i: usize = 0;
         while (i < TASK_AWAIT_STRESS_N) : (i += 1) {

@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.107]
+
+### Eklendi
+
+- `WorkerPool` testlerine (steal, STW otomatik-collect, Channel, Task await) değişmez: tüm işçiler çıkınca `pool_ready_total == 0`. Sayaç artık/eksik kalırsa yanlış ya da kaçırılmış deadlock demektir.
+- Doğrulama (kod değişikliği yok): CPU yakıcılar altında (36 yakıcı) `async_task_churn_long` `wasm32-wasi-threads`'te 0/25 deadlock, native `stress-test` (ReleaseFast, 1500 tur) 6 koşuda 0 hata.
+
 ## [2.0.106]
 
 ### Düzeltildi
