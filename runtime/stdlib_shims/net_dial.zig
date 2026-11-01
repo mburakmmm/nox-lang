@@ -74,6 +74,39 @@ pub fn install(vtable: *Io.VTable) void {
 
 const MAX_ADDRS = 16;
 
+/// Aynı anda yaşayan DNS yardımcı iş parçacığı sayısı. `getaddrinfo` iptal edilemez: son tarihi geçen bir istek beklemeyi bırakır ama iş parçacığı sistem çözümleyicisi
+/// (macOS ~30 sn) dönene kadar yaşar. Sınır olmasaydı yavaş bir DNS altında N eşzamanlı istek N iş parçacığı ve N yığın bırakırdı. Sınıra gelince yeni arama, kendi son
+/// tarihine kadar boş yuva bekler; bulamazsa zaman aşımı olur (yeni iş parçacığı AÇILMAZ).
+const MAX_LOOKUP_THREADS: u32 = 32;
+
+const Slots = struct {
+    inflight: std.atomic.Value(u32) = .init(0),
+
+    fn tryAcquire(self: *Slots, limit: u32) bool {
+        var cur = self.inflight.load(.acquire);
+        while (cur < limit) {
+            cur = self.inflight.cmpxchgWeak(cur, cur + 1, .acq_rel, .acquire) orelse return true;
+        }
+        return false;
+    }
+
+    fn release(self: *Slots) void {
+        _ = self.inflight.fetchSub(1, .acq_rel);
+    }
+
+    /// Boş yuva bulunana ya da `deadline_ns` (monoton) dolana kadar bekler; `deadline_ns == 0` ise beklemeden dener.
+    fn acquireUntil(self: *Slots, limit: u32, deadline_ns: i64) bool {
+        while (true) {
+            if (self.tryAcquire(limit)) return true;
+            if (deadline_ns == 0 or nowNs() >= deadline_ns) return false;
+            var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+        }
+    }
+};
+
+var g_lookup_slots: Slots = .{};
+
 const LookupJob = struct {
     refs: std.atomic.Value(u32) = .init(2),
     done: std.atomic.Value(bool) = .init(false),
@@ -91,6 +124,8 @@ const LookupJob = struct {
 
 fn lookupThread(job: *LookupJob) void {
     defer job.release();
+    // Yuva, iş parçacığı GERÇEKTEN bitince (çağıran vazgeçmiş olsa bile) boşalır.
+    defer g_lookup_slots.release();
     resolveInto(job);
     job.done.store(true, .release);
 }
@@ -166,17 +201,25 @@ fn boundedLookup(
     var heap_job = false;
     if (rem) |r| {
         // Son tarihli çözümleme: yardımcı iş parçacığı; vazgeçilirse iş parçacığı kendi payını bırakır.
-        job = std.heap.page_allocator.create(LookupJob) catch return error.NameServerFailure;
+        const deadline = nowNs() + r * std.time.ns_per_ms;
+        if (!g_lookup_slots.acquireUntil(MAX_LOOKUP_THREADS, deadline)) {
+            tl_timed_out = true;
+            return error.NameServerFailure;
+        }
+        job = std.heap.page_allocator.create(LookupJob) catch {
+            g_lookup_slots.release();
+            return error.NameServerFailure;
+        };
         job.* = .{ .port = options.port, .family = options.family };
         heap_job = true;
         @memcpy(job.host_z[0..name.len], name);
         job.host_z[name.len] = 0;
         const th = std.Thread.spawn(.{}, lookupThread, .{job}) catch {
+            g_lookup_slots.release();
             std.heap.page_allocator.destroy(job);
             return error.NameServerFailure;
         };
         th.detach();
-        const deadline = nowNs() + r * std.time.ns_per_ms;
         while (!job.done.load(.acquire)) {
             if (nowNs() >= deadline) {
                 tl_timed_out = true;
@@ -359,4 +402,34 @@ test "çözümleme: IPv6 literal (köşeli parantezli) ve localhost ağ çözüm
         };
     } else |_| {}
     try std.testing.expect(v4 and v6);
+}
+
+test "DNS yuvaları: sınıra gelince bekler, süre dolarsa vazgeçer, boşalınca yeniden verir" {
+    if (comptime !enabled) return error.SkipZigTest;
+    var slots: Slots = .{};
+    try std.testing.expect(slots.acquireUntil(2, 0));
+    try std.testing.expect(slots.acquireUntil(2, 0));
+    // Dolu: son tarihsiz ve kısa son tarihli denemeler başarısız olur.
+    try std.testing.expect(!slots.acquireUntil(2, 0));
+    const t0 = nowNs();
+    try std.testing.expect(!slots.acquireUntil(2, t0 + 20 * std.time.ns_per_ms));
+    try std.testing.expect(nowNs() - t0 >= 20 * std.time.ns_per_ms);
+    slots.release();
+    try std.testing.expect(slots.acquireUntil(2, 0));
+    try std.testing.expectEqual(@as(u32, 2), slots.inflight.load(.acquire));
+}
+
+test "DNS yuvaları: bekleyen, başka bir iş parçacığı yuva bırakınca devam eder" {
+    if (comptime !enabled) return error.SkipZigTest;
+    var slots: Slots = .{};
+    try std.testing.expect(slots.acquireUntil(1, 0));
+    const releaser = try std.Thread.spawn(.{}, struct {
+        fn run(sl: *Slots) void {
+            var ts: std.c.timespec = .{ .sec = 0, .nsec = 30 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+            sl.release();
+        }
+    }.run, .{&slots});
+    defer releaser.join();
+    try std.testing.expect(slots.acquireUntil(1, nowNs() + 2 * std.time.ns_per_s));
 }

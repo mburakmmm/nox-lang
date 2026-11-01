@@ -76,6 +76,7 @@ pub const WorkerPool = struct {
     pool_live_count: *std.atomic.Value(usize),
     pool_waiting_on_io: *std.atomic.Value(usize),
     pool_idle_workers: *std.atomic.Value(usize),
+    pool_ready_total: *std.atomic.Value(usize),
     /// Faz MN.8, Bulgu B: `state.pool_activity_epoch`e (bkz. `asap.zig`)
     /// DOĞRUDAN İŞARETÇİ — AYNI desen, `Scheduler.attachToPool`e `PoolLink.
     /// activity_epoch` OLARAK GEÇİRİLİR.
@@ -163,6 +164,7 @@ pub const WorkerPool = struct {
             .pool_live_count = &pool_ext.pool_live_count,
             .pool_waiting_on_io = &pool_ext.pool_waiting_on_io,
             .pool_idle_workers = &pool_ext.pool_idle_workers,
+            .pool_ready_total = &pool_ext.pool_ready_total,
             .pool_activity_epoch = &pool_ext.pool_activity_epoch,
             .deque_list = deque_list,
             .pool_stw_requested = &pool_ext.pool_stw_requested,
@@ -467,6 +469,7 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         .live_count = ctx.pool.pool_live_count,
         .waiting_on_io = ctx.pool.pool_waiting_on_io,
         .idle_workers = ctx.pool.pool_idle_workers,
+        .ready_total = ctx.pool.pool_ready_total,
         .activity_epoch = ctx.pool.pool_activity_epoch,
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
@@ -679,6 +682,7 @@ fn cycleStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *CycleStressCtx) voi
         .live_count = ctx.pool.pool_live_count,
         .waiting_on_io = ctx.pool.pool_waiting_on_io,
         .idle_workers = ctx.pool.pool_idle_workers,
+        .ready_total = ctx.pool.pool_ready_total,
         .activity_epoch = ctx.pool.pool_activity_epoch,
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
@@ -798,6 +802,7 @@ fn chanStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *ChanStressCtx) void 
         .live_count = ctx.pool.pool_live_count,
         .waiting_on_io = ctx.pool.pool_waiting_on_io,
         .idle_workers = ctx.pool.pool_idle_workers,
+        .ready_total = ctx.pool.pool_ready_total,
         .activity_epoch = ctx.pool.pool_activity_epoch,
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
@@ -952,6 +957,7 @@ fn taskAwaitStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *TaskAwaitStress
         .live_count = ctx.pool.pool_live_count,
         .waiting_on_io = ctx.pool.pool_waiting_on_io,
         .idle_workers = ctx.pool.pool_idle_workers,
+        .ready_total = ctx.pool.pool_ready_total,
         .activity_epoch = ctx.pool.pool_activity_epoch,
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,

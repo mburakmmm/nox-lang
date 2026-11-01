@@ -29206,3 +29206,10 @@ Bir üst-düzey `def` nesne dosyasında düz adıyla genel sembol olduğundan, s
 
 `http_client.watchdogLoop` ve `http_stream.streamWatchdog` süreyi `elapsed += 5` ile toplamaz, `http_client.monotonicMs()` ile ölçer: yavaş `nanosleep` (emülatör, yüklü CI) zaman aşımını uzatamaz. Regresyon: `bekçi: yavaş uyku zaman aşımını uzatmaz` (50 ms uyku, 300 ms zaman aşımı ~300 ms'de tetiklenir; eski sayaç ~3000 ms beklerdi).
 
+### 3.321.2 Sağlamlaştırma turu (v2.0.103)
+
+- **ASan SIGILL kök nedeni:** Nox'tan bağımsız. Android 16 arm64 imajında NDK r28 ASan çalışma zamanı, düz bir C programında bile ilk \`pthread_create\`te \`autiasp\` (işaretçi doğrulaması) ile SIGILL verir (lldb: \`___interceptor_prctl\` dönüşü; \`-mbranch-protection=none\` çözmez). ASan altında stdlib paketi bu yüzden yalnız x86_64 emülatöründe (PAC yok) gecelik çalışır (\`mobile_android_ci.sh full\`).
+- **DNS yardımcı iş parçacığı sınırı:** \`net_dial.zig\` aynı anda en fazla 32 \`getaddrinfo\` iş parçacığı tutar (\`g_lookup_slots\`); dolunca yeni arama kendi son tarihine kadar yuva bekler, bulamazsa zaman aşımı olur (yeni iş parçacığı açılmaz). Birim testleri yuva mantığını sınar; yavaş-DNS ortamında gerçek ölçüm yapılmadı.
+- **Run önbelleği:** eşzamanlı iki \`prune\` testi eklendi; sınırlar \`run_cache.zig\` başlığında belgelendi (aynı özet iki süreçte aynı anda derlenemez).
+- **Scheduler yanlış-pozitif deadlock (10.11):** \`pool_ready_total\` (bkz. TODO 10.11). \`poolWideDeadlockCheck\` artık başka işçilerin hazır listelerini de hesaba katar.
+

@@ -178,6 +178,7 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
                 .live_count = pool.pool_live_count,
                 .waiting_on_io = pool.pool_waiting_on_io,
                 .idle_workers = pool.pool_idle_workers,
+                .ready_total = pool.pool_ready_total,
                 .activity_epoch = pool.pool_activity_epoch,
                 .stw_requested = pool.pool_stw_requested,
                 .stw_arrived = pool.pool_stw_arrived,

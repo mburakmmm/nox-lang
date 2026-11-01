@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.103]
+
+### Düzeltildi
+
+- **Seyrek yanlış-pozitif "deadlock detected" (wasm-threads havuzu, TODO 10.11).** Yük altında `async_task_churn_long` 12/30 tekrar üretildi (düzeltmeyle 0/40): zamanlayıcıdan düşmüş bir işçinin hazır listesindeki fiber diğer işçiye görünmüyordu. Havuz-çapında `pool_ready_total` sayacı eklendi; çalma sırasında işçi artık "boşta" sayılmaz. Birim regresyon testi eklendi.
+- **DNS yardımcı iş parçacıkları sınırsızdı.** `getaddrinfo` iptal edilemediğinden zaman aşımına uğrayan aramaların iş parçacıkları çözümleyici dönene kadar yaşıyordu; eşzamanlı çözülemeyen ad sayısı kadar iş parçacığı birikebilirdi. En fazla 32 eşzamanlı arama; sınıra gelen arama kendi son tarihine kadar bekler.
+- Android AddressSanitizer SIGILL'inin kök nedeni bulundu: Nox'tan bağımsız (Android 16 arm64 + NDK ASan + PAC, düz C programı bile ölür). ASan'lı stdlib paketi gecelik iş akışında x86_64 emülatörüne taşındı.
+
+### Eklendi
+
+- `run_cache.prune` için eşzamanlı iki temizleyici testi; `run_cache.zig` başlığında sınırlar (best-effort, aynı özetin iki süreçte aynı anda derlenmesi desteklenmez).
+
 ## [2.0.102]
 
 ### Düzeltildi

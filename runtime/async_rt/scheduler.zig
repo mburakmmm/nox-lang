@@ -83,6 +83,8 @@ pub const PoolLink = struct {
     live_count: *std.atomic.Value(usize),
     waiting_on_io: *std.atomic.Value(usize),
     idle_workers: *std.atomic.Value(usize),
+    /// Bkz. `asap.RuntimeState.pool_ready_total`.
+    ready_total: *std.atomic.Value(usize),
     /// Faz MN.8, Bulgu B: `poolWideDeadlockCheck`nin epoch-doğrulamalı
     /// kök-neden düzeltmesi İçİn (bkz. `asap.RuntimeState`nin `pool_
     /// activity_epoch`inin AYNI belge notu).
@@ -205,6 +207,7 @@ pub const Scheduler = struct {
     pool_live_count: ?*std.atomic.Value(usize) = null,
     pool_waiting_on_io: ?*std.atomic.Value(usize) = null,
     pool_idle_workers: ?*std.atomic.Value(usize) = null,
+    pool_ready_total: ?*std.atomic.Value(usize) = null,
     /// Faz MN.8, Bulgu B: bkz. `PoolLink.activity_epoch`in belge notu.
     pool_activity_epoch: ?*atomic_compat.Value(u64) = null,
     /// Faz MN.6: STW bariyerinin ÜÇ paylaşılan atomiğine işaretçiler —
@@ -274,6 +277,7 @@ pub const Scheduler = struct {
         self.pool_live_count = link.live_count;
         self.pool_waiting_on_io = link.waiting_on_io;
         self.pool_idle_workers = link.idle_workers;
+        self.pool_ready_total = link.ready_total;
         self.pool_activity_epoch = link.activity_epoch;
         self.stw_requested = link.stw_requested;
         self.stw_arrived = link.stw_arrived;
@@ -389,6 +393,8 @@ pub const Scheduler = struct {
         // İMKANSIZ kıldığından) `is_foreign` HER ZAMAN `false` olurdu, bu
         // YÜZDEN çağrıyı TAMAMEN atlamak DAVRANIŞI DEĞİŞTİRMEZ.
         const is_foreign = if (comptime is_freestanding) false else self.pool_live_count != null and thread_spawn.currentId() != self.owner_tid;
+        // Sayaç, listeden ÖNCE artar (gözlemci hiçbir zaman gerçek sayıdan az görmez); bkz. `asap.RuntimeState.pool_ready_total`.
+        if (self.pool_ready_total) |rt_total| _ = rt_total.fetchAdd(1, .acq_rel);
         self.ready_lock.lock();
         self.ready.append(self.allocator, fiber) catch @panic("OOM: could not grow the scheduler ready queue");
         self.ready_lock.unlock();
@@ -635,8 +641,12 @@ pub const Scheduler = struct {
         const waiting_io = self.pool_waiting_on_io.?;
         const idle = self.pool_idle_workers.?;
         const epoch = self.pool_activity_epoch.?;
+        const ready_total = self.pool_ready_total.?;
         _ = idle.fetchAdd(1, .monotonic);
-        defer _ = idle.fetchSub(1, .monotonic);
+        var counted = true;
+        defer if (counted) {
+            _ = idle.fetchSub(1, .monotonic);
+        };
 
         const epoch_before = epoch.load(.acquire);
 
@@ -650,15 +660,26 @@ pub const Scheduler = struct {
                 } else sleepMs(1);
             } else sleepMs(1);
             if (self.hasLocalReadyWork()) return false;
+            // Çalma sırasında bu işçi "boşta" SAYILMAZ: çalınan fiber `markReady` ile yayımlanana kadar ne bir deque'de ne de bir `ready` listesindedir. İşçi bu
+            // aralıkta (aşırı CPU açlığında 20 ms'den uzun) zamanlayıcıdan düşerse, boşta sayılmaya devam etseydi diğer işçiler "herkes boşta, iş yok, epoch aynı" görüp
+            // YANLIŞ-POZİTİF deadlock ilan ederdi (yük altında `async_task_churn_long` wasm-threads'te ~%10 tekrar üretildi). `.acq_rel`: çalmanın etkisini
+            // gören bir gözlemci bu azaltmayı da görür.
+            _ = idle.fetchSub(1, .acq_rel);
+            counted = false;
             if (self.tryStealFromSiblings()) |f| {
                 self.markReady(f);
                 return false;
             }
+            _ = idle.fetchAdd(1, .acq_rel);
+            counted = true;
             if (live.load(.monotonic) == 0) return false;
             if (waiting_io.load(.monotonic) > 0) return false;
             if (idle.load(.monotonic) < n_workers) return false;
+            if (ready_total.load(.acquire) > 0) return false;
         }
         if (self.hasLocalReadyWork()) return false;
+        // Başka bir (belki zamanlayıcıdan düşmüş) işçinin hazır listesinde bekleyen fiber varsa bu deadlock değildir.
+        if (ready_total.load(.acquire) > 0) return false;
         if (!(idle.load(.monotonic) >= n_workers and
             live.load(.monotonic) > 0 and
             waiting_io.load(.monotonic) == 0))
@@ -710,6 +731,11 @@ pub const Scheduler = struct {
             // elemanın YERİNE kuyruğun SON elemanını taşıyarak O(1) yapar.
             const maybe_fiber: ?*Fiber = if (self.ready.items.len > 0) self.ready.swapRemove(0) else null;
             self.ready_lock.unlock();
+            // Listeden ÇIKTIKTAN sonra azalır. Havuza bağlanmadan ÖNCE eklenmiş bir fiber sayaçta yoktur: taşmayı önlemek için sıfırın altına inilmez.
+            if (maybe_fiber != null) if (self.pool_ready_total) |rt_total| {
+                var cur = rt_total.load(.acquire);
+                while (cur > 0) cur = rt_total.cmpxchgWeak(cur, cur - 1, .acq_rel, .acquire) orelse break;
+            };
             const fiber = maybe_fiber orelse blk: {
                 // Faz MN.4: KENDİ hazır kuyruğu BOŞ — havuzluysa (bkz.
                 // `pool_live_count`) ÖNCE KENDİ deque'inden pop, SONRA
@@ -1565,6 +1591,7 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
         live_count: std.atomic.Value(usize) = .init(0),
         waiting_on_io: std.atomic.Value(usize) = .init(0),
         idle_workers: std.atomic.Value(usize) = .init(0),
+        ready_total: std.atomic.Value(usize) = .init(0),
         activity_epoch: atomic_compat.Value(u64) = .init(0),
         deques: [N]Deque = @splat(.{}),
         deque_ptrs: [N]*Deque = undefined,
@@ -1587,6 +1614,7 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
                 .live_count = &shared.live_count,
                 .waiting_on_io = &shared.waiting_on_io,
                 .idle_workers = &shared.idle_workers,
+                .ready_total = &shared.ready_total,
                 .activity_epoch = &shared.activity_epoch,
                 .stw_requested = &shared.stw_requested,
                 .stw_arrived = &shared.stw_arrived,
@@ -1651,4 +1679,58 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
     for (0..N) |i| {
         try std.testing.expectEqual(@as(usize, ROUNDS), shared.rounds_done[i].load(.monotonic));
     }
+}
+
+// ---- Yanlış-pozitif deadlock regresyonu: başka işçinin hazır listesindeki fiber ----
+//
+// Aşırı CPU açlığında bir işçi "boşta" sayılırken kendi `ready` listesindeki fiber'ı işleyemeden >20 ms zamanlayıcıdan düşebilir; diğer işçi "herkes boşta, deque'ler boş,
+// epoch aynı" görüp deadlock ilan ederdi (yük altında wasm-threads `async_task_churn_long`ta 12/30 tekrar üretildi). `pool_ready_total` > 0 iken ilan EDİLMEMELİ.
+
+test "poolWideDeadlockCheck: havuzdaki herhangi bir hazır listede fiber varken deadlock ilan etmez" {
+    if (comptime is_freestanding) return error.SkipZigTest;
+    var stw_requested: std.atomic.Value(bool) = .init(false);
+    var stw_arrived: std.atomic.Value(usize) = .init(0);
+    var stw_sense: std.atomic.Value(bool) = .init(false);
+    var stw_lock: SpinLock = .{};
+    var active_workers: std.atomic.Value(usize) = .init(1);
+    var stw_round_n: std.atomic.Value(usize) = .init(1);
+    var live_count: std.atomic.Value(usize) = .init(1);
+    var waiting_on_io: std.atomic.Value(usize) = .init(0);
+    var idle_workers: std.atomic.Value(usize) = .init(0);
+    var ready_total: std.atomic.Value(usize) = .init(0);
+    var activity_epoch: atomic_compat.Value(u64) = .init(0);
+    var deque: Deque = .{};
+    var deque_ptrs = [_]*Deque{&deque};
+    var wake_fds = [_]std.atomic.Value(i32){.init(-1)};
+
+    const Fn = struct {
+        fn collect(_: ?*anyopaque) callconv(.c) void {}
+    };
+    var sched = try Scheduler.init(std.testing.allocator);
+    defer sched.deinit();
+    try sched.attachToPool(.{
+        .own_slot = 0,
+        .sibling_deques = &deque_ptrs,
+        .live_count = &live_count,
+        .waiting_on_io = &waiting_on_io,
+        .idle_workers = &idle_workers,
+        .ready_total = &ready_total,
+        .activity_epoch = &activity_epoch,
+        .stw_requested = &stw_requested,
+        .stw_arrived = &stw_arrived,
+        .stw_sense = &stw_sense,
+        .stw_lock = &stw_lock,
+        .active_workers = &active_workers,
+        .stw_round_n = &stw_round_n,
+        .wake_fds = &wake_fds,
+        .collect_fn = &Fn.collect,
+        .rt = null,
+    });
+
+    // Başka bir işçinin hazır listesinde fiber var (sayaç 1): deadlock DEĞİL.
+    ready_total.store(1, .release);
+    try std.testing.expect(!sched.poolWideDeadlockCheck());
+    // Pozitif kontrol: sayaç 0 iken aynı durum (tek işçi, canlı fiber, hazır iş yok) deadlock'tur.
+    ready_total.store(0, .release);
+    try std.testing.expect(sched.poolWideDeadlockCheck());
 }

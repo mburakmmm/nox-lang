@@ -14,6 +14,15 @@
 //!      boyut tavanı aşıldığında EN ESKİ kullanılanlar silinir. Son
 //!      `grace_s` içinde kullanılan girdiye ASLA dokunulmaz (eşzamanlı
 //!      `noxc run/test` süreçleri güvende).
+//!
+//! **Sınırlar (bilinçli):** temizlik best-effort'tur; silinemeyen girdi kalır
+//! (Windows'ta çalışan `.exe` silinemez), 512 MiB mutlak kota değil hedeftir.
+//! Çalışan bir program tavan nedeniyle silinirse Unix'te çalışmaya devam eder
+//! (inode yaşar), Windows'ta silme sessizce başarısız olur. Aynı özetli iki
+//! derleme AYNI dizine yazar (özet = içerik): biri bitip `dropIntermediates`
+//! çalıştırırken diğerinin henüz okumadığı `bin.ll`yi silebilir; aynı kaynağı
+//! aynı anda iki süreçte derlemek desteklenmez (derleme başına özel dizin
+//! mimariyi değiştirir, bkz. spec §3.321).
 
 const std = @import("std");
 const Io = std.Io;
@@ -354,4 +363,39 @@ test "limitsFromEnv: MB cinsinden tavan, gecersiz deger varsayilani korur" {
     try std.testing.expectEqual(@as(u64, 0), limitsFromEnv("0").max_bytes);
     try std.testing.expectEqual((Limits{}).max_bytes, limitsFromEnv("abc").max_bytes);
     try std.testing.expectEqual((Limits{}).max_bytes, limitsFromEnv(null).max_bytes);
+}
+
+test "prune: eşzamanlı iki temizleyici çökmez, taze ve in-flight girdilere dokunmaz" {
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    var rb: [Io.Dir.max_path_bytes]u8 = undefined;
+    const home = rb[0..try tmp.dir.realPath(io, &rb)];
+
+    const now: i64 = 2_000_000_000;
+    const day: i64 = 24 * 3600;
+    var i: usize = 0;
+    while (i < 40) : (i += 1) {
+        var name: [16]u8 = undefined;
+        _ = try std.fmt.bufPrint(&name, "old{d:0>13}", .{i});
+        try writeEntry(io, tmp.dir, &name, "bin", 1000, 30 * day, now);
+    }
+    try writeEntry(io, tmp.dir, "fresh0000000000a", "bin", 1000, 30, now);
+    try writeEntry(io, tmp.dir, "building0000000b", "", 0, 5, now); // derleme sürüyor: ikilisi henüz yok
+
+    const Worker = struct {
+        fn run(h: []const u8) void {
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
+            _ = prune(arena.allocator(), std.testing.io, h, .{ .max_bytes = 0 }, 2_000_000_000, false) catch {};
+        }
+    };
+    const t1 = try std.Thread.spawn(.{}, Worker.run, .{home});
+    const t2 = try std.Thread.spawn(.{}, Worker.run, .{home});
+    t1.join();
+    t2.join();
+
+    try std.testing.expect(exists(io, tmp.dir, "cache/run/obj/fresh0000000000a/bin"));
+    try std.testing.expect(exists(io, tmp.dir, "cache/run/obj/building0000000b/used"));
+    try std.testing.expect(!exists(io, tmp.dir, "cache/run/obj/old0000000000000/bin"));
 }

@@ -577,6 +577,10 @@ pub const PoolExtension = struct {
     /// SADECE `pool_idle_workers == (havuzdaki TOPLAM worker sayısı)`
     /// İKEN (yani TÜM worker'lar AYNI ANDA boştaysa) ANLAMLIDIR.
     pool_idle_workers: std.atomic.Value(usize) = .init(0),
+    /// Havuzdaki TÜM `Scheduler.ready` listelerindeki fiber sayısı (en az: gerçek sayıdan AZ olmaz). `poolWideDeadlockCheck` bir işçinin yerel hazır listesini yalnızca KENDİ
+    /// işçisi görebilir; aşırı CPU açlığında o işçi "boşta" sayılırken hazır listesinde bekleyen fiber'ı işleyemeden >20 ms zamanlayıcıdan düşebilir ve başka işçi yanlış-pozitif
+    /// deadlock ilan ederdi (yük altında wasm-threads `async_task_churn_long`ta ~%30 tekrar üretildi). Bu sayaç > 0 ise deadlock ilan EDİLMEZ.
+    pool_ready_total: std.atomic.Value(usize) = .init(0),
     /// Faz MN.8, Bulgu B: `poolWideDeadlockCheck`nin (bkz. scheduler.zig)
     /// YAKLAŞIK sezgiselinin KÖK NEDEN düzeltmesi — MN.7a/7b doğrulamasında
     /// TEKRAR TEKRAR GERÇEKTEN gözlemlenen ("toplu spawn + sıralı await"

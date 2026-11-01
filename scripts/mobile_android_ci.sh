@@ -45,6 +45,13 @@ run_step "yığın ve iş parçacığı probe'u" "$root/scripts/mobile_stack_pro
 if [ "$mode" = full ]; then
   # Sanitizer: AddressSanitizer'lı host ile yığın/iş parçacığı probe'u (Android'de sızıntı denetimi yok; taşma/UAF/çift serbest bırakma yakalanır).
   run_step "AddressSanitizer yığın probe'u" env NOX_ANDROID_SANITIZE=address "$root/scripts/mobile_stack_probe.sh" android
+  # AddressSanitizer + iş parçacığı: Android 16 arm64 imajında PAC (`autiasp`) yüzünden NDK'nin ASan çalışma zamanı, düz bir C programında bile ilk `pthread_create`te
+  # SIGILL ile ölür (Nox'tan bağımsız; bkz. docs/internals/mobile-matrix.md). x86_64'te PAC yoktur: stdlib paketi (HTTP iş parçacığı dahil) ASan altında çalışır.
+  if [ "$abi" = x64 ]; then
+    run_step "AddressSanitizer stdlib paketi" env NOX_ANDROID_SANITIZE=address "$root/scripts/mobile_android_run.sh"
+  else
+    echo "atlandı: AddressSanitizer stdlib paketi (yalnız x64; arm64 Android 16'da ASan + iş parçacığı PAC nedeniyle çöker)"
+  fi
   run_step "ağ matrisi" "$root/scripts/mobile_network_probe.sh" android
   run_step "sandbox ve disk-dolu probe'u" "$root/scripts/mobile_sandbox_probe.sh" android
   run_step "saat, entropi ve log probe'u" "$root/scripts/mobile_clock_probe.sh" android
