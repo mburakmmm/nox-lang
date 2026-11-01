@@ -1688,6 +1688,8 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
 
 test "poolWideDeadlockCheck: havuzdaki herhangi bir hazır listede fiber varken deadlock ilan etmez" {
     if (comptime is_freestanding) return error.SkipZigTest;
+    // Windows'ta uyandırma borusu (`makeSelfPipe`) yok, `attachToPool` bağlanamaz: mantık platformdan bağımsızdır, Linux/macOS'ta koşar.
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     var stw_requested: std.atomic.Value(bool) = .init(false);
     var stw_arrived: std.atomic.Value(usize) = .init(0);
     var stw_sense: std.atomic.Value(bool) = .init(false);

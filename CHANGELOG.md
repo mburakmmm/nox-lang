@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.106]
+
+### Düzeltildi
+
+- v2.0.103'ün `poolWideDeadlockCheck` regresyon testi Windows CI'da kırmızıydı: Windows'ta uyandırma borusu (`makeSelfPipe`) olmadığından `attachToPool` bağlanamıyordu. Test Windows'ta atlanır (mantık platformdan bağımsız, Linux/macOS'ta koşar).
+
 ## [2.0.105]
 
 ### Düzeltildi
