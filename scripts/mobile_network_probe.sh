@@ -76,10 +76,10 @@ scenario() {
   ok=1
   printf '%s' "$tok" | grep -Eq "^($want)$" || ok=0
   # Süre sınırı Nox'un KENDİ ölçtüğü süreye (belirteç satırının 4. alanı) uygulanır; `simctl spawn`/`adb shell` başlatma gecikmesi (CI'da ilk çağrı ~10 sn) testin konusu değildir,
-  # yalnızca takılmayı yakalamak için geniş bir toplam duvar sınırı vardır.
+  # yalnızca takılmayı yakalamak için geniş bir toplam duvar sınırı vardır (CI koşucusunda tek bir `simctl spawn` 37 sn sürdüğü görüldü; Nox'un ölçtüğü süre 346 ms idi).
   elapsed=$(printf '%s' "$first" | awk '{print $4}')
   [ -n "$elapsed" ] && [ "$elapsed" -le "$max" ] || ok=0
-  [ "$wall" -le $((max + 20000)) ] || ok=0
+  [ "$wall" -le $((max + 45000)) ] || ok=0
   if [ -n "$want_after" ]; then printf '%s' "$aft" | grep -Eq "^after ($want_after) " || ok=0; fi
   if [ $ok = 1 ]; then echo "ok   $name: $first${aft:+ | $aft} (duvar ${wall}ms)"; else echo "FAIL $name: [$first] [$aft] duvar=${wall}ms beklenen=($want)<=${max}ms ${want_after:+after=($want_after)}"; fail=$((fail+1)); fi
 }

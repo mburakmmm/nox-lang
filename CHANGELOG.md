@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.108]
+
+### Düzeltildi
+
+- `scripts/mobile_network_probe.sh` toplam duvar sınırı (takılma bekçisi) 20 sn'den 45 sn'e çıkarıldı: v2.0.106'nın iOS simülatör koşusunda `tls_valid` Nox'un ölçtüğü 346 ms'ye rağmen tek bir `simctl spawn` başlatması 37 sn sürdüğü için kırmızı oldu (CI koşucusu gecikmesi, Nox değil); v2.0.107'de aynı koşu yeşildi.
+
 ## [2.0.107]
 
 ### Eklendi
