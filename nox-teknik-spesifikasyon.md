@@ -117,7 +117,7 @@ belgelenmemiş bir gerçek AÇIKÇA yazıya döküldü.
   BUNU birleştirir (bkz. §3.1'in "unary eksi" operatör önceliği notu).
 
 - **String literalleri — tek satırlık ÇAĞRIŞIM YAPAR ama ASLINDA DEĞİLDİR:**
-  `'...'`/`"..."`, temel kaçış dizileriyle (`\n`, `\t`, `\\`, `\'`, `\"` vb.)
+  `'...'`/`"..."`, temel kaçış dizileriyle (`\n`, `\t`, `\`, `\'`, `\"` vb.)
   DESTEKLENİR — ama ÜÇLÜ tırnak (`'''...'''`/`\"\"\"...\"\"\"`), ham (raw, `r"..."`),
   byte (`b"..."`) ya da biçimlendirilmiş (f-string, `f"..."`) ÖNEKLER/varyantlar
   YOKTUR (f-string zaten §3.1'in "Faz 1'de bilerek dışarıda bırakılanlar"
@@ -9396,7 +9396,7 @@ PENCERESİNİN yapısal olarak KAPATILDIĞI) VE GERÇEK Linux/x86-64 CI'de
 YENİDEN ÇALIŞTIRMAYLA doğrulanır.
 
 **2. PIE link hatası — `tests/compat/zig_ext/util.o`:**
-`relocation R_X86_64_32S against \`__anon_1490' can not be used when
+`relocation R_X86_64_32S against `__anon_1490' can not be used when
 making a PIE object; recompile with -fPIE`. `build.zig`nin `cc -c` İLE
 derlediği C uzantıları (`mathutil.o`/`counter.o`) dağıtımın PIE-varsayılan
 `cc` yapılandırmasını KENDİLİĞİNDEN devralır — AMA `util.o`, `zig
@@ -12912,7 +12912,7 @@ ZAMAN (tek başına YA DA `\n`den ÖNCE) sessizce ATLAYAN bir dal eklendi
 yolu izler; (3) ters-eğik-çizgi satır-devamı kontrolüne `\r\n` varyantı
 eklendi. Üçü de `lexer.zig`ye 3 YENİ birim testiyle (if/indent bloğu,
 yorum/boş-satır, satır-devamı — ÜÇÜ de AÇIKÇA `\r\n` baytlı dize
-birleştirmesiyle inşa edilmiş, Zig'in çok-satırlı `\\` string
+birleştirmesiyle inşa edilmiş, Zig'in çok-satırlı `\` string
 sözdiziminin yalnızca LF ekleyebilmesi YÜZÜNDEN) doğrulandı — kasıtlı
 boz→kırmızı ritüeliyle (yeni `\r`-atlama dalı geçici olarak `if (false
 and ...)` yapıldı) ÜÇÜNÜN de BEKLENEN `UnexpectedCharacter`la
@@ -14230,7 +14230,7 @@ isim ESAS OLARAK mekanik bir codegen/checker EGZERSİZİYDİ.
    "... is loading libcrypto in an unsafe way" YAZIP `abort()` ÇAĞIRIYOR
    (`openLib`in "sıradaki adayı dene" mantığının HİÇ YAKALAYAMADIĞI bir
    SIGABRT — dlopen'in KENDİSİ başarısız DÖNMÜYOR). `lldb` backtrace'i
-   (`libssl.dylib\`__report_load`) İLE YAKALANDI. Düzeltme:
+   (`libssl.dylib`__report_load`) İLE YAKALANDI. Düzeltme:
    `libraryCandidates()`nin macOS dalı ARTIK YALNIZCA MUTLAK yolları
    (Homebrew arm64/Intel + MacPorts) dener, bare isim HİÇ denenmez.
 2. **GERÇEK bir use-after-free yarışı** (kök neden — `serveImpl`nin
@@ -29071,11 +29071,11 @@ Release `ci-gate` işinin `timeout-minutes` değeri 210'dur. Poll hâlâ 200 dak
 
 ## 3.302 Windows yol sözdizimi ve test zaman aşımı (v2.0.14)
 
-`nox.path` dize işlemleri her konakta `/` üretir. `\` yalnızca girdi ayracıdır. `is_absolute("/a/b")` doğrudur; `"a/b"` yanlıştır. Windows'ta `C:/a` ve `C:\a` da mutlaktır. `basename`, `dirname`, `extension` ve `components` POSIX kurallarını kullanır, bu yüzden `/a/b/c.txt` bileşenleri `a`, `b`, `c.txt` olur.
+`nox.path` dize işlemleri her konakta `/` üretir. `` yalnızca girdi ayracıdır. `is_absolute("/a/b")` doğrudur; `"a/b"` yanlıştır. Windows'ta `C:/a` ve `C:\a` da mutlaktır. `basename`, `dirname`, `extension` ve `components` POSIX kurallarını kullanır, bu yüzden `/a/b/c.txt` bileşenleri `a`, `b`, `c.txt` olur.
 
 `canonicalize` olmayan yolda başarısız olur. Windows `GetFullPathNameA` ardından `GetFileAttributesA` bakar; dosya yoksa `PathError` döner. Sembolik bağ çözümü Windows'ta yoktur; bu v1 farkı durur. `/usr` Windows'ta yoktur. Golden, çalışma dizininde gerçek bir dosya oluşturup yalnızca `basename` basar.
 
-MinGW, uzantısız `-o` adına `.exe` ekler. `noxc` bunu zaten bilir. CLI testleri aynı adı açar. `nox.json` içine gömülen ve `noxc install`'a verilen yollar `/` kullanır; `D:\...` JSON kaçışı olur ve kayıt defteri adı sanılır. `noxc install` `\` ve sürücü harfini de yerel yol sayar.
+MinGW, uzantısız `-o` adına `.exe` ekler. `noxc` bunu zaten bilir. CLI testleri aynı adı açar. `nox.json` içine gömülen ve `noxc install`'a verilen yollar `/` kullanır; `D:\...` JSON kaçışı olur ve kayıt defteri adı sanılır. `noxc install` `` ve sürücü harfini de yerel yol sayar.
 
 Eklenti kapanış işareti `fopen` ikili kipte yazılır. Metin kipi Windows'ta `\n` yazısını `\r\n` yapardı.
 
@@ -29208,8 +29208,8 @@ Bir üst-düzey `def` nesne dosyasında düz adıyla genel sembol olduğundan, s
 
 ### 3.321.2 Sağlamlaştırma turu (v2.0.103)
 
-- **ASan SIGILL kök nedeni:** Nox'tan bağımsız. Android 16 arm64 imajında NDK r28 ASan çalışma zamanı, düz bir C programında bile ilk \`pthread_create\`te \`autiasp\` (işaretçi doğrulaması) ile SIGILL verir (lldb: \`___interceptor_prctl\` dönüşü; \`-mbranch-protection=none\` çözmez). ASan altında stdlib paketi bu yüzden yalnız x86_64 emülatöründe (PAC yok) gecelik çalışır (\`mobile_android_ci.sh full\`).
-- **DNS yardımcı iş parçacığı sınırı:** \`net_dial.zig\` aynı anda en fazla 32 \`getaddrinfo\` iş parçacığı tutar (\`g_lookup_slots\`); dolunca yeni arama kendi son tarihine kadar yuva bekler, bulamazsa zaman aşımı olur (yeni iş parçacığı açılmaz). Birim testleri yuva mantığını sınar; yavaş-DNS ortamında gerçek ölçüm yapılmadı.
-- **Run önbelleği:** eşzamanlı iki \`prune\` testi eklendi; sınırlar \`run_cache.zig\` başlığında belgelendi (aynı özet iki süreçte aynı anda derlenemez).
-- **Scheduler yanlış-pozitif deadlock (10.11):** \`pool_ready_total\` (bkz. TODO 10.11). \`poolWideDeadlockCheck\` artık başka işçilerin hazır listelerini de hesaba katar.
+- **ASan SIGILL kök nedeni:** Nox'tan bağımsız. Android 16 arm64 imajında NDK r28 ASan çalışma zamanı, düz bir C programında bile ilk `pthread_create`te `autiasp` (işaretçi doğrulaması) ile SIGILL verir (lldb: `___interceptor_prctl` dönüşü; `-mbranch-protection=none` çözmez). ASan altında stdlib paketi bu yüzden yalnız x86_64 emülatöründe (PAC yok) gecelik çalışır (`mobile_android_ci.sh full`).
+- **DNS yardımcı iş parçacığı sınırı:** `net_dial.zig` aynı anda en fazla 32 `getaddrinfo` iş parçacığı tutar (`g_lookup_slots`); dolunca yeni arama kendi son tarihine kadar yuva bekler, bulamazsa zaman aşımı olur (yeni iş parçacığı açılmaz). Birim testleri yuva mantığını sınar; yavaş-DNS ortamında gerçek ölçüm yapılmadı.
+- **Run önbelleği:** eşzamanlı iki `prune` testi eklendi; sınırlar `run_cache.zig` başlığında belgelendi (aynı özet iki süreçte aynı anda derlenemez).
+- **Scheduler yanlış-pozitif deadlock (10.11):** `pool_ready_total` (bkz. TODO 10.11). `poolWideDeadlockCheck` artık başka işçilerin hazır listelerini de hesaba katar.
 

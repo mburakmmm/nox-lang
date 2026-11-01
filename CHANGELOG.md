@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.104]
+
+### Düzeltildi
+
+- v2.0.103'ün spesifikasyon bölümünde (§3.321.2) kaçışlı ters tırnaklar kalmıştı; düzeltildi.
+
 ## [2.0.103]
 
 ### Düzeltildi
