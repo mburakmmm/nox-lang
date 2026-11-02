@@ -5,9 +5,14 @@
 //! Çözüm `std.Io` vtable'ının iki girişini değiştirir (bkz. `install`): `netLookup` sistem `getaddrinfo`sunu (AF_UNSPEC: IPv4 + IPv6, işletim sisteminin RFC 6724 sırası) bir yardımcı
 //! iş parçacığında çalıştırır ve son tarihte vazgeçer; `netConnectIp` bloklamasız `connect` + `poll` ile son tarihe kadar bekler. Son tarih iş parçacığı-yerel bir değerdir
 //! (`begin`/`end`); ayarlı değilse çağrı std'nin özgün uygulamasına gider (davranış değişmez). Windows/wasm/freestanding'de hiçbir şey yapılmaz.
+//!
+//! **Kaynak sınırı (v2.0.103/v2.0.109):** `getaddrinfo` iptal edilemez; son tarihi geçen arama beklemeyi bırakır ama iş parçacığı çözümleyici dönene kadar yaşar. Bu yüzden (1) aynı anda
+//! en fazla `MAX_LOOKUP_THREADS` yardımcı iş parçacığı vardır, sınıra gelen arama kendi son tarihine kadar yuva bekler; (2) singleflight: aynı (ad, port, aile) için uçuşta bir arama
+//! varsa yeni iş parçacığı açılmaz, çağıran mevcut aramaya katılır (yavaş bir ada N eşzamanlı istek = 1 `getaddrinfo`). Her katılımcı kendi son tarihini kullanır.
 
 const std = @import("std");
 const builtin = @import("builtin");
+const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
 
 const Io = std.Io;
 const net = std.Io.net;
@@ -107,6 +112,61 @@ const Slots = struct {
 
 var g_lookup_slots: Slots = .{};
 
+/// Singleflight: aynı (ad, port, aile) için uçuştaki bir arama varsa yeni iş parçacığı AÇILMAZ, çağıran mevcut aramaya katılır. Yavaş/ölü bir ada N eşzamanlı istek
+/// N yerine TEK `getaddrinfo` ve TEK iş parçacığı demektir. Her katılımcı kendi son tarihini kullanır (birinin zaman aşımı diğerlerini iptal etmez).
+const Flights = struct {
+    lock: SpinLock = .{},
+    jobs: [MAX_LOOKUP_THREADS]?*LookupJob = @splat(null),
+
+    fn matches(job: *const LookupJob, name: []const u8, port: u16, family: ?IpAddress.Family) bool {
+        if (job.port != port or job.family != family) return false;
+        const stored: [*:0]const u8 = @ptrCast(&job.host_z);
+        return std.ascii.eqlIgnoreCase(std.mem.span(stored), name);
+    }
+
+    /// Eşleşen uçuştaki işi bulursa ona bir referans ekleyip döndürür.
+    fn join(self: *Flights, name: []const u8, port: u16, family: ?IpAddress.Family) ?*LookupJob {
+        self.lock.lock();
+        defer self.lock.unlock();
+        return self.joinLocked(name, port, family);
+    }
+
+    fn joinLocked(self: *Flights, name: []const u8, port: u16, family: ?IpAddress.Family) ?*LookupJob {
+        for (self.jobs) |maybe| {
+            const j = maybe orelse continue;
+            if (matches(j, name, port, family)) {
+                _ = j.refs.fetchAdd(1, .acq_rel);
+                return j;
+            }
+        }
+        return null;
+    }
+
+    /// `job`u kaydeder; aynı anahtarla başka bir iş araya girdiyse onu (referansı artırılmış) döndürür ve `job` kaydedilmez.
+    fn insertOrJoin(self: *Flights, job: *LookupJob, name: []const u8) ?*LookupJob {
+        self.lock.lock();
+        defer self.lock.unlock();
+        if (self.joinLocked(name, job.port, job.family)) |other| return other;
+        for (&self.jobs) |*slot| {
+            if (slot.* == null) {
+                slot.* = job;
+                return null;
+            }
+        }
+        unreachable; // her iş bir yuva tutar (MAX_LOOKUP_THREADS) ve kayıt dizisi aynı boyuttadır
+    }
+
+    fn remove(self: *Flights, job: *LookupJob) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        for (&self.jobs) |*slot| {
+            if (slot.* == job) slot.* = null;
+        }
+    }
+};
+
+var g_flights: Flights = .{};
+
 const LookupJob = struct {
     refs: std.atomic.Value(u32) = .init(2),
     done: std.atomic.Value(bool) = .init(false),
@@ -127,6 +187,8 @@ fn lookupThread(job: *LookupJob) void {
     // Yuva, iş parçacığı GERÇEKTEN bitince (çağıran vazgeçmiş olsa bile) boşalır.
     defer g_lookup_slots.release();
     resolveInto(job);
+    // Önce kayıttan çıkar: bu andan sonra gelenler eski sonucu paylaşmaz, yeni arama başlatır.
+    g_flights.remove(job);
     job.done.store(true, .release);
 }
 
@@ -202,24 +264,42 @@ fn boundedLookup(
     if (rem) |r| {
         // Son tarihli çözümleme: yardımcı iş parçacığı; vazgeçilirse iş parçacığı kendi payını bırakır.
         const deadline = nowNs() + r * std.time.ns_per_ms;
-        if (!g_lookup_slots.acquireUntil(MAX_LOOKUP_THREADS, deadline)) {
-            tl_timed_out = true;
-            return error.NameServerFailure;
+        if (g_flights.join(name, options.port, options.family)) |shared| {
+            job = shared; // uçuştaki aynı aramaya katıl (yeni iş parçacığı yok)
+            heap_job = true;
+        } else {
+            if (!g_lookup_slots.acquireUntil(MAX_LOOKUP_THREADS, deadline)) {
+                tl_timed_out = true;
+                return error.NameServerFailure;
+            }
+            const fresh = std.heap.page_allocator.create(LookupJob) catch {
+                g_lookup_slots.release();
+                return error.NameServerFailure;
+            };
+            fresh.* = .{ .port = options.port, .family = options.family };
+            @memcpy(fresh.host_z[0..name.len], name);
+            fresh.host_z[name.len] = 0;
+            if (g_flights.insertOrJoin(fresh, name)) |other| {
+                // Slot beklerken başka biri aynı aramayı başlattı: kendi işimizi at, onunkine katıl.
+                g_lookup_slots.release();
+                std.heap.page_allocator.destroy(fresh);
+                job = other;
+            } else spawned: {
+                const th = std.Thread.spawn(.{}, lookupThread, .{fresh}) catch {
+                    // İş parçacığı açılamadı: kayıttan çıkar; araya katılanlar varsa onlara başarısız sonuç ver.
+                    g_flights.remove(fresh);
+                    g_lookup_slots.release();
+                    fresh.done.store(true, .release); // ok == false: bekleyenler `UnknownHostName` görür
+                    fresh.release(); // iş parçacığının payı
+                    job = fresh;
+                    heap_job = true;
+                    break :spawned;
+                };
+                th.detach();
+                job = fresh;
+            }
+            heap_job = true;
         }
-        job = std.heap.page_allocator.create(LookupJob) catch {
-            g_lookup_slots.release();
-            return error.NameServerFailure;
-        };
-        job.* = .{ .port = options.port, .family = options.family };
-        heap_job = true;
-        @memcpy(job.host_z[0..name.len], name);
-        job.host_z[name.len] = 0;
-        const th = std.Thread.spawn(.{}, lookupThread, .{job}) catch {
-            g_lookup_slots.release();
-            std.heap.page_allocator.destroy(job);
-            return error.NameServerFailure;
-        };
-        th.detach();
         while (!job.done.load(.acquire)) {
             if (nowNs() >= deadline) {
                 tl_timed_out = true;
@@ -432,4 +512,33 @@ test "DNS yuvaları: bekleyen, başka bir iş parçacığı yuva bırakınca dev
     }.run, .{&slots});
     defer releaser.join();
     try std.testing.expect(slots.acquireUntil(1, nowNs() + 2 * std.time.ns_per_s));
+}
+
+test "Flights: aynı anahtara katılır, farklı anahtara katılmaz, çıkarılınca yeniden başlar" {
+    if (comptime !enabled) return error.SkipZigTest;
+    var flights: Flights = .{};
+    var a: LookupJob = .{ .port = 443, .family = null };
+    @memcpy(a.host_z[0..11], "Example.COM");
+    a.host_z[11] = 0;
+    try std.testing.expect(flights.insertOrJoin(&a, "Example.COM") == null);
+
+    // Aynı ad (büyük/küçük harf duyarsız), port ve aile: katılır, referans artar.
+    try std.testing.expectEqual(@as(?*LookupJob, &a), flights.join("example.com", 443, null));
+    try std.testing.expectEqual(@as(u32, 3), a.refs.load(.acquire));
+    // Farklı port ya da aile: katılmaz.
+    try std.testing.expect(flights.join("example.com", 80, null) == null);
+    try std.testing.expect(flights.join("example.com", 443, .ip4) == null);
+    try std.testing.expect(flights.join("other.test", 443, null) == null);
+
+    // İkinci bir iş aynı anahtarla eklenmek istenirse mevcut olana katılır, kendisi kaydedilmez.
+    var b: LookupJob = .{ .port = 443, .family = null };
+    @memcpy(b.host_z[0..11], "example.com");
+    b.host_z[11] = 0;
+    try std.testing.expectEqual(@as(?*LookupJob, &a), flights.insertOrJoin(&b, "example.com"));
+
+    // Çıkarılınca artık katılınamaz; yeni iş kaydedilebilir.
+    flights.remove(&a);
+    try std.testing.expect(flights.join("example.com", 443, null) == null);
+    try std.testing.expect(flights.insertOrJoin(&b, "example.com") == null);
+    flights.remove(&b);
 }

@@ -29213,3 +29213,7 @@ Bir üst-düzey `def` nesne dosyasında düz adıyla genel sembol olduğundan, s
 - **Run önbelleği:** eşzamanlı iki `prune` testi eklendi; sınırlar `run_cache.zig` başlığında belgelendi (aynı özet iki süreçte aynı anda derlenemez).
 - **Scheduler yanlış-pozitif deadlock (10.11):** `pool_ready_total` (bkz. TODO 10.11). `poolWideDeadlockCheck` artık başka işçilerin hazır listelerini de hesaba katar.
 
+### 3.321.3 DNS singleflight (v2.0.109)
+
+`net_dial.zig`: aynı (ad, port, aile) için uçuşta bir `getaddrinfo` varsa yeni iş parçacığı açılmaz; çağıran mevcut aramaya katılır (`Flights`, `g_flights`, en çok `MAX_LOOKUP_THREADS` girdi, SpinLock korumalı). Her katılımcı kendi son tarihini kullanır: birinin zaman aşımı diğerlerinin aramasını iptal etmez. İş parçacığı bitince önce kayıttan çıkar, sonra `done` yayımlar (sonradan gelen eski sonucu paylaşmaz). Slot beklerken aynı aramayı başka biri başlatırsa kendi işini atıp onunkine katılır (`insertOrJoin`). Etki: ölü bir ada N eşzamanlı istek N yerine 1 iş parçacığı ve 1 çözümleme. Sabit boyutlu çözümleyici havuzu + iş kuyruğu yapılmadı (iptal edilemeyen `getaddrinfo` yüzünden kuyruktaki işi geri çekmenin kazancı küçük); gerçek yavaş-DNS ortamında yük ölçümü yapılmadı.
+

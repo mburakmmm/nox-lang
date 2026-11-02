@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.109]
+
+### Eklendi
+
+- **DNS singleflight (`net_dial.zig`).** Aynı (ad, port, aile) için uçuşta bir arama varsa yeni iş parçacığı açılmaz, çağıran mevcut aramaya katılır: ölü bir ada N eşzamanlı istek artık N yerine 1 `getaddrinfo` ve 1 yardımcı iş parçacığı. Her katılımcı kendi son tarihini kullanır. v2.0.103'ün 32 iş parçacığı sınırının üstüne gelir. Birim testi: `Flights: aynı anahtara katılır, farklı anahtara katılmaz, çıkarılınca yeniden başlar`. Gerçek yavaş-DNS ortamında yük ölçümü yapılmadı.
+
 ## [2.0.108]
 
 ### Düzeltildi
