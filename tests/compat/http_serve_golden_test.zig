@@ -268,6 +268,132 @@ test "nox.http.serve: uctan uca, iki eszamanli baglanti GERCEKTEN cakisir (yavas
     try std.testing.expectEqualStrings("/fast\n/slow\n", stdout_data);
 }
 
+/// Dinlemeye başlamış bir 127.0.0.1 dinleyicisi (OS'un atadığı port); üst-akım sunucu testi için.
+fn upstreamListener(port_out: *u16) !sys.fd_t {
+    const fd = sys.socket(sys.AF.INET, sys.SOCK.STREAM, 0);
+    if (sys.badFd(fd)) return error.SocketFailed;
+    var reuse: c_int = 1;
+    _ = sys.setsockopt(fd, sys.SOL.SOCKET, sys.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
+    if (sys.listen(fd, 64) != 0) return error.ListenFailed;
+    var got: sys.sockaddr.in = undefined;
+    var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
+    if (sys.getsockname(fd, @ptrCast(&got), &got_len) != 0) return error.GetsocknameFailed;
+    port_out.* = std.mem.bigToNative(u16, got.port);
+    return fd;
+}
+
+/// `count` bağlantı kabul eder; her birine 100 ms gecikmeyle `ok` yanıtı verir (eşzamanlı istekler çakışsın diye bağlantı başına bir iş parçacığı).
+fn upstreamServeMany(listen_fd: sys.fd_t, count: usize) void {
+    var handlers: [32]?std.Thread = @splat(null);
+    var i: usize = 0;
+    while (i < count and i < handlers.len) : (i += 1) {
+        var pfd = [1]sys.pollfd{.{ .fd = listen_fd, .events = sys.POLL.IN, .revents = 0 }};
+        if (sys.poll(&pfd, 1, 30_000) <= 0) break;
+        const conn = sys.accept(listen_fd, null, null);
+        if (sys.badFd(conn)) break;
+        handlers[i] = std.Thread.spawn(.{}, struct {
+            fn run(c: sys.fd_t) void {
+                defer _ = sys.close(c);
+                var buf: [4096]u8 = undefined;
+                var total: usize = 0;
+                while (total < buf.len) {
+                    const n = sys.read(c, buf[total..].ptr, buf.len - total);
+                    if (n <= 0) break;
+                    total += @intCast(n);
+                    if (std.mem.indexOf(u8, buf[0..total], "\r\n\r\n") != null) break;
+                }
+                const ts: sys.timespec = .{ .sec = 0, .nsec = 100 * std.time.ns_per_ms };
+                _ = sys.nanosleep(&ts, null);
+                const response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+                _ = sys.write(c, response.ptr, response.len);
+            }
+        }.run, .{conn}) catch null;
+    }
+    for (&handlers) |*h| if (h.*) |t| t.join();
+}
+
+test "nox.http.serve: handler İÇİNDEN giden nox.http.request (fiber, kooperatif) 8 eşzamanlı istemcide hepsi doğru yanıtlanır" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const N = 8;
+
+    var up_port: u16 = 0;
+    const up_fd = try upstreamListener(&up_port);
+    defer _ = sys.close(up_fd);
+    const up_thread = try std.Thread.spawn(.{}, upstreamServeMany, .{ up_fd, N });
+    defer up_thread.join();
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Handler, üst-akım sunucuya bir istek atar (bu bir bağlantı fiber'ında çalışır: istek büyük yığınlı bir fiber'da, kooperatif ağ G/Ç'siyle yürür) ve yanıtını yazdırır.
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    try:
+        \\        up: nox_http_HttpResponse = nox.http.request("GET", "http://127.0.0.1:{d}/", "", {{}}, 5000)
+        \\        print("up:" + up.body)
+        \\        return nox_http_HttpResponse(200, "via:" + up.body, {{"x": "x"}})
+        \\    except nox_http_HttpError:
+        \\        print("up:error")
+        \\        return nox_http_HttpResponse(502, "bad gateway", {{"x": "x"}})
+        \\
+        \\nox.http.serve({d}, handle, {d})
+        \\
+    , .{ up_port, port, N });
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    var clients: [N]std.Thread = undefined;
+    for (&clients) |*t| t.* = try std.Thread.spawn(.{}, connectSendAndDrain, .{ port, "/x", @as(u32, 0) });
+    for (clients) |t| t.join();
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    if (term != .exited) std.debug.print("cocuk surec normal cikmadi, term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı): {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
+    }
+    // 8 handler'ın hepsi üst-akımdan "ok" aldı (hata/zaman aşımı yok).
+    var ok_lines: usize = 0;
+    var it = std.mem.splitScalar(u8, stdout_data, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        try std.testing.expectEqualStrings("up:ok", line);
+        ok_lines += 1;
+    }
+    try std.testing.expectEqual(@as(usize, N), ok_lines);
+}
+
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox_http_request_
 // method/target/body/headers`in ARTIK kopyalamayıp `retain` ETTİĞİ yeni
 // yolu, `HttpRequest`nin DÖRT alanının TAMAMINI (method/target/body/

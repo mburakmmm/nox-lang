@@ -49,6 +49,8 @@ What a handler returns and what the client functions return.
 | `delete(url, headers)`, `head(url, headers)`, `options(url, headers)` | bodyless requests |
 | `request(method, url, body, headers, timeout_ms=0)` | any of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; optional timeout |
 
+**Concurrency.** Inside a task (`spawn`) or a `serve` handler, a request does not occupy an operating-system thread: the task is suspended while it waits for the network and the worker runs other tasks, so thousands of requests can be in flight at once on a few threads (about 110 KB of memory per request in flight). Outside a task (plain top-level code), on Windows and for `stream`/`stream_upload`, each request still uses a helper thread.
+
 `headers` are *added* to the request (the client also sends its own `Host`, `User-Agent`, `Accept-Encoding` …). Redirects are **not** followed: a 3xx response is returned as it is, so you decide whether to follow `Location` (and whether to forward `Authorization`). gzip/deflate response bodies are decoded
 automatically. A non-2xx status is **not** an error: inspect `status`. `HttpError` is raised when the request could not be made at all (connection refused, DNS failure, TLS failure) or when the body arrives incomplete (the connection closed before the announced `Content-Length`).
 

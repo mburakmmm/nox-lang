@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.115]
+
+### Eklendi
+
+- **Fiber HTTP yolu için yük ve entegrasyon kanıtı.** `scripts/http_fiber_load.sh` (+ `tests/stress/http_fiber_load.nox`, `scripts/http_load_server.py`): N eşzamanlı `nox.http.request`, tüm istekler başarılı ve tepe iş parçacığı küçük olmalı; gecelik `stress.yml`e `http-fiber-load` (Linux, 3000 istek). macOS ölçümü: 5000 eşzamanlı istek 3 iş parçacığı, 554 MB, hepsi başarılı; eski yol 2000'de iş parçacığı sınırına çarpıp 43 isteği düşürüyordu. `serve` handler'ının içinden giden `nox.http.request` testi (`http_serve_golden_test`). `docs/stdlib/http.md`: eşzamanlılık notu.
+
 ## [2.0.114]
 
 ### Değişti

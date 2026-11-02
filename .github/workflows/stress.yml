@@ -156,3 +156,23 @@ jobs:
 
       - name: zig build concurrency-torture-test (ReleaseFast, 8 seed × 15000 görev)
         run: zig build concurrency-torture-test -Doptimize=ReleaseFast -Dtorture-seed-count=8 -Dtorture-tasks=15000
+
+  # v2.0.115 (bkz. nox-teknik-spesifikasyon.md §3.321.5): `nox.http` istemcisinin fiber yolu (OS iş parçacığı açmadan) Linux'ta yüksek eşzamanlılıkta: 3000 eşzamanlı istek hepsi başarılı olmalı,
+  # tepe iş parçacığı sayısı küçük kalmalı (eski yolda ~2000 iş parçacığında istekler başarısız oluyordu).
+  http-fiber-load:
+    name: nox.http fiber yolu yük testi (Linux x86-64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - name: zig build (ReleaseFast)
+        run: zig build -Doptimize=ReleaseFast
+      - name: 3000 eşzamanlı istek
+        run: scripts/http_fiber_load.sh 3000 16
+
