@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.117]
+
+### Düzeltildi
+
+- **KRİTİK: tek bir HTTP isteği `nox.http.serve` sürecini çökertebiliyordu.** `Transfer-Encoding: chunked` ile dev parça boyutu (`FFFFFFFFFFFFFFFF`) Zig std'nin chunked çözücüsünde tamsayı taşmasına yol açıyordu. Kendi chunked çözücümüze geçildi (sınırlı, taşmasız).
+- Bozuk isteklere sessiz bağlantı kesmek yerine durum kodu: 400/413/431/417/501; kesik gövde artık handler'a tamamlanmış gibi gitmiyor (400).
+- Request-smuggling savunması: Content-Length+Transfer-Encoding, yinelenen Transfer-Encoding, alan adında boşluk, başlıkta NUL, iki noktasız satır, Host'suz HTTP/1.1 reddedilir.
+
+### Eklendi
+
+- `scripts/http_server_fuzz.py` (40 elle vaka + seed'li mutasyon fuzz'u; gecelik `stress.yml`de `http-fuzz`) ve `http_serve_golden_test`te bozuk-istek regresyon testi.
+
 ## [2.0.116]
 
 ### Düzeltildi

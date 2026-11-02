@@ -21,6 +21,7 @@ pub const listen = Impl.listen;
 pub const accept = Impl.accept;
 pub const connect = Impl.connect;
 pub const close = Impl.close;
+pub const shutdown = Impl.shutdown;
 pub const read = Impl.read;
 pub const write = Impl.write;
 pub const setsockopt = Impl.setsockopt;
@@ -46,6 +47,9 @@ const Posix = struct {
     pub const accept = std.c.accept;
     pub const connect = std.c.connect;
     pub const close = std.c.close;
+    pub fn shutdown(sock: std.c.fd_t, how: c_int) c_int {
+        return std.c.shutdown(sock, how);
+    }
     pub const read = std.c.read;
     pub const write = std.c.write;
     pub const setsockopt = std.c.setsockopt;
@@ -80,6 +84,7 @@ const Win = struct {
         extern "ws2_32" fn send(s: SOCKET, buf: [*]const u8, len: i32, flags: i32) callconv(.c) i32;
         extern "ws2_32" fn recv(s: SOCKET, buf: [*]u8, len: i32, flags: i32) callconv(.c) i32;
         extern "ws2_32" fn closesocket(s: SOCKET) callconv(.c) i32;
+        extern "ws2_32" fn shutdown(s: SOCKET, how: i32) callconv(.c) i32;
         extern "ws2_32" fn setsockopt(s: SOCKET, level: i32, optname: i32, optval: ?*const anyopaque, optlen: i32) callconv(.c) i32;
         extern "ws2_32" fn getsockopt(s: SOCKET, level: i32, optname: i32, optval: *anyopaque, optlen: *i32) callconv(.c) i32;
         extern "ws2_32" fn getsockname(s: SOCKET, addr: *ws2.sockaddr.in, namelen: *i32) callconv(.c) i32;
@@ -201,6 +206,10 @@ const Win = struct {
 
     pub fn close(sock: fd_t) i32 {
         return api.closesocket(sock);
+    }
+
+    pub fn shutdown(sock: fd_t, how: i32) i32 {
+        return api.shutdown(sock, how);
     }
 
     pub fn read(sock: fd_t, buf: [*]u8, nbyte: usize) isize {

@@ -1118,6 +1118,94 @@ export fn nox_http_request_headers(rt: ?*anyopaque, req: ?*anyopaque) callconv(.
 /// ruhta, TAMAMLAYICI bir üst sınır.
 const MAX_REQUESTS_PER_CONNECTION: usize = 1000;
 
+/// İstek başlığı doğrulaması (request-smuggling / ayrıştırma belirsizliği savunması). std ayrıştırıcısının kabul ettiği ama RFC 9110/9112'ye göre reddedilmesi gereken biçimler:
+/// başlıkta NUL, iki nokta üstüste olmayan satır, alan adında boşluk/kontrol/ayırıcı karakter (`X A: v`), HTTP/1.1'de `Host` yokluğu, `Content-Length` ile `Transfer-Encoding` birlikte,
+/// `chunked` dışında/ek bir `Transfer-Encoding` (ör. `gzip, chunked`: sıkıştırma çözücümüz yok → 501).
+const HeadVerdict = enum { ok, bad_request, not_implemented };
+
+fn isTchar(c: u8) bool {
+    return switch (c) {
+        '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~' => true,
+        '0'...'9', 'a'...'z', 'A'...'Z' => true,
+        else => false,
+    };
+}
+
+fn validateRequestHead(head_buffer: []const u8, is_http11: bool) HeadVerdict {
+    if (std.mem.indexOfScalar(u8, head_buffer, 0) != null) return .bad_request;
+    var lines = std.mem.splitSequence(u8, head_buffer, "\r\n");
+    _ = lines.next(); // istek satırı
+    var has_host = false;
+    var has_cl = false;
+    var te_value: ?[]const u8 = null;
+    while (lines.next()) |line| {
+        if (line.len == 0) break;
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse return .bad_request;
+        if (colon == 0) return .bad_request;
+        const name = line[0..colon];
+        for (name) |c| if (!isTchar(c)) return .bad_request;
+        const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
+        if (std.ascii.eqlIgnoreCase(name, "host")) has_host = true;
+        if (std.ascii.eqlIgnoreCase(name, "content-length")) has_cl = true;
+        if (std.ascii.eqlIgnoreCase(name, "transfer-encoding")) {
+            if (te_value != null) return .bad_request; // yinelenen Transfer-Encoding
+            te_value = value;
+        }
+    }
+    if (is_http11 and !has_host) return .bad_request;
+    if (te_value) |te| {
+        if (has_cl) return .bad_request; // CL + TE: smuggling vektörü, RFC 9112 §6.1 "hata olarak ele alınmalı"
+        if (!std.ascii.eqlIgnoreCase(te, "chunked")) return .not_implemented;
+    }
+    return .ok;
+}
+
+/// `Transfer-Encoding: chunked` istek gövdesinin sonucu (bkz. `readChunkedBody`).
+const ChunkedResult = enum { ok, too_large, invalid, closed };
+
+/// RFC 9112 §7.1 chunked gövdesini KENDİ çözücümüzle okur. Zig std'nin `http.Reader` chunked çözücüsü `FFFFFFFFFFFFFFFF` gibi bir parça boyutunda `chunk_len + 2` toplamında tamsayı
+/// taşmasıyla paniğe düşüyordu: tek bir kötü istek tüm sunucuyu öldürüyordu (HTTP fuzz testi buldu). Burada boyut en çok 16 onaltılık basamak, toplam gövde `max_bytes` ile sınırlıdır,
+/// parça uzantıları (`;ext`) yok sayılır, artçı başlıklar (trailer) en çok 8 KiB okunup atılır; hiçbir adımda taşma olamaz.
+fn readChunkedBody(in: *std.Io.Reader, out: *std.Io.Writer, max_bytes: usize) ChunkedResult {
+    var total: usize = 0;
+    while (true) {
+        const line = in.takeDelimiterInclusive('\n') catch |err| return switch (err) {
+            error.StreamTooLong => .invalid,
+            else => .closed,
+        };
+        // "<hex>[;ext]\r\n"
+        var end = line.len;
+        while (end > 0 and (line[end - 1] == '\n' or line[end - 1] == '\r')) end -= 1;
+        const hex_end = std.mem.indexOfScalar(u8, line[0..end], ';') orelse end;
+        const digits = std.mem.trim(u8, line[0..hex_end], " \t");
+        if (digits.len == 0 or digits.len > 16) return .invalid;
+        var size: u64 = 0;
+        for (digits) |c| {
+            const d = std.fmt.charToDigit(c, 16) catch return .invalid;
+            size = (size << 4) | d;
+        }
+        if (size == 0) {
+            // Artçı başlıklar: boş satıra kadar oku ve at.
+            var trailer_bytes: usize = 0;
+            while (true) {
+                const t = in.takeDelimiterInclusive('\n') catch |err| return switch (err) {
+                    error.StreamTooLong => .invalid,
+                    else => .closed,
+                };
+                trailer_bytes += t.len;
+                if (trailer_bytes > 8 * 1024) return .invalid;
+                if (std.mem.trim(u8, t, "\r\n").len == 0) return .ok;
+            }
+        }
+        if (size > max_bytes or total > max_bytes - @as(usize, @intCast(size))) return .too_large;
+        total += @intCast(size);
+        in.streamExact64(out, size) catch return .closed;
+        // Parça verisinin ardından CRLF.
+        const crlf = in.takeArray(2) catch return .closed;
+        if (crlf[0] != '\r' or crlf[1] != '\n') return .invalid;
+    }
+}
+
 fn connectionEntry(arg: *anyopaque) void {
     const conn: *ConnCtx = @ptrCast(@alignCast(arg));
     const gpa = conn.allocator;
@@ -1176,7 +1264,31 @@ fn connectionEntry(arg: *anyopaque) void {
     var server: std.http.Server = .init(reader_ptr, writer_ptr);
     var requests_served: usize = 0;
     while (requests_served < MAX_REQUESTS_PER_CONNECTION) : (requests_served += 1) {
-        var request = server.receiveHead() catch break;
+        var request = server.receiveHead() catch |err| {
+            // Ayrıştırılabilen ama kabul edilmeyen istekler için istemciye bir durum kodu ver (eskiden bağlantı sessizce kesiliyordu); okuma/kopma hatalarında yalnızca kapat.
+            const status_line: ?[]const u8 = switch (err) {
+                error.HttpHeadersOversize => "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                error.HttpHeadersInvalid => "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                else => null,
+            };
+            if (status_line) |sl| {
+                writer_ptr.writeAll(sl) catch {};
+                writer_ptr.flush() catch {};
+            }
+            break;
+        };
+
+        switch (validateRequestHead(request.head_buffer, request.head.version == .@"HTTP/1.1")) {
+            .ok => {},
+            .bad_request => {
+                request.respond("Bad Request", .{ .status = .bad_request, .keep_alive = false }) catch {};
+                break;
+            },
+            .not_implemented => {
+                request.respond("Not Implemented", .{ .status = .not_implemented, .keep_alive = false }) catch {};
+                break;
+            },
+        }
 
         // Faz "sunucu-tarafı WebSocket Upgrade": `conn.ws_handler` AYARLIYSA
         // HER istek ÖNCE Upgrade ADAYI olarak SUNULUR. `reader_ptr`/
@@ -1245,8 +1357,16 @@ fn connectionEntry(arg: *anyopaque) void {
             }
         }
 
+        // `Expect: 100-continue`: std `readerExpectNone` bunu varsaymaz (assert); onay satırını yazıp bayrağı temizle, geçersiz beklentiyi 417 ile reddet.
+        if (request.head.expect != null) {
+            request.writeExpectContinue() catch |err| {
+                if (err == error.HttpExpectationFailed) request.respond("Expectation Failed", .{ .status = .expectation_failed, .keep_alive = false }) catch {};
+                break;
+            };
+        }
         var transfer_buffer: [1024]u8 = undefined;
-        const body_reader = request.readerExpectNone(&transfer_buffer);
+        const chunked_body = request.head.method.requestHasBody() and request.head.transfer_encoding == .chunked;
+        const body_reader: *std.Io.Reader = if (chunked_body) .ending else request.readerExpectNone(&transfer_buffer);
         // Gövde HÂLÂ düz (ARC-DIŞI) bir `Writer.Allocating`e PARÇA PARÇA
         // okunur — soket okumaları ARC bloklarının aksine artımlı olarak
         // BÜYÜYEMEDİĞİNDEN bu ADIM KAÇINILMAZDIR. ARC'a geçiş, TÜM gövde
@@ -1261,7 +1381,23 @@ fn connectionEntry(arg: *anyopaque) void {
         // üstü not), sınır AŞILDIĞI ANDA daha fazla veri OKUNMADAN durulur
         // (saldırganın gönderdiği KALAN baytlar HİÇ tüketilmez/tahsis edilmez).
         var body_too_large = false;
-        while (true) {
+        if (chunked_body) {
+            // Kendi chunked çözücümüz (std'ninki dev parça boyutunda taşma paniğine düşüyordu).
+            switch (readChunkedBody(reader_ptr, &body_out.writer, conn.max_body_bytes)) {
+                .ok => server.reader.state = .ready,
+                .too_large => {
+                    request.respond("Payload Too Large", .{ .status = .payload_too_large, .keep_alive = false }) catch {};
+                    break;
+                },
+                .invalid => {
+                    writer_ptr.writeAll("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n") catch {};
+                    writer_ptr.flush() catch {};
+                    break;
+                },
+                .closed => break,
+            }
+        }
+        while (!chunked_body) {
             const n = body_reader.stream(&body_out.writer, .unlimited) catch |err| switch (err) {
                 error.EndOfStream => break,
                 else => break,
@@ -1277,6 +1413,15 @@ fn connectionEntry(arg: *anyopaque) void {
             }
         }
         if (body_too_large) break;
+        // Content-Length'ten az gövde geldiyse (bağlantı yarıda kesildi) istek tamamlanmış sayılmaz: handler'a kesik gövde verilmez.
+        if (!chunked_body and request.head.method.requestHasBody()) {
+            if (request.head.content_length) |cl| {
+                if (body_out.written().len < cl) {
+                    request.respond("Bad Request", .{ .status = .bad_request, .keep_alive = false }) catch {};
+                    break;
+                }
+            }
+        }
 
         const body_str = http_client.dupeToNoxStr(rt, body_out.written()) orelse break;
         defer str_mod.nox_str_release(rt, body_str);

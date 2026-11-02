@@ -176,3 +176,21 @@ jobs:
       - name: 3000 eşzamanlı istek
         run: scripts/http_fiber_load.sh 3000 16
 
+  # v2.0.117: `nox.http.serve` sunucusuna bozuk/saldırgan girdi (dev chunk boyutu, CL+TE smuggling, aşırı büyük başlık, rastgele mutasyonlar): sunucu ölmemeli, askıda kalmamalı.
+  http-fuzz:
+    name: nox.http sunucu fuzz testi (Linux x86-64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - name: zig build
+        run: zig build
+      - name: Fuzz (1500 mutasyon)
+        run: python3 scripts/http_server_fuzz.py --iterations 1500 --case-timeout 4
+

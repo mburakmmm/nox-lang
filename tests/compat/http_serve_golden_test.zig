@@ -489,6 +489,94 @@ test "nox.http.serve: handler'dan sızan yakalanmamış istisna 500 döner, sunu
     try std.testing.expect(std.mem.indexOf(u8, stderr_data, "ZeroDivisionError") != null);
 }
 
+/// Ham `payload`'u gönderip (yazma tarafını kapatarak) yanıtın durum kodunu döndürür; yanıt yoksa/okunamazsa 0.
+fn rawStatus(port: u16, payload: []const u8) u16 {
+    const fd = testConnect(port) catch return 0;
+    defer _ = sys.close(fd);
+    var off: usize = 0;
+    while (off < payload.len) {
+        const n = sys.write(fd, payload[off..].ptr, payload.len - off);
+        if (n <= 0) break;
+        off += @intCast(n);
+    }
+    _ = sys.shutdown(fd, 1); // SHUT_WR: eksik istekte sunucu EOF görsün
+    var buf: [512]u8 = undefined;
+    var total: usize = 0;
+    while (total < buf.len) {
+        const n = sys.read(fd, buf[total..].ptr, buf.len - total);
+        if (n <= 0) break;
+        total += @intCast(n);
+    }
+    if (total < 12 or !std.mem.startsWith(u8, buf[0..total], "HTTP/1.")) return 0;
+    return std.fmt.parseInt(u16, buf[9..12], 10) catch 0;
+}
+
+test "nox.http.serve: bozuk/saldırgan istekler (dev chunk boyutu, CL+TE, NUL, boşluklu başlık adı, kesik gövde, Host yok) reddedilir, sunucu ÖLMEZ" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    return nox_http_HttpResponse(200, str(len(req.body)), {{}})
+        \\
+        \\nox.http.serve({d}, handle, 10)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    const cases = [_]struct { payload: []const u8, want: u16 }{
+        // Eskiden: Zig std chunked çözücüsünde `chunk_len + 2` taşması → tüm süreç panikle ölüyordu.
+        .{ .payload = "POST /x HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\nFFFFFFFFFFFFFFFF\r\nabc\r\n", .want = 413 },
+        .{ .payload = "POST /x HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\nZZ\r\nabc\r\n0\r\n\r\n", .want = 400 },
+        .{ .payload = "POST /x HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5;ext=1\r\nhello\r\n0\r\nX-T: v\r\n\r\n", .want = 200 },
+        // Request smuggling vektörleri.
+        .{ .payload = "POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n", .want = 400 },
+        .{ .payload = "GET /x HTTP/1.1\r\nHost: x\r\nX A: v\r\nConnection: close\r\n\r\n", .want = 400 },
+        .{ .payload = "GET /x HTTP/1.1\r\nHost: x\r\nX-A: a\x00b\r\nConnection: close\r\n\r\n", .want = 400 },
+        .{ .payload = "GET /x HTTP/1.1\r\nConnection: close\r\n\r\n", .want = 400 },
+        // Kesik gövde handler'a tamamlanmış gibi verilmez.
+        .{ .payload = "POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort", .want = 400 },
+        // Hepsinden sonra sunucu hâlâ sağlıklı.
+        .{ .payload = "POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello", .want = 200 },
+        .{ .payload = "GET /x HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", .want = 200 },
+    };
+    var got: [cases.len]u16 = undefined;
+    var want: [cases.len]u16 = undefined;
+    for (cases, 0..) |c, i| {
+        got[i] = rawStatus(port, c.payload);
+        want[i] = c.want;
+    }
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try child.wait(io);
+    if (term != .exited) std.debug.print("cocuk surec normal cikmadi (sunucu oldu mu?), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expectEqualSlices(u16, &want, &got);
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+}
+
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox_http_request_
 // method/target/body/headers`in ARTIK kopyalamayıp `retain` ETTİĞİ yeni
 // yolu, `HttpRequest`nin DÖRT alanının TAMAMINI (method/target/body/
