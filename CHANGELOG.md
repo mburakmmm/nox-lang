@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.120]
+
+### Eklendi
+
+- **Aynı adlı birden çok yanıt başlığı:** `nox.http.multi(["a=1", "b=2"])` ile `Set-Cookie`/`Link`/`Vary` gibi başlıklar artık ayrı satırlar olarak yazılır (`HttpResponse` API'si değişmedi).
+
+### Düzeltildi
+
+- Yinelenen **istek** başlıkları (iki `Accept`, iki `Cookie`) `req.headers`te sonuncusu öncekini ezmek yerine `, ` (Cookie için `; `) ile birleşik gelir.
+
 ## [2.0.119]
 
 ### Düzeltildi

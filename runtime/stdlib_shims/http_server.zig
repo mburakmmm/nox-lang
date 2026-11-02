@@ -1102,14 +1102,24 @@ fn containsCrOrLf(s: []const u8) bool {
 fn retainHeaders(rt: ?*anyopaque, gpa: std.mem.Allocator, headers_dict: ?*anyopaque) ![]std.http.Header {
     const d: *dict_mod.Dict = @ptrCast(@alignCast(headers_dict orelse return &.{}));
     if (d.entries.items.len == 0) return &.{};
-    const out = try gpa.alloc(std.http.Header, d.entries.items.len);
+    // Aynı adlı birden çok başlık (Set-Cookie, Link, Vary ...) için değer `\n` ile birleştirilir (`nox.http.multi`): her parça ayrı bir başlık satırı olur. Önce toplam satır sayısı ve
+    // doğrulama (CR, NUL, adda LF yasak), sonra tahsis.
+    var total: usize = 0;
+    for (d.entries.items) |e| {
+        const key = str_mod.nox_str_slice(@ptrFromInt(@as(usize, @bitCast(e.key))));
+        const value = str_mod.nox_str_slice(@ptrFromInt(@as(usize, @bitCast(e.value))));
+        if (std.mem.indexOfAny(u8, key, "\r\n\x00") != null or std.mem.indexOfAny(u8, value, "\r\x00") != null) return error.InvalidHeaderValue;
+        var parts: usize = 0;
+        var it = std.mem.splitScalar(u8, value, '\n');
+        while (it.next()) |seg| {
+            if (seg.len > 0) parts += 1;
+        }
+        total += @max(parts, 1);
+    }
+    const out = try gpa.alloc(std.http.Header, total);
     errdefer gpa.free(out);
     var filled: usize = 0;
-    // Bir başlık CR/LF İÇERDİĞİNDEN dolayı REDDEDİLİRSE, o ANA KADAR ZATEN
-    // `retain` edilmiş elemanların (bkz. `arc.nox_rc_retain`) refcount'unu
-    // BURADA geri almak GEREKİR — aksi halde `out` `errdefer` İLE serbest
-    // bırakılsa BİLE, İÇİNDEKİ str'lerin fazladan retain'i ASLA dengelenmez
-    // (kalıcı bir sızıntı olurdu).
+    // Hata durumunda o ana kadar alınmış referanslar geri verilir (aksi halde kalıcı sızıntı).
     errdefer for (out[0..filled]) |h| {
         str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
         str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
@@ -1119,11 +1129,30 @@ fn retainHeaders(rt: ?*anyopaque, gpa: std.mem.Allocator, headers_dict: ?*anyopa
         const value_ptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(e.value)));
         const key = str_mod.nox_str_slice(key_ptr);
         const value = str_mod.nox_str_slice(value_ptr);
-        if (containsCrOrLf(key) or containsCrOrLf(value)) return error.InvalidHeaderValue;
-        str_mod.nox_str_retain(key_ptr);
-        str_mod.nox_str_retain(value_ptr);
-        out[filled] = .{ .name = key, .value = value };
-        filled += 1;
+        if (std.mem.indexOfScalar(u8, value, '\n') == null) {
+            str_mod.nox_str_retain(key_ptr);
+            str_mod.nox_str_retain(value_ptr);
+            out[filled] = .{ .name = key, .value = value };
+            filled += 1;
+            continue;
+        }
+        var it = std.mem.splitScalar(u8, value, '\n');
+        var emitted: usize = 0;
+        while (it.next()) |seg| {
+            if (seg.len == 0) continue;
+            const seg_str = http_client.dupeToNoxStr(rt, seg) orelse return error.OutOfMemory;
+            str_mod.nox_str_retain(key_ptr);
+            out[filled] = .{ .name = key, .value = str_mod.nox_str_slice(seg_str) };
+            filled += 1;
+            emitted += 1;
+        }
+        if (emitted == 0) {
+            // Yalnızca ayırıcılardan oluşan değer: tek boş değerli başlık.
+            const empty = http_client.dupeToNoxStr(rt, "") orelse return error.OutOfMemory;
+            str_mod.nox_str_retain(key_ptr);
+            out[filled] = .{ .name = key, .value = str_mod.nox_str_slice(empty) };
+            filled += 1;
+        }
     }
     return out;
 }
@@ -1197,11 +1226,42 @@ export fn nox_http_request_peer_addr(rt: ?*anyopaque, req: ?*anyopaque) callconv
 export fn nox_http_request_headers(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?*anyopaque {
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
     const d = dict_mod.nox_dict_new(rt, 1) orelse return null;
-    for (r.headers) |h| {
+    for (r.headers, 0..) |h, i| {
+        // Aynı adlı (birebir) önceki bir başlık varsa bu giriş onunla birleştirildi: atla.
+        var seen_before = false;
+        for (r.headers[0..i]) |prev| {
+            if (std.mem.eql(u8, prev.name, h.name)) {
+                seen_before = true;
+                break;
+            }
+        }
+        if (seen_before) continue;
         const k: [*:0]u8 = @ptrCast(@constCast(h.name.ptr));
-        const v: [*:0]u8 = @ptrCast(@constCast(h.value.ptr));
+        var count: usize = 0;
+        for (r.headers[i..]) |other| {
+            if (std.mem.eql(u8, other.name, h.name)) count += 1;
+        }
+        if (count == 1) {
+            const v: [*:0]u8 = @ptrCast(@constCast(h.value.ptr));
+            str_mod.nox_str_retain(k);
+            str_mod.nox_str_retain(v);
+            dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(k)), @bitCast(@intFromPtr(v)));
+            continue;
+        }
+        // Yinelenen başlık (RFC 9110 §5.3): değerler istek sırasıyla birleştirilir (`, `; `Cookie` için `; `) — eskiden sonuncusu öncekileri sessizce eziyordu. Her eşleşen giriş
+        // sırayla katılır; `max_header` sınırı zaten başlık tamponuyla bağlı.
+        const sep: []const u8 = if (std.ascii.eqlIgnoreCase(h.name, "cookie")) "; " else ", ";
+        var combined: std.ArrayListUnmanaged(u8) = .empty;
+        defer combined.deinit(std.heap.page_allocator);
+        var first = true;
+        for (r.headers[i..]) |other| {
+            if (!std.mem.eql(u8, other.name, h.name)) continue;
+            if (!first) combined.appendSlice(std.heap.page_allocator, sep) catch break;
+            combined.appendSlice(std.heap.page_allocator, other.value) catch break;
+            first = false;
+        }
+        const v = http_client.dupeToNoxStr(rt, combined.items) orelse continue;
         str_mod.nox_str_retain(k);
-        str_mod.nox_str_retain(v);
         dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(k)), @bitCast(@intFromPtr(v)));
     }
     return d;

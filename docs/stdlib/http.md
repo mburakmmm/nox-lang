@@ -181,6 +181,17 @@ print(resp.status, resp.body)
 200 GET /hi?x=1
 ```
 
+### Several headers with the same name
+
+`HttpResponse.headers` is a `dict[str, str]`, so a name appears once. To send several lines with the same name (`Set-Cookie`, `Link`, `Vary`), join the values with `nox.http.multi`; the server writes each one as its own header line:
+
+```text
+h: dict[str, str] = {}
+h["Set-Cookie"] = nox.http.multi(["session=abc; Path=/; HttpOnly", "theme=dark; Path=/"])
+```
+
+On the request side, a header the client sent more than once arrives in `req.headers` as one entry with the values joined by `, ` (by `; ` for `Cookie`), as RFC 9110 describes.
+
 ### Configuration and graceful shutdown
 
 ```text

@@ -724,6 +724,69 @@ test "nox.http.configure: gövde/başlık sınırları ve nox.http.shutdown() ç
     try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
 }
 
+/// Ham `payload`'u gönderip tüm yanıtı (bağlantı kapanana kadar) `buf`a okur; okunan bayt sayısını döndürür.
+fn rawResponse(port: u16, payload: []const u8, buf: []u8) usize {
+    const fd = testConnect(port) catch return 0;
+    defer _ = sys.close(fd);
+    _ = sys.write(fd, payload.ptr, payload.len);
+    var total: usize = 0;
+    while (total < buf.len) {
+        const n = sys.read(fd, buf[total..].ptr, buf.len - total);
+        if (n <= 0) break;
+        total += @intCast(n);
+    }
+    return total;
+}
+
+test "nox.http: aynı adlı birden çok yanıt başlığı (multi → Set-Cookie ×2) ve yinelenen istek başlıkları birleşik gelir" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    h: dict[str, str] = {{}}
+        \\    h["Set-Cookie"] = nox.http.multi(["a=1; Path=/", "b=2; Path=/; HttpOnly"])
+        \\    h["X-Accept"] = req.headers["Accept"]
+        \\    h["X-Cookie"] = req.headers["Cookie"]
+        \\    return nox_http_HttpResponse(200, "ok", h)
+        \\
+        \\nox.http.serve({d}, handle, 1)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    var buf: [2048]u8 = undefined;
+    const n = rawResponse(port, "GET / HTTP/1.1\r\nHost: x\r\nAccept: text/html\r\nAccept: application/json\r\nCookie: x=1\r\nCookie: y=2\r\nConnection: close\r\n\r\n", &buf);
+    const resp = buf[0..n];
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "Set-Cookie: a=1; Path=/\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "Set-Cookie: b=2; Path=/; HttpOnly\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "X-Accept: text/html, application/json\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "X-Cookie: x=1; y=2\r\n") != null);
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+}
+
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox_http_request_
 // method/target/body/headers`in ARTIK kopyalamayıp `retain` ETTİĞİ yeni
 // yolu, `HttpRequest`nin DÖRT alanının TAMAMINI (method/target/body/

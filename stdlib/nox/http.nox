@@ -69,6 +69,19 @@ extern def nox_http_response_free(h: ptr) -> None from "zig-out/lib/noxrt.o"
 #   drain_timeout_ms  shutdown'da uçuştaki isteklerin bitmesi için en uzun bekleme (varsayılan 10000)
 # `shutdown()` graceful kapanış başlatır (SIGTERM/SIGINT de aynısını yapar): yeni bağlantı alınmaz, uçuştaki istekler biter, boştaki keep-alive bağlantılar kapanır ve `serve*` DÖNER;
 # çağıran sonrasında temizlik kodunu çalıştırabilir. İkinci sinyal hemen çıkar.
+# v2.0.120 — AYNI adlı birden çok yanıt başlığı (Set-Cookie, Link, Vary ...): `HttpResponse.headers` bir `dict[str, str]` olduğundan değerler `\n` ile birleştirilir ve sunucu HER parçayı
+# ayrı bir başlık satırı olarak yazar: `h["Set-Cookie"] = nox.http.multi(["a=1; Path=/", "b=2; Path=/"])`. (Başlıkta CR/NUL hâlâ yasak: yanıt reddedilir.) İstek tarafında yinelenen
+# başlıklar `req.headers`te `, ` ile (Cookie için `; ` ile) birleşik gelir.
+def multi(values: list[str]) -> str:
+    out: str = ""
+    first: bool = True
+    for v in values:
+        if not first:
+            out = out + "\n"
+        out = out + v
+        first = False
+    return out
+
 extern def nox_http_config_set_raw(key: int, value: int) -> None from "zig-out/lib/noxrt.o"
 extern def nox_http_shutdown_raw() -> None from "zig-out/lib/noxrt.o"
 
