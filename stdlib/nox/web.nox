@@ -1,0 +1,223 @@
+# nox.web — bir `nox.http` backend'i için üretim yapı taşları (v2.0.121). TAMAMEN saf Nox: `serve*` handler'ı içinden (veya `nox.router` middleware'i olarak) çağrılan düz işlevler ve küçük
+# sınıflar. Çerezler, CORS, hız sınırı, istek kimliği, erişim günlüğü, güvenlik başlıkları, yanıt yardımcıları.
+#
+# Çok işçili sunucuda (`serve_multicore`) modül durumu işçi başınadır: `RateLimiter` sayaçları da işçi başınadır (toplam sınır ≈ limit × işçi sayısı); paylaşımlı kesin sınır için
+# veritabanı ya da `nox.atomic`/`nox.sharedmem` kullanın.
+import nox.strings
+import nox.time
+import nox.uuid
+import nox.log
+from nox.http import HttpRequest, HttpResponse
+
+# --- Başlık yardımcıları -------------------------------------------------------------------------------------------------------------------------
+
+# İstek başlığını büyük/küçük harf duyarsız arar (`req.headers` adları istemcinin yazdığı gibidir). Yoksa "" döner; yinelenen başlıklar `, ` ile birleşik gelir.
+def header(req: HttpRequest, name: str) -> str:
+    for key in req.headers:
+        if nox.strings.eq_ignore_case(key, name):
+            return req.headers[key]
+    return ""
+
+# `Authorization: Bearer <token>` içindeki token; yoksa ya da biçim farklıysa "".
+def bearer_token(req: HttpRequest) -> str:
+    value: str = header(req, "Authorization")
+    if nox.strings.starts_with(value, "Bearer "):
+        return nox.strings.trim(nox.strings.splitn(value, " ", 2)[1])
+    return ""
+
+# --- Çerezler ------------------------------------------------------------------------------------------------------------------------------------
+
+# `Cookie` başlığını (`a=1; b=2`) ada göre sözlüğe çevirir. Aynı ad tekrarlanırsa İLK değer kalır (RFC 6265 §5.4: en özel yol önce gelir).
+def parse_cookies(header_value: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if header_value == "":
+        return out
+    for part in nox.strings.split(header_value, ";"):
+        pair: list[str] = nox.strings.splitn(nox.strings.trim(part), "=", 2)
+        if len(pair) == 2:
+            name: str = nox.strings.trim(pair[0])
+            if name != "" and name not in out:
+                out[name] = nox.strings.trim(pair[1])
+    return out
+
+def _cookie_safe(s: str) -> bool:
+    return not (nox.strings.contains(s, ";") or nox.strings.contains(s, ",") or nox.strings.contains(s, " ") or nox.strings.contains(s, "\r") or nox.strings.contains(s, "\n") or nox.strings.contains(s, "\x00"))
+
+# Bir `Set-Cookie` başlık DEĞERİ üretir. `max_age < 0` oturum çerezidir (Max-Age yazılmaz); `same_site` "Lax" | "Strict" | "None" ("None" `secure` ister). Ad/değerde `;`, `,`, boşluk,
+# CR/LF/NUL varsa `ValueError` (başlık enjeksiyonunu önler); değeri gerekirse `nox.url.percent_encode` ile kodlayın. Birden çok çerez için `nox.http.multi([...])` kullanın.
+def cookie(name: str, value: str, path: str = "/", max_age: int = -1, http_only: bool = True, secure: bool = False, same_site: str = "Lax") -> str:
+    if name == "" or not _cookie_safe(name) or not _cookie_safe(value) or not _cookie_safe(path):
+        raise ValueError("unsafe cookie name, value or path")
+    if same_site != "Lax" and same_site != "Strict" and same_site != "None":
+        raise ValueError("same_site must be Lax, Strict or None")
+    if same_site == "None" and not secure:
+        raise ValueError("SameSite=None requires secure=True")
+    out: str = name + "=" + value + "; Path=" + path
+    if max_age >= 0:
+        out = out + "; Max-Age=" + str(max_age)
+    if http_only:
+        out = out + "; HttpOnly"
+    if secure:
+        out = out + "; Secure"
+    return out + "; SameSite=" + same_site
+
+# Çerezi silen `Set-Cookie` değeri (Max-Age=0).
+def expire_cookie(name: str, path: str = "/") -> str:
+    return cookie(name, "", path, 0)
+
+# --- CORS ----------------------------------------------------------------------------------------------------------------------------------------
+
+# Kaynaklar arası istek ilkesi. `allow_origins`: izin verilen kaynaklar ya da ["*"]; `allow_credentials` açıkken "*" geçerli olmaz (tarayıcı reddeder): o zaman istekteki kaynak yansıtılır.
+class Cors:
+    def __init__(self: Cors, allow_origins: list[str], allow_methods: str, allow_headers: str, max_age: int, allow_credentials: bool) -> None:
+        self.allow_origins = allow_origins
+        self.allow_methods = allow_methods
+        self.allow_headers = allow_headers
+        self.max_age = max_age
+        self.allow_credentials = allow_credentials
+
+    def origin_allowed(self: Cors, origin: str) -> bool:
+        if origin == "":
+            return False
+        for o in self.allow_origins:
+            if o == "*" or o == origin:
+                return True
+        return False
+
+    # Ön uçuş (preflight) isteğiyse (`OPTIONS` + `Origin` + `Access-Control-Request-Method`) yanıt döner: izinli kaynağa 204, değilse 403. Ön uçuş değilse `None` (handler'a devam edin).
+    def preflight(self: Cors, req: HttpRequest) -> HttpResponse | None:
+        origin: str = header(req, "Origin")
+        if req.method != "OPTIONS" or origin == "" or header(req, "Access-Control-Request-Method") == "":
+            return None
+        if not self.origin_allowed(origin):
+            return HttpResponse(403, "origin not allowed", {})
+        h: dict[str, str] = {}
+        self._fill(h, origin)
+        h["Access-Control-Allow-Methods"] = self.allow_methods
+        h["Access-Control-Allow-Headers"] = self.allow_headers
+        h["Access-Control-Max-Age"] = str(self.max_age)
+        return HttpResponse(204, "", h)
+
+    def _fill(self: Cors, h: dict[str, str], origin: str) -> None:
+        if self.allow_credentials or "*" not in self.allow_origins:
+            h["Access-Control-Allow-Origin"] = origin
+            h["Vary"] = "Origin"
+        else:
+            h["Access-Control-Allow-Origin"] = "*"
+        if self.allow_credentials:
+            h["Access-Control-Allow-Credentials"] = "true"
+
+    # Gerçek isteğin yanıtına CORS başlıklarını ekler (kaynak izinliyse); aksi halde yanıt değişmez.
+    def apply(self: Cors, req: HttpRequest, resp: HttpResponse) -> HttpResponse:
+        origin: str = header(req, "Origin")
+        if self.origin_allowed(origin):
+            self._fill(resp.headers, origin)
+        return resp
+
+# İstemcinin IP'si (`req.peer_addr` içindeki `ip:port`tan port atılır; IPv6 `[::1]:port` → `::1`). Hız sınırı anahtarı olarak PORTU DEĞİL bunu kullanın: port her bağlantıda değişir.
+# Ters vekil (nginx, Cloudflare) arkasında gerçek istemci `X-Forwarded-For`dadır; ona yalnızca vekile güveniyorsanız bakın.
+def client_ip(req: HttpRequest) -> str:
+    addr: str = req.peer_addr
+    if nox.strings.starts_with(addr, "["):
+        return nox.strings.replace(nox.strings.split(addr, "]")[0], "[", "")
+    parts: list[str] = nox.strings.split(addr, ":")
+    if len(parts) < 2:
+        return addr
+    kept: list[str] = []
+    i: int = 0
+    while i < len(parts) - 1:
+        kept.append(parts[i])
+        i = i + 1
+    return nox.strings.join(kept, ":")
+
+# --- Hız sınırı ---------------------------------------------------------------------------------------------------------------------------------
+
+# Sabit pencereli sayaç: her `window_ms` içinde bir anahtar (ör. istemci IP'si) en çok `limit` istek yapabilir. Bellek: pencere başına görülen farklı anahtar sayısı (üst sınır `max_keys`;
+# aşılırsa sayaçlar sıfırlanır, sunucu şişmez). Çok işçili sunucuda işçi başınadır (modül başlığına bakın).
+class RateLimiter:
+    def __init__(self: RateLimiter, limit: int, window_ms: int) -> None:
+        self.limit = limit
+        self.window_ms = window_ms
+        self.counts: dict[str, int] = {}
+        self.window_start = 0
+        self.max_keys = 100000
+
+    # İstek geçebilir mi? (Her çağrı sayacı artırır.)
+    def allow(self: RateLimiter, key: str) -> bool:
+        now: int = nox.time.now_ms()
+        if now - self.window_start >= self.window_ms or len(self.counts) >= self.max_keys:
+            self.counts = {}
+            self.window_start = now
+        n: int = 1
+        if key in self.counts:
+            n = self.counts[key] + 1
+        self.counts[key] = n
+        return n <= self.limit
+
+    # Sınırı aşan istemciye söylenecek `Retry-After` (saniye, en az 1).
+    def retry_after_s(self: RateLimiter) -> int:
+        left: int = self.window_ms - (nox.time.now_ms() - self.window_start)
+        if left <= 0:
+            return 1
+        return (left + 999) // 1000
+
+    # Sınır aşıldıysa gönderilecek 429 yanıtı.
+    def too_many(self: RateLimiter) -> HttpResponse:
+        return HttpResponse(429, "too many requests", {"Retry-After": str(self.retry_after_s())})
+
+# --- İstek kimliği, erişim günlüğü, güvenlik başlıkları ---------------------------------------------------------------------------------
+
+def _id_safe(s: str) -> bool:
+    if s == "" or len(s) > 64:
+        return False
+    i: int = 0
+    n: int = nox.strings.byte_len(s)
+    while i < n:
+        b: int = nox.strings.byte_at(s, i)
+        ok: bool = (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 45 or b == 95 or b == 46
+        if not ok:
+            return False
+        i = i + 1
+    return True
+
+# İstemcinin `X-Request-Id`'si güvenliyse (≤64 karakter, harf/rakam/-/_/.) onu, yoksa yeni bir UUID döner. Günlükte ve yanıtta aynı kimliği kullanın.
+def request_id(req: HttpRequest) -> str:
+    incoming: str = header(req, "X-Request-Id")
+    if _id_safe(incoming):
+        return incoming
+    return nox.uuid.uuid4()
+
+# Yanıta `X-Request-Id` ekler.
+def with_request_id(resp: HttpResponse, rid: str) -> HttpResponse:
+    resp.headers["X-Request-Id"] = rid
+    return resp
+
+# Tek satırlık erişim günlüğü (`nox.log.info`): `METHOD hedef durum süre_ms kimlik istemci`. `started_ms` = isteğin başında `nox.time.now_ms()`.
+def access_log(req: HttpRequest, resp: HttpResponse, started_ms: int, rid: str) -> None:
+    elapsed: int = nox.time.now_ms() - started_ms
+    nox.log.info(req.method + " " + req.target + " " + str(resp.status) + " " + str(elapsed) + "ms " + rid + " " + req.peer_addr)
+
+# Savunmacı güvenlik başlıkları (nosniff, çerçeveleme yasağı, referrer ilkesi). Yanıtta zaten varsa dokunmaz.
+def with_security_headers(resp: HttpResponse) -> HttpResponse:
+    if "X-Content-Type-Options" not in resp.headers:
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+    if "X-Frame-Options" not in resp.headers:
+        resp.headers["X-Frame-Options"] = "DENY"
+    if "Referrer-Policy" not in resp.headers:
+        resp.headers["Referrer-Policy"] = "no-referrer"
+    return resp
+
+# --- Yanıt yardımcıları -------------------------------------------------------------------------------------------------------------------------
+
+def text_response(status: int, body: str) -> HttpResponse:
+    return HttpResponse(status, body, {"Content-Type": "text/plain; charset=utf-8"})
+
+# `body_json` zaten JSON metnidir (ör. `nox.json.dump(...)`).
+def json_response(status: int, body_json: str) -> HttpResponse:
+    return HttpResponse(status, body_json, {"Content-Type": "application/json"})
+
+# `location` CR/LF içermemelidir (içeriyorsa `ValueError`).
+def redirect(location: str, status: int = 302) -> HttpResponse:
+    if nox.strings.contains(location, "\r") or nox.strings.contains(location, "\n"):
+        raise ValueError("redirect location must not contain CR or LF")
+    return HttpResponse(status, "", {"Location": location})

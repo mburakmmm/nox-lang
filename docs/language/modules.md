@@ -119,8 +119,40 @@ Statements after the last such declaration, and compound statements such as `if`
 initialiser may not read a module variable that a function reads but that is declared *after* it; the compiler rejects that with a
 message naming both variables instead of reading uninitialised memory.
 
+### Module-level state and the multi-core runtime
+
 Under the multi-core runtime each worker keeps its own copy of module state; share data between tasks with channels, `nox.atomic` or
-`nox.sharedmem` ([Concurrency](concurrency.md#the-scheduler)).
+`nox.sharedmem` ([Concurrency](concurrency.md#the-scheduler)). This includes plain `nox.http.serve` on the default LLVM backend: connections can be
+handled by any worker, so a handler may see another worker's copy.
+
+Only the variables' own initialisers (and method calls on them up to the last promoted declaration) run for every worker. A statement placed *after* the last
+module variable, such as `router.get("/", home)`, runs once, on the main worker. Put setup that every worker needs inside a function and call it from the
+initialiser:
+
+```nox
+class Counter:
+    def __init__(self: Counter) -> None:
+        self.n = 0
+
+def build() -> Counter:
+    c: Counter = Counter()
+    c.n = 10
+    return c
+
+counter: Counter = build()
+
+def bump() -> int:
+    counter.n = counter.n + 1
+    return counter.n
+
+print(bump())
+```
+
+```output
+11
+```
+
+The same applies to a database connection (open it in the initialiser; each worker then has its own) and to routers: see [`nox.router`](../stdlib/router.md#using-a-router-with-the-server).
 
 ## Packages
 

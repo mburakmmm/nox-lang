@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.122]
+
+### Eklendi
+
+- **`nox.web`:** bir `nox.http` backend'i için üretim yapı taşları — çerezler (`cookie`/`parse_cookies`/`expire_cookie`), `Cors` (ön uçuş + yanıt başlıkları), `RateLimiter` (sabit pencere, `client_ip` anahtarı), `request_id`, `access_log`, `with_security_headers`, `bearer_token`, `header` (büyük/küçük harf duyarsız), `text_response`/`json_response`/`redirect`. Saf Nox. Belge: `docs/stdlib/web.md`; golden: `web_building_blocks` (iki backend'de aynı çıktı).
+- **Referans backend:** `examples/todo-backend` (kayıt/giriş argon2id + JWT, kullanıcıya özel yapılacaklar listesi SQLite'ta, CORS, hız sınırı, istek kimliği, erişim günlüğü, SIGTERM ile temiz kapanış) ve `scripts/todo_backend_smoke.py` (derler, çalıştırır; yetki yalıtımı, CORS, 429, 8 eşzamanlı istemci, bellek sızıntısı raporu yok, temiz kapanış). CI `docs` işinde QBE ve LLVM için koşar.
+
+### Belgelendi (bulgu)
+
+- **Varsayılan (LLVM) backend'de modül durumu işçi başınadır, düz `nox.http.serve` için de.** Bağlantı fiber'ları işçiler arasında çalınabildiğinden (MN.12) her işçi modül değişkenlerinin kendi kopyasını görür; `router: Router = Router()` ardından modül düzeyinde `router.get(...)` çağıran belgelenmiş kalıp, eşzamanlı yükte yaklaşık yarı yarıya `404` veriyordu (QBE'de değil). Doğru kalıp: rotaları global başlatıcısında çağrılan bir fonksiyonda kaydetmek (`router: Router = build_router()`). `docs/stdlib/router.md`, `http.md`, `web.md`, `language/modules.md` düzeltildi/eklendi. Derleyici davranışı bu sürümde DEĞİŞMEDİ (bkz. spesifikasyon §3.327, açık karar).
+
 ## [2.0.121]
 
 ### Düzeltildi

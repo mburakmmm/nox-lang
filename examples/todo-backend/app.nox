@@ -1,0 +1,264 @@
+# Referans backend: kullanıcı kaydı/girişi (argon2id + JWT), kullanıcıya özel yapılacaklar listesi (SQLite), CORS, hız sınırı, istek kimliği, erişim günlüğü, güvenlik başlıkları ve
+# graceful shutdown. Çalıştırma:  noxc run examples/todo-backend/app.nox   (ortam: PORT=8080 TODO_DB=todo.db JWT_SECRET=... RATE_LIMIT=300)
+# MODÜL DURUMU: varsayılan (LLVM) backend'inde bağlantılar farklı işçi iş parçacıklarında çalışabilir ve HER işçi modül durumunun kendi kopyasını alır. Bu yüzden her şey (veritabanı, rotalar,
+# CORS, hız sınırı) bir GLOBAL BAŞLATICISINDA kurulur (`router: Router = build_router()`); modül düzeyinde sonradan çağrılan `router.get(...)` yalnızca ana işçide çalışırdı.
+# Sonuç: veritabanı DOSYA tabanlıdır (her işçi kendi bağlantısını açar; `:memory:` işçiler arasında paylaşılmaz) ve hız sınırı işçi başınadır (`nox.web` başlığına bakın).
+# Uç noktalar:  GET /health | POST /register {"user","password"} | POST /login {...} -> {"token"} | GET/POST /todos | PUT/DELETE /todos/:id   (Authorization: Bearer <token>)
+import nox.http
+import nox.os
+import nox.sqlite
+import nox.crypto
+import nox.jwt
+import nox.json
+import nox.time
+import nox.web
+import nox.router
+import nox.log
+from nox.http import HttpRequest, HttpResponse
+from nox.sqlite import Connection, SqliteError
+from nox.db import Row, Statement
+from nox.json import JsonValue, JsonWriter, JsonError
+from nox.jwt import JwtError
+from nox.router import Router, Context
+from nox.web import Cors, RateLimiter
+
+def env_or(name: str, fallback: str) -> str:
+    try:
+        v: str = nox.os.getenv(name)
+        if v != "":
+            return v
+    except Exception:
+        return fallback
+    return fallback
+
+SECRET: str = env_or("JWT_SECRET", "dev-secret-change-me-dev-secret-change-me")
+
+def open_db() -> Connection:
+    c: Connection = nox.sqlite.open(env_or("TODO_DB", "todo.db"))
+    # PRAGMA'lar satır döndürür: `execute` yalnızca "bitti" kabul eder, bu yüzden `query` ile çalıştırılır.
+    c.prepare("PRAGMA busy_timeout = 5000").query()
+    c.prepare("PRAGMA journal_mode = WAL").query()
+    c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, hash TEXT NOT NULL)")
+    c.execute("CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
+    return c
+
+db: Connection = open_db()
+cors: Cors = Cors(["http://localhost:3000"], "GET, POST, PUT, DELETE", "Content-Type, Authorization", 600, False)
+limiter: RateLimiter = RateLimiter(int(env_or("RATE_LIMIT", "300")), 60000)
+
+# --- JSON yardımcıları -------------------------------------------------------------------------------------------------------------------------
+
+def json_field(v: JsonValue, name: str) -> str:
+    # Nesnedeki `name` alanının metin değeri; yoksa ya da metin değilse "".
+    if not nox.json.is_object(v):
+        return ""
+    i: int = 0
+    while i < nox.json.object_len(v):
+        if nox.json.object_key(v, i) == name:
+            item: JsonValue = nox.json.object_value(v, i)
+            if nox.json.is_string(item):
+                return nox.json.as_string(item)
+            return ""
+        i = i + 1
+    return ""
+
+def json_bool_field(v: JsonValue, name: str, fallback: bool) -> bool:
+    if not nox.json.is_object(v):
+        return fallback
+    i: int = 0
+    while i < nox.json.object_len(v):
+        if nox.json.object_key(v, i) == name:
+            item: JsonValue = nox.json.object_value(v, i)
+            if nox.json.is_bool(item):
+                return nox.json.as_bool(item)
+            return fallback
+        i = i + 1
+    return fallback
+
+def error(status: int, message: str) -> HttpResponse:
+    w: JsonWriter = JsonWriter()
+    w.begin_object()
+    w.write_key("error")
+    w.write_string(message)
+    w.end_object()
+    return nox.web.json_response(status, w.build())
+
+def todo_json(w: JsonWriter, r: Row) -> None:
+    w.begin_object()
+    w.write_key("id")
+    w.write_int(r.get_int(0))
+    w.write_key("title")
+    w.write_string(r.get_str(1))
+    w.write_key("done")
+    w.write_bool(r.get_int(2) != 0)
+    w.end_object()
+
+# --- Kimlik doğrulama ------------------------------------------------------------------------------------------------------------------------
+
+def token_for(user_id: int, name: str) -> str:
+    return nox.jwt.sign("{\"sub\":" + str(user_id) + ",\"name\":" + nox.json.dump_string(name) + ",\"exp\":" + str(nox.time.now_ms() // 1000 + 3600) + "}", SECRET)
+
+# Geçerli Bearer token'ın kullanıcı kimliği; geçersiz/süresi dolmuşsa -1.
+def current_user(ctx: Context) -> int:
+    tok: str = nox.web.bearer_token(ctx.request)
+    if tok == "":
+        return -1
+    try:
+        claims: JsonValue = nox.json.parse(nox.jwt.verify(tok, SECRET))
+        i: int = 0
+        sub: int = -1
+        exp: int = 0
+        while i < nox.json.object_len(claims):
+            if nox.json.object_key(claims, i) == "sub":
+                sub = int(nox.json.as_number(nox.json.object_value(claims, i)))
+            if nox.json.object_key(claims, i) == "exp":
+                exp = int(nox.json.as_number(nox.json.object_value(claims, i)))
+            i = i + 1
+        if exp < nox.time.now_ms() // 1000:
+            return -1
+        return sub
+    except JwtError:
+        return -1
+    except JsonError:
+        return -1
+
+def register(ctx: Context) -> HttpResponse:
+    try:
+        body: JsonValue = nox.json.parse(ctx.request.body)
+        name: str = json_field(body, "user")
+        password: str = json_field(body, "password")
+        if len(name) < 3 or len(name) > 32 or len(password) < 8:
+            return error(400, "user needs 3-32 characters and password at least 8")
+        ins: Statement = db.prepare("INSERT INTO users (name, hash) VALUES (?, ?)")
+        ins.bind_str(0, name)
+        ins.bind_str(1, nox.crypto.argon2_hash(password))
+        try:
+            ins.execute()
+        except SqliteError:
+            return error(409, "user already exists")
+        return nox.web.json_response(201, "{\"id\":" + str(db.last_insert_rowid()) + "}")
+    except JsonError:
+        return error(400, "invalid JSON")
+
+def login(ctx: Context) -> HttpResponse:
+    try:
+        body: JsonValue = nox.json.parse(ctx.request.body)
+        name: str = json_field(body, "user")
+        password: str = json_field(body, "password")
+        q: Statement = db.prepare("SELECT id, hash FROM users WHERE name = ?")
+        q.bind_str(0, name)
+        rows: list[Row] = q.query()
+        if len(rows) == 0 or not nox.crypto.argon2_verify(rows[0].get_str(1), password):
+            return error(401, "bad credentials")
+        w: JsonWriter = JsonWriter()
+        w.begin_object()
+        w.write_key("token")
+        w.write_string(token_for(rows[0].get_int(0), name))
+        w.end_object()
+        return nox.web.json_response(200, w.build())
+    except JsonError:
+        return error(400, "invalid JSON")
+
+# --- Yapılacaklar ---------------------------------------------------------------------------------------------------------------------------
+
+def list_todos(ctx: Context) -> HttpResponse:
+    uid: int = current_user(ctx)
+    if uid < 0:
+        return error(401, "unauthorized")
+    q: Statement = db.prepare("SELECT id, title, done FROM todos WHERE user_id = ? ORDER BY id")
+    q.bind_int(0, uid)
+    w: JsonWriter = JsonWriter()
+    w.begin_array()
+    for r in q.query():
+        todo_json(w, r)
+    w.end_array()
+    return nox.web.json_response(200, w.build())
+
+def create_todo(ctx: Context) -> HttpResponse:
+    uid: int = current_user(ctx)
+    if uid < 0:
+        return error(401, "unauthorized")
+    try:
+        title: str = json_field(nox.json.parse(ctx.request.body), "title")
+        if title == "" or len(title) > 200:
+            return error(400, "title needs 1-200 characters")
+        ins: Statement = db.prepare("INSERT INTO todos (user_id, title) VALUES (?, ?)")
+        ins.bind_int(0, uid)
+        ins.bind_str(1, title)
+        ins.execute()
+        return nox.web.json_response(201, "{\"id\":" + str(db.last_insert_rowid()) + "}")
+    except JsonError:
+        return error(400, "invalid JSON")
+
+def update_todo(ctx: Context) -> HttpResponse:
+    uid: int = current_user(ctx)
+    if uid < 0:
+        return error(401, "unauthorized")
+    try:
+        done: bool = json_bool_field(nox.json.parse(ctx.request.body), "done", False)
+        st: Statement = db.prepare("UPDATE todos SET done = ? WHERE id = ? AND user_id = ?")
+        st.bind_int(0, 1 if done else 0)
+        st.bind_int(1, int(ctx.param("id")))
+        st.bind_int(2, uid)
+        if st.execute() == 0:
+            return error(404, "no such todo")
+        return nox.web.json_response(200, "{\"ok\":true}")
+    except JsonError:
+        return error(400, "invalid JSON")
+    except ValueError:
+        return error(400, "bad id")
+
+def delete_todo(ctx: Context) -> HttpResponse:
+    uid: int = current_user(ctx)
+    if uid < 0:
+        return error(401, "unauthorized")
+    try:
+        st: Statement = db.prepare("DELETE FROM todos WHERE id = ? AND user_id = ?")
+        st.bind_int(0, int(ctx.param("id")))
+        st.bind_int(1, uid)
+        if st.execute() == 0:
+            return error(404, "no such todo")
+        return HttpResponse(204, "", {})
+    except ValueError:
+        return error(400, "bad id")
+
+def health(ctx: Context) -> HttpResponse:
+    return nox.web.text_response(200, "ok")
+
+def build_router() -> Router:
+    r: Router = Router()
+    r.get("/health", health)
+    r.post("/register", register)
+    r.post("/login", login)
+    r.get("/todos", list_todos)
+    r.post("/todos", create_todo)
+    r.put("/todos/:id", update_todo)
+    r.delete("/todos/:id", delete_todo)
+    return r
+
+router: Router = build_router()
+
+# --- Sunucu -------------------------------------------------------------------------------------------------------------------------------
+
+def respond(req: HttpRequest) -> HttpResponse:
+    if not limiter.allow(nox.web.client_ip(req)):
+        return limiter.too_many()
+    pre: HttpResponse | None = cors.preflight(req)
+    if pre is not None:
+        return pre
+    return cors.apply(req, router.dispatch(req))
+
+def handle(req: HttpRequest) -> HttpResponse:
+    started: int = nox.time.now_ms()
+    rid: str = nox.web.request_id(req)
+    resp: HttpResponse = nox.web.with_security_headers(nox.web.with_request_id(respond(req), rid))
+    nox.web.access_log(req, resp, started, rid)
+    return resp
+
+nox.log.set_level("INFO")
+nox.http.configure(max_body_bytes=65536, drain_timeout_ms=5000)
+port: int = int(env_or("PORT", "8080"))
+nox.log.info("listening on :" + str(port))
+nox.http.serve(port, handle)
+db.close()
+nox.log.info("stopped cleanly")

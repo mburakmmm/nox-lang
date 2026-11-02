@@ -1,0 +1,46 @@
+import nox.http
+import nox.web
+from nox.http import HttpRequest, HttpResponse
+from nox.web import Cors, RateLimiter
+
+cors: Cors = Cors(["https://app.example"], "GET, POST", "Content-Type, Authorization", 600, True)
+
+print(nox.web.cookie("sid", "abc123"))
+print(nox.web.cookie("t", "1", "/app", 3600, False, True, "Strict"))
+print(nox.web.expire_cookie("sid"))
+jar: dict[str, str] = nox.web.parse_cookies("a=1; b=two; a=ignored; c=x=y")
+print(jar["a"] + "|" + jar["b"] + "|" + jar["c"])
+try:
+    print(nox.web.cookie("bad name", "v"))
+except ValueError:
+    print("unsafe cookie rejected")
+
+pre: HttpRequest = HttpRequest("OPTIONS", "/x", "", {"origin": "https://app.example", "Access-Control-Request-Method": "POST"}, "")
+r1: HttpResponse | None = cors.preflight(pre)
+if r1 is not None:
+    print(r1.status)
+    print(r1.headers["Access-Control-Allow-Origin"])
+bad: HttpRequest = HttpRequest("OPTIONS", "/x", "", {"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"}, "")
+r2: HttpResponse | None = cors.preflight(bad)
+if r2 is not None:
+    print(r2.status)
+real: HttpRequest = HttpRequest("GET", "/x", "", {"Origin": "https://app.example"}, "")
+resp: HttpResponse = cors.apply(real, HttpResponse(200, "ok", {}))
+print(resp.headers["Access-Control-Allow-Origin"] + " " + resp.headers["Vary"] + " " + resp.headers["Access-Control-Allow-Credentials"])
+
+rl: RateLimiter = RateLimiter(2, 60000)
+print(rl.allow("1.2.3.4"))
+print(rl.allow("1.2.3.4"))
+print(rl.allow("1.2.3.4"))
+print(rl.allow("9.9.9.9"))
+print(rl.too_many().status)
+
+print(nox.web.request_id(HttpRequest("GET", "/", "", {"X-Request-Id": "abc-123"}, "")))
+print(len(nox.web.request_id(HttpRequest("GET", "/", "", {"X-Request-Id": "bad id!"}, ""))))
+print(nox.web.bearer_token(HttpRequest("GET", "/", "", {"authorization": "Bearer tok.en"}, "")))
+sec: HttpResponse = nox.web.with_security_headers(HttpResponse(200, "", {}))
+print(sec.headers["X-Frame-Options"])
+print(nox.web.redirect("/login").headers["Location"])
+print(nox.web.client_ip(HttpRequest("GET", "/", "", {}, "203.0.113.7:51234")))
+print(nox.web.client_ip(HttpRequest("GET", "/", "", {}, "[2001:db8::1]:8080")))
+print(nox.web.client_ip(HttpRequest("GET", "/", "", {}, "")) == "")

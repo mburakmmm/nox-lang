@@ -112,25 +112,33 @@ pong!
 
 ## Using a router with the server
 
-Build the router once at module level and call it from the server's handler function:
+Build the router in a function and assign it to a module variable; the handler calls it:
 
 ```nox
 import nox.http
 from nox.http import HttpRequest, HttpResponse
 from nox.router import Router, Context
 
-router: Router = Router()
-
 def home(ctx: Context) -> HttpResponse:
     return HttpResponse(200, "hello", {"Content-Type": "text/plain"})
 
-router.get("/", home)
+def build_router() -> Router:
+    r: Router = Router()
+    r.get("/", home)
+    return r
+
+router: Router = build_router()
 
 def handle(req: HttpRequest) -> HttpResponse:
     return router.dispatch(req)
 
 nox.http.serve(8080, handle)
 ```
+
+**Register the routes inside the function that initialises the variable.** On the default LLVM backend connections run on several worker threads and each worker
+has its own copy of the module's variables ([Modules](../language/modules.md#module-level-state-and-the-multi-core-runtime)); the initialiser runs for every
+worker, whereas a statement such as `router.get("/", home)` placed after the variable runs only once, on the main worker. With the registration at module level the
+other workers would have an empty router and answer `404` under concurrent load.
 
 `nox.reflect.router_from_decorators()` builds a router from `@get`/`@post`/`@put`/`@delete`-decorated functions ([Decorators](../language/decorators.md)).
 

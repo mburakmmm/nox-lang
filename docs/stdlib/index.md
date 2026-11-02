@@ -22,7 +22,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
+| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `sqlite` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql` |
 | `network` + `filesystem` | both | `transfer` |
@@ -98,6 +98,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.http`](http.md) | HTTP client and server (TLS and WebSocket upgrade included) |
 | [`nox.transfer`](transfer.md) | stream HTTP bodies to and from files |
 | [`nox.router`](router.md) | path routing and middleware |
+| [`nox.web`](web.md) | cookies, CORS, rate limiting, request ids, access log, security headers |
 | [`nox.websocket`](websocket.md) | WebSocket client and server connection |
 | [`nox.tls`](tls.md) | client TLS streams |
 | [`nox.smtp`](smtp.md) | send e-mail |

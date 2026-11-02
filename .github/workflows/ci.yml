@@ -145,6 +145,11 @@ jobs:
           cd services/noxlang-site && ../../zig-out/bin/noxc fetch && ../../zig-out/bin/noxc check main.nox
       - name: Siteyi üret (landing örnekleri dahil doğrulanır)
         run: python3 scripts/build_site.py --verify
+      # v2.0.122: referans backend (examples/todo-backend: kayıt/giriş/JWT, SQLite, CORS, hız sınırı, SIGTERM ile temiz kapanış) iki backend'de uçtan uca; LLVM'de eşzamanlı istemciler farklı işçilere düşer (modül durumu kopyası regresyonu burada yakalanır).
+      - name: Referans backend duman testi (QBE + LLVM)
+        run: |
+          python3 scripts/todo_backend_smoke.py --backend qbe
+          python3 scripts/todo_backend_smoke.py --backend llvm
 
   test:
     strategy:
