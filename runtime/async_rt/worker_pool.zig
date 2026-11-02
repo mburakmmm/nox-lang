@@ -223,6 +223,9 @@ pub const WorkerPool = struct {
 
     pub fn joinAll(self: *WorkerPool) void {
         for (self.threads) |t| t.join();
+        // Değişmez (yalnız Debug/ReleaseSafe): tüm işçiler çıkınca hiçbir `ready` listesinde fiber kalmamalı. Sayaç artık kalırsa `poolWideDeadlockCheck` gerçek bir
+        // deadlock'u asla ilan edemez; eksik kalırsa yanlış-pozitif verir (bkz. `asap.RuntimeState.pool_ready_total`). Gerçek programlar (torture, serve_multicore) bunu bedavaya doğrular.
+        std.debug.assert(self.pool_ready_total.load(.acquire) == 0);
     }
 
     /// `joinAll` SONRASI çağrılmalıdır. `nox_runtime_deinit`i TAM BİR KEZ
