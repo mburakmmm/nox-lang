@@ -351,18 +351,52 @@ const RequestCtx = struct {
     }
 };
 
-pub fn loadIosCa(client: *std.http.Client) bool {
-    const apple_roots = @import("apple_roots.zig");
-    const io = client.io;
+/// Süreç-genelinde TEK paylaşılan CA paketi. Eskiden her `std.http.Client` (yani her istek) HTTPS'te sistem sertifika deposunu yeniden okuyup ayrıştırıyordu (macOS'ta Keychain ~20 ms/istek):
+/// iş parçacığı yolunda paralel çalıştığı için gizliydi, istekler fiber'da zamanlayıcı iş parçacığında seri çalışınca 60 eşzamanlı HTTPS isteği 470 ms yerine 1500 ms sürdü. Paket bir kez
+/// yüklenir (Go'nun sistem kök sertifikalarını bir kez okumasıyla aynı: yeni bir sistem kökü için süreç yeniden başlar), sonra salt okunur paylaşılır. Yükleme başarısız olursa istemci
+/// kendi yoluna düşer (aynı hata). Bellek `page_allocator`dan alınır ve süreç ömrü boyunca tutulur.
+const SharedCa = struct {
+    lock: asap.SpinLock = .{},
+    ready: std.atomic.Value(bool) = .init(false),
+    bundle: std.crypto.Certificate.Bundle = .empty,
+};
+var g_shared_ca: SharedCa = .{};
+
+fn loadSharedCa(io: std.Io) bool {
+    if (g_shared_ca.ready.load(.acquire)) return true;
+    g_shared_ca.lock.lock();
+    defer g_shared_ca.lock.unlock();
+    if (g_shared_ca.ready.load(.acquire)) return true;
     var bundle: std.crypto.Certificate.Bundle = .empty;
-    defer bundle.deinit(client.allocator);
     const now = std.Io.Clock.real.now(io);
-    if (!apple_roots.fill(&bundle, client.allocator, io, now)) return false;
-    client.ca_bundle_lock.lock(io) catch return false;
-    defer client.ca_bundle_lock.unlock(io);
-    client.now = now;
-    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
+    const ok = if (comptime builtin.os.tag == .ios) blk: {
+        const apple_roots = @import("apple_roots.zig");
+        break :blk apple_roots.fill(&bundle, std.heap.page_allocator, io, now);
+    } else blk: {
+        bundle.rescan(std.heap.page_allocator, io, now) catch break :blk false;
+        break :blk true;
+    };
+    if (!ok) {
+        bundle.deinit(std.heap.page_allocator);
+        return false;
+    }
+    g_shared_ca.bundle = bundle;
+    g_shared_ca.ready.store(true, .release);
     return true;
+}
+
+/// HTTPS isteği için `client`e paylaşılan CA paketini ÖDÜNÇ verir (sahiplik geçmez) ve geçerlilik denetimi için güncel zamanı yazar. `false`: paket yüklenemedi, istemci kendi yoluna düşer.
+/// `client.deinit()`ten ÖNCE `releaseSharedCa` çağrılmalıdır (aksi halde `deinit` paylaşılan belleği serbest bırakırdı).
+pub fn adoptSharedCa(client: *std.http.Client) bool {
+    if (!loadSharedCa(client.io)) return false;
+    client.ca_bundle = g_shared_ca.bundle;
+    client.now = std.Io.Clock.real.now(client.io);
+    return true;
+}
+
+pub fn releaseSharedCa(client: *std.http.Client) void {
+    // Paylaşılan paketi istemciden ayır: `Client.deinit` `ca_bundle`ı serbest bırakır. Paket paylaşılmadıysa (yükleme başarısız / HTTP) bu zaten boştur ya da istemcinin kendi paketidir.
+    if (g_shared_ca.ready.load(.acquire) and client.ca_bundle.bytes.items.ptr == g_shared_ca.bundle.bytes.items.ptr) client.ca_bundle = .empty;
 }
 
 /// `noxc run --sandbox` ağı kapalı başlatır (ADR-010) ve `NOX_SANDBOX_NO_NET=1` ayarlar. İşletim sistemi `connect`i zaten reddeder, ama
@@ -453,14 +487,16 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     defer request_arena.deinit();
     var client: std.http.Client = .{ .allocator = request_arena.allocator(), .io = io };
     defer client.deinit();
+    defer releaseSharedCa(&client); // `client.deinit`ten ÖNCE çalışır (LIFO)
 
     const uri = std.Uri.parse(ctx.url) catch {
         ctx.failed = true;
         return;
     };
 
-    if (comptime builtin.os.tag == .ios) {
-        if (!loadIosCa(&client)) {
+    if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) {
+        // iOS'ta sistem kökleri yalnızca bu yolla alınabilir: yüklenemezse istek başarısız olur. Diğer platformlarda yükleme başarısızlığı istemcinin kendi yoluna düşer (aynı hata).
+        if (!adoptSharedCa(&client) and builtin.os.tag == .ios) {
             ctx.failed = true;
             return;
         }

@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.114]
+
+### Değişti
+
+- **Paylaşılan CA paketi.** `nox.http` her HTTPS isteğinde sistem sertifika deposunu yeniden okuyup ayrıştırıyordu; paket artık süreç-genelinde bir kez yüklenip istemcilere ödünç verilir (`http_stream` dahil). iOS Apple kökleri aynı yolla. Yükleme başarısız olursa istemci kendi yoluna düşer (iOS'ta istek başarısız olur).
+- v2.0.113'ün fiber HTTP yolunun doğru karşılaştırması: ReleaseFast'te 60 eşzamanlı HTTPS iş parçacığı yoluyla eşit (481-541 ms, eskiden 465-474 ms), 63 yerine 4 iş parçacığı, CPU 0,38 → 0,25 sn. (v2.0.113 notlarında Debug/release karışıklığı vardı; `nox-teknik-spesifikasyon.md` §3.321.5'te düzeltildi.)
+
 ## [2.0.113]
 
 ### Değişti

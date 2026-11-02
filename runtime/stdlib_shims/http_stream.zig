@@ -169,13 +169,14 @@ fn streamWorker(ctx: *StreamCtx) void {
     defer request_arena.deinit();
     var client: std.http.Client = .{ .allocator = request_arena.allocator(), .io = io };
     defer client.deinit();
+    defer http.releaseSharedCa(&client); // `client.deinit`ten ÖNCE çalışır (LIFO)
 
     const uri = std.Uri.parse(ctx.url) catch {
         markFailed(ctx);
         return;
     };
-    if (comptime builtin.os.tag == .ios) {
-        if (!http.loadIosCa(&client)) {
+    if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) {
+        if (!http.adoptSharedCa(&client) and builtin.os.tag == .ios) {
             markFailed(ctx);
             return;
         }

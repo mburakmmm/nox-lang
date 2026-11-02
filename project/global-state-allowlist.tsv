@@ -102,6 +102,7 @@ runtime/wasm_mt_alloc.zig	lock_state	wasm-alloc	iş parçacıklı wasm ayırıc�
 runtime/wasm_threads_libc.zig	lock_state	wasm-lock	iş parçacıklı wasi printf'inin çıktı kilidi; wasi-libc stdio'su iş parçacığı güvenli değildir
 runtime/stdlib_shims/http_client.zig	g_client_io_vtable	shared-io	paylaşılan std.Io.Threaded örneğinin vtable kopyası; net_dial.install ile BİR KEZ (g_client_io_state ilklenirken) yamalanır, sonra salt okunur
 runtime/stdlib_shims/http_client.zig	g_watchdog	shared-io	süreç-geneli paylaşılan HTTP bekçisi: zaman aşımlı tüm istek/akışlar tek iş parçacığında izlenir; SpinLock korumalı kayıt listesi, iş parçacığı kayıt boşalınca çıkar; yalnız Shared işaretçileri ve süre sayaçları taşır
+runtime/stdlib_shims/http_client.zig	g_shared_ca	shared-io	süreç-geneli TEK paylaşılan CA paketi: ilk HTTPS isteğinde SpinLock altında bir kez yüklenir, sonra salt okunur paylaşılır (Go'nun sistem köklerini bir kez okumasıyla aynı); istemciye ödünç verilir, sahiplik geçmez
 runtime/stdlib_shims/net_dial.zig	g_vtable	shared-io	install'a verilen yamalı vtable işaretçisi; Queue.close/putOne için Io değeri kurar; install'da BİR KEZ yazılır
 runtime/stdlib_shims/net_dial.zig	g_base_lookup	shared-io	std'nin özgün netLookup işlevi (son tarihsiz çağrılar için); install'da BİR KEZ yazılır, sonra salt okunur
 runtime/stdlib_shims/net_dial.zig	g_base_connect_ip	shared-io	std'nin özgün netConnectIp işlevi (son tarihsiz çağrılar için); install'da BİR KEZ yazılır, sonra salt okunur

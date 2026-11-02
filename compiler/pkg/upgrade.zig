@@ -199,7 +199,22 @@ fn verifyChecksum(a: Allocator, io: Io, scratch_dir: Io.Dir, archive_name: []con
     if (!std.ascii.eqlIgnoreCase(actual_hex, expected_hex)) return error.UpgradeChecksumMismatch;
 }
 
+/// En çok `DOWNLOAD_ATTEMPTS` kez dener (geçici ağ kopması/GitHub CDN hatası tek denemede bütün yükseltmeyi düşürmesin) ve HER başarısız denemenin NEDENİNİ (HTTP durumu ya da
+/// düşük seviye hata) stderr'e yazar: eskiden yalnızca "UpgradeDownloadFailed" görünüyor, ne olduğu anlaşılmıyordu.
+const DOWNLOAD_ATTEMPTS = 3;
+
 fn downloadToFile(a: Allocator, io: Io, url: []const u8, dest_dir: Io.Dir, dest_name: []const u8) !void {
+    var attempt: u32 = 1;
+    while (true) : (attempt += 1) {
+        if (downloadOnce(a, io, url, dest_dir, dest_name)) |_| return else |err| {
+            std.debug.print("upgrade: download attempt {d}/{d} failed ({t}): {s}\n", .{ attempt, DOWNLOAD_ATTEMPTS, err, url });
+            if (attempt >= DOWNLOAD_ATTEMPTS) return error.UpgradeDownloadFailed;
+            io.sleep(.fromSeconds(@intCast(attempt)), .awake) catch {};
+        }
+    }
+}
+
+fn downloadOnce(a: Allocator, io: Io, url: []const u8, dest_dir: Io.Dir, dest_name: []const u8) !void {
     var client: std.http.Client = .{ .allocator = a, .io = io };
     defer client.deinit();
 
@@ -210,7 +225,10 @@ fn downloadToFile(a: Allocator, io: Io, url: []const u8, dest_dir: Io.Dir, dest_
 
     var redirect_buffer: [8 * 1024]u8 = undefined;
     var response = try req.receiveHead(&redirect_buffer);
-    if (response.head.status != .ok) return error.UpgradeDownloadFailed;
+    if (response.head.status != .ok) {
+        std.debug.print("upgrade: HTTP {d} {s}\n", .{ @intFromEnum(response.head.status), response.head.status.phrase() orelse "" });
+        return error.UpgradeDownloadFailed;
+    }
 
     // GERÇEK bir GitHub Release varlığı HTTP-katmanında (Content-Encoding)
     // SIKIŞTIRILMAZ (opak bir ikili blob) — bu, `.tar.gz`nin KENDİ İÇ gzip
@@ -222,7 +240,10 @@ fn downloadToFile(a: Allocator, io: Io, url: []const u8, dest_dir: Io.Dir, dest_
     defer file.close(io);
     var file_buf: [1024 * 64]u8 = undefined;
     var file_writer = file.writer(io, &file_buf);
-    _ = reader.streamRemaining(&file_writer.interface) catch return error.UpgradeDownloadFailed;
+    _ = reader.streamRemaining(&file_writer.interface) catch |err| {
+        std.debug.print("upgrade: download interrupted ({t}; reader: {?t})\n", .{ err, response.bodyErr() });
+        return error.UpgradeDownloadFailed;
+    };
     try file_writer.flush();
 }
 
