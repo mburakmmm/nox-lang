@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.111]
+
+### Eklendi
+
+- DNS çözümleme çekirdeği `awaitLookup` olarak ayrıldı (`LookupJob.resolve`/`ctx` ile test edilebilir). İki birim testi: 20 eşzamanlı istek aynı ada TEK çözümleme ve TEK iş parçacığı kullanır; bir katılımcının zaman aşımı diğerlerini iptal etmez, yuva iş parçacığı bitince boşalır. Davranış değişmedi.
+
 ## [2.0.110]
 
 ### Eklendi

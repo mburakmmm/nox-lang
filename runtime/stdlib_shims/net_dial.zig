@@ -176,6 +176,9 @@ const LookupJob = struct {
     family: ?IpAddress.Family,
     count: usize = 0,
     addrs: [MAX_ADDRS]IpAddress = undefined,
+    /// Çözümleyici (üretimde `resolveInto`); testler yavaş/sayan bir sahte verir. `ctx` ona geçen opak durumdur.
+    resolve: *const fn (*LookupJob) void = &resolveInto,
+    ctx: ?*anyopaque = null,
 
     fn release(self: *LookupJob) void {
         if (self.refs.fetchSub(1, .acq_rel) == 1) std.heap.page_allocator.destroy(self);
@@ -186,7 +189,7 @@ fn lookupThread(job: *LookupJob) void {
     defer job.release();
     // Yuva, iş parçacığı GERÇEKTEN bitince (çağıran vazgeçmiş olsa bile) boşalır.
     defer g_lookup_slots.release();
-    resolveInto(job);
+    job.resolve(job);
     // Önce kayıttan çıkar: bu andan sonra gelenler eski sonucu paylaşmaz, yeni arama başlatır.
     g_flights.remove(job);
     job.done.store(true, .release);
@@ -231,6 +234,51 @@ fn put(q: *Io.Queue(HostName.LookupResult), t_io: Io, item: HostName.LookupResul
     };
 }
 
+const AwaitError = error{ TimedOut, Failed };
+
+/// Son tarihli çözümleme (singleflight + iş parçacığı sınırı): bitmiş bir `LookupJob` döndürür; çağıran `release` eder. Süre dolarsa kendi payını bırakıp `TimedOut` verir
+/// (iş parçacığı çözümleyici dönene kadar yaşar ve kendi yuvasını sonra bırakır).
+fn awaitLookup(name: []const u8, port: u16, family: ?IpAddress.Family, deadline_ns: i64, resolve: *const fn (*LookupJob) void, ctx: ?*anyopaque) AwaitError!*LookupJob {
+    var job: *LookupJob = undefined;
+    if (g_flights.join(name, port, family)) |shared| {
+        job = shared; // uçuştaki aynı aramaya katıl (yeni iş parçacığı yok)
+    } else {
+        if (!g_lookup_slots.acquireUntil(MAX_LOOKUP_THREADS, deadline_ns)) return error.TimedOut;
+        const fresh = std.heap.page_allocator.create(LookupJob) catch {
+            g_lookup_slots.release();
+            return error.Failed;
+        };
+        fresh.* = .{ .port = port, .family = family, .resolve = resolve, .ctx = ctx };
+        @memcpy(fresh.host_z[0..name.len], name);
+        fresh.host_z[name.len] = 0;
+        if (g_flights.insertOrJoin(fresh, name)) |other| {
+            // Slot beklerken başka biri aynı aramayı başlattı: kendi işimizi at, onunkine katıl.
+            g_lookup_slots.release();
+            std.heap.page_allocator.destroy(fresh);
+            job = other;
+        } else if (std.Thread.spawn(.{}, lookupThread, .{fresh})) |th| {
+            th.detach();
+            job = fresh;
+        } else |_| {
+            // İş parçacığı açılamadı: kayıttan çıkar; araya katılanlara başarısız (ok == false) sonuç ver.
+            g_flights.remove(fresh);
+            g_lookup_slots.release();
+            fresh.done.store(true, .release);
+            fresh.release(); // iş parçacığının payı
+            job = fresh;
+        }
+    }
+    while (!job.done.load(.acquire)) {
+        if (nowNs() >= deadline_ns) {
+            job.release();
+            return error.TimedOut;
+        }
+        var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
+        _ = std.c.nanosleep(&ts, null);
+    }
+    return job;
+}
+
 fn boundedLookup(
     userdata: ?*anyopaque,
     host_name: HostName,
@@ -262,53 +310,15 @@ fn boundedLookup(
     var job: *LookupJob = &inline_job;
     var heap_job = false;
     if (rem) |r| {
-        // Son tarihli çözümleme: yardımcı iş parçacığı; vazgeçilirse iş parçacığı kendi payını bırakır.
         const deadline = nowNs() + r * std.time.ns_per_ms;
-        if (g_flights.join(name, options.port, options.family)) |shared| {
-            job = shared; // uçuştaki aynı aramaya katıl (yeni iş parçacığı yok)
-            heap_job = true;
-        } else {
-            if (!g_lookup_slots.acquireUntil(MAX_LOOKUP_THREADS, deadline)) {
+        job = awaitLookup(name, options.port, options.family, deadline, &resolveInto, null) catch |e| switch (e) {
+            error.TimedOut => {
                 tl_timed_out = true;
                 return error.NameServerFailure;
-            }
-            const fresh = std.heap.page_allocator.create(LookupJob) catch {
-                g_lookup_slots.release();
-                return error.NameServerFailure;
-            };
-            fresh.* = .{ .port = options.port, .family = options.family };
-            @memcpy(fresh.host_z[0..name.len], name);
-            fresh.host_z[name.len] = 0;
-            if (g_flights.insertOrJoin(fresh, name)) |other| {
-                // Slot beklerken başka biri aynı aramayı başlattı: kendi işimizi at, onunkine katıl.
-                g_lookup_slots.release();
-                std.heap.page_allocator.destroy(fresh);
-                job = other;
-            } else spawned: {
-                const th = std.Thread.spawn(.{}, lookupThread, .{fresh}) catch {
-                    // İş parçacığı açılamadı: kayıttan çıkar; araya katılanlar varsa onlara başarısız sonuç ver.
-                    g_flights.remove(fresh);
-                    g_lookup_slots.release();
-                    fresh.done.store(true, .release); // ok == false: bekleyenler `UnknownHostName` görür
-                    fresh.release(); // iş parçacığının payı
-                    job = fresh;
-                    heap_job = true;
-                    break :spawned;
-                };
-                th.detach();
-                job = fresh;
-            }
-            heap_job = true;
-        }
-        while (!job.done.load(.acquire)) {
-            if (nowNs() >= deadline) {
-                tl_timed_out = true;
-                job.release();
-                return error.NameServerFailure;
-            }
-            var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
-        }
+            },
+            error.Failed => return error.NameServerFailure,
+        };
+        heap_job = true;
     } else {
         @memcpy(inline_job.host_z[0..name.len], name);
         inline_job.host_z[name.len] = 0;
@@ -541,4 +551,85 @@ test "Flights: aynı anahtara katılır, farklı anahtara katılmaz, çıkarıl�
     try std.testing.expect(flights.join("example.com", 443, null) == null);
     try std.testing.expect(flights.insertOrJoin(&b, "example.com") == null);
     flights.remove(&b);
+}
+
+const FakeResolver = struct {
+    calls: std.atomic.Value(u32) = .init(0),
+    gate: std.atomic.Value(bool) = .init(false),
+
+    fn resolve(job: *LookupJob) void {
+        const self: *FakeResolver = @ptrCast(@alignCast(job.ctx.?));
+        _ = self.calls.fetchAdd(1, .acq_rel);
+        while (!self.gate.load(.acquire)) {
+            var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+        }
+        job.addrs[0] = .{ .ip4 = .loopback(job.port) };
+        job.count = 1;
+        job.ok = true;
+    }
+};
+
+fn sleepMsTest(ms: i64) void {
+    var ts: std.c.timespec = .{ .sec = @intCast(@divTrunc(ms, 1000)), .nsec = @intCast(@mod(ms, 1000) * std.time.ns_per_ms) };
+    _ = std.c.nanosleep(&ts, null);
+}
+
+fn waitSlotsDrained() !void {
+    var i: usize = 0;
+    while (i < 500) : (i += 1) {
+        if (g_lookup_slots.inflight.load(.acquire) == 0) return;
+        sleepMsTest(2);
+    }
+    return error.SlotsNotReleased;
+}
+
+test "awaitLookup: 20 eşzamanlı istek aynı ada TEK çözümleme ve TEK iş parçacığı kullanır" {
+    if (comptime !enabled) return error.SkipZigTest;
+    var fake: FakeResolver = .{};
+    const Worker = struct {
+        fn run(f: *FakeResolver, ok_count: *std.atomic.Value(u32)) void {
+            const job = awaitLookup("singleflight-a.test", 80, null, nowNs() + 5 * std.time.ns_per_s, &FakeResolver.resolve, f) catch return;
+            defer job.release();
+            if (job.ok and job.count == 1) _ = ok_count.fetchAdd(1, .acq_rel);
+        }
+    };
+    var ok_count: std.atomic.Value(u32) = .init(0);
+    var threads: [20]std.Thread = undefined;
+    for (&threads) |*t| t.* = try std.Thread.spawn(.{}, Worker.run, .{ &fake, &ok_count });
+    sleepMsTest(100); // hepsi uçuştaki aramaya katılsın
+    try std.testing.expectEqual(@as(u32, 1), g_lookup_slots.inflight.load(.acquire));
+    fake.gate.store(true, .release);
+    for (threads) |t| t.join();
+    try std.testing.expectEqual(@as(u32, 20), ok_count.load(.acquire));
+    try std.testing.expectEqual(@as(u32, 1), fake.calls.load(.acquire));
+    try waitSlotsDrained();
+}
+
+test "awaitLookup: bir katılımcının zaman aşımı diğerlerini iptal etmez; yuva iş parçacığı bitince boşalır" {
+    if (comptime !enabled) return error.SkipZigTest;
+    var fake: FakeResolver = .{};
+    const Waiter = struct {
+        fn run(f: *FakeResolver, ok: *std.atomic.Value(bool)) void {
+            const job = awaitLookup("singleflight-b.test", 80, null, nowNs() + 5 * std.time.ns_per_s, &FakeResolver.resolve, f) catch return;
+            defer job.release();
+            ok.store(job.ok, .release);
+        }
+    };
+    var long_ok: std.atomic.Value(bool) = .init(false);
+    const long_waiter = try std.Thread.spawn(.{}, Waiter.run, .{ &fake, &long_ok });
+    sleepMs50();
+    // Kısa son tarihli katılımcı: çözümleyici kapıda bekliyor, süre dolar.
+    try std.testing.expectError(error.TimedOut, awaitLookup("singleflight-b.test", 80, null, nowNs() + 30 * std.time.ns_per_ms, &FakeResolver.resolve, &fake));
+    // Çözümleyici hâlâ çalışıyor: yuva dolu, iş parçacığı yaşıyor.
+    try std.testing.expectEqual(@as(u32, 1), g_lookup_slots.inflight.load(.acquire));
+    fake.gate.store(true, .release);
+    long_waiter.join();
+    try std.testing.expect(long_ok.load(.acquire));
+    try std.testing.expectEqual(@as(u32, 1), fake.calls.load(.acquire));
+    try waitSlotsDrained();
+}
+
+fn sleepMs50() void {
+    sleepMsTest(50);
 }
