@@ -201,6 +201,126 @@ test "nox.http.get: gercek bir yerel sunucuya karsi uctan uca (import + extern d
     try expectGolden(source, "200\nhello\nmerhaba\n");
 }
 
+fn sleepMs(ms: u64) void {
+    const ts: sys.timespec = .{ .sec = @intCast(ms / 1000), .nsec = @intCast((ms % 1000) * std.time.ns_per_ms) };
+    _ = sys.nanosleep(&ts, null);
+}
+
+/// `count` bağlantı kabul eder; her birine kısa bir gecikmeyle `ok` yanıtı verir (hepsi aynı anda açık olsun diye iş parçacığı başına bağlantı).
+fn testServeMany(listen_fd: sys.fd_t, count: usize) void {
+    var served: usize = 0;
+    var handlers: [64]?std.Thread = @splat(null);
+    while (served < count) : (served += 1) {
+        const conn = acceptWithTimeout(listen_fd, 20_000);
+        if (sys.badFd(conn)) break;
+        handlers[served] = std.Thread.spawn(.{}, struct {
+            fn run(c: sys.fd_t) void {
+                defer _ = sys.close(c);
+                var buf: [4096]u8 = undefined;
+                var total: usize = 0;
+                while (total < buf.len) {
+                    const n = sys.read(c, buf[total..].ptr, buf.len - total);
+                    if (n <= 0) break;
+                    total += @intCast(n);
+                    if (std.mem.indexOf(u8, buf[0..total], "\r\n\r\n") != null) break;
+                }
+                sleepMs(80);
+                const response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+                _ = sys.write(c, response.ptr, response.len);
+            }
+        }.run, .{conn}) catch null;
+    }
+    for (&handlers) |*h| if (h.*) |t| t.join();
+}
+
+/// `count` bağlantı kabul edip hiçbir şey yazmadan `hold_ms` tutar (zaman aşımı senaryosu), sonra bırakır.
+fn testHoldConnections(listen_fd: sys.fd_t, count: usize, hold_ms: u64) void {
+    var conns: [64]sys.fd_t = undefined;
+    var n: usize = 0;
+    while (n < count) : (n += 1) {
+        const c = acceptWithTimeout(listen_fd, 20_000);
+        if (sys.badFd(c)) break;
+        conns[n] = c;
+    }
+    sleepMs(hold_ms);
+    for (conns[0..n]) |c| _ = sys.close(c);
+}
+
+/// `n` adet `spawn get_one(url)` görevi başlatıp sonuçlarını toplayan Nox kaynağı üretir; `get_one_src` `get_one` tanımını (sonda yeni satır) içerir.
+fn fiberTasksSource(allocator: std.mem.Allocator, get_one_src: []const u8, url: []const u8, n: usize) !std.ArrayListUnmanaged(u8) {
+    var src: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer src.deinit(allocator);
+    try src.appendSlice(allocator, get_one_src);
+    for (0..n) |i| try src.print(allocator, "t{d}: Task[int] = spawn get_one(\"{s}\")\n", .{ i, url });
+    try src.appendSlice(allocator, "total: int = 0\n");
+    for (0..n) |i| try src.print(allocator, "total = total + await t{d}\n", .{i});
+    try src.appendSlice(allocator, "print(total)\n");
+    return src;
+}
+
+test "nox.http.request: spawn görevlerinde (fiber, OS iş parçacığı açmadan) 12 eşzamanlı istek hepsi başarılı" {
+    const allocator = std.testing.allocator;
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer _ = sys.close(listen_fd);
+    _ = sys.listen(listen_fd, 64); // 12 eşzamanlı bağlantı için birikim kuyruğu
+
+    const server_thread = try std.Thread.spawn(.{}, testServeMany, .{ listen_fd, 12 });
+    defer server_thread.join();
+
+    const url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}/", .{port});
+    defer allocator.free(url);
+    var src = try fiberTasksSource(allocator,
+        \\import nox.http
+        \\
+        \\async def get_one(url: str) -> int:
+        \\    try:
+        \\        r: nox_http_HttpResponse = nox.http.request("GET", url, "", {}, 5000)
+        \\        if r.status == 200 and r.body == "ok":
+        \\            return 1
+        \\        return 0
+        \\    except nox_http_HttpError:
+        \\        return 0
+        \\
+    , url, 12);
+    defer src.deinit(allocator);
+
+    try expectGolden(src.items, "12\n");
+}
+
+test "nox.http.request: spawn görevlerinde yanıtsız sunucuya zaman aşımı HttpTimeoutError verir (fiber hata yolu)" {
+    const allocator = std.testing.allocator;
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer _ = sys.close(listen_fd);
+    _ = sys.listen(listen_fd, 64);
+
+    const server_thread = try std.Thread.spawn(.{}, testHoldConnections, .{ listen_fd, 6, @as(u64, 2500) });
+    defer server_thread.join();
+
+    const url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}/", .{port});
+    defer allocator.free(url);
+    var src = try fiberTasksSource(allocator,
+        \\import nox.http
+        \\
+        \\async def get_one(url: str) -> int:
+        \\    try:
+        \\        r: nox_http_HttpResponse = nox.http.request("GET", url, "", {}, 300)
+        \\        return 0
+        \\    except nox_http_HttpTimeoutError:
+        \\        return 1
+        \\    except nox_http_HttpError:
+        \\        return 2
+        \\
+    , url, 6);
+    defer src.deinit(allocator);
+
+    // 6 görevin altısı da zaman aşımı (1): toplam 6.
+    try expectGolden(src.items, "6\n");
+}
+
 test "nox.http.get: baglanti hatasi HttpError'i raise eder, try/except yakalar" {
     const allocator = std.testing.allocator;
 

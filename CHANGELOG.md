@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.113]
+
+### Değişti
+
+- **`nox.http.request` fiber içinde OS iş parçacığı açmadan çalışır (POSIX).** Çağıran bir `spawn` görevindeyse istek büyük yığınlı (768 KiB) bir fiber'da yürür ve ağ G/Ç'si (okuma/yazma/bağlanma/DNS beklemesi) kooperatiftir: fiber reaktörde askıya alınır, iş parçacığı bloke olmaz. 60 eşzamanlı HTTP isteği tepe 63 yerine 3 iş parçacığı, 60 eşzamanlı HTTPS 4 iş parçacığı kullanır; zaman aşımı/hata yolları aynı davranışı korur. Windows, wasm, fiber dışı çağrılar ve `nox.http.stream` eski iş parçacığı yolunda kalır.
+- Fiber altyapısı: standart dışı boyutlu (büyük) yığınlar (`allocGuardedStackSized`, `Scheduler.acquireStackSized`, `spawnPinnedSized`, ayrı büyük-yığın havuzu); `net_dial` son tarihi fiber'a taşındı (iş parçacığı-yerel durum fiber'lar arasında ezilirdi).
+- `scripts/mobile_network_probe.sh`: çekirdek senaryolar `NOX_NET_FIBER=1` ile (istekler `spawn` görevinde) ikinci kez koşar; `tests/compat/http_stdlib_golden_test.zig`: fiber kipinde 12 eşzamanlı başarı ve 6 eşzamanlı zaman aşımı testleri.
+
 ## [2.0.112]
 
 ### Değişti

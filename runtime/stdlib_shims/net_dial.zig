@@ -13,6 +13,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
+const bridge = @import("../async_rt/bridge.zig");
+const fiber_net = @import("fiber_net.zig");
 
 const Io = std.Io;
 const net = std.Io.net;
@@ -27,13 +29,33 @@ pub const enabled = switch (builtin.os.tag) {
 /// Tek bir deneme için üst sınır: son tarih uzaksa ilk adresin kara delik olması sonraki adresleri (IPv4 yedeği) aç bırakmasın.
 const ATTEMPT_CAP_MS: i64 = 4000;
 
+/// Fiber içinde süresiz (`timeout_ms == 0`) DNS aramasının kooperatif bekleme üst sınırı.
+const LOOKUP_FIBER_CAP_MS: i64 = 120_000;
+
 threadlocal var tl_deadline_ns: i64 = 0;
 threadlocal var tl_timed_out: bool = false;
+
+/// Son tarih durumu: bir zamanlayıcıdaki fiber içindeysek fiber'ın KENDİSİNDE (fiber'lar askıya alınınca aynı iş parçacığını paylaşır), değilse iş parçacığı-yerel.
+const Deadline = struct { ns: *i64, timed_out: *bool };
+
+fn deadlineState() Deadline {
+    if (comptime enabled) {
+        if (bridge.currentFiber()) |f| return .{ .ns = &f.net_deadline_ns, .timed_out = &f.net_timed_out };
+    }
+    return .{ .ns = &tl_deadline_ns, .timed_out = &tl_timed_out };
+}
 
 /// `install`a verilen (yamalı) vtable; `Queue.close/putOne` için `Io` değeri kurarken kullanılır.
 var g_vtable: ?*const Io.VTable = null;
 var g_base_lookup: ?@TypeOf(@as(Io.VTable, undefined).netLookup) = null;
 var g_base_connect_ip: ?@TypeOf(@as(Io.VTable, undefined).netConnectIp) = null;
+
+/// 1 ms bekleme: bir zamanlayıcıdaki fiber içindeysek KOOPERATİF (zamanlayıcı iş parçacığı başka fiber çalıştırır), değilse iş parçacığını uyutur.
+fn pause() void {
+    if (fiber_net.sleepCooperative(1)) return;
+    var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
+    _ = std.c.nanosleep(&ts, null);
+}
 
 fn nowNs() i64 {
     var ts: std.c.timespec = undefined;
@@ -44,24 +66,26 @@ fn nowNs() i64 {
 /// Bu iş parçacığındaki sonraki DNS/bağlanma çağrıları için `timeout_ms` süre tanır (0 = sınırsız). `end` ile temizlenir.
 pub fn begin(timeout_ms: u64) void {
     if (comptime !enabled) return;
-    tl_timed_out = false;
-    tl_deadline_ns = if (timeout_ms == 0) 0 else nowNs() + @as(i64, @intCast(@min(timeout_ms, std.math.maxInt(i32)))) * std.time.ns_per_ms;
+    const st = deadlineState();
+    st.timed_out.* = false;
+    st.ns.* = if (timeout_ms == 0) 0 else nowNs() + @as(i64, @intCast(@min(timeout_ms, std.math.maxInt(i32)))) * std.time.ns_per_ms;
 }
 
 pub fn end() void {
     if (comptime !enabled) return;
-    tl_deadline_ns = 0;
+    deadlineState().ns.* = 0;
 }
 
 /// Son `begin`den beri bir DNS/bağlanma son tarihi aşıldı mı? (çağıran bunu "zaman aşımı" hata türüne çevirir)
 pub fn timedOut() bool {
     if (comptime !enabled) return false;
-    return tl_timed_out;
+    return deadlineState().timed_out.*;
 }
 
 fn remainingMs() ?i64 {
-    if (tl_deadline_ns == 0) return null;
-    const left = @divFloor(tl_deadline_ns - nowNs(), std.time.ns_per_ms);
+    const deadline_ns = deadlineState().ns.*;
+    if (deadline_ns == 0) return null;
+    const left = @divFloor(deadline_ns - nowNs(), std.time.ns_per_ms);
     return if (left < 0) 0 else left;
 }
 
@@ -104,8 +128,7 @@ const Slots = struct {
         while (true) {
             if (self.tryAcquire(limit)) return true;
             if (deadline_ns == 0 or nowNs() >= deadline_ns) return false;
-            var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            pause();
         }
     }
 };
@@ -273,8 +296,7 @@ fn awaitLookup(name: []const u8, port: u16, family: ?IpAddress.Family, deadline_
             job.release();
             return error.TimedOut;
         }
-        var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
-        _ = std.c.nanosleep(&ts, null);
+        pause();
     }
     return job;
 }
@@ -309,11 +331,13 @@ fn boundedLookup(
     var inline_job: LookupJob = .{ .port = options.port, .family = options.family };
     var job: *LookupJob = &inline_job;
     var heap_job = false;
-    if (rem) |r| {
+    // Fiber içinde süresiz arama bile yardımcı iş parçacığında yapılır ve kooperatif beklenir (aksi halde `getaddrinfo` zamanlayıcı iş parçacığını bloke ederdi).
+    const rem_eff: ?i64 = rem orelse if (fiber_net.inFiber()) @as(?i64, LOOKUP_FIBER_CAP_MS) else null;
+    if (rem_eff) |r| {
         const deadline = nowNs() + r * std.time.ns_per_ms;
         job = awaitLookup(name, options.port, options.family, deadline, &resolveInto, null) catch |e| switch (e) {
             error.TimedOut => {
-                tl_timed_out = true;
+                deadlineState().timed_out.* = true;
                 return error.NameServerFailure;
             },
             error.Failed => return error.NameServerFailure,
@@ -361,10 +385,11 @@ fn errnoToConnectError(e: c_int) IpAddress.ConnectError {
 }
 
 fn boundedConnectIp(userdata: ?*anyopaque, address: *const IpAddress, options: IpAddress.ConnectOptions) IpAddress.ConnectError!net.Socket {
-    const rem = remainingMs() orelse return g_base_connect_ip.?(userdata, address, options);
+    // Fiber içinde süresiz bağlanma bile bloklamayan yolla yapılır (kooperatif); fiber dışında süresiz çağrı std'nin özgün uygulamasına gider.
+    const rem = remainingMs() orelse (if (fiber_net.inFiber()) @as(i64, std.math.maxInt(i32)) else return g_base_connect_ip.?(userdata, address, options));
     if (options.mode != .stream or options.protocol != null) return g_base_connect_ip.?(userdata, address, options);
     if (rem == 0) {
-        tl_timed_out = true;
+        deadlineState().timed_out.* = true;
         return error.Timeout;
     }
 
@@ -407,10 +432,19 @@ fn boundedConnectIp(userdata: ?*anyopaque, address: *const IpAddress, options: I
         const e = std.posix.errno(rc);
         if (e != .INPROGRESS) return errnoToConnectError(@intFromEnum(e));
         const budget = @min(rem, ATTEMPT_CAP_MS);
-        var pfd = [1]std.c.pollfd{.{ .fd = fd, .events = std.c.POLL.OUT, .revents = 0 }};
-        const pr = std.c.poll(&pfd, 1, @intCast(budget));
+        var pr: c_int = undefined;
+        if (fiber_net.inFiber()) {
+            // Kooperatif bekleme: fiber reaktörde askıya alınır, iş parçacığı bloke olmaz.
+            pr = switch (fiber_net.waitFd(fd, true, @intCast(budget))) {
+                .ready => 1,
+                .timed_out => 0,
+            };
+        } else {
+            var pfd = [1]std.c.pollfd{.{ .fd = fd, .events = std.c.POLL.OUT, .revents = 0 }};
+            pr = std.c.poll(&pfd, 1, @intCast(budget));
+        }
         if (pr == 0) {
-            if (budget >= rem) tl_timed_out = true;
+            if (budget >= rem) deadlineState().timed_out.* = true;
             return error.Timeout;
         }
         if (pr < 0) return error.NetworkUnreachable;

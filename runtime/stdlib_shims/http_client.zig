@@ -50,10 +50,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 pub const net_dial = @import("net_dial.zig");
+const fiber_net = @import("fiber_net.zig");
 const asap = @import("../alloc/asap.zig");
 const arc = @import("../alloc/arc.zig");
 const dict_mod = @import("../collections/dict.zig");
 const bridge = @import("../async_rt/bridge.zig");
+const fiber_mod = @import("../async_rt/fiber.zig");
 const io_mod = @import("../async_rt/io.zig");
 const str_mod = @import("../str.zig");
 const shim_util = @import("shim_util.zig");
@@ -120,6 +122,7 @@ pub fn sharedClientIo() std.Io {
         });
         g_client_io_vtable = g_client_io_storage.io().vtable.*;
         net_dial.install(&g_client_io_vtable);
+        fiber_net.install(&g_client_io_vtable);
         g_client_io_state.store(.ready, .release);
     } else {
         while (g_client_io_state.load(.acquire) != .ready) std.Thread.yield() catch {};
@@ -728,19 +731,23 @@ fn doRequest(
         ctx.shared = shared;
     }
 
-    const thread = std.Thread.spawn(.{}, workerThreadFn, .{ctx}) catch {
-        if (ctx.shared) |sh| {
-            // İşçi hiç başlamadı: kendi payını bırak, bekçi `done` görünce çıkıp kendi payını bırakır.
-            sh.done.store(true, .release);
-            sh.release();
-        }
-        ctx.destroyOwned();
-        gpa.destroy(ctx);
-        closeFd(fds[0]);
-        closeFd(fds[1]);
-        return null;
-    };
-    thread.detach();
+    // Zamanlayıcıdaki bir fiber içindeysek (POSIX): isteği ayrı bir OS iş parçacığında DEĞİL, büyük yığınlı bir fiber'da çalıştır (ağ G/Ç'si kooperatiftir, bkz. `fiber_net.zig`).
+    // Aksi halde (sıradan iş parçacığı, Windows, wasm) eski iş parçacığı yolu.
+    if (!trySpawnWorkerFiber(ctx)) {
+        const thread = std.Thread.spawn(.{}, workerThreadFn, .{ctx}) catch {
+            if (ctx.shared) |sh| {
+                // İşçi hiç başlamadı: kendi payını bırak, bekçi `done` görünce çıkıp kendi payını bırakır.
+                sh.done.store(true, .release);
+                sh.release();
+            }
+            ctx.destroyOwned();
+            gpa.destroy(ctx);
+            closeFd(fds[0]);
+            closeFd(fds[1]);
+            return null;
+        };
+        thread.detach();
+    }
 
     if (bridge.currentFiberScheduler()) |scheduler| {
         // Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/
@@ -762,6 +769,35 @@ fn doRequest(
         return null;
     }
     return ctx;
+}
+
+/// Fiber işçisinin yığın boyutu: `std.http.Client` + TLS, ReleaseSafe'te ölçülen ~128-192 KiB yığın ister (192 KiB'de çalışır, 128'de çöker); Debug ve derin sertifika zincirleri için
+/// pay bırakılır. Adres alanı yalnızca ayrılır (mmap), dokunulan sayfalar fiziksel bellek tutar; bitince büyük-yığın havuzuna döner (en çok `MAX_POOLED_BIG_STACKS`).
+const HTTP_FIBER_STACK: usize = 768 * 1024;
+
+fn workerFiberEntry(arg: *anyopaque) void {
+    workerThreadFn(@ptrCast(@alignCast(arg)));
+}
+
+/// Çağıran bir zamanlayıcıdaki fiber ise (POSIX) `ctx`'i büyük yığınlı bir fiber olarak başlatır ve `true` döner; aksi halde (ya da yığın/fiber kurulamazsa) `false` — çağıran iş parçacığı
+/// yoluna düşer. Fiber, çağıranın zamanlayıcısına yapışık çalışır (çalınmaz): istek soketi ve bekleyen çağıran aynı iş parçacığında kalır.
+fn trySpawnWorkerFiber(ctx: *RequestCtx) bool {
+    if (comptime !fiber_net.enabled) return false;
+    const s = bridge.currentFiberScheduler() orelse return false;
+    const stack = s.acquireStackSized(HTTP_FIBER_STACK) catch return false;
+    const fiber = fiber_mod.Fiber.createWithStack(s.allocator, workerFiberEntry, ctx, stack) catch {
+        s.releaseStack(stack);
+        return false;
+    };
+    // `scheduler.spawnPinned` ile aynı muhasebe: havuzluysa paylaşılan canlı sayaç, değilse yerel; `run()` fiber bitince dengeler ve yığını havuza geri verir.
+    if (s.pool_live_count) |plc| {
+        _ = plc.fetchAdd(1, .monotonic);
+    } else {
+        s.live_count += 1;
+    }
+    if (s.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
+    s.markReady(fiber);
+    return true;
 }
 
 pub fn parseMethod(name: []const u8) ?std.http.Method {

@@ -246,9 +246,9 @@ const WIN_MEM_RELEASE: u32 = 0x8000;
 const WIN_PAGE_READWRITE: u32 = 0x04;
 const WIN_PAGE_NOACCESS: u32 = 0x01;
 
-fn allocGuardedStackWindows() ![]align(STACK_ALIGN) u8 {
+fn allocGuardedStackWindows(size: usize) ![]align(STACK_ALIGN) u8 {
     const page = guardPageSize();
-    const total = page + STACK_SIZE;
+    const total = page + size;
     const base = WinVirtual.VirtualAlloc(null, total, WIN_MEM_COMMIT | WIN_MEM_RESERVE, WIN_PAGE_READWRITE) orelse return error.VirtualAllocFailed;
     var old_protect: u32 = 0;
     if (WinVirtual.VirtualProtect(base, page, WIN_PAGE_NOACCESS, &old_protect) == 0) {
@@ -257,7 +257,7 @@ fn allocGuardedStackWindows() ![]align(STACK_ALIGN) u8 {
     }
     const usable_addr = @intFromPtr(base) + page;
     const usable_ptr: [*]align(STACK_ALIGN) u8 = @ptrFromInt(usable_addr);
-    return usable_ptr[0..STACK_SIZE];
+    return usable_ptr[0..size];
 }
 
 fn freeGuardedStackWindows(stack: []align(STACK_ALIGN) u8) void {
@@ -267,9 +267,9 @@ fn freeGuardedStackWindows(stack: []align(STACK_ALIGN) u8) void {
     _ = WinVirtual.VirtualFree(base, 0, WIN_MEM_RELEASE);
 }
 
-fn allocGuardedStackPosix() ![]align(STACK_ALIGN) u8 {
+fn allocGuardedStackPosix(size: usize) ![]align(STACK_ALIGN) u8 {
     const page = guardPageSize();
-    const total = page + STACK_SIZE;
+    const total = page + size;
     const region = try std.posix.mmap(
         null,
         total,
@@ -285,14 +285,23 @@ fn allocGuardedStackPosix() ![]align(STACK_ALIGN) u8 {
     }
     const usable_addr = @intFromPtr(region.ptr) + page;
     const usable_ptr: [*]align(STACK_ALIGN) u8 = @ptrFromInt(usable_addr);
-    return usable_ptr[0..STACK_SIZE];
+    return usable_ptr[0..size];
 }
 
 fn freeGuardedStackPosix(stack: []align(STACK_ALIGN) u8) void {
     const page = guardPageSize();
     const base_addr = @intFromPtr(stack.ptr) - page;
     const base_ptr: [*]align(std.heap.page_size_min) u8 = @ptrFromInt(base_addr);
-    std.posix.munmap(base_ptr[0 .. page + STACK_SIZE]);
+    std.posix.munmap(base_ptr[0 .. page + stack.len]);
+}
+
+/// Standart olmayan boyutlu (genellikle daha BÜYÜK) koruma-sayfalı yığın: derin yığın isteyen iş (ör. `std.http` + TLS ~128-192 KiB, bkz. spec §3.321.5) için. Yalnızca POSIX/Windows'ta
+/// (mmap/VirtualAlloc); enjekte edilmiş sağlayıcıda, wasm'de ve freestanding'de standart boyut dışı yığın YOKTUR (`error.StackAllocFailed`; çağıran standart yola düşer).
+pub fn allocGuardedStackSized(size: usize) ![]align(STACK_ALIGN) u8 {
+    if (size == STACK_SIZE) return allocGuardedStack();
+    if (g_stack_provider.load(.monotonic) != null or is_wasm or is_freestanding) return error.StackAllocFailed;
+    if (builtin.os.tag == .windows) return allocGuardedStackWindows(size);
+    return allocGuardedStackPosix(size);
 }
 
 pub fn allocGuardedStack() ![]align(STACK_ALIGN) u8 {
@@ -305,9 +314,9 @@ pub fn allocGuardedStack() ![]align(STACK_ALIGN) u8 {
     } else if (comptime is_freestanding) {
         return error.StackAllocFailed;
     } else if (builtin.os.tag == .windows) {
-        return allocGuardedStackWindows();
+        return allocGuardedStackWindows(STACK_SIZE);
     } else {
-        return allocGuardedStackPosix();
+        return allocGuardedStackPosix(STACK_SIZE);
     }
 }
 
@@ -462,6 +471,10 @@ pub const Fiber = struct {
     /// refcount protokolü) — bu YÜZDEN BU işaretçi fiber'ın KENDİ, TÜM
     /// çalışma ömrü BOYUNCA GÜVENLE geçerlidir.
     cancel_flag: ?*std.atomic.Value(bool) = null,
+    /// `net_dial.zig`'in DNS+bağlanma son tarihi (monoton ns; 0 = yok) ve "son tarih aşıldı" bayrağı. Zamanlayıcı iş parçacığındaki fiber'lar askıya alınınca birbirinin
+    /// iş parçacığı-yerel durumunu ezmesin diye bu durum fiber'ın KENDİSİNDE tutulur (iş parçacığı-yerel yedek yalnızca fiber olmayan çağıranlar içindir).
+    net_deadline_ns: i64 = 0,
+    net_timed_out: bool = false,
     /// Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83, `TaskLocal[T]`):
     /// bu fiber'a ÖZGÜ, `TaskLocal` tutamacı işaretçisiyle ANAHTARLANMIŞ
     /// depolama — `runtime/async_rt/task_local.zig`nin `nox_tasklocal_

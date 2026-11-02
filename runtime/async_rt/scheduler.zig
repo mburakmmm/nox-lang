@@ -52,6 +52,9 @@ const IoReactor = io_reactor.IoReactor;
 /// hedef, VE `scheduler_test`/`channel_test`in `runtime/async_rt/
 /// scheduler.zig`yi KENDİ modül KÖKÜ olarak kullanması).
 const SpinLock = @import("spinlock.zig").SpinLock;
+
+/// Bekletilen büyük (standart dışı boyutlu) yığın sayısı üst sınırı (zamanlayıcı başına).
+const MAX_POOLED_BIG_STACKS: usize = 4;
 /// Faz MN.4/5.8: `chase_lev_deque.zig` (MN.3a) TAMAMEN bağımsız (SADECE
 /// std/builtin) — `runtime/async_rt/`nin AYNI "runtime/alloc/den bağımsız"
 /// sınırı İçİNDE GÜVENLE İTHAL EDİLEBİLİR. **`worker_pool.zig` İSE ASLA
@@ -175,6 +178,8 @@ pub const Scheduler = struct {
     /// Tamamlanmış fiber'lardan geri dönüştürülen, henüz yeniden kullanılmamış
     /// yığınların havuzu — bkz. modül üstü not.
     stack_pool: std.ArrayListUnmanaged([]align(fiber_mod.STACK_ALIGN) u8) = .empty,
+    /// Standart dışı boyutlu (büyük) yığınlar için ayrı havuz (en çok `MAX_POOLED_BIG_STACKS` tutulur); bkz. `acquireStackSized`.
+    big_stack_pool: std.ArrayListUnmanaged([]align(fiber_mod.STACK_ALIGN) u8) = .empty,
     /// D.0 (bkz. nox-teknik-spesifikasyon.md §3.29): gerçek G/Ç hazır-olma
     /// bildirimi için kqueue reaktörü.
     reactor: IoReactor,
@@ -262,6 +267,8 @@ pub const Scheduler = struct {
         self.ready.deinit(self.allocator);
         for (self.stack_pool.items) |stack| fiber_mod.freeGuardedStack(stack);
         self.stack_pool.deinit(self.allocator);
+        for (self.big_stack_pool.items) |stack| fiber_mod.freeGuardedStack(stack);
+        self.big_stack_pool.deinit(self.allocator);
         if (self.wake_read_fd) |fd| self_pipe.closeSelfPipeFd(fd);
         if (self.wake_write_fd) |fd| self_pipe.closeSelfPipeFd(fd);
     }
@@ -354,6 +361,23 @@ pub const Scheduler = struct {
         return stack;
     }
 
+    /// Standart `STACK_SIZE` dışında bir boyut isteyen fiber'lar için (ör. `std.http`+TLS). Aynı boyuttaki geri dönüştürülmüş yığın varsa onu verir. Boyut standartsa `acquireStack`.
+    pub fn acquireStackSized(self: *Scheduler, size: usize) ![]align(fiber_mod.STACK_ALIGN) u8 {
+        if (size == fiber_mod.STACK_SIZE) return self.acquireStack();
+        var i: usize = self.big_stack_pool.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.big_stack_pool.items[i].len == size) {
+                const stack = self.big_stack_pool.swapRemove(i);
+                fiber_mod.paintStackForResearch(stack);
+                return stack;
+            }
+        }
+        const stack = try fiber_mod.allocGuardedStackSized(size);
+        fiber_mod.paintStackForResearch(stack);
+        return stack;
+    }
+
     /// Bir yığını (artık kullanılmayan) genel ayırıcıya GERİ VERMEK yerine
     /// havuza ekler. Havuzun kendisi büyütülemezse (OOM — son derece
     /// olası değil ama Zig'in `try` sözleşmesi bunu ele almayı gerektirir),
@@ -365,6 +389,15 @@ pub const Scheduler = struct {
         // ayırıcıya GERİ VERİLMEDEN HEMEN ÖNCE (BU kullanımın yüksek-su-
         // işaretinin HÂLÂ okunabilir OLDUĞU SON an).
         fiber_mod.measureStackHwmForResearch(stack);
+        if (stack.len != fiber_mod.STACK_SIZE) {
+            // Büyük yığınlar: sınırlı havuz (bellek sayfaları dokunuldukça fiziksel olarak tutulur; çok sayıda büyük yığını bekletmeyiz).
+            if (self.big_stack_pool.items.len >= MAX_POOLED_BIG_STACKS) {
+                fiber_mod.freeGuardedStack(stack);
+                return;
+            }
+            self.big_stack_pool.append(self.allocator, stack) catch fiber_mod.freeGuardedStack(stack);
+            return;
+        }
         self.stack_pool.append(self.allocator, stack) catch {
             fiber_mod.freeGuardedStack(stack);
         };
@@ -1181,9 +1214,14 @@ pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (TaskArg) 
 /// SADECE yerleştirme mekanizması değişir, dönen `Task(T)` tutamacı
 /// `await_()`/`destroy_task` İLE TAMAMEN NORMAL şekilde kullanılabilir.
 pub fn spawnPinned(scheduler: *Scheduler, comptime T: type, func: *const fn (TaskArg) callconv(.c) T, arg: TaskArg) !*Task(T) {
+    return spawnPinnedSized(scheduler, T, func, arg, fiber_mod.STACK_SIZE);
+}
+
+/// `spawnPinned` + özel yığın boyutu (derin yığın isteyen iş için; bkz. `acquireStackSized`).
+pub fn spawnPinnedSized(scheduler: *Scheduler, comptime T: type, func: *const fn (TaskArg) callconv(.c) T, arg: TaskArg, stack_size: usize) !*Task(T) {
     const task = try scheduler.allocator.create(Task(T));
     task.* = .{ .scheduler = scheduler, .func = func, .arg = arg };
-    const stack = try scheduler.acquireStack();
+    const stack = try scheduler.acquireStackSized(stack_size);
     task.fiber = Fiber.createWithStack(scheduler.allocator, Task(T).entryTrampoline, task, stack) catch |e| {
         scheduler.releaseStack(stack);
         return e;
@@ -1269,6 +1307,44 @@ test "tek görev, await olmadan sonucu doğru hesaplar" {
 
     try std.testing.expect(task.state.load(.acquire) == Task(i64).COMPLETED);
     try std.testing.expectEqual(@as(i64, 42), task.result);
+}
+
+test "büyük yığınlı fiber: standart yığına sığmayan derinlik çalışır; yığın büyük havuzdan yeniden kullanılır" {
+    if (comptime is_freestanding or builtin.cpu.arch.isWasm()) return error.SkipZigTest;
+    const Fn = struct {
+        // ~400 KiB yığın kullanır (standart 192 KiB'ye sığmaz); derleyici diziyi atmasın diye sayfalara yazıp okur.
+        fn deep(arg: *anyopaque) callconv(.c) i64 {
+            const x: *i64 = @ptrCast(@alignCast(arg));
+            var buf: [400 * 1024]u8 = undefined;
+            var i: usize = 0;
+            while (i < buf.len) : (i += 4096) buf[i] = @truncate(i);
+            var sum: i64 = 0;
+            i = 0;
+            while (i < buf.len) : (i += 4096) sum += buf[i];
+            std.mem.doNotOptimizeAway(&buf);
+            return x.* + @as(i64, @intCast(@as(u64, @intCast(sum)) & 0)); // sum yalnızca etkisiz kalmasın diye hesaplanır
+        }
+    };
+    var scheduler = try Scheduler.init(std.heap.page_allocator);
+    defer scheduler.deinit();
+    const big: usize = 1024 * 1024;
+
+    var input: i64 = 7;
+    const t1 = try spawnPinnedSized(&scheduler, i64, Fn.deep, &input, big);
+    defer scheduler.allocator.destroy(t1);
+    try scheduler.run();
+    try std.testing.expectEqual(@as(i64, 7), t1.result);
+    // Bitince büyük yığın büyük havuza döner (standart havuza değil).
+    try std.testing.expectEqual(@as(usize, 1), scheduler.big_stack_pool.items.len);
+    try std.testing.expectEqual(big, scheduler.big_stack_pool.items[0].len);
+
+    // İkinci fiber aynı boyutta aynı yığını yeniden kullanır (yeni mmap yok).
+    const first_ptr = scheduler.big_stack_pool.items[0].ptr;
+    const t2 = try spawnPinnedSized(&scheduler, i64, Fn.deep, &input, big);
+    defer scheduler.allocator.destroy(t2);
+    try std.testing.expectEqual(@as(usize, 0), scheduler.big_stack_pool.items.len);
+    try scheduler.run();
+    try std.testing.expectEqual(first_ptr, scheduler.big_stack_pool.items[0].ptr);
 }
 
 test "bir görev başka bir görevi await eder (iç içe askıya alma)" {

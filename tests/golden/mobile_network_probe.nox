@@ -22,8 +22,23 @@ def fetch(url: str, timeout_ms: int) -> str:
     elapsed: int = nox.time.instant_now().ms - start
     return token + " " + str(status) + " " + str(blen) + " " + str(elapsed)
 
+# `NOX_NET_FIBER=1`: istekler bir `spawn` görevinde (fiber) yapılır — `nox.http` bu durumda OS iş parçacığı açmadan, kooperatif ağ G/Ç'siyle çalışır (bkz. spec §3.321.5);
+# aksi halde üst-düzey (fiber dışı) kodda çalışır ve iş parçacığı yolunu kullanır. Matris her iki kipte de geçmelidir.
+async def fetch_task(url: str, timeout_ms: int) -> str:
+    return fetch(url, timeout_ms)
+
 timeout_ms: int = int(nox.os.getenv("NOX_NET_TIMEOUT_MS"))
-print(fetch(nox.os.getenv("NOX_NET_URL"), timeout_ms))
+in_fiber: bool = nox.os.getenv("NOX_NET_FIBER") == "1"
+main_url: str = nox.os.getenv("NOX_NET_URL")
+if in_fiber:
+    t1: Task[str] = spawn fetch_task(main_url, timeout_ms)
+    print(await t1)
+else:
+    print(fetch(main_url, timeout_ms))
 after_url: str = nox.os.getenv("NOX_NET_AFTER_URL")
 if after_url != "":
-    print("after " + fetch(after_url, timeout_ms))
+    if in_fiber:
+        t2: Task[str] = spawn fetch_task(after_url, timeout_ms)
+        print("after " + await t2)
+    else:
+        print("after " + fetch(after_url, timeout_ms))

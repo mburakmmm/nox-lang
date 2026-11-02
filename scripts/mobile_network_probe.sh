@@ -12,6 +12,8 @@ noxc=${NOXC:-"$root/zig-out/bin/noxc"}
 work=/tmp/nox-net-probe
 rm -rf "$work"; mkdir -p "$work"
 fail=0
+fiber_mode=0
+label=""
 
 python3 "$root/scripts/mobile_net_servers.py" --ports-file "$work/ports.json" >"$work/servers.log" 2>&1 &
 servers=$!
@@ -36,7 +38,7 @@ android)
   for p in $P_OK4 $P_OK6 $P_SILENT $P_TRUNC $P_RESET $P_TLS; do "$adb" reverse tcp:$p tcp:$p >/dev/null 2>&1; done
   HOSTIP=127.0.0.1; DRIPHOST=10.0.2.2
   run_probe() { # url timeout after → stdout (belirteç satırları)
-    "$adb" shell "NOX_NET_URL='$1' NOX_NET_TIMEOUT_MS=$2 NOX_NET_AFTER_URL='$3' NOX_MOBILE_ROOT=/data/local/tmp/nox-net /data/local/tmp/nox-net-probe 2>/dev/null" | tr -d '\r'
+    "$adb" shell "NOX_NET_FIBER=$fiber_mode NOX_NET_URL='$1' NOX_NET_TIMEOUT_MS=$2 NOX_NET_AFTER_URL='$3' NOX_MOBILE_ROOT=/data/local/tmp/nox-net /data/local/tmp/nox-net-probe 2>/dev/null" | tr -d '\r'
   }
   pid_of() { "$adb" shell pidof nox-net-probe | tr -d '\r'; }
   stop_pid() { "$adb" shell kill -STOP "$1"; }
@@ -53,7 +55,7 @@ ios)
   xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -isysroot "$sdk" -o "$work/probe" "$work/host.o" "$work/probe.o" "$rt" -framework Security -framework Foundation -framework CFNetwork
   HOSTIP=127.0.0.1; DRIPHOST=127.0.0.1
   run_probe() {
-    SIMCTL_CHILD_NOX_NET_URL="$1" SIMCTL_CHILD_NOX_NET_TIMEOUT_MS=$2 SIMCTL_CHILD_NOX_NET_AFTER_URL="$3" SIMCTL_CHILD_NOX_MOBILE_ROOT=/tmp/nox-net-root \
+    SIMCTL_CHILD_NOX_NET_FIBER=$fiber_mode SIMCTL_CHILD_NOX_NET_URL="$1" SIMCTL_CHILD_NOX_NET_TIMEOUT_MS=$2 SIMCTL_CHILD_NOX_NET_AFTER_URL="$3" SIMCTL_CHILD_NOX_MOBILE_ROOT=/tmp/nox-net-root \
       xcrun simctl spawn "$udid" "$work/probe" 2>/dev/null
   }
   pid_of() { pgrep -f "$work/probe" | head -1; }
@@ -68,7 +70,7 @@ now_ms() { python3 -c "import time;print(int(time.time()*1000))"; }
 
 # scenario <ad> <url> <zaman_aşımı_ms> <sonra_url|-> <beklenen_belirteç_regex> <azami_ms> [<beklenen_after_belirteç>]
 scenario() {
-  name=$1; url=$2; to=$3; after=$4; want=$5; max=$6; want_after=${7:-}
+  name=$label$1; url=$2; to=$3; after=$4; want=$5; max=$6; want_after=${7:-}
   [ "$after" = "-" ] && after=""
   t0=$(now_ms); out=$(run_probe "$url" "$to" "$after"); t1=$(now_ms); wall=$((t1 - t0))
   first=$(printf '%s\n' "$out" | grep -v '^after ' | head -1); aft=$(printf '%s\n' "$out" | grep '^after ' | head -1)
@@ -87,17 +89,25 @@ scenario() {
 OK4="http://$HOSTIP:$P_OK4/"
 # Isınma: ilk süreç başlatması (özellikle CI'da) yavaştır; sonuç sayılmaz.
 run_probe "$OK4" 5000 "" >/dev/null 2>&1
-scenario ipv4_literal     "$OK4"                              5000 -        ok          4000
-scenario dns_dual_stack   "http://localhost:$P_OK4/"          5000 -        ok          4000
-scenario ipv6_literal     "http://[::1]:$P_OK6/"              5000 -        ok          4000
-scenario conn_refused     "http://$HOSTIP:$P_CLOSED/"         5000 -        error       4000
-scenario conn_reset       "http://$HOSTIP:$P_RESET/"          5000 "$OK4"   error       4000   ok
-scenario idle_timeout     "http://$HOSTIP:$P_SILENT/"         1500 "$OK4"   timeout     5000   ok
-scenario truncated_body   "http://$HOSTIP:$P_TRUNC/"          5000 "$OK4"   error       4000   ok
-scenario tls_self_signed  "https://$HOSTIP:$P_TLS/"           5000 "$OK4"   error       4000   ok
-scenario tls_valid        "https://example.com/"             10000 -        ok          12000
-scenario dns_unresolvable "http://nonexistent.invalid/"       3000 "$OK4"   "error|timeout" 6000 ok
-scenario connect_blackhole "http://192.0.2.1:81/"             2000 "$OK4"   "error|timeout" 5000 ok
+core_scenarios() {
+  scenario ipv4_literal     "$OK4"                              5000 -        ok          4000
+  scenario dns_dual_stack   "http://localhost:$P_OK4/"          5000 -        ok          4000
+  scenario ipv6_literal     "http://[::1]:$P_OK6/"              5000 -        ok          4000
+  scenario conn_refused     "http://$HOSTIP:$P_CLOSED/"         5000 -        error       4000
+  scenario conn_reset       "http://$HOSTIP:$P_RESET/"          5000 "$OK4"   error       4000   ok
+  scenario idle_timeout     "http://$HOSTIP:$P_SILENT/"         1500 "$OK4"   timeout     5000   ok
+  scenario truncated_body   "http://$HOSTIP:$P_TRUNC/"          5000 "$OK4"   error       4000   ok
+  scenario tls_self_signed  "https://$HOSTIP:$P_TLS/"           5000 "$OK4"   error       4000   ok
+  scenario tls_valid        "https://example.com/"             10000 -        ok          12000
+  scenario dns_unresolvable "http://nonexistent.invalid/"       3000 "$OK4"   "error|timeout" 6000 ok
+  scenario connect_blackhole "http://192.0.2.1:81/"             2000 "$OK4"   "error|timeout" 5000 ok
+}
+
+core_scenarios
+# Aynı çekirdek senaryolar istekler bir `spawn` görevinde (fiber) yapılınca da geçmelidir: `nox.http` orada OS iş parçacığı açmadan kooperatif ağ G/Ç'si kullanır (spec §3.321.5).
+fiber_mode=1; label="fiber:"
+core_scenarios
+fiber_mode=0; label=""
 
 # arka plana alma / geri dönme: istek sürerken süreci durdur (iOS askıya alma, Android Doze benzeri), sonra devam ettir.
 run_probe "http://$DRIPHOST:$P_DRIP/" 20000 "$OK4" >"$work/suspend.out" &
