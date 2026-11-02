@@ -206,30 +206,113 @@ pub fn socketHandleToUsize(h: anytype) usize {
     };
 }
 
-const RealSleeper = struct {
-    fn sleep(_: *RealSleeper, ms: u32) void {
-        sleepMs(ms);
+/// Paylaşılan bekçi: zaman aşımlı TÜM istekler ve akışlar TEK iş parçacığında izlenir (eskiden her istek için ayrı bir bekçi iş parçacığı 5 ms'de bir uyanıyordu: 60 eşzamanlı
+/// istek ~125 iş parçacığı ve N x 200 uyanma/sn demekti). Kayıt `Shared` payını (bekçi payı) devralır ve `done` görülünce bırakır. İş parçacığı kayıt boşalınca çıkar, yeni kayıtta yeniden açılır.
+pub const WatchKind = enum { request, stream };
+
+const WatchEntry = struct {
+    shared: *Shared,
+    timeout_ms: u64,
+    kind: WatchKind,
+    /// `request`: kayıt anı. `stream`: son işlem başlangıcı / devre dışı kalma anı (boşta zaman aşımı sayacının sıfır noktası).
+    mark_ms: u64,
+    last_epoch: u32,
+};
+
+pub const Watchdog = struct {
+    lock: asap.SpinLock = .{},
+    list: std.ArrayListUnmanaged(WatchEntry) = .empty,
+    running: bool = false,
+
+    /// `shared`ı izlemeye alır (bekçi payı devredilir). Başarısızlıkta (bellek ya da iş parçacığı yok) `false`: pay hâlâ ÇAĞIRANDADIR.
+    pub fn register(self: *Watchdog, shared: *Shared, timeout_ms: u64, kind: WatchKind) bool {
+        return self.registerAt(shared, timeout_ms, kind, monotonicMs(), true);
+    }
+
+    fn registerAt(self: *Watchdog, shared: *Shared, timeout_ms: u64, kind: WatchKind, now_ms: u64, spawn_thread: bool) bool {
+        self.lock.lock();
+        self.list.append(std.heap.page_allocator, .{
+            .shared = shared,
+            .timeout_ms = timeout_ms,
+            .kind = kind,
+            .mark_ms = now_ms,
+            .last_epoch = shared.epoch.load(.acquire),
+        }) catch {
+            self.lock.unlock();
+            return false;
+        };
+        const need_thread = !self.running;
+        if (need_thread and spawn_thread) self.running = true;
+        self.lock.unlock();
+        if (need_thread and spawn_thread) {
+            const th = std.Thread.spawn(.{}, loop, .{self}) catch {
+                self.lock.lock();
+                defer self.lock.unlock();
+                self.running = false;
+                // Kaydı geri al (bu çağıranın girdisi listenin SONUNDA olmayabilir: `shared` işaretçisiyle bul).
+                for (self.list.items, 0..) |e, i| {
+                    if (e.shared == shared) {
+                        _ = self.list.swapRemove(i);
+                        break;
+                    }
+                }
+                return false;
+            };
+            th.detach();
+        }
+        return true;
+    }
+
+    fn loop(self: *Watchdog) void {
+        while (true) {
+            sleepMs(5);
+            if (self.tick(monotonicMs())) return;
+        }
+    }
+
+    /// Bir tur: biten girdileri bırakır, süresi dolanları iptal eder. Liste boşsa (iş parçacığı çıkmalı) `true`.
+    fn tick(self: *Watchdog, now_ms: u64) bool {
+        self.lock.lock();
+        defer self.lock.unlock();
+        var i: usize = 0;
+        while (i < self.list.items.len) {
+            const e = &self.list.items[i];
+            if (e.shared.done.load(.acquire)) {
+                e.shared.release();
+                _ = self.list.swapRemove(i);
+                continue;
+            }
+            switch (e.kind) {
+                .request => if (now_ms -| e.mark_ms >= e.timeout_ms) {
+                    e.shared.timed_out.store(true, .release);
+                    // Bağlantı henüz kurulmamış olabilir (DNS/connect aşaması): tutamaç belirince sonraki turda yeniden denenir.
+                    e.shared.abortConnection();
+                },
+                .stream => {
+                    const ep = e.shared.epoch.load(.acquire);
+                    if (ep != e.last_epoch) {
+                        e.last_epoch = ep;
+                        e.mark_ms = now_ms;
+                    }
+                    if (!e.shared.armed.load(.acquire)) {
+                        e.mark_ms = now_ms;
+                    } else if (now_ms -| e.mark_ms >= e.timeout_ms) {
+                        e.shared.timed_out.store(true, .release);
+                        e.shared.abortConnection();
+                    }
+                },
+            }
+            i += 1;
+        }
+        if (self.list.items.len == 0) {
+            self.running = false;
+            return true;
+        }
+        return false;
     }
 };
 
-fn watchdogThreadFn(shared: *Shared, timeout_ms: u64) void {
-    var sleeper: RealSleeper = .{};
-    watchdogLoop(shared, timeout_ms, &sleeper);
-}
-
-/// `sleeper.sleep` yalnızca bekleme adımıdır; süre `monotonicMs` ile ölçülür (yavaş uyku zaman aşımını uzatmaz — bkz. test).
-fn watchdogLoop(shared: *Shared, timeout_ms: u64, sleeper: anytype) void {
-    defer shared.release();
-    const start = monotonicMs();
-    while (!shared.done.load(.acquire)) {
-        sleeper.sleep(5);
-        if (monotonicMs() - start >= timeout_ms) {
-            shared.timed_out.store(true, .release);
-            // Bağlantı henüz kurulmamış olabilir (DNS/connect aşaması): tutamaç belirince tekrar denenir.
-            shared.abortConnection();
-        }
-    }
-}
+pub var g_watchdog: Watchdog = .{};
 
 const RequestCtx = struct {
     allocator: std.mem.Allocator,
@@ -634,15 +717,14 @@ fn doRequest(
             return null;
         };
         shared.* = .{};
-        const watchdog = std.Thread.spawn(.{}, watchdogThreadFn, .{ shared, @as(u64, @intCast(timeout_ms)) }) catch {
+        if (!g_watchdog.register(shared, @intCast(timeout_ms), .request)) {
             std.heap.page_allocator.destroy(shared);
             ctx.destroyOwned();
             gpa.destroy(ctx);
             closeFd(fds[0]);
             closeFd(fds[1]);
             return null;
-        };
-        watchdog.detach();
+        }
         ctx.shared = shared;
     }
 
@@ -1214,29 +1296,85 @@ test "nox_http_request_raw: PUT/PATCH/DELETE/OPTIONS/HEAD gerçek metodla gider,
     try std.testing.expect(nox_http_request_raw(rt, bad, url, null, 0, null, 0) == null);
 }
 
-/// Nominal 5 ms yerine 50 ms uyuyan yavaş bir "uyku": emülatör / yüklü CI makinesini taklit eder. Durum dosya düzeyinde değil, bu yapıda.
-const SlowSleeper = struct {
-    shared: *Shared,
-    t0: u64,
-    seen_ms: u64 = 0,
-
-    fn sleep(self: *SlowSleeper, _: u32) void {
-        sleepMs(50);
-        if (self.shared.timed_out.load(.acquire)) {
-            self.seen_ms = monotonicMs() - self.t0;
-            self.shared.done.store(true, .release);
-        }
-    }
-};
-
-test "bekçi: yavaş uyku zaman aşımını uzatmaz (süre sayılan adımlarla değil monoton saatle ölçülür)" {
+test "Watchdog: süre sayılan adımlarla değil monoton saatle ölçülür (geç gelen tur yine tetikler)" {
+    var wd: Watchdog = .{};
     var shared: Shared = .{};
-    var sleeper: SlowSleeper = .{ .shared = &shared, .t0 = monotonicMs() };
-    // Eski sayaç (`elapsed += 5`) 300 ms için 60 adım x 50 ms = ~3000 ms bekler; monoton saat ~300 ms'de tetikler.
-    watchdogLoop(&shared, 300, &sleeper);
+    try std.testing.expect(wd.registerAt(&shared, 300, .request, 1000, false));
+    // Süre dolmadan: tetiklenmez.
+    try std.testing.expect(!wd.tick(1100));
+    try std.testing.expect(!shared.timed_out.load(.acquire));
+    // Çok geç gelen tek tur (yavaş uyku / yüklü makine) yine de tetikler.
+    try std.testing.expect(!wd.tick(1000 + 5000));
     try std.testing.expect(shared.timed_out.load(.acquire));
-    try std.testing.expect(sleeper.seen_ms >= 300);
-    try std.testing.expect(sleeper.seen_ms < 1500);
+    // İş bitince girdi bırakılır ve liste boşalır (iş parçacığı çıkabilir).
+    shared.done.store(true, .release);
+    try std.testing.expect(wd.tick(7000));
+    try std.testing.expectEqual(@as(usize, 0), wd.list.items.len);
+    try std.testing.expectEqual(@as(u32, 1), shared.refs.load(.acquire)); // bekçi payı bırakıldı
+    wd.list.deinit(std.heap.page_allocator);
+}
+
+test "Watchdog: akış kipinde boşta sayacı silahsızken ve yeni işlemde (epoch) sıfırlanır" {
+    var wd: Watchdog = .{};
+    var shared: Shared = .{};
+    try std.testing.expect(wd.registerAt(&shared, 100, .stream, 0, false));
+    // Silahsız (işlem yok): süre ne kadar geçerse geçsin tetiklenmez, sayaç sürekli sıfırlanır.
+    _ = wd.tick(10_000);
+    try std.testing.expect(!shared.timed_out.load(.acquire));
+    // Silahlandı: sıfır noktası son tur (10_000); 100 ms dolmadan tetiklenmez.
+    shared.armed.store(true, .release);
+    _ = wd.tick(10_050);
+    try std.testing.expect(!shared.timed_out.load(.acquire));
+    // Yeni işlem (epoch arttı): sayaç yeniden başlar.
+    _ = shared.epoch.fetchAdd(1, .acq_rel);
+    _ = wd.tick(10_140);
+    try std.testing.expect(!shared.timed_out.load(.acquire));
+    _ = wd.tick(10_250);
+    try std.testing.expect(shared.timed_out.load(.acquire));
+    shared.done.store(true, .release);
+    _ = wd.tick(10_300);
+    wd.list.deinit(std.heap.page_allocator);
+}
+
+test "Watchdog: 100 eşzamanlı kayıt TEK iş parçacığıyla izlenir, hepsi tetiklenir, iş parçacığı boşalınca çıkar" {
+    var wd: Watchdog = .{};
+    const N = 100;
+    var shareds: [N]*Shared = undefined;
+    for (&shareds) |*sh| {
+        sh.* = try std.heap.page_allocator.create(Shared);
+        sh.*.* = .{};
+        try std.testing.expect(wd.register(sh.*, 50, .request));
+    }
+    // Hepsi gerçek bekçi iş parçacığı tarafından tetiklenir.
+    var waited: usize = 0;
+    while (waited < 400) : (waited += 1) {
+        var all = true;
+        for (shareds) |sh| {
+            if (!sh.timed_out.load(.acquire)) all = false;
+        }
+        if (all) break;
+        sleepMs(5);
+    }
+    for (shareds) |sh| try std.testing.expect(sh.timed_out.load(.acquire));
+    // İşler bitti: bekçi girdileri bırakır, liste boşalır ve iş parçacığı çıkar.
+    for (shareds) |sh| sh.done.store(true, .release);
+    waited = 0;
+    while (waited < 400) : (waited += 1) {
+        wd.lock.lock();
+        const idle = wd.list.items.len == 0 and !wd.running;
+        wd.lock.unlock();
+        if (idle) break;
+        sleepMs(5);
+    }
+    wd.lock.lock();
+    try std.testing.expectEqual(@as(usize, 0), wd.list.items.len);
+    try std.testing.expect(!wd.running);
+    wd.lock.unlock();
+    for (shareds) |sh| {
+        try std.testing.expectEqual(@as(u32, 1), sh.refs.load(.acquire)); // yalnızca "çağıran" payı kaldı
+        std.heap.page_allocator.destroy(sh);
+    }
+    wd.list.deinit(std.heap.page_allocator);
 }
 
 test "nox_http_request_raw: sessiz sunucuda timeout_ms gerçek zaman aşımı verir (error_kind 1), bağlantı iptal edilir" {

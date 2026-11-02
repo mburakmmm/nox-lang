@@ -29219,3 +29219,7 @@ Bir üst-düzey `def` nesne dosyasında düz adıyla genel sembol olduğundan, s
 
 Sonuç (v2.0.111): çözümleme çekirdeği `awaitLookup` olarak ayrıldı ve `LookupJob.resolve`/`ctx` ile test edilebilir. İki birim testi: 20 eşzamanlı istek aynı ada TEK çözümleme ve TEK iş parçacığı kullanır; bir katılımcının zaman aşımı diğerlerini iptal etmez ve yuva iş parçacığı bitince boşalır. Gözlem (kapsam dışı): her zaman aşımlı HTTP isteği ayrıca bir işçi + bir bekçi iş parçacığı açar (60 eşzamanlı istekte ~125 iş parçacığı ölçüldü); DNS sınırı bunları kapsamaz.
 
+### 3.321.4 Paylaşılan HTTP bekçisi (v2.0.112)
+
+`http_client.Watchdog` (`g_watchdog`): zaman aşımlı TÜM istekler (`.request`) ve akışlar (`.stream`, işlem başına boşta zaman aşımı: silahsızken ve yeni işlemde `epoch` değişince sayaç sıfırlanır) TEK bekçi iş parçacığında izlenir; eskiden her istek için ayrı bir bekçi iş parçacığı 5 ms'de bir uyanıyordu. Kayıt `Shared` bekçi payını devralır ve `done` görülünce bırakır; iş parçacığı kayıt boşalınca çıkar, yeni kayıtta yeniden açılır; süre `monotonicMs` ile ölçülür (§3.321.1). Ölçüm: 400 ms zaman aşımlı, yanıt vermeyen sunucuya 60 eşzamanlı istek: tepe iş parçacığı ~125 → 63 (işçi iş parçacığı istek başına hâlâ vardır), hepsi 441 ms'de zaman aşımına uğradı. Testler: `Watchdog.tick` deterministik (zamanı parametre alır), 100 eşzamanlı kayıtla tek iş parçacığı ve çıkış.
+

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.112]
+
+### Değişti
+
+- **HTTP zaman aşımı bekçisi artık paylaşımlı.** Zaman aşımlı her `nox.http` isteği ve akışı için ayrı bir bekçi iş parçacığı açılıp 5 ms'de bir uyanıyordu; şimdi tüm istekler TEK bekçi iş parçacığında izlenir (kayıt boşalınca iş parçacığı çıkar). 400 ms zaman aşımlı yanıtsız sunucuya 60 eşzamanlı istekte tepe iş parçacığı sayısı ~125'ten 63'e indi; hepsi zamanında zaman aşımına uğradı. Üç birim testi: deterministik `Watchdog.tick` (istek ve akış kipleri, silahsız/epoch sıfırlama), 100 eşzamanlı kayıt tek iş parçacığıyla izlenir ve iş parçacığı çıkar. İstek başına işçi iş parçacığı hâlâ vardır.
+
 ## [2.0.111]
 
 ### Eklendi
