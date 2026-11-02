@@ -1,0 +1,54 @@
+# v2.0.122: global bildirimin hemen ardından gelen `router.get(...)` kayıtları HER işçide çalışır. LLVM'de görevler farklı işçilere çalınır ve her işçi modül durumunun kendi kopyasını görür;
+# eskiden kayıtlar yalnızca ana işçide kalıyor, diğer işçilerin yönlendiricisi boş çıkıyordu (HTTP'de ~%50 404). Kayıt dışı çağrılar (print) sırasını korur.
+import nox.time
+from nox.router import Router, Context
+from nox.http import HttpRequest, HttpResponse
+
+router: Router = Router()
+
+def a(ctx: Context) -> HttpResponse:
+    return HttpResponse(200, "a", {})
+
+def b(ctx: Context) -> HttpResponse:
+    return HttpResponse(201, "b", {})
+
+router.get("/a", a)
+router.post("/b", b)
+
+async def routes_seen(ch: Channel[int]) -> None:
+    nox.time.sleep_ms(30)
+    await ch.send(len(router.routes))
+
+async def status_of(ch: Channel[int], method: str, target: str) -> None:
+    nox.time.sleep_ms(30)
+    await ch.send(router.dispatch(HttpRequest(method, target, "", {}, "")).status)
+
+async def main_task() -> None:
+    print("start")
+    ch: Channel[int] = Channel[int](16)
+    n: int = 0
+    while n < 16:
+        w: Task[None] = spawn routes_seen(ch)
+        n = n + 1
+    total: int = 0
+    n = 0
+    while n < 16:
+        total = total + await ch.recv()
+        n = n + 1
+    print(total)
+    sch: Channel[int] = Channel[int](3)
+    s1: Task[None] = spawn status_of(sch, "GET", "/a")
+    s2: Task[None] = spawn status_of(sch, "POST", "/b")
+    s3: Task[None] = spawn status_of(sch, "GET", "/missing")
+    await s1
+    await s2
+    await s3
+    got: int = 0
+    codes: int = 0
+    while got < 3:
+        codes = codes + await sch.recv()
+        got = got + 1
+    print(codes)
+
+m: Task[None] = spawn main_task()
+await m

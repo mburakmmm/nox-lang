@@ -1,7 +1,7 @@
 # Referans backend: kullanıcı kaydı/girişi (argon2id + JWT), kullanıcıya özel yapılacaklar listesi (SQLite), CORS, hız sınırı, istek kimliği, erişim günlüğü, güvenlik başlıkları ve
 # graceful shutdown. Çalıştırma:  noxc run examples/todo-backend/app.nox   (ortam: PORT=8080 TODO_DB=todo.db JWT_SECRET=... RATE_LIMIT=300)
 # MODÜL DURUMU: varsayılan (LLVM) backend'inde bağlantılar farklı işçi iş parçacıklarında çalışabilir ve HER işçi modül durumunun kendi kopyasını alır. Bu yüzden her şey (veritabanı, rotalar,
-# CORS, hız sınırı) bir GLOBAL BAŞLATICISINDA kurulur (`router: Router = build_router()`); modül düzeyinde sonradan çağrılan `router.get(...)` yalnızca ana işçide çalışırdı.
+# CORS, hız sınırı) bir GLOBAL BAŞLATICISINDA kurulur (`router: Router = build_router()`). (Bildirimin hemen ardından gelen `router.get(...)` kayıtları da her işçide çalışır, ama bir fonksiyonda kurmak araya giren deyimlerden etkilenmez.)
 # Sonuç: veritabanı DOSYA tabanlıdır (her işçi kendi bağlantısını açar; `:memory:` işçiler arasında paylaşılmaz) ve hız sınırı işçi başınadır (`nox.web` başlığına bakın).
 # Uç noktalar:  GET /health | POST /register {"user","password"} | POST /login {...} -> {"token"} | GET/POST /todos | PUT/DELETE /todos/:id   (Authorization: Bearer <token>)
 import nox.http

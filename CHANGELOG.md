@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.123]
+
+### Düzeltildi
+
+- **LLVM'de `router.get(...)` kayıtları artık her işçide çalışır.** Varsayılan backend'de bağlantılar farklı işçilerde çalışır ve her işçi modül durumunun kendi kopyasını görür; `router: Router = Router()` ardından modül düzeyinde `router.get(...)` kalıbında kayıtlar yalnızca ana işçide çalıştığından eşzamanlı yükte istekler yaklaşık yarı yarıya `404` alıyordu (QBE'de değil). Son terfi eden global bildiriminin hemen ardından gelen, `nox.router.Router` değişkeni üzerindeki doğrudan metod çağrıları (`get/post/put/delete/use/...`; arada yalnızca `def`/`class`/import olabilir) artık `nox_init_globals`te, yani her işçide çalışır. Başka sınıfların metodları (`app.run()`, `db.seed()`) bilerek kapsam dışıdır: onları her işçide yeniden çalıştırmak çift yan etki ya da engelleme olurdu. Golden: `router_registration_all_workers` (eski derleyicide LLVM'de 16/1212, şimdi 32/805).
+
 ## [2.0.122]
 
 ### Eklendi

@@ -135,10 +135,37 @@ def handle(req: HttpRequest) -> HttpResponse:
 nox.http.serve(8080, handle)
 ```
 
-**Register the routes inside the function that initialises the variable.** On the default LLVM backend connections run on several worker threads and each worker
-has its own copy of the module's variables ([Modules](../language/modules.md#module-level-state-and-the-multi-core-runtime)); the initialiser runs for every
-worker, whereas a statement such as `router.get("/", home)` placed after the variable runs only once, on the main worker. With the registration at module level the
-other workers would have an empty router and answer `404` under concurrent load.
+On the default LLVM backend connections run on several worker threads and each worker has its own copy of the module's variables ([Modules](../language/modules.md#module-level-state-and-the-multi-core-runtime)).
+The variable's initialiser therefore runs for every worker, and so do the `router.get(...)`-style calls that **directly follow** the declaration (only `def`, `class` and
+imports may sit between them), so this layout works too:
+
+```nox
+from nox.http import HttpResponse
+from nox.router import Router, Context
+
+def home(ctx: Context) -> HttpResponse:
+    return HttpResponse(200, "hello", {})
+
+def create_item(ctx: Context) -> HttpResponse:
+    return HttpResponse(201, "created", {})
+
+router: Router = Router()
+
+router.get("/", home)
+router.post("/items", create_item)
+
+def count() -> int:
+    return len(router.routes)
+
+print(count())
+```
+
+```output
+2
+```
+
+Keep the registrations together right after the declaration. A registration separated from it by any other statement (a `print`, an assignment) runs only on the main worker,
+and the other workers would answer `404` for those routes. Building the router in a function, as above, is immune to this and is the better choice for larger routers.
 
 `nox.reflect.router_from_decorators()` builds a router from `@get`/`@post`/`@put`/`@delete`-decorated functions ([Decorators](../language/decorators.md)).
 

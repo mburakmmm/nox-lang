@@ -125,9 +125,11 @@ Under the multi-core runtime each worker keeps its own copy of module state; sha
 `nox.sharedmem` ([Concurrency](concurrency.md#the-scheduler)). This includes plain `nox.http.serve` on the default LLVM backend: connections can be
 handled by any worker, so a handler may see another worker's copy.
 
-Only the variables' own initialisers (and method calls on them up to the last promoted declaration) run for every worker. A statement placed *after* the last
-module variable, such as `router.get("/", home)`, runs once, on the main worker. Put setup that every worker needs inside a function and call it from the
-initialiser:
+Only the variables' own initialisers (and method calls on them up to the last declaration a function reads) run for every worker. The one exception is route
+registration: `r.get(...)`, `r.post(...)`, `r.use(...)` and the other calls on a [`nox.router.Router`](../stdlib/router.md) variable that directly follow its declaration
+(only `def`, `class` and imports may sit between them) also run for every worker, so the usual `router = Router()` / `router.get(...)` layout works. Any other statement
+placed *after* the last module variable, such as `app.run()` or `db.seed()` on your own objects, runs once, on the main worker. Put setup that every worker needs inside a
+function and call it from the initialiser:
 
 ```nox
 class Counter:

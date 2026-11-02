@@ -728,6 +728,44 @@ fn exprRootIdent(expr: ast.Expr) ?[]const u8 {
     };
 }
 
+/// `nox.router.Router`ın codegen'deki mangled sınıf adı (bkz. `from nox.router import Router`).
+const ROUTER_CLASS = "nox_router_Router";
+
+/// v2.0.122: `r.get("/x", h)` gibi, alıcısı bir `Router` modül değişkeni olan DOĞRUDAN metod çağrısı (rota/ara katman kaydı). Başka sınıfların metodları (`app.run()`, `db.seed()`)
+/// BİLİNÇLİ olarak dışarıda: onları her işçide yeniden çalıştırmak çift yan etki ya da engelleme demek olurdu.
+fn exprIsRouterRegistration(expr: ast.Expr, router_vars: *const std.StringHashMapUnmanaged(void)) ?[]const u8 {
+    if (expr != .call) return null;
+    const callee = expr.call.callee.*;
+    switch (callee) {
+        .attribute => |attr| {
+            if (attr.obj.* != .identifier) return null;
+            const name = attr.obj.*.identifier;
+            return if (router_vars.contains(name)) name else null;
+        },
+        else => return null,
+    }
+}
+
+/// Son terfi `var_decl`ın (`last`) HEMEN ardından gelen bitişik rota-kaydı çağrılarını (arada yalnızca `def`/`class`/import/`pass` olabilir) kapsayacak biçimde sınırı uzatır.
+/// Neden: LLVM'de bağlantılar farklı işçilerde çalışır ve her işçi modül durumunun kendi kopyasını görür; `router: Router = Router()` + `router.get(...)` kalıbında kayıtlar
+/// yalnızca `$main`de kalırsa diğer işçilerin yönlendiricisi boş olur (eşzamanlı yükte ~%50 404). Uzatma kaynak sırasını bozmaz: aradaki hiçbir çalışma zamanı deyimi atlanmaz.
+fn extendOverRouterRegistrations(module: ast.Module, last: usize, router_vars: *const std.StringHashMapUnmanaged(void), promoted: *const std.StringHashMapUnmanaged(void)) usize {
+    var end = last;
+    var i = last + 1;
+    while (i < module.body.len) : (i += 1) {
+        switch (module.body[i].kind) {
+            .func_def, .class_def, .import_stmt, .from_import_stmt, .pass_stmt => continue,
+            .expr_stmt => |e| {
+                const root = exprIsRouterRegistration(e, router_vars) orelse break;
+                if (!promoted.contains(root)) break;
+                end = i;
+            },
+            else => break,
+        }
+    }
+    return end;
+}
+
 /// `xs.append(...)` / `cfg.touch()`: alıcının kökü TERFİ ETMİŞ bir modül
 /// değişkeni olan bir metod çağrısı. `print(x)` ve `boot(cfg)` DEĞİLDİR
 /// (kök bir fonksiyon adıdır) — onlar `$main`de kalır.
@@ -880,6 +918,17 @@ pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions:
         decl_i += 1;
     }
 
+    var router_vars: std.StringHashMapUnmanaged(void) = .empty;
+    defer router_vars.deinit(self.allocator);
+    for (module.body) |stmt| {
+        if (stmt.kind != .var_decl) continue;
+        const v = stmt.kind.var_decl;
+        const info = self.resolveType(v.type_expr) catch continue;
+        if (info.class_name) |cn| {
+            if (std.mem.eql(u8, cn, ROUTER_CLASS)) try router_vars.put(self.allocator, v.name, {});
+        }
+    }
+
     // Yalnızca SON terfi bildirimine KADAR olan dilim taranır. Ondan
     // SONRAKİ `g = h` ataması `h`'yi terfi ETMEZ: o atama `$main`de kalır
     // ve `h` sıradan bir yerel olabilir. Aksi halde geç bir atama, araya
@@ -891,7 +940,7 @@ pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions:
         for (module.body, 0..) |stmt, i| {
             if (stmt.kind == .var_decl and used_in_functions.contains(stmt.kind.var_decl.name)) last_now = i;
         }
-        const last = last_now orelse break;
+        const last = extendOverRouterRegistrations(module, last_now orelse break, &router_vars, &used_in_functions);
         for (module.body, 0..) |stmt, i| {
             if (i > last) break;
             switch (stmt.kind) {
@@ -933,6 +982,7 @@ pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions:
     for (module.body, 0..) |stmt, i| {
         if (stmt.kind == .var_decl and used_in_functions.contains(stmt.kind.var_decl.name)) last_promoted = i;
     }
+    if (last_promoted) |lp| last_promoted = extendOverRouterRegistrations(module, lp, &router_vars, &used_in_functions);
     self.module_global_init_last = last_promoted orelse 0;
 
     // Son terfi bildirimine KADAR (dahil) olan ilklendirme diliminde, bir
