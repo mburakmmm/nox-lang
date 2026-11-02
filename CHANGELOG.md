@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.118]
+
+### Eklendi
+
+- **Graceful shutdown.** `SIGTERM`/`SIGINT` ya da `nox.http.shutdown()`: yeni bağlantı alınmaz, uçuştaki istekler biter (`Connection: close` ile), boştaki keep-alive bağlantılar kapanır ve `serve*` DÖNER (sonrasındaki temizlik kodu çalışır, çıkış kodu 0); ikinci sinyal hemen çıkar; `drain_timeout_ms` sonrası bekleme biter. Golden: uçuşta yavaş istek + boşta keep-alive + SIGTERM.
+- **`nox.http.configure(max_body_bytes, max_header_bytes, read_timeout_ms, max_connections, drain_timeout_ms)`**: sunucu sınırları artık ayarlanabilir (eskiden derleme zamanı sabitleriydi).
+
+### Değişti
+
+- İstek başlık tamponu yığındaki sabit 4 KiB yerine bağlantı başına öbekte, varsayılan 16 KiB (tarayıcı çerezleri 431 aldırıyordu).
+- Kabul yoklaması 2 sn → 250 ms (kapanış bayrağı daha çabuk görülür).
+
+### Düzeltildi
+
+- `nox.time.sleep_ms` bir sinyalle (`EINTR`) yarıda kesilince kalan süreyi tamamlamadan dönüyordu.
+
 ## [2.0.117]
 
 ### Düzeltildi

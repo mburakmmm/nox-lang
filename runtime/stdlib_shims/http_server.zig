@@ -52,6 +52,7 @@ const http_client = @import("http_client.zig");
 const str_mod = @import("../str.zig");
 const tls_server = @import("tls_server.zig");
 const websocket_server = @import("websocket_server.zig");
+const fiber_net = @import("fiber_net.zig");
 
 /// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): okuma zaman aşımı —
 /// bir bağlantı BAŞLIK/GÖVDE göndermeden bu süreden UZUN askıda kalırsa
@@ -62,6 +63,68 @@ const websocket_server = @import("websocket_server.zig");
 const READ_TIMEOUT_MS: u32 = 30_000;
 /// v1.158.0: yanıt yazma zaman aşımı (yavaş-okuyucu koruması, bkz. `io.nonBlockingWriteWithTimeout`).
 const WRITE_TIMEOUT_MS: u32 = 30_000;
+
+/// `nox.http.configure(...)`in süreç-genelinde ayarları (bkz. spec §3.324). `serve*` başlarken okur; çağrı `serve`den ÖNCE yapılmalıdır (çalışırken değiştirmek yalnızca YENİ bağlantıları etkiler).
+/// Süreç-geneli çünkü ayarlar tüm worker'larda ortaktır (`serve_multicore`un her worker'ı modül durumunun kendi kopyasını taşır, ayar ise tek).
+const ServeConfig = struct {
+    max_body_bytes: std.atomic.Value(usize) = .init(MAX_REQUEST_BODY_BYTES),
+    /// İstek satırı + başlıklar için bağlantı başına tampon (üst sınır = tek istek başlığının en çok boyutu). Eskiden sabit 4 KiB'tı: tarayıcı çerezleri bunu kolayca aşıp 431 aldırıyordu.
+    max_header_bytes: std.atomic.Value(usize) = .init(DEFAULT_MAX_HEADER_BYTES),
+    read_timeout_ms: std.atomic.Value(u32) = .init(READ_TIMEOUT_MS),
+    max_concurrent: std.atomic.Value(usize) = .init(DEFAULT_MAX_CONCURRENT_CONNECTIONS),
+    /// Graceful shutdown'da uçuştaki bağlantıların bitmesi için beklenecek en uzun süre.
+    drain_timeout_ms: std.atomic.Value(u32) = .init(DEFAULT_DRAIN_TIMEOUT_MS),
+};
+const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
+const MIN_HEADER_BYTES: usize = 4 * 1024;
+const MAX_HEADER_BYTES_LIMIT: usize = 1024 * 1024;
+const DEFAULT_DRAIN_TIMEOUT_MS: u32 = 10_000;
+var g_serve_config: ServeConfig = .{};
+
+/// Anahtar kodları `stdlib/nox/http.nox`daki `configure` ile eşleşir. Geçersiz/negatif değer yok sayılır (0 = varsayılanı koru).
+export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
+    if (value <= 0) return;
+    const v: usize = @intCast(value);
+    switch (key) {
+        1 => g_serve_config.max_body_bytes.store(v, .monotonic),
+        2 => g_serve_config.max_header_bytes.store(std.math.clamp(v, MIN_HEADER_BYTES, MAX_HEADER_BYTES_LIMIT), .monotonic),
+        3 => g_serve_config.read_timeout_ms.store(@intCast(@min(v, std.math.maxInt(u32))), .monotonic),
+        4 => g_serve_config.max_concurrent.store(v, .monotonic),
+        5 => g_serve_config.drain_timeout_ms.store(@intCast(@min(v, std.math.maxInt(u32))), .monotonic),
+        else => {},
+    }
+}
+
+/// Graceful shutdown bayrağı (süreç-geneli): SIGTERM/SIGINT ya da `nox.http.shutdown()` ile kurulur. `serve*` kabul döngüleri yeni bağlantı almayı bırakır, uçuştaki istekler
+/// biter, boştaki keep-alive bağlantılar kapatılır ve `serve` DÖNER (çağıran temizlik kodunu çalıştırabilir). Signal işleyicisinden yazıldığı için atomik, global olmak zorundadır.
+var g_shutdown: std.atomic.Value(bool) = .init(false);
+var g_signals_installed: std.atomic.Value(bool) = .init(false);
+
+fn shuttingDown() bool {
+    return g_shutdown.load(.acquire);
+}
+
+export fn nox_http_shutdown_raw() callconv(.c) void {
+    g_shutdown.store(true, .release);
+}
+
+fn onTermSignal(sig: posix.SIG) callconv(.c) void {
+    // İkinci sinyal: graceful bekleme yerine hemen çık (takılan bir handler süreci sonsuza dek tutmasın).
+    if (g_shutdown.swap(true, .acq_rel)) std.c._exit(128 + @as(c_int, @intCast(@intFromEnum(sig))));
+}
+
+/// POSIX'te SIGTERM/SIGINT'i graceful shutdown'a bağlar (süreç başına bir kez). Windows'ta konsol olayları için bir işleyici yok: yalnızca `nox.http.shutdown()`.
+fn installShutdownSignals() void {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) return;
+    if (g_signals_installed.swap(true, .acq_rel)) return;
+    const act: posix.Sigaction = .{
+        .handler = .{ .handler = onTermSignal },
+        .mask = posix.sigemptyset(),
+        .flags = 0,
+    };
+    posix.sigaction(.TERM, &act, null);
+    posix.sigaction(.INT, &act, null);
+}
 
 /// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.close`
 /// (CRT fd-tablosu İçin) Windows SOCKET'leri İçin GEÇERSİZDİR —
@@ -663,7 +726,7 @@ const SHARED_BUDGET_POLL_MS: u32 = 25;
 /// oluştur/ayarla/kapat döngüsü) İHMAL EDİLEBİLİR tutarken, testlerin
 /// (15-20 saniyelik watchdog zaman aşımlarına göre) HÂLÂ HIZLI/AÇIK
 /// başarısız olmasını SAĞLAR.
-const DEFAULT_ACCEPT_POLL_MS: u32 = 2000;
+const DEFAULT_ACCEPT_POLL_MS: u32 = 250;
 
 /// `max_connections_per_worker`, `nox.http.serve_multicore`nin `max_
 /// connections` argümanının ORİJİNAL, HER ZAMAN VAR OLAN anlamıdır —
@@ -866,6 +929,39 @@ const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 4096;
 const ConnCounter = struct {
     active: std.atomic.Value(usize) = .init(0),
     refs: std.atomic.Value(usize) = .init(1), // serveImpl'in KENDİ referansı
+    /// Canlı bağlantıların kaydı (graceful shutdown'da BOŞTA bekleyenleri uyandırıp kapatmak için). Kayıt bağlantı oluşturulurken (`serveImpl`), silme `connectionEntry` bitişinde
+    /// (çalınmış fiber başka işçide olabilir) yapılır: bu yüzden kilitli.
+    lock: asap.SpinLock = .{},
+    head: ?*ConnCtx = null,
+
+    fn register(self: *ConnCounter, conn: *ConnCtx) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        conn.prev = null;
+        conn.next = self.head;
+        if (self.head) |h| h.prev = conn;
+        self.head = conn;
+    }
+
+    fn unregister(self: *ConnCounter, conn: *ConnCtx) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        if (conn.prev) |p| p.next = conn.next else if (self.head == conn) self.head = conn.next;
+        if (conn.next) |n| n.prev = conn.prev;
+        conn.prev = null;
+        conn.next = null;
+    }
+
+    /// Yeni istek beklemekte olan (`idle`) bağlantıların okuma yönünü kapatır: askıdaki `read` EOF ile döner ve bağlantı kendini temizler. `force` ise uçuştaki isteği olanlar da dahil.
+    fn shutdownIdle(self: *ConnCounter, force: bool) void {
+        if (comptime builtin.os.tag == .windows) return;
+        self.lock.lock();
+        defer self.lock.unlock();
+        var it = self.head;
+        while (it) |c| : (it = c.next) {
+            if (force or c.idle.load(.acquire)) _ = std.c.shutdown(c.fd, std.c.SHUT.RD);
+        }
+    }
 
     fn unref(self: *ConnCounter, allocator: std.mem.Allocator) void {
         if (self.refs.fetchSub(1, .acq_rel) == 1) allocator.destroy(self);
@@ -935,6 +1031,12 @@ const ConnCtx = struct {
     /// (bağlantı fiber'ları `serveImpl` döndükten SONRA da handler'ı
     /// çağırabilir, bkz. HH.1 notu — closure'ın ömrü bu sayaçla korunur).
     ctx_refcounted: bool = false,
+    /// `ConnCounter` kaydı için bağlı liste bağları ve "yeni istek bekliyor" bayrağı (graceful shutdown).
+    prev: ?*ConnCtx = null,
+    next: ?*ConnCtx = null,
+    idle: std.atomic.Value(bool) = .init(false),
+    /// İstek satırı + başlıklar için tampon boyutu (`ServeConfig.max_header_bytes`).
+    head_buf_len: usize = DEFAULT_MAX_HEADER_BYTES,
 };
 
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `method`/`target`/
@@ -1222,11 +1324,16 @@ fn connectionEntry(arg: *anyopaque) void {
         conn.active_connections.unref(gpa);
     }
 
+    // Kayıttan çıkış, fd kapanmadan ve sayaç serbest kalmadan ÖNCE çalışmalı (LIFO: en son bildirilen ilk çalışır) — aksi halde `shutdownIdle` kapanmış/yeniden kullanılmış bir fd'ye dokunurdu.
+    defer conn.active_connections.unregister(conn);
+
     const scheduler = bridge.currentFiberScheduler();
 
-    var read_buf: [4096]u8 = undefined;
+    // İstek satırı + başlıkların sığacağı tampon (yapılandırılabilir, varsayılan 16 KiB; eskiden yığında sabit 4 KiB). Yığında değil öbekte: bağlantı fiber'ının yığını (192 KiB) handler'a kalsın.
+    const read_buf = gpa.alloc(u8, conn.head_buf_len) catch return;
+    defer gpa.free(read_buf);
     var write_buf: [4096]u8 = undefined;
-    var fiber_reader = FiberReader.init(conn.fd, scheduler, &read_buf, conn.read_timeout_ms);
+    var fiber_reader = FiberReader.init(conn.fd, scheduler, read_buf, conn.read_timeout_ms);
     var fiber_writer = FiberWriter.init(conn.fd, scheduler, &write_buf);
 
     // Faz "sunucu-tarafı TLS": `conn.tls_ctx` AYARLIYSA `std.http.Server`e
@@ -1264,7 +1371,11 @@ fn connectionEntry(arg: *anyopaque) void {
     var server: std.http.Server = .init(reader_ptr, writer_ptr);
     var requests_served: usize = 0;
     while (requests_served < MAX_REQUESTS_PER_CONNECTION) : (requests_served += 1) {
+        // Yeni istek beklenirken "boşta": graceful shutdown bu bağlantının okumasını EOF'a çevirip kapatabilir. Bayrak önce kurulur, sonra kapanış denetlenir — iki yönden biri mutlaka yakalar.
+        conn.idle.store(true, .release);
+        if (shuttingDown()) break;
         var request = server.receiveHead() catch |err| {
+            conn.idle.store(false, .release);
             // Ayrıştırılabilen ama kabul edilmeyen istekler için istemciye bir durum kodu ver (eskiden bağlantı sessizce kesiliyordu); okuma/kopma hatalarında yalnızca kapat.
             const status_line: ?[]const u8 = switch (err) {
                 error.HttpHeadersOversize => "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
@@ -1278,6 +1389,7 @@ fn connectionEntry(arg: *anyopaque) void {
             break;
         };
 
+        conn.idle.store(false, .release);
         switch (validateRequestHead(request.head_buffer, request.head.version == .@"HTTP/1.1")) {
             .ok => {},
             .bad_request => {
@@ -1442,13 +1554,13 @@ fn connectionEntry(arg: *anyopaque) void {
             const body_slice: []const u8 = if (resp.body) |p| str_mod.nox_str_slice(p) else &.{};
             request.respond(body_slice, .{
                 .status = @enumFromInt(resp.status),
-                .keep_alive = true,
+                .keep_alive = !shuttingDown(),
                 .extra_headers = resp.headers,
             }) catch break;
         } else {
             request.respond("Internal Server Error", .{
                 .status = .internal_server_error,
-                .keep_alive = true,
+                .keep_alive = !shuttingDown(),
             }) catch break;
         }
 
@@ -1471,7 +1583,7 @@ fn connectionEntry(arg: *anyopaque) void {
         // keep_alive` formülü BUNA (`request.head.keep_alive`in KENDİSİNE)
         // İNDİRGENİR; bu, HTTP SÜRÜM varsayılanını (HTTP/1.0 vs 1.1) DA
         // ZATEN İÇERİR (bkz. `Request.Head.parse`).
-        if (!request.head.keep_alive) break;
+        if (!request.head.keep_alive or shuttingDown()) break;
     }
 }
 
@@ -1489,7 +1601,7 @@ fn connectionEntry(arg: *anyopaque) void {
 /// AYNEN eski `served`-yerel-sayaçlı yoldur. DOLU İSE (SADECE `serve_
 /// multicore`nin SINIRLI yolu) bkz. `SharedServeBudget`nin belge notu.
 export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64, needs_headers: i32, shared_budget: ?*anyopaque) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, null, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, (needs_headers & SERVE_FLAG_NEEDS_HEADERS) != 0, (needs_headers & SERVE_FLAG_REFCOUNTED_CTX) != 0, @ptrCast(@alignCast(shared_budget)));
+    serveImpl(rt, server, handler, handler_ctx, null, max_connections, g_serve_config.max_concurrent.load(.monotonic), g_serve_config.max_body_bytes.load(.monotonic), g_serve_config.read_timeout_ms.load(.monotonic), (needs_headers & SERVE_FLAG_NEEDS_HEADERS) != 0, (needs_headers & SERVE_FLAG_REFCOUNTED_CTX) != 0, @ptrCast(@alignCast(shared_budget)));
 }
 
 /// `nox_http_serve_raw`/`nox_http_serve_ws_raw`nin `needs_headers`
@@ -1553,7 +1665,7 @@ export fn nox_http_handler_ctx_release(ctx: ?*anyopaque) callconv(.c) void {
 /// TEK bir sunucu HEM normal HTTP rotalarını HEM DE WS Upgrade'i
 /// KARIŞIK sunabilir. `shared_budget`: bkz. `nox_http_serve_raw`nin notu.
 export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: websocket_server.WsHandlerFn, max_connections: i64, needs_headers: i32, shared_budget: ?*anyopaque) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, (needs_headers & SERVE_FLAG_NEEDS_HEADERS) != 0, (needs_headers & SERVE_FLAG_REFCOUNTED_CTX) != 0, @ptrCast(@alignCast(shared_budget)));
+    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, g_serve_config.max_concurrent.load(.monotonic), g_serve_config.max_body_bytes.load(.monotonic), g_serve_config.read_timeout_ms.load(.monotonic), (needs_headers & SERVE_FLAG_NEEDS_HEADERS) != 0, (needs_headers & SERVE_FLAG_REFCOUNTED_CTX) != 0, @ptrCast(@alignCast(shared_budget)));
 }
 
 /// `nox_http_serve_raw`nin GERÇEK gövdesi — `max_concurrent`/`max_body_bytes`/
@@ -1584,8 +1696,12 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
     counter.* = .{};
     defer counter.unref(gpa);
 
+    installShutdownSignals();
+
     var served: i64 = 0;
     accept_loop: while (true) {
+        // Graceful shutdown: yeni bağlantı kabul etme (aşağıdaki drain uçuştakileri bitirir).
+        if (shuttingDown()) break :accept_loop;
         // Faz MN.11.1: `shared_budget` DOLU İSE (SADECE `serve_multicore`nin
         // SINIRLI yolu) döngü koşulu PAYLAŞILAN atomik sayaca göre kontrol
         // edilir — YEREL `served` YERİNE (bkz. `SharedServeBudget`nin belge
@@ -1654,8 +1770,10 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             .ws_handler = ws_handler,
             .needs_headers = needs_headers,
             .ctx_refcounted = ctx_refcounted,
+            .head_buf_len = g_serve_config.max_header_bytes.load(.monotonic),
         };
         _ = counter.refs.fetchAdd(1, .monotonic); // conn'un referansı (connectionEntry bırakır)
+        counter.register(conn);
         if (ctx_refcounted) handlerCtxRetain(handler_ctx);
         // **KÖK NEDEN düzeltmesi (kullanım-sonrası-serbest-bırakma, TLS +
         // fiber zamanlaması — bkz. `tls_server.ctxTakeExtraRef`nin belge
@@ -1703,6 +1821,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
                 // sızıntısı", çökme DEĞİL ama YİNE DE bir kaynak sızıntısı).
                 if (conn.tls_ctx) |ctx| tls_server.ctxReleaseExtraRef(ctx);
                 _ = counter.active.fetchSub(1, .monotonic);
+                counter.unregister(conn);
                 counter.unref(gpa); // conn'un referansı (fiber hiç çalışmayacak)
                 gpa.destroy(conn);
                 _ = closeSocket(conn_fd);
@@ -1711,6 +1830,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             const fiber = fiber_mod.Fiber.createWithStack(gpa, connectionEntry, conn, stack) catch {
                 if (conn.tls_ctx) |ctx| tls_server.ctxReleaseExtraRef(ctx);
                 _ = counter.active.fetchSub(1, .monotonic);
+                counter.unregister(conn);
                 counter.unref(gpa); // conn'un referansı (fiber hiç çalışmayacak)
                 s.releaseStack(stack);
                 gpa.destroy(conn);
@@ -1778,6 +1898,32 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             connectionEntry(conn);
         }
     }
+
+    // Graceful shutdown: kabul bitti; uçuştaki istekler `drain_timeout_ms` içinde bitsin. Boştaki keep-alive bağlantıları sürekli uyandırıp kapatırız (bir bağlantı yanıtını bitirip boşa
+    // çıktıkça yeni tur gerekir); süre dolarsa kalanlar da zorla kapatılır ve `serve` yine DÖNER (takılan bir handler süreci sonsuza dek tutmasın).
+    if (shuttingDown()) {
+        const drain_ms = g_serve_config.drain_timeout_ms.load(.monotonic);
+        const start = monotonicNowMs();
+        while (counter.active.load(.acquire) > 0) {
+            const waited = monotonicNowMs() - start;
+            if (waited >= drain_ms) {
+                counter.shutdownIdle(true);
+                break;
+            }
+            counter.shutdownIdle(false);
+            drainPause();
+        }
+    }
+}
+
+fn monotonicNowMs() u64 {
+    return http_client.monotonicMs();
+}
+
+/// Drain beklemesi: fiber içindeysek kooperatif (diğer bağlantı fiber'ları ilerlesin), değilse kısa uyku.
+fn drainPause() void {
+    if (fiber_net.sleepCooperative(10)) return;
+    http_client.sleepMs(10);
 }
 
 test "ConnCounter: serveImpl + her ConnCtx birer referans tutar, SON bırakan serbest bırakır (sızıntı/çift-free yok)" {

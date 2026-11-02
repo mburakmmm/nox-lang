@@ -115,11 +115,18 @@ export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
         WinTime.Sleep(@intCast(ms));
         return;
     }
-    const ts: std.c.timespec = .{
+    var ts: std.c.timespec = .{
         .sec = @intCast(@divTrunc(ms, std.time.ms_per_s)),
         .nsec = @intCast(@mod(ms, std.time.ms_per_s) * std.time.ns_per_ms),
     };
-    _ = std.c.nanosleep(&ts, null);
+    // Bir sinyal (ör. SIGTERM'de graceful shutdown) uykuyu `EINTR` ile yarıda kesebilir: kalan süre tamamlanmadan dönmek `sleep_ms(1500)` çağıran bir handler'ı erken uyandırırdı.
+    var rem: std.c.timespec = undefined;
+    while (true) {
+        const rc = std.c.nanosleep(&ts, &rem);
+        if (rc == 0) break;
+        if (std.posix.errno(rc) != .INTR) break;
+        ts = rem;
+    }
 }
 
 /// Stdlib fazı V.4 — `nox.time.DateTime`: bir epoch-ms değerini takvim

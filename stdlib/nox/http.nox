@@ -61,6 +61,27 @@ extern def nox_http_response_free(h: ptr) -> None from "zig-out/lib/noxrt.o"
 # (bağlantı zaten kendi fiber'ında senkron çalışır); bağlantı-seviyesi
 # dengeleme ZATEN paylaşılan-fd üzerindeki OS-seviyesi `accept()`
 # yarışıyla sağlanır, --release'in KENDİSİ BUNU DEĞİŞTİRMEZ.
+# v2.0.118 — sunucu yapılandırması ve graceful shutdown (bkz. spec §3.324). `configure` süreç-geneli ayarları `serve*`den ÖNCE kurar (0 = varsayılanı koru):
+#   max_body_bytes    istek gövdesi üst sınırı (varsayılan 10 MiB; aşılırsa 413)
+#   max_header_bytes  istek satırı + başlıklar için tampon (varsayılan 16 KiB, 4 KiB-1 MiB; aşılırsa 431)
+#   read_timeout_ms   bir istek beklerken/okurken en uzun sessizlik (varsayılan 30000)
+#   max_connections   aynı anda en çok açık bağlantı (varsayılan 4096; aşan bağlantı reddedilir)
+#   drain_timeout_ms  shutdown'da uçuştaki isteklerin bitmesi için en uzun bekleme (varsayılan 10000)
+# `shutdown()` graceful kapanış başlatır (SIGTERM/SIGINT de aynısını yapar): yeni bağlantı alınmaz, uçuştaki istekler biter, boştaki keep-alive bağlantılar kapanır ve `serve*` DÖNER;
+# çağıran sonrasında temizlik kodunu çalıştırabilir. İkinci sinyal hemen çıkar.
+extern def nox_http_config_set_raw(key: int, value: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_http_shutdown_raw() -> None from "zig-out/lib/noxrt.o"
+
+def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_ms: int = 0, max_connections: int = 0, drain_timeout_ms: int = 0) -> None:
+    nox_http_config_set_raw(1, max_body_bytes)
+    nox_http_config_set_raw(2, max_header_bytes)
+    nox_http_config_set_raw(3, read_timeout_ms)
+    nox_http_config_set_raw(4, max_connections)
+    nox_http_config_set_raw(5, drain_timeout_ms)
+
+def shutdown() -> None:
+    nox_http_shutdown_raw()
+
 extern def nox_http_listen_fd(port: int) -> int from "zig-out/lib/noxrt.o" with_rt
 
 def listen(port: int) -> int:

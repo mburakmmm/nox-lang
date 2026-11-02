@@ -108,6 +108,9 @@ runtime/stdlib_shims/net_dial.zig	g_base_lookup	shared-io	std'nin özgün netLoo
 runtime/stdlib_shims/net_dial.zig	g_base_connect_ip	shared-io	std'nin özgün netConnectIp işlevi (son tarihsiz çağrılar için); install'da BİR KEZ yazılır, sonra salt okunur
 runtime/stdlib_shims/net_dial.zig	g_lookup_slots	shared-io	süreç-geneli DNS yardımcı iş parçacığı sayacı (atomik); getaddrinfo iptal edilemediği için eşzamanlı iş parçacığı sayısını MAX_LOOKUP_THREADS ile sınırlar; salt sayaç, kullanıcı verisi taşımaz
 runtime/stdlib_shims/net_dial.zig	g_flights	shared-io	süreç-geneli uçuştaki DNS aramaları kaydı (singleflight); SpinLock korumalı, en çok MAX_LOOKUP_THREADS girdi; yalnız ad/port/aile anahtarı ve çözüm sonucu taşır, kullanıcı verisi yok
+runtime/stdlib_shims/http_server.zig	g_serve_config	shared-io	nox.http.configure ayarları (gövde/başlık/zaman aşımı/bağlantı/drain sınırları): süreç-geneli, atomik; serve* başlarken okur. Ayarlar tüm worker'larda ortaktır
+runtime/stdlib_shims/http_server.zig	g_shutdown	shared-io	graceful shutdown bayrağı: SIGTERM/SIGINT işleyicisi ve nox.http.shutdown() yazar, tüm serve* kabul döngüleri okur. Signal işleyicisinden yazıldığı için atomik ve global olmak zorunda
+runtime/stdlib_shims/http_server.zig	g_signals_installed	shared-io	SIGTERM/SIGINT işleyicisinin süreç başına BİR KEZ kurulduğunu işaretleyen atomik bayrak
 runtime/stdlib_shims/fiber_net.zig	g_base_read	shared-io	std'nin özgün netRead işlevi (fiber olmayan çağıranlar için); install'da BİR KEZ yazılır, sonra salt okunur
 runtime/stdlib_shims/fiber_net.zig	g_base_write	shared-io	std'nin özgün netWrite işlevi (fiber olmayan çağıranlar için); install'da BİR KEZ yazılır, sonra salt okunur
 runtime/stdlib_shims/fiber_net.zig	tl_idle_pipes	tl-net-dial	iş parçacığı-yerel boş boru çiftleri havuzu: kooperatif uyku her eşzamanlı uyuyan fiber için ayrı bir fd ister (reaktör fd'yi (ident,filtre) ile tanır); yalnız o iş parçacığının fiber'ları dokunur

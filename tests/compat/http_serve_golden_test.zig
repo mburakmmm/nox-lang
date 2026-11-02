@@ -577,6 +577,153 @@ test "nox.http.serve: bozuk/saldırgan istekler (dev chunk boyutu, CL+TE, NUL, b
     try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
 }
 
+test "nox.http.serve: SIGTERM'de graceful shutdown — uçuştaki istek biter, boşta keep-alive kapanır, yeni bağlantı alınmaz, serve DÖNER" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows'ta sinyal yok (yalnız nox.http.shutdown())
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\import nox.time
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    if req.target == "/slow":
+        \\        nox.time.sleep_ms(700)
+        \\        print("slow finished")
+        \\        return nox_http_HttpResponse(200, "slow-done", {{}})
+        \\    return nox_http_HttpResponse(200, "ok", {{}})
+        \\
+        \\nox.http.serve({d}, handle)
+        \\print("drained")
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    // Boşta keep-alive bağlantı: bir istek yapıp açık bırak.
+    const idle_fd = try testConnect(port);
+    defer _ = sys.close(idle_fd);
+    {
+        const req = "GET /x HTTP/1.1\r\nHost: x\r\n\r\n";
+        _ = sys.write(idle_fd, req.ptr, req.len);
+        var buf: [256]u8 = undefined;
+        _ = sys.read(idle_fd, &buf, buf.len); // yanıt (bağlantı açık kalır)
+    }
+
+    // Uçuştaki yavaş istek.
+    const slow_thread = try std.Thread.spawn(.{}, struct {
+        fn run(pt: u16, out: *u16) void {
+            out.* = fetchStatus(pt, "/slow");
+        }
+    }.run, .{ port, &slow_status });
+    const ts: sys.timespec = .{ .sec = 0, .nsec = 250 * std.time.ns_per_ms };
+    _ = sys.nanosleep(&ts, null);
+
+    // Uçuş sürerken SIGTERM.
+    try std.posix.kill(child.id.?, .TERM);
+    slow_thread.join();
+
+    // Boşta bağlantı sunucu tarafından kapatıldı (okuma EOF döner, 3 sn içinde).
+    var pfd = [1]sys.pollfd{.{ .fd = idle_fd, .events = sys.POLL.IN, .revents = 0 }};
+    const ready = sys.poll(&pfd, 1, 3000);
+    var idle_closed = false;
+    if (ready > 0) {
+        var b: [16]u8 = undefined;
+        idle_closed = sys.read(idle_fd, &b, b.len) <= 0;
+    }
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try child.wait(io);
+    if (term != .exited) std.debug.print("cocuk surec temiz cikmadi, term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expectEqual(@as(u16, 200), slow_status); // uçuştaki istek tamamlandı
+    try std.testing.expect(idle_closed);
+    try std.testing.expectEqualStrings("slow finished\ndrained\n", stdout_data); // serve döndü ve temizlik kodu çalıştı
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+}
+
+var slow_status: u16 = 0;
+
+test "nox.http.configure: gövde/başlık sınırları ve nox.http.shutdown() çalışır (413/431, sonra graceful çıkış)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    if req.target == "/stop":
+        \\        nox.http.shutdown()
+        \\    return nox_http_HttpResponse(200, str(len(req.body)), {{}})
+        \\
+        \\nox.http.configure(max_body_bytes=10, max_header_bytes=4096, drain_timeout_ms=2000)
+        \\nox.http.serve({d}, handle)
+        \\print("bye")
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    const big_header = try std.fmt.allocPrint(a, "GET /x HTTP/1.1\r\nHost: x\r\nCookie: {s}\r\nConnection: close\r\n\r\n", .{"c" ** 5000});
+    const cases = [_]struct { payload: []const u8, want: u16 }{
+        .{ .payload = "POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789", .want = 200 },
+        .{ .payload = "POST /x HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\nConnection: close\r\n\r\n01234567890", .want = 413 },
+        .{ .payload = big_header, .want = 431 },
+        .{ .payload = "GET /stop HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", .want = 200 },
+    };
+    var got: [cases.len]u16 = undefined;
+    var want: [cases.len]u16 = undefined;
+    for (cases, 0..) |c, i| {
+        got[i] = rawStatus(port, c.payload);
+        want[i] = c.want;
+    }
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expectEqualSlices(u16, &want, &got);
+    try std.testing.expectEqualStrings("bye\n", stdout_data);
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+}
+
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox_http_request_
 // method/target/body/headers`in ARTIK kopyalamayıp `retain` ETTİĞİ yeni
 // yolu, `HttpRequest`nin DÖRT alanının TAMAMINI (method/target/body/

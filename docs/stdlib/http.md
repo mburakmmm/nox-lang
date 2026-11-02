@@ -181,6 +181,27 @@ print(resp.status, resp.body)
 200 GET /hi?x=1
 ```
 
+### Configuration and graceful shutdown
+
+```text
+nox.http.configure(max_body_bytes=0, max_header_bytes=0, read_timeout_ms=0, max_connections=0, drain_timeout_ms=0)
+nox.http.shutdown()
+```
+
+`configure` sets process-wide server limits and must be called **before** `serve*` (an argument of `0` keeps the default). It applies to every worker.
+
+| Argument | Default | Effect |
+|---|---|---|
+| `max_body_bytes` | 10 MiB | a larger request body is answered with `413` |
+| `max_header_bytes` | 16 KiB (4 KiB – 1 MiB) | the request line plus all headers must fit; otherwise `431`. Browsers' cookies are the usual reason to raise it |
+| `read_timeout_ms` | 30000 | longest silence while waiting for a request or its body; the connection is then closed |
+| `max_connections` | 4096 | connections open at once; further ones are refused until some close |
+| `drain_timeout_ms` | 10000 | how long a graceful shutdown waits for requests that are still being handled |
+
+**Graceful shutdown.** `SIGTERM` or `SIGINT` (and `nox.http.shutdown()`, which you may call from a handler) stops the server cleanly: new connections are no longer accepted, requests that are already being handled finish and are answered with `Connection: close`, idle keep-alive connections are closed, and **`serve*` returns** — so the code after it (closing a database, flushing logs) runs and the program exits normally. A second signal exits immediately. After `drain_timeout_ms` the server stops waiting and also returns. On Windows only `nox.http.shutdown()` is available (there is no signal handler). A WebSocket connection already upgraded is not closed by a shutdown: close it from its handler, or rely on `drain_timeout_ms`.
+
+Malformed or hostile requests no longer drop the connection silently: `400` (bad request line or header, conflicting `Content-Length`/`Transfer-Encoding`, `Host` missing in HTTP/1.1), `413`, `431`, `501` (a `Transfer-Encoding` other than `chunked`). A handler that raises an uncaught exception is answered with `500`, the exception class and line are written to standard error, and the server keeps serving.
+
 ### Choosing a `serve` form
 
 - **`serve`** — one worker; simplest; module-level state is shared by every request. Fine for small services and the whole development workflow.
