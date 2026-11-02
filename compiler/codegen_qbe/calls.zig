@@ -599,7 +599,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     }
                     return v;
                 }
-                const result = try self.genParseOrRaise(v, "nox_str_is_valid_int", "nox_str_to_int", .l, "int(): invalid number format");
+                const result = try self.genParseOrRaise(c.args[0], v, "nox_str_is_valid_int", "nox_str_to_int", .l, "int(): invalid number format");
                 try self.releaseIfTemporary(c.args[0], v);
                 return result;
             }
@@ -618,7 +618,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     }
                     return self.convert(v, .d);
                 }
-                const result = try self.genParseOrRaise(v, "nox_str_is_valid_float", "nox_str_to_float", .d, "float(): invalid number format");
+                const result = try self.genParseOrRaise(c.args[0], v, "nox_str_is_valid_float", "nox_str_to_float", .d, "float(): invalid number format");
                 try self.releaseIfTemporary(c.args[0], v);
                 return result;
             }
@@ -1444,7 +1444,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
 /// "buraya vardıysan şunu hesapla" deseni — bkz. `genEqCompareOrJump`in
 /// belge notu, aynı yığın-taşması endişesi burada da geçerli olmasa
 /// bile TUTARLILIK için AYNI desen tercih edildi).
-pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_fn: []const u8, result_qtype: QbeType, message: []const u8) CodegenError!Value {
+pub fn genParseOrRaise(self: *Codegen, arg_expr: ast.Expr, v: Value, valid_fn: []const u8, convert_fn: []const u8, result_qtype: QbeType, message: []const u8) CodegenError!Value {
     const valid_t = try self.newTemp();
     const valid_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{valid_fn});
     try self.qbeCall(.{ .name = valid_t, .ty = .w }, valid_sym, &.{.{ .ty = .l, .text = v.text }});
@@ -1452,6 +1452,9 @@ pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_f
     const ok_label = try self.newLabel("parse_ok");
     try self.qbeJnz(valid_t, ok_label, err_label);
     try self.qbeLabel(err_label);
+    // v2.0.121: argüman TAZE bir geçici ise (`int(f())`, `int(ctx.param("id"))`) başarı yolu onu `releaseIfTemporary` ile bırakır; HATA yolu da bırakmalı, yoksa her yakalanan
+    // ValueError bir `str` sızdırırdı (HTTP handler'ında `int(ctx.param("id"))` her kötü istekte).
+    try self.releaseIfTemporary(arg_expr, v);
 
     const msg_value = try self.emitStringLiteral(message);
     const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;

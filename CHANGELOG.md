@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.121]
+
+### Düzeltildi
+
+- **`int(f())` / `float(f())` başarısız olunca geçici argüman sızıyordu.** `int()`/`float()` bir ValueError fırlattığında, argüman taze bir değerse (çağrı sonucu, `ctx.param("id")`, `d["k"]` okuması) hata yolunda serbest bırakılmıyordu: başarı yolu bırakıyor, hata yolu bırakmıyordu. Yakalanan her `ValueError` bir `str` sızdırıyordu (HTTP handler'ında `int(ctx.param("id"))` ile geçersiz bir yol parametresi gelen her istek, süreç kapanırken "memory leak detected" raporu). Her iki backend'de düzeltildi; golden: `parse_error_temp_release` (eski derleyicide sızıntı raporlar).
+
 ## [2.0.120]
 
 ### Eklendi

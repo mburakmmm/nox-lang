@@ -1,0 +1,35 @@
+# int()/float() başarısız olduğunda (ValueError) TAZE geçici argüman (çağrı sonucu, dict okuması) serbest bırakılır: sızıntı yok, doğru değerler.
+def g(n: int) -> str:
+    return "ab" + str(n)
+
+def a() -> int:
+    try:
+        return int(g(7))
+    except ValueError:
+        return -1
+
+def b() -> float:
+    try:
+        return float(g(8))
+    except ValueError:
+        return -2.0
+
+def c(d: dict[str, str]) -> int:
+    try:
+        return int(d["id"])
+    except ValueError:
+        return -3
+
+def ok() -> int:
+    return int("4" + str(2))
+
+i: int = 0
+total: int = 0
+while i < 100:
+    total = total + a() + c({"id": "x" + str(i)})
+    i = i + 1
+print(total)
+print(a())
+print(b())
+print(c({"id": "12"}))
+print(ok())
