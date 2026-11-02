@@ -394,6 +394,101 @@ test "nox.http.serve: handler İÇİNDEN giden nox.http.request (fiber, kooperat
     try std.testing.expectEqual(@as(usize, N), ok_lines);
 }
 
+/// `path` için bir istek atıp yanıtın durum kodunu döndürür (bağlantı kapanana kadar okur); okunamazsa 0.
+fn fetchStatus(port: u16, path: []const u8) u16 {
+    const fd = testConnect(port) catch return 0;
+    defer _ = sys.close(fd);
+    testSendGet(fd, path);
+    var buf: [512]u8 = undefined;
+    var total: usize = 0;
+    while (total < buf.len) {
+        const n = sys.read(fd, buf[total..].ptr, buf.len - total);
+        if (n <= 0) break;
+        total += @intCast(n);
+    }
+    if (total < 12 or !std.mem.startsWith(u8, buf[0..total], "HTTP/1.")) return 0;
+    return std.fmt.parseInt(u16, buf[9..12], 10) catch 0;
+}
+
+test "nox.http.serve: handler'dan sızan yakalanmamış istisna 500 döner, sunucu ÖLMEZ ve sonraki istekleri sunar (IndexError/ZeroDivisionError/özel sınıf)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Eskiden bu üç yol da sarmalayıcının null yanıtın alanlarını okumasıyla tüm süreci SIGSEGV (139) ile sessizce öldürüyordu.
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\class AppError(Exception):
+        \\    pass
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    if req.target == "/boom":
+        \\        raise AppError("kaboom")
+        \\    if req.target == "/idx":
+        \\        xs: list[int] = [1, 2]
+        \\        return nox_http_HttpResponse(200, str(xs[5]), {{}})
+        \\    if req.target == "/div":
+        \\        z: int = len(req.body)
+        \\        return nox_http_HttpResponse(200, str(10 // z), {{}})
+        \\    return nox_http_HttpResponse(200, "ok", {{}})
+        \\
+        \\nox.http.serve({d}, handle, 7)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    // Sıralı istekler: her hata yolundan SONRA sunucu hâlâ yanıt vermeli.
+    const paths = [_][]const u8{ "/ok", "/boom", "/ok", "/idx", "/ok", "/div", "/ok" };
+    const want = [_]u16{ 200, 500, 200, 500, 200, 500, 200 };
+    var got: [7]u16 = undefined;
+    for (paths, 0..) |path, i| got[i] = fetchStatus(port, path);
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    if (term != .exited) std.debug.print("cocuk surec normal cikmadi (sunucu oldu mu?), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expectEqualSlices(u16, &want, &got);
+
+    // stderr'de YALNIZCA üç istisna raporu olmalı (sızıntı/UAF çıktısı yok).
+    var reports: usize = 0;
+    var it = std.mem.splitScalar(u8, stderr_data, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        try std.testing.expect(std.mem.startsWith(u8, line, "nox: uncaught exception in a server handler: "));
+        reports += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), reports);
+    try std.testing.expect(std.mem.indexOf(u8, stderr_data, "AppError (line 8)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, stderr_data, "IndexError") != null);
+    try std.testing.expect(std.mem.indexOf(u8, stderr_data, "ZeroDivisionError") != null);
+}
+
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox_http_request_
 // method/target/body/headers`in ARTIK kopyalamayıp `retain` ETTİĞİ yeni
 // yolu, `HttpRequest`nin DÖRT alanının TAMAMINI (method/target/body/

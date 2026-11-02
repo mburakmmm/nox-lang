@@ -857,6 +857,18 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
 
     try self.releaseValueIfSet(req_obj.text, req_obj.heap, req_obj.elem_qtype, req_obj.class_name, req_obj.elem_heap_info, req_obj.dict_info);
 
+    // Handler yakalanmamış bir istisna fırlattıysa dönüş değeri null'dur: alanlarını okumak sunucuyu SIGSEGV ile öldürürdü. İstisna raporlanır/serbest bırakılır ve sarmalayıcı null
+    // döner; `connectionEntry` bunu 500 yanıtına çevirir ve bağlantı/sunucu yaşamaya devam eder.
+    const pending = try self.newTemp();
+    try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const exc_label = try self.newLabel("http_handler_exc");
+    const ok_label = try self.newLabel("http_handler_ok");
+    try self.qbeJnz(pending, exc_label, ok_label);
+    try self.qbeLabel(exc_label);
+    try self.qbeCall(null, "$nox_server_handler_exception", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeRet("0");
+    try self.qbeLabel(ok_label);
+
     const status = try self.genFieldReadFromValue(resp_obj, "status");
     const body = try self.genFieldReadFromValue(resp_obj, "body");
     const headers = try self.genFieldReadFromValue(resp_obj, "headers");
@@ -913,6 +925,9 @@ pub fn genHttpServeWsWrapper(self: *Codegen, spec: types.HttpServeWsWrapperSpec)
     try self.qbeCall(null, ws_handler_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = conn_obj.text } });
 
     try self.releaseValueIfSet(conn_obj.text, conn_obj.heap, conn_obj.elem_qtype, conn_obj.class_name, conn_obj.elem_heap_info, conn_obj.dict_info);
+
+    // Yakalanmamış istisna: raporla ve temizle (bekleyen istisna fiber'da kalırsa sonraki işlemleri bozar); oturum kapanır, sunucu yaşar.
+    try self.qbeCall(null, "$nox_server_handler_exception", &.{.{ .ty = .l, .text = RT_PARAM }});
 
     try self.qbeRet("0");
     try self.qbeFuncEnd();

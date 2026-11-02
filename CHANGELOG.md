@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.116]
+
+### Düzeltildi
+
+- **KRİTİK: sunucu handler'ından sızan yakalanmamış istisna tüm `nox.http.serve*` sürecini sessizce SIGSEGV ile öldürüyordu.** Özel bir sınıf, `IndexError` ya da `ZeroDivisionError` fırlatan tek bir istek yeterliydi (çıkış 139, hiçbir mesaj). Artık o istek 500 döner, istisna sınıfı ve satırı stderr'e raporlanır ve sunucu sonraki isteklere hizmet vermeye devam eder (QBE, LLVM ve `serve_multicore` dahil). WebSocket handler'ı için de aynı raporlama/temizlik. Golden test eklendi.
+
 ## [2.0.115]
 
 ### Eklendi

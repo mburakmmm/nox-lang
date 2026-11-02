@@ -148,6 +148,22 @@ export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
     haltProcess();
 }
 
+/// Bir sunucu işleyicisinden (HTTP `serve*` handler'ı, WebSocket handler'ı) yakalanmadan sızan istisna için: nesneyi alır, sınıf adını ve `raise` satırını stderr'e raporlar, nesneyi
+/// serbest bırakır ve DÖNER (süreç ölmez). Çağıran taraf (üretilen sarmalayıcı) HTTP'de 500 yanıtı, WebSocket'te oturum kapanışıyla devam eder. Eskiden sarmalayıcı, istisna sonrası dönen
+/// null yanıtın alanlarını okuyup tüm sunucuyu sessizce SIGSEGV ile öldürüyordu. İstisna yoksa hiçbir şey yapmaz.
+pub export fn nox_server_handler_exception(rt: ?*anyopaque) void {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    const pe = pendingException(state);
+    const obj = pe.obj.* orelse return;
+    const line = pe.line.*;
+    pe.obj.* = null;
+    var class_name: [*:0]const u8 = "unknown class";
+    const tag: *const i64 = @ptrCast(@alignCast(obj));
+    if (dispatch_registry.classNameFn()) |f| class_name = abi_ptr.cstr(f(abi_ptr.arg(rt), tag.*, abi_ptr.arg(obj)));
+    diag_sink.report(rt, "nox: uncaught exception in a server handler: {s} (line {d}) - the request ends with 500, the server keeps running\n", .{ class_name, line });
+    if (dispatch_registry.classReleaseFn()) |f| f(abi_ptr.arg(rt), tag.*, abi_ptr.arg(obj));
+}
+
 /// v2.0 madde 4 (§3): sabit-genişlikli bir tamsayı işleminin (`u8`/`i32`/
 /// vb.) QBE (varsayılan, DERLEME-zamanı DEĞİL ÇALIŞMA-zamanı taşma
 /// kontrollü) backend'inde taşması durumunda çağrılır — `--release`
