@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.119]
+
+### Düzeltildi
+
+- v2.0.118'in eklediği `nox_http_config_set_raw`/`nox_http_shutdown_raw` dışa aktarımları `wasm_abi_table.zig`ye işlenmemişti (CI `gen_wasm_abi.py --check` kırmızı); tablo yenilendi.
+
 ## [2.0.118]
 
 ### Eklendi
