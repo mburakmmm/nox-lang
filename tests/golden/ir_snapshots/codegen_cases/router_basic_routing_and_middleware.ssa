@@ -3683,8 +3683,8 @@ export function $nox_http_HttpStream__fail(l %rt, l %p_self, l %p_what) {
     ret
 @exc_continue14
     %t27 =l add %t15, 24
-    storel 337, %t27
-    call $nox_raise(l %rt, l %t15, l 337)
+    storel 341, %t27
+    call $nox_raise(l %rt, l %t15, l 341)
     %t28 =w call $nox_exception_pending(l %rt)
     jnz %t28, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -3765,8 +3765,8 @@ export function $nox_http_HttpStream__fail(l %rt, l %p_self, l %p_what) {
     ret
 @exc_continue35
     %t53 =l add %t41, 24
-    storel 338, %t53
-    call $nox_raise(l %rt, l %t41, l 338)
+    storel 342, %t53
+    call $nox_raise(l %rt, l %t41, l 342)
     %t54 =w call $nox_exception_pending(l %rt)
     jnz %t54, @exc_propagate36, @exc_continue37
 @exc_propagate36
@@ -3861,8 +3861,8 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     ret 0
 @exc_continue14
     %t29 =l add %t11, 24
-    storel 342, %t29
-    call $nox_raise(l %rt, l %t11, l 342)
+    storel 346, %t29
+    call $nox_raise(l %rt, l %t11, l 346)
     %t30 =w call $nox_exception_pending(l %rt)
     jnz %t30, @exc_propagate21, @exc_continue22
 @exc_propagate21
@@ -3969,8 +3969,8 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     ret 0
 @exc_continue43
     %t63 =l add %t45, 24
-    storel 344, %t63
-    call $nox_raise(l %rt, l %t45, l 344)
+    storel 348, %t63
+    call $nox_raise(l %rt, l %t45, l 348)
     %t64 =w call $nox_exception_pending(l %rt)
     jnz %t64, @exc_propagate50, @exc_continue51
 @exc_propagate50
@@ -4076,8 +4076,8 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     ret 0
 @exc_continue72
     %t96 =l add %t78, 24
-    storel 346, %t96
-    call $nox_raise(l %rt, l %t78, l 346)
+    storel 350, %t96
+    call $nox_raise(l %rt, l %t78, l 350)
     %t97 =w call $nox_exception_pending(l %rt)
     jnz %t97, @exc_propagate79, @exc_continue80
 @exc_propagate79
@@ -4261,8 +4261,8 @@ export function $nox_http_HttpStream_write(l %rt, l %p_self, l %p_content) {
     ret
 @exc_continue14
     %t22 =l add %t10, 24
-    storel 355, %t22
-    call $nox_raise(l %rt, l %t10, l 355)
+    storel 359, %t22
+    call $nox_raise(l %rt, l %t10, l 359)
     %t23 =w call $nox_exception_pending(l %rt)
     jnz %t23, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -4328,8 +4328,8 @@ export function $nox_http_HttpStream_write(l %rt, l %p_self, l %p_content) {
     ret
 @exc_continue31
     %t45 =l add %t33, 24
-    storel 357, %t45
-    call $nox_raise(l %rt, l %t33, l 357)
+    storel 361, %t45
+    call $nox_raise(l %rt, l %t33, l 361)
     %t46 =w call $nox_exception_pending(l %rt)
     jnz %t46, @exc_propagate32, @exc_continue33
 @exc_propagate32
@@ -4419,8 +4419,8 @@ export function $nox_http_HttpStream_finish(l %rt, l %p_self) {
     ret
 @exc_continue14
     %t21 =l add %t9, 24
-    storel 364, %t21
-    call $nox_raise(l %rt, l %t9, l 364)
+    storel 368, %t21
+    call $nox_raise(l %rt, l %t9, l 368)
     %t22 =w call $nox_exception_pending(l %rt)
     jnz %t22, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -4486,8 +4486,8 @@ export function $nox_http_HttpStream_finish(l %rt, l %p_self) {
     ret
 @exc_continue31
     %t44 =l add %t32, 24
-    storel 366, %t44
-    call $nox_raise(l %rt, l %t32, l 366)
+    storel 370, %t44
+    call $nox_raise(l %rt, l %t32, l 370)
     %t45 =w call $nox_exception_pending(l %rt)
     jnz %t45, @exc_propagate32, @exc_continue33
 @exc_propagate32
@@ -11399,13 +11399,23 @@ export function $nox_http_set_http2(l %rt, w %p_enabled) {
 @fn_end3
     ret
 }
-export function $nox_http_client_pool(l %rt, l %p_max_idle) {
+export function $nox_http_client_pool(l %rt, l %p_max_idle, l %p_idle_timeout_ms) {
 @start
     %t0 =l alloc8 8
+    %t1 =l alloc8 8
     storel %p_max_idle, %t0
-    %t1 =l loadl %t0
-    call $nox_http_client_pool_set_raw(l %t1)
-@fn_end0
+    storel %p_idle_timeout_ms, %t1
+    %t2 =l loadl %t0
+    call $nox_http_client_pool_set_raw(l %t2)
+    %t3 =l loadl %t1
+    %t4 =w csgel %t3, 0
+    jnz %t4, @if_then1, @if_end0
+@if_then1
+    %t5 =l loadl %t1
+    call $nox_http_client_pool_idle_timeout_raw(l %t5)
+    jmp @if_end0
+@if_end0
+@fn_end2
     ret
 }
 export function l $nox_http_client_idle_connections(l %rt) {
@@ -11498,8 +11508,8 @@ export function l $nox_http_listen(l %rt, l %p_port) {
     ret 0
 @exc_continue20
     %t27 =l add %t15, 24
-    storel 203, %t27
-    call $nox_raise(l %rt, l %t15, l 203)
+    storel 207, %t27
+    call $nox_raise(l %rt, l %t15, l 207)
     %t28 =w call $nox_exception_pending(l %rt)
     jnz %t28, @exc_propagate21, @exc_continue22
 @exc_propagate21
@@ -11606,8 +11616,8 @@ export function l $nox_http_listen_v6(l %rt, l %p_port, w %p_v6_only) {
     ret 0
 @exc_continue22
     %t31 =l add %t19, 24
-    storel 221, %t31
-    call $nox_raise(l %rt, l %t19, l 221)
+    storel 225, %t31
+    call $nox_raise(l %rt, l %t19, l 225)
     %t32 =w call $nox_exception_pending(l %rt)
     jnz %t32, @exc_propagate23, @exc_continue24
 @exc_propagate23
@@ -11725,8 +11735,8 @@ export function l $nox_http_get(l %rt, l %p_url, l %p_headers) {
     ret 0
 @exc_continue14
     %t36 =l add %t16, 24
-    storel 228, %t36
-    call $nox_raise(l %rt, l %t16, l 228)
+    storel 232, %t36
+    call $nox_raise(l %rt, l %t16, l 232)
     %t37 =w call $nox_exception_pending(l %rt)
     jnz %t37, @exc_propagate24, @exc_continue25
 @exc_propagate24
@@ -11991,8 +12001,8 @@ export function l $nox_http_post(l %rt, l %p_url, l %p_body, l %p_headers) {
     ret 0
 @exc_continue14
     %t38 =l add %t18, 24
-    storel 245, %t38
-    call $nox_raise(l %rt, l %t18, l 245)
+    storel 249, %t38
+    call $nox_raise(l %rt, l %t18, l 249)
     %t39 =w call $nox_exception_pending(l %rt)
     jnz %t39, @exc_propagate24, @exc_continue25
 @exc_propagate24
@@ -12347,8 +12357,8 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     ret 0
 @exc_continue36
     %t77 =l add %t57, 24
-    storel 267, %t77
-    call $nox_raise(l %rt, l %t57, l 267)
+    storel 271, %t77
+    call $nox_raise(l %rt, l %t57, l 271)
     %t78 =w call $nox_exception_pending(l %rt)
     jnz %t78, @exc_propagate46, @exc_continue47
 @exc_propagate46
@@ -12514,8 +12524,8 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     ret 0
 @exc_continue83
     %t126 =l add %t106, 24
-    storel 269, %t126
-    call $nox_raise(l %rt, l %t106, l 269)
+    storel 273, %t126
+    call $nox_raise(l %rt, l %t106, l 273)
     %t127 =w call $nox_exception_pending(l %rt)
     jnz %t127, @exc_propagate93, @exc_continue94
 @exc_propagate93
@@ -12677,8 +12687,8 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     ret 0
 @exc_continue128
     %t173 =l add %t153, 24
-    storel 270, %t173
-    call $nox_raise(l %rt, l %t153, l 270)
+    storel 274, %t173
+    call $nox_raise(l %rt, l %t153, l 274)
     %t174 =w call $nox_exception_pending(l %rt)
     jnz %t174, @exc_propagate138, @exc_continue139
 @exc_propagate138
@@ -13078,8 +13088,8 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     ret 0
 @exc_continue28
     %t54 =l add %t42, 24
-    storel 390, %t54
-    call $nox_raise(l %rt, l %t42, l 390)
+    storel 394, %t54
+    call $nox_raise(l %rt, l %t42, l 394)
     %t55 =w call $nox_exception_pending(l %rt)
     jnz %t55, @exc_propagate29, @exc_continue30
 @exc_propagate29
@@ -13183,8 +13193,8 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     ret 0
 @exc_continue57
     %t87 =l add %t75, 24
-    storel 392, %t87
-    call $nox_raise(l %rt, l %t75, l 392)
+    storel 396, %t87
+    call $nox_raise(l %rt, l %t75, l 396)
     %t88 =w call $nox_exception_pending(l %rt)
     jnz %t88, @exc_propagate58, @exc_continue59
 @exc_propagate58
@@ -13284,8 +13294,8 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     ret 0
 @exc_continue84
     %t118 =l add %t106, 24
-    storel 393, %t118
-    call $nox_raise(l %rt, l %t106, l 393)
+    storel 397, %t118
+    call $nox_raise(l %rt, l %t106, l 397)
     %t119 =w call $nox_exception_pending(l %rt)
     jnz %t119, @exc_propagate85, @exc_continue86
 @exc_propagate85
@@ -13459,8 +13469,8 @@ export function l $nox_http_stream_upload(l %rt, l %p_method, l %p_url, l %p_hea
     ret 0
 @exc_continue8
     %t16 =l add %t9, 24
-    storel 408, %t16
-    call $nox_raise(l %rt, l %t9, l 408)
+    storel 412, %t16
+    call $nox_raise(l %rt, l %t9, l 412)
     %t17 =w call $nox_exception_pending(l %rt)
     jnz %t17, @exc_propagate9, @exc_continue10
 @exc_propagate9

@@ -342,6 +342,34 @@ test "nox.http.request: yeniden kullanılan bağlantı yanıtsız kapanırsa GET
     , "200\n200\n200\npost failed\n", 3, 6);
 }
 
+test "nox.http.request: boşta bağlantı yaş sınırı — süre dolunca temizleyici bağlantıyı kapatır, sonraki istek yeni bağlantı açar" {
+    try runPoolScenario(.keep,
+        \\nox.http.client_pool(32, 300)
+        \\print(nox.http.get(url, {{}}).status)
+        \\print(nox.http.client_idle_connections())
+        \\nox.time.sleep_ms(1500)
+        \\print(nox.http.client_idle_connections())
+        \\print(nox.http.get(url, {{}}).status)
+        \\print(nox.http.client_idle_connections())
+        \\
+    , "200\n1\n0\n200\n1\n", 2, 2);
+}
+
+test "nox.http.request: yeniden kullanılan bağlantı eski bir yaş damgası yüzünden erken kapatılmaz; 0 yaş sınırını kaldırır" {
+    try runPoolScenario(.keep,
+        \\nox.http.client_pool(32, 600)
+        \\print(nox.http.get(url, {{}}).status)
+        \\nox.time.sleep_ms(400)
+        \\print(nox.http.get(url, {{}}).status)
+        \\nox.time.sleep_ms(400)
+        \\print(nox.http.client_idle_connections())
+        \\nox.http.client_pool(32, 0)
+        \\nox.time.sleep_ms(1200)
+        \\print(nox.http.client_idle_connections())
+        \\
+    , "200\n200\n1\n1\n", 1, 2);
+}
+
 fn sleepMs(ms: u64) void {
     const ts: sys.timespec = .{ .sec = @intCast(ms / 1000), .nsec = @intCast((ms % 1000) * std.time.ns_per_ms) };
     _ = sys.nanosleep(&ts, null);

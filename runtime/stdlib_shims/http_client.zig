@@ -460,9 +460,14 @@ const PoolState = struct {
     ca_tried: bool = false,
     now_refreshed_ms: u64 = 0,
     client: std.http.Client = undefined,
+    /// Boşta bağlantının ilk görüldüğü an (bağlantı ADRESİ → ms). Yalnızca std havuz mutex'i (`connection_pool.mutex`) altında okunur/yazılır; anahtarlar asla dereference edilmez.
+    idle_since: std.AutoHashMapUnmanaged(usize, u64) = .empty,
 };
 var g_pool: PoolState = .{};
 var g_pool_size: std.atomic.Value(usize) = .init(32);
+/// Boşta bağlantı ömrü (ms); 0 = sınırsız. Go'nun `DefaultTransport.IdleConnTimeout` değeriyle aynı varsayılan.
+var g_pool_idle_timeout_ms: std.atomic.Value(u64) = .init(90_000);
+var g_reaper_running: std.atomic.Value(bool) = .init(false);
 const POOL_MAX_SIZE: usize = 1024;
 /// std `Client.now`ı (sertifika geçerlilik denetimi) yalnızca ilk HTTPS isteğinde yazar; uzun ömürlü istemcide bayatlamaması için bu aralıkta yenilenir.
 const POOL_NOW_REFRESH_MS: u64 = 10 * 60 * 1000;
@@ -520,10 +525,90 @@ fn prunePool(client: *std.http.Client, uri: std.Uri, https: bool, force_all: boo
         if (force_all or idleSocketDead(c)) {
             pool.free.remove(n);
             pool.free_len -= 1;
+            _ = g_pool.idle_since.remove(@intFromPtr(c));
             c.destroy(io);
-        } else return true;
+        } else {
+            // Bu bağlantı şimdi kullanılacak: yaş damgası silinir (yeniden bırakıldığında taze görülsün).
+            _ = g_pool.idle_since.remove(@intFromPtr(c));
+            return true;
+        }
     }
     return false;
+}
+
+/// `pool.mutex` altında: (1) artık boşta olmayan bağlantıların damgalarını siler, (2) ilk kez görülen boşta bağlantılara damga vurur, (3) `timeout_ms`i aşan boşta bağlantıları kapatır.
+/// Damga "ilk görülme" anıdır: temizleyici ≤ aralık kadar geç görebilir, yani yaş en fazla bir aralık eksik tahmin edilir (fazla DEĞİL: bağlantı erken kapatılmaz).
+fn sweepIdleLocked(pool: *std.http.Client.ConnectionPool, io: std.Io, now_ms: u64, timeout_ms: u64) void {
+    // Boşta olmayanları ele: damga tablosunu bir "görüldü" kümesiyle karşılaştır.
+    var seen: std.AutoHashMapUnmanaged(usize, void) = .empty;
+    defer seen.deinit(std.heap.c_allocator);
+    var node = pool.free.first;
+    while (node) |n| {
+        node = n.next;
+        const c: *std.http.Client.Connection = @alignCast(@fieldParentPtr("pool_node", n));
+        const key = @intFromPtr(c);
+        if (g_pool.idle_since.get(key)) |since| {
+            if (timeout_ms != 0 and now_ms -| since >= timeout_ms) {
+                pool.free.remove(n);
+                pool.free_len -= 1;
+                _ = g_pool.idle_since.remove(key);
+                c.destroy(io);
+                continue;
+            }
+        } else {
+            g_pool.idle_since.put(std.heap.c_allocator, key, now_ms) catch {};
+        }
+        seen.put(std.heap.c_allocator, key, {}) catch {};
+    }
+    var it = g_pool.idle_since.keyIterator();
+    var stale: std.ArrayListUnmanaged(usize) = .empty;
+    defer stale.deinit(std.heap.c_allocator);
+    while (it.next()) |k| if (!seen.contains(k.*)) stale.append(std.heap.c_allocator, k.*) catch {};
+    for (stale.items) |k| _ = g_pool.idle_since.remove(k);
+}
+
+/// Temizleyici iş parçacığı: havuzda boşta bağlantı oldukça yaşa göre eskileri kapatır; havuz 5 sn boş kalınca çıkar (sonraki istek gerekirse yeniden başlatır).
+fn reaperLoop() void {
+    var empty_ms: u64 = 0;
+    while (true) {
+        const timeout = g_pool_idle_timeout_ms.load(.monotonic);
+        const interval: u64 = if (timeout == 0) 1000 else std.math.clamp(timeout / 4, 50, 1000);
+        sleepMs(@intCast(interval));
+        g_pool.lock.lock();
+        const ready = g_pool.ready;
+        g_pool.lock.unlock();
+        if (!ready) continue;
+        const io = g_pool.client.io;
+        const pool = &g_pool.client.connection_pool;
+        pool.mutex.lockUncancelable(io);
+        sweepIdleLocked(pool, io, monotonicMs(), timeout);
+        const idle = pool.free_len;
+        pool.mutex.unlock(io);
+        if (idle == 0) {
+            empty_ms += interval;
+            if (empty_ms >= 5000) {
+                g_reaper_running.store(false, .release);
+                // Bu arada bir istek bağlantı bıraktıysa (ve yeni temizleyici başlatmadıysa) devam et.
+                if (g_pool.client.connection_pool.free_len > 0 and !g_reaper_running.swap(true, .acq_rel)) {
+                    empty_ms = 0;
+                    continue;
+                }
+                return;
+            }
+        } else empty_ms = 0;
+    }
+}
+
+/// Havuzda (ipucu olarak, kilitsiz okunan) boşta bağlantı varsa ve yaş sınırı açıksa temizleyiciyi başlatır.
+fn ensureReaper() void {
+    if (g_pool_idle_timeout_ms.load(.monotonic) == 0) return;
+    if (!g_pool.ready or g_pool.client.connection_pool.free_len == 0) return;
+    if (g_reaper_running.swap(true, .acq_rel)) return;
+    const th = std.Thread.spawn(.{}, reaperLoop, .{}) catch {
+        g_reaper_running.store(false, .release);
+        return;
+    };
+    th.detach();
 }
 
 /// Boşta havuzu `new_size` bağlantıya indirir (en eskiler kapanır) ve üst sınırı ayarlar.
@@ -549,6 +634,11 @@ fn resizePool(new_size: usize) void {
 export fn nox_http_client_pool_set_raw(max_idle: i64) callconv(.c) void {
     const n: usize = if (max_idle < 0) 0 else @min(@as(usize, @intCast(max_idle)), POOL_MAX_SIZE);
     resizePool(n);
+}
+
+/// `nox.http.client_pool(.., idle_timeout_ms)`: boşta bağlantı ömrü (0 = sınırsız). Yeni değer bir sonraki taramada uygulanır.
+export fn nox_http_client_pool_idle_timeout_raw(ms: i64) callconv(.c) void {
+    g_pool_idle_timeout_ms.store(if (ms < 0) 0 else @intCast(ms), .monotonic);
 }
 
 /// Şu an havuzda bekleyen boşta bağlantı sayısı (`nox.http.client_idle_connections()`).
@@ -635,6 +725,8 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         }
         break :blk &local_client;
     };
+
+    defer if (pooled) ensureReaper();
 
     var attempt: u8 = 0;
     retry: while (true) {

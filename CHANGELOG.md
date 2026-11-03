@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.128]
+
+### Eklendi
+
+- **Bağlantı havuzunda boşta yaş sınırı:** havuzda `idle_timeout_ms` (varsayılan 90 sn, Go `DefaultTransport` ile aynı) boyunca boşta kalan bağlantı kapatılır; eskiden yalnızca sunucu kapatınca ya da havuz dolunca kapanıyordu (boşta bir süreç 32 soketi sonsuza dek tutabiliyordu). `nox.http.client_pool(max_idle, idle_timeout_ms=...)`; `0` sınırsız, verilmezse mevcut değer korunur. Havuzda boşta bağlantı varken küçük bir temizleyici iş parçacığı çalışır, havuz birkaç sn boş kalınca kendiliğinden çıkar. Yeniden kullanılan bağlantının eski damgası silinir (erken kapatma yok).
+
 ## [2.0.127]
 
 ### Eklendi

@@ -101,7 +101,7 @@ Outgoing requests share a process-wide pool of idle connections. When a request 
 
 | Call | Meaning |
 |---|---|
-| `nox.http.client_pool(max_idle)` | the most idle connections kept (default `32`, at most `1024`); `0` turns pooling off: idle connections close at once and every request opens and closes its own |
+| `nox.http.client_pool(max_idle, idle_timeout_ms=...)` | the most idle connections kept (default `32`, at most `1024`); `0` turns pooling off: idle connections close at once and every request opens and closes its own. `idle_timeout_ms` is how long a connection may sit idle in the pool (default `90000`; `0` = no limit; leave it out to keep the current value) |
 | `nox.http.client_idle_connections()` | how many idle connections the pool holds right now |
 
 ```nox
@@ -123,7 +123,7 @@ How stale connections are handled — a server may close an idle connection at a
 - Before a request, the pool checks the idle connection it is about to reuse; one the server has already closed is discarded and a fresh connection is opened. You never see an error for this.
 - If the connection dies in the instant between that check and the request, an **idempotent** request (`GET`, `HEAD`, `OPTIONS`, `PUT`, `DELETE`, `TRACE`) that failed before any response arrived is retried **once** on a fresh connection. `POST` and `PATCH` are never retried automatically, because the server may already have acted on them; such a request fails with `HttpError` and your code decides.
 - Only responses that were read completely return their connection to the pool; a timeout, a truncated body or a `Connection: close` response closes it. A request with `timeout_ms` is cancelled by closing its connection, which is never reused.
-- Idle connections stay open until the server closes them, the pool is full (the oldest are closed first) or `client_pool` shrinks the pool. Streaming calls (`nox.http.stream`, `stream_upload`) open their own connections and do not use the pool.
+- Idle connections are closed after `idle_timeout_ms` (90 s by default, measured from when the pool first sees them idle, to within a fraction of a second), when the server closes them, when the pool is full (the oldest go first) or when `client_pool` shrinks the pool. A small background thread does the sweeping and exits on its own once the pool has been empty for a few seconds. Streaming calls (`nox.http.stream`, `stream_upload`) open their own connections and do not use the pool.
 - HTTPS certificate checks use the current time, refreshed every ten minutes.
 
 ### Streaming large bodies
