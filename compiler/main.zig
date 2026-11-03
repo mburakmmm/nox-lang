@@ -1167,6 +1167,12 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
                 printErr("-g (debug info) is only supported by the QBE backend: use --backend qbe -g\n", .{});
                 std.process.exit(1);
             }
+            // Masaüstü `--target` (wasm/mobil yukarıda döndü) LLVM yolunda desteklenmez: `.ll` yerel
+            // runtime'a bağlanır ve hata vermeden YANLIŞ platformun ikilisi (örn. Mach-O) üretilirdi.
+            if (target) |t| {
+                printErr("--backend llvm does not support cross target '{s}' (desktop targets build through the QBE backend: drop --backend or use --backend qbe)\n", .{t});
+                std.process.exit(1);
+            }
             return true;
         },
         .auto => {},

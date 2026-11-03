@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.131]
+
+### Düzeltildi
+
+- **`--backend llvm --target windows-x64` (ve diğer masaüstü hedefler) sessizce yanlış ikili üretiyordu:** hata vermeden başarılı görünüp ana makinenin yerel ikilisini (ör. Mach-O) üretiyordu; Windows'ta "geçerli bir uygulama değil" olarak patladı. Artık açık hata (çıkış 1) verir; masaüstü çapraz derleme QBE yoluyla yapılır. wasm ve mobil hedefler etkilenmez. Test: `tests/cli/backend_default_test.zig`. Bkz. spec §3.336.
+
 ## [2.0.130]
 
 ### Düzeltildi

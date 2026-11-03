@@ -131,3 +131,13 @@ test "noxc build -g --backend llvm: acik hata (LLVM hata ayiklama bilgisi uretme
     try std.testing.expect(r.term == .exited and r.term.exited == 1);
     try std.testing.expect(std.mem.indexOf(u8, r.stderr, "--backend qbe -g") != null);
 }
+
+test "noxc build --backend llvm --target windows-x64: acik hata (yanlis platform ikilisi uretilmez)" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    const r = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--backend", "llvm", "--target", "windows-x64", "x.nox" } });
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    try std.testing.expect(r.term == .exited and r.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, r.stderr, "does not support cross target 'windows-x64'") != null);
+}
