@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.132]
+
+### Düzeltildi
+
+- **Windows CI (v2.0.125'ten beri kırmızıydı):** `tests/compat/http_serve_golden_test.zig` Windows'ta BAĞLANMIYORDU (`lld-link: undefined symbol: kill`): testler Windows'ta başta atlansa da `std.posix.kill` çağrıları yine çözümleniyordu. Beş çağrı, Windows'ta derleme zamanında devre dışı kalan tek bir `sendSigterm` yardımcısına taşındı. Gerçek bir Windows 11 makinesinde (SSH ile geliştirme döngüsü) doğrulandı: dosyadaki 26 testten 15'i geçer, 11'i kasıtlı atlanır; `http_stdlib_golden_test`te de başarısız yok (yalnızca makinede `gzip` aracı olmayan iki test hariç).
+- **macOS CI testi kararsızlığı:** "yeniden kullanılan bağlantı eski bir yaş damgası yüzünden erken kapatılmaz" testi 600 ms sınırı + 400 ms uykularla yoğun CI'da meşru biçimde taşıyordu (bağlantı gerçekten sınırdan uzun boşta kalıyordu). Süreler 3 sn sınırı + 1,8 sn uykuya genişletildi; test aynı şeyi (toplam yaş sınırı aşar, boşta süre aşmaz) kanıtlamaya devam eder.
+
 ## [2.0.131]
 
 ### Düzeltildi

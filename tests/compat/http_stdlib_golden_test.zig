@@ -355,16 +355,18 @@ test "nox.http.request: boşta bağlantı yaş sınırı — süre dolunca temiz
     , "200\n1\n0\n200\n1\n", 2, 2);
 }
 
+// Süreler yoğun CI makinelerinde uykuların uzamasına dayanacak kadar geniştir: toplam yaş (3,6 sn) sınırı (3 sn) aşar,
+// boşta süre (1,8 sn) aşmaz; payı 1,2 sn. (600 ms sınırı + 400 ms uykular macOS CI'da 1 koşuda meşru biçimde taşmıştı.)
 test "nox.http.request: yeniden kullanılan bağlantı eski bir yaş damgası yüzünden erken kapatılmaz; 0 yaş sınırını kaldırır" {
     try runPoolScenario(.keep,
-        \\nox.http.client_pool(32, 600)
+        \\nox.http.client_pool(32, 3000)
         \\print(nox.http.get(url, {{}}).status)
-        \\nox.time.sleep_ms(400)
+        \\nox.time.sleep_ms(1800)
         \\print(nox.http.get(url, {{}}).status)
-        \\nox.time.sleep_ms(400)
+        \\nox.time.sleep_ms(1800)
         \\print(nox.http.client_idle_connections())
         \\nox.http.client_pool(32, 0)
-        \\nox.time.sleep_ms(1200)
+        \\nox.time.sleep_ms(1500)
         \\print(nox.http.client_idle_connections())
         \\
     , "200\n200\n1\n1\n", 1, 2);

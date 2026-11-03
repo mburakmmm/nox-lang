@@ -25,6 +25,13 @@ const host_link = @import("host_link");
 const child_watchdog = @import("child_watchdog.zig");
 const h2 = @import("http2");
 
+/// Çocuk sunucuya SIGTERM gönderir. Windows'ta sinyal yoktur (`posix.kill` orada bağlanamaz: `undefined symbol: kill`);
+/// bu testler Windows'ta zaten başta atlanır, burada da derleme zamanında dışarıda bırakılır.
+fn sendSigterm(id: std.process.Child.Id) !void {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try std.posix.kill(id, .TERM);
+}
+
 fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8) ![]const u8 {
     const io = std.testing.io;
 
@@ -632,7 +639,7 @@ test "nox.http.serve: SIGTERM'de graceful shutdown — uçuştaki istek biter, b
     _ = sys.nanosleep(&ts, null);
 
     // Uçuş sürerken SIGTERM.
-    try std.posix.kill(child.id.?, .TERM);
+    try sendSigterm(child.id.?);
     slow_thread.join();
 
     // Boşta bağlantı sunucu tarafından kapatıldı (okuma EOF döner, 3 sn içinde).
@@ -930,7 +937,7 @@ test "nox.http: akış sırasında istemci kopması handler'ı bitirir (send Fal
     }
 
     // 3) Açık akış sürerken SIGTERM: handler `is_open() == False` görüp çıkar, serve döner.
-    try std.posix.kill(child.id.?, .TERM);
+    try sendSigterm(child.id.?);
 
     var stdout_buf: [4096]u8 = undefined;
     var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
@@ -1058,7 +1065,7 @@ test "nox.http.configure(max_connections): sınır dolunca yeni bağlantı 'Retr
     try std.testing.expect(std.mem.startsWith(u8, rejected, "HTTP/1.1 503 Service Unavailable\r\n"));
     try std.testing.expect(std.mem.indexOf(u8, rejected, "Retry-After: 1\r\n") != null);
 
-    try std.posix.kill(child.id.?, .TERM);
+    try sendSigterm(child.id.?);
     var stderr_buf: [4096]u8 = undefined;
     var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
     const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
@@ -1160,7 +1167,7 @@ const H2Server = struct {
     /// SIGTERM (graceful) + çıktıyı topla. Çağıran tüm istemci soketlerini önce kapatmış olmalı.
     fn stop(self: *H2Server, allocator: std.mem.Allocator, out_stdout: *[]u8, expected_stderr_prefix: []const u8) !void {
         const io = std.testing.io;
-        try std.posix.kill(self.child.id.?, .TERM);
+        try sendSigterm(self.child.id.?);
         var stdout_buf: [4096]u8 = undefined;
         var stdout_reader = self.child.stdout.?.reader(io, &stdout_buf);
         out_stdout.* = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
@@ -1901,7 +1908,7 @@ test "HTTP/2 (h2c): SSE parça parça akar; istemci RST_STREAM'i handler'ı biti
     while (c.readFrame(3000)) |f| {
         if (f.stream_id == 5 and f.kind == h2.frame_data) break;
     }
-    try std.posix.kill(srv.child.id.?, .TERM);
+    try sendSigterm(srv.child.id.?);
     while (c.readFrame(8000)) |f| {
         _ = try c.absorb(f, &resps);
     }
