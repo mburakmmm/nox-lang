@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.129]
+
+### Eklendi
+
+- **Trailer'lar:** yanıt trailer'ları `stream.trailers({...})` (HTTP/2'de son HEADERS çerçevesi, chunked HTTP/1.1'de son chunk'tan sonra) ve istek trailer'ları `req.trailer(ad)` (chunked HTTP/1.1 ve HTTP/2). Bağımsız doğrulama: Go'nun `net/http` istemcisi (HTTP/1.1 ve h2c) `resp.Trailer`'ı okudu ve kendi istek trailer'ını sunucuya iletti.
+- **HTTP/2 üzerinden WebSocket (RFC 8441):** `serve_ws*` sunucuları `SETTINGS_ENABLE_CONNECT_PROTOCOL` duyurur; `:protocol: websocket` içeren genişletilmiş CONNECT akışı üzerinde mevcut `ws_handle` DEĞİŞMEDEN çalışır (akışın DATA'sı Reader/Writer olur, pencere tüketildikçe açılır). Düz CONNECT (proxy tüneli) 501.
+- **HTTP/2 `Expect: 100-continue`:** gövde gelmeden `:status 100` ara yanıtı gönderilir.
+- **Giden isteklerde vekil:** `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` ve `NO_PROXY`. `http://` hedefler standart forward-proxy biçiminde; `https://` hedefler vekile `CONNECT host:443` tüneliyle gider, TLS tünelin içinde hedef adına (SNI + sertifika doğrulaması) kurulur ve havuzlanır. Gerçek `api.github.com` ile CONNECT vekili üzerinden doğrulandı.
+
+### Düzeltildi (güvenlik)
+
+- **std'nin HTTPS vekil geri düşüşü kapatıldı:** std `http.Client`, vekil `CONNECT`'i reddedince `https://` hedefi düz metin `GET https://…` olarak vekile gönderiyor (istek içeriği ve `Authorization` başlığı vekile açık) ve paylaşılan `Proxy` nesnesini kalıcı olarak değiştiriyordu. Artık tünel kurulamazsa istek başarısız olur; `http://` vekil dışındaki vekil URL'leri (vekile TLS) vekili atlamadan reddedilir.
+
 ## [2.0.128]
 
 ### Eklendi

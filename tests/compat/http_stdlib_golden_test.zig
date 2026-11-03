@@ -370,6 +370,140 @@ test "nox.http.request: yeniden kullanılan bağlantı eski bir yaş damgası y�
     , "200\n200\n1\n1\n", 1, 2);
 }
 
+// ---- Vekil (HTTP_PROXY / HTTPS_PROXY / NO_PROXY) -------------------------------------------------------------------------------------------------------
+
+const ProxyStub = struct {
+    listen_fd: sys.fd_t,
+    stop: std.atomic.Value(bool) = .init(false),
+    count: std.atomic.Value(usize) = .init(0),
+    tunnel_first_byte: std.atomic.Value(u8) = .init(0),
+    tunnel_sni: std.atomic.Value(bool) = .init(false),
+    lines: [8][96]u8 = undefined,
+    lens: [8]usize = @splat(0),
+};
+
+fn readHead(c: sys.fd_t, buf: []u8) ?[]const u8 {
+    var total: usize = 0;
+    while (total < buf.len) {
+        const n = sys.read(c, buf[total..].ptr, buf.len - total);
+        if (n <= 0) return null;
+        total += @intCast(n);
+        if (std.mem.indexOf(u8, buf[0..total], "\r\n\r\n")) |i| return buf[0 .. i + 4];
+    }
+    return null;
+}
+
+fn proxyConn(px: *ProxyStub, c: sys.fd_t) void {
+    defer _ = sys.close(c);
+    var buf: [4096]u8 = undefined;
+    while (readHead(c, &buf)) |head| {
+        const eol = std.mem.indexOf(u8, head, "\r\n") orelse head.len;
+        const idx = px.count.fetchAdd(1, .monotonic);
+        if (idx < px.lines.len) {
+            const n = @min(eol, px.lines[idx].len);
+            @memcpy(px.lines[idx][0..n], head[0..n]);
+            px.lens[idx] = n;
+        }
+        if (std.mem.startsWith(u8, head, "CONNECT ")) {
+            const ok = "HTTP/1.1 200 Connection established\r\n\r\n";
+            _ = sys.write(c, ok.ptr, ok.len);
+            // Tünelin içi: istemci hedefe TLS konuşuyor. İlk kayıt bir TLS el sıkışması (0x16) olmalı ve ClientHello'da SNI olarak hedef adı bulunmalı; sonra kapat (TLS sunucusu yok).
+            var hello: [2048]u8 = undefined;
+            var got: usize = 0;
+            while (got < 6) {
+                const n = sys.read(c, hello[got..].ptr, hello.len - got);
+                if (n <= 0) break;
+                got += @intCast(n);
+            }
+            px.tunnel_first_byte.store(if (got > 0) hello[0] else 0, .release);
+            if (std.mem.indexOf(u8, hello[0..got], "secure.example.invalid") != null) px.tunnel_sni.store(true, .release);
+            return;
+        }
+        const resp = "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\nproxied";
+        _ = sys.write(c, resp.ptr, resp.len);
+    }
+}
+
+fn proxyLoop(px: *ProxyStub) void {
+    var handlers: [8]?std.Thread = @splat(null);
+    var i: usize = 0;
+    while (!px.stop.load(.acquire) and i < handlers.len) {
+        var pfd = [1]sys.pollfd{.{ .fd = px.listen_fd, .events = sys.POLL.IN, .revents = 0 }};
+        if (sys.poll(&pfd, 1, 100) <= 0) continue;
+        const conn = sys.accept(px.listen_fd, null, null);
+        if (sys.badFd(conn)) break;
+        handlers[i] = std.Thread.spawn(.{}, proxyConn, .{ px, conn }) catch null;
+        i += 1;
+    }
+    for (&handlers) |*h| if (h.*) |t| t.join();
+}
+
+test "nox.http: HTTP_PROXY/HTTPS_PROXY ortam değişkenleri (CONNECT tüneli) ve NO_PROXY (vekilsiz doğrudan bağlantı)" {
+    const allocator = std.testing.allocator;
+    var up_port: u16 = 0;
+    const up_fd = try testListenerOn127001(&up_port);
+    defer _ = sys.close(up_fd);
+    var up: PoolUpstream = .{ .listen_fd = up_fd, .mode = .keep };
+    const up_th = try std.Thread.spawn(.{}, poolUpstreamLoop, .{&up});
+    var px_port: u16 = 0;
+    const px_fd = try testListenerOn127001(&px_port);
+    defer _ = sys.close(px_fd);
+    var px: ProxyStub = .{ .listen_fd = px_fd };
+    const px_th = try std.Thread.spawn(.{}, proxyLoop, .{&px});
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\import nox.http
+        \\import nox.os
+        \\
+        \\nox.os.set_var("HTTP_PROXY", "http://127.0.0.1:{d}")
+        \\nox.os.set_var("HTTPS_PROXY", "http://127.0.0.1:{d}")
+        \\nox.os.set_var("NO_PROXY", "127.0.0.1, .skip.test")
+        \\print(nox.http.get("http://via.example.invalid:8080/a", {{}}).body)
+        \\print(nox.http.get("http://127.0.0.1:{d}/b", {{}}).body)
+        \\try:
+        \\    print(nox.http.get("https://secure.example.invalid/x", {{}}).status)
+        \\except nox_http_HttpError:
+        \\    print("tunnel failed")
+        \\
+    , .{ px_port, px_port, up_port });
+    defer allocator.free(source);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const result = compileAndRun(arena.allocator(), source) catch |e| {
+        up.stop.store(true, .release);
+        px.stop.store(true, .release);
+        up_th.join();
+        px_th.join();
+        return e;
+    };
+    up.stop.store(true, .release);
+    px.stop.store(true, .release);
+    up_th.join();
+    px_th.join();
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+    try std.testing.expectEqualStrings("proxied\nok\ntunnel failed\n", result.stdout);
+    try std.testing.expectEqual(@as(usize, 0), result.stderr.len);
+
+    // Vekil: http hedefi standart forward-proxy biçimiyle (mutlak-URI GET, CONNECT YOK); https hedefi için CONNECT host:443 ve tünelde TLS ClientHello (SNI = hedef adı), düz metin HTTP DEĞİL.
+    // NO_PROXY'li 127.0.0.1 vekile HİÇ uğramadı.
+    const n = @min(px.count.load(.acquire), px.lines.len);
+    var saw_forward_get = false;
+    var saw_https_connect = false;
+    for (0..n) |i| {
+        const line = px.lines[i][0..px.lens[i]];
+        if (std.mem.startsWith(u8, line, "GET http://via.example.invalid:8080/a ")) saw_forward_get = true;
+        if (std.mem.startsWith(u8, line, "CONNECT secure.example.invalid:443")) saw_https_connect = true;
+        try std.testing.expect(std.mem.indexOf(u8, line, "/b") == null);
+        try std.testing.expect(!std.mem.startsWith(u8, line, "CONNECT via.example.invalid"));
+        try std.testing.expect(!std.mem.startsWith(u8, line, "GET https://"));
+    }
+    try std.testing.expect(saw_forward_get and saw_https_connect);
+    try std.testing.expectEqual(@as(u8, 0x16), px.tunnel_first_byte.load(.acquire));
+    try std.testing.expect(px.tunnel_sni.load(.acquire));
+    // Doğrudan bağlantı: yukarı akış tam bir istek gördü.
+    try std.testing.expectEqual(@as(usize, 1), up.reqs.load(.acquire));
+}
+
 fn sleepMs(ms: u64) void {
     const ts: sys.timespec = .{ .sec = @intCast(ms / 1000), .nsec = @intCast((ms % 1000) * std.time.ns_per_ms) };
     _ = sys.nanosleep(&ts, null);

@@ -126,6 +126,15 @@ How stale connections are handled — a server may close an idle connection at a
 - Idle connections are closed after `idle_timeout_ms` (90 s by default, measured from when the pool first sees them idle, to within a fraction of a second), when the server closes them, when the pool is full (the oldest go first) or when `client_pool` shrinks the pool. A small background thread does the sweeping and exits on its own once the pool has been empty for a few seconds. Streaming calls (`nox.http.stream`, `stream_upload`) open their own connections and do not use the pool.
 - HTTPS certificate checks use the current time, refreshed every ten minutes.
 
+### Proxies
+
+The client honours `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (and the lower-case spellings), plus `NO_PROXY`. They are read when the first request is made; changing them later has no effect.
+
+- **`http://` targets** go through the proxy in the standard forward-proxy form (`GET http://host/path`).
+- **`https://` targets** are tunnelled with `CONNECT host:443`; TLS to the *target* (server name, certificate check) then runs inside the tunnel, so the proxy sees only encrypted bytes. If the proxy refuses the tunnel the request **fails**; it is never retried as a plain-text request to the proxy. Tunnelled connections are pooled like direct ones. The proxy URL itself must be `http://` (a TLS connection to the proxy is not supported; such a request fails rather than bypassing the proxy).
+- **`NO_PROXY`** is a comma-separated list: `*` for everything, `example.com` for the host and its subdomains, `.example.com` for subdomains only; a `:port` suffix is ignored and IP ranges (CIDR) are not understood (an exact IP matches). Matching hosts connect directly.
+- `user:password@` in the proxy URL is sent as `Proxy-Authorization: Basic`. Environment variables are not read on Windows.
+
 ### Streaming large bodies
 
 `get`, `post` and `request` keep the whole response body in memory. For large downloads and uploads use a stream: the body moves in chunks, memory use is bounded by the chunk size,
@@ -240,6 +249,7 @@ headers go out **immediately**, then every `send` reaches the client at once (ch
 | `stream.retry(ms)` | suggest the client's reconnect delay |
 | `stream.is_open()` | `False` after a write failed, after `end()`, or while the server is shutting down |
 | `stream.sleep_ms(ms)` | wait; cooperative (other connections keep running, also on the QBE backend) and returns early when the server shuts down. Use it instead of `nox.time.sleep_ms` in stream loops |
+| `stream.trailers(headers)` | set the response trailers (`grpc-status`, a checksum, ...): sent after the body, before `end()`; returns `False` if the stream already ended or the client speaks HTTP/1.0 |
 | `stream.end()` | finish the body and return the placeholder response the handler must return (its contents are ignored) |
 
 ```nox
@@ -271,9 +281,33 @@ True
 True
 ```
 
+### Trailers
+
+Trailing headers travel after the body: as a final `HEADERS` frame in HTTP/2, after the last chunk in chunked HTTP/1.1. Set them with `stream.trailers({...})` before `stream.end()`. For requests, `req.trailer(name)` returns a trailer sent after the body (chunked HTTP/1.1 or HTTP/2), or `""`; repeated values are joined with `, `. Trailers are only known once the request body has been read, which is when your handler runs.
+
+```nox
+from nox.http import HttpRequest, ResponseStream
+
+req: HttpRequest = HttpRequest("GET", "/", "", {})
+s: ResponseStream = req.stream(200, {})
+s.send("body")
+print(s.trailers({"X-Checksum": "abc"}))
+print(s.sent_trailers["X-Checksum"])
+s.end()
+print(s.trailers({"late": "x"}))
+print(req.trailer("X-Sum") == "")
+```
+
+```output
+True
+abc
+False
+True
+```
+
 Things to know:
 
-- The connection **closes** after a stream (`Connection: close`); the next request opens a new one. The handler's return value is ignored, and an exception after the stream has started just ends it (the status line is already sent, so no `500` is possible).
+- On HTTP/1.1 the connection **closes** after a stream (`Connection: close`); the next request opens a new one. The handler's return value is ignored, and an exception after the stream has started just ends it (the status line is already sent, so no `500` is possible).
 - A client that disconnects is noticed at the **next write**: `send`/`event`/`comment` return `False`. In a quiet stream send a `comment` every few seconds; it doubles as a heartbeat for proxies.
 - On `SIGTERM`/`SIGINT` or `nox.http.shutdown()`, `is_open()` turns `False` and `sleep_ms` returns, so a loop written as above ends by itself and the graceful shutdown completes; otherwise the server waits `drain_timeout_ms` and then closes the stream.
 - Each open stream holds one connection and one fiber. On the default backend streams are spread over the worker threads like any other connection ([Choosing a `serve` form](#choosing-a-serve-form)); the QBE backend serves all of them from one thread, so wait with `stream.sleep_ms`, never with a blocking call.
@@ -323,7 +357,9 @@ What differs from HTTP/1.1, as your handler sees it:
 | Request header names | normalised to `Title-Case` (`content-type` arrives as `Content-Type`), so `req.headers["Content-Type"]` works for every client; `Host` is filled from `:authority` |
 | Response header names | sent in lower case, as the protocol requires; `Connection`, `Keep-Alive`, `Transfer-Encoding` and `Upgrade` response headers are dropped (they do not exist in HTTP/2) |
 | `Content-Length` | added for you when the handler does not set one |
-| Not supported | trailers, server push and WebSocket over HTTP/2 (WebSocket clients and browsers use an HTTP/1.1 connection, which is served as before) |
+| WebSocket | works over HTTP/2 too ([RFC 8441](https://www.rfc-editor.org/rfc/rfc8441)) on `serve_ws*` servers: the server announces `SETTINGS_ENABLE_CONNECT_PROTOCOL`, and an extended `CONNECT` with `:protocol: websocket` runs your `ws_handle` on the stream; clients that use an HTTP/1.1 upgrade are served as before |
+| Trailers, `Expect: 100-continue` | supported: see [trailers](#trailers) below; the `100` interim response is sent for you |
+| Not supported (by design) | server push and the RFC 7540 priority tree: both are deprecated by RFC 9113 and gone from browsers; priority signals are accepted and ignored, which the protocol allows |
 
 Limits and protection: 100 concurrent requests per connection (further ones are refused and retried by the client), `max_body_bytes` and `max_header_bytes` apply as in HTTP/1.1, an incomplete request is cut after `read_timeout_ms`, an idle connection is closed after two minutes, and floods of control frames (`SETTINGS`, `PING`, resets — the "rapid reset" attack) end the connection with `ENHANCE_YOUR_CALM`. A request that was reset by the client keeps its slot until your handler returns, so resets cannot be used to start unbounded work.
 

@@ -20,6 +20,7 @@ class ResponseStream:
         self.conn = conn
         # `conn == 0` (birim testi): gönderilen parçalar burada toplanır.
         self.sent: list[str] = []
+        self.sent_trailers: dict[str, str] = {}
         self.finished = False
 
     # Ham bir parça yazar. `True`: yazıldı; `False`: istemci gitti ya da akış bitti.
@@ -41,6 +42,16 @@ class ResponseStream:
         for line in nox.strings.split(nox.strings.replace(data, "\r", ""), "\n"):
             out = out + "data: " + line + "\n"
         return self.send(out + "\n")
+
+    # Yanıt trailer'ları: gövde bittikten SONRA, `end()`den ÖNCE kaydedilir (chunked HTTP/1.1 ya da HTTP/2; gRPC `grpc-status` gibi). `False`: akış bitmiş/HTTP/1.0 (trailer yok).
+    def trailers(self: ResponseStream, headers: dict[str, str]) -> bool:
+        if self.conn == 0:
+            if self.finished:
+                return False
+            for k in headers:
+                self.sent_trailers[k] = headers[k]
+            return True
+        return nox_http_respstream_trailers_raw(self.conn, headers) != 0
 
     # SSE yorum satırı (`: metin`): istemci görmez, bağlantıyı canlı tutar ve kopmayı yakalar.
     def comment(self: ResponseStream, text: str = "") -> bool:
@@ -104,6 +115,12 @@ class HttpRequest:
         return s
 
     # Server-Sent Events: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, vekil tamponlamasını kapatan `X-Accel-Buffering: no`. Olayları `stream.event(...)` ile yazın.
+    # Gövdeden SONRA gelen istek trailer'ı (chunked HTTP/1.1 ya da HTTP/2); yoksa "". Çoklu değerler ", " ile birleşir. Handler çalışırken (gövde tamamlandığında) bilinir.
+    def trailer(self: HttpRequest, name: str) -> str:
+        if self.conn == 0:
+            return ""
+        return nox_http_request_trailer_raw(self.conn, name)
+
     def sse(self: HttpRequest) -> ResponseStream:
         return self.stream(200, {"Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -161,6 +178,8 @@ def multi(values: list[str]) -> str:
 extern def nox_http_config_set_raw(key: int, value: int) -> None from "zig-out/lib/noxrt.o"
 extern def nox_http_shutdown_raw() -> None from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_start_raw(conn: int, status: int, headers: dict[str, str]) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_respstream_trailers_raw(conn: int, headers: dict[str, str]) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_request_trailer_raw(conn: int, name: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_respstream_send_raw(conn: int, data: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_end_raw(conn: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_open_raw(conn: int) -> int from "zig-out/lib/noxrt.o"

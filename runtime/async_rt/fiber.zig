@@ -475,6 +475,8 @@ pub const Fiber = struct {
     /// iş parçacığı-yerel durumunu ezmesin diye bu durum fiber'ın KENDİSİNDE tutulur (iş parçacığı-yerel yedek yalnızca fiber olmayan çağıranlar içindir).
     net_deadline_ns: i64 = 0,
     net_timed_out: bool = false,
+    /// `net_dial` için: bu fiber'ın sıradaki bağlanması bir HTTP CONNECT tüneli olarak vekil üzerinden yapılacaksa tünel açıklaması (opak; bkz. `net_dial.Tunnel`). Fiber-yerel çünkü fiber'lar aynı OS iş parçacığını paylaşır.
+    net_tunnel: ?*const anyopaque = null,
     /// Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83, `TaskLocal[T]`):
     /// bu fiber'a ÖZGÜ, `TaskLocal` tutamacı işaretçisiyle ANAHTARLANMIŞ
     /// depolama — `runtime/async_rt/task_local.zig`nin `nox_tasklocal_

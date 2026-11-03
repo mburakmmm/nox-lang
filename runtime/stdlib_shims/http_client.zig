@@ -462,6 +462,8 @@ const PoolState = struct {
     client: std.http.Client = undefined,
     /// Boşta bağlantının ilk görüldüğü an (bağlantı ADRESİ → ms). Yalnızca std havuz mutex'i (`connection_pool.mutex`) altında okunur/yazılır; anahtarlar asla dereference edilmez.
     idle_since: std.AutoHashMapUnmanaged(usize, u64) = .empty,
+    /// Vekil ortam değişkenleri havuz kurulurken bir kez okunur (`applyProxyEnv`); `NO_PROXY` listesi (c_allocator, süreç ömrü).
+    no_proxy: []const u8 = "",
 };
 var g_pool: PoolState = .{};
 var g_pool_size: std.atomic.Value(usize) = .init(32);
@@ -472,12 +474,60 @@ const POOL_MAX_SIZE: usize = 1024;
 /// std `Client.now`ı (sertifika geçerlilik denetimi) yalnızca ilk HTTPS isteğinde yazar; uzun ömürlü istemcide bayatlamaması için bu aralıkta yenilenir.
 const POOL_NOW_REFRESH_MS: u64 = 10 * 60 * 1000;
 
+/// `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (küçük harfli karşılıkları dahil) ortam değişkenlerinden istemcinin vekillerini kurar (std `initDefaultProxies`). Windows ve wasm'da ortam
+/// değişkeni okunmaz (vekil yok).
+fn applyProxyEnv(client: *std.http.Client, arena: std.mem.Allocator) void {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return;
+    var map = std.process.Environ.Map.init(arena);
+    const names = [_][:0]const u8{ "http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY" };
+    for (names) |n| {
+        if (std.c.getenv(n.ptr)) |v| map.put(n, std.mem.span(v)) catch {};
+    }
+    client.initDefaultProxies(arena, &map) catch {};
+    // `http://` hedefleri için standart "forward proxy" biçimi (mutlak-URI): std'nin önce-CONNECT-sonra-geri-düş yolu kullanılmaz (CONNECT reddedilince sessizce kalıcı olarak kapanıp paylaşılan
+    // `Proxy` nesnesini iş parçacıkları arasında yazıyordu). `https://` hedefleri `net_dial.Tunnel` ile kendi CONNECT tünelimizden geçer, std'nin HTTPS vekil yoluna HİÇ girmez.
+    if (client.http_proxy) |hp| hp.supports_connect = false;
+}
+
+fn noProxyEnv() ?[]const u8 {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return null;
+    if (std.c.getenv("NO_PROXY")) |v| return std.mem.span(v);
+    if (std.c.getenv("no_proxy")) |v| return std.mem.span(v);
+    return null;
+}
+
+/// `NO_PROXY` (virgül/boşlukla ayrılmış): `*` hepsi, `example.com` kendisi ve alt alanları, `.example.com` yalnızca alt alanlar, `host:port` portu yok sayar. IP aralıkları (CIDR) desteklenmez; tam IP eşleşir.
+fn noProxyMatches(list: []const u8, host: []const u8) bool {
+    var it = std.mem.tokenizeAny(u8, list, ", \t");
+    while (it.next()) |raw| {
+        var e: []const u8 = raw;
+        if (std.mem.eql(u8, e, "*")) return true;
+        if (std.mem.lastIndexOfScalar(u8, e, ':')) |ci| {
+            const port = e[ci + 1 ..];
+            var digits = port.len > 0;
+            for (port) |ch| digits = digits and ch >= '0' and ch <= '9';
+            if (digits and std.mem.indexOfScalar(u8, e, ']') == null) e = e[0..ci];
+        }
+        if (e.len > 0 and e[0] == '.') e = e[1..];
+        if (e.len == 0) continue;
+        if (std.ascii.eqlIgnoreCase(host, e)) return true;
+        if (host.len > e.len and host[host.len - e.len - 1] == '.' and std.ascii.eqlIgnoreCase(host[host.len - e.len ..], e)) return true;
+    }
+    return false;
+}
+
 fn poolClientFor(io: std.Io, https: bool) error{CaUnavailable}!*std.http.Client {
     g_pool.lock.lock();
     defer g_pool.lock.unlock();
     if (!g_pool.ready) {
         g_pool.client = .{ .allocator = std.heap.c_allocator, .io = io };
         g_pool.client.connection_pool.free_size = g_pool_size.load(.monotonic);
+        // Vekil ayarları süreç ömrü boyunca tutulur (arena asla serbest bırakılmaz); ortam değişkenleri ilk havuzlu istekte okunur, sonraki değişiklikler yok sayılır.
+        if (std.heap.c_allocator.create(std.heap.ArenaAllocator) catch null) |pa| {
+            pa.* = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+            applyProxyEnv(&g_pool.client, pa.allocator());
+        }
+        g_pool.no_proxy = if (noProxyEnv()) |v| (std.heap.c_allocator.dupe(u8, v) catch "") else "";
         g_pool.ready = true;
     }
     const c = &g_pool.client;
@@ -718,6 +768,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
             return;
         }
     else blk: {
+        applyProxyEnv(&local_client, request_arena.allocator());
         // iOS'ta sistem kökleri yalnızca bu yolla alınabilir: yüklenemezse istek başarısız olur. Diğer platformlarda yükleme başarısızlığı istemcinin kendi yoluna düşer (aynı hata).
         if (https and !adoptSharedCa(&local_client) and builtin.os.tag == .ios) {
             ctx.failed = true;
@@ -735,9 +786,42 @@ fn workerThreadFn(ctx: *RequestCtx) void {
 
         // DNS + bağlanma `timeout_ms` ile sınırlı (bkz. `net_dial.zig`); bağlantı kurulunca (ya da başarısız olunca) son tarih kalkar.
         if (ctx.timeout_ms > 0) net_dial.begin(ctx.timeout_ms);
+        // Vekil yönlendirmesi: (1) `NO_PROXY` eşleşen ana makine → vekilsiz doğrudan bağlantı (std yalnızca HTTP_PROXY/HTTPS_PROXY'yi bilir, bağlantıyı kendimiz açıp isteğe veriyoruz);
+        // (2) `https://` hedef + HTTPS_PROXY → vekile CONNECT tüneli (`net_dial.Tunnel`), üstünde std hedef adına TLS kurar; tünel kurulamazsa istek BAŞARISIZ olur (düz metin geri düşüşü yok);
+        // (3) `http://` hedef + HTTP_PROXY → std'nin mutlak-URI forward-proxy yolu.
+        var direct_conn: ?*std.http.Client.Connection = null;
+        var tunnel: net_dial.Tunnel = undefined;
+        if (client.http_proxy != null or client.https_proxy != null) route: {
+            var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+            const hn = uri.getHost(&host_buf) catch break :route;
+            const port: u16 = uri.port orelse (if (https) @as(u16, 443) else @as(u16, 80));
+            const list = if (pooled) g_pool.no_proxy else (noProxyEnv() orelse "");
+            const bypass = list.len != 0 and noProxyMatches(list, hn.bytes);
+            if (!bypass and !https) break :route;
+            if (!bypass) {
+                const px = client.https_proxy orelse break :route;
+                if (px.protocol == .tls) {
+                    // `https://` vekil URL'si (vekile TLS) desteklenmiyor: sessizce doğrudan/düz metin gitmek yerine başarısız ol.
+                    net_dial.end();
+                    ctx.failed = true;
+                    return;
+                }
+                tunnel = .{ .proxy_host = px.host.bytes, .proxy_port = px.port, .target_host = hn.bytes, .target_port = port, .authorization = px.authorization };
+                net_dial.setTunnel(&tunnel);
+            }
+            direct_conn = client.connectTcp(hn, port, if (https) .tls else .plain) catch {
+                net_dial.setTunnel(null);
+                net_dial.end();
+                if (net_dial.timedOut()) if (ctx.shared) |sh| sh.timed_out.store(true, .release);
+                ctx.failed = true;
+                return;
+            };
+            net_dial.setTunnel(null);
+        }
         var req = client.request(ctx.method, uri, .{
             .extra_headers = ctx.request_headers,
             .redirect_behavior = .unhandled,
+            .connection = direct_conn,
         }) catch |err| {
             net_dial.end();
             if (net_dial.timedOut()) if (ctx.shared) |sh| sh.timed_out.store(true, .release);

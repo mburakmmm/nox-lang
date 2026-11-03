@@ -1083,6 +1083,8 @@ const ServerRequest = struct {
     stream: ?*StreamState = null,
     /// HTTP/2 akışı (v2.0.127): doluysa `nox_http_respstream_*` HTTP/2 yazma yolunu kullanır.
     h2: ?*h2srv.Stream = null,
+    /// HTTP/1.1 chunked istek trailer'ları ham metin ("Ad: değer\n" satırları); `req.trailer(ad)`.
+    trailers_blob: []const u8 = &.{},
 };
 
 /// Akışlı (chunked) yanıtın durumu. `body.writer.buffer` `buf`ı gösterir; bu yüzden durum yığında değil yığında-dışı (heap) tutulur ve adresi sabittir.
@@ -1091,7 +1093,24 @@ const StreamState = struct {
     buf: [2048]u8 = undefined,
     failed: bool = false,
     ended: bool = false,
+    /// Chunked yanıtın trailer'ları (`ResponseStream.trailers`); ARC-sahipli dizeler, akış bitince bırakılır.
+    trailers: []const std.http.Header = &.{},
+    rt: ?*anyopaque = null,
+    chunked: bool = true,
 };
+
+/// Akışı kapatır (son chunk; varsa trailer'larla). Yalnızca bir kez etkili.
+fn finishH1Stream(st: *StreamState) bool {
+    if (st.ended) return !st.failed;
+    st.ended = true;
+    if (st.failed) return false;
+    const rc = if (st.trailers.len > 0 and st.chunked) st.body.endChunked(.{ .trailers = st.trailers }) else st.body.end();
+    rc catch {
+        st.failed = true;
+        return false;
+    };
+    return true;
+}
 
 // Faz HH.3 (bkz. nox-teknik-spesifikasyon.md §3.68): `body`/`headers`
 // ARTIK KOPYALANMAZ — `nox_http_response_new`nin TEK gerçek çağrı sitesi
@@ -1277,8 +1296,9 @@ export fn nox_http_respstream_start_raw(rt: ?*anyopaque, conn: i64, status: i64,
     const hdrs = retainHeaders(rt, gpa, headers) catch return 0;
     defer releaseHeaderList(rt, gpa, hdrs);
     const st = gpa.create(StreamState) catch return 0;
-    st.* = .{ .body = undefined };
+    st.* = .{ .body = undefined, .rt = rt };
     const http10 = request.head.version == .@"HTTP/1.0";
+    st.chunked = !http10;
     st.body = request.respondStreaming(&st.buf, .{ .respond_options = .{
         .status = @enumFromInt(status),
         .keep_alive = false,
@@ -1330,14 +1350,53 @@ export fn nox_http_respstream_end_raw(conn: i64) callconv(.c) i64 {
         return 1;
     }
     const st = r.stream orelse return 0;
-    if (st.ended) return if (st.failed) 0 else 1;
-    st.ended = true;
-    if (st.failed) return 0;
-    st.body.end() catch {
-        st.failed = true;
+    return if (finishH1Stream(st)) 1 else 0;
+}
+
+/// `ResponseStream.trailers(headers)`: akış bitmeden önce chunked/HTTP/2 yanıt trailer'larını kaydeder. `1` kabul edildi; `0` akış yok/bitmiş, HTTP/1.0 (trailer yok) ya da geçersiz başlık.
+export fn nox_http_respstream_trailers_raw(rt: ?*anyopaque, conn: i64, headers: ?*anyopaque) callconv(.c) i64 {
+    const r = requestFromConn(conn) orelse return 0;
+    const gpa = r.gpa orelse return 0;
+    const hdrs = retainHeaders(rt, gpa, headers) catch return 0;
+    if (r.h2) |hs| {
+        defer releaseHeaderList(rt, gpa, hdrs);
+        return if (h2srv.streamTrailers(hs, hdrs)) 1 else 0;
+    }
+    const st = r.stream orelse {
+        releaseHeaderList(rt, gpa, hdrs);
         return 0;
     };
+    if (st.ended or st.failed or !st.chunked or st.trailers.len > 0) {
+        releaseHeaderList(rt, gpa, hdrs);
+        return 0;
+    }
+    st.trailers = hdrs;
     return 1;
+}
+
+/// `req.trailer(ad)`: gövdeden sonra gelen istek trailer'ı (chunked HTTP/1.1 ya da HTTP/2); yoksa "". Çoklu değerler ", " ile birleşir.
+export fn nox_http_request_trailer_raw(rt: ?*anyopaque, conn: i64, name: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const empty = str_mod.nox_str_from_bytes(rt, "");
+    const r = requestFromConn(conn) orelse return empty;
+    const gpa = r.gpa orelse return empty;
+    const wanted: []const u8 = if (name) |n| str_mod.nox_str_slice(@constCast(n)) else "";
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(gpa);
+    if (r.h2) |hs| {
+        _ = h2srv.requestTrailer(hs, wanted, &out, gpa);
+    } else {
+        var lines = std.mem.splitScalar(u8, r.trailers_blob, '\n');
+        var found = false;
+        while (lines.next()) |line| {
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+            if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, line[0..colon], " \t"), wanted)) continue;
+            if (found) out.appendSlice(gpa, ", ") catch break;
+            out.appendSlice(gpa, std.mem.trim(u8, line[colon + 1 ..], " \t\r")) catch break;
+            found = true;
+        }
+    }
+    if (empty) |e| str_mod.nox_str_release(rt, e);
+    return str_mod.nox_str_from_bytes(rt, out.items);
 }
 
 /// Akış açık mı: başlamış, hata almamış, bitirilmemiş ve sunucu kapanmıyor.
@@ -1475,7 +1534,7 @@ const ChunkedResult = enum { ok, too_large, invalid, closed };
 /// RFC 9112 §7.1 chunked gövdesini KENDİ çözücümüzle okur. Zig std'nin `http.Reader` chunked çözücüsü `FFFFFFFFFFFFFFFF` gibi bir parça boyutunda `chunk_len + 2` toplamında tamsayı
 /// taşmasıyla paniğe düşüyordu: tek bir kötü istek tüm sunucuyu öldürüyordu (HTTP fuzz testi buldu). Burada boyut en çok 16 onaltılık basamak, toplam gövde `max_bytes` ile sınırlıdır,
 /// parça uzantıları (`;ext`) yok sayılır, artçı başlıklar (trailer) en çok 8 KiB okunup atılır; hiçbir adımda taşma olamaz.
-fn readChunkedBody(in: *std.Io.Reader, out: *std.Io.Writer, max_bytes: usize) ChunkedResult {
+fn readChunkedBody(in: *std.Io.Reader, out: *std.Io.Writer, max_bytes: usize, trailers_out: *std.ArrayListUnmanaged(u8), gpa: std.mem.Allocator) ChunkedResult {
     var total: usize = 0;
     while (true) {
         const line = in.takeDelimiterInclusive('\n') catch |err| return switch (err) {
@@ -1494,7 +1553,7 @@ fn readChunkedBody(in: *std.Io.Reader, out: *std.Io.Writer, max_bytes: usize) Ch
             size = (size << 4) | d;
         }
         if (size == 0) {
-            // Artçı başlıklar: boş satıra kadar oku ve at.
+            // Artçı başlıklar (trailer): boş satıra kadar okunur ve `trailers_out`a "Ad: değer\n" satırları olarak toplanır.
             var trailer_bytes: usize = 0;
             while (true) {
                 const t = in.takeDelimiterInclusive('\n') catch |err| return switch (err) {
@@ -1503,7 +1562,10 @@ fn readChunkedBody(in: *std.Io.Reader, out: *std.Io.Writer, max_bytes: usize) Ch
                 };
                 trailer_bytes += t.len;
                 if (trailer_bytes > 8 * 1024) return .invalid;
-                if (std.mem.trim(u8, t, "\r\n").len == 0) return .ok;
+                const tl = std.mem.trim(u8, t, "\r\n");
+                if (tl.len == 0) return .ok;
+                trailers_out.appendSlice(gpa, tl) catch return .invalid;
+                trailers_out.append(gpa, '\n') catch return .invalid;
             }
         }
         if (size > max_bytes or total > max_bytes - @as(usize, @intCast(size))) return .too_large;
@@ -1573,6 +1635,7 @@ fn h2ServeStream(user: *anyopaque, st: *h2srv.Stream) void {
     const conn: *ConnCtx = @ptrCast(@alignCast(user));
     const gpa = conn.allocator;
     const rt = conn.rt;
+    if (st.ws_connect) return h2ServeWebSocket(conn, st);
     const method_str = http_client.dupeToNoxStr(rt, st.method) orelse return;
     defer str_mod.nox_str_release(rt, method_str);
     const target_str = http_client.dupeToNoxStr(rt, st.path) orelse return;
@@ -1627,6 +1690,64 @@ fn h2ServeStream(user: *anyopaque, st: *h2srv.Stream) void {
     // payload yoksa (handler istisna fırlattı): motor 500 döner.
 }
 
+/// RFC 8441: HTTP/2 akışı üstünde WebSocket. Akışın gelen DATA'sı `Reader`, giden DATA `Writer` olur; mevcut `websocket_server` çerçeveleme/handler kodu DEĞİŞMEDEN çalışır.
+const H2WsReader = struct {
+    interface: std.Io.Reader,
+    st: *h2srv.Stream,
+
+    fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *H2WsReader = @alignCast(@fieldParentPtr("interface", io_r));
+        const dest = limit.slice(try io_w.writableSliceGreedy(1));
+        const n = h2srv.inboundRead(self.st, dest) orelse return error.EndOfStream;
+        io_w.advance(n);
+        return n;
+    }
+};
+
+const H2WsWriter = struct {
+    interface: std.Io.Writer,
+    st: *h2srv.Stream,
+
+    fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *H2WsWriter = @alignCast(@fieldParentPtr("interface", io_w));
+        if (!h2srv.streamSend(self.st, io_w.buffered())) return error.WriteFailed;
+        for (data[0 .. data.len - 1]) |chunk| {
+            if (!h2srv.streamSend(self.st, chunk)) return error.WriteFailed;
+        }
+        const pattern = data[data.len - 1];
+        var i: usize = 0;
+        while (i < splat) : (i += 1) {
+            if (!h2srv.streamSend(self.st, pattern)) return error.WriteFailed;
+        }
+        return io_w.consume(io_w.end + std.Io.Writer.countSplat(data, splat));
+    }
+};
+
+fn h2ServeWebSocket(conn: *ConnCtx, st: *h2srv.Stream) void {
+    const ws_handler = conn.ws_handler orelse {
+        h2srv.respond(st, 501, &.{}, "Not Implemented");
+        return;
+    };
+    var version_ok = false;
+    for (st.headers.items) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "sec-websocket-version") and std.mem.eql(u8, std.mem.trim(u8, h.value, " \t"), "13")) version_ok = true;
+    }
+    if (!version_ok) {
+        h2srv.respond(st, 400, &.{.{ .name = "sec-websocket-version", .value = "13" }}, "Bad Request");
+        return;
+    }
+    // El sıkışma: HTTP/2'de yalnızca `200` (Sec-WebSocket-Accept yok); ardından akışın DATA'sı WebSocket çerçeveleridir.
+    if (!h2srv.streamBegin(st, 200, &.{})) return;
+    var rbuf: [4096]u8 = undefined;
+    var wbuf: [4096]u8 = undefined;
+    var reader: H2WsReader = .{ .interface = .{ .vtable = &.{ .stream = H2WsReader.stream }, .buffer = &rbuf, .seek = 0, .end = 0 }, .st = st };
+    var writer: H2WsWriter = .{ .interface = .{ .vtable = &.{ .drain = H2WsWriter.drain }, .buffer = &wbuf }, .st = st };
+    var wsc: websocket_server.WsServerConn = .{ .reader = &reader.interface, .writer = &writer.interface };
+    ws_handler(conn.handler_ctx, &wsc);
+    writer.interface.flush() catch {};
+    h2srv.streamEnd(st);
+}
+
 /// Bağlantıyı HTTP/2 olarak yürütür (ALPN `h2` ya da düz TCP'de `PRI` ön eki).
 fn runHttp2(conn: *ConnCtx, reader: *std.Io.Reader, writer: *std.Io.Writer, tls_conn: ?*tls_server.TlsConn, plain_timeout: *u32) void {
     conn.tls_conn = tls_conn;
@@ -1635,6 +1756,7 @@ fn runHttp2(conn: *ConnCtx, reader: *std.Io.Reader, writer: *std.Io.Writer, tls_
         .max_body_bytes = conn.max_body_bytes,
         .max_header_bytes = g_serve_config.max_header_bytes.load(.monotonic),
         .read_timeout_ms = conn.read_timeout_ms,
+        .ws_enabled = conn.ws_handler != null,
     };
     const hooks: h2srv.Hooks = .{
         .user = conn,
@@ -1707,7 +1829,7 @@ fn connectionEntry(arg: *anyopaque) void {
         var use_h2 = false;
         if (tls_conn) |tc| {
             use_h2 = tc.alpn_h2;
-        } else if (conn.ws_handler == null) {
+        } else {
             conn.idle.store(true, .release);
             if (reader_ptr.peek(3)) |first| {
                 use_h2 = std.mem.eql(u8, first, "PRI");
@@ -1844,6 +1966,8 @@ fn connectionEntry(arg: *anyopaque) void {
         // toplandıktan SONRA TEK bir `dupeToNoxStr` çağrısıyla (aşağıda)
         // olur — `nox_http_request_body`nin ARTIK YENİDEN kopyalamaması
         // İÇİN yeterli (ikinci kopya BURADA, TEK kopyaya indirgenir).
+        var trailer_blob: std.ArrayListUnmanaged(u8) = .empty;
+        defer trailer_blob.deinit(gpa);
         var body_out: std.Io.Writer.Allocating = .init(gpa);
         defer body_out.deinit();
         // Faz Q.5: `streamRemaining` (SINIRSIZ) YERİNE `conn.max_body_bytes`e
@@ -1854,7 +1978,7 @@ fn connectionEntry(arg: *anyopaque) void {
         var body_too_large = false;
         if (chunked_body) {
             // Kendi chunked çözücümüz (std'ninki dev parça boyutunda taşma paniğine düşüyordu).
-            switch (readChunkedBody(reader_ptr, &body_out.writer, conn.max_body_bytes)) {
+            switch (readChunkedBody(reader_ptr, &body_out.writer, conn.max_body_bytes, &trailer_blob, gpa)) {
                 .ok => server.reader.state = .ready,
                 .too_large => {
                     request.respond("Payload Too Large", .{ .status = .payload_too_large, .keep_alive = false }) catch {};
@@ -1905,6 +2029,7 @@ fn connectionEntry(arg: *anyopaque) void {
             .peer_addr = peer_addr_str,
             .http_request = &request,
             .gpa = gpa,
+            .trailers_blob = trailer_blob.items,
         };
 
         const resp_payload = conn.handler(conn.handler_ctx, &req_handle);
@@ -1914,7 +2039,8 @@ fn connectionEntry(arg: *anyopaque) void {
         // (akıştan sonra keep-alive yok: bir sonraki istek ile çerçeveleme karışmasın).
         if (req_handle.stream) |st| {
             defer gpa.destroy(st);
-            if (!st.ended and !st.failed) st.body.end() catch {};
+            defer releaseHeaderList(rt, gpa, st.trailers);
+            _ = finishH1Stream(st);
             break;
         }
 

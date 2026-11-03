@@ -34,6 +34,35 @@ const LOOKUP_FIBER_CAP_MS: i64 = 120_000;
 
 threadlocal var tl_deadline_ns: i64 = 0;
 threadlocal var tl_timed_out: bool = false;
+threadlocal var tl_tunnel: ?*const Tunnel = null;
+
+/// HTTP CONNECT tüneli isteği (v2.0.129): `setTunnel` ile işaretlenen fiber/iş parçacığının sıradaki `connect`i hedefe değil VEKİLE yapılır (arama da vekilin adı için), bağlanınca `CONNECT target:port`
+/// el sıkışması gerçekleşir; başarısızlık bağlantı hatasıdır (düz metin geri düşüşü YOK). std sonra aynı soket üzerinde TLS'i hedef adına kurar (SNI + sertifika doğrulaması).
+pub const Tunnel = struct {
+    proxy_host: []const u8,
+    proxy_port: u16,
+    target_host: []const u8,
+    target_port: u16,
+    /// `Proxy-Authorization` değeri (ör. "Basic ...") ya da null.
+    authorization: ?[]const u8 = null,
+};
+
+pub fn setTunnel(t: ?*const Tunnel) void {
+    if (comptime !enabled) return;
+    if (comptime enabled) {
+        if (bridge.currentFiber()) |f| {
+            f.net_tunnel = if (t) |x| @ptrCast(x) else null;
+            return;
+        }
+    }
+    tl_tunnel = t;
+}
+
+fn activeTunnel() ?*const Tunnel {
+    if (comptime !enabled) return null;
+    if (bridge.currentFiber()) |f| return if (f.net_tunnel) |x| @ptrCast(@alignCast(x)) else null;
+    return tl_tunnel;
+}
 
 /// Son tarih durumu: bir zamanlayıcıdaki fiber içindeysek fiber'ın KENDİSİNDE (fiber'lar askıya alınınca aynı iş parçacığını paylaşır), değilse iş parçacığı-yerel.
 const Deadline = struct { ns: *i64, timed_out: *bool };
@@ -305,12 +334,18 @@ fn boundedLookup(
     userdata: ?*anyopaque,
     host_name: HostName,
     resolved: *Io.Queue(HostName.LookupResult),
-    options: HostName.LookupOptions,
+    options_in: HostName.LookupOptions,
 ) HostName.LookupError!void {
     const rem = remainingMs();
     const t_io: Io = .{ .userdata = userdata, .vtable = g_vtable.? };
     defer resolved.close(t_io);
     var name = host_name.bytes;
+    var options = options_in;
+    // Tünel: hedef adı yerel çözülmez; vekilin adı/portu çözülür (vekil hedefi kendisi çözer).
+    if (activeTunnel()) |tn| {
+        name = tn.proxy_host;
+        options.port = tn.proxy_port;
+    }
     // `[::1]` biçimi: köşeli parantezleri at.
     if (name.len >= 2 and name[0] == '[' and name[name.len - 1] == ']') name = name[1 .. name.len - 1];
 
@@ -384,9 +419,81 @@ fn errnoToConnectError(e: c_int) IpAddress.ConnectError {
     };
 }
 
+/// Soket hazır (okunabilir/yazılabilir) olana ya da `budget_ms` dolana dek bekler (fiber içinde kooperatif). `false`: zaman aşımı.
+fn waitReady(fd: std.c.fd_t, write: bool, budget_ms: i64) bool {
+    const ms: u32 = @intCast(@min(@max(budget_ms, 1), std.math.maxInt(i32)));
+    if (fiber_net.inFiber()) return fiber_net.waitFd(fd, write, ms) == .ready;
+    var pfd = [1]std.c.pollfd{.{ .fd = fd, .events = if (write) std.c.POLL.OUT else std.c.POLL.IN, .revents = 0 }};
+    return std.c.poll(&pfd, 1, @intCast(ms)) > 0;
+}
+
+/// Vekile `CONNECT host:port` gönderir ve `2xx` yanıt bekler. Yanıt başlığı dışında hiçbir bayt tüketilmez (TLS el sıkışması sonraki baytlardan başlar): vekil `200`den sonra sunucunun
+/// ilk baytlarını göndermez, yanıtı başlık sonunda (CRLFCRLF) bırakır. Başarısızlıkta soket kapatılır.
+fn connectHandshake(fd: std.c.fd_t, tn: *const Tunnel, rem_ms: i64) IpAddress.ConnectError!void {
+    errdefer _ = std.c.close(fd);
+    var req_buf: [768]u8 = undefined;
+    const host_is_v6 = std.mem.indexOfScalar(u8, tn.target_host, ':') != null;
+    const req = (if (tn.authorization) |auth|
+        std.fmt.bufPrint(&req_buf, "CONNECT {s}{s}{s}:{d} HTTP/1.1\r\nHost: {s}{s}{s}:{d}\r\nProxy-Authorization: {s}\r\n\r\n", .{
+            if (host_is_v6) "[" else "", tn.target_host, if (host_is_v6) "]" else "", tn.target_port,
+            if (host_is_v6) "[" else "", tn.target_host, if (host_is_v6) "]" else "", tn.target_port,
+            auth,
+        })
+    else
+        std.fmt.bufPrint(&req_buf, "CONNECT {s}{s}{s}:{d} HTTP/1.1\r\nHost: {s}{s}{s}:{d}\r\n\r\n", .{
+            if (host_is_v6) "[" else "", tn.target_host, if (host_is_v6) "]" else "", tn.target_port,
+            if (host_is_v6) "[" else "", tn.target_host, if (host_is_v6) "]" else "", tn.target_port,
+        })) catch return error.ConnectionRefused;
+    const deadline = nowNs() + @min(rem_ms, 30_000) * std.time.ns_per_ms;
+    var off: usize = 0;
+    while (off < req.len) {
+        const n = std.c.write(fd, req[off..].ptr, req.len - off);
+        if (n > 0) {
+            off += @intCast(n);
+            continue;
+        }
+        if (n < 0 and std.posix.errno(n) == .AGAIN) {
+            const left = @divFloor(deadline - nowNs(), std.time.ns_per_ms);
+            if (left <= 0 or !waitReady(fd, true, left)) {
+                deadlineState().timed_out.* = true;
+                return error.Timeout;
+            }
+            continue;
+        }
+        return error.ConnectionResetByPeer;
+    }
+    // Yanıt başlığını BAYT BAYT oku: CRLFCRLF'ten sonrasını (TLS verisi) tüketmemek için.
+    var head: [1024]u8 = undefined;
+    var len: usize = 0;
+    while (true) {
+        var byte: [1]u8 = undefined;
+        const n = std.c.read(fd, &byte, 1);
+        if (n == 1) {
+            if (len == head.len) return error.ConnectionRefused;
+            head[len] = byte[0];
+            len += 1;
+            if (len >= 4 and std.mem.eql(u8, head[len - 4 .. len], "\r\n\r\n")) break;
+            continue;
+        }
+        if (n == 0) return error.ConnectionResetByPeer;
+        if (std.posix.errno(n) == .AGAIN) {
+            const left = @divFloor(deadline - nowNs(), std.time.ns_per_ms);
+            if (left <= 0 or !waitReady(fd, false, left)) {
+                deadlineState().timed_out.* = true;
+                return error.Timeout;
+            }
+            continue;
+        }
+        return error.ConnectionResetByPeer;
+    }
+    // "HTTP/1.x 2xx ..."
+    if (len < 12 or !std.mem.startsWith(u8, head[0..len], "HTTP/1.") or head[9] != '2') return error.ConnectionRefused;
+}
+
 fn boundedConnectIp(userdata: ?*anyopaque, address: *const IpAddress, options: IpAddress.ConnectOptions) IpAddress.ConnectError!net.Socket {
     // Fiber içinde süresiz bağlanma bile bloklamayan yolla yapılır (kooperatif); fiber dışında süresiz çağrı std'nin özgün uygulamasına gider.
-    const rem = remainingMs() orelse (if (fiber_net.inFiber()) @as(i64, std.math.maxInt(i32)) else return g_base_connect_ip.?(userdata, address, options));
+    const tunnel = activeTunnel();
+    const rem = remainingMs() orelse (if (fiber_net.inFiber() or tunnel != null) @as(i64, std.math.maxInt(i32)) else return g_base_connect_ip.?(userdata, address, options));
     if (options.mode != .stream or options.protocol != null) return g_base_connect_ip.?(userdata, address, options);
     if (rem == 0) {
         deadlineState().timed_out.* = true;
@@ -453,6 +560,7 @@ fn boundedConnectIp(userdata: ?*anyopaque, address: *const IpAddress, options: I
         _ = std.c.getsockopt(fd, std.c.SOL.SOCKET, std.c.SO.ERROR, &so_err, &so_len);
         if (so_err != 0) return errnoToConnectError(so_err);
     }
+    if (tunnel) |tn| try connectHandshake(fd, tn, rem);
     setNonBlocking(fd, false);
     return .{ .handle = fd, .address = address.* };
 }

@@ -52,6 +52,8 @@ pub const setting_max_concurrent_streams: u16 = 0x3;
 pub const setting_initial_window_size: u16 = 0x4;
 pub const setting_max_frame_size: u16 = 0x5;
 pub const setting_max_header_list_size: u16 = 0x6;
+/// RFC 8441: genişletilmiş CONNECT (`:protocol`) desteği.
+pub const setting_enable_connect_protocol: u16 = 0x8;
 
 pub const default_window: i64 = 65535;
 pub const max_window: i64 = 2147483647;

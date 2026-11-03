@@ -33,6 +33,8 @@ pub const Config = struct {
     /// Hiç açık akışı olmayan bağlantının ömrü.
     idle_timeout_ms: u32 = 120_000,
     max_concurrent_streams: u32 = 100,
+    /// WebSocket sunucusu var: SETTINGS_ENABLE_CONNECT_PROTOCOL bildirilir ve `:protocol` içeren genişletilmiş CONNECT (RFC 8441) kabul edilir.
+    ws_enabled: bool = false,
 };
 
 pub const Hooks = struct {
@@ -86,6 +88,17 @@ pub const Stream = struct {
     early_status: u16 = 0,
     /// 413 sonrası gelen DATA atılır (yanıt iptal edilmesin).
     discard_body: bool = false,
+    /// İstek trailer'ları (HEADERS + END_STREAM, gövdeden sonra); handler `req.trailer(ad)` ile okur.
+    trailers: std.ArrayListUnmanaged(h2.Header) = .empty,
+    /// `Expect: 100-continue` taşıyan istek (ara yanıt gönderildi).
+    expect_continue: bool = false,
+    /// Genişletilmiş CONNECT (`:protocol`), RFC 8441: yalnızca "websocket" desteklenir.
+    protocol: []const u8 = "",
+    ws_connect: bool = false,
+    /// WebSocket kipi: istek gövdesi akış olarak `inbound`a girer (handler kendi hızında tüketir), handler istek bitmeden başlar.
+    ws_mode: bool = false,
+    inbound: std.ArrayListUnmanaged(u8) = .empty,
+    inbound_off: usize = 0,
 
     // --- durum (Conn.lock altında) ---
     in_map: bool = true,
@@ -102,6 +115,8 @@ pub const Stream = struct {
     head_queued: bool = false,
     head_sent: bool = false,
     out_end: bool = false,
+    /// Yanıt trailer'ları (HPACK bloğu): akış bitişinde son HEADERS(END_STREAM) olarak gider.
+    out_trailers: ?[]u8 = null,
     end_sent: bool = false,
     rst_after: bool = false,
     chunks: std.ArrayListUnmanaged(Chunk) = .empty,
@@ -112,6 +127,8 @@ pub const Stream = struct {
         const c = self.conn;
         const gpa = c.gpa;
         if (self.out_head) |h| gpa.free(h);
+        if (self.out_trailers) |t| gpa.free(t);
+        self.inbound.deinit(gpa);
         for (self.chunks.items[self.chunk_head..]) |ch| gpa.free(ch.data);
         self.chunks.deinit(gpa);
         self.body.deinit(gpa);
@@ -395,6 +412,80 @@ pub fn responseStarted(s: *Stream) bool {
     return s.head_queued;
 }
 
+/// Yanıt trailer'ları (akış bitmeden, `streamEnd`'den ÖNCE): gövdeden sonra son HEADERS olarak gider. `false`: akış başlamamış/bitmiş/iptal ya da bellek yok.
+pub fn streamTrailers(s: *Stream, headers: []const std.http.Header) bool {
+    const c = s.conn;
+    const gpa = c.gpa;
+    var blk: std.ArrayListUnmanaged(u8) = .empty;
+    defer blk.deinit(gpa);
+    for (headers) |h| {
+        if (h.name.len == 0 or h.name[0] == ':' or h2.isConnectionSpecific(h.name) or h.name.len > 128) continue;
+        var lower: [128]u8 = undefined;
+        for (h.name, 0..) |ch, i| lower[i] = std.ascii.toLower(ch);
+        h2.encodeField(&blk, gpa, lower[0..h.name.len], h.value) catch return false;
+    }
+    if (blk.items.len == 0) return true; // boş trailer = trailer yok
+    const owned = blk.toOwnedSlice(gpa) catch return false;
+    c.lock.lock();
+    if (!s.head_queued or s.out_end or s.out_trailers != null) {
+        c.lock.unlock();
+        gpa.free(owned);
+        return false;
+    }
+    if (s.canceled or c.closing) {
+        c.lock.unlock();
+        gpa.free(owned);
+        return true; // istemci gitti: sessizce kabul
+    }
+    s.out_trailers = owned;
+    c.lock.unlock();
+    return true;
+}
+
+/// Gelen trailer'lardan `name` (büyük/küçük harf duyarsız) değeri; çoklu değerler ", " ile birleşir. `buf`a yazılır, yoksa `null`.
+pub fn requestTrailer(s: *Stream, name: []const u8, out: *std.ArrayListUnmanaged(u8), gpa: Allocator) bool {
+    var found = false;
+    for (s.trailers.items) |t| {
+        if (!std.ascii.eqlIgnoreCase(t.name, name)) continue;
+        if (found) out.appendSlice(gpa, ", ") catch return found;
+        out.appendSlice(gpa, t.value) catch return found;
+        found = true;
+    }
+    return found;
+}
+
+/// WebSocket (RFC 8441) kipinde gelen veriyi okur: veri gelene, istemci END_STREAM/RST yollayana ya da bağlantı kapanana dek KOOPERATİF bekler. `null` = akış sonu.
+/// Tüketilen baytlar akış penceresine geri verilir (yavaş tüketici istemciyi yavaşlatır, bellek sınırlı kalır).
+pub fn inboundRead(s: *Stream, dst: []u8) ?usize {
+    const c = s.conn;
+    while (true) {
+        c.lock.lock();
+        const avail = s.inbound.items.len - s.inbound_off;
+        if (avail > 0) {
+            const n = @min(avail, dst.len);
+            @memcpy(dst[0..n], s.inbound.items[s.inbound_off..][0..n]);
+            s.inbound_off += n;
+            if (s.inbound_off == s.inbound.items.len) {
+                s.inbound.clearRetainingCapacity();
+                s.inbound_off = 0;
+            }
+            s.recv_pending += @intCast(n);
+            if (s.recv_pending >= window_update_threshold and !s.recv_ended and !s.canceled) {
+                queueWindowUpdateLocked(c, s.id, s.recv_pending);
+                s.recv_window += s.recv_pending;
+                s.recv_pending = 0;
+            }
+            c.lock.unlock();
+            wake(c);
+            return n;
+        }
+        const done = s.recv_ended or s.canceled or c.closing;
+        c.lock.unlock();
+        if (done) return null;
+        sleepCoop(1);
+    }
+}
+
 /// Handler yanıt göndermeden döndüyse 500, akış açık kaldıysa bitir.
 fn ensureFinished(s: *Stream) void {
     const c = s.conn;
@@ -535,7 +626,7 @@ fn buildStreamFramesLocked(c: *Conn, wbuf: *std.ArrayListUnmanaged(u8)) void {
         }
         if (s.out_head != null and !s.head_sent) {
             const head = s.out_head.?;
-            const end_on_headers = s.out_end and s.chunk_head >= s.chunks.items.len;
+            const end_on_headers = s.out_end and s.chunk_head >= s.chunks.items.len and s.out_trailers == null;
             appendHeaderBlock(wbuf, gpa, s.id, head, end_on_headers, c.peer_max_frame) catch return;
             gpa.free(head);
             s.out_head = null;
@@ -547,7 +638,14 @@ fn buildStreamFramesLocked(c: *Conn, wbuf: *std.ArrayListUnmanaged(u8)) void {
             while (stream_round < round_bytes_per_stream and round_total < round_bytes_total) {
                 if (s.chunk_head >= s.chunks.items.len) {
                     if (s.out_end) {
-                        h2.appendFrameHeader(wbuf, gpa, 0, h2.frame_data, h2.flag_end_stream, s.id) catch return;
+                        if (s.out_trailers) |tr| {
+                            // Trailer'lar: son HEADERS(END_HEADERS|END_STREAM) bloğu (gerekirse CONTINUATION).
+                            appendHeaderBlockFlags(wbuf, gpa, s.id, tr, h2.flag_end_stream, c.peer_max_frame) catch return;
+                            gpa.free(tr);
+                            s.out_trailers = null;
+                        } else {
+                            h2.appendFrameHeader(wbuf, gpa, 0, h2.frame_data, h2.flag_end_stream, s.id) catch return;
+                        }
                         s.end_sent = true;
                     }
                     break;
@@ -559,7 +657,7 @@ fn buildStreamFramesLocked(c: *Conn, wbuf: *std.ArrayListUnmanaged(u8)) void {
                 if (avail <= 0) break;
                 const n: usize = @intCast(avail);
                 const last_chunk = s.chunk_head + 1 == s.chunks.items.len;
-                const is_last = last_chunk and n == remaining and s.out_end;
+                const is_last = last_chunk and n == remaining and s.out_end and s.out_trailers == null;
                 h2.appendFrameHeader(wbuf, gpa, @intCast(n), h2.frame_data, if (is_last) h2.flag_end_stream else 0, s.id) catch return;
                 wbuf.appendSlice(gpa, ch.data[ch.off..][0..n]) catch return;
                 ch.off += n;
@@ -597,6 +695,10 @@ fn buildStreamFramesLocked(c: *Conn, wbuf: *std.ArrayListUnmanaged(u8)) void {
 }
 
 fn appendHeaderBlock(wbuf: *std.ArrayListUnmanaged(u8), gpa: Allocator, id: u32, block: []const u8, end_stream: bool, max_frame: u32) Allocator.Error!void {
+    return appendHeaderBlockFlags(wbuf, gpa, id, block, if (end_stream) h2.flag_end_stream else 0, max_frame);
+}
+
+fn appendHeaderBlockFlags(wbuf: *std.ArrayListUnmanaged(u8), gpa: Allocator, id: u32, block: []const u8, extra_flags: u8, max_frame: u32) Allocator.Error!void {
     var off: usize = 0;
     var first = true;
     while (true) {
@@ -604,7 +706,7 @@ fn appendHeaderBlock(wbuf: *std.ArrayListUnmanaged(u8), gpa: Allocator, id: u32,
         const last = off + take == block.len;
         var flags: u8 = 0;
         if (last) flags |= h2.flag_end_headers;
-        if (first and end_stream) flags |= h2.flag_end_stream;
+        if (first) flags |= extra_flags;
         try h2.appendFrameHeader(wbuf, gpa, @intCast(take), if (first) h2.frame_headers else h2.frame_continuation, flags, id);
         try wbuf.appendSlice(gpa, block[off..][0..take]);
         off += take;
@@ -633,7 +735,7 @@ fn tick(c: *Conn, now: u64) void {
     var it = c.streams.valueIterator();
     while (it.next()) |sp| {
         const s = sp.*;
-        if (!s.recv_ended and !s.canceled and now -| s.activity_ms >= c.cfg.read_timeout_ms) {
+        if (!s.recv_ended and !s.canceled and !s.ws_mode and now -| s.activity_ms >= c.cfg.read_timeout_ms) {
             s.canceled = true;
             queueRstLocked(c, s.id, .cancel);
         }
@@ -724,14 +826,16 @@ pub fn run(gpa: Allocator, reader: *std.Io.Reader, writer: *std.Io.Writer, cfg: 
 
     // Sunucu SETTINGS + bağlantı penceresini yükselt.
     {
-        var st: [6 * 4]u8 = undefined;
+        var st: [6 * 5]u8 = undefined;
         var n: usize = 0;
-        const entries = [_][2]u32{
+        const all_entries = [_][2]u32{
             .{ h2.setting_max_concurrent_streams, cfg.max_concurrent_streams },
             .{ h2.setting_initial_window_size, our_stream_window },
             .{ h2.setting_max_header_list_size, @intCast(@min(cfg.max_header_bytes, 0x7fffffff)) },
             .{ h2.setting_enable_push, 0 },
+            .{ h2.setting_enable_connect_protocol, 1 },
         };
+        const entries = all_entries[0..if (cfg.ws_enabled) all_entries.len else all_entries.len - 1];
         for (entries) |e| {
             std.mem.writeInt(u16, st[n..][0..2], @intCast(e[0]), .big);
             std.mem.writeInt(u32, st[n + 2 ..][0..4], e[1], .big);
@@ -934,6 +1038,13 @@ fn readerLoop(c: *Conn, r: *std.Io.Reader) void {
                     } else if (s.recv_window < 0) {
                         queueRstLocked(c, s.id, .flow_control_error);
                         s.canceled = true;
+                    } else if (s.ws_mode) {
+                        // WebSocket: veri akış olarak sıraya girer; stream-seviyesi pencere tüketildikçe (`inboundRead`) açılır.
+                        s.inbound.appendSlice(gpa, data) catch {
+                            queueRstLocked(c, s.id, .internal_error);
+                            s.canceled = true;
+                        };
+                        if (fh.flags & h2.flag_end_stream != 0) s.recv_ended = true;
                     } else {
                         if (s.early_status == 0) {
                             if (s.body.items.len + data.len > c.cfg.max_body_bytes) {
@@ -1054,6 +1165,13 @@ fn finishHeaderBlock(c: *Conn, decoder: *h2.Decoder, cs: *ContState) bool {
         var go_trailer: ?*Stream = null;
         if (c.streams.get(cs.stream_id)) |ts| {
             if (!ts.recv_ended and !ts.canceled) {
+                const ta = ts.arena.allocator();
+                for (tmp.items) |th| {
+                    if (th.name.len == 0 or th.name[0] == ':') continue; // trailer'da pseudo-header yok
+                    const cname = canonicalName(ta, th.name) catch continue;
+                    const cval = ta.dupe(u8, th.value) catch continue;
+                    ts.trailers.append(ta, .{ .name = cname, .value = cval }) catch {};
+                }
                 ts.recv_ended = true;
                 ts.handler_state = .running;
                 go_trailer = ts;
@@ -1097,7 +1215,7 @@ fn finishHeaderBlock(c: *Conn, decoder: *h2.Decoder, cs: *ContState) bool {
         return true;
     }
 
-    const malformed = !buildRequest(s, tmp_headers.items);
+    const malformed = !buildRequest(s, tmp_headers.items, c.cfg.ws_enabled) or (s.ws_connect and cs.end_stream);
     if (malformed) {
         c.lock.lock();
         queueRstLocked(c, s.id, .protocol_error);
@@ -1108,7 +1226,8 @@ fn finishHeaderBlock(c: *Conn, decoder: *h2.Decoder, cs: *ContState) bool {
         return true;
     }
     if (exceeded) s.early_status = 431;
-    if (std.mem.eql(u8, s.method, "CONNECT")) s.early_status = 501;
+    // Düz CONNECT ve "websocket" dışı genişletilmiş CONNECT desteklenmez.
+    if (std.mem.eql(u8, s.method, "CONNECT") and !s.ws_connect) s.early_status = 501;
 
     c.lock.lock();
     c.streams.put(gpa, s.id, s) catch {
@@ -1123,9 +1242,22 @@ fn finishHeaderBlock(c: *Conn, decoder: *h2.Decoder, cs: *ContState) bool {
         s.recv_ended = true;
         s.handler_state = .running;
         go = true;
+    } else if (s.ws_connect) {
+        // WebSocket: istek gövdesi (WS çerçeveleri) sürerken handler HEMEN başlar.
+        s.ws_mode = true;
+        s.handler_state = .running;
+        go = true;
+    } else if (s.expect_continue) {
+        // `Expect: 100-continue`: istemci gövdeyi göndermeden önce ara yanıtı bekleyebilir.
+        var blk: std.ArrayListUnmanaged(u8) = .empty;
+        defer blk.deinit(gpa);
+        if (h2.encodeField(&blk, gpa, ":status", "100")) |_| {
+            _ = appendCtrlLocked(c, h2.frame_headers, h2.flag_end_headers, s.id, blk.items);
+        } else |_| {}
     }
     c.lock.unlock();
     if (go) dispatchStream(c, s);
+    wake(c);
     return true;
 }
 
@@ -1159,7 +1291,7 @@ fn canonicalName(a: Allocator, name: []const u8) Allocator.Error![]u8 {
 }
 
 /// Çözülmüş başlık listesinden isteği kurar ve RFC 9113 §8.2/§8.3 doğrulamasını yapar (`false` = hatalı biçimli istek).
-fn buildRequest(s: *Stream, decoded: []const h2.Header) bool {
+fn buildRequest(s: *Stream, decoded: []const h2.Header, ws_enabled: bool) bool {
     const a = s.arena.allocator();
     var seen_regular = false;
     var have_method = false;
@@ -1184,6 +1316,10 @@ fn buildRequest(s: *Stream, decoded: []const h2.Header) bool {
                 have_scheme = true;
             } else if (std.mem.eql(u8, h.name, ":authority")) {
                 s.authority = h.value;
+            } else if (std.mem.eql(u8, h.name, ":protocol")) {
+                // RFC 8441: yalnızca SETTINGS_ENABLE_CONNECT_PROTOCOL bildirildiyse (WebSocket sunucusu varsa) geçerli.
+                if (!ws_enabled or s.protocol.len != 0) return false;
+                s.protocol = h.value;
             } else return false;
             continue;
         }
@@ -1200,12 +1336,15 @@ fn buildRequest(s: *Stream, decoded: []const h2.Header) bool {
             s.content_length = v;
         }
         if (std.mem.eql(u8, h.name, "host")) have_host = true;
+        if (std.mem.eql(u8, h.name, "expect") and std.ascii.eqlIgnoreCase(h.value, "100-continue")) s.expect_continue = true;
         const cname = canonicalName(a, h.name) catch return false;
         s.headers.append(a, .{ .name = cname, .value = h.value }) catch return false;
     }
     if (!have_method or s.method.len == 0) return false;
     const is_connect = std.mem.eql(u8, s.method, "CONNECT");
-    if (!is_connect) {
+    if (s.protocol.len != 0 and !is_connect) return false; // `:protocol` yalnızca CONNECT ile
+    if (is_connect and s.protocol.len != 0) s.ws_connect = std.ascii.eqlIgnoreCase(s.protocol, "websocket");
+    if (!is_connect or s.protocol.len != 0) {
         if (!have_scheme or !have_path or s.path.len == 0) return false;
         if (s.path[0] != '/' and !std.mem.eql(u8, s.path, "*")) return false;
     }

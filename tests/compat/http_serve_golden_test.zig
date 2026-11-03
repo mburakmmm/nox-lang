@@ -1074,6 +1074,8 @@ test "nox.http.configure(max_connections): sınır dolunca yeni bağlantı 'Retr
 
 const h2_program =
     \\import nox.http
+    \\import nox.websocket
+    \\from nox.websocket import WebSocketServerConn
     \\
     \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
     \\    if req.target == "/echo":
@@ -1105,6 +1107,13 @@ const h2_program =
     \\            f.sleep_ms(30)
     \\        print("forever closed")
     \\        return f.end()
+    \\    if req.target == "/trailers":
+    \\        t: nox_http_ResponseStream = req.stream(200, {{}})
+    \\        t.send("body")
+    \\        t.trailers({{"X-Checksum": "abc", "Grpc-Status": "0"}})
+    \\        return t.end()
+    \\    if req.target == "/reqtrailer":
+    \\        return nox_http_HttpResponse(200, req.body + ":" + req.trailer("X-Sum"), {{}})
     \\    if req.target == "/boom":
     \\        raise ValueError("boom")
     \\    cookie: str = ""
@@ -1112,7 +1121,13 @@ const h2_program =
     \\        cookie = req.headers["Cookie"]
     \\    return nox_http_HttpResponse(200, "hello " + req.method + " " + req.target, {{"X-Host": req.headers["Host"], "X-Cookie": cookie}})
     \\
-    \\nox.http.serve({d}, handle)
+    \\def ws_handle(conn: WebSocketServerConn) -> None:
+    \\    msg: str = conn.recv()
+    \\    conn.send_text("echo:" + msg)
+    \\    msg2: str = conn.recv()
+    \\    conn.send_text("echo:" + msg2)
+    \\
+    \\nox.http.serve_ws({d}, handle, ws_handle)
     \\print("drained")
     \\
 ;
@@ -1193,6 +1208,7 @@ const H2Conn = struct {
     /// Alınan DATA baytlarına karşılık otomatik WINDOW_UPDATE gönder.
     auto_window: bool = true,
     server_max_streams: u32 = 0,
+    server_connect_protocol: bool = false,
     ping_acks: usize = 0,
 
     fn open(a: std.mem.Allocator, port: u16) !H2Conn {
@@ -1253,7 +1269,10 @@ const H2Conn = struct {
                 saw_settings = true;
                 var off: usize = 0;
                 while (off + 6 <= f.payload.len) : (off += 6) {
-                    if (std.mem.readInt(u16, f.payload[off..][0..2], .big) == h2.setting_max_concurrent_streams) self.server_max_streams = std.mem.readInt(u32, f.payload[off + 2 ..][0..4], .big);
+                    const sid_ = std.mem.readInt(u16, f.payload[off..][0..2], .big);
+                    const val_ = std.mem.readInt(u32, f.payload[off + 2 ..][0..4], .big);
+                    if (sid_ == h2.setting_max_concurrent_streams) self.server_max_streams = val_;
+                    if (sid_ == h2.setting_enable_connect_protocol) self.server_connect_protocol = val_ == 1;
                 }
                 try self.sendFrame(h2.frame_settings, h2.flag_ack, 0, &.{});
             }
@@ -1635,6 +1654,195 @@ test "HTTP/2 (h2c): hatalı biçimli istekler akışı sıfırlar (bağlantı ya
         var pfd = [1]sys.pollfd{.{ .fd = fd, .events = sys.POLL.IN, .revents = 0 }};
         if (sys.poll(&pfd, 1, 3000) > 0) try std.testing.expect(sys.read(fd, &b, b.len) <= 0);
     }
+
+    var out: []u8 = undefined;
+    try srv.stop(allocator, &out, "");
+    defer allocator.free(out);
+}
+
+fn maskedTextFrame(a: std.mem.Allocator, text: []const u8) ![]u8 {
+    const key = [4]u8{ 0x11, 0x22, 0x33, 0x44 };
+    var out = try a.alloc(u8, 2 + 4 + text.len);
+    out[0] = 0x81; // FIN + metin
+    out[1] = @as(u8, @intCast(text.len)) | 0x80;
+    @memcpy(out[2..6], &key);
+    for (text, 0..) |ch, i| out[6 + i] = ch ^ key[i % 4];
+    return out;
+}
+
+test "HTTP/2 (h2c): Expect: 100-continue ara yanıtı, yanıt trailer'ları (akışlı), istek trailer'ları (gövdeden sonra HEADERS)" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const srv = try H2Server.start(allocator);
+    defer srv.deinit(allocator);
+
+    var c = try H2Conn.open(a, srv.port);
+    defer c.close();
+    try c.handshake();
+    try std.testing.expect(c.server_connect_protocol); // serve_ws sunucusu RFC 8441'i duyurur
+    var resps: std.AutoHashMapUnmanaged(u32, H2Resp) = .empty;
+
+    // 1) Expect: 100-continue → önce `:status 100`, sonra gövde, sonra 200.
+    {
+        var blk: std.ArrayListUnmanaged(u8) = .empty;
+        try h2.encodeField(&blk, a, ":method", "POST");
+        try h2.encodeField(&blk, a, ":scheme", "http");
+        try h2.encodeField(&blk, a, ":path", "/echo");
+        try h2.encodeField(&blk, a, ":authority", "localhost");
+        try h2.encodeField(&blk, a, "expect", "100-continue");
+        try c.sendFrame(h2.frame_headers, h2.flag_end_headers, 1, blk.items);
+        var got_100 = false;
+        while (c.readFrame(3000)) |f| {
+            _ = try c.absorb(f, &resps);
+            if (f.kind == h2.frame_headers and f.stream_id == 1) {
+                got_100 = resps.getPtr(1).?.status == 100;
+                break;
+            }
+        }
+        try std.testing.expect(got_100);
+        try c.sendFrame(h2.frame_data, h2.flag_end_stream, 1, "hello");
+        try std.testing.expect(try c.awaitStreams(&.{1}, &resps, null, 5000));
+        try std.testing.expectEqual(@as(u16, 200), resps.getPtr(1).?.status);
+        try std.testing.expectEqualStrings("POST:5", resps.getPtr(1).?.body.items);
+    }
+
+    // 2) Yanıt trailer'ları: DATA'da END_STREAM YOK, son HEADERS trailer'ları taşır.
+    {
+        try c.request(3, "GET", "/trailers", &.{}, null);
+        var data_end_flag = false;
+        var trailer_headers_end = false;
+        var seen_trailers = false;
+        while (c.readFrame(5000)) |f| {
+            if (f.stream_id == 3 and f.kind == h2.frame_data and f.flags & h2.flag_end_stream != 0) data_end_flag = true;
+            if (f.stream_id == 3 and f.kind == h2.frame_headers and resps.getPtr(3) != null and resps.getPtr(3).?.status == 200) {
+                trailer_headers_end = f.flags & h2.flag_end_stream != 0;
+                seen_trailers = true;
+            }
+            if ((try c.absorb(f, &resps)) == 3) break;
+        }
+        const r = resps.getPtr(3).?;
+        try std.testing.expect(!data_end_flag);
+        try std.testing.expect(seen_trailers and trailer_headers_end);
+        try std.testing.expectEqualStrings("body", r.body.items);
+        var cks = false;
+        var gs = false;
+        for (r.headers.items) |h| {
+            if (std.mem.eql(u8, h.name, "x-checksum") and std.mem.eql(u8, h.value, "abc")) cks = true;
+            if (std.mem.eql(u8, h.name, "grpc-status") and std.mem.eql(u8, h.value, "0")) gs = true;
+        }
+        try std.testing.expect(cks and gs);
+    }
+
+    // 3) İstek trailer'ları: HEADERS, DATA (END_STREAM yok), trailer HEADERS(END_STREAM).
+    {
+        var blk: std.ArrayListUnmanaged(u8) = .empty;
+        try h2.encodeField(&blk, a, ":method", "POST");
+        try h2.encodeField(&blk, a, ":scheme", "http");
+        try h2.encodeField(&blk, a, ":path", "/reqtrailer");
+        try h2.encodeField(&blk, a, ":authority", "localhost");
+        try c.sendFrame(h2.frame_headers, h2.flag_end_headers, 5, blk.items);
+        try c.sendFrame(h2.frame_data, 0, 5, "hello");
+        var tr: std.ArrayListUnmanaged(u8) = .empty;
+        try h2.encodeField(&tr, a, "x-sum", "42");
+        try c.sendFrame(h2.frame_headers, h2.flag_end_headers | h2.flag_end_stream, 5, tr.items);
+        try std.testing.expect(try c.awaitStreams(&.{5}, &resps, null, 5000));
+        try std.testing.expectEqualStrings("hello:42", resps.getPtr(5).?.body.items);
+    }
+
+    var out: []u8 = undefined;
+    try srv.stop(allocator, &out, "");
+    defer allocator.free(out);
+}
+
+test "HTTP/1.1: chunked yanıt trailer'ları ve chunked istek trailer'ları (req.trailer)" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const srv = try H2Server.start(allocator);
+    defer srv.deinit(allocator);
+
+    var buf: [2048]u8 = undefined;
+    // Yanıt trailer'ları: son chunk'tan (0\r\n) SONRA başlık satırları gelir.
+    const n = rawResponse(srv.port, "GET /trailers HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", &buf);
+    const resp = buf[0..n];
+    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 200 OK\r\n"));
+    const zero = std.mem.indexOf(u8, resp, "\r\n0\r\n") orelse return error.NoFinalChunk;
+    try std.testing.expect(std.mem.indexOf(u8, resp[0..zero], "body") != null);
+    const tail = resp[zero + 5 ..];
+    try std.testing.expect(std.ascii.indexOfIgnoreCase(tail, "x-checksum: abc\r\n") != null);
+    try std.testing.expect(std.ascii.indexOfIgnoreCase(tail, "grpc-status: 0\r\n") != null);
+    try std.testing.expect(std.mem.endsWith(u8, resp, "\r\n\r\n"));
+
+    // İstek trailer'ı: chunked gövde + "X-Sum: 42".
+    const n2 = rawResponse(srv.port, "POST /reqtrailer HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTrailer: X-Sum\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\nX-Sum: 42\r\n\r\n", &buf);
+    try std.testing.expect(std.mem.endsWith(u8, buf[0..n2], "hello:42"));
+
+    var out: []u8 = undefined;
+    try srv.stop(allocator, &out, "");
+    defer allocator.free(out);
+}
+
+test "HTTP/2 (h2c): WebSocket üzerinden RFC 8441 — genişletilmiş CONNECT, maskeli çerçeveler akış DATA'sında, iki mesaj yankısı, düz CONNECT 501" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const srv = try H2Server.start(allocator);
+    defer srv.deinit(allocator);
+
+    var c = try H2Conn.open(a, srv.port);
+    defer c.close();
+    try c.handshake();
+    try std.testing.expect(c.server_connect_protocol);
+    var resps: std.AutoHashMapUnmanaged(u32, H2Resp) = .empty;
+
+    // Düz CONNECT (proxy tüneli) desteklenmez → 501; sunucu yaşar.
+    {
+        var blk: std.ArrayListUnmanaged(u8) = .empty;
+        try h2.encodeField(&blk, a, ":method", "CONNECT");
+        try h2.encodeField(&blk, a, ":authority", "example.com:443");
+        try c.sendFrame(h2.frame_headers, h2.flag_end_headers | h2.flag_end_stream, 1, blk.items);
+        try std.testing.expect(try c.awaitStreams(&.{1}, &resps, null, 5000));
+        // :scheme/:path yok → hatalı biçimli (RST) ya da 501; her ikisi de reddir.
+        const r = resps.getPtr(1).?;
+        try std.testing.expect(r.status == 501 or r.rst != null);
+    }
+
+    // WebSocket el sıkışması.
+    var blk: std.ArrayListUnmanaged(u8) = .empty;
+    try h2.encodeField(&blk, a, ":method", "CONNECT");
+    try h2.encodeField(&blk, a, ":protocol", "websocket");
+    try h2.encodeField(&blk, a, ":scheme", "http");
+    try h2.encodeField(&blk, a, ":path", "/ws");
+    try h2.encodeField(&blk, a, ":authority", "localhost");
+    try h2.encodeField(&blk, a, "sec-websocket-version", "13");
+    try c.sendFrame(h2.frame_headers, h2.flag_end_headers, 3, blk.items);
+    while (c.readFrame(3000)) |f| {
+        _ = try c.absorb(f, &resps);
+        if (f.kind == h2.frame_headers and f.stream_id == 3) break;
+    }
+    try std.testing.expectEqual(@as(u16, 200), resps.getPtr(3).?.status);
+    try std.testing.expect(!resps.getPtr(3).?.ended);
+
+    // İki mesaj: istemci→sunucu maskeli, sunucu→istemci maskesiz.
+    for ([_][]const u8{ "merhaba", "tekrar" }) |msg| {
+        try c.sendFrame(h2.frame_data, 0, 3, try maskedTextFrame(a, msg));
+        var got: std.ArrayListUnmanaged(u8) = .empty;
+        const want = try std.fmt.allocPrint(a, "echo:{s}", .{msg});
+        while (got.items.len < 2 + want.len) {
+            const f = c.readFrame(5000) orelse break;
+            if (f.stream_id == 3 and f.kind == h2.frame_data) try got.appendSlice(a, f.payload);
+            _ = try c.absorb(f, &resps);
+        }
+        try std.testing.expectEqual(@as(u8, 0x81), got.items[0]);
+        try std.testing.expectEqual(@as(u8, @intCast(want.len)), got.items[1]);
+        try std.testing.expectEqualStrings(want, got.items[2..][0..want.len]);
+    }
+    // Handler iki mesajdan sonra döner → sunucu akışı bitirir (END_STREAM; yankı okunurken zaten gelmiş olabilir).
+    if (!resps.getPtr(3).?.ended) try std.testing.expect(try c.awaitStreams(&.{3}, &resps, null, 5000));
+    try std.testing.expect(resps.getPtr(3).?.ended);
 
     var out: []u8 = undefined;
     try srv.stop(allocator, &out, "");
