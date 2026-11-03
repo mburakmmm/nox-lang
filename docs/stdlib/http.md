@@ -93,6 +93,39 @@ r: HttpResponse = nox.http.request("PUT", "http://127.0.0.1:8080/items/1", "{\"n
 png: Buffer = nox.bytes.from_str(nox.http.get("http://127.0.0.1:8080/logo.png", {}).body)
 ```
 
+### Connection pooling
+
+Outgoing requests share a process-wide pool of idle connections. When a request finishes, its connection goes back to the pool and the next request to the same scheme, host and port
+(from any task or worker) reuses it, so repeated calls to one API skip the TCP connect and, for `https`, the TLS handshake. Against a real HTTPS API this made back-to-back requests about
+4× faster (336 ms → 82 ms each). Nothing changes in how you call the client.
+
+| Call | Meaning |
+|---|---|
+| `nox.http.client_pool(max_idle)` | the most idle connections kept (default `32`, at most `1024`); `0` turns pooling off: idle connections close at once and every request opens and closes its own |
+| `nox.http.client_idle_connections()` | how many idle connections the pool holds right now |
+
+```nox
+import nox.http
+
+print(nox.http.client_idle_connections())
+nox.http.client_pool(0)
+nox.http.client_pool(32)
+print(nox.http.client_idle_connections())
+```
+
+```output
+0
+0
+```
+
+How stale connections are handled — a server may close an idle connection at any time:
+
+- Before a request, the pool checks the idle connection it is about to reuse; one the server has already closed is discarded and a fresh connection is opened. You never see an error for this.
+- If the connection dies in the instant between that check and the request, an **idempotent** request (`GET`, `HEAD`, `OPTIONS`, `PUT`, `DELETE`, `TRACE`) that failed before any response arrived is retried **once** on a fresh connection. `POST` and `PATCH` are never retried automatically, because the server may already have acted on them; such a request fails with `HttpError` and your code decides.
+- Only responses that were read completely return their connection to the pool; a timeout, a truncated body or a `Connection: close` response closes it. A request with `timeout_ms` is cancelled by closing its connection, which is never reused.
+- Idle connections stay open until the server closes them, the pool is full (the oldest are closed first) or `client_pool` shrinks the pool. Streaming calls (`nox.http.stream`, `stream_upload`) open their own connections and do not use the pool.
+- HTTPS certificate checks use the current time, refreshed every ten minutes.
+
 ### Streaming large bodies
 
 `get`, `post` and `request` keep the whole response body in memory. For large downloads and uploads use a stream: the body moves in chunks, memory use is bounded by the chunk size,

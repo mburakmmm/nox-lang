@@ -165,6 +165,8 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_hpy_take_error", Entry{ .params = "P", .ret = 'P' } },
     .{ "nox_hpy_writer_get_str", Entry{ .params = "PPP", .ret = 'P' } },
     .{ "nox_http_build_tls_ctx", Entry{ .params = "PP", .ret = 'P' } },
+    .{ "nox_http_client_pool_idle_raw", Entry{ .params = "", .ret = 'L' } },
+    .{ "nox_http_client_pool_set_raw", Entry{ .params = "L", .ret = 'v' } },
     .{ "nox_http_config_set_raw", Entry{ .params = "LL", .ret = 'v' } },
     .{ "nox_http_free_bounded_payload", Entry{ .params = "PP", .ret = 'v' } },
     .{ "nox_http_free_shared_budget", Entry{ .params = "PP", .ret = 'v' } },

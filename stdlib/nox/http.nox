@@ -176,6 +176,18 @@ def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_m
 def shutdown() -> None:
     nox_http_shutdown_raw()
 
+extern def nox_http_client_pool_set_raw(max_idle: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_http_client_pool_idle_raw() -> int from "zig-out/lib/noxrt.o"
+
+# Giden isteklerin bağlantı havuzu (v2.0.126): bir isteğin bağlantısı bitince boşta havuza döner, aynı sunucuya sonraki istekler onu kullanır (TCP + TLS el sıkışması atlanır).
+# `max_idle`, süreç-geneli boşta bağlantı üst sınırıdır (varsayılan 32); 0 havuzu kapatır (boştakiler hemen kapanır, her istek kendi bağlantısını açıp kapatır).
+def client_pool(max_idle: int) -> None:
+    nox_http_client_pool_set_raw(max_idle)
+
+# Şu an havuzda bekleyen boşta bağlantı sayısı.
+def client_idle_connections() -> int:
+    return nox_http_client_pool_idle_raw()
+
 extern def nox_http_listen_fd(port: int) -> int from "zig-out/lib/noxrt.o" with_rt
 
 def listen(port: int) -> int:

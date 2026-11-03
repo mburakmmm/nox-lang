@@ -201,6 +201,147 @@ test "nox.http.get: gercek bir yerel sunucuya karsi uctan uca (import + extern d
     try expectGolden(source, "200\nhello\nmerhaba\n");
 }
 
+// ---- Bağlantı havuzu (v2.0.126) ----
+
+const PoolMode = enum { keep, close_after_response, drop_second_request };
+
+const PoolUpstream = struct {
+    listen_fd: sys.fd_t,
+    mode: PoolMode,
+    conns: std.atomic.Value(usize) = .init(0),
+    reqs: std.atomic.Value(usize) = .init(0),
+    stop: std.atomic.Value(bool) = .init(false),
+};
+
+fn poolUpstreamConn(up: *PoolUpstream, c: sys.fd_t) void {
+    defer _ = sys.close(c);
+    var buf: [8192]u8 = undefined;
+    var have: usize = 0;
+    var n_on_conn: usize = 0;
+    while (true) {
+        // Bir isteğin başlığı tamamlanana dek oku.
+        var head_end: ?usize = null;
+        while (head_end == null) {
+            if (std.mem.indexOf(u8, buf[0..have], "\r\n\r\n")) |i| {
+                head_end = i + 4;
+                break;
+            }
+            if (have == buf.len) return;
+            const n = sys.read(c, buf[have..].ptr, buf.len - have);
+            if (n <= 0) return;
+            have += @intCast(n);
+        }
+        const he = head_end.?;
+        // Gövde (POST): Content-Length kadar tüket.
+        var need: usize = 0;
+        if (std.ascii.indexOfIgnoreCase(buf[0..he], "content-length: ")) |i| {
+            var j = i + "content-length: ".len;
+            while (j < he and buf[j] >= '0' and buf[j] <= '9') : (j += 1) need = need * 10 + (buf[j] - '0');
+        }
+        while (have < he + need) {
+            const n = sys.read(c, buf[have..].ptr, buf.len - have);
+            if (n <= 0) return;
+            have += @intCast(n);
+        }
+        std.mem.copyForwards(u8, buf[0 .. have - (he + need)], buf[he + need .. have]);
+        have -= he + need;
+
+        n_on_conn += 1;
+        _ = up.reqs.fetchAdd(1, .monotonic);
+        if (up.mode == .drop_second_request and n_on_conn == 2) return; // yanıtsız kapat
+        const response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
+        _ = sys.write(c, response.ptr, response.len);
+        if (up.mode == .close_after_response) return; // keep-alive ilan edip kapat
+    }
+}
+
+fn poolUpstreamLoop(up: *PoolUpstream) void {
+    var handlers: [32]?std.Thread = @splat(null);
+    var i: usize = 0;
+    while (!up.stop.load(.acquire) and i < handlers.len) {
+        var pfd = [1]sys.pollfd{.{ .fd = up.listen_fd, .events = sys.POLL.IN, .revents = 0 }};
+        if (sys.poll(&pfd, 1, 100) <= 0) continue;
+        const conn = sys.accept(up.listen_fd, null, null);
+        if (sys.badFd(conn)) break;
+        _ = up.conns.fetchAdd(1, .monotonic);
+        handlers[i] = std.Thread.spawn(.{}, poolUpstreamConn, .{ up, conn }) catch null;
+        i += 1;
+    }
+    for (&handlers) |*h| if (h.*) |t| t.join();
+}
+
+fn runPoolScenario(mode: PoolMode, comptime body: []const u8, expected_out: []const u8, expected_conns: usize, expected_reqs: usize) !void {
+    const allocator = std.testing.allocator;
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer _ = sys.close(listen_fd);
+    var up: PoolUpstream = .{ .listen_fd = listen_fd, .mode = mode };
+    const th = try std.Thread.spawn(.{}, poolUpstreamLoop, .{&up});
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\import nox.http
+        \\import nox.time
+        \\
+        \\url: str = "http://127.0.0.1:{d}/x"
+        \\
+    ++ body, .{port});
+    defer allocator.free(source);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const result = compileAndRun(arena.allocator(), source) catch |e| {
+        up.stop.store(true, .release);
+        th.join();
+        return e;
+    };
+    up.stop.store(true, .release);
+    th.join();
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+    try std.testing.expectEqualStrings(expected_out, result.stdout);
+    try std.testing.expectEqual(@as(usize, 0), result.stderr.len);
+    try std.testing.expectEqual(expected_conns, up.conns.load(.acquire));
+    try std.testing.expectEqual(expected_reqs, up.reqs.load(.acquire));
+}
+
+test "nox.http.request: bağlantı havuzu — art arda istekler TEK bağlantıyı yeniden kullanır, client_pool(0) kapatır ve boşta bağlantıları kapatır" {
+    try runPoolScenario(.keep,
+        \\i: int = 0
+        \\while i < 5:
+        \\    print(nox.http.get(url, {{}}).status)
+        \\    i = i + 1
+        \\print(nox.http.client_idle_connections())
+        \\nox.http.client_pool(0)
+        \\print(nox.http.client_idle_connections())
+        \\print(nox.http.get(url, {{}}).status)
+        \\print(nox.http.get(url, {{}}).status)
+        \\print(nox.http.client_idle_connections())
+        \\
+    , "200\n200\n200\n200\n200\n1\n0\n200\n200\n0\n", 3, 7);
+}
+
+test "nox.http.request: sunucunun yanıttan sonra kapattığı (bayat) boşta bağlantı bir sonraki istekten önce ayıklanır, hata görünmez" {
+    try runPoolScenario(.close_after_response,
+        \\i: int = 0
+        \\while i < 4:
+        \\    print(nox.http.get(url, {{}}).status)
+        \\    nox.time.sleep_ms(100)
+        \\    i = i + 1
+        \\
+    , "200\n200\n200\n200\n", 4, 4);
+}
+
+test "nox.http.request: yeniden kullanılan bağlantı yanıtsız kapanırsa GET bir kez taze bağlantıyla yeniden denenir, POST ASLA" {
+    try runPoolScenario(.drop_second_request,
+        \\print(nox.http.get(url, {{}}).status)
+        \\print(nox.http.get(url, {{}}).status)
+        \\print(nox.http.get(url, {{}}).status)
+        \\try:
+        \\    print(nox.http.post(url, "payload", {{}}).status)
+        \\except nox_http_HttpError:
+        \\    print("post failed")
+        \\
+    , "200\n200\n200\npost failed\n", 3, 6);
+}
+
 fn sleepMs(ms: u64) void {
     const ts: sys.timespec = .{ .sec = @intCast(ms / 1000), .nsec = @intCast((ms % 1000) * std.time.ns_per_ms) };
     _ = sys.nanosleep(&ts, null);

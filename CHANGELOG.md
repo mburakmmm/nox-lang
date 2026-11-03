@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.126]
+
+### Eklendi
+
+- **Giden isteklerde bağlantı havuzu:** `nox.http.request/get/post` artık süreç-geneli, iş parçacığı güvenli bir boşta bağlantı havuzu kullanır; biten isteğin bağlantısı havuza döner ve aynı şema/sunucu/porta sonraki istekler (hangi görev ya da işçiden olursa olsun) onu devralır: TCP bağlantısı ve HTTPS'te TLS el sıkışması atlanır. Gerçek bir HTTPS API'ye art arda istekler 336 ms → 82 ms. `nox.http.client_pool(max_idle)` (varsayılan 32, en çok 1024; `0` havuzu kapatır ve eski istek-başına-istemci davranışına döner) ve `nox.http.client_idle_connections()`.
+- Bayat bağlantı güvenliği: sunucunun kapattığı boşta bağlantı istekten önce `poll` ile fark edilip atılır; yarışı yine de kaybeden, yeniden kullanılmış bağlantıda ve yanıt gelmeden başarısız olan idempotent isteği (GET/HEAD/OPTIONS/PUT/DELETE/TRACE) bir kez taze bağlantıyla yeniden dener; POST/PATCH asla otomatik yeniden denenmez.
+- Yan fayda: 32 bin kısa ömürlü bağlantı yerine ~64 bağlantı kullanıldığından macOS'ta ephemeral port tükenmesi (havuzsuz 64×500 ardışık istekte ~%50 hata) ortadan kalkar.
+
 ## [2.0.125]
 
 ### Düzeltildi

@@ -447,6 +447,132 @@ pub fn responseBodyTruncated(req: *std.http.Client.Request, method: std.http.Met
     };
 }
 
+// ---- Giden istek bağlantı havuzu (v2.0.126, spec §3.331) ----
+//
+// Eskiden her istek kendi `std.http.Client`ini kurup bitince kapatıyordu: aynı sunucuya art arda istekler her seferinde yeni TCP (HTTPS'te ayrıca TLS) el sıkışması öderdi. Artık süreç-genelinde TEK
+// paylaşılan istemci (ve std'nin iş parçacığı güvenli `ConnectionPool`u) kullanılır: biten isteğin bağlantısı boşta havuza döner, sonraki istek (hangi fiber/iş parçacığından olursa olsun) onu devralır.
+// Boşta bağlantı, sunucu tarafından kapatılmış olabilir: bu, std'de denetlenmez, o yüzden (1) her istekten önce eşleşen boşta bağlantılar `poll` ile yoklanır (okunabilir = veri/EOF/hata → at) ve
+// (2) yine de bir yarış kaybedilirse, yeniden kullanılmış bağlantıda ve yanıt başlığı gelmeden başarısız olan İDEMPOTENT bir istek (GET/HEAD/OPTIONS/PUT/DELETE/TRACE) bir kez, boşta bağlantılar
+// atılarak taze bağlantıyla yeniden denenir (POST/PATCH asla yeniden denenmez). `size == 0` havuzu kapatır (eski davranış: istek başına istemci).
+const PoolState = struct {
+    lock: asap.SpinLock = .{},
+    ready: bool = false,
+    ca_tried: bool = false,
+    now_refreshed_ms: u64 = 0,
+    client: std.http.Client = undefined,
+};
+var g_pool: PoolState = .{};
+var g_pool_size: std.atomic.Value(usize) = .init(32);
+const POOL_MAX_SIZE: usize = 1024;
+/// std `Client.now`ı (sertifika geçerlilik denetimi) yalnızca ilk HTTPS isteğinde yazar; uzun ömürlü istemcide bayatlamaması için bu aralıkta yenilenir.
+const POOL_NOW_REFRESH_MS: u64 = 10 * 60 * 1000;
+
+fn poolClientFor(io: std.Io, https: bool) error{CaUnavailable}!*std.http.Client {
+    g_pool.lock.lock();
+    defer g_pool.lock.unlock();
+    if (!g_pool.ready) {
+        g_pool.client = .{ .allocator = std.heap.c_allocator, .io = io };
+        g_pool.client.connection_pool.free_size = g_pool_size.load(.monotonic);
+        g_pool.ready = true;
+    }
+    const c = &g_pool.client;
+    if (https) {
+        const now_ms = monotonicMs();
+        if (!g_pool.ca_tried) {
+            // Paylaşılan sistem CA paketini bir kez ödünç ver (asla `deinit` edilmez). Yüklenemezse iOS'ta istek başarısız olur, diğerlerinde std kendi paketini yükler.
+            if (!adoptSharedCa(c) and builtin.os.tag == .ios) return error.CaUnavailable;
+            g_pool.ca_tried = true;
+            g_pool.now_refreshed_ms = now_ms;
+        } else if (c.now != null and now_ms -| g_pool.now_refreshed_ms >= POOL_NOW_REFRESH_MS) {
+            c.ca_bundle_lock.lockUncancelable(io);
+            c.now = std.Io.Clock.real.now(io);
+            c.ca_bundle_lock.unlock(io);
+            g_pool.now_refreshed_ms = now_ms;
+        }
+    }
+    return c;
+}
+
+/// Boşta bir bağlantı güvenilir mi değil mi: soket okunabilir (karşı taraf kapattı/veri gönderdi/hata) ise güvenilmezdir. Windows/wasm'da yoklama yapılmaz (yeniden deneme yedeği vardır).
+fn idleSocketDead(c: *std.http.Client.Connection) bool {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return false;
+    var pfd = [1]posix.pollfd{.{ .fd = c.stream_reader.stream.socket.handle, .events = posix.POLL.IN, .revents = 0 }};
+    const rc = std.c.poll(&pfd, 1, 0);
+    return rc > 0;
+}
+
+/// `uri`nin sunucusuna ait boşta bağlantıları sondan başa (std `findConnection` en son bırakılanı seçer) yoklar: ölü olanları (ya da `force_all` ise hepsini) kapatır, ilk canlı eşleşmede durur — bu isteğin
+/// kullanacağı bağlantı odur; daha eskileri ona ihtiyaç olunca yoklanır (istek başına tek `poll`, havuz büyüklüğünden bağımsız). Dönüş: bu istek için canlı, yeniden kullanılabilir bir boşta bağlantı var mı.
+fn prunePool(client: *std.http.Client, uri: std.Uri, https: bool, force_all: bool) bool {
+    var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+    const host = uri.getHost(&host_buf) catch return false;
+    const protocol: std.http.Client.Protocol = if (https) .tls else .plain;
+    const port: u16 = uri.port orelse (if (https) @as(u16, 443) else @as(u16, 80));
+    const io = client.io;
+    const pool = &client.connection_pool;
+    pool.mutex.lockUncancelable(io);
+    defer pool.mutex.unlock(io);
+    var node = pool.free.last;
+    while (node) |n| {
+        node = n.prev;
+        const c: *std.http.Client.Connection = @alignCast(@fieldParentPtr("pool_node", n));
+        if (c.protocol != protocol or c.port != port or !c.host().eql(host)) continue;
+        if (force_all or idleSocketDead(c)) {
+            pool.free.remove(n);
+            pool.free_len -= 1;
+            c.destroy(io);
+        } else return true;
+    }
+    return false;
+}
+
+/// Boşta havuzu `new_size` bağlantıya indirir (en eskiler kapanır) ve üst sınırı ayarlar.
+fn resizePool(new_size: usize) void {
+    g_pool_size.store(new_size, .monotonic);
+    g_pool.lock.lock();
+    defer g_pool.lock.unlock();
+    if (!g_pool.ready) return;
+    const io = g_pool.client.io;
+    const pool = &g_pool.client.connection_pool;
+    pool.mutex.lockUncancelable(io);
+    defer pool.mutex.unlock(io);
+    while (pool.free_len > new_size) {
+        const n = pool.free.popFirst() orelse break;
+        pool.free_len -= 1;
+        const c: *std.http.Client.Connection = @alignCast(@fieldParentPtr("pool_node", n));
+        c.destroy(io);
+    }
+    pool.free_size = new_size;
+}
+
+/// `nox.http.client_pool(max_idle)`: süreç-geneli boşta bağlantı üst sınırı; 0 havuzu kapatır (boştakiler hemen kapanır, sonraki istekler istek başına istemciyle yapılır).
+export fn nox_http_client_pool_set_raw(max_idle: i64) callconv(.c) void {
+    const n: usize = if (max_idle < 0) 0 else @min(@as(usize, @intCast(max_idle)), POOL_MAX_SIZE);
+    resizePool(n);
+}
+
+/// Şu an havuzda bekleyen boşta bağlantı sayısı (`nox.http.client_idle_connections()`).
+export fn nox_http_client_pool_idle_raw() callconv(.c) i64 {
+    g_pool.lock.lock();
+    defer g_pool.lock.unlock();
+    if (!g_pool.ready) return 0;
+    const io = g_pool.client.io;
+    const pool = &g_pool.client.connection_pool;
+    pool.mutex.lockUncancelable(io);
+    defer pool.mutex.unlock(io);
+    return @intCast(pool.free_len);
+}
+
+/// Yeniden deneme güvenli mi: yeniden kullanılmış bir bağlantıda, ilk denemede, zaman aşımı olmadan, idempotent bir yöntemle.
+fn canRetryOnStale(ctx: *RequestCtx, reused: bool, attempt: u8) bool {
+    if (!reused or attempt != 0) return false;
+    if (ctx.shared) |sh| if (sh.timed_out.load(.acquire)) return false;
+    return switch (ctx.method) {
+        .GET, .HEAD, .OPTIONS, .PUT, .DELETE, .TRACE => true,
+        else => false,
+    };
+}
+
 fn workerThreadFn(ctx: *RequestCtx) void {
     // `write_fd` BURADA (fonksiyon GİRİŞİNDE) YEREL bir değişkene
     // KOPYALANIR — GERÇEK bir yarış durumu (Linux/x86-64 CI'de bir
@@ -480,165 +606,177 @@ fn workerThreadFn(ctx: *RequestCtx) void {
 
     const io = sharedClientIo();
 
-    // İstek ömrü kadar bir arena. `std.http.Client` başarısız bağlantıda
-    // (Windows AFD) bıraktığı ara tahsisler Nox'un DebugAllocator sızıntı
-    // sayacına düşmesin; istek bitince arena hepsini geri verir.
-    var request_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer request_arena.deinit();
-    var client: std.http.Client = .{ .allocator = request_arena.allocator(), .io = io };
-    defer client.deinit();
-    defer releaseSharedCa(&client); // `client.deinit`ten ÖNCE çalışır (LIFO)
-
     const uri = std.Uri.parse(ctx.url) catch {
         ctx.failed = true;
         return;
     };
+    const https = std.ascii.eqlIgnoreCase(uri.scheme, "https");
 
-    if (std.ascii.eqlIgnoreCase(uri.scheme, "https")) {
+    // Havuz kapalıyken (ya da kapatıldığında) eski yol: İstek ömrü kadar bir arena. `std.http.Client` başarısız bağlantıda
+    // (Windows AFD) bıraktığı ara tahsisler Nox'un DebugAllocator sızıntı sayacına düşmesin; istek bitince arena hepsini geri verir.
+    var request_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer request_arena.deinit();
+    var local_client: std.http.Client = .{ .allocator = request_arena.allocator(), .io = io };
+    const pooled = g_pool_size.load(.monotonic) > 0;
+    defer if (!pooled) {
+        releaseSharedCa(&local_client); // `deinit`ten ÖNCE
+        local_client.deinit();
+    };
+    const client: *std.http.Client = if (pooled)
+        poolClientFor(io, https) catch {
+            ctx.failed = true;
+            return;
+        }
+    else blk: {
         // iOS'ta sistem kökleri yalnızca bu yolla alınabilir: yüklenemezse istek başarısız olur. Diğer platformlarda yükleme başarısızlığı istemcinin kendi yoluna düşer (aynı hata).
-        if (!adoptSharedCa(&client) and builtin.os.tag == .ios) {
+        if (https and !adoptSharedCa(&local_client) and builtin.os.tag == .ios) {
             ctx.failed = true;
             return;
         }
-    }
+        break :blk &local_client;
+    };
 
-    // DNS + bağlanma `timeout_ms` ile sınırlı (bkz. `net_dial.zig`); bağlantı kurulunca (ya da başarısız olunca) son tarih kalkar.
-    if (ctx.timeout_ms > 0) net_dial.begin(ctx.timeout_ms);
-    var req = client.request(ctx.method, uri, .{
-        .extra_headers = ctx.request_headers,
-        .redirect_behavior = .unhandled,
-    }) catch |err| {
+    var attempt: u8 = 0;
+    retry: while (true) {
+        // Bayat boşta bağlantıları ayıkla; canlı eşleşen biri kaldıysa bu istek onu kullanacak ("yeniden kullanılmış"). Yeniden denemede boşta bağlantıların hepsi atılır: taze bağlantı garanti.
+        const reused = pooled and prunePool(client, uri, https, attempt > 0);
+
+        // DNS + bağlanma `timeout_ms` ile sınırlı (bkz. `net_dial.zig`); bağlantı kurulunca (ya da başarısız olunca) son tarih kalkar.
+        if (ctx.timeout_ms > 0) net_dial.begin(ctx.timeout_ms);
+        var req = client.request(ctx.method, uri, .{
+            .extra_headers = ctx.request_headers,
+            .redirect_behavior = .unhandled,
+        }) catch |err| {
+            net_dial.end();
+            if (net_dial.timedOut()) if (ctx.shared) |sh| sh.timed_out.store(true, .release);
+            if (comptime (builtin.abi.isAndroid() or builtin.os.tag == .ios) and builtin.mode == .Debug) {
+                const c = struct {
+                    extern "c" fn nox_host_log_debug(text: [*:0]const u8) void;
+                };
+                c.nox_host_log_debug(@errorName(err));
+            }
+            ctx.failed = true;
+            return;
+        };
         net_dial.end();
-        if (net_dial.timedOut()) if (ctx.shared) |sh| sh.timed_out.store(true, .release);
-        if (comptime (builtin.abi.isAndroid() or builtin.os.tag == .ios) and builtin.mode == .Debug) {
-            const c = struct {
-                extern "c" fn nox_host_log_debug(text: [*:0]const u8) void;
+        defer req.deinit();
+        // Zaman aşımı bekçisi için açık soketi yayınla; bağlantı havuza dönmeden/kapanmadan ÖNCE geri al (LIFO: req.deinit'ten önce çalışır) — bekçi havuzdaki bağlantıya asla dokunmaz.
+        if (ctx.shared) |sh| {
+            if (req.connection) |conn| sh.setHandle(socketHandleToUsize(conn.stream_reader.stream.socket.handle));
+        }
+        defer if (ctx.shared) |sh| sh.clearHandle();
+
+        const sent_ok = sent: {
+            if (ctx.body) |b| {
+                req.transfer_encoding = .{ .content_length = b.len };
+                var body_writer = req.sendBodyUnflushed(&.{}) catch break :sent false;
+                body_writer.writer.writeAll(b) catch break :sent false;
+                body_writer.end() catch break :sent false;
+                const conn = req.connection orelse break :sent false;
+                conn.flush() catch break :sent false;
+            } else {
+                req.sendBodiless() catch break :sent false;
+            }
+            break :sent true;
+        };
+        if (!sent_ok) {
+            if (canRetryOnStale(ctx, reused, attempt)) {
+                attempt += 1;
+                continue :retry;
+            }
+            ctx.failed = true;
+            return;
+        }
+
+        var redirect_buffer: [8 * 1024]u8 = undefined;
+        var response = req.receiveHead(&redirect_buffer) catch {
+            if (canRetryOnStale(ctx, reused, attempt)) {
+                attempt += 1;
+                continue :retry;
+            }
+            ctx.failed = true;
+            return;
+        };
+
+        ctx.status = @intFromEnum(response.head.status);
+
+        var headers_list: std.ArrayListUnmanaged(std.http.Header) = .empty;
+        var it = response.head.iterateHeaders();
+        while (it.next()) |h| {
+            const name_copy = ctx.allocator.dupe(u8, h.name) catch continue;
+            const value_copy = ctx.allocator.dupe(u8, h.value) catch {
+                ctx.allocator.free(name_copy);
+                continue;
             };
-            c.nox_host_log_debug(@errorName(err));
+            headers_list.append(ctx.allocator, .{ .name = name_copy, .value = value_copy }) catch {
+                ctx.allocator.free(name_copy);
+                ctx.allocator.free(value_copy);
+                continue;
+            };
         }
-        ctx.failed = true;
-        return;
-    };
-    net_dial.end();
-    defer req.deinit();
-    // Zaman aşımı bekçisi için açık soketi yayınla; bağlantı kapanmadan ÖNCE geri al (LIFO: req.deinit'ten önce çalışır).
-    if (ctx.shared) |sh| {
-        if (req.connection) |conn| sh.setHandle(socketHandleToUsize(conn.stream_reader.stream.socket.handle));
-    }
-    defer if (ctx.shared) |sh| sh.clearHandle();
+        ctx.response_headers = headers_list.toOwnedSlice(ctx.allocator) catch &.{};
+        // Düzeltme 1/2 gövde-okuma başarısızlıklarının (decompress tamponu
+        // tahsisi, desteklenmeyen kodlama, `streamRemaining`, gömülü NUL) HEPSİ
+        // BURADAN SONRA, yani `ctx.response_headers` ZATEN doldurulduktan SONRA
+        // gerçekleşir — bu ARTIK BAŞARISIZ olan istekler İÇİN de `response_
+        // headers`ın serbest bırakılmasını GARANTİ eder (`doRequest`nin
+        // başarısızlık yolu, `destroyOwned` ÜZERİNDEN yalnızca `request_
+        // headers`ı serbest bırakır, `response_headers`ı DEĞİL — bu olmadan
+        // gerçek bir bellek sızıntısı olurdu, testle YAKALANDI).
+        var headers_committed = false;
+        defer if (!headers_committed) {
+            for (ctx.response_headers) |header| {
+                ctx.allocator.free(header.name);
+                ctx.allocator.free(header.value);
+            }
+            if (ctx.response_headers.len > 0) ctx.allocator.free(ctx.response_headers);
+            ctx.response_headers = &.{};
+        };
 
-    if (ctx.body) |b| {
-        req.transfer_encoding = .{ .content_length = b.len };
-        var body_writer = req.sendBodyUnflushed(&.{}) catch {
+        var transfer_buffer: [1024]u8 = undefined;
+        // `std.http.Client`in varsayılan `accept_encoding`i (bkz. Zig std
+        // `Client.Options.default_accept_encoding`) sunucudan zaten gzip/deflate
+        // İSTEDİĞİNDEN, düz `Response.reader` GERÇEK DÜNYADA (Cloudflare/GitHub/
+        // Google DAHİL) neredeyse HER zaman HAM/sıkıştırılmış bayt döndürür —
+        // `readerDecompressing` İLE `Content-Encoding`e göre ÇÖZÜLEREK okunur
+        // (bkz. Zig std'nin KENDİ `Client.fetch`i, AYNI desen).
+        const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+            .identity => &.{},
+            .deflate, .gzip => ctx.allocator.alloc(u8, std.compress.flate.max_window_len) catch {
+                ctx.failed = true;
+                return;
+            },
+            // İstemcinin varsayılan `accept_encoding`i yalnızca gzip/deflate/
+            // identity'i talep ettiğinden buraya ULAŞILMASI BEKLENMEZ — sunucu
+            // yine de gönderirse (standart-dışı davranış) güvenle reddedilir.
+            .zstd, .compress => {
+                ctx.failed = true;
+                return;
+            },
+        };
+        defer if (decompress_buffer.len > 0) ctx.allocator.free(decompress_buffer);
+        var decompress: std.http.Decompress = undefined;
+        const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+        var body_out: std.Io.Writer.Allocating = .init(ctx.allocator);
+        defer body_out.deinit();
+        _ = reader.streamRemaining(&body_out.writer) catch {
             ctx.failed = true;
             return;
         };
-        body_writer.writer.writeAll(b) catch {
+        // Sunucu Content-Length/chunked gövdesini tamamlamadan bağlantıyı kapattıysa `streamRemaining` bunu temiz bir gövde sonu
+        // sayar; eksik gövde sessizce başarı olarak dönmesin (v2.0.69).
+        if (responseBodyTruncated(&req, ctx.method, response.head.status)) {
             ctx.failed = true;
             return;
-        };
-        body_writer.end() catch {
-            ctx.failed = true;
-            return;
-        };
-        const conn = req.connection orelse {
-            ctx.failed = true;
-            return;
-        };
-        conn.flush() catch {
-            ctx.failed = true;
-            return;
-        };
-    } else {
-        req.sendBodiless() catch {
-            ctx.failed = true;
-            return;
-        };
-    }
-
-    var redirect_buffer: [8 * 1024]u8 = undefined;
-    var response = req.receiveHead(&redirect_buffer) catch {
-        ctx.failed = true;
-        return;
-    };
-
-    ctx.status = @intFromEnum(response.head.status);
-
-    var headers_list: std.ArrayListUnmanaged(std.http.Header) = .empty;
-    var it = response.head.iterateHeaders();
-    while (it.next()) |h| {
-        const name_copy = ctx.allocator.dupe(u8, h.name) catch continue;
-        const value_copy = ctx.allocator.dupe(u8, h.value) catch {
-            ctx.allocator.free(name_copy);
-            continue;
-        };
-        headers_list.append(ctx.allocator, .{ .name = name_copy, .value = value_copy }) catch {
-            ctx.allocator.free(name_copy);
-            ctx.allocator.free(value_copy);
-            continue;
-        };
-    }
-    ctx.response_headers = headers_list.toOwnedSlice(ctx.allocator) catch &.{};
-    // Düzeltme 1/2 gövde-okuma başarısızlıklarının (decompress tamponu
-    // tahsisi, desteklenmeyen kodlama, `streamRemaining`, gömülü NUL) HEPSİ
-    // BURADAN SONRA, yani `ctx.response_headers` ZATEN doldurulduktan SONRA
-    // gerçekleşir — bu ARTIK BAŞARISIZ olan istekler İÇİN de `response_
-    // headers`ın serbest bırakılmasını GARANTİ eder (`doRequest`nin
-    // başarısızlık yolu, `destroyOwned` ÜZERİNDEN yalnızca `request_
-    // headers`ı serbest bırakır, `response_headers`ı DEĞİL — bu olmadan
-    // gerçek bir bellek sızıntısı olurdu, testle YAKALANDI).
-    var headers_committed = false;
-    defer if (!headers_committed) {
-        for (ctx.response_headers) |header| {
-            ctx.allocator.free(header.name);
-            ctx.allocator.free(header.value);
         }
-        if (ctx.response_headers.len > 0) ctx.allocator.free(ctx.response_headers);
-        ctx.response_headers = &.{};
-    };
+        const body: []u8 = body_out.toOwnedSlice() catch &.{};
 
-    var transfer_buffer: [1024]u8 = undefined;
-    // `std.http.Client`in varsayılan `accept_encoding`i (bkz. Zig std
-    // `Client.Options.default_accept_encoding`) sunucudan zaten gzip/deflate
-    // İSTEDİĞİNDEN, düz `Response.reader` GERÇEK DÜNYADA (Cloudflare/GitHub/
-    // Google DAHİL) neredeyse HER zaman HAM/sıkıştırılmış bayt döndürür —
-    // `readerDecompressing` İLE `Content-Encoding`e göre ÇÖZÜLEREK okunur
-    // (bkz. Zig std'nin KENDİ `Client.fetch`i, AYNI desen).
-    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
-        .identity => &.{},
-        .deflate, .gzip => ctx.allocator.alloc(u8, std.compress.flate.max_window_len) catch {
-            ctx.failed = true;
-            return;
-        },
-        // İstemcinin varsayılan `accept_encoding`i yalnızca gzip/deflate/
-        // identity'i talep ettiğinden buraya ULAŞILMASI BEKLENMEZ — sunucu
-        // yine de gönderirse (standart-dışı davranış) güvenle reddedilir.
-        .zstd, .compress => {
-            ctx.failed = true;
-            return;
-        },
-    };
-    defer if (decompress_buffer.len > 0) ctx.allocator.free(decompress_buffer);
-    var decompress: std.http.Decompress = undefined;
-    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
-    var body_out: std.Io.Writer.Allocating = .init(ctx.allocator);
-    defer body_out.deinit();
-    _ = reader.streamRemaining(&body_out.writer) catch {
-        ctx.failed = true;
-        return;
-    };
-    // Sunucu Content-Length/chunked gövdesini tamamlamadan bağlantıyı kapattıysa `streamRemaining` bunu temiz bir gövde sonu
-    // sayar; eksik gövde sessizce başarı olarak dönmesin (v2.0.69).
-    if (responseBodyTruncated(&req, ctx.method, response.head.status)) {
-        ctx.failed = true;
-        return;
+        // Gövde ikili olabilir (gömülü `\0`, geçersiz UTF-8): `str` uzunluğu başlıkta taşıdığı için
+        // `nox_str_from_bytes` hepsini aynen kopyalar; gövde reddedilmez.
+        ctx.response_body = body;
+        headers_committed = true;
+        break :retry;
     }
-    const body: []u8 = body_out.toOwnedSlice() catch &.{};
-
-    // Gövde ikili olabilir (gömülü `\0`, geçersiz UTF-8): `str` uzunluğu başlıkta taşıdığı için
-    // `nox_str_from_bytes` hepsini aynen kopyalar; gövde reddedilmez.
-    ctx.response_body = body;
-    headers_committed = true;
 }
 
 /// Güvenlik bulgusu M-1 (bkz. güvenlik raporu) — `std.http`nin KENDİ
