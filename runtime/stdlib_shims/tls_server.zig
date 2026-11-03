@@ -26,6 +26,8 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const io_mod = @import("../async_rt/io.zig");
 const scheduler_mod = @import("../async_rt/scheduler.zig");
+const asap = @import("../alloc/asap.zig");
+const fiber_net = @import("fiber_net.zig");
 
 /// **GERÇEK, ÇALIŞMA-ZAMANINDA bulunan hata (macOS):** ÖNCEDEN bu liste
 /// BARE isimleri (`"libssl.3.dylib"`/`"libssl.dylib"`) İLK sırada
@@ -170,6 +172,9 @@ const BioNewFn = *const fn (method: ?*anyopaque) callconv(.c) ?*anyopaque;
 const BioMethodFn = *const fn () callconv(.c) ?*anyopaque;
 const BioReadFn = *const fn (bio: ?*anyopaque, buf: [*]u8, len: c_int) callconv(.c) c_int;
 const BioWriteFn = *const fn (bio: ?*anyopaque, buf: [*]const u8, len: c_int) callconv(.c) c_int;
+const AlpnSelectCb = *const fn (ssl: ?*anyopaque, out: *?[*]const u8, outlen: *u8, in: [*]const u8, inlen: c_uint, arg: ?*anyopaque) callconv(.c) c_int;
+const CtxSetAlpnCbFn = *const fn (ctx: ?*anyopaque, cb: AlpnSelectCb, arg: ?*anyopaque) callconv(.c) void;
+const SslGetAlpnFn = *const fn (ssl: ?*anyopaque, data: *?[*]const u8, len: *c_uint) callconv(.c) void;
 const BioCtrlFn = *const fn (bio: ?*anyopaque, cmd: c_int, larg: c_long, parg: ?*anyopaque) callconv(.c) c_long;
 
 const Funcs = struct {
@@ -194,6 +199,9 @@ const Funcs = struct {
     bio_read: BioReadFn,
     bio_write: BioWriteFn,
     bio_ctrl: BioCtrlFn,
+    /// ALPN (HTTP/2) için isteğe bağlı; eski kütüphanelerde yoksa ALPN kapalı kalır.
+    ctx_set_alpn_cb: ?CtxSetAlpnCbFn = null,
+    ssl_get_alpn: ?SslGetAlpnFn = null,
 };
 
 const SSL_FILETYPE_PEM: c_int = 1;
@@ -239,6 +247,10 @@ fn loadAll() bool {
     const bio_write = lookupSym(&bio_lib, BioWriteFn, "BIO_write") orelse return false;
     const bio_ctrl = lookupSym(&bio_lib, BioCtrlFn, "BIO_ctrl") orelse return false;
 
+    // ALPN sembolleri isteğe bağlıdır (yoksa HTTP/2 teklif edilmez, TLS yine çalışır) ve bulunamama mesajı basılmaz.
+    const ctx_set_alpn_cb: ?CtxSetAlpnCbFn = if (builtin.os.tag == .windows) null else lib.lookup(CtxSetAlpnCbFn, "SSL_CTX_set_alpn_select_cb");
+    const ssl_get_alpn: ?SslGetAlpnFn = if (builtin.os.tag == .windows) null else lib.lookup(SslGetAlpnFn, "SSL_get0_alpn_selected");
+
     g_lib = lib;
     g_funcs = .{
         .tls_server_method = tls_server_method,
@@ -262,6 +274,8 @@ fn loadAll() bool {
         .bio_read = bio_read,
         .bio_write = bio_write,
         .bio_ctrl = bio_ctrl,
+        .ctx_set_alpn_cb = ctx_set_alpn_cb,
+        .ssl_get_alpn = ssl_get_alpn,
     };
     return true;
 }
@@ -300,7 +314,7 @@ pub const CtxError = enum {
 /// yüklenemedi, dosya bulunamadı, cert/key EŞLEŞMİYOR) `null` döner ve
 /// (VERİLDİYSE) `err_out`a HANGİ adımın başarısız olduğunu YAZAR —
 /// çağıran (`http_server.zig`) stderr'e TEK satırlık bir tanı BASAR.
-pub fn newServerCtx(cert_path: [*:0]const u8, key_path: [*:0]const u8, err_out: ?*CtxError) ?*anyopaque {
+pub fn newServerCtx(cert_path: [*:0]const u8, key_path: [*:0]const u8, err_out: ?*CtxError, allow_h2: bool) ?*anyopaque {
     if (!ensureLoaded()) {
         if (err_out) |e| e.* = .lib_load_failed;
         return null;
@@ -328,7 +342,45 @@ pub fn newServerCtx(cert_path: [*:0]const u8, key_path: [*:0]const u8, err_out: 
         g_funcs.ctx_free(ctx);
         return null;
     }
+    // ALPN: istemci `h2`/`http/1.1` önerir; `arg` bu bağlamın `h2` seçmesine izin verip vermediğini taşır (WebSocket yükseltmeli sunucular yalnızca `http/1.1` seçer).
+    if (g_funcs.ctx_set_alpn_cb) |set_cb| set_cb(ctx, alpnSelect, if (allow_h2) @as(?*anyopaque, @ptrFromInt(1)) else null);
     return ctx;
+}
+
+/// HTTP/2 teklifinin genel anahtarı (`nox.http.set_http2`); kapalıyken ALPN yalnızca `http/1.1` seçer.
+var g_alpn_h2_enabled: std.atomic.Value(bool) = .init(true);
+
+pub fn setHttp2Enabled(on: bool) void {
+    g_alpn_h2_enabled.store(on, .release);
+}
+
+/// OpenSSL ALPN seçim geri çağrısı (sunucu): istemcinin listesinde `h2` varsa ve izinliyse onu, yoksa `http/1.1`i seçer; ikisi de yoksa ALPN'siz devam (`SSL_TLSEXT_ERR_NOACK`).
+fn alpnSelect(ssl: ?*anyopaque, out: *?[*]const u8, outlen: *u8, in: [*]const u8, inlen: c_uint, arg: ?*anyopaque) callconv(.c) c_int {
+    _ = ssl;
+    const allow_h2 = @intFromPtr(arg) == 1 and g_alpn_h2_enabled.load(.acquire);
+    var have_h2 = false;
+    var have_h1 = false;
+    var i: usize = 0;
+    while (i < inlen) {
+        const len: usize = in[i];
+        i += 1;
+        if (i + len > inlen) break;
+        const proto = in[i..][0..len];
+        if (std.mem.eql(u8, proto, "h2")) have_h2 = true;
+        if (std.mem.eql(u8, proto, "http/1.1")) have_h1 = true;
+        i += len;
+    }
+    if (allow_h2 and have_h2) {
+        out.* = "h2".ptr;
+        outlen.* = 2;
+        return 0; // SSL_TLSEXT_ERR_OK
+    }
+    if (have_h1) {
+        out.* = "http/1.1".ptr;
+        outlen.* = 8;
+        return 0;
+    }
+    return 3; // SSL_TLSEXT_ERR_NOACK
 }
 
 pub fn freeServerCtx(ctx: *anyopaque) void {
@@ -447,7 +499,17 @@ pub const TlsConn = struct {
     /// DEĞİL) burada AÇIKLANIR.
     read_target: []u8 = &.{},
     write_source: []const u8 = &.{},
+    /// ALPN sonucu: el sıkışma `h2` seçtiyse `true`.
+    alpn_h2: bool = false,
+    /// HTTP/2 kipi: okuyucu ve yazıcı AYRI fiber'lardır ve aynı `SSL*`i paylaşır. `SSL_*`/BIO çağrıları `ssl_lock` altındadır (kritik bölümler asla askıya almaz), `wbio`yu soketle
+    /// yalnızca YAZICI boşaltır (TLS kayıtları sırayla gitsin), okuyucu çıktı üretirse `wake_fn` ile yazıcıyı uyandırır.
+    shared: bool = false,
+    ssl_lock: asap.SpinLock = .{},
+    wake_fn: ?*const fn (*anyopaque) void = null,
+    wake_arg: ?*anyopaque = null,
 };
+
+const Role = enum { handshake, read, write };
 
 /// Normal durumda döngü 1-3 yinelemede biter (bkz. plan dosyası) — bu
 /// SAVUNMACI bir üst sınırdır, doğruluk KANITI DEĞİL.
@@ -484,7 +546,8 @@ fn fillRbioOnce(conn: *TlsConn) !void {
     }
 }
 
-fn drive(conn: *TlsConn, op: *const fn (*TlsConn) callconv(.c) c_int) !c_int {
+fn drive(conn: *TlsConn, op: *const fn (*TlsConn) callconv(.c) c_int, role: Role) !c_int {
+    if (conn.shared) return sharedDrive(conn, op, role);
     var iter: usize = 0;
     while (iter < MAX_PUMP_ITERS) : (iter += 1) {
         try flushWbio(conn);
@@ -503,6 +566,90 @@ fn drive(conn: *TlsConn, op: *const fn (*TlsConn) callconv(.c) c_int) !c_int {
         }
     }
     return error.TlsPumpExhausted;
+}
+
+/// `wbio`da bekleyen bayt var mı (`ssl_lock` altında çağrılır).
+fn wbioPendingLocked(conn: *TlsConn) bool {
+    return g_funcs.bio_ctrl(conn.wbio, BIO_CTRL_PENDING, 0, null) > 0;
+}
+
+/// Paylaşımlı (HTTP/2) kipte `wbio`yu soketle boşaltır: SADECE yazıcı fiber'ı çağırır. Bir parça kilit altında `wbio`dan alınır, soket yazması kilitsizdir (askıya alabilir).
+fn flushWbioShared(conn: *TlsConn) !void {
+    var buf: [16384]u8 = undefined;
+    while (true) {
+        conn.ssl_lock.lock();
+        const pending = g_funcs.bio_ctrl(conn.wbio, BIO_CTRL_PENDING, 0, null);
+        var n: c_int = 0;
+        if (pending > 0) {
+            const want: c_int = @intCast(@min(pending, @as(c_long, buf.len)));
+            n = g_funcs.bio_read(conn.wbio, &buf, want);
+        }
+        conn.ssl_lock.unlock();
+        if (n <= 0) return;
+        try rawSockWriteAll(conn.scheduler, conn.fd, buf[0..@intCast(n)]);
+    }
+}
+
+fn sharedDrive(conn: *TlsConn, op: *const fn (*TlsConn) callconv(.c) c_int, role: Role) !c_int {
+    var spins: usize = 0;
+    while (true) {
+        conn.ssl_lock.lock();
+        const rc = op(conn);
+        const err: c_int = if (rc > 0) 0 else g_funcs.ssl_get_error(conn.ssl, rc);
+        const pending = wbioPendingLocked(conn);
+        conn.ssl_lock.unlock();
+        if (role == .write) {
+            try flushWbioShared(conn);
+        } else if (pending) {
+            // Okuyucu çıktı üretti (alert, anahtar güncelleme): soketi tek yazıcı boşaltır.
+            if (conn.wake_fn) |w| w(conn.wake_arg.?);
+        }
+        if (rc > 0) return rc;
+        switch (err) {
+            SSL_ERROR_WANT_READ => {
+                if (role == .read) {
+                    var buf: [16384]u8 = undefined;
+                    const n = try rawSockRead(conn.scheduler, conn.fd, &buf, conn.read_timeout_ms);
+                    if (n == 0) return error.EndOfStream;
+                    var off: usize = 0;
+                    conn.ssl_lock.lock();
+                    defer conn.ssl_lock.unlock();
+                    while (off < n) {
+                        const w = g_funcs.bio_write(conn.rbio, buf[off..n].ptr, @intCast(n - off));
+                        if (w <= 0) return error.TlsBioWriteFailed;
+                        off += @intCast(w);
+                    }
+                } else {
+                    // Yazıcı okuma beklemez: okuyucu rbio'yu besleyene dek kısa bekle.
+                    spins += 1;
+                    if (spins > 20000) return error.TlsPumpExhausted;
+                    _ = fiber_net.sleepCooperative(1);
+                }
+            },
+            SSL_ERROR_WANT_WRITE => {
+                if (role == .read) {
+                    spins += 1;
+                    if (spins > 20000) return error.TlsPumpExhausted;
+                    _ = fiber_net.sleepCooperative(1);
+                }
+            },
+            SSL_ERROR_ZERO_RETURN => return error.EndOfStream,
+            else => return error.TlsFatal,
+        }
+    }
+}
+
+/// HTTP/2 yazıcısı: `wbio`da bekleyen TLS çıktısını (okuyucunun ürettiği alert vb. dahil) soketle boşaltır.
+pub fn tlsFlush(conn: *TlsConn) !void {
+    if (conn.shared) return flushWbioShared(conn);
+    return flushWbio(conn);
+}
+
+/// Paylaşımlı kipe geçer (el sıkışma bitti, okuyucu/yazıcı ayrılacak).
+pub fn enterSharedMode(conn: *TlsConn, wake_fn: *const fn (*anyopaque) void, wake_arg: *anyopaque) void {
+    conn.wake_fn = wake_fn;
+    conn.wake_arg = wake_arg;
+    conn.shared = true;
 }
 
 /// `ctx` (`newServerCtx`in döndürdüğü `SSL_CTX*`) İLE `fd` ÜZERİNDE bir
@@ -528,7 +675,13 @@ pub fn acceptHandshake(ctx: *anyopaque, fd: posix.fd_t, scheduler: ?*scheduler_m
     const conn = try allocator.create(TlsConn);
     errdefer allocator.destroy(conn);
     conn.* = .{ .ssl = ssl, .rbio = rbio, .wbio = wbio, .fd = fd, .scheduler = scheduler, .read_timeout_ms = read_timeout_ms };
-    _ = try drive(conn, doHandshakeOp);
+    _ = try drive(conn, doHandshakeOp, .handshake);
+    if (g_funcs.ssl_get_alpn) |get_alpn| {
+        var data: ?[*]const u8 = null;
+        var len: c_uint = 0;
+        get_alpn(ssl, &data, &len);
+        if (data) |d| conn.alpn_h2 = len == 2 and d[0] == 'h' and d[1] == '2';
+    }
     return conn;
 }
 
@@ -564,7 +717,7 @@ fn connWriteOp(conn: *TlsConn) callconv(.c) c_int {
 
 pub fn tlsRead(conn: *TlsConn, buf: []u8) !usize {
     conn.read_target = buf;
-    const rc = drive(conn, connReadOp) catch |err| switch (err) {
+    const rc = drive(conn, connReadOp, .read) catch |err| switch (err) {
         error.EndOfStream => return 0,
         else => return err,
     };
@@ -573,7 +726,7 @@ pub fn tlsRead(conn: *TlsConn, buf: []u8) !usize {
 
 pub fn tlsWrite(conn: *TlsConn, buf: []const u8) !usize {
     conn.write_source = buf;
-    const rc = try drive(conn, connWriteOp);
+    const rc = try drive(conn, connWriteOp, .write);
     return @intCast(rc);
 }
 

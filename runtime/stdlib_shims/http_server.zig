@@ -51,6 +51,7 @@ const fiber_mod = @import("../async_rt/fiber.zig");
 const http_client = @import("http_client.zig");
 const str_mod = @import("../str.zig");
 const tls_server = @import("tls_server.zig");
+const h2srv = @import("http2_server.zig");
 const websocket_server = @import("websocket_server.zig");
 const fiber_net = @import("fiber_net.zig");
 
@@ -74,6 +75,8 @@ const ServeConfig = struct {
     max_concurrent: std.atomic.Value(usize) = .init(DEFAULT_MAX_CONCURRENT_CONNECTIONS),
     /// Graceful shutdown'da uçuştaki bağlantıların bitmesi için beklenecek en uzun süre.
     drain_timeout_ms: std.atomic.Value(u32) = .init(DEFAULT_DRAIN_TIMEOUT_MS),
+    /// HTTP/2 (TLS'te ALPN `h2`, düz TCP'de `h2c` önceden bilinen): 1 = açık (varsayılan), 2 = kapalı.
+    http2: std.atomic.Value(u8) = .init(1),
 };
 const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
 const MIN_HEADER_BYTES: usize = 4 * 1024;
@@ -84,6 +87,11 @@ var g_serve_config: ServeConfig = .{};
 /// Anahtar kodları `stdlib/nox/http.nox`daki `configure` ile eşleşir. Geçersiz/negatif değer yok sayılır (0 = varsayılanı koru).
 export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
     if (value <= 0) return;
+    if (key == 6) {
+        g_serve_config.http2.store(if (value == 2) 2 else 1, .monotonic);
+        tls_server.setHttp2Enabled(value != 2);
+        return;
+    }
     const v: usize = @intCast(value);
     switch (key) {
         1 => g_serve_config.max_body_bytes.store(v, .monotonic),
@@ -434,7 +442,7 @@ export fn nox_http_server_listen_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:
     const kp = key_path orelse return null;
     const fd = bindAndListen(port, false) orelse return null;
     var ctx_err: tls_server.CtxError = undefined;
-    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
+    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err, h2srv.supported) orelse {
         logTlsCtxFailure(ctx_err);
         _ = closeSocket(fd);
         return null;
@@ -530,7 +538,7 @@ export fn nox_http_listen_fd_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:0]co
     const kp = key_path orelse return null;
     const fd = bindAndListen(port, false) orelse return null;
     var ctx_err: tls_server.CtxError = undefined;
-    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
+    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err, h2srv.supported) orelse {
         logTlsCtxFailure(ctx_err);
         _ = closeSocket(fd);
         return null;
@@ -621,7 +629,7 @@ export fn nox_http_build_tls_ctx(cert_path: ?[*:0]const u8, key_path: ?[*:0]cons
     const cp = cert_path orelse return null;
     const kp = key_path orelse return null;
     var ctx_err: tls_server.CtxError = undefined;
-    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
+    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err, h2srv.supported) orelse {
         logTlsCtxFailure(ctx_err);
         return null;
     };
@@ -836,7 +844,7 @@ export fn nox_http_server_from_fd_tls_owned(rt: ?*anyopaque, fd: i64, cert_path:
     const cp = cert_path orelse return null;
     const kp = key_path orelse return null;
     var ctx_err: tls_server.CtxError = undefined;
-    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
+    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err, h2srv.supported) orelse {
         logTlsCtxFailure(ctx_err);
         return null;
     };
@@ -1034,6 +1042,9 @@ const ConnCtx = struct {
     /// codegen'in (`http_intrinsics.zig`) BİLİNÇLİ olarak `false` GEÇTİĞİ
     /// çağrı sitelerinde DEĞİŞİR.
     needs_headers: bool = true,
+    /// v2.0.127 (HTTP/2): `connectionEntry` TLS bağlantısını / düz okuyucunun zaman aşımı alanını HTTP/2 kancalarına açar.
+    tls_conn: ?*tls_server.TlsConn = null,
+    reader_timeout: ?*u32 = null,
     /// Faz B.2: `handler_ctx` bir `HandlerCtx` (atomik referans sayaçlı,
     /// first-class closure handler'ı taşır) İSE `true` — `serveImpl` her
     /// bağlantı İçin bir referans ALIR, `connectionEntry` BİTİNCE bırakır
@@ -1070,6 +1081,8 @@ const ServerRequest = struct {
     http_request: ?*std.http.Server.Request = null,
     gpa: ?std.mem.Allocator = null,
     stream: ?*StreamState = null,
+    /// HTTP/2 akışı (v2.0.127): doluysa `nox_http_respstream_*` HTTP/2 yazma yolunu kullanır.
+    h2: ?*h2srv.Stream = null,
 };
 
 /// Akışlı (chunked) yanıtın durumu. `body.writer.buffer` `buf`ı gösterir; bu yüzden durum yığında değil yığında-dışı (heap) tutulur ve adresi sabittir.
@@ -1250,6 +1263,13 @@ fn releaseHeaderList(rt: ?*anyopaque, gpa: std.mem.Allocator, hdrs: []const std.
 /// durum/başlık, `conn` yok). Bağlantı akıştan sonra kapanır (`Connection: close`).
 export fn nox_http_respstream_start_raw(rt: ?*anyopaque, conn: i64, status: i64, headers: ?*anyopaque) callconv(.c) i64 {
     const r = requestFromConn(conn) orelse return 0;
+    if (r.h2) |st| {
+        if (status < 200 or status > 599 or status == 204 or status == 304) return 0;
+        const gpa2 = r.gpa orelse return 0;
+        const hdrs2 = retainHeaders(rt, gpa2, headers) catch return 0;
+        defer releaseHeaderList(rt, gpa2, hdrs2);
+        return if (h2srv.streamBegin(st, @intCast(status), hdrs2)) 1 else 0;
+    }
     if (r.stream != null) return 0;
     const request = r.http_request orelse return 0;
     const gpa = r.gpa orelse return 0;
@@ -1279,6 +1299,10 @@ export fn nox_http_respstream_start_raw(rt: ?*anyopaque, conn: i64, status: i64,
 /// Bir parçayı yazıp hemen gönderir. `1` yazıldı; `0` akış yok/bitmiş ya da istemci gitti (bundan sonra hiçbir şey yazılmaz).
 export fn nox_http_respstream_send_raw(conn: i64, data: ?[*:0]const u8) callconv(.c) i64 {
     const r = requestFromConn(conn) orelse return 0;
+    if (r.h2) |hs| {
+        const b2: []const u8 = if (data) |d| str_mod.nox_str_slice(@constCast(d)) else &.{};
+        return if (h2srv.streamSend(hs, b2)) 1 else 0;
+    }
     const st = r.stream orelse return 0;
     if (st.failed or st.ended) return 0;
     const bytes: []const u8 = if (data) |d| str_mod.nox_str_slice(@constCast(d)) else &.{};
@@ -1301,6 +1325,10 @@ export fn nox_http_respstream_send_raw(conn: i64, data: ?[*:0]const u8) callconv
 /// Akışı bitirir (son chunk). Tekrar çağrı zararsızdır. `1` temiz bitti, `0` yazılamadı.
 export fn nox_http_respstream_end_raw(conn: i64) callconv(.c) i64 {
     const r = requestFromConn(conn) orelse return 0;
+    if (r.h2) |hs| {
+        h2srv.streamEnd(hs);
+        return 1;
+    }
     const st = r.stream orelse return 0;
     if (st.ended) return if (st.failed) 0 else 1;
     st.ended = true;
@@ -1315,6 +1343,7 @@ export fn nox_http_respstream_end_raw(conn: i64) callconv(.c) i64 {
 /// Akış açık mı: başlamış, hata almamış, bitirilmemiş ve sunucu kapanmıyor.
 export fn nox_http_respstream_open_raw(conn: i64) callconv(.c) i64 {
     const r = requestFromConn(conn) orelse return 0;
+    if (r.h2) |hs| return if (h2srv.streamOpen(hs)) 1 else 0;
     const st = r.stream orelse return 0;
     return if (!st.failed and !st.ended and !shuttingDown()) 1 else 0;
 }
@@ -1486,6 +1515,139 @@ fn readChunkedBody(in: *std.Io.Reader, out: *std.Io.Writer, max_bytes: usize) Ch
     }
 }
 
+// ---- HTTP/2 yapıştırıcı (v2.0.127, spec §3.332) -----------------------------------------------------------------------------------------------------------
+
+/// Aynı süreçte bağlı bir fiber başlatır (bkz. `serveImpl`nin bağlantı fiber'ı başlatma kalıbı: `acquireStack` + `createWithStack` + canlı sayaç + deque'e it).
+fn h2SpawnFiber(user: *anyopaque, entry: h2srv.FiberFn, arg: *anyopaque, pinned: bool) bool {
+    const conn: *ConnCtx = @ptrCast(@alignCast(user));
+    const s = bridge.currentFiberScheduler() orelse return false;
+    const stack = s.acquireStack() catch return false;
+    const fiber = fiber_mod.Fiber.createWithStack(conn.allocator, entry, arg, stack) catch {
+        s.releaseStack(stack);
+        return false;
+    };
+    if (s.pool_live_count) |plc| {
+        _ = plc.fetchAdd(1, .monotonic);
+    } else {
+        s.live_count += 1;
+    }
+    if (pinned) {
+        // Çalınamaz: deque'e girmez, bu işçinin hazır listesinde kalır (bkz. `spawnPinnedSized`).
+        if (s.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
+        s.markReady(fiber);
+    } else if (s.ownDeque()) |d| {
+        d.pushBottom(fiber) catch s.markReady(fiber);
+        if (s.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
+    } else {
+        s.markReady(fiber);
+    }
+    return true;
+}
+
+fn h2ShuttingDown() bool {
+    return shuttingDown();
+}
+
+fn h2CloseRead(user: *anyopaque) void {
+    const conn: *ConnCtx = @ptrCast(@alignCast(user));
+    if (builtin.os.tag != .windows) _ = std.c.shutdown(conn.fd, 0);
+}
+
+fn h2AfterPreface(user: *anyopaque, wake: *const fn (*anyopaque) void, wake_arg: *anyopaque) void {
+    const conn: *ConnCtx = @ptrCast(@alignCast(user));
+    if (conn.tls_conn) |tc| {
+        tc.read_timeout_ms = std.math.maxInt(u32);
+        tls_server.enterSharedMode(tc, wake, wake_arg);
+    } else if (conn.reader_timeout) |t| {
+        t.* = std.math.maxInt(u32);
+    }
+}
+
+fn h2FlushTransport(user: *anyopaque) void {
+    const conn: *ConnCtx = @ptrCast(@alignCast(user));
+    if (conn.tls_conn) |tc| tls_server.tlsFlush(tc) catch {};
+}
+
+/// Bir HTTP/2 akışının handler fiber'ı: isteği Nox değerlerine çevirir, uygulama handler'ını çağırır ve yanıtı akışa yazar (HTTP/1.1 yolunun `connectionEntry` gövdesiyle aynı sözleşme).
+fn h2ServeStream(user: *anyopaque, st: *h2srv.Stream) void {
+    const conn: *ConnCtx = @ptrCast(@alignCast(user));
+    const gpa = conn.allocator;
+    const rt = conn.rt;
+    const method_str = http_client.dupeToNoxStr(rt, st.method) orelse return;
+    defer str_mod.nox_str_release(rt, method_str);
+    const target_str = http_client.dupeToNoxStr(rt, st.path) orelse return;
+    defer str_mod.nox_str_release(rt, target_str);
+    const peer_addr_str = http_client.dupeToNoxStr(rt, conn.peer_addr.slice()) orelse return;
+    defer str_mod.nox_str_release(rt, peer_addr_str);
+
+    var headers_list: std.ArrayListUnmanaged(std.http.Header) = .empty;
+    defer {
+        for (headers_list.items) |h| {
+            str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
+            str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
+        }
+        headers_list.deinit(gpa);
+    }
+    if (conn.needs_headers) {
+        for (st.headers.items) |h| {
+            const name_copy = http_client.dupeToNoxStr(rt, h.name) orelse continue;
+            const value_copy = http_client.dupeToNoxStr(rt, h.value) orelse {
+                str_mod.nox_str_release(rt, name_copy);
+                continue;
+            };
+            headers_list.append(gpa, .{ .name = str_mod.nox_str_slice(name_copy), .value = str_mod.nox_str_slice(value_copy) }) catch {
+                str_mod.nox_str_release(rt, name_copy);
+                str_mod.nox_str_release(rt, value_copy);
+                continue;
+            };
+        }
+    }
+    const body_str = http_client.dupeToNoxStr(rt, st.body.items) orelse return;
+    defer str_mod.nox_str_release(rt, body_str);
+
+    var req_handle: ServerRequest = .{
+        .method = method_str,
+        .target = target_str,
+        .body = body_str,
+        .headers = headers_list.items,
+        .peer_addr = peer_addr_str,
+        .gpa = gpa,
+        .h2 = st,
+    };
+    const resp_payload = conn.handler(conn.handler_ctx, &req_handle);
+    defer if (resp_payload) |r| destroyResponse(rt, gpa, @ptrCast(@alignCast(r)));
+
+    // `req.stream(...)` kullanıldıysa yanıt zaten akışta; motor `ensureFinished` ile bitirir.
+    if (h2srv.responseStarted(st)) return;
+    if (resp_payload) |r| {
+        const resp: *ServerResponse = @ptrCast(@alignCast(r));
+        const body_slice: []const u8 = if (resp.body) |p| str_mod.nox_str_slice(p) else &.{};
+        h2srv.respond(st, @intCast(resp.status), resp.headers, body_slice);
+    }
+    // payload yoksa (handler istisna fırlattı): motor 500 döner.
+}
+
+/// Bağlantıyı HTTP/2 olarak yürütür (ALPN `h2` ya da düz TCP'de `PRI` ön eki).
+fn runHttp2(conn: *ConnCtx, reader: *std.Io.Reader, writer: *std.Io.Writer, tls_conn: ?*tls_server.TlsConn, plain_timeout: *u32) void {
+    conn.tls_conn = tls_conn;
+    conn.reader_timeout = plain_timeout;
+    const cfg: h2srv.Config = .{
+        .max_body_bytes = conn.max_body_bytes,
+        .max_header_bytes = g_serve_config.max_header_bytes.load(.monotonic),
+        .read_timeout_ms = conn.read_timeout_ms,
+    };
+    const hooks: h2srv.Hooks = .{
+        .user = conn,
+        .serveStream = h2ServeStream,
+        .spawn = h2SpawnFiber,
+        .shuttingDown = h2ShuttingDown,
+        .closeRead = h2CloseRead,
+        .afterPreface = h2AfterPreface,
+        .flushTransport = h2FlushTransport,
+    };
+    h2srv.run(conn.allocator, reader, writer, cfg, hooks);
+}
+
 fn connectionEntry(arg: *anyopaque) void {
     const conn: *ConnCtx = @ptrCast(@alignCast(arg));
     const gpa = conn.allocator;
@@ -1537,6 +1699,25 @@ fn connectionEntry(arg: *anyopaque) void {
         tls_writer = tls_server.TlsServerWriter.init(tc, &tls_write_buf);
         reader_ptr = &tls_reader.interface;
         writer_ptr = &tls_writer.interface;
+    }
+
+    // HTTP/2: TLS'te ALPN `h2` seçildiyse ya da düz TCP'de bağlantı `PRI` (istemci ön eki) ile başlıyorsa (h2c önceden bilinen) bağlantı HTTP/2 motoruna devredilir; HTTP/1.1 yolu
+    // aşağıda DEĞİŞMEDEN sürer. Motor fiber ister (okuyucu/yazıcı/handler fiber'ları): fiber dışı eşzamanlı kabulde kullanılmaz.
+    if (h2srv.supported and scheduler != null and g_serve_config.http2.load(.monotonic) != 2) {
+        var use_h2 = false;
+        if (tls_conn) |tc| {
+            use_h2 = tc.alpn_h2;
+        } else if (conn.ws_handler == null) {
+            conn.idle.store(true, .release);
+            if (reader_ptr.peek(3)) |first| {
+                use_h2 = std.mem.eql(u8, first, "PRI");
+            } else |_| {}
+            conn.idle.store(false, .release);
+        }
+        if (use_h2) {
+            runHttp2(conn, reader_ptr, writer_ptr, tls_conn, &fiber_reader.read_timeout_ms);
+            return;
+        }
     }
 
     // Faz HH.6: `std.http.Server` ZATEN "aynı bağlantıda birden çok

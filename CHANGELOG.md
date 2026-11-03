@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.127]
+
+### Eklendi
+
+- **HTTP/2 sunucusu.** `nox.http.serve*` artık HTTP/2 konuşur: TLS'te ALPN `h2` ile, düz TCP'de istemci ön eki (h2c "önceden bilinen") ile; HTTP/1.1 istemcileri etkilenmez ve handler kodu değişmez. Her istek kendi görevinde çalışır (bir bağlantıda en çok 100 eşzamanlı istek; yavaş istek hızlıyı bloklamaz), akış kontrolü yazıcıda yapılır (1 MiB akış / 4 MiB bağlantı penceresi), `req.sse()`/`req.stream()` HTTP/2'de de çalışır (yalnızca akış biter, bağlantı kalır). Protokol: tam HPACK (dinamik tablo, Huffman), CONTINUATION, doldurma, SETTINGS/PING/GOAWAY/RST_STREAM/WINDOW_UPDATE. Başlık adları handler'a `Title-Case` gelir (`Host` `:authority`den), yanıt başlıkları küçük harfle gider, bağlantıya özgü yanıt başlıkları atılır, `Content-Length` eklenir.
+- **Savunmalar:** eşzamanlı akış sınırı (sıfırlanan akış yuvasını handler dönene dek tutar: "rapid reset" etkisiz), CONTINUATION/başlık listesi/HPACK tablo sınırları, SETTINGS/PING/PRIORITY/RST_STREAM/boş-DATA seli → `GOAWAY(ENHANCE_YOUR_CALM)`, yazma kuyruğu sınırı, eksik istek ve boşta bağlantı zaman aşımları, SIGTERM'de `GOAWAY(NO_ERROR)` ve uçuştaki isteklerin bitmesi.
+- `nox.http.set_http2(False)` HTTP/2'yi kapatır (TLS yalnızca `http/1.1` sunar, h2c algılanmaz). Windows'ta henüz yok (HTTP/1.1 sürer).
+- Testler: `http2.zig` birim testleri (RFC 7541 Ek C.4 vektörleri dahil), `http_serve_golden_test` içinde sahte h2c istemcisiyle dört senaryo (çoklama sırası, akış kontrolü tam 65535 bayt, 101. akış reddi, hatalı biçimli istekler, çerçeve ihlalleri, CONTINUATION, sel, rapid reset, SSE, RST ile iptal, SIGTERM + GOAWAY), `scripts/http2_server_fuzz.py` (62 yapısal vaka + mutasyon), `scripts/http2_smoke.py` (gerçek curl/nghttp2: TLS+ALPN ve h2c). Bağımsız doğrulama: Go'nun HTTP/2 istemcisi (300 eşzamanlı istek, 5 MiB yükleme, 40 eşzamanlı 3 MB indirme) geçti.
+- Ölçüm (ReleaseFast, macOS arm64): tek HTTP/2 bağlantısı üzerinden ~170-180 bin req/s (h2c ve TLS; HTTP/1.1, 64 bağlantı: ~150-160 bin).
+
 ## [2.0.126]
 
 ### Eklendi

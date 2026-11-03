@@ -304,8 +304,46 @@ Malformed or hostile requests no longer drop the connection silently: `400` (bad
 
 - **`serve`** — one listening socket; simplest. On the QBE backend one thread handles every request and module-level state is shared. On the default LLVM backend the connection fibers can be picked up by any worker thread, and **each worker has its own copy of the module's variables** — build everything the handler needs in a variable initialiser (`router: Router = build_router()`, `db: Connection = open_db()`); `router.get(...)` calls directly after the router's declaration also run per worker, other statements placed after the last variable do not ([Modules](../language/modules.md#module-level-state-and-the-multi-core-runtime)). Keep data that must be shared in a database, `nox.atomic` or `nox.sharedmem`.
 - **`serve_multicore`** — scales across CPU cores. Each worker has its own copy of module-level state, so keep shared state in a database or in `nox.atomic` / `nox.sharedmem`.
-- **`_tls`** — pass paths to a PEM certificate chain and private key. Behind a reverse proxy that terminates TLS, plain `serve` is usually what you want.
+- **`_tls`** — pass paths to a PEM certificate chain and private key; clients that offer `h2` get [HTTP/2](#http2). Behind a reverse proxy that terminates TLS, plain `serve` is usually what you want.
 - **`_ws`** — use when the same port serves normal requests and WebSockets; see [`nox.websocket`](websocket.md).
+
+### HTTP/2
+
+The server speaks HTTP/2 as well as HTTP/1.1, with no change to your handler: the same `HttpRequest` goes in and the same `HttpResponse` comes out.
+
+- **Over TLS** (`serve_tls`, `serve_ws_tls`, ...) the protocol is negotiated with ALPN: a client that offers `h2` gets HTTP/2, every other client gets HTTP/1.1.
+- **Over plain TCP** a client that starts with the HTTP/2 connection preface ("prior knowledge", `curl --http2-prior-knowledge`, or a reverse proxy speaking cleartext HTTP/2 to its upstream) gets HTTP/2; ordinary HTTP/1.1 clients are unaffected.
+- **Multiplexing:** every request on a connection runs your handler on its own task, so one browser connection can have up to 100 requests in flight, slow ones do not hold up fast ones, and a long-lived `req.sse()` stream shares the connection with ordinary requests. Streaming responses ([Streaming responses](#streaming-responses)) work unchanged; unlike HTTP/1.1, only the stream ends, not the connection.
+- **Flow control** is handled for you: uploads and downloads are paced by the peer's windows (1 MiB per request and 4 MiB per connection on the receiving side), so a slow client cannot make the server buffer a whole response.
+
+What differs from HTTP/1.1, as your handler sees it:
+
+| | |
+|---|---|
+| Request header names | normalised to `Title-Case` (`content-type` arrives as `Content-Type`), so `req.headers["Content-Type"]` works for every client; `Host` is filled from `:authority` |
+| Response header names | sent in lower case, as the protocol requires; `Connection`, `Keep-Alive`, `Transfer-Encoding` and `Upgrade` response headers are dropped (they do not exist in HTTP/2) |
+| `Content-Length` | added for you when the handler does not set one |
+| Not supported | trailers, server push and WebSocket over HTTP/2 (WebSocket clients and browsers use an HTTP/1.1 connection, which is served as before) |
+
+Limits and protection: 100 concurrent requests per connection (further ones are refused and retried by the client), `max_body_bytes` and `max_header_bytes` apply as in HTTP/1.1, an incomplete request is cut after `read_timeout_ms`, an idle connection is closed after two minutes, and floods of control frames (`SETTINGS`, `PING`, resets — the "rapid reset" attack) end the connection with `ENHANCE_YOUR_CALM`. A request that was reset by the client keeps its slot until your handler returns, so resets cannot be used to start unbounded work.
+
+On `SIGTERM` or `nox.http.shutdown()` each HTTP/2 connection is sent `GOAWAY`, requests already running finish, and the connection closes ([Configuration and graceful shutdown](#configuration-and-graceful-shutdown)); a stream loop that checks `stream.is_open()` ends by itself.
+
+`nox.http.set_http2(False)` turns HTTP/2 off (TLS then offers only `http/1.1` and cleartext HTTP/2 is not detected); `True` turns it back on. It applies to connections accepted afterwards. HTTP/2 is not available on Windows yet; connections there stay on HTTP/1.1.
+
+```nox
+import nox.http
+
+nox.http.set_http2(False)
+nox.http.set_http2(True)
+print("http2 configurable")
+```
+
+```output
+http2 configurable
+```
+
+Try it with `curl --http2 -k https://localhost:8443/` (TLS) or `curl --http2-prior-knowledge http://localhost:8080/` (cleartext); `curl -w '%{http_version}'` prints `2`.
 
 ### Behaviour
 

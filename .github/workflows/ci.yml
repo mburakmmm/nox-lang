@@ -150,6 +150,11 @@ jobs:
         run: |
           python3 scripts/todo_backend_smoke.py --backend qbe
           python3 scripts/todo_backend_smoke.py --backend llvm
+      # v2.0.127: HTTP/2 (TLS + ALPN ve h2c önceden bilinen) gerçek curl/nghttp2 ile: protokol, HTTP/1.1 geri dönüşü, çoklama, akış kontrolü, SSE, temiz kapanış.
+      - name: HTTP/2 duman testi (curl; QBE + LLVM)
+        run: |
+          python3 scripts/http2_smoke.py --backend qbe
+          python3 scripts/http2_smoke.py --backend llvm
 
   test:
     strategy:

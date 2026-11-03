@@ -176,6 +176,13 @@ def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_m
 def shutdown() -> None:
     nox_http_shutdown_raw()
 
+# HTTP/2 (v2.0.127): TLS'te ALPN `h2` ve düz TCP'de istemci ön eki (h2c) ile açılır. `False` iken TLS yalnızca `http/1.1` sunar ve h2c algılanmaz. Sonradan kabul edilen bağlantılar için geçerlidir.
+def set_http2(enabled: bool) -> None:
+    if enabled:
+        nox_http_config_set_raw(6, 1)
+    else:
+        nox_http_config_set_raw(6, 2)
+
 extern def nox_http_client_pool_set_raw(max_idle: int) -> None from "zig-out/lib/noxrt.o"
 extern def nox_http_client_pool_idle_raw() -> int from "zig-out/lib/noxrt.o"
 

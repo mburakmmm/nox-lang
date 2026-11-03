@@ -23,6 +23,7 @@ const sys = @import("sys_compat");
 const nox = @import("nox");
 const host_link = @import("host_link");
 const child_watchdog = @import("child_watchdog.zig");
+const h2 = @import("http2");
 
 fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8) ![]const u8 {
     const io = std.testing.io;
@@ -1064,6 +1065,647 @@ test "nox.http.configure(max_connections): sınır dolunca yeni bağlantı 'Retr
     const term = try child.wait(io);
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+}
+
+// ---- HTTP/2 (v2.0.127) -------------------------------------------------------------------------------------------------------------------------------
+//
+// Sahte bir h2c istemcisi (`H2Conn`): bağlantı ön eki, çerçeve gönder/oku, HPACK (kodlama `http2.encodeField`, çözme `http2.Decoder`) ve yanıt toplama. Sunucu GERÇEK bir Nox ikilisidir.
+
+const h2_program =
+    \\import nox.http
+    \\
+    \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+    \\    if req.target == "/echo":
+    \\        return nox_http_HttpResponse(200, req.method + ":" + str(len(req.body)), {{}})
+    \\    if req.target == "/big":
+    \\        return nox_http_HttpResponse(200, "x" * 300000, {{"Content-Type": "application/octet-stream"}})
+    \\    if req.target == "/slow":
+    \\        s: nox_http_ResponseStream = req.stream(200, {{}})
+    \\        s.sleep_ms(300)
+    \\        s.send("slow")
+    \\        return s.end()
+    \\    if req.target == "/events":
+    \\        e: nox_http_ResponseStream = req.sse()
+    \\        i: int = 0
+    \\        while i < 3 and e.is_open():
+    \\            e.event("tick " + str(i), "tick")
+    \\            i = i + 1
+    \\            e.sleep_ms(250)
+    \\        if e.is_open():
+    \\            print("events done")
+    \\        else:
+    \\            print("events aborted")
+    \\        return e.end()
+    \\    if req.target == "/forever":
+    \\        f: nox_http_ResponseStream = req.stream(200, {{}})
+    \\        while f.is_open():
+    \\            if not f.comment("hb"):
+    \\                break
+    \\            f.sleep_ms(30)
+    \\        print("forever closed")
+    \\        return f.end()
+    \\    if req.target == "/boom":
+    \\        raise ValueError("boom")
+    \\    cookie: str = ""
+    \\    if "Cookie" in req.headers:
+    \\        cookie = req.headers["Cookie"]
+    \\    return nox_http_HttpResponse(200, "hello " + req.method + " " + req.target, {{"X-Host": req.headers["Host"], "X-Cookie": cookie}})
+    \\
+    \\nox.http.serve({d}, handle)
+    \\print("drained")
+    \\
+;
+
+const H2Server = struct {
+    tmp: std.testing.TmpDir,
+    arena: std.heap.ArenaAllocator,
+    child: std.process.Child,
+    watchdog: child_watchdog.ChildWatchdog = .{},
+    port: u16,
+
+    fn start(allocator: std.mem.Allocator) !*H2Server {
+        const self = try allocator.create(H2Server);
+        errdefer allocator.destroy(self);
+        self.arena = std.heap.ArenaAllocator.init(allocator);
+        errdefer self.arena.deinit();
+        self.port = try probeFreePort();
+        const a = self.arena.allocator();
+        const source = try std.fmt.allocPrint(a, h2_program, .{self.port});
+        self.tmp = std.testing.tmpDir(.{});
+        errdefer self.tmp.cleanup();
+        const bin_path = try compileToBinary(a, &self.tmp, source);
+        self.child = try std.process.spawn(std.testing.io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+        self.watchdog = .{};
+        try self.watchdog.arm(&self.child, 90_000);
+        return self;
+    }
+
+    /// SIGTERM (graceful) + çıktıyı topla. Çağıran tüm istemci soketlerini önce kapatmış olmalı.
+    fn stop(self: *H2Server, allocator: std.mem.Allocator, out_stdout: *[]u8, expected_stderr_prefix: []const u8) !void {
+        const io = std.testing.io;
+        try std.posix.kill(self.child.id.?, .TERM);
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout_reader = self.child.stdout.?.reader(io, &stdout_buf);
+        out_stdout.* = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+        var stderr_buf: [4096]u8 = undefined;
+        var stderr_reader = self.child.stderr.?.reader(io, &stderr_buf);
+        const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+        defer allocator.free(stderr_data);
+        const term = try self.child.wait(io);
+        self.watchdog.disarm();
+        if (term != .exited or term.exited != 0) std.debug.print("h2 sunucu temiz cikmadi: {any}\nstderr:\n{s}\n", .{ term, stderr_data });
+        try std.testing.expect(term == .exited);
+        try std.testing.expectEqual(@as(u8, 0), term.exited);
+        // Sızıntı/çökme raporu yok: stderr boş olmalı (ya da yalnızca beklenen handler-istisnası satırlarını içermeli).
+        if (expected_stderr_prefix.len == 0) {
+            if (stderr_data.len != 0) std.debug.print("h2 sunucu stderr:\n{s}\n", .{stderr_data[0..@min(stderr_data.len, 3000)]});
+            try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+        } else {
+            try std.testing.expect(std.mem.startsWith(u8, stderr_data, expected_stderr_prefix));
+            try std.testing.expect(std.mem.indexOf(u8, stderr_data, "leak") == null);
+        }
+    }
+
+    fn deinit(self: *H2Server, allocator: std.mem.Allocator) void {
+        self.tmp.cleanup();
+        self.arena.deinit();
+        allocator.destroy(self);
+    }
+};
+
+const H2Frame = struct { kind: u8, flags: u8, stream_id: u32, payload: []const u8 };
+
+const H2Resp = struct {
+    status: u16 = 0,
+    body: std.ArrayListUnmanaged(u8) = .empty,
+    headers: std.ArrayListUnmanaged(h2.Header) = .empty,
+    ended: bool = false,
+    rst: ?u32 = null,
+};
+
+const H2Conn = struct {
+    fd: sys.fd_t,
+    a: std.mem.Allocator,
+    buf: [32768]u8 = undefined,
+    dec: h2.Decoder,
+    goaway: ?u32 = null,
+    /// Alınan DATA baytlarına karşılık otomatik WINDOW_UPDATE gönder.
+    auto_window: bool = true,
+    server_max_streams: u32 = 0,
+    ping_acks: usize = 0,
+
+    fn open(a: std.mem.Allocator, port: u16) !H2Conn {
+        return .{ .fd = try testConnect(port), .a = a, .dec = h2.Decoder.init(a, 4096) };
+    }
+
+    fn close(self: *H2Conn) void {
+        _ = sys.close(self.fd);
+        self.dec.deinit();
+    }
+
+    fn sendRaw(self: *H2Conn, bytes: []const u8) void {
+        var off: usize = 0;
+        while (off < bytes.len) {
+            const n = sys.write(self.fd, bytes[off..].ptr, bytes.len - off);
+            if (n <= 0) return;
+            off += @intCast(n);
+        }
+    }
+
+    fn sendFrame(self: *H2Conn, kind: u8, flags: u8, sid: u32, payload: []const u8) !void {
+        var l: std.ArrayListUnmanaged(u8) = .empty;
+        defer l.deinit(self.a);
+        try h2.appendFrameHeader(&l, self.a, @intCast(payload.len), kind, flags, sid);
+        try l.appendSlice(self.a, payload);
+        self.sendRaw(l.items);
+    }
+
+    fn readExact(self: *H2Conn, dst: []u8, timeout_ms: i32) bool {
+        var got: usize = 0;
+        while (got < dst.len) {
+            var pfd = [1]sys.pollfd{.{ .fd = self.fd, .events = sys.POLL.IN, .revents = 0 }};
+            if (sys.poll(&pfd, 1, timeout_ms) <= 0) return false;
+            const n = sys.read(self.fd, dst[got..].ptr, dst.len - got);
+            if (n <= 0) return false;
+            got += @intCast(n);
+        }
+        return true;
+    }
+
+    /// Sıradaki çerçeve (yük `self.buf`ta, sonraki okumaya kadar geçerli). `null` = zaman aşımı ya da bağlantı kapandı.
+    fn readFrame(self: *H2Conn, timeout_ms: i32) ?H2Frame {
+        var hdr: [9]u8 = undefined;
+        if (!self.readExact(&hdr, timeout_ms)) return null;
+        const fh = h2.parseFrameHeader(&hdr);
+        if (fh.length > self.buf.len) return null;
+        if (!self.readExact(self.buf[0..fh.length], timeout_ms)) return null;
+        return .{ .kind = fh.kind, .flags = fh.flags, .stream_id = fh.stream_id, .payload = self.buf[0..fh.length] };
+    }
+
+    fn handshake(self: *H2Conn) !void {
+        self.sendRaw(h2.preface);
+        try self.sendFrame(h2.frame_settings, 0, 0, &.{});
+        var saw_settings = false;
+        while (!saw_settings) {
+            const f = self.readFrame(5000) orelse return error.NoServerSettings;
+            if (f.kind == h2.frame_settings and f.flags & h2.flag_ack == 0) {
+                saw_settings = true;
+                var off: usize = 0;
+                while (off + 6 <= f.payload.len) : (off += 6) {
+                    if (std.mem.readInt(u16, f.payload[off..][0..2], .big) == h2.setting_max_concurrent_streams) self.server_max_streams = std.mem.readInt(u32, f.payload[off + 2 ..][0..4], .big);
+                }
+                try self.sendFrame(h2.frame_settings, h2.flag_ack, 0, &.{});
+            }
+        }
+    }
+
+    /// İstek başlıkları (ve isteğe bağlı gövde). `extra`: [ad, değer] çiftleri (küçük harf).
+    fn request(self: *H2Conn, sid: u32, method: []const u8, path: []const u8, extra: []const [2][]const u8, body: ?[]const u8) !void {
+        var blk: std.ArrayListUnmanaged(u8) = .empty;
+        defer blk.deinit(self.a);
+        try h2.encodeField(&blk, self.a, ":method", method);
+        try h2.encodeField(&blk, self.a, ":scheme", "http");
+        try h2.encodeField(&blk, self.a, ":path", path);
+        try h2.encodeField(&blk, self.a, ":authority", "localhost");
+        for (extra) |e| try h2.encodeField(&blk, self.a, e[0], e[1]);
+        try self.sendFrame(h2.frame_headers, h2.flag_end_headers | (if (body == null) h2.flag_end_stream else 0), sid, blk.items);
+        if (body) |b| {
+            var off: usize = 0;
+            while (off < b.len) {
+                const take = @min(b.len - off, 16384);
+                const last = off + take == b.len;
+                try self.sendFrame(h2.frame_data, if (last) h2.flag_end_stream else 0, sid, b[off..][0..take]);
+                off += take;
+            }
+        }
+    }
+
+    /// Bir çerçeveyi duruma işler; `resps` akış kimliğine göre toplanır. Döner: akışın bittiği (END_STREAM ya da RST) akış kimliği, yoksa 0.
+    fn absorb(self: *H2Conn, f: H2Frame, resps: *std.AutoHashMapUnmanaged(u32, H2Resp)) !u32 {
+        switch (f.kind) {
+            h2.frame_settings => if (f.flags & h2.flag_ack == 0) try self.sendFrame(h2.frame_settings, h2.flag_ack, 0, &.{}),
+            h2.frame_ping => if (f.flags & h2.flag_ack != 0) {
+                self.ping_acks += 1;
+            } else try self.sendFrame(h2.frame_ping, h2.flag_ack, 0, f.payload),
+            h2.frame_goaway => self.goaway = std.mem.readInt(u32, f.payload[4..8], .big),
+            h2.frame_headers => {
+                const gop = try resps.getOrPut(self.a, f.stream_id);
+                if (!gop.found_existing) gop.value_ptr.* = .{};
+                var arena = std.heap.ArenaAllocator.init(self.a);
+                defer arena.deinit();
+                var hs: std.ArrayListUnmanaged(h2.Header) = .empty;
+                _ = try self.dec.decode(f.payload, arena.allocator(), &hs, 1 << 20);
+                for (hs.items) |h| {
+                    if (std.mem.eql(u8, h.name, ":status")) gop.value_ptr.status = try std.fmt.parseInt(u16, h.value, 10);
+                    try gop.value_ptr.headers.append(self.a, .{ .name = try self.a.dupe(u8, h.name), .value = try self.a.dupe(u8, h.value) });
+                }
+                if (f.flags & h2.flag_end_stream != 0) {
+                    gop.value_ptr.ended = true;
+                    return f.stream_id;
+                }
+            },
+            h2.frame_data => {
+                const gop = try resps.getOrPut(self.a, f.stream_id);
+                if (!gop.found_existing) gop.value_ptr.* = .{};
+                try gop.value_ptr.body.appendSlice(self.a, f.payload);
+                if (self.auto_window and f.payload.len > 0) {
+                    var inc: [4]u8 = undefined;
+                    std.mem.writeInt(u32, &inc, @intCast(f.payload.len), .big);
+                    try self.sendFrame(h2.frame_window_update, 0, 0, &inc);
+                    try self.sendFrame(h2.frame_window_update, 0, f.stream_id, &inc);
+                }
+                if (f.flags & h2.flag_end_stream != 0) {
+                    gop.value_ptr.ended = true;
+                    return f.stream_id;
+                }
+            },
+            h2.frame_rst_stream => {
+                const gop = try resps.getOrPut(self.a, f.stream_id);
+                if (!gop.found_existing) gop.value_ptr.* = .{};
+                gop.value_ptr.rst = std.mem.readInt(u32, f.payload[0..4], .big);
+                return f.stream_id;
+            },
+            else => {},
+        }
+        return 0;
+    }
+
+    /// Verilen akışlar bitene (END_STREAM / RST) dek okur; bitiş sırasını `order`a yazar. `false`: zaman aşımı.
+    fn awaitStreams(self: *H2Conn, sids: []const u32, resps: *std.AutoHashMapUnmanaged(u32, H2Resp), order: ?*std.ArrayListUnmanaged(u32), timeout_ms: i32) !bool {
+        var remaining: usize = sids.len;
+        while (remaining > 0) {
+            const f = self.readFrame(timeout_ms) orelse return false;
+            const done = try self.absorb(f, resps);
+            if (done != 0) {
+                for (sids) |sid| {
+                    if (sid == done) {
+                        remaining -= 1;
+                        if (order) |o| try o.append(self.a, done);
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    fn get(self: *H2Conn, sid: u32, path: []const u8, resps: *std.AutoHashMapUnmanaged(u32, H2Resp)) !*H2Resp {
+        try self.request(sid, "GET", path, &.{}, null);
+        try std.testing.expect(try self.awaitStreams(&.{sid}, resps, null, 5000));
+        return resps.getPtr(sid).?;
+    }
+};
+
+test "HTTP/2 (h2c): GET/POST, çok parçalı gövde, yanıt başlıkları, PING/SETTINGS, bilinmeyen çerçeve yok sayılır" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const srv = try H2Server.start(allocator);
+    defer srv.deinit(allocator);
+
+    var c = try H2Conn.open(a, srv.port);
+    try c.handshake();
+    try std.testing.expectEqual(@as(u32, 100), c.server_max_streams);
+    var resps: std.AutoHashMapUnmanaged(u32, H2Resp) = .empty;
+
+    const r1 = try c.get(1, "/hello", &resps);
+    try std.testing.expectEqual(@as(u16, 200), r1.status);
+    try std.testing.expectEqualStrings("hello GET /hello", r1.body.items);
+    // :authority → Host başlığına dönüşür; çerez başlığı yok → boş.
+    var host_ok = false;
+    for (r1.headers.items) |h| {
+        if (std.mem.eql(u8, h.name, "x-host") and std.mem.eql(u8, h.value, "localhost")) host_ok = true;
+        try std.testing.expect(!h2.isConnectionSpecific(h.name));
+    }
+    try std.testing.expect(host_ok);
+
+    // PING → ACK; bilinmeyen çerçeve türü yok sayılır; ardından normal istek çalışır.
+    try c.sendFrame(h2.frame_ping, 0, 0, "12345678");
+    try c.sendFrame(0xfa, 0, 0, "ignored");
+    const r3 = try c.get(3, "/hello", &resps);
+    try std.testing.expectEqualStrings("hello GET /hello", r3.body.items);
+    try std.testing.expectEqual(@as(usize, 1), c.ping_acks);
+
+    // POST: 100 KiB gövde 7 DATA çerçevesinde.
+    const body = try a.alloc(u8, 100 * 1024);
+    @memset(body, 'p');
+    try c.request(5, "POST", "/echo", &.{}, body);
+    try std.testing.expect(try c.awaitStreams(&.{5}, &resps, null, 5000));
+    try std.testing.expectEqualStrings("POST:102400", resps.getPtr(5).?.body.items);
+
+    // Çerez başlıkları: iki ayrı `cookie` alanı Nox tarafında tek başlıkta görünür.
+    try c.request(7, "GET", "/hello", &.{ .{ "cookie", "a=1" }, .{ "cookie", "b=2" } }, null);
+    try std.testing.expect(try c.awaitStreams(&.{7}, &resps, null, 5000));
+    var cookie_seen = false;
+    for (resps.getPtr(7).?.headers.items) |h| {
+        if (std.mem.eql(u8, h.name, "x-cookie")) cookie_seen = std.mem.indexOf(u8, h.value, "a=1") != null and std.mem.indexOf(u8, h.value, "b=2") != null;
+    }
+    try std.testing.expect(cookie_seen);
+
+    // Handler istisnası: 500, bağlantı ve sunucu yaşar.
+    const rb = try c.get(9, "/boom", &resps);
+    try std.testing.expectEqual(@as(u16, 500), rb.status);
+    const r11 = try c.get(11, "/hello", &resps);
+    try std.testing.expectEqual(@as(u16, 200), r11.status);
+
+    c.close();
+    var out: []u8 = undefined;
+    try srv.stop(allocator, &out, "nox: uncaught exception in a server handler");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("drained\n", out);
+}
+
+test "HTTP/2 (h2c): çoklama (yavaş akış hızlıyı bloklamaz), akış kontrolü (pencere dolunca durur, WINDOW_UPDATE ile sürer), 101. eşzamanlı akış reddedilir" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const srv = try H2Server.start(allocator);
+    defer srv.deinit(allocator);
+
+    var c = try H2Conn.open(a, srv.port);
+    try c.handshake();
+    var resps: std.AutoHashMapUnmanaged(u32, H2Resp) = .empty;
+
+    // Çoklama: 1 ve 3 yavaş (300 ms), 5 hızlı → 5 ÖNCE biter.
+    try c.request(1, "GET", "/slow", &.{}, null);
+    try c.request(3, "GET", "/slow", &.{}, null);
+    try c.request(5, "GET", "/hello", &.{}, null);
+    var order: std.ArrayListUnmanaged(u32) = .empty;
+    try std.testing.expect(try c.awaitStreams(&.{ 1, 3, 5 }, &resps, &order, 5000));
+    try std.testing.expectEqual(@as(u32, 5), order.items[0]);
+    try std.testing.expectEqualStrings("slow", resps.getPtr(1).?.body.items);
+    try std.testing.expectEqualStrings("slow", resps.getPtr(3).?.body.items);
+
+    // Akış kontrolü: istemci WINDOW_UPDATE göndermez → sunucu tam 65535 bayt DATA yollayıp durur.
+    c.auto_window = false;
+    try c.request(7, "GET", "/big", &.{}, null);
+    var data_total: usize = 0;
+    var ended = false;
+    while (c.readFrame(600)) |f| {
+        if (f.stream_id != 7) continue;
+        if (f.kind == h2.frame_data) {
+            data_total += f.payload.len;
+            if (f.flags & h2.flag_end_stream != 0) ended = true;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 65535), data_total);
+    try std.testing.expect(!ended);
+    // Pencereleri aç: kalan 300000 - 65535 bayt gelir ve akış biter.
+    var inc: [4]u8 = undefined;
+    std.mem.writeInt(u32, &inc, 1 << 20, .big);
+    try c.sendFrame(h2.frame_window_update, 0, 0, &inc);
+    try c.sendFrame(h2.frame_window_update, 0, 7, &inc);
+    while (!ended) {
+        const f = c.readFrame(5000) orelse break;
+        if (f.stream_id == 7 and f.kind == h2.frame_data) {
+            data_total += f.payload.len;
+            if (f.flags & h2.flag_end_stream != 0) ended = true;
+        }
+    }
+    try std.testing.expect(ended);
+    try std.testing.expectEqual(@as(usize, 300000), data_total);
+    c.auto_window = true;
+
+    // 101 eşzamanlı akış: ilk 100 kabul edilir, 101. REFUSED_STREAM (7). (/slow 300 ms tutar.)
+    var sid: u32 = 101;
+    var n: usize = 0;
+    while (n < 101) : (n += 1) {
+        try c.request(sid, "GET", "/slow", &.{}, null);
+        sid += 2;
+    }
+    var refused: usize = 0;
+    var completed: usize = 0;
+    var seen_done: usize = 0;
+    while (seen_done < 101) {
+        const f = c.readFrame(5000) orelse break;
+        const done = try c.absorb(f, &resps);
+        if (done != 0) {
+            seen_done += 1;
+            const r = resps.getPtr(done).?;
+            if (r.rst) |code| {
+                if (code == 7) refused += 1;
+            } else completed += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), refused);
+    try std.testing.expectEqual(@as(usize, 100), completed);
+
+    c.close();
+    var out: []u8 = undefined;
+    try srv.stop(allocator, &out, "");
+    defer allocator.free(out);
+}
+
+test "HTTP/2 (h2c): hatalı biçimli istekler akışı sıfırlar (bağlantı yaşar); çerçeve ihlalleri GOAWAY ile bağlantıyı bitirir; CONTINUATION; sel ve rapid-reset sınırı" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const srv = try H2Server.start(allocator);
+    defer srv.deinit(allocator);
+    var resps: std.AutoHashMapUnmanaged(u32, H2Resp) = .empty;
+
+    // (a) Akış hataları: büyük harfli ad, bağlantıya özgü başlık, :path yok → RST_STREAM(PROTOCOL_ERROR=1); bağlantı sağlam.
+    {
+        var c = try H2Conn.open(a, srv.port);
+        defer c.close();
+        try c.handshake();
+        try c.request(1, "GET", "/hello", &.{.{ "X-Upper", "1" }}, null);
+        try c.request(3, "GET", "/hello", &.{.{ "connection", "close" }}, null);
+        // :path olmayan istek elle kodlanır.
+        var blk: std.ArrayListUnmanaged(u8) = .empty;
+        try h2.encodeField(&blk, a, ":method", "GET");
+        try h2.encodeField(&blk, a, ":scheme", "http");
+        try c.sendFrame(h2.frame_headers, h2.flag_end_headers | h2.flag_end_stream, 5, blk.items);
+        try std.testing.expect(try c.awaitStreams(&.{ 1, 3, 5 }, &resps, null, 5000));
+        for ([_]u32{ 1, 3, 5 }) |sid| try std.testing.expectEqual(@as(?u32, 1), resps.getPtr(sid).?.rst);
+        const ok = try c.get(7, "/hello", &resps);
+        try std.testing.expectEqual(@as(u16, 200), ok.status);
+    }
+
+    // (b) Bağlantı hataları: GOAWAY(PROTOCOL_ERROR) ve kapanış. 0 numaralı akışta DATA; sıfır artışlı WINDOW_UPDATE; CONTINUATION arasına başka çerçeve.
+    const violations = [_]struct { kind: u8, flags: u8, sid: u32, payload: []const u8 }{
+        .{ .kind = h2.frame_data, .flags = 0, .sid = 0, .payload = "x" },
+        .{ .kind = h2.frame_window_update, .flags = 0, .sid = 0, .payload = &[_]u8{ 0, 0, 0, 0 } },
+        .{ .kind = h2.frame_settings, .flags = 0, .sid = 1, .payload = &.{} },
+        .{ .kind = h2.frame_push_promise, .flags = 4, .sid = 1, .payload = &[_]u8{ 0, 0, 0, 2 } },
+        .{ .kind = h2.frame_ping, .flags = 0, .sid = 0, .payload = "short" },
+    };
+    for (violations) |v| {
+        var c = try H2Conn.open(a, srv.port);
+        defer c.close();
+        try c.handshake();
+        try c.sendFrame(v.kind, v.flags, v.sid, v.payload);
+        var got_goaway = false;
+        while (c.readFrame(3000)) |f| {
+            if (f.kind == h2.frame_goaway) {
+                got_goaway = true;
+                const code = std.mem.readInt(u32, f.payload[4..8], .big);
+                try std.testing.expect(code == 1 or code == 6); // PROTOCOL_ERROR ya da FRAME_SIZE_ERROR
+            }
+        }
+        try std.testing.expect(got_goaway);
+    }
+
+    // (c) CONTINUATION: başlık bloğu iki çerçeveye bölünür → normal yanıt. Araya başka çerçeve girerse GOAWAY.
+    {
+        var c = try H2Conn.open(a, srv.port);
+        defer c.close();
+        try c.handshake();
+        var blk: std.ArrayListUnmanaged(u8) = .empty;
+        try h2.encodeField(&blk, a, ":method", "GET");
+        try h2.encodeField(&blk, a, ":scheme", "http");
+        try h2.encodeField(&blk, a, ":path", "/hello");
+        try h2.encodeField(&blk, a, ":authority", "localhost");
+        const mid = blk.items.len / 2;
+        try c.sendFrame(h2.frame_headers, h2.flag_end_stream, 1, blk.items[0..mid]);
+        try c.sendFrame(h2.frame_continuation, h2.flag_end_headers, 1, blk.items[mid..]);
+        try std.testing.expect(try c.awaitStreams(&.{1}, &resps, null, 5000));
+        try std.testing.expectEqualStrings("hello GET /hello", resps.getPtr(1).?.body.items);
+        // Ara çerçeve: HEADERS (END_HEADERS yok) → PING → protokol hatası.
+        try c.sendFrame(h2.frame_headers, h2.flag_end_stream, 3, blk.items[0..mid]);
+        try c.sendFrame(h2.frame_ping, 0, 0, "12345678");
+        var got_goaway = false;
+        while (c.readFrame(3000)) |f| {
+            if (f.kind == h2.frame_goaway) got_goaway = true;
+        }
+        try std.testing.expect(got_goaway);
+    }
+
+    // (d) SETTINGS seli → GOAWAY(ENHANCE_YOUR_CALM=11).
+    {
+        var c = try H2Conn.open(a, srv.port);
+        defer c.close();
+        try c.handshake();
+        var batch: std.ArrayListUnmanaged(u8) = .empty;
+        var i: usize = 0;
+        while (i < 5000) : (i += 1) try h2.appendFrameHeader(&batch, a, 0, h2.frame_settings, 0, 0);
+        c.sendRaw(batch.items);
+        var code: u32 = 0;
+        while (c.readFrame(3000)) |f| {
+            if (f.kind == h2.frame_goaway) code = std.mem.readInt(u32, f.payload[4..8], .big);
+        }
+        try std.testing.expectEqual(@as(u32, 11), code);
+    }
+
+    // (e) Rapid reset: 1000 × (HEADERS + RST_STREAM) → GOAWAY(ENHANCE_YOUR_CALM); sunucu başka bağlantıları sunmaya devam eder.
+    {
+        var c = try H2Conn.open(a, srv.port);
+        defer c.close();
+        try c.handshake();
+        var blk: std.ArrayListUnmanaged(u8) = .empty;
+        try h2.encodeField(&blk, a, ":method", "GET");
+        try h2.encodeField(&blk, a, ":scheme", "http");
+        try h2.encodeField(&blk, a, ":path", "/slow");
+        try h2.encodeField(&blk, a, ":authority", "localhost");
+        var batch: std.ArrayListUnmanaged(u8) = .empty;
+        var sid: u32 = 1;
+        var i: usize = 0;
+        while (i < 1000) : (i += 1) {
+            try h2.appendFrameHeader(&batch, a, @intCast(blk.items.len), h2.frame_headers, h2.flag_end_headers | h2.flag_end_stream, sid);
+            try batch.appendSlice(a, blk.items);
+            try h2.appendFrameHeader(&batch, a, 4, h2.frame_rst_stream, 0, sid);
+            try h2.appendU32(&batch, a, @intFromEnum(h2.ErrorCode.cancel));
+            sid += 2;
+        }
+        c.sendRaw(batch.items);
+        var code: u32 = 0;
+        while (c.readFrame(3000)) |f| {
+            if (f.kind == h2.frame_goaway) code = std.mem.readInt(u32, f.payload[4..8], .big);
+        }
+        try std.testing.expectEqual(@as(u32, 11), code);
+    }
+    {
+        var c = try H2Conn.open(a, srv.port);
+        defer c.close();
+        try c.handshake();
+        const ok = try c.get(1, "/hello", &resps);
+        try std.testing.expectEqual(@as(u16, 200), ok.status);
+    }
+
+    // (f) Bozuk ön ek: yanıt yok, bağlantı kapanır.
+    {
+        const fd = try testConnect(srv.port);
+        defer _ = sys.close(fd);
+        const bad = "PRI * HTTP/2.0\r\n\r\nXX\r\n\r\n"; // 24 bayt, ama SM yerine XX
+        _ = sys.write(fd, bad.ptr, bad.len);
+        var b: [16]u8 = undefined;
+        var pfd = [1]sys.pollfd{.{ .fd = fd, .events = sys.POLL.IN, .revents = 0 }};
+        if (sys.poll(&pfd, 1, 3000) > 0) try std.testing.expect(sys.read(fd, &b, b.len) <= 0);
+    }
+
+    var out: []u8 = undefined;
+    try srv.stop(allocator, &out, "");
+    defer allocator.free(out);
+}
+
+test "HTTP/2 (h2c): SSE parça parça akar; istemci RST_STREAM'i handler'ı bitirir; SIGTERM açık akışı bitirir ve GOAWAY(NO_ERROR) gönderir" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const srv = try H2Server.start(allocator);
+    defer srv.deinit(allocator);
+
+    var c = try H2Conn.open(a, srv.port);
+    defer c.close();
+    try c.handshake();
+    var resps: std.AutoHashMapUnmanaged(u32, H2Resp) = .empty;
+
+    // 1) /events: ilk olay handler bitmeden (≈750 ms) çok önce gelir.
+    try c.request(1, "GET", "/events", &.{}, null);
+    var first_data_ms: ?i64 = null;
+    const t0 = std.Io.Clock.awake.now(std.testing.io).toMilliseconds();
+    var done = false;
+    while (!done) {
+        const f = c.readFrame(5000) orelse break;
+        if (f.stream_id == 1 and f.kind == h2.frame_data and first_data_ms == null and f.payload.len > 0) first_data_ms = std.Io.Clock.awake.now(std.testing.io).toMilliseconds() - t0;
+        if ((try c.absorb(f, &resps)) == 1) done = true;
+    }
+    try std.testing.expect(done);
+    try std.testing.expect(first_data_ms != null and first_data_ms.? < 400);
+    const r1 = resps.getPtr(1).?;
+    try std.testing.expectEqualStrings("event: tick\ndata: tick 0\n\nevent: tick\ndata: tick 1\n\nevent: tick\ndata: tick 2\n\n", r1.body.items);
+
+    // 2) İstemci akışı yarıda keser → handler is_open()==false görüp çıkar ("events aborted").
+    try c.request(3, "GET", "/events", &.{}, null);
+    while (c.readFrame(3000)) |f| {
+        if (f.stream_id == 3 and f.kind == h2.frame_data) break;
+    }
+    var cancel: [4]u8 = undefined;
+    std.mem.writeInt(u32, &cancel, @intFromEnum(h2.ErrorCode.cancel), .big);
+    try c.sendFrame(h2.frame_rst_stream, 0, 3, &cancel);
+    // Handler bir sonraki olay aralığında (250 ms) iptali görüp "events aborted" yazar; SIGTERM'den ÖNCE yazılması için bekle.
+    const settle: sys.timespec = .{ .sec = 0, .nsec = 500 * std.time.ns_per_ms };
+    _ = sys.nanosleep(&settle, null);
+
+    // 3) /forever açıkken SIGTERM: GOAWAY(NO_ERROR) gelir, handler çıkar, bağlantı kapanır, serve döner.
+    try c.request(5, "GET", "/forever", &.{}, null);
+    while (c.readFrame(3000)) |f| {
+        if (f.stream_id == 5 and f.kind == h2.frame_data) break;
+    }
+    try std.posix.kill(srv.child.id.?, .TERM);
+    while (c.readFrame(8000)) |f| {
+        _ = try c.absorb(f, &resps);
+    }
+    try std.testing.expectEqual(@as(?u32, 0), c.goaway);
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = srv.child.stdout.?.reader(std.testing.io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = srv.child.stderr.?.reader(std.testing.io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try srv.child.wait(std.testing.io);
+    srv.watchdog.disarm();
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expectEqualStrings("events done\nevents aborted\nforever closed\ndrained\n", stdout_data);
     try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
 }
 

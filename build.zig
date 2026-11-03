@@ -1650,6 +1650,12 @@ pub fn build(b: *std.Build) void {
     // modül üstü notu: `std.process.spawn` ile ARKA PLANDA çalıştırılan bir
     // ikili + eşzamanlı istemci soketleri gerektirdiğinden `http_stdlib_test`in
     // `compileAndRun`ından FARKLI bir çalıştırma modeli kullanır) ----
+    // HTTP/2 çerçeve + HPACK katmanı (v2.0.127): derleyici modülünden bağımsız, yalnızca std — compat testleri sahte bir h2c istemcisini bununla kurar.
+    const http2_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/stdlib_shims/http2.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const http_serve_test_mod = b.createModule(.{
         .root_source_file = b.path("tests/compat/http_serve_golden_test.zig"),
         .target = target,
@@ -1661,6 +1667,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nox", .module = nox_mod },
             .{ .name = "sys_compat", .module = sys_compat_mod },
             .{ .name = "host_link", .module = host_link_mod },
+            .{ .name = "http2", .module = http2_mod },
         },
     });
     const http_serve_test = b.addTest(.{ .root_module = http_serve_test_mod });

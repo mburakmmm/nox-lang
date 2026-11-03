@@ -94,7 +94,8 @@ def cases():
     yield "geçerli GET", GET + b"Connection: close\r\n\r\n"
     yield "rastgele çöp", b"\x00\x01\x02GARBAGE\xff\xfe\r\n\r\n"
     yield "bilinmeyen metod", b"FOOBAR /x HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
-    yield "HTTP/2 ön ek", b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+    # v2.0.127: geçerli ön ek artık h2c olarak kabul edilir (sonrasında çerçeve beklenir); geçersiz çerçeve gelirse GOAWAY + kapanış. HTTP/2'ye özgü sınamalar: scripts/http2_server_fuzz.py.
+    yield "HTTP/2 ön ek + geçersiz çerçeve", b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + b"\xff\xff\xff\x00\x00\x00\x00\x00\x01"
     yield "HTTP/0.9 stili", b"GET /x\r\n\r\n"
     yield "HTTP/9.9", b"GET /x HTTP/9.9\r\nHost: x\r\nConnection: close\r\n\r\n"
     yield "Host yok (1.1)", b"GET /x HTTP/1.1\r\nConnection: close\r\n\r\n"
