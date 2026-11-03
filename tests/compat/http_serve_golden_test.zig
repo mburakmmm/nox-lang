@@ -787,6 +787,165 @@ test "nox.http: aynı adlı birden çok yanıt başlığı (multi → Set-Cookie
     try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
 }
 
+var stream_resp_buf: [8192]u8 = undefined;
+var stream_resp_len: usize = 0;
+
+test "nox.http: akışlı yanıt (SSE) — chunked çerçeveleme doğru, akış sürerken başka istek HIZLICA sunulur (kooperatif sleep_ms)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    if req.target == "/events":
+        \\        s: nox_http_ResponseStream = req.sse()
+        \\        i: int = 0
+        \\        while i < 3:
+        \\            s.event("n" + str(i), "tick")
+        \\            s.sleep_ms(300)
+        \\            i = i + 1
+        \\        print("stream done")
+        \\        return s.end()
+        \\    print("fast served")
+        \\    return nox_http_HttpResponse(200, "fast", {{}})
+        \\
+        \\nox.http.serve({d}, handle, 2)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    const reader = try std.Thread.spawn(.{}, struct {
+        fn run(pt: u16) void {
+            stream_resp_len = rawResponse(pt, "GET /events HTTP/1.1\r\nHost: x\r\n\r\n", &stream_resp_buf);
+        }
+    }.run, .{port});
+    const ts: sys.timespec = .{ .sec = 0, .nsec = 200 * std.time.ns_per_ms };
+    _ = sys.nanosleep(&ts, null);
+    const fast_status = fetchStatus(port, "/fast"); // akış (900 ms) sürerken
+    reader.join();
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+    const resp = stream_resp_buf[0..stream_resp_len];
+    try std.testing.expectEqual(@as(u16, 200), fast_status);
+    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 200 OK\r\n"));
+    try std.testing.expect(std.ascii.indexOfIgnoreCase(resp, "transfer-encoding: chunked\r\n") != null);
+    try std.testing.expect(std.ascii.indexOfIgnoreCase(resp, "content-type: text/event-stream") != null);
+    try std.testing.expect(std.ascii.indexOfIgnoreCase(resp, "connection: close\r\n") != null);
+    // Her olay kendi chunk'ı: "<hex>\r\nevent: tick\ndata: nN\n\n\r\n"; sonda "0\r\n\r\n".
+    try std.testing.expect(std.mem.indexOf(u8, resp, "event: tick\ndata: n0\n\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "event: tick\ndata: n1\n\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "event: tick\ndata: n2\n\n") != null);
+    try std.testing.expect(std.mem.endsWith(u8, resp, "0\r\n\r\n"));
+    // Sıra kanıtı: hızlı istek akış BİTMEDEN sunuldu.
+    try std.testing.expectEqualStrings("fast served\nstream done\n", stdout_data);
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+}
+
+test "nox.http: akış sırasında istemci kopması handler'ı bitirir (send False), sunucu ÖLMEZ (SIGPIPE yok); SIGTERM açık akışı bitirir, serve döner" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows'ta sinyal yok
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    s: nox_http_ResponseStream = req.sse()
+        \\    while s.is_open():
+        \\        if not s.comment("hb"):
+        \\            print("peer gone")
+        \\            return s.end()
+        \\        s.sleep_ms(30)
+        \\    print("shutdown")
+        \\    return s.end()
+        \\
+        \\nox.http.serve({d}, handle)
+        \\print("drained")
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    // 1) Akışı başlat, başlığı oku, kop.
+    {
+        const fd = try testConnect(port);
+        const req = "GET /events HTTP/1.1\r\nHost: x\r\n\r\n";
+        _ = sys.write(fd, req.ptr, req.len);
+        var head: [512]u8 = undefined;
+        const n = sys.read(fd, &head, head.len);
+        try std.testing.expect(n > 0);
+        try std.testing.expect(std.mem.startsWith(u8, head[0..@intCast(n)], "HTTP/1.1 200 OK\r\n"));
+        _ = sys.close(fd);
+    }
+    const ts: sys.timespec = .{ .sec = 0, .nsec = 700 * std.time.ns_per_ms };
+    _ = sys.nanosleep(&ts, null);
+
+    // 2) Sunucu hâlâ yaşıyor: ikinci akış açılır.
+    const fd2 = try testConnect(port);
+    defer _ = sys.close(fd2);
+    {
+        const req = "GET /events HTTP/1.1\r\nHost: x\r\n\r\n";
+        _ = sys.write(fd2, req.ptr, req.len);
+        var head: [512]u8 = undefined;
+        const n = sys.read(fd2, &head, head.len);
+        try std.testing.expect(n > 0);
+        try std.testing.expect(std.mem.startsWith(u8, head[0..@intCast(n)], "HTTP/1.1 200 OK\r\n"));
+    }
+
+    // 3) Açık akış sürerken SIGTERM: handler `is_open() == False` görüp çıkar, serve döner.
+    try std.posix.kill(child.id.?, .TERM);
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try child.wait(io);
+    if (term != .exited) std.debug.print("cocuk surec temiz cikmadi, term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expectEqualStrings("peer gone\nshutdown\ndrained\n", stdout_data);
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+}
+
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox_http_request_
 // method/target/body/headers`in ARTIK kopyalamayıp `retain` ETTİĞİ yeni
 // yolu, `HttpRequest`nin DÖRT alanının TAMAMINI (method/target/body/

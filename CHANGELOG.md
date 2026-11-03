@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.124]
+
+### Eklendi
+
+- **Akışlı yanıtlar (SSE dahil):** handler imzası değişmeden `req.stream(status, headers)` / `req.sse()` bağlantıya durum satırı ve başlıkları HEMEN yazan bir `ResponseStream` döndürür. `send`, `event(data, event, id)`, `comment`, `retry`, `is_open`, `sleep_ms` (kooperatif; QBE'nin tek iş parçacığını kilitlemez, kapanışta erken döner), `end()`. Chunked çerçeveleme (HTTP/1.0 istemcisine kapanana dek ham akış), akıştan sonra bağlantı kapanır. Elle kurulmuş istekte (`conn == 0`) parçalar `stream.sent`te toplanır (birim testi). `HttpRequest` kurucusuna varsayılanlı `conn: int = 0` eklendi.
+- Referans uygulamaya `GET /todos/stream` (kimlik doğrulamalı SSE) eklendi; duman testi 3 olay ve 401'i doğrular.
+
+### Düzeltildi
+
+- **İstemci kopunca ikinci yazmada tüm süreç `SIGPIPE` ile ölüyordu** (exit 141). Tek yazmalı normal yanıtlarda görünmüyordu; akışlı yanıtlarda kaçınılmazdı. `serve*` artık `SIGPIPE`ı yoksayar (Go/Rust varsayılanı), yazma yolları `EPIPE`ı `BrokenPipe` hatasına çevirir.
+
 ## [2.0.123]
 
 ### Düzeltildi

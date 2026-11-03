@@ -1,3 +1,5 @@
+import nox.strings
+
 class HttpError(Exception):
     pass
 
@@ -11,6 +13,64 @@ class HttpResponse:
         self.body = body
         self.headers = headers
 
+# v2.0.124 — akışlı yanıt (SSE, büyük/uzun yanıtlar). `HttpRequest.stream`/`sse` döndürür. Parçalar yazılır yazılmaz istemciye gönderilir.
+# İstemci gittiğinde `send` `False` döner ve akış kapanır: döngüler `is_open()`/`send` sonucuna bakmalıdır. Kopma bir SONRAKİ yazmada anlaşılır, uzun sessizliklerde `comment()` ile kalp atışı gönderin.
+class ResponseStream:
+    def __init__(self: ResponseStream, conn: int) -> None:
+        self.conn = conn
+        # `conn == 0` (birim testi): gönderilen parçalar burada toplanır.
+        self.sent: list[str] = []
+        self.finished = False
+
+    # Ham bir parça yazar. `True`: yazıldı; `False`: istemci gitti ya da akış bitti.
+    def send(self: ResponseStream, chunk: str) -> bool:
+        if self.conn == 0:
+            if self.finished:
+                return False
+            self.sent.append(chunk)
+            return True
+        return nox_http_respstream_send_raw(self.conn, chunk) != 0
+
+    # Bir SSE olayı: `data` çok satırlıysa her satır ayrı `data:` alanı olur; `event`/`id` yeni satır içeremez (temizlenir).
+    def event(self: ResponseStream, data: str, event: str = "", id: str = "") -> bool:
+        out: str = ""
+        if event != "":
+            out = out + "event: " + _sse_line(event) + "\n"
+        if id != "":
+            out = out + "id: " + _sse_line(id) + "\n"
+        for line in nox.strings.split(nox.strings.replace(data, "\r", ""), "\n"):
+            out = out + "data: " + line + "\n"
+        return self.send(out + "\n")
+
+    # SSE yorum satırı (`: metin`): istemci görmez, bağlantıyı canlı tutar ve kopmayı yakalar.
+    def comment(self: ResponseStream, text: str = "") -> bool:
+        return self.send(": " + _sse_line(text) + "\n\n")
+
+    # Yeniden bağlanma gecikmesi önerisi (ms).
+    def retry(self: ResponseStream, ms: int) -> bool:
+        return self.send("retry: " + str(ms) + "\n\n")
+
+    # Akış açık mı: başlamış, yazma hatası yok, `end` çağrılmamış ve sunucu kapanmıyor (SIGTERM/`nox.http.shutdown()`).
+    def is_open(self: ResponseStream) -> bool:
+        if self.conn == 0:
+            return not self.finished
+        return nox_http_respstream_open_raw(self.conn) != 0
+
+    # Akış döngülerinde bekleme. Kooperatiftir (diğer bağlantılar ilerler, QBE'nin tek iş parçacığı takılmaz) ve sunucu kapanırken erken döner; `nox.time.sleep_ms` yerine bunu kullanın.
+    def sleep_ms(self: ResponseStream, ms: int) -> None:
+        nox_http_respstream_sleep_raw(ms)
+
+    # Akışı bitirir ve handler'ın döndürmesi gereken yer tutucu yanıtı verir: `return stream.end()`. (Dönen yanıt yok sayılır.)
+    def end(self: ResponseStream) -> HttpResponse:
+        if self.conn == 0:
+            self.finished = True
+        else:
+            nox_http_respstream_end_raw(self.conn)
+        return HttpResponse(200, "", {})
+
+def _sse_line(s: str) -> str:
+    return nox.strings.replace(nox.strings.replace(s, "\r", ""), "\n", " ")
+
 # stdlib fazı §D.1.6: `nox.http.serve`in `handle` çağrı sitesine geçtiği
 # istek nesnesi — alan SIRASI (method, target, body, headers, peer_addr)
 # codegen'in `genHttpServeWrapper`ının HANGİ `nox_http_request_*`
@@ -23,13 +83,29 @@ class HttpResponse:
 # IPv4 — dinleme soketi HER ZAMAN `AF_INET`dir).
 # v2.0 sözleşmesi (VERSIONING.md §5): kurucuya EKLENEN her yeni parametre varsayılan değer TAŞIR, böylece mevcut çağıranlar (testler, çerçeveler)
 # bozulmaz; `peer_addr` bunun ilk uygulamasıdır (eskiden zorunluydu ve Aether'i kırmıştı).
+# v2.0.124: `conn` sunucunun bu bağlantı için doldurduğu iç tutamaçtır (yalnızca handler çağrısı boyunca geçerli; elle kurulan isteklerde 0 = bağlantı yok). `stream`/`sse` onu kullanır.
 class HttpRequest:
-    def __init__(self: HttpRequest, method: str, target: str, body: str, headers: dict[str, str], peer_addr: str = "") -> None:
+    def __init__(self: HttpRequest, method: str, target: str, body: str, headers: dict[str, str], peer_addr: str = "", conn: int = 0) -> None:
         self.method = method
         self.target = target
         self.body = body
         self.headers = headers
         self.peer_addr = peer_addr
+        self.conn = conn
+
+    # Akışlı yanıt başlatır: durum satırı ve başlıklar HEMEN gönderilir, gövde `ResponseStream.send` ile parça parça yazılır (chunked). Handler sonunda `return stream.end()`.
+    # Akıştan sonra bağlantı kapanır. Başlatılamazsa (akış zaten başlamış, durum 200-599 dışı/204/304, geçersiz başlık, bağlantı yok) `HttpError`.
+    # Elle kurulmuş isteklerde (`conn == 0`, birim testleri) akış bellekte toplanır: `stream.sent`.
+    def stream(self: HttpRequest, status: int, headers: dict[str, str]) -> ResponseStream:
+        s: ResponseStream = ResponseStream(self.conn)
+        if self.conn != 0:
+            if nox_http_respstream_start_raw(self.conn, status, headers) == 0:
+                raise HttpError("cannot start a streaming response (already started, invalid status or header, or the client is gone)")
+        return s
+
+    # Server-Sent Events: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, vekil tamponlamasını kapatan `X-Accel-Buffering: no`. Olayları `stream.event(...)` ile yazın.
+    def sse(self: HttpRequest) -> ResponseStream:
+        return self.stream(200, {"Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 extern def nox_http_get_raw(url: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_post_raw(url: str, body: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
@@ -84,6 +160,11 @@ def multi(values: list[str]) -> str:
 
 extern def nox_http_config_set_raw(key: int, value: int) -> None from "zig-out/lib/noxrt.o"
 extern def nox_http_shutdown_raw() -> None from "zig-out/lib/noxrt.o"
+extern def nox_http_respstream_start_raw(conn: int, status: int, headers: dict[str, str]) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_respstream_send_raw(conn: int, data: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_respstream_end_raw(conn: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_respstream_open_raw(conn: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_respstream_sleep_raw(ms: int) -> None from "zig-out/lib/noxrt.o"
 
 def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_ms: int = 0, max_connections: int = 0, drain_timeout_ms: int = 0) -> None:
     nox_http_config_set_raw(1, max_body_bytes)

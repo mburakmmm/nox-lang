@@ -93,7 +93,7 @@ def main():
 
     port = free_port()
     base = f"http://127.0.0.1:{port}"
-    srv, log = start_server(exe, work, port, {"RATE_LIMIT": "100000"}, "main")
+    srv, log = start_server(exe, work, port, {"RATE_LIMIT": "100000", "STREAM_INTERVAL_MS": "100"}, "main")
     try:
         st, body, hdr = call(base, "GET", "/health")
         check(st == 200 and body == "ok", "GET /health -> 200 ok")
@@ -134,6 +134,17 @@ def main():
         check(st == 200, "todo güncelle 200")
         st, body, _ = call(base, "GET", "/todos", token=ta)
         check(st == 200 and [t["done"] for t in body] == [True, False] and body[0]["title"] == "buy milk", "liste alice'in iki todosunu döner")
+        # SSE: kullanıcının todo sayıları, 3 olay sonra akış kendiliğinden biter; yetkisiz erişim 401.
+        st, _, _ = call(base, "GET", "/todos/stream?events=3")
+        check(st == 401, "token'sız /todos/stream 401")
+        sreq = urllib.request.Request(base + "/todos/stream?events=3", headers={"Authorization": "Bearer " + ta})
+        with urllib.request.urlopen(sreq, timeout=10) as sr:
+            check(sr.status == 200 and sr.headers.get("Content-Type", "").startswith("text/event-stream"), "SSE akışı 200 + text/event-stream")
+            text = sr.read().decode()
+        events = [blk for blk in text.split("\n\n") if blk.startswith("event: todos")]
+        check(len(events) == 3, f"SSE 3 olay gönderdi ({len(events)})")
+        payloads = [json.loads(e.split("data: ", 1)[1]) for e in events]
+        check(all(p == {"total": 2, "done": 1} for p in payloads), "SSE olayları alice'in sayılarını taşır")
         st, body, _ = call(base, "GET", "/todos", token=tb)
         check(st == 200 and body == [], "bob alice'in todolarını GÖRMEZ")
         st, _, _ = call(base, "PUT", f"/todos/{tid}", {"done": False}, tb)

@@ -124,6 +124,14 @@ fn installShutdownSignals() void {
     };
     posix.sigaction(.TERM, &act, null);
     posix.sigaction(.INT, &act, null);
+    // Kopan bir istemciye ikinci yazma SIGPIPE ile TÜM süreci öldürürdü (akışlı yanıtlarda ilk yazmadan sonra kaçınılmaz: `nox.http` `ResponseStream`). Sinyal yoksayılır; yazma yolları
+    // EPIPE'ı `BrokenPipe` hatasına çevirir, bağlantı kapanır (Go ve Rust'ın varsayılanı da budur).
+    const ign: posix.Sigaction = .{
+        .handler = .{ .handler = posix.SIG.IGN },
+        .mask = posix.sigemptyset(),
+        .flags = 0,
+    };
+    posix.sigaction(.PIPE, &ign, null);
 }
 
 /// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.close`
@@ -198,6 +206,7 @@ fn rawWriteAll(scheduler: ?*scheduler_mod.Scheduler, fd: posix.fd_t, bytes: []co
                 if (rc >= 0) break :blk @as(usize, @intCast(rc));
                 switch (posix.errno(rc)) {
                     .INTR => continue,
+                    .PIPE, .CONNRESET => return error.BrokenPipe,
                     else => |e| return posix.unexpectedErrno(e),
                 }
             }
@@ -1056,6 +1065,19 @@ const ServerRequest = struct {
     /// (`accept()`in doldurduğu karşı taraf adresi) ARC-sahipli bir `str`
     /// olarak inşa edilir — `method`/`target`/`body` İLE AYNI disiplin.
     peer_addr: ?[*:0]u8,
+    /// v2.0.124 (akışlı yanıt, spec §3.329): `connectionEntry` tarafından yalnızca handler çağrısı boyunca geçerli olan istek/tahsisçi göstericileri; `HttpRequest.conn`
+    /// bu `ServerRequest`in adresini taşır ve `nox_http_stream_*` işlevleri onu geri çözer. `stream`, `req.stream(...)` çağrısıyla kurulur.
+    http_request: ?*std.http.Server.Request = null,
+    gpa: ?std.mem.Allocator = null,
+    stream: ?*StreamState = null,
+};
+
+/// Akışlı (chunked) yanıtın durumu. `body.writer.buffer` `buf`ı gösterir; bu yüzden durum yığında değil yığında-dışı (heap) tutulur ve adresi sabittir.
+const StreamState = struct {
+    body: std.http.BodyWriter,
+    buf: [2048]u8 = undefined,
+    failed: bool = false,
+    ended: bool = false,
 };
 
 // Faz HH.3 (bkz. nox-teknik-spesifikasyon.md §3.68): `body`/`headers`
@@ -1211,6 +1233,102 @@ export fn nox_http_request_body(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) 
 /// spesifikasyon.md ilgili bölüm): `method`/`target`/`body` İLE AYNI
 /// retain-SADECE disiplini — `connectionEntry` ZATEN `r.peer_addr`i
 /// ARC-sahipli olarak inşa etti.
+fn requestFromConn(conn: i64) ?*ServerRequest {
+    if (conn <= 0) return null;
+    return @ptrFromInt(@as(usize, @intCast(conn)));
+}
+
+fn releaseHeaderList(rt: ?*anyopaque, gpa: std.mem.Allocator, hdrs: []const std.http.Header) void {
+    for (hdrs) |h| {
+        str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
+        str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
+    }
+    if (hdrs.len > 0) gpa.free(hdrs);
+}
+
+/// `req.stream(status, headers)`: durum satırını ve başlıkları HEMEN yazıp gönderir (chunked; HTTP/1.0 istemcisine kapanana dek ham akış). `1` başarılı, `0` başarısız (akış zaten başlamış, geçersiz
+/// durum/başlık, `conn` yok). Bağlantı akıştan sonra kapanır (`Connection: close`).
+export fn nox_http_respstream_start_raw(rt: ?*anyopaque, conn: i64, status: i64, headers: ?*anyopaque) callconv(.c) i64 {
+    const r = requestFromConn(conn) orelse return 0;
+    if (r.stream != null) return 0;
+    const request = r.http_request orelse return 0;
+    const gpa = r.gpa orelse return 0;
+    if (status < 200 or status > 599 or status == 204 or status == 304) return 0;
+    const hdrs = retainHeaders(rt, gpa, headers) catch return 0;
+    defer releaseHeaderList(rt, gpa, hdrs);
+    const st = gpa.create(StreamState) catch return 0;
+    st.* = .{ .body = undefined };
+    const http10 = request.head.version == .@"HTTP/1.0";
+    st.body = request.respondStreaming(&st.buf, .{ .respond_options = .{
+        .status = @enumFromInt(status),
+        .keep_alive = false,
+        .extra_headers = hdrs,
+        .transfer_encoding = if (http10) .none else null,
+    } }) catch {
+        gpa.destroy(st);
+        return 0;
+    };
+    // Başlıklar yazıcıya girdi; istemcinin HEMEN görmesi için gönder.
+    st.body.flush() catch {
+        st.failed = true;
+    };
+    r.stream = st;
+    return if (st.failed) 0 else 1;
+}
+
+/// Bir parçayı yazıp hemen gönderir. `1` yazıldı; `0` akış yok/bitmiş ya da istemci gitti (bundan sonra hiçbir şey yazılmaz).
+export fn nox_http_respstream_send_raw(conn: i64, data: ?[*:0]const u8) callconv(.c) i64 {
+    const r = requestFromConn(conn) orelse return 0;
+    const st = r.stream orelse return 0;
+    if (st.failed or st.ended) return 0;
+    const bytes: []const u8 = if (data) |d| str_mod.nox_str_slice(@constCast(d)) else &.{};
+    if (bytes.len == 0) return 1;
+    st.body.writer.writeAll(bytes) catch {
+        st.failed = true;
+        return 0;
+    };
+    st.body.writer.flush() catch {
+        st.failed = true;
+        return 0;
+    };
+    st.body.flush() catch {
+        st.failed = true;
+        return 0;
+    };
+    return 1;
+}
+
+/// Akışı bitirir (son chunk). Tekrar çağrı zararsızdır. `1` temiz bitti, `0` yazılamadı.
+export fn nox_http_respstream_end_raw(conn: i64) callconv(.c) i64 {
+    const r = requestFromConn(conn) orelse return 0;
+    const st = r.stream orelse return 0;
+    if (st.ended) return if (st.failed) 0 else 1;
+    st.ended = true;
+    if (st.failed) return 0;
+    st.body.end() catch {
+        st.failed = true;
+        return 0;
+    };
+    return 1;
+}
+
+/// Akış açık mı: başlamış, hata almamış, bitirilmemiş ve sunucu kapanmıyor.
+export fn nox_http_respstream_open_raw(conn: i64) callconv(.c) i64 {
+    const r = requestFromConn(conn) orelse return 0;
+    const st = r.stream orelse return 0;
+    return if (!st.failed and !st.ended and !shuttingDown()) 1 else 0;
+}
+
+/// Akış döngülerinde bekleme: fiber içindeysek KOOPERATİF (diğer bağlantılar ilerler; QBE'nin tek iş parçacığı kilitlenmez), kapanış başlarsa erken döner.
+export fn nox_http_respstream_sleep_raw(ms: i64) callconv(.c) void {
+    var left: u64 = if (ms > 0) @intCast(ms) else 0;
+    while (left > 0 and !shuttingDown()) {
+        const slice: u32 = @intCast(@min(left, 100));
+        if (!fiber_net.sleepCooperative(slice)) http_client.sleepMs(slice);
+        left -= slice;
+    }
+}
+
 export fn nox_http_request_peer_addr(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     _ = rt;
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
@@ -1604,10 +1722,20 @@ fn connectionEntry(arg: *anyopaque) void {
             .body = body_str,
             .headers = headers_list.items,
             .peer_addr = peer_addr_str,
+            .http_request = &request,
+            .gpa = gpa,
         };
 
         const resp_payload = conn.handler(conn.handler_ctx, &req_handle);
         defer if (resp_payload) |r| destroyResponse(rt, gpa, @ptrCast(@alignCast(r)));
+
+        // Handler akışlı yanıt başlattıysa (`req.stream(...)`): başlık ve gövde parçaları ZATEN yazıldı. Dönüş değeri (ya da istisna) yok sayılır, kapanış parçası yazılır, bağlantı kapatılır
+        // (akıştan sonra keep-alive yok: bir sonraki istek ile çerçeveleme karışmasın).
+        if (req_handle.stream) |st| {
+            defer gpa.destroy(st);
+            if (!st.ended and !st.failed) st.body.end() catch {};
+            break;
+        }
 
         if (resp_payload) |r| {
             const resp: *ServerResponse = @ptrCast(@alignCast(r));

@@ -24,7 +24,7 @@ What a server handler receives.
 | `headers` | `dict[str, str]` | request headers, with the **names as the client wrote them** (`Content-Type`, `User-Agent`, …) — look up with the exact spelling, or loop |
 | `peer_addr` | `str` | the client's `ip:port` (IPv4 `a.b.c.d:port`; IPv6 clients appear as `[::1]:port`) |
 
-`HttpRequest(method, target, body, headers, peer_addr="")` can be constructed directly, which is how handlers are unit-tested. Constructor parameters are frozen; new ones are only
+`HttpRequest(method, target, body, headers, peer_addr="", conn=0)` can be constructed directly, which is how handlers are unit-tested (`conn` is the server's internal connection handle; leave it `0`). Constructor parameters are frozen; new ones are only
 ever added with defaults ([Stability](../apis/stability.md)).
 
 ### `HttpResponse`
@@ -191,6 +191,60 @@ h["Set-Cookie"] = nox.http.multi(["session=abc; Path=/; HttpOnly", "theme=dark; 
 ```
 
 On the request side, a header the client sent more than once arrives in `req.headers` as one entry with the values joined by `, ` (by `; ` for `Cookie`), as RFC 9110 describes.
+
+### Streaming responses
+
+A handler normally returns one `HttpResponse`. To send a body over time — server-sent events, a long export, a progress feed — start a stream from the request. The status line and
+headers go out **immediately**, then every `send` reaches the client at once (chunked transfer encoding). The handler keeps its signature and ends with `return stream.end()`.
+
+| Call | Meaning |
+|---|---|
+| `req.stream(status, headers)` | start a streaming response; raises `HttpError` if it cannot (already started, status outside 200–599 or 204/304, invalid header) |
+| `req.sse()` | `stream(200, ...)` with `Content-Type: text/event-stream`, `Cache-Control: no-cache` and `X-Accel-Buffering: no` (stops reverse proxies from buffering) |
+| `stream.send(chunk)` | write a raw chunk; `False` once the client has gone or the stream has ended |
+| `stream.event(data, event="", id="")` | one SSE event; a multi-line `data` becomes one `data:` field per line; `event` and `id` have newlines removed |
+| `stream.comment(text="")` | an SSE comment line (`: text`): invisible to the client, keeps the connection alive and detects a broken one |
+| `stream.retry(ms)` | suggest the client's reconnect delay |
+| `stream.is_open()` | `False` after a write failed, after `end()`, or while the server is shutting down |
+| `stream.sleep_ms(ms)` | wait; cooperative (other connections keep running, also on the QBE backend) and returns early when the server shuts down. Use it instead of `nox.time.sleep_ms` in stream loops |
+| `stream.end()` | finish the body and return the placeholder response the handler must return (its contents are ignored) |
+
+```nox
+from nox.http import HttpRequest, HttpResponse, ResponseStream
+
+def handle(req: HttpRequest) -> HttpResponse:
+    s: ResponseStream = req.sse()
+    n: int = 0
+    while s.is_open() and n < 3:
+        if not s.event("tick " + str(n), "tick", str(n)):
+            break
+        n = n + 1
+        s.sleep_ms(1000)
+    return s.end()
+
+# A request built by hand has no connection: the stream collects what was sent, which is how handlers are unit-tested.
+test_req: HttpRequest = HttpRequest("GET", "/events", "", {})
+s2: ResponseStream = test_req.sse()
+s2.event("hello", "greeting")
+s2.comment("ping")
+print(len(s2.sent))
+print(s2.sent[0] == "event: greeting\ndata: hello\n\n")
+print(s2.sent[1] == ": ping\n\n")
+```
+
+```output
+2
+True
+True
+```
+
+Things to know:
+
+- The connection **closes** after a stream (`Connection: close`); the next request opens a new one. The handler's return value is ignored, and an exception after the stream has started just ends it (the status line is already sent, so no `500` is possible).
+- A client that disconnects is noticed at the **next write**: `send`/`event`/`comment` return `False`. In a quiet stream send a `comment` every few seconds; it doubles as a heartbeat for proxies.
+- On `SIGTERM`/`SIGINT` or `nox.http.shutdown()`, `is_open()` turns `False` and `sleep_ms` returns, so a loop written as above ends by itself and the graceful shutdown completes; otherwise the server waits `drain_timeout_ms` and then closes the stream.
+- Each open stream holds one connection and one fiber. On the default backend streams are spread over the worker threads like any other connection ([Choosing a `serve` form](#choosing-a-serve-form)); the QBE backend serves all of them from one thread, so wait with `stream.sleep_ms`, never with a blocking call.
+- Behind a reverse proxy, keep `X-Accel-Buffering: no` (set by `sse()`) and make sure the proxy does not enforce a short read timeout shorter than your heartbeat interval.
 
 ### Configuration and graceful shutdown
 

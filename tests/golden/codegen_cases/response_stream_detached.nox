@@ -1,0 +1,24 @@
+# v2.0.124: `HttpRequest.sse()/stream()` bağlantısız (elle kurulmuş) istekte parçaları bellekte toplar; SSE çerçevelemesi ve kapanış davranışı.
+from nox.http import HttpRequest, HttpResponse, ResponseStream
+
+req: HttpRequest = HttpRequest("GET", "/events", "", {}, "10.0.0.1:5000")
+s: ResponseStream = req.sse()
+print(s.is_open())
+print(s.event("one"))
+print(s.event("a\r\nb", "msg", "7"))
+print(s.event("x", "bad\nname", "i\r\nd"))
+print(s.comment("hb\nbeat"))
+print(s.retry(1500))
+print(s.send("raw"))
+print(len(s.sent))
+for chunk in s.sent:
+    print("[" + chunk + "]")
+r: HttpResponse = s.end()
+print(r.status)
+print(s.is_open())
+print(s.send("late"))
+print(len(s.sent))
+s2: ResponseStream = req.stream(200, {"Content-Type": "text/plain"})
+print(s2.send("a"))
+print(s2.send("b"))
+print(s2.sent[0] + s2.sent[1])

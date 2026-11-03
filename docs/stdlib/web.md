@@ -102,7 +102,7 @@ In a real handler, add `nox.web.access_log(req, resp, started, rid)` before the 
 
 ## Reference application
 
-[`examples/todo-backend`](https://github.com/mburakmmm/nox-lang/tree/main/examples/todo-backend) is a complete small backend built from these pieces: registration and login (argon2id + JWT), a per-user todo list in SQLite, CORS, rate limiting, request ids, access log, security headers and graceful shutdown on `SIGTERM`. `scripts/todo_backend_smoke.py` builds it and drives it end to end (authorisation isolation between two users, CORS, 429, 8 concurrent clients, clean shutdown) on both backends.
+[`examples/todo-backend`](https://github.com/mburakmmm/nox-lang/tree/main/examples/todo-backend) is a complete small backend built from these pieces: registration and login (argon2id + JWT), a per-user todo list in SQLite, a server-sent-events endpoint ([streaming responses](http.md#streaming-responses)), CORS, rate limiting, request ids, access log, security headers and graceful shutdown on `SIGTERM`. `scripts/todo_backend_smoke.py` builds it and drives it end to end (authorisation isolation between two users, CORS, 429, 8 concurrent clients, clean shutdown) on both backends.
 
 ## Notes
 

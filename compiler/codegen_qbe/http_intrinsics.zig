@@ -821,6 +821,9 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
                 try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = "1" } });
             }
             req_values[i] = .{ .text = t, .qtype = .l, .heap = .dict, .dict_info = f.info.dict_info };
+        } else if (std.mem.eql(u8, f.name, "conn")) {
+            // v2.0.124: akışlı yanıt için bu bağlantının `ServerRequest` adresi (düz tamsayı, ARC dışı); yalnızca handler çağrısı boyunca geçerlidir.
+            req_values[i] = .{ .text = "%req", .qtype = .l };
         } else {
             return error.Unsupported;
         }

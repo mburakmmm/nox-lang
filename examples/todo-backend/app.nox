@@ -1,9 +1,9 @@
 # Referans backend: kullanıcı kaydı/girişi (argon2id + JWT), kullanıcıya özel yapılacaklar listesi (SQLite), CORS, hız sınırı, istek kimliği, erişim günlüğü, güvenlik başlıkları ve
-# graceful shutdown. Çalıştırma:  noxc run examples/todo-backend/app.nox   (ortam: PORT=8080 TODO_DB=todo.db JWT_SECRET=... RATE_LIMIT=300)
+# graceful shutdown. Çalıştırma:  noxc run examples/todo-backend/app.nox   (ortam: PORT=8080 TODO_DB=todo.db JWT_SECRET=... RATE_LIMIT=300 STREAM_INTERVAL_MS=1000)
 # MODÜL DURUMU: varsayılan (LLVM) backend'inde bağlantılar farklı işçi iş parçacıklarında çalışabilir ve HER işçi modül durumunun kendi kopyasını alır. Bu yüzden her şey (veritabanı, rotalar,
 # CORS, hız sınırı) bir GLOBAL BAŞLATICISINDA kurulur (`router: Router = build_router()`). (Bildirimin hemen ardından gelen `router.get(...)` kayıtları da her işçide çalışır, ama bir fonksiyonda kurmak araya giren deyimlerden etkilenmez.)
 # Sonuç: veritabanı DOSYA tabanlıdır (her işçi kendi bağlantısını açar; `:memory:` işçiler arasında paylaşılmaz) ve hız sınırı işçi başınadır (`nox.web` başlığına bakın).
-# Uç noktalar:  GET /health | POST /register {"user","password"} | POST /login {...} -> {"token"} | GET/POST /todos | PUT/DELETE /todos/:id   (Authorization: Bearer <token>)
+# Uç noktalar:  GET /health | POST /register {"user","password"} | POST /login {...} -> {"token"} | GET/POST /todos | PUT/DELETE /todos/:id | GET /todos/stream[?events=N] (SSE: kullanıcının todo sayıları)   (Authorization: Bearer <token>)
 import nox.http
 import nox.os
 import nox.sqlite
@@ -14,7 +14,7 @@ import nox.time
 import nox.web
 import nox.router
 import nox.log
-from nox.http import HttpRequest, HttpResponse
+from nox.http import HttpRequest, HttpResponse, ResponseStream
 from nox.sqlite import Connection, SqliteError
 from nox.db import Row, Statement
 from nox.json import JsonValue, JsonWriter, JsonError
@@ -222,6 +222,29 @@ def delete_todo(ctx: Context) -> HttpResponse:
     except ValueError:
         return error(400, "bad id")
 
+def stream_todos(ctx: Context) -> HttpResponse:
+    uid: int = current_user(ctx)
+    if uid < 0:
+        return error(401, "unauthorized")
+    limit: int = 0
+    if "events" in ctx.query:
+        try:
+            limit = int(ctx.query["events"])
+        except ValueError:
+            return error(400, "bad events")
+    interval: int = int(env_or("STREAM_INTERVAL_MS", "1000"))
+    s: ResponseStream = ctx.request.sse()
+    sent: int = 0
+    while s.is_open() and (limit == 0 or sent < limit):
+        q: Statement = db.prepare("SELECT COUNT(*), COALESCE(SUM(done), 0) FROM todos WHERE user_id = ?")
+        q.bind_int(0, uid)
+        rows: list[Row] = q.query()
+        if not s.event("{\"total\":" + str(rows[0].get_int(0)) + ",\"done\":" + str(rows[0].get_int(1)) + "}", "todos"):
+            break
+        sent = sent + 1
+        s.sleep_ms(interval)
+    return s.end()
+
 def health(ctx: Context) -> HttpResponse:
     return nox.web.text_response(200, "ok")
 
@@ -231,6 +254,7 @@ def build_router() -> Router:
     r.post("/register", register)
     r.post("/login", login)
     r.get("/todos", list_todos)
+    r.get("/todos/stream", stream_todos)
     r.post("/todos", create_todo)
     r.put("/todos/:id", update_todo)
     r.delete("/todos/:id", delete_todo)
