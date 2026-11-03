@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.125]
+
+### Düzeltildi
+
+- **Kalıcı bağlantıda 1000. istekten sonra beklenmedik kopma:** sunucu bağlantı başına en çok 1000 istek sunar, ama son yanıt `Connection: close` taşımadan bağlantıyı kapatıyordu; istemciler (ör. `wrk`: ~%0,1 "read error") bunu beklenmedik kopma olarak görüyor, yeniden deneyen istemcilerde yinelenen istek riski doğuyordu. Son izinli yanıt artık `Connection: close` taşır.
+- **Eşzamanlı bağlantı sınırı dolunca** (`configure(max_connections=...)`, varsayılan 4096) yeni bağlantı sessizce kapatılıyordu; artık `503 Service Unavailable` + `Retry-After: 1` alır.
+
+### Eklendi
+
+- `scripts/http_backend_bench.sh`: referans backend'i `wrk` ile ölçer (`/health`, JWT+SQLite liste, yazma). ÖNEMLİ: ReleaseFast kurulumla çalıştırın; düz `zig build` Debug çalışma zamanı üretir ve sonuçlar ~100 kat düşük çıkar. Ölçüm sonuçları: spesifikasyon §3.330.
+
 ## [2.0.124]
 
 ### Eklendi

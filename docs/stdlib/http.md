@@ -260,7 +260,7 @@ nox.http.shutdown()
 | `max_body_bytes` | 10 MiB | a larger request body is answered with `413` |
 | `max_header_bytes` | 16 KiB (4 KiB – 1 MiB) | the request line plus all headers must fit; otherwise `431`. Browsers' cookies are the usual reason to raise it |
 | `read_timeout_ms` | 30000 | longest silence while waiting for a request or its body; the connection is then closed |
-| `max_connections` | 4096 | connections open at once; further ones are refused until some close |
+| `max_connections` | 4096 | connections open at once; further ones get a `503 Service Unavailable` (`Retry-After: 1`) and are closed until some close |
 | `drain_timeout_ms` | 10000 | how long a graceful shutdown waits for requests that are still being handled |
 
 **Graceful shutdown.** `SIGTERM` or `SIGINT` (and `nox.http.shutdown()`, which you may call from a handler) stops the server cleanly: new connections are no longer accepted, requests that are already being handled finish and are answered with `Connection: close`, idle keep-alive connections are closed, and **`serve*` returns** — so the code after it (closing a database, flushing logs) runs and the program exits normally. A second signal exits immediately. After `drain_timeout_ms` the server stops waiting and also returns. On Windows only `nox.http.shutdown()` is available (there is no signal handler). A WebSocket connection already upgraded is not closed by a shutdown: close it from its handler, or rely on `drain_timeout_ms`.
@@ -277,7 +277,8 @@ Malformed or hostile requests no longer drop the connection silently: `400` (bad
 ### Behaviour
 
 - Request bodies and headers are limited to sane sizes; a client that stalls on reading or writing is cut off by a write timeout (2.0 closes the slow-reader denial-of-service hole).
-- `HEAD`, `Connection: close` and keep-alive are handled by the runtime.
+- `HEAD`, `Connection: close` and keep-alive are handled by the runtime. A connection serves at most 1000 requests; the 1000th response carries `Connection: close` so clients reconnect cleanly instead of seeing an unexpected reset.
+- A client that disconnects while the server writes does not stop the process: `SIGPIPE` is ignored by the `serve*` functions and the write simply fails.
 - Routing is not part of the server: use [`nox.router`](router.md).
 
 ## Notes

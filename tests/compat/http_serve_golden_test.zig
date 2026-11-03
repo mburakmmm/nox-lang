@@ -946,6 +946,127 @@ test "nox.http: akış sırasında istemci kopması handler'ı bitirir (send Fal
     try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
 }
 
+test "nox.http.serve: bağlantı başına izinli son (1000.) istek 'Connection: close' taşır, ondan önceki yanıtlar taşımaz; kapanış beklenmedik bir kopma değildir" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    return nox_http_HttpResponse(200, "ok", {{}})
+        \\
+        \\nox.http.serve({d}, handle, 1)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    const fd = try testConnect(port);
+    defer _ = sys.close(fd);
+    const req = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    var closes_before: usize = 0;
+    var last_has_close = false;
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        _ = sys.write(fd, req.ptr, req.len);
+        var buf: [512]u8 = undefined;
+        var got: usize = 0;
+        // Yanıt "ok" gövdesiyle biter.
+        while (!std.mem.endsWith(u8, buf[0..got], "ok")) {
+            const n = sys.read(fd, buf[got..].ptr, buf.len - got);
+            if (n <= 0) break;
+            got += @intCast(n);
+        }
+        const has_close = std.ascii.indexOfIgnoreCase(buf[0..got], "connection: close") != null;
+        if (i + 1 < 1000) {
+            if (has_close) closes_before += 1;
+        } else last_has_close = has_close;
+    }
+    // Son yanıttan sonra sunucu bağlantıyı kapattı: okuma EOF döner.
+    var tail: [8]u8 = undefined;
+    const eof = sys.read(fd, &tail, tail.len);
+
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(usize, 0), closes_before);
+    try std.testing.expect(last_has_close);
+    try std.testing.expect(eof <= 0);
+}
+
+test "nox.http.configure(max_connections): sınır dolunca yeni bağlantı 'Retry-After' içeren 503 alır, mevcut akış etkilenmez, kapanış temiz" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows'ta sinyal yok
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    s: nox_http_ResponseStream = req.sse()
+        \\    while s.is_open():
+        \\        if not s.comment("hb"):
+        \\            break
+        \\        s.sleep_ms(30)
+        \\    return s.end()
+        \\
+        \\nox.http.configure(max_connections=1)
+        \\nox.http.serve({d}, handle)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    const hold = try testConnect(port);
+    defer _ = sys.close(hold);
+    {
+        const req = "GET /a HTTP/1.1\r\nHost: x\r\n\r\n";
+        _ = sys.write(hold, req.ptr, req.len);
+        var head: [256]u8 = undefined;
+        const n = sys.read(hold, &head, head.len);
+        try std.testing.expect(n > 0);
+        try std.testing.expect(std.mem.startsWith(u8, head[0..@intCast(n)], "HTTP/1.1 200 OK\r\n"));
+    }
+
+    var buf: [512]u8 = undefined;
+    const n = rawResponse(port, "GET /b HTTP/1.1\r\nHost: x\r\n\r\n", &buf);
+    const rejected = buf[0..n];
+    try std.testing.expect(std.mem.startsWith(u8, rejected, "HTTP/1.1 503 Service Unavailable\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, rejected, "Retry-After: 1\r\n") != null);
+
+    try std.posix.kill(child.id.?, .TERM);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+}
+
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox_http_request_
 // method/target/body/headers`in ARTIK kopyalamayıp `retain` ETTİĞİ yeni
 // yolu, `HttpRequest`nin DÖRT alanının TAMAMINI (method/target/body/

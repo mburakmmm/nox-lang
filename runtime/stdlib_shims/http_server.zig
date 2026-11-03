@@ -1742,13 +1742,13 @@ fn connectionEntry(arg: *anyopaque) void {
             const body_slice: []const u8 = if (resp.body) |p| str_mod.nox_str_slice(p) else &.{};
             request.respond(body_slice, .{
                 .status = @enumFromInt(resp.status),
-                .keep_alive = !shuttingDown(),
+                .keep_alive = keepAliveAllowed(requests_served),
                 .extra_headers = resp.headers,
             }) catch break;
         } else {
             request.respond("Internal Server Error", .{
                 .status = .internal_server_error,
-                .keep_alive = !shuttingDown(),
+                .keep_alive = keepAliveAllowed(requests_served),
             }) catch break;
         }
 
@@ -1771,8 +1771,22 @@ fn connectionEntry(arg: *anyopaque) void {
         // keep_alive` formülü BUNA (`request.head.keep_alive`in KENDİSİNE)
         // İNDİRGENİR; bu, HTTP SÜRÜM varsayılanını (HTTP/1.0 vs 1.1) DA
         // ZATEN İÇERİR (bkz. `Request.Head.parse`).
-        if (!request.head.keep_alive or shuttingDown()) break;
+        if (!request.head.keep_alive or !keepAliveAllowed(requests_served)) break;
     }
+}
+
+/// Eşzamanlı bağlantı sınırı dolu: istemci neden reddedildiğini görsün diye TEK bir en-iyi-çaba `503` yazılıp soket kapatılır (okuma/yazma beklenmez, tampon doluysa yazı kaybolur ve istemci yalnızca
+/// kapanışı görür; eskiden her zaman yalnızca kapanış görülürdü). Maliyet: reddedilen bağlantı başına bir `write` + `close`.
+fn rejectOverloaded(fd: posix.fd_t) void {
+    const msg = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n";
+    if (builtin.os.tag != .windows) _ = std.c.write(fd, msg.ptr, msg.len);
+    closeSocket(fd);
+}
+
+/// Bu bağlantıda `requests_served` (0 tabanlı) numaralı isteğin yanıtı bağlantıyı açık tutabilir mi? Kapanıyorsak ya da bu son izinli istekse (`MAX_REQUESTS_PER_CONNECTION`) hayır: yanıt `Connection: close`
+/// taşımalı ki istemci kapanışı beklenmedik bir kopma (okuma hatası, kalıcı bağlantıda yeniden deneme) olarak görmesin.
+fn keepAliveAllowed(requests_served: usize) bool {
+    return !shuttingDown() and requests_served + 1 < MAX_REQUESTS_PER_CONNECTION;
 }
 
 /// Kabul döngüsü — `bridge.currentFiberScheduler()`e göre fiber-native
@@ -1936,7 +1950,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         // (fd sessizce kapatılır, hiçbir HTTP yanıtı YAZILMAZ — reddetmenin
         // KENDİSİNİN ek kaynak tüketmemesi İÇİN en ucuz tepki).
         if (counter.active.load(.monotonic) >= max_concurrent) {
-            _ = closeSocket(conn_fd);
+            rejectOverloaded(conn_fd);
             continue :accept_loop;
         }
 
@@ -2662,7 +2676,7 @@ test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler
     try std.testing.expect(std.mem.indexOf(u8, resp_buf[0..resp_len], "413") != null);
 }
 
-test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP yaniti almadan reddedilir" {
+test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti 503 ile (handler CAGRILMADAN) reddedilir" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
     bridge.nox_async_init(rt);
@@ -2699,16 +2713,16 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP ya
     sleepMs(30);
 
     // "fast" istemci: `max_concurrent = 1` ZATEN DOLU olduğundan reddedilmesi
-    // BEKLENİR — bağlantı HİÇBİR HTTP yanıtı ALMADAN (sıfır bayt okuyarak,
-    // sunucu fd'yi sessizce kapattığı İÇİN) kapanmalı.
+    // BEKLENİR — v2.0.125'ten beri istemci kapanıştan önce tek bir
+    // `503 Service Unavailable` (Retry-After: 1) okur (eskiden sıfır bayt).
     var fast_rejected: bool = false;
     const fast_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, rejected: *bool) void {
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
-            var buf: [16]u8 = undefined;
+            var buf: [64]u8 = undefined;
             const n = testRead(fd, &buf);
-            rejected.* = (n <= 0);
+            rejected.* = n > 12 and std.mem.startsWith(u8, buf[0..@intCast(n)], "HTTP/1.1 503");
         }
     }.run, .{ port, &fast_rejected });
 
