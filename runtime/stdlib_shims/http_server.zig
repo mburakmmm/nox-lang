@@ -2086,7 +2086,11 @@ fn connectionEntry(arg: *anyopaque) void {
 /// kapanışı görür; eskiden her zaman yalnızca kapanış görülürdü). Maliyet: reddedilen bağlantı başına bir `write` + `close`.
 fn rejectOverloaded(fd: posix.fd_t) void {
     const msg = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n";
-    if (builtin.os.tag != .windows) _ = std.c.write(fd, msg.ptr, msg.len);
+    if (builtin.os.tag == .windows) {
+        _ = io_mod.WinSock.send(@intFromPtr(fd), msg.ptr, @intCast(msg.len), 0);
+    } else {
+        _ = std.c.write(fd, msg.ptr, msg.len);
+    }
     closeSocket(fd);
 }
 

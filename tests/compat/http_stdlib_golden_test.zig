@@ -439,6 +439,7 @@ fn proxyLoop(px: *ProxyStub) void {
 }
 
 test "nox.http: HTTP_PROXY/HTTPS_PROXY ortam değişkenleri (CONNECT tüneli) ve NO_PROXY (vekilsiz doğrudan bağlantı)" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows: vekil ortam değişkenleri Windows'ta okunmaz
     const allocator = std.testing.allocator;
     var up_port: u16 = 0;
     const up_fd = try testListenerOn127001(&up_port);

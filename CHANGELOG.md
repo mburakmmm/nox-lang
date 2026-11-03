@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.130]
+
+### Düzeltildi
+
+- **CI (Dokümanlar işi):** v2.0.126'dan beri havuz istemcisi `std.heap.c_allocator`ı Windows'ta `_msize`e bağladığından "ayrılmış semboller" denetimi kırmızıydı; `_msize` listeye eklendi.
+- **Windows:** aşırı bağlantı sınırı dolunca `503` Windows'ta yazılmıyordu (yalnızca kapanıyordu) → `WinSock.send` ile yazılır. Windows'ta henüz bulunmayan özelliklere dayanan testler açıkça atlanır: HTTP/2 (fiber ağ/uyandırma katmanı POSIX), vekil ortam değişkenleri (Windows'ta okunmaz), ve `ResponseStream.sleep_ms`in kooperatif olmasını bekleyen SSE testi (Windows'ta `fiber_net` yok; sleep zamanlayıcıyı bloklar). Bunlar ARA önlemdir: gerçek Windows desteği için bir Windows geliştirme ortamı gerekir (bkz. spec §3.335).
+
 ## [2.0.129]
 
 ### Eklendi
