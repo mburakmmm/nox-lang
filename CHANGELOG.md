@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.133]
+
+### Düzeltildi
+
+- **Windows'ta test sunucusu sızıntısı (v2.0.132'nin getirdiği):** `HTTP/1.1: chunked trailer'lar` testinde Windows atlaması yoktu; sunucu başlatıldıktan sonra `sendSigterm` `SkipZigTest` döndürünce `prog.exe` öldürülmeden kalıyor, boruyu tutuyor ve `zig build test` yaklaşık 30 dakika bitmiyordu (CI'da da olurdu). Teste başta Windows atlaması eklendi ve `sendSigterm`in Windows dalı atlamadan önce süreci `NtTerminateProcess` ile sonlandırır; böylece bu sınıf hata bir daha sızıntı bırakamaz. Gerçek Windows'ta doğrulandı: `prog` süreci kalmıyor, koşu bitiyor.
+
 ## [2.0.132]
 
 ### Düzeltildi

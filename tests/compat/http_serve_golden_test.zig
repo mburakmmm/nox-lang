@@ -28,7 +28,11 @@ const h2 = @import("http2");
 /// Çocuk sunucuya SIGTERM gönderir. Windows'ta sinyal yoktur (`posix.kill` orada bağlanamaz: `undefined symbol: kill`);
 /// bu testler Windows'ta zaten başta atlanır, burada da derleme zamanında dışarıda bırakılır.
 fn sendSigterm(id: std.process.Child.Id) !void {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    if (@import("builtin").os.tag == .windows) {
+        // Sunucu çoktan başlamış olabilir: atlama onu ÖLDÜRÜLMEDEN bırakırdı (sızan süreç `zig build`i kilitler).
+        _ = std.os.windows.ntdll.NtTerminateProcess(id, @enumFromInt(1));
+        return error.SkipZigTest;
+    }
     try std.posix.kill(id, .TERM);
 }
 
@@ -1769,6 +1773,7 @@ test "HTTP/2 (h2c): Expect: 100-continue ara yanıtı, yanıt trailer'ları (ak�
 }
 
 test "HTTP/1.1: chunked yanıt trailer'ları ve chunked istek trailer'ları (req.trailer)" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows'ta sinyal yok (H2Server.stop SIGTERM kullanır)
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
