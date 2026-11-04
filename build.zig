@@ -2191,6 +2191,8 @@ pub fn build(b: *std.Build) void {
     wasm_options.addOption([]const u8, "pg_driver_path", "tests/golden/wasm_pg_driver.mjs");
     wasm_options.addOption([]const u8, "serve_driver_path", "tests/golden/wasm_serve_driver.mjs");
     wasm_options.addOption([]const u8, "pg_program_path", "tests/golden/wasm_pg_program.nox.in");
+    wasm_options.addOption([]const u8, "mysql_driver_path", "tests/golden/wasm_mysql_driver.mjs");
+    wasm_options.addOption([]const u8, "mysql_program_path", "tests/golden/wasm_mysql_program.nox.in");
     wasm_options.addOption([]const u8, "tcp_program_path", "tests/golden/wasm_tcp_program.nox.in");
     const wasm_target_mod = b.createModule(.{
         .root_source_file = b.path("tests/golden/wasm_target_test.zig"),

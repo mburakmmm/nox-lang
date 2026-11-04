@@ -26,7 +26,7 @@ Her kip `wasm32-wasi` ve `wasm32-freestanding` için vardır. Dil ve standart k�
 ## Sınırlar
 
 - **Eşzamanlılık kipe bağlıdır** (yukarıdaki tabloya bakın). Varsayılan kipte iş parçacığı yoktur ve `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. `--asyncify` gerçek fiber verir (tek iş parçacığı, M:1); `--threads` gerçek paralellik verir (M:N).
-- **Henüz desteklenmeyen modüller.** `mysql`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
+- **Henüz desteklenmeyen modüller.** `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
 - **Ağ host'a bağlıdır.** `nox.http` WASM'da derlenir, ama gerçek bir soket (istemci `get`/`post`/`request`/akışlı istemci, sunucu `serve*`) bir host yeteneği olmadan çalışmaz: istemci çağrıları yakalanabilir bir `HttpCapabilityError` (`HttpError`ın alt sınıfı) fırlatır; `serve` bir tanı mesajı yazıp gerçek bir bind hatasındaki gibi hemen döner.
 - **Yerel kütüphane yok.** `extern def ... from "lib"` ile bir `.wasm`a native kütüphane bağlanamaz.
 - **Dosya sistemi** çalıştırıcının WASI ön-açımlarına bağlıdır (`wasm_run.mjs` `.` ve `/tmp` açar).
@@ -168,6 +168,10 @@ Derleyicinin kendisi de WASM olarak çalışır (sunucusuz playground, gömülü
 ### PostgreSQL
 
 `nox.postgres` WASM'da `libpq` yerine Zig'de yazılmış bir PostgreSQL protokol 3.0 istemcisiyle çalışır (host TCP yeteneği gerekir, bkz. yukarıdaki "Ham TCP"). Kimlik doğrulama: trust, cleartext, MD5, SCRAM-SHA-256; sorgular: basit protokol (`execute`/`query`) ve genişletilmiş protokol (`prepare` + `bind_*`, metin biçimli parametreler/sonuçlar, `$n` ve `?` yer tutucuları). Bağlantı dizesi hem `host=... port=... user=... password=... dbname=...` hem `postgres://kullanıcı:parola@host:port/db?sslmode=require` biçimindedir. `sslmode=require|verify-ca|verify-full` SSLRequest + host TLS'ini kullanır (sertifikayı host doğrular); diğer kipler düz metindir (libpq'nun `prefer` varsayılanından bilinçli sapma). Sınırlar: `COPY`, `LISTEN/NOTIFY`, ikili biçim ve `PQprepare` adlandırılmış ifadeler yok (yerel sürücüyle aynı kapsam).
+
+### MySQL / MariaDB
+
+`nox.mysql` WASM'da `libmysqlclient` yerine Zig'de yazılmış bir MySQL istemci protokolüyle çalışır (host TCP yeteneği gerekir, bkz. "Ham TCP"). Kimlik doğrulama: `mysql_native_password` ve `caching_sha2_password` (MySQL 8'in varsayılanı: hızlı yol ve, sunucu önbelleği boşken, sunucunun RSA anahtarıyla OAEP şifrelenmiş parolayla tam kimlik doğrulama; TLS gerekmez), kimlik doğrulama eklentisi değiştirme dahil. Sorgular metin protokolüyle (`COM_QUERY`) gider; `prepare` + `bind_*` yerel sürücüyle aynı biçimde istemci tarafında kaçışlanarak (`NO_BACKSLASH_ESCAPES` kipine duyarlı) SQL'e gömülür. `last_insert_rowid()`, `changes()` ve `NULL` ayrımı çalışır. GERÇEK MySQL 8.4 ve MariaDB 11 sunucularına karşı doğrulandı. Sınırlar: TLS yok (`open_url` ayrıca TLS seçeneği taşımaz), `localhost` için de unix soketi yerine TCP kullanılır, `CALL` gibi çoklu sonuç kümelerinde yalnızca ilk sonuç döner, `LOCAL INFILE` yok.
 
 ### Alt süreçler (`nox.process`)
 

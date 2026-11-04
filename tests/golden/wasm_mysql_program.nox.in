@@ -1,0 +1,70 @@
+import nox.mysql
+from nox.mysql import Connection, MysqlError
+from nox.db import Row, Statement
+
+# Birinci baglanti: sunucunun onbellegi bos oldugundan caching_sha2_password TAM kimlik dogrulama (RSA ile sifreli parola).
+conn: Connection = nox.mysql.open_url("mysql://root:__ROOT_PASSWORD__@127.0.0.1:__PORT__/__DB__")
+conn.execute("DROP TABLE IF EXISTS people")
+conn.execute("CREATE TABLE people (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50) NOT NULL, age INT, bio TEXT)")
+
+ins: Statement = conn.prepare("INSERT INTO people (name, age, bio) VALUES (?, ?, ?)")
+ins.bind_str(0, "alice")
+ins.bind_int(1, 30)
+ins.bind_str(2, "çok satırlı\nmetin 'tırnak' \"çift\" \\ ters")
+print("affected", ins.execute(), "id", conn.last_insert_rowid())
+
+ins2: Statement = conn.prepare("INSERT INTO people (name, age, bio) VALUES (?, ?, ?)")
+ins2.bind_str(0, "bob")
+ins2.bind_int(1, 41)
+ins2.bind_null(2)
+print("affected", ins2.execute(), "id", conn.last_insert_rowid())
+
+conn.execute("INSERT INTO people (name, age) VALUES ('carol', NULL)")
+print("updated", conn.execute("UPDATE people SET age = age + 1 WHERE age IS NOT NULL"))
+
+people: list[Row] = conn.query("SELECT id, name, age, bio FROM people ORDER BY id")
+for r in people:
+    print(r.get_int(0), r.get_str(1), r.is_null(2), r.is_null(3))
+print(people[0].get_int(2), people[1].get_int(2))
+print(people[0].get_str(3))
+
+q: Statement = conn.prepare("SELECT name FROM people WHERE age > ? ORDER BY name")
+q.bind_int(0, 31)
+for r in q.query():
+    print("older:", r.get_str(0))
+
+try:
+    conn.execute("SELEC nothing")
+    print("unreachable")
+except MysqlError as e:
+    print("syntax error:", "You have an error in your SQL syntax" in e.message)
+
+try:
+    conn.execute("INSERT INTO people (name) VALUES (NULL)")
+    print("unreachable")
+except MysqlError as e:
+    print("not null:", "cannot be null" in e.message)
+
+print("deleted", conn.execute("DELETE FROM people WHERE name = 'carol'"))
+print("count", conn.query("SELECT COUNT(*) FROM people")[0].get_int(0))
+
+# Ikinci baglanti: parola artik sunucu onbelleginde, hizli yol.
+conn2: Connection = nox.mysql.open_url("mysql://root:__ROOT_PASSWORD__@127.0.0.1:__PORT__/__DB__")
+print("fast path", conn2.query("SELECT 1 + 1")[0].get_int(0))
+conn2.close()
+
+# mysql_native_password kullanicisi (sunucu --mysql-native-password=ON ile baslatilir).
+conn.execute("DROP USER IF EXISTS 'nativeuser'@'%'")
+conn.execute("CREATE USER 'nativeuser'@'%' IDENTIFIED WITH mysql_native_password BY 'native-pw'")
+conn.execute("GRANT SELECT ON __DB__.* TO 'nativeuser'@'%'")
+conn3: Connection = nox.mysql.open_url("mysql://nativeuser:native-pw@127.0.0.1:__PORT__/__DB__")
+print("native", conn3.query("SELECT name FROM people ORDER BY id")[0].get_str(0))
+conn3.close()
+conn.execute("DROP USER 'nativeuser'@'%'")
+conn.close()
+
+try:
+    bad: Connection = nox.mysql.open_url("mysql://root:wrong@127.0.0.1:__PORT__/__DB__")
+    print("unreachable")
+except MysqlError as e:
+    print("auth failed:", "Access denied" in e.message)

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.159]
+
+### Eklendi
+
+- **WASM'da `nox.mysql`:** libmysqlclient yerine Zig'de yazılmış MySQL/MariaDB istemci protokolü (`mysql_native_password`, `caching_sha2_password` hızlı + RSA-OAEP tam kimlik doğrulama, AuthSwitch; metin protokolü; istemci tarafı kaçışlamalı `prepare`/`bind_*`), host TCP yeteneği üzerinde. GERÇEK MySQL 8.4 ve MariaDB 11 sunucularına karşı doğrulandı (spec 3.361).
+
 ## [2.0.158]
 
 ### Eklendi

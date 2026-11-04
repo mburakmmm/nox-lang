@@ -107,8 +107,8 @@ test "wasm32-wasi: JSON, regex, gzip, sha256, fs kabukları" {
 }
 
 test "wasm32-wasi: henüz desteklenmeyen modül derleme zamanında açık iletiyle reddedilir" {
-    try expectRejected("import nox.mysql\nprint(1)\n", "cannot be used on the wasm32-wasi target");
     try expectRejected("import nox.sharedmem\nprint(1)\n", "cannot be used on the wasm32-wasi target");
+    try expectRejected("import nox.native\nprint(1)\n", "cannot be used on the wasm32-wasi target");
 }
 
 // v2.0.146 (spec §3.348): `nox.sqlite` WASM'da DERLENİR; SQLite amalgamation'ı ayrı bir nesne olarak (`noxrt-wasm32-*-sqlite3.o`) yalnızca `nox_sqlite_*` kullanan
@@ -764,6 +764,47 @@ test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucu
         \\error: statement failed: ERROR:  relation "no_such_table" does not exist
         \\
         \\1
+        \\auth failed: True
+        \\exit 0
+        \\
+    , res.stdout);
+}
+
+// v2.0.159 (spec §3.361): `nox.mysql` WASM'da libmysqlclient yerine Zig'de yazılmış MySQL protokol istemcisiyle çalışır (host TCP üzerinde). Sürücü yerelde bulunan `mysql:8.4`
+// imajından atılabilir bir kapsayıcı açar (caching_sha2_password: RSA ile tam + hızlı yol, mysql_native_password); Docker/imaj yoksa atlanır.
+test "wasm32-freestanding --asyncify: nox.mysql gerçek bir MySQL sunucusuna karşı (caching_sha2 tam+hızlı yol, native parola, kaçışlama, hata yolları)" {
+    const allocator = std.testing.allocator;
+    const res = std.process.run(allocator, std.testing.io, .{
+        .argv = &.{ "node", "--no-warnings", build_options.mysql_driver_path, build_options.noxc_path, build_options.mysql_program_path, build_options.wasm_host_path },
+    }) catch |err| {
+        if (err == error.FileNotFound) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(res.stdout);
+    defer allocator.free(res.stderr);
+    if (std.mem.eql(u8, std.mem.trim(u8, res.stdout, "\n "), "SKIP")) return error.SkipZigTest;
+    if (res.term != .exited or res.term.exited != 0) {
+        if (std.mem.indexOf(u8, res.stderr, "zig not found") != null or std.mem.indexOf(u8, res.stderr, "wasm-opt") != null) return error.SkipZigTest;
+        std.debug.print("mysql: surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
+        return error.ProgramFailed;
+    }
+    try std.testing.expectEqualStrings(
+        \\affected 1 id 1
+        \\affected 1 id 2
+        \\updated 2
+        \\1 alice False False
+        \\2 bob False True
+        \\3 carol True True
+        \\31 42
+        \\çok satırlı
+        \\metin 'tırnak' "çift" \ ters
+        \\older: bob
+        \\syntax error: True
+        \\not null: True
+        \\deleted 1
+        \\count 2
+        \\fast path 2
+        \\native alice
         \\auth failed: True
         \\exit 0
         \\

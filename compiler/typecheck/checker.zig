@@ -408,7 +408,6 @@ pub const MobileMask = enum { none, ios, android };
 /// bağlayıcı tanımsız `nox_*` sembolleriyle hata verirdi). v2.0.144'ten itibaren `nox.http` ailesi (`http`, `transfer`, `router`, `reflect`, `web`) bu listede DEĞİLDİR:
 /// semboller `runtime/stdlib_shims/http_wasm.zig`de "network yeteneği yok" stub'larıyla sağlanır (ADR-016). Listedeki her modül, yetenek modeline taşındıkça buradan çıkar.
 const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }{
-    .{ .name = "mysql", .why = "it loads a host shared library" },
     .{ .name = "sharedmem", .why = "WASI has no shared memory" },
     .{ .name = "native", .why = "WASI has no dynamic loading" },
     .{ .name = "plugin", .why = "WASI has no dynamic loading" },
