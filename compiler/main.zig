@@ -1646,6 +1646,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     // `--sandbox` ailesi (ADR-010): bayraklar derleme seçeneklerinden AYRILIR, yalnızca ikilinin çalıştırılmasına uygulanır.
     var sandboxed = false;
     var wasm_allow_process = false;
+    var wasm_allow_serve = false;
     var policy: sandbox.Policy = .{};
     var kept: std.ArrayListUnmanaged([]const u8) = .empty;
     var writes: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -1657,6 +1658,8 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             policy.allow_net = true;
         } else if (std.mem.eql(u8, arg, "--allow-process")) {
             wasm_allow_process = true;
+        } else if (std.mem.eql(u8, arg, "--allow-serve")) {
+            wasm_allow_serve = true;
         } else if (std.mem.startsWith(u8, arg, "--allow-write=")) {
             try writes.append(a, arg["--allow-write=".len..]);
         } else if (std.mem.startsWith(u8, arg, "--allow-read=")) {
@@ -1670,8 +1673,8 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     const opts = parseBuildOpts(kept.items);
     // `--allow-net` wasm hedeflerinde `--sandbox` olmadan da geçerlidir: wasm32-freestanding --asyncify modülüne host `fetch`ini verir (spec §3.351).
     const wasm_run = isWasmTarget(opts.profile, opts.target);
-    if (wasm_allow_process and !wasm_run) {
-        printErr("noxc run: --allow-process only applies to --target wasm32-freestanding-asyncify\n", .{});
+    if ((wasm_allow_process or wasm_allow_serve) and !wasm_run) {
+        printErr("noxc run: --allow-process/--allow-serve only apply to --target wasm32-freestanding-asyncify\n", .{});
         std.process.exit(1);
     }
     if (!sandboxed and ((policy.allow_net and !wasm_run) or writes.items.len > 0 or reads.items.len > 0)) {
@@ -1714,7 +1717,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             std.process.exit(1);
         }
         const is_free = if (opts.target) |t| (if (qbe_target.hostedTargetInfo(t)) |info| (info.wasm_freestanding or info.wasm_threads) else false) else false;
-        const code = try runWasi(gpa, io, a, bin_path, is_free, policy.allow_net, wasm_allow_process, split.after);
+        const code = try runWasi(gpa, io, a, bin_path, is_free, policy.allow_net, wasm_allow_process, wasm_allow_serve, split.after);
         std.process.exit(code);
     }
     if (sandboxed) {
@@ -1771,7 +1774,7 @@ const WASM_HOST_JS = @embedFile("wasm_host.mjs");
 
 /// `noxc run --target wasm32-wasi|wasm32-freestanding`: `.wasm`ı çalıştırır. WASI modülleri için bulunan ilk çalıştırıcı (`wasmtime`, `wasmer`, `node`),
 /// freestanding (`nox_host`) için her zaman `node`. Çalışma dizini ve `/tmp` WASI programına açılır. Çalıştırıcı yoksa açık hata verir.
-fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, allow_net: bool, allow_process: bool, argv_tail: []const []const u8) !u8 {
+fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, allow_net: bool, allow_process: bool, allow_serve: bool, argv_tail: []const []const u8) !u8 {
     // `freestanding` = yalnızca node sürücüsü: nox_host (ADR-013) ve iş parçacıklı wasi (ADR-015; wasmtime/wasmer wasi-threads'i kaldırdı).
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     if (allow_net and !freestanding) printErr("note: --allow-net only applies to wasm32-freestanding --asyncify (WASI has no network); ignored\n", .{});
@@ -1787,6 +1790,7 @@ fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: 
         if (g_vfs_dir.len > 0 and freestanding) try argv.append(a, try std.fmt.allocPrint(a, "--vfs-dir={s}", .{g_vfs_dir}));
         if (allow_net and freestanding) try argv.append(a, "--allow-net");
         if (allow_process and freestanding) try argv.append(a, "--allow-process");
+        if (allow_serve and freestanding) try argv.append(a, "--allow-serve");
     } else {
         printErr("noxc run --target wasm32-*: no runtime found on PATH ({s}), or use 'noxc build' and run the .wasm yourself\n", .{if (freestanding) "install node" else "install wasmtime, wasmer or node"});
         std.process.exit(1);

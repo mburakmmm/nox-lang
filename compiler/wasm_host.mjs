@@ -485,8 +485,65 @@ export async function nodeProcess() {
   };
 }
 
+/**
+ * HTTP sunucusu (kind 14/15, `http_server_wasm.zig`; `nox.http.serve`): `serve.listen(port, handle) -> Promise<{ port, close() }>` sağlayıcısı; `handle(req) -> Promise<resp>` her gelen
+ * isteği modüle iletir. `req` = { method, target, headers ("Ad: değer\n" metni), body (Uint8Array), peer }; `resp` = { status, headers (aynı metin), body }. Node için varsayılan:
+ * `nodeHttpServer()` (`node:http`, varsayılan olarak yalnızca 127.0.0.1\'de dinler; `NOX_SERVE_HOST` ile değişir).
+ */
+export async function nodeHttpServer() {
+  const http = await import('node:http');
+  return {
+    listen: (port, handle) =>
+      new Promise((resolve, reject) => {
+        const srv = http.createServer((req, res) => {
+          const chunks = [];
+          req.on('data', (c) => chunks.push(c));
+          req.on('end', async () => {
+            let headers = '';
+            for (let i = 0; i < req.rawHeaders.length; i += 2) headers += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\n`;
+            try {
+              const r = await handle({ method: req.method, target: req.url, headers, body: new Uint8Array(Buffer.concat(chunks)), peer: `${req.socket.remoteAddress}:${req.socket.remotePort}` });
+              res.statusCode = r.status;
+              for (const line of r.headers.split('\n')) {
+                const i = line.indexOf(': ');
+                if (i > 0) res.appendHeader(line.slice(0, i), line.slice(i + 2));
+              }
+              res.end(Buffer.from(r.body));
+            } catch {
+              res.statusCode = 500;
+              res.end('Internal Server Error');
+            }
+          });
+        });
+        srv.once('error', reject);
+        srv.listen(port, process.env.NOX_SERVE_HOST || '127.0.0.1', () => resolve({ port: srv.address().port, close: () => srv.close() }));
+      }),
+  };
+}
+
+const SERVER_EVENT = Symbol('server-event');
+
+/** `http_listen` (kind 14): sağlayıcıdan bir dinleyici açar; gerçek port `status` alanında döner. */
+async function doListen(req, server) {
+  if (!server.provider) return { ...failed(req.id, 0), body: new TextEncoder().encode('serve capability is not available in this host') };
+  try {
+    const l = await server.provider.listen(req.arg, (r) => {
+      return new Promise((resolve) => {
+        const id = server.nextId++;
+        server.pending.set(id, resolve);
+        server.queue.push({ id, ...r });
+        if (server.waiter) server.waiter();
+      });
+    });
+    server.listeners.set(req.id, l);
+    return { id: req.id, status: l.port, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+  } catch (e) {
+    return { ...failed(req.id, 0), body: new TextEncoder().encode(String(e && e.message ? e.message : e)) };
+  }
+}
+
 /** Askıdaki modülün yeni isteklerini başlatır, bir tanesi bitene kadar bekler ve sonucunu modüle iletir. */
-async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl, procImpl) {
+async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl, procImpl, server) {
   const x = instance.exports;
   const mem = x.memory;
   const lenPtr = x.nox_host_alloc(4);
@@ -498,6 +555,12 @@ async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl
   for (const req of pending) {
     if (req.kind === 0) {
       inflight.set(req.id, doFetch(fetchFn, req));
+    } else if (req.kind === 14) {
+      inflight.set(req.id, doListen(req, server));
+    } else if (req.kind === 15) {
+      const l = server.listeners.get(req.stream);
+      server.listeners.delete(req.stream);
+      if (l) l.close();
     } else if (req.kind === 13) {
       inflight.set(req.id, doProc(req, procImpl));
     } else if (req.kind >= 8) {
@@ -514,11 +577,59 @@ async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl
       else p.catch(() => {});
     }
   }
-  if (inflight.size === 0) {
+  // Sunucu: tamamlanan yanıtları host\'a ver, kuyruktaki istekleri modüle ilet.
+  if (typeof x.nox_host_http_take_responses === 'function') {
+    const rl = x.nox_host_alloc(4);
+    const rp = x.nox_host_http_take_responses(rl);
+    const rn = new DataView(mem.buffer).getUint32(rl, true);
+    const rb = rp ? new Uint8Array(mem.buffer, rp, rn).slice() : emptyBytes;
+    if (rp) x.nox_host_free(rp, rn);
+    x.nox_host_free(rl, 4);
+    const rdv = new DataView(rb.buffer, rb.byteOffset, rb.byteLength);
+    for (let i = 0; i < rb.length; ) {
+      const id = rdv.getUint32(i, true);
+      const status = rdv.getUint32(i + 4, true);
+      const hl = rdv.getUint32(i + 8, true);
+      const headers = new TextDecoder().decode(rb.subarray(i + 12, i + 12 + hl));
+      const bl = rdv.getUint32(i + 12 + hl, true);
+      const body = rb.slice(i + 16 + hl, i + 16 + hl + bl);
+      i += 16 + hl + bl;
+      const resolve = server.pending.get(id);
+      server.pending.delete(id);
+      if (resolve) resolve({ status, headers, body });
+    }
+    if (server.stopRequested) {
+      x.nox_host_http_stop();
+      for (const l of server.listeners.values()) l.close();
+      server.listeners.clear();
+      return;
+    }
+    if (server.queue.length > 0) {
+      const enc = new TextEncoder();
+      const putB = (b) => {
+        const p = x.nox_host_alloc(b.length);
+        new Uint8Array(mem.buffer, p, b.length).set(b);
+        return [p, b.length];
+      };
+      while (server.queue.length > 0) {
+        const q = server.queue.shift();
+        const fields = [enc.encode(q.method), enc.encode(q.target), enc.encode(q.headers), q.body, enc.encode(q.peer)].map(putB);
+        x.nox_host_http_dispatch(q.id, ...fields.flat());
+        for (const [p, n] of fields) x.nox_host_free(p, n);
+      }
+      return; // modül sürdürülüp istekleri işlesin
+    }
+  }
+  const serverEvent = server.listeners.size > 0 ? new Promise((res) => (server.waiter = () => res(SERVER_EVENT))) : null;
+  if (inflight.size === 0 && !serverEvent) {
     if (pending.length === 0) throw new Error('nox: program host için askıda ama bekleyen istek yok');
     return; // yalnızca yanıtsız (kapatma) istekleri vardı: bekleyecek bir şey yok, programı sürdür
   }
-  const done = await Promise.race([...inflight.entries()].map(([id, p]) => p.then((r) => r)));
+  const racers = [...inflight.entries()].map(([id, p]) => p.then((r) => r));
+  if (serverEvent) racers.push(serverEvent);
+  const done = await Promise.race(racers);
+  server.waiter = null;
+  if (done === SERVER_EVENT) return;
   inflight.delete(done.id);
   const put = (b) => {
     const p = x.nox_host_alloc(b.length);
@@ -630,9 +741,11 @@ export async function runNox(wasmBytes, io, opts = {}) {
   if (vfs && vfs.files) vfsPreload(instance, vfs.files);
   const asyncHost = typeof x.nox_host_resume === 'function' && typeof x.nox_host_caps_set === 'function';
   const fetchFn = opts.fetch || null;
-  if (asyncHost && (fetchFn || opts.tcp || opts.process)) x.nox_host_caps_set((fetchFn ? 1 : 0) | (opts.tcp ? 2 : 0) | (opts.process ? 4 : 0));
+  if (asyncHost && (fetchFn || opts.tcp || opts.process || opts.serve)) x.nox_host_caps_set((fetchFn ? 1 : 0) | (opts.tcp ? 2 : 0) | (opts.process ? 4 : 0) | (opts.serve ? 8 : 0));
   let code = 0;
   const streams = new Map();
+  const server = { provider: opts.serve || null, queue: [], pending: new Map(), listeners: new Map(), nextId: 1, waiter: null, stopRequested: false };
+  if (opts.serveSignal) opts.serveSignal.addEventListener('abort', () => { server.stopRequested = true; if (server.waiter) server.waiter(); });
   try {
     let step = () => x._start();
     const inflight = new Map();
@@ -647,7 +760,7 @@ export async function runNox(wasmBytes, io, opts = {}) {
         throw e;
       }
       if (!asyncHost || x.nox_host_status() !== 1) break;
-      await pumpFetches(instance, (fetchFn || globalThis.fetch).bind(globalThis), inflight, streams, opts.WebSocket === undefined ? globalThis.WebSocket : opts.WebSocket, opts.tcp || null, opts.process || null);
+      await pumpFetches(instance, (fetchFn || globalThis.fetch).bind(globalThis), inflight, streams, opts.WebSocket === undefined ? globalThis.WebSocket : opts.WebSocket, opts.tcp || null, opts.process || null, server);
       step = () => x.nox_host_resume();
     }
   } finally {
@@ -659,6 +772,7 @@ export async function runNox(wasmBytes, io, opts = {}) {
         else if (st.reader) st.reader.cancel().catch(() => {});
       } catch {}
     }
+    for (const l of server.listeners.values()) l.close();
     streams.clear();
     if (vfs && vfs.onSave) await vfs.onSave(vfsSnapshot(instance));
   }
@@ -786,6 +900,7 @@ function takeHostFlags(args) {
   let dir = process.env.NOX_VFS_DIR || null;
   let allowNet = process.env.NOX_ALLOW_NET === '1';
   let allowProcess = process.env.NOX_ALLOW_PROCESS === '1';
+  let allowServe = process.env.NOX_ALLOW_SERVE === '1';
   const rest = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -793,9 +908,17 @@ function takeHostFlags(args) {
     else if (a === '--vfs-dir' && i + 1 < args.length) dir = args[++i];
     else if (a === '--allow-net') allowNet = true;
     else if (a === '--allow-process') allowProcess = true;
+    else if (a === '--allow-serve') allowServe = true;
     else rest.push(a);
   }
-  return { dir, allowNet, allowProcess, rest };
+  return { dir, allowNet, allowProcess, allowServe, rest };
+}
+
+/** SIGINT/SIGTERM'de zarif kapanış için AbortSignal (sunucu modülü `serve` döngüsünden çıkar, program normal biter). */
+function shutdownSignal() {
+  const ctrl = new AbortController();
+  for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => ctrl.abort());
+  return ctrl.signal;
 }
 
 async function nodeMain() {
@@ -807,7 +930,7 @@ async function nodeMain() {
     process.exit(2);
   }
   const bytes = fs.readFileSync(file);
-  const { dir: vfsDir, allowNet, allowProcess, rest: progArgs } = takeHostFlags(argv.slice(3));
+  const { dir: vfsDir, allowNet, allowProcess, allowServe, rest: progArgs } = takeHostFlags(argv.slice(3));
   const mod = await WebAssembly.compile(bytes);
   const modules = new Set(WebAssembly.Module.imports(mod).map((i) => i.module));
 
@@ -822,7 +945,7 @@ async function nodeMain() {
       const nv = await makeNodeVfs(vfsDir);
       vfs = { files: nv.load(), onSave: (snap) => nv.save(snap) };
     }
-    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: allowNet ? globalThis.fetch : null, tcp: allowNet ? await nodeTcp() : null, process: allowProcess ? await nodeProcess() : null });
+    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: allowNet ? globalThis.fetch : null, tcp: allowNet ? await nodeTcp() : null, process: allowProcess ? await nodeProcess() : null, serve: allowServe ? await nodeHttpServer() : null, serveSignal: allowServe ? shutdownSignal() : undefined });
     return;
   }
 

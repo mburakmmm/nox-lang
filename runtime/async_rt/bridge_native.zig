@@ -122,6 +122,11 @@ pub fn currentTaskLocals() ?*std.AutoHashMapUnmanaged(*anyopaque, ?*anyopaque) {
     return &f.task_locals;
 }
 
+/// Zamanlayıcı başlatılmış mı (`nox_async_init` çağrıldı mı)? Fiber dışından (ana akıştan) zamanlayıcıyı sürmek isteyen host köprüleri (`http_server_wasm.zig`) kullanır.
+pub fn schedulerReady() bool {
+    return GSchedulerSlot.value != null;
+}
+
 pub fn currentFiber() ?*fiber_mod.Fiber {
     if (GSchedulerSlot.value) |*s| return s.current;
     return null;

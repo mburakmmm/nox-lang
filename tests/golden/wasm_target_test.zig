@@ -852,3 +852,59 @@ test "wasm32-freestanding --asyncify: gerçek alt süreç (Node child_process, -
         },
     }
 }
+
+// v2.0.158 (spec §3.360): `nox.http.serve` WASM\'da bir HOST yeteneğidir: host (Node `node:http`) dinler, istekleri modüle iletir, modül her istek için bir fiber\'da handler\'ı çalıştırır.
+// Sürücü gerçek HTTP istemci istekleri yollar (POST gövdesi/başlıklar, 404, çoklu Set-Cookie, handler\'ın `nox.http.get` ile upstream\'e gitmesi, paralel istekler) ve zarifçe kapatır.
+test "wasm32-freestanding --asyncify: nox.http.serve host sunucusuyla (istek/yanıt, handler içinde fetch, paralel, zarif kapanış)" {
+    const src =
+        \\import nox.http
+        \\from nox.http import HttpRequest, HttpResponse
+        \\
+        \\def handle(req: HttpRequest) -> HttpResponse:
+        \\    h: dict[str, str] = {}
+        \\    h["Content-Type"] = "text/plain"
+        \\    h["X-Echo-Method"] = req.method
+        \\    h["Set-Cookie"] = "a=1\nb=2"
+        \\    if req.target == "/echo":
+        \\        return HttpResponse(200, req.method + " " + req.target + " body=" + req.body + " ua=" + req.headers["user-agent"], h)
+        \\    if req.target == "/proxy":
+        \\        none: dict[str, str] = {}
+        \\        up: HttpResponse = nox.http.get("http://upstream.invalid/data", none)
+        \\        return HttpResponse(200, "via proxy: " + up.body, h)
+        \\    return HttpResponse(404, "nope", h)
+        \\
+        \\print("starting")
+        \\nox.http.serve(0, handle)
+        \\print("stopped")
+        \\
+    ;
+    const allocator = std.testing.allocator;
+    const outcome = try wasm_helpers.buildAndRunRepeated(allocator, build_options.noxc_path, build_options.serve_driver_path, .freestanding_asyncify, src, &.{}, 1);
+    switch (outcome) {
+        .tool_missing => return error.SkipZigTest,
+        .rejected, .build_failed => |msg| {
+            defer allocator.free(msg);
+            std.debug.print("serve: derleme basarisiz: {s}\n", .{msg});
+            return error.BuildFailed;
+        },
+        .ran => |r| {
+            defer allocator.free(r.stdout);
+            defer allocator.free(r.stderr);
+            if (r.term != .exited or r.term.exited != 0) {
+                std.debug.print("serve: surucu basarisiz: {s}\n{s}\n", .{ r.stderr, r.stdout });
+                return error.ProgramFailed;
+            }
+            try std.testing.expectEqualStrings(
+                \\starting
+                \\stopped
+                \\echo 200 POST /echo body=hello ua=tester POST ["a=1","b=2"]
+                \\missing 404 nope
+                \\proxy 200 via proxy: UPSTREAM-DATA
+                \\parallel POST /echo body=p1 ua=u | POST /echo body=p2 ua=u | POST /echo body=p3 ua=u | POST /echo body=p4 ua=u
+                \\exit 0
+                \\upstream http://upstream.invalid/data
+                \\
+            , r.stdout);
+        },
+    }
+}

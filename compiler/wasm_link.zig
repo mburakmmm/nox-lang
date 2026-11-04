@@ -38,6 +38,10 @@ pub fn plan(a: std.mem.Allocator, info: qbe_target.HostedTargetInfo, ir: []const
     if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and (has(ir, "nox_http_") or has(ir, "nox_ws_") or has(ir, "nox_tls_") or has(ir, "nox_smtp_") or has(ir, "nox_pg_") or has(ir, "nox_process_"))) {
         try flags.appendSlice(a, &.{ "-Wl,--export=nox_host_caps_set", "-Wl,--export=nox_host_alloc", "-Wl,--export=nox_host_free", "-Wl,--export=nox_host_fetch_pending", "-Wl,--export=nox_host_fetch_complete", "-Wl,--export=nox_host_status", "-Wl,--export=nox_host_resume" });
     }
+    // `nox.http.serve` (spec §3.360): host dinler, istekleri modüle iletir ve yanıtları alır.
+    if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and has(ir, "nox_http_serve_raw")) {
+        try flags.appendSlice(a, &.{ "-Wl,--export=nox_host_http_dispatch", "-Wl,--export=nox_host_http_take_responses", "-Wl,--export=nox_host_http_stop" });
+    }
     // Sanal dosya sistemini kalıcı kılmak isteyen host için önyükleme/anlık görüntü dışa aktarımları (spec §3.350); yalnızca dosya sistemini kullanan programlara.
     if (info.wasm_freestanding and (has(ir, "nox_fs_") or has(ir, "nox_sqlite_"))) {
         try flags.appendSlice(a, &.{ "-Wl,--export=nox_vfs_host_alloc", "-Wl,--export=nox_vfs_host_free", "-Wl,--export=nox_vfs_host_put", "-Wl,--export=nox_vfs_host_mkdir", "-Wl,--export=nox_vfs_host_snapshot" });

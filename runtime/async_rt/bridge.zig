@@ -12,6 +12,11 @@ else
 
 pub const currentFiberScheduler = impl.currentFiberScheduler;
 pub const currentFiber = impl.currentFiber;
+pub const schedulerReady = if (@hasDecl(impl, "schedulerReady")) impl.schedulerReady else struct {
+    fn f() bool {
+        return false;
+    }
+}.f;
 pub const currentTaskLocals = impl.currentTaskLocals;
 pub const spawnPinnedForCurrentThread = impl.spawnPinnedForCurrentThread;
 pub const nox_async_init = impl.nox_async_init;

@@ -19,9 +19,12 @@ const str_mod = @import("../str.zig");
 /// açmadıysa (`fetch.available()` yanlış) ya da başka bir kipteyse aşağıdaki "ağ yeteneği yok" davranışı geçerlidir.
 const fetch_enabled = @import("../wasm_host.zig").is_freestanding_wasm and wasm_options.asyncify;
 const fetch = if (fetch_enabled) @import("http_fetch.zig") else struct {};
+/// Sunucu (spec §3.360): host dinler ve istekleri iletir; yalnızca `--asyncify` freestanding + host `serve` yeteneği.
+const srv = @import("http_server_wasm.zig");
 
 comptime {
     if (fetch_enabled) _ = fetch;
+    _ = srv;
 }
 
 fn fetchActive() bool {
@@ -228,7 +231,7 @@ export fn nox_http_stream_close_raw(h: ?*anyopaque) callconv(.c) void {
 // ---- Sunucu (dinleme yok) ----------------------------------------------------------------------------------------------------------------------------
 
 export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyopaque {
-    _ = port;
+    if (srv.available()) return srv.listen(rt, port);
     serverUnavailable(rt);
     return null;
 }
@@ -335,24 +338,28 @@ export fn nox_http_server_from_fd_tls_owned(rt: ?*anyopaque, fd: i64, cert_path:
 }
 
 export fn nox_http_server_port(server: ?*anyopaque) callconv(.c) i64 {
-    _ = server;
+    if (srv.available()) return srv.serverPort(server);
     return 0;
 }
 
 export fn nox_http_server_close(rt: ?*anyopaque, server: ?*anyopaque) callconv(.c) void {
+    if (srv.available()) {
+        srv.serverClose(server);
+        return;
+    }
     _ = rt;
-    _ = server;
 }
 
 export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: ?*const anyopaque, handler_ctx: ?*anyopaque, max_connections: i64, needs_headers: i32, shared_budget: ?*anyopaque) callconv(.c) void {
-    // Gerçek çalışma zamanı da dinleyemediğinde (bind hatası) hemen döner; `server` burada her zaman null'dır.
-    _ = rt;
     _ = server;
-    _ = handler;
-    _ = handler_ctx;
     _ = max_connections;
     _ = needs_headers;
     _ = shared_budget;
+    if (srv.available()) {
+        srv.serve(rt, @ptrCast(handler orelse return), handler_ctx);
+        return;
+    }
+    // Gerçek çalışma zamanı da dinleyemediğinde (bind hatası) hemen döner; `server` burada her zaman null'dır.
 }
 
 export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: ?*const anyopaque, handler_ctx: ?*anyopaque, ws_handler: ?*const anyopaque, max_connections: i64, needs_headers: i32, shared_budget: ?*anyopaque) callconv(.c) void {
@@ -367,52 +374,51 @@ export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: ?
 }
 
 export fn nox_http_handler_ctx_new(rt: ?*anyopaque, closure: ?*anyopaque) callconv(.c) ?*anyopaque {
-    _ = rt;
-    _ = closure;
+    if (srv.available()) return srv.handlerCtxNew(rt, closure);
     return null;
 }
 
 export fn nox_http_handler_ctx_release(ctx: ?*anyopaque) callconv(.c) void {
-    _ = ctx;
+    if (srv.available()) {
+        srv.handlerCtxRelease(ctx);
+        return;
+    }
+
 }
 
 // ---- Sunucu tarafı istek/yanıt erişimcileri (handler wrapper'ları yalnızca gerçek bir sunucuda çalışır) -------------------------------------------------
 
 export fn nox_http_response_new(rt: ?*anyopaque, status: i64, body: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    _ = rt;
-    _ = status;
-    _ = body;
-    _ = headers;
+    if (srv.available()) return srv.responseNew(rt, status, body, headers);
     return null;
 }
 
 export fn nox_http_request_method(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    if (srv.available()) return srv.requestMethod(req);
     _ = rt;
-    _ = req;
     return null;
 }
 
 export fn nox_http_request_target(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    if (srv.available()) return srv.requestTarget(req);
     _ = rt;
-    _ = req;
     return null;
 }
 
 export fn nox_http_request_body(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    if (srv.available()) return srv.requestBody(req);
     _ = rt;
-    _ = req;
     return null;
 }
 
 export fn nox_http_request_peer_addr(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    if (srv.available()) return srv.requestPeer(req);
     _ = rt;
-    _ = req;
     return null;
 }
 
 export fn nox_http_request_headers(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?*anyopaque {
-    _ = rt;
-    _ = req;
+    if (srv.available()) return srv.requestHeaders(rt, req);
     return null;
 }
 

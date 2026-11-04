@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.158]
+
+### Eklendi
+
+- **WASM'da `nox.http.serve`** host sunucu yeteneği olarak: `runNox({ serve: await nodeHttpServer(), serveSignal })`, `--allow-serve`. Host dinler ve istekleri modüle iletir; handler her istek için bir fiber'da çalışır (handler içinde `fetch`, `nox.sqlite` vb. kullanılabilir, `nox.router`/`nox.web` çalışır). Sağlayıcı arayüzü başka host'lara (Nexus, service worker) uyarlanabilir (spec 3.360).
+
 ## [2.0.157]
 
 ### Eklendi
