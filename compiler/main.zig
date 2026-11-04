@@ -41,6 +41,7 @@ const upgrade_mod = @import("pkg/upgrade.zig");
 const registry = @import("pkg/registry.zig");
 const install_mod = @import("pkg/install.zig");
 const cache_prune = @import("pkg/cache_prune.zig");
+const progress = @import("pkg/progress.zig");
 const run_cache = @import("pkg/run_cache.zig");
 const formatter = @import("fmt/formatter.zig");
 const build_options = @import("build_options");
@@ -60,6 +61,22 @@ fn detectUseColor(io: std.Io, environ_map: *const std.process.Environ.Map) bool 
         if (v.len > 0) return false;
     }
     return std.Io.File.stderr().supportsAnsiEscapeCodes(io) catch false;
+}
+
+/// v2.0.135: `noxc install/upgrade/...` canlı ilerleme çubuğunu (imleç başa dönüşü + satır silme) yalnızca stderr gerçek bir
+/// terminalse çizer. `NO_COLOR` rengi kapatır ama çubuğu kapatmaz (çubukta renk yoktur); `TERM=dumb` ve boru hattı/CI çıktısı
+/// kapatır (orada yalnızca başlangıç/bitiş satırları basılır, bkz. `pkg/progress.zig`).
+var g_progress_live: bool = false;
+
+fn detectLiveProgress(io: std.Io, environ_map: *const std.process.Environ.Map) bool {
+    if (environ_map.get("TERM")) |t| {
+        if (std.mem.eql(u8, t, "dumb")) return false;
+    }
+    return std.Io.File.stderr().supportsAnsiEscapeCodes(io) catch false;
+}
+
+fn reporter(io: std.Io) progress.Reporter {
+    return .{ .io = io, .live = g_progress_live };
 }
 
 /// Bulundu (kullanıcı geri bildirimi, 2026-07-24): `noxc` çıplak
@@ -236,6 +253,7 @@ fn realMain(init: std.process.Init) !void {
     const io = init.io;
 
     g_use_color = detectUseColor(io, init.environ_map);
+    g_progress_live = detectLiveProgress(io, init.environ_map);
 
     var all_args: std.ArrayListUnmanaged([]const u8) = .empty;
     // Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): `.iterate()`
@@ -396,10 +414,14 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
         }
     }
 
+    const r = reporter(io);
+    const resolve_step = if (explicit_version == null) r.begin("Checking the latest release", .{}) else null;
     const target_tag = upgrade_mod.resolveTargetVersion(a, io, explicit_version, policy, fetch_policy) catch |err| {
+        if (resolve_step) |st| st.fail();
         printErr("failed to resolve version ({t})\n", .{err});
         std.process.exit(1);
     };
+    if (resolve_step) |st| st.done();
 
     const up_to_date = upgrade_mod.isAlreadyUpToDate(a, target_tag) catch false;
 
@@ -436,7 +458,8 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
     };
 
     const install_root = try project.resolveInstallRoot(a, io, resource_dir_override);
-    upgrade_mod.performUpgrade(a, io, target_tag, asset, install_root, policy, fetch_policy) catch |err| {
+    r.info("Upgrading noxc to {s} ({s})", .{ target_tag, asset.name });
+    upgrade_mod.performUpgrade(a, io, r, target_tag, asset, install_root, policy, fetch_policy) catch |err| {
         printErr("upgrade failed ({t})\n", .{err});
         std.process.exit(1);
     };
@@ -477,7 +500,7 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registr
     // AYNI basit ayrım).
     const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
     const idx = if (is_url)
-        pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
+        loadIndexReported(a, io, index_arg, fetch_policy) catch |e| {
             printErr("search: could not fetch/parse the index ({t}): {s}\n", .{ e, index_arg });
             std.process.exit(1);
         }
@@ -543,7 +566,7 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
         const index_arg = registry_policy.index_url;
         const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
         const idx = if (is_url)
-            pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
+            loadIndexReported(a, io, index_arg, fetch_policy) catch |e| {
                 printErr("add: could not fetch/parse the index ({t}): {s}\n", .{ e, index_arg });
                 std.process.exit(1);
             }
@@ -755,7 +778,7 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         const index_arg = registry_policy.index_url;
         const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
         const idx = if (is_url)
-            pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
+            loadIndexReported(a, io, index_arg, fetch_policy) catch |e| {
                 printErr("install: could not fetch/parse the index ({t}): {s}\n", .{ e, index_arg });
                 std.process.exit(1);
             }
@@ -784,6 +807,17 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, repo, ref) catch std.process.exit(1);
 }
 
+/// v2.0.135: `pkg_index.loadIndexFromUrl` + "Fetching the package index" adımı (ağ beklemesi artık sessiz değil).
+fn loadIndexReported(a: std.mem.Allocator, io: std.Io, url: []const u8, fetch_policy: fetch.FetchPolicy) !pkg_index.Index {
+    const step = reporter(io).begin("Fetching the package index", .{});
+    const idx = pkg_index.loadIndexFromUrl(a, io, url, fetch_policy) catch |e| {
+        step.fail();
+        return e;
+    };
+    step.done();
+    return idx;
+}
+
 /// v1.33.0 (bkz. nox-teknik-spesifikasyon.md §3.100): `cmdInstall`nin (repo/
 /// ref ZATEN çözüldükten SONRAKİ) fetch+derle+yerleştir+kayıt gövdesi —
 /// `cmdRefresh` (AŞAĞIDA) tarafından da PAYLAŞILIR, ÇÜNKÜ `noxc install
@@ -807,10 +841,14 @@ fn installOrUpdatePackage(
     ref: []const u8,
 ) !void {
     var sig_diag: ?[]const u8 = null;
+    const r = reporter(io);
+    const fetch_step = r.begin("Fetching {s}@{s}", .{ repo, ref });
     const fetch_result = fetch.fetchToCache(a, io, nox_home, repo, ref, false, &sig_diag, fetch_policy) catch |e| {
+        fetch_step.fail();
         printErr("install: could not fetch ({t}): {s}@{s}\n", .{ e, repo, ref });
         return e;
     };
+    fetch_step.done();
 
     const pkg_manifest = project.loadManifest(a, io, fetch_result.cache_dir) catch |e| {
         printErr("install: the package's nox.json could not be read or is invalid ({s}): {t}\n", .{ fetch_result.cache_dir, e });
@@ -834,7 +872,11 @@ fn installOrUpdatePackage(
     defer std.Io.Dir.cwd().deleteTree(io, scratch_dir_path) catch {};
     const scratch_bin_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ scratch_dir_path, bin_spec.name });
 
+    r.info("Building {s}", .{bin_spec.name});
+    const build_started = std.Io.Timestamp.now(io, .awake).nanoseconds;
     const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, .auto, .hosted, fetch_policy, null, false, .exe);
+    var build_buf: [32]u8 = undefined;
+    r.info("Built {s} in {s}", .{ bin_spec.name, progress.formatDuration(&build_buf, std.Io.Timestamp.now(io, .awake).nanoseconds - build_started) });
 
     const bin_dir_path = try project.resolveGlobalBinDir(a, nox_home);
     try std.Io.Dir.cwd().createDirPath(io, bin_dir_path);
@@ -909,7 +951,8 @@ fn cmdRefresh(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         return;
     }
     var fail_count: usize = 0;
-    for (registry_state.packages) |entry| {
+    for (registry_state.packages, 0..) |entry, idx| {
+        reporter(io).info("Updating [{d}/{d}] {s}", .{ idx + 1, registry_state.packages.len, entry.command_name });
         installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, entry.repo, entry.ref) catch {
             fail_count += 1;
         };
@@ -1910,7 +1953,9 @@ fn resolveImportsForBuild(
             // getir. Kilitli tam SHA önbellekte duruyorsa `fetchToCache`
             // `git` çağırmaz. Dal adı SHA'yı çözmek için klon ister.
             var sig_diag: ?[]const u8 = null;
+            const dep_step = reporter(io).begin("Fetching {s} ({s}@{s})", .{ req.alias, req.repo, fetch_ref });
             const result = fetch.fetchToCache(a, io, nox_home, req.repo, fetch_ref, req.require_signed_commit, &sig_diag, fetch_policy) catch |e| {
+                dep_step.fail();
                 if (e == error.CommitSignatureRejected) {
                     printErr("could not fetch the package (alias={s}, repo={s}): commit signature verification failed:\n{s}\n", .{ req.alias, req.repo, sig_diag orelse "(git gave no explanation)" });
                 } else {
@@ -1918,6 +1963,7 @@ fn resolveImportsForBuild(
                 }
                 return error.BuildFailed;
             };
+            dep_step.done();
             try roots.put(a, req.alias, result.cache_dir);
 
             var found_idx: ?usize = null;
@@ -2069,7 +2115,9 @@ fn resolveDependencies(
 
         const previous = if (locked_opt) |locked| locked.resolved else null;
         var sig_diag: ?[]const u8 = null;
+        const dep_step = reporter(io).begin("Fetching {s} ({s}@{s})", .{ req.alias, req.repo, fetch_ref });
         const result = fetch.fetchToCache(a, io, nox_home, req.repo, fetch_ref, req.require_signed_commit, &sig_diag, fetch_policy) catch |e| {
+            dep_step.fail();
             if (e == error.CommitSignatureRejected) {
                 printErr("could not fetch the package (alias={s}, repo={s}): commit signature verification failed:\n{s}\n", .{ req.alias, req.repo, sig_diag orelse "(git gave no explanation)" });
             } else {
@@ -2077,6 +2125,7 @@ fn resolveDependencies(
             }
             std.process.exit(1);
         };
+        dep_step.done();
 
         var found_idx: ?usize = null;
         for (new_packages.items, 0..) |p, i| {

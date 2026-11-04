@@ -113,6 +113,10 @@ test "noxc install: yerel fixture paket global kurulur, GERCEKTEN calisir, list 
         return error.InstallFailed;
     }
     try std.testing.expect(std.mem.indexOf(u8, install_result.stderr, "hellocli") != null);
+    // v2.0.135: aşama satırları (getirme + derleme) görünür, boruda canlı çubuk karakterleri yok.
+    try std.testing.expect(std.mem.indexOf(u8, install_result.stderr, "==> Fetching ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, install_result.stderr, "==> Building hellocli") != null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, install_result.stderr, '\r') == null);
 
     // 2) kurulan ikili GERCEKTEN var mi ve CALISIYOR mu?
     const bin_path = try std.fmt.allocPrint(gpa, "{s}/bin/hellocli{s}", .{ home_path, exeSuffix() });

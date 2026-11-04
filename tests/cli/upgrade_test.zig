@@ -357,6 +357,16 @@ test "noxc upgrade: GERCEK uctan-uca cikarma+degistirme (sahte tar.gz, izole kur
         return error.UpgradeFailed;
     }
 
+    // v2.0.135: konuşkan ilerleme çıktısı (stderr bir boru, TTY değil): aşama satırları var, canlı çubuk/ANSI/imleç başa dönüşü YOK.
+    for ([_][]const u8{ "==> Checking the latest release ... done", "==> Downloading nox-lang-v99.0.0-fixture-", "==> Verifying checksum ... done", "==> Extracting ... done", "upgraded to: v99.0.0-fixture" }) |needle| {
+        if (std.mem.indexOf(u8, result.stderr, needle) == null) {
+            std.debug.print("beklenen ilerleme satiri yok: {s}\nstderr:\n{s}\n", .{ needle, result.stderr });
+            return error.MissingProgressLine;
+        }
+    }
+    try std.testing.expect(std.mem.indexOfScalar(u8, result.stderr, '\r') == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "\x1b[2K") == null);
+
     // YENİ icerik GERCEKTEN yerine gecti mi?
     const new_noxc = try tmp.dir.readFileAlloc(io, "bin/noxc", gpa, .limited(4096));
     defer gpa.free(new_noxc);

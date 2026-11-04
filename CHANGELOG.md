@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.135]
+
+### Eklendi
+
+- **CLI ilerleme çıktısı:** `noxc upgrade/install/refresh/fetch/update/add/search` ve `build`/`run` sırasındaki otomatik bağımlılık getirme artık ne yaptığını söyler: `==> Fetching github.com/org/pkg@main ... done (1.2s)`, `==> Building tool`, `refresh`te `Updating [2/5] ad`. `upgrade` indirmesi gerçek bir çubuk gösterir (yüzde, boyut, hız, tahmini süre; `Content-Length` yoksa boyut ve hız). Çubuk yalnızca stderr bir terminalse (ve `TERM=dumb` değilse) canlı çizilir; boru hattı/CI'da yalnızca aşama satırları ve `19.8 MB in 4.8s (4.1 MB/s)` özeti basılır (günlükler imleç hareketiyle dolmaz). Yeni modül `compiler/pkg/progress.zig` (biçimlendirme/çubuk saf işlevlerdir, birim testli). Testler: `tests/cli/upgrade_test.zig` ve `install_test.zig` aşama satırlarını ve boruda `\r`/ANSI olmadığını doğrular. Bkz. spec §3.338, `docs/tools/noxc.md`.
+
 ## [2.0.134]
 
 ### Düzeltildi

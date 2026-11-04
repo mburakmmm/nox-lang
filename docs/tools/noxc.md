@@ -73,6 +73,20 @@ Details: [Packages](packages.md) and [noxpkg](noxpkg.md).
 | `noxc version`, `noxc --version`, `-V` | print the version |
 | `noxc --help`, `-h` | print the help screen |
 
+## Progress output
+
+Commands that wait on the network or the build (`upgrade`, `install`, `refresh`, `fetch`, `update`, `add`, `search`, and automatic dependency fetching during `build`/`run`) report what they are doing on stderr, one `==>` line per stage:
+
+```text
+==> Checking the latest release ... done
+==> Upgrading noxc to v2.0.135 (macos-arm64)
+==> Downloading nox-lang-v2.0.135-macos-arm64.tar.gz (19.8 MB)
+    [===========>            ]  48%  9.5 MB / 19.8 MB  4.1 MB/s  eta 2.5s
+==> Verifying checksum ... done
+```
+
+In a terminal the download line is a live bar (percentage, size, speed, estimated time) that is replaced by a summary (`19.8 MB in 4.8s (4.1 MB/s)`) when it finishes. When stderr is not a terminal (a pipe, a file, CI) or `TERM=dumb`, no bar is drawn: you get only the stage lines and the summary, so logs stay readable. A stage that finishes in under a tenth of a second omits its duration.
+
 ## Environment
 
 `NOX_HOME` (the data directory, default `~/.nox`), `NOX_INDEX_URL`, `NOX_PUBLISH_API_BASE`, `NOX_UPGRADE_API_BASE` and others are listed in [Environment variables](../reference/environment.md).

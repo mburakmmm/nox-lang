@@ -39,6 +39,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const fetch_mod = @import("fetch.zig");
+const progress = @import("progress.zig");
 const build_options = @import("build_options");
 
 const REPO = "mburakmmm/nox-lang";
@@ -203,10 +204,10 @@ fn verifyChecksum(a: Allocator, io: Io, scratch_dir: Io.Dir, archive_name: []con
 /// düşük seviye hata) stderr'e yazar: eskiden yalnızca "UpgradeDownloadFailed" görünüyor, ne olduğu anlaşılmıyordu.
 const DOWNLOAD_ATTEMPTS = 3;
 
-fn downloadToFile(a: Allocator, io: Io, url: []const u8, dest_dir: Io.Dir, dest_name: []const u8) !void {
+fn downloadToFile(a: Allocator, io: Io, r: progress.Reporter, url: []const u8, dest_dir: Io.Dir, dest_name: []const u8) !void {
     var attempt: u32 = 1;
     while (true) : (attempt += 1) {
-        if (downloadOnce(a, io, url, dest_dir, dest_name)) |_| return else |err| {
+        if (downloadOnce(a, io, r, url, dest_dir, dest_name)) |_| return else |err| {
             std.debug.print("upgrade: download attempt {d}/{d} failed ({t}): {s}\n", .{ attempt, DOWNLOAD_ATTEMPTS, err, url });
             if (attempt >= DOWNLOAD_ATTEMPTS) return error.UpgradeDownloadFailed;
             io.sleep(.fromSeconds(@intCast(attempt)), .awake) catch {};
@@ -214,7 +215,7 @@ fn downloadToFile(a: Allocator, io: Io, url: []const u8, dest_dir: Io.Dir, dest_
     }
 }
 
-fn downloadOnce(a: Allocator, io: Io, url: []const u8, dest_dir: Io.Dir, dest_name: []const u8) !void {
+fn downloadOnce(a: Allocator, io: Io, r: progress.Reporter, url: []const u8, dest_dir: Io.Dir, dest_name: []const u8) !void {
     var client: std.http.Client = .{ .allocator = a, .io = io };
     defer client.deinit();
 
@@ -240,11 +241,22 @@ fn downloadOnce(a: Allocator, io: Io, url: []const u8, dest_dir: Io.Dir, dest_na
     defer file.close(io);
     var file_buf: [1024 * 64]u8 = undefined;
     var file_writer = file.writer(io, &file_buf);
-    _ = reader.streamRemaining(&file_writer.interface) catch |err| {
-        std.debug.print("upgrade: download interrupted ({t}; reader: {?t})\n", .{ err, response.bodyErr() });
-        return error.UpgradeDownloadFailed;
-    };
+
+    // v2.0.135: parça parça aktarım (ilerleme çubuğu için); toplam, yönlendirme sonrası YANITIN `Content-Length`idir.
+    var dl = progress.Download.start(r, dest_name, response.head.content_length);
+    while (true) {
+        const n = reader.stream(&file_writer.interface, .limited(64 * 1024)) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => {
+                dl.abort();
+                std.debug.print("upgrade: download interrupted ({t}; reader: {?t})\n", .{ err, response.bodyErr() });
+                return error.UpgradeDownloadFailed;
+            },
+        };
+        dl.advance(n);
+    }
     try file_writer.flush();
+    dl.finish();
 }
 
 /// `source_dir`nin TÜM ağacını (dosya+dizin) `dest_dir`ye kopyalar —
@@ -470,7 +482,7 @@ fn isBinExeEntry(entry: std.Io.Dir.Walker.Entry) bool {
 /// bir aşama BAŞARISIZ olursa `install_root` HİÇ DOKUNULMADAN kalır
 /// (`scratch` dizini bir SONRAKİ çalıştırmada YENİDEN kullanılabilir/
 /// silinip yeniden oluşturulur).
-pub fn performUpgrade(a: Allocator, io: Io, target_tag: []const u8, asset: PlatformAsset, install_root: []const u8, policy: UpgradePolicy, fetch_policy: fetch_mod.FetchPolicy) !void {
+pub fn performUpgrade(a: Allocator, io: Io, r: progress.Reporter, target_tag: []const u8, asset: PlatformAsset, install_root: []const u8, policy: UpgradePolicy, fetch_policy: fetch_mod.FetchPolicy) !void {
     var install_dir = try std.Io.Dir.openDirAbsolute(io, install_root, .{});
     defer install_dir.close(io);
 
@@ -490,7 +502,7 @@ pub fn performUpgrade(a: Allocator, io: Io, target_tag: []const u8, asset: Platf
     const checksum_url = try std.fmt.allocPrint(a, "{s}.sha256", .{download_url});
 
     try validateUpgradeUrlScheme(download_url, fetch_policy.allow_insecure_transport);
-    try downloadToFile(a, io, download_url, scratch_dir, archive_name);
+    try downloadToFile(a, io, r, download_url, scratch_dir, archive_name);
 
     // Sağlamlık kontrolü (isteğe bağlı ama ucuz) — bkz. `verifyChecksum`nin
     // belge notu. `.sha256` getirilemezse (ör. ÇOK ESKİ bir sürüm/manuel
@@ -498,20 +510,32 @@ pub fn performUpgrade(a: Allocator, io: Io, target_tag: []const u8, asset: Platf
     // bütünlük kontrolünün KENDİSİNİN, olmayan bir dosya YÜZÜNDEN TÜM
     // upgrade'i engellememesi İçindir.
     if (httpGetToMemory(a, io, checksum_url)) |sha_body| {
-        try verifyChecksum(a, io, scratch_dir, archive_name, sha_body);
+        const verify_step = r.begin("Verifying checksum", .{});
+        verifyChecksum(a, io, scratch_dir, archive_name, sha_body) catch |err| {
+            verify_step.fail();
+            return err;
+        };
+        verify_step.done();
     } else |_| {}
 
     try scratch_dir.createDirPath(io, "final");
     var final_dir = try scratch_dir.openDir(io, "final", .{ .iterate = true });
     defer final_dir.close(io);
 
-    if (asset.is_zip) {
-        try extractZip(a, io, scratch_dir, archive_name, final_dir);
-    } else {
-        try extractTarGz(io, scratch_dir, archive_name, final_dir);
-    }
+    const extract_step = r.begin("Extracting", .{});
+    const extracted = if (asset.is_zip) extractZip(a, io, scratch_dir, archive_name, final_dir) else extractTarGz(io, scratch_dir, archive_name, final_dir);
+    extracted catch |err| {
+        extract_step.fail();
+        return err;
+    };
+    extract_step.done();
 
-    try installFromScratch(a, io, final_dir, install_dir, install_root);
+    const install_step = r.begin("Installing into {s}", .{install_root});
+    installFromScratch(a, io, final_dir, install_dir, install_root) catch |err| {
+        install_step.fail();
+        return err;
+    };
+    install_step.done();
 }
 
 test "currentPlatformAsset: bu makinenin platformu icin dogru varlik doner" {
