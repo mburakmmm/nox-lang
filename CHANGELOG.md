@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.134]
+
+### Düzeltildi
+
+- **CI (macOS işi):** iş sınırı 45 dakikaydı ama korpus büyüdükçe normal bir koşu 42-45 dakikaya çıktı; v2.0.124/130/133'te iş, test ortasında sınıra çarpıp "cancelled" oldu (gerçek bir hang ya da hata değil; bu yüzden CI "hâlâ kırmızı" görünüyordu ve `Release` iş akışı da CI'ya bağlı olduğundan düşüyordu). Sınır 75 dakikaya çıkarıldı. Windows işi v2.0.133'te ilk kez yeşil.
+- Not (değişiklik yok): `mobile` iş akışındaki Android `example.com` isteği ve iOS `fiber:connect_blackhole` duvar süresi hataları ortam dalgalanmasıdır (aynı kod v2.0.132'de yeşildi; uygulamanın ölçtüğü zaman aşımı 2 sn, koşucunun duvar süresi 68 sn).
+
 ## [2.0.133]
 
 ### Düzeltildi
