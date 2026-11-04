@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.150]
+
+### Eklendi
+
+- **Sürüm arşivleri artık WASM çalışma zamanını içerir** (macOS, Linux, Windows): `lib/noxrt-wasm32-*.o`, `-sqlite3.o` nesneleri ve `lib/compiler-rt-wasm32*.a`. Daha önce yayımlanmış bir `noxc` ile `--target wasm32-*` derlenemiyordu (kaynaktan `zig build wasm-rt` gerekiyordu). `zig` PATH'te olmalı, `--asyncify` için ayrıca `wasm-opt` (spec 3.352).
+- **`nox.fs.remove_dir`, `create_dir_all`, `remove_dir_all`:** boş dizin silme, `mkdir -p`, `rm -r`. Native, WASI ve sanal dosya sisteminde (wasm32-freestanding) çalışır.
+- `build.zig`: `addWasmCompilerRt` (Zig'in compiler-rt'si wasm32 için tek bir statik arşive).
+
+### Düzeltildi
+
+- Yeni bir çalışma zamanı sembolü `wasm_abi_table.zig`ye eklenmediğinde wasm32'de çalışma zamanında `unreachable` ile çöküyordu; tablo yeniden üretildi (host dışa aktarımları dahil).
+
 ## [2.0.149]
 
 ### Eklendi

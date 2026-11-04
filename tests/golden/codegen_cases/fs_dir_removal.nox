@@ -1,0 +1,45 @@
+import nox.fs
+from nox.fs import FsError
+
+base: str = "/tmp/nox_golden_fs_rmdir"
+if nox.fs.exists(base):
+    nox.fs.remove_dir_all(base)
+
+# create_dir_all: eksik ebeveynler oluşur, var olan dizinde etkisiz.
+nox.fs.create_dir_all(base + "/a/b/c")
+nox.fs.create_dir_all(base + "/a/b/c")
+print(nox.fs.is_dir(base + "/a/b/c"))
+nox.fs.write_string(base + "/a/b/c/f.txt", "x")
+nox.fs.write_string(base + "/a/g.txt", "y")
+
+# remove_dir yalnızca boş dizini siler.
+try:
+    nox.fs.remove_dir(base + "/a/b/c")
+    print("unreachable")
+except FsError:
+    print("not empty")
+try:
+    nox.fs.remove_dir(base + "/a/g.txt")
+    print("unreachable")
+except FsError:
+    print("not a dir")
+try:
+    nox.fs.remove_dir(base + "/yok")
+    print("unreachable")
+except FsError:
+    print("missing")
+
+nox.fs.remove_file(base + "/a/b/c/f.txt")
+nox.fs.remove_dir(base + "/a/b/c")
+print(nox.fs.exists(base + "/a/b/c"), nox.fs.is_dir(base + "/a/b"))
+
+# create_dir_all bir dosya bileşeniyle çakışırsa FsError.
+try:
+    nox.fs.create_dir_all(base + "/a/g.txt/alt")
+    print("unreachable")
+except FsError:
+    print("blocked by file")
+
+# remove_dir_all tüm ağacı siler.
+nox.fs.remove_dir_all(base)
+print(nox.fs.exists(base))

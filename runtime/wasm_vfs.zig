@@ -302,6 +302,25 @@ pub fn remove(path: []const u8) bool {
     return true;
 }
 
+/// Boş bir dizini siler. Kök, dolu dizin, dosya ya da olmayan yol için `false`.
+pub fn removeDir(path: []const u8) bool {
+    lock();
+    defer unlock();
+    if (!ensureReady()) return false;
+    const norm = normalize(path) orelse return false;
+    defer gpa.free(norm);
+    if (std.mem.eql(u8, norm, "/")) return false;
+    const e = g_entries.get(norm) orelse return false;
+    if (e.file != null) return false;
+    var it = g_entries.iterator();
+    while (it.next()) |kv| {
+        if (isUnder(kv.key_ptr.*, norm)) return false; // boş değil
+    }
+    const kv = g_entries.fetchRemove(norm) orelse return false;
+    gpa.free(kv.key);
+    return true;
+}
+
 pub fn createDir(path: []const u8) bool {
     lock();
     defer unlock();
@@ -627,6 +646,21 @@ test "rename: dosya degistirir, dizin alt agacla tasinir, kendi altina tasinamaz
     try std.testing.expect(!rename("/t_mv/yok", "/t_mv/q"));
     try std.testing.expect(!rename("/t_mv/y", "/t_mv/z")); // hedef dizin
     try std.testing.expect(!rename("/", "/t_mv/root"));
+}
+
+test "removeDir: bos dizini siler; dolu dizin, dosya, kok ve olmayan yolu reddeder" {
+    try std.testing.expect(createDir("/t_rmdir"));
+    try std.testing.expect(createDir("/t_rmdir/alt"));
+    const fd = open("/t_rmdir/alt/f", .write);
+    close(fd);
+    try std.testing.expect(!removeDir("/t_rmdir")); // dolu
+    try std.testing.expect(!removeDir("/t_rmdir/alt/f")); // dosya
+    try std.testing.expect(!removeDir("/"));
+    try std.testing.expect(!removeDir("/t_rmdir/yok"));
+    try std.testing.expect(remove("/t_rmdir/alt/f"));
+    try std.testing.expect(removeDir("/t_rmdir/alt"));
+    try std.testing.expect(removeDir("/t_rmdir"));
+    try std.testing.expect(stat("/t_rmdir") == null);
 }
 
 test "canonicalPath: var olan yolu normallestirir, olmayani reddeder" {

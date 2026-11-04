@@ -207,6 +207,7 @@ test "wasm: nox.fs sanal dosya sistemi (freestanding) ve dosya tabanlı sqlite" 
         try expectGoldenOn(t, "fs_tree_semantics", @embedFile("codegen_cases/fs_tree_semantics.nox"), @embedFile("codegen_cases/fs_tree_semantics.expected"));
         try expectGoldenOn(t, "fs_new_operations", @embedFile("codegen_cases/fs_new_operations.nox"), @embedFile("codegen_cases/fs_new_operations.expected"));
         try expectGoldenOn(t, "path_new_operations", @embedFile("codegen_cases/path_new_operations.nox"), @embedFile("codegen_cases/path_new_operations.expected"));
+        try expectGoldenOn(t, "fs_dir_removal", @embedFile("codegen_cases/fs_dir_removal.nox"), @embedFile("codegen_cases/fs_dir_removal.expected"));
         try expectGoldenOn(t, "fs_streaming", @embedFile("codegen_cases/fs_streaming.nox"), @embedFile("codegen_cases/fs_streaming.expected"));
         try expectGoldenOn(t, "sqlite_file_roundtrip", @embedFile("codegen_cases/sqlite_file_roundtrip.nox"), @embedFile("codegen_cases/sqlite_file_roundtrip.expected"));
     }

@@ -723,6 +723,30 @@ export fn nox_fs_create_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(
     fsLastOkPtr().* = std.c.mkdir(p, 0o755) == 0;
 }
 
+/// Boş bir dizini siler (`rmdir`); boş değilse ya da yoksa başarısız olur. `remove_file` dizin silmez, bu yüzden ayrı bir işlemdir.
+export fn nox_fs_remove_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) void {
+    if (!embed.allowsPath(rt, path)) {
+        fsLastOkPtr().* = false;
+        return;
+    }
+    const p = path orelse {
+        fsLastOkPtr().* = false;
+        return;
+    };
+    if (comptime is_vfs) {
+        fsLastOkPtr().* = vfs.removeDir(std.mem.span(p));
+        return;
+    }
+    if (comptime builtin.os.tag == .windows) {
+        const w = struct {
+            extern "kernel32" fn RemoveDirectoryA(path: [*:0]const u8) callconv(.c) i32;
+        };
+        fsLastOkPtr().* = w.RemoveDirectoryA(p) != 0;
+        return;
+    }
+    fsLastOkPtr().* = std.c.rmdir(p) == 0;
+}
+
 /// Akışlı dosya G/Ç (v2.0.69, Nova N.4): `read_to_string`/`write_string` bütün dosyayı belleğe alır; büyük dosyalar için
 /// açık bir dosya tanımlayıcısı (`fd`) saf bir `int` olarak Nox tarafına verilir ve parça parça okunur/yazılır. `fd` bir
 /// işaretçi DEĞİL, işletim sistemi tanımlayıcısıdır: Nox sınıfı (`FileReader`/`FileWriter`) onu tek sahip olarak tutar, çift

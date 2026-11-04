@@ -302,6 +302,23 @@ fn addWasmRuntimeChain(b: *std.Build, optimize: std.builtin.OptimizeMode, root: 
     return &install.step;
 }
 
+/// wasm32 hedefleri için Zig'in compiler-rt'sini (`__multi3`, `__lshrti3`, ...) tek bir statik arşive paketler. `noxc`nin `zig cc` bağlama yolu bunu kendiliğinden alır; `zig`i olmayan
+/// bir bağlayıcı (tarayıcıda clang/wasm-ld, spec §3.352) çalışma zamanı nesnesiyle birlikte bunu bağlamalıdır. `threads`: atomics + bulk_memory özellikli varyant.
+fn addWasmCompilerRt(b: *std.Build, install_name: []const u8, threads: bool) *std.Build.Step {
+    const wasm_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding, .abi = .none, .cpu_features_add = if (threads) std.Target.wasm.featureSet(&.{ .atomics, .bulk_memory }) else std.Target.Cpu.Feature.Set.empty });
+    const mod = b.createModule(.{
+        .root_source_file = b.path("runtime/wasm_compiler_rt_root.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
+        .single_threaded = !threads,
+    });
+    const lib = b.addLibrary(.{ .name = install_name, .linkage = .static, .root_module = mod });
+    lib.bundle_compiler_rt = true;
+    const install = b.addInstallFile(lib.getEmittedBin(), b.fmt("lib/{s}.a", .{install_name}));
+    install.step.dependOn(&lib.step);
+    return &install.step;
+}
+
 fn addMobileRuntimeChain(
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
@@ -1017,6 +1034,8 @@ pub fn build(b: *std.Build) void {
     wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-asyncify", true, true, false));
     wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm.zig", "noxrt-wasm32-wasi-threads", false, true, true));
     wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-threads", true, true, true));
+    wasm_rt_step.dependOn(addWasmCompilerRt(b, "compiler-rt-wasm32", false));
+    wasm_rt_step.dependOn(addWasmCompilerRt(b, "compiler-rt-wasm32-threads", true));
     const mobile_rt_simulator = b.step("mobile-rt-simulator", "Build the iOS simulator noxrt object");
     mobile_rt_simulator.dependOn(simulator_rt);
     const mobile_rt_android = b.step("mobile-rt-android", "Build the Android noxrt objects");

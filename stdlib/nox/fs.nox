@@ -33,6 +33,7 @@ extern def nox_fs_copy_raw(src: str, dst: str) -> None from "zig-out/lib/noxrt.o
 extern def nox_fs_rename_raw(old: str, new: str) -> None from "zig-out/lib/noxrt.o" with_rt
 extern def nox_fs_remove_file_raw(path: str) -> None from "zig-out/lib/noxrt.o" with_rt
 extern def nox_fs_create_dir_raw(path: str) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_fs_remove_dir_raw(path: str) -> None from "zig-out/lib/noxrt.o" with_rt
 # v2.0.69 (Nova N.4) — akışlı dosya G/Ç: açık dosya tanımlayıcısı saf `int`tir (işaretçi değil).
 extern def nox_fs_open_raw(path: str, mode: int) -> int from "zig-out/lib/noxrt.o" with_rt
 extern def nox_fs_read_chunk_raw(fd: int, n: int) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -125,6 +126,32 @@ def create_dir(path: str) -> None:
     nox_fs_create_dir_raw(path)
     if nox_fs_last_op_ok() == 0:
         raise FsError("could not create directory: " + path)
+
+# v2.0.150: boş bir dizini siler (`rmdir`); dizin boş değilse ya da yoksa `FsError`. Ağacı topluca silmek için `remove_dir_all`.
+def remove_dir(path: str) -> None:
+    nox_fs_remove_dir_raw(path)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("could not remove directory: " + path)
+
+# v2.0.150: `mkdir -p` — eksik ebeveynleri de oluşturur; dizin zaten varsa hiçbir şey yapmaz. Yolun bir bileşeni dosyaysa `FsError`.
+def create_dir_all(path: str) -> None:
+    if is_dir(path):
+        return
+    cut: int = path.rfind("/")
+    if cut > 0:
+        create_dir_all(path[0:cut])
+    create_dir(path)
+
+# v2.0.150: `rm -r` — dizini ve altındaki her şeyi siler (sembolik bağlar izlenmez, `nox.fs` onları ayırt etmez). Yol bir dosyaysa `FsError`.
+# `path` için bu dosyanın başındaki güvenlik uyarısı geçerlidir: güvenilmeyen girdiyle ÇAĞIRMAYIN.
+def remove_dir_all(path: str) -> None:
+    for name in read_dir(path):
+        child: str = path + "/" + name
+        if is_dir(child):
+            remove_dir_all(child)
+        else:
+            remove_file(child)
+    remove_dir(path)
 
 # ---- Akışlı dosya G/Ç (v2.0.69, Nova N.4) ----
 #

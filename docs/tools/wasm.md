@@ -7,7 +7,7 @@ noxc build --target wasm32-wasi hello.nox -o hello.wasm
 node --no-warnings tests/golden/wasm_run.mjs hello.wasm   # ya da wasmtime, wasmer, ...
 ```
 
-Çıktı bir WASI komutudur (`_start`). Derleme yolu LLVM'dir: `.ll` dosyası `zig cc -target wasm32-wasi` ile wasi-libc ve `noxrt-wasm32-wasi.o` çalışma zamanına bağlanır. `zig` PATH'te olmalıdır; `--backend qbe`, `--emit-asm` ve `-g` bu hedefte hatadır. Çalışma zamanı nesnesi `zig build wasm-rt` ile üretilir (sürüm paketlerinde hazır gelir).
+Çıktı bir WASI komutudur (`_start`). Derleme yolu LLVM'dir: `.ll` dosyası `zig cc -target wasm32-wasi` ile wasi-libc ve `noxrt-wasm32-wasi.o` çalışma zamanına bağlanır. `zig` PATH'te olmalıdır; `--backend qbe`, `--emit-asm` ve `-g` bu hedefte hatadır. Çalışma zamanı nesneleri (`lib/noxrt-wasm32-*.o`, `-sqlite3.o` ve compiler-rt arşivleri `lib/compiler-rt-wasm32*.a`) `zig build wasm-rt` ile üretilir; v2.0.150'den itibaren sürüm arşivlerinde (macOS, Linux, Windows) hazır gelir, yani yayımlanmış bir `noxc` ile `--target wasm32-*` kaynak derlemeden çalışır (`zig` PATH'te olmalı; `--asyncify` için ayrıca `wasm-opt`).
 
 ## Nelerin çalıştığı
 

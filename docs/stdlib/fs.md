@@ -43,6 +43,9 @@ Files are read and written as text bytes; `content` is written exactly as given 
 | `rename(old, new)` | renames or moves; raises `FsError` on failure |
 | `remove_file(path)` | deletes a file; raises `FsError` on failure |
 | `create_dir(path)` | creates one directory (the parent must exist); raises `FsError` on failure |
+| `create_dir_all(path)` | `mkdir -p`: also creates missing parents; does nothing if the directory exists; raises `FsError` if a path component is a file |
+| `remove_dir(path)` | removes an **empty** directory; raises `FsError` if it is not empty, missing, or not a directory |
+| `remove_dir_all(path)` | removes a directory and everything under it (`rm -r`; symbolic links are not distinguished); raises `FsError` on failure |
 
 ## Streaming large files
 

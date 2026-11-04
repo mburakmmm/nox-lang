@@ -179,6 +179,10 @@ jobs:
           # bir `noxc` `--profile freestanding` derlemesinde "dosya bulunamadı"
           # İLE BAŞARISIZ olurdu (kaynaktan derleyenler ETKİLENMİYORDU).
           cp zig-out/lib/noxrt-freestanding.o "$stage/lib/"
+          # v2.0.150: WASM hedefleri (`noxc build --target wasm32-wasi|wasm32-freestanding[-asyncify|-threads]`) için çalışma zamanı nesneleri. Daha önce paketlenmiyordu:
+          # yayımlanmış bir `noxc` wasm derleyemiyor, kaynaktan `zig build wasm-rt` gerektiriyordu. Hedef-bağımsızdır (wasm), `-Dcpu` uygulanmaz.
+          zig build wasm-rt -Doptimize=ReleaseFast
+          cp zig-out/lib/noxrt-wasm32-*.o zig-out/lib/compiler-rt-wasm32*.a "$stage/lib/"
           cp -R zig-out/lib/nox "$stage/lib/"
           cp README.md LICENSE CHANGELOG.md "$stage/"
           # NNI başlığı (yerel eklenti yazarları için kararlı C ABI)
@@ -278,6 +282,11 @@ jobs:
           # KOŞULSUZ ürettiği İKİNCİ nesne dosyası).
           Copy-Item "zig-out\lib\noxrt-freestanding.o" "$stage\lib\"
           Copy-Item "zig-out\lib\swap_asm.o" "$stage\lib\"
+          # v2.0.150: WASM çalışma zamanı nesneleri (macOS/Linux paketleme adımıyla aynı gerekçe).
+          zig build wasm-rt -Doptimize=ReleaseFast
+          if ($LASTEXITCODE -ne 0) { throw "zig build wasm-rt basarisiz (exit $LASTEXITCODE)" }
+          Copy-Item "zig-out\lib\noxrt-wasm32-*.o" "$stage\lib\"
+          Copy-Item "zig-out\lib\compiler-rt-wasm32*.a" "$stage\lib\"
           Copy-Item -Recurse "zig-out\lib\nox" "$stage\lib\"
           Copy-Item README.md, LICENSE, CHANGELOG.md "$stage\"
           Copy-Item -Recurse include "$stage\"
