@@ -54,7 +54,10 @@ comptime {
 var g_argv0 = [_]?[*:0]const u8{ "nox", null };
 
 export fn _start() callconv(.c) void {
-    host.exit(entry.run(1, @intFromPtr(&g_argv0)));
+    const rc = entry.run(1, @intFromPtr(&g_argv0));
+    // Program host için askıdaysa (fetch bekliyor, bkz. wasm_host_async.zig) çıkış bildirilmez; host `nox_host_resume` ile sürdürür.
+    if (entry.suspended()) return;
+    host.exit(rc);
 }
 
 export fn nox_host_abi_version() callconv(.c) u32 {

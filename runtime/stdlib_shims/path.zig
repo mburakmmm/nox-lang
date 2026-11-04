@@ -196,9 +196,14 @@ export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv
         return dupeToNoxStr(rt, buf[0..len]);
     }
     if (comptime wasm_host.is_freestanding_wasm) {
-        // freestanding: dosya sistemi yok; `realpath` hep başarısız.
-        pathLastOkPtr().* = false;
-        return dupeToNoxStr(rt, "");
+        // freestanding: gerçek dosya sistemi yok; yol, bellek içi sanal dosya sisteminde (`wasm_vfs.zig`, spec §3.349) aranır.
+        const canon = @import("../wasm_vfs.zig").canonicalPath(std.mem.span(path)) orelse {
+            pathLastOkPtr().* = false;
+            return dupeToNoxStr(rt, "");
+        };
+        defer std.heap.page_allocator.free(canon);
+        pathLastOkPtr().* = true;
+        return dupeToNoxStr(rt, canon);
     }
     var buf: [std.c.PATH_MAX]u8 = undefined;
     const resolved = std.c.realpath(path, &buf) orelse {

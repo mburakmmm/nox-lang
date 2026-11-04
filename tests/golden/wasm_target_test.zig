@@ -206,6 +206,7 @@ test "wasm: nox.fs sanal dosya sistemi (freestanding) ve dosya tabanlı sqlite" 
     inline for (.{ wasm_helpers.Target.wasi, .freestanding, .wasi_asyncify, .freestanding_asyncify, .wasi_threads, .freestanding_threads }) |t| {
         try expectGoldenOn(t, "fs_tree_semantics", @embedFile("codegen_cases/fs_tree_semantics.nox"), @embedFile("codegen_cases/fs_tree_semantics.expected"));
         try expectGoldenOn(t, "fs_new_operations", @embedFile("codegen_cases/fs_new_operations.nox"), @embedFile("codegen_cases/fs_new_operations.expected"));
+        try expectGoldenOn(t, "path_new_operations", @embedFile("codegen_cases/path_new_operations.nox"), @embedFile("codegen_cases/path_new_operations.expected"));
         try expectGoldenOn(t, "fs_streaming", @embedFile("codegen_cases/fs_streaming.nox"), @embedFile("codegen_cases/fs_streaming.expected"));
         try expectGoldenOn(t, "sqlite_file_roundtrip", @embedFile("codegen_cases/sqlite_file_roundtrip.nox"), @embedFile("codegen_cases/sqlite_file_roundtrip.expected"));
     }
@@ -352,4 +353,109 @@ test "wasm32-freestanding: dosya sistemini kullanmayan program --vfs-dir dizinin
     const kept = try tmp.dir.readFileAlloc(io, "state/keep.txt", allocator, .limited(64));
     defer allocator.free(kept);
     try std.testing.expectEqualStrings("korunmali", kept);
+}
+
+// v2.0.149 (spec §3.351): `wasm32-freestanding --asyncify` + `nox.http` istemcisi host `fetch`ine dayanır. Sürücü (`wasm_fetch_driver.mjs`) süreç içi sahte bir `fetch` verir:
+// sıralı istekler, gövde/başlık iletimi, 404, bağlantı hatası, zaman aşımı ve `spawn` ile PARALEL istekler (en çok eşzamanlı 2) sınanır; ağ yeteneği kapalıyken
+// `HttpCapabilityError` alınır.
+const fetch_program =
+    \\import nox.http
+    \\from nox.http import HttpResponse, HttpError, HttpTimeoutError
+    \\
+    \\def hdrs() -> dict[str, str]:
+    \\    h: dict[str, str] = {}
+    \\    h["X-Test"] = "nox"
+    \\    return h
+    \\
+    \\async def slow_len(path: str) -> int:
+    \\    r: HttpResponse = nox.http.get("http://t.invalid" + path, hdrs())
+    \\    return len(r.body)
+    \\
+    \\r: HttpResponse = nox.http.get("http://t.invalid/hello", hdrs())
+    \\print(r.status, r.body, r.headers["x-reply"])
+    \\p: HttpResponse = nox.http.post("http://t.invalid/echo", "payload", hdrs())
+    \\print(p.status, p.body)
+    \\m: HttpResponse = nox.http.get("http://t.invalid/missing", hdrs())
+    \\print(m.status)
+    \\try:
+    \\    c: HttpResponse = nox.http.get("http://t.invalid/refuse", hdrs())
+    \\    print("unreachable")
+    \\except HttpError:
+    \\    print("connect error")
+    \\try:
+    \\    t: HttpResponse = nox.http.request("GET", "http://t.invalid/timeout", "", hdrs(), 30)
+    \\    print("unreachable")
+    \\except HttpTimeoutError:
+    \\    print("timeout")
+    \\t1: Task[int] = spawn slow_len("/slow")
+    \\t2: Task[int] = spawn slow_len("/slow")
+    \\a: int = await t1
+    \\b: int = await t2
+    \\print("parallel", a, b)
+    \\
+;
+
+const fetch_expected =
+    \\200 GET:/hello:- yes
+    \\200 POST:/echo:payload
+    \\404
+    \\connect error
+    \\timeout
+    \\parallel 11 11
+    \\exit 0
+    \\max concurrent 2
+    \\fetch GET /hello x-test=nox body=-
+    \\fetch GET /missing x-test=nox body=-
+    \\fetch GET /refuse x-test=nox body=-
+    \\fetch GET /slow x-test=nox body=-
+    \\fetch GET /slow x-test=nox body=-
+    \\fetch GET /timeout x-test=nox body=-
+    \\fetch POST /echo x-test=nox body=payload
+    \\
+;
+
+fn runFetchDriver(source: []const u8, mode: []const u8) !?[]u8 {
+    const allocator = std.testing.allocator;
+    const outcome = try wasm_helpers.buildAndRunRepeated(allocator, build_options.noxc_path, build_options.fetch_driver_path, .freestanding_asyncify, source, &.{mode}, 1);
+    switch (outcome) {
+        .tool_missing => return null,
+        .rejected, .build_failed => |msg| {
+            defer allocator.free(msg);
+            std.debug.print("fetch [{s}]: derleme basarisiz: {s}\n", .{ mode, msg });
+            return error.BuildFailed;
+        },
+        .ran => |r| {
+            defer allocator.free(r.stderr);
+            if (r.term != .exited or r.term.exited != 0) {
+                std.debug.print("fetch [{s}]: surucu basarisiz: {s}\n{s}\n", .{ mode, r.stderr, r.stdout });
+                allocator.free(r.stdout);
+                return error.ProgramFailed;
+            }
+            return r.stdout;
+        },
+    }
+}
+
+test "wasm32-freestanding --asyncify: nox.http host fetch'ine dayanır (sıralı, hata, zaman aşımı, paralel)" {
+    const out = (try runFetchDriver(fetch_program, "allow")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings(fetch_expected, out);
+}
+
+test "wasm32-freestanding --asyncify: host ağ yeteneğini vermezse HttpCapabilityError" {
+    const src =
+        \\import nox.http
+        \\from nox.http import HttpResponse, HttpCapabilityError
+        \\
+        \\h: dict[str, str] = {}
+        \\try:
+        \\    r: HttpResponse = nox.http.get("http://t.invalid/hello", h)
+        \\    print("unreachable")
+        \\except HttpCapabilityError:
+        \\    print("capability")
+        \\
+    ;
+    const out = (try runFetchDriver(src, "deny")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("capability\nexit 0\nmax concurrent 0\n", out);
 }

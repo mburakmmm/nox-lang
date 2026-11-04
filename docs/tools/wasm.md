@@ -36,7 +36,7 @@ Ayrıntı ve gerekçe: [ADR-012](../internals/adr/012-wasm-target.md). Bir WASM 
 
 ## Yetenek modeli ve `--deny-capability`
 
-WASM genel amaçlı bir derleme hedefidir: modüller, ihtiyaç duydukları şey bir *yetenek* (`network`, `filesystem`, `process`, `clock`, `entropy`, ...) olduğu sürece derlenir. Yeteneği sağlamak host'un işidir (WASI, `nox_host` import'ları ya da bir tarayıcı sayfası); sağlamıyorsa çağrı anında açık bir hata alırsınız, link hatası ya da çökme değil. Bugün bu `nox.http` ailesi için geçerlidir (ağ yeteneği yok); diğer yetenekler (sanal dosya sistemi, `fetch` tabanlı istemci, ...) aynı modelle eklenecektir ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
+WASM genel amaçlı bir derleme hedefidir: modüller, ihtiyaç duydukları şey bir *yetenek* (`network`, `filesystem`, `process`, `clock`, `entropy`, ...) olduğu sürece derlenir. Yeteneği sağlamak host'un işidir (WASI, `nox_host` import'ları ya da bir tarayıcı sayfası); sağlamıyorsa çağrı anında açık bir hata alırsınız, link hatası ya da çökme değil. Bugün bu `nox.http` istemcisi (ağ), `nox.fs` ve `nox.sqlite` (sanal dosya sistemi) için geçerlidir; kalan yetenekler aynı modelle eklenecektir ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
 
 Güvenilmeyen kodu derleyen ortamlar (ör. tarayıcıda bir kod deneme alanı) yetenekleri **derleme zamanında** da kısıtlayabilir; bu bayrak yalnızca WASM'da değil, her hedefte çalışır:
 
@@ -137,3 +137,18 @@ await runNox(bytes, io, { vfs: {
 ```
 
 Kalıcılık çıkışta yazılır: program çökerse (tuzak) anlık görüntü yine alınır, ama süreç öldürülürse (kill) alınmaz.
+
+## Ağ: `nox.http` istemcisi host `fetch`i ile (wasm32-freestanding --asyncify)
+
+`wasm32-freestanding-asyncify` hedefinde `nox.http.get/post/request` host'un `fetch`ine dayanır (tarayıcıda `window.fetch`, Node'da `globalThis.fetch`, ya da host'un verdiği herhangi bir `fetch` uyumlu işlev). Yetenek **varsayılan olarak kapalıdır**: host açıkça vermedikçe istemci çağrıları yakalanabilir bir `HttpCapabilityError` fırlatır.
+
+```js
+import { runNox } from './wasm_host.mjs';
+await runNox(bytes, io, { fetch: globalThis.fetch });   // ağ açık
+await runNox(bytes, io, { fetch: null });               // ağ kapalı (varsayılan): HttpCapabilityError
+```
+
+Komut satırında Node için `noxc run --target wasm32-freestanding-asyncify --allow-net prog.nox` (ya da `NOX_ALLOW_NET=1`). Derleme zamanında `--deny-capability network` modülün ağ kullanmasını tümden yasaklar (playground).
+
+- **Nasıl çalışır.** Ağ çağrısı yapan fiber bekletilir, başka fiber'lar çalışır (`spawn` ile istekler paralel gider); hazır fiber kalmayınca modül çıkış bildirmeden host'a döner, host `fetch`leri bekler, sonuçları iletir ve `nox_host_resume()` ile programı sürdürür. Modüle hiçbir import eklenmez; host yalnızca dışa aktarımları (`nox_host_caps_set`, `nox_host_fetch_pending`, `nox_host_fetch_complete`, `nox_host_status`, `nox_host_resume`, `nox_host_alloc/free`) çağırır. Ayrıntı: spec §3.351. Kendi host'unu yazıyorsan `compiler/wasm_host.mjs`teki `runNox` döngüsü referanstır.
+- **Sınırlar.** Yalnızca `--asyncify` freestanding (askıya almak için fiber gerekir); düz freestanding, `--threads` ve `wasm32-wasi` kiplerinde istemci eskisi gibi `HttpCapabilityError` verir. Yanıt tümüyle tamponlanır: akışlı istemci (`stream_*`, `transfer`) desteklenmez ve yönlendirmeleri `fetch` izler. Başlık adları `fetch`in verdiği gibi küçük harflidir. Tarayıcıda CORS ve karışık-içerik kuralları sayfaya aittir. Zaman aşımı `AbortSignal.timeout` ile uygulanır.

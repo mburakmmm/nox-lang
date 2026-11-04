@@ -12,6 +12,10 @@
 //! Asyncify'ın `asyncify.start_unwind/stop_unwind/start_rewind/stop_rewind` import'ları `wasm-opt` tarafından modülün İÇİNDE tanımlanır; ortaya host
 //! gerektiren bir import çıkmaz. Durum (`g_state`) burada ayrıca izlenir, çünkü Binaryen `get_state`i import olarak sağlamaz.
 
+//! **Host askıya alma (v2.0.149, spec §3.351).** Bir fiber değil TÜM program, host'a (JS olay döngüsüne) geri dönmek üzere askıya alınabilir: `hostSuspend` ana
+//! akışı (zamanlayıcı döngüsü dahil) `swap` ile aynı düzenekle bir arabelleğe kaydedip yığını sürücüye kadar açar ve sürücü `nox_asyncify_run`dan HOST'A DÖNER
+//! (`isHostSuspended()`). Host işini bitirince `nox_asyncify_run_resume` aynı akışı arabellekten yeniden sarar. `fetch` tabanlı HTTP istemcisi bunun üstüne kurulur.
+
 const std = @import("std");
 
 extern "asyncify" fn start_unwind(data: usize) void;
@@ -53,6 +57,11 @@ pub const BUF_SIZE: usize = 256 * 1024;
 const Phase = enum { normal, unwinding, rewinding };
 
 threadlocal var g_phase: Phase = .normal;
+/// Host askıya alma: `hostSuspend` çağrısında kaydedilen ana akış, işaretçi kimliği olarak kullanılan `host_marker` ve sürücünün ilk girişteki gölge yığın işaretçisi.
+threadlocal var g_host_ctx: Context = .{};
+threadlocal var g_host_suspended: bool = false;
+threadlocal var g_entry_sp: usize = 0;
+var host_marker: Context = .{};
 threadlocal var g_cur_root: *Root = undefined;
 threadlocal var g_next: *Context = undefined;
 threadlocal var free_bufs: [64]usize = undefined;
@@ -117,6 +126,38 @@ noinline fn swapImpl(old: *Context, new: *Context, caller_sp: usize) void {
     start_unwind(old.buf);
 }
 
+/// Program host'a dönmek üzere askıdaysa `true` (sürücü `nox_asyncify_run`dan döndü, ama program bitmedi): host işini yapıp `nox_asyncify_run_resume` çağırmalıdır.
+pub fn isHostSuspended() bool {
+    return g_host_suspended;
+}
+
+/// Çalışan akışı (ana akış; zamanlayıcı döngüsü dahil) host'a dönmek üzere askıya alır; `nox_asyncify_run_resume` ile devam edildiğinde buradan döner.
+/// `swap` ile aynı gerekçeyle gölge yığın işaretçisi ÇAĞIRANIN içinde okunur.
+pub inline fn hostSuspend() void {
+    hostSuspendImpl(getSp());
+}
+
+noinline fn hostSuspendImpl(caller_sp: usize) void {
+    if (g_phase == .rewinding) {
+        stop_rewind();
+        g_phase = .normal;
+        if (g_host_ctx.buf != 0) {
+            releaseBuf(g_host_ctx.buf);
+            g_host_ctx.buf = 0;
+        }
+        return;
+    }
+    g_host_ctx.root = g_cur_root;
+    g_host_ctx.sp = caller_sp;
+    g_host_ctx.buf = acquireBuf();
+    const hdr: [*]usize = @ptrFromInt(g_host_ctx.buf);
+    hdr[0] = g_host_ctx.buf + 2 * @sizeOf(usize);
+    hdr[1] = g_host_ctx.buf + BUF_SIZE;
+    g_next = &host_marker;
+    g_phase = .unwinding;
+    start_unwind(g_host_ctx.buf);
+}
+
 /// Sürücü köküne verilen giriş: tek `usize` argümanlı, `i32` dönen işlev (ana akış için `main`, havuz işçisi için işçi gövdesi).
 pub const EntryFn = *const fn (usize) callconv(.c) i32;
 
@@ -132,11 +173,25 @@ threadlocal var entry_root: Root = .{ .run = entryRun };
 
 /// Bir iş parçacığının (ana ya da havuz işçisi) giriş sürücüsü: `entry(arg)`yi KÖK akış olarak çalıştırır. Fiber'lar `swap` ile bu döngüye yığın açarak döner.
 /// `asyncify-removelist` ile dönüşümden muaf tutulur (adında `nox_asyncify_run` geçer). Her iş parçacığı kendi sürücü durumuna (threadlocal) sahiptir.
+/// Program `hostSuspend` ile askıya alındıysa 0 döner ve `isHostSuspended()` doğrudur.
 pub noinline fn nox_asyncify_run(entry: EntryFn, arg: usize) i32 {
     g_entry = entry;
     g_entry_arg = arg;
-    const entry_sp = getSp();
-    var root: *Root = &entry_root;
+    g_entry_sp = getSp();
+    return nox_asyncify_run_loop(&entry_root);
+}
+
+/// `hostSuspend` ile askıya alınan programı sürdürür (host işini bitirdikten sonra); program biterse dönüş kodunu, yeniden askıya alınırsa 0 döner (`isHostSuspended()`).
+pub noinline fn nox_asyncify_run_resume() i32 {
+    g_host_suspended = false;
+    setSp(g_host_ctx.sp);
+    start_rewind(g_host_ctx.buf);
+    g_phase = .rewinding;
+    return nox_asyncify_run_loop(g_host_ctx.root.?);
+}
+
+noinline fn nox_asyncify_run_loop(start_root: *Root) i32 {
+    var root = start_root;
     while (true) {
         g_cur_root = root;
         root.run(root);
@@ -144,6 +199,12 @@ pub noinline fn nox_asyncify_run(entry: EntryFn, arg: usize) i32 {
             stop_unwind();
             g_phase = .normal;
             const next = g_next;
+            if (next == &host_marker) {
+                // Tüm program host için askıda: yığın modülün dışına (JS'e) kadar boşalır.
+                g_host_suspended = true;
+                setSp(g_entry_sp);
+                return 0;
+            }
             root = next.root.?;
             setSp(next.sp);
             if (next.fresh) {
@@ -155,7 +216,7 @@ pub noinline fn nox_asyncify_run(entry: EntryFn, arg: usize) i32 {
             continue;
         }
         if (root == &entry_root) {
-            setSp(entry_sp);
+            setSp(g_entry_sp);
             return g_rc;
         }
         @panic("asyncify: bir fiber kökü normal döndü (trampoline `swap` ile bitmelidir)");

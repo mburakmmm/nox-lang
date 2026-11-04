@@ -23,6 +23,18 @@ pub fn run(argc: i32, argv: u64) i32 {
     return main(argc, argv);
 }
 
+/// Program host'a dönmek üzere askıda mı (`asyncify.hostSuspend`)? Asyncify dışı kiplerde her zaman `false`. Askıdaysa çağıran (`_start`) çıkış kodunu bildirmez.
+pub fn suspended() bool {
+    if (comptime wasm_options.asyncify) return asyncify.isHostSuspended();
+    return false;
+}
+
+/// Host işini bitirince programı sürdürür; çıkış kodunu (ya da yeniden askıdaysa 0) döner.
+pub fn resumeRun() i32 {
+    if (comptime wasm_options.asyncify) return asyncify.nox_asyncify_run_resume();
+    return 0;
+}
+
 /// WASI: wasi-libc'nin `__main_void`u bunu çağırır (argv işaretçisi 32-bit, Nox ise 64-bit sözcük bekler).
 fn mainArgcArgv(argc: i32, argv: i32) callconv(.c) i32 {
     return run(argc, @as(u64, @as(u32, @bitCast(argv))));

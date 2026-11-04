@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.149]
+
+### Eklendi
+
+- **wasm32-freestanding --asyncify: `nox.http` istemcisi (`get/post/request`) host `fetch`ine dayanır** (tarayıcıda `window.fetch`, Node'da `globalThis.fetch` ya da host'un verdiği işlev). Yetenek varsayılan olarak KAPALIDIR (host açıkça vermezse `HttpCapabilityError`); modüle import eklenmez, host yalnızca dışa aktarımları çağırır. `spawn` ile verilen istekler paraleldir; zaman aşımı, bağlantı hatası ve 404 yerel istemciyle aynı istisnalara eşlenir. Program ağ beklerken TÜM yığın JS'e açılır ve `fetch` bitince sürdürülür (`asyncify.hostSuspend`, `Scheduler.suspendForHost`; spec 3.351).
+- `wasm_host.mjs`: `runNox(bytes, io, { fetch })`; Node CLI `--allow-net` / `NOX_ALLOW_NET=1`; `noxc run --target wasm32-freestanding-asyncify --allow-net`.
+- Sürücülü test (`tests/golden/wasm_fetch_driver.mjs`, süreç içi sahte `fetch`): sıralı, hata, zaman aşımı, paralel istekler ve ağ kapalıyken `HttpCapabilityError`.
+
+### Düzeltildi
+
+- `nox.path.canonicalize` wasm32-freestanding'de (sanal dosya sistemi artık var) her zaman `PathError` veriyordu; sanal dosya sistemine bakar. `path_new_operations` freestanding testlerine eklendi.
+- `wasm_host.mjs` CLI'sı `--vfs-dir`/`--allow-net` bayraklarını `wasm32-wasi-threads` program argümanlarından da ayıklar.
+
 ## [2.0.148]
 
 ### Eklendi

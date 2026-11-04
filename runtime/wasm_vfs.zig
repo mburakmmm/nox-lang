@@ -274,6 +274,19 @@ pub fn stat(path: []const u8) ?Info {
     return .{ .size = 0, .mtime_ms = 0, .is_dir = true };
 }
 
+/// `realpath` karşılığı: yol VARSA mutlak, normalleştirilmiş hali (çağıran `gpa` ile serbest bırakır), yoksa `null`. Sembolik bağ olmadığından yalnızca `.`/`..` çözülür.
+pub fn canonicalPath(path: []const u8) ?[]u8 {
+    lock();
+    defer unlock();
+    if (!ensureReady()) return null;
+    const norm = normalize(path) orelse return null;
+    if (!g_entries.contains(norm)) {
+        gpa.free(norm);
+        return null;
+    }
+    return norm;
+}
+
 /// Bir dosyayı siler (dizin silmez). Açık tanıtıcılar kapanana kadar içerik yaşar.
 pub fn remove(path: []const u8) bool {
     lock();
@@ -614,6 +627,14 @@ test "rename: dosya degistirir, dizin alt agacla tasinir, kendi altina tasinamaz
     try std.testing.expect(!rename("/t_mv/yok", "/t_mv/q"));
     try std.testing.expect(!rename("/t_mv/y", "/t_mv/z")); // hedef dizin
     try std.testing.expect(!rename("/", "/t_mv/root"));
+}
+
+test "canonicalPath: var olan yolu normallestirir, olmayani reddeder" {
+    try std.testing.expect(createDir("/t_canon"));
+    const got = canonicalPath("t_canon/../t_canon/./").?;
+    defer gpa.free(got);
+    try std.testing.expectEqualStrings("/t_canon", got);
+    try std.testing.expect(canonicalPath("/t_canon/yok") == null);
 }
 
 test "unlink semantigi: acik tanitici varken silinen dosya kapanana kadar yasar" {

@@ -1660,13 +1660,15 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             try kept.append(a, arg);
         }
     }
-    if (!sandboxed and (policy.allow_net or writes.items.len > 0 or reads.items.len > 0)) {
-        printErr("noxc run: --allow-net/--allow-write/--allow-read only apply together with --sandbox\n", .{});
-        std.process.exit(1);
-    }
     policy.allow_write = writes.items;
     policy.allow_read = reads.items;
     const opts = parseBuildOpts(kept.items);
+    // `--allow-net` wasm hedeflerinde `--sandbox` olmadan da geçerlidir: wasm32-freestanding --asyncify modülüne host `fetch`ini verir (spec §3.351).
+    const wasm_run = isWasmTarget(opts.profile, opts.target);
+    if (!sandboxed and ((policy.allow_net and !wasm_run) or writes.items.len > 0 or reads.items.len > 0)) {
+        printErr("noxc run: --allow-net/--allow-write/--allow-read only apply together with --sandbox (--allow-net also applies to --target wasm32-freestanding)\n", .{});
+        std.process.exit(1);
+    }
     const path_arg = opts.path orelse {
         std.debug.print("usage: noxc run [--dump|-v] <file.nox> [-- argv...]\n", .{});
         std.process.exit(1);
@@ -1703,7 +1705,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             std.process.exit(1);
         }
         const is_free = if (opts.target) |t| (if (qbe_target.hostedTargetInfo(t)) |info| (info.wasm_freestanding or info.wasm_threads) else false) else false;
-        const code = try runWasi(gpa, io, a, bin_path, is_free, split.after);
+        const code = try runWasi(gpa, io, a, bin_path, is_free, policy.allow_net, split.after);
         std.process.exit(code);
     }
     if (sandboxed) {
@@ -1760,9 +1762,10 @@ const WASM_HOST_JS = @embedFile("wasm_host.mjs");
 
 /// `noxc run --target wasm32-wasi|wasm32-freestanding`: `.wasm`ı çalıştırır. WASI modülleri için bulunan ilk çalıştırıcı (`wasmtime`, `wasmer`, `node`),
 /// freestanding (`nox_host`) için her zaman `node`. Çalışma dizini ve `/tmp` WASI programına açılır. Çalıştırıcı yoksa açık hata verir.
-fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, argv_tail: []const []const u8) !u8 {
+fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, allow_net: bool, argv_tail: []const []const u8) !u8 {
     // `freestanding` = yalnızca node sürücüsü: nox_host (ADR-013) ve iş parçacıklı wasi (ADR-015; wasmtime/wasmer wasi-threads'i kaldırdı).
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (allow_net and !freestanding) printErr("note: --allow-net only applies to wasm32-freestanding --asyncify (WASI has no network); ignored\n", .{});
     if (g_vfs_dir.len > 0 and !freestanding) printErr("note: --vfs-dir only applies to wasm32-freestanding (wasm32-wasi uses the real file system through WASI preopens); ignored\n", .{});
     if (!freestanding and probeOk(gpa, io, &.{ "wasmtime", "--version" })) {
         try argv.appendSlice(a, &.{ "wasmtime", "run", "--dir", ".", "--dir", "/tmp", wasm_path, "--" });
@@ -1773,6 +1776,7 @@ fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: 
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = runner_path, .data = WASM_HOST_JS });
         try argv.appendSlice(a, &.{ "node", "--no-warnings", runner_path, wasm_path });
         if (g_vfs_dir.len > 0 and freestanding) try argv.append(a, try std.fmt.allocPrint(a, "--vfs-dir={s}", .{g_vfs_dir}));
+        if (allow_net and freestanding) try argv.append(a, "--allow-net");
     } else {
         printErr("noxc run --target wasm32-*: no runtime found on PATH ({s}), or use 'noxc build' and run the .wasm yourself\n", .{if (freestanding) "install node" else "install wasmtime, wasmer or node"});
         std.process.exit(1);
@@ -3101,6 +3105,10 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
     }
     if (info.wasm_freestanding) try argv.appendSlice(a, &.{ "-Wl,--no-entry", "-Wl,--export=_start", "-Wl,--export=nox_host_abi_version" });
     if (info.wasm_freestanding and info.wasm_threads) try argv.append(a, "-Wl,--export=nox_host_thread_start");
+    // v2.0.149 (spec §3.351): `--asyncify` freestanding'de `nox.http` istemcisi host `fetch`ini kullanabilir; host'un çağıracağı dışa aktarımlar.
+    if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and std.mem.indexOf(u8, ir, "nox_http_") != null) {
+        try argv.appendSlice(a, &.{ "-Wl,--export=nox_host_caps_set", "-Wl,--export=nox_host_alloc", "-Wl,--export=nox_host_free", "-Wl,--export=nox_host_fetch_pending", "-Wl,--export=nox_host_fetch_complete", "-Wl,--export=nox_host_status", "-Wl,--export=nox_host_resume" });
+    }
     // v2.0.148 (spec §3.350): sanal dosya sistemini kalıcı kılmak isteyen host için önyükleme/anlık görüntü dışa aktarımları; yalnızca dosya sistemini kullanan programlara.
     if (info.wasm_freestanding and (std.mem.indexOf(u8, ir, "nox_fs_") != null or std.mem.indexOf(u8, ir, "nox_sqlite_") != null)) {
         try argv.appendSlice(a, &.{ "-Wl,--export=nox_vfs_host_alloc", "-Wl,--export=nox_vfs_host_free", "-Wl,--export=nox_vfs_host_put", "-Wl,--export=nox_vfs_host_mkdir", "-Wl,--export=nox_vfs_host_snapshot" });

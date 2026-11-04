@@ -2134,6 +2134,7 @@ pub fn build(b: *std.Build) void {
     const wasm_options = b.addOptions();
     wasm_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
     wasm_options.addOption([]const u8, "runner_path", "compiler/wasm_host.mjs");
+    wasm_options.addOption([]const u8, "fetch_driver_path", "tests/golden/wasm_fetch_driver.mjs");
     const wasm_target_mod = b.createModule(.{
         .root_source_file = b.path("tests/golden/wasm_target_test.zig"),
         .target = target,

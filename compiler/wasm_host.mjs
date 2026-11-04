@@ -16,6 +16,9 @@
 // Kalıcı dosya sistemi (wasm32-freestanding, spec §3.350): `nox.fs`/`nox.sqlite` modülün içindeki bellek içi sanal dosya sistemine yazar. Kalıcılık istiyorsan
 // `runNox(bytes, io, { vfs: { files, onSave } })`: `files` ([{ path, data? }]; `data` yoksa dizin) modül başlamadan yüklenir, `onSave(entries)` çıkışta anlık görüntüyle
 // çağrılır. Node CLI: `node wasm_host.mjs prog.wasm --vfs-dir=DIR` (ya da `NOX_VFS_DIR`) DIR'i yükler ve çıkışta geri yazar (`/tmp` geçicidir, kaydedilmez).
+//
+// Ağ yeteneği (wasm32-freestanding --asyncify, spec §3.351): `runNox(bytes, io, { fetch })`; `fetch` verilmezse `nox.http` istemcisi `HttpCapabilityError` verir. Node CLI:
+// `--allow-net` (ya da `NOX_ALLOW_NET=1`) `globalThis.fetch`i verir.
 
 export const NOX_HOST_ABI_VERSION = 1;
 
@@ -129,22 +132,123 @@ export function vfsSnapshot(instance, memory = null) {
   return out;
 }
 
+// ---- Ağ yeteneği: `fetch` (wasm32-freestanding --asyncify, spec §3.351) ------------------------------------------------------------------------
+
+/** "Ad: değer\n" satırlarını bir başlık nesnesine çevirir (yinelenen adlar `, ` ile birleşir). */
+function parseHeaderLines(text) {
+  const h = {};
+  for (const line of text.split('\n')) {
+    const i = line.indexOf(': ');
+    if (i <= 0) continue;
+    const k = line.slice(0, i);
+    h[k] = k in h ? `${h[k]}, ${line.slice(i + 2)}` : line.slice(i + 2);
+  }
+  return h;
+}
+
+/** `nox_host_fetch_pending` çıktısını ayrıştırır: [{ id, timeoutMs, hasBody, method, url, headers, body }]. */
+function parsePendingRequests(buf) {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const dec = new TextDecoder();
+  const out = [];
+  let i = 0;
+  const u32 = () => {
+    const v = dv.getUint32(i, true);
+    i += 4;
+    return v;
+  };
+  const bytes = () => {
+    const n = u32();
+    const b = buf.subarray(i, i + n);
+    i += n;
+    return b;
+  };
+  while (i < buf.length) {
+    const id = u32();
+    const timeoutMs = u32();
+    const hasBody = u32() !== 0;
+    out.push({ id, timeoutMs, hasBody, method: dec.decode(bytes()), url: dec.decode(bytes()), headers: dec.decode(bytes()), body: bytes().slice() });
+  }
+  return out;
+}
+
+async function doFetch(fetchFn, req) {
+  const init = { method: req.method, headers: parseHeaderLines(req.headers) };
+  if (req.hasBody) init.body = req.body;
+  if (req.timeoutMs > 0) init.signal = AbortSignal.timeout(req.timeoutMs);
+  try {
+    const res = await fetchFn(req.url, init);
+    const body = new Uint8Array(await res.arrayBuffer());
+    let headers = '';
+    res.headers.forEach((v, k) => {
+      headers += `${k}: ${v}\n`;
+    });
+    return { id: req.id, status: res.status, errorKind: -1, headers: new TextEncoder().encode(headers), body };
+  } catch (e) {
+    const timeout = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    return { id: req.id, status: 0, errorKind: timeout ? 1 : 0, headers: new Uint8Array(0), body: new Uint8Array(0) };
+  }
+}
+
+/** Askıdaki modülün yeni isteklerini başlatır, bir tanesi bitene kadar bekler ve sonucunu modüle iletir. */
+async function pumpFetches(instance, fetchFn, inflight) {
+  const x = instance.exports;
+  const mem = x.memory;
+  const lenPtr = x.nox_host_alloc(4);
+  const ptr = x.nox_host_fetch_pending(lenPtr);
+  const len = new DataView(mem.buffer).getUint32(lenPtr, true);
+  const pending = ptr ? parsePendingRequests(new Uint8Array(mem.buffer, ptr, len).slice()) : [];
+  if (ptr) x.nox_host_free(ptr, len);
+  x.nox_host_free(lenPtr, 4);
+  for (const req of pending) inflight.set(req.id, doFetch(fetchFn, req));
+  if (inflight.size === 0) throw new Error('nox: program host için askıda ama bekleyen istek yok');
+  const done = await Promise.race([...inflight.entries()].map(([id, p]) => p.then((r) => r)));
+  inflight.delete(done.id);
+  const put = (b) => {
+    const p = x.nox_host_alloc(b.length);
+    new Uint8Array(mem.buffer, p, b.length).set(b);
+    return p;
+  };
+  const hp = put(done.headers);
+  const bp = put(done.body);
+  x.nox_host_fetch_complete(done.id, done.status, done.errorKind, hp, done.headers.length, bp, done.body.length);
+  x.nox_host_free(hp, done.headers.length);
+  x.nox_host_free(bp, done.body.length);
+}
+
 /**
  * `wasm32-freestanding` modülünü çalıştırır; çıkış kodunu döner. `opts.vfs` = { files, onSave } kalıcı dosya sistemi içindir (dosyanın başındaki nota bak); modül
- * dosya sistemini kullanmıyorsa yok sayılır (böylece `onSave` boş bir görüntüyle diski silmez).
+ * dosya sistemini kullanmıyorsa yok sayılır (böylece `onSave` boş bir görüntüyle diski silmez). `opts.fetch`: `--asyncify` ile derlenmiş ve `nox.http` kullanan modüller için
+ * ağ yeteneği: bir `fetch` işlevi (ör. `globalThis.fetch` ya da süreç içi sahte) verilmezse ağ yeteneği KAPALIDIR ve istemci çağrıları `HttpCapabilityError` verir (en az ayrıcalık).
  */
 export async function runNox(wasmBytes, io, opts = {}) {
   const host = createHost(io);
   const { instance } = await WebAssembly.instantiate(wasmBytes, host.imports);
   host.bind(instance);
+  const x = instance.exports;
   const vfs = opts.vfs && vfsAvailable(instance) ? opts.vfs : null;
   if (vfs && vfs.files) vfsPreload(instance, vfs.files);
+  const asyncHost = typeof x.nox_host_resume === 'function' && typeof x.nox_host_caps_set === 'function';
+  const fetchFn = opts.fetch || null;
+  if (asyncHost && fetchFn) x.nox_host_caps_set(1);
   let code = 0;
   try {
-    instance.exports._start();
-  } catch (e) {
-    if (e instanceof NoxExit) code = e.code;
-    else throw e;
+    let step = () => x._start();
+    const inflight = new Map();
+    for (;;) {
+      try {
+        step();
+      } catch (e) {
+        if (e instanceof NoxExit) {
+          code = e.code;
+          break;
+        }
+        throw e;
+      }
+      if (!asyncHost || x.nox_host_status() !== 1) break;
+      await pumpFetches(instance, fetchFn.bind(globalThis), inflight);
+      step = () => x.nox_host_resume();
+    }
   } finally {
     if (vfs && vfs.onSave) await vfs.onSave(vfsSnapshot(instance));
   }
@@ -267,17 +371,19 @@ async function makeNodeVfs(dir, loadedInit = null) {
   return api;
 }
 
-/** `--vfs-dir=DIR` / `--vfs-dir DIR` argümanını (ve `NOX_VFS_DIR` ortam değişkenini) ayıklar. */
-function takeVfsDir(args) {
+/** `--vfs-dir=DIR` / `--vfs-dir DIR` (ve `NOX_VFS_DIR`) ile `--allow-net` (ve `NOX_ALLOW_NET=1`) argümanlarını ayıklar. */
+function takeHostFlags(args) {
   let dir = process.env.NOX_VFS_DIR || null;
+  let allowNet = process.env.NOX_ALLOW_NET === '1';
   const rest = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith('--vfs-dir=')) dir = a.slice('--vfs-dir='.length);
     else if (a === '--vfs-dir' && i + 1 < args.length) dir = args[++i];
+    else if (a === '--allow-net') allowNet = true;
     else rest.push(a);
   }
-  return { dir, rest };
+  return { dir, allowNet, rest };
 }
 
 async function nodeMain() {
@@ -289,14 +395,14 @@ async function nodeMain() {
     process.exit(2);
   }
   const bytes = fs.readFileSync(file);
+  const { dir: vfsDir, allowNet, rest: progArgs } = takeHostFlags(argv.slice(3));
   const mod = await WebAssembly.compile(bytes);
   const modules = new Set(WebAssembly.Module.imports(mod).map((i) => i.module));
 
   if (modules.has('nox_host')) {
-    const { dir: vfsDir } = takeVfsDir(argv.slice(3));
     const memImportNox = findMemoryImport(bytes);
     if (memImportNox && memImportNox.shared) {
-      process.exitCode = await runThreaded(file, mod, memImportNox, argv.slice(3), 'nox', vfsDir);
+      process.exitCode = await runThreaded(file, mod, memImportNox, progArgs, 'nox', vfsDir);
       return;
     }
     let vfs;
@@ -304,20 +410,20 @@ async function nodeMain() {
       const nv = await makeNodeVfs(vfsDir);
       vfs = { files: nv.load(), onSave: (snap) => nv.save(snap) };
     }
-    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs });
+    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: allowNet ? globalThis.fetch : null });
     return;
   }
 
   // wasm32-wasi (+ iş parçacıklı varyant: paylaşımlı bellek içe aktarımı varsa)
   const memImport = findMemoryImport(bytes);
   if (memImport && memImport.shared) {
-    process.exitCode = await runThreaded(file, mod, memImport, argv.slice(3));
+    process.exitCode = await runThreaded(file, mod, memImport, progArgs);
     return;
   }
   const { WASI } = await import('node:wasi');
   const wasi = new WASI({
     version: 'preview1',
-    args: [file, ...argv.slice(3)],
+    args: [file, ...progArgs],
     env: process.env,
     preopens: await wasiPreopens(),
     returnOnExit: true,

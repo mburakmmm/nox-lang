@@ -16,5 +16,5 @@ Mevcut profil (`hosted`/`freestanding`) ve mobil maske sistemi, derlenen *hedefi
 ## Sonuçlar
 
 - `nox.http` ailesi 6 WASM hedefinin hepsinde derlenir ve fixture korpusu native ile aynı çıktıyı verir (yönlendirme, `web` yapı taşları, `reflect`, akışlı yanıt, istek hata yolları).
-- Kalan reddedilen modüller (`tls`, `websocket`, `smtp`, `postgres`, `mysql`, `process`, `sharedmem`; `native`/`plugin`/`hpy` hiçbir zaman) aynı modele taşınacaktır (`sqlite` v2.0.146'da amalgamation'ın statik bağlanmasıyla eklendi): sanal dosya sistemi v2.0.147'de çalışma zamanının içinde (host import'u olmadan) eklendi; sırada `fetch` tabanlı HTTP istemcisi, WebSocket istemcisi.
+- Kalan reddedilen modüller (`tls`, `websocket`, `smtp`, `postgres`, `mysql`, `process`, `sharedmem`; `native`/`plugin`/`hpy` hiçbir zaman) aynı modele taşınacaktır (`sqlite` v2.0.146'da amalgamation'ın statik bağlanmasıyla eklendi): sanal dosya sistemi v2.0.147'de çalışma zamanının içinde (host import'u olmadan), `fetch` tabanlı HTTP istemcisi v2.0.149'da (yalnızca `--asyncify` freestanding; yetenek host'un `nox_host_caps_set` çağrısıyla açılır, varsayılan kapalı) eklendi; sırada WebSocket istemcisi.
 - Playground: tarayıcıda derleyicinin ön yüzü çalışır ve üretilen modül `--deny-capability` ile derlenir.

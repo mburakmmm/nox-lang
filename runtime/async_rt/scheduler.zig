@@ -41,6 +41,10 @@ const fiber_mod = @import("fiber.zig");
 const Fiber = fiber_mod.Fiber;
 const Context = fiber_mod.Context;
 const io_reactor = @import("io_reactor.zig");
+/// wasm32 `--asyncify`: tüm program host'a (JS olay döngüsüne) dönmek üzere askıya alınabilir (`asyncify.hostSuspend`, spec §3.351): hazır fiber kalmayıp bir fiber
+/// host'tan sonuç bekliyorsa (`waiting_on_host > 0`) `run` programı askıya alır.
+const host_async = if (builtin.cpu.arch.isWasm()) @import("wasm_options").asyncify else false;
+const asyncify_mod = if (host_async) @import("asyncify.zig") else struct {};
 const IoReactor = io_reactor.IoReactor;
 /// Faz MN.4/5.8: `SpinLock`in TEK doğruluk kaynağı `runtime/async_rt/
 /// spinlock.zig`ye taşındı (bkz. onun belge notu) — `runtime/alloc/asap.zig`
@@ -188,6 +192,8 @@ pub const Scheduler = struct {
     /// boş VE `waiting_on_io > 0` İSE bu bir deadlock DEĞİLDİR, `reactor.poll`
     /// çağrılıp beklenir (bkz. `run`).
     waiting_on_io: usize = 0,
+    /// wasm32 `--asyncify`: host'tan (ör. `fetch`) sonuç bekleyen (`suspendForHost`) fiber sayısı; `run` hazır fiber kalmayınca programı host'a döndürür.
+    waiting_on_host: usize = 0,
     /// Faz MN.4/5: bu zamanlayıcının `init()` SIRASINDA kaydedilen sahibi —
     /// `markReady`nin ÇAĞIRAN iş parçacığının KENDİ zamanlayıcısı MI
     /// (yerel, ÇOK SIK) YOKSA YABANCI (havuzdaki BAŞKA bir worker, NADİR)
@@ -470,6 +476,15 @@ pub const Scheduler = struct {
         fiber.yield();
         self.waiting_on_io -= 1;
         if (self.pool_waiting_on_io) |pwio| _ = pwio.fetchSub(1, .monotonic);
+    }
+
+    /// Çağıran fiber'ı host bir sonuç iletene kadar (`markReady` ile uyandırılana dek) askıya alır. Yalnızca wasm32 `--asyncify`de anlamlıdır; `run` hazır fiber kalmayınca
+    /// tüm programı host'a döndürür (`asyncify.hostSuspend`), host sonucu iletip `markReady` çağırınca döngü devam eder.
+    pub fn suspendForHost(self: *Scheduler) void {
+        const fiber = self.current.?;
+        self.waiting_on_host += 1;
+        fiber.yield();
+        self.waiting_on_host -= 1;
     }
 
     /// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): `suspendForIo`
@@ -844,6 +859,12 @@ pub const Scheduler = struct {
                 if (self.waiting_on_io > 0) {
                     _ = self.reactor.poll(self) catch @panic("kqueue poll failed");
                     continue;
+                }
+                if (comptime host_async) {
+                    if (self.waiting_on_host > 0) {
+                        asyncify_mod.hostSuspend();
+                        continue;
+                    }
                 }
                 return error.Deadlock;
             };

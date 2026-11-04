@@ -12,6 +12,28 @@
 //! Küresel/gizli durum yoktur (AGENTS §2.6): "başarısız tutamaç" sabit bir işaretçidir, hiç yazılmaz.
 
 const diag_sink = @import("diag_sink");
+const wasm_options = @import("wasm_options");
+const str_mod = @import("../str.zig");
+
+/// `wasm32-freestanding --asyncify` (tek iş parçacıklı): host `fetch`ine dayanan gerçek istemci (`http_fetch.zig`, spec §3.351). Host `nox_host_caps_set(1)` ile yeteneği
+/// açmadıysa (`fetch.available()` yanlış) ya da başka bir kipteyse aşağıdaki "ağ yeteneği yok" davranışı geçerlidir.
+const fetch_enabled = @import("../wasm_host.zig").is_freestanding_wasm and wasm_options.asyncify and !wasm_options.threads;
+const fetch = if (fetch_enabled) @import("http_fetch.zig") else struct {};
+
+comptime {
+    if (fetch_enabled) _ = fetch;
+}
+
+fn fetchActive() bool {
+    return fetch_enabled and fetch.available();
+}
+
+/// `failedHandle()` dışındaki tutamaçlar `http_fetch.Response`tur.
+fn fetchResponse(h: ?*anyopaque) ?*fetch.Response {
+    const p = h orelse return null;
+    if (p == failedHandle()) return null;
+    return @ptrCast(@alignCast(p));
+}
 
 /// `nox_http_response_error_kind`/`nox_http_stream_error_kind` değeri: host bu yeteneği sağlamıyor (0 = bağlantı, 1 = zaman aşımı, 3 = geçersiz istek).
 pub const ERROR_KIND_CAPABILITY: i64 = 4;
@@ -52,59 +74,75 @@ export fn nox_http_client_pool_idle_raw() callconv(.c) i64 {
 
 export fn nox_http_get_raw(rt: ?*anyopaque, url: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
     _ = rt;
-    _ = url;
-    _ = headers;
+    if (comptime fetch_enabled) {
+        if (fetch.available()) return @ptrCast(fetch.request("GET", str_mod.nox_str_slice(url orelse return null), null, headers, 0));
+    }
     return failedHandle();
 }
 
 export fn nox_http_post_raw(rt: ?*anyopaque, url: ?[*:0]const u8, body: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
     _ = rt;
-    _ = url;
-    _ = body;
-    _ = headers;
+    if (comptime fetch_enabled) {
+        if (fetch.available()) return @ptrCast(fetch.request("POST", str_mod.nox_str_slice(url orelse return null), str_mod.nox_str_slice(body orelse return null), headers, 0));
+    }
     return failedHandle();
 }
 
 export fn nox_http_request_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*:0]const u8, body: ?[*:0]const u8, has_body: i32, headers: ?*anyopaque, timeout_ms: i64) callconv(.c) ?*anyopaque {
     _ = rt;
-    _ = method;
-    _ = url;
-    _ = body;
-    _ = has_body;
-    _ = headers;
-    _ = timeout_ms;
+    if (comptime fetch_enabled) {
+        if (fetch.available()) {
+            const m = str_mod.nox_str_slice(method orelse return null);
+            const u = str_mod.nox_str_slice(url orelse return null);
+            const b: ?[]const u8 = if (has_body != 0) str_mod.nox_str_slice(body orelse return null) else null;
+            return @ptrCast(fetch.request(m, u, b, headers, timeout_ms));
+        }
+    }
     return failedHandle();
 }
 
 export fn nox_http_response_error_kind(h: ?*anyopaque) callconv(.c) i64 {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetch.available()) {
+            if (h == null) return 3; // geçersiz istek (yerel istemciyle aynı)
+            if (fetchResponse(h)) |r| return r.error_kind;
+        }
+    }
     return ERROR_KIND_CAPABILITY;
 }
 
 export fn nox_http_response_ok(h: ?*anyopaque) callconv(.c) i32 {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchResponse(h)) |r| return fetch.responseOk(r);
+    }
     return 0;
 }
 
 export fn nox_http_response_status(h: ?*anyopaque) callconv(.c) i64 {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchResponse(h)) |r| return r.status;
+    }
     return 0;
 }
 
 export fn nox_http_response_body(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c) ?[*:0]u8 {
-    _ = rt;
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchResponse(h)) |r| return fetch.responseBody(rt, r);
+    }
     return null;
 }
 
 export fn nox_http_response_headers(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c) ?*anyopaque {
-    _ = rt;
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchResponse(h)) |r| return fetch.responseHeaders(rt, r);
+    }
     return null;
 }
 
 export fn nox_http_response_free(h: ?*anyopaque) callconv(.c) void {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchResponse(h)) |r| fetch.responseFree(r);
+    }
 }
 
 // ---- Akışlı istemci (`transfer`, `http.stream_*`) ---------------------------------------------------------------------------------------------------
