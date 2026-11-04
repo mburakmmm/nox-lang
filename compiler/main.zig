@@ -23,6 +23,8 @@ const signing = @import("pkg/signing.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const syntax_report = @import("syntax_report.zig");
+const frontend = @import("frontend.zig");
+const wasm_link = @import("wasm_link.zig");
 const ast = @import("parser/ast.zig");
 const ast_dump = @import("parser/ast_dump.zig");
 const checker = @import("typecheck/checker.zig");
@@ -2908,12 +2910,7 @@ fn appendScalarLocalNames(io: std.Io, a: std.mem.Allocator, asm_path: []const u8
 }
 
 fn mobileMaskOf(info: ?qbe_target.HostedTargetInfo) checker.MobileMask {
-    const ht = info orelse return .none;
-    return switch (ht.mobile) {
-        .none => .none,
-        .ios_device, .ios_simulator => .ios,
-        .android => .android,
-    };
+    return frontend.mobileMaskOf(info);
 }
 
 fn stripOneExt(path: []const u8) []const u8 {
@@ -3084,9 +3081,11 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
         return error.BuildFailed;
     }
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try argv.appendSlice(a, &.{ "zig", "cc", "-target", info.zig_triple, "-O2", "-Wno-override-module", "-Wl,-z,stack-size=8388608", "-o", out_path, ll_path, rt_path });
-    // v2.0.146 (spec §3.348): SQLite amalgamation'ı ayrı bir nesne olarak kurulur; yalnızca `nox_sqlite_*` çağıran programlara bağlanır (diğerleri büyümez).
-    if (std.mem.indexOf(u8, ir, "nox_sqlite_") != null) {
+    try argv.appendSlice(a, &.{ "zig", "cc", "-target", info.zig_triple, "-O2", "-Wno-override-module", "-o", out_path, ll_path, rt_path });
+    // Bağlanacak nesneler ve bayraklar `compiler/wasm_link.zig`de planlanır (tarayıcıdaki WASM derleyici ile ortak, spec §3.353).
+    const link_plan = try wasm_link.plan(a, info, ir);
+    // SQLite amalgamation'ı ayrı bir nesne olarak kurulur; yalnızca `nox_sqlite_*` çağıran programlara bağlanır (diğerleri büyümez).
+    if (link_plan.sqlite) {
         const sqlite_path = try std.fmt.allocPrint(a, "{s}/lib/{s}-sqlite3.o", .{ resource_dirs.install_root, info.runtime_object_name });
         if (std.Io.Dir.accessAbsolute(io, sqlite_path, .{})) |_| {} else |_| {
             printErr("wasm sqlite object '{s}' is missing; build it with: zig build wasm-rt\n", .{sqlite_path});
@@ -3094,25 +3093,8 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
         }
         try argv.append(a, sqlite_path);
     }
-    // Çalışma zamanı nesnesindeki DWARF ~3 MB ekler. `--strip-debug` `target_features` bölümünü de siler ve `wasm-opt` (asyncify/threads) onu okur; bu yollarda DWARF
-    // zaten `wasm-opt --strip-dwarf` ile atılır. wasm-opt kullanmayan varsayılan kip burada soyulur (v2.0.84'e kadar 3 MB, şimdi ~100 KB); işlev adları korunur.
-    if (!info.wasm_asyncify and !info.wasm_threads) try argv.append(a, "-Wl,--strip-debug");
-    // wasm32-freestanding: libc/WASI başlangıcı yok; giriş `_start` (runtime/wasm_libc.zig), host import'ları `nox_host` ad alanından.
-    if (info.wasm_threads) {
-        // ADR-015: paylaşımlı bellek + atomikler; Zig'in WasiThreadImpl'i `wasi_thread_start`ı dışa aktarılmış ister, host `wasi::thread-spawn` sağlar.
-        try argv.appendSlice(a, &.{ "-mcpu=generic+atomics+bulk_memory", "-Wl,--shared-memory", "-Wl,--import-memory", "-Wl,--initial-memory=33554432", "-Wl,--max-memory=1073741824" });
-        if (!info.wasm_freestanding) try argv.append(a, "-Wl,--export=wasi_thread_start");
-    }
-    if (info.wasm_freestanding) try argv.appendSlice(a, &.{ "-Wl,--no-entry", "-Wl,--export=_start", "-Wl,--export=nox_host_abi_version" });
-    if (info.wasm_freestanding and info.wasm_threads) try argv.append(a, "-Wl,--export=nox_host_thread_start");
-    // v2.0.149 (spec §3.351): `--asyncify` freestanding'de `nox.http` istemcisi host `fetch`ini kullanabilir; host'un çağıracağı dışa aktarımlar.
-    if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and std.mem.indexOf(u8, ir, "nox_http_") != null) {
-        try argv.appendSlice(a, &.{ "-Wl,--export=nox_host_caps_set", "-Wl,--export=nox_host_alloc", "-Wl,--export=nox_host_free", "-Wl,--export=nox_host_fetch_pending", "-Wl,--export=nox_host_fetch_complete", "-Wl,--export=nox_host_status", "-Wl,--export=nox_host_resume" });
-    }
-    // v2.0.148 (spec §3.350): sanal dosya sistemini kalıcı kılmak isteyen host için önyükleme/anlık görüntü dışa aktarımları; yalnızca dosya sistemini kullanan programlara.
-    if (info.wasm_freestanding and (std.mem.indexOf(u8, ir, "nox_fs_") != null or std.mem.indexOf(u8, ir, "nox_sqlite_") != null)) {
-        try argv.appendSlice(a, &.{ "-Wl,--export=nox_vfs_host_alloc", "-Wl,--export=nox_vfs_host_free", "-Wl,--export=nox_vfs_host_put", "-Wl,--export=nox_vfs_host_mkdir", "-Wl,--export=nox_vfs_host_snapshot" });
-    }
+    if (link_plan.threads_features) try argv.append(a, "-mcpu=generic+atomics+bulk_memory");
+    try argv.appendSlice(a, link_plan.ld_flags);
     if (info.wasm_freestanding) {
         // libc/libm yok: `from "m"` bildirimleri çalışma zamanındaki (`wasm_libc.zig`/compiler-rt) tanımlara çözülür; `-lm` verilmez.
         var tmp: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -3244,82 +3226,16 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // doğrudan kullanılır: Faz 10 generics'i somut örneklemeleri
     // (`checker_state.instantiations`) burada, ownership analizi ve codegen'e
     // iletmek için gereklidir (bkz. checker.zig, "Faz 10: generics" notu).
-    var checker_state = checker.Checker.init(a);
-    applyDeniedCapabilities(&checker_state);
-    checker_state.backend = backend;
-    checker_state.profile = profile;
-    checker_state.mobile_mask = mobileMaskOf(hosted_info);
-    checker_state.wasm_target = if (hosted_info) |ht| ht.wasm else false;
-    checker_state.wasm_freestanding = if (hosted_info) |ht| ht.wasm_freestanding else false;
-    checker_state.checkModule(module) catch |e| {
-        printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
-        return error.BuildFailed;
+    // Tip denetimi + codegen meta verisi + IR metni `compiler/frontend.zig`dedir (CLI ve tarayıcıdaki WASM derleyici aynı kodu paylaşır, spec §3.353).
+    const fe_cfg: frontend.Config = .{ .backend = backend, .profile = profile, .hosted_info = hosted_info, .deny_capabilities = g_deny_capabilities };
+    var analysis = frontend.analyze(a, module, fe_cfg, .{}) catch |e| switch (e) {
+        error.BuildFailed => return error.BuildFailed,
+        else => return e,
     };
-    // Faz T.2: `checkModule` artık fonksiyon/sınıf/metod/gevşek-deyim
-    // SINIRINDAKİ hatalarda FIRLATMAZ, `checker_state.diagnostics`e
-    // KAYDEDER (bkz. checker.zig, `recordDiagnostic`) — bu yüzden BAŞARILI
-    // dönüş TEK BAŞINA "tip hatasız" anlamına GELMEZ, AYRICA kontrol edilir.
-    if (checker_state.diagnostics.items.len > 0) {
-        for (checker_state.diagnostics.items) |d| {
-            printErr("type error ({t}): {s}\n", .{ d.code, d.message });
-        }
-        return error.BuildFailed;
-    }
-    const instantiations = checker_state.instantiations.items;
-
-    // Codegen'in `module.body`deki generic ŞABLONLARINI (açık `[T]` VEYA
-    // Faz 11'in örtük protokol parametresi yoluyla) atlayabilmesi için
-    // isimlerini iletiyoruz (bkz. codegen.zig, `generateModule` belge notu).
-    var generic_names: std.ArrayListUnmanaged([]const u8) = .empty;
-    var generic_it = checker_state.generic_functions.keyIterator();
-    while (generic_it.next()) |k| try generic_names.append(a, k.*);
-
-    // Faz U.4.5 (bkz. `checker.zig`nin `functions_used_as_value`i VE
-    // `codegen_qbe/closures.zig`nin `genFunctionValueTrampoline`ının belge
-    // notu): `generic_names` İLE AYNI "keyIterator → slice" deseni.
-    var functions_used_as_value: std.ArrayListUnmanaged([]const u8) = .empty;
-    var fn_value_it = checker_state.functions_used_as_value.keyIterator();
-    while (fn_value_it.next()) |k| try functions_used_as_value.append(a, k.*);
-
-    // v2.0 madde 2.3: `functions_used_as_value` İLE AYNI "keyIterator →
-    // slice" deseni — `@ffi.callback` hedefleri.
-    var callback_targets: std.ArrayListUnmanaged([]const u8) = .empty;
-    var cb_target_it = checker_state.callback_targets.keyIterator();
-    while (cb_target_it.next()) |k| try callback_targets.append(a, k.*);
-
-    // Bulundu (Aether NOX_LIMITATIONS.md madde 13 — çapraz-modül sınıf
-    // kalıtımı, bkz. `codegen.zig`nin `Codegen.resolved_bases`inin belge
-    // notu): `checker_state.classes`in HER girdisinin `.base`i (ZATEN
-    // `registerClassSignatures`in `from_imports` geri-düşüşüyle DOĞRU
-    // çözülmüş) `class_name → resolved_base_name` haritasına kopyalanıp
-    // codegen'e aktarılır — codegen KENDİ başına bir çözümleme YENİDEN
-    // UYGULAMAZ.
-    var resolved_bases: std.StringHashMapUnmanaged([]const u8) = .empty;
-    var class_base_it = checker_state.classes.iterator();
-    while (class_base_it.next()) |e| {
-        if (e.value_ptr.*.base) |b| try resolved_bases.put(a, e.key_ptr.*, b);
-    }
-
-    // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı): `instantiations`/
-    // `generic_names`in AYNISI ama SINIFLAR İçin.
-    const class_instantiations = checker_state.class_instantiations.items;
-    var generic_class_names: std.ArrayListUnmanaged([]const u8) = .empty;
-    var generic_class_it = checker_state.generic_classes.keyIterator();
-    while (generic_class_it.next()) |k| try generic_class_names.append(a, k.*);
-
-    // Faz U.4.3: checker'ın closure yakalama (capture) listelerini
-    // (`checker.ClosureInfo`, isim + SEMANTIK `Type`) codegen'in beklediği
-    // basitleştirilmiş şekle (yol → yalnızca yakalanan İSİMLER) çevirir —
-    // codegen, HER yakalanan ismin TAM `TypeInfo`sini KENDİSİ, dış
-    // fonksiyonun O ANKİ `self.vars`ından türetir (bkz. `genNestedFuncDef`in
-    // belge notu) — bu yüzden `Type`↔`TypeInfo` dönüştürücüsüne GEREK YOK.
-    var closure_infos: std.StringHashMapUnmanaged([]const []const u8) = .empty;
-    var closure_it = checker_state.closure_infos.iterator();
-    while (closure_it.next()) |entry| {
-        const names = try a.alloc([]const u8, entry.value_ptr.captures.len);
-        for (entry.value_ptr.captures, 0..) |c, i| names[i] = c.name;
-        try closure_infos.put(a, entry.key_ptr.*, names);
-    }
+    const instantiations = analysis.instantiations();
+    const generic_names = analysis.generic_names;
+    const class_instantiations = analysis.classInstantiations();
+    const generic_class_names = analysis.generic_class_names;
 
     if (verbose) {
         // `report` yalnızca BU dökümün İÇİN hesaplanır (codegen KENDİ
@@ -3327,7 +3243,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         // parametre olarak ALMAZ) — `verbose` DEĞİLSE `ownership.analyze`
         // çağrısının KENDİSİ de atlanır, yalnızca I/O DEĞİL, hesaplama da
         // tasarruf edilir.
-        const report = try ownership.analyze(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items);
+        const report = try ownership.analyze(a, module, instantiations, generic_names, class_instantiations, generic_class_names);
         var stdout_buf: [4096]u8 = undefined;
         var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
         try stdout_writer.interface.writeAll("--- sahiplik analizi ---\n");
@@ -3344,21 +3260,9 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
 
     const library_mode = emit != .exe;
     const llvm_triple: []const u8 = if (hosted_info) |ht| (if (ht.llvmOnly()) ht.llvmTriple() else "") else "";
-    const ir = codegen.generateModuleWithMeta(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, profile, null, callback_targets.items, resolved_bases, checker_state.class_ctors.items, library_mode, llvm_triple) catch |err| switch (err) {
-        error.Unsupported => {
-            std.debug.print(
-                "codegen: this program contains a construct that is not supported at the moment " ++
-                    "(e.g. a nested function/class definition, an unsupported " ++
-                    "type expression, or a for loop over an iterable other than " ++
-                    "range()/list[T]) - see the language reference at " ++
-                    "https://noxlang.com/docs/language/\n",
-                .{},
-            );
-            return error.BuildFailed;
-        },
-        // Ayrıntılı ileti (hangi değişken hangisini okuyor) codegen'de basıldı.
-        error.GlobalInitOrder => return error.BuildFailed,
-        else => |e| return e,
+    const ir = frontend.emit(a, module, &analysis, fe_cfg, .{ .debug_source_path = debug_source_path, .library_mode = library_mode, .llvm_triple = llvm_triple }, .{}) catch |e| switch (e) {
+        error.BuildFailed => return error.BuildFailed,
+        else => return e,
     };
 
     const stem = output_override orelse stemOf(path_arg);

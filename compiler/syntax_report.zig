@@ -19,6 +19,7 @@ const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const token_mod = @import("lexer/token.zig");
 const span_mod = @import("span.zig");
+const report_sink = @import("report_sink.zig");
 const TokenKind = token_mod.TokenKind;
 
 pub const Error = error{ SyntaxError, OutOfMemory };
@@ -73,20 +74,25 @@ fn lineText(source: []const u8, line: u32) []const u8 {
     return source[start..end];
 }
 
-fn report(source: []const u8, label: []const u8, line: u32, col: u32, comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("{s}:{d}:{d}: syntax error: " ++ fmt ++ "\n", .{ label, line, col } ++ args);
+fn report(sink: report_sink.Sink, source: []const u8, label: []const u8, line: u32, col: u32, comptime fmt: []const u8, args: anytype) void {
+    sink.print("{s}:{d}:{d}: syntax error: " ++ fmt ++ "\n", .{ label, line, col } ++ args);
     if (line == 0) return;
     const text = lineText(source, line);
-    std.debug.print("    {s}\n", .{text});
+    sink.print("    {s}\n", .{text});
     var pad_buf: [256]u8 = undefined;
     const pad = @min(if (col > 0) col - 1 else 0, pad_buf.len);
     @memset(pad_buf[0..pad], ' ');
-    std.debug.print("    {s}^\n", .{pad_buf[0..pad]});
+    sink.print("    {s}^\n", .{pad_buf[0..pad]});
 }
 
 /// `source`'u ayrıştırır; lex/parse hatasında okunaklı bir tanılama basıp `error.SyntaxError` döner.
 /// `label`: tanılamada gösterilecek dosya adı.
 pub fn parseSource(a: std.mem.Allocator, source: []const u8, label: []const u8) Error!ast.Module {
+    return parseSourceTo(report_sink.stderr, a, source, label);
+}
+
+/// `parseSource` ile aynı, ama tanılama `sink`e yazılır (gömülü kullanım: tarayıcıdaki WASM ön yüzü).
+pub fn parseSourceTo(sink: report_sink.Sink, a: std.mem.Allocator, source: []const u8, label: []const u8) Error!ast.Module {
     const lexed = lexer.tokenizeCapturingSpan(a, source);
     const tokens = lexed.tokens orelse {
         const err = lexed.err.?;
@@ -98,7 +104,7 @@ pub fn parseSource(a: std.mem.Allocator, source: []const u8, label: []const u8) 
             error.TabsNotAllowed => "tab used in indentation — use spaces",
             error.OutOfMemory => unreachable,
         };
-        report(source, label, lexed.err_span.start_line, lexed.err_span.start_col, "{s}", .{msg});
+        report(sink, source, label, lexed.err_span.start_line, lexed.err_span.start_col, "{s}", .{msg});
         return error.SyntaxError;
     };
     var p = parser.Parser.init(a, tokens);
@@ -123,16 +129,16 @@ pub fn parseSource(a: std.mem.Allocator, source: []const u8, label: []const u8) 
                 else => "'",
             };
             if (d.note) |note| {
-                report(source, label, d.span.start_line, d.span.start_col, "{s}", .{note});
+                report(sink, source, label, d.span.start_line, d.span.start_col, "{s}", .{note});
             } else if (d.expected) |exp| {
-                report(source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s} (expected {s})", .{ quote, found, quote, kindName(exp) });
+                report(sink, source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s} (expected {s})", .{ quote, found, quote, kindName(exp) });
             } else {
-                report(source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s}", .{ quote, found, quote });
+                report(sink, source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s}", .{ quote, found, quote });
             }
         } else switch (e) {
-            error.InvalidNumberLiteral => report(source, label, 0, 0, "invalid number literal", .{}),
-            error.RecursionLimitExceeded => report(source, label, 0, 0, "expression nested too deeply", .{}),
-            else => report(source, label, 0, 0, "parse error ({t})", .{e}),
+            error.InvalidNumberLiteral => report(sink, source, label, 0, 0, "invalid number literal", .{}),
+            error.RecursionLimitExceeded => report(sink, source, label, 0, 0, "expression nested too deeply", .{}),
+            else => report(sink, source, label, 0, 0, "parse error ({t})", .{e}),
         }
         return error.SyntaxError;
     };
@@ -147,4 +153,13 @@ test "parseSource geçerli kaynağı ayrıştırır, bozukta SyntaxError döner"
     try std.testing.expectError(error.SyntaxError, parseSource(a, "if x > 1\n    pass\n", "bad2.nox"));
     try std.testing.expectError(error.SyntaxError, parseSource(a, "x: str = \"abc\n", "bad3.nox"));
     try std.testing.expectError(error.SyntaxError, parseSource(a, "\tx: int = 1\n", "bad4.nox"));
+}
+
+test "parseSourceTo: tanılama verilen Sink'e yazılır (stderr'e değil)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var col = report_sink.Collector{ .allocator = a };
+    try std.testing.expectError(error.SyntaxError, parseSourceTo(col.sink(), a, "print(1 2)\n", "bad.nox"));
+    try std.testing.expectEqualStrings("bad.nox:1:9: syntax error: unexpected '2' (expected ')')\n    print(1 2)\n            ^\n", col.list.items);
 }

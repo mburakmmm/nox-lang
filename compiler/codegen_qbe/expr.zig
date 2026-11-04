@@ -305,7 +305,7 @@ pub fn internPinnedStringConst(self: *Codegen, s: []const u8) CodegenError![]con
 /// değişkeni/fonksiyon bulamadığı bir iç tutarsızlıktır — ör. modül-global ilklendiricisinde terfi
 /// etmemiş bir üst düzey değişken).
 noinline fn unresolvedIdentifier(self: *Codegen, name: []const u8) CodegenError {
-    std.debug.print("codegen: name '{s}' could not be resolved at this point (line {d}): it is not visible to codegen as a local/parameter, a module variable or a top-level function. In module-global initialisers this can mean the name refers to an unpromoted top-level variable\n", .{ name, self.current_raise_line });
+    self.diag_sink.print("codegen: name '{s}' could not be resolved at this point (line {d}): it is not visible to codegen as a local/parameter, a module variable or a top-level function. In module-global initialisers this can mean the name refers to an unpromoted top-level variable\n", .{ name, self.current_raise_line });
     return error.Unsupported;
 }
 

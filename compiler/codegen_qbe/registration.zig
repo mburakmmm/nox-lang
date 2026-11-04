@@ -4,6 +4,7 @@
 //! aşaması: diğer HER şeyden (deyim/ifade codegen'i DAHİL) ÖNCE çalışır.
 
 const std = @import("std");
+const report_sink = @import("../report_sink.zig");
 const reserved_symbols = @import("reserved_symbols.zig");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
@@ -864,7 +865,7 @@ fn promoteReferencedVars(a: std.mem.Allocator, refs: *const std.StringHashMapUnm
     return changed;
 }
 
-fn ensureGlobalsReady(a: std.mem.Allocator, expr: ast.Expr, reader: []const u8, ready: *const std.StringHashMapUnmanaged(void), var_index: *const std.StringHashMapUnmanaged(usize), promoted: *const std.StringHashMapUnmanaged(void)) CodegenError!void {
+fn ensureGlobalsReady(sink: report_sink.Sink, a: std.mem.Allocator, expr: ast.Expr, reader: []const u8, ready: *const std.StringHashMapUnmanaged(void), var_index: *const std.StringHashMapUnmanaged(usize), promoted: *const std.StringHashMapUnmanaged(void)) CodegenError!void {
     var refs: std.StringHashMapUnmanaged(void) = .empty;
     defer refs.deinit(a);
     var bound: std.StringHashMapUnmanaged(void) = .empty;
@@ -875,7 +876,7 @@ fn ensureGlobalsReady(a: std.mem.Allocator, expr: ast.Expr, reader: []const u8, 
         if (!var_index.contains(k.*)) continue;
         if (!promoted.contains(k.*)) continue;
         if (ready.contains(k.*)) continue;
-        std.debug.print("codegen: while preparing '{s}', the module variable '{s}', which has not been declared yet, is read; module variables seen by a function are initialised in declaration order\n", .{ reader, k.* });
+        sink.print("codegen: while preparing '{s}', the module variable '{s}', which has not been declared yet, is read; module variables seen by a function are initialised in declaration order\n", .{ reader, k.* });
         return error.GlobalInitOrder;
     }
 }
@@ -997,14 +998,14 @@ pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions:
             switch (stmt.kind) {
                 .var_decl => |v| {
                     if (!used_in_functions.contains(v.name)) continue;
-                    try ensureGlobalsReady(self.allocator, v.value, v.name, &ready, &var_index, &used_in_functions);
+                    try ensureGlobalsReady(self.diag_sink, self.allocator, v.value, v.name, &ready, &var_index, &used_in_functions);
                     try ready.put(self.allocator, v.name, {});
                 },
                 .assign => |asg| {
                     const root = exprRootIdent(asg.target) orelse continue;
                     if (!used_in_functions.contains(root)) continue;
-                    try ensureGlobalsReady(self.allocator, asg.target, root, &ready, &var_index, &used_in_functions);
-                    try ensureGlobalsReady(self.allocator, asg.value, root, &ready, &var_index, &used_in_functions);
+                    try ensureGlobalsReady(self.diag_sink, self.allocator, asg.target, root, &ready, &var_index, &used_in_functions);
+                    try ensureGlobalsReady(self.diag_sink, self.allocator, asg.value, root, &ready, &var_index, &used_in_functions);
                 },
                 .expr_stmt => |e| {
                     if (!exprIsPromotedMethodCall(e, &used_in_functions)) continue;
@@ -1013,7 +1014,7 @@ pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions:
                         .attribute => |attr| exprRootIdent(attr.obj.*) orelse continue,
                         else => continue,
                     };
-                    try ensureGlobalsReady(self.allocator, e, root, &ready, &var_index, &used_in_functions);
+                    try ensureGlobalsReady(self.diag_sink, self.allocator, e, root, &ready, &var_index, &used_in_functions);
                 },
                 else => {},
             }

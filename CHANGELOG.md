@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.151]
+
+### Eklendi
+
+- **Tarayıcıda çalışan Nox derleyicisi** (`docs/tools/browser-compiler.md`, spec 3.353): kaynak -> `.wasm` tamamen tarayıcıda/Node'da, sunucu ve yerel araç olmadan. Ön yüz `noxc-frontend.wasm` (`zig build wasm-compiler`, ~2 MB, stdlib gömülü) yerel `noxc` ile byte-birebir aynı LLVM IR üretir; arka uç clang + wasm-ld'nin WASM derlemesidir (`@yowasp/clang`, isteğe bağlı bağımlılık, tembel). JS API: `compiler/wasm_compiler.mjs` (`createNoxCompiler`, `createFrontend`, `compile`, `compileToIr`, `addFile`).
+- Sürümle birlikte `nox-web-compiler-<sürüm>.tar.gz` yayımlanır (ön yüz, JS, çalışma zamanı nesneleri).
+- `zig build wasm-frontend-test` (IR eşitliği, hata tanılamaları, bağlama planı), `scripts/wasm_frontend_corpus.py` (tüm korpus IR karşılaştırması), `scripts/web_compiler_e2e.mjs` (tam boru hattı, opt-in).
+
+### Değişti
+
+- İç yeniden düzenleme (davranış aynı, IR-diff testleri yeşil): `compiler/frontend.zig` (tip denetimi + IR), `compiler/wasm_link.zig` (WASM bağlama planı, `linkWasm` ile paylaşılır), `compiler/report_sink.zig` (tanılama hedefi), `module_loader.LoadEnv`, `syntax_report.parseSourceTo`, `codegen.generateModuleWithMetaSink`.
+
 ## [2.0.150]
 
 ### Eklendi

@@ -190,12 +190,30 @@ jobs:
           tar czf "${stage}.tar.gz" "$stage"
           shasum -a 256 "${stage}.tar.gz" > "${stage}.tar.gz.sha256"
 
+      # v2.0.151: tarayıcıda çalışan derleyici (spec §3.353) — hedef-bağımsızdır (wasm), bu yüzden yalnızca linux-x64 işinde bir kez paketlenir.
+      - name: Tarayıcı derleyicisini paketle
+        if: matrix.asset == 'linux-x64'
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME:-dev}"
+          web="nox-web-compiler-${version}"
+          zig build wasm-compiler -Doptimize=ReleaseFast
+          mkdir -p "$web/lib"
+          cp zig-out/lib/noxc-frontend.wasm "$web/"
+          cp compiler/wasm_compiler.mjs compiler/wasm_host.mjs "$web/"
+          cp zig-out/lib/noxrt-wasm32-freestanding*.o zig-out/lib/compiler-rt-wasm32*.a "$web/lib/"
+          cp docs/tools/browser-compiler.md "$web/README.md"
+          tar czf "${web}.tar.gz" "$web"
+          shasum -a 256 "${web}.tar.gz" > "${web}.tar.gz.sha256"
+
       - name: Yükle
         uses: softprops/action-gh-release@v2
         with:
           files: |
             nox-lang-*.tar.gz
             nox-lang-*.tar.gz.sha256
+            nox-web-compiler-*.tar.gz
+            nox-web-compiler-*.tar.gz.sha256
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

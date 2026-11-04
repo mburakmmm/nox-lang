@@ -28,9 +28,32 @@ const std = @import("std");
 const builtin = @import("builtin");
 const lexer = @import("lexer/lexer.zig");
 const syntax_report = @import("syntax_report.zig");
+const report_sink = @import("report_sink.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
 const project = @import("project.zig");
+
+/// Kaynak dosyalara erişim ve tanılama yazımı. Varsayılan: `io` üzerinden gerçek dosya sistemi + stderr (`noxc`, LSP). Gömülü kullanımda (tarayıcıdaki WASM ön yüzü, spec §3.353) çağıran
+/// bellek içi bir dosya tablosu (`exists_fn`/`read_fn`) ve kendi `Sink`ini verir; `io` orada kullanılmaz (`std.Io.failing`).
+pub const LoadEnv = struct {
+    io: std.Io,
+    ctx: ?*anyopaque = null,
+    exists_fn: ?*const fn (ctx: ?*anyopaque, path: []const u8) bool = null,
+    read_fn: ?*const fn (ctx: ?*anyopaque, a: std.mem.Allocator, path: []const u8) error{ FileNotFound, OutOfMemory }![]u8 = null,
+    sink: report_sink.Sink = report_sink.stderr,
+
+    fn exists(self: LoadEnv, path: []const u8) bool {
+        if (self.exists_fn) |f| return f(self.ctx, path);
+        if (comptime builtin.os.tag == .freestanding) return false;
+        if (std.Io.Dir.accessAbsolute(self.io, path, .{})) |_| return true else |_| return false;
+    }
+
+    fn read(self: LoadEnv, a: std.mem.Allocator, path: []const u8) ![]u8 {
+        if (self.read_fn) |f| return f(self.ctx, a, path);
+        if (comptime builtin.os.tag == .freestanding) return error.FileNotFound;
+        return std.Io.Dir.cwd().readFileAlloc(self.io, path, a, .limited(1024 * 1024));
+    }
+};
 
 pub const LoadError = error{ ModuleNotFound, UnknownImportAlias, SyntaxError } || lexer.LexError || parser.ParseError || std.Io.Dir.ReadFileAllocError;
 
@@ -47,7 +70,7 @@ pub const LoadError = error{ ModuleNotFound, UnknownImportAlias, SyntaxError } |
 /// `user_module`ü DEĞİŞTİRMEDEN döndürmez, HER ZAMAN en az `core.nox`u
 /// içeren YENİ bir modül döner.
 pub fn resolveImports(a: std.mem.Allocator, io: std.Io, user_module: ast.Module) LoadError!ast.Module {
-    return resolveImportsImpl(a, io, user_module, null, "stdlib", null);
+    return resolveImportsImpl(a, .{ .io = io }, user_module, null, "stdlib", null);
 }
 
 /// Faz Q.3 (bkz. docs/uretim-hazirlik-analizi.md, main.zig'in
@@ -60,7 +83,7 @@ pub fn resolveImports(a: std.mem.Allocator, io: std.Io, user_module: ast.Module)
 /// olduğundan sabit `"stdlib"` göreli kökünü kullanmaya DEVAM eder)
 /// DEĞİŞMEDEN bu fonksiyonun `stdlib_root = "stdlib"` özel durumudur.
 pub fn resolveImportsFrom(a: std.mem.Allocator, io: std.Io, user_module: ast.Module, stdlib_root: []const u8) LoadError!ast.Module {
-    return resolveImportsImpl(a, io, user_module, null, stdlib_root, null);
+    return resolveImportsImpl(a, .{ .io = io }, user_module, null, stdlib_root, null);
 }
 
 /// Faz O §P.6 (bkz. plan dosyası "Faz O" bölümü, nox-teknik-spesifikasyon.md
@@ -101,12 +124,17 @@ pub fn resolveProjectImports(
     stdlib_root: []const u8,
     project_root: ?[]const u8,
 ) LoadError!ast.Module {
-    return resolveImportsImpl(a, io, user_module, &alias_roots, stdlib_root, project_root);
+    return resolveImportsImpl(a, .{ .io = io }, user_module, &alias_roots, stdlib_root, project_root);
+}
+
+/// Gömülü kullanım için: kaynaklar `env`den (bellek içi tablo + `Sink`) okunur, proje/alias çözümü yoktur (yalnızca `nox.*` stdlib ve verilen sanal dosyalar).
+pub fn resolveImportsWithEnv(a: std.mem.Allocator, env: LoadEnv, user_module: ast.Module, stdlib_root: []const u8) LoadError!ast.Module {
+    return resolveImportsImpl(a, env, user_module, null, stdlib_root, null);
 }
 
 fn resolveImportsImpl(
     a: std.mem.Allocator,
-    io: std.Io,
+    env: LoadEnv,
     user_module: ast.Module,
     alias_roots: ?*const std.StringHashMapUnmanaged([]const u8),
     stdlib_root: []const u8,
@@ -116,12 +144,12 @@ fn resolveImportsImpl(
     var extra: std.ArrayListUnmanaged(ast.Stmt) = .empty;
 
     const core_path = try std.fmt.allocPrint(a, "{s}/nox/core.nox", .{stdlib_root});
-    const core_source = try std.Io.Dir.cwd().readFileAlloc(io, core_path, a, .limited(1024 * 1024));
+    const core_source = try env.read(a, core_path);
     const core_tokens = try lexer.tokenize(a, core_source);
     const core_module = try parser.parseModule(a, core_tokens);
     try extra.appendSlice(a, core_module.body);
 
-    try loadImportsRecursive(a, io, user_module.body, &loaded, &extra, alias_roots, stdlib_root, project_root, null, null);
+    try loadImportsRecursive(a, env, user_module.body, &loaded, &extra, alias_roots, stdlib_root, project_root, null, null);
 
     const combined = try a.alloc(ast.Stmt, extra.items.len + user_module.body.len);
     @memcpy(combined[0..extra.items.len], extra.items);
@@ -139,10 +167,6 @@ fn resolveImportsImpl(
     // (`@intFromPtr(&arg)`) BU birleştirmeden SONRA da GEÇERLİ kalır,
     // yeter ki haritanın KENDİSİ de birlikte TAŞINSIN.
     return .{ .body = combined, .expr_spans = user_module.expr_spans };
-}
-
-fn fileExistsAbsolute(io: std.Io, path: []const u8) bool {
-    if (std.Io.Dir.accessAbsolute(io, path, .{})) |_| return true else |_| return false;
 }
 
 /// Windows NT nesne adı `/` kabul etmez (`OBJECT_NAME_INVALID` paniği).
@@ -169,6 +193,7 @@ pub fn resolveImportFilePath(
     project_root: ?[]const u8,
 ) LoadError![]const u8 {
     if (segments.len == 0) return error.ModuleNotFound;
+    const env: LoadEnv = .{ .io = io };
     const is_nox_stdlib = std.mem.eql(u8, segments[0], "nox");
     if (alias_roots) |roots| {
         if (!is_nox_stdlib) {
@@ -179,14 +204,14 @@ pub fn resolveImportFilePath(
             if (project_root) |proot| {
                 const rel_path = try joinWith(a, segments, '/');
                 const candidate = try toNativePath(a, try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ proot, rel_path }));
-                if (fileExistsAbsolute(io, candidate)) return candidate;
+                if (env.exists(candidate)) return candidate;
             }
             return error.UnknownImportAlias;
         }
     }
     const rel_path = try joinWith(a, segments, '/');
     const path = try toNativePath(a, try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ stdlib_root, rel_path }));
-    if (!fileExistsAbsolute(io, path)) return error.ModuleNotFound;
+    if (!env.exists(path)) return error.ModuleNotFound;
     return path;
 }
 
@@ -204,7 +229,7 @@ pub fn resolveImportFilePath(
 /// kullanıcı modülü İçin (VE `nox.json`ı olmayan/geçersiz olan paketler İçin).
 fn loadImportsRecursive(
     a: std.mem.Allocator,
-    io: std.Io,
+    env: LoadEnv,
     stmts: []const ast.Stmt,
     loaded: *std.StringHashMapUnmanaged(void),
     out: *std.ArrayListUnmanaged(ast.Stmt),
@@ -264,7 +289,7 @@ fn loadImportsRecursive(
                     if (project_root) |proot| {
                         const rel_path = try joinWith(a, segments, '/');
                         const candidate = try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ proot, rel_path });
-                        if (fileExistsAbsolute(io, candidate)) break :blk candidate;
+                        if (env.exists(candidate)) break :blk candidate;
                     }
                     return error.UnknownImportAlias;
                 }
@@ -281,12 +306,12 @@ fn loadImportsRecursive(
         // KULLANILMAYA DEVAM EDERKEN bu belleği serbest bırakır — sallanan
         // işaretçi (use-after-free) ile sonuçlanır (ör. `registerFunc`de
         // "bilinmeyen tip: <çöp baytlar>" gibi bozuk hatalar).
-        const source = std.Io.Dir.cwd().readFileAlloc(io, file_path, a, .limited(1024 * 1024)) catch |e| switch (e) {
+        const source = env.read(a, file_path) catch |e| switch (e) {
             error.FileNotFound => return error.ModuleNotFound,
             else => return e,
         };
 
-        const stdlib_module = try syntax_report.parseSource(a, source, file_path);
+        const stdlib_module = try syntax_report.parseSourceTo(env.sink, a, source, file_path);
 
         // Faz NN.3: BU dosyanın (varsa) kendi paket kökünün KENDİ `nox.json`
         // adını best-effort okur (yok/geçersizse SESSİZCE yok sayılır —
@@ -294,7 +319,8 @@ fn loadImportsRecursive(
         // paketler) — bu, AŞAĞIDAKİ özyinelemeli çağrının "şu an bu paketin
         // İÇİNDEYİZ" bağlamını KURAR.
         const next_own_name: ?[]const u8, const next_own_root: ?[]const u8 = if (pkg_root) |root| blk: {
-            const manifest = project.loadManifest(a, io, root) catch break :blk .{ null, null };
+            if (comptime builtin.os.tag == .freestanding) break :blk .{ null, null }; // gömülü kullanımda paket manifesti yoktur
+            const manifest = project.loadManifest(a, env.io, root) catch break :blk .{ null, null };
             if (manifest.name.len == 0) break :blk .{ null, null };
             break :blk .{ manifest.name, root };
         } else .{ null, null };
@@ -302,7 +328,7 @@ fn loadImportsRecursive(
         // ÖNCE bu stdlib modülünün KENDİ import'larını özyinelemeli çöz
         // (transitif — bir stdlib modülü başka bir stdlib modülünü import
         // edebilir).
-        try loadImportsRecursive(a, io, stdlib_module.body, loaded, out, alias_roots, stdlib_root, project_root, next_own_name, next_own_root);
+        try loadImportsRecursive(a, env, stdlib_module.body, loaded, out, alias_roots, stdlib_root, project_root, next_own_name, next_own_root);
 
         // Bu modülün KENDİ üst-düzey `func_def`/`class_def` adlarını topla.
         var rename_map: std.StringHashMapUnmanaged([]const u8) = .empty;

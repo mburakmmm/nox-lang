@@ -1036,6 +1036,36 @@ pub fn build(b: *std.Build) void {
     wasm_rt_step.dependOn(addWasmRuntimeChain(b, wasm_optimize, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-threads", true, true, true));
     wasm_rt_step.dependOn(addWasmCompilerRt(b, "compiler-rt-wasm32", false));
     wasm_rt_step.dependOn(addWasmCompilerRt(b, "compiler-rt-wasm32-threads", true));
+    // v2.0.151 (spec §3.353): tarayıcıda çalışan Nox derleyicisinin ön yüzü (`compiler/wasm_compiler.zig`), stdlib gömülü, wasm32-freestanding.
+    var fc_install_step: *std.Build.Step = undefined;
+    {
+        const bundler = b.addExecutable(.{
+            .name = "bundle_stdlib",
+            .root_module = b.createModule(.{ .root_source_file = b.path("tools/bundle_stdlib.zig"), .target = b.graph.host, .optimize = .Debug }),
+        });
+        const bundle_run = b.addRunArtifact(bundler);
+        bundle_run.addArg("stdlib");
+        bundle_run.has_side_effects = false;
+        const stdlib_bundle_file = bundle_run.captureStdOut(.{});
+        const fc_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding, .abi = .none });
+        const abi_layout_wasm = b.createModule(.{ .root_source_file = b.path("shared/abi_layout.zig"), .target = fc_target, .optimize = .ReleaseSmall });
+        const fc_mod = b.createModule(.{
+            .root_source_file = b.path("compiler/wasm_compiler.zig"),
+            .target = fc_target,
+            .optimize = .ReleaseSmall,
+            .single_threaded = true,
+            .imports = &.{.{ .name = "abi_layout", .module = abi_layout_wasm }},
+        });
+        fc_mod.addAnonymousImport("stdlib_bundle", .{ .root_source_file = stdlib_bundle_file });
+        const fc_exe = b.addExecutable(.{ .name = "noxc-frontend", .root_module = fc_mod });
+        fc_exe.entry = .disabled;
+        fc_exe.rdynamic = true;
+        const fc_install = b.addInstallFile(fc_exe.getEmittedBin(), "lib/noxc-frontend.wasm");
+        fc_install.step.dependOn(&fc_exe.step);
+        const fc_step = b.step("wasm-compiler", "Tarayıcıda çalışan Nox derleyicisinin ön yüzünü (noxc-frontend.wasm) derler");
+        fc_step.dependOn(&fc_install.step);
+        fc_install_step = &fc_install.step;
+    }
     const mobile_rt_simulator = b.step("mobile-rt-simulator", "Build the iOS simulator noxrt object");
     mobile_rt_simulator.dependOn(simulator_rt);
     const mobile_rt_android = b.step("mobile-rt-android", "Build the Android noxrt objects");
@@ -2169,6 +2199,28 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&wasm_target_run.step);
     const wasm_test_step = b.step("wasm-test", "wasm32-wasi ve wasm32-freestanding duman testleri (node + zig gerekir) — 'test'in alt kümesi");
     wasm_test_step.dependOn(&wasm_target_run.step);
+
+    // v2.0.151 (spec §3.353): tarayıcıda çalışan derleyici ön yüzü, yerel `noxc` ile byte-birebir aynı IR'ı üretmeli.
+    {
+        const fe_options = b.addOptions();
+        fe_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
+        fe_options.addOption([]const u8, "frontend_wasm_path", "zig-out/lib/noxc-frontend.wasm");
+        fe_options.addOption([]const u8, "frontend_driver_path", "tests/golden/wasm_frontend_driver.mjs");
+        const fe_test_mod = b.createModule(.{
+            .root_source_file = b.path("tests/golden/wasm_frontend_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "build_options", .module = fe_options.createModule() }},
+        });
+        const fe_test = b.addTest(.{ .root_module = fe_test_mod });
+        fe_test.step.dependOn(b.getInstallStep());
+        fe_test.step.dependOn(wasm_rt_step);
+        fe_test.step.dependOn(fc_install_step);
+        const fe_run = addTimedTestRun(b, fe_test, win_test_timeout_s);
+        test_step.dependOn(&fe_run.step);
+        const fe_step = b.step("wasm-frontend-test", "Tarayıcı derleyicisinin ön yüzü yerel noxc ile aynı IR'ı üretiyor mu");
+        fe_step.dependOn(&fe_run.step);
+    }
 
     const wasm_corpus_mod = b.createModule(.{
         .root_source_file = b.path("tests/golden/wasm_corpus_test.zig"),

@@ -152,3 +152,7 @@ Komut satırında Node için `noxc run --target wasm32-freestanding-asyncify --a
 
 - **Nasıl çalışır.** Ağ çağrısı yapan fiber bekletilir, başka fiber'lar çalışır (`spawn` ile istekler paralel gider); hazır fiber kalmayınca modül çıkış bildirmeden host'a döner, host `fetch`leri bekler, sonuçları iletir ve `nox_host_resume()` ile programı sürdürür. Modüle hiçbir import eklenmez; host yalnızca dışa aktarımları (`nox_host_caps_set`, `nox_host_fetch_pending`, `nox_host_fetch_complete`, `nox_host_status`, `nox_host_resume`, `nox_host_alloc/free`) çağırır. Ayrıntı: spec §3.351. Kendi host'unu yazıyorsan `compiler/wasm_host.mjs`teki `runNox` döngüsü referanstır.
 - **Sınırlar.** Yalnızca `--asyncify` freestanding (askıya almak için fiber gerekir); düz freestanding, `--threads` ve `wasm32-wasi` kiplerinde istemci eskisi gibi `HttpCapabilityError` verir. Yanıt tümüyle tamponlanır: akışlı istemci (`stream_*`, `transfer`) desteklenmez ve yönlendirmeleri `fetch` izler. Başlık adları `fetch`in verdiği gibi küçük harflidir. Tarayıcıda CORS ve karışık-içerik kuralları sayfaya aittir. Zaman aşımı `AbortSignal.timeout` ile uygulanır.
+
+## Tarayıcıda derleme
+
+Derleyicinin kendisi de WASM olarak çalışır (sunucusuz playground, gömülü kod deneme alanı): bkz. [Tarayıcıda Nox derleyicisi](browser-compiler.md).

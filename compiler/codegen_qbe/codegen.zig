@@ -201,6 +201,7 @@
 
 const std = @import("std");
 const ast = @import("../parser/ast.zig");
+const report_sink = @import("../report_sink.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const async_thread_mod = @import("async_thread.zig");
@@ -1047,6 +1048,8 @@ pub const Codegen = struct {
         };
     }
 
+    /// Codegen iletilerinin yazıldığı yer (varsayılan stderr).
+    diag_sink: report_sink.Sink = report_sink.stderr,
     allocator: std.mem.Allocator,
     out: std.Io.Writer.Allocating,
     /// DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel
@@ -1743,7 +1746,12 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
 }
 
 pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8), class_ctors: []const decorators_mod.ClassCtorInfo, library_mode: bool, llvm_triple: []const u8) CodegenError![]u8 {
-    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile, .resolved_bases = resolved_bases, .library_mode = library_mode, .llvm_triple = llvm_triple };
+    return generateModuleWithMetaSink(allocator, module, extra_functions, generic_template_names, extra_classes, generic_class_template_names, debug_source_path, closure_infos, defer_synthetic_names, from_imports, functions_used_as_value, module_aliases, decorated_functions, backend, profile, explain_opts, callback_targets, resolved_bases, class_ctors, library_mode, llvm_triple, report_sink.stderr);
+}
+
+/// `generateModuleWithMeta` ile aynı; codegen iletileri (desteklenmeyen yapı vb.) `diag_sink`e yazılır (tarayıcıdaki WASM derleyici için stderr yoktur, spec §3.353).
+pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8), class_ctors: []const decorators_mod.ClassCtorInfo, library_mode: bool, llvm_triple: []const u8, diag_sink: report_sink.Sink) CodegenError![]u8 {
+    var gen: Codegen = .{ .diag_sink = diag_sink, .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile, .resolved_bases = resolved_bases, .library_mode = library_mode, .llvm_triple = llvm_triple };
     if (gen.backend == .llvm and llvm_triple.len > 0) {
         try gen.out.writer.print("target triple = \"{s}\"\n", .{llvm_triple});
     }
