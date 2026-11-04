@@ -54,6 +54,8 @@ What a handler returns and what the client functions return.
 `headers` are *added* to the request (the client also sends its own `Host`, `User-Agent`, `Accept-Encoding` …). Redirects are **not** followed: a 3xx response is returned as it is, so you decide whether to follow `Location` (and whether to forward `Authorization`). gzip/deflate response bodies are decoded
 automatically. A non-2xx status is **not** an error: inspect `status`. `HttpError` is raised when the request could not be made at all (connection refused, DNS failure, TLS failure) or when the body arrives incomplete (the connection closed before the announced `Content-Length`).
 
+On the WebAssembly targets there are no sockets of the module's own: the network is a capability the host grants (default off). Without it, client calls raise `HttpCapabilityError`, a subclass of `HttpError`, so a plain `except HttpError` also catches it; see [WebAssembly](../tools/wasm.md#yetenek-modeli-ve---deny-capability).
+
 ```nox
 import nox.http
 from nox.http import HttpResponse, HttpError

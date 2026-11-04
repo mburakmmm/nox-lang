@@ -99,7 +99,7 @@ In a terminal the download line is a live bar (percentage, size, speed, estimate
 
 `--vfs-dir <dir>` (with `noxc run --target wasm32-freestanding`) loads a directory into the module's virtual file system before the run and writes it back on exit, so `nox.fs` and file-based `nox.sqlite` persist; see [WebAssembly](wasm.md#kalıcı-sanal-dosya-sistemi).
 
-`--deny-capability <list>` (also `--deny-capability=<list>`, valid with every subcommand) makes the compiler reject any program that imports a module needing one of the listed capabilities, or calls a function marked `@capability.requires` for it: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. It is meant for environments that compile untrusted code (a playground, a CI sandbox) and works on every target; see [WebAssembly](wasm.md#yetenek-modeli-ve-deny-capability).
+`--deny-capability <list>` (also `--deny-capability=<list>`, valid with every subcommand) makes the compiler reject any program that imports a module needing one of the listed capabilities, or calls a function marked `@capability.requires` for it: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. It is meant for environments that compile untrusted code (a playground, a CI sandbox) and works on every target; see [WebAssembly](wasm.md#yetenek-modeli-ve---deny-capability).
 
 ## Environment
 

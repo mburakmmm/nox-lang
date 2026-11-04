@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.160]
+
+### Düzeltildi
+
+- **CI (v2.0.144'ten beri kırmızıydı):** `--threads` ağ testleri `wasm-opt` yokken atlanmıyordu; Windows'ta Node'un WASI'si `fd_readdir` uygulamadığından `read_dir` kullanan WASI fixture'ları Windows ana makinede atlanır (gerçek bir Windows makinede doğrulandı, `docs/tools/wasm.md` Sınırlar'da belgelendi); belge denetimi: kırık `#yetenek-modeli-ve---deny-capability` bağlantıları ve `stdlib/http.md`de belgelenmemiş `HttpCapabilityError`.
+- **CI kapsamı:** Linux ve macOS işlerine `binaryen` kurulur; böylece `--asyncify` host yeteneği testleri (fetch, TCP, process, serve...) CI'de atlanmak yerine gerçekten koşar.
+
 ## [2.0.159]
 
 ### Eklendi

@@ -217,6 +217,18 @@ jobs:
           tar xf /tmp/zig.tar.xz -C /tmp
           echo "/tmp/zig-${{ matrix.zig_arch }}-0.16.0" >>"$GITHUB_PATH"
 
+      # v2.0.160: WASM `--asyncify` testleri (`wasm-opt --asyncify`: fetch/TCP/postgres/mysql/process/serve host
+      # yetenekleri) `wasm-opt` (binaryen) PATH'te yoksa SESSİZCE atlanıyordu — CI'de bu test grubu hiç koşmuyordu.
+      - name: binaryen kur (macOS)
+        if: runner.os == 'macOS'
+        run: brew install binaryen
+
+      - name: binaryen kur (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binaryen
+
       - name: qbe kur (macOS)
         if: runner.os == 'macOS'
         run: brew install qbe
