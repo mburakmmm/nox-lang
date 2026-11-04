@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const host = @import("wasm_host.zig");
+const vfs = @import("wasm_vfs.zig");
 
 const header_size: usize = 16;
 
@@ -143,4 +144,54 @@ export fn nox_sqlite_rt_random(buf: [*]u8, n: c_int) callconv(.c) c_int {
 /// Duvar saati, Unix milisaniye cinsinden (`nox_host.clock_ms(0)`).
 export fn nox_sqlite_rt_now_ms() callconv(.c) i64 {
     return host.clock_ms(0);
+}
+
+// ---- Sanal dosya sistemi köprüsü (`runtime/wasm_vfs.zig`): dosya tabanlı veritabanları için ------------------------------------------------------------------
+
+/// `mode`: 0 oku, 1 yaz (keser/oluşturur), 2 sona ekle, 3 oku+yaz (oluşturur, kesmez). Hata `-1`.
+export fn nox_vfs_open(path: [*:0]const u8, mode: c_int) callconv(.c) c_int {
+    const m: vfs.Mode = switch (mode) {
+        0 => .read,
+        1 => .write,
+        2 => .append,
+        else => .read_write,
+    };
+    return vfs.open(std.mem.span(path), m);
+}
+
+export fn nox_vfs_close(fd: c_int) callconv(.c) void {
+    vfs.close(fd);
+}
+
+/// `off` konumundan okur; dönen sayı `n`den küçükse dosya sonuna gelinmiştir. Hata `-1`.
+export fn nox_vfs_pread(fd: c_int, buf: [*]u8, n: c_int, off: i64) callconv(.c) c_int {
+    if (n < 0 or off < 0) return -1;
+    return @intCast(vfs.pread(fd, buf[0..@intCast(n)], @intCast(off)));
+}
+
+export fn nox_vfs_pwrite(fd: c_int, buf: [*]const u8, n: c_int, off: i64) callconv(.c) c_int {
+    if (n < 0 or off < 0) return -1;
+    return @intCast(vfs.pwrite(fd, buf[0..@intCast(n)], @intCast(off)));
+}
+
+export fn nox_vfs_truncate(fd: c_int, size: i64) callconv(.c) c_int {
+    if (size < 0) return -1;
+    return if (vfs.truncate(fd, @intCast(size))) 0 else -1;
+}
+
+/// Açık dosyanın boyutu (bayt); hata `-1`.
+export fn nox_vfs_size(fd: c_int) callconv(.c) i64 {
+    const info = vfs.fstat(fd) orelse return -1;
+    return info.size;
+}
+
+/// `0` başarı, `-1` yok/dizin.
+export fn nox_vfs_remove(path: [*:0]const u8) callconv(.c) c_int {
+    return if (vfs.remove(std.mem.span(path))) 0 else -1;
+}
+
+/// Dosya (dizin değil) varsa `1`.
+export fn nox_vfs_exists(path: [*:0]const u8) callconv(.c) c_int {
+    const info = vfs.stat(std.mem.span(path)) orelse return 0;
+    return if (info.is_dir) 0 else 1;
 }

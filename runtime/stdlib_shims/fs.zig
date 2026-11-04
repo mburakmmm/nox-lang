@@ -29,7 +29,17 @@ const http_client = if (@import("builtin").cpu.arch.isWasm()) @import("shim_util
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
 const bridge = @import("../async_rt/bridge.zig");
-const embed = @import("../embed.zig");
+/// wasm32-freestanding'de gerçek işletim sistemi yoktur: dosya işlemleri çalışma zamanının bellek içi sanal dosya sistemine (`runtime/wasm_vfs.zig`, spec §3.349) gider.
+const is_vfs = builtin.cpu.arch.isWasm() and builtin.os.tag == .freestanding;
+const vfs = if (is_vfs) @import("../wasm_vfs.zig") else struct {};
+/// `embed.zig` (gömme yol politikası, `realpath`) freestanding'de derlenmez; orada gömme hedefi de yoktur ve tüm yollar sanal dosya sistemine aittir.
+const embed = if (is_vfs) struct {
+    fn allowsPath(rt: ?*anyopaque, path: ?[*:0]const u8) bool {
+        _ = rt;
+        _ = path;
+        return true;
+    }
+} else @import("../embed.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
@@ -169,6 +179,10 @@ fn androidFstat(fd: c_int) ?FileInfo {
 }
 
 fn fstatCompat(fd: c_int) ?FileInfo {
+    if (comptime is_vfs) {
+        const info = vfs.fstat(fd) orelse return null;
+        return .{ .size = @intCast(info.size), .mtime_sec = @divFloor(info.mtime_ms, 1000), .mtime_nsec = @mod(info.mtime_ms, 1000) * 1_000_000 };
+    }
     if (builtin.os.tag == .windows) {
         const size = WinFile._filelengthi64(fd);
         if (size < 0) return null;
@@ -217,11 +231,13 @@ fn oFlagsWrite(extra: OExtra) std.c.O {
 }
 
 fn openFileRead(path: [*:0]const u8) c_int {
+    if (comptime is_vfs) return vfs.open(std.mem.span(path), .read);
     if (builtin.os.tag == .windows) return WinFile._open(path, WinFile.O_RDONLY | WinFile.O_BINARY, 0);
     return std.c.open(path, oFlagsRead(.{}), @as(c_uint, 0));
 }
 
 fn openFileWrite(path: [*:0]const u8, append: bool) c_int {
+    if (comptime is_vfs) return vfs.open(std.mem.span(path), if (append) .append else .write);
     if (builtin.os.tag == .windows) {
         const flags = WinFile.O_WRONLY | WinFile.O_CREAT | WinFile.O_BINARY | (if (append) WinFile.O_APPEND else WinFile.O_TRUNC);
         return WinFile._open(path, flags, 0o644);
@@ -231,6 +247,7 @@ fn openFileWrite(path: [*:0]const u8, append: bool) c_int {
 }
 
 fn readFd(fd: c_int, buf: []u8) isize {
+    if (comptime is_vfs) return vfs.read(fd, buf);
     if (builtin.os.tag == .windows) {
         const n = WinFile._read(fd, buf.ptr, @intCast(@min(buf.len, std.math.maxInt(c_uint))));
         return @intCast(n);
@@ -239,6 +256,7 @@ fn readFd(fd: c_int, buf: []u8) isize {
 }
 
 fn writeFd(fd: c_int, buf: []const u8) isize {
+    if (comptime is_vfs) return vfs.write(fd, buf);
     if (builtin.os.tag == .windows) {
         const n = WinFile._write(fd, buf.ptr, @intCast(@min(buf.len, std.math.maxInt(c_uint))));
         return @intCast(n);
@@ -247,6 +265,7 @@ fn writeFd(fd: c_int, buf: []const u8) isize {
 }
 
 fn closeFd(fd: c_int) void {
+    if (comptime is_vfs) return vfs.close(fd);
     if (builtin.os.tag == .windows) {
         _ = WinFile._close(fd);
     } else {
@@ -393,6 +412,7 @@ export fn nox_fs_append_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, conten
 export fn nox_fs_exists_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) i32 {
     if (!embed.allowsPath(rt, path)) return 0;
     const p = path orelse return 0;
+    if (comptime is_vfs) return if (vfs.stat(std.mem.span(p)) != null) 1 else 0;
     return if (std.c.access(p, std.c.F_OK) == 0) 1 else 0;
 }
 
@@ -406,6 +426,7 @@ export fn nox_fs_exists_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) 
 export fn nox_fs_is_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) i32 {
     if (!embed.allowsPath(rt, path)) return 0;
     const p = path orelse return 0;
+    if (comptime is_vfs) return if (vfs.stat(std.mem.span(p))) |info| @intFromBool(info.is_dir) else 0;
     if (builtin.os.tag == .windows) {
         const attrs = WinFile.GetFileAttributesA(p);
         if (attrs == WinFile.INVALID_FILE_ATTRIBUTES) return 0;
@@ -424,6 +445,7 @@ export fn nox_fs_is_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) 
 export fn nox_fs_is_file_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) i32 {
     if (!embed.allowsPath(rt, path)) return 0;
     const p = path orelse return 0;
+    if (comptime is_vfs) return if (vfs.stat(std.mem.span(p))) |info| @intFromBool(!info.is_dir) else 0;
     if (std.c.access(p, std.c.F_OK) != 0) return 0;
     return if (nox_fs_is_dir_raw(rt, p) == 0) 1 else 0;
 }
@@ -460,6 +482,17 @@ export fn nox_fs_stat_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) vo
         fsLastOkPtr().* = false;
         return;
     };
+    if (comptime is_vfs) {
+        // Dizinler de sorgulanabilir (POSIX'te bir dizini `open(O_RDONLY)` ile açıp `fstat` etmek de çalışır).
+        const info = vfs.stat(std.mem.span(p)) orelse {
+            fsLastOkPtr().* = false;
+            return;
+        };
+        fsLastSizePtr().* = info.size;
+        fsLastMtimePtr().* = info.mtime_ms;
+        fsLastOkPtr().* = true;
+        return;
+    }
     const fd = openFileRead(p);
     if (fd < 0) {
         fsLastOkPtr().* = false;
@@ -495,6 +528,11 @@ export fn nox_fs_stat_mtime_ms_raw() callconv(.c) i64 {
 /// `FindNextFileA`/`FindClose` kullanılır (Win32'nin KENDİ dizin-listeleme
 /// API'si, `path\*` joker deseni GEREKTİRİR).
 fn collectDirNames(path: [*:0]const u8, names: *std.ArrayListUnmanaged([]const u8)) !void {
+    if (comptime is_vfs) {
+        // `wasm_vfs` adları `page_allocator` ile tahsis eder (bu dosyanın serbest bırakma yoluyla aynı).
+        if (!vfs.readDir(std.mem.span(path), names)) return error.OpenDirFailed;
+        return;
+    }
     if (builtin.os.tag == .windows) {
         // `path` bu fonksiyonun C sözleşmesidir: Linux `opendir` gibi HAM
         // bir NUL-sonlu dizgi. `nox_str_slice` işaretçinin 8 bayt ÖNCESİNİ
@@ -637,6 +675,10 @@ export fn nox_fs_rename_raw(rt: ?*anyopaque, old: ?[*:0]const u8, new: ?[*:0]con
         fsLastOkPtr().* = false;
         return;
     };
+    if (comptime is_vfs) {
+        fsLastOkPtr().* = vfs.rename(std.mem.span(o), std.mem.span(n));
+        return;
+    }
     if (comptime builtin.os.tag == .windows) {
         // C `rename` Windows'ta var olan hedefin üzerine YAZMAZ (POSIX'ten farklı); `write_string_atomic` ve `rename` aynı anlamı taşısın diye
         // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH kullanılır. Hedef bir dizinse yine başarısız olur.
@@ -658,6 +700,10 @@ export fn nox_fs_remove_file_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv
         fsLastOkPtr().* = false;
         return;
     };
+    if (comptime is_vfs) {
+        fsLastOkPtr().* = vfs.remove(std.mem.span(p));
+        return;
+    }
     fsLastOkPtr().* = std.c.unlink(p) == 0;
 }
 
@@ -670,6 +716,10 @@ export fn nox_fs_create_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(
         fsLastOkPtr().* = false;
         return;
     };
+    if (comptime is_vfs) {
+        fsLastOkPtr().* = vfs.createDir(std.mem.span(p));
+        return;
+    }
     fsLastOkPtr().* = std.c.mkdir(p, 0o755) == 0;
 }
 
@@ -763,7 +813,9 @@ export fn nox_fs_seek_raw(fd: i64, offset: i64) callconv(.c) i64 {
         fsLastOkPtr().* = false;
         return -1;
     }
-    const pos: i64 = if (builtin.os.tag == .windows)
+    const pos: i64 = if (comptime is_vfs)
+        vfs.seek(@intCast(fd), offset)
+    else if (builtin.os.tag == .windows)
         WinFile._lseeki64(@intCast(fd), offset, 0)
     else
         @intCast(std.c.lseek(@intCast(fd), @intCast(offset), std.c.SEEK.SET));

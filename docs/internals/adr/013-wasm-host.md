@@ -21,7 +21,7 @@ Durum: kabul (kullanıcı kararı: Nox'a özel import ad alanı). `--target wasm
 Host, `nox_host_abi_version()`ı okuyup desteklemediği bir sürümü reddeder. Sürüm artışı kırıcı değişikliktir (yeni import eklemek değildir: bilinmeyen import host'ta tanımlı değilse modül yüklenmez, bu da açık bir hatadır).
 - **Çekirdek ayırıcı**: freestanding çıplak donanım değildir; `std.heap.wasm_allocator` (`memory.grow`) ile `nox_runtime_init_with_allocator` yolu kullanılır (`asap.zig`).
 - **libc yerine**: `printf` (yer tutucular `%lld %llu %d %u %s %c %g %f %%`), `strcmp`, ve eksik libm (`atan2`, `tan`) `wasm_libc.zig`dedir; kalan matematik Zig compiler-rt'den gelir. `from "m"` bildirimleri için `-lm` verilmez.
-- **Ortam**: işletim sistemi yoktur. `nox.os.getenv`/`set_var` modüle özel, başlangıçta boş bir tabloyla çalışır; `arg(0)` `"nox"`, `current_dir()` `"/"`. Dosya sistemi yoktur: `nox.fs` derleme zamanında reddedilir (ve ağ/süreç modülleri ADR-012'deki gibi).
+- **Ortam**: işletim sistemi yoktur. `nox.os.getenv`/`set_var` modüle özel, başlangıçta boş bir tabloyla çalışır; `arg(0)` `"nox"`, `current_dir()` `"/"`. Gerçek dosya sistemi yoktur; v2.0.147'den beri `nox.fs` ve dosya tabanlı `nox.sqlite` çalışma zamanının bellek içi sanal dosya sistemi üzerinde çalışır (`runtime/wasm_vfs.zig`; host import'u gerekmez, ömrü program ömrüdür, `/` ve `/tmp` başlangıçta vardır). Ağ/süreç modülleri ADR-012'deki gibi.
 - **Çalıştırıcı**: `compiler/wasm_host.mjs` tek dosyalık, bağımlılıksız ES modülüdür (Node CLI + tarayıcı için `createHost`/`runNox`). `noxc` bunu gömer; `noxc run --target wasm32-freestanding` onu `node` ile çalıştırır. Nexus Engine gibi başka bir host aynı tabloyu uygular.
 
 ## Reddedilen

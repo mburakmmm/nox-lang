@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.147]
+
+### Eklendi
+
+- **wasm32-freestanding'de `nox.fs` artık çalışır:** çalışma zamanının içinde yaşayan bellek içi sanal dosya sistemi (`runtime/wasm_vfs.zig`). Host'a import eklenmez, gerçek diske yazılmaz, `--threads` kipinde iş parçacıkları arasında paylaşılır; `/` ve `/tmp` başlangıçta vardır, göreli yollar `/` altında çözülür. `read_dir`, `rename` (dosya/dizin), `copy`, akışlı okuma/yazma, `metadata` dahil tüm `nox.fs` yüzeyi (spec 3.349).
+- **wasm32-freestanding'de dosya tabanlı `nox.sqlite`:** SQLite artık sanal dosya sisteminde gerçek bir VFS ile çalışır (kapat/yeniden aç kalıcılığı, journal, adsız geçici dosyalar).
+- Yeni fixture'lar `fs_tree_semantics`, `sqlite_file_roundtrip`, `fs_written_by_threads`; `wasm_vfs.zig` için 7 birim testi.
+
+### Değişti
+
+- `--deny-capability filesystem` wasm32-freestanding'de de `nox.fs`i yasaklar (playground için). `wasm32-freestanding` için "`nox.fs` derleme zamanında reddedilir" testi, sanal dosya sistemi testiyle değiştirildi. `docs/tools/wasm.md`, ADR-013, ADR-016, `docs/stdlib/fs.md`.
+
 ## [2.0.146]
 
 ### Eklendi

@@ -54,7 +54,7 @@ noxc build --target wasm32-freestanding prog.nox -o prog.wasm
 noxc run   --target wasm32-freestanding prog.nox          # node ile (compiler/wasm_host.mjs)
 ```
 
-WASI ve libc olmadan, tarayıcıya ya da gömülü bir host'a uygun bir modül üretir. Modül dış dünyayı yalnızca `nox_host` import'larıyla görür: `write`, `read`, `clock_ms`, `random_fill`, `sleep_ms`, `exit` ([ADR-013](../internals/adr/013-wasm-host.md)). Dil ve stdlib `wasm32-wasi` ile aynıdır; farklar: `nox.fs` yok (dosya sistemi yok), ortam değişkenleri boş başlar (`set_var` modüle özel), `arg(0)` `"nox"`.
+WASI ve libc olmadan, tarayıcıya ya da gömülü bir host'a uygun bir modül üretir. Modül dış dünyayı yalnızca `nox_host` import'larıyla görür: `write`, `read`, `clock_ms`, `random_fill`, `sleep_ms`, `exit` ([ADR-013](../internals/adr/013-wasm-host.md)). Dil ve stdlib `wasm32-wasi` ile aynıdır; farklar: `nox.fs` gerçek diske değil, çalışma zamanının bellek içi sanal dosya sistemine yazar (aşağıya bakın), ortam değişkenleri boş başlar (`set_var` modüle özel), `arg(0)` `"nox"`.
 
 Tarayıcıda ya da kendi host'unda çalıştırmak için `compiler/wasm_host.mjs` içindeki `createHost` kullanılır:
 
@@ -112,4 +112,10 @@ NOX_POOL_WORKERS=4 noxc run --target wasm32-wasi --threads prog.nox
 
 ## SQLite
 
-`nox.sqlite` her WASM hedefinde derlenir; SQLite kütüphanesi programa statik bağlanır (yalnızca `nox.sqlite` kullanan programlar ~700 KB büyür). `wasm32-wasi`'de dosya tabanlı veritabanları host'un ön-açtığı dizinlerde çalışır (`wasmtime run --dir=. app.wasm`) ve çalıştırmalar arasında kalıcıdır; kilitleme yoktur (tek süreç varsayımı). `wasm32-freestanding`'de şimdilik yalnızca bellek-içi (`":memory:"`) veritabanları çalışır.
+`nox.sqlite` her WASM hedefinde derlenir; SQLite kütüphanesi programa statik bağlanır (yalnızca `nox.sqlite` kullanan programlar ~700 KB büyür). `wasm32-wasi`'de dosya tabanlı veritabanları host'un ön-açtığı dizinlerde çalışır (`wasmtime run --dir=. app.wasm`) ve çalıştırmalar arasında kalıcıdır; kilitleme yoktur (tek süreç varsayımı). `wasm32-freestanding`'de şimdilik dosya tabanlı veritabanları sanal dosya sisteminde yaşar (aşağıya bakın).
+
+## Sanal dosya sistemi (wasm32-freestanding)
+
+`wasm32-freestanding` modülünde işletim sistemi yoktur; `nox.fs` ve dosya tabanlı `nox.sqlite` çalışma zamanının doğrusal belleğinde yaşayan bir **bellek içi sanal dosya sistemine** gider. Host'a hiçbir import eklenmez, gerçek diske ya da sunucuya hiçbir şey yazılmaz (playground için güvenli). Başlangıçta `/` ve `/tmp` vardır; göreli yollar `/` altında çözülür, `..` kökün üstüne çıkmaz. Dosya sistemi program ömrü boyunca yaşar, çıkışta kaybolur; `--threads` kipinde iş parçacıkları arasında paylaşılır. `remove_file` açık bir tanıtıcı varken bile güvenlidir (POSIX `unlink` gibi). Sınırlar: sembolik bağ, izin biti ve dizin silme yoktur (`nox.fs` zaten sunmaz); `rename` bir dizini başka bir dizinin üstüne taşıyamaz.
+
+Kalıcılık ya da gerçek bir dizine eşleme gerektiren host'lar için ileride `nox_host`a isteğe bağlı `fs_*` import'ları eklenebilir; bu kırıcı olmaz. `wasm32-wasi`'de dosya işlemleri ise WASI'nin ön-açılmış dizinlerine (`.` ve `/tmp`) gider.

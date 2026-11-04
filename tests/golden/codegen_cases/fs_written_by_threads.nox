@@ -1,0 +1,33 @@
+# Birden çok iş parçacığı aynı dosya sistemine yazar; ana iş parçacığı hepsini görür.
+# (wasm32-freestanding-threads'te dosya sistemi iş parçacıkları arasında paylaşılan sanal dosya sistemidir.)
+import nox.fs
+import nox.thread
+
+async def writer(i: int) -> int:
+    n: int = 0
+    while n < 20:
+        nox.fs.append_string("/tmp/nox_golden_fs_thr_" + str(i) + ".txt", str(i))
+        n = n + 1
+    return i
+
+a: int = 0
+while a < 4:
+    if nox.fs.exists("/tmp/nox_golden_fs_thr_" + str(a) + ".txt"):
+        nox.fs.remove_file("/tmp/nox_golden_fs_thr_" + str(a) + ".txt")
+    a = a + 1
+
+h0: ThreadHandle[int] = nox.thread.start(writer, 0)
+h1: ThreadHandle[int] = nox.thread.start(writer, 1)
+h2: ThreadHandle[int] = nox.thread.start(writer, 2)
+h3: ThreadHandle[int] = nox.thread.start(writer, 3)
+r0: int = await h0.join()
+r1: int = await h1.join()
+r2: int = await h2.join()
+r3: int = await h3.join()
+
+k: int = 0
+while k < 4:
+    path: str = "/tmp/nox_golden_fs_thr_" + str(k) + ".txt"
+    print(len(nox.fs.read_to_string(path)), nox.fs.read_to_string(path)[0])
+    nox.fs.remove_file(path)
+    k = k + 1

@@ -60,6 +60,7 @@ pub const strings_shim = @import("stdlib_shims/strings.zig");
 pub const math_shim = @import("stdlib_shims/math.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
+pub const wasm_vfs = @import("wasm_vfs.zig");
 pub const path_shim = @import("stdlib_shims/path.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
 pub const json_shim = @import("stdlib_shims/json.zig");

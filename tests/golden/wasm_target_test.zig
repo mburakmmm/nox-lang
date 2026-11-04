@@ -200,8 +200,15 @@ test "wasm32-freestanding: nox_host stdout/stderr, ortam tablosu, argv[0], libm"
     try expectGoldenOn(.freestanding, "mathx_basic", @embedFile("codegen_cases/mathx_basic.nox"), @embedFile("codegen_cases/mathx_basic.expected"));
 }
 
-test "wasm32-freestanding: nox.fs derleme zamanında reddedilir (dosya sistemi yok), wasi'de çalışır" {
-    try expectRejectedOn(.freestanding, "import nox.fs\nprint(1)\n", "cannot be used on the wasm32-freestanding target");
+// v2.0.147 (spec §3.349): wasm32-freestanding'de `nox.fs` çalışma zamanının bellek içi sanal dosya sistemi üzerinde ÇALIŞIR (host import'u gerekmez). Tüm `fs_*` fixture'ları ve
+// dosya tabanlı `nox.sqlite` hem native hem 6 WASM hedefinde aynı çıktıyı verir; iş parçacıklı kiplerde sanal dosya sistemi paylaşılır.
+test "wasm: nox.fs sanal dosya sistemi (freestanding) ve dosya tabanlı sqlite" {
+    inline for (.{ wasm_helpers.Target.wasi, .freestanding, .wasi_asyncify, .freestanding_asyncify, .wasi_threads, .freestanding_threads }) |t| {
+        try expectGoldenOn(t, "fs_tree_semantics", @embedFile("codegen_cases/fs_tree_semantics.nox"), @embedFile("codegen_cases/fs_tree_semantics.expected"));
+        try expectGoldenOn(t, "fs_new_operations", @embedFile("codegen_cases/fs_new_operations.nox"), @embedFile("codegen_cases/fs_new_operations.expected"));
+        try expectGoldenOn(t, "fs_streaming", @embedFile("codegen_cases/fs_streaming.nox"), @embedFile("codegen_cases/fs_streaming.expected"));
+        try expectGoldenOn(t, "sqlite_file_roundtrip", @embedFile("codegen_cases/sqlite_file_roundtrip.nox"), @embedFile("codegen_cases/sqlite_file_roundtrip.expected"));
+    }
 }
 
 test "wasm32 --asyncify: gerçek fiber askıya alma (iç içe benzetimin deadlock sınırı yok)" {
@@ -241,6 +248,7 @@ fn threadsSmoke(t: wasm_helpers.Target) !void {
     try expectGoldenOn(t, "async_task_churn_long", @embedFile("codegen_cases/async_task_churn_long.nox"), @embedFile("codegen_cases/async_task_churn_long.expected"));
     try expectGoldenOn(t, "thread_channel_backpressure", @embedFile("codegen_cases/thread_channel_backpressure.nox"), @embedFile("codegen_cases/thread_channel_backpressure.expected"));
     try expectGoldenOn(t, "class_reference_cycle_collected", @embedFile("codegen_cases/class_reference_cycle_collected.nox"), @embedFile("codegen_cases/class_reference_cycle_collected.expected"));
+    try expectGoldenOn(t, "fs_written_by_threads", @embedFile("codegen_cases/fs_written_by_threads.nox"), @embedFile("codegen_cases/fs_written_by_threads.expected"));
 }
 
 test "wasm32 --threads: yalnızca wasm32-wasi ve wasm32-freestanding hedeflerinde geçerlidir" {

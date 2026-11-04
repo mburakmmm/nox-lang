@@ -1,0 +1,29 @@
+import nox.sqlite
+import nox.fs
+from nox.sqlite import Connection
+from nox.db import Row
+
+# Dosya tabanlı veritabanı: kapatılıp yeniden açılınca veri kalır. (wasm32-freestanding'de dosya bellek içi sanal dosya sistemindedir.)
+path: str = "/tmp/nox_golden_sqlite_file.db"
+if nox.fs.exists(path):
+    nox.fs.remove_file(path)
+
+conn: Connection = nox.sqlite.open(path)
+conn.execute("CREATE TABLE k (id INTEGER, v TEXT)")
+conn.execute("INSERT INTO k VALUES (1, 'one')")
+conn.execute("INSERT INTO k VALUES (2, 'two')")
+conn.close()
+print(nox.fs.exists(path), nox.fs.metadata(path).size > 0)
+
+c2: Connection = nox.sqlite.open(path)
+rows: list[Row] = c2.query("SELECT id, v FROM k ORDER BY id")
+for r in rows:
+    print(r.get_int(0), r.get_str(1))
+c2.execute("DELETE FROM k WHERE id = 1")
+c2.close()
+
+c3: Connection = nox.sqlite.open(path)
+print(len(c3.query("SELECT id FROM k")))
+c3.close()
+nox.fs.remove_file(path)
+print(nox.fs.exists(path))
