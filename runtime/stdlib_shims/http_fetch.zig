@@ -36,10 +36,10 @@ var g_next_id: u32 = 1;
 var g_reqs: std.ArrayListUnmanaged(*Request) = .empty;
 
 /// İstek türü (host'a giden kaydın `kind` alanı): 0 tam yanıt `fetch`i, 1 akış açma (başlıklar gelince döner, gövde host'ta okuyucuda kalır), 2 akıştan bir parça okuma,
-/// 3 akışı kapatma (yanıtsız, "detached").
-const Kind = enum(u32) { fetch = 0, stream_open = 1, stream_read = 2, stream_close = 3 };
+/// 3 akışı kapatma (yanıtsız, "detached"), 4-7 WebSocket (`websocket_wasm.zig`): açma, gönderme (yanıtsız), alma, kapatma (yanıtsız).
+pub const Kind = enum(u32) { fetch = 0, stream_open = 1, stream_read = 2, stream_close = 3, ws_open = 4, ws_send = 5, ws_recv = 6, ws_close = 7 };
 
-const Request = struct {
+pub const Request = struct {
     id: u32,
     kind: Kind = .fetch,
     /// `stream_read`/`stream_close`: hedef akışın host kimliği (açan `stream_open` isteğinin `id`si).
@@ -131,7 +131,7 @@ fn destroyRequest(r: *Request) void {
     gpa.destroy(r);
 }
 
-const Spec = struct {
+pub const Spec = struct {
     kind: Kind = .fetch,
     stream: u32 = 0,
     arg: u32 = 0,
@@ -147,7 +147,7 @@ fn clampMs(ms: i64) u32 {
 }
 
 /// İsteği tabloya yazar (kopyalar). Tahsis hatasında `null`.
-fn submit(spec: Spec, detached: bool) ?*Request {
+pub fn submit(spec: Spec, detached: bool) ?*Request {
     const method = gpa.dupe(u8, spec.method) catch return null;
     const url = gpa.dupe(u8, spec.url) catch {
         gpa.free(method);
@@ -175,7 +175,7 @@ fn submit(spec: Spec, detached: bool) ?*Request {
         .id = g_next_id,
         .kind = spec.kind,
         .stream = spec.stream,
-        .arg = if (spec.kind == .stream_read) spec.arg else clampMs(spec.timeout_ms),
+        .arg = if (spec.kind == .stream_read or spec.kind == .ws_recv) spec.arg else clampMs(spec.timeout_ms),
         .detached = detached,
         .method = method,
         .url = url,
@@ -196,7 +196,7 @@ fn submit(spec: Spec, detached: bool) ?*Request {
 }
 
 /// Sonuç gelene kadar bekler (fiber ise `suspendForHost`, ana akış ise doğrudan `hostSuspend`), isteği tablodan çıkarır ve yanıtı döner (sahiplik çağırana geçer).
-fn waitFor(req: *Request) ?*Response {
+pub fn waitFor(req: *Request) ?*Response {
     if (req.fiber != null and req.sched != null) {
         while (!req.done) req.sched.?.suspendForHost();
     } else {

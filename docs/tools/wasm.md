@@ -26,7 +26,7 @@ Her kip `wasm32-wasi` ve `wasm32-freestanding` için vardır. Dil ve standart k�
 ## Sınırlar
 
 - **Eşzamanlılık kipe bağlıdır** (yukarıdaki tabloya bakın). Varsayılan kipte iş parçacığı yoktur ve `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. `--asyncify` gerçek fiber verir (tek iş parçacığı, M:1); `--threads` gerçek paralellik verir (M:N).
-- **Henüz desteklenmeyen modüller.** `tls`, `websocket`, `smtp`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
+- **Henüz desteklenmeyen modüller.** `tls`, `smtp`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
 - **Ağ host'a bağlıdır.** `nox.http` WASM'da derlenir, ama gerçek bir soket (istemci `get`/`post`/`request`/akışlı istemci, sunucu `serve*`) bir host yeteneği olmadan çalışmaz: istemci çağrıları yakalanabilir bir `HttpCapabilityError` (`HttpError`ın alt sınıfı) fırlatır; `serve` bir tanı mesajı yazıp gerçek bir bind hatasındaki gibi hemen döner.
 - **Yerel kütüphane yok.** `extern def ... from "lib"` ile bir `.wasm`a native kütüphane bağlanamaz.
 - **Dosya sistemi** çalıştırıcının WASI ön-açımlarına bağlıdır (`wasm_run.mjs` `.` ve `/tmp` açar).
@@ -156,3 +156,7 @@ Komut satırında Node için `noxc run --target wasm32-freestanding-asyncify --a
 ## Tarayıcıda derleme
 
 Derleyicinin kendisi de WASM olarak çalışır (sunucusuz playground, gömülü kod deneme alanı): bkz. [Tarayıcıda Nox derleyicisi](browser-compiler.md).
+
+### WebSocket istemcisi
+
+`nox.websocket` (`connect`, `send_text`, `recv`, `is_open`, `close`) tüm WASM hedeflerinde derlenir. `wasm32-freestanding-asyncify`'da host'un `WebSocket`ine dayanır (tarayıcıda `window.WebSocket`, Node 22+ `globalThis.WebSocket`); ağ yeteneği `fetch` ile aynı anahtarla açılır (`runNox(bytes, io, { fetch, WebSocket })`, `--allow-net`). `send_text` yanıtsızdır, `recv` fiber'ı bekletir (diğer fiber'lar çalışır), kapanışta boş `str` döner ve `is_open()` yanlış olur; `wss://` host tarafından yönetilir. Diğer kiplerde ya da yetenek yokken `connect` "network capability" iletisiyle `WebSocketError` fırlatır. İkili iletiler `str` olarak ham baytlarla gelir. Sunucu tarafı (`serve_ws`) WASM'da yoktur.

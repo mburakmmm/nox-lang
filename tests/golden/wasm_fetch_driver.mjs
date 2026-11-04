@@ -42,6 +42,32 @@ const fakeFetch = async (url, init) => {
   }
 };
 
+// Süreç içi sahte WebSocket: /echo her iletiyi "echo:<ileti>" olarak geri yollar, /close-after-2 iki ileti yollayıp kapanır, /refuse bağlanamaz.
+const wsLog = [];
+class FakeWebSocket {
+  constructor(url) {
+    this.url = url;
+    this.path = new URL(url.replace(/^ws/, 'http')).pathname;
+    wsLog.push(`open ${url}`);
+    setTimeout(() => {
+      if (this.path === '/refuse') return this.onerror && this.onerror(new Error('refused'));
+      this.onopen && this.onopen();
+      if (this.path === '/close-after-2') {
+        setTimeout(() => this.onmessage && this.onmessage({ data: 'a' }), 5);
+        setTimeout(() => this.onmessage && this.onmessage({ data: 'b' }), 10);
+        setTimeout(() => this.onclose && this.onclose(), 15);
+      }
+    }, 5);
+  }
+  send(data) {
+    wsLog.push(`send ${data}`);
+    if (this.path === '/echo') setTimeout(() => this.onmessage && this.onmessage({ data: `echo:${data}` }), 5);
+  }
+  close() {
+    wsLog.push('close');
+  }
+}
+
 const out = [];
 const io = {
   write: (fd, b) => {
@@ -55,9 +81,10 @@ const io = {
 };
 // `AbortSignal.timeout` zamanlayıcısı Node'da unref edilir; bekleyen bir söz tek başına olay döngüsünü açık tutmaz.
 const keepAlive = setInterval(() => {}, 1000);
-const code = await runNox(fs.readFileSync(process.argv[2]), io, mode === 'deny' ? { fetch: null } : { fetch: fakeFetch });
+const code = await runNox(fs.readFileSync(process.argv[2]), io, mode === 'deny' ? { fetch: null } : { fetch: fakeFetch, WebSocket: FakeWebSocket });
 clearInterval(keepAlive);
 process.stdout.write(out.join(''));
 console.log(`exit ${code}`);
 console.log(`max concurrent ${active.max}`);
 for (const c of calls.sort()) console.log(`fetch ${c}`);
+for (const w of wsLog) console.log(`ws ${w}`);

@@ -253,8 +253,65 @@ async function doStream(fetchFn, req, streams) {
   }
 }
 
+/**
+ * WebSocket (kind 4-7, `websocket_wasm.zig`): `streams` haritasında { ws, queue, waiter, closed, error } tutulur. `ws_open` bağlantı kurulunca (ya da hata) döner; gelen iletiler
+ * kuyruğa yazılır, `ws_recv` sıradaki iletiyi (ya da kapanışı: durum 1) verir; `ws_send`/`ws_close` yanıtsızdır.
+ */
+async function doSocket(req, streams, WebSocketCtor) {
+  if (req.kind === 5) {
+    const st = streams.get(req.stream);
+    if (st && !st.closed) st.ws.send(new TextDecoder().decode(req.body));
+    return null;
+  }
+  if (req.kind === 7) {
+    const st = streams.get(req.stream);
+    streams.delete(req.stream);
+    if (st && !st.closed) st.ws.close();
+    return null;
+  }
+  if (req.kind === 6) {
+    const st = streams.get(req.stream);
+    if (!st) return { id: req.id, status: 1, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+    if (st.queue.length === 0 && !st.closed) await new Promise((resolve) => (st.waiter = resolve));
+    st.waiter = null;
+    if (st.queue.length > 0) return { id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: st.queue.shift() };
+    streams.delete(req.stream);
+    return { id: req.id, status: 1, errorKind: -1, headers: emptyBytes, body: emptyBytes }; // kapandı
+  }
+  // kind 4: aç
+  if (!WebSocketCtor) return { ...failed(req.id, 0), body: new TextEncoder().encode('WebSocket is not available in this host') };
+  return new Promise((resolve) => {
+    let ws;
+    try {
+      ws = new WebSocketCtor(req.url);
+    } catch (e) {
+      resolve({ ...failed(req.id, 0), body: new TextEncoder().encode(String(e && e.message ? e.message : e)) });
+      return;
+    }
+    ws.binaryType = 'arraybuffer';
+    const st = { ws, queue: [], waiter: null, closed: false };
+    let opened = false;
+    ws.onopen = () => {
+      opened = true;
+      streams.set(req.id, st);
+      resolve({ id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: emptyBytes });
+    };
+    ws.onmessage = (ev) => {
+      st.queue.push(typeof ev.data === 'string' ? new TextEncoder().encode(ev.data) : new Uint8Array(ev.data));
+      if (st.waiter) st.waiter();
+    };
+    const onEnd = (msg) => {
+      st.closed = true;
+      if (st.waiter) st.waiter();
+      if (!opened) resolve({ ...failed(req.id, 0), body: new TextEncoder().encode(msg) });
+    };
+    ws.onerror = () => onEnd('WebSocket connection failed');
+    ws.onclose = () => onEnd('WebSocket closed before the handshake completed');
+  });
+}
+
 /** Askıdaki modülün yeni isteklerini başlatır, bir tanesi bitene kadar bekler ve sonucunu modüle iletir. */
-async function pumpFetches(instance, fetchFn, inflight, streams) {
+async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor) {
   const x = instance.exports;
   const mem = x.memory;
   const lenPtr = x.nox_host_alloc(4);
@@ -266,6 +323,10 @@ async function pumpFetches(instance, fetchFn, inflight, streams) {
   for (const req of pending) {
     if (req.kind === 0) {
       inflight.set(req.id, doFetch(fetchFn, req));
+    } else if (req.kind >= 4) {
+      const p = doSocket(req, streams, wsCtor);
+      if (req.kind === 4 || req.kind === 6) inflight.set(req.id, p);
+      else p.catch(() => {});
     } else {
       const p = doStream(fetchFn, req, streams);
       if (req.kind !== 3) inflight.set(req.id, p);
@@ -405,7 +466,7 @@ export async function runNox(wasmBytes, io, opts = {}) {
         throw e;
       }
       if (!asyncHost || x.nox_host_status() !== 1) break;
-      await pumpFetches(instance, fetchFn.bind(globalThis), inflight, streams);
+      await pumpFetches(instance, fetchFn.bind(globalThis), inflight, streams, opts.WebSocket === undefined ? globalThis.WebSocket : opts.WebSocket);
       step = () => x.nox_host_resume();
     }
   } finally {

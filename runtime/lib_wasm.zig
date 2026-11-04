@@ -50,6 +50,7 @@ pub const regex_shim = @import("stdlib_shims/regex.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
 pub const http_wasm_shim = @import("stdlib_shims/http_wasm.zig");
+pub const websocket_wasm_shim = @import("stdlib_shims/websocket_wasm.zig");
 pub const sqlite_shim = @import("stdlib_shims/sqlite.zig");
 
 /// İş parçacıklı kipte yerel M:N havuzu (`nox_pool_*`): `pool_bridge` aracılığıyla `worker_pool`/`scheduler` zamanlayıcıları.
@@ -95,5 +96,6 @@ comptime {
     _ = crypto_shim;
     _ = fs_shim;
     _ = http_wasm_shim;
+    _ = websocket_wasm_shim;
     _ = sqlite_shim;
 }

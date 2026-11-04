@@ -601,3 +601,72 @@ test "wasm32-freestanding-threads: ağ yeteneği verilmezse HttpCapabilityError"
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("capability\nexit 0\n", out);
 }
+
+// v2.0.154 (spec §3.356): `nox.websocket` istemcisi WASM'da derlenir; wasm32-freestanding --asyncify'da host'un `WebSocket`ine dayanır (gönderme yanıtsız, `recv` fiber'ı bekletir),
+// diğer kiplerde/yetenek yokken `connect` "ağ yeteneği yok" iletisiyle `WebSocketError` verir.
+test "wasm32-freestanding --asyncify: nox.websocket istemcisi host WebSocket'ine dayanır" {
+    const src =
+        \\import nox.websocket
+        \\from nox.websocket import WebSocketClient, WebSocketError
+        \\
+        \\c: WebSocketClient = nox.websocket.connect("ws://t.invalid:9000/echo")
+        \\c.send_text("hello")
+        \\print(c.recv())
+        \\c.send_text("again")
+        \\print(c.recv())
+        \\print(c.is_open())
+        \\c.close()
+        \\
+        \\d: WebSocketClient = nox.websocket.connect("ws://t.invalid/close-after-2")
+        \\print(d.recv())
+        \\print(d.recv())
+        \\print(len(d.recv()))
+        \\print(d.is_open())
+        \\d.close()
+        \\
+        \\try:
+        \\    e: WebSocketClient = nox.websocket.connect("ws://t.invalid/refuse")
+        \\    print("unreachable")
+        \\except WebSocketError:
+        \\    print("ws connect error")
+        \\
+    ;
+    const out = (try runFetchDriver(src, "allow")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings(
+        \\echo:hello
+        \\echo:again
+        \\True
+        \\a
+        \\b
+        \\0
+        \\False
+        \\ws connect error
+        \\exit 0
+        \\max concurrent 0
+        \\ws open ws://t.invalid:9000/echo
+        \\ws send hello
+        \\ws send again
+        \\ws close
+        \\ws open ws://t.invalid:80/close-after-2
+        \\ws open ws://t.invalid:80/refuse
+        \\
+    , out);
+}
+
+test "wasm32-freestanding --asyncify: host ağ yeteneğini vermezse WebSocket bağlantısı yetenek iletisiyle başarısız olur" {
+    const src =
+        \\import nox.websocket
+        \\from nox.websocket import WebSocketClient, WebSocketError
+        \\
+        \\try:
+        \\    c: WebSocketClient = nox.websocket.connect("ws://t.invalid/echo")
+        \\    print("unreachable")
+        \\except WebSocketError as e:
+        \\    print("denied" if "network" in e.message else e.message)
+        \\
+    ;
+    const out = (try runFetchDriver(src, "deny")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("denied\nexit 0\nmax concurrent 0\n", out);
+}

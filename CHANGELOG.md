@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.154]
+
+### Eklendi
+
+- **WASM'da `nox.websocket` istemcisi** (tüm hedefler derler; `wasm32-freestanding-asyncify`'da host `WebSocket`ine dayanır, ağ yeteneğiyle aynı anahtar; yetenek yokken `WebSocketError`). `runNox(bytes, io, { fetch, WebSocket })` (spec 3.356).
+
 ## [2.0.153]
 
 ### Eklendi
