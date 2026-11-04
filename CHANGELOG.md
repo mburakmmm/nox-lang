@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.161]
+
+### Güvenlik
+
+- **Tarayıcı derleyicisi seçenek enjeksiyonu:** `compileToIr`ın `label`/`target`/`deny` değerleri denetim karakteri içeremez (bir `label` içindeki `\ndeny=` ile `--deny-capability` kısıtı atlatılabiliyordu); Zig tarafı da her anahtarın yalnızca ilk görünümünü alır. `addFile` aynı yol tekrar eklenince sızıntı yapıyordu, düzeltildi.
+- **`--vfs-dir` sembolik bağ:** çıkışta geri yazma/silme, kök altındaki bir sembolik bağdan kök dışına taşamaz.
+- **`wasm-opt` özellik bayrakları:** `--asyncify` hedefleri artık `--enable-bulk-memory/sign-ext/nontrapping-float-to-int/mutable-globals` ile çağırır; eski binaryen sürümleri (Ubuntu 24.04: 108) `target_features` olmayan nesnelerde "bulk memory is disabled" ile başarısız oluyordu (CI'ye binaryen eklenince ortaya çıktı).
+- **CI (macOS/belge denetimi):** `wasi.finalizeBindings` olmayan Node sürümlerinde (v24.4 öncesi) iş parçacıklı WASI için `wasi.initialize` yedeği; WASM host köprüsü global durumları `project/global-state-allowlist.tsv`ye `wasm-host` kategorisiyle gerekçelendi (AGENTS §2.6); `RemoveDirectoryA` ayrılmış semboller listesine eklendi.
+- **Ağ/süreç izin listeleri:** `--net-allow=` (fetch, WebSocket, TCP; yönlendirmeler yeniden denetlenir) ve `--allow-process=liste`; `nodeProcess` çıktı sınırı.
+- **`nodeHttpServer` kotaları:** gövde, yanıt, işleyici süresi ve eşzamanlı istek sınırları (413/500/504/503). Spec 3.362.
+
 ## [2.0.160]
 
 ### Düzeltildi

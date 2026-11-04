@@ -330,6 +330,41 @@ test "wasm32-freestanding: --vfs-dir sanal dosya sistemini kalıcı kılar (3 ç
     }
 }
 
+// Güvenlik: `--vfs-dir` altındaki bir sembolik bağ, çıkışta geri yazmayı kök dışına yönlendirememeli (yükleme bağları atlar; kaydetme de bağın altına yazmaz ya da silmez).
+test "wasm32-freestanding: --vfs-dir altındaki sembolik bağ kök dışına yazdırılamaz" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.createDirPath(io, "outside");
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const outside = try std.fmt.allocPrint(allocator, "{s}/outside", .{path_buf[0..len]});
+    defer allocator.free(outside);
+    try tmp.dir.symLink(io, outside, "state/data", .{ .is_directory = true });
+    const arg = try std.fmt.allocPrint(allocator, "--vfs-dir={s}/state", .{path_buf[0..len]});
+    defer allocator.free(arg);
+    const outcome = try wasm_helpers.buildAndRunRepeated(allocator, build_options.noxc_path, build_options.runner_path, .freestanding, persist_program, &.{arg}, 1);
+    switch (outcome) {
+        .tool_missing => return error.SkipZigTest,
+        .rejected, .build_failed => |msg| {
+            defer allocator.free(msg);
+            return error.BuildFailed;
+        },
+        .ran => |r| {
+            defer allocator.free(r.stdout);
+            defer allocator.free(r.stderr);
+            try std.testing.expect(r.term == .exited and r.term.exited == 0);
+        },
+    }
+    var out_dir = try tmp.dir.openDir(io, "outside", .{ .iterate = true });
+    defer out_dir.close(io);
+    var it = out_dir.iterate();
+    try std.testing.expect((try it.next(io)) == null);
+}
+
 test "wasm32-freestanding: dosya sistemini kullanmayan program --vfs-dir dizinine dokunmaz" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -771,6 +806,24 @@ test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucu
         \\exit 0
         \\
     , res.stdout);
+}
+
+// v2.0.161 (spec §3.362): host güvenlik politikaları: ağ/süreç izin listeleri (yönlendirme dahil), süreç çıktı sınırı ve `nodeHttpServer` kaynak kotaları (gövde, yanıt, süre, eşzamanlılık).
+test "wasm host: ağ/süreç izin listeleri ve HTTP sunucu kotaları" {
+    const allocator = std.testing.allocator;
+    const res = std.process.run(allocator, std.testing.io, .{
+        .argv = &.{ "node", "--no-warnings", build_options.policy_driver_path, build_options.wasm_host_path },
+    }) catch |err| {
+        if (err == error.FileNotFound) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(res.stdout);
+    defer allocator.free(res.stderr);
+    if (res.term != .exited or res.term.exited != 0) {
+        std.debug.print("policy: surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
+        return error.ProgramFailed;
+    }
+    try std.testing.expectEqualStrings("policy ok\n", res.stdout);
 }
 
 // v2.0.159 (spec §3.361): `nox.mysql` WASM'da libmysqlclient yerine Zig'de yazılmış MySQL protokol istemcisiyle çalışır (host TCP üzerinde). Sürücü yerelde bulunan `mysql:8.4`

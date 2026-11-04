@@ -1647,6 +1647,8 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     var sandboxed = false;
     var wasm_allow_process = false;
     var wasm_allow_serve = false;
+    var wasm_process_allow: []const u8 = "";
+    var wasm_net_allow: []const u8 = "";
     var policy: sandbox.Policy = .{};
     var kept: std.ArrayListUnmanaged([]const u8) = .empty;
     var writes: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -1660,6 +1662,11 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             wasm_allow_process = true;
         } else if (std.mem.eql(u8, arg, "--allow-serve")) {
             wasm_allow_serve = true;
+        } else if (std.mem.startsWith(u8, arg, "--allow-process=")) {
+            wasm_allow_process = true;
+            wasm_process_allow = arg["--allow-process=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--net-allow=")) {
+            wasm_net_allow = arg["--net-allow=".len..];
         } else if (std.mem.startsWith(u8, arg, "--allow-write=")) {
             try writes.append(a, arg["--allow-write=".len..]);
         } else if (std.mem.startsWith(u8, arg, "--allow-read=")) {
@@ -1717,7 +1724,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             std.process.exit(1);
         }
         const is_free = if (opts.target) |t| (if (qbe_target.hostedTargetInfo(t)) |info| (info.wasm_freestanding or info.wasm_threads) else false) else false;
-        const code = try runWasi(gpa, io, a, bin_path, is_free, policy.allow_net, wasm_allow_process, wasm_allow_serve, split.after);
+        const code = try runWasi(gpa, io, a, bin_path, is_free, policy.allow_net, wasm_allow_process, wasm_allow_serve, wasm_process_allow, wasm_net_allow, split.after);
         std.process.exit(code);
     }
     if (sandboxed) {
@@ -1774,7 +1781,7 @@ const WASM_HOST_JS = @embedFile("wasm_host.mjs");
 
 /// `noxc run --target wasm32-wasi|wasm32-freestanding`: `.wasm`ı çalıştırır. WASI modülleri için bulunan ilk çalıştırıcı (`wasmtime`, `wasmer`, `node`),
 /// freestanding (`nox_host`) için her zaman `node`. Çalışma dizini ve `/tmp` WASI programına açılır. Çalıştırıcı yoksa açık hata verir.
-fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, allow_net: bool, allow_process: bool, allow_serve: bool, argv_tail: []const []const u8) !u8 {
+fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, allow_net: bool, allow_process: bool, allow_serve: bool, process_allow: []const u8, net_allow: []const u8, argv_tail: []const []const u8) !u8 {
     // `freestanding` = yalnızca node sürücüsü: nox_host (ADR-013) ve iş parçacıklı wasi (ADR-015; wasmtime/wasmer wasi-threads'i kaldırdı).
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     if (allow_net and !freestanding) printErr("note: --allow-net only applies to wasm32-freestanding --asyncify (WASI has no network); ignored\n", .{});
@@ -1789,7 +1796,8 @@ fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: 
         try argv.appendSlice(a, &.{ "node", "--no-warnings", runner_path, wasm_path });
         if (g_vfs_dir.len > 0 and freestanding) try argv.append(a, try std.fmt.allocPrint(a, "--vfs-dir={s}", .{g_vfs_dir}));
         if (allow_net and freestanding) try argv.append(a, "--allow-net");
-        if (allow_process and freestanding) try argv.append(a, "--allow-process");
+        if (allow_process and freestanding) try argv.append(a, if (process_allow.len > 0) try std.fmt.allocPrint(a, "--allow-process={s}", .{process_allow}) else "--allow-process");
+        if (net_allow.len > 0 and freestanding) try argv.append(a, try std.fmt.allocPrint(a, "--net-allow={s}", .{net_allow}));
         if (allow_serve and freestanding) try argv.append(a, "--allow-serve");
     } else {
         printErr("noxc run --target wasm32-*: no runtime found on PATH ({s}), or use 'noxc build' and run the .wasm yourself\n", .{if (freestanding) "install node" else "install wasmtime, wasmer or node"});
@@ -3143,9 +3151,9 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
         // `NOX_WASM_NAMES=1`: işlev adlarını (name section) çıktıda tutar — wasm yığın izleri adlı olur (tanılama).
         const keep_names = std.c.getenv("NOX_WASM_NAMES") != null;
         if (keep_names) {
-            try runTool(gpa, io, &.{ "wasm-opt", out_path, "--strip-dwarf", "--asyncify", "--pass-arg=asyncify-removelist@*nox_asyncify_run*", "--pass-arg=asyncify-ignore-imports", "-O2", "-g", "-o", out_path });
+            try runTool(gpa, io, &.{ "wasm-opt", out_path, "--strip-dwarf", "--enable-bulk-memory", "--enable-sign-ext", "--enable-nontrapping-float-to-int", "--enable-mutable-globals", "--asyncify", "--pass-arg=asyncify-removelist@*nox_asyncify_run*", "--pass-arg=asyncify-ignore-imports", "-O2", "-g", "-o", out_path });
         } else {
-            try runTool(gpa, io, &.{ "wasm-opt", out_path, "--strip-dwarf", "--asyncify", "--pass-arg=asyncify-removelist@*nox_asyncify_run*", "--pass-arg=asyncify-ignore-imports", "-O2", "-o", out_path });
+            try runTool(gpa, io, &.{ "wasm-opt", out_path, "--strip-dwarf", "--enable-bulk-memory", "--enable-sign-ext", "--enable-nontrapping-float-to-int", "--enable-mutable-globals", "--asyncify", "--pass-arg=asyncify-removelist@*nox_asyncify_run*", "--pass-arg=asyncify-ignore-imports", "-O2", "-o", out_path });
         }
     }
     return out_path;

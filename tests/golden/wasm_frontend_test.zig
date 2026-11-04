@@ -101,6 +101,14 @@ test "wasm ön yüzü: sözdizimi, tip ve yetenek hataları okunaklı tanılama 
     }
 }
 
+test "wasm ön yüzü: label/target/deny içindeki denetim karakterleri reddedilir (seçenek enjeksiyonu)" {
+    const allocator = std.testing.allocator;
+    const fe = (try run(allocator, &.{ "node", "--no-warnings", build_options.frontend_driver_path, build_options.frontend_wasm_path, "unused.nox", "wasm32-freestanding", "fs", "--bad-label" })) orelse return error.SkipZigTest;
+    defer allocator.free(fe.stdout);
+    defer allocator.free(fe.stderr);
+    try std.testing.expectEqualStrings("rejected\n", fe.stdout);
+}
+
 test "wasm ön yüzü: bağlama planı (sqlite, fs/vfs dışa aktarımları, asyncify + fetch, threads)" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});

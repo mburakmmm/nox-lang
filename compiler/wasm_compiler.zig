@@ -41,6 +41,12 @@ fn loadStdlib() void {
     }
 }
 
+fn inBundle(v: []const u8) bool {
+    const b = @intFromPtr(stdlib_bundle.ptr);
+    const p = @intFromPtr(v.ptr);
+    return p >= b and p < b + stdlib_bundle.len;
+}
+
 fn fsExists(_: ?*anyopaque, path: []const u8) bool {
     return g_files.contains(path);
 }
@@ -68,12 +74,25 @@ const Options = struct {
 
 fn parseOptions(text: []const u8) Options {
     var o: Options = .{};
+    // Her anahtarın İLK görünümü geçerlidir: `label` gibi serbest metin taşıyan alanlara sızan bir `\ndeny=` satırı, önceki güvenlik seçeneklerini ezemez (savunma derinliği; JS tarafı ayrıca denetim karakterlerini reddeder).
+    var seen_target = false;
+    var seen_deny = false;
+    var seen_label = false;
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line| {
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
         const k = line[0..eq];
         const v = std.mem.trim(u8, line[eq + 1 ..], "\r ");
-        if (std.mem.eql(u8, k, "target")) o.target = v else if (std.mem.eql(u8, k, "deny")) o.deny = v else if (std.mem.eql(u8, k, "label")) o.label = v;
+        if (std.mem.eql(u8, k, "target") and !seen_target) {
+            seen_target = true;
+            o.target = v;
+        } else if (std.mem.eql(u8, k, "deny") and !seen_deny) {
+            seen_deny = true;
+            o.deny = v;
+        } else if (std.mem.eql(u8, k, "label") and !seen_label) {
+            seen_label = true;
+            o.label = v;
+        }
     }
     return o;
 }
@@ -120,12 +139,23 @@ export fn nox_fc_free(ptr: ?[*]u8, len: usize) callconv(.c) void {
 /// Sanal dosya ekler/değiştirir (`yol` tam yoldur; stdlib `/stdlib/nox/...` altındadır). `0` başarı.
 export fn nox_fc_add_file(path: [*]const u8, path_len: usize, data: [*]const u8, data_len: usize) callconv(.c) i32 {
     loadStdlib();
-    const key = gpa.dupe(u8, path[0..path_len]) catch return -1;
-    const val = gpa.dupe(u8, data[0..data_len]) catch {
-        gpa.free(key);
+    const val = gpa.dupe(u8, data[0..data_len]) catch return -1;
+    // Aynı yol yeniden eklenince eski değer (ve anahtar) serbest bırakılır; aksi halde her `addFile` sızdırırdı.
+    const slot = g_files.getOrPut(gpa, path[0..path_len]) catch {
+        gpa.free(val);
         return -1;
     };
-    g_files.put(gpa, key, val) catch return -1;
+    if (slot.found_existing) {
+        // Gömülü stdlib verisi `gpa` ile tahsisli değildir; yalnızca önceki `addFile` değerleri serbest bırakılır.
+        if (!inBundle(slot.value_ptr.*)) gpa.free(slot.value_ptr.*);
+    } else {
+        slot.key_ptr.* = gpa.dupe(u8, path[0..path_len]) catch {
+            _ = g_files.remove(path[0..path_len]);
+            gpa.free(val);
+            return -1;
+        };
+    }
+    slot.value_ptr.* = val;
     return 0;
 }
 

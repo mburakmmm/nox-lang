@@ -463,7 +463,7 @@ async function doProc(req, proc) {
 }
 
 /** Node'un `child_process.spawn`ına dayanan varsayılan süreç sağlayıcısı (kabuksuz; çıktı tamponlanır; `timeoutMs > 0` aşılırsa süreç öldürülür ve hata verilir). */
-export async function nodeProcess() {
+export async function nodeProcess({ maxOutputBytes = 16 * 1024 * 1024 } = {}) {
   const cp = await import('node:child_process');
   return {
     run: (program, args, cwd, timeoutMs) =>
@@ -472,12 +472,25 @@ export async function nodeProcess() {
         const out = [];
         const errc = [];
         let timedOut = false;
+        let total = 0;
+        let tooBig = false;
         const timer = timeoutMs > 0 ? setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs) : null;
-        child.stdout.on('data', (d) => out.push(d));
-        child.stderr.on('data', (d) => errc.push(d));
+        // stdout + stderr toplamı sınırlanır: sınırsız çıktı veren bir alt süreç host belleğini tüketemez.
+        const collect = (list) => (d) => {
+          total += d.length;
+          if (total > maxOutputBytes) {
+            tooBig = true;
+            child.kill('SIGKILL');
+            return;
+          }
+          list.push(d);
+        };
+        child.stdout.on('data', collect(out));
+        child.stderr.on('data', collect(errc));
         child.on('error', (e) => { if (timer) clearTimeout(timer); reject(e); });
         child.on('close', (code) => {
           if (timer) clearTimeout(timer);
+          if (tooBig) return reject(new Error(`process output exceeded ${maxOutputBytes} bytes`));
           if (timedOut) return reject(new Error('process timed out'));
           resolve({ status: code === null ? -1 : code, stdout: new Uint8Array(Buffer.concat(out)), stderr: new Uint8Array(Buffer.concat(errc)) });
         });
@@ -490,19 +503,62 @@ export async function nodeProcess() {
  * isteği modüle iletir. `req` = { method, target, headers ("Ad: değer\n" metni), body (Uint8Array), peer }; `resp` = { status, headers (aynı metin), body }. Node için varsayılan:
  * `nodeHttpServer()` (`node:http`, varsayılan olarak yalnızca 127.0.0.1\'de dinler; `NOX_SERVE_HOST` ile değişir).
  */
-export async function nodeHttpServer() {
+export async function nodeHttpServer({ maxBodyBytes = 10 * 1024 * 1024, maxResponseBytes = 64 * 1024 * 1024, requestTimeoutMs = 30000, maxConcurrent = 64 } = {}) {
   const http = await import('node:http');
   return {
     listen: (port, handle) =>
       new Promise((resolve, reject) => {
+        let active = 0;
+        const reply = (res, status, text) => {
+          if (res.writableEnded || res.headersSent) return;
+          res.statusCode = status;
+          res.setHeader('Connection', 'close');
+          res.end(text);
+        };
         const srv = http.createServer((req, res) => {
+          // Kaynak kotaları: eşzamanlı istek sayısı, gövde boyutu, işleyici süresi, yanıt boyutu (aşıldığında 503/413/504/500).
+          if (active >= maxConcurrent) {
+            res.setHeader('Retry-After', '1');
+            reply(res, 503, 'Service Unavailable');
+            req.resume();
+            return;
+          }
+          if (Number(req.headers['content-length'] || 0) > maxBodyBytes) {
+            reply(res, 413, 'Payload Too Large');
+            res.once('finish', () => req.destroy());
+            return;
+          }
+          active++;
+          let closed = false;
+          res.once('close', () => {
+            closed = true;
+            active--;
+          });
           const chunks = [];
-          req.on('data', (c) => chunks.push(c));
+          let received = 0;
+          let rejected = false;
+          req.on('data', (c) => {
+            if (rejected) return;
+            received += c.length;
+            if (received > maxBodyBytes) {
+              rejected = true;
+              chunks.length = 0;
+              reply(res, 413, 'Payload Too Large');
+              res.once('finish', () => req.destroy());
+              return;
+            }
+            chunks.push(c);
+          });
           req.on('end', async () => {
+            if (rejected || closed) return;
             let headers = '';
             for (let i = 0; i < req.rawHeaders.length; i += 2) headers += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\n`;
+            const timer = setTimeout(() => reply(res, 504, 'Gateway Timeout'), requestTimeoutMs);
             try {
               const r = await handle({ method: req.method, target: req.url, headers, body: new Uint8Array(Buffer.concat(chunks)), peer: `${req.socket.remoteAddress}:${req.socket.remotePort}` });
+              clearTimeout(timer);
+              if (res.writableEnded || closed) return; // zaman aşımı ya da istemci kopması: yanıt atılır
+              if (r.body.length > maxResponseBytes) return reply(res, 500, 'Response Too Large');
               res.statusCode = r.status;
               for (const line of r.headers.split('\n')) {
                 const i = line.indexOf(': ');
@@ -510,14 +566,88 @@ export async function nodeHttpServer() {
               }
               res.end(Buffer.from(r.body));
             } catch {
-              res.statusCode = 500;
-              res.end('Internal Server Error');
+              clearTimeout(timer);
+              reply(res, 500, 'Internal Server Error');
             }
           });
         });
         srv.once('error', reject);
         srv.listen(port, process.env.NOX_SERVE_HOST || '127.0.0.1', () => resolve({ port: srv.address().port, close: () => srv.close() }));
       }),
+  };
+}
+
+
+/**
+ * Ağ izin listesi: `"host[:port],*.alan[:port]"` (port yoksa ya da `*` ise her port). Host adı, modülün verdiği haliyle eşlenir (DNS çözümlemesi sonrası IP denetimi YAPILMAZ: izinli bir adın
+ * özel bir IP'ye çözülmesi operatörün sorumluluğundadır). `fetch` yönlendirmeleri elle izlenir ve her hedef yeniden denetlenir.
+ */
+export function netPolicy(spec) {
+  const entries = (Array.isArray(spec) ? spec : String(spec).split(','))
+    .map((x) => String(x).trim().toLowerCase())
+    .filter(Boolean)
+    .map((p) => {
+      const m = /^(.*?)(?::(\d+|\*))?$/.exec(p);
+      return { host: m[1].replace(/^\[|\]$/g, ''), port: m[2] === undefined || m[2] === '*' ? null : Number(m[2]) };
+    });
+  return {
+    allows(host, port) {
+      const h = String(host).toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
+      return entries.some((e) => (e.port === null || e.port === Number(port)) && (e.host === '*' || e.host === h || (e.host.startsWith('*.') && h.endsWith(e.host.slice(1)) && h.length > e.host.length - 1)));
+    },
+  };
+}
+
+function urlPort(u) {
+  return u.port ? Number(u.port) : u.protocol === 'https:' || u.protocol === 'wss:' ? 443 : 80;
+}
+
+export function restrictFetch(fetchFn, policy) {
+  return async (url, init = {}) => {
+    let cur = new URL(url);
+    let opts = { ...init };
+    const follow = (init.redirect ?? 'follow') === 'follow';
+    for (let hop = 0; hop < 10; hop++) {
+      if (!policy.allows(cur.hostname, urlPort(cur))) throw new TypeError(`network policy: ${cur.host} is not in the allowed list`);
+      const res = await fetchFn(cur.href, { ...opts, redirect: 'manual' });
+      const loc = res.headers.get('location');
+      if (follow && res.status >= 300 && res.status < 400 && loc) {
+        cur = new URL(loc, cur);
+        if (res.status === 303 || ((res.status === 301 || res.status === 302) && String(opts.method || 'GET').toUpperCase() === 'POST')) {
+          opts = { ...opts, method: 'GET', body: undefined };
+        }
+        continue;
+      }
+      return res;
+    }
+    throw new TypeError('network policy: too many redirects');
+  };
+}
+
+export function restrictTcp(tcp, policy) {
+  return {
+    ...tcp,
+    connect: (host, port, useTls) => (policy.allows(host, port) ? tcp.connect(host, port, useTls) : Promise.reject(new Error(`network policy: ${host}:${port} is not in the allowed list`))),
+  };
+}
+
+export function restrictWebSocket(Ctor, policy) {
+  if (!Ctor) return Ctor;
+  return class extends Ctor {
+    constructor(url, ...rest) {
+      const u = new URL(url);
+      if (!policy.allows(u.hostname, urlPort(u))) throw new Error(`network policy: ${u.host} is not in the allowed list`);
+      super(url, ...rest);
+    }
+  };
+}
+
+/** Alt süreç izin listesi: yalnızca listedeki program adları (ya da mutlak yollar) çalıştırılabilir; program, modülün verdiği haliyle eşlenir. */
+export function restrictProcess(proc, allowed) {
+  const set = new Set((Array.isArray(allowed) ? allowed : String(allowed).split(',')).map((x) => String(x).trim()).filter(Boolean));
+  return {
+    ...proc,
+    run: (program, ...rest) => (set.has(program) ? proc.run(program, ...rest) : Promise.reject(new Error(`process policy: '${program}' is not in the allowed list`))),
   };
 }
 
@@ -853,6 +983,21 @@ async function makeNodeVfs(dir, loadedInit = null) {
       return entries;
     },
     save(snapshot) {
+      // Kök altında (hedef dahil) bir sembolik bağ varsa, yazma/silme kök dışına taşabilir: bu yollar atlanır (yükleme zaten sembolik bağları atlar).
+      const underSymlink = (rel) => {
+        let cur = root;
+        for (const part of rel.split('/').slice(1)) {
+          cur = pathMod.join(cur, part);
+          let st;
+          try {
+            st = fs.lstatSync(cur);
+          } catch {
+            return false; // yok: altındaki hiçbir bileşen bağ olamaz
+          }
+          if (st.isSymbolicLink()) return true;
+        }
+        return false;
+      };
       const want = new Map();
       for (const e of snapshot) {
         if (vfsIsTmp(e.path)) continue;
@@ -866,6 +1011,7 @@ async function makeNodeVfs(dir, loadedInit = null) {
       for (const rel of [...api.loaded].sort((a, b) => b.length - a.length)) {
         const w = want.get(rel);
         const p = abs(rel);
+        if (underSymlink(rel)) continue;
         let st;
         try {
           st = fs.lstatSync(p);
@@ -877,6 +1023,10 @@ async function makeNodeVfs(dir, loadedInit = null) {
       }
       for (const [rel, e] of [...want].sort((a, b) => a[0].length - b[0].length)) {
         const p = abs(rel);
+        if (underSymlink(rel)) {
+          process.stderr.write(`nox: --vfs-dir: '${rel}' bir sembolik bağın altında, kaydedilmedi\n`);
+          continue;
+        }
         if (e.data === undefined) {
           fs.mkdirSync(p, { recursive: true });
           continue;
@@ -901,6 +1051,8 @@ function takeHostFlags(args) {
   let allowNet = process.env.NOX_ALLOW_NET === '1';
   let allowProcess = process.env.NOX_ALLOW_PROCESS === '1';
   let allowServe = process.env.NOX_ALLOW_SERVE === '1';
+  let netAllow = process.env.NOX_NET_ALLOW || null;
+  let processAllow = process.env.NOX_PROCESS_ALLOW || null;
   const rest = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -908,10 +1060,14 @@ function takeHostFlags(args) {
     else if (a === '--vfs-dir' && i + 1 < args.length) dir = args[++i];
     else if (a === '--allow-net') allowNet = true;
     else if (a === '--allow-process') allowProcess = true;
+    else if (a.startsWith('--allow-process=')) {
+      allowProcess = true;
+      processAllow = a.slice('--allow-process='.length);
+    } else if (a.startsWith('--net-allow=')) netAllow = a.slice('--net-allow='.length);
     else if (a === '--allow-serve') allowServe = true;
     else rest.push(a);
   }
-  return { dir, allowNet, allowProcess, allowServe, rest };
+  return { dir, allowNet, allowProcess, allowServe, netAllow, processAllow, rest };
 }
 
 /** SIGINT/SIGTERM'de zarif kapanış için AbortSignal (sunucu modülü `serve` döngüsünden çıkar, program normal biter). */
@@ -930,13 +1086,17 @@ async function nodeMain() {
     process.exit(2);
   }
   const bytes = fs.readFileSync(file);
-  const { dir: vfsDir, allowNet, allowProcess, allowServe, rest: progArgs } = takeHostFlags(argv.slice(3));
+  const { dir: vfsDir, allowNet, allowProcess, allowServe, netAllow, processAllow, rest: progArgs } = takeHostFlags(argv.slice(3));
   const mod = await WebAssembly.compile(bytes);
   const modules = new Set(WebAssembly.Module.imports(mod).map((i) => i.module));
 
   if (modules.has('nox_host')) {
     const memImportNox = findMemoryImport(bytes);
     if (memImportNox && memImportNox.shared) {
+      if (netAllow) {
+        console.error('nox: --net-allow is not supported with shared-memory (--threads) modules; use the asyncify target');
+        process.exit(2);
+      }
       process.exitCode = await runThreaded(file, mod, memImportNox, progArgs, 'nox', vfsDir, allowNet);
       return;
     }
@@ -945,7 +1105,18 @@ async function nodeMain() {
       const nv = await makeNodeVfs(vfsDir);
       vfs = { files: nv.load(), onSave: (snap) => nv.save(snap) };
     }
-    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: allowNet ? globalThis.fetch : null, tcp: allowNet ? await nodeTcp() : null, process: allowProcess ? await nodeProcess() : null, serve: allowServe ? await nodeHttpServer() : null, serveSignal: allowServe ? shutdownSignal() : undefined });
+    const np = netAllow ? netPolicy(netAllow) : null;
+    let tcpImpl = allowNet ? await nodeTcp() : null;
+    let procImpl = allowProcess ? await nodeProcess() : null;
+    let fetchImpl = allowNet ? globalThis.fetch : null;
+    let wsImpl = globalThis.WebSocket;
+    if (np) {
+      if (fetchImpl) fetchImpl = restrictFetch(fetchImpl.bind(globalThis), np);
+      if (tcpImpl) tcpImpl = restrictTcp(tcpImpl, np);
+      wsImpl = restrictWebSocket(wsImpl, np);
+    }
+    if (processAllow && procImpl) procImpl = restrictProcess(procImpl, processAllow);
+    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: fetchImpl, WebSocket: wsImpl, tcp: tcpImpl, process: procImpl, serve: allowServe ? await nodeHttpServer() : null, serveSignal: allowServe ? shutdownSignal() : undefined });
     return;
   }
 
@@ -1107,7 +1278,9 @@ async function workerMain() {
       throw new NoxExit(code);
     };
     inst = await WebAssembly.instantiate(mod, imp);
-    wasi.finalizeBindings(inst, { memory });
+    // `finalizeBindings` yeni Node sürümlerindedir (v24.4+); eskilerde bellek, `_initialize` dışa aktarımı olan bir örnek yüzeyiyle verilir.
+    if (typeof wasi.finalizeBindings === 'function') wasi.finalizeBindings(inst, { memory });
+    else wasi.initialize({ exports: { memory, _initialize() {} } });
     startName = 'wasi_thread_start';
   }
   try {

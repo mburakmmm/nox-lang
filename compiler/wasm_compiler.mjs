@@ -70,7 +70,12 @@ export async function createFrontend(frontendWasm) {
     },
     compileToIr(source, { target = 'wasm32-freestanding', deny = [], label = 'main.nox' } = {}) {
       const sb = enc.encode(source);
-      const optText = `target=${target}\ndeny=${Array.isArray(deny) ? deny.join(',') : deny}\nlabel=${label}\n`;
+      // Seçenekler satır tabanlı bir metindir: değerlerdeki denetim karakterleri (özellikle `\n`) başka bir seçeneği (örn. `deny=`) enjekte edebilirdi.
+      const denyText = Array.isArray(deny) ? deny.join(',') : String(deny);
+      for (const [name, value] of [['target', target], ['deny', denyText], ['label', label]]) {
+        if (/[\u0000-\u001f\u007f]/.test(String(value))) throw new Error(`nox: geçersiz '${name}' seçeneği (denetim karakteri içeremez)`);
+      }
+      const optText = `target=${target}\ndeny=${denyText}\nlabel=${label}\n`;
       const ob = enc.encode(optText);
       const sp = put(sb);
       const op = put(ob);
