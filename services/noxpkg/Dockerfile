@@ -40,7 +40,10 @@ RUN mkdir -p /app && /src/zig-out/bin/noxc build -o /app/noxpkg main.nox
 FROM debian:bookworm-slim AS runtime
 # `nox.sqlite` libsqlite3'ü ilk `open()` çağrısında yükler. Derleme
 # `-lsqlite3` eklemez; kütüphane imajda hazır olmalıdır.
-RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 \
+# `ca-certificates`: noxpkg, `noxc login` için GitHub'a (api.github.com, github.com) HTTPS ile bağlanır (bkz. github.nox). Debian slim imajında CA deposu
+# yoktur; eksikse TLS doğrulaması hemen başarısız olur ve giriş "Could not reach GitHub" ile düşer (yerel duman testi ana makinenin sertifikalarını
+# kullandığından bunu GÖSTERMEZ — 2026-11-04'te canlıda yakalandı).
+RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=toolchain /app/noxpkg /app/noxpkg
 COPY services/noxpkg/static /app/static

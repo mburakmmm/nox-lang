@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.141]
+
+### Düzeltildi
+
+- **Canlı noxpkg imajında CA sertifikası yoktu, `noxc login` "Could not reach GitHub" ile düşüyordu:** `services/noxpkg/Dockerfile`ın çalışma zamanı imajı (Debian slim) `ca-certificates` içermiyordu; sunucu GitHub'a HTTPS ile bağlanırken TLS doğrulaması anında başarısız oluyordu. Yerel duman testi ana makinenin sertifikalarını kullandığı için bunu göstermedi; M4'e ilk dağıtımda canlıda yakalandı ve aynı gün düzeltildi (`ca-certificates` eklendi). Dağıtım: noxpkg yayıncı kimliği (v2.0.136) canlıya alındı.
+
 ## [2.0.140]
 
 ### Eklendi
