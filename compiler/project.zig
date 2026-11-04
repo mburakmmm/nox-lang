@@ -293,6 +293,9 @@ pub const InstalledPackage = struct {
     /// mevcut bir yardımcı YOKSA `pkg/install.zig` bunu KENDİSİ üretir
     /// (bkz. onun belge notu).
     installed_at: []const u8,
+    /// Bu ikiliyi derleyen `noxc` sürümü (`refresh`: kaynak değişmemiş olsa bile `noxc` yükseldiyse paket yeni derleyiciyle bir kez yeniden
+    /// derlenir; sürüm aynıysa "güncel" diyip atlanır). Eski kayıtlarda boştur.
+    compiler_version: []const u8 = "",
 };
 
 pub const InstalledRegistry = struct {

@@ -367,6 +367,131 @@ test "noxc refresh <paket>: yeni bir commit SONRASI guncel kodu ceker ve yeniden
     try std.testing.expectEqualStrings("surum-2\n", run_after.stdout);
 }
 
+/// `noxc <args...>` calistirir, basarili cikis bekler, stderr'i dondurur (cagiran serbest birakir).
+fn runNoxcOk(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, args: []const []const u8) ![]u8 {
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer argv.deinit(gpa);
+    try argv.append(gpa, noxcPath());
+    try argv.appendSlice(gpa, args);
+    const result = try std.process.run(gpa, io, .{ .argv = argv.items, .environ_map = env });
+    defer gpa.free(result.stdout);
+    errdefer gpa.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        std.debug.print("noxc {s} basarisiz (stderr): {s}\n", .{ args[0], result.stderr });
+        return error.NoxcFailed;
+    }
+    return result.stderr;
+}
+
+test "noxc refresh: kaynak ve noxc degismediyse 'up to date' der ve klonlamadan/derlemeden atlar; --force yeniden derler; yeni commit guncellenir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var pkg_dir = std.testing.tmpDir(.{});
+    defer pkg_dir.cleanup();
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg_dir.dir, &pkg_buf);
+    try seedInstallablePackage(io, gpa, pkg_dir.dir, pkg_path, "currentcli", "v1");
+
+    var home_dir = std.testing.tmpDir(.{});
+    defer home_dir.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home_dir.dir, &home_buf);
+    var env = try std.testing.environ.createMap(gpa);
+    defer env.deinit();
+    try env.put("NOX_HOME", home_path);
+
+    const first = try runNoxcOk(gpa, io, &env, &.{ "install", pkg_path });
+    defer gpa.free(first);
+    try std.testing.expect(std.mem.indexOf(u8, first, "==> Building currentcli") != null);
+
+    const bin_path = try std.fmt.allocPrint(gpa, "{s}/bin/currentcli{s}", .{ home_path, exeSuffix() });
+    defer gpa.free(bin_path);
+    const before = try std.Io.Dir.cwd().statFile(io, bin_path, .{});
+
+    // 1) Hicbir sey degismedi: tek paket ve toplu refresh "up to date" der; ne klonlar ne derler.
+    for ([_][]const []const u8{ &.{ "refresh", "currentcli" }, &.{"refresh"}, &.{ "install", pkg_path } }) |args| {
+        const err = try runNoxcOk(gpa, io, &env, args);
+        defer gpa.free(err);
+        if (std.mem.indexOf(u8, err, "up to date") == null or std.mem.indexOf(u8, err, "==> Building") != null or std.mem.indexOf(u8, err, "==> Fetching") != null) {
+            std.debug.print("{s}: guncel pakette yeniden kurulum yapildi:\n{s}\n", .{ args[0], err });
+            return error.ReinstalledUpToDatePackage;
+        }
+    }
+    const after = try std.Io.Dir.cwd().statFile(io, bin_path, .{});
+    try std.testing.expect(after.mtime.nanoseconds == before.mtime.nanoseconds);
+
+    // 2) --force: guncel olsa da yeniden derler.
+    const forced = try runNoxcOk(gpa, io, &env, &.{ "refresh", "currentcli", "--force" });
+    defer gpa.free(forced);
+    try std.testing.expect(std.mem.indexOf(u8, forced, "==> Building currentcli") != null);
+
+    // 3) Ikili silinmisse "guncel" sayilmaz, geri kurulur.
+    try std.Io.Dir.cwd().deleteFile(io, bin_path);
+    const restored = try runNoxcOk(gpa, io, &env, &.{ "refresh", "currentcli" });
+    defer gpa.free(restored);
+    try std.testing.expect(std.mem.indexOf(u8, restored, "==> Building currentcli") != null);
+    try std.Io.Dir.cwd().access(io, bin_path, .{});
+
+    // 4) Yeni commit gelince guncellenir.
+    try pkg_dir.dir.writeFile(io, .{ .sub_path = "cli.nox", .data = "print(\"v2\")\n" });
+    try commitFixtureUpdate(io, gpa, pkg_path);
+    const updated = try runNoxcOk(gpa, io, &env, &.{"refresh"});
+    defer gpa.free(updated);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "new version found") != null);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "refresh: 1 updated, 0 up to date") != null);
+    const run_after = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
+    defer gpa.free(run_after.stdout);
+    defer gpa.free(run_after.stderr);
+    try std.testing.expectEqualStrings("v2\n", run_after.stdout);
+}
+
+test "noxc refresh: kayit eski noxc surumuyle derlenmisse (compiler_version farkli) kaynak ayni olsa da bir kez yeniden derler" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var pkg_dir = std.testing.tmpDir(.{});
+    defer pkg_dir.cleanup();
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg_dir.dir, &pkg_buf);
+    try seedInstallablePackage(io, gpa, pkg_dir.dir, pkg_path, "oldcompilercli", "x");
+
+    var home_dir = std.testing.tmpDir(.{});
+    defer home_dir.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home_dir.dir, &home_buf);
+    var env = try std.testing.environ.createMap(gpa);
+    defer env.deinit();
+    try env.put("NOX_HOME", home_path);
+
+    const first = try runNoxcOk(gpa, io, &env, &.{ "install", pkg_path });
+    defer gpa.free(first);
+
+    // Kaydi eski bir derleyici surumunden kalmis gibi (alan hic yokmus gibi) yeniden yaz.
+    const json_path = try std.fmt.allocPrint(gpa, "{s}/pkg/installed.json", .{home_path});
+    defer gpa.free(json_path);
+    const text = try std.Io.Dir.cwd().readFileAlloc(io, json_path, gpa, .limited(1024 * 1024));
+    defer gpa.free(text);
+    const needle = "\"compiler_version\": \"";
+    const at = std.mem.indexOf(u8, text, needle) orelse return error.CompilerVersionNotRecorded;
+    const value_start = at + needle.len;
+    const value_end = std.mem.indexOfScalarPos(u8, text, value_start, '"') orelse return error.CompilerVersionNotRecorded;
+    const edited = try std.fmt.allocPrint(gpa, "{s}0.0.1-old{s}", .{ text[0..value_start], text[value_end..] });
+    defer gpa.free(edited);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = edited });
+
+    const refreshed = try runNoxcOk(gpa, io, &env, &.{ "refresh", "oldcompilercli" });
+    defer gpa.free(refreshed);
+    try std.testing.expect(std.mem.indexOf(u8, refreshed, "noxc changed (0.0.1-old ->") != null);
+    try std.testing.expect(std.mem.indexOf(u8, refreshed, "==> Building oldcompilercli") != null);
+
+    // Yeniden derlendikten sonra kayit guncel: bir sonraki refresh atlar.
+    const again = try runNoxcOk(gpa, io, &env, &.{ "refresh", "oldcompilercli" });
+    defer gpa.free(again);
+    try std.testing.expect(std.mem.indexOf(u8, again, "up to date") != null);
+    try std.testing.expect(std.mem.indexOf(u8, again, "==> Building") == null);
+}
+
 test "noxc refresh (argumansiz): TUM kurulu paketleri gunceller" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;

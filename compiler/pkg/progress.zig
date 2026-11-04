@@ -52,6 +52,12 @@ pub const Step = struct {
         }
     }
 
+    /// Satırı `done` yerine kendi sonucuyla kapatır (ör. `up to date`).
+    pub fn doneAs(self: Step, text: []const u8) void {
+        _ = self;
+        std.debug.print(" {s}\n", .{text});
+    }
+
     /// Adım başarısız: satırı kapatır; hata mesajını çağıran yazar.
     pub fn fail(self: Step) void {
         _ = self;

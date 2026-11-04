@@ -149,7 +149,7 @@ fn printHelp(is_tr: bool) void {
             \\  install <ad|repo>     bir paketi GLOBAL olarak kurar (paketin kendi 'bin' giris noktasi gerekir)
             \\  uninstall <komut>     global kurulu bir paketi kaldirir
             \\  list                  global kurulu paketleri listeler
-            \\  refresh [paket]       global kurulu paket(ler)i en son surume gunceller (paket verilmezse TUMUNU gunceller)
+            \\  refresh [paket] [--force]  global kurulu paket(ler)i gunceller; zaten guncel olani atlar (paket verilmezse TUMU; --force yeniden derler)
             \\  cache prune [--dry-run] [--all]  paket onbelleginin eski SHA dizinlerini siler (install/refresh/upgrade de otomatik yapar)
             \\  version               sürüm bilgisini yazdırır (--version/-V ile aynı)
             \\
@@ -199,6 +199,7 @@ fn printHelp(is_tr: bool) void {
             \\  install <name|repo>   GLOBALLY install a package (needs its own 'bin' entry point)
             \\  uninstall <command>   remove a globally installed package
             \\  list                  list globally installed packages
+            \\  refresh [command] [--force]  update globally installed packages; ones that are already current are skipped (--force rebuilds)
             \\  cache prune [--dry-run] [--all]  delete stale package-cache SHA dirs (install/refresh/upgrade also do this automatically)
             \\  version               print version info (same as --version/-V)
             \\
@@ -870,6 +871,7 @@ fn cmdWhoami(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, registry_po
 fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy, environ_map: *const std.process.Environ.Map) !void {
     var ref: []const u8 = "main";
     var ref_explicit = false;
+    var force = false;
     var pkg_arg: ?[]const u8 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -881,12 +883,14 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
             }
             ref = args[i];
             ref_explicit = true;
+        } else if (std.mem.eql(u8, args[i], "--force")) {
+            force = true;
         } else if (pkg_arg == null) {
             pkg_arg = args[i];
         }
     }
     const pkg = pkg_arg orelse {
-        std.debug.print("usage: noxc install <package-name|repo[@ref]> [--ref <ref>]\n", .{});
+        std.debug.print("usage: noxc install <package-name|repo[@ref]> [--ref <ref>] [--force]\n", .{});
         std.process.exit(1);
     };
 
@@ -941,7 +945,7 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         ref = fetch.resolveDefaultRef(a, io, repo, fetch_policy) catch ref;
     }
 
-    installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, repo, ref) catch std.process.exit(1);
+    _ = installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, repo, ref, force) catch std.process.exit(1);
 }
 
 /// v2.0.135: `pkg_index.loadIndexFromUrl` + "Fetching the package index" adımı (ağ beklemesi artık sessiz değil).
@@ -976,9 +980,50 @@ fn installOrUpdatePackage(
     environ_map: *const std.process.Environ.Map,
     repo: []const u8,
     ref: []const u8,
-) !void {
+    force: bool,
+) !InstallOutcome {
     var sig_diag: ?[]const u8 = null;
     const r = reporter(io);
+
+    // v2.0.143: kurulu paket zaten güncelse (aynı uzak SHA, aynı `noxc` sürümü, ikili duruyor) klonlama/derleme/yerleştirme YAPILMAZ.
+    // Uzak SHA `git ls-remote` ile (klonsuz) sorulur; çözülemezse (çevrimdışı, bilinmeyen ref) normal yola düşülür, yani bu önkontrol
+    // yalnızca bir atlama ipucudur ve yanlış bir "güncel" kararına yol açamaz. `--force` her zaman yeniden kurar.
+    if (!force) already_current: {
+        const state = project.loadInstalledRegistry(a, io, nox_home) catch break :already_current;
+        var recorded: ?project.InstalledPackage = null;
+        for (state.packages) |p| {
+            if (std.mem.eql(u8, p.repo, repo) and std.mem.eql(u8, p.ref, ref)) {
+                recorded = p;
+                break;
+            }
+        }
+        const have = recorded orelse break :already_current;
+        if (have.resolved_sha.len == 0) break :already_current;
+        const bin_dir_path = project.resolveGlobalBinDir(a, nox_home) catch break :already_current;
+        const exe_name = install_mod.exeFileName(a, have.command_name) catch break :already_current;
+        const exe_path = std.fmt.allocPrint(a, "{s}/{s}", .{ bin_dir_path, exe_name }) catch break :already_current;
+        std.Io.Dir.cwd().access(io, exe_path, .{}) catch break :already_current; // ikili silinmişse yeniden kur
+
+        const check = r.begin("Checking {s}@{s} for updates", .{ repo, ref });
+        const remote = (fetch.resolveRemoteSha(a, io, repo, ref, fetch_policy) catch null) orelse {
+            check.doneAs("could not check, fetching");
+            break :already_current;
+        };
+        if (!std.mem.eql(u8, remote, have.resolved_sha)) {
+            check.doneAs("new version found");
+            break :already_current;
+        }
+        if (!std.mem.eql(u8, have.compiler_version, build_options.version)) {
+            check.doneAs("source unchanged");
+            r.info("noxc changed ({s} -> {s}): rebuilding {s}", .{ if (have.compiler_version.len > 0) have.compiler_version else "unknown", build_options.version, have.command_name });
+            break :already_current;
+        }
+        check.doneAs("up to date");
+        const short = have.resolved_sha[0..@min(8, have.resolved_sha.len)];
+        printOk("up to date: {s} ({s}@{s})\n", .{ have.command_name, repo, short });
+        return .up_to_date;
+    }
+
     const fetch_step = r.begin("Fetching {s}@{s}", .{ repo, ref });
     const fetch_result = fetch.fetchToCache(a, io, nox_home, repo, ref, false, &sig_diag, fetch_policy) catch |e| {
         fetch_step.fail();
@@ -1036,6 +1081,7 @@ fn installOrUpdatePackage(
         .resolved_sha = fetch_result.resolved_sha,
         .bin_path = bin_spec.path,
         .installed_at = installed_at,
+        .compiler_version = build_options.version,
     });
     try project.saveInstalledRegistry(a, io, nox_home, .{ .packages = new_packages });
 
@@ -1053,7 +1099,11 @@ fn installOrUpdatePackage(
     if (!install_mod.isDirOnPath(path_env, bin_dir_path)) {
         install_mod.printPathHint(bin_dir_path);
     }
+    return if (was_already_installed) .updated else .installed;
 }
+
+/// `installOrUpdatePackage`in sonucu (`refresh` toplu özeti için).
+const InstallOutcome = enum { installed, updated, up_to_date };
 
 /// v1.33.0 (bkz. nox-teknik-spesifikasyon.md §3.100): `noxc install
 /// <paket>`i TEKRAR çalıştırmanın ZATEN yaptığı (yeniden fetch+derle+
@@ -1068,18 +1118,27 @@ fn installOrUpdatePackage(
 /// konvansiyonuyla TUTARLI), sadece SONUNDA (en az bir başarısızlık
 /// VARSA) `exit(1)` yapılır.
 fn cmdRefresh(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy, environ_map: *const std.process.Environ.Map) !void {
+    var force = false;
+    var name_arg: ?[]const u8 = null;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--force")) {
+            force = true;
+        } else if (name_arg == null) {
+            name_arg = arg;
+        }
+    }
+
     const registry_state = project.loadInstalledRegistry(a, io, nox_home) catch |e| {
         printErr("refresh: could not read the installed-package record: {t}\n", .{e});
         std.process.exit(1);
     };
 
-    if (args.len > 0) {
-        const command_name = args[0];
+    if (name_arg) |command_name| {
         const entry = project.findInstalled(registry_state, command_name) orelse {
             printErr("refresh: '{s}' is not installed globally\n", .{command_name});
             std.process.exit(1);
         };
-        installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, entry.repo, entry.ref) catch std.process.exit(1);
+        _ = installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, entry.repo, entry.ref, force) catch std.process.exit(1);
         return;
     }
 
@@ -1088,13 +1147,24 @@ fn cmdRefresh(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         return;
     }
     var fail_count: usize = 0;
+    var updated_count: usize = 0;
+    var current_count: usize = 0;
     for (registry_state.packages, 0..) |entry, idx| {
-        reporter(io).info("Updating [{d}/{d}] {s}", .{ idx + 1, registry_state.packages.len, entry.command_name });
-        installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, entry.repo, entry.ref) catch {
+        reporter(io).info("[{d}/{d}] {s}", .{ idx + 1, registry_state.packages.len, entry.command_name });
+        const outcome = installOrUpdatePackage(gpa, io, a, nox_home, resource_dirs, fetch_policy, environ_map, entry.repo, entry.ref, force) catch {
             fail_count += 1;
+            continue;
         };
+        switch (outcome) {
+            .up_to_date => current_count += 1,
+            .installed, .updated => updated_count += 1,
+        }
     }
-    if (fail_count > 0) std.process.exit(1);
+    if (fail_count > 0) {
+        printErr("refresh: {d} updated, {d} up to date, {d} failed\n", .{ updated_count, current_count, fail_count });
+        std.process.exit(1);
+    }
+    printOk("refresh: {d} updated, {d} up to date\n", .{ updated_count, current_count });
 }
 
 /// `installed.json`daki kayıtları `cache_prune.KeepEntry` listesine çevirir.

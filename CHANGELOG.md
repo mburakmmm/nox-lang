@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.143]
+
+### Düzeltildi
+
+- **`noxc refresh` güncel olsa da her paketi baştan klonlayıp derliyordu:** `installOrUpdatePackage` kurulu kayıttaki SHA ile hiç karşılaştırma yapmıyordu. Artık önce `git ls-remote` ile uzak SHA sorulur (klonlama yok); aynıysa, kayıtlı `noxc` sürümü şimdikiyle aynıysa ve ikili duruyorsa `up to date` denip atlanır. Yeni commit varsa güncellenir; `noxc` yükseltilmişse (kaynak aynı olsa bile) paket yeni derleyiciyle BİR KEZ yeniden derlenir (`installed.json`a `compiler_version` yazılır; eski kayıtlarda boştur); ikili silinmişse geri kurulur; çevrimdışıysa normal yola düşer. Toplu `refresh` sonunda `N updated, M up to date` özeti verir. `noxc refresh` ve `noxc install` için `--force` (her zaman yeniden kur). İngilizce yardım ekranına eksik olan `refresh` satırı eklendi. Test: `install_test` (güncel pakette klonlama/derleme yok ve ikilinin mtime'ı değişmez, `--force`, silinmiş ikili, yeni commit, eski `compiler_version`), birim `pickRemoteSha`. Bkz. spec §3.345.
+
 ## [2.0.142]
 
 ### Düzeltildi

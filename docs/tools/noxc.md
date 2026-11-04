@@ -61,7 +61,8 @@ A bare `noxc file.nox` builds `file`; it does not run it (use `noxc run`).
 | `noxc logout` | delete the local token and revoke it on the server |
 | `noxc whoami` | show which GitHub account you are signed in as |
 | `noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c]` | submit package metadata to the central index (requires `noxc login`; awaits admin approval) |
-| `noxc install <name\|repo[@ref]> [--ref <ref>]` | globally install a package that declares a `bin` entry point. `github.com/org/name@v1.2.3` sets the ref; `--ref` overrides it. `git@host:path` is not split on the first `@` |
+| `noxc install <name\|repo[@ref]> [--ref <ref>] [--force]` | globally install a package that declares a `bin` entry point. `github.com/org/name@v1.2.3` sets the ref; `--ref` overrides it. `git@host:path` is not split on the first `@` |
+| `noxc refresh [command] [--force]` | update globally installed packages (all of them without an argument). A package whose remote commit is unchanged, built by the same `noxc`, is reported as *up to date* and skipped (one `git ls-remote`, no clone or build); `--force` rebuilds anyway. After `noxc upgrade`, packages are rebuilt once with the new compiler |
 | `noxc uninstall <command>` | remove a globally installed command |
 | `noxc list` | list globally installed packages |
 | `noxc cache prune [--dry-run] [--all]` | delete stale package-cache directories and old/oversized `noxc run`/`noxc test` binaries (`--all` empties the run cache) |

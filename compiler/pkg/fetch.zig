@@ -407,6 +407,64 @@ test "install repo@ref ayirir, git@ ve https adresine dokunmaz" {
     try std.testing.expect(https.ref == null);
 }
 
+/// `ref` (dal, etiket ya da tam SHA) için uzak depodaki commit SHA'sını KLONLAMADAN çözer (`git ls-remote`): `noxc refresh`, kurulu SHA ile
+/// aynıysa derleme/yerleştirmeyi atlayabilsin diye. Tam 40 haneli SHA olduğu gibi döner (ağ yok). Kısaltılmış SHA'lar klonsuz çözülemez
+/// (null). Ek açıklamalı etiketlerde `^{}` (soyulmuş) satırı commit'i verir ve öncelik alır. Bulunamazsa ya da git başarısız olursa null:
+/// çağıran normal (klonlayan) yola düşer, yani bu işlev ASLA yanlış bir "güncel" kararı üretmek için kullanılmaz, yalnızca bir atlama ipucudur.
+pub fn resolveRemoteSha(a: Allocator, io: Io, repo: []const u8, ref: []const u8, policy: FetchPolicy) !?[]const u8 {
+    if (ref.len == 40 and isAllHex(ref)) return try a.dupe(u8, ref);
+    if (ref.len >= 7 and isAllHex(ref)) return null;
+    const clone_url = try resolveCloneUrl(a, repo, policy.allow_insecure_transport);
+    const heads = try std.fmt.allocPrint(a, "refs/heads/{s}", .{ref});
+    const tags = try std.fmt.allocPrint(a, "refs/tags/{s}", .{ref});
+    const peeled = try std.fmt.allocPrint(a, "refs/tags/{s}^{{}}", .{ref});
+    const out = runGit(a, io, &.{ "ls-remote", clone_url, heads, tags, peeled }, null, policy) catch return null;
+    return pickRemoteSha(a, out, ref);
+}
+
+/// `git ls-remote` çıktısından (`<sha>\t<ref>` satırları) `ref` için commit SHA'sını seçer: soyulmuş etiket > dal > etiket.
+fn pickRemoteSha(a: Allocator, ls_remote_output: []const u8, ref: []const u8) !?[]const u8 {
+    var head_sha: ?[]const u8 = null;
+    var tag_sha: ?[]const u8 = null;
+    var peeled_sha: ?[]const u8 = null;
+    var lines = std.mem.splitScalar(u8, ls_remote_output, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        const tab = std.mem.indexOfScalar(u8, line, '\t') orelse continue;
+        const sha = line[0..tab];
+        const name = line[tab + 1 ..];
+        if (sha.len != 40 or !isAllHex(sha)) continue;
+        if (std.mem.startsWith(u8, name, "refs/heads/") and std.mem.eql(u8, name["refs/heads/".len..], ref)) head_sha = sha;
+        if (std.mem.startsWith(u8, name, "refs/tags/")) {
+            const rest = name["refs/tags/".len..];
+            if (std.mem.endsWith(u8, rest, "^{}")) {
+                if (std.mem.eql(u8, rest[0 .. rest.len - 3], ref)) peeled_sha = sha;
+            } else if (std.mem.eql(u8, rest, ref)) tag_sha = sha;
+        }
+    }
+    const chosen = peeled_sha orelse head_sha orelse tag_sha orelse return null;
+    return try a.dupe(u8, chosen);
+}
+
+test "pickRemoteSha: soyulmus etiket > dal > etiket, bulunamazsa null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tag_obj = "1111111111111111111111111111111111111111";
+    const commit = "2222222222222222222222222222222222222222";
+    const head = "3333333333333333333333333333333333333333";
+    const annotated = tag_obj ++ "\trefs/tags/v1.0.0\n" ++ commit ++ "\trefs/tags/v1.0.0^{}\n";
+    try std.testing.expectEqualStrings(commit, (try pickRemoteSha(a, annotated, "v1.0.0")).?);
+    const lightweight = commit ++ "\trefs/tags/v2\n";
+    try std.testing.expectEqualStrings(commit, (try pickRemoteSha(a, lightweight, "v2")).?);
+    const branch = head ++ "\trefs/heads/main\n";
+    try std.testing.expectEqualStrings(head, (try pickRemoteSha(a, branch, "main")).?);
+    // Başka bir adın satırı yanlışlıkla eşleşmez; sha biçimi bozuksa yok sayılır.
+    try std.testing.expect((try pickRemoteSha(a, branch, "dev")) == null);
+    try std.testing.expect((try pickRemoteSha(a, "zzzz\trefs/heads/main\n", "main")) == null);
+    try std.testing.expect((try pickRemoteSha(a, "", "main")) == null);
+}
+
 pub fn resolveDefaultRef(a: Allocator, io: Io, repo: []const u8, policy: FetchPolicy) ![]const u8 {
     const clone_url = try resolveCloneUrl(a, repo, policy.allow_insecure_transport);
     const out = try runGit(a, io, &.{ "ls-remote", "--symref", clone_url, "HEAD" }, null, policy);
