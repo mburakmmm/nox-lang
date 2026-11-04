@@ -1,0 +1,50 @@
+name: AppImage
+
+# `packaging/appimage` ile `noxc` AppImage'ini mevcut bir release arşivinden üretir ve çalıştırarak doğrular (x86-64 ve aarch64, kendi runner'ında).
+# Kaynak: mevcut bir release (boşsa en son kararlı sürüm). Sürüm kesmeden denemek için elle çalıştır ya da `packaging/appimage/**` değişince.
+# Gerçek yayım `release.yml`in `appimage` işindedir.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Kaynak release etiketi (boş: en son kararlı sürüm)"
+        required: false
+        default: ""
+  push:
+    paths:
+      - "packaging/appimage/**"
+      - ".github/workflows/appimage.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Etiketi belirle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag }}"
+          if [ -z "$tag" ]; then tag="$(bash scripts/latest_release_with.sh linux-x64.tar.gz linux-arm64.tar.gz)"; fi
+          echo "kaynak sürüm: $tag"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+      - name: AppImage derle
+        run: bash packaging/appimage/build-appimage.sh "$TAG" "${{ matrix.arch }}" out
+      - name: Çalıştırarak doğrula
+        run: bash packaging/appimage/test-appimage.sh out/noxc-*-${{ matrix.arch }}.AppImage "$TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noxc-appimage-${{ matrix.arch }}
+          path: out/*

@@ -1,0 +1,46 @@
+# Snap tarifi şablonu: `scripts/update_snap_package.py` sürüm, mimari ve sağlama toplamını bir GitHub Release'ten doldurur.
+# Release arşivinden kurar (derleme yok). `classic` kısıtlama: noxc, ana makinedeki C araç zincirini (gcc/clang/zig) çalıştırıp kullanıcının
+# dizinlerine yazmak zorundadır; strict kısıtlama bunu engeller. Classic kısıtlama Snap Store'da elle onay ister (docs/internals/releasing.md).
+name: noxc
+title: Nox compiler
+base: core24
+version: "@VERSION@"
+summary: Compiler and project tool for the Nox programming language
+description: |
+  Nox is a statically typed language with Python-like syntax that compiles to native code.
+  This snap contains the compiler (noxc), the language server (noxlsp), the runtime and the standard library.
+  noxc links the programs it builds with a C toolchain from your system (gcc or clang, or zig).
+website: https://noxlang.com
+source-code: https://github.com/mburakmmm/nox-lang
+issues: https://github.com/mburakmmm/nox-lang/issues
+contact: https://github.com/mburakmmm/nox-lang/issues
+license: MIT
+icon: snap/gui/noxc.png
+grade: stable
+confinement: classic
+platforms:
+  @SNAP_ARCH@:
+    build-on: [@SNAP_ARCH@]
+    build-for: [@SNAP_ARCH@]
+
+apps:
+  noxc:
+    command: bin/noxc
+    environment:
+      PATH: $SNAP/bin:$PATH
+  noxlsp:
+    command: bin/noxlsp
+
+parts:
+  nox:
+    plugin: nil
+    # Classic snap: ikililer ana makinenin yükleyicisi/glibc'si yerine core24'ün kütüphanelerine bağlanır (eski dağıtımlarda da çalışsın).
+    build-attributes: [enable-patchelf]
+    source: https://github.com/mburakmmm/nox-lang/releases/download/v@VERSION@/nox-lang-v@VERSION@-@ASSET@.tar.gz
+    source-type: tar
+    source-checksum: sha256/@SHA@
+    override-build: |
+      # Arşivin tek üst dizini (nox-lang-v<sürüm>-<platform>/) araç sürümüne göre soyulmuş ya da soyulmamış gelebilir; ikisi de çalışsın.
+      tree="$(find "$CRAFT_PART_SRC" -maxdepth 2 -type d -name 'nox-lang-v*' | head -n1)"
+      if [ -z "$tree" ]; then tree="$CRAFT_PART_SRC"; fi
+      cp -a "$tree"/. "$CRAFT_PART_INSTALL"/

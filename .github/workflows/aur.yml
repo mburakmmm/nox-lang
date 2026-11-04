@@ -31,7 +31,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ github.event.inputs.tag }}"
-          if [ -z "$tag" ]; then tag="$(gh release view --repo mburakmmm/nox-lang --json tagName --jq .tagName)"; fi
+          if [ -z "$tag" ]; then tag="$(bash scripts/latest_release_with.sh linux-x64.tar.gz linux-arm64.tar.gz)"; fi
           echo "kaynak sürüm: $tag"
           echo "TAG=$tag" >> "$GITHUB_ENV"
       - name: Arch Linux'ta derle, kur, çalıştır, kaldır

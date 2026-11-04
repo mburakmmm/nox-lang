@@ -49,6 +49,13 @@ Pushing a `v*` tag triggers `release.yml`:
 5. **AUR job** — for stable tags only, it builds the `noxc-bin` package from the release in a clean Arch Linux container (`packaging/aur/test-in-arch.sh`: `makepkg`, `.SRCINFO` identical to `makepkg --printsrcinfo`, install, run, upgrade guard,
    remove), then pushes `PKGBUILD` and `.SRCINFO` (`scripts/update_aur_package.py`, template `packaging/aur/PKGBUILD.in`) to `ssh://aur@aur.archlinux.org/noxc-bin.git`. The push needs a repository secret `AUR_SSH_PRIVATE_KEY` (the private
    half of an SSH key registered in your AUR account); without it only the container test runs. To iterate without a release, push to a branch that changes `packaging/aur/**` (or run *AUR package* manually).
+6. **AppImage jobs** — x86-64 and aarch64, each on its own runner: `packaging/appimage/build-appimage.sh` assembles an AppDir from the release archive (checksum verified) and runs `appimagetool`; `test-appimage.sh` runs the result (`version`, `run`, the QBE
+   back end, the `noxlsp` dispatch, the upgrade guard) before `noxc-<version>-<arch>.AppImage` and its SHA-256 are uploaded to the release. No account or secret is involved.
+7. **Snap jobs** — stable tags only, amd64 and arm64: `scripts/update_snap_package.py` writes `snapcraft.yaml` (classic confinement, built from the release archive with `patchelf` so the binaries use the core24 libraries), `snapcraft pack --destructive-mode`
+   builds it and `packaging/snap/test-snap.sh` installs it with `--classic`, runs it and removes it; the `.snap` is attached to the release. If the repository secret `SNAPCRAFT_STORE_CREDENTIALS` exists
+   (`snapcraft export-login --snaps noxc --acls package_access,package_push,package_release -`) the job also uploads to the Snap Store's `stable` channel; this needs the name registered (`snapcraft register noxc`) and
+   [classic confinement approved](https://forum.snapcraft.io/c/store-requests/19) by the Snap Store reviewers first. The upload step never fails the release.
+   To iterate on AppImage, Snap or AUR packaging without a release, push to a branch that changes `packaging/<format>/**` (or run the matching workflow manually): each builds from the newest release that has all the needed assets and runs the same tests.
 
 Because the workflow concurrency cancels a superseded CI run, a later push can cancel the CI run of an earlier tag and make that tag's release fail its gate; push one release at a time and wait for CI.
 

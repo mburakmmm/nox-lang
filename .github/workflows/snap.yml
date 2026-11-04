@@ -1,0 +1,57 @@
+name: Snap package
+
+# `packaging/snap` ile üretilen `noxc` snap'ini (classic) gerçekten derler, kurar, çalıştırır ve kaldırır. Kaynak: mevcut bir release (boşsa
+# en son kararlı sürüm). Sürüm kesmeden denemek için elle çalıştır ya da `packaging/snap/**` değişince. Gerçek yayım `release.yml`in `snap` işindedir.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Kaynak release etiketi (boş: en son kararlı sürüm)"
+        required: false
+        default: ""
+  push:
+    paths:
+      - "packaging/snap/**"
+      - "scripts/update_snap_package.py"
+      - ".github/workflows/snap.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  snap:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Etiketi belirle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag }}"
+          if [ -z "$tag" ]; then tag="$(bash scripts/latest_release_with.sh linux-x64.tar.gz linux-arm64.tar.gz)"; fi
+          echo "kaynak sürüm: $tag"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+      - name: Snapcraft kur
+        run: sudo snap install snapcraft --classic
+      - name: Tarifi üret
+        run: python3 scripts/update_snap_package.py --tag "$TAG" --arch "${{ matrix.arch }}" --outdir snapproj
+      - name: Snap'i derle
+        run: |
+          cd snapproj
+          sudo snapcraft pack --destructive-mode --output "noxc_${{ matrix.arch }}.snap"
+          mv "noxc_${{ matrix.arch }}.snap" ..
+      - name: Kur, çalıştır, kaldır
+        run: bash packaging/snap/test-snap.sh "noxc_${{ matrix.arch }}.snap" "$TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noxc-snap-${{ matrix.arch }}
+          path: noxc_${{ matrix.arch }}.snap

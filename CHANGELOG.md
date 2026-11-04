@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.140]
+
+### Eklendi
+
+- **Snap (`noxc`, classic):** `sudo snap install noxc --classic` (amd64 ve arm64). Release arşivinden `patchelf` ile core24 kütüphanelerine bağlanarak kurulur (eski dağıtımlarda da çalışır), `noxc` ve `noxc.noxlsp` uygulamaları, arşivle gelen `qbe` PATH'tedir. `scripts/update_snap_package.py` mimariye özel `snapcraft.yaml` üretir; `release.yml`in `snap` işi her kararlı sürümde derler, kurup çalıştırarak doğrular (`packaging/snap/test-snap.sh`), `.snap`ı release'e ekler ve `SNAPCRAFT_STORE_CREDENTIALS` varsa Snap Store `stable` kanalına yükler (adın kaydı ve classic onayı gerekir).
+- **AppImage:** `noxc-<sürüm>-x86_64.AppImage` ve `-aarch64.AppImage` her sürümde release'e eklenir (tek dosya, kurulum yok); `noxlsp` adıyla çağrılırsa language server açılır. Hesap/secret gerektirmez; üretildikten sonra çalıştırılarak doğrulanır (`packaging/appimage/test-appimage.sh`).
+- **`noxc upgrade` koruması genişledi:** Snap (`/snap/noxc/...`) ve AppImage (`/.mount_*`, `/appimage_extracted_*`) kurulumlarında dosyalara ve ağa dokunmadan doğru yönergeyi (`sudo snap refresh noxc` / yeni `.AppImage`i indirin) verip çıkış 1 döner; Homebrew ve pacman ile birlikte `upgrade.managedBy` dört yöntemi tanır.
+- Paket test iş akışları (`snap.yml`, `appimage.yml`, `aur.yml`, `windows-installer.yml`) "en son sürüm" olarak, gereken TÜM varlıkları yüklenmiş en yeni kararlı release'i seçer (`scripts/latest_release_with.sh`); yayımlanmakta olan bir release'in eksik varlıkları testleri 404 ile düşürüyordu. Bkz. spec §3.343, `docs/install/index.md`.
+
 ## [2.0.139]
 
 ### Eklendi

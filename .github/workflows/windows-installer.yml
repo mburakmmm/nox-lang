@@ -31,7 +31,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $tag = "${{ github.event.inputs.tag }}"
-          if (-not $tag) { $tag = (gh release view --repo mburakmmm/nox-lang --json tagName --jq .tagName) }
+          if (-not $tag) { $tag = (bash scripts/latest_release_with.sh windows-x64.zip) }
           Write-Host "kaynak sürüm: $tag"
           gh release download $tag --repo mburakmmm/nox-lang --pattern "nox-lang-*-windows-x64.zip" --dir src
           Expand-Archive -Path (Get-ChildItem src\*.zip | Select-Object -First 1).FullName -DestinationPath stage-root

@@ -385,3 +385,75 @@ jobs:
           git config user.email "mburakmemiscy@gmail.com"
           git commit -m "noxc-bin ${GITHUB_REF_NAME#v}"
           git push origin master
+
+  # v2.0.140: AppImage (Linux, her dağıtımda çalışan tek dosya). Release arşivinden üretilir, çalıştırılarak doğrulanır (packaging/appimage/test-appimage.sh) ve
+  # release'e yüklenir. Hesap/anahtar gerektirmez, her etikette (ön sürümler dahil) çalışır; test kırmızıysa yüklenmez.
+  appimage:
+    name: AppImage (${{ matrix.arch }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: AppImage derle
+        run: bash packaging/appimage/build-appimage.sh "${GITHUB_REF_NAME}" "${{ matrix.arch }}" out
+      - name: Çalıştırarak doğrula
+        run: bash packaging/appimage/test-appimage.sh out/noxc-*-${{ matrix.arch }}.AppImage "${GITHUB_REF_NAME}"
+      - name: Yükle
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/noxc-*.AppImage
+            out/noxc-*.AppImage.sha256
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # v2.0.140: Snap (classic). Yalnızca kararlı sürümler. Her mimari kendi runner'ında derlenir, kurulup çalıştırılarak doğrulanır (packaging/snap/test-snap.sh) ve
+  # `.snap` release'e yüklenir. Snap Store'a yükleme `SNAPCRAFT_STORE_CREDENTIALS` secret'ı varsa yapılır (adın kaydı ve classic onayı gerekir, bkz.
+  # docs/internals/releasing.md); yoksa ya da Store reddederse uyarı verir, sürüm etkilenmez.
+  snap:
+    name: Snap (${{ matrix.arch }})
+    needs: build
+    if: ${{ !contains(github.ref_name, '-') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snapcraft kur
+        run: sudo snap install snapcraft --classic
+      - name: Tarifi üret ve derle
+        run: |
+          set -euo pipefail
+          python3 scripts/update_snap_package.py --tag "${GITHUB_REF_NAME}" --arch "${{ matrix.arch }}" --outdir snapproj
+          cd snapproj
+          sudo snapcraft pack --destructive-mode --output "noxc_${GITHUB_REF_NAME#v}_${{ matrix.arch }}.snap"
+          mv noxc_*.snap ..
+      - name: Kur, çalıştır, kaldır
+        run: bash packaging/snap/test-snap.sh noxc_*_${{ matrix.arch }}.snap "${GITHUB_REF_NAME}"
+      - name: Yükle (release)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: noxc_*_${{ matrix.arch }}.snap
+      - name: Snap Store'a yükle
+        continue-on-error: true
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -z "${SNAPCRAFT_STORE_CREDENTIALS}" ]; then
+            echo "::warning::SNAPCRAFT_STORE_CREDENTIALS tanımlı değil: Snap Store'a yüklenmedi (bkz. docs/internals/releasing.md)"
+            exit 0
+          fi
+          snapcraft upload --release=stable noxc_*_${{ matrix.arch }}.snap

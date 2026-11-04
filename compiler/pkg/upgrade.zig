@@ -538,15 +538,21 @@ pub fn performUpgrade(a: Allocator, io: Io, r: progress.Reporter, target_tag: []
     install_step.done();
 }
 
-/// Kurulumu bir paket yöneticisi yönetiyorsa onun adı ve güncelleme komutu. `noxc upgrade` bu dosyaları kendisi ezerse yöneticinin kaydı
-/// ile gerçek içerik ayrışır (`brew` Cellar'daki sürüm dizinini sahiplenir). Kök, çalışan ikilinin GERÇEK yolundan türetilir
-/// (symlink çözülmüş), yani Homebrew'de `.../Cellar/noxc/<sürüm>/libexec`.
-pub const ManagedBy = struct { name: []const u8, update_command: []const u8 };
+/// Kurulumu bir paket yöneticisi ya da paket biçimi yönetiyorsa onun adı ve güncelleme yönergesi. `noxc upgrade` bu dosyaları kendisi
+/// ezerse yöneticinin kaydı ile gerçek içerik ayrışır (`brew` Cellar'daki sürüm dizinini, `snap` salt-okunur imajı sahiplenir; bir AppImage
+/// ise kendi geçici bağlama noktasında çalışır ve zaten değiştirilemez). Kök, çalışan ikilinin GERÇEK yolundan türetilir (symlink çözülmüş).
+pub const ManagedBy = struct { name: []const u8, update_hint: []const u8 };
 
 pub fn managedBy(install_root: []const u8) ?ManagedBy {
-    if (std.mem.indexOf(u8, install_root, "/Cellar/") != null) return .{ .name = "Homebrew", .update_command = "brew upgrade noxc" };
+    // Homebrew: `.../Cellar/noxc/<sürüm>/libexec`.
+    if (std.mem.indexOf(u8, install_root, "/Cellar/") != null) return .{ .name = "Homebrew", .update_hint = "update it with 'brew upgrade noxc'" };
     // AUR `noxc-bin` paketi (packaging/aur): ağaç /usr/lib/noxc altındadır, /usr/bin'dekiler sarmalayıcıdır.
-    if (std.mem.eql(u8, install_root, "/usr/lib/noxc") or std.mem.startsWith(u8, install_root, "/usr/lib/noxc/")) return .{ .name = "pacman (AUR package noxc-bin)", .update_command = "yay -Syu noxc-bin" };
+    if (std.mem.eql(u8, install_root, "/usr/lib/noxc") or std.mem.startsWith(u8, install_root, "/usr/lib/noxc/")) return .{ .name = "pacman (AUR package noxc-bin)", .update_hint = "update it with your AUR helper, for example 'yay -Syu noxc-bin'" };
+    // Snap (classic): `/snap/noxc/<revizyon>` ya da (Fedora/Arch'ta) `/var/lib/snapd/snap/noxc/<revizyon>`.
+    if (std.mem.indexOf(u8, install_root, "/snap/noxc/") != null) return .{ .name = "snap", .update_hint = "update it with 'sudo snap refresh noxc'" };
+    // AppImage: çalışma zamanı kendini `/tmp/.mount_*` altına bağlar (ya da `--appimage-extract-and-run` ile `/tmp/appimage_extracted_*` altına açar).
+    if (std.mem.indexOf(u8, install_root, "/.mount_") != null or std.mem.indexOf(u8, install_root, "/appimage_extracted_") != null)
+        return .{ .name = "AppImage", .update_hint = "download a newer .AppImage from https://github.com/mburakmmm/nox-lang/releases" };
     return null;
 }
 
@@ -667,14 +673,27 @@ fn tmpRootAlloc(a: Allocator, io: Io, tmp: *std.testing.TmpDir) ![]const u8 {
     return try a.dupe(u8, try tmpRoot(io, tmp, &buf));
 }
 
-test "managedBy: Homebrew Cellar yolu taninir, diger yollar serbesttir" {
+test "managedBy: Homebrew, pacman, snap ve AppImage taninir, diger yollar serbesttir" {
     const brew = managedBy("/opt/homebrew/Cellar/noxc/2.0.136/libexec") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("Homebrew", brew.name);
-    try std.testing.expectEqualStrings("brew upgrade noxc", brew.update_command);
+    try std.testing.expect(std.mem.indexOf(u8, brew.update_hint, "brew upgrade noxc") != null);
     try std.testing.expect(managedBy("/home/u/linuxbrew/.linuxbrew/Cellar/noxc/1/libexec") != null);
+
     const aur = managedBy("/usr/lib/noxc") orelse return error.TestUnexpectedResult;
     try std.testing.expect(std.mem.indexOf(u8, aur.name, "pacman") != null);
+    try std.testing.expect(std.mem.indexOf(u8, aur.update_hint, "yay -Syu noxc-bin") != null);
     try std.testing.expect(managedBy("/usr/lib/noxcfoo") == null);
+
+    const snap = managedBy("/snap/noxc/123") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("snap", snap.name);
+    try std.testing.expect(std.mem.indexOf(u8, snap.update_hint, "snap refresh noxc") != null);
+    try std.testing.expect(managedBy("/var/lib/snapd/snap/noxc/123") != null);
+    try std.testing.expect(managedBy("/snap/other/1") == null);
+
+    const appimage = managedBy("/tmp/.mount_noxc-2AbCdE/usr") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("AppImage", appimage.name);
+    try std.testing.expect(managedBy("/tmp/appimage_extracted_0123abcd/usr") != null);
+
     try std.testing.expect(managedBy("/Users/u/.nox-lang") == null);
     try std.testing.expect(managedBy("/usr/local") == null);
 }

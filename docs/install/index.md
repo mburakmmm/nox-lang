@@ -33,6 +33,27 @@ yay -S noxc-bin          # or any AUR helper; or: git clone https://aur.archlinu
 `noxc-bin` installs the prebuilt release (x86-64 and aarch64) under `/usr/lib/noxc` with `noxc` and `noxlsp` in `/usr/bin`, and needs `gcc` to link (`clang` or `zig` are optional). Update it through your AUR helper;
 `noxc upgrade` refuses to run on a pacman install and tells you so.
 
+## Snap (Linux)
+
+```sh
+sudo snap install noxc --classic
+```
+
+The snap uses *classic* confinement because `noxc` has to run your system's C toolchain and write wherever your project lives. `noxc` and `noxlsp` are available as `noxc` and `noxc.noxlsp`. Update with `sudo snap refresh noxc`
+(snaps also refresh themselves); `noxc upgrade` refuses to run on a snap install. The `.snap` files are also attached to each [release](https://github.com/mburakmmm/nox-lang/releases) (`sudo snap install --dangerous --classic <file>`).
+
+## AppImage (Linux)
+
+Download `noxc-<version>-x86_64.AppImage` (or `aarch64`) from the [releases](https://github.com/mburakmmm/nox-lang/releases), then:
+
+```sh
+chmod +x noxc-*.AppImage
+./noxc-*.AppImage run hello.nox          # arguments go to noxc
+```
+
+One file, no installation, any distribution (it needs FUSE, or run it with `--appimage-extract-and-run`). Name it or link it as `noxc` to put it on your `PATH`; invoked under the name `noxlsp` it starts the language server instead.
+Update by downloading the new file (`noxc upgrade` refuses to run from an AppImage).
+
 ## Homebrew (macOS and Linux)
 
 ```sh
