@@ -35,7 +35,7 @@ pub fn plan(a: std.mem.Allocator, info: qbe_target.HostedTargetInfo, ir: []const
     if (info.wasm_freestanding) try flags.appendSlice(a, &.{ "-Wl,--no-entry", "-Wl,--export=_start", "-Wl,--export=nox_host_abi_version" });
     if (info.wasm_freestanding and info.wasm_threads) try flags.append(a, "-Wl,--export=nox_host_thread_start");
     // `--asyncify` freestanding'de `nox.http` istemcisi host `fetch`ini kullanabilir (spec §3.351); host'un çağıracağı dışa aktarımlar.
-    if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and (has(ir, "nox_http_") or has(ir, "nox_ws_") or has(ir, "nox_tls_") or has(ir, "nox_smtp_") or has(ir, "nox_pg_"))) {
+    if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and (has(ir, "nox_http_") or has(ir, "nox_ws_") or has(ir, "nox_tls_") or has(ir, "nox_smtp_") or has(ir, "nox_pg_") or has(ir, "nox_process_"))) {
         try flags.appendSlice(a, &.{ "-Wl,--export=nox_host_caps_set", "-Wl,--export=nox_host_alloc", "-Wl,--export=nox_host_free", "-Wl,--export=nox_host_fetch_pending", "-Wl,--export=nox_host_fetch_complete", "-Wl,--export=nox_host_status", "-Wl,--export=nox_host_resume" });
     }
     // Sanal dosya sistemini kalıcı kılmak isteyen host için önyükleme/anlık görüntü dışa aktarımları (spec §3.350); yalnızca dosya sistemini kullanan programlara.

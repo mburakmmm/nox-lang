@@ -445,8 +445,48 @@ export async function nodeTcp() {
   };
 }
 
+/**
+ * Alt süreç (kind 13, `process_wasm.zig`): `proc.run(program, args, cwd, timeoutMs) -> Promise<{ status, stdout, stderr }>` sağlayıcısı. Node için varsayılan: `nodeProcess()`
+ * (`child_process.spawn`, KABUKSUZ: argümanlar kabuk yorumundan geçmez). Yetenek açıkça verilmedikçe kapalıdır.
+ */
+async function doProc(req, proc) {
+  const enc = new TextEncoder();
+  const err = (e) => ({ ...failed(req.id, 0), body: enc.encode(String(e && e.message ? e.message : e)) });
+  if (!proc) return err('process capability is not available in this host');
+  try {
+    const args = req.body.length === 0 ? [] : new TextDecoder().decode(req.body).split('\0');
+    const r = await proc.run(req.method, args, req.url, req.arg);
+    return { id: req.id, status: r.status, errorKind: -1, headers: r.stderr, body: r.stdout };
+  } catch (e) {
+    return err(e);
+  }
+}
+
+/** Node'un `child_process.spawn`ına dayanan varsayılan süreç sağlayıcısı (kabuksuz; çıktı tamponlanır; `timeoutMs > 0` aşılırsa süreç öldürülür ve hata verilir). */
+export async function nodeProcess() {
+  const cp = await import('node:child_process');
+  return {
+    run: (program, args, cwd, timeoutMs) =>
+      new Promise((resolve, reject) => {
+        const child = cp.spawn(program, args, { cwd: cwd || undefined, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+        const out = [];
+        const errc = [];
+        let timedOut = false;
+        const timer = timeoutMs > 0 ? setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs) : null;
+        child.stdout.on('data', (d) => out.push(d));
+        child.stderr.on('data', (d) => errc.push(d));
+        child.on('error', (e) => { if (timer) clearTimeout(timer); reject(e); });
+        child.on('close', (code) => {
+          if (timer) clearTimeout(timer);
+          if (timedOut) return reject(new Error('process timed out'));
+          resolve({ status: code === null ? -1 : code, stdout: new Uint8Array(Buffer.concat(out)), stderr: new Uint8Array(Buffer.concat(errc)) });
+        });
+      }),
+  };
+}
+
 /** Askıdaki modülün yeni isteklerini başlatır, bir tanesi bitene kadar bekler ve sonucunu modüle iletir. */
-async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl) {
+async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl, procImpl) {
   const x = instance.exports;
   const mem = x.memory;
   const lenPtr = x.nox_host_alloc(4);
@@ -458,6 +498,8 @@ async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl
   for (const req of pending) {
     if (req.kind === 0) {
       inflight.set(req.id, doFetch(fetchFn, req));
+    } else if (req.kind === 13) {
+      inflight.set(req.id, doProc(req, procImpl));
     } else if (req.kind >= 8) {
       const p = doTcp(req, streams, tcpImpl);
       if (req.kind === 8 || req.kind === 10 || req.kind === 11) inflight.set(req.id, p);
@@ -588,7 +630,7 @@ export async function runNox(wasmBytes, io, opts = {}) {
   if (vfs && vfs.files) vfsPreload(instance, vfs.files);
   const asyncHost = typeof x.nox_host_resume === 'function' && typeof x.nox_host_caps_set === 'function';
   const fetchFn = opts.fetch || null;
-  if (asyncHost && (fetchFn || opts.tcp)) x.nox_host_caps_set((fetchFn ? 1 : 0) | (opts.tcp ? 2 : 0));
+  if (asyncHost && (fetchFn || opts.tcp || opts.process)) x.nox_host_caps_set((fetchFn ? 1 : 0) | (opts.tcp ? 2 : 0) | (opts.process ? 4 : 0));
   let code = 0;
   const streams = new Map();
   try {
@@ -605,7 +647,7 @@ export async function runNox(wasmBytes, io, opts = {}) {
         throw e;
       }
       if (!asyncHost || x.nox_host_status() !== 1) break;
-      await pumpFetches(instance, (fetchFn || globalThis.fetch).bind(globalThis), inflight, streams, opts.WebSocket === undefined ? globalThis.WebSocket : opts.WebSocket, opts.tcp || null);
+      await pumpFetches(instance, (fetchFn || globalThis.fetch).bind(globalThis), inflight, streams, opts.WebSocket === undefined ? globalThis.WebSocket : opts.WebSocket, opts.tcp || null, opts.process || null);
       step = () => x.nox_host_resume();
     }
   } finally {
@@ -743,15 +785,17 @@ async function makeNodeVfs(dir, loadedInit = null) {
 function takeHostFlags(args) {
   let dir = process.env.NOX_VFS_DIR || null;
   let allowNet = process.env.NOX_ALLOW_NET === '1';
+  let allowProcess = process.env.NOX_ALLOW_PROCESS === '1';
   const rest = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith('--vfs-dir=')) dir = a.slice('--vfs-dir='.length);
     else if (a === '--vfs-dir' && i + 1 < args.length) dir = args[++i];
     else if (a === '--allow-net') allowNet = true;
+    else if (a === '--allow-process') allowProcess = true;
     else rest.push(a);
   }
-  return { dir, allowNet, rest };
+  return { dir, allowNet, allowProcess, rest };
 }
 
 async function nodeMain() {
@@ -763,7 +807,7 @@ async function nodeMain() {
     process.exit(2);
   }
   const bytes = fs.readFileSync(file);
-  const { dir: vfsDir, allowNet, rest: progArgs } = takeHostFlags(argv.slice(3));
+  const { dir: vfsDir, allowNet, allowProcess, rest: progArgs } = takeHostFlags(argv.slice(3));
   const mod = await WebAssembly.compile(bytes);
   const modules = new Set(WebAssembly.Module.imports(mod).map((i) => i.module));
 
@@ -778,7 +822,7 @@ async function nodeMain() {
       const nv = await makeNodeVfs(vfsDir);
       vfs = { files: nv.load(), onSave: (snap) => nv.save(snap) };
     }
-    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: allowNet ? globalThis.fetch : null, tcp: allowNet ? await nodeTcp() : null });
+    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: allowNet ? globalThis.fetch : null, tcp: allowNet ? await nodeTcp() : null, process: allowProcess ? await nodeProcess() : null });
     return;
   }
 

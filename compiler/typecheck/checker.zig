@@ -409,7 +409,6 @@ pub const MobileMask = enum { none, ios, android };
 /// semboller `runtime/stdlib_shims/http_wasm.zig`de "network yeteneği yok" stub'larıyla sağlanır (ADR-016). Listedeki her modül, yetenek modeline taşındıkça buradan çıkar.
 const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }{
     .{ .name = "mysql", .why = "it loads a host shared library" },
-    .{ .name = "process", .why = "WASI has no child processes" },
     .{ .name = "sharedmem", .why = "WASI has no shared memory" },
     .{ .name = "native", .why = "WASI has no dynamic loading" },
     .{ .name = "plugin", .why = "WASI has no dynamic loading" },

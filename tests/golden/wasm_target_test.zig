@@ -769,3 +769,86 @@ test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucu
         \\
     , res.stdout);
 }
+
+// v2.0.157 (spec §3.359): `nox.process` WASM'da bir HOST yeteneğidir (bit 2): `wasm32-freestanding --asyncify` + host `process` sağlayıcısı. Sürücü süreç içi sahte sağlayıcı verir;
+// gerçek `child_process.spawn` yolu (`nodeProcess`) ayrı testte `--allow-process` ile denenir.
+test "wasm32-freestanding --asyncify: nox.process host süreç sağlayıcısıyla (çıkış kodu, stdout/stderr, hata, zaman aşımı)" {
+    const src =
+        \\import nox.process
+        \\from nox.process import Command, Output, ProcessError
+        \\
+        \\a: list[str] = ["one", "two words", "three"]
+        \\o: Output = Command("echo-tool").arg_list(a).set_cwd("/work").set_timeout(500).run()
+        \\print(o.status, o.stdout, o.stderr, o.success())
+        \\f: Output = Command("fails").run()
+        \\print(f.status, f.stdout, f.stderr, f.success())
+        \\try:
+        \\    m: Output = Command("missing").run()
+        \\    print("unreachable")
+        \\except ProcessError:
+        \\    print("process error")
+        \\try:
+        \\    t: Output = Command("slow").set_timeout(10).run()
+        \\    print("unreachable")
+        \\except ProcessError:
+        \\    print("timeout error")
+        \\
+    ;
+    const out = (try runFetchDriver(src, "allow")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings(
+        \\0 one,two words,three warn True
+        \\3 partial boom False
+        \\process error
+        \\timeout error
+        \\exit 0
+        \\max concurrent 0
+        \\proc echo-tool [one|two words|three] cwd=/work timeout=500
+        \\proc fails [] cwd=- timeout=0
+        \\proc missing [] cwd=- timeout=0
+        \\proc slow [] cwd=- timeout=10
+        \\
+    , out);
+}
+
+test "wasm32-freestanding --asyncify: host süreç yeteneğini vermezse ProcessError" {
+    const src =
+        \\import nox.process
+        \\from nox.process import Command, Output, ProcessError
+        \\
+        \\try:
+        \\    o: Output = Command("echo-tool").run()
+        \\    print("unreachable")
+        \\except ProcessError:
+        \\    print("denied")
+        \\
+    ;
+    const out = (try runFetchDriver(src, "deny")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("denied\nexit 0\nmax concurrent 0\n", out);
+}
+
+test "wasm32-freestanding --asyncify: gerçek alt süreç (Node child_process, --allow-process, kabuksuz)" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\import nox.process
+        \\from nox.process import Command, Output
+        \\
+        \\o: Output = Command("node").arg("-e").arg("console.log(process.argv[1] + '!'); console.error('err'); process.exit(7)").arg("a b; echo injected").run()
+        \\print(o.status, o.stdout, o.stderr)
+        \\
+    ;
+    const outcome = try wasm_helpers.buildAndRunRepeated(allocator, build_options.noxc_path, build_options.runner_path, .freestanding_asyncify, src, &.{"--allow-process"}, 1);
+    switch (outcome) {
+        .tool_missing => return error.SkipZigTest,
+        .rejected, .build_failed => |msg| {
+            defer allocator.free(msg);
+            return error.BuildFailed;
+        },
+        .ran => |r| {
+            defer allocator.free(r.stdout);
+            defer allocator.free(r.stderr);
+            try std.testing.expectEqualStrings("7 a b; echo injected!\n err\n\n", r.stdout);
+        },
+    }
+}

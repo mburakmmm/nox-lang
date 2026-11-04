@@ -68,6 +68,22 @@ class FakeWebSocket {
   }
 }
 
+// Süreç içi sahte süreç sağlayıcısı: "echo-tool" argümanlarını stdout'a yazar, "fails" 3 ile çıkar, "missing" bulunamaz, "slow" zaman aşımına uğrar.
+const procLog = [];
+const fakeProc = {
+  async run(program, args, cwd, timeoutMs) {
+    procLog.push(`${program} [${args.join('|')}] cwd=${cwd || '-'} timeout=${timeoutMs}`);
+    const enc = new TextEncoder();
+    if (program === 'missing') throw new Error('spawn missing ENOENT');
+    if (program === 'slow') {
+      await new Promise((r) => setTimeout(r, 50));
+      throw new Error('process timed out');
+    }
+    if (program === 'fails') return { status: 3, stdout: enc.encode('partial'), stderr: enc.encode('boom') };
+    return { status: 0, stdout: enc.encode(args.join(',')), stderr: enc.encode('warn') };
+  },
+};
+
 const out = [];
 const io = {
   write: (fd, b) => {
@@ -81,10 +97,11 @@ const io = {
 };
 // `AbortSignal.timeout` zamanlayıcısı Node'da unref edilir; bekleyen bir söz tek başına olay döngüsünü açık tutmaz.
 const keepAlive = setInterval(() => {}, 1000);
-const code = await runNox(fs.readFileSync(process.argv[2]), io, mode === 'deny' ? { fetch: null } : { fetch: fakeFetch, WebSocket: FakeWebSocket });
+const code = await runNox(fs.readFileSync(process.argv[2]), io, mode === 'deny' ? { fetch: null } : { fetch: fakeFetch, WebSocket: FakeWebSocket, process: fakeProc });
 clearInterval(keepAlive);
 process.stdout.write(out.join(''));
 console.log(`exit ${code}`);
 console.log(`max concurrent ${active.max}`);
 for (const c of calls.sort()) console.log(`fetch ${c}`);
 for (const w of wsLog) console.log(`ws ${w}`);
+for (const p of procLog) console.log(`proc ${p}`);

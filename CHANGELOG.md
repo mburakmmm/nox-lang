@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.157]
+
+### Eklendi
+
+- **WASM'da `nox.process`** host yeteneği olarak: `runNox({ process: await nodeProcess() })`, `--allow-process` (kabuksuz `child_process.spawn`; varsayılan kapalı, `--allow-net`ten bağımsız). Yetenek yokken `ProcessError` (spec 3.359).
+
 ## [2.0.156]
 
 ### Eklendi

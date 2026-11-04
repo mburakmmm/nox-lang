@@ -26,7 +26,7 @@ Her kip `wasm32-wasi` ve `wasm32-freestanding` için vardır. Dil ve standart k�
 ## Sınırlar
 
 - **Eşzamanlılık kipe bağlıdır** (yukarıdaki tabloya bakın). Varsayılan kipte iş parçacığı yoktur ve `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. `--asyncify` gerçek fiber verir (tek iş parçacığı, M:1); `--threads` gerçek paralellik verir (M:N).
-- **Henüz desteklenmeyen modüller.** `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
+- **Henüz desteklenmeyen modüller.** `mysql`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
 - **Ağ host'a bağlıdır.** `nox.http` WASM'da derlenir, ama gerçek bir soket (istemci `get`/`post`/`request`/akışlı istemci, sunucu `serve*`) bir host yeteneği olmadan çalışmaz: istemci çağrıları yakalanabilir bir `HttpCapabilityError` (`HttpError`ın alt sınıfı) fırlatır; `serve` bir tanı mesajı yazıp gerçek bir bind hatasındaki gibi hemen döner.
 - **Yerel kütüphane yok.** `extern def ... from "lib"` ile bir `.wasm`a native kütüphane bağlanamaz.
 - **Dosya sistemi** çalıştırıcının WASI ön-açımlarına bağlıdır (`wasm_run.mjs` `.` ve `/tmp` açar).
@@ -36,7 +36,7 @@ Ayrıntı ve gerekçe: [ADR-012](../internals/adr/012-wasm-target.md). Bir WASM 
 
 ## Yetenek modeli ve `--deny-capability`
 
-WASM genel amaçlı bir derleme hedefidir: modüller, ihtiyaç duydukları şey bir *yetenek* (`network`, `filesystem`, `process`, `clock`, `entropy`, ...) olduğu sürece derlenir. Yeteneği sağlamak host'un işidir (WASI, `nox_host` import'ları ya da bir tarayıcı sayfası); sağlamıyorsa çağrı anında açık bir hata alırsınız, link hatası ya da çökme değil. Bugün bu `nox.http` istemcisi (ağ), `nox.fs` ve `nox.sqlite` (sanal dosya sistemi) için geçerlidir; kalan yetenekler aynı modelle eklenecektir ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
+WASM genel amaçlı bir derleme hedefidir: modüller, ihtiyaç duydukları şey bir *yetenek* (`network`, `filesystem`, `clock`, `entropy`, ...) olduğu sürece derlenir. Yeteneği sağlamak host'un işidir (WASI, `nox_host` import'ları ya da bir tarayıcı sayfası); sağlamıyorsa çağrı anında açık bir hata alırsınız, link hatası ya da çökme değil. Bugün bu `nox.http` istemcisi (ağ), `nox.fs` ve `nox.sqlite` (sanal dosya sistemi) için geçerlidir; kalan yetenekler aynı modelle eklenecektir ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
 
 Güvenilmeyen kodu derleyen ortamlar (ör. tarayıcıda bir kod deneme alanı) yetenekleri **derleme zamanında** da kısıtlayabilir; bu bayrak yalnızca WASM'da değil, her hedefte çalışır:
 
@@ -45,7 +45,7 @@ noxc build --target wasm32-freestanding --deny-capability fs,net,process prog.no
 NOX_DENY_CAPABILITY=net noxc check prog.nox       # ortam değişkeni de olur
 ```
 
-Liste virgülle ayrılır: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. Yasaklanan bir yeteneği isteyen modülü içe aktaran ya da `@capability.requires` ile işaretli bir işlevi çağıran program reddedilir: `module 'nox.http' cannot be used: the capability 'network' is denied (--deny-capability)`. Bilinmeyen bir ad hata verir (yanlış yazılmış bir yasak sessizce yok sayılmaz). İkinci katman host'tur: ilgili `nox_host` import'larını hiç sağlamayan bir host, yasaklanmamış olsa bile o yeteneği vermez.
+Liste virgülle ayrılır: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. Yasaklanan bir yeteneği isteyen modülü içe aktaran ya da `@capability.requires` ile işaretli bir işlevi çağıran program reddedilir: `module 'nox.http' cannot be used: the capability 'network' is denied (--deny-capability)`. Bilinmeyen bir ad hata verir (yanlış yazılmış bir yasak sessizce yok sayılmaz). İkinci katman host'tur: ilgili `nox_host` import'larını hiç sağlamayan bir host, yasaklanmamış olsa bile o yeteneği vermez.
 
 ## `wasm32-freestanding` ve `nox_host`
 
@@ -168,3 +168,7 @@ Derleyicinin kendisi de WASM olarak çalışır (sunucusuz playground, gömülü
 ### PostgreSQL
 
 `nox.postgres` WASM'da `libpq` yerine Zig'de yazılmış bir PostgreSQL protokol 3.0 istemcisiyle çalışır (host TCP yeteneği gerekir, bkz. yukarıdaki "Ham TCP"). Kimlik doğrulama: trust, cleartext, MD5, SCRAM-SHA-256; sorgular: basit protokol (`execute`/`query`) ve genişletilmiş protokol (`prepare` + `bind_*`, metin biçimli parametreler/sonuçlar, `$n` ve `?` yer tutucuları). Bağlantı dizesi hem `host=... port=... user=... password=... dbname=...` hem `postgres://kullanıcı:parola@host:port/db?sslmode=require` biçimindedir. `sslmode=require|verify-ca|verify-full` SSLRequest + host TLS'ini kullanır (sertifikayı host doğrular); diğer kipler düz metindir (libpq'nun `prefer` varsayılanından bilinçli sapma). Sınırlar: `COPY`, `LISTEN/NOTIFY`, ikili biçim ve `PQprepare` adlandırılmış ifadeler yok (yerel sürücüyle aynı kapsam).
+
+### Alt süreçler (`nox.process`)
+
+`nox.process` tüm WASM hedeflerinde derlenir; çalıştırma bir **host yeteneğidir**. `wasm32-freestanding-asyncify`'da host bir süreç sağlayıcısı verirse (`runNox(bytes, io, { process: await nodeProcess() })` ya da Node komut satırında `--allow-process`, `noxc run --target wasm32-freestanding-asyncify --allow-process`) `Command(...).run()` çalışır; aksi halde `ProcessError` ("could not run the process") verir. Varsayılan Node sağlayıcısı `child_process.spawn`ı KABUKSUZ çağırır (argümanlar kabuk yorumundan geçmez, enjeksiyon yok); çıktı tamponlanır, `set_timeout` aşılırsa süreç öldürülür. Tarayıcıda süreç yoktur (sağlayıcı verilmez). `--allow-net` süreç yeteneğini AÇMAZ: ağ ve süreç ayrı anahtarlardır.
