@@ -24,6 +24,15 @@ noxc --version
 
 Environment variables for the installer: `NOX_INSTALL_DIR` (install root) and `NOX_VERSION` (a specific tag such as `v2.0.0` instead of the latest).
 
+## Arch Linux (AUR)
+
+```sh
+yay -S noxc-bin          # or any AUR helper; or: git clone https://aur.archlinux.org/noxc-bin.git && cd noxc-bin && makepkg -si
+```
+
+`noxc-bin` installs the prebuilt release (x86-64 and aarch64) under `/usr/lib/noxc` with `noxc` and `noxlsp` in `/usr/bin`, and needs `gcc` to link (`clang` or `zig` are optional). Update it through your AUR helper;
+`noxc upgrade` refuses to run on a pacman install and tells you so.
+
 ## Homebrew (macOS and Linux)
 
 ```sh

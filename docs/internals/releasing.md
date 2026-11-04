@@ -46,6 +46,9 @@ Pushing a `v*` tag triggers `release.yml`:
 4. **Homebrew tap job** — for stable tags only, after the build jobs, it generates `Formula/noxc.rb` from the release's `.sha256` files (`scripts/update_homebrew_formula.py`, template `packaging/homebrew/noxc.rb.in`) and pushes it to
    [`mburakmmm/homebrew-nox`](https://github.com/mburakmmm/homebrew-nox). It needs a repository secret `HOMEBREW_TAP_TOKEN` (a fine-grained personal access token with *Contents: Read and write* on that one repository);
    without it the job only warns and the release is unaffected. The tap's own CI then audits, installs and tests the formula on macOS arm64, Linux x86-64 and Linux arm64.
+5. **AUR job** — for stable tags only, it builds the `noxc-bin` package from the release in a clean Arch Linux container (`packaging/aur/test-in-arch.sh`: `makepkg`, `.SRCINFO` identical to `makepkg --printsrcinfo`, install, run, upgrade guard,
+   remove), then pushes `PKGBUILD` and `.SRCINFO` (`scripts/update_aur_package.py`, template `packaging/aur/PKGBUILD.in`) to `ssh://aur@aur.archlinux.org/noxc-bin.git`. The push needs a repository secret `AUR_SSH_PRIVATE_KEY` (the private
+   half of an SSH key registered in your AUR account); without it only the container test runs. To iterate without a release, push to a branch that changes `packaging/aur/**` (or run *AUR package* manually).
 
 Because the workflow concurrency cancels a superseded CI run, a later push can cancel the CI run of an earlier tag and make that tag's release fail its gate; push one release at a time and wait for CI.
 

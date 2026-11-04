@@ -545,6 +545,8 @@ pub const ManagedBy = struct { name: []const u8, update_command: []const u8 };
 
 pub fn managedBy(install_root: []const u8) ?ManagedBy {
     if (std.mem.indexOf(u8, install_root, "/Cellar/") != null) return .{ .name = "Homebrew", .update_command = "brew upgrade noxc" };
+    // AUR `noxc-bin` paketi (packaging/aur): ağaç /usr/lib/noxc altındadır, /usr/bin'dekiler sarmalayıcıdır.
+    if (std.mem.eql(u8, install_root, "/usr/lib/noxc") or std.mem.startsWith(u8, install_root, "/usr/lib/noxc/")) return .{ .name = "pacman (AUR package noxc-bin)", .update_command = "yay -Syu noxc-bin" };
     return null;
 }
 
@@ -670,6 +672,9 @@ test "managedBy: Homebrew Cellar yolu taninir, diger yollar serbesttir" {
     try std.testing.expectEqualStrings("Homebrew", brew.name);
     try std.testing.expectEqualStrings("brew upgrade noxc", brew.update_command);
     try std.testing.expect(managedBy("/home/u/linuxbrew/.linuxbrew/Cellar/noxc/1/libexec") != null);
+    const aur = managedBy("/usr/lib/noxc") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, aur.name, "pacman") != null);
+    try std.testing.expect(managedBy("/usr/lib/noxcfoo") == null);
     try std.testing.expect(managedBy("/Users/u/.nox-lang") == null);
     try std.testing.expect(managedBy("/usr/local") == null);
 }

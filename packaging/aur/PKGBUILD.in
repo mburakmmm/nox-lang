@@ -1,0 +1,42 @@
+# Maintainer: Melih Burak Memiş <mburakmemiscy@gmail.com>
+# Şablon: `scripts/update_aur_package.py` sürüm ve sağlama toplamlarını bir GitHub Release'ten doldurup PKGBUILD ve .SRCINFO üretir.
+pkgname=noxc-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Compiler and project tool for the Nox programming language (prebuilt release)"
+arch=('x86_64' 'aarch64')
+url="https://noxlang.com"
+license=('MIT')
+# Derlenen programları bağlamak için bir C derleyicisi gerekir (QBE yolu `cc`, LLVM yolu clang ya da zig kullanır).
+depends=('glibc' 'gcc')
+optdepends=('clang: default LLVM back end (faster generated code)'
+            'zig: alternative C toolchain for linking and cross targets')
+provides=('noxc')
+conflicts=('noxc')
+# Release ikilileri zaten ReleaseFast derlenmiştir; makepkg'ın strip adımına gerek yok.
+options=('!strip')
+source_x86_64=("nox-lang-v${pkgver}-linux-x64.tar.gz::https://github.com/mburakmmm/nox-lang/releases/download/v${pkgver}/nox-lang-v${pkgver}-linux-x64.tar.gz")
+source_aarch64=("nox-lang-v${pkgver}-linux-arm64.tar.gz::https://github.com/mburakmmm/nox-lang/releases/download/v${pkgver}/nox-lang-v${pkgver}-linux-arm64.tar.gz")
+sha256sums_x86_64=('@SHA_LINUX_X64@')
+sha256sums_aarch64=('@SHA_LINUX_ARM64@')
+
+package() {
+  local _asset
+  case "$CARCH" in
+    x86_64) _asset=linux-x64 ;;
+    aarch64) _asset=linux-arm64 ;;
+  esac
+  cd "$srcdir/nox-lang-v${pkgver}-${_asset}"
+
+  # Arşivin düzeni `noxc`nin kendi kurulum düzenidir (`<kök>/bin`, `<kök>/lib`, `<kök>/include`): kaynaklarını ikilisinin yanında
+  # arar. Ağaç olduğu gibi /usr/lib/noxc'ye konur; /usr/bin'dekiler arşivle gelen `qbe`yi PATH'e ekleyen küçük sarmalayıcılardır.
+  install -d "$pkgdir/usr/lib/noxc" "$pkgdir/usr/bin"
+  cp -a bin lib include "$pkgdir/usr/lib/noxc/"
+  for tool in noxc noxlsp; do
+    printf '#!/bin/sh\nPATH="/usr/lib/noxc/bin:$PATH" exec /usr/lib/noxc/bin/%s "$@"\n' "$tool" > "$pkgdir/usr/bin/$tool"
+    chmod 755 "$pkgdir/usr/bin/$tool"
+  done
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/$pkgname"
+}

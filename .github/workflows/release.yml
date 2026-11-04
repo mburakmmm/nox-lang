@@ -345,3 +345,43 @@ jobs:
           git add Formula/noxc.rb
           git commit -m "noxc ${GITHUB_REF_NAME#v}"
           git push origin HEAD:main
+
+  # v2.0.139: kararlı bir sürüm yayımlanınca AUR paketini (`noxc-bin`) günceller. ÖNCE paket temiz bir Arch container'ında gerçekten derlenir,
+  # kurulur ve çalıştırılır (packaging/aur/test-in-arch.sh; secret olmasa da çalışır, kırmızıysa AUR'a itilmez). `AUR_SSH_PRIVATE_KEY`
+  # (AUR hesabına tanımlı SSH anahtarının özel kısmı) yoksa itme adımı uyarıp atlanır; sürümün kendisi etkilenmez.
+  aur:
+    name: AUR paketi güncelle
+    needs: build
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Paketi Arch Linux'ta derle, kur, çalıştır, kaldır
+        run: docker run --rm -e TAG="${GITHUB_REF_NAME}" -v "$PWD:/w:ro" archlinux:base-devel bash /w/packaging/aur/test-in-arch.sh
+      - name: PKGBUILD üret ve AUR'a it
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AUR_KEY}" ]; then
+            echo "::warning::AUR_SSH_PRIVATE_KEY tanımlı değil: AUR paketi güncellenmedi (bkz. docs/internals/releasing.md)"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${AUR_KEY}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+          git clone ssh://aur@aur.archlinux.org/noxc-bin.git /tmp/aur
+          python3 scripts/update_aur_package.py --tag "${GITHUB_REF_NAME}" --outdir /tmp/aur
+          cd /tmp/aur
+          git checkout -B master
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "AUR paketi zaten güncel"
+            exit 0
+          fi
+          git config user.name "Melih Burak Memiş"
+          git config user.email "mburakmemiscy@gmail.com"
+          git commit -m "noxc-bin ${GITHUB_REF_NAME#v}"
+          git push origin master

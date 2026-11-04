@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.139]
+
+### Eklendi
+
+- **AUR paketi `noxc-bin` (Arch Linux):** hazır release arşivinden kurar (x86-64 ve aarch64), `/usr/lib/noxc` altına ve `/usr/bin/noxc`, `/usr/bin/noxlsp` sarmalayıcılarıyla; `gcc` bağımlılığı, `clang`/`zig` isteğe bağlı. `PKGBUILD` ve `.SRCINFO` `scripts/update_aur_package.py` ile (şablon `packaging/aur/PKGBUILD.in`) bir release'ten üretilir; `release.yml`in yeni `aur` işi her kararlı sürümde paketi temiz bir Arch container'ında gerçekten derleyip kurup çalıştırır (`packaging/aur/test-in-arch.sh`; `.SRCINFO`nun `makepkg --printsrcinfo` ile birebir aynı olması dahil) ve `AUR_SSH_PRIVATE_KEY` varsa AUR'a iter. `noxc upgrade` pacman kurulumunda (`/usr/lib/noxc`) dosyalara ve ağa dokunmadan AUR yardımcısına yönlendirir. Bkz. spec §3.342, `docs/install/index.md`.
+
 ## [2.0.138]
 
 ### Eklendi
