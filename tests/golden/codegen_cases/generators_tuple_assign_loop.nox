@@ -1,0 +1,58 @@
+# Tuple assignment inside a generator's loop must write back to the generator frame
+# (it used to rebind the name to a fresh cell, so yields kept seeing the initial value).
+
+def fib_count(n: int) -> Iterator[int]:
+    a: int = 0
+    b: int = 1
+    i: int = 0
+    while i < n:
+        yield a
+        a, b = b, a + b
+        i = i + 1
+
+def fib_below(limit: int) -> Iterator[int]:
+    a: int = 0
+    b: int = 1
+    while a < limit:
+        yield a
+        a, b = b, a + b
+
+def swapper() -> Iterator[int]:
+    a: int = 1
+    b: int = 2
+    for k in range(4):
+        yield a * 10 + b
+        a, b = b, a
+
+def nested_branch(n: int) -> Iterator[int]:
+    lo: int = 0
+    hi: int = 100
+    for k in range(n):
+        if k % 2 == 0:
+            lo, hi = lo + 1, hi - 1
+        else:
+            lo, hi = lo + 10, hi - 10
+        yield lo
+        yield hi
+
+def fresh_names(n: int) -> Iterator[int]:
+    total: int = 0
+    for k in range(n):
+        p, q = k, k * k
+        total, p = total + q, 0
+        yield total + p
+
+for x in fib_count(10):
+    print(x)
+print("--")
+for x in fib_below(60):
+    print(x)
+print("--")
+for x in swapper():
+    print(x)
+print("--")
+for x in nested_branch(4):
+    print(x)
+print("--")
+for x in fresh_names(5):
+    print(x)

@@ -443,6 +443,15 @@ const Pass = struct {
             .expr_stmt => |*e| try self.rename(e),
             .var_decl => |*v| {
                 try self.rename(&v.value);
+                // v2.0.162: tuple açma (`a, b = b, a + b`) parse-zamanında `a: __infer = tup.f0` bildirimlerine indirgenir. İsim jeneratörde ZATEN bir
+                // hücreye alınmışsa bu bir YENİDEN BİLDİRİM değil ATAMADIR: yeni hücre açıp adı ona bağlamak, önceki `yield a`/koşul okumalarının (eski hücreye
+                // yeniden adlandırılmış) döngü geri-kenarında güncel değeri görmesini engellerdi. Mevcut hücreye yaz.
+                if (v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer")) {
+                    if (self.lookup(v.name)) |existing| {
+                        try out.append(self.a, .{ .kind = .{ .assign = .{ .target = try self.writeTarget(existing), .value = v.value } }, .line = st.line, .span = st.span });
+                        return;
+                    }
+                }
                 if (hoist) {
                     const b = if (v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer"))
                         try self.inferredCell(v.name, v.value)

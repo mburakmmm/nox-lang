@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.162]
+
+### Düzeltildi
+
+- **Jeneratör döngüsünde tuple atama kalıcı olmuyordu:** `while`/`for` içinde `a, b = b, a + b` (ve `a, b = b, a` takası) yield'ler arasında yazılmıyordu; `fib` jeneratörü `0 0 0 0 0 0` üretiyor, `while a < limit` ile hiç bitmiyordu. Kök neden `typecheck/generator_desugar.zig`: tuple açma parse-zamanında `a: __infer = tup.f0` bildirimlerine iner ve jeneratör dönüşümü bunu ZATEN hücreye alınmış `a` için YENİ bir hücre açıp adı ona bağlıyordu — döngü gövdesinde daha önce eski hücreye yeniden adlandırılmış `yield a`/koşul okumaları geri-kenarda güncel değeri hiç görmüyordu. Artık mevcut hücreye atanır (LLVM ve QBE'de aynı; dönüşüm backend'den önce). Golden: `generators_tuple_assign_loop` (fib, sınırlı fib, takas, iç içe `if`, döngü içinde yeni isimli açma).
+
 ## [2.0.161]
 
 ### Güvenlik
