@@ -1,0 +1,53 @@
+name: Windows installer
+
+# Mevcut bir release'in Windows arşivinden kurucuyu (Inno Setup) üretir, sessiz kur / yeniden kur / kaldır testinden geçirir ve
+# derlenen kurucuyu artefakt olarak yükler. Kurucu üzerinde yeni sürüm kesmeden denemek için: elle çalıştır (tag boşsa en son
+# kararlı sürüm) ya da `packaging/windows/**` değiştiğinde otomatik çalışır. Gerçek yayımlama `release.yml`dedir.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Kaynak release etiketi (boş: en son kararlı sürüm)"
+        required: false
+        default: ""
+  push:
+    paths:
+      - "packaging/windows/**"
+      - ".github/workflows/windows-installer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kaynak release arşivini indir
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.event.inputs.tag }}"
+          if (-not $tag) { $tag = (gh release view --repo mburakmmm/nox-lang --json tagName --jq .tagName) }
+          Write-Host "kaynak sürüm: $tag"
+          gh release download $tag --repo mburakmmm/nox-lang --pattern "nox-lang-*-windows-x64.zip" --dir src
+          Expand-Archive -Path (Get-ChildItem src\*.zip | Select-Object -First 1).FullName -DestinationPath stage-root
+          $stage = (Get-ChildItem stage-root | Select-Object -First 1).FullName
+          "STAGE=$stage" | Out-File -Append -FilePath $env:GITHUB_ENV
+          "VERSION=$($tag.TrimStart('v'))" | Out-File -Append -FilePath $env:GITHUB_ENV
+      - name: Inno Setup kur
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+      - name: Kurucuyu derle
+        shell: pwsh
+        run: .\packaging\windows\build-installer.ps1 -Stage $env:STAGE -Version $env:VERSION -OutDir installer-out
+      - name: Kur / yeniden kur / kaldır testi
+        shell: pwsh
+        run: .\packaging\windows\test-installer.ps1 -Installer (Get-ChildItem installer-out\*-setup.exe | Select-Object -First 1).FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nox-windows-installer
+          path: installer-out/*

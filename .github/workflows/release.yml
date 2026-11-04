@@ -285,12 +285,30 @@ jobs:
           $hash = (Get-FileHash "$stage.zip" -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path "$stage.zip.sha256" -Value "$hash  $stage.zip" -NoNewline
 
+      # v2.0.138: Windows kurucusu (Inno Setup): kullanıcı başına kurulum, isteğe bağlı PATH'e ekleme, kaldırıcı. Yayımlanmadan ÖNCE sessiz
+      # kur / yeniden kur / kaldır testinden geçer (bkz. packaging/windows/test-installer.ps1); test kırmızıysa sürüm yayımlanmaz.
+      - name: Inno Setup kur
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+      - name: Kurucuyu derle ve test et
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${env:GITHUB_REF_NAME}".TrimStart("v")
+          $stage = "nox-lang-${env:GITHUB_REF_NAME}-windows-x64"
+          .\packaging\windows\build-installer.ps1 -Stage $stage -Version $version -OutDir installer-out
+          $setup = (Get-ChildItem installer-out\*-setup.exe | Select-Object -First 1).FullName
+          .\packaging\windows\test-installer.ps1 -Installer $setup
+          Move-Item installer-out\nox-lang-*-setup.exe, installer-out\nox-lang-*-setup.exe.sha256 .
+
       - name: Yükle
         uses: softprops/action-gh-release@v2
         with:
           files: |
             nox-lang-*.zip
             nox-lang-*.zip.sha256
+            nox-lang-*-setup.exe
+            nox-lang-*-setup.exe.sha256
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

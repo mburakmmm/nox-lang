@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.138]
+
+### Eklendi
+
+- **Windows kurucusu:** `nox-lang-v<sürüm>-windows-x64-setup.exe` (Inno Setup). Varsayılan kullanıcı başına kurulum (yönetici izni yok, `%LOCALAPPDATA%\Programs\Nox`; sihirbazda "tüm kullanıcılar" seçeneği), isteğe bağlı "PATH'e ekle" görevi, *Ayarlar → Uygulamalar*'da kaldırıcı; Türkçe/İngilizce sihirbaz; sessiz kurulum (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=... /MERGETASKS="!addpath"`). Kaldırıcı yalnızca kendi eklediği PATH girdisini çıkarır (kullanıcının PATH'inin geri kalanı ayırıcılarıyla birlikte aynen korunur), yeniden kurulumda PATH çiftlenmez. `release.yml` Windows işi kurucuyu her sürümde derler ve YAYIMLAMADAN önce gerçek Windows'ta sessiz kur / yeniden kur / kaldır testinden geçirir (`packaging/windows/test-installer.ps1`; kırmızıysa sürüm çıkmaz). Kurucu henüz kod imzalı değildir (SmartScreen uyarısı çıkabilir; `.sha256` doğrulanabilir). Kurucuyu sürüm kesmeden denemek için `windows-installer.yml` (elle ya da `packaging/windows/**` değişince). Bkz. spec §3.341, `docs/install/index.md`.
+
 ## [2.0.137]
 
 ### Eklendi

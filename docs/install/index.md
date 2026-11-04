@@ -36,6 +36,13 @@ This installs `noxc` and `noxlsp` and puts the bundled `qbe` where `noxc` finds 
 
 ## Windows
 
+**Installer (recommended).** Download `nox-lang-v<version>-windows-x64-setup.exe` from the [GitHub releases](https://github.com/mburakmmm/nox-lang/releases) and run it. It installs for your user by default (no administrator
+rights, under `%LOCALAPPDATA%\Programs\Nox`; the first page offers "install for all users" instead), can add Nox to your `PATH`, and registers an uninstaller in *Settings → Apps*. Uninstalling removes only the `PATH` entry it
+added. Silent install for scripts: `nox-lang-v<version>-windows-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` (add `/DIR="C:\tools\nox"` to choose the folder, `/MERGETASKS="!addpath"` to skip the `PATH` change).
+The installer is not code-signed yet, so Windows SmartScreen may show a warning the first time: choose *More info → Run anyway*, or verify the `.sha256` file next to the download.
+
+**Script.**
+
 ```powershell
 irm https://noxlang.com/install.ps1 | iex
 ```
