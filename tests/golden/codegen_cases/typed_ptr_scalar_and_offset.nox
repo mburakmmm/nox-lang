@@ -44,7 +44,13 @@ def offset_roundtrip_i32() -> None:
 
 def offset_roundtrip_class() -> None:
     lowlevel:
-        buf: list[Point] = [Point(0, 0), Point(0, 0), Point(0, 0)]
+        # Yedek tampon BİLEREK `list[int]`: `ptr[Point]` üzerinden 3 elemanın
+        # (3 x sizeof(Point) = 72 bayt) yazıldığı bölge, `detach`in döndürdüğü
+        # list'in BAŞINDAN (16 baytlık başlık dahil) başlar. Önceki `list[Point]`
+        # yalnızca 16 + 3*8 = 40 bayttı; 32 baytlık taşma yerelde arenanın büyük
+        # parçasında görünmezdi, ama `wasm_mt_alloc`ın sıkı boyut sınıflarında
+        # komşu bloğa (üst 32 bit çöp) yazıyordu. 16 + 9*8 = 88 >= 72.
+        buf: list[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0]
         base: ptr = detach(buf)
         base_addr: int = ptr_to_int(base)
         p: ptr[Point] = ptr[Point](base_addr)

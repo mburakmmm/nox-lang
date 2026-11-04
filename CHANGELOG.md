@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.145]
+
+### Düzeltildi
+
+- **`typed_ptr_scalar_and_offset` fixture'ı wasm32 `-threads` hedeflerinde `201` yerine `4294967497` basıyordu:** derleyici/çalışma zamanı hatası DEĞİL, fixture'ın kendi yığın taşmasıydı. `offset_roundtrip_class`, `ptr[Point]`i `detach(list[Point])` sonucunun BAŞINA (16 baytlık list başlığı dahil) kuruyordu; list yalnızca 16 + 3×8 = 40 bayttı, ama 3 × `sizeof(Point)` (= 24) = 72 bayt yazılıyordu (32 bayt taşma). Yerelde ve diğer wasm kiplerinde taşma arena düğümünün fazladan payında görünmez kalıyordu; `wasm_mt_alloc`ın sıkı boyut sınıflarında komşu bloğa yazıp üçüncü `Point.y`nin üst 32 bitini bozuyordu. Yedek tampon artık `list[int]` (16 + 9×8 = 88 bayt ≥ 72). 6 wasm hedefinin hepsinde (wasi/freestanding × düz/asyncify/threads) ve yerelde QBE + LLVM'de doğrulandı. Bkz. spec §3.347.
+
 ## [2.0.144]
 
 ### Eklendi
