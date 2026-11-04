@@ -1,0 +1,21 @@
+import nox.tls
+import nox.smtp
+from nox.tls import TlsStream, TlsError
+from nox.smtp import SmtpError
+
+try:
+    s: TlsStream = nox.tls.connect("localhost", __TLS_PORT__)
+    print(s.write("hello tls"))
+    print(s.read(100))
+    s.write("bye")
+    print(s.read(100))
+    print(len(s.read(100)))
+    s.close()
+
+    to: list[str] = ["a@example.com", "b@example.com"]
+    nox.smtp.send_mail("localhost", __SMTP_PORT__, False, True, "nox.test", "", "", "me@example.com", to, "Merhaba", "line one\r\n.dotted line\r\nlast")
+    print("mail sent")
+except TlsError as e:
+    print("tls error:", "tcp" if "tcp" in e.message else e.message)
+except SmtpError as e:
+    print("smtp error:", e.message)

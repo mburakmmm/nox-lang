@@ -107,7 +107,7 @@ test "wasm32-wasi: JSON, regex, gzip, sha256, fs kabukları" {
 }
 
 test "wasm32-wasi: henüz desteklenmeyen modül derleme zamanında açık iletiyle reddedilir" {
-    try expectRejected("import nox.tls\nprint(1)\n", "cannot be used on the wasm32-wasi target");
+    try expectRejected("import nox.mysql\nprint(1)\n", "cannot be used on the wasm32-wasi target");
     try expectRejected("import nox.postgres\nprint(1)\n", "cannot be used on the wasm32-wasi target");
 }
 
@@ -669,4 +669,65 @@ test "wasm32-freestanding --asyncify: host ağ yeteneğini vermezse WebSocket ba
     const out = (try runFetchDriver(src, "deny")) orelse return error.SkipZigTest;
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("denied\nexit 0\nmax concurrent 0\n", out);
+}
+
+// v2.0.155 (spec §3.357): ham TCP host yeteneği (`nox.tls`, `nox.smtp`). TLS HOST'ta sonlanır (Node `tls`, sertifika doğrulaması dahil); STARTTLS yükseltmesi host'ta yapılır.
+// Sürücü yerel bir TLS yankı sunucusu ve STARTTLS destekli sahte SMTP sunucusu başlatır (`openssl` ile kendinden imzalı sertifika; `NODE_EXTRA_CA_CERTS`). `openssl`/`node` yoksa atlanır.
+fn runTcpDriver(mode: []const u8) !?[]u8 {
+    const allocator = std.testing.allocator;
+    const res = std.process.run(allocator, std.testing.io, .{
+        .argv = &.{ "node", "--no-warnings", build_options.tcp_driver_path, build_options.noxc_path, build_options.tcp_program_path, build_options.wasm_host_path, mode },
+    }) catch |err| {
+        if (err == error.FileNotFound) return null;
+        return err;
+    };
+    defer allocator.free(res.stderr);
+    if (res.term != .exited or res.term.exited != 0) {
+        const missing = std.mem.indexOf(u8, res.stderr, "openssl") != null or std.mem.indexOf(u8, res.stderr, "zig not found") != null or std.mem.indexOf(u8, res.stderr, "wasm-opt") != null;
+        if (missing) {
+            allocator.free(res.stdout);
+            return null;
+        }
+        std.debug.print("tcp [{s}]: surucu basarisiz: {s}\n{s}\n", .{ mode, res.stderr, res.stdout });
+        allocator.free(res.stdout);
+        return error.ProgramFailed;
+    }
+    return res.stdout;
+}
+
+test "wasm32-freestanding --asyncify: nox.tls ve nox.smtp (STARTTLS) host TCP yeteneğiyle çalışır" {
+    const out = (try runTcpDriver("allow")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings(
+        \\9
+        \\HELLO TLS
+        \\BYE
+        \\0
+        \\mail sent
+        \\exit 0
+        \\server tls recv hello tls
+        \\server tls recv bye
+        \\server smtp EHLO nox.test
+        \\server smtp STARTTLS
+        \\server smtp tls EHLO nox.test
+        \\server smtp tls MAIL FROM:<me@example.com>
+        \\server smtp tls RCPT TO:<a@example.com>
+        \\server smtp tls RCPT TO:<b@example.com>
+        \\server smtp tls DATA
+        \\server smtp data From: me@example.com
+        \\server smtp data To: a@example.com, b@example.com
+        \\server smtp data Subject: Merhaba
+        \\server smtp data 
+        \\server smtp data line one
+        \\server smtp data ..dotted line
+        \\server smtp data last
+        \\server smtp tls QUIT
+        \\
+    , out);
+}
+
+test "wasm32-freestanding --asyncify: host TCP yeteneğini vermezse TlsError (tcp capability)" {
+    const out = (try runTcpDriver("deny")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("tls error: tcp\nexit 0\n", out);
 }

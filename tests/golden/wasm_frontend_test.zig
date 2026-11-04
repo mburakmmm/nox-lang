@@ -83,7 +83,7 @@ test "wasm ön yüzü: sözdizimi, tip ve yetenek hataları okunaklı tanılama 
         .{ .src = "print(1 2)\n", .deny = "", .needle = "syntax error: unexpected '2' (expected ')')" },
         .{ .src = "x: int = \"a\"\n", .deny = "", .needle = "type error (TypeMismatch)" },
         .{ .src = "import nox.fs\nnox.fs.write_string(\"/tmp/a\", \"x\")\n", .deny = "fs", .needle = "the capability 'filesystem' is denied" },
-        .{ .src = "import nox.tls\nprint(1)\n", .deny = "", .needle = "cannot be used on the wasm32" },
+        .{ .src = "import nox.mysql\nprint(1)\n", .deny = "", .needle = "cannot be used on the wasm32" },
         .{ .src = "import nox.nonexistent\nprint(1)\n", .deny = "", .needle = "import error" },
     };
     for (cases, 0..) |c, i| {

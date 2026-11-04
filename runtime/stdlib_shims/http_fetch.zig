@@ -31,13 +31,15 @@ const sync_net = wasm_options.threads;
 const gpa = std.heap.page_allocator;
 
 pub const CAP_FETCH: u32 = 1;
+/// Bit 1: ham TCP (host `connect`: Node `net`/`tls`; tarayıcıda yok). `smtp`, `tls` ve veritabanı sürücüleri için (spec §3.357).
+pub const CAP_TCP: u32 = 2;
 var g_caps: u32 = 0;
 var g_next_id: u32 = 1;
 var g_reqs: std.ArrayListUnmanaged(*Request) = .empty;
 
 /// İstek türü (host'a giden kaydın `kind` alanı): 0 tam yanıt `fetch`i, 1 akış açma (başlıklar gelince döner, gövde host'ta okuyucuda kalır), 2 akıştan bir parça okuma,
 /// 3 akışı kapatma (yanıtsız, "detached"), 4-7 WebSocket (`websocket_wasm.zig`): açma, gönderme (yanıtsız), alma, kapatma (yanıtsız).
-pub const Kind = enum(u32) { fetch = 0, stream_open = 1, stream_read = 2, stream_close = 3, ws_open = 4, ws_send = 5, ws_recv = 6, ws_close = 7 };
+pub const Kind = enum(u32) { fetch = 0, stream_open = 1, stream_read = 2, stream_close = 3, ws_open = 4, ws_send = 5, ws_recv = 6, ws_close = 7, tcp_open = 8, tcp_write = 9, tcp_read = 10, tcp_starttls = 11, tcp_close = 12 };
 
 pub const Request = struct {
     id: u32,
@@ -69,6 +71,10 @@ pub const Response = struct {
     body: []u8,
     headers: []u8,
 };
+
+pub fn tcpAvailable() bool {
+    return g_caps & CAP_TCP != 0;
+}
 
 pub fn available() bool {
     // `--threads`: yetenek host'un `net_fetch` import'una verdiği yanıtla anlaşılır (-1 = yok); her zaman denenir.
@@ -175,7 +181,7 @@ pub fn submit(spec: Spec, detached: bool) ?*Request {
         .id = g_next_id,
         .kind = spec.kind,
         .stream = spec.stream,
-        .arg = if (spec.kind == .stream_read or spec.kind == .ws_recv) spec.arg else clampMs(spec.timeout_ms),
+        .arg = if (spec.kind == .stream_read or spec.kind == .ws_recv or spec.kind == .tcp_read) spec.arg else clampMs(spec.timeout_ms),
         .detached = detached,
         .method = method,
         .url = url,
@@ -205,7 +211,7 @@ pub fn waitFor(req: *Request) ?*Response {
     }
     for (g_reqs.items, 0..) |r, i| {
         if (r == req) {
-            _ = g_reqs.swapRemove(i);
+            _ = g_reqs.orderedRemove(i);
             break;
         }
     }
@@ -516,7 +522,7 @@ export fn nox_host_fetch_pending(out_len: *usize) callconv(.c) ?[*]u8 {
         }
         r.handed_out = true;
         if (r.detached) {
-            _ = g_reqs.swapRemove(i);
+            _ = g_reqs.orderedRemove(i);
             destroyRequest(r);
             continue;
         }

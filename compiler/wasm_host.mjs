@@ -310,8 +310,143 @@ async function doSocket(req, streams, WebSocketCtor) {
   });
 }
 
+/**
+ * Ham TCP (kind 8-12, `tcp_host.zig`; `smtp`/`tls` modülleri): `tcp.connect(host, port, useTls) -> Promise<{ write(bytes), read(max) -> Promise<Uint8Array|null>, startTls(servername) -> Promise,
+ * close() }>` sağlayıcısı üzerinden. TLS host'ta sonlanır (sertifika doğrulaması dahil). Node için varsayılan: `nodeTcp()`. Tarayıcıda ham soket yoktur (sağlayıcı verilmez).
+ */
+async function doTcp(req, streams, tcp) {
+  const dec = new TextDecoder();
+  const enc = new TextEncoder();
+  const err = (id, e) => ({ ...failed(id, 0), body: enc.encode(String(e && e.message ? e.message : e)) });
+  if (req.kind === 9) {
+    const st = streams.get(req.stream);
+    if (st) st.write(req.body);
+    return null;
+  }
+  if (req.kind === 12) {
+    const st = streams.get(req.stream);
+    streams.delete(req.stream);
+    if (st) st.close();
+    return null;
+  }
+  if (req.kind === 10) {
+    const st = streams.get(req.stream);
+    if (!st) return { id: req.id, status: 1, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+    try {
+      const chunk = await st.read(req.arg);
+      if (chunk === null) return { id: req.id, status: 1, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+      return { id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: chunk };
+    } catch (e) {
+      return err(req.id, e);
+    }
+  }
+  if (req.kind === 11) {
+    const st = streams.get(req.stream);
+    if (!st) return err(req.id, 'no such connection');
+    try {
+      await st.startTls(req.url);
+      return { id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+    } catch (e) {
+      return err(req.id, e);
+    }
+  }
+  // kind 8: aç ("host:port", method === "tls" ise bağlantı anında TLS)
+  if (!tcp) return err(req.id, 'TCP is not available in this host');
+  const colon = req.url.lastIndexOf(':');
+  try {
+    const sock = await tcp.connect(req.url.slice(0, colon), Number(req.url.slice(colon + 1)), req.method === 'tls');
+    streams.set(req.id, sock);
+    return { id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+  } catch (e) {
+    return err(req.id, e);
+  }
+}
+
+/** Node'un `net`/`tls` modüllerine dayanan varsayılan TCP sağlayıcısı (bkz. `doTcp`). */
+export async function nodeTcp() {
+  const net = await import('node:net');
+  const tls = await import('node:tls');
+  const wrap = (sock0) => {
+    let sock = sock0;
+    let queue = [];
+    let ended = false;
+    let error = null;
+    let waiter = null;
+    const wake = () => {
+      if (waiter) {
+        const w = waiter;
+        waiter = null;
+        w();
+      }
+    };
+    const attach = (s) => {
+      s.on('data', (d) => {
+        queue.push(new Uint8Array(d));
+        wake();
+      });
+      s.on('end', () => {
+        ended = true;
+        wake();
+      });
+      s.on('close', () => {
+        ended = true;
+        wake();
+      });
+      s.on('error', (e) => {
+        error = e;
+        ended = true;
+        wake();
+      });
+    };
+    attach(sock);
+    return {
+      write: (bytes) => {
+        try {
+          sock.write(bytes);
+        } catch (e) {
+          error = e;
+        }
+      },
+      async read(max) {
+        while (queue.length === 0 && !ended) await new Promise((r) => (waiter = r));
+        if (queue.length === 0) {
+          if (error) throw error;
+          return null;
+        }
+        const head = queue[0];
+        if (head.length <= max) return queue.shift();
+        queue[0] = head.subarray(max);
+        return head.subarray(0, max);
+      },
+      async startTls(servername) {
+        queue = [];
+        sock.removeAllListeners('data');
+        sock.removeAllListeners('end');
+        sock.removeAllListeners('close');
+        sock.removeAllListeners('error');
+        const upgraded = await new Promise((resolve, reject) => {
+          // Node, IP adresini SNI olarak kabul etmez; IP ile bağlanıldıysa sertifika adı doğrulaması IP SAN'ına göre yapılır.
+          const t = tls.connect(net.isIP(servername) ? { socket: sock } : { socket: sock, servername }, () => resolve(t));
+          t.once('error', reject);
+        });
+        sock = upgraded;
+        ended = false;
+        attach(sock);
+      },
+      close: () => sock.destroy(),
+    };
+  };
+  return {
+    connect: (host, port, useTls) =>
+      new Promise((resolve, reject) => {
+        const s = useTls ? tls.connect(net.isIP(host) ? { host, port } : { host, port, servername: host }, () => resolve(wrap(s))) : net.connect({ host, port }, () => resolve(wrap(s)));
+        s.once('error', reject);
+      }),
+  };
+}
+
 /** Askıdaki modülün yeni isteklerini başlatır, bir tanesi bitene kadar bekler ve sonucunu modüle iletir. */
-async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor) {
+async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl) {
   const x = instance.exports;
   const mem = x.memory;
   const lenPtr = x.nox_host_alloc(4);
@@ -323,6 +458,10 @@ async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor) {
   for (const req of pending) {
     if (req.kind === 0) {
       inflight.set(req.id, doFetch(fetchFn, req));
+    } else if (req.kind >= 8) {
+      const p = doTcp(req, streams, tcpImpl);
+      if (req.kind === 8 || req.kind === 10 || req.kind === 11) inflight.set(req.id, p);
+      else p.catch(() => {});
     } else if (req.kind >= 4) {
       const p = doSocket(req, streams, wsCtor);
       if (req.kind === 4 || req.kind === 6) inflight.set(req.id, p);
@@ -449,12 +588,12 @@ export async function runNox(wasmBytes, io, opts = {}) {
   if (vfs && vfs.files) vfsPreload(instance, vfs.files);
   const asyncHost = typeof x.nox_host_resume === 'function' && typeof x.nox_host_caps_set === 'function';
   const fetchFn = opts.fetch || null;
-  if (asyncHost && fetchFn) x.nox_host_caps_set(1);
+  if (asyncHost && (fetchFn || opts.tcp)) x.nox_host_caps_set((fetchFn ? 1 : 0) | (opts.tcp ? 2 : 0));
   let code = 0;
+  const streams = new Map();
   try {
     let step = () => x._start();
     const inflight = new Map();
-    const streams = new Map();
     for (;;) {
       try {
         step();
@@ -466,10 +605,19 @@ export async function runNox(wasmBytes, io, opts = {}) {
         throw e;
       }
       if (!asyncHost || x.nox_host_status() !== 1) break;
-      await pumpFetches(instance, fetchFn.bind(globalThis), inflight, streams, opts.WebSocket === undefined ? globalThis.WebSocket : opts.WebSocket);
+      await pumpFetches(instance, (fetchFn || globalThis.fetch).bind(globalThis), inflight, streams, opts.WebSocket === undefined ? globalThis.WebSocket : opts.WebSocket, opts.tcp || null);
       step = () => x.nox_host_resume();
     }
   } finally {
+    // Program çıkarken kapatılmamış akışlar/soketler/WebSocket'ler bırakılır (aksi halde Node olay döngüsü açık kalır).
+    for (const st of streams.values()) {
+      try {
+        if (st.close) st.close();
+        else if (st.ws) st.ws.close();
+        else if (st.reader) st.reader.cancel().catch(() => {});
+      } catch {}
+    }
+    streams.clear();
     if (vfs && vfs.onSave) await vfs.onSave(vfsSnapshot(instance));
   }
   return code;
@@ -630,7 +778,7 @@ async function nodeMain() {
       const nv = await makeNodeVfs(vfsDir);
       vfs = { files: nv.load(), onSave: (snap) => nv.save(snap) };
     }
-    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: allowNet ? globalThis.fetch : null });
+    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: allowNet ? globalThis.fetch : null, tcp: allowNet ? await nodeTcp() : null });
     return;
   }
 

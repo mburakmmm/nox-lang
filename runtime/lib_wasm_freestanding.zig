@@ -54,6 +54,7 @@ pub const wasm_vfs_host = @import("wasm_vfs_host.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
 pub const http_wasm_shim = @import("stdlib_shims/http_wasm.zig");
 pub const websocket_wasm_shim = @import("stdlib_shims/websocket_wasm.zig");
+pub const tcp_modules_wasm_shim = @import("stdlib_shims/tcp_modules_wasm.zig");
 pub const sqlite_shim = @import("stdlib_shims/sqlite.zig");
 pub const wasm_libc_sqlite = @import("wasm_libc_sqlite.zig");
 
@@ -95,6 +96,7 @@ comptime {
     _ = fs_shim;
     _ = http_wasm_shim;
     _ = websocket_wasm_shim;
+    _ = tcp_modules_wasm_shim;
     _ = sqlite_shim;
     _ = wasm_libc_sqlite;
 }

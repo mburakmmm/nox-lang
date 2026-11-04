@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.155]
+
+### Eklendi
+
+- **WASM'da ham TCP host yeteneği:** `nox.tls` ve `nox.smtp` (STARTTLS dahil) tüm WASM hedeflerinde derlenir; `wasm32-freestanding-asyncify`'da host TCP verirse (Node: `--allow-net` / `runNox({ tcp: await nodeTcp() })`) gerçek bağlantı kurar. TLS host'ta sonlanır (sertifika doğrulaması dahil); tarayıcıda yetenek yoktur ve `connect` yetenek iletisiyle hata verir (spec 3.357).
+
+### Düzeltildi
+
+- Host'a verilen yanıtsız istekler (WebSocket/TCP yazma, kapatma) kuyruktaki diğer isteklerin sırasını bozuyordu (`swapRemove`); SMTP DATA satırları ve `ws_send` sırası etkileniyordu.
+- `runNox` çıkarken açık soketleri/WebSocket'leri/akışları kapatır (Node süreci takılı kalmaz).
+
 ## [2.0.154]
 
 ### Eklendi
