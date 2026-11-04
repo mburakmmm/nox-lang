@@ -538,6 +538,16 @@ pub fn performUpgrade(a: Allocator, io: Io, r: progress.Reporter, target_tag: []
     install_step.done();
 }
 
+/// Kurulumu bir paket yöneticisi yönetiyorsa onun adı ve güncelleme komutu. `noxc upgrade` bu dosyaları kendisi ezerse yöneticinin kaydı
+/// ile gerçek içerik ayrışır (`brew` Cellar'daki sürüm dizinini sahiplenir). Kök, çalışan ikilinin GERÇEK yolundan türetilir
+/// (symlink çözülmüş), yani Homebrew'de `.../Cellar/noxc/<sürüm>/libexec`.
+pub const ManagedBy = struct { name: []const u8, update_command: []const u8 };
+
+pub fn managedBy(install_root: []const u8) ?ManagedBy {
+    if (std.mem.indexOf(u8, install_root, "/Cellar/") != null) return .{ .name = "Homebrew", .update_command = "brew upgrade noxc" };
+    return null;
+}
+
 test "currentPlatformAsset: bu makinenin platformu icin dogru varlik doner" {
     const asset = currentPlatformAsset();
     if (builtin.os.tag == .macos and builtin.cpu.arch == .aarch64) {
@@ -653,4 +663,13 @@ test "replaceFile (Windows): yuklu bir imaj kilitliyken de degistirir" {
 fn tmpRootAlloc(a: Allocator, io: Io, tmp: *std.testing.TmpDir) ![]const u8 {
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     return try a.dupe(u8, try tmpRoot(io, tmp, &buf));
+}
+
+test "managedBy: Homebrew Cellar yolu taninir, diger yollar serbesttir" {
+    const brew = managedBy("/opt/homebrew/Cellar/noxc/2.0.136/libexec") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("Homebrew", brew.name);
+    try std.testing.expectEqualStrings("brew upgrade noxc", brew.update_command);
+    try std.testing.expect(managedBy("/home/u/linuxbrew/.linuxbrew/Cellar/noxc/1/libexec") != null);
+    try std.testing.expect(managedBy("/Users/u/.nox-lang") == null);
+    try std.testing.expect(managedBy("/usr/local") == null);
 }

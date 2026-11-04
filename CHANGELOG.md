@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.137]
+
+### Eklendi
+
+- **Homebrew tap:** `brew tap mburakmmm/nox && brew install noxc` (Apple Silicon macOS, Linux x86-64/arm64). Formül release arşivinden kurar (derleme yok); `noxc` ve `noxlsp` `libexec/bin`i PATH'e ekleyen sarmalayıcılardır, böylece arşivle gelen `qbe` ayrı kurulmadan bulunur. Formül `scripts/update_homebrew_formula.py` ile (şablon `packaging/homebrew/noxc.rb.in`) üretilir; `release.yml`in yeni `homebrew` işi her kararlı sürümde tap'i günceller (`HOMEBREW_TAP_TOKEN` gerekir, yoksa uyarıp atlar). Tap'in kendi CI'ı üç platformda `brew audit --strict`, kurulum ve test çalıştırır. Bkz. spec §3.340, `docs/install/index.md`, `docs/internals/releasing.md`.
+- **`noxc upgrade` paket yöneticisi koruması:** Homebrew kurulumunda (`.../Cellar/...`) dosyalara ve ağa dokunmadan `brew upgrade noxc` önerip çıkış 1 verir.
+
 ## [2.0.136]
 
 ### Eklendi

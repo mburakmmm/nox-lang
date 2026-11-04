@@ -383,3 +383,37 @@ test "noxc upgrade: GERCEK uctan-uca cikarma+degistirme (sahte tar.gz, izole kur
     // Scratch dizini temizlendi mi?
     try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(io, ".upgrade-scratch", .{}));
 }
+
+test "noxc upgrade: Homebrew'un yonettigi kurulumda dosyalara dokunmadan 'brew upgrade noxc'e yonlendirir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "Cellar/noxc/9.9.9/libexec/bin");
+    try tmp.dir.writeFile(io, .{ .sub_path = "Cellar/noxc/9.9.9/libexec/bin/noxc", .data = "BREW-OWNED" });
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &path_buf);
+    const root = try std.fmt.allocPrint(gpa, "{s}/Cellar/noxc/9.9.9/libexec", .{path_buf[0..root_len]});
+    defer gpa.free(root);
+
+    var env = try std.testing.environ.createMap(gpa);
+    defer env.deinit();
+    // Ulasilamaz API/indirme tabani: yonlendirme ag cagrisindan ONCE olmalidir (acik surum verildigi icin API de sorulmaz).
+    try env.put("NOX_UPGRADE_API_BASE", "http://127.0.0.1:1");
+    try env.put("NOX_UPGRADE_DOWNLOAD_BASE", "http://127.0.0.1:1");
+    try env.put("NOX_ALLOW_INSECURE_TRANSPORT", "1");
+    try env.put("NOX_RESOURCE_DIR", root);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "upgrade", "v99.0.0" }, .environ_map = &env });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "installed by Homebrew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "brew upgrade noxc") != null);
+    // Hicbir indirme denenmedi, dosyaya dokunulmadi.
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Downloading") == null);
+    const content = try tmp.dir.readFileAlloc(io, "Cellar/noxc/9.9.9/libexec/bin/noxc", gpa, .limited(64));
+    defer gpa.free(content);
+    try std.testing.expectEqualStrings("BREW-OWNED", content);
+}

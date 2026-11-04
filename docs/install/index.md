@@ -24,6 +24,16 @@ noxc --version
 
 Environment variables for the installer: `NOX_INSTALL_DIR` (install root) and `NOX_VERSION` (a specific tag such as `v2.0.0` instead of the latest).
 
+## Homebrew (macOS and Linux)
+
+```sh
+brew tap mburakmmm/nox
+brew install noxc
+```
+
+This installs `noxc` and `noxlsp` and puts the bundled `qbe` where `noxc` finds it. Apple Silicon macOS, Linux x86-64 and Linux arm64 are supported (there is no Intel macOS build). Update with
+`brew upgrade noxc`; `noxc upgrade` refuses to run on a Homebrew install and tells you so.
+
 ## Windows
 
 ```powershell
@@ -51,7 +61,7 @@ zig build test --summary all    # optional: the full test suite
 
 ```sh
 noxc upgrade --check            # is there a newer release?
-noxc upgrade                    # update in place (checksum verified)
+noxc upgrade                    # update in place (checksum verified; installs managed by Homebrew use `brew upgrade noxc`)
 noxc upgrade v2.1.0             # a specific version
 ```
 

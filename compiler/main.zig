@@ -472,6 +472,10 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
     };
 
     const install_root = try project.resolveInstallRoot(a, io, resource_dir_override);
+    if (upgrade_mod.managedBy(install_root)) |manager| {
+        printErr("noxc was installed by {s}: update it with '{s}' (noxc upgrade would overwrite files {s} manages)\n", .{ manager.name, manager.update_command, manager.name });
+        std.process.exit(1);
+    }
     r.info("Upgrading noxc to {s} ({s})", .{ target_tag, asset.name });
     upgrade_mod.performUpgrade(a, io, r, target_tag, asset, install_root, policy, fetch_policy) catch |err| {
         printErr("upgrade failed ({t})\n", .{err});

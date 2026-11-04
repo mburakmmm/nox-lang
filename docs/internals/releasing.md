@@ -40,6 +40,9 @@ Pushing a `v*` tag triggers `release.yml`:
 2. **Build jobs** — build `noxc`, `noxlsp`, `noxrt.o`, `noxrt-freestanding.o` and the standard library in `ReleaseFast` for macOS arm64, Linux x86-64, Linux arm64 and Windows x86-64 (with explicit `-Dcpu` baselines so the binaries run on
    older machines), bundle `qbe` where applicable, and upload archives plus SHA-256 files to the GitHub release.
 3. Tags containing a `-` (such as `v2.0.0-rc.1`) are published as **pre-releases**, so `noxc upgrade` and the installers keep pointing at the latest stable release.
+4. **Homebrew tap job** — for stable tags only, after the build jobs, it generates `Formula/noxc.rb` from the release's `.sha256` files (`scripts/update_homebrew_formula.py`, template `packaging/homebrew/noxc.rb.in`) and pushes it to
+   [`mburakmmm/homebrew-nox`](https://github.com/mburakmmm/homebrew-nox). It needs a repository secret `HOMEBREW_TAP_TOKEN` (a fine-grained personal access token with *Contents: Read and write* on that one repository);
+   without it the job only warns and the release is unaffected. The tap's own CI then audits, installs and tests the formula on macOS arm64, Linux x86-64 and Linux arm64.
 
 Because the workflow concurrency cancels a superseded CI run, a later push can cancel the CI run of an earlier tag and make that tag's release fail its gate; push one release at a time and wait for CI.
 
