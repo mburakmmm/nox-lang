@@ -64,9 +64,13 @@ const Kernel32 = if (builtin.os.tag == .windows) struct {
 /// `loadAll` bu ikisini TEK bir kod yolunda BİRLEŞTİRİR (`openLib`/
 /// `lookupSym` yardımcıları ÜZERİNDEN) — geri kalan TÜM `nox_sqlite_*_raw`
 /// dışa aktarımları bu platform farkından TAMAMEN İZOLE KALIR.
-const LibHandle = if (builtin.os.tag == .windows) ?*anyopaque else std.DynLib;
+const is_wasm = builtin.cpu.arch.isWasm();
+
+/// WASM'da dinamik yükleme yoktur: `sqlite3.c` amalgamation'ı çalışma zamanı nesnesine STATİK bağlanır (Android ile aynı yol, bkz. `loadAll`).
+const LibHandle = if (builtin.os.tag == .windows) ?*anyopaque else if (is_wasm) void else std.DynLib;
 
 fn openLib() ?LibHandle {
+    if (comptime is_wasm) return null;
     if (builtin.os.tag == .windows) {
         // `LoadLibraryA("sqlite3.dll")` önce exe dizinine, sonra System32'ye,
         // sonra PATH'e bakar. GitHub `windows-2025` imajı PATH'e Python
@@ -86,6 +90,7 @@ fn openLib() ?LibHandle {
 }
 
 fn lookupSym(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
+    if (comptime is_wasm) return null;
     if (builtin.os.tag == .windows) {
         const handle = lib.* orelse return null;
         const addr = Kernel32.GetProcAddress(handle, name.ptr) orelse return null;
@@ -140,28 +145,36 @@ var g_lib: LibHandle = undefined;
 var g_funcs: Funcs = undefined;
 
 fn loadAll() bool {
-    if (comptime builtin.abi.isAndroid()) {
+    if (comptime builtin.abi.isAndroid() or is_wasm) {
         // Sistem libsqlite.so uygulama ad alanında libandroidicu ister ve
         // yüklenmez. Android çalışma zamanı sqlite birleştirmesini kendi
-        // nesnesine bağlar; dlopen yoktur.
+        // nesnesine bağlar; dlopen yoktur. WASM'da da dlopen yoktur: v2.0.146'dan
+        // itibaren `third_party/sqlite/sqlite3.c`, WASM çalışma zamanı nesnesine
+        // derlenip bağlanır (bkz. `build.zig` `addWasmRuntimeChain`, spec §3.348).
         const linked = struct {
-            extern "c" fn sqlite3_open(filename: [*:0]const u8, ppDb: *?*anyopaque) callconv(.c) c_int;
-            extern "c" fn sqlite3_close(db: ?*anyopaque) callconv(.c) c_int;
-            extern "c" fn sqlite3_errmsg(db: ?*anyopaque) callconv(.c) ?[*:0]const u8;
-            extern "c" fn sqlite3_prepare_v2(db: ?*anyopaque, sql: [*:0]const u8, nbyte: c_int, ppStmt: *?*anyopaque, pzTail: ?*?[*:0]const u8) callconv(.c) c_int;
-            extern "c" fn sqlite3_step(stmt: ?*anyopaque) callconv(.c) c_int;
-            extern "c" fn sqlite3_finalize(stmt: ?*anyopaque) callconv(.c) c_int;
-            extern "c" fn sqlite3_column_count(stmt: ?*anyopaque) callconv(.c) c_int;
-            extern "c" fn sqlite3_column_type(stmt: ?*anyopaque, i: c_int) callconv(.c) c_int;
-            extern "c" fn sqlite3_column_text(stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
-            extern "c" fn sqlite3_column_name(stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
-            extern "c" fn sqlite3_bind_int64(stmt: ?*anyopaque, idx: c_int, val: i64) callconv(.c) c_int;
-            extern "c" fn sqlite3_bind_double(stmt: ?*anyopaque, idx: c_int, val: f64) callconv(.c) c_int;
-            extern "c" fn sqlite3_bind_text(stmt: ?*anyopaque, idx: c_int, text: [*:0]const u8, nbyte: c_int, destructor: ?*const anyopaque) callconv(.c) c_int;
-            extern "c" fn sqlite3_bind_null(stmt: ?*anyopaque, idx: c_int) callconv(.c) c_int;
-            extern "c" fn sqlite3_changes(db: ?*anyopaque) callconv(.c) c_int;
-            extern "c" fn sqlite3_last_insert_rowid(db: ?*anyopaque) callconv(.c) i64;
+            extern fn sqlite3_vfs_find(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
+            extern fn sqlite3_vfs_register(vfs: ?*anyopaque, make_default: c_int) callconv(.c) c_int;
+            extern fn sqlite3_open(filename: [*:0]const u8, ppDb: *?*anyopaque) callconv(.c) c_int;
+            extern fn sqlite3_close(db: ?*anyopaque) callconv(.c) c_int;
+            extern fn sqlite3_errmsg(db: ?*anyopaque) callconv(.c) ?[*:0]const u8;
+            extern fn sqlite3_prepare_v2(db: ?*anyopaque, sql: [*:0]const u8, nbyte: c_int, ppStmt: *?*anyopaque, pzTail: ?*?[*:0]const u8) callconv(.c) c_int;
+            extern fn sqlite3_step(stmt: ?*anyopaque) callconv(.c) c_int;
+            extern fn sqlite3_finalize(stmt: ?*anyopaque) callconv(.c) c_int;
+            extern fn sqlite3_column_count(stmt: ?*anyopaque) callconv(.c) c_int;
+            extern fn sqlite3_column_type(stmt: ?*anyopaque, i: c_int) callconv(.c) c_int;
+            extern fn sqlite3_column_text(stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
+            extern fn sqlite3_column_name(stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
+            extern fn sqlite3_bind_int64(stmt: ?*anyopaque, idx: c_int, val: i64) callconv(.c) c_int;
+            extern fn sqlite3_bind_double(stmt: ?*anyopaque, idx: c_int, val: f64) callconv(.c) c_int;
+            extern fn sqlite3_bind_text(stmt: ?*anyopaque, idx: c_int, text: [*:0]const u8, nbyte: c_int, destructor: ?*const anyopaque) callconv(.c) c_int;
+            extern fn sqlite3_bind_null(stmt: ?*anyopaque, idx: c_int) callconv(.c) c_int;
+            extern fn sqlite3_changes(db: ?*anyopaque) callconv(.c) c_int;
+            extern fn sqlite3_last_insert_rowid(db: ?*anyopaque) callconv(.c) i64;
         };
+        // WASI: sqlite'ın unix VFS'i kilit için `fcntl(F_SETLK)` kullanır, wasi-libc'de yoktur. Kilitsiz "unix-none" varsayılan yapılır (tek süreç/ön-açılmış dizinler).
+        if (comptime is_wasm and builtin.os.tag == .wasi) {
+            if (linked.sqlite3_vfs_find("unix-none")) |none| _ = linked.sqlite3_vfs_register(none, 1);
+        }
         g_lib = undefined;
         g_funcs = .{
             .open = linked.sqlite3_open,
@@ -223,6 +236,21 @@ fn loadAll() bool {
     return true;
 }
 
+/// WASM `--threads`'te sqlite `SQLITE_THREADSAFE=0` ile derlenir (mutex yok); birden çok iş parçacığı aynı anda içeri girmesin diye TÜM dışa aktarımlar küçük bir
+/// döner kilitle seri hale getirilir. Tek iş parçacıklı derlemelerde (masaüstü, WASM varsayılan/asyncify) kilit derleme zamanında yok olur.
+const needs_lock = is_wasm and !builtin.single_threaded;
+var g_lock: std.atomic.Value(u8) = .init(0);
+
+inline fn lock() void {
+    if (comptime needs_lock) {
+        while (g_lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {}
+    }
+}
+
+inline fn unlock() void {
+    if (comptime needs_lock) g_lock.store(0, .release);
+}
+
 /// `true` dönerse `g_funcs` KULLANIMA HAZIRDIR. `false` dönerse (kütüphane
 /// KURULU DEĞİL VEYA beklenmeyen bir ABI'ye sahip) ÇAĞIRAN taraf (HER
 /// `nox_sqlite_*_raw` fonksiyonu) `null`/`0` gibi bir başarısızlık
@@ -235,7 +263,7 @@ fn ensureLoaded() bool {
         while (true) {
             const s = g_state.load(.acquire);
             if (s == .ready or s == .failed) break;
-            std.Thread.yield() catch {};
+            if (comptime !is_wasm) std.Thread.yield() catch {};
         }
     }
     return g_state.load(.acquire) == .ready;
@@ -255,8 +283,13 @@ fn dupeEmpty(rt: ?*anyopaque) ?[*:0]u8 {
 const SQLITE_TRANSIENT: ?*const anyopaque = @ptrFromInt(std.math.maxInt(usize));
 
 pub export fn nox_sqlite_open_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-    const embed = @import("../embed.zig");
-    if (!embed.allowsPath(rt, path)) return null;
+    lock();
+    defer unlock();
+    // `embed.zig` (yol politikası, `realpath`) wasm32-freestanding'de derlenmez; orada gömme hedefi de yoktur.
+    if (comptime !(is_wasm and builtin.os.tag == .freestanding)) {
+        const embed = @import("../embed.zig");
+        if (!embed.allowsPath(rt, path)) return null;
+    }
     const p = path orelse return null;
     if (!ensureLoaded()) return null;
     var db: ?*anyopaque = null;
@@ -265,6 +298,8 @@ pub export fn nox_sqlite_open_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callcon
 }
 
 pub export fn nox_sqlite_errmsg_raw(rt: ?*anyopaque, db: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    lock();
+    defer unlock();
     if (!ensureLoaded()) return dupeToNoxStr(rt, "could not load libsqlite3 (it may not be installed on the system)");
     const opened = db orelse return dupeToNoxStr(rt, "sqlite database is not open");
     const msg = g_funcs.errmsg(opened) orelse return dupeEmpty(rt);
@@ -272,6 +307,8 @@ pub export fn nox_sqlite_errmsg_raw(rt: ?*anyopaque, db: ?*anyopaque) callconv(.
 }
 
 pub export fn nox_sqlite_prepare_raw(db: ?*anyopaque, sql: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    lock();
+    defer unlock();
     const opened = db orelse return null;
     const s = sql orelse return null;
     if (!ensureLoaded()) return null;
@@ -281,48 +318,64 @@ pub export fn nox_sqlite_prepare_raw(db: ?*anyopaque, sql: ?[*:0]const u8) callc
 }
 
 pub export fn nox_sqlite_step_raw(stmt: ?*anyopaque) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1; // SQLITE_ERROR
     return g_funcs.step(active);
 }
 
 pub export fn nox_sqlite_finalize_raw(stmt: ?*anyopaque) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const active = stmt orelse return 0;
     if (!ensureLoaded()) return 1;
     return g_funcs.finalize(active);
 }
 
 pub export fn nox_sqlite_close_raw(db: ?*anyopaque) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const opened = db orelse return 0;
     if (!ensureLoaded()) return 1;
     return g_funcs.close(opened);
 }
 
 pub export fn nox_sqlite_column_count_raw(stmt: ?*anyopaque) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const active = stmt orelse return 0;
     if (!ensureLoaded()) return 0;
     return g_funcs.column_count(active);
 }
 
 pub export fn nox_sqlite_column_type_raw(stmt: ?*anyopaque, i: i64) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const active = stmt orelse return 5;
     if (!ensureLoaded()) return 5; // SQLITE_NULL
     return g_funcs.column_type(active, @intCast(i));
 }
 
 pub export fn nox_sqlite_bind_int_raw(stmt: ?*anyopaque, idx: i64, val: i64) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
     return g_funcs.bind_int64(active, @intCast(idx), val);
 }
 
 pub export fn nox_sqlite_bind_double_raw(stmt: ?*anyopaque, idx: i64, val: f64) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
     return g_funcs.bind_double(active, @intCast(idx), val);
 }
 
 pub export fn nox_sqlite_bind_text_raw(stmt: ?*anyopaque, idx: i64, value: ?[*:0]const u8) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
     const v = value orelse "";
@@ -330,24 +383,32 @@ pub export fn nox_sqlite_bind_text_raw(stmt: ?*anyopaque, idx: i64, value: ?[*:0
 }
 
 pub export fn nox_sqlite_bind_null_raw(stmt: ?*anyopaque, idx: i64) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
     return g_funcs.bind_null(active, @intCast(idx));
 }
 
 pub export fn nox_sqlite_changes_raw(db: ?*anyopaque) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const opened = db orelse return 0;
     if (!ensureLoaded()) return 0;
     return g_funcs.changes(opened);
 }
 
 pub export fn nox_sqlite_last_insert_rowid_raw(db: ?*anyopaque) callconv(.c) i64 {
+    lock();
+    defer unlock();
     const opened = db orelse return 0;
     if (!ensureLoaded()) return 0;
     return g_funcs.last_insert_rowid(opened);
 }
 
 pub export fn nox_sqlite_column_text_raw(rt: ?*anyopaque, stmt: ?*anyopaque, i: i64) callconv(.c) ?[*:0]u8 {
+    lock();
+    defer unlock();
     const active = stmt orelse return dupeEmpty(rt);
     if (!ensureLoaded()) return dupeEmpty(rt);
     const txt = g_funcs.column_text(active, @intCast(i)) orelse return dupeEmpty(rt);
@@ -355,6 +416,8 @@ pub export fn nox_sqlite_column_text_raw(rt: ?*anyopaque, stmt: ?*anyopaque, i: 
 }
 
 pub export fn nox_sqlite_column_name_raw(rt: ?*anyopaque, stmt: ?*anyopaque, i: i64) callconv(.c) ?[*:0]u8 {
+    lock();
+    defer unlock();
     const active = stmt orelse return dupeEmpty(rt);
     if (!ensureLoaded()) return dupeEmpty(rt);
     const name = g_funcs.column_name(active, @intCast(i)) orelse return dupeEmpty(rt);

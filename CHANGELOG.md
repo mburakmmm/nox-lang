@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.146]
+
+### Eklendi
+
+- **WASM'da `nox.sqlite` artık derlenir** (6 hedefin hepsi). SQLite amalgamation'ı hedef başına ayrı bir nesne olarak (`noxrt-<hedef>-sqlite3.o`) kurulur ve yalnızca `nox.sqlite` kullanan programlara bağlanır (diğerleri büyümez). wasm32-wasi: kilitsiz `unix-none` VFS, ön-açılmış dizinlerde kalıcı dosya veritabanı; wasm32-freestanding: bellek-içi VFS + çalışma zamanı ayırıcısı üzerinden küçük bir libc (`runtime/wasm_libc_sqlite.zig`); `--threads`: döner kilitle seri hale getirilmiş çağrılar (spec 3.348).
+- Yeni fixture `sqlite_memory_roundtrip` (sorgu, bağlama, `Row.get_*`, hata yolu) ve `wasm_target_test` kapsamı.
+
+### Değişti
+
+- `docs/tools/wasm.md`, ADR-016: `sqlite` reddedilen modül listesinden çıktı.
+
 ## [2.0.145]
 
 ### Düzeltildi

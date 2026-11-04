@@ -108,7 +108,13 @@ test "wasm32-wasi: JSON, regex, gzip, sha256, fs kabukları" {
 
 test "wasm32-wasi: henüz desteklenmeyen modül derleme zamanında açık iletiyle reddedilir" {
     try expectRejected("import nox.tls\nprint(1)\n", "cannot be used on the wasm32-wasi target");
-    try expectRejected("import nox.sqlite\nprint(1)\n", "cannot be used on the wasm32-wasi target");
+    try expectRejected("import nox.postgres\nprint(1)\n", "cannot be used on the wasm32-wasi target");
+}
+
+// v2.0.146 (spec §3.348): `nox.sqlite` WASM'da DERLENİR; SQLite amalgamation'ı ayrı bir nesne olarak (`noxrt-wasm32-*-sqlite3.o`) yalnızca `nox_sqlite_*` kullanan
+// programlara bağlanır. wasm32-wasi'de dosya tabanlı veritabanı ön-açılmış dizinlerde, wasm32-freestanding'de yalnızca bellek-içi (`:memory:`) çalışır.
+test "wasm: nox.sqlite bellek-içi sorgu + hata yolu" {
+    try expectGolden("sqlite_memory_roundtrip", @embedFile("codegen_cases/sqlite_memory_roundtrip.nox"), @embedFile("codegen_cases/sqlite_memory_roundtrip.expected"));
 }
 
 // v2.0.144 (spec §3.346): `nox.http` ve ona bağlı router/web/reflect/transfer WASM'da DERLENİR. Yönlendirme ve bir handler'ın doğrudan çağrılarak sınanması saf Nox'tur

@@ -3,6 +3,8 @@
 An SQLite driver. It loads the system `libsqlite3` **at run time, the first time you call `open`**, so programs that never use SQLite have no dependency on it; if the library is not
 installed, `open` raises a clean `SqliteError` instead of failing at build or start-up.
 
+On the WASM targets SQLite is linked statically instead (there is no dynamic loading); see [WASM](../tools/wasm.md#sqlite).
+
 ```text
 import nox.sqlite
 from nox.sqlite import Connection, SqliteError

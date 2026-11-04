@@ -1,0 +1,26 @@
+import nox.sqlite
+from nox.sqlite import Connection, SqliteError
+from nox.db import Statement, Row
+
+conn: Connection = nox.sqlite.open(":memory:")
+conn.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)")
+ins: Statement = conn.prepare("INSERT INTO t VALUES (?, ?, ?)")
+ins.bind_int(0, 1)
+ins.bind_str(1, "alice")
+ins.bind_float(2, 1.5)
+print(ins.execute())
+conn.execute("INSERT INTO t VALUES (2, 'bob', 2.5)")
+rows: list[Row] = conn.query("SELECT id, name, score FROM t ORDER BY id")
+for r in rows:
+    print(r.get_int(0), r.get_str(1), r.get_float(2))
+print(len(rows))
+conn.close()
+
+# Hata yolu: geçersiz SQL SqliteError fırlatır.
+bad: Connection = nox.sqlite.open(":memory:")
+try:
+    bad.execute("SELEKT 1")
+    print("unreachable")
+except SqliteError:
+    print("sql error")
+bad.close()

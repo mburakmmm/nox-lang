@@ -26,7 +26,7 @@ Her kip `wasm32-wasi` ve `wasm32-freestanding` için vardır. Dil ve standart k�
 ## Sınırlar
 
 - **Eşzamanlılık kipe bağlıdır** (yukarıdaki tabloya bakın). Varsayılan kipte iş parçacığı yoktur ve `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. `--asyncify` gerçek fiber verir (tek iş parçacığı, M:1); `--threads` gerçek paralellik verir (M:N).
-- **Henüz desteklenmeyen modüller.** `tls`, `websocket`, `smtp`, `sqlite`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
+- **Henüz desteklenmeyen modüller.** `tls`, `websocket`, `smtp`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
 - **Ağ host'a bağlıdır.** `nox.http` WASM'da derlenir, ama gerçek bir soket (istemci `get`/`post`/`request`/akışlı istemci, sunucu `serve*`) bir host yeteneği olmadan çalışmaz: istemci çağrıları yakalanabilir bir `HttpCapabilityError` (`HttpError`ın alt sınıfı) fırlatır; `serve` bir tanı mesajı yazıp gerçek bir bind hatasındaki gibi hemen döner.
 - **Yerel kütüphane yok.** `extern def ... from "lib"` ile bir `.wasm`a native kütüphane bağlanamaz.
 - **Dosya sistemi** çalıştırıcının WASI ön-açımlarına bağlıdır (`wasm_run.mjs` `.` ve `/tmp` açar).
@@ -36,7 +36,7 @@ Ayrıntı ve gerekçe: [ADR-012](../internals/adr/012-wasm-target.md). Bir WASM 
 
 ## Yetenek modeli ve `--deny-capability`
 
-WASM genel amaçlı bir derleme hedefidir: modüller, ihtiyaç duydukları şey bir *yetenek* (`network`, `filesystem`, `process`, `clock`, `entropy`, ...) olduğu sürece derlenir. Yeteneği sağlamak host'un işidir (WASI, `nox_host` import'ları ya da bir tarayıcı sayfası); sağlamıyorsa çağrı anında açık bir hata alırsınız, link hatası ya da çökme değil. Bugün bu yalnızca `nox.http` ailesi için geçerlidir (ağ yeteneği yok); diğer yetenekler (sanal dosya sistemi, `fetch` tabanlı istemci, `sqlite`, ...) aynı modelle eklenecektir ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
+WASM genel amaçlı bir derleme hedefidir: modüller, ihtiyaç duydukları şey bir *yetenek* (`network`, `filesystem`, `process`, `clock`, `entropy`, ...) olduğu sürece derlenir. Yeteneği sağlamak host'un işidir (WASI, `nox_host` import'ları ya da bir tarayıcı sayfası); sağlamıyorsa çağrı anında açık bir hata alırsınız, link hatası ya da çökme değil. Bugün bu `nox.http` ailesi için geçerlidir (ağ yeteneği yok); diğer yetenekler (sanal dosya sistemi, `fetch` tabanlı istemci, ...) aynı modelle eklenecektir ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
 
 Güvenilmeyen kodu derleyen ortamlar (ör. tarayıcıda bir kod deneme alanı) yetenekleri **derleme zamanında** da kısıtlayabilir; bu bayrak yalnızca WASM'da değil, her hedefte çalışır:
 
@@ -109,3 +109,7 @@ NOX_POOL_WORKERS=4 noxc run --target wasm32-wasi --threads prog.nox
 ```
 
 `--threads`, yerel `--release` çalışma zamanının iş çalan M:N havuzunu WASM'a taşır: `spawn`/`await`, `Channel`, `nox.thread` birden çok iş parçacığında GERÇEKTEN paralel çalışır (paylaşımlı bellek + atomikler). Modül `env.memory` (paylaşımlı) ve `wasi::thread-spawn` içe aktarır; `compiler/wasm_host.mjs` bunları Node Worker'larıyla sağlar (wasmtime 50 `-Sthreads`ı kaldırdığından `noxc run` bu hedefte yalnızca Node kullanır). Başka bir host aynı iki içe aktarımı sağlayarak modülü çalıştırabilir. İşçi sayısı `NOX_POOL_WORKERS` ile ayarlanır. Sınırlar ve gerekçe: [ADR-015](../internals/adr/015-wasm-threads.md); `wasm32-freestanding` için de `--threads` vardır: host `nox_host.thread_spawn(arg) -> tid` sağlar ve her yeni iş parçacığında `nox_host_thread_start(tid, arg)`ı çağırır (paylaşımlı `env.memory` ile).
+
+## SQLite
+
+`nox.sqlite` her WASM hedefinde derlenir; SQLite kütüphanesi programa statik bağlanır (yalnızca `nox.sqlite` kullanan programlar ~700 KB büyür). `wasm32-wasi`'de dosya tabanlı veritabanları host'un ön-açtığı dizinlerde çalışır (`wasmtime run --dir=. app.wasm`) ve çalıştırmalar arasında kalıcıdır; kilitleme yoktur (tek süreç varsayımı). `wasm32-freestanding`'de şimdilik yalnızca bellek-içi (`":memory:"`) veritabanları çalışır.

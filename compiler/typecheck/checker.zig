@@ -411,7 +411,6 @@ const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }
     .{ .name = "tls", .why = "it needs sockets" },
     .{ .name = "websocket", .why = "it needs sockets" },
     .{ .name = "smtp", .why = "it needs sockets" },
-    .{ .name = "sqlite", .why = "it loads a host shared library" },
     .{ .name = "postgres", .why = "it loads a host shared library" },
     .{ .name = "mysql", .why = "it loads a host shared library" },
     .{ .name = "process", .why = "WASI has no child processes" },

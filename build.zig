@@ -267,9 +267,38 @@ fn addWasmRuntimeChain(b: *std.Build, optimize: std.builtin.OptimizeMode, root: 
             .{ .name = "wasm_options", .module = wasm_options.createModule() },
         },
     });
+    // v2.0.146 (spec §3.348): SQLite amalgamation'ı WASM çalışma zamanı nesnesine derlenip bağlanır (dlopen yok). Kullanılmayan işlevler wasm-ld GC ile atılır, yani
+    // `nox.sqlite` kullanmayan programlar büyümez. C kodu her zaman wasi başlıklarıyla derlenir (freestanding hedefin libc başlığı yoktur; semboller çalışma zamanından
+    // gelir, `runtime/wasm_libc_sqlite.zig`).
+    const sqlite_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .wasi, .abi = .musl, .cpu_features_add = if (threads) thread_features else no_features });
+    const sqlite_mod = b.createModule(.{
+        .target = sqlite_target,
+        .optimize = .ReleaseSmall,
+        .link_libc = true,
+        .single_threaded = !threads,
+    });
+    const sqlite_common = [_][]const u8{
+        "-DSQLITE_THREADSAFE=0",        "-DSQLITE_OMIT_LOAD_EXTENSION=1", "-DSQLITE_OMIT_WAL=1",     "-DSQLITE_OMIT_SHARED_CACHE=1",
+        "-DSQLITE_DEFAULT_MEMSTATUS=0", "-DSQLITE_OMIT_DEPRECATED=1",     "-DSQLITE_TEMP_STORE=3",   "-DSQLITE_OMIT_PROGRESS_CALLBACK=1",
+        "-DSQLITE_OMIT_LOCALTIME=1",    "-DSQLITE_USE_ALLOCA=0",          "-fno-sanitize=undefined",
+    };
+    const sqlite_wasi_extra = [_][]const u8{ "-D_WASI_EMULATED_GETPID", "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS", "-DSQLITE_ENABLE_LOCKING_STYLE=0" };
+    const sqlite_free_extra = [_][]const u8{"-DSQLITE_OS_OTHER=1"};
+    // wasm32-freestanding: amalgamation + OS katmanı tek çeviri biriminde (`nox_sqlite_freestanding.c`); Zig bir nesneye birden çok C dosyasını yazmaz.
+    sqlite_mod.addCSourceFile(.{
+        .file = b.path(if (freestanding) "third_party/sqlite/nox_sqlite_freestanding.c" else "third_party/sqlite/sqlite3.c"),
+        .flags = if (freestanding) &(sqlite_common ++ sqlite_free_extra) else &(sqlite_common ++ sqlite_wasi_extra),
+    });
+    if (freestanding) sqlite_mod.addIncludePath(b.path("third_party/sqlite"));
+    // Ayrı nesne olarak kurulur (`mod.addObject` çalışma zamanının kendi kodunu düşürüyordu): `linkWasm`, yalnızca `nox_sqlite_*` kullanan programlara ekler.
+    const sqlite_obj = b.addObject(.{ .name = b.fmt("{s}-sqlite3", .{install_name}), .root_module = sqlite_mod });
+    const sqlite_install = b.addInstallFile(sqlite_obj.getEmittedBin(), b.fmt("lib/{s}-sqlite3.o", .{install_name}));
+    sqlite_install.step.dependOn(&sqlite_obj.step);
+
     const obj = b.addObject(.{ .name = install_name, .root_module = mod });
     const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
     install.step.dependOn(&obj.step);
+    install.step.dependOn(&sqlite_install.step);
     return &install.step;
 }
 
