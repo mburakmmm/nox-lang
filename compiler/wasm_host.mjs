@@ -12,6 +12,10 @@
 //     Modül `_start` ve `nox_host_abi_version` dışa aktarır; host sürüm uyuşmazsa yüklemeyi reddeder.
 //
 // Tarayıcıda `createHost({ write, read, clockMs, randomFill, sleepMs })` ile kendi G/Ç'ni ver; Node CLI'si bunları fs/crypto ile bağlar.
+//
+// Kalıcı dosya sistemi (wasm32-freestanding, spec §3.350): `nox.fs`/`nox.sqlite` modülün içindeki bellek içi sanal dosya sistemine yazar. Kalıcılık istiyorsan
+// `runNox(bytes, io, { vfs: { files, onSave } })`: `files` ([{ path, data? }]; `data` yoksa dizin) modül başlamadan yüklenir, `onSave(entries)` çıkışta anlık görüntüyle
+// çağrılır. Node CLI: `node wasm_host.mjs prog.wasm --vfs-dir=DIR` (ya da `NOX_VFS_DIR`) DIR'i yükler ve çıkışta geri yazar (`/tmp` geçicidir, kaydedilmez).
 
 export const NOX_HOST_ABI_VERSION = 1;
 
@@ -51,18 +55,100 @@ export function createHost(io, sharedMemory = null) {
   };
 }
 
-/** `wasm32-freestanding` modülünü çalıştırır; çıkış kodunu döner. */
-export async function runNox(wasmBytes, io) {
+
+// ---- Kalıcı sanal dosya sistemi (spec §3.350) ----------------------------------------------------------------------------------------------
+
+const VFS_EXPORTS = ['nox_vfs_host_alloc', 'nox_vfs_host_free', 'nox_vfs_host_put', 'nox_vfs_host_mkdir', 'nox_vfs_host_snapshot'];
+
+/** Modül sanal dosya sistemini kullanıyor mu (dışa aktarımlar yalnızca `nox.fs`/`nox.sqlite` kullanan programlarda vardır)? */
+export function vfsAvailable(instance) {
+  return VFS_EXPORTS.every((n) => typeof instance.exports[n] === 'function');
+}
+
+function vfsMemory(instance, memory) {
+  return memory ?? instance.exports.memory;
+}
+
+/** `entries`: [{ path, data? }] (`data` bir Uint8Array; yoksa dizin). Üst dizinler kendiliğinden oluşur. Modül sanal dosya sistemini kullanmıyorsa hiçbir şey yapmaz (false). */
+export function vfsPreload(instance, entries, memory = null) {
+  if (!vfsAvailable(instance)) return false;
+  const mem = vfsMemory(instance, memory);
+  const x = instance.exports;
+  const enc = new TextEncoder();
+  const put = (bytes) => {
+    const ptr = x.nox_vfs_host_alloc(bytes.length);
+    if (!ptr) throw new Error('sanal dosya sistemi: bellek ayrılamadı');
+    new Uint8Array(mem.buffer, ptr, bytes.length).set(bytes);
+    return ptr;
+  };
+  for (const e of entries) {
+    const pb = enc.encode(e.path);
+    const pp = put(pb);
+    let rc;
+    if (e.data === undefined) {
+      rc = x.nox_vfs_host_mkdir(pp, pb.length);
+    } else {
+      const dp = put(e.data);
+      rc = x.nox_vfs_host_put(pp, pb.length, dp, e.data.length);
+      x.nox_vfs_host_free(dp, e.data.length);
+    }
+    x.nox_vfs_host_free(pp, pb.length);
+    if (rc !== 0) throw new Error(`sanal dosya sistemi önyüklemesi başarısız: ${e.path}`);
+  }
+  return true;
+}
+
+/** Sanal dosya sisteminin anlık görüntüsü: [{ path, data? }] (yola göre sıralı; ebeveyn çocuktan önce). Kullanılmıyorsa `null`. */
+export function vfsSnapshot(instance, memory = null) {
+  if (!vfsAvailable(instance)) return null;
+  const mem = vfsMemory(instance, memory);
+  const x = instance.exports;
+  const lenPtr = x.nox_vfs_host_alloc(4);
+  const ptr = x.nox_vfs_host_snapshot(lenPtr);
+  if (!ptr) {
+    x.nox_vfs_host_free(lenPtr, 4);
+    throw new Error('sanal dosya sistemi: anlık görüntü alınamadı');
+  }
+  const len = new DataView(mem.buffer).getUint32(lenPtr, true);
+  const buf = new Uint8Array(mem.buffer, ptr, len).slice();
+  x.nox_vfs_host_free(ptr, len);
+  x.nox_vfs_host_free(lenPtr, 4);
+  const dec = new TextDecoder();
+  const dv = new DataView(buf.buffer);
+  const out = [];
+  let i = 0;
+  while (i < buf.length) {
+    const kind = buf[i];
+    const plen = dv.getUint32(i + 1, true);
+    const path = dec.decode(buf.subarray(i + 5, i + 5 + plen));
+    const dlen = dv.getUint32(i + 5 + plen, true);
+    const start = i + 9 + plen;
+    out.push(kind === 1 ? { path, data: buf.slice(start, start + dlen) } : { path });
+    i = start + dlen;
+  }
+  return out;
+}
+
+/**
+ * `wasm32-freestanding` modülünü çalıştırır; çıkış kodunu döner. `opts.vfs` = { files, onSave } kalıcı dosya sistemi içindir (dosyanın başındaki nota bak); modül
+ * dosya sistemini kullanmıyorsa yok sayılır (böylece `onSave` boş bir görüntüyle diski silmez).
+ */
+export async function runNox(wasmBytes, io, opts = {}) {
   const host = createHost(io);
   const { instance } = await WebAssembly.instantiate(wasmBytes, host.imports);
   host.bind(instance);
+  const vfs = opts.vfs && vfsAvailable(instance) ? opts.vfs : null;
+  if (vfs && vfs.files) vfsPreload(instance, vfs.files);
+  let code = 0;
   try {
     instance.exports._start();
   } catch (e) {
-    if (e instanceof NoxExit) return e.code;
-    throw e;
+    if (e instanceof NoxExit) code = e.code;
+    else throw e;
+  } finally {
+    if (vfs && vfs.onSave) await vfs.onSave(vfsSnapshot(instance));
   }
-  return 0;
+  return code;
 }
 
 // ---- Node CLI ----------------------------------------------------------------------------------------------------------------------------
@@ -89,6 +175,111 @@ async function makeNodeIo() {
   };
 }
 
+
+// ---- Node: dizin <-> sanal dosya sistemi -----------------------------------------------------------------------------------------------------
+
+const VFS_DIR_MAX_BYTES = 512 * 1024 * 1024;
+
+/** Sanal yol bileşenleri diske güvenle eşlenebilir mi (normalleştirilmiş yollarda `..` olmaz; ayrıca ters bölü, `:` ve NUL reddedilir). */
+function vfsSafePath(p) {
+  return p.startsWith('/') && p.split('/').slice(1).every((c) => c.length > 0 && !/[\\:\0]/.test(c) && c !== '.' && c !== '..');
+}
+
+const vfsIsTmp = (rel) => rel === '/tmp' || rel.startsWith('/tmp/');
+
+/**
+ * `dir` dizinini sanal dosya sistemine eşler: `load()` dizini okur (sembolik bağlar ve üst düzey `tmp` atlanır), `save(snapshot)` sonucu geri yazar. Yalnızca YÜKLENEN
+ * yollardan programın sildikleri diskten silinir (başka bir süreç aynı sırada dosya eklediyse dokunulmaz); değişmeyen dosyalar yeniden yazılmaz; yazma geçici dosya + rename ile yapılır.
+ */
+async function makeNodeVfs(dir, loadedInit = null) {
+  const fs = await import('node:fs');
+  const pathMod = await import('node:path');
+  const root = pathMod.resolve(dir);
+  if (root === pathMod.parse(root).root) throw new Error('--vfs-dir bir dosya sistemi kökü olamaz');
+  const abs = (rel) => pathMod.join(root, ...rel.split('/').slice(1));
+  const api = {
+    loaded: loadedInit ?? [],
+    load() {
+      fs.mkdirSync(root, { recursive: true });
+      const entries = [];
+      let total = 0;
+      const walk = (absDir, rel) => {
+        for (const d of fs.readdirSync(absDir, { withFileTypes: true })) {
+          if (d.isSymbolicLink()) continue;
+          const r = `${rel}/${d.name}`;
+          if (vfsIsTmp(r) || !vfsSafePath(r)) continue;
+          const full = pathMod.join(absDir, d.name);
+          if (d.isDirectory()) {
+            entries.push({ path: r });
+            walk(full, r);
+          } else if (d.isFile()) {
+            const data = new Uint8Array(fs.readFileSync(full));
+            total += data.length;
+            if (total > VFS_DIR_MAX_BYTES) throw new Error(`--vfs-dir çok büyük (en çok ${VFS_DIR_MAX_BYTES} bayt yüklenir)`);
+            entries.push({ path: r, data });
+          }
+        }
+      };
+      walk(root, '');
+      api.loaded = entries.map((e) => e.path);
+      return entries;
+    },
+    save(snapshot) {
+      const want = new Map();
+      for (const e of snapshot) {
+        if (vfsIsTmp(e.path)) continue;
+        if (!vfsSafePath(e.path)) {
+          process.stderr.write(`nox: --vfs-dir: '${e.path}' diske eşlenemez, kaydedilmedi\n`);
+          continue;
+        }
+        want.set(e.path, e);
+      }
+      // Programın sildiği ya da türünü değiştirdiği (dosya <-> dizin) yüklenmiş yollar diskten kaldırılır.
+      for (const rel of [...api.loaded].sort((a, b) => b.length - a.length)) {
+        const w = want.get(rel);
+        const p = abs(rel);
+        let st;
+        try {
+          st = fs.lstatSync(p);
+        } catch {
+          continue;
+        }
+        if (st.isSymbolicLink()) continue;
+        if (!w || (w.data !== undefined && st.isDirectory()) || (w.data === undefined && st.isFile())) fs.rmSync(p, { recursive: true, force: true });
+      }
+      for (const [rel, e] of [...want].sort((a, b) => a[0].length - b[0].length)) {
+        const p = abs(rel);
+        if (e.data === undefined) {
+          fs.mkdirSync(p, { recursive: true });
+          continue;
+        }
+        fs.mkdirSync(pathMod.dirname(p), { recursive: true });
+        try {
+          if (Buffer.compare(fs.readFileSync(p), e.data) === 0) continue;
+        } catch {}
+        const tmp = `${p}.nox-tmp-${process.pid}`;
+        fs.writeFileSync(tmp, e.data);
+        fs.renameSync(tmp, p);
+      }
+      api.loaded = [...want.keys()];
+    },
+  };
+  return api;
+}
+
+/** `--vfs-dir=DIR` / `--vfs-dir DIR` argümanını (ve `NOX_VFS_DIR` ortam değişkenini) ayıklar. */
+function takeVfsDir(args) {
+  let dir = process.env.NOX_VFS_DIR || null;
+  const rest = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--vfs-dir=')) dir = a.slice('--vfs-dir='.length);
+    else if (a === '--vfs-dir' && i + 1 < args.length) dir = args[++i];
+    else rest.push(a);
+  }
+  return { dir, rest };
+}
+
 async function nodeMain() {
   const fs = await import('node:fs');
   const { argv } = await import('node:process');
@@ -102,12 +293,18 @@ async function nodeMain() {
   const modules = new Set(WebAssembly.Module.imports(mod).map((i) => i.module));
 
   if (modules.has('nox_host')) {
+    const { dir: vfsDir } = takeVfsDir(argv.slice(3));
     const memImportNox = findMemoryImport(bytes);
     if (memImportNox && memImportNox.shared) {
-      process.exitCode = await runThreaded(file, mod, memImportNox, argv.slice(3), 'nox');
+      process.exitCode = await runThreaded(file, mod, memImportNox, argv.slice(3), 'nox', vfsDir);
       return;
     }
-    process.exitCode = await runNox(bytes, await makeNodeIo());
+    let vfs;
+    if (vfsDir) {
+      const nv = await makeNodeVfs(vfsDir);
+      vfs = { files: nv.load(), onSave: (snap) => nv.save(snap) };
+    }
+    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs });
     return;
   }
 
@@ -174,14 +371,14 @@ function findMemoryImport(bytes) {
  * Gözetmen (Node ana iş parçacığı): programın ana iş parçacığı da bir Worker'dır, böylece herhangi bir wasm iş parçacığı `atomic.wait` içinde bloke olsa bile gözetmenin
  * olay döngüsü açık kalır ve HERHANGİ bir iş parçacığının `proc_exit`ini (BroadcastChannel ile) alıp süreci sonlandırabilir.
  */
-async function runThreaded(file, mod, memImport, args, kind = 'wasi') {
+async function runThreaded(file, mod, memImport, args, kind = 'wasi', vfsDir = null) {
   const { Worker } = await import('node:worker_threads');
   const memory = new WebAssembly.Memory({ initial: memImport.min, maximum: memImport.max ?? memImport.min, shared: true });
   const chan = new BroadcastChannel(EXIT_CHANNEL);
   const done = new Promise((resolve) => {
     chan.onmessage = (ev) => resolve(ev.data.exit);
   });
-  const w = new Worker(new URL(import.meta.url), { workerData: { main: true, kind, mod, memory, tid: 0, arg: 0, file, args, tids: new Int32Array(new SharedArrayBuffer(4)) }, argv: [file] });
+  const w = new Worker(new URL(import.meta.url), { workerData: { main: true, kind, mod, memory, tid: 0, arg: 0, file, args, vfsDir, tids: new Int32Array(new SharedArrayBuffer(4)) }, argv: [file] });
   w.on('error', (e) => {
     console.error(e);
     process.exit(1);
@@ -200,10 +397,11 @@ async function wasiPreopens() {
 }
 
 /** `wasm32-freestanding-threads` örneği: `nox_host` + `thread_spawn` + paylaşımlı `env.memory`. Node ve tarayıcı Worker'ları ortak kullanır. */
-async function instantiateNoxThread(mod, memory, io, spawnThread, exitAll) {
+async function instantiateNoxThread(mod, memory, io, spawnThread, exitAll, beforeExit = null) {
   const host = createHost(io, memory);
   host.imports.nox_host.thread_spawn = spawnThread;
   host.imports.nox_host.exit = (code) => {
+    if (beforeExit) beforeExit();
     exitAll(code);
     throw new NoxExit(code);
   };
@@ -217,7 +415,8 @@ async function instantiateNoxThread(mod, memory, io, spawnThread, exitAll) {
 async function workerMain() {
   const { workerData, Worker } = await import('node:worker_threads');
   const nodeFs = await import('node:fs');
-  const { mod, memory, tid, arg, file, args, tids, kind } = workerData;
+  const { mod, memory, tid, arg, file, args, tids, kind, vfsDir } = workerData;
+  let vfsLoaded = workerData.vfsLoaded;
   const chan = new BroadcastChannel(EXIT_CHANNEL);
   const exitAll = (code) => {
     chan.postMessage({ exit: code });
@@ -225,7 +424,7 @@ async function workerMain() {
   };
   const spawnThread = (a) => {
     const t = Atomics.add(tids, 0, 1) + 1; // iş parçacıkları arasında benzersiz, > 0
-    const w = new Worker(new URL(import.meta.url), { workerData: { main: false, kind, mod, memory, tid: t, arg: a, file, args, tids }, argv: [file] });
+    const w = new Worker(new URL(import.meta.url), { workerData: { main: false, kind, mod, memory, tid: t, arg: a, file, args, tids, vfsDir, vfsLoaded }, argv: [file] });
     w.on('error', (e) => {
       // Worker başlatma/çalışma hatası: sessizce yutulursa `join` sonsuza dek bekler.
       nodeFs.writeSync(2, `wasm iş parçacığı hatası: ${e && e.stack ? e.stack : e}\n`);
@@ -236,9 +435,25 @@ async function workerMain() {
 
   let inst;
   let startName;
+  let onMainReturn = null;
   if (kind === 'nox') {
     // wasm32-freestanding-threads: `nox_host` import'ları + `thread_spawn`; iş parçacığı girişi `nox_host_thread_start`.
-    inst = await instantiateNoxThread(mod, memory, await makeNodeIo(), spawnThread, exitAll);
+    // Kalıcı dosya sistemi (`--vfs-dir`): ana iş parçacığı dizini yükler; çıkışı hangi iş parçacığı tetiklerse o anlık görüntüyü yazar (bellek paylaşımlıdır).
+    const nv = vfsDir ? await makeNodeVfs(vfsDir, vfsLoaded) : null;
+    let self = null;
+    const saveVfs = nv
+      ? () => {
+          if (!self || !vfsAvailable(self)) return;
+          nv.save(vfsSnapshot(self, memory));
+        }
+      : null;
+    inst = await instantiateNoxThread(mod, memory, await makeNodeIo(), spawnThread, exitAll, saveVfs);
+    self = inst;
+    if (nv && workerData.main) {
+      vfsPreload(inst, nv.load(), memory);
+      vfsLoaded = nv.loaded;
+    }
+    onMainReturn = saveVfs;
     startName = 'nox_host_thread_start';
   } else {
     const { WASI } = await import('node:wasi');
@@ -255,6 +470,7 @@ async function workerMain() {
   try {
     if (workerData.main) {
       inst.exports._start();
+      if (onMainReturn) onMainReturn();
       exitAll(0); // `_start` proc_exit olmadan döndü
     } else {
       inst.exports[startName](tid, arg);
@@ -279,7 +495,7 @@ const BROWSER_CHANNEL = 'nox-wasm-browser';
  * (yalnızca `write`) ve çıkışı tek bir BroadcastChannel ile iletir, böylece çıktı ile çıkış kodu sıralı gelir. `io.write` sayfada çalışır; diğer `io` alanları
  * Worker içinde varsayılanlarla değiştirilir (okuma yok, `crypto`, `performance`).
  */
-export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url } = {}) {
+export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url, vfs = null } = {}) {
   if (!globalThis.crossOriginIsolated) {
     throw new Error('SharedArrayBuffer için sayfa COOP/COEP ile sunulmalı (crossOriginIsolated)');
   }
@@ -300,17 +516,22 @@ export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url
     const w = new Worker(workerUrl, { type: 'module' });
     workers.push(w);
     w.onerror = (e) => settle.reject(new Error(`wasm iş parçacığı hatası: ${e.message}`));
-    w.postMessage({ noxThread: { main, mod, memory, tid, arg, tids } });
+    w.postMessage({ noxThread: { main, mod, memory, tid, arg, tids, vfs: !!vfs, vfsFiles: main && vfs ? vfs.files : undefined } });
   };
+  let vfsEntries = null;
   chan.onmessage = (ev) => {
     const m = ev.data;
     if (m.type === 'write') io.write(m.fd, m.bytes);
+    else if (m.type === 'vfs') vfsEntries = m.entries;
     else if (m.type === 'exit') settle.resolve(m.code);
     else if (m.type === 'spawn') start(false, m.tid, m.arg);
   };
   try {
     start(true, 0, 0);
-    return await done;
+    const code = await done;
+    // Çıkışı tetikleyen iş parçacığı anlık görüntüyü, çıkış iletisinden ÖNCE gönderir (aynı kanalda sıra korunur).
+    if (vfs && vfs.onSave && vfsEntries) await vfs.onSave(vfsEntries);
+    return code;
   } finally {
     for (const w of workers) w.terminate();
     chan.close();
@@ -318,7 +539,7 @@ export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url
 }
 
 /** Tarayıcı Worker'ı: ana ya da `thread_spawn` ile açılan bir wasm iş parçacığı. */
-async function browserWorkerMain({ main, mod, memory, tid, arg, tids }) {
+async function browserWorkerMain({ main, mod, memory, tid, arg, tids, vfs, vfsFiles }) {
   const chan = new BroadcastChannel(BROWSER_CHANNEL);
   const enc = new TextEncoder();
   const sleepCell = new Int32Array(new SharedArrayBuffer(4));
@@ -339,7 +560,11 @@ async function browserWorkerMain({ main, mod, memory, tid, arg, tids }) {
       if (ms > 0) Atomics.wait(sleepCell, 0, 0, ms);
     },
   };
-  const exitAll = (code) => chan.postMessage({ type: 'exit', code });
+  let self = null;
+  const exitAll = (code) => {
+    if (vfs && self && vfsAvailable(self)) chan.postMessage({ type: 'vfs', entries: vfsSnapshot(self, memory) });
+    chan.postMessage({ type: 'exit', code });
+  };
   const fail = (text) => {
     io.write(2, enc.encode(`${text}\n`));
     exitAll(1);
@@ -350,7 +575,9 @@ async function browserWorkerMain({ main, mod, memory, tid, arg, tids }) {
     return t;
   };
   try {
-    const inst = await instantiateNoxThread(mod, memory, io, spawnThread, exitAll);
+    const inst = await instantiateNoxThread(mod, memory, io, spawnThread, (code) => exitAll(code));
+    self = inst;
+    if (main && vfsFiles) vfsPreload(inst, vfsFiles, memory);
     if (main) {
       inst.exports._start();
       exitAll(0); // `_start` exit olmadan döndü

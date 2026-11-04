@@ -82,6 +82,9 @@ fn detectLiveProgress(io: std.Io, environ_map: *const std.process.Environ.Map) b
 /// ayarlar; tüm denetleyici kurulumları `applyDeniedCapabilities` ile okur. (Güvenilmeyen kodu derleyen playground için; bkz. spec §3.346.)
 var g_deny_capabilities: []const u8 = "";
 
+/// v2.0.148: `--vfs-dir`: `noxc run --target wasm32-freestanding`ın sanal dosya sistemini kalıcı kılan dizin (boş = kalıcı değil). Yalnızca node sürücüsüne iletilir.
+var g_vfs_dir: []const u8 = "";
+
 fn applyDeniedCapabilities(ch: *checker.Checker) void {
     ch.denyCapabilities(g_deny_capabilities) catch {
         printErr("unknown capability in --deny-capability / NOX_DENY_CAPABILITY: '{s}' (valid: filesystem|fs, network|net, clock, entropy|random, threads, process, shared_memory|shm, libc_math, dynamic_code|dynamic)\n", .{g_deny_capabilities});
@@ -308,6 +311,20 @@ fn realMain(init: std.process.Init) !void {
             }
             if (std.mem.startsWith(u8, arg, "--deny-capability=")) {
                 g_deny_capabilities = arg["--deny-capability=".len..];
+                continue;
+            }
+            // v2.0.148: `--vfs-dir <dizin>` / `--vfs-dir=<dizin>` — `noxc run --target wasm32-freestanding` için kalıcı sanal dosya sistemi (spec §3.350).
+            if (std.mem.eql(u8, arg, "--vfs-dir")) {
+                if (r + 1 >= all_args.items.len) {
+                    printErr("--vfs-dir expects a directory\n", .{});
+                    std.process.exit(1);
+                }
+                r += 1;
+                g_vfs_dir = all_args.items[r];
+                continue;
+            }
+            if (std.mem.startsWith(u8, arg, "--vfs-dir=")) {
+                g_vfs_dir = arg["--vfs-dir=".len..];
                 continue;
             }
             all_args.items[w] = arg;
@@ -1746,6 +1763,7 @@ const WASM_HOST_JS = @embedFile("wasm_host.mjs");
 fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: []const u8, freestanding: bool, argv_tail: []const []const u8) !u8 {
     // `freestanding` = yalnızca node sürücüsü: nox_host (ADR-013) ve iş parçacıklı wasi (ADR-015; wasmtime/wasmer wasi-threads'i kaldırdı).
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    if (g_vfs_dir.len > 0 and !freestanding) printErr("note: --vfs-dir only applies to wasm32-freestanding (wasm32-wasi uses the real file system through WASI preopens); ignored\n", .{});
     if (!freestanding and probeOk(gpa, io, &.{ "wasmtime", "--version" })) {
         try argv.appendSlice(a, &.{ "wasmtime", "run", "--dir", ".", "--dir", "/tmp", wasm_path, "--" });
     } else if (!freestanding and probeOk(gpa, io, &.{ "wasmer", "--version" })) {
@@ -1754,6 +1772,7 @@ fn runWasi(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, wasm_path: 
         const runner_path = try std.fmt.allocPrint(a, "{s}.run.mjs", .{wasm_path});
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = runner_path, .data = WASM_HOST_JS });
         try argv.appendSlice(a, &.{ "node", "--no-warnings", runner_path, wasm_path });
+        if (g_vfs_dir.len > 0 and freestanding) try argv.append(a, try std.fmt.allocPrint(a, "--vfs-dir={s}", .{g_vfs_dir}));
     } else {
         printErr("noxc run --target wasm32-*: no runtime found on PATH ({s}), or use 'noxc build' and run the .wasm yourself\n", .{if (freestanding) "install node" else "install wasmtime, wasmer or node"});
         std.process.exit(1);
@@ -3082,6 +3101,10 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
     }
     if (info.wasm_freestanding) try argv.appendSlice(a, &.{ "-Wl,--no-entry", "-Wl,--export=_start", "-Wl,--export=nox_host_abi_version" });
     if (info.wasm_freestanding and info.wasm_threads) try argv.append(a, "-Wl,--export=nox_host_thread_start");
+    // v2.0.148 (spec §3.350): sanal dosya sistemini kalıcı kılmak isteyen host için önyükleme/anlık görüntü dışa aktarımları; yalnızca dosya sistemini kullanan programlara.
+    if (info.wasm_freestanding and (std.mem.indexOf(u8, ir, "nox_fs_") != null or std.mem.indexOf(u8, ir, "nox_sqlite_") != null)) {
+        try argv.appendSlice(a, &.{ "-Wl,--export=nox_vfs_host_alloc", "-Wl,--export=nox_vfs_host_free", "-Wl,--export=nox_vfs_host_put", "-Wl,--export=nox_vfs_host_mkdir", "-Wl,--export=nox_vfs_host_snapshot" });
+    }
     if (info.wasm_freestanding) {
         // libc/libm yok: `from "m"` bildirimleri çalışma zamanındaki (`wasm_libc.zig`/compiler-rt) tanımlara çözülür; `-lm` verilmez.
         var tmp: std.ArrayListUnmanaged([]const u8) = .empty;

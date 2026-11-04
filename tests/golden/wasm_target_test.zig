@@ -259,3 +259,97 @@ test "wasm32 --threads: yalnızca wasm32-wasi ve wasm32-freestanding hedeflerind
     try std.testing.expect(result.term == .exited and result.term.exited != 0);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "--threads only applies") != null);
 }
+
+// v2.0.148 (spec §3.350): kalıcı sanal dosya sistemi. `node wasm_host.mjs prog.wasm --vfs-dir=DIR` dizini yükler ve çıkışta geri yazar: program art arda çalıştırılınca
+// dosyalar ve dosya tabanlı sqlite korunur, programın sildiği dosya diskten silinir, `/tmp` kaydedilmez. Aynı program dosya sistemini kullanmıyorsa `--vfs-dir` zararsızdır.
+const persist_program =
+    \\import nox.fs
+    \\import nox.sqlite
+    \\from nox.sqlite import Connection
+    \\from nox.db import Row
+    \\
+    \\n: int = 0
+    \\if nox.fs.exists("/data/counter.txt"):
+    \\    n = int(nox.fs.read_to_string("/data/counter.txt"))
+    \\else:
+    \\    nox.fs.create_dir("/data")
+    \\n = n + 1
+    \\nox.fs.write_string("/data/counter.txt", str(n))
+    \\nox.fs.write_string("/tmp/scratch.txt", "gecici")
+    \\conn: Connection = nox.sqlite.open("/data/app.db")
+    \\conn.execute("CREATE TABLE IF NOT EXISTS runs (n INTEGER)")
+    \\conn.execute("INSERT INTO runs VALUES (" + str(n) + ")")
+    \\rows: list[Row] = conn.query("SELECT n FROM runs")
+    \\print("run", n, "rows", len(rows))
+    \\conn.close()
+    \\
+;
+
+test "wasm32-freestanding: --vfs-dir sanal dosya sistemini kalıcı kılar (3 çalıştırma, 3 hedef kipi)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    inline for (.{ wasm_helpers.Target.freestanding, .freestanding_asyncify, .freestanding_threads }) |t| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const len = try tmp.dir.realPath(io, &path_buf);
+        const arg = try std.fmt.allocPrint(allocator, "--vfs-dir={s}/state", .{path_buf[0..len]});
+        defer allocator.free(arg);
+        const outcome = try wasm_helpers.buildAndRunRepeated(allocator, build_options.noxc_path, build_options.runner_path, t, persist_program, &.{arg}, 3);
+        switch (outcome) {
+            .tool_missing => return error.SkipZigTest,
+            .rejected, .build_failed => |msg| {
+                defer allocator.free(msg);
+                std.debug.print("persist [{s}]: derleme basarisiz: {s}\n", .{ wasm_helpers.targetName(t), msg });
+                return error.BuildFailed;
+            },
+            .ran => |r| {
+                defer allocator.free(r.stdout);
+                defer allocator.free(r.stderr);
+                if (r.term != .exited or r.term.exited != 0) {
+                    std.debug.print("persist [{s}]: program basarisiz: {s}\n", .{ wasm_helpers.targetName(t), r.stderr });
+                    return error.ProgramFailed;
+                }
+                try std.testing.expectEqualStrings("run 1 rows 1\nrun 2 rows 2\nrun 3 rows 3\n", r.stdout);
+            },
+        }
+        // Diskte: sayaç ve veritabanı var, /tmp'ye yazılan dosya yok.
+        var state = try tmp.dir.openDir(io, "state", .{});
+        defer state.close(io);
+        const counter = try state.readFileAlloc(io, "data/counter.txt", allocator, .limited(64));
+        defer allocator.free(counter);
+        try std.testing.expectEqualStrings("3", counter);
+        const db = try state.statFile(io, "data/app.db", .{});
+        try std.testing.expect(db.size > 0);
+        try std.testing.expectError(error.FileNotFound, state.statFile(io, "tmp/scratch.txt", .{}));
+    }
+}
+
+test "wasm32-freestanding: dosya sistemini kullanmayan program --vfs-dir dizinine dokunmaz" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/keep.txt", .data = "korunmali" });
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const arg = try std.fmt.allocPrint(allocator, "--vfs-dir={s}/state", .{path_buf[0..len]});
+    defer allocator.free(arg);
+    const outcome = try wasm_helpers.buildAndRunRepeated(allocator, build_options.noxc_path, build_options.runner_path, .freestanding, "print(1)\n", &.{arg}, 1);
+    switch (outcome) {
+        .tool_missing => return error.SkipZigTest,
+        .rejected, .build_failed => |msg| {
+            defer allocator.free(msg);
+            return error.BuildFailed;
+        },
+        .ran => |r| {
+            defer allocator.free(r.stdout);
+            defer allocator.free(r.stderr);
+            try std.testing.expectEqualStrings("1\n", r.stdout);
+        },
+    }
+    const kept = try tmp.dir.readFileAlloc(io, "state/keep.txt", allocator, .limited(64));
+    defer allocator.free(kept);
+    try std.testing.expectEqualStrings("korunmali", kept);
+}

@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.148]
+
+### Eklendi
+
+- **Kalıcı sanal dosya sistemi (wasm32-freestanding):** host, modül başlamadan önce ağacı doldurabilir ve çıkışta anlık görüntüsünü alabilir; modüle zorunlu import eklenmez. `noxc run --target wasm32-freestanding --vfs-dir DIR` (ya da `node wasm_host.mjs prog.wasm --vfs-dir=DIR` / `NOX_VFS_DIR`) bir dizini yükler ve çıkışta geri yazar: `nox.fs` dosyaları ve dosya tabanlı `nox.sqlite` çalıştırmalar arasında kalır; programın sildiği dosya diskten silinir, `/tmp` kaydedilmez, dosya sistemini kullanmayan programlar dizine dokunmaz. Düz, asyncify ve threads kiplerinde çalışır (spec 3.350).
+- `wasm_host.mjs`: `runNox(bytes, io, { vfs: { files, onSave } })`, `runNoxThreads(..., { vfs })` (tarayıcı), `vfsAvailable/vfsPreload/vfsSnapshot`.
+- Modül dışa aktarımları `nox_vfs_host_alloc/free/put/mkdir/snapshot` (yalnızca dosya sistemini kullanan programlarda); `wasm_vfs.zig` birim testi ve `wasm_target_test` kalıcılık testleri.
+
 ## [2.0.147]
 
 ### Eklendi

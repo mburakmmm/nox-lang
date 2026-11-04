@@ -116,6 +116,24 @@ NOX_POOL_WORKERS=4 noxc run --target wasm32-wasi --threads prog.nox
 
 ## Sanal dosya sistemi (wasm32-freestanding)
 
-`wasm32-freestanding` modülünde işletim sistemi yoktur; `nox.fs` ve dosya tabanlı `nox.sqlite` çalışma zamanının doğrusal belleğinde yaşayan bir **bellek içi sanal dosya sistemine** gider. Host'a hiçbir import eklenmez, gerçek diske ya da sunucuya hiçbir şey yazılmaz (playground için güvenli). Başlangıçta `/` ve `/tmp` vardır; göreli yollar `/` altında çözülür, `..` kökün üstüne çıkmaz. Dosya sistemi program ömrü boyunca yaşar, çıkışta kaybolur; `--threads` kipinde iş parçacıkları arasında paylaşılır. `remove_file` açık bir tanıtıcı varken bile güvenlidir (POSIX `unlink` gibi). Sınırlar: sembolik bağ, izin biti ve dizin silme yoktur (`nox.fs` zaten sunmaz); `rename` bir dizini başka bir dizinin üstüne taşıyamaz.
+`wasm32-freestanding` modülünde işletim sistemi yoktur; `nox.fs` ve dosya tabanlı `nox.sqlite` çalışma zamanının doğrusal belleğinde yaşayan bir **bellek içi sanal dosya sistemine** gider. Host'a hiçbir import eklenmez, gerçek diske ya da sunucuya hiçbir şey yazılmaz (playground için güvenli). Başlangıçta `/` ve `/tmp` vardır; göreli yollar `/` altında çözülür, `..` kökün üstüne çıkmaz. Varsayılan olarak dosya sistemi program ömrü boyunca yaşar ve çıkışta kaybolur; `--threads` kipinde iş parçacıkları arasında paylaşılır. Kalıcı kılmak için bir sonraki bölüme bakın. `remove_file` açık bir tanıtıcı varken bile güvenlidir (POSIX `unlink` gibi). Sınırlar: sembolik bağ, izin biti ve dizin silme yoktur (`nox.fs` zaten sunmaz); `rename` bir dizini başka bir dizinin üstüne taşıyamaz.
 
 Kalıcılık ya da gerçek bir dizine eşleme gerektiren host'lar için ileride `nox_host`a isteğe bağlı `fs_*` import'ları eklenebilir; bu kırıcı olmaz. `wasm32-wasi`'de dosya işlemleri ise WASI'nin ön-açılmış dizinlerine (`.` ve `/tmp`) gider.
+
+### Kalıcı sanal dosya sistemi
+
+Sanal dosya sistemi **isteğe bağlı olarak kalıcı** yapılabilir: host, modül başlamadan önce ağacı doldurur ve çıkışta anlık görüntüsünü saklar. Bunun için modüle hiçbir import eklenmez; modül (yalnızca `nox.fs`/`nox.sqlite` kullanıyorsa) `nox_vfs_host_alloc/free/put/mkdir/snapshot` dışa aktarımlarını sunar ve host belleği doğrudan okur/yazar. `/tmp` geçici sayılır: hosta yansıtılmaz ve kaydedilmez.
+
+- **Komut satırı (Node):** `noxc run --target wasm32-freestanding --vfs-dir veri/ prog.nox` ya da derlenmiş modülle `node wasm_host.mjs prog.wasm --vfs-dir=veri/` (veya `NOX_VFS_DIR`). Dizin başlangıçta sanal dosya sistemine yüklenir (sembolik bağlar atlanır, en çok 512 MiB), çıkışta geri yazılır: değişen dosyalar geçici dosya + `rename` ile yazılır, değişmeyenlere dokunulmaz, programın sildiği dosyalar diskten silinir. Dosya sistemini kullanmayan bir program dizine dokunmaz.
+- **Tarayıcı / kendi host'un:** `runNox(bytes, io, { vfs: { files, onSave } })`; `files` `[{ path, data? }]` (`data` yoksa dizin) ve `onSave(entries)` çıkışta aynı biçimde anlık görüntüyle çağrılır; kaydı IndexedDB/OPFS'e yazmak sana kalmıştır. İş parçacıklı modüller için `runNoxThreads(bytes, io, { vfs: { files, onSave } })` aynı sözleşmeyi uygular. Alt düzey: `vfsPreload(instance, entries)` ve `vfsSnapshot(instance)`.
+
+```js
+import { runNox } from './wasm_host.mjs';
+const saved = JSON.parse(localStorage.getItem('nox-vfs') ?? '[]').map((e) => ({ path: e.path, data: e.b64 && Uint8Array.from(atob(e.b64), (c) => c.charCodeAt(0)) }));
+await runNox(bytes, io, { vfs: {
+  files: saved,
+  onSave: (entries) => localStorage.setItem('nox-vfs', JSON.stringify(entries.filter((e) => !e.path.startsWith('/tmp')).map((e) => ({ path: e.path, b64: e.data && btoa(String.fromCharCode(...e.data)) })))),
+} });
+```
+
+Kalıcılık çıkışta yazılır: program çökerse (tuzak) anlık görüntü yine alınır, ama süreç öldürülürse (kill) alınmaz.

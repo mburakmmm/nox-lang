@@ -30,6 +30,12 @@ pub fn targetName(t: Target) []const u8 {
 }
 
 pub fn buildAndRun(allocator: std.mem.Allocator, noxc_path: []const u8, runner_path: []const u8, target: Target, source: []const u8) !Outcome {
+    return buildAndRunRepeated(allocator, noxc_path, runner_path, target, source, &.{}, 1);
+}
+
+/// Derler ve `runs` kez (her seferinde `extra_args` ile) çalıştırır. Dönen `ran` sonucunun `stdout`u TÜM çalıştırmaların çıktısının art arda eklenmiş halidir,
+/// `term` SON çalıştırmanınkidir; herhangi bir çalıştırma başarısızsa o anda durur. Kalıcı sanal dosya sistemi (`--vfs-dir=`) testleri içindir.
+pub fn buildAndRunRepeated(allocator: std.mem.Allocator, noxc_path: []const u8, runner_path: []const u8, target: Target, source: []const u8, extra_args: []const []const u8, runs: usize) !Outcome {
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -59,11 +65,27 @@ pub fn buildAndRun(allocator: std.mem.Allocator, noxc_path: []const u8, runner_p
     }
     allocator.free(build.stderr);
 
-    const run = std.process.run(allocator, io, .{
-        .argv = &.{ "node", "--no-warnings", runner_path, wasm_path },
-    }) catch |err| {
-        if (err == error.FileNotFound) return .tool_missing;
-        return err;
-    };
-    return .{ .ran = run };
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "node", "--no-warnings", runner_path, wasm_path });
+    try argv.appendSlice(allocator, extra_args);
+
+    var all_stdout: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer all_stdout.deinit(allocator);
+    var last: ?std.process.RunResult = null;
+    var n: usize = 0;
+    while (n < runs) : (n += 1) {
+        const run = std.process.run(allocator, io, .{ .argv = argv.items }) catch |err| {
+            if (err == error.FileNotFound) return .tool_missing;
+            return err;
+        };
+        try all_stdout.appendSlice(allocator, run.stdout);
+        allocator.free(run.stdout);
+        if (last) |l| allocator.free(l.stderr);
+        last = run;
+        if (run.term != .exited or run.term.exited != 0) break;
+    }
+    var result = last.?;
+    result.stdout = try all_stdout.toOwnedSlice(allocator);
+    return .{ .ran = result };
 }

@@ -392,6 +392,95 @@ pub fn rename(old_path: []const u8, new_path: []const u8) bool {
     return true;
 }
 
+// ---- Host köprüsü: önyükleme (preload) ve anlık görüntü (snapshot) ---------------------------------------------------------------------------------------------
+// Host sanal dosya sistemini kalıcı kılmak için (Node `--vfs-dir`, tarayıcıda IndexedDB/OPFS) modül başlamadan ağacı doldurur ve çıkışta anlık görüntüsünü alır.
+// Hiçbir import gerektirmez: host dışa aktarımları (`runtime/wasm_vfs_host.zig`) çağırır, belleği doğrudan okur/yazar; kilit sayesinde `--threads`te de güvenlidir.
+
+/// `path` ve üstündeki tüm dizinleri oluşturur (`mkdir -p`); var olan bir DOSYA yolu engellerse `false`. Çağıran kilidi tutar.
+fn mkdirAllLocked(norm: []const u8) bool {
+    if (g_entries.get(norm)) |e| return e.file == null;
+    if (!mkdirAllLocked(parentOf(norm))) return false;
+    return putDir(norm);
+}
+
+/// Dizin (ve gerekirse üstleri) oluşturur. Var olan dizin başarıdır.
+pub fn hostMkdirAll(path: []const u8) bool {
+    lock();
+    defer unlock();
+    if (!ensureReady()) return false;
+    const norm = normalize(path) orelse return false;
+    defer gpa.free(norm);
+    return mkdirAllLocked(norm);
+}
+
+/// Dosyayı (üst dizinleriyle) oluşturur ya da içeriğini değiştirir.
+pub fn hostPut(path: []const u8, data: []const u8) bool {
+    lock();
+    defer unlock();
+    if (!ensureReady()) return false;
+    const norm = normalize(path) orelse return false;
+    defer gpa.free(norm);
+    if (std.mem.eql(u8, norm, "/")) return false;
+    if (!mkdirAllLocked(parentOf(norm))) return false;
+    if (g_entries.get(norm)) |e| {
+        const f = e.file orelse return false; // dizin dosyayla değiştirilmez
+        f.data.clearRetainingCapacity();
+        f.data.appendSlice(gpa, data) catch return false;
+        f.mtime_ms = now();
+        return true;
+    }
+    const f = gpa.create(File) catch return false;
+    f.* = .{ .mtime_ms = now() };
+    f.data.appendSlice(gpa, data) catch {
+        gpa.destroy(f);
+        return false;
+    };
+    const key = gpa.dupe(u8, norm) catch {
+        f.data.deinit(gpa);
+        gpa.destroy(f);
+        return false;
+    };
+    g_entries.put(gpa, key, .{ .file = f }) catch {
+        gpa.free(key);
+        f.data.deinit(gpa);
+        gpa.destroy(f);
+        return false;
+    };
+    return true;
+}
+
+fn lessPath(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+/// Tüm ağacın (kök hariç) serileştirilmiş görüntüsü; çağıran `gpa` ile serbest bırakır. Kayıt: `u8 tür (0 dizin, 1 dosya)`, `u32 yol uzunluğu`, yol, `u32 veri uzunluğu`,
+/// veri (hepsi küçük-endian). Kayıtlar yola göre sıralıdır, yani ebeveyn çocuktan önce gelir.
+pub fn snapshot() ?[]u8 {
+    lock();
+    defer unlock();
+    if (!ensureReady()) return null;
+    var keys: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer keys.deinit(gpa);
+    var it = g_entries.iterator();
+    while (it.next()) |kv| {
+        if (kv.key_ptr.*.len <= 1) continue;
+        keys.append(gpa, kv.key_ptr.*) catch return null;
+    }
+    std.mem.sort([]const u8, keys.items, {}, lessPath);
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    for (keys.items) |key| {
+        const e = g_entries.get(key).?;
+        const data: []const u8 = if (e.file) |f| f.data.items else &.{};
+        out.append(gpa, if (e.file != null) 1 else 0) catch return null;
+        out.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToLittle(u32, @intCast(key.len)))) catch return null;
+        out.appendSlice(gpa, key) catch return null;
+        out.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToLittle(u32, @intCast(data.len)))) catch return null;
+        out.appendSlice(gpa, data) catch return null;
+    }
+    return out.toOwnedSlice(gpa) catch null;
+}
+
 // ---- Testler (yerel; global tablo kullanıldığından her test kendi yolunu kullanır) ------------------------------------------------------------------------------
 
 fn expectNormalized(input: []const u8, want: []const u8) !void {
@@ -551,4 +640,42 @@ test "tanitici numaralari 3'ten baslar ve kapaninca yeniden kullanilir" {
     try std.testing.expectEqual(a, c);
     close(b);
     close(c);
+}
+
+test "hostPut/hostMkdirAll/snapshot: onyukleme ve anlik goruntu gidis-donus" {
+    try std.testing.expect(hostMkdirAll("/t_snap/bos"));
+    try std.testing.expect(hostPut("/t_snap/a/b.txt", "içerik")); // ust dizinler kendiliginden olusur
+    try std.testing.expect(hostPut("/t_snap/a/b.txt", "yeni")); // uzerine yazar
+    try std.testing.expect(!hostPut("/t_snap/a", "x")); // dizin dosyayla degistirilmez
+    try std.testing.expect(!hostMkdirAll("/t_snap/a/b.txt/alt")); // dosya yolu engeller
+    const fd = open("/t_snap/a/b.txt", .read);
+    var buf: [8]u8 = undefined;
+    try std.testing.expectEqual(@as(isize, 4), read(fd, &buf));
+    try std.testing.expectEqualStrings("yeni", buf[0..4]);
+    close(fd);
+
+    const snap = snapshot().?;
+    defer gpa.free(snap);
+    // Kayitlari ayristir; /t_snap altindakileri topla.
+    var i: usize = 0;
+    var seen_dir = false;
+    var seen_file = false;
+    while (i < snap.len) {
+        const kind = snap[i];
+        const plen = std.mem.readInt(u32, snap[i + 1 ..][0..4], .little);
+        const path = snap[i + 5 ..][0..plen];
+        const dlen = std.mem.readInt(u32, snap[i + 5 + plen ..][0..4], .little);
+        const data = snap[i + 9 + plen ..][0..dlen];
+        i += 9 + plen + dlen;
+        if (std.mem.eql(u8, path, "/t_snap/bos")) {
+            try std.testing.expectEqual(@as(u8, 0), kind);
+            seen_dir = true;
+        }
+        if (std.mem.eql(u8, path, "/t_snap/a/b.txt")) {
+            try std.testing.expectEqual(@as(u8, 1), kind);
+            try std.testing.expectEqualStrings("yeni", data);
+            seen_file = true;
+        }
+    }
+    try std.testing.expect(seen_dir and seen_file);
 }
