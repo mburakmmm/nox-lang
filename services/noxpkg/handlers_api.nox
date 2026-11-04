@@ -1,0 +1,175 @@
+# handlers_api — `noxc login/logout/whoami/publish` API'si: GitHub aygıt-akışı girişi, jeton doğrulaması, ad sahipliği.
+#
+# Akış: `noxc login` -> POST /api/auth/device/start (kullanıcıya github.com/login/device ve bir kod gösterilir) -> kullanıcı
+# GitHub'da onaylar -> `noxc` POST /api/auth/device/poll ile bekler -> sunucu GitHub'dan kullanıcıyı doğrular, yayıncıyı
+# kaydeder ve noxpkg'in KENDİ API jetonunu döner. GitHub jetonu saklanmaz, `noxc`ye verilmez (bkz. github.nox).
+# Mesajlar `noxc` tarafından olduğu gibi yazdırılır, bu yüzden İngilizcedir.
+import nox.json
+import nox.os
+import nox.strings
+import nox.validate
+from nox.validate import Schema
+from nox.json import JsonValue
+from nox.json import JsonError
+from nox.os import OsError
+from nox.router import Context
+from nox.http import HttpResponse
+import store
+from store import Publisher, NameOwner
+import github
+from github import DeviceStart, DevicePoll, GithubUser
+import handlers_public
+
+def _fail(status: int, message: str) -> HttpResponse:
+    body: str = "{\"ok\": false, \"error\": " + nox.json.dump_string(message) + "}"
+    return HttpResponse(status, body, {"Content-Type": "application/json"})
+
+# `Authorization: Bearer <jeton>` -> jeton ("" yoksa).
+def bearer(ctx: Context) -> str:
+    raw: str = ""
+    if ctx.request.headers.contains("Authorization"):
+        raw = ctx.request.headers["Authorization"]
+    elif ctx.request.headers.contains("authorization"):
+        raw = ctx.request.headers["authorization"]
+    if not nox.strings.starts_with(raw, "Bearer "):
+        return ""
+    return nox.strings.trim(nox.strings.replace(raw, "Bearer ", ""))
+
+# Jetonun yayıncısı; yoksa/geçersizse None.
+def authenticated(ctx: Context) -> Publisher | None:
+    token: str = bearer(ctx)
+    if len(token) == 0:
+        return None
+    return store.publisher_for_token(token)
+
+def _admin_github() -> str:
+    try:
+        return nox.os.getenv("NOXPKG_ADMIN_GITHUB")
+    except OsError:
+        return ""
+
+def _is_admin_login(login: str) -> bool:
+    admin: str = _admin_github()
+    if len(admin) == 0:
+        return False
+    return nox.strings.lower(admin) == nox.strings.lower(login)
+
+def device_start(ctx: Context) -> HttpResponse:
+    if not github.configured():
+        return _fail(503, "GitHub login is not configured on this server.")
+    if handlers_public._locked(ctx, "dstart:", 3600000, 20):
+        return _fail(429, "Too many login attempts, try again later.")
+    handlers_public._hit(ctx, "dstart:", 3600000)
+    ds: DeviceStart | None = github.device_start()
+    if ds == None:
+        return _fail(502, "Could not reach GitHub.")
+    body: str = "{\"ok\": true, \"device_code\": " + nox.json.dump_string(ds.device_code) + ", \"user_code\": " + nox.json.dump_string(ds.user_code) + ", \"verification_uri\": " + nox.json.dump_string(ds.verification_uri) + ", \"interval\": " + str(ds.interval) + ", \"expires_in\": " + str(ds.expires_in) + "}"
+    return HttpResponse(200, body, {"Content-Type": "application/json"})
+
+def _status(status: str) -> HttpResponse:
+    return HttpResponse(200, "{\"ok\": true, \"status\": " + nox.json.dump_string(status) + "}", {"Content-Type": "application/json"})
+
+def device_poll(ctx: Context) -> HttpResponse:
+    if not github.configured():
+        return _fail(503, "GitHub login is not configured on this server.")
+    if handlers_public._locked(ctx, "dpoll:", 3600000, 900):
+        return _fail(429, "Too many requests, try again later.")
+    handlers_public._hit(ctx, "dpoll:", 3600000)
+    code: str = ""
+    try:
+        code = handlers_public._field(ctx.request.body, "device_code")
+    except JsonError:
+        return _fail(400, "Request could not be read.")
+    if len(code) == 0 or len(code) > 200:
+        return _fail(400, "device_code is required.")
+    dp: DevicePoll = github.device_poll(code)
+    if dp.state != "ok":
+        if dp.state == "error":
+            return _fail(502, "GitHub did not accept the device code.")
+        return _status(dp.state)
+    user: GithubUser | None = github.user_info(dp.access_token)
+    if user == None:
+        return _fail(502, "Could not verify the GitHub account.")
+    pub: Publisher = store.upsert_publisher(user.id, user.login, user.avatar_url)
+    if _is_admin_login(pub.login):
+        store.claim_legacy(pub.id)
+    token: str = store.mint_token(pub.id)
+    body: str = "{\"ok\": true, \"status\": \"ok\", \"token\": " + nox.json.dump_string(token) + ", \"login\": " + nox.json.dump_string(pub.login) + "}"
+    return HttpResponse(200, body, {"Content-Type": "application/json"})
+
+def whoami(ctx: Context) -> HttpResponse:
+    pub: Publisher | None = authenticated(ctx)
+    if pub == None:
+        return _fail(401, "Not logged in or the token expired: run `noxc login`.")
+    body: str = "{\"ok\": true, \"login\": " + nox.json.dump_string(pub.login) + ", \"github_id\": " + str(pub.github_id) + "}"
+    return HttpResponse(200, body, {"Content-Type": "application/json"})
+
+def logout(ctx: Context) -> HttpResponse:
+    token: str = bearer(ctx)
+    if len(token) == 0:
+        return _fail(401, "No token.")
+    store.revoke_token(token)
+    return HttpResponse(200, "{\"ok\": true}", {"Content-Type": "application/json"})
+
+def _publish_schema() -> Schema:
+    s: Schema = Schema()
+    s.require("name", "string")
+    s.require("repo", "string")
+    s.optional("ref", "string")
+    s.optional("description", "string")
+    s.optional("tags", "array")
+    return s
+
+def _opt_field(v: JsonValue, key: str) -> JsonValue | None:
+    i: int = 0
+    n: int = nox.json.object_len(v)
+    while i < n:
+        if nox.json.object_key(v, i) == key:
+            return nox.json.object_value(v, i)
+        i = i + 1
+    return None
+
+# `noxc publish`: jeton ZORUNLU (anonim yayın kapalı). Ad ilk yayımlayana rezerve edilir; başkasının adı 403 alır. Gönderi yine
+# yönetici onayına düşer (yönetim panelinde yayıncıyla birlikte görünür).
+def publish(ctx: Context) -> HttpResponse:
+    pub: Publisher | None = authenticated(ctx)
+    if pub == None:
+        return _fail(401, "Login required: run `noxc login` first.")
+    errors: list[str] = nox.validate.validate_json_str(ctx.request.body, _publish_schema())
+    if len(errors) > 0:
+        return _fail(400, errors[0])
+    v: JsonValue = nox.json.parse(ctx.request.body)
+    name: str = ""
+    repo: str = ""
+    ref: str = "main"
+    description: str = ""
+    tags: list[str] = []
+    name_v: JsonValue | None = _opt_field(v, "name")
+    if name_v != None:
+        name = nox.json.as_string(name_v)
+    repo_v: JsonValue | None = _opt_field(v, "repo")
+    if repo_v != None:
+        repo = nox.json.as_string(repo_v)
+    ref_v: JsonValue | None = _opt_field(v, "ref")
+    if ref_v != None:
+        ref = nox.json.as_string(ref_v)
+    desc_v: JsonValue | None = _opt_field(v, "description")
+    if desc_v != None:
+        description = nox.json.as_string(desc_v)
+    tags_v: JsonValue | None = _opt_field(v, "tags")
+    if tags_v != None:
+        i: int = 0
+        n: int = nox.json.array_len(tags_v)
+        while i < n:
+            tags.append(nox.json.as_string(nox.json.array_get(tags_v, i)))
+            i = i + 1
+    owner: NameOwner = store.name_owner(name)
+    if owner.kind == "publisher" and owner.publisher_id != pub.id:
+        return _fail(403, "The name '" + name + "' belongs to @" + owner.login + ".")
+    if owner.kind == "legacy":
+        return _fail(403, "The name '" + name + "' is reserved by the registry administrators.")
+    if not store.add_submission(name, repo, ref, description, tags, pub.id):
+        return _fail(429, "Too many pending submissions.")
+    id: str = store.latest_submission_id(name, repo)
+    body2: str = "{\"ok\": true, \"id\": " + nox.json.dump_string(id) + ", \"publisher\": " + nox.json.dump_string(pub.login) + "}"
+    return HttpResponse(200, body2, {"Content-Type": "application/json"})

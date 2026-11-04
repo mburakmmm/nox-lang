@@ -42,6 +42,8 @@ const registry = @import("pkg/registry.zig");
 const install_mod = @import("pkg/install.zig");
 const cache_prune = @import("pkg/cache_prune.zig");
 const progress = @import("pkg/progress.zig");
+const credentials = @import("pkg/credentials.zig");
+const auth = @import("pkg/auth.zig");
 const run_cache = @import("pkg/run_cache.zig");
 const formatter = @import("fmt/formatter.zig");
 const build_options = @import("build_options");
@@ -140,6 +142,9 @@ fn printHelp(is_tr: bool) void {
             \\  add <alias> [repo]    bagimliligi nox.json'a ekler (repo verilmezse indeksten cozer)
             \\  delete <alias>        bagimliligi nox.json'dan (ve nox.lock'tan) cikarir
             \\  publish <repo>        paket metadatasini merkezi indekse gonderir (admin onayi bekler)
+            \\  login                 GitHub ile giris yapar (publish icin gerekli; jeton ~/.nox/credentials'a yazilir)
+            \\  logout                cikis yapar ve sunucudaki jetonu iptal eder
+            \\  whoami                hangi GitHub hesabiyla girildigini gosterir
             \\  upgrade [--check] [s] noxc'nin kendisini en son (ya da belirtilen) surume gunceller
             \\  install <ad|repo>     bir paketi GLOBAL olarak kurar (paketin kendi 'bin' giris noktasi gerekir)
             \\  uninstall <komut>     global kurulu bir paketi kaldirir
@@ -187,6 +192,9 @@ fn printHelp(is_tr: bool) void {
             \\  add <alias> [repo]    add a dependency to nox.json (resolves repo from the index if omitted)
             \\  delete <alias>        remove a dependency from nox.json (and nox.lock)
             \\  publish <repo>        submit package metadata to the central index (awaits admin approval)
+            \\  login                 sign in with GitHub (required to publish; the token is saved in ~/.nox/credentials)
+            \\  logout                sign out and revoke the token on the server
+            \\  whoami                show which GitHub account you are signed in as
             \\  upgrade [--check] [v] self-update noxc to the latest (or a given) version
             \\  install <name|repo>   GLOBALLY install a package (needs its own 'bin' entry point)
             \\  uninstall <command>   remove a globally installed package
@@ -328,7 +336,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, expand, explain, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
+    const Subcommand = enum { sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -349,6 +357,9 @@ fn realMain(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "add")) break :blk .add;
         if (std.mem.eql(u8, first, "delete")) break :blk .delete;
         if (std.mem.eql(u8, first, "publish")) break :blk .publish;
+        if (std.mem.eql(u8, first, "login")) break :blk .login;
+        if (std.mem.eql(u8, first, "logout")) break :blk .logout;
+        if (std.mem.eql(u8, first, "whoami")) break :blk .whoami;
         if (std.mem.eql(u8, first, "init")) break :blk .init;
         if (std.mem.eql(u8, first, "check")) break :blk .check;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
@@ -380,7 +391,10 @@ fn realMain(init: std.process.Init) !void {
         .search => try cmdSearch(io, a, rest, registry_policy, fetch_policy),
         .add => try cmdAdd(io, a, rest, registry_policy, fetch_policy),
         .delete => try cmdDelete(io, a, rest),
-        .publish => try cmdPublish(io, a, rest, registry_policy, fetch_policy),
+        .publish => try cmdPublish(io, a, rest, nox_home, registry_policy, fetch_policy),
+        .login => try cmdLogin(io, a, rest, nox_home, registry_policy, fetch_policy),
+        .logout => try cmdLogout(io, a, nox_home, registry_policy, fetch_policy),
+        .whoami => try cmdWhoami(io, a, nox_home, registry_policy, fetch_policy),
         .version => std.debug.print("noxc {s}\n", .{build_options.version}),
         .fetch => try cmdFetch(io, a, rest, nox_home, fetch_policy),
         .update => try cmdUpdate(io, a, rest, nox_home, fetch_policy),
@@ -674,7 +688,7 @@ fn cmdDelete(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
 /// — YALNIZCA METADATA gönderir (kod/tarball YOK). `noxpkg` sunucusunun
 /// gönderi-kutusuna EKLENİR; onay kullanıcının KENDİSİ tarafından admin
 /// panelinden yapılır (bu komut onay-BEKLEMEZ/poll ETMEZ).
-fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
+fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
     var repo_opt: ?[]const u8 = null;
     var ref: []const u8 = "main";
     var description: []const u8 = "";
@@ -711,8 +725,18 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, regist
         std.process.exit(1);
     }
 
+    // v2.0.136: yayın için giriş ZORUNLU (ad ilk yayımlayana rezerve edilir, yayıncı yönetim panelinde görünür).
+    const saved = credentials.load(a, io, nox_home) catch |e| {
+        printErr("publish: could not read {s}/credentials ({t}); run 'noxc login' again\n", .{ nox_home, e });
+        std.process.exit(1);
+    };
+    const cred = credentials.find(saved, registry_policy.publish_api_base) orelse {
+        printErr("publish: you are not logged in to {s}: run 'noxc login' first\n", .{registry_policy.publish_api_base});
+        std.process.exit(1);
+    };
+
     const payload: registry.PublishPayload = .{ .name = manifest.name, .repo = repo, .ref = ref, .description = description, .tags = tags };
-    const result = registry.submitPublish(a, io, registry_policy.publish_api_base, payload, fetch_policy.allow_insecure_transport) catch |e| {
+    const result = registry.submitPublish(a, io, registry_policy.publish_api_base, payload, cred.token, fetch_policy.allow_insecure_transport) catch |e| {
         printErr("publish: could not submit ({t}): {s}\n", .{ e, registry_policy.publish_api_base });
         std.process.exit(1);
     };
@@ -720,7 +744,116 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, regist
         printErr("publish: rejected: {s}\n", .{result.@"error"});
         std.process.exit(1);
     }
-    printOk("submitted: {s} (id={s}) — awaiting approval\n", .{ manifest.name, result.id });
+    printOk("submitted: {s} (id={s}) as @{s} — awaiting approval\n", .{ manifest.name, result.id, cred.login });
+}
+
+/// `noxc login [--no-browser]` (v2.0.136): GitHub aygıt akışıyla giriş. Kullanıcıya bir kod gösterilir, tarayıcıda github.com/login/device
+/// açılır (en iyi çaba; yalnızca etkileşimli terminalde ve `--no-browser`/`NOX_NO_BROWSER` yoksa), onay beklenir; noxpkg'in API
+/// jetonu `<NOX_HOME>/credentials`e `0600` ile yazılır. Bkz. `pkg/auth.zig`, `pkg/credentials.zig`, `services/noxpkg/handlers_api.nox`.
+fn cmdLogin(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
+    var open_browser = g_progress_live;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--no-browser")) open_browser = false;
+    }
+    if (std.c.getenv("NOX_NO_BROWSER") != null) open_browser = false;
+
+    const base = registry_policy.publish_api_base;
+    const r = reporter(io);
+    const start_step = r.begin("Requesting a sign-in code from {s}", .{base});
+    const start = auth.deviceStart(a, io, base, fetch_policy.allow_insecure_transport) catch |e| {
+        start_step.fail();
+        printErr("login: could not reach the registry ({t}): {s}\n", .{ e, base });
+        std.process.exit(1);
+    };
+    if (!start.ok) {
+        start_step.fail();
+        printErr("login: {s}\n", .{if (start.@"error".len > 0) start.@"error" else "the registry refused the request"});
+        std.process.exit(1);
+    }
+    start_step.done();
+
+    std.debug.print("\nTo sign in, open {s} and enter this code:\n\n    {s}\n\n", .{ start.verification_uri, start.user_code });
+    if (open_browser) auth.openBrowser(a, io, start.verification_uri);
+
+    const wait_step = r.begin("Waiting for approval on GitHub (Ctrl+C to cancel)", .{});
+    const outcome = auth.pollUntilDone(a, io, base, start, fetch_policy.allow_insecure_transport) catch |e| {
+        wait_step.fail();
+        printErr("login: {t}\n", .{e});
+        std.process.exit(1);
+    };
+    switch (outcome) {
+        .ok => |granted| {
+            wait_step.done();
+            const existing = credentials.load(a, io, nox_home) catch &[_]credentials.Entry{};
+            const updated = try credentials.upsert(a, existing, .{ .server = base, .token = granted.token, .login = granted.login });
+            credentials.save(a, io, nox_home, updated) catch |e| {
+                printErr("login: could not save the token to {s}/credentials ({t})\n", .{ nox_home, e });
+                std.process.exit(1);
+            };
+            printOk("logged in as @{s} (token saved to {s}/credentials)\n", .{ granted.login, nox_home });
+        },
+        .denied => {
+            wait_step.fail();
+            printErr("login: you denied the request on GitHub\n", .{});
+            std.process.exit(1);
+        },
+        .expired => {
+            wait_step.fail();
+            printErr("login: the code expired before it was approved; run 'noxc login' again\n", .{});
+            std.process.exit(1);
+        },
+        .failed => |why| {
+            wait_step.fail();
+            printErr("login: {s}\n", .{why});
+            std.process.exit(1);
+        },
+    }
+}
+
+/// `noxc logout` (v2.0.136): yerel jetonu siler ve sunucudaki jetonu iptal etmeyi dener (sunucuya ulaşılamasa da yerel kayıt silinir).
+fn cmdLogout(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
+    const base = registry_policy.publish_api_base;
+    const saved = credentials.load(a, io, nox_home) catch |e| {
+        printErr("logout: could not read {s}/credentials ({t})\n", .{ nox_home, e });
+        std.process.exit(1);
+    };
+    const cred = credentials.find(saved, base) orelse {
+        std.debug.print("not logged in to {s}\n", .{base});
+        return;
+    };
+    var revoked = false;
+    if (auth.logout(a, io, base, cred.token, fetch_policy.allow_insecure_transport)) |status| {
+        revoked = status == 200;
+    } else |_| {}
+    const remaining = try credentials.remove(a, saved, base);
+    try credentials.save(a, io, nox_home, remaining);
+    if (revoked) {
+        printOk("logged out @{s} (token revoked on the server)\n", .{cred.login});
+    } else {
+        printOk("logged out @{s} locally; the server could not be reached to revoke the token (it expires on its own)\n", .{cred.login});
+    }
+}
+
+/// `noxc whoami` (v2.0.136): sunucuya sorarak hangi GitHub hesabıyla girildiğini gösterir.
+fn cmdWhoami(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
+    const base = registry_policy.publish_api_base;
+    const saved = credentials.load(a, io, nox_home) catch |e| {
+        printErr("whoami: could not read {s}/credentials ({t})\n", .{ nox_home, e });
+        std.process.exit(1);
+    };
+    const cred = credentials.find(saved, base) orelse {
+        printErr("not logged in to {s}: run 'noxc login'\n", .{base});
+        std.process.exit(1);
+    };
+    const reply = auth.whoami(a, io, base, cred.token, fetch_policy.allow_insecure_transport) catch |e| {
+        printErr("whoami: could not verify with the registry ({t}); last known account: @{s}\n", .{ e, cred.login });
+        std.process.exit(1);
+    };
+    if (reply.status != 200 or !reply.who.ok) {
+        printErr("whoami: the saved token is no longer valid ({s}): run 'noxc login'\n", .{if (reply.who.@"error".len > 0) reply.who.@"error" else "rejected"});
+        std.process.exit(1);
+    }
+    std.debug.print("@{s} ({s})\n", .{ reply.who.login, base });
 }
 
 /// `noxc install <paket-adi|repo> [--ref <ref>]` — bkz. `pkg/install.zig`nin

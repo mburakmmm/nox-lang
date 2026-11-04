@@ -76,3 +76,19 @@ test "noxc <gercekten-eksik.nox>: bilinmeyen-komut ipucu YERINE normal dosya-bul
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "file not found") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unknown command") == null);
 }
+
+test "noxc (argumansiz): yardim ekrani login/logout/whoami komutlarini listeler (TR ve EN)" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    for ([_][]const u8{ "tr_TR.UTF-8", "en_US.UTF-8" }) |lang| {
+        const result = try runWithLang(gpa, io, &.{noxcPath()}, lang);
+        defer gpa.free(result.stdout);
+        defer gpa.free(result.stderr);
+        for ([_][]const u8{ "  login ", "  logout ", "  whoami " }) |needle| {
+            if (std.mem.indexOf(u8, result.stderr, needle) == null) {
+                std.debug.print("yardim ekraninda {s} yok ({s})\n", .{ needle, lang });
+                return error.MissingCommandInHelp;
+            }
+        }
+    }
+}

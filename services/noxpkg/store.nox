@@ -31,7 +31,7 @@ class IndexEntry:
         self.tags = tags
 
 class Submission:
-    def __init__(self: Submission, id: str, name: str, repo: str, ref: str, description: str, tags: list[str], submitted_at_ms: int) -> None:
+    def __init__(self: Submission, id: str, name: str, repo: str, ref: str, description: str, tags: list[str], submitted_at_ms: int, publisher_login: str = "") -> None:
         self.id = id
         self.name = name
         self.repo = repo
@@ -39,6 +39,31 @@ class Submission:
         self.description = description
         self.tags = tags
         self.submitted_at_ms = submitted_at_ms
+        self.publisher_login = publisher_login
+
+# `noxc login` ile GitHub üzerinden kimliği doğrulanmış yayıncı. `github_id` değişmez kimliktir (login yeniden adlandırılabilir).
+class Publisher:
+    def __init__(self: Publisher, id: int, github_id: int, login: str, avatar_url: str) -> None:
+        self.id = id
+        self.github_id = github_id
+        self.login = login
+        self.avatar_url = avatar_url
+
+class PublisherSummary:
+    def __init__(self: PublisherSummary, login: str, avatar_url: str, package_count: int, pending_count: int, last_login_ms: int) -> None:
+        self.login = login
+        self.avatar_url = avatar_url
+        self.package_count = package_count
+        self.pending_count = pending_count
+        self.last_login_ms = last_login_ms
+
+# Bir paket adının sahibi. kind: "free" (kimse), "publisher" (publisher_id/login dolu), "legacy" (yayıncı kaydından önce eklenmiş;
+# sahibi yönetici GitHub hesabıdır, bkz. `claim_legacy`).
+class NameOwner:
+    def __init__(self: NameOwner, kind: str, publisher_id: int, login: str) -> None:
+        self.kind = kind
+        self.publisher_id = publisher_id
+        self.login = login
 
 class Viewer:
     def __init__(self: Viewer, user_id: int, username: str, role: str) -> None:
@@ -147,6 +172,16 @@ def _entry_from_row(row: Row) -> IndexEntry:
 def _exec(db: Connection, sql: str) -> None:
     db.execute(sql)
 
+# SQLite'ta `ADD COLUMN IF NOT EXISTS` yok: sütun listesine bakılır. Göç idempotenttir (her açılışta çalışır).
+def _add_column_if_missing(db: Connection, table: str, column: str, decl: str) -> None:
+    rows: list[Row] = db.query("PRAGMA table_info(" + table + ")")
+    i: int = 0
+    while i < len(rows):
+        if rows[i].get_str(1) == column:
+            return
+        i = i + 1
+    _exec(db, "ALTER TABLE " + table + " ADD COLUMN " + column + " " + decl)
+
 def _ensure(db: Connection) -> None:
     _exec(db, "PRAGMA foreign_keys=ON")
     _exec(db, "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -155,6 +190,10 @@ def _ensure(db: Connection) -> None:
     _exec(db, "CREATE TABLE IF NOT EXISTS submissions (id TEXT PRIMARY KEY, name TEXT NOT NULL, repo TEXT NOT NULL, ref TEXT NOT NULL, description TEXT NOT NULL, tags TEXT NOT NULL, submitted_at_ms INTEGER NOT NULL)")
     _exec(db, "CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, package_name TEXT NOT NULL REFERENCES packages(name) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id), body TEXT NOT NULL, created_at_ms INTEGER NOT NULL)")
     _exec(db, "CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, package_name TEXT NOT NULL REFERENCES packages(name) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id), title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, created_at_ms INTEGER NOT NULL)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS publishers (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL UNIQUE, login TEXT NOT NULL, avatar_url TEXT NOT NULL, created_at_ms INTEGER NOT NULL, last_login_ms INTEGER NOT NULL)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS api_tokens (token_hash TEXT PRIMARY KEY, publisher_id INTEGER NOT NULL REFERENCES publishers(id) ON DELETE CASCADE, created_at_ms INTEGER NOT NULL, last_used_ms INTEGER NOT NULL, expires_at_ms INTEGER NOT NULL)")
+    _add_column_if_missing(db, "packages", "publisher_id", "INTEGER")
+    _add_column_if_missing(db, "submissions", "publisher_id", "INTEGER")
     _import_json_once(db)
     _sync_admin(db)
     _mirror(db)
@@ -384,24 +423,24 @@ def render_index_json() -> str:
 
 def load_inbox() -> list[Submission]:
     db: Connection = _open()
-    rows: list[Row] = db.query("SELECT id, name, repo, ref, description, tags, submitted_at_ms FROM submissions ORDER BY submitted_at_ms")
+    rows: list[Row] = db.query("SELECT s.id, s.name, s.repo, s.ref, s.description, s.tags, s.submitted_at_ms, COALESCE(p.login, '') FROM submissions s LEFT JOIN publishers p ON p.id = s.publisher_id ORDER BY s.submitted_at_ms")
     db.close()
     out: list[Submission] = []
     i: int = 0
     while i < len(rows):
         row: Row = rows[i]
-        out.append(Submission(row.get_str(0), row.get_str(1), row.get_str(2), row.get_str(3), row.get_str(4), _tags_parse(row.get_str(5)), row.get_int(6)))
+        out.append(Submission(row.get_str(0), row.get_str(1), row.get_str(2), row.get_str(3), row.get_str(4), _tags_parse(row.get_str(5)), row.get_int(6), row.get_str(7)))
         i = i + 1
     return out
 
-def add_submission(name: str, repo: str, ref: str, description: str, tags: list[str]) -> bool:
+def add_submission(name: str, repo: str, ref: str, description: str, tags: list[str], publisher_id: int) -> bool:
     db: Connection = _open()
     count_rows: list[Row] = db.query("SELECT COUNT(*) FROM submissions")
     n: int = count_rows[0].get_int(0)
     if n >= _max_pending():
         db.close()
         return False
-    st: Statement = db.prepare("INSERT INTO submissions (id, name, repo, ref, description, tags, submitted_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    st: Statement = db.prepare("INSERT INTO submissions (id, name, repo, ref, description, tags, submitted_at_ms, publisher_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0))")
     st.bind_str(0, nox.uuid.uuid4())
     st.bind_str(1, name)
     st.bind_str(2, repo)
@@ -409,6 +448,7 @@ def add_submission(name: str, repo: str, ref: str, description: str, tags: list[
     st.bind_str(4, description)
     st.bind_str(5, _tags_dump(tags))
     st.bind_int(6, nox.time.now_ms())
+    st.bind_int(7, publisher_id)
     st.execute()
     _mirror(db)
     db.close()
@@ -427,19 +467,21 @@ def latest_submission_id(name: str, repo: str) -> str:
 
 def approve_submission(id: str) -> bool:
     db: Connection = _open()
-    st: Statement = db.prepare("SELECT name, repo, description, tags FROM submissions WHERE id = ?")
+    st: Statement = db.prepare("SELECT name, repo, description, tags, COALESCE(publisher_id, 0) FROM submissions WHERE id = ?")
     st.bind_str(0, id)
     rows: list[Row] = st.query()
     if len(rows) == 0:
         db.close()
         return False
     row: Row = rows[0]
-    up: Statement = db.prepare("INSERT INTO packages (name, repo, description, tags, created_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET repo = excluded.repo, description = excluded.description, tags = excluded.tags")
+    # Yayıncı çakışmada KORUNUR (COALESCE): sahipsiz (eski) bir paket ilk sahibini alır, sahipli paketin sahibi değişmez.
+    up: Statement = db.prepare("INSERT INTO packages (name, repo, description, tags, created_at_ms, publisher_id) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0)) ON CONFLICT(name) DO UPDATE SET repo = excluded.repo, description = excluded.description, tags = excluded.tags, publisher_id = COALESCE(packages.publisher_id, excluded.publisher_id)")
     up.bind_str(0, row.get_str(0))
     up.bind_str(1, row.get_str(1))
     up.bind_str(2, row.get_str(2))
     up.bind_str(3, row.get_str(3))
     up.bind_int(4, nox.time.now_ms())
+    up.bind_int(5, row.get_int(4))
     up.execute()
     rm: Statement = db.prepare("DELETE FROM submissions WHERE id = ?")
     rm.bind_str(0, id)
@@ -590,3 +632,147 @@ def set_report_status(id: int, status: str) -> bool:
     n: int = st.execute()
     db.close()
     return n > 0
+
+
+# ---- Yayıncılar, API jetonları, ad sahipliği --------------------------------
+
+# GitHub kimliğiyle yayıncıyı oluşturur ya da günceller (login yeniden adlandırılmış olabilir; kimlik `github_id`dir).
+def upsert_publisher(github_id: int, login: str, avatar_url: str) -> Publisher:
+    db: Connection = _open()
+    now: int = nox.time.now_ms()
+    up: Statement = db.prepare("INSERT INTO publishers (github_id, login, avatar_url, created_at_ms, last_login_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT(github_id) DO UPDATE SET login = excluded.login, avatar_url = excluded.avatar_url, last_login_ms = excluded.last_login_ms")
+    up.bind_int(0, github_id)
+    up.bind_str(1, login)
+    up.bind_str(2, avatar_url)
+    up.bind_int(3, now)
+    up.bind_int(4, now)
+    up.execute()
+    sel: Statement = db.prepare("SELECT id, github_id, login, avatar_url FROM publishers WHERE github_id = ?")
+    sel.bind_int(0, github_id)
+    rows: list[Row] = sel.query()
+    db.close()
+    row: Row = rows[0]
+    return Publisher(row.get_int(0), row.get_int(1), row.get_str(2), row.get_str(3))
+
+def _token_hash(token: str) -> str:
+    return nox.crypto.sha256(token)
+
+# Yeni bir API jetonu üretir ve YALNIZCA özetini saklar (sızan bir veritabanı jeton vermez). Geçerlilik 1 yıl, her kullanımda
+# yenilenmez; `noxc login` yenisini alır. Dönen metin tek seferliktir: sunucuda bir daha okunamaz.
+def mint_token(publisher_id: int) -> str:
+    token: str = "nxp_" + nox.crypto.secure_random_hex(32)
+    db: Connection = _open()
+    now: int = nox.time.now_ms()
+    st: Statement = db.prepare("INSERT INTO api_tokens (token_hash, publisher_id, created_at_ms, last_used_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)")
+    st.bind_str(0, _token_hash(token))
+    st.bind_int(1, publisher_id)
+    st.bind_int(2, now)
+    st.bind_int(3, now)
+    st.bind_int(4, now + 365 * 86400000)
+    st.execute()
+    db.close()
+    return token
+
+# Jetonun sahibi; geçersiz, süresi dolmuş ya da silinmiş jeton için None. Son kullanım zamanını günceller.
+def publisher_for_token(token: str) -> Publisher | None:
+    if len(token) < 8 or len(token) > 200 or not nox.strings.starts_with(token, "nxp_"):
+        return None
+    db: Connection = _open()
+    h: str = _token_hash(token)
+    st: Statement = db.prepare("SELECT p.id, p.github_id, p.login, p.avatar_url, t.expires_at_ms FROM api_tokens t JOIN publishers p ON p.id = t.publisher_id WHERE t.token_hash = ?")
+    st.bind_str(0, h)
+    rows: list[Row] = st.query()
+    if len(rows) == 0:
+        db.close()
+        return None
+    row: Row = rows[0]
+    now: int = nox.time.now_ms()
+    if row.get_int(4) < now:
+        db.close()
+        return None
+    touch: Statement = db.prepare("UPDATE api_tokens SET last_used_ms = ? WHERE token_hash = ?")
+    touch.bind_int(0, now)
+    touch.bind_str(1, h)
+    touch.execute()
+    db.close()
+    return Publisher(row.get_int(0), row.get_int(1), row.get_str(2), row.get_str(3))
+
+def revoke_token(token: str) -> bool:
+    db: Connection = _open()
+    st: Statement = db.prepare("DELETE FROM api_tokens WHERE token_hash = ?")
+    st.bind_str(0, _token_hash(token))
+    n: int = st.execute()
+    db.close()
+    return n > 0
+
+# Bir paket adının sahibi. Önce yayımlanmış paket, yoksa en eski bekleyen gönderi (ad ilk gönderene REZERVE edilir; reddedilince
+# ya da silinince rezerv de kalkar).
+def name_owner(name: str) -> NameOwner:
+    db: Connection = _open()
+    pk: Statement = db.prepare("SELECT COALESCE(k.publisher_id, 0), COALESCE(u.login, '') FROM packages k LEFT JOIN publishers u ON u.id = k.publisher_id WHERE k.name = ?")
+    pk.bind_str(0, name)
+    prow: list[Row] = pk.query()
+    if len(prow) > 0:
+        pid: int = prow[0].get_int(0)
+        plogin: str = prow[0].get_str(1)
+        db.close()
+        if pid == 0:
+            return NameOwner("legacy", 0, "")
+        return NameOwner("publisher", pid, plogin)
+    sb: Statement = db.prepare("SELECT COALESCE(s.publisher_id, 0), COALESCE(u.login, '') FROM submissions s LEFT JOIN publishers u ON u.id = s.publisher_id WHERE s.name = ? ORDER BY s.submitted_at_ms LIMIT 1")
+    sb.bind_str(0, name)
+    srow: list[Row] = sb.query()
+    db.close()
+    if len(srow) == 0:
+        return NameOwner("free", 0, "")
+    sid: int = srow[0].get_int(0)
+    if sid == 0:
+        return NameOwner("legacy", 0, "")
+    return NameOwner("publisher", sid, srow[0].get_str(1))
+
+# Yayıncı kaydından ÖNCE eklenmiş (sahipsiz) paketleri ve gönderileri bu yayıncıya (yönetici GitHub hesabı) atar.
+def claim_legacy(publisher_id: int) -> int:
+    db: Connection = _open()
+    a: Statement = db.prepare("UPDATE packages SET publisher_id = ? WHERE publisher_id IS NULL")
+    a.bind_int(0, publisher_id)
+    n: int = a.execute()
+    b: Statement = db.prepare("UPDATE submissions SET publisher_id = ? WHERE publisher_id IS NULL")
+    b.bind_int(0, publisher_id)
+    m: int = b.execute()
+    db.close()
+    return n + m
+
+# Paket adı -> yayıncı login'i (yalnız sahipli paketler); yönetim tablosu tek sorguyla doldurulur.
+def load_package_owners() -> dict[str, str]:
+    db: Connection = _open()
+    rows: list[Row] = db.query("SELECT k.name, u.login FROM packages k JOIN publishers u ON u.id = k.publisher_id")
+    db.close()
+    out: dict[str, str] = {}
+    i: int = 0
+    while i < len(rows):
+        out[rows[i].get_str(0)] = rows[i].get_str(1)
+        i = i + 1
+    return out
+
+def find_package_publisher(name: str) -> Publisher | None:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT u.id, u.github_id, u.login, u.avatar_url FROM packages k JOIN publishers u ON u.id = k.publisher_id WHERE k.name = ?")
+    st.bind_str(0, name)
+    rows: list[Row] = st.query()
+    db.close()
+    if len(rows) == 0:
+        return None
+    row: Row = rows[0]
+    return Publisher(row.get_int(0), row.get_int(1), row.get_str(2), row.get_str(3))
+
+def load_publishers() -> list[PublisherSummary]:
+    db: Connection = _open()
+    rows: list[Row] = db.query("SELECT u.login, u.avatar_url, (SELECT COUNT(*) FROM packages k WHERE k.publisher_id = u.id), (SELECT COUNT(*) FROM submissions s WHERE s.publisher_id = u.id), u.last_login_ms FROM publishers u ORDER BY u.last_login_ms DESC")
+    db.close()
+    out: list[PublisherSummary] = []
+    i: int = 0
+    while i < len(rows):
+        row: Row = rows[i]
+        out.append(PublisherSummary(row.get_str(0), row.get_str(1), row.get_int(2), row.get_int(3), row.get_int(4)))
+        i = i + 1
+    return out

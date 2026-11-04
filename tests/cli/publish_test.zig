@@ -112,6 +112,14 @@ fn writeProjectWithName(io: std.Io, a: std.mem.Allocator, dir: std.Io.Dir, name:
     });
 }
 
+/// v2.0.136: `publish` giriş ister. `home` altına, `api_base` sunucusu için kayıtlı bir jeton yazar (NOX_HOME olarak verilir).
+fn seedCredentials(io: std.Io, a: std.mem.Allocator, home: std.Io.Dir, api_base: []const u8) !void {
+    try home.writeFile(io, .{
+        .sub_path = "credentials",
+        .data = try std.fmt.allocPrint(a, "{{\"servers\":[{{\"server\":\"{s}\",\"token\":\"nxp_testtoken\",\"login\":\"tester\"}}]}}\n", .{api_base}),
+    });
+}
+
 test "noxc publish: sunucu ok:true donerse basarili cikar, id'yi yazdirir" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -135,6 +143,11 @@ test "noxc publish: sunucu ok:true donerse basarili cikar, id'yi yazdirir" {
     const api_base = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}", .{port});
     try env_map.put("NOX_PUBLISH_API_BASE", api_base);
     try env_map.put("NOX_ALLOW_INSECURE_TRANSPORT", "1");
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    try seedCredentials(io, a, home.dir, api_base);
+    try env_map.put("NOX_HOME", try absPath(io, home.dir, &home_buf));
 
     const noxc_abs = try noxcAbsPath(io, a);
     const result = try std.process.run(std.testing.allocator, io, .{
@@ -150,6 +163,7 @@ test "noxc publish: sunucu ok:true donerse basarili cikar, id'yi yazdirir" {
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "submitted: testpkg") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "abc123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "as @tester") != null);
 }
 
 test "noxc publish: sunucu ok:false donerse cikis 1, hata mesaji basilir" {
@@ -175,6 +189,11 @@ test "noxc publish: sunucu ok:false donerse cikis 1, hata mesaji basilir" {
     const api_base = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}", .{port});
     try env_map.put("NOX_PUBLISH_API_BASE", api_base);
     try env_map.put("NOX_ALLOW_INSECURE_TRANSPORT", "1");
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    try seedCredentials(io, a, home.dir, api_base);
+    try env_map.put("NOX_HOME", try absPath(io, home.dir, &home_buf));
 
     const noxc_abs = try noxcAbsPath(io, a);
     const result = try std.process.run(std.testing.allocator, io, .{
@@ -218,4 +237,40 @@ test "noxc publish: nox.json'da bos 'name' varsa hic ag cagrisi yapmadan yerel h
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "'name' in nox.json is empty") != null);
+}
+
+test "noxc publish: giris yapilmamissa hic ag cagrisi yapmadan 'noxc login' yonlendirmesiyle cikis 1" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+    try writeProjectWithName(io, a, proj.dir, "testpkg");
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    // Dinleyici yok: ag cagrisi denenirse "could not submit" gorunurdu, "not logged in" degil.
+    try env_map.put("NOX_PUBLISH_API_BASE", "http://127.0.0.1:1");
+    try env_map.put("NOX_ALLOW_INSECURE_TRANSPORT", "1");
+    try env_map.put("NOX_HOME", try absPath(io, home.dir, &home_buf));
+
+    const noxc_abs = try noxcAbsPath(io, a);
+    const result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc_abs, "publish", "github.com/example/testpkg" },
+        .cwd = .{ .path = proj_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "not logged in") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "noxc login") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "could not submit") == null);
 }

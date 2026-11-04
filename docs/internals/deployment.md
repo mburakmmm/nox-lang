@@ -61,6 +61,8 @@ Copy `deploy/web/.env.example` to `deploy/web/.env` and fill it in. Docker Compo
 | `NYX_SECRET_KEY` | secret for the site's Nyx app, at least 32 characters |
 | `NOXPKG_ADMIN_PASSWORD_HASH` | Argon2id hash of the registry admin password (`noxc run services/noxpkg/scripts/gen_admin_hash.nox -- '<password>'`) |
 | `NOXPKG_SESSION_SECRET` | secret for the registry's session cookie |
+| `NOXPKG_GITHUB_CLIENT_ID` | client id of the GitHub OAuth App behind `noxc login`. Create it under *GitHub > Settings > Developer settings > OAuth Apps*, tick **Enable Device Flow**; the callback URL is unused (any value works) and no client secret is needed. Leave empty to disable login (and so publishing) |
+| `NOXPKG_ADMIN_GITHUB` | the administrator's GitHub login; packages listed before accounts existed are assigned to it the first time it signs in |
 | `NOXPKG_DATA_DIR` | directory with the registry database `noxpkg.db` (default `services/noxpkg/data`) |
 | `BACKUP_DIR` | where local snapshots are kept (default `services/noxpkg/backups`) |
 | `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | optional off-site backup to an S3-compatible bucket such as Cloudflare R2 |

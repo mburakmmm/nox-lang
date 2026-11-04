@@ -12,7 +12,7 @@ from nox.json import JsonError
 from nox.router import Context
 from nox.http import HttpResponse
 import store
-from store import IndexEntry, Comment, Viewer
+from store import IndexEntry, Comment, Viewer, Publisher
 import templates
 import auth
 from auth import Session, RateLimiter
@@ -160,7 +160,11 @@ def package_page(ctx: Context) -> HttpResponse:
     composer: str = templates.guest_composer()
     if current_viewer(ctx) != None:
         composer = templates.member_composer(name)
-    main_html: str = templates.package_main(entry.name, _repo_href(entry.repo), entry.repo, entry.description, _tags_html(entry.tags), entry.name, blocks, composer)
+    publisher_html: str = ""
+    owner: Publisher | None = store.find_package_publisher(name)
+    if owner != None:
+        publisher_html = templates.publisher_line(owner.login)
+    main_html: str = templates.package_main(entry.name, _repo_href(entry.repo), entry.repo, entry.description, _tags_html(entry.tags), entry.name, blocks, composer, publisher_html)
     return _html(ctx, entry.name + " — Packages", main_html)
 
 def login_page(ctx: Context) -> HttpResponse:
@@ -267,57 +271,3 @@ def post_report(ctx: Context) -> HttpResponse:
     if not store.add_report(ctx.param("name"), viewer.user_id, title, body):
         return _json_msg(404, False, "Paket yok.")
     return _json_msg(200, True, "")
-
-def _publish_schema() -> Schema:
-    s: Schema = Schema()
-    s.require("name", "string")
-    s.require("repo", "string")
-    s.optional("ref", "string")
-    s.optional("description", "string")
-    s.optional("tags", "array")
-    return s
-
-def _opt_field(v: JsonValue, key: str) -> JsonValue | None:
-    i: int = 0
-    n: int = nox.json.object_len(v)
-    while i < n:
-        if nox.json.object_key(v, i) == key:
-            return nox.json.object_value(v, i)
-        i = i + 1
-    return None
-
-def publish(ctx: Context) -> HttpResponse:
-    errors: list[str] = nox.validate.validate_json_str(ctx.request.body, _publish_schema())
-    if len(errors) > 0:
-        body: str = "{\"ok\": false, \"error\": " + nox.json.dump_string(errors[0]) + "}"
-        return HttpResponse(400, body, {"Content-Type": "application/json"})
-    v: JsonValue = nox.json.parse(ctx.request.body)
-    name: str = ""
-    repo: str = ""
-    ref: str = "main"
-    description: str = ""
-    tags: list[str] = []
-    name_v: JsonValue | None = _opt_field(v, "name")
-    if name_v != None:
-        name = nox.json.as_string(name_v)
-    repo_v: JsonValue | None = _opt_field(v, "repo")
-    if repo_v != None:
-        repo = nox.json.as_string(repo_v)
-    ref_v: JsonValue | None = _opt_field(v, "ref")
-    if ref_v != None:
-        ref = nox.json.as_string(ref_v)
-    desc_v: JsonValue | None = _opt_field(v, "description")
-    if desc_v != None:
-        description = nox.json.as_string(desc_v)
-    tags_v: JsonValue | None = _opt_field(v, "tags")
-    if tags_v != None:
-        i: int = 0
-        n: int = nox.json.array_len(tags_v)
-        while i < n:
-            tags.append(nox.json.as_string(nox.json.array_get(tags_v, i)))
-            i = i + 1
-    if not store.add_submission(name, repo, ref, description, tags):
-        return HttpResponse(429, "{\"ok\": false, \"error\": \"cok fazla bekleyen gonderi\"}", {"Content-Type": "application/json"})
-    id: str = store.latest_submission_id(name, repo)
-    body2: str = "{\"ok\": true, \"id\": " + nox.json.dump_string(id) + "}"
-    return HttpResponse(200, body2, {"Content-Type": "application/json"})

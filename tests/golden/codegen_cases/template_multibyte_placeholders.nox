@@ -1,0 +1,16 @@
+import nox.template
+from nox.template import TemplateError
+
+# Çok baytlı (UTF-8) karakterlerden SONRA gelen yer tutucular doğru okunur. `nox.strings.index_of` bayt konumu verir, `_substr`/`len`
+# kod noktası kullanır: bu birim karışıklığı `Yayınlayan {{ x }}` gibi şablonlarda yer tutucuyu kaydırıp çıktıyı bozuyordu.
+c: dict[str, str] = {"x": "VAL", "y": "<b>"}
+print(nox.template.render("a {{ x }} b", c))
+print(nox.template.render("ö {{ x }} b", c))
+print(nox.template.render("Yayınlayan <a href=\"u/{{ x }}\">@{{ x }}</a>", c))
+print(nox.template.render("İsim: {{ x }} — Çıkış: {{ y }} ✓ {{ x }}", c))
+print(nox.template.render_unescaped("Yayıncılar {{ y }}!", c))
+print(nox.template.render("日本語 {{ x }} 日本語 {{ x }}", c))
+try:
+    print(nox.template.render("Çıkış {{ yok }}", c))
+except TemplateError:
+    print("tanimsiz degisken hatasi")

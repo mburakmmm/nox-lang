@@ -52,14 +52,17 @@ def _render_impl(tmpl: str, context: dict[str, str], escape: bool) -> str:
     n: int = len(tmpl)
     while pos < n:
         rest: str = _substr_from(tmpl, pos)
-        rel_start: int = nox.strings.index_of(rest, "{{")
+        # `str.find` KOD NOKTASI konumu verir (`_substr`/`len`/`s[i]` ile aynı birim). `nox.strings.index_of` BAYT konumu verir:
+        # çok baytlı bir karakterden (ö, ı, İ ...) sonraki yer tutucular kayıyor, `{alice"` gibi bozuk çıktı ya da
+        # "undefined template variable: 'ain'" hatası üretiyordu.
+        rel_start: int = rest.find("{{")
         if rel_start < 0:
             out = out + rest
             pos = n
         else:
             out = out + _substr(rest, 0, rel_start)
             after_open: str = _substr_from(rest, rel_start + 2)
-            rel_end: int = nox.strings.index_of(after_open, "}}")
+            rel_end: int = after_open.find("}}")
             if rel_end < 0:
                 raise TemplateError("unclosed '{{': " + rest)
             raw_key: str = _substr(after_open, 0, rel_end)

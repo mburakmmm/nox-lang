@@ -1,0 +1,144 @@
+# github — noxpkg'in GitHub OAuth "device flow" aktarıcısı.
+#
+# `noxc login` GitHub'la HİÇ konuşmaz: aygıt kodunu bu sunucudan ister, kullanıcı github.com/login/device'ta kodu onaylar, `noxc` kodu
+# bu sunucuya sorar (poll), sunucu GitHub'a sorar. GitHub erişim jetonu yalnızca bu istekte bellekte yaşar: kimliği doğrulamak için
+# `GET /user` çağrılır ve ATILIR (diske yazılmaz, `noxc`ye verilmez). Aygıt akışı yalnızca `client_id` ister (gizli anahtar yok).
+# Kapsam boştur: yalnızca herkese açık profil (id, login, avatar) okunur.
+#
+# Testte GitHub yerine sahte bir sunucuya gidilebilsin diye taban adresler ortamdan okunur (`NOXPKG_GITHUB_BASE`, `NOXPKG_GITHUB_API`).
+import nox.http
+import nox.json
+import nox.os
+import nox.strings
+from nox.http import HttpResponse, HttpError
+from nox.json import JsonValue, JsonError
+from nox.os import OsError
+
+class DeviceStart:
+    def __init__(self: DeviceStart, device_code: str, user_code: str, verification_uri: str, interval: int, expires_in: int) -> None:
+        self.device_code = device_code
+        self.user_code = user_code
+        self.verification_uri = verification_uri
+        self.interval = interval
+        self.expires_in = expires_in
+
+# state: "pending" | "slow_down" | "ok" | "denied" | "expired" | "error"
+class DevicePoll:
+    def __init__(self: DevicePoll, state: str, access_token: str) -> None:
+        self.state = state
+        self.access_token = access_token
+
+class GithubUser:
+    def __init__(self: GithubUser, id: int, login: str, avatar_url: str) -> None:
+        self.id = id
+        self.login = login
+        self.avatar_url = avatar_url
+
+def _env(name: str) -> str:
+    try:
+        return nox.os.getenv(name)
+    except OsError:
+        return ""
+
+def _base() -> str:
+    v: str = _env("NOXPKG_GITHUB_BASE")
+    if len(v) == 0:
+        return "https://github.com"
+    return v
+
+def _api() -> str:
+    v: str = _env("NOXPKG_GITHUB_API")
+    if len(v) == 0:
+        return "https://api.github.com"
+    return v
+
+def client_id() -> str:
+    return _env("NOXPKG_GITHUB_CLIENT_ID")
+
+def configured() -> bool:
+    return len(client_id()) > 0
+
+def _field(v: JsonValue, key: str) -> JsonValue | None:
+    i: int = 0
+    n: int = nox.json.object_len(v)
+    while i < n:
+        if nox.json.object_key(v, i) == key:
+            return nox.json.object_value(v, i)
+        i = i + 1
+    return None
+
+def _str_field(v: JsonValue, key: str) -> str:
+    f: JsonValue | None = _field(v, key)
+    if f == None:
+        return ""
+    return nox.json.as_string(f)
+
+def _int_field(v: JsonValue, key: str, fallback: int) -> int:
+    f: JsonValue | None = _field(v, key)
+    if f == None:
+        return fallback
+    return int(nox.json.as_number(f))
+
+def _form_headers() -> dict[str, str]:
+    h: dict[str, str] = {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "noxpkg"}
+    return h
+
+# Aygıt kodu ister. GitHub'a ulaşılamaz ya da yanıt bozuksa None.
+def device_start() -> DeviceStart | None:
+    try:
+        resp: HttpResponse = nox.http.request("POST", _base() + "/login/device/code", "client_id=" + client_id() + "&scope=", _form_headers(), 10000)
+        if resp.status != 200:
+            return None
+        v: JsonValue = nox.json.parse(resp.body)
+        device_code: str = _str_field(v, "device_code")
+        user_code: str = _str_field(v, "user_code")
+        uri: str = _str_field(v, "verification_uri")
+        if len(device_code) == 0 or len(user_code) == 0 or len(uri) == 0:
+            return None
+        return DeviceStart(device_code, user_code, uri, _int_field(v, "interval", 5), _int_field(v, "expires_in", 900))
+    except HttpError:
+        return None
+    except JsonError:
+        return None
+
+# Kullanıcının onayını bir kez sorar (bekleme `noxc`nin işi).
+def device_poll(device_code: str) -> DevicePoll:
+    body: str = "client_id=" + client_id() + "&device_code=" + device_code + "&grant_type=urn:ietf:params:oauth:grant-type:device_code"
+    try:
+        resp: HttpResponse = nox.http.request("POST", _base() + "/login/oauth/access_token", body, _form_headers(), 10000)
+        v: JsonValue = nox.json.parse(resp.body)
+        token: str = _str_field(v, "access_token")
+        if len(token) > 0:
+            return DevicePoll("ok", token)
+        err: str = _str_field(v, "error")
+        if err == "authorization_pending":
+            return DevicePoll("pending", "")
+        if err == "slow_down":
+            return DevicePoll("slow_down", "")
+        if err == "expired_token":
+            return DevicePoll("expired", "")
+        if err == "access_denied":
+            return DevicePoll("denied", "")
+        return DevicePoll("error", "")
+    except HttpError:
+        return DevicePoll("error", "")
+    except JsonError:
+        return DevicePoll("error", "")
+
+# Erişim jetonunun sahibini doğrular. Geçersizse None.
+def user_info(access_token: str) -> GithubUser | None:
+    h: dict[str, str] = {"Accept": "application/vnd.github+json", "Authorization": "Bearer " + access_token, "User-Agent": "noxpkg"}
+    try:
+        resp: HttpResponse = nox.http.request("GET", _api() + "/user", "", h, 10000)
+        if resp.status != 200:
+            return None
+        v: JsonValue = nox.json.parse(resp.body)
+        uid: int = _int_field(v, "id", 0)
+        login: str = _str_field(v, "login")
+        if uid <= 0 or len(login) == 0:
+            return None
+        return GithubUser(uid, login, _str_field(v, "avatar_url"))
+    except HttpError:
+        return None
+    except JsonError:
+        return None

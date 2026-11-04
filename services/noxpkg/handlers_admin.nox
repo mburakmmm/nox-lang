@@ -1,8 +1,9 @@
 # handlers_admin — yönetim kapısı. Kayıt olan hesap buraya giremez;
 # rol veritabanından okunur. Onay, çıkarma ve hata kapatma CSRF ister.
 import nox.strings
+import nox.time
 import store
-from store import Submission, IndexEntry, Report, Viewer
+from store import Submission, IndexEntry, Report, Viewer, PublisherSummary
 from nox.router import Context
 from nox.http import HttpResponse
 from nox.json import JsonError
@@ -61,21 +62,47 @@ def _csrf_ok(ctx: Context, submitted: str) -> bool:
     session: Session = Session(handlers_public._secret())
     return session.verify_csrf(_cookie_value(ctx), submitted)
 
+# Yönetim tablosunda yayıncı etiketi. Repo sahibi (github.com/<sahip>/...) yayıncıdan farklıysa uyarı eklenir: bir başkasının deposunu
+# kendi adıyla yayınlamak meşru olabilir (kuruluş hesapları) ama onaylamadan önce göze çarpmalıdır.
+def _publisher_label(login: str, repo: str) -> str:
+    if len(login) == 0:
+        return "(eski kayıt)"
+    owner: str = repo
+    owner = nox.strings.replace(owner, "https://", "")
+    owner = nox.strings.replace(owner, "http://", "")
+    owner = nox.strings.replace(owner, "github.com/", "")
+    parts: list[str] = nox.strings.splitn(owner, "/", 2)
+    if len(parts) > 0 and nox.strings.lower(parts[0]) != nox.strings.lower(login):
+        return "@" + login + " (repo sahibi: " + parts[0] + ")"
+    return "@" + login
+
 def dashboard(ctx: Context) -> HttpResponse:
     subs: list[Submission] = store.load_inbox()
     pending_html: str = ""
     i: int = 0
     while i < len(subs):
         s: Submission = subs[i]
-        pending_html = pending_html + templates.pending_row(s.id, s.name, s.repo, s.ref, s.description)
+        pending_html = pending_html + templates.pending_row(s.id, s.name, s.repo, s.ref, s.description, _publisher_label(s.publisher_login, s.repo))
         i = i + 1
     entries: list[IndexEntry] = store.load_packages()
+    owners: dict[str, str] = store.load_package_owners()
     index_html: str = ""
     j: int = 0
     while j < len(entries):
         e: IndexEntry = entries[j]
-        index_html = index_html + templates.index_row(e.name, e.repo, e.description)
+        owner_login: str = ""
+        if owners.contains(e.name):
+            owner_login = owners[e.name]
+        index_html = index_html + templates.index_row(e.name, e.repo, e.description, _publisher_label(owner_login, e.repo))
         j = j + 1
+    publishers: list[PublisherSummary] = store.load_publishers()
+    publisher_html: str = ""
+    p: int = 0
+    while p < len(publishers):
+        ps: PublisherSummary = publishers[p]
+        when: str = nox.time.from_epoch_ms(ps.last_login_ms).to_str()
+        publisher_html = publisher_html + templates.publisher_row(ps.login, str(ps.package_count), str(ps.pending_count), when)
+        p = p + 1
     reports: list[Report] = store.load_reports()
     report_html: str = ""
     k: int = 0
@@ -87,7 +114,7 @@ def dashboard(ctx: Context) -> HttpResponse:
     account: str = templates.account_bar("", "")
     if viewer != None:
         account = templates.account_bar(viewer.username, viewer.role)
-    html: str = templates.page("Yönetim — Nox", account, templates.dashboard_main(pending_html, index_html, report_html), handlers_public._csrf(ctx))
+    html: str = templates.page("Yönetim — Nox", account, templates.dashboard_main(pending_html, index_html, report_html, publisher_html), handlers_public._csrf(ctx))
     return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
 
 def approve(ctx: Context) -> HttpResponse:

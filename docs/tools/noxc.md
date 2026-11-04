@@ -57,7 +57,10 @@ A bare `noxc file.nox` builds `file`; it does not run it (use `noxc run`).
 | `noxc add <alias> [repo] [--ref <ref>]` | add a dependency to `nox.json` (looks `repo` up in the index when omitted; `ref` defaults to `master`) |
 | `noxc delete <alias>` | remove a dependency from `nox.json` and `nox.lock` |
 | `noxc search <query>` | search the central index; `noxc search <index.json\|url> <query>` searches another index |
-| `noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c]` | submit package metadata to the central index (awaits admin approval) |
+| `noxc login [--no-browser]` | sign in to the registry with GitHub (needed to publish); saves a token in `~/.nox/credentials` |
+| `noxc logout` | delete the local token and revoke it on the server |
+| `noxc whoami` | show which GitHub account you are signed in as |
+| `noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c]` | submit package metadata to the central index (requires `noxc login`; awaits admin approval) |
 | `noxc install <name\|repo[@ref]> [--ref <ref>]` | globally install a package that declares a `bin` entry point. `github.com/org/name@v1.2.3` sets the ref; `--ref` overrides it. `git@host:path` is not split on the first `@` |
 | `noxc uninstall <command>` | remove a globally installed command |
 | `noxc list` | list globally installed packages |

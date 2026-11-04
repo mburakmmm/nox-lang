@@ -65,42 +65,55 @@ pub const PublishResult = struct {
 
 pub const PublishError = error{PublishFailed};
 
-/// `payload`i JSON olarak `<api_base>/api/publish`e POST'lar VE sunucunun
-/// `PublishResult` şeklindeki yanıtını ayrıştırıp döner (HTTP düzeyinde
-/// başarısız olsa BİLE — ör. sunucu 400 İLE `{"ok":false,"error":"..."}`
-/// dönerse — bu bir Zig hatası DEĞİLDİR, `PublishResult.ok == false`
-/// olarak ÇAĞIRANA YANSITILIR; yalnızca AĞ/protokol düzeyinde GERÇEKTEN
-/// BAŞARISIZ olunursa `error.PublishFailed` fırlatılır). `pkg_index.
-/// loadIndexFromUrl` İLE AYNI şema-doğrulama (yalnızca `https://`,
-/// `http://` SADECE `allow_insecure_transport` İLE) VE AYNI gzip/deflate
-/// çözme deseni (Cloudflare Tunnel yanıtları sıkıştırabilir) — GÖVDE
-/// gönderme kısmı İSE `runtime/stdlib_shims/http_client.zig`nin KENDİ
-/// POST deseninden (`transfer_encoding = .content_length`,
-/// `sendBodyUnflushed` + yaz + `.end()` + `conn.flush()`) alınmıştır.
-pub fn submitPublish(a: Allocator, io: Io, api_base: []const u8, payload: PublishPayload, allow_insecure_transport: bool) !PublishResult {
-    if (std.mem.startsWith(u8, api_base, "https://")) {} else if (std.mem.startsWith(u8, api_base, "http://") and allow_insecure_transport) {} else {
+/// `jsonRequest`in yanıtı: HTTP durumu + (gerekirse gzip/deflate çözülmüş) gövde.
+pub const HttpReply = struct {
+    status: u16,
+    body: []const u8,
+};
+
+/// `noxpkg` sunucusuna JSON isteği (v2.0.136: `submitPublish`in HTTP gövdesi genelleştirildi; giriş/çıkış/whoami uç noktaları da
+/// kullanır). `bearer` doluysa `Authorization: Bearer <jeton>` eklenir. `body` null ise gövdesiz istek. Yanıt HTTP durumu ne olursa olsun
+/// DÖNER (4xx JSON hata gövdesi çağıranın işidir); yalnızca ağ/protokol düzeyinde başarısızlık `error.PublishFailed`dir.
+/// `loadIndexFromUrl` ile AYNI şema doğrulaması (yalnızca `https://`, `http://` SADECE `allow_insecure_transport` ile) ve AYNI
+/// gzip/deflate çözme (Cloudflare Tunnel yanıtları sıkıştırabilir); POST gövdesi `runtime/stdlib_shims/http_client.zig`nin kendi deseniyle
+/// (`transfer_encoding = .content_length`, `sendBodyUnflushed` + yaz + `.end()` + `conn.flush()`) gönderilir.
+pub fn jsonRequest(a: Allocator, io: Io, method: std.http.Method, url: []const u8, body: ?[]const u8, bearer: ?[]const u8, allow_insecure_transport: bool) !HttpReply {
+    if (std.mem.startsWith(u8, url, "https://")) {} else if (std.mem.startsWith(u8, url, "http://") and allow_insecure_transport) {} else {
         return error.PublishFailed;
     }
-
-    const url = try std.fmt.allocPrint(a, "{s}/api/publish", .{api_base});
-    const body = try std.json.Stringify.valueAlloc(a, payload, .{});
 
     var client: std.http.Client = .{ .allocator = a, .io = io };
     defer client.deinit();
 
-    const uri = try std.Uri.parse(url);
-    var req = client.request(.POST, uri, .{
-        .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
+    const uri = std.Uri.parse(url) catch return error.PublishFailed;
+    var header_buf: [2]std.http.Header = undefined;
+    var header_count: usize = 0;
+    if (body != null) {
+        header_buf[header_count] = .{ .name = "content-type", .value = "application/json" };
+        header_count += 1;
+    }
+    var auth_value: []const u8 = "";
+    if (bearer) |token| {
+        auth_value = std.fmt.allocPrint(a, "Bearer {s}", .{token}) catch return error.PublishFailed;
+        header_buf[header_count] = .{ .name = "authorization", .value = auth_value };
+        header_count += 1;
+    }
+    var req = client.request(method, uri, .{
+        .extra_headers = header_buf[0..header_count],
         .redirect_behavior = .unhandled,
     }) catch return error.PublishFailed;
     defer req.deinit();
 
-    req.transfer_encoding = .{ .content_length = body.len };
-    var body_writer = req.sendBodyUnflushed(&.{}) catch return error.PublishFailed;
-    body_writer.writer.writeAll(body) catch return error.PublishFailed;
-    body_writer.end() catch return error.PublishFailed;
-    const conn = req.connection orelse return error.PublishFailed;
-    conn.flush() catch return error.PublishFailed;
+    if (body) |payload| {
+        req.transfer_encoding = .{ .content_length = payload.len };
+        var body_writer = req.sendBodyUnflushed(&.{}) catch return error.PublishFailed;
+        body_writer.writer.writeAll(payload) catch return error.PublishFailed;
+        body_writer.end() catch return error.PublishFailed;
+        const conn = req.connection orelse return error.PublishFailed;
+        conn.flush() catch return error.PublishFailed;
+    } else {
+        req.sendBodiless() catch return error.PublishFailed;
+    }
 
     var redirect_buffer: [8 * 1024]u8 = undefined;
     var response = req.receiveHead(&redirect_buffer) catch return error.PublishFailed;
@@ -118,8 +131,17 @@ pub fn submitPublish(a: Allocator, io: Io, api_base: []const u8, payload: Publis
     var resp_body_out: std.Io.Writer.Allocating = .init(a);
     _ = reader.streamRemaining(&resp_body_out.writer) catch return error.PublishFailed;
     const resp_body = resp_body_out.toOwnedSlice() catch return error.PublishFailed;
+    return .{ .status = @intFromEnum(response.head.status), .body = resp_body };
+}
 
-    const parsed = std.json.parseFromSlice(PublishResult, a, resp_body, .{ .ignore_unknown_fields = true }) catch {
+/// `payload`i JSON olarak `<api_base>/api/publish`e POST'lar (`token`: `noxc login` jetonu) VE sunucunun `PublishResult` şeklindeki
+/// yanıtını ayrıştırıp döner (HTTP düzeyinde başarısız olsa BİLE, ör. 401/403 ile `{"ok":false,"error":"..."}`, bu bir Zig hatası
+/// DEĞİLDİR: `PublishResult.ok == false` olarak çağırana yansıtılır; yalnızca ağ/protokol düzeyinde başarısızlık `error.PublishFailed`).
+pub fn submitPublish(a: Allocator, io: Io, api_base: []const u8, payload: PublishPayload, token: []const u8, allow_insecure_transport: bool) !PublishResult {
+    const url = try std.fmt.allocPrint(a, "{s}/api/publish", .{api_base});
+    const body = try std.json.Stringify.valueAlloc(a, payload, .{});
+    const reply = try jsonRequest(a, io, .POST, url, body, token, allow_insecure_transport);
+    const parsed = std.json.parseFromSlice(PublishResult, a, reply.body, .{ .ignore_unknown_fields = true }) catch {
         return error.PublishFailed;
     };
     return parsed.value;

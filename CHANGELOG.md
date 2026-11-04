@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.136]
+
+### Eklendi
+
+- **`noxc login` / `logout` / `whoami` ve yayıncı kimliği (noxpkg):** `noxc login` GitHub'ın aygıt akışıyla giriş yapar (kod gösterir, tarayıcıyı açar, onayı bekler); noxpkg kendi API jetonunu verir ve `~/.nox/credentials` dosyasına `0600` ile yazılır (GitHub jetonu istemciye hiç inmez; sunucu yalnız SHA-256 özetini tutar). **`noxc publish` artık giriş ister** (girişsiz çağrı ağa gitmeden `noxc login`e yönlendirir; sunucu da `401` verir). Paket adı ilk yayımlayana rezerve edilir (başkası `403`, sahibin adıyla); hesaplardan önce listelenmiş paketler yönetici GitHub hesabına geçer (`NOXPKG_ADMIN_GITHUB`). Yönetim panelinde yayıncı sütunu (repo sahibi farklıysa uyarı) ve "Yayıncılar" bölümü, paket sayfasında "Yayınlayan @login". `index.json` şeması değişmedi. Sunucuda `NOXPKG_GITHUB_CLIENT_ID` (GitHub OAuth App, Device Flow açık) gerekir; tanımlı değilse `noxc login` bunu söyler. Bkz. spec §3.339, `docs/tools/noxpkg.md`, `docs/internals/deployment.md`. Test: `scripts/noxpkg_auth_smoke.py` (gerçek sunucu + sahte GitHub + gerçek `noxc`), CI Dokümanlar işinde.
+
+### Düzeltildi
+
+- **`nox.template` çok baytlı (UTF-8) karakterlerden sonra gelen yer tutucuları yanlış okuyordu:** `Yayınlayan <a href="/{{ x }}">` çıktısı `/{alice"` oluyor, `Yayıncılar {{ y }}` ise `undefined template variable: 'ain'` hatası veriyordu. `nox.strings.index_of` BAYT, `len`/`s[i]` KOD NOKTASI konumu verir; şablon motoru ikisini karıştırıyordu (UTF-8 farkındalığı eklenirken güncellenmemişti). `str.find` kullanıldı. Golden: `template_multibyte_placeholders` (QBE + LLVM).
+
 ## [2.0.135]
 
 ### Eklendi

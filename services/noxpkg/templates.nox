@@ -60,9 +60,16 @@ def comment_block(username: str, body: str, when: str) -> str:
     ctx: dict[str, str] = {"username": username, "body": body, "when": when}
     return nox.template.render(_comment_template(), ctx)
 
-def package_main(name: str, repo_href: str, repo_label: str, description: str, tags_html: str, install: str, comments_html: str, composer_html: str) -> str:
-    ctx: dict[str, str] = {"name": nox.template.escape_html(name), "repo_href": nox.template.escape_html(repo_href), "repo_label": nox.template.escape_html(repo_label), "description": nox.template.escape_html(description), "tags": tags_html, "install": nox.template.escape_html(install), "comments": comments_html, "composer": composer_html}
-    tmpl: str = "<p class=\"kicker\"><a href=\"/\">Packages</a></p><div class=\"pkg-head\"><div><h1>{{ name }}</h1><p class=\"lead\">{{ description }}</p><div class=\"tags\">{{ tags }}</div></div><div><p class=\"install\">noxc add {{ install }}</p><p><a href=\"{{ repo_href }}\" rel=\"noopener noreferrer\">{{ repo_label }}</a></p></div></div><section class=\"panel\"><h2>Yorumlar</h2>{{ comments }}{{ composer }}</section>"
+# Paketi yayınlayan GitHub hesabı (varsa). Avatar gösterilmez: site CSP'si dış görsele izin vermez.
+def publisher_line(login: str) -> str:
+    if len(login) == 0:
+        return ""
+    ctx: dict[str, str] = {"login": login}
+    return nox.template.render("<p class=\"publisher\">Yayınlayan <a href=\"https://github.com/{{ login }}\" rel=\"noopener noreferrer\">@{{ login }}</a></p>", ctx)
+
+def package_main(name: str, repo_href: str, repo_label: str, description: str, tags_html: str, install: str, comments_html: str, composer_html: str, publisher_html: str = "") -> str:
+    ctx: dict[str, str] = {"publisher": publisher_html, "name": nox.template.escape_html(name), "repo_href": nox.template.escape_html(repo_href), "repo_label": nox.template.escape_html(repo_label), "description": nox.template.escape_html(description), "tags": tags_html, "install": nox.template.escape_html(install), "comments": comments_html, "composer": composer_html}
+    tmpl: str = "<p class=\"kicker\"><a href=\"/\">Packages</a></p><div class=\"pkg-head\"><div><h1>{{ name }}</h1><p class=\"lead\">{{ description }}</p>{{ publisher }}<div class=\"tags\">{{ tags }}</div></div><div><p class=\"install\">noxc add {{ install }}</p><p><a href=\"{{ repo_href }}\" rel=\"noopener noreferrer\">{{ repo_label }}</a></p></div></div><section class=\"panel\"><h2>Yorumlar</h2>{{ comments }}{{ composer }}</section>"
     return nox.template.render_unescaped(tmpl, ctx)
 
 def guest_composer() -> str:
@@ -80,17 +87,17 @@ def admin_login_main() -> str:
     return "<p class=\"kicker\">Yönetim</p><h1>Yönetici girişi</h1><p class=\"lead\">Paket onayları ve hata bildirimleri bu kapının arkasında.</p><section class=\"panel\"><form data-post=\"/admin/login\" data-next=\"/admin\"><label for=\"user\">Kullanıcı adı</label><input id=\"user\" name=\"username\" type=\"text\" autocomplete=\"username\" value=\"admin\" required><label for=\"pw\">Parola</label><input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Giriş yap</button></form></section>"
 
 def _pending_row() -> str:
-    return "<tr><td>{{ name }}</td><td>{{ repo }}</td><td>{{ ref }}</td><td>{{ description }}</td><td><button class=\"btn\" type=\"button\" data-admin-post=\"/admin/approve/{{ id }}\">Onayla</button> <button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/reject/{{ id }}\">Reddet</button></td></tr>"
+    return "<tr><td>{{ name }}</td><td>{{ publisher }}</td><td>{{ repo }}</td><td>{{ ref }}</td><td>{{ description }}</td><td><button class=\"btn\" type=\"button\" data-admin-post=\"/admin/approve/{{ id }}\">Onayla</button> <button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/reject/{{ id }}\">Reddet</button></td></tr>"
 
-def pending_row(id: str, name: str, repo: str, ref: str, description: str) -> str:
-    ctx: dict[str, str] = {"id": id, "name": name, "repo": repo, "ref": ref, "description": description}
+def pending_row(id: str, name: str, repo: str, ref: str, description: str, publisher: str) -> str:
+    ctx: dict[str, str] = {"id": id, "name": name, "repo": repo, "ref": ref, "description": description, "publisher": publisher}
     return nox.template.render(_pending_row(), ctx)
 
 def _index_row() -> str:
-    return "<tr><td>{{ name }}</td><td>{{ repo }}</td><td>{{ description }}</td><td><button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/index/remove\" data-extra=\"{{ name }}\">Çıkar</button></td></tr>"
+    return "<tr><td>{{ name }}</td><td>{{ publisher }}</td><td>{{ repo }}</td><td>{{ description }}</td><td><button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/index/remove\" data-extra=\"{{ name }}\">Çıkar</button></td></tr>"
 
-def index_row(name: str, repo: str, description: str) -> str:
-    ctx: dict[str, str] = {"name": name, "repo": repo, "description": description}
+def index_row(name: str, repo: str, description: str, publisher: str) -> str:
+    ctx: dict[str, str] = {"name": name, "repo": repo, "description": description, "publisher": publisher}
     return nox.template.render(_index_row(), ctx)
 
 def _report_row() -> str:
@@ -100,7 +107,14 @@ def report_row(id: str, package_name: str, username: str, title: str, body: str,
     ctx: dict[str, str] = {"id": id, "package": package_name, "username": username, "title": title, "body": body, "status": status}
     return nox.template.render(_report_row(), ctx)
 
-def dashboard_main(pending_html: str, index_html: str, report_html: str) -> str:
-    ctx: dict[str, str] = {"pending": pending_html, "index": index_html, "reports": report_html}
-    tmpl: str = "<p class=\"kicker\">Yönetim</p><h1>Kayıt</h1><section class=\"panel\"><h2>Bekleyen gönderiler</h2><div class=\"table-wrap\"><table><tr><th>İsim</th><th>Repo</th><th>Ref</th><th>Açıklama</th><th></th></tr>{{ pending }}</table></div></section><section class=\"panel\"><h2>Yayında</h2><div class=\"table-wrap\"><table><tr><th>İsim</th><th>Repo</th><th>Açıklama</th><th></th></tr>{{ index }}</table></div></section><section class=\"panel\"><h2>Hata bildirimleri</h2><div class=\"table-wrap\"><table><tr><th>Paket</th><th>Kullanıcı</th><th>Başlık</th><th>Gövde</th><th>Durum</th><th></th></tr>{{ reports }}</table></div></section>"
+def _publisher_row() -> str:
+    return "<tr><td><a href=\"https://github.com/{{ login }}\" rel=\"noopener noreferrer\">@{{ login }}</a></td><td>{{ packages }}</td><td>{{ pending }}</td><td>{{ last_login }}</td></tr>"
+
+def publisher_row(login: str, packages: str, pending: str, last_login: str) -> str:
+    ctx: dict[str, str] = {"login": login, "packages": packages, "pending": pending, "last_login": last_login}
+    return nox.template.render(_publisher_row(), ctx)
+
+def dashboard_main(pending_html: str, index_html: str, report_html: str, publisher_html: str) -> str:
+    ctx: dict[str, str] = {"pending": pending_html, "index": index_html, "reports": report_html, "publishers": publisher_html}
+    tmpl: str = "<p class=\"kicker\">Yönetim</p><h1>Kayıt</h1><section class=\"panel\"><h2>Bekleyen gönderiler</h2><div class=\"table-wrap\"><table><tr><th>İsim</th><th>Yayıncı</th><th>Repo</th><th>Ref</th><th>Açıklama</th><th></th></tr>{{ pending }}</table></div></section><section class=\"panel\"><h2>Yayında</h2><div class=\"table-wrap\"><table><tr><th>İsim</th><th>Yayıncı</th><th>Repo</th><th>Açıklama</th><th></th></tr>{{ index }}</table></div></section><section class=\"panel\"><h2>Yayıncılar</h2><div class=\"table-wrap\"><table><tr><th>GitHub</th><th>Paket</th><th>Bekleyen</th><th>Son giriş</th></tr>{{ publishers }}</table></div></section><section class=\"panel\"><h2>Hata bildirimleri</h2><div class=\"table-wrap\"><table><tr><th>Paket</th><th>Kullanıcı</th><th>Başlık</th><th>Gövde</th><th>Durum</th><th></th></tr>{{ reports }}</table></div></section>"
     return nox.template.render_unescaped(tmpl, ctx)

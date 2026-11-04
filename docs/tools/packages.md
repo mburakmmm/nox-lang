@@ -89,13 +89,19 @@ Add `~/.nox/bin` to your `PATH`. `install` accepts a package name from the index
 ## Publishing a package
 
 1. Put your project in a public Git repository with a `nox.json` and a tag for each release.
-2. Submit its metadata to the central index:
+2. Sign in once with your GitHub account (see [noxpkg](noxpkg.md#signing-in-and-publishing)):
+
+   ```sh
+   noxc login
+   ```
+
+3. Submit its metadata to the central index:
 
    ```sh
    noxc publish github.com/you/yourpkg --ref v1.0.0 --description "What it does" --tags web,http
    ```
 
-3. A registry administrator reviews and approves the submission; once approved, `noxc search` and `noxc add` find it.
+4. A registry administrator reviews and approves the submission; once approved, `noxc search` and `noxc add` find it. The package page shows you as its publisher, and the name is yours for future releases.
 
 `publish` sends **metadata only** (name, repository, ref, description, tags); no code is uploaded — consumers fetch from your repository. See [noxpkg](noxpkg.md) for the service.
 

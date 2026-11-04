@@ -8,10 +8,13 @@
 # iş parçacığında yarışmasın. `PORT` 8080. Durum `data/noxpkg.db`dedir;
 # `GET /index.json` bu veritabanından üretilir.
 import nox.http
+import nox.os
+from nox.os import OsError
 from nox.http import HttpRequest, HttpResponse
 from nox.router import Router, Context
 import handlers_public
 import handlers_admin
+import handlers_api
 
 def h_home(ctx: Context) -> HttpResponse:
     return handlers_public.home(ctx)
@@ -20,7 +23,19 @@ def h_index_json(ctx: Context) -> HttpResponse:
     return handlers_public.index_json(ctx)
 
 def h_publish(ctx: Context) -> HttpResponse:
-    return handlers_public.publish(ctx)
+    return handlers_api.publish(ctx)
+
+def h_device_start(ctx: Context) -> HttpResponse:
+    return handlers_api.device_start(ctx)
+
+def h_device_poll(ctx: Context) -> HttpResponse:
+    return handlers_api.device_poll(ctx)
+
+def h_whoami(ctx: Context) -> HttpResponse:
+    return handlers_api.whoami(ctx)
+
+def h_api_logout(ctx: Context) -> HttpResponse:
+    return handlers_api.logout(ctx)
 
 def h_css(ctx: Context) -> HttpResponse:
     return handlers_public.css(ctx)
@@ -90,6 +105,10 @@ def build_router() -> Router:
     router.post("/p/:name/yorum", h_comment)
     router.post("/p/:name/hata", h_report)
     router.post("/api/publish", h_publish)
+    router.post("/api/auth/device/start", h_device_start)
+    router.post("/api/auth/device/poll", h_device_poll)
+    router.get("/api/auth/whoami", h_whoami)
+    router.post("/api/auth/logout", h_api_logout)
     router.get("/admin/login", h_admin_login_page)
     router.post("/admin/login", h_admin_login_submit)
     router.get("/admin", h_dashboard)
@@ -110,4 +129,14 @@ def handle(req: HttpRequest) -> HttpResponse:
         print(e.message)
         return HttpResponse(500, e.message, {"Content-Type": "text/plain; charset=utf-8"})
 
-nox.http.serve_multicore(8080, handle, 1, 0)
+# `NOXPKG_PORT` (varsayılan 8080): yerel duman testi serbest bir port seçebilsin.
+def listen_port() -> int:
+    try:
+        v: str = nox.os.getenv("NOXPKG_PORT")
+        if len(v) > 0:
+            return int(v)
+    except OsError:
+        return 8080
+    return 8080
+
+nox.http.serve_multicore(listen_port(), handle, 1, 0)
