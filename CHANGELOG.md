@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.153]
+
+### Eklendi
+
+- **wasm32-freestanding-threads: `nox.http` istemcisi** (`get/post/request`): çağıran iş parçacığı bloke olur; host `nox_host.net_fetch`/`net_read` ile tarayıcı Worker'ında eşzamanlı XHR (`runNoxThreads(..., { net: true })`), Node'da yardımcı Worker (`--allow-net`) kullanır. Yetenek varsayılan kapalı (`HttpCapabilityError`). Akışlı istemci bu kipte yok (spec 3.355).
+
 ## [2.0.152]
 
 ### Eklendi

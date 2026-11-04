@@ -1,0 +1,35 @@
+import nox.http
+import nox.thread
+from nox.http import HttpResponse, HttpError, HttpTimeoutError, HttpCapabilityError
+
+def hdrs() -> dict[str, str]:
+    h: dict[str, str] = {}
+    h["X-Test"] = "nox"
+    return h
+
+async def fetch_body(path: str) -> int:
+    r: HttpResponse = nox.http.get("http://127.0.0.1:__PORT__" + path, hdrs())
+    return len(r.body)
+
+try:
+    r: HttpResponse = nox.http.get("http://127.0.0.1:__PORT__/main", hdrs())
+    print(r.status, r.body, r.headers["x-reply"])
+    p: HttpResponse = nox.http.post("http://127.0.0.1:__PORT__/echo", "payload", hdrs())
+    print(p.status, p.body)
+    h1: ThreadHandle[int] = nox.thread.start(fetch_body, "/a")
+    h2: ThreadHandle[int] = nox.thread.start(fetch_body, "/bb")
+    n1: int = await h1.join()
+    n2: int = await h2.join()
+    print("threads", n1, n2)
+    try:
+        t: HttpResponse = nox.http.request("GET", "http://127.0.0.1:__PORT__/slow", "", hdrs(), 50)
+        print("unreachable")
+    except HttpTimeoutError:
+        print("timeout")
+    try:
+        c: HttpResponse = nox.http.get("http://127.0.0.1:1/x", hdrs())
+        print("unreachable")
+    except HttpError:
+        print("connect error")
+except HttpCapabilityError:
+    print("capability")

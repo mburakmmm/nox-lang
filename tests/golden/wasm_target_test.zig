@@ -552,3 +552,52 @@ test "wasm32-freestanding --asyncify: nox.transfer (download_to_file / upload_fi
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("200 aaaabbbbbbcc\n200 POST:/echo:payload-xyz\nexit 0\nmax concurrent 1\nfetch GET /chunks x-test=- body=-\nfetch POST /echo x-test=- body=payload-xyz\n", out);
 }
+
+// v2.0.153 (spec §3.355): `--threads` modüllerinde `nox.http` istemcisi. Çağıran iş parçacığı `nox_host.net_fetch` içinde bloke olur (Node'da yardımcı Worker + Atomics.wait,
+// tarayıcı Worker'ında eşzamanlı XHR); sürücü gerçek bir yerel HTTP sunucusu başlatır. Yetenek `--allow-net` ile açılır, açılmazsa `HttpCapabilityError`.
+fn runThreadsNet(mode: []const u8) !?[]u8 {
+    const allocator = std.testing.allocator;
+    const res = std.process.run(allocator, std.testing.io, .{
+        .argv = &.{ "node", "--no-warnings", build_options.threads_net_driver_path, build_options.noxc_path, build_options.threads_net_program_path, build_options.wasm_host_path, mode },
+    }) catch |err| {
+        if (err == error.FileNotFound) return null;
+        return err;
+    };
+    defer allocator.free(res.stderr);
+    if (res.term != .exited or res.term.exited != 0) {
+        if (std.mem.indexOf(u8, res.stderr, "zig not found") != null) {
+            allocator.free(res.stdout);
+            return null;
+        }
+        std.debug.print("threads net [{s}]: surucu basarisiz: {s}\n{s}\n", .{ mode, res.stderr, res.stdout });
+        allocator.free(res.stdout);
+        return error.ProgramFailed;
+    }
+    return res.stdout;
+}
+
+test "wasm32-freestanding-threads: nox.http iş parçacıklarında bloke eden eşzamanlı ağ ile çalışır" {
+    const out = (try runThreadsNet("allow")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    // Sürücü ilk satırda derleme iletisini yazmaz (stderr'e gider); stdout: program çıktısı + çıkış kodu + sunucu günlüğü.
+    try std.testing.expectEqualStrings(
+        \\200 GET:/main: yes
+        \\200 POST:/echo:payload
+        \\threads 7 8
+        \\timeout
+        \\connect error
+        \\exit 0
+        \\server GET /a x-test=nox body=-
+        \\server GET /bb x-test=nox body=-
+        \\server GET /main x-test=nox body=-
+        \\server GET /slow x-test=nox body=-
+        \\server POST /echo x-test=nox body=payload
+        \\
+    , out);
+}
+
+test "wasm32-freestanding-threads: ağ yeteneği verilmezse HttpCapabilityError" {
+    const out = (try runThreadsNet("deny")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("capability\nexit 0\n", out);
+}

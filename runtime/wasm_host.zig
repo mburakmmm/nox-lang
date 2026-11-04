@@ -32,3 +32,10 @@ pub fn exitProcess(code: u8) noreturn {
 /// YALNIZCA iş parçacıklı modüllerin (`wasm32-freestanding-threads`, ADR-015) içe aktardığı: yeni bir iş parçacığı başlatır; host paylaşımlı belleğe bağlı yeni bir örnekte
 /// `nox_host_thread_start(tid, arg)`ı çağırır. Dönen `tid > 0`; hata `< 0`.
 pub extern "nox_host" fn thread_spawn(arg: usize) i32;
+
+/// YALNIZCA iş parçacıklı modüllerin (`--threads`) `nox.http` istemcisi için (spec §3.355): çağıran iş parçacığını BLOKE ederek isteği gerçekleştirir (host: tarayıcı Worker'ında
+/// eşzamanlı XHR, Node'da yardımcı Worker + `Atomics.wait`). `req` istek kaydıdır (`http_fetch.zig` biçimi). Dönüş: yanıt uzunluğu (>= 0; `net_read` ile alınır) ya da
+/// negatif hata (-1 ağ yeteneği yok, -2 bağlantı hatası, -3 zaman aşımı, -4 diğer).
+pub extern "nox_host" fn net_fetch(req: [*]const u8, len: usize) i32;
+/// Son `net_fetch` yanıtını (çağıran iş parçacığına özel) `ptr[0..cap]`a kopyalar; kopyalanan bayt sayısını döner.
+pub extern "nox_host" fn net_read(ptr: [*]u8, cap: usize) i32;

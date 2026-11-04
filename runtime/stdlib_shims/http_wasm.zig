@@ -15,9 +15,9 @@ const diag_sink = @import("diag_sink");
 const wasm_options = @import("wasm_options");
 const str_mod = @import("../str.zig");
 
-/// `wasm32-freestanding --asyncify` (tek iş parçacıklı): host `fetch`ine dayanan gerçek istemci (`http_fetch.zig`, spec §3.351). Host `nox_host_caps_set(1)` ile yeteneği
+/// `wasm32-freestanding --asyncify` (askıya alma) ve `--threads` (eşzamanlı `nox_host.net_fetch`): host `fetch`ine dayanan gerçek istemci (`http_fetch.zig`, spec §3.351/§3.355). Host `nox_host_caps_set(1)` ile yeteneği
 /// açmadıysa (`fetch.available()` yanlış) ya da başka bir kipteyse aşağıdaki "ağ yeteneği yok" davranışı geçerlidir.
-const fetch_enabled = @import("../wasm_host.zig").is_freestanding_wasm and wasm_options.asyncify and !wasm_options.threads;
+const fetch_enabled = @import("../wasm_host.zig").is_freestanding_wasm and wasm_options.asyncify;
 const fetch = if (fetch_enabled) @import("http_fetch.zig") else struct {};
 
 comptime {

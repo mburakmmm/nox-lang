@@ -290,6 +290,90 @@ async function pumpFetches(instance, fetchFn, inflight, streams) {
   x.nox_host_free(bp, done.body.length);
 }
 
+// ---- Ağ: iş parçacıklı modüller (`--threads`, spec §3.355) --------------------------------------------------------------------------------------------
+// Bir wasm iş parçacığı `nox_host.net_fetch` içinde BLOKE olur; sonuç eşzamanlı alınır. Tarayıcı Worker'ında eşzamanlı XHR, Node'da yardımcı bir Worker (fetch'i o çalıştırır,
+// çağıran `Atomics.wait` ile bekler ve sonucu `receiveMessageOnPort` ile alır) kullanılır. Host yeteneği vermezse `syncFetch` null'dır ve `net_fetch` -1 döner (HttpCapabilityError).
+
+/** `net_fetch`/`net_read` import'ları. `syncFetch(req) -> { status, errorKind, headers, body }` (eşzamanlı) ya da null. */
+function makeNetImports(syncFetch, getMemory) {
+  let last = null;
+  return {
+    net_fetch: (ptr, len) => {
+      if (!syncFetch) return -1;
+      const req = parsePendingRequests(new Uint8Array(getMemory().buffer, ptr, len).slice())[0];
+      const r = syncFetch(req);
+      if (r.errorKind >= 0) return r.errorKind === 1 ? -3 : r.errorKind === 0 ? -2 : -4;
+      const out = new Uint8Array(8 + r.headers.length + r.body.length);
+      const dv = new DataView(out.buffer);
+      dv.setUint32(0, r.status, true);
+      dv.setUint32(4, r.headers.length, true);
+      out.set(r.headers, 8);
+      out.set(r.body, 8 + r.headers.length);
+      last = out;
+      return out.length;
+    },
+    net_read: (ptr, cap) => {
+      if (!last) return 0;
+      const n = Math.min(cap, last.length);
+      new Uint8Array(getMemory().buffer, ptr, n).set(last.subarray(0, n));
+      last = null;
+      return n;
+    },
+  };
+}
+
+/** Tarayıcı Worker'ı: eşzamanlı XHR (Worker'larda izinlidir; `responseType` ve `timeout` desteklenir). */
+function xhrSync(req) {
+  const x = new XMLHttpRequest();
+  try {
+    x.open(req.method, req.url, false);
+    if (req.arg > 0) x.timeout = req.arg;
+    x.responseType = 'arraybuffer';
+    for (const [k, v] of Object.entries(parseHeaderLines(req.headers))) {
+      try {
+        x.setRequestHeader(k, v);
+      } catch {}
+    }
+    x.send(req.hasBody ? req.body : null);
+  } catch (e) {
+    return failed(req.id, e && e.name === 'TimeoutError' ? 1 : 0);
+  }
+  if (x.status === 0) return failed(req.id, 0);
+  const headers = new TextEncoder().encode(x.getAllResponseHeaders().replace(/\r\n/g, '\n'));
+  return { id: req.id, status: x.status, errorKind: -1, headers, body: new Uint8Array(x.response) };
+}
+
+/** Node: bu iş parçacığına özel bir yardımcı Worker (tembel) fetch'i çalıştırır. */
+function makeNodeSyncFetch(wt) {
+  let st = null;
+  return (req) => {
+    if (!st) {
+      const { port1, port2 } = new wt.MessageChannel();
+      const cell = new Int32Array(new SharedArrayBuffer(4));
+      const w = new wt.Worker(new URL(import.meta.url), { workerData: { netHelper: true, port: port2, cell }, transferList: [port2] });
+      w.unref();
+      st = { port1, cell, w };
+    }
+    Atomics.store(st.cell, 0, 0);
+    st.port1.postMessage(req);
+    Atomics.wait(st.cell, 0, 0);
+    const m = wt.receiveMessageOnPort(st.port1);
+    return m ? m.message : failed(req.id, 2);
+  };
+}
+
+/** Yardımcı Worker gövdesi (Node). */
+async function netHelperMain() {
+  const { workerData } = await import('node:worker_threads');
+  const { port, cell } = workerData;
+  port.on('message', async (req) => {
+    const r = await doFetch(globalThis.fetch.bind(globalThis), req);
+    port.postMessage(r);
+    Atomics.store(cell, 0, 1);
+    Atomics.notify(cell, 0);
+  });
+}
+
 /**
  * `wasm32-freestanding` modülünü çalıştırır; çıkış kodunu döner. `opts.vfs` = { files, onSave } kalıcı dosya sistemi içindir (dosyanın başındaki nota bak); modül
  * dosya sistemini kullanmıyorsa yok sayılır (böylece `onSave` boş bir görüntüyle diski silmez). `opts.fetch`: `--asyncify` ile derlenmiş ve `nox.http` kullanan modüller için
@@ -477,7 +561,7 @@ async function nodeMain() {
   if (modules.has('nox_host')) {
     const memImportNox = findMemoryImport(bytes);
     if (memImportNox && memImportNox.shared) {
-      process.exitCode = await runThreaded(file, mod, memImportNox, progArgs, 'nox', vfsDir);
+      process.exitCode = await runThreaded(file, mod, memImportNox, progArgs, 'nox', vfsDir, allowNet);
       return;
     }
     let vfs;
@@ -552,14 +636,14 @@ function findMemoryImport(bytes) {
  * Gözetmen (Node ana iş parçacığı): programın ana iş parçacığı da bir Worker'dır, böylece herhangi bir wasm iş parçacığı `atomic.wait` içinde bloke olsa bile gözetmenin
  * olay döngüsü açık kalır ve HERHANGİ bir iş parçacığının `proc_exit`ini (BroadcastChannel ile) alıp süreci sonlandırabilir.
  */
-async function runThreaded(file, mod, memImport, args, kind = 'wasi', vfsDir = null) {
+async function runThreaded(file, mod, memImport, args, kind = 'wasi', vfsDir = null, allowNet = false) {
   const { Worker } = await import('node:worker_threads');
   const memory = new WebAssembly.Memory({ initial: memImport.min, maximum: memImport.max ?? memImport.min, shared: true });
   const chan = new BroadcastChannel(EXIT_CHANNEL);
   const done = new Promise((resolve) => {
     chan.onmessage = (ev) => resolve(ev.data.exit);
   });
-  const w = new Worker(new URL(import.meta.url), { workerData: { main: true, kind, mod, memory, tid: 0, arg: 0, file, args, vfsDir, tids: new Int32Array(new SharedArrayBuffer(4)) }, argv: [file] });
+  const w = new Worker(new URL(import.meta.url), { workerData: { main: true, kind, mod, memory, tid: 0, arg: 0, file, args, vfsDir, allowNet, tids: new Int32Array(new SharedArrayBuffer(4)) }, argv: [file] });
   w.on('error', (e) => {
     console.error(e);
     process.exit(1);
@@ -578,8 +662,9 @@ async function wasiPreopens() {
 }
 
 /** `wasm32-freestanding-threads` örneği: `nox_host` + `thread_spawn` + paylaşımlı `env.memory`. Node ve tarayıcı Worker'ları ortak kullanır. */
-async function instantiateNoxThread(mod, memory, io, spawnThread, exitAll, beforeExit = null) {
+async function instantiateNoxThread(mod, memory, io, spawnThread, exitAll, beforeExit = null, syncFetch = null) {
   const host = createHost(io, memory);
+  Object.assign(host.imports.nox_host, makeNetImports(syncFetch, () => memory));
   host.imports.nox_host.thread_spawn = spawnThread;
   host.imports.nox_host.exit = (code) => {
     if (beforeExit) beforeExit();
@@ -596,7 +681,7 @@ async function instantiateNoxThread(mod, memory, io, spawnThread, exitAll, befor
 async function workerMain() {
   const { workerData, Worker } = await import('node:worker_threads');
   const nodeFs = await import('node:fs');
-  const { mod, memory, tid, arg, file, args, tids, kind, vfsDir } = workerData;
+  const { mod, memory, tid, arg, file, args, tids, kind, vfsDir, allowNet } = workerData;
   let vfsLoaded = workerData.vfsLoaded;
   const chan = new BroadcastChannel(EXIT_CHANNEL);
   const exitAll = (code) => {
@@ -605,7 +690,7 @@ async function workerMain() {
   };
   const spawnThread = (a) => {
     const t = Atomics.add(tids, 0, 1) + 1; // iş parçacıkları arasında benzersiz, > 0
-    const w = new Worker(new URL(import.meta.url), { workerData: { main: false, kind, mod, memory, tid: t, arg: a, file, args, tids, vfsDir, vfsLoaded }, argv: [file] });
+    const w = new Worker(new URL(import.meta.url), { workerData: { main: false, kind, mod, memory, tid: t, arg: a, file, args, tids, vfsDir, vfsLoaded, allowNet }, argv: [file] });
     w.on('error', (e) => {
       // Worker başlatma/çalışma hatası: sessizce yutulursa `join` sonsuza dek bekler.
       nodeFs.writeSync(2, `wasm iş parçacığı hatası: ${e && e.stack ? e.stack : e}\n`);
@@ -628,7 +713,8 @@ async function workerMain() {
           nv.save(vfsSnapshot(self, memory));
         }
       : null;
-    inst = await instantiateNoxThread(mod, memory, await makeNodeIo(), spawnThread, exitAll, saveVfs);
+    const wtMod = allowNet ? await import('node:worker_threads') : null;
+    inst = await instantiateNoxThread(mod, memory, await makeNodeIo(), spawnThread, exitAll, saveVfs, allowNet ? makeNodeSyncFetch(wtMod) : null);
     self = inst;
     if (nv && workerData.main) {
       vfsPreload(inst, nv.load(), memory);
@@ -676,7 +762,7 @@ const BROWSER_CHANNEL = 'nox-wasm-browser';
  * (yalnızca `write`) ve çıkışı tek bir BroadcastChannel ile iletir, böylece çıktı ile çıkış kodu sıralı gelir. `io.write` sayfada çalışır; diğer `io` alanları
  * Worker içinde varsayılanlarla değiştirilir (okuma yok, `crypto`, `performance`).
  */
-export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url, vfs = null } = {}) {
+export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url, vfs = null, net = false } = {}) {
   if (!globalThis.crossOriginIsolated) {
     throw new Error('SharedArrayBuffer için sayfa COOP/COEP ile sunulmalı (crossOriginIsolated)');
   }
@@ -697,7 +783,7 @@ export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url
     const w = new Worker(workerUrl, { type: 'module' });
     workers.push(w);
     w.onerror = (e) => settle.reject(new Error(`wasm iş parçacığı hatası: ${e.message}`));
-    w.postMessage({ noxThread: { main, mod, memory, tid, arg, tids, vfs: !!vfs, vfsFiles: main && vfs ? vfs.files : undefined } });
+    w.postMessage({ noxThread: { main, mod, memory, tid, arg, tids, vfs: !!vfs, vfsFiles: main && vfs ? vfs.files : undefined, net: !!net } });
   };
   let vfsEntries = null;
   chan.onmessage = (ev) => {
@@ -720,7 +806,7 @@ export async function runNoxThreads(wasmBytes, io, { workerUrl = import.meta.url
 }
 
 /** Tarayıcı Worker'ı: ana ya da `thread_spawn` ile açılan bir wasm iş parçacığı. */
-async function browserWorkerMain({ main, mod, memory, tid, arg, tids, vfs, vfsFiles }) {
+async function browserWorkerMain({ main, mod, memory, tid, arg, tids, vfs, vfsFiles, net }) {
   const chan = new BroadcastChannel(BROWSER_CHANNEL);
   const enc = new TextEncoder();
   const sleepCell = new Int32Array(new SharedArrayBuffer(4));
@@ -756,7 +842,7 @@ async function browserWorkerMain({ main, mod, memory, tid, arg, tids, vfs, vfsFi
     return t;
   };
   try {
-    const inst = await instantiateNoxThread(mod, memory, io, spawnThread, (code) => exitAll(code));
+    const inst = await instantiateNoxThread(mod, memory, io, spawnThread, (code) => exitAll(code), null, net ? xhrSync : null);
     self = inst;
     if (main && vfsFiles) vfsPreload(inst, vfsFiles, memory);
     if (main) {
@@ -778,7 +864,9 @@ if (typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlob
 
 if (typeof process !== 'undefined' && process.argv) {
   const wt = await import('node:worker_threads').catch(() => null);
-  if (wt && !wt.isMainThread && wt.workerData && wt.workerData.tid !== undefined && wt.workerData.mod) {
+  if (wt && !wt.isMainThread && wt.workerData && wt.workerData.netHelper) {
+    await netHelperMain();
+  } else if (wt && !wt.isMainThread && wt.workerData && wt.workerData.tid !== undefined && wt.workerData.mod) {
     await workerMain();
   } else if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
     await nodeMain();

@@ -24,6 +24,9 @@ const scheduler_mod = @import("../async_rt/scheduler.zig");
 const fiber_mod = @import("../async_rt/fiber.zig");
 const wasm_entry = @import("../wasm_entry.zig");
 const host = @import("../wasm_host.zig");
+const wasm_options = @import("wasm_options");
+/// `--threads` modülleri çağıran iş parçacığını bloke eden eşzamanlı ağ import'unu kullanır (`nox_host.net_fetch`, spec §3.355); asyncify'da askıya alma kullanılır.
+const sync_net = wasm_options.threads;
 
 const gpa = std.heap.page_allocator;
 
@@ -68,6 +71,8 @@ pub const Response = struct {
 };
 
 pub fn available() bool {
+    // `--threads`: yetenek host'un `net_fetch` import'una verdiği yanıtla anlaşılır (-1 = yok); her zaman denenir.
+    if (comptime sync_net) return true;
     return g_caps & CAP_FETCH != 0;
 }
 
@@ -216,8 +221,45 @@ pub fn request(method: []const u8, url: []const u8, body: ?[]const u8, headers: 
     if (body != null and !isBodyMethod(method)) return null;
     const htext = headersToText(headers) orelse return null;
     defer gpa.free(htext);
+    if (comptime sync_net) return requestSync(method, url, body, htext, timeout_ms);
     const req = submit(.{ .method = method, .url = url, .headers_text = htext, .body = body, .timeout_ms = timeout_ms }, false) orelse return null;
     return waitFor(req);
+}
+
+/// `--threads`: isteği tek kayıt olarak host'a verir, çağıran iş parçacığı yanıt gelene kadar BLOKE olur (havuzun diğer işçileri çalışır). Yanıt: `u32 status`, `u32 başlık
+/// uzunluğu`, başlıklar, gövde. Host `-1` dönerse ağ yeteneği yoktur (`error_kind` 4 -> `HttpCapabilityError`).
+fn requestSync(method: []const u8, url: []const u8, body: ?[]const u8, htext: []const u8, timeout_ms: i64) ?*Response {
+    var rec: std.ArrayListUnmanaged(u8) = .empty;
+    defer rec.deinit(gpa);
+    if (!(putU32(&rec, 0) and putU32(&rec, 0) and putU32(&rec, 0) and putU32(&rec, clampMs(timeout_ms)) and putU32(&rec, @intFromBool(body != null)) and putBytes(&rec, method) and putBytes(&rec, url) and putBytes(&rec, htext) and putBytes(&rec, body orelse ""))) return null;
+    const resp = gpa.create(Response) catch return null;
+    resp.* = .{ .ok = false, .status = 0, .error_kind = 2, .body = &.{}, .headers = &.{} };
+    const n = host.net_fetch(rec.items.ptr, rec.items.len);
+    if (n < 0) {
+        resp.error_kind = switch (n) {
+            -1 => 4,
+            -2 => 0,
+            -3 => 1,
+            else => 2,
+        };
+        return resp;
+    }
+    const buf = gpa.alloc(u8, @max(@as(usize, @intCast(n)), 1)) catch {
+        gpa.destroy(resp);
+        return null;
+    };
+    defer gpa.free(buf);
+    const got: usize = @intCast(host.net_read(buf.ptr, @intCast(n)));
+    if (got < 8) return resp;
+    const status = std.mem.readInt(u32, buf[0..4], .little);
+    const hlen = std.mem.readInt(u32, buf[4..8], .little);
+    if (8 + hlen > got) return resp;
+    resp.headers = gpa.dupe(u8, buf[8 .. 8 + hlen]) catch return resp;
+    resp.body = gpa.dupe(u8, buf[8 + hlen .. got]) catch return resp;
+    resp.ok = true;
+    resp.status = status;
+    resp.error_kind = 0;
+    return resp;
 }
 
 // ---- Akışlı istemci --------------------------------------------------------------------------------------------------------------------------------
@@ -281,6 +323,12 @@ fn openRemote(st: *Stream, body: ?[]const u8) void {
 /// `nox_http_stream_open_raw`. Geçersiz istekte `null` (hata türü 3).
 pub fn streamOpen(method: []const u8, url: []const u8, headers: ?*anyopaque, body: ?[]const u8, upload_len: i64, timeout_ms: i64) ?*Stream {
     if (!knownMethod(method)) return null;
+    if (comptime sync_net) {
+        // `--threads`: eşzamanlı ağ import'u akış (parça parça okuma) sunamaz; yetenek hatası olarak bildirilir (`stream_*` yalnızca `--asyncify` freestanding'de).
+        const st = gpa.create(Stream) catch return null;
+        st.* = .{ .ok = false, .error_kind = 4, .req_headers = gpa.alloc(u8, 0) catch return null };
+        return st;
+    }
     const uploading = upload_len != -2;
     if ((body != null or uploading) and !isBodyMethod(method)) return null;
     const htext = headersToText(headers) orelse return null;
