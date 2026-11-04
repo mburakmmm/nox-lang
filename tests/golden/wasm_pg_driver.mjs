@@ -56,7 +56,9 @@ try {
   started = true;
 
   fs.writeFileSync(path.join(dir, 'prog.nox'), fs.readFileSync(template, 'utf8').replaceAll('__PORT__', String(freePort)));
-  execFileSync(noxc, ['build', '--target', 'wasm32-freestanding-asyncify', path.join(dir, 'prog.nox'), '-o', path.join(dir, 'prog.wasm')], { stdio: ['ignore', 'ignore', 'inherit'] });
+  // `NOX_WASM_NAMES=1`: işlev adları korunur, bir wasm tuzağı (trap) okunaklı bir yığın izi verir (CI teşhisi).
+  execFileSync(noxc, ['build', '--target', 'wasm32-freestanding-asyncify', path.join(dir, 'prog.nox'), '-o', path.join(dir, 'prog.wasm')], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, NOX_WASM_NAMES: '1' } });
+  process.stderr.write(`pg: ${execFileSync(pgCtl, ['--version'], { encoding: 'utf8', env: pgEnv }).trim()}; node ${process.version}; ${os.platform()}-${os.arch()}\n`);
   const child = spawn('node', ['--no-warnings', host, path.join(dir, 'prog.wasm'), '--allow-net'], { stdio: ['ignore', 'pipe', 'inherit'] });
   let out = '';
   child.stdout.on('data', (d) => (out += d));

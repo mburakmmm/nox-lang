@@ -105,6 +105,8 @@ deploy/web/install-update-timer.sh uninstall
 tail -f ~/Library/Logs/nox-site-update.log
 ```
 
+macOS keeps launchd agents out of `~/Documents`, `~/Desktop` and `~/Downloads`, so `install` copies what the updater needs (`update-site.sh`, `docker-compose.yml` and `.env`, the latter mode `0600`) to `~/.nox-site-update/deploy/` and points the agent there; run `install` again after you change the compose file or `.env`.
+
 One-time setup: after the first release has pushed the image, open the package on GitHub (*your profile > Packages > noxlang-site > Package settings*) and set its visibility to **Public**, so the machine can pull it without credentials. The compose file keeps `build:` as well, so `up -d --build` still builds locally if you prefer.
 
 The *download page* does not depend on any of this: it reads the latest GitHub release at request time (`/api/release`, cached for ten minutes), so new archives appear there without a redeploy. `deploy/web/test_update_site.sh` exercises the update script against a fake `docker` and runs in CI.

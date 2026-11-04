@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.164]
+
+### Düzeltildi
+
+- **CI teşhisi:** `wasm_pg_driver.mjs` programı `NOX_WASM_NAMES=1` ile derler (wasm tuzağı okunaklı yığın izi verir) ve `pg_ctl`/Node/platform sürümünü yazar; Linux CI'da gerçek PostgreSQL'e karşı WASM testi `memory access out of bounds` ile düşüyordu (Ubuntu 24.04 + PG 16 + Node 22 + binaryen 108 ile Linux konteynerinde yerelde aynı koşulda GEÇİYOR, kök neden araştırılıyor).
+- **`install-update-timer.sh`:** macOS (TCC) launchd ajanlarının `~/Documents` altındaki betiği çalıştırmasına izin vermez ("Operation not permitted", çıkış 126); `install` artık `update-site.sh`, `docker-compose.yml` ve `.env`i (0600) `~/.nox-site-update/deploy/` altına kopyalar ve ajanı oraya yöneltir. Gerçek M4'te launchd altında `--check` ile doğrulandı.
+
 ## [2.0.163]
 
 ### Eklendi
