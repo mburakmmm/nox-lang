@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.142]
+
+### Düzeltildi
+
+- **Belge / ana sayfa:** kurulum sayfası henüz yayımlanmamış yöntemler için gerçek alternatifi söyler (AUR: depodan `makepkg`, Snap: release'e eklenen `.snap`); ana sayfada Homebrew ve Windows kurucusu duyurulur. Yalnızca çalışan yöntemler öne çıkarılır.
+
 ## [2.0.141]
 
 ### Düzeltildi

@@ -27,7 +27,15 @@ Environment variables for the installer: `NOX_INSTALL_DIR` (install root) and `N
 ## Arch Linux (AUR)
 
 ```sh
-yay -S noxc-bin          # or any AUR helper; or: git clone https://aur.archlinux.org/noxc-bin.git && cd noxc-bin && makepkg -si
+yay -S noxc-bin          # or any AUR helper
+```
+
+*The package is being published to the AUR. Until it appears there, build it from this repository (it downloads the release archive):*
+
+```sh
+git clone https://github.com/mburakmmm/nox-lang && cd nox-lang
+python3 scripts/update_aur_package.py --tag v<version> --outdir /tmp/noxc-bin
+cd /tmp/noxc-bin && makepkg -si
 ```
 
 `noxc-bin` installs the prebuilt release (x86-64 and aarch64) under `/usr/lib/noxc` with `noxc` and `noxlsp` in `/usr/bin`, and needs `gcc` to link (`clang` or `zig` are optional). Update it through your AUR helper;
@@ -39,8 +47,10 @@ yay -S noxc-bin          # or any AUR helper; or: git clone https://aur.archlinu
 sudo snap install noxc --classic
 ```
 
+*The Snap Store listing is awaiting approval of the classic confinement. Until it is live, install the `.snap` attached to a [release](https://github.com/mburakmmm/nox-lang/releases):* `sudo snap install --dangerous --classic noxc_<version>_amd64.snap`.
+
 The snap uses *classic* confinement because `noxc` has to run your system's C toolchain and write wherever your project lives. `noxc` and `noxlsp` are available as `noxc` and `noxc.noxlsp`. Update with `sudo snap refresh noxc`
-(snaps also refresh themselves); `noxc upgrade` refuses to run on a snap install. The `.snap` files are also attached to each [release](https://github.com/mburakmmm/nox-lang/releases) (`sudo snap install --dangerous --classic <file>`).
+(snaps also refresh themselves); `noxc upgrade` refuses to run on a snap install.
 
 ## AppImage (Linux)
 
