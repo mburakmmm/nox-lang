@@ -404,13 +404,10 @@ const StaticMethod = struct { fd: ast.FuncDef, owner: []const u8, is_class: bool
 
 pub const MobileMask = enum { none, ios, android };
 
-/// `--target wasm32-wasi`: çalışma zamanında soket, süreç, `dlopen` ve gömülü HPy/WASM köprüsü yoktur; bu modüller derleme zamanında reddedilir
-/// (aksi halde bağlayıcı tanımsız `nox_*` sembolleriyle hata verirdi). Gerekçe `nox_*` sembollerinin `runtime/lib_wasm.zig`de bulunmamasıdır.
+/// `--target wasm32-wasi` / `wasm32-freestanding`: çalışma zamanında henüz bir host yeteneği ya da stub'ı OLMAYAN modüller derleme zamanında reddedilir (aksi halde
+/// bağlayıcı tanımsız `nox_*` sembolleriyle hata verirdi). v2.0.144'ten itibaren `nox.http` ailesi (`http`, `transfer`, `router`, `reflect`, `web`) bu listede DEĞİLDİR:
+/// semboller `runtime/stdlib_shims/http_wasm.zig`de "network yeteneği yok" stub'larıyla sağlanır (ADR-016). Listedeki her modül, yetenek modeline taşındıkça buradan çıkar.
 const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }{
-    .{ .name = "http", .why = "it needs sockets" },
-    .{ .name = "transfer", .why = "it needs sockets" },
-    .{ .name = "reflect", .why = "it depends on nox.http" },
-    .{ .name = "router", .why = "it depends on nox.http" },
     .{ .name = "tls", .why = "it needs sockets" },
     .{ .name = "websocket", .why = "it needs sockets" },
     .{ .name = "smtp", .why = "it needs sockets" },
@@ -755,6 +752,10 @@ pub const Checker = struct {
     /// `.none` masaüstüdür. Mobil maske üçüncü bir profil değildir:
     /// `hosted` grant'inden `process`, `shared_memory` ve `dynamic_code` düşer.
     mobile_mask: MobileMask = .none,
+    /// `--deny-capability` / `NOX_DENY_CAPABILITY`: herhangi bir hedefte, profilin sağladığı bir yeteneği ELLE geri alır (bit = `@intFromEnum(Capability)`).
+    /// Playground gibi güvenilmeyen kodu derleyen ortamlar `fs,net,process` gibi bir küme yasaklar: o yetenekleri isteyen modül import'u ve
+    /// `@capability.requires` çağrıları derleme zamanında reddedilir (host ayrıca ilgili import'ları vermeyerek ikinci bir katman sağlar).
+    denied_capabilities: u16 = 0,
     /// `--target wasm32-wasi` (bkz. `WASM_UNAVAILABLE_MODULES`).
     wasm_target: bool = false,
     /// `--target wasm32-freestanding`: `wasm_target`e ek olarak dosya sistemi yoktur (ADR-013).
@@ -1356,7 +1357,36 @@ pub const Checker = struct {
         };
     }
 
+    fn isDenied(self: *const Checker, cap: Capability) bool {
+        return (self.denied_capabilities >> @intCast(@intFromEnum(cap))) & 1 == 1;
+    }
+
+    /// `list`: virgülle ayrılmış yetenek adları (`filesystem|fs`, `network|net`, `clock`, `entropy`, `threads`, `process`, `shared_memory|shm`, `libc_math`,
+    /// `dynamic_code|dynamic`). Bilinmeyen ad hata verir (sessizce yok sayılmaz: yanlış yazılmış bir yasak güvenlik beklentisini boşa çıkarırdı).
+    pub fn denyCapabilities(self: *Checker, list: []const u8) error{UnknownCapability}!void {
+        var it = std.mem.splitScalar(u8, list, ',');
+        while (it.next()) |raw| {
+            const name = std.mem.trim(u8, raw, " \t");
+            if (name.len == 0) continue;
+            const cap = capabilityFromAlias(name) orelse return error.UnknownCapability;
+            self.denied_capabilities |= @as(u16, 1) << @intCast(@intFromEnum(cap));
+        }
+    }
+
+    fn capabilityFromAlias(name: []const u8) ?Capability {
+        const aliases = [_]struct { alias: []const u8, name: []const u8 }{
+            .{ .alias = "fs", .name = "filesystem" },
+            .{ .alias = "net", .name = "network" },
+            .{ .alias = "shm", .name = "shared_memory" },
+            .{ .alias = "dynamic", .name = "dynamic_code" },
+            .{ .alias = "random", .name = "entropy" },
+        };
+        for (aliases) |a| if (std.mem.eql(u8, a.alias, name)) return Capability.fromName(a.name);
+        return Capability.fromName(name);
+    }
+
     fn grantsCapability(self: *const Checker, cap: Capability) bool {
+        if (self.isDenied(cap)) return false;
         if (!profileGrants(self.profile, cap)) return false;
         if (self.mobile_mask == .none) return true;
         return switch (cap) {
@@ -1519,6 +1549,9 @@ pub const Checker = struct {
         }
         for (caps) |cap| {
             if (self.grantsCapability(cap)) continue;
+            if (self.isDenied(cap)) {
+                return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used: the capability '{s}' is denied (--deny-capability)", .{ segments[1], cap.label() });
+            }
             if (self.mobile_mask != .none and profileGrants(self.profile, cap)) {
                 return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on a mobile target (required capability: '{s}')", .{ segments[1], cap.label() });
             }
@@ -2694,6 +2727,9 @@ pub const Checker = struct {
         const caps = self.capability_functions.get(name) orelse return;
         for (caps) |cap| {
             if (self.grantsCapability(cap)) continue;
+            if (self.isDenied(cap)) {
+                return self.fail(error.CapabilityNotGranted, "the call to '{s}' was rejected: the capability '{s}' is denied (--deny-capability)", .{ name, cap.label() });
+            }
             if (self.mobile_mask != .none and profileGrants(self.profile, cap)) {
                 return self.fail(error.CapabilityNotGranted, "the call to '{s}' was rejected on a mobile target (required capability: '{s}')", .{ name, cap.label() });
             }

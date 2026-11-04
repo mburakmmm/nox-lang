@@ -106,9 +106,81 @@ test "wasm32-wasi: JSON, regex, gzip, sha256, fs kabukları" {
     try expectGoldenOn(.wasi, "fs_read_write_roundtrip", @embedFile("codegen_cases/fs_read_write_roundtrip.nox"), @embedFile("codegen_cases/fs_read_write_roundtrip.expected"));
 }
 
-test "wasm32-wasi: soket gerektiren modül derleme zamanında açık iletiyle reddedilir" {
-    try expectRejected("import nox.http\nprint(1)\n", "cannot be used on the wasm32-wasi target");
+test "wasm32-wasi: henüz desteklenmeyen modül derleme zamanında açık iletiyle reddedilir" {
+    try expectRejected("import nox.tls\nprint(1)\n", "cannot be used on the wasm32-wasi target");
     try expectRejected("import nox.sqlite\nprint(1)\n", "cannot be used on the wasm32-wasi target");
+}
+
+// v2.0.144 (spec §3.346): `nox.http` ve ona bağlı router/web/reflect/transfer WASM'da DERLENİR. Yönlendirme ve bir handler'ın doğrudan çağrılarak sınanması saf Nox'tur
+// ve çalışır; yalnızca soket gerektiren çağrılar host'ta "network" yeteneği yoksa yakalanabilir bir `HttpCapabilityError` fırlatır (`HttpError`ın alt sınıfı).
+const http_capability_program =
+    \\import nox.http
+    \\import nox.router
+    \\from nox.http import HttpRequest, HttpResponse, HttpError, HttpCapabilityError
+    \\from nox.router import Router, Context
+    \\
+    \\def hello(ctx: Context) -> HttpResponse:
+    \\    return HttpResponse(200, "hello " + ctx.param("name"), {"Content-Type": "text/plain"})
+    \\
+    \\r: Router = Router()
+    \\r.get("/hi/:name", hello)
+    \\resp: HttpResponse = r.dispatch(HttpRequest("GET", "/hi/nox", "", {}))
+    \\print(resp.status, resp.body)
+    \\
+    \\try:
+    \\    nox.http.get("http://example.com/", {})
+    \\    print("unexpected")
+    \\except HttpCapabilityError as e:
+    \\    print("capability:", e.message)
+    \\
+    \\try:
+    \\    nox.http.post("http://example.com/", "x", {})
+    \\except HttpError:
+    \\    print("generic HttpError catch ok")
+    \\
+    \\try:
+    \\    nox.http.request("DELETE", "http://example.com/x", "", {}, 1000)
+    \\except HttpCapabilityError as e:
+    \\    print("request:", e.message)
+    \\
+;
+
+const http_capability_expected =
+    \\200 hello nox
+    \\capability: the 'network' capability is not available on this host: GET http://example.com/
+    \\generic HttpError catch ok
+    \\request: the 'network' capability is not available on this host: DELETE http://example.com/x
+    \\
+;
+
+test "wasm: nox.http + nox.router derlenir; handler doğrudan çalışır; ağ çağrıları HttpCapabilityError verir (6 hedef)" {
+    inline for (.{ wasm_helpers.Target.wasi, .freestanding, .wasi_asyncify, .freestanding_asyncify, .wasi_threads, .freestanding_threads }) |t| {
+        try expectGoldenOn(t, "http_capability", http_capability_program, http_capability_expected);
+    }
+}
+
+test "wasm: nox.http.serve dinleyemez, tanı yazıp bir bind hatası gibi hemen döner (program çökmez)" {
+    const src =
+        \\import nox.http
+        \\from nox.http import HttpRequest, HttpResponse
+        \\
+        \\def handle(req: HttpRequest) -> HttpResponse:
+        \\    return HttpResponse(200, "x", {})
+        \\
+        \\nox.http.serve(8080, handle)
+        \\print("after serve")
+        \\
+    ;
+    try expectGolden("serve_unavailable", src, "after serve\n");
+}
+
+test "wasm: web / router / reflect / akışlı yanıt fixture'ları artık wasm'da native ile aynı çıktıyı verir" {
+    try expectGolden("web_building_blocks", @embedFile("codegen_cases/web_building_blocks.nox"), @embedFile("codegen_cases/web_building_blocks.expected"));
+    try expectGolden("router_basic", @embedFile("codegen_cases/router_basic_routing_and_middleware.nox"), @embedFile("codegen_cases/router_basic_routing_and_middleware.expected"));
+    try expectGolden("router_query", @embedFile("codegen_cases/router_query_string.nox"), @embedFile("codegen_cases/router_query_string.expected"));
+    try expectGolden("reflect_signature", @embedFile("codegen_cases/reflect_signature_metadata.nox"), @embedFile("codegen_cases/reflect_signature_metadata.expected"));
+    try expectGolden("response_stream_detached", @embedFile("codegen_cases/response_stream_detached.nox"), @embedFile("codegen_cases/response_stream_detached.expected"));
+    try expectGolden("http_request_methods_errors", @embedFile("codegen_cases/http_request_methods_errors.nox"), @embedFile("codegen_cases/http_request_methods_errors.expected"));
 }
 
 test "wasm32-wasi: HPy/WASM köprü yerleşikleri reddedilir" {

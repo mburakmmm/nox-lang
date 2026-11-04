@@ -49,6 +49,7 @@ pub const gzip_shim = @import("stdlib_shims/gzip.zig");
 pub const regex_shim = @import("stdlib_shims/regex.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
+pub const http_wasm_shim = @import("stdlib_shims/http_wasm.zig");
 
 /// İş parçacıklı kipte yerel M:N havuzu (`nox_pool_*`): `pool_bridge` aracılığıyla `worker_pool`/`scheduler` zamanlayıcıları.
 pub const pool_bridge = if (wasm_options.threads) @import("async_rt/pool_bridge.zig") else struct {};
@@ -92,4 +93,5 @@ comptime {
     _ = regex_shim;
     _ = crypto_shim;
     _ = fs_shim;
+    _ = http_wasm_shim;
 }

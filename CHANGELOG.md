@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.144]
+
+### Eklendi
+
+- **WASM'da `nox.http` ailesi (`http`, `transfer`, `router`, `reflect`, `web`) artık derlenir** (6 hedefin hepsi). Yönlendirme, çerezler, CORS, istek/yanıt sınıfları, akışlı yanıt tipleri ve bir handler'ın doğrudan çağrılarak sınanması WASM'da çalışır ve native ile aynı çıktıyı verir (fixture korpusu: `http_*`, `router_*`, `reflect_*`, `web_building_blocks`, `response_stream_detached`). Yalnızca gerçek soket gerektiren çağrılar host'ta ağ yeteneği yoksa çalışmaz: istemci çağrıları (`get`/`post`/`request`/akışlı istemci) yeni, yakalanabilir bir `HttpCapabilityError` fırlatır (`HttpError`ın alt sınıfı; `except HttpError` onu da yakalar), `serve*` bir tanı mesajı yazıp bir bind hatası gibi hemen döner. Çalışma zamanı sembolleri `runtime/stdlib_shims/http_wasm.zig`de (58 sembol, gerçek imzalarla birebir); `scripts/check_wasm_http_stubs.py` ad ve imza eşitliğini denetler (CI Dokümanlar işi).
+- **`--deny-capability <liste>` / `--deny-capability=<liste>` / `NOX_DENY_CAPABILITY` (her alt komutta, her hedefte):** derleyiciye belirli yetenekleri (`filesystem|fs`, `network|net`, `clock`, `entropy|random`, `threads`, `process`, `shared_memory|shm`, `libc_math`, `dynamic_code|dynamic`) reddettirir; yasaklanan yeteneği isteyen modül import'u ve `@capability.requires` çağrıları derleme zamanında reddedilir, bilinmeyen ad açık hata verir. Güvenilmeyen kodu derleyen ortamlar (playground) için. Bkz. spec §3.346, ADR-016, `docs/tools/wasm.md`.
+
+### Değişti
+
+- `docs/tools/wasm.md`: reddedilen modül listesi ve "Yetenek modeli" bölümü. Kalan reddedilenler: `tls`, `websocket`, `smtp`, `sqlite`, `postgres`, `mysql`, `process`, `sharedmem` (host yeteneği olarak eklenecek), `native`, `plugin`, `hpy` (WASM'da mümkün değil).
+- WASM fixture korpusu varsayılan kipte `channel_rendezvous_pingpong`u atlar (iç içe çalıştırma benzetiminde deadlock; belgelenmiş sınır, `--asyncify`/`--threads` gerçek fiberle geçer).
+
 ## [2.0.143]
 
 ### Düzeltildi

@@ -11,7 +11,7 @@ node --no-warnings tests/golden/wasm_run.mjs hello.wasm   # ya da wasmtime, wasm
 
 ## Nelerin çalıştığı
 
-Dilin tamamı: sınıflar, kalıtım (çoklu dahil), jeneratörler, `async`/`await`/`Channel`, istisnalar, `with`, `__del__`, comprehension'lar, f-string, `lowlevel`. Standart kütüphaneden: `nox.strings`, `math`, `mathx`, `os`, `path`, `time`, `random`, `json`, `yaml`, `toml`, `csv`, `unicode`, `bytes`, `buffer`, `base64`, `bits`, `atomic`, `collections`, `url`, `uuid`, `validate`, `template`, `log`, `test`, `io`, **`fs`** (WASI ön-açılan dizinler), **`regex`**, **`gzip`**, **`crypto`** (hash/HMAC/parola özetleri, WASI `random_get`).
+Dilin tamamı: sınıflar, kalıtım (çoklu dahil), jeneratörler, `async`/`await`/`Channel`, istisnalar, `with`, `__del__`, comprehension'lar, f-string, `lowlevel`. Standart kütüphaneden: `nox.strings`, `math`, `mathx`, `os`, `path`, `time`, `random`, `json`, `yaml`, `toml`, `csv`, `unicode`, `bytes`, `buffer`, `base64`, `bits`, `atomic`, `collections`, `url`, `uuid`, `validate`, `template`, `log`, `test`, `io`, **`fs`** (WASI ön-açılan dizinler), **`regex`**, **`gzip`**, **`crypto`** (hash/HMAC/parola özetleri, WASI `random_get`), **`http`**, **`router`**, **`web`**, **`reflect`**, **`transfer`** (yönlendirme, çerezler, CORS, istek/yanıt sınıfları ve bir handler'ın doğrudan çağrılarak sınanması çalışır; ağ çağrıları için aşağıdaki [yetenek modeline](#yetenek-modeli-ve-deny-capability) bakın).
 
 ## Destek matrisi
 
@@ -26,12 +26,26 @@ Her kip `wasm32-wasi` ve `wasm32-freestanding` için vardır. Dil ve standart k�
 ## Sınırlar
 
 - **Eşzamanlılık kipe bağlıdır** (yukarıdaki tabloya bakın). Varsayılan kipte iş parçacığı yoktur ve `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. `--asyncify` gerçek fiber verir (tek iş parçacığı, M:1); `--threads` gerçek paralellik verir (M:N).
-- **Ağ ve süreç yok.** `nox.http`, `transfer`, `reflect`, `router`, `tls`, `websocket`, `smtp`, `sqlite`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.http' cannot be used on the wasm32-wasi target (it needs sockets)`.
+- **Henüz desteklenmeyen modüller.** `tls`, `websocket`, `smtp`, `sqlite`, `postgres`, `mysql`, `process`, `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
+- **Ağ host'a bağlıdır.** `nox.http` WASM'da derlenir, ama gerçek bir soket (istemci `get`/`post`/`request`/akışlı istemci, sunucu `serve*`) bir host yeteneği olmadan çalışmaz: istemci çağrıları yakalanabilir bir `HttpCapabilityError` (`HttpError`ın alt sınıfı) fırlatır; `serve` bir tanı mesajı yazıp gerçek bir bind hatasındaki gibi hemen döner.
 - **Yerel kütüphane yok.** `extern def ... from "lib"` ile bir `.wasm`a native kütüphane bağlanamaz.
 - **Dosya sistemi** çalıştırıcının WASI ön-açımlarına bağlıdır (`wasm_run.mjs` `.` ve `/tmp` açar).
 - **Matematik** işlevleri (`exp`, `sin`, ...) wasi-libc'den gelir; son basamakta platform libm'den ayrılabilir (ör. `exp(1.0)`).
 
 Ayrıntı ve gerekçe: [ADR-012](../internals/adr/012-wasm-target.md). Bir WASM modülünü Nox'a *içe aktarmak* (`wasm_call`) ayrı bir mekanizmadır: [HPy ve WebAssembly](../internals/hpy-wasm.md).
+
+## Yetenek modeli ve `--deny-capability`
+
+WASM genel amaçlı bir derleme hedefidir: modüller, ihtiyaç duydukları şey bir *yetenek* (`network`, `filesystem`, `process`, `clock`, `entropy`, ...) olduğu sürece derlenir. Yeteneği sağlamak host'un işidir (WASI, `nox_host` import'ları ya da bir tarayıcı sayfası); sağlamıyorsa çağrı anında açık bir hata alırsınız, link hatası ya da çökme değil. Bugün bu yalnızca `nox.http` ailesi için geçerlidir (ağ yeteneği yok); diğer yetenekler (sanal dosya sistemi, `fetch` tabanlı istemci, `sqlite`, ...) aynı modelle eklenecektir ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
+
+Güvenilmeyen kodu derleyen ortamlar (ör. tarayıcıda bir kod deneme alanı) yetenekleri **derleme zamanında** da kısıtlayabilir; bu bayrak yalnızca WASM'da değil, her hedefte çalışır:
+
+```bash
+noxc build --target wasm32-freestanding --deny-capability fs,net,process prog.nox -o prog.wasm
+NOX_DENY_CAPABILITY=net noxc check prog.nox       # ortam değişkeni de olur
+```
+
+Liste virgülle ayrılır: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. Yasaklanan bir yeteneği isteyen modülü içe aktaran ya da `@capability.requires` ile işaretli bir işlevi çağıran program reddedilir: `module 'nox.http' cannot be used: the capability 'network' is denied (--deny-capability)`. Bilinmeyen bir ad hata verir (yanlış yazılmış bir yasak sessizce yok sayılmaz). İkinci katman host'tur: ilgili `nox_host` import'larını hiç sağlamayan bir host, yasaklanmamış olsa bile o yeteneği vermez.
 
 ## `wasm32-freestanding` ve `nox_host`
 

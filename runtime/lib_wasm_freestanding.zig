@@ -50,6 +50,7 @@ pub const os_shim = @import("stdlib_shims/os.zig");
 pub const io_shim = @import("stdlib_shims/io.zig");
 pub const random_shim = @import("stdlib_shims/random.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
+pub const http_wasm_shim = @import("stdlib_shims/http_wasm.zig");
 
 comptime {
     if (wasm_options.threads) _ = pool_bridge;
@@ -85,4 +86,5 @@ comptime {
     _ = io_shim;
     _ = random_shim;
     _ = crypto_shim;
+    _ = http_wasm_shim;
 }

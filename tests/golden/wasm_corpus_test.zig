@@ -6,6 +6,8 @@
 //! - `thread_spawn_ordering`: wasm32-wasi tek iş parçacıklıdır; `nox.thread` aynı yığında eşzamanlı çalışır, `sleep_ms` ile yarışan sıra native'den farklıdır.
 //! - `task_local_basic`: iki işçinin yazdırma sırası zamanlayıcıya bağlıdır (testin amacı per-fiber izolasyon).
 //! - `mathx_trig_log_constants`: wasi-libc (musl) `exp(1.0)` değeri 1 ULP farklıdır (2.7182818284590455); Python/macOS libm 2.718281828459045 verir.
+//! - `channel_rendezvous_pingpong` (yalnız varsayılan kip): iki görevin karşılıklı kanal beklemesi iç içe çalıştırma benzetiminde deadlock'tur (belgelenmiş sınır, docs/tools/wasm.md);
+//!   `--asyncify` ve `--threads` kipleri gerçek fiber ile native ile aynı çıktıyı verir.
 
 const std = @import("std");
 const build_options = @import("build_options");
@@ -16,6 +18,7 @@ const DENYLISTED_SOURCES = [_][]const u8{
     @embedFile("codegen_cases/thread_spawn_ordering.nox"),
     @embedFile("codegen_cases/task_local_basic.nox"),
     @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
+    @embedFile("codegen_cases/channel_rendezvous_pingpong.nox"),
 };
 
 /// İş parçacıklı varyant (ADR-015) yerel `--release` M:N çalışma zamanıyla aynı denylist'i paylaşır (`backend_differential_corpus_test.zig`): zamanlayıcıya bağlı sıra

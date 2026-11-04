@@ -7,6 +7,11 @@ class HttpError(Exception):
 class HttpTimeoutError(HttpError):
     pass
 
+# Host bu çağrı için gereken yeteneği sağlamıyor: WASM'da gerçek bir ağ yoksa (v2.0.144'ten itibaren `nox.http` WASM'da derlenir; yönlendirme, çerezler,
+# istek/yanıt sınıfları ve handler'ın doğrudan çağrılarak sınanması çalışır, yalnızca soket gerektiren çağrılar bunu fırlatır). `except HttpError` bunu da yakalar.
+class HttpCapabilityError(HttpError):
+    pass
+
 class HttpResponse:
     def __init__(self: HttpResponse, status: int, body: str, headers: dict[str, str]) -> None:
         self.status = status
@@ -247,7 +252,10 @@ def listen_v6(port: int, v6_only: bool) -> int:
 def get(url: str, headers: dict[str, str]) -> HttpResponse:
     h: ptr = nox_http_get_raw(url, headers)
     if nox_http_response_ok(h) == 0:
+        kind: int = nox_http_response_error_kind(h)
         nox_http_response_free(h)
+        if kind == 4:
+            raise HttpCapabilityError("the 'network' capability is not available on this host: GET " + url)
         raise HttpError("request failed: " + url)
     status: int = nox_http_response_status(h)
     body: str = nox_http_response_body(h)
@@ -264,7 +272,10 @@ def get(url: str, headers: dict[str, str]) -> HttpResponse:
 def post(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
     h: ptr = nox_http_post_raw(url, body, headers)
     if nox_http_response_ok(h) == 0:
+        kind: int = nox_http_response_error_kind(h)
         nox_http_response_free(h)
+        if kind == 4:
+            raise HttpCapabilityError("the 'network' capability is not available on this host: POST " + url)
         raise HttpError("request failed: " + url)
     status: int = nox_http_response_status(h)
     resp_body: str = nox_http_response_body(h)
@@ -286,6 +297,8 @@ def request(method: str, url: str, body: str, headers: dict[str, str], timeout_m
     if nox_http_response_ok(h) == 0:
         kind: int = nox_http_response_error_kind(h)
         nox_http_response_free(h)
+        if kind == 4:
+            raise HttpCapabilityError("the 'network' capability is not available on this host: " + method + " " + url)
         if kind == 3:
             raise HttpError("invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): " + method + " " + url)
         if kind == 1:
@@ -409,6 +422,8 @@ def _open_stream(method: str, url: str, body: str, has_body: int, headers: dict[
     if nox_http_stream_ok(h) == 0:
         kind: int = nox_http_stream_error_kind(h)
         nox_http_stream_close_raw(h)
+        if kind == 4:
+            raise HttpCapabilityError("the 'network' capability is not available on this host: " + method + " " + url)
         if kind == 3:
             raise HttpError("invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): " + method + " " + url)
         if kind == 1:

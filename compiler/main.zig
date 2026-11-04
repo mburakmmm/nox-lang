@@ -77,6 +77,18 @@ fn detectLiveProgress(io: std.Io, environ_map: *const std.process.Environ.Map) b
     return std.Io.File.stderr().supportsAnsiEscapeCodes(io) catch false;
 }
 
+/// v2.0.144: `--deny-capability <liste>` / `--deny-capability=<liste>` / `NOX_DENY_CAPABILITY`: derleyicinin (herhangi bir hedefte) REDDETTİĞİ yetenekler
+/// (`filesystem|fs`, `network|net`, `clock`, `entropy|random`, `threads`, `process`, `shared_memory|shm`, `libc_math`, `dynamic_code|dynamic`). `main()` bir kez
+/// ayarlar; tüm denetleyici kurulumları `applyDeniedCapabilities` ile okur. (Güvenilmeyen kodu derleyen playground için; bkz. spec §3.346.)
+var g_deny_capabilities: []const u8 = "";
+
+fn applyDeniedCapabilities(ch: *checker.Checker) void {
+    ch.denyCapabilities(g_deny_capabilities) catch {
+        printErr("unknown capability in --deny-capability / NOX_DENY_CAPABILITY: '{s}' (valid: filesystem|fs, network|net, clock, entropy|random, threads, process, shared_memory|shm, libc_math, dynamic_code|dynamic)\n", .{g_deny_capabilities});
+        std.process.exit(1);
+    };
+}
+
 fn reporter(io: std.Io) progress.Reporter {
     return .{ .io = io, .live = g_progress_live };
 }
@@ -277,6 +289,32 @@ fn realMain(init: std.process.Init) !void {
     _ = arg_it.next(); // program adı
     while (arg_it.next()) |arg| try all_args.append(gpa, arg);
     defer all_args.deinit(gpa);
+
+    // `--deny-capability` her alt komutta geçerli, global bir bayraktır: listeden çıkarılır, alt komut ayrıştırıcıları görmez.
+    if (init.environ_map.get("NOX_DENY_CAPABILITY")) |v| g_deny_capabilities = v;
+    {
+        var w: usize = 0;
+        var r: usize = 0;
+        while (r < all_args.items.len) : (r += 1) {
+            const arg = all_args.items[r];
+            if (std.mem.eql(u8, arg, "--deny-capability")) {
+                if (r + 1 >= all_args.items.len) {
+                    printErr("--deny-capability expects a comma-separated list of capabilities\n", .{});
+                    std.process.exit(1);
+                }
+                r += 1;
+                g_deny_capabilities = all_args.items[r];
+                continue;
+            }
+            if (std.mem.startsWith(u8, arg, "--deny-capability=")) {
+                g_deny_capabilities = arg["--deny-capability=".len..];
+                continue;
+            }
+            all_args.items[w] = arg;
+            w += 1;
+        }
+        all_args.shrinkRetainingCapacity(w);
+    }
 
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
@@ -2537,6 +2575,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     var checker_state = checker.Checker.init(a);
+    applyDeniedCapabilities(&checker_state);
     checker_state.profile = opts.profile;
     checker_state.mobile_mask = mobileMaskOf(if (opts.profile == .hosted and opts.target != null) qbe_target.hostedTargetInfo(opts.target.?) else null);
     checker_state.wasm_target = if (opts.profile == .hosted and opts.target != null) (if (qbe_target.hostedTargetInfo(opts.target.?)) |ht| ht.wasm else false) else false;
@@ -2578,6 +2617,7 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     var checker_state = checker.Checker.init(a);
+    applyDeniedCapabilities(&checker_state);
     checker_state.checkModule(module) catch |e| {
         printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         std.process.exit(1);
@@ -2652,6 +2692,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
 
     const backend: codegen.Backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm, opts.debug_info)) .llvm else .qbe;
     var checker_state = checker.Checker.init(a);
+    applyDeniedCapabilities(&checker_state);
     checker_state.backend = backend;
     checker_state.checkModule(module) catch |e| {
         printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
@@ -3164,6 +3205,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // (`checker_state.instantiations`) burada, ownership analizi ve codegen'e
     // iletmek için gereklidir (bkz. checker.zig, "Faz 10: generics" notu).
     var checker_state = checker.Checker.init(a);
+    applyDeniedCapabilities(&checker_state);
     checker_state.backend = backend;
     checker_state.profile = profile;
     checker_state.mobile_mask = mobileMaskOf(hosted_info);

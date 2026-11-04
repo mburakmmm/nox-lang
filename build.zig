@@ -1286,6 +1286,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/help_screen_test.zig",
         "tests/cli/explain_test.zig",
         "tests/cli/profile_test.zig",
+        "tests/cli/deny_capability_test.zig",
         "tests/cli/backend_default_test.zig",
         "tests/cli/mobile_target_test.zig",
         "tests/cli/embed_abi_corpus_test.zig",

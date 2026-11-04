@@ -91,6 +91,10 @@ Commands that wait on the network or the build (`upgrade`, `install`, `refresh`,
 
 In a terminal the download line is a live bar (percentage, size, speed, estimated time) that is replaced by a summary (`19.8 MB in 4.8s (4.1 MB/s)`) when it finishes. When stderr is not a terminal (a pipe, a file, CI) or `TERM=dumb`, no bar is drawn: you get only the stage lines and the summary, so logs stay readable. A stage that finishes in under a tenth of a second omits its duration.
 
+## Capability restrictions
+
+`--deny-capability <list>` (also `--deny-capability=<list>`, valid with every subcommand) makes the compiler reject any program that imports a module needing one of the listed capabilities, or calls a function marked `@capability.requires` for it: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. It is meant for environments that compile untrusted code (a playground, a CI sandbox) and works on every target; see [WebAssembly](wasm.md#yetenek-modeli-ve-deny-capability).
+
 ## Environment
 
 `NOX_HOME` (the data directory, default `~/.nox`), `NOX_INDEX_URL`, `NOX_PUBLISH_API_BASE`, `NOX_UPGRADE_API_BASE` and others are listed in [Environment variables](../reference/environment.md).

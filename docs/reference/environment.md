@@ -8,6 +8,7 @@
 | `NOX_RESOURCE_DIR` | `noxc` | use this directory instead of the one next to the executable to find the runtime object and standard library |
 | `NOX_INDEX_URL` | `search`, `add` | the package index to query: an `https://…/index.json` URL or a local file (default `https://noxpkg.noxlang.com/index.json`) |
 | `NOX_PUBLISH_API_BASE` | `publish`, `login`, `logout`, `whoami` | base URL of the registry's API (default `https://noxpkg.noxlang.com`); credentials are saved per server |
+| `NOX_DENY_CAPABILITY` | every subcommand | same as `--deny-capability`: comma-separated capabilities the compiler rejects (`fs`, `net`, `process`, ...) |
 | `NOX_NO_BROWSER` | `login` | when set, `noxc login` does not try to open a browser (same as `--no-browser`) |
 | `NOX_RUN_CACHE_MAX_MB` | `run`, `test`, `cache prune` | size cap in MB for the `noxc run`/`noxc test` binary cache under `$NOX_HOME/cache/run` (default 512; `0` = no cap). Entries unused for 14 days are removed regardless; entries used in the last 10 minutes are never removed |
 | `NOX_UPGRADE_API_BASE`, `NOX_UPGRADE_DOWNLOAD_BASE` | `upgrade` | override where releases are looked up and downloaded (for mirrors and tests) |

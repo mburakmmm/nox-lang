@@ -29,7 +29,7 @@ CASES = os.path.join(ROOT, "tests/golden/codegen_cases")
 # `wasm_corpus_test.zig`deki denylist'lerle AYNI (gerekçeler orada).
 LIBM = {"mathx_trig_log_constants"}
 DENY = {
-    "default": LIBM | {"thread_spawn_ordering", "task_local_basic"},
+    "default": LIBM | {"thread_spawn_ordering", "task_local_basic", "channel_rendezvous_pingpong"},
     "asyncify": LIBM,
     "threads": LIBM | {"async_deadlock", "thread_spawn_ordering", "task_reassignment_frees_old", "task_local_basic"},
 }
