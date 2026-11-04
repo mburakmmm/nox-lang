@@ -433,13 +433,47 @@ def load_inbox() -> list[Submission]:
         i = i + 1
     return out
 
-def add_submission(name: str, repo: str, ref: str, description: str, tags: list[str], publisher_id: int) -> bool:
+# Yayın sonucu: 0 = kuyruk dolu (reddedildi), 1 = onay kuyruğuna girdi/güncellendi, 2 = onaylı paketin aynı sahibi tarafından
+# aynı repo için güncellendi (onay gerekmedi).
+#
+# Tekrarlar tek satıra iner: aynı (ad, repo, yayıncı) için bekleyen bir gönderim varsa yeni satır AÇILMAZ, mevcut satır güncellenir.
+# Paket zaten onaylıysa, aynı yayıncı AYNI repoyu yayımlıyorsa (yeni sürüm/açıklama/etiket) katalog doğrudan güncellenir: repo
+# adresi değişmediği için inceleyecek yeni bir şey yoktur. Yeni ad ve repo değişikliği hep onaya düşer.
+def add_submission(name: str, repo: str, ref: str, description: str, tags: list[str], publisher_id: int) -> int:
     db: Connection = _open()
+    live: Statement = db.prepare("UPDATE packages SET description = ?, tags = ? WHERE name = ? AND repo = ? AND publisher_id = ?")
+    live.bind_str(0, description)
+    live.bind_str(1, _tags_dump(tags))
+    live.bind_str(2, name)
+    live.bind_str(3, repo)
+    live.bind_int(4, publisher_id)
+    if publisher_id != 0 and live.execute() > 0:
+        # Aynı pakete ait bekleyen eski gönderimler artık gereksizdir.
+        drop: Statement = db.prepare("DELETE FROM submissions WHERE name = ? AND repo = ? AND publisher_id = ?")
+        drop.bind_str(0, name)
+        drop.bind_str(1, repo)
+        drop.bind_int(2, publisher_id)
+        drop.execute()
+        _mirror(db)
+        db.close()
+        return 2
+    upd: Statement = db.prepare("UPDATE submissions SET ref = ?, description = ?, tags = ?, submitted_at_ms = ? WHERE name = ? AND repo = ? AND COALESCE(publisher_id, 0) = ?")
+    upd.bind_str(0, ref)
+    upd.bind_str(1, description)
+    upd.bind_str(2, _tags_dump(tags))
+    upd.bind_int(3, nox.time.now_ms())
+    upd.bind_str(4, name)
+    upd.bind_str(5, repo)
+    upd.bind_int(6, publisher_id)
+    if upd.execute() > 0:
+        _mirror(db)
+        db.close()
+        return 1
     count_rows: list[Row] = db.query("SELECT COUNT(*) FROM submissions")
     n: int = count_rows[0].get_int(0)
     if n >= _max_pending():
         db.close()
-        return False
+        return 0
     st: Statement = db.prepare("INSERT INTO submissions (id, name, repo, ref, description, tags, submitted_at_ms, publisher_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0))")
     st.bind_str(0, nox.uuid.uuid4())
     st.bind_str(1, name)
@@ -452,7 +486,17 @@ def add_submission(name: str, repo: str, ref: str, description: str, tags: list[
     st.execute()
     _mirror(db)
     db.close()
-    return True
+    return 1
+
+# Eskiden biriken yinelenen bekleyen gönderimleri (aynı ad + repo + yayıncı) en yenisine indirir. Yönetim paneli açılırken çağrılır.
+def dedupe_pending() -> int:
+    db: Connection = _open()
+    st: Statement = db.prepare("DELETE FROM submissions WHERE rowid NOT IN (SELECT MAX(rowid) FROM submissions GROUP BY name, repo, COALESCE(publisher_id, 0))")
+    n: int = st.execute()
+    if n > 0:
+        _mirror(db)
+    db.close()
+    return n
 
 def latest_submission_id(name: str, repo: str) -> str:
     db: Connection = _open()
@@ -525,9 +569,9 @@ def _username_ok(name: str) -> bool:
 def register_user(username: str, password: str) -> str:
     name: str = nox.strings.trim(username)
     if not _username_ok(name):
-        return "Kullanıcı adı 3-32 karakter olmalı; harf, rakam ve alt çizgi."
+        return "The username must be 3–32 characters: letters, digits and underscores."
     if len(password) < 8 or len(password) > 200:
-        return "Parola en az 8 karakter olmalı."
+        return "The password must be at least 8 characters."
     db: Connection = _open()
     hash: str = nox.crypto.argon2_hash(password)
     st: Statement = db.prepare("INSERT INTO users (username, password_hash, role, created_at_ms) VALUES (?, ?, 'user', ?)")
@@ -538,7 +582,7 @@ def register_user(username: str, password: str) -> str:
         st.execute()
     except SqliteError:
         db.close()
-        return "Bu kullanıcı adı alınmış."
+        return "That username is taken."
     db.close()
     return ""
 

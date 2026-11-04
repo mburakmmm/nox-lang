@@ -1,0 +1,26 @@
+async def work(id: int, n: int) -> int:
+    total: int = 0
+    for i in range(n):
+        total += i
+    return total
+
+async def producer(c: Channel[int]) -> None:
+    for i in range(5):
+        await c.send(i * 10)
+
+async def main_task() -> None:
+    a: Task[int] = spawn work(1, 1000)
+    b: Task[int] = spawn work(2, 2000)
+    ra: int = await a
+    rb: int = await b
+    print("work results:", ra, rb)
+
+    ch: Channel[int] = Channel[int](2)
+    p: Task[None] = spawn producer(ch)
+    for k in range(5):
+        v: int = await ch.recv()
+        print("got", v)
+    await p
+
+t: Task[None] = spawn main_task()
+await t

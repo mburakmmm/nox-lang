@@ -289,9 +289,11 @@ HEADER = """<header class="topbar">
       </div>
     </div>
     <a href="{pkg}" rel="noopener">Packages</a>
+    <a class="nav-beta" href="/playground/">Playground <span class="pill">Beta</span></a>
   </nav>
   <div class="topright">
     <button class="search-open" type="button" aria-label="Search the docs" data-search-open><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Search</span><kbd>/</kbd></button>
+    <a class="btn-dl" href="/download/" aria-label="Download Nox"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M10 3v9m0 0l-3.500-3.500M10 12l3.500-3.500M4 15.500h12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download</span></a>
     <a class="gh" href="{repo}" rel="noopener" aria-label="Nox on GitHub"><svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 014 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.66 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
     <button class="theme-toggle" type="button" aria-label="Toggle colour theme" data-theme-toggle><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path class="i-moon" d="M16.5 12.2A7 7 0 017.8 3.5a7 7 0 108.7 8.7z" fill="currentColor"/><g class="i-sun" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10" cy="10" r="3.6" fill="currentColor"/><path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M4 4l1.4 1.4M14.6 14.6L16 16M16 4l-1.4 1.4M5.4 14.6L4 16"/></g></svg></button>
     <button class="menu-toggle" type="button" aria-label="Open navigation" data-menu-toggle><span></span><span></span><span></span></button>
@@ -315,12 +317,12 @@ FOOTER = """<footer class="footer">
       <p>Native without the ownership noise.</p>
     </div>
     <nav class="footer-cols" aria-label="Footer">
-      <div><h4>Learn</h4><a href="/docs/install/">Install</a><a href="/docs/tutorial/">Tutorial</a><a href="/docs/language/">Language reference</a><a href="/docs/stdlib/">Standard library</a></div>
+      <div><h4>Learn</h4><a href="/download/">Download</a><a href="/playground/">Playground (beta)</a><a href="/docs/install/">Install guide</a><a href="/docs/tutorial/">Tutorial</a><a href="/docs/language/">Language reference</a><a href="/docs/stdlib/">Standard library</a></div>
       <div><h4>Build on Nox</h4><a href="/docs/apis/">The three APIs</a><a href="/docs/apis/nni/">Native interface (NNI)</a><a href="/docs/apis/plugin-api/">Plugin API</a><a href="/docs/tools/noxpkg/">Publish a package</a></div>
       <div><h4>Project</h4><a href="{repo}" rel="noopener">GitHub</a><a href="{pkg}" rel="noopener">noxpkg registry</a><a href="https://nyx.noxlang.com">Nyx</a><a href="https://aether.noxlang.com">Aether</a><a href="https://aura.noxlang.com">Aura</a><a href="/docs/whatsnew/2.0/">What’s new in 2.0</a><a href="/docs/reference/versioning/">Versioning policy</a></div>
     </nav>
   </div>
-  <div class="footer-base"><span>© Melih Burak Memiş and Nox contributors · MIT License</span><span>noxlang.com is served by a Nyx app written in Nox.</span></div>
+  <div class="footer-base"><span>© Melih Burak Memiş and Nox contributors · MIT License</span><span class="built-note">This site is written in Nox: a <a href="https://nyx.noxlang.com">Nyx</a> app serves it, and the Playground runs the compiler as WebAssembly.</span></div>
 </footer>
 """.replace("{repo}", REPO_URL).replace("{pkg}", PKG_URL)
 
@@ -430,6 +432,22 @@ def verify_snippets(snips):
     print(f"landing örnekleri doğrulandı ({len(snips)})")
 
 
+def verify_playground_examples():
+    """Playground örnekleri (site/playground/examples/*.nox) native `noxc run` ile 0 koduyla bitmeli; `index.tsv` her örneği listelemeli."""
+    noxc = os.path.join(ROOT, "zig-out", "bin", "noxc")
+    ex_dir = os.path.join(SITE_SRC, "playground", "examples")
+    listed = [l.split("\t", 1)[0] for l in read(os.path.join(ex_dir, "index.tsv")).splitlines() if l.strip()]
+    files = sorted(f[:-4] for f in os.listdir(ex_dir) if f.endswith(".nox"))
+    if sorted(listed) != files:
+        sys.exit(f"playground: index.tsv ile örnek dosyaları uyuşmuyor ({sorted(listed)} != {files})")
+    tmp = tempfile.mkdtemp(prefix="nox-play-verify-")
+    for name in files:
+        r = subprocess.run([noxc, "run", os.path.join(ex_dir, name + ".nox")], capture_output=True, text=True, timeout=120, cwd=tmp)
+        if r.returncode != 0:
+            sys.exit(f"playground örneği {name}: çalışmadı:\n{r.stdout}{r.stderr}")
+    print(f"playground örnekleri doğrulandı ({len(files)})")
+
+
 def code_card(code, lang="nox", label=None, out=None):
     body = highlight_code(code, lang)
     lab = label or LANG_LABEL.get(lang, lang)
@@ -461,6 +479,53 @@ def build_landing(sections, snips, css_v, stdlib_pages):
     return html_out
 
 
+PLAY_FILES = ("play.js", "compile-worker.js", "run-worker.js")
+PLAY_LIB = ("noxc-frontend.wasm", "noxrt-wasm32-freestanding.o", "noxrt-wasm32-freestanding-sqlite3.o", "compiler-rt-wasm32.a")
+
+
+def build_playground_assets(out, wasm_lib):
+    """Playground'un istemci varlıklarını `public/playground/` altına koyar. Derleyici ön yüzü ve çalışma zamanı nesneleri
+    `zig build wasm-compiler wasm-rt` çıktısıdır (`--wasm-lib`); yoksa playground sayfası YAZILMAZ (dönüş: False)."""
+    missing = [n for n in PLAY_LIB if not os.path.isfile(os.path.join(wasm_lib, n))]
+    if missing:
+        print("uyarı: playground atlandı; eksik WASM varlıkları: " + ", ".join(missing) + f" ({wasm_lib})")
+        return False
+    dest = os.path.join(out, "playground")
+    os.makedirs(os.path.join(dest, "lib"))
+    for n in PLAY_FILES:
+        shutil.copy(os.path.join(SITE_SRC, "playground", n), os.path.join(dest, n))
+    for n in ("wasm_compiler.mjs", "wasm_host.mjs"):
+        shutil.copy(os.path.join(ROOT, "compiler", n), os.path.join(dest, n))
+    for n in PLAY_LIB:
+        shutil.copy(os.path.join(wasm_lib, n), os.path.join(dest, "lib", n))
+    examples = []
+    ex_dir = os.path.join(SITE_SRC, "playground", "examples")
+    for line in read(os.path.join(ex_dir, "index.tsv")).splitlines():
+        if not line.strip():
+            continue
+        ex_id, title = line.split("\t", 1)
+        examples.append({"id": ex_id, "title": title, "code": read(os.path.join(ex_dir, ex_id + ".nox"))})
+    write(os.path.join(dest, "examples.json"), json.dumps(examples, ensure_ascii=False))
+    return True
+
+
+def build_static_page(template, title, description, path, css_v, extra_head=""):
+    """`site/<template>` şablonundaki {{HEAD}}/{{HEADER}}/{{FOOTER}}/{{CSSV}} yer tutucularını doldurur (indirme, playground)."""
+    tpl = read(os.path.join(SITE_SRC, template))
+    head = head_html(title, description, BASE_URL + path, BASE_URL + "/assets/img/social-preview.jpg", extra_head).replace("{CSSV}", css_v)
+    return (tpl.replace("{{HEAD}}", head).replace("{{HEADER}}", HEADER).replace("{{FOOTER}}", FOOTER)
+            .replace("{{CSSV}}", css_v))
+
+
+EXTRA_PAGES = [
+    # (şablon, url yolu, başlık, açıklama, arama bölümü)
+    ("download.html", "/download/", "Download Nox · macOS, Windows, Linux, WebAssembly",
+     "Download the Nox compiler and toolchain for macOS, Windows and Linux — installers, archives, AppImage, Snap, Homebrew and AUR — or try Nox in the browser.", "Install"),
+    ("playground.html", "/playground/", "Nox Playground (beta) · compile and run Nox in your browser",
+     "Write Nox, compile it to WebAssembly and run it — all inside your browser. Nothing is sent to a server.", "Tools"),
+]
+
+
 # --------------------------------------------------------------------------------------
 # Derleme
 # --------------------------------------------------------------------------------------
@@ -469,13 +534,16 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset
                  ".png": "image/png", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8",
                  ".xml": "application/xml; charset=utf-8", ".webmanifest": "application/manifest+json",
                  ".sh": "text/x-shellscript; charset=utf-8", ".ps1": "text/plain; charset=utf-8",
-                 ".svg": "image/svg+xml", ".ico": "image/x-icon"}
+                 ".svg": "image/svg+xml", ".ico": "image/x-icon", ".mjs": "text/javascript; charset=utf-8",
+                 ".wasm": "application/wasm"}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(ROOT, "services", "noxlang-site", "public"))
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--wasm-lib", default=os.path.join(ROOT, "zig-out", "lib"),
+                    help="noxc-frontend.wasm ve noxrt-wasm32-freestanding*.o içeren dizin (zig build wasm-compiler wasm-rt)")
     args = ap.parse_args()
     out = os.path.abspath(args.out)
     if os.path.exists(out):
@@ -485,6 +553,7 @@ def main():
     snips = load_snippets()
     if args.verify:
         verify_snippets(snips)
+        verify_playground_examples()
 
     sections, order = load_toc()
     known = {p["rel"]: p["url"] for p in order}
@@ -515,6 +584,16 @@ def main():
                        "h": [{"t": t, "i": i} for (l, i, t) in headings if l in (2, 3)],
                        "x": " ".join(body_words)[:3500]})
 
+    have_play = build_playground_assets(out, os.path.abspath(args.wasm_lib))
+    extra_urls = []
+    for tpl_name, url_path, title, desc, section in EXTRA_PAGES:
+        if not os.path.exists(os.path.join(SITE_SRC, tpl_name)):
+            continue
+        if tpl_name == "playground.html" and not have_play:
+            continue
+        write(os.path.join(out, url_path.strip("/"), "index.html"), build_static_page(tpl_name, title, desc, url_path, css_v))
+        extra_urls.append(url_path)
+        search.append({"t": title.split(" · ")[0], "u": url_path, "s": section, "d": desc, "h": [], "x": ""})
     stdlib_pages = [p for p in order if p["rel"].startswith("stdlib/") and p["rel"] != "stdlib/index.md"]
     write(os.path.join(out, "index.html"), build_landing(sections, snips, css_v, stdlib_pages))
     write(os.path.join(out, "search-index.json"), json.dumps(search, ensure_ascii=False, separators=(",", ":")))
@@ -532,7 +611,7 @@ def main():
 </body></html>
 """)
     write(os.path.join(out, "robots.txt"), f"User-agent: *\nAllow: /\nSitemap: {BASE_URL}/sitemap.xml\n")
-    urls = [BASE_URL + "/"] + [BASE_URL + p["url"] for p in order]
+    urls = [BASE_URL + "/"] + [BASE_URL + u for u in extra_urls] + [BASE_URL + p["url"] for p in order]
     write(os.path.join(out, "sitemap.xml"),
           '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
           + "".join(f"<url><loc>{u}</loc></url>\n" for u in urls) + "</urlset>\n")
@@ -543,6 +622,9 @@ def main():
                   {"src": "/assets/img/icon-512.png", "sizes": "512x512", "type": "image/png"}]}, indent=2))
     for n in ("install.sh", "install.ps1"):
         shutil.copy(os.path.join(ROOT, n), os.path.join(out, n))
+    # Sitenin derlendiği Nox sürümü: dağıtım doğrulaması (scripts/site_image_smoke.sh, deploy/web/update-site.sh) bunu okur.
+    zon = read(os.path.join(ROOT, "build.zig.zon"))
+    write(os.path.join(out, "version.txt"), re.search(r'\.version\s*=\s*"([^"]+)"', zon).group(1) + "\n")
 
     # İzinleri normalleştir: kaynak dosyaların kısıtlayıcı modları (ör. 0600) çıktıya taşınırsa, root olmayan kullanıcıyla
     # çalışan konteyner onları okuyamaz (v2.0.0-rc.3 dağıtımında yakalandı).

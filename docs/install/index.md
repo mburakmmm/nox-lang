@@ -3,6 +3,8 @@
 Nox ships as a single archive per platform containing `noxc` (the compiler and tool), `noxlsp` (the language server), the runtime objects, the standard library, the bundled `qbe` back end (Linux, macOS) and the header
 `include/nox_nni.h`.
 
+Prefer a picker that detects your system and shows every option? Use the [download page](/download/). Just want to try the language first? Open the [Playground](/playground/) — nothing to install.
+
 ## Requirements
 
 - **To compile and run programs:** a C toolchain for linking (`cc`) — Xcode Command Line Tools on macOS, `build-essential`/`gcc` on Linux, MinGW-w64 or Zig on Windows — and, for the default LLVM back end, **`clang` or `zig`** on `PATH`.

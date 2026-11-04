@@ -373,6 +373,42 @@ jobs:
           git commit -m "noxc ${GITHUB_REF_NAME#v}"
           git push origin HEAD:main
 
+  # v2.0.163: kararlı bir sürüm yayımlanınca noxlang.com sitesinin imajını (belgeler, Playground'un derleyicisi, indirme sayfası) GHCR'ye iter.
+  # Üretim makinesi (deploy/web/update-site.sh) imajı kendi başına çeker; bu iş makineye ERİŞMEZ ve gizli anahtar gerektirmez (yalnızca GITHUB_TOKEN).
+  # İmaj, ÖNCE gerçekten çalıştırılıp `scripts/site_image_smoke.sh` ile doğrulanır; test kırmızıysa itilmez. Yalnızca `build` (release arşivleri)
+  # başarılıysa çalışır, ön sürümlerde (`-rc`) çalışmaz. Paketin GHCR'de GENEL (public) olması gerekir: bkz. docs/internals/deployment.md.
+  site-image:
+    name: noxlang.com imajı (GHCR)
+    needs: build
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/noxlang-site
+    steps:
+      - uses: actions/checkout@v4
+      - name: İmajı derle
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          docker build -f services/noxlang-site/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.version=${ver}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "${IMAGE}:${ver}" -t "${IMAGE}:latest" .
+      - name: Duman testi (üretim ayarlarıyla çalıştır)
+        run: bash scripts/site_image_smoke.sh "${IMAGE}:${GITHUB_REF_NAME#v}" "${GITHUB_REF_NAME#v}"
+      - name: GHCR'ye it
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          ver="${GITHUB_REF_NAME#v}"
+          docker push "${IMAGE}:${ver}"
+          docker push "${IMAGE}:latest"
+
   # v2.0.139: kararlı bir sürüm yayımlanınca AUR paketini (`noxc-bin`) günceller. ÖNCE paket temiz bir Arch container'ında gerçekten derlenir,
   # kurulur ve çalıştırılır (packaging/aur/test-in-arch.sh; secret olmasa da çalışır, kırmızıysa AUR'a itilmez). `AUR_SSH_PRIVATE_KEY`
   # (AUR hesabına tanımlı SSH anahtarının özel kısmı) yoksa itme adımı uyarıp atlanır; sürümün kendisi etkilenmez.

@@ -1,0 +1,16 @@
+import nox.sqlite
+from nox.sqlite import Connection
+from nox.db import Row, Statement
+
+db: Connection = nox.sqlite.open(":memory:")
+db.execute("CREATE TABLE langs (name TEXT, year INTEGER)")
+for entry in [("Nox", 2025), ("Python", 1991), ("Zig", 2016)]:
+    st: Statement = db.prepare("INSERT INTO langs VALUES (?, ?)")
+    st.bind_str(0, entry[0])
+    st.bind_int(1, entry[1])
+    st.execute()
+
+rows: list[Row] = db.query("SELECT name, year FROM langs ORDER BY year")
+for r in rows:
+    print(r.get_str(0), r.get_int(1))
+db.close()

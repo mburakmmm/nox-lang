@@ -55,15 +55,15 @@
           if (next) window.location = next;
           else window.location.reload();
         } else if (r.status === 429) {
-          showErr(form, "Çok fazla deneme. Biraz sonra tekrar dene.");
+          showErr(form, "Too many attempts. Please try again in a moment.");
           if (btn) btn.disabled = false;
         } else {
-          showErr(form, (data && data.error) || "İşlem tamamlanamadı.");
+          showErr(form, (data && data.error) || "That did not go through.");
           if (btn) btn.disabled = false;
         }
       });
     }).catch(function () {
-      showErr(form, "Bağlantı hatası.");
+      showErr(form, "Connection error.");
       if (btn) btn.disabled = false;
     });
   });
@@ -71,7 +71,7 @@
   var logout = document.getElementById("logout");
   if (logout) {
     logout.addEventListener("click", function () {
-      fetch("/cikis", {
+      fetch("/logout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ csrf: csrf() })

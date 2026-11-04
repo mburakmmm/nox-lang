@@ -208,4 +208,18 @@
       });
     }).catch(function () {});
   }
+
+  // ---- yumuşak giriş (yalnızca landing bölümleri; hareket azaltma tercihine saygı) ----
+  (function () {
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var els = document.querySelectorAll("body.landing .section .section-head, body.landing .principle, body.landing .battery, body.landing .layer, body.landing .facts li, body.landing .cta-box");
+    if (reduce || !("IntersectionObserver" in window) || !els.length) return;
+    root.classList.add("js");
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); }
+      });
+    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.05 });
+    els.forEach(function (el) { el.classList.add("reveal"); io.observe(el); });
+  })();
 })();

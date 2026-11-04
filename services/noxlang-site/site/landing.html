@@ -18,13 +18,14 @@
       <p class="lede">A statically typed language with Python’s syntax, compiled ahead of time to native code.</p>
       <p class="lede-sub">Memory is managed for you — there is no borrow checker, no lifetime syntax and no <code>free</code>. Write what you mean; the compiler works out the rest.</p>
       <div class="hero-actions">
-        <a class="btn btn-primary" href="/docs/install/">Get started</a>
+        <a class="btn btn-primary" href="/download/">Download Nox</a>
+        <a class="btn" href="/playground/">Try it in your browser <span class="pill">Beta</span></a>
         <a class="btn" href="/docs/tutorial/">Take the tutorial</a>
       </div>
       <div class="install" data-copy="curl -fsSL https://noxlang.com/install.sh | sh" title="Click to copy">
         <span class="prompt">$</span><code>curl -fsSL https://noxlang.com/install.sh | sh</code>
       </div>
-      <p class="install-note">macOS and Linux. With Homebrew: <code>brew install mburakmmm/nox/noxc</code>. On Windows: <code>irm https://noxlang.com/install.ps1 | iex</code>, or use the <a href="/docs/install/#windows">installer</a>. <a href="/docs/install/">All install options</a>.</p>
+      <p class="install-note">macOS (Apple silicon) and Linux. With Homebrew: <code>brew install mburakmmm/nox/noxc</code>. On Windows: the <a href="/download/#windows">installer</a> or <code>irm https://noxlang.com/install.ps1 | iex</code>. Also AppImage, Snap and AUR — <a href="/download/">all downloads</a>.</p>
     </div>
     <div class="hero-code">{{HERO_SNIPPET}}</div>
   </div>
@@ -132,6 +133,48 @@
     </div>
   </section>
 
+  <section class="section" aria-labelledby="play">
+    <div class="wrap built">
+      <div>
+        <p class="kicker">Playground <span class="pill">Beta</span></p>
+        <h2 id="play">Run the real compiler in a browser tab.</h2>
+        <p>The Playground is not a mock-up: the Nox front end and an LLVM toolchain run as WebAssembly in your page, compile your program to a <code>.wasm</code> module and run it in a worker. Nothing you type is sent to a server.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="/playground/">Open the Playground</a>
+          <a class="btn" href="/docs/tools/browser-compiler/">How it works</a>
+        </div>
+      </div>
+      <div class="term" aria-label="Playground preview">
+        <div class="term-bar"><i></i><i></i><i></i></div>
+<pre><span class="c"># main.nox</span>
+def greet(name: str) -&gt; str:
+    return f"Hello, {name}!"
+
+print(greet("browser"))
+
+<span class="c"># compiled in ~200 ms, then run:</span>
+<span class="p">&gt;</span> Hello, browser!</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="nyx">
+    <div class="wrap built">
+      <div>
+        <p class="kicker">Built with Nox</p>
+        <h2 id="nyx">This site runs on Nyx.</h2>
+        <p>noxlang.com is a <a href="https://nyx.noxlang.com">Nyx</a> application written in Nox and compiled to a single native binary: the router, security headers, rate limiting, the live release lookup behind the download page and the per-route policy for the Playground. The framework sites (Nyx, Aether, Aura) and the <a href="https://noxpkg.noxlang.com">noxpkg registry</a> — accounts, GitHub sign-in, an admin console — are Nox services too.</p>
+        <p>We use it for what it is: a young framework running real traffic, which is how we find the gaps. The source is in the repository.</p>
+        <a class="nyx-badge" href="https://github.com/mburakmmm/nox-lang/tree/main/services/noxlang-site"><i></i>services/noxlang-site</a>
+      </div>
+      <ul class="facts">
+        <li><strong>1</strong><span>native binary serves the site</span></li>
+        <li><strong>0</strong><span>Python, Node or PHP at run time</span></li>
+        <li><strong>3</strong><span>production services in Nox: this site, the framework sites and noxpkg</span></li>
+      </ul>
+    </div>
+  </section>
+
   <section class="section" aria-labelledby="where">
     <div class="wrap">
       <div class="section-head">
@@ -142,14 +185,15 @@
         <table class="platforms">
           <thead><tr><th>Platform</th><th>Status</th></tr></thead>
           <tbody>
-            <tr><td>macOS · Apple silicon</td><td><span class="dot"></span>Fully tested</td></tr>
-            <tr><td>Linux · x86-64 and aarch64</td><td><span class="dot"></span>Fully tested</td></tr>
-            <tr><td>Windows · x86-64</td><td><span class="dot warn"></span>Supported, end-to-end smoke tested</td></tr>
+            <tr><td>macOS · Apple silicon</td><td><span class="dot"></span>Fully tested · prebuilt, Homebrew</td></tr>
+            <tr><td>Linux · x86-64 and aarch64</td><td><span class="dot"></span>Fully tested · tarball, AppImage, Snap, AUR</td></tr>
+            <tr><td>Windows · x86-64</td><td><span class="dot"></span>Fully tested · installer and zip, the whole test suite runs in CI</td></tr>
+            <tr><td>WebAssembly · WASI and browser</td><td><span class="dot"></span>Compile to <code>.wasm</code>, or run the compiler itself in a browser tab — see the <a href="/playground/">Playground</a></td></tr>
             <tr><td>Bare metal · freestanding x86-64</td><td><span class="dot"></span>Boots a real kernel image under QEMU in the test suite</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="install-note">Details and known gaps are in the <a href="/docs/reference/platforms/">platform notes</a>.</p>
+      <p class="install-note">Intel Macs build from source. Details and known gaps are in the <a href="/docs/reference/platforms/">platform notes</a>.</p>
     </div>
   </section>
 

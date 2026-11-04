@@ -1,63 +1,65 @@
-# WebAssembly (wasm32-wasi)
+# WebAssembly
 
-Nox programları WebAssembly'ye derlenebilir:
+Nox programs compile to WebAssembly, and the compiler itself runs as WebAssembly in a browser tab ([Playground](playground.md)).
 
 ```bash
 noxc build --target wasm32-wasi hello.nox -o hello.wasm
-node --no-warnings tests/golden/wasm_run.mjs hello.wasm   # ya da wasmtime, wasmer, ...
+node --no-warnings tests/golden/wasm_run.mjs hello.wasm   # or wasmtime, wasmer, ...
 ```
 
-Çıktı bir WASI komutudur (`_start`). Derleme yolu LLVM'dir: `.ll` dosyası `zig cc -target wasm32-wasi` ile wasi-libc ve `noxrt-wasm32-wasi.o` çalışma zamanına bağlanır. `zig` PATH'te olmalıdır; `--backend qbe`, `--emit-asm` ve `-g` bu hedefte hatadır. Çalışma zamanı nesneleri (`lib/noxrt-wasm32-*.o`, `-sqlite3.o` ve compiler-rt arşivleri `lib/compiler-rt-wasm32*.a`) `zig build wasm-rt` ile üretilir; v2.0.150'den itibaren sürüm arşivlerinde (macOS, Linux, Windows) hazır gelir, yani yayımlanmış bir `noxc` ile `--target wasm32-*` kaynak derlemeden çalışır (`zig` PATH'te olmalı; `--asyncify` için ayrıca `wasm-opt`).
+The output is a WASI command (`_start`). The build path is LLVM: the `.ll` file is linked with wasi-libc and the `noxrt-wasm32-wasi.o` runtime through `zig cc -target wasm32-wasi`, so `zig` must be on `PATH`; `--backend qbe`, `--emit-asm` and `-g` are errors on this target. The runtime objects (`lib/noxrt-wasm32-*.o`, the `-sqlite3.o` objects and the `lib/compiler-rt-wasm32*.a` archives) are produced by `zig build wasm-rt`. Since v2.0.150 they ship inside the release archives (macOS, Linux, Windows), so a published `noxc` can build `--target wasm32-*` without compiling anything from source (`zig` on `PATH`; `--asyncify` also needs `wasm-opt`).
 
-## Nelerin çalıştığı
+## What works
 
-Dilin tamamı: sınıflar, kalıtım (çoklu dahil), jeneratörler, `async`/`await`/`Channel`, istisnalar, `with`, `__del__`, comprehension'lar, f-string, `lowlevel`. Standart kütüphaneden: `nox.strings`, `math`, `mathx`, `os`, `path`, `time`, `random`, `json`, `yaml`, `toml`, `csv`, `unicode`, `bytes`, `buffer`, `base64`, `bits`, `atomic`, `collections`, `url`, `uuid`, `validate`, `template`, `log`, `test`, `io`, **`fs`** (WASI ön-açılan dizinler), **`regex`**, **`gzip`**, **`crypto`** (hash/HMAC/parola özetleri, WASI `random_get`), **`http`**, **`router`**, **`web`**, **`reflect`**, **`transfer`** (yönlendirme, çerezler, CORS, istek/yanıt sınıfları ve bir handler'ın doğrudan çağrılarak sınanması çalışır; ağ çağrıları için aşağıdaki [yetenek modeline](#yetenek-modeli-ve---deny-capability) bakın).
+The whole language: classes, inheritance (multiple included), generators, `async`/`await`/`Channel`, exceptions, `with`, `__del__`, comprehensions, f-strings, `lowlevel`. From the standard library: `nox.strings`, `math`, `mathx`, `os`, `path`, `time`, `random`, `json`, `yaml`, `toml`, `csv`, `unicode`, `bytes`, `buffer`, `base64`, `bits`, `atomic`, `collections`, `url`, `uuid`, `validate`, `template`, `log`, `test`, `io`, **`fs`**, **`regex`**, **`gzip`**, **`crypto`** (hashes, HMAC, password digests), **`sqlite`**, **`http`**, **`router`**, **`web`**, **`reflect`**, **`transfer`**, **`websocket`**, **`tls`**, **`smtp`**, **`postgres`**, **`mysql`** and **`process`**. Anything that needs the outside world — sockets, child processes, a listening server — is a *capability* the host grants; see the [capability model](#capability-model-and---deny-capability).
 
-## Destek matrisi
+## Targets and modes
 
-| Kip | Bayrak | `spawn`/`await`/`Channel` | Gerçek fiber | Gerçek paralellik (`nox.thread`, M:N) | Bilinen sınır |
+| Mode | Flag | `spawn`/`await`/`Channel` | Real fibers | Real parallelism (`nox.thread`, M:N) | Known limit |
 |---|---|---|---|---|---|
-| Varsayılan | (yok) | iç içe çalıştırma benzetimi | hayır | hayır | altındaki bir görevi bekleyen görev deadlock sayılır |
-| Asyncify | `--asyncify` | fiber (M:1) | evet | hayır | Asyncify'ın boyut ve hız maliyeti ([ADR-014](../internals/adr/014-wasm-asyncify.md)) |
-| Threads | `--threads` | fiber + iş çalan havuz (M:N) | evet (Asyncify ile) | evet | paylaşımlı bellek gerekir; dosya tanıtıcıları iş parçacığı başınadır ([ADR-015](../internals/adr/015-wasm-threads.md)) |
+| Default | (none) | nested-run simulation | no | no | a task waiting on a task below it on the stack is reported as a deadlock |
+| Asyncify | `--asyncify` | fibers (M:1) | yes | no | size and speed cost of Asyncify ([ADR-014](../internals/adr/014-wasm-asyncify.md)) |
+| Threads | `--threads` | fibers + work-stealing pool (M:N) | yes (with Asyncify) | yes | needs shared memory; file handles are per thread ([ADR-015](../internals/adr/015-wasm-threads.md)) |
 
-Her kip `wasm32-wasi` ve `wasm32-freestanding` için vardır. Dil ve standart kütüphane davranışı kipler arasında aynıdır; fark yalnızca eşzamanlılık modelidir. Bu eşdeğerlik `zig build wasm-corpus-test` ile sekiz hedefte de fixture korpusuyla doğrulanır; bilinen farklar (libm'in son basamağı, kipe özgü zamanlama sırası) korpus listelerinde belgelidir.
+Every mode exists for both `wasm32-wasi` and `wasm32-freestanding`. Language and standard-library behaviour is identical across modes; only the concurrency model differs. This equivalence is checked by `zig build wasm-corpus-test` over the fixture corpus on all eight targets; the known differences (the last digit of libm, mode-specific scheduling order) are documented in the corpus lists.
 
-## Sınırlar
+## Limits
 
-- **Eşzamanlılık kipe bağlıdır** (yukarıdaki tabloya bakın). Varsayılan kipte iş parçacığı yoktur ve `spawn`/`await` iç içe çalıştırma benzetimiyle çalışır: bir görev, onu bekleyen görevin yığınında sonuna kadar çalışır; altındaki bir görevin sonucunu bekleyen görev "deadlock" olarak bildirilir. `--asyncify` gerçek fiber verir (tek iş parçacığı, M:1); `--threads` gerçek paralellik verir (M:N).
-- **Henüz desteklenmeyen modüller.** `sharedmem`, `native`, `plugin`, `hpy` ve `hpy_*` / `wasm_call` yerleşikleri derleme sırasında şu iletiyle reddedilir: `module 'nox.tls' cannot be used on the wasm32-wasi target (it needs sockets)`. Bunların çoğu için yol bellidir (host yeteneği olarak sağlanması; aşağıdaki modele bakın), `native`, `plugin` ve `hpy` ise WASM'da hiçbir zaman mümkün değildir (dinamik yükleme yok).
-- **Ağ host'a bağlıdır.** `nox.http` WASM'da derlenir, ama gerçek bir soket (istemci `get`/`post`/`request`/akışlı istemci, sunucu `serve*`) bir host yeteneği olmadan çalışmaz: istemci çağrıları yakalanabilir bir `HttpCapabilityError` (`HttpError`ın alt sınıfı) fırlatır; `serve` bir tanı mesajı yazıp gerçek bir bind hatasındaki gibi hemen döner.
-- **Windows'ta Node WASI ile `read_dir`.** `wasm32-wasi` modülünü Windows'ta Node'un `node:wasi`si ile çalıştırırken `nox.fs.read_dir` (ve onu kullanan `remove_dir_all`) `FsError` verir: Node'un WASI'si Windows'ta `fd_readdir`i uygulamaz (ENOSYS). Linux/macOS'ta ve `wasm32-freestanding`'de (sanal dosya sistemi) sorun yoktur; Wasmtime gibi başka bir WASI motoru da etkilenmez.
-- **Yerel kütüphane yok.** `extern def ... from "lib"` ile bir `.wasm`a native kütüphane bağlanamaz.
-- **Dosya sistemi** çalıştırıcının WASI ön-açımlarına bağlıdır (`wasm_run.mjs` `.` ve `/tmp` açar).
-- **Matematik** işlevleri (`exp`, `sin`, ...) wasi-libc'den gelir; son basamakta platform libm'den ayrılabilir (ör. `exp(1.0)`).
+- **Concurrency depends on the mode** (see the table). In the default mode there are no threads and `spawn`/`await` use the nested-run simulation: a task runs to completion on the stack of the task awaiting it, and a task waiting for the result of a task below it is reported as a "deadlock". `--asyncify` gives real fibers (one thread, M:1); `--threads` gives real parallelism (M:N).
+- **Modules that are not available.** `sharedmem`, `native`, `plugin`, `hpy` and the `hpy_*` / `wasm_call` built-ins are rejected at compile time with a message such as `module 'nox.sharedmem' cannot be used on the wasm32-wasi target (...)`. `native`, `plugin` and `hpy` can never work in WebAssembly (there is no dynamic loading).
+- **The network belongs to the host.** `nox.http` compiles, but a real socket (client `get`/`post`/`request`/streaming, server `serve*`) does not work without a host capability: client calls raise a catchable `HttpCapabilityError` (a subclass of `HttpError`); `serve` prints a diagnostic and returns at once, like a real bind failure.
+- **Node WASI on Windows has no `read_dir`.** Running a `wasm32-wasi` module under Node's `node:wasi` on Windows makes `nox.fs.read_dir` (and `remove_dir_all`, which uses it) raise `FsError`: Node's WASI does not implement `fd_readdir` on Windows (ENOSYS). Linux, macOS, `wasm32-freestanding` (virtual file system) and other WASI engines such as Wasmtime are not affected.
+- **No native libraries.** `extern def ... from "lib"` cannot link a native library into a `.wasm`.
+- **The file system** depends on the runner's WASI pre-opens (`wasm_run.mjs` opens `.` and `/tmp`).
+- **Math** functions (`exp`, `sin`, ...) come from wasi-libc and may differ from the platform libm in the last digit (for example `exp(1.0)`).
 
-Ayrıntı ve gerekçe: [ADR-012](../internals/adr/012-wasm-target.md). Bir WASM modülünü Nox'a *içe aktarmak* (`wasm_call`) ayrı bir mekanizmadır: [HPy ve WebAssembly](../internals/hpy-wasm.md).
+Details and rationale: [ADR-012](../internals/adr/012-wasm-target.md). *Importing* a WebAssembly module into Nox (`wasm_call`) is a separate mechanism: [HPy and WebAssembly](../internals/hpy-wasm.md).
 
-## Yetenek modeli ve `--deny-capability`
+## Capability model and `--deny-capability`
 
-WASM genel amaçlı bir derleme hedefidir: modüller, ihtiyaç duydukları şey bir *yetenek* (`network`, `filesystem`, `clock`, `entropy`, ...) olduğu sürece derlenir. Yeteneği sağlamak host'un işidir (WASI, `nox_host` import'ları ya da bir tarayıcı sayfası); sağlamıyorsa çağrı anında açık bir hata alırsınız, link hatası ya da çökme değil. Bugün bu `nox.http` istemcisi (ağ), `nox.fs` ve `nox.sqlite` (sanal dosya sistemi) için geçerlidir; kalan yetenekler aynı modelle eklenecektir ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
+WebAssembly is a general-purpose compile target: a module compiles as long as what it needs is a *capability* (`network`, `filesystem`, `clock`, `entropy`, ...). Providing the capability is the host's job (WASI, the `nox_host` imports, or a browser page); if the host does not, you get a clear error at the call, not a link error or a crash. The model covers the `nox.http` client (network), `nox.fs` and `nox.sqlite` (virtual file system), sockets, processes and servers, each described below ([ADR-016](../internals/adr/016-wasm-capabilities.md)).
 
-Güvenilmeyen kodu derleyen ortamlar (ör. tarayıcıda bir kod deneme alanı) yetenekleri **derleme zamanında** da kısıtlayabilir; bu bayrak yalnızca WASM'da değil, her hedefte çalışır:
+Environments that compile untrusted code (a code playground in a browser, for example) can also restrict capabilities at **compile time**; the flag works on every target, not just WebAssembly:
 
 ```bash
 noxc build --target wasm32-freestanding --deny-capability fs,net,process prog.nox -o prog.wasm
-NOX_DENY_CAPABILITY=net noxc check prog.nox       # ortam değişkeni de olur
+NOX_DENY_CAPABILITY=net noxc check prog.nox       # an environment variable works too
 ```
 
-Liste virgülle ayrılır: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. Yasaklanan bir yeteneği isteyen modülü içe aktaran ya da `@capability.requires` ile işaretli bir işlevi çağıran program reddedilir: `module 'nox.http' cannot be used: the capability 'network' is denied (--deny-capability)`. Bilinmeyen bir ad hata verir (yanlış yazılmış bir yasak sessizce yok sayılmaz). İkinci katman host'tur: ilgili `nox_host` import'larını hiç sağlamayan bir host, yasaklanmamış olsa bile o yeteneği vermez.
+The list is comma separated: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. A program that imports a module needing a denied capability, or calls a function marked `@capability.requires` for it, is rejected: `module 'nox.http' cannot be used: the capability 'network' is denied (--deny-capability)`. An unknown name is an error (a misspelled denial is never ignored silently). The second layer is the host: a host that provides none of the relevant `nox_host` imports does not grant the capability even if it was not denied.
 
-## `wasm32-freestanding` ve `nox_host`
+On the freestanding asyncify target the host grants capabilities through a bit mask (`nox_host_caps_set`): `fetch` (1), `tcp` (2), `process` (4) and `serve` (8). All are **off by default**.
+
+## `wasm32-freestanding` and `nox_host`
 
 ```bash
 noxc build --target wasm32-freestanding prog.nox -o prog.wasm
-noxc run   --target wasm32-freestanding prog.nox          # node ile (compiler/wasm_host.mjs)
+noxc run   --target wasm32-freestanding prog.nox          # runs with node (compiler/wasm_host.mjs)
 ```
 
-WASI ve libc olmadan, tarayıcıya ya da gömülü bir host'a uygun bir modül üretir. Modül dış dünyayı yalnızca `nox_host` import'larıyla görür: `write`, `read`, `clock_ms`, `random_fill`, `sleep_ms`, `exit` ([ADR-013](../internals/adr/013-wasm-host.md)). Dil ve stdlib `wasm32-wasi` ile aynıdır; farklar: `nox.fs` gerçek diske değil, çalışma zamanının bellek içi sanal dosya sistemine yazar (aşağıya bakın), ortam değişkenleri boş başlar (`set_var` modüle özel), `arg(0)` `"nox"`.
+This produces a module with no WASI and no libc, suitable for a browser or an embedded host. The module sees the outside world only through the `nox_host` imports: `write`, `read`, `clock_ms`, `random_fill`, `sleep_ms` and `exit` ([ADR-013](../internals/adr/013-wasm-host.md)). Language and standard library are the same as on `wasm32-wasi`; the differences: `nox.fs` writes to the runtime's in-memory virtual file system, not a real disk (see below), the environment starts empty (`set_var` is module-local), and `arg(0)` is `"nox"`.
 
-Tarayıcıda ya da kendi host'unda çalıştırmak için `compiler/wasm_host.mjs` içindeki `createHost` kullanılır:
+To run it in a browser or your own host, use `createHost`/`runNox` from `compiler/wasm_host.mjs`:
 
 ```js
 import { runNox } from './wasm_host.mjs';
@@ -70,63 +72,63 @@ const code = await runNox(await (await fetch('prog.wasm')).arrayBuffer(), {
 });
 ```
 
-### Doğrulama araçları
+### Verification tools
 
-`scripts/wasm_corpus.py` fixture korpusunu paralel ve motor seçilebilir koşar (`--target`, `--engine node|wasmtime`); `scripts/wasm_stress.py` karma yükü (kanal fan-in, döngüsel çöp, terk edilen jeneratörler, `nox.thread`) dört hedefte süre boyunca tekrar koşup native çıktıyla birebir karşılaştırır.
+`scripts/wasm_corpus.py` runs the fixture corpus in parallel on a selectable engine (`--target`, `--engine node|wasmtime`); `scripts/wasm_stress.py` repeats a mixed workload (channel fan-in, cyclic garbage, abandoned generators, `nox.thread`) on four targets for a given time and compares the output byte for byte with native.
 
-### Maliyet
+### Cost
 
-Ölçümler `benchmarks/wasm/RESULTS.md` içindedir (`benchmarks/wasm_bench.py` ile yeniden üretilir). Özet (Apple M4, Node 26): wasm, native LLVM'e göre CPU-bağımlı kodda 1,4x, bellek-yoğun kodda 3-5x yavaştır; `--asyncify` CPU-bağımlı kodda varsayılan kipe göre +0-4% ekler ama çok sık askıya alan yüklerde (500 bin `spawn`/`await`) 2,6x yavaşlatır; `--threads` dört eşit görevde Asyncify'a göre 2,7x hızlıdır ama tek işçide atomik ARC maliyeti taşır. Modüller 60-125 KB'dır.
+Measurements are in `benchmarks/wasm/RESULTS.md` (reproduce with `benchmarks/wasm_bench.py`). In short (Apple M4, Node 26): WebAssembly is 1.4x slower than native LLVM on CPU-bound code and 3-5x slower on memory-heavy code; `--asyncify` adds 0-4% on CPU-bound code compared with the default mode but slows workloads that suspend very often (500 thousand `spawn`/`await`) by 2.6x; `--threads` is 2.7x faster than Asyncify on four equal tasks but pays for atomic ARC on a single worker. Modules are 60-125 KB.
 
-### Tarayıcıda
+### In the browser
 
-`createHost`/`runNox` tarayıcıda olduğu gibi çalışır; `--asyncify` modülleri de (saf wasm). İş parçacıklı `wasm32-freestanding-threads` modülleri için `runNoxThreads(bytes, io)` kullanılır: ana wasm iş parçacığı bir Worker olarak çalışır (sayfa `Atomics.wait` yapamaz), tüm Worker'ları sayfa oluşturur ve çıktı/çıkış kodu sayfaya iletilir. Sayfa `crossOriginIsolated` olmalıdır (`Cross-Origin-Opener-Policy: same-origin` ve `Cross-Origin-Embedder-Policy: require-corp`). `examples/wasm-browser/` bir örnek sayfa ve bu başlıkları ekleyen küçük bir sunucu içerir:
+`createHost`/`runNox` work in a browser as they are, and so do `--asyncify` modules (plain WebAssembly). For threaded `wasm32-freestanding-threads` modules use `runNoxThreads(bytes, io)`: the main wasm thread runs as a Worker (a page cannot `Atomics.wait`), the page creates all Workers, and output and exit code are relayed to the page. The page must be `crossOriginIsolated` (`Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`). `examples/wasm-browser/` has a sample page and a small server that adds those headers:
 
 ```bash
 noxc build --target wasm32-freestanding-threads prog.nox -o examples/wasm-browser/prog.wasm
 node examples/wasm-browser/serve.mjs      # http://127.0.0.1:8123/examples/wasm-browser/index.html?wasm=prog.wasm
 ```
 
-Chromium'da doğrulandı: varsayılan, `--asyncify` ve `--threads` kipleri (200 iş parçacıklı `thread_spawn_stress` ve paylaşımlı atomik sayaç dahil) native ile aynı çıktıyı verir. Firefox ve Safari denenmedi. `wasm32-wasi` modülleri tarayıcıda bir WASI dolgusu gerektirir (`nox_host` yerine WASI import'ları); `wasm_host.mjs` WASI'yi yalnızca Node'da sağlar.
+Verified in Chromium: the default, `--asyncify` and `--threads` modes (including the 200-thread `thread_spawn_stress` and the shared atomic counter) give the same output as native. Firefox and Safari were not tried for threads. `wasm32-wasi` modules need a WASI shim in a browser (WASI imports instead of `nox_host`); `wasm_host.mjs` provides WASI only on Node.
 
-### Başka motorlar
+### Other engines
 
-`wasm32-wasi` ve `wasm32-wasi-asyncify` modülleri `wasmtime` ile de çalışır (`noxc run` zaten onu tercih eder): tüm fixture korpusu `scripts/wasm_corpus.py --target wasm32-wasi --engine wasmtime` ile sıfır farkla geçer. İş parçacıklı modüller wasmtime/wasmer'da çalışmaz (wasi-threads kaldırıldı); onlar için `wasm_host.mjs` ya da `thread_spawn` sözleşmesini uygulayan bir host gerekir.
+`wasm32-wasi` and `wasm32-wasi-asyncify` modules also run under `wasmtime` (`noxc run` prefers it): the whole fixture corpus passes with zero differences through `scripts/wasm_corpus.py --target wasm32-wasi --engine wasmtime`. Threaded modules do not run under wasmtime or wasmer (wasi-threads was removed); they need `wasm_host.mjs` or a host that implements the `thread_spawn` contract.
 
-## `--asyncify`: gerçek fiber
+## `--asyncify`: real fibers
 
 ```bash
-noxc build --target wasm32-wasi --asyncify prog.nox -o prog.wasm     # wasm-opt (binaryen) gerekir
+noxc build --target wasm32-wasi --asyncify prog.nox -o prog.wasm     # needs wasm-opt (binaryen)
 noxc run   --target wasm32-freestanding --asyncify prog.nox
 ```
 
-`--asyncify` göreve bekleyen görevleri gerçekten askıya alır (yığın değiştirme): karşılıklı kanal beklemeleri, `nox.thread`/`sleep` sırası ve `async` kalıpları native zamanlayıcıyla aynı sırada çalışır, deadlock sınırı kalkar. Çıktı modül host'tan ek import istemez; her WASM motorunda çalışır. Maliyet: yaklaşık %30–50 yavaşlık/boyut ve `wasm-opt` bağımlılığı ([ADR-014](../internals/adr/014-wasm-asyncify.md)). Paralel çalışma değildir (tek iş parçacığı).
+`--asyncify` really suspends tasks that are waiting (stack switching): mutual channel waits, `nox.thread`/`sleep` ordering and `async` patterns run in the same order as under the native scheduler, and the deadlock limit disappears. The output module asks the host for no extra imports and runs on any WebAssembly engine. Cost: roughly 30-50% in speed and size and a dependency on `wasm-opt` ([ADR-014](../internals/adr/014-wasm-asyncify.md)). It is not parallelism (a single thread). The `wasm-opt` invocation enables bulk memory, sign extension, non-trapping float-to-int and mutable globals explicitly so older binaryen releases accept the objects.
 
-## `--threads`: gerçek paralel M:N
+## `--threads`: real parallel M:N
 
 ```bash
-noxc build --target wasm32-wasi --threads prog.nox -o prog.wasm       # wasm-opt (binaryen) ve node gerekir
+noxc build --target wasm32-wasi --threads prog.nox -o prog.wasm       # needs wasm-opt (binaryen) and node
 NOX_POOL_WORKERS=4 noxc run --target wasm32-wasi --threads prog.nox
 ```
 
-`--threads`, yerel `--release` çalışma zamanının iş çalan M:N havuzunu WASM'a taşır: `spawn`/`await`, `Channel`, `nox.thread` birden çok iş parçacığında GERÇEKTEN paralel çalışır (paylaşımlı bellek + atomikler). Modül `env.memory` (paylaşımlı) ve `wasi::thread-spawn` içe aktarır; `compiler/wasm_host.mjs` bunları Node Worker'larıyla sağlar (wasmtime 50 `-Sthreads`ı kaldırdığından `noxc run` bu hedefte yalnızca Node kullanır). Başka bir host aynı iki içe aktarımı sağlayarak modülü çalıştırabilir. İşçi sayısı `NOX_POOL_WORKERS` ile ayarlanır. Sınırlar ve gerekçe: [ADR-015](../internals/adr/015-wasm-threads.md); `wasm32-freestanding` için de `--threads` vardır: host `nox_host.thread_spawn(arg) -> tid` sağlar ve her yeni iş parçacığında `nox_host_thread_start(tid, arg)`ı çağırır (paylaşımlı `env.memory` ile).
+`--threads` brings the work-stealing M:N pool of the native `--release` runtime to WebAssembly: `spawn`/`await`, `Channel` and `nox.thread` really run in parallel on several threads (shared memory plus atomics). The module imports `env.memory` (shared) and `wasi::thread-spawn`; `compiler/wasm_host.mjs` provides them with Node Workers (wasmtime 50 removed `-Sthreads`, so `noxc run` uses only Node for this target). Another host can run the module by providing the same two imports. The worker count is set with `NOX_POOL_WORKERS`. Limits and rationale: [ADR-015](../internals/adr/015-wasm-threads.md). `--threads` also exists for `wasm32-freestanding`: the host provides `nox_host.thread_spawn(arg) -> tid` and calls `nox_host_thread_start(tid, arg)` on each new thread (with a shared `env.memory`).
 
 ## SQLite
 
-`nox.sqlite` her WASM hedefinde derlenir; SQLite kütüphanesi programa statik bağlanır (yalnızca `nox.sqlite` kullanan programlar ~700 KB büyür). `wasm32-wasi`'de dosya tabanlı veritabanları host'un ön-açtığı dizinlerde çalışır (`wasmtime run --dir=. app.wasm`) ve çalıştırmalar arasında kalıcıdır; kilitleme yoktur (tek süreç varsayımı). `wasm32-freestanding`'de şimdilik dosya tabanlı veritabanları sanal dosya sisteminde yaşar (aşağıya bakın).
+`nox.sqlite` compiles on every WebAssembly target; the SQLite library is linked into the program statically (only programs that use `nox.sqlite` grow, by about 700 KB). On `wasm32-wasi`, file-based databases work in the directories the host pre-opens (`wasmtime run --dir=. app.wasm`) and persist between runs; there is no locking (a single process is assumed). On `wasm32-freestanding`, file-based databases live in the virtual file system (below).
 
-## Sanal dosya sistemi (wasm32-freestanding)
+## Virtual file system (wasm32-freestanding)
 
-`wasm32-freestanding` modülünde işletim sistemi yoktur; `nox.fs` ve dosya tabanlı `nox.sqlite` çalışma zamanının doğrusal belleğinde yaşayan bir **bellek içi sanal dosya sistemine** gider. Host'a hiçbir import eklenmez, gerçek diske ya da sunucuya hiçbir şey yazılmaz (playground için güvenli). Başlangıçta `/` ve `/tmp` vardır; göreli yollar `/` altında çözülür, `..` kökün üstüne çıkmaz. Varsayılan olarak dosya sistemi program ömrü boyunca yaşar ve çıkışta kaybolur; `--threads` kipinde iş parçacıkları arasında paylaşılır. Kalıcı kılmak için bir sonraki bölüme bakın. `remove_file` açık bir tanıtıcı varken bile güvenlidir (POSIX `unlink` gibi). Sınırlar: sembolik bağ, izin biti ve dizin silme yoktur (`nox.fs` zaten sunmaz); `rename` bir dizini başka bir dizinin üstüne taşıyamaz.
+A `wasm32-freestanding` module has no operating system; `nox.fs` and file-based `nox.sqlite` go to an **in-memory virtual file system** that lives in the runtime's linear memory. No import is added for the host, and nothing is written to a real disk or server (safe for a playground). It starts with `/` and `/tmp`; relative paths resolve under `/`, and `..` never climbs above the root. By default the file system lives for the lifetime of the program and disappears at exit; in `--threads` mode it is shared between threads. See the next section to make it persistent. `remove_file` is safe even while a handle is open (like POSIX `unlink`). Limits: no symbolic links, permission bits or directory removal of non-empty directories except through `remove_dir_all`; `rename` cannot move a directory on top of another directory.
 
-Kalıcılık ya da gerçek bir dizine eşleme gerektiren host'lar için ileride `nox_host`a isteğe bağlı `fs_*` import'ları eklenebilir; bu kırıcı olmaz. `wasm32-wasi`'de dosya işlemleri ise WASI'nin ön-açılmış dizinlerine (`.` ve `/tmp`) gider.
+On `wasm32-wasi`, file operations go to the pre-opened directories of WASI (`.` and `/tmp`).
 
-### Kalıcı sanal dosya sistemi
+### Persistent virtual file system
 
-Sanal dosya sistemi **isteğe bağlı olarak kalıcı** yapılabilir: host, modül başlamadan önce ağacı doldurur ve çıkışta anlık görüntüsünü saklar. Bunun için modüle hiçbir import eklenmez; modül (yalnızca `nox.fs`/`nox.sqlite` kullanıyorsa) `nox_vfs_host_alloc/free/put/mkdir/snapshot` dışa aktarımlarını sunar ve host belleği doğrudan okur/yazar. `/tmp` geçici sayılır: hosta yansıtılmaz ve kaydedilmez.
+The virtual file system can be made **persistent on request**: the host fills the tree before the module starts and stores a snapshot at exit. Nothing is imported for this: the module (only if it uses `nox.fs`/`nox.sqlite`) exports `nox_vfs_host_alloc/free/put/mkdir/snapshot` and the host reads and writes memory directly. `/tmp` counts as temporary: it is neither mirrored to the host nor saved.
 
-- **Komut satırı (Node):** `noxc run --target wasm32-freestanding --vfs-dir veri/ prog.nox` ya da derlenmiş modülle `node wasm_host.mjs prog.wasm --vfs-dir=veri/` (veya `NOX_VFS_DIR`). Dizin başlangıçta sanal dosya sistemine yüklenir (sembolik bağlar atlanır, en çok 512 MiB), çıkışta geri yazılır: değişen dosyalar geçici dosya + `rename` ile yazılır, değişmeyenlere dokunulmaz, programın sildiği dosyalar diskten silinir. Dosya sistemini kullanmayan bir program dizine dokunmaz.
-- **Tarayıcı / kendi host'un:** `runNox(bytes, io, { vfs: { files, onSave } })`; `files` `[{ path, data? }]` (`data` yoksa dizin) ve `onSave(entries)` çıkışta aynı biçimde anlık görüntüyle çağrılır; kaydı IndexedDB/OPFS'e yazmak sana kalmıştır. İş parçacıklı modüller için `runNoxThreads(bytes, io, { vfs: { files, onSave } })` aynı sözleşmeyi uygular. Alt düzey: `vfsPreload(instance, entries)` ve `vfsSnapshot(instance)`.
+- **Command line (Node):** `noxc run --target wasm32-freestanding --vfs-dir data/ prog.nox`, or with a built module `node wasm_host.mjs prog.wasm --vfs-dir=data/` (or `NOX_VFS_DIR`). The directory is loaded into the virtual file system at start (symbolic links are skipped; at most 512 MiB) and written back at exit: changed files are written with a temporary file plus `rename`, unchanged files are left alone, and files the program deleted are deleted from disk. A symbolic link under the root is never written through or deleted through. A program that does not use the file system does not touch the directory.
+- **Browser / your own host:** `runNox(bytes, io, { vfs: { files, onSave } })`; `files` is `[{ path, data? }]` (a missing `data` means a directory) and `onSave(entries)` is called at exit with a snapshot in the same shape; writing it to IndexedDB/OPFS is up to you. For threaded modules, `runNoxThreads(bytes, io, { vfs: { files, onSave } })` follows the same contract. Low level: `vfsPreload(instance, entries)` and `vfsSnapshot(instance)`.
 
 ```js
 import { runNox } from './wasm_host.mjs';
@@ -137,59 +139,60 @@ await runNox(bytes, io, { vfs: {
 } });
 ```
 
-Kalıcılık çıkışta yazılır: program çökerse (tuzak) anlık görüntü yine alınır, ama süreç öldürülürse (kill) alınmaz.
+Persistence is written at exit: if the program crashes (a trap) the snapshot is still taken, but if the process is killed it is not.
 
-## Ağ: `nox.http` istemcisi host `fetch`i ile (wasm32-freestanding --asyncify)
+## Network: the `nox.http` client through the host's `fetch` (wasm32-freestanding --asyncify)
 
-`wasm32-freestanding-asyncify` hedefinde `nox.http.get/post/request` host'un `fetch`ine dayanır (tarayıcıda `window.fetch`, Node'da `globalThis.fetch`, ya da host'un verdiği herhangi bir `fetch` uyumlu işlev). Yetenek **varsayılan olarak kapalıdır**: host açıkça vermedikçe istemci çağrıları yakalanabilir bir `HttpCapabilityError` fırlatır.
+On the `wasm32-freestanding-asyncify` target, `nox.http.get/post/request` rely on the host's `fetch` (`window.fetch` in a browser, `globalThis.fetch` in Node, or any `fetch`-compatible function the host provides). The capability is **off by default**: unless the host grants it, client calls raise a catchable `HttpCapabilityError`.
 
 ```js
 import { runNox } from './wasm_host.mjs';
-await runNox(bytes, io, { fetch: globalThis.fetch });   // ağ açık
-await runNox(bytes, io, { fetch: null });               // ağ kapalı (varsayılan): HttpCapabilityError
+await runNox(bytes, io, { fetch: globalThis.fetch });   // network on
+await runNox(bytes, io, { fetch: null });               // network off (the default): HttpCapabilityError
 ```
 
-Komut satırında Node için `noxc run --target wasm32-freestanding-asyncify --allow-net prog.nox` (ya da `NOX_ALLOW_NET=1`). Derleme zamanında `--deny-capability network` modülün ağ kullanmasını tümden yasaklar (playground).
+On the command line, for Node: `noxc run --target wasm32-freestanding-asyncify --allow-net prog.nox` (or `NOX_ALLOW_NET=1`). At compile time, `--deny-capability network` forbids a module from using the network at all (this is what the Playground does).
 
-- **Nasıl çalışır.** Ağ çağrısı yapan fiber bekletilir, başka fiber'lar çalışır (`spawn` ile istekler paralel gider); hazır fiber kalmayınca modül çıkış bildirmeden host'a döner, host `fetch`leri bekler, sonuçları iletir ve `nox_host_resume()` ile programı sürdürür. Modüle hiçbir import eklenmez; host yalnızca dışa aktarımları (`nox_host_caps_set`, `nox_host_fetch_pending`, `nox_host_fetch_complete`, `nox_host_status`, `nox_host_resume`, `nox_host_alloc/free`) çağırır. Ayrıntı: spec §3.351. Kendi host'unu yazıyorsan `compiler/wasm_host.mjs`teki `runNox` döngüsü referanstır.
-- **Sınırlar.** Yalnızca `--asyncify` freestanding (askıya almak için fiber gerekir); düz freestanding, `--threads` ve `wasm32-wasi` kiplerinde istemci eskisi gibi `HttpCapabilityError` verir. Akışlı istemci (`stream`, `stream_upload`, `nox.transfer`) desteklenir: indirme `fetch` yanıtının okuyucusundan parça parça (yalnızca `read_chunk` çağrıldıkça, geri basınçlı) okunur, `timeout_ms` boşta kalma zaman aşımıdır; yükleme çalışma zamanında tamponlanır ve `finish()` ile tek istek olarak gönderilir (`fetch` yükleme akışı her tarayıcıda yoktur). `get/post/request` yanıtı tümüyle tamponlar. Yönlendirmeleri `fetch` izler. Başlık adları `fetch`in verdiği gibi küçük harflidir. Tarayıcıda CORS ve karışık-içerik kuralları sayfaya aittir. Zaman aşımı `AbortSignal.timeout` ile uygulanır.
+- **How it works.** The fiber that makes the network call is parked and other fibers run (so with `spawn` requests go out in parallel). When no fiber is ready, the module returns to the host without reporting an exit; the host waits for the `fetch`es, delivers the results and resumes the program with `nox_host_resume()`. Nothing is imported by the module; the host only calls exports (`nox_host_caps_set`, `nox_host_fetch_pending`, `nox_host_fetch_complete`, `nox_host_status`, `nox_host_resume`, `nox_host_alloc/free`). Details: spec §3.351. If you write your own host, the `runNox` loop in `compiler/wasm_host.mjs` is the reference.
+- **Limits.** Only `--asyncify` freestanding (suspending needs fibers); plain freestanding, `--threads` (see below) and `wasm32-wasi` keep raising `HttpCapabilityError`. The streaming client (`stream`, `stream_upload`, `nox.transfer`) is supported: a download is read from the `fetch` response reader chunk by chunk (only as `read_chunk` is called, with back-pressure) and `timeout_ms` is an idle timeout; an upload is buffered in the runtime and sent as one request on `finish()` (not every browser supports streaming upload bodies in `fetch`). `get/post/request` buffer the whole response. Redirects are followed by `fetch`. Header names are lower case, as `fetch` gives them. In a browser, CORS and mixed-content rules belong to the page. Timeouts use `AbortSignal.timeout`.
+- **`--threads`.** Threaded freestanding modules can use the client too: the calling thread blocks in `nox_host.net_fetch`/`net_read` (a helper Worker plus `Atomics.wait` on Node, synchronous XHR in a browser Worker), with the capability off by default.
 
-## Tarayıcıda derleme
+## Compiling in the browser
 
-Derleyicinin kendisi de WASM olarak çalışır (sunucusuz playground, gömülü kod deneme alanı): bkz. [Tarayıcıda Nox derleyicisi](browser-compiler.md).
+The compiler itself also runs as WebAssembly (a server-free playground, an embedded code sandbox): see [The Nox compiler in the browser](browser-compiler.md) and the [Playground](playground.md).
 
-### WebSocket istemcisi
+### WebSocket client
 
-`nox.websocket` (`connect`, `send_text`, `recv`, `is_open`, `close`) tüm WASM hedeflerinde derlenir. `wasm32-freestanding-asyncify`'da host'un `WebSocket`ine dayanır (tarayıcıda `window.WebSocket`, Node 22+ `globalThis.WebSocket`); ağ yeteneği `fetch` ile aynı anahtarla açılır (`runNox(bytes, io, { fetch, WebSocket })`, `--allow-net`). `send_text` yanıtsızdır, `recv` fiber'ı bekletir (diğer fiber'lar çalışır), kapanışta boş `str` döner ve `is_open()` yanlış olur; `wss://` host tarafından yönetilir. Diğer kiplerde ya da yetenek yokken `connect` "network capability" iletisiyle `WebSocketError` fırlatır. İkili iletiler `str` olarak ham baytlarla gelir. Sunucu tarafı (`serve_ws`) WASM'da yoktur.
+`nox.websocket` (`connect`, `send_text`, `recv`, `is_open`, `close`) compiles on every WebAssembly target. On `wasm32-freestanding-asyncify` it relies on the host's `WebSocket` (`window.WebSocket` in a browser, `globalThis.WebSocket` in Node 22+); the network capability is opened with the same switch as `fetch` (`runNox(bytes, io, { fetch, WebSocket })`, `--allow-net`). `send_text` has no reply, `recv` parks the fiber (other fibers run), at close it returns an empty `str` and `is_open()` becomes false; `wss://` is handled by the host. In other modes, or without the capability, `connect` raises `WebSocketError` with a "network capability" message. Binary messages arrive as `str` with the raw bytes. The server side (`serve_ws`) is not available on WebAssembly.
 
-### Ham TCP: `nox.tls` ve `nox.smtp`
+### Raw TCP: `nox.tls` and `nox.smtp`
 
-`nox.tls` ve `nox.smtp` tüm WASM hedeflerinde derlenir. `wasm32-freestanding-asyncify`'da gerçek bağlantılar için host **TCP yeteneği** verir: `runNox(bytes, io, { tcp: await nodeTcp() })` (`nodeTcp` Node'un `net`/`tls` modüllerine dayanır; `wasm_host.mjs`ten dışa aktarılır) ya da Node komut satırında `--allow-net`. Tarayıcıda ham soket yoktur: orada `tcp` verilmez ve `connect` "tcp capability" iletisiyle `TlsError`/`SmtpError` verir (kendi `{ connect(host, port, useTls) }` sağlayıcınızı, ör. bir WebSocket-TCP köprüsü, verebilirsiniz). **TLS host'ta sonlanır**: modülde CA paketi ya da el sıkışma kodu yoktur, sertifika doğrulaması (ad dahil) host'un TLS yığınındadır (Node: sistem CA'ları + `NODE_EXTRA_CA_CERTS`). `smtp` STARTTLS yükseltmesi de host'ta yapılır. Akış, `fetch` ile aynı askıya alma mekanizmasıyla çalışır (okuma fiber'ı bekletir, yazma yanıtsızdır). Sınır: `--threads`, düz freestanding ve `wasm32-wasi*` kiplerinde yetenek yoktur.
+`nox.tls` and `nox.smtp` compile on every WebAssembly target. For real connections on `wasm32-freestanding-asyncify` the host provides the **TCP capability**: `runNox(bytes, io, { tcp: await nodeTcp() })` (`nodeTcp` is built on Node's `net`/`tls` and exported from `wasm_host.mjs`), or `--allow-net` on the Node command line. A browser has no raw sockets: there `tcp` is not provided and `connect` raises `TlsError`/`SmtpError` with a "tcp capability" message (you can supply your own `{ connect(host, port, useTls) }` provider, for example a WebSocket-to-TCP bridge). **TLS terminates in the host**: the module carries no CA bundle or handshake code, and certificate validation (hostname included) lives in the host's TLS stack (Node: system CAs plus `NODE_EXTRA_CA_CERTS`). The `smtp` STARTTLS upgrade also happens in the host. Streaming uses the same suspension mechanism as `fetch` (a read parks the fiber, writes have no reply). Limit: `--threads`, plain freestanding and `wasm32-wasi*` do not have the capability.
 
 ### PostgreSQL
 
-`nox.postgres` WASM'da `libpq` yerine Zig'de yazılmış bir PostgreSQL protokol 3.0 istemcisiyle çalışır (host TCP yeteneği gerekir, bkz. yukarıdaki "Ham TCP"). Kimlik doğrulama: trust, cleartext, MD5, SCRAM-SHA-256; sorgular: basit protokol (`execute`/`query`) ve genişletilmiş protokol (`prepare` + `bind_*`, metin biçimli parametreler/sonuçlar, `$n` ve `?` yer tutucuları). Bağlantı dizesi hem `host=... port=... user=... password=... dbname=...` hem `postgres://kullanıcı:parola@host:port/db?sslmode=require` biçimindedir. `sslmode=require|verify-ca|verify-full` SSLRequest + host TLS'ini kullanır (sertifikayı host doğrular); diğer kipler düz metindir (libpq'nun `prefer` varsayılanından bilinçli sapma). Sınırlar: `COPY`, `LISTEN/NOTIFY`, ikili biçim ve `PQprepare` adlandırılmış ifadeler yok (yerel sürücüyle aynı kapsam).
+`nox.postgres` runs on WebAssembly with a PostgreSQL protocol 3.0 client written in Zig instead of `libpq` (it needs the host TCP capability, see "Raw TCP"). Authentication: trust, cleartext, MD5, SCRAM-SHA-256; queries: the simple protocol (`execute`/`query`) and the extended protocol (`prepare` + `bind_*`, text-format parameters and results, `$n` and `?` placeholders). The connection string is either `host=... port=... user=... password=... dbname=...` or `postgres://user:password@host:port/db?sslmode=require`. `sslmode=require|verify-ca|verify-full` uses SSLRequest plus the host's TLS (the host verifies the certificate, so all three modes verify — stricter than libpq's `require`); other modes are plain text (a deliberate departure from libpq's `prefer` default). Limits: no `COPY`, `LISTEN/NOTIFY`, binary format or named `PQprepare` statements (the same scope as the native driver).
 
 ### MySQL / MariaDB
 
-`nox.mysql` WASM'da `libmysqlclient` yerine Zig'de yazılmış bir MySQL istemci protokolüyle çalışır (host TCP yeteneği gerekir, bkz. "Ham TCP"). Kimlik doğrulama: `mysql_native_password` ve `caching_sha2_password` (MySQL 8'in varsayılanı: hızlı yol ve, sunucu önbelleği boşken, sunucunun RSA anahtarıyla OAEP şifrelenmiş parolayla tam kimlik doğrulama; TLS gerekmez), kimlik doğrulama eklentisi değiştirme dahil. Sorgular metin protokolüyle (`COM_QUERY`) gider; `prepare` + `bind_*` yerel sürücüyle aynı biçimde istemci tarafında kaçışlanarak (`NO_BACKSLASH_ESCAPES` kipine duyarlı) SQL'e gömülür. `last_insert_rowid()`, `changes()` ve `NULL` ayrımı çalışır. GERÇEK MySQL 8.4 ve MariaDB 11 sunucularına karşı doğrulandı. Sınırlar: TLS yok (`open_url` ayrıca TLS seçeneği taşımaz), `localhost` için de unix soketi yerine TCP kullanılır, `CALL` gibi çoklu sonuç kümelerinde yalnızca ilk sonuç döner, `LOCAL INFILE` yok.
+`nox.mysql` runs on WebAssembly with a MySQL client protocol written in Zig instead of `libmysqlclient` (it needs the host TCP capability, see "Raw TCP"). Authentication: `mysql_native_password` and `caching_sha2_password` (MySQL 8's default: the fast path and, when the server's cache is empty, full authentication with the password encrypted under the server's RSA key with OAEP — no TLS required), including authentication-plugin switching. Queries use the text protocol (`COM_QUERY`); `prepare` + `bind_*` works as in the native driver, escaped on the client (aware of `NO_BACKSLASH_ESCAPES`) and embedded in the SQL. `last_insert_rowid()`, `changes()` and the `NULL` distinction work. Verified against real MySQL 8.4 and MariaDB 11 servers. Limits: no TLS (`open_url` carries no TLS option), TCP is used even for `localhost` (no Unix socket), only the first result of a multi-result statement such as `CALL` is returned, and there is no `LOCAL INFILE`.
 
-### Alt süreçler (`nox.process`)
+### Child processes (`nox.process`)
 
-`nox.process` tüm WASM hedeflerinde derlenir; çalıştırma bir **host yeteneğidir**. `wasm32-freestanding-asyncify`'da host bir süreç sağlayıcısı verirse (`runNox(bytes, io, { process: await nodeProcess() })` ya da Node komut satırında `--allow-process`, `noxc run --target wasm32-freestanding-asyncify --allow-process`) `Command(...).run()` çalışır; aksi halde `ProcessError` ("could not run the process") verir. Varsayılan Node sağlayıcısı `child_process.spawn`ı KABUKSUZ çağırır (argümanlar kabuk yorumundan geçmez, enjeksiyon yok); çıktı tamponlanır, `set_timeout` aşılırsa süreç öldürülür. Tarayıcıda süreç yoktur (sağlayıcı verilmez). `--allow-net` süreç yeteneğini AÇMAZ: ağ ve süreç ayrı anahtarlardır.
+`nox.process` compiles on every WebAssembly target; running a process is a **host capability**. On `wasm32-freestanding-asyncify`, if the host provides a process provider (`runNox(bytes, io, { process: await nodeProcess() })`, or `--allow-process` on the Node command line, `noxc run --target wasm32-freestanding-asyncify --allow-process`), `Command(...).run()` works; otherwise it raises `ProcessError` ("could not run the process"). The default Node provider calls `child_process.spawn` **without a shell** (arguments are never interpreted by a shell, so there is no injection); output is buffered and the process is killed if `set_timeout` is exceeded. A browser has no processes (no provider is given). `--allow-net` does **not** turn the process capability on: network and process are separate switches.
 
-### HTTP sunucusu (`nox.http.serve`)
+### HTTP server (`nox.http.serve`)
 
-Sunucu da bir **host yeteneğidir**: modül soket açmaz. `wasm32-freestanding-asyncify`'da host bir `serve` sağlayıcısı verirse (`runNox(bytes, io, { serve: await nodeHttpServer(), serveSignal })`, Node komut satırında `--allow-serve`, `noxc run --target wasm32-freestanding-asyncify --allow-serve`) `nox.http.serve(port, handler)` host üzerinde dinler (`port` 0: host seçer; Node sağlayıcısı varsayılan olarak yalnızca `127.0.0.1`de dinler, `NOX_SERVE_HOST` ile değişir), gelen her isteği modüle iletir ve modül `handler`ı her istek için ayrı bir fiber'da çalıştırır. Handler'lar diğer fiber'lar gibi `nox.http.get` (host `fetch`i), `nox.sqlite`, `nox.fs` kullanabilir; `nox.router`/`nox.web` yapı taşları olduğu gibi çalışır. Sağlayıcı arayüzü: `listen(port, handle) -> Promise<{ port, close() }>`, `handle({ method, target, headers, body, peer }) -> Promise<{ status, headers, body }>`: Node'un `node:http`si yerine Nexus Engine, bir service worker ya da kendi sunucunuz bağlanabilir. `serveSignal` (AbortSignal) abort edilince (`Ctrl-C`/SIGTERM'de CLI bunu yapar) dinleyiciler kapanır, `serve` döner ve program normal biter. Yetenek yoksa `serve` eskisi gibi bir tanı yazıp hemen döner.
+The server is also a **host capability**: the module opens no socket. On `wasm32-freestanding-asyncify`, if the host provides a `serve` provider (`runNox(bytes, io, { serve: await nodeHttpServer(), serveSignal })`, `--allow-serve` on the Node command line, `noxc run --target wasm32-freestanding-asyncify --allow-serve`), `nox.http.serve(port, handler)` listens on the host (`port` 0: the host picks; the Node provider listens on `127.0.0.1` only by default, changed with `NOX_SERVE_HOST`), forwards every incoming request to the module, and the module runs `handler` in its own fiber per request. Handlers can use `nox.http.get` (the host's `fetch`), `nox.sqlite` and `nox.fs` like any fiber, and the `nox.router`/`nox.web` building blocks work unchanged. The provider interface is `listen(port, handle) -> Promise<{ port, close() }>` and `handle({ method, target, headers, body, peer }) -> Promise<{ status, headers, body }>`: instead of Node's `node:http` you can plug in another engine, a service worker or your own server. When `serveSignal` (an `AbortSignal`) aborts (the CLI does that on `Ctrl-C`/SIGTERM) the listeners close, `serve` returns and the program ends normally. Without the capability, `serve` prints a diagnostic and returns at once, as before.
 
-Sınırlar: işleyici turları toplu çalışır (bir turdaki istekler eşzamanlıdır; tur bitene kadar gelen yeni istekler sıraya girer); akışlı yanıt (`stream`/`respstream_*`), WebSocket upgrade (`serve_ws`), TLS (host sonlandırır), HTTP/2 ve çok çekirdekli (`serve_multicore`) yoktur; yalnızca `wasm32-freestanding-asyncify`.
+Limits: handler rounds run in batches (requests in one round run concurrently; new requests wait in a queue until the round finishes); there are no streaming responses (`stream`/`respstream_*`), no WebSocket upgrade (`serve_ws`), no TLS (the host terminates it), no HTTP/2 and no multi-core `serve_multicore`; `wasm32-freestanding-asyncify` only.
 
-## Host güvenlik politikaları
+## Host security policies
 
-Yetenekler varsayılan olarak kapalıdır; açıldıklarında da host'un `node` sağlayıcıları şu sınırları uygular. Güvenilmeyen kod barındıran bir host (ör. çok kiracılı bir platform) bunları sıkılaştırmalı ya da kendi sağlayıcılarını vermelidir.
+Capabilities are off by default; when they are on, the host's `node` providers apply the limits below. A host that runs untrusted code (a multi-tenant platform, for example) should tighten them or supply its own providers.
 
-- **Ağ izin listesi:** `--net-allow=host[:port],*.alan[:port],...` (ya da `NOX_NET_ALLOW`; `noxc run` ile de verilebilir) `--allow-net` ile birlikte `fetch`, WebSocket ve ham TCP bağlantılarını yalnızca listedeki hedeflerle sınırlar (port yoksa ya da `*` ise her port; `*.alan` apex alan adını kapsamaz). `fetch` yönlendirmeleri elle izlenir ve her hedef yeniden denetlenir. Host adı, modülün verdiği haliyle eşlenir: DNS çözümlemesi sonrası IP denetimi yapılmaz, yani izinli bir adın özel bir IP'ye çözülmesi operatörün sorumluluğundadır. `--threads` modüllerinde desteklenmez (açıkça reddedilir). Programatik karşılıkları: `netPolicy`, `restrictFetch`, `restrictTcp`, `restrictWebSocket`.
-- **Süreç izin listesi:** `--allow-process=git,/usr/bin/env` yalnızca listedeki programlara izin verir (yalın `--allow-process` hepsine; program, modülün verdiği haliyle eşlenir, yol araması yapılmaz). `nodeProcess` stdout + stderr toplamını `maxOutputBytes` (varsayılan 16 MiB) ile sınırlar; aşılırsa süreç öldürülür. Programatik karşılığı: `restrictProcess`.
-- **HTTP sunucu kotaları:** `nodeHttpServer({ maxBodyBytes: 10 MiB, maxResponseBytes: 64 MiB, requestTimeoutMs: 30000, maxConcurrent: 64 })`. Aşıldığında istemci 413 (gövde), 500 (yanıt), 504 (işleyici süresi) ya da 503 (eşzamanlılık) alır; zaman aşımına uğrayan ya da istemcisi kopan isteklerin yanıtı atılır.
-- **`--vfs-dir`:** kök altında bir sembolik bağ varsa çıkışta o yola yazılmaz/silinmez (kök dışına taşma engellenir).
-- **Tarayıcıda derleyici:** `compileToIr` seçenekleri (`target`, `deny`, `label`) denetim karakteri içeremez; aksi halde bir `label` içindeki `\ndeny=` ile yetenek kısıtı atlatılabilirdi.
+- **Network allow-list:** `--net-allow=host[:port],*.domain[:port],...` (or `NOX_NET_ALLOW`; also accepted by `noxc run`) together with `--allow-net` limits `fetch`, WebSocket and raw TCP connections to the listed destinations (no port, or `*`, means any port; `*.domain` does not cover the apex name). `fetch` redirects are followed manually and every hop is checked again. The host name is matched as the module gives it: there is no IP check after DNS resolution, so an allowed name that resolves to a private address is the operator's responsibility. It is not supported with `--threads` modules (refused explicitly). Programmatic equivalents: `netPolicy`, `restrictFetch`, `restrictTcp`, `restrictWebSocket`.
+- **Process allow-list:** `--allow-process=git,/usr/bin/env` allows only the listed programs (plain `--allow-process` allows all; the program is matched as the module gives it, with no path search). `nodeProcess` limits the sum of stdout and stderr to `maxOutputBytes` (16 MiB by default) and kills the process when it is exceeded. Programmatic equivalent: `restrictProcess`.
+- **HTTP server quotas:** `nodeHttpServer({ maxBodyBytes: 10 MiB, maxResponseBytes: 64 MiB, requestTimeoutMs: 30000, maxConcurrent: 64 })`. When one is exceeded the client gets 413 (body), 500 (response), 504 (handler time) or 503 (concurrency); the response of a request that timed out or whose client disconnected is dropped.
+- **`--vfs-dir`:** a symbolic link under the root is never written through or deleted through, so nothing escapes the root.
+- **Compiler in the browser:** the `compileToIr` options (`target`, `deny`, `label`) cannot contain control characters; otherwise a `\ndeny=` inside a `label` could have bypassed a capability restriction.

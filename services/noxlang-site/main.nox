@@ -13,6 +13,9 @@ import nox.fs
 import nox.os
 import nox.strings
 import nox.log
+import nox.json
+import nox.time
+from nox.json import JsonValue, JsonError
 from nox.os import OsError
 from nox.http import HttpRequest, HttpResponse
 from nox.router import Context
@@ -38,6 +41,11 @@ files: dict[str, str] = {}
 meta: dict[str, str] = {}
 cfg: Config = nyx.config.load()
 apps: list[Application] = []
+play_apps: list[Application] = []
+# /api/release: GitHub'ın "latest release" yanıtından indirme sayfasının ihtiyaç duyduğu alanlar (işçi başına, 10 dakika önbellek).
+release_cache: dict[str, str] = {}
+RELEASE_API: str = "https://api.github.com/repos/mburakmmm/nox-lang/releases/latest"
+RELEASE_TTL_MS: int = 600000
 
 def load_content() -> None:
     root: str = site_root()
@@ -72,7 +80,82 @@ def serve_path(path: str) -> HttpResponse:
         return HttpResponse(301, "", headers)
     return respond("/404.html", 404)
 
+def json_get(v: JsonValue, key: str) -> JsonValue | None:
+    n: int = nox.json.object_len(v)
+    i: int = 0
+    while i < n:
+        if nox.json.object_key(v, i) == key:
+            return nox.json.object_value(v, i)
+        i = i + 1
+    return None
+
+def json_str(v: JsonValue, key: str) -> str:
+    item: JsonValue | None = json_get(v, key)
+    if item == None:
+        return ""
+    if not nox.json.is_string(item):
+        return ""
+    return nox.json.as_string(item)
+
+# GitHub'dan en son sürümü çeker ve yalnızca {tag, page, assets:[{name,url,size}]} biçiminde yeniden yazar ("" = başarısız).
+def fetch_release() -> str:
+    headers: dict[str, str] = {"Accept": "application/vnd.github+json", "User-Agent": "noxlang-site"}
+    try:
+        r: HttpResponse = nox.http.request("GET", RELEASE_API, "", headers, 5000)
+        if r.status != 200:
+            return ""
+        v: JsonValue = nox.json.parse(r.body)
+        tag: str = json_str(v, "tag_name")
+        if len(tag) == 0:
+            return ""
+        out: str = "{\"tag\": " + nox.json.dump_string(tag) + ", \"page\": " + nox.json.dump_string(json_str(v, "html_url")) + ", \"assets\": ["
+        assets: JsonValue | None = json_get(v, "assets")
+        first: bool = True
+        if assets != None:
+            n: int = nox.json.array_len(assets)
+            i: int = 0
+            while i < n:
+                a: JsonValue = nox.json.array_get(assets, i)
+                name: str = json_str(a, "name")
+                url: str = json_str(a, "browser_download_url")
+                size: int = 0
+                size_v: JsonValue | None = json_get(a, "size")
+                if size_v != None and nox.json.is_number(size_v):
+                    size = int(nox.json.as_number(size_v))
+                if len(name) > 0 and len(url) > 0 and not nox.strings.ends_with(name, ".sha256"):
+                    if not first:
+                        out = out + ", "
+                    first = False
+                    out = out + "{\"name\": " + nox.json.dump_string(name) + ", \"url\": " + nox.json.dump_string(url) + ", \"size\": " + str(size) + "}"
+                i = i + 1
+        return out + "]}"
+    except HttpError:
+        return ""
+    except JsonError:
+        return ""
+
+def release_response() -> HttpResponse:
+    headers: dict[str, str] = {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300"}
+    now: int = nox.time.now_ms()
+    if "body" in release_cache and now - int(release_cache["at"]) < RELEASE_TTL_MS:
+        return HttpResponse(200, release_cache["body"], headers)
+    fresh: str = fetch_release()
+    if len(fresh) > 0:
+        release_cache["body"] = fresh
+        release_cache["at"] = str(now)
+        return HttpResponse(200, fresh, headers)
+    if "body" in release_cache:
+        # GitHub ulaşılamıyor/hız sınırında: eski yanıtı sun, kısa süre sonra yeniden dene.
+        release_cache["at"] = str(now - RELEASE_TTL_MS + 60000)
+        return HttpResponse(200, release_cache["body"], headers)
+    return HttpResponse(502, "{\"error\": \"release information is unavailable\"}", {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"})
+
 def setup(application: Application) -> None:
+    def release(ctx: Context) -> HttpResponse:
+        return release_response()
+
+    application.router.get("/api/release", release)
+
     def page(ctx: Context) -> HttpResponse:
         return serve_path(ctx.request.target)
 
@@ -87,6 +170,18 @@ def app() -> Application:
     if len(apps) == 0:
         apps.append(nyx.app.boot(cfg, setup))
     return apps[0]
+
+# Playground tarayıcıda derler ve çalıştırır: WebAssembly örnekleme ('wasm-unsafe-eval'), Worker'lar ve clang/lld paketi (pinli sürüm, jsDelivr)
+# için gevşetilmiş bir CSP gerekir. Bu yalnızca /playground yolları için ikinci bir Nyx uygulamasıyla uygulanır; site geri kalanı sıkı CSP'de kalır.
+def play_csp() -> str:
+    return "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net; font-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+
+def play_app() -> Application:
+    if len(play_apps) == 0:
+        pcfg: Config = nyx.config.load()
+        pcfg.csp = play_csp()
+        play_apps.append(nyx.app.boot(pcfg, setup))
+    return play_apps[0]
 
 def host_of(req: HttpRequest) -> str:
     try:
@@ -104,6 +199,8 @@ def handle(req: HttpRequest) -> HttpResponse:
         headers: dict[str, str] = {}
         headers["Location"] = "https://noxlang.com" + req.target
         return HttpResponse(301, "", headers)
+    if nox.strings.starts_with(req.target, "/playground"):
+        return nyx.app.dispatch(play_app(), req)
     return nyx.app.dispatch(app(), req)
 
 # Port, modül düzeyi `cfg`ye DOKUNMADAN alınır (ana görev başka bir işçide devam ederse o işçinin global bloğu henüz boş olabilir).

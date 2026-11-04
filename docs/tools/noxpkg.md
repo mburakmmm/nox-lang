@@ -39,7 +39,9 @@ The registry token is saved in `~/.nox/credentials` (`$NOX_HOME/credentials`), r
 | `noxc whoami` | which account the saved token belongs to (asks the server) |
 | `noxc logout` | deletes the local token and revokes it on the server |
 
-A package **name belongs to whoever submits it first**. Only that account can publish the name again (updates); anyone else gets a `403` that names the owner. Submissions still wait for administrator approval, and the
+A package **name belongs to whoever submits it first**. Only that account can publish the name again (updates); anyone else gets a `403` that names the owner. A **new package name** or a **change of repository** waits for administrator approval. Publishing again to the same name and the same repository as the account that owns it
+(a new version, description or tags) needs **no new approval**: the catalogue entry is updated at once and `noxc publish` says `published` instead of `submitted`. Submitting the same pending
+package again does not add rows to the queue; it updates the one that is waiting. The
 package page and the administration panel show who published each package (a warning appears when the repository owner differs from the publisher). Packages that were listed before accounts existed belong to the
 registry administrator's GitHub account.
 
@@ -55,7 +57,7 @@ registry administrator's GitHub account.
 | `description` | string | no | one line |
 | `tags` | array of strings | no | search keywords |
 
-Without a valid token the endpoint answers `401`. The submission lands in an inbox; it becomes visible in `index.json` only after an administrator approves it in the web UI. The endpoint is rate-limited and validates its input.
+Without a valid token the endpoint answers `401`. The reply is `{"ok": true, "status": "pending", "id": ...}` when the submission lands in the inbox (it becomes visible in `index.json` only after an administrator approves it in the web UI) and `"status": "published"` when an owner's update to an approved package went live directly. The endpoint is rate-limited and validates its input.
 
 ## Running a registry
 

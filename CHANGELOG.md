@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.163]
+
+### Eklendi
+
+- **noxlang.com yenilemesi:** İndirme sayfası (`/download/`): işletim sistemini ve mimariyi algılar (macOS, Windows, Linux, tarayıcı/WebAssembly), son sürümü Nyx uygulamasının `/api/release` ucundan (GitHub'dan önbellekli) okuyup bağlantıları ve boyutları doldurur; Windows kurucusu/zip, Linux tarball/AppImage/Snap/AUR/Homebrew, betik kurulumları, gereksinimler ve doğrulama. Üst çubukta İndir düğmesi ve Playground (Beta) bağlantısı; ana sayfada Playground ve "Nyx ile yazıldı" bölümleri, güncellenmiş platform tablosu, yumuşak giriş animasyonları ve kart vurguları (genel tasarım korunur).
+- **Playground (beta, `/playground/`):** derleme ve çalıştırma tamamen tarayıcıda. Ön yüz (`noxc-frontend.wasm`) + clang/wasm-ld (`@yowasp/clang`, pinli sürüm, jsDelivr) bir derleyici işçisinde, çıktı ayrı bir çalıştırma işçisinde (Stop işçiyi sonlandırır, 15 sn zaman aşımı, 1 MiB çıktı sınırı); network/process/shared_memory/dynamic_code derleme zamanında yasak; stdin kutusu, 10 örnek, kopyalanabilir bağlantı, canlı hata denetimi. Yalnızca `/playground` için gevşetilmiş CSP (ikinci bir Nyx uygulaması, `'wasm-unsafe-eval'` + işçiler + CDN); site geri kalanı sıkı CSP'de kalır. Dockerfile WASM varlıklarını `tool` aşamasında üretir (`zig build wasm-compiler wasm-rt`).
+- **Belgeler:** 7 yeni öğretici bölüm (dosyalar ve JSON, test, jenerikler ve protokoller, veritabanları, komut satırı araçları, WebAssembly, paket yayımlama) ve "Recipes" sayfası (her kod bloğu derlenir/çalıştırılır); `docs/tools/playground.md`; `wasm.md`, `browser-compiler.md`, `symbols.md` İngilizceye çevrildi ve güncellendi; `whatsnew/2.0` "Since 2.0.0" bölümü; platforms/faq/migrating/python-differences'taki bayat ifadeler düzeltildi (Windows durumu, çoklu kalıtım, `*args`, `__del__`).
+- **Otomatik site güncellemesi:** her kararlı sürümde `release.yml`in yeni `site-image` işi site imajını (belgeler, Playground derleyicisi, indirme sayfası) derler, üretim ayarlarıyla çalıştırıp `scripts/site_image_smoke.sh` ile doğrular ve ancak geçerse GHCR'ye iter; üretim makinesinde `deploy/web/update-site.sh` (launchd, 15 dk; `install-update-timer.sh`) imajı çeker, yalnızca `noxlang-site` servisini yeniden başlatır, sağlık + `/version.txt` doğrular, olmazsa önceki imaja döner ve bozuk imajı tekrar denemez. Makineye dışarıdan erişim ve gizli anahtar gerekmez. `deploy/web/test_update_site.sh` CI'da çalışır; Dockerfile Zig'i makine mimarisine göre indirir; site `/version.txt` yayınlar.
+- **`noxc publish`:** sunucu `status` döner; onaylı paketin sahibi aynı repoyu yeniden yayımlarsa `published` yazılır (aşağıya bakın).
+
+### Değişti
+
+- **noxpkg (registry):** arayüz İngilizceye çevrildi (`/login`, `/register`, `/logout`, `/p/<ad>/comment`, `/p/<ad>/report`; `/giris` yönlendirmesi korunur). **Onay kuyruğu:** aynı (ad, repo, yayıncı) için bekleyen gönderim tekrar gönderilince yeni satır açılmaz, mevcut satır güncellenir (yönetim paneli açılırken eski yinelenenler birleştirilir); onaylı paketin sahibi AYNI repoyu yeniden yayımlarsa katalog onaysız güncellenir; yeni ad ve repo değişikliği yine onaya düşer. `scripts/noxpkg_auth_smoke.py` bunu doğrular.
+- `scripts/build_site.py --verify` Playground örneklerini de çalıştırır; `--wasm-lib` ile WASM varlık dizini verilir (yoksa Playground atlanır).
+
 ## [2.0.162]
 
 ### Düzeltildi

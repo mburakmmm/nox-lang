@@ -7,7 +7,7 @@ import nox.fs
 from nox.fs import FsError, FileMetadata, FileReader, FileWriter
 ```
 
-**Capability:** `filesystem` (unavailable in freestanding profiles). On `wasm32-freestanding` it works on an in-memory virtual file system instead of the real disk; see [WASM](../tools/wasm.md#sanal-dosya-sistemi-wasm32-freestanding).
+**Capability:** `filesystem` (unavailable in freestanding profiles). On `wasm32-freestanding` it works on an in-memory virtual file system instead of the real disk; see [WASM](../tools/wasm.md#virtual-file-system-wasm32-freestanding).
 
 > **Security.** `nox.fs` passes paths straight to the operating system. It does **no** validation, canonicalisation or sandboxing: `..` segments, symbolic links
 > and absolute paths all work. If a path comes from an untrusted source (user input, a network request), you must confine it yourself — for example by

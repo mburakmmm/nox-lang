@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{HEAD}}
+</head>
+<body class="pg-body">
+<a class="skip" href="#editor">Skip to the editor</a>
+{{HEADER}}
+
+<main class="pg" id="main">
+  <div class="pg-bar">
+    <h1>Playground <span class="pill">Beta</span></h1>
+    <label class="sr-only" for="pg-example">Example</label>
+    <select id="pg-example" aria-label="Load an example"></select>
+    <button class="btn btn-primary" id="pg-run" type="button" disabled>Run <kbd>⌘↵</kbd></button>
+    <button class="btn" id="pg-stop" type="button" hidden>Stop</button>
+    <button class="btn" id="pg-share" type="button">Copy link</button>
+    <span class="pg-spacer"></span>
+    <span class="pg-status" id="pg-status" role="status" aria-live="polite">Loading the compiler…</span>
+  </div>
+
+  <div class="pg-main">
+    <section class="pg-editor" aria-label="Source code">
+      <div class="pg-pane-head">main.nox</div>
+      <div class="pg-edit-wrap" id="pg-edit-wrap">
+        <div class="pg-gutter" id="pg-gutter" aria-hidden="true"></div>
+        <pre id="pg-hl" aria-hidden="true"><code></code></pre>
+        <textarea id="editor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Nox source code"></textarea>
+      </div>
+      <div class="pg-pane-head">stdin (optional)</div>
+      <div class="pg-input"><input id="pg-stdin" type="text" placeholder="Text your program reads with input() — one line per ⏎" aria-label="Standard input"></div>
+    </section>
+    <section class="pg-out" aria-label="Output">
+      <div class="pg-pane-head">Output</div>
+      <pre class="pg-term" id="pg-term" tabindex="0"><span class="m">Press Run to compile and run your program. Everything happens in this tab.</span></pre>
+      <p class="pg-note">Beta: runs the <code>wasm32-freestanding</code> target in your browser with the network, process and dynamic-code capabilities denied; files live in memory. The first run downloads the compiler (about 25&nbsp;MB, cached afterwards). <a href="/docs/tools/browser-compiler/">How it works</a> · <a href="/docs/tools/wasm/">Limits</a></p>
+    </section>
+  </div>
+</main>
+
+<script src="/playground/play.js?v={{CSSV}}" type="module"></script>
+<script src="/assets/js/app.js?v={{CSSV}}" defer></script>
+</body>
+</html>

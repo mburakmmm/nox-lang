@@ -35,26 +35,26 @@ def require_admin_session(ctx: Context) -> HttpResponse | None:
     return None
 
 def login_page(ctx: Context) -> HttpResponse:
-    html: str = templates.page("Yönetim — Nox", templates.account_bar("", ""), templates.admin_login_main(), "")
+    html: str = templates.page("Admin — Nox", templates.account_bar("", ""), templates.admin_login_main(), "")
     return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
 
 def login_submit(ctx: Context) -> HttpResponse:
     if handlers_public._locked(ctx, "admin:", 900000, 5):
-        return handlers_public._json_msg(429, False, "Çok fazla deneme.")
+        return handlers_public._json_msg(429, False, "Too many attempts.")
     username: str = ""
     password: str = ""
     try:
         username = handlers_public._field(ctx.request.body, "username")
         password = handlers_public._field(ctx.request.body, "password")
     except JsonError:
-        return handlers_public._json_msg(400, False, "İstek okunamadı.")
+        return handlers_public._json_msg(400, False, "The request could not be read.")
     viewer: Viewer | None = store.authenticate(username, password)
     if viewer == None:
         handlers_public._hit(ctx, "admin:", 900000)
-        return handlers_public._json_msg(401, False, "Yönetici girişi reddedildi.")
+        return handlers_public._json_msg(401, False, "Administrator sign-in was refused.")
     if viewer.role != "admin":
         handlers_public._hit(ctx, "admin:", 900000)
-        return handlers_public._json_msg(401, False, "Yönetici girişi reddedildi.")
+        return handlers_public._json_msg(401, False, "Administrator sign-in was refused.")
     handlers_public._clear_hits(ctx, "admin:")
     return HttpResponse(200, "{\"ok\": true, \"error\": \"\"}", {"Content-Type": "application/json", "Set-Cookie": handlers_public._session_cookie(ctx, viewer)})
 
@@ -66,17 +66,18 @@ def _csrf_ok(ctx: Context, submitted: str) -> bool:
 # kendi adıyla yayınlamak meşru olabilir (kuruluş hesapları) ama onaylamadan önce göze çarpmalıdır.
 def _publisher_label(login: str, repo: str) -> str:
     if len(login) == 0:
-        return "(eski kayıt)"
+        return "(legacy entry)"
     owner: str = repo
     owner = nox.strings.replace(owner, "https://", "")
     owner = nox.strings.replace(owner, "http://", "")
     owner = nox.strings.replace(owner, "github.com/", "")
     parts: list[str] = nox.strings.splitn(owner, "/", 2)
     if len(parts) > 0 and nox.strings.lower(parts[0]) != nox.strings.lower(login):
-        return "@" + login + " (repo sahibi: " + parts[0] + ")"
+        return "@" + login + " (repo owner: " + parts[0] + ")"
     return "@" + login
 
 def dashboard(ctx: Context) -> HttpResponse:
+    store.dedupe_pending()
     subs: list[Submission] = store.load_inbox()
     pending_html: str = ""
     i: int = 0
@@ -114,7 +115,7 @@ def dashboard(ctx: Context) -> HttpResponse:
     account: str = templates.account_bar("", "")
     if viewer != None:
         account = templates.account_bar(viewer.username, viewer.role)
-    html: str = templates.page("Yönetim — Nox", account, templates.dashboard_main(pending_html, index_html, report_html, publisher_html), handlers_public._csrf(ctx))
+    html: str = templates.page("Admin — Nox", account, templates.dashboard_main(pending_html, index_html, report_html, publisher_html), handlers_public._csrf(ctx))
     return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
 
 def approve(ctx: Context) -> HttpResponse:

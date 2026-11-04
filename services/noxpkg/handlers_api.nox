@@ -129,8 +129,9 @@ def _opt_field(v: JsonValue, key: str) -> JsonValue | None:
         i = i + 1
     return None
 
-# `noxc publish`: jeton ZORUNLU (anonim yayın kapalı). Ad ilk yayımlayana rezerve edilir; başkasının adı 403 alır. Gönderi yine
-# yönetici onayına düşer (yönetim panelinde yayıncıyla birlikte görünür).
+# `noxc publish`: jeton ZORUNLU (anonim yayın kapalı). Ad ilk yayımlayana rezerve edilir; başkasının adı 403 alır. Yeni ad ve repo
+# değişikliği yönetici onayına düşer (yönetim panelinde yayıncıyla birlikte görünür); onaylı paketin aynı sahibi aynı repoyu
+# güncellerse onay beklemeden katalog güncellenir (`status: published`). Tekrarlar tek bekleyen satırda birleşir.
 def publish(ctx: Context) -> HttpResponse:
     pub: Publisher | None = authenticated(ctx)
     if pub == None:
@@ -168,8 +169,13 @@ def publish(ctx: Context) -> HttpResponse:
         return _fail(403, "The name '" + name + "' belongs to @" + owner.login + ".")
     if owner.kind == "legacy":
         return _fail(403, "The name '" + name + "' is reserved by the registry administrators.")
-    if not store.add_submission(name, repo, ref, description, tags, pub.id):
+    outcome: int = store.add_submission(name, repo, ref, description, tags, pub.id)
+    if outcome == 0:
         return _fail(429, "Too many pending submissions.")
-    id: str = store.latest_submission_id(name, repo)
-    body2: str = "{\"ok\": true, \"id\": " + nox.json.dump_string(id) + ", \"publisher\": " + nox.json.dump_string(pub.login) + "}"
+    id: str = ""
+    status: str = "published"
+    if outcome == 1:
+        id = store.latest_submission_id(name, repo)
+        status = "pending"
+    body2: str = "{\"ok\": true, \"id\": " + nox.json.dump_string(id) + ", \"status\": " + nox.json.dump_string(status) + ", \"publisher\": " + nox.json.dump_string(pub.login) + "}"
     return HttpResponse(200, body2, {"Content-Type": "application/json"})

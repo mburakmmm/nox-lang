@@ -39,6 +39,8 @@ curl -fsSL https://noxlang.com/install.sh | sh
 
 Windows (PowerShell): `irm https://noxlang.com/install.ps1 | iex`
 
+Other ways (Homebrew, the Windows installer, AppImage, Snap, AUR) are on the [download page](https://noxlang.com/download/). To try Nox without installing anything, use the [Playground](https://noxlang.com/playground/) (beta): it compiles and runs your program in the browser.
+
 ## Documentation
 
 Everything is at **<https://noxlang.com>** (the sources live in [`docs/`](docs/index.md)):

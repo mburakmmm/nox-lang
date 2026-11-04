@@ -66,3 +66,5 @@ Because the workflow concurrency cancels a superseded CI run, a later push can c
 ## Documentation and website
 
 The documentation in `docs/` is built into the website; the site and the noxpkg registry are deployed from `services/`. Docs are checked in CI-adjacent tooling (`scripts/check_docs.py`) so a release never ships examples that do not compile.
+
+A stable release also publishes the website image to GHCR (the `site-image` job), and the production machine picks it up on its own; see [Deploying](deployment.md#automatic-site-updates).

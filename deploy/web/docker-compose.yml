@@ -6,6 +6,9 @@
 name: nox-web
 services:
   noxlang-site:
+    # `image` + `build`: elle `up -d --build` yerel derler (yukarıdaki komut); `deploy/web/update-site.sh` ise release.yml'in GHCR'ye ittiği
+    # hazır imajı çeker (docs/internals/deployment.md "Automatic site updates"). Aynı adı paylaştıkları için ikisi birbirinin yerine geçer.
+    image: ${NOXLANG_SITE_IMAGE:-ghcr.io/mburakmmm/noxlang-site:latest}
     build:
       context: ../..
       dockerfile: services/noxlang-site/Dockerfile

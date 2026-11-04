@@ -1,0 +1,21 @@
+class InsufficientFunds(Exception):
+    pass
+
+class Account:
+    def __init__(self, balance: int) -> None:
+        self.balance = balance
+
+    def withdraw(self, amount: int) -> None:
+        if amount > self.balance:
+            raise InsufficientFunds("need " + str(amount - self.balance) + " more")
+        self.balance -= amount
+
+acct: Account = Account(100)
+for amount in [30, 50, 40]:
+    try:
+        acct.withdraw(amount)
+        print("withdrew", amount, "-> balance", acct.balance)
+    except InsufficientFunds as e:
+        print("refused:", e.message)
+    finally:
+        print("  (checked", amount, ")")

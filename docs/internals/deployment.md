@@ -92,6 +92,23 @@ docker compose -f deploy/web/docker-compose.yml ps
 The first build compiles Zig, QBE and `noxc` inside the image and takes several minutes; later builds reuse the cache. Check `https://noxlang.com/healthz` and `https://noxpkg.noxlang.com/index.json` afterwards. To roll back, check out the previous
 commit and run the same command again.
 
+## Automatic site updates
+
+The documentation, the download page and the Playground's compiler are baked into the `noxlang-site` image, so they only change when a new image is deployed. This is automated with a *pull-based* flow that needs no inbound access to the machine and no secrets:
+
+1. **Publish.** On every stable release (`vX.Y.Z`, not `-rc`), the `site-image` job of `release.yml` builds the site image on an arm64 runner and starts it with the production settings. `scripts/site_image_smoke.sh` then checks the contract — `/healthz`, the strict content-security policy on ordinary pages, the relaxed one only on `/playground`, the Playground files and the WebAssembly front end, `/api/release`, and `/version.txt` equal to the tagged version. Only if every check passes is the image pushed to `ghcr.io/mburakmmm/noxlang-site` as `X.Y.Z` and `latest`. The job runs after the release archives have been built, which itself waits for a green CI.
+2. **Update.** On the production machine, `deploy/web/update-site.sh` pulls `latest`; if it differs from what is running it restarts **only** the `noxlang-site` service with it and waits (up to two minutes) for the container to become healthy *and* for `/version.txt` to report the new version. If that fails it puts the previous image back (kept as `:previous`), and remembers the bad image so it is not retried every cycle. Overlapping runs are prevented with a lock, a failed pull leaves the site untouched, and `--check` only reports whether an update is waiting.
+
+```sh
+deploy/web/install-update-timer.sh install      # launchd runs update-site.sh every 15 minutes
+deploy/web/install-update-timer.sh uninstall
+tail -f ~/Library/Logs/nox-site-update.log
+```
+
+One-time setup: after the first release has pushed the image, open the package on GitHub (*your profile > Packages > noxlang-site > Package settings*) and set its visibility to **Public**, so the machine can pull it without credentials. The compose file keeps `build:` as well, so `up -d --build` still builds locally if you prefer.
+
+The *download page* does not depend on any of this: it reads the latest GitHub release at request time (`/api/release`, cached for ten minutes), so new archives appear there without a redeploy. `deploy/web/test_update_site.sh` exercises the update script against a fake `docker` and runs in CI.
+
 ## Backups
 
 The registry's state is `noxpkg.db`. Accounts, comments and bug reports live only there. The package catalog and the publish inbox are mirrored to `index.json` and `inbox.json` after every write (a temporary file, then a rename). Those JSON files are never deleted: the first boot imports them once, and later writes refresh them from the database. `GET /index.json` is rendered from the database in the shape `noxc search` and `noxc add` already read. `ratelimit.txt` is still a small text file.

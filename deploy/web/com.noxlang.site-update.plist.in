@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- noxlang.com imajını 15 dakikada bir günceller (deploy/web/update-site.sh). install-update-timer.sh __REPO__ ve __HOME__'u doldurur. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.noxlang.site-update</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/deploy/web/update-site.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- docker (OrbStack/Docker Desktop) launchd'nin dar PATH'inde yoktur -->
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.orbstack/bin</string>
+    <key>HOME</key><string>__HOME__</string>
+  </dict>
+  <key>StartInterval</key><integer>900</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/nox-site-update.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/nox-site-update.log</string>
+</dict>
+</plist>

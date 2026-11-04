@@ -1,4 +1,4 @@
-# 11. Next steps
+# 18. Next steps
 
 You now know the shape of Nox: static types with Python's syntax, functions and classes, collections, errors, modules, tasks and a web server. Where
 to go from here depends on what you want to build.

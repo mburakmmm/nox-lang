@@ -60,6 +60,8 @@ pub const PublishPayload = struct {
 pub const PublishResult = struct {
     ok: bool,
     id: []const u8 = "",
+    /// `pending` (onay bekliyor) ya da `published` (onaylı paketin aynı sahibi aynı repoyu güncelledi, onay gerekmedi). Eski sunucular alanı göndermez.
+    status: []const u8 = "",
     @"error": []const u8 = "",
 };
 

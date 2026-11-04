@@ -64,7 +64,7 @@ mini-language is fully supported in f-strings, `format()` and `str.format`.
 ## Errors and resources
 
 Exceptions are classes, `except Base:` catches subclasses, and `e.message`/`e.line` are available. There is no traceback object — an uncaught
-exception prints the class and source line. Resources are released by `with`, `defer` and `finally`; there is no `__del__` and no `weakref`.
+exception prints the class and source line. Resources are released by `with`, `defer` and `finally`; `__del__` runs once when the last reference goes away ([Classes](classes.md#destructors-__del__)); there is no `weakref`.
 Built-in error text is English; match the exception class, not the wording.
 
 ## Modules

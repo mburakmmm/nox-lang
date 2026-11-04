@@ -146,11 +146,11 @@ def package_page(ctx: Context) -> HttpResponse:
     name: str = ctx.param("name")
     entry: IndexEntry | None = store.find_package(name)
     if entry == None:
-        return _html(ctx, "Paket yok — Nox", "<h1>Paket yok</h1><p class=\"lead\"><a href=\"/\">Paketlere dön</a></p>")
+        return _html(ctx, "Package not found — Nox", "<h1>Package not found</h1><p class=\"lead\"><a href=\"/\">Back to all packages</a></p>")
     comments: list[Comment] = store.load_comments(name)
     blocks: str = ""
     if len(comments) == 0:
-        blocks = "<p class=\"callout\">Henüz yorum yok.</p>"
+        blocks = "<p class=\"callout\">No comments yet.</p>"
     i: int = 0
     while i < len(comments):
         c: Comment = comments[i]
@@ -168,7 +168,7 @@ def package_page(ctx: Context) -> HttpResponse:
     return _html(ctx, entry.name + " — Packages", main_html)
 
 def login_page(ctx: Context) -> HttpResponse:
-    return _html(ctx, "Giriş yap — Nox", templates.auth_main())
+    return _html(ctx, "Sign in — Nox", templates.auth_main())
 
 def _session_cookie(ctx: Context, viewer: Viewer) -> str:
     session: Session = Session(_secret())
@@ -176,38 +176,38 @@ def _session_cookie(ctx: Context, viewer: Viewer) -> str:
 
 def login_submit(ctx: Context) -> HttpResponse:
     if _locked(ctx, "login:", 900000, 5):
-        return _json_msg(429, False, "Çok fazla deneme.")
+        return _json_msg(429, False, "Too many attempts.")
     username: str = ""
     password: str = ""
     try:
         username = _field(ctx.request.body, "username")
         password = _field(ctx.request.body, "password")
     except JsonError:
-        return _json_msg(400, False, "İstek okunamadı.")
+        return _json_msg(400, False, "The request could not be read.")
     viewer: Viewer | None = store.authenticate(username, password)
     if viewer == None:
         _hit(ctx, "login:", 900000)
-        return _json_msg(401, False, "Kullanıcı adı veya parola yanlış.")
+        return _json_msg(401, False, "Wrong username or password.")
     _clear_hits(ctx, "login:")
     return HttpResponse(200, "{\"ok\": true, \"error\": \"\"}", {"Content-Type": "application/json", "Set-Cookie": _session_cookie(ctx, viewer)})
 
 def register_submit(ctx: Context) -> HttpResponse:
     if _locked(ctx, "reg:", 900000, 5):
-        return _json_msg(429, False, "Çok fazla deneme.")
+        return _json_msg(429, False, "Too many attempts.")
     username: str = ""
     password: str = ""
     try:
         username = _field(ctx.request.body, "username")
         password = _field(ctx.request.body, "password")
     except JsonError:
-        return _json_msg(400, False, "İstek okunamadı.")
+        return _json_msg(400, False, "The request could not be read.")
     _hit(ctx, "reg:", 900000)
     message: str = store.register_user(username, password)
     if len(message) > 0:
         return _json_msg(400, False, message)
     viewer: Viewer | None = store.authenticate(username, password)
     if viewer == None:
-        return _json_msg(500, False, "Hesap açıldı ama oturum kurulamadı.")
+        return _json_msg(500, False, "The account was created but the session could not be started.")
     return HttpResponse(200, "{\"ok\": true, \"error\": \"\"}", {"Content-Type": "application/json", "Set-Cookie": _session_cookie(ctx, viewer)})
 
 def logout(ctx: Context) -> HttpResponse:
@@ -215,10 +215,10 @@ def logout(ctx: Context) -> HttpResponse:
     try:
         token = _field(ctx.request.body, "csrf")
     except JsonError:
-        return _json_msg(400, False, "İstek okunamadı.")
+        return _json_msg(400, False, "The request could not be read.")
     session: Session = Session(_secret())
     if not session.verify_csrf(_cookie_value(ctx), token):
-        return _json_msg(403, False, "Oturum doğrulanamadı.")
+        return _json_msg(403, False, "The session could not be verified.")
     cleared: str = http_util.build_set_cookie("noxpkg_session", "", 0, _https(ctx))
     return HttpResponse(200, "{\"ok\": true, \"error\": \"\"}", {"Content-Type": "application/json", "Set-Cookie": cleared})
 
@@ -237,37 +237,37 @@ def _require_user(ctx: Context) -> Viewer | None:
 def post_comment(ctx: Context) -> HttpResponse:
     viewer: Viewer | None = _require_user(ctx)
     if viewer == None:
-        return _json_msg(403, False, "Giriş yap.")
+        return _json_msg(403, False, "Sign in first.")
     if _locked(ctx, "cmt:" + str(viewer.user_id), 600000, 20):
-        return _json_msg(429, False, "Çok fazla yorum.")
+        return _json_msg(429, False, "Too many comments.")
     body: str = ""
     try:
         body = nox.strings.trim(_field(ctx.request.body, "body"))
     except JsonError:
-        return _json_msg(400, False, "İstek okunamadı.")
+        return _json_msg(400, False, "The request could not be read.")
     if len(body) == 0 or len(body) > 2000:
-        return _json_msg(400, False, "Yorum 1-2000 karakter olmalı.")
+        return _json_msg(400, False, "A comment must be 1–2000 characters.")
     _hit(ctx, "cmt:" + str(viewer.user_id), 600000)
     if not store.add_comment(ctx.param("name"), viewer.user_id, body):
-        return _json_msg(404, False, "Paket yok.")
+        return _json_msg(404, False, "Package not found.")
     return _json_msg(200, True, "")
 
 def post_report(ctx: Context) -> HttpResponse:
     viewer: Viewer | None = _require_user(ctx)
     if viewer == None:
-        return _json_msg(403, False, "Giriş yap.")
+        return _json_msg(403, False, "Sign in first.")
     if _locked(ctx, "rpt:" + str(viewer.user_id), 3600000, 10):
-        return _json_msg(429, False, "Çok fazla bildirim.")
+        return _json_msg(429, False, "Too many reports.")
     title: str = ""
     body: str = ""
     try:
         title = nox.strings.trim(_field(ctx.request.body, "title"))
         body = nox.strings.trim(_field(ctx.request.body, "body"))
     except JsonError:
-        return _json_msg(400, False, "İstek okunamadı.")
+        return _json_msg(400, False, "The request could not be read.")
     if len(title) == 0 or len(title) > 120 or len(body) == 0 or len(body) > 4000:
-        return _json_msg(400, False, "Başlık 1-120, açıklama 1-4000 karakter olmalı.")
+        return _json_msg(400, False, "The title must be 1–120 characters and the details 1–4000.")
     _hit(ctx, "rpt:" + str(viewer.user_id), 3600000)
     if not store.add_report(ctx.param("name"), viewer.user_id, title, body):
-        return _json_msg(404, False, "Paket yok.")
+        return _json_msg(404, False, "Package not found.")
     return _json_msg(200, True, "")

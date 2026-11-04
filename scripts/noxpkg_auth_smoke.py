@@ -189,6 +189,30 @@ def main():
         st, j = jcall(base, "POST", "/api/publish", {"name": "beta", "repo": "github.com/bob/beta"}, token=bob["token"])
         check(st == 200, f"bob başka bir ad alabilir ({st})")
 
+        # 3b) onay kuyruğu: tekrarlar tek satıra iner; onaylı paketin aynı sahibi aynı repoyu onaysız günceller; repo değişimi onaya düşer
+        for ref in ("v3", "v4"):
+            jcall(base, "POST", "/api/publish", {"name": "alpha", "repo": "github.com/alice/alpha", "ref": ref, "description": "son"}, token=alice["token"])
+        db = sqlite3.connect(os.path.join(run_dir, "data/noxpkg.db"))
+        rows = db.execute("SELECT ref, description FROM submissions WHERE name = 'alpha'").fetchall()
+        check(rows == [("v4", "son")], f"aynı paket için tek bekleyen satır, en yeni içerikle ({rows})")
+        db.execute("INSERT INTO packages (name, repo, description, tags, created_at_ms, publisher_id) SELECT name, repo, description, tags, 1, publisher_id FROM submissions WHERE name = 'alpha'")
+        db.execute("DELETE FROM submissions WHERE name = 'alpha'")
+        db.commit()
+        db.close()
+        st, j = jcall(base, "POST", "/api/publish", {"name": "alpha", "repo": "github.com/alice/alpha", "description": "yeni sürüm", "tags": ["z"]}, token=alice["token"])
+        check(st == 200 and j.get("status") == "published" and j.get("id") == "", f"onaylı paketin aynı repo güncellemesi onaysız yayımlanır ({st} {j})")
+        db = sqlite3.connect(os.path.join(run_dir, "data/noxpkg.db"))
+        pend = db.execute("SELECT COUNT(*) FROM submissions WHERE name = 'alpha'").fetchone()[0]
+        desc = db.execute("SELECT description FROM packages WHERE name = 'alpha'").fetchone()[0]
+        db.close()
+        check(pend == 0 and desc == "yeni sürüm", f"güncelleme katalogda, kuyrukta satır yok ({pend} {desc!r})")
+        st, j = jcall(base, "POST", "/api/publish", {"name": "alpha", "repo": "github.com/alice/alpha-fork"}, token=alice["token"])
+        check(st == 200 and j.get("status") == "pending" and j.get("id"), f"repo değişimi yine onaya düşer ({st} {j})")
+        db = sqlite3.connect(os.path.join(run_dir, "data/noxpkg.db"))
+        db.execute("DELETE FROM submissions WHERE name = 'alpha'")
+        db.commit()
+        db.close()
+
         # 4) eski (sahipsiz) kayıt: yönetici GitHub hesabı girene kadar başkası alamaz, girince ona geçer
         db = sqlite3.connect(os.path.join(run_dir, "data/noxpkg.db"))
         db.execute("INSERT INTO packages (name, repo, description, tags, created_at_ms) VALUES ('legacy-pkg', 'github.com/old/legacy-pkg', 'eski', '[]', 1)")
@@ -210,11 +234,11 @@ def main():
         cookie = (hd.get("Set-Cookie") or "").split(";")[0]
         check(st == 200 and cookie, f"admin parola girişi ({st})")
         st, page, _ = call(base, "GET", "/admin", headers={"Cookie": cookie})
-        check(st == 200 and "@alice" in page and "@bob" in page and "Yayıncılar" in page, f"panel: bekleyen gönderilerde ve Yayıncılar bölümünde yayıncılar ({st} {page[:200]!r})")
-        check("repo sahibi" not in page.split("Yayında")[0] or "github.com/old" in page, "panel: repo sahibi yayıncıyla aynıysa uyarı yok")
+        check(st == 200 and "@alice" in page and "@bob" in page and "Publishers" in page, f"panel: bekleyen gönderilerde ve Yayıncılar bölümünde yayıncılar ({st} {page[:200]!r})")
+        check("repo sahibi" not in page.split("Published")[0] or "github.com/old" in page, "panel: repo sahibi yayıncıyla aynıysa uyarı yok")
         check("@AdminUser" in page, "panel: yayındaki eski paket yöneticiye atfedilir")
         st, page, _ = call(base, "GET", "/p/legacy-pkg")
-        check(st == 200 and "Yayınlayan" in page and "@AdminUser" in page, f"paket sayfası: Yayınlayan @AdminUser ({st} {page[:200]!r})")
+        check(st == 200 and "Published by" in page and "@AdminUser" in page, f"paket sayfası: Published by @AdminUser ({st} {page[:200]!r})")
         st, idx, _ = call(base, "GET", "/index.json")
         check(st == 200 and "publisher" not in idx, "index.json şeması değişmedi (yayıncı alanı sızmaz)")
 

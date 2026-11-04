@@ -806,7 +806,11 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
         printErr("publish: rejected: {s}\n", .{result.@"error"});
         std.process.exit(1);
     }
-    printOk("submitted: {s} (id={s}) as @{s} — awaiting approval\n", .{ manifest.name, result.id, cred.login });
+    if (std.mem.eql(u8, result.status, "published")) {
+        printOk("published: {s} updated in the registry as @{s} (no approval needed: same owner, same repository)\n", .{ manifest.name, cred.login });
+    } else {
+        printOk("submitted: {s} (id={s}) as @{s} — awaiting approval\n", .{ manifest.name, result.id, cred.login });
+    }
 }
 
 /// `noxc login [--no-browser]` (v2.0.136): GitHub aygıt akışıyla giriş. Kullanıcıya bir kod gösterilir, tarayıcıda github.com/login/device

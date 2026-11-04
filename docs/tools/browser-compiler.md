@@ -1,13 +1,13 @@
-# Tarayıcıda Nox derleyicisi
+# The Nox compiler in the browser
 
-Nox derleyicisinin tamamı WebAssembly olarak çalışır: kaynak kodu **tarayıcıda** (ya da Node'da) `.wasm`a derlenir ve orada çalıştırılır. Sunucu, `noxc` ikilisi, `zig` ya da `clang` kurulumu gerekmez; kod hiçbir yere gönderilmez (playground, gömülü kod deneme alanları, çevrimdışı araçlar için).
+The whole Nox compiler runs as WebAssembly: source code is compiled to `.wasm` **in the browser** (or in Node) and run there. No server, no `noxc` binary, no `zig` or `clang` installation is needed, and the code is sent nowhere. It powers the [Playground](playground.md) and is meant for embedded code sandboxes and offline tools.
 
-İki parça vardır:
+There are two parts:
 
-1. **Ön yüz** (`noxc-frontend.wasm`, ~2 MB): lexer, parser, tip denetimi ve LLVM IR üretimi. `nox.*` standart kütüphanesi modülün içine gömülüdür. Yerel `noxc build --target wasm32-*` ile **byte-birebir aynı** IR'ı üretir (aynı kod, `compiler/frontend.zig`). Bir programı ~30 ms'de denetler/derler; sözdizimi ve tip hatalarını okunaklı metin olarak döner.
-2. **Arka uç** (clang + wasm-ld, WASM olarak): IR'ı çalışma zamanı nesneleriyle bağlayıp `.wasm` üretir. Varsayılan sağlayıcı [`@yowasp/clang`](https://www.npmjs.com/package/@yowasp/clang) (isteğe bağlı bağımlılık, ~25 MiB gzip, ilk kullanımda tembel yüklenir ve tarayıcı önbelleğinde kalır); `runClang(argv, files)` uyumlu başka bir sağlayıcı da verilebilir.
+1. **The front end** (`noxc-frontend.wasm`, about 2 MB): lexer, parser, type checker and LLVM IR generation. The `nox.*` standard library is embedded in the module. It produces **byte-for-byte the same** IR as a native `noxc build --target wasm32-*` (it is the same code, `compiler/frontend.zig`). It checks and compiles a program in about 30 ms and returns syntax and type errors as readable text.
+2. **The back end** (clang and wasm-ld, themselves WebAssembly): links the IR with the runtime objects and produces `.wasm`. The default provider is [`@yowasp/clang`](https://www.npmjs.com/package/@yowasp/clang) (an optional dependency, about 25 MiB gzipped, loaded lazily on first use and kept in the browser cache); any other provider with a compatible `runClang(argv, files)` can be passed instead.
 
-## Kullanım
+## Usage
 
 ```js
 import { createNoxCompiler } from './wasm_compiler.mjs';
@@ -15,26 +15,26 @@ import { runNox } from './wasm_host.mjs';
 
 const nox = await createNoxCompiler({
   frontend: await (await fetch('noxc-frontend.wasm')).arrayBuffer(),
-  // çalışma zamanı nesneleri: noxrt-wasm32-freestanding.o, ...-sqlite3.o, compiler-rt-wasm32.a (sürüm arşivinin lib/ dizini)
+  // runtime objects: noxrt-wasm32-freestanding.o, ...-sqlite3.o, compiler-rt-wasm32.a (the lib/ directory of a release archive)
   asset: async (name) => new Uint8Array(await (await fetch(`lib/${name}`)).arrayBuffer()),
   clang: () => import('@yowasp/clang'),
 });
 
-const r = await nox.compile('print("merhaba", 6 * 7)\n', { target: 'wasm32-freestanding' });
-if (!r.ok) console.error(r.diagnostics);              // "main.nox:1:9: syntax error: ..." gibi
-else await runNox(r.wasm, io);                         // io: write/read/clockMs/randomFill/sleepMs (bkz. WebAssembly sayfası)
+const r = await nox.compile('print("hello", 6 * 7)\n', { target: 'wasm32-freestanding' });
+if (!r.ok) console.error(r.diagnostics);              // for example "main.nox:1:9: syntax error: ..."
+else await runNox(r.wasm, io);                         // io: write/read/clockMs/randomFill/sleepMs (see the WebAssembly page)
 ```
 
-- `nox.compileToIr(source, opts)` yalnızca ön yüzü çalıştırır (`{ ok, ir, plan, diagnostics }`): canlı hata denetimi için idealdir.
-- `opts.target`: `wasm32-freestanding` (varsayılan), `-asyncify`, `-threads`; `opts.deny`: derleme zamanı yetenek yasakları (`['fs', 'network']`, bkz. `--deny-capability`); `opts.label`: tanılamadaki dosya adı.
-- `nox.addFile('/stdlib/...' | yol, metin)`: bellek içi sanal dosya ekler.
-- `--asyncify` hedefleri bağlama sonrası `wasm-opt` ister: tarayıcıda `binaryen` (npm, Apache-2.0) ile `import { binaryenAsyncify } from './wasm_asyncify.mjs'; createNoxCompiler({ ..., optimize: binaryenAsyncify(binaryen) })`. Verilmezse açık bir hata döner. `nox.http` istemcisi (`fetch`) yalnızca bu hedefte çalışır.
+- `nox.compileToIr(source, opts)` runs only the front end (`{ ok, ir, plan, diagnostics }`): ideal for live error checking.
+- `opts.target`: `wasm32-freestanding` (the default), `-asyncify`, `-threads`. `opts.deny`: compile-time capability bans (`['fs', 'network']`, see `--deny-capability`). `opts.label`: the file name shown in diagnostics. These options cannot contain control characters.
+- `nox.addFile('/stdlib/...' | path, text)`: adds an in-memory virtual file (adding the same path again replaces it).
+- `--asyncify` targets need a post-link `wasm-opt`: in a browser use `binaryen` (npm, Apache-2.0) with `import { binaryenAsyncify } from './wasm_asyncify.mjs'; createNoxCompiler({ ..., optimize: binaryenAsyncify(binaryen) })`. Without it a clear error is returned. The `nox.http` client (`fetch`) works only on this target.
 
-Çalıştırırken [WebAssembly sayfasındaki](wasm.md) host seçenekleri geçerlidir: bellek içi dosya sistemi, isteğe bağlı kalıcılık (`vfs`) ve yalnızca açıkça verilirse ağ (`fetch`). Güvenilmeyen kodu çalıştıran sayfalarda `deny` ile yetenekleri derleme zamanında kısıtlayın ve `runNox`a `fetch`/`vfs` vermeyin.
+When running, the host options on the [WebAssembly page](wasm.md) apply: the in-memory file system, optional persistence (`vfs`) and — only when explicitly given — the network (`fetch`). On pages that run untrusted code, restrict capabilities at compile time with `deny` and give `runNox` no `fetch` or `vfs`.
 
-## Dağıtım ve sınırlar
+## Distribution and limits
 
-- Sürüm arşivinin yanında `nox-web-compiler-<sürüm>.tar.gz` yayımlanır: `noxc-frontend.wasm`, `wasm_compiler.mjs`, `wasm_asyncify.mjs`, `wasm_host.mjs` ve `lib/` (çalışma zamanı nesneleri). Kaynaktan: `zig build wasm-compiler wasm-rt`.
-- İlk derleme clang/lld'yi yükler (yüzlerce ms); sonrakiler ~0,3-1 sn sürer. Büyük programlar ve `nox.sqlite` (≈ 800 KB çıktı) biraz daha uzun sürer.
-- Yerel `extern def ... from "<kütüphane>"` bildirimleri tarayıcıda bağlanamaz (yerel kütüphane yok); `native`, `plugin`, `hpy` modülleri WASM'da zaten kullanılamaz.
-- Doğrulama: `scripts/wasm_frontend_corpus.py` tüm `codegen_cases` korpusunda ön yüz IR'ını yerel `noxc` ile karşılaştırır (467 aynı + 16 aynı nedenle reddedilen); `scripts/web_compiler_e2e.mjs` tam boru hattını (ön yüz -> clang -> çalıştırma) korpusta çalıştırıp `.expected` ile karşılaştırır (`wasm32-freestanding` 453 ok, `wasm32-freestanding-asyncify` binaryen ile 458 ok).
+- Next to the release archive a `nox-web-compiler-<version>.tar.gz` is published: `noxc-frontend.wasm`, `wasm_compiler.mjs`, `wasm_asyncify.mjs`, `wasm_host.mjs` and `lib/` (the runtime objects). From source: `zig build wasm-compiler wasm-rt`.
+- The first compile loads clang/lld (hundreds of ms); later ones take about 0.3-1 s. Large programs and `nox.sqlite` (an output of about 800 KB) take a little longer.
+- Native `extern def ... from "<library>"` declarations cannot be linked in a browser (there are no native libraries); the `native`, `plugin` and `hpy` modules are unavailable on WebAssembly anyway.
+- Verification: `scripts/wasm_frontend_corpus.py` compares the front end's IR with native `noxc` over the whole `codegen_cases` corpus (467 identical, plus 16 rejected for the same reason); `scripts/web_compiler_e2e.mjs` runs the full pipeline (front end, clang, run) over the corpus and compares with `.expected` (`wasm32-freestanding` 453 ok, `wasm32-freestanding-asyncify` 458 ok with binaryen).

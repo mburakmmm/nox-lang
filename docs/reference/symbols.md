@@ -1,25 +1,25 @@
-# Sembol adları
+# Symbol names
 
-Bir Nox üst-düzey `def`i, nesne dosyasında düz adıyla bir **genel sembol** olur (`$ad` QBE'de, `@ad` LLVM'de). Aynı adı taşıyan bir C kütüphanesi sembolü çalışma zamanı ya da üretilen kod tarafından çağrılıyorsa, kullanıcı fonksiyonu bağlayıcıda onun yerine geçerdi: `def printf(...)` `print`i sessizce bozar, `def getenv(...)` çalışma zamanının ortam okumasını ele geçirir, `def read(...)` `nox.io`nun `read`ini değiştirir, wasm'da imza uyuşmazlığı çağrıyı tuzağa düşürür.
+A top-level Nox `def` becomes a **global symbol** in the object file, under its plain name (`$name` in QBE, `@name` in LLVM). If a C library symbol of the same name is called by the runtime or by generated code, the user function would take its place at link time: `def printf(...)` would silently break `print`, `def getenv(...)` would hijack the runtime's environment lookup, `def read(...)` would replace the `read` used by `nox.io`, and on WebAssembly a signature mismatch makes the call trap.
 
-## Politika
+## Policy
 
-Standart C, POSIX, libm ve hedef sistemlerin (Darwin, glibc/musl, Android, Windows, wasi-libc) çalışma zamanı sembollerinden oluşan **ayrılmış ad listesindeki** bir adı taşıyan üst-düzey fonksiyonun SEMBOLÜ `nox_user_<ad>` olur. Nox düzeyindeki ad değişmez: kaynak kodda `printf(...)` yazmaya devam edersiniz; hata iletileri, `reflect` ve `noxc expand` eski adı gösterir. Bu iki backend'de ve tüm hedeflerde (yerel, mobil, wasm) aynıdır.
+The **SYMBOL** of a top-level function whose name is on the **reserved-name list** — made of the runtime symbols of standard C, POSIX, libm and the target systems (Darwin, glibc/musl, Android, Windows, wasi-libc) — becomes `nox_user_<name>`. The Nox-level name does not change: you keep writing `printf(...)` in source, and error messages, `reflect` and `noxc expand` show the original name. This is the same on both back ends and on every target (native, mobile, WebAssembly).
 
 ```python
-def getenv(x: int) -> int:     # nesne dosyasında nox_user_getenv
+def getenv(x: int) -> int:     # nox_user_getenv in the object file
     return x + 1
 
-print(getenv(41))              # 42; çalışma zamanının kendi getenv'i etkilenmez
+print(getenv(41))              # 42; the runtime's own getenv is unaffected
 ```
 
-- Liste yalnızca bugün bağlanan sembolleri değil, standart C/POSIX/libm ad alanının tamamını kapsar (`compiler/codegen_qbe/reserved_symbols.zig`); çalışma zamanı yarın yeni bir libc işlevine bağlanabilir.
-- `extern def` bildirimleri ETKİLENMEZ: `extern def sqrt(x: float) -> float from "m"` gerçek `sqrt`ı bağlamak içindir.
-- Nox yerleşikleri (`abs`, `round`, `min`, ...) ve anahtar sözcükler zaten kullanıcı fonksiyonu olarak tanımlanamaz.
-- Bir Nox işlevini C'den ada göre çağıran gömme (`nox_embed`) kodu, ayrılmış bir adı taşıyan işlev için `nox_user_` önekli adı kullanmalıdır. Ayrılmamış adlar eskisi gibi düz adla çağrılır.
-- Sınıf metodlarının sembolleri `Sınıf_metod` biçimindedir; yalnızca sınıf adı bir libc öneki ile (`pthread`, `clock`, ...) çakışırsa ayrılmış bir adla karşılaşabilir. Bu durum için bir koruma yoktur (belgelenmiş sınır).
+- The list covers the whole standard C/POSIX/libm namespace, not only the symbols linked today (`compiler/codegen_qbe/reserved_symbols.zig`); the runtime may link a new libc function tomorrow.
+- `extern def` declarations are NOT affected: `extern def sqrt(x: float) -> float from "m"` is meant to bind the real `sqrt`.
+- Nox built-ins (`abs`, `round`, `min`, ...) and keywords cannot be defined as user functions in the first place.
+- Embedding code (`nox_embed`) that calls a Nox function from C by name must use the `nox_user_` prefixed name for a function with a reserved name. Names that are not reserved are called by their plain name as before.
+- The symbols of class methods have the form `Class_method`; a reserved name can only appear if the class name collides with a libc prefix (`pthread`, `clock`, ...). There is no protection for that case (a documented limit).
 
-## Doğrulama
+## Verification
 
-- `tests/golden/codegen_cases/reserved_symbol_names.nox`: listedeki HER ad için bir kullanıcı fonksiyonu tanımlar ve çağırır; bazıları ayrıca işlev değeri, `spawn` ve `nox.thread.start` yollarıyla kullanılır. İki backend'de ve sekiz wasm hedefinde koşar. Liste değişince `scripts/gen_reserved_symbol_fixture.py` çalıştırılır; CI `--check` ile güncelliği doğrular.
-- `scripts/check_reserved_symbols.py`: çalışma zamanı nesnelerinin (`zig-out/lib/noxrt*.o`) `nm -u` ile okunan, libc'den çözdüğü her sembolün listede olduğunu doğrular. Çalışma zamanı yeni bir libc işlevine bağlanınca CI burada kırılır.
+- `tests/golden/codegen_cases/reserved_symbol_names.nox` defines and calls a user function for EVERY name on the list; some are also used through function values, `spawn` and `nox.thread.start`. It runs on both back ends and on all eight WebAssembly targets. When the list changes, run `scripts/gen_reserved_symbol_fixture.py`; CI checks that it is current with `--check`.
+- `scripts/check_reserved_symbols.py` verifies, by reading `nm -u` of the runtime objects (`zig-out/lib/noxrt*.o`), that every symbol they resolve from libc is on the list. When the runtime starts linking a new libc function, CI breaks here.

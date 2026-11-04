@@ -93,13 +93,13 @@ In a terminal the download line is a live bar (percentage, size, speed, estimate
 
 ## Capability restrictions
 
-`--allow-net` also applies to `noxc run --target wasm32-freestanding-asyncify`: it gives the module the host's `fetch` so `nox.http` works; without it the client raises `HttpCapabilityError` (see [WebAssembly](wasm.md#ağ-noxhttp-istemcisi-host-fetchi-ile-wasm32-freestanding---asyncify)).
+`--allow-net` also applies to `noxc run --target wasm32-freestanding-asyncify`: it gives the module the host's `fetch` so `nox.http` works; without it the client raises `HttpCapabilityError` (see [WebAssembly](wasm.md#network-the-noxhttp-client-through-the-hosts-fetch-wasm32-freestanding---asyncify)).
 
 `--allow-process` and `--allow-serve` likewise give a `wasm32-freestanding-asyncify` module the host's child-process and HTTP-server capabilities (off by default; see [WebAssembly](wasm.md)).
 
-`--vfs-dir <dir>` (with `noxc run --target wasm32-freestanding`) loads a directory into the module's virtual file system before the run and writes it back on exit, so `nox.fs` and file-based `nox.sqlite` persist; see [WebAssembly](wasm.md#kalıcı-sanal-dosya-sistemi).
+`--vfs-dir <dir>` (with `noxc run --target wasm32-freestanding`) loads a directory into the module's virtual file system before the run and writes it back on exit, so `nox.fs` and file-based `nox.sqlite` persist; see [WebAssembly](wasm.md#persistent-virtual-file-system).
 
-`--deny-capability <list>` (also `--deny-capability=<list>`, valid with every subcommand) makes the compiler reject any program that imports a module needing one of the listed capabilities, or calls a function marked `@capability.requires` for it: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. It is meant for environments that compile untrusted code (a playground, a CI sandbox) and works on every target; see [WebAssembly](wasm.md#yetenek-modeli-ve---deny-capability).
+`--deny-capability <list>` (also `--deny-capability=<list>`, valid with every subcommand) makes the compiler reject any program that imports a module needing one of the listed capabilities, or calls a function marked `@capability.requires` for it: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. It is meant for environments that compile untrusted code (a playground, a CI sandbox) and works on every target; see [WebAssembly](wasm.md#capability-model-and---deny-capability).
 
 ## Environment
 

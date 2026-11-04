@@ -788,6 +788,7 @@ test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucu
         std.debug.print("pg: surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
         return error.ProgramFailed;
     }
+    if (res.stderr.len > 0 and std.mem.indexOf(u8, res.stdout, "exit 0") == null) std.debug.print("surucu stderr:\n{s}\n", .{res.stderr});
     try std.testing.expectEqualStrings(
         \\inserted id 1
         \\affected 1
@@ -844,6 +845,7 @@ test "wasm32-freestanding --asyncify: nox.mysql gerçek bir MySQL sunucusuna kar
         std.debug.print("mysql: surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
         return error.ProgramFailed;
     }
+    if (res.stderr.len > 0 and std.mem.indexOf(u8, res.stdout, "exit 0") == null) std.debug.print("surucu stderr:\n{s}\n", .{res.stderr});
     try std.testing.expectEqualStrings(
         \\affected 1 id 1
         \\affected 1 id 2

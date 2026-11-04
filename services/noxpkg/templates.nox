@@ -5,7 +5,7 @@
 import nox.template
 
 def _page_template() -> str:
-    return "<!doctype html><html lang=\"tr\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{{ title }}</title><link rel=\"stylesheet\" href=\"/pkg.css\"><script>try{var t=localStorage.getItem(\"nox-theme\");if(t===\"light\"||t===\"dark\")document.documentElement.setAttribute(\"data-theme\",t);}catch(e){}</script>{{ csrf_meta }}</head><body><header class=\"topbar\"><a class=\"brand\" href=\"https://noxlang.com\"><span class=\"mark\">N</span><span>Nox</span></a><nav class=\"topnav\" aria-label=\"Birincil\"><a href=\"/\" aria-current=\"page\">Packages</a><a href=\"https://noxlang.com/docs/tutorial/\">Tutorial</a><a href=\"https://noxlang.com/docs/stdlib/\">Stdlib</a></nav><div class=\"topright\">{{ account }}<button class=\"icon-btn\" id=\"theme\" type=\"button\" aria-label=\"Tema\">◐</button></div></header><main class=\"wrap\">{{ main }}<p class=\"footer\"><a href=\"/admin/login\">Yönetim</a></p></main><script src=\"/pkg.js\"></script></body></html>"
+    return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{{ title }}</title><link rel=\"stylesheet\" href=\"/pkg.css\"><script>try{var t=localStorage.getItem(\"nox-theme\");if(t===\"light\"||t===\"dark\")document.documentElement.setAttribute(\"data-theme\",t);}catch(e){}</script>{{ csrf_meta }}</head><body><header class=\"topbar\"><a class=\"brand\" href=\"https://noxlang.com\"><span class=\"mark\">N</span><span>Nox</span></a><nav class=\"topnav\" aria-label=\"Primary\"><a href=\"/\" aria-current=\"page\">Packages</a><a href=\"https://noxlang.com/docs/tutorial/\">Tutorial</a><a href=\"https://noxlang.com/docs/stdlib/\">Stdlib</a></nav><div class=\"topright\">{{ account }}<button class=\"icon-btn\" id=\"theme\" type=\"button\" aria-label=\"Toggle theme\">◐</button></div></header><main class=\"wrap\">{{ main }}<p class=\"footer\"><a href=\"/admin/login\">Admin</a></p></main><script src=\"/pkg.js\"></script></body></html>"
 
 def page(title: str, account_html: str, main_html: str, csrf: str) -> str:
     csrf_meta: str = ""
@@ -17,13 +17,13 @@ def page(title: str, account_html: str, main_html: str, csrf: str) -> str:
 
 def account_bar(username: str, role: str) -> str:
     if len(username) == 0:
-        return "<a class=\"btn\" href=\"/giris\">Giriş yap</a>"
+        return "<a class=\"btn\" href=\"/login\">Sign in</a>"
     who_ctx: dict[str, str] = {"name": username}
     who: str = nox.template.render("<span class=\"who\">{{ name }}</span>", who_ctx)
     admin: str = ""
     if role == "admin":
-        admin = "<a class=\"btn btn-ghost\" href=\"/admin\">Yönetim</a>"
-    return who + admin + "<button class=\"btn btn-ghost\" id=\"logout\" type=\"button\">Çıkış</button>"
+        admin = "<a class=\"btn btn-ghost\" href=\"/admin\">Admin</a>"
+    return who + admin + "<button class=\"btn btn-ghost\" id=\"logout\" type=\"button\">Sign out</button>"
 
 def _card_template() -> str:
     return "<a class=\"card\" href=\"/p/{{ name }}\" data-name=\"{{ name }}\" data-repo=\"{{ repo }}\" data-description=\"{{ description }}\" data-tags=\"{{ tags }}\"><h2>{{ name }}</h2><p>{{ description }}</p><span class=\"tags\">{{ tag_html }}</span></a>"
@@ -50,7 +50,7 @@ def package_card(name: str, repo: str, description: str, tags: list[str]) -> str
 
 def home_main(cards_html: str) -> str:
     ctx: dict[str, str] = {"cards": cards_html}
-    tmpl: str = "<p class=\"kicker\">Registry</p><h1>Packages</h1><p class=\"lead\">Nox paket indeksi. <code>noxc search</code> ile ara, <code>noxc add</code> ile projene ekle.</p><input class=\"search\" id=\"q\" type=\"search\" placeholder=\"Paket ara\" autofocus><div class=\"grid\" id=\"pkgs\">{{ cards }}</div><p class=\"empty\" id=\"empty\" hidden>Eşleşen paket yok.</p>"
+    tmpl: str = "<p class=\"kicker\">Registry</p><h1>Packages</h1><p class=\"lead\">The Nox package index. Find packages with <code>noxc search</code> and add one to your project with <code>noxc add</code>.</p><input class=\"search\" id=\"q\" type=\"search\" placeholder=\"Search packages\" autofocus><div class=\"grid\" id=\"pkgs\">{{ cards }}</div><p class=\"empty\" id=\"empty\" hidden>No matching packages.</p>"
     return nox.template.render_unescaped(tmpl, ctx)
 
 def _comment_template() -> str:
@@ -65,43 +65,43 @@ def publisher_line(login: str) -> str:
     if len(login) == 0:
         return ""
     ctx: dict[str, str] = {"login": login}
-    return nox.template.render("<p class=\"publisher\">Yayınlayan <a href=\"https://github.com/{{ login }}\" rel=\"noopener noreferrer\">@{{ login }}</a></p>", ctx)
+    return nox.template.render("<p class=\"publisher\">Published by <a href=\"https://github.com/{{ login }}\" rel=\"noopener noreferrer\">@{{ login }}</a></p>", ctx)
 
 def package_main(name: str, repo_href: str, repo_label: str, description: str, tags_html: str, install: str, comments_html: str, composer_html: str, publisher_html: str = "") -> str:
     ctx: dict[str, str] = {"publisher": publisher_html, "name": nox.template.escape_html(name), "repo_href": nox.template.escape_html(repo_href), "repo_label": nox.template.escape_html(repo_label), "description": nox.template.escape_html(description), "tags": tags_html, "install": nox.template.escape_html(install), "comments": comments_html, "composer": composer_html}
-    tmpl: str = "<p class=\"kicker\"><a href=\"/\">Packages</a></p><div class=\"pkg-head\"><div><h1>{{ name }}</h1><p class=\"lead\">{{ description }}</p>{{ publisher }}<div class=\"tags\">{{ tags }}</div></div><div><p class=\"install\">noxc add {{ install }}</p><p><a href=\"{{ repo_href }}\" rel=\"noopener noreferrer\">{{ repo_label }}</a></p></div></div><section class=\"panel\"><h2>Yorumlar</h2>{{ comments }}{{ composer }}</section>"
+    tmpl: str = "<p class=\"kicker\"><a href=\"/\">Packages</a></p><div class=\"pkg-head\"><div><h1>{{ name }}</h1><p class=\"lead\">{{ description }}</p>{{ publisher }}<div class=\"tags\">{{ tags }}</div></div><div><p class=\"install\">noxc add {{ install }}</p><p><a href=\"{{ repo_href }}\" rel=\"noopener noreferrer\">{{ repo_label }}</a></p></div></div><section class=\"panel\"><h2>Comments</h2>{{ comments }}{{ composer }}</section>"
     return nox.template.render_unescaped(tmpl, ctx)
 
 def guest_composer() -> str:
-    return "<p class=\"callout\">Yorum yazmak ve hata bildirmek için <a href=\"/giris\">giriş yap</a>.</p>"
+    return "<p class=\"callout\"><a href=\"/login\">Sign in</a> to comment or report a problem.</p>"
 
 def member_composer(name: str) -> str:
     ctx: dict[str, str] = {"name": name}
-    tmpl: str = "<form data-post=\"/p/{{ name }}/yorum\"><label for=\"body\">Yorum</label><textarea id=\"body\" name=\"body\" maxlength=\"2000\" required></textarea><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Gönder</button></form><form data-post=\"/p/{{ name }}/hata\"><label for=\"title\">Hata başlığı</label><input id=\"title\" name=\"title\" type=\"text\" maxlength=\"120\" required><label for=\"report\">Ne oldu</label><textarea id=\"report\" name=\"body\" maxlength=\"4000\" required></textarea><p class=\"err\" hidden></p><button class=\"btn btn-ghost\" type=\"submit\">Hata bildir</button></form>"
+    tmpl: str = "<form data-post=\"/p/{{ name }}/comment\"><label for=\"body\">Comment</label><textarea id=\"body\" name=\"body\" maxlength=\"2000\" required></textarea><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Post comment</button></form><form data-post=\"/p/{{ name }}/report\"><label for=\"title\">Problem title</label><input id=\"title\" name=\"title\" type=\"text\" maxlength=\"120\" required><label for=\"report\">What happened</label><textarea id=\"report\" name=\"body\" maxlength=\"4000\" required></textarea><p class=\"err\" hidden></p><button class=\"btn btn-ghost\" type=\"submit\">Report a problem</button></form>"
     return nox.template.render(tmpl, ctx)
 
 def auth_main() -> str:
-    return "<p class=\"kicker\">Hesap</p><h1>Giriş yap</h1><p class=\"lead\">Yorum ve hata bildirimi için bir hesap yeter. Paket onaylamak yönetim kapısındadır.</p><div class=\"auth-grid\"><section class=\"panel\"><h2>Giriş yap</h2><form data-post=\"/giris\" data-next=\"/\"><label for=\"user\">Kullanıcı adı</label><input id=\"user\" name=\"username\" type=\"text\" autocomplete=\"username\" required><label for=\"pw\">Parola</label><input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Giriş yap</button></form></section><section class=\"panel\"><h2>Kayıt ol</h2><form data-post=\"/kayit\" data-next=\"/\"><label for=\"new-user\">Kullanıcı adı</label><input id=\"new-user\" name=\"username\" type=\"text\" autocomplete=\"username\" required><label for=\"new-pw\">Parola</label><input id=\"new-pw\" name=\"password\" type=\"password\" autocomplete=\"new-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Kayıt ol</button></form></section></div>"
+    return "<p class=\"kicker\">Account</p><h1>Sign in</h1><p class=\"lead\">An account is all you need to comment and report problems. Publishing packages uses <code>noxc login</code> with GitHub.</p><div class=\"auth-grid\"><section class=\"panel\"><h2>Sign in</h2><form data-post=\"/login\" data-next=\"/\"><label for=\"user\">Username</label><input id=\"user\" name=\"username\" type=\"text\" autocomplete=\"username\" required><label for=\"pw\">Password</label><input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Sign in</button></form></section><section class=\"panel\"><h2>Create an account</h2><form data-post=\"/register\" data-next=\"/\"><label for=\"new-user\">Username</label><input id=\"new-user\" name=\"username\" type=\"text\" autocomplete=\"username\" required><label for=\"new-pw\">Password</label><input id=\"new-pw\" name=\"password\" type=\"password\" autocomplete=\"new-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Create account</button></form></section></div>"
 
 def admin_login_main() -> str:
-    return "<p class=\"kicker\">Yönetim</p><h1>Yönetici girişi</h1><p class=\"lead\">Paket onayları ve hata bildirimleri bu kapının arkasında.</p><section class=\"panel\"><form data-post=\"/admin/login\" data-next=\"/admin\"><label for=\"user\">Kullanıcı adı</label><input id=\"user\" name=\"username\" type=\"text\" autocomplete=\"username\" value=\"admin\" required><label for=\"pw\">Parola</label><input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Giriş yap</button></form></section>"
+    return "<p class=\"kicker\">Admin</p><h1>Administrator sign-in</h1><p class=\"lead\">Package approvals and problem reports live behind this door.</p><section class=\"panel\"><form data-post=\"/admin/login\" data-next=\"/admin\"><label for=\"user\">Username</label><input id=\"user\" name=\"username\" type=\"text\" autocomplete=\"username\" value=\"admin\" required><label for=\"pw\">Password</label><input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required><p class=\"err\" hidden></p><button class=\"btn\" type=\"submit\">Sign in</button></form></section>"
 
 def _pending_row() -> str:
-    return "<tr><td>{{ name }}</td><td>{{ publisher }}</td><td>{{ repo }}</td><td>{{ ref }}</td><td>{{ description }}</td><td><button class=\"btn\" type=\"button\" data-admin-post=\"/admin/approve/{{ id }}\">Onayla</button> <button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/reject/{{ id }}\">Reddet</button></td></tr>"
+    return "<tr><td>{{ name }}</td><td>{{ publisher }}</td><td>{{ repo }}</td><td>{{ ref }}</td><td>{{ description }}</td><td><button class=\"btn\" type=\"button\" data-admin-post=\"/admin/approve/{{ id }}\">Approve</button> <button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/reject/{{ id }}\">Reject</button></td></tr>"
 
 def pending_row(id: str, name: str, repo: str, ref: str, description: str, publisher: str) -> str:
     ctx: dict[str, str] = {"id": id, "name": name, "repo": repo, "ref": ref, "description": description, "publisher": publisher}
     return nox.template.render(_pending_row(), ctx)
 
 def _index_row() -> str:
-    return "<tr><td>{{ name }}</td><td>{{ publisher }}</td><td>{{ repo }}</td><td>{{ description }}</td><td><button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/index/remove\" data-extra=\"{{ name }}\">Çıkar</button></td></tr>"
+    return "<tr><td>{{ name }}</td><td>{{ publisher }}</td><td>{{ repo }}</td><td>{{ description }}</td><td><button class=\"btn btn-ghost danger\" type=\"button\" data-admin-post=\"/admin/index/remove\" data-extra=\"{{ name }}\">Remove</button></td></tr>"
 
 def index_row(name: str, repo: str, description: str, publisher: str) -> str:
     ctx: dict[str, str] = {"name": name, "repo": repo, "description": description, "publisher": publisher}
     return nox.template.render(_index_row(), ctx)
 
 def _report_row() -> str:
-    return "<tr><td>{{ package }}</td><td>{{ username }}</td><td>{{ title }}</td><td>{{ body }}</td><td>{{ status }}</td><td><button class=\"btn btn-ghost\" type=\"button\" data-admin-post=\"/admin/reports/{{ id }}/close\">Kapat</button></td></tr>"
+    return "<tr><td>{{ package }}</td><td>{{ username }}</td><td>{{ title }}</td><td>{{ body }}</td><td>{{ status }}</td><td><button class=\"btn btn-ghost\" type=\"button\" data-admin-post=\"/admin/reports/{{ id }}/close\">Close</button></td></tr>"
 
 def report_row(id: str, package_name: str, username: str, title: str, body: str, status: str) -> str:
     ctx: dict[str, str] = {"id": id, "package": package_name, "username": username, "title": title, "body": body, "status": status}
@@ -116,5 +116,5 @@ def publisher_row(login: str, packages: str, pending: str, last_login: str) -> s
 
 def dashboard_main(pending_html: str, index_html: str, report_html: str, publisher_html: str) -> str:
     ctx: dict[str, str] = {"pending": pending_html, "index": index_html, "reports": report_html, "publishers": publisher_html}
-    tmpl: str = "<p class=\"kicker\">Yönetim</p><h1>Kayıt</h1><section class=\"panel\"><h2>Bekleyen gönderiler</h2><div class=\"table-wrap\"><table><tr><th>İsim</th><th>Yayıncı</th><th>Repo</th><th>Ref</th><th>Açıklama</th><th></th></tr>{{ pending }}</table></div></section><section class=\"panel\"><h2>Yayında</h2><div class=\"table-wrap\"><table><tr><th>İsim</th><th>Yayıncı</th><th>Repo</th><th>Açıklama</th><th></th></tr>{{ index }}</table></div></section><section class=\"panel\"><h2>Yayıncılar</h2><div class=\"table-wrap\"><table><tr><th>GitHub</th><th>Paket</th><th>Bekleyen</th><th>Son giriş</th></tr>{{ publishers }}</table></div></section><section class=\"panel\"><h2>Hata bildirimleri</h2><div class=\"table-wrap\"><table><tr><th>Paket</th><th>Kullanıcı</th><th>Başlık</th><th>Gövde</th><th>Durum</th><th></th></tr>{{ reports }}</table></div></section>"
+    tmpl: str = "<p class=\"kicker\">Admin</p><h1>Registry</h1><section class=\"panel\"><h2>Pending submissions</h2><div class=\"table-wrap\"><table><tr><th>Name</th><th>Publisher</th><th>Repo</th><th>Ref</th><th>Description</th><th></th></tr>{{ pending }}</table></div></section><section class=\"panel\"><h2>Published</h2><div class=\"table-wrap\"><table><tr><th>Name</th><th>Publisher</th><th>Repo</th><th>Description</th><th></th></tr>{{ index }}</table></div></section><section class=\"panel\"><h2>Publishers</h2><div class=\"table-wrap\"><table><tr><th>GitHub</th><th>Packages</th><th>Pending</th><th>Last sign-in</th></tr>{{ publishers }}</table></div></section><section class=\"panel\"><h2>Problem reports</h2><div class=\"table-wrap\"><table><tr><th>Package</th><th>User</th><th>Title</th><th>Details</th><th>Status</th><th></th></tr>{{ reports }}</table></div></section>"
     return nox.template.render_unescaped(tmpl, ctx)
