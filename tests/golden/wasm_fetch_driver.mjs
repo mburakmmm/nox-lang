@@ -14,6 +14,24 @@ const fakeFetch = async (url, init) => {
   active.n++;
   active.max = Math.max(active.max, active.n);
   try {
+    if (u.pathname === '/chunks' || u.pathname === '/stall') {
+      // Akışlı yanıt: /chunks üç parça verip biter, /stall bir parça verip sonsuza dek bekler (boşta kalma zaman aşımı sınanır).
+      const parts = u.pathname === '/chunks' ? ['aaaa', 'bbbbbb', 'cc'] : ['first'];
+      let n = 0;
+      const stream = new ReadableStream({
+        async pull(controller) {
+          if (n < parts.length) {
+            await new Promise((r) => setTimeout(r, 10));
+            controller.enqueue(new TextEncoder().encode(parts[n++]));
+          } else if (u.pathname === '/chunks') {
+            controller.close();
+          } else {
+            await new Promise((_, rej) => init.signal && init.signal.addEventListener('abort', () => rej(init.signal.reason)));
+          }
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'x-reply': 'streamed' } });
+    }
     if (u.pathname === '/slow') await new Promise((r) => setTimeout(r, 100));
     if (u.pathname === '/refuse') throw new TypeError('fetch failed');
     if (u.pathname === '/timeout') await new Promise((_, rej) => init.signal.addEventListener('abort', () => rej(init.signal.reason)));

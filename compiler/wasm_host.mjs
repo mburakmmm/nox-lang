@@ -146,7 +146,7 @@ function parseHeaderLines(text) {
   return h;
 }
 
-/** `nox_host_fetch_pending` çıktısını ayrıştırır: [{ id, timeoutMs, hasBody, method, url, headers, body }]. */
+/** `nox_host_fetch_pending` çıktısını ayrıştırır: [{ id, kind, stream, arg, hasBody, method, url, headers, body }]. `kind`: 0 fetch, 1 stream_open, 2 stream_read, 3 stream_close. */
 function parsePendingRequests(buf) {
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const dec = new TextDecoder();
@@ -165,33 +165,96 @@ function parsePendingRequests(buf) {
   };
   while (i < buf.length) {
     const id = u32();
-    const timeoutMs = u32();
+    const kind = u32();
+    const stream = u32();
+    const arg = u32();
     const hasBody = u32() !== 0;
-    out.push({ id, timeoutMs, hasBody, method: dec.decode(bytes()), url: dec.decode(bytes()), headers: dec.decode(bytes()), body: bytes().slice() });
+    out.push({ id, kind, stream, arg, hasBody, method: dec.decode(bytes()), url: dec.decode(bytes()), headers: dec.decode(bytes()), body: bytes().slice() });
   }
   return out;
 }
 
+const emptyBytes = new Uint8Array(0);
+const errorKindOf = (e) => (e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 1 : 0);
+const failed = (id, kind) => ({ id, status: 0, errorKind: kind, headers: emptyBytes, body: emptyBytes });
+
+function headerText(res) {
+  let headers = '';
+  res.headers.forEach((v, k) => {
+    headers += `${k}: ${v}\n`;
+  });
+  return new TextEncoder().encode(headers);
+}
+
+/** Tam yanıtlı `fetch` (kind 0). */
 async function doFetch(fetchFn, req) {
   const init = { method: req.method, headers: parseHeaderLines(req.headers) };
   if (req.hasBody) init.body = req.body;
-  if (req.timeoutMs > 0) init.signal = AbortSignal.timeout(req.timeoutMs);
+  if (req.arg > 0) init.signal = AbortSignal.timeout(req.arg);
   try {
     const res = await fetchFn(req.url, init);
     const body = new Uint8Array(await res.arrayBuffer());
-    let headers = '';
-    res.headers.forEach((v, k) => {
-      headers += `${k}: ${v}\n`;
-    });
-    return { id: req.id, status: res.status, errorKind: -1, headers: new TextEncoder().encode(headers), body };
+    return { id: req.id, status: res.status, errorKind: -1, headers: headerText(res), body };
   } catch (e) {
-    const timeout = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
-    return { id: req.id, status: 0, errorKind: timeout ? 1 : 0, headers: new Uint8Array(0), body: new Uint8Array(0) };
+    return failed(req.id, errorKindOf(e));
+  }
+}
+
+/** Zaman aşımlı bekleme: `ms > 0` iken söz `ms` içinde bitmezse akış iptal edilir ve `TimeoutError` fırlar (boşta kalma zaman aşımı, toplam süre değil). */
+function withIdleTimeout(promise, ms, onTimeout) {
+  if (!(ms > 0)) return promise;
+  let timer;
+  const timeout = new Promise((_, rej) => {
+    timer = setTimeout(() => {
+      onTimeout();
+      const e = new Error('timeout');
+      e.name = 'TimeoutError';
+      rej(e);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Akışlı istemci (kind 1/2/3): `streams` açık yanıt okuyucularını tutar (anahtar: açan isteğin kimliği). */
+async function doStream(fetchFn, req, streams) {
+  if (req.kind === 3) {
+    const st = streams.get(req.stream);
+    streams.delete(req.stream);
+    if (st && st.reader) st.reader.cancel().catch(() => {});
+    return null; // yanıt beklenmez
+  }
+  if (req.kind === 2) {
+    const st = streams.get(req.stream);
+    if (!st) return failed(req.id, 0);
+    try {
+      if (!st.reader) {
+        streams.delete(req.stream);
+        return { id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+      }
+      const { done, value } = await withIdleTimeout(st.reader.read(), st.timeoutMs, () => st.ctrl.abort());
+      if (done) streams.delete(req.stream);
+      return { id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: done ? emptyBytes : value };
+    } catch (e) {
+      streams.delete(req.stream);
+      if (st.reader) st.reader.cancel().catch(() => {});
+      return failed(req.id, errorKindOf(e));
+    }
+  }
+  // kind 1: akışı aç — başlıklar gelince döner, gövde okuyucuda kalır.
+  const ctrl = new AbortController();
+  const init = { method: req.method, headers: parseHeaderLines(req.headers), signal: ctrl.signal };
+  if (req.hasBody) init.body = req.body;
+  try {
+    const res = await withIdleTimeout(fetchFn(req.url, init), req.arg, () => ctrl.abort());
+    streams.set(req.id, { reader: res.body ? res.body.getReader() : null, ctrl, timeoutMs: req.arg });
+    return { id: req.id, status: res.status, errorKind: -1, headers: headerText(res), body: emptyBytes };
+  } catch (e) {
+    return failed(req.id, errorKindOf(e));
   }
 }
 
 /** Askıdaki modülün yeni isteklerini başlatır, bir tanesi bitene kadar bekler ve sonucunu modüle iletir. */
-async function pumpFetches(instance, fetchFn, inflight) {
+async function pumpFetches(instance, fetchFn, inflight, streams) {
   const x = instance.exports;
   const mem = x.memory;
   const lenPtr = x.nox_host_alloc(4);
@@ -200,8 +263,19 @@ async function pumpFetches(instance, fetchFn, inflight) {
   const pending = ptr ? parsePendingRequests(new Uint8Array(mem.buffer, ptr, len).slice()) : [];
   if (ptr) x.nox_host_free(ptr, len);
   x.nox_host_free(lenPtr, 4);
-  for (const req of pending) inflight.set(req.id, doFetch(fetchFn, req));
-  if (inflight.size === 0) throw new Error('nox: program host için askıda ama bekleyen istek yok');
+  for (const req of pending) {
+    if (req.kind === 0) {
+      inflight.set(req.id, doFetch(fetchFn, req));
+    } else {
+      const p = doStream(fetchFn, req, streams);
+      if (req.kind !== 3) inflight.set(req.id, p);
+      else p.catch(() => {});
+    }
+  }
+  if (inflight.size === 0) {
+    if (pending.length === 0) throw new Error('nox: program host için askıda ama bekleyen istek yok');
+    return; // yalnızca yanıtsız (kapatma) istekleri vardı: bekleyecek bir şey yok, programı sürdür
+  }
   const done = await Promise.race([...inflight.entries()].map(([id, p]) => p.then((r) => r)));
   inflight.delete(done.id);
   const put = (b) => {
@@ -235,6 +309,7 @@ export async function runNox(wasmBytes, io, opts = {}) {
   try {
     let step = () => x._start();
     const inflight = new Map();
+    const streams = new Map();
     for (;;) {
       try {
         step();
@@ -246,7 +321,7 @@ export async function runNox(wasmBytes, io, opts = {}) {
         throw e;
       }
       if (!asyncHost || x.nox_host_status() !== 1) break;
-      await pumpFetches(instance, fetchFn.bind(globalThis), inflight);
+      await pumpFetches(instance, fetchFn.bind(globalThis), inflight, streams);
       step = () => x.nox_host_resume();
     }
   } finally {

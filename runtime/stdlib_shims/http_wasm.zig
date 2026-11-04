@@ -147,59 +147,82 @@ export fn nox_http_response_free(h: ?*anyopaque) callconv(.c) void {
 
 // ---- Akışlı istemci (`transfer`, `http.stream_*`) ---------------------------------------------------------------------------------------------------
 
+/// `failedHandle()` dışındaki akış tutamaçları `http_fetch.Stream`dir.
+fn fetchStream(h: ?*anyopaque) ?*fetch.Stream {
+    const p = h orelse return null;
+    if (p == failedHandle()) return null;
+    return @ptrCast(@alignCast(p));
+}
+
 export fn nox_http_stream_open_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*:0]const u8, headers: ?*anyopaque, body: ?[*:0]const u8, has_body: i32, upload_len: i64, timeout_ms: i64) callconv(.c) ?*anyopaque {
     _ = rt;
-    _ = method;
-    _ = url;
-    _ = headers;
-    _ = body;
-    _ = has_body;
-    _ = upload_len;
-    _ = timeout_ms;
+    if (comptime fetch_enabled) {
+        if (fetch.available()) {
+            const m = str_mod.nox_str_slice(method orelse return null);
+            const u = str_mod.nox_str_slice(url orelse return null);
+            const b: ?[]const u8 = if (has_body != 0) str_mod.nox_str_slice(body orelse return null) else null;
+            return @ptrCast(fetch.streamOpen(m, u, headers, b, upload_len, timeout_ms));
+        }
+    }
     return failedHandle();
 }
 
 export fn nox_http_stream_error_kind(h: ?*anyopaque) callconv(.c) i64 {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetch.available()) {
+            if (h == null) return 3; // geçersiz istek
+            if (fetchStream(h)) |st| return st.error_kind;
+        }
+    }
     return ERROR_KIND_CAPABILITY;
 }
 
 export fn nox_http_stream_ok(h: ?*anyopaque) callconv(.c) i32 {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchStream(h)) |st| return fetch.streamOk(st);
+    }
     return 0;
 }
 
 export fn nox_http_stream_status(h: ?*anyopaque) callconv(.c) i64 {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchStream(h)) |st| return st.status;
+    }
     return 0;
 }
 
 export fn nox_http_stream_headers(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c) ?*anyopaque {
-    _ = rt;
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchStream(h)) |st| return fetch.streamHeaders(rt, st);
+    }
     return null;
 }
 
 export fn nox_http_stream_read_raw(rt: ?*anyopaque, h: ?*anyopaque, n: i64) callconv(.c) ?[*:0]u8 {
-    _ = rt;
-    _ = h;
-    _ = n;
+    if (comptime fetch_enabled) {
+        if (fetchStream(h)) |st| return fetch.streamRead(rt, st, n);
+    }
     return null;
 }
 
 export fn nox_http_stream_write_raw(h: ?*anyopaque, content: ?[*:0]const u8) callconv(.c) i32 {
-    _ = h;
-    _ = content;
+    if (comptime fetch_enabled) {
+        if (fetchStream(h)) |st| return fetch.streamWrite(st, str_mod.nox_str_slice(content orelse return 0));
+    }
     return 0;
 }
 
 export fn nox_http_stream_finish_raw(h: ?*anyopaque) callconv(.c) i32 {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchStream(h)) |st| return fetch.streamFinish(st);
+    }
     return 0;
 }
 
 export fn nox_http_stream_close_raw(h: ?*anyopaque) callconv(.c) void {
-    _ = h;
+    if (comptime fetch_enabled) {
+        if (fetchStream(h)) |st| fetch.streamFree(st);
+    }
 }
 
 // ---- Sunucu (dinleme yok) ----------------------------------------------------------------------------------------------------------------------------

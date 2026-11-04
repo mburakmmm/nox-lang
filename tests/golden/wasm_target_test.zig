@@ -460,3 +460,95 @@ test "wasm32-freestanding --asyncify: host ağ yeteneğini vermezse HttpCapabili
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("capability\nexit 0\nmax concurrent 0\n", out);
 }
+
+// v2.0.152 (spec §3.354): akışlı istemci (`stream`, `stream_upload`). İndirme `fetch` yanıtının okuyucusundan parça parça okunur (geri basınç: yalnızca `read_chunk` çağrıldıkça),
+// yükleme çalışma zamanında tamponlanıp `finish` ile tek istek olarak gönderilir, `read_chunk` boşta kalma zaman aşımı `HttpTimeoutError` verir.
+const stream_program =
+    \\import nox.http
+    \\from nox.http import HttpStream, HttpError, HttpTimeoutError
+    \\
+    \\def hdrs() -> dict[str, str]:
+    \\    h: dict[str, str] = {}
+    \\    h["X-Test"] = "nox"
+    \\    return h
+    \\
+    \\with nox.http.stream("GET", "http://t.invalid/chunks", hdrs()) as s:
+    \\    print(s.status, s.headers["x-reply"])
+    \\    total: int = 0
+    \\    while True:
+    \\        chunk: str = s.read_chunk(3)
+    \\        if len(chunk) == 0:
+    \\            break
+    \\        total = total + len(chunk)
+    \\        print(chunk)
+    \\    print("total", total)
+    \\
+    \\up: HttpStream = nox.http.stream_upload("POST", "http://t.invalid/echo", hdrs(), 9)
+    \\up.write("abc")
+    \\up.write("defghi")
+    \\up.finish()
+    \\print(up.status, up.read_chunk(100))
+    \\up.close()
+    \\
+    \\try:
+    \\    with nox.http.stream("GET", "http://t.invalid/stall", hdrs(), "", 40) as st:
+    \\        print(st.read_chunk(100))
+    \\        print(st.read_chunk(100))
+    \\        print("unreachable")
+    \\except HttpTimeoutError:
+    \\    print("idle timeout")
+    \\
+    \\try:
+    \\    with nox.http.stream("GET", "http://t.invalid/refuse", hdrs()) as bad:
+    \\        print("unreachable")
+    \\except HttpError:
+    \\    print("stream connect error")
+    \\
+;
+
+const stream_expected =
+    \\200 streamed
+    \\aaa
+    \\a
+    \\bbb
+    \\bbb
+    \\cc
+    \\total 12
+    \\200 POST:/echo:abcdefghi
+    \\first
+    \\idle timeout
+    \\stream connect error
+    \\exit 0
+    \\max concurrent 1
+    \\fetch GET /chunks x-test=nox body=-
+    \\fetch GET /refuse x-test=nox body=-
+    \\fetch GET /stall x-test=nox body=-
+    \\fetch POST /echo x-test=nox body=abcdefghi
+    \\
+;
+
+test "wasm32-freestanding --asyncify: akışlı istemci (indirme, yükleme, boşta zaman aşımı) host fetch'ine dayanır" {
+    const out = (try runFetchDriver(stream_program, "allow")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings(stream_expected, out);
+}
+
+test "wasm32-freestanding --asyncify: nox.transfer (download_to_file / upload_file) akışlı istemciyi ve sanal dosya sistemini birlikte kullanır" {
+    const src =
+        \\import nox.http
+        \\import nox.transfer
+        \\import nox.fs
+        \\from nox.http import HttpResponse
+        \\
+        \\h: dict[str, str] = {}
+        \\n: int = nox.transfer.download_to_file("http://t.invalid/chunks", "/tmp/dl.bin", h)
+        \\print(n, nox.fs.read_to_string("/tmp/dl.bin"))
+        \\nox.fs.write_string("/tmp/up.bin", "payload-xyz")
+        \\r: HttpResponse = nox.transfer.upload_file("POST", "http://t.invalid/echo", "/tmp/up.bin", h)
+        \\print(r.status, r.body)
+        \\
+    ;
+    const out = (try runFetchDriver(src, "allow")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("200 aaaabbbbbbcc\n200 POST:/echo:payload-xyz\nexit 0\nmax concurrent 1\nfetch GET /chunks x-test=- body=-\nfetch POST /echo x-test=- body=payload-xyz\n", out);
+}

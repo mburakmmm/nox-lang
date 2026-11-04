@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.152]
+
+### Eklendi
+
+- **wasm32-freestanding-asyncify: akışlı HTTP istemcisi** (`nox.http.stream`, `stream_upload`, `nox.transfer.download_to_file/upload_file`): indirme `fetch` yanıtının okuyucusundan parça parça ve geri basınçla okunur; yükleme tamponlanıp `finish()` ile gönderilir; `timeout_ms` boşta kalma zaman aşımıdır (spec 3.354). Host istek kayıtlarına `kind/stream/arg` alanları eklendi (§3.351 protokolünün genişlemesi).
+- **Tarayıcıda `--asyncify` derleme:** `compiler/wasm_asyncify.mjs` (`binaryenAsyncify`, `createNoxCompiler({ optimize })`); `scripts/web_compiler_e2e.mjs --target wasm32-freestanding-asyncify` tüm korpusta 458 ok.
+
 ## [2.0.151]
 
 ### Eklendi

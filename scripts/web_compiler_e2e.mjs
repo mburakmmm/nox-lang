@@ -26,9 +26,19 @@ if (!process.env.YOWASP_CLANG) {
   console.error('YOWASP_CLANG=<.../@yowasp/clang/gen/bundle.js> gerekli (bkz. dosya başı)');
   process.exit(2);
 }
-if (target.endsWith('-threads') || target.endsWith('-asyncify')) {
-  console.error('bu betik yalnızca düz wasm32-freestanding hedefini çalıştırır (asyncify için wasm-opt, threads için paylaşımlı bellek gerekir)');
+if (target.endsWith('-threads')) {
+  console.error('bu betik --threads hedeflerini çalıştırmaz (paylaşımlı bellek + Worker gerekir)');
   process.exit(2);
+}
+// `-asyncify` hedefleri için `binaryen` gerekir: BINARYEN=<.../node_modules/binaryen/index.js>
+let optimize = null;
+if (target.endsWith('-asyncify')) {
+  if (!process.env.BINARYEN) {
+    console.error('-asyncify için BINARYEN=<.../node_modules/binaryen/index.js> gerekli');
+    process.exit(2);
+  }
+  const { binaryenAsyncify } = await import('../compiler/wasm_asyncify.mjs');
+  optimize = binaryenAsyncify((await import(pathToFileURL(process.env.BINARYEN).href)).default);
 }
 
 const LIB = path.join(ROOT, 'zig-out/lib');
@@ -36,10 +46,11 @@ const nox = await createNoxCompiler({
   frontend: fs.readFileSync(path.join(LIB, 'noxc-frontend.wasm')),
   asset: async (n) => new Uint8Array(fs.readFileSync(path.join(LIB, n))),
   clang: () => import(pathToFileURL(process.env.YOWASP_CLANG).href),
+  optimize,
 });
 
 // Yerel noxc'nin düz freestanding'de de çalıştırmadığı/denylist'e aldığı fixture'lar `wasm_corpus.py` ile aynıdır.
-const SKIP = new Set(['mathx_trig_log_constants', 'thread_spawn_ordering', 'task_local_basic', 'channel_rendezvous_pingpong']);
+const SKIP = new Set(target.endsWith('-asyncify') ? ['mathx_trig_log_constants'] : ['mathx_trig_log_constants', 'thread_spawn_ordering', 'task_local_basic', 'channel_rendezvous_pingpong']);
 const cases = fs.readdirSync(path.join(ROOT, 'tests/golden/codegen_cases')).filter((f) => f.endsWith('.nox') && f.includes(filter)).sort();
 const picked = all ? cases : cases.filter((_, i) => i % Math.max(1, Math.floor(cases.length / limit)) === 0).slice(0, limit);
 const sleepCell = new Int32Array(new SharedArrayBuffer(4));

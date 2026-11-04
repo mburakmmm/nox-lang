@@ -28,13 +28,13 @@ else await runNox(r.wasm, io);                         // io: write/read/clockMs
 - `nox.compileToIr(source, opts)` yalnızca ön yüzü çalıştırır (`{ ok, ir, plan, diagnostics }`): canlı hata denetimi için idealdir.
 - `opts.target`: `wasm32-freestanding` (varsayılan), `-asyncify`, `-threads`; `opts.deny`: derleme zamanı yetenek yasakları (`['fs', 'network']`, bkz. `--deny-capability`); `opts.label`: tanılamadaki dosya adı.
 - `nox.addFile('/stdlib/...' | yol, metin)`: bellek içi sanal dosya ekler.
-- `--asyncify` hedefleri bağlama sonrası `wasm-opt` ister; `createNoxCompiler({ optimize })` ile (örn. `binaryen`) bir son işlem işlevi verilmezse açık bir hata döner.
+- `--asyncify` hedefleri bağlama sonrası `wasm-opt` ister: tarayıcıda `binaryen` (npm, Apache-2.0) ile `import { binaryenAsyncify } from './wasm_asyncify.mjs'; createNoxCompiler({ ..., optimize: binaryenAsyncify(binaryen) })`. Verilmezse açık bir hata döner. `nox.http` istemcisi (`fetch`) yalnızca bu hedefte çalışır.
 
 Çalıştırırken [WebAssembly sayfasındaki](wasm.md) host seçenekleri geçerlidir: bellek içi dosya sistemi, isteğe bağlı kalıcılık (`vfs`) ve yalnızca açıkça verilirse ağ (`fetch`). Güvenilmeyen kodu çalıştıran sayfalarda `deny` ile yetenekleri derleme zamanında kısıtlayın ve `runNox`a `fetch`/`vfs` vermeyin.
 
 ## Dağıtım ve sınırlar
 
-- Sürüm arşivinin yanında `nox-web-compiler-<sürüm>.tar.gz` yayımlanır: `noxc-frontend.wasm`, `wasm_compiler.mjs`, `wasm_host.mjs` ve `lib/` (çalışma zamanı nesneleri). Kaynaktan: `zig build wasm-compiler wasm-rt`.
+- Sürüm arşivinin yanında `nox-web-compiler-<sürüm>.tar.gz` yayımlanır: `noxc-frontend.wasm`, `wasm_compiler.mjs`, `wasm_asyncify.mjs`, `wasm_host.mjs` ve `lib/` (çalışma zamanı nesneleri). Kaynaktan: `zig build wasm-compiler wasm-rt`.
 - İlk derleme clang/lld'yi yükler (yüzlerce ms); sonrakiler ~0,3-1 sn sürer. Büyük programlar ve `nox.sqlite` (≈ 800 KB çıktı) biraz daha uzun sürer.
 - Yerel `extern def ... from "<kütüphane>"` bildirimleri tarayıcıda bağlanamaz (yerel kütüphane yok); `native`, `plugin`, `hpy` modülleri WASM'da zaten kullanılamaz.
-- Doğrulama: `scripts/wasm_frontend_corpus.py` tüm `codegen_cases` korpusunda ön yüz IR'ını yerel `noxc` ile karşılaştırır (467 aynı + 16 aynı nedenle reddedilen); `scripts/web_compiler_e2e.mjs` tam boru hattını (ön yüz -> clang -> çalıştırma) korpusta çalıştırıp `.expected` ile karşılaştırır (453 ok).
+- Doğrulama: `scripts/wasm_frontend_corpus.py` tüm `codegen_cases` korpusunda ön yüz IR'ını yerel `noxc` ile karşılaştırır (467 aynı + 16 aynı nedenle reddedilen); `scripts/web_compiler_e2e.mjs` tam boru hattını (ön yüz -> clang -> çalıştırma) korpusta çalıştırıp `.expected` ile karşılaştırır (`wasm32-freestanding` 453 ok, `wasm32-freestanding-asyncify` binaryen ile 458 ok).
