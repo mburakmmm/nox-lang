@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.156]
+
+### Eklendi
+
+- **WASM'da `nox.postgres`:** libpq yerine Zig'de yazılmış PostgreSQL protokol 3.0 istemcisi (SCRAM-SHA-256, MD5, cleartext; basit ve genişletilmiş protokol; `sslmode=require` host TLS'i ile), host TCP yeteneği üzerinde. GERÇEK bir PostgreSQL 18 sunucusuna karşı doğrulandı (spec 3.358).
+
 ## [2.0.155]
 
 ### Eklendi

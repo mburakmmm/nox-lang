@@ -108,7 +108,7 @@ test "wasm32-wasi: JSON, regex, gzip, sha256, fs kabukları" {
 
 test "wasm32-wasi: henüz desteklenmeyen modül derleme zamanında açık iletiyle reddedilir" {
     try expectRejected("import nox.mysql\nprint(1)\n", "cannot be used on the wasm32-wasi target");
-    try expectRejected("import nox.postgres\nprint(1)\n", "cannot be used on the wasm32-wasi target");
+    try expectRejected("import nox.sharedmem\nprint(1)\n", "cannot be used on the wasm32-wasi target");
 }
 
 // v2.0.146 (spec §3.348): `nox.sqlite` WASM'da DERLENİR; SQLite amalgamation'ı ayrı bir nesne olarak (`noxrt-wasm32-*-sqlite3.o`) yalnızca `nox_sqlite_*` kullanan
@@ -730,4 +730,42 @@ test "wasm32-freestanding --asyncify: host TCP yeteneğini vermezse TlsError (tc
     const out = (try runTcpDriver("deny")) orelse return error.SkipZigTest;
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("tls error: tcp\nexit 0\n", out);
+}
+
+// v2.0.156 (spec §3.358): `nox.postgres` WASM'da libpq yerine Zig'de yazılmış PostgreSQL protokol istemcisiyle çalışır (host TCP üzerinde). Sürücü GERÇEK bir PostgreSQL kümesi kurar
+// (`initdb`, scram-sha-256) ve sunucuya karşı tam bir oturum çalıştırır; `initdb`/`pg_ctl` yoksa atlanır.
+test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucusuna karşı (SCRAM-SHA-256, basit + genişletilmiş protokol)" {
+    const allocator = std.testing.allocator;
+    const res = std.process.run(allocator, std.testing.io, .{
+        .argv = &.{ "node", "--no-warnings", build_options.pg_driver_path, build_options.noxc_path, build_options.pg_program_path, build_options.wasm_host_path },
+    }) catch |err| {
+        if (err == error.FileNotFound) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(res.stdout);
+    defer allocator.free(res.stderr);
+    if (std.mem.eql(u8, std.mem.trim(u8, res.stdout, "\n "), "SKIP")) return error.SkipZigTest;
+    if (res.term != .exited or res.term.exited != 0) {
+        if (std.mem.indexOf(u8, res.stderr, "zig not found") != null or std.mem.indexOf(u8, res.stderr, "wasm-opt") != null) return error.SkipZigTest;
+        std.debug.print("pg: surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
+        return error.ProgramFailed;
+    }
+    try std.testing.expectEqualStrings(
+        \\inserted id 1
+        \\affected 1
+        \\updated 2
+        \\1 alice False False
+        \\2 bob False True
+        \\3 carol True True
+        \\31 42
+        \\çok satırlı
+        \\metin 'tırnak'
+        \\older: bob
+        \\error: statement failed: ERROR:  relation "no_such_table" does not exist
+        \\
+        \\1
+        \\auth failed: True
+        \\exit 0
+        \\
+    , res.stdout);
 }

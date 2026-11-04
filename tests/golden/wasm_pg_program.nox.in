@@ -1,0 +1,49 @@
+import nox.postgres
+from nox.postgres import Connection, PostgresError
+from nox.db import Row, Statement
+
+conn: Connection = nox.postgres.open("host=127.0.0.1 port=__PORT__ user=postgres password=secret dbname=postgres")
+conn.execute("CREATE TABLE people (id serial PRIMARY KEY, name text NOT NULL, age int, bio text)")
+
+ins: Statement = conn.prepare("INSERT INTO people (name, age, bio) VALUES (?, ?, ?) RETURNING id")
+ins.bind_str(0, "alice")
+ins.bind_int(1, 30)
+ins.bind_str(2, "çok satırlı\nmetin 'tırnak'")
+rows: list[Row] = ins.query()
+print("inserted id", rows[0].get_int(0))
+
+ins2: Statement = conn.prepare("INSERT INTO people (name, age, bio) VALUES (?, ?, ?)")
+ins2.bind_str(0, "bob")
+ins2.bind_int(1, 41)
+ins2.bind_null(2)
+n: int = ins2.execute()
+print("affected", n)
+
+conn.execute("INSERT INTO people (name, age) VALUES ('carol', NULL)")
+print("updated", conn.execute("UPDATE people SET age = age + 1 WHERE age IS NOT NULL"))
+
+people: list[Row] = conn.query("SELECT id, name, age, bio FROM people ORDER BY id")
+for r in people:
+    print(r.get_int(0), r.get_str(1), r.is_null(2), r.is_null(3))
+print(people[0].get_int(2), people[1].get_int(2))
+print(people[0].get_str(3))
+
+q: Statement = conn.prepare("SELECT name FROM people WHERE age > ? ORDER BY name")
+q.bind_int(0, 31)
+for r in q.query():
+    print("older:", r.get_str(0))
+
+try:
+    conn.execute("SELECT * FROM no_such_table")
+    print("unreachable")
+except PostgresError as e:
+    print("error:", e.message)
+
+print(conn.execute("DELETE FROM people WHERE name = 'carol'"))
+conn.close()
+
+try:
+    bad: Connection = nox.postgres.open("host=127.0.0.1 port=__PORT__ user=postgres password=wrong dbname=postgres")
+    print("unreachable")
+except PostgresError as e:
+    print("auth failed:", "password authentication failed" in e.message)
