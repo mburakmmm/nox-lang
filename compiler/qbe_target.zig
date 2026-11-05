@@ -116,15 +116,20 @@ pub const HostedTargetInfo = struct {
     pub fn isMobile(self: HostedTargetInfo) bool {
         return self.mobile != .none;
     }
+
+    /// Masaüstü barındırılan hedef (macOS/Linux/Windows exe): hem QBE hem LLVM ile derlenebilir (LLVM çapraz bağlama `zig cc -target` ister).
+    pub fn isDesktop(self: HostedTargetInfo) bool {
+        return !self.wasm and self.mobile == .none;
+    }
 };
 
 pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
-    if (std.mem.eql(u8, target_name, "macos-arm64")) return .{ .qbe_target = "arm64_apple", .runtime_object_name = "noxrt-macos-arm64", .zig_triple = "aarch64-macos", .is_windows = false };
-    if (std.mem.eql(u8, target_name, "macos-x64")) return .{ .qbe_target = "amd64_apple", .runtime_object_name = "noxrt-macos-x64", .zig_triple = "x86_64-macos", .is_windows = false };
-    if (std.mem.eql(u8, target_name, "linux-x64")) return .{ .qbe_target = "amd64_sysv", .runtime_object_name = "noxrt-linux-x64", .zig_triple = "x86_64-linux-gnu", .is_windows = false };
-    if (std.mem.eql(u8, target_name, "linux-arm64")) return .{ .qbe_target = "arm64", .runtime_object_name = "noxrt-linux-arm64", .zig_triple = "aarch64-linux-gnu", .is_windows = false };
-    if (std.mem.eql(u8, target_name, "windows-x64")) return .{ .qbe_target = "amd64_win", .runtime_object_name = "noxrt-windows-x64", .zig_triple = "x86_64-windows-gnu", .is_windows = true };
-    if (std.mem.eql(u8, target_name, "linux-riscv64")) return .{ .qbe_target = "rv64", .runtime_object_name = "noxrt-linux-riscv64", .zig_triple = "riscv64-linux-musl", .is_windows = false };
+    if (std.mem.eql(u8, target_name, "macos-arm64")) return .{ .qbe_target = "arm64_apple", .runtime_object_name = "noxrt-macos-arm64", .zig_triple = "aarch64-macos", .is_windows = false, .llvm_triple = "arm64-apple-macosx" };
+    if (std.mem.eql(u8, target_name, "macos-x64")) return .{ .qbe_target = "amd64_apple", .runtime_object_name = "noxrt-macos-x64", .zig_triple = "x86_64-macos", .is_windows = false, .llvm_triple = "x86_64-apple-macosx" };
+    if (std.mem.eql(u8, target_name, "linux-x64")) return .{ .qbe_target = "amd64_sysv", .runtime_object_name = "noxrt-linux-x64", .zig_triple = "x86_64-linux-gnu", .is_windows = false, .llvm_triple = "x86_64-unknown-linux-gnu" };
+    if (std.mem.eql(u8, target_name, "linux-arm64")) return .{ .qbe_target = "arm64", .runtime_object_name = "noxrt-linux-arm64", .zig_triple = "aarch64-linux-gnu", .is_windows = false, .llvm_triple = "aarch64-unknown-linux-gnu" };
+    if (std.mem.eql(u8, target_name, "windows-x64")) return .{ .qbe_target = "amd64_win", .runtime_object_name = "noxrt-windows-x64", .zig_triple = "x86_64-windows-gnu", .is_windows = true, .llvm_triple = "x86_64-w64-windows-gnu" };
+    if (std.mem.eql(u8, target_name, "linux-riscv64")) return .{ .qbe_target = "rv64", .runtime_object_name = "noxrt-linux-riscv64", .zig_triple = "riscv64-linux-musl", .is_windows = false, .llvm_triple = "riscv64-unknown-linux-musl" };
     if (std.mem.eql(u8, target_name, "wasm32-wasi")) return .{
         .qbe_target = "",
         .runtime_object_name = "noxrt-wasm32-wasi",
@@ -249,5 +254,15 @@ test "mobile llvm triples stay locked" {
     const x64 = hostedTargetInfo("android-x64").?;
     try std.testing.expectEqualStrings("x86_64-linux-android24", x64.llvmTriple());
     try std.testing.expect(hostedTargetInfo("macos-arm64").?.mobile == .none);
+    // Masaüstü hedefler hem QBE hem LLVM ile derlenir: LLVM üçlüsü tanımlı, ama "yalnızca LLVM" değildir.
+    for ([_][]const u8{ "macos-arm64", "macos-x64", "linux-x64", "linux-arm64", "linux-riscv64", "windows-x64" }) |target_name| {
+        const info = hostedTargetInfo(target_name).?;
+        try std.testing.expect(info.isDesktop());
+        try std.testing.expect(!info.llvmOnly());
+        try std.testing.expect(info.llvm_triple.len > 0);
+    }
+    try std.testing.expectEqualStrings("x86_64-w64-windows-gnu", hostedTargetInfo("windows-x64").?.llvmTriple());
+    try std.testing.expect(!hostedTargetInfo("ios-arm64").?.isDesktop());
+    try std.testing.expect(!hostedTargetInfo("wasm32-wasi").?.isDesktop());
     try std.testing.expect(hostedTargetInfo("ios-simulator-x64") == null);
 }

@@ -808,14 +808,18 @@ jobs:
           if ! command -v "$qemu" >/dev/null 2>&1; then
             qemu=qemu-riscv64
           fi
+          # v2.0.177: masaüstü `--target` artık varsayılan olarak LLVM'den geçer; her program İKİ backend ile de çapraz derlenir ve qemu-user altında çalıştırılır.
           run_one() {
             local src="$1"
             local out="$2"
             local bin="$3"
-            zig-out/bin/noxc build --target linux-riscv64 "$src" -o "$bin"
-            got="$("$qemu" "$bin")"
-            printf '%s\n' "$got" > /tmp/nox-riscv-got
-            diff -u "$out" /tmp/nox-riscv-got
+            for backend in qbe llvm; do
+              zig-out/bin/noxc build --backend "$backend" --target linux-riscv64 "$src" -o "$bin"
+              got="$("$qemu" "$bin")"
+              printf '%s\n' "$got" > /tmp/nox-riscv-got
+              echo "riscv64 $backend: $src"
+              diff -u "$out" /tmp/nox-riscv-got
+            done
           }
           run_one tests/golden/codegen_cases/class_list_spawn.nox tests/golden/codegen_cases/class_list_spawn.expected /tmp/nox-riscv-smoke
           run_one tests/golden/codegen_cases/fibonacci.nox tests/golden/codegen_cases/fibonacci.expected /tmp/nox-riscv-fib

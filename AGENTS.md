@@ -55,8 +55,9 @@ Zig runtime'a statik bağlama (allocator, ARC, döngü çözücü, HPy köprüs�
 **Backend notu (v1.143.0, kullanıcı kararı):** yukarıdaki "QBE IR üretimi" adımı AYNI tiplenmiş
 IR'dan iki backend'e dallanır — `qbe*` sarmalayıcı dikişi (`qbe_emit.zig`/`llvm_emit.zig`) üzerinden
 QBE (`.ssa` → `qbe` → `cc`) VEYA LLVM (`.ll` → `clang -O2`). **VARSAYILAN LLVM'dir** (hosted, macOS/Linux,
-`clang` varsa); QBE `--backend qbe` ile seçilir ve freestanding/`--target`/`--emit-asm`/Windows/clang-yok
-durumlarında otomatik kullanılır. Değişmez İlkeler HER İKİ backend için geçerlidir; her codegen değişikliği
+`clang` varsa); QBE `--backend qbe` ile seçilir ve freestanding/`--emit-asm`/`-g`/Windows/clang-yok
+durumlarında otomatik kullanılır. Masaüstü `--target` çapraz derlemesi de `zig` varsa LLVM'dir
+(`.ll` + `zig cc -O2 -target`; v2.0.177, kullanıcı kararı 2026-11-05). Değişmez İlkeler HER İKİ backend için geçerlidir; her codegen değişikliği
 İKİ backend'de de (fixture korpusu ikisini de çalıştırır) doğrulanmalıdır.
 
 Detaylı gerekçeler için: `nox-teknik-spesifikasyon.md` (repo kökünde).

@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.177]
+
+### Eklendi
+
+- **Masaüstü `--target` çapraz derlemesi artık LLVM'den de geçer ve `zig` varsa varsayılan LLVM'dir (Faz 11.1, kullanıcı kararı).** `macos-arm64`, `macos-x64`, `linux-x64`, `linux-arm64`, `linux-riscv64` ve `windows-x64` için `.ll` dosyası `zig cc -O2 -target <üçlü>` ile hedefin çalışma zamanı nesnesine bağlanır: çapraz derlenen ikililer `-O2` hızındadır ve Windows `.exe` artık QBE'nin `amd64_win` upstream hatasına bağımlı değildir (yamalı QBE yalnızca `--backend qbe --target windows-x64` için gerekir). `-g`, `--emit-asm` ve freestanding QBE'de kalır; `--backend qbe` her zaman QBE seçer. Bağlayıcı görünürlük bayrağı artık HEDEFİN biçimine göre seçilir (PE/Mach-O/ELF). **Davranış değişikliği:** `--backend llvm --target <masaüstü>` eskiden hata veriyordu, artık derler; bilinmeyen hedef hâlâ hatadır.
+- **Doğrulama:** bu Mac'ten altı hedefin hepsi LLVM ile derlendi (ELF/Mach-O/PE başlıkları). `spawn`/`await`, sınıf, sözlük, istisna ve float biçimlendirme içeren bir program linux-arm64 (Docker), linux-x64 (emülasyon), macos-x64 (Rosetta) ve macos-arm64'te birebir aynı çıktıyı verdi. Yeni testler: `tests/golden/target_flag_test.zig` (LLVM ile ELF arm64/x64/riscv64 ve PE/AMD64, QBE yamasız), `tests/cli/backend_default_test.zig` (varsayılan LLVM `.ll`, `--backend qbe` `.ssa`, `-g`/`--emit-asm` hatası, bilinmeyen hedef), `qbe_target.zig` birim testi. CI `riscv64-smoke` her programı iki backend ile derler ve qemu-user altında çalıştırır.
+- Spesifikasyon §3.365; `docs/tools/backends.md`, `docs/tools/noxc.md` ve AGENTS.md §3 (backend seçim kuralı) güncellendi.
+
 ## [2.0.176]
 
 ### Değişti

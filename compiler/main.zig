@@ -1468,6 +1468,25 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
                 }
                 return true;
             }
+            // v2.0.177 (Faz 11.1): masaüstü `--target` artık LLVM'den de geçer (`.ll` + `zig cc -O2 -target <üçlü>`): çapraz derlenen ikililer de `-O2` hızındadır ve Windows `.exe`
+            // QBE'nin `amd64_win` hatasına bağımlı olmaz. Çapraz bağlama `zig cc` ister (QBE yolu da çapraz hedefte `zig cc` kullanır). `-g` ve `--emit-asm` yalnızca QBE'dedir.
+            if (profile == .hosted and info.isDesktop()) {
+                switch (choice) {
+                    .qbe => return false,
+                    .llvm => {
+                        if (debug_info or emit_asm) {
+                            printErr("--backend llvm does not support -g or --emit-asm for target '{s}' (use --backend qbe)\n", .{t});
+                            std.process.exit(1);
+                        }
+                        if (!probeOk(gpa, io, &.{ "zig", "version" })) {
+                            printErr("--backend llvm --target {s} needs zig on PATH (zig cc cross-links the .ll file)\n", .{t});
+                            std.process.exit(1);
+                        }
+                        return true;
+                    },
+                    .auto => return !(debug_info or emit_asm) and probeOk(gpa, io, &.{ "zig", "version" }),
+                }
+            }
         }
     }
     switch (choice) {
@@ -1481,7 +1500,7 @@ fn resolveRelease(gpa: std.mem.Allocator, io: std.Io, choice: BackendChoice, pro
             // Masaüstü `--target` (wasm/mobil yukarıda döndü) LLVM yolunda desteklenmez: `.ll` yerel
             // runtime'a bağlanır ve hata vermeden YANLIŞ platformun ikilisi (örn. Mach-O) üretilirdi.
             if (target) |t| {
-                printErr("--backend llvm does not support cross target '{s}' (desktop targets build through the QBE backend: drop --backend or use --backend qbe)\n", .{t});
+                printErr("--backend llvm: unknown or unsupported target '{s}' (valid desktop targets: macos-arm64, macos-x64, linux-x64, linux-arm64, linux-riscv64, windows-x64)\n", .{t});
                 std.process.exit(1);
             }
             return true;
@@ -3319,7 +3338,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
 
     const library_mode = emit != .exe;
-    const llvm_triple: []const u8 = if (hosted_info) |ht| (if (ht.llvmOnly()) ht.llvmTriple() else "") else "";
+    const llvm_triple: []const u8 = if (hosted_info) |ht| (if (ht.llvmOnly() or (release and ht.isDesktop())) ht.llvmTriple() else "") else "";
     const ir = frontend.emit(a, module, &analysis, fe_cfg, .{ .debug_source_path = debug_source_path, .library_mode = library_mode, .llvm_triple = llvm_triple }, .{}) catch |e| switch (e) {
         error.BuildFailed => return error.BuildFailed,
         else => return e,
@@ -3358,24 +3377,38 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{stem});
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
 
-        const driver = ccDriver(gpa, io);
+        // v2.0.177: masaüstü `--target` (çapraz) hedefinde bağlayıcı `zig cc -target <üçlü>`dür; hedefin işletim sistemi/çalışma zamanı nesnesi ana makineninkinden bağımsız seçilir.
+        const cross: ?qbe_target.HostedTargetInfo = if (hosted_info) |ht| (if (ht.isDesktop()) ht else null) else null;
+        const target_win = if (cross) |ht| ht.is_windows else builtin.os.tag == .windows;
+        const driver: CcDriver = if (cross != null) .zig_cc else ccDriver(gpa, io);
         var clang_argv: std.ArrayListUnmanaged([]const u8) = .empty;
         switch (driver) {
             .zig_cc => {
                 try clang_argv.appendSlice(a, &.{ "zig", "cc", "-O2", "-Wno-override-module" });
-                if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-target", "x86_64-windows-gnu" });
+                if (cross) |ht| {
+                    try clang_argv.appendSlice(a, &.{ "-target", ht.zig_triple });
+                    // musl üçlüsü statik bağlanır (QBE yoluyla aynı): qemu-user sysroot olmadan çalıştırır.
+                    if (std.mem.endsWith(u8, ht.zig_triple, "musl")) try clang_argv.append(a, "-static");
+                } else if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-target", "x86_64-windows-gnu" });
             },
             .clang, .none => {
                 try clang_argv.appendSlice(a, &.{ "clang", "-O2", "-Wno-override-module" });
                 if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-target", "x86_64-w64-windows-gnu" });
             },
         }
-        try clang_argv.appendSlice(a, linker_visibility_args);
-        try clang_argv.appendSlice(a, &.{ "-o", bin_path, ll_path, resource_dirs.noxrt_path });
+        // Bağlayıcı görünürlük bayrağı HEDEFİN biçimine göre seçilir (ana makineninki değil): PE `--export-all-symbols`, Mach-O `-dead_strip`, ELF `--gc-sections`.
+        if (cross) |ht| {
+            try clang_argv.append(a, if (ht.is_windows) "-Wl,--export-all-symbols" else if (std.mem.endsWith(u8, ht.zig_triple, "macos")) "-Wl,-dead_strip" else "-Wl,--gc-sections");
+        } else try clang_argv.appendSlice(a, linker_visibility_args);
+        const rt_path: []const u8 = if (cross) |ht| try std.fmt.allocPrint(a, "{s}/lib/{s}.o", .{ resource_dirs.install_root, ht.runtime_object_name }) else resource_dirs.noxrt_path;
+        try clang_argv.appendSlice(a, &.{ "-o", bin_path, ll_path, rt_path });
         // Windows'ta fiber bağlam değişimi assembly'si `noxrt.o`nun dışında ayrı kurulur (QBE yolundaki ile aynı).
-        if (builtin.os.tag == .windows) try clang_argv.append(a, resource_dirs.swap_asm_path);
+        if (target_win) {
+            const swap_path: []const u8 = if (cross) |ht| try std.fmt.allocPrint(a, "{s}/lib/swap_asm-{s}.o", .{ resource_dirs.install_root, ht.runtime_object_name }) else resource_dirs.swap_asm_path;
+            try clang_argv.append(a, swap_path);
+        }
         try clang_argv.append(a, "-lm");
-        if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
+        if (target_win) try clang_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
         try appendExternLinkArgs(a, &clang_argv, module);
 
         const clang_result = std.process.run(gpa, io, .{ .argv = clang_argv.items }) catch |err| {

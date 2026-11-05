@@ -10,13 +10,14 @@ Nox compiles the typed program to one of two back ends, which are tested against
 | Scheduler | **multi-core M:N work-stealing** with atomic reference counts | single-threaded cooperative |
 | Needs | `clang` or `zig` on `PATH` | the bundled `qbe`, and a C compiler for linking |
 | Debug info (`-g`) | no | yes (DWARF line tables) |
-| `--target` cross-compile, `--emit-asm`, freestanding | no | yes |
+| `--target` cross-compile (desktop) | yes, needs `zig` (`zig cc -O2 -target`) | yes |
+| `--emit-asm`, freestanding | no | yes |
 
 ## How the backend is chosen
 
 `--backend llvm` and `--backend qbe` always win. Otherwise (`auto`):
 
-1. **freestanding** builds, desktop `--target`, `--emit-asm` and `-g` → QBE. Mobile names (`ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64`) and `wasm32-wasi`/`wasm32-freestanding` stay on LLVM; `--backend qbe` is an error;
+1. **freestanding** builds, `--emit-asm` and `-g` → QBE. A desktop `--target` (`macos-arm64`, `macos-x64`, `linux-x64`, `linux-arm64`, `linux-riscv64`, `windows-x64`) goes to LLVM when `zig` is on `PATH` (the `.ll` file is cross-linked with `zig cc -O2 -target <triple>`, so cross-built programs run at `-O2` speed and a Windows `.exe` does not depend on QBE's `amd64_win` back end), otherwise to QBE. Mobile names (`ios-arm64`, `ios-simulator-arm64`, `android-arm64`, `android-x64`) and `wasm32-wasi`/`wasm32-freestanding` stay on LLVM; `--backend qbe` is an error;
 2. on **Windows**, LLVM when `zig` is installed (it links with `zig cc -target x86_64-windows-gnu`), otherwise QBE with MinGW `cc`;
 3. on macOS and Linux, LLVM when `clang` or `zig` is on `PATH`; with neither, QBE and a one-line note;
 4. otherwise LLVM.
@@ -42,7 +43,7 @@ Both back ends implement exactly the language in the [reference](../language/ind
 |---|---|
 | Parallelism: tasks run on a worker pool (LLVM) or interleave on one thread (QBE) | write tasks that are correct under both; communicate with channels |
 | `spawn`/`nox.thread.start` argument types are wider on LLVM | stay within the QBE set for portable code ([Concurrency](../language/concurrency.md#the-scheduler)) |
-| `-g`, desktop `--target`, `--emit-asm`, freestanding exist only on QBE | choose `--backend qbe` for those. Mobile targets and `wasm32-*` are LLVM |
+| `-g`, `--emit-asm`, freestanding exist only on QBE | choose `--backend qbe` for those. Desktop `--target` works on both. Mobile targets and `wasm32-*` are LLVM |
 | speed | LLVM is faster; neither is a semantic choice |
 
 Both back ends are run over the entire golden corpus on every change, and a differential test compares their output.

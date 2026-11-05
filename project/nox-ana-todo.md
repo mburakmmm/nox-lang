@@ -371,14 +371,27 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
   kanıtı. Linux üzerinden `macos-arm64`/iOS çapraz derlemesi de denenip kayda geçirilir.
   **Durum (v2.0.175):** yamalı QBE (`scripts/build_qbe.sh`) release/CI'a bağlandı; bu Mac'ten 6 masaüstü hedefinin hepsi derleniyor (ELF/Mach-O/PE başlıkları doğrulandı). Kalan: üretilen `.exe`nin
   Windows'ta ÇALIŞTIRILMASI (Windows PC çevrimdışı) ve Linux üzerinden `macos-arm64`/iOS çapraz derlemesi.
+  **v2.0.177:** masaüstü `--target` LLVM'den de geçer (`zig` varsa varsayılan); Windows `.exe` artık QBE yamasına bağlı değil. Linux arm64/x64 ve macOS x64/arm64 çıktıları çalıştırılarak
+  doğrulandı; kalan: Windows `.exe` ve riscv64-LLVM çalıştırma kanıtı (riscv64 CI qemu-user'da, Windows PC çevrimdışı).
 - [x] **11.2 Betik modu (v2.0.176).** `noxc run` zaten içerik-özetli, boyut tavanlı bir ikili önbelleğine sahipti (`run_cache.zig`); eksik olan betik argümanlarıydı: `./betik.nox a b`
   argümanları sessizce düşüyordu. Artık betik yolundan sonraki her şey programa gider (`--` isteğe bağlı), `#!/usr/bin/env -S noxc run` shebang'i çalışır. Test:
   `tests/cli/run_script_args_test.zig`; belge: `docs/tools/noxc.md` "Scripts". Davranış değişikliği: yoldan SONRA verilen derleyici bayrakları programa gider.
-- [ ] **11.3 Performans.** dict ~2,5x C (`entries` + `HashMap`, `d[k]` iki arama), matmul ~2x C (sınır kontrolü + `list[list[T]]` dolaylaması), `--release` varsayılanı kararı.
+- [~] **11.3 Performans.** Ölçüm (benchmarks/cross_lang, LLVM, C'ye oran): fib 0,93×, trees 0,76×, sort 0,92×, collatz 1,0×, mandelbrot 1,17×, strings 1,2×, loop 1,26×, matmul 2×, dict 2,65×,
+  sieve 3× (24 ms). **dict karşılaştırması adil değil:** C çekirdeği önceden 2M slot ayrılmış, ekleme sırasını tutmayan, tohumsuz bir tablo; Nox'un dict'i ekleme sırasını korur, büyür ve hash-flooding'e
+  karşı tohumludur (v1.142.16'da zaten kompakt açık adresli indeks + tek girdilik önbellek). Go ile aynı hızda (0,053 / 0,057), Python'dan ~5× hızlı → C eşitliği kovalanmaz, kabul edilmiş maliyet.
+  Gerçek hedef: matmul/sieve sınır kontrolü (IndexError semantiği korunarak döngü-dışına alma).
+  **`--release` varsayılanı: KAPANDI, zaten varsayılan.** `--release` yalnızca `--backend llvm`in eski adı; LLVM (`clang -O2`) macOS/Linux'ta `clang` ya da `zig` varsa otomatik seçilir (v1.143.0, `docs/tools/backends.md`).
+  QBE'ye düşen durumlar: masaüstü `--target` çapraz derleme, `-g`, `--emit-asm`, freestanding, clang/zig yok. Kullanıcı kararı 2026-11-05: "varsayılan olsun" → değişiklik gerekmedi.
+  `--target` çapraz derlemesi de artık LLVM'den geçer (v2.0.177, spec §3.365).
 - [ ] **11.4 Güvenlik.** Masaüstü `nox.fs`/`nox.os` kök (jail) seçeneği (mobil maskesi örnek; ADR-MOB-004), `uretim-hazirlik-analizi.md` #11 maddesinin güncel durumunu doğrula,
   release imzası + SBOM, stdlib sertleştirme taraması (fuzz kapsamı).
-- [ ] **11.5 Release akışı kanıtı.** v2.0.173'te taslak→yayın akışı eklendi (yarım yüklenmiş "Latest" yüzünden `noxc upgrade` 404); v2.0.174 gerçek tag'de ilk kez sınanıyor. Yeşil
-  Release + M4'ün düzeltilmiş site imajını (`-Dcpu=baseline`) sağlıklı alması kanıtlanmadan 2.1 ilan edilmez.
+- [x] **11.5 Release akışı kanıtı (2026-11-05).** v2.0.174 gerçek tag'de taslak→yayın akışını geçti (17 varlığın hepsi yüklendikten sonra yayımlandı, "Latest" oldu; Homebrew/AUR/AppImage/Snap/site-image
+  `publish`ten sonra koştu). Düzeltilmiş site imajı (`-Dcpu=baseline`) Apple Silicon'da çalıştı; M4 onu kendiliğinden 33 sn'de yayına aldı, sağlıklı, temizlik betiği kendiliğinden koştu, noxlang.com `/version.txt` = 2.0.174.
+- [ ] **11.9 Göreli `extern def ... from "yol"` çözümü (Aura isteği, 2026-11-05).** `appendExternLinkArgs` `from` değerini clang'e olduğu gibi verir, yani bağlama çalışma dizinine bağlıdır (`cd examples/dashboard && noxc run main.nox`
+  `native/libaura_host.dylib`i bulamaz). Karar: dosya çalışma dizininde varsa o kazanır (bugünkü davranış); yoksa `nox.json`un bulunduğu proje kökünde aranır ve bulunursa clang'e MUTLAK yolla verilir; proje
+  kökünün ÜSTÜNE çıkılmaz (rastgele üst dizindeki dosya bağlanmasın, AGENTS §9.5), `nox.json` yoksa dokunulmaz. `-lname` kütüphane adları ve `zig-out/lib/noxrt.o` sentinel'i değişmez. Kapsam dışı (2.2): bir
+  bağımlılık paketinin kendi göreli `extern`ünü paket kökünde aramak (`module` birleşik gelir, kaynak bilgisi taşınmıyor); `.o`/`.a` içeriğinin `noxc run` önbellek anahtarına girmemesi (eski statik kütüphane
+  ile bayat ikili) ayrı bir eksik.
 - [ ] **11.6 2.1 ilanı.** CHANGELOG/sürüm notu, `docs/whatsnew`, site ve duyuru; yalnızca 11.1–11.5 kapanınca.
 - [ ] **11.7 (2.2) REPL — LLVM ORC JIT.** `noxc` LLVM'e bağlı değil (`.ll` + `clang`); libLLVM'i `nox.sqlite` gibi çalışma anında tembel yüklemek, `noxrt.o`yu JIT'e nesne olarak
   eklemek, satırlar arası durum için modül-global + ARC (ASAP satırlar arasında kanıtlayamaz). iOS JIT yasak → yalnızca masaüstü. Önce spike + tasarım onayı.
