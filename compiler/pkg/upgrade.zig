@@ -228,6 +228,8 @@ fn downloadOnce(a: Allocator, io: Io, r: progress.Reporter, url: []const u8, des
     var response = try req.receiveHead(&redirect_buffer);
     if (response.head.status != .ok) {
         std.debug.print("upgrade: HTTP {d} {s}\n", .{ @intFromEnum(response.head.status), response.head.status.phrase() orelse "" });
+        // Eski sürümlerde (v2.0.173 öncesi) bir release, tüm platform arşivleri yüklenmeden "Latest" olabiliyordu; 404'ün olağan nedeni budur.
+        if (response.head.status == .not_found) std.debug.print("upgrade: the archive for this platform is not published (yet); if this release is brand new, try again in a few minutes\n", .{});
         return error.UpgradeDownloadFailed;
     }
 

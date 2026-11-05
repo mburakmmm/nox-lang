@@ -106,8 +106,47 @@ jobs:
             elapsed=$((elapsed + poll_interval_s))
           done
 
-  build:
+  # v2.0.173: release ÖNCE TASLAK (draft) olarak açılır, tüm çekirdek arşivler (macOS/Linux x64+arm64/Windows) yüklenince `publish` işi TEK SEFERDE yayımlar.
+  # Eskiden her yükleme adımı yayımlanmış bir release'e yazıyordu: ilk biten iş (ör. linux-arm64) release'i "Latest" yapıyor, diğer platformların arşivi
+  # dakikalarca eksik kalıyor ve `noxc upgrade` / install betikleri bu pencerede 404 alıyordu (v2.0.171'de macOS arşivi 2 dk geç geldi). `softprops/action-gh-release`
+  # var olan bir taslağı etiketle bulur (tüm release'leri listeler) ve taslak olarak bırakır; yükleme adımları bu yüzden değişmeden çalışır.
+  create-release:
+    name: Taslak release oluştur
     needs: ci-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Taslak yoksa oluştur (yeniden çalıştırmaya dayanıklı)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME zaten var (yeniden çalıştırma); dokunulmadı."
+            exit 0
+          fi
+          flags=()
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease);; esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME" ${flags[@]+"${flags[@]}"}
+
+  # Tüm çekirdek arşivler (build matrisi + windows-x64) başarıyla yüklenmeden release YAYIMLANMAZ; biri düşerse release taslak kalır ve yarım sürüm kimseye görünmez.
+  # Başarısız işi yeniden çalıştırmak yeterlidir. Kararlı sürüm "Latest" olur; `-` içeren etiketler (rc) ön-sürüm olarak yayımlanır.
+  publish:
+    name: Release'i yayımla
+    needs: [build, windows-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Taslağı yayımla
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=(--latest)
+          case "$GITHUB_REF_NAME" in *-*) latest=(--latest=false);; esac
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false "${latest[@]}"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets|length|"yayımlandı: \(.) varlık"'
+
+  build:
+    needs: [ci-gate, create-release]
     strategy:
       fail-fast: false
       matrix:
@@ -214,7 +253,7 @@ jobs:
             nox-lang-*.tar.gz.sha256
             nox-web-compiler-*.tar.gz
             nox-web-compiler-*.tar.gz.sha256
-          draft: false
+          draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
 
@@ -236,7 +275,7 @@ jobs:
   # GÜVENDİĞİ AYNI ilkeyle, bu paket MinGW'i GETİRMEZ (kullanıcının KENDİ
   # kurması gerekir — `install.ps1` bunu KONTROL EDİP UYARIR).
   windows-x64:
-    needs: ci-gate
+    needs: [ci-gate, create-release]
     name: windows-x64
     runs-on: windows-latest
     steps:
@@ -336,7 +375,7 @@ jobs:
             nox-lang-*.zip.sha256
             nox-lang-*-setup.exe
             nox-lang-*-setup.exe.sha256
-          draft: false
+          draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
 
@@ -345,7 +384,7 @@ jobs:
   # uyarı verir; sürümün kendisi etkilenmez. Tap'in kendi CI'ı (`tests.yml`) yeni formülü push'ta denetler, kurar ve test eder.
   homebrew:
     name: Homebrew tap güncelle
-    needs: build
+    needs: publish
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
@@ -379,7 +418,7 @@ jobs:
   # başarılıysa çalışır, ön sürümlerde (`-rc`) çalışmaz. Paketin GHCR'de GENEL (public) olması gerekir: bkz. docs/internals/deployment.md.
   site-image:
     name: noxlang.com imajı (GHCR)
-    needs: build
+    needs: publish
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
@@ -414,7 +453,7 @@ jobs:
   # (AUR hesabına tanımlı SSH anahtarının özel kısmı) yoksa itme adımı uyarıp atlanır; sürümün kendisi etkilenmez.
   aur:
     name: AUR paketi güncelle
-    needs: build
+    needs: publish
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
@@ -453,7 +492,7 @@ jobs:
   # release'e yüklenir. Hesap/anahtar gerektirmez, her etikette (ön sürümler dahil) çalışır; test kırmızıysa yüklenmez.
   appimage:
     name: AppImage (${{ matrix.arch }})
-    needs: build
+    needs: publish
     strategy:
       fail-fast: false
       matrix:
@@ -482,7 +521,7 @@ jobs:
   # docs/internals/releasing.md); yoksa ya da Store reddederse uyarı verir, sürüm etkilenmez.
   snap:
     name: Snap (${{ matrix.arch }})
-    needs: build
+    needs: publish
     if: ${{ !contains(github.ref_name, '-') }}
     strategy:
       fail-fast: false

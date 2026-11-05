@@ -3005,18 +3005,20 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti 503 ile (handl
     TestHandlerLog.log.clearRetainingCapacity();
     TestHandlerLog.rt_ptr = rt;
 
-    // "slow" istemci: bağlanır, isteği GÖNDERMEDEN önce 150ms bekler — bu
-    // sürede bağlantısı "aktif" sayılıp `max_concurrent = 1` sınırını
-    // DOLDURUR (D.0'ın "sıra kanıtı" testleriyle AYNI teknik).
+    // "slow" istemci: bağlanır, isteği "fast" istemci reddedilene (ya da güvenlik zaman aşımına) KADAR göndermez — bu sürede bağlantısı "aktif" sayılıp
+    // `max_concurrent = 1` sınırını DOLDURUR. Eskiden sabit 150ms uyku vardı; yüklü bir CI koşucusunda sunucu "fast" bağlantıyı kabul etmeden bu süre
+    // dolabiliyor, "slow" bitip sayacı boşaltıyor ve "fast" 503 yerine normal işleniyordu (macOS CI'da görülen aralıklı hata). Artık sıra belirleyici.
+    var fast_done: std.atomic.Value(bool) = .init(false);
     const slow_thread = try std.Thread.spawn(.{}, struct {
-        fn run(p: u16) void {
+        fn run(p: u16, done: *std.atomic.Value(bool)) void {
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
-            sleepMs(150);
+            var waited: u32 = 0;
+            while (!done.load(.acquire) and waited < 10_000) : (waited += 5) sleepMs(5);
             testSendGet(fd, "/slow");
             testReadAll(fd);
         }
-    }.run, .{port});
+    }.run, .{ port, &fast_done });
 
     // Sunucunun "slow" bağlantıyı kabul edip sayacı 1'e çıkarmasını beklemek
     // İÇİN kısa bir emniyet payı (kabul döngüsü mikrosaniyeler içinde tepki
@@ -3028,14 +3030,15 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti 503 ile (handl
     // `503 Service Unavailable` (Retry-After: 1) okur (eskiden sıfır bayt).
     var fast_rejected: bool = false;
     const fast_thread = try std.Thread.spawn(.{}, struct {
-        fn run(p: u16, rejected: *bool) void {
+        fn run(p: u16, rejected: *bool, done: *std.atomic.Value(bool)) void {
+            defer done.store(true, .release);
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
             var buf: [64]u8 = undefined;
             const n = testRead(fd, &buf);
             rejected.* = n > 12 and std.mem.startsWith(u8, buf[0..@intCast(n)], "HTTP/1.1 503");
         }
-    }.run, .{ port, &fast_rejected });
+    }.run, .{ port, &fast_rejected, &fast_done });
 
     var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 2, .max_concurrent = 1 };
     const serve_task = bridge.nox_async_spawn(rt, testServeEntry, &args).?;

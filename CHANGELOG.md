@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.173]
+
+### Düzeltildi
+
+- **Release yarım yüklenmişken "Latest" oluyordu (`noxc upgrade` HTTP 404).** `release.yml`deki her yükleme adımı yayımlanmış bir release'e yazdığından ilk biten iş (ör. linux-arm64) release'i herkese açık "Latest" yapıyor, diğer platformların arşivleri dakikalarca eksik kalıyordu; bu pencerede `noxc upgrade`, kurulum betikleri ve indirme sayfası var olmayan arşive gidip 404 alıyordu (v2.0.171'de macOS arşivi 2 dk, Linux x64 daha da geç geldi). Artık `create-release` işi release'i TASLAK açar, build matrisi + Windows işi arşivleri taslağa yükler ve `publish` işi hepsi başarılı olunca tek seferde yayımlar ("Latest"); bir iş düşerse release taslak kalır, yarım sürüm görünmez. Homebrew/AUR/AppImage/Snap/site-image işleri `publish`ten sonra çalışır. `docs/internals/releasing.md` güncellendi.
+- **`noxc upgrade` 404'te nedenini söyler:** platform arşivi henüz yayımlanmamışsa "birkaç dakika sonra tekrar deneyin" ipucu yazdırır.
+- **`http_server` testi `Faz Q.5` zamanlamadan bağımsız:** "slow" istemci sabit 150ms uyumak yerine "fast" istemci 503'ü okuyana kadar isteğini göndermiyor. Yüklü bir CI koşucusunda (v2.0.172 macOS) süre sunucu "fast" bağlantıyı kabul etmeden dolup testi aralıklı düşürüyordu; yük altında (6 CPU yakıcı) doğrulandı.
+
 ## [2.0.172]
 
 ### Düzeltildi

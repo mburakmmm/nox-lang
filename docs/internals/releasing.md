@@ -38,10 +38,13 @@ Pushing a `v*` tag triggers `release.yml`:
 
 1. **Gate job** — verifies that the tag, `build.zig.zon` and `CHANGELOG.md` agree, then **waits for the `ci.yml` run on the tagged commit and fails the release unless it succeeded**. A red commit is never published.
 2. **Build jobs** — build `noxc`, `noxlsp`, `noxrt.o`, `noxrt-freestanding.o` and the standard library in `ReleaseFast` for macOS arm64, Linux x86-64, Linux arm64 and Windows x86-64 (with explicit `-Dcpu` baselines so the binaries run on
-   older machines), bundle `qbe` where applicable, and upload archives plus SHA-256 files to the GitHub release.
+   older machines), bundle `qbe` where applicable, and upload archives plus SHA-256 files to the **draft** GitHub release (opened by the `create-release` job).
    The Windows job also builds the **installer** (`packaging/windows/nox.iss`, Inno Setup) and runs `packaging/windows/test-installer.ps1` on it — silent install, reinstall (no duplicate `PATH` entry), uninstall, and a check
    that the user's `PATH` is restored byte for byte — before uploading `nox-lang-<tag>-windows-x64-setup.exe` and its SHA-256. A failing installer test stops the release. To iterate on the installer without cutting a release, push to a branch
    that changes `packaging/windows/**` (or run *Windows installer* manually): it builds the installer from an existing release's archive and runs the same test.
+   **Publishing is atomic.** The release stays a draft, invisible to `noxc upgrade`, the installers and the website, until every core archive (macOS arm64, Linux x86-64, Linux arm64, Windows zip and installer) is uploaded; only then the
+   `publish` job flips it to public and marks it *Latest*. If any build job fails the release stays a draft, so a half-uploaded version is never visible — fix the cause and re-run the failed jobs. (Before v2.0.173 each job published the
+   release as soon as its own archive landed, and `noxc upgrade` could see a "latest" release whose archive for your platform did not exist yet and fail with HTTP 404.) The Homebrew, AUR, AppImage, Snap and site-image jobs run after `publish`.
 3. Tags containing a `-` (such as `v2.0.0-rc.1`) are published as **pre-releases**, so `noxc upgrade` and the installers keep pointing at the latest stable release.
 4. **Homebrew tap job** — for stable tags only, after the build jobs, it generates `Formula/noxc.rb` from the release's `.sha256` files (`scripts/update_homebrew_formula.py`, template `packaging/homebrew/noxc.rb.in`) and pushes it to
    [`mburakmmm/homebrew-nox`](https://github.com/mburakmmm/homebrew-nox). It needs a repository secret `HOMEBREW_TAP_TOKEN` (a fine-grained personal access token with *Contents: Read and write* on that one repository);
