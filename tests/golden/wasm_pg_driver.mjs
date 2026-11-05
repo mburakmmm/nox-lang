@@ -60,23 +60,10 @@ try {
   // `NOX_WASM_NAMES=1`: işlev adları korunur, bir wasm tuzağı (trap) okunaklı bir yığın izi verir (CI teşhisi).
   execFileSync(noxc, ['build', '--target', 'wasm32-freestanding-asyncify', path.join(dir, 'prog.nox'), '-o', path.join(dir, 'prog.wasm')], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, NOX_WASM_NAMES: '1', ...(resourceDir ? { NOX_RESOURCE_DIR: path.resolve(resourceDir) } : {}) } });
   process.stderr.write(`pg: ${execFileSync(pgCtl, ['--version'], { encoding: 'utf8', env: pgEnv }).trim()}; node ${process.version}; ${os.platform()}-${os.arch()}\n`);
-  // CI teşhisi: bu sürücü kaç kez, kim tarafından, hangi ortamla çalıştırıldı (yalnızca düşen koşunun stderr'i görünür).
-  try {
-    const ppid = process.ppid;
-    const cmd = fs.existsSync(`/proc/${ppid}/cmdline`) ? fs.readFileSync(`/proc/${ppid}/cmdline`, 'utf8').split('\0').join(' ').slice(0, 200) : '?';
-    process.stderr.write(`driver: pid=${process.pid} ppid=${ppid} cmd=[${cmd}] crashdir=${process.env.NOX_CRASH_ARTIFACTS_DIR ?? '(yok)'} envkeys=${Object.keys(process.env).length} port=${freePort} loadavg=${os.loadavg().map((x) => x.toFixed(1)).join('/')} t=${new Date().toISOString()}\n`);
-  } catch {}
   const child = spawn('node', ['--no-warnings', host, path.join(dir, 'prog.wasm'), '--allow-net'], { stdio: ['ignore', 'pipe', 'inherit'] });
   let out = '';
   child.stdout.on('data', (d) => (out += d));
   const code = await new Promise((r) => child.on('close', r));
-  // CI teşhisi: derlenen modülü (geçse de düşse de) çökme artefaktları dizinine kopyalar; ci.yml bu dizini artefakt olarak yükler.
-  if (process.env.NOX_CRASH_ARTIFACTS_DIR) {
-    try {
-      fs.mkdirSync(process.env.NOX_CRASH_ARTIFACTS_DIR, { recursive: true });
-      fs.copyFileSync(path.join(dir, 'prog.wasm'), path.join(process.env.NOX_CRASH_ARTIFACTS_DIR, `pg_prog_exit${code}.wasm`));
-    } catch {}
-  }
   process.stdout.write(out);
   console.log(`exit ${code}`);
 } finally {

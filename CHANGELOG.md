@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.172]
+
+### Düzeltildi
+
+- **CI: geçici PG teşhis düzeneği kaldırıldı.** v2.0.164–170 arasında Linux'taki `nox.postgres` WASM çökmesini izlemek için eklenen `pg-debug.yml` iş akışı, `scripts/ci_pg_debug.sh`, `ci.yml`deki çökme-artefaktı yükleme adımı ve `wasm_pg_driver.mjs`deki pid/ppid/artefakt kopyalama kodu silindi. Kök neden v2.0.171'de (asyncify `HOST_RESERVE`) çözüldü; sürücü yalnızca `pg_ctl` sürümü satırını ve ReleaseFast kaynak-kökü parametresini korur.
+
 ## [2.0.171]
 
 ### Düzeltildi
