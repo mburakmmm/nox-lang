@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.184]
+
+### Değişti
+
+- **Release imza adımları artık zorunlu.** v2.0.180'in gerçek release'inde `actions/attest-build-provenance` adımları çalıştı: Linux, macOS ve Windows arşivleri ile SBOM'un her birinde GitHub'ın attestation kaydı var (API ile doğrulandı), SBOM (`nox-lang-v2.0.180-sbom.spdx.json`) release'e eklendi. Bu yüzden `continue-on-error` kaldırıldı. Release `publish`e kadar taslak olduğundan düşen bir imza adımı yarım imzalı sürümü görünür kılmaz; düşen işi yeniden çalıştırmak yeterlidir.
+
 ## [2.0.183]
 
 ### Düzeltildi

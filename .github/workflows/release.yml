@@ -151,7 +151,6 @@ jobs:
           python3 scripts/gen_sbom.py "$GITHUB_REF_NAME" "$sbom"
           gh release upload "$GITHUB_REF_NAME" "$sbom" --clobber --repo "$GITHUB_REPOSITORY"
       - name: SBOM'u imzala (provenance)
-        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: nox-lang-*-sbom.spdx.json
@@ -267,9 +266,8 @@ jobs:
           shasum -a 256 "${web}.tar.gz" > "${web}.tar.gz.sha256"
 
       # v2.0.180 (Faz 11.4): her arşiv için GitHub/Sigstore "build provenance" imzası (anahtarsız; hangi iş akışının, hangi commit'ten ürettiğini kanıtlar). Doğrulama:
-      # `gh attestation verify <arşiv> --repo mburakmmm/nox-lang`. İlk sürümlerde `continue-on-error`: altyapı arızası bir release'i bloklamasın; `publish` işi eksik imzayı uyarı olarak yazar.
+      # `gh attestation verify <arşiv> --repo mburakmmm/nox-lang`. v2.0.184'ten beri ZORUNLU: release taslak olduğundan imza adımı düşerse yarım sürüm görünmez, düşen işi yeniden çalıştırmak yeterlidir.
       - name: Arşivleri imzala (provenance)
-        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
@@ -404,7 +402,6 @@ jobs:
           Move-Item installer-out\nox-lang-*-setup.exe, installer-out\nox-lang-*-setup.exe.sha256 .
 
       - name: Arşivleri imzala (provenance)
-        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
