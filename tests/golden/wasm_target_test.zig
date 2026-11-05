@@ -772,10 +772,11 @@ test "wasm32-freestanding --asyncify: host TCP yeteneğini vermezse TlsError (tc
 
 // v2.0.156 (spec §3.358): `nox.postgres` WASM'da libpq yerine Zig'de yazılmış PostgreSQL protokol istemcisiyle çalışır (host TCP üzerinde). Sürücü GERÇEK bir PostgreSQL kümesi kurar
 // (`initdb`, scram-sha-256) ve sunucuya karşı tam bir oturum çalıştırır; `initdb`/`pg_ctl` yoksa atlanır.
-test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucusuna karşı (SCRAM-SHA-256, basit + genişletilmiş protokol)" {
+/// `resource_dir`: noxc'ye `NOX_RESOURCE_DIR` olarak verilecek kök (null = `zig-out`, yani `-Doptimize` modunun kendi WASM çalışma zamanı nesneleri).
+fn expectPostgresProgram(resource_dir: ?[]const u8) !void {
     const allocator = std.testing.allocator;
     const res = std.process.run(allocator, std.testing.io, .{
-        .argv = &.{ "node", "--no-warnings", build_options.pg_driver_path, build_options.noxc_path, build_options.pg_program_path, build_options.wasm_host_path },
+        .argv = &.{ "node", "--no-warnings", build_options.pg_driver_path, build_options.noxc_path, build_options.pg_program_path, build_options.wasm_host_path, resource_dir orelse "" },
     }) catch |err| {
         if (err == error.FileNotFound) return error.SkipZigTest;
         return err;
@@ -807,6 +808,19 @@ test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucu
         \\exit 0
         \\
     , res.stdout);
+}
+
+test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucusuna karşı (SCRAM-SHA-256, basit + genişletilmiş protokol)" {
+    try expectPostgresProgram(null);
+}
+
+// v2.0.171 regresyonu: aynı program, `zig build test` hangi modda koşarsa koşsun ReleaseFast derlenmiş WASM çalışma zamanı nesnesine karşı. Kök neden: Asyncify ana akışı host'a
+// askıya alırken host çağrıları (`nox_host_fetch_pending`/`_complete`, ...) gölge yığın TEPESİNDEN çalışıp askıdaki programın en dış çerçevelerini eziyordu; yalnızca ReleaseFast
+// çerçeve yerleşimi `nox_pg_exec_params_raw`ın `ArrayList`lerini o bölgeye düşürüyordu (`BrkAllocator.free` "memory access out of bounds"). Bkz. `asyncify.HOST_RESERVE`.
+test "wasm32-freestanding --asyncify: nox.postgres ReleaseFast çalışma zamanı nesnesiyle (host çağrıları askıdaki gölge yığını ezmez)" {
+    // `-Doptimize=ReleaseFast` koşusunda yukarıdaki test zaten aynı nesneleri kullanır.
+    if (builtin.mode == .ReleaseFast) return error.SkipZigTest;
+    try expectPostgresProgram(build_options.wasm_fast_resource_dir);
 }
 
 // v2.0.161 (spec §3.362): host güvenlik politikaları: ağ/süreç izin listeleri (yönlendirme dahil), süreç çıktı sınırı ve `nodeHttpServer` kaynak kotaları (gövde, yanıt, süre, eşzamanlılık).

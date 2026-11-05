@@ -17,6 +17,7 @@
 //! (`isHostSuspended()`). Host işini bitirince `nox_asyncify_run_resume` aynı akışı arabellekten yeniden sarar. `fetch` tabanlı HTTP istemcisi bunun üstüne kurulur.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 extern "asyncify" fn start_unwind(data: usize) void;
 extern "asyncify" fn stop_unwind() void;
@@ -158,6 +159,15 @@ noinline fn hostSuspendImpl(caller_sp: usize) void {
     start_unwind(g_host_ctx.buf);
 }
 
+/// **Host çağrıları için ayrılan gölge yığın bölgesi (v2.0.171).** Program `hostSuspend` ile askıdayken host, modülün dışa aktarımlarını (`nox_host_alloc`,
+/// `nox_host_fetch_pending`, `nox_host_fetch_complete`, `nox_host_http_dispatch`, ...) çağırır; bunlar gölge yığın işaretçisi sürücünün giriş değerinde (yığın
+/// TEPESİ) iken çalışır ve çerçevelerini tepeden aşağı doğru yazar. Askıdaki programın en dıştaki çerçeveleri (ana akışın `main`, zamanlayıcı döngüsü, sürücü
+/// çağrı zinciri; `Buf`/`ArrayList` gibi adresi alınan yereller) tam o bölgede durur: host çağrısı bunları sessizce ezer, program sarılınca ezilmiş yereller
+/// (ör. `ArrayList.capacity`) `free`ye bozuk boyut verir. Asyncify yalnızca WASM yerellerini kaydeder, gölge yığın BELLEĞİNİ kaydetmez. Bu yüzden program, tepeden
+/// `HOST_RESERVE` bayt aşağıda çalışır; host çağrıları bu ayrılmış bölgeyi kullanır. (Optimizasyon kipine göre çerçeve boyutları değişir; ReleaseFast'te nox.postgres
+/// sorgusunun çerçevesi ezilen bölgeye düşüyordu, ReleaseSafe'te düşmüyordu.) İş parçacıklı kipte askıya alma yoktur, bu yüzden ayrılmaz.
+pub const HOST_RESERVE: usize = 64 * 1024;
+
 /// Sürücü köküne verilen giriş: tek `usize` argümanlı, `i32` dönen işlev (ana akış için `main`, havuz işçisi için işçi gövdesi).
 pub const EntryFn = *const fn (usize) callconv(.c) i32;
 
@@ -178,6 +188,10 @@ pub noinline fn nox_asyncify_run(entry: EntryFn, arg: usize) i32 {
     g_entry = entry;
     g_entry_arg = arg;
     g_entry_sp = getSp();
+    if (comptime builtin.single_threaded) {
+        // Program çerçeveleri yığın tepesinden HOST_RESERVE bayt aşağıda başlar (aşağıdaki açıklamaya bakınız).
+        setSp(g_entry_sp - HOST_RESERVE);
+    }
     return nox_asyncify_run_loop(&entry_root);
 }
 

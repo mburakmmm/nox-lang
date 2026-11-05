@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.171]
+
+### Düzeltildi
+
+- **WASM asyncify: host çağrıları askıdaki programın gölge yığın çerçevelerini eziyordu.** `nox.postgres` WASM programı ReleaseFast çalışma zamanıyla ilk `query()`de `memory access out of bounds at heap.BrkAllocator.free` ile düşüyordu (CI'da yalnızca `zig build test -Doptimize=ReleaseFast`; ReleaseSafe/ReleaseSmall'da çerçeve yerleşimi şans eseri örtüşmüyordu). Kök neden derleyici/wasm-opt hatası değil: program `hostSuspend` ile askıdayken host'un çağırdığı `nox_host_*` dışa aktarımları gölge yığın TEPESİNDEN çalışıp askıdaki programın en dış çerçevelerini (adresi alınan `ArrayList` yerelleri dahil) eziyordu; Asyncify gölge yığın belleğini kaydetmez. `asyncify.nox_asyncify_run` artık programı tepeden `HOST_RESERVE` (64 KiB) aşağıda başlatır (spec §3.364).
+
+### Eklendi
+
+- **ReleaseFast WASM regresyon testi:** `build.zig` asyncify+freestanding çalışma zamanını her `zig build test`te AYRICA ReleaseFast olarak `zig-out/wasm-rt-fast`e kurar (`addWasmRuntimeChainTo`); `wasm_target_test` PG programını ona karşı da çalıştırır (`wasm_pg_driver.mjs` isteğe bağlı 4. argüman: `NOX_RESOURCE_DIR`). Düzeltme geri alınınca bu test düşer, ReleaseSafe testi geçmeye devam eder.
+
 ## [2.0.170]
 
 ### Değişti

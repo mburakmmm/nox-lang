@@ -235,6 +235,12 @@ fn addHostedRuntimeChain(
 /// v2.0.76 (Faz 10, WASM): `noxrt-wasm32-wasi.o` — LLVM backend'in `wasm32-wasi` hedefi için çalışma zamanı. Kök `runtime/lib_wasm.zig`
 /// (OS iş parçacığı / soket / dlopen / fiber yığın değiştirme İÇERMEZ; async, aynı yığında yuvalanmış bir benzetimle çalışır).
 fn addWasmRuntimeChain(b: *std.Build, optimize: std.builtin.OptimizeMode, root: []const u8, install_name: []const u8, freestanding: bool, asyncify: bool, threads: bool) *std.Build.Step {
+    return addWasmRuntimeChainTo(b, optimize, root, install_name, freestanding, asyncify, threads, "lib");
+}
+
+/// `addWasmRuntimeChain`in kurulum dizini (`<prefix>/<lib_dir>/`) seçilebilen hâli. Regresyon testi (v2.0.171) ReleaseFast çalışma zamanı nesnelerini `zig build test` Debug iken
+/// bile ayrı bir kökte (`wasm-rt-fast/lib`) kurar; böylece `-Doptimize=ReleaseFast`e özgü bir WASM miscompile/yığın hatası yalnızca CI'daki ReleaseFast adımında değil her koşuda görünür.
+fn addWasmRuntimeChainTo(b: *std.Build, optimize: std.builtin.OptimizeMode, root: []const u8, install_name: []const u8, freestanding: bool, asyncify: bool, threads: bool, lib_dir: []const u8) *std.Build.Step {
     // `threads` (ADR-015): paylaşımlı bellek + atomikler; aksi halde tek iş parçacıklı.
     const thread_features = std.Target.wasm.featureSet(&.{ .atomics, .bulk_memory });
     const no_features = std.Target.Cpu.Feature.Set.empty;
@@ -292,11 +298,11 @@ fn addWasmRuntimeChain(b: *std.Build, optimize: std.builtin.OptimizeMode, root: 
     if (freestanding) sqlite_mod.addIncludePath(b.path("third_party/sqlite"));
     // Ayrı nesne olarak kurulur (`mod.addObject` çalışma zamanının kendi kodunu düşürüyordu): `linkWasm`, yalnızca `nox_sqlite_*` kullanan programlara ekler.
     const sqlite_obj = b.addObject(.{ .name = b.fmt("{s}-sqlite3", .{install_name}), .root_module = sqlite_mod });
-    const sqlite_install = b.addInstallFile(sqlite_obj.getEmittedBin(), b.fmt("lib/{s}-sqlite3.o", .{install_name}));
+    const sqlite_install = b.addInstallFile(sqlite_obj.getEmittedBin(), b.fmt("{s}/{s}-sqlite3.o", .{ lib_dir, install_name }));
     sqlite_install.step.dependOn(&sqlite_obj.step);
 
     const obj = b.addObject(.{ .name = install_name, .root_module = mod });
-    const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
+    const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("{s}/{s}.o", .{ lib_dir, install_name }));
     install.step.dependOn(&obj.step);
     install.step.dependOn(&sqlite_install.step);
     return &install.step;
@@ -2191,6 +2197,8 @@ pub fn build(b: *std.Build) void {
     wasm_options.addOption([]const u8, "pg_driver_path", "tests/golden/wasm_pg_driver.mjs");
     wasm_options.addOption([]const u8, "serve_driver_path", "tests/golden/wasm_serve_driver.mjs");
     wasm_options.addOption([]const u8, "pg_program_path", "tests/golden/wasm_pg_program.nox.in");
+    // v2.0.171: ReleaseFast WASM çalışma zamanı kökü (`NOX_RESOURCE_DIR` olarak noxc'ye verilir); bkz. aşağıdaki `wasm_fast_rt`.
+    wasm_options.addOption([]const u8, "wasm_fast_resource_dir", "zig-out/wasm-rt-fast");
     wasm_options.addOption([]const u8, "mysql_driver_path", "tests/golden/wasm_mysql_driver.mjs");
     wasm_options.addOption([]const u8, "policy_driver_path", "tests/golden/wasm_policy_driver.mjs");
     wasm_options.addOption([]const u8, "mysql_program_path", "tests/golden/wasm_mysql_program.nox.in");
@@ -2206,6 +2214,17 @@ pub fn build(b: *std.Build) void {
     const wasm_target_test = b.addTest(.{ .root_module = wasm_target_mod });
     wasm_target_test.step.dependOn(b.getInstallStep());
     wasm_target_test.step.dependOn(wasm_rt_step);
+    // v2.0.171 regresyon koruması: `wasm-rt` Debug derlemede ReleaseSafe nesne üretir, yani yalnızca `-Doptimize=ReleaseFast` ile görünen bir WASM çalışma zamanı hatası
+    // (v2.0.171: host çağrılarının askıdaki programın gölge yığın çerçevelerini ezmesi, bkz. `asyncify.HOST_RESERVE`) `zig build test` Debug'da gizli kalırdı.
+    // Bu yüzden asyncify+freestanding çalışma zamanı AYRICA her zaman ReleaseFast olarak, ayrı bir kökte (`zig-out/wasm-rt-fast`) kurulur ve PG testi ona karşı da koşar.
+    const wasm_fast_rt = addWasmRuntimeChainTo(b, .ReleaseFast, "runtime/lib_wasm_freestanding.zig", "noxrt-wasm32-freestanding-asyncify", true, true, false, "wasm-rt-fast/lib");
+    const wasm_fast_stdlib = b.addInstallDirectory(.{
+        .source_dir = b.path("stdlib"),
+        .install_dir = .prefix,
+        .install_subdir = "wasm-rt-fast/lib/nox/stdlib",
+    });
+    wasm_target_test.step.dependOn(wasm_fast_rt);
+    wasm_target_test.step.dependOn(&wasm_fast_stdlib.step);
     const wasm_target_run = addTimedTestRun(b, wasm_target_test, win_test_timeout_s);
     test_step.dependOn(&wasm_target_run.step);
     const wasm_test_step = b.step("wasm-test", "wasm32-wasi ve wasm32-freestanding duman testleri (node + zig gerekir) — 'test'in alt kümesi");

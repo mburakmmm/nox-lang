@@ -1,13 +1,14 @@
 // `wasm32-freestanding --asyncify` + `nox.postgres` (Zig protokol istemcisi, spec §3.358) testi için sürücü: GERÇEK bir PostgreSQL sunucusuna karşı çalışır. Geçici bir küme
 // (`initdb`, scram-sha-256) kurar, `pg_ctl` ile başlatır, Nox şablonunu (`__PORT__`) derleyip `wasm_host.mjs --allow-net` ile çalıştırır ve kümeyi durdurup siler.
-// `initdb`/`pg_ctl` bulunamazsa "SKIP" yazıp 0 ile çıkar. Kullanım: node wasm_pg_driver.mjs <noxc> <sablon.nox> <wasm_host.mjs>
+// `initdb`/`pg_ctl` bulunamazsa "SKIP" yazıp 0 ile çıkar. Kullanım: node wasm_pg_driver.mjs <noxc> <sablon.nox> <wasm_host.mjs> [kaynak-kökü]
+// İsteğe bağlı `kaynak-kökü`, noxc'ye `NOX_RESOURCE_DIR` olarak verilir (örn. ReleaseFast WASM çalışma zamanı nesnelerinin kurulu olduğu `zig-out/wasm-rt-fast`).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
 
-const [, , noxc, template, host] = process.argv;
+const [, , noxc, template, host, resourceDir] = process.argv;
 
 function findBin(name) {
   const dirs = (process.env.PATH || '').split(path.delimiter);
@@ -57,7 +58,7 @@ try {
 
   fs.writeFileSync(path.join(dir, 'prog.nox'), fs.readFileSync(template, 'utf8').replaceAll('__PORT__', String(freePort)));
   // `NOX_WASM_NAMES=1`: işlev adları korunur, bir wasm tuzağı (trap) okunaklı bir yığın izi verir (CI teşhisi).
-  execFileSync(noxc, ['build', '--target', 'wasm32-freestanding-asyncify', path.join(dir, 'prog.nox'), '-o', path.join(dir, 'prog.wasm')], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, NOX_WASM_NAMES: '1' } });
+  execFileSync(noxc, ['build', '--target', 'wasm32-freestanding-asyncify', path.join(dir, 'prog.nox'), '-o', path.join(dir, 'prog.wasm')], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, NOX_WASM_NAMES: '1', ...(resourceDir ? { NOX_RESOURCE_DIR: path.resolve(resourceDir) } : {}) } });
   process.stderr.write(`pg: ${execFileSync(pgCtl, ['--version'], { encoding: 'utf8', env: pgEnv }).trim()}; node ${process.version}; ${os.platform()}-${os.arch()}\n`);
   // CI teşhisi: bu sürücü kaç kez, kim tarafından, hangi ortamla çalıştırıldı (yalnızca düşen koşunun stderr'i görünür).
   try {
