@@ -875,7 +875,9 @@ jobs:
           for name in class_list_spawn fibonacci print_dict_index_assign_empty list_row_hoist_order; do
             for backend in llvm qbe; do
               zig-out/bin/noxc build --backend "$backend" --target macos-arm64 "tests/golden/codegen_cases/$name.nox" -o "macx/$name.$backend"
-              file "macx/$name.$backend" | grep -q "Mach-O 64-bit executable arm64"
+              # `file` çıktısının sözcük sırası sürüme göre değişir ("executable arm64" / "arm64 executable"): hem Mach-O hem arm64 aranır, ayrıca 64-bit Mach-O sihirli baytı (cf fa ed fe) doğrulanır.
+              file "macx/$name.$backend" | grep -Eq "Mach-O 64-bit.*arm64"
+              test "$(head -c4 "macx/$name.$backend" | od -An -tx1 | tr -d ' \n')" = "cffaedfe"
             done
           done
           ls -l macx

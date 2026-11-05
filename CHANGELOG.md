@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.183]
+
+### Düzeltildi
+
+- **CI: Linux→macOS çapraz derleme işi yanlış bir `file` denetimiyle düşüyordu.** v2.0.182'nin `windows-cross-build` işi `macos-arm64` programını başarıyla derledi (`built: ...`), ama doğrulama satırı `file` çıktısını macOS'taki sözcük sırasıyla ("Mach-O 64-bit executable arm64") arıyordu; Ubuntu'daki `file` farklı sırayla yazar. Denetim artık `Mach-O 64-bit.*arm64` desenini arar ve ayrıca 64-bit Mach-O sihirli baytını (`cf fa ed fe`) doğrular; ikincisi sunucudaki `file` sürümüne bağlı değildir.
+
 ## [2.0.182]
 
 ### Eklendi
