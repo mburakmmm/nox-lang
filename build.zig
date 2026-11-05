@@ -1744,6 +1744,36 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    // v2.0.180 (Faz 11.4c): HPACK/Huffman çözücüsünün fuzz hedefi (bkz. tests/fuzz/hpack_fuzz.zig): yalnızca std + `http2` modülü.
+    const hpack_fuzz_mod = b.createModule(.{
+        .root_source_file = b.path("tests/fuzz/hpack_fuzz.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "http2", .module = http2_mod },
+        },
+    });
+    const hpack_fuzz_test = b.addTest(.{ .root_module = hpack_fuzz_mod });
+    test_step.dependOn(&addTimedTestRun(b, hpack_fuzz_test, win_test_timeout_s).step);
+    // MySQL protokol ayrıştırıcıları (sunucudan gelen baytlar): yalnızca std + `mysql_proto` modülü.
+    const mysql_proto_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/stdlib_shims/mysql_proto.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const mysql_fuzz_mod = b.createModule(.{
+        .root_source_file = b.path("tests/fuzz/mysql_proto_fuzz.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "mysql_proto", .module = mysql_proto_mod },
+        },
+    });
+    const mysql_fuzz_test = b.addTest(.{ .root_module = mysql_fuzz_mod });
+    test_step.dependOn(&addTimedTestRun(b, mysql_fuzz_test, win_test_timeout_s).step);
+    const hpack_fuzz_step = b.step("hpack-fuzz-test", "Yalnızca stdlib protokol ayrıştırıcılarının (HPACK/Huffman, MySQL) fuzz hedeflerini ve deterministik taramalarını çalıştırır");
+    hpack_fuzz_step.dependOn(&addTimedTestRun(b, hpack_fuzz_test, win_test_timeout_s).step);
+    hpack_fuzz_step.dependOn(&addTimedTestRun(b, mysql_fuzz_test, win_test_timeout_s).step);
     const http_serve_test_mod = b.createModule(.{
         .root_source_file = b.path("tests/compat/http_serve_golden_test.zig"),
         .target = target,

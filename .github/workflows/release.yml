@@ -134,7 +134,27 @@ jobs:
     name: Release'i yayımla
     needs: [build, windows-x64]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
     steps:
+      - uses: actions/checkout@v4
+      # SBOM (SPDX 2.3): arşive giren bileşenler (Nox, SQLite, QBE, Zig) `scripts/gen_sbom.py` ile depodan okunur; okunamayan sürüm release'i durdurur. Taslağa eklenir ve imzalanır.
+      - name: SBOM üret ve taslağa ekle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sbom="nox-lang-${GITHUB_REF_NAME}-sbom.spdx.json"
+          python3 scripts/gen_sbom.py "$GITHUB_REF_NAME" "$sbom"
+          gh release upload "$GITHUB_REF_NAME" "$sbom" --clobber --repo "$GITHUB_REPOSITORY"
+      - name: SBOM'u imzala (provenance)
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: nox-lang-*-sbom.spdx.json
       - name: Taslağı yayımla
         env:
           GH_TOKEN: ${{ github.token }}
@@ -147,6 +167,11 @@ jobs:
 
   build:
     needs: [ci-gate, create-release]
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -241,6 +266,16 @@ jobs:
           tar czf "${web}.tar.gz" "$web"
           shasum -a 256 "${web}.tar.gz" > "${web}.tar.gz.sha256"
 
+      # v2.0.180 (Faz 11.4): her arşiv için GitHub/Sigstore "build provenance" imzası (anahtarsız; hangi iş akışının, hangi commit'ten ürettiğini kanıtlar). Doğrulama:
+      # `gh attestation verify <arşiv> --repo mburakmmm/nox-lang`. İlk sürümlerde `continue-on-error`: altyapı arızası bir release'i bloklamasın; `publish` işi eksik imzayı uyarı olarak yazar.
+      - name: Arşivleri imzala (provenance)
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            nox-lang-*.tar.gz
+            nox-web-compiler-*.tar.gz
+
       - name: Yükle
         uses: softprops/action-gh-release@v2
         with:
@@ -272,6 +307,11 @@ jobs:
   # kurması gerekir — `install.ps1` bunu KONTROL EDİP UYARIR).
   windows-x64:
     needs: [ci-gate, create-release]
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
     name: windows-x64
     runs-on: windows-latest
     steps:
@@ -362,6 +402,14 @@ jobs:
           $setup = (Get-ChildItem installer-out\*-setup.exe | Select-Object -First 1).FullName
           .\packaging\windows\test-installer.ps1 -Installer $setup
           Move-Item installer-out\nox-lang-*-setup.exe, installer-out\nox-lang-*-setup.exe.sha256 .
+
+      - name: Arşivleri imzala (provenance)
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            nox-lang-*.zip
+            nox-lang-*-setup.exe
 
       - name: Yükle
         uses: softprops/action-gh-release@v2

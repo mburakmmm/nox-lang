@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.180]
+
+### Eklendi
+
+- **Release arşivleri için imza ve SBOM (Faz 11.4b).** Her build işi arşivlerini yüklemeden önce `actions/attest-build-provenance` ile imzalar (GitHub/Sigstore, anahtarsız; hangi iş akışının hangi commit'ten ürettiğini kanıtlar); `publish` işi `scripts/gen_sbom.py` ile `nox-lang-<tag>-sbom.spdx.json` (SPDX 2.3: Nox, SQLite, QBE, Zig) üretip taslağa ekler ve onu da imzalar. Kullanıcı doğrulaması: `gh attestation verify <arşiv> --repo mburakmmm/nox-lang` (`docs/install/index.md`). `gen_sbom.py` SQLite/QBE/Zig sürümlerini depodan okur ve okuyamazsa hata verir; CI her değişiklikte `gen_sbom.py --check` çalıştırır. İmza adımları ilk sürümlerde `continue-on-error`dur (altyapı arızası release'i bloklamasın); ilk yeşil sürümlerden sonra zorunlu yapılmalıdır. **Bu iş akışı gerçek bir tag'de ilk kez v2.0.180'de sınanıyor.**
+- **Stdlib protokol ayrıştırıcıları için fuzz (Faz 11.4c).** Fuzz yalnızca ön yüzü (lexer/parser/checker) ve WASM ayrıştırıcısını kapsıyordu. Saldırgan kontrollü girdi ayrıştıran iki saf ayrıştırıcı daha eklendi: HTTP/2 sunucusunun HPACK + Huffman çözücüsü ve `parseFrameHeader` (`tests/fuzz/hpack_fuzz.zig`), MySQL istemcisinin sunucudan gelen baytları (`handshake`, OK/ERR/EOF, sütun adı, RSA anahtarı PEM/SPKI) (`tests/fuzz/mysql_proto_fuzz.zig`). Her biri kapsam güdümlü `std.testing.fuzz` hedefi ve her `zig build test`te çalışan deterministik tohumlu 20.000 girdilik tarama (rastgele + geçerli bloktan mutasyon) içerir; `zig build hpack-fuzz-test` ikisini çalıştırır. **Sonuç: 40.000 girdide hata bulunmadı.** Kapsam güdümlü mod bu Zig sürümünde macOS'ta derlenmiyor (Zig'in `writeStackTrace`i; mevcut fuzz hedefleri de aynı); deterministik tarama her yerde koşar. WebSocket çerçeveleri G/Ç ile iç içe olduğu için saf bir hedef sunmuyor; JSON/regex ayrıştırıcıları çalışma zamanı durumuna bağlı (2.2 adayı).
+
 ## [2.0.179]
 
 ### Düzeltildi

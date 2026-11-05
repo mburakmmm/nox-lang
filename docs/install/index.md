@@ -96,6 +96,16 @@ This installs `noxc.exe` and friends under `%USERPROFILE%\.nox-lang` (override w
 Download `nox-lang-<version>-<platform>.tar.gz` (or `.zip` on Windows) and its `.sha256` file from the [GitHub releases](https://github.com/mburakmmm/nox-lang/releases), verify the checksum, unpack, and put `bin/` on your `PATH`.
 The archive's layout is `bin/`, `lib/` (runtime objects and `lib/nox/stdlib`) and `include/`.
 
+### Verify where an archive came from
+
+The `.sha256` file only proves the download is intact. Each release archive also carries a signed **build provenance attestation** (GitHub/Sigstore, keyless) that records which workflow run and commit produced it. With the [GitHub CLI](https://cli.github.com):
+
+```sh
+gh attestation verify nox-lang-<version>-<platform>.tar.gz --repo mburakmmm/nox-lang
+```
+
+Every release also ships `nox-lang-<version>-sbom.spdx.json`, an SPDX 2.3 software bill of materials listing what goes into the archive (Nox, SQLite, QBE, the Zig standard library), and that file is attested the same way.
+
 ## From source
 
 ```sh
