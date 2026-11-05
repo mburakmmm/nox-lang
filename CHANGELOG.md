@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.185]
+
+### Düzeltildi
+
+- **CI: macOS çapraz çalıştırma işi ara dosyaları çalıştırmaya kalkıyordu.** v2.0.183'te Linux'ta derlenen macOS arm64 ikilisi macOS'ta ÇALIŞTI ve beklenen çıktıyı verdi (`ok class_list_spawn.llvm`), ama artefakt `macx/*` olarak yüklendiğinden derleyicinin bıraktığı `*.llvm.ll` IR dosyası da indirildi ve döngü onu betik gibi çalıştırmaya kalkıp düştü. Artefakt artık yalnızca `*.llvm` ve `*.qbe` ikililerini içerir, döngü yalnızca onları çalıştırır.
+
 ## [2.0.184]
 
 ### Değişti
