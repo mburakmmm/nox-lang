@@ -387,7 +387,7 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
   release imzası + SBOM, stdlib sertleştirme taraması (fuzz kapsamı).
 - [x] **11.5 Release akışı kanıtı (2026-11-05).** v2.0.174 gerçek tag'de taslak→yayın akışını geçti (17 varlığın hepsi yüklendikten sonra yayımlandı, "Latest" oldu; Homebrew/AUR/AppImage/Snap/site-image
   `publish`ten sonra koştu). Düzeltilmiş site imajı (`-Dcpu=baseline`) Apple Silicon'da çalıştı; M4 onu kendiliğinden 33 sn'de yayına aldı, sağlıklı, temizlik betiği kendiliğinden koştu, noxlang.com `/version.txt` = 2.0.174.
-- [ ] **11.9 Göreli `extern def ... from "yol"` çözümü (Aura isteği, 2026-11-05).** `appendExternLinkArgs` `from` değerini clang'e olduğu gibi verir, yani bağlama çalışma dizinine bağlıdır (`cd examples/dashboard && noxc run main.nox`
+- [x] **11.9 (v2.0.178) Göreli `extern def ... from "yol"` çözümü (Aura isteği, 2026-11-05).** `appendExternLinkArgs` `from` değerini clang'e olduğu gibi verir, yani bağlama çalışma dizinine bağlıdır (`cd examples/dashboard && noxc run main.nox`
   `native/libaura_host.dylib`i bulamaz). Karar: dosya çalışma dizininde varsa o kazanır (bugünkü davranış); yoksa `nox.json`un bulunduğu proje kökünde aranır ve bulunursa clang'e MUTLAK yolla verilir; proje
   kökünün ÜSTÜNE çıkılmaz (rastgele üst dizindeki dosya bağlanmasın, AGENTS §9.5), `nox.json` yoksa dokunulmaz. `-lname` kütüphane adları ve `zig-out/lib/noxrt.o` sentinel'i değişmez. Kapsam dışı (2.2): bir
   bağımlılık paketinin kendi göreli `extern`ünü paket kökünde aramak (`module` birleşik gelir, kaynak bilgisi taşınmıyor); `.o`/`.a` içeriğinin `noxc run` önbellek anahtarına girmemesi (eski statik kütüphane

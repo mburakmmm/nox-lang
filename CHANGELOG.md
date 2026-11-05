@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.178]
+
+### Düzeltildi
+
+- **Göreli `extern def ... from "yol"` artık proje kökünde de aranır (Faz 11.9, Aura isteği).** `appendExternLinkArgs` `from` değerini clang'e olduğu gibi veriyordu, bağlama çalışma dizinine bağlıydı: `noxc run examples/dashboard/main.nox` (proje kökünden) çalışıyor, `cd examples/dashboard && noxc run main.nox` `no such file or directory: 'native/libaura_host.dylib'` ile düşüyordu. Artık dosya çalışma dizininde yoksa derlenen kaynağın proje kökünde (`nox.json`un dizini) aranır ve bulunursa clang'e mutlak yolla verilir. Çalışma dizinindeki dosya hâlâ önceliklidir (davranış bozulmaz), arama proje kökünde DURUR (üst dizinlere çıkılmaz; AGENTS §9.5) ve `nox.json` yoksa hiçbir şey değişmez. `-l<ad>` kütüphane adları ve `zig-out/lib/noxrt.o` sentinel'i etkilenmez; QBE, LLVM ve WASM bağlama yolları aynı işlevi kullanır. `tests/cli/extern_path_test.zig` örnek klasöründen çalıştırmayı, proje kökünden çalıştırmayı ve iki sınırı (nox.json'un üstündeki ve nox.json olmayan dizindeki dosya bulunmaz) doğrular. Spesifikasyon §3.366, `docs/language/ffi.md`.
+- **Bilinen sınırlar (2.2):** bir bağımlılık paketinin kendi göreli `extern`ü paket kökünde değil uygulama kökünde aranır (`module` birleşik gelir); `.o`/`.a` içeriği `noxc run` önbellek anahtarına girmez (statik kütüphane değişince bayat ikili).
+
 ## [2.0.177]
 
 ### Eklendi

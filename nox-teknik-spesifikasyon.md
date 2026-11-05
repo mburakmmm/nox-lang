@@ -29629,3 +29629,11 @@ Harici incelemenin (GPT) doğrulanan bulguları: (1) `wasm_compiler.mjs` seçene
 **Sonuç.** Çapraz derlenen ikililer `-O2` hızındadır ve Windows `.exe` artık QBE'nin `amd64_win` upstream hatasına (bkz. §3.196, v2.0.175) bağımlı değildir; yamalı QBE yalnızca `--backend qbe --target windows-x64` için gerekir.
 
 **Doğrulama.** Bu Mac'ten altı hedefin hepsi derlendi (ELF/Mach-O/PE başlıkları doğrulandı). `spawn`/`await`, sınıf, sözlük, istisna ve float biçimlendirme içeren bir program linux-arm64 (yerel Docker), linux-x64 (emülasyon), macos-x64 (Rosetta) ve macos-arm64'te birebir aynı çıktıyı verdi. CI: `riscv64-smoke` her programı iki backend ile derleyip qemu-user altında çalıştırır. Windows `.exe`nin çalıştırılması ve riscv64 LLVM çalıştırması CI/Windows PC kanıtını bekler.
+
+### 3.366 Göreli `extern def ... from "yol"` proje kökünde aranır (v2.0.178)
+
+**Sorun.** `appendExternLinkArgs`, `from` değerini clang'e olduğu gibi verir; bağlama çalışma dizinine bağlıydı (Aura: `cd examples/dashboard && noxc run main.nox` `native/libaura_host.dylib`i bulamıyordu).
+
+**Karar.** Göreli bir dosya yolu için sıra: (1) mutlak yol olduğu gibi; (2) dosya çalışma dizininde varsa olduğu gibi (bugünkü davranış); (3) yoksa derlenen kaynağın proje kökünde (`nox.json`un dizini, `project.findProjectRoot`) aranır ve bulunursa clang'e mutlak yolla verilir; (4) bulunamazsa göreli yol aynen bırakılır. Arama proje kökünde DURUR: üst dizinlere çıkılmaz (rastgele bir üst dizindeki dosya sessizce bağlanmasın, AGENTS §9.5) ve `nox.json` yoksa hiçbir şey değişmez. `-l<ad>` kütüphane adları ve `zig-out/lib/noxrt.o` sentinel'i etkilenmez. Hem QBE hem LLVM (ve WASM) bağlama yolları aynı `appendExternLinkArgs`i kullanır.
+
+**Sınırlar.** `module` birleşik geldiği için bir bağımlılık paketinin kendi göreli `extern`ü paket kökünde değil UYGULAMANIN kökünde aranır. `.o`/`.a` içeriği `noxc run` önbellek anahtarına girmez (statik kütüphane yeniden derlenirse bayat ikili çalışabilir; `.dylib` etkilenmez). İkisi de bilinen açık maddelerdir (Faz 11.9, 2.2).

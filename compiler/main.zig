@@ -3149,7 +3149,7 @@ fn linkMobile(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []
 }
 
 /// `--target wasm32-wasi`: LLVM IR'ı `zig cc -target wasm32-wasi` ile wasi-libc + `noxrt-wasm32-wasi.o`ya bağlar, `.wasm` üretir.
-fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []const u8, ir: []const u8, info: qbe_target.HostedTargetInfo, output_override: ?[]const u8, resource_dirs: project.ResourceDirs, module: ast.Module) ![]const u8 {
+fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []const u8, ir: []const u8, info: qbe_target.HostedTargetInfo, output_override: ?[]const u8, resource_dirs: project.ResourceDirs, module: ast.Module, extern_root: ?[]const u8) ![]const u8 {
     const base = stripOneExt(output_override orelse stem);
     const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{base});
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
@@ -3177,13 +3177,13 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
     if (info.wasm_freestanding) {
         // libc/libm yok: `from "m"` bildirimleri çalışma zamanındaki (`wasm_libc.zig`/compiler-rt) tanımlara çözülür; `-lm` verilmez.
         var tmp: std.ArrayListUnmanaged([]const u8) = .empty;
-        try appendExternLinkArgs(a, &tmp, module);
+        try appendExternLinkArgs(io, a, &tmp, module, extern_root);
         for (tmp.items) |arg| {
             if (std.mem.eql(u8, arg, "-lm")) continue;
             try argv.append(a, arg);
         }
     } else {
-        try appendExternLinkArgs(a, &argv, module);
+        try appendExternLinkArgs(io, a, &argv, module, extern_root);
     }
     const result = std.process.run(gpa, io, .{ .argv = argv.items }) catch |err| {
         if (err == error.FileNotFound) {
@@ -3359,6 +3359,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // belge notu): `.qbe` VE `.llvm` yollarının İKİSİ de AYNI, genel dead-
     // stripping bayrağına İHTİYAÇ DUYAR — TEK yerde hesaplanır.
     const linker_visibility_args = computeLinkerVisibilityArgs();
+    const extern_root = externProjectRoot(io, a, path_arg);
 
     // Faz LLVM.5 (bkz. plan dosyası "`noxc build --release` için deneysel
     // bir LLVM backend'i"): `--release` İKEN `.ssa`/`qbe`/`cc` boru hattı
@@ -3372,7 +3373,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             if (ht.isMobile()) {
                 return linkMobile(gpa, io, a, stem, ir, ht, emit, output_override, resource_dirs);
             }
-            if (ht.wasm) return linkWasm(gpa, io, a, stem, ir, ht, output_override, resource_dirs, module);
+            if (ht.wasm) return linkWasm(gpa, io, a, stem, ir, ht, output_override, resource_dirs, module, extern_root);
         }
         const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{stem});
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
@@ -3409,7 +3410,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         }
         try clang_argv.append(a, "-lm");
         if (target_win) try clang_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
-        try appendExternLinkArgs(a, &clang_argv, module);
+        try appendExternLinkArgs(io, a, &clang_argv, module, extern_root);
 
         const clang_result = std.process.run(gpa, io, .{ .argv = clang_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
@@ -3523,7 +3524,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             "zig", "cc",     "-target", freestanding_triple,       "-ffreestanding", "-nostdlib", "-static",
             "-o",  bin_path, asm_path,  freestanding_runtime_path,
         });
-        try appendExternLinkArgs(a, &zig_argv, module);
+        try appendExternLinkArgs(io, a, &zig_argv, module, extern_root);
 
         const zig_result = std.process.run(gpa, io, .{ .argv = zig_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
@@ -3600,7 +3601,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // 'WSAGetLastError'`/`'NtCreateFile'`/`'CertOpenSystemStoreW'`/... İLE
     // doğrulandı).
     if (target_is_windows) try cc_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
-    try appendExternLinkArgs(a, &cc_argv, module);
+    try appendExternLinkArgs(io, a, &cc_argv, module, extern_root);
 
     const cc_result = try std.process.run(gpa, io, .{
         .argv = cc_argv.items,
@@ -3670,7 +3671,29 @@ fn stemOf(path: []const u8) []const u8 {
 /// nox/*.nox — HEPSİ bu TAM literal dizgeyi `from_lib` olarak yazar) — bu
 /// yüzden gerçek `noxrt_path` ne olursa olsun (sistem geneli bir kurulumda
 /// CWD-göreli DEĞİL, mutlak bir yol) eşleşme DOĞRU çalışır.
-fn appendExternLinkArgs(allocator: std.mem.Allocator, argv: *std.ArrayListUnmanaged([]const u8), module: ast.Module) !void {
+/// v2.0.178 (Faz 11.9): `extern def ... from "yol"` göreli bir YOLsa ve dosya çalışma dizininde YOKSA, derlenen kaynağın proje kökünde (`nox.json`un bulunduğu dizin) aranır; bulunursa
+/// clang'e MUTLAK yolla verilir. Çalışma dizininde varsa o kazanır (bugünkü davranış), mutlak yol olduğu gibi kalır, proje kökünün ÜSTÜNE çıkılmaz (rastgele bir üst dizindeki dosya
+/// sessizce bağlanmasın; `extern def` zaten çıplak native kod yetkisidir, AGENTS §9.5) ve `nox.json` yoksa hiçbir şey değişmez. Kütüphane adları (`-lsqlite3`) bu işleme girmez.
+fn resolveExternPath(io: std.Io, a: std.mem.Allocator, from_lib: []const u8, project_root: ?[]const u8) []const u8 {
+    if (std.fs.path.isAbsolute(from_lib)) return from_lib;
+    if (std.Io.Dir.cwd().access(io, from_lib, .{})) |_| return from_lib else |_| {}
+    const root = project_root orelse return from_lib;
+    const candidate = std.fs.path.join(a, &.{ root, from_lib }) catch return from_lib;
+    if (std.Io.Dir.accessAbsolute(io, candidate, .{})) |_| return candidate else |_| {}
+    return from_lib;
+}
+
+/// Derlenen kaynağın proje kökü (`nox.json`un bulunduğu dizin); manifest yoksa `null`.
+fn externProjectRoot(io: std.Io, a: std.mem.Allocator, path_arg: []const u8) ?[]const u8 {
+    const abs = if (std.fs.path.isAbsolute(path_arg)) path_arg else blk: {
+        const cwd_abs = std.process.currentPathAlloc(io, a) catch return null;
+        break :blk std.fs.path.resolve(a, &.{ cwd_abs, path_arg }) catch return null;
+    };
+    const dir = std.fs.path.dirname(abs) orelse return null;
+    return project.findProjectRoot(a, io, dir) catch null;
+}
+
+fn appendExternLinkArgs(io: std.Io, allocator: std.mem.Allocator, argv: *std.ArrayListUnmanaged([]const u8), module: ast.Module, project_root: ?[]const u8) !void {
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     try seen.put(allocator, "zig-out/lib/noxrt.o", {});
     for (module.body) |stmt| {
@@ -3683,7 +3706,7 @@ fn appendExternLinkArgs(allocator: std.mem.Allocator, argv: *std.ArrayListUnmana
             std.mem.endsWith(u8, from_lib, ".o") or
             std.mem.endsWith(u8, from_lib, ".a");
         if (looks_like_path) {
-            try argv.append(allocator, from_lib);
+            try argv.append(allocator, resolveExternPath(io, allocator, from_lib, project_root));
         } else {
             try argv.append(allocator, try std.fmt.allocPrint(allocator, "-l{s}", .{from_lib}));
         }

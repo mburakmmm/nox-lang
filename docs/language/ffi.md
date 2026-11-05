@@ -26,6 +26,8 @@ not meant for user code.)
   `from "build/libfoo.a"`;
 - otherwise a **system library name**, linked as `-l<name>`: `"m"` (libm), `"c"`, `"sqlite3"`.
 
+A relative file path is looked up in the **current directory** first, so `noxc run examples/app/main.nox` from the project root finds `native/libfoo.o`. If it is not there, `noxc` looks in the **project root** (the directory with `nox.json`) and passes the file to the linker by absolute path, so `cd examples/app && noxc run main.nox` works too. The search stops at the project root: it never walks into parent directories, and a script without a `nox.json` keeps the plain current-directory behaviour. An absolute path is used as written.
+
 The function name is the C symbol and is **never mangled**, so `extern def` functions are called unqualified after an import
 ([Modules](modules.md#qualified-access-has-two-quirks)). A library used by several declarations is linked once.
 
