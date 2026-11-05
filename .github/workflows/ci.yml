@@ -232,17 +232,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq binaryen
 
-      - name: qbe kur (macOS)
-        if: runner.os == 'macOS'
-        run: brew install qbe
-
-      - name: qbe kur (Linux — kaynaktan derle)
-        if: runner.os == 'Linux'
+      # v2.0.175: release arşivine giren QBE ile AYNI yamalı derleme (`scripts/build_qbe.sh`): testler, kullanıcıya giden `qbe` ile koşar ve `--target windows-x64` tam derlemesi doğrulanır.
+      - name: qbe kur (yamalı, kaynaktan derle)
         run: |
-          curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz
-          tar xf /tmp/qbe.tar.xz -C /tmp
-          make -C /tmp/qbe-1.3 -j"$(nproc)"
-          sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
+          set -euo pipefail
+          scripts/build_qbe.sh "$RUNNER_TEMP/qbe-bin/qbe"
+          echo "$RUNNER_TEMP/qbe-bin" >>"$GITHUB_PATH"
 
       # Faz F.5 (bkz. nox-teknik-spesifikasyon.md §3.179 — dış
       # incelemenin bulduğu boşluk): `tests/golden/kernel_boot_x86_64_
@@ -331,7 +326,7 @@ jobs:
             ulimit -c unlimited
             export NOX_CRASH_ARTIFACTS_DIR=/tmp/nox_crash_artifacts
           fi
-          zig build test
+          zig build test -Drequire-patched-qbe=true
 
       # `if: always()` — "zig build test (Debug)" BAŞARISIZ olsa BİLE
       # çalışır (asıl amaç TAM OLARAK BU: bir çöküş OLDUĞUNDA teşhis
@@ -394,7 +389,7 @@ jobs:
         run: zig build -Doptimize=ReleaseFast
 
       - name: zig build test (ReleaseFast)
-        run: zig build test -Doptimize=ReleaseFast
+        run: zig build test -Doptimize=ReleaseFast -Drequire-patched-qbe=true
 
   # Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): GERÇEK Windows
   # desteği YOK — `runtime/async_rt/io_reactor.zig` şu an yalnızca macOS

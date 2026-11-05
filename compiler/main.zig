@@ -3540,6 +3540,10 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     defer gpa.free(cc_result.stderr);
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         printErr("cc failed:\n{s}\n", .{cc_result.stderr});
+        // Stok QBE 1.3'ün `amd64_win` arka ucu geçersiz bir `movsd %r10, ...` üretir (upstream hatası); Nox'un release arşivleriyle gelen `bin/qbe` yamalıdır.
+        if (target_is_windows and std.mem.indexOf(u8, cc_result.stderr, "invalid operand for instruction") != null) {
+            printErr("hint: this is the upstream QBE 1.3 amd64_win bug. Use the qbe bundled with Nox releases (noxc upgrade) or build the patched one with scripts/build_qbe.sh\n", .{});
+        }
         return error.BuildFailed;
     }
 

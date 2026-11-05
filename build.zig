@@ -2168,6 +2168,9 @@ pub fn build(b: *std.Build) void {
     // doğrulanması — `kernel_boot_options`nin AYNI `noxc_path` deseni.
     const target_flag_options = b.addOptions();
     target_flag_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
+    // v2.0.175: CI (ve release), `scripts/build_qbe.sh` ile yamalı QBE kurar ve `-Drequire-patched-qbe=true` verir; bu durumda yamasız bir QBE `--target windows-x64` tam
+    // derlemesinde testi ATLATMAZ, DÜŞÜRÜR (yamanın sessizce kaybolmasını önler). Yerel geliştirmede (stok QBE) test atlanır.
+    target_flag_options.addOption(bool, "require_patched_qbe", b.option(bool, "require-patched-qbe", "windows-x64 çapraz bağlama testinde yamasız QBE'yi atlamak yerine başarısız say (CI)") orelse false);
     const target_flag_mod = b.createModule(.{
         .root_source_file = b.path("tests/golden/target_flag_test.zig"),
         .target = target,

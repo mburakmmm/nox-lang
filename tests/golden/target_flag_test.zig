@@ -6,16 +6,10 @@
 //! yöntemle) + geçersiz kombinasyonların (riscv64 linksiz, profil/hedef
 //! uyuşmazlığı) AÇIK bir hatayla reddedildiği.
 //!
-//! `windows-x64` hedefi BİLİNÇLİ olarak TAM LİNK doğrulaması YAPMAZ —
-//! stok/vendored `qbe` sürümlerinin `amd64_win` backend'inde GERÇEK,
-//! BİLİNEN bir upstream ABI hatası VAR (bir spill/reload kopyası YANLIŞ
-//! register sınıfı [`Kl`, `instr->cls` YERİNE] kullanıyor — `movsd %r10,
-//! ...` GİBİ geçersiz bir komut ÜRETİYOR; bkz. `.github/workflows/
-//! release.yml`nin Windows işinin KENDİ `winabi.c` METİN-YAMASI, "GERÇEK
-//! bir upstream amd64_win ABI hatasının metin-yaması"). BU projenin
-//! standart CI qbe kurulumu (macOS/Linux runner'ları, `ci.yml`) BU YAMAYA
-//! SAHİP DEĞİL — bu YÜZDEN windows-x64 SADECE `--emit-asm` (ham `.s`,
-//! linksiz) İLE doğrulanır, TAM link denenmez.
+//! `windows-x64` hedefi: stok QBE 1.3'ün `amd64_win` arka ucunda GERÇEK, BİLİNEN bir upstream ABI hatası vardır (bir spill/reload kopyası YANLIŞ register sınıfı [`Kl`,
+//! `instr->cls` YERİNE] kullanır ve `movsd %r10, ...` GİBİ geçersiz bir komut üretir). `scripts/build_qbe.sh` aynı metin-yamasını (release'in Windows işindeki `winabi.c`
+//! yamasıyla aynı) macOS/Linux QBE'sine uygular; release arşivlerinin `bin/qbe`si ve CI'ın QBE'si yamalıdır. Bu yüzden `windows-x64` iki testle doğrulanır: `--emit-asm`
+//! (her QBE ile çalışır) ve TAM bağlama → geçerli PE/AMD64 çıktısı (v2.0.175, Faz 11.1; yamasız QBE'de yerelde atlanır, CI'da `-Drequire-patched-qbe=true` ile başarısız sayılır).
 //!
 //! `qbe`/`zig`/`noxc` (henüz kurulmamışsa) PATH'te/`zig-out`ta YOKSA test
 //! SESSİZCE `SkipZigTest` İLE atlanır (bu ailenin AYNI ilkesi).
@@ -198,7 +192,7 @@ test "v2.0 madde 8: --target aarch64 --profile freestanding dogru e_machine'li b
     try expectElf(io, tmp.dir, "out_fs_aarch64", EM_AARCH64);
 }
 
-test "v2.0 madde 8: --target windows-x64 --emit-asm ham .s uretir (tam link, bilinen amd64_win qbe hatasi yuzunden denenmez)" {
+test "v2.0 madde 8: --target windows-x64 --emit-asm ham .s uretir (her qbe ile calisir)" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -224,6 +218,50 @@ test "v2.0 madde 8: --target windows-x64 --emit-asm ham .s uretir (tam link, bil
     defer allocator.free(s_path);
     const stat = try std.Io.Dir.cwd().statFile(io, s_path, .{});
     try std.testing.expect(stat.size > 0);
+}
+
+// v2.0.175 (Faz 11.1): macOS/Linux'tan `--target windows-x64` TAM bağlama. Yamalı QBE ile (`scripts/build_qbe.sh`) gerçek bir PE çalıştırılabilir dosyası üretilir: "MZ" DOS
+// başlığı, `e_lfanew` ile gösterilen "PE\0\0" imzası ve AMD64 (0x8664) makine alanı. Yamasız stok QBE `movsd %r10, ...` ile düşer; yerelde bu durumda test atlanır,
+// CI'da (`-Drequire-patched-qbe=true`) başarısız sayılır.
+test "v2.0.175: --target windows-x64 tam link gecerli bir PE (AMD64) uretir (yamali qbe)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+    try writeTrivialFixture(io, tmp.dir, "t.nox");
+    const src_path = try std.fmt.allocPrint(allocator, "{s}/t.nox", .{dir_path});
+    defer allocator.free(src_path);
+    const out_path = try std.fmt.allocPrint(allocator, "{s}/out_win.exe", .{dir_path});
+    defer allocator.free(out_path);
+
+    const result = try runNoxcBuild(allocator, io, &.{ "--target", "windows-x64" }, src_path, out_path);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        const stock_qbe_bug = std.mem.indexOf(u8, result.stderr, "invalid operand for instruction") != null;
+        if (stock_qbe_bug and !build_options.require_patched_qbe) {
+            std.debug.print("windows-x64 tam link atlandi: yamasiz stok qbe (scripts/build_qbe.sh ile yamali qbe kurun)\n", .{});
+            return error.SkipZigTest;
+        }
+        std.debug.print("noxc build --target windows-x64 basarisiz: {s}\n", .{result.stderr});
+        return error.NoxcBuildFailed;
+    }
+
+    const file = try openBuilt(io, tmp.dir, "out_win.exe");
+    defer file.close(io);
+    var scratch: [256]u8 = undefined;
+    var reader = std.Io.File.Reader.init(file, io, &scratch);
+    var head: [0x100]u8 = undefined;
+    try reader.interface.readSliceAll(&head);
+    try std.testing.expectEqualSlices(u8, "MZ", head[0..2]);
+    const e_lfanew = std.mem.readInt(u32, head[0x3c..0x40], .little);
+    // PE imzası ve COFF başlığı DOS saplamasının hemen ardından gelir; küçük çıktılarda 0x100 bayt içinde kalır.
+    try std.testing.expect(e_lfanew + 6 <= head.len);
+    try std.testing.expectEqualSlices(u8, "PE\x00\x00", head[e_lfanew .. e_lfanew + 4]);
+    try std.testing.expectEqual(@as(u16, 0x8664), std.mem.readInt(u16, head[e_lfanew + 4 ..][0..2], .little));
 }
 
 test "v2.0 madde 8: --target riscv64 --profile freestanding (linksiz) acik bir hatayla reddedilir" {

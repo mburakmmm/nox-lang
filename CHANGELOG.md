@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.175]
+
+### Eklendi
+
+- **macOS/Linux'tan Windows `.exe` çapraz derleme (`--target windows-x64`) çalışıyor (Faz 11.1).** Eskiden yamasız QBE 1.3'ün `amd64_win` arka ucu `movsd %r10, ...` ile düşüyordu; yama yalnızca release'in Windows işindeydi, release arşivlerindeki `bin/qbe` yamasızdı. `scripts/build_qbe.sh` sabit sağlama toplamlı QBE 1.3 kaynağını aynı metin-yamasıyla derler (yama satırı bulunmazsa hata verir). Release (macOS ve Linux) ve CI artık Homebrew'un/yamasız QBE'si yerine bunu kullanır; arşive giren `bin/qbe` yamalıdır. Bu Mac'ten linux-x64/arm64/riscv64, macos-x64/arm64 ve windows-x64 çapraz derlemesi ölçüldü (ELF/Mach-O/PE başlıkları doğru). Çıktıların Windows'ta ÇALIŞTIRILMASI henüz kanıtlanmadı (Faz 11.1 açık).
+- **Test:** `tests/golden/target_flag_test.zig` windows-x64 tam bağlamanın geçerli bir PE/AMD64 dosyası ürettiğini doğrular. Yamasız QBE'de yerelde atlanır; CI `-Drequire-patched-qbe=true` ile atlatmaz, başarısız sayar (yamanın sessizce kaybolmasını önler).
+- **`noxc` ipucu:** Windows hedefinde bu upstream hatası görülürse `cc failed` çıktısının ardına nedenini ve çözümü (release'teki `bin/qbe`, `noxc upgrade`, `scripts/build_qbe.sh`) söyleyen bir `hint:` satırı yazar.
+- `project/nox-ana-todo.md` Faz 11: 2.1 yayın kapsamı ve 2.2'ye bırakılan REPL (ORC JIT) ile C FFI maliyeti maddeleri.
+
 ## [2.0.174]
 
 ### Düzeltildi

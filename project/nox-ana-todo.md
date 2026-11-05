@@ -359,6 +359,29 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
 
 **Dürüst kapsam notu (güncel: v2.0.82):** v2.0.76 ilk uygulaması iş parçacığı/yığın değiştirme olmadan geldi; eksikler sonradan kapandı: `wasm32-freestanding` ve `nox_host` (v2.0.77, ADR-013), `--asyncify` gerçek fiber (v2.0.78, ADR-014), `--threads` gerçek M:N (v2.0.80-81, ADR-015). Hâlâ yok: soket/ağ sunucusu, `dlopen`/yerel kütüphane bağlama, `nox.process`, veritabanı sürücüleri (derleme zamanında açık iletiyle reddedilir). Kip başına destek matrisi: `docs/tools/wasm.md`. Kalan iş yeni özellik değil güvenilirliktir: gerçek tarayıcı ve ikinci WASM motorunda host testi, uzun süreli thread stres testi, Asyncify/threads maliyet ölçümü.
 
+## Faz 11 — Nox 2.1 yayın kapsamı (kullanıcı kararı, 2026-11-05)
+
+**2.1 ilanı, aşağıdaki 11.1–11.6 maddelerinin HEPSİ kanıtla kapanınca yapılır** (kullanıcı: "çözünce artık 2.1 ilan ederiz"). REPL ve C FFI maliyeti 2.2'ye bırakıldı
+(11.7). Her madde için AGENTS §16: mimariyi etkileyen kısımda önce kısa tasarım sunulur.
+
+- [ ] **11.1 Windows `.exe` çapraz derleme.** 2026-11-05'te ölçüldü: macOS'tan `linux-x64/linux-arm64/linux-riscv64/macos-x64` çapraz derlemesi çalışıyor (ELF/Mach-O başlığı
+  doğru), `windows-x64` `movsd %r10, ...` (upstream QBE `amd64_win` ABI hatası) ile düşüyor; yama yalnızca release'in Windows işinde (`winabi.c` metin-yaması), macOS/Linux
+  arşivlerindeki QBE yamasız. `--backend llvm` masaüstü çapraz hedefi reddeder. Yapılacak: yamayı TÜM QBE kurulumlarına (release macOS/Linux, ci.yml, Dockerfile'lar, `noxc`un
+  getirdiği `qbe`) uygulamak; CI'a "windows-x64 çapraz derle, çıktı `MZ`/PE başlığı" testi; tüm masaüstü hedefleri için çapraz matris + (mümkünse qemu-user/wine ile) çalıştırma
+  kanıtı. Linux üzerinden `macos-arm64`/iOS çapraz derlemesi de denenip kayda geçirilir.
+- [ ] **11.2 Betik modu.** `noxc run` zaten ~0,25 sn (merhaba programı). Eklenecek: shebang (`#!/usr/bin/env noxc run`), kaynak-özeti anahtarlı ikili önbelleği, hızlı `-O0` yolu.
+- [ ] **11.3 Performans.** dict ~2,5x C (`entries` + `HashMap`, `d[k]` iki arama), matmul ~2x C (sınır kontrolü + `list[list[T]]` dolaylaması), `--release` varsayılanı kararı.
+- [ ] **11.4 Güvenlik.** Masaüstü `nox.fs`/`nox.os` kök (jail) seçeneği (mobil maskesi örnek; ADR-MOB-004), `uretim-hazirlik-analizi.md` #11 maddesinin güncel durumunu doğrula,
+  release imzası + SBOM, stdlib sertleştirme taraması (fuzz kapsamı).
+- [ ] **11.5 Release akışı kanıtı.** v2.0.173'te taslak→yayın akışı eklendi (yarım yüklenmiş "Latest" yüzünden `noxc upgrade` 404); v2.0.174 gerçek tag'de ilk kez sınanıyor. Yeşil
+  Release + M4'ün düzeltilmiş site imajını (`-Dcpu=baseline`) sağlıklı alması kanıtlanmadan 2.1 ilan edilmez.
+- [ ] **11.6 2.1 ilanı.** CHANGELOG/sürüm notu, `docs/whatsnew`, site ve duyuru; yalnızca 11.1–11.5 kapanınca.
+- [ ] **11.7 (2.2) REPL — LLVM ORC JIT.** `noxc` LLVM'e bağlı değil (`.ll` + `clang`); libLLVM'i `nox.sqlite` gibi çalışma anında tembel yüklemek, `noxrt.o`yu JIT'e nesne olarak
+  eklemek, satırlar arası durum için modül-global + ARC (ASAP satırlar arasında kanıtlayamaz). iOS JIT yasak → yalnızca masaüstü. Önce spike + tasarım onayı.
+- [ ] **11.8 (2.2) C FFI maliyetini sıfıra yaklaştır / C kütüphanelerini Nox'ta çalıştır.** Kullanıcı isteği (2026-11-05). Önce mevcut maliyetin ölçümü (`extern def` trampoline'ı,
+  marshaling, ARC muhasebesi) ve tasarım seçenekleri (başlık dosyasından otomatik `extern def`, C kaynağını `zig cc` ile aynı modüle derleme, doğrudan çağrı/inline) çıkarılır.
+  AGENTS §9.5 güven sınırı geçerlidir: sandbox/otomatik "güvenli mod" kapsamlı güvenlik tasarımı gerektirir, yarım eklenmez.
+
 ## Her görev için kapanış şablonu
 
 - Değişen alan:

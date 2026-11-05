@@ -175,17 +175,13 @@ jobs:
           tar xf /tmp/zig.tar.xz -C /tmp
           echo "/tmp/zig-${{ matrix.zig_arch }}-0.16.0" >>"$GITHUB_PATH"
 
-      - name: qbe kur (macOS)
-        if: runner.os == 'macOS'
-        run: brew install qbe
-
-      - name: qbe kur (Linux — kaynaktan derle)
-        if: runner.os == 'Linux'
+      # v2.0.175: QBE macOS'ta da (Homebrew paketi yerine) sabitlenmiş kaynaktan, upstream `amd64_win` yamasıyla derlenir (`scripts/build_qbe.sh`). Arşive giren `bin/qbe` böylece
+      # macOS/Linux'tan `noxc build --target windows-x64` çapraz derlemesini mümkün kılar (yamasız QBE `movsd %r10, ...` ile düşüyordu).
+      - name: qbe kur (yamalı, kaynaktan derle)
         run: |
-          curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz
-          tar xf /tmp/qbe.tar.xz -C /tmp
-          make -C /tmp/qbe-1.3 -j"$(nproc)"
-          sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
+          set -euo pipefail
+          scripts/build_qbe.sh "$RUNNER_TEMP/qbe-bin/qbe"
+          echo "$RUNNER_TEMP/qbe-bin" >>"$GITHUB_PATH"
 
       # v1.142.7: `-Dcpu` AÇIKÇA verilir. Varsayılan (`standardTargetOptions`) =
       # DERLEYEN runner'ın NATIVE CPU'su: ubuntu-latest AVX-512'li bir makinede
