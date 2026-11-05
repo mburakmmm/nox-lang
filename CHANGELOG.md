@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.166]
+
+### Değişti
+
+- **Geçici CI teşhisi (devam):** `scripts/ci_pg_debug.sh` ayrıca sunucu bayt günlüğü proxy'si OLMADAN doğrudan çalıştırır, gerçek `wasm_pg_driver.mjs` sürücüsünü 3 kez çalıştırır ve `zig build wasm-test` özetini yazar (runner'da aynı program 6 farklı koşulda GEÇTİ; yalnızca Zig test düzeneğinde düşüyor).
+
 ## [2.0.165]
 
 ### Değişti

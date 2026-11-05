@@ -46,4 +46,20 @@ run_case liftoff-only "" "--liftoff-only"
 run_case no-liftoff "" "--no-liftoff"
 run_case tz-utc "-c timezone=Etc/UTC" ""
 run_case scram-iter-1000 "-c scram_iterations=1000" ""
+
+echo "== proxy'siz doğrudan (sürücü ile aynı düzen): PG 15432'de"
+start_pg_direct() { rm -rf "$work/data"; echo secret > "$work/pw"; LC_ALL=C "$PGB/initdb" -D "$work/data" -U postgres --auth=scram-sha-256 --pwfile "$work/pw" -E UTF8 --locale=C >/dev/null 2>&1; LC_ALL=C "$PGB/pg_ctl" -D "$work/data" -o "-p $port -k $work -c listen_addresses=127.0.0.1 -c fsync=off" -l "$work/log" -w start >/dev/null 2>&1; }
+for i in 1 2 3; do
+  start_pg_direct
+  res="$(node --no-warnings compiler/wasm_host.mjs "$work/prog.wasm" --allow-net 2>&1 | head -6 | tr '\n' '|')"
+  echo "== [dogrudan-$i] ${res:0:300}"
+  LC_ALL=C "$PGB/pg_ctl" -D "$work/data" -m immediate -w stop >/dev/null 2>&1
+done
+echo "== gerçek sürücü (tests/golden/wasm_pg_driver.mjs) 3 kez"
+for i in 1 2 3; do
+  res="$(node tests/golden/wasm_pg_driver.mjs "$PWD/zig-out/bin/noxc" tests/golden/wasm_pg_program.nox.in compiler/wasm_host.mjs 2>&1 | head -12 | tr '\n' '|')"
+  echo "== [surucu-$i] ${res:0:400}"
+done
+echo "== zig build wasm-test (Zig test düzeneği, özet)"
+zig build wasm-test 2>&1 | grep -E "error: '|surucu stderr|RuntimeError|BrkAllocator|passed|failed" | head -12
 rm -rf "$work"
