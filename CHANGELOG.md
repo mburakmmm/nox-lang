@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.174]
+
+### Düzeltildi
+
+- **noxlang-site imajı Apple Silicon'da SIGILL veriyordu (v2.0.171 imajı yayına alınamadı).** `services/noxlang-site/Dockerfile` `zig build`i `-Dcpu` vermeden çalıştırıyordu; imaj, onu derleyen GitHub arm64 runner'ın yerel CPU'suna (Neoverse, SVE2 vb.) göre derlendi ve Mac mini M4'te ilk komutta çıkış 132 ile düştü. Otomatik güncelleme sağlık denetimini geçemeyen imajı geri aldı (~3 dk kesinti). Artık aarch64'te `baseline`, x86-64'te `x86_64_v2` (release arşivleriyle aynı sabit taban, bkz. v1.142.7). `scripts/site_image_smoke.sh` duman testi derleyen CPU'da koştuğu için bu hatayı yakalayamaz; bu yüzden Dockerfile'da `-Dcpu=` bulunduğunu statik olarak denetler ve yoksa release'i durdurur.
+
+### Eklendi
+
+- **Docker disk/önbellek temizliği (`deploy/web/prune-docker.sh`).** Üretim makinesinde her derleme/çekme eski imaj sürümleri, etiketsiz katmanlar ve derleme önbelleği bırakıyordu (mini'de 11 GB önbelleğin 5 GB'ı geri kazanılabilirdi). Betik `noxlang-site` sürüm etiketlerini (`latest` ve `previous` hariç), bizim etiketimizi taşıyan etiketsiz imajları (ve 24 saatten eski her etiketsiz imajı) ve 48 saatten eski önbelleği siler; çalışan bir konteynerin kullandığı imaja, volume ve ağlara dokunmaz, güncellemeyi asla başarısız kılmaz. `update-site.sh` her güncelleme/geri dönüşten sonra hemen, aksi halde günde en çok bir kez çalıştırır; `install-update-timer.sh` betiği de kopyalar. `test_update_site.sh` 5 yeni senaryo içerir. `docs/internals/deployment.md` güncellendi.
+
 ## [2.0.173]
 
 ### Düzeltildi

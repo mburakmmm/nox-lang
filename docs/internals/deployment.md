@@ -105,9 +105,11 @@ deploy/web/install-update-timer.sh uninstall
 tail -f ~/Library/Logs/nox-site-update.log
 ```
 
-macOS keeps launchd agents out of `~/Documents`, `~/Desktop` and `~/Downloads`, so `install` copies what the updater needs (`update-site.sh`, `docker-compose.yml` and `.env`, the latter mode `0600`) to `~/.nox-site-update/deploy/` and points the agent there; run `install` again after you change the compose file or `.env`.
+macOS keeps launchd agents out of `~/Documents`, `~/Desktop` and `~/Downloads`, so `install` copies what the updater needs (`update-site.sh`, `prune-docker.sh`, `docker-compose.yml` and `.env`, the latter mode `0600`) to `~/.nox-site-update/deploy/` and points the agent there; run `install` again after you change the compose file or `.env`.
 
 One-time setup: after the first release has pushed the image, open the package on GitHub (*your profile > Packages > noxlang-site > Package settings*) and set its visibility to **Public**, so the machine can pull it without credentials. The compose file keeps `build:` as well, so `up -d --build` still builds locally if you prefer.
+
+**Disk and cache housekeeping.** Every build or pull leaves old image versions, untagged layers and build cache behind, and the machine hosts other projects too. `deploy/web/prune-docker.sh` keeps that bounded: it removes the `noxlang-site` version tags other than `latest` and `previous` (the rollback point), untagged images from our releases (and any untagged image older than 24 hours), and build cache older than 48 hours. It never touches an image a running container uses, nor volumes or networks, and it never fails the update. `update-site.sh` runs it right after every update or rollback and at most once a day otherwise. After a manual `docker compose ... up -d --build`, run `deploy/web/prune-docker.sh` yourself. Tune it with `DANGLING_MAX_AGE` and `BUILD_CACHE_MAX_AGE`.
 
 The *download page* does not depend on any of this: it reads the latest GitHub release at request time (`/api/release`, cached for ten minutes), so new archives appear there without a redeploy. `deploy/web/test_update_site.sh` exercises the update script against a fake `docker` and runs in CI.
 

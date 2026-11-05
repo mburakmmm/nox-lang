@@ -24,10 +24,24 @@ SITE_URL="${SITE_URL:-http://127.0.0.1:8081}"
 HEALTH_TIMEOUT_S="${HEALTH_TIMEOUT_S:-120}"
 LOCK_DIR="${LOCK_DIR:-${TMPDIR:-/tmp}/nox-site-update.lock}"
 STATE_DIR="${STATE_DIR:-$HOME/.nox-site-update}"
+PRUNE_SCRIPT="${PRUNE_SCRIPT:-$here/prune-docker.sh}"
+PRUNE_INTERVAL_S="${PRUNE_INTERVAL_S:-86400}"
 repo="${IMAGE%:*}"
 previous_tag="${repo}:previous"
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+
+# Disk/önbellek şişmesini önler (bkz. prune-docker.sh). Güncelleme ya da geri dönüşten sonra HEMEN (`force`), aksi halde en çok PRUNE_INTERVAL_S'de bir çalışır.
+# Temizlik hiçbir zaman güncellemenin sonucunu değiştirmez.
+housekeeping() {
+  local force="${1:-}" now last
+  now="$(date +%s)"
+  last="$(cat "$STATE_DIR/last-prune" 2>/dev/null || echo 0)"
+  if [ "$force" != "force" ] && [ $((now - last)) -lt "$PRUNE_INTERVAL_S" ]; then return 0; fi
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  printf '%s\n' "$now" > "$STATE_DIR/last-prune" 2>/dev/null || true
+  [ -x "$PRUNE_SCRIPT" ] && "$PRUNE_SCRIPT" 2>&1 || true
+}
 
 compose() {
   local env_args=()
@@ -89,6 +103,7 @@ bad_id="$(cat "$STATE_DIR/bad-image" 2>/dev/null || true)"
 
 if [ "$new_id" = "$run_id" ]; then
   log "güncel: $IMAGE (${new_version:-?})"
+  housekeeping
   exit 0
 fi
 # Sağlıksız çıkıp geri alınmış bir imaj her 15 dakikada yeniden denenip siteyi kesmesin: o imaj kimliği atlanır (sonraki sürüm başka kimlik taşır).
@@ -109,6 +124,7 @@ elif [ -n "$old_id" ] && [ "$old_id" != "$new_id" ]; then "$DOCKER" tag "$old_id
 if compose up -d --no-build --no-deps "$SERVICE" >/dev/null 2>&1 && wait_healthy "$new_version"; then
   rm -f "$STATE_DIR/bad-image" 2>/dev/null || true
   log "tamam: ${new_version:-?} yayında"
+  housekeeping force
   exit 0
 fi
 
@@ -118,6 +134,7 @@ if [ -n "$run_id" ] && "$DOCKER" image inspect "$previous_tag" >/dev/null 2>&1; 
   "$DOCKER" tag "$previous_tag" "$IMAGE" >/dev/null 2>&1 || true
   if compose up -d --no-build --no-deps "$SERVICE" >/dev/null 2>&1 && wait_healthy ""; then
     log "geri dönüldü: önceki imaj yayında; bozuk imaj bir sonraki sürüme kadar atlanacak"
+    housekeeping force
   else
     log "KRİTİK: geri dönüş de sağlıklı değil; elle müdahale gerekir (docker compose logs $SERVICE)"
   fi

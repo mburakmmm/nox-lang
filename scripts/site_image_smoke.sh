@@ -11,6 +11,14 @@ set -euo pipefail
 image="${1:?kullanım: site_image_smoke.sh <imaj> [beklenen-sürüm, örn. 2.0.163]}"
 expect_version="${2:-}"
 name="nox-site-smoke-$$"
+
+# Bu test imajı derleyen makinenin KENDİ CPU'sunda koşar; "native CPU'ya bağımlı ikili" hatasını (başka CPU'da SIGILL, v2.0.171) burada yakalayamaz. Bu yüzden Dockerfile'ın
+# `zig build`inin sabit bir `-Dcpu=` taşıdığı statik olarak doğrulanır.
+dockerfile="$(cd "$(dirname "$0")/.." && pwd)/services/noxlang-site/Dockerfile"
+if ! grep -E '^\s*&&\s+zig build -Doptimize=ReleaseFast .*-Dcpu=|^RUN .*zig build -Doptimize=ReleaseFast .*-Dcpu=' "$dockerfile" >/dev/null; then
+  echo "FAIL: $dockerfile içindeki 'zig build -Doptimize=ReleaseFast' -Dcpu= taşımıyor (imaj derleyici makinenin CPU'suna bağlı kalır, başka CPU'da SIGILL)"
+  exit 1
+fi
 port="${SMOKE_PORT:-18199}"
 
 cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }

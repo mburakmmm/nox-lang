@@ -6,6 +6,7 @@
 #   4) yeni sürüm sağlıksız -> önceki imaja geri dönülür, kötü imaj bir sonraki çalıştırmada atlanır
 #   5) çekme başarısız -> site olduğu gibi kalır
 #   6) --check değişiklik yapmaz; kilit tutuluyorsa atlanır
+#   7) temizlik (prune-docker.sh): eski sürüm etiketleri silinir, latest/previous korunur; güncelleme/geri dönüşten sonra hemen, aksi halde günde en çok bir kez çalışır
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d)"
@@ -20,7 +21,9 @@ cat > "$work/bin/docker" <<'SH'
 #!/bin/bash
 S="${FAKE_STATE:?}"
 args="$*"
+echo "$args" >> "$S/calls"
 case "$1" in
+  images) cat "$S/tag_list" 2>/dev/null; exit 0 ;;
   pull)
     [ -f "$S/pull_fail" ] && exit 1
     ref="${@: -1}"
@@ -115,5 +118,29 @@ run; rc=$?
 touch "$work/state/pull_fail"; echo sha256:eee > "$work/state/registry_id"
 run; rc=$?
 { [ $rc = 1 ] && [ "$(cat "$work/state/running")" = sha256:ddd ] && grep -q "çekilemedi" "$work/out"; } && ok "çekme başarısızsa site olduğu gibi kalır" || { fail "çekme hatası (rc=$rc)"; cat "$work/out"; }
+
+# 7) temizlik
+export NOXLANG_SITE_REPO=ghcr.io/o/noxlang-site
+reset
+printf '%s\n' ghcr.io/o/noxlang-site:latest ghcr.io/o/noxlang-site:previous ghcr.io/o/noxlang-site:2.0.1 ghcr.io/o/noxlang-site:2.0.2 > "$work/state/tag_list"
+FAKE_STATE="$work/state" DOCKER="$work/bin/docker" "$here/prune-docker.sh" > "$work/out" 2>&1; rc=$?
+{ [ $rc = 0 ] && grep -q "^rmi ghcr.io/o/noxlang-site:2.0.1$" "$work/state/calls" && grep -q "^rmi ghcr.io/o/noxlang-site:2.0.2$" "$work/state/calls" \
+  && ! grep -q "^rmi .*:latest" "$work/state/calls" && ! grep -q "^rmi .*:previous" "$work/state/calls" \
+  && grep -q "^builder prune" "$work/state/calls" && grep -q "^image prune" "$work/state/calls"; } \
+  && ok "prune eski sürüm etiketlerini siler, latest/previous korunur, önbellek temizlenir" || { fail "prune (rc=$rc)"; cat "$work/out" "$work/state/calls"; }
+
+# güncelleme sonrası hemen temizlik; hemen ardından gelen "güncel" çalıştırması (24 saat dolmadan) temizlemez
+reset; echo sha256:aaa > "$work/state/registry_id"; version sha256:aaa 2.0.1
+run; rc=$?
+{ [ $rc = 0 ] && grep -q "^builder prune" "$work/state/calls"; } && ok "güncellemeden sonra temizlik hemen çalışır" || { fail "güncelleme sonrası prune (rc=$rc)"; cat "$work/out"; }
+: > "$work/state/calls"
+run; rc=$?
+{ [ $rc = 0 ] && ! grep -q "^builder prune" "$work/state/calls"; } && ok "güncel çalıştırma 24 saat dolmadan temizlik yapmaz" || { fail "gereksiz prune (rc=$rc)"; cat "$work/state/calls"; }
+PRUNE_INTERVAL_S=0 run; rc=$?
+{ [ $rc = 0 ] && grep -q "^builder prune" "$work/state/calls"; } && ok "süre dolunca güncel çalıştırma da temizler" || { fail "süreli prune (rc=$rc)"; cat "$work/state/calls"; }
+# sağlıksız imaj geri alınınca da temizlenir
+echo sha256:fff > "$work/state/registry_id"; version sha256:fff 2.0.9; echo sha256:fff > "$work/state/bad_id"; : > "$work/state/calls"
+run; rc=$?
+{ [ $rc = 1 ] && grep -q "geri dönüldü" "$work/out" && grep -q "^builder prune" "$work/state/calls"; } && ok "geri dönüşten sonra da temizlik çalışır" || { fail "geri dönüş prune (rc=$rc)"; cat "$work/out"; }
 
 [ "$fails" = 0 ] && echo "update-site.sh testi: temiz" || { echo "$fails hata"; exit 1; }

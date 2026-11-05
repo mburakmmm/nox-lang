@@ -6,7 +6,7 @@
 # Gerekenler: (1) GHCR paketinin GENEL olması, (2) bu depo klasörünün makinede bulunması (compose dosyası ve .env buradan kopyalanır).
 #
 # macOS koruması (TCC): launchd ajanları ~/Documents, ~/Desktop ve ~/Downloads altındaki dosyalara erişemez ("Operation not permitted", çıkış 126).
-# Bu yüzden `install`, çalışmak için gereken dosyaları (update-site.sh, docker-compose.yml, .env) korumasız ~/.nox-site-update/deploy/ altına KOPYALAR
+# Bu yüzden `install`, çalışmak için gereken dosyaları (update-site.sh, prune-docker.sh, docker-compose.yml, .env) korumasız ~/.nox-site-update/deploy/ altına KOPYALAR
 # (.env 0600). Compose dosyasını ya da .env'i değiştirirsen `install`ı yeniden çalıştır; kopya güncellenir. Betik yalnızca `noxlang-site`
 # servisini kaldırır/kurar, bu yüzden kopyadaki göreli veri yolları (noxpkg vb.) hiç kullanılmaz.
 set -eu
@@ -21,8 +21,9 @@ render() { sed -e "s|__DEPLOY__|$stage|g" -e "s|__HOME__|$HOME|g" "$here/$label.
 stage_files() {
   mkdir -p "$stage"
   cp "$here/update-site.sh" "$stage/update-site.sh"
+  cp "$here/prune-docker.sh" "$stage/prune-docker.sh"
   cp "$here/docker-compose.yml" "$stage/docker-compose.yml"
-  chmod 755 "$stage/update-site.sh"
+  chmod 755 "$stage/update-site.sh" "$stage/prune-docker.sh"
   if [ -f "$here/.env" ]; then
     ( umask 077; cp "$here/.env" "$stage/.env" )
     chmod 600 "$stage/.env"

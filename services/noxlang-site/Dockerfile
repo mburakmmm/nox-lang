@@ -20,7 +20,11 @@ RUN curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz \
     && cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe && rm -rf /tmp/qbe.tar.xz /tmp/qbe-1.3
 WORKDIR /src
 COPY . .
-RUN zig build -Doptimize=ReleaseFast
+# `-Dcpu` AÇIKÇA verilir (release.yml'deki arşivlerle AYNI sabit taban; bkz. v1.142.7): varsayılan, imajı derleyen makinenin NATIVE CPU'sudur. GitHub'ın arm64 runner'ında
+# (Neoverse, SVE2 vb.) derlenen imaj Apple Silicon'da (Mac mini M4) ilk komutta SIGILL (çıkış 132) veriyordu; v2.0.171 imajı bu yüzden sağlıksız çıkıp geri alındı.
+# Çalışma zamanı nesnesi (noxrt.o) ve ondan türeyen site ikilisi de bu tabana göre derlenir. aarch64: baseline, x86-64: x86_64_v2.
+RUN case "$(uname -m)" in aarch64|arm64) cpu=baseline;; *) cpu=x86_64_v2;; esac \
+    && zig build -Doptimize=ReleaseFast -Dcpu="$cpu"
 # Playground: tarayıcıda çalışan derleyicinin ön yüzü ve WASM çalışma zamanı nesneleri (site aşaması bunları public/playground/'a koyar).
 RUN zig build wasm-compiler wasm-rt -Doptimize=ReleaseFast
 WORKDIR /src/services/noxlang-site
