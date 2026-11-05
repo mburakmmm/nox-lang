@@ -60,6 +60,19 @@ for i in 1 2 3; do
   res="$(node tests/golden/wasm_pg_driver.mjs "$PWD/zig-out/bin/noxc" tests/golden/wasm_pg_program.nox.in compiler/wasm_host.mjs 2>&1 | head -12 | tr '\n' '|')"
   echo "== [surucu-$i] ${res:0:400}"
 done
-echo "== zig build wasm-test (Zig test düzeneği, özet)"
-zig build wasm-test 2>&1 | grep -E "error: '|surucu stderr|RuntimeError|BrkAllocator|passed|failed" | head -12
+echo "== CPU çekişmesi altında (zig build test paralelliğini taklit): 3*nproc meşgul döngü + gerçek sürücü"
+busy=()
+for i in $(seq 1 $(( $(nproc) * 3 ))); do ( while :; do :; done ) & busy+=($!); done
+for i in 1 2 3 4; do
+  res="$(node tests/golden/wasm_pg_driver.mjs "$PWD/zig-out/bin/noxc" tests/golden/wasm_pg_program.nox.in compiler/wasm_host.mjs 2>&1 | grep -E "RuntimeError|BrkAllocator|nox_postgres|inserted id 1|exit " | head -4 | tr '\n' '|')"
+  echo "== [yuk-surucu-$i] ${res:0:400}"
+done
+echo "== tek CPU'ya sabitlenmiş (taskset -c 0) + yük"
+for i in 1 2 3; do
+  start_pg_direct
+  res="$(taskset -c 0 node --no-warnings compiler/wasm_host.mjs "$work/prog.wasm" --allow-net 2>&1 | grep -E "RuntimeError|BrkAllocator|nox_postgres|inserted id 1" | head -4 | tr '\n' '|')"
+  echo "== [taskset-$i] ${res:0:300}"
+  LC_ALL=C "$PGB/pg_ctl" -D "$work/data" -m immediate -w stop >/dev/null 2>&1
+done
+kill "${busy[@]}" 2>/dev/null
 rm -rf "$work"

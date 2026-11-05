@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.167]
+
+### Değişti
+
+- **Geçici CI teşhisi (devam 2):** runner'da gerçek sürücü ve `zig build wasm-test` TEK BAŞLARINA geçti; yalnızca tam `zig build test` altında düşüyor. `scripts/ci_pg_debug.sh` şimdi CPU çekişmesi (3*nproc meşgul döngü) ve `taskset -c 0` altında çalıştırır (zamanlama/katman geçişi hatası hipotezi).
+
 ## [2.0.166]
 
 ### Değişti
