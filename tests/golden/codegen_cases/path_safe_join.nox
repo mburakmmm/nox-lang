@@ -1,0 +1,27 @@
+import nox.fs
+import nox.path
+
+def attempt(label: str, root: str, req: str) -> None:
+    try:
+        r: str = nox.path.safe_join(root, req)
+        print(label, "ok", nox.path.basename(r))
+    except nox_path_PathError:
+        print(label, "reddedildi")
+
+nox.fs.create_dir_all("nox_sj_root/data/sub")
+nox.fs.create_dir_all("nox_sj_root/dataevil")
+nox.fs.write_string("nox_sj_root/data/a.txt", "a")
+nox.fs.write_string("nox_sj_root/dataevil/secret", "s")
+
+attempt("var olan dosya", "nox_sj_root/data", "a.txt")
+attempt("yeni dosya", "nox_sj_root/data", "sub/new.txt")
+attempt("kok", "nox_sj_root/data", ".")
+attempt("nokta nokta", "nox_sj_root/data", "../dataevil/secret")
+attempt("kardes onek", "nox_sj_root/data", "../dataevil")
+attempt("var olmayan kardes onek", "nox_sj_root/data", "../data_evil")
+attempt("mutlak yol kokun altina gider", "nox_sj_root/data", "/etc")
+attempt("var olmayan ara dizinden kacis", "nox_sj_root/data", "x/../../dataevil/secret")
+print(nox.path.strip_prefix("/srv/dataevil/x", "/srv/data"))
+print(nox.path.strip_prefix("/srv/data/x", "/srv/data"))
+print(nox.path.strip_prefix("/srv/data", "/srv/data") == "")
+nox.fs.remove_dir_all("nox_sj_root")

@@ -25,7 +25,7 @@ exact commit of every dependency and `require_signed_commit` can demand a signed
 
 ## The standard library
 
-- `nox.fs` and `nox.os` perform **no path validation**. If a path can come from an untrusted source, canonicalise it against an allowed root ([`nox.path.canonicalize`](../stdlib/path.md)) and reject anything outside before calling them.
+- `nox.fs` and `nox.os` perform **no path validation**. If a path can come from an untrusted source, confine it with [`nox.path.safe_join`](../stdlib/path.md#confining-untrusted-paths) before calling them (it rejects `..`, symbolic-link escapes and sibling directories such as `/srv/dataevil` for the root `/srv/data`).
 - `nox.process` runs the program and arguments you give it with your authority; there is no shell, but never take the program name from untrusted input.
 - SQL: always pass values through `Statement.bind_*`; table and column names cannot be bound and must come from your code.
 - `nox.template` escapes for HTML text and quoted attributes only.

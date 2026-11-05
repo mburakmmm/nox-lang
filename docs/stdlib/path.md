@@ -19,8 +19,9 @@ from nox.path import PathError
 | `extension(p)` | the part after the last dot of the last component (`"z.tar.gz"` → `".gz"`), or `""` |
 | `is_absolute(p)` | whether `p` starts at the root |
 | `components(p)` | the non-empty components as a list (`"/x/y/z"` → `['x','y','z']`) |
-| `strip_prefix(p, prefix)` | `p` without the leading `prefix` and the separator after it; if `p` does not start with `prefix` it is returned unchanged |
+| `strip_prefix(p, prefix)` | `p` without the leading `prefix` and the separator after it; if `prefix` is not a prefix of `p` **at a component boundary** (`/srv/dataevil` does not start with `/srv/data`) it is returned unchanged |
 | `canonicalize(p)` | the absolute path with `.`, `..` and symbolic links resolved; **the path must exist** (`PathError` otherwise) |
+| `safe_join(root, requested)` | `requested` resolved under `root`, or `PathError` if the result would leave `root` (see [Confining untrusted paths](#confining-untrusted-paths)) |
 
 ```nox
 import nox.path
@@ -43,15 +44,19 @@ no such path
 
 ## Confining untrusted paths
 
-`canonicalize` is the building block for safely serving files: resolve the requested path and require the result to start with your root.
+`safe_join` is the standard way to turn a path that came from outside (a request, a form, a configuration file) into one that is guaranteed to stay under a root directory:
 
 ```nox
 import nox.path
-import nox.strings
+from nox.path import PathError
 
-def inside(root: str, requested: str) -> bool:
-    full: str = nox.path.canonicalize(nox.path.join(root, requested))
-    return nox.strings.starts_with(full, root)
+def open_upload(name: str) -> str:
+    try:
+        return nox.path.safe_join("/srv/uploads", name)
+    except PathError:
+        return ""
 ```
 
-Remember that the check must run on the *canonicalised* path, after `..` and symlinks are resolved.
+It canonicalises `root` (which must exist), joins `requested`, resolves `..` and symbolic links, and compares **path components**, not string prefixes: `/srv/dataevil` is not inside `/srv/data`. An absolute `requested` is treated as relative to `root` (`/etc/passwd` becomes `<root>/etc/passwd`). A target that does not exist yet (a file you are about to write) is allowed: its parent directory is resolved and checked instead. Anything that would end up outside `root` raises `PathError`.
+
+Do not confine a path with `starts_with(canonicalize(...), root)`: that accepts siblings such as `/srv/dataevil` and misjudges a root that is itself a symbolic link. `safe_join` does neither.

@@ -383,8 +383,9 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
   **`--release` varsayılanı: KAPANDI, zaten varsayılan.** `--release` yalnızca `--backend llvm`in eski adı; LLVM (`clang -O2`) macOS/Linux'ta `clang` ya da `zig` varsa otomatik seçilir (v1.143.0, `docs/tools/backends.md`).
   QBE'ye düşen durumlar: masaüstü `--target` çapraz derleme, `-g`, `--emit-asm`, freestanding, clang/zig yok. Kullanıcı kararı 2026-11-05: "varsayılan olsun" → değişiklik gerekmedi.
   `--target` çapraz derlemesi de artık LLVM'den geçer (v2.0.177, spec §3.365).
-- [ ] **11.4 Güvenlik.** Masaüstü `nox.fs`/`nox.os` kök (jail) seçeneği (mobil maskesi örnek; ADR-MOB-004), `uretim-hazirlik-analizi.md` #11 maddesinin güncel durumunu doğrula,
-  release imzası + SBOM, stdlib sertleştirme taraması (fuzz kapsamı).
+- [~] **11.4 Güvenlik.** (a) **bitti, v2.0.179:** `uretim-hazirlik-analizi.md` #11 güncel durumu doğrulandı: `nox.fs` yol doğrulaması bilinçli olarak yok (belgelenmiş); ama belgedeki kök-içi örneği güvensizdi ve
+  `nox.path.strip_prefix` bileşen sınırını kontrol etmiyordu (`/srv/dataevil` − `/srv/data`) — ikisi düzeltildi, standart `nox.path.safe_join` eklendi (spec §3.367). Masaüstüne zorunlu kök/jail EKLENMEDİ
+  (capability sistemi gerektirir; OS düzeyi kısıt `--sandbox`ta). (b) release imzası + SBOM, (c) stdlib sertleştirme/fuzz kapsamı taraması: açık.
 - [x] **11.5 Release akışı kanıtı (2026-11-05).** v2.0.174 gerçek tag'de taslak→yayın akışını geçti (17 varlığın hepsi yüklendikten sonra yayımlandı, "Latest" oldu; Homebrew/AUR/AppImage/Snap/site-image
   `publish`ten sonra koştu). Düzeltilmiş site imajı (`-Dcpu=baseline`) Apple Silicon'da çalıştı; M4 onu kendiliğinden 33 sn'de yayına aldı, sağlıklı, temizlik betiği kendiliğinden koştu, noxlang.com `/version.txt` = 2.0.174.
 - [x] **11.9 (v2.0.178) Göreli `extern def ... from "yol"` çözümü (Aura isteği, 2026-11-05).** `appendExternLinkArgs` `from` değerini clang'e olduğu gibi verir, yani bağlama çalışma dizinine bağlıdır (`cd examples/dashboard && noxc run main.nox`

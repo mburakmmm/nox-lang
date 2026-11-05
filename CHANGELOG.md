@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.179]
+
+### Düzeltildi
+
+- **`nox.path.strip_prefix` bileşen sınırını kontrol etmiyordu (güvenlik).** `strip_prefix("/srv/dataevil/x", "/srv/data")` önek bileşen sınırında olmadığı halde `"evil/x"` döndürüyordu; bu sonuç bir "kök içinde mi" kontrolünde kardeş dizini kökün içinde gösterebilirdi. Artık önek yalnızca kalan boşsa, bir ayraçla başlıyorsa ya da önek zaten bir ayraçla bitiyorsa çıkarılır; aksi halde yol değişmeden döner. `runtime/stdlib_shims/path.zig` birim testi 6 durumu kapsar.
+- **Belgelerdeki "kökün içinde mi" örneği güvensizdi.** `docs/stdlib/path.md`teki `starts_with(canonicalize(join(root, requested)), root)` örneği `/srv/dataevil`i `/srv/data`nın içinde sayıyor ve kökün kendisi sembolik bağsa yanlış sonuç veriyordu. Örnek kaldırıldı.
+
+### Eklendi
+
+- **`nox.path.safe_join(root, requested)` (Faz 11.4).** Güvenilmeyen bir yolu (istek, form, yapılandırma) bir kök dizinin İÇİNDE tutmanın standart yolu: `root`u kanonikleştirir, `requested`i birleştirir, `..` ve sembolik bağları çözer ve **yol bileşenlerini** karşılaştırır (dize önekini değil). Kökten kaçan her şey `PathError` verir; mutlak `requested` köke göre göreli sayılır; henüz var olmayan hedefler (yazılacak dosya) için ebeveyn çözülüp kontrol edilir. Testler: `tests/golden/codegen_cases/path_safe_join.nox` (iki backend), `tests/cli/path_confine_test.zig` (sembolik bağlar ve bağlantılı kök). `docs/stdlib/path.md`, `fs.md` ve `reference/security.md` `safe_join`a yönlendirir.
+
 ## [2.0.178]
 
 ### Düzeltildi

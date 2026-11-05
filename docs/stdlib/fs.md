@@ -11,7 +11,7 @@ from nox.fs import FsError, FileMetadata, FileReader, FileWriter
 
 > **Security.** `nox.fs` passes paths straight to the operating system. It does **no** validation, canonicalisation or sandboxing: `..` segments, symbolic links
 > and absolute paths all work. If a path comes from an untrusted source (user input, a network request), you must confine it yourself — for example by
-> canonicalising it with [`nox.path.canonicalize`](path.md) and checking that it stays inside an allowed root. See [Security](../reference/security.md).
+> confining it with [`nox.path.safe_join`](path.md#confining-untrusted-paths), which rejects anything that would leave an allowed root. See [Security](../reference/security.md).
 
 ## Reading and writing
 

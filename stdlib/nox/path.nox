@@ -45,3 +45,33 @@ def strip_prefix(p: str, prefix: str) -> str:
 
 def components(p: str) -> list[str]:
     return nox_path_components_raw(p)
+
+# v2.0.179: güvenilmeyen bir yolu bir kökün İÇİNE hapsetmek için standart yardımcı (eskiden belgelerdeki `starts_with` örneği `/srv/dataevil`i `/srv/data`nın içinde sayıyordu).
+def _components_start_with(full: list[str], base: list[str]) -> bool:
+    if len(full) < len(base):
+        return False
+    i: int = 0
+    while i < len(base):
+        if full[i] != base[i]:
+            return False
+        i = i + 1
+    return True
+
+# `requested`i `root` altında çözer ve sonucu döner; `..`, sembolik bağlar ve kökten kaçan her şey `PathError` verir. `root` var olmalıdır. Mutlak bir `requested` köke göre
+# göreli sayılır (`/etc/passwd` -> `<root>/etc/passwd`). Henüz var olmayan bir hedef (yazılacak dosya) için ebeveyni çözülür ve ebeveynin kök içinde olduğu doğrulanır.
+# Karşılaştırma yol BİLEŞENLERİ üzerindedir, dize öneki üzerinde değil: `/srv/dataevil`, `/srv/data`nın içinde SAYILMAZ.
+def safe_join(root: str, requested: str) -> str:
+    base: str = canonicalize(root)
+    candidate: str = join(base, requested)
+    full: str = ""
+    try:
+        full = canonicalize(candidate)
+    except PathError:
+        name: str = basename(candidate)
+        if name == "" or name == "." or name == "..":
+            raise PathError("path escapes root: " + requested)
+        parent: str = canonicalize(dirname(candidate))
+        full = join(parent, name)
+    if not _components_start_with(components(full), components(base)):
+        raise PathError("path escapes root: " + requested)
+    return full

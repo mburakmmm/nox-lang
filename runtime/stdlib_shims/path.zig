@@ -224,6 +224,10 @@ export fn nox_path_strip_prefix_raw(rt: ?*anyopaque, p: ?[*:0]const u8, prefix: 
     const pre = str_mod.nox_str_slice(prefix orelse return null);
     if (!std.mem.startsWith(u8, slice, pre)) return dupeToNoxStr(rt, slice);
     var rest = slice[pre.len..];
+    // v2.0.179: önek yalnızca BİLEŞEN sınırında geçerlidir. `/srv/dataevil/x` için `/srv/data` önek DEĞİLDİR (eskiden `evil/x` döndürülüyordu): kalan boşsa, bir ayraçla
+    // başlıyorsa ya da önek zaten bir ayraçla bitiyorsa sınırdır; aksi halde yol değişmeden döner.
+    const at_boundary = rest.len == 0 or isPathSep(rest[0]) or (pre.len > 0 and isPathSep(pre[pre.len - 1]));
+    if (!at_boundary) return dupeToNoxStr(rt, slice);
     if (rest.len > 0 and isPathSep(rest[0])) rest = rest[1..];
     return dupeToNoxStr(rt, rest);
 }
@@ -421,6 +425,31 @@ test "Faz III.4: nox_path_strip_prefix_raw onek eslesirse cikarir, eslesmezse de
     const s2 = nox_path_strip_prefix_raw(rt, abc_txt, xy_pre) orelse return error.Failed;
     defer str.nox_str_release(rt, s2);
     try std.testing.expectEqualStrings("/a/b/c.txt", std.mem.sliceTo(s2, 0));
+}
+
+test "v2.0.179: nox_path_strip_prefix_raw onegi yalnizca bilesen sinirinda cikarir (/srv/dataevil, /srv/data degildir)" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const cases = [_]struct { path: []const u8, prefix: []const u8, want: []const u8 }{
+        .{ .path = "/srv/dataevil/x", .prefix = "/srv/data", .want = "/srv/dataevil/x" },
+        .{ .path = "/srv/data", .prefix = "/srv/data", .want = "" },
+        .{ .path = "/srv/data/x", .prefix = "/srv/data", .want = "x" },
+        .{ .path = "/srv/data/x", .prefix = "/srv/data/", .want = "x" },
+        .{ .path = "/srv/data/", .prefix = "/srv/data/", .want = "" },
+        .{ .path = "/srv/data-x", .prefix = "/srv/data", .want = "/srv/data-x" },
+    };
+    for (cases) |c| {
+        const p = makeTestStr(rt, c.path);
+        defer str.nox_str_release(rt, p);
+        const pre = makeTestStr(rt, c.prefix);
+        defer str.nox_str_release(rt, pre);
+        const got = nox_path_strip_prefix_raw(rt, p, pre) orelse return error.Failed;
+        defer str.nox_str_release(rt, got);
+        try std.testing.expectEqualStrings(c.want, std.mem.sliceTo(got, 0));
+    }
 }
 
 test "Faz III.4: nox_path_components_raw yol bilesenlerini dogru sirada doner" {
