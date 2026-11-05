@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.170]
+
+### Değişti
+
+- **Geçici CI teşhisi (devam 5):** artefakt, CI'nın derlediği PG modülünün yerelde GEÇTİĞİNİ ve CI'da da bir koşunun GEÇTİĞİNİ gösterdi (aynı işte iki sürücü çalıştırması var: biri `NOX_CRASH_ARTIFACTS_DIR` ile geçti, düşen koşu o değişkeni görmemiş görünüyor). Sürücü artık kendi pid/ppid/ebeveyn komut satırı/ortam anahtar sayısı/yük/zaman bilgisini stderr'e yazar.
+
 ## [2.0.169]
 
 ### Değişti
