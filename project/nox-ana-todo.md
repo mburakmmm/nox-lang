@@ -373,16 +373,14 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
   Windows'ta ÇALIŞTIRILMASI (Windows PC çevrimdışı) ve Linux üzerinden `macos-arm64`/iOS çapraz derlemesi.
   **v2.0.177:** masaüstü `--target` LLVM'den de geçer (`zig` varsa varsayılan); Windows `.exe` artık QBE yamasına bağlı değil. Linux arm64/x64 ve macOS x64/arm64 çıktıları çalıştırılarak
   doğrulandı; kalan: Windows `.exe` ve riscv64-LLVM çalıştırma kanıtı (riscv64 CI qemu-user'da, Windows PC çevrimdışı).
+  **v2.0.181:** Linux'ta iki backend ile çapraz derlenen Windows `.exe`ler CI'da Windows'ta ÇALIŞTIRILIR (`windows-cross-build` + `windows-cross-run`); ilk yeşil koşu bu maddeyi kapatır.
 - [x] **11.2 Betik modu (v2.0.176).** `noxc run` zaten içerik-özetli, boyut tavanlı bir ikili önbelleğine sahipti (`run_cache.zig`); eksik olan betik argümanlarıydı: `./betik.nox a b`
   argümanları sessizce düşüyordu. Artık betik yolundan sonraki her şey programa gider (`--` isteğe bağlı), `#!/usr/bin/env -S noxc run` shebang'i çalışır. Test:
   `tests/cli/run_script_args_test.zig`; belge: `docs/tools/noxc.md` "Scripts". Davranış değişikliği: yoldan SONRA verilen derleyici bayrakları programa gider.
-- [~] **11.3 Performans.** Ölçüm (benchmarks/cross_lang, LLVM, C'ye oran): fib 0,93×, trees 0,76×, sort 0,92×, collatz 1,0×, mandelbrot 1,17×, strings 1,2×, loop 1,26×, matmul 2×, dict 2,65×,
-  sieve 3× (24 ms). **dict karşılaştırması adil değil:** C çekirdeği önceden 2M slot ayrılmış, ekleme sırasını tutmayan, tohumsuz bir tablo; Nox'un dict'i ekleme sırasını korur, büyür ve hash-flooding'e
-  karşı tohumludur (v1.142.16'da zaten kompakt açık adresli indeks + tek girdilik önbellek). Go ile aynı hızda (0,053 / 0,057), Python'dan ~5× hızlı → C eşitliği kovalanmaz, kabul edilmiş maliyet.
-  Gerçek hedef: matmul/sieve sınır kontrolü (IndexError semantiği korunarak döngü-dışına alma).
-  **`--release` varsayılanı: KAPANDI, zaten varsayılan.** `--release` yalnızca `--backend llvm`in eski adı; LLVM (`clang -O2`) macOS/Linux'ta `clang` ya da `zig` varsa otomatik seçilir (v1.143.0, `docs/tools/backends.md`).
-  QBE'ye düşen durumlar: masaüstü `--target` çapraz derleme, `-g`, `--emit-asm`, freestanding, clang/zig yok. Kullanıcı kararı 2026-11-05: "varsayılan olsun" → değişiklik gerekmedi.
-  `--target` çapraz derlemesi de artık LLVM'den geçer (v2.0.177, spec §3.365).
+- [x] **11.3 Performans (ölçüldü, 2026-11-05).** C'ye oran (LLVM): fib 0,93×, trees 0,76×, sort 0,92×, collatz 1,0×, mandelbrot 1,17×, strings 1,2×, loop 1,26×, matmul 2×, dict 2,65×, sieve 3×. Büyük oranlar mutlak
+  olarak küçüktür (matmul ~20 ms, sieve ~24 ms) ve tasarım garantilerinin bedelidir: dict'in C çekirdeği önceden ayrılmış/sırasız/tohumsuz bir tablodur, Nox'unki ekleme sırasını korur, büyür ve tohumludur
+  (Go ile aynı hız, Python'dan ~5× hızlı); matmul/sieve sınır kontrolü `IndexError` semantiğini korur, döngü dışına almak döngü-versiyonlama geçişi ister (2.2 adayı). `--release` varsayılanı: zaten varsayılan.
+  Kod değişikliği yapılmadı; bu sonuç bilerek kayda alındı.
 - [~] **11.4 Güvenlik.** (a) **bitti, v2.0.179:** `uretim-hazirlik-analizi.md` #11 güncel durumu doğrulandı: `nox.fs` yol doğrulaması bilinçli olarak yok (belgelenmiş); ama belgedeki kök-içi örneği güvensizdi ve
   `nox.path.strip_prefix` bileşen sınırını kontrol etmiyordu (`/srv/dataevil` − `/srv/data`) — ikisi düzeltildi, standart `nox.path.safe_join` eklendi (spec §3.367). Masaüstüne zorunlu kök/jail EKLENMEDİ
   (capability sistemi gerektirir; OS düzeyi kısıt `--sandbox`ta). (b) **v2.0.180, kanıt bekliyor:** release imzası (provenance attestation) + SBOM eklendi; ilk gerçek tag'de v2.0.180'de sınanır, yeşil

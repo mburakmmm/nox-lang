@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.181]
+
+### Eklendi
+
+- **Çapraz derlenen Windows `.exe`lerin gerçekten çalıştığının CI kanıtı (Faz 11.1).** Yeni `windows-cross-build` işi (ubuntu) dört golden programı iki backend ile (`--backend llvm` ve yamalı QBE ile `--backend qbe`) `--target windows-x64` olarak çapraz derler, çıktının `PE32+` olduğunu doğrular ve artefakt yükler; yeni `windows-cross-run` işi (windows-latest) bu `.exe`leri indirip ÇALIŞTIRIR ve çıktıyı `.expected` dosyalarıyla karşılaştırır. Windows'taki yerel derleme bunu kanıtlamazdı: kanıtlanan, başka bir işletim sisteminde üretilen ikilidir. Bu işler gerçek bir CI koşusunda ilk kez v2.0.181'de sınanıyor.
+
+### Değişti
+
+- **Performans (Faz 11.3) ölçüldü, kod değişikliği yok.** C'ye oran (LLVM): fib 0,93×, trees 0,76×, sort 0,92×, collatz 1,0×, mandelbrot 1,17×, strings 1,2×, loop 1,26×, matmul 2×, dict 2,65×, sieve 3×. En büyük oranlar mutlak olarak çok küçüktür (matmul 20 ms fark, sieve 24 ms) ve tasarım garantilerinin bedelidir: dict ekleme sırasını korur, büyür ve hash-flooding'e karşı tohumludur (C çekirdeği ise önceden ayrılmış, sırasız, tohumsuz bir tablodur; Go ile aynı hızda, Python'dan ~5× hızlı); matmul/sieve sınır kontrolü `IndexError` semantiğini korur ve bunu döngü dışına almak `n`in `len(b)` ile ilişkisini kanıtlayan bir döngü-versiyonlama geçişi gerektirir. Bu geçiş 2.2 adayıdır. `--release` varsayılan olsun kararı: zaten varsayılan (LLVM, v1.143.0).
+
 ## [2.0.180]
 
 ### Eklendi

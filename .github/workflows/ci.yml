@@ -828,3 +828,70 @@ jobs:
           run_one tests/golden/codegen_cases/fibonacci.nox tests/golden/codegen_cases/fibonacci.expected /tmp/nox-riscv-fib
           run_one tests/golden/codegen_cases/print_dict_index_assign_empty.nox tests/golden/codegen_cases/print_dict_index_assign_empty.expected /tmp/nox-riscv-dict
           run_one tests/golden/codegen_cases/list_row_hoist_order.nox tests/golden/codegen_cases/list_row_hoist_order.expected /tmp/nox-riscv-order
+
+  # v2.0.181 (Faz 11.1): Linux'ta ÇAPRAZ derlenen Windows `.exe`lerin gerçekten çalıştığının kanıtı. İş 1 (ubuntu) her programı iki backend ile (`--backend llvm` ve yamalı QBE ile `--backend qbe`)
+  # `--target windows-x64` olarak derler ve artefakt yükler; iş 2 (windows-latest) bunları indirip ÇALIŞTIRIR ve çıktıyı `.expected` dosyasıyla karşılaştırır. Windows'taki yerel derleme bunu kanıtlamaz:
+  # kanıtlanan, başka bir işletim sisteminde üretilen ikilidir.
+  windows-cross-build:
+    name: Windows .exe çapraz derleme (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - name: qbe kur (yamalı, kaynaktan derle)
+        run: |
+          set -euo pipefail
+          scripts/build_qbe.sh "$RUNNER_TEMP/qbe-bin/qbe"
+          echo "$RUNNER_TEMP/qbe-bin" >>"$GITHUB_PATH"
+      - name: noxc ve Windows runtime
+        run: zig build
+      - name: Programları iki backend ile çapraz derle
+        run: |
+          set -euo pipefail
+          mkdir -p winx
+          for name in class_list_spawn fibonacci print_dict_index_assign_empty list_row_hoist_order; do
+            for backend in llvm qbe; do
+              zig-out/bin/noxc build --backend "$backend" --target windows-x64 "tests/golden/codegen_cases/$name.nox" -o "winx/$name.$backend.exe"
+              file "winx/$name.$backend.exe" | grep -q "PE32+"
+            done
+          done
+          ls -l winx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-cross-exes
+          path: winx/*.exe
+          retention-days: 3
+
+  windows-cross-run:
+    name: Windows .exe çapraz derleme (Windows'ta çalıştır)
+    needs: windows-cross-build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-cross-exes
+          path: winx
+      - name: Çalıştır ve beklenen çıktıyla karşılaştır
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail=0
+          for exe in winx/*.exe; do
+            base="$(basename "$exe" .exe)"
+            name="${base%.*}"
+            "$exe" | tr -d '\r' > "out_$base.txt"
+            if diff -u "tests/golden/codegen_cases/$name.expected" "out_$base.txt"; then
+              echo "ok   $base"
+            else
+              echo "FAIL $base"; fail=1
+            fi
+          done
+          exit $fail
