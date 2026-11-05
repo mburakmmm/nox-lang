@@ -63,6 +63,13 @@ try {
   let out = '';
   child.stdout.on('data', (d) => (out += d));
   const code = await new Promise((r) => child.on('close', r));
+  // CI teşhisi: derlenen modülü (geçse de düşse de) çökme artefaktları dizinine kopyalar; ci.yml bu dizini artefakt olarak yükler.
+  if (process.env.NOX_CRASH_ARTIFACTS_DIR) {
+    try {
+      fs.mkdirSync(process.env.NOX_CRASH_ARTIFACTS_DIR, { recursive: true });
+      fs.copyFileSync(path.join(dir, 'prog.wasm'), path.join(process.env.NOX_CRASH_ARTIFACTS_DIR, `pg_prog_exit${code}.wasm`));
+    } catch {}
+  }
   process.stdout.write(out);
   console.log(`exit ${code}`);
 } finally {

@@ -355,6 +355,17 @@ jobs:
       # DENENİR (bu test dosyası başına EN FAZLA 1 ikili ürettiğinden ucuz)
       # VE glob genişlemeleri HER YERDE bash DİZİLERİ (nullglob'un GÜVENLE
       # çalıştığı TEK yol) İLE yapılır, ASLA `ls`e PIPE EDİLMEZ.
+      # v2.0.169 (geçici teşhis): `wasm_pg_driver.mjs` derlediği modülü NOX_CRASH_ARTIFACTS_DIR'e kopyalar; Linux'ta PG WASM testinin yalnızca tam
+      # `zig build test` altında düştüğü modülü indirip yerelde incelemek için artefakt olarak yüklenir.
+      - name: Çökme artefaktlarını yükle (Linux)
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-artifacts-${{ matrix.name }}
+          path: /tmp/nox_crash_artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Çekirdek dökümü analizi (varsa, Linux)
         if: always() && runner.os == 'Linux'
         run: |

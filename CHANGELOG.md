@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.169]
+
+### Değişti
+
+- **Geçici CI teşhisi (devam 4):** ci.yml ortamıyla bile `zig build wasm-test` runner'da GEÇTİ; PG WASM testi yalnızca tam `zig build test` altında düşüyor. `wasm_pg_driver.mjs` derlediği modülü `NOX_CRASH_ARTIFACTS_DIR`e kopyalar ve ci.yml bu dizini (Linux) artefakt olarak yükler; düşen modül indirilip yerelde incelenecek.
+
 ## [2.0.168]
 
 ### Değişti
