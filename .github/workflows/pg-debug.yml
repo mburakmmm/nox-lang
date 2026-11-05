@@ -28,3 +28,13 @@ jobs:
           zig build wasm-rt
       - name: Teşhis
         run: bash scripts/ci_pg_debug.sh
+      # CI'nın tam `zig build test` adımındaki ortamı (core dump yapılandırması, ulimit -c, NOX_CRASH_ARTIFACTS_DIR) yalnızca wasm testleri için taklit eder.
+      - name: ci.yml ortamı + zig build wasm-test
+        run: |
+          sudo apt-get install -y -qq gdb
+          mkdir -p /tmp/nox_cores /tmp/nox_crash_artifacts
+          sudo sysctl -w kernel.core_pattern=/tmp/nox_cores/core.%e.%p
+          ulimit -c unlimited
+          export NOX_CRASH_ARTIFACTS_DIR=/tmp/nox_crash_artifacts
+          zig build wasm-test 2>&1 | grep -E "error: '|surucu stderr|RuntimeError|BrkAllocator|nox_postgres|passed|failed" | head -20 || true
+          echo "wasm-test bitti"

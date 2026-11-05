@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.168]
+
+### Değişti
+
+- **Geçici CI teşhisi (devam 3):** CPU çekişmesi ve `taskset` altında da GEÇTİ. `pg-debug.yml` şimdi `zig build wasm-test`i ci.yml'in tam test adımındaki ortamla (core dump yapılandırması, `ulimit -c unlimited`, `NOX_CRASH_ARTIFACTS_DIR`) çalıştırır.
+
 ## [2.0.167]
 
 ### Değişti
