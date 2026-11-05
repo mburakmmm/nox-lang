@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.176]
+
+### Değişti
+
+- **`noxc run` betik yolundan sonraki her argümanı programa iletir (Faz 11.2, betik modu).** Eskiden argümanlar yalnızca `--` sonrasında iletiliyordu; `noxc run betik.nox a b` ve shebang'li `./betik.nox a b` çağrılarında `a b` **sessizce düşüyordu** (`nox.os.arg_count()` 1 kalıyordu). Artık Python'daki gibi betik yolundan sonrası programındır; `--` isteğe bağlıdır ve eski `noxc run betik.nox -- a b` biçimi aynen çalışır. **Davranış değişikliği:** betik yolundan SONRA yazılan derleyici/sandbox bayrakları (`noxc run f.nox --release`) artık programa gider; bunlar yoldan ÖNCE verilmelidir (`noxc run --release f.nox`). Kullanım satırı `noxc run [--dump|-v] <file.nox> [argv...]` oldu.
+
+### Eklendi
+
+- **Betik modu belgesi ve testi.** `#!/usr/bin/env -S noxc run` shebang'li bir `.nox` dosyası `chmod +x` ile doğrudan çalıştırılır (ikili `noxc run` önbelleğinde tutulur; kaynak, derleyici ya da stdlib değişince yeniden derlenir). Düz `#!/usr/bin/env noxc` betiği ÇALIŞTIRMAZ (çıplak `noxc dosya.nox` yalnızca derler); bu `docs/tools/noxc.md` "Scripts" bölümünde anlatıldı. `tests/cli/run_script_args_test.zig` argüman iletimini (`--`siz, `--`li, betik bayrakları, yoldan önceki derleyici bayrağı) ve shebang'li betiği doğrular.
+
 ## [2.0.175]
 
 ### Eklendi

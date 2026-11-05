@@ -1645,9 +1645,20 @@ fn isRunnableOnHost(profile: codegen.Profile, target: []const u8) bool {
 /// içerik özetiyle derler. Özet tutuyorsa yeniden derlemez. Çalıştırılabilir
 /// dosyayı stdio'yu
 /// MİRAS ALARAK çalıştırır, çocuğun çıkış kodunu AYNEN yansıtır.
+/// `parseBuildOpts`in tanıdığı derleme bayrakları: `null` = derleme bayrağı değil; `false` = tek başına bayrak; `true` = bir sonraki argümanı değer olarak alır. `cmdRun`
+/// betik yolunu (ilk bayrak-olmayan argüman) bulmak için kullanır; `parseBuildOpts` ile aynı listede kalmalıdır.
+fn buildFlagTakesValue(arg: []const u8) ?bool {
+    const valued = [_][]const u8{ "-o", "--backend", "--profile", "--target" };
+    for (valued) |f| if (std.mem.eql(u8, arg, f)) return true;
+    const bare = [_][]const u8{ "--dump", "-v", "-g", "--release", "--asyncify", "--threads", "--emit-asm", "--emit-obj", "--emit-static-lib", "--emit-shared-lib" };
+    for (bare) |f| if (std.mem.eql(u8, arg, f)) return false;
+    return null;
+}
+
 fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy, run_limits: run_cache.Limits) !void {
-    const split = splitOnDoubleDash(args);
     // `--sandbox` ailesi (ADR-010): bayraklar derleme seçeneklerinden AYRILIR, yalnızca ikilinin çalıştırılmasına uygulanır.
+    // Betik modu (v2.0.175): betik yolundan SONRAKİ her argüman (Python gibi) programa iletilir; `--` isteğe bağlıdır (`#!/usr/bin/env -S noxc run` ile `./betik.nox a b` çalışır).
+    // Derleme/sandbox bayrakları betik yolundan ÖNCE verilir.
     var sandboxed = false;
     var wasm_allow_process = false;
     var wasm_allow_serve = false;
@@ -1657,8 +1668,25 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     var kept: std.ArrayListUnmanaged([]const u8) = .empty;
     var writes: std.ArrayListUnmanaged([]const u8) = .empty;
     var reads: std.ArrayListUnmanaged([]const u8) = .empty;
-    for (split.before) |arg| {
-        if (std.mem.eql(u8, arg, "--sandbox")) {
+    var prog_args: std.ArrayListUnmanaged([]const u8) = .empty;
+    var path_seen = false;
+    var dd_consumed = false;
+    var ai: usize = 0;
+    while (ai < args.len) : (ai += 1) {
+        const arg = args[ai];
+        if (path_seen) {
+            if (!dd_consumed and std.mem.eql(u8, arg, "--")) {
+                dd_consumed = true;
+            } else {
+                try prog_args.append(a, arg);
+            }
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--")) {
+            // Betik yolundan önce `--`: kalan her şey programın argümanıdır (yol eksikse aşağıdaki kullanım hatası verilir).
+            try prog_args.appendSlice(a, args[ai + 1 ..]);
+            break;
+        } else if (std.mem.eql(u8, arg, "--sandbox")) {
             sandboxed = true;
         } else if (std.mem.eql(u8, arg, "--allow-net")) {
             policy.allow_net = true;
@@ -1675,8 +1703,16 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             try writes.append(a, arg["--allow-write=".len..]);
         } else if (std.mem.startsWith(u8, arg, "--allow-read=")) {
             try reads.append(a, arg["--allow-read=".len..]);
-        } else {
+        } else if (buildFlagTakesValue(arg)) |takes_value| {
             try kept.append(a, arg);
+            if (takes_value and ai + 1 < args.len) {
+                ai += 1;
+                try kept.append(a, args[ai]);
+            }
+        } else {
+            // `parseBuildOpts` ile aynı kural: tanınmayan ilk argüman betik yoludur.
+            try kept.append(a, arg);
+            path_seen = true;
         }
     }
     policy.allow_write = writes.items;
@@ -1693,7 +1729,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
         std.process.exit(1);
     }
     const path_arg = opts.path orelse {
-        std.debug.print("usage: noxc run [--dump|-v] <file.nox> [-- argv...]\n", .{});
+        std.debug.print("usage: noxc run [--dump|-v] <file.nox> [argv...]\n", .{});
         std.process.exit(1);
     };
     // v2.0 madde 8: `--emit-asm` linklenmemiş BİR `.s` dosyası döner,
@@ -1728,14 +1764,14 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
             std.process.exit(1);
         }
         const is_free = if (opts.target) |t| (if (qbe_target.hostedTargetInfo(t)) |info| (info.wasm_freestanding or info.wasm_threads) else false) else false;
-        const code = try runWasi(gpa, io, a, bin_path, is_free, policy.allow_net, wasm_allow_process, wasm_allow_serve, wasm_process_allow, wasm_net_allow, split.after);
+        const code = try runWasi(gpa, io, a, bin_path, is_free, policy.allow_net, wasm_allow_process, wasm_allow_serve, wasm_process_allow, wasm_net_allow, prog_args.items);
         std.process.exit(code);
     }
     if (sandboxed) {
-        const code = try runSandboxed(io, a, bin_path, split.after, policy);
+        const code = try runSandboxed(io, a, bin_path, prog_args.items, policy);
         std.process.exit(code);
     }
-    const code = try runAndWait(io, a, bin_path, split.after);
+    const code = try runAndWait(io, a, bin_path, prog_args.items);
     std.process.exit(code);
 }
 

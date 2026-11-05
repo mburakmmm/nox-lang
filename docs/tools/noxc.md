@@ -22,7 +22,7 @@ normally).
 | `noxc build [options] <file.nox>` | compile to a native executable named after the file (or `-o`) |
 | `noxc sign keygen <name>`, `sign lock --key <name> [dir]`, `sign trust <pub>`, `sign revoke <fp>`, `sign verify [dir]` | Ed25519 signing of `nox.lock` ([ADR-011](../internals/adr/011-lock-signing.md)); `verify` exits 0 only for a valid signature by a trusted, non-revoked key |
 | `noxc run --sandbox [--allow-net] [--allow-write=DIR] [--allow-read=DIR] <file.nox>` | run the compiled program under an OS sandbox: no network, writes only to `$TMPDIR` ([ADR-010](../internals/adr/010-sandbox.md)); macOS `sandbox-exec`, Linux `bwrap` |
-| `noxc run [options] <file.nox> [-- args…]` | compile into `$NOX_HOME/cache/run/` (keyed by path, source contents, the `noxc` binary, `noxrt.o`, and the installed stdlib) and run; a matching cache entry is not rebuilt. Everything after `--` goes to the program (`nox.os.arg(1)`, …) |
+| `noxc run [options] <file.nox> [args…]` | compile into `$NOX_HOME/cache/run/` (keyed by path, source contents, the `noxc` binary, `noxrt.o`, and the installed stdlib) and run; a matching cache entry is not rebuilt. Everything after `--` goes to the program (`nox.os.arg(1)`, …) |
 | `noxc check [options] <file.nox>` | parse and type-check only — fast, no code generation. Exit status 0 means "no type errors" |
 | `noxc test [name\|path …]` | run every `*_test.nox` under the current directory, or only those whose file name contains `name`, or the given directory. A compile error is a failed file; the rest still run ([Testing](testing.md)) |
 | `noxc expand <file.nox>` | print the decorator metadata the compiler extracted from the file |
@@ -101,6 +101,24 @@ In a terminal the download line is a live bar (percentage, size, speed, estimate
 
 `--deny-capability <list>` (also `--deny-capability=<list>`, valid with every subcommand) makes the compiler reject any program that imports a module needing one of the listed capabilities, or calls a function marked `@capability.requires` for it: `filesystem`/`fs`, `network`/`net`, `clock`, `entropy`/`random`, `threads`, `process`, `shared_memory`/`shm`, `libc_math`, `dynamic_code`/`dynamic`. It is meant for environments that compile untrusted code (a playground, a CI sandbox) and works on every target; see [WebAssembly](wasm.md#capability-model-and---deny-capability).
 
+## Scripts
+
+A Nox file can be run like a script. `noxc run` compiles it once, keeps the binary in the run cache (keyed by the source, the compiler and the standard library, so editing the file recompiles it and an unchanged file starts immediately) and runs it:
+
+```nox
+#!/usr/bin/env -S noxc run
+import nox.os
+
+print("hello,", nox.os.arg(1))
+```
+
+```sh
+chmod +x greet.nox
+./greet.nox world        # hello, world
+```
+
+Everything after the file path is passed to the program, like `python script.py a b`; a leading `--` is optional and accepted for older invocations. Compiler and sandbox options (`--backend`, `--sandbox`, ...) go **before** the file path, so they never reach the program. `env -S` is needed for the two-word shebang on Linux; macOS accepts it too. The plain form `#!/usr/bin/env noxc` does not run the script: a bare `noxc file.nox` only builds it.
+
 ## Environment
 
 `NOX_HOME` (the data directory, default `~/.nox`), `NOX_INDEX_URL`, `NOX_PUBLISH_API_BASE`, `NOX_UPGRADE_API_BASE` and others are listed in [Environment variables](../reference/environment.md).
@@ -108,7 +126,7 @@ In a terminal the download line is a live bar (percentage, size, speed, estimate
 ## Examples
 
 ```sh
-noxc run main.nox -- a b c        # run with arguments
+noxc run main.nox a b c           # run with arguments (everything after the file goes to the program)
 noxc build -o app main.nox        # produce ./app
 noxc check main.nox               # type-check only
 noxc build --backend qbe main.nox # use the QBE backend

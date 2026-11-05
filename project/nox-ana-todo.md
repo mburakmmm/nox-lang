@@ -364,12 +364,16 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
 **2.1 ilanı, aşağıdaki 11.1–11.6 maddelerinin HEPSİ kanıtla kapanınca yapılır** (kullanıcı: "çözünce artık 2.1 ilan ederiz"). REPL ve C FFI maliyeti 2.2'ye bırakıldı
 (11.7). Her madde için AGENTS §16: mimariyi etkileyen kısımda önce kısa tasarım sunulur.
 
-- [ ] **11.1 Windows `.exe` çapraz derleme.** 2026-11-05'te ölçüldü: macOS'tan `linux-x64/linux-arm64/linux-riscv64/macos-x64` çapraz derlemesi çalışıyor (ELF/Mach-O başlığı
+- [~] **11.1 Windows `.exe` çapraz derleme.** 2026-11-05'te ölçüldü: macOS'tan `linux-x64/linux-arm64/linux-riscv64/macos-x64` çapraz derlemesi çalışıyor (ELF/Mach-O başlığı
   doğru), `windows-x64` `movsd %r10, ...` (upstream QBE `amd64_win` ABI hatası) ile düşüyor; yama yalnızca release'in Windows işinde (`winabi.c` metin-yaması), macOS/Linux
   arşivlerindeki QBE yamasız. `--backend llvm` masaüstü çapraz hedefi reddeder. Yapılacak: yamayı TÜM QBE kurulumlarına (release macOS/Linux, ci.yml, Dockerfile'lar, `noxc`un
   getirdiği `qbe`) uygulamak; CI'a "windows-x64 çapraz derle, çıktı `MZ`/PE başlığı" testi; tüm masaüstü hedefleri için çapraz matris + (mümkünse qemu-user/wine ile) çalıştırma
   kanıtı. Linux üzerinden `macos-arm64`/iOS çapraz derlemesi de denenip kayda geçirilir.
-- [ ] **11.2 Betik modu.** `noxc run` zaten ~0,25 sn (merhaba programı). Eklenecek: shebang (`#!/usr/bin/env noxc run`), kaynak-özeti anahtarlı ikili önbelleği, hızlı `-O0` yolu.
+  **Durum (v2.0.175):** yamalı QBE (`scripts/build_qbe.sh`) release/CI'a bağlandı; bu Mac'ten 6 masaüstü hedefinin hepsi derleniyor (ELF/Mach-O/PE başlıkları doğrulandı). Kalan: üretilen `.exe`nin
+  Windows'ta ÇALIŞTIRILMASI (Windows PC çevrimdışı) ve Linux üzerinden `macos-arm64`/iOS çapraz derlemesi.
+- [x] **11.2 Betik modu (v2.0.176).** `noxc run` zaten içerik-özetli, boyut tavanlı bir ikili önbelleğine sahipti (`run_cache.zig`); eksik olan betik argümanlarıydı: `./betik.nox a b`
+  argümanları sessizce düşüyordu. Artık betik yolundan sonraki her şey programa gider (`--` isteğe bağlı), `#!/usr/bin/env -S noxc run` shebang'i çalışır. Test:
+  `tests/cli/run_script_args_test.zig`; belge: `docs/tools/noxc.md` "Scripts". Davranış değişikliği: yoldan SONRA verilen derleyici bayrakları programa gider.
 - [ ] **11.3 Performans.** dict ~2,5x C (`entries` + `HashMap`, `d[k]` iki arama), matmul ~2x C (sınır kontrolü + `list[list[T]]` dolaylaması), `--release` varsayılanı kararı.
 - [ ] **11.4 Güvenlik.** Masaüstü `nox.fs`/`nox.os` kök (jail) seçeneği (mobil maskesi örnek; ADR-MOB-004), `uretim-hazirlik-analizi.md` #11 maddesinin güncel durumunu doğrula,
   release imzası + SBOM, stdlib sertleştirme taraması (fuzz kapsamı).
