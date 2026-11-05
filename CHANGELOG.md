@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.165]
+
+### Değişti
+
+- **Geçici CI teşhisi:** `.github/workflows/pg-debug.yml` + `scripts/ci_pg_debug.sh` (elle çalıştırılır): Linux runner'ında nox.postgres WASM testinin `BrkAllocator.free` içinde (`nox_postgres__pg_exec_params` sırasında) `memory access out of bounds` ile düşmesini farklı koşullarda yeniden çalıştırıp sunucu baytlarını kaydederek daraltır. Kök neden bulununca ikisi de silinir.
+
 ## [2.0.164]
 
 ### Düzeltildi

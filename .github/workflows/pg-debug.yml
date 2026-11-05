@@ -1,0 +1,30 @@
+name: PG debug (geçici)
+
+# GEÇİCİ: Linux runner'ında nox.postgres WASM testinin `memory access out of bounds` ile düşmesini daraltmak için (bkz. scripts/ci_pg_debug.sh).
+# Kök neden bulunca bu dosya ve betik silinir. Yalnızca elle çalıştırılır.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pg-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - name: binaryen kur
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq binaryen
+      - name: Derle
+        run: |
+          zig build
+          zig build wasm-rt
+      - name: Teşhis
+        run: bash scripts/ci_pg_debug.sh
