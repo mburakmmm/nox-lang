@@ -373,7 +373,8 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
   Windows'ta ÇALIŞTIRILMASI (Windows PC çevrimdışı) ve Linux üzerinden `macos-arm64`/iOS çapraz derlemesi.
   **v2.0.177:** masaüstü `--target` LLVM'den de geçer (`zig` varsa varsayılan); Windows `.exe` artık QBE yamasına bağlı değil. Linux arm64/x64 ve macOS x64/arm64 çıktıları çalıştırılarak
   doğrulandı; kalan: Windows `.exe` ve riscv64-LLVM çalıştırma kanıtı (riscv64 CI qemu-user'da, Windows PC çevrimdışı).
-  **v2.0.181:** Linux'ta iki backend ile çapraz derlenen Windows `.exe`ler CI'da Windows'ta ÇALIŞTIRILIR (`windows-cross-build` + `windows-cross-run`); ilk yeşil koşu bu maddeyi kapatır.
+  **v2.0.181 KANITLANDI:** Linux'ta iki backend (LLVM, yamalı QBE) ile çapraz derlenen Windows `.exe`ler CI'da Windows'ta çalıştı ve beklenen çıktıyı verdi (`windows-cross-run` yeşil). **v2.0.182:** aynı kanıt Linux→macOS (arm64) için
+  eklendi (`macos-cross-run`). Kalan: riscv64'ün LLVM ile qemu-user'da çalıştırılması (180/181 CI'ında `riscv64-smoke`).
 - [x] **11.2 Betik modu (v2.0.176).** `noxc run` zaten içerik-özetli, boyut tavanlı bir ikili önbelleğine sahipti (`run_cache.zig`); eksik olan betik argümanlarıydı: `./betik.nox a b`
   argümanları sessizce düşüyordu. Artık betik yolundan sonraki her şey programa gider (`--` isteğe bağlı), `#!/usr/bin/env -S noxc run` shebang'i çalışır. Test:
   `tests/cli/run_script_args_test.zig`; belge: `docs/tools/noxc.md` "Scripts". Davranış değişikliği: yoldan SONRA verilen derleyici bayrakları programa gider.

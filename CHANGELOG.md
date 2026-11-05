@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.182]
+
+### Eklendi
+
+- **Linux'ta çapraz derlenen macOS (arm64) ikilileri CI'da macOS'ta çalıştırılır (Faz 11.1).** `windows-cross-build` işi artık dört golden programı iki backend ile `--target macos-arm64` olarak da derler (`Mach-O 64-bit executable arm64` doğrulanır) ve yeni `macos-cross-run` işi (macos-15) bunları indirip çalıştırır, çıktıyı `.expected` ile karşılaştırır. Çalışma zamanı Apple çerçevelerine bağlı olmadığından (`apple_roots.zig` anahtarlık dosyasını doğrudan okur) Linux'tan macOS'a çapraz bağlama beklenir; bu iş onu kanıtlar. **Doğrulama:** v2.0.181'in `windows-cross-run` işi, Linux'ta LLVM ve QBE ile çapraz derlenen Windows `.exe`lerin Windows'ta çalıştığını ve beklenen çıktıyı verdiğini gösterdi.
+
 ## [2.0.181]
 
 ### Eklendi

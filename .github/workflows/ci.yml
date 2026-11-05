@@ -833,7 +833,7 @@ jobs:
   # `--target windows-x64` olarak derler ve artefakt yükler; iş 2 (windows-latest) bunları indirip ÇALIŞTIRIR ve çıktıyı `.expected` dosyasıyla karşılaştırır. Windows'taki yerel derleme bunu kanıtlamaz:
   # kanıtlanan, başka bir işletim sisteminde üretilen ikilidir.
   windows-cross-build:
-    name: Windows .exe çapraz derleme (Linux)
+    name: Çapraz derleme (Linux → Windows, macOS)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -867,6 +867,51 @@ jobs:
           name: windows-cross-exes
           path: winx/*.exe
           retention-days: 3
+      # macOS (arm64) hedefi de Linux'ta çapraz derlenir; ikiliyi macOS koşucusu çalıştırır (aşağıdaki `macos-cross-run`). Çalışma zamanı Apple çerçevelerine bağlı değildir (apple_roots.zig anahtarlık dosyasını okur).
+      - name: macOS (arm64) için çapraz derle
+        run: |
+          set -euo pipefail
+          mkdir -p macx
+          for name in class_list_spawn fibonacci print_dict_index_assign_empty list_row_hoist_order; do
+            for backend in llvm qbe; do
+              zig-out/bin/noxc build --backend "$backend" --target macos-arm64 "tests/golden/codegen_cases/$name.nox" -o "macx/$name.$backend"
+              file "macx/$name.$backend" | grep -q "Mach-O 64-bit executable arm64"
+            done
+          done
+          ls -l macx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-cross-bins
+          path: macx/*
+          retention-days: 3
+
+  macos-cross-run:
+    name: macOS çapraz derleme (macOS'ta çalıştır)
+    needs: windows-cross-build
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-cross-bins
+          path: macx
+      - name: Çalıştır ve beklenen çıktıyla karşılaştır
+        run: |
+          set -euo pipefail
+          fail=0
+          chmod +x macx/*
+          for bin in macx/*; do
+            base="$(basename "$bin")"
+            name="${base%.*}"
+            "$bin" > "out_$base.txt"
+            if diff -u "tests/golden/codegen_cases/$name.expected" "out_$base.txt"; then
+              echo "ok   $base"
+            else
+              echo "FAIL $base"; fail=1
+            fi
+          done
+          exit $fail
 
   windows-cross-run:
     name: Windows .exe çapraz derleme (Windows'ta çalıştır)
