@@ -414,6 +414,12 @@ const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }
     .{ .name = "hpy", .why = "the HPy bridge is not part of the wasm runtime" },
 };
 
+/// `freestanding` profilinde sınıflandırılmış olsa bile ÇALIŞMA ZAMANINDA bulunmayan modüller (mobil/hosted çalışma zamanında vardır, `lib_freestanding.zig`de yoktur): yetenek tablosunda
+/// `{}` görünmeleri freestanding'de sessizce kabul edilip bağlama hatasına dönüşmesin diye açıkça reddedilir.
+const FREESTANDING_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }{
+    .{ .name = "unicode", .why = "Unicode normalisation is not part of the freestanding runtime" },
+};
+
 pub const Checker = struct {
     allocator: std.mem.Allocator,
     functions: std.StringHashMapUnmanaged(FuncSig) = .{},
@@ -1418,6 +1424,8 @@ pub const Checker = struct {
         // İLE AYNI gerekçeyle HİÇBİR OS/libc bağımlılığı TAŞIMAZ.
         .{ .name = "binary", .caps = &.{} },
         .{ .name = "buffer", .caps = &.{} },
+        // v2.0.186 (mobil kapsam): `nox.bytes` yalnızca `nox.strings` ve `nox.buffer` üzerine kurulu saf Nox'tur.
+        .{ .name = "bytes", .caps = &.{} },
         .{ .name = "collections", .caps = &.{} },
         // v4 Faz B (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.console`
         // — `nox.log` İLE AYNI seviyeli format, AMA ZAMAN DAMGASI (VE onun
@@ -1486,9 +1494,12 @@ pub const Checker = struct {
         .{ .name = "toml", .caps = &.{} },
         // v2.0.69: `nox.http` akışı + `nox.fs` dosyaları; ikisinin yeteneğini de ister.
         .{ .name = "transfer", .caps = &.{ .network, .filesystem } },
+        // v2.0.186: yalnızca `nox_unicode_normalize_raw` (hosted çalışma zamanında, saf Zig, işletim sistemi yeteneği istemez). Freestanding'de çalışma zamanı yoktur (`FREESTANDING_UNAVAILABLE_MODULES`).
+        .{ .name = "unicode", .caps = &.{} },
         .{ .name = "url", .caps = &.{} },
         .{ .name = "uuid", .caps = &.{} },
         .{ .name = "validate", .caps = &.{} },
+        .{ .name = "web", .caps = &.{ .network, .clock } },
         .{ .name = "websocket", .caps = &.{.network} },
         .{ .name = "yaml", .caps = &.{} },
     };
@@ -1522,6 +1533,13 @@ pub const Checker = struct {
             for (WASM_UNAVAILABLE_MODULES) |m| {
                 if (std.mem.eql(u8, m.name, segments[1])) {
                     return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on the wasm32-wasi target ({s})", .{ segments[1], m.why });
+                }
+            }
+        }
+        if (self.profile == .freestanding) {
+            for (FREESTANDING_UNAVAILABLE_MODULES) |m| {
+                if (std.mem.eql(u8, m.name, segments[1])) {
+                    return self.fail(error.FreestandingModuleForbidden, "module 'nox.{s}' cannot be used in the 'freestanding' profile ({s})", .{ segments[1], m.why });
                 }
             }
         }

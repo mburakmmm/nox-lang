@@ -8,7 +8,7 @@ on:
 jobs:
   ios-simulator:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - name: Zig 0.16.0
@@ -49,6 +49,11 @@ jobs:
           chmod +x scripts/mobile_clock_probe.sh
           udid=$(xcrun simctl list devices booted | grep -Eo '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1)
           scripts/mobile_clock_probe.sh ios "$udid"
+      # v2.0.186: tüm codegen_cases korpusu (+ mobil varyantlar) simülatörde çalışır ve .expected ile karşılaştırılır (WASM korpusunun mobil karşılığı).
+      - name: Fixture korpusu (simülatör)
+        run: |
+          udid=$(xcrun simctl list devices booted | grep -Eo '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1)
+          python3 scripts/mobile_corpus.py ios "$udid" --jobs 4
       - name: iOS library checks
         run: |
           zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "qbe is rejected"

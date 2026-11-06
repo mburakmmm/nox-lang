@@ -1,0 +1,28 @@
+# Mobil varyant (scripts/mobile_corpus.py): codegen_cases/path_safe_join.nox ile aynı semantik; mobil kök politikası göreli ve `..` içeren yolları reddettiği için yollar mutlak /tmp altındadır.
+import nox.fs
+import nox.path
+
+def attempt(label: str, root: str, req: str) -> None:
+    try:
+        r: str = nox.path.safe_join(root, req)
+        print(label, "ok", nox.path.basename(r))
+    except nox_path_PathError:
+        print(label, "reddedildi")
+
+nox.fs.create_dir_all("/tmp/nox_sj_root/data/sub")
+nox.fs.create_dir_all("/tmp/nox_sj_root/dataevil")
+nox.fs.write_string("/tmp/nox_sj_root/data/a.txt", "a")
+nox.fs.write_string("/tmp/nox_sj_root/dataevil/secret", "s")
+
+attempt("var olan dosya", "/tmp/nox_sj_root/data", "a.txt")
+attempt("yeni dosya", "/tmp/nox_sj_root/data", "sub/new.txt")
+attempt("kok", "/tmp/nox_sj_root/data", ".")
+attempt("nokta nokta", "/tmp/nox_sj_root/data", "../dataevil/secret")
+attempt("kardes onek", "/tmp/nox_sj_root/data", "../dataevil")
+attempt("var olmayan kardes onek", "/tmp/nox_sj_root/data", "../data_evil")
+attempt("mutlak yol kokun altina gider", "/tmp/nox_sj_root/data", "/etc")
+attempt("var olmayan ara dizinden kacis", "/tmp/nox_sj_root/data", "x/../../dataevil/secret")
+print(nox.path.strip_prefix("/srv/dataevil/x", "/srv/data"))
+print(nox.path.strip_prefix("/srv/data/x", "/srv/data"))
+print(nox.path.strip_prefix("/srv/data", "/srv/data") == "")
+nox.fs.remove_dir_all("/tmp/nox_sj_root")

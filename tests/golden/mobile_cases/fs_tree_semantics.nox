@@ -1,0 +1,28 @@
+# Mobil varyant (scripts/mobile_corpus.py): codegen_cases/fs_tree_semantics.nox (`..` içeren yol çözümü hariç) ile aynı semantik; mobil kök politikası göreli ve `..` içeren yolları reddettiği için yollar mutlak /tmp altındadır.
+import nox.fs
+from nox.fs import FsError
+
+base: str = "/tmp/nox_golden_fs_tree"
+if nox.fs.exists(base) == False:
+    nox.fs.create_dir(base)
+
+# `..` içeren yollar aynı dosyaya çözülür; read_dir doğrudan çocukları verir (sıra tanımsız, bu yüzden sıralanır).
+nox.fs.write_string(base + "/a.txt", "A")
+nox.fs.write_string(base + "/b.txt", "B")
+names: list[str] = sorted(nox.fs.read_dir(base))
+print(names)
+print(nox.fs.is_dir(base), nox.fs.is_file(base), nox.fs.is_file(base + "/a.txt"), nox.fs.is_dir(base + "/a.txt"))
+print(nox.fs.read_to_string(base + "/a.txt") + nox.fs.read_to_string(base + "/b.txt"))
+
+# Bir dosyanın üzerine rename: hedef değiştirilir.
+nox.fs.rename(base + "/a.txt", base + "/b.txt")
+print(nox.fs.exists(base + "/a.txt"), nox.fs.read_to_string(base + "/b.txt"))
+nox.fs.remove_file(base + "/b.txt")
+print(len(nox.fs.read_dir(base)))
+
+# Ebeveyn dizin yoksa yazma FsError verir.
+try:
+    nox.fs.write_string("/tmp/nox_golden_no_such_dir_zz/x.txt", "x")
+    print("unreachable")
+except FsError:
+    print("no parent")

@@ -1,0 +1,19 @@
+# Mobil varyant (scripts/mobile_corpus.py): codegen_cases/path_new_operations.nox ile aynı semantik; mobil kök politikası göreli ve `..` içeren yolları reddettiği için yollar mutlak /tmp altındadır.
+import nox.fs
+import nox.path
+
+nox.fs.write_string("/tmp/nox_canon_marker.txt", "x")
+canon: str = nox.path.canonicalize("/tmp/nox_canon_marker.txt")
+print(nox.path.basename(canon))
+print(nox.path.strip_prefix("/a/b/c.txt", "/a/b"))
+print(nox.path.strip_prefix("/a/b/c.txt", "/x/y"))
+comps: list[str] = nox.path.components("/a/b/c.txt")
+print(len(comps))
+print(comps[0])
+print(comps[1])
+print(comps[2])
+try:
+    bad: str = nox.path.canonicalize("/definitely/does/not/exist/nox_iii4")
+    print("ulasilmamali")
+except nox_path_PathError as e:
+    print(e.message)

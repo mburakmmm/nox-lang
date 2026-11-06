@@ -167,6 +167,36 @@ test "mobile mask allows jwt and rejects host libraries" {
     try std.testing.expectEqual(@as(u8, 0), if (desktop.term == .exited) desktop.term.exited else 1);
 }
 
+test "mobile mask allows bytes, unicode and web; freestanding still rejects unicode and web" {
+    if (builtin.os.tag == .windows) return;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    try tmp.dir.writeFile(io, .{ .sub_path = "ok.nox", .data = "import nox.bytes\nimport nox.unicode\nimport nox.web\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "uni.nox", .data = "import nox.unicode\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "web.nox", .data = "import nox.web\n" });
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir = path_buf[0..len];
+    const ok = try std.fmt.allocPrint(gpa, "{s}/ok.nox", .{dir});
+    defer gpa.free(ok);
+    const uni = try std.fmt.allocPrint(gpa, "{s}/uni.nox", .{dir});
+    defer gpa.free(uni);
+    const web = try std.fmt.allocPrint(gpa, "{s}/web.nox", .{dir});
+    defer gpa.free(web);
+    // v2.0.186: bu üç modül mobil yetenek maskesinde sınıflandırılmamıştı ("not been classified") ve mobilde gereksiz yere reddediliyordu.
+    for ([_][]const u8{ "ios-arm64", "ios-simulator-arm64", "android-arm64", "android-x64" }) |target| {
+        const r = try run(gpa, io, &.{ noxcPath(), "check", "--target", target, ok });
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        try std.testing.expectEqual(@as(u8, 0), if (r.term == .exited) r.term.exited else 1);
+    }
+    // Freestanding çalışma zamanında Unicode normalizasyonu yok (hosted/mobil/wasm çalışma zamanında var); `nox.web` ağ ve saat ister.
+    try expectFail(gpa, io, &.{ noxcPath(), "check", "--profile", "freestanding", uni }, "Unicode normalisation");
+    try expectFail(gpa, io, &.{ noxcPath(), "check", "--profile", "freestanding", web }, "freestanding");
+}
+
 test "mobile library entry compiles async" {
     if (builtin.os.tag != .macos) return;
     var tmp = std.testing.tmpDir(.{});

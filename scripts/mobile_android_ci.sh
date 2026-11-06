@@ -1,7 +1,7 @@
 #!/bin/sh
 # TODO 4.1/4.5: Android emülatöründe (CI: Linux x86_64 + KVM, `reactivecircus/android-emulator-runner`) çalıştırma korpusu.
 #   scripts/mobile_android_ci.sh smoke   PR: stdlib paketi + çalışma zamanı probe'u + yığın/iş parçacığı probe'u
-#   scripts/mobile_android_ci.sh full    gece: smoke + AddressSanitizer yığın probe'u + ağ matrisi + sandbox/disk-dolu + saat/entropi/log
+#   scripts/mobile_android_ci.sh full    gece: smoke + AddressSanitizer yığın probe'u + ağ matrisi + sandbox/disk-dolu + saat/entropi/log + fixture korpusu
 # NOX_ANDROID_ABI=arm64|x64 hedef ABI'yi seçer (CI'da x64, yerelde arm64). Her adım bağımsız çalışır; başarısız adım sayısı > 0 ise 1 ile çıkar, böylece tek bir
 # kırmızı adım geri kalan korpusu gizlemez. Bekçi: her adım `timeout` ile sınırlıdır (takılan bir emülatör işi sonsuza dek tutamaz). Temizlik: çıkışta
 # `adb reverse` kuralları ve cihazdaki /data/local/tmp/nox-* artıkları silinir; emülatörün kendisini çağıran iş akışı kapatır.
@@ -55,6 +55,11 @@ if [ "$mode" = full ]; then
   run_step "ağ matrisi" "$root/scripts/mobile_network_probe.sh" android
   run_step "sandbox ve disk-dolu probe'u" "$root/scripts/mobile_sandbox_probe.sh" android
   run_step "saat, entropi ve log probe'u" "$root/scripts/mobile_clock_probe.sh" android
+  # v2.0.186: tüm codegen_cases korpusu (+ mobil varyantlar) emülatörde çalışır ve .expected ile karşılaştırılır (WASM korpusunun mobil karşılığı). Yavaş: adım zaman aşımı yükseltilir.
+  saved_timeout=$step_timeout
+  step_timeout=3000
+  run_step "fixture korpusu" python3 "$root/scripts/mobile_corpus.py" android --jobs 4
+  step_timeout=$saved_timeout
 fi
 echo "başarısız adım: $fail"
 [ $fail -eq 0 ]

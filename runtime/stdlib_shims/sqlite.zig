@@ -286,7 +286,9 @@ pub export fn nox_sqlite_open_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callcon
     lock();
     defer unlock();
     // `embed.zig` (yol politikası, `realpath`) wasm32-freestanding'de derlenmez; orada gömme hedefi de yoktur.
-    if (comptime !(is_wasm and builtin.os.tag == .freestanding)) {
+    // v2.0.186: `":memory:"` dosya sistemine hiç dokunmaz; gömme (mobil) kök denetiminden muaftır (eskiden "not under an allowed root" diye reddediliyordu ve mobilde bellek içi veritabanı açılamıyordu).
+    const is_memory = if (path) |pz| std.mem.eql(u8, std.mem.span(pz), ":memory:") else false;
+    if (!is_memory and comptime !(is_wasm and builtin.os.tag == .freestanding)) {
         const embed = @import("../embed.zig");
         if (!embed.allowsPath(rt, path)) return null;
     }
@@ -428,4 +430,20 @@ pub export fn nox_sqlite_column_name_raw(rt: ?*anyopaque, stmt: ?*anyopaque, i: 
 /// tiplerle karşılaştırılabilir — `handle == 0` TİP HATASI verir.
 pub export fn nox_sqlite_is_null_ptr(p: ?*anyopaque) callconv(.c) i64 {
     return if (p == null) 1 else 0;
+}
+
+test "v2.0.186: gomme kok denetimi etkinken \":memory:\" acilir, kok disindaki dosya yolu reddedilir" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    if (!ensureLoaded()) return error.SkipZigTest;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    state.embed_active = true;
+    state.embed_roots[0] = "/app/documents";
+    defer state.embed_active = false;
+    const mem = nox_sqlite_open_raw(rt, ":memory:");
+    try std.testing.expect(mem != null);
+    _ = nox_sqlite_close_raw(mem);
+    try std.testing.expect(nox_sqlite_open_raw(rt, "/tmp/nox_outside_root.db") == null);
+    try std.testing.expect(nox_sqlite_open_raw(rt, "relative.db") == null);
 }

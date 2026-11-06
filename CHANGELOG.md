@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.186]
+
+### Eklendi
+
+- **Mobil fixture korpusu: iOS simülatöründe ve Android emülatöründe 468 programın tamamı çalıştırılır (WASM korpusunun mobil karşılığı).** `scripts/mobile_corpus.py` (`ios <UDID>` / `android`) `tests/golden/codegen_cases` fixture'larını (+ `tests/golden/mobile_cases` mobil varyantlarını) hedef için derler, `scripts/mobile_corpus_host.c` ana programıyla (gömme ABI: `nox_embed_bind` + `nox_app_start` üst düzey ifadeleri çalıştırır) bağlar, simülatörde (`simctl spawn`) ya da emülatörde (`adb`) çalıştırıp çıktıyı `.expected` ile karşılaştırır. Sınıflar WASM korpusuyla aynıdır: `ok`, `reddedildi` (mobil maskesi modülü açık iletiyle reddeder; başarı sayılır), `atlandı` (`tests/golden/mobile_corpus_denylist.txt`, her satırın gerekçesi var), `HATA`. **Sonuç (yerel): iOS simülatörü 462 ok / 1 reddedildi / 5 atlandı / 0 HATA; Android emülatörü (arm64) 462 ok / 1 reddedildi / 5 atlandı / 0 HATA.** Önceden mobilde yalnızca 9 modüllük tek bir `mobile_stdlib_suite` vardı. CI: iOS PR işi (`mobile.yml`) korpusu her değişiklikte, Android gece işi (`mobile-nightly.yml`, x86_64 emülatör) `full` kipte çalıştırır.
+- **Mobil varyantlar** (`tests/golden/mobile_cases`): mobil kök politikası (ADR-MOB-004) göreli ve `..` içeren yolları BİLİNÇLİ reddeder; `path_safe_join`, `path_new_operations` ve `fs_tree_semantics` aynı semantiği mutlak `/tmp` yollarıyla sınar. Politika gevşetilmedi: test ana programı yalnızca hangi dizini "geçici dizin kökü" saydığını bildirir (`NOX_MOBILE_TEMP`).
+
+### Düzeltildi
+
+- **Mobilde `nox.bytes`, `nox.unicode` ve `nox.web` "sınıflandırılmamış" diye reddediliyordu.** Mobil yetenek tablosuna eklendi (`bytes`: saf Nox; `unicode`: yalnızca hosted çalışma zamanındaki `nox_unicode_normalize_raw`; `web`: ağ + saat). `unicode` freestanding çalışma zamanında olmadığından freestanding profilinde açıkça reddedilir (`FREESTANDING_UNAVAILABLE_MODULES`). Mobil derlenebilen stdlib modülü sayısı 40/50 → 43/50 (WASM: 46/50). Test: `tests/cli/mobile_target_test.zig`.
+- **Mobilde bellek içi SQLite açılamıyordu.** `nox.sqlite.open(":memory:")` dosya yolu gibi kök denetimine sokulup "not under an allowed root" ile reddediliyordu; `":memory:"` dosya sistemine dokunmadığından muaf tutuldu. Birim testi `runtime/stdlib_shims/sqlite.zig`de; korpusun `sqlite_memory_roundtrip` ve `sqlite_bind_out_of_range_raises` fixture'ları bunu yakaladı.
+
 ## [2.0.185]
 
 ### Düzeltildi
