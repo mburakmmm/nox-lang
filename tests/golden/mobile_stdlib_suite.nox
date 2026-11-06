@@ -22,9 +22,19 @@ def denied_write() -> int:
     except FsError:
         return 0
 
+# v2.0.188: ":memory:" dosya sistemine dokunmaz ve kök politikasından muaftır (eskiden bu denetim tam tersini bekliyordu: açılması hata sayılıyordu); dosya sistemi yolları ise
+# kök politikasına tabi kalır: kök dışındaki bir veritabanı yolu reddedilmelidir.
 def memory_db() -> int:
     try:
         opened: Connection = nox.sqlite.open(":memory:")
+        opened.close()
+        return 0
+    except SqliteError:
+        return 1
+
+def outside_db() -> int:
+    try:
+        opened: Connection = nox.sqlite.open("/nox-outside-root.db")
         opened.close()
         return 1
     except SqliteError:
@@ -64,6 +74,8 @@ def suite_body(root: str) -> int:
         return 7
     if memory_db() != 0:
         return 8
+    if outside_db() != 0:
+        return 16
     db: Connection = nox.sqlite.open(root + "/suite.db")
     ignored: int = db.execute("drop table if exists t")
     ignored = db.execute("create table t(n integer)")

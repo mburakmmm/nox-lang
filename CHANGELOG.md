@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.188]
+
+### Düzeltildi
+
+- **v2.0.186'nın mobil `stdlib paketi` regresyonu.** `tests/golden/mobile_stdlib_suite.nox`taki `memory_db()` denetimi, `nox.sqlite.open(":memory:")` açılışının mobilde REDDEDİLMESİNİ bekliyordu (açılırsa `return 8`). v2.0.186'da bellek içi SQLite'ı kök politikasından muaf tuttuğumda bu beklenti bozuldu ve iOS simülatörü ile Android emülatörü paketi `suite 8` ile düştü (o düşüşü başta DNS sanmıştım; kod 99 değil 8'di). `:memory:` dosya sistemine dokunmadığı ve WASM'da zaten açıldığı için yeni davranış korundu; denetim güncellendi: `:memory:` AÇILMALI, kök dışındaki bir dosya yolu (`/nox-outside-root.db`) hâlâ REDDEDİLMELİ (yeni `outside_db()`, çıkış kodu 16). Yerelde iOS simülatörü ve Android emülatöründe `suite 0 pending 0` doğrulandı.
+
 ## [2.0.187]
 
 ### Düzeltildi
