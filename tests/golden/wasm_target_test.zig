@@ -790,24 +790,8 @@ fn expectPostgresProgram(resource_dir: ?[]const u8) !void {
         return error.ProgramFailed;
     }
     if (res.stderr.len > 0 and std.mem.indexOf(u8, res.stdout, "exit 0") == null) std.debug.print("surucu stderr:\n{s}\n", .{res.stderr});
-    try std.testing.expectEqualStrings(
-        \\inserted id 1
-        \\affected 1
-        \\updated 2
-        \\1 alice False False
-        \\2 bob False True
-        \\3 carol True True
-        \\31 42
-        \\çok satırlı
-        \\metin 'tırnak'
-        \\older: bob
-        \\error: statement failed: ERROR:  relation "no_such_table" does not exist
-        \\
-        \\1
-        \\auth failed: True
-        \\exit 0
-        \\
-    , res.stdout);
+    // Beklenen çıktı `wasm_pg_program.expected` ile ortaktır (mobil sınama `scripts/mobile_db_probe.py` da aynı dosyayı kullanır); sürücü sonuna "exit 0" ekler.
+    try std.testing.expectEqualStrings(@embedFile("wasm_pg_program.expected") ++ "exit 0\n", res.stdout);
 }
 
 test "wasm32-freestanding --asyncify: nox.postgres gerçek bir PostgreSQL sunucusuna karşı (SCRAM-SHA-256, basit + genişletilmiş protokol)" {
@@ -860,27 +844,8 @@ test "wasm32-freestanding --asyncify: nox.mysql gerçek bir MySQL sunucusuna kar
         return error.ProgramFailed;
     }
     if (res.stderr.len > 0 and std.mem.indexOf(u8, res.stdout, "exit 0") == null) std.debug.print("surucu stderr:\n{s}\n", .{res.stderr});
-    try std.testing.expectEqualStrings(
-        \\affected 1 id 1
-        \\affected 1 id 2
-        \\updated 2
-        \\1 alice False False
-        \\2 bob False True
-        \\3 carol True True
-        \\31 42
-        \\çok satırlı
-        \\metin 'tırnak' "çift" \ ters
-        \\older: bob
-        \\syntax error: True
-        \\not null: True
-        \\deleted 1
-        \\count 2
-        \\fast path 2
-        \\native alice
-        \\auth failed: True
-        \\exit 0
-        \\
-    , res.stdout);
+    // Beklenen çıktı `wasm_mysql_program.expected` ile ortaktır (mobil sınama `scripts/mobile_db_probe.py` da aynı dosyayı kullanır); sürücü sonuna "exit 0" ekler.
+    try std.testing.expectEqualStrings(@embedFile("wasm_mysql_program.expected") ++ "exit 0\n", res.stdout);
 }
 
 // v2.0.157 (spec §3.359): `nox.process` WASM'da bir HOST yeteneğidir (bit 2): `wasm32-freestanding --asyncify` + host `process` sağlayıcısı. Sürücü süreç içi sahte sağlayıcı verir;

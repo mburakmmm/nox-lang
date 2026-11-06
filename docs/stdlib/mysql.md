@@ -44,3 +44,11 @@ def connect() -> Connection:
 - Install `libmysqlclient` (or MariaDB Connector/C) on machines that connect.
 - Do not build SQL by concatenating untrusted text; use `bind_*`.
 - Do not share a connection between tasks that may run on different workers.
+
+## On a mobile target (iOS, Android)
+
+There is no `libmysqlclient` on a phone, so on `ios-*` and `android-*` targets `nox.mysql` uses a MySQL/MariaDB client written in Zig, over the operating system's sockets. The API is the same; nothing has to be installed. Authentication: `mysql_native_password` and `caching_sha2_password` (fast path, and the full path with the server's RSA key, so the password never travels in plain text even without TLS), including an authentication plugin switch. Queries use the text protocol (`COM_QUERY`); a result set is held in memory once the reply is complete, and only the first of several result sets is returned.
+
+- **There is no TLS yet.** The password is protected, but queries and results are not: only connect to a server over a network you trust (loopback, a VPN, a private network). A phone app should normally talk to an HTTP API rather than straight to a database.
+- `host` is always a TCP host (no Unix socket for `localhost`). Calls block the calling thread, and there is no read timeout.
+- Verified on the iOS simulator and the Android emulator against a real MySQL 8.4 server (`scripts/mobile_db_probe.py`).

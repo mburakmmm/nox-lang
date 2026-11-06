@@ -71,9 +71,12 @@ pub const unicode_shim = @import("stdlib_shims/unicode.zig");
 pub const io_shim = @import("stdlib_shims/io.zig");
 pub const sqlite_shim = @import("stdlib_shims/sqlite.zig");
 pub const process_shim = @import("stdlib_shims/process.zig");
-pub const postgres_shim = @import("stdlib_shims/postgres.zig");
+// Mobil hedeflerde (iOS/Android) ana makine kütüphanesi (`libpq`/`libmysqlclient`) yüklenemez; bunun yerine saf Zig protokol istemcileri yerel soketler (`tcp_native.zig`) üzerinde kullanılır (v2.0.189).
+// Aynı `nox_pg_*`/`nox_mysql_*` sembollerini dışa aktarırlar, yani `.nox` tarafı değişmez.
+const mobile_db = builtin.os.tag == .ios or builtin.abi.isAndroid();
+pub const postgres_shim = if (mobile_db) @import("stdlib_shims/pg_wasm.zig") else @import("stdlib_shims/postgres.zig");
 pub const native_shim = @import("stdlib_shims/native.zig");
-pub const mysql_shim = @import("stdlib_shims/mysql.zig");
+pub const mysql_shim = if (mobile_db) @import("stdlib_shims/mysql_wasm.zig") else @import("stdlib_shims/mysql.zig");
 pub const tls_shim = @import("stdlib_shims/tls.zig");
 pub const tls_server_shim = @import("stdlib_shims/tls_server.zig");
 pub const websocket_shim = @import("stdlib_shims/websocket.zig");
@@ -117,6 +120,7 @@ comptime {
     _ = embed;
     _ = http_client;
     _ = @import("stdlib_shims/net_dial.zig");
+    _ = @import("stdlib_shims/tcp_native.zig");
     _ = http_stream;
     _ = http_server;
     _ = strings_shim;

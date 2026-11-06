@@ -48,8 +48,8 @@ fn dupeEmpty(rt: ?*anyopaque) ?[*:0]u8 {
 /// çağrısı bunu YENİDEN taramaz.
 const LoadState = enum(u8) { uninit, initializing, ready, failed };
 var g_ca_state: std.atomic.Value(LoadState) = .init(.uninit);
-var g_ca_bundle: std.crypto.Certificate.Bundle = .empty;
-var g_ca_lock: std.Io.RwLock = .init;
+pub var g_ca_bundle: std.crypto.Certificate.Bundle = .empty;
+pub var g_ca_lock: std.Io.RwLock = .init;
 
 pub fn loadSystemCas(bundle: *std.crypto.Certificate.Bundle, io: std.Io, now: std.Io.Timestamp) bool {
     if (builtin.os.tag == .ios) {
@@ -59,7 +59,7 @@ pub fn loadSystemCas(bundle: *std.crypto.Certificate.Bundle, io: std.Io, now: st
     return if (bundle.rescan(std.heap.page_allocator, io, now)) |_| true else |_| false;
 }
 
-fn ensureCaBundle(io: std.Io) bool {
+pub fn ensureCaBundle(io: std.Io) bool {
     if (g_ca_state.cmpxchgStrong(.uninit, .initializing, .acquire, .monotonic) == null) {
         const now = std.Io.Timestamp.now(io, .real);
         const ok = loadSystemCas(&g_ca_bundle, io, now);

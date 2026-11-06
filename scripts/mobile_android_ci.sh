@@ -60,6 +60,8 @@ if [ "$mode" = full ]; then
   step_timeout=3000
   run_step "fixture korpusu" python3 "$root/scripts/mobile_corpus.py" android --jobs 4
   step_timeout=$saved_timeout
+  # v2.0.189: veritabanı istemcileri (saf Zig PostgreSQL/MySQL) gerçek sunuculara karşı: SCRAM, caching_sha2, TLS sertifika reddi. Sunucular geçici (PostgreSQL kümesi, mysql:8.4 kapsayıcısı).
+  run_step "veritabanı istemcileri" env NOX_PROBE_PULL=1 python3 "$root/scripts/mobile_db_probe.py" android all
 fi
 echo "başarısız adım: $fail"
 [ $fail -eq 0 ]

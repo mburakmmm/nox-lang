@@ -4,9 +4,11 @@
 //! Sınırlar: TLS yok (host TLS'i ileride eklenebilir), `host` her zaman TCP'dir (`localhost` için de unix soketi yok), çoklu sonuç kümelerinde yalnızca ilki döner.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const str_mod = @import("../str.zig");
 const shim_util = @import("shim_util.zig");
-const tcp = @import("tcp_host.zig");
+// Taşıma derleme zamanında seçilir: WASM'da ana makine TCP'si (`tcp_host.zig`), yerel (iOS/Android) derlemede işletim sistemi soketleri (`tcp_native.zig`, v2.0.189). İkisi aynı arayüzü sağlar.
+const tcp = if (builtin.cpu.arch.isWasm()) @import("tcp_host.zig") else @import("tcp_native.zig");
 const proto = @import("mysql_proto.zig");
 
 const gpa = std.heap.page_allocator;
@@ -68,8 +70,10 @@ const Conn = struct {
 fn fillRandom(buf: []u8) void {
     if (comptime @import("../wasm_host.zig").is_freestanding_wasm) {
         @import("../wasm_host.zig").random_fill(buf.ptr, buf.len);
+    } else if (comptime builtin.cpu.arch.isWasm()) {
+        @memset(buf, 4); // WASI: ağ yeteneği yoktur, bağlantı kurulamaz (nonce kullanılmaz)
     } else {
-        @memset(buf, 4);
+        tcp.randomFill(buf); // yerel: SCRAM/kimlik doğrulama nonce'u tahmin edilemez olmalıdır
     }
 }
 

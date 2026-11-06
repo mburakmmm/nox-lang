@@ -1265,7 +1265,7 @@ export fn nox_http_response_free(h: ?*anyopaque) callconv(.c) void {
 // GİRMEDEN — bu yalnızca test tarafının sahte sunucusu, D.1.4'ün GERÇEK
 // fiber-native sunucu kabuğu AYRI bir dosyada, ayrı bir sonraki adımdır).
 
-fn testListenerOn127001(port_out: *u16) !posix.fd_t {
+pub fn testListenerOn127001(port_out: *u16) !posix.fd_t {
     if (builtin.os.tag == .windows) {
         io_mod.ensureWinsock();
         const ws = io_mod.WinSock;
@@ -1309,7 +1309,7 @@ fn testListenerOn127001(port_out: *u16) !posix.fd_t {
 /// accept()` hatasını taşıdığı GÖZDEN KAÇMIŞTI (istemci bağlantısı
 /// KURULAMAZSA `accept()` SONSUZA KADAR bekler, `defer server_thread.
 /// join()` de test sürecini SONSUZA KADAR askıda bırakır).
-fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
+pub fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
     var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
     const n = std.c.poll(&pfd, 1, timeout_ms);
     if (n <= 0) return -1;

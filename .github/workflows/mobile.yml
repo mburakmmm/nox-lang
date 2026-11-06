@@ -54,6 +54,13 @@ jobs:
         run: |
           udid=$(xcrun simctl list devices booted | grep -Eo '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1)
           python3 scripts/mobile_corpus.py ios "$udid" --jobs 4
+      # v2.0.189: veritabanı istemcileri (saf Zig PostgreSQL) gerçek bir sunucuya karşı simülatörde: SCRAM kimlik doğrulama, sorgu protokolleri, TLS sertifika reddi. MySQL için Docker yok; atlanır.
+      - name: Veritabanı istemcileri (simülatör)
+        run: |
+          command -v initdb >/dev/null 2>&1 || { brew install postgresql@16 >/dev/null; echo "$(brew --prefix postgresql@16)/bin" >> "$GITHUB_PATH"; export PATH="$(brew --prefix postgresql@16)/bin:$PATH"; }
+          udid=$(xcrun simctl list devices booted | grep -Eo '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}' | head -1)
+          python3 scripts/mobile_db_probe.py ios "$udid" pg
+          python3 scripts/mobile_db_probe.py ios "$udid" tls
       - name: iOS library checks
         run: |
           zig test tests/cli/mobile_target_test.zig -ODebug --test-filter "qbe is rejected"

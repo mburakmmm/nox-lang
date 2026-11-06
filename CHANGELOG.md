@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.189]
+
+### Eklendi
+
+- **`nox.postgres` ve `nox.mysql` mobilde (iOS ve Android) çalışır.** Mobil yetenek maskesi bu iki modülü "ana makine kütüphanesi yüklüyor" diye reddediyordu (`libpq`/`libmysqlclient` bir telefonda yoktur). WASM için yazılmış saf Zig protokol istemcileri (`pg_wasm.zig`, `mysql_wasm.zig`) artık mobil hedeflerde `libpq`/`libmysqlclient` yerine kullanılır: yeni `runtime/stdlib_shims/tcp_native.zig` aynı `tcp` arayüzünü (`connect`, `write`, `readSome`, `startTls`, `close`) işletim sistemi soketleri üzerinde sağlar, istemciler taşımayı derleme zamanında seçer, `runtime/lib.zig` mobil hedeflerde `postgres.zig`/`mysql.zig` yerine bu istemcileri bağlar. `.nox` tarafı ve sembol adları değişmedi. `startTls` aynı soketi `nox.tls` ile aynı `std.crypto.tls` istemcisi ve sistem CA deposuyla yükseltir; yükseltmeden önce tamponda düz metin kalmışsa reddeder (STARTTLS enjeksiyonu).
+- **Gerçek sunuculara karşı mobil sınama (`scripts/mobile_db_probe.py`).** iOS simülatöründe ve Android arm64 emülatöründe, geçici bir PostgreSQL kümesine (SCRAM-SHA-256, basit ve genişletilmiş protokol) ve `mysql:8.4` kapsayıcısına (`caching_sha2_password` tam ve hızlı yol, `mysql_native_password`, kaçışlama, hata yolları) karşı çalışır; çıktılar WASM testiyle ORTAK `wasm_pg_program.expected` / `wasm_mysql_program.expected` dosyalarıyla karşılaştırılır (iki kopya ayrışamaz). İki TLS güvenlik denetimi: `sslmode=require` ile kendinden imzalı sertifika `TlsCertificateNotVerified` ile REDDEDİLİR; sunucu TLS'siz iken düz metne DÜŞÜLMEZ. CI: iOS PR işi PostgreSQL ve TLS denetimlerini, Android gece işi hepsini çalıştırır. Mobil derlenebilen stdlib modülü 43/50 → 45/50 (WASM 46/50; kalan 5 mobil dışlaması platform kuralıdır). Üç `tcp_native` birim testi (yerel soket üzerinde yaz/oku/EOF, ulaşılamayan adres, rastgelelik).
+- **Mobil korpus sonucu (yerel, refaktör ve DB değişikliklerinden sonra): iOS simülatörü ve Android arm64 emülatörü her biri 468 fixture, 463 ok, 0 reddedildi, 5 gerekçeli atlama, 0 hata** (önceden 462 ok + 1 reddedildi: `postgres_mysql_connect_error` artık mobilde gerçekten çalışır).
+- **Ortak çalıştırıcı (`scripts/mobile_run.py`).** Korpus ve DB sınaması aynı derle-bağla-çalıştır kodunu kullanır (`mobile_corpus.py` bu modüle taşındı).
+
+### Düzeltildi
+
+- **PostgreSQL/MySQL istemcilerinin SCRAM/kimlik doğrulama nonce'u WASM dışı derlemede sabit değerdi.** `fillRandom`un WASM dışı dalı `@memset(buf, 4)` idi (yalnızca testler için bırakılmıştı); mobil hedeflerde kullanılmaya başlanınca tahmin edilemez olması gereken istemci nonce'u için gerçek rastgelelik (`tcp_native.randomFill`) kullanılır.
+
+### Bilinen sınırlar
+
+- **MySQL istemcisinde TLS yok** (WASM'daki gibi); parola korunur (`caching_sha2` RSA yolu) ama sorgular ve sonuçlar korunmaz: yalnızca güvenilir bir ağda kullanın. PostgreSQL'de TLS yalnızca `sslmode=require|verify-*` ile kullanılır (varsayılan düz metindir).
+- Okuma/yazma zaman aşımı yok; yanıt vermeyen sunucu çağrıyı bekletir.
+- Güvenilir bir sertifikayla BAŞARILI TLS oturumu uçtan uca sınanmadı (simülatöre/emülatöre test kök sertifikası kurulmadı); doğrulama aşamasına kadar el sıkışma sınandı.
+
 ## [2.0.188]
 
 ### Düzeltildi

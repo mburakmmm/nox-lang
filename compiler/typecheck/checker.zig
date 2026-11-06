@@ -1511,12 +1511,6 @@ pub const Checker = struct {
         return null;
     }
 
-    fn mobileLoadsHostLibrary(name: []const u8) bool {
-        // `nox.mysql` ve `nox.postgres` masaüstünde `libmysqlclient` / `libpq`
-        // açar. iOS ve Android uygulamasında bu dosyalar yoktur.
-        return std.mem.eql(u8, name, "mysql") or std.mem.eql(u8, name, "postgres");
-    }
-
     /// ESKİ `checkFreestandingImportAllowed`/`checkHostedImportAllowed`
     /// İKİLİSİNİN YERİNE — capability SİMETRİK olduğundan (bir modül bir
     /// capability GEREKTİRİR, bir profil ONU YA SAĞLAR YA DA SAĞLAMAZ) TEK
@@ -1552,9 +1546,6 @@ pub const Checker = struct {
             }
             return;
         };
-        if (self.mobile_mask != .none and mobileLoadsHostLibrary(segments[1])) {
-            return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on a mobile target (it loads a host shared library that is not part of the mobile runtime)", .{segments[1]});
-        }
         for (caps) |cap| {
             if (self.grantsCapability(cap)) continue;
             if (self.isDenied(cap)) {

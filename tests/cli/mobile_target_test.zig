@@ -125,7 +125,7 @@ test "mobile mask rejects process and allows async" {
     try std.testing.expectEqual(@as(u8, 0), if (allowed.term == .exited) allowed.term.exited else 1);
 }
 
-test "mobile mask allows jwt and rejects host libraries" {
+test "mobile mask allows jwt and the database clients, rejects libssl servers" {
     if (builtin.os.tag == .windows) return;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -156,8 +156,15 @@ test "mobile mask allows jwt and rejects host libraries" {
     defer gpa.free(allowed.stdout);
     defer gpa.free(allowed.stderr);
     try std.testing.expectEqual(@as(u8, 0), if (allowed.term == .exited) allowed.term.exited else 1);
-    try expectFail(gpa, io, &.{ noxcPath(), "check", "--target", "android-arm64", mysql }, "host shared library");
-    try expectFail(gpa, io, &.{ noxcPath(), "check", "--target", "ios-simulator-arm64", postgres }, "host shared library");
+    // v2.0.189: `nox.mysql`/`nox.postgres` mobilde saf Zig protokol istemcileriyle çalışır (ana makine kütüphanesi yüklenmez); artık reddedilmez.
+    for ([_][]const u8{ "ios-arm64", "ios-simulator-arm64", "android-arm64", "android-x64" }) |target| {
+        for ([_][]const u8{ mysql, postgres }) |db| {
+            const r = try run(gpa, io, &.{ noxcPath(), "check", "--target", target, db });
+            defer gpa.free(r.stdout);
+            defer gpa.free(r.stderr);
+            try std.testing.expectEqual(@as(u8, 0), if (r.term == .exited) r.term.exited else 1);
+        }
+    }
     try expectFail(gpa, io, &.{ noxcPath(), "check", "--target", "ios-arm64", tls_srv }, "libssl");
     try expectFail(gpa, io, &.{ noxcPath(), "check", "--target", "android-x64", ws_tls }, "libssl");
     try expectFail(gpa, io, &.{ noxcPath(), "check", "--target", "ios-simulator-arm64", fd_tls }, "libssl");
