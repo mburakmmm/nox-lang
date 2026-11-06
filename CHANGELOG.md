@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.0]
+
+**Nox 2.1.** 2.0 sözleşmesi (kararlılık politikası) değişmedi; 2.0.1–2.0.189 arasında biriken ve 2.1 olarak ilan edilen işlerin özeti `docs/whatsnew/2.1.md`de, ayrıntısı aşağıdaki 2.0.x girişlerindedir.
+
+### Eklendi
+
+- **WebAssembly ve tarayıcı:** `wasm32-wasi`/`wasm32-freestanding` hedefleri (`--asyncify`, `--threads`), WASM'da `nox.http` (istemci ve sunucu), `nox.sqlite`, `nox.postgres`, `nox.mysql`, `nox.websocket`, `nox.process`, kalıcı sanal dosya sistemi; tarayıcıda çalışan derleyici ve Playground (beta).
+- **Gerçek çapraz derleme:** `--target` ile altı masaüstü hedefi (`macos-arm64`, `macos-x64`, `linux-x64`, `linux-arm64`, `linux-riscv64`, `windows-x64`), `zig` varsa LLVM ile; Linux'ta derlenen Windows ve macOS ikilileri CI'da hedef işletim sisteminde çalıştırılır.
+- **Mobil kapsam (deneysel):** mobil hedeflerde 45/50 stdlib modülü derlenir (WASM 46/50; kalan 5 platform kuralı); `nox.postgres` ve `nox.mysql` saf Zig istemcileriyle çalışır; 468 fixture'lık korpus iOS simülatöründe ve Android emülatöründe CI'da hatasız çalışır. Dört mobil hedef hâlâ `experimental` (gerçek cihaz laboratuvarı yok).
+- **Betik modu:** `#!/usr/bin/env -S noxc run`, betik argümanları, önbellekli ikili.
+- **HTTP:** HTTP/2 sunucusu, akışlı yanıtlar ve SSE, graceful shutdown, bağlantı havuzu ve vekil desteği, `nox.web`.
+- **Güvenlik:** `nox.path.safe_join`, imzalı release arşivleri (build provenance) ve SBOM, HPACK/MySQL fuzz hedefleri.
+- **Dağıtım:** Homebrew, AUR, AppImage, Snap, Windows kurucusu; noxlang.com indirme sayfası; yayıncı kimliği (`noxc login`).
+
+### Değişti (davranış)
+
+- `noxc run betik.nox a b` betik yolundan sonraki her şeyi programa iletir; derleyici seçenekleri dosyadan ÖNCE verilir.
+- `noxc build --backend llvm --target <masaüstü>` artık derler; `--target` tek başına `zig` varsa LLVM kullanır.
+- `nox.path.strip_prefix` yalnızca bileşen sınırında önek çıkarır.
+
 ## [2.0.189]
 
 ### Eklendi

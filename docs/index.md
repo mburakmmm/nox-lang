@@ -33,7 +33,7 @@ Ada has 150
 | install Nox | [Installing Nox](install/index.md) |
 | learn the language | the [Tutorial](tutorial/index.md) |
 | look something up | the [Language reference](language/index.md) and the [Standard library](stdlib/index.md) |
-| see what is new in 2.0 | [What's new in Nox 2.0](whatsnew/2.0.md) and [Migrating from 1.x](whatsnew/migrating.md) |
+| see what is new | [What's new in Nox 2.1](whatsnew/2.1.md), [Nox 2.0](whatsnew/2.0.md) and [Migrating from 1.x](whatsnew/migrating.md) |
 | build libraries, frameworks or native extensions | [The three APIs](apis/index.md) |
 | use the tools | [noxc](tools/noxc.md), [Packages](tools/packages.md), [Testing](tools/testing.md) |
 | understand how it works or contribute | [Internals](internals/architecture.md) |

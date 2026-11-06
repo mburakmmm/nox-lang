@@ -364,7 +364,7 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
 **2.1 ilanı, aşağıdaki 11.1–11.6 maddelerinin HEPSİ kanıtla kapanınca yapılır** (kullanıcı: "çözünce artık 2.1 ilan ederiz"). REPL ve C FFI maliyeti 2.2'ye bırakıldı
 (11.7). Her madde için AGENTS §16: mimariyi etkileyen kısımda önce kısa tasarım sunulur.
 
-- [~] **11.1 Windows `.exe` çapraz derleme.** 2026-11-05'te ölçüldü: macOS'tan `linux-x64/linux-arm64/linux-riscv64/macos-x64` çapraz derlemesi çalışıyor (ELF/Mach-O başlığı
+- [x] **11.1 Windows `.exe` çapraz derleme.** 2026-11-05'te ölçüldü: macOS'tan `linux-x64/linux-arm64/linux-riscv64/macos-x64` çapraz derlemesi çalışıyor (ELF/Mach-O başlığı
   doğru), `windows-x64` `movsd %r10, ...` (upstream QBE `amd64_win` ABI hatası) ile düşüyor; yama yalnızca release'in Windows işinde (`winabi.c` metin-yaması), macOS/Linux
   arşivlerindeki QBE yamasız. `--backend llvm` masaüstü çapraz hedefi reddeder. Yapılacak: yamayı TÜM QBE kurulumlarına (release macOS/Linux, ci.yml, Dockerfile'lar, `noxc`un
   getirdiği `qbe`) uygulamak; CI'a "windows-x64 çapraz derle, çıktı `MZ`/PE başlığı" testi; tüm masaüstü hedefleri için çapraz matris + (mümkünse qemu-user/wine ile) çalıştırma
@@ -382,7 +382,7 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
   olarak küçüktür (matmul ~20 ms, sieve ~24 ms) ve tasarım garantilerinin bedelidir: dict'in C çekirdeği önceden ayrılmış/sırasız/tohumsuz bir tablodur, Nox'unki ekleme sırasını korur, büyür ve tohumludur
   (Go ile aynı hız, Python'dan ~5× hızlı); matmul/sieve sınır kontrolü `IndexError` semantiğini korur, döngü dışına almak döngü-versiyonlama geçişi ister (2.2 adayı). `--release` varsayılanı: zaten varsayılan.
   Kod değişikliği yapılmadı; bu sonuç bilerek kayda alındı.
-- [~] **11.4 Güvenlik.** (a) **bitti, v2.0.179:** `uretim-hazirlik-analizi.md` #11 güncel durumu doğrulandı: `nox.fs` yol doğrulaması bilinçli olarak yok (belgelenmiş); ama belgedeki kök-içi örneği güvensizdi ve
+- [x] **11.4 Güvenlik.** (a) **bitti, v2.0.179:** `uretim-hazirlik-analizi.md` #11 güncel durumu doğrulandı: `nox.fs` yol doğrulaması bilinçli olarak yok (belgelenmiş); ama belgedeki kök-içi örneği güvensizdi ve
   `nox.path.strip_prefix` bileşen sınırını kontrol etmiyordu (`/srv/dataevil` − `/srv/data`) — ikisi düzeltildi, standart `nox.path.safe_join` eklendi (spec §3.367). Masaüstüne zorunlu kök/jail EKLENMEDİ
   (capability sistemi gerektirir; OS düzeyi kısıt `--sandbox`ta). (b) **bitti, v2.0.180 kanıtladı / v2.0.184 zorunlu yaptı:** release imzası (provenance attestation) + SBOM gerçek release'te çalıştı (Linux/macOS/Windows arşivleri ve SBOM'da birer attestation kaydı). (c) **v2.0.180:** HPACK/Huffman ve MySQL protokol fuzz hedefleri + deterministik tarama (40.000 girdi, hata yok); JSON/regex/WebSocket hedefleri 2.2.
 - [x] **11.5 Release akışı kanıtı (2026-11-05).** v2.0.174 gerçek tag'de taslak→yayın akışını geçti (17 varlığın hepsi yüklendikten sonra yayımlandı, "Latest" oldu; Homebrew/AUR/AppImage/Snap/site-image
@@ -392,7 +392,11 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
   kökünün ÜSTÜNE çıkılmaz (rastgele üst dizindeki dosya bağlanmasın, AGENTS §9.5), `nox.json` yoksa dokunulmaz. `-lname` kütüphane adları ve `zig-out/lib/noxrt.o` sentinel'i değişmez. Kapsam dışı (2.2): bir
   bağımlılık paketinin kendi göreli `extern`ünü paket kökünde aramak (`module` birleşik gelir, kaynak bilgisi taşınmıyor); `.o`/`.a` içeriğinin `noxc run` önbellek anahtarına girmemesi (eski statik kütüphane
   ile bayat ikili) ayrı bir eksik.
-- [ ] **11.6 2.1 ilanı.** CHANGELOG/sürüm notu, `docs/whatsnew`, site ve duyuru; yalnızca 11.1–11.5 kapanınca.
+- [x] **11.6 2.1 ilanı (v2.1.0).** CHANGELOG/sürüm notu, `docs/whatsnew`, site ve duyuru; yalnızca 11.1–11.5 kapanınca.
+- [ ] **11.10 (2.2) `noxc run` önbelleğinde aralıklı eşzamanlı silme (araştırılacak).** 2026-11-06'da `scripts/check_docs.py` (6 işçi) yerelde iki kez aralıklı olarak `ld: open() failed, errno=2 for ~/.nox/cache/run/obj/<özet>/bin`
+  ile düştü (bağlama sırasında çıktı dizini yok olmuş), üçüncü koşu temiz geçti. Önbellek tavanda (≈513 MB / 512 MiB) ve `~/.nox`u başka bir oturumun `noxc`si (Aura ajanı) de kullanıyor. 192 paralel `noxc run` (8 işçi, json/http/regex
+  import'lu) ile yeniden ÜRETİLEMEDİ; CI'da (taze önbellek) görülmedi. Şüphe: bir başka sürecin `prune`u ya da `cache prune`u derlemesi süren girdiyi siliyor (`prune` 600 sn korumasına güvenir, ama `used` işaretçisi derleme BİTİNCE yazılır). Olası güvenli
+  önlem: `prepareRunCache`te dizin açılır açılmaz `used` işaretçisi yazmak. Yeniden üretilmeden kod değiştirilmedi.
 - [ ] **11.7 (2.2) REPL — LLVM ORC JIT.** `noxc` LLVM'e bağlı değil (`.ll` + `clang`); libLLVM'i `nox.sqlite` gibi çalışma anında tembel yüklemek, `noxrt.o`yu JIT'e nesne olarak
   eklemek, satırlar arası durum için modül-global + ARC (ASAP satırlar arasında kanıtlayamaz). iOS JIT yasak → yalnızca masaüstü. Önce spike + tasarım onayı.
 - [ ] **11.8 (2.2) C FFI maliyetini sıfıra yaklaştır / C kütüphanelerini Nox'ta çalıştır.** Kullanıcı isteği (2026-11-05). Önce mevcut maliyetin ölçümü (`extern def` trampoline'ı,

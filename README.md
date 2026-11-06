@@ -49,7 +49,7 @@ Everything is at **<https://noxlang.com>** (the sources live in [`docs/`](docs/i
 - [Language reference](docs/language/index.md) and [standard library](docs/stdlib/index.md)
 - [The three APIs](docs/apis/index.md): NAPI (the Nox source contract), NNI (the native C ABI) and the Plugin API
 - [Tools](docs/tools/noxc.md): `noxc`, packages, the [noxpkg registry](https://noxpkg.noxlang.com), testing, the LSP
-- [What's new in 2.0](docs/whatsnew/2.0.md) and [migrating from 1.x](docs/whatsnew/migrating.md)
+- [What's new in 2.1](docs/whatsnew/2.1.md), [what's new in 2.0](docs/whatsnew/2.0.md) and [migrating from 1.x](docs/whatsnew/migrating.md)
 
 ## Contributing
 
