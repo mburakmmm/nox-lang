@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.0.187]
+
+### Düzeltildi
+
+- **CI: `mobile` iş akışının `android-emulator` işi aralıklı düşüyordu (DNS).** GitHub koşucusundaki emülatörün çözümleyicisi yoktu (`dns1=` boş, `ping: unknown host example.com`); `stdlib paketi` `https://example.com/` istediği için v2.0.176, 179, 184 ve 186'da `request failed` ile düştü (her seferinde aynı tanı satırı). Emülatör seçeneklerine `-dns-server 8.8.8.8,1.1.1.1` eklendi (`mobile.yml` ve `mobile-nightly.yml`).
+
 ## [2.0.186]
 
 ### Eklendi
