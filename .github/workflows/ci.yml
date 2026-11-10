@@ -235,6 +235,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq binaryen
 
+      # v2.1.36: `tests/cli/grpc_test.zig` (nox.grpc, gerçek bir grpcio sunucusuna karşı) grpcio yoksa sessizce atlanır; Linux'ta kurulur (macOS'ta pip "externally managed" olabilir, orada atlanması kabul).
+      - name: grpcio kur (Linux)
+        if: runner.os == 'Linux'
+        run: python3 -m pip install --user grpcio || python3 -m pip install --user --break-system-packages grpcio || true
+
       # v2.0.175: release arşivine giren QBE ile AYNI yamalı derleme (`scripts/build_qbe.sh`): testler, kullanıcıya giden `qbe` ile koşar ve `--target windows-x64` tam derlemesi doğrulanır.
       - name: qbe kur (yamalı, kaynaktan derle)
         run: |
@@ -774,11 +779,13 @@ jobs:
           }
 
       # Linux ve macOS ile aynı `zig build test` korpusu. qbe PATH'te,
-      # OpenSSL kurulu. `-Dwin-test-timeout=300` her testin adını basar ve
-      # 300 saniyede bitmeyen testi `TIMEOUT: <ad>` ile düşürür. İşin 180
+      # OpenSSL kurulu. `-Dwin-test-timeout=900` her testin adını basar ve
+      # 900 saniyede bitmeyen testi `TIMEOUT: <ad>` ile düşürür. İşin 180
       # dakikalık sınırı, koşucunun kendisi asılırsa yedektir.
+      # v2.1.36: 300 saniye, "TÜM golden fixture'lar" testi için artık yetmiyordu (v2.1.19, v2.1.23, v2.1.31:
+      # tek test 500+ fixture'ı Windows Debug'ta derleyip çalıştırır; korpus büyüdükçe süre 300 sn'yi aştı).
       - name: zig build test (Debug)
-        run: zig build test -Dwin-test-timeout=300
+        run: zig build test -Dwin-test-timeout=900
 
   # v2.0.8: hosted riscv64 dumanı. Tam dil korpusu değil. Sınıf/liste/spawn,
   # fibonacci, sözlük yazdırma ve satır taşıma hata sırası qemu-user altında çalışır.

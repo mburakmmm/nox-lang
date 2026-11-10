@@ -103,7 +103,7 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 
 - **Windows `nox.terminal`:** denetim yok, `TerminalError` döner (C8).
 - **Android API 26 çökmesi:** açık (bkz. `project_limitation_round_2026_11_10`); cihaz/emülatör gerektirir.
-- **Windows CI zaman aşımı:** v2.1.19 `wasm_frontend_test` (300 sn) ve v2.1.23 `codegen_golden_test` "TÜM golden fixture'lar" (300 sn, `NOX_WIN_TEST_TIMEOUT_SEC`) zaman aşımı. Yük kaynaklı olabilir; korpus büyüdükçe Debug Windows'ta eşik yaklaşıyor. **İzle:** art arda iki Windows koşusunda tekrar ederse eşiği/korpusu böl; tek seferlik ise yük say.
+- **Windows CI zaman aşımı:** v2.1.19 `wasm_frontend_test`, v2.1.23 ve v2.1.31 `codegen_golden_test` "TÜM golden fixture'lar" 300 sn'yi aştı. v2.1.36'da `-Dwin-test-timeout=900`. Bu test tek parçadır ve korpusla büyür: 900 sn'yi de aşarsa fixture'ları birkaç teste bölmek (kalıcı çözüm) gerekir.
 - **aarch64 stack-smash:** KAPANDI (2026-10-08); "çözüldü" kabul et, yeniden açma.
 
 ---

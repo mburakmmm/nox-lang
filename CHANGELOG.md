@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.36]
+
+### Düzeltildi (CI)
+
+- Windows tam test işinde `-Dwin-test-timeout` 300'den 900 saniyeye çıkarıldı: tek bir test ("TÜM golden fixture'lar", 500+ fixture) Windows Debug'ta 300 sn'yi aşıyordu (v2.1.19, v2.1.23, v2.1.31 CI koşuları). Bekçi gerçek asılmaları yakalamaya devam eder.
+- Linux CI'ye `grpcio` kurulumu eklendi: `tests/cli/grpc_test.zig` artık orada atlanmadan gerçek bir gRPC sunucusuna (düz ve TLS) karşı koşar.
+
 ## [2.1.35]
 
 ### Eklendi
