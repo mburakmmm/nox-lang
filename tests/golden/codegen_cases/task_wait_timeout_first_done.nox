@@ -1,0 +1,29 @@
+# Ember NL-003: Task.is_done/wait/wait_any — zaman aşımlı kooperatif bekleme (iptal etmez, tüketmez).
+import nox.time
+
+async def work(ms: int, v: int) -> int:
+    nox.time.sleep_ms(ms)
+    return v
+
+async def run() -> None:
+    fast: Task[int] = spawn work(20, 7)
+    slow: Task[int] = spawn work(400, 9)
+    print(fast.wait(1000))
+    print(await fast)
+    print(slow.wait(50))
+    print(slow.is_done())
+    slow.cancel()
+    a: Task[int] = spawn work(300, 1)
+    b: Task[str] = spawn lazy(10)
+    print(a.wait_any(b, 1000))
+    c: Task[int] = spawn work(500, 3)
+    d: Task[int] = spawn work(600, 4)
+    print(c.wait_any(d, 30))
+    print(await b)
+
+async def lazy(ms: int) -> str:
+    nox.time.sleep_ms(ms)
+    return "b"
+
+m: Task[None] = spawn run()
+await m

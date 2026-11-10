@@ -1,0 +1,28 @@
+# Ember NL-002: fiber içindeki sleep_ms yalnız çağıran fiber'ı askıya alır; yavaş uyuyan görev beklerken ticker ilerler
+# (bloke eden uyku "slow"u tick'lerden ÖNCE yazdırırdı).
+import nox.time
+
+async def sleeper(name: str, ms: int, out: Channel[int]) -> None:
+    nox.time.sleep_ms(ms)
+    print(name)
+    await out.send(1)
+
+async def ticker(out: Channel[int]) -> None:
+    i: int = 0
+    while i < 3:
+        nox.time.sleep_ms(30)
+        print("tick")
+        i = i + 1
+    await out.send(1)
+
+async def main_task() -> None:
+    done: Channel[int] = Channel[int](0)
+    a: Task[None] = spawn sleeper("slow", 200, done)
+    b: Task[None] = spawn ticker(done)
+    await done.recv()
+    await done.recv()
+    await a
+    await b
+
+m: Task[None] = spawn main_task()
+await m

@@ -1995,7 +1995,11 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     // Faz SC.2: `t.cancel()` — checker ZATEN 0-argümanlı `cancel`i
     // doğruladı, `await` GEREKMEDEN NORMAL metod-çağrısı yolunda ele
     // alınır (`.task_local`nin AYNI ilkesi).
-    if (obj.heap == .task) return async_thread_mod.genTaskCancel(self, obj);
+    if (obj.heap == .task) {
+        if (std.mem.eql(u8, a.attr, "is_done")) return async_thread_mod.genTaskIsDone(self, obj);
+        if (std.mem.eql(u8, a.attr, "wait") or std.mem.eql(u8, a.attr, "wait_any")) return async_thread_mod.genTaskWait(self, obj, a, args);
+        return async_thread_mod.genTaskCancel(self, obj);
+    }
     if (obj.heap != .class) return error.Unsupported;
     try self.checkNoLowlevelEscape(obj);
     const cinfo = self.classes.get(obj.class_name.?).?;

@@ -29690,3 +29690,10 @@ Kaynak: aether/nyx/aura/nova/pulse `NOX_LIMITATIONS` belgeleri; kayıt `project/
 - **Jenerik taban:** `ast.ClassDef.base_args`. `Checker.resolveGenericBases` (`collectProtocols`tan sonra, `registerSignatures`tan ÖNCE) `Base[int]`yi `typeExprToType` ile somutlaştırır (`defer_class_body_checks` açık: örnek gövdeleri `pending_inst_bodies`e gider ve `registerSignatures`tan sonra `checkPendingInstBodies` ile denetlenir, çünkü fonksiyon imzaları o sırada kayıtlı değildir), `cd.base`i örnek adına çevirir. Sonrası sıradan tekli kalıtımdır.
 - **`spawn`:** callee `.identifier` (yerel ya da `from_imports`), nitelikli modül yolu (`imported_modules`) ya da `obj.metot`. Metotta `resolveSpawnAttributeCallee` `__spawn_<Sınıf>_<metot>(__self: Sınıf, ...) -> R { return __self.metot(...) }` async fonksiyonunu bir kez sentezler (`registerFunc` + `instantiations` + `checkFunctionBody`), çağrıyı yerinde `spawn __spawn_...(obj, args...)`a çevirir. Codegen değişmedi.
 - **`nox_mem_stat`:** `RuntimeState.mem_stats_on` + `usize` atomik sayaçlar; `nox_rc_alloc`/`nox_rc_free_payload` yalnızca bayrak açıkken sayar.
+
+### 3.374 Kooperatif uyku, `Task.wait*`, `nox.signal` (v2.1.6)
+
+- **`sleep_ms`**: `nox_time_sleep_ms_raw` fiber içindeyse `fiber_net.sleepCooperative` (hiç yazılmayan boru + `registerWithTimeout`) kullanır; freestanding/wasm/Windows'ta eski yol. `fiber_net` yalnızca bu hedeflerde içe aktarılır.
+- **`Task.is_done/wait/wait_any`**: yerleşik `Task` metotları (checker `.task` dalı, `genTaskIsDone`/`genTaskWait`). `nox_task_is_done` iki köprüde (native/wasm); `nox_task_wait[_any]` `stdlib_shims/task_wait.zig`de 1→10 ms yoklamalı döngü (`nox_time_sleep_ms_raw`). `Task[T]` jenerik işlev imzalarında çözülemediğinden yardımcılar stdlib işlevi değil metottur.
+- **`nox.signal`**: `stdlib_shims/signal.zig` — sinyal başına atomik bayrak, `sigaction` işleyicisi yalnızca bayrağı kurar. Yetenek: `process`. Extern adları `_raw` soneklidir (`install` gibi sarmalayıcı adlarıyla çakışmamak için).
+- Açık: `list[Task[T]]`/`TaskGroup` (codegen `Unsupported`: liste eleman bırakma/tutma `Task`ı bilmiyor), CPU-bound görev sonlandırma.

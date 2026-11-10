@@ -1,0 +1,23 @@
+# Ember NL-008: nox.signal — bayrak-kuran işleyici, take/pending/wait; wait kooperatiftir (killer görevi 40 ms sonra sinyal gönderir).
+import nox.signal
+import nox.time
+
+s: int = nox.signal.sigusr1()
+print(nox.signal.install(s))
+print(nox.signal.pending(s))
+print(nox.signal.send_self(s))
+print(nox.signal.pending(s))
+print(nox.signal.take(s), nox.signal.take(s))
+
+async def killer(sig: int) -> None:
+    nox.time.sleep_ms(40)
+    nox.signal.send_self(sig)
+
+async def run() -> None:
+    k: Task[None] = spawn killer(s)
+    print(nox.signal.wait(s, 2000))
+    print(nox.signal.wait(s, 30))
+    await k
+
+m: Task[None] = spawn run()
+await m

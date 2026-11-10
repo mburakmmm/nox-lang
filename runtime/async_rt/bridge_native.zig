@@ -321,6 +321,12 @@ pub export fn nox_task_cancel(task: ?*anyopaque) void {
     t.cancel_requested.store(true, .release);
 }
 
+/// `t.is_done()`: görev bitti mi (başarıyla ya da istisnayla)? Bloke etmez, tüketmez: sonucu/istisnayı `await` yine alır.
+pub export fn nox_task_is_done(task: ?*anyopaque) i32 {
+    const t: *TaskI64 = @ptrCast(@alignCast(task orelse return 0));
+    return if (t.state.load(.acquire) == TaskI64.COMPLETED) 1 else 0;
+}
+
 /// ŞU AN çalışan fiber'ın (`bridge.currentFiber()`) KENDİ Task'ı iptal
 /// istendi Mİ — `genAwaitExpr`nin, KENDİ `await`ini gerçekleştirmeden
 /// ÖNCE çağırdığı kontrol. Fiber YOKSA (main/senkron kod) VEYA `cancel_flag`

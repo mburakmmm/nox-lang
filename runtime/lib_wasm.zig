@@ -40,6 +40,8 @@ pub const math_shim = @import("stdlib_shims/math.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
 pub const path_shim = @import("stdlib_shims/path.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
+pub const task_wait = @import("stdlib_shims/task_wait.zig");
+pub const signal_shim = @import("stdlib_shims/signal.zig");
 pub const random_shim = @import("stdlib_shims/random.zig");
 pub const json_shim = @import("stdlib_shims/json.zig");
 pub const unicode_shim = @import("stdlib_shims/unicode.zig");
@@ -90,6 +92,8 @@ comptime {
     _ = os_shim;
     _ = path_shim;
     _ = time_shim;
+    _ = task_wait;
+    _ = signal_shim;
     _ = random_shim;
     _ = json_shim;
     _ = unicode_shim;

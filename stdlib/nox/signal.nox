@@ -1,0 +1,66 @@
+# nox.signal — işlem sinyallerine abonelik (SIGINT/SIGTERM/SIGHUP/SIGUSR1/SIGUSR2). Ember NL-008.
+#
+# İşleyici yalnızca bir bayrak kurar (async-signal-safe); Nox kodu bayrağı kendi akışında okur. Tipik graceful-shutdown döngüsü:
+#
+#     nox.signal.install(nox.signal.sigterm())
+#     while not nox.signal.take(nox.signal.sigterm()):
+#         ... iş yap ...
+#         nox.time.sleep_ms(50)     # fiber içinde yalnızca bu görevi askıya alır
+#     ... aktif işleri boşalt, çık ...
+#
+# `install`: sinyali bayrak-kuran işleyiciye bağlar. `pending`: bayrak kurulu mu (tüketmez). `take`: bayrağı oku ve temizle.
+# `wait(sig, timeout_ms)`: sinyal gelene ya da süre dolana kadar kooperatif bekler, geldiyse bayrağı tüketip True döner.
+# Windows, wasm ve freestanding'de sinyal yoktur: `install` False döner. `nox.http.serve*` kendi SIGTERM/SIGINT işleyicisini
+# kurar; son kuran kazanır, ikisini birlikte kullanmayın.
+extern def nox_signal_number_raw(which: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_signal_install_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_signal_pending_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_signal_take_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_signal_raise_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
+
+import nox.time
+
+def sigint() -> int:
+    return nox_signal_number_raw(0)
+
+def sigterm() -> int:
+    return nox_signal_number_raw(1)
+
+def sighup() -> int:
+    return nox_signal_number_raw(2)
+
+def sigusr1() -> int:
+    return nox_signal_number_raw(3)
+
+def sigusr2() -> int:
+    return nox_signal_number_raw(4)
+
+def install(sig: int) -> bool:
+    return nox_signal_install_raw(sig) == 1
+
+def pending(sig: int) -> bool:
+    return nox_signal_pending_raw(sig) == 1
+
+def take(sig: int) -> bool:
+    return nox_signal_take_raw(sig) == 1
+
+# Bu sürece `sig` sinyalini gönderir (testler ve kendi kendini durdurma için).
+def send_self(sig: int) -> bool:
+    return nox_signal_raise_raw(sig) == 1
+
+def wait(sig: int, timeout_ms: int) -> bool:
+    started: nox.time.Instant = nox.time.instant_now()
+    poll: int = 1
+    while True:
+        if nox_signal_take_raw(sig) == 1:
+            return True
+        remaining: int = timeout_ms - started.elapsed_ms()
+        if remaining <= 0:
+            return False
+        step: int = poll
+        if step > remaining:
+            step = remaining
+        nox.time.sleep_ms(step)
+        if poll < 10:
+            poll = poll * 2
+    return False

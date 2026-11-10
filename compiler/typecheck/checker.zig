@@ -1475,6 +1475,7 @@ pub const Checker = struct {
         .{ .name = "plugin", .caps = &.{.dynamic_code} },
         .{ .name = "postgres", .caps = &.{.network} },
         .{ .name = "process", .caps = &.{.process} },
+        .{ .name = "signal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },
         .{ .name = "reflect", .caps = &.{} },
         .{ .name = "regex", .caps = &.{} },
@@ -8879,7 +8880,24 @@ pub const Checker = struct {
                         if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'cancel' takes no arguments", .{});
                         return .none;
                     }
-                    return self.fail(error.UndefinedMethod, "Task has no method '{s}' (only cancel)", .{a.attr});
+                    // `t.is_done()`: bitti mi? Bloke etmez; sonucu/istisnayı `await` yine alır. `nox.tasks.wait`/`first_done` bunun üzerine kuruludur.
+                    if (std.mem.eql(u8, a.attr, "is_done")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'is_done' takes no arguments", .{});
+                        return .boolean;
+                    }
+                    // `t.wait(ms) -> bool` ve `t.wait_any(other, ms) -> int`: zaman aşımlı kooperatif bekleme (iptal etmez, tüketmez).
+                    if (std.mem.eql(u8, a.attr, "wait")) {
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'wait' takes exactly 1 argument (timeout in milliseconds)", .{});
+                        if ((try self.checkExpr(ctx, c.args[0])) != .int) return self.fail(error.TypeMismatch, "the timeout of 'wait' must be an int (milliseconds)", .{});
+                        return .boolean;
+                    }
+                    if (std.mem.eql(u8, a.attr, "wait_any")) {
+                        if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'wait_any' takes 2 arguments (another Task, timeout in milliseconds)", .{});
+                        if ((try self.checkExpr(ctx, c.args[0])) != .task) return self.fail(error.TypeMismatch, "the first argument of 'wait_any' must be a Task", .{});
+                        if ((try self.checkExpr(ctx, c.args[1])) != .int) return self.fail(error.TypeMismatch, "the timeout of 'wait_any' must be an int (milliseconds)", .{});
+                        return .int;
+                    }
+                    return self.fail(error.UndefinedMethod, "Task has no method '{s}' (only cancel, is_done, wait and wait_any)", .{a.attr});
                 }
                 if (obj_t == .channel) {
                     const elem_t = obj_t.channel.*;

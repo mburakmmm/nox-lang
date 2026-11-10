@@ -18,6 +18,7 @@ pub const schedulerReady = if (@hasDecl(impl, "schedulerReady")) impl.schedulerR
     }
 }.f;
 pub const currentTaskLocals = impl.currentTaskLocals;
+pub const nox_task_is_done = impl.nox_task_is_done;
 pub const spawnPinnedForCurrentThread = impl.spawnPinnedForCurrentThread;
 pub const nox_async_init = impl.nox_async_init;
 pub const nox_async_deinit = impl.nox_async_deinit;

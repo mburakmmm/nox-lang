@@ -1070,6 +1070,32 @@ pub fn genTaskCancel(self: *Codegen, task_val: Value) CodegenError!Value {
     return .{ .text = "0", .qtype = .none };
 }
 
+/// `t.is_done()` — bloke etmeyen, sonucu tüketmeyen "bitti mi?" sorgusu (`bool`).
+pub fn genTaskIsDone(self: *Codegen, task_val: Value) CodegenError!Value {
+    const r = try self.newTemp();
+    try self.qbeCall(.{ .name = r, .ty = .w }, "$nox_task_is_done", &.{.{ .ty = .l, .text = task_val.text }});
+    return .{ .text = r, .qtype = .w };
+}
+
+/// `t.wait(ms)` (bool) ve `t.wait_any(other, ms)` (int: 0 = t, 1 = other, -1 = zaman aşımı). Görevi iptal etmez ve tüketmez.
+pub fn genTaskWait(self: *Codegen, task_val: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    const r = try self.newTemp();
+    if (std.mem.eql(u8, a.attr, "wait")) {
+        if (args.len != 1) return error.Unsupported;
+        const ms = try self.convert(try self.genExpr(args[0]), .l);
+        try self.qbeCall(.{ .name = r, .ty = .w }, "$nox_task_wait", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text }, .{ .ty = .l, .text = ms.text } });
+        return .{ .text = r, .qtype = .w };
+    }
+    if (args.len != 2) return error.Unsupported;
+    const other = try self.genExpr(args[0]);
+    const ms = try self.convert(try self.genExpr(args[1]), .l);
+    try self.qbeCall(.{ .name = r, .ty = .w }, "$nox_task_wait_any", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text }, .{ .ty = .l, .text = other.text }, .{ .ty = .l, .text = ms.text } });
+    // `.w` sonuç `int` (l) bekleyen kullanım yerleri için işaretli genişletilir.
+    const widened = try self.newTemp();
+    try self.qbeOp1(widened, .l, "extsw", r);
+    return .{ .text = widened, .qtype = .l };
+}
+
 /// `ch.send(v)`/`ch.recv()` — YALNIZCA `await` üzerinden (bkz.
 /// `genAwaitExpr`) çağrılır, `genCall`in normal metod-çağrısı yolundan
 /// GEÇMEZ (`Channel` `self.classes`de yok, yerleşik bir tiptir). `ch_val`

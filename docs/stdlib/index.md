@@ -26,7 +26,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 | `filesystem` | files and directories | `fs`, `sqlite` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql` |
 | `network` + `filesystem` | both | `transfer` |
-| `process` | the process and its children | `os`, `process` |
+| `process` | the process and its children | `os`, `process`, `signal` |
 | `threads` | native threads | `thread`, `atomic` |
 | `clock` | reading the system clock | `log` (and the clock functions of `time`) |
 | `shared_memory` | cross-process memory | `sharedmem` |
@@ -73,6 +73,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.path`](path.md) | path manipulation |
 | [`nox.os`](os.md) | arguments, environment variables, working directory, exit |
 | [`nox.process`](process.md) | run external programs |
+| [`nox.signal`](signal.md) | `SIGINT`/`SIGTERM`/… as flags a task can poll |
 | [`nox.console`](console.md), [`nox.log`](log.md) | levelled output without / with timestamps |
 
 ### Formats and encodings

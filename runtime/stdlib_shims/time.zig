@@ -36,6 +36,15 @@ const builtin = @import("builtin");
 /// sembolleri ÇÖZEBİLMESİ GEREKİR (çağrılmasalar bile).
 const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
 
+/// Ember NL-002: fiber içindeki `sleep_ms` zamanlayıcı iş parçacığını BLOKE ETMEZ — yalnız çağıran fiber askıya alınır, diğer fiber'lar
+/// ilerler (`fiber_net.sleepCooperative`, hiç yazılmayan bir boru + reaktör zaman aşımı). Fiber dışında (ya da freestanding/wasm/Windows'ta)
+/// eski iş parçacığı uykusu kalır. `fiber_net` ağ yığınını çeker; freestanding ve wasm derlemeleri ona bağlanmaz.
+const fiber_net = if (is_freestanding or builtin.cpu.arch.isWasm()) struct {
+    fn sleepCooperative(_: u32) bool {
+        return false;
+    }
+} else @import("fiber_net.zig");
+
 /// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): bu Zig sürümünde
 /// `std.c.clockid_t` Windows İçin `void`dir (`.windows` dalı HİÇ
 /// case'lenmemiş, `else => void`) — `clock_gettime`/`nanosleep` BU YÜZDEN
@@ -111,6 +120,7 @@ export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
     }
     if (comptime is_freestanding) return;
     if (ms <= 0) return;
+    if (fiber_net.sleepCooperative(@intCast(@min(ms, std.math.maxInt(u32))))) return;
     if (builtin.os.tag == .windows) {
         WinTime.Sleep(@intCast(ms));
         return;

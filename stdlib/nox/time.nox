@@ -2,11 +2,9 @@
 # time.zig`ye sarar. İkisi de ARC-dışı (`with_rt` yok, yalnızca `int` alır/
 # döner).
 #
-# BİLİNÇLİ v1 SINIRLAMASI: `sleep_ms` bir fiber İÇİNDEYKEN bile GERÇEKTEN
-# BLOKE OLUR — `runtime/async_rt`in kqueue reaktörü (bkz. D.0) YALNIZCA
-# soket G/Ç'si İÇİN hazır-olma bildirimi sağlar, bir ZAMANLAYICI (timer)
-# olayı İÇİN DEĞİL. `nox.http.serve` İÇİNDEKİ bir `handle`in `sleep_ms`
-# çağırması TÜM sunucuyu o süre boyunca DURDURUR.
+# `sleep_ms` bir fiber (ör. `async def` görevi ya da `nox.http.serve` işleyicisi) İÇİNDEYKEN yalnızca ÇAĞIRAN fiber'ı askıya alır; zamanlayıcı
+# iş parçacığı o sürede diğer fiber'ları çalıştırır (hiç yazılmayan bir boru + reaktör zaman aşımı, bkz. `fiber_net.sleepCooperative`).
+# Fiber DIŞINDA (üst düzey kod, `nox.thread` iş parçacığı) ve Windows'ta `sleep_ms` iş parçacığını bloke eder.
 #
 # `now_ms`/`sleep_ms` extern def'leri `_raw` SONEKİ TAŞIR — AYNI KISA adlı
 # sarmalayıcılarla (module_loader'ın mangle ETTİĞİ "nox_time_now_ms" gibi)

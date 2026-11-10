@@ -172,6 +172,12 @@ pub export fn nox_task_retain(task: ?*anyopaque) void {
     t.refcount += 1;
 }
 
+/// `t.is_done()`: görev bitti mi? Bloke etmez, tüketmez.
+pub export fn nox_task_is_done(task: ?*anyopaque) i32 {
+    const t: *Task = @ptrCast(@alignCast(task orelse return 0));
+    return if (t.state == .done) 1 else 0;
+}
+
 pub export fn nox_task_cancel(task: ?*anyopaque) void {
     const t: *Task = @ptrCast(@alignCast(task orelse return));
     t.cancel_requested = true;

@@ -16,7 +16,7 @@ available everywhere.
 |---|---|
 | `now_ms()` | milliseconds since the Unix epoch (wall clock; can jump if the system clock is changed) |
 | `boot_ms()` | a monotonic millisecond counter that **includes time the device spent suspended**; only differences are meaningful |
-| `sleep_ms(ms)` | blocks the **current thread** for `ms` milliseconds |
+| `sleep_ms(ms)` | waits `ms` milliseconds: inside a task it suspends only that task (other tasks keep running), elsewhere it blocks the thread |
 | `now()` | the current time as a `DateTime` (UTC) |
 | `from_epoch_ms(ms)` | converts epoch milliseconds to a `DateTime` (UTC) |
 | `instant_now()` | a monotonic `Instant` for measuring intervals (see "Clocks and device sleep") |
@@ -87,6 +87,6 @@ True True
 
 ## Notes
 
-- `sleep_ms` blocks its thread. Under the default multi-core scheduler other tasks keep running on other workers; under QBE's single-threaded scheduler the
-  whole program waits ([Concurrency](../language/concurrency.md#the-scheduler)).
+- `sleep_ms` inside a task suspends only that task on both backends; outside a task (top-level code of a plain thread, Windows) it blocks the thread
+  ([Concurrency](../language/concurrency.md#the-scheduler)).
 - There is no time-zone support: `DateTime` is UTC. Format with `nox.time.pad2` or [f-string](../language/strings.md#f-strings) format specs.

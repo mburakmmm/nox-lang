@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.6]
+
+### Eklendi
+
+- **`nox.time.sleep_ms` fiber içinde kooperatif** (Ember NL-002): bir görev (`async def`, HTTP işleyicisi) `sleep_ms` çağırınca yalnızca o görev askıya alınır, zamanlayıcı diğer görevleri çalıştırır (iki arka uçta). Fiber dışında ve Windows'ta iş parçacığı uykusu kalır. Yeni sözdizimi yok.
+- **`Task` için `is_done()`, `wait(ms)`, `wait_any(other, ms)`** (Ember NL-003): bloke etmeyen "bitti mi?", zaman aşımlı kooperatif bekleme ve iki görevden ilk bitenin sıra numarası (`0`, `1`, zaman aşımında `-1`). Görevi iptal etmezler ve sonucunu tüketmezler; zaman aşımında istenirse `t.cancel()` çağrılır.
+- **`nox.signal`** (Ember NL-008): `SIGINT`/`SIGTERM`/`SIGHUP`/`SIGUSR1`/`SIGUSR2` için `install`, `pending`, `take`, `wait(sig, timeout_ms)`, `send_self`. İşleyici yalnızca async-signal-safe bir bayrak kurar; Nox kodu bayrağı kendi görevinde okur. Windows/wasm/freestanding'de sinyal yoktur (`install` `False`).
+
 ## [2.1.5]
 
 ### Eklendi

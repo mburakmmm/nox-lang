@@ -28,10 +28,10 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 
 ## C. Karar gerektirenler (AGENTS.md §16: mimariyi etkiler, sorulmadan yapılmaz)
 
-- [~] **C1 ember NL-002/003** fiber'ı bloklamayan `sleep_async_ms`, `select`/`race`/zaman aşımı.
+- [x] **C1 ember NL-002/003** fiber'ı bloklamayan uyku (`sleep_ms` fiber içinde kooperatif) ve zaman aşımı/ilk biten (`Task.wait`, `wait_any`) — **KAPANDI v2.1.6** (Channel için zaman aşımlı recv yok: görev sarmalayıcısı kullanın).
 - [~] **C2 ember NL-005** `list[Task[T]]` / `TaskGroup`.
 - [~] **C3 ember NL-004** CPU-bound görevi sonlandırma sözleşmesi.
-- [~] **C4 ember NL-008** sinyal abonelik API'si.
+- [x] **C4 ember NL-008** sinyal abonelik API'si (`nox.signal`) — **KAPANDI v2.1.6**.
 - [~] **C5 ember NL-006/007/013** Postgres: SQLSTATE, havuz, sorgu zaman aşımı/iptal, fiber-uyumlu I/O.
 - [~] **C6 ember NL-001** `nox.redis`.
 - [~] **C7 ember NL-009** JSON tam sayı hassasiyeti (2^53 üstü).

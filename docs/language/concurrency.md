@@ -87,6 +87,36 @@ await t0
 worker cancelled
 ```
 
+### Timeouts and waiting for the first of two tasks
+
+`t.is_done()` asks, without blocking and without consuming the result, whether the task has finished. `t.wait(ms)` waits cooperatively for it up to `ms`
+milliseconds and returns whether it finished; `t.wait_any(other, ms)` waits for whichever of the two tasks finishes first and returns `0` (`t`), `1` (`other`) or
+`-1` (timeout). None of them cancels a task or consumes its result: after a `True`, `await t` returns immediately; after a timeout call `t.cancel()` if the work
+should stop.
+
+```nox
+import nox.time
+
+async def work(ms: int, v: int) -> int:
+    nox.time.sleep_ms(ms)
+    return v
+
+async def run() -> None:
+    slow: Task[int] = spawn work(400, 1)
+    if slow.wait(50):
+        print(await slow)
+    else:
+        print("timed out")
+        slow.cancel()
+
+t0: Task[None] = spawn run()
+await t0
+```
+
+```output
+timed out
+```
+
 ### Async generators and `async for`
 
 An `async def` whose body contains `yield` is an **async generator**. Calling it does not start a task (it is not `spawn`ed): it returns a
@@ -285,14 +315,14 @@ All tasks run on fibers scheduled by the runtime:
   using `nox.http.serve_multicore*` or `nox.thread.pool_run`) and can be overridden at run time with the `NOX_POOL_WORKERS` environment
   variable. Reference counting is atomic on this backend, so values may safely be shared between tasks on different workers.
 - **QBE backend:** a **single-threaded cooperative scheduler**. Tasks interleave only at `await` points (and at blocking I/O, which is
-  non-blocking at the fiber level); `time.sleep_ms` blocks the one thread.
+  non-blocking at the fiber level); `time.sleep_ms` inside a task suspends only that task.
 
 Consequences for portable code:
 
 - Do not rely on tasks running in parallel *or* strictly interleaved — write them to be correct under both.
 - Data shared between tasks should flow through channels. Module-level variables are not a safe way to communicate between tasks that may run on different
   workers (each worker keeps its own copy of the module state); use channels, `nox.atomic` counters, or `nox.sharedmem`.
-- `time.sleep_ms` blocks its worker; with the M:N pool other tasks continue on other workers, with QBE everything waits.
+- `time.sleep_ms` inside a task (an `async def`, an HTTP handler) suspends only that task on both backends; outside a task (and on Windows) it blocks its thread.
 - The argument and result types of `spawn`/`nox.thread.start` are restricted on QBE to scalars, `str`, `None`, `ptr` and thread
   channels; on LLVM lists, dictionaries, class instances, tasks and channels are accepted too.
 
