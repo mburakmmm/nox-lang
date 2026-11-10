@@ -1,0 +1,274 @@
+# nox.protobuf — Protocol Buffers TEL FORMATI yazıcısı/okuyucusu (Pulse NOX-CAP-PROTOBUF). Şema/kod üretici YOK: alan numaralarını siz verirsiniz (OTLP, gRPC yükleri, kendi mesajlarınız için yeterli).
+#
+#     import nox.protobuf
+#     from nox.protobuf import Writer, Reader
+#
+#     w: Writer = nox.protobuf.writer()
+#     w.varint(1, 150)                 # int32/int64/uint32/uint64/enum
+#     w.string(2, "testing")
+#     inner: Writer = nox.protobuf.writer()
+#     inner.sint(1, -5)                # sint32/sint64 (zigzag)
+#     w.message(3, inner)              # iç içe mesaj
+#     data: list[int] = w.to_bytes()   # ya da w.to_str() (bayt-tam str, HTTP gövdesi için)
+#
+#     r: Reader = nox.protobuf.reader(data)
+#     while r.next_field():
+#         if r.field == 1:
+#             print(r.read_varint())
+#         elif r.field == 2:
+#             print(r.read_string())
+#         else:
+#             r.skip()                 # bilinmeyen alanlar atlanır (ileri uyumluluk)
+#
+# Tel tipleri: 0 varint, 1 fixed64, 2 uzunluk-önekli (string/bytes/mesaj/packed), 5 fixed32. Grup (3/4) desteklenmez. Negatif `int32/int64` 10 bayt varint olarak yazılır (spesifikasyon gereği).
+# Tüm sayılar Nox `int` (64 bit işaretli); `uint64`'ün üst yarısı negatif görünür (bit deseni korunur). Bozuk/kesik girdi `ProtobufError` fırlatır.
+import nox.bytes
+
+extern def nox_float_bits_raw(x: float) -> int from "zig-out/lib/noxrt.o"
+extern def nox_float_from_bits_raw(b: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_float32_bits_raw(x: float) -> int from "zig-out/lib/noxrt.o"
+extern def nox_float32_from_bits_raw(b: int) -> float from "zig-out/lib/noxrt.o"
+
+class ProtobufError(Exception):
+    def __init__(self: ProtobufError, message: str) -> None:
+        super().__init__(message)
+
+class Writer:
+    buf: list[int]
+
+    def __init__(self: Writer) -> None:
+        self.buf = []
+
+    def _put_varint(self: Writer, v: int) -> None:
+        n: int = v
+        while True:
+            b: int = n & 127
+            # 64 bitlik değerde mantıksal sağa kaydırma (aritmetik kaydırma + üst 7 bit maskesi).
+            n = (n >> 7) & 144115188075855871
+            if n != 0:
+                self.buf.append(b | 128)
+            else:
+                self.buf.append(b)
+                break
+
+    def _put_tag(self: Writer, field: int, wire_type: int) -> None:
+        if field < 1:
+            raise ProtobufError("field number must be >= 1")
+        self._put_varint((field << 3) | wire_type)
+
+    def _put_fixed(self: Writer, v: int, nbytes: int) -> None:
+        i: int = 0
+        while i < nbytes:
+            self.buf.append((v >> (8 * i)) & 255)
+            i += 1
+
+    def _put_bytes(self: Writer, data: list[int]) -> None:
+        self._put_varint(len(data))
+        for b in data:
+            self.buf.append(b)
+
+    # int32/int64/uint32/uint64/bool/enum alanı (tel tipi 0).
+    def varint(self: Writer, field: int, v: int) -> None:
+        self._put_tag(field, 0)
+        self._put_varint(v)
+
+    def boolean(self: Writer, field: int, v: bool) -> None:
+        self._put_tag(field, 0)
+        if v:
+            self._put_varint(1)
+        else:
+            self._put_varint(0)
+
+    # sint32/sint64 alanı (zigzag).
+    def sint(self: Writer, field: int, v: int) -> None:
+        self._put_tag(field, 0)
+        self._put_varint((v << 1) ^ (v >> 63))
+
+    def fixed64(self: Writer, field: int, v: int) -> None:
+        self._put_tag(field, 1)
+        self._put_fixed(v, 8)
+
+    def fixed32(self: Writer, field: int, v: int) -> None:
+        self._put_tag(field, 5)
+        self._put_fixed(v, 4)
+
+    def double(self: Writer, field: int, v: float) -> None:
+        self.fixed64(field, nox_float_bits_raw(v))
+
+    def float32(self: Writer, field: int, v: float) -> None:
+        self.fixed32(field, nox_float32_bits_raw(v))
+
+    def string(self: Writer, field: int, s: str) -> None:
+        self._put_tag(field, 2)
+        self._put_bytes(nox.bytes.list_from_str(s))
+
+    def bytes_field(self: Writer, field: int, data: list[int]) -> None:
+        self._put_tag(field, 2)
+        self._put_bytes(data)
+
+    # İç içe mesaj: `inner` ayrı bir Writer'da hazırlanır.
+    def message(self: Writer, field: int, inner: Writer) -> None:
+        self._put_tag(field, 2)
+        self._put_bytes(inner.buf)
+
+    # packed repeated varint alanı (proto3 varsayılanı).
+    def packed_varints(self: Writer, field: int, values: list[int]) -> None:
+        body: Writer = Writer()
+        for v in values:
+            body._put_varint(v)
+        self._put_tag(field, 2)
+        self._put_bytes(body.buf)
+
+    def size(self: Writer) -> int:
+        return len(self.buf)
+
+    def to_bytes(self: Writer) -> list[int]:
+        return self.buf
+
+    # Bayt-tam `str` (NUL dahil): HTTP gövdesi ya da nox.udp yükü olarak gönderilebilir.
+    def to_str(self: Writer) -> str:
+        return nox.bytes.str_from_list(self.buf)
+
+class Reader:
+    data: list[int]
+    pos: int
+    end: int
+    # Son `next_field()`in okuduğu alan numarası ve tel tipi.
+    field: int
+    wire_type: int
+
+    def __init__(self: Reader, data: list[int], pos: int, end: int) -> None:
+        self.data = data
+        self.pos = pos
+        self.end = end
+        self.field = 0
+        self.wire_type = 0
+
+    def _need(self: Reader, n: int) -> None:
+        if n < 0 or self.pos + n > self.end:
+            raise ProtobufError("truncated message")
+
+    def _varint(self: Reader) -> int:
+        result: int = 0
+        shift: int = 0
+        while True:
+            if self.pos >= self.end:
+                raise ProtobufError("truncated varint")
+            b: int = self.data[self.pos]
+            self.pos += 1
+            if shift < 64:
+                result = result | ((b & 127) << shift)
+            if (b & 128) == 0:
+                break
+            shift += 7
+            if shift > 63:
+                raise ProtobufError("varint is longer than 10 bytes")
+        return result
+
+    def _fixed(self: Reader, nbytes: int) -> int:
+        self._need(nbytes)
+        result: int = 0
+        i: int = 0
+        while i < nbytes:
+            result = result | (self.data[self.pos + i] << (8 * i))
+            i += 1
+        self.pos += nbytes
+        return result
+
+    def _expect(self: Reader, wire_type: int) -> None:
+        if self.wire_type != wire_type:
+            raise ProtobufError("field " + str(self.field) + " has wire type " + str(self.wire_type) + ", expected " + str(wire_type))
+
+    # Sonraki alanın etiketini okur; mesaj bittiyse False.
+    def next_field(self: Reader) -> bool:
+        if self.pos >= self.end:
+            return False
+        tag: int = self._varint()
+        self.field = tag >> 3
+        self.wire_type = tag & 7
+        if self.field == 0:
+            raise ProtobufError("invalid field number 0")
+        return True
+
+    def read_varint(self: Reader) -> int:
+        self._expect(0)
+        return self._varint()
+
+    def read_bool(self: Reader) -> bool:
+        return self.read_varint() != 0
+
+    def read_sint(self: Reader) -> int:
+        u: int = self.read_varint()
+        return ((u >> 1) & 9223372036854775807) ^ (0 - (u & 1))
+
+    def read_fixed64(self: Reader) -> int:
+        self._expect(1)
+        return self._fixed(8)
+
+    # Sıfır genişletilmiş (uint32/fixed32).
+    def read_fixed32(self: Reader) -> int:
+        self._expect(5)
+        return self._fixed(4)
+
+    # İşaret genişletilmiş (sfixed32/int32 fixed).
+    def read_sfixed32(self: Reader) -> int:
+        v: int = self.read_fixed32()
+        if v >= 2147483648:
+            return v - 4294967296
+        return v
+
+    def read_double(self: Reader) -> float:
+        return nox_float_from_bits_raw(self.read_fixed64())
+
+    def read_float32(self: Reader) -> float:
+        return nox_float32_from_bits_raw(self.read_fixed32())
+
+    def read_bytes(self: Reader) -> list[int]:
+        self._expect(2)
+        n: int = self._varint()
+        self._need(n)
+        out: list[int] = self.data[self.pos:self.pos + n]
+        self.pos += n
+        return out
+
+    def read_string(self: Reader) -> str:
+        return nox.bytes.str_from_list(self.read_bytes())
+
+    # İç içe mesaj: yalnızca o mesajın baytları üzerinde yeni bir Reader.
+    def read_message(self: Reader) -> Reader:
+        body: list[int] = self.read_bytes()
+        return Reader(body, 0, len(body))
+
+    # packed repeated varint alanı.
+    def read_packed_varints(self: Reader) -> list[int]:
+        inner: Reader = self.read_message()
+        out: list[int] = []
+        while inner.pos < inner.end:
+            out.append(inner._varint())
+        return out
+
+    # Geçerli alanı atlar (bilinmeyen alanlar için).
+    def skip(self: Reader) -> None:
+        if self.wire_type == 0:
+            self._varint()
+        elif self.wire_type == 1:
+            self._need(8)
+            self.pos += 8
+        elif self.wire_type == 2:
+            n: int = self._varint()
+            self._need(n)
+            self.pos += n
+        elif self.wire_type == 5:
+            self._need(4)
+            self.pos += 4
+        else:
+            raise ProtobufError("unsupported wire type " + str(self.wire_type))
+
+def writer() -> Writer:
+    return Writer()
+
+def reader(data: list[int]) -> Reader:
+    return Reader(data, 0, len(data))
+
+def reader_from_str(s: str) -> Reader:
+    return reader(nox.bytes.list_from_str(s))

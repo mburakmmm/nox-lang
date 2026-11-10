@@ -42,7 +42,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [~] **C9 aether/nyx/ember** `serve_multicore` closure, IPv6 çok çekirdekli dinleme, paylaşılan `Application`/`list`/`dict`, `AtomicRef`.
 - [x] **C10 nyx 2.3** şablonda döngü/koşul — `render_blocks` (`for`/`if`/`else`, `loop.*`) — **KAPANDI v2.1.7**; `render` değişmedi.
 - [x] **C11 nyx 2.4** `nox.jwt.verify` `exp/nbf/iat` kontrolü — `verify_claims`/`verify_now` eklendi (v2.1.7); `verify` davranışı değişmedi.
-- [~] **C12 pulse** protobuf, gRPC, UDP (**KAPANDI v2.1.15**: `nox.udp`), Buffer→str köprüsü ve gzip→bytes (**KAPANDI v2.1.13**: `nox.bytes.str_from_list/to_str/...`); mikro/nano-saniye saat (**KAPANDI v2.1.13**: `now_ns`, `monotonic_ns`).
+- [~] **C12 pulse** protobuf (**KAPANDI v2.1.18**: `nox.protobuf` tel formatı), gRPC (açık: HTTP/2 istemci + trailer kararı), UDP (**KAPANDI v2.1.15**: `nox.udp`), Buffer→str köprüsü ve gzip→bytes (**KAPANDI v2.1.13**: `nox.bytes.str_from_list/to_str/...`); mikro/nano-saniye saat (**KAPANDI v2.1.13**: `now_ns`, `monotonic_ns`).
 - [x] **C13 ember NL-010/011/014** UUIDv7 (**KAPANDI v2.1.7**: `uuid7`, `uuid7_at`, `uuid7_timestamp_ms`), property-test (**KAPANDI v2.1.12**: `nox.property`), zaman dilimi (**KAPANDI v2.1.14**: `nox.timezone`).
 - [~] **C14 aether 5** `@controller`/`@get` metot dekoratörlerinin işleyici olması.
 - [~] **C15 pulse TYPE-001** tagged union / enum.

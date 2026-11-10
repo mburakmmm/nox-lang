@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.18]
+
+### Eklendi
+
+- **`nox.protobuf`** (Pulse NOX-CAP-PROTOBUF): Protocol Buffers tel formatı yazıcısı/okuyucusu, saf Nox (şema üretici yok). `Writer`: `varint`, `boolean`, `sint` (zigzag), `fixed64/32`, `double`, `float32`, `string`, `bytes_field`, `message` (iç içe), `packed_varints`, `to_bytes`/`to_str`. `Reader`: `next_field` + `read_*` + `skip` (bilinmeyen alanlar), `read_message`, `read_packed_varints`; bozuk girdi `ProtobufError`. Resmi kodlama örnekleriyle birebir doğrulandı (`08 96 01`, `22 06 03 8E 02 9E A7 05`). `nox.gzip` + `nox.bytes` ile birlikte OTLP/HTTP için yeterli.
+- Runtime: `nox_float_bits_raw`/`nox_float_from_bits_raw`/`nox_float32_bits_raw`/`nox_float32_from_bits_raw` (IEEE 754 bit yeniden yorumlama).
+
 ## [2.1.17]
 
 ### Eklendi

@@ -59,6 +59,27 @@ export fn nox_math_exp_raw(x: f64) callconv(.c) f64 {
     return @exp(x);
 }
 
+/// Bit düzeyinde yeniden yorumlama (IEEE 754): `nox.protobuf` `double`/`float` alanları için. `f64` ↔ 64 bit; `f32` için değer önce `f32`ye yuvarlanır (alt 32 bit döner).
+export fn nox_float_bits_raw(x: f64) callconv(.c) i64 {
+    return @bitCast(x);
+}
+
+export fn nox_float_from_bits_raw(b: i64) callconv(.c) f64 {
+    return @bitCast(b);
+}
+
+export fn nox_float32_bits_raw(x: f64) callconv(.c) i64 {
+    const f: f32 = @floatCast(x);
+    const u: u32 = @bitCast(f);
+    return @intCast(u);
+}
+
+export fn nox_float32_from_bits_raw(b: i64) callconv(.c) f64 {
+    const u: u32 = @truncate(@as(u64, @bitCast(b)));
+    const f: f32 = @bitCast(u);
+    return f;
+}
+
 export fn nox_math_atan2_raw(y: f64, x: f64) callconv(.c) f64 {
     return std.math.atan2(y, x);
 }
@@ -109,6 +130,13 @@ export fn nox_float_round_digits_raw(x: f64, nd: i64) callconv(.c) f64 {
     const exp10: i64 = -nd;
     const txt = std.fmt.bufPrint(&out, "{s}{s}e{d}", .{ if (neg) "-" else "", qs, exp10 }) catch return x;
     return std.fmt.parseFloat(f64, txt) catch x;
+}
+
+test "float bit dönüşümleri: gidiş-dönüş ve f32 yuvarlama" {
+    try std.testing.expectEqual(@as(i64, 0x3FF0000000000000), nox_float_bits_raw(1.0));
+    try std.testing.expectEqual(@as(f64, -2.5), nox_float_from_bits_raw(nox_float_bits_raw(-2.5)));
+    try std.testing.expectEqual(@as(i64, 0x3F800000), nox_float32_bits_raw(1.0));
+    try std.testing.expectEqual(@as(f64, 0.5), nox_float32_from_bits_raw(nox_float32_bits_raw(0.5)));
 }
 
 test "nox_float_round_digits_raw Python round() ile birebir" {

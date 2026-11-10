@@ -22,7 +22,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
+| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `sqlite`, `timezone` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `udp` |
 | `network` + `filesystem` | both | `transfer` |
@@ -66,6 +66,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.buffer`](buffer.md) | fixed-size byte buffers and spans |
 | [`nox.binary`](binary.md) | cursor-based binary readers and writers |
 | [`nox.bytes`](bytes.md) | `str` to `Buffer` byte conversion (hosted) |
+| [`nox.protobuf`](protobuf.md) | Protocol Buffers wire format: writer and reader (varint, zigzag, fixed, nested, packed) |
 
 ### Files, processes and the environment
 

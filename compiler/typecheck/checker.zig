@@ -1479,6 +1479,8 @@ pub const Checker = struct {
         .{ .name = "terminal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },
         .{ .name = "property", .caps = &.{} },
+        // Saf Nox (`nox.bytes` üzerine) + iki küçük bit-dönüşümü sembolü; mobil/wasm'da da geçerli.
+        .{ .name = "protobuf", .caps = &.{} },
         .{ .name = "reflect", .caps = &.{} },
         .{ .name = "regex", .caps = &.{} },
         .{ .name = "redis", .caps = &.{.network} },

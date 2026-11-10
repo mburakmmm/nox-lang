@@ -1,0 +1,136 @@
+# nox.protobuf: resmi kodlama örnekleri, tüm alan türleri, iç içe/packed, bilinmeyen alan atlama ve bozuk girdi hataları.
+import nox.protobuf
+from nox.protobuf import Writer, Reader, ProtobufError
+
+failures: int = 0
+
+def expect_str(name: str, got: str, want: str) -> int:
+    if got != want:
+        print("FAIL " + name + ": " + got + " != " + want)
+        return 1
+    return 0
+
+def expect_int(name: str, got: int, want: int) -> int:
+    if got != want:
+        print("FAIL " + name + ": " + str(got) + " != " + str(want))
+        return 1
+    return 0
+
+# Resmi örnekler (protobuf.dev/programming-guides/encoding).
+a: Writer = nox.protobuf.writer()
+a.varint(1, 150)
+failures += expect_str("varint 150", str(a.to_bytes()), "[8, 150, 1]")
+a.string(2, "testing")
+failures += expect_str("string", str(a.to_bytes()), "[8, 150, 1, 18, 7, 116, 101, 115, 116, 105, 110, 103]")
+p: Writer = nox.protobuf.writer()
+p.packed_varints(4, [3, 270, 86942])
+failures += expect_str("packed", str(p.to_bytes()), "[34, 6, 3, 142, 2, 158, 167, 5]")
+neg: Writer = nox.protobuf.writer()
+neg.varint(1, -1)
+failures += expect_str("negative int64 is 10 bytes", str(neg.to_bytes()), "[8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 1]")
+
+# Tüm türlerle bir mesaj ve geri okuma.
+inner: Writer = nox.protobuf.writer()
+inner.sint(1, -5)
+inner.string(2, "nested")
+m: Writer = nox.protobuf.writer()
+m.varint(1, 300)
+m.boolean(2, True)
+m.sint(3, -2147483648)
+m.fixed64(4, -2)
+m.fixed32(5, 4294967295)
+m.double(6, -2.5)
+m.float32(7, 0.5)
+m.string(8, "héllo")
+m.bytes_field(9, [0, 1, 255, 0])
+m.message(10, inner)
+m.packed_varints(11, [1, 2, 3, 1000])
+m.varint(99, 7)
+m.varint(12, 5)
+
+seen: int = 0
+r: Reader = nox.protobuf.reader(m.to_bytes())
+while r.next_field():
+    f: int = r.field
+    if f == 1:
+        failures += expect_int("f1", r.read_varint(), 300)
+    elif f == 2:
+        failures += expect_int("f2", 1 if r.read_bool() else 0, 1)
+    elif f == 3:
+        failures += expect_int("f3", r.read_sint(), -2147483648)
+    elif f == 4:
+        failures += expect_int("f4", r.read_fixed64(), -2)
+    elif f == 5:
+        failures += expect_int("f5", r.read_fixed32(), 4294967295)
+    elif f == 6:
+        failures += expect_str("f6", str(r.read_double()), "-2.5")
+    elif f == 7:
+        failures += expect_str("f7", str(r.read_float32()), "0.5")
+    elif f == 8:
+        failures += expect_str("f8", r.read_string(), "héllo")
+    elif f == 9:
+        failures += expect_str("f9", str(r.read_bytes()), "[0, 1, 255, 0]")
+    elif f == 10:
+        sub: Reader = r.read_message()
+        while sub.next_field():
+            if sub.field == 1:
+                failures += expect_int("nested sint", sub.read_sint(), -5)
+            elif sub.field == 2:
+                failures += expect_str("nested string", sub.read_string(), "nested")
+            else:
+                sub.skip()
+    elif f == 11:
+        failures += expect_str("f11", str(r.read_packed_varints()), "[1, 2, 3, 1000]")
+    else:
+        r.skip()  # 99, 12: bilinmeyen alanlar atlanır
+    seen += 1
+failures += expect_int("fields seen", seen, 13)
+
+# str köprüsü (bayt-tam).
+s: str = m.to_str()
+r2: Reader = nox.protobuf.reader_from_str(s)
+r2.next_field()
+failures += expect_int("via str", r2.read_varint(), 300)
+
+# Hatalar: yanlış tel tipi, kesik varint/uzunluk, geçersiz alan 0.
+def raises_wire() -> int:
+    bad: Reader = nox.protobuf.reader([8, 5])
+    bad.next_field()
+    try:
+        bad.read_string()
+    except ProtobufError as e:
+        return 1
+    return 0
+
+def raises_truncated() -> int:
+    bad: Reader = nox.protobuf.reader([18, 10, 1, 2])
+    bad.next_field()
+    try:
+        bad.read_bytes()
+    except ProtobufError as e:
+        return 1
+    return 0
+
+def raises_varint() -> int:
+    bad: Reader = nox.protobuf.reader([8, 128])
+    bad.next_field()
+    try:
+        bad.read_varint()
+    except ProtobufError as e:
+        return 1
+    return 0
+
+def raises_zero() -> int:
+    bad: Reader = nox.protobuf.reader([0, 1])
+    try:
+        bad.next_field()
+    except ProtobufError as e:
+        return 1
+    return 0
+
+failures += expect_int("wrong wire type", raises_wire(), 1)
+failures += expect_int("truncated length", raises_truncated(), 1)
+failures += expect_int("truncated varint", raises_varint(), 1)
+failures += expect_int("field zero", raises_zero(), 1)
+
+print("failures: " + str(failures))
