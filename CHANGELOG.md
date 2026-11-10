@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.10]
+
+### Eklendi
+
+- **`nox.tasks.TaskGroup[T]`** (Ember NL-005): dinamik sayıda görev (`add`, `size`, `finished`, `wait_all(ms)`, `wait_below(limit, ms)`, `cancel_all()`, `handles()`); `list[Task[T]]` doğrudan yazılamadığından görevler `TaskHandle[T]` (alan `task`) içinde saklanır.
+
+### Düzeltildi
+
+- **`Task`/`Channel` alanlı sınıflar sızdırmıyor:** böyle bir sınıfın örneği yığına/arenaya terfi ediyor ve sınıf bırakma işlevi (alanlardaki görev/kanal yapılarını yıkan) hiç çalışmıyordu; artık terfi etmiyor.
+- **`spawn` doğrudan çağrı argümanı** (`g.add(spawn w(i))`): çağıranın tek başvurusu çağrıdan sonra bırakılır (önceden her görev yapısı sızardı).
+- **Modül-yerel jenerik sınıf başvurusu:** bir stdlib modülünün jenerik sınıfı içinde başka bir modül-yerel jenerik sınıfa tip ifadesiyle başvurmak (`_Handle[T]`) başka bir modülden örneklenince "unknown generic type" veriyordu; modül yükleyici artık tip ifadelerindeki jenerik sınıf adını da yeniden adlandırır.
+
 ## [2.1.9]
 
 ### Eklendi

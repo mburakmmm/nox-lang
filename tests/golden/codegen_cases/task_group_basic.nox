@@ -1,0 +1,46 @@
+# Ember NL-005: nox.tasks.TaskGroup[T] — dinamik sayıda görev, wait_all/wait_below/cancel_all/handles; Task alanlı sınıflar sızdırmaz.
+import nox.tasks
+import nox.time
+from nox.tasks import TaskGroup, TaskHandle
+
+async def work(i: int) -> int:
+    nox.time.sleep_ms(10 * i)
+    return i * 2
+
+async def boom() -> int:
+    raise ValueError("boom")
+
+async def run() -> None:
+    g: TaskGroup[int] = TaskGroup[int]()
+    i: int = 0
+    while i < 5:
+        g.add(spawn work(i))
+        i = i + 1
+    print(g.size())
+    print(g.wait_all(5000), g.finished())
+    results: list[int] = []
+    for h in g.handles():
+        results.append(await h.task)
+    print(results)
+
+    slow: TaskGroup[int] = TaskGroup[int]()
+    slow.add(spawn work(50))
+    print(slow.wait_all(30), slow.finished())
+    slow.cancel_all()
+
+    lim: TaskGroup[int] = TaskGroup[int]()
+    lim.add(spawn work(3))
+    lim.add(spawn work(4))
+    print(lim.wait_below(1, 2000), lim.finished() >= 1)
+
+    bad: TaskGroup[int] = TaskGroup[int]()
+    bad.add(spawn work(1))
+    bad.add(spawn boom())
+    try:
+        for h2 in bad.handles():
+            print(await h2.task)
+    except ValueError as e:
+        print("first error:", e.message)
+
+m: Task[None] = spawn run()
+await m

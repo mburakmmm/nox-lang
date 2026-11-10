@@ -96,6 +96,12 @@ fn classSafeForStackAlloc(cinfo: *const types.ClassInfo) bool {
     if (cinfo.del_owner != null) return false;
     for (cinfo.fields.items) |f| {
         if (isHeapManaged(f.info.heap)) return false;
+        // `Task`/`Channel`/`ThreadHandle`/`ThreadChannel`/`TaskLocal` alanları ARC-yönetimli DEĞİLDİR ama sınıf bırakma işlevi onları `destroyNonArcValue` ile yıkar;
+        // yığın/arena örneğinde bırakma hiç çalışmadığından görev/kanal yapıları sızardı (bir `Task` sarmalayan sınıf: `Job(spawn w(1))`).
+        switch (f.info.heap) {
+            .task, .channel, .thread_handle, .thread_channel, .task_local => return false,
+            else => {},
+        }
     }
     return true;
 }

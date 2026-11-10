@@ -1,0 +1,33 @@
+# Bir `Task` alanı olan sınıf yığına terfi etmez ve `spawn` geçici argümanı çağrıdan sonra bırakılır: görev yapıları sızmaz
+# (önceden `Job(spawn w(1))` ve `g.add(spawn w(i))` her görevi sızdırırdı; sızıntı bildirimi stderr'e yazılır ve CI bunu hata sayar).
+class Job:
+    t: Task[int]
+
+    def __init__(self: Job, t: Task[int]) -> None:
+        self.t = t
+
+class Pool:
+    items: list[Job]
+
+    def __init__(self: Pool) -> None:
+        self.items = []
+
+    def add(self: Pool, t: Task[int]) -> None:
+        self.items.append(Job(t))
+
+async def w(i: int) -> int:
+    return i * 3
+
+async def run() -> None:
+    j: Job = Job(spawn w(1))
+    print(await j.t)
+    p: Pool = Pool()
+    p.add(spawn w(2))
+    p.add(spawn w(3))
+    total: int = 0
+    for job in p.items:
+        total = total + await job.t
+    print(total)
+
+m: Task[None] = spawn run()
+await m

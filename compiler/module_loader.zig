@@ -377,7 +377,8 @@ fn renameTypeExpr(a: std.mem.Allocator, te: ast.TypeExpr, map: *const RenameMap)
         .generic => |g| blk: {
             const args = try a.alloc(ast.TypeExpr, g.args.len);
             for (g.args, 0..) |arg, i| args[i] = try renameTypeExpr(a, arg, map);
-            break :blk .{ .generic = .{ .name = g.name, .args = args } };
+            // Modül-yerel bir jenerik sınıfa başvuru (`_Handle[T]`) da modül önekiyle yeniden adlandırılır (kurucu çağrısıyla aynı kural); yerleşikler (`list`, `Task`, ...) haritada yoktur.
+            break :blk .{ .generic = .{ .name = if (map.get(g.name)) |m| m else g.name, .args = args } };
         },
         // Faz U.4: içindeki tip ifadelerinde (parametreler/dönüş) sınıf adı
         // yeniden adlandırması GEREKEBİLİR (`.simple`/`.generic` İLE AYNI

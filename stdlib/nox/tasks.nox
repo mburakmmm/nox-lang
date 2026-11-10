@@ -1,0 +1,95 @@
+# nox.tasks — görev toplulukları (Ember NL-005): `TaskGroup[T]`, aynı `T` sonuç tipli görevleri toplar. `list[Task[T]]` doğrudan yazılamaz; grup görevleri
+# bir tutamak sınıfında (`TaskHandle[T]`, alan `task`) saklar (sınıf bırakılınca görev yapıları da bırakılır).
+#
+#     import nox.tasks
+#     from nox.tasks import TaskGroup
+#
+#     async def work(i: int) -> int:
+#         return i * 2
+#
+#     async def run() -> None:
+#         g: TaskGroup[int] = TaskGroup[int]()
+#         for i in range(10):
+#             g.add(spawn work(i))
+#         if g.wait_all(5000):                  # kooperatif; tümü bitti mi?
+#             for h in g.handles():             # ekleme sırasıyla; `await` bir hata varsa onu fırlatır
+#                 print(await h.task)
+#         else:
+#             g.cancel_all()
+#
+# Sınırlı eşzamanlılık: `g.size() - g.finished()` kaç görevin sürdüğünü verir; yeni görev eklemeden önce `g.wait_below(limit, timeout_ms)` ile kooperatif beklenir.
+import nox.time
+
+class TaskHandle[T]:
+    task: Task[T]
+
+    def __init__(self: TaskHandle, task: Task[T]) -> None:
+        self.task = task
+
+class TaskGroup[T]:
+    _items: list[TaskHandle[T]]
+
+    def __init__(self: TaskGroup) -> None:
+        self._items = []
+
+    def add(self: TaskGroup, t: Task[T]) -> None:
+        items: list[TaskHandle[T]] = self._items
+        items.append(TaskHandle[T](t))
+        self._items = items
+
+    def size(self: TaskGroup) -> int:
+        return len(self._items)
+
+    # Şimdiye kadar bitmiş görev sayısı.
+    def finished(self: TaskGroup) -> int:
+        n: int = 0
+        for h in self._items:
+            if h.task.is_done():
+                n = n + 1
+        return n
+
+    # Tüm görevler bitene ya da `timeout_ms` dolana kadar kooperatif bekler; hepsi bittiyse True.
+    def wait_all(self: TaskGroup, timeout_ms: int) -> bool:
+        started: nox.time.Instant = nox.time.instant_now()
+        poll: int = 1
+        while True:
+            if self.finished() == len(self._items):
+                return True
+            remaining: int = timeout_ms - started.elapsed_ms()
+            if remaining <= 0:
+                return False
+            step: int = poll
+            if step > remaining:
+                step = remaining
+            nox.time.sleep_ms(step)
+            if poll < 10:
+                poll = poll * 2
+        return False
+
+    # Süren (bitmemiş) görev sayısı `limit`in altına inene ya da süre dolana kadar bekler; indiyse True. Eşzamanlılığı sınırlamak için `add`den önce çağırın.
+    def wait_below(self: TaskGroup, limit: int, timeout_ms: int) -> bool:
+        started: nox.time.Instant = nox.time.instant_now()
+        poll: int = 1
+        while True:
+            if len(self._items) - self.finished() < limit:
+                return True
+            remaining: int = timeout_ms - started.elapsed_ms()
+            if remaining <= 0:
+                return False
+            step: int = poll
+            if step > remaining:
+                step = remaining
+            nox.time.sleep_ms(step)
+            if poll < 10:
+                poll = poll * 2
+        return False
+
+    # Her göreve iptal ister (kooperatif: görev bir sonraki `await`inde `CancelledError` alır).
+    def cancel_all(self: TaskGroup) -> None:
+        for h in self._items:
+            h.task.cancel()
+
+    # Ekleme sırasıyla tutamaklar: `for h in g.handles(): results.append(await h.task)`. (`await` yalnızca `async def` içinde ve bir `Task` değeri üzerinde yazılabildiğinden
+    # bekleme çağıranın döngüsünde yapılır.) Bir görev istisnayla bittiyse o görevin `await`i istisnayı fırlatır; kalanlar için `cancel_all()` çağrılabilir.
+    def handles(self: TaskGroup) -> list[TaskHandle[T]]:
+        return self._items

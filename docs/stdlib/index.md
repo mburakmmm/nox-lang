@@ -51,6 +51,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.math`](math.md), [`nox.mathx`](mathx.md) | floating-point mathematics (libm-backed / libc-free) |
 | [`nox.random`](random.md) | pseudo-random numbers and shuffling |
 | [`nox.time`](time.md) | wall clock, sleeping, calendar date-times, monotonic intervals |
+| [`nox.tasks`](tasks.md) | task groups: add, wait, limit, cancel |
 | [`nox.regex`](regex.md) | regular expressions (groups, alternation, captures) |
 | [`nox.unicode`](unicode.md) | Unicode normalization (NFC/NFD/NFKC/NFKD) and Turkish case mapping |
 | [`nox.template`](template.md) | `{{ name }}` text templates, HTML-escaped by default |

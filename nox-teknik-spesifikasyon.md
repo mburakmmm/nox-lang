@@ -29717,3 +29717,10 @@ Kaynak: aether/nyx/aura/nova/pulse `NOX_LIMITATIONS` belgeleri; kayıt `project/
 
 `stdlib_shims/redis.zig`: RESP2 istemcisi, taşıma `tcp_native.zig` (wasm'da `tcp_host.zig`) — `connect(..., tls)` bağlanır bağlanmaz TLS, `http_client.sharedClientIo()` fiber-farkındalıklı olduğundan fiber içinde yalnızca çağıran görev bekler. `RConn` kendi okuma tamponunu yönetir (`fill`/`need`/`line`); yanıt `Reply` ağacıdır (derinlik ≤ 32, toplu dize ≤ 256 MiB). Sunucu hata yanıtı bir G/Ç hatası değildir (`Reply` olarak döner, `nox/redis.nox` `RedisError`a çevirir); G/Ç hatasında bağlantı `ok=false` olur. `Reply.__del__` kökün tutamacını bırakır; `at(i)` çocuğu ödünç alır ve ebeveynini canlı tutar. Yetenek: `network`.
 - Bilinen kalıp: aynı kapsamda iki farklı sınıf tipli değişkeni aynı adla bildirmek (`r2: Reply` sonra `r2: Client`) checker'dan geçer (sınıf↔sınıf yeniden bildirimi kasıtlı serbest) ama codegen'de "desteklenmiyor"a ya da sızıntıya yol açabilir.
+
+### 3.378 `nox.tasks.TaskGroup`, Task alanlı sınıf sızıntıları (v2.1.10)
+
+- `classSafeForStackAlloc` (`local_escape.zig`) artık `.task/.channel/.thread_handle/.thread_channel/.task_local` alanlı sınıfları yığın/arena terfisinden hariç tutar (bırakma işlevi `destroyNonArcValue` ile alanları yıkar).
+- `releaseTemporaryArgs` `Task`/`Channel` geçicilerini (`releaseNonArcIfTemporary`) ve doğrudan `spawn` argümanını (`isTemporaryExpr` spawn'ı taze saymaz) çağrıdan sonra bırakır.
+- `module_loader.renameTypeExpr` `.generic` adını `map` ile yeniden adlandırır (modül-yerel jenerik sınıf başvuruları).
+- `TaskGroup[T]`: `_items: list[TaskHandle[T]]`; bekleme `Task.is_done` + `sleep_ms` yoklaması. `await` yalnızca `async def` içinde ve `Task` değerinde yazılabildiğinden `join_all` yoktur (`handles()` döngüsü çağıranda).

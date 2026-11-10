@@ -1571,6 +1571,13 @@ pub fn releaseTemporaryArgs(self: *Codegen, exprs: []const ast.Expr, values: []c
         if (!v.is_pinned and !v.is_stack_slot and isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
             try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info, v.dict_info);
         }
+        // `Task`/`Channel` geçicisi (ör. `g.add(spawn w(i))`): çağıranın kendi başvurusu çağrıdan sonra bırakılır; çağrılan saklamışsa (alan atama)
+        // kendi `retain`ini yapmıştır. Önceden bu başvuru hiç bırakılmaz, görev yapısı sızardı.
+        try self.releaseNonArcIfTemporary(e, v);
+        // `spawn f()` doğrudan argüman olduğunda (`isTemporaryExpr` onu taze saymaz): çağıranın tek başvurusu çağrıdan sonra bırakılır.
+        if (e == .spawn_expr and !v.is_pinned and !v.is_stack_slot and self.isSpawnRefcountedType(v.heap)) {
+            try self.destroyNonArcValue(v.text, v.heap);
+        }
     }
 }
 

@@ -1497,6 +1497,7 @@ pub const Checker = struct {
         // İLE işaretli (`nox.crypto`nin AYNI deseni). `DateTime`/`Duration`/
         // `from_epoch_ms`/vb. (SAF takvim aritmetiği) HER profilde serbest.
         .{ .name = "time", .caps = &.{} },
+        .{ .name = "tasks", .caps = &.{} },
         .{ .name = "tls", .caps = &.{.network} },
         .{ .name = "toml", .caps = &.{} },
         // v2.0.69: `nox.http` akışı + `nox.fs` dosyaları; ikisinin yeteneğini de ister.
