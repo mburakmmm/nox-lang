@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.26]
+
+### Düzeltildi
+
+- `scripts/http_factory_probe.py` (CI testi `http_multicore_factory_test`): LLVM havuz boyutu varsayılanda CPU sayısıyla sınırlı olduğundan 3 çekirdekli macOS CI koşucusunda fabrika 4 yerine 3 kez çağrılıyordu (v2.1.20'de macOS CI kırıldı). Probe `NOX_POOL_WORKERS=4` ile havuzu sabitler.
+
 ## [2.1.25]
 
 ### Eklendi

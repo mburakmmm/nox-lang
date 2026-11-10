@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """serve_multicore'a FABRİKA fonksiyonu (v2.1.20): her worker fabrikayı kendi RuntimeState'inde bir kez çağırır.
 
-Kullanım: http_factory_probe.py <noxc>. Program iki arka uçta (LLVM ve QBE) 4 worker ile çalıştırılır; fabrika bir günlük dosyasına satır ekler. Beklenen: tam 4 çağrı ve her çalışanın kendi
+Kullanım: http_factory_probe.py <noxc>. Program iki arka uçta (LLVM ve QBE) 4 worker ile çalıştırılır (LLVM havuz boyutu varsayılanda CPU sayısıyla sınırlıdır: `NOX_POOL_WORKERS=4` ile sabitlenir); fabrika bir günlük dosyasına satır ekler. Beklenen: tam 4 çağrı ve her çalışanın kendi
 `hits` sayacının ardışık artması. Çıkış 0 = başarılı.
 """
 import collections
@@ -29,7 +29,7 @@ for backend in ("llvm", "qbe"):
         log = os.path.join(tmp, "factory.log")
         open(path, "w").write(template.replace("@PORT@", str(port)))
         open(log, "w").close()
-        p = subprocess.Popen([noxc, "run", "--backend", backend, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, FAC_LOG=log))
+        p = subprocess.Popen([noxc, "run", "--backend", backend, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, FAC_LOG=log, NOX_POOL_WORKERS=str(WORKERS)))
         try:
             up = False
             for _ in range(150):
