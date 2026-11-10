@@ -15,8 +15,17 @@ pub const debug = if (builtin.os.tag == .ios) struct {
 /// Reddedilen bir TCP bağlantısı Zig'in Debug izini stderr'e basar.
 /// Nox bu hatayı kendi istisnasına çevirir; iz, programın stderr'ini
 /// kirletmesin.
+///
+/// `signal_stack_size = null`: Zig std her iş parçacığı için 256 KiB'lik
+/// `threadlocal` bir sinyal yığını (`Thread.maybeAttachSignalStack`) ayırır.
+/// Bu statik TLS'i 256 KiB şişirir; Android API < 29 (eski Bionic) buyuk
+/// PT_TLS bölümünü olan bir yürütülebilirde ilk TLS erişiminde SIGSEGV verir
+/// (gecelik API 26 emülatörü: 468 fixture'ın 400'ü). Runtime bir kütüphanedir;
+/// std'nin segfault işleyicisini kurmaz ve Nox kendi sigaltstack'ini kullanmaz,
+/// yani bu yığın hiçbir zaman işe yaramıyordu.
 pub const std_options: std.Options = .{
     .unexpected_error_tracing = false,
+    .signal_stack_size = null,
 };
 
 pub const asap = @import("alloc/asap.zig");

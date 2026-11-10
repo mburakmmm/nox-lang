@@ -84,6 +84,19 @@ EOF
 "$clang" -c -fPIE $android_cflags -target "$android_triple" -I "$root/include" -o "$work/probe_host.o" "$root/scripts/mobile_probe_host.c"
 "$clang" -fPIE -pie $android_cflags -target "$android_triple" -o "$work/suite" "$work/suite_host.o" "$work/suite.o" "$rt" -lm -ldl -llog
 "$clang" -fPIE -pie $android_cflags -target "$android_triple" -o "$work/probe" "$work/probe_host.o" "$work/probe.o" "$rt" -lm -ldl -llog
+# Statik TLS bekçisi: Zig std'nin 256 KiB'lik `threadlocal` sinyal yığını PT_TLS'i şişirir ve Android API < 29'da (eski Bionic) ilk TLS erişiminde SIGSEGV verir;
+# ASan altında da ASan'ın alternatif yığın `munmap`ı bu bellekte EINVAL ile ölür (gecelik v2.1.0 öncesi hatası). `runtime/lib.zig` `signal_stack_size = null` yapar.
+readelf="$(dirname "$clang")/llvm-readelf"
+if [ -x "$readelf" ]; then
+  tls_hex=$("$readelf" -lW "$work/suite" | awk '$1=="TLS" { print $6 }')
+  tls_memsz=""
+  [ -n "$tls_hex" ] && tls_memsz=$(printf '%d' "$tls_hex")
+  if [ -n "$tls_memsz" ] && [ "$tls_memsz" -gt 65536 ]; then
+    echo "FAIL: PT_TLS bellek boyutu $tls_memsz bayt (> 65536); eski Android'de çöker" >&2
+    exit 1
+  fi
+  echo "PT_TLS bellek boyutu: ${tls_memsz:-yok} bayt"
+fi
 android_san_push "$ndk" "$adb"
 "$adb" push "$work/suite" /data/local/tmp/nox-suite
 "$adb" push "$work/probe" /data/local/tmp/nox-probe

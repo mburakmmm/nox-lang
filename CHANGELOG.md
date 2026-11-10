@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.1]
+
+### Düzeltildi
+
+- **Android API < 29'da çalışma zamanı çökmesi ve ASan `munmap` hatası (gecelik mobil CI):** Zig std her iş parçacığı için 256 KiB'lik `threadlocal` bir sinyal yığını (`signal_stack_size`) ayırır; bu, Nox çalışma zamanına bağlanan yürütülebilirin statik TLS'ini ~350 KB'a şişiriyordu. Eski Bionic (API 26) bu büyüklükteki `PT_TLS` bölümünde ilk TLS erişiminde SIGSEGV veriyordu (468 fixture'ın 400'ü); API 34'te ASan, kendi alternatif yığını yerine bu belleği `munmap` etmeye çalışıp `EINVAL` ile ölüyordu. Çalışma zamanı std'nin segfault işleyicisini kurmaz ve `sigaltstack` kullanmaz, yani yığın hiç işe yaramıyordu; `runtime/lib.zig` artık `signal_stack_size = null` verir (`PT_TLS` 350 KB → 1,4 KB). `scripts/mobile_android_run.sh` `PT_TLS` > 64 KiB ise düşer.
+
 ## [2.1.0]
 
 **Nox 2.1.** 2.0 sözleşmesi (kararlılık politikası) değişmedi; 2.0.1–2.0.189 arasında biriken ve 2.1 olarak ilan edilen işlerin özeti `docs/whatsnew/2.1.md`de, ayrıntısı aşağıdaki 2.0.x girişlerindedir.
