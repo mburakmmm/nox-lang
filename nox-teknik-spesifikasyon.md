@@ -29728,3 +29728,7 @@ Kaynak: aether/nyx/aura/nova/pulse `NOX_LIMITATIONS` belgeleri; kayıt `project/
 ### 3.379 `nox.property` (v2.1.12)
 
 Saf Nox (`stdlib/nox/property.nox`): `Rng` Park–Miller (48271 mod 2^31−1; çarpım < 2^47, taşmaz); üreticiler `size` ile sınırlıdır. `check` her çalıştırmada `seed + run` ve `1 + run*max_size/runs` boyutuyla `replay` eder; başarısızlıkta aynı tohumla boyutu yarılayarak hâlâ başarısız olan en küçük boyutu bulur ("boyut küçültme", değer küçültme değil). Özellik içi istisna başarısızlıktır. Fonksiyon tipli parametre `(Rng) -> bool`.
+
+### 3.380 Nanosaniye saatler, bayt köprüsü, Task alanlı sınıf yeniden bildirimi (v2.1.13)
+
+`nox_time_now_ns_raw`/`nox_time_monotonic_ns_raw` (`i64` ns; Windows `WinTime.nowNs/monotonicNs`, wasm host ms × 10^6). `nox_bytes_str_from_list_raw` (`gzip.zig`, `readIntListAsBytes` + `nox_str_from_bytes`) ve `nox_bytes_last_ok_raw` (ayrı ad: `nox.gzip` ile birlikte içe aktarılınca extern adı çakışmasın). `Checker.declareVar`: iki FARKLI sınıfın aynı adla yeniden bildirimi, sınıflardan birinin `Task/Channel/ThreadHandle/ThreadChannel/TaskLocal` alanı varsa reddedilir (`classHasNonArcFields`); diğer sınıf↔sınıf yeniden bildirimi kasıtlı serbest kalır (Faz M.8 / v1.148.0 testleri).

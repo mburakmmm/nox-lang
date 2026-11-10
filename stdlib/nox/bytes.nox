@@ -15,3 +15,52 @@ def from_str(s: str) -> Buffer:
         out.set(i, u8(nox.strings.byte_at(s, i)))
         i = i + 1
     return out
+
+
+extern def nox_bytes_str_from_list_raw(data: list[int]) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bytes_last_ok_raw() -> int from "zig-out/lib/noxrt.o"
+
+class BytesError(Exception):
+    pass
+
+# Bayt listesi (`list[int]`, her eleman 0-255; `nox.gzip`in çıktısı gibi) → bayt-tam `str` (gömülü NUL ve geçersiz UTF-8 aynen korunur): ikili HTTP gövdesi,
+# protobuf yükü. 0-255 dışı bir eleman `BytesError`.
+def str_from_list(data: list[int]) -> str:
+    s: str = nox_bytes_str_from_list_raw(data)
+    if nox_bytes_last_ok_raw() == 0:
+        raise BytesError("byte list contains a value outside 0..255")
+    return s
+
+# `str` → bayt listesi (UTF-8 baytları; `from_str(...)`ün `list[int]` karşılığı).
+def list_from_str(s: str) -> list[int]:
+    n: int = nox.strings.byte_len(s)
+    out: list[int] = []
+    i: int = 0
+    while i < n:
+        out.append(nox.strings.byte_at(s, i))
+        i = i + 1
+    return out
+
+# `Buffer` → bayt listesi.
+def to_list(b: Buffer) -> list[int]:
+    out: list[int] = []
+    i: int = 0
+    while i < b.len():
+        out.append(int(b.get(i)))
+        i = i + 1
+    return out
+
+# `Buffer` → bayt-tam `str`.
+def to_str(b: Buffer) -> str:
+    return str_from_list(to_list(b))
+
+# Bayt listesi → `Buffer`.
+def from_list(data: list[int]) -> Buffer:
+    out: Buffer = Buffer(len(data))
+    i: int = 0
+    while i < len(data):
+        if data[i] < 0 or data[i] > 255:
+            raise BytesError("byte list contains a value outside 0..255")
+        out.set(i, u8(data[i]))
+        i = i + 1
+    return out

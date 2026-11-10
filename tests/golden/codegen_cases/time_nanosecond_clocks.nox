@@ -1,0 +1,13 @@
+# Pulse CLOCK-001: now_ns/monotonic_ns — nanosaniye çözünürlüklü saatler.
+import nox.time
+
+a: int = nox.time.monotonic_ns()
+b: int = nox.time.monotonic_ns()
+print(b >= a, b - a < 1000000000)
+w: int = nox.time.now_ns()
+ms: int = nox.time.now_ms()
+print(w > 1700000000000000000, w // 1000000 - ms < 1000 and ms - w // 1000000 < 1000)
+x: int = nox.time.monotonic_ns()
+nox.time.sleep_ms(20)
+d: int = nox.time.monotonic_ns() - x
+print(d >= 15000000, d < 500000000)

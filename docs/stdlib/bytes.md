@@ -15,6 +15,10 @@ contents of a file). `from_str` copies those bytes into a [`Buffer`](buffer.md).
 | Function | Description |
 |---|---|
 | `from_str(s)` | a new `Buffer` holding the bytes of `s` |
+| `str_from_list(data)` | a byte-exact `str` from a `list[int]` of values 0-255 (e.g. the output of [`nox.gzip`](gzip.md)); `BytesError` for a value outside 0..255. Usable as a binary HTTP body or protobuf payload |
+| `list_from_str(s)` | the bytes of `s` as a `list[int]` |
+| `to_list(buf)`, `from_list(data)` | `Buffer` ↔ `list[int]` |
+| `to_str(buf)` | a byte-exact `str` from a `Buffer` |
 
 ```nox
 import nox.bytes

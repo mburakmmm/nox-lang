@@ -13,6 +13,8 @@
 extern def nox_time_now_ms_raw() -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_sleep_ms_raw(ms: int) -> None from "zig-out/lib/noxrt.o"
 extern def nox_time_boot_ms_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_now_ns_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_monotonic_ns_raw() -> int from "zig-out/lib/noxrt.o"
 
 # v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.time`
 # ARTIK MODÜL-seviyesinde capability-SİZ (`import nox.time` HER profilde
@@ -32,6 +34,16 @@ def now_ms() -> int:
 @capability.requires("clock")
 def boot_ms() -> int:
     return nox_time_boot_ms_raw()
+
+# Unix epoch'tan NANOSANİYE (duvar saati; i64 2262 yılına kadar yeter). Çözünürlük platforma bağlıdır (Linux/macOS: ~ns, Windows: 100 ns); wasm'da host milisaniye verir.
+@capability.requires("clock")
+def now_ns() -> int:
+    return nox_time_now_ns_raw()
+
+# Nanosaniye çözünürlüklü MONOTON sayaç (süre ölçümü için; yalnızca farklar anlamlıdır, sistem saati değişse de geri gitmez).
+@capability.requires("clock")
+def monotonic_ns() -> int:
+    return nox_time_monotonic_ns_raw()
 
 @capability.requires("clock")
 def sleep_ms(ms: int) -> None:

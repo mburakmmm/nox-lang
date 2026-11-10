@@ -145,3 +145,21 @@ pub export fn nox_gzip_decompress_to_str_raw(rt: ?*anyopaque, list_ptr: ?*anyopa
     g_last_op_ok = true;
     return str_mod.nox_str_from_bytes(rt, decompressed);
 }
+
+/// Pulse NOX-CAP-BYTES-001: bayt listesini (`list[int]`, her eleman 0-255) BAYT-TAM bir `str`e çevirir (gömülü NUL ve geçersiz UTF-8 aynen korunur; ikili HTTP
+/// gövdesi / protobuf yükü için). 0-255 dışı bir eleman varsa `g_last_op_ok` düşer ve boş dize döner. Ters yön `nox.strings.byte_at` döngüsüdür.
+/// Son `nox_bytes_str_from_list_raw` çağrısı başarılı mıydı? (`nox_gzip_last_op_ok` ile aynı iş parçacığı-yerel bayrak; `nox.bytes` ayrı bir adla çağırır, böylece
+/// `nox.gzip` ile birlikte içe aktarıldığında extern adları çakışmaz.)
+pub export fn nox_bytes_last_ok_raw() callconv(.c) i64 {
+    return if (g_last_op_ok) 1 else 0;
+}
+
+pub export fn nox_bytes_str_from_list_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    const bytes = readIntListAsBytes(list_ptr) orelse {
+        g_last_op_ok = false;
+        return str_mod.nox_str_from_bytes(rt, "");
+    };
+    defer std.heap.page_allocator.free(bytes);
+    g_last_op_ok = true;
+    return str_mod.nox_str_from_bytes(rt, bytes);
+}

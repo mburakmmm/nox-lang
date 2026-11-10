@@ -5728,6 +5728,19 @@ pub const Checker = struct {
         };
     }
 
+    /// Sınıfın `Task`/`Channel`/`ThreadHandle`/`ThreadChannel`/`TaskLocal` tipli (ARC-dışı) alanı var mı?
+    fn classHasNonArcFields(self: *Checker, class_name: []const u8) bool {
+        const def = self.class_defs_by_name.get(class_name) orelse return false;
+        for (def.fields) |f| {
+            const te = f.type_expr;
+            if (te == .generic) {
+                const gn = te.generic.name;
+                if (std.mem.eql(u8, gn, "Task") or std.mem.eql(u8, gn, "Channel") or std.mem.eql(u8, gn, "ThreadHandle") or std.mem.eql(u8, gn, "ThreadChannel") or std.mem.eql(u8, gn, "TaskLocal")) return true;
+            }
+        }
+        return false;
+    }
+
     /// v1.148.0: bir yerel değişkenin (var_decl / `for` değişkeni / `except ... as` / `with ... as`) AYNI kapsamda FARKLI bir
     /// tiple yeniden bildirilmesini reddeder. Codegen ad başına TEK slot/tip tuttuğundan önceden `x: int = 1` sonra
     /// `x: str = "a"` (ya da aynı döngü değişkenini farklı eleman tipli iki `for`da kullanmak) SESSİZCE yanlış kod
@@ -5736,7 +5749,10 @@ pub const Checker = struct {
         if (ctx.scope.lookupLocal(name)) |existing| {
             // Sınıf ↔ sınıf yeniden bildirimi serbest: temsil aynı (işaretçi), serbest bırakma tag-tabanlı; yaygın kullanım
             // (`except A as e` ... `except B as e`).
-            const both_classes = existing == .class and ty == .class;
+            // `Task`/`Channel`/... alanlı bir sınıf bu serbestliğin DIŞINDADIR: eski değer yeni bildirimin tipiyle (alan konumları farklı) yıkılırdı (çalışma zamanı paniği /
+            // "desteklenmiyor"); böyle iki farklı sınıfı aynı adla bildirmek açık bir tanıyla reddedilir.
+            const both_classes = existing == .class and ty == .class and
+                (std.mem.eql(u8, existing.class, ty.class) or (!self.classHasNonArcFields(existing.class) and !self.classHasNonArcFields(ty.class)));
             if (!types.eql(existing, ty) and !both_classes) {
                 return self.fail(error.TypeMismatch, "'{s}' is already defined in this scope with type '{s}'; it cannot be redefined with type '{s}' (use a different name)", .{ name, try self.typeText(existing), try self.typeText(ty) });
             }

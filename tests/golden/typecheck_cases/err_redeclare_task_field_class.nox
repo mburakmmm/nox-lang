@@ -1,0 +1,16 @@
+class A:
+    x: int
+    def __init__(self: A) -> None:
+        self.x = 1
+async def w() -> int:
+    return 1
+class B:
+    t: Task[int]
+    def __init__(self: B, t: Task[int]) -> None:
+        self.t = t
+async def run() -> None:
+    a: A = A()
+    a: B = B(spawn w())
+    print(1)
+m: Task[None] = spawn run()
+await m

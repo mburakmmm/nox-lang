@@ -70,6 +70,24 @@ const WinTime = if (builtin.os.tag == .windows) struct {
         return @divFloor(unix_100ns, 10_000);
     }
 
+    fn nowNs() i64 {
+        var ft: std.os.windows.FILETIME = undefined;
+        GetSystemTimePreciseAsFileTime(&ft);
+        const ticks: u64 = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        const unix_100ns: i64 = @as(i64, @intCast(ticks)) - 116444736000000000;
+        return unix_100ns * 100;
+    }
+
+    fn monotonicNs() i64 {
+        if (freq == 0) _ = QueryPerformanceFrequency(&freq);
+        var counter: i64 = 0;
+        _ = QueryPerformanceCounter(&counter);
+        // `counter * 1e9` taşabileceğinden tam saniye ve kalan ayrı çevrilir.
+        const secs = @divTrunc(counter, freq);
+        const rem = @mod(counter, freq);
+        return secs * 1_000_000_000 + @divTrunc(rem * 1_000_000_000, freq);
+    }
+
     var freq: i64 = 0;
     fn monotonicMs() i64 {
         if (freq == 0) _ = QueryPerformanceFrequency(&freq);
@@ -86,6 +104,26 @@ export fn nox_time_now_ms_raw() callconv(.c) i64 {
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.REALTIME, &ts);
     return @as(i64, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
+}
+
+/// Pulse CLOCK-001: nanosaniye çözünürlüklü duvar saati (Unix epoch'tan ns; i64 2262'ye kadar yeter). wasm'da host yalnızca milisaniye verir (ms * 10^6).
+export fn nox_time_now_ns_raw() callconv(.c) i64 {
+    if (comptime wasm_host.is_freestanding_wasm) return wasm_host.clock_ms(0) * 1_000_000;
+    if (comptime is_freestanding) return 0;
+    if (builtin.os.tag == .windows) return WinTime.nowNs();
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.REALTIME, &ts);
+    return @as(i64, ts.sec) * 1_000_000_000 + @as(i64, ts.nsec);
+}
+
+/// Nanosaniye çözünürlüklü MONOTON saat (yalnızca farklar anlamlıdır). wasm'da milisaniye çözünürlüklüdür.
+export fn nox_time_monotonic_ns_raw() callconv(.c) i64 {
+    if (comptime wasm_host.is_freestanding_wasm) return wasm_host.clock_ms(1) * 1_000_000;
+    if (comptime is_freestanding) return 0;
+    if (builtin.os.tag == .windows) return WinTime.monotonicNs();
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i64, ts.sec) * 1_000_000_000 + @as(i64, ts.nsec);
 }
 
 /// Faz III.7 (bkz. nox-teknik-spesifikasyon.md §3.69) — `nox_time_now_ms_

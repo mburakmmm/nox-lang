@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.13]
+
+### Eklendi
+
+- **`nox.time.now_ns()` / `monotonic_ns()`** (Pulse CLOCK-001): nanosaniye çözünürlüklü duvar ve monoton saat (Windows 100 ns, wasm 1 ms).
+- **`nox.bytes` köprüleri** (Pulse CAP-BYTES/COMPRESSION): `str_from_list`, `list_from_str`, `to_list`, `from_list`, `to_str`; `nox.gzip` çıktısı (`list[int]`) bayt-tam bir `str`e (ikili HTTP gövdesi / protobuf yükü) çevrilebilir.
+
+### Düzeltildi
+
+- `Task`/`Channel` alanlı bir sınıfı, başka bir sınıfla aynı adla aynı kapsamda yeniden bildirmek (`a: A = ...` sonra `a: B = ...`) çalışma zamanı paniğine ("incorrect alignment") ya da "desteklenmiyor" hatasına yol açıyordu; artık açık bir tip hatası verir. Basit sınıflar arasındaki serbest yeniden bildirim değişmedi.
+
 ## [2.1.12]
 
 ### Eklendi

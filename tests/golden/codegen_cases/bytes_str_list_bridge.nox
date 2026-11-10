@@ -1,0 +1,20 @@
+# Pulse CAP-BYTES/COMPRESSION: list[int] <-> bayt-tam str, Buffer <-> list/str; gzip çıktısı ikili HTTP gövdesi olabilir.
+import nox.bytes
+import nox.gzip
+import nox.strings
+from nox.bytes import BytesError
+
+raw: list[int] = [0, 255, 128, 65, 0, 10]
+s: str = nox.bytes.str_from_list(raw)
+print(nox.strings.byte_len(s), nox.bytes.list_from_str(s) == raw)
+from nox.buffer import Buffer
+b: Buffer = nox.bytes.from_str(s)
+print(b.len(), nox.bytes.to_list(b) == raw, nox.bytes.to_str(b) == s)
+z: list[int] = nox.gzip.compress("hello hello hello hello")
+body: str = nox.bytes.str_from_list(z)
+print(nox.strings.byte_len(body) == len(z), nox.bytes.list_from_str(body) == z)
+print(nox.gzip.decompress(nox.bytes.list_from_str(body)))
+try:
+    nox.bytes.str_from_list([1, 300])
+except BytesError as e:
+    print("range error")
