@@ -68,5 +68,28 @@ for backend in ("llvm", "qbe"):
             print(f"[{backend}] başarısız rc={r.returncode}\n--- stdout\n{r.stdout}\n--- beklenen\n{expected}\n--- stderr\n{r.stderr[:1500]}")
             rc = 1
 server.stop(0)
+
+# --- TLS (ALPN h2): kendinden imzalı sertifika + özel CA ---
+import shutil
+
+if shutil.which("openssl"):
+    with tempfile.TemporaryDirectory() as tdir:
+        key, cert = os.path.join(tdir, "key.pem"), os.path.join(tdir, "cert.pem")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "2", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"], check=True, capture_output=True)
+        tserver = grpc.server(futures.ThreadPoolExecutor(max_workers=4), options=[("grpc.max_receive_message_length", 64 * 1024 * 1024)])
+        tserver.add_generic_rpc_handlers((Handler(),))
+        creds = grpc.ssl_server_credentials([(open(key, "rb").read(), open(cert, "rb").read())])
+        tport = tserver.add_secure_port("127.0.0.1:0", creds)
+        tserver.start()
+        ttemplate = open(os.path.join(ROOT, "tests/golden/grpc_tls_program.nox.in")).read()
+        texpected = open(os.path.join(ROOT, "tests/golden/grpc_tls_program.expected")).read()
+        for backend in ("llvm", "qbe"):
+            path = os.path.join(tdir, "tls_app.nox")
+            open(path, "w").write(ttemplate.replace("@PORT@", str(tport)).replace("@CA@", cert))
+            r = subprocess.run([noxc, "run", "--backend", backend, path], capture_output=True, text=True, timeout=120)
+            if r.returncode != 0 or r.stdout != texpected or r.stderr.strip():
+                print(f"[tls {backend}] başarısız rc={r.returncode}\n--- stdout\n{r.stdout}\n--- beklenen\n{texpected}\n--- stderr\n{r.stderr[:1500]}")
+                rc = 1
+        tserver.stop(0)
 print("ok" if rc == 0 else "FAIL")
 sys.exit(rc)

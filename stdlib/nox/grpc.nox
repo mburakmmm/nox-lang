@@ -1,4 +1,4 @@
-# nox.grpc — gRPC istemcisi (HTTP/2, düz TCP `h2c`), saf Zig. Mesajlar protobuf baytlarıdır (`nox.protobuf` ile kodlanır/çözülür); `str` ikili-güvenlidir.
+# nox.grpc — gRPC istemcisi (HTTP/2: düz TCP `h2c` ya da TLS ALPN `h2`), saf Zig. Mesajlar protobuf baytlarıdır (`nox.protobuf` ile kodlanır/çözülür); `str` ikili-güvenlidir.
 #
 #     import nox.grpc
 #     import nox.protobuf
@@ -15,7 +15,7 @@
 # çağrılar sırayla yapılır. `timeout_ms > 0` sunucuya `grpc-timeout` olarak bildirilir (sunucu `DEADLINE_EXCEEDED` döner); istemci tarafında okuma zaman aşımı yoktur.
 #
 # **Hata modeli:** taşıma/protokol hatası `GrpcError` olur ve bağlantı kapanır (`connect` ile yeniden açın); sunucu durumu `Response.status` ve `GrpcStatusError.code` ile gelir (`OK` = 0,
-# `UNAVAILABLE` = 14, ...). **Sınırlar:** TLS yok (ALPN `h2` bildirilemiyor; TLS arkasındaki servisler için bir TLS sonlandırıcı kullanın); sıkıştırılmış mesajlar (`grpc-encoding`)
+# `UNAVAILABLE` = 14, ...). **TLS:** `connect_tls(host, port, ca_file="")` (ALPN `h2`; sistem CA deposu ya da PEM `ca_file`). **Sınırlar:** sıkıştırılmış mesajlar (`grpc-encoding`)
 # kabul edilmez; yanıt üst verisi `header(name)` ile okunur (başlıklar ve trailer birlikte, ad küçük harf).
 
 OK: int = 0
@@ -50,6 +50,7 @@ class GrpcStatusError(Exception):
         self.detail = detail
 
 extern def nox_grpc_open_raw(host: str, port: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_grpc_open_tls_raw(host: str, port: int, ca_file: str) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_grpc_status_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_grpc_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_grpc_close_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
@@ -136,4 +137,15 @@ def connect(host: str, port: int) -> Client:
         msg: str = nox_grpc_errmsg_raw(h)
         nox_grpc_close_raw(h)
         raise GrpcError("could not connect to " + host + ":" + str(port) + ": " + msg)
+    return Client(host, port, h)
+
+# TLS (ALPN `h2`) üzerinden bağlanır. `ca_file` boşsa sistem CA deposu, doluysa (PEM yolu) yalnızca o dosyadaki CA'lar güvenilir sayılır; sunucu adı sertifikaya karşı doğrulanır.
+def connect_tls(host: str, port: int, ca_file: str = "") -> Client:
+    h: ptr = nox_grpc_open_tls_raw(host, port, ca_file)
+    if nox_grpc_is_null_raw(h) != 0:
+        raise GrpcError("out of memory")
+    if nox_grpc_status_raw(h) == 0:
+        msg: str = nox_grpc_errmsg_raw(h)
+        nox_grpc_close_raw(h)
+        raise GrpcError("could not connect (TLS) to " + host + ":" + str(port) + ": " + msg)
     return Client(host, port, h)

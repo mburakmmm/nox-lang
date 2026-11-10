@@ -8,8 +8,8 @@
 //! Akış denetimi: gönderirken karşının bağlantı ve akış pencereleri izlenir (`WINDOW_UPDATE`, `SETTINGS_INITIAL_WINDOW_SIZE`); alırken her `DATA` için pencere yenilenir.
 //! Sıkıştırılmış mesaj (`grpc-encoding`) KABUL EDİLMEZ: istek `grpc-accept-encoding: identity` bildirir, sunucu yine de sıkıştırırsa çağrı hata verir.
 //!
-//! **v1 sınırları:** TLS yok (Zig'in `std.crypto.tls` istemcisi ALPN `h2` bildiremez; TLS arkasındaki gRPC sunucuları için bir TLS sonlandırıcı/proxy kullanın);
-//! okuma zaman aşımı YOKTUR (`nox_tcp` taşımasının sınırı; süreyi sunucuya `grpc-timeout` ile bildirin, sunucu `DEADLINE_EXCEEDED` döner).
+//! **TLS** (v2.1.35): `nox_grpc_open_tls_raw` ALPN `h2` bildiren yamalı vendor TLS istemcisiyle (`runtime/vendor/tls_client.zig`, `alpn_h2`) bağlanır; sistem CA deposu ya da `ca_file`.
+//! **v1 sınırları:** okuma zaman aşımı YOKTUR (`nox_tcp` taşımasının sınırı; süreyi sunucuya `grpc-timeout` ile bildirin, sunucu `DEADLINE_EXCEEDED` döner).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -44,6 +44,7 @@ const GConn = struct {
     peer_stream_window: i64 = h2.default_window,
     peer_max_frame: u32 = h2.default_max_frame,
     goaway: bool = false,
+    tls: bool = false,
 
     fn setErr(self: *GConn, msg: []const u8) void {
         if (self.errmsg_owned) gpa.free(self.errmsg);
@@ -62,7 +63,12 @@ const GConn = struct {
     }
 
     fn fill(self: *GConn) bool {
-        const chunk = tcp.readSome(self.c, 64 * 1024);
+        var chunk = tcp.readSome(self.c, 64 * 1024);
+        // TLS 1.3'te oturum bileti gibi uygulama verisi taşımayan kayıtlar boş bir okuma döndürebilir (hata/EOF değildir): yeniden dene.
+        var retries: usize = 0;
+        while (chunk.len == 0 and self.c.ok and !self.c.eof and retries < 64) : (retries += 1) {
+            chunk = tcp.readSome(self.c, 64 * 1024);
+        }
         if (chunk.len == 0) {
             self.fail(if (self.c.eof) "connection closed by the server" else (if (self.c.errmsg.len > 0) self.c.errmsg else "read failed"));
             return false;
@@ -438,7 +444,7 @@ fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8,
     defer hb.deinit(gpa);
     const ok_hdr = blk: {
         h2.encodeField(&hb, gpa, ":method", "POST") catch break :blk false;
-        h2.encodeField(&hb, gpa, ":scheme", "http") catch break :blk false;
+        h2.encodeField(&hb, gpa, ":scheme", if (c.tls) "https" else "http") catch break :blk false;
         h2.encodeField(&hb, gpa, ":path", path) catch break :blk false;
         h2.encodeField(&hb, gpa, ":authority", c.authority) catch break :blk false;
         h2.encodeField(&hb, gpa, "content-type", "application/grpc") catch break :blk false;
@@ -553,16 +559,32 @@ fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8,
 /// Düz TCP (h2c, önceden bilinen) bağlantı açar: ön ek + boş SETTINGS gönderir. Başarısız olsa da geçerli bir tutamak döner (`status == 0`, `errmsg` dolu); yalnızca bellek
 /// yetersizliğinde `null`.
 pub export fn nox_grpc_open_raw(host: ?[*:0]const u8, port: i64) callconv(.c) ?*anyopaque {
+    return openImpl(host, port, false, null);
+}
+
+/// TLS üzerinden (ALPN `h2`) bağlanır. `ca_file` doluysa (PEM) sistem deposu YERİNE yalnızca o dosyadaki CA'lara güvenilir; boşsa sistem CA deposu kullanılır. Sunucu adı (`host`)
+/// sertifikaya karşı doğrulanır.
+pub export fn nox_grpc_open_tls_raw(host: ?[*:0]const u8, port: i64, ca_file: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    return openImpl(host, port, true, ca_file);
+}
+
+fn openImpl(host: ?[*:0]const u8, port: i64, use_tls: bool, ca_file: ?[*:0]const u8) ?*anyopaque {
     const c = gpa.create(GConn) catch return null;
     const h = str_mod.nox_str_slice(host orelse "");
     const tc = tcp.connect(h, port, false) orelse {
         gpa.destroy(c);
         return null;
     };
-    c.* = .{ .c = tc, .ok = tc.ok, .decoder = h2.Decoder.init(gpa, 4096) };
+    c.* = .{ .c = tc, .ok = tc.ok, .decoder = h2.Decoder.init(gpa, 4096), .tls = use_tls };
     if (!tc.ok) {
         c.setErr(if (tc.errmsg.len > 0) tc.errmsg else "could not connect");
         return c;
+    }
+    if (use_tls) {
+        if (!tcp.startTlsEx(tc, h, true, str_mod.nox_str_slice(ca_file orelse ""))) {
+            c.fail(if (tc.errmsg.len > 0) tc.errmsg else "TLS handshake failed");
+            return c;
+        }
     }
     var buf: [64]u8 = undefined;
     c.authority = gpa.dupe(u8, std.fmt.bufPrint(&buf, "{s}:{d}", .{ h, port }) catch h) catch &.{};

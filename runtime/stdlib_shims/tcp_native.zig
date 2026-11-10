@@ -21,6 +21,11 @@ const SOCK_BUF: usize = TlsClient.min_buffer_len;
 const TLS_READ_BUF: usize = TlsClient.min_buffer_len;
 const TLS_WRITE_BUF: usize = TlsClient.min_buffer_len;
 
+const OwnCa = struct {
+    bundle: std.crypto.Certificate.Bundle = .empty,
+    lock: std.Io.RwLock = .init,
+};
+
 pub const Conn = struct {
     ok: bool = false,
     eof: bool = false,
@@ -39,6 +44,8 @@ pub const Conn = struct {
     stream_writer: std.Io.net.Stream.Writer = undefined,
     client: TlsClient = undefined,
     socket_open: bool = false,
+    /// `startTlsEx`in `ca_file` ile kurduğu, bağlantıya özgü CA deposu (varsa `close` serbest bırakır).
+    own_ca: ?*OwnCa = null,
 
     pub fn setErr(self: *Conn, msg: []const u8) void {
         if (self.errmsg_owned) gpa.free(self.errmsg);
@@ -125,13 +132,40 @@ pub fn readSome(c: *Conn, max: usize) []const u8 {
 /// Mevcut düz bağlantıyı aynı soket üzerinde TLS'e yükseltir (`servername`: SNI + sertifika doğrulaması). Başarıda `true`.
 /// Yükseltme öncesi tamponlanmış düz metin kalmamalıdır: kalırsa (STARTTLS enjeksiyonu) yükseltme reddedilir.
 pub fn startTls(c: *Conn, servername: []const u8) bool {
+    return startTlsEx(c, servername, false, "");
+}
+
+/// `startTls` + isteğe bağlı ALPN `h2` (v2.1.35, gRPC) ve `ca_file` (PEM; doluysa sistem deposu YERİNE yalnızca bu dosyadaki CA'lara güvenilir: kurumsal/özel CA ve testler).
+/// `alpn_h2` istenip sunucu `h2` seçmezse yükseltme başarısız olur.
+pub fn startTlsEx(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []const u8) bool {
     if (!c.ok or c.use_tls) return false;
     if (c.stream_reader.interface.bufferedLen() != 0) {
         c.setErr("unexpected data received before the TLS upgrade");
         c.ok = false;
         return false;
     }
-    if (!tls_mod.ensureCaBundle(c.io)) {
+    var bundle_ptr: *std.crypto.Certificate.Bundle = &tls_mod.g_ca_bundle;
+    var lock_ptr: *std.Io.RwLock = &tls_mod.g_ca_lock;
+    if (ca_file.len > 0) {
+        const own = gpa.create(OwnCa) catch {
+            c.setErr("out of memory");
+            c.ok = false;
+            return false;
+        };
+        own.* = .{};
+        const now0 = std.Io.Timestamp.now(c.io, .real);
+        own.bundle.addCertsFromFilePathAbsolute(gpa, c.io, now0, ca_file) catch |err| {
+            own.bundle.deinit(gpa);
+            gpa.destroy(own);
+            var buf: [200]u8 = undefined;
+            c.setErr(std.fmt.bufPrint(&buf, "could not load the CA file: {s}", .{@errorName(err)}) catch "could not load the CA file");
+            c.ok = false;
+            return false;
+        };
+        c.own_ca = own;
+        bundle_ptr = &own.bundle;
+        lock_ptr = &own.lock;
+    } else if (!tls_mod.ensureCaBundle(c.io)) {
         c.setErr("could not load the system CA certificates");
         c.ok = false;
         return false;
@@ -144,8 +178,8 @@ pub fn startTls(c: *Conn, servername: []const u8) bool {
         .ca = .{ .bundle = .{
             .gpa = gpa,
             .io = c.io,
-            .lock = &tls_mod.g_ca_lock,
-            .bundle = &tls_mod.g_ca_bundle,
+            .lock = lock_ptr,
+            .bundle = bundle_ptr,
         } },
         .ssl_key_log = null,
         .read_buffer = &c.tls_read_buf,
@@ -153,11 +187,17 @@ pub fn startTls(c: *Conn, servername: []const u8) bool {
         .entropy = &random_buffer,
         .realtime_now = now,
         .allow_truncation_attacks = false,
+        .alpn_h2 = alpn_h2,
     }) catch |err| {
         c.setErr(@errorName(err));
         c.ok = false;
         return false;
     };
+    if (alpn_h2 and !c.client.alpn_h2_selected) {
+        c.setErr("the server did not negotiate HTTP/2 (ALPN h2)");
+        c.ok = false;
+        return false;
+    }
     c.use_tls = true;
     return true;
 }
@@ -166,6 +206,10 @@ pub fn close(c: *Conn) void {
     if (c.use_tls) c.client.end() catch {};
     if (c.socket_open) c.stream.close(c.io);
     c.buf.deinit(gpa);
+    if (c.own_ca) |own| {
+        own.bundle.deinit(gpa);
+        gpa.destroy(own);
+    }
     if (c.errmsg_owned) gpa.free(c.errmsg);
     gpa.destroy(c);
 }

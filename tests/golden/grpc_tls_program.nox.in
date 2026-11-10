@@ -1,0 +1,17 @@
+# nox.grpc over TLS (ALPN h2): özel CA ile güvenilir, sistem deposuyla güvenilmeyen (kendinden imzalı) sertifika. scripts/grpc_probe.py @PORT@ ve @CA@ doldurur.
+import nox.grpc
+from nox.grpc import Client, GrpcError
+
+c: Client = nox.grpc.connect_tls("localhost", @PORT@, "@CA@")
+print(c.unary("/test.Echo/Unary", "hello tls"))
+big: str = "q" * 200000
+print(len(c.unary("/test.Echo/Unary", big)))
+c.close()
+try:
+    nox.grpc.connect_tls("localhost", @PORT@)
+except GrpcError as e:
+    print("untrusted rejected")
+try:
+    nox.grpc.connect_tls("localhost", @PORT@, "/nonexistent/ca.pem")
+except GrpcError as e:
+    print("missing ca rejected")

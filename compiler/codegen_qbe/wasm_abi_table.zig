@@ -133,6 +133,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_grpc_errmsg_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_grpc_is_null_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_grpc_open_raw", Entry{ .params = "PL", .ret = 'P' } },
+    .{ "nox_grpc_open_tls_raw", Entry{ .params = "PLP", .ret = 'P' } },
     .{ "nox_grpc_result_at_raw", Entry{ .params = "PPL", .ret = 'P' } },
     .{ "nox_grpc_result_count_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_grpc_result_free_raw", Entry{ .params = "P", .ret = 'v' } },

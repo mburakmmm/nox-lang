@@ -182,6 +182,15 @@ pub fn startTls(c: *Conn, servername: []const u8) bool {
     return true;
 }
 
+/// gRPC için ALPN `h2` + özel CA dosyası wasm ana makinesinde desteklenmez.
+pub fn startTlsEx(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []const u8) bool {
+    _ = servername;
+    _ = alpn_h2;
+    _ = ca_file;
+    c.setErr("TLS with ALPN is not supported on this host");
+    return false;
+}
+
 pub fn close(c: *Conn) void {
     if (comptime enabled) {
         if (c.ok and c.id != 0) _ = fetch.submit(.{ .kind = .tcp_close, .stream = c.id }, true);

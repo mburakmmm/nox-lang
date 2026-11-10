@@ -63,7 +63,7 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 
 `nox.grpc`: HTTP/2 `h2c` istemcisi (`runtime/stdlib_shims/grpc.zig`, HPACK/kare yardımcıları `http2.zig`'den), unary + sunucu/istemci akışı (mesajlar toplanır), üst veri, trailer, akış denetimi. Gerçek `grpcio` sunucusuna karşı `scripts/grpc_probe.py` (iki arka uç).
 
-**Hâlâ açık:** (1) **TLS**: `tcp_native` TLS'i Zig `std.crypto.tls` kullanır ve ALPN `h2` bildiremez; TLS-yalnız servisler için ya OpenSSL FFI istemcisi (sunucu tarafı `tls_server.zig` OpenSSL'i dinamik yüklüyor, ALPN'li istemci eklenebilir) ya da vendor `tls_client.zig`ye ALPN uzantısı gerekir. (2) Çift yönlü akışta istek/yanıt araya girmesi (şimdi: önce istekler gider, sonra yanıtlar toplanır). (3) `grpc-encoding: gzip` sıkıştırması (`gzip.zig` hazır). (4) Sunucu tarafı gRPC (trailer desteği `respstream_trailers` ile var; çerçeve ve iletim biçimi yazılmadı). Kullanıcı istemedikçe sunucu tarafına girme.
+**TLS (v2.1.35):** `connect_tls` — vendor `tls_client.zig`ye ALPN `h2` yaması (üçüncü NOX PATCH; dosya Zig kurulumundan salt-okunur kopyalanmıştı, `chmod u+w` gerekti) ve `tcp_native.startTlsEx` (ALPN + `ca_file`). **Hâlâ açık:** (1) **mTLS** (istemci sertifikası) ve wasm'da TLS. (2) Çift yönlü akışta istek/yanıt araya girmesi (şimdi: önce istekler gider, sonra yanıtlar toplanır). (3) `grpc-encoding: gzip` sıkıştırması (`gzip.zig` hazır). (4) Sunucu tarafı gRPC (trailer desteği `respstream_trailers` ile var; çerçeve ve iletim biçimi yazılmadı). Kullanıcı istemedikçe sunucu tarafına girme.
 
 ### E3. IPv6 çok çekirdekli dinleme (KAPANDI v2.1.32)
 

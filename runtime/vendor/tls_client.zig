@@ -87,6 +87,8 @@ application_cipher: tls.ApplicationCipher,
 /// allows other programs with access to that file to decrypt all traffic over
 /// this connection.
 ssl_key_log: ?*SslKeyLog,
+/// NOX PATCH: sunucu EncryptedExtensions'ta ALPN olarak `h2` seçti mi (yalnızca TLS 1.3).
+alpn_h2_selected: bool,
 
 pub const ReadError = error{
     /// The alert description will be stored in `alert`.
@@ -171,6 +173,8 @@ pub const Options = struct {
     /// application layer itself verifies that the amount of data received equals
     /// the amount of data expected, such as HTTP with the Content-Length header.
     allow_truncation_attacks: bool = false,
+    /// NOX PATCH (v2.1.35, gRPC): ClientHello'ya ALPN `h2` uzantısı ekler; sunucunun seçimi `alpn_h2_selected` alanında okunur.
+    alpn_h2: bool = false,
     /// Populated when `error.TlsAlert` is returned from `init`.
     alert: ?*tls.Alert = null,
 
@@ -294,8 +298,15 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
         .explicit => server_name_extension.len + host_len,
     };
 
+    // NOX PATCH: ALPN uzantısı (`h2`), SNI ana bilgisayar baytlarından SONRA ayrı bir iovec olarak yazılır.
+    const alpn_ext = int(u16, @intFromEnum(tls.ExtensionType.application_layer_protocol_negotiation)) ++
+        int(u16, 5) ++ // uzantı verisi uzunluğu
+        int(u16, 3) ++ // protocol_name_list uzunluğu
+        [_]u8{ 2, 'h', '2' };
+    const alpn_len: usize = if (options.alpn_h2) alpn_ext.len else 0;
+
     const extensions_header =
-        int(u16, @intCast(extensions_payload.len + server_name_extension_len)) ++
+        int(u16, @intCast(extensions_payload.len + server_name_extension_len + alpn_len)) ++
         extensions_payload ++
         server_name_extension;
 
@@ -308,12 +319,12 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
         extensions_header;
 
     const out_handshake = .{@intFromEnum(tls.HandshakeType.client_hello)} ++
-        int(u24, @intCast(client_hello.len - server_name_extension.len + server_name_extension_len)) ++
+        int(u24, @intCast(client_hello.len - server_name_extension.len + server_name_extension_len + alpn_len)) ++
         client_hello;
 
     const cleartext_header_buf = .{@intFromEnum(tls.ContentType.handshake)} ++
         int(u16, @intFromEnum(tls.ProtocolVersion.tls_1_0)) ++
-        int(u16, @intCast(out_handshake.len - server_name_extension.len + server_name_extension_len)) ++
+        int(u16, @intCast(out_handshake.len - server_name_extension.len + server_name_extension_len + alpn_len)) ++
         out_handshake;
     const cleartext_header = switch (options.host) {
         .no_verification => cleartext_header_buf[0 .. cleartext_header_buf.len - server_name_extension.len],
@@ -321,8 +332,19 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
     };
 
     {
-        var iovecs: [2][]const u8 = .{ cleartext_header, host };
-        try output.writeVecAll(iovecs[0..if (host.len == 0) 1 else 2]);
+        var iovecs: [3][]const u8 = undefined;
+        var n_iov: usize = 0;
+        iovecs[n_iov] = cleartext_header;
+        n_iov += 1;
+        if (host.len != 0) {
+            iovecs[n_iov] = host;
+            n_iov += 1;
+        }
+        if (options.alpn_h2) {
+            iovecs[n_iov] = &alpn_ext;
+            n_iov += 1;
+        }
+        try output.writeVecAll(iovecs[0..n_iov]);
         try output.flush();
     }
 
@@ -333,6 +355,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
     // * Detect whether a certificate is the first one presented, in which case
     //   we need to verify the host name.
     var cert_index: usize = 0;
+    var alpn_h2_selected = false; // NOX PATCH
     // * Flip back and forth between the two cleartext buffers in order to keep
     //   the previous certificate in memory so that it can be verified by the
     //   next one.
@@ -564,6 +587,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                 const p = &@field(handshake_cipher, @tagName(tag.with()));
                                 p.transcript_hash.update(cleartext_header[tls.record_header_len..]); // Client Hello part 1
                                 p.transcript_hash.update(host); // Client Hello part 2
+                                if (options.alpn_h2) p.transcript_hash.update(&alpn_ext); // NOX PATCH: ALPN uzantısı
                                 p.transcript_hash.update(wrapped_handshake);
                             },
 
@@ -636,9 +660,18 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             const et = all_extd.decode(tls.ExtensionType);
                             const ext_size = all_extd.decode(u16);
                             const extd = try all_extd.sub(ext_size);
-                            _ = extd;
                             switch (et) {
                                 .server_name => {},
+                                // NOX PATCH: ALPN seçimi: u16 liste uzunluğu, u8 ad uzunluğu, ad.
+                                .application_layer_protocol_negotiation => {
+                                    var ed = extd;
+                                    try ed.ensure(3);
+                                    _ = ed.decode(u16);
+                                    const name_len = ed.decode(u8);
+                                    try ed.ensure(name_len);
+                                    const name = ed.slice(name_len);
+                                    alpn_h2_selected = name.len == 2 and name[0] == 'h' and name[1] == '2';
+                                },
                                 else => {},
                             }
                         }
@@ -1090,6 +1123,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             .allow_truncation_attacks = options.allow_truncation_attacks,
                             .application_cipher = app_cipher,
                             .ssl_key_log = options.ssl_key_log,
+                            .alpn_h2_selected = alpn_h2_selected,
                         };
                     },
                     else => return error.TlsUnexpectedMessage,

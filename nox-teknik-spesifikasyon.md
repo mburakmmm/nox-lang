@@ -29810,3 +29810,7 @@ Parser `encodeCoveragePattern`: korumasız her `case`, `Varyant(arg,...)` olarak
 ### 3.398 `Channel[T].wait(ms)` (v2.1.34)
 
 Checker: `.channel` alıcısında `wait(int) -> bool` (`await` gerekmez). Codegen (`calls.zig`): `obj.heap == .channel` ve `wait` ise `$nox_channel_wait(rt, ch, ms)`. Runtime: `bridge_native.zig`/`bridge_wasm.zig` `nox_channel_ready` (tamponda değer ya da bekleyen gönderici var mı; native'de mutex altında), `task_wait.zig` `nox_channel_wait` (1→10 ms katlanan kooperatif uyku ile yoklama, `Task.wait` ile aynı). Golden: `channel_wait_timeout`.
+
+### 3.399 gRPC TLS (ALPN `h2`) (v2.1.35)
+
+`runtime/vendor/tls_client.zig` (üçüncü NOX PATCH): `Options.alpn_h2`; ClientHello'ya `application_layer_protocol_negotiation` (`h2`) uzantısı SNI ana bilgisayar baytlarından sonra üçüncü iovec olarak yazılır (uzunluk alanları ve transcript hash buna göre artar); EncryptedExtensions'taki ALPN seçimi `Client.alpn_h2_selected`e yazılır. `tcp_native.startTlsEx(c, servername, alpn_h2, ca_file)`: `ca_file` doluysa bağlantıya özgü `Certificate.Bundle` (yalnızca o PEM'e güven, `close` serbest bırakır), `alpn_h2` istenip seçilmediyse yükseltme başarısız; wasm ana makinesinde (`tcp_host`) desteklenmez. `grpc.zig` `nox_grpc_open_tls_raw`; `:scheme` `https`; `fill` boş TLS okumalarını yeniden dener. Stdlib `connect_tls`. Test: `scripts/grpc_probe.py` TLS bölümü (`openssl` ile kendinden imzalı sertifika, `grpcio` TLS sunucusu, `tests/golden/grpc_tls_program.nox.in`).

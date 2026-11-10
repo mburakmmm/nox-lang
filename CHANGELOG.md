@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.35]
+
+### Eklendi
+
+- **`nox.grpc.connect_tls(host, port, ca_file="")`**: TLS üzerinden gRPC (ALPN `h2`). Vendor TLS istemcisine (`runtime/vendor/tls_client.zig`) ALPN `h2` uzantısı yaması (`Options.alpn_h2`, EncryptedExtensions'tan `alpn_h2_selected`); `tcp_native.startTlsEx` ALPN + isteğe bağlı bağlantıya özgü CA dosyası. Sunucu adı doğrulanır; kendinden imzalı sertifika `ca_file` verilmeden reddedilir. Gerçek `grpcio` TLS sunucusuna karşı iki arka uçta sınanır.
+
+### Düzeltildi
+
+- TLS 1.3'te uygulama verisi taşımayan kayıtlar (oturum bileti) `tcp.readSome`dan boş bir okuma döndürebiliyordu; gRPC istemcisi bunu hata saymak yerine yeniden dener.
+
 ## [2.1.34]
 
 ### Eklendi

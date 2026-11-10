@@ -1,6 +1,6 @@
 # nox.grpc
 
-A gRPC client (HTTP/2 over plain TCP, `h2c`) written in Zig: no `grpc` library needed. Messages are protobuf bytes (encode and decode them with [`nox.protobuf`](protobuf.md)); a `str`
+A gRPC client (HTTP/2 over plain TCP `h2c`, or over TLS with ALPN `h2`) written in Zig: no `grpc` library needed. Messages are protobuf bytes (encode and decode them with [`nox.protobuf`](protobuf.md)); a `str`
 holds bytes safely, including NUL.
 
 ```text
@@ -22,7 +22,8 @@ c.close()
 
 | Member | Description |
 |---|---|
-| `connect(host, port) -> Client` | opens the connection and sends the HTTP/2 preface; failure raises `GrpcError` |
+| `connect(host, port) -> Client` | opens a plain TCP (`h2c`) connection and sends the HTTP/2 preface; failure raises `GrpcError` |
+| `connect_tls(host, port, ca_file="") -> Client` | the same over TLS with ALPN `h2`. The server name is checked against the certificate. An empty `ca_file` uses the system CA store; a PEM path trusts only the CAs in that file (a private CA, a self-signed server) |
 | `Client.unary(path, request, timeout_ms=0) -> str` | one request, one reply message; a status other than `OK` raises `GrpcStatusError` (`code`, `detail`) |
 | `Client.call(path, requests, timeout_ms=0) -> Response` | any RPC shape: one or more request messages (client streaming), all reply messages collected (server streaming). The status is in the `Response`, not raised |
 | `Client.call_with(path, requests, metadata, timeout_ms) -> Response` | the same with request metadata (`dict[str, str]`) |
@@ -39,7 +40,7 @@ answers `DEADLINE_EXCEEDED` when it runs out.
 
 ## Limits
 
-- **No TLS yet.** The built-in TLS client cannot announce ALPN `h2`; put a TLS terminator (or a local proxy) in front of a TLS-only service.
+- **TLS needs TLS 1.3 ALPN support from the server** (the usual case for gRPC servers); a server that does not select `h2` makes `connect_tls` fail. No client certificates (mTLS) yet. Not available when compiled to WebAssembly.
 - **Sequential calls** on one connection; the client does not interleave a bidirectional stream (requests are sent, then replies are collected).
 - **No compression:** requests announce `grpc-accept-encoding: identity`; a compressed reply is an error.
 - **No client-side read timeout** (the same limit as [`nox.redis`](redis.md)); use `timeout_ms` so the server enforces the deadline.
