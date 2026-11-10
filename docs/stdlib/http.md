@@ -190,7 +190,7 @@ The `serve` family are language-level entry points: the handler must be a plain 
 |---|---|
 | `serve(port, handle[, max_connections])` | one listener, runs on the calling worker; handler may be a name or a closure |
 | `serve_fd(fd, handle[, max_connections])` | serve on an already-listening socket from `listen(port)` |
-| `serve_multicore(port, handle, num_threads[, max_connections])` | `num_threads` workers share the listening socket; handler must be a function **name**; `max_connections` must be an integer literal |
+| `serve_multicore(port, handle, num_threads[, max_connections])` | `num_threads` workers share the listening socket; `handle` must be a function **name**: either the handler itself or a **factory** (a function with no parameters that returns the handler closure), which every worker calls once in its own runtime to build its own state; `max_connections` must be an integer literal |
 | `serve_tls(port, handle, cert_path, key_path[, max_connections])` | HTTPS using PEM certificate and key files |
 | `serve_ws(port, handle, ws_handle[, max_connections])` | HTTP plus WebSocket upgrade; `ws_handle(conn: WebSocketServerConn) -> None` runs for upgraded connections |
 | `serve_ws_tls(port, handle, ws_handle, cert_path, key_path[, max_connections])` | WebSocket over TLS |
@@ -339,7 +339,19 @@ Malformed or hostile requests no longer drop the connection silently: `400` (bad
 ### Choosing a `serve` form
 
 - **`serve`** — one listening socket; simplest. On the QBE backend one thread handles every request and module-level state is shared. On the default LLVM backend the connection fibers can be picked up by any worker thread, and **each worker has its own copy of the module's variables** — build everything the handler needs in a variable initialiser (`router: Router = build_router()`, `db: Connection = open_db()`); `router.get(...)` calls directly after the router's declaration also run per worker, other statements placed after the last variable do not ([Modules](../language/modules.md#module-level-state-and-the-multi-core-runtime)). Keep data that must be shared in a database, `nox.atomic` or `nox.sharedmem`.
-- **`serve_multicore`** — scales across CPU cores. Each worker has its own copy of module-level state, so keep shared state in a database or in `nox.atomic` / `nox.sharedmem`.
+- **`serve_multicore`** — scales across CPU cores. Each worker has its own copy of module-level state, so keep shared state in a database or in `nox.atomic` (`AtomicInt`, `AtomicBool`, and `AtomicRef` for a shared immutable snapshot) / `nox.sharedmem`. To give each worker its own application object, pass a **factory** instead of a handler:
+
+  ```text
+  def make_handler() -> (HttpRequest) -> HttpResponse:
+      app: App = App()              # built once per worker, inside that worker
+      def handle(req: HttpRequest) -> HttpResponse:
+          return app.dispatch(req)
+      return handle
+
+  nox.http.serve_multicore(8080, make_handler, 4)
+  ```
+
+  A closure *value* from the main runtime is still rejected, because the workers use separate runtimes; the factory runs inside each worker, so its closure belongs to that worker. The `_tls`, `_ws` and `_ws_tls` forms accept a factory too.
 - **`_tls`** — pass paths to a PEM certificate chain and private key; clients that offer `h2` get [HTTP/2](#http2). Behind a reverse proxy that terminates TLS, plain `serve` is usually what you want.
 - **`_ws`** — use when the same port serves normal requests and WebSockets; see [`nox.websocket`](websocket.md).
 

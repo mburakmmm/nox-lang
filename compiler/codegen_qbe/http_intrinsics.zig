@@ -330,12 +330,33 @@ pub fn emitFdServeTailCtx(self: *Codegen, fd_text: []const u8, wrapper_name: []c
 /// planı). `genHttpServeMulticore`/`genHttpServeMulticoreGeneric`nin
 /// ÇAĞIRANIN KENDİ payı İLE `genHttpServeMulticoreWorker`nin ÜRETİLEN
 /// worker gövdesi TARAFINDAN paylaşılır.
+/// Fabrika modu: BU worker'ın KENDİ `RuntimeState`inde (`RT_PARAM`) `factory_fn`i çağırıp dönen closure'ı bir `HandlerCtx`e paketler (ctx closure'ı retain eder; fabrikanın kendi payı
+/// bırakılır). Dönen `ctx` `emitServeAndCloseCtx(..., refcounted = true)` ile serve bitince bırakılır.
+fn emitFactoryCtx(self: *Codegen, factory_fn: []const u8) CodegenError![]const u8 {
+    const closure = try self.newTemp();
+    const factory_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{factory_fn});
+    try self.qbeCall(.{ .name = closure, .ty = .l }, factory_sym, &.{.{ .ty = .l, .text = RT_PARAM }});
+    const ctx = try self.newTemp();
+    try self.qbeCall(.{ .name = ctx, .ty = .l }, "$nox_http_handler_ctx_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = closure } });
+    try self.releaseValueIfSet(closure, .closure, .none, null, null, null);
+    return ctx;
+}
+
 pub fn emitListenServeTail(self: *Codegen, port_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool, shared_budget_text: []const u8) CodegenError!void {
+    return emitListenServeTailFactory(self, port_text, wrapper_name, max_conn_text, tls_ctx_text, ws_wrapper_name, needs_headers, shared_budget_text, null);
+}
+
+pub fn emitListenServeTailFactory(self: *Codegen, port_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool, shared_budget_text: []const u8, factory_fn: ?[]const u8) CodegenError!void {
     const server = try self.newTemp();
     if (tls_ctx_text) |ctx| {
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen_multicore_worker_tls", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_text }, .{ .ty = .l, .text = ctx } });
     } else {
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen_multicore_worker", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_text } });
+    }
+    if (factory_fn) |ff| {
+        const ctx = try emitFactoryCtx(self, ff);
+        try emitServeAndCloseCtx(self, server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers, shared_budget_text, ctx, true);
+        return;
     }
     try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers, shared_budget_text);
 }
@@ -443,11 +464,14 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
         else => return error.Unsupported,
     };
     const sig = self.functions.get(handle_name) orelse return error.Unsupported;
-    if (sig.params.len != 1) return error.Unsupported;
-    if (sig.params[0].heap != .class or sig.params[0].class_name == null) return error.Unsupported;
-    if (sig.ret.heap != .class or sig.ret.class_name == null) return error.Unsupported;
-    const req_class = sig.params[0].class_name.?;
-    const resp_class = sig.ret.class_name.?;
+    const is_factory = sig.params.len == 0 and sig.ret.heap == .closure;
+    if (!is_factory) {
+        if (sig.params.len != 1) return error.Unsupported;
+        if (sig.params[0].heap != .class or sig.params[0].class_name == null) return error.Unsupported;
+        if (sig.ret.heap != .class or sig.ret.class_name == null) return error.Unsupported;
+    }
+    const req_class: []const u8 = if (is_factory) "nox_http_HttpRequest" else sig.params[0].class_name.?;
+    const resp_class: []const u8 = if (is_factory) "nox_http_HttpResponse" else sig.ret.class_name.?;
 
     const num_threads_v0 = try self.genExpr(c.args[2]);
     try self.checkNoLowlevelEscape(num_threads_v0);
@@ -491,14 +515,15 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     // OLAN bir i64), HER worker `nox_http_server_listen_multicore_worker`i
     // KENDİ gövdesinde (bkz. `genHttpServeMulticoreWorker`) ÇAĞIRIP
     // `SO_REUSEPORT` İLE KENDİ BAĞIMSIZ soketini TAZE açar.
-    const used_fields = self.computeUsedFieldsFor(handle_name);
+    const used_fields = if (is_factory) UsedRequestFields.allUsed() else self.computeUsedFieldsFor(handle_name);
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
     self.http_serve_wrapper_counter += 1;
-    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = used_fields });
+    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = if (is_factory) "" else handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = used_fields, .closure_mode = is_factory });
+    const factory_fn: ?[]const u8 = if (is_factory) handle_name else null;
 
     const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
     self.http_serve_multicore_worker_counter += 1;
-    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text, .needs_headers = used_fields.headers, .bounded = is_bounded });
+    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text, .needs_headers = used_fields.headers, .bounded = is_bounded, .factory_fn = factory_fn });
 
     // Faz MN.7b: `--release` (LLVM backend) altında, `num_threads - 1`
     // × `$nox_thread_spawn` (AŞAĞIDAKİ, `.qbe`de DEĞİŞMEDEN KALAN yol)
@@ -575,7 +600,7 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     try self.qbeJmp(cond_label);
     try self.qbeLabel(end_label);
 
-    try self.emitListenServeTail(port_v.text, wrapper_name, max_conn_text, null, null, used_fields.headers, shared_budget_text);
+    try emitListenServeTailFactory(self, port_v.text, wrapper_name, max_conn_text, null, null, used_fields.headers, shared_budget_text, factory_fn);
 
     // Faz HH.8: ÇAĞIRANIN KENDİ payı (yukarıdaki `emitFdServeTail`)
     // BİTTİKTEN SONRA, spawn edilen HER worker'ı join et — `max_
@@ -724,7 +749,7 @@ pub fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorke
         port = port_t;
     }
 
-    try self.emitListenServeTail(port, spec.wrapper_name, spec.max_conn_text, tls_ctx_text, spec.ws_wrapper_name, spec.needs_headers, shared_budget_text);
+    try emitListenServeTailFactory(self, port, spec.wrapper_name, spec.max_conn_text, tls_ctx_text, spec.ws_wrapper_name, spec.needs_headers, shared_budget_text, spec.factory_fn);
 
     try self.qbeRet("0");
     try self.qbeFuncEnd();
@@ -1012,8 +1037,27 @@ pub fn registerHttpHandlers(self: *Codegen, handle_name: []const u8, ws_handle_n
     wrapper_name: []const u8,
     ws_wrapper_name: ?[]const u8,
     needs_headers: bool,
+    /// Fabrika modu: `handle_name` bir işleyici FABRİKASIDIR (`() -> closure`); her worker kendi `RuntimeState`inde çağırır (bkz. `emitFactoryCtx`).
+    factory_fn: ?[]const u8 = null,
 } {
     const sig = self.functions.get(handle_name) orelse return error.Unsupported;
+    if (sig.params.len == 0 and sig.ret.heap == .closure) {
+        const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
+        self.http_serve_wrapper_counter += 1;
+        // Checker imzanın `(nox_http_HttpRequest) -> nox_http_HttpResponse` closure'ı döndürdüğünü doğruladı (bkz. `registerHttpHandlersExpr`in AYNI notu).
+        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = "", .req_class = "nox_http_HttpRequest", .resp_class = "nox_http_HttpResponse", .used_fields = UsedRequestFields.allUsed(), .closure_mode = true });
+        var ws_name: ?[]const u8 = null;
+        if (ws_handle_name) |wsh| {
+            const ws_sig = self.functions.get(wsh) orelse return error.Unsupported;
+            if (ws_sig.params.len != 1) return error.Unsupported;
+            if (ws_sig.params[0].heap != .class or ws_sig.params[0].class_name == null) return error.Unsupported;
+            const name = try std.fmt.allocPrint(self.allocator, "http_serve_ws_wrap_{d}", .{self.http_serve_ws_wrapper_counter});
+            self.http_serve_ws_wrapper_counter += 1;
+            try self.http_serve_ws_wrappers.append(self.allocator, .{ .name = name, .ws_handler_fn = wsh, .conn_class = ws_sig.params[0].class_name.?, .ctx_is_handler_ctx = true });
+            ws_name = name;
+        }
+        return .{ .wrapper_name = wrapper_name, .ws_wrapper_name = ws_name, .needs_headers = true, .factory_fn = handle_name };
+    }
     if (sig.params.len != 1) return error.Unsupported;
     if (sig.params[0].heap != .class or sig.params[0].class_name == null) return error.Unsupported;
     if (sig.ret.heap != .class or sig.ret.class_name == null) return error.Unsupported;
@@ -1285,7 +1329,7 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
 
     const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
     self.http_serve_multicore_worker_counter += 1;
-    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = handlers.wrapper_name, .max_conn_text = max_conn_text, .ws_wrapper_name = handlers.ws_wrapper_name, .tls = want_tls, .needs_headers = handlers.needs_headers, .bounded = is_bounded });
+    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = handlers.wrapper_name, .max_conn_text = max_conn_text, .ws_wrapper_name = handlers.ws_wrapper_name, .tls = want_tls, .needs_headers = handlers.needs_headers, .bounded = is_bounded, .factory_fn = handlers.factory_fn });
 
     // Faz MN.7b (bkz. `genHttpServeMulticore`nin AYNI belge notu):
     // `payload` BURADA da (`want_tls` İSE `PortTlsPayload*`, DEĞİLSE
@@ -1357,7 +1401,7 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     // YERİNE `emitListenServeTail` (KENDİ BAĞIMSIZ `SO_REUSEPORT` soketini
     // TAZE açar).
     const tls_ctx_text: ?[]const u8 = if (want_tls) tls_ctx_v else null;
-    try self.emitListenServeTail(port_v.text, handlers.wrapper_name, max_conn_text, tls_ctx_text, handlers.ws_wrapper_name, handlers.needs_headers, shared_budget_text);
+    try emitListenServeTailFactory(self, port_v.text, handlers.wrapper_name, max_conn_text, tls_ctx_text, handlers.ws_wrapper_name, handlers.needs_headers, shared_budget_text, handlers.factory_fn);
 
     // Faz HH.8: ÇAĞIRANIN KENDİ payı BİTTİKTEN SONRA, spawn edilen HER
     // worker'ı join et (bkz. `genHttpServeMulticore`nin AYNI gerekçesi).

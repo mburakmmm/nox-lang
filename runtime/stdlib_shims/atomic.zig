@@ -21,6 +21,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const str_mod = @import("../str.zig");
+const shim_util = @import("shim_util.zig");
 
 /// wasm32-wasi tek iş parçacıklıdır ve 64-bit atomik işlem yoktur: düz bir hücre aynı arayüzü verir.
 const PlainCell = struct {
@@ -88,6 +90,76 @@ export fn nox_atomic_free(h: i64) callconv(.c) void {
     std.heap.page_allocator.destroy(cell);
 }
 
+/// `AtomicRef`: worker'lar arası paylaşılan DEĞİŞMEZ bir bayt anlık görüntüsü (örn. serileştirilmiş yapılandırma/rota tablosu). Worker'ların ARC yığınları ayrı olduğundan nesne değil BAYTLAR
+/// paylaşılır: `set` yeni bir tampon kurup kilit altında takas eder, `get` kilit altında kopyalar (okuyucu eski tamponun serbest bırakılmasıyla yarışmaz). Sürüm sayacı her `set`te artar.
+const SnapshotCell = struct {
+    lock: std.atomic.Value(u32) = .init(0),
+    version: i64 = 0,
+    data: []u8 = &.{},
+
+    fn acquire(self: *SnapshotCell) void {
+        while (self.lock.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) std.atomic.spinLoopHint();
+    }
+    fn release(self: *SnapshotCell) void {
+        self.lock.store(0, .release);
+    }
+};
+
+fn snapFromHandle(h: i64) ?*SnapshotCell {
+    if (h == 0) return null;
+    return @ptrFromInt(@as(usize, @intCast(h)));
+}
+
+/// Yeni bir anlık görüntü hücresi (ilk değer `initial`); başarısızlıkta 0.
+export fn nox_atomic_ref_new(initial: ?[*:0]const u8) callconv(.c) i64 {
+    const cell = std.heap.page_allocator.create(SnapshotCell) catch return 0;
+    cell.* = .{};
+    if (initial) |p| {
+        const bytes = str_mod.nox_str_slice(p);
+        cell.data = std.heap.page_allocator.dupe(u8, bytes) catch {
+            std.heap.page_allocator.destroy(cell);
+            return 0;
+        };
+    }
+    return @intCast(@intFromPtr(cell));
+}
+
+/// Anlık görüntüyü `value` ile değiştirir ve YENİ sürümü döner (bellek yetersizse -1).
+export fn nox_atomic_ref_set(h: i64, value: ?[*:0]const u8) callconv(.c) i64 {
+    const cell = snapFromHandle(h) orelse return -1;
+    const bytes = if (value) |p| str_mod.nox_str_slice(p) else "";
+    const copy = std.heap.page_allocator.dupe(u8, bytes) catch return -1;
+    cell.acquire();
+    const old = cell.data;
+    cell.data = copy;
+    cell.version += 1;
+    const v = cell.version;
+    cell.release();
+    if (old.len > 0) std.heap.page_allocator.free(old);
+    return v;
+}
+
+/// Anlık görüntünün KOPYASINI çağıranın `RuntimeState`inde yeni bir `str` olarak döner.
+export fn nox_atomic_ref_get(rt: ?*anyopaque, h: i64) callconv(.c) ?[*:0]u8 {
+    const cell = snapFromHandle(h) orelse return shim_util.dupeToNoxStr(rt, "");
+    cell.acquire();
+    defer cell.release();
+    return shim_util.dupeToNoxStr(rt, cell.data);
+}
+
+pub export fn nox_atomic_ref_version(h: i64) callconv(.c) i64 {
+    const cell = snapFromHandle(h) orelse return 0;
+    cell.acquire();
+    defer cell.release();
+    return cell.version;
+}
+
+export fn nox_atomic_ref_free(h: i64) callconv(.c) void {
+    const cell = snapFromHandle(h) orelse return;
+    if (cell.data.len > 0) std.heap.page_allocator.free(cell.data);
+    std.heap.page_allocator.destroy(cell);
+}
+
 test "nox_atomic: new/load/store/add/cas/free" {
     const h = nox_atomic_new(5);
     try std.testing.expect(h != 0);
@@ -123,4 +195,14 @@ test "nox_atomic: gercek OS thread'leri arasinda kayip guncelleme yok" {
     for (&threads) |*t| t.* = try std.Thread.spawn(.{}, worker, .{h});
     for (threads) |t| t.join();
     try std.testing.expectEqual(@as(i64, 40_000), nox_atomic_load(h));
+}
+
+test "nox_atomic_ref: set/version/free (str yardimcisi olmadan, bayt kopyasi)" {
+    const h = nox_atomic_ref_new(null);
+    try std.testing.expect(h != 0);
+    try std.testing.expectEqual(@as(i64, 0), nox_atomic_ref_version(h));
+    // set/get Nox str başlığı gerektirir; sürüm sayacı ve boş değer burada doğrulanır, bayt yolu Nox goldeninde.
+    nox_atomic_ref_free(h);
+    nox_atomic_ref_free(0);
+    try std.testing.expectEqual(@as(i64, 0), nox_atomic_ref_version(0));
 }

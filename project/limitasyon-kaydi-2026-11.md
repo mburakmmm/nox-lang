@@ -39,12 +39,12 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [x] **C6 ember NL-001** `nox.redis` (RESP2, AUTH/ACL, TLS, Streams, betik/NOSCRIPT, reconnect) — **KAPANDI v2.1.9**; TLS başarılı el sıkışması güvenilir sertifikalı bir Redis'e karşı denenmedi.
 - [x] **C7 ember NL-009** JSON tam sayı hassasiyeti (2^53 üstü) — `as_int`, `number_text`, `dump` tam metni korur — **KAPANDI v2.1.7**.
 - [x] **C8 rune** `nox.terminal` (raw mod, boyut, poll, ham yazma, echo, yetenek tespiti) — **KAPANDI v2.1.7**; Windows'ta terminal denetimi yok (`TerminalError`).
-- [~] **C9 aether/nyx/ember** `serve_multicore` closure, IPv6 çok çekirdekli dinleme, paylaşılan `Application`/`list`/`dict`, `AtomicRef`.
+- [x] **C9 aether/nyx/ember** `serve_multicore` işleyici FABRİKASI (worker başına kurulum) + `AtomicRef` — **KAPANDI v2.1.20** (kullanıcı kararı: fabrika, ortak bellek değil). IPv6 çok çekirdekli dinleme ve `list`/`dict` paylaşımı kapsam dışı (belgelenmiş worker-başına-kopya modeli).
 - [x] **C10 nyx 2.3** şablonda döngü/koşul — `render_blocks` (`for`/`if`/`else`, `loop.*`) — **KAPANDI v2.1.7**; `render` değişmedi.
 - [x] **C11 nyx 2.4** `nox.jwt.verify` `exp/nbf/iat` kontrolü — `verify_claims`/`verify_now` eklendi (v2.1.7); `verify` davranışı değişmedi.
 - [~] **C12 pulse** protobuf (**KAPANDI v2.1.18**: `nox.protobuf` tel formatı), gRPC (açık: HTTP/2 istemci + trailer kararı), UDP (**KAPANDI v2.1.15**: `nox.udp`), Buffer→str köprüsü ve gzip→bytes (**KAPANDI v2.1.13**: `nox.bytes.str_from_list/to_str/...`); mikro/nano-saniye saat (**KAPANDI v2.1.13**: `now_ns`, `monotonic_ns`).
 - [x] **C13 ember NL-010/011/014** UUIDv7 (**KAPANDI v2.1.7**: `uuid7`, `uuid7_at`, `uuid7_timestamp_ms`), property-test (**KAPANDI v2.1.12**: `nox.property`), zaman dilimi (**KAPANDI v2.1.14**: `nox.timezone`).
-- [~] **C14 aether 5** `@controller`/`@get` metot dekoratörlerinin işleyici olması.
+- [x] **C14 aether 5** Üst-düzey fonksiyon dekoratörleriyle işleyici kaydı (`router_from_decorators`/`decorator_handler`) zaten vardı ve conformance testli; sınıf/metod dekoratörlerinin işleyici olması kullanıcı kararıyla (2026-11-10) KAPSAM DIŞI.
 - [~] **C15 pulse TYPE-001** tagged union / enum.
 
 ## D. Bayat ya da tasarım gereği (iş yok)

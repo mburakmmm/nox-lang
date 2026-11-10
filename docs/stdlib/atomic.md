@@ -28,6 +28,18 @@ This is intentionally narrow: a single 64-bit integer or boolean, not a shared o
 
 `AtomicError` is the exception class of the module; the operations above do not raise in normal use.
 
+## `AtomicRef`
+
+A shared, immutable **`str` snapshot** (serialized configuration, a route table, JSON). Workers have separate ARC heaps, so the *bytes* are shared rather than an object: `set` copies the value and swaps it in, `get` returns a fresh copy on the caller's heap, and a reader always sees one whole `set` (never a half-written value).
+
+| Member | Description |
+|---|---|
+| `new_ref(initial)` / `from_ref_handle(h)` | create a cell / attach to an existing one in another worker (`handle` is an `int`) |
+| `get()` | the current snapshot (a copy) |
+| `set(value)` | publishes a new snapshot and returns its version number |
+| `version()` | increases by one on every `set`; poll it to notice a change |
+| `free()` | release the cell once every worker is done |
+
 ## `AtomicBool`
 
 `new_bool(initial)`, `load()`, `store(value)`, `compare_and_swap(expected, desired)`, `handle`, `from_bool_handle(h)`, `free()` — the same operations for a flag.

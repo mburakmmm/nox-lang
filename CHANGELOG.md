@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.20]
+
+### Eklendi
+
+- **`serve_multicore*` işleyici fabrikası** (Aether/Nyx/Ember): `handle` olarak parametresiz, `(HttpRequest) -> HttpResponse` closure'ı döndüren bir üst-düzey fonksiyon verilebilir; her worker fabrikayı KENDİ `RuntimeState`inde bir kez çağırıp kendi durumunu (`Application`, bağlantılar) kurar. `_tls`/`_ws`/`_ws_tls` biçimleri dahil. Ana çalışma zamanındaki closure DEĞERİ hâlâ reddedilir (hata iletisi artık fabrikayı önerir).
+- **`nox.atomic.AtomicRef`**: worker'lar arası paylaşılan değişmez `str` anlık görüntüsü (`new_ref`, `from_ref_handle`, `get`, `set`, `version`, `free`). Nesne değil bayt paylaşılır; okuyucu her zaman bir `set`in tamamını görür.
+
+### Notlar
+
+- Üst-düzey fonksiyon dekoratörleriyle işleyici kaydı (`router_from_decorators`, `decorator_handler`) zaten mevcut ve conformance testli; sınıf/metod dekoratörlerinin işleyici olması kullanıcı kararıyla kapsam dışı bırakıldı (kayıt C14).
+
 ## [2.1.19]
 
 ### Eklendi

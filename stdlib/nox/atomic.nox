@@ -25,6 +25,11 @@ extern def nox_atomic_store(h: int, value: int) -> None from "zig-out/lib/noxrt.
 extern def nox_atomic_add(h: int, delta: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_atomic_cas(h: int, expected: int, desired: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_atomic_free(h: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_atomic_ref_new(initial: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_atomic_ref_set(h: int, value: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_atomic_ref_get(h: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_atomic_ref_version(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_atomic_ref_free(h: int) -> None from "zig-out/lib/noxrt.o"
 
 class AtomicError(Exception):
     pass
@@ -105,3 +110,38 @@ def from_int_handle(h: int) -> AtomicInt:
 
 def from_bool_handle(h: int) -> AtomicBool:
     return AtomicBool(h)
+
+# `AtomicRef`: worker'lar arası paylaşılan DEĞİŞMEZ `str` anlık görüntüsü (örn. serileştirilmiş yapılandırma, rota tablosu, JSON). Her worker'ın ARC yığını ayrı olduğundan nesne değil BAYTLAR
+# paylaşılır: `set` değeri kopyalayıp atomik takas eder, `get` çağıranın yığınında yeni bir kopya döndürür (her zaman bir `set`in tamamını görür, yarım yazım yok). `version()` her `set`te artar
+# (değişikliği yoklamak için). `handle` bir `int`tir: `nox.thread`e argüman olarak geçirilebilir, worker'da `from_ref_handle(h)` ile aynı hücreye bağlanın. Ömür `AtomicInt` ile aynı:
+# tüm worker'lar bittikten sonra bir kez `free()`.
+class AtomicRef:
+    handle: int
+
+    def __init__(self: AtomicRef, handle: int) -> None:
+        self.handle = handle
+
+    def get(self: AtomicRef) -> str:
+        return nox_atomic_ref_get(self.handle)
+
+    # Yeni değeri yayımlar ve yeni sürüm numarasını döndürür.
+    def set(self: AtomicRef, value: str) -> int:
+        v: int = nox_atomic_ref_set(self.handle, value)
+        if v < 0:
+            raise AtomicError("could not publish the snapshot (out of memory)")
+        return v
+
+    def version(self: AtomicRef) -> int:
+        return nox_atomic_ref_version(self.handle)
+
+    def free(self: AtomicRef) -> None:
+        nox_atomic_ref_free(self.handle)
+
+def new_ref(initial: str) -> AtomicRef:
+    h: int = nox_atomic_ref_new(initial)
+    if h == 0:
+        raise AtomicError("could not allocate an atomic reference cell")
+    return AtomicRef(h)
+
+def from_ref_handle(h: int) -> AtomicRef:
+    return AtomicRef(h)

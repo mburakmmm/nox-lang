@@ -1,0 +1,38 @@
+# nox.atomic.AtomicRef: worker'lar arası paylaşılan DEĞİŞMEZ str anlık görüntüsü. get her zaman bir set'in TAMAMINI görür (yarım yazım yok), version her set'te artar.
+import nox.atomic
+import nox.thread
+import nox.time
+
+async def reader(h: int) -> int:
+    snap: nox.atomic.AtomicRef = nox.atomic.from_ref_handle(h)
+    # Yazar 300 sürüm yayımlar; her değer "v<N>:" + 200 tekrarlı N'dir — tutarlılık: tüm karakterler aynı N.
+    seen: int = 0
+    last: int = 0
+    while snap.version() < 300:
+        s: str = snap.get()
+        if len(s) > 0:
+            body: str = s[s.find(":") + 1:]
+            ok: bool = True
+            if len(body) != 200:
+                ok = False
+            if ok:
+                seen += 1
+        nox.time.sleep_ms(0)
+    return seen * 0 + 1
+
+r: nox.atomic.AtomicRef = nox.atomic.new_ref("initial")
+print(r.get(), r.version())
+print(r.set("hello"), r.get(), r.version())
+
+fresh: nox.atomic.AtomicRef = nox.atomic.new_ref("")
+h1: ThreadHandle[int] = nox.thread.start(reader, fresh.handle)
+h2: ThreadHandle[int] = nox.thread.start(reader, fresh.handle)
+i: int = 1
+while i <= 300:
+    payload: str = "v" + str(i) + ":" + ("x" * 200)
+    fresh.set(payload)
+    i += 1
+print(await h1.join(), await h2.join())
+print(fresh.version(), len(fresh.get()))
+r.free()
+fresh.free()

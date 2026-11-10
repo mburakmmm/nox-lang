@@ -1,0 +1,26 @@
+# serve_multicore(port, make_handler, n): fabrika her worker'ın KENDİ RuntimeState'inde bir kez çağrılır (worker başına durum). scripts/http_factory_probe.py @PORT@'u doldurur.
+import nox.http
+import nox.random
+import nox.fs
+import nox.os
+from nox.http import HttpRequest, HttpResponse
+
+class App:
+    id: int
+    hits: int
+
+    def __init__(self: App, id: int) -> None:
+        self.id = id
+        self.hits = 0
+
+def make_handler() -> (HttpRequest) -> HttpResponse:
+    nox.fs.append_string(nox.os.getenv("FAC_LOG"), "factory\n")
+    app: App = App(nox.random.randint(1, 1000000000))
+
+    def handle(req: HttpRequest) -> HttpResponse:
+        app.hits += 1
+        return HttpResponse(200, "id:" + str(app.id) + " hits:" + str(app.hits), {})
+
+    return handle
+
+nox.http.serve_multicore(@PORT@, make_handler, 4)

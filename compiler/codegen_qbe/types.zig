@@ -343,6 +343,9 @@ pub const HttpServeMulticoreWorkerSpec = struct {
     /// DEĞİL, `MulticoreBoundedPayload{port, tls_ctx, budget}`dir (bkz.
     /// `genHttpServeMulticoreWorker`nin payload-çözme dalı).
     bounded: bool = false,
+    /// Fabrika modu (v2.1.20): `serve_multicore(port, make_handler, n)` — `make_handler() -> (HttpRequest) -> HttpResponse`. Her worker KENDİ `RuntimeState`inde fabrikayı bir kez çağırıp
+    /// bir `HandlerCtx` kurar (closure worker'a özgüdür; ana çalışma zamanından geçirilemez).
+    factory_fn: ?[]const u8 = null,
 };
 
 /// Faz C.1b: `obj.metod` BAĞLI-metod DEĞERİ İçin TEMBEL kaydedilen trampoline

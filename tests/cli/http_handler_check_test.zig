@@ -66,3 +66,45 @@ test "nox.http.serve: yanlis imzali closure handler reddedilir" {
     try std.testing.expect(result.term == .exited and result.term.exited != 0);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "the parameter of 'handle' must be 'HttpRequest'") != null);
 }
+
+test "nox.http.serve_multicore: isleyici FABRIKASI (parametresiz, closure donduren) kabul edilir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const result = try checkSource(io, a,
+        \\import nox.http
+        \\
+        \\def make_handler() -> (nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\        return nox_http_HttpResponse(200, "ok", {"x": "y"})
+        \\    return handle
+        \\
+        \\nox.http.serve_multicore(8080, make_handler, 2)
+        \\
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+}
+
+test "nox.http.serve_multicore: parametreli fabrika reddedilir (fabrika sifir parametre alir)" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const result = try checkSource(io, a,
+        \\import nox.http
+        \\
+        \\def make_handler(tag: str) -> (nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\        return nox_http_HttpResponse(200, tag, {"x": "y"})
+        \\    return handle
+        \\
+        \\nox.http.serve_multicore(8080, make_handler, 2)
+        \\
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited != 0);
+}

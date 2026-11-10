@@ -3017,10 +3017,14 @@ pub const Checker = struct {
         if (handle_expr == .identifier) {
             const n = handle_expr.identifier;
             const is_local = (try ctx.scope.lookup(self.allocator, n)) != null;
-            if (!is_local) return self.validateNamedHttpHandler(fn_label, n);
+            if (!is_local) {
+                // Çok çekirdekli sunucu: ya düz `(HttpRequest) -> HttpResponse` işleyici adı ya da worker başına bir kez çağrılan FABRİKA (`() -> (HttpRequest) -> HttpResponse`).
+                if (!allow_closure and self.isHttpHandlerFactory(n)) return;
+                return self.validateNamedHttpHandler(fn_label, n);
+            }
         }
         if (!allow_closure) {
-            return self.fail(error.NotCallable, "'{s}': 'handle' must be a plain function name (a closure handler is NOT supported in this variant: in the default build the multicore workers use a SEPARATE RuntimeState, so a closure from the main runtime cannot be passed to them)", .{fn_label});
+            return self.fail(error.NotCallable, "'{s}': 'handle' must be a plain function name (a closure handler is NOT supported in this variant: in the default build the multicore workers use a SEPARATE RuntimeState, so a closure from the main runtime cannot be passed to them; pass a FACTORY instead: a top-level function with no parameters that returns the handler closure, called once per worker)", .{fn_label});
         }
         const t = try self.checkExpr(ctx, handle_expr);
         const ft = switch (t) {
@@ -3036,6 +3040,21 @@ pub const Checker = struct {
         if (ft.return_type.* != .class or !std.mem.eql(u8, ft.return_type.class, "nox_http_HttpResponse")) {
             return self.fail(error.TypeMismatch, "'{s}': 'handle' must return an 'HttpResponse'", .{fn_label});
         }
+    }
+
+    /// `n` adlı üst-düzey fonksiyon bir işleyici FABRİKASI mı: sıfır parametre, `async` değil ve `(HttpRequest) -> HttpResponse` tipli bir closure döndürür.
+    fn isHttpHandlerFactory(self: *Checker, n: []const u8) bool {
+        if (self.async_functions.contains(n)) return false;
+        const sig = self.functions.get(n) orelse return false;
+        if (sig.params.len != 0) return false;
+        const ft = switch (sig.return_type) {
+            .func => |f| f,
+            else => return false,
+        };
+        if (ft.params.len != 1) return false;
+        if (ft.params[0] != .class or !std.mem.eql(u8, ft.params[0].class, "nox_http_HttpRequest")) return false;
+        if (ft.return_type.* != .class or !std.mem.eql(u8, ft.return_type.class, "nox_http_HttpResponse")) return false;
+        return true;
     }
 
     /// `validateHttpHandler`in ESKİ (üst-düzey fonksiyon ADI) doğrulaması —
