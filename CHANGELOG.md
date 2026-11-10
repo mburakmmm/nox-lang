@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.22]
+
+### Düzeltildi
+
+- `scripts/terminal_pty_probe.py` (CI testi `terminal_pty_test`): pty pencere boyutu ebeveynde `fork`tan sonra ayarlanıyordu; yavaş koşucuda çocuk boyutu önce sorgulayıp `80 24` görüyordu (Linux x86-64 CI'ı v2.1.17'de aralıklı kırıldı). Boyut artık çocuğun kendi tty'sinde `exec`ten önce ayarlanıyor.
+
 ## [2.1.21]
 
 ### Eklendi

@@ -27,8 +27,10 @@ with tempfile.TemporaryDirectory() as tmp:
         sys.exit(1)
     pid, fd = pty.fork()
     if pid == 0:
+        # Pencere boyutu `exec`ten ÖNCE çocuğun kendi tty'sinde (stdin = slave) ayarlanır: ebeveynde fork'tan sonra ayarlamak yavaş koşucuda yarışır
+        # (çocuk boyutu ayarlanmadan önce sorgulayıp varsayılan 80x24'ü görebilir).
+        fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
         os.execv(binary, [binary])
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
     out = b""
     sent = False
     end = time.time() + 20
