@@ -769,13 +769,41 @@ pub const Parser = struct {
         return t.lexeme;
     }
 
-    /// `case` deseni: `_` | `Yol.Varyant` | `Yol.Varyant(a, _, alan=b)`.
-    fn parseMatchPattern(self: *Parser) ParseError!ast.MatchCase {
-        const line = self.cur().line;
-        if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "_") and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
-            _ = self.advance();
-            return .{ .wildcard = true, .line = line };
+    /// Bir `case`/iç içe desen argümanı: `a` | `_` | `alan=a` | literal (`0`, `"x"`, `-1`, `True`) | iç içe `Enum.Varyant(...)`.
+    fn parseMatchPatternArg(self: *Parser) ParseError!ast.MatchPatternArg {
+        var arg: ast.MatchPatternArg = .{};
+        if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .assign) {
+            arg.keyword = self.advance().lexeme;
+            _ = self.advance(); // `=`
         }
+        const k = self.curKind();
+        if (k == .int_lit or k == .float_lit or k == .string_lit or k == .kw_true or k == .kw_false or k == .minus) {
+            const e = try self.parseUnary();
+            const ok = switch (e) {
+                .int_lit, .float_lit, .bool_lit, .string_lit => true,
+                .unary => |u| u.op == .neg and (u.operand.* == .int_lit or u.operand.* == .float_lit),
+                else => false,
+            };
+            if (!ok) {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "a literal pattern must be an int, float, str or bool literal" };
+                return error.UnexpectedToken;
+            }
+            arg.literal = e;
+            return arg;
+        }
+        if (self.check(.identifier) and self.pos + 1 < self.tokens.len and (self.tokens[self.pos + 1].kind == .dot or self.tokens[self.pos + 1].kind == .l_paren)) {
+            const sub = try self.allocator.create(ast.MatchCase);
+            sub.* = try self.parseEnumPattern();
+            arg.sub = sub;
+            return arg;
+        }
+        arg.bind = try self.parsePatternBindTarget();
+        return arg;
+    }
+
+    /// `Yol.Varyant` ya da `Yol.Varyant(arg, ...)` (en az iki parçalı nitelikli yol).
+    fn parseEnumPattern(self: *Parser) ParseError!ast.MatchCase {
+        const line = self.cur().line;
         var path = std.ArrayList([]const u8).empty;
         try path.append(self.allocator, (try self.expect(.identifier)).lexeme);
         while (self.match(.dot)) try path.append(self.allocator, (try self.expect(.identifier)).lexeme);
@@ -784,13 +812,7 @@ pub const Parser = struct {
         if (self.match(.l_paren)) {
             has_parens = true;
             while (!self.check(.r_paren)) {
-                if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .assign) {
-                    const kw = self.advance().lexeme;
-                    _ = self.advance(); // `=`
-                    try args.append(self.allocator, .{ .keyword = kw, .bind = try self.parsePatternBindTarget() });
-                } else {
-                    try args.append(self.allocator, .{ .bind = try self.parsePatternBindTarget() });
-                }
+                try args.append(self.allocator, try self.parseMatchPatternArg());
                 if (!self.match(.comma)) break;
             }
             _ = try self.expect(.r_paren);
@@ -802,10 +824,124 @@ pub const Parser = struct {
         return .{ .path = try path.toOwnedSlice(self.allocator), .args = try args.toOwnedSlice(self.allocator), .has_parens = has_parens, .line = line };
     }
 
+    /// `case` deseni: `_` | `Yol.Varyant[(...)]` [`if` koruma].
+    fn parseMatchPattern(self: *Parser) ParseError!ast.MatchCase {
+        const line = self.cur().line;
+        if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "_") and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
+            _ = self.advance();
+            return .{ .wildcard = true, .line = line };
+        }
+        var pat = try self.parseEnumPattern();
+        if (self.match(.kw_if)) pat.guard = try self.parseExpr();
+        return pat;
+    }
+
     fn pathExpr(self: *Parser, segs: []const []const u8) ParseError!ast.Expr {
         var e = identE(segs[0]);
         for (segs[1..]) |sg| e = try self.attrE(e, sg);
         return e;
+    }
+
+    fn payloadCall(self: *Parser, subject: ast.Expr, enum_e: ast.Expr, variant: []const u8, idx: i64, keyword: []const u8) ParseError!ast.Expr {
+        return self.callE(identE("__nox_payload"), &.{ subject, enum_e, .{ .string_lit = variant }, .{ .int_lit = idx }, .{ .string_lit = keyword } });
+    }
+
+    const Bind = struct { name: []const u8, value: ast.Expr };
+
+    /// Desen bir koşula (`conds`), kimlik denetimlerine/bağlamalara (`pre`) ve bağlama listesine (`binds`) indirgenir; iç içe desenler payload ifadesi üzerinde özyinelenir.
+    /// Koşullar `and` ile birleştirilir, bu yüzden iç desenler yalnızca dış varyant eşleşince değerlendirilir (eşleşmeyen varyantın payload alanı boştur).
+    fn lowerPattern(self: *Parser, subject: ast.Expr, pat: ast.MatchCase, conds: *std.ArrayList(ast.Expr), pre: *std.ArrayList(ast.Stmt), binds: *std.ArrayList(Bind)) ParseError!void {
+        const enum_segs = pat.path[0 .. pat.path.len - 1];
+        const variant = pat.path[pat.path.len - 1];
+        const enum_e = try self.pathExpr(enum_segs);
+        const tag_const = try std.fmt.allocPrint(self.allocator, "__tag_{s}", .{variant});
+        try conds.append(self.allocator, .{ .binary = .{
+            .op = .eq,
+            .left = try self.box(try self.attrE(subject, "_tag")),
+            .right = try self.box(try self.attrE(enum_e, tag_const)),
+        } });
+        var any_kw = false;
+        for (pat.args) |a| if (a.keyword != null) {
+            any_kw = true;
+        };
+        const arity: i64 = if (!pat.has_parens) -2 else if (any_kw) -1 else @intCast(pat.args.len);
+        try pre.append(self.allocator, mkStmt(.{ .expr_stmt = try self.callE(identE("__nox_match_check"), &.{ subject, enum_e, .{ .string_lit = variant }, .{ .int_lit = arity } }) }, pat.line));
+        for (pat.args, 0..) |a, j| {
+            const idx: i64 = if (a.keyword != null) -1 else @intCast(j);
+            const payload = try self.payloadCall(subject, enum_e, variant, idx, a.keyword orelse "");
+            if (a.sub) |sub| {
+                try self.lowerPattern(payload, sub.*, conds, pre, binds);
+            } else if (a.literal) |lit| {
+                try conds.append(self.allocator, .{ .binary = .{ .op = .eq, .left = try self.box(payload), .right = try self.box(lit) } });
+            } else if (a.bind) |name| {
+                try binds.append(self.allocator, .{ .name = name, .value = payload });
+            }
+        }
+    }
+
+    fn patternIrrefutable(pat: ast.MatchCase) bool {
+        if (pat.guard != null) return false;
+        for (pat.args) |a| if (a.sub != null or a.literal != null) return false;
+        return true;
+    }
+
+    fn andAll(self: *Parser, items: []const ast.Expr) ParseError!ast.Expr {
+        var acc = items[0];
+        for (items[1..]) |it| {
+            // Önce kutula, sonra ata: `acc = .{ ... .left = box(acc) }` Zig'de sonuç konumuna yerinde yazıldığından `acc`i yarım yazılmış okurdu.
+            const lhs = try self.box(acc);
+            const rhs = try self.box(it);
+            acc = .{ .binary = .{ .op = .and_, .left = lhs, .right = rhs } };
+        }
+        return acc;
+    }
+
+    /// `case ... if koşul`: koşuldaki bağlama adları payload ifadeleriyle değiştirilir (bağlama deyimleri gövdededir, koşuldan SONRA çalışır). Desteklenmeyen ifade biçimleri reddedilir.
+    fn substituteBinds(self: *Parser, e: ast.Expr, binds: []const Bind) ParseError!ast.Expr {
+        switch (e) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => return e,
+            .identifier => |n| {
+                for (binds) |b| if (std.mem.eql(u8, b.name, n)) return b.value;
+                return e;
+            },
+            .unary => |u| return .{ .unary = .{ .op = u.op, .operand = try self.box(try self.substituteBinds(u.operand.*, binds)) } },
+            .binary => |b| {
+                var nb = b;
+                nb.left = try self.box(try self.substituteBinds(b.left.*, binds));
+                nb.right = try self.box(try self.substituteBinds(b.right.*, binds));
+                return .{ .binary = nb };
+            },
+            .attribute => |a| return .{ .attribute = .{ .obj = try self.box(try self.substituteBinds(a.obj.*, binds)), .attr = a.attr } },
+            .index => |ix| return .{ .index = .{ .obj = try self.box(try self.substituteBinds(ix.obj.*, binds)), .index = try self.box(try self.substituteBinds(ix.index.*, binds)) } },
+            .call => |c| {
+                const args = try self.allocator.alloc(ast.Expr, c.args.len);
+                for (c.args, 0..) |a, i| args[i] = try self.substituteBinds(a, binds);
+                var nc = c;
+                nc.callee = try self.box(try self.substituteBinds(c.callee.*, binds));
+                nc.args = args;
+                return .{ .call = nc };
+            },
+            .kwarg => |k| return .{ .kwarg = .{ .name = k.name, .value = try self.box(try self.substituteBinds(k.value.*, binds)) } },
+            .ternary => |t| return .{ .ternary = .{
+                .cond = try self.box(try self.substituteBinds(t.cond.*, binds)),
+                .then_expr = try self.box(try self.substituteBinds(t.then_expr.*, binds)),
+                .else_expr = try self.box(try self.substituteBinds(t.else_expr.*, binds)),
+            } },
+            .list_lit => |items| {
+                const out = try self.allocator.alloc(ast.Expr, items.len);
+                for (items, 0..) |it, i| out[i] = try self.substituteBinds(it, binds);
+                return .{ .list_lit = out };
+            },
+            .tuple_lit => |items| {
+                const out = try self.allocator.alloc(ast.Expr, items.len);
+                for (items, 0..) |it, i| out[i] = try self.substituteBinds(it, binds);
+                return .{ .tuple_lit = out };
+            },
+            else => {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "this expression form is not supported in a case guard; compute it in the case body" };
+                return error.UnexpectedToken;
+            },
+        }
     }
 
     /// `match konu:` → gizli konu değişkeni + `if/elif/else` zinciri (bkz. yukarıdaki not). İlk deyimi (`__match_N: __infer = konu`) döner, zinciri `extra_stmts`e ekler.
@@ -821,10 +957,6 @@ pub const Parser = struct {
         while (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "case")) {
             _ = self.advance();
             const pat = try self.parseMatchPattern();
-            if (self.check(.kw_if)) {
-                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "guards (`case P if cond:`) are not supported; test the condition inside the case body" };
-                return error.UnexpectedToken;
-            }
             _ = try self.expect(.colon);
             const body = try self.parseBlock();
             try cases.append(self.allocator, pat);
@@ -844,8 +976,9 @@ pub const Parser = struct {
         const tmp = try std.fmt.allocPrint(self.allocator, "__match_{d}", .{self.match_counter});
         const line = start_tok.line;
         const has_wild = cases.items[cases.items.len - 1].wildcard;
+        const subj_ref = identE(tmp);
 
-        // Her dalın gövdesi: [kimlik denetimi, bağlamalar...] ++ kullanıcı gövdesi.
+        // Her dalın gövdesi: [kimlik denetimleri, bağlamalar...] ++ kullanıcı gövdesi.
         var branches = std.ArrayList([]ast.Stmt).empty;
         var covered = std.ArrayList(u8).empty;
         var first_enum: ?ast.Expr = null;
@@ -856,37 +989,20 @@ pub const Parser = struct {
                 try branches.append(self.allocator, bodies.items[i]);
                 continue;
             }
-            const enum_segs = c.path[0 .. c.path.len - 1];
-            const variant = c.path[c.path.len - 1];
-            const enum_e = try self.pathExpr(enum_segs);
+            const enum_e = try self.pathExpr(c.path[0 .. c.path.len - 1]);
             if (first_enum == null) first_enum = enum_e;
-            if (covered.items.len > 0) try covered.append(self.allocator, ',');
-            try covered.appendSlice(self.allocator, variant);
-            const tag_const = try std.fmt.allocPrint(self.allocator, "__tag_{s}", .{variant});
-            try conds.append(self.allocator, .{ .binary = .{
-                .op = .eq,
-                .left = try self.box(try self.attrE(identE(tmp), "_tag")),
-                .right = try self.box(try self.attrE(enum_e, tag_const)),
-            } });
-
+            if (patternIrrefutable(c.*)) {
+                if (covered.items.len > 0) try covered.append(self.allocator, ',');
+                try covered.appendSlice(self.allocator, c.path[c.path.len - 1]);
+            }
+            var case_conds = std.ArrayList(ast.Expr).empty;
             var pre = std.ArrayList(ast.Stmt).empty;
-            var any_kw = false;
-            for (c.args) |a| if (a.keyword != null) {
-                any_kw = true;
-            };
-            const arity: i64 = if (!c.has_parens) -2 else if (any_kw) -1 else @intCast(c.args.len);
-            try pre.append(self.allocator, mkStmt(.{ .expr_stmt = try self.callE(identE("__nox_match_check"), &.{ identE(tmp), enum_e, .{ .string_lit = variant }, .{ .int_lit = arity } }) }, c.line));
-            for (c.args, 0..) |a, j| {
-                const bind = a.bind orelse continue;
-                const idx: i64 = if (a.keyword != null) -1 else @intCast(j);
-                const payload = try self.callE(identE("__nox_payload"), &.{
-                    identE(tmp),
-                    enum_e,
-                    .{ .string_lit = variant },
-                    .{ .int_lit = idx },
-                    .{ .string_lit = a.keyword orelse "" },
-                });
-                try pre.append(self.allocator, mkStmt(.{ .var_decl = .{ .name = bind, .type_expr = .{ .simple = "__infer" }, .value = payload } }, c.line));
+            var binds = std.ArrayList(Bind).empty;
+            try self.lowerPattern(subj_ref, c.*, &case_conds, &pre, &binds);
+            if (c.guard) |g| try case_conds.append(self.allocator, try self.substituteBinds(g, binds.items));
+            try conds.append(self.allocator, try self.andAll(case_conds.items));
+            for (binds.items) |b| {
+                try pre.append(self.allocator, mkStmt(.{ .var_decl = .{ .name = b.name, .type_expr = .{ .simple = "__infer" }, .value = b.value } }, c.line));
             }
             c.prefix = pre.items.len;
             const full = try self.allocator.alloc(ast.Stmt, pre.items.len + bodies.items[i].len);
@@ -901,7 +1017,7 @@ pub const Parser = struct {
         } else if (first_enum) |fe| {
             // Kapsamlılık derleme zamanında denetlenir (`__nox_match_unreachable`, checker'da `0`a yeniden yazılır); `raise` dalın dönüş analizinde sonlandırıcı sayılmasını sağlar.
             const eb = try self.allocator.alloc(ast.Stmt, 2);
-            eb[0] = mkStmt(.{ .expr_stmt = try self.callE(identE("__nox_match_unreachable"), &.{ identE(tmp), fe, .{ .string_lit = try covered.toOwnedSlice(self.allocator) } }) }, line);
+            eb[0] = mkStmt(.{ .expr_stmt = try self.callE(identE("__nox_match_unreachable"), &.{ subj_ref, fe, .{ .string_lit = try covered.toOwnedSlice(self.allocator) } }) }, line);
             eb[1] = mkStmt(.{ .raise_stmt = try self.callE(identE("RuntimeError"), &.{.{ .string_lit = "no case matched" }}) }, line);
             else_body = eb;
         }

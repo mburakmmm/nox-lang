@@ -74,6 +74,55 @@ match subject:
 - `case _:` matches anything not matched above and must come last.
 - Cases are tried top to bottom and the first one that fits runs. There is no fall-through, so no `break` is needed.
 
+### Nested patterns, literals and guards
+
+A field can itself be matched with a pattern, a literal or a name:
+
+```nox
+enum Option[T]:
+    Some(value: T)
+    Nothing
+
+enum Token:
+    Word(text: str)
+    Num(n: int)
+    End
+
+def deep(o: Option[Option[int]]) -> str:
+    match o:
+        case Option.Some(Option.Some(v)):
+            return "some some " + str(v)
+        case Option.Some(Option.Nothing):
+            return "some nothing"
+        case _:
+            return "nothing"
+
+def lit(t: Token) -> str:
+    match t:
+        case Token.Word("end"):
+            return "the end word"
+        case Token.Num(0):
+            return "zero"
+        case Token.Num(n) if n > 100:
+            return "large"
+        case Token.Num(n):
+            return "num " + str(n)
+        case _:
+            return "other"
+
+a: Option[Option[int]] = Option.Some(Option.Some(4))
+print(deep(a), lit(Token.Word("end")), lit(Token.Num(0)), lit(Token.Num(500)), lit(Token.Num(7)), lit(Token.End))
+```
+
+```output
+some some 4 the end word zero large num 7 other
+```
+
+- **Nested pattern.** `Option.Some(Option.Some(v))` matches when the outer variant matches and the inner value matches its pattern.
+- **Literal.** An `int`, `float`, `str` or `bool` literal (including `-1`) matches a field that equals it.
+- **Guard.** `case P if condition:` runs only when the pattern matches *and* the condition is true; otherwise the next case is tried. The condition can use the names the pattern binds.
+- **Exhaustiveness.** A case with a literal, a nested pattern or a guard does not count as covering its variant, because it can fail. Finish such a `match` with `case _:` (or a plain case for the variant).
+
 ### Exhaustiveness
 
 Without a `case _:`, every variant has to appear in some case, otherwise the program does not compile:
@@ -142,7 +191,7 @@ The type arguments come from the arguments of the variant (`Option.Some(5)` is a
 
 ## Limits
 
-- Patterns are one level deep: `Variant(a, b)`. Nested patterns (`Shape.Circle(Point(x, y))`), literal patterns and `case x if cond:` guards are not supported; test conditions inside the case body.
+- A guard can use names, literals, operators, calls, attributes and indexing; lambdas, comprehensions and dictionary literals are not supported inside a guard (compute them in the body).
 - `match` bindings are not available inside generator functions (`yield`).
 - A generic enum type cannot be named through a module prefix in an annotation (`m.Option[int]`, a limit of every generic class); import it with `from m import Option`.
 

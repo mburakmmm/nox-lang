@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.25]
+
+### Eklendi
+
+- **`match` iç içe desen, literal desen ve koruma** (kayıt C15b): `case Option.Some(Option.Some(v)):`, `case Token.Word("end"):`, `case Token.Num(-1):` ve `case P if koşul:`. Koruma yanlışsa zincir sonraki kola düşer; koşul, desenin bağladığı adları kullanabilir. Kapsamlılık muhafazakârdır: literal/iç içe/korumalı bir kol varyantı kapsamış sayılmaz (`case _:` ile bitirin). `noxc fmt` hepsini korur.
+- Açık tip argümanlı çağrılarda (`f[T](...)`) argümanlar parametrenin bilinen tipiyle denetlenir (`Option.Some(Option.Nothing)` gibi iç içe kurucular için).
+
+### Düzeltildi
+
+- **İç içe jenerik sınıf türleri** (`Box[Box[int]]`, `Option[Option[int]]`): codegen iç içe kullanıcı jenerik türünü checker'dan farklı mangle ediyordu (`unsupported type expression`); artık aynı ad kullanılır.
+
 ## [2.1.24]
 
 ### Eklendi

@@ -543,3 +543,35 @@ test "fmt: jenerik enum yuzey bicimi korunur (tip parametreleri yazilir, Enum__V
     try std.testing.expect(std.mem.indexOf(u8, once, "Option__") == null);
     try std.testing.expect(std.mem.indexOf(u8, once, "__enum_v") == null);
 }
+
+test "fmt: match koruma, ic ice ve literal desenler korunur" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const canonical =
+        "enum Option[T]:\n" ++
+        "    Some(value: T)\n" ++
+        "    Nothing\n" ++
+        "\n" ++
+        "enum Token:\n" ++
+        "    Word(text: str)\n" ++
+        "    Num(n: int)\n" ++
+        "\n" ++
+        "def f(o: Option[Option[int]], t: Token) -> int:\n" ++
+        "    match o:\n" ++
+        "        case Option.Some(Option.Some(v)) if v > 3:\n" ++
+        "            return v\n" ++
+        "        case _:\n" ++
+        "            pass\n" ++
+        "    match t:\n" ++
+        "        case Token.Word(\"end\"):\n" ++
+        "            return 0\n" ++
+        "        case Token.Num(-1):\n" ++
+        "            return -1\n" ++
+        "        case Token.Num(n=k) if k > 100:\n" ++
+        "            return k\n" ++
+        "        case _:\n" ++
+        "            return 1\n";
+    const once = try formatSource(allocator, canonical);
+    try std.testing.expectEqualStrings(canonical, once);
+}

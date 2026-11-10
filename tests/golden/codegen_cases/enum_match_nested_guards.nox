@@ -1,0 +1,80 @@
+# match: `case ... if` koruması (başarısız koruma zincirde sonraki kola düşer), iç içe desen (Option.Some(Option.Some(v))), literal desen (Token.Word("end"), Token.Num(0), Token.Num(-1)).
+enum Option[T]:
+    Some(value: T)
+    Nothing
+
+enum Shape:
+    Circle(radius: float)
+    Rect(w: float, h: float)
+    Empty
+
+enum Token:
+    Word(text: str)
+    Num(n: int)
+    End
+
+def classify(s: Shape) -> str:
+    match s:
+        case Shape.Circle(r) if r > 10.0:
+            return "big circle"
+        case Shape.Circle(r):
+            return "circle " + str(r)
+        case Shape.Rect(w, h) if w == h:
+            return "square"
+        case Shape.Rect(w, h):
+            return "rect"
+        case Shape.Empty:
+            return "empty"
+
+def deep(o: Option[Option[int]]) -> str:
+    match o:
+        case Option.Some(Option.Some(v)):
+            return "some some " + str(v)
+        case Option.Some(Option.Nothing):
+            return "some nothing"
+        case _:
+            return "nothing"
+
+def lit(t: Token) -> str:
+    match t:
+        case Token.Word("end"):
+            return "the end word"
+        case Token.Word(w):
+            return "word " + w
+        case Token.Num(0):
+            return "zero"
+        case Token.Num(-1):
+            return "minus one"
+        case Token.Num(n) if n > 100:
+            return "large"
+        case Token.Num(n):
+            return "num " + str(n)
+        case _:
+            return "end"
+
+print(classify(Shape.Circle(20.0)), classify(Shape.Circle(2.0)), classify(Shape.Rect(2.0, 2.0)), classify(Shape.Rect(1.0, 2.0)), classify(Shape.Empty))
+a: Option[Option[int]] = Option.Some(Option.Some(4))
+b: Option[Option[int]] = Option.Some(Option.Nothing)
+c: Option[Option[int]] = Option.Nothing
+print(deep(a), deep(b), deep(c))
+print(lit(Token.Word("end")), lit(Token.Word("hi")), lit(Token.Num(0)), lit(Token.Num(-1)), lit(Token.Num(500)), lit(Token.Num(7)), lit(Token.End))
+
+# Koruma yan etkisiz değerlendirme sırası: kollar yukarıdan aşağıya, koruma yalnızca etiket eşleşince çalışır.
+calls: int = 0
+
+def tick(n: int) -> bool:
+    global_calls: int = n
+    return n > 0
+
+def order(s: Shape) -> str:
+    match s:
+        case Shape.Circle(r) if tick(1) and r > 100.0:
+            return "huge"
+        case Shape.Circle(r) if r < 0.5:
+            return "tiny"
+        case Shape.Circle(_):
+            return "normal"
+        case _:
+            return "not a circle"
+
+print(order(Shape.Circle(500.0)), order(Shape.Circle(0.1)), order(Shape.Circle(3.0)), order(Shape.Empty))

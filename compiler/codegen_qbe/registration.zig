@@ -129,6 +129,14 @@ fn appendMangledTypeExprName(self: *Codegen, buf: *std.ArrayListUnmanaged(u8), t
                 return;
             }
             if (g.args.len == 0) return error.Unsupported;
+            // İç içe KULLANICI jenerik sınıfı (`Box[Box[int]]`, `Option[Option[int]]`): checker iç türü `Box__int` sınıf adı olarak mangle eder, dış ad `Box__Box__int` olur.
+            // Aday ad zaten kayıtlı bir örneklenmiş sınıfsa o kullanılır (yerleşik `list_int` biçimiyle çakışmaz).
+            const base_name = if (self.from_imports.get(g.name)) |m| m else g.name;
+            const cand = try mangleGenericClassName(self, base_name, g.args);
+            if (self.classes.contains(cand)) {
+                try buf.appendSlice(self.allocator, cand);
+                return;
+            }
             try buf.appendSlice(self.allocator, g.name);
             try buf.appendSlice(self.allocator, "_");
             try appendMangledTypeExprName(self, buf, g.args[0]);

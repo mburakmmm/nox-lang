@@ -221,8 +221,12 @@ pub const IfStmt = struct {
 pub const MatchPatternArg = struct {
     /// `Varyant(alan=a)` biçiminde anahtar sözcük (alan adı); konumsal ise `null`.
     keyword: ?[]const u8 = null,
-    /// Bağlanan değişken adı; `null` = `_` (yok sayılır).
+    /// Bağlanan değişken adı; `null` = `_` (yok sayılır) — `sub`/`literal` yoksa.
     bind: ?[]const u8 = null,
+    /// İç içe enum deseni (`Option.Some(Option.Some(v))`): alanın değeri bu desenle de eşleşmelidir.
+    sub: ?*const MatchCase = null,
+    /// Literal desen (`Token.Word("end")`, `Shape.Circle(0)`): alan bu değere eşit olmalıdır.
+    literal: ?Expr = null,
 };
 
 pub const MatchCase = struct {
@@ -232,6 +236,8 @@ pub const MatchCase = struct {
     /// Desen `(...)` içeriyor mu (birim varyant `Enum.V` ile `Enum.V()` ayrımı formatter için).
     has_parens: bool = false,
     wildcard: bool = false,
+    /// `case P if koşul:` koruması (desen eşleşse bile koşul yanlışsa zincir sonraki kola düşer).
+    guard: ?Expr = null,
     /// Bu dalın gövdesinin başındaki, parser'ın eklediği deyim sayısı (bağlama bildirimleri + kapsamlılık denetimi); formatter bunları yazmaz.
     prefix: usize = 0,
     line: u32 = 0,

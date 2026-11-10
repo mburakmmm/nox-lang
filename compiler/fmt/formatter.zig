@@ -296,7 +296,13 @@ const Printer = struct {
         for (c.args, 0..) |a, i| {
             if (i > 0) try self.writer.writeAll(", ");
             if (a.keyword) |kw| try self.writer.print("{s}=", .{kw});
-            try self.writer.writeAll(a.bind orelse "_");
+            if (a.sub) |sub| {
+                try self.printMatchPattern(sub.*);
+            } else if (a.literal) |lit| {
+                try self.printExpr(lit);
+            } else {
+                try self.writer.writeAll(a.bind orelse "_");
+            }
         }
         try self.writer.writeAll(")");
     }
@@ -319,6 +325,10 @@ const Printer = struct {
             try self.indentTo(depth + 1);
             try self.writer.writeAll("case ");
             try self.printMatchPattern(c);
+            if (c.guard) |g| {
+                try self.writer.writeAll(" if ");
+                try self.printExpr(g);
+            }
             try self.writer.writeAll(":");
             try self.line(c.line);
             try self.printStmts(body[@min(c.prefix, body.len)..], depth + 2);

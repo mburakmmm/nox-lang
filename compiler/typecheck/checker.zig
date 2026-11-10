@@ -11309,6 +11309,12 @@ pub const Checker = struct {
                 if (((arg == .list_lit and arg.list_lit.len == 0) or (arg == .dict_lit and arg.dict_lit.len == 0)) and !(try self.mentionsProtocol(p.type_expr))) {
                     if (self.typeExprToType(p.type_expr)) |resolved| break :blk resolved else |_| {}
                 }
+                // Açık tip argümanlarıyla (`f[T](...)`) parametre tipi önceden bilinir: argüman beklenen tiple denetlenir (örn. iç içe `Option.Some(Option.Nothing)`).
+                if (explicit != null) {
+                    if (self.substituteTypeExpr(p.type_expr, &bindings)) |sub| {
+                        if (self.typeExprToType(sub)) |pt| break :blk try self.checkExprExpected(ctx, arg, pt) else |_| {}
+                    } else |_| {}
+                }
                 break :blk try self.checkExpr(ctx, arg);
             };
             try self.unifyTypeExpr(p.type_expr, at, gfd.type_params, &bindings, gfd.name);
