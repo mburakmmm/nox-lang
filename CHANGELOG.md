@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.33]
+
+### Eklendi
+
+- **`nox.grpc`: gRPC istemcisi** (kayıt C12, pulse NOX-CAP-GRPC-001): HTTP/2 `h2c` (düz TCP) üzerinde saf Zig istemci. `connect(host, port)`, `Client.unary`, `Client.call` (unary, sunucu-akışlı ve istemci-akışlı RPC: istek mesajları listesi gider, tüm yanıt mesajları toplanır), `call_with` (istek üst verisi), `Response.status/message/messages/header` (başlık ve trailer), `grpc-timeout`, yüzde-kodlu `grpc-message` çözme, iki yönde akış denetimi (`WINDOW_UPDATE`, `SETTINGS`). `nox.protobuf` ile mesaj kodlanır. Sunucu durumu veri (`Response.status`) / `GrpcStatusError`, taşıma hatası `GrpcError`. **Sınırlar:** TLS yok (ALPN `h2` bildirilemiyor), çift yönlü araya girme yok, sıkıştırma yok, istemci tarafı okuma zaman aşımı yok. Gerçek `grpcio` sunucusuna karşı iki arka uçta sınanır (`scripts/grpc_probe.py`; `grpcio` yoksa atlanır).
+
 ## [2.1.32]
 
 ### Eklendi

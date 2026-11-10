@@ -30,7 +30,7 @@ Kaynak: pulse deposunun `NOX_LIMITATIONS` belgesi (`DESIGN-LIMIT`). Hepsi "Nox b
 |---|---|---|
 | FIBER-001 | Fiber yığını sabit 192 KiB (`runtime/async_rt/fiber.zig` `STACK_SIZE`); derin özyinelemeli kodlayıcı/ayrıştırıcı taşarsa süreç sonlanır | **Geçerli.** Kod özyineleme yerine döngü kullanmalı ve derinlik sınırı koymalı. `STACK_SIZE` küçültülmez (bkz. bellek: fiber-stack sertleştirmesi). |
 | HTTP-001 | HTTP istemcisi HTTP/1.1; yalnız GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS; gövde yalnız POST/PUT/PATCH; `timeout_ms=0` DNS/bağlanmayı sınırsız bırakır; akışsız çağrı tüm gövdeyi tamponlar | **Geçerli.** Akışlı okuma sonradan eklendi (Faz 8), ama yöntem kümesi değişmedi. |
-| HTTP-002 | HTTP/2 yalnız sunucu tarafında; istemci HTTP/1.1; gRPC taşıması değil | **Geçerli.** gRPC için E2'ye bak. |
+| HTTP-002 | HTTP/2 yalnız sunucu tarafında; istemci HTTP/1.1; gRPC taşıması değil | **Kısmen bayat:** `nox.grpc` (v2.1.33) HTTP/2 `h2c` istemcisi sağlar; `nox.http` istemcisi hâlâ HTTP/1.1. |
 | FS-001 | Dosya yolları sınırlanmaz (mutlak yol, `..`, symlink doğrudan işletim sistemine gider) | **Geçerli ve AGENTS.md §9.5'te güven sınırı olarak belgeli.** Güvenilmeyen `path`i çağıran taraf kanonikleştirmelidir; `nox.fs` bunu otomatik yapmaz. "Kolaylık" olarak sandbox ekleme. |
 | STR-001 | `char_from_byte(0)` boş dize döner | **Bayat:** v2.1.30'da düzeltildi (tek NUL baytlı `str`). |
 | TASKLOCAL-002 | Doğan görev ebeveynin `TaskLocal` değerini miras almaz; bağlamı açıkça geçir | **Geçerli, tasarım.** Otomatik miras ekleme. |
@@ -59,12 +59,11 @@ Her satır: durum, neden bekliyor, ajanın ilk adımı.
 
 Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliği sanıp bırakınca global'in tek referansı sıfırlanıyor, `nox_deinit_globals` ikinci kez serbest bırakıyordu. Düzeltme: `returnNeedsRetain` (ownership.zig). Golden: `module_global_returned_borrowed`. Kayıttaki "Aura'ya özgü olabilir" varsayımı yanlıştı; ders: modül globalleri de parametre/alan gibi **ödünç referanstır** ve dönüşte retain ister.
 
-### E2. C12 — gRPC (karar bekliyor)
+### E2. C12 — gRPC (KAPANDI v2.1.33, kısmen)
 
-- **Durum:** `[~]`. Protobuf (v2.1.18), UDP, saat, bytes köprüleri bitti; gRPC yok.
-- **Neden bekliyor:** HTTP/2 **istemcisi** ve HTTP **trailer** desteği mimari karardır (§16): sunucu H2'si var, istemci yok; gRPC durum bilgisi trailer'da gelir.
-- **Kullanıcı yetkisi:** Kullanıcı "sen karar ver, hepsini yapalım" dedi. Yine de bu, yeni bir ağ protokolü katmanıdır; **tasarım notunu yazıp (`project/` altında) kullanıcıya özetle, sonra uygula.**
-- **Önerilen kapsam (sade başlangıç):** (1) HTTP/2 istemci çerçeveleme (yalnız TLS/ALPN `h2`, mevcut sunucu çerçeve kodunu yeniden kullan), (2) trailer okuma, (3) `nox.grpc` unary çağrı + `nox.protobuf` ile mesaj, (4) akışlı RPC sonra. Önce wasm/QBE etkisini ölç: wasm hedefinde reddedilmeli (bkz. `wasm_abi_table`).
+`nox.grpc`: HTTP/2 `h2c` istemcisi (`runtime/stdlib_shims/grpc.zig`, HPACK/kare yardımcıları `http2.zig`'den), unary + sunucu/istemci akışı (mesajlar toplanır), üst veri, trailer, akış denetimi. Gerçek `grpcio` sunucusuna karşı `scripts/grpc_probe.py` (iki arka uç).
+
+**Hâlâ açık:** (1) **TLS**: `tcp_native` TLS'i Zig `std.crypto.tls` kullanır ve ALPN `h2` bildiremez; TLS-yalnız servisler için ya OpenSSL FFI istemcisi (sunucu tarafı `tls_server.zig` OpenSSL'i dinamik yüklüyor, ALPN'li istemci eklenebilir) ya da vendor `tls_client.zig`ye ALPN uzantısı gerekir. (2) Çift yönlü akışta istek/yanıt araya girmesi (şimdi: önce istekler gider, sonra yanıtlar toplanır). (3) `grpc-encoding: gzip` sıkıştırması (`gzip.zig` hazır). (4) Sunucu tarafı gRPC (trailer desteği `respstream_trailers` ile var; çerçeve ve iletim biçimi yazılmadı). Kullanıcı istemedikçe sunucu tarafına girme.
 
 ### E3. IPv6 çok çekirdekli dinleme (KAPANDI v2.1.32)
 

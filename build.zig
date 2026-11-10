@@ -1403,6 +1403,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/terminal_pty_test.zig",
         "tests/cli/postgres_diagnostics_test.zig",
         "tests/cli/redis_test.zig",
+        "tests/cli/grpc_test.zig",
         "tests/cli/http_multicore_factory_test.zig",
         "tests/cli/run_script_args_test.zig",
         "tests/cli/extern_path_test.zig",

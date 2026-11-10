@@ -24,7 +24,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 |---|---|---|
 | none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `sqlite`, `timezone` |
-| `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `udp` |
+| `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `grpc`, `udp` |
 | `network` + `filesystem` | both | `transfer` |
 | `process` | the process and its children | `os`, `process`, `signal`, `terminal` |
 | `threads` | native threads | `thread`, `atomic` |
@@ -116,6 +116,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 |---|---|
 | [`nox.db`](db.md) | shared `Row`, `Statement` and the `DbConnection` protocol |
 | [`nox.sqlite`](sqlite.md), [`nox.postgres`](postgres.md), [`nox.mysql`](mysql.md) | drivers |
+| [`nox.grpc`](grpc.md) | gRPC client over HTTP/2 (h2c): unary, server/client streaming, metadata |
 | [`nox.redis`](redis.md) | Redis client: commands, Streams, scripts, AUTH/TLS |
 | [`nox.orm`](orm.md) | parameterised CRUD helpers over any driver |
 

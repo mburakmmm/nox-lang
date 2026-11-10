@@ -1,0 +1,139 @@
+# nox.grpc — gRPC istemcisi (HTTP/2, düz TCP `h2c`), saf Zig. Mesajlar protobuf baytlarıdır (`nox.protobuf` ile kodlanır/çözülür); `str` ikili-güvenlidir.
+#
+#     import nox.grpc
+#     import nox.protobuf
+#     from nox.grpc import Client, Response
+#
+#     c: Client = nox.grpc.connect("127.0.0.1", 50051)
+#     w: Writer = nox.protobuf.writer()
+#     w.write_string(1, "Nox")
+#     reply: str = c.unary("/helloworld.Greeter/SayHello", w.to_str())      # DURUM != OK ise GrpcStatusError
+#     r: Response = c.call("/helloworld.Greeter/SayHello", [w.to_str()])      # durumu kendiniz denetleyin
+#     print(r.status, r.message, len(r.messages))
+#
+# Tek `call` unary, sunucu-akışlı (birden çok yanıt mesajı toplanır) ve istemci-akışlı (birden çok istek mesajı) RPC'leri kapsar; çift yönlü araya girme yoktur. Bir bağlantıda
+# çağrılar sırayla yapılır. `timeout_ms > 0` sunucuya `grpc-timeout` olarak bildirilir (sunucu `DEADLINE_EXCEEDED` döner); istemci tarafında okuma zaman aşımı yoktur.
+#
+# **Hata modeli:** taşıma/protokol hatası `GrpcError` olur ve bağlantı kapanır (`connect` ile yeniden açın); sunucu durumu `Response.status` ve `GrpcStatusError.code` ile gelir (`OK` = 0,
+# `UNAVAILABLE` = 14, ...). **Sınırlar:** TLS yok (ALPN `h2` bildirilemiyor; TLS arkasındaki servisler için bir TLS sonlandırıcı kullanın); sıkıştırılmış mesajlar (`grpc-encoding`)
+# kabul edilmez; yanıt üst verisi `header(name)` ile okunur (başlıklar ve trailer birlikte, ad küçük harf).
+
+OK: int = 0
+CANCELLED: int = 1
+UNKNOWN: int = 2
+INVALID_ARGUMENT: int = 3
+DEADLINE_EXCEEDED: int = 4
+NOT_FOUND: int = 5
+ALREADY_EXISTS: int = 6
+PERMISSION_DENIED: int = 7
+RESOURCE_EXHAUSTED: int = 8
+FAILED_PRECONDITION: int = 9
+ABORTED: int = 10
+OUT_OF_RANGE: int = 11
+UNIMPLEMENTED: int = 12
+INTERNAL: int = 13
+UNAVAILABLE: int = 14
+DATA_LOSS: int = 15
+UNAUTHENTICATED: int = 16
+
+class GrpcError(Exception):
+    def __init__(self: GrpcError, message: str) -> None:
+        super().__init__(message)
+
+class GrpcStatusError(Exception):
+    code: int
+    detail: str
+
+    def __init__(self: GrpcStatusError, code: int, detail: str) -> None:
+        super().__init__("grpc status " + str(code) + ": " + detail)
+        self.code = code
+        self.detail = detail
+
+extern def nox_grpc_open_raw(host: str, port: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_grpc_status_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_grpc_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_grpc_close_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_grpc_call_raw(conn: ptr, path: str, meta: str, reqs: list[str], timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_grpc_result_status_raw(r: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_grpc_result_message_raw(r: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_grpc_result_count_raw(r: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_grpc_result_at_raw(r: ptr, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_grpc_result_header_raw(r: ptr, name: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_grpc_result_free_raw(r: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_grpc_is_null_raw(p: ptr) -> int from "zig-out/lib/noxrt.o"
+
+class Response:
+    status: int
+    message: str
+    messages: list[str]
+    handle: ptr
+
+    def __init__(self: Response, handle: ptr) -> None:
+        self.handle = handle
+        self.status = nox_grpc_result_status_raw(handle)
+        self.message = nox_grpc_result_message_raw(handle)
+        self.messages = []
+        n: int = nox_grpc_result_count_raw(handle)
+        i: int = 0
+        while i < n:
+            self.messages.append(nox_grpc_result_at_raw(handle, i))
+            i = i + 1
+
+    def __del__(self: Response) -> None:
+        nox_grpc_result_free_raw(self.handle)
+
+    def ok(self: Response) -> bool:
+        return self.status == 0
+
+    # Yanıt başlığı ya da trailer değeri (ad büyük/küçük harfe duyarsız); yoksa boş dize.
+    def header(self: Response, name: str) -> str:
+        return nox_grpc_result_header_raw(self.handle, name)
+
+class Client:
+    host: str
+    port: int
+    handle: ptr
+
+    def __init__(self: Client, host: str, port: int, handle: ptr) -> None:
+        self.host = host
+        self.port = port
+        self.handle = handle
+
+    def is_ok(self: Client) -> bool:
+        return nox_grpc_status_raw(self.handle) != 0
+
+    def close(self: Client) -> None:
+        nox_grpc_close_raw(self.handle)
+
+    # Üst veri ile genel çağrı. `metadata`: istek üst verisi (`ad` -> değer). Taşıma hatasında `GrpcError`.
+    def call_with(self: Client, path: str, requests: list[str], metadata: dict[str, str], timeout_ms: int) -> Response:
+        meta: str = ""
+        for k in metadata.keys():
+            meta = meta + k + ": " + metadata[k] + "\n"
+        h: ptr = nox_grpc_call_raw(self.handle, path, meta, requests, timeout_ms)
+        if nox_grpc_is_null_raw(h) != 0:
+            raise GrpcError(nox_grpc_errmsg_raw(self.handle))
+        return Response(h)
+
+    def call(self: Client, path: str, requests: list[str], timeout_ms: int = 0) -> Response:
+        empty: dict[str, str] = {}
+        return self.call_with(path, requests, empty, timeout_ms)
+
+    # Tek istek / tek yanıt: durum OK değilse `GrpcStatusError`, yanıt mesajı yoksa boş dize.
+    def unary(self: Client, path: str, request: str, timeout_ms: int = 0) -> str:
+        r: Response = self.call(path, [request], timeout_ms)
+        if r.status != 0:
+            raise GrpcStatusError(r.status, r.message)
+        if len(r.messages) == 0:
+            return ""
+        return r.messages[0]
+
+def connect(host: str, port: int) -> Client:
+    h: ptr = nox_grpc_open_raw(host, port)
+    if nox_grpc_is_null_raw(h) != 0:
+        raise GrpcError("out of memory")
+    if nox_grpc_status_raw(h) == 0:
+        msg: str = nox_grpc_errmsg_raw(h)
+        nox_grpc_close_raw(h)
+        raise GrpcError("could not connect to " + host + ":" + str(port) + ": " + msg)
+    return Client(host, port, h)

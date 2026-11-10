@@ -1,0 +1,42 @@
+# nox.grpc: gerçek bir gRPC sunucusuna karşı (scripts/grpc_probe.py, grpcio) unary, sunucu/istemci akışı, hata durumu, üst veri, büyük yük. @PORT@ doldurulur.
+import nox.grpc
+from nox.grpc import Client, Response, GrpcError, GrpcStatusError
+
+c: Client = nox.grpc.connect("127.0.0.1", @PORT@)
+
+print(c.unary("/test.Echo/Unary", "hello"))
+
+r: Response = c.call("/test.Echo/Count", ["3"])
+print(r.status, len(r.messages), r.messages[0], r.messages[2])
+
+r2: Response = c.call("/test.Echo/Collect", ["a", "b", "c"])
+print(r2.status, r2.messages[0])
+
+r3: Response = c.call("/test.Echo/Fail", ["x"])
+print(r3.status, r3.message, len(r3.messages))
+try:
+    c.unary("/test.Echo/Fail", "x")
+except GrpcStatusError as e:
+    print("caught", e.code, e.detail)
+
+meta: dict[str, str] = {}
+meta["x-token"] = "s3cret"
+r4: Response = c.call_with("/test.Echo/Meta", ["m"], meta, 0)
+print(r4.messages[0], r4.header("x-reply"), r4.header("X-Trailer"))
+
+big: str = "z" * 300000
+echoed: str = c.unary("/test.Echo/Unary", big)
+print(len(echoed), echoed == big)
+
+r5: Response = c.call("/test.Echo/Big", ["2000000"])
+print(r5.status, len(r5.messages[0]))
+
+r6: Response = c.call("/test.Echo/Unimplemented", ["x"], 1000)
+print(r6.status)
+
+print(c.unary("/test.Echo/Unary", "again"))
+c.close()
+try:
+    nox.grpc.connect("127.0.0.1", 1)
+except GrpcError as e:
+    print("connect failed")
