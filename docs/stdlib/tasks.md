@@ -52,6 +52,31 @@ True
 [0, 2, 4, 6]
 ```
 
+## Cancelling CPU-bound work
+
+Cancellation is cooperative, so a loop that never awaits needs a checkpoint:
+
+```text
+import nox.tasks
+import nox.time
+
+async def crunch(n: int) -> int:
+    total: int = 0
+    for i in range(n):
+        total += heavy(i)
+        nox.tasks.checkpoint()          # raises CancelledError if cancellation was requested
+        if i % 1000 == 0:
+            nox.time.sleep_ms(0)        # let other tasks and timers run
+    return total
+```
+
+| Function | Description |
+|---|---|
+| `checkpoint()` | raises `CancelledError` if the current task (or the thread's entry task) was cancelled with `Task.cancel()` / `ThreadHandle.cancel()`; otherwise a cheap flag read. Outside a task it does nothing |
+| `is_cancelled()` | the same flag without raising, to clean up and return your own way |
+
+Nothing is stopped forcibly, so no resource is leaked and no ARC state is corrupted. A thread started with `nox.thread.start` is cancelled with `h.cancel()`.
+
 ## Notes
 
 - Tasks are started with `spawn`; the group does not start them. Cancelling does not interrupt a task that never awaits (see [Concurrency](../language/concurrency.md#cancellation)).

@@ -4439,6 +4439,62 @@ export function l $nox_time_instant_now(l %rt) {
 @fn_end1
     ret 0
 }
+export function $nox_tasks_checkpoint(l %rt) {
+@start
+    %t0 =l call $nox_task_check_cancelled(l %rt)
+    %t1 =w ceql %t0, 1
+    jnz %t1, @if_then1, @if_end0
+@if_then1
+    %t2 =l add $str15, 16
+    %t3 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 8, %t3
+    %t4 =l add %t3, 8
+    storel $CancelledError_vtable, %t4
+    %t5 =l add %t3, 16
+    storel 0, %t5
+    %t6 =l add %t3, 24
+    storel 0, %t6
+    call $Exception___init__(l %rt, l %t3, l %t2)
+    %t7 =w call $nox_exception_pending(l %rt)
+    jnz %t7, @ctor_init_failed2, @ctor_init_cont3
+@ctor_init_failed2
+    %t8 =w ceql %t3, 0
+    jnz %t8, @release_skip5, @release4
+@release4
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t3)
+    jmp @release_done6
+@release_skip5
+    jmp @release_done6
+@release_done6
+    jmp @ctor_init_cont3
+@ctor_init_cont3
+    %t9 =w call $nox_exception_pending(l %rt)
+    jnz %t9, @exc_propagate7, @exc_continue8
+@exc_propagate7
+    ret
+@exc_continue8
+    %t10 =l add %t3, 24
+    storel 39, %t10
+    call $nox_raise(l %rt, l %t3, l 39)
+    %t11 =w call $nox_exception_pending(l %rt)
+    jnz %t11, @exc_propagate9, @exc_continue10
+@exc_propagate9
+    ret
+@exc_continue10
+    jmp @if_end0
+@if_end0
+@fn_end11
+    ret
+}
+export function w $nox_tasks_is_cancelled(l %rt) {
+@start
+    %t0 =l call $nox_task_check_cancelled(l %rt)
+    %t1 =w ceql %t0, 1
+    ret %t1
+@after_return0
+@fn_end1
+    ret 0
+}
 export function l $work(l %rt, l %p_i) {
 @start
     %t0 =l alloc8 8
@@ -4460,7 +4516,7 @@ export function l $work(l %rt, l %p_i) {
 }
 export function l $boom(l %rt) {
 @start
-    %t0 =l add $str15, 16
+    %t0 =l add $str16, 16
     %t1 =l call $nox_rc_alloc(l %rt, l 32)
     storel 17, %t1
     %t2 =l add %t1, 8
@@ -4943,7 +4999,7 @@ export function $run(l %rt) {
     %t135 =w call $nox_task_check_cancelled(l %rt)
     jnz %t135, @task_cancelled109, @task_not_cancelled110
 @task_cancelled109
-    %t136 =l add $str16, 16
+    %t136 =l add $str17, 16
     %t137 =l call $nox_rc_alloc(l %rt, l 32)
     storel 8, %t137
     %t138 =l add %t137, 8
@@ -6526,7 +6582,7 @@ export function $run(l %rt) {
     %t568 =w call $nox_task_check_cancelled(l %rt)
     jnz %t568, @task_cancelled537, @task_not_cancelled538
 @task_cancelled537
-    %t569 =l add $str17, 16
+    %t569 =l add $str18, 16
     %t570 =l call $nox_rc_alloc(l %rt, l 32)
     storel 8, %t570
     %t571 =l add %t570, 8
@@ -6597,7 +6653,7 @@ export function $run(l %rt) {
 @release_done555
     storel 0, %t12
     storel %t583, %t12
-    %t588 =l add $str18, 16
+    %t588 =l add $str19, 16
     %t589 =l loadl %t12
     %t590 =l add %t589, 16
     %t591 =l loadl %t590
@@ -6825,7 +6881,7 @@ export function l $main_body(l %argp) {
     %t5 =w call $nox_task_check_cancelled(l %rt)
     jnz %t5, @task_cancelled0, @task_not_cancelled1
 @task_cancelled0
-    %t6 =l add $str19, 16
+    %t6 =l add $str20, 16
     %t7 =l call $nox_rc_alloc(l %rt, l 32)
     storel 8, %t7
     %t8 =l add %t7, 8
@@ -7234,7 +7290,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str20, 16
+    %t9 =l add $str21, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -7349,7 +7405,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str21, 16
+    %t9 =l add $str22, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -7364,7 +7420,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str22, 16
+    %t20 =l add $str23, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -7402,14 +7458,15 @@ data $str11 = { l 1073741824, l 2305843009213693978, b "invalid format specifier
 data $str12 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
 data $str13 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
 data $str14 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
-data $str15 = { l 1073741824, l 2305843009213693956, b "boom", b 0 }
-data $str16 = { l 1073741824, l 2305843009213693970, b "gorev iptal edildi", b 0 }
+data $str15 = { l 1073741824, l 2305843009213693966, b "task cancelled", b 0 }
+data $str16 = { l 1073741824, l 2305843009213693956, b "boom", b 0 }
 data $str17 = { l 1073741824, l 2305843009213693970, b "gorev iptal edildi", b 0 }
-data $str18 = { l 1073741824, l 2305843009213693964, b "first error:", b 0 }
-data $str19 = { l 1073741824, l 2305843009213693970, b "gorev iptal edildi", b 0 }
-data $str20 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str18 = { l 1073741824, l 2305843009213693970, b "gorev iptal edildi", b 0 }
+data $str19 = { l 1073741824, l 2305843009213693964, b "first error:", b 0 }
+data $str20 = { l 1073741824, l 2305843009213693970, b "gorev iptal edildi", b 0 }
 data $str21 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str22 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str23 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b " ", b 0 }
 data $fmt_lit1 = { b "\n", b 0 }
 data $fmt_lit2 = { b "None", b 0 }

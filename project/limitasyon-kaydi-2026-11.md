@@ -33,7 +33,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 
 - [x] **C1 ember NL-002/003** fiber'ı bloklamayan uyku (`sleep_ms` fiber içinde kooperatif) ve zaman aşımı/ilk biten (`Task.wait`, `wait_any`) — **KAPANDI v2.1.6** (Channel için zaman aşımlı recv yok: görev sarmalayıcısı kullanın).
 - [x] **C2 ember NL-005** `TaskGroup[T]` (`nox.tasks`) — **KAPANDI v2.1.10**; çıplak `list[Task[T]]` hâlâ yazılamaz (codegen `Unsupported`), grup tutamak sınıfı kullanır. Ayrıca `Task` alanlı sınıfların yığına terfisi ve `spawn` geçici argümanı sızıntıları düzeltildi.
-- [~] **C3 ember NL-004** CPU-bound görevi sonlandırma sözleşmesi.
+- [x] **C3 ember NL-004** CPU-bound görevi sonlandırma — **KAPANDI v2.1.19**: kooperatif `nox.tasks.checkpoint()`/`is_cancelled()` + `ThreadHandle.cancel()` (kullanıcı kararı: işbirlikçi, önleyici değil).
 - [x] **C4 ember NL-008** sinyal abonelik API'si (`nox.signal`) — **KAPANDI v2.1.6**.
 - [x] **C5 ember NL-006/007/013** Postgres: SQLSTATE/`kind`, `statement_timeout`, `Transaction`, `Pool` **KAPANDI v2.1.8**; fiber-uyumlu (bloklamayan) libpq G/Ç, `set_query_timeout`, `cancel()` (`PQcancel`) **KAPANDI v2.1.17**.
 - [x] **C6 ember NL-001** `nox.redis` (RESP2, AUTH/ACL, TLS, Streams, betik/NOSCRIPT, reconnect) — **KAPANDI v2.1.9**; TLS başarılı el sıkışması güvenilir sertifikalı bir Redis'e karşı denenmedi.

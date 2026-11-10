@@ -29753,3 +29753,7 @@ Saf Nox (`stdlib/nox/property.nox`): `Rng` Park–Miller (48271 mod 2^31−1; ç
 
 `stdlib/nox/protobuf.nox` saf Nox: `Writer` (`buf: list[int]`; 64 bit varint için mantıksal kaydırma `(n >> 7) & 0x01FFFFFFFFFFFFFF`, negatif değer 10 bayt) ve `Reader` (`data/pos/end/field/wire_type`; `read_message` yalnızca alt mesaj baytlarını kopyalar). `float`/`double` için `math.zig`: `nox_float_bits_raw`/`nox_float_from_bits_raw`/`nox_float32_bits_raw`/`nox_float32_from_bits_raw` (+ birim testi, wasm ABI üreteçle). `MODULE_CAPABILITIES`: `protobuf` → yok. Golden: `protobuf_wire_roundtrip`. Kapsam dışı: şema/kod üretici, grup tel tipleri (3/4), proto2 uzantıları.
 
+### 3.386 Kooperatif CPU-bound iptal: `checkpoint()`, `ThreadHandle.cancel()` (v2.1.19)
+
+`nox.tasks.checkpoint()/is_cancelled()` mevcut `nox_task_check_cancelled(rt)`i (çalışan fiber'ın `cancel_flag`ı) kullanır. `ThreadHandle`a `cancel_requested` atomik bayrağı eklendi; `childThreadMain` giriş görevinin `fiber.cancel_flag`ını buna bağlar (`bridge.nox_task_set_cancel_flag`, wasm'da etkisiz). Checker: `ThreadHandle.cancel()` (0 argüman, `.none`); codegen: LLVM'de `$nox_task_cancel` (tutamak bir Task), QBE'de `$nox_thread_cancel`. `sleep_ms(0)` fiber içinde `sleepCooperative(1)`. Reddedilen: önleyici sonlandırma (ilke #3 ve ARC bütünlüğü ile çelişir). Golden: `cpu_bound_cancel_checkpoint`.
+

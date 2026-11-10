@@ -513,6 +513,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_terminal_size_raw", Entry{ .params = "L", .ret = 'L' } },
     .{ "nox_terminal_stdin_read_raw", Entry{ .params = "PL", .ret = 'P' } },
     .{ "nox_terminal_stdout_write_raw", Entry{ .params = "P", .ret = 'W' } },
+    .{ "nox_thread_cancel", Entry{ .params = "P", .ret = 'v' } },
     .{ "nox_thread_destroy", Entry{ .params = "PP", .ret = 'v' } },
     .{ "nox_thread_join", Entry{ .params = "PP", .ret = 'L' } },
     .{ "nox_thread_spawn", Entry{ .params = "PPLWW", .ret = 'P' } },

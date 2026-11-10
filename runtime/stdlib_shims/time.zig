@@ -157,7 +157,12 @@ export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
         return;
     }
     if (comptime is_freestanding) return;
-    if (ms <= 0) return;
+    if (ms <= 0) {
+        // `sleep_ms(0)`: fiber içinde ≈1 ms kooperatif uyku — diğer görevler ve zamanlayıcılar çalışır (CPU-bound döngülerde `nox.tasks.checkpoint()` ile birlikte). Hazır kuyruktaki bir
+        // fiber reaktörü aç bıraktığından (reaktör yalnızca kuyruk boşken yoklanır) saf bir "yield" yetmez. Fiber dışında etkisiz.
+        _ = fiber_net.sleepCooperative(1);
+        return;
+    }
     if (fiber_net.sleepCooperative(@intCast(@min(ms, std.math.maxInt(u32))))) return;
     if (builtin.os.tag == .windows) {
         WinTime.Sleep(@intCast(ms));

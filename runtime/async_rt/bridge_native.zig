@@ -321,6 +321,13 @@ pub export fn nox_task_cancel(task: ?*anyopaque) void {
     t.cancel_requested.store(true, .release);
 }
 
+/// Görevin giriş fiber'ının iptal bayrağını `flag`a yönlendirir (`nox.thread.start`: çocuk iş parçacığının giriş görevi, `ThreadHandle.cancel()`in yazdığı bayrağı okur;
+/// `nox.tasks.checkpoint()` bunu görür). Yalnızca spawn'dan hemen sonra, görev henüz çalışmadan çağrılır.
+pub fn nox_task_set_cancel_flag(task: ?*anyopaque, flag: *std.atomic.Value(bool)) void {
+    const t: *TaskI64 = @ptrCast(@alignCast(task orelse return));
+    t.fiber.cancel_flag = flag;
+}
+
 /// `t.is_done()`: görev bitti mi (başarıyla ya da istisnayla)? Bloke etmez, tüketmez: sonucu/istisnayı `await` yine alır.
 pub export fn nox_task_is_done(task: ?*anyopaque) i32 {
     const t: *TaskI64 = @ptrCast(@alignCast(task orelse return 0));

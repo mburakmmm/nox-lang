@@ -18,7 +18,7 @@ available everywhere.
 | `boot_ms()` | a monotonic millisecond counter that **includes time the device spent suspended**; only differences are meaningful |
 | `now_ns()` | Unix time in **nanoseconds** (wall clock; resolution is platform dependent: about 1 ns on Linux/macOS, 100 ns on Windows, 1 ms in WebAssembly) |
 | `monotonic_ns()` | a nanosecond monotonic counter for measuring durations (only differences are meaningful; it never goes backwards) |
-| `sleep_ms(ms)` | waits `ms` milliseconds: inside a task it suspends only that task (other tasks keep running), elsewhere it blocks the thread |
+| `sleep_ms(ms)` | waits `ms` milliseconds: inside a task it suspends only that task (other tasks keep running), elsewhere it blocks the thread. `sleep_ms(0)` inside a task is a short (about 1 ms) cooperative sleep so other tasks and timers can run |
 | `now()` | the current time as a `DateTime` (UTC) |
 | `from_epoch_ms(ms)` | converts epoch milliseconds to a `DateTime` (UTC) |
 | `instant_now()` | a monotonic `Instant` for measuring intervals (see "Clocks and device sleep") |

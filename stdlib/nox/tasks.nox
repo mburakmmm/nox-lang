@@ -20,6 +20,28 @@
 # Sınırlı eşzamanlılık: `g.size() - g.finished()` kaç görevin sürdüğünü verir; yeni görev eklemeden önce `g.wait_below(limit, timeout_ms)` ile kooperatif beklenir.
 import nox.time
 
+extern def nox_task_check_cancelled() -> int from "zig-out/lib/noxrt.o" with_rt
+
+# CPU-bound çalışmayı iptal edilebilir yapar (Ember NL-004): iptal İSTENMİŞSE (`Task.cancel()` ya da `ThreadHandle.cancel()`) `CancelledError` fırlatır. CPU döngüsünün
+# içine konur; iptal kooperatiftir (ucuz bir bayrak okuması), çalışan kod zorla durdurulmaz — bu yüzden kaynak sızıntısı/ARC bozulması olmaz:
+#
+#     async def crunch(n: int) -> int:
+#         total: int = 0
+#         for i in range(n):
+#             total += heavy(i)
+#             nox.tasks.checkpoint()          # iptal istenmişse burada CancelledError
+#         return total
+#
+# Görev/iş parçacığı dışında (üst-düzey kod) iptal edilemez: hiçbir şey yapmaz. Tek çekirdekli zamanlayıcıda (QBE) başka görevlerin ilerlemesi için döngüde ara sıra
+# `nox.time.sleep_ms(0)` ile kooperatif olarak sıra verin.
+def checkpoint() -> None:
+    if nox_task_check_cancelled() == 1:
+        raise CancelledError("task cancelled")
+
+# `checkpoint()` ile aynı bayrak; fırlatmadan sorar (temizlik yapıp kendi yolunuzla çıkmak için).
+def is_cancelled() -> bool:
+    return nox_task_check_cancelled() == 1
+
 class TaskHandle[T]:
     task: Task[T]
 

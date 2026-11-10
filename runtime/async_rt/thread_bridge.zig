@@ -110,6 +110,8 @@ pub const ThreadHandle = struct {
     /// parçacığında, SIRAYLA — birbirleriyle GERÇEKTEN eşzamanlı DEĞİL)
     /// dokunulur — atomik OLMASINA GEREK YOK.
     read_fd_closed: bool = false,
+    /// `ThreadHandle.cancel()` bunu yazar; çocuğun giriş fiber'ının `cancel_flag`ı buna işaret eder (`nox.tasks.checkpoint()` okur). Kooperatif: iş parçacığı zorla durdurulmaz.
+    cancel_requested: std.atomic.Value(bool) = .init(false),
 
     fn release(self: *ThreadHandle) void {
         if (self.owners.fetchSub(1, .acq_rel) == 1) {
@@ -165,6 +167,7 @@ fn childThreadMain(ctx: *ChildCtx) void {
     }
 
     const task = bridge.nox_async_spawn(child_rt, ctx.entry, closure).?;
+    bridge.nox_task_set_cancel_flag(task, &ctx.handle.cancel_requested);
     _ = bridge.nox_async_run_to_completion(child_rt);
     const result_payload = bridge.nox_async_await(child_rt, task);
     bridge.nox_async_destroy_task(child_rt, task);
@@ -291,6 +294,12 @@ export fn nox_thread_join(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c) i64
         return strPtrToPayload(cloned);
     }
     return h.result;
+}
+
+/// `ThreadHandle.cancel()`: kooperatif iptal İSTER (yalnızca bayrağı kurar). İş parçacığı bir sonraki `nox.tasks.checkpoint()`te (ya da `await`te) `CancelledError` alır.
+export fn nox_thread_cancel(handle: ?*anyopaque) callconv(.c) void {
+    const h: *ThreadHandle = @ptrCast(@alignCast(handle orelse return));
+    h.cancel_requested.store(true, .release);
 }
 
 /// `ThreadHandle`i (bkz. onun belge notu, atomik referans SAYIMI) serbest

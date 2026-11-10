@@ -27,6 +27,7 @@ pub const nox_async_await = impl.nox_async_await;
 pub const nox_task_retain = impl.nox_task_retain;
 pub const nox_task_cancel = impl.nox_task_cancel;
 pub const nox_task_check_cancelled = impl.nox_task_check_cancelled;
+pub const nox_task_set_cancel_flag = impl.nox_task_set_cancel_flag;
 pub const nox_async_destroy_task = impl.nox_async_destroy_task;
 pub const nox_async_run_to_completion = impl.nox_async_run_to_completion;
 pub const nox_async_deadlock_abort = impl.nox_async_deadlock_abort;

@@ -57,7 +57,9 @@ nobody awaits is not reported, so use this only for work that handles its own er
 ### Cancellation
 
 `task.cancel()` requests cancellation. It is **cooperative**: it sets a flag, and the cancelled task gets a `CancelledError` the next time
-*it* awaits another task. A task that never awaits (pure computation) is not interrupted. The `CancelledError` can be caught inside the
+*it* awaits another task. A task that never awaits (pure computation) is not interrupted by itself: put `nox.tasks.checkpoint()` inside the CPU loop
+(it raises `CancelledError` when cancellation was requested; `nox.tasks.is_cancelled()` asks without raising), and call `nox.time.sleep_ms(0)` now and then so
+other tasks and timers can run. `h.cancel()` on a `ThreadHandle` sets the same flag for the thread's entry task. The `CancelledError` can be caught inside the
 task; if it is not, it reaches whoever awaits the task.
 
 ```nox

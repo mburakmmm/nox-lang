@@ -8980,7 +8980,12 @@ pub const Checker = struct {
                         if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'join' takes no arguments", .{});
                         return obj_t.thread_handle.*;
                     }
-                    return self.fail(error.UndefinedMethod, "ThreadHandle has no method '{s}' (only join)", .{a.attr});
+                    // `h.cancel()`: kooperatif iptal İSTE (senkron, `await` gerektirmez); iş parçacığı bir sonraki `nox.tasks.checkpoint()`te `CancelledError` alır.
+                    if (std.mem.eql(u8, a.attr, "cancel")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'cancel' takes no arguments", .{});
+                        return .none;
+                    }
+                    return self.fail(error.UndefinedMethod, "ThreadHandle has no method '{s}' (only join and cancel)", .{a.attr});
                 }
                 // `ThreadChannel[T]`in yerleşik `send`/`recv`i — Faz BB.6,
                 // `Channel` İLE BİREBİR AYNI desen/sözleşme (İKİSİ de

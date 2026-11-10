@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.19]
+
+### Eklendi
+
+- **CPU-bound görev iptali** (Ember NL-004): `nox.tasks.checkpoint()` (iptal istenmişse `CancelledError`) ve `nox.tasks.is_cancelled()`. `ThreadHandle.cancel()` (iş parçacığının giriş görevine aynı kooperatif bayrağı; LLVM'de tutamak bir `Task`, QBE'de `ThreadHandle` bayrağı). Zorla durdurma yok: kaynak sızıntısı/ARC bozulması riski yok.
+
+### Değişti
+
+- `nox.time.sleep_ms(0)` bir görev içinde artık ≈1 ms kooperatif uyku (önceden etkisiz): CPU-bound döngülerde diğer görevlerin/zamanlayıcıların çalışmasına izin verir (reaktör yalnızca hazır kuyruk boşken yoklandığından saf bir "yield" yetmez).
+
 ## [2.1.18]
 
 ### Eklendi

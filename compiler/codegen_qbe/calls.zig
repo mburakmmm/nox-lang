@@ -1999,6 +1999,12 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     // classes`de YOK OLMASINA RAĞMEN) `genAwaitExpr` YERİNE BURADA,
     // NORMAL metod-çağrısı yolunda ele alınır.
     if (obj.heap == .task_local) return async_thread_mod.genTaskLocalOp(self, obj, a, args);
+    // `h.cancel()` (ThreadHandle): LLVM'de tutamak bir `Task`tır (bkz. `destroyNonArcValue`), QBE'de ayrı `ThreadHandle` bayrağı.
+    if (obj.heap == .thread_handle) {
+        const sym: []const u8 = if (self.backend == .llvm) "$nox_task_cancel" else "$nox_thread_cancel";
+        try self.qbeCall(null, sym, &.{.{ .ty = .l, .text = obj.text }});
+        return .{ .text = "0", .qtype = .none };
+    }
     // Faz SC.2: `t.cancel()` — checker ZATEN 0-argümanlı `cancel`i
     // doğruladı, `await` GEREKMEDEN NORMAL metod-çağrısı yolunda ele
     // alınır (`.task_local`nin AYNI ilkesi).

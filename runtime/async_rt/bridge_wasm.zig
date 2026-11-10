@@ -183,6 +183,12 @@ pub export fn nox_task_cancel(task: ?*anyopaque) void {
     t.cancel_requested = true;
 }
 
+/// wasm'da `nox.thread` yok: bayrak yönlendirmesi etkisiz.
+pub fn nox_task_set_cancel_flag(task: ?*anyopaque, flag: *bool) void {
+    _ = task;
+    _ = flag;
+}
+
 pub export fn nox_task_check_cancelled(rt: ?*anyopaque) i32 {
     _ = rt;
     const s = &(g_sched orelse return 0);
