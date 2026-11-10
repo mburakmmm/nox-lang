@@ -437,6 +437,8 @@ pub const LocalDecl = struct {
     /// GG.12: bkz. `VarInfo.borrowed_field`in belge notu — `allocSlot`
     /// BUNU doğrudan `VarInfo`ye taşır.
     borrowed_field: bool = false,
+    /// `for x in xs:` (listenin elemanını ÖDÜNÇ alan) döngü değişkeni. Aynı ad sonradan bir `var_decl` ile yeniden bildirilirse yuva SAHİPLİ olur (bkz. `unifyLoopVarLocals`).
+    loop_var: bool = false,
 };
 
 pub const StringDatum = struct {

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.23]
+
+### Düzeltildi
+
+- **`for t in xs:` döngü değişkeninin yeniden bildirilmesi** (kayıt A18): aynı kapsamda sonradan `t: Sınıf = ...` (ya da önce bildirilip sonra aynı adla döngü) yerel listesinde iki kayıt üretiyor, sonuncusu kazanıyordu; döngü ödünç aldığı elemanı retain etmeden yazarken `var_decl` yuvayı sahipli sanıp eski değeri bırakıyor, listenin elemanı erken serbest kalıp SIGSEGV veriyordu. Çakışan döngü değişkenleri artık sahipli yapılır (`unifyLoopVarLocals`) ve `genForList` her yinelemede eskiyi bırakıp yeni elemanı retain eder.
+
 ## [2.1.22]
 
 ### Düzeltildi

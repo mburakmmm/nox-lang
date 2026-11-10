@@ -636,6 +636,7 @@ pub const Codegen = struct {
     pub const inferWithCtxClassName = registration.inferWithCtxClassName;
     pub const allocSlot = registration.allocSlot;
     pub const allocSlotEx = registration.allocSlotEx;
+    pub const allocLocalSlots = registration.allocLocalSlots;
     pub const allocInlineSlot = registration.allocInlineSlot;
     pub const genFunction = registration.genFunction;
     pub const userFnName = registration.userFnName;

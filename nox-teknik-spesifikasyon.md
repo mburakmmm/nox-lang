@@ -29769,3 +29769,7 @@ Checker: `validateHttpHandler(..., allow_closure=false)` düz ad olarak ayrıca 
 - **Diğer geçişler**: `module_loader` `enum_variants`i (alan tiplerini yeniden adlandırarak) korur; `bound_method_fixup` varyant adlarını muaf tutar; `formatter.zig` `printEnum`/`printMatch` özgün yüzeyi yeniden üretir.
 - Golden: `enum_match_basic`, `enum_match_payloads_arc`; typecheck `err_enum_match_{non_exhaustive,wrong_enum,arity,unknown_variant}`; fmt; `tests/cli/local_import_test.zig` (çapraz modül). Açık: jenerik enum (jenerik sınıflarda `@staticmethod` desteği gerekir), editör grameri (tree-sitter/VS Code), kayıt A18 (döngü değişkeni yeniden bildirimi, enum'dan bağımsız).
 
+### 3.389 Döngü değişkeni yeniden bildirimi: sahiplik birleştirme (v2.1.23)
+
+`registration.zig` `unifyLoopVarLocals`/`allocLocalSlots`: yerel listesinde aynı adla hem `LocalDecl.loop_var` (listeyi ödünç alan `for`) hem döngü-dışı bir kayıt varsa döngü kaydı `is_param = false` (sahipli) olur; dört yuva-tahsis döngüsü tek `allocLocalSlots` yardımcısına taşındı. `stmt.zig` `genForList`: yuva sahipliyse (`!is_param` ve heap-yönetimli) eleman yazılmadan önce `releaseSlotIfSet` + `emitInlineRetain`. Golden: `loop_var_redeclared_owned`.
+

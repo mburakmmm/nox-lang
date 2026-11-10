@@ -1237,6 +1237,11 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     try self.qbeOp2(elem_addr, .l, "add", list_ptr, off8);
     const elem_val = try self.newTemp();
     try self.loadListElem(elem_val, list_info.elem_qtype, elem_addr);
+    // Döngü değişkeni sonradan yeniden bildirilmişse yuva sahiplidir (`unifyLoopVarLocals`): önceki elemanı bırak, yenisini retain et.
+    if (!loop_var.is_param and isHeapManaged(loop_var.heap)) {
+        try self.releaseSlotIfSet(loop_var);
+        try self.emitInlineRetain(elem_val, loop_var.heap);
+    }
     try self.qbeStore(loop_var.qtype, elem_val, loop_var.slot);
 
     try pushLoop(self, end_label, step_label);

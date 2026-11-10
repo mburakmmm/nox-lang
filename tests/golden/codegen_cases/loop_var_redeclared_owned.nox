@@ -1,0 +1,58 @@
+# A18: `for t in xs` döngü değişkeninin adı aynı kapsamda `t: A = ...` ile yeniden bildirildiğinde yuva SAHİPLİ olur; liste elemanı erken serbest kalmaz, sızıntı da olmaz.
+class A:
+    x: int
+    s: str
+
+    def __init__(self, x: int, s: str) -> None:
+        self.x = x
+        self.s = s
+
+enum Token:
+    Word(text: str)
+    End
+
+def forward() -> int:
+    items: list[A] = []
+    for i in range(4):
+        items.append(A(i, "s" + str(i)))
+    for t in items:
+        print(t.x)
+    total: int = 0
+    for i in range(2000):
+        t: A = A(i, "k" + str(i))
+        total += t.x + len(t.s)
+    print(items[3].s)
+    return total
+
+def reversed_order() -> int:
+    t: A = A(100, "first")
+    items: list[A] = [A(1, "a"), A(2, "b")]
+    for t in items:
+        print(t.s)
+    print(t.s, items[0].s)
+    return t.x
+
+items: list[A] = []
+for i in range(3):
+    items.append(A(i, "m" + str(i)))
+for t in items:
+    print(t.s)
+sum2: int = 0
+for i in range(1500):
+    t: A = A(i, "z" + str(i))
+    sum2 += t.x
+print(sum2, items[2].s)
+
+toks: list[Token] = [Token.Word("a"), Token.End, Token.Word("c")]
+for tok in toks:
+    match tok:
+        case Token.Word(w):
+            print(w)
+        case _:
+            print("end")
+for i in range(1000):
+    tok: Token = Token.Word("w" + str(i))
+print(toks[0] == Token.Word("a"))
+
+print(forward())
+print(reversed_order())

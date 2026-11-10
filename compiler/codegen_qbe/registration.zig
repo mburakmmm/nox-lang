@@ -1479,7 +1479,7 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
                     } else if (src.elem_is_str) {
                         loop_var_info.heap = .str;
                     }
-                    try locals.append(self.allocator, .{ .name = f.var_name, .info = loop_var_info, .is_param = true });
+                    try locals.append(self.allocator, .{ .name = f.var_name, .info = loop_var_info, .is_param = true, .loop_var = true });
                     // `genForList`nin dahili döngü indeksi için gizli bir
                     // yerel — FONKSİYON GİRİŞİNDE (`allocSlot` ile) BİR
                     // KEZ tahsis edilmesi gerekir. Aksi halde (bu `for`
@@ -1625,6 +1625,27 @@ pub fn inferWithCtxClassName(self: *Codegen, ctx_expr: ast.Expr, locals: []const
     }
 }
 
+/// Bir `for x in xs:` döngü değişkeni ÖDÜNÇ alınmış (`is_param`) bir yuvadır; ama aynı ad sonradan bir `var_decl` ile yeniden bildirilirse (ya da önce bildirilip sonra döngü
+/// değişkeni olursa) yerel listesinde iki kayıt olur ve `vars.put` sonuncuyu kazandırırdı: döngü ödünç aldığı elemanı retain etmeden yazarken `var_decl` yuvayı sahipli sanıp eski değeri
+/// bırakıyor → listenin elemanı erken serbest kalıyordu (A18). Çakışan döngü değişkenleri SAHİPLİ yapılır (`is_param = false`); `genForList` bu durumda eskiyi bırakıp yeni elemanı retain eder.
+pub fn unifyLoopVarLocals(locals: []LocalDecl) void {
+    for (locals, 0..) |*l, i| {
+        if (!l.loop_var) continue;
+        for (locals, 0..) |other, j| {
+            if (i == j or !std.mem.eql(u8, other.name, l.name)) continue;
+            if (!other.loop_var) {
+                l.is_param = false;
+                break;
+            }
+        }
+    }
+}
+
+pub fn allocLocalSlots(self: *Codegen, locals: []LocalDecl) CodegenError!void {
+    unifyLoopVarLocals(locals);
+    for (locals) |l| try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
+}
+
 pub fn allocSlot(self: *Codegen, name: []const u8, info: TypeInfo, is_param: bool, arena: bool) CodegenError!void {
     try self.allocSlotEx(name, info, is_param, arena, false);
 }
@@ -1766,7 +1787,7 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     // STACK adresini `nox_rc_free_payload`e geçirip GERÇEK bir SIGBUS'a
     // yol açar (GERÇEKTEN denenip gözlemlendi, break→red→fix).
     try self.registerLocalStackSlots(fd.body, fd.params);
-    for (locals.items) |l| try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
+    try self.allocLocalSlots(locals.items);
     try self.prepareInlineSites(fd.body);
     for (fd.params) |p| {
         const info = self.vars.get(p.name).?;
@@ -1861,7 +1882,7 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     try self.qbeFuncHeaderEnd();
 
     try self.registerLocalStackSlots(m.body, m.params);
-    for (locals.items) |l| try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
+    try self.allocLocalSlots(locals.items);
     try self.prepareInlineSites(m.body);
     {
         const info = self.vars.get("self").?;
@@ -1985,7 +2006,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     // (eskiden olduğu gibi sabit `false`) kapsam-sonu otomatik release'i
     // yanlışlıkla tetikleyip listenin sahipliğini bozardı.
     try self.registerLocalStackSlots(stmts, &.{});
-    for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+    try self.allocLocalSlots(locals.items);
     try self.prepareInlineSites(stmts);
     try self.genMainStmts(stmts, .w);
     // bkz. `genFunction`nin AYNI, GERÇEK arena-sızıntısı düzeltmesinin notu
@@ -2059,7 +2080,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     try self.qbeFuncHeaderEnd();
     try self.qbeLoadL(RT_PARAM, "%argp");
     try self.registerLocalStackSlots(stmts, &.{});
-    for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+    try self.allocLocalSlots(locals.items);
     try self.prepareInlineSites(stmts);
     try self.genMainStmts(stmts, .l);
     // bkz. `genFunction`nin AYNI, GERÇEK arena-sızıntısı düzeltmesinin notu
