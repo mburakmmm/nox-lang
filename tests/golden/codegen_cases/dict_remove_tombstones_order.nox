@@ -1,0 +1,58 @@
+# Aura L2: dict (indeks kurulu) silme mezar taşı bırakır; len/contains/get/pop, ekleme sırası, keys()/values(),
+# for döngüsü, print ve yeniden ekleme mezar taşlarının varlığında da doğru olmalı.
+d: dict[int, int] = {}
+i: int = 0
+while i < 100:
+    d[i] = i * 2
+    i = i + 1
+i = 0
+while i < 100:
+    if i % 3 == 0:
+        del d[i]
+    i = i + 1
+print(len(d))
+print(d.contains(3), d.contains(4))
+print(d.pop(4), d.contains(4))
+total: int = 0
+count: int = 0
+for k in d:
+    total = total + k
+    count = count + 1
+print(count, total)
+ks: list[int] = d.keys()
+print(ks[0], ks[1], ks[2], ks[len(ks) - 1])
+d[3] = 33
+d[4] = 44
+print(len(d), d[3], d[4])
+vs: list[int] = d.values()
+print(vs[len(vs) - 2], vs[len(vs) - 1])
+
+# str anahtarlar + print (konumsal okuma yolu) + çok silme/ekleme
+w: dict[str, int] = {}
+n: int = 0
+while n < 40:
+    w["k" + str(n)] = n
+    n = n + 1
+n = 0
+while n < 40:
+    if n % 2 == 0:
+        del w["k" + str(n)]
+    n = n + 1
+w["k0"] = 1000
+print(len(w), w["k1"], w["k0"], w.contains("k2"))
+small: dict[str, int] = {"a": 1, "b": 2}
+del small["a"]
+print(small)
+
+# churn: aynı anahtarı tekrar tekrar ekle/sil
+c: dict[int, int] = {}
+x: int = 0
+while x < 20:
+    c[x] = x
+    x = x + 1
+r: int = 0
+while r < 500:
+    c[1000 + r] = r
+    del c[1000 + r]
+    r = r + 1
+print(len(c))

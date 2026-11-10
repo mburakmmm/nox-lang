@@ -11,7 +11,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [x] **A4 pulse FLOAT-001** NaN `!=` LLVM'de `False`, QBE'de `True` (yeniden üretildi; IEEE: `True`). — **KAPANDI v2.1.2**
 - [x] **A5 pulse PARSER-001** `-9223372036854775808` doğrudan yazılamıyor (yeniden üretildi). — **KAPANDI v2.1.2**
 - [x] **A6 aura L1** İçinde `dict[str, Node]` olan döngü çıkışta askıda kalıyor (yeniden üretildi, 10 sn'de bitmedi). — **KAPANDI v2.1.2**
-- [ ] **A7 aura L2** `dict`/`set`/`OrderedDict` silme O(n) (aura ölçümü: 10k→20k katı ~5).
+- [x] **A7 aura L2** `dict`/`set`/`OrderedDict` silme O(n) (aura ölçümü: 10k→20k katı ~5). — **KAPANDI v2.1.3**
 - [x] **A8 nyx 2.8** `query_decode` `+` karakterini boşluk yapmıyor (yeniden üretildi: `a+b c`). — **KAPANDI v2.1.2**
 - [x] **A9 pulse HTTP-003** GET'te gövde sessizce yok sayılıyor (yeniden üretim bekliyor). — **KAPANDI v2.1.2**
 - [x] **A10 nova 8** HEAD yanıtı + keep-alive gövde okuma kilitlenmesi (bekliyor). — **KAPANDI v2.1.2**

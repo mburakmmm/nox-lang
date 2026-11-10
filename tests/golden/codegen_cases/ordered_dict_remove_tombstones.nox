@@ -1,0 +1,77 @@
+# Aura L2: OrderedDict.remove mezar taşı bırakır (amortize O(1)); sıra, size, contains, get,
+# yeniden ekleme ve sıkıştırma (>=16 mezar taşı ve yarıdan fazlası) basit bir liste modeliyle çapraz denetlenir.
+from nox.collections import OrderedDict
+
+def check(o: OrderedDict[int, int], model_keys: list[int], model_vals: list[int], tag: str) -> None:
+    ok: bool = o.size() == len(model_keys)
+    ks: list[int] = o.keys_list()
+    vs: list[int] = o.values_list()
+    if len(ks) != len(model_keys) or len(vs) != len(model_vals):
+        ok = False
+    else:
+        i: int = 0
+        while i < len(ks):
+            if ks[i] != model_keys[i] or vs[i] != model_vals[i]:
+                ok = False
+            if not o.contains(model_keys[i]) or o.get(model_keys[i]) != model_vals[i]:
+                ok = False
+            i = i + 1
+    print(tag + " " + str(ok) + " " + str(o.size()))
+
+o: OrderedDict[int, int] = OrderedDict[int, int]()
+mk: list[int] = []
+mv: list[int] = []
+i: int = 0
+while i < 200:
+    o.set(i, i * 3)
+    mk.append(i)
+    mv.append(i * 3)
+    i = i + 1
+check(o, mk, mv, "fill")
+
+# 10 tekil silme (eşik altında: mezar taşları birikir, sıkıştırma yok)
+i = 0
+while i < 10:
+    o.remove(i * 5)
+    i = i + 1
+mk2: list[int] = []
+mv2: list[int] = []
+j: int = 0
+while j < len(mk):
+    if mk[j] % 5 != 0 or mk[j] >= 50:
+        mk2.append(mk[j])
+        mv2.append(mv[j])
+    j = j + 1
+print(o.contains(5))
+print(o.remove(5))
+check(o, mk2, mv2, "few-removed")
+
+# silinen anahtarı yeniden ekle: sona gider
+o.set(5, 999)
+mk2.append(5)
+mv2.append(999)
+check(o, mk2, mv2, "reinserted")
+
+# toplu silme: sıkıştırmayı tetikler; sonra tekrar ekle ve üzerine yaz
+k: int = 0
+while k < 200:
+    if k % 2 == 1:
+        o.remove(k)
+    k = k + 1
+mk3: list[int] = []
+mv3: list[int] = []
+j = 0
+while j < len(mk2):
+    if mk2[j] % 2 == 0:
+        mk3.append(mk2[j])
+        mv3.append(mv2[j])
+    j = j + 1
+check(o, mk3, mv3, "bulk-removed")
+o.set(1, 11)
+o.set(0, 77)
+mk3.append(1)
+mv3.append(11)
+mk3.append(0)
+mv3.append(77)
+check(o, mk3, mv3, "after-compaction")
+print(o.remove(12345))

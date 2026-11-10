@@ -58,8 +58,27 @@ def _hx_find[T](items: list[T], slots: list[int], v: T) -> int:
         s: int = slots[pos]
         if s == 0:
             return -1
-        if items[s - 1] == v:
+        # s < 0: silinmiş slot (mezar taşı) — zincir sürer.
+        if s > 0 and items[s - 1] == v:
             return s - 1
+        pos = (pos + 1) & mask
+        probes = probes + 1
+    return -1
+
+# `_hx_find` gibi, ama bulunan SLOTUN konumunu döndürür (silme için); yoksa -1.
+def _hx_find_slot[T](items: list[T], slots: list[int], v: T) -> int:
+    cap: int = len(slots)
+    if cap == 0:
+        return -1
+    mask: int = cap - 1
+    pos: int = __nox_hash(v) & mask
+    probes: int = 0
+    while probes < cap:
+        s: int = slots[pos]
+        if s == 0:
+            return -1
+        if s > 0 and items[s - 1] == v:
+            return pos
         pos = (pos + 1) & mask
         probes = probes + 1
     return -1
@@ -363,11 +382,37 @@ class OrderedDict[K, V]:
     _keys: list[K]
     _values: list[V]
     _slots: list[int]
+    # Aura L2: `remove` listeyi kaydırıp indeksi yeniden kurmak yerine girdiyi MEZAR TAŞI yapar (`_dead[i]`, slot = -1);
+    # mezar taşları yarıyı aşınca `_compact` tek geçişte temizler (amortize O(1) silme). `_ndead == 0` iken eski davranış.
+    _dead: list[bool]
+    _ndead: int
 
     def __init__(self: OrderedDict) -> None:
         self._keys = []
         self._values = []
         self._slots = []
+        self._dead = []
+        self._ndead = 0
+
+    def _compact(self: OrderedDict) -> None:
+        keys: list[K] = self._keys
+        values: list[V] = self._values
+        dead: list[bool] = self._dead
+        new_keys: list[K] = []
+        new_values: list[V] = []
+        new_dead: list[bool] = []
+        i: int = 0
+        while i < len(keys):
+            if not dead[i]:
+                new_keys.append(keys[i])
+                new_values.append(values[i])
+                new_dead.append(False)
+            i = i + 1
+        self._keys = new_keys
+        self._values = new_values
+        self._dead = new_dead
+        self._ndead = 0
+        self._slots = _hx_rebuild(new_keys, _hx_cap_for(len(new_keys), len(self._slots)))
 
     def _index_of(self: OrderedDict, k: K) -> int:
         return _hx_find(self._keys, self._slots, k)
@@ -382,12 +427,18 @@ class OrderedDict[K, V]:
         else:
             keys: list[K] = self._keys
             values: list[V] = self._values
+            dead: list[bool] = self._dead
             keys.append(k)
             values.append(v)
+            dead.append(False)
             self._keys = keys
             self._values = values
+            self._dead = dead
             if len(keys) * 2 > len(self._slots):
-                self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
+                if self._ndead > 0:
+                    self._compact()
+                else:
+                    self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
             else:
                 _hx_place(self._slots, __nox_hash(k), len(keys) - 1)
 
@@ -398,32 +449,29 @@ class OrderedDict[K, V]:
         return self._values[idx]
 
     def remove(self: OrderedDict, k: K) -> bool:
-        idx: int = self._index_of(k)
-        if idx < 0:
+        pos: int = _hx_find_slot(self._keys, self._slots, k)
+        if pos < 0:
             return False
-        keys: list[K] = self._keys
-        values: list[V] = self._values
-        new_keys: list[K] = []
-        new_values: list[V] = []
-        i: int = 0
-        while i < len(keys):
-            if i != idx:
-                new_keys.append(keys[i])
-                new_values.append(values[i])
-            i = i + 1
-        self._keys = new_keys
-        self._values = new_values
-        self._slots = _hx_rebuild(new_keys, len(self._slots))
+        idx: int = self._slots[pos] - 1
+        self._slots[pos] = -1
+        self._dead[idx] = True
+        self._ndead = self._ndead + 1
+        if self._ndead >= 16 and self._ndead * 2 > len(self._keys):
+            self._compact()
         return True
 
     def keys_list(self: OrderedDict) -> list[K]:
+        if self._ndead > 0:
+            self._compact()
         return self._keys
 
     def values_list(self: OrderedDict) -> list[V]:
+        if self._ndead > 0:
+            self._compact()
         return self._values
 
     def size(self: OrderedDict) -> int:
-        return len(self._keys)
+        return len(self._keys) - self._ndead
 
 # ---------------------------------------------------------------------
 # LRUCache[K, V] — OrderedDict'in AYNI dogrusal-tarama deseni + sabit

@@ -24,7 +24,7 @@ kullanıcıya sunulur; onaydan sonra uygulanır. Her özellik: parser → checke
 - [x] **1.4 Varsayılan argümanlar + keyword argümanlar** — v1.147.0 (spec §3.264). Yalnızca sabit literal varsayılanlar; argümanlar parametre sırasıyla değerlendirilir.
 - [x] **1.5 `for` genişletmeleri** — v1.148.0 (spec §3.265): `range(a,b,adım)`, `for c in str`, `for k in dict`, her liste ifadesi. Ayrıca eski bir
   doğruluk açığı kapandı (aynı kapsamda farklı tiple yeniden bildirim).
-- [x] **1.6a dict tam API** — v1.149.0 (spec §3.266): get/pop/setdefault/update/copy/clear/len/`del d[k]`. Silme O(n).
+- [x] **1.6a dict tam API** — v1.149.0 (spec §3.266): get/pop/setdefault/update/copy/clear/len/`del d[k]`. Silme O(n) idi; v2.1.3'ten beri amortize O(1) (mezar taşı).
 - [x] **1.6b dict değer/anahtar tipleri** — v1.152.0 (spec §3.269): değer `list[T]`/`dict`, anahtar `float`; ayrıca `xs[i].append`/`d[k].append` eleman alıcısı büyütme.
 - [x] **1.7 list tam API** — v1.150.0 (spec §3.267): `extend`, `insert`, `pop(i)`, `remove`, `index`, `count`, `clear`, `reverse`, `copy`, `del xs[i]`, `list + list`, `list * n`, `sorted`/`reversed` (yeni liste döner). Dilimleme 1.9'da.
 - [x] **1.8 `float(int)` / açık int→float dönüşümü** — v1.151.0 (spec §3.268): `float(int/float/bool/u8…u64/str)`.

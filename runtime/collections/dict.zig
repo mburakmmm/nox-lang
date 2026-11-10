@@ -296,7 +296,13 @@ const StrOrIntContext = struct {
 /// (konum etiketten türer).
 const IndexTable = struct {
     slots: []u64 = &.{},
+    /// Kullanılan (boş OLMAYAN: canlı + silinmiş) slot sayısı; yük çarpanı bunun üzerinden hesaplanır.
     count: usize = 0,
+    /// `count` içindeki silinmiş (`DELETED`) slot sayısı. Silme mezar taşı bırakır; bir sonraki büyütme/yeniden kurma temizler.
+    deleted: usize = 0,
+
+    /// Silinmiş anahtarın slot işareti: arama bunu atlayıp zinciri sürdürür (0 = zincir biter).
+    const DELETED: u64 = std.math.maxInt(u64);
 
     const empty: IndexTable = .{};
 
@@ -313,7 +319,7 @@ const IndexTable = struct {
         while (true) {
             const s = self.slots[pos];
             if (s == 0) return null;
-            if (@as(u32, @truncate(s >> 32)) == tag) {
+            if (s != DELETED and @as(u32, @truncate(s >> 32)) == tag) {
                 const idx: usize = @intCast((s & 0xFFFF_FFFF) - 1);
                 if (keysEqual(key_is_str, entries[idx].key, key)) return idx;
             }
@@ -329,15 +335,40 @@ const IndexTable = struct {
     }
 
     fn grow(self: *IndexTable, allocator: std.mem.Allocator) !void {
-        const new_len: usize = if (self.slots.len == 0) 16 else self.slots.len * 2;
+        // Canlı slot sayısına göre büyür: çoğu slot silinmişse (`DELETED`) tabloyu şişirmek yerine aynı boyutta yeniden kurar.
+        const live = self.count - self.deleted;
+        const new_len: usize = if (self.slots.len == 0) 16 else if ((live + 1) * 4 > self.slots.len) self.slots.len * 2 else self.slots.len;
         const ns = try allocator.alloc(u64, new_len);
         @memset(ns, 0);
         for (self.slots) |s| {
-            if (s == 0) continue;
+            if (s == 0 or s == DELETED) continue;
             place(ns, @truncate(s >> 32), @intCast((s & 0xFFFF_FFFF) - 1));
         }
         if (self.slots.len > 0) allocator.free(self.slots);
         self.slots = ns;
+        self.count = live;
+        self.deleted = 0;
+    }
+
+    /// Anahtarın slotunu `DELETED` yapar (anahtar `entries`te hâlâ okunabilir olmalı). Bulunduysa `true`.
+    fn remove(self: *IndexTable, entries: []const Entry, key_is_str: bool, key: i64, h: u64) bool {
+        if (self.slots.len == 0) return false;
+        const mask = self.slots.len - 1;
+        const tag: u32 = @truncate(h);
+        var pos: usize = @as(usize, tag) & mask;
+        while (true) {
+            const s = self.slots[pos];
+            if (s == 0) return false;
+            if (s != DELETED and @as(u32, @truncate(s >> 32)) == tag) {
+                const idx: usize = @intCast((s & 0xFFFF_FFFF) - 1);
+                if (keysEqual(key_is_str, entries[idx].key, key)) {
+                    self.slots[pos] = DELETED;
+                    self.deleted += 1;
+                    return true;
+                }
+            }
+            pos = (pos + 1) & mask;
+        }
     }
 
     /// Anahtarın tabloda OLMADIĞI varsayılır (çağıran `find` ile doğrular).
@@ -375,7 +406,23 @@ pub const Dict = struct {
     /// fonksiyonu (codegen kurulumda `nox_dict_set_value_release` ile yazar; `value_is_class` bayrağı bu durumda "ARC
     /// işaretçisi" demektir). `null` ise `value_is_class` değerleri sınıf etiket-dağıtımıyla (`releaseClassPayload`) bırakılır.
     value_release: ?*const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void = null,
+    /// Aura L2: indeks kuruluyken (`index_built`) silme `entries`i kaydırmaz (O(n)) — girdiyi MEZAR TAŞI yapar: `dead_bits`te
+    /// biti kurulur, indeksteki slotu `DELETED` olur. `dead` mezar taşı sayısıdır; yarısı aşılınca `compact` tek geçişte
+    /// temizler (amortize O(1) silme). `dead == 0` iken `dead_bits` kullanılmaz ve her yol eski davranışla aynıdır.
+    dead: usize = 0,
+    dead_bits: std.ArrayListUnmanaged(u64) = .empty,
 };
+
+/// `entries[i]` mezar taşı mı? (`dead == 0` hızlı yolu.)
+inline fn isDead(d: *const Dict, i: usize) bool {
+    if (d.dead == 0) return false;
+    return (d.dead_bits.items[i >> 6] >> @intCast(i & 63)) & 1 == 1;
+}
+
+/// Canlı girdi sayısı.
+inline fn liveCount(d: *const Dict) usize {
+    return d.entries.items.len - d.dead;
+}
 
 fn payloadToStrPtr(v: i64) ?[*:0]u8 {
     if (v == 0) return null;
@@ -450,6 +497,18 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
         d.entries.items[i] = .{ .key = key, .value = value };
     } else {
         d.entries.append(state.allocator(), .{ .key = key, .value = value }) catch return;
+        if (d.dead != 0) {
+            // Mezar taşı bit kümesi yeni girdiyi de kapsamalı (yeni bitler 0 = canlı).
+            const need = (d.entries.items.len + 63) / 64;
+            if (d.dead_bits.items.len < need) {
+                const old_len = d.dead_bits.items.len;
+                d.dead_bits.resize(state.allocator(), need) catch {
+                    _ = d.entries.pop();
+                    return;
+                };
+                @memset(d.dead_bits.items[old_len..], 0);
+            }
+        }
         d.last_idx = d.entries.items.len - 1;
         if (d.index_built) {
             const new_index = d.entries.items.len - 1;
@@ -464,18 +523,53 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
     }
 }
 
-/// v1.149.0: `entries[i]`yi (ekleme SIRASINI koruyarak) siler. `entries` indeksleri kaydığından hash indeksi (`index`) yeniden
-/// kurulur (`index_built` ise) ve `last_idx` geçersiz kılınır. Karmaşıklık O(n) (küçük/orta sözlükler için yeterli; büyük
-/// sözlüklerde çok sayıda silme için bkz. spec §3.266 "bilinen sınırlama").
-fn removeAt(rt: ?*anyopaque, d: *Dict, i: usize) void {
+/// `entries[i]`yi (ekleme SIRASINI koruyarak) siler. `key`, sözlükte aranan anahtardır (içeriği `entries[i].key` ile aynı; çağıran
+/// `str` anahtarı bırakmadan ÖNCE çağırmalı: indeks silme anahtarın karmasını okur).
+/// İndeks yokken (küçük sözlük) girdi kaydırılır (en çok `SMALL_MAP_THRESHOLD` öğe). İndeks varken girdi mezar taşı olur (Aura L2).
+fn removeAt(rt: ?*anyopaque, d: *Dict, i: usize, key: i64) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
-    _ = d.entries.orderedRemove(i);
     d.last_idx = std.math.maxInt(usize);
-    if (d.index_built) {
-        d.index.deinit(state.allocator());
-        d.index_built = false;
-        if (d.entries.items.len > SMALL_MAP_THRESHOLD) buildIndex(d, state.allocator(), rt);
+    if (!d.index_built) {
+        _ = d.entries.orderedRemove(i);
+        return;
     }
+    const ctx: StrOrIntContext = .{ .key_is_str = d.key_is_str, .rt = rt };
+    _ = d.index.remove(d.entries.items, d.key_is_str, key, ctx.hash(key));
+    if (d.dead == 0) {
+        // İlk mezar taşı: bit kümesi `entries` uzunluğunu kapsayacak şekilde (sıfırlı) açılır.
+        const words = (d.entries.items.len + 63) / 64;
+        d.dead_bits.resize(state.allocator(), words) catch {
+            // Bellek yok: eski (O(n)) yola düş — girdiyi kaydır, indeksi yeniden kur.
+            _ = d.entries.orderedRemove(i);
+            d.index.deinit(state.allocator());
+            d.index_built = false;
+            if (d.entries.items.len > SMALL_MAP_THRESHOLD) buildIndex(d, state.allocator(), rt);
+            return;
+        };
+        @memset(d.dead_bits.items, 0);
+    }
+    d.dead_bits.items[i >> 6] |= @as(u64, 1) << @intCast(i & 63);
+    d.dead += 1;
+    if (d.dead >= 16 and d.dead * 2 > d.entries.items.len) compact(rt, d);
+}
+
+/// Mezar taşlarını tek geçişte temizler (ekleme sırası korunur) ve indeksi yeniden kurar. `dead == 0` ise no-op.
+fn compact(rt: ?*anyopaque, d: *Dict) void {
+    if (d.dead == 0) return;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    var w: usize = 0;
+    for (d.entries.items, 0..) |e, r| {
+        if (isDead(d, r)) continue;
+        d.entries.items[w] = e;
+        w += 1;
+    }
+    d.entries.shrinkRetainingCapacity(w);
+    d.dead = 0;
+    d.dead_bits.clearRetainingCapacity();
+    d.last_idx = std.math.maxInt(usize);
+    d.index.deinit(state.allocator());
+    d.index_built = false;
+    if (w > SMALL_MAP_THRESHOLD) buildIndex(d, state.allocator(), rt);
 }
 
 /// `del d[k]` / `d.remove`: anahtar + değer (str/sınıf ise) serbest bırakılarak silinir. Silindiyse 1, yoksa 0.
@@ -483,10 +577,11 @@ pub export fn nox_dict_remove(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32,
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
     const i = findIndex(d, key, rt) orelse return 0;
     const old = d.entries.items[i];
+    // Önce silinir (indeks, `key` canlıyken karmasını okur), SONRA payload'lar bırakılır.
+    removeAt(rt, d, i, key);
     if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.value));
     if (value_is_class != 0) releaseValuePayload(rt, d, old.value);
     if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
-    removeAt(rt, d, i);
     return 1;
 }
 
@@ -496,8 +591,8 @@ pub export fn nox_dict_pop(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, ke
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
     const i = findIndex(d, key, rt) orelse return 0;
     const old = d.entries.items[i];
+    removeAt(rt, d, i, key);
     if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
-    removeAt(rt, d, i);
     return old.value;
 }
 
@@ -505,7 +600,8 @@ pub export fn nox_dict_pop(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, ke
 pub export fn nox_dict_clear(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32) void {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return));
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
-    for (d.entries.items) |e| {
+    for (d.entries.items, 0..) |e, i| {
+        if (isDead(d, i)) continue;
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.value));
         if (value_is_class != 0) releaseValuePayload(rt, d, e.value);
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.key));
@@ -514,6 +610,8 @@ pub export fn nox_dict_clear(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, 
     d.index.deinit(state.allocator());
     d.index_built = false;
     d.last_idx = std.math.maxInt(usize);
+    d.dead = 0;
+    d.dead_bits.clearRetainingCapacity();
 }
 
 /// `dst.update(src)` / `src.copy()`: `src`nin her girdisi `dst`ye eklenir/üzerine yazılır. Anahtar ve değer (str/sınıf ise)
@@ -521,6 +619,7 @@ pub export fn nox_dict_clear(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, 
 pub export fn nox_dict_update(rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32) void {
     const s: *Dict = @ptrCast(@alignCast(src orelse return));
     if (dst == src) return;
+    compact(rt, s); // kaynak sırayla gezilir: mezar taşı bırakma
     if (dst) |dp| {
         const dd: *Dict = @ptrCast(@alignCast(dp));
         if (dd.value_release == null) dd.value_release = s.value_release;
@@ -578,15 +677,27 @@ pub export fn nox_hash_str(rt: ?*anyopaque, s: ?[*:0]const u8) i64 {
 
 pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    return @intCast(d.entries.items.len);
+    return @intCast(liveCount(d));
+}
+
+/// `idx`inci CANLI girdinin `entries` konumu (mezar taşı yokken `idx`in kendisi). Mezar taşı varsa O(n) tarama — yalnızca
+/// konumsal okuma (`print`) kullanır; sıralı gezintiler (`keys()`/`values()`/`update`) önce `compact` eder.
+fn liveEntryAt(d: *const Dict, idx: usize) ?usize {
+    if (d.dead == 0) return if (idx < d.entries.items.len) idx else null;
+    var seen: usize = 0;
+    for (0..d.entries.items.len) |i| {
+        if (isDead(d, i)) continue;
+        if (seen == idx) return i;
+        seen += 1;
+    }
+    return null;
 }
 
 /// v2.0.23: Sözlüğün `idx` indisindeki (ekleme sırası) anahtarının 8-baytlık ham payload'ını döner (borrowed okuma).
 pub export fn nox_dict_entry_key(dp: ?*anyopaque, idx: i64) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
     if (idx < 0) return 0;
-    const i: usize = @intCast(idx);
-    if (i >= d.entries.items.len) return 0;
+    const i = liveEntryAt(d, @intCast(idx)) orelse return 0;
     return d.entries.items[i].key;
 }
 
@@ -594,8 +705,7 @@ pub export fn nox_dict_entry_key(dp: ?*anyopaque, idx: i64) i64 {
 pub export fn nox_dict_entry_value(dp: ?*anyopaque, idx: i64) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
     if (idx < 0) return 0;
-    const i: usize = @intCast(idx);
-    if (i >= d.entries.items.len) return 0;
+    const i = liveEntryAt(d, @intCast(idx)) orelse return 0;
     return d.entries.items[i].value;
 }
 
@@ -614,6 +724,7 @@ pub export fn nox_dict_entry_value(dp: ?*anyopaque, idx: i64) i64 {
 /// bir İKİNCİ sahip olur (`nox_dict_release`/liste'nin KENDİ release'i
 /// birbirinden bağımsız, İKİSİ de kendi payını serbest bırakır).
 fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, is_class: bool, elem_size: i64, want_key: bool) ?*anyopaque {
+    compact(rt, d); // sıralı gezinti: mezar taşı bırakma
     const n = d.entries.items.len;
     const esz: usize = @intCast(elem_size);
     const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + esz * n) orelse return null;
@@ -664,7 +775,8 @@ pub export fn nox_dict_trace_fill(dp: ?*anyopaque, buf: ?*anyopaque, start_idx: 
     const d: *const Dict = @ptrCast(@alignCast(dp orelse return start_idx));
     const out: [*]u8 = @ptrCast(buf orelse return start_idx);
     var idx = start_idx;
-    for (d.entries.items) |e| {
+    for (d.entries.items, 0..) |e, i| {
+        if (isDead(d, i)) continue;
         const slot: *align(1) abi_ptr.Slot = @ptrCast(out + abi_layout.TRACE_BUF_LEN_SIZE + @as(usize, @intCast(idx)) * abi_layout.TRACE_BUF_SLOT_SIZE);
         slot.* = abi_ptr.slot(@as(?*anyopaque, @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(e.value)))))));
         idx += 1;
@@ -682,13 +794,15 @@ pub export fn nox_dict_release(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32
     if (arc.nox_rc_predecrement(ptr) == 0) return;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const d: *Dict = @ptrCast(@alignCast(ptr));
-    for (d.entries.items) |e| {
+    for (d.entries.items, 0..) |e, i| {
+        if (isDead(d, i)) continue;
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.value));
         if (value_is_class != 0) releaseValuePayload(rt, d, e.value);
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.key));
     }
     d.entries.deinit(state.allocator());
     d.index.deinit(state.allocator());
+    d.dead_bits.deinit(state.allocator());
     arc.nox_rc_free_payload(rt, ptr, @sizeOf(Dict));
 }
 
@@ -706,11 +820,13 @@ pub export fn nox_dict_shallow_gc_free_class_values(rt: ?*anyopaque, dp: ?*anyop
     if (arc.nox_rc_predecrement(ptr) == 0) return;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const d: *Dict = @ptrCast(@alignCast(ptr));
-    for (d.entries.items) |e| {
+    for (d.entries.items, 0..) |e, i| {
+        if (isDead(d, i)) continue;
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.key));
     }
     d.entries.deinit(state.allocator());
     d.index.deinit(state.allocator());
+    d.dead_bits.deinit(state.allocator());
     arc.nox_rc_free_payload(rt, ptr, @sizeOf(Dict));
 }
 
@@ -728,8 +844,8 @@ test "nox_dict_remove/pop/clear/update — sıra korunur, indeks yeniden kurulur
     try std.testing.expectEqual(@as(i64, 200), nox_dict_get(rt, d, 0, 20));
     // Ekleme sırası korunur: 4'ten sonra 6 gelir.
     const dd: *Dict = @ptrCast(@alignCast(d));
-    try std.testing.expectEqual(@as(i64, 4), dd.entries.items[3].key);
-    try std.testing.expectEqual(@as(i64, 6), dd.entries.items[4].key);
+    try std.testing.expectEqual(@as(i64, 4), nox_dict_entry_key(dd, 3));
+    try std.testing.expectEqual(@as(i64, 6), nox_dict_entry_key(dd, 4));
     try std.testing.expectEqual(@as(i64, 70), nox_dict_pop(rt, d, 0, 7));
     try std.testing.expectEqual(@as(i64, 18), nox_dict_len(d));
 
@@ -1116,4 +1232,66 @@ test "v2.0.23: nox_dict_entry_key / nox_dict_entry_value ekleme sirasina gore do
     try std.testing.expectEqual(@as(i64, 0), nox_dict_entry_value(d, 3));
 
     nox_dict_release(rt, d, 0, 0, 0);
+}
+
+test "Aura L2: indeks kuruluyken silme mezar taşı bırakır; sıra, len, get/contains ve yeniden ekleme doğru kalır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    const dd: *Dict = @ptrCast(@alignCast(d));
+    var k: i64 = 0;
+    while (k < 100) : (k += 1) nox_dict_set(rt, d, 0, 0, 0, k, k * 10);
+    // 10 tekil silme: eşik (16) altında, mezar taşları birikir.
+    k = 0;
+    while (k < 10) : (k += 1) try std.testing.expectEqual(@as(i32, 1), nox_dict_remove(rt, d, 0, 0, 0, k * 2));
+    try std.testing.expectEqual(@as(usize, 10), dd.dead);
+    try std.testing.expectEqual(@as(i64, 90), nox_dict_len(d));
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_contains(rt, d, 0, 4));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_contains(rt, d, 0, 5));
+    try std.testing.expectEqual(@as(i64, 50), nox_dict_get(rt, d, 0, 5));
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_remove(rt, d, 0, 0, 0, 4)); // zaten silinmiş
+    // Konumsal okuma: canlı girdiler ekleme sırasıyla (0,2,..,18 silindi → ilk canlı 1, sonra 3, 5, ...).
+    try std.testing.expectEqual(@as(i64, 1), nox_dict_entry_key(d, 0));
+    try std.testing.expectEqual(@as(i64, 3), nox_dict_entry_key(d, 1));
+    try std.testing.expectEqual(@as(i64, 20), nox_dict_entry_key(d, 10));
+    // Silinen anahtarı yeniden ekle: sona gider.
+    nox_dict_set(rt, d, 0, 0, 0, 4, 444);
+    try std.testing.expectEqual(@as(i64, 91), nox_dict_len(d));
+    try std.testing.expectEqual(@as(i64, 444), nox_dict_get(rt, d, 0, 4));
+    try std.testing.expectEqual(@as(i64, 4), nox_dict_entry_key(d, 90));
+    // keys() önce sıkıştırır; liste sırası aynı.
+    const keys = nox_dict_keys(rt, d, 0, 8) orelse return error.NewFailed;
+    defer arc.nox_rc_release(rt, keys, 16 + 8 * 91);
+    try std.testing.expectEqual(@as(usize, 0), dd.dead);
+    const kb: [*]const u8 = @ptrCast(keys);
+    try std.testing.expectEqual(@as(i64, 91), @as(*align(1) const i64, @ptrCast(kb)).*);
+    try std.testing.expectEqual(@as(i64, 1), @as(*align(1) const i64, @ptrCast(kb + 16)).*);
+    try std.testing.expectEqual(@as(i64, 4), @as(*align(1) const i64, @ptrCast(kb + 16 + 8 * 90)).*);
+    try std.testing.expectEqual(@as(i64, 444), nox_dict_get(rt, d, 0, 4)); // indeks sıkıştırmadan sonra da doğru
+    nox_dict_release(rt, d, 0, 0, 0);
+}
+
+test "Aura L2: toplu silme otomatik sıkıştırır (dead sınırlı), str anahtarlar sızdırmaz, ters sırada da çalışır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const d = nox_dict_new(rt, 1) orelse return error.NewFailed;
+    const dd: *Dict = @ptrCast(@alignCast(d));
+    var bufs: [2000][12]u8 = undefined;
+    var i: usize = 0;
+    while (i < 2000) : (i += 1) {
+        const txt = std.fmt.bufPrint(&bufs[i], "k{d}", .{i}) catch unreachable;
+        const sk = str_mod.nox_str_from_bytes(rt, txt) orelse return error.AllocFailed;
+        nox_dict_set(rt, d, 1, 0, 0, @bitCast(@as(u64, @intFromPtr(sk))), @intCast(i));
+    }
+    // Hepsini (tek tek) sil: her silmede aranan anahtar için yeni bir str kurulur.
+    i = 0;
+    while (i < 2000) : (i += 1) {
+        const txt = std.fmt.bufPrint(&bufs[i], "k{d}", .{i}) catch unreachable;
+        const probe = str_mod.nox_str_from_bytes(rt, txt) orelse return error.AllocFailed;
+        defer str_mod.nox_str_release(rt, probe);
+        try std.testing.expectEqual(@as(i32, 1), nox_dict_remove(rt, d, 1, 0, 0, @bitCast(@as(u64, @intFromPtr(probe)))));
+        try std.testing.expect(dd.dead <= dd.entries.items.len / 2 + 16);
+    }
+    try std.testing.expectEqual(@as(i64, 0), nox_dict_len(d));
+    nox_dict_release(rt, d, 1, 0, 0);
 }

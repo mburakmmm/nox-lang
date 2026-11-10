@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.3]
+
+### Düzeltildi
+
+- **`dict`, `set` ve `OrderedDict` silme amortize O(1)** (Aura L2): indeks kurulu sözlüklerde `del d[k]` / `d.pop(k)` / `s.discard(k)` artık `entries`i kaydırıp karma indeksi yeniden kurmuyor; girdi mezar taşı oluyor (bit kümesi + indekste `DELETED`), mezar taşları yarıyı aşınca tek geçişte temizleniyor. Ekleme sırası, `len`, `keys()`/`values()`, `for`, `print` ve yeniden ekleme aynı. `nox.collections.OrderedDict.remove` aynı yöntemi kullanıyor. Ölçüm (aura repro, ReleaseFast): 40 000 elemanı tek tek silmek önceden 6 sn (`dict`) / 17 sn (`OrderedDict`), şimdi ölçülemeyecek kadar kısa.
+
 ## [2.1.2]
 
 Çerçeve geliştiricilerinin (aether, nyx, aura, nova, pulse) bildirdiği, güncel derlemede yeniden üretilen hatalar. Ayrıntılı kayıt: `project/limitasyon-kaydi-2026-11.md`.

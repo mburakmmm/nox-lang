@@ -136,7 +136,7 @@ function with a non-`None` return type must return on every path. `return a, b` 
 ## `del`
 
 `del xs[i]` removes a list element (`IndexError` when out of range, negative indexes allowed); `del d[k]` removes a dictionary entry
-(`KeyError` when absent). Deleting from a dictionary is O(n).
+(`KeyError` when absent). Deleting from a dictionary is amortized O(1) (a deleted entry is a tombstone; tombstones are compacted in one pass once they outnumber half the entries). Insertion order is preserved.
 
 ```nox
 xs: list[int] = [1, 2, 3, 4]
