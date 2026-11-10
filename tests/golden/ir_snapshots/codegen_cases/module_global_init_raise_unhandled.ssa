@@ -1914,6 +1914,12 @@ export function $nox_init_globals(l %rt) {
     storel 9, %t4
     ret
 }
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 16)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
 export function $nox_deinit_globals(l %rt) {
 @start
     %t0 =l call $nox_globals_get(l %rt)
@@ -2658,31 +2664,44 @@ export function w $main(w %argc, l %argv) {
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    call $nox_init_globals(l %rt)
+    call $nox_globals_alloc(l %rt)
     storel 5, %t0
-    %t1 =l add $str5, 16
-    %t2 =w ceql %t1, 0
-    jnz %t2, @print_none0, @print_some1
-@print_none0
-    call $printf(l $fmt_lit0)
-    call $printf(l $fmt_newline)
-    jmp @print_opt_done2
-@print_some1
-    call $nox_print_str(l %t1)
-    call $printf(l $fmt_newline)
-    jmp @print_opt_done2
-@print_opt_done2
-    %t3 =l call $total(l %rt)
-    %t4 =w call $nox_exception_pending(l %rt)
-    jnz %t4, @exc_propagate3, @exc_continue4
-@exc_propagate3
+    %t1 =l call $nox_globals_get(l %rt)
+    %t2 =l call $load(l %rt, l 3)
+    %t3 =w call $nox_exception_pending(l %rt)
+    jnz %t3, @exc_propagate0, @exc_continue1
+@exc_propagate0
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue4
-    call $printf(l $fmt_int, ..., l %t3)
+@exc_continue1
+    %t4 =l add %t1, 0
+    storel %t2, %t4
+    %t5 =l call $nox_globals_get(l %rt)
+    %t6 =l add %t5, 8
+    storel 9, %t6
+    %t7 =l add $str5, 16
+    %t8 =w ceql %t7, 0
+    jnz %t8, @print_none2, @print_some3
+@print_none2
+    call $printf(l $fmt_lit0)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done4
+@print_some3
+    call $nox_print_str(l %t7)
+    call $printf(l $fmt_newline)
+    jmp @print_opt_done4
+@print_opt_done4
+    %t9 =l call $total(l %rt)
+    %t10 =w call $nox_exception_pending(l %rt)
+    jnz %t10, @exc_propagate5, @exc_continue6
+@exc_propagate5
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue6
+    call $printf(l $fmt_int, ..., l %t9)
     call $nox_deinit_globals(l %rt)
     call $nox_runtime_deinit(l %rt)
-@fn_end5
+@fn_end7
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

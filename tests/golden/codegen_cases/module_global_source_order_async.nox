@@ -1,0 +1,36 @@
+# Async varyantı ($main_body): aynı sıra. Global'e dokunan üst-düzey atama/metod çağrıları, aradaki gevşek ifadelerden ÖNCE değil KAYNAK SIRASINDA çalışır (önceden hepsi $nox_init_globals'e çekiliyordu).
+class Counter:
+    n: int
+
+    def __init__(self: Counter) -> None:
+        self.n = 0
+
+    def set(self: Counter, v: int) -> None:
+        self.n = v
+
+c: Counter = Counter()
+x: int = 0
+
+def get_x() -> int:
+    return x
+
+def get_n() -> int:
+    return c.n
+
+c.set(1)
+print("after set(1):", c.n, x)
+print(get_n())
+x = 5
+c.set(2)
+print("after set(2):", c.n, x)
+y: int = 1
+
+def get_y() -> int:
+    return y
+
+async def double(v: int) -> int:
+    return v * 2
+
+print(get_n(), get_x(), get_y())
+t: Task[int] = spawn double(get_x())
+print(await t)

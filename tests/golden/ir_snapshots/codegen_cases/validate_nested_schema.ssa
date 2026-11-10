@@ -7856,6 +7856,12 @@ export function $nox_init_globals(l %rt) {
     storel 4611686018427387904, %t1
     ret
 }
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
 export function $nox_deinit_globals(l %rt) {
 @start
     %t0 =l call $nox_globals_get(l %rt)
@@ -23785,7 +23791,7 @@ export function w $main(w %argc, l %argv) {
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    call $nox_init_globals(l %rt)
+    call $nox_globals_alloc(l %rt)
     storel 0, %t5
     storel 0, %t6
     storel 0, %t7
@@ -23798,392 +23804,395 @@ export function w $main(w %argc, l %argv) {
     storel 4, %t2
     storel 8, %t3
     storel 16, %t4
-    %t12 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t12
-    %t13 =l add %t12, 8
-    storel 0, %t13
-    call $nox_validate_Schema___init__(l %rt, l %t12)
-    %t14 =l loadl %t5
-    %t15 =w ceql %t14, 0
-    jnz %t15, @release_skip1, @release0
+    %t12 =l call $nox_globals_get(l %rt)
+    %t13 =l add %t12, 0
+    storel 4611686018427387904, %t13
+    %t14 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t14
+    %t15 =l add %t14, 8
+    storel 0, %t15
+    call $nox_validate_Schema___init__(l %rt, l %t14)
+    %t16 =l loadl %t5
+    %t17 =w ceql %t16, 0
+    jnz %t17, @release_skip1, @release0
 @release0
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t14, l $nox_validate_Schema_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t16, l $nox_validate_Schema_release)
     jmp @release_done2
 @release_skip1
     jmp @release_done2
 @release_done2
     storel 0, %t5
-    storel %t12, %t5
-    %t16 =l loadl %t5
-    %t17 =l add $str182, 16
-    %t18 =l add $str183, 16
-    call $nox_validate_Schema_require(l %rt, l %t16, l %t17, l %t18)
-    %t19 =w call $nox_exception_pending(l %rt)
-    jnz %t19, @exc_propagate3, @exc_continue4
+    storel %t14, %t5
+    %t18 =l loadl %t5
+    %t19 =l add $str182, 16
+    %t20 =l add $str183, 16
+    call $nox_validate_Schema_require(l %rt, l %t18, l %t19, l %t20)
+    %t21 =w call $nox_exception_pending(l %rt)
+    jnz %t21, @exc_propagate3, @exc_continue4
 @exc_propagate3
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue4
-    %t20 =l loadl %t5
-    %t21 =l add $str184, 16
-    %t22 =l add $str185, 16
-    call $nox_validate_Schema_optional(l %rt, l %t20, l %t21, l %t22)
-    %t23 =w call $nox_exception_pending(l %rt)
-    jnz %t23, @exc_propagate5, @exc_continue6
+    %t22 =l loadl %t5
+    %t23 =l add $str184, 16
+    %t24 =l add $str185, 16
+    call $nox_validate_Schema_optional(l %rt, l %t22, l %t23, l %t24)
+    %t25 =w call $nox_exception_pending(l %rt)
+    jnz %t25, @exc_propagate5, @exc_continue6
 @exc_propagate5
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue6
-    %t24 =l loadl %t5
-    %t25 =l add $str186, 16
-    call $nox_validate_Schema_min_length(l %rt, l %t24, l %t25, l 2)
-    %t26 =w call $nox_exception_pending(l %rt)
-    jnz %t26, @exc_propagate7, @exc_continue8
+    %t26 =l loadl %t5
+    %t27 =l add $str186, 16
+    call $nox_validate_Schema_min_length(l %rt, l %t26, l %t27, l 2)
+    %t28 =w call $nox_exception_pending(l %rt)
+    jnz %t28, @exc_propagate7, @exc_continue8
 @exc_propagate7
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue8
-    %t27 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t27
-    %t28 =l add %t27, 8
-    storel 0, %t28
-    call $nox_validate_Schema___init__(l %rt, l %t27)
-    %t29 =l loadl %t6
-    %t30 =w ceql %t29, 0
-    jnz %t30, @release_skip10, @release9
+    %t29 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t29
+    %t30 =l add %t29, 8
+    storel 0, %t30
+    call $nox_validate_Schema___init__(l %rt, l %t29)
+    %t31 =l loadl %t6
+    %t32 =w ceql %t31, 0
+    jnz %t32, @release_skip10, @release9
 @release9
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t29, l $nox_validate_Schema_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t31, l $nox_validate_Schema_release)
     jmp @release_done11
 @release_skip10
     jmp @release_done11
 @release_done11
     storel 0, %t6
-    storel %t27, %t6
-    %t31 =l loadl %t6
-    %t32 =l add $str187, 16
-    %t33 =l add $str188, 16
-    call $nox_validate_Schema_require(l %rt, l %t31, l %t32, l %t33)
-    %t34 =w call $nox_exception_pending(l %rt)
-    jnz %t34, @exc_propagate12, @exc_continue13
+    storel %t29, %t6
+    %t33 =l loadl %t6
+    %t34 =l add $str187, 16
+    %t35 =l add $str188, 16
+    call $nox_validate_Schema_require(l %rt, l %t33, l %t34, l %t35)
+    %t36 =w call $nox_exception_pending(l %rt)
+    jnz %t36, @exc_propagate12, @exc_continue13
 @exc_propagate12
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue13
-    %t35 =l loadl %t6
-    %t36 =l add $str189, 16
-    %t37 =l add $str190, 16
-    call $nox_validate_Schema_require(l %rt, l %t35, l %t36, l %t37)
-    %t38 =w call $nox_exception_pending(l %rt)
-    jnz %t38, @exc_propagate14, @exc_continue15
+    %t37 =l loadl %t6
+    %t38 =l add $str189, 16
+    %t39 =l add $str190, 16
+    call $nox_validate_Schema_require(l %rt, l %t37, l %t38, l %t39)
+    %t40 =w call $nox_exception_pending(l %rt)
+    jnz %t40, @exc_propagate14, @exc_continue15
 @exc_propagate14
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue15
-    %t39 =l loadl %t6
-    %t40 =l add $str191, 16
-    call $nox_validate_Schema_min(l %rt, l %t39, l %t40, d d_1)
-    %t41 =w call $nox_exception_pending(l %rt)
-    jnz %t41, @exc_propagate16, @exc_continue17
+    %t41 =l loadl %t6
+    %t42 =l add $str191, 16
+    call $nox_validate_Schema_min(l %rt, l %t41, l %t42, d d_1)
+    %t43 =w call $nox_exception_pending(l %rt)
+    jnz %t43, @exc_propagate16, @exc_continue17
 @exc_propagate16
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue17
-    %t42 =l loadl %t6
-    %t43 =l add $str192, 16
-    call $nox_validate_Schema_max(l %rt, l %t42, l %t43, d d_99)
-    %t44 =w call $nox_exception_pending(l %rt)
-    jnz %t44, @exc_propagate18, @exc_continue19
+    %t44 =l loadl %t6
+    %t45 =l add $str192, 16
+    call $nox_validate_Schema_max(l %rt, l %t44, l %t45, d d_99)
+    %t46 =w call $nox_exception_pending(l %rt)
+    jnz %t46, @exc_propagate18, @exc_continue19
 @exc_propagate18
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue19
-    %t45 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t45
-    %t46 =l add %t45, 8
-    storel 0, %t46
-    call $nox_validate_Schema___init__(l %rt, l %t45)
-    %t47 =l loadl %t7
-    %t48 =w ceql %t47, 0
-    jnz %t48, @release_skip21, @release20
+    %t47 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t47
+    %t48 =l add %t47, 8
+    storel 0, %t48
+    call $nox_validate_Schema___init__(l %rt, l %t47)
+    %t49 =l loadl %t7
+    %t50 =w ceql %t49, 0
+    jnz %t50, @release_skip21, @release20
 @release20
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t47, l $nox_validate_Schema_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t49, l $nox_validate_Schema_release)
     jmp @release_done22
 @release_skip21
     jmp @release_done22
 @release_done22
     storel 0, %t7
-    storel %t45, %t7
-    %t49 =l loadl %t7
-    %t50 =l add $str193, 16
-    %t51 =l add $str194, 16
-    call $nox_validate_Schema_require(l %rt, l %t49, l %t50, l %t51)
-    %t52 =w call $nox_exception_pending(l %rt)
-    jnz %t52, @exc_propagate23, @exc_continue24
+    storel %t47, %t7
+    %t51 =l loadl %t7
+    %t52 =l add $str193, 16
+    %t53 =l add $str194, 16
+    call $nox_validate_Schema_require(l %rt, l %t51, l %t52, l %t53)
+    %t54 =w call $nox_exception_pending(l %rt)
+    jnz %t54, @exc_propagate23, @exc_continue24
 @exc_propagate23
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue24
-    %t53 =l loadl %t7
-    %t54 =l add $str195, 16
-    %t55 =l add $str196, 16
-    call $nox_validate_Schema_require(l %rt, l %t53, l %t54, l %t55)
-    %t56 =w call $nox_exception_pending(l %rt)
-    jnz %t56, @exc_propagate25, @exc_continue26
+    %t55 =l loadl %t7
+    %t56 =l add $str195, 16
+    %t57 =l add $str196, 16
+    call $nox_validate_Schema_require(l %rt, l %t55, l %t56, l %t57)
+    %t58 =w call $nox_exception_pending(l %rt)
+    jnz %t58, @exc_propagate25, @exc_continue26
 @exc_propagate25
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue26
-    %t57 =l loadl %t7
-    %t58 =l add $str197, 16
-    %t59 =l add $str198, 16
-    call $nox_validate_Schema_format(l %rt, l %t57, l %t58, l %t59)
-    %t60 =w call $nox_exception_pending(l %rt)
-    jnz %t60, @exc_propagate27, @exc_continue28
+    %t59 =l loadl %t7
+    %t60 =l add $str197, 16
+    %t61 =l add $str198, 16
+    call $nox_validate_Schema_format(l %rt, l %t59, l %t60, l %t61)
+    %t62 =w call $nox_exception_pending(l %rt)
+    jnz %t62, @exc_propagate27, @exc_continue28
 @exc_propagate27
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue28
-    %t61 =l loadl %t7
-    %t62 =l add $str199, 16
-    %t63 =l add $str200, 16
-    call $nox_validate_Schema_require(l %rt, l %t61, l %t62, l %t63)
-    %t64 =w call $nox_exception_pending(l %rt)
-    jnz %t64, @exc_propagate29, @exc_continue30
+    %t63 =l loadl %t7
+    %t64 =l add $str199, 16
+    %t65 =l add $str200, 16
+    call $nox_validate_Schema_require(l %rt, l %t63, l %t64, l %t65)
+    %t66 =w call $nox_exception_pending(l %rt)
+    jnz %t66, @exc_propagate29, @exc_continue30
 @exc_propagate29
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue30
-    %t65 =l loadl %t7
-    %t66 =l add $str201, 16
-    %t67 =l add $str202, 16
-    call $nox_validate_Schema_format(l %rt, l %t65, l %t66, l %t67)
-    %t68 =w call $nox_exception_pending(l %rt)
-    jnz %t68, @exc_propagate31, @exc_continue32
+    %t67 =l loadl %t7
+    %t68 =l add $str201, 16
+    %t69 =l add $str202, 16
+    call $nox_validate_Schema_format(l %rt, l %t67, l %t68, l %t69)
+    %t70 =w call $nox_exception_pending(l %rt)
+    jnz %t70, @exc_propagate31, @exc_continue32
 @exc_propagate31
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue32
-    %t69 =l loadl %t7
-    %t70 =l add $str203, 16
-    %t71 =l add $str204, 16
-    call $nox_validate_Schema_require(l %rt, l %t69, l %t70, l %t71)
-    %t72 =w call $nox_exception_pending(l %rt)
-    jnz %t72, @exc_propagate33, @exc_continue34
+    %t71 =l loadl %t7
+    %t72 =l add $str203, 16
+    %t73 =l add $str204, 16
+    call $nox_validate_Schema_require(l %rt, l %t71, l %t72, l %t73)
+    %t74 =w call $nox_exception_pending(l %rt)
+    jnz %t74, @exc_propagate33, @exc_continue34
 @exc_propagate33
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue34
-    %t73 =l loadl %t7
-    %t74 =l add $str205, 16
-    call $nox_validate_Schema_min(l %rt, l %t73, l %t74, d d_18)
-    %t75 =w call $nox_exception_pending(l %rt)
-    jnz %t75, @exc_propagate35, @exc_continue36
+    %t75 =l loadl %t7
+    %t76 =l add $str205, 16
+    call $nox_validate_Schema_min(l %rt, l %t75, l %t76, d d_18)
+    %t77 =w call $nox_exception_pending(l %rt)
+    jnz %t77, @exc_propagate35, @exc_continue36
 @exc_propagate35
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue36
-    %t76 =l loadl %t7
-    %t77 =l add $str206, 16
-    %t78 =l add $str207, 16
-    call $nox_validate_Schema_require(l %rt, l %t76, l %t77, l %t78)
-    %t79 =w call $nox_exception_pending(l %rt)
-    jnz %t79, @exc_propagate37, @exc_continue38
+    %t78 =l loadl %t7
+    %t79 =l add $str206, 16
+    %t80 =l add $str207, 16
+    call $nox_validate_Schema_require(l %rt, l %t78, l %t79, l %t80)
+    %t81 =w call $nox_exception_pending(l %rt)
+    jnz %t81, @exc_propagate37, @exc_continue38
 @exc_propagate37
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue38
-    %t80 =l loadl %t7
-    %t81 =l add $str208, 16
-    %t82 =l add $str209, 16
-    call $nox_validate_Schema_pattern(l %rt, l %t80, l %t81, l %t82)
-    %t83 =w call $nox_exception_pending(l %rt)
-    jnz %t83, @exc_propagate39, @exc_continue40
+    %t82 =l loadl %t7
+    %t83 =l add $str208, 16
+    %t84 =l add $str209, 16
+    call $nox_validate_Schema_pattern(l %rt, l %t82, l %t83, l %t84)
+    %t85 =w call $nox_exception_pending(l %rt)
+    jnz %t85, @exc_propagate39, @exc_continue40
 @exc_propagate39
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue40
-    %t84 =l loadl %t7
-    %t85 =l add $str210, 16
-    call $nox_validate_Schema_max_length(l %rt, l %t84, l %t85, l 5)
-    %t86 =w call $nox_exception_pending(l %rt)
-    jnz %t86, @exc_propagate41, @exc_continue42
+    %t86 =l loadl %t7
+    %t87 =l add $str210, 16
+    call $nox_validate_Schema_max_length(l %rt, l %t86, l %t87, l 5)
+    %t88 =w call $nox_exception_pending(l %rt)
+    jnz %t88, @exc_propagate41, @exc_continue42
 @exc_propagate41
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue42
-    %t87 =l loadl %t7
-    %t88 =l add $str211, 16
-    %t89 =l loadl %t5
-    call $nox_validate_Schema_require_object_schema(l %rt, l %t87, l %t88, l %t89)
-    %t90 =w call $nox_exception_pending(l %rt)
-    jnz %t90, @exc_propagate43, @exc_continue44
+    %t89 =l loadl %t7
+    %t90 =l add $str211, 16
+    %t91 =l loadl %t5
+    call $nox_validate_Schema_require_object_schema(l %rt, l %t89, l %t90, l %t91)
+    %t92 =w call $nox_exception_pending(l %rt)
+    jnz %t92, @exc_propagate43, @exc_continue44
 @exc_propagate43
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue44
-    %t91 =l loadl %t7
-    %t92 =l add $str212, 16
-    %t93 =l add $str213, 16
-    call $nox_validate_Schema_optional_array_of_kind(l %rt, l %t91, l %t92, l %t93)
-    %t94 =w call $nox_exception_pending(l %rt)
-    jnz %t94, @exc_propagate45, @exc_continue46
+    %t93 =l loadl %t7
+    %t94 =l add $str212, 16
+    %t95 =l add $str213, 16
+    call $nox_validate_Schema_optional_array_of_kind(l %rt, l %t93, l %t94, l %t95)
+    %t96 =w call $nox_exception_pending(l %rt)
+    jnz %t96, @exc_propagate45, @exc_continue46
 @exc_propagate45
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue46
-    %t95 =l loadl %t7
-    %t96 =l add $str214, 16
-    %t97 =l loadl %t6
-    call $nox_validate_Schema_optional_array_of_schema(l %rt, l %t95, l %t96, l %t97)
-    %t98 =w call $nox_exception_pending(l %rt)
-    jnz %t98, @exc_propagate47, @exc_continue48
+    %t97 =l loadl %t7
+    %t98 =l add $str214, 16
+    %t99 =l loadl %t6
+    call $nox_validate_Schema_optional_array_of_schema(l %rt, l %t97, l %t98, l %t99)
+    %t100 =w call $nox_exception_pending(l %rt)
+    jnz %t100, @exc_propagate47, @exc_continue48
 @exc_propagate47
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue48
-    %t99 =l add $str215, 16
-    %t100 =l loadl %t7
-    %t101 =l call $nox_validate_validate_json_str(l %rt, l %t99, l %t100)
-    %t102 =w call $nox_exception_pending(l %rt)
-    jnz %t102, @exc_propagate49, @exc_continue50
+    %t101 =l add $str215, 16
+    %t102 =l loadl %t7
+    %t103 =l call $nox_validate_validate_json_str(l %rt, l %t101, l %t102)
+    %t104 =w call $nox_exception_pending(l %rt)
+    jnz %t104, @exc_propagate49, @exc_continue50
 @exc_propagate49
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue50
-    call $show(l %rt, l %t101)
-    %t103 =w ceql %t101, 0
-    jnz %t103, @release_skip52, @release51
+    call $show(l %rt, l %t103)
+    %t105 =w ceql %t103, 0
+    jnz %t105, @release_skip52, @release51
 @release51
-    call $List_str_release(l %rt, l %t101)
+    call $List_str_release(l %rt, l %t103)
     jmp @release_done53
 @release_skip52
     jmp @release_done53
 @release_done53
-    %t104 =w call $nox_exception_pending(l %rt)
-    jnz %t104, @exc_propagate54, @exc_continue55
+    %t106 =w call $nox_exception_pending(l %rt)
+    jnz %t106, @exc_propagate54, @exc_continue55
 @exc_propagate54
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue55
-    %t105 =l add $str216, 16
-    %t106 =l loadl %t7
-    %t107 =l call $nox_validate_validate_json_str(l %rt, l %t105, l %t106)
-    %t108 =w call $nox_exception_pending(l %rt)
-    jnz %t108, @exc_propagate56, @exc_continue57
+    %t107 =l add $str216, 16
+    %t108 =l loadl %t7
+    %t109 =l call $nox_validate_validate_json_str(l %rt, l %t107, l %t108)
+    %t110 =w call $nox_exception_pending(l %rt)
+    jnz %t110, @exc_propagate56, @exc_continue57
 @exc_propagate56
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue57
-    call $show(l %rt, l %t107)
-    %t109 =w ceql %t107, 0
-    jnz %t109, @release_skip59, @release58
+    call $show(l %rt, l %t109)
+    %t111 =w ceql %t109, 0
+    jnz %t111, @release_skip59, @release58
 @release58
-    call $List_str_release(l %rt, l %t107)
+    call $List_str_release(l %rt, l %t109)
     jmp @release_done60
 @release_skip59
     jmp @release_done60
 @release_done60
-    %t110 =w call $nox_exception_pending(l %rt)
-    jnz %t110, @exc_propagate61, @exc_continue62
+    %t112 =w call $nox_exception_pending(l %rt)
+    jnz %t112, @exc_propagate61, @exc_continue62
 @exc_propagate61
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue62
-    %t111 =l add $str217, 16
-    %t112 =l loadl %t7
-    %t113 =l call $nox_validate_validate_json_str(l %rt, l %t111, l %t112)
-    %t114 =w call $nox_exception_pending(l %rt)
-    jnz %t114, @exc_propagate63, @exc_continue64
+    %t113 =l add $str217, 16
+    %t114 =l loadl %t7
+    %t115 =l call $nox_validate_validate_json_str(l %rt, l %t113, l %t114)
+    %t116 =w call $nox_exception_pending(l %rt)
+    jnz %t116, @exc_propagate63, @exc_continue64
 @exc_propagate63
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue64
-    call $show(l %rt, l %t113)
-    %t115 =w ceql %t113, 0
-    jnz %t115, @release_skip66, @release65
+    call $show(l %rt, l %t115)
+    %t117 =w ceql %t115, 0
+    jnz %t117, @release_skip66, @release65
 @release65
-    call $List_str_release(l %rt, l %t113)
+    call $List_str_release(l %rt, l %t115)
     jmp @release_done67
 @release_skip66
     jmp @release_done67
 @release_done67
-    %t116 =w call $nox_exception_pending(l %rt)
-    jnz %t116, @exc_propagate68, @exc_continue69
+    %t118 =w call $nox_exception_pending(l %rt)
+    jnz %t118, @exc_propagate68, @exc_continue69
 @exc_propagate68
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue69
-    %t117 =l add $str218, 16
-    %t118 =l loadl %t7
-    %t119 =l call $nox_validate_validate_json_str(l %rt, l %t117, l %t118)
-    %t120 =w call $nox_exception_pending(l %rt)
-    jnz %t120, @exc_propagate70, @exc_continue71
+    %t119 =l add $str218, 16
+    %t120 =l loadl %t7
+    %t121 =l call $nox_validate_validate_json_str(l %rt, l %t119, l %t120)
+    %t122 =w call $nox_exception_pending(l %rt)
+    jnz %t122, @exc_propagate70, @exc_continue71
 @exc_propagate70
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue71
-    call $show(l %rt, l %t119)
-    %t121 =w ceql %t119, 0
-    jnz %t121, @release_skip73, @release72
+    call $show(l %rt, l %t121)
+    %t123 =w ceql %t121, 0
+    jnz %t123, @release_skip73, @release72
 @release72
-    call $List_str_release(l %rt, l %t119)
+    call $List_str_release(l %rt, l %t121)
     jmp @release_done74
 @release_skip73
     jmp @release_done74
 @release_done74
-    %t122 =w call $nox_exception_pending(l %rt)
-    jnz %t122, @exc_propagate75, @exc_continue76
+    %t124 =w call $nox_exception_pending(l %rt)
+    jnz %t124, @exc_propagate75, @exc_continue76
 @exc_propagate75
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue76
-    %t123 =l loadl %t7
-    %t124 =l add $str219, 16
-    call $nox_validate_Schema_min(l %rt, l %t123, l %t124, d d_1)
-    %t125 =w call $nox_exception_pending(l %rt)
-    jnz %t125, @exc_propagate80, @exc_continue81
+    %t125 =l loadl %t7
+    %t126 =l add $str219, 16
+    call $nox_validate_Schema_min(l %rt, l %t125, l %t126, d d_1)
+    %t127 =w call $nox_exception_pending(l %rt)
+    jnz %t127, @exc_propagate80, @exc_continue81
 @exc_propagate80
     jmp @try_dispatch77
 @exc_continue81
     jmp @try_after78
 @try_dispatch77
-    %t126 =l call $nox_exception_take(l %rt)
-    %t127 =l loadl %t126
+    %t128 =l call $nox_exception_take(l %rt)
+    %t129 =l loadl %t128
     jmp @except_check82
 @except_check82
-    %t128 =w ceql %t127, 18
-    jnz %t128, @except_body83, @except_reraise84
+    %t130 =w ceql %t129, 18
+    jnz %t130, @except_body83, @except_reraise84
 @except_body83
-    %t129 =l loadl %t8
-    %t130 =w ceql %t129, 0
-    jnz %t130, @release_skip86, @release85
+    %t131 =l loadl %t8
+    %t132 =w ceql %t131, 0
+    jnz %t132, @release_skip86, @release85
 @release85
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t129)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t131)
     jmp @release_done87
 @release_skip86
     jmp @release_done87
 @release_done87
     storel 0, %t8
-    storel %t126, %t8
-    %t131 =l loadl %t8
-    %t132 =l add %t131, 16
-    %t133 =l loadl %t132
-    %t134 =w ceql %t133, 0
-    jnz %t134, @print_none88, @print_some89
+    storel %t128, %t8
+    %t133 =l loadl %t8
+    %t134 =l add %t133, 16
+    %t135 =l loadl %t134
+    %t136 =w ceql %t135, 0
+    jnz %t136, @print_none88, @print_some89
 @print_none88
     call $printf(l $fmt_lit2)
     call $printf(l $fmt_newline)
     jmp @print_opt_done90
 @print_some89
-    call $nox_print_str(l %t133)
+    call $nox_print_str(l %t135)
     call $printf(l $fmt_newline)
     jmp @print_opt_done90
 @print_opt_done90
     jmp @try_after78
 @except_reraise84
-    call $nox_raise(l %rt, l %t126, l 57)
-    %t135 =w call $nox_exception_pending(l %rt)
-    jnz %t135, @exc_propagate91, @exc_continue92
+    call $nox_raise(l %rt, l %t128, l 57)
+    %t137 =w call $nox_exception_pending(l %rt)
+    jnz %t137, @exc_propagate91, @exc_continue92
 @exc_propagate91
     call $nox_unhandled_exception(l %rt)
     ret 0
@@ -24191,54 +24200,54 @@ export function w $main(w %argc, l %argv) {
     jmp @try_after78
 @try_after78
 @try_end79
-    %t136 =l loadl %t7
-    %t137 =l add $str220, 16
-    %t138 =l add $str221, 16
-    call $nox_validate_Schema_pattern(l %rt, l %t136, l %t137, l %t138)
-    %t139 =w call $nox_exception_pending(l %rt)
-    jnz %t139, @exc_propagate96, @exc_continue97
+    %t138 =l loadl %t7
+    %t139 =l add $str220, 16
+    %t140 =l add $str221, 16
+    call $nox_validate_Schema_pattern(l %rt, l %t138, l %t139, l %t140)
+    %t141 =w call $nox_exception_pending(l %rt)
+    jnz %t141, @exc_propagate96, @exc_continue97
 @exc_propagate96
     jmp @try_dispatch93
 @exc_continue97
     jmp @try_after94
 @try_dispatch93
-    %t140 =l call $nox_exception_take(l %rt)
-    %t141 =l loadl %t140
+    %t142 =l call $nox_exception_take(l %rt)
+    %t143 =l loadl %t142
     jmp @except_check98
 @except_check98
-    %t142 =w ceql %t141, 18
-    jnz %t142, @except_body99, @except_reraise100
+    %t144 =w ceql %t143, 18
+    jnz %t144, @except_body99, @except_reraise100
 @except_body99
-    %t143 =l loadl %t9
-    %t144 =w ceql %t143, 0
-    jnz %t144, @release_skip102, @release101
+    %t145 =l loadl %t9
+    %t146 =w ceql %t145, 0
+    jnz %t146, @release_skip102, @release101
 @release101
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t143)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t145)
     jmp @release_done103
 @release_skip102
     jmp @release_done103
 @release_done103
     storel 0, %t9
-    storel %t140, %t9
-    %t145 =l loadl %t9
-    %t146 =l add %t145, 16
-    %t147 =l loadl %t146
-    %t148 =w ceql %t147, 0
-    jnz %t148, @print_none104, @print_some105
+    storel %t142, %t9
+    %t147 =l loadl %t9
+    %t148 =l add %t147, 16
+    %t149 =l loadl %t148
+    %t150 =w ceql %t149, 0
+    jnz %t150, @print_none104, @print_some105
 @print_none104
     call $printf(l $fmt_lit3)
     call $printf(l $fmt_newline)
     jmp @print_opt_done106
 @print_some105
-    call $nox_print_str(l %t147)
+    call $nox_print_str(l %t149)
     call $printf(l $fmt_newline)
     jmp @print_opt_done106
 @print_opt_done106
     jmp @try_after94
 @except_reraise100
-    call $nox_raise(l %rt, l %t140, l 61)
-    %t149 =w call $nox_exception_pending(l %rt)
-    jnz %t149, @exc_propagate107, @exc_continue108
+    call $nox_raise(l %rt, l %t142, l 61)
+    %t151 =w call $nox_exception_pending(l %rt)
+    jnz %t151, @exc_propagate107, @exc_continue108
 @exc_propagate107
     call $nox_unhandled_exception(l %rt)
     ret 0
@@ -24246,53 +24255,53 @@ export function w $main(w %argc, l %argv) {
     jmp @try_after94
 @try_after94
 @try_end95
-    %t150 =l loadl %t7
-    %t151 =l add $str222, 16
-    call $nox_validate_Schema_min(l %rt, l %t150, l %t151, d d_1)
-    %t152 =w call $nox_exception_pending(l %rt)
-    jnz %t152, @exc_propagate112, @exc_continue113
+    %t152 =l loadl %t7
+    %t153 =l add $str222, 16
+    call $nox_validate_Schema_min(l %rt, l %t152, l %t153, d d_1)
+    %t154 =w call $nox_exception_pending(l %rt)
+    jnz %t154, @exc_propagate112, @exc_continue113
 @exc_propagate112
     jmp @try_dispatch109
 @exc_continue113
     jmp @try_after110
 @try_dispatch109
-    %t153 =l call $nox_exception_take(l %rt)
-    %t154 =l loadl %t153
+    %t155 =l call $nox_exception_take(l %rt)
+    %t156 =l loadl %t155
     jmp @except_check114
 @except_check114
-    %t155 =w ceql %t154, 18
-    jnz %t155, @except_body115, @except_reraise116
+    %t157 =w ceql %t156, 18
+    jnz %t157, @except_body115, @except_reraise116
 @except_body115
-    %t156 =l loadl %t10
-    %t157 =w ceql %t156, 0
-    jnz %t157, @release_skip118, @release117
+    %t158 =l loadl %t10
+    %t159 =w ceql %t158, 0
+    jnz %t159, @release_skip118, @release117
 @release117
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t156)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t158)
     jmp @release_done119
 @release_skip118
     jmp @release_done119
 @release_done119
     storel 0, %t10
-    storel %t153, %t10
-    %t158 =l loadl %t10
-    %t159 =l add %t158, 16
-    %t160 =l loadl %t159
-    %t161 =w ceql %t160, 0
-    jnz %t161, @print_none120, @print_some121
+    storel %t155, %t10
+    %t160 =l loadl %t10
+    %t161 =l add %t160, 16
+    %t162 =l loadl %t161
+    %t163 =w ceql %t162, 0
+    jnz %t163, @print_none120, @print_some121
 @print_none120
     call $printf(l $fmt_lit4)
     call $printf(l $fmt_newline)
     jmp @print_opt_done122
 @print_some121
-    call $nox_print_str(l %t160)
+    call $nox_print_str(l %t162)
     call $printf(l $fmt_newline)
     jmp @print_opt_done122
 @print_opt_done122
     jmp @try_after110
 @except_reraise116
-    call $nox_raise(l %rt, l %t153, l 65)
-    %t162 =w call $nox_exception_pending(l %rt)
-    jnz %t162, @exc_propagate123, @exc_continue124
+    call $nox_raise(l %rt, l %t155, l 65)
+    %t164 =w call $nox_exception_pending(l %rt)
+    jnz %t164, @exc_propagate123, @exc_continue124
 @exc_propagate123
     call $nox_unhandled_exception(l %rt)
     ret 0
@@ -24300,54 +24309,54 @@ export function w $main(w %argc, l %argv) {
     jmp @try_after110
 @try_after110
 @try_end111
-    %t163 =l loadl %t7
-    %t164 =l add $str223, 16
-    %t165 =l add $str224, 16
-    call $nox_validate_Schema_format(l %rt, l %t163, l %t164, l %t165)
-    %t166 =w call $nox_exception_pending(l %rt)
-    jnz %t166, @exc_propagate128, @exc_continue129
+    %t165 =l loadl %t7
+    %t166 =l add $str223, 16
+    %t167 =l add $str224, 16
+    call $nox_validate_Schema_format(l %rt, l %t165, l %t166, l %t167)
+    %t168 =w call $nox_exception_pending(l %rt)
+    jnz %t168, @exc_propagate128, @exc_continue129
 @exc_propagate128
     jmp @try_dispatch125
 @exc_continue129
     jmp @try_after126
 @try_dispatch125
-    %t167 =l call $nox_exception_take(l %rt)
-    %t168 =l loadl %t167
+    %t169 =l call $nox_exception_take(l %rt)
+    %t170 =l loadl %t169
     jmp @except_check130
 @except_check130
-    %t169 =w ceql %t168, 18
-    jnz %t169, @except_body131, @except_reraise132
+    %t171 =w ceql %t170, 18
+    jnz %t171, @except_body131, @except_reraise132
 @except_body131
-    %t170 =l loadl %t11
-    %t171 =w ceql %t170, 0
-    jnz %t171, @release_skip134, @release133
+    %t172 =l loadl %t11
+    %t173 =w ceql %t172, 0
+    jnz %t173, @release_skip134, @release133
 @release133
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t170)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t172)
     jmp @release_done135
 @release_skip134
     jmp @release_done135
 @release_done135
     storel 0, %t11
-    storel %t167, %t11
-    %t172 =l loadl %t11
-    %t173 =l add %t172, 16
-    %t174 =l loadl %t173
-    %t175 =w ceql %t174, 0
-    jnz %t175, @print_none136, @print_some137
+    storel %t169, %t11
+    %t174 =l loadl %t11
+    %t175 =l add %t174, 16
+    %t176 =l loadl %t175
+    %t177 =w ceql %t176, 0
+    jnz %t177, @print_none136, @print_some137
 @print_none136
     call $printf(l $fmt_lit5)
     call $printf(l $fmt_newline)
     jmp @print_opt_done138
 @print_some137
-    call $nox_print_str(l %t174)
+    call $nox_print_str(l %t176)
     call $printf(l $fmt_newline)
     jmp @print_opt_done138
 @print_opt_done138
     jmp @try_after126
 @except_reraise132
-    call $nox_raise(l %rt, l %t167, l 69)
-    %t176 =w call $nox_exception_pending(l %rt)
-    jnz %t176, @exc_propagate139, @exc_continue140
+    call $nox_raise(l %rt, l %t169, l 69)
+    %t178 =w call $nox_exception_pending(l %rt)
+    jnz %t178, @exc_propagate139, @exc_continue140
 @exc_propagate139
     call $nox_unhandled_exception(l %rt)
     ret 0
@@ -24355,71 +24364,71 @@ export function w $main(w %argc, l %argv) {
     jmp @try_after126
 @try_after126
 @try_end127
-    %t177 =l loadl %t9
-    %t178 =w ceql %t177, 0
-    jnz %t178, @release_skip142, @release141
+    %t179 =l loadl %t9
+    %t180 =w ceql %t179, 0
+    jnz %t180, @release_skip142, @release141
 @release141
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t177)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t179)
     jmp @release_done143
 @release_skip142
     jmp @release_done143
 @release_done143
     storel 0, %t9
-    %t179 =l loadl %t5
-    %t180 =w ceql %t179, 0
-    jnz %t180, @release_skip145, @release144
+    %t181 =l loadl %t5
+    %t182 =w ceql %t181, 0
+    jnz %t182, @release_skip145, @release144
 @release144
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t179, l $nox_validate_Schema_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t181, l $nox_validate_Schema_release)
     jmp @release_done146
 @release_skip145
     jmp @release_done146
 @release_done146
     storel 0, %t5
-    %t181 =l loadl %t8
-    %t182 =w ceql %t181, 0
-    jnz %t182, @release_skip148, @release147
+    %t183 =l loadl %t8
+    %t184 =w ceql %t183, 0
+    jnz %t184, @release_skip148, @release147
 @release147
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t181)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t183)
     jmp @release_done149
 @release_skip148
     jmp @release_done149
 @release_done149
     storel 0, %t8
-    %t183 =l loadl %t7
-    %t184 =w ceql %t183, 0
-    jnz %t184, @release_skip151, @release150
+    %t185 =l loadl %t7
+    %t186 =w ceql %t185, 0
+    jnz %t186, @release_skip151, @release150
 @release150
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t183, l $nox_validate_Schema_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t185, l $nox_validate_Schema_release)
     jmp @release_done152
 @release_skip151
     jmp @release_done152
 @release_done152
     storel 0, %t7
-    %t185 =l loadl %t6
-    %t186 =w ceql %t185, 0
-    jnz %t186, @release_skip154, @release153
+    %t187 =l loadl %t6
+    %t188 =w ceql %t187, 0
+    jnz %t188, @release_skip154, @release153
 @release153
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t185, l $nox_validate_Schema_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t187, l $nox_validate_Schema_release)
     jmp @release_done155
 @release_skip154
     jmp @release_done155
 @release_done155
     storel 0, %t6
-    %t187 =l loadl %t10
-    %t188 =w ceql %t187, 0
-    jnz %t188, @release_skip157, @release156
+    %t189 =l loadl %t10
+    %t190 =w ceql %t189, 0
+    jnz %t190, @release_skip157, @release156
 @release156
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t187)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t189)
     jmp @release_done158
 @release_skip157
     jmp @release_done158
 @release_done158
     storel 0, %t10
-    %t189 =l loadl %t11
-    %t190 =w ceql %t189, 0
-    jnz %t190, @release_skip160, @release159
+    %t191 =l loadl %t11
+    %t192 =w ceql %t191, 0
+    jnz %t192, @release_skip160, @release159
 @release159
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t189)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t191)
     jmp @release_done161
 @release_skip160
     jmp @release_done161

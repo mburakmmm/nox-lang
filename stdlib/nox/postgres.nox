@@ -37,6 +37,8 @@ extern def nox_pg_status_ok_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_pg_finish_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_pg_exec_raw(conn: ptr, query: str) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_pg_set_timeout_raw(conn: ptr, ms: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_pg_cancel_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_exec_params_raw(conn: ptr, query: str, params: list[str], null_flags: list[str]) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_pg_result_ok_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_result_errmsg_raw(res: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -268,9 +270,20 @@ class Connection:
         return nox_pg_status_ok_raw(self.handle) != 0
 
     # Sunucu tarafı sorgu zaman aşımı: `ms` milisaniyeyi aşan her deyim sunucuca iptal edilir ve `PostgresError` (`kind == "query_canceled"`, 57014)
-    # olarak döner; bağlantı kullanılabilir kalır. `0` sınırı kaldırır. (İstemci tarafı iptal API'si yoktur.)
+    # olarak döner; bağlantı kullanılabilir kalır. `0` sınırı kaldırır.
     def set_statement_timeout(self: Connection, ms: int) -> None:
         self.execute("SET statement_timeout = " + str(ms))
+
+    # İstemci tarafı sorgu zaman aşımı: `ms` milisaniyeyi aşan her deyim `PQcancel` ile iptal edilir (sunucu `kind == "query_canceled"` döner) ve bağlantı kullanılabilir kalır.
+    # `statement_timeout`un aksine sunucu yanıt veremese de çalışır (sunucuya ayrı kısa bir iptal bağlantısı açılır). `0` sınırı kaldırır.
+    # Mobil/wasm saf Zig istemcisinde etkisizdir (sunucu tarafı `set_statement_timeout` kullanın).
+    def set_query_timeout(self: Connection, ms: int) -> None:
+        nox_pg_set_timeout_raw(self.handle, ms)
+
+    # Çalışan bir sorguyu başka bir görevden/iş parçacığından iptal eder; başarıyla istenirse True (sorgu o sırada çalışmıyorsa etkisizdir). Çalışan sorgu
+    # `PostgresError(kind == "query_canceled")` ile döner. İptal isteği için sunucuya ayrı bir bağlantı açıldığından çağıranı kısa süre bloklar.
+    def cancel(self: Connection) -> bool:
+        return nox_pg_cancel_raw(self.handle) == 1
 
     # Kilit bekleme sınırı (aynı biçimde, `kind == "query_canceled"`... kilit zaman aşımı 55P03 → "other").
     def set_lock_timeout(self: Connection, ms: int) -> None:

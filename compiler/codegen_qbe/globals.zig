@@ -14,6 +14,7 @@ const codegen = @import("codegen.zig");
 
 const Codegen = codegen.Codegen;
 const RT_PARAM = types.RT_PARAM;
+const QbeType = types.QbeType;
 const CodegenError = abi.CodegenError;
 const isHeapManaged = abi.isHeapManaged;
 
@@ -69,32 +70,70 @@ pub fn genNoxInitGlobals(self: *Codegen, module: ast.Module) CodegenError!void {
 
     for (module.body, 0..) |stmt, i| {
         if (!self.stmtRunsInGlobalInit(stmt, i)) continue;
-        self.current_raise_line = stmt.line;
-        switch (stmt.kind) {
-            .var_decl => |v| {
-                // Terfi ETMEMİŞ bir `var_decl` buraya DÜŞMEZ
-                // (`stmtRunsInGlobalInit`). Yine de `.get` zorunlu
-                // açılmaz: P1c'de paket globali + sıradan betik değişkeni
-                // bir aradayken panik bu varsayımdan çıkmıştı.
-                const g = self.module_globals.get(v.name) orelse continue;
-                const v0 = try self.genExprForTarget(v.value, g.info);
-                const retained = try self.retainIfAliasing(v.value, v0);
-                const val = try self.convert(retained, g.info.qtype);
-                const addr = try self.newTemp();
-                try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
-                try self.qbeStore(g.info.qtype, val.text, addr);
-            },
-            // `cfg.secret_key = ...` boot()'tan ÖNCE aynı nesneye yazılsın.
-            // `genAssign`in global dalı `$main` ile AYNI yoldur.
-            .assign => |asg| try self.genAssign(asg),
-            .expr_stmt => |e| {
-                const ev = try self.genExpr(e);
-                try self.releaseIfTemporary(e, ev);
-                if (e == .spawn_expr and ev.heap == .task) try self.destroyNonArcValue(ev.text, .task);
-            },
-            else => {},
+        try genGlobalInitStmt(self, stmt, block);
+    }
+    try self.qbeRet(null);
+    try self.qbeFuncEnd();
+}
+
+/// `$nox_init_globals` dilimindeki TEK bir üst-düzey deyimi (terfi `var_decl` / globale atama / globale metod çağrısı) üretir. `block`, modül-global bloğunun adresidir.
+/// Hem `$nox_init_globals` (worker'lar) hem de `main` (kaynak sırası, `genGlobalInitStmtInMain`) bunu kullanır.
+fn genGlobalInitStmt(self: *Codegen, stmt: ast.Stmt, block: []const u8) CodegenError!void {
+    self.current_raise_line = stmt.line;
+    switch (stmt.kind) {
+        .var_decl => |v| {
+            // Terfi ETMEMİŞ bir `var_decl` buraya DÜŞMEZ (`stmtRunsInGlobalInit`). Yine de `.get` zorunlu açılmaz: P1c'de paket globali + sıradan betik değişkeni
+            // bir aradayken panik bu varsayımdan çıkmıştı.
+            const g = self.module_globals.get(v.name) orelse return;
+            const v0 = try self.genExprForTarget(v.value, g.info);
+            const retained = try self.retainIfAliasing(v.value, v0);
+            const val = try self.convert(retained, g.info.qtype);
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
+            try self.qbeStore(g.info.qtype, val.text, addr);
+        },
+        // `cfg.secret_key = ...` boot()'tan ÖNCE aynı nesneye yazılsın. `genAssign`in global dalı `$main` ile AYNI yoldur.
+        .assign => |asg| try self.genAssign(asg),
+        .expr_stmt => |e| {
+            const ev = try self.genExpr(e);
+            try self.releaseIfTemporary(e, ev);
+            if (e == .spawn_expr and ev.heap == .task) try self.destroyNonArcValue(ev.text, .task);
+        },
+        else => {},
+    }
+}
+
+/// `main`/`$main_body`/gömülü giriş: dilim deyimini KAYNAK SIRASINDA yerinde üretir (önceden hepsi `$nox_init_globals` ile aradaki `print`/`try` gibi gevşek deyimlerden ÖNCE çalışıyordu).
+/// Blok adresi her seferinde `$nox_globals_get` ile alınır (SSA temp'i dallar arasında taşımamak için).
+pub fn genGlobalInitStmtInMain(self: *Codegen, stmt: ast.Stmt) CodegenError!void {
+    const block = try self.newTemp();
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try genGlobalInitStmt(self, stmt, block);
+}
+
+/// `main` deyim listesini üretir: modülde global yoksa düz `genStmts`; varsa `main_plan` sırasıyla gevşek deyim koşuları ile dilim deyimlerini serpiştirir.
+pub fn genMainStmts(self: *Codegen, stmts: []const ast.Stmt, ret: QbeType) CodegenError!void {
+    if (self.module_globals.count() == 0 or self.main_plan.len == 0) return self.genStmts(stmts, ret);
+    for (self.main_plan) |item| {
+        switch (item) {
+            .init_stmt => |st| try self.genGlobalInitStmtInMain(st),
+            .loose_run => |r| try self.genStmts(stmts[r.start..r.end], ret),
         }
     }
+}
+
+/// Yalnızca bloğu ayırır ve çalışma zamanına kaydeder (`$nox_init_globals`in ilk iki adımı): `main` dilimi kendisi sırayla çalıştırır.
+pub fn genNoxGlobalsAlloc(self: *Codegen) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+    try self.qbeFuncHeaderStart(null, "$nox_globals_alloc");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncHeaderEnd();
+    const block = try self.newTemp();
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.module_globals_size}) } });
+    try self.qbeCall(null, "$nox_globals_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = block } });
     try self.qbeRet(null);
     try self.qbeFuncEnd();
 }

@@ -24,6 +24,7 @@ const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
+const fiber_net = @import("fiber_net.zig");
 
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
@@ -84,6 +85,23 @@ const GetisnullFn = *const fn (res: ?*anyopaque, row: c_int, col: c_int) callcon
 const CmdTuplesFn = *const fn (res: ?*anyopaque) callconv(.c) ?[*:0]const u8;
 const ClearFn = *const fn (res: ?*anyopaque) callconv(.c) void;
 const ResultErrorFieldFn = *const fn (res: ?*anyopaque, fieldcode: c_int) callconv(.c) ?[*:0]const u8;
+const SetNonblockingFn = *const fn (conn: ?*anyopaque, arg: c_int) callconv(.c) c_int;
+const SendQueryFn = *const fn (conn: ?*anyopaque, query: [*:0]const u8) callconv(.c) c_int;
+const SendQueryParamsFn = *const fn (
+    conn: ?*anyopaque,
+    command: [*:0]const u8,
+    n_params: c_int,
+    param_types: ?[*]const c_uint,
+    param_values: ?[*]const ?[*:0]const u8,
+    param_lengths: ?[*]const c_int,
+    param_formats: ?[*]const c_int,
+    result_format: c_int,
+) callconv(.c) c_int;
+const ConnFlagFn = *const fn (conn: ?*anyopaque) callconv(.c) c_int;
+const GetResultFn = *const fn (conn: ?*anyopaque) callconv(.c) ?*anyopaque;
+const GetCancelFn = *const fn (conn: ?*anyopaque) callconv(.c) ?*anyopaque;
+const CancelFn = *const fn (cancel: ?*anyopaque, errbuf: [*]u8, errbufsize: c_int) callconv(.c) c_int;
+const FreeCancelFn = *const fn (cancel: ?*anyopaque) callconv(.c) void;
 
 const Funcs = struct {
     connectdb: ConnectdbFn,
@@ -102,6 +120,17 @@ const Funcs = struct {
     cmd_tuples: CmdTuplesFn,
     clear: ClearFn,
     result_error_field: ResultErrorFieldFn,
+    set_nonblocking: SetNonblockingFn,
+    send_query: SendQueryFn,
+    send_query_params: SendQueryParamsFn,
+    consume_input: ConnFlagFn,
+    is_busy: ConnFlagFn,
+    flush: ConnFlagFn,
+    socket: ConnFlagFn,
+    get_result: GetResultFn,
+    get_cancel: GetCancelFn,
+    cancel: CancelFn,
+    free_cancel: FreeCancelFn,
 };
 
 const LoadState = enum(u8) { uninit, initializing, ready, failed };
@@ -127,6 +156,17 @@ fn loadAll() bool {
     const cmd_tuples_fn = lookupSym(&lib, CmdTuplesFn, "PQcmdTuples") orelse return false;
     const clear_fn = lookupSym(&lib, ClearFn, "PQclear") orelse return false;
     const result_error_field_fn = lookupSym(&lib, ResultErrorFieldFn, "PQresultErrorField") orelse return false;
+    const set_nonblocking_fn = lookupSym(&lib, SetNonblockingFn, "PQsetnonblocking") orelse return false;
+    const send_query_fn = lookupSym(&lib, SendQueryFn, "PQsendQuery") orelse return false;
+    const send_query_params_fn = lookupSym(&lib, SendQueryParamsFn, "PQsendQueryParams") orelse return false;
+    const consume_input_fn = lookupSym(&lib, ConnFlagFn, "PQconsumeInput") orelse return false;
+    const is_busy_fn = lookupSym(&lib, ConnFlagFn, "PQisBusy") orelse return false;
+    const flush_fn = lookupSym(&lib, ConnFlagFn, "PQflush") orelse return false;
+    const socket_fn = lookupSym(&lib, ConnFlagFn, "PQsocket") orelse return false;
+    const get_result_fn = lookupSym(&lib, GetResultFn, "PQgetResult") orelse return false;
+    const get_cancel_fn = lookupSym(&lib, GetCancelFn, "PQgetCancel") orelse return false;
+    const cancel_fn = lookupSym(&lib, CancelFn, "PQcancel") orelse return false;
+    const free_cancel_fn = lookupSym(&lib, FreeCancelFn, "PQfreeCancel") orelse return false;
 
     g_lib = lib;
     g_funcs = .{
@@ -146,6 +186,17 @@ fn loadAll() bool {
         .cmd_tuples = cmd_tuples_fn,
         .clear = clear_fn,
         .result_error_field = result_error_field_fn,
+        .set_nonblocking = set_nonblocking_fn,
+        .send_query = send_query_fn,
+        .send_query_params = send_query_params_fn,
+        .consume_input = consume_input_fn,
+        .is_busy = is_busy_fn,
+        .flush = flush_fn,
+        .socket = socket_fn,
+        .get_result = get_result_fn,
+        .get_cancel = get_cancel_fn,
+        .cancel = cancel_fn,
+        .free_cancel = free_cancel_fn,
     };
     return true;
 }
@@ -178,65 +229,179 @@ const CONNECTION_OK: c_int = 0;
 const PGRES_COMMAND_OK: c_int = 1;
 const PGRES_TUPLES_OK: c_int = 2;
 
+/// Tutamak: libpq `PGconn`u + bu bağlantıya özgü sorgu zaman aşımı (tutamak başına durum; global yok). Nox'a opak işaretçi olarak verilir.
+const PgConn = struct {
+    conn: ?*anyopaque,
+    /// İstemci tarafı sorgu zaman aşımı (ms); 0 = sınırsız. Aşılırsa sorgu `PQcancel` ile iptal edilir (sunucu 57014 `query_canceled` döner).
+    timeout_ms: i64 = 0,
+};
+
+const pg_gpa = std.heap.page_allocator;
+
+fn asPg(h: ?*anyopaque) ?*PgConn {
+    return @ptrCast(@alignCast(h orelse return null));
+}
+
 pub export fn nox_pg_connect_raw(conninfo: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     const s = conninfo orelse return null;
     if (!ensureLoaded()) return null;
     const conn = g_funcs.connectdb(s) orelse return null;
-    if (g_funcs.status(conn) != CONNECTION_OK) {
-        // Bağlantı BAŞARISIZ — `PQfinish` ÇAĞRILMAZ (libpq'nun KENDİ
-        // sözleşmesi: başarısız bir `PQconnectdb` SONUCU YİNE DE
-        // `PQfinish` İLE serbest bırakılmalıdır, AKSİ TAKDİRDE sızar) —
-        // bu YÜZDEN handle'ı OLDUĞU GİBİ döneriz, `.nox` tarafı `status`/
-        // `errmsg`i OKUYUP SONRA `close()`u ÇAĞIRIR (`SqliteError`in AYNI
-        // "başarısız handle'ı yine de temizle" deseni).
-        return conn;
-    }
-    return conn;
+    const h = pg_gpa.create(PgConn) catch {
+        g_funcs.finish(conn);
+        return null;
+    };
+    h.* = .{ .conn = conn };
+    // Bağlantı BAŞARISIZ olsa da tutamak OLDUĞU GİBİ döner (libpq sözleşmesi: başarısız bir `PQconnectdb` sonucu yine `PQfinish` ile bırakılmalıdır); `.nox` tarafı
+    // `status`/`errmsg`i okuyup sonra `close()`u çağırır (`SqliteError`in aynı deseni).
+    return h;
 }
 
-pub export fn nox_pg_status_ok_raw(conn: ?*anyopaque) callconv(.c) i64 {
+pub export fn nox_pg_status_ok_raw(h: ?*anyopaque) callconv(.c) i64 {
     if (!ensureLoaded()) return 0;
-    return if (g_funcs.status(conn) == CONNECTION_OK) 1 else 0;
+    const pg = asPg(h) orelse return 0;
+    return if (g_funcs.status(pg.conn) == CONNECTION_OK) 1 else 0;
 }
 
-pub export fn nox_pg_errmsg_raw(rt: ?*anyopaque, conn: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+pub export fn nox_pg_errmsg_raw(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     if (!ensureLoaded()) return dupeToNoxStr(rt, "could not load libpq (it may not be installed on the system)");
-    const msg = g_funcs.error_message(conn) orelse return dupeEmpty(rt);
+    const pg = asPg(h) orelse return dupeEmpty(rt);
+    const msg = g_funcs.error_message(pg.conn) orelse return dupeEmpty(rt);
     return dupeToNoxStr(rt, std.mem.span(msg));
 }
 
-pub export fn nox_pg_finish_raw(conn: ?*anyopaque) callconv(.c) void {
+pub export fn nox_pg_finish_raw(h: ?*anyopaque) callconv(.c) void {
     if (!ensureLoaded()) return;
-    g_funcs.finish(conn);
+    const pg = asPg(h) orelse return;
+    g_funcs.finish(pg.conn);
+    pg_gpa.destroy(pg);
 }
 
-pub export fn nox_pg_exec_raw(conn: ?*anyopaque, query: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-    const q = query orelse return null;
-    if (!ensureLoaded()) return null;
-    return g_funcs.exec(conn, q);
+/// Bağlantının istemci tarafı sorgu zaman aşımı (ms, 0 = sınırsız).
+pub export fn nox_pg_set_timeout_raw(h: ?*anyopaque, ms: i64) callconv(.c) void {
+    const pg = asPg(h) orelse return;
+    pg.timeout_ms = if (ms < 0) 0 else ms;
 }
 
-/// `Statement.bind_*`nin BİRİKTİRDİĞİ metin-formatlı parametreleri (bir
-/// `list[str]` + PARALEL bir `list[str]` NULL bayrağı — checker'ın FFI
-/// sınırı `list[str]` DIŞINDA HİÇBİR `list[T]`ye (ör. `list[bool]`e)
-/// PARAMETRE olarak İZİN VERMEDİĞİNDEN, `is_null` bayrağı "1"/"0" metin
-/// dizeleri OLARAK kodlanır — `Statement.nox`'un KENDİ İÇ tamponları)
-/// `PQexecParams`e iletir — sqlite'ın GERÇEK artımlı bind'inin AKSİNE,
-/// libpq'nun `PQexecParams` API'si TEK bir çağrıda TÜM parametreleri alır
-/// ("biriktir-sonra-ateşle", bkz. `stdlib/nox/postgres.nox`nin `Statement`
-/// sınıfının belge notu). `null_flags`te "1" OLAN bir indeks İçin
-/// `paramValues[i]` C `NULL` olarak geçirilir (libpq'nun SQL `NULL`
-/// sözleşmesi) — `params_list`teki KARŞILIK gelen dize (BOŞ bir yer
-/// tutucu) YOK SAYILIR. `paramTypes`/`paramLengths`/`paramFormats` HEPSİ
-/// `null` (metin formatı — libpq TÜM değerleri metin olarak yorumlar,
-/// sunucu tipi KENDİSİ ÇIKARIR), `resultFormat = 0` (metin) —
-/// `nox_pg_getvalue_raw`in mevcut metin-tabanlı okuma yoluyla TUTARLI.
-pub export fn nox_pg_exec_params_raw(conn: ?*anyopaque, query: ?[*:0]const u8, params_list: ?*anyopaque, null_flags_list: ?*anyopaque) callconv(.c) ?*anyopaque {
+/// Çalışan sorguyu istemci tarafından iptal eder (`PQcancel`: sunucuya AYRI, kısa ömürlü bir bağlantıyla iptal isteği gönderir; başka bir iş parçacığından/görevden güvenle çağrılabilir,
+/// ama o küçük bağlantı kurulurken çağıranı kısa süre bloklar). Başarıda 1. Sorgu o sırada çalışmıyorsa etkisizdir.
+pub export fn nox_pg_cancel_raw(h: ?*anyopaque) callconv(.c) i64 {
+    if (!ensureLoaded()) return 0;
+    const pg = asPg(h) orelse return 0;
+    return cancelConn(pg.conn);
+}
+
+fn cancelConn(conn: ?*anyopaque) i64 {
+    const c = g_funcs.get_cancel(conn) orelse return 0;
+    defer g_funcs.free_cancel(c);
+    var buf: [256]u8 = undefined;
+    return if (g_funcs.cancel(c, &buf, buf.len) == 1) 1 else 0;
+}
+
+/// Bloklamayan sorgu yürütme (Windows dışında): `PQsendQuery*` gönderdikten sonra soketi bekler. Fiber içindeyken yalnızca çağıran görev reaktörde askıya alınır (zamanlayıcı
+/// iş parçacığı diğer görevleri çalıştırır), fiber dışında `poll` ile beklenir. `timeout_ms` aşılırsa bir kez `PQcancel` çağrılır ve sunucunun iptal yanıtı (57014) beklenir.
+const async_io = builtin.os.tag != .windows and !builtin.cpu.arch.isWasm();
+
+fn nowMs() i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), 1_000_000);
+}
+
+/// Soket hazır olana ya da `budget_ms` dolana dek bekler (`< 0` sınırsız). `false`: zaman aşımı.
+fn waitSock(sock: c_int, write: bool, budget_ms: i64) bool {
+    if (fiber_net.inFiber()) {
+        const t: ?u32 = if (budget_ms < 0) null else @intCast(@min(@max(budget_ms, 1), std.math.maxInt(i32)));
+        return fiber_net.waitFd(sock, write, t) == .ready;
+    }
+    var pfd = [1]std.c.pollfd{.{ .fd = sock, .events = if (write) std.c.POLL.OUT else std.c.POLL.IN, .revents = 0 }};
+    const ms: c_int = if (budget_ms < 0) -1 else @intCast(@min(budget_ms, std.math.maxInt(i32)));
+    return std.c.poll(&pfd, 1, ms) > 0;
+}
+
+/// İptal isteği gönderildikten sonra sunucunun yanıtını bekleme üst sınırı (ms).
+const CANCEL_GRACE_MS: i64 = 5000;
+
+/// Gönderilmiş bir sorgunun sonuçlarını toplar; `PQexec` gibi SON sonucu döner (`null`: bağlantı hatası). Çağıran `PQclear` eder.
+fn collectResults(pg: *PgConn) ?*anyopaque {
+    const conn = pg.conn;
+    const sock = g_funcs.socket(conn);
+    if (sock < 0) return null;
+    var deadline: i64 = if (pg.timeout_ms > 0) nowMs() + pg.timeout_ms else -1;
+    var cancelled = false;
+    while (true) {
+        const f = g_funcs.flush(conn);
+        if (f == 0) break;
+        if (f < 0) return null;
+        const rem: i64 = if (deadline < 0) -1 else @max(deadline - nowMs(), 1);
+        _ = waitSock(sock, true, rem);
+        if (deadline >= 0 and nowMs() >= deadline and !cancelled) {
+            _ = cancelConn(conn);
+            cancelled = true;
+            deadline = nowMs() + CANCEL_GRACE_MS;
+        }
+    }
+    var last: ?*anyopaque = null;
+    while (true) {
+        while (g_funcs.is_busy(conn) != 0) {
+            const rem: i64 = if (deadline < 0) -1 else deadline - nowMs();
+            if (deadline >= 0 and rem <= 0) {
+                if (!cancelled) {
+                    _ = cancelConn(conn);
+                    cancelled = true;
+                    deadline = nowMs() + CANCEL_GRACE_MS;
+                    continue;
+                }
+                // Sunucu iptale yanıt vermedi: bağlantı kullanılamaz (çağıran `null` görür, bağlantıyı kapatmalıdır).
+                if (last) |l| g_funcs.clear(l);
+                return null;
+            }
+            _ = waitSock(sock, false, rem);
+            if (g_funcs.consume_input(conn) == 0) {
+                if (last) |l| g_funcs.clear(l);
+                return null;
+            }
+        }
+        const res = g_funcs.get_result(conn) orelse break;
+        if (last) |l| g_funcs.clear(l);
+        last = res;
+    }
+    return last;
+}
+
+fn runSimple(pg: *PgConn, q: [*:0]const u8) ?*anyopaque {
+    if (comptime !async_io) return g_funcs.exec(pg.conn, q);
+    if (g_funcs.set_nonblocking(pg.conn, 1) != 0) return g_funcs.exec(pg.conn, q);
+    defer _ = g_funcs.set_nonblocking(pg.conn, 0);
+    if (g_funcs.send_query(pg.conn, q) != 1) return null;
+    return collectResults(pg);
+}
+
+fn runParams(pg: *PgConn, q: [*:0]const u8, n: c_int, values: ?[*]const ?[*:0]const u8) ?*anyopaque {
+    if (comptime !async_io) return g_funcs.exec_params(pg.conn, q, n, null, values, null, null, 0);
+    if (g_funcs.set_nonblocking(pg.conn, 1) != 0) return g_funcs.exec_params(pg.conn, q, n, null, values, null, null, 0);
+    defer _ = g_funcs.set_nonblocking(pg.conn, 0);
+    if (g_funcs.send_query_params(pg.conn, q, n, null, values, null, null, 0) != 1) return null;
+    return collectResults(pg);
+}
+
+pub export fn nox_pg_exec_raw(h: ?*anyopaque, query: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     const q = query orelse return null;
     if (!ensureLoaded()) return null;
-    const bytes: [*]u8 = @ptrCast(params_list orelse return g_funcs.exec_params(conn, q, 0, null, null, null, null, 0));
+    const pg = asPg(h) orelse return null;
+    return runSimple(pg, q);
+}
+
+/// `Statement.bind_*`nin BİRİKTİRDİĞİ metin-formatlı parametreleri (bir `list[str]` + PARALEL bir `list[str]` NULL bayrağı — checker'ın FFI sınırı `list[str]` DIŞINDA
+/// HİÇBİR `list[T]`ye PARAMETRE olarak İZİN VERMEDİĞİNDEN, `is_null` bayrağı "1"/"0" metin dizeleri OLARAK kodlanır) `PQsendQueryParams`e iletir — libpq TEK çağrıda TÜM
+/// parametreleri alır ("biriktir-sonra-ateşle", bkz. `stdlib/nox/postgres.nox`nin `Statement` notu). `null_flags`te "1" olan indeks için `paramValues[i]` C `NULL` olarak
+/// geçirilir (SQL `NULL`). `paramTypes`/`paramLengths`/`paramFormats` `null` (metin formatı), `resultFormat = 0`.
+pub export fn nox_pg_exec_params_raw(h: ?*anyopaque, query: ?[*:0]const u8, params_list: ?*anyopaque, null_flags_list: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const q = query orelse return null;
+    if (!ensureLoaded()) return null;
+    const pg = asPg(h) orelse return null;
+    const bytes: [*]u8 = @ptrCast(params_list orelse return runParams(pg, q, 0, null));
     const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
-    if (count == 0) return g_funcs.exec_params(conn, q, 0, null, null, null, null, 0);
+    if (count == 0) return runParams(pg, q, 0, null);
     const null_bytes: ?[*]u8 = if (null_flags_list) |p| @ptrCast(p) else null;
     const gpa = std.heap.page_allocator;
     const values = gpa.alloc(?[*:0]const u8, count) catch return null;
@@ -255,7 +420,7 @@ pub export fn nox_pg_exec_params_raw(conn: ?*anyopaque, query: ?[*:0]const u8, p
             values[i] = @ptrFromInt(addr);
         }
     }
-    return g_funcs.exec_params(conn, q, @intCast(count), null, values.ptr, null, null, 0);
+    return runParams(pg, q, @intCast(count), values.ptr);
 }
 
 pub export fn nox_pg_result_ok_raw(res: ?*anyopaque) callconv(.c) i64 {

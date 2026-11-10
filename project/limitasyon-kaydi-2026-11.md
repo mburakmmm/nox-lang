@@ -20,6 +20,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [ ] **A13 aura L7** modül düzeyi `str` atamasında çıkışta `nox_rc_pool_drain` çökmesi (bağımsız repro yok; A6 (v2.1.2) çıkış-kilitlenmesini düzeltti — aura `files` self-check'ini `_roots[0]` yamasını geri alıp yeniden denemeli; çökme sürerse ayrı hata).
 - [x] **A15 (v2.1.16)** Bir `async def`in okuduğu modül-düzeyi `Channel[T]`/`Task[T]` çıkışta yıkılmıyordu — **KAPANDI v2.1.16**: `nox_deinit_globals` artık `isSpawnRefcountedType` globalleri de bırakır ve async epilog'unda `nox_async_deinit`ten ÖNCE çağrılır (önceden sıra tersti: zamanlayıcı kapatılmış olduğundan `Channel.deinit` çöküyordu).
 - [x] **A16 (v2.1.15)** `print(await t)` hesaplanmış str/sınıf/list sızdırıyordu — **KAPANDI v2.1.15**.
+- [x] **A17 (v2.1.17)** Global'e dokunan üst-düzey atama/metod çağrıları aradaki ifadelerden önce çalışıyordu (kaynak sırası bozuktu) — **KAPANDI v2.1.17**.
 - [x] **A14 aura L5** `docs/language/memory.md` `__del__ yok` diyor, `__del__` var (belge). — **KAPANDI v2.1.4**
 
 ## B. Dil/derleyici özellikleri (küçük, tasarımı belli)
@@ -34,7 +35,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [x] **C2 ember NL-005** `TaskGroup[T]` (`nox.tasks`) — **KAPANDI v2.1.10**; çıplak `list[Task[T]]` hâlâ yazılamaz (codegen `Unsupported`), grup tutamak sınıfı kullanır. Ayrıca `Task` alanlı sınıfların yığına terfisi ve `spawn` geçici argümanı sızıntıları düzeltildi.
 - [~] **C3 ember NL-004** CPU-bound görevi sonlandırma sözleşmesi.
 - [x] **C4 ember NL-008** sinyal abonelik API'si (`nox.signal`) — **KAPANDI v2.1.6**.
-- [~] **C5 ember NL-006/007/013** Postgres: SQLSTATE/`kind`, `statement_timeout`, `Transaction`, `Pool` **KAPANDI v2.1.8**; fiber-uyumlu (bloklamayan) libpq G/Ç ve istemci tarafı iptal (`PQcancel`) AÇIK.
+- [x] **C5 ember NL-006/007/013** Postgres: SQLSTATE/`kind`, `statement_timeout`, `Transaction`, `Pool` **KAPANDI v2.1.8**; fiber-uyumlu (bloklamayan) libpq G/Ç, `set_query_timeout`, `cancel()` (`PQcancel`) **KAPANDI v2.1.17**.
 - [x] **C6 ember NL-001** `nox.redis` (RESP2, AUTH/ACL, TLS, Streams, betik/NOSCRIPT, reconnect) — **KAPANDI v2.1.9**; TLS başarılı el sıkışması güvenilir sertifikalı bir Redis'e karşı denenmedi.
 - [x] **C7 ember NL-009** JSON tam sayı hassasiyeti (2^53 üstü) — `as_int`, `number_text`, `dump` tam metni korur — **KAPANDI v2.1.7**.
 - [x] **C8 rune** `nox.terminal` (raw mod, boyut, poll, ham yazma, echo, yetenek tespiti) — **KAPANDI v2.1.7**; Windows'ta terminal denetimi yok (`TerminalError`).

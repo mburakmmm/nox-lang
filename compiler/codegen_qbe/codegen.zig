@@ -323,6 +323,12 @@ pub const Backend = @import("../typecheck/types.zig").Backend;
 /// erişebilmesi İçİn (`checker.zig`nin `types` importu `pub` DEĞİL).
 pub const Profile = @import("../typecheck/types.zig").Profile;
 
+/// `Codegen.main_plan` öğesi: bir `$nox_init_globals` dilim deyimi YA DA `loose` listesinin ardışık bir alt dilimi.
+pub const MainPlanItem = union(enum) {
+    init_stmt: ast.Stmt,
+    loose_run: struct { start: usize, end: usize },
+};
+
 pub const Codegen = struct {
     pub const isFuncInlineEligible = inlining.isFuncInlineEligible;
     pub const computeInlinableFunctions = inlining.computeInlinableFunctions;
@@ -360,6 +366,9 @@ pub const Codegen = struct {
     pub const genTraceDispatch = layout.genTraceDispatch;
     pub const genNoxInitGlobals = globals_mod.genNoxInitGlobals;
     pub const genNoxDeinitGlobals = globals_mod.genNoxDeinitGlobals;
+    pub const genNoxGlobalsAlloc = globals_mod.genNoxGlobalsAlloc;
+    pub const genGlobalInitStmtInMain = globals_mod.genGlobalInitStmtInMain;
+    pub const genMainStmts = globals_mod.genMainStmts;
     pub const genDecoratorMetadata = decorators_mod.genDecoratorMetadata;
     pub const genReflectMetadata = decorators_mod.genReflectMetadata;
     pub const genGcFreeDispatch = layout.genGcFreeDispatch;
@@ -1203,6 +1212,9 @@ pub const Codegen = struct {
     /// `$main`de, kaynak sırasındaki yerinde kalır. Ayrıntı:
     /// `registration.zig` `collectModuleGlobals`.
     module_global_init_last: usize = 0,
+    /// `main` deyimlerinin KAYNAK SIRASI planı (yalnızca modül-global varsa dolu): gevşek deyim koşuları (`loose` listesinin alt dilimleri) ile
+    /// `$nox_init_globals` dilimine ait deyimler serpiştirilir; böylece dilim deyimleri aradaki `print`/`try`ten ÖNCE değil, yerinde çalışır.
+    main_plan: []const MainPlanItem = &.{},
     /// Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): `genIf`/`genWhile`nin
     /// `checker.zig`'in `FnCtx.narrowed`iyle AYNI DAR örüntüyü (yalnızca
     /// `if x != None:`/`if x == None:`) MEKANİK olarak YANSITAN örtüsü —
@@ -2018,6 +2030,7 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     // BAĞIMSIZ çözer, ama TÜM üretim tek yerde toplanır).
     if (gen.module_globals.count() > 0) {
         try gen.genNoxInitGlobals(module);
+        try gen.genNoxGlobalsAlloc();
         try gen.genNoxDeinitGlobals();
     }
     for (module.body) |stmt| {
@@ -2029,16 +2042,26 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
 
     var loose: std.ArrayListUnmanaged(ast.Stmt) = .empty;
     defer loose.deinit(allocator);
+    // `main_plan`: dilim deyimleri (`$nox_init_globals` worker'lar içindir) `main`de KAYNAK SIRASINDA yerinde çalışır; gevşek deyimler `loose`un ardışık alt dilimleridir.
+    var plan: std.ArrayListUnmanaged(MainPlanItem) = .empty;
+    defer plan.deinit(allocator);
     for (module.body, 0..) |stmt, i| {
         switch (stmt.kind) {
             .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
-            // İlklendirme dilimindeki terfi `var_decl` / globale atama /
-            // globale metod çağrısı `$nox_init_globals`te ÜRETİLDİ — `$main`
-            // onları TEKRAR çalıştırmaz. Dilimden sonraki atamalar ve
-            // terfi ETMEMİŞ değişkenler burada kalır.
-            else => if (!gen.stmtRunsInGlobalInit(stmt, i)) try loose.append(allocator, stmt),
+            else => if (gen.stmtRunsInGlobalInit(stmt, i)) {
+                try plan.append(allocator, .{ .init_stmt = stmt });
+            } else {
+                try loose.append(allocator, stmt);
+                const at = loose.items.len - 1;
+                if (plan.items.len > 0 and plan.items[plan.items.len - 1] == .loose_run and plan.items[plan.items.len - 1].loose_run.end == at) {
+                    plan.items[plan.items.len - 1].loose_run.end = at + 1;
+                } else {
+                    try plan.append(allocator, .{ .loose_run = .{ .start = at, .end = at + 1 } });
+                }
+            },
         }
     }
+    gen.main_plan = plan.items;
     // Faz 21 aşama 4: modül HERHANGİ bir async özelliği (async def/spawn/
     // await/Channel) kullanıyorsa `main`, üst düzey kodu bir fiber olarak
     // çalıştıran fiber-sarmalı bir kökle üretilir; kullanmıyorsa (büyük

@@ -1829,6 +1829,12 @@ export function $nox_init_globals(l %rt) {
     storel 0, %t1
     ret
 }
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
 export function $nox_deinit_globals(l %rt) {
 @start
     %t0 =l call $nox_globals_get(l %rt)
@@ -2401,32 +2407,35 @@ export function w $main(w %argc, l %argv) {
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    call $nox_init_globals(l %rt)
+    call $nox_globals_alloc(l %rt)
+    %t3 =l call $nox_globals_get(l %rt)
+    %t4 =l add %t3, 0
+    storel 0, %t4
     storel 5, %t0
-    %t3 =l loadl %t0
-    %t4 =l call $nox_int_to_str(l %rt, l %t3)
-    %t5 =w ceql %t4, 0
-    jnz %t5, @print_none0, @print_some1
+    %t5 =l loadl %t0
+    %t6 =l call $nox_int_to_str(l %rt, l %t5)
+    %t7 =w ceql %t6, 0
+    jnz %t7, @print_none0, @print_some1
 @print_none0
     call $printf(l $fmt_lit0)
     call $printf(l $fmt_newline)
     jmp @print_opt_done2
 @print_some1
-    call $nox_print_str(l %t4)
+    call $nox_print_str(l %t6)
     call $printf(l $fmt_newline)
     jmp @print_opt_done2
 @print_opt_done2
-    %t6 =w ceql %t4, 0
-    jnz %t6, @release_skip4, @release3
+    %t8 =w ceql %t6, 0
+    jnz %t8, @release_skip4, @release3
 @release3
-    %t7 =l sub %t4, 16
-    %t8 =l loadl %t7
-    %t9 =l sub %t8, 1
-    storel %t9, %t7
-    %t10 =w cslel %t9, 0
-    jnz %t10, @str_free6, @str_free_skip7
+    %t9 =l sub %t6, 16
+    %t10 =l loadl %t9
+    %t11 =l sub %t10, 1
+    storel %t11, %t9
+    %t12 =w cslel %t11, 0
+    jnz %t12, @str_free6, @str_free_skip7
 @str_free6
-    call $nox_str_free_now(l %rt, l %t4)
+    call $nox_str_free_now(l %rt, l %t6)
     jmp @str_free_done8
 @str_free_skip7
     jmp @str_free_done8
@@ -2436,44 +2445,44 @@ export function w $main(w %argc, l %argv) {
     jmp @release_done5
 @release_done5
     storel 7, %t1
-    %t11 =l loadl %t1
-    %t12 =l call $nox_globals_get(l %rt)
-    %t13 =l add %t12, 0
-    storel %t11, %t13
-    jmp @inline_done9
-@inline_done9
+    %t13 =l loadl %t1
     %t14 =l call $nox_globals_get(l %rt)
     %t15 =l add %t14, 0
-    %t16 =l loadl %t15
-    storel %t16, %t2
+    storel %t13, %t15
+    jmp @inline_done9
+@inline_done9
+    %t16 =l call $nox_globals_get(l %rt)
+    %t17 =l add %t16, 0
+    %t18 =l loadl %t17
+    storel %t18, %t2
     jmp @inline_done10
 @after_inline_return11
     jmp @inline_done10
 @inline_done10
-    %t17 =l loadl %t2
-    %t18 =l call $nox_int_to_str(l %rt, l %t17)
-    %t19 =w ceql %t18, 0
-    jnz %t19, @print_none12, @print_some13
+    %t19 =l loadl %t2
+    %t20 =l call $nox_int_to_str(l %rt, l %t19)
+    %t21 =w ceql %t20, 0
+    jnz %t21, @print_none12, @print_some13
 @print_none12
     call $printf(l $fmt_lit1)
     call $printf(l $fmt_newline)
     jmp @print_opt_done14
 @print_some13
-    call $nox_print_str(l %t18)
+    call $nox_print_str(l %t20)
     call $printf(l $fmt_newline)
     jmp @print_opt_done14
 @print_opt_done14
-    %t20 =w ceql %t18, 0
-    jnz %t20, @release_skip16, @release15
+    %t22 =w ceql %t20, 0
+    jnz %t22, @release_skip16, @release15
 @release15
-    %t21 =l sub %t18, 16
-    %t22 =l loadl %t21
-    %t23 =l sub %t22, 1
-    storel %t23, %t21
-    %t24 =w cslel %t23, 0
-    jnz %t24, @str_free18, @str_free_skip19
+    %t23 =l sub %t20, 16
+    %t24 =l loadl %t23
+    %t25 =l sub %t24, 1
+    storel %t25, %t23
+    %t26 =w cslel %t25, 0
+    jnz %t26, @str_free18, @str_free_skip19
 @str_free18
-    call $nox_str_free_now(l %rt, l %t18)
+    call $nox_str_free_now(l %rt, l %t20)
     jmp @str_free_done20
 @str_free_skip19
     jmp @str_free_done20

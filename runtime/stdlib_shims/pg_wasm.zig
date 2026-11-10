@@ -263,6 +263,17 @@ export fn nox_pg_errmsg_raw(rt: ?*anyopaque, conn: ?*anyopaque) callconv(.c) ?[*
     return shim_util.dupeToNoxStr(rt, c.errmsg);
 }
 
+/// Mobil/wasm saf Zig istemcisinde istemci tarafı sorgu zaman aşımı/iptal yok (`nox_pg_set_timeout_raw` etkisiz, `nox_pg_cancel_raw` 0); sunucu tarafı `statement_timeout` çalışır.
+export fn nox_pg_set_timeout_raw(conn: ?*anyopaque, ms: i64) callconv(.c) void {
+    _ = conn;
+    _ = ms;
+}
+
+export fn nox_pg_cancel_raw(conn: ?*anyopaque) callconv(.c) i64 {
+    _ = conn;
+    return 0;
+}
+
 export fn nox_pg_finish_raw(conn: ?*anyopaque) callconv(.c) void {
     const c: *Conn = @ptrCast(@alignCast(conn orelse return));
     if (c.ok) _ = sendTagged(c.tcp, 'X', "");

@@ -2745,6 +2745,12 @@ export function $nox_init_globals(l %rt) {
     storel %t1, %t2
     ret
 }
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
 export function $nox_deinit_globals(l %rt) {
 @start
     %t0 =l call $nox_globals_get(l %rt)
@@ -3876,19 +3882,23 @@ export function l $main_body(l %argp) {
     %rt =l loadl %argp
     storel 0, %t0
     %t13 =l call $nox_globals_get(l %rt)
-    %t14 =l add %t13, 0
-    %t15 =l loadl %t14
-    storel %t15, %t1
-    %t16 =l loadl %t1
-    %t17 =l call $nox_signal_install_raw(l %t16)
-    %t18 =w ceql %t17, 1
-    storew %t18, %t2
+    %t14 =l call $nox_signal_sigusr1(l %rt)
+    %t15 =l add %t13, 0
+    storel %t14, %t15
+    %t16 =l call $nox_globals_get(l %rt)
+    %t17 =l add %t16, 0
+    %t18 =l loadl %t17
+    storel %t18, %t1
+    %t19 =l loadl %t1
+    %t20 =l call $nox_signal_install_raw(l %t19)
+    %t21 =w ceql %t20, 1
+    storew %t21, %t2
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t19 =w loadw %t2
-    jnz %t19, @print_true2, @print_false3
+    %t22 =w loadw %t2
+    jnz %t22, @print_true2, @print_false3
 @print_true2
     call $printf(l $fmt_bool_true)
     jmp @print_done4
@@ -3896,20 +3906,20 @@ export function l $main_body(l %argp) {
     call $printf(l $fmt_bool_false)
     jmp @print_done4
 @print_done4
-    %t20 =l call $nox_globals_get(l %rt)
-    %t21 =l add %t20, 0
-    %t22 =l loadl %t21
-    storel %t22, %t3
-    %t23 =l loadl %t3
-    %t24 =l call $nox_signal_pending_raw(l %t23)
-    %t25 =w ceql %t24, 1
-    storew %t25, %t4
+    %t23 =l call $nox_globals_get(l %rt)
+    %t24 =l add %t23, 0
+    %t25 =l loadl %t24
+    storel %t25, %t3
+    %t26 =l loadl %t3
+    %t27 =l call $nox_signal_pending_raw(l %t26)
+    %t28 =w ceql %t27, 1
+    storew %t28, %t4
     jmp @inline_done5
 @after_inline_return6
     jmp @inline_done5
 @inline_done5
-    %t26 =w loadw %t4
-    jnz %t26, @print_true7, @print_false8
+    %t29 =w loadw %t4
+    jnz %t29, @print_true7, @print_false8
 @print_true7
     call $printf(l $fmt_bool_true)
     jmp @print_done9
@@ -3917,20 +3927,20 @@ export function l $main_body(l %argp) {
     call $printf(l $fmt_bool_false)
     jmp @print_done9
 @print_done9
-    %t27 =l call $nox_globals_get(l %rt)
-    %t28 =l add %t27, 0
-    %t29 =l loadl %t28
-    storel %t29, %t5
-    %t30 =l loadl %t5
-    %t31 =l call $nox_signal_raise_raw(l %t30)
-    %t32 =w ceql %t31, 1
-    storew %t32, %t6
+    %t30 =l call $nox_globals_get(l %rt)
+    %t31 =l add %t30, 0
+    %t32 =l loadl %t31
+    storel %t32, %t5
+    %t33 =l loadl %t5
+    %t34 =l call $nox_signal_raise_raw(l %t33)
+    %t35 =w ceql %t34, 1
+    storew %t35, %t6
     jmp @inline_done10
 @after_inline_return11
     jmp @inline_done10
 @inline_done10
-    %t33 =w loadw %t6
-    jnz %t33, @print_true12, @print_false13
+    %t36 =w loadw %t6
+    jnz %t36, @print_true12, @print_false13
 @print_true12
     call $printf(l $fmt_bool_true)
     jmp @print_done14
@@ -3938,20 +3948,20 @@ export function l $main_body(l %argp) {
     call $printf(l $fmt_bool_false)
     jmp @print_done14
 @print_done14
-    %t34 =l call $nox_globals_get(l %rt)
-    %t35 =l add %t34, 0
-    %t36 =l loadl %t35
-    storel %t36, %t7
-    %t37 =l loadl %t7
-    %t38 =l call $nox_signal_pending_raw(l %t37)
-    %t39 =w ceql %t38, 1
-    storew %t39, %t8
+    %t37 =l call $nox_globals_get(l %rt)
+    %t38 =l add %t37, 0
+    %t39 =l loadl %t38
+    storel %t39, %t7
+    %t40 =l loadl %t7
+    %t41 =l call $nox_signal_pending_raw(l %t40)
+    %t42 =w ceql %t41, 1
+    storew %t42, %t8
     jmp @inline_done15
 @after_inline_return16
     jmp @inline_done15
 @inline_done15
-    %t40 =w loadw %t8
-    jnz %t40, @print_true17, @print_false18
+    %t43 =w loadw %t8
+    jnz %t43, @print_true17, @print_false18
 @print_true17
     call $printf(l $fmt_bool_true)
     jmp @print_done19
@@ -3959,33 +3969,33 @@ export function l $main_body(l %argp) {
     call $printf(l $fmt_bool_false)
     jmp @print_done19
 @print_done19
-    %t41 =l call $nox_globals_get(l %rt)
-    %t42 =l add %t41, 0
-    %t43 =l loadl %t42
-    storel %t43, %t9
-    %t44 =l loadl %t9
-    %t45 =l call $nox_signal_take_raw(l %t44)
-    %t46 =w ceql %t45, 1
-    storew %t46, %t10
+    %t44 =l call $nox_globals_get(l %rt)
+    %t45 =l add %t44, 0
+    %t46 =l loadl %t45
+    storel %t46, %t9
+    %t47 =l loadl %t9
+    %t48 =l call $nox_signal_take_raw(l %t47)
+    %t49 =w ceql %t48, 1
+    storew %t49, %t10
     jmp @inline_done20
 @after_inline_return21
     jmp @inline_done20
 @inline_done20
-    %t47 =w loadw %t10
-    %t48 =l call $nox_globals_get(l %rt)
-    %t49 =l add %t48, 0
-    %t50 =l loadl %t49
-    storel %t50, %t11
-    %t51 =l loadl %t11
-    %t52 =l call $nox_signal_take_raw(l %t51)
-    %t53 =w ceql %t52, 1
-    storew %t53, %t12
+    %t50 =w loadw %t10
+    %t51 =l call $nox_globals_get(l %rt)
+    %t52 =l add %t51, 0
+    %t53 =l loadl %t52
+    storel %t53, %t11
+    %t54 =l loadl %t11
+    %t55 =l call $nox_signal_take_raw(l %t54)
+    %t56 =w ceql %t55, 1
+    storew %t56, %t12
     jmp @inline_done22
 @after_inline_return23
     jmp @inline_done22
 @inline_done22
-    %t54 =w loadw %t12
-    jnz %t47, @print_true24, @print_false25
+    %t57 =w loadw %t12
+    jnz %t50, @print_true24, @print_false25
 @print_true24
     call $printf(l $fmt_bool_true_frag)
     jmp @print_done26
@@ -3994,7 +4004,7 @@ export function l $main_body(l %argp) {
     jmp @print_done26
 @print_done26
     call $printf(l $fmt_lit0)
-    jnz %t54, @print_true27, @print_false28
+    jnz %t57, @print_true27, @print_false28
 @print_true27
     call $printf(l $fmt_bool_true_frag)
     jmp @print_done29
@@ -4003,65 +4013,65 @@ export function l $main_body(l %argp) {
     jmp @print_done29
 @print_done29
     call $printf(l $fmt_lit1)
-    %t55 =l call $nox_alloc(l %rt, l 8)
-    storel %rt, %t55
-    %t56 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t55)
-    %t57 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t57)
+    %t58 =l call $nox_alloc(l %rt, l 8)
+    storel %rt, %t58
+    %t59 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t58)
+    %t60 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t60)
     storel 0, %t0
-    storel %t56, %t0
-    %t58 =l loadl %t0
-    %t59 =w call $nox_task_check_cancelled(l %rt)
-    jnz %t59, @task_cancelled30, @task_not_cancelled31
+    storel %t59, %t0
+    %t61 =l loadl %t0
+    %t62 =w call $nox_task_check_cancelled(l %rt)
+    jnz %t62, @task_cancelled30, @task_not_cancelled31
 @task_cancelled30
-    %t60 =l add $str16, 16
-    %t61 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 6, %t61
-    %t62 =l add %t61, 8
-    storel $CancelledError_vtable, %t62
-    %t63 =l add %t61, 16
-    storel 0, %t63
-    %t64 =l add %t61, 24
-    storel 0, %t64
-    call $Exception___init__(l %rt, l %t61, l %t60)
-    %t65 =w call $nox_exception_pending(l %rt)
-    jnz %t65, @ctor_init_failed32, @ctor_init_cont33
+    %t63 =l add $str16, 16
+    %t64 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 6, %t64
+    %t65 =l add %t64, 8
+    storel $CancelledError_vtable, %t65
+    %t66 =l add %t64, 16
+    storel 0, %t66
+    %t67 =l add %t64, 24
+    storel 0, %t67
+    call $Exception___init__(l %rt, l %t64, l %t63)
+    %t68 =w call $nox_exception_pending(l %rt)
+    jnz %t68, @ctor_init_failed32, @ctor_init_cont33
 @ctor_init_failed32
-    %t66 =w ceql %t61, 0
-    jnz %t66, @release_skip35, @release34
+    %t69 =w ceql %t64, 0
+    jnz %t69, @release_skip35, @release34
 @release34
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t61)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t64)
     jmp @release_done36
 @release_skip35
     jmp @release_done36
 @release_done36
     jmp @ctor_init_cont33
 @ctor_init_cont33
-    %t67 =w call $nox_exception_pending(l %rt)
-    jnz %t67, @exc_propagate37, @exc_continue38
+    %t70 =w call $nox_exception_pending(l %rt)
+    jnz %t70, @exc_propagate37, @exc_continue38
 @exc_propagate37
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue38
-    %t68 =l add %t61, 24
-    storel 23, %t68
-    call $nox_raise(l %rt, l %t61, l 23)
-    %t69 =w call $nox_exception_pending(l %rt)
-    jnz %t69, @exc_propagate39, @exc_continue40
+    %t71 =l add %t64, 24
+    storel 23, %t71
+    call $nox_raise(l %rt, l %t64, l 23)
+    %t72 =w call $nox_exception_pending(l %rt)
+    jnz %t72, @exc_propagate39, @exc_continue40
 @exc_propagate39
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue40
 @task_not_cancelled31
-    %t70 =l call $nox_async_await(l %rt, l %t58)
-    %t71 =w call $nox_exception_pending(l %rt)
-    jnz %t71, @exc_propagate41, @exc_continue42
+    %t73 =l call $nox_async_await(l %rt, l %t61)
+    %t74 =w call $nox_exception_pending(l %rt)
+    jnz %t74, @exc_propagate41, @exc_continue42
 @exc_propagate41
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue42
-    %t72 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t72)
+    %t75 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t75)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
 @fn_end43
@@ -4073,7 +4083,7 @@ export function w $main(w %argc, l %argv) {
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
     call $nox_async_init(l %rt)
-    call $nox_init_globals(l %rt)
+    call $nox_globals_alloc(l %rt)
     %t0 =l call $nox_alloc(l %rt, l 8)
     storel %rt, %t0
     %t1 =l call $nox_async_spawn(l %rt, l $main_body, l %t0)

@@ -1829,6 +1829,12 @@ export function $nox_init_globals(l %rt) {
     storel 100, %t1
     ret
 }
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
 export function $nox_deinit_globals(l %rt) {
 @start
     %t0 =l call $nox_globals_get(l %rt)
@@ -2411,41 +2417,44 @@ export function w $main(w %argc, l %argv) {
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    call $nox_init_globals(l %rt)
+    call $nox_globals_alloc(l %rt)
+    %t4 =l call $nox_globals_get(l %rt)
+    %t5 =l add %t4, 0
+    storel 100, %t5
     storel 5, %t0
-    %t4 =l loadl %t0
-    %t5 =l add %t4, 1
-    storel %t5, %t0
     %t6 =l loadl %t0
-    storel %t6, %t1
+    %t7 =l add %t6, 1
+    storel %t7, %t0
+    %t8 =l loadl %t0
+    storel %t8, %t1
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t7 =l loadl %t1
-    %t8 =l call $nox_int_to_str(l %rt, l %t7)
-    %t9 =w ceql %t8, 0
-    jnz %t9, @print_none2, @print_some3
+    %t9 =l loadl %t1
+    %t10 =l call $nox_int_to_str(l %rt, l %t9)
+    %t11 =w ceql %t10, 0
+    jnz %t11, @print_none2, @print_some3
 @print_none2
     call $printf(l $fmt_lit0)
     call $printf(l $fmt_newline)
     jmp @print_opt_done4
 @print_some3
-    call $nox_print_str(l %t8)
+    call $nox_print_str(l %t10)
     call $printf(l $fmt_newline)
     jmp @print_opt_done4
 @print_opt_done4
-    %t10 =w ceql %t8, 0
-    jnz %t10, @release_skip6, @release5
+    %t12 =w ceql %t10, 0
+    jnz %t12, @release_skip6, @release5
 @release5
-    %t11 =l sub %t8, 16
-    %t12 =l loadl %t11
-    %t13 =l sub %t12, 1
-    storel %t13, %t11
-    %t14 =w cslel %t13, 0
-    jnz %t14, @str_free8, @str_free_skip9
+    %t13 =l sub %t10, 16
+    %t14 =l loadl %t13
+    %t15 =l sub %t14, 1
+    storel %t15, %t13
+    %t16 =w cslel %t15, 0
+    jnz %t16, @str_free8, @str_free_skip9
 @str_free8
-    call $nox_str_free_now(l %rt, l %t8)
+    call $nox_str_free_now(l %rt, l %t10)
     jmp @str_free_done10
 @str_free_skip9
     jmp @str_free_done10
@@ -2454,45 +2463,45 @@ export function w $main(w %argc, l %argv) {
 @release_skip6
     jmp @release_done7
 @release_done7
-    %t15 =l call $nox_globals_get(l %rt)
-    %t16 =l add %t15, 0
-    %t17 =l loadl %t16
-    %t18 =l add %t17, 1
-    %t19 =l call $nox_globals_get(l %rt)
-    %t20 =l add %t19, 0
-    storel %t18, %t20
+    %t17 =l call $nox_globals_get(l %rt)
+    %t18 =l add %t17, 0
+    %t19 =l loadl %t18
+    %t20 =l add %t19, 1
     %t21 =l call $nox_globals_get(l %rt)
     %t22 =l add %t21, 0
-    %t23 =l loadl %t22
-    storel %t23, %t2
+    storel %t20, %t22
+    %t23 =l call $nox_globals_get(l %rt)
+    %t24 =l add %t23, 0
+    %t25 =l loadl %t24
+    storel %t25, %t2
     jmp @inline_done11
 @after_inline_return12
     jmp @inline_done11
 @inline_done11
-    %t24 =l loadl %t2
-    %t25 =l call $nox_int_to_str(l %rt, l %t24)
-    %t26 =w ceql %t25, 0
-    jnz %t26, @print_none13, @print_some14
+    %t26 =l loadl %t2
+    %t27 =l call $nox_int_to_str(l %rt, l %t26)
+    %t28 =w ceql %t27, 0
+    jnz %t28, @print_none13, @print_some14
 @print_none13
     call $printf(l $fmt_lit1)
     call $printf(l $fmt_newline)
     jmp @print_opt_done15
 @print_some14
-    call $nox_print_str(l %t25)
+    call $nox_print_str(l %t27)
     call $printf(l $fmt_newline)
     jmp @print_opt_done15
 @print_opt_done15
-    %t27 =w ceql %t25, 0
-    jnz %t27, @release_skip17, @release16
+    %t29 =w ceql %t27, 0
+    jnz %t29, @release_skip17, @release16
 @release16
-    %t28 =l sub %t25, 16
-    %t29 =l loadl %t28
-    %t30 =l sub %t29, 1
-    storel %t30, %t28
-    %t31 =w cslel %t30, 0
-    jnz %t31, @str_free19, @str_free_skip20
+    %t30 =l sub %t27, 16
+    %t31 =l loadl %t30
+    %t32 =l sub %t31, 1
+    storel %t32, %t30
+    %t33 =w cslel %t32, 0
+    jnz %t33, @str_free19, @str_free_skip20
 @str_free19
-    call $nox_str_free_now(l %rt, l %t25)
+    call $nox_str_free_now(l %rt, l %t27)
     jmp @str_free_done21
 @str_free_skip20
     jmp @str_free_done21
@@ -2501,45 +2510,45 @@ export function w $main(w %argc, l %argv) {
 @release_skip17
     jmp @release_done18
 @release_done18
-    %t32 =l call $nox_globals_get(l %rt)
-    %t33 =l add %t32, 0
-    %t34 =l loadl %t33
-    %t35 =l add %t34, 1
-    %t36 =l call $nox_globals_get(l %rt)
-    %t37 =l add %t36, 0
-    storel %t35, %t37
+    %t34 =l call $nox_globals_get(l %rt)
+    %t35 =l add %t34, 0
+    %t36 =l loadl %t35
+    %t37 =l add %t36, 1
     %t38 =l call $nox_globals_get(l %rt)
     %t39 =l add %t38, 0
-    %t40 =l loadl %t39
-    storel %t40, %t3
+    storel %t37, %t39
+    %t40 =l call $nox_globals_get(l %rt)
+    %t41 =l add %t40, 0
+    %t42 =l loadl %t41
+    storel %t42, %t3
     jmp @inline_done22
 @after_inline_return23
     jmp @inline_done22
 @inline_done22
-    %t41 =l loadl %t3
-    %t42 =l call $nox_int_to_str(l %rt, l %t41)
-    %t43 =w ceql %t42, 0
-    jnz %t43, @print_none24, @print_some25
+    %t43 =l loadl %t3
+    %t44 =l call $nox_int_to_str(l %rt, l %t43)
+    %t45 =w ceql %t44, 0
+    jnz %t45, @print_none24, @print_some25
 @print_none24
     call $printf(l $fmt_lit2)
     call $printf(l $fmt_newline)
     jmp @print_opt_done26
 @print_some25
-    call $nox_print_str(l %t42)
+    call $nox_print_str(l %t44)
     call $printf(l $fmt_newline)
     jmp @print_opt_done26
 @print_opt_done26
-    %t44 =w ceql %t42, 0
-    jnz %t44, @release_skip28, @release27
+    %t46 =w ceql %t44, 0
+    jnz %t46, @release_skip28, @release27
 @release27
-    %t45 =l sub %t42, 16
-    %t46 =l loadl %t45
-    %t47 =l sub %t46, 1
-    storel %t47, %t45
-    %t48 =w cslel %t47, 0
-    jnz %t48, @str_free30, @str_free_skip31
+    %t47 =l sub %t44, 16
+    %t48 =l loadl %t47
+    %t49 =l sub %t48, 1
+    storel %t49, %t47
+    %t50 =w cslel %t49, 0
+    jnz %t50, @str_free30, @str_free_skip31
 @str_free30
-    call $nox_str_free_now(l %rt, l %t42)
+    call $nox_str_free_now(l %rt, l %t44)
     jmp @str_free_done32
 @str_free_skip31
     jmp @str_free_done32

@@ -1,0 +1,68 @@
+# Ember NL-013: nox.postgres bloklamayan G/Ç (fiber), istemci tarafı sorgu zaman aşımı ve Connection.cancel() — gerçek sunucuya karşı.
+# Tek worker (NOX_POOL_WORKERS=1) ile çalıştırılır: modül değişkenleri (slow/fast bağlantıları) worker başına kopyadır, görevlerin aynı kopyayı görmesi için. scripts/postgres_native_probe.py geçici bir PostgreSQL kümesi kurar ve @DSN@'yi doldurur.
+import nox.postgres
+import nox.time
+from nox.postgres import PostgresError, Connection
+from nox.db import Row
+
+DSN: str = "@DSN@"
+slow: Connection = nox.postgres.open(DSN)
+fast: Connection = nox.postgres.open(DSN)
+
+# 1) İstemci tarafı zaman aşımı: sorgu iptal edilir, bağlantı kullanılabilir kalır.
+slow.set_query_timeout(150)
+started: nox.time.Instant = nox.time.instant_now()
+try:
+    slow.query("SELECT pg_sleep(10)")
+except PostgresError as e:
+    print("timeout:", e.kind, e.is_query_canceled())
+print("quick:", started.elapsed_ms() < 5000)
+slow.set_query_timeout(0)
+print("usable:", len(slow.query("SELECT 1")))
+
+# 2) Fiber içinde bir sorgu beklerken diğer görev ilerler (libpq bloklamıyor). Sonuç zaman damgaları dönüş değeriyle taşınır (modül değişkenleri worker başına kopyadır).
+async def long_query() -> int:
+    rows: list[Row] = slow.query("SELECT pg_sleep(1.5)")
+    if len(rows) != 1:
+        return 0
+    return nox.time.monotonic_ns()
+
+async def many_quick() -> int:
+    n: int = 0
+    i: int = 0
+    while i < 20:
+        fast.query("SELECT 1")
+        n += 1
+        nox.time.sleep_ms(20)
+        i += 1
+    if n != 20:
+        return 0
+    return nox.time.monotonic_ns()
+
+t_long: Task[int] = spawn long_query()
+t_quick: Task[int] = spawn many_quick()
+quick_end: int = await t_quick
+long_end: int = await t_long
+print("concurrent:", quick_end > 0, "long ok:", long_end > 0, "quick finished first:", quick_end < long_end)
+
+# 3) Başka bir görevden iptal.
+async def canceller() -> int:
+    nox.time.sleep_ms(200)
+    if slow.cancel():
+        return 1
+    return 0
+
+async def victim() -> str:
+    try:
+        slow.query("SELECT pg_sleep(10)")
+    except PostgresError as e:
+        return e.kind
+    return "not cancelled"
+
+t_victim: Task[str] = spawn victim()
+t_cancel: Task[int] = spawn canceller()
+print("cancelled:", await t_victim, "cancel sent:", await t_cancel == 1)
+print("after cancel:", len(slow.query("SELECT 1")))
+
+slow.close()
+fast.close()

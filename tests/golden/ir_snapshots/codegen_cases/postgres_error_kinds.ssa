@@ -5552,8 +5552,8 @@ export function l $nox_postgres_Connection_execute(l %rt, l %p_self, l %p_sql) {
     ret 0
 @exc_continue3
     %t16 =l add %t14, 24
-    storel 250, %t16
-    call $nox_raise(l %rt, l %t14, l 250)
+    storel 252, %t16
+    call $nox_raise(l %rt, l %t14, l 252)
     %t17 =w call $nox_exception_pending(l %rt)
     jnz %t17, @exc_propagate4, @exc_continue5
 @exc_propagate4
@@ -5611,8 +5611,8 @@ export function l $nox_postgres_Connection_query(l %rt, l %p_self, l %p_sql) {
     ret 0
 @exc_continue3
     %t18 =l add %t14, 24
-    storel 258, %t18
-    call $nox_raise(l %rt, l %t14, l 258)
+    storel 260, %t18
+    call $nox_raise(l %rt, l %t14, l 260)
     %t19 =w call $nox_exception_pending(l %rt)
     jnz %t19, @exc_propagate7, @exc_continue8
 @exc_propagate7
@@ -5758,6 +5758,34 @@ export function $nox_postgres_Connection_set_statement_timeout(l %rt, l %p_self,
 @exc_continue13
 @fn_end14
     ret
+}
+export function $nox_postgres_Connection_set_query_timeout(l %rt, l %p_self, l %p_ms) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    storel %p_self, %t0
+    storel %p_ms, %t1
+    %t2 =l loadl %t0
+    %t3 =l add %t2, 8
+    %t4 =l loadl %t3
+    %t5 =l loadl %t1
+    call $nox_pg_set_timeout_raw(l %t4, l %t5)
+@fn_end0
+    ret
+}
+export function w $nox_postgres_Connection_cancel(l %rt, l %p_self) {
+@start
+    %t0 =l alloc8 8
+    storel %p_self, %t0
+    %t1 =l loadl %t0
+    %t2 =l add %t1, 8
+    %t3 =l loadl %t2
+    %t4 =l call $nox_pg_cancel_raw(l %t3)
+    %t5 =w ceql %t4, 1
+    ret %t5
+@after_return0
+@fn_end1
+    ret 0
 }
 export function $nox_postgres_Connection_set_lock_timeout(l %rt, l %p_self, l %p_ms) {
 @start
@@ -6120,7 +6148,7 @@ export function $nox_postgres_Transaction___exit__(l %rt, l %p_self) {
     storel %t13, %t1
     jmp @try_after3
 @except_reraise9
-    call $nox_raise(l %rt, l %t13, l 324)
+    call $nox_raise(l %rt, l %t13, l 337)
     %t18 =w call $nox_exception_pending(l %rt)
     jnz %t18, @exc_propagate13, @exc_continue14
 @exc_propagate13
@@ -6950,8 +6978,8 @@ export function l $nox_postgres_Pool_acquire(l %rt, l %p_self) {
 @exc_continue178
     %t198 =l loadl %t7
     %t199 =l add %t198, 24
-    storel 407, %t199
-    call $nox_raise(l %rt, l %t198, l 407)
+    storel 420, %t199
+    call $nox_raise(l %rt, l %t198, l 420)
     storel 0, %t7
     %t200 =w call $nox_exception_pending(l %rt)
     jnz %t200, @exc_propagate191, @exc_continue192
@@ -6990,7 +7018,7 @@ export function l $nox_postgres_Pool_acquire(l %rt, l %p_self) {
 @exc_continue192
     jmp @try_after140
 @except_reraise159
-    call $nox_raise(l %rt, l %t167, l 407)
+    call $nox_raise(l %rt, l %t167, l 420)
     %t207 =w call $nox_exception_pending(l %rt)
     jnz %t207, @exc_propagate202, @exc_continue203
 @exc_propagate202
@@ -7206,8 +7234,8 @@ export function l $nox_postgres_Pool_acquire(l %rt, l %p_self) {
     ret 0
 @exc_continue242
     %t276 =l add %t248, 24
-    storel 410, %t276
-    call $nox_raise(l %rt, l %t248, l 410)
+    storel 423, %t276
+    call $nox_raise(l %rt, l %t248, l 423)
     %t277 =w call $nox_exception_pending(l %rt)
     jnz %t277, @exc_propagate255, @exc_continue256
 @exc_propagate255
@@ -7367,8 +7395,8 @@ export function l $nox_postgres_Pool_acquire(l %rt, l %p_self) {
     ret 0
 @exc_continue278
     %t324 =l add %t301, 24
-    storel 414, %t324
-    call $nox_raise(l %rt, l %t301, l 414)
+    storel 427, %t324
+    call $nox_raise(l %rt, l %t301, l 427)
     %t325 =w call $nox_exception_pending(l %rt)
     jnz %t325, @exc_propagate291, @exc_continue292
 @exc_propagate291
@@ -7526,8 +7554,8 @@ export function l $nox_postgres_Pool_acquire(l %rt, l %p_self) {
     ret 0
 @exc_continue41
     %t63 =l add %t48, 24
-    storel 387, %t63
-    call $nox_raise(l %rt, l %t48, l 387)
+    storel 400, %t63
+    call $nox_raise(l %rt, l %t48, l 400)
     %t64 =l loadl %t5
     %t65 =w ceql %t64, 0
     jnz %t65, @release_skip55, @release54
@@ -7621,7 +7649,7 @@ export function $nox_postgres_Pool_give_back(l %rt, l %p_self, l %p_conn) {
     storew 0, %t2
     jmp @try_after3
 @except_reraise9
-    call $nox_raise(l %rt, l %t12, l 423)
+    call $nox_raise(l %rt, l %t12, l 436)
     %t17 =w call $nox_exception_pending(l %rt)
     jnz %t17, @exc_propagate13, @exc_continue14
 @exc_propagate13
@@ -11841,8 +11869,8 @@ export function l $nox_postgres__pg_exec_params(l %rt, l %p_stmt) {
     ret 0
 @exc_continue15
     %t29 =l add %t20, 24
-    storel 189, %t29
-    call $nox_raise(l %rt, l %t20, l 189)
+    storel 191, %t29
+    call $nox_raise(l %rt, l %t20, l 191)
     %t30 =l loadl %t1
     %t31 =w ceql %t30, 0
     jnz %t31, @release_skip20, @release19
@@ -11883,8 +11911,8 @@ export function l $nox_postgres__pg_execute(l %rt, l %p_stmt) {
     ret 0
 @exc_continue5
     %t13 =l add %t11, 24
-    storel 199, %t13
-    call $nox_raise(l %rt, l %t11, l 199)
+    storel 201, %t13
+    call $nox_raise(l %rt, l %t11, l 201)
     %t14 =w call $nox_exception_pending(l %rt)
     jnz %t14, @exc_propagate6, @exc_continue7
 @exc_propagate6
@@ -11952,8 +11980,8 @@ export function l $nox_postgres__pg_query(l %rt, l %p_stmt) {
     ret 0
 @exc_continue8
     %t17 =l add %t13, 24
-    storel 207, %t17
-    call $nox_raise(l %rt, l %t13, l 207)
+    storel 209, %t17
+    call $nox_raise(l %rt, l %t13, l 209)
     %t18 =w call $nox_exception_pending(l %rt)
     jnz %t18, @exc_propagate12, @exc_continue13
 @exc_propagate12
@@ -12295,8 +12323,8 @@ export function l $nox_postgres__translate_placeholders_to_dollar(l %rt, l %p_sq
     ret 0
 @exc_continue17
     %t44 =l add %t25, 24
-    storel 226, %t44
-    call $nox_raise(l %rt, l %t25, l 226)
+    storel 228, %t44
+    call $nox_raise(l %rt, l %t25, l 228)
     %t45 =l loadl %t1
     %t46 =w ceql %t45, 0
     jnz %t46, @release_skip31, @release30
@@ -12451,8 +12479,8 @@ export function l $nox_postgres_open(l %rt, l %p_conninfo) {
     ret 0
 @exc_continue14
     %t45 =l add %t19, 24
-    storel 329, %t45
-    call $nox_raise(l %rt, l %t19, l 329)
+    storel 342, %t45
+    call $nox_raise(l %rt, l %t19, l 342)
     %t46 =w call $nox_exception_pending(l %rt)
     jnz %t46, @exc_propagate21, @exc_continue22
 @exc_propagate21
@@ -12607,8 +12635,8 @@ export function l $nox_postgres_open(l %rt, l %p_conninfo) {
     ret 0
 @exc_continue49
     %t102 =l add %t76, 24
-    storel 333, %t102
-    call $nox_raise(l %rt, l %t76, l 333)
+    storel 346, %t102
+    call $nox_raise(l %rt, l %t76, l 346)
     %t103 =w call $nox_exception_pending(l %rt)
     jnz %t103, @exc_propagate56, @exc_continue57
 @exc_propagate56
@@ -12756,8 +12784,8 @@ export function l $nox_postgres_pool(l %rt, l %p_conninfo, l %p_size, l %p_acqui
     ret 0
 @exc_continue8
     %t29 =l add %t14, 24
-    storel 454, %t29
-    call $nox_raise(l %rt, l %t14, l 454)
+    storel 467, %t29
+    call $nox_raise(l %rt, l %t14, l 467)
     %t30 =w call $nox_exception_pending(l %rt)
     jnz %t30, @exc_propagate9, @exc_continue10
 @exc_propagate9

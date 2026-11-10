@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.17]
+
+### Eklendi
+
+- **`nox.postgres` bloklamayan G/Ç, istemci zaman aşımı ve iptal** (Ember NL-013): libpq artık `PQsendQuery*` + `PQsocket` beklemesiyle bloklamayan kipte sürülür (fiber içinde yalnızca çağıran görev askıya alınır, fiber dışında `poll`). `Connection.set_query_timeout(ms)` süreyi aşan sorguyu `PQcancel` ile iptal eder (`kind == "query_canceled"`), `Connection.cancel()` çalışan sorguyu başka bir görevden iptal eder. Tutamak artık `PGconn` + zaman aşımını taşıyan küçük bir yapıdır (tutamak başına durum). Mobil/wasm saf Zig istemcisinde etkisizdir.
+
+### Düzeltildi
+
+- **Global'e dokunan üst-düzey ifadeler kaynak sırasını bozuyordu:** terfi etmiş (bir fonksiyonca okunan) değişkenlere yapılan üst-düzey atamalar ve metod çağrıları (`c.set(1)`, `x = 5`) aradaki `print`/`try` gibi ifadelerden ÖNCE, `$nox_init_globals` içinde çalışıyordu (`print(c.n)` yanlışlıkla sonraki değeri görüyordu). `main` (senkron, async `$main_body`, gömülü giriş) artık bu ifadeleri kaynak sırasında yerinde çalıştırır; `$nox_init_globals` yalnızca worker'lar için (aynı dilimle) kalır.
+
 ## [2.1.16]
 
 ### Düzeltildi

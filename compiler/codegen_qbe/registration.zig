@@ -1976,7 +1976,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     // (`stmts`, artık modül-global `var_decl`ları HARİÇ tutar — bkz.
     // `codegen.zig`nin `loose` inşası) İŞLENMEDEN ÖNCE çalıştırılır.
     if (self.module_globals.count() > 0) {
-        try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+        try self.qbeCall(null, "$nox_globals_alloc", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
     // Not: `main`in kendi PARAMETRESİ yoktur, ama `collectLocals` artık
     // BAZI yerelleri (heap-yönetimli elemanlı bir `for`nin döngü
@@ -1987,7 +1987,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     try self.registerLocalStackSlots(stmts, &.{});
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
-    try self.genStmts(stmts, .w);
+    try self.genMainStmts(stmts, .w);
     // bkz. `genFunction`nin AYNI, GERÇEK arena-sızıntısı düzeltmesinin notu
     // (v3 sertleştirme yol haritası madde 6) — `main`in üst-düzey deyimleri
     // İçİn AYNI örtük düşme-çıkışı boşluğu (bu ARTIK `zig build test`teki
@@ -2061,7 +2061,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     try self.registerLocalStackSlots(stmts, &.{});
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
-    try self.genStmts(stmts, .l);
+    try self.genMainStmts(stmts, .l);
     // bkz. `genFunction`nin AYNI, GERÇEK arena-sızıntısı düzeltmesinin notu
     // (v3 sertleştirme yol haritası madde 6) — `$main_body` İçİn (`async`
     // KULLANAN programların üst-düzey deyimleri, TAM DA "Concurrency
@@ -2088,7 +2088,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
         try emitDispatchTableRegistration(self);
         try self.qbeCall(null, "$nox_async_init", &.{.{ .ty = .l, .text = RT_PARAM }});
         if (self.module_globals.count() > 0) {
-            try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+            try self.qbeCall(null, "$nox_globals_alloc", &.{.{ .ty = .l, .text = RT_PARAM }});
         }
         const closure_t = try self.newTemp();
         try self.qbeCall(.{ .name = closure_t, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });
@@ -2179,7 +2179,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     // TAMAMEN BAĞIMSIZ, ÇÜNKÜ BURADA HİÇ bir fiber'ın GÖVDESİNE GÖMÜLÜ
     // DEĞİL — düz, sıralı `$main` kodu).
     if (self.module_globals.count() > 0) {
-        try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+        try self.qbeCall(null, "$nox_globals_alloc", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
     const closure_t = try self.newTemp();
     try self.qbeCall(.{ .name = closure_t, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });

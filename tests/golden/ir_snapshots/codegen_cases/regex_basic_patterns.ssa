@@ -3039,6 +3039,12 @@ export function $nox_init_globals(l %rt) {
     storel 4611686018427387904, %t1
     ret
 }
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
 export function $nox_deinit_globals(l %rt) {
 @start
     %t0 =l call $nox_globals_get(l %rt)
@@ -9174,27 +9180,30 @@ export function w $main(w %argc, l %argv) {
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    call $nox_init_globals(l %rt)
+    call $nox_globals_alloc(l %rt)
     storel 1, %t0
     storel 2, %t1
     storel 4, %t2
     storel 8, %t3
     storel 16, %t4
-    %t26 =l add $str43, 16
-    storel %t26, %t5
-    %t27 =l add $str44, 16
-    storel %t27, %t6
-    %t28 =l loadl %t5
-    %t29 =l loadl %t6
-    %t30 =l call $nox_regex_is_match_raw(l %t28, l %t29)
-    %t31 =w cnel %t30, 0
-    storew %t31, %t7
+    %t26 =l call $nox_globals_get(l %rt)
+    %t27 =l add %t26, 0
+    storel 4611686018427387904, %t27
+    %t28 =l add $str43, 16
+    storel %t28, %t5
+    %t29 =l add $str44, 16
+    storel %t29, %t6
+    %t30 =l loadl %t5
+    %t31 =l loadl %t6
+    %t32 =l call $nox_regex_is_match_raw(l %t30, l %t31)
+    %t33 =w cnel %t32, 0
+    storew %t33, %t7
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t32 =w loadw %t7
-    jnz %t32, @print_true2, @print_false3
+    %t34 =w loadw %t7
+    jnz %t34, @print_true2, @print_false3
 @print_true2
     call $printf(l $fmt_bool_true)
     jmp @print_done4
@@ -9202,21 +9211,21 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done4
 @print_done4
-    %t33 =l add $str45, 16
-    storel %t33, %t8
-    %t34 =l add $str46, 16
-    storel %t34, %t9
-    %t35 =l loadl %t8
-    %t36 =l loadl %t9
-    %t37 =l call $nox_regex_is_match_raw(l %t35, l %t36)
-    %t38 =w cnel %t37, 0
-    storew %t38, %t10
+    %t35 =l add $str45, 16
+    storel %t35, %t8
+    %t36 =l add $str46, 16
+    storel %t36, %t9
+    %t37 =l loadl %t8
+    %t38 =l loadl %t9
+    %t39 =l call $nox_regex_is_match_raw(l %t37, l %t38)
+    %t40 =w cnel %t39, 0
+    storew %t40, %t10
     jmp @inline_done5
 @after_inline_return6
     jmp @inline_done5
 @inline_done5
-    %t39 =w loadw %t10
-    jnz %t39, @print_true7, @print_false8
+    %t41 =w loadw %t10
+    jnz %t41, @print_true7, @print_false8
 @print_true7
     call $printf(l $fmt_bool_true)
     jmp @print_done9
@@ -9224,21 +9233,21 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done9
 @print_done9
-    %t40 =l add $str47, 16
-    storel %t40, %t11
-    %t41 =l add $str48, 16
-    storel %t41, %t12
-    %t42 =l loadl %t11
-    %t43 =l loadl %t12
-    %t44 =l call $nox_regex_is_match_raw(l %t42, l %t43)
-    %t45 =w cnel %t44, 0
-    storew %t45, %t13
+    %t42 =l add $str47, 16
+    storel %t42, %t11
+    %t43 =l add $str48, 16
+    storel %t43, %t12
+    %t44 =l loadl %t11
+    %t45 =l loadl %t12
+    %t46 =l call $nox_regex_is_match_raw(l %t44, l %t45)
+    %t47 =w cnel %t46, 0
+    storew %t47, %t13
     jmp @inline_done10
 @after_inline_return11
     jmp @inline_done10
 @inline_done10
-    %t46 =w loadw %t13
-    jnz %t46, @print_true12, @print_false13
+    %t48 =w loadw %t13
+    jnz %t48, @print_true12, @print_false13
 @print_true12
     call $printf(l $fmt_bool_true)
     jmp @print_done14
@@ -9246,21 +9255,21 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done14
 @print_done14
-    %t47 =l add $str49, 16
-    storel %t47, %t14
-    %t48 =l add $str50, 16
-    storel %t48, %t15
-    %t49 =l loadl %t14
-    %t50 =l loadl %t15
-    %t51 =l call $nox_regex_is_match_raw(l %t49, l %t50)
-    %t52 =w cnel %t51, 0
-    storew %t52, %t16
+    %t49 =l add $str49, 16
+    storel %t49, %t14
+    %t50 =l add $str50, 16
+    storel %t50, %t15
+    %t51 =l loadl %t14
+    %t52 =l loadl %t15
+    %t53 =l call $nox_regex_is_match_raw(l %t51, l %t52)
+    %t54 =w cnel %t53, 0
+    storew %t54, %t16
     jmp @inline_done15
 @after_inline_return16
     jmp @inline_done15
 @inline_done15
-    %t53 =w loadw %t16
-    jnz %t53, @print_true17, @print_false18
+    %t55 =w loadw %t16
+    jnz %t55, @print_true17, @print_false18
 @print_true17
     call $printf(l $fmt_bool_true)
     jmp @print_done19
@@ -9268,48 +9277,48 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done19
 @print_done19
-    %t54 =l add $str51, 16
-    storel %t54, %t17
-    %t55 =l add $str52, 16
-    storel %t55, %t18
-    %t56 =l loadl %t17
-    %t57 =l loadl %t18
-    %t58 =l call $nox_regex_find_raw(l %t56, l %t57)
-    storel %t58, %t19
+    %t56 =l add $str51, 16
+    storel %t56, %t17
+    %t57 =l add $str52, 16
+    storel %t57, %t18
+    %t58 =l loadl %t17
+    %t59 =l loadl %t18
+    %t60 =l call $nox_regex_find_raw(l %t58, l %t59)
+    storel %t60, %t19
     jmp @inline_done20
 @after_inline_return21
     jmp @inline_done20
 @inline_done20
-    %t59 =l loadl %t19
-    call $printf(l $fmt_int, ..., l %t59)
-    %t60 =l add $str53, 16
-    storel %t60, %t20
-    %t61 =l add $str54, 16
-    storel %t61, %t21
-    %t62 =l loadl %t20
-    %t63 =l loadl %t21
-    %t64 =l call $nox_regex_find_raw(l %t62, l %t63)
-    storel %t64, %t22
+    %t61 =l loadl %t19
+    call $printf(l $fmt_int, ..., l %t61)
+    %t62 =l add $str53, 16
+    storel %t62, %t20
+    %t63 =l add $str54, 16
+    storel %t63, %t21
+    %t64 =l loadl %t20
+    %t65 =l loadl %t21
+    %t66 =l call $nox_regex_find_raw(l %t64, l %t65)
+    storel %t66, %t22
     jmp @inline_done22
 @after_inline_return23
     jmp @inline_done22
 @inline_done22
-    %t65 =l loadl %t22
-    call $printf(l $fmt_int, ..., l %t65)
-    %t66 =l add $str55, 16
-    storel %t66, %t23
-    %t67 =l add $str56, 16
-    storel %t67, %t24
-    %t68 =l loadl %t23
-    %t69 =l loadl %t24
-    %t70 =l call $nox_regex_find_raw(l %t68, l %t69)
-    storel %t70, %t25
+    %t67 =l loadl %t22
+    call $printf(l $fmt_int, ..., l %t67)
+    %t68 =l add $str55, 16
+    storel %t68, %t23
+    %t69 =l add $str56, 16
+    storel %t69, %t24
+    %t70 =l loadl %t23
+    %t71 =l loadl %t24
+    %t72 =l call $nox_regex_find_raw(l %t70, l %t71)
+    storel %t72, %t25
     jmp @inline_done24
 @after_inline_return25
     jmp @inline_done24
 @inline_done24
-    %t71 =l loadl %t25
-    call $printf(l $fmt_int, ..., l %t71)
+    %t73 =l loadl %t25
+    call $printf(l $fmt_int, ..., l %t73)
     call $nox_deinit_globals(l %rt)
     call $nox_runtime_deinit(l %rt)
 @fn_end26

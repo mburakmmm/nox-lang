@@ -19,6 +19,8 @@ from nox.postgres import Connection, PostgresError
 | `Connection.prepare(sql)` | a parameterised [`Statement`](db.md#statement) with **`$1`, `$2`, …** placeholders |
 | `Connection.close()` | closes the connection |
 | `Connection.is_ok()` | is the connection still usable (not dropped)? |
+| `Connection.set_query_timeout(ms)` | client-side limit: a statement still running after `ms` milliseconds is cancelled with `PQcancel` and fails with `kind == "query_canceled"`; `0` removes the limit. Works even when the server stops answering normally. The connection stays usable |
+| `Connection.cancel()` | cancels the running statement from another task or thread (`True` if the request was sent); the statement fails with `kind == "query_canceled"`. Opens a short extra connection to the server, so it blocks the caller briefly |
 | `Connection.set_statement_timeout(ms)` | server-side limit: a statement running longer than `ms` milliseconds is cancelled by the server (`kind == "query_canceled"`); `0` removes the limit. The connection stays usable |
 | `Connection.set_lock_timeout(ms)` | the same for waiting on locks |
 | `Connection.transaction()` | a [`Transaction`](#transactions) for `with` |
@@ -94,7 +96,8 @@ finally:
 
 ## Notes
 
-- libpq calls are synchronous: a slow query blocks its worker thread. With the default multi-core scheduler other tasks keep running on other workers; with QBE's single-threaded scheduler everything waits. Use `set_statement_timeout` to bound queries on the server. There is no client-side cancel (`PQcancel`) yet.
+- libpq is driven in non-blocking mode: inside a task a slow query suspends only that task, and other tasks keep running on the same worker (outside a task the call waits with `poll`). `set_query_timeout` bounds a query from the client, `set_statement_timeout` from the server, and `cancel()` stops one on demand.
+- Module-level variables are per worker (see [Modules](../language/modules.md#module-level-state-and-the-multi-core-runtime)): a `Connection` kept in a module variable and used from several tasks is a different object on each worker, so `cancel()` only reaches the query running on the same copy. Run with `NOX_POOL_WORKERS=1` (or keep the cancelling code on the connection's own task) when one task must cancel another's query.
 
 - `libpq` (the PostgreSQL client library) must be installed on machines that call `open` — for example the `libpq5` package on Debian/Ubuntu.
 - Prefer `Statement` parameters over concatenating SQL; they travel to the server separately from the SQL text.
@@ -106,5 +109,5 @@ finally:
 There is no `libpq` on a phone, so on `ios-*` and `android-*` targets `nox.postgres` uses a PostgreSQL protocol 3.0 client written in Zig, over the operating system's sockets. The API and the `conninfo` forms are the same; nothing has to be installed. Authentication: trust, cleartext, MD5 and SCRAM-SHA-256. Queries use the simple protocol (`execute`, `query`) and the extended protocol (`prepare` with `bind_*`).
 
 - **TLS** is used only for `sslmode=require` and `verify-*`: the connection asks the server for TLS, then verifies its certificate and host name against the system CA store, and fails if it cannot (a self-signed certificate is refused; the client never falls back to plain text when `require` is set). Every other `sslmode`, including the default, is plain text, unlike libpq's `prefer`. **Use `sslmode=require` for any server that is not on a trusted local network.**
-- Calls block the calling thread, and there is no read timeout: a server that never answers keeps the call waiting.
+- Calls block the calling thread, and there is no read timeout or client-side cancel (`set_query_timeout` and `cancel()` do nothing here): a server that never answers keeps the call waiting. Use `set_statement_timeout` to bound queries on the server.
 - Verified on the iOS simulator and the Android emulator against a real PostgreSQL server (`scripts/mobile_db_probe.py`).
