@@ -405,13 +405,13 @@ fn readInt(block: []const u8, pos: *usize, prefix_bits: u4) error{CompressionErr
     var v: usize = block[pos.*] & mask;
     pos.* += 1;
     if (v < mask) return v;
-    var shift: u6 = 0;
+    var shift: u32 = 0;
     while (true) {
         if (pos.* >= block.len) return error.CompressionError;
         const b = block[pos.*];
         pos.* += 1;
         if (shift > 28) return error.CompressionError;
-        v += (@as(usize, b & 0x7f)) << shift;
+        v += (@as(usize, b & 0x7f)) << @as(std.math.Log2Int(usize), @intCast(shift));
         if (v > 0x7fffffff) return error.CompressionError;
         if (b & 0x80 == 0) return v;
         shift += 7;

@@ -451,6 +451,14 @@ export fn nox_channel_send(rt: ?*anyopaque, ch: ?*anyopaque, value: i64) void {
     c.send(value);
 }
 
+/// `ch.wait(ms)` için yoklama: bir `recv` şu an BEKLEMEDEN dönebilir mi (tamponda değer ya da bekleyen gönderici var mı)? Tüketmez.
+pub export fn nox_channel_ready(ch: ?*anyopaque) i32 {
+    const c: *ChannelI64 = @ptrCast(@alignCast(ch orelse return 0));
+    c.mutex.lock();
+    defer c.mutex.unlock();
+    return if (c.buffer.items.len > 0 or c.send_waiters.items.len > 0) 1 else 0;
+}
+
 export fn nox_channel_recv(rt: ?*anyopaque, ch: ?*anyopaque) i64 {
     _ = rt;
     const c: *ChannelI64 = @ptrCast(@alignCast(ch.?));

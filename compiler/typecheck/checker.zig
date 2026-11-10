@@ -9395,7 +9395,13 @@ pub const Checker = struct {
                         if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'recv' takes no arguments", .{});
                         return elem_t;
                     }
-                    return self.fail(error.UndefinedMethod, "Channel has no method '{s}' (only send/recv)", .{a.attr});
+                    // `ch.wait(ms) -> bool`: bir `recv` ms içinde bloklamadan dönebilecek mi (v2.1.34); değeri tüketmez, `await ch.recv()` sonra alır.
+                    if (std.mem.eql(u8, a.attr, "wait")) {
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'wait' takes exactly 1 argument (timeout in milliseconds)", .{});
+                        if ((try self.checkExpr(ctx, c.args[0])) != .int) return self.fail(error.TypeMismatch, "the timeout of 'wait' must be an int (milliseconds)", .{});
+                        return .boolean;
+                    }
+                    return self.fail(error.UndefinedMethod, "Channel has no method '{s}' (only send/recv/wait)", .{a.attr});
                 }
                 // `TaskLocal[T]`in yerleşik `get`/`set`/`clear`i — Faz OO.2
                 // (bkz. nox-teknik-spesifikasyon.md §3.83), `Channel` İLE

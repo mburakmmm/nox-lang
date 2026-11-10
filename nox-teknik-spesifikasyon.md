@@ -29806,3 +29806,7 @@ Parser `encodeCoveragePattern`: korumasız her `case`, `Varyant(arg,...)` olarak
 ### 3.397 `nox.grpc` istemcisi (v2.1.33)
 
 `runtime/stdlib_shims/grpc.zig`: `tcp_native`/`tcp_host` taşıması üzerinde HTTP/2 istemci motoru (`GConn`: `rbuf`, HPACK `Decoder`, bağlantı/akış pencereleri, `peer_max_frame`). `nox_grpc_open_raw` ön ek + SETTINGS (push kapalı, başlangıç penceresi 1 MiB) + bağlantı `WINDOW_UPDATE` gönderir. `call` bir akışta HEADERS (`encodeField`; CONTINUATION'a bölme), uzunluk önekli mesajları DATA (pencere denetimli `sendBody`), sonra `pumpFrame` ile SETTINGS/PING/WINDOW_UPDATE/GOAWAY/RST_STREAM/HEADERS/DATA işler; mesajlar `drainMessages` ile toplanır, `grpc-status`/`grpc-message` (yüzde çözmeli) trailer'dan okunur. Stdlib: `stdlib/nox/grpc.nox` (`Client`, `Response`, `GrpcError`, `GrpcStatusError`, durum sabitleri); yetenek tablosunda `grpc` → `network`. Test: `tests/cli/grpc_test.zig` (probe `scripts/grpc_probe.py`, şablon `tests/golden/grpc_program.nox.in`). Sınırlar: TLS/ALPN yok, çift yönlü araya girme yok, sıkıştırma yok.
+
+### 3.398 `Channel[T].wait(ms)` (v2.1.34)
+
+Checker: `.channel` alıcısında `wait(int) -> bool` (`await` gerekmez). Codegen (`calls.zig`): `obj.heap == .channel` ve `wait` ise `$nox_channel_wait(rt, ch, ms)`. Runtime: `bridge_native.zig`/`bridge_wasm.zig` `nox_channel_ready` (tamponda değer ya da bekleyen gönderici var mı; native'de mutex altında), `task_wait.zig` `nox_channel_wait` (1→10 ms katlanan kooperatif uyku ile yoklama, `Task.wait` ile aynı). Golden: `channel_wait_timeout`.

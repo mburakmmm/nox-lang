@@ -3334,7 +3334,7 @@ test "serveImpl: GERÇEK çapraz-worker bağlantı çalma — SO_REUSEPORT denge
 
 test "v1.142.10: IPv6 dual-stack dinleyici — ::1 peer'i [::1]:port, 127.0.0.1 peer'i eski a.b.c.d:port biçiminde raporlanır" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    const lfd = bindAndListenV6(0, false) orelse return error.SkipZigTest;
+    const lfd = bindAndListenV6(0, false, false) orelse return error.SkipZigTest;
     defer _ = closeSocket(lfd);
     var laddr: std.c.sockaddr.in6 = undefined;
     var llen: std.c.socklen_t = @sizeOf(std.c.sockaddr.in6);
@@ -3374,7 +3374,7 @@ test "v1.142.10: IPv6 dual-stack dinleyici — ::1 peer'i [::1]:port, 127.0.0.1 
 
 test "v1.142.10: v6_only=true dinleyici IPv4 istemciyi KABUL ETMEZ" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    const lfd = bindAndListenV6(0, true) orelse return error.SkipZigTest;
+    const lfd = bindAndListenV6(0, true, false) orelse return error.SkipZigTest;
     defer _ = closeSocket(lfd);
     var laddr: std.c.sockaddr.in6 = undefined;
     var llen: std.c.socklen_t = @sizeOf(std.c.sockaddr.in6);

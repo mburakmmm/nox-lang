@@ -83,10 +83,9 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 - **Durum:** Hâlâ yazılamaz (codegen `Unsupported`); `nox.tasks.TaskGroup[T]` (v2.1.10) tutamak sınıfı kullanır.
 - **Ajan:** Çözüm olarak `TaskGroup` öner. Gerçek `list[Task[T]]` desteği ARC/yıkım semantiğini etkiler; ayrı tasarım gerektirir.
 
-### E7. `Channel` için zaman aşımlı `recv` yok
+### E7. `Channel` zaman aşımı (KAPANDI v2.1.34)
 
-- **Durum:** `Task.wait` / `wait_any` zaman aşımlıdır (v2.1.6); Channel'da yok.
-- **Ajan:** Görev sarmalayıcısı kullanmayı öner. Channel zaman aşımı eklemek istenirse zamanlayıcı ve reaktör etkileşimi (reaktör yalnız hazır kuyruk boşken yoklanır) hesaba katılmalı.
+`ch.wait(ms) -> bool` (bir `recv` bloklamadan dönebilecek mi; tüketmez) — `Task.wait` ile aynı kooperatif yoklama (`runtime/stdlib_shims/task_wait.zig` `nox_channel_wait`, `bridge*.zig` `nox_channel_ready`). Zaman aşımlı `recv` doğrudan **yok**: `wait` + `await recv` ikilisi; birden çok alıcıda `wait` ile `recv` arasında değer başkasına gidebilir (belgeli).
 
 ### E8. `match` / enum açık kenarları
 

@@ -32,7 +32,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 
 ## C. Karar gerektirenler (AGENTS.md §16: mimariyi etkiler, sorulmadan yapılmaz)
 
-- [x] **C1 ember NL-002/003** fiber'ı bloklamayan uyku (`sleep_ms` fiber içinde kooperatif) ve zaman aşımı/ilk biten (`Task.wait`, `wait_any`) — **KAPANDI v2.1.6** (Channel için zaman aşımlı recv yok: görev sarmalayıcısı kullanın).
+- [x] **C1 ember NL-002/003** fiber'ı bloklamayan uyku (`sleep_ms` fiber içinde kooperatif) ve zaman aşımı/ilk biten (`Task.wait`, `wait_any`) — **KAPANDI v2.1.6** (Channel için zaman aşımı **v2.1.34**'te geldi: `ch.wait(ms) -> bool`).
 - [x] **C2 ember NL-005** `TaskGroup[T]` (`nox.tasks`) — **KAPANDI v2.1.10**; çıplak `list[Task[T]]` hâlâ yazılamaz (codegen `Unsupported`), grup tutamak sınıfı kullanır. Ayrıca `Task` alanlı sınıfların yığına terfisi ve `spawn` geçici argümanı sızıntıları düzeltildi.
 - [x] **C3 ember NL-004** CPU-bound görevi sonlandırma — **KAPANDI v2.1.19**: kooperatif `nox.tasks.checkpoint()`/`is_cancelled()` + `ThreadHandle.cancel()` (kullanıcı kararı: işbirlikçi, önleyici değil).
 - [x] **C4 ember NL-008** sinyal abonelik API'si (`nox.signal`) — **KAPANDI v2.1.6**.

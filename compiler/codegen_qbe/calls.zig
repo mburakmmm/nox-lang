@@ -2013,6 +2013,14 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
         if (std.mem.eql(u8, a.attr, "wait") or std.mem.eql(u8, a.attr, "wait_any")) return async_thread_mod.genTaskWait(self, obj, a, args);
         return async_thread_mod.genTaskCancel(self, obj);
     }
+    // `ch.wait(ms)` (Channel): `await` gerektirmez, bir `recv` bloklamadan dönebilecek mi (zaman aşımlı kooperatif yoklama).
+    if (obj.heap == .channel and std.mem.eql(u8, a.attr, "wait")) {
+        if (args.len != 1) return error.Unsupported;
+        const ms = try self.convert(try self.genExpr(args[0]), .l);
+        const r = try self.newTemp();
+        try self.qbeCall(.{ .name = r, .ty = .w }, "$nox_channel_wait", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = ms.text } });
+        return .{ .text = r, .qtype = .w };
+    }
     if (obj.heap != .class) return error.Unsupported;
     try self.checkNoLowlevelEscape(obj);
     const cinfo = self.classes.get(obj.class_name.?).?;

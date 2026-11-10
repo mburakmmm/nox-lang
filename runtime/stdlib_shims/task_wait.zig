@@ -32,3 +32,18 @@ pub export fn nox_task_wait_any(rt: ?*anyopaque, a: ?*anyopaque, b: ?*anyopaque,
     _ = rt;
     return poll(a, b, ms);
 }
+
+/// `Channel[T].wait(ms)` (v2.1.34): `ms` içinde bir `recv`in bloklamadan dönebileceği an `1`, süre dolarsa `0`. Değeri TÜKETMEZ (`await ch.recv()` sonra alır); birden çok alıcı
+/// aynı kanalda yarışırsa `wait` doğru döndükten sonra diğeri değeri almış olabilir. Yoklama aralığı 1 ms'den 10 ms'ye katlanır; `ms <= 0` yalnızca sorgular.
+pub export fn nox_channel_wait(rt: ?*anyopaque, ch: ?*anyopaque, ms: i64) i32 {
+    _ = rt;
+    const start = nox_time_monotonic_ms_raw();
+    var step: i64 = 1;
+    while (true) {
+        if (bridge.nox_channel_ready(ch) != 0) return 1;
+        const remaining = ms - (nox_time_monotonic_ms_raw() - start);
+        if (remaining <= 0) return 0;
+        nox_time_sleep_ms_raw(@min(step, remaining));
+        step = @min(step * 2, 10);
+    }
+}

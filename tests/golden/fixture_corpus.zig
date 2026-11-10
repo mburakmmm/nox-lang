@@ -554,4 +554,5 @@ pub const fixtures = [_]Fixture{
     .{ .name = "codegen(çalıştır): timezone_iana_lookup (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/timezone_iana_lookup.nox"), .expected_stdout = @embedFile("codegen_cases/timezone_iana_lookup.expected") },
     .{ .name = "codegen(çalıştır): udp_loopback_roundtrip (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/udp_loopback_roundtrip.nox"), .expected_stdout = @embedFile("codegen_cases/udp_loopback_roundtrip.expected") },
     .{ .name = "codegen(çalıştır): url_query_decode_plus (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/url_query_decode_plus.nox"), .expected_stdout = @embedFile("codegen_cases/url_query_decode_plus.expected") },
+    .{ .name = "codegen(çalıştır): Channel[T].wait(ms) zaman aşımlı hazır sorgusu (v2.1.34)", .kind = .golden, .source = @embedFile("codegen_cases/channel_wait_timeout.nox"), .expected_stdout = @embedFile("codegen_cases/channel_wait_timeout.expected") },
 };

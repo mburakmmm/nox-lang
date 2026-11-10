@@ -1,0 +1,20 @@
+import nox.time
+
+# Channel[T].wait(ms): bir recv ms içinde bloklamadan dönebilecek mi (değeri tüketmez). Zaman aşımı False, değer gelince True; ardından await recv değeri alır.
+async def producer(ch: Channel[int], delay: int) -> None:
+    nox.time.sleep_ms(delay)
+    await ch.send(42)
+
+async def main_async() -> None:
+    ch: Channel[int] = Channel[int](4)
+    print(ch.wait(20))
+    p: Task[None] = spawn producer(ch, 300)
+    print(ch.wait(5))
+    print(ch.wait(2000))
+    v: int = await ch.recv()
+    print(v)
+    print(ch.wait(0))
+    await p
+
+t: Task[None] = spawn main_async()
+await t

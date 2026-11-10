@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.34]
+
+### Eklendi
+
+- **`Channel[T].wait(ms) -> bool`** (kayıt C1 kalanı): bir `recv`in `ms` içinde bloklamadan dönebileceği an `True`, süre dolarsa `False`; değeri tüketmez (`await ch.recv()` sonra alır). Kooperatif yoklama (1→10 ms), `Task.wait` ile aynı desen; LLVM havuzu, QBE ve wasm köprülerinde.
+
+### Düzeltildi
+
+- **v2.1.32 ve v2.1.33 kırık `zig build test` ile yayımlanmıştı** (sürüm notu hatası: test çıktısı yanlış okunmuştu). Kırıklar: `http_server.zig` IPv6 testleri `bindAndListenV6`nin yeni 3. parametresini geçmiyordu; `http2.zig` HPACK `readInt` kaydırma tipi 32-bit `usize` hedeflerinde (wasm32) derlenmiyordu (`nox.grpc` HPACK'i wasm çalışma zamanına da taşıyınca ortaya çıktı); `nox.http.configure` imzası değişince 12 IR anlık görüntüsünün yalnızca `http.nox` satır numaraları kaydı (yeniden üretildi). Hepsi bu sürümde giderildi; tam test koşusu yeşil.
+
 ## [2.1.33]
 
 ### Eklendi

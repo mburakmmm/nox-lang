@@ -249,6 +249,12 @@ export fn nox_channel_send(rt: ?*anyopaque, ch: ?*anyopaque, value: i64) void {
     }
 }
 
+/// `ch.wait(ms)` için yoklama: bir `recv` şu an BEKLEMEDEN dönebilir mi? Tüketmez.
+pub export fn nox_channel_ready(ch: ?*anyopaque) i32 {
+    const c: *Channel = @ptrCast(@alignCast(ch orelse return 0));
+    return if (c.len() > 0) 1 else 0;
+}
+
 export fn nox_channel_recv(rt: ?*anyopaque, ch: ?*anyopaque) i64 {
     const c: *Channel = @ptrCast(@alignCast(ch.?));
     while (c.len() == 0) {

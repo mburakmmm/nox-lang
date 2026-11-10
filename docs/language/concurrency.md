@@ -227,6 +227,19 @@ await t
 10
 ```
 
+### Waiting with a timeout
+
+`ch.wait(ms)` returns `True` as soon as a `recv` would not block (a value is buffered or a sender is waiting) and `False` if `ms` milliseconds pass first. It does not
+consume the value: call `await ch.recv()` afterwards. If several tasks receive from the same channel, another one may take the value between `wait` and `recv`; use one receiver
+per channel when that matters.
+
+```text
+if ch.wait(500):
+    job: int = await ch.recv()
+else:
+    print("no work for 500 ms")
+```
+
 ### Fan-out and fan-in
 
 There is no `list[Task[T]]` in 2.0 (tasks and channels cannot be stored in collections). The idiom for "start N workers and gather the
