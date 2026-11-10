@@ -22,9 +22,9 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 
 ## B. Dil/derleyici özellikleri (küçük, tasarımı belli)
 
-- [ ] **B1 aura L3** `class Sub(Base[int])` somut jenerik taban (yeniden üretildi: sözdizimi hatası).
-- [ ] **B2 nova 9** `spawn obj.method()` ve içe aktarılan `async def` (metot hâlâ reddediliyor; içe aktarma yeniden üretilecek).
-- [ ] **B3 aura L4** bellek ayırma sayacı (`nox.mem.stats()`).
+- [x] **B1 aura L3** `class Sub(Base[int])` somut jenerik taban (yeniden üretildi: sözdizimi hatası). — **KAPANDI v2.1.5**
+- [x] **B2 nova 9** `spawn obj.method()` ve içe aktarılan `async def` (metot hâlâ reddediliyor; içe aktarma yeniden üretilecek). — **KAPANDI v2.1.5**
+- [x] **B3 aura L4** bellek ayırma sayacı (`nox.mem.stats()`). — **KAPANDI v2.1.5**
 
 ## C. Karar gerektirenler (AGENTS.md §16: mimariyi etkiler, sorulmadan yapılmaz)
 

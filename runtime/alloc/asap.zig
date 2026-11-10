@@ -402,6 +402,14 @@ pub const RuntimeState = struct {
     /// dokunuşunda KENDİLİĞİNDEN KAYITLI bir üye OLUR.
     arc_owner_pool: if (debug_thread_check) OwnerPool else void =
         if (debug_thread_check) .{} else {},
+    /// Aura L4 — `nox.mem.stats()`: ARC bellek sayaçları. `mem_stats_on` kapalıyken (varsayılan) `nox_rc_alloc`/`nox_rc_free_payload`
+    /// sıcak yolunda yalnızca bu tek bool okunur; ilk `stats()` çağrısı sayımı başlatır. Sayaçlar atomiktir (M:N işçileri aynı
+    /// `RuntimeState`i paylaşır); yalnızca ölçüm sırasında ödenir. Sayılan: mantıksal ARC blokları (`str`/`list`/`dict`/sınıf), havuzdan
+    /// yeniden kullanılanlar dahil; ASAP ile yığına/arenaya terfi eden nesneler heap'e hiç girmediğinden sayılmaz.
+    mem_stats_on: bool = false,
+    mem_allocs: std.atomic.Value(usize) = .init(0),
+    mem_frees: std.atomic.Value(usize) = .init(0),
+    mem_bytes: std.atomic.Value(usize) = .init(0),
     /// Faz MN.4/5.8: `arcOwnerThreadOk`nin KENDİ "üye mi, DEĞİLSE kaydet"
     /// mantığını korur — **GERÇEK, ÖNCEDEN VAR OLAN bir eşzamanlılık
     /// hatası** (bu görev SIRASINDA, `WorkerPool`nin GERÇEK 4-iş-parçacıklı

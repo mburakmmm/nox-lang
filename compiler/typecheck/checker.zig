@@ -616,6 +616,10 @@ pub const Checker = struct {
     /// edilmiş) sınıf tanımları — `instantiations`in AYNISI ama SINIFLAR
     /// İçin.
     class_instantiations: std.ArrayListUnmanaged(ast.ClassDef) = .empty,
+    /// `class Sub(Base[int])` tabanı kayıt aşamasında (`resolveGenericBases`) somutlaştırılır; fonksiyon imzaları o sırada henüz kayıtlı
+    /// olmadığından örneğin gövde denetimi buraya ertelenir ve `registerSignatures`ten sonra yapılır.
+    defer_class_body_checks: bool = false,
+    pending_inst_bodies: std.ArrayListUnmanaged(ast.ClassDef) = .empty,
     /// v1.169.0: yan etkili keyword argümanların kaynak-sırası değerlendirme permütasyonu (anahtar: `call_expansions` ile aynı `callee` işaretçisi).
     call_orders: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
     last_eval_order: ?[]const u8 = null,
@@ -2908,6 +2912,79 @@ pub const Checker = struct {
         return try self.resolveMangledCall(ctx, c, mangled, not_found_msg);
     }
 
+    /// `spawn` callee'si bir nitelikli yoldur (`mod.f` ya da `obj.metod`): modül-nitelikli ise mangled fonksiyon adına, aksi halde
+    /// sınıf metoduna çözülür. Metod için `__spawn_<Sınıf>_<metod>(__self: Sınıf, ...)` sarmalayıcısı (bir kez) sentezlenir:
+    /// gövdesi yalnızca `return __self.metod(...)`dır; böylece `spawn` yalnızca düz fonksiyon biçimini bilmeye devam eder.
+    fn resolveSpawnAttributeCallee(self: *Checker, ctx: *FnCtx, real: *ast.Call, at: ast.Attribute) TypeError!void {
+        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (try self.flattenDottedPath(real.callee.*, &raw_segments) and raw_segments.items.len >= 2) {
+            const segments = try self.substituteAlias(raw_segments.items);
+            const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
+            if (self.imported_modules.contains(module_path)) {
+                real.callee.* = .{ .identifier = try self.joinSegments(segments, '_') };
+                return;
+            }
+        }
+        const recv_t = try self.checkExpr(ctx, at.obj.*);
+        if (recv_t != .class) {
+            return self.fail(error.NotCallable, "'spawn' can only wrap a function or a method call on a class instance", .{});
+        }
+        const cls = recv_t.class;
+        const md = self.findMethodDef(cls, at.attr) orelse
+            return self.fail(error.UndefinedMethod, "class '{s}' has no method '{s}'", .{ cls, at.attr });
+        if (md.params.len == 0 or real.args.len != md.params.len - 1) {
+            return self.fail(error.ArgumentCountMismatch, "'{s}.{s}' expects {d} arguments, {d} were given", .{ cls, at.attr, if (md.params.len == 0) 0 else md.params.len - 1, real.args.len });
+        }
+        const thunk = try std.fmt.allocPrint(self.allocator, "__spawn_{s}_{s}", .{ cls, at.attr });
+        if (!self.functions.contains(thunk)) {
+            const params = try self.allocator.alloc(ast.Param, md.params.len);
+            params[0] = .{ .name = "__self", .type_expr = .{ .simple = cls } };
+            for (md.params[1..], 1..) |p, i| params[i] = .{ .name = p.name, .type_expr = p.type_expr };
+            const recv = try self.allocator.create(ast.Expr);
+            recv.* = .{ .identifier = "__self" };
+            const callee = try self.allocator.create(ast.Expr);
+            callee.* = .{ .attribute = .{ .obj = recv, .attr = at.attr } };
+            const args = try self.allocator.alloc(ast.Expr, md.params.len - 1);
+            for (md.params[1..], 0..) |p, i| args[i] = .{ .identifier = p.name };
+            const invoke: ast.Expr = .{ .call = .{ .callee = callee, .args = args } };
+            const returns_none = md.return_type == .simple and std.mem.eql(u8, md.return_type.simple, "None");
+            const body = try self.allocator.alloc(ast.Stmt, 1);
+            body[0] = .{ .kind = if (returns_none) .{ .expr_stmt = invoke } else .{ .return_stmt = invoke }, .line = self.current_line };
+            const fd: ast.FuncDef = .{
+                .name = thunk,
+                .type_params = &.{},
+                .params = params,
+                .return_type = md.return_type,
+                .body = body,
+                .is_async = true,
+            };
+            try self.registerFunc(fd);
+            try self.instantiations.append(self.allocator, fd);
+            try self.checkFunctionBody(fd);
+        }
+        const new_args = try self.allocator.alloc(ast.Expr, real.args.len + 1);
+        new_args[0] = at.obj.*;
+        @memcpy(new_args[1..], real.args);
+        real.args = new_args;
+        real.callee.* = .{ .identifier = thunk };
+    }
+
+    /// `cls` sınıfında (ya da taban zincirinde) `name` metodunun tanımı. Jenerik örnek sınıflar `class_instantiations`ta durur.
+    fn findMethodDef(self: *Checker, cls: []const u8, name: []const u8) ?ast.FuncDef {
+        var cur: ?[]const u8 = cls;
+        while (cur) |c| {
+            if (self.class_defs_by_name.get(c)) |cd| {
+                for (cd.methods) |m| if (std.mem.eql(u8, m.name, name)) return m;
+            }
+            for (self.class_instantiations.items) |cd| {
+                if (!std.mem.eql(u8, cd.name, c)) continue;
+                for (cd.methods) |m| if (std.mem.eql(u8, m.name, name)) return m;
+            }
+            cur = if (self.classes.get(c)) |ci| ci.base else null;
+        }
+        return null;
+    }
+
     /// `nox.http.serve`/`serve_fd`/`serve_multicore`nin ÜÇÜNÜN de paylaştığı
     /// `handle` doğrulaması — Faz DD.1 (bkz. nox-teknik-spesifikasyon.md
     /// §3.60) İçin `tryResolveHttpServeCall`in (stdlib fazı §D.1.6, §3.34)
@@ -3722,7 +3799,9 @@ pub const Checker = struct {
         // ZATEN doğru olan girdileri DOKUNMADAN bırakır).
         try self.resolveReExportChains(module);
         try self.collectProtocols(module);
+        try self.resolveGenericBases(module);
         try self.registerSignatures(module);
+        try self.checkPendingInstBodies();
         try self.resolveReExportChains(module);
         try self.collectModuleGlobals(module);
         try self.collectSpawnTargets(module);
@@ -6778,15 +6857,24 @@ pub const Checker = struct {
                 break :blk t;
             },
             .spawn_expr => |operand_ptr| blk: {
-                const operand = operand_ptr.*;
-                const call = switch (operand) {
-                    .call => |c| c,
-                    else => return self.fail(error.NotCallable, "'spawn' can only wrap a call expression", .{}),
-                };
-                const fn_name = switch (call.callee.*) {
-                    .identifier => |n| n,
-                    else => return self.fail(error.NotCallable, "'spawn' can only wrap a direct function call (method/constructor calls are not supported yet)", .{}),
-                };
+                if (operand_ptr.* != .call) return self.fail(error.NotCallable, "'spawn' can only wrap a call expression", .{});
+                // Callee çözümü: `f(...)` (yerel ya da `from m import f`), `mod.f(...)` (modül-nitelikli) ve `obj.metod(...)`.
+                // Sonuncusu için `__spawn_<Sınıf>_<metod>` adlı bir `async def` ince sarmalayıcı sentezlenir (alıcı ilk argüman olur).
+                // Her durumda callee yerinde düz bir `.identifier`e çevrilir; codegen yalnızca bu şekli bilir.
+                const real: *ast.Call = @constCast(&operand_ptr.call);
+                switch (real.callee.*) {
+                    .identifier => |n| {
+                        if (!self.functions.contains(n)) {
+                            if (self.from_imports.get(n)) |m| {
+                                if (self.functions.contains(m)) real.callee.* = .{ .identifier = m };
+                            }
+                        }
+                    },
+                    .attribute => |at| try self.resolveSpawnAttributeCallee(ctx, real, at),
+                    else => return self.fail(error.NotCallable, "'spawn' can only wrap a direct function call", .{}),
+                }
+                const call = real.*;
+                const fn_name = call.callee.identifier;
                 if (!self.async_functions.contains(fn_name)) {
                     return self.fail(error.TypeMismatch, "'spawn' can only start 'async def' functions: '{s}' is not async", .{fn_name});
                 }
@@ -10446,8 +10534,48 @@ pub const Checker = struct {
             try self.generic_methods.put(self.allocator, key, .{ .fd = gm, .class_inst_index = inst_index });
             try self.generic_method_names.put(self.allocator, gm.name, {});
         }
-        try self.checkClassBody(concrete);
+        if (self.defer_class_body_checks) {
+            try self.pending_inst_bodies.append(self.allocator, concrete);
+        } else {
+            try self.checkClassBody(concrete);
+        }
         return .{ .class = mangled };
+    }
+
+    /// `class Sub(Base[int]):` — jenerik tabanı somutlaştırıp `Sub.base`i örnek adına çevirir (bkz. `ast.ClassDef.base_args`).
+    /// `registerSignatures`ten ÖNCE çalışır (Sub'ın imzası tabanın sınıf bilgisini ister); örnek gövdeleri `checkPendingInstBodies` ile sonra denetlenir.
+    fn resolveGenericBases(self: *Checker, module: ast.Module) TypeError!void {
+        for (module.body) |*stmt| {
+            if (stmt.kind != .class_def) continue;
+            const cd = &stmt.kind.class_def;
+            if (cd.base_args.len == 0) continue;
+            self.current_line = stmt.line;
+            self.current_span = stmt.span;
+            if (cd.type_params.len > 0) {
+                return self.fail(error.TypeMismatch, "a generic class ('{s}') cannot have a base class (generic + inheritance is not supported in v1)", .{cd.name});
+            }
+            if (cd.extra_bases.len > 0) {
+                return self.fail(error.TypeMismatch, "class '{s}': a concrete generic base ('{s}[...]') cannot be combined with other base classes", .{ cd.name, cd.base.? });
+            }
+            const te: ast.TypeExpr = .{ .generic = .{ .name = cd.base.?, .args = @constCast(cd.base_args) } };
+            self.defer_class_body_checks = true;
+            defer self.defer_class_body_checks = false;
+            const t = try self.typeExprToType(te);
+            if (t != .class) {
+                return self.fail(error.TypeMismatch, "class '{s}': base '{s}[...]' is not a class", .{ cd.name, cd.base.? });
+            }
+            cd.base = t.class;
+            cd.base_args = &.{};
+            try self.class_defs_by_name.put(self.allocator, cd.name, cd.*);
+        }
+    }
+
+    fn checkPendingInstBodies(self: *Checker) TypeError!void {
+        var i: usize = 0;
+        while (i < self.pending_inst_bodies.items.len) : (i += 1) {
+            try self.checkClassBody(self.pending_inst_bodies.items[i]);
+        }
+        self.pending_inst_bodies.clearRetainingCapacity();
     }
 
     /// Faz C.2: üst-düzey (generic OLMAYAN) sınıfların generic metodlarını

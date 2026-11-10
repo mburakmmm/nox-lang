@@ -469,6 +469,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_tasklocal_clear", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_tasklocal_destroy", Entry{ .params = "PP", .ret = 'v' } },
     .{ "nox_tasklocal_get", Entry{ .params = "PP", .ret = 'P' } },
+    .{ "nox_mem_stat", Entry{ .params = "PL", .ret = 'L' } },
     .{ "nox_tasklocal_new", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_dict_release_thunk", Entry{ .params = "W", .ret = 'P' } },
     .{ "nox_tasklocal_set", Entry{ .params = "PPP", .ret = 'P' } },

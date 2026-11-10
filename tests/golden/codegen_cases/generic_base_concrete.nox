@@ -1,0 +1,70 @@
+# Aura L3: somut jenerik sınıf taban sınıf olabilir (`class Sub(Base[int])`).
+class Stack[T]:
+    items: list[T]
+
+    def __init__(self) -> None:
+        self.items = []
+
+    def push(self, v: T) -> None:
+        self.items.append(v)
+
+    def size(self) -> int:
+        return len(self.items)
+
+    def top(self) -> T:
+        return self.items[len(self.items) - 1]
+
+
+class IntStack(Stack[int]):
+    total: int
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.total = 0
+
+    def push(self, v: int) -> None:
+        super().push(v)
+        self.total = self.total + v
+
+    def sum(self) -> int:
+        return self.total
+
+
+class NameStack(Stack[str]):
+    def shout(self) -> str:
+        return self.top() + "!"
+
+
+class Repo[K]:
+    key: K
+
+    def __init__(self, k: K) -> None:
+        self.key = k
+
+    def describe(self) -> str:
+        return "repo"
+
+
+class UserRepo(Repo[str]):
+    def describe(self) -> str:
+        return "users:" + self.key
+
+
+s: IntStack = IntStack()
+s.push(3)
+s.push(4)
+print(s.size(), s.sum(), s.top())
+
+n: NameStack = NameStack()
+n.push("a")
+n.push("b")
+print(n.size(), n.shout())
+
+# alt sınıf, somut taban tipine atanabilir
+base: Stack[int] = s
+print(base.size())
+
+r: UserRepo = UserRepo("x")
+print(r.describe())
+rb: Repo[str] = r
+print(rb.describe())

@@ -1,0 +1,25 @@
+import nox.mem
+
+class Node:
+    v: int
+    def __init__(self, v: int) -> None:
+        self.v = v
+
+keep: list[Node] = []
+
+def churn(n: int) -> None:
+    i: int = 0
+    while i < n:
+        t: list[Node] = [Node(i), Node(i + 1)]
+        i = i + 1
+
+nox.mem.stats()
+churn(100)
+a: nox.mem.MemStats = nox.mem.stats()
+print(a.allocations > 0, a.live == 0, a.bytes_allocated > 0)
+i: int = 0
+while i < 50:
+    keep.append(Node(i))
+    i = i + 1
+b: nox.mem.MemStats = nox.mem.stats()
+print(b.live >= 50, b.allocations > a.allocations)

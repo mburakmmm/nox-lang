@@ -392,6 +392,14 @@ const Printer = struct {
                 }
                 if (c.base) |b| {
                     try self.writer.print("({s}", .{b});
+                    if (c.base_args.len > 0) {
+                        try self.writer.writeAll("[");
+                        for (c.base_args, 0..) |ba, idx| {
+                            if (idx > 0) try self.writer.writeAll(", ");
+                            try self.printType(ba);
+                        }
+                        try self.writer.writeAll("]");
+                    }
                     for (c.extra_bases) |eb| try self.writer.print(", {s}", .{eb});
                     try self.writer.writeAll(")");
                 }

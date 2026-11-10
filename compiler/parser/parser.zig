@@ -861,9 +861,16 @@ pub const Parser = struct {
         // taban sınıf adı kabul edilir (virgülle ayrılmış çoklu taban
         // YOK, Python'un çoklu-kalıtımı Nox'un v1 kapsamı DIŞINDA).
         var base_class: ?[]const u8 = null;
+        var base_args = std.ArrayList(ast.TypeExpr).empty;
         var extra_bases = std.ArrayList([]const u8).empty;
         if (self.match(.l_paren)) {
             base_class = (try self.expect(.identifier)).lexeme;
+            // Somut jenerik taban: `class Sub(Base[int]):`.
+            if (self.match(.l_bracket)) {
+                try base_args.append(self.allocator, try self.parseTypeExpr());
+                while (self.match(.comma)) try base_args.append(self.allocator, try self.parseTypeExpr());
+                _ = try self.expect(.r_bracket);
+            }
             while (self.match(.comma)) try extra_bases.append(self.allocator, (try self.expect(.identifier)).lexeme);
             _ = try self.expect(.r_paren);
         }
@@ -948,6 +955,7 @@ pub const Parser = struct {
             .name = name,
             .base = base_class,
             .extra_bases = try extra_bases.toOwnedSlice(self.allocator),
+            .base_args = try base_args.toOwnedSlice(self.allocator),
             .type_params = try type_params.toOwnedSlice(self.allocator),
             .methods = try methods.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),

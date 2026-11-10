@@ -312,6 +312,10 @@ pub const ClassDef = struct {
     base: ?[]const u8 = null,
     /// `class C(A, B, D):` — ilk taban `base`, kalanlar burada. `mixin_flatten.zig` bunları checker'dan ÖNCE `C`ye KOPYALAYIP boşaltır.
     extra_bases: []const []const u8 = &.{},
+    /// `class Sub(Base[int]):` — somut jenerik taban: `base` = "Base", tip argümanları burada. Checker (`resolveGenericBases`)
+    /// `Base[int]`yi somutlaştırıp `base`i örnek adına (`Base__int`) çevirir ve bu listeyi boşaltır; sonraki geçişler hep
+    /// düz bir tabanla çalışır. Yalnızca TEK tabanda ve jenerik olmayan sınıfta geçerlidir.
+    base_args: []const TypeExpr = &.{},
     /// `mixin_flatten.zig`nin düzleştirmeden SONRA bıraktığı ÇÖZÜLMÜŞ mixin sınıf adları (`extra_bases`in karşılığı). Bu sınıfın örnekleri her mixin tipine de
     /// atanabilir (alt tipleme) ve `except <Mixin>` onları yakalar; nesne düzeni/vtable bunun için bileşen-geneli renklendirilir (bkz. `codegen_qbe/mi_layout.zig`).
     mixins: []const []const u8 = &.{},

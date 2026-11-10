@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.5]
+
+### Eklendi
+
+- **Somut jenerik taban sınıf** (Aura L3): `class IntStack(Stack[int])`. Jenerik sınıf somut tip argümanlarıyla bir kez örneklenir ve alt sınıf alanlarını/metotlarını (`super()` ve geçersiz kılma dahil) sıradan bir tabandan gibi miras alır; alt sınıf `Stack[int]` değişkenine atanabilir. İçe aktarılan jenerik sınıflar da olur (`from nox.collections import Stack`). Jenerik bir sınıfın kendisi hâlâ taban alamaz (`class B[U](A[U])`). `noxc fmt` `Base[int]`yi korur.
+- **`spawn` içe aktarılan `async def`, modül-nitelikli çağrı ve metot ile** (Nova 9): `spawn af(5)` (`from m import af`), `spawn m.af(5)` ve `spawn obj.metot(...)`. Metot için `__spawn_<Sınıf>_<metot>` ince sarmalayıcısı sentezlenir (alıcı ilk argüman); sınıf örneği göreve geçtiğinden bu varsayılan (LLVM) arka uçta geçerlidir.
+- **`nox.mem.stats()`** (Aura L4): ARC heap bloklarının tahsis/serbest bırakma sayısı ve bayt toplamı (`MemStats.allocations/frees/live/bytes_allocated`). Kapalıyken maliyet tek bir bool okuması; ilk çağrı sayımı başlatır.
+
 ## [2.1.4]
 
 ### Düzeltildi

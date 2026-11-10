@@ -70,3 +70,34 @@ def read_volatile[T](p: ptr[T]) -> T:
 def write_volatile[T](p: ptr[T], value: T) -> None:
     lowlevel:
         ptr_write_volatile(p, value)
+
+
+# ---------------------------------------------------------------------
+# Bellek sayaçları (Aura L4). Sayaç, ARC-yönetimli heap bloklarını (`str`, `list`, `dict`, sınıf örnekleri) sayar;
+# ASAP ile yığına/arenaya terfi eden nesneler heap'e hiç girmediğinden sayılmaz. KAPALIYKEN maliyet tek bir bool okumasıdır:
+# ilk `stats()` çağrısı sayımı BAŞLATIR (sıfır döner), sonraki çağrılar o andan beri toplananı verir. Yani ölçülecek koddan
+# ÖNCE bir kez `stats()` çağırın, sonra tekrar çağırıp farkı okuyun:
+#
+#     nox.mem.stats()                      # sayımı başlatır
+#     ... ölçülecek kod ...
+#     s: nox.mem.MemStats = nox.mem.stats()
+#     print(s.allocations, s.frees, s.live)
+#
+# `live = allocations - frees` sayımın başlamasından sonra tahsis edilip henüz bırakılmamış blok sayısıdır; sayımdan ÖNCE
+# tahsis edilmiş bir blok sayım sırasında bırakılırsa `live` negatif olabilir.
+extern def nox_mem_stat(which: int) -> int from "zig-out/lib/noxrt.o" with_rt
+
+class MemStats:
+    allocations: int
+    frees: int
+    live: int
+    bytes_allocated: int
+
+    def __init__(self: MemStats, allocations: int, frees: int, bytes_allocated: int) -> None:
+        self.allocations = allocations
+        self.frees = frees
+        self.live = allocations - frees
+        self.bytes_allocated = bytes_allocated
+
+def stats() -> MemStats:
+    return MemStats(nox_mem_stat(0), nox_mem_stat(1), nox_mem_stat(2))

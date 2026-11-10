@@ -221,6 +221,29 @@ family (fields that are never present together share slots, so the cost is small
 `super()` is an error inside a mixin method (the method is copied into `C`); generic classes cannot be bases of a multiple-inheritance class; `@repr("C")` and
 `@packed` classes cannot take part.
 
+### Concrete generic base classes
+
+A generic class can be instantiated with concrete type arguments and used as the base of an ordinary class:
+
+```nox
+class Stack[T]:
+    items: list[T]
+    def __init__(self) -> None:
+        self.items = []
+    def push(self, v: T) -> None:
+        self.items.append(v)
+
+class IntStack(Stack[int]):
+    def total(self) -> int:
+        s: int = 0
+        for x in self.items:
+            s = s + x
+        return s
+```
+
+`Stack[int]` is instantiated once and `IntStack` inherits its fields and methods (including `super()` and overriding) like from any other base; an `IntStack` can be
+assigned to a `Stack[int]` variable. A generic class itself still cannot have a base (`class B[U](A[U])` is not supported).
+
 ## Special methods
 
 A class may define special methods; the compiler rewrites each operator into an ordinary method call, so ownership, inheritance and

@@ -137,6 +137,13 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
     // bir data-race'e İLERLEMEDEN, KESİN bir panikle DURUR.
     if (rt) |r| std.debug.assert(asap.arcOwnerThreadOk(@ptrCast(@alignCast(r))));
     const total = payload_size + HEADER_SIZE;
+    if (rt) |r| {
+        const st: *asap.RuntimeState = @ptrCast(@alignCast(r));
+        if (st.mem_stats_on) {
+            _ = st.mem_allocs.fetchAdd(1, .monotonic);
+            _ = st.mem_bytes.fetchAdd(payload_size, .monotonic);
+        }
+    }
     if (use_pool) {
         if (poolClassIndex(total)) |idx| {
             const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
@@ -168,6 +175,39 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
     rc.* = 1;
     const base_bytes: [*]u8 = @ptrCast(base);
     return base_bytes + HEADER_SIZE;
+}
+
+/// `nox.mem.stats()` için: `which` 0 = tahsis sayısı, 1 = serbest bırakılan blok sayısı, 2 = tahsis edilen toplam yük baytı.
+/// İLK çağrı sayımı BAŞLATIR (sayaçlar sıfırdan başlar) ve 0 döner; böylece ölçülecek koddan önce bir kez `stats()` çağrılır.
+pub export fn nox_mem_stat(rt: ?*anyopaque, which: i64) i64 {
+    const st: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return 0));
+    if (!st.mem_stats_on) {
+        st.mem_stats_on = true;
+        return 0;
+    }
+    const v: usize = switch (which) {
+        0 => st.mem_allocs.load(.monotonic),
+        1 => st.mem_frees.load(.monotonic),
+        2 => st.mem_bytes.load(.monotonic),
+        else => 0,
+    };
+    return @intCast(v);
+}
+
+test "nox_mem_stat: ilk çağrı sayımı başlatır; sonra tahsis/serbest bırakma sayılır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const before = nox_rc_alloc(rt, 16) orelse return error.AllocFailed; // sayım kapalı: sayılmaz
+    try std.testing.expectEqual(@as(i64, 0), nox_mem_stat(rt, 0)); // sayımı başlatır
+    const a = nox_rc_alloc(rt, 40) orelse return error.AllocFailed;
+    const b = nox_rc_alloc(rt, 24) orelse return error.AllocFailed;
+    try std.testing.expectEqual(@as(i64, 2), nox_mem_stat(rt, 0));
+    try std.testing.expectEqual(@as(i64, 64), nox_mem_stat(rt, 2));
+    nox_rc_free_payload(rt, a, 40);
+    try std.testing.expectEqual(@as(i64, 1), nox_mem_stat(rt, 1));
+    nox_rc_free_payload(rt, b, 24);
+    nox_rc_free_payload(rt, before, 16); // sayım açıkken serbest bırakılan eski blok da sayılır
+    try std.testing.expectEqual(@as(i64, 3), nox_mem_stat(rt, 1));
 }
 
 /// v2.0 madde 6 (bkz. plan dosyası §5, Model B): `ptr[T]`in heap-yönetimli
@@ -278,6 +318,10 @@ pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_siz
     const bytes: [*]u8 = @ptrCast(p);
     const base = bytes - HEADER_SIZE;
     const total = payload_size + HEADER_SIZE;
+    if (rt) |r| {
+        const st: *asap.RuntimeState = @ptrCast(@alignCast(r));
+        if (st.mem_stats_on) _ = st.mem_frees.fetchAdd(1, .monotonic);
+    }
     if (use_pool) {
         if (poolClassIndex(total)) |idx| {
             const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));

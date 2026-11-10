@@ -47,6 +47,30 @@ print(demo())
 23
 ```
 
+## Allocation counters
+
+`nox.mem.stats() -> MemStats` reports how many ARC-managed heap blocks (`str`, `list`, `dict`, class instances) were allocated and freed. The counters cost
+one boolean check on the allocation path while off; the **first** `stats()` call starts counting and returns zeros, later calls return what was counted
+since. Call it once before the code you want to measure, then again and read the difference:
+
+```nox
+import nox.mem
+
+nox.mem.stats()                      # starts counting
+# ... code under measurement ...
+s: nox.mem.MemStats = nox.mem.stats()
+print(s.allocations, s.frees, s.live)
+```
+
+| Field | Meaning |
+|---|---|
+| `allocations` | blocks allocated since counting started (blocks reused from the internal pool count too) |
+| `frees` | blocks freed since counting started |
+| `live` | `allocations - frees`; can be negative if a block allocated before counting started is freed during measurement |
+| `bytes_allocated` | total payload bytes of those allocations |
+
+Objects the compiler promotes to the stack or an arena never reach the heap and are not counted.
+
 ## Notes
 
 - `detach(x)` of a `list[T]` yields a pointer to the list **header**; the elements start 16 bytes after it. [`nox.buffer`](buffer.md) hides that detail for byte buffers.

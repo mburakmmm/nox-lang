@@ -558,3 +558,46 @@ test "8.3: degisebilir sinif ozniteligi moduller arasi (from-import, import, ali
     defer std.testing.allocator.free(run_result.stderr);
     try std.testing.expectEqualStrings("debug=False retries=3\ndebug=True retries=10 7 7\n", run_result.stdout);
 }
+
+// Nova 9: `spawn` içe aktarılan `async def`'i (`from m import f` ve `m.f`) ve bir sınıf metodunu (`obj.metod(...)`) başlatabilir.
+// Metot için sarmalayıcı sentezlenir; sınıf örneği göreve geçtiğinden bu yalnızca varsayılan (LLVM) arka uçta geçerlidir.
+test "spawn: iceri aktarilan async def, modul-nitelikli cagri ve sinif metodu" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "amod.nox",
+        .data = "async def af(x: int) -> int:\n    return x + 7\n\nclass Worker:\n    base: int\n\n    def __init__(self, base: int) -> None:\n        self.base = base\n\n    async def run(self, k: int) -> int:\n        return self.base + k\n\n    async def note(self, k: int) -> None:\n        print(self.base * k)\n",
+    });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data = "from amod import af, Worker\nimport amod\n\nasync def go() -> None:\n    t: Task[int] = spawn af(5)\n    print(await t)\n    t2: Task[int] = spawn amod.af(6)\n    print(await t2)\n    w: Worker = Worker(100)\n    t3: Task[int] = spawn w.run(1)\n    print(await t3)\n    t4: Task[None] = spawn w.note(2)\n    await t4\n\nm: Task[None] = spawn go()\nawait m\n",
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const run_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "run", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    if (run_result.term != .exited or run_result.term.exited != 0) {
+        std.debug.print("run basarisiz, stderr: {s}\n", .{run_result.stderr});
+    }
+    try std.testing.expect(run_result.term == .exited and run_result.term.exited == 0);
+    try std.testing.expectEqualStrings("12\n13\n101\n200\n", run_result.stdout);
+}
