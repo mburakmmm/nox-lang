@@ -9,6 +9,7 @@
   "def"
   "class"
   "protocol"
+  "enum"
   "extern"
   "lowlevel"
   "import"
@@ -19,6 +20,8 @@
 ] @keyword
 
 [
+  "match"
+  "case"
   "if"
   "elif"
   "else"
@@ -83,6 +86,12 @@
 (extern_function_definition name: (identifier) @function)
 (class_definition name: (identifier) @type)
 (protocol_definition name: (identifier) @type)
+(enum_definition name: (identifier) @type)
+(enum_variant name: (identifier) @constant)
+(enum_field name: (identifier) @variable.parameter)
+(variant_pattern name: (pattern_path (identifier) @type . (identifier) @constant .))
+(variant_pattern name: (identifier) @constant)
+(keyword_pattern name: (identifier) @variable.parameter)
 (parameter name: (identifier) @variable.parameter)
 (type_parameters (identifier) @type.parameter)
 

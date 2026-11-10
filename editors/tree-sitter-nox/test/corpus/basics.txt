@@ -830,3 +830,92 @@ b: set[int] = {x for x in a}
       (comp_for_clause
         (identifier)
         (identifier)))))
+
+================================================================================
+enum ve match/case (etiketli birlik)
+================================================================================
+enum Shape:
+    Circle(radius: float)
+    Rect(w: float, h: float)
+    Empty
+
+enum Option[T]:
+    Some(value: T)
+    Nothing
+
+def area(s: Shape) -> float:
+    match s:
+        case Shape.Circle(r):
+            return r
+        case Shape.Rect(w=a, h=_):
+            return a
+        case Option.Some(Option.Some(7)) if True:
+            return 1.0
+        case Shape.Empty:
+            return -1.0
+        case _:
+            return 0.0
+
+--------------------------------------------------------------------------------
+
+(module
+  (enum_definition
+    name: (identifier)
+    body: (enum_body
+      (enum_variant
+        name: (identifier)
+        fields: (enum_fields
+          (enum_field name: (identifier) type: (identifier))))
+      (enum_variant
+        name: (identifier)
+        fields: (enum_fields
+          (enum_field name: (identifier) type: (identifier))
+          (enum_field name: (identifier) type: (identifier))))
+      (enum_variant
+        name: (identifier))))
+  (enum_definition
+    name: (identifier)
+    type_parameters: (type_parameters (identifier))
+    body: (enum_body
+      (enum_variant
+        name: (identifier)
+        fields: (enum_fields
+          (enum_field name: (identifier) type: (identifier))))
+      (enum_variant
+        name: (identifier))))
+  (function_definition
+    name: (identifier)
+    parameters: (parameters
+      (parameter name: (identifier) type: (identifier)))
+    return_type: (identifier)
+    body: (block
+      (match_statement
+        subject: (identifier)
+        (case_clause
+          pattern: (variant_pattern
+            name: (pattern_path (identifier) (identifier))
+            arguments: (pattern_arguments (identifier)))
+          body: (block (return_statement value: (identifier))))
+        (case_clause
+          pattern: (variant_pattern
+            name: (pattern_path (identifier) (identifier))
+            arguments: (pattern_arguments
+              (keyword_pattern name: (identifier) value: (identifier))
+              (keyword_pattern name: (identifier) value: (identifier))))
+          body: (block (return_statement value: (identifier))))
+        (case_clause
+          pattern: (variant_pattern
+            name: (pattern_path (identifier) (identifier))
+            arguments: (pattern_arguments
+              (variant_pattern
+                name: (pattern_path (identifier) (identifier))
+                arguments: (pattern_arguments (integer)))))
+          guard: (true)
+          body: (block (return_statement value: (float))))
+        (case_clause
+          pattern: (variant_pattern
+            name: (pattern_path (identifier) (identifier)))
+          body: (block (return_statement value: (unary_expression operand: (float)))))
+        (case_clause
+          pattern: (identifier)
+          body: (block (return_statement value: (float))))))))

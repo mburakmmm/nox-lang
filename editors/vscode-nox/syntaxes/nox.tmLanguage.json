@@ -13,7 +13,9 @@
     { "include": "#keywords-operator" },
     { "include": "#constants" },
     { "include": "#def-name" },
-    { "include": "#class-name" }
+    { "include": "#class-name" },
+    { "include": "#enum-name" },
+    { "include": "#match-case" }
   ],
   "repository": {
     "comments": {
@@ -98,7 +100,7 @@
       "patterns": [
         {
           "name": "keyword.other.nox",
-          "match": "\\b(def|class|protocol|extern|lowlevel|import|from|as|with|with_rt|defer|lambda|assert|pass)\\b"
+          "match": "\\b(def|class|protocol|enum|extern|lowlevel|import|from|as|with|with_rt|defer|lambda|assert|pass)\\b"
         }
       ]
     },
@@ -133,6 +135,29 @@
           "captures": {
             "1": { "name": "keyword.other.nox" },
             "2": { "name": "entity.name.function.nox" }
+          }
+        }
+      ]
+    },
+    "match-case": {
+      "patterns": [
+        {
+          "match": "^\\s*(match)\\s+.+:\\s*(#.*)?$",
+          "captures": { "1": { "name": "keyword.control.conditional.nox" } }
+        },
+        {
+          "match": "^\\s*(case)\\b(?=.*:\\s*(#.*)?$)",
+          "captures": { "1": { "name": "keyword.control.conditional.nox" } }
+        }
+      ]
+    },
+    "enum-name": {
+      "patterns": [
+        {
+          "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.other.nox" },
+            "2": { "name": "entity.name.type.enum.nox" }
           }
         }
       ]

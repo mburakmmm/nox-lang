@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.27]
+
+### Eklendi
+
+- **Editör desteği: `enum` / `match` / `case`** (kayıt C15c): tree-sitter grameri (`enum_definition`, `enum_variant`, `match_statement`, `case_clause`, `variant_pattern`, iç içe/literal/anahtar sözcüklü desen, koruma) + `highlights.scm` + corpus testi; VS Code tmLanguage'ine `enum`, `match`, `case` kuralları.
+
 ## [2.1.26]
 
 ### Düzeltildi

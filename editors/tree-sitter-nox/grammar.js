@@ -84,6 +84,8 @@ module.exports = grammar({
       $.extern_function_definition,
       $.class_definition,
       $.protocol_definition,
+      $.enum_definition,
+      $.match_statement,
       $.try_statement,
       $.with_statement,
       $.lowlevel_statement,
@@ -221,6 +223,58 @@ module.exports = grammar({
     protocol_definition: $ => seq(
       'protocol', field('name', $.identifier), ':', field('body', $.class_body),
     ),
+
+    // `enum Shape:` / `enum Option[T]:` — etiketli birlik (bkz. docs/language/enums.md).
+    // Gövde: `Ad` ya da `Ad(alan: Tip, ...)` varyantları + metodlar.
+    enum_definition: $ => seq(
+      'enum', field('name', $.identifier),
+      optional(field('type_parameters', $.type_parameters)),
+      ':', field('body', $.enum_body),
+    ),
+    enum_body: $ => seq(
+      $._newline, $._indent,
+      repeat1(choice(
+        seq($.string, $._newline),
+        seq($.pass_statement, $._newline),
+        $.enum_variant,
+        $.function_definition,
+      )),
+      $._dedent,
+    ),
+    enum_variant: $ => seq(
+      field('name', $.identifier),
+      optional(field('fields', $.enum_fields)),
+      $._newline,
+    ),
+    enum_fields: $ => seq('(', commaSep1($.enum_field), optional(','), ')'),
+    enum_field: $ => seq(field('name', $.identifier), ':', field('type', $._type_expression)),
+
+    // `match x:` + `case Desen [if koşul]:` (Python 3.10 tarzı, bkz. docs/language/enums.md).
+    match_statement: $ => seq(
+      'match', field('subject', $._expression), ':',
+      $._newline, $._indent, repeat1($.case_clause), $._dedent,
+    ),
+    case_clause: $ => seq(
+      'case', field('pattern', $._case_pattern),
+      optional(seq('if', field('guard', $._expression))),
+      ':', field('body', $.block),
+    ),
+    _case_pattern: $ => choice(
+      $.variant_pattern,
+      $.negative_literal_pattern,
+      $.integer, $.float, $.string, $.true, $.false,
+      $.identifier,
+    ),
+    // `Enum.Varyant`, `Enum.Varyant(a, _, kw=b)`, `mod.Enum.Varyant(...)`.
+    variant_pattern: $ => choice(
+      seq(field('name', $.pattern_path), optional(field('arguments', $.pattern_arguments))),
+      seq(field('name', $.identifier), field('arguments', $.pattern_arguments)),
+    ),
+    pattern_path: $ => seq($.identifier, repeat1(seq('.', $.identifier))),
+    pattern_arguments: $ => seq('(', commaSep($._pattern_argument), optional(','), ')'),
+    _pattern_argument: $ => choice($.keyword_pattern, $._case_pattern),
+    keyword_pattern: $ => seq(field('name', $.identifier), '=', field('value', $._case_pattern)),
+    negative_literal_pattern: $ => seq('-', choice($.integer, $.float)),
 
     try_statement: $ => seq(
       'try', ':', field('body', $.block),
