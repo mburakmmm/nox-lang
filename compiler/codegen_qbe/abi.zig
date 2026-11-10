@@ -284,7 +284,9 @@ pub fn isTemporaryExpr(expr: ast.Expr) bool {
         // `isHeapManaged`in belge notu) ELER.
         // `.ternary`: `genTernary` her dalın sonucunu SAHİPLİ (+1) hale getirir (ödünç bir dal retain edilir) —
         // sonuç HER ZAMAN taze bir sahiplik taşır, tüketici serbest bırakmalıdır.
-        .call, .list_lit, .dict_lit, .binary, .generic_construct, .ternary, .slice, .list_comp, .dict_comp => true,
+        // `.await_expr`: `genAwaitExpr` sonucu (Task sonucu / Channel.recv / ThreadHandle.join) çağırana SAHİPLİ (+1) devredilir (bir isme bağlanırken
+        // `isAliasingExpr` retain etmez); geçici olarak tüketilince (`print(await t)`, `f(await t)`) çağrıdan sonra bırakılmalıdır, aksi halde sızar.
+        .call, .list_lit, .dict_lit, .binary, .generic_construct, .ternary, .slice, .list_comp, .dict_comp, .await_expr => true,
         .attribute => |a| isTemporaryExpr(a.obj.*),
         .index => |idx| isTemporaryExpr(idx.obj.*),
         else => false,

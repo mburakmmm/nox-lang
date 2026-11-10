@@ -50,6 +50,7 @@ pub const signal_shim = @import("stdlib_shims/signal.zig");
 pub const terminal_shim = @import("stdlib_shims/terminal.zig");
 pub const redis_shim = @import("stdlib_shims/redis.zig");
 pub const tz_shim = @import("stdlib_shims/tz.zig");
+pub const udp_shim = @import("stdlib_shims/udp.zig");
 /// Faz MN.3a: BAĞIMSIZ, henüz HİÇBİR yere BAĞLANMAMIŞ (bkz. onun modül
 /// üstü notu) — SADECE `zig build test`nin `noxrt_test`inin (bu dosyayı
 /// KÖK modül olarak kullanan) KENDİ testlerini KEŞFEDEBİLMESİ İçİn burada
@@ -129,6 +130,7 @@ comptime {
     _ = terminal_shim;
     _ = redis_shim;
     _ = tz_shim;
+    _ = udp_shim;
     _ = chase_lev_deque;
     _ = worker_pool;
     _ = str;

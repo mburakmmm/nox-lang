@@ -18,6 +18,8 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [x] **A11 pulse TASKLOCAL-001** TaskLocal değerleri fiber yok edilirken serbest bırakılmıyor (bekliyor). — **KAPANDI v2.1.2**
 - [x] **A12 pulse PROVENANCE-001** `noxc --version` kaynak commit'ini göstermiyor. — **KAPANDI v2.1.2**
 - [ ] **A13 aura L7** modül düzeyi `str` atamasında çıkışta `nox_rc_pool_drain` çökmesi (bağımsız repro yok; A6 (v2.1.2) çıkış-kilitlenmesini düzeltti — aura `files` self-check'ini `_roots[0]` yamasını geri alıp yeniden denemeli; çökme sürerse ayrı hata).
+- [ ] **A15 (v2.1.15'te bulundu)** Bir `async def`in okuduğu modül-düzeyi `Channel[T]` çıkışta yıkılmıyor (sızıntı; parametre olarak geçirince yok). `nox_deinit_globals` (`compiler/codegen_qbe/globals.zig`) yalnızca `isHeapManaged` globalleri bırakır; Task/Channel için `destroyNonArcValue` eklemek çıkışta SIGSEGV verdi (sayaç muhasebesi: terfi eden yuva + okuyucu), geri alındı. Repro: `ch: Channel[int] = Channel[int](2)`; `async def producer(): await ch.send(1)`; `await ch.recv()`.
+- [x] **A16 (v2.1.15)** `print(await t)` hesaplanmış str/sınıf/list sızdırıyordu — **KAPANDI v2.1.15**.
 - [x] **A14 aura L5** `docs/language/memory.md` `__del__ yok` diyor, `__del__` var (belge). — **KAPANDI v2.1.4**
 
 ## B. Dil/derleyici özellikleri (küçük, tasarımı belli)
@@ -39,7 +41,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [~] **C9 aether/nyx/ember** `serve_multicore` closure, IPv6 çok çekirdekli dinleme, paylaşılan `Application`/`list`/`dict`, `AtomicRef`.
 - [x] **C10 nyx 2.3** şablonda döngü/koşul — `render_blocks` (`for`/`if`/`else`, `loop.*`) — **KAPANDI v2.1.7**; `render` değişmedi.
 - [x] **C11 nyx 2.4** `nox.jwt.verify` `exp/nbf/iat` kontrolü — `verify_claims`/`verify_now` eklendi (v2.1.7); `verify` davranışı değişmedi.
-- [~] **C12 pulse** protobuf, gRPC, UDP, Buffer→str köprüsü ve gzip→bytes (**KAPANDI v2.1.13**: `nox.bytes.str_from_list/to_str/...`); mikro/nano-saniye saat (**KAPANDI v2.1.13**: `now_ns`, `monotonic_ns`).
+- [~] **C12 pulse** protobuf, gRPC, UDP (**KAPANDI v2.1.15**: `nox.udp`), Buffer→str köprüsü ve gzip→bytes (**KAPANDI v2.1.13**: `nox.bytes.str_from_list/to_str/...`); mikro/nano-saniye saat (**KAPANDI v2.1.13**: `now_ns`, `monotonic_ns`).
 - [x] **C13 ember NL-010/011/014** UUIDv7 (**KAPANDI v2.1.7**: `uuid7`, `uuid7_at`, `uuid7_timestamp_ms`), property-test (**KAPANDI v2.1.12**: `nox.property`), zaman dilimi (**KAPANDI v2.1.14**: `nox.timezone`).
 - [~] **C14 aether 5** `@controller`/`@get` metot dekoratörlerinin işleyici olması.
 - [~] **C15 pulse TYPE-001** tagged union / enum.

@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.15]
+
+### Eklendi
+
+- **`nox.udp`** (Pulse NOX-CAP-UDP-001): UDP datagram soketleri. `bind`, `open`, `is_supported`; `UdpSocket.send_to/send_bytes_to/recv/local_port/close`; `Datagram`, `UdpError` (`kind`: `timeout`/`closed`/`io`). Soketler bloklamayan açılır; `recv` bir fiber içinde yalnızca çağıran görevi askıya alır. Yük bayt-tamdır (NUL dahil). IPv4 varsayılan, `ipv6=True` ile çift yığın. Yalnızca POSIX (Windows/wasm'da `is_supported()` False).
+
+### Düzeltildi
+
+- **`print(await t)` / `f(await t)` sızıntısı:** `await` sonucu (hesaplanmış `str`, sınıf, `list`) bir çağrıya argüman ya da alıcı olarak geçince çağrıdan sonra serbest bırakılmıyordu (`await` ifadesi bir isme bağlanırken zaten "sahipli" sayılıyordu, geçici olarak sayılmıyordu). `isTemporaryExpr` artık `.await_expr`i tanıyor.
+
 ## [2.1.14]
 
 ### Eklendi

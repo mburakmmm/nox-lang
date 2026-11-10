@@ -1,0 +1,29 @@
+# `await` sonucu bir argüman/alıcı olarak geçici tüketildiğinde çağrıdan sonra serbest bırakılır (önceden `print(await t)` hesaplanmış str'yi sızdırıyordu).
+class Box:
+    name: str
+
+    def __init__(self: Box, name: str) -> None:
+        self.name = name
+
+async def make_text(x: int) -> str:
+    return "v" + str(x)
+
+async def make_box(x: int) -> Box:
+    return Box("box" + str(x))
+
+async def make_list(x: int) -> list[str]:
+    return ["a" + str(x), "b" + str(x)]
+
+def shout(s: str) -> str:
+    return s + "!"
+
+t1: Task[str] = spawn make_text(3)
+print(await t1)
+t2: Task[str] = spawn make_text(4)
+print(shout(await t2))
+t3: Task[Box] = spawn make_box(5)
+print((await t3).name)
+t4: Task[list[str]] = spawn make_list(6)
+print(len(await t4))
+print(await spawn make_text(7))
+print(shout(await spawn make_text(8)))

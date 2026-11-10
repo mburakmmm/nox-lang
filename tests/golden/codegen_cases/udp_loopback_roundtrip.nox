@@ -1,0 +1,91 @@
+# nox.udp: loopback gönder/al, bayt-tam yük, kısaltma, zaman aşımı, yanıt, fiber içinde bloklamama. UDP yoksa (Windows/wasm) denetimler atlanır; çıktı her yerde aynıdır.
+import nox.udp
+import nox.time
+from nox.udp import UdpSocket, Datagram, UdpError
+
+failures: int = 0
+
+def expect_int(name: str, got: int, want: int) -> int:
+    if got != want:
+        print("FAIL " + name + ": " + str(got) + " != " + str(want))
+        return 1
+    return 0
+
+def expect_str(name: str, got: str, want: str) -> int:
+    if got != want:
+        print("FAIL " + name + ": " + got + " != " + want)
+        return 1
+    return 0
+
+async def receive_on(port: int) -> str:
+    rx: UdpSocket = nox.udp.bind("127.0.0.1", port)
+    d: Datagram = rx.recv(64, 5000)
+    rx.close()
+    return d.data
+
+async def send_later(port: int) -> int:
+    nox.time.sleep_ms(150)
+    tx: UdpSocket = nox.udp.open()
+    n: int = tx.send_to("127.0.0.1", port, "from-task")
+    tx.close()
+    return n
+
+if nox.udp.is_supported():
+    rx: UdpSocket = nox.udp.bind("127.0.0.1", 0)
+    tx: UdpSocket = nox.udp.open()
+    port: int = rx.local_port()
+    failures += expect_int("port assigned", 1 if port > 0 else 0, 1)
+    failures += expect_int("sent", tx.send_to("127.0.0.1", port, "ping"), 4)
+    d: Datagram = rx.recv(2048, 2000)
+    failures += expect_str("payload", d.data, "ping")
+    failures += expect_str("peer host", d.host, "127.0.0.1")
+    failures += expect_int("peer port", d.port, tx.local_port())
+    # NUL içeren ikili yük bayt-tam gelir.
+    tx.send_bytes_to("127.0.0.1", port, [0, 1, 255, 0, 65])
+    bin: Datagram = rx.recv(2048, 2000)
+    failures += expect_str("binary", str(bin.to_bytes()), "[0, 1, 255, 0, 65]")
+    # max_len'den uzun datagram kısaltılır.
+    tx.send_to("127.0.0.1", port, "abcdefghij")
+    cut: Datagram = rx.recv(4, 2000)
+    failures += expect_str("truncated", cut.data, "abcd")
+    # Boş kuyrukta zaman aşımı.
+    timed_out: int = 0
+    try:
+        rx.recv(16, 50)
+    except UdpError as e:
+        if e.is_timeout():
+            timed_out = 1
+    failures += expect_int("timeout", timed_out, 1)
+    # Yanıt göndericinin adresine gider.
+    rx.send_to(d.host, d.port, "pong")
+    reply: Datagram = tx.recv(16, 2000)
+    failures += expect_str("reply", reply.data, "pong")
+    # Kapatma etkisizdir ve sonrası UdpError verir.
+    tx.close()
+    tx.close()
+    rx.close()
+    closed_kind: str = ""
+    try:
+        rx.recv(16, 10)
+    except UdpError as e:
+        closed_kind = e.kind
+    failures += expect_str("closed", closed_kind, "closed")
+    # Kullanımdaki port reddedilir.
+    a: UdpSocket = nox.udp.bind("127.0.0.1", 0)
+    in_use: int = 0
+    try:
+        b: UdpSocket = nox.udp.bind("127.0.0.1", a.local_port())
+    except UdpError as e:
+        in_use = 1
+    failures += expect_int("port in use", in_use, 1)
+    a.close()
+    # Fiber içinde alıcı beklerken gönderici görevi (uyuyarak) ilerler.
+    probe: UdpSocket = nox.udp.bind("127.0.0.1", 0)
+    free_port: int = probe.local_port()
+    probe.close()
+    got: Task[str] = spawn receive_on(free_port)
+    sent: Task[int] = spawn send_later(free_port)
+    failures += expect_str("fiber receive", await got, "from-task")
+    failures += expect_int("fiber send", await sent, 9)
+
+print("failures: " + str(failures))

@@ -1,0 +1,125 @@
+# nox.udp — UDP datagram soketleri (Pulse NOX-CAP-UDP-001): statsd/syslog/telemetri, keşif ve basit RPC için. Yalnızca POSIX (macOS/Linux/Android/iOS); Windows ve wasm'da `is_supported()` False.
+#
+#     import nox.udp
+#     from nox.udp import UdpSocket, Datagram, UdpError
+#
+#     rx: UdpSocket = nox.udp.bind("127.0.0.1", 0)         # 0: işletim sistemi bir port seçer
+#     tx: UdpSocket = nox.udp.open()                       # yalnızca göndermek için
+#     tx.send_to("127.0.0.1", rx.local_port(), "ping")
+#     d: Datagram = rx.recv(2048, 1000)                    # en çok 2048 bayt, 1 sn zaman aşımı
+#     print(d.data, d.host, d.port)
+#
+# `recv` bir fiber içinde zamanlayıcıyı bloke etmez (yalnızca çağıran görev askıya alınır). `timeout_ms`: < 0 sınırsız, 0 yoklama. Zaman aşımı `UdpError(kind="timeout")` fırlatır.
+# Veri bayt-tamdır: `str` NUL dahil her baytı taşır; ikili yükler için `send_bytes_to` (list[int]) ve `Datagram.to_bytes()` vardır. Üst sınır 65507 bayt.
+# Adres ailesi `bind`/`open` anında seçilir (IPv4 varsayılan, `ipv6=True` ile IPv6); farklı ailedeki hedefe gönderim `UdpError` verir. `send_to` adı çözmek için bloklayıcı `getaddrinfo` kullanır
+# (IP sabitleri ve `localhost` anında çözülür). UDP güvenilmezdir: sıra, kayıp ve tekrar sizin sorumluluğunuzdadır.
+import nox.bytes
+
+extern def nox_udp_supported_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_udp_open_raw(host: str, port: int, flags: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_udp_ok_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_udp_errmsg_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_udp_local_port_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_udp_send_raw(h: ptr, host: str, port: int, data: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_udp_recv_raw(h: ptr, max_len: int, timeout_ms: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_udp_recv_status_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_udp_peer_host_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_udp_peer_port_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_udp_close_raw(h: ptr) -> None from "zig-out/lib/noxrt.o"
+
+class UdpError(Exception):
+    kind: str
+
+    def __init__(self: UdpError, message: str, kind: str = "io") -> None:
+        super().__init__(message)
+        self.kind = kind
+
+    def is_timeout(self: UdpError) -> bool:
+        return self.kind == "timeout"
+
+# Alınan bir datagram: yük (`data`), göndericinin sayısal adresi (`host`) ve portu (`port`).
+class Datagram:
+    data: str
+    host: str
+    port: int
+
+    def __init__(self: Datagram, data: str, host: str, port: int) -> None:
+        self.data = data
+        self.host = host
+        self.port = port
+
+    def to_bytes(self: Datagram) -> list[int]:
+        return nox.bytes.list_from_str(self.data)
+
+class UdpSocket:
+    handle: ptr
+    closed: bool
+
+    def __init__(self: UdpSocket, handle: ptr) -> None:
+        self.handle = handle
+        self.closed = False
+
+    def _live(self: UdpSocket) -> None:
+        if self.closed:
+            raise UdpError("socket is closed", "closed")
+
+    # Soketin yerel portu (`bind` portu 0 ise işletim sisteminin seçtiği).
+    def local_port(self: UdpSocket) -> int:
+        self._live()
+        return nox_udp_local_port_raw(self.handle)
+
+    # `data` baytlarını `host:port`a tek bir datagram olarak gönderir; gönderilen bayt sayısını döndürür.
+    def send_to(self: UdpSocket, host: str, port: int, data: str) -> int:
+        self._live()
+        n: int = nox_udp_send_raw(self.handle, host, port, data)
+        if n < 0:
+            raise UdpError(nox_udp_errmsg_raw(self.handle), "io")
+        return n
+
+    def send_bytes_to(self: UdpSocket, host: str, port: int, data: list[int]) -> int:
+        return self.send_to(host, port, nox.bytes.str_from_list(data))
+
+    # Bir datagram alır (en çok `max_len` bayt; fazlası atılır). Zaman aşımı `UdpError(kind="timeout")`.
+    def recv(self: UdpSocket, max_len: int = 65507, timeout_ms: int = -1) -> Datagram:
+        self._live()
+        data: str = nox_udp_recv_raw(self.handle, max_len, timeout_ms)
+        status: int = nox_udp_recv_status_raw(self.handle)
+        if status == 1:
+            raise UdpError("receive timed out", "timeout")
+        if status != 0:
+            raise UdpError(nox_udp_errmsg_raw(self.handle), "io")
+        return Datagram(data, nox_udp_peer_host_raw(self.handle), nox_udp_peer_port_raw(self.handle))
+
+    # Soketi kapatır; ikinci çağrı etkisizdir.
+    def close(self: UdpSocket) -> None:
+        if not self.closed:
+            self.closed = True
+            nox_udp_close_raw(self.handle)
+
+# Bu hedefte UDP kullanılabilir mi? (Windows/wasm/freestanding'de False.)
+def is_supported() -> bool:
+    return nox_udp_supported_raw() == 1
+
+# `host:port`a bağlı bir soket açar. `host` boşsa tüm arayüzler; `port` 0 ise işletim sistemi seçer. `ipv6`: IPv6 (çift yığın) soketi;
+# `reuse`: SO_REUSEADDR/SO_REUSEPORT (aynı portu paylaşma); `broadcast`: SO_BROADCAST.
+def bind(host: str, port: int, ipv6: bool = False, reuse: bool = False, broadcast: bool = False) -> UdpSocket:
+    flags: int = 0
+    if ipv6:
+        flags += 1
+    if reuse:
+        flags += 2
+    if broadcast:
+        flags += 4
+    h: ptr = nox_udp_open_raw(host, port, flags)
+    ok: int = nox_udp_ok_raw(h)
+    if ok < 0:
+        raise UdpError("could not allocate a socket", "io")
+    if ok == 0:
+        msg: str = nox_udp_errmsg_raw(h)
+        nox_udp_close_raw(h)
+        raise UdpError("could not bind " + host + ":" + str(port) + ": " + msg, "io")
+    return UdpSocket(h)
+
+# Yalnızca göndermek için: tüm arayüzlerde, işletim sisteminin seçtiği geçici bir portta açılır.
+def open(ipv6: bool = False, broadcast: bool = False) -> UdpSocket:
+    return bind("", 0, ipv6, False, broadcast)

@@ -3826,25 +3826,44 @@ export function $run(l %rt) {
     call $printf(l $fmt_newline)
     jmp @print_opt_done37
 @print_opt_done37
-    %t115 =l loadl %t2
-    call $nox_async_destroy_task(l %rt, l %t115)
-    storel 0, %t2
-    %t116 =l loadl %t5
-    call $nox_async_destroy_task(l %rt, l %t116)
-    storel 0, %t5
-    %t117 =l loadl %t3
-    call $nox_async_destroy_task(l %rt, l %t117)
-    storel 0, %t3
-    %t118 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t118)
-    storel 0, %t0
-    %t119 =l loadl %t4
-    call $nox_async_destroy_task(l %rt, l %t119)
-    storel 0, %t4
-    %t120 =l loadl %t1
+    %t115 =w ceql %t106, 0
+    jnz %t115, @release_skip39, @release38
+@release38
+    %t116 =l sub %t106, 16
+    %t117 =l loadl %t116
+    %t118 =l sub %t117, 1
+    storel %t118, %t116
+    %t119 =w cslel %t118, 0
+    jnz %t119, @str_free41, @str_free_skip42
+@str_free41
+    call $nox_str_free_now(l %rt, l %t106)
+    jmp @str_free_done43
+@str_free_skip42
+    jmp @str_free_done43
+@str_free_done43
+    jmp @release_done40
+@release_skip39
+    jmp @release_done40
+@release_done40
+    %t120 =l loadl %t2
     call $nox_async_destroy_task(l %rt, l %t120)
+    storel 0, %t2
+    %t121 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t121)
+    storel 0, %t5
+    %t122 =l loadl %t3
+    call $nox_async_destroy_task(l %rt, l %t122)
+    storel 0, %t3
+    %t123 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t123)
+    storel 0, %t0
+    %t124 =l loadl %t4
+    call $nox_async_destroy_task(l %rt, l %t124)
+    storel 0, %t4
+    %t125 =l loadl %t1
+    call $nox_async_destroy_task(l %rt, l %t125)
     storel 0, %t1
-@fn_end38
+@fn_end44
     ret
 }
 export function l $lazy(l %rt, l %p_ms) {

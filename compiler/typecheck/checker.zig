@@ -1500,6 +1500,8 @@ pub const Checker = struct {
         .{ .name = "time", .caps = &.{} },
         // Ember NL-014: tzdata dosyalarını okur (Windows/wasm'da `is_supported()` False; freestanding'de modül reddedilir).
         .{ .name = "timezone", .caps = &.{.filesystem} },
+        // Pulse NOX-CAP-UDP-001: ham POSIX UDP soketleri (Windows/wasm'da `is_supported()` False).
+        .{ .name = "udp", .caps = &.{.network} },
         .{ .name = "tasks", .caps = &.{} },
         .{ .name = "tls", .caps = &.{.network} },
         .{ .name = "toml", .caps = &.{} },
