@@ -895,10 +895,26 @@ pub const Parser = struct {
         }
     }
 
-    fn patternIrrefutable(pat: ast.MatchCase) bool {
-        if (pat.guard != null) return false;
-        for (pat.args) |a| if (a.sub != null or a.literal != null) return false;
-        return true;
+    /// Kapsamlılık analizi için desen kodlaması: `Varyant` | `Varyant(arg,arg)`; arg = `[alan=]` + (`_` bağlama/yok sayma | `#` literal | iç içe desen).
+    fn encodeCoveragePattern(self: *Parser, pat: ast.MatchCase, out: *std.ArrayList(u8)) ParseError!void {
+        try out.appendSlice(self.allocator, pat.path[pat.path.len - 1]);
+        if (!pat.has_parens) return;
+        try out.append(self.allocator, '(');
+        for (pat.args, 0..) |a, i| {
+            if (i > 0) try out.append(self.allocator, ',');
+            if (a.keyword) |k| {
+                try out.appendSlice(self.allocator, k);
+                try out.append(self.allocator, '=');
+            }
+            if (a.sub) |sub| {
+                try self.encodeCoveragePattern(sub.*, out);
+            } else if (a.literal != null) {
+                try out.append(self.allocator, '#');
+            } else {
+                try out.append(self.allocator, '_');
+            }
+        }
+        try out.append(self.allocator, ')');
     }
 
     fn andAll(self: *Parser, items: []const ast.Expr) ParseError!ast.Expr {
@@ -1007,9 +1023,10 @@ pub const Parser = struct {
             }
             const enum_e = try self.pathExpr(c.path[0 .. c.path.len - 1]);
             if (first_enum == null) first_enum = enum_e;
-            if (patternIrrefutable(c.*)) {
-                if (covered.items.len > 0) try covered.append(self.allocator, ',');
-                try covered.appendSlice(self.allocator, c.path[c.path.len - 1]);
+            // Kapsamlılık satırı: korumasız her desen kodlanır (iç içe desenler dahil); checker satır matrisiyle analiz eder.
+            if (c.guard == null) {
+                if (covered.items.len > 0) try covered.append(self.allocator, ';');
+                try self.encodeCoveragePattern(c.*, &covered);
             }
             var case_conds = std.ArrayList(ast.Expr).empty;
             var pre = std.ArrayList(ast.Stmt).empty;

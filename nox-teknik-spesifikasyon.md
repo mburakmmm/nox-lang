@@ -29794,3 +29794,7 @@ Parser (`parseBaseTypeExpr`): nitelikli ad (`m.Box`) `[` ile devam ederse `.gene
 ### 3.394 Döndürülen modül globali ve `char_from_byte(0)` (v2.1.30)
 
 `ownership.returnNeedsRetain`: `.identifier` dalı artık `vars`ta bulunmayan ama `module_globals`te olan adı ödünç referans sayar ve `return _g` retain eder (önceden `false`: çağıranın yereli global'in referansını tüketip `nox_deinit_globals`te çift serbest bırakma oluşuyordu). `runtime/str.zig` `nox_char_from_byte`: `0` tek NUL baytlı `str` üretir (önceden boş); 0-255 dışı boş. Golden: `module_global_returned_borrowed`, `strings_char_from_byte_nul`.
+
+### 3.395 `match` iç içe kapsamlılık analizi (v2.1.31)
+
+Parser `encodeCoveragePattern`: korumasız her `case`, `Varyant(arg,...)` olarak kodlanır (`_` bağlama/yok sayma, `#` literal, iç içe desen, `alan=` öneki) ve `;` ile birleştirilip `__nox_match_unreachable` üçüncü argümanı olur. Checker: `parseMPat`, `mpatColumns`, `matrixExhaustive` (Maranget tarzı satır matrisi; enum sütununda her varyant için özelleştirme, enum olmayan sütunda yalnızca `_` satırları), alan tipleri `variantFieldTypes` ile örneklenmiş sınıfın `_Varyant_alan` alanlarından alınır (jenerik enum dahil). Üst düzeyde hiç satırı olmayan varyant "missing", satırı olup matrisi kapsamayan "only partly covered" olarak raporlanır. Golden: `enum_match_nested_exhaustive`, typecheck `err_enum_match_nested_not_exhaustive`. Ayrıca atıl kalmış 41 codegen + 15 typecheck golden test paketine bağlandı.

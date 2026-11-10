@@ -8048,6 +8048,141 @@ pub const Checker = struct {
         return try self.rewriteExprTo(ctx, key, repl);
     }
 
+    // ===== match kapsamlılık analizi (desen matrisi) =====
+    //
+    // Parser her korumasız `case` desenini `Varyant(arg,...)` olarak kodlar (arg: `_` bağlama, `#` literal, iç içe desen, `alan=` önekli olabilir).
+    // Bir değişken sütununda yalnızca `_` tüm değerleri kapsar; literal hiçbir şeyi kapsamaz; iç içe enum deseni, ancak alanın TÜM varyantları
+    // (satır matrisinde özyinelemeli olarak) kapsanırsa kapsar.
+
+    const MPatArg = struct { kw: ?[]const u8, pat: *MPat };
+    const MPat = struct { wild: bool = false, lit: bool = false, name: []const u8 = "", has_args: bool = false, args: []const MPatArg = &.{} };
+
+    fn parseMPat(self: *Checker, src: []const u8, pos: *usize) TypeError!*MPat {
+        const node = try self.allocator.create(MPat);
+        node.* = .{};
+        if (pos.* < src.len and src[pos.*] == '_') {
+            pos.* += 1;
+            node.wild = true;
+            return node;
+        }
+        if (pos.* < src.len and src[pos.*] == '#') {
+            pos.* += 1;
+            node.lit = true;
+            return node;
+        }
+        const start = pos.*;
+        while (pos.* < src.len and src[pos.*] != '(' and src[pos.*] != ',' and src[pos.*] != ')' and src[pos.*] != '=') pos.* += 1;
+        node.name = src[start..pos.*];
+        if (pos.* < src.len and src[pos.*] == '(') {
+            pos.* += 1;
+            node.has_args = true;
+            var args: std.ArrayListUnmanaged(MPatArg) = .empty;
+            while (pos.* < src.len and src[pos.*] != ')') {
+                var kw: ?[]const u8 = null;
+                // `alan=desen` mi?
+                var q = pos.*;
+                while (q < src.len and src[q] != '(' and src[q] != ',' and src[q] != ')' and src[q] != '=') q += 1;
+                if (q < src.len and src[q] == '=') {
+                    kw = src[pos.*..q];
+                    pos.* = q + 1;
+                }
+                try args.append(self.allocator, .{ .kw = kw, .pat = try self.parseMPat(src, pos) });
+                if (pos.* < src.len and src[pos.*] == ',') pos.* += 1;
+            }
+            if (pos.* < src.len and src[pos.*] == ')') pos.* += 1;
+            node.args = try args.toOwnedSlice(self.allocator);
+        }
+        return node;
+    }
+
+    /// Bir varyant desenini, varyantın alan sırasına göre sütun desenlerine açar (parantezsiz desen: tüm alanlar `_`).
+    fn mpatColumns(self: *Checker, pat: *const MPat, v: ast.EnumVariant) TypeError![]const *MPat {
+        const cols = try self.allocator.alloc(*MPat, v.fields.len);
+        const wild = try self.allocator.create(MPat);
+        wild.* = .{ .wild = true };
+        for (cols) |*col| col.* = wild;
+        if (!pat.has_args) return cols;
+        for (pat.args, 0..) |a, i| {
+            var idx: ?usize = if (a.kw == null and i < v.fields.len) i else null;
+            if (a.kw) |k| for (v.fields, 0..) |f, j| if (std.mem.eql(u8, f.name, k)) {
+                idx = j;
+            };
+            if (idx) |ix| cols[ix] = a.pat;
+        }
+        return cols;
+    }
+
+    fn wildColumns(self: *Checker, n: usize) TypeError![]const *MPat {
+        const cols = try self.allocator.alloc(*MPat, n);
+        const wild = try self.allocator.create(MPat);
+        wild.* = .{ .wild = true };
+        for (cols) |*col| col.* = wild;
+        return cols;
+    }
+
+    /// `class_name` örneklenmiş enum sınıfının varyantları (jenerik için kaynak tanımdan), enum değilse `null`.
+    fn enumVariantsOfClass(self: *Checker, class_name: []const u8) ?[]const ast.EnumVariant {
+        if (self.class_defs_by_name.get(class_name)) |cd| {
+            if (cd.enum_variants.len > 0) return cd.enum_variants;
+        }
+        if (self.generic_origin.get(class_name)) |origin| {
+            if (self.generic_classes.get(origin)) |g| if (g.enum_variants.len > 0) return g.enum_variants;
+        }
+        return null;
+    }
+
+    fn variantFieldTypes(self: *Checker, class_name: []const u8, v: ast.EnumVariant) TypeError![]const ?Type {
+        const out = try self.allocator.alloc(?Type, v.fields.len);
+        const info = self.classes.get(class_name);
+        for (v.fields, 0..) |f, i| {
+            out[i] = null;
+            if (info) |ci| {
+                const slot = try std.fmt.allocPrint(self.allocator, "_{s}_{s}", .{ v.name, f.name });
+                out[i] = ci.fields.get(slot);
+            }
+        }
+        return out;
+    }
+
+    /// Satır matrisi tüm değer kombinasyonlarını kapsıyor mu? (`types[i]` = i. sütunun tipi, bilinmiyorsa `null`).
+    fn matrixExhaustive(self: *Checker, rows: []const []const *MPat, col_types: []const ?Type) TypeError!bool {
+        if (rows.len == 0) return false;
+        if (col_types.len == 0) return true;
+        const variants: ?[]const ast.EnumVariant = if (col_types[0]) |t| switch (t) {
+            .class => |n| self.enumVariantsOfClass(n),
+            else => null,
+        } else null;
+        if (variants) |vs| {
+            const cname = col_types[0].?.class;
+            for (vs) |v| {
+                var spec: std.ArrayListUnmanaged([]const *MPat) = .empty;
+                for (rows) |r| {
+                    const head = r[0];
+                    var cols: []const *MPat = undefined;
+                    if (head.wild) {
+                        cols = try self.wildColumns(v.fields.len);
+                    } else if (!head.lit and std.mem.eql(u8, head.name, v.name)) {
+                        cols = try self.mpatColumns(head, v);
+                    } else continue;
+                    const merged = try self.allocator.alloc(*MPat, cols.len + r.len - 1);
+                    @memcpy(merged[0..cols.len], cols);
+                    @memcpy(merged[cols.len..], r[1..]);
+                    try spec.append(self.allocator, merged);
+                }
+                const ftypes = try self.variantFieldTypes(cname, v);
+                const nt = try self.allocator.alloc(?Type, ftypes.len + col_types.len - 1);
+                @memcpy(nt[0..ftypes.len], ftypes);
+                @memcpy(nt[ftypes.len..], col_types[1..]);
+                if (!try self.matrixExhaustive(spec.items, nt)) return false;
+            }
+            return true;
+        }
+        // Enum olmayan sütun: yalnızca `_` satırları kapsar (literal hiçbir şeyi kapsamaz).
+        var rest: std.ArrayListUnmanaged([]const *MPat) = .empty;
+        for (rows) |r| if (r[0].wild) try rest.append(self.allocator, r[1..]);
+        return self.matrixExhaustive(rest.items, col_types[1..]);
+    }
+
     fn enumDefOf(self: *Checker, ctx: *FnCtx, subject: ast.Expr, enum_expr: ast.Expr, what: []const u8) TypeError!ast.ClassDef {
         if (try self.genericEnumName(ctx, enum_expr)) |gname| {
             const gcd = self.generic_classes.get(gname).?;
@@ -8125,21 +8260,47 @@ pub const Checker = struct {
         if (eq(u8, name, "__nox_match_unreachable")) {
             if (c.args.len != 3 or c.args[2] != .string_lit) return null;
             const cd = try self.enumDefOf(ctx, c.args[0], c.args[1], "match");
-            const covered = c.args[2].string_lit;
+            const subj_t = try self.checkExpr(ctx, c.args[0]);
+            const subj_class: []const u8 = switch (subj_t) {
+                .class => |n| n,
+                else => cd.name,
+            };
+            // Satırlar `;` ile ayrılmış kodlanmış desenlerdir (bkz. parser `encodeCoveragePattern`).
+            var rows: std.ArrayListUnmanaged(*MPat) = .empty;
+            if (c.args[2].string_lit.len > 0) {
+                var it = std.mem.splitScalar(u8, c.args[2].string_lit, ';');
+                while (it.next()) |row| {
+                    var pos: usize = 0;
+                    try rows.append(self.allocator, try self.parseMPat(row, &pos));
+                }
+            }
             var missing: std.ArrayListUnmanaged(u8) = .empty;
+            var partial: std.ArrayListUnmanaged(u8) = .empty;
             for (cd.enum_variants) |v| {
-                var seen = false;
-                var it = std.mem.splitScalar(u8, covered, ',');
-                while (it.next()) |cv| if (eq(u8, cv, v.name)) {
-                    seen = true;
-                };
-                if (!seen) {
+                var has_row = false;
+                var spec_rows: std.ArrayListUnmanaged([]const *MPat) = .empty;
+                for (rows.items) |r| {
+                    if (!eq(u8, r.name, v.name)) continue;
+                    has_row = true;
+                    const cols = try self.mpatColumns(r, v);
+                    try spec_rows.append(self.allocator, cols);
+                }
+                if (!has_row) {
                     if (missing.items.len > 0) try missing.appendSlice(self.allocator, ", ");
                     try missing.appendSlice(self.allocator, v.name);
+                    continue;
+                }
+                const vtypes = try self.variantFieldTypes(subj_class, v);
+                if (!try self.matrixExhaustive(spec_rows.items, vtypes)) {
+                    if (partial.items.len > 0) try partial.appendSlice(self.allocator, ", ");
+                    try partial.appendSlice(self.allocator, v.name);
                 }
             }
             if (missing.items.len > 0) {
                 return self.fail(error.TypeMismatch, "non-exhaustive match on enum '{s}': missing variant(s) {s} (add the missing case(s) or a `case _:`)", .{ cd.name, missing.items });
+            }
+            if (partial.items.len > 0) {
+                return self.fail(error.TypeMismatch, "non-exhaustive match on enum '{s}': variant(s) {s} are only partly covered (a literal, nested pattern or guard can fail; add a plain case for them or a `case _:`)", .{ cd.name, partial.items });
             }
             try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .int_lit = 0 });
             return .int;

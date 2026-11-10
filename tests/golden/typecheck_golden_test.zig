@@ -2357,3 +2357,108 @@ test "golden(typecheck): v2.0 madde 7 — memory_fence argüman almaz" {
         @embedFile("typecheck_cases/err_fence_with_args.expected"),
     );
 }
+
+test "golden(typecheck): err_enum_generic_non_exhaustive (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_generic_non_exhaustive.nox"),
+        @embedFile("typecheck_cases/err_enum_generic_non_exhaustive.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_generic_unit_no_context (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_generic_unit_no_context.nox"),
+        @embedFile("typecheck_cases/err_enum_generic_unit_no_context.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_generic_wrong_instance (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_generic_wrong_instance.nox"),
+        @embedFile("typecheck_cases/err_enum_generic_wrong_instance.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_match_arity (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_match_arity.nox"),
+        @embedFile("typecheck_cases/err_enum_match_arity.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_match_nested_not_exhaustive (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_match_nested_not_exhaustive.nox"),
+        @embedFile("typecheck_cases/err_enum_match_nested_not_exhaustive.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_match_nested_wrong_enum (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_match_nested_wrong_enum.nox"),
+        @embedFile("typecheck_cases/err_enum_match_nested_wrong_enum.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_match_non_exhaustive (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_match_non_exhaustive.nox"),
+        @embedFile("typecheck_cases/err_enum_match_non_exhaustive.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_match_refutable_not_exhaustive (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_match_refutable_not_exhaustive.nox"),
+        @embedFile("typecheck_cases/err_enum_match_refutable_not_exhaustive.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_match_unknown_variant (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_match_unknown_variant.nox"),
+        @embedFile("typecheck_cases/err_enum_match_unknown_variant.expected"),
+    );
+}
+
+test "golden(typecheck): err_enum_match_wrong_enum (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_enum_match_wrong_enum.nox"),
+        @embedFile("typecheck_cases/err_enum_match_wrong_enum.expected"),
+    );
+}
+
+test "golden(typecheck): err_pool_run_entry_has_params (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_pool_run_entry_has_params.nox"),
+        @embedFile("typecheck_cases/err_pool_run_entry_has_params.expected"),
+    );
+}
+
+test "golden(typecheck): err_pool_run_entry_not_async (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_pool_run_entry_not_async.nox"),
+        @embedFile("typecheck_cases/err_pool_run_entry_not_async.expected"),
+    );
+}
+
+test "golden(typecheck): err_pool_run_num_workers_not_int (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_pool_run_num_workers_not_int.nox"),
+        @embedFile("typecheck_cases/err_pool_run_num_workers_not_int.expected"),
+    );
+}
+
+test "golden(typecheck): err_redeclare_task_field_class (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_redeclare_task_field_class.nox"),
+        @embedFile("typecheck_cases/err_redeclare_task_field_class.expected"),
+    );
+}
+
+test "golden(typecheck): ok_pool_run (v2.1.31: golden bağlandı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_pool_run.nox"),
+        @embedFile("typecheck_cases/ok_pool_run.expected"),
+    );
+}

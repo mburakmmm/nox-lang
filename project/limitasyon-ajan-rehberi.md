@@ -93,7 +93,7 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 
 ### E8. `match` / enum açık kenarları
 
-- Kapsamlılık denetimi **muhafazakâr**: literal, iç içe veya korumalı kol, varyantı kapsamış sayılmaz; `case _:` ile bitirmek gerekir. Tam iç içe kapsamlılık analizi yapılmadı.
+- Kapsamlılık artık **iç içe desenleri** de analiz eder (v2.1.31, desen matrisi); yalnızca korumalı ve literal kollar varyantı kapsamaz (bilinçli, koşul çalışma zamanında değerlendirilir).
 - `match` bağlamaları üreteç (`yield`) fonksiyonlarında kullanılamaz.
 - Koruma ifadesinde lambda, comprehension ve sözlük sabiti desteklenmez.
 - Yeni `StmtKind` **eklenmedi** (≈25 dosya, 90+ yürüyücü); `match` mevcut `IfStmt` zincirine indirgenir. Bunu bozacak değişiklik büyük refaktördür, sormadan yapma.

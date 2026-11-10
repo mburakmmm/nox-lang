@@ -121,7 +121,7 @@ some some 4 the end word zero large num 7 other
 - **Nested pattern.** `Option.Some(Option.Some(v))` matches when the outer variant matches and the inner value matches its pattern.
 - **Literal.** An `int`, `float`, `str` or `bool` literal (including `-1`) matches a field that equals it.
 - **Guard.** `case P if condition:` runs only when the pattern matches *and* the condition is true; otherwise the next case is tried. The condition can use the names the pattern binds.
-- **Exhaustiveness.** A case with a literal, a nested pattern or a guard does not count as covering its variant, because it can fail. Finish such a `match` with `case _:` (or a plain case for the variant).
+- **Exhaustiveness.** A guarded case or a case with a literal can fail, so it does not cover its variant. Nested patterns do count when, together, they cover every variant of the inner enum: `Option.Some(Option.Some(v))`, `Option.Some(Option.Nothing)` and `Option.Nothing` is exhaustive. Otherwise finish the `match` with `case _:` (or a plain case for the variant); the error says the variant is "only partly covered".
 
 ### Exhaustiveness
 

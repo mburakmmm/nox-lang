@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.31]
+
+### Eklendi
+
+- **`match` iç içe kapsamlılık analizi**: iç içe desenler artık birlikte iç enum'un tüm varyantlarını kapsıyorsa `case _:` gerekmez (`Option.Some(Option.Some(v))` + `Option.Some(Option.Nothing)` + `Option.Nothing`). Parser her korumasız deseni kodlar, checker desen matrisiyle özyinelemeli analiz yapar (jenerik enum, anahtar sözcüklü bağlama ve karışık enum alanları dahil). Literal ve korumalı kol hâlâ varyantı kapsamaz; eksik varyant yoksa ama kısmen kapsanmışsa hata "only partly covered" der.
+
+### Düzeltildi (test altyapısı)
+
+- `tests/golden/codegen_cases` altındaki 41 golden fixture (enum, ağ, zaman, atomic, protobuf, udp, timezone, signal, task, ... — v2.1.2x'te eklenmişlerdi) hiçbir teste bağlı değildi: yalnızca IR anlık görüntüsü alınıyor, çalıştırılmıyordu. `fixture_corpus.zig`ye eklendi (iki backend'de ve pinlenmemiş havuzla 3 kez doğrulandı). Aynı şekilde 15 typecheck golden (`err_enum_*`, `err_pool_run_*`, `ok_pool_run`, `err_redeclare_task_field_class`) `typecheck_golden_test.zig`ye bağlandı.
+
 ## [2.1.30]
 
 ### Düzeltildi
