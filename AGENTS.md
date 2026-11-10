@@ -9,6 +9,7 @@ Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm kodlam
 - Yeni bir göreve başlamadan önce: §2 (Değişmez İlkeler) ve görevle ilgili implementasyon kılavuzunu (§8-§12) oku.
 - Belirsiz bir tasarım kararıyla karşılaşırsan: önce spesifikasyon dosyasına bak, orada da yoksa §16'daki karar prosedürünü izle. **Tahmin yürütüp devam etme.**
 - Her PR/görev sonunda §14'teki checklist'i uygula.
+- **Çerçeve limitasyonları (bayat / tasarım gereği / yapılmamış) ajan rehberi: `project/limitasyon-ajan-rehberi.md`** (kayıt: `project/limitasyon-kaydi-2026-11.md`). Bir limitasyonu "düzeltmeden" önce oraya bak: tasarım gereği olanlara dokunulmaz, mimari kararlar sorulur.
 - **2.0 öncesi yapılacaklar KALICI listesi: `project/v2-hazirlik-yol-haritasi.md`.** Yeni bir göreve başlamadan önce oraya bak; bir madde bitince ya da yeni eksik bulununca o dosyayı güncelle.
 
 ---

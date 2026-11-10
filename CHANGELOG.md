@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.29]
+
+### Belge
+
+- `project/limitasyon-ajan-rehberi.md`: bayat / tasarım gereği (D) ve yapılmamış (E) limitasyonları ajanlar için açıklar (neye dokunulmaz, hangileri karar ister, sonradan kapananlar). `AGENTS.md` §0 bağlantı verir.
+
 ## [2.1.28]
 
 ### Eklendi
