@@ -75,6 +75,15 @@ fn mangledQualifiedClassName(self: *Codegen, raw_segments: []const []const u8) C
     return mangled.toOwnedSlice(self.allocator);
 }
 
+/// C15d: noktalı jenerik ad (`m.Box`) → alias ikamesi + `_` mangling (checker'ın `qualifiedGenericBase`i ile AYNI); noktasız ad aynen döner.
+fn qualifiedGenericBase(self: *Codegen, name: []const u8) CodegenError![]const u8 {
+    if (std.mem.indexOfScalar(u8, name, '.') == null) return name;
+    var segs: std.ArrayListUnmanaged([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, name, '.');
+    while (it.next()) |seg| try segs.append(self.allocator, seg);
+    return mangledQualifiedClassName(self, segs.items);
+}
+
 fn mangleGenericClassName(self: *Codegen, base: []const u8, args: []const ast.TypeExpr) CodegenError![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     try buf.appendSlice(self.allocator, base);
@@ -131,7 +140,7 @@ fn appendMangledTypeExprName(self: *Codegen, buf: *std.ArrayListUnmanaged(u8), t
             if (g.args.len == 0) return error.Unsupported;
             // İç içe KULLANICI jenerik sınıfı (`Box[Box[int]]`, `Option[Option[int]]`): checker iç türü `Box__int` sınıf adı olarak mangle eder, dış ad `Box__Box__int` olur.
             // Aday ad zaten kayıtlı bir örneklenmiş sınıfsa o kullanılır (yerleşik `list_int` biçimiyle çakışmaz).
-            const base_name = if (self.from_imports.get(g.name)) |m| m else g.name;
+            const base_name = if (self.from_imports.get(g.name)) |m| m else try qualifiedGenericBase(self, g.name);
             const cand = try mangleGenericClassName(self, base_name, g.args);
             if (self.classes.contains(cand)) {
                 try buf.appendSlice(self.allocator, cand);
@@ -275,6 +284,13 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
                     const mangled2 = try mangleGenericClassName(self, mangled_base, g.args);
                     if (self.classes.contains(mangled2)) {
                         return .{ .qtype = .l, .heap = .class, .class_name = mangled2 };
+                    }
+                }
+                // C15d: `m.Box[int]` — noktalı jenerik ad alias ikamesi + `_` mangling ile çözülür.
+                if (std.mem.indexOfScalar(u8, g.name, '.') != null) {
+                    const mangled3 = try mangleGenericClassName(self, try qualifiedGenericBase(self, g.name), g.args);
+                    if (self.classes.contains(mangled3)) {
+                        return .{ .qtype = .l, .heap = .class, .class_name = mangled3 };
                     }
                 }
                 return error.Unsupported;

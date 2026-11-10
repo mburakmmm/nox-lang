@@ -1128,6 +1128,13 @@ test "golden(typecheck): Faz U.3 — 'from X import Y' — Y kaynak modülde YOK
     );
 }
 
+test "golden(typecheck): C15d — modul onekli jenerik tip (nomodule.Box[int]) bilinmeyen modulde acik hata" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_qualified_generic_unknown_module.nox"),
+        @embedFile("typecheck_cases/err_qualified_generic_unknown_module.expected"),
+    );
+}
+
 test "golden(typecheck): Faz U.4.1 — (int, int) -> int fonksiyon tipi imzada kabul edilir" {
     try expectGolden(
         @embedFile("typecheck_cases/ok_func_type_signature.nox"),

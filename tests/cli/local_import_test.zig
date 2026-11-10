@@ -770,3 +770,99 @@ test "enum: jenerik enum proje-ici modulden `from m import Option, first` ile ku
     defer std.testing.allocator.free(run_result.stderr);
     try std.testing.expectEqualStrings("some ann nothing\n7\n", run_result.stdout);
 }
+
+// C15d (limitasyon kaydı): modül önekli jenerik tip açıklaması ve çağrısı — `m.Box[int]`, `m.Option[str]`, `m.Box[m.Box[int]]`,
+// `m.Box[int](5)`, `m.first[int](xs)`. Parametre, dönüş, alan, liste elemanı ve iç içe konumlar; boş stderr = sızıntı yok.
+test "C15d: modul onekli jenerik tip aciklamasi ve cagrisi (m.Box[int])" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "m.nox",
+        .data =
+        \\class Box[T]:
+        \\    value: T
+        \\    def __init__(self: Box, value: T) -> None:
+        \\        self.value = value
+        \\    def get(self: Box) -> T:
+        \\        return self.value
+        \\
+        \\enum Option[T]:
+        \\    Some(value: T)
+        \\    Nothing
+        \\
+        \\def first[T](xs: list[T]) -> T:
+        \\    return xs[0]
+        \\
+        ,
+    });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data =
+        \\import m
+        \\
+        \\class Holder:
+        \\    def __init__(self: Holder, b: m.Box[str]) -> None:
+        \\        self.b = b
+        \\
+        \\def unwrap(b: m.Box[int]) -> int:
+        \\    return b.get()
+        \\
+        \\def make(n: int) -> m.Box[int]:
+        \\    return m.Box[int](n)
+        \\
+        \\def pick(o: m.Option[str]) -> str:
+        \\    match o:
+        \\        case m.Option.Some(s):
+        \\            return s
+        \\        case m.Option.Nothing:
+        \\            return "none"
+        \\
+        \\boxes: list[m.Box[int]] = [make(1), make(2)]
+        \\print(unwrap(boxes[1]))
+        \\h: Holder = Holder(m.Box[str]("held"))
+        \\print(h.b.get())
+        \\print(m.first[int]([7, 8]))
+        \\print(pick(m.Option.Some("x")), pick(m.Option.Nothing))
+        \\nested: m.Box[m.Box[int]] = m.Box[m.Box[int]](make(5))
+        \\print(nested.get().get())
+        \\
+        ,
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    for ([_][]const u8{ "llvm", "qbe" }) |backend| {
+        const build_result = try std.process.run(std.testing.allocator, io, .{
+            .argv = &.{ noxcPath(), "build", "--backend", backend, main_path },
+            .environ_map = &env_map,
+        });
+        defer std.testing.allocator.free(build_result.stdout);
+        defer std.testing.allocator.free(build_result.stderr);
+        if (build_result.term != .exited or build_result.term.exited != 0) {
+            std.debug.print("build basarisiz ({s}), stderr: {s}\n", .{ backend, build_result.stderr });
+        }
+        try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+        const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+        defer std.testing.allocator.free(run_result.stdout);
+        defer std.testing.allocator.free(run_result.stderr);
+        try std.testing.expectEqualStrings("", run_result.stderr);
+        try std.testing.expectEqualStrings("2\nheld\n7\nx none\n5\n", run_result.stdout);
+    }
+}

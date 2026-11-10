@@ -39,6 +39,7 @@ import util                  # <project>/util.nox
 import app.models            # <project>/app/models.nox
 from app.models import User, greet
 x: util.Box = util.Box(2)    # qualified type names work in annotations
+y: util.Pair[int] = util.Pair[int](2)   # so do generic ones
 ```
 
 Forms:

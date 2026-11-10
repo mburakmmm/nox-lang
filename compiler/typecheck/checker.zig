@@ -965,7 +965,7 @@ pub const Checker = struct {
                 // (nox.collections'ın `import`+tip-annotasyon KULLANIMIYLA)
                 // DOĞRULANDI.
                 const maybe_gcd = self.generic_classes.get(g.name) orelse blk: {
-                    const mangled_base = self.from_imports.get(g.name) orelse break :blk null;
+                    const mangled_base = self.from_imports.get(g.name) orelse (try self.qualifiedGenericBase(g.name)) orelse break :blk null;
                     break :blk self.generic_classes.get(mangled_base);
                 };
                 if (maybe_gcd) |gcd| {
@@ -2811,6 +2811,22 @@ pub const Checker = struct {
             if (std.mem.eql(u8, n, name)) return true;
         }
         return false;
+    }
+
+    /// C15d: `m.Box` / `pkg.mod.Option` gibi noktalı bir jenerik ad (parser `m.Box[int]` tip açıklamasını `.generic` + noktalı ad olarak üretir)
+    /// modül öneki takma adı ikame edilip `_` ile birleştirilmiş mangled adına çözülür. Nokta yoksa `null`.
+    fn qualifiedGenericBase(self: *Checker, name: []const u8) TypeError!?[]const u8 {
+        if (std.mem.indexOfScalar(u8, name, '.') == null) return null;
+        var segs: std.ArrayListUnmanaged([]const u8) = .empty;
+        var it = std.mem.splitScalar(u8, name, '.');
+        while (it.next()) |seg| try segs.append(self.allocator, seg);
+        const resolved = try self.substituteAlias(segs.items);
+        if (resolved.len < 2) return null;
+        const module_path = try self.joinSegments(resolved[0 .. resolved.len - 1], '.');
+        if (!self.imported_modules.contains(module_path)) {
+            return self.fail(error.UnknownType, "unknown module: {s}", .{module_path});
+        }
+        return try self.joinSegments(resolved, '_');
     }
 
     /// `segments`i `sep` ile birleştirir (bkz. `checkModule`in `.import_stmt`
@@ -7021,7 +7037,7 @@ pub const Checker = struct {
         // `f[int](x)`: AÇIK tip argümanlı generic FONKSİYON çağrısı (sıfır parametreli `none_of[int]()` DAHİL; tip parametresi argümanlardan çıkarılamıyorsa tek yol budur).
         // Codegen çağrıyı `resolved_class_name` hücresindeki somutlaştırılmış fonksiyon adından üretir (sınıf adlarıyla çakışmaz: `classes` yerine `functions`te bulunur).
         const maybe_gfd = self.generic_functions.get(g.name) orelse blk: {
-            const mangled_fn = self.from_imports.get(g.name) orelse break :blk null;
+            const mangled_fn = self.from_imports.get(g.name) orelse (try self.qualifiedGenericBase(g.name)) orelse break :blk null;
             break :blk self.generic_functions.get(mangled_fn);
         };
         if (maybe_gfd) |gfd| {
@@ -7044,7 +7060,7 @@ pub const Checker = struct {
             return rt;
         }
         const maybe_gcd = self.generic_classes.get(g.name) orelse blk: {
-            const mangled_base = self.from_imports.get(g.name) orelse break :blk null;
+            const mangled_base = self.from_imports.get(g.name) orelse (try self.qualifiedGenericBase(g.name)) orelse break :blk null;
             break :blk self.generic_classes.get(mangled_base);
         };
         if (maybe_gcd) |gcd| {
@@ -8137,6 +8153,7 @@ pub const Checker = struct {
         // AŞAĞIDAKİ normal metod-çağrısı yolu aynen devam eder.
         if (self.generic_method_names.count() > 0) try self.tryResolveGenericMethodCall(ctx, c);
         if (self.generic_classes.count() > 0) try self.tryResolveGenericEnumCall(ctx, c);
+        if (self.generic_classes.count() + self.generic_functions.count() > 0) if (try self.tryResolveQualifiedGenericCall(ctx, c)) |t| return t;
         if (self.static_method_names.count() > 0) try self.tryResolveStaticMethodCall(ctx, c);
         // `cls(...)` (classmethod gövdesi): çağrı, alıcı sınıfın kurucusuna yeniden yazılır.
         if (ctx.cls_alias) |al| {
@@ -11143,15 +11160,47 @@ pub const Checker = struct {
         switch (e) {
             .identifier => |n| return .{ .simple = n },
             .none_lit => return .{ .simple = "None" },
+            .attribute => {
+                var segs: std.ArrayListUnmanaged([]const u8) = .empty;
+                if (!(try self.flattenDottedPath(e, &segs)) or segs.items.len < 2) return null;
+                return .{ .qualified = try segs.toOwnedSlice(self.allocator) };
+            },
             .index => |ix| {
-                if (ix.obj.* != .identifier) return null;
                 const inner = (try self.indexExprToTypeExpr(ix.index.*)) orelse return null;
                 const args = try self.allocator.alloc(ast.TypeExpr, 1);
                 args[0] = inner;
-                return .{ .generic = .{ .name = ix.obj.identifier, .args = args } };
+                if (ix.obj.* == .identifier) return .{ .generic = .{ .name = ix.obj.identifier, .args = args } };
+                // C15d: `m.Box[int]` (noktalı jenerik ad)
+                var segs: std.ArrayListUnmanaged([]const u8) = .empty;
+                if (ix.obj.* != .attribute or !(try self.flattenDottedPath(ix.obj.*, &segs)) or segs.items.len < 2) return null;
+                return .{ .generic = .{ .name = try self.joinSegments(segs.items, '.'), .args = args } };
             },
             else => return null,
         }
+    }
+
+    /// C15d: `m.Box[int](5)` / `m.first[int](xs)` — modül önekli jenerik sınıf ya da fonksiyon çağrısı, nitelikli adı mangled ada çevrilmiş
+    /// `generic_construct`a yeniden yazılır (`from m import Box` ile `Box[int](5)` aynı yola düşer).
+    fn tryResolveQualifiedGenericCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
+        if (c.callee.* != .index) return null;
+        const ix = c.callee.index;
+        if (ix.obj.* != .attribute) return null;
+        var raw: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (!(try self.flattenDottedPath(ix.obj.*, &raw)) or raw.items.len < 2) return null;
+        if ((try ctx.scope.lookup(self.allocator, raw.items[0])) != null or self.module_globals.contains(raw.items[0])) return null;
+        const segments = try self.substituteAlias(raw.items);
+        const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
+        if (!self.imported_modules.contains(module_path)) return null;
+        const mangled = try self.joinSegments(segments, '_');
+        if (!self.generic_classes.contains(mangled) and !self.generic_functions.contains(mangled)) return null;
+        const targ = (try self.indexExprToTypeExpr(ix.index.*)) orelse return null;
+        const te = try self.allocator.alloc(ast.TypeExpr, 1);
+        te[0] = targ;
+        const cell = try self.allocator.create(?[]const u8);
+        cell.* = null;
+        const call_args = try self.allocator.dupe(ast.Expr, c.args);
+        const repl: ast.Expr = .{ .generic_construct = .{ .name = mangled, .type_args = te, .args = call_args, .resolved_class_name = cell } };
+        return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), repl);
     }
 
     fn tryResolveGenericMethodCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!void {

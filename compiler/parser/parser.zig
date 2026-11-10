@@ -490,6 +490,22 @@ pub const Parser = struct {
             while (self.match(.dot)) {
                 try segments.append(self.allocator, (try self.expect(.identifier)).lexeme);
             }
+            // C15d: `m.Box[int]` / `pkg.mod.Option[int]` — nitelikli jenerik tip. Ad noktalı birleştirilir (`"m.Box"`); checker ve
+            // codegen alias ikamesi + `_` mangling ile modül önekli jenerik sınıfa çözer.
+            if (self.match(.l_bracket)) {
+                var args = std.ArrayList(ast.TypeExpr).empty;
+                try args.append(self.allocator, try self.parseTypeExpr());
+                while (self.match(.comma)) {
+                    try args.append(self.allocator, try self.parseTypeExpr());
+                }
+                _ = try self.expect(.r_bracket);
+                var joined = std.ArrayList(u8).empty;
+                for (segments.items, 0..) |seg, i| {
+                    if (i != 0) try joined.append(self.allocator, '.');
+                    try joined.appendSlice(self.allocator, seg);
+                }
+                return .{ .generic = .{ .name = try joined.toOwnedSlice(self.allocator), .args = try args.toOwnedSlice(self.allocator) } };
+            }
             return .{ .qualified = try segments.toOwnedSlice(self.allocator) };
         }
         return .{ .simple = name };

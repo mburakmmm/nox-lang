@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.28]
+
+### Eklendi
+
+- **Modül önekli jenerik tip** (kayıt C15d): `x: m.Box[int]`, `o: m.Option[str]`, `m.Box[m.Box[int]]` tip açıklamaları ve `m.Box[int](5)` / `m.first[int](xs)` çağrıları (`import m` ile). Önceden yalnızca `from m import Box` çalışıyordu; açıklama `unexpected '['` sözdizimi hatası veriyordu. Parametre, dönüş, alan, liste elemanı ve iç içe konumlar iki backend'de de çalışır; `noxc fmt` korur.
+
 ## [2.1.27]
 
 ### Eklendi
