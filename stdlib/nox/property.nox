@@ -1,0 +1,112 @@
+# nox.property — seed'li özellik tabanlı (property-based) test yardımcıları (Ember NL-011).
+#
+#     import nox.property
+#     from nox.property import Rng
+#
+#     def reverse_twice(r: Rng) -> bool:
+#         xs: list[int] = r.int_list(r.size, -100, 100)
+#         ys: list[int] = xs.copy()
+#         ys.reverse()
+#         ys.reverse()
+#         return xs == ys
+#
+#     nox.property.check("reverse twice", reverse_twice)            # 100 çalıştırma
+#
+# Her çalıştırma kendi tohumuyla (`seed + çalıştırma_no`) bir `Rng` kurar; üreticiler `r.size` ile sınırlanır (liste uzunluğu, dize uzunluğu, tamsayı büyüklüğü).
+# Başarısız çalıştırma bulununca AYNI tohumla `size` küçültülerek (yarılanarak) hâlâ başarısız olan en küçük boyut aranır — "boyut küçültme" — ve
+# `PropertyFailed(seed, size, run)` fırlatılır; ileti tek satırlık bir yeniden oynatma ipucu içerir. Aynı tohum aynı değerleri üretir, bu yüzden CI çıktısındaki
+# tohum yerelde `replay(prop, seed, size)` ile tekrarlanabilir. Özellik içinde bir istisna da başarısızlık sayılır.
+# Üretici: Park–Miller (minimal standart) doğrusal eşlenik üreteç — kriptografik değildir, taşma yapmaz, platformlar arası aynı diziyi verir.
+
+class PropertyFailed(Exception):
+    seed: int
+    size: int
+    run: int
+
+    def __init__(self: PropertyFailed, message: str, seed: int, size: int, run: int) -> None:
+        super().__init__(message)
+        self.seed = seed
+        self.size = size
+        self.run = run
+
+class Rng:
+    state: int
+    size: int
+
+    def __init__(self: Rng, seed: int, size: int) -> None:
+        s: int = seed % 2147483646
+        if s < 0:
+            s = s + 2147483646
+        self.state = s + 1
+        self.size = size
+
+    # [0, 2147483646) aralığında bir sonraki ham değer.
+    def next_raw(self: Rng) -> int:
+        self.state = (self.state * 48271) % 2147483647
+        return self.state - 1
+
+    # [lo, hi] kapalı aralığında tamsayı; üst sınır `size` ile daraltılır (lo + size'a kadar).
+    def int_range(self: Rng, lo: int, hi: int) -> int:
+        top: int = hi
+        if top - lo > self.size:
+            top = lo + self.size
+        if top <= lo:
+            return lo
+        return lo + self.next_raw() % (top - lo + 1)
+
+    def boolean(self: Rng) -> bool:
+        return self.next_raw() % 2 == 1
+
+    # 0..`max_len` (en çok `size`) uzunlukta, `lo`..`hi` aralığında tamsayı listesi.
+    def int_list(self: Rng, max_len: int, lo: int, hi: int) -> list[int]:
+        n: int = self.int_range(0, max_len)
+        out: list[int] = []
+        i: int = 0
+        while i < n:
+            out.append(self.int_range(lo, hi))
+            i = i + 1
+        return out
+
+    # 0..`max_len` (en çok `size`) uzunlukta küçük harfli ASCII dize.
+    def ascii_str(self: Rng, max_len: int) -> str:
+        n: int = self.int_range(0, max_len)
+        out: str = ""
+        i: int = 0
+        while i < n:
+            out = out + chr(97 + self.next_raw() % 26)
+            i = i + 1
+        return out
+
+    # Verilen listeden rastgele bir öğe (boş liste için `ValueError`).
+    def choice_str(self: Rng, items: list[str]) -> str:
+        if len(items) == 0:
+            raise ValueError("choice_str on an empty list")
+        return items[self.next_raw() % len(items)]
+
+# Tek bir çalıştırmayı verilen tohum ve boyutla yürütür; özellik doğruysa True, yanlışsa ya da istisna fırlatırsa False.
+def replay(prop: (Rng) -> bool, seed: int, size: int) -> bool:
+    r: Rng = Rng(seed, size)
+    try:
+        return prop(r)
+    except Exception as e:
+        return False
+    return False
+
+# `prop`u `runs` kez dener (boyut 1'den `max_size`a doğru büyür). Başarısızlıkta boyutu küçültüp `PropertyFailed` fırlatır.
+def check(name: str, prop: (Rng) -> bool, runs: int = 100, seed: int = 12345, max_size: int = 100) -> None:
+    run: int = 0
+    while run < runs:
+        size: int = 1 + (run * max_size) // runs
+        run_seed: int = seed + run
+        if not replay(prop, run_seed, size):
+            smallest: int = size
+            cand: int = size // 2
+            while cand >= 0:
+                if not replay(prop, run_seed, cand):
+                    smallest = cand
+                if cand == 0:
+                    cand = -1
+                else:
+                    cand = cand // 2
+            raise PropertyFailed("property '" + name + "' failed on run " + str(run) + ": replay with replay(prop, " + str(run_seed) + ", " + str(smallest) + ")", run_seed, smallest, run)
+        run = run + 1

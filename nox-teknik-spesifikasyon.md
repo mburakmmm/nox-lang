@@ -29724,3 +29724,7 @@ Kaynak: aether/nyx/aura/nova/pulse `NOX_LIMITATIONS` belgeleri; kayıt `project/
 - `releaseTemporaryArgs` `Task`/`Channel` geçicilerini (`releaseNonArcIfTemporary`) ve doğrudan `spawn` argümanını (`isTemporaryExpr` spawn'ı taze saymaz) çağrıdan sonra bırakır.
 - `module_loader.renameTypeExpr` `.generic` adını `map` ile yeniden adlandırır (modül-yerel jenerik sınıf başvuruları).
 - `TaskGroup[T]`: `_items: list[TaskHandle[T]]`; bekleme `Task.is_done` + `sleep_ms` yoklaması. `await` yalnızca `async def` içinde ve `Task` değerinde yazılabildiğinden `join_all` yoktur (`handles()` döngüsü çağıranda).
+
+### 3.379 `nox.property` (v2.1.12)
+
+Saf Nox (`stdlib/nox/property.nox`): `Rng` Park–Miller (48271 mod 2^31−1; çarpım < 2^47, taşmaz); üreticiler `size` ile sınırlıdır. `check` her çalıştırmada `seed + run` ve `1 + run*max_size/runs` boyutuyla `replay` eder; başarısızlıkta aynı tohumla boyutu yarılayarak hâlâ başarısız olan en küçük boyutu bulur ("boyut küçültme", değer küçültme değil). Özellik içi istisna başarısızlıktır. Fonksiyon tipli parametre `(Rng) -> bool`.

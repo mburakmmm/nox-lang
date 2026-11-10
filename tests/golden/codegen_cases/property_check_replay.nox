@@ -1,0 +1,36 @@
+# Ember NL-011: nox.property — seed'li özellik testi: üreticiler, boyut küçültme, yeniden oynatma, istisna = başarısızlık.
+import nox.property
+from nox.property import Rng, PropertyFailed
+
+def reverse_twice(r: Rng) -> bool:
+    xs: list[int] = r.int_list(r.size, -100, 100)
+    ys: list[int] = xs.copy()
+    ys.reverse()
+    ys.reverse()
+    return xs == ys
+
+def small_numbers(r: Rng) -> bool:
+    return r.int_range(0, 1000) < 50
+
+def always_raises(r: Rng) -> bool:
+    raise ValueError("boom")
+
+def same_seed_same_values(r: Rng) -> bool:
+    a: Rng = Rng(77, 50)
+    b: Rng = Rng(77, 50)
+    return a.int_list(20, 0, 9) == b.int_list(20, 0, 9) and a.ascii_str(10) == b.ascii_str(10)
+
+nox.property.check("reverse twice", reverse_twice)
+nox.property.check("deterministic", same_seed_same_values, 20)
+print("ok")
+try:
+    nox.property.check("small", small_numbers, 50, 1)
+except PropertyFailed as e:
+    print(e.run >= 0, e.size <= 100, nox.property.replay(small_numbers, e.seed, e.size))
+    print(e.message[0:33])
+try:
+    nox.property.check("raises", always_raises, 5, 1)
+except PropertyFailed as e2:
+    print("raises caught", e2.run)
+r: Rng = Rng(1, 10)
+print(r.int_range(5, 5), r.int_range(0, 3) <= 3, len(r.ascii_str(100)) <= 10)

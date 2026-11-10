@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.12]
+
+### Eklendi
+
+- **`nox.property`** (Ember NL-011): seed'li özellik tabanlı test. `check(name, prop, runs, seed, max_size)`, `replay(prop, seed, size)`, `Rng` üreticileri (`int_range`, `boolean`, `int_list`, `ascii_str`, `choice_str`); başarısızlıkta boyut küçültme ve yeniden oynatma ipucuyla `PropertyFailed(seed, size, run)`. Park–Miller üreteç: platformlar arası aynı dizi.
+
 ## [2.1.11]
 
 ### Düzeltildi
