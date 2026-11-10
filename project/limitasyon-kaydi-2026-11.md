@@ -17,7 +17,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [x] **A10 nova 8** HEAD yanıtı + keep-alive gövde okuma kilitlenmesi (bekliyor). — **KAPANDI v2.1.2**
 - [x] **A11 pulse TASKLOCAL-001** TaskLocal değerleri fiber yok edilirken serbest bırakılmıyor (bekliyor). — **KAPANDI v2.1.2**
 - [x] **A12 pulse PROVENANCE-001** `noxc --version` kaynak commit'ini göstermiyor. — **KAPANDI v2.1.2**
-- [ ] **A13 aura L7** modül düzeyi `str` atamasında çıkışta `nox_rc_pool_drain` çökmesi (bağımsız repro yok; A6 (v2.1.2) çıkış-kilitlenmesini düzeltti — aura `files` self-check'ini `_roots[0]` yamasını geri alıp yeniden denemeli; çökme sürerse ayrı hata).
+- [x] **A13 aura L7** modül düzeyi `str` atamasında çıkışta çökme — **KAPANDI v2.1.30**: kök neden Aura'ya özgü değildi; `return _global` (modül globalini olduğu gibi döndürmek) retain etmiyordu, çağıran sonucu bırakınca `nox_deinit_globals` çift serbest bırakıyordu. Aura'nın `_root: str` hâlini geri alan bir kopyada `files` self-check'i artık geçer.
 - [x] **A15 (v2.1.16)** Bir `async def`in okuduğu modül-düzeyi `Channel[T]`/`Task[T]` çıkışta yıkılmıyordu — **KAPANDI v2.1.16**: `nox_deinit_globals` artık `isSpawnRefcountedType` globalleri de bırakır ve async epilog'unda `nox_async_deinit`ten ÖNCE çağrılır (önceden sıra tersti: zamanlayıcı kapatılmış olduğundan `Channel.deinit` çöküyordu).
 - [x] **A16 (v2.1.15)** `print(await t)` hesaplanmış str/sınıf/list sızdırıyordu — **KAPANDI v2.1.15**.
 - [x] **A17 (v2.1.17)** Global'e dokunan üst-düzey atama/metod çağrıları aradaki ifadelerden önce çalışıyordu (kaynak sırası bozuktu) — **KAPANDI v2.1.17**.

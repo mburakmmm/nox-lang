@@ -1001,7 +1001,10 @@ pub fn returnNeedsRetain(self: *Codegen, e: ast.Expr, v0: Value) bool {
     if (v0.always_fresh) return false;
     return switch (e) {
         .identifier => |name| blk: {
-            const info = self.vars.get(name) orelse break :blk false;
+            // A13 (aura L7, v2.1.30): bir MODÜL GLOBALİNİ `return _g` ile olduğu gibi döndürmek, globalin sahipliğindeki ödünç alınmış bir
+            // referansı dışarı vermektir — çağıran sonucu kendi sahipliğiymiş gibi release eder; retain yoksa global deinit'te çift serbest
+            // bırakma olur. Yerel değişken `vars`ta bulunur; bulunmayan ad modül globaliyse retain gerekir.
+            const info = self.vars.get(name) orelse break :blk self.module_globals.contains(name);
             // GG.14 (bkz. nox-teknik-spesifikasyon.md §3.66):
             // `info.is_pinned_str` — BU parametrenin, BU splice sitesinde,
             // HER ZAMAN bir string literaline (`PINNED_REFCOUNT`, ASLA

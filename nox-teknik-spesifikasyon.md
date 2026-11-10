@@ -29790,3 +29790,7 @@ AST: `MatchPatternArg.sub`/`.literal`, `MatchCase.guard`. Parser (`lowerPattern`
 ### 3.393 Modül önekli jenerik tip (v2.1.28)
 
 Parser (`parseBaseTypeExpr`): nitelikli ad (`m.Box`) `[` ile devam ederse `.generic` üretilir, `name` noktalı birleşik addır (`"m.Box"`). Checker: `qualifiedGenericBase` (alias ikamesi + `imported_modules` doğrulaması + `_` mangling) `typeExprToType` ve `checkGenericConstruct` içindeki `from_imports` geri düşüşüne eklendi; `tryResolveQualifiedGenericCall` `m.Box[int](args)` çağrısını (callee `index(attribute…)`) mangled adlı `generic_construct`a `expr_rewrites` ile yeniden yazar (jenerik fonksiyon da aynı yoldan); `indexExprToTypeExpr` nitelikli tip argümanlarını (`m.Box[m.Box[int]]`) tanır. Codegen (`registration.qualifiedGenericBase`): `appendMangledTypeExprName` ve `resolveType` aynı mangling'i uygular. Test: `tests/cli/local_import_test.zig` "C15d" (llvm+qbe, boş stderr); typecheck `err_qualified_generic_unknown_module`.
+
+### 3.394 Döndürülen modül globali ve `char_from_byte(0)` (v2.1.30)
+
+`ownership.returnNeedsRetain`: `.identifier` dalı artık `vars`ta bulunmayan ama `module_globals`te olan adı ödünç referans sayar ve `return _g` retain eder (önceden `false`: çağıranın yereli global'in referansını tüketip `nox_deinit_globals`te çift serbest bırakma oluşuyordu). `runtime/str.zig` `nox_char_from_byte`: `0` tek NUL baytlı `str` üretir (önceden boş); 0-255 dışı boş. Golden: `module_global_returned_borrowed`, `strings_char_from_byte_nul`.

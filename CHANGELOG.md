@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.30]
+
+### Düzeltildi
+
+- **Modül globalini `return` ile döndürmek çıkışta çift serbest bırakma yapıyordu** (kayıt A13, aura L7): `def get_root() -> str: return _root` globali retain etmeden döndürüyordu; çağıran (`root: str = get_root()`) sonucu kendi sahipliği sanıp bırakınca global'in tek referansı erken sıfırlanıyor, `nox_deinit_globals` aynı nesneyi ikinci kez serbest bırakıyordu (`str`, `list`, sınıf; iki backend'de de). `returnNeedsRetain` artık yerel olmayan, modül globali olan bir adı ödünç referans sayar.
+- **`nox.strings.char_from_byte(0)` boş dize döndürüyordu** (pulse NOX-STR-001): `str` uzunluk başlığı taşıdığından artık tek NUL baytlı (`len == 1`) bir dize üretir; 0-255 dışı hâlâ boştur.
+
 ## [2.1.29]
 
 ### Belge

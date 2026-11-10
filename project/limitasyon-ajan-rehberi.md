@@ -32,7 +32,7 @@ Kaynak: pulse deposunun `NOX_LIMITATIONS` belgesi (`DESIGN-LIMIT`). Hepsi "Nox b
 | HTTP-001 | HTTP istemcisi HTTP/1.1; yalnız GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS; gövde yalnız POST/PUT/PATCH; `timeout_ms=0` DNS/bağlanmayı sınırsız bırakır; akışsız çağrı tüm gövdeyi tamponlar | **Geçerli.** Akışlı okuma sonradan eklendi (Faz 8), ama yöntem kümesi değişmedi. |
 | HTTP-002 | HTTP/2 yalnız sunucu tarafında; istemci HTTP/1.1; gRPC taşıması değil | **Geçerli.** gRPC için E2'ye bak. |
 | FS-001 | Dosya yolları sınırlanmaz (mutlak yol, `..`, symlink doğrudan işletim sistemine gider) | **Geçerli ve AGENTS.md §9.5'te güven sınırı olarak belgeli.** Güvenilmeyen `path`i çağıran taraf kanonikleştirmelidir; `nox.fs` bunu otomatik yapmaz. "Kolaylık" olarak sandbox ekleme. |
-| STR-001 | `char_from_byte(0)` boş dize döner | **Doğrulanmadı bu turda.** `chr(0)` ya da ara bellek dönüşümü kullan; düzeltme istenirse önce yeniden üret. |
+| STR-001 | `char_from_byte(0)` boş dize döner | **Bayat:** v2.1.30'da düzeltildi (tek NUL baytlı `str`). |
 | TASKLOCAL-002 | Doğan görev ebeveynin `TaskLocal` değerini miras almaz; bağlamı açıkça geçir | **Geçerli, tasarım.** Otomatik miras ekleme. |
 | TASKLOCAL-003 | `TaskLocal[T]` içinde çıplak `int`/`float`/`bool` saklanamaz | **Geçerli.** Sınıf/`str`/`list`/`dict` kullan. |
 | QBE-001 / QBE-002 | QBE zamanlayıcısı kooperatif, paralel değil; QBE `spawn`/`thread` aktarımı LLVM'den dar | **Geçerli.** Bkz. D3. |
@@ -55,11 +55,9 @@ Kaynak: pulse deposunun `NOX_LIMITATIONS` belgesi (`DESIGN-LIMIT`). Hepsi "Nox b
 
 Her satır: durum, neden bekliyor, ajanın ilk adımı.
 
-### E1. A13 — aura L7: modül düzeyi `str` atamasında çıkışta `nox_rc_pool_drain` çökmesi
+### E1. A13 — aura L7 (KAPANDI v2.1.30)
 
-- **Durum:** Açık, kanıtlanmamış. Bağımsız küçük repro yok; belirti yalnız aura içinde görülmüştü.
-- **Bağlam:** İlgili A6 (döngüde `dict[str, Node]` çıkış askısı) v2.1.2'de çözüldü; A15 (v2.1.16) çıkışta global yıkım sırasını düzeltti (`nox_deinit_globals` artık `nox_async_deinit`ten önce). L7 bunlardan sonra kendiliğinden kapanmış olabilir.
-- **İlk adım:** `~/Documents/aura` içinde self-check'i (`files` testi, `_roots[0]` yamasını geri alıp) güncel `noxc` ile yeniden çalıştır. Çökme yoksa kaydı `[x] bayat` yap. Çökme sürerse stack iziyle küçük repro çıkar, sonra ayrı hata olarak aç.
+Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliği sanıp bırakınca global'in tek referansı sıfırlanıyor, `nox_deinit_globals` ikinci kez serbest bırakıyordu. Düzeltme: `returnNeedsRetain` (ownership.zig). Golden: `module_global_returned_borrowed`. Kayıttaki "Aura'ya özgü olabilir" varsayımı yanlıştı; ders: modül globalleri de parametre/alan gibi **ödünç referanstır** ve dönüşte retain ister.
 
 ### E2. C12 — gRPC (karar bekliyor)
 

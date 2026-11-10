@@ -909,17 +909,13 @@ test "nox_str_byte_at gecerli indekste dogru bayti tahsissiz doner" {
 }
 
 /// `nox_str_byte_at`nin TERSİ (bkz. proje belleği "4 yeni stdlib modülü"
-/// planı, nox.url) — HAM bir bayt DEĞERİNİ (0-255) TEK karakterlik bir
-/// `str`e çevirir. **Bilinçli v1 kapsamı**: `b` HER ZAMAN TEK bir HAM BAYT
-/// olarak yazılır (0-255 aralığı DIŞI `0`a KIRPILIR). **Bulundu (test
-/// yazarken)**: `b == 0` (KIRPILMIŞ geçersiz girdi DAHİL) HER ZAMAN BOŞ
-/// bir `str` üretir, "tek baytlı" DEĞİL — Nox'un TÜM string temsili
-/// NUL-sonlandırmalı (C-tarzı) OLDUĞUNDAN gömülü bir NUL bayt asla
-/// TEMSİL EDİLEMEZ. Ascii-durumu tek çıktı baytından ZATEN biliniyor
-/// (SIFIR ek tarama).
+/// planı, nox.url) — HAM bir bayt DEĞERİNİ (0-255) TEK baytlık bir `str`e
+/// çevirir. `b == 0` gömülü bir NUL baytlı 1 uzunluklu `str` üretir
+/// (`str` uzunluk başlığı taşır, NUL içerebilir; v2.1.30 öncesi boş dönüyordu,
+/// NOX-STR-001). 0-255 DIŞI girdi boş `str` verir (geçersiz bayt).
 pub export fn nox_char_from_byte(rt: ?*anyopaque, b: i64) ?[*:0]u8 {
-    const byte: u8 = if (b < 0 or b > 255) 0 else @intCast(b);
-    if (byte == 0) return allocStr(rt, &.{}, ASCII_TRUE);
+    if (b < 0 or b > 255) return allocStr(rt, &.{}, ASCII_TRUE);
+    const byte: u8 = @intCast(b);
     const ascii_state: u64 = if (byte < 0x80) ASCII_TRUE else ASCII_FALSE;
     return allocStr(rt, &[_]u8{byte}, ascii_state);
 }
@@ -968,12 +964,14 @@ test "nox_char_from_byte gecerli baytlardan tek karakterlik str uretir" {
     const s2 = nox_char_from_byte(rt, 0xC3) orelse return error.ConvFailed;
     defer nox_str_release(rt, s2);
     try std.testing.expectEqual(@as(usize, 1), std.mem.span(s2).len);
-    // Kırpılan (0-255 dışı) girdi 0'a düşer — NUL-sonlandırmalı temsil
-    // GÖMÜLÜ bir NUL bayt TAŞIYAMADIĞINDAN bu HER ZAMAN boş bir `str`
-    // üretir (bkz. fonksiyonun belge notu) — "tek bayt" DEĞİL.
+    // 0-255 dışı girdi boş `str` verir; 0 ise tek NUL baytlı `str` (NOX-STR-001).
     const s3 = nox_char_from_byte(rt, 300) orelse return error.ConvFailed;
     defer nox_str_release(rt, s3);
     try std.testing.expectEqual(@as(usize, 0), std.mem.span(s3).len);
+    const s4 = nox_char_from_byte(rt, 0) orelse return error.ConvFailed;
+    defer nox_str_release(rt, s4);
+    try std.testing.expectEqual(@as(usize, 1), nox_str_slice(s4).len);
+    try std.testing.expectEqual(@as(u8, 0), nox_str_slice(s4)[0]);
 }
 
 test "nox_int_to_str/nox_float_to_str dogru bicimlendirir" {

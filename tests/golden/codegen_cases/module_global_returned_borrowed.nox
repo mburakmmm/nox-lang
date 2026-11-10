@@ -1,0 +1,43 @@
+# A13 (aura L7): modül globalini `return _g` ile döndürmek ödünç alınmış referanstır; çağıranın yereli release edince
+# global'in sahipliği bozulmamalı (önceden çıkışta `nox_deinit_globals`te çift serbest bırakma).
+class Box:
+    def __init__(self: Box, n: int) -> None:
+        self.n = n
+
+_root: str = ""
+_items: list[str] = []
+_box: Box = Box(0)
+
+def set_root(path: str) -> None:
+    _root = path
+
+def get_root() -> str:
+    return _root
+
+def get_items() -> list[str]:
+    return _items
+
+def get_box() -> Box:
+    return _box
+
+def set_box(b: Box) -> None:
+    _box = b
+
+def inside(path: str) -> int:
+    root: str = get_root()
+    if path == root:
+        return 1
+    return 0
+
+def uses() -> int:
+    items: list[str] = get_items()
+    items.append("x")
+    b: Box = get_box()
+    return len(items) + b.n
+
+s: str = "/home/" + str(7)
+set_root(s)
+set_box(Box(5))
+print(inside("/home/7"), inside("/other"), inside("/home/7"))
+print(uses(), uses())
+print(get_root(), len(get_items()), get_box().n)
