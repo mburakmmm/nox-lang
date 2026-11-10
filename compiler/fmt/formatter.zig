@@ -228,7 +228,7 @@ const Printer = struct {
         while (i < stmts.len) {
             const stmt = stmts[i];
             // TODO 8.3: sınıf sabiti için parser'ın eklediği sentetik depo değişkeni yüzey sözdiziminde yoktur.
-            if (stmt.kind == .var_decl and stmt.kind.var_decl.class_attr != null) {
+            if (stmt.kind == .var_decl and (stmt.kind.var_decl.class_attr != null or stmt.kind.var_decl.is_match_temp)) {
                 i += 1;
                 continue;
             }
@@ -260,6 +260,94 @@ const Printer = struct {
             }
             try self.printStmt(stmt, depth);
             i += 1;
+        }
+    }
+
+    fn printMatchPattern(self: *Printer, c: ast.MatchCase) FormatError!void {
+        if (c.wildcard) {
+            try self.writer.writeAll("_");
+            return;
+        }
+        for (c.path, 0..) |seg, i| {
+            if (i > 0) try self.writer.writeAll(".");
+            try self.writer.writeAll(seg);
+        }
+        if (!c.has_parens) return;
+        try self.writer.writeAll("(");
+        for (c.args, 0..) |a, i| {
+            if (i > 0) try self.writer.writeAll(", ");
+            if (a.keyword) |kw| try self.writer.print("{s}=", .{kw});
+            try self.writer.writeAll(a.bind orelse "_");
+        }
+        try self.writer.writeAll(")");
+    }
+
+    /// `match konu:` + `case ...:` kolları; gövdelerin başındaki parser'ın eklediği `prefix` deyimleri (kimlik denetimi + bağlamalar) yazılmaz.
+    fn printMatch(self: *Printer, f: ast.IfStmt, mo: *const ast.MatchOrigin, line_no: u32, depth: usize) FormatError!void {
+        try self.indentTo(depth);
+        try self.writer.writeAll("match ");
+        try self.printExpr(mo.subject);
+        try self.writer.writeAll(":");
+        try self.line(line_no);
+        for (mo.cases, 0..) |c, i| {
+            const body: []const ast.Stmt = if (c.wildcard)
+                (f.else_body orelse &.{})
+            else if (i == 0)
+                f.then_body
+            else
+                f.elif_clauses[i - 1].body;
+            try self.emitLeadingTrivia(depth + 1, c.line);
+            try self.indentTo(depth + 1);
+            try self.writer.writeAll("case ");
+            try self.printMatchPattern(c);
+            try self.writer.writeAll(":");
+            try self.line(c.line);
+            try self.printStmts(body[@min(c.prefix, body.len)..], depth + 2);
+        }
+    }
+
+    /// `enum Ad:` yüzey biçimi: varyantlar (`EnumVariant`) + kullanıcı metodları. Parser'ın sentezlediği alan/sabit/`__init__`/kurucular yazılmaz.
+    fn printEnum(self: *Printer, c: ast.ClassDef, line_no: u32, depth: usize) FormatError!void {
+        try self.indentTo(depth);
+        try self.writer.print("enum {s}:", .{c.name});
+        try self.line(line_no);
+        if (c.doc) |doc| {
+            try self.indentTo(depth + 1);
+            try self.writer.writeAll("\"\"\"");
+            try self.writer.writeAll(doc);
+            try self.writer.writeAll("\"\"\"\n");
+            self.last_was_blank = false;
+        }
+        for (c.enum_variants) |v| {
+            try self.emitLeadingTrivia(depth + 1, v.line);
+            try self.indentTo(depth + 1);
+            try self.writer.writeAll(v.name);
+            if (v.has_parens) {
+                try self.writer.writeAll("(");
+                for (v.fields, 0..) |fd, i| {
+                    if (i > 0) try self.writer.writeAll(", ");
+                    try self.writer.print("{s}: ", .{fd.name});
+                    try self.printType(fd.type_expr);
+                }
+                try self.writer.writeAll(")");
+            }
+            try self.line(v.line);
+        }
+        var first_user = true;
+        for (c.methods) |m| {
+            if (std.mem.eql(u8, m.name, "__init__")) continue;
+            var is_variant = false;
+            for (c.enum_variants) |v| if (std.mem.eql(u8, v.name, m.name)) {
+                is_variant = true;
+            };
+            if (is_variant) continue;
+            if (first_user and m.body.len > 0) {
+                while (self.trivia_idx < self.trivia.len and self.trivia[self.trivia_idx].line < m.body[0].line) self.trivia_idx += 1;
+            }
+            try self.writer.writeAll("\n");
+            self.last_was_blank = true;
+            first_user = false;
+            try self.printFuncDefNoLeading(m, depth + 1);
         }
     }
 
@@ -309,6 +397,11 @@ const Printer = struct {
                 try self.line(stmt.line);
             },
             .if_stmt => |f| {
+                // `match konu:` yüzey biçimi (parser `if/elif/else` zincirine indirgemişti).
+                if (f.match_origin) |mo| {
+                    try self.printMatch(f, mo, stmt.line, depth);
+                    return;
+                }
                 // v1.162.0: `assert koşul[, mesaj]` yüzey biçimi.
                 if (f.is_assert and f.cond == .unary and f.then_body.len == 1 and f.then_body[0].kind == .raise_stmt and f.then_body[0].kind.raise_stmt == .call) {
                     const rc = f.then_body[0].kind.raise_stmt.call;
@@ -377,6 +470,10 @@ const Printer = struct {
             },
             .func_def => |fd| try self.printFuncDef(fd, depth, stmt.line),
             .class_def => |c| {
+                if (c.enum_variants.len > 0) {
+                    try self.printEnum(c, stmt.line, depth);
+                    return;
+                }
                 try self.printDecorators(c.decorators, depth);
                 try self.indentTo(depth);
                 // Pulse NOX-FMT-001: `class Box[T]` tip parametreleri SİLİNİRSE

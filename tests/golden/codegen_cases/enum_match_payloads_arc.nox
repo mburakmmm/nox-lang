@@ -1,0 +1,43 @@
+# enum payload'ları: str, iki str, sınıf + int; anahtar sözcüklü ve konumsal bağlama, '_' ve 'case _:'; liste içinde değerler (sızıntı/çift serbest bırakma yok).
+class Node:
+    label: str
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+enum Token:
+    Word(text: str)
+    Pair(left: str, right: str)
+    Item(node: Node, weight: int)
+    End
+
+def show(t: Token) -> str:
+    match t:
+        case Token.Word(text=x):
+            return "word:" + x
+        case Token.Pair(l, _):
+            return "pair-left:" + l
+        case Token.Item(n, w):
+            return "item:" + n.label + str(w)
+        case _:
+            return "other"
+
+items: list[Token] = []
+for i in range(3):
+    items.append(Token.Word("w" + str(i)))
+items.append(Token.Pair("a", "b"))
+items.append(Token.Item(Node("n"), 7))
+items.append(Token.End)
+for tok in items:
+    print(show(tok))
+
+# Çok sayıda değer üret ve bırak: ARC sızıntısı olursa çıkışta rapor edilir.
+total: int = 0
+for i in range(2000):
+    t: Token = Token.Item(Node("k" + str(i)), i)
+    match t:
+        case Token.Item(n, w):
+            total += w + len(n.label)
+        case _:
+            total -= 1
+print(total)

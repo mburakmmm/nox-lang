@@ -43,3 +43,23 @@ print(headers["a"])
 
 print(risky(5))
 print(risky(-1))
+
+# enum + match: yüzey biçimi korunur
+enum Shape:
+    # daire
+    Circle(radius: float)
+    Rect(w: float, h: float)
+    Empty
+
+    def area(self) -> float:
+        match self:
+            # daire kolu
+            case Shape.Circle(r):
+                return 3.0 * r * r
+            case Shape.Rect(w, h):
+                return w * h
+            case _:
+                return 0.0
+
+print(Shape.Circle(2.0).area())
+print(Shape.Empty.area())

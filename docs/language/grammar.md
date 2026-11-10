@@ -33,8 +33,8 @@ import_stmt    = "import" dotted [ "as" NAME ]
 import_name    = NAME [ "as" NAME ] ;
 dotted         = NAME { "." NAME } ;
 
-compound_stmt  = if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | lowlevel_stmt
-               | func_def | class_def | protocol_def | extern_def ;
+compound_stmt  = if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | lowlevel_stmt | match_stmt
+               | func_def | class_def | enum_def | protocol_def | extern_def ;
 
 if_stmt        = "if" expr ":" block { "elif" expr ":" block } [ "else" ":" block ] ;
 while_stmt     = "while" expr ":" block ;
@@ -44,6 +44,10 @@ try_stmt       = "try" ":" block { except_clause } [ "finally" ":" block ] ;
 except_clause  = "except" [ ( dotted | "(" dotted { "," dotted } ")" ) [ "as" NAME ] ] ":" block ;
 with_stmt      = "with" expr [ "as" NAME ] ":" block ;
 lowlevel_stmt  = "lowlevel" ":" block ;
+match_stmt     = "match" expr ":" NEWLINE INDENT case_clause { case_clause } DEDENT ;
+case_clause    = "case" ( "_" | pattern ) ":" block ;
+pattern        = dotted [ "(" [ pat_arg { "," pat_arg } ] ")" ] ;
+pat_arg        = ( NAME | "_" ) | NAME "=" ( NAME | "_" ) ;
 ```
 
 ## Definitions
@@ -61,6 +65,9 @@ default        = literal | "-" number | "None" ;
 class_def      = { decorator } "class" NAME [ type_params ] [ "(" dotted ")" ] ":" NEWLINE INDENT
                  [ docstring ] { field_decl | func_def | "pass" } DEDENT ;
 field_decl     = NAME ":" type NEWLINE ;
+
+enum_def       = "enum" NAME ":" NEWLINE INDENT [ docstring ] { variant | func_def | "pass" } DEDENT ;
+variant        = NAME [ "(" NAME ":" type { "," NAME ":" type } ")" ] NEWLINE ;
 
 protocol_def   = "protocol" NAME ":" NEWLINE INDENT { method_sig } DEDENT ;
 method_sig     = "def" NAME "(" [ params ] ")" "->" type ":" NEWLINE INDENT "pass" NEWLINE DEDENT ;

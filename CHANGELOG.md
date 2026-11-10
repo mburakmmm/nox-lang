@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.21]
+
+### Eklendi
+
+- **`enum` (etiketli birleşim) ve `match/case`** (Pulse TYPE-001): `enum Shape:` varyantları (`Circle(radius: float)`, `Rect(w: float, h: float)`, `Empty`) ve metodları tanımlar; `Shape.Circle(2.0)` ile kurulur, payload'sız varyant `Shape.Empty` olarak yazılır. `match s:` / `case Shape.Circle(r):` deseni konumsal (`Circle(r, _)`) ve anahtar sözcüklü (`Rect(h=height)`) bağlamayı, `case _:` varsayılanını destekler. Kapsamlılık derleme zamanında denetlenir (eksik varyant → hata), yanlış enum/bilinmeyen varyant/yanlış alan sayısı net hata verir. Enum değerleri eşitlik (`==`), liste/sözlük elemanı olma, modüller arası kullanım (`from m import E`, `import m` → `m.E.V(...)`) ve `noxc fmt` (özgün `enum`/`match` yüzeyini korur) ile çalışır. Belge: `docs/language/enums.md`.
+- Sınırlar (belgeli): iç içe/literal desenler ve `case ... if` koruması yok; jenerik enum (`enum Option[T]`) henüz yok; `match` bağlamaları jeneratör fonksiyonlarında kullanılamaz.
+
+### Düzeltildi
+
+- `bound_method_fixup`: değer konumundaki `Sınıf.Birim` başvurusu bağlı-metod değerine çevriliyordu; enum varyant adları muaf.
+- `module_loader`: modül yeniden adlandırması `ClassDef.enum_variants` alanını düşürüyordu.
+
 ## [2.1.20]
 
 ### Eklendi

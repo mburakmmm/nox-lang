@@ -5691,7 +5691,8 @@ pub const Checker = struct {
         // hatada DURDUĞUNDAN) OLABİLİR — bu durumda İKİNCİ, YANILTICI bir
         // "atanmadı" tanısı EKLEMEK YERİNE atlanır (bkz. modül üstü not,
         // "AYNI birim İÇİNDE İKİNCİ hata raporlanMAZ" kuralıyla TUTARLI).
-        if (self.diagnostics.items.len == diagnostics_before_init) {
+        // `enum` sınıflarında kullanılmayan varyantların payload alanları sıfırlı bellekte kalır (yalnızca etiketi eşleşen varyantın alanları okunur): denetim atlanır.
+        if (self.diagnostics.items.len == diagnostics_before_init and cd.enum_variants.len == 0) {
             const info = self.classes.get(cd.name).?;
             var it = info.declared_unassigned.keyIterator();
             while (it.next()) |name| {
@@ -7525,6 +7526,22 @@ pub const Checker = struct {
     fn checkAttribute(self: *Checker, ctx: *FnCtx, a: ast.Attribute) TypeError!Type {
         // `Sınıf.SABİT`: obj bir DEĞİŞKEN olmayan sınıf adıdır; okuma literal değere yeniden yazılır.
         if (try self.receiverClassName(ctx, a.obj.*)) |rc| {
+            // `Enum.Birim` (payload'sız varyant) → `Enum.Birim()` kurucu çağrısı.
+            if (self.class_defs_by_name.get(rc)) |ecd| {
+                if (ecd.enum_variants.len > 0) {
+                    if (std.mem.startsWith(u8, a.attr, "__tag_")) {
+                        if (findEnumVariant(ecd, a.attr["__tag_".len..]) == null) {
+                            return self.fail(error.UndefinedAttribute, "enum '{s}' has no variant '{s}'", .{ rc, a.attr["__tag_".len..] });
+                        }
+                    } else if (findEnumVariant(ecd, a.attr)) |ev| {
+                        if (ev.fields.len == 0) {
+                            const callee = try self.allocator.create(ast.Expr);
+                            callee.* = .{ .attribute = .{ .obj = a.obj, .attr = a.attr } };
+                            return try self.rewriteExprTo(ctx, @intFromPtr(a.obj), .{ .call = .{ .callee = callee, .args = &.{} } });
+                        }
+                    }
+                }
+            }
             if (self.classes.get(rc).?.consts.get(a.attr)) |k| {
                 try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), if (k.global) |g| ast.Expr{ .identifier = g } else k.value);
                 return k.ty;
@@ -7881,6 +7898,97 @@ pub const Checker = struct {
         return false;
     }
 
+    // ---- enum (etiketli birleşim) kancaları -----------------------------------------------------------------------------------------------------------------
+    // Parser `match`i `if/elif/else` zincirine indirger ve üç dahili çağrı bırakır; hepsi burada doğrulanıp yeniden yazılır, codegen yalnızca düz ifadeleri görür:
+    //   __nox_match_check(konu, Enum, "Varyant", n)   → doğrulanır, `0` literaline yeniden yazılır
+    //   __nox_payload(konu, Enum, "Varyant", i, "alan") → `konu._Varyant_alan` alan okumasına yeniden yazılır (bağlamanın tipi buradan çıkar)
+    //   __nox_match_unreachable(konu, Enum, "A,B")     → kapsamlılık denetlenir, `0` literaline yeniden yazılır (ardından `raise RuntimeError(...)` gelir)
+
+    fn enumDefOf(self: *Checker, ctx: *FnCtx, subject: ast.Expr, enum_expr: ast.Expr, what: []const u8) TypeError!ast.ClassDef {
+        const enum_name = (try self.receiverClassName(ctx, enum_expr)) orelse
+            return self.fail(error.UndefinedClass, "{s}: the pattern's enum is not a known class", .{what});
+        const cd = self.class_defs_by_name.get(enum_name) orelse
+            return self.fail(error.UndefinedClass, "{s}: '{s}' is not an enum", .{ what, enum_name });
+        if (cd.enum_variants.len == 0) return self.fail(error.TypeMismatch, "{s}: '{s}' is a class, not an enum", .{ what, enum_name });
+        const st = try self.checkExpr(ctx, subject);
+        const subj_name = switch (st) {
+            .class => |n| n,
+            else => return self.fail(error.TypeMismatch, "match subject must be an enum value of '{s}'", .{enum_name}),
+        };
+        if (!std.mem.eql(u8, subj_name, enum_name)) {
+            return self.fail(error.TypeMismatch, "match subject has type '{s}' but the pattern belongs to enum '{s}'", .{ subj_name, enum_name });
+        }
+        return cd;
+    }
+
+    fn findEnumVariant(cd: ast.ClassDef, name: []const u8) ?ast.EnumVariant {
+        for (cd.enum_variants) |v| if (std.mem.eql(u8, v.name, name)) return v;
+        return null;
+    }
+
+    fn tryEnumIntrinsic(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
+        const name = c.callee.identifier;
+        if (!std.mem.startsWith(u8, name, "__nox_match_") and !std.mem.eql(u8, name, "__nox_payload")) return null;
+        const eq = std.mem.eql;
+        if (eq(u8, name, "__nox_match_check")) {
+            if (c.args.len != 4 or c.args[2] != .string_lit or c.args[3] != .int_lit) return null;
+            const cd = try self.enumDefOf(ctx, c.args[0], c.args[1], "case pattern");
+            const v = findEnumVariant(cd, c.args[2].string_lit) orelse
+                return self.fail(error.UndefinedAttribute, "enum '{s}' has no variant '{s}'", .{ cd.name, c.args[2].string_lit });
+            const n = c.args[3].int_lit;
+            if (n >= 0 and @as(usize, @intCast(n)) != v.fields.len) {
+                return self.fail(error.ArgumentCountMismatch, "variant '{s}.{s}' has {d} field(s), the pattern binds {d} (use `_` to ignore a field)", .{ cd.name, v.name, v.fields.len, n });
+            }
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .int_lit = 0 });
+            return .int;
+        }
+        if (eq(u8, name, "__nox_payload")) {
+            if (c.args.len != 5 or c.args[2] != .string_lit or c.args[3] != .int_lit or c.args[4] != .string_lit) return null;
+            const cd = try self.enumDefOf(ctx, c.args[0], c.args[1], "case pattern");
+            const v = findEnumVariant(cd, c.args[2].string_lit) orelse
+                return self.fail(error.UndefinedAttribute, "enum '{s}' has no variant '{s}'", .{ cd.name, c.args[2].string_lit });
+            const idx = c.args[3].int_lit;
+            var field: ?ast.FieldDecl = null;
+            if (idx >= 0) {
+                if (@as(usize, @intCast(idx)) < v.fields.len) field = v.fields[@intCast(idx)];
+            } else {
+                for (v.fields) |f| if (eq(u8, f.name, c.args[4].string_lit)) {
+                    field = f;
+                    break;
+                };
+            }
+            const f = field orelse
+                return self.fail(error.UndefinedAttribute, "variant '{s}.{s}' has no field '{s}'", .{ cd.name, v.name, c.args[4].string_lit });
+            const slot = try std.fmt.allocPrint(self.allocator, "_{s}_{s}", .{ v.name, f.name });
+            const obj = try self.allocator.create(ast.Expr);
+            obj.* = c.args[0];
+            return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), .{ .attribute = .{ .obj = obj, .attr = slot } });
+        }
+        if (eq(u8, name, "__nox_match_unreachable")) {
+            if (c.args.len != 3 or c.args[2] != .string_lit) return null;
+            const cd = try self.enumDefOf(ctx, c.args[0], c.args[1], "match");
+            const covered = c.args[2].string_lit;
+            var missing: std.ArrayListUnmanaged(u8) = .empty;
+            for (cd.enum_variants) |v| {
+                var seen = false;
+                var it = std.mem.splitScalar(u8, covered, ',');
+                while (it.next()) |cv| if (eq(u8, cv, v.name)) {
+                    seen = true;
+                };
+                if (!seen) {
+                    if (missing.items.len > 0) try missing.appendSlice(self.allocator, ", ");
+                    try missing.appendSlice(self.allocator, v.name);
+                }
+            }
+            if (missing.items.len > 0) {
+                return self.fail(error.TypeMismatch, "non-exhaustive match on enum '{s}': missing variant(s) {s} (add the missing case(s) or a `case _:`)", .{ cd.name, missing.items });
+            }
+            try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .int_lit = 0 });
+            return .int;
+        }
+        return null;
+    }
+
     fn checkCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
         // Faz C.2: `obj.metod[T](...)` / çıkarımlı `obj.metod(...)` generic
         // metod çağrısı — callee YERİNDE somut metod adına yeniden yazılır,
@@ -7894,6 +8002,7 @@ pub const Checker = struct {
             }
         }
         if (c.callee.* == .identifier) {
+            if (try self.tryEnumIntrinsic(ctx, c)) |t| return t;
             if (try self.tryDesugarPreludeCall(ctx, c)) |t| return t;
         }
         switch (c.callee.*) {

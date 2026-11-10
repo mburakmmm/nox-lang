@@ -52,6 +52,7 @@ pub const Parser = struct {
     expr_spans: std.AutoHashMapUnmanaged(usize, Span) = .empty,
     /// v1.157.0: tuple açma desugarının ek deyimleri ve gizli ad sayacı (bkz. `parseSimpleStmt`/`parseFor`).
     extra_stmts: std.ArrayList(ast.Stmt) = .empty,
+    match_counter: u32 = 0,
     tuple_counter: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator, tokens: []const Token) Parser {
@@ -215,7 +216,7 @@ pub const Parser = struct {
     fn parseStmt(self: *Parser) ParseError!ast.Stmt {
         const line = self.cur().line;
         const start_tok = self.cur();
-        const kind: ast.StmtKind = switch (self.curKind()) {
+        const kind: ast.StmtKind = if (self.isEnumStart()) try self.parseEnumDef() else if (self.isMatchStart()) try self.parseMatch(start_tok) else switch (self.curKind()) {
             .kw_if => try self.parseIf(),
             .kw_while => try self.parseWhile(),
             .kw_for => try self.parseFor(),
@@ -564,6 +565,341 @@ pub const Parser = struct {
     /// veya-daha-fazla. Argümanlar burada HERHANGİ bir ifade olarak
     /// ayrıştırılır — "yalnızca literal" KISITI BİLEREK checker'a bırakılır
     /// (`hpy_call`nin AYNI deseni, bkz. `checker.zig`).
+
+    // ---- enum / match (etiketli birleşim) -----------------------------------------------------------------------------------------------------------------------
+    //
+    // `enum Ad:` parse-zamanında düz bir sınıfa indirgenir (checker/codegen yeni bir düğüm görmez):
+    //   alanlar  : `_tag: int` + her payload alanı için `_<Varyant>_<alan>`
+    //   sabitler : `__tag_<Varyant>: int = k` (`Ad.Varyant` desenleri `Ad.__tag_Varyant` ile karşılaştırılır; sınıf sabitleri derleme zamanında katlanır)
+    //   metodlar : `__init__(self, tag)` + her varyant için `@staticmethod def Varyant(...) -> Ad`
+    // `match konu:` bir `if/elif/else` zincirine indirgenir (bkz. `parseMatch`).
+
+    fn isEnumStart(self: *const Parser) bool {
+        if (!(self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "enum"))) return false;
+        if (self.pos + 2 >= self.tokens.len) return false;
+        const k1 = self.tokens[self.pos + 1].kind;
+        const k2 = self.tokens[self.pos + 2].kind;
+        return k1 == .identifier and (k2 == .colon or k2 == .l_bracket);
+    }
+
+    fn identE(name: []const u8) ast.Expr {
+        return .{ .identifier = name };
+    }
+
+    fn attrE(self: *Parser, obj: ast.Expr, attr: []const u8) ParseError!ast.Expr {
+        return .{ .attribute = .{ .obj = try self.box(obj), .attr = attr } };
+    }
+
+    fn callE(self: *Parser, callee: ast.Expr, args: []const ast.Expr) ParseError!ast.Expr {
+        const a = try self.allocator.dupe(ast.Expr, args);
+        return .{ .call = .{ .callee = try self.box(callee), .args = a } };
+    }
+
+    fn mkStmt(kind: ast.StmtKind, line: u32) ast.Stmt {
+        return .{ .kind = kind, .line = line };
+    }
+
+    fn parseEnumDef(self: *Parser) ParseError!ast.StmtKind {
+        const enum_tok = self.advance(); // `enum`
+        const name = (try self.expect(.identifier)).lexeme;
+        if (self.check(.l_bracket)) {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "generic enums are not supported yet" };
+            return error.UnexpectedToken;
+        }
+        _ = try self.expect(.colon);
+        _ = try self.expect(.newline);
+        _ = try self.expect(.indent);
+
+        var variants = std.ArrayList(ast.EnumVariant).empty;
+        var user_methods = std.ArrayList(ast.FuncDef).empty;
+        var doc: ?[]const u8 = null;
+        while (!self.check(.dedent)) {
+            if (self.check(.kw_pass)) {
+                _ = self.advance();
+                _ = try self.expect(.newline);
+            } else if (self.check(.string_lit)) {
+                const doc_tok = self.advance();
+                const text = try self.decodeString(doc_tok.lexeme);
+                _ = try self.expect(.newline);
+                if (doc == null and variants.items.len == 0 and user_methods.items.len == 0) doc = text;
+            } else if (self.check(.at_sign)) {
+                const decorators = try self.parseDecorators();
+                var fd = try self.parseFuncDef(name);
+                fd.decorators = decorators;
+                try user_methods.append(self.allocator, fd);
+            } else if (self.check(.kw_def) or self.check(.kw_async)) {
+                try user_methods.append(self.allocator, try self.parseFuncDef(name));
+            } else if (self.check(.identifier)) {
+                const vline = self.cur().line;
+                const vname = self.advance().lexeme;
+                for (variants.items) |v| if (std.mem.eql(u8, v.name, vname)) {
+                    self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "duplicate enum variant" };
+                    return error.UnexpectedToken;
+                };
+                var fields = std.ArrayList(ast.FieldDecl).empty;
+                var has_parens = false;
+                if (self.match(.l_paren)) {
+                    has_parens = true;
+                    while (!self.check(.r_paren)) {
+                        const fline = self.cur().line;
+                        const fname = (try self.expect(.identifier)).lexeme;
+                        _ = try self.expect(.colon);
+                        const fty = try self.parseTypeExpr();
+                        try fields.append(self.allocator, .{ .name = fname, .type_expr = fty, .line = fline });
+                        if (!self.match(.comma)) break;
+                    }
+                    _ = try self.expect(.r_paren);
+                }
+                _ = try self.expect(.newline);
+                try variants.append(self.allocator, .{ .name = vname, .tag = @intCast(variants.items.len), .fields = try fields.toOwnedSlice(self.allocator), .has_parens = has_parens, .line = vline });
+            } else {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "an enum body contains variants (`Name` or `Name(field: Type)`) and methods" };
+                return error.UnexpectedToken;
+            }
+        }
+        _ = try self.expect(.dedent);
+        if (variants.items.len == 0) {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(enum_tok), .note = "an enum needs at least one variant" };
+            return error.UnexpectedToken;
+        }
+
+        const line = enum_tok.line;
+        var fields = std.ArrayList(ast.FieldDecl).empty;
+        var consts = std.ArrayList(ast.ConstDecl).empty;
+        var methods = std.ArrayList(ast.FuncDef).empty;
+        try fields.append(self.allocator, .{ .name = "_tag", .type_expr = .{ .simple = "int" }, .line = line });
+
+        // __init__(self, tag: int): self._tag = tag
+        {
+            const params = try self.allocator.alloc(ast.Param, 2);
+            params[0] = .{ .name = "self", .type_expr = .{ .simple = name }, .self_inferred = true };
+            params[1] = .{ .name = "tag", .type_expr = .{ .simple = "int" } };
+            const body = try self.allocator.alloc(ast.Stmt, 1);
+            body[0] = mkStmt(.{ .assign = .{ .target = try self.attrE(identE("self"), "_tag"), .value = identE("tag") } }, line);
+            try methods.append(self.allocator, .{ .name = "__init__", .params = params, .return_type = .{ .simple = "None" }, .body = body });
+        }
+
+        for (variants.items) |v| {
+            try consts.append(self.allocator, .{
+                .name = try std.fmt.allocPrint(self.allocator, "__tag_{s}", .{v.name}),
+                .type_expr = .{ .simple = "int" },
+                .value = .{ .int_lit = v.tag },
+                .line = v.line,
+            });
+            const params = try self.allocator.alloc(ast.Param, v.fields.len);
+            var body = std.ArrayList(ast.Stmt).empty;
+            // __enum_v: Ad = Ad(tag)
+            try body.append(self.allocator, mkStmt(.{ .var_decl = .{
+                .name = "__enum_v",
+                .type_expr = .{ .simple = name },
+                .value = try self.callE(identE(name), &.{.{ .int_lit = v.tag }}),
+            } }, v.line));
+            for (v.fields, 0..) |f, i| {
+                const slot = try std.fmt.allocPrint(self.allocator, "_{s}_{s}", .{ v.name, f.name });
+                try fields.append(self.allocator, .{ .name = slot, .type_expr = f.type_expr, .line = f.line });
+                params[i] = .{ .name = f.name, .type_expr = f.type_expr };
+                try body.append(self.allocator, mkStmt(.{ .assign = .{ .target = try self.attrE(identE("__enum_v"), slot), .value = identE(f.name) } }, v.line));
+            }
+            try body.append(self.allocator, mkStmt(.{ .return_stmt = identE("__enum_v") }, v.line));
+            const decos = try self.allocator.alloc(ast.Decorator, 1);
+            decos[0] = .{ .name = "staticmethod", .args = &.{}, .line = v.line };
+            try methods.append(self.allocator, .{
+                .name = v.name,
+                .params = params,
+                .return_type = .{ .simple = name },
+                .body = try body.toOwnedSlice(self.allocator),
+                .decorators = decos,
+            });
+        }
+        for (user_methods.items) |m| try methods.append(self.allocator, m);
+
+        return .{ .class_def = .{
+            .name = name,
+            .methods = try methods.toOwnedSlice(self.allocator),
+            .fields = try fields.toOwnedSlice(self.allocator),
+            .consts = try consts.toOwnedSlice(self.allocator),
+            .doc = doc,
+            .enum_variants = try variants.toOwnedSlice(self.allocator),
+        } };
+    }
+
+    /// `match` bağlamsal anahtar kelimesi: satır `match <ifade>:` ile biter ve ardından girintili bir `case` bloğu gelir.
+    fn isMatchStart(self: *const Parser) bool {
+        if (!(self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "match"))) return false;
+        if (self.pos + 1 >= self.tokens.len) return false;
+        const nk = self.tokens[self.pos + 1].kind;
+        if (nk == .assign or nk == .dot or nk == .colon or nk == .comma or nk == .newline or nk == .r_paren) return false;
+        var j = self.pos + 1;
+        while (j < self.tokens.len and self.tokens[j].kind != .newline and self.tokens[j].kind != .eof) : (j += 1) {}
+        if (j + 2 >= self.tokens.len or self.tokens[j - 1].kind != .colon) return false;
+        return self.tokens[j + 1].kind == .indent and self.tokens[j + 2].kind == .identifier and std.mem.eql(u8, self.tokens[j + 2].lexeme, "case");
+    }
+
+    fn parsePatternBindTarget(self: *Parser) ParseError!?[]const u8 {
+        const t = try self.expect(.identifier);
+        if (std.mem.eql(u8, t.lexeme, "_")) return null;
+        return t.lexeme;
+    }
+
+    /// `case` deseni: `_` | `Yol.Varyant` | `Yol.Varyant(a, _, alan=b)`.
+    fn parseMatchPattern(self: *Parser) ParseError!ast.MatchCase {
+        const line = self.cur().line;
+        if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "_") and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
+            _ = self.advance();
+            return .{ .wildcard = true, .line = line };
+        }
+        var path = std.ArrayList([]const u8).empty;
+        try path.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        while (self.match(.dot)) try path.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        var args = std.ArrayList(ast.MatchPatternArg).empty;
+        var has_parens = false;
+        if (self.match(.l_paren)) {
+            has_parens = true;
+            while (!self.check(.r_paren)) {
+                if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .assign) {
+                    const kw = self.advance().lexeme;
+                    _ = self.advance(); // `=`
+                    try args.append(self.allocator, .{ .keyword = kw, .bind = try self.parsePatternBindTarget() });
+                } else {
+                    try args.append(self.allocator, .{ .bind = try self.parsePatternBindTarget() });
+                }
+                if (!self.match(.comma)) break;
+            }
+            _ = try self.expect(.r_paren);
+        }
+        if (path.items.len < 2) {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "a case pattern must be qualified: `Enum.Variant` (or `_`)" };
+            return error.UnexpectedToken;
+        }
+        return .{ .path = try path.toOwnedSlice(self.allocator), .args = try args.toOwnedSlice(self.allocator), .has_parens = has_parens, .line = line };
+    }
+
+    fn pathExpr(self: *Parser, segs: []const []const u8) ParseError!ast.Expr {
+        var e = identE(segs[0]);
+        for (segs[1..]) |sg| e = try self.attrE(e, sg);
+        return e;
+    }
+
+    /// `match konu:` → gizli konu değişkeni + `if/elif/else` zinciri (bkz. yukarıdaki not). İlk deyimi (`__match_N: __infer = konu`) döner, zinciri `extra_stmts`e ekler.
+    fn parseMatch(self: *Parser, start_tok: Token) ParseError!ast.StmtKind {
+        _ = self.advance(); // `match`
+        const subject = try self.parseExpr();
+        _ = try self.expect(.colon);
+        _ = try self.expect(.newline);
+        _ = try self.expect(.indent);
+
+        var cases = std.ArrayList(ast.MatchCase).empty;
+        var bodies = std.ArrayList([]ast.Stmt).empty;
+        while (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "case")) {
+            _ = self.advance();
+            const pat = try self.parseMatchPattern();
+            if (self.check(.kw_if)) {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "guards (`case P if cond:`) are not supported; test the condition inside the case body" };
+                return error.UnexpectedToken;
+            }
+            _ = try self.expect(.colon);
+            const body = try self.parseBlock();
+            try cases.append(self.allocator, pat);
+            try bodies.append(self.allocator, body);
+        }
+        _ = try self.expect(.dedent);
+        if (cases.items.len == 0) {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(start_tok), .note = "a match needs at least one case" };
+            return error.UnexpectedToken;
+        }
+        for (cases.items, 0..) |c, i| if (c.wildcard and i + 1 != cases.items.len) {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(start_tok), .note = "`case _:` must be the last case" };
+            return error.UnexpectedToken;
+        };
+
+        self.match_counter += 1;
+        const tmp = try std.fmt.allocPrint(self.allocator, "__match_{d}", .{self.match_counter});
+        const line = start_tok.line;
+        const has_wild = cases.items[cases.items.len - 1].wildcard;
+
+        // Her dalın gövdesi: [kimlik denetimi, bağlamalar...] ++ kullanıcı gövdesi.
+        var branches = std.ArrayList([]ast.Stmt).empty;
+        var covered = std.ArrayList(u8).empty;
+        var first_enum: ?ast.Expr = null;
+        var conds = std.ArrayList(ast.Expr).empty;
+        for (cases.items, 0..) |*c, i| {
+            if (c.wildcard) {
+                c.prefix = 0;
+                try branches.append(self.allocator, bodies.items[i]);
+                continue;
+            }
+            const enum_segs = c.path[0 .. c.path.len - 1];
+            const variant = c.path[c.path.len - 1];
+            const enum_e = try self.pathExpr(enum_segs);
+            if (first_enum == null) first_enum = enum_e;
+            if (covered.items.len > 0) try covered.append(self.allocator, ',');
+            try covered.appendSlice(self.allocator, variant);
+            const tag_const = try std.fmt.allocPrint(self.allocator, "__tag_{s}", .{variant});
+            try conds.append(self.allocator, .{ .binary = .{
+                .op = .eq,
+                .left = try self.box(try self.attrE(identE(tmp), "_tag")),
+                .right = try self.box(try self.attrE(enum_e, tag_const)),
+            } });
+
+            var pre = std.ArrayList(ast.Stmt).empty;
+            var any_kw = false;
+            for (c.args) |a| if (a.keyword != null) {
+                any_kw = true;
+            };
+            const arity: i64 = if (!c.has_parens) -2 else if (any_kw) -1 else @intCast(c.args.len);
+            try pre.append(self.allocator, mkStmt(.{ .expr_stmt = try self.callE(identE("__nox_match_check"), &.{ identE(tmp), enum_e, .{ .string_lit = variant }, .{ .int_lit = arity } }) }, c.line));
+            for (c.args, 0..) |a, j| {
+                const bind = a.bind orelse continue;
+                const idx: i64 = if (a.keyword != null) -1 else @intCast(j);
+                const payload = try self.callE(identE("__nox_payload"), &.{
+                    identE(tmp),
+                    enum_e,
+                    .{ .string_lit = variant },
+                    .{ .int_lit = idx },
+                    .{ .string_lit = a.keyword orelse "" },
+                });
+                try pre.append(self.allocator, mkStmt(.{ .var_decl = .{ .name = bind, .type_expr = .{ .simple = "__infer" }, .value = payload } }, c.line));
+            }
+            c.prefix = pre.items.len;
+            const full = try self.allocator.alloc(ast.Stmt, pre.items.len + bodies.items[i].len);
+            @memcpy(full[0..pre.items.len], pre.items);
+            @memcpy(full[pre.items.len..], bodies.items[i]);
+            try branches.append(self.allocator, full);
+        }
+
+        var else_body: ?[]ast.Stmt = null;
+        if (has_wild) {
+            else_body = branches.items[branches.items.len - 1];
+        } else if (first_enum) |fe| {
+            // Kapsamlılık derleme zamanında denetlenir (`__nox_match_unreachable`, checker'da `0`a yeniden yazılır); `raise` dalın dönüş analizinde sonlandırıcı sayılmasını sağlar.
+            const eb = try self.allocator.alloc(ast.Stmt, 2);
+            eb[0] = mkStmt(.{ .expr_stmt = try self.callE(identE("__nox_match_unreachable"), &.{ identE(tmp), fe, .{ .string_lit = try covered.toOwnedSlice(self.allocator) } }) }, line);
+            eb[1] = mkStmt(.{ .raise_stmt = try self.callE(identE("RuntimeError"), &.{.{ .string_lit = "no case matched" }}) }, line);
+            else_body = eb;
+        }
+
+        const n_cond = conds.items.len;
+        if (n_cond == 0) {
+            // Yalnızca `case _:`: konu değerlendirilir, gövde koşulsuz çalışır.
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(start_tok), .note = "a match needs at least one enum variant case" };
+            return error.UnexpectedToken;
+        }
+        const origin = try self.allocator.create(ast.MatchOrigin);
+        origin.* = .{ .subject = subject, .cases = try cases.toOwnedSlice(self.allocator) };
+
+        var elifs = std.ArrayList(ast.ElifClause).empty;
+        for (1..n_cond) |i| try elifs.append(self.allocator, .{ .cond = conds.items[i], .body = branches.items[i] });
+        const if_kind: ast.StmtKind = .{ .if_stmt = .{
+            .cond = conds.items[0],
+            .then_body = branches.items[0],
+            .elif_clauses = try elifs.toOwnedSlice(self.allocator),
+            .else_body = else_body,
+            .match_origin = origin,
+        } };
+        try self.extra_stmts.append(self.allocator, .{ .kind = if_kind, .line = line, .span = span_mod.fromTokens(start_tok, self.tokens[self.pos - 1]) });
+        return .{ .var_decl = .{ .name = tmp, .type_expr = .{ .simple = "__infer" }, .value = subject, .is_match_temp = true } };
+    }
+
     fn parseDecorators(self: *Parser) ParseError![]ast.Decorator {
         var decorators = std.ArrayList(ast.Decorator).empty;
         while (self.check(.at_sign)) {

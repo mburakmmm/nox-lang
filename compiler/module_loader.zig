@@ -705,6 +705,17 @@ fn renameNestedFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rename
 /// adlandırılır"), `import nox.X` üzerinden GELEN alan bildirimleri
 /// SESSİZCE DÜŞERDİ (dosya HÂLÂ derlenirdi — yalnızca o alan çıkarım-only
 /// semantiğe geri dönerdi).
+/// `enum` varyantlarının payload alan tiplerini `renameFieldDecls` ile aynı kurallarla yeniden adlandırır (varyant adları ve etiketler aynen kalır).
+fn renameEnumVariants(a: std.mem.Allocator, variants: []const ast.EnumVariant, map: *const std.StringHashMapUnmanaged([]const u8)) !([]const ast.EnumVariant) {
+    if (variants.len == 0) return variants;
+    const out = try a.alloc(ast.EnumVariant, variants.len);
+    for (variants, 0..) |v, i| {
+        out[i] = v;
+        out[i].fields = try renameFieldDecls(a, v.fields, map);
+    }
+    return out;
+}
+
 fn renameFieldDecls(a: std.mem.Allocator, fields: []const ast.FieldDecl, map: *const RenameMap) std.mem.Allocator.Error![]ast.FieldDecl {
     const out = try a.alloc(ast.FieldDecl, fields.len);
     for (fields, 0..) |fd, i| out[i] = .{ .name = fd.name, .type_expr = try renameTypeExpr(a, fd.type_expr, map) };
@@ -781,7 +792,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
             // sınıfıdır (`Exception` GİBİ, `map`de YOKTUR, OLDUĞU GİBİ
             // KALIR) — HER İKİ durumda da checker'ın `self.classes.get(
             // base_name)`i DOĞRU sonucu BULUR.
-            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .base = if (cd.base) |b| (map.get(b) orelse b) else null, .extra_bases = try renameNames(a, cd.extra_bases, map), .consts = try renameConsts(a, cd.consts, map), .doc = cd.doc, .type_params = cd.type_params, .methods = methods, .fields = fields, .decorators = cd.decorators } };
+            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .base = if (cd.base) |b| (map.get(b) orelse b) else null, .extra_bases = try renameNames(a, cd.extra_bases, map), .consts = try renameConsts(a, cd.consts, map), .doc = cd.doc, .type_params = cd.type_params, .methods = methods, .fields = fields, .decorators = cd.decorators, .enum_variants = try renameEnumVariants(a, cd.enum_variants, map) } };
         },
         .protocol_def => |pd| blk: {
             const methods = try a.alloc(ast.FuncDef, pd.methods.len);

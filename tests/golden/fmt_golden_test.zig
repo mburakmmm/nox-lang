@@ -469,3 +469,52 @@ test "fmt: v1.168.0 — set[T] ve küme literali yüzey biçimi korunur (İDEMPO
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: enum ve match yuzey bicimi korunur (indirgenmis sinif/if zinciri yazilmaz)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const canonical =
+        "enum E:\n" ++
+        "    A\n" ++
+        "    B(x: int, y: str)\n" ++
+        "\n" ++
+        "    def f(self) -> int:\n" ++
+        "        match self:\n" ++
+        "            case E.A:\n" ++
+        "                return 0\n" ++
+        "            case E.B(x, _):\n" ++
+        "                return x\n" ++
+        "\n" ++
+        "def g(e: E) -> int:\n" ++
+        "    match e:\n" ++
+        "        case E.B(y=s, x=n):\n" ++
+        "            return n\n" ++
+        "        case _:\n" ++
+        "            return -1\n";
+    // Kanonik biçim sabit noktadır ve indirgenmiş iç adlar (`__match_N`, `_tag`, `__tag_`) çıktıda görünmez.
+    const once = try formatSource(allocator, canonical);
+    try std.testing.expectEqualStrings(canonical, once);
+    try std.testing.expect(std.mem.indexOf(u8, once, "__match_") == null);
+    try std.testing.expect(std.mem.indexOf(u8, once, "_tag") == null);
+    // Düzensiz boşluklu girdi kanonik biçime gelir.
+    const messy =
+        "enum E:\n" ++
+        "    A\n" ++
+        "    B(x:int,y:str)\n" ++
+        "    def f(self)->int:\n" ++
+        "        match   self :\n" ++
+        "            case E.A :\n" ++
+        "                return 0\n" ++
+        "            case E.B( x , _ ):\n" ++
+        "                return x\n" ++
+        "\n" ++
+        "def g(e:E)->int:\n" ++
+        "    match e:\n" ++
+        "        case E.B(y=s,x=n):\n" ++
+        "            return n\n" ++
+        "        case _:\n" ++
+        "            return -1\n";
+    const fixed = try formatSource(allocator, messy);
+    try std.testing.expectEqualStrings(canonical, fixed);
+}

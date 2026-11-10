@@ -32,12 +32,15 @@ const Fixer = struct {
     allocator: std.mem.Allocator,
     method_names: std.StringHashMapUnmanaged(void) = .empty,
     field_names: std.StringHashMapUnmanaged(void) = .empty,
+    /// `enum` varyant adları: `Enum.Birim` bir bağlı-metod DEĞERİ değil, checker'ın kurucu çağrısına yeniden yazdığı varyant başvurusudur; bu adlar yeniden yazılmaz.
+    enum_variant_names: std.StringHashMapUnmanaged(void) = .empty,
     rewrites: usize = 0,
 
     fn collect(self: *Fixer, stmts: []const ast.Stmt) std.mem.Allocator.Error!void {
         for (stmts) |stmt| {
             switch (stmt.kind) {
                 .class_def => |cd| {
+                    for (cd.enum_variants) |v| try self.enum_variant_names.put(self.allocator, v.name, {});
                     for (cd.methods) |m| {
                         if (std.mem.startsWith(u8, m.name, "__")) continue;
                         try self.method_names.put(self.allocator, m.name, {});
@@ -87,7 +90,7 @@ const Fixer = struct {
         // (`a.value` → "'A' sınıfının 'value' alanı yok"). Ayrım zaten
         // checker/codegen'de tip bilgisiyle yapılır: `ad` alanysa
         // `__nox_bind_method` düz alan okumasına düşer (bkz. üst belge notu).
-        return self.method_names.contains(name);
+        return self.method_names.contains(name) and !self.enum_variant_names.contains(name);
     }
 
     fn fixStmts(self: *Fixer, stmts: []ast.Stmt) std.mem.Allocator.Error!void {

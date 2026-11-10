@@ -601,3 +601,92 @@ test "spawn: iceri aktarilan async def, modul-nitelikli cagri ve sinif metodu" {
     try std.testing.expect(run_result.term == .exited and run_result.term.exited == 0);
     try std.testing.expectEqualStrings("12\n13\n101\n200\n", run_result.stdout);
 }
+
+test "enum: proje-ici modulden `from m import E` ve `import m` (nitelikli) ile kullanilir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "shapes.nox",
+        .data =
+        \\enum Shape:
+        \\    Circle(radius: float)
+        \\    Rect(w: float, h: float)
+        \\    Empty
+        \\
+        \\    def area(self) -> float:
+        \\        match self:
+        \\            case Shape.Circle(r):
+        \\                return 3.0 * r * r
+        \\            case Shape.Rect(w, h):
+        \\                return w * h
+        \\            case Shape.Empty:
+        \\                return 0.0
+        \\
+        \\def unit() -> Shape:
+        \\    return Shape.Rect(1.0, 1.0)
+        \\
+        ,
+    });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data =
+        \\import shapes
+        \\from shapes import Shape, unit
+        \\
+        \\def name(s: Shape) -> str:
+        \\    match s:
+        \\        case Shape.Circle(r):
+        \\            return "circle"
+        \\        case Shape.Rect(w, h):
+        \\            return "rect"
+        \\        case Shape.Empty:
+        \\            return "empty"
+        \\
+        \\def qualified(s: shapes.Shape) -> str:
+        \\    match s:
+        \\        case shapes.Shape.Circle(radius=r):
+        \\            return "circle " + str(r)
+        \\        case _:
+        \\            return "other"
+        \\
+        \\print(name(Shape.Circle(1.0)), name(Shape.Empty), name(unit()))
+        \\print(Shape.Rect(2.0, 5.0).area())
+        \\print(qualified(shapes.Shape.Circle(1.5)), qualified(shapes.unit()))
+        \\
+        ,
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "build", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("circle empty rect\n10.0\ncircle 1.5 other\n", run_result.stdout);
+}

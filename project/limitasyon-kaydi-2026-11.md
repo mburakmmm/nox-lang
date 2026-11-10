@@ -21,6 +21,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [x] **A15 (v2.1.16)** Bir `async def`in okuduğu modül-düzeyi `Channel[T]`/`Task[T]` çıkışta yıkılmıyordu — **KAPANDI v2.1.16**: `nox_deinit_globals` artık `isSpawnRefcountedType` globalleri de bırakır ve async epilog'unda `nox_async_deinit`ten ÖNCE çağrılır (önceden sıra tersti: zamanlayıcı kapatılmış olduğundan `Channel.deinit` çöküyordu).
 - [x] **A16 (v2.1.15)** `print(await t)` hesaplanmış str/sınıf/list sızdırıyordu — **KAPANDI v2.1.15**.
 - [x] **A17 (v2.1.17)** Global'e dokunan üst-düzey atama/metod çağrıları aradaki ifadelerden önce çalışıyordu (kaynak sırası bozuktu) — **KAPANDI v2.1.17**.
+- [ ] **A18 (v2.1.21'de bulundu, enum'dan bağımsız)** Bir `for t in xs:` (xs: `list[SınıfTipi]`) döngü değişkeninin adı, sonradan AYNI kapsamda `t: Sınıf = ...` ile yeniden bildirilirse (özellikle bir döngü içinde çok yineleme), `var_decl` ödünç alınmış (`is_param`) döngü yuvasındaki ESKİ değeri serbest bırakıyor → `xs`in elemanı erken serbest kalır, çıkışta/sonraki tahsislerde SIGSEGV. Repro: `items: list[A] = [A(0),A(1)]`, `for t in items: print(t.x)`, `for i in range(2000): t: A = A(i)` (çıkış 139; HEAD'de de aynı). Çalışma çözümü: farklı ad. Düzeltme yeri: `compiler/codegen_qbe/stmt.zig` `.var_decl` (`releaseSlotIfSet` öncesi `info.is_param` denetimi) + `collectLocals` yuva sahipliği.
 - [x] **A14 aura L5** `docs/language/memory.md` `__del__ yok` diyor, `__del__` var (belge). — **KAPANDI v2.1.4**
 
 ## B. Dil/derleyici özellikleri (küçük, tasarımı belli)
@@ -45,7 +46,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [~] **C12 pulse** protobuf (**KAPANDI v2.1.18**: `nox.protobuf` tel formatı), gRPC (açık: HTTP/2 istemci + trailer kararı), UDP (**KAPANDI v2.1.15**: `nox.udp`), Buffer→str köprüsü ve gzip→bytes (**KAPANDI v2.1.13**: `nox.bytes.str_from_list/to_str/...`); mikro/nano-saniye saat (**KAPANDI v2.1.13**: `now_ns`, `monotonic_ns`).
 - [x] **C13 ember NL-010/011/014** UUIDv7 (**KAPANDI v2.1.7**: `uuid7`, `uuid7_at`, `uuid7_timestamp_ms`), property-test (**KAPANDI v2.1.12**: `nox.property`), zaman dilimi (**KAPANDI v2.1.14**: `nox.timezone`).
 - [x] **C14 aether 5** Üst-düzey fonksiyon dekoratörleriyle işleyici kaydı (`router_from_decorators`/`decorator_handler`) zaten vardı ve conformance testli; sınıf/metod dekoratörlerinin işleyici olması kullanıcı kararıyla (2026-11-10) KAPSAM DIŞI.
-- [~] **C15 pulse TYPE-001** tagged union / enum.
+- [x] **C15 pulse TYPE-001** tagged union / enum — **KAPANDI v2.1.21** (`enum` + `match/case`, konumsal+anahtar sözcüklü bağlama, kapsamlılık denetimi). Açık alt maddeler: **C15a** jenerik enum (`enum Option[T]`: jenerik sınıflarda `@staticmethod` + `Option[int].Some(..)` ifade biçimi gerekir), **C15b** iç içe/literal desen ve `case ... if` koruması, **C15c** editör grameri (tree-sitter `grammar.js`, VS Code tmLanguage) `enum`/`match`/`case` anahtar sözcükleri.
 
 ## D. Bayat ya da tasarım gereği (iş yok)
 

@@ -1,0 +1,31 @@
+# enum + match: payload'lı/payload'sız varyantlar, metodda match(self), çıplak birim varyant, yapısal eşitlik.
+enum Shape:
+    Circle(radius: float)
+    Rect(w: float, h: float)
+    Empty
+
+    def describe(self) -> str:
+        match self:
+            case Shape.Circle(r):
+                return "circle " + str(r)
+            case Shape.Rect(w, h):
+                return "rect " + str(w) + "x" + str(h)
+            case Shape.Empty:
+                return "empty"
+
+def area(s: Shape) -> float:
+    match s:
+        case Shape.Circle(r):
+            return 3.0 * r * r
+        case Shape.Rect(w, h):
+            return w * h
+        case Shape.Empty:
+            return 0.0
+
+c: Shape = Shape.Circle(2.0)
+print(area(c))
+print(area(Shape.Rect(2.0, 3.0)))
+print(area(Shape.Empty))
+print(Shape.Rect(1.5, 2.0).describe())
+print(Shape.Empty.describe())
+print(Shape.Empty == Shape.Empty, Shape.Circle(1.0) == Shape.Circle(2.0))

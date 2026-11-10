@@ -213,6 +213,33 @@ pub const IfStmt = struct {
     else_body: ?[]Stmt,
     /// v1.162.0: `assert koşul, mesaj` yüzey biçimi (parse-zamanı `if not koşul: raise AssertionError(mesaj)`e indirgenir; yalnızca formatter yazımı korur).
     is_assert: bool = false,
+    /// `match konu:` deyimi parse-zamanında bu `if/elif/else` zincirine indirgenir; formatter özgün `match/case` yüzeyini buradan yeniden üretir.
+    match_origin: ?*const MatchOrigin = null,
+};
+
+/// `case` deseni: `Enum.Varyant(a, b)`, `Enum.Birim`, `Enum.Varyant(alan=a)` ya da `_`.
+pub const MatchPatternArg = struct {
+    /// `Varyant(alan=a)` biçiminde anahtar sözcük (alan adı); konumsal ise `null`.
+    keyword: ?[]const u8 = null,
+    /// Bağlanan değişken adı; `null` = `_` (yok sayılır).
+    bind: ?[]const u8 = null,
+};
+
+pub const MatchCase = struct {
+    /// `["Shape", "Circle"]` (nitelikli yol); `wildcard` ise boş.
+    path: []const []const u8 = &.{},
+    args: []const MatchPatternArg = &.{},
+    /// Desen `(...)` içeriyor mu (birim varyant `Enum.V` ile `Enum.V()` ayrımı formatter için).
+    has_parens: bool = false,
+    wildcard: bool = false,
+    /// Bu dalın gövdesinin başındaki, parser'ın eklediği deyim sayısı (bağlama bildirimleri + kapsamlılık denetimi); formatter bunları yazmaz.
+    prefix: usize = 0,
+    line: u32 = 0,
+};
+
+pub const MatchOrigin = struct {
+    subject: Expr,
+    cases: []const MatchCase,
 };
 
 pub const WhileStmt = struct { cond: Expr, body: []Stmt };
@@ -300,6 +327,18 @@ pub const ConstDecl = struct {
     promoted: bool = false,
 };
 
+/// `enum` varyantı (parser enum'u sınıfa indirger; varyant ve payload alan bilgisi checker/formatter için saklanır).
+pub const EnumVariant = struct {
+    name: []const u8,
+    /// Etiket numarası (bildirim sırası, 0'dan).
+    tag: i64,
+    /// Payload alanları (bildirim sırasıyla); sınıfta `_<Varyant>_<alan>` adlı alanlara karşılık gelir.
+    fields: []const FieldDecl = &.{},
+    /// Kaynakta `Varyant(...)` parantezi var mıydı (formatter).
+    has_parens: bool = false,
+    line: u32 = 0,
+};
+
 pub const ClassDef = struct {
     name: []const u8,
     consts: []const ConstDecl = &.{},
@@ -338,6 +377,9 @@ pub const ClassDef = struct {
     /// checker v1'de sınıf decorator'larını AÇIKÇA reddeder (bkz. plan
     /// dosyası "kapsam DIŞI" — bağlı-metod-değer mekanizması gerektirir).
     decorators: []const Decorator = &.{},
+    /// Boş değilse bu sınıf bir `enum`dan indirgenmiştir (etiketli birleşim): alanlar `_tag` + `_<Varyant>_<alan>`, kurucular `@staticmethod`lardır.
+    /// Kullanılmayan varyantların payload alanları sıfırlı bellekte kalır (checker bu sınıflarda `__init__`te atanmamış alan denetimini atlar).
+    enum_variants: []const EnumVariant = &.{},
 };
 
 /// Yapısal (structural) bir protokol — Python'ın `typing.Protocol`'üne
@@ -398,6 +440,8 @@ pub const VarDecl = struct {
     /// Parser'ın bir sınıf sabiti (`NAME: T = literal`) için eklediği SENTETİK modül değişkeni (değişebilir sınıf özniteliği deposu, TODO 8.3).
     /// `Sınıf.NAME = ...` ile atanmayan sabitlerin değişkeni checker'da `pass`e çevrilir; formatter bu deyimleri yazmaz.
     class_attr: ?ClassAttrRef = null,
+    /// `match` deyiminin parser'ın eklediği gizli konu değişkeni (`__match_N: __infer = konu`): formatter bunu yazmaz (`match` kaynağı `IfStmt.match_origin`den yeniden üretilir).
+    is_match_temp: bool = false,
 };
 
 pub const ClassAttrRef = struct { class: []const u8, name: []const u8 };
