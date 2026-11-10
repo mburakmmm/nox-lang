@@ -2105,10 +2105,11 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
         try self.qbeRet(null);
         try self.qbeLabel(ok_label);
         try self.qbeCall(null, "$nox_async_destroy_task", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_t } });
-        try self.qbeCall(null, "$nox_async_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
+        // Globaller zamanlayıcı CANLIYKEN bırakılır: `Channel.deinit`/Task yıkımı zamanlayıcının allocator'ına dokunur (önceden `nox_async_deinit` önce geliyordu → çıkışta çökme).
         if (self.module_globals.count() > 0) {
             try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
         }
+        try self.qbeCall(null, "$nox_async_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
         try self.qbeRet(null);
         try self.qbeFuncEnd();
         try self.qbeFuncHeaderStart(null, "$nox_embed_bind");
@@ -2217,10 +2218,11 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     try self.qbeRet("0"); // erişilemez — savunmacı (bkz. `emitExceptionCheck`in AYNI deseni)
     try self.qbeLabel(ok_label);
     try self.qbeCall(null, "$nox_async_destroy_task", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_t } });
-    try self.qbeCall(null, "$nox_async_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
+    // Bkz. yukarıdaki not: globaller zamanlayıcı canlıyken bırakılır.
     if (self.module_globals.count() > 0) {
         try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
+    try self.qbeCall(null, "$nox_async_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
     if (self.backend == .llvm and (!self.isWasmTarget() or self.isWasmThreads())) {
         try self.qbeCall(null, "$nox_pool_main_join_and_destroy", &.{.{ .ty = .l, .text = RT_PARAM }});
     } else {

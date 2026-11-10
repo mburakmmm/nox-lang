@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.16]
+
+### Düzeltildi
+
+- **Modül-düzeyi `Channel[T]`/`Task[T]` sızıntısı** (kayıt A15): bir `async def`in okuduğu modül-düzeyi `Channel`/`Task` çıkışta yıkılmıyordu. `nox_deinit_globals` artık bunları da bırakır. Ayrıca async `main` epilog'unda sıra düzeltildi: globaller zamanlayıcı kapatılmadan ÖNCE bırakılır (önceden `nox_async_deinit` önce geliyordu; `Channel.deinit` kapatılmış zamanlayıcının allocator'ına dokunup çıkışta çöküyordu).
+
 ## [2.1.15]
 
 ### Eklendi

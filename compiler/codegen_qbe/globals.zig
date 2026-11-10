@@ -121,7 +121,22 @@ pub fn genNoxDeinitGlobals(self: *Codegen) CodegenError!void {
 
     var it = self.module_globals.valueIterator();
     while (it.next()) |g| {
-        if (!isHeapManaged(g.info.heap)) continue;
+        if (!isHeapManaged(g.info.heap)) {
+            if (!self.isSpawnRefcountedType(g.info.heap)) continue;
+            const slot = try self.newTemp();
+            try self.qbeOp2Imm(slot, .l, "add", block, @intCast(g.offset));
+            const handle = try self.newTemp();
+            try self.qbeLoadL(handle, slot);
+            const is_null = try self.newTemp();
+            try self.qbeOp2Imm(is_null, .w, "ceql", handle, 0);
+            const destroy_label = try self.newLabel("global_destroy");
+            const skip_label = try self.newLabel("global_destroy_skip");
+            try self.qbeJnz(is_null, skip_label, destroy_label);
+            try self.qbeLabel(destroy_label);
+            try self.destroyNonArcValue(handle, g.info.heap);
+            try self.qbeLabel(skip_label);
+            continue;
+        }
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
         const ptr = try self.newTemp();

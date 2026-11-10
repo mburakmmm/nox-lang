@@ -1,0 +1,23 @@
+# Bir async def'in okuduğu modül-düzeyi Channel/Task çıkışta yıkılır (önceden Channel sızıyor, yıkım eklenince zamanlayıcı kapatıldıktan sonra çöküyordu).
+ch: Channel[int] = Channel[int](2)
+
+async def producer() -> int:
+    await ch.send(1)
+    await ch.send(2)
+    return 0
+
+async def work(x: int) -> int:
+    return x * 2
+
+shared: Task[int] = spawn work(21)
+
+async def reader() -> int:
+    r: int = await shared
+    return r
+
+p: Task[int] = spawn producer()
+print(await ch.recv())
+print(await ch.recv())
+print(await p)
+u: Task[int] = spawn reader()
+print(await u)
