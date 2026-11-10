@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.14]
+
+### Eklendi
+
+- **`nox.timezone`** (Ember NL-014): IANA zaman dilimleri. `utc_offset`, `is_dst`, `abbreviation`, `zone_info`, `to_local`, `from_local` (belirsiz saat: ilk oluşum; olmayan saat: boşluktan önceki ofset), `format_iso`, `is_supported`, `TimezoneError`. Sistem `tzdata`'sını (TZif v2+) okur; son geçişten sonrası için POSIX TZ altbilgisi kuralı (`Mm.w.d`) değerlendirilir. Windows/wasm/tzdata'sız kapsayıcıda `UTC` dışındaki bölgeler `TimezoneError` fırlatır.
+
+### Düzeltildi
+
+- `scripts/gen_wasm_abi.py` modül-nitelikli fonksiyon-işaretçisi takma adlarını (`tl.ReleaseFn`) çözemiyor ve `nox_tasklocal_new` ile `nox_http_serve_ws_raw` girdilerini sessizce tablodan düşürüyordu (tablo elle düzenlenmişti, `--check` bayattı); üreteç düzeltildi, tablo üretimle eşitlendi (0 çözülemeyen).
+
 ## [2.1.13]
 
 ### Eklendi

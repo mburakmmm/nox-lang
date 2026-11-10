@@ -41,7 +41,7 @@ def classify(t):
     if t in ("f32",): return "F"
     if t in ("void", "noreturn"): return "v"
     if t.startswith("abi_ptr.Arg") or t == "Arg": return "L"
-    if re.fullmatch(r"\w*Fn", t): return "P"  # TraceFn/TaskFn gibi fonksiyon işaretçisi takma adları
+    if re.fullmatch(r"[\w.]*Fn", t): return "P"  # TraceFn/TaskFn/`tl.ReleaseFn` gibi (modül-nitelikli) fonksiyon işaretçisi takma adları
     return "?"
 
 sig_re = re.compile(r"(?:pub\s+)?export\s+fn\s+(\w+)\s*\(")

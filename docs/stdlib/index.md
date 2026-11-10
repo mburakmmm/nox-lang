@@ -23,7 +23,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 | Capability | Meaning | Modules |
 |---|---|---|
 | none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
-| `filesystem` | files and directories | `fs`, `sqlite` |
+| `filesystem` | files and directories | `fs`, `sqlite`, `timezone` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis` |
 | `network` + `filesystem` | both | `transfer` |
 | `process` | the process and its children | `os`, `process`, `signal`, `terminal` |
@@ -77,6 +77,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.process`](process.md) | run external programs |
 | [`nox.signal`](signal.md) | `SIGINT`/`SIGTERM`/… as flags a task can poll |
 | [`nox.terminal`](terminal.md) | TTY detection, size, raw mode, echo, raw input/output |
+| [`nox.timezone`](timezone.md) | IANA time zones: offset, abbreviation, DST, local ↔ UTC conversion |
 | [`nox.console`](console.md), [`nox.log`](log.md) | levelled output without / with timestamps |
 
 ### Formats and encodings

@@ -29732,3 +29732,7 @@ Saf Nox (`stdlib/nox/property.nox`): `Rng` Park–Miller (48271 mod 2^31−1; ç
 ### 3.380 Nanosaniye saatler, bayt köprüsü, Task alanlı sınıf yeniden bildirimi (v2.1.13)
 
 `nox_time_now_ns_raw`/`nox_time_monotonic_ns_raw` (`i64` ns; Windows `WinTime.nowNs/monotonicNs`, wasm host ms × 10^6). `nox_bytes_str_from_list_raw` (`gzip.zig`, `readIntListAsBytes` + `nox_str_from_bytes`) ve `nox_bytes_last_ok_raw` (ayrı ad: `nox.gzip` ile birlikte içe aktarılınca extern adı çakışmasın). `Checker.declareVar`: iki FARKLI sınıfın aynı adla yeniden bildirimi, sınıflardan birinin `Task/Channel/ThreadHandle/ThreadChannel/TaskLocal` alanı varsa reddedilir (`classHasNonArcFields`); diğer sınıf↔sınıf yeniden bildirimi kasıtlı serbest kalır (Faz M.8 / v1.148.0 testleri).
+
+### 3.381 IANA zaman dilimleri: `nox.timezone` (v2.1.14)
+
+`runtime/stdlib_shims/tz.zig`: durumsuz (global/threadlocal yok) dışa aktarımlar `nox_tz_offset_raw`/`nox_tz_isdst_raw` (hata sentinelleri `minInt(i64)` = tzdata yok, `minInt+1` = bilinmeyen bölge), `nox_tz_abbr_raw` (`with_rt`), `nox_tz_supported_raw`. TZif v2+ (64-bit blok) ayrıştırılır; son geçişten sonrası için altbilgideki POSIX TZ (`<+03>-3`, `EST5EDT,M3.2.0,M11.1.0/2`; yalnızca `Mm.w.d` kuralları) değerlendirilir. Bölge adı doğrulanır (`/`/`.` ile başlama, `..` yok, ≤64 bayt); `UTC`/`Etc/UTC`/`GMT` tzdata istemez. `MODULE_CAPABILITIES`: `timezone` → `filesystem` (freestanding'de reddedilir). `from_local`: Python `fold=0`. wasm ABI girdileri `scripts/gen_wasm_abi.py` ile üretilir.

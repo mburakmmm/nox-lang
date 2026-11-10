@@ -1,0 +1,109 @@
+# nox.timezone — IANA zaman dilimi dönüşümleri (Ember NL-014). Sistemin `tzdata` dosyalarını (TZif v2+: `$TZDIR`, `/usr/share/zoneinfo`, macOS `/var/db/timezone/zoneinfo`)
+# okur; son geçişten sonraki tarihler için dosya altbilgisindeki POSIX TZ kuralı (`EST5EDT,M3.2.0,M11.1.0`) değerlendirilir, yani 2038 sonrası da doğrudur.
+#
+#     import nox.timezone
+#     off: int = nox.timezone.utc_offset("Europe/Istanbul", 1721044800)       # 10800
+#     local = nox.timezone.to_local("America/New_York", 1721044800 * 1000)    # DateTime (duvar saati)
+#     ms: int = nox.timezone.from_local("Europe/Berlin", local)               # yerel duvar saati → UTC epoch ms
+#     s: str = nox.timezone.format_iso("Asia/Tokyo", ms)                      # 2024-07-15T21:00:00+09:00
+#
+# Zaman damgaları UTC epoch'tur (`unix_s` saniye, `*_ms` milisaniye). Bilinmeyen bölge `TimezoneError` fırlatır. "UTC"/"Etc/UTC"/"GMT" tzdata gerektirmez.
+# Windows, wasm ve freestanding'de tzdata okunamaz: `is_supported()` False döner, "UTC" dışındaki bölgeler `TimezoneError` fırlatır.
+# `from_local`: belirsiz (yaz→kış geri alma) yerel saatler İLK oluşuma (yaz saati), olmayan (ileri alma boşluğu) saatler boşluktan ÖNCEKİ ofsete göre çözülür
+# (Python `fold=0` davranışı). Bölge adı doğrulanır (`..`, `/` ile başlama yok): güvenilmeyen girdiyle çağırmak güvenlidir.
+import nox.time
+
+extern def nox_tz_offset_raw(zone: str, unix_s: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_tz_isdst_raw(zone: str, unix_s: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_tz_abbr_raw(zone: str, unix_s: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_tz_supported_raw() -> int from "zig-out/lib/noxrt.o"
+
+class TimezoneError(Exception):
+    zone: str
+
+    def __init__(self: TimezoneError, message: str, zone: str) -> None:
+        super().__init__(message)
+        self.zone = zone
+
+# Bir bölgenin belirli bir andaki durumu.
+class ZoneInfo:
+    zone: str
+    offset_s: int
+    abbreviation: str
+    is_dst: bool
+
+    def __init__(self: ZoneInfo, zone: str, offset_s: int, abbreviation: str, is_dst: bool) -> None:
+        self.zone = zone
+        self.offset_s = offset_s
+        self.abbreviation = abbreviation
+        self.is_dst = is_dst
+
+# Bu hedefte IANA bölgeleri okunabiliyor mu? (Windows/wasm/freestanding'de False.)
+def is_supported() -> bool:
+    return nox_tz_supported_raw() == 1
+
+# nox_tz_*_raw hata sentinelleri: en küçük int = tzdata yok, en küçük int + 1 = bilinmeyen bölge. Gerçek farklar ±1 gün içindedir.
+def _check(zone: str, value: int) -> int:
+    if value < -1000000000:
+        if value == -9223372036854775807 - 1:
+            raise TimezoneError("time zone database is not available on this target: " + zone, zone)
+        raise TimezoneError("unknown time zone: " + zone, zone)
+    return value
+
+# `zone` bölgesinin UTC `unix_s` anındaki UTC farkı (saniye, doğu pozitif).
+def utc_offset(zone: str, unix_s: int) -> int:
+    return _check(zone, nox_tz_offset_raw(zone, unix_s))
+
+def is_dst(zone: str, unix_s: int) -> bool:
+    return _check(zone, nox_tz_isdst_raw(zone, unix_s)) == 1
+
+# Bölge kısaltması (`CET`, `EDT`, `+03`).
+def abbreviation(zone: str, unix_s: int) -> str:
+    _check(zone, nox_tz_offset_raw(zone, unix_s))
+    return nox_tz_abbr_raw(zone, unix_s)
+
+def zone_info(zone: str, unix_s: int) -> ZoneInfo:
+    off: int = utc_offset(zone, unix_s)
+    return ZoneInfo(zone, off, nox_tz_abbr_raw(zone, unix_s), is_dst(zone, unix_s))
+
+# UTC epoch milisaniyesini bölgenin duvar saatine çevirir.
+def to_local(zone: str, epoch_ms: int) -> nox.time.DateTime:
+    off: int = utc_offset(zone, epoch_ms // 1000)
+    return nox.time.from_epoch_ms(epoch_ms + off * 1000)
+
+# Bölgenin duvar saatini UTC epoch milisaniyesine çevirir (belirsiz/olmayan saatler için modül notuna bak).
+def from_local(zone: str, local: nox.time.DateTime) -> int:
+    wall_ms: int = local.to_epoch_ms()
+    wall_s: int = wall_ms // 1000
+    before: int = utc_offset(zone, wall_s - 86400)
+    after: int = utc_offset(zone, wall_s + 86400)
+    # İki aday ofset; ofseti kendi anında doğrulananlar geçerlidir.
+    cand_a: int = wall_s - before
+    cand_b: int = wall_s - after
+    ok_a: bool = utc_offset(zone, cand_a) == before
+    ok_b: bool = utc_offset(zone, cand_b) == after
+    if ok_a and ok_b:
+        # Belirsiz (ya da ofset sabit): ilk oluşum = daha erken UTC anı.
+        pick: int = cand_a
+        if cand_b < cand_a:
+            pick = cand_b
+        return pick * 1000 + (wall_ms - wall_s * 1000)
+    if ok_a:
+        return cand_a * 1000 + (wall_ms - wall_s * 1000)
+    if ok_b:
+        return cand_b * 1000 + (wall_ms - wall_s * 1000)
+    # Olmayan saat (ileri alma boşluğu): boşluktan önceki ofsete göre çöz.
+    return cand_a * 1000 + (wall_ms - wall_s * 1000)
+
+# `2024-07-15T21:00:00+09:00` (UTC için `Z` değil, her zaman ofset yazılır).
+def format_iso(zone: str, epoch_ms: int) -> str:
+    off: int = utc_offset(zone, epoch_ms // 1000)
+    local: nox.time.DateTime = nox.time.from_epoch_ms(epoch_ms + off * 1000)
+    sign: str = "+"
+    mag: int = off
+    if off < 0:
+        sign = "-"
+        mag = 0 - off
+    date: str = str(local.year) + "-" + nox.time.pad2(local.month) + "-" + nox.time.pad2(local.day)
+    clock: str = nox.time.pad2(local.hour) + ":" + nox.time.pad2(local.minute) + ":" + nox.time.pad2(local.second)
+    return date + "T" + clock + sign + nox.time.pad2(mag // 3600) + ":" + nox.time.pad2((mag % 3600) // 60)

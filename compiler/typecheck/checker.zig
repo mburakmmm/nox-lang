@@ -1498,6 +1498,8 @@ pub const Checker = struct {
         // İLE işaretli (`nox.crypto`nin AYNI deseni). `DateTime`/`Duration`/
         // `from_epoch_ms`/vb. (SAF takvim aritmetiği) HER profilde serbest.
         .{ .name = "time", .caps = &.{} },
+        // Ember NL-014: tzdata dosyalarını okur (Windows/wasm'da `is_supported()` False; freestanding'de modül reddedilir).
+        .{ .name = "timezone", .caps = &.{.filesystem} },
         .{ .name = "tasks", .caps = &.{} },
         .{ .name = "tls", .caps = &.{.network} },
         .{ .name = "toml", .caps = &.{} },

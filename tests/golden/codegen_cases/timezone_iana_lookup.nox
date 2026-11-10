@@ -1,0 +1,62 @@
+# nox.timezone: IANA bölgeleri (TZif + POSIX altbilgisi). tzdata yoksa (Windows/wasm/kapsayıcı) denetimler atlanır; çıktı her yerde aynıdır.
+import nox.timezone
+import nox.time
+from nox.timezone import TimezoneError
+
+failures: int = 0
+
+def expect_int(name: str, got: int, want: int) -> int:
+    if got != want:
+        print("FAIL " + name + ": " + str(got) + " != " + str(want))
+        return 1
+    return 0
+
+def expect_str(name: str, got: str, want: str) -> int:
+    if got != want:
+        print("FAIL " + name + ": " + got + " != " + want)
+        return 1
+    return 0
+
+# UTC tzdata gerektirmez.
+failures += expect_int("utc", nox.timezone.utc_offset("UTC", 1721044800), 0)
+failures += expect_str("utc abbr", nox.timezone.abbreviation("Etc/UTC", 0), "UTC")
+
+if nox.timezone.is_supported():
+    july: int = 1721044800
+    january: int = 1705320000
+    failures += expect_int("istanbul", nox.timezone.utc_offset("Europe/Istanbul", july), 10800)
+    failures += expect_str("istanbul abbr", nox.timezone.abbreviation("Europe/Istanbul", july), "+03")
+    failures += expect_int("ny summer", nox.timezone.utc_offset("America/New_York", july), -14400)
+    failures += expect_int("ny winter", nox.timezone.utc_offset("America/New_York", january), -18000)
+    failures += expect_str("ny abbr", nox.timezone.abbreviation("America/New_York", july), "EDT")
+    failures += expect_int("berlin dst", 1 if nox.timezone.is_dst("Europe/Berlin", july) else 0, 1)
+    failures += expect_int("berlin std", 1 if nox.timezone.is_dst("Europe/Berlin", january) else 0, 0)
+    failures += expect_int("sydney summer", nox.timezone.utc_offset("Australia/Sydney", january), 39600)
+    failures += expect_int("sydney winter", nox.timezone.utc_offset("Australia/Sydney", july), 36000)
+    # Son geçişten sonra (2040): POSIX altbilgisi kuralı.
+    failures += expect_int("ny 2040", nox.timezone.utc_offset("America/New_York", 2224000000), -14400)
+    failures += expect_str("tokyo iso", nox.timezone.format_iso("Asia/Tokyo", july * 1000), "2024-07-15T21:00:00+09:00")
+    failures += expect_str("ny iso", nox.timezone.format_iso("America/New_York", july * 1000), "2024-07-15T08:00:00-04:00")
+    local: nox.time.DateTime = nox.timezone.to_local("Europe/Berlin", july * 1000)
+    failures += expect_str("berlin local", local.to_str(), "2024-07-15 14:00:00")
+    failures += expect_int("round trip", nox.timezone.from_local("Europe/Berlin", local), july * 1000)
+    # Belirsiz (geri alma): ilk oluşum; olmayan (ileri alma): boşluktan önceki ofset.
+    ambiguous: nox.time.DateTime = nox.time.DateTime(2024, 10, 27, 2, 30, 0)
+    failures += expect_str("ambiguous", nox.timezone.format_iso("Europe/Berlin", nox.timezone.from_local("Europe/Berlin", ambiguous)), "2024-10-27T02:30:00+02:00")
+    gap: nox.time.DateTime = nox.time.DateTime(2024, 3, 31, 2, 30, 0)
+    failures += expect_str("gap", nox.timezone.format_iso("Europe/Berlin", nox.timezone.from_local("Europe/Berlin", gap)), "2024-03-31T03:30:00+02:00")
+    info: nox.timezone.ZoneInfo = nox.timezone.zone_info("Europe/Istanbul", july)
+    failures += expect_str("info", info.zone + " " + info.abbreviation, "Europe/Istanbul +03")
+    # Bilinmeyen bölge ve yol geçişi reddedilir.
+    caught: int = 0
+    try:
+        nox.timezone.utc_offset("Mars/Olympus", july)
+    except TimezoneError as e:
+        caught += 1
+    try:
+        nox.timezone.utc_offset("../etc/passwd", july)
+    except TimezoneError as e:
+        caught += 1
+    failures += expect_int("rejected", caught, 2)
+
+print("failures: " + str(failures))
