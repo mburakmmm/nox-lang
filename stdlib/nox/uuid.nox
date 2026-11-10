@@ -14,6 +14,7 @@
 import nox.crypto
 import nox.random
 import nox.strings
+import nox.time
 
 # `s[start:end]` (Nox'ta dilim sözdizimi YOK) eşdeğeri — yalnızca bu
 # modül İçinde kullanılan küçük, YEREL bir yardımcı.
@@ -64,3 +65,54 @@ def is_valid(s: str) -> bool:
                 return False
         i = i + 1
     return True
+
+
+# `n`nin `digits` basamaklı, küçük harfli, sıfır dolgulu on altılık gösterimi (n >= 0; taşan üst basamaklar atılır).
+def _hex_fixed(n: int, digits: int) -> str:
+    alphabet: str = "0123456789abcdef"
+    out: str = ""
+    i: int = 0
+    v: int = n
+    while i < digits:
+        out = alphabet[v & 15] + out
+        v = v >> 4
+        i = i + 1
+    return out
+
+# RFC 9562 sürüm 7 UUID, verilen Unix zamanıyla (milisaniye): ilk 48 bit zaman damgası, sürüm 7, kalan bitler
+# kriptografik rastgele. Saat enjeksiyonu: testler sabit bir `unix_ms` verebilir. Aynı milisaniyedeki UUID'ler
+# arasında sıra GARANTİSİ yoktur (RFC 9562 bunu isteğe bağlı bırakır); zaman damgası milisaniye çözünürlüklüdür.
+def uuid7_at(unix_ms: int) -> str:
+    if unix_ms < 0:
+        raise ValueError("unix_ms must not be negative")
+    ts: str = _hex_fixed(unix_ms, 12)
+    rnd: str = nox.crypto.secure_random_hex(9)
+    variant_options: list[str] = ["8", "9", "a", "b"]
+    variant: str = variant_options[nox.random.randint(0, 3)]
+    return (_substr(ts, 0, 8) + "-" + _substr(ts, 8, 12) + "-7" + _substr(rnd, 0, 3) + "-" + variant +
+        _substr(rnd, 3, 6) + "-" + _substr(rnd, 6, 18))
+
+# Şimdiki duvar saatiyle zaman sıralı UUID (UUIDv7). Sözlük sırası zaman sırasıyla örtüşür (aynı milisaniye içi hariç).
+def uuid7() -> str:
+    return uuid7_at(nox.time.now_ms())
+
+def _hex_digit_value(b: int) -> int:
+    if b >= 48 and b <= 57:
+        return b - 48
+    if b >= 97 and b <= 102:
+        return b - 87
+    return b - 55
+
+# UUIDv7'nin gömülü Unix zaman damgasını (milisaniye) döndürür. Geçerli bir UUID metni değilse `ValueError`.
+def uuid7_timestamp_ms(s: str) -> int:
+    if not is_valid(s):
+        raise ValueError("not a valid UUID")
+    if s[14] != "7":
+        raise ValueError("not a version 7 UUID")
+    ms: int = 0
+    i: int = 0
+    while i < 13:
+        if i != 8:
+            ms = (ms << 4) | _hex_digit_value(nox.strings.byte_at(s, i))
+        i = i + 1
+    return ms

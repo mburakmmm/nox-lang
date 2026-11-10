@@ -1,0 +1,23 @@
+import nox.terminal
+from nox.terminal import TerminalSize
+
+print(nox.terminal.is_tty(0), nox.terminal.is_tty(1))
+sz: TerminalSize = nox.terminal.get_size()
+print(sz.cols, sz.rows)
+nox.terminal.enable_raw_mode()
+nox.terminal.enable_raw_mode()
+print(nox.terminal.is_raw_mode())
+got: str = ""
+tries: int = 0
+while len(got) < 3 and tries < 50:
+    if nox.terminal.poll_input(100):
+        got = got + nox.terminal.read_raw(8)
+    tries = tries + 1
+nox.terminal.disable_raw_mode()
+print(nox.terminal.is_raw_mode())
+nox.terminal.disable_raw_mode()
+print(nox.terminal.is_raw_mode())
+print(len(got))
+nox.terminal.write_raw("[" + got + "]\n")
+nox.terminal.set_echo(False)
+nox.terminal.set_echo(True)

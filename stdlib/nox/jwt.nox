@@ -24,7 +24,10 @@
 
 import nox.base64
 import nox.crypto
+import nox.json
+from nox.json import JsonValue
 import nox.strings
+import nox.time
 
 class JwtError(Exception):
     pass
@@ -86,3 +89,34 @@ def verify(token: str, secret: str) -> str:
     if not nox.crypto.constant_time_eq(sig_b64, expected_sig_b64):
         raise JwtError("JWT signature could not be verified")
     return nox.base64.decode(payload_b64)
+
+
+# `verify` + RFC 7519 zaman iddiaları (Nyx 2.4): `exp` (süre doldu: şimdi >= exp), `nbf` (henüz geçerli değil: şimdi < nbf) ve `iat`
+# (gelecekte verilmiş: iat > şimdi) kontrol edilir; yoksa o kontrol atlanır. `now_s` Unix saniyesi, `leeway_s` saat sapması payı (saniye).
+# Payload bir JSON nesnesi olmalı; sayı olmayan `exp`/`nbf`/`iat` reddedilir. Başarılıysa ham payload JSON metnini döner.
+def verify_claims(token: str, secret: str, now_s: int, leeway_s: int) -> str:
+    payload: str = verify(token, secret)
+    v: JsonValue = nox.json.parse(payload)
+    if not nox.json.is_object(v):
+        raise JwtError("JWT payload must be a JSON object")
+    n: int = nox.json.object_len(v)
+    i: int = 0
+    while i < n:
+        key: str = nox.json.object_key(v, i)
+        if key == "exp" or key == "nbf" or key == "iat":
+            claim: JsonValue = nox.json.object_value(v, i)
+            if not nox.json.is_number(claim):
+                raise JwtError("JWT claim '" + key + "' must be a number")
+            t: float = nox.json.as_number(claim)
+            if key == "exp" and float(now_s - leeway_s) >= t:
+                raise JwtError("JWT has expired")
+            if key == "nbf" and float(now_s + leeway_s) < t:
+                raise JwtError("JWT is not valid yet (nbf)")
+            if key == "iat" and t > float(now_s + leeway_s):
+                raise JwtError("JWT was issued in the future (iat)")
+        i = i + 1
+    return payload
+
+# `verify_claims`in şimdiki duvar saatiyle (`nox.time.now_ms`) çalışan kısayolu.
+def verify_now(token: str, secret: str, leeway_s: int) -> str:
+    return verify_claims(token, secret, nox.time.now_ms() // 1000, leeway_s)

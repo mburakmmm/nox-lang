@@ -68,6 +68,29 @@ def as_bool(v: JsonValue) -> bool:
 def as_number(v: JsonValue) -> float:
     return v.n
 
+# 2^53'ten büyük tamsayılar `float`a sığmaz (`as_number(9007199254740993)` → 9007199254740992.0); ayrıştırıcı bu durumda sayının tam
+# metnini de saklar. `as_int` tam değeri döndürür (tamsayı olmayan ya da `int` aralığı dışındaki sayıda `JsonError`), `number_text` sayının
+# ondalık metnidir (büyük tamsayılarda tam metin, diğerlerinde `dump` ile aynı biçim). `dump` büyük tamsayıları aynen yazar.
+def as_int(v: JsonValue) -> int:
+    if v.kind != 2:
+        raise JsonError("not a number")
+    if len(v.s) > 0:
+        try:
+            return int(v.s)
+        except ValueError as e:
+            raise JsonError("integer out of range: " + v.s)
+    i: int = int(v.n)
+    if float(i) != v.n:
+        raise JsonError("not an integer")
+    return i
+
+def number_text(v: JsonValue) -> str:
+    if v.kind != 2:
+        raise JsonError("not a number")
+    if len(v.s) > 0:
+        return v.s
+    return dump_number(v.n)
+
 def as_string(v: JsonValue) -> str:
     return v.s
 
@@ -134,6 +157,8 @@ def dump(v: JsonValue) -> str:
             return "true"
         return "false"
     if is_number(v):
+        if len(v.s) > 0:
+            return v.s
         return dump_number(as_number(v))
     if is_string(v):
         return dump_string(as_string(v))

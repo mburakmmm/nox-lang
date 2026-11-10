@@ -47,6 +47,7 @@ pub const task_local = @import("async_rt/task_local.zig");
 pub const task_local_entry = @import("async_rt/task_local_entry.zig");
 pub const task_wait = @import("stdlib_shims/task_wait.zig");
 pub const signal_shim = @import("stdlib_shims/signal.zig");
+pub const terminal_shim = @import("stdlib_shims/terminal.zig");
 /// Faz MN.3a: BAĞIMSIZ, henüz HİÇBİR yere BAĞLANMAMIŞ (bkz. onun modül
 /// üstü notu) — SADECE `zig build test`nin `noxrt_test`inin (bu dosyayı
 /// KÖK modül olarak kullanan) KENDİ testlerini KEŞFEDEBİLMESİ İçİn burada
@@ -123,6 +124,7 @@ comptime {
     _ = task_local_entry;
     _ = task_wait;
     _ = signal_shim;
+    _ = terminal_shim;
     _ = chase_lev_deque;
     _ = worker_pool;
     _ = str;

@@ -15,9 +15,11 @@ from nox.jwt import JwtError
 |---|---|
 | `sign(payload_json, secret)` | returns `header.payload.signature` for the JSON text `payload_json`, signed with `secret` |
 | `verify(token, secret)` | checks the signature (in constant time) and returns the payload JSON text; raises `JwtError` for a malformed token, a wrong algorithm or a bad signature |
+| `verify_claims(token, secret, now_s, leeway_s)` | `verify`, then enforces the time claims against `now_s` (Unix seconds) with `leeway_s` seconds of clock skew: `exp` (expired when now ≥ exp), `nbf` (not valid yet when now < nbf) and `iat` (issued in the future). Absent claims are skipped; a non-numeric one or a non-object payload raises `JwtError` |
+| `verify_now(token, secret, leeway_s)` | `verify_claims` with the current wall clock |
 
-The token is three Base64url parts separated by dots. `verify` does **not** interpret claims: it does not check `exp`, `nbf` or `aud` — parse the returned payload with
-[`nox.json`](json.md) and enforce them yourself.
+The token is three Base64url parts separated by dots. `verify` does **not** interpret claims: use `verify_claims`/`verify_now` for `exp`, `nbf` and `iat`; `aud`, `iss` and the rest are yours to enforce — parse the
+returned payload with [`nox.json`](json.md).
 
 ```nox
 import nox.jwt

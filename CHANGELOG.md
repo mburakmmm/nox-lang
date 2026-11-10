@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.7]
+
+### Eklendi
+
+- **`nox.terminal`** (Rune): `is_tty`, `get_size`, `get_capabilities`, `enable_raw_mode`/`disable_raw_mode` (iç içe sayaçlı), `restore_state`, `set_echo`, `poll_input` (fiber içinde yalnızca çağıran görevi bekletir), bayt-güvenli `read_raw`, `write_raw`, `flush`. Gerçek bir pty'de sınanır (`scripts/terminal_pty_probe.py`). Windows/wasm/freestanding'de terminal denetimi yoktur.
+- **`nox.template.render_blocks`** (Nyx 2.3): `{% for x in liste %}`, `{% if ad %}`/`{% else %}`/`{% endif %}`, `{% if not ad %}`, `loop.index/index0/first/last`, iç içe bloklar; `render` değişmedi.
+- **`nox.jwt.verify_claims` / `verify_now`** (Nyx 2.4): `exp`, `nbf`, `iat` denetimi (saat sapması payı ile). `verify` değişmedi.
+- **`nox.uuid.uuid7` / `uuid7_at` / `uuid7_timestamp_ms`** (Ember NL-010): RFC 9562 zaman sıralı UUID, saat enjeksiyonu.
+- **`nox.json.as_int` / `number_text`** (Ember NL-009): 2^53 ve üstü JSON tamsayıları tam korunur; `dump` bunları aynen yazar.
+
+### Düzeltildi
+
+- Tarayıcı derleyicisinin (`noxc-frontend.wasm`) gömülü stdlib paketi, `stdlib/` değiştiğinde yeniden üretilmiyordu (dizin izlenen girdi değildi); artık her `.nox` dosyası paketleyicinin girdisidir.
+
 ## [2.1.6]
 
 ### Eklendi

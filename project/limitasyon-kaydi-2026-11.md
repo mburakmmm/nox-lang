@@ -34,13 +34,13 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [x] **C4 ember NL-008** sinyal abonelik API'si (`nox.signal`) — **KAPANDI v2.1.6**.
 - [~] **C5 ember NL-006/007/013** Postgres: SQLSTATE, havuz, sorgu zaman aşımı/iptal, fiber-uyumlu I/O.
 - [~] **C6 ember NL-001** `nox.redis`.
-- [~] **C7 ember NL-009** JSON tam sayı hassasiyeti (2^53 üstü).
-- [~] **C8 rune** `nox.terminal` (raw mod, boyut, poll, ham yazma, echo).
+- [x] **C7 ember NL-009** JSON tam sayı hassasiyeti (2^53 üstü) — `as_int`, `number_text`, `dump` tam metni korur — **KAPANDI v2.1.7**.
+- [x] **C8 rune** `nox.terminal` (raw mod, boyut, poll, ham yazma, echo, yetenek tespiti) — **KAPANDI v2.1.7**; Windows'ta terminal denetimi yok (`TerminalError`).
 - [~] **C9 aether/nyx/ember** `serve_multicore` closure, IPv6 çok çekirdekli dinleme, paylaşılan `Application`/`list`/`dict`, `AtomicRef`.
-- [~] **C10 nyx 2.3** şablonda döngü/koşul.
-- [~] **C11 nyx 2.4** `nox.jwt.verify` `exp/nbf/iat` kontrolü.
+- [x] **C10 nyx 2.3** şablonda döngü/koşul — `render_blocks` (`for`/`if`/`else`, `loop.*`) — **KAPANDI v2.1.7**; `render` değişmedi.
+- [x] **C11 nyx 2.4** `nox.jwt.verify` `exp/nbf/iat` kontrolü — `verify_claims`/`verify_now` eklendi (v2.1.7); `verify` davranışı değişmedi.
 - [~] **C12 pulse** protobuf, gRPC, UDP, Buffer→str köprüsü, gzip→bytes, mikro-saniye saat.
-- [~] **C13 ember NL-010/011/014** UUIDv7, property-test, zaman dilimi.
+- [~] **C13 ember NL-010/011/014** UUIDv7 (**KAPANDI v2.1.7**: `uuid7`, `uuid7_at`, `uuid7_timestamp_ms`), property-test (açık), zaman dilimi (açık).
 - [~] **C14 aether 5** `@controller`/`@get` metot dekoratörlerinin işleyici olması.
 - [~] **C15 pulse TYPE-001** tagged union / enum.
 

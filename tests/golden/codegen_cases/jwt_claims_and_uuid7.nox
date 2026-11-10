@@ -1,0 +1,42 @@
+# Nyx 2.4 + Ember NL-010: verify_claims (exp/nbf/iat) ve UUIDv7 (zaman damgası gömülü, sıralı, saat enjeksiyonu).
+import nox.jwt
+import nox.uuid
+from nox.jwt import JwtError
+
+tok: str = nox.jwt.sign("{\"sub\":\"a\",\"exp\":100,\"nbf\":50,\"iat\":40}", "k")
+print(nox.jwt.verify(tok, "k"))
+print(nox.jwt.verify_claims(tok, "k", 60, 0))
+try:
+    nox.jwt.verify_claims(tok, "k", 100, 0)
+except JwtError as e:
+    print(e.message)
+try:
+    nox.jwt.verify_claims(tok, "k", 45, 0)
+except JwtError as e:
+    print(e.message)
+try:
+    nox.jwt.verify_claims(tok, "k", 30, 0)
+except JwtError as e:
+    print(e.message)
+print(nox.jwt.verify_claims(tok, "k", 101, 5))
+fut: str = nox.jwt.sign("{\"iat\":500}", "k")
+try:
+    nox.jwt.verify_claims(fut, "k", 100, 0)
+except JwtError as e:
+    print(e.message)
+bad: str = nox.jwt.sign("{\"exp\":\"soon\"}", "k")
+try:
+    nox.jwt.verify_claims(bad, "k", 100, 0)
+except JwtError as e:
+    print(e.message)
+plain: str = nox.jwt.sign("{\"sub\":\"b\"}", "k")
+print(nox.jwt.verify_claims(plain, "k", 99999, 0))
+
+a: str = nox.uuid.uuid7_at(1700000000000)
+b: str = nox.uuid.uuid7_at(1700000000001)
+print(len(a), a[14], nox.uuid.is_valid(a))
+print(nox.uuid.uuid7_timestamp_ms(a), nox.uuid.uuid7_timestamp_ms(b))
+print(a < b)
+print(a[0:13])
+now: str = nox.uuid.uuid7()
+print(nox.uuid.uuid7_timestamp_ms(now) > 1700000000000)

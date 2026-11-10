@@ -1,0 +1,20 @@
+# Nyx 2.3: render_blocks — {% for %}, {% if %}/{% else %}, loop.*, iç içe bloklar, hata yolları; render() etiketleri literal bırakır.
+import nox.template
+from nox.template import TemplateError
+
+scalars: dict[str, str] = {"title": "Users & Co", "admin": "true", "empty_flag": ""}
+users: list[dict[str, str]] = [{"name": "Ada <1>", "role": "dev"}, {"name": "Bob", "role": "ops"}]
+lists: dict[str, list[dict[str, str]]] = {"users": users}
+
+t: str = "<h1>{{ title }}</h1>{% for u in users %}[{{ loop.index }}:{{ u.name }}/{{ u.role }}{% if loop.last %}.{% else %},{% endif %}]{% endfor %}"
+print(nox.template.render_blocks(t, scalars, lists))
+print(nox.template.render_blocks("{% if admin %}A{% else %}B{% endif %}{% if empty_flag %}C{% else %}D{% endif %}{% if not users %}E{% endif %}{% if users %}F{% endif %}", scalars, lists))
+nested: str = "{% for u in users %}{% if u.role %}<{{ u.name }}>{% endif %}{% for x in users %}{{ x.role }}{% endfor %};{% endfor %}"
+print(nox.template.render_blocks_unescaped(nested, scalars, lists))
+print(nox.template.render("{% for item in items %}x{% endfor %}", scalars))
+for bad in ["{% for u in users %}x", "{% endfor %}", "{% if admin %}x", "{{ nope }}", "{% for u in nolist %}{% endfor %}", "{% bogus %}", "{{ open"]:
+    try:
+        nox.template.render_blocks(bad, scalars, lists)
+        print("no error")
+    except TemplateError as e:
+        print(e.message)

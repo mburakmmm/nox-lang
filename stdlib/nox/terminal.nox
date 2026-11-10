@@ -1,0 +1,144 @@
+# nox.terminal — terminal G/Ç denetimi (Rune): TTY algılama, boyut, ham mod, echo kapatma, bloklamayan ham girdi, ham çıktı.
+#
+#     import nox.terminal
+#
+#     nox.terminal.enable_raw_mode()
+#     try:
+#         while True:
+#             if nox.terminal.poll_input(100):           # fiber içinde yalnızca bu görev bekler
+#                 chunk: str = nox.terminal.read_raw(32)  # ham baytlar; çok baytlı UTF-8 parça parça gelebilir
+#                 if chunk == "q":
+#                     break
+#     finally:
+#         nox.terminal.disable_raw_mode()
+#
+# Ham girdi `str` olarak döner ve bayt-güvenlidir (gömülü NUL ve geçersiz UTF-8 aynen korunur); tuş dizilerini (ESC [ A, ...) çağıran ayrıştırır.
+# Ham mod iç içe çağrılara karşı sayaçlıdır: her `enable_raw_mode` bir `disable_raw_mode` ile eşleşmelidir; `restore_state` sayaçtan bağımsız olarak özgün
+# terminal ayarlarını geri yükler (hata/`finally` kurtarması). Windows, wasm ve freestanding'de terminal denetimi yoktur: `is_tty` False,
+# `enable_raw_mode` `TerminalError`, boyut ortam/varsayılandan gelir.
+import nox.os
+from nox.os import OsError
+
+class TerminalError(Exception):
+    pass
+
+class TerminalSize:
+    cols: int
+    rows: int
+
+    def __init__(self: TerminalSize, cols: int, rows: int) -> None:
+        self.cols = cols
+        self.rows = rows
+
+class TerminalCapabilities:
+    is_tty: bool
+    supports_ansi: bool
+    supports_truecolor: bool
+    color_depth: int
+
+    def __init__(self: TerminalCapabilities, is_tty: bool, supports_ansi: bool, supports_truecolor: bool, color_depth: int) -> None:
+        self.is_tty = is_tty
+        self.supports_ansi = supports_ansi
+        self.supports_truecolor = supports_truecolor
+        self.color_depth = color_depth
+
+extern def nox_terminal_is_tty_raw(fd: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_size_raw(which: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_enable_raw_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_disable_raw_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_is_raw_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_restore_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_set_echo_raw(enabled: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_poll_raw(timeout_ms: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_stdin_read_raw(max_bytes: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_terminal_stdout_write_raw(s: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_terminal_flush_raw() -> None from "zig-out/lib/noxrt.o"
+
+# `fd` (0 stdin, 1 stdout, 2 stderr) bir terminale mi bağlı?
+def is_tty(fd: int = 1) -> bool:
+    return nox_terminal_is_tty_raw(fd) == 1
+
+# Ortam değişkeni yoksa boş dize (`nox.os.getenv` yoksa hata verir).
+def _env(name: str) -> str:
+    try:
+        return nox.os.getenv(name)
+    except OsError as e:
+        return ""
+    return ""
+
+def _env_int(name: str, fallback: int) -> int:
+    v: str = _env(name)
+    if len(v) == 0:
+        return fallback
+    try:
+        n: int = int(v)
+        if n > 0:
+            return n
+    except ValueError as e:
+        return fallback
+    return fallback
+
+# Sütun x satır. Gerçek terminal boyutu okunamazsa (terminal değil / desteklenmiyor) `COLUMNS`/`LINES` ortam değişkenleri, o da yoksa 80x24.
+def get_size() -> TerminalSize:
+    cols: int = nox_terminal_size_raw(0)
+    rows: int = nox_terminal_size_raw(1)
+    if cols <= 0:
+        cols = _env_int("COLUMNS", 80)
+    if rows <= 0:
+        rows = _env_int("LINES", 24)
+    return TerminalSize(cols, rows)
+
+# Renk yeteneği: `NO_COLOR` doluysa renksiz, `TERM=dumb` ya da stdout terminal değilse ANSI yok; `COLORTERM=truecolor|24bit` 24 bit,
+# `TERM` içinde `256color` 8 bit, aksi halde 16 renk.
+def get_capabilities() -> TerminalCapabilities:
+    tty: bool = is_tty(1)
+    term: str = _env("TERM")
+    colorterm: str = _env("COLORTERM")
+    if not tty or term == "dumb" or len(_env("NO_COLOR")) > 0:
+        return TerminalCapabilities(tty, False, False, 0)
+    if colorterm == "truecolor" or colorterm == "24bit":
+        return TerminalCapabilities(tty, True, True, 16777216)
+    if term.find("256color") >= 0:
+        return TerminalCapabilities(tty, True, False, 256)
+    return TerminalCapabilities(tty, True, False, 16)
+
+# stdin'i ham moda alır. Başarısızsa `TerminalError` (terminal değil, desteklenmiyor).
+def enable_raw_mode() -> None:
+    if nox_terminal_enable_raw_raw() != 0:
+        raise TerminalError("cannot enable raw mode (stdin is not a terminal or the platform has no terminal control)")
+
+def disable_raw_mode() -> None:
+    if nox_terminal_disable_raw_raw() != 0:
+        raise TerminalError("cannot restore the terminal settings")
+
+def is_raw_mode() -> bool:
+    return nox_terminal_is_raw_raw() == 1
+
+# Sayaçtan bağımsız: özgün terminal ayarlarını geri yükler (hata/`finally` kurtarması).
+def restore_state() -> None:
+    nox_terminal_restore_raw()
+
+# Parola girişi için echo'yu kapat/aç.
+def set_echo(enabled: bool) -> None:
+    flag: int = 0
+    if enabled:
+        flag = 1
+    if nox_terminal_set_echo_raw(flag) != 0:
+        raise TerminalError("cannot change terminal echo (stdin is not a terminal)")
+
+# stdin'de okunacak veri var mı? En çok `timeout_ms` bekler (negatif: süresiz). Fiber içinde yalnızca çağıran görev bekler.
+def poll_input(timeout_ms: int) -> bool:
+    return nox_terminal_poll_raw(timeout_ms) == 1
+
+# stdin'de hazır olan en çok `max_bytes` baytı döndürür (beklemez; yoksa boş dize). Bayt-güvenli.
+def read_raw(max_bytes: int = 256) -> str:
+    return nox_terminal_stdin_read_raw(max_bytes)
+
+# Satır sonu eklemeden stdout'a yazar; önce `print` tamponunu boşaltır, böylece sıra korunur.
+def write_raw(content: str) -> None:
+    if nox_terminal_stdout_write_raw(content) != 0:
+        raise TerminalError("cannot write to the terminal")
+
+# `print` tamponunu boşaltır (`write_raw` zaten tamponsuzdur).
+def flush() -> None:
+    nox_terminal_flush_raw()

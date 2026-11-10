@@ -29697,3 +29697,11 @@ Kaynak: aether/nyx/aura/nova/pulse `NOX_LIMITATIONS` belgeleri; kayıt `project/
 - **`Task.is_done/wait/wait_any`**: yerleşik `Task` metotları (checker `.task` dalı, `genTaskIsDone`/`genTaskWait`). `nox_task_is_done` iki köprüde (native/wasm); `nox_task_wait[_any]` `stdlib_shims/task_wait.zig`de 1→10 ms yoklamalı döngü (`nox_time_sleep_ms_raw`). `Task[T]` jenerik işlev imzalarında çözülemediğinden yardımcılar stdlib işlevi değil metottur.
 - **`nox.signal`**: `stdlib_shims/signal.zig` — sinyal başına atomik bayrak, `sigaction` işleyicisi yalnızca bayrağı kurar. Yetenek: `process`. Extern adları `_raw` soneklidir (`install` gibi sarmalayıcı adlarıyla çakışmamak için).
 - Açık: `list[Task[T]]`/`TaskGroup` (codegen `Unsupported`: liste eleman bırakma/tutma `Task`ı bilmiyor), CPU-bound görev sonlandırma.
+
+### 3.375 Kütüphane turu: terminal, şablon blokları, JWT/UUIDv7/JSON (v2.1.7)
+
+- **`nox.terminal`**: `stdlib_shims/terminal.zig` (termios + `TIOCGWINSZ` + `poll`; fiber içinde `fiber_net.waitFd`). Ham mod sayaçlıdır (`g_raw_depth`), `restore_state` sayaçtan bağımsızdır; `write_raw` önce `print` tamponunu boşaltır. Yetenek: `process`. Extern adları sarmalayıcılarla çakışmasın diye `stdin_read`/`stdout_write` içerir.
+- **`render_blocks`**: belirteç (`0` metin, `1` ifade, `2` deyim) → `_render_range` özyinelemeli; `for` kapsamı skalerlerin kopyasına `x.alan` ve `loop.*` anahtarları ekler. `render` bloklara dokunmaz.
+- **`verify_claims`**: `verify` + `nox.json` ile `exp/nbf/iat`. **`uuid7_at`**: 48 bit ms + sürüm 7 + `secure_random_hex(9)` + rastgele varyant nibble'ı.
+- **JSON tamsayı**: `buildNode[Fast]` `|i| ≥ 2^53` ya da düz büyük `number_string` için sayının metnini yaprağın `s` alanına da yazar; `as_int`/`number_text`/`dump` onu kullanır (diğer sayılarda ek tahsis yok).
+- **Paketleyici girdisi**: `bundle_stdlib` çalıştırıcısına her `stdlib/**/*.nox` `addFileInput` ile eklenir.

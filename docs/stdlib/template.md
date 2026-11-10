@@ -1,7 +1,7 @@
 # nox.template
 
 A minimal text template engine: `{{ name }}` placeholders replaced from a dictionary. By default every value is **HTML-escaped**, which is the basic defence against
-cross-site scripting. There are no conditionals or loops — build repeated markup in Nox and substitute the result with `render_unescaped`.
+cross-site scripting. `render` / `render_unescaped` only substitute placeholders; `render_blocks` / `render_blocks_unescaped` also understand `{% for %}` and `{% if %}`.
 
 ```text
 import nox.template
@@ -48,6 +48,33 @@ print(nox.template.render_unescaped("<ul>{{ rows }}</ul>", {"rows": rows}))
 
 ```output
 <ul><li>a</li><li>b</li></ul>
+```
+
+## Blocks: loops and conditions
+
+`render_blocks(template, scalars, lists)` adds two block tags. Data comes in two dictionaries: `scalars: dict[str, str]` for `{{ name }}` and conditions, and
+`lists: dict[str, list[dict[str, str]]]` for loops (each item is a dictionary of fields).
+
+| Syntax | Meaning |
+|---|---|
+| `{% for u in users %}…{% endfor %}` | repeats the body for each item of `lists["users"]`; `{{ u.name }}` reads the item's field `name` |
+| `loop.index`, `loop.index0`, `loop.first`, `loop.last` | inside a loop: 1-based and 0-based position, and `"true"`/`"false"` flags |
+| `{% if name %}…{% else %}…{% endif %}` | true when the scalar is non-empty and not `"0"`/`"false"`/`"False"`, or the named list is non-empty; an undefined name is false |
+| `{% if not name %}…{% endif %}` | negation |
+
+Blocks nest. A missing `endfor`/`endif`, a stray `endfor`/`endif`/`else`, an unknown tag, an undefined `{{ name }}` and an undefined loop list all raise
+`TemplateError`. Values are HTML-escaped by `render_blocks`; `render_blocks_unescaped` writes them as is. Plain `render` leaves `{% … %}` untouched.
+
+```nox
+import nox.template
+
+users: list[dict[str, str]] = [{"name": "Ada"}, {"name": "Bob"}]
+html: str = nox.template.render_blocks("{% for u in users %}{{ loop.index }}:{{ u.name }}{% if loop.last %}.{% else %}, {% endif %}{% endfor %}", {}, {"users": users})
+print(html)
+```
+
+```output
+1:Ada, 2:Bob.
 ```
 
 ## Notes

@@ -82,3 +82,197 @@ def render(tmpl: str, context: dict[str, str]) -> str:
 
 def render_unescaped(tmpl: str, context: dict[str, str]) -> str:
     return _render_impl(tmpl, context, False)
+
+# ---------------------------------------------------------------------
+# Blok şablonları (Nyx 2.3): `render_blocks` / `render_blocks_unescaped`. `render`dan farkı: `{% ... %}` etiketlerini yorumlar.
+#
+#     {% for u in users %}<li>{{ u.name }} ({{ loop.index }})</li>{% endfor %}
+#     {% if admin %}...{% else %}...{% endif %}        {% if not items %}empty{% endif %}
+#
+# Veri iki sözlükle verilir: `scalars: dict[str, str]` (`{{ ad }}` ve `if ad`) ve `lists: dict[str, list[dict[str, str]]]` (`for x in ad`; her öğe
+# bir alan sözlüğü, gövdede `{{ x.alan }}`; `loop.index` (1'den), `loop.index0`, `loop.first`, `loop.last` ("true"/"false")). Koşul: bir skalerde değer
+# boş değil ve "0"/"false"/"False" değilse doğru; bir liste adında liste boş değilse doğru. Tanımsız ad `if`te yanlış, `{{ }}` ve `for`da `TemplateError`.
+# `for`/`if` iç içe olabilir; kapanmamış/yetim `endfor`/`endif`/`else` `TemplateError` verir. Değerler `render_blocks`ta HTML kaçışlanır.
+class _Tokens:
+    kinds: list[int]
+    texts: list[str]
+
+    def __init__(self: _Tokens) -> None:
+        self.kinds = []
+        self.texts = []
+
+    def add(self: _Tokens, kind: int, text: str) -> None:
+        kinds: list[int] = self.kinds
+        texts: list[str] = self.texts
+        kinds.append(kind)
+        texts.append(text)
+        self.kinds = kinds
+        self.texts = texts
+
+# 0 = metin, 1 = `{{ ifade }}`, 2 = `{% deyim %}` (içerik kırpılmış).
+def _tokenize(tmpl: str) -> _Tokens:
+    toks: _Tokens = _Tokens()
+    pos: int = 0
+    n: int = len(tmpl)
+    while pos < n:
+        rest: str = _substr_from(tmpl, pos)
+        e_at: int = rest.find("{{")
+        s_at: int = rest.find("{%")
+        if e_at < 0 and s_at < 0:
+            toks.add(0, rest)
+            pos = n
+        else:
+            is_expr: bool = s_at < 0 or (e_at >= 0 and e_at < s_at)
+            at: int = s_at
+            if is_expr:
+                at = e_at
+            if at > 0:
+                toks.add(0, _substr(rest, 0, at))
+            after: str = _substr_from(rest, at + 2)
+            close: str = "%}"
+            kind: int = 2
+            if is_expr:
+                close = "}}"
+                kind = 1
+            end: int = after.find(close)
+            if end < 0:
+                raise TemplateError("unclosed '" + _substr(rest, at, at + 2) + "'")
+            toks.add(kind, nox.strings.trim(_substr(after, 0, end)))
+            pos = pos + at + 2 + end + 2
+    return toks
+
+def _words(s: str) -> list[str]:
+    out: list[str] = []
+    for w in nox.strings.split(s, " "):
+        if len(w) > 0:
+            out.append(w)
+    return out
+
+def _first_word(stmt: str) -> str:
+    ws: list[str] = _words(stmt)
+    if len(ws) == 0:
+        return ""
+    return ws[0]
+
+# `lo` konumundaki `open_word` açıcısının eşleşen `close_word` kapatıcısının konumu (iç içe aynı türden bloklar sayılır); yoksa hata.
+def _find_close(toks: _Tokens, lo: int, hi: int, open_word: str, close_word: str) -> int:
+    depth: int = 0
+    i: int = lo
+    while i < hi:
+        if toks.kinds[i] == 2:
+            w: str = _first_word(toks.texts[i])
+            if w == open_word:
+                depth = depth + 1
+            elif w == close_word:
+                depth = depth - 1
+                if depth == 0:
+                    return i
+        i = i + 1
+    raise TemplateError("'{% " + open_word + " %}' has no matching '{% " + close_word + " %}'")
+
+# `lo..hi` aralığında, iç içe `if`lerin dışındaki (derinlik 0) `else` konumu; yoksa -1.
+def _find_else(toks: _Tokens, lo: int, hi: int) -> int:
+    depth: int = 0
+    i: int = lo
+    while i < hi:
+        if toks.kinds[i] == 2:
+            w: str = _first_word(toks.texts[i])
+            if w == "if":
+                depth = depth + 1
+            elif w == "endif":
+                depth = depth - 1
+            elif w == "else" and depth == 0:
+                return i
+        i = i + 1
+    return -1
+
+def _truthy_scalar(v: str) -> bool:
+    return len(v) > 0 and v != "0" and v != "false" and v != "False"
+
+def _eval_cond(words: list[str], scalars: dict[str, str], lists: dict[str, list[dict[str, str]]]) -> bool:
+    negate: bool = False
+    name_idx: int = 1
+    if len(words) >= 3 and words[1] == "not":
+        negate = True
+        name_idx = 2
+    if len(words) != name_idx + 1:
+        raise TemplateError("invalid '{% if %}' condition: " + nox.strings.join(words, " "))
+    name: str = words[name_idx]
+    result: bool = False
+    if scalars.contains(name):
+        result = _truthy_scalar(scalars[name])
+    elif lists.contains(name):
+        result = len(lists[name]) > 0
+    if negate:
+        return not result
+    return result
+
+def _render_range(toks: _Tokens, lo: int, hi: int, scalars: dict[str, str], lists: dict[str, list[dict[str, str]]], escape: bool) -> str:
+    out: str = ""
+    i: int = lo
+    while i < hi:
+        kind: int = toks.kinds[i]
+        text: str = toks.texts[i]
+        if kind == 0:
+            out = out + text
+            i = i + 1
+        elif kind == 1:
+            if not scalars.contains(text):
+                raise TemplateError("undefined template variable: '" + text + "'")
+            if escape:
+                out = out + escape_html(scalars[text])
+            else:
+                out = out + scalars[text]
+            i = i + 1
+        else:
+            words: list[str] = _words(text)
+            head: str = ""
+            if len(words) > 0:
+                head = words[0]
+            if head == "for":
+                if len(words) != 4 or words[2] != "in":
+                    raise TemplateError("invalid '{% for %}': expected 'for <name> in <list>'")
+                end: int = _find_close(toks, i, hi, "for", "endfor")
+                var: str = words[1]
+                list_name: str = words[3]
+                if not lists.contains(list_name):
+                    raise TemplateError("undefined template list: '" + list_name + "'")
+                items: list[dict[str, str]] = lists[list_name]
+                total: int = len(items)
+                idx: int = 0
+                while idx < total:
+                    scope: dict[str, str] = scalars.copy()
+                    item: dict[str, str] = items[idx]
+                    for field in item.keys():
+                        scope[var + "." + field] = item[field]
+                    scope["loop.index"] = str(idx + 1)
+                    scope["loop.index0"] = str(idx)
+                    scope["loop.first"] = "true" if idx == 0 else "false"
+                    scope["loop.last"] = "true" if idx == total - 1 else "false"
+                    out = out + _render_range(toks, i + 1, end, scope, lists, escape)
+                    idx = idx + 1
+                i = end + 1
+            elif head == "if":
+                end2: int = _find_close(toks, i, hi, "if", "endif")
+                else_at: int = _find_else(toks, i + 1, end2)
+                if _eval_cond(words, scalars, lists):
+                    then_hi: int = end2
+                    if else_at >= 0:
+                        then_hi = else_at
+                    out = out + _render_range(toks, i + 1, then_hi, scalars, lists, escape)
+                elif else_at >= 0:
+                    out = out + _render_range(toks, else_at + 1, end2, scalars, lists, escape)
+                i = end2 + 1
+            else:
+                raise TemplateError("unexpected '{% " + text + " %}'")
+    return out
+
+def _render_blocks_impl(tmpl: str, scalars: dict[str, str], lists: dict[str, list[dict[str, str]]], escape: bool) -> str:
+    toks: _Tokens = _tokenize(tmpl)
+    return _render_range(toks, 0, len(toks.kinds), scalars, lists, escape)
+
+def render_blocks(tmpl: str, scalars: dict[str, str], lists: dict[str, list[dict[str, str]]]) -> str:
+    return _render_blocks_impl(tmpl, scalars, lists, True)
+
+def render_blocks_unescaped(tmpl: str, scalars: dict[str, str], lists: dict[str, list[dict[str, str]]]) -> str:
+    return _render_blocks_impl(tmpl, scalars, lists, False)

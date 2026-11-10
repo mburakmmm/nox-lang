@@ -245,13 +245,34 @@ fn makeLeaf(rt: ?*anyopaque, shared: SharedEmpties, kind: i64, b: bool, n: f64, 
     return callMakeJsonValue(rt, kind, if (b) 1 else 0, n, s, empty_arr, empty_keys, empty_vals);
 }
 
+/// 2^53'ten büyük/eşit büyüklükteki tamsayılar `f64`e SIĞMAZ (`9007199254740993` → `9007199254740992`). Bu durumda sayının tam ondalık metni yaprağın `s` alanında
+/// da tutulur (`nox.json.as_int`/`number_text` onu okur, `dump` onu aynen yazar); diğer sayılarda `s` paylaşılan boş dizedir (ek tahsis yok).
+fn exactNumberText(rt: ?*anyopaque, shared: SharedEmpties, text: []const u8) ?[*:0]const u8 {
+    return dupeToNoxStr(rt, text) orelse sharedEmptyStr(shared);
+}
+
+fn isPlainBigInteger(s: []const u8) bool {
+    var digits = s;
+    if (digits.len > 0 and digits[0] == '-') digits = digits[1..];
+    if (digits.len < 16) return false;
+    for (digits) |c| if (c < '0' or c > '9') return false;
+    return true;
+}
+
 fn buildNode(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEmpties, v: std.json.Value) !?*anyopaque {
     return switch (v) {
         .null => makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared)),
         .bool => |b| makeLeaf(rt, shared, 1, b, 0.0, sharedEmptyStr(shared)),
-        .integer => |i| makeLeaf(rt, shared, 2, false, @floatFromInt(i), sharedEmptyStr(shared)),
+        .integer => |i| blk: {
+            if (i >= (1 << 53) or i <= -(1 << 53)) {
+                var buf: [24]u8 = undefined;
+                const text = std.fmt.bufPrint(&buf, "{d}", .{i}) catch break :blk makeLeaf(rt, shared, 2, false, @floatFromInt(i), sharedEmptyStr(shared));
+                break :blk makeLeaf(rt, shared, 2, false, @floatFromInt(i), exactNumberText(rt, shared, text));
+            }
+            break :blk makeLeaf(rt, shared, 2, false, @floatFromInt(i), sharedEmptyStr(shared));
+        },
         .float => |f| makeLeaf(rt, shared, 2, false, f, sharedEmptyStr(shared)),
-        .number_string => |s| makeLeaf(rt, shared, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, sharedEmptyStr(shared)),
+        .number_string => |s| makeLeaf(rt, shared, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, if (isPlainBigInteger(s)) exactNumberText(rt, shared, s) else sharedEmptyStr(shared)),
         .string => |s| blk: {
             const dup = dupeToNoxStr(rt, s) orelse break :blk null;
             break :blk makeLeaf(rt, shared, 3, false, 0.0, dup);
@@ -335,9 +356,16 @@ fn buildNodeFast(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEm
     return switch (v) {
         .null => makeLeafFast(rt, shared, class_id, 0, false, 0.0, sharedEmptyStr(shared)),
         .bool => |b| makeLeafFast(rt, shared, class_id, 1, b, 0.0, sharedEmptyStr(shared)),
-        .integer => |i| makeLeafFast(rt, shared, class_id, 2, false, @floatFromInt(i), sharedEmptyStr(shared)),
+        .integer => |i| blk: {
+            if (i >= (1 << 53) or i <= -(1 << 53)) {
+                var buf: [24]u8 = undefined;
+                const text = std.fmt.bufPrint(&buf, "{d}", .{i}) catch break :blk makeLeafFast(rt, shared, class_id, 2, false, @floatFromInt(i), sharedEmptyStr(shared));
+                break :blk makeLeafFast(rt, shared, class_id, 2, false, @floatFromInt(i), exactNumberText(rt, shared, text));
+            }
+            break :blk makeLeafFast(rt, shared, class_id, 2, false, @floatFromInt(i), sharedEmptyStr(shared));
+        },
         .float => |f| makeLeafFast(rt, shared, class_id, 2, false, f, sharedEmptyStr(shared)),
-        .number_string => |s| makeLeafFast(rt, shared, class_id, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, sharedEmptyStr(shared)),
+        .number_string => |s| makeLeafFast(rt, shared, class_id, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, if (isPlainBigInteger(s)) exactNumberText(rt, shared, s) else sharedEmptyStr(shared)),
         .string => |s| blk: {
             const dup = dupeToNoxStr(rt, s) orelse break :blk null;
             break :blk makeLeafFast(rt, shared, class_id, 3, false, 0.0, dup);

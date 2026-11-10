@@ -1,0 +1,20 @@
+# Ember NL-009: 2^53 üstü JSON tamsayıları tam korunur (as_int, number_text, dump).
+import nox.json
+from nox.json import JsonError, JsonValue
+
+v: JsonValue = nox.json.parse("[9007199254740993, 5, 2.5, -9007199254740993, 12345678901234567890, 1e3]")
+print(nox.json.as_int(nox.json.array_get(v, 0)))
+print(nox.json.as_int(nox.json.array_get(v, 1)))
+print(nox.json.number_text(nox.json.array_get(v, 2)))
+print(nox.json.as_int(nox.json.array_get(v, 3)))
+print(nox.json.number_text(nox.json.array_get(v, 4)))
+print(nox.json.dump(v))
+try:
+    nox.json.as_int(nox.json.array_get(v, 2))
+except JsonError as e:
+    print(e.message)
+try:
+    nox.json.as_int(nox.json.array_get(v, 4))
+except JsonError as e:
+    print(e.message)
+print(nox.json.as_int(nox.json.array_get(v, 5)))

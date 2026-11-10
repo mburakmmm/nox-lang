@@ -25,7 +25,9 @@ Every node is exactly one of null, boolean, number, string, array or object. Tes
 | Function | Description |
 |---|---|
 | `is_null(v)`, `is_bool(v)`, `is_number(v)`, `is_string(v)`, `is_array(v)`, `is_object(v)` | kind tests |
-| `as_bool(v)`, `as_number(v)`, `as_string(v)` | the value; `as_number` is a `float` (use `int(...)` for integers) |
+| `as_bool(v)`, `as_number(v)`, `as_string(v)` | the value; `as_number` is a `float` (integers above 2^53 lose precision as a `float`: use `as_int`) |
+| `as_int(v)` | the exact `int` value of a number (a `JsonError` if it is not an integer or does not fit in `int`); integers of 2^53 and above keep their exact text, so `9007199254740993` is not rounded |
+| `number_text(v)` | the number's decimal text (the exact text for integers of 2^53 and above); `dump` writes such integers unchanged |
 | `array_len(v)`, `array_get(v, i)` | array length and element |
 | `object_len(v)`, `object_key(v, i)`, `object_value(v, i)` | an object's `i`-th entry, **in document order** |
 

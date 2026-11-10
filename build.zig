@@ -1075,7 +1075,22 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{ .root_source_file = b.path("tools/bundle_stdlib.zig"), .target = b.graph.host, .optimize = .Debug }),
         });
         const bundle_run = b.addRunArtifact(bundler);
+        // Her stdlib `.nox` dosyası İZLENEN bir girdidir (içeriği önbellek anahtarına girer): düz `addArg("stdlib")` ile stdlib değiştiğinde gömülü paket
+        // bayat kalıyordu, tarayıcı derleyicisi yerel `noxc`den farklı IR üretiyordu (bkz. wasm_frontend_test). `addDirectoryArg` dizin içeriğini
+        // hash'lemez; bu yüzden dosyalar tek tek eklenir.
         bundle_run.addArg("stdlib");
+        {
+            const bio = b.graph.io;
+            const root_handle = if (comptime @hasField(std.Build, "build_root")) b.build_root.handle else b.root.root_dir.handle;
+            var sdir = root_handle.openDir(bio, "stdlib", .{ .iterate = true }) catch @panic("stdlib/ acilamadi");
+            defer sdir.close(bio);
+            var walker = sdir.walk(b.allocator) catch @panic("stdlib/ gezilemedi");
+            defer walker.deinit();
+            while (walker.next(bio) catch @panic("stdlib/ gezilemedi")) |entry| {
+                if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".nox")) continue;
+                bundle_run.addFileInput(b.path(b.fmt("stdlib/{s}", .{entry.path})));
+            }
+        }
         bundle_run.has_side_effects = false;
         const stdlib_bundle_file = bundle_run.captureStdOut(.{});
         const fc_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding, .abi = .none });
@@ -1385,6 +1400,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/package_resolution_test.zig",
         "tests/cli/add_delete_test.zig",
         "tests/cli/local_import_test.zig",
+        "tests/cli/terminal_pty_test.zig",
         "tests/cli/run_script_args_test.zig",
         "tests/cli/extern_path_test.zig",
         "tests/cli/path_confine_test.zig",

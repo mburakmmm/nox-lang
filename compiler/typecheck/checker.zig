@@ -1476,6 +1476,7 @@ pub const Checker = struct {
         .{ .name = "postgres", .caps = &.{.network} },
         .{ .name = "process", .caps = &.{.process} },
         .{ .name = "signal", .caps = &.{.process} },
+        .{ .name = "terminal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },
         .{ .name = "reflect", .caps = &.{} },
         .{ .name = "regex", .caps = &.{} },
