@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.8]
+
+### Eklendi
+
+- **`nox.postgres` yapılandırılmış hatalar** (Ember NL-006): `PostgresError.sqlstate`, `severity`, `detail`, `hint`, `table`, `column`, `constraint` ve `kind` (`unique_violation`, `foreign_key_violation`, `not_null_violation`, `check_violation`, `serialization_failure`, `deadlock`, `query_canceled`, `connection`, `other`); `is_unique_violation()`, `is_retryable()` vb. Hem libpq hem mobilin saf Zig istemcisi doldurur.
+- **`Connection.set_statement_timeout(ms)`, `set_lock_timeout(ms)`, `is_ok()`** ve **`with conn.transaction() as tx:`** (Ember NL-007): `commit()` çağrılmadan çıkılan işlem geri alınır.
+- **`nox.postgres.pool(conninfo, size, acquire_timeout_ms)`** (`Pool.acquire/give_back/close`): sınırlı, kooperatif bekleyen, bozuk bağlantıları ayıklayan ve atomik kilitle görevler arası paylaşılabilen bağlantı havuzu.
+- **`with obj.metot(...) as x:`**: bağlam yöneticisi ifadesi artık sınıf tipli bir yerelin metot çağrısı olabilir (önceden derleyici "desteklenmiyor" diyordu).
+- Derleyici, bir sınıfın `release`/`trace`/`gc_free` adlı metodunu açık bir tanıyla reddeder (üretilen `<Sınıf>_release` sembolüyle çakışıp clang'da "invalid redefinition" hatası veriyordu).
+
 ## [2.1.7]
 
 ### Eklendi

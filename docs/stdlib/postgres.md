@@ -18,6 +18,11 @@ from nox.postgres import Connection, PostgresError
 | `Connection.query(sql)` | runs a query; returns `list[Row]` |
 | `Connection.prepare(sql)` | a parameterised [`Statement`](db.md#statement) with **`$1`, `$2`, …** placeholders |
 | `Connection.close()` | closes the connection |
+| `Connection.is_ok()` | is the connection still usable (not dropped)? |
+| `Connection.set_statement_timeout(ms)` | server-side limit: a statement running longer than `ms` milliseconds is cancelled by the server (`kind == "query_canceled"`); `0` removes the limit. The connection stays usable |
+| `Connection.set_lock_timeout(ms)` | the same for waiting on locks |
+| `Connection.transaction()` | a [`Transaction`](#transactions) for `with` |
+| `pool(conninfo, size, acquire_timeout_ms)` | a bounded [`Pool`](#connection-pool) |
 
 Parameters are bound by **zero-based** index in the Nox API (`bind_str(0, …)` fills `$1`), accumulated and sent together when you call `execute()` or `query()`. Each `Statement` execution is an
 independent request; there are no server-side named prepared statements.
@@ -39,7 +44,57 @@ def connect() -> Connection:
     return nox.postgres.open("postgres://app:secret@localhost:5432/appdb")
 ```
 
+## Errors
+
+`PostgresError` is structured. For errors reported by the server the fields come from the protocol, so you never have to parse the message:
+
+| Field / method | Meaning |
+|---|---|
+| `sqlstate` | the five-character SQLSTATE (`"23505"`); empty when no server was involved |
+| `severity`, `detail`, `hint`, `table`, `column`, `constraint` | the server's diagnostic fields (empty when absent) |
+| `kind` | `"unique_violation"` (23505), `"foreign_key_violation"` (23503), `"not_null_violation"` (23502), `"check_violation"` (23514), `"serialization_failure"` (40001), `"deadlock"` (40P01), `"query_canceled"` (57014: `statement_timeout`, cancel), `"connection"` (class 08, 57P01–57P03, and failures to connect or load libpq), otherwise `"other"` |
+| `is_unique_violation()`, `is_serialization_failure()`, `is_deadlock()`, `is_query_canceled()`, `is_connection_error()` | shortcuts for `kind` |
+| `is_retryable()` | `True` for serialization failures and deadlocks: retry the whole transaction. A connection error needs a **new connection** instead |
+
+```text
+try:
+    conn.execute("INSERT INTO users (id) VALUES (1)")
+except PostgresError as e:
+    if e.is_unique_violation():
+        print("duplicate", e.constraint)
+```
+
+## Transactions
+
+`with conn.transaction() as tx:` runs `BEGIN`, and `__exit__` rolls back unless the body called `tx.commit()` first (Nox's `__exit__` cannot see an
+exception, so the rule is "anything not explicitly committed is rolled back", like Go's `defer tx.Rollback()`). `tx` has `execute`, `query`, `prepare`, `commit` and `rollback`.
+
+```text
+with conn.transaction() as tx:
+    tx.execute("UPDATE accounts SET balance = balance - 10 WHERE id = 1")
+    tx.execute("UPDATE accounts SET balance = balance + 10 WHERE id = 2")
+    tx.commit()        # leave the block without this and both updates are rolled back
+```
+
+## Connection pool
+
+`nox.postgres.pool(conninfo, size, acquire_timeout_ms)` returns a `Pool` that opens at most `size` connections on demand. `acquire()` hands out an idle connection or a new one; when all
+`size` are in use it waits **cooperatively** (other tasks keep running) and raises `PostgresError` after `acquire_timeout_ms`. Give the connection back with `give_back(conn)`: a
+dropped connection is discarded (and replaced on the next `acquire`), an open transaction is rolled back. `close()` closes the idle connections. The pool's bookkeeping is protected by an
+atomic lock, so one pool may be shared by tasks running on different workers; a single connection must be used by one task at a time.
+
+```text
+pool: Pool = nox.postgres.pool("host=localhost dbname=app", 4, 5000)
+conn: Connection = pool.acquire()
+try:
+    rows: list[Row] = conn.query("SELECT 1")
+finally:
+    pool.give_back(conn)
+```
+
 ## Notes
+
+- libpq calls are synchronous: a slow query blocks its worker thread. With the default multi-core scheduler other tasks keep running on other workers; with QBE's single-threaded scheduler everything waits. Use `set_statement_timeout` to bound queries on the server. There is no client-side cancel (`PQcancel`) yet.
 
 - `libpq` (the PostgreSQL client library) must be installed on machines that call `open` — for example the `libpq5` package on Debian/Ubuntu.
 - Prefer `Statement` parameters over concatenating SQL; they travel to the server separately from the SQL text.

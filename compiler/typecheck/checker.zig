@@ -3474,6 +3474,13 @@ pub const Checker = struct {
         // Somut (monomorphize edilmiş, `type_params = &.{}`) bir çağrı BU
         // erken dönüşten ETKİLENMEZ.
         if (cd.type_params.len > 0) return;
+        // Derleyici her sınıf için `<Sınıf>_release`/`_trace`/`_gc_free` sembollerini üretir; aynı adlı bir metod sembolle çakışır ve clang'ın
+        // "invalid redefinition of function" hatasına kadar gizli kalırdı. Açık bir tanı verilir.
+        for (cd.methods) |m| {
+            if (std.mem.eql(u8, m.name, "release") or std.mem.eql(u8, m.name, "trace") or std.mem.eql(u8, m.name, "gc_free")) {
+                return self.fail(error.DuplicateDefinition, "class '{s}': the method name '{s}' is reserved (the compiler generates a '{s}_{s}' function for every class) — rename the method", .{ cd.name, m.name, cd.name, m.name });
+            }
+        }
         const info = self.classes.get(cd.name).?; // collectClassNames'de eklendi
         // Bulundu (Aether NOX_LIMITATIONS.md madde 13 — çapraz-modül sınıf
         // kalıtımı): `cd.base` ÇIPLAK bir isimse (ör. `from pkg.mod import

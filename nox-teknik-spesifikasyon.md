@@ -29705,3 +29705,10 @@ Kaynak: aether/nyx/aura/nova/pulse `NOX_LIMITATIONS` belgeleri; kayıt `project/
 - **`verify_claims`**: `verify` + `nox.json` ile `exp/nbf/iat`. **`uuid7_at`**: 48 bit ms + sürüm 7 + `secure_random_hex(9)` + rastgele varyant nibble'ı.
 - **JSON tamsayı**: `buildNode[Fast]` `|i| ≥ 2^53` ya da düz büyük `number_string` için sayının metnini yaprağın `s` alanına da yazar; `as_int`/`number_text`/`dump` onu kullanır (diğer sayılarda ek tahsis yok).
 - **Paketleyici girdisi**: `bundle_stdlib` çalıştırıcısına her `stdlib/**/*.nox` `addFileInput` ile eklenir.
+
+### 3.376 `nox.postgres` tanıları, işlem koruması ve havuz (v2.1.8)
+
+- `nox_pg_result_field_raw(res, code)`: libpq'da `PQresultErrorField`, saf Zig istemcide ham ErrorResponse gövdesinden ('C' SQLSTATE, 'S', 'D', 'H', 't', 'c', 'n'). `_pg_error(res, prefix)` alanları okuyup sonucu serbest bırakır ve `PostgresError` döndürür; `kind` SQLSTATE'ten türetilir (bağlantı kurulamaması `kind="connection"`).
+- `Transaction`: `__enter__` BEGIN, `__exit__` commit edilmediyse ROLLBACK (Nox'ta `__exit__` istisnayı görmez). `Pool`: `AtomicInt` CAS kilidi + `idle: list[Connection]`; bekleme `sleep_ms` ile kooperatif.
+- **Codegen**: `inferWithCtxClassName` `with obj.metot(...)` için alıcı sınıfın metot imzasından dönüş sınıfını okur. **Checker**: `registerClassSignatures` `release`/`trace`/`gc_free` metot adlarını reddeder.
+- Açık: libpq çağrıları iş parçacığını bloke eder (bloklamayan G/Ç / `PQcancel` yok); `nox.redis` yok.

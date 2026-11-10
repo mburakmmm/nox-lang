@@ -1,0 +1,83 @@
+# Ember NL-006/007: nox.postgres yapılandırılmış hata (SQLSTATE/kind), statement_timeout, Transaction koruması ve Pool — gerçek sunucuya karşı.
+# scripts/postgres_native_probe.py geçici bir PostgreSQL kümesi kurar ve @DSN@'yi doldurur.
+import nox.postgres
+from nox.postgres import PostgresError, Connection, Transaction, Pool
+from nox.db import Row
+
+DSN: str = "@DSN@"
+c: Connection = nox.postgres.open(DSN)
+c.execute("DROP TABLE IF EXISTS items")
+c.execute("CREATE TABLE items (id int primary key, v int not null, ref int)")
+c.execute("INSERT INTO items VALUES (1, 10, NULL)")
+
+try:
+    c.execute("INSERT INTO items VALUES (1, 20, NULL)")
+except PostgresError as e:
+    print(e.kind, e.sqlstate, e.is_unique_violation(), e.constraint, e.table, e.severity)
+try:
+    c.execute("INSERT INTO items VALUES (2, NULL, NULL)")
+except PostgresError as e:
+    print(e.kind, e.sqlstate, e.column)
+try:
+    c.query("SELEC 1")
+except PostgresError as e:
+    print(e.kind, e.sqlstate)
+
+# statement_timeout -> 57014
+c.set_statement_timeout(50)
+try:
+    c.query("SELECT pg_sleep(2)")
+except PostgresError as e:
+    print(e.kind, e.is_query_canceled(), e.is_retryable())
+c.set_statement_timeout(0)
+print(len(c.query("SELECT 1")))
+
+# serialization failure -> 40001 (two sessions)
+a: Connection = nox.postgres.open(DSN)
+b: Connection = nox.postgres.open(DSN)
+a.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
+a.query("SELECT v FROM items WHERE id = 1")
+b.execute("UPDATE items SET v = v + 1 WHERE id = 1")
+try:
+    a.execute("UPDATE items SET v = v + 1 WHERE id = 1")
+except PostgresError as e:
+    print(e.kind, e.sqlstate, e.is_retryable())
+a.execute("ROLLBACK")
+
+# Transaction guard: uncommitted -> rolled back; committed -> kept
+with c.transaction() as tx:
+    tx.execute("INSERT INTO items VALUES (5, 50, NULL)")
+print(len(c.query("SELECT * FROM items WHERE id = 5")))
+with c.transaction() as tx2:
+    tx2.execute("INSERT INTO items VALUES (6, 60, NULL)")
+    tx2.commit()
+print(len(c.query("SELECT * FROM items WHERE id = 6")))
+try:
+    with c.transaction() as tx3:
+        tx3.execute("INSERT INTO items VALUES (7, 70, NULL)")
+        tx3.execute("INSERT INTO items VALUES (7, 71, NULL)")
+        tx3.commit()
+except PostgresError as e:
+    print("rolled back", e.kind)
+print(len(c.query("SELECT * FROM items WHERE id = 7")))
+
+# Pool: bounded, reuse, exhaustion timeout, broken connection eviction
+p: Pool = nox.postgres.pool(DSN, 2, 200)
+c1: Connection = p.acquire()
+c2: Connection = p.acquire()
+print(p.open_count(), p.idle_count())
+try:
+    p.acquire()
+except PostgresError as e:
+    print("exhausted")
+p.give_back(c1)
+c3: Connection = p.acquire()
+print(p.open_count(), p.idle_count())
+p.give_back(c2)
+p.give_back(c3)
+print(p.open_count(), p.idle_count())
+p.close()
+print(p.open_count(), p.idle_count())
+a.close()
+b.close()
+c.close()

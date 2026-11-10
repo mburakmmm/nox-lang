@@ -345,6 +345,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_pg_nfields_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_pg_ntuples_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_pg_result_errmsg_raw", Entry{ .params = "PP", .ret = 'P' } },
+    .{ "nox_pg_result_field_raw", Entry{ .params = "PPL", .ret = 'P' } },
     .{ "nox_pg_result_ok_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_pg_status_ok_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_pool_main_init", Entry{ .params = "W", .ret = 'P' } },

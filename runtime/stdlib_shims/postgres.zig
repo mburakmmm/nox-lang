@@ -83,6 +83,7 @@ const GetvalueFn = *const fn (res: ?*anyopaque, row: c_int, col: c_int) callconv
 const GetisnullFn = *const fn (res: ?*anyopaque, row: c_int, col: c_int) callconv(.c) c_int;
 const CmdTuplesFn = *const fn (res: ?*anyopaque) callconv(.c) ?[*:0]const u8;
 const ClearFn = *const fn (res: ?*anyopaque) callconv(.c) void;
+const ResultErrorFieldFn = *const fn (res: ?*anyopaque, fieldcode: c_int) callconv(.c) ?[*:0]const u8;
 
 const Funcs = struct {
     connectdb: ConnectdbFn,
@@ -100,6 +101,7 @@ const Funcs = struct {
     getisnull: GetisnullFn,
     cmd_tuples: CmdTuplesFn,
     clear: ClearFn,
+    result_error_field: ResultErrorFieldFn,
 };
 
 const LoadState = enum(u8) { uninit, initializing, ready, failed };
@@ -124,6 +126,7 @@ fn loadAll() bool {
     const getisnull_fn = lookupSym(&lib, GetisnullFn, "PQgetisnull") orelse return false;
     const cmd_tuples_fn = lookupSym(&lib, CmdTuplesFn, "PQcmdTuples") orelse return false;
     const clear_fn = lookupSym(&lib, ClearFn, "PQclear") orelse return false;
+    const result_error_field_fn = lookupSym(&lib, ResultErrorFieldFn, "PQresultErrorField") orelse return false;
 
     g_lib = lib;
     g_funcs = .{
@@ -142,6 +145,7 @@ fn loadAll() bool {
         .getisnull = getisnull_fn,
         .cmd_tuples = cmd_tuples_fn,
         .clear = clear_fn,
+        .result_error_field = result_error_field_fn,
     };
     return true;
 }
@@ -264,6 +268,14 @@ pub export fn nox_pg_result_errmsg_raw(rt: ?*anyopaque, res: ?*anyopaque) callco
     if (!ensureLoaded()) return dupeEmpty(rt);
     const msg = g_funcs.result_error_message(res) orelse return dupeEmpty(rt);
     return dupeToNoxStr(rt, std.mem.span(msg));
+}
+
+/// Başarısız bir sonucun yapılandırılmış hata alanı (`PG_DIAG_*` kodu, tek karakter): 'S' önem, 'C' SQLSTATE, 'M' ileti, 'D' ayrıntı, 'H' ipucu,
+/// 't' tablo, 'c' sütun, 'n' kısıt adı. Alan yoksa boş dize.
+pub export fn nox_pg_result_field_raw(rt: ?*anyopaque, res: ?*anyopaque, code: i64) callconv(.c) ?[*:0]u8 {
+    if (!ensureLoaded()) return dupeEmpty(rt);
+    const v = g_funcs.result_error_field(res, @intCast(code)) orelse return dupeEmpty(rt);
+    return dupeToNoxStr(rt, std.mem.span(v));
 }
 
 pub export fn nox_pg_ntuples_raw(res: ?*anyopaque) callconv(.c) i64 {

@@ -1,0 +1,12 @@
+# Ember NL-006: PostgresError.kind SQLSTATE'ten türetilir; is_* ve is_retryable ayrımı; sunucusuz bağlantı hatası "connection" olur.
+import nox.postgres
+from nox.postgres import PostgresError
+
+codes: list[str] = ["23505", "23503", "23502", "23514", "40001", "40P01", "57014", "08006", "57P01", "42601", ""]
+for code in codes:
+    e: PostgresError = PostgresError("m", code)
+    print(code + " " + e.kind, e.is_retryable(), e.is_connection_error())
+try:
+    nox.postgres.open("host=127.0.0.1 port=1 user=x dbname=y connect_timeout=2")
+except PostgresError as err:
+    print(err.kind, err.is_connection_error(), err.sqlstate == "")

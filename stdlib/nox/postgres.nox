@@ -40,6 +40,7 @@ extern def nox_pg_exec_raw(conn: ptr, query: str) -> ptr from "zig-out/lib/noxrt
 extern def nox_pg_exec_params_raw(conn: ptr, query: str, params: list[str], null_flags: list[str]) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_pg_result_ok_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_result_errmsg_raw(res: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_pg_result_field_raw(res: ptr, code: int) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_pg_ntuples_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_nfields_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_fname_raw(res: ptr, col: int) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -49,8 +50,79 @@ extern def nox_pg_changes_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_clear_raw(res: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_pg_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
 
+# Hata ayrımı (Ember NL-006): sunucu hatalarında `sqlstate` (5 karakter, ör. "23505"), `severity`, `detail`, `hint`, `table`, `column` ve `constraint`
+# doldurulur; bağlantı kurulamadığında/koptuğunda `sqlstate` boştur ve `kind == "connection"`. Hata iletisini ayrıştırmak YERİNE `kind`/`is_*` kullanın.
+# `kind`: "unique_violation" (23505), "foreign_key_violation" (23503), "not_null_violation" (23502), "check_violation" (23514),
+# "serialization_failure" (40001), "deadlock" (40P01), "query_canceled" (57014: `statement_timeout`/iptal), "connection" (08xxx, 57P01-57P03, bağlantı hatası),
+# "other".
 class PostgresError(Exception):
-    pass
+    sqlstate: str
+    severity: str
+    detail: str
+    hint: str
+    table: str
+    column: str
+    constraint: str
+    kind: str
+
+    def __init__(self: PostgresError, message: str, sqlstate: str = "", severity: str = "", detail: str = "", hint: str = "", table: str = "", column: str = "", constraint: str = "", kind: str = "") -> None:
+        super().__init__(message)
+        self.sqlstate = sqlstate
+        self.severity = severity
+        self.detail = detail
+        self.hint = hint
+        self.table = table
+        self.column = column
+        self.constraint = constraint
+        if len(kind) > 0:
+            self.kind = kind
+        else:
+            self.kind = _kind_for_sqlstate(sqlstate)
+
+    def is_unique_violation(self: PostgresError) -> bool:
+        return self.kind == "unique_violation"
+
+    def is_serialization_failure(self: PostgresError) -> bool:
+        return self.kind == "serialization_failure"
+
+    def is_deadlock(self: PostgresError) -> bool:
+        return self.kind == "deadlock"
+
+    def is_query_canceled(self: PostgresError) -> bool:
+        return self.kind == "query_canceled"
+
+    def is_connection_error(self: PostgresError) -> bool:
+        return self.kind == "connection"
+
+    # Aynı işlemi (yeni bir işlemde) yeniden denemek anlamlı mı? Serileştirme hatası ve kilitlenme: evet. Bağlantı hatası için yeni bir bağlantı gerekir.
+    def is_retryable(self: PostgresError) -> bool:
+        return self.kind == "serialization_failure" or self.kind == "deadlock"
+
+def _kind_for_sqlstate(sqlstate: str) -> str:
+    if sqlstate == "23505":
+        return "unique_violation"
+    if sqlstate == "23503":
+        return "foreign_key_violation"
+    if sqlstate == "23502":
+        return "not_null_violation"
+    if sqlstate == "23514":
+        return "check_violation"
+    if sqlstate == "40001":
+        return "serialization_failure"
+    if sqlstate == "40P01":
+        return "deadlock"
+    if sqlstate == "57014":
+        return "query_canceled"
+    if sqlstate.startswith("08") or sqlstate == "57P01" or sqlstate == "57P02" or sqlstate == "57P03":
+        return "connection"
+    return "other"
+
+# Başarısız bir sonuçtan yapılandırılmış `PostgresError` kurar ve sonucu serbest bırakır (çağıran `raise` eder). `prefix`: "query failed: " gibi.
+def _pg_error(res: ptr, prefix: str) -> PostgresError:
+    msg: str = nox_pg_result_errmsg_raw(res)
+    err: PostgresError = PostgresError(prefix + msg, nox_pg_result_field_raw(res, 67), nox_pg_result_field_raw(res, 83), nox_pg_result_field_raw(res, 68), nox_pg_result_field_raw(res, 72), nox_pg_result_field_raw(res, 116), nox_pg_result_field_raw(res, 99), nox_pg_result_field_raw(res, 110))
+    nox_pg_clear_raw(res)
+    return err
 
 def _read_rows(res: ptr) -> list[Row]:
     nrows: int = nox_pg_ntuples_raw(res)
@@ -124,9 +196,7 @@ def _pg_exec_params(stmt: Statement) -> ptr:
 def _pg_execute(stmt: Statement) -> int:
     res: ptr = _pg_exec_params(stmt)
     if nox_pg_result_ok_raw(res) == 0:
-        msg: str = nox_pg_result_errmsg_raw(res)
-        nox_pg_clear_raw(res)
-        raise PostgresError("statement failed: " + msg)
+        raise _pg_error(res, "statement failed: ")
     n: int = nox_pg_changes_raw(res)
     nox_pg_clear_raw(res)
     return n
@@ -134,9 +204,7 @@ def _pg_execute(stmt: Statement) -> int:
 def _pg_query(stmt: Statement) -> list[Row]:
     res: ptr = _pg_exec_params(stmt)
     if nox_pg_result_ok_raw(res) == 0:
-        msg: str = nox_pg_result_errmsg_raw(res)
-        nox_pg_clear_raw(res)
-        raise PostgresError("query failed: " + msg)
+        raise _pg_error(res, "query failed: ")
     rows: list[Row] = _read_rows(res)
     nox_pg_clear_raw(res)
     return rows
@@ -179,9 +247,7 @@ class Connection:
     def execute(self: Connection, sql: str) -> int:
         res: ptr = nox_pg_exec_raw(self.handle, sql)
         if nox_pg_result_ok_raw(res) == 0:
-            msg: str = nox_pg_result_errmsg_raw(res)
-            nox_pg_clear_raw(res)
-            raise PostgresError("statement failed: " + msg)
+            raise _pg_error(res, "statement failed: ")
         n: int = nox_pg_changes_raw(res)
         nox_pg_clear_raw(res)
         return n
@@ -189,9 +255,7 @@ class Connection:
     def query(self: Connection, sql: str) -> list[Row]:
         res: ptr = nox_pg_exec_raw(self.handle, sql)
         if nox_pg_result_ok_raw(res) == 0:
-            msg: str = nox_pg_result_errmsg_raw(res)
-            nox_pg_clear_raw(res)
-            raise PostgresError("query failed: " + msg)
+            raise _pg_error(res, "query failed: ")
         rows: list[Row] = _read_rows(res)
         nox_pg_clear_raw(res)
         return rows
@@ -199,12 +263,193 @@ class Connection:
     def close(self: Connection) -> None:
         nox_pg_finish_raw(self.handle)
 
+    # Bağlantı hâlâ kullanılabilir durumda mı (kopmamış/bozulmamış)? Havuz bozuk bağlantıyı bununla ayıklar.
+    def is_ok(self: Connection) -> bool:
+        return nox_pg_status_ok_raw(self.handle) != 0
+
+    # Sunucu tarafı sorgu zaman aşımı: `ms` milisaniyeyi aşan her deyim sunucuca iptal edilir ve `PostgresError` (`kind == "query_canceled"`, 57014)
+    # olarak döner; bağlantı kullanılabilir kalır. `0` sınırı kaldırır. (İstemci tarafı iptal API'si yoktur.)
+    def set_statement_timeout(self: Connection, ms: int) -> None:
+        self.execute("SET statement_timeout = " + str(ms))
+
+    # Kilit bekleme sınırı (aynı biçimde, `kind == "query_canceled"`... kilit zaman aşımı 55P03 → "other").
+    def set_lock_timeout(self: Connection, ms: int) -> None:
+        self.execute("SET lock_timeout = " + str(ms))
+
+    # `with conn.transaction() as tx:` — bkz. `Transaction`.
+    def transaction(self: Connection) -> Transaction:
+        return Transaction(self)
+
+# Kapsam korumalı işlem: `with conn.transaction() as tx:` BEGIN yapar; gövde `tx.commit()` çağırmadan biterse (dönüş, istisna, `break`) `__exit__`
+# ROLLBACK yapar. Nox'ta `__exit__` istisnayı görmez, bu yüzden "açıkça commit edilmeyen işlem geri alınır" kuralı kullanılır (Go'nun `defer tx.Rollback()` idiyomu).
+# ROLLBACK'in kendisi başarısız olursa (bağlantı koptu) hata yutulur: sunucu zaten işlemi sonlandırmıştır.
+class Transaction:
+    conn: Connection
+    active: bool
+
+    def __init__(self: Transaction, conn: Connection) -> None:
+        self.conn = conn
+        self.active = False
+
+    def __enter__(self: Transaction) -> Transaction:
+        self.conn.execute("BEGIN")
+        self.active = True
+        return self
+
+    def execute(self: Transaction, sql: str) -> int:
+        return self.conn.execute(sql)
+
+    def query(self: Transaction, sql: str) -> list[Row]:
+        return self.conn.query(sql)
+
+    def prepare(self: Transaction, sql: str) -> Statement:
+        return self.conn.prepare(sql)
+
+    def commit(self: Transaction) -> None:
+        if self.active:
+            self.active = False
+            self.conn.execute("COMMIT")
+
+    def rollback(self: Transaction) -> None:
+        if self.active:
+            self.active = False
+            self.conn.execute("ROLLBACK")
+
+    def __exit__(self: Transaction) -> None:
+        if self.active:
+            self.active = False
+            try:
+                self.conn.execute("ROLLBACK")
+            except PostgresError as e:
+                pass
+
 def open(conninfo: str) -> Connection:
     handle: ptr = nox_pg_connect_raw(conninfo)
     if nox_pg_is_null_ptr(handle) != 0:
-        raise PostgresError("could not connect (libpq may have failed to load): " + conninfo)
+        raise PostgresError("could not connect (libpq may have failed to load): " + conninfo, "", "", "", "", "", "", "", "connection")
     if nox_pg_status_ok_raw(handle) == 0:
         msg: str = nox_pg_errmsg_raw(handle)
         nox_pg_finish_raw(handle)
-        raise PostgresError("connection failed: " + msg)
+        raise PostgresError("connection failed: " + msg, "", "", "", "", "", "", "", "connection")
     return Connection(handle)
+
+
+# Sınırlı bağlantı havuzu (Ember NL-007). `acquire()` boş bir bağlantı verir (gerekirse en çok `size` bağlantıya kadar yenisini açar); havuz doluysa
+# başka bir görev `give_back` edene kadar KOOPERATİF bekler (`acquire_timeout_ms` sonra `PostgresError`, `kind == "other"`). Bozuk (kopmuş) bağlantılar
+# `give_back`te ayıklanır, sıradaki `acquire` yenisini açar. İç durum atomik bir kilitle korunur: havuz, M:N zamanlayıcıdaki farklı işçilerde koşan
+# görevler arasında paylaşılabilir. Bir bağlantı AYNI ANDA tek göreve verilir; bağlantıyı görevler arasında paylaşmayın.
+#
+#     pool: Pool = nox.postgres.pool("host=... dbname=...", 4, 5000)
+#     c: Connection = pool.acquire()
+#     try:
+#         rows: list[Row] = c.query("SELECT 1")
+#     finally:
+#         pool.give_back(c)
+import nox.atomic
+import nox.time
+
+class Pool:
+    conninfo: str
+    size: int
+    acquire_timeout_ms: int
+    idle: list[Connection]
+    opened: int
+    lock: nox.atomic.AtomicInt
+
+    def __init__(self: Pool, conninfo: str, size: int, acquire_timeout_ms: int) -> None:
+        self.conninfo = conninfo
+        self.size = size
+        self.acquire_timeout_ms = acquire_timeout_ms
+        self.idle = []
+        self.opened = 0
+        self.lock = nox.atomic.new_int(0)
+
+    def _lock(self: Pool) -> None:
+        spins: int = 0
+        while not self.lock.compare_and_swap(0, 1):
+            spins = spins + 1
+            if spins > 20:
+                nox.time.sleep_ms(1)
+
+    def _unlock(self: Pool) -> None:
+        self.lock.store(0)
+
+    # Boş bağlantıyı al, yoksa (sınır altındaysa) yenisini aç, yoksa bekle.
+    def acquire(self: Pool) -> Connection:
+        started: nox.time.Instant = nox.time.instant_now()
+        poll: int = 1
+        while True:
+            self._lock()
+            reuse: bool = len(self.idle) > 0
+            candidate: Connection | None = None
+            if reuse:
+                idle: list[Connection] = self.idle
+                candidate = idle.pop()
+                self.idle = idle
+            can_open: bool = (not reuse) and self.opened < self.size
+            if can_open:
+                self.opened = self.opened + 1
+            self._unlock()
+            if candidate is not None:
+                if candidate.is_ok():
+                    return candidate
+                candidate.close()
+                self._lock()
+                self.opened = self.opened - 1
+                self._unlock()
+            elif can_open:
+                try:
+                    return open(self.conninfo)
+                except PostgresError as e:
+                    self._lock()
+                    self.opened = self.opened - 1
+                    self._unlock()
+                    raise e
+            else:
+                if started.elapsed_ms() >= self.acquire_timeout_ms:
+                    raise PostgresError("connection pool exhausted: no connection became free within " + str(self.acquire_timeout_ms) + " ms")
+                nox.time.sleep_ms(poll)
+                if poll < 10:
+                    poll = poll * 2
+        raise PostgresError("unreachable")
+
+    # Bağlantıyı havuza geri ver. Bozuksa kapatılır ve sayaçtan düşülür (açık işlem varsa önce ROLLBACK denenir).
+    def give_back(self: Pool, conn: Connection) -> None:
+        healthy: bool = conn.is_ok()
+        if healthy:
+            try:
+                conn.execute("ROLLBACK")
+            except PostgresError as e:
+                healthy = False
+        self._lock()
+        if healthy:
+            idle: list[Connection] = self.idle
+            idle.append(conn)
+            self.idle = idle
+        else:
+            self.opened = self.opened - 1
+        self._unlock()
+        if not healthy:
+            conn.close()
+
+    # Boştaki tüm bağlantıları kapatır (kullanımdaki bağlantılar `give_back`te havuza girmeye devam eder).
+    def close(self: Pool) -> None:
+        self._lock()
+        idle: list[Connection] = self.idle
+        self.idle = []
+        self.opened = self.opened - len(idle)
+        self._unlock()
+        for c in idle:
+            c.close()
+
+    # Şu an boşta bekleyen ve toplam açık bağlantı sayısı (tanı/test için).
+    def idle_count(self: Pool) -> int:
+        return len(self.idle)
+
+    def open_count(self: Pool) -> int:
+        return self.opened
+
+def pool(conninfo: str, size: int, acquire_timeout_ms: int) -> Pool:
+    if size <= 0:
+        raise PostgresError("pool size must be positive")
+    return Pool(conninfo, size, acquire_timeout_ms)

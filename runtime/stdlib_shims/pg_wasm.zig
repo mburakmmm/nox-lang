@@ -38,6 +38,8 @@ const Result = struct {
     ok: bool = false,
     errmsg: []const u8 = "",
     errmsg_owned: bool = false,
+    /// Sunucunun ham ErrorResponse gövdesi (alan kodu + NUL'lu değer çiftleri): `nox_pg_result_field_raw` buradan okur.
+    err_body: []u8 = &.{},
     cols: std.ArrayListUnmanaged([]u8) = .empty,
     /// Düz dizi: satır * nfields + sütun; `null` = SQL NULL.
     cells: std.ArrayListUnmanaged(?[]u8) = .empty,
@@ -50,6 +52,7 @@ const Result = struct {
         for (self.cells.items) |c| if (c) |b| gpa.free(b);
         self.cells.deinit(gpa);
         if (self.errmsg_owned) gpa.free(self.errmsg);
+        if (self.err_body.len > 0) gpa.free(self.err_body);
         gpa.destroy(self);
     }
 };
@@ -353,6 +356,8 @@ fn collect(conn: *Conn) *Result {
                 const e = formatError(gpa, m.body);
                 defer gpa.free(e);
                 failResult(r, e);
+                if (r.err_body.len > 0) gpa.free(r.err_body);
+                r.err_body = gpa.dupe(u8, m.body) catch &.{};
             },
             'Z' => return r,
             else => {}, // ParseComplete, BindComplete, NoData, EmptyQueryResponse, Notice, ParameterStatus, ...
@@ -450,6 +455,20 @@ export fn nox_pg_result_ok_raw(r: ?*anyopaque) callconv(.c) i64 {
 export fn nox_pg_result_errmsg_raw(rt: ?*anyopaque, r: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     const x = res(r) orelse return shim_util.dupeToNoxStr(rt, "");
     return shim_util.dupeToNoxStr(rt, x.errmsg);
+}
+
+/// `postgres.zig`nin `nox_pg_result_field_raw`ıyla aynı: ErrorResponse alanı ('S' önem, 'C' SQLSTATE, 'D' ayrıntı, 't' tablo, 'c' sütun, 'n' kısıt...).
+export fn nox_pg_result_field_raw(rt: ?*anyopaque, r: ?*anyopaque, code: i64) callconv(.c) ?[*:0]u8 {
+    const x = res(r) orelse return shim_util.dupeToNoxStr(rt, "");
+    const body = x.err_body;
+    var i: usize = 0;
+    while (i < body.len and body[i] != 0) {
+        const c = body[i];
+        const end = std.mem.indexOfScalarPos(u8, body, i + 1, 0) orelse body.len;
+        if (@as(i64, c) == code) return shim_util.dupeToNoxStr(rt, body[i + 1 .. end]);
+        i = end + 1;
+    }
+    return shim_util.dupeToNoxStr(rt, "");
 }
 
 export fn nox_pg_ntuples_raw(r: ?*anyopaque) callconv(.c) i64 {

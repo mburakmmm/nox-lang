@@ -1589,12 +1589,23 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
 /// `with FileHandle("x.txt") as f:`) ya da ZATEN bilinen (önceden
 /// `locals`e eklenmiş) bir sınıf tipli yerelin adı (ör. `with existing_
 /// resource:`) ya da sınıf döndüren bir serbest fonksiyon çağrısı
-/// (`with open_read(path) as f:`, v2.0.69). Başka HİÇBİR ifade şekli (alan okuması, metod çağrısı,
+/// (`with open_read(path) as f:`, v2.0.69) ya da sınıf tipli bir yerelin metod çağrısı (`with conn.transaction() as tx:`). Başka HİÇBİR ifade şekli (alan okuması,
 /// indeksleme...) v1 kapsamında DESTEKLENMEZ — `inferFieldType`in AYNI
 /// bilinçli dar kapsamıyla TUTARLI.
 pub fn inferWithCtxClassName(self: *Codegen, ctx_expr: ast.Expr, locals: []const LocalDecl) CodegenError![]const u8 {
     switch (ctx_expr) {
         .call => |c| {
+            // `with obj.metod(...) as x:` — alıcı sınıf tipli bilinen bir yerel ise metodun dönüş sınıfı (ör. `with conn.transaction() as tx:`).
+            if (c.callee.* == .attribute) {
+                const at = c.callee.attribute;
+                if (at.obj.* != .identifier) return error.Unsupported;
+                const recv = Codegen.findLocal(locals, at.obj.identifier) orelse return error.Unsupported;
+                if (recv.heap != .class) return error.Unsupported;
+                const recv_class = self.classes.get(recv.class_name orelse return error.Unsupported) orelse return error.Unsupported;
+                const msig = recv_class.methods.get(at.attr) orelse return error.Unsupported;
+                if (msig.sig.ret.heap != .class) return error.Unsupported;
+                return msig.sig.ret.class_name orelse return error.Unsupported;
+            }
             if (c.callee.* != .identifier) return error.Unsupported;
             const name = c.callee.identifier;
             if (self.classes.contains(name)) return name;
