@@ -223,12 +223,31 @@ const Printer = struct {
         try self.emitRemainingTrivia();
     }
 
+    /// `name`, aynı gövdedeki önceki bir jenerik `enum`un sentezlenmiş `Enum__Varyant` kurucusu mu?
+    fn isGenericEnumCtor(prev: []const ast.Stmt, name: []const u8) bool {
+        for (prev) |st| {
+            if (st.kind != .class_def) continue;
+            const c = st.kind.class_def;
+            if (c.enum_variants.len == 0 or c.type_params.len == 0) continue;
+            if (!std.mem.startsWith(u8, name, c.name)) continue;
+            const rest = name[c.name.len..];
+            if (!std.mem.startsWith(u8, rest, "__")) continue;
+            for (c.enum_variants) |v| if (std.mem.eql(u8, rest[2..], v.name)) return true;
+        }
+        return false;
+    }
+
     fn printStmts(self: *Printer, stmts: []const ast.Stmt, depth: usize) FormatError!void {
         var i: usize = 0;
         while (i < stmts.len) {
             const stmt = stmts[i];
             // TODO 8.3: sınıf sabiti için parser'ın eklediği sentetik depo değişkeni yüzey sözdiziminde yoktur.
             if (stmt.kind == .var_decl and (stmt.kind.var_decl.class_attr != null or stmt.kind.var_decl.is_match_temp)) {
+                i += 1;
+                continue;
+            }
+            // Jenerik `enum`un parser'ın sınıfın ardına eklediği kurucu fonksiyonları (`Enum__Varyant`) yüzey sözdiziminde yoktur.
+            if (stmt.kind == .func_def and isGenericEnumCtor(stmts[0..i], stmt.kind.func_def.name)) {
                 i += 1;
                 continue;
             }
@@ -309,7 +328,16 @@ const Printer = struct {
     /// `enum Ad:` yüzey biçimi: varyantlar (`EnumVariant`) + kullanıcı metodları. Parser'ın sentezlediği alan/sabit/`__init__`/kurucular yazılmaz.
     fn printEnum(self: *Printer, c: ast.ClassDef, line_no: u32, depth: usize) FormatError!void {
         try self.indentTo(depth);
-        try self.writer.print("enum {s}:", .{c.name});
+        try self.writer.print("enum {s}", .{c.name});
+        if (c.type_params.len > 0) {
+            try self.writer.writeAll("[");
+            for (c.type_params, 0..) |tp, i| {
+                if (i > 0) try self.writer.writeAll(", ");
+                try self.writer.writeAll(tp);
+            }
+            try self.writer.writeAll("]");
+        }
+        try self.writer.writeAll(":");
         try self.line(line_no);
         if (c.doc) |doc| {
             try self.indentTo(depth + 1);

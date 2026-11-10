@@ -1,0 +1,94 @@
+# Jenerik enum: Option[T], Result[T, E], metodlar, match, beklenen-tip çıkarımı (Enum.Birim), jenerik fonksiyon içinde kullanım, ARC (str/sınıf/liste payload).
+class Node:
+    label: str
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+enum Option[T]:
+    Some(value: T)
+    Nothing
+
+    def unwrap_or(self, default: T) -> T:
+        match self:
+            case Option.Some(v):
+                return v
+            case Option.Nothing:
+                return default
+
+    def is_some(self) -> bool:
+        match self:
+            case Option.Some(_):
+                return True
+            case _:
+                return False
+
+enum Result[T, E]:
+    Ok(value: T)
+    Err(error: E)
+
+enum Pair[A, B]:
+    Both(left: A, right: B)
+
+def first[T](xs: list[T]) -> Option[T]:
+    if len(xs) == 0:
+        return Option.Nothing
+    return Option.Some(xs[0])
+
+def divide(a: int, b: int) -> Result[int, str]:
+    if b == 0:
+        return Result.Err("division by zero")
+    return Result.Ok(a // b)
+
+def describe(r: Result[int, str]) -> str:
+    match r:
+        case Result.Ok(v):
+            return "ok " + str(v)
+        case Result.Err(e):
+            return "error " + e
+
+x: Option[int] = Option.Some(5)
+y: Option[int] = Option.Nothing
+z: Option[str] = Option.Some("hi")
+print(x.unwrap_or(0), y.unwrap_or(7), z.unwrap_or("none"))
+print(x.is_some(), y.is_some())
+print(describe(divide(10, 2)), describe(divide(1, 0)))
+
+names: list[str] = ["ann", "bob"]
+empty: list[str] = []
+print(first(names).unwrap_or("-"), first(empty).unwrap_or("-"))
+
+w: Option[float] = Option.Some(2.5)
+print(w.unwrap_or(0.0))
+p: Pair[int, str] = Pair.Both(1, "one")
+match p:
+    case Pair.Both(left=a, right=b):
+        print(a, b)
+
+nodes: Option[Node] = Option.Some(Node("n1"))
+match nodes:
+    case Option.Some(n):
+        print(n.label)
+    case Option.Nothing:
+        print("no node")
+
+lists: Option[list[int]] = Option.Some([1, 2, 3])
+match lists:
+    case Option.Some(xs):
+        print(len(xs))
+    case _:
+        print(0)
+
+# Çok sayıda değer üret ve bırak: sızıntı olursa çıkışta rapor edilir.
+total: int = 0
+for i in range(2000):
+    item: Option[Node] = Option.Some(Node("k" + str(i)))
+    match item:
+        case Option.Some(n):
+            total += len(n.label)
+        case _:
+            total -= 1
+    gone: Option[str] = Option.Nothing
+    total += len(gone.unwrap_or("ab"))
+print(total)
+print(Option.Some(1) == Option.Some(1), x == y)

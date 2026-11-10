@@ -3435,8 +3435,14 @@ pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError
     // çağrısıyla AYNI yol (`genConstruct`) kullanılır (bkz. calls.zig:134'ün
     // AYNI deseni).
     if (g.resolved_class_name.*) |mangled| {
-        const cinfo = self.classes.get(mangled) orelse return error.Unsupported;
-        return self.genConstruct(mangled, cinfo, g.args);
+        if (self.classes.get(mangled)) |cinfo| return self.genConstruct(mangled, cinfo, g.args);
+        // `f[int](x)`: açık tip argümanlı generic fonksiyon çağrısı — checker somutlaştırılmış fonksiyon adını bu hücreye yazdı.
+        if (self.functions.contains(mangled)) {
+            const callee = try self.allocator.create(ast.Expr);
+            callee.* = .{ .identifier = mangled };
+            return self.genCall(.{ .callee = callee, .args = g.args });
+        }
+        return error.Unsupported;
     }
     // Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83): `TaskLocal[T]()`
     // — `Channel[T]`in AYNI `elem_heap_info`/`elem_is_str` yakalama

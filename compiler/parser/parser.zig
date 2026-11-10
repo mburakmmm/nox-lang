@@ -602,10 +602,14 @@ pub const Parser = struct {
     fn parseEnumDef(self: *Parser) ParseError!ast.StmtKind {
         const enum_tok = self.advance(); // `enum`
         const name = (try self.expect(.identifier)).lexeme;
-        if (self.check(.l_bracket)) {
-            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "generic enums are not supported yet" };
-            return error.UnexpectedToken;
+        var type_params = std.ArrayList([]const u8).empty;
+        if (self.match(.l_bracket)) {
+            try type_params.append(self.allocator, (try self.expect(.identifier)).lexeme);
+            while (self.match(.comma)) try type_params.append(self.allocator, (try self.expect(.identifier)).lexeme);
+            _ = try self.expect(.r_bracket);
         }
+        const type_param_names: []const []const u8 = try type_params.toOwnedSlice(self.allocator);
+        const is_generic = type_param_names.len > 0;
         _ = try self.expect(.colon);
         _ = try self.expect(.newline);
         _ = try self.expect(.indent);
@@ -701,6 +705,29 @@ pub const Parser = struct {
                 try body.append(self.allocator, mkStmt(.{ .assign = .{ .target = try self.attrE(identE("__enum_v"), slot), .value = identE(f.name) } }, v.line));
             }
             try body.append(self.allocator, mkStmt(.{ .return_stmt = identE("__enum_v") }, v.line));
+            if (is_generic) {
+                // Jenerik sınıflarda `@staticmethod` yok: kurucu, sınıfın hemen ardından gelen üst-düzey jenerik fonksiyondur (`Enum__Varyant[T](...) -> Enum[T]`);
+                // checker `Enum.Varyant(...)` çağrılarını bu fonksiyona yönlendirir.
+                var targ_exprs = std.ArrayList(ast.TypeExpr).empty;
+                for (type_param_names) |tp| try targ_exprs.append(self.allocator, .{ .simple = tp });
+                const targs = try targ_exprs.toOwnedSlice(self.allocator);
+                const self_ty: ast.TypeExpr = .{ .generic = .{ .name = name, .args = targs } };
+                const cell = try self.allocator.create(?[]const u8);
+                cell.* = null;
+                body.items[0] = mkStmt(.{ .var_decl = .{
+                    .name = "__enum_v",
+                    .type_expr = self_ty,
+                    .value = .{ .generic_construct = .{ .name = name, .type_args = targs, .args = try self.allocator.dupe(ast.Expr, &.{.{ .int_lit = v.tag }}), .resolved_class_name = cell } },
+                } }, v.line);
+                try self.extra_stmts.append(self.allocator, .{ .kind = .{ .func_def = .{
+                    .name = try std.fmt.allocPrint(self.allocator, "{s}__{s}", .{ name, v.name }),
+                    .type_params = type_param_names,
+                    .params = params,
+                    .return_type = self_ty,
+                    .body = try body.toOwnedSlice(self.allocator),
+                } }, .line = v.line });
+                continue;
+            }
             const decos = try self.allocator.alloc(ast.Decorator, 1);
             decos[0] = .{ .name = "staticmethod", .args = &.{}, .line = v.line };
             try methods.append(self.allocator, .{
@@ -719,6 +746,7 @@ pub const Parser = struct {
             .fields = try fields.toOwnedSlice(self.allocator),
             .consts = try consts.toOwnedSlice(self.allocator),
             .doc = doc,
+            .type_params = type_param_names,
             .enum_variants = try variants.toOwnedSlice(self.allocator),
         } };
     }

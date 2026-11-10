@@ -600,6 +600,8 @@ pub const Checker = struct {
     /// `ensureClassBodyChecked`in bir sınıfın ADINDAN kendi `ast.ClassDef`ine
     /// (taban zincirini YUKARI doğru YÜRÜMEK İçin) geri gitmesi İçin.
     class_defs_by_name: std.StringHashMapUnmanaged(ast.ClassDef) = .{},
+    /// Örneklenmiş jenerik sınıf adı (`Option__int`) → jenerik sınıf adı (`Option`); jenerik `enum`ların `match`/kurucu çözümlemesi için.
+    generic_origin: std.StringHashMapUnmanaged([]const u8) = .{},
     /// Faz 7: `ensureClassBodyChecked` tarafından tutulan — bir sınıfın
     /// gövdesinin (Geçiş 3) ZATEN denetlenip denetlenmediği (bkz. onun
     /// belge notu, "taban ÖNCE, ama SADECE gerektiğinde" deseni).
@@ -6515,6 +6517,7 @@ pub const Checker = struct {
         if (expr == .list_comp) if (expected) |exp| if (exp == .list) return self.checkListCompExpected(ctx, expr.list_comp, exp.list.*);
         if (expr == .dict_comp) if (expected) |exp| if (exp == .dict) return self.checkDictCompExpected(ctx, expr.dict_comp, exp.dict.value.*);
         if (expr == .lambda) return self.checkLambda(ctx, expr.lambda, expected);
+        if (expected) |exp| if (expr == .call or expr == .attribute) if (try self.tryGenericEnumExpected(ctx, expr, exp)) |t| return t;
         if (expr == .tuple_lit) return self.checkTupleLit(ctx, expr.tuple_lit, expected);
         if (expr == .ternary) return self.checkTernary(ctx, expr.ternary, expected);
         if (expr == .list_lit and expr.list_lit.len == 0) {
@@ -7015,6 +7018,31 @@ pub const Checker = struct {
         // `from_imports` GERİ DÜŞÜŞÜYLE (satır ~2198) AYNI ilke: yerel bir
         // isim `self.generic_classes`de BULUNAMAZSA, `from X import Box`
         // İLE bağlanan mangled bir isim OLUP OLMADIĞI da denenir.
+        // `f[int](x)`: AÇIK tip argümanlı generic FONKSİYON çağrısı (sıfır parametreli `none_of[int]()` DAHİL; tip parametresi argümanlardan çıkarılamıyorsa tek yol budur).
+        // Codegen çağrıyı `resolved_class_name` hücresindeki somutlaştırılmış fonksiyon adından üretir (sınıf adlarıyla çakışmaz: `classes` yerine `functions`te bulunur).
+        const maybe_gfd = self.generic_functions.get(g.name) orelse blk: {
+            const mangled_fn = self.from_imports.get(g.name) orelse break :blk null;
+            break :blk self.generic_functions.get(mangled_fn);
+        };
+        if (maybe_gfd) |gfd| {
+            if (g.type_args.len != gfd.type_params.len) {
+                return self.fail(error.ArgumentCountMismatch, "'{s}' takes {d} type argument(s), {d} given", .{ g.name, gfd.type_params.len, g.type_args.len });
+            }
+            var needs_expand = g.args.len < gfd.params.len or anyVariadic(gfd.params);
+            for (g.args) |a| if (a == .kwarg) {
+                needs_expand = true;
+            };
+            if (needs_expand) {
+                return self.fail(error.ArgumentCountMismatch, "a call with explicit type arguments ('{s}[...]') must pass every argument positionally (no defaults, keywords or *args)", .{g.name});
+            }
+            const explicit = try self.allocator.alloc(Type, g.type_args.len);
+            for (g.type_args, 0..) |ta, i| explicit[i] = try self.typeExprToType(ta);
+            const callee = try self.allocator.create(ast.Expr);
+            callee.* = .{ .identifier = gfd.name };
+            const rt = try self.instantiateGenericWith(ctx, gfd, .{ .callee = callee, .args = g.args }, explicit);
+            g.resolved_class_name.* = callee.identifier;
+            return rt;
+        }
         const maybe_gcd = self.generic_classes.get(g.name) orelse blk: {
             const mangled_base = self.from_imports.get(g.name) orelse break :blk null;
             break :blk self.generic_classes.get(mangled_base);
@@ -7524,6 +7552,23 @@ pub const Checker = struct {
     }
 
     fn checkAttribute(self: *Checker, ctx: *FnCtx, a: ast.Attribute) TypeError!Type {
+        // Jenerik `enum`: `Enum.__tag_V` (match koşulları) etiket literaline katlanır; `Enum.Birim` beklenen tip olmadan çıkarılamaz.
+        if (self.generic_classes.count() > 0) {
+            if (try self.genericEnumName(ctx, a.obj.*)) |ename| {
+                const gcd = self.generic_classes.get(ename).?;
+                if (std.mem.startsWith(u8, a.attr, "__tag_")) {
+                    const ev = findEnumVariant(gcd, a.attr["__tag_".len..]) orelse
+                        return self.fail(error.UndefinedAttribute, "enum '{s}' has no variant '{s}'", .{ ename, a.attr["__tag_".len..] });
+                    try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), .{ .int_lit = ev.tag });
+                    return .int;
+                }
+                if (findEnumVariant(gcd, a.attr)) |ev| {
+                    if (ev.fields.len == 0) {
+                        return self.fail(error.TypeMismatch, "cannot infer the type arguments of generic enum '{s}' for '{s}.{s}': give the target a type (`x: {s}[int] = {s}.{s}`)", .{ ename, ename, a.attr, ename, ename, a.attr });
+                    }
+                }
+            }
+        }
         // `Sınıf.SABİT`: obj bir DEĞİŞKEN olmayan sınıf adıdır; okuma literal değere yeniden yazılır.
         if (try self.receiverClassName(ctx, a.obj.*)) |rc| {
             // `Enum.Birim` (payload'sız varyant) → `Enum.Birim()` kurucu çağrısı.
@@ -7904,7 +7949,104 @@ pub const Checker = struct {
     //   __nox_payload(konu, Enum, "Varyant", i, "alan") → `konu._Varyant_alan` alan okumasına yeniden yazılır (bağlamanın tipi buradan çıkar)
     //   __nox_match_unreachable(konu, Enum, "A,B")     → kapsamlılık denetlenir, `0` literaline yeniden yazılır (ardından `raise RuntimeError(...)` gelir)
 
+    /// `e` jenerik bir `enum`i (örn. `Option`, `mod.Option`) adlandırıyorsa `generic_classes` anahtarını döner (yerel değişken/global bunu gölgeliyorsa `null`).
+    fn genericEnumName(self: *Checker, ctx: *FnCtx, e: ast.Expr) TypeError!?[]const u8 {
+        if (self.generic_classes.count() == 0) return null;
+        if (e == .identifier) {
+            const n = e.identifier;
+            if ((try ctx.scope.lookup(self.allocator, n)) != null or self.module_globals.contains(n)) return null;
+            if (self.generic_classes.get(n)) |g| if (g.enum_variants.len > 0) return n;
+            if (self.from_imports.get(n)) |q| {
+                if (self.generic_classes.get(q)) |g| if (g.enum_variants.len > 0) return q;
+            }
+            return null;
+        }
+        if (e != .attribute) return null;
+        var raw: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (!(try self.flattenDottedPath(e, &raw)) or raw.items.len < 2) return null;
+        if ((try ctx.scope.lookup(self.allocator, raw.items[0])) != null or self.module_globals.contains(raw.items[0])) return null;
+        const segments = try self.substituteAlias(raw.items);
+        const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
+        if (!self.imported_modules.contains(module_path)) return null;
+        const mangled = try self.joinSegments(segments, '_');
+        if (self.generic_classes.get(mangled)) |g| if (g.enum_variants.len > 0) return mangled;
+        return null;
+    }
+
+    fn genericEnumFnName(self: *Checker, ename: []const u8, variant: []const u8) TypeError![]const u8 {
+        return std.fmt.allocPrint(self.allocator, "{s}__{s}", .{ ename, variant });
+    }
+
+    /// `Enum.Varyant(args)` (jenerik enum): çağrı, kurucu fonksiyona (`Enum__Varyant`) yönlendirilir; tip argümanları argümanlardan çıkarılır.
+    fn tryResolveGenericEnumCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!void {
+        if (c.callee.* != .attribute) return;
+        const at = c.callee.attribute;
+        const ename = (try self.genericEnumName(ctx, at.obj.*)) orelse return;
+        const gcd = self.generic_classes.get(ename).?;
+        if (findEnumVariant(gcd, at.attr) == null) {
+            return self.fail(error.UndefinedAttribute, "enum '{s}' has no variant '{s}'", .{ ename, at.attr });
+        }
+        c.callee.* = .{ .identifier = try self.genericEnumFnName(ename, at.attr) };
+    }
+
+    /// Beklenen tip bilinen bir jenerik enum örneğiyse (`x: Option[int] = Option.Some(5)` / `= Option.Nothing`), kurucuyu AÇIK tip argümanlarıyla yeniden yazar
+    /// (argümanlardan çıkarılamayan tip parametreleri için tek yol budur).
+    fn tryGenericEnumExpected(self: *Checker, ctx: *FnCtx, expr: ast.Expr, expected: Type) TypeError!?Type {
+        if (self.generic_origin.count() == 0) return null;
+        const exp_name = switch (expected) {
+            .class => |n| n,
+            else => return null,
+        };
+        const origin = self.generic_origin.get(exp_name) orelse return null;
+        var obj_expr: ?ast.Expr = null;
+        var variant: []const u8 = "";
+        var args: []const ast.Expr = &.{};
+        var key: usize = 0;
+        switch (expr) {
+            .call => |c| {
+                if (c.callee.* != .attribute) return null;
+                obj_expr = c.callee.attribute.obj.*;
+                variant = c.callee.attribute.attr;
+                args = c.args;
+                key = @intFromPtr(c.callee);
+            },
+            .attribute => |a| {
+                obj_expr = a.obj.*;
+                variant = a.attr;
+                key = @intFromPtr(a.obj);
+            },
+            else => return null,
+        }
+        const ename = (try self.genericEnumName(ctx, obj_expr.?)) orelse return null;
+        if (!std.mem.eql(u8, ename, origin)) return null;
+        const gcd = self.generic_classes.get(ename).?;
+        const ev = findEnumVariant(gcd, variant) orelse return null;
+        if (expr == .attribute and ev.fields.len != 0) return null;
+        const targs = self.class_type_args.get(exp_name) orelse return null;
+        const te = try self.allocator.alloc(ast.TypeExpr, targs.len);
+        for (targs, 0..) |t, i| te[i] = try self.typeToTypeExpr(t);
+        const cell = try self.allocator.create(?[]const u8);
+        cell.* = null;
+        const call_args = try self.allocator.dupe(ast.Expr, args);
+        const repl: ast.Expr = .{ .generic_construct = .{ .name = try self.genericEnumFnName(ename, variant), .type_args = te, .args = call_args, .resolved_class_name = cell } };
+        return try self.rewriteExprTo(ctx, key, repl);
+    }
+
     fn enumDefOf(self: *Checker, ctx: *FnCtx, subject: ast.Expr, enum_expr: ast.Expr, what: []const u8) TypeError!ast.ClassDef {
+        if (try self.genericEnumName(ctx, enum_expr)) |gname| {
+            const gcd = self.generic_classes.get(gname).?;
+            const gst = try self.checkExpr(ctx, subject);
+            const gsubj = switch (gst) {
+                .class => |n| n,
+                else => return self.fail(error.TypeMismatch, "match subject must be an enum value of '{s}'", .{gname}),
+            };
+            const origin = self.generic_origin.get(gsubj) orelse
+                return self.fail(error.TypeMismatch, "match subject has type '{s}' but the pattern belongs to enum '{s}'", .{ gsubj, gname });
+            if (!std.mem.eql(u8, origin, gname)) {
+                return self.fail(error.TypeMismatch, "match subject has type '{s}' but the pattern belongs to enum '{s}'", .{ gsubj, gname });
+            }
+            return gcd;
+        }
         const enum_name = (try self.receiverClassName(ctx, enum_expr)) orelse
             return self.fail(error.UndefinedClass, "{s}: the pattern's enum is not a known class", .{what});
         const cd = self.class_defs_by_name.get(enum_name) orelse
@@ -7994,6 +8136,7 @@ pub const Checker = struct {
         // metod çağrısı — callee YERİNDE somut metod adına yeniden yazılır,
         // AŞAĞIDAKİ normal metod-çağrısı yolu aynen devam eder.
         if (self.generic_method_names.count() > 0) try self.tryResolveGenericMethodCall(ctx, c);
+        if (self.generic_classes.count() > 0) try self.tryResolveGenericEnumCall(ctx, c);
         if (self.static_method_names.count() > 0) try self.tryResolveStaticMethodCall(ctx, c);
         // `cls(...)` (classmethod gövdesi): çağrı, alıcı sınıfın kurucusuna yeniden yazılır.
         if (ctx.cls_alias) |al| {
@@ -10697,7 +10840,8 @@ pub const Checker = struct {
                 mi += 1;
             }
         }
-        const concrete: ast.ClassDef = .{ .name = mangled, .type_params = &.{}, .methods = methods, .fields = fields };
+        const concrete: ast.ClassDef = .{ .name = mangled, .type_params = &.{}, .methods = methods, .fields = fields, .enum_variants = gcd.enum_variants };
+        if (gcd.enum_variants.len > 0) try self.generic_origin.put(self.allocator, mangled, gcd.name);
 
         // Önce yer tutucuyu kaydet (olası öz-başvurulu/özyinelemeli generic
         // sınıflar AYNI somutlaştırmayı YENİDEN bulsun diye — `instantiateGeneric`in
@@ -11120,6 +11264,11 @@ pub const Checker = struct {
     }
 
     fn instantiateGeneric(self: *Checker, ctx: *FnCtx, gfd: ast.FuncDef, c0: ast.Call) TypeError!Type {
+        return self.instantiateGenericWith(ctx, gfd, c0, null);
+    }
+
+    /// `explicit`: `f[int, str](...)` ile verilen tip argümanları (sırayla `gfd.type_params`a bağlanır); `null` ise yalnızca argümanlardan çıkarım yapılır.
+    fn instantiateGenericWith(self: *Checker, ctx: *FnCtx, gfd: ast.FuncDef, c0: ast.Call, explicit: ?[]const Type) TypeError!Type {
         // v1.147.0: keyword/eksik (varsayılanlı) argümanlar ÖNCE şablonun parametrelerine göre genişletilir
         // (tip çıkarımı tam konumsal listeyi bekler).
         var c = c0;
@@ -11139,6 +11288,7 @@ pub const Checker = struct {
 
         var bindings: std.StringHashMapUnmanaged(Type) = .{};
         defer bindings.deinit(self.allocator);
+        if (explicit) |ex| for (gfd.type_params, ex) |tp, t| try bindings.put(self.allocator, tp, t);
         for (gfd.params, c.args) |p, arg| {
             // v1.162.0: fonksiyon-tipli parametreler ikinci geçişte (diğer argümanlardan tip parametreleri bağlandıktan sonra) işlenir.
             if (p.type_expr == .func_type) continue;

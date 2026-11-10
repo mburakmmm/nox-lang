@@ -649,11 +649,16 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
         // ÖNCEDEN VAR OLAN bir kısıttır, bu değişiklikle GENİŞLETİLMEDİ.)
         .generic_construct => |g| {
             if (g.resolved_class_name.*) |mangled| {
-                const cinfo = self.classes.get(mangled) orelse return error.Unsupported;
-                if (cinfo.has_init) {
-                    const sym = try std.fmt.allocPrint(self.allocator, "{s}___init__", .{mangled});
-                    try info.callees.append(self.allocator, sym);
-                }
+                if (self.classes.get(mangled)) |cinfo| {
+                    if (cinfo.has_init) {
+                        const sym = try std.fmt.allocPrint(self.allocator, "{s}___init__", .{mangled});
+                        try info.callees.append(self.allocator, sym);
+                    }
+                } else if (self.functions.contains(mangled)) {
+                    // `f[int](x)` / jenerik `enum` kurucusu: somutlaştırılmış bir FONKSİYON çağrısı (bkz. `genGenericConstruct`).
+                    try info.callees.append(self.allocator, mangled);
+                    for (g.args) |a| try self.collectRaiseInfoExpr(a, info, class_ctx, var_types, poisoned);
+                } else return error.Unsupported;
             }
         },
         .unary => |u| try self.collectRaiseInfoExpr(u.operand.*, info, class_ctx, var_types, poisoned),

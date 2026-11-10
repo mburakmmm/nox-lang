@@ -518,3 +518,28 @@ test "fmt: enum ve match yuzey bicimi korunur (indirgenmis sinif/if zinciri yazi
     const fixed = try formatSource(allocator, messy);
     try std.testing.expectEqualStrings(canonical, fixed);
 }
+
+test "fmt: jenerik enum yuzey bicimi korunur (tip parametreleri yazilir, Enum__Varyant kurucu fonksiyonlari yazilmaz)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const canonical =
+        "enum Option[T]:\n" ++
+        "    Some(value: T)\n" ++
+        "    Nothing\n" ++
+        "\n" ++
+        "    def unwrap_or(self, default: T) -> T:\n" ++
+        "        match self:\n" ++
+        "            case Option.Some(v):\n" ++
+        "                return v\n" ++
+        "            case Option.Nothing:\n" ++
+        "                return default\n" ++
+        "\n" ++
+        "enum Result[T, E]:\n" ++
+        "    Ok(value: T)\n" ++
+        "    Err(error: E)\n";
+    const once = try formatSource(allocator, canonical);
+    try std.testing.expectEqualStrings(canonical, once);
+    try std.testing.expect(std.mem.indexOf(u8, once, "Option__") == null);
+    try std.testing.expect(std.mem.indexOf(u8, once, "__enum_v") == null);
+}

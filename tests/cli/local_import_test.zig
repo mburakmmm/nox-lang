@@ -690,3 +690,83 @@ test "enum: proje-ici modulden `from m import E` ve `import m` (nitelikli) ile k
     defer std.testing.allocator.free(run_result.stderr);
     try std.testing.expectEqualStrings("circle empty rect\n10.0\ncircle 1.5 other\n", run_result.stdout);
 }
+
+test "enum: jenerik enum proje-ici modulden `from m import Option, first` ile kullanilir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "opt.nox",
+        .data =
+        \\enum Option[T]:
+        \\    Some(value: T)
+        \\    Nothing
+        \\
+        \\    def unwrap_or(self, default: T) -> T:
+        \\        match self:
+        \\            case Option.Some(v):
+        \\                return v
+        \\            case Option.Nothing:
+        \\                return default
+        \\
+        \\def first[T](xs: list[T]) -> Option[T]:
+        \\    if len(xs) == 0:
+        \\        return Option.Nothing
+        \\    return Option.Some(xs[0])
+        \\
+        ,
+    });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data =
+        \\from opt import Option, first
+        \\
+        \\def show(o: Option[str]) -> str:
+        \\    match o:
+        \\        case Option.Some(v):
+        \\            return "some " + v
+        \\        case Option.Nothing:
+        \\            return "nothing"
+        \\
+        \\names: list[str] = ["ann", "bob"]
+        \\empty: list[str] = []
+        \\print(show(first(names)), show(first(empty)))
+        \\n: Option[int] = Option.Nothing
+        \\print(n.unwrap_or(7))
+        \\
+        ,
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "build", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("some ann nothing\n7\n", run_result.stdout);
+}

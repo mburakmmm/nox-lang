@@ -89,11 +89,62 @@ Because the compiler proves every variant is handled, a function whose cases all
 - the subject's type and the pattern's enum must be the same enum;
 - the variant must exist, and a positional pattern must bind as many names as the variant has fields.
 
+## Generic enums
+
+An enum can have type parameters, like a generic class. `Option` and `Result` need no library: they are ordinary enums.
+
+```nox
+enum Option[T]:
+    Some(value: T)
+    Nothing
+
+    def unwrap_or(self, default: T) -> T:
+        match self:
+            case Option.Some(v):
+                return v
+            case Option.Nothing:
+                return default
+
+enum Result[T, E]:
+    Ok(value: T)
+    Err(error: E)
+
+def first[T](xs: list[T]) -> Option[T]:
+    if len(xs) == 0:
+        return Option.Nothing
+    return Option.Some(xs[0])
+
+def divide(a: int, b: int) -> Result[int, str]:
+    if b == 0:
+        return Result.Err("division by zero")
+    return Result.Ok(a // b)
+
+x: Option[int] = Option.Some(5)
+y: Option[int] = Option.Nothing
+print(x.unwrap_or(0), y.unwrap_or(7))
+nums: list[int] = [4, 5]
+print(first(nums).unwrap_or(-1))
+r: Result[int, str] = divide(1, 0)
+match r:
+    case Result.Ok(v):
+        print("ok", v)
+    case Result.Err(e):
+        print("error", e)
+```
+
+```output
+5 7
+4
+error division by zero
+```
+
+The type arguments come from the arguments of the variant (`Option.Some(5)` is an `Option[int]`) or, when the variant carries nothing that determines them, from the type the value is going to: the annotation of a variable, a parameter, a return type. `print(Option.Nothing)` has no such context and is rejected with a message that says so.
+
 ## Limits
 
 - Patterns are one level deep: `Variant(a, b)`. Nested patterns (`Shape.Circle(Point(x, y))`), literal patterns and `case x if cond:` guards are not supported; test conditions inside the case body.
-- Generic enums (`enum Option[T]`) are not supported yet.
 - `match` bindings are not available inside generator functions (`yield`).
+- A generic enum type cannot be named through a module prefix in an annotation (`m.Option[int]`, a limit of every generic class); import it with `from m import Option`.
 
 ## How it works
 

@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.24]
+
+### Eklendi
+
+- **Jenerik `enum`** (Pulse TYPE-001 devamı): `enum Option[T]:`, `enum Result[T, E]:` gibi tip parametreli etiketli birleşimler. `Option.Some(5)` argümandan, `Option.Nothing`/`Result.Err("x")` gibi tipi belirlemeyen varyantlar hedefin tipinden (değişken açıklaması, parametre, dönüş tipi) `Option[int]`e çözülür; belirlenemezse net hata. `match`, metodlar, `from m import Option` ve jenerik fonksiyonlarda (`def first[T](xs) -> Option[T]`) kullanım, `==`, ARC (str/sınıf/liste payload) ve `noxc fmt` desteklenir. Belge: `docs/language/enums.md`.
+- **Açık tip argümanlı jenerik fonksiyon çağrısı** `f[int](x)` ve sıfır parametreli `none_of[int]()` (belgelenmişti ama `unknown generic constructor` veriyordu). Jenerik enum kurucuları bunun üzerine kurulu.
+
+### Notlar
+
+- Jenerik enum kurucuları, jenerik sınıflarda `@staticmethod` olmadığından sınıfın ardına eklenen üst-düzey jenerik fonksiyonlardır (`Option__Some[T]`); `noxc fmt` bunları yazmaz.
+
 ## [2.1.23]
 
 ### Düzeltildi
