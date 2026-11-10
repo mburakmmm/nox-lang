@@ -29798,3 +29798,7 @@ Parser (`parseBaseTypeExpr`): nitelikli ad (`m.Box`) `[` ile devam ederse `.gene
 ### 3.395 `match` iç içe kapsamlılık analizi (v2.1.31)
 
 Parser `encodeCoveragePattern`: korumasız her `case`, `Varyant(arg,...)` olarak kodlanır (`_` bağlama/yok sayma, `#` literal, iç içe desen, `alan=` öneki) ve `;` ile birleştirilip `__nox_match_unreachable` üçüncü argümanı olur. Checker: `parseMPat`, `mpatColumns`, `matrixExhaustive` (Maranget tarzı satır matrisi; enum sütununda her varyant için özelleştirme, enum olmayan sütunda yalnızca `_` satırları), alan tipleri `variantFieldTypes` ile örneklenmiş sınıfın `_Varyant_alan` alanlarından alınır (jenerik enum dahil). Üst düzeyde hiç satırı olmayan varyant "missing", satırı olup matrisi kapsamayan "only partly covered" olarak raporlanır. Golden: `enum_match_nested_exhaustive`, typecheck `err_enum_match_nested_not_exhaustive`. Ayrıca atıl kalmış 41 codegen + 15 typecheck golden test paketine bağlandı.
+
+### 3.396 Çok çekirdekli IPv6 dinleme (v2.1.32)
+
+`http_server.zig`: `ServeConfig.ip_family` (config anahtarı 7; 0 IPv4, 1 dual-stack, 2 yalnızca IPv6; Windows'ta yok sayılır). `bindAndListenV6` bir `reuse_port` parametresi aldı; `bindAndListenMulticore` aileye göre IPv6 ya da eski IPv4 `bindAndListen(port, true)` yolunu seçer ve `nox_http_server_listen_multicore_worker` ile `_tls` varyantı bunu kullanır. Stdlib: `nox.http.configure(ip_family=...)`. Test: `tests/cli/http_multicore_factory_test.zig` "ip_family" (probe `scripts/http_ipv6_probe.py`, şablon `tests/golden/http_multicore_ipv6_program.nox.in`).

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.32]
+
+### Eklendi
+
+- **Çok çekirdekli IPv6 dinleme** (kayıt C9 kalanı): `nox.http.configure(ip_family=1)` (dual-stack `::`) / `ip_family=2` (yalnızca IPv6) ile `serve_multicore*` her worker'ında kendi `SO_REUSEPORT` IPv6 soketini açar; varsayılan (0) IPv4 aynen kalır. Windows'ta yok sayılır. İki arka uçta gerçek sunucu probu (`scripts/http_ipv6_probe.py`).
+
 ## [2.1.31]
 
 ### Eklendi

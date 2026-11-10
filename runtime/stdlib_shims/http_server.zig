@@ -77,6 +77,8 @@ const ServeConfig = struct {
     drain_timeout_ms: std.atomic.Value(u32) = .init(DEFAULT_DRAIN_TIMEOUT_MS),
     /// HTTP/2 (TLS'te ALPN `h2`, düz TCP'de `h2c` önceden bilinen): 1 = açık (varsayılan), 2 = kapalı.
     http2: std.atomic.Value(u8) = .init(1),
+    /// Çok çekirdekli (`serve_multicore*`) dinleyici ailesi: 0 = IPv4 (varsayılan), 1 = IPv6 dual-stack (`::`, IPv4 istemciler de bağlanır), 2 = yalnızca IPv6. Windows'ta yok sayılır.
+    ip_family: std.atomic.Value(u8) = .init(0),
 };
 const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
 const MIN_HEADER_BYTES: usize = 4 * 1024;
@@ -90,6 +92,10 @@ export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
     if (key == 6) {
         g_serve_config.http2.store(if (value == 2) 2 else 1, .monotonic);
         tls_server.setHttp2Enabled(value != 2);
+        return;
+    }
+    if (key == 7) {
+        if (builtin.os.tag != .windows) g_serve_config.ip_family.store(if (value == 2) 2 else 1, .monotonic);
         return;
     }
     const v: usize = @intCast(value);
@@ -483,12 +489,13 @@ export fn nox_http_listen_fd(rt: ?*anyopaque, port: i64) callconv(.c) i64 {
 /// kabul döngüleriyle (`sockaddr_storage` tabanlı accept) doğrudan çalışır.
 /// Windows'ta DESTEKLENMEZ (`-1`): Winsock yolu henüz `sockaddr_in6`yı ele
 /// almıyor ve CI'da doğrulanamıyor.
-fn bindAndListenV6(port: i64, v6_only: bool) ?posix.fd_t {
+fn bindAndListenV6(port: i64, v6_only: bool, reuse_port: bool) ?posix.fd_t {
     if (builtin.os.tag == .windows) return null;
     const fd = std.c.socket(std.c.AF.INET6, std.c.SOCK.STREAM, 0);
     if (fd < 0) return null;
     var reuse: c_int = 1;
     _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    if (reuse_port) _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEPORT, &reuse, @sizeOf(c_int));
     // `std.c`de IPV6_V6ONLY sabiti yok: Darwin 27, Linux 26; IPPROTO_IPV6 = 41.
     const ipv6_v6only: c_int = switch (builtin.os.tag) {
         .linux => 26,
@@ -516,9 +523,16 @@ fn bindAndListenV6(port: i64, v6_only: bool) ?posix.fd_t {
     return fd;
 }
 
+/// Çok çekirdekli worker dinleyicisi: `configure(ip_family=...)` ile IPv6 seçilmişse (Windows hariç) her worker kendi `SO_REUSEPORT` IPv6 soketini açar, yoksa eski IPv4 yolu.
+fn bindAndListenMulticore(port: i64) ?posix.fd_t {
+    const fam = g_serve_config.ip_family.load(.monotonic);
+    if (fam != 0 and builtin.os.tag != .windows) return bindAndListenV6(port, fam == 2, true);
+    return bindAndListen(port, true);
+}
+
 export fn nox_http_listen_fd_v6(rt: ?*anyopaque, port: i64, v6_only: i64) callconv(.c) i64 {
     _ = rt;
-    const fd = bindAndListenV6(port, v6_only != 0) orelse return -1;
+    const fd = bindAndListenV6(port, v6_only != 0, false) orelse return -1;
     return fdToI64(fd);
 }
 
@@ -608,7 +622,7 @@ export fn nox_http_server_listen_multicore_worker(rt: ?*anyopaque, port: i64) ca
         handle.* = .{ .listen_fd = fd, .owns_fd = false };
         return handle;
     }
-    const fd = bindAndListen(port, true) orelse return null;
+    const fd = bindAndListenMulticore(port) orelse return null;
     const handle = state.allocator().create(ServerHandle) catch {
         _ = closeSocket(fd);
         return null;
@@ -685,7 +699,7 @@ export fn nox_http_server_listen_multicore_worker_tls(rt: ?*anyopaque, port: i64
         handle.* = .{ .listen_fd = fd, .owns_fd = false, .tls_ctx = tls_ctx, .owns_tls_ctx = false };
         return handle;
     }
-    const fd = bindAndListen(port, true) orelse return null;
+    const fd = bindAndListenMulticore(port) orelse return null;
     const handle = state.allocator().create(ServerHandle) catch {
         _ = closeSocket(fd);
         return null;

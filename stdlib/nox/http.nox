@@ -165,6 +165,7 @@ extern def nox_http_response_free(h: ptr) -> None from "zig-out/lib/noxrt.o"
 #   read_timeout_ms   bir istek beklerken/okurken en uzun sessizlik (varsayılan 30000)
 #   max_connections   aynı anda en çok açık bağlantı (varsayılan 4096; aşan bağlantı reddedilir)
 #   drain_timeout_ms  shutdown'da uçuştaki isteklerin bitmesi için en uzun bekleme (varsayılan 10000)
+#   ip_family         `serve_multicore*` dinleyici ailesi (v2.1.32): 0 = IPv4 (varsayılan), 1 = IPv6 dual-stack (`::`, IPv4 istemciler de bağlanır), 2 = yalnızca IPv6; Windows'ta yok sayılır
 # `shutdown()` graceful kapanış başlatır (SIGTERM/SIGINT de aynısını yapar): yeni bağlantı alınmaz, uçuştaki istekler biter, boştaki keep-alive bağlantılar kapanır ve `serve*` DÖNER;
 # çağıran sonrasında temizlik kodunu çalıştırabilir. İkinci sinyal hemen çıkar.
 # v2.0.120 — AYNI adlı birden çok yanıt başlığı (Set-Cookie, Link, Vary ...): `HttpResponse.headers` bir `dict[str, str]` olduğundan değerler `\n` ile birleştirilir ve sunucu HER parçayı
@@ -190,12 +191,13 @@ extern def nox_http_respstream_end_raw(conn: int) -> int from "zig-out/lib/noxrt
 extern def nox_http_respstream_open_raw(conn: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_sleep_raw(ms: int) -> None from "zig-out/lib/noxrt.o"
 
-def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_ms: int = 0, max_connections: int = 0, drain_timeout_ms: int = 0) -> None:
+def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_ms: int = 0, max_connections: int = 0, drain_timeout_ms: int = 0, ip_family: int = 0) -> None:
     nox_http_config_set_raw(1, max_body_bytes)
     nox_http_config_set_raw(2, max_header_bytes)
     nox_http_config_set_raw(3, read_timeout_ms)
     nox_http_config_set_raw(4, max_connections)
     nox_http_config_set_raw(5, drain_timeout_ms)
+    nox_http_config_set_raw(7, ip_family)
 
 def shutdown() -> None:
     nox_http_shutdown_raw()

@@ -318,7 +318,7 @@ Things to know:
 ### Configuration and graceful shutdown
 
 ```text
-nox.http.configure(max_body_bytes=0, max_header_bytes=0, read_timeout_ms=0, max_connections=0, drain_timeout_ms=0)
+nox.http.configure(max_body_bytes=0, max_header_bytes=0, read_timeout_ms=0, max_connections=0, drain_timeout_ms=0, ip_family=0)
 nox.http.shutdown()
 ```
 
@@ -331,6 +331,7 @@ nox.http.shutdown()
 | `read_timeout_ms` | 30000 | longest silence while waiting for a request or its body; the connection is then closed |
 | `max_connections` | 4096 | connections open at once; further ones get a `503 Service Unavailable` (`Retry-After: 1`) and are closed until some close |
 | `drain_timeout_ms` | 10000 | how long a graceful shutdown waits for requests that are still being handled |
+| `ip_family` | 0 | listening family of `serve_multicore*`: `0` IPv4, `1` IPv6 dual-stack (`::`, IPv4 clients still connect), `2` IPv6 only; ignored on Windows |
 
 **Graceful shutdown.** `SIGTERM` or `SIGINT` (and `nox.http.shutdown()`, which you may call from a handler) stops the server cleanly: new connections are no longer accepted, requests that are already being handled finish and are answered with `Connection: close`, idle keep-alive connections are closed, and **`serve*` returns** — so the code after it (closing a database, flushing logs) runs and the program exits normally. A second signal exits immediately. After `drain_timeout_ms` the server stops waiting and also returns. On Windows only `nox.http.shutdown()` is available (there is no signal handler). A WebSocket connection already upgraded is not closed by a shutdown: close it from its handler, or rely on `drain_timeout_ms`.
 

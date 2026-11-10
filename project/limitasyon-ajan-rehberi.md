@@ -66,11 +66,9 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 - **Kullanıcı yetkisi:** Kullanıcı "sen karar ver, hepsini yapalım" dedi. Yine de bu, yeni bir ağ protokolü katmanıdır; **tasarım notunu yazıp (`project/` altında) kullanıcıya özetle, sonra uygula.**
 - **Önerilen kapsam (sade başlangıç):** (1) HTTP/2 istemci çerçeveleme (yalnız TLS/ALPN `h2`, mevcut sunucu çerçeve kodunu yeniden kullan), (2) trailer okuma, (3) `nox.grpc` unary çağrı + `nox.protobuf` ile mesaj, (4) akışlı RPC sonra. Önce wasm/QBE etkisini ölç: wasm hedefinde reddedilmeli (bkz. `wasm_abi_table`).
 
-### E3. IPv6 çok çekirdekli dinleme
+### E3. IPv6 çok çekirdekli dinleme (KAPANDI v2.1.32)
 
-- **Durum:** Kapsam dışı bırakıldı (C9 notu). `serve_multicore` yalnız IPv4 dinler; IPv6 tek çekirdekli yolda opt-in vardır (v1.142.x).
-- **Neden:** Çok çekirdekli yol `SO_REUSEPORT` dağıtımına bağlı; IPv6 ek soket ailesi ve platform farkları getirir.
-- **İlk adım:** Kullanıcı isterse `http_serve_multicore` içinde ikinci bir dinleyici ailesi ekleme tasarımını yaz; istemeden başlama.
+`nox.http.configure(ip_family=1|2)`: her `serve_multicore*` worker'ı kendi `SO_REUSEPORT` IPv6 soketini açar (`bindAndListenMulticore`). Windows'ta yok sayılır (Winsock yolu `sockaddr_in6` işlemiyor ve CI'da doğrulanamıyor). Test: `scripts/http_ipv6_probe.py` (iki arka uç × dual-stack/yalnızca-IPv6).
 
 ### E4. `list`/`dict` paylaşımı worker'lar arasında
 

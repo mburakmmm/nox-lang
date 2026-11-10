@@ -1,0 +1,12 @@
+# serve_multicore + configure(ip_family=@FAMILY@): her worker kendi SO_REUSEPORT IPv6 soketini açar. scripts/http_ipv6_probe.py @PORT@ ve @FAMILY@'yi doldurur.
+import nox.http
+from nox.http import HttpRequest, HttpResponse
+
+def make_handler() -> (HttpRequest) -> HttpResponse:
+    def handle(req: HttpRequest) -> HttpResponse:
+        return HttpResponse(200, "peer:" + req.peer_addr, {})
+
+    return handle
+
+nox.http.configure(ip_family=@FAMILY@)
+nox.http.serve_multicore(@PORT@, make_handler, 4)
