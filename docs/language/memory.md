@@ -93,6 +93,5 @@ kernel-provided allocator are described in [Freestanding](../tools/freestanding.
 
 ## What is not exposed
 
-There is no `del x` that frees an object (`del` removes list elements and dictionary entries), no destructor/`__del__` method, no weak
-references and no way to ask for an object's address from ordinary code. Resource cleanup is expressed with `with` (context managers),
+There is no `del x` that frees an object (`del` removes list elements and dictionary entries), no weak references and no way to ask for an object's address from ordinary code. A class may define `__del__`; it runs when the object's last reference goes away (not for objects reclaimed by the cycle collector). Resource cleanup is expressed with `with` (context managers),
 `defer` and `finally` ([Exceptions](exceptions.md)), which share one scope-exit mechanism with automatic memory release.
