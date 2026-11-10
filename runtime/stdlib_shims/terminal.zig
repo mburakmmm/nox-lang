@@ -82,8 +82,8 @@ pub export fn nox_terminal_enable_raw_raw() i32 {
 
 /// `enable_raw`ın eşi: son eşleşen çağrıda özgün ayarlar geri yüklenir.
 pub export fn nox_terminal_disable_raw_raw() i32 {
+    if (g_raw_depth == 0) return 0; // eşleşmemiş disable zararsızdır (desteklenmeyen hedeflerde de)
     if (comptime !supported) return -1;
-    if (g_raw_depth == 0) return 0;
     g_raw_depth -= 1;
     if (g_raw_depth > 0) return 0;
     const orig = g_orig orelse return 0;

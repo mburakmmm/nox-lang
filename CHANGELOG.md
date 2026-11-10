@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.11]
+
+### Düzeltildi
+
+- CI: çalışma zamanına giren `tcgetattr`/`tcsetattr` libc sembolleri ayrılmış kullanıcı-sembol listesine eklendi (aynı adlı kullanıcı fonksiyonları `nox_user_` önekiyle yayılır); `nox.terminal` birim testi Windows'ta (terminal denetimi yok) `disable_raw_mode`un eşleşmemiş çağrısı için `0` bekliyordu ama `-1` dönüyordu.
+
 ## [2.1.10]
 
 ### Eklendi

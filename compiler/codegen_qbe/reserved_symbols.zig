@@ -44,7 +44,7 @@ pub const names = [_][]const u8{
     // <signal.h>, <setjmp.h>, <locale.h>, <assert.h>, <errno.h>
                                "kill",                           "raise",                       "signal",                            "sigaction",                   "sigaltstack",
     "sigemptyset",                    "sigfillset",                    "sigaddset",                        "sigdelset",                "sigprocmask",                               "sigsuspend",                       "longjmp",                        "setjmp",                      "_setjmp",                           "_longjmp",                    "siglongjmp",
-    "sigsetjmp",                      "setlocale",                     "localeconv",                       "assert",                   "errno",                                     "__error",
+    "tcgetattr",                      "tcsetattr",                     "sigsetjmp",                      "setlocale",                     "localeconv",                       "assert",                   "errno",                                     "__error",
     // <unistd.h>, <fcntl.h>, <sys/*.h>
                              "access",                         "chdir",                       "chmod",                             "chown",                       "close",
     "dup",                            "dup2",                          "execl",                            "execle",                   "execlp",                                    "execv",                            "execve",                         "execvp",                      "faccessat",                         "fchdir",                      "fchmod",
