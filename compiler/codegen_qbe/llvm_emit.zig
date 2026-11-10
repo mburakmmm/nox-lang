@@ -324,7 +324,9 @@ const CmpSpec = struct { float: bool, pred: []const u8, operand_ty: []const u8 }
 fn cmpSpecFor(mnemonic: []const u8) ?CmpSpec {
     const table = [_]struct { []const u8, CmpSpec }{
         .{ "ceqd", .{ .float = true, .pred = "oeq", .operand_ty = "double" } },
-        .{ "cned", .{ .float = true, .pred = "one", .operand_ty = "double" } },
+        // Pulse NOX-FLOAT-001: `!=` IEEE'de NaN için DOĞRUdur (QBE `cned` ile aynı):
+        // sıralı `one` yerine sırasız-ya-da-eşit-değil `une`.
+        .{ "cned", .{ .float = true, .pred = "une", .operand_ty = "double" } },
         .{ "cltd", .{ .float = true, .pred = "olt", .operand_ty = "double" } },
         .{ "cled", .{ .float = true, .pred = "ole", .operand_ty = "double" } },
         .{ "cgtd", .{ .float = true, .pred = "ogt", .operand_ty = "double" } },

@@ -43,6 +43,17 @@ const INDENT = "    ";
 
 pub const FormatError = std.Io.Writer.Error || error{NoSpaceLeft};
 
+/// Pulse NOX-FMT-002: kontrol baytları (NUL dahil) kaynak dosyada GERÇEK bayt
+/// olarak yazılırsa dosya araçlarca ikili sayılır; metin kaçışı olarak yazılır.
+fn writeControlEscape(w: *std.Io.Writer, c: u8) FormatError!bool {
+    switch (c) {
+        '\r' => try w.writeAll("\\r"),
+        0...8, 11, 12, 14...31, 127 => try w.print("\\x{x:0>2}", .{c}),
+        else => return false,
+    }
+    return true;
+}
+
 /// `module`ü (`trivia`nin EŞLİK ETTİĞİ AYNI kaynaktan üretilmiş olması
 /// ÖNKOŞULDUR — bkz. `lexer.tokenizeWithTrivia`) kanonik Nox kaynağına
 /// formatlar.
@@ -368,13 +379,23 @@ const Printer = struct {
             .class_def => |c| {
                 try self.printDecorators(c.decorators, depth);
                 try self.indentTo(depth);
-                if (c.base) |b| {
-                    try self.writer.print("class {s}({s}", .{ c.name, b });
-                    for (c.extra_bases) |eb| try self.writer.print(", {s}", .{eb});
-                    try self.writer.writeAll("):");
-                } else {
-                    try self.writer.print("class {s}:", .{c.name});
+                // Pulse NOX-FMT-001: `class Box[T]` tip parametreleri SİLİNİRSE
+                // biçimlendirilmiş kaynak `UnknownType: T` ile derlenmez.
+                try self.writer.print("class {s}", .{c.name});
+                if (c.type_params.len > 0) {
+                    try self.writer.writeAll("[");
+                    for (c.type_params, 0..) |tp, idx| {
+                        if (idx > 0) try self.writer.writeAll(", ");
+                        try self.writer.writeAll(tp);
+                    }
+                    try self.writer.writeAll("]");
                 }
+                if (c.base) |b| {
+                    try self.writer.print("({s}", .{b});
+                    for (c.extra_bases) |eb| try self.writer.print(", {s}", .{eb});
+                    try self.writer.writeAll(")");
+                }
+                try self.writer.writeAll(":");
                 try self.line(stmt.line);
                 // v1.164.1: sınıf docstring'i.
                 if (c.doc) |doc| {
@@ -783,7 +804,7 @@ const Printer = struct {
                 '\\' => try self.writer.writeAll("\\\\"),
                 '\n' => try self.writer.writeAll("\\n"),
                 '\t' => try self.writer.writeAll("\\t"),
-                else => try self.writer.writeByte(c),
+                else => if (!try writeControlEscape(self.writer, c)) try self.writer.writeByte(c),
             },
             .call => |cl| {
                 try self.writer.writeAll("{");
@@ -1056,8 +1077,25 @@ const Printer = struct {
     /// yazdırır (`3.0` DEĞİL `3` yazılırsa, yeniden lex edildiğinde bir
     /// `int_lit`e DÖNÜŞÜR — AST'nin `float`/`int` AYRIMINI BOZAR).
     fn printFloat(self: *Printer, v: f64) FormatError!void {
+        // Pulse NOX-FMT-003: `{d}` 1.0e300 için 301 basamak üretir (sabit 64
+        // baytlık tampon `NoSpaceLeft` verirdi); çok büyük/küçük büyüklükler
+        // bilimsel gösterimle yazılır (`1.0e300`, `5.0e-324`) ve yeniden
+        // lex edildiğinde AYNI float'a döner.
         var buf: [64]u8 = undefined;
-        const s = try std.fmt.bufPrint(&buf, "{d}", .{v});
+        const mag = @abs(v);
+        const sci = mag != 0 and (mag >= 1.0e16 or mag < 1.0e-4);
+        const s = if (sci)
+            try std.fmt.bufPrint(&buf, "{e}", .{v})
+        else
+            try std.fmt.bufPrint(&buf, "{d}", .{v});
+        if (sci) {
+            // `{e}` "1e300" üretir: mantiste ondalık nokta yoksa ".0" ekle.
+            const e_at = std.mem.indexOfScalar(u8, s, 'e').?;
+            try self.writer.writeAll(s[0..e_at]);
+            if (std.mem.indexOfScalar(u8, s[0..e_at], '.') == null) try self.writer.writeAll(".0");
+            try self.writer.writeAll(s[e_at..]);
+            return;
+        }
         try self.writer.writeAll(s);
         if (std.mem.indexOfScalar(u8, s, '.') == null) try self.writer.writeAll(".0");
     }
@@ -1075,7 +1113,7 @@ const Printer = struct {
                     '\\' => try self.writer.writeAll("\\\\"),
                     '\n' => try self.writer.writeAll("\\n"),
                     '\t' => try self.writer.writeAll("\\t"),
-                    else => try self.writer.writeByte(c),
+                    else => if (!try writeControlEscape(self.writer, c)) try self.writer.writeByte(c),
                 }
             }
             try self.writer.writeAll("'");
@@ -1088,7 +1126,7 @@ const Printer = struct {
                 '\\' => try self.writer.writeAll("\\\\"),
                 '\n' => try self.writer.writeAll("\\n"),
                 '\t' => try self.writer.writeAll("\\t"),
-                else => try self.writer.writeByte(c),
+                else => if (!try writeControlEscape(self.writer, c)) try self.writer.writeByte(c),
             }
         }
         try self.writer.writeAll("\"");

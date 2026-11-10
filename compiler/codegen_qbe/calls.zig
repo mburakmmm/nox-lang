@@ -3428,8 +3428,27 @@ pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError
     if (std.mem.eql(u8, g.name, "TaskLocal")) {
         if (g.type_args.len != 1 or g.args.len != 0) return error.Unsupported;
         const elem = try self.resolveType(g.type_args[0]);
+        // Pulse NOX-TASKLOCAL-001: `clear()` çağrılmadan biten fiber'ın kalan değerini serbest bırakmak için türe uygun
+        // `fn(rt, ptr)` bırakma işlevi tutamağa yazılır (bkz. `runtime/async_rt/task_local_entry.zig`). Sınıf için `release_dispatch`
+        // (çok biçimli sınıfları da etiketten çözer); `str`/`list`/`dict` için kendi bırakıcıları.
+        const release_arg: []const u8 = switch (elem.heap) {
+            .str => "$nox_str_release",
+            .class => "$nox_rc_release_enqueue_dynamic",
+            .list => blk: {
+                const li: ElemHeapInfo = .{ .heap = .list, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str };
+                break :blk try std.fmt.allocPrint(self.allocator, "${s}_release", .{try self.releaseFnNameFor(li)});
+            },
+            .dict => blk: {
+                const di = elem.dict_info orelse break :blk "0";
+                const combo: u8 = (@as(u8, @intFromBool(di.key_is_str)) << 2) | (@as(u8, @intFromBool(di.value_is_str)) << 1) | @as(u8, @intFromBool(di.valueIsArc()));
+                const thunk = try self.newTemp();
+                try self.qbeCall(.{ .name = thunk, .ty = .l }, "$nox_dict_release_thunk", &.{.{ .ty = .w, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{combo}) }});
+                break :blk thunk;
+            },
+            else => "0",
+        };
         const tl_t = try self.newTemp();
-        try self.qbeCall(.{ .name = tl_t, .ty = .l }, "$nox_tasklocal_new", &.{.{ .ty = .l, .text = RT_PARAM }});
+        try self.qbeCall(.{ .name = tl_t, .ty = .l }, "$nox_tasklocal_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = release_arg } });
         var elem_heap_info: ?*const ElemHeapInfo = null;
         if (elem.heap == .class or elem.heap == .list) {
             const info = try self.allocator.create(ElemHeapInfo);

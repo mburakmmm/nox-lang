@@ -1,0 +1,31 @@
+# Aura L1: dict[K, Sınıf] alanı içeren döngü çıkışta döngü-çözücü kilidinde askıda kalırdı
+# (trace, değerleri retain eden geçici bir liste kurup release ediyordu).
+class Node:
+    kids: dict[str, Node]
+    by_id: dict[int, Node]
+    parent: Node | None
+
+    def __init__(self) -> None:
+        self.kids = {}
+        self.by_id = {}
+        self.parent = None
+
+
+def self_cycle() -> None:
+    a: Node = Node()
+    a.kids["self"] = a
+
+
+def mutual_cycle() -> None:
+    a: Node = Node()
+    b: Node = Node()
+    a.by_id[1] = b
+    b.parent = a
+    b.kids["a"] = a
+
+
+self_cycle()
+mutual_cycle()
+for i in range(3000):
+    mutual_cycle()
+print("cycle ok")

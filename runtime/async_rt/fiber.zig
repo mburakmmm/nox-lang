@@ -54,6 +54,7 @@ comptime {
 const is_freestanding = (builtin.os.tag == .freestanding or builtin.os.tag == .other) and !(builtin.cpu.arch.isWasm() and std.Target.wasm.featureSetHas(builtin.cpu.features, .atomics));
 const is_wasm = builtin.cpu.arch.isWasm();
 /// wasm32'de fiber değiştirme Binaryen Asyncify ile yapılır (bkz. `asyncify.zig`, ADR-014).
+const task_local_entry = @import("task_local_entry.zig");
 const asyncify = if (is_wasm) @import("asyncify.zig") else struct {};
 
 pub const Context = switch (builtin.cpu.arch) {
@@ -485,7 +486,7 @@ pub const Fiber = struct {
     /// `destroyKeepStack`) TAMAMEN boşaltılır — bkz. o fonksiyonların
     /// belge notu (leftover değerlerin `release_kind`e göre serbest
     /// bırakılması `task_local.zig`nin `drainTaskLocals`inde yapılır).
-    task_locals: std.AutoHashMapUnmanaged(*anyopaque, ?*anyopaque) = .empty,
+    task_locals: task_local_entry.Map = .empty,
 
     /// Faz MN.2 (bkz. proje planı "LLVM-only atomic ARC + M:N zamanlayıcı"):
     /// eskiden `threadlocal var` OLAN, ama GERÇEKTEN mutasyona uğrayan
@@ -642,18 +643,8 @@ pub const Fiber = struct {
     /// tarafından yeniden kullanılabilir. Yalnızca `Fiber` struct'ının
     /// kendisi (küçük, sabit boyutlu) serbest bırakılır.
     ///
-    /// **`task_locals`nin BİLİNÇLİ v1 sınırlaması:** BURADA (VE `destroy`da)
-    /// SADECE haritanın KENDİ Zig-İÇİ ayırımı boşaltılır — SAKLANAN Nox
-    /// DEĞERLERİ serbest BIRAKILMAZ. `scheduler.zig`/`fiber.zig` KASITLI
-    /// OLARAK `RuntimeState`ten BAĞIMSIZDIR (bkz. modül üstü not, "İlke
-    /// #6") — bu YÜZDEN burada `nox_class_release_dispatch` GİBİ bir
-    /// çağrı YAPILAMAZ (`rt` yoktur). Bu, iyi-davranışlı kodun (nyx'in
-    /// İSTEK-sonu middleware zincirinin ZATEN doğal olarak yapacağı gibi)
-    /// bir fiber bitmeden ÖNCE KENDİ `TaskLocal`larını `clear()`
-    /// ETMESİNİ gerektiren, BELGELENMİŞ bir v1 sınırlamasıdır (aksi
-    /// halde o TEK değerin referansı sızar — TÜM programın çökmesine
-    /// YOL AÇMAZ, yalnızca o değerin serbest bırakılmasını GECİKTİRİR/
-    /// engeller).
+    /// `task_locals` fiber BİTERKEN `trampoline`de `task_local_entry.drain` ile boşaltılır; burada yalnızca
+    /// haritanın Zig-içi ayırımı bırakılır (bitmeden yok edilen fiber'ın değerleri için bkz. `task_local_entry.zig`).
     pub fn destroyKeepStack(self: *Fiber) []align(STACK_ALIGN) u8 {
         if (comptime is_wasm) asyncify.discard(&self.ctx);
         self.task_locals.deinit(self.allocator);
@@ -765,6 +756,11 @@ fn callEntryPad2(self: *Fiber) void {
 }
 fn callEntryPad1(self: *Fiber) void {
     self.entry(self.arg);
+    // Pulse NOX-TASKLOCAL-001: `clear()` edilmemiş TaskLocal değerleri fiber BİTERKEN (normal dönüş, istisna ve iptal
+    // yollarının hepsi `entry`den buraya döner) girdilerin kendi bırakma işleviyle serbest bırakılır. BURADA, `trampoline`in
+    // sahte önyükleme çerçevesinde DEĞİL: `DebugAllocator`ın yığın-izi yakalaması `free` içinde sahte çerçeveyi yürürse çöker
+    // (bkz. yukarıdaki dolgu zinciri notu) — bu yüzden bırakma, `entry` ile aynı gerçek çerçeve derinliğinde çalışır.
+    task_local_entry.drain(&self.task_locals, self.allocator);
 }
 
 test "iki fiber arasında birden çok kez geçiş, x19 kaçağı doğru çalışır" {

@@ -117,7 +117,7 @@ pub fn currentFiberScheduler() ?*scheduler_mod.Scheduler {
 /// burada panik ATILMAZ, ÇÜNKÜ TaskLocal fiber DIŞINDA da SÖZDİZİMSEL
 /// olarak ÇAĞRILABİLİR bir metod çağrısıdır — checker BUNU kısıtlamaz).
 /// Çalışan görevin `TaskLocal` haritası (fiber dışında `null`).
-pub fn currentTaskLocals() ?*std.AutoHashMapUnmanaged(*anyopaque, ?*anyopaque) {
+pub fn currentTaskLocals() ?*@import("task_local_entry.zig").Map {
     const f = currentFiber() orelse return null;
     return &f.task_locals;
 }

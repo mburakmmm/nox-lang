@@ -38,6 +38,14 @@ run_step() {
 "$adb" shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
 echo "cihaz: $("$adb" shell getprop ro.product.cpu.abi | tr -d '\r') api $("$adb" shell getprop ro.build.version.sdk | tr -d '\r') sayfa $("$adb" shell getconf PAGE_SIZE | tr -d '\r')"
 
+# DNS bekleme: emülatörün DNS'i açılışta aralıklı olarak hazır olmuyor (`net.dns1` boş, `ping: unknown host`); suite `https://example.com/` istediğinden
+# çözümleme gelene kadar (en çok 90 sn) beklenir. Gelmezse devam edilir: ağ gerektiren adımlar nedenini aşağıdaki tanıda gösterir.
+i=0
+while [ $i -lt 30 ]; do
+  "$adb" shell 'ping -c 1 -W 2 example.com' >/dev/null 2>&1 && break
+  i=$((i + 1))
+  sleep 3
+done
 # Tanı (hata değil): suite `https://example.com/` ister; emülatörün DNS'i ve dış erişimi başarısızlıkta nedeni ayırt etmeyi sağlar.
 echo "ağ tanısı: dns1=$("$adb" shell getprop net.dns1 | tr -d '\r') $("$adb" shell 'ping -c 1 -W 5 example.com 2>&1 | tail -2' | tr -d '\r' | tr '\n' ' ')"
 run_step "stdlib paketi + çalışma zamanı probe'u" "$root/scripts/mobile_android_run.sh"

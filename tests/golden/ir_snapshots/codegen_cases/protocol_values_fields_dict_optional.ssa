@@ -2146,7 +2146,6 @@ export function l $Zoo_trace(l %rt, l %p) {
     %t0 =l alloc8 8
     %t17 =l alloc8 8
     %t25 =l alloc8 8
-    %t43 =l alloc8 8
     storel 1, %t0
     %t1 =l add %p, 16
     %t2 =l loadl %t1
@@ -2221,38 +2220,9 @@ export function l $Zoo_trace(l %rt, l %p) {
     %t40 =w ceql %t39, 0
     jnz %t40, @trace_dict_fill_skip12, @trace_dict_fill_have13
 @trace_dict_fill_have13
-    %t41 =l call $nox_dict_values(l %rt, l %t39, w 0, w 1, l 8)
-    %t42 =l loadl %t41
-    storel 0, %t43
-    jmp @trace_dict_fill_cond15
-@trace_dict_fill_cond15
-    %t44 =l loadl %t43
-    %t45 =w csltl %t44, %t42
-    jnz %t45, @trace_dict_fill_body16, @trace_dict_fill_loopend17
-@trace_dict_fill_body16
-    %t46 =l mul %t44, 8
-    %t47 =l add %t46, 16
-    %t48 =l add %t41, %t47
-    %t49 =l loadl %t48
-    %t50 =l loadl %t17
-    %t51 =l mul %t50, 8
-    %t52 =l add %t51, 8
-    %t53 =l add %t16, %t52
-    storel %t49, %t53
-    %t54 =l add %t50, 1
-    storel %t54, %t17
-    %t55 =l add %t44, 1
-    storel %t55, %t43
-    jmp @trace_dict_fill_cond15
-@trace_dict_fill_loopend17
-    %t56 =w ceql %t41, 0
-    jnz %t56, @release_skip19, @release18
-@release18
-    call $List_Animal__Base_release(l %rt, l %t41)
-    jmp @release_done20
-@release_skip19
-    jmp @release_done20
-@release_done20
+    %t41 =l loadl %t17
+    %t42 =l call $nox_dict_trace_fill(l %t39, l %t16, l %t41)
+    storel %t42, %t17
     jmp @trace_dict_fill_after14
 @trace_dict_fill_skip12
     jmp @trace_dict_fill_after14

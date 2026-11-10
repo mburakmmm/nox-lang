@@ -909,6 +909,16 @@ fn workerThreadFn(ctx: *RequestCtx) void {
             ctx.response_headers = &.{};
         };
 
+        // Nova 8 (RFC 7230 §3.3.3): HEAD yanıtı ve 1xx/204/304 `Content-Length` taşısa da GÖVDE OLMAZ.
+        // Okuyucuyu çalıştırmak, keep-alive bağlantıda hiç gelmeyecek baytları sonsuza dek beklerdi.
+        if (ctx.method == .HEAD or response.head.status == .no_content or response.head.status == .not_modified or
+            @intFromEnum(response.head.status) < 200)
+        {
+            ctx.response_body = &.{};
+            headers_committed = true;
+            break :retry;
+        }
+
         var transfer_buffer: [1024]u8 = undefined;
         // `std.http.Client`in varsayılan `accept_encoding`i (bkz. Zig std
         // `Client.Options.default_accept_encoding`) sunucudan zaten gzip/deflate
@@ -1591,7 +1601,7 @@ test "Güvenlik M-1: copyHeaders normal (CR/LF'siz) başlıklarda HÂLÂ doğru 
 
 // ---- v2.0.31: genel metod, gerçek zaman aşımı, ikili gövde ---------------
 
-const CustomMode = enum { echo_method, stall, binary };
+const CustomMode = enum { echo_method, stall, binary, head_keepalive };
 
 /// Tek bağlantı kabul edip isteği (başlık sonuna kadar) okur; `mode`a göre yanıt verir. Yalnızca POSIX (testler Windows'ta atlanır).
 fn testServeCustom(listen_fd: posix.fd_t, mode: CustomMode) void {
@@ -1624,6 +1634,14 @@ fn testServeCustom(listen_fd: posix.fd_t, mode: CustomMode) void {
             const is_head = std.mem.eql(u8, method, "HEAD");
             const text = std.fmt.bufPrint(&out, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nX-Method: {s}\r\nConnection: close\r\n\r\n{s}", .{ method.len, method, if (is_head) "" else method }) catch return;
             _ = std.c.write(conn, text.ptr, text.len);
+        },
+        .head_keepalive => {
+            // Nova 8: HEAD yanıtı gerçek bir sunucudaki gibi `Content-Length` bildirir ama gövde göndermez ve bağlantıyı
+            // AÇIK tutar (keep-alive). İstemci gövde beklerse burada kapanana kadar (1.5 sn) takılır.
+            const header = "HTTP/1.1 200 OK\r\nContent-Length: 64\r\nContent-Type: text/plain\r\n\r\n";
+            _ = std.c.write(conn, header.ptr, header.len);
+            var pfd = [1]posix.pollfd{.{ .fd = conn, .events = posix.POLL.IN, .revents = 0 }};
+            _ = posix.poll(&pfd, 1500) catch 0;
         },
         .binary => {
             const body = [_]u8{ 0x00, 0xff, 0x80, 'a', 0x00 };
@@ -1680,6 +1698,36 @@ test "nox_http_request_raw: PUT/PATCH/DELETE/OPTIONS/HEAD gerçek metodla gider,
     const url = str_mod.nox_str_from_bytes(rt, "http://127.0.0.1:1/") orelse return error.AllocFailed;
     defer str_mod.nox_str_release(rt, url);
     try std.testing.expect(nox_http_request_raw(rt, bad, url, null, 0, null, 0) == null);
+}
+
+test "nox_http_request_raw: HEAD + Content-Length + keep-alive gövde BEKLEMEZ (Nova 8, RFC 7230 §3.3.3)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer closeFd(listen_fd);
+    const server = try std.Thread.spawn(.{}, testServeCustom, .{ listen_fd, CustomMode.head_keepalive });
+    defer server.join();
+
+    var url_buf: [64]u8 = undefined;
+    const url = (try testUrl(rt, port, &url_buf)) orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, url);
+    const method = str_mod.nox_str_from_bytes(rt, "HEAD") orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, method);
+
+    const t0 = monotonicMs();
+    const resp = nox_http_request_raw(rt, method, url, null, 0, null, 0) orelse return error.RequestFailed;
+    defer nox_http_response_free(resp);
+    const elapsed = monotonicMs() - t0;
+    try std.testing.expectEqual(@as(i32, 1), nox_http_response_ok(resp));
+    try std.testing.expectEqual(@as(i64, 200), nox_http_response_status(resp));
+    const got = nox_http_response_body(rt, resp) orelse return error.NoBody;
+    defer str_mod.nox_str_release(rt, got);
+    try std.testing.expectEqualStrings("", str_mod.nox_str_slice(got));
+    // Sunucu bağlantıyı 1.5 sn tutar: gövde bekleseydik bundan uzun sürerdi.
+    try std.testing.expect(elapsed < 1000);
 }
 
 test "Watchdog: süre sayılan adımlarla değil monoton saatle ölçülür (geç gelen tur yine tetikler)" {

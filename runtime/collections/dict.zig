@@ -654,6 +654,24 @@ pub export fn nox_dict_values(rt: ?*anyopaque, dp: ?*anyopaque, value_is_str: i3
     return buildEntryList(rt, d, value_is_str != 0, value_is_class != 0, value_elem_size, false);
 }
 
+/// Döngü çözücünün `$Sınıf_trace`i için: sözlüğün DEĞERLERİNİ (`dict[K, Sınıf]`)
+/// refcount'a HİÇ dokunmadan `buf`ın (8 baytlık uzunluk başlığı + 8 baytlık yuvalar)
+/// `start_idx`inci yuvasından itibaren yazar, YENİ yazma indeksini döner.
+/// (`nox_dict_values` her değeri retain eden geçici bir liste kurardı; o listenin
+/// release'i döngü-çözücü kilidi tutulurken `nox_cycle_possible_root`a yeniden girip
+/// kilitleniyordu.)
+pub export fn nox_dict_trace_fill(dp: ?*anyopaque, buf: ?*anyopaque, start_idx: i64) i64 {
+    const d: *const Dict = @ptrCast(@alignCast(dp orelse return start_idx));
+    const out: [*]u8 = @ptrCast(buf orelse return start_idx);
+    var idx = start_idx;
+    for (d.entries.items) |e| {
+        const slot: *align(1) abi_ptr.Slot = @ptrCast(out + abi_layout.TRACE_BUF_LEN_SIZE + @as(usize, @intCast(idx)) * abi_layout.TRACE_BUF_SLOT_SIZE);
+        slot.* = abi_ptr.slot(@as(?*anyopaque, @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(e.value)))))));
+        idx += 1;
+    }
+    return idx;
+}
+
 /// Faz FF.3 — `dict`in refcount'unu bir azaltır; sıfıra/altına düşerse
 /// KENDİSİNİ (ve İÇİNDEKİ TÜM `str` anahtar/değerleri, varsa) GERÇEKTEN
 /// yıkar — `runtime/str.zig`nin `nox_str_release`iyle (`nox_rc_
@@ -1040,6 +1058,12 @@ pub const dict_release_wrappers = [8]*const fn (abi_ptr.Arg, abi_ptr.Arg) callco
 pub export fn nox_dict_set_value_release_dict(dp: ?*anyopaque, combo: i32) void {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return));
     d.value_release = dict_release_wrappers[@as(usize, @intCast(combo)) & 7];
+}
+
+/// Codegen için: iç sözlük bayraklarına (`combo`, bkz. `nox_dict_set_value_release_dict`) uygun `fn(rt, ptr)` bırakma
+/// işaretçisini DÖNER (sözlüğe yazmadan) — örn. `TaskLocal[dict[K, V]]` için tutamağa yazılır.
+pub export fn nox_dict_release_thunk(combo: i32) *const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void {
+    return dict_release_wrappers[@as(usize, @intCast(combo)) & 7];
 }
 
 var test_value_release_calls: usize = 0;

@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.2]
+
+Çerçeve geliştiricilerinin (aether, nyx, aura, nova, pulse) bildirdiği, güncel derlemede yeniden üretilen hatalar. Ayrıntılı kayıt: `project/limitasyon-kaydi-2026-11.md`.
+
+### Düzeltildi
+
+- **`noxc fmt` anlamı koruyor:** `class Box[T]` tip parametreleri silinmiyor (biçimlendirilmiş kaynak artık `UnknownType: T` vermiyor); `"\x00"` gibi kontrol baytları dosyaya gerçek bayt değil metin kaçışı olarak yazılıyor; `1.0e300` gibi büyük/küçük float'lar `NoSpaceLeft` vermiyor, bilimsel gösterimle yazılıyor (`1.0e300`, `5.0e-324`).
+- **NaN karşılaştırması iki arka uçta aynı:** LLVM'de `float != float` NaN için `False` veriyordu (sıralı `fcmp one`); IEEE ve QBE'deki gibi `True` (`une`). Yan etki: bir NaN böleni artık sıfır bölme sayılmıyor.
+- **`-9223372036854775808` doğrudan yazılabiliyor** (en küçük `int`). `-9223372036854775808 ** 2` gibi bir üs/çağrı izliyorsa Python önceliği korunur ve hâlâ reddedilir.
+- **İçinde `dict[K, Sınıf]` olan döngü çıkışta askıda kalmıyor:** döngü çözücünün izleme adımı değerleri retain eden geçici bir liste kurup bırakıyordu; o bırakma, kilit tutulurken aynı (yeniden girilemez) kilide girip sonsuza dek dönüyordu. Artık `nox_dict_trace_fill` değerleri refcount'a dokunmadan okuyor.
+- **`nox.url.query_decode` `+` karakterini boşluk yapıyor** (`application/x-www-form-urlencoded`); gerçek artı `%2B`. `percent_decode` (yol) değişmedi.
+- **`nox.http.request` GET/DELETE/HEAD/OPTIONS ile boş olmayan gövdeyi reddediyor** (`invalid request`); önceden gövde sessizce atılıyordu.
+- **HEAD yanıtı gövde beklemiyor:** keep-alive bağlantıda `Content-Length` taşıyan HEAD (ve 1xx/204/304) yanıtları sonsuza dek takılıyordu (RFC 7230 §3.3.3).
+- **`TaskLocal` değerleri sızmıyor:** `clear()` çağırmadan biten görev/fiber'ın kalan değerleri (sınıf, `str`, `list`, `dict`) normal dönüş, istisna ve iptalde serbest bırakılıyor. `TaskLocal[T]()` artık türe uygun bırakma işlevini tutamağa yazıyor.
+- **Gecelik mobil CI:** Android emülatör DNS'inin açılışta hazır olmaması için bekleme eklendi (önceki sürümde Zig std'nin 256 KiB TLS sinyal yığını kapatılmıştı).
+
+### Eklendi
+
+- `noxc version --build-info`: sürüm, kaynak commit (`NOX_BUILD_COMMIT` ya da `git rev-parse HEAD`, kirli ağaçta `-dirty`), Zig sürümü, hedef ve optimize modu. Düz `noxc version` değişmedi.
+
 ## [2.1.1]
 
 ### Düzeltildi

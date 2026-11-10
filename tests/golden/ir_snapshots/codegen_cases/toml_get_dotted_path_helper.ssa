@@ -1869,7 +1869,6 @@ export function l $nox_toml_TomlValue_trace(l %rt, l %p) {
     %t0 =l alloc8 8
     %t17 =l alloc8 8
     %t22 =l alloc8 8
-    %t40 =l alloc8 8
     storel 0, %t0
     %t1 =l add %p, 48
     %t2 =l loadl %t1
@@ -1940,38 +1939,9 @@ export function l $nox_toml_TomlValue_trace(l %rt, l %p) {
     %t37 =w ceql %t36, 0
     jnz %t37, @trace_dict_fill_skip12, @trace_dict_fill_have13
 @trace_dict_fill_have13
-    %t38 =l call $nox_dict_values(l %rt, l %t36, w 0, w 1, l 8)
-    %t39 =l loadl %t38
-    storel 0, %t40
-    jmp @trace_dict_fill_cond15
-@trace_dict_fill_cond15
-    %t41 =l loadl %t40
-    %t42 =w csltl %t41, %t39
-    jnz %t42, @trace_dict_fill_body16, @trace_dict_fill_loopend17
-@trace_dict_fill_body16
-    %t43 =l mul %t41, 8
-    %t44 =l add %t43, 16
-    %t45 =l add %t38, %t44
-    %t46 =l loadl %t45
-    %t47 =l loadl %t17
-    %t48 =l mul %t47, 8
-    %t49 =l add %t48, 8
-    %t50 =l add %t16, %t49
-    storel %t46, %t50
-    %t51 =l add %t47, 1
-    storel %t51, %t17
-    %t52 =l add %t41, 1
-    storel %t52, %t40
-    jmp @trace_dict_fill_cond15
-@trace_dict_fill_loopend17
-    %t53 =w ceql %t38, 0
-    jnz %t53, @release_skip19, @release18
-@release18
-    call $List_nox_toml_TomlValue_release(l %rt, l %t38)
-    jmp @release_done20
-@release_skip19
-    jmp @release_done20
-@release_done20
+    %t38 =l loadl %t17
+    %t39 =l call $nox_dict_trace_fill(l %t36, l %t16, l %t38)
+    storel %t39, %t17
     jmp @trace_dict_fill_after14
 @trace_dict_fill_skip12
     jmp @trace_dict_fill_after14

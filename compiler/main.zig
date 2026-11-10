@@ -453,7 +453,7 @@ fn realMain(init: std.process.Init) !void {
         .login => try cmdLogin(io, a, rest, nox_home, registry_policy, fetch_policy),
         .logout => try cmdLogout(io, a, nox_home, registry_policy, fetch_policy),
         .whoami => try cmdWhoami(io, a, nox_home, registry_policy, fetch_policy),
-        .version => std.debug.print("noxc {s}\n", .{build_options.version}),
+        .version => try cmdVersion(io, rest),
         .fetch => try cmdFetch(io, a, rest, nox_home, fetch_policy),
         .update => try cmdUpdate(io, a, rest, nox_home, fetch_policy),
         .init => try cmdInit(io, a, rest),
@@ -2040,6 +2040,33 @@ fn pathIsDir(io: std.Io, path: []const u8) bool {
 /// sayılır. `module_loader.resolveImports` KASITLI olarak ÇAĞRILMAZ —
 /// KULLANICININ KENDİ dosyası formatlanır, stdlib'in TÜM merge edilmiş
 /// içeriği DEĞİL (bkz. `formatter.zig`nin modül üstü notu).
+/// `noxc version` (stderr, `install.sh`in güvendiği TEK satır) ve `noxc version --build-info` (stdout, makine
+/// okunur `anahtar: değer` satırları): Pulse PROVENANCE-001 — derleyicinin hangi kaynak revizyonundan
+/// derlendiğini ÇIKARIM yapmadan doğrulamak. `commit` derlemede `NOX_BUILD_COMMIT` ya da `git rev-parse HEAD`
+/// ile alınır; kaynak arşivi gibi ikisi de yoksa "unknown" yazar.
+fn cmdVersion(io: std.Io, args: []const []const u8) !void {
+    var build_info = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--build-info")) build_info = true;
+    }
+    if (!build_info) {
+        std.debug.print("noxc {s}\n", .{build_options.version});
+        return;
+    }
+    var stdout_buf: [512]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    const w = &stdout_writer.interface;
+    try w.print("version: {s}\ncommit: {s}\nzig: {s}\ntarget: {s}-{s}\noptimize: {s}\n", .{
+        build_options.version,
+        build_options.commit,
+        builtin.zig_version_string,
+        @tagName(builtin.cpu.arch),
+        @tagName(builtin.os.tag),
+        @tagName(builtin.mode),
+    });
+    try w.flush();
+}
+
 fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
     if (args.len == 0) {
         std.debug.print("usage: noxc fmt <file.nox>\n", .{});

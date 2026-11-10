@@ -264,6 +264,15 @@ def query_bool(q: dict[str, str], key: str) -> bool:
         return False
     raise ValueError("invalid bool value for query parameter: " + key + "=" + v)
 
+# Nyx 2.8: sorgu dizgisi (`application/x-www-form-urlencoded`) kuralı — `+` BOŞLUK demektir;
+# gerçek bir artı `%2B` olarak kodlanır. Önce `+`lar boşluğa çevrilir, SONRA yüzde çözülür (sıra
+# önemli: `%2B` çözülünce oluşan `+` bir daha boşluğa DÖNMEZ). `percent_decode` yol bölümleri
+# için olduğu gibi kalır (yolda `+` literaldir).
+def _form_decode(s: str) -> str:
+    if not nox.strings.contains(s, "+"):
+        return percent_decode(s)
+    return percent_decode(nox.strings.replace(s, "+", " "))
+
 def query_decode(s: str) -> dict[str, str]:
     result: dict[str, str] = {}
     if len(s) == 0:
@@ -274,11 +283,11 @@ def query_decode(s: str) -> dict[str, str]:
         pair: str = pairs[i]
         eq_idx: int = nox.strings.index_of(pair, "=")
         if eq_idx < 0:
-            result[percent_decode(pair)] = ""
+            result[_form_decode(pair)] = ""
         else:
             k: str = _substr(pair, 0, eq_idx)
             v: str = _substr(pair, eq_idx + 1, len(pair))
-            result[percent_decode(k)] = percent_decode(v)
+            result[_form_decode(k)] = _form_decode(v)
         i = i + 1
     return result
 

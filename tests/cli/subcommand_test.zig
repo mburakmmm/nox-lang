@@ -431,6 +431,76 @@ test "fmt: gercek formatlayici dosyayi yerinde yeniden yazar, IDEMPOTENTTIR" {
     try std.testing.expectEqualStrings(once, twice);
 }
 
+// Pulse PROVENANCE-001: `noxc version --build-info` stdout'a makine okunur satırlar basar; `commit` ya 7+ karakterlik
+// bir revizyon (isteğe bağlı `-dirty` soneki) ya da kaynak git'siz derlendiyse dürüstçe "unknown"dır.
+test "version --build-info: surum, commit, zig, hedef ve optimize satirlarini stdout'a basar" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const noxc = try noxcPath(a);
+
+    const r = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ noxc, "version", "--build-info" } });
+    defer std.testing.allocator.free(r.stdout);
+    defer std.testing.allocator.free(r.stderr);
+    try std.testing.expect(r.term == .exited and r.term.exited == 0);
+    try std.testing.expect(std.mem.startsWith(u8, r.stdout, "version: "));
+    const commit_at = std.mem.indexOf(u8, r.stdout, "\ncommit: ") orelse return error.MissingCommit;
+    const rest = r.stdout[commit_at + "\ncommit: ".len ..];
+    const commit = rest[0 .. std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len];
+    try std.testing.expect(std.mem.eql(u8, commit, "unknown") or commit.len >= 7);
+    for ([_][]const u8{ "\nzig: ", "\ntarget: ", "\noptimize: " }) |key| {
+        try std.testing.expect(std.mem.indexOf(u8, r.stdout, key) != null);
+    }
+    // Düz `version` değişmez: tek `noxc <sürüm>` satırı (install.sh'ın güvendiği biçim), stdout boş.
+    const plain = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ noxc, "version" } });
+    defer std.testing.allocator.free(plain.stdout);
+    defer std.testing.allocator.free(plain.stderr);
+    try std.testing.expectEqual(@as(usize, 0), plain.stdout.len);
+    try std.testing.expect(std.mem.startsWith(u8, plain.stderr, "noxc "));
+}
+
+// Pulse NOX-FMT-001/002/003: biçimlendirici anlamı korumalı. Jenerik sınıfın `[T]`si
+// silinmez, NUL gibi kontrol baytları metin kaçışı kalır, büyük/küçük float'lar
+// `NoSpaceLeft` vermez ve bilimsel gösterimle yeniden yazılır; ikinci geçiş aynı çıktıyı verir.
+test "fmt: jenerik sinif parametresi, kontrol kacislari ve buyuk float korunur" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const src =
+        "class Box[T]:\n    v: T\n    def __init__(self, v: T) -> None:\n        self.v = v\n" ++
+        "z: str = \"A\\x00B\\r\\x7f\"\nbig: float = 1.0e300\ntiny: float = 5e-324\nmid: float = 2.5\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "g.nox", .data = src });
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const src_path = try std.fmt.allocPrint(a, "{s}/g.nox", .{path_buf[0..len]});
+    const noxc = try noxcPath(a);
+
+    var once: []const u8 = "";
+    for (0..2) |round| {
+        const r = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ noxc, "fmt", src_path } });
+        defer std.testing.allocator.free(r.stdout);
+        defer std.testing.allocator.free(r.stderr);
+        try std.testing.expect(r.term == .exited and r.term.exited == 0);
+        const out = try tmp.dir.readFileAlloc(io, "g.nox", a, .limited(4096));
+        try std.testing.expect(std.mem.indexOfScalar(u8, out, 0) == null);
+        try std.testing.expect(std.mem.indexOf(u8, out, "class Box[T]:") != null);
+        try std.testing.expect(std.mem.indexOf(u8, out, "\"A\\x00B\\r\\x7f\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, out, "big: float = 1.0e300") != null);
+        try std.testing.expect(std.mem.indexOf(u8, out, "tiny: float = 5.0e-324") != null);
+        if (round == 0) once = out else try std.testing.expectEqualStrings(once, out);
+    }
+    const chk = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ noxc, "check", src_path } });
+    defer std.testing.allocator.free(chk.stdout);
+    defer std.testing.allocator.free(chk.stderr);
+    try std.testing.expect(chk.term == .exited and chk.term.exited == 0);
+}
+
 // Kurulum betiğinin (`install.sh`) doğrulama adımının GÜVENDİĞİ komut —
 // `noxc version`/`--version`/`-V` ÜÇÜ de `noxc <build.zig.zon'daki
 // version>\n`i basar (bkz. build.zig'in `build_options.version`ı, `main.

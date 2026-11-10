@@ -44,6 +44,7 @@ pub const async_bridge = @import("async_rt/bridge.zig");
 pub const thread_bridge = @import("async_rt/thread_bridge.zig");
 pub const thread_channel = @import("async_rt/thread_channel.zig");
 pub const task_local = @import("async_rt/task_local.zig");
+pub const task_local_entry = @import("async_rt/task_local_entry.zig");
 /// Faz MN.3a: BAĞIMSIZ, henüz HİÇBİR yere BAĞLANMAMIŞ (bkz. onun modül
 /// üstü notu) — SADECE `zig build test`nin `noxrt_test`inin (bu dosyayı
 /// KÖK modül olarak kullanan) KENDİ testlerini KEŞFEDEBİLMESİ İçİn burada
@@ -117,6 +118,7 @@ comptime {
     _ = pool_bridge;
     _ = thread_channel;
     _ = task_local;
+    _ = task_local_entry;
     _ = chase_lev_deque;
     _ = worker_pool;
     _ = str;

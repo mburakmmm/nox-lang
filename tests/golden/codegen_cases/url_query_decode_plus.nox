@@ -1,0 +1,9 @@
+# Nyx 2.8: sorgu dizgisinde `+` boşluktur, `%2B` gerçek artıdır, yolda `+` literaldir.
+import nox.url
+
+q: dict[str, str] = nox.url.query_decode("a+b=c+d%2Be%20f&x+y&k=")
+print(q["a b"])
+print(q["x y"] == "")
+print(q["k"] == "")
+print(nox.url.percent_decode("a+b"))
+print(len(q))

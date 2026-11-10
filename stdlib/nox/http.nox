@@ -293,6 +293,10 @@ def request(method: str, url: str, body: str, headers: dict[str, str], timeout_m
     has_body: int = 0
     if method == "POST" or method == "PUT" or method == "PATCH":
         has_body = 1
+    elif len(body) > 0:
+        # Pulse HTTP-003: gövdesi OLAMAYAN bir yöntemde (GET/HEAD/DELETE/OPTIONS) boş olmayan gövde
+        # ÖNCEDEN sessizce atılırdı. `has_body` = 1 geçilince çalışma zamanı isteği reddeder (kind 3).
+        has_body = 1
     h: ptr = nox_http_request_raw(method, url, body, has_body, headers, timeout_ms)
     if nox_http_response_ok(h) == 0:
         kind: int = nox_http_response_error_kind(h)

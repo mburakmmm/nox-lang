@@ -451,6 +451,27 @@ fn addMobileRuntimeChain(
     return &install.step;
 }
 
+/// Derlenen kaynağın git commit'i (40 hex) ya da "unknown" (bkz. `version_options` notu).
+fn sourceCommit(b: *std.Build) []const u8 {
+    if (b.graph.environ_map.get("NOX_BUILD_COMMIT")) |c| {
+        if (c.len > 0) return b.dupe(c);
+    }
+    const r = std.process.run(b.allocator, b.graph.io, .{
+        .argv = &.{ "git", "-C", b.build_root.path orelse ".", "rev-parse", "HEAD" },
+    }) catch return "unknown";
+    if (r.term != .exited or r.term.exited != 0) return "unknown";
+    const t = std.mem.trim(u8, r.stdout, " \t\r\n");
+    if (t.len < 7) return "unknown";
+    // Kirli çalışma ağacı (izlenen dosyalarda yerel değişiklik) commit'e EŞİT bir kaynağı temsil etmez: açıkça işaretlenir.
+    const dirty = std.process.run(b.allocator, b.graph.io, .{
+        .argv = &.{ "git", "-C", b.build_root.path orelse ".", "status", "--porcelain", "--untracked-files=no" },
+    }) catch return b.dupe(t);
+    if (dirty.term == .exited and dirty.term.exited == 0 and std.mem.trim(u8, dirty.stdout, " \t\r\n").len > 0) {
+        return b.fmt("{s}-dirty", .{t});
+    }
+    return b.dupe(t);
+}
+
 pub fn build(b: *std.Build) void {
     if (builtin.zig_version.order(EXPECTED_ZIG_VERSION) != .eq) {
         std.debug.print(
@@ -615,6 +636,10 @@ pub fn build(b: *std.Build) void {
     const build_zig_zon = @import("build.zig.zon");
     const version_options = b.addOptions();
     version_options.addOption([]const u8, "version", build_zig_zon.version);
+    // Pulse PROVENANCE-001: `noxc version --build-info` derlemenin KAYNAK commit'ini gösterir. Önce
+    // `NOX_BUILD_COMMIT` (sürüm CI'ı etiketli commit'i verir), yoksa `git rev-parse HEAD`; ikisi de
+    // yoksa (git'siz kaynak arşivi) "unknown" — asla uydurulmaz.
+    version_options.addOption([]const u8, "commit", sourceCommit(b));
     noxc_mod.addOptions("build_options", version_options);
     // `compiler/pkg/upgrade.zig` (bkz. `noxc upgrade`nin belge notu) `nox_mod`
     // (lib_test'in kökü, bkz. `compiler/lib.zig`) ÜZERİNDEN de erişildiği

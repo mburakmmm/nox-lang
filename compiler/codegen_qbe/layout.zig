@@ -632,26 +632,19 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
         const after_label = try self.newLabel("trace_dict_fill_after");
         try self.qbeJnz(is_null, skip_label, have_label);
         try self.qbeLabel(have_label);
-        // `nox_dict_values` (bkz. `runtime/collections/dict.zig`) DEĞER
-        // başına bir retain yapan, GERÇEK bir `list[ClassType]` (ARC
-        // başlıklı, `nox_rc_alloc`la tahsisli) döner — `d.values()`nin
-        // KENDİ, ZATEN VAR OLAN çalışma zamanı ilkeli, İKİNCİ bir mekanizma
-        // İCAT EDİLMEDİ. Anahtar tipi (`key_is_str`) DEĞER çıkarımını
-        // ETKİLEMEZ, bu YÜZDEN HER ZAMAN `0` geçilir.
-        const values_list = try self.newTemp();
-        try self.qbeCall(.{ .name = values_list, .ty = .l }, "$nox_dict_values", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = dict_ptr }, .{ .ty = .w, .text = "0" }, .{ .ty = .w, .text = "1" }, .{ .ty = .l, .text = "8" } });
-        const len_v = try self.newTemp();
-        try self.qbeLoadL(len_v, values_list);
-        try self.emitTraceCopyLoop(values_list, len_v, buf, write_idx_slot, "trace_dict_fill");
-        // `values_list`in KENDİSİ (geçici) serbest bırakılır — İÇİNDEKİ HER
-        // sınıf değeri `nox_dict_values`in KENDİSİ TARAFINDAN BİR KEZ
-        // retain edilmişti; bu release SADECE o retain'i geri alır —
-        // elemanların KENDİLERİ (orijinal dict HÂLÂ REFERANS TUTTUĞUNDAN)
-        // serbest BIRAKILMAZ (bkz. `releaseValueIfSet`in `.list` dalı,
-        // AYNI "refcount>0 İSE sadece azalt" güvenliği).
-        const elem_info = try self.allocator.create(ElemHeapInfo);
-        elem_info.* = .{ .heap = .class, .class_name = f.info.dict_info.?.value_class_name };
-        try self.releaseValueIfSet(values_list, .list, .l, null, elem_info, null);
+        // Aura L1: ÖNCEDEN `nox_dict_values` (her değeri RETAIN eden geçici bir
+        // `list[Sınıf]`) çağrılır ve sonra RELEASE edilirdi; o release, trace
+        // `nox_cycle_collect` tarafından döngü-çözücü kilidi TUTULURKEN çalıştığı
+        // için sıfırlanmayan her değeri `nox_cycle_possible_root`a sokar ve AYNI
+        // (yeniden girilemez) kilide kilitlenirdi — döngüdeki bir `dict[K, Sınıf]`
+        // alanı programı çıkışta SONSUZA KADAR askıda bırakırdı. Artık sözlük
+        // girdileri ARC'ye hiç dokunmadan doğrudan arabelleğe yazılır
+        // (`nox_list_nested_fill` ile aynı desen).
+        const wi = try self.newTemp();
+        try self.qbeLoadL(wi, write_idx_slot);
+        const wi_next = try self.newTemp();
+        try self.qbeCall(.{ .name = wi_next, .ty = .l }, "$nox_dict_trace_fill", &.{ .{ .ty = .l, .text = dict_ptr }, .{ .ty = .l, .text = buf }, .{ .ty = .l, .text = wi } });
+        try self.qbeStoreL(wi_next, write_idx_slot);
         try self.qbeJmp(after_label);
         try self.qbeLabel(skip_label);
         try self.qbeJmp(after_label);

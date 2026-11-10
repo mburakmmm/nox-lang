@@ -29667,3 +29667,16 @@ Harici incelemenin (GPT) doğrulanan bulguları: (1) `wasm_compiler.mjs` seçene
 **Güvenlik.** `startTls` sertifikayı ve sunucu adını sistem CA deposuna karşı doğrular; doğrulanamazsa bağlantı kurulmaz (`TlsCertificateNotVerified`). `sslmode=require` iken sunucu TLS'i reddederse düz metne düşülmez. Yükseltme anında tamponda düz metin varsa reddedilir. Sınırlar: MySQL'de TLS yok; okuma zaman aşımı yok; başarılı güvenilir-sertifika oturumu sınanmadı.
 
 **Doğrulama.** iOS simülatörü ve Android arm64 emülatörü, gerçek PostgreSQL 18 ve MySQL 8.4 sunucularına karşı `scripts/mobile_db_probe.py`; WASM testiyle ortak beklenen çıktılar. `postgres_mysql_connect_error` korpus fixture'ı artık "reddedildi" yerine iki platformda çalışır.
+
+### 3.371 Çerçeve limitasyon turu 1 (v2.1.2)
+
+Kaynak: aether/nyx/aura/nova/pulse `NOX_LIMITATIONS` belgeleri; kayıt `project/limitasyon-kaydi-2026-11.md`. Güncel derlemede yeniden üretilen hatalar kapandı:
+
+- **Biçimlendirici** (`compiler/fmt/formatter.zig`): sınıf `type_params` yazılır; kontrol baytları (`\r`, `\x00`…`\x1f`, `\x7f`) metin kaçışıdır; `printFloat` `|v| ≥ 1e16` veya `< 1e-4` için `{e}` (mantis `.0` zorunlu) kullanır.
+- **IEEE `!=`**: LLVM `cned` → `fcmp une` (QBE `cned` ile aynı). `==`/sıralama sıralı kalır.
+- **Min int literal**: `parseUnary` `-` + `9223372036854775808` belirtecini (ardında `**`, `.`, `(`, `[` yoksa) doğrudan `minInt(i64)` yapar.
+- **Döngü çözücü + `dict[K, Sınıf]`**: `$Sınıf_trace` artık `nox_dict_values` (retain eden geçici liste, release'i `cycle_gc_lock` altında `possible_root`a yeniden girer) yerine `nox_dict_trace_fill` ile değerleri refcount'a dokunmadan arabelleğe yazar.
+- **`nox.url.query_decode`**: `+` → boşluk, sonra yüzde çözme (`%2B` gerçek artı). **`nox.http.request`**: gövdesiz yöntemde boş olmayan gövde `HttpError` (`invalid request`). **HEAD/1xx/204/304** yanıtları gövde okumaz.
+- **TaskLocal ARC**: `TaskLocal[T]()` `fn(rt, ptr)` bırakma işlevini ve `rt`yi `task_local_entry.Handle`a yazar; her `set` bunları girdiye (`Entry`) kopyalar; fiber/görev biterken `task_local_entry.drain` kalan değerleri bırakır. Bırakma, `entry` ile aynı gerçek çerçeve derinliğinde (`callEntryPad1`) çalışmak ZORUNDA: `trampoline`in sahte önyükleme çerçevesinde `DebugAllocator` yığın-izi yakalaması çöker (bkz. §3.31).
+- **`noxc version --build-info`**: `version/commit/zig/target/optimize` stdout'a; commit `NOX_BUILD_COMMIT` ya da `git rev-parse HEAD` (+`-dirty`).
+- **Android API < 29**: Zig std'nin 256 KiB `threadlocal` sinyal yığını (statik TLS 350 KB) kapatıldı (v2.1.1). Kalan API 26 sorunu açık: ikincil iş parçacığında ELF TLS (kayıt dosyası).

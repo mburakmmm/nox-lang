@@ -1417,6 +1417,18 @@ pub const Parser = struct {
 
     fn parseUnary(self: *Parser) ParseError!ast.Expr {
         if (self.match(.minus)) {
+            // Pulse NOX-PARSER-001: `-9223372036854775808` (i64 en küçük değer).
+            // Pozitif belirteç i64'e SIĞMAZ; işaret ile birlikte doğrudan en küçük
+            // değere çevrilir. `-9223372036854775808 ** 2` gibi bir üs/çağrı/indeks
+            // izliyorsa Python önceliği (`-(x ** 2)`) için normal yolu izler ve
+            // belirteç yine reddedilir.
+            if (self.curKind() == .int_lit and std.mem.eql(u8, self.cur().lexeme, "9223372036854775808")) {
+                const next: TokenKind = if (self.pos + 1 < self.tokens.len) self.tokens[self.pos + 1].kind else .eof;
+                if (next != .star_star and next != .dot and next != .l_paren and next != .l_bracket) {
+                    _ = self.advance();
+                    return .{ .int_lit = std.math.minInt(i64) };
+                }
+            }
             try self.enterRecursion();
             defer self.exitRecursion();
             const operand = try self.parseUnary();

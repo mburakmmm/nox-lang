@@ -29,7 +29,8 @@ pub fn currentFiber() ?*fiber_mod.Fiber {
     return null;
 }
 
-const TaskLocalMap = std.AutoHashMapUnmanaged(*anyopaque, ?*anyopaque);
+const task_local_entry = @import("task_local_entry.zig");
+const TaskLocalMap = task_local_entry.Map;
 
 const TaskFn = *const fn (u64) callconv(.c) i64;
 
@@ -121,6 +122,8 @@ fn runTask(rt: ?*anyopaque, t: *Task) void {
     const prev = s.current;
     s.current = t;
     t.result = t.func(t.arg);
+    // Pulse NOX-TASKLOCAL-001: kalan TaskLocal değerlerini görev biterken bırak (`current` hâlâ `t`: `__del__` TaskLocal'a dokunabilir).
+    task_local_entry.drain(&t.task_locals, allocatorFromRt(rt));
     s.current = prev;
     if (nox_exception_pending(rt) != 0) {
         t.exc_obj = nox_exception_take(rt);

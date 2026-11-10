@@ -1,0 +1,46 @@
+# Pulse TASKLOCAL-001: `clear()` çağırmadan biten görevin TaskLocal değeri (sınıf/str/list) görev bitince
+# serbest bırakılır — dönüş, istisna ve iptal yollarında da. `__del__` sayacı sızıntıyı gösterir.
+class Ctx:
+    name: str
+
+    def __init__(self: Ctx, name: str) -> None:
+        self.name = name
+
+    def __del__(self: Ctx) -> None:
+        released.append(self.name)
+
+released: list[str] = []
+
+async def plain(tl: TaskLocal[Ctx]) -> None:
+    tl.set(Ctx("plain"))
+
+async def failing(tl: TaskLocal[Ctx]) -> None:
+    tl.set(Ctx("failing"))
+    raise ValueError("boom")
+
+async def replaced(tl: TaskLocal[Ctx]) -> None:
+    tl.set(Ctx("first"))
+    tl.set(Ctx("second"))
+
+async def listy(tl: TaskLocal[list[str]]) -> None:
+    tl.set(["a", "b"])
+
+async def run() -> None:
+    tl: TaskLocal[Ctx] = TaskLocal[Ctx]()
+    tl_list: TaskLocal[list[str]] = TaskLocal[list[str]]()
+    t1: Task[None] = spawn plain(tl)
+    await t1
+    t2: Task[None] = spawn failing(tl)
+    try:
+        await t2
+    except ValueError as e:
+        print("caught " + e.message)
+    t3: Task[None] = spawn replaced(tl)
+    await t3
+    t4: Task[None] = spawn listy(tl_list)
+    await t4
+    released.sort()
+    print(released)
+
+m: Task[None] = spawn run()
+await m
