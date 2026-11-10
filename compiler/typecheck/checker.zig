@@ -1480,6 +1480,7 @@ pub const Checker = struct {
         .{ .name = "random", .caps = &.{} },
         .{ .name = "reflect", .caps = &.{} },
         .{ .name = "regex", .caps = &.{} },
+        .{ .name = "redis", .caps = &.{.network} },
         .{ .name = "router", .caps = &.{} },
         .{ .name = "sharedmem", .caps = &.{.shared_memory} },
         .{ .name = "smtp", .caps = &.{.network} },

@@ -1,0 +1,288 @@
+# nox.redis — Redis istemcisi (RESP2), saf Zig: `libhiredis` gerekmez. Düz TCP ya da bağlanır bağlanmaz TLS, AUTH (parola ya da kullanıcı+parola), SELECT,
+# bayt-güvenli komutlar/yanıtlar, Streams (XADD/XGROUP/XREADGROUP/XAUTOCLAIM/XACK), betik önbelleği (EVALSHA + NOSCRIPT kurtarma) ve yeniden bağlanma. Ember NL-001.
+#
+#     import nox.redis
+#     from nox.redis import Client, Reply, RedisError
+#
+#     c: Client = nox.redis.connect("127.0.0.1", 6379)
+#     c.set("k", "v")
+#     v: str | None = c.get("k")
+#     r: Reply = c.command(["INCRBY", "counter", "5"])      # genel yol: her Redis komutu
+#     print(r.as_int())
+#
+# **Hata modeli:** sunucu hata yanıtı (`-WRONGTYPE ...`) `RedisError` olur (`code` = ilk sözcük: "WRONGTYPE", "NOSCRIPT", "BUSYGROUP", ...; `kind == "server"`);
+# G/Ç/protokol hatası `kind == "connection"` olur ve istemci kapanır — `reconnect()` ile yeniden bağlanın (komut ortasında kopan bir komutun sunucuda işlenmiş olup
+# olmadığı bilinemez: yeniden denemeyi çağıran karar verir). Okuma zaman aşımı yoktur (`XREADGROUP ... BLOCK` gibi komutlar meşru olarak bekler); fiber içinde yalnızca çağıran görev bekler.
+#
+# **Yanıt (`Reply`)**: `kind()` 0 nil, 1 basit dize, 2 hata, 3 tamsayı, 4 toplu dize, 5 dizi; `as_str()`, `as_int()`, `len()`, `at(i)`. `at(i)` ebeveynin belleğini ÖDÜNÇ alır; çocuk ebeveynini
+# canlı tutar. Ham bayt yükler `as_str()` ile aynen gelir.
+
+class RedisError(Exception):
+    code: str
+    kind: str
+
+    def __init__(self: RedisError, message: str, code: str = "", kind: str = "server") -> None:
+        super().__init__(message)
+        self.code = code
+        self.kind = kind
+
+    def is_connection_error(self: RedisError) -> bool:
+        return self.kind == "connection"
+
+    def is_noscript(self: RedisError) -> bool:
+        return self.code == "NOSCRIPT"
+
+    def is_busygroup(self: RedisError) -> bool:
+        return self.code == "BUSYGROUP"
+
+    def is_wrongtype(self: RedisError) -> bool:
+        return self.code == "WRONGTYPE"
+
+extern def nox_redis_open_raw(host: str, port: int, use_tls: int, user: str, password: str, db: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_redis_status_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_redis_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_redis_close_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_redis_command_raw(conn: ptr, args: list[str]) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_redis_reply_kind_raw(r: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_redis_reply_int_raw(r: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_redis_reply_str_raw(r: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_redis_reply_len_raw(r: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_redis_reply_at_raw(r: ptr, i: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_redis_reply_free_raw(r: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_redis_is_null_raw(p: ptr) -> int from "zig-out/lib/noxrt.o"
+
+class Reply:
+    handle: ptr
+    owner: bool
+    parent: Reply | None
+
+    def __init__(self: Reply, handle: ptr, owner: bool, parent: Reply | None) -> None:
+        self.handle = handle
+        self.owner = owner
+        self.parent = parent
+
+    def __del__(self: Reply) -> None:
+        if self.owner:
+            nox_redis_reply_free_raw(self.handle)
+
+    def kind(self: Reply) -> int:
+        return nox_redis_reply_kind_raw(self.handle)
+
+    def is_nil(self: Reply) -> bool:
+        return nox_redis_reply_kind_raw(self.handle) == 0
+
+    def is_error(self: Reply) -> bool:
+        return nox_redis_reply_kind_raw(self.handle) == 2
+
+    def as_int(self: Reply) -> int:
+        return nox_redis_reply_int_raw(self.handle)
+
+    # Basit/toplu dize ve hata iletisi için metin; nil için boş dize.
+    def as_str(self: Reply) -> str:
+        return nox_redis_reply_str_raw(self.handle)
+
+    def len(self: Reply) -> int:
+        return nox_redis_reply_len_raw(self.handle)
+
+    def at(self: Reply, i: int) -> Reply:
+        if i < 0 or i >= nox_redis_reply_len_raw(self.handle):
+            raise IndexError("reply index out of range")
+        return Reply(nox_redis_reply_at_raw(self.handle, i), False, self)
+
+    # Dizi yanıtın öğelerini metin listesi olarak döndürür (her öğe için `as_str`; iç içe diziler boş dize olur).
+    def to_str_list(self: Reply) -> list[str]:
+        out: list[str] = []
+        n: int = nox_redis_reply_len_raw(self.handle)
+        i: int = 0
+        while i < n:
+            out.append(nox_redis_reply_str_raw(nox_redis_reply_at_raw(self.handle, i)))
+            i = i + 1
+        return out
+
+def _first_word(msg: str) -> str:
+    out: str = ""
+    i: int = 0
+    while i < len(msg):
+        c: str = msg[i]
+        if c == " ":
+            return out
+        out = out + c
+        i = i + 1
+    return out
+
+class Client:
+    host: str
+    port: int
+    tls: bool
+    username: str
+    password: str
+    db: int
+    handle: ptr
+    scripts: dict[str, str]
+
+    def __init__(self: Client, host: str, port: int, tls: bool, username: str, password: str, db: int, handle: ptr) -> None:
+        self.host = host
+        self.port = port
+        self.tls = tls
+        self.username = username
+        self.password = password
+        self.db = db
+        self.handle = handle
+        self.scripts = {}
+
+    def is_ok(self: Client) -> bool:
+        return nox_redis_status_raw(self.handle) != 0
+
+    def close(self: Client) -> None:
+        nox_redis_close_raw(self.handle)
+
+    # Bağlantıyı kapatıp aynı ayarlarla (AUTH/SELECT dahil) yeniden kurar. Betik önbelleği (sha'lar) sunucuya özgüdür: temizlenir.
+    def reconnect(self: Client) -> None:
+        nox_redis_close_raw(self.handle)
+        h: ptr = _open(self.host, self.port, self.tls, self.username, self.password, self.db)
+        self.handle = h
+        self.scripts = {}
+
+    # Genel yol: komutu gönderir ve yanıtı döndürür. Sunucu hata yanıtı `RedisError(kind="server")`, G/Ç hatası `RedisError(kind="connection")`.
+    def command(self: Client, args: list[str]) -> Reply:
+        if not self.is_ok():
+            raise RedisError("connection is closed: " + nox_redis_errmsg_raw(self.handle), "", "connection")
+        raw: ptr = nox_redis_command_raw(self.handle, args)
+        if nox_redis_is_null_raw(raw) != 0:
+            raise RedisError("connection error: " + nox_redis_errmsg_raw(self.handle), "", "connection")
+        r: Reply = Reply(raw, True, None)
+        if r.is_error():
+            msg: str = r.as_str()
+            raise RedisError(msg, _first_word(msg), "server")
+        return r
+
+    def ping(self: Client) -> str:
+        return self.command(["PING"]).as_str()
+
+    def get(self: Client, key: str) -> str | None:
+        r: Reply = self.command(["GET", key])
+        if r.is_nil():
+            return None
+        return r.as_str()
+
+    def set(self: Client, key: str, value: str) -> bool:
+        return self.command(["SET", key, value]).as_str() == "OK"
+
+    # `SET key value EX seconds`.
+    def set_ex(self: Client, key: str, value: str, seconds: int) -> bool:
+        return self.command(["SET", key, value, "EX", str(seconds)]).as_str() == "OK"
+
+    def delete(self: Client, key: str) -> int:
+        return self.command(["DEL", key]).as_int()
+
+    def incr(self: Client, key: str) -> int:
+        return self.command(["INCR", key]).as_int()
+
+    def expire(self: Client, key: str, seconds: int) -> bool:
+        return self.command(["EXPIRE", key, str(seconds)]).as_int() == 1
+
+    # ---- Streams ----
+
+    # `XADD stream [MAXLEN ~ n] * f1 v1 ...`; yeni girdinin kimliğini döndürür. `maxlen <= 0` sınırsız.
+    def xadd(self: Client, stream: str, fields: dict[str, str], maxlen: int = 0) -> str:
+        args: list[str] = ["XADD", stream]
+        if maxlen > 0:
+            args.append("MAXLEN")
+            args.append("~")
+            args.append(str(maxlen))
+        args.append("*")
+        for k in fields.keys():
+            args.append(k)
+            args.append(fields[k])
+        return self.command(args).as_str()
+
+    # `XGROUP CREATE stream group id [MKSTREAM]`. Grup zaten varsa `RedisError` (`is_busygroup()`); `xgroup_ensure` bunu yutar.
+    def xgroup_create(self: Client, stream: str, group: str, start_id: str = "$", mkstream: bool = True) -> bool:
+        args: list[str] = ["XGROUP", "CREATE", stream, group, start_id]
+        if mkstream:
+            args.append("MKSTREAM")
+        return self.command(args).as_str() == "OK"
+
+    # Grup yoksa oluşturur; varsa (BUSYGROUP) sessizce geçer. Yeni oluşturduysa True.
+    def xgroup_ensure(self: Client, stream: str, group: str, start_id: str = "$") -> bool:
+        try:
+            return self.xgroup_create(stream, group, start_id, True)
+        except RedisError as e:
+            if e.is_busygroup():
+                return False
+            raise e
+        return False
+
+    # `XREADGROUP GROUP g c [COUNT n] [BLOCK ms] STREAMS stream id`. Ham yanıt: `[[stream, [[id, [f, v, ...]], ...]]]`; zaman aşımında nil.
+    # `block_ms < 0` bloklamaz, `0` süresiz bekler.
+    def xreadgroup(self: Client, group: str, consumer: str, stream: str, id: str = ">", count: int = 1, block_ms: int = -1) -> Reply:
+        args: list[str] = ["XREADGROUP", "GROUP", group, consumer]
+        if count > 0:
+            args.append("COUNT")
+            args.append(str(count))
+        if block_ms >= 0:
+            args.append("BLOCK")
+            args.append(str(block_ms))
+        args.append("STREAMS")
+        args.append(stream)
+        args.append(id)
+        return self.command(args)
+
+    # `XAUTOCLAIM stream group consumer min-idle start [COUNT n]`. Ham yanıt: `[next-start-id, [[id, [f, v, ...]], ...], [silinen kimlikler]]`.
+    def xautoclaim(self: Client, stream: str, group: str, consumer: str, min_idle_ms: int, start: str = "0-0", count: int = 100) -> Reply:
+        return self.command(["XAUTOCLAIM", stream, group, consumer, str(min_idle_ms), start, "COUNT", str(count)])
+
+    def xack(self: Client, stream: str, group: str, ids: list[str]) -> int:
+        args: list[str] = ["XACK", stream, group]
+        for i in ids:
+            args.append(i)
+        return self.command(args).as_int()
+
+    # ---- Betikler ----
+
+    # Betiği yükler (`SCRIPT LOAD`) ve sha1'ini döndürür; sonuç bu bağlantı için önbelleğe alınır.
+    def script_load(self: Client, script: str) -> str:
+        if self.scripts.contains(script):
+            return self.scripts[script]
+        sha: str = self.command(["SCRIPT", "LOAD", script]).as_str()
+        self.scripts[script] = sha
+        return sha
+
+    # `EVALSHA` ile çalıştırır; sunucu betiği bilmiyorsa (NOSCRIPT: sunucu yeniden başladı/`SCRIPT FLUSH`) bir kez yeniden yükleyip tekrar dener.
+    def eval_cached(self: Client, script: str, keys: list[str], args: list[str]) -> Reply:
+        sha: str = self.script_load(script)
+        try:
+            return self.command(_evalsha_args(sha, keys, args))
+        except RedisError as e:
+            if not e.is_noscript():
+                raise e
+        self.scripts = {}
+        sha2: str = self.script_load(script)
+        return self.command(_evalsha_args(sha2, keys, args))
+
+def _evalsha_args(sha: str, keys: list[str], args: list[str]) -> list[str]:
+    out: list[str] = ["EVALSHA", sha, str(len(keys))]
+    for k in keys:
+        out.append(k)
+    for a in args:
+        out.append(a)
+    return out
+
+def _open(host: str, port: int, tls: bool, username: str, password: str, db: int) -> ptr:
+    use_tls: int = 0
+    if tls:
+        use_tls = 1
+    h: ptr = nox_redis_open_raw(host, port, use_tls, username, password, db)
+    if nox_redis_is_null_raw(h) != 0:
+        raise RedisError("could not allocate a connection", "", "connection")
+    if nox_redis_status_raw(h) == 0:
+        msg: str = nox_redis_errmsg_raw(h)
+        nox_redis_close_raw(h)
+        raise RedisError("could not connect to " + host + ":" + str(port) + ": " + msg, "", "connection")
+    return h
+
+# Bağlanır. `tls=True` bağlanır bağlanmaz TLS (sertifika ve sunucu adı sistem CA deposuna karşı doğrulanır). `password` doluysa AUTH
+# (`username` doluysa `AUTH kullanıcı parola`), `db > 0` ise SELECT yapılır. Başarısızlıkta `RedisError(kind="connection")`.
+def connect(host: str, port: int = 6379, tls: bool = False, username: str = "", password: str = "", db: int = 0) -> Client:
+    h: ptr = _open(host, port, tls, username, password, db)
+    return Client(host, port, tls, username, password, db, h)

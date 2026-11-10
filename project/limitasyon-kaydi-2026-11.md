@@ -33,7 +33,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [~] **C3 ember NL-004** CPU-bound görevi sonlandırma sözleşmesi.
 - [x] **C4 ember NL-008** sinyal abonelik API'si (`nox.signal`) — **KAPANDI v2.1.6**.
 - [~] **C5 ember NL-006/007/013** Postgres: SQLSTATE/`kind`, `statement_timeout`, `Transaction`, `Pool` **KAPANDI v2.1.8**; fiber-uyumlu (bloklamayan) libpq G/Ç ve istemci tarafı iptal (`PQcancel`) AÇIK.
-- [~] **C6 ember NL-001** `nox.redis`.
+- [x] **C6 ember NL-001** `nox.redis` (RESP2, AUTH/ACL, TLS, Streams, betik/NOSCRIPT, reconnect) — **KAPANDI v2.1.9**; TLS başarılı el sıkışması güvenilir sertifikalı bir Redis'e karşı denenmedi.
 - [x] **C7 ember NL-009** JSON tam sayı hassasiyeti (2^53 üstü) — `as_int`, `number_text`, `dump` tam metni korur — **KAPANDI v2.1.7**.
 - [x] **C8 rune** `nox.terminal` (raw mod, boyut, poll, ham yazma, echo, yetenek tespiti) — **KAPANDI v2.1.7**; Windows'ta terminal denetimi yok (`TerminalError`).
 - [~] **C9 aether/nyx/ember** `serve_multicore` closure, IPv6 çok çekirdekli dinleme, paylaşılan `Application`/`list`/`dict`, `AtomicRef`.

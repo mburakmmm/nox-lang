@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.9]
+
+### Eklendi
+
+- **`nox.redis`** (Ember NL-001): saf Zig RESP2 Redis istemcisi (`hiredis` gerekmez). `connect(host, port, tls, username, password, db)` (düz TCP ya da baştan TLS, `AUTH`/ACL, `SELECT`), bayt-güvenli `command(args)`, `Reply` ağacı (`kind/as_str/as_int/len/at/to_str_list`), `get/set/set_ex/delete/incr/expire`, Streams (`xadd`, `xgroup_create/ensure`, `xreadgroup`, `xautoclaim`, `xack`), betik önbelleği (`script_load`, `eval_cached`: NOSCRIPT'te bir kez yeniden yükleyip dener), `reconnect()` ve `RedisError(kind, code)` (`"server"` ya da `"connection"`). WASM ve mobilde de çalışır (taşıma `tcp_host`/`tcp_native`). Gerçek `redis-server` probuyla sınanır (`scripts/redis_probe.py`).
+
 ## [2.1.8]
 
 ### Eklendi

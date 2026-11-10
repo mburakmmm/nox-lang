@@ -29712,3 +29712,8 @@ Kaynak: aether/nyx/aura/nova/pulse `NOX_LIMITATIONS` belgeleri; kayıt `project/
 - `Transaction`: `__enter__` BEGIN, `__exit__` commit edilmediyse ROLLBACK (Nox'ta `__exit__` istisnayı görmez). `Pool`: `AtomicInt` CAS kilidi + `idle: list[Connection]`; bekleme `sleep_ms` ile kooperatif.
 - **Codegen**: `inferWithCtxClassName` `with obj.metot(...)` için alıcı sınıfın metot imzasından dönüş sınıfını okur. **Checker**: `registerClassSignatures` `release`/`trace`/`gc_free` metot adlarını reddeder.
 - Açık: libpq çağrıları iş parçacığını bloke eder (bloklamayan G/Ç / `PQcancel` yok); `nox.redis` yok.
+
+### 3.377 `nox.redis` (v2.1.9)
+
+`stdlib_shims/redis.zig`: RESP2 istemcisi, taşıma `tcp_native.zig` (wasm'da `tcp_host.zig`) — `connect(..., tls)` bağlanır bağlanmaz TLS, `http_client.sharedClientIo()` fiber-farkındalıklı olduğundan fiber içinde yalnızca çağıran görev bekler. `RConn` kendi okuma tamponunu yönetir (`fill`/`need`/`line`); yanıt `Reply` ağacıdır (derinlik ≤ 32, toplu dize ≤ 256 MiB). Sunucu hata yanıtı bir G/Ç hatası değildir (`Reply` olarak döner, `nox/redis.nox` `RedisError`a çevirir); G/Ç hatasında bağlantı `ok=false` olur. `Reply.__del__` kökün tutamacını bırakır; `at(i)` çocuğu ödünç alır ve ebeveynini canlı tutar. Yetenek: `network`.
+- Bilinen kalıp: aynı kapsamda iki farklı sınıf tipli değişkeni aynı adla bildirmek (`r2: Reply` sonra `r2: Client`) checker'dan geçer (sınıf↔sınıf yeniden bildirimi kasıtlı serbest) ama codegen'de "desteklenmiyor"a ya da sızıntıya yol açabilir.

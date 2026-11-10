@@ -1,0 +1,87 @@
+# Ember NL-001: nox.redis — komutlar, ikili yük, Streams/tüketici grupları, betik önbelleği + NOSCRIPT kurtarma, AUTH/ACL, kopan bağlantı + reconnect.
+# scripts/redis_probe.py iki geçici redis-server başlatır (@PORT@ parolasız, @AUTHPORT@ requirepass=secret).
+import nox.redis
+from nox.redis import Client, Reply, RedisError
+
+c: Client = nox.redis.connect("127.0.0.1", @PORT@)
+print(c.ping())
+c.set("k", "v")
+print(c.get("k"), c.get("missing") is None)
+print(c.incr("n"), c.incr("n"), c.delete("n"))
+# binary payload with NUL and high bytes
+payload: str = "a" + chr(0) + "b" + chr(255)
+c.set("bin", payload)
+back: str | None = c.get("bin")
+if back is not None:
+    print(back == payload, len(back))
+try:
+    c.command(["LPUSH", "k", "x"])
+except RedisError as e:
+    print(e.code, e.kind, e.is_wrongtype())
+c.delete("s")
+print(c.xgroup_ensure("s", "g", "0"), c.xgroup_ensure("s", "g", "0"))
+mid: str = c.xadd("s", {"a": "1", "b": "two"})
+print(len(mid) > 0)
+r: Reply = c.xreadgroup("g", "c1", "s", ">", 10, -1)
+entry: Reply = r.at(0).at(1).at(0)
+print(entry.at(0).as_str() == mid, entry.at(1).to_str_list())
+print(c.xack("s", "g", [mid]))
+r2: Reply = c.xreadgroup("g", "c1", "s", ">", 10, 50)
+print(r2.is_nil())
+# autoclaim
+mid2: str = c.xadd("s", {"x": "y"})
+c.xreadgroup("g", "c1", "s", ">", 10, -1)
+ac: Reply = c.xautoclaim("s", "g", "c2", 0, "0-0", 10)
+print(ac.at(1).len(), ac.at(1).at(0).at(0).as_str() == mid2)
+# script with NOSCRIPT recovery
+sc: str = "return redis.call('INCRBY', KEYS[1], ARGV[1])"
+print(c.eval_cached(sc, ["cnt"], ["5"]).as_int(), c.eval_cached(sc, ["cnt"], ["2"]).as_int())
+c.command(["SCRIPT", "FLUSH"])
+print(c.eval_cached(sc, ["cnt"], ["1"]).as_int())
+c.delete("cnt")
+# reconnect after the server drops us
+print(c.is_ok())
+c.close()
+c2: Client = nox.redis.connect("127.0.0.1", @PORT@)
+c2.close()
+try:
+    nox.redis.connect("127.0.0.1", 1)
+except RedisError as e:
+    print(e.kind, e.is_connection_error())
+
+# ---- AUTH (requirepass) ve ACL kullanıcısı ----
+a0: Client = nox.redis.connect("127.0.0.1", @AUTHPORT@)
+try:
+    a0.ping()
+except RedisError as e:
+    print(e.code, e.kind)
+a0.close()
+try:
+    nox.redis.connect("127.0.0.1", @AUTHPORT@, False, "", "wrong")
+except RedisError as e:
+    print(e.kind, e.is_connection_error())
+a1: Client = nox.redis.connect("127.0.0.1", @AUTHPORT@, False, "", "secret")
+print(a1.ping())
+a1.command(["ACL", "SETUSER", "worker", "on", ">wpass", "~jobs:*", "+get", "+set", "+ping"])
+a2: Client = nox.redis.connect("127.0.0.1", @AUTHPORT@, False, "worker", "wpass")
+print(a2.set("jobs:1", "x"), a2.ping())
+try:
+    a2.set("other", "x")
+except RedisError as e:
+    print(e.code)
+a2.close()
+
+# ---- Kopan bağlantı: kind == "connection", reconnect() sonrası çalışır; betik önbelleği sıfırlanır ----
+r1: Client = nox.redis.connect("127.0.0.1", @PORT@)
+killer: Client = nox.redis.connect("127.0.0.1", @PORT@)
+cid: Reply = r1.command(["CLIENT", "ID"])
+killer.command(["CLIENT", "KILL", "ID", str(cid.as_int())])
+try:
+    r1.ping()
+    print("no error")
+except RedisError as e:
+    print(e.kind, e.is_connection_error(), r1.is_ok())
+r1.reconnect()
+print(r1.is_ok(), r1.ping())
+r1.close()
+killer.close()

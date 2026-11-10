@@ -24,7 +24,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 |---|---|---|
 | none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `sqlite` |
-| `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql` |
+| `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis` |
 | `network` + `filesystem` | both | `transfer` |
 | `process` | the process and its children | `os`, `process`, `signal`, `terminal` |
 | `threads` | native threads | `thread`, `atomic` |
@@ -111,6 +111,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 |---|---|
 | [`nox.db`](db.md) | shared `Row`, `Statement` and the `DbConnection` protocol |
 | [`nox.sqlite`](sqlite.md), [`nox.postgres`](postgres.md), [`nox.mysql`](mysql.md) | drivers |
+| [`nox.redis`](redis.md) | Redis client: commands, Streams, scripts, AUTH/TLS |
 | [`nox.orm`](orm.md) | parameterised CRUD helpers over any driver |
 
 ### Concurrency and low level

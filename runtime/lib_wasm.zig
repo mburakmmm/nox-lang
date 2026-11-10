@@ -43,6 +43,7 @@ pub const time_shim = @import("stdlib_shims/time.zig");
 pub const task_wait = @import("stdlib_shims/task_wait.zig");
 pub const signal_shim = @import("stdlib_shims/signal.zig");
 pub const terminal_shim = @import("stdlib_shims/terminal.zig");
+pub const redis_shim = @import("stdlib_shims/redis.zig");
 pub const random_shim = @import("stdlib_shims/random.zig");
 pub const json_shim = @import("stdlib_shims/json.zig");
 pub const unicode_shim = @import("stdlib_shims/unicode.zig");
@@ -96,6 +97,7 @@ comptime {
     _ = task_wait;
     _ = signal_shim;
     _ = terminal_shim;
+    _ = redis_shim;
     _ = random_shim;
     _ = json_shim;
     _ = unicode_shim;
