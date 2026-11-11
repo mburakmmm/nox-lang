@@ -23,7 +23,7 @@ c.close()
 | Member | Description |
 |---|---|
 | `connect(host, port) -> Client` | opens a plain TCP (`h2c`) connection and sends the HTTP/2 preface; failure raises `GrpcError` |
-| `connect_tls(host, port, ca_file="") -> Client` | the same over TLS with ALPN `h2`. The server name is checked against the certificate. An empty `ca_file` uses the system CA store; a PEM path trusts only the CAs in that file (a private CA, a self-signed server) |
+| `connect_tls(host, port, ca_file="", cert_file="", key_file="") -> Client` | the same over TLS with ALPN `h2`. The server name is checked against the certificate. An empty `ca_file` uses the system CA store; a PEM path trusts only the CAs in that file (a private CA, a self-signed server). `cert_file` + `key_file` (PEM) present a client certificate when the server asks for one (mTLS); the key must be ECDSA P-256, ECDSA P-384 or Ed25519 (RSA keys are not supported: the standard library cannot sign with RSA) |
 | `Client.unary(path, request, timeout_ms=0) -> str` | one request, one reply message; a status other than `OK` raises `GrpcStatusError` (`code`, `detail`) |
 | `Client.call(path, requests, timeout_ms=0) -> Response` | any RPC shape: one or more request messages (client streaming), all reply messages collected (server streaming). The status is in the `Response`, not raised |
 | `Client.call_with(path, requests, metadata, timeout_ms) -> Response` | the same with request metadata (`dict[str, str]`) |
@@ -59,7 +59,7 @@ release or finish streams **before** `Client.close()`.
 
 ## Limits
 
-- **TLS needs TLS 1.3 ALPN support from the server** (the usual case for gRPC servers); a server that does not select `h2` makes `connect_tls` fail. No client certificates (mTLS) yet. Not available when compiled to WebAssembly.
+- **TLS needs TLS 1.3 ALPN support from the server** (the usual case for gRPC servers); a server that does not select `h2` makes `connect_tls` fail. Client certificates: ECDSA P-256/P-384 and Ed25519 keys only (TLS 1.3). Not available when compiled to WebAssembly.
 - **One call or stream at a time** per connection (open several connections for parallel calls). `call` sends all requests and then collects the replies; use `open_stream` to interleave.
 - **Compression:** gzip only. Requests announce `grpc-accept-encoding: gzip,identity` and gzip replies are decoded automatically; `Client.use_compression(True)` gzips the request messages too. Any other `grpc-encoding` is an error.
 - **No client-side read timeout** (the same limit as [`nox.redis`](redis.md)); use `timeout_ms` so the server enforces the deadline.

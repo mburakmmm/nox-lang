@@ -191,6 +191,16 @@ pub fn startTlsEx(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []co
     return false;
 }
 
+pub fn startTlsMtls(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []const u8, cert_file: []const u8, key_file: []const u8) bool {
+    _ = servername;
+    _ = alpn_h2;
+    _ = ca_file;
+    _ = cert_file;
+    _ = key_file;
+    c.setErr("client certificates are not supported on this host");
+    return false;
+}
+
 pub fn close(c: *Conn) void {
     if (comptime enabled) {
         if (c.ok and c.id != 0) _ = fetch.submit(.{ .kind = .tcp_close, .stream = c.id }, true);

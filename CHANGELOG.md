@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.40]
+
+### Eklendi
+
+- **mTLS (TLS istemci sertifikası)**: `nox.grpc.connect_tls(host, port, ca_file, cert_file, key_file)` ve `nox.redis.connect(..., ca_file, cert_file, key_file)`. Vendor TLS istemcisi (`runtime/vendor/tls_client.zig`, dördüncü NOX PATCH) sunucunun `certificate_request`indeki `signature_algorithms`ı okur, gerçek `Certificate` zincirini ve RFC 8446 §4.4.3 `CertificateVerify`ı (ECDSA P-256/P-384, Ed25519) kendi şifreli kayıtlarında gönderir. PEM zincir + PKCS#8/SEC1 anahtar yükleyici `runtime/stdlib_shims/client_cert.zig`. **RSA istemci anahtarları desteklenmez** (Zig std'de RSA imzalama yok; açık hata). Redis'te üç anahtar türü de, gRPC'de P-256/P-384 gerçek sunucuya karşı doğrulandı (grpcio/BoringSSL Ed25519 istemci sertifikasını imza listesinde istemez).
+
 ## [2.1.39]
 
 ### Değişti

@@ -1,0 +1,12 @@
+# nox.grpc mTLS: sunucu istemci sertifikası ister (require_client_auth). Doğru sertifika ile çağrı çalışır, sertifikasız bağlantı reddedilir. scripts/grpc_probe.py doldurur.
+import nox.grpc
+from nox.grpc import Client, GrpcError
+
+c: Client = nox.grpc.connect_tls("localhost", @PORT@, "@CA@", "@CERT@", "@KEY@")
+print(c.unary("/test.Echo/Unary", "hello mtls"))
+c.close()
+try:
+    d: Client = nox.grpc.connect_tls("localhost", @PORT@, "@CA@")
+    print(d.unary("/test.Echo/Unary", "no cert"))
+except GrpcError as e:
+    print("no client cert rejected")

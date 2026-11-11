@@ -96,5 +96,33 @@ if shutil.which("openssl"):
                 print(f"[tls {backend}] başarısız rc={r.returncode}\n--- stdout\n{r.stdout}\n--- beklenen\n{texpected}\n--- stderr\n{r.stderr[:1500]}")
                 rc = 1
         tserver.stop(0)
+
+        # --- mTLS: sunucu istemci sertifikası ister; ECDSA P-256 ve P-384 istemci anahtarları ---
+        mtemplate = open(os.path.join(ROOT, "tests/golden/grpc_mtls_program.nox.in")).read()
+        mexpected = open(os.path.join(ROOT, "tests/golden/grpc_mtls_program.expected")).read()
+        key_kinds = {
+            "p256": ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1"],
+            "p384": ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:secp384r1"],
+            # Ed25519 istemci sertifikası grpcio'da (BoringSSL) istenen imza algoritmaları listesinde YOK; Ed25519 yolu `scripts/redis_probe.py`de (OpenSSL sunucusu) sınanır.
+        }
+        for kind, base in key_kinds.items():
+            ckey, ccert = os.path.join(tdir, f"c_{kind}.key"), os.path.join(tdir, f"c_{kind}.crt")
+            gen = subprocess.run(base + ["-nodes", "-keyout", ckey, "-out", ccert, "-days", "2", "-subj", "/CN=client-" + kind], capture_output=True)
+            if gen.returncode != 0:
+                print(f"skip mtls {kind}: openssl anahtar üretemedi")
+                continue
+            mserver = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+            mserver.add_generic_rpc_handlers((Handler(),))
+            mcreds = grpc.ssl_server_credentials([(open(key, "rb").read(), open(cert, "rb").read())], root_certificates=open(ccert, "rb").read(), require_client_auth=True)
+            mport = mserver.add_secure_port("127.0.0.1:0", mcreds)
+            mserver.start()
+            for backend in ("llvm", "qbe"):
+                path = os.path.join(tdir, "mtls_app.nox")
+                open(path, "w").write(mtemplate.replace("@PORT@", str(mport)).replace("@CA@", cert).replace("@CERT@", ccert).replace("@KEY@", ckey))
+                r = subprocess.run([noxc, "run", "--backend", backend, path], capture_output=True, text=True, timeout=120)
+                if r.returncode != 0 or r.stdout != mexpected or r.stderr.strip():
+                    print(f"[mtls {kind} {backend}] başarısız rc={r.returncode}\n--- stdout\n{r.stdout}\n--- beklenen\n{mexpected}\n--- stderr\n{r.stderr[:1500]}")
+                    rc = 1
+            mserver.stop(0)
 print("ok" if rc == 0 else "FAIL")
 sys.exit(rc)

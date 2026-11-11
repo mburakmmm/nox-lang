@@ -681,16 +681,16 @@ fn streamRecv(st: *Stream) i32 {
 /// Düz TCP (h2c, önceden bilinen) bağlantı açar: ön ek + boş SETTINGS gönderir. Başarısız olsa da geçerli bir tutamak döner (`status == 0`, `errmsg` dolu); yalnızca bellek
 /// yetersizliğinde `null`.
 pub export fn nox_grpc_open_raw(host: ?[*:0]const u8, port: i64) callconv(.c) ?*anyopaque {
-    return openImpl(host, port, false, null);
+    return openImpl(host, port, false, null, null, null);
 }
 
-/// TLS üzerinden (ALPN `h2`) bağlanır. `ca_file` doluysa (PEM) sistem deposu YERİNE yalnızca o dosyadaki CA'lara güvenilir; boşsa sistem CA deposu kullanılır. Sunucu adı (`host`)
+/// TLS üzerinden (ALPN `h2`) bağlanır; `cert_file`+`key_file` doluysa sunucu isterse istemci sertifikası sunulur (mTLS). `ca_file` doluysa (PEM) sistem deposu YERİNE yalnızca o dosyadaki CA'lara güvenilir; boşsa sistem CA deposu kullanılır. Sunucu adı (`host`)
 /// sertifikaya karşı doğrulanır.
-pub export fn nox_grpc_open_tls_raw(host: ?[*:0]const u8, port: i64, ca_file: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-    return openImpl(host, port, true, ca_file);
+pub export fn nox_grpc_open_tls_raw(host: ?[*:0]const u8, port: i64, ca_file: ?[*:0]const u8, cert_file: ?[*:0]const u8, key_file: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    return openImpl(host, port, true, ca_file, cert_file, key_file);
 }
 
-fn openImpl(host: ?[*:0]const u8, port: i64, use_tls: bool, ca_file: ?[*:0]const u8) ?*anyopaque {
+fn openImpl(host: ?[*:0]const u8, port: i64, use_tls: bool, ca_file: ?[*:0]const u8, cert_file: ?[*:0]const u8, key_file: ?[*:0]const u8) ?*anyopaque {
     const c = gpa.create(GConn) catch return null;
     const h = str_mod.nox_str_slice(host orelse "");
     const tc = tcp.connect(h, port, false) orelse {
@@ -703,7 +703,10 @@ fn openImpl(host: ?[*:0]const u8, port: i64, use_tls: bool, ca_file: ?[*:0]const
         return c;
     }
     if (use_tls) {
-        if (!tcp.startTlsEx(tc, h, true, if (ca_file) |p| str_mod.nox_str_slice(p) else "")) {
+        const ca: []const u8 = if (ca_file) |p| str_mod.nox_str_slice(p) else "";
+        const cert: []const u8 = if (cert_file) |p| str_mod.nox_str_slice(p) else "";
+        const key: []const u8 = if (key_file) |p| str_mod.nox_str_slice(p) else "";
+        if (!tcp.startTlsMtls(tc, h, true, ca, cert, key)) {
             c.fail(if (tc.errmsg.len > 0) tc.errmsg else "TLS handshake failed");
             return c;
         }

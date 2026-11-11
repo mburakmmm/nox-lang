@@ -1,0 +1,17 @@
+# nox.redis mTLS: sunucu istemci sertifikası ister. Doğru sertifika ile çalışır, sertifikasız bağlantı reddedilir. scripts/redis_probe.py doldurur.
+import nox.redis
+from nox.redis import Client, RedisError
+
+c: Client = nox.redis.connect("localhost", @PORT@, True, "", "", 0, "@CA@", "@CERT@", "@KEY@")
+print(c.ping())
+c.reconnect()
+c.set("k", "mtls-value")
+v: str | None = c.get("k")
+if v is not None:
+    print(v)
+c.close()
+try:
+    d: Client = nox.redis.connect("localhost", @PORT@, True, "", "", 0, "@CA@")
+    print(d.ping())
+except RedisError as e:
+    print("no client cert rejected", e.is_connection_error())

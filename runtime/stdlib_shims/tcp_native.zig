@@ -14,6 +14,7 @@ const http_client = @import("http_client.zig");
 const tls_mod = @import("tls.zig");
 /// `std.crypto.tls.Client` DEĞİL — `certificate_request` düzeltmesi içeren yamalı kopya (bkz. `tls.zig`).
 const TlsClient = @import("../vendor/tls_client.zig");
+const client_cert_mod = @import("client_cert.zig");
 
 const gpa = std.heap.page_allocator;
 
@@ -46,6 +47,8 @@ pub const Conn = struct {
     socket_open: bool = false,
     /// `startTlsEx`in `ca_file` ile kurduğu, bağlantıya özgü CA deposu (varsa `close` serbest bırakır).
     own_ca: ?*OwnCa = null,
+    /// `startTlsMtls`in yüklediği istemci sertifikası/anahtarı (varsa `close` serbest bırakır ve anahtarı sıfırlar).
+    own_client_cert: ?*client_cert_mod.Loaded = null,
 
     pub fn setErr(self: *Conn, msg: []const u8) void {
         if (self.errmsg_owned) gpa.free(self.errmsg);
@@ -139,6 +142,12 @@ pub fn startTls(c: *Conn, servername: []const u8) bool {
 /// `startTls` + isteğe bağlı ALPN `h2` (v2.1.35, gRPC) ve `ca_file` (PEM; doluysa sistem deposu YERİNE yalnızca bu dosyadaki CA'lara güvenilir: kurumsal/özel CA ve testler).
 /// `alpn_h2` istenip sunucu `h2` seçmezse yükseltme başarısız olur.
 pub fn startTlsEx(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []const u8) bool {
+    return startTlsMtls(c, servername, alpn_h2, ca_file, "", "");
+}
+
+/// `startTlsEx` + mTLS (v2.1.40): `cert_file` (PEM zincir) ve `key_file` (PEM özel anahtar: ECDSA P-256/P-384 ya da Ed25519; RSA desteklenmez) doluysa sunucu
+/// istemci sertifikası isterse (TLS 1.3 `certificate_request`) sunulur.
+pub fn startTlsMtls(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []const u8, cert_file: []const u8, key_file: []const u8) bool {
     if (!c.ok or c.use_tls) return false;
     if (c.stream_reader.interface.bufferedLen() != 0) {
         c.setErr("unexpected data received before the TLS upgrade");
@@ -171,6 +180,17 @@ pub fn startTlsEx(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []co
         c.ok = false;
         return false;
     }
+    var client_cert: ?TlsClient.ClientCert = null;
+    if (cert_file.len > 0) {
+        const loaded = client_cert_mod.load(gpa, c.io, cert_file, key_file) catch |err| {
+            var buf: [200]u8 = undefined;
+            c.setErr(std.fmt.bufPrint(&buf, "could not load the client certificate or key: {s}", .{@errorName(err)}) catch "could not load the client certificate or key");
+            c.ok = false;
+            return false;
+        };
+        c.own_client_cert = loaded;
+        client_cert = loaded.cert;
+    }
     var random_buffer: [TlsClient.Options.entropy_len]u8 = undefined;
     c.io.random(&random_buffer);
     const now = std.Io.Timestamp.now(c.io, .real);
@@ -189,6 +209,7 @@ pub fn startTlsEx(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []co
         .realtime_now = now,
         .allow_truncation_attacks = false,
         .alpn_h2 = alpn_h2,
+        .client_cert = client_cert,
     }) catch |err| {
         c.setErr(@errorName(err));
         c.ok = false;
@@ -210,6 +231,11 @@ pub fn close(c: *Conn) void {
     if (c.own_ca) |own| {
         own.bundle.deinit(gpa);
         gpa.destroy(own);
+    }
+    if (c.own_client_cert) |cc| {
+        std.crypto.secureZero(u8, std.mem.asBytes(&cc.cert.key));
+        cc.deinit();
+        gpa.destroy(cc);
     }
     if (c.errmsg_owned) gpa.free(c.errmsg);
     gpa.destroy(c);

@@ -14,6 +14,9 @@
 //! GÖNDERMEDİĞİ İçİn ORADA sorun YOKTU). Upstream'de bilinen, HÂLÂ AÇIK
 //! bir Zig hatası: `ziglang/zig#19521`.
 //!
+//! **Sonradan eklenen NOX PATCH'ler (v2.1.35, v2.1.40):** ALPN `h2` uzantısı (`Options.alpn_h2`, `alpn_h2_selected`) ve mTLS istemci sertifikası (`Options.client_cert`,
+//! `ClientCert`, `sealHandshakeRecord`; ECDSA P-256/P-384 + Ed25519). Zig yükseltmesinde bunlar da yeniden uygulanmalıdır.
+//!
 //! **Bu dosyada yapılan İKİ yama** (aşağıda `NOX PATCH` yorumlarıyla
 //! işaretli, ikisi de SADECE TLS 1.3 İçİn — TLS 1.2'de `certificate_
 //! request` YİNE İŞLENMİYOR, BİLİNÇLİ kapsam dışı, günümüz posta
@@ -124,6 +127,82 @@ pub const SslKeyLog = struct {
 /// at least this amount.
 pub const min_buffer_len = tls.max_ciphertext_record_len;
 
+/// NOX PATCH (v2.1.40, mTLS): istemci sertifikası. `chain`: DER sertifikalar (ilki yaprak). Anahtar türleri: ECDSA P-256, ECDSA P-384, Ed25519
+/// (std'de RSA imzalama yok, RSA istemci anahtarları desteklenmez). Yalnızca TLS 1.3'te ve sunucu `certificate_request` gönderirse kullanılır.
+pub const ClientCert = struct {
+    /// El sıkışma mesajları için geçici (yığın dışı) tamponlar bununla ayrılır.
+    gpa: std.mem.Allocator,
+    chain: []const []const u8,
+    key: Key,
+    pub const Key = union(enum) { p256: [32]u8, p384: [48]u8, ed25519: [32]u8 };
+
+    fn schemeCode(self: ClientCert) u16 {
+        return switch (self.key) {
+            .p256 => @intFromEnum(tls.SignatureScheme.ecdsa_secp256r1_sha256),
+            .p384 => @intFromEnum(tls.SignatureScheme.ecdsa_secp384r1_sha384),
+            .ed25519 => @intFromEnum(tls.SignatureScheme.ed25519),
+        };
+    }
+
+    /// `msg` üzerinde imza üretir; `out`a yazar, uzunluğu döner (ECDSA: DER, Ed25519: 64 bayt).
+    fn sign(self: ClientCert, msg: []const u8, out: *[160]u8) error{TlsBadSignatureScheme}!usize {
+        switch (self.key) {
+            .p256 => |sk_bytes| {
+                const E = crypto.sign.ecdsa.EcdsaP256Sha256;
+                const kp = E.KeyPair.fromSecretKey(E.SecretKey.fromBytes(sk_bytes) catch return error.TlsBadSignatureScheme) catch return error.TlsBadSignatureScheme;
+                const sig = kp.sign(msg, null) catch return error.TlsBadSignatureScheme;
+                var der: [E.Signature.der_encoded_length_max]u8 = undefined;
+                const d = sig.toDer(&der);
+                @memcpy(out[0..d.len], d);
+                return d.len;
+            },
+            .p384 => |sk_bytes| {
+                const E = crypto.sign.ecdsa.EcdsaP384Sha384;
+                const kp = E.KeyPair.fromSecretKey(E.SecretKey.fromBytes(sk_bytes) catch return error.TlsBadSignatureScheme) catch return error.TlsBadSignatureScheme;
+                const sig = kp.sign(msg, null) catch return error.TlsBadSignatureScheme;
+                var der: [E.Signature.der_encoded_length_max]u8 = undefined;
+                const d = sig.toDer(&der);
+                @memcpy(out[0..d.len], d);
+                return d.len;
+            },
+            .ed25519 => |seed| {
+                const E = crypto.sign.Ed25519;
+                const kp = E.KeyPair.generateDeterministic(seed) catch return error.TlsBadSignatureScheme;
+                const sig = kp.sign(msg, null) catch return error.TlsBadSignatureScheme;
+                const b = sig.toBytes();
+                @memcpy(out[0..b.len], &b);
+                return b.len;
+            },
+        }
+    }
+};
+
+/// NOX PATCH: bir el sıkışma mesajını kendi şifreli kaydına sarar (`handshake` içerik türü), `dst`ye yazar ve kayıt uzunluğunu döner.
+fn sealHandshakeRecord(comptime P: type, dst: []u8, msg: []const u8, key: anytype, iv: anytype, seq: u64) error{TlsRecordOverflow}!usize {
+    const inner_len = msg.len + 1;
+    if (inner_len + P.AEAD.tag_length > tls.max_ciphertext_len) return error.TlsRecordOverflow;
+    const total = tls.record_header_len + inner_len + P.AEAD.tag_length;
+    if (total > dst.len) return error.TlsRecordOverflow;
+    dst[0] = @intFromEnum(tls.ContentType.application_data);
+    std.mem.writeInt(u16, dst[1..3], @intFromEnum(tls.ProtocolVersion.tls_1_2), .big);
+    std.mem.writeInt(u16, dst[3..5], @intCast(inner_len + P.AEAD.tag_length), .big);
+    const ad = dst[0..tls.record_header_len];
+    // AEAD girdi/çıktı örtüşmemeli: `msg` + içerik türü baytı ayrı bir ara tamponda.
+    var inner_stack: [tls.max_ciphertext_len]u8 = undefined;
+    @memcpy(inner_stack[0..msg.len], msg);
+    inner_stack[msg.len] = @intFromEnum(tls.ContentType.handshake);
+    const nonce = nonce: {
+        const V = @Vector(P.AEAD.nonce_length, u8);
+        const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
+        const operand: V = pad ++ @as([8]u8, @bitCast(big(seq)));
+        break :nonce @as(V, iv) ^ operand;
+    };
+    const ciphertext = dst[tls.record_header_len..][0..inner_len];
+    const tag = dst[tls.record_header_len + inner_len ..][0..P.AEAD.tag_length];
+    P.AEAD.encrypt(ciphertext, tag, inner_stack[0..inner_len], ad, nonce, key);
+    return total;
+}
+
 pub const Options = struct {
     /// How to perform host verification of server certificates.
     host: union(enum) {
@@ -175,6 +254,8 @@ pub const Options = struct {
     allow_truncation_attacks: bool = false,
     /// NOX PATCH (v2.1.35, gRPC): ClientHello'ya ALPN `h2` uzantısı ekler; sunucunun seçimi `alpn_h2_selected` alanında okunur.
     alpn_h2: bool = false,
+    /// NOX PATCH (v2.1.40, mTLS): sunucu `certificate_request` gönderirse sunulacak istemci sertifikası (yoksa boş Certificate).
+    client_cert: ?ClientCert = null,
     /// Populated when `error.TlsAlert` is returned from `init`.
     alert: ?*tls.Alert = null,
 
@@ -183,6 +264,7 @@ pub const Options = struct {
 
 pub const InitError = error{
     InsufficientEntropy,
+    OutOfMemory,
     DiskQuota,
     LockViolation,
     NotOpenForWriting,
@@ -394,6 +476,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
     // mesajını kabul edip istemcinin kendi el sıkışma turunda boş bir
     // `Certificate` yanıtı inşa edebilmesi için gereken durum.
     var client_cert_requested = false;
+    var client_scheme_ok = false; // sunucunun signature_algorithms listesi istemci anahtarımızın şemasını içeriyor mu
     var cert_req_context_buf: [255]u8 = undefined;
     var cert_req_context_len: u8 = 0;
     var client_hs_write_seq: u64 = 0;
@@ -698,7 +781,25 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         cert_req_context_len = ctx_len;
                         try hsd.ensure(2);
                         const ext_total = hsd.decode(u16);
-                        _ = try hsd.sub(ext_total);
+                        var req_exts = try hsd.sub(ext_total);
+                        while (!req_exts.eof()) {
+                            try req_exts.ensure(4);
+                            const req_et = req_exts.decode(tls.ExtensionType);
+                            const req_sz = req_exts.decode(u16);
+                            var req_ed = try req_exts.sub(req_sz);
+                            if (req_et == .signature_algorithms) {
+                                try req_ed.ensure(2);
+                                const list_len = req_ed.decode(u16);
+                                var consumed: usize = 0;
+                                while (consumed + 2 <= list_len) : (consumed += 2) {
+                                    try req_ed.ensure(2);
+                                    const sch = req_ed.decode(u16);
+                                    if (options.client_cert) |cc| {
+                                        if (sch == cc.schemeCode()) client_scheme_ok = true;
+                                    }
+                                }
+                            }
+                        }
                         client_cert_requested = true;
                     },
                     .certificate => cert: {
@@ -974,7 +1075,61 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                     // application-traffic-secret türetmesi İçin) BUNU İÇERMEMELİ.
                                     var cert_record_buf: [tls.record_header_len + (1 + 3 + 255 + 3 + 1) + P.AEAD.tag_length]u8 = undefined;
                                     var cert_record_len: usize = 0;
-                                    if (client_cert_requested) {
+                                    // NOX PATCH (v2.1.40, mTLS): gerçek istemci sertifikası + CertificateVerify, her biri kendi şifreli kaydında (seq 0, 1); Finished seq 2'de gider.
+                                    const use_client_cert = client_cert_requested and client_scheme_ok and options.client_cert != null;
+                                    var mtls_flight: []u8 = &.{};
+                                    defer if (mtls_flight.len > 0) options.client_cert.?.gpa.free(mtls_flight);
+                                    if (use_client_cert) {
+                                        const cc = options.client_cert.?;
+                                        var body_len: usize = 1 + @as(usize, cert_req_context_len) + 3;
+                                        for (cc.chain) |der| body_len += 3 + der.len + 2;
+                                        const cert_msg_len = 4 + body_len;
+                                        if (cert_msg_len + 1 + P.AEAD.tag_length > tls.max_ciphertext_len) return error.TlsRecordOverflow;
+                                        const cert_msg = cc.gpa.alloc(u8, cert_msg_len) catch return error.OutOfMemory;
+                                        defer cc.gpa.free(cert_msg);
+                                        cert_msg[0] = @intFromEnum(tls.HandshakeType.certificate);
+                                        std.mem.writeInt(u24, cert_msg[1..4], @intCast(body_len), .big);
+                                        cert_msg[4] = cert_req_context_len;
+                                        @memcpy(cert_msg[5..][0..cert_req_context_len], cert_req_context_buf[0..cert_req_context_len]);
+                                        var off: usize = 5 + @as(usize, cert_req_context_len);
+                                        const list_len = body_len - 1 - @as(usize, cert_req_context_len) - 3;
+                                        std.mem.writeInt(u24, cert_msg[off..][0..3], @intCast(list_len), .big);
+                                        off += 3;
+                                        for (cc.chain) |der| {
+                                            std.mem.writeInt(u24, cert_msg[off..][0..3], @intCast(der.len), .big);
+                                            off += 3;
+                                            @memcpy(cert_msg[off..][0..der.len], der);
+                                            off += der.len;
+                                            std.mem.writeInt(u16, cert_msg[off..][0..2], 0, .big); // sertifika uzantıları yok
+                                            off += 2;
+                                        }
+                                        p.transcript_hash.update(cert_msg);
+                                        // CertificateVerify (RFC 8446 §4.4.3): imzalanan = 64×0x20 ‖ "TLS 1.3, client CertificateVerify" ‖ 0x00 ‖ Hash(Certificate'a kadar transcript).
+                                        const th = p.transcript_hash.peek();
+                                        const cv_prefix = " " ** 64 ++ "TLS 1.3, client CertificateVerify\x00";
+                                        var to_sign: [cv_prefix.len + P.Hash.digest_length]u8 = undefined;
+                                        @memcpy(to_sign[0..cv_prefix.len], cv_prefix);
+                                        @memcpy(to_sign[cv_prefix.len..], &th);
+                                        var sig_buf: [160]u8 = undefined;
+                                        const sig_len = try cc.sign(&to_sign, &sig_buf);
+                                        var cv_msg: [4 + 2 + 2 + 160]u8 = undefined;
+                                        cv_msg[0] = @intFromEnum(tls.HandshakeType.certificate_verify);
+                                        std.mem.writeInt(u24, cv_msg[1..4], @intCast(2 + 2 + sig_len), .big);
+                                        std.mem.writeInt(u16, cv_msg[4..6], cc.schemeCode(), .big);
+                                        std.mem.writeInt(u16, cv_msg[6..8], @intCast(sig_len), .big);
+                                        @memcpy(cv_msg[8..][0..sig_len], sig_buf[0..sig_len]);
+                                        const cv_total = 8 + sig_len;
+                                        p.transcript_hash.update(cv_msg[0..cv_total]);
+                                        const rec1_cap = tls.record_header_len + cert_msg_len + 1 + P.AEAD.tag_length;
+                                        const rec2_cap = tls.record_header_len + cv_total + 1 + P.AEAD.tag_length;
+                                        mtls_flight = cc.gpa.alloc(u8, rec1_cap + rec2_cap) catch return error.OutOfMemory;
+                                        const n1 = try sealHandshakeRecord(P, mtls_flight[0..rec1_cap], cert_msg, pv.client_handshake_key, pv.client_handshake_iv, client_hs_write_seq);
+                                        client_hs_write_seq += 1;
+                                        const n2 = try sealHandshakeRecord(P, mtls_flight[n1..][0..rec2_cap], cv_msg[0..cv_total], pv.client_handshake_key, pv.client_handshake_iv, client_hs_write_seq);
+                                        client_hs_write_seq += 1;
+                                        mtls_flight = mtls_flight[0 .. n1 + n2];
+                                    }
+                                    if (client_cert_requested and !use_client_cert) {
                                         var cert_wrapped_buf: [1 + 3 + 255 + 3]u8 = undefined;
                                         const cert_body_len: u32 = 1 + @as(u32, cert_req_context_len) + 3;
                                         cert_wrapped_buf[0] = @intFromEnum(tls.HandshakeType.certificate);
@@ -1041,7 +1196,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                     if (client_cert_requested) {
                                         var all_msgs_vec: [3][]const u8 = .{
                                             &client_change_cipher_spec_msg,
-                                            cert_record_buf[0..cert_record_len],
+                                            if (use_client_cert) mtls_flight else cert_record_buf[0..cert_record_len],
                                             &finished_msg,
                                         };
                                         try output.writeVecAll(&all_msgs_vec);

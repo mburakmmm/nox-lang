@@ -12,9 +12,9 @@ from nox.redis import Client, Reply, RedisError
 
 ## Connecting
 
-`connect(host, port=6379, tls=False, username="", password="", db=0, ca_file="") -> Client`
+`connect(host, port=6379, tls=False, username="", password="", db=0, ca_file="", cert_file="", key_file="") -> Client`
 
-- `tls=True` starts TLS immediately (a `rediss://`-style endpoint); the certificate and host name are checked against the system CA store. `ca_file` (a PEM path) replaces the system store: only the CAs in that file are trusted (a private CA or a self-signed server). `reconnect()` keeps it.
+- `tls=True` starts TLS immediately (a `rediss://`-style endpoint); the certificate and host name are checked against the system CA store. `ca_file` (a PEM path) replaces the system store: only the CAs in that file are trusted (a private CA or a self-signed server). `cert_file` + `key_file` (PEM) present a client certificate when the server requires one (mTLS): ECDSA P-256/P-384 or Ed25519 keys (no RSA keys). `reconnect()` keeps all three.
 - A non-empty `password` sends `AUTH` (`AUTH username password` when `username` is given); `db > 0` sends `SELECT`.
 - Failure raises `RedisError` with `kind == "connection"`.
 
