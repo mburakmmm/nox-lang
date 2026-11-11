@@ -118,6 +118,24 @@ for backend in ("llvm", "qbe"):
             except grpc.RpcError as e:
                 check(e.code() == grpc.StatusCode.FAILED_PRECONDITION, f"[{backend}] akış içi hata kodu {e.code()}")
             check(got == [b"first:x"], f"[{backend}] akış içi hata öncesi yanıt {got}")
+            # --- üst veri, süre sınırı, yanıt üst verisi/trailer ve gzip yanıt sıkıştırması ---
+            metas = ch.unary_stream("/test.Echo/Meta", request_serializer=ident, response_deserializer=ident)
+            mcall = metas(b"x", metadata=(("x-token", "s3cret"),), timeout=20)
+            parts = list(mcall)
+            check(parts == [b"s3cret", b"True", b"ok", b"True"], f"[{backend}] üst veri/süre mesajları {parts}")
+            check(("x-reply-header", "rh") in mcall.initial_metadata(), f"[{backend}] yanıt başlığı {mcall.initial_metadata()}")
+            check(("x-reply-trailer", "rt") in mcall.trailing_metadata(), f"[{backend}] yanıt trailer {mcall.trailing_metadata()}")
+            # süre dolunca sunucu akışı DEADLINE_EXCEEDED ile biter (sunucu ya da istemci tarafı; ikisi de aynı kodu verir) ve bağlantı yaşar
+            slowc = ch.unary_stream("/test.Echo/Slow", request_serializer=ident, response_deserializer=ident)
+            ticks = 0
+            try:
+                for t in slowc(b"x", timeout=0.6):
+                    ticks += 1
+                check(False, f"[{backend}] süre dolması beklenirdi")
+            except grpc.RpcError as e:
+                check(e.code() == grpc.StatusCode.DEADLINE_EXCEEDED, f"[{backend}] süre kodu {e.code()}")
+            check(ticks >= 3, f"[{backend}] süre dolmadan önce tick sayısı {ticks}")
+            check(unary(b"after deadline", timeout=10) == b"after deadline", f"[{backend}] süre sonrası çağrı")
             ch.close()
         finally:
             # `noxc run` sunucuyu alt süreç olarak başlatır: tüm süreç grubunu öldür (yoksa stderr borusu açık kalır).

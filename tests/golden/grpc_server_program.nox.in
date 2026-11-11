@@ -1,9 +1,10 @@
 # nox.grpc_server: grpcio istemcisine karşı (scripts/grpc_server_probe.py) unary, sunucu/istemci akışı, hata durumu, büyük mesaj. @PORT@ doldurulur.
 import nox.http
+import nox.time
 import nox.grpc_server
 from nox.http import HttpRequest, HttpResponse
 from nox.grpc import GrpcStatusError
-from nox.grpc_server import Method, StreamMethod, Call
+from nox.grpc_server import Method, StreamMethod, CtxMethod, Call
 
 def echo(requests: list[str]) -> list[str]:
     return [requests[0]]
@@ -53,7 +54,28 @@ def chat_fail(call: Call) -> None:
 def streams() -> list[StreamMethod]:
     return [StreamMethod("/test.Echo/Bidi", chat), StreamMethod("/test.Echo/BidiFail", chat_fail)]
 
+def meta(call: Call, requests: list[str]) -> list[str]:
+    call.set_header("x-reply-header", "rh")
+    call.set_trailer("x-reply-trailer", "rt")
+    left: int = call.remaining_ms()
+    within: str = "none"
+    if left > 0 and left <= call.timeout_ms():
+        within = "ok"
+    return [call.header("X-Token"), str(call.timeout_ms() > 0), within, str(call.compressing())]
+
+def slow(call: Call) -> None:
+    # Süre dolana kadar her 40 ms'de bir "tick" yollar; süre dolunca send DEADLINE_EXCEEDED fırlatır (istemci süresi daha uzun olsun diye 2 sn).
+    while True:
+        call.send("tick")
+        nox.time.sleep_ms(40)
+
+def ctxs() -> list[CtxMethod]:
+    return [CtxMethod("/test.Echo/Meta", meta)]
+
+def streams2() -> list[StreamMethod]:
+    return [StreamMethod("/test.Echo/Bidi", chat), StreamMethod("/test.Echo/BidiFail", chat_fail), StreamMethod("/test.Echo/Slow", slow)]
+
 def handle(req: HttpRequest) -> HttpResponse:
-    return nox.grpc_server.dispatch_all(table(), streams(), req)
+    return nox.grpc_server.dispatch_full(table(), streams2(), ctxs(), req, True)
 
 nox.http.serve(@PORT@, handle)

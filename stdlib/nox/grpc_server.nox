@@ -32,12 +32,21 @@
 #             call.send("echo:" + m)
 #             m = call.recv()
 #
-# **Sınırlar:** `Method` işleyicileri istek gövdesi tamamen okunduktan SONRA çağrılır (toplu); `grpc-timeout` yok sayılır; yanıt sıkıştırması yok (istek gzip'i çözülür).
-# Yanıt `nox.http` akışıyla gider: `content-type: application/grpc`, mesajlar `DATA`, `grpc-status` trailer. Gerçek akış HTTP/2 gerektirir (Windows'ta HTTP/2 sunucusu yok).
+# **Üst veri, süre sınırı ve sıkıştırma (v2.1.44):** `Call` istek üst verisini (`call.header("x-token")`), istemcinin `grpc-timeout` süresini (`call.timeout_ms()`, `call.remaining_ms()`),
+# yanıt üst verisini (`call.set_header`, `call.set_trailer`) ve gzip yanıt sıkıştırmasını (`call.use_compression(True)`; yalnızca istemci `grpc-accept-encoding: gzip` bildirdiyse) sunar. Süre dolunca
+# `recv`/`send` `GrpcStatusError(4, "deadline exceeded")` fırlatır (DEADLINE_EXCEEDED). `CtxMethod(path, handler)`: `(Call, list[str]) -> list[str]` toplu işleyici, bağlam (üst veri/süre) erişimiyle;
+# toplu işleyiciler süre dolmuşsa dönüşte DEADLINE_EXCEEDED ile cevaplanır (çalışan işleyici durdurulamaz). `dispatch_full(methods, streams, ctxs, req, compress_replies=False)` üç tabloyu birlikte yürütür.
+# Yanıt başlıkları ilk `send`de (ya da işleyici bitince) gider; erken göndermek için `call.send_headers()`.
+#
+# **Sınırlar:** `Method`/`CtxMethod` işleyicileri istek gövdesi tamamen okunduktan SONRA çağrılır (toplu). Yanıt `nox.http` akışıyla gider: `content-type: application/grpc`, mesajlar `DATA`,
+# `grpc-status` trailer. Gerçek akış HTTP/2 gerektirir (Windows'ta HTTP/2 sunucusu yok).
+
+
 
 import nox.bytes
 import nox.gzip
 import nox.strings
+import nox.time
 import nox.http
 from nox.http import HttpRequest, HttpResponse, ResponseStream
 from nox.grpc import GrpcStatusError
@@ -86,22 +95,125 @@ def _read_all(req: HttpRequest) -> str:
         chunk = req.read_chunk(65536)
     return body
 
-# Gerçek çift yönlü akış: işleyici `recv()`/`send()` ile istek ve yanıt mesajlarını araya sokar.
+def _now_ms() -> int:
+    return nox.time.monotonic_ns() // 1000000
+
+# `grpc-timeout` değerini (`<sayı><birim>`: H saat, M dakika, S saniye, m milisaniye, u mikrosaniye, n nanosaniye) milisaniyeye çevirir; yok/bozuksa 0.
+def parse_timeout_ms(value: str) -> int:
+    if len(value) < 2:
+        return 0
+    unit: str = value[len(value) - 1:len(value)]
+    num: int = 0
+    i: int = 0
+    while i < len(value) - 1:
+        c: int = ord(value[i:i + 1])
+        if c < 48 or c > 57:
+            return 0
+        num = num * 10 + (c - 48)
+        i = i + 1
+    if unit == "H":
+        return num * 3600000
+    if unit == "M":
+        return num * 60000
+    if unit == "S":
+        return num * 1000
+    if unit == "m":
+        return num
+    if unit == "u":
+        return num // 1000
+    if unit == "n":
+        return num // 1000000
+    return 0
+
+# Bir çağrının bağlamı: istek üst verisi, süre sınırı, yanıt üst verisi ve (akış yöntemlerinde) `recv()`/`send()`.
 class Call:
     req: HttpRequest
-    out: ResponseStream
+    out: ResponseStream | None
     buf: list[int]
     ended: bool
+    start_ms: int
+    deadline_ms: int
+    compress: bool
+    started: bool
+    out_headers: dict[str, str]
+    out_trailers: dict[str, str]
 
-    def __init__(self: Call, req: HttpRequest, out: ResponseStream) -> None:
+    def __init__(self: Call, req: HttpRequest) -> None:
         self.req = req
-        self.out = out
+        self.out = None
         self.buf = nox.bytes.list_from_str(req.body)
         self.ended = False
+        self.start_ms = _now_ms()
+        self.deadline_ms = parse_timeout_ms(self.header("grpc-timeout"))
+        self.compress = False
+        self.started = False
+        self.out_headers = {}
+        self.out_trailers = {}
 
-    # Sıradaki istek mesajı; istek tarafı bittiyse `None`. Bozuk çerçevede `GrpcStatusError(13, ...)`.
+    # İstek üst verisi (ad büyük/küçük harfe duyarsız); yoksa "".
+    def header(self: Call, name: str) -> str:
+        want: str = name.lower()
+        for k in self.req.headers.keys():
+            if k.lower() == want:
+                return self.req.headers[k]
+        return ""
+
+    # İstemcinin `grpc-timeout` süresi (ms); yoksa 0.
+    def timeout_ms(self: Call) -> int:
+        return self.deadline_ms
+
+    # Süre dolmasına kalan ms (süre yoksa -1); dolmuşsa 0.
+    def remaining_ms(self: Call) -> int:
+        if self.deadline_ms <= 0:
+            return -1
+        left: int = self.deadline_ms - (_now_ms() - self.start_ms)
+        if left < 0:
+            return 0
+        return left
+
+    def expired(self: Call) -> bool:
+        return self.deadline_ms > 0 and _now_ms() - self.start_ms >= self.deadline_ms
+
+    # Yanıtlar gzip ile mi gidecek (`use_compression(True)` etkili olduysa).
+    def compressing(self: Call) -> bool:
+        return self.compress
+
+    # Yanıtın ilk başlıklarına ekler (`send_headers`/ilk `send`ten önce); sonradan eklenenler yok sayılır.
+    def set_header(self: Call, name: str, value: str) -> None:
+        self.out_headers[name.lower()] = value
+
+    # Yanıt trailer'ına ekler (`grpc-status`ın yanında gider).
+    def set_trailer(self: Call, name: str, value: str) -> None:
+        self.out_trailers[name.lower()] = value
+
+    # Yanıt mesajlarını gzip ile sıkıştırır; yalnızca istemci `grpc-accept-encoding`inde `gzip` bildirdiyse etkili olur. Başlık gönderilmeden ÖNCE çağırın.
+    def use_compression(self: Call, on: bool) -> None:
+        if on and not self.started and self.header("grpc-accept-encoding").find("gzip") >= 0:
+            self.compress = True
+        if not on:
+            self.compress = False
+
+    # Yanıt başlıklarını hemen gönderir (normalde ilk `send`de gider). Birden çok çağrı zararsızdır.
+    def send_headers(self: Call) -> None:
+        if self.started:
+            return
+        self.started = True
+        h: dict[str, str] = {}
+        for k in self.out_headers.keys():
+            h[k] = self.out_headers[k]
+        h["content-type"] = "application/grpc"
+        if self.compress:
+            h["grpc-encoding"] = "gzip"
+        self.out = self.req.stream(200, h)
+
+    def _check_deadline(self: Call) -> None:
+        if self.expired():
+            raise GrpcStatusError(4, "deadline exceeded")
+
+    # Sıradaki istek mesajı; istek tarafı bittiyse `None`. Bozuk çerçevede `GrpcStatusError(13, ...)`, süre dolduysa `GrpcStatusError(4, ...)`.
     def recv(self: Call) -> str | None:
         while True:
+            self._check_deadline()
             have: int = len(self.buf)
             if have >= 5:
                 flag: int = self.buf[0]
@@ -123,9 +235,31 @@ class Call:
                 self.buf = self.buf + nox.bytes.list_from_str(chunk)
         return None
 
-    # Yanıt mesajını hemen gönderir; istemci gitmişse `False`.
+    # Yanıt mesajını hemen gönderir (ilk çağrıda yanıt başlıkları da gider); istemci gitmişse `False`, süre dolduysa `GrpcStatusError(4, ...)`.
     def send(self: Call, message: str) -> bool:
-        return self.out.send(frame(message))
+        self._check_deadline()
+        self.send_headers()
+        s: ResponseStream | None = self.out
+        if s is None:
+            return False
+        if self.compress:
+            return s.send(frame_gzip(message))
+        return s.send(frame(message))
+
+    # Çağrıyı bitirir: başlıklar gitmediyse gönderir, `grpc-status` trailer'ını yazar. Dönen yer tutucu yanıt işleyiciden döndürülmelidir.
+    def finish(self: Call, code: int, message: str) -> HttpResponse:
+        self.send_headers()
+        s: ResponseStream | None = self.out
+        trailers: dict[str, str] = {}
+        for k in self.out_trailers.keys():
+            trailers[k] = self.out_trailers[k]
+        trailers["grpc-status"] = str(code)
+        if len(message) > 0:
+            trailers["grpc-message"] = _pct(message)
+        if s is None:
+            return _status_only(code, message)
+        s.trailers(trailers)
+        return s.end()
 
 class StreamMethod:
     path: str
@@ -135,11 +269,28 @@ class StreamMethod:
         self.path = path
         self.handler = handler
 
+# Bağlam erişimli toplu yöntem: `(Call, istek mesajları) -> yanıt mesajları`.
+class CtxMethod:
+    path: str
+    handler: (Call, list[str]) -> list[str]
+
+    def __init__(self: CtxMethod, path: str, handler: (Call, list[str]) -> list[str]) -> None:
+        self.path = path
+        self.handler = handler
+
+def _frame_raw(flag: int, payload: str) -> str:
+    n: int = nox.strings.byte_len(payload)
+    prefix: list[int] = [flag, (n >> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255]
+    return nox.bytes.str_from_list(prefix) + payload
+
 # Bir yanıt mesajını uzunluk önekiyle çerçeveler.
 def frame(message: str) -> str:
-    n: int = nox.strings.byte_len(message)
-    prefix: list[int] = [0, (n >> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255]
-    return nox.bytes.str_from_list(prefix) + message
+    return _frame_raw(0, message)
+
+# Mesajı gzip ile sıkıştırıp bayrak 1 ile çerçeveler.
+def frame_gzip(message: str) -> str:
+    z: list[int] = nox.gzip.compress_bytes(nox.bytes.list_from_str(message))
+    return _frame_raw(1, nox.bytes.str_from_list(z))
 
 # `grpc-message` değeri yüzde-kodludur: 0x20-0x7E dışı baytlar ve `%` `%XX` olur.
 def _pct(text: str) -> str:
@@ -171,6 +322,11 @@ def dispatch(methods: list[Method], req: HttpRequest) -> HttpResponse:
 
 # `Method` (toplu) ve `StreamMethod` (gerçek akış) tablolarıyla yürütür.
 def dispatch_all(methods: list[Method], streams: list[StreamMethod], req: HttpRequest) -> HttpResponse:
+    no_ctx: list[CtxMethod] = []
+    return dispatch_full(methods, streams, no_ctx, req, False)
+
+# Üç tabloyla yürütür. `compress_replies`: istemci gzip kabul ediyorsa yanıtları gzip'ler.
+def dispatch_full(methods: list[Method], streams: list[StreamMethod], ctxs: list[CtxMethod], req: HttpRequest, compress_replies: bool = False) -> HttpResponse:
     if req.method != "POST":
         return _status_only(12, "gRPC calls are HTTP/2 POST requests")
     path: str = req.target
@@ -179,34 +335,39 @@ def dispatch_all(methods: list[Method], streams: list[StreamMethod], req: HttpRe
         path = path[0:q]
     for sm in streams:
         if sm.path == path:
-            sh: dict[str, str] = {}
-            sh["content-type"] = "application/grpc"
-            out: ResponseStream = req.stream(200, sh)
-            call: Call = Call(req, out)
-            st: dict[str, str] = {}
+            call: Call = Call(req)
+            call.use_compression(compress_replies)
             try:
                 sm.handler(call)
-                st["grpc-status"] = "0"
             except GrpcStatusError as e:
-                st["grpc-status"] = str(e.code)
-                if len(e.detail) > 0:
-                    st["grpc-message"] = _pct(e.detail)
-            out.trailers(st)
-            return out.end()
+                return call.finish(e.code, e.detail)
+            return call.finish(0, "")
+    for cm in ctxs:
+        if cm.path == path:
+            return _run_batch(req, compress_replies, cm.handler)
     for m in methods:
         if m.path == path:
-            responses: list[str] = []
-            try:
-                responses = m.handler(parse_messages(_read_all(req)))
-            except GrpcStatusError as e:
-                return _status_only(e.code, e.detail)
-            h: dict[str, str] = {}
-            h["content-type"] = "application/grpc"
-            s: ResponseStream = req.stream(200, h)
-            for r in responses:
-                s.send(frame(r))
-            trailers: dict[str, str] = {}
-            trailers["grpc-status"] = "0"
-            s.trailers(trailers)
-            return s.end()
+            return _run_batch(req, compress_replies, _adapt(m.handler))
     return _status_only(12, "unknown method " + path)
+
+# `Method` işleyicisini bağlam alan biçime uyarlar.
+def _adapt(h: (list[str]) -> list[str]) -> (Call, list[str]) -> list[str]:
+    def run(call: Call, requests: list[str]) -> list[str]:
+        return h(requests)
+
+    return run
+
+# Toplu (unary / istemci akışı / sunucu akışı) yöntemi çalıştırır.
+def _run_batch(req: HttpRequest, compress_replies: bool, handler: (Call, list[str]) -> list[str]) -> HttpResponse:
+    call: Call = Call(req)
+    call.use_compression(compress_replies)
+    responses: list[str] = []
+    try:
+        responses = handler(call, parse_messages(_read_all(req)))
+    except GrpcStatusError as e:
+        return call.finish(e.code, e.detail)
+    if call.expired():
+        return call.finish(4, "deadline exceeded")
+    for r in responses:
+        call.send(r)
+    return call.finish(0, "")

@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.44]
+
+### Eklendi
+
+- **gRPC sunucusunda üst veri, süre sınırı, yanıt başlığı/trailer ve gzip yanıtı** (`nox.grpc_server`): `Call.header(name)`, `timeout_ms()/remaining_ms()/expired()` (istemcinin `grpc-timeout`u), `set_header`/`set_trailer`/`send_headers`, `use_compression(True)` + `compressing()` (istemci `grpc-accept-encoding: gzip` bildirdiyse yanıtlar gzip'lenir). Süre sınırı zorlanır: `recv()`/`send()` süre dolunca `GrpcStatusError(4)` fırlatır, geç dönen toplu yöntem `DEADLINE_EXCEEDED` yanıtlar. Yeni `CtxMethod(path, handler)` (bağlam alan toplu yöntem) ve `dispatch_full(methods, streams, ctxs, req, compress_replies)`. grpcio istemcisine karşı iki arka uçta sınanır (üst veri yansıması, `grpc-timeout` görünürlüğü, yanıt başlığı/trailer, süre dolunca akışın `DEADLINE_EXCEEDED` ile bitmesi ve bağlantının yaşaması).
+
+### Düzeltildi
+
+- **`nox.gzip.compress*` fiber içinde çöküyordu** (SIGBUS): `std.compress.flate.Compress` ~224 KB yığın ister, fiber yığını 192 KiB. `nox.http`/`nox.grpc_server` işleyicisinde (fiber) sıkıştırma yapan her program çökerdi; sıkıştırma artık 2 MiB yığınlı geçici bir OS iş parçacığında çalışır (WASM'da doğrudan). Regresyon testi: 192 KiB yığınlı iş parçacığında gidiş-dönüş.
+
 ## [2.1.43]
 
 ### Eklendi

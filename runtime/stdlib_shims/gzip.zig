@@ -15,6 +15,7 @@
 //! olduğundan).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
@@ -56,7 +57,32 @@ fn readIntListAsBytes(list_ptr: ?*anyopaque) ?[]u8 {
     return out;
 }
 
+/// Yığın üstü sıkıştırıcı durumu (`flate.Compress` ~224 KB + 64 KB pencere) fiber yığınından (192 KiB) BÜYÜKTÜR: bir `nox.http`/`nox.grpc_server` işleyicisi (fiber)
+/// içinde çağrılınca yığın korumasına çarpıp SIGBUS veriyordu (v2.1.44). Bu yüzden iş, büyük yığınlı geçici bir OS iş parçacığında yürütülür (iş parçacığı
+/// olmayan hedeflerde — WASM — doğrudan, oradaki yığın ayrıdır).
+const compress_thread_stack: usize = 2 * 1024 * 1024;
+
+const CompressJob = struct {
+    allocator: std.mem.Allocator,
+    data: []const u8,
+    result: ?([]u8) = null,
+};
+
+fn compressJobMain(job: *CompressJob) void {
+    job.result = gzipCompressInline(job.allocator, job.data) catch null;
+}
+
 pub fn gzipCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    if (comptime builtin.single_threaded or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) {
+        return gzipCompressInline(allocator, data);
+    }
+    var job = CompressJob{ .allocator = allocator, .data = data };
+    const t = std.Thread.spawn(.{ .stack_size = compress_thread_stack }, compressJobMain, .{&job}) catch return error.OutOfMemory;
+    t.join();
+    return job.result orelse error.OutOfMemory;
+}
+
+fn gzipCompressInline(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     // `Compress.init`nin KENDİ ön-koşulu: `assert(output.buffer.len > 8);`
     // — `Writer.Allocating.init` BOŞ (`&.{}`) bir buffer İLE başlar,
     // BU YÜZDEN `initCapacity` (N > 8) KULLANILMALI.
@@ -71,8 +97,11 @@ pub fn gzipCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
 
 pub fn gzipDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     var in_reader = std.Io.Reader.fixed(data);
-    var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
-    var decompress = std.compress.flate.Decompress.init(&in_reader, .gzip, &window_buf);
+    const window_buf = try allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer allocator.free(window_buf);
+    const decompress = try allocator.create(std.compress.flate.Decompress);
+    defer allocator.destroy(decompress);
+    decompress.* = std.compress.flate.Decompress.init(&in_reader, .gzip, window_buf);
     var out: std.Io.Writer.Allocating = try .initCapacity(allocator, 4096);
     errdefer out.deinit();
     _ = try decompress.reader.streamRemaining(&out.writer);
@@ -162,4 +191,22 @@ pub export fn nox_bytes_str_from_list_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque
     defer std.heap.page_allocator.free(bytes);
     g_last_op_ok = true;
     return str_mod.nox_str_from_bytes(rt, bytes);
+}
+
+fn smallStackRoundTrip(ok: *bool) void {
+    const data = "gzip on a fiber-sized stack " ** 40;
+    const z = gzipCompress(std.heap.page_allocator, data) catch return;
+    defer std.heap.page_allocator.free(z);
+    const back = gzipDecompress(std.heap.page_allocator, z) catch return;
+    defer std.heap.page_allocator.free(back);
+    ok.* = std.mem.eql(u8, back, data);
+}
+
+// v2.1.44: fiber yığınından (192 KiB) küçük bir yığında bile sıkıştırma çalışır (iş büyük yığınlı bir iş parçacığına taşınır); öncesinde SIGBUS veriyordu.
+test "gzipCompress works from a fiber-sized (192 KiB) stack" {
+    if (builtin.single_threaded) return error.SkipZigTest;
+    var ok = false;
+    const t = try std.Thread.spawn(.{ .stack_size = 192 * 1024 }, smallStackRoundTrip, .{&ok});
+    t.join();
+    try std.testing.expect(ok);
 }
