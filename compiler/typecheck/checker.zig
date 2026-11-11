@@ -1456,6 +1456,7 @@ pub const Checker = struct {
         .{ .name = "fs", .caps = &.{.filesystem} },
         // v2.1.33: gRPC istemcisi (HTTP/2 h2c, düz TCP); Windows/wasm'da `tcp` taşımasının sınırları redis ile aynıdır.
         .{ .name = "grpc", .caps = &.{.network} },
+        .{ .name = "grpc_server", .caps = &.{.network} },
         .{ .name = "gzip", .caps = &.{} },
         .{ .name = "hpy", .caps = &.{ .filesystem, .dynamic_code } },
         .{ .name = "http", .caps = &.{.network} },

@@ -1,0 +1,121 @@
+# nox.grpc_server — gRPC SUNUCUSU, `nox.http` üzerinde (HTTP/2 `h2c` önceden bilinen ya da `serve_tls*` ile ALPN `h2`). Mesajlar protobuf baytlarıdır (`nox.protobuf`).
+#
+#     import nox.http
+#     import nox.grpc_server
+#     from nox.http import HttpRequest, HttpResponse
+#     from nox.grpc import GrpcStatusError
+#     from nox.grpc_server import Method
+#
+#     def say_hello(requests: list[str]) -> list[str]:
+#         return ["hello " + requests[0]]          # unary: tek istek, tek yanıt
+#
+#     def count(requests: list[str]) -> list[str]:  # sunucu akışı: tek istek, çok yanıt
+#         return [requests[0], requests[0]]
+#
+#     def table() -> list[Method]:
+#         return [Method("/helloworld.Greeter/SayHello", say_hello), Method("/helloworld.Greeter/Count", count)]
+#
+#     def handle(req: HttpRequest) -> HttpResponse:
+#         return nox.grpc_server.dispatch(table(), req)
+#
+#     nox.http.serve(50051, handle)
+#
+# Bir yöntem `(list[str]) -> list[str]` işlevidir: istek mesajları (unary: 1, istemci akışı: N) gelir, yanıt mesajları (unary: 1, sunucu akışı: N) döner. Hata için
+# `raise GrpcStatusError(kod, "ileti")` (`nox.grpc`): istemci o durumu alır. Bilinmeyen yöntem `UNIMPLEMENTED` (12) olur.
+#
+# **Sınırlar:** istek gövdesi tamamen okunduktan SONRA işleyici çağrılır (gerçek çift yönlü araya girme yok; sunucu akışı ve istemci akışı toplu çalışır); `grpc-timeout`
+# yok sayılır; yanıt sıkıştırması yok (istek gzip'i çözülür). Yanıt `nox.http` akışıyla gider: `content-type: application/grpc`, mesajlar `DATA`, `grpc-status` trailer.
+
+import nox.bytes
+import nox.gzip
+import nox.strings
+import nox.http
+from nox.http import HttpRequest, HttpResponse, ResponseStream
+from nox.grpc import GrpcStatusError
+
+class Method:
+    path: str
+    handler: (list[str]) -> list[str]
+
+    def __init__(self: Method, path: str, handler: (list[str]) -> list[str]) -> None:
+        self.path = path
+        self.handler = handler
+
+def _u32(data: list[int], pos: int) -> int:
+    return (data[pos] << 24) | (data[pos + 1] << 16) | (data[pos + 2] << 8) | data[pos + 3]
+
+# Uzunluk önekli (1 bayt bayrak + 4 bayt BE uzunluk) mesaj akışını mesaj listesine çevirir. Bozuk çerçevede `GrpcStatusError(13, ...)`; sıkıştırılmış (bayrak 1)
+# mesajlar `gzip` ise çözülür.
+def parse_messages(body: str) -> list[str]:
+    data: list[int] = nox.bytes.list_from_str(body)
+    out: list[str] = []
+    pos: int = 0
+    total: int = len(data)
+    while pos < total:
+        if pos + 5 > total:
+            raise GrpcStatusError(13, "truncated message prefix")
+        flag: int = data[pos]
+        n: int = _u32(data, pos + 1)
+        if flag > 1 or pos + 5 + n > total:
+            raise GrpcStatusError(13, "malformed message frame")
+        chunk: list[int] = data[pos + 5:pos + 5 + n]
+        if flag == 1:
+            chunk = nox.gzip.decompress_bytes(chunk)
+        out.append(nox.bytes.str_from_list(chunk))
+        pos = pos + 5 + n
+    return out
+
+# Bir yanıt mesajını uzunluk önekiyle çerçeveler.
+def frame(message: str) -> str:
+    n: int = nox.strings.byte_len(message)
+    prefix: list[int] = [0, (n >> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255]
+    return nox.bytes.str_from_list(prefix) + message
+
+# `grpc-message` değeri yüzde-kodludur: 0x20-0x7E dışı baytlar ve `%` `%XX` olur.
+def _pct(text: str) -> str:
+    out: str = ""
+    for b in nox.bytes.list_from_str(text):
+        if b < 32 or b > 126 or b == 37:
+            out = out + "%" + _hex2(b)
+        else:
+            out = out + chr(b)
+    return out
+
+def _hex2(b: int) -> str:
+    digits: str = "0123456789ABCDEF"
+    return digits[b >> 4] + digits[b & 15]
+
+# HTTP 200 + yalnızca başlıklar (trailers-only) ile durum döner.
+def _status_only(code: int, message: str) -> HttpResponse:
+    h: dict[str, str] = {}
+    h["content-type"] = "application/grpc"
+    h["grpc-status"] = str(code)
+    if len(message) > 0:
+        h["grpc-message"] = _pct(message)
+    return HttpResponse(200, "", h)
+
+# Bir gRPC isteğini `methods` tablosuna göre yürütür; `nox.http.serve` işleyicisinden çağrılır.
+def dispatch(methods: list[Method], req: HttpRequest) -> HttpResponse:
+    if req.method != "POST":
+        return _status_only(12, "gRPC calls are HTTP/2 POST requests")
+    path: str = req.target
+    q: int = path.find("?")
+    if q >= 0:
+        path = path[0:q]
+    for m in methods:
+        if m.path == path:
+            responses: list[str] = []
+            try:
+                responses = m.handler(parse_messages(req.body))
+            except GrpcStatusError as e:
+                return _status_only(e.code, e.detail)
+            h: dict[str, str] = {}
+            h["content-type"] = "application/grpc"
+            s: ResponseStream = req.stream(200, h)
+            for r in responses:
+                s.send(frame(r))
+            trailers: dict[str, str] = {}
+            trailers["grpc-status"] = "0"
+            s.trailers(trailers)
+            return s.end()
+    return _status_only(12, "unknown method " + path)

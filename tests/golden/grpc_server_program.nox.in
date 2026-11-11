@@ -1,0 +1,44 @@
+# nox.grpc_server: grpcio istemcisine karşı (scripts/grpc_server_probe.py) unary, sunucu/istemci akışı, hata durumu, büyük mesaj. @PORT@ doldurulur.
+import nox.http
+import nox.grpc_server
+from nox.http import HttpRequest, HttpResponse
+from nox.grpc import GrpcStatusError
+from nox.grpc_server import Method
+
+def echo(requests: list[str]) -> list[str]:
+    return [requests[0]]
+
+def count(requests: list[str]) -> list[str]:
+    n: int = int(requests[0])
+    out: list[str] = []
+    i: int = 1
+    while i <= n:
+        out.append(str(i))
+        i = i + 1
+    return out
+
+def collect(requests: list[str]) -> list[str]:
+    joined: str = ""
+    for r in requests:
+        joined = joined + r
+    return [joined]
+
+def fail(requests: list[str]) -> list[str]:
+    raise GrpcStatusError(5, "no such user: 100% ü")
+
+def big(requests: list[str]) -> list[str]:
+    return ["y" * int(requests[0])]
+
+def table() -> list[Method]:
+    return [
+        Method("/test.Echo/Unary", echo),
+        Method("/test.Echo/Count", count),
+        Method("/test.Echo/Collect", collect),
+        Method("/test.Echo/Fail", fail),
+        Method("/test.Echo/Big", big),
+    ]
+
+def handle(req: HttpRequest) -> HttpResponse:
+    return nox.grpc_server.dispatch(table(), req)
+
+nox.http.serve(@PORT@, handle)

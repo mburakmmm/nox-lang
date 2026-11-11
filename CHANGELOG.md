@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.41]
+
+### Eklendi
+
+- **`nox.grpc_server`: Nox ile yazılmış gRPC sunucusu** (`nox.http` HTTP/2 sunucusu üzerinde): `Method(path, handler)` tablosu, `dispatch(methods, req)`, `parse_messages`/`frame`. Bir yöntem `(list[str]) -> list[str]` işlevidir (istek mesajları → yanıt mesajları): unary, sunucu akışı ve istemci akışı; `raise GrpcStatusError(kod, "ileti")` ile durum (ileti yüzde-kodlanır), bilinmeyen yöntem `UNIMPLEMENTED`, gzip'li istek çözülür. Yanıt `req.stream` + `grpc-status` trailer'ıyla gider. Gerçek bir `grpcio` istemcisine karşı iki arka uçta sınanır (`scripts/grpc_server_probe.py`; 300 KB istek, 2 MB yanıt, 20 ardışık çağrı). **Sınır:** istek gövdesi tamamen okunduktan sonra işleyici çağrıldığından gerçek çift yönlü akış yok.
+
 ## [2.1.40]
 
 ### Eklendi
