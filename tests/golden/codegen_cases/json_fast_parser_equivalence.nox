@@ -1,0 +1,47 @@
+# v2.1.61: doğrudan-düğüm JSON ayrıştırıcısı için eşdeğerlik golden'ı. Beklenen çıktı `std.json` tabanlı ESKİ uygulamadan üretilmiştir; yeni ayrıştırıcı BİREBİR aynısını vermelidir
+# (sayı sınıfları, kaçışlar, yinelenen anahtar = hata, derinlik sınırı 32, geçersiz belgeler).
+import nox.json
+import nox.strings
+from nox.json import JsonValue, JsonError
+
+def show(doc: str) -> None:
+    try:
+        v: JsonValue = nox.json.parse(doc)
+        print(nox.json.dump(v))
+    except JsonError as e:
+        print("ERR")
+
+def nest(n: int) -> str:
+    return nox.strings.repeat("[", n) + "1" + nox.strings.repeat("]", n)
+
+# --- skalerler ve sayı sınıfları ---
+for d in ["null", "true", "false", "0", "-0", "1", "-1", "1.5", "1e3", "1E-2", "-0.0", "0.1", "3.141592653589793", "12345678901234567890", "-9007199254740993", "9007199254740992", "9007199254740993", "123456789012345678901234567890.5", "1e999", "-1e999", "5e-324", "1.7976931348623157e308", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809"]:
+    show(d)
+
+# --- dizeler ---
+show("\"\"")
+show("\"abc\"")
+show("\"a\\nb\\t\\\"\\\\\\/\\b\\f\\r\"")
+show("\"\\u00e9\\u4e2d\\u0041\"")
+show("\"\\ud83d\\ude00\"")
+show("\"héllo 世界 😀\"")
+show("\"\\u0000x\"")
+show("\"\\u001f\"")
+
+# --- kapsayıcılar ve boşluk ---
+for d in ["[]", "{}", "[1,2,3]", "[ ]", "{ }", " \n\t[ 1 , 2 ]\r\n ", "{\"a\":1,\"b\":[true,null,{\"c\":\"d\"}]}", "{\"k\":{\"k\":{\"k\":[]}}}", "[[],[[]],{}]", "{\"é\":\"ü\",\"\\u0061\":1}", "[\"a\",\"b\",\"c\"]", "{\"\":0}"]:
+    show(d)
+
+# --- derinlik sınırı (32 geçerli, 33 hata) ---
+show(nest(32))
+show(nest(33))
+show("{\"a\":" + nest(31) + "}")
+
+# --- geçersiz belgeler ---
+for d in ["", " ", "[", "]", "{", "}", "{\"a\":1,}", "[1,]", "[,1]", "{\"a\" 1}", "{\"a\":}", "{a:1}", "01", "1.", ".5", "+1", "-", "1e", "1e+", "nul", "tru", "falsey", "\"abc", "\"\\x\"", "\"\\u12\"", "\"\\ud800\"", "\"\\udc00\"", "\"\\ud800\\u0041\"", "{\"a\":1,\"a\":2}", "{\"a\":1,\"b\":2,\"a\":3}", "[1] x", "[1][2]", "\"tab\there\"", "{'a':1}", "[1 2]", "{\"a\":1 \"b\":2}", "[1,2", "{\"a\":[1,2}", "NaN", "Infinity", "[-]", "--1", "0x10", "1_000", "\"\\\"", "nullnull"]:
+    show(d)
+
+# --- geçersiz UTF-8 (ham baytlar) ---
+show("\"" + nox.strings.char_from_byte(255) + "\"")
+show("\"" + nox.strings.char_from_byte(195) + "\"")
+show("\"" + nox.strings.char_from_byte(192) + nox.strings.char_from_byte(128) + "\"")

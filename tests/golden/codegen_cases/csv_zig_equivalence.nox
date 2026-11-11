@@ -1,0 +1,21 @@
+# v2.1.62: nox.csv.parse Zig'e taşındı; beklenen çıktı saf-Nox ESKİ uygulamadan üretilmiştir (alıntılı alanlar, kaçış, CRLF, boş alan/satır, sondaki satır sonsuz, UTF-8, hata).
+import nox.csv
+import nox.strings
+from nox.csv import CsvError
+
+def show(doc: str) -> None:
+    try:
+        rows: list[list[str]] = nox.csv.parse(doc)
+        print(len(rows))
+        for r in rows:
+            print(len(r), r)
+    except CsvError as e:
+        print("ERR")
+
+for d in ["", "a", "a,b,c", "a,b,c\n", "a,b,c\nd,e,f", "a,b,c\r\nd,e,f\r\n", ",,\n", "a,,c\n", "\n", "\n\n", "a\n\nb", "\"x\",\"y,z\"\n", "\"he said \"\"hi\"\"\",2\n", "\"multi\nline\",b\n", "\"\"\n", "\"\",\"\"\n", "a,\"b\"c,d\n", "héllo,世界,😀\n", "a\rb,c\n", "\"unterminated", "a,\"unterminated\n", "x,y\n\"q\"", "1,2\n3,4\n5,6\n", " a , b \n", "a,b\r", "\"a\"\"\"", ","]:
+    show(d)
+big: str = nox.strings.repeat("alpha,\"be,ta\",gamma\n", 2000)
+rows2: list[list[str]] = nox.csv.parse(big)
+print(len(rows2), rows2[0], rows2[1999])
+dicts: list[dict[str, str]] = nox.csv.parse_dicts("id,name\n1,ann\n2,bob\n")
+print(len(dicts), dicts[1]["name"])

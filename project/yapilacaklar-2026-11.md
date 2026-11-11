@@ -37,17 +37,21 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 
 - [x] **2.1** `nox.base64` encode/decode → Zig kabuğu (26x/36x yavaştı; artık 1.0x/2.0x) — **v2.1.56**
 - [x] **2.2** `strings.upper/lower` ASCII SIMD yolu — **v2.1.56** (kalan maliyet büyük tahsis: 2.9)
-- [ ] **2.3** `strings.replace` (1.44x), `csv.parse` (1.35x) tahsis azaltma
-- [ ] **2.4** `json` parse/dump (1.7x) profil + optimize
-- [ ] **2.5** `regex` find_all/replace (1.5-1.7x) profil + optimize
+- [x] **2.3** `csv.parse` Zig'e (24.8 → 6.1 ms, 0.34x) — **v2.1.61**; `strings.replace` 1.35x: iki geçişli tarama sınırlı, kabul edildi (CPython tek geçiş memchr)
+- [x] **2.4** `json` parse 34.2 → 16.9 ms (0.91x), dump 27.2 → 18.3 ms (1.14x) — doğrudan düğüm ayrıştırıcı + Zig dump — **v2.1.61**
+- [x] **2.5** `regex` find_all 1.72 → 1.32x, replace 1.54 → 1.15x (ASCII bitmap + ilk-bayt ön süzgeci) — **v2.1.61**
 - [-] **2.6** `gzip` (2.5x/3.4x) — **yeni bağımlılık eklenmeyecek** (kullanıcı kararı); Zig flate kalır. İsteğe bağlı: bağımlılıksız ince ayar (düzey/tampon)
-- [~] **2.7** Eksik modül adaylarından hangileri gerçek talep: `bigint`/`decimal`, argüman ayrıştırma, `tempfile`/`glob`, XML/HTML, zip/tar/zstd, md5/sha3/blake3, `Mutex/Semaphore`, `.env`/ini
+- [x] **2.7** Eksik modül adayları: kullanıcı seçimi (2026-11-11): bigint+decimal/fraction, argparse, tempfile+glob/fnmatch, zip/tar/zstd+md5/sha3/blake3 (aşağıda 2.10-2.13); `XML/HTML`, `Mutex/Semaphore`, `.env/ini` istenmedi
+- [ ] **2.10** `nox.bigint` + `nox.decimal`/`nox.fraction` (keyfi hassasiyet; bağımlılıksız, Zig std.math.big)
+- [ ] **2.11** `nox.argparse` (komut satırı ayrıştırıcı)
+- [ ] **2.12** `nox.tempfile` + `nox.glob`/`fnmatch`
+- [ ] **2.13** `zip`/`tar`/`zstd`(yalnız açma: Zig std yalnız açar) arşiv/sıkıştırma + `md5`/`sha3`/`blake3` özetleri (Zig std.crypto; yeni bağımlılık YOK)
 - [x] **2.9** Büyük tahsis maliyeti: tam-eşit-boyutlu büyük blok önbelleği + SIMD ASCII taraması — **v2.1.60** (1 MB concat+len 0.36 → 0.10 ms; upper/lower/trim 55 → 5.4 ms)
-- [ ] **2.8** Her düzeltmeden sonra `benchmarks/stdlib_perf/run.py` ile yeniden ölç (hedef: tüm kalemler ≤ ~1.5x)
+- [x] **2.8** Yeniden ölçüm (v2.1.61): geometrik ortalama **0.68**; ≤ 1.5x hedefi: gzip 2.5x/2.2x (bağımlılık yok kararı) ve base64.decode 2.0x dışında sağlandı. (base64.decode için ayrı kalem olarak SIMD arama eklenebilir)
 
 ## 3. FFI (rapor: ffi-performans-analizi)
 
-- [~] **3.1** `Buffer`/`list[u8]`/`list[int]` için `lowlevel` içinde veri işaretçisi (sıfır-kopya) — **dil/ABI kararı**
+- [ ] **3.1** `lowlevel` içinde `ptr_of(liste)`/`Buffer` veri işaretçisi (sıfır-kopya) — kullanıcı ONAYLADI (2026-11-11); İlke 1/2 uyumlu: yalnız `lowlevel`, skaler elemanlı, tip denetimli
 - [ ] **3.2** QBE'de `lowlevel` `ptr_read/ptr_write` döngü maliyeti (0.87 vs 0.40 ns/eleman) incele
 - [ ] **3.3** Callback trampoline'ı profile et (4.99 ns, C'nin 7x'i)
 - [ ] **3.4** Struct-by-value ve saklanan (kayıtlı) callback tasarımı — madde 5.1 ile birlikte

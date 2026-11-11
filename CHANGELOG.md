@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.61]
+
+### Değişti
+
+- **`nox.json` doğrudan-düğüm ayrıştırıcı + Zig `dump`.** `parse`: `std.json.parseFromSlice` + ara `Value` ağacı yerine iki geçiş — allocation'sız tam doğrulama (katı JSON dilbilgisi, geçerli UTF-8, vekil çiftleri, yinelenen anahtar = hata, derinlik ≤ 32 — `std.json` ile AYNI kabul/ret kümesi) ve doğrulanmış girdiden doğrudan `JsonValue` düğümleri; ilk düğüm Nox kurucusundan üretilip sınıf kimliği oradan okunur. `dump`: düğüm ağacı Zig'de tek tampona yazılır (`nox_json_dump_raw`), çıktı önceki saf-Nox özyinelemeli `dump` ile birebir. Ölçüm (ReleaseFast): `json_parse_50k_objs` 34.2 → 16.9 ms (CPython 18.6), `json_dump` 27.2 → 18.3 ms. Doğrulama: `json_fast_parser_equivalence` golden'ı (beklenen çıktı ESKİ std tabanlı uygulamadan üretildi), 150 bin mutasyonlu farksal birim testi (hızlı doğrulayıcı = `std.json` + derinlik ön geçişi), mevcut 14 JSON fixture'ı.
+- **`nox.regex` motoru:** her sınıf için ASCII bitmap'i (üyelik O(1)) ve eşleşmenin başlayabileceği ilk baytları çıkaran ön süzgeç (boş eşleşme / sıfır-genişlikli yapı / arama-ileri / geri başvuru olmayan kalıplarda; UTF-8 sınırları ve ICASE korunur). `find_all` 5.8 → 4.4 ms, `replace` 6.1 → 4.4 ms. Doğrulama: özellikler kapalı kopyayla farksal birim testi + regex fixture'ları.
+- **`nox.csv.parse` Zig'e taşındı** (`runtime/stdlib_shims/csv.zig`): 24.8 → 6.1 ms (CPython 17.9). Anlam birebir (golden: `csv_zig_equivalence`, beklenen çıktı eski saf-Nox uygulamadan).
+- **Derleyici:** `with_rt` işaretli `extern def` (yalnızca stdlib'in kendi çalışma zamanı kabukları) artık sınıf-tipli parametre alabilir (işaretçi ödünç geçer); kullanıcı kodu için kural değişmedi.
+- Stdlib kıyası geometrik ortalama nox/python 0.75 → **0.68**. Kalan en yavaş kalemler: `gzip` 2.5x/2.2x (yeni bağımlılık eklenmeyecek, kullanıcı kararı), `base64.decode` 2.0x, `replace` 1.35x, `regex.find_all` 1.3x.
+
 ## [2.1.60]
 
 ### Değişti

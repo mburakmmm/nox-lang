@@ -40,54 +40,21 @@ def _quote_field(field: str) -> str:
 # `text`i satır/sütunlara ayırır — HER satır `list[str]`, tüm satırlar
 # `list[list[str]]`. Boş metin `[]` döner; sondaki temiz bir `\n`
 # SAHTE bir ek (boş) satır ÜRETMEZ.
+# v2.1.62: ayrıştırma Zig'de (`runtime/stdlib_shims/csv.zig`); anlam saf-Nox durum makinesiyle BİREBİR aynıdır (golden: `csv_zig_equivalence`). Zig düz alan listesini ve satır uzunluklarını verir.
+extern def nox_csv_fields_raw(text: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_csv_row_lens_raw() -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_csv_last_ok_raw() -> int from "zig-out/lib/noxrt.o"
+
 def parse(text: str) -> list[list[str]]:
-    rows: list[list[str]] = []
-    row: list[str] = []
-    field: str = ""
-    in_quotes: bool = False
-    field_started: bool = False
-    i: int = 0
-    n: int = len(text)
-    while i < n:
-        c: str = text[i]
-        if in_quotes:
-            if c == "\"":
-                if i + 1 < n and text[i + 1] == "\"":
-                    field = field + "\""
-                    i = i + 2
-                else:
-                    in_quotes = False
-                    i = i + 1
-            else:
-                field = field + c
-                i = i + 1
-        elif c == "\"":
-            in_quotes = True
-            field_started = True
-            i = i + 1
-        elif c == ",":
-            row.append(field)
-            field = ""
-            field_started = False
-            i = i + 1
-        elif c == "\r":
-            i = i + 1
-        elif c == "\n":
-            row.append(field)
-            rows.append(row)
-            row = []
-            field = ""
-            field_started = False
-            i = i + 1
-        else:
-            field = field + c
-            field_started = True
-            i = i + 1
-    if in_quotes:
+    fields: list[str] = nox_csv_fields_raw(text)
+    if nox_csv_last_ok_raw() == 0:
         raise CsvError("unterminated quoted field")
-    if field != "" or field_started or len(row) > 0:
-        row.append(field)
-        rows.append(row)
+    lens: list[int] = nox_csv_row_lens_raw()
+    rows: list[list[str]] = []
+    pos: int = 0
+    for n in lens:
+        rows.append(fields[pos:pos + n])
+        pos = pos + n
     return rows
 
 # İLK satırı başlık olarak kullanıp SONRAKİ HER satırı `dict[str,str]`e

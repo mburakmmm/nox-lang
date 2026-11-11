@@ -1861,7 +1861,9 @@ pub const Checker = struct {
             // bayt uzunluk başlığı + `str` işaretçileri, Zig tarafı bunu
             // DOĞRUDAN OKUYABİLİR, İNŞA ETMEK ZORUNDA DEĞİL) PARAMETRE
             // yönünde de AYNEN geçerlidir.
-            if (!isFfiSafeType(pt) and !isFfiSafeListType(pt)) {
+            // v2.1.61: yalnızca stdlib'in kendi çalışma zamanı kabukları (`with_rt`) sınıf-tipli parametre alabilir (ör. `nox_json_dump_raw(v: JsonValue)`): işaretçi ÖDÜNÇ geçer (çağıran sahibi kalır, `retains` yok),
+            // kullanıcı kodu için kural DEĞİŞMEDİ (sınıflar C ABI sınırından geçmez).
+            if (!isFfiSafeType(pt) and !isFfiSafeListType(pt) and !(ed.needs_rt and isFfiSafeClassReturnType(pt))) {
                 return self.fail(error.TypeMismatch, "extern function '{s}': parameter '{s}' has an unsupported type (only int/float/bool/str/None/list[str]/list[int] can cross the C ABI boundary in v0.1)", .{ ed.name, p.name });
             }
             params[i] = pt;

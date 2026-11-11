@@ -509,6 +509,10 @@ const Program = struct {
     nslots: u32, // 2*(ngroups+1) + mark sayısı
     names: []const []const u8,
     flags: i64,
+    /// v2.1.62: her sınıf için ASCII (0..127) üyelik bitmap'i (`prog.flags`e göre hesaplanır; yalnızca etkin ICASE durumu `prog.flags`inkiyle aynıysa kullanılır).
+    class_bits: []const [2]u64 = &.{},
+    /// v2.1.62: eşleşmenin başlayabileceği ilk baytların kümesi (256 bit); `null` = ön süzgeç yok (boş eşleşme / sıfır-genişlikli yapı / arama-ileri / geri başvuru ihtimali).
+    first: ?[4]u64 = null,
 };
 
 const Compiler = struct {
@@ -659,7 +663,7 @@ fn compile(arena: std.mem.Allocator, pattern: []const u8, err_out: *[]const u8) 
         err_out.* = if (c.err.len > 0) c.err else "out of memory";
         return null;
     }
-    return .{
+    var prog: Program = .{
         .insts = c.insts.items,
         .classes = p.classes.items,
         .ngroups = p.ngroups,
@@ -667,6 +671,108 @@ fn compile(arena: std.mem.Allocator, pattern: []const u8, err_out: *[]const u8) 
         .names = p.names.items,
         .flags = p.flags,
     };
+    // v2.1.62: sınıf bitmap'leri ve ilk-bayt kümesi (bellek yetmezse özellik kapalı kalır).
+    if (arena.alloc([2]u64, prog.classes.len)) |bits| {
+        for (prog.classes, 0..) |cls, ci| {
+            bits[ci] = .{ 0, 0 };
+            var cp: u32 = 0;
+            while (cp < 128) : (cp += 1) {
+                if (classMatchesStatic(cls, prog.flags, cp)) bits[ci][cp >> 6] |= @as(u64, 1) << @intCast(cp & 63);
+            }
+        }
+        prog.class_bits = bits;
+        prog.first = computeFirstSet(arena, &prog);
+    } else |_| {}
+    return prog;
+}
+
+/// `Vm.classMatches` ile AYNI anlam (bayraklara göre), VM'siz: bitmap önhesabı için.
+fn classMatchesStatic(cls: Class, flags: i64, cp: u32) bool {
+    var hit = classHasStatic(cls, cp);
+    if (!hit and (flags & FLAG_ICASE) != 0) {
+        hit = classHasStatic(cls, unicode.foldSimple(cp)) or classHasStatic(cls, unicode.upperSimple(cp));
+    }
+    return hit != cls.negate;
+}
+
+fn classHasStatic(cls: Class, cp: u32) bool {
+    for (cls.items) |it| {
+        switch (it) {
+            .range => |r| if (cp >= r.lo and cp <= r.hi) return true,
+            .digit => |neg| if (unicode.isDecimal(cp) != neg) return true,
+            .word => |neg| if (isWordCp(cp) != neg) return true,
+            .space => |neg| if (isSpaceCp(cp) != neg) return true,
+        }
+    }
+    return false;
+}
+
+/// Eşleşmenin başlayabileceği ilk baytlar. Her yol bir TÜKETEN komuta ulaşmalı; boş eşleşme (`match`), sıfır-genişlikli yapı (`bol/eol/...`), `look`, geri başvuru görülürse `null` (ön süzgeç yok).
+/// Sınıflarda ASCII kısmı tam (bitmap), 0x80+ baytların HEPSİ dahil edilir (korunumlu); ICASE'de de 0x80+ baytların hepsi dahildir (ör. Kelvin işareti ~ `k`).
+fn computeFirstSet(arena: std.mem.Allocator, prog: *const Program) ?[4]u64 {
+    const visited = arena.alloc(bool, prog.insts.len) catch return null;
+    @memset(visited, false);
+    var set: [4]u64 = .{ 0, 0, 0, 0 };
+    const icase = (prog.flags & FLAG_ICASE) != 0;
+    var stack: std.ArrayListUnmanaged(u32) = .empty;
+    stack.append(arena, 0) catch return null;
+    while (stack.pop()) |pc0| {
+        var pc = pc0;
+        while (true) {
+            if (pc >= prog.insts.len or visited[pc]) break;
+            visited[pc] = true;
+            const inst = prog.insts[pc];
+            switch (inst.op) {
+                .char => {
+                    const cp = inst.c;
+                    if (cp < 128) {
+                        setBit(&set, cp);
+                    } else {
+                        var buf: [4]u8 = undefined;
+                        _ = std.unicode.utf8Encode(@intCast(cp), &buf) catch return null;
+                        setBit(&set, buf[0]);
+                    }
+                    if (icase) {
+                        setHigh(&set);
+                        const lo = unicode.foldSimple(cp);
+                        const up = unicode.upperSimple(cp);
+                        if (lo < 128) setBit(&set, lo);
+                        if (up < 128) setBit(&set, up);
+                    }
+                    break;
+                },
+                .any => {
+                    set = .{ ~@as(u64, 0), ~@as(u64, 0), ~@as(u64, 0), ~@as(u64, 0) };
+                    break;
+                },
+                .class => {
+                    const ci = inst.c;
+                    if (ci >= prog.class_bits.len) return null;
+                    set[0] |= prog.class_bits[ci][0];
+                    set[1] |= prog.class_bits[ci][1];
+                    setHigh(&set);
+                    break;
+                },
+                .split => {
+                    stack.append(arena, inst.y) catch return null;
+                    pc = inst.x;
+                },
+                .jmp => pc = inst.x,
+                .save, .mark, .progress => pc += 1,
+                else => return null, // match, bol/eol/..., wordb, backref, look
+            }
+        }
+    }
+    return set;
+}
+
+fn setBit(set: *[4]u64, b: u32) void {
+    set[b >> 6] |= @as(u64, 1) << @intCast(b & 63);
+}
+
+fn setHigh(set: *[4]u64) void {
+    set[2] = ~@as(u64, 0);
+    set[3] = ~@as(u64, 0);
 }
 
 // ------------------------------------------------------------------ VM ----
@@ -718,6 +824,9 @@ const Vm = struct {
     }
 
     fn classMatches(self: *Vm, ci: u32, cp: u32) bool {
+        if (cp < 128 and ci < self.prog.class_bits.len and (self.flags & FLAG_ICASE) == (self.prog.flags & FLAG_ICASE)) {
+            return (self.prog.class_bits[ci][cp >> 6] >> @intCast(cp & 63)) & 1 != 0;
+        }
         const cls = self.prog.classes[ci];
         var hit = self.classHas(cls, cp);
         if (!hit and (self.flags & FLAG_ICASE) != 0) {
@@ -938,7 +1047,19 @@ fn search(alloc: std.mem.Allocator, prog: *const Program, text: []const u8, from
     var vm: Vm = .{ .prog = prog, .text = text, .flags = flags, .caps = caps, .alloc = alloc, .full = (flags & FLAG_FULL) != 0 };
     defer vm.stack.deinit(alloc);
     var start = from;
+    // v2.1.62: ilk-bayt ön süzgeci — eşleşme bu baytla BAŞLAYAMAZSA başlangıcı atla (UTF-8 sınırları korunur: devam baytları başlangıç sayılmaz). Yalnızca ICASE durumu derlemedekiyle
+    // aynıysa ve sabitli/tam eşleşme değilse; kalıp boş eşleşebilirse `first == null`.
+    const use_first = prog.first != null and (flags & FLAG_ICASE) == (prog.flags & FLAG_ICASE) and (flags & (FLAG_ANCHORED | FLAG_FULL)) == 0;
     while (start <= text.len) {
+        if (use_first) {
+            const fs = prog.first.?;
+            while (start < text.len) {
+                const b = text[start];
+                if ((b & 0xC0) != 0x80 and (fs[b >> 6] >> @intCast(b & 63)) & 1 != 0) break;
+                start += 1;
+            }
+            if (start >= text.len) return false; // boş eşleşme yok, kalan metinde başlangıç baytı yok
+        }
         @memset(caps, -1);
         vm.stack.clearRetainingCapacity();
         if (vm.run(0, start, 0, false)) |end| {
@@ -1158,4 +1279,53 @@ test "geçersiz desenler" {
     try std.testing.expect(compile(arena.allocator(), "a{3,2}", &err) == null);
     try std.testing.expect(compile(arena.allocator(), "\\1", &err) == null);
     try std.testing.expect(compile(arena.allocator(), "(?<=a)b", &err) == null);
+}
+
+// v2.1.62: sınıf bitmap'i + ilk-bayt ön süzgeci SONUCU değiştirmemelidir: aynı program, özellikler kapalı (`first = null`, `class_bits = &.{}`) kopyayla çok sayıda (kalıp, metin, başlangıç) üçlüsünde karşılaştırılır.
+test "v2.1.62: ön süzgeç + sınıf bitmap'i, özellikler kapalı referansla aynı eşleşmeleri verir" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const patterns = [_][]const u8{
+        "[0-9]+",  "\\d+",       "\\w+",                  "\\s+",         "[a-c]x", "(?i)abc",   "(?i)k",
+        "é+",
+        "[^a-z]+", "a|b|cd",     "(a|b)+c",               "x*y",          ".+z",    "\\bfoo\\b", "^a",
+        "b$",      "(?=a)a",     "ab*",
+        "[é-ü]+",
+        "\\D\\d",  "(?i)[a-c]+", "[-+]?[0-9]*\\.?[0-9]+", "(foo|bar)baz",
+    };
+    const texts = [_][]const u8{
+        "",                  "a",                            "abc xyz 123 foo bar foobaz", "w123x w4x",
+        "héllo wörld éé üü",
+        "KkK\xe2\x84\xaakK", "x yz xyyz  zz",                "0.5 -3 +4.25e1",             "\xc3\xa9\xc3\xa9\xc3\xa9",
+        "AABBcd cd ab",      "foo bar baz foobarbaz barbaz",
+    };
+    var prng = std.Random.DefaultPrng.init(0x5EED);
+    const rand = prng.random();
+    var checked: usize = 0;
+    for (patterns) |pat| {
+        var err: []const u8 = "";
+        const prog = compile(arena, pat, &err) orelse continue;
+        var ref = prog;
+        ref.first = null;
+        ref.class_bits = &.{};
+        const caps_a = try arena.alloc(isize, prog.nslots);
+        const caps_b = try arena.alloc(isize, prog.nslots);
+        for (texts) |txt| {
+            var from: usize = 0;
+            while (from <= txt.len) : (from += 1) {
+                // yalnızca kod noktası sınırlarında başla (orijinal arama da böyle çağrılır)
+                if (from < txt.len and (txt[from] & 0xC0) == 0x80) continue;
+                for ([_]i64{ 0, FLAG_ICASE, FLAG_MULTILINE }) |fl| {
+                    const ra = search(std.testing.allocator, &prog, txt, from, fl, caps_a);
+                    const rb = search(std.testing.allocator, &ref, txt, from, fl, caps_b);
+                    try std.testing.expectEqual(rb, ra);
+                    if (ra) try std.testing.expectEqualSlices(isize, caps_b, caps_a);
+                    checked += 1;
+                }
+            }
+        }
+        _ = rand;
+    }
+    try std.testing.expect(checked > 1000);
 }

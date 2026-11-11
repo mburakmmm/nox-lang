@@ -574,11 +574,569 @@ export fn nox_json_escape_string_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callcon
     return dupeToNoxStr(rt, escaped);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// v2.1.61: DOĞRUDAN-DÜĞÜM JSON ayrıştırıcısı. `std.json.parseFromSlice` (Scanner + ara `Value` ağacı + düğüm kopyaları) yerine iki geçiş:
+//   1. `validate`: ALLOCATION'SIZ (yalnızca yinelenen-anahtar denetimi için küçük arena listesi) tam dilbilgisi denetimi — `std.json`un kabul/ret kümesiyle AYNI: katı JSON dilbilgisi, kontrol
+//      karakteri (< 0x20) yasak, geçerli UTF-8 şart, `\uXXXX` vekil çiftleri eşli olmalı, yinelenen anahtar = hata, iç içe kapsayıcı derinliği <= MAX_JSON_NESTING_DEPTH.
+//   2. `build`: doğrulanmış girdiden doğrudan `JsonValue` düğümleri üretir (sözdizimi hatası olamaz; tahsis hatası `null` yayar).
+// `std.json` tabanlı eski yol (ilk çağrıda sınıf keşfi için) ve `jsonNestingDepthExceeds` REFERANS olarak kalır; farksal testler (aşağıda) ve `json_fast_parser_equivalence` golden'ı ikisini karşılaştırır.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+const FastJson = struct {
+    s: []const u8,
+    i: usize = 0,
+    allocator: std.mem.Allocator,
+    keys: std.ArrayListUnmanaged(KeySpan) = .empty,
+    scratch: std.ArrayListUnmanaged(u8) = .empty,
+    scratch2: std.ArrayListUnmanaged(u8) = .empty,
+    /// `JsonValue` sınıf kimliği; bilinmiyorsa (bu iş parçacığında ilk ayrıştırma) İLK düğüm Nox kurucusundan (`callMakeJsonValue`) üretilir ve kimlik oradan okunur.
+    cid: ?i64 = null,
+
+    const KeySpan = struct { start: usize, end: usize, esc: bool };
+
+    fn ws(self: *FastJson) void {
+        while (self.i < self.s.len) : (self.i += 1) {
+            switch (self.s[self.i]) {
+                ' ', '\t', '\n', '\r' => {},
+                else => return,
+            }
+        }
+    }
+
+    fn lit(self: *FastJson, word: []const u8) bool {
+        if (self.s.len - self.i < word.len or !std.mem.eql(u8, self.s[self.i..][0..word.len], word)) return false;
+        self.i += word.len;
+        return true;
+    }
+
+    fn hex4(self: *const FastJson, at: usize) ?u16 {
+        if (at + 4 > self.s.len) return null;
+        var v: u16 = 0;
+        for (self.s[at..][0..4]) |c| {
+            const d: u16 = switch (c) {
+                '0'...'9' => c - '0',
+                'a'...'f' => c - 'a' + 10,
+                'A'...'F' => c - 'A' + 10,
+                else => return null,
+            };
+            v = (v << 4) | d;
+        }
+        return v;
+    }
+
+    /// `self.i` açılış tırnağında. Başarıda `self.i` kapanış tırnağının ARDINDA; `start`/`end` ham içerik, `esc` kaçış içerir mi.
+    fn validString(self: *FastJson, start: *usize, end: *usize, esc: *bool) bool {
+        self.i += 1;
+        start.* = self.i;
+        esc.* = false;
+        while (self.i < self.s.len) {
+            const c = self.s[self.i];
+            if (c == '"') {
+                end.* = self.i;
+                self.i += 1;
+                return true;
+            }
+            if (c < 0x20) return false;
+            if (c == '\\') {
+                esc.* = true;
+                if (self.i + 1 >= self.s.len) return false;
+                switch (self.s[self.i + 1]) {
+                    '"', '\\', '/', 'b', 'f', 'n', 'r', 't' => self.i += 2,
+                    'u' => {
+                        const hi = self.hex4(self.i + 2) orelse return false;
+                        self.i += 6;
+                        if (hi >= 0xD800 and hi <= 0xDBFF) {
+                            if (self.i + 1 >= self.s.len or self.s[self.i] != '\\' or self.s[self.i + 1] != 'u') return false;
+                            const lo = self.hex4(self.i + 2) orelse return false;
+                            if (lo < 0xDC00 or lo > 0xDFFF) return false;
+                            self.i += 6;
+                        } else if (hi >= 0xDC00 and hi <= 0xDFFF) {
+                            return false;
+                        }
+                    },
+                    else => return false,
+                }
+                continue;
+            }
+            if (c < 0x80) {
+                self.i += 1;
+                continue;
+            }
+            const n = std.unicode.utf8ByteSequenceLength(c) catch return false;
+            if (self.i + n > self.s.len) return false;
+            _ = std.unicode.utf8Decode(self.s[self.i..][0..n]) catch return false;
+            self.i += n;
+        }
+        return false;
+    }
+
+    fn validNumber(self: *FastJson) bool {
+        var i = self.i;
+        const s = self.s;
+        if (i < s.len and s[i] == '-') i += 1;
+        if (i >= s.len) return false;
+        if (s[i] == '0') {
+            i += 1;
+        } else if (s[i] >= '1' and s[i] <= '9') {
+            while (i < s.len and s[i] >= '0' and s[i] <= '9') i += 1;
+        } else return false;
+        if (i < s.len and s[i] == '.') {
+            i += 1;
+            const d0 = i;
+            while (i < s.len and s[i] >= '0' and s[i] <= '9') i += 1;
+            if (i == d0) return false;
+        }
+        if (i < s.len and (s[i] == 'e' or s[i] == 'E')) {
+            i += 1;
+            if (i < s.len and (s[i] == '+' or s[i] == '-')) i += 1;
+            const d0 = i;
+            while (i < s.len and s[i] >= '0' and s[i] <= '9') i += 1;
+            if (i == d0) return false;
+        }
+        self.i = i;
+        return true;
+    }
+
+    fn validValue(self: *FastJson, open_depth: usize) bool {
+        if (self.i >= self.s.len) return false;
+        switch (self.s[self.i]) {
+            '{' => return self.validObject(open_depth + 1),
+            '[' => return self.validArray(open_depth + 1),
+            '"' => {
+                var a: usize = 0;
+                var b: usize = 0;
+                var e = false;
+                return self.validString(&a, &b, &e);
+            },
+            't' => return self.lit("true"),
+            'f' => return self.lit("false"),
+            'n' => return self.lit("null"),
+            '-', '0'...'9' => return self.validNumber(),
+            else => return false,
+        }
+    }
+
+    fn validArray(self: *FastJson, depth: usize) bool {
+        if (depth > MAX_JSON_NESTING_DEPTH) return false;
+        self.i += 1;
+        self.ws();
+        if (self.i < self.s.len and self.s[self.i] == ']') {
+            self.i += 1;
+            return true;
+        }
+        while (true) {
+            self.ws();
+            if (!self.validValue(depth)) return false;
+            self.ws();
+            if (self.i >= self.s.len) return false;
+            switch (self.s[self.i]) {
+                ',' => self.i += 1,
+                ']' => {
+                    self.i += 1;
+                    return true;
+                },
+                else => return false,
+            }
+        }
+    }
+
+    fn validObject(self: *FastJson, depth: usize) bool {
+        if (depth > MAX_JSON_NESTING_DEPTH) return false;
+        self.i += 1;
+        self.ws();
+        if (self.i < self.s.len and self.s[self.i] == '}') {
+            self.i += 1;
+            return true;
+        }
+        const key_base = self.keys.items.len;
+        while (true) {
+            self.ws();
+            if (self.i >= self.s.len or self.s[self.i] != '"') return false;
+            var a: usize = 0;
+            var b: usize = 0;
+            var e = false;
+            if (!self.validString(&a, &b, &e)) return false;
+            self.keys.append(self.allocator, .{ .start = a, .end = b, .esc = e }) catch return false;
+            self.ws();
+            if (self.i >= self.s.len or self.s[self.i] != ':') return false;
+            self.i += 1;
+            self.ws();
+            if (!self.validValue(depth)) return false;
+            self.ws();
+            if (self.i >= self.s.len) return false;
+            switch (self.s[self.i]) {
+                ',' => self.i += 1,
+                '}' => {
+                    self.i += 1;
+                    const ok = !self.hasDuplicate(key_base);
+                    self.keys.shrinkRetainingCapacity(key_base);
+                    return ok;
+                },
+                else => return false,
+            }
+        }
+    }
+
+    /// `slot` indeksindeki anahtarın KAÇIŞSIZ baytları (`buf` yalnızca kaçışlı anahtarlarda kullanılır).
+    fn keyBytes(self: *FastJson, k: KeySpan, buf: *std.ArrayListUnmanaged(u8)) []const u8 {
+        if (!k.esc) return self.s[k.start..k.end];
+        buf.clearRetainingCapacity();
+        self.unescapeInto(buf, self.s[k.start..k.end]) catch return self.s[k.start..k.end];
+        return buf.items;
+    }
+
+    fn hasDuplicate(self: *FastJson, base: usize) bool {
+        const ks = self.keys.items[base..];
+        if (ks.len < 2) return false;
+        if (ks.len <= 8) {
+            for (ks, 0..) |a, ai| {
+                const ab = self.keyBytes(a, &self.scratch);
+                for (ks[ai + 1 ..]) |b| {
+                    const bb = self.keyBytes(b, &self.scratch2);
+                    if (std.mem.eql(u8, ab, bb)) return true;
+                }
+            }
+            return false;
+        }
+        // Büyük nesneler: açık adresli karma tablosu (anahtar baytları KAÇIŞSIZ karşılaştırılır).
+        var cap: usize = 16;
+        while (cap < ks.len * 2) cap *= 2;
+        const table = self.allocator.alloc(u32, cap) catch return true; // bellek yoksa güvenli tarafta: hata say
+        defer self.allocator.free(table);
+        @memset(table, std.math.maxInt(u32));
+        for (ks, 0..) |a, ai| {
+            const ab = self.keyBytes(a, &self.scratch);
+            var pos: usize = @intCast(std.hash.Wyhash.hash(0, ab) & (cap - 1));
+            while (table[pos] != std.math.maxInt(u32)) : (pos = (pos + 1) & (cap - 1)) {
+                const other = ks[table[pos]];
+                const ob = self.keyBytes(other, &self.scratch2);
+                if (std.mem.eql(u8, ab, ob)) return true;
+            }
+            table[pos] = @intCast(ai);
+        }
+        return false;
+    }
+
+    /// Doğrulanmış ham dize içeriğini (kaçışlar dahil) çözülmüş UTF-8 baytlarına çevirip `out`a ekler.
+    fn unescapeInto(self: *FastJson, out: *std.ArrayListUnmanaged(u8), raw: []const u8) !void {
+        var j: usize = 0;
+        while (j < raw.len) {
+            const c = raw[j];
+            if (c != '\\') {
+                // Kaçışsız çalışmayı toplu kopyala.
+                var k = j + 1;
+                while (k < raw.len and raw[k] != '\\') k += 1;
+                try out.appendSlice(self.allocator, raw[j..k]);
+                j = k;
+                continue;
+            }
+            const e = raw[j + 1];
+            switch (e) {
+                '"' => try out.append(self.allocator, '"'),
+                '\\' => try out.append(self.allocator, '\\'),
+                '/' => try out.append(self.allocator, '/'),
+                'b' => try out.append(self.allocator, 0x08),
+                'f' => try out.append(self.allocator, 0x0C),
+                'n' => try out.append(self.allocator, '\n'),
+                'r' => try out.append(self.allocator, '\r'),
+                't' => try out.append(self.allocator, '\t'),
+                'u' => {
+                    var cp: u21 = hexQuad(raw[j + 2 ..][0..4]);
+                    j += 6;
+                    if (cp >= 0xD800 and cp <= 0xDBFF) {
+                        const lo: u21 = hexQuad(raw[j + 2 ..][0..4]);
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                        j += 6;
+                    }
+                    var buf: [4]u8 = undefined;
+                    const n = std.unicode.utf8Encode(cp, &buf) catch unreachable;
+                    try out.appendSlice(self.allocator, buf[0..n]);
+                    continue;
+                },
+                else => unreachable,
+            }
+            j += 2;
+        }
+    }
+
+    fn hexQuad(q: *const [4]u8) u21 {
+        var v: u21 = 0;
+        for (q) |c| {
+            const d: u21 = switch (c) {
+                '0'...'9' => c - '0',
+                'a'...'f' => c - 'a' + 10,
+                'A'...'F' => c - 'A' + 10,
+                else => unreachable,
+            };
+            v = (v << 4) | d;
+        }
+        return v;
+    }
+
+    // ---- build (girdi `validate`ten geçmiştir) ----
+
+    fn node(self: *FastJson, rt: ?*anyopaque, kind: i64, b: bool, n: f64, str: ?[*:0]const u8, arr: ?*anyopaque, keys: ?*anyopaque, vals: ?*anyopaque) ?*anyopaque {
+        if (self.cid) |c| return makeJsonValueDirect(rt, c, kind, b, n, str, arr, keys, vals);
+        const r = callMakeJsonValue(rt, kind, if (b) 1 else 0, n, str, arr, keys, vals) orelse return null;
+        const c = @as(*align(1) const i64, @ptrCast(r)).*;
+        self.cid = c;
+        JsonValueClassIdSlot.value = c;
+        return r;
+    }
+
+    fn leaf(self: *FastJson, rt: ?*anyopaque, shared: SharedEmpties, kind: i64, b: bool, n: f64, str: ?[*:0]const u8) ?*anyopaque {
+        return self.node(rt, kind, b, n, str, sharedEmptyList(shared), sharedEmptyList(shared), sharedEmptyList(shared));
+    }
+
+    /// Çözülmüş dize değeri → Nox `str`.
+    fn buildStr(self: *FastJson, rt: ?*anyopaque, a: usize, b: usize, esc: bool) ?[*:0]u8 {
+        if (!esc) return dupeToNoxStr(rt, self.s[a..b]);
+        self.scratch.clearRetainingCapacity();
+        self.unescapeInto(&self.scratch, self.s[a..b]) catch return null;
+        return dupeToNoxStr(rt, self.scratch.items);
+    }
+
+    fn buildValue(self: *FastJson, rt: ?*anyopaque, shared: SharedEmpties) ?*anyopaque {
+        self.ws();
+        switch (self.s[self.i]) {
+            '{' => {
+                self.i += 1;
+                var key_items: std.ArrayListUnmanaged(?*anyopaque) = .empty;
+                var val_items: std.ArrayListUnmanaged(?*anyopaque) = .empty;
+                self.ws();
+                if (self.s[self.i] == '}') {
+                    self.i += 1;
+                } else {
+                    while (true) {
+                        self.ws();
+                        var a: usize = 0;
+                        var b: usize = 0;
+                        var e = false;
+                        _ = self.validString(&a, &b, &e); // geçerli: yalnızca aralığı bul
+                        key_items.append(self.allocator, self.buildStr(rt, a, b, e)) catch return null;
+                        self.ws();
+                        self.i += 1; // ':'
+                        const child = self.buildValue(rt, shared);
+                        val_items.append(self.allocator, child) catch return null;
+                        self.ws();
+                        const c = self.s[self.i];
+                        self.i += 1;
+                        if (c == '}') break;
+                    }
+                }
+                const keys_list = buildPtrList(rt, key_items.items) orelse return null;
+                const vals_list = buildPtrList(rt, val_items.items) orelse return null;
+                return self.node(rt, 5, false, 0.0, sharedEmptyStr(shared), sharedEmptyList(shared), keys_list, vals_list);
+            },
+            '[' => {
+                self.i += 1;
+                var items: std.ArrayListUnmanaged(?*anyopaque) = .empty;
+                self.ws();
+                if (self.s[self.i] == ']') {
+                    self.i += 1;
+                } else {
+                    while (true) {
+                        const child = self.buildValue(rt, shared);
+                        items.append(self.allocator, child) catch return null;
+                        self.ws();
+                        const c = self.s[self.i];
+                        self.i += 1;
+                        if (c == ']') break;
+                    }
+                }
+                const arr_list = buildPtrList(rt, items.items) orelse return null;
+                return self.node(rt, 4, false, 0.0, sharedEmptyStr(shared), arr_list, sharedEmptyList(shared), sharedEmptyList(shared));
+            },
+            '"' => {
+                var a: usize = 0;
+                var b: usize = 0;
+                var e = false;
+                _ = self.validString(&a, &b, &e);
+                const dup = self.buildStr(rt, a, b, e) orelse return null;
+                return self.leaf(rt, shared, 3, false, 0.0, dup);
+            },
+            't' => {
+                self.i += 4;
+                return self.leaf(rt, shared, 1, true, 0.0, sharedEmptyStr(shared));
+            },
+            'f' => {
+                self.i += 5;
+                return self.leaf(rt, shared, 1, false, 0.0, sharedEmptyStr(shared));
+            },
+            'n' => {
+                self.i += 4;
+                return self.leaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
+            },
+            else => {
+                const start = self.i;
+                _ = self.validNumber();
+                return self.numberLeaf(rt, shared, self.s[start..self.i]);
+            },
+        }
+    }
+
+    /// `std.json.Value.parseFromNumberSlice` + `buildNodeFast`in sayı dallarıyla BİREBİR aynı sınıflandırma.
+    fn numberLeaf(self: *FastJson, rt: ?*anyopaque, shared: SharedEmpties, tok: []const u8) ?*anyopaque {
+        const integer_like = !std.mem.eql(u8, tok, "-0") and std.mem.indexOfAny(u8, tok, ".eE") == null;
+        if (!integer_like) {
+            const f = std.fmt.parseFloat(f64, tok) catch 0.0;
+            if (std.math.isFinite(f)) return self.leaf(rt, shared, 2, false, f, sharedEmptyStr(shared));
+            return self.leaf(rt, shared, 2, false, f, if (isPlainBigInteger(tok)) exactNumberText(rt, shared, tok) else sharedEmptyStr(shared));
+        }
+        if (std.fmt.parseInt(i64, tok, 10)) |i| {
+            if (i >= (1 << 53) or i <= -(1 << 53)) {
+                var buf: [24]u8 = undefined;
+                const text = std.fmt.bufPrint(&buf, "{d}", .{i}) catch return self.leaf(rt, shared, 2, false, @floatFromInt(i), sharedEmptyStr(shared));
+                return self.leaf(rt, shared, 2, false, @floatFromInt(i), exactNumberText(rt, shared, text));
+            }
+            return self.leaf(rt, shared, 2, false, @floatFromInt(i), sharedEmptyStr(shared));
+        } else |_| {
+            return self.leaf(rt, shared, 2, false, std.fmt.parseFloat(f64, tok) catch 0.0, if (isPlainBigInteger(tok)) exactNumberText(rt, shared, tok) else sharedEmptyStr(shared));
+        }
+    }
+};
+
+/// Referans/farksal test girişi: `slice` geçerli JSON mu (derinlik <= MAX_JSON_NESTING_DEPTH dahil)?
+fn fastValidate(allocator: std.mem.Allocator, slice: []const u8) bool {
+    var p = FastJson{ .s = slice, .allocator = allocator };
+    defer p.keys.deinit(allocator);
+    defer p.scratch.deinit(allocator);
+    defer p.scratch2.deinit(allocator);
+    p.ws();
+    if (!p.validValue(0)) return false;
+    p.ws();
+    return p.i == slice.len;
+}
+
+// v2.1.61: `nox.json.dump` Zig'de. Düğüm ağacı (JsonValue: kind@8, b@16, n@24, s@32, arr@40, keys@48, vals@56; liste: len@0, cap@8, elemanlar@LIST_HEADER_SIZE) tek tampona yazılır.
+// Anlam `json.nox`un saf-Nox `dump`ıyla BİREBİR: sayı = `s` doluysa (tam tamsayı metni) o, değilse |n| < 1e15 ve tamsayı ise tamsayı, aksi halde `str(float)` (Python repr).
+fn rdI64(p: [*]const u8, off: usize) i64 {
+    return @as(*align(1) const i64, @ptrCast(p + off)).*;
+}
+
+fn rdF64(p: [*]const u8, off: usize) f64 {
+    return @as(*align(1) const f64, @ptrCast(p + off)).*;
+}
+
+fn rdPtr(p: [*]const u8, off: usize) ?[*]const u8 {
+    const v = @as(*align(1) const u64, @ptrCast(p + off)).*;
+    if (v == 0) return null;
+    return @ptrFromInt(@as(usize, @intCast(v)));
+}
+
+fn dumpNumberInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), n: f64) std.mem.Allocator.Error!void {
+    if (n < 1000000000000000.0 and n > -1000000000000000.0) {
+        const i: i64 = @intFromFloat(n);
+        if (@as(f64, @floatFromInt(i)) == n) {
+            var tmp: [24]u8 = undefined;
+            const t = std.fmt.bufPrint(&tmp, "{d}", .{i}) catch unreachable;
+            return out.appendSlice(a, t);
+        }
+    }
+    var fb: [64]u8 = undefined;
+    return out.appendSlice(a, str_mod.formatFloatRepr(&fb, n));
+}
+
+fn dumpNodeInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), node: [*]const u8) std.mem.Allocator.Error!void {
+    switch (rdI64(node, FIELD_SLOT_SIZE * 1)) {
+        0 => try out.appendSlice(a, "null"),
+        1 => try out.appendSlice(a, if (rdI64(node, FIELD_SLOT_SIZE * 2) != 0) "true" else "false"),
+        2 => {
+            if (rdPtr(node, FIELD_SLOT_SIZE * 4)) |sp| {
+                const sl = str_mod.nox_str_slice(@ptrCast(sp));
+                if (sl.len > 0) return out.appendSlice(a, sl);
+            }
+            try dumpNumberInto(a, out, rdF64(node, FIELD_SLOT_SIZE * 3));
+        },
+        3 => {
+            const sl: []const u8 = if (rdPtr(node, FIELD_SLOT_SIZE * 4)) |sp| str_mod.nox_str_slice(@ptrCast(sp)) else "";
+            var sfa = std.heap.stackFallback(4096, a);
+            const ea = sfa.get();
+            const esc = try escapeJsonString(ea, sl);
+            defer ea.free(esc);
+            try out.appendSlice(a, esc);
+        },
+        4 => {
+            const list = rdPtr(node, FIELD_SLOT_SIZE * 5) orelse return out.appendSlice(a, "[]");
+            const n: usize = @intCast(rdI64(list, 0));
+            try out.append(a, '[');
+            for (0..n) |i| {
+                if (i > 0) try out.append(a, ',');
+                const child = rdPtr(list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i) orelse {
+                    try out.appendSlice(a, "null");
+                    continue;
+                };
+                try dumpNodeInto(a, out, child);
+            }
+            try out.append(a, ']');
+        },
+        else => {
+            const keys = rdPtr(node, FIELD_SLOT_SIZE * 6) orelse return out.appendSlice(a, "{}");
+            const vals = rdPtr(node, FIELD_SLOT_SIZE * 7) orelse return out.appendSlice(a, "{}");
+            const n: usize = @intCast(rdI64(keys, 0));
+            try out.append(a, '{');
+            for (0..n) |i| {
+                if (i > 0) try out.append(a, ',');
+                const kp = rdPtr(keys, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i);
+                const ksl: []const u8 = if (kp) |k| str_mod.nox_str_slice(@ptrCast(k)) else "";
+                var sfa = std.heap.stackFallback(1024, a);
+                const ea = sfa.get();
+                const esc = try escapeJsonString(ea, ksl);
+                defer ea.free(esc);
+                try out.appendSlice(a, esc);
+                try out.append(a, ':');
+                const child = rdPtr(vals, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i) orelse {
+                    try out.appendSlice(a, "null");
+                    continue;
+                };
+                try dumpNodeInto(a, out, child);
+            }
+            try out.append(a, '}');
+        },
+    }
+}
+
+export fn nox_json_dump_raw(rt: ?*anyopaque, v: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    const node: [*]const u8 = @ptrCast(v orelse return dupeToNoxStr(rt, "null"));
+    const a = scratch_util.scratchAllocator();
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(a);
+    dumpNodeInto(a, &out, node) catch return null;
+    return dupeToNoxStr(rt, out.items);
+}
+
 export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     // NOT: `s`in null olduğu dal İçin `str_mod.nox_str_slice`e DÜŞMEYİZ —
     // o yol yalnızca GERÇEK bir Nox `str` (görünmez başlıklı) BEKLER, boş
     // Zig dize literal'i "" BUNU SAĞLAMAZ (başlıksız bellek okunması OLURDU).
     const slice = if (s) |sp| str_mod.nox_str_slice(sp) else "";
+
+    // v2.1.61: doğrudan-düğüm ayrıştırıcı (ilk çağrı dahil: sınıf kimliği ilk düğüm Nox kurucusundan okunur). `std.json` tabanlı aşağıdaki yol REFERANS olarak (farksal testler) kalır.
+    {
+        if (DecodeArenaSlot.value == null) {
+            DecodeArenaSlot.value = std.heap.ArenaAllocator.init(scratch_util.scratchAllocator());
+        }
+        const farena = &DecodeArenaSlot.value.?;
+        defer _ = farena.reset(.{ .retain_with_limit = DECODE_ARENA_RETAIN_LIMIT });
+        var fp = FastJson{ .s = slice, .allocator = farena.allocator(), .cid = JsonValueClassIdSlot.value };
+        fp.ws();
+        const ok = fp.validValue(0) and blk: {
+            fp.ws();
+            break :blk fp.i == slice.len;
+        };
+        if (!ok) {
+            jsonLastOpOkPtr().* = false;
+            return makeLeafUnshared(rt, 0, false, 0.0, "");
+        }
+        const fshared = initSharedEmpties(rt) orelse {
+            jsonLastOpOkPtr().* = true;
+            return makeLeafUnshared(rt, 0, false, 0.0, "");
+        };
+        defer releaseSharedEmpties(rt, fshared);
+        fp.i = 0;
+        const froot = fp.buildValue(rt, fshared);
+        jsonLastOpOkPtr().* = true;
+        return froot orelse makeLeaf(rt, fshared, 0, false, 0.0, sharedEmptyStr(fshared));
+    }
 
     // GG.23: `std.json.parseFromSlice`ı HİÇ ÇAĞIRMADAN ÖNCE — bkz.
     // `jsonNestingDepthExceeds`in belge notu. Sözdizimi-hatasıyla AYNI
@@ -795,4 +1353,99 @@ test "escapeJsonString: çıktı std.json ile geri okunabilir (round-trip)" {
     const parsed = try std.json.parseFromSlice([]const u8, a, escaped, .{});
     defer parsed.deinit();
     try std.testing.expectEqualSlices(u8, &raw, parsed.value);
+}
+
+// v2.1.61: farksal test — doğrudan-düğüm ayrıştırıcının doğrulayıcısı (`fastValidate`), `std.json` tabanlı referansla (derinlik ön geçişi + `parseFromSlice`) AYNI kabul/ret kararını verir.
+// Tohum belgeler yapısal olarak değiştirilir (karakter ekle/sil/değiştir, parça kopyala) — hem geçerli hem geçersiz binlerce belge üretir.
+test "v2.1.61: fastValidate, std.json tabanlı referansla 150k mutasyonda aynı kabul/ret kararını verir" {
+    const gpa = std.testing.allocator;
+    const seeds = [_][]const u8{
+        "{\"a\":1,\"b\":[true,null,{\"c\":\"d\\n\\u00e9\\ud83d\\ude00\"}],\"e\":-1.5e+10}",
+        "[1,2.5,-0,0,1e3,\"x\",{},[],[[1]]]",
+        "{\"k\":{\"k\":{\"k\":[]}}}",
+        " \t\r\n[ 1 , 2 ]\n",
+        "\"h\xc3\xa9llo \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x98\x80\"",
+        "{\"é\":1,\"\\u0061\":2,\"b\":3}",
+        "12345678901234567890",
+        "{\"a\":1,\"a\":2}",
+    };
+    const alphabet = "{}[]\",:\\/ \t\n\r0123456789+-.eEabfnrtul\xc3\xa9\x80\xff";
+    var prng = std.Random.DefaultPrng.init(0xFA57);
+    const rand = prng.random();
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(gpa);
+    var accepted: usize = 0;
+    var rejected: usize = 0;
+    var round: usize = 0;
+    while (round < 150_000) : (round += 1) {
+        buf.clearRetainingCapacity();
+        try buf.appendSlice(gpa, seeds[rand.uintLessThan(usize, seeds.len)]);
+        const edits = rand.uintLessThan(usize, 4);
+        var e: usize = 0;
+        while (e < edits) : (e += 1) {
+            if (buf.items.len == 0) break;
+            const pos = rand.uintLessThan(usize, buf.items.len);
+            switch (rand.uintLessThan(u8, 4)) {
+                0 => buf.items[pos] = alphabet[rand.uintLessThan(usize, alphabet.len)],
+                1 => _ = buf.orderedRemove(pos),
+                2 => try buf.insert(gpa, pos, alphabet[rand.uintLessThan(usize, alphabet.len)]),
+                else => {
+                    const len = @min(rand.uintLessThan(usize, 6), buf.items.len - pos);
+                    var tmp: [6]u8 = undefined;
+                    @memcpy(tmp[0..len], buf.items[pos..][0..len]);
+                    try buf.insertSlice(gpa, pos, tmp[0..len]);
+                },
+            }
+        }
+        const doc = buf.items;
+        // Referans: derinlik ön geçişi + std.json (eski `nox_json_decode_raw` yolu).
+        const ref_ok = blk: {
+            if (jsonNestingDepthExceeds(doc, MAX_JSON_NESTING_DEPTH)) break :blk false;
+            var arena = std.heap.ArenaAllocator.init(gpa);
+            defer arena.deinit();
+            _ = std.json.parseFromSlice(std.json.Value, arena.allocator(), doc, .{}) catch break :blk false;
+            break :blk true;
+        };
+        var arena2 = std.heap.ArenaAllocator.init(gpa);
+        defer arena2.deinit();
+        const got = fastValidate(arena2.allocator(), doc);
+        if (got != ref_ok) {
+            std.debug.print("AYRIŞTI (ref={}, fast={}): {any}\n  metin: {s}\n", .{ ref_ok, got, doc, doc });
+            return error.ValidatorDisagrees;
+        }
+        if (got) accepted += 1 else rejected += 1;
+    }
+    // Test anlamlı olsun: hem kabul hem ret yeterince örneklenmiş olmalı.
+    try std.testing.expect(accepted > 5_000);
+    try std.testing.expect(rejected > 5_000);
+}
+
+test "v2.1.61: fastValidate sınır durumları (derinlik 32/33, yinelenen anahtar, vekil çiftler, -0)" {
+    const a = std.testing.allocator;
+    var deep32: [66]u8 = undefined;
+    @memset(deep32[0..32], '[');
+    deep32[32] = '1';
+    @memset(deep32[33..65], ']');
+    // 32 açılış + 32 kapanış
+    var d32: [65]u8 = undefined;
+    @memset(d32[0..32], '[');
+    d32[32] = '1';
+    @memset(d32[33..65], ']');
+    try std.testing.expect(fastValidate(a, &d32));
+    var d33: [67]u8 = undefined;
+    @memset(d33[0..33], '[');
+    d33[33] = '1';
+    @memset(d33[34..67], ']');
+    try std.testing.expect(!fastValidate(a, &d33));
+    try std.testing.expect(!fastValidate(a, "{\"a\":1,\"a\":2}"));
+    try std.testing.expect(!fastValidate(a, "{\"a\":1,\"\\u0061\":2}"));
+    try std.testing.expect(fastValidate(a, "\"\\ud83d\\ude00\""));
+    try std.testing.expect(!fastValidate(a, "\"\\ud83d\""));
+    try std.testing.expect(!fastValidate(a, "\"\\ude00\""));
+    try std.testing.expect(fastValidate(a, "-0"));
+    try std.testing.expect(!fastValidate(a, "01"));
+    try std.testing.expect(!fastValidate(a, ""));
+    // 20 anahtarlı nesne (karma yolu) ve sonda yinelenen anahtar
+    try std.testing.expect(fastValidate(a, "{\"a\":1,\"b\":1,\"c\":1,\"d\":1,\"e\":1,\"f\":1,\"g\":1,\"h\":1,\"i\":1,\"j\":1,\"k\":1,\"l\":1}"));
+    try std.testing.expect(!fastValidate(a, "{\"a\":1,\"b\":1,\"c\":1,\"d\":1,\"e\":1,\"f\":1,\"g\":1,\"h\":1,\"i\":1,\"j\":1,\"k\":1,\"a\":1}"));
 }

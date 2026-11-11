@@ -149,22 +149,11 @@ def dump_number(n: float) -> str:
             return str(i)
     return str(n)
 
+# v2.1.61: düğüm ağacı Zig'de tek tampona yazılır (`runtime/stdlib_shims/json.zig` `nox_json_dump_raw`); çıktı önceki saf-Nox özyinelemeli `dump` ile BİREBİR aynıdır.
+extern def nox_json_dump_raw(v: JsonValue) -> str from "zig-out/lib/noxrt.o" with_rt
+
 def dump(v: JsonValue) -> str:
-    if is_null(v):
-        return "null"
-    if is_bool(v):
-        if as_bool(v):
-            return "true"
-        return "false"
-    if is_number(v):
-        if len(v.s) > 0:
-            return v.s
-        return dump_number(as_number(v))
-    if is_string(v):
-        return dump_string(as_string(v))
-    if is_array(v):
-        return dump_array(v)
-    return dump_object(v)
+    return nox_json_dump_raw(v)
 
 def dump_array(v: JsonValue) -> str:
     out: str = "["
