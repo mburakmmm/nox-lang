@@ -44,7 +44,8 @@ apps: list[Application] = []
 play_apps: list[Application] = []
 # /api/release: GitHub'ın "latest release" yanıtından indirme sayfasının ihtiyaç duyduğu alanlar (işçi başına, 10 dakika önbellek).
 release_cache: dict[str, str] = {}
-RELEASE_API: str = "https://api.github.com/repos/mburakmmm/nox-lang/releases/latest"
+# `releases/latest` KULLANILMAZ: GitHub onu semver'e göre değil en son OLUŞTURULAN release'e göre seçer (CI sırası karışınca eski sürüm "latest" olur); liste çekilip en yüksek kararlı vX.Y.Z seçilir.
+RELEASE_API: str = "https://api.github.com/repos/mburakmmm/nox-lang/releases?per_page=100"
 RELEASE_TTL_MS: int = 600000
 
 def load_content() -> None:
@@ -97,6 +98,58 @@ def json_str(v: JsonValue, key: str) -> str:
         return ""
     return nox.json.as_string(item)
 
+def digits_to_int(part: str) -> int:
+    if len(part) == 0 or len(part) > 9:
+        return -1
+    n: int = 0
+    i: int = 0
+    while i < len(part):
+        c: int = nox.strings.byte_at(part, i)
+        if c < 48 or c > 57:
+            return -1
+        n = n * 10 + (c - 48)
+        i = i + 1
+    return n
+
+# "vMAJOR.MINOR.PATCH" -> karşılaştırılabilir tek sayı; kararlı olmayan etiket (ön ek/sonek) için -1.
+def semver_key(tag: str) -> int:
+    if len(tag) < 6 or nox.strings.byte_at(tag, 0) != 118:
+        return -1
+    parts: list[str] = nox.strings.split(tag[1:], ".")
+    if len(parts) != 3:
+        return -1
+    ma: int = digits_to_int(parts[0])
+    mi: int = digits_to_int(parts[1])
+    pa: int = digits_to_int(parts[2])
+    if ma < 0 or mi < 0 or pa < 0 or ma >= 1000000 or mi >= 1000000 or pa >= 1000000:
+        return -1
+    return ma * 1000000000000 + mi * 1000000 + pa
+
+def json_flag(v: JsonValue, key: str) -> bool:
+    item: JsonValue | None = json_get(v, key)
+    if item == None:
+        return False
+    if not nox.json.is_bool(item):
+        return False
+    return nox.json.as_bool(item)
+
+# Release listesinden (JSON dizi) taslak/ön sürüm olmayan EN YÜKSEK vX.Y.Z sürümünün nesnesini seçer; yoksa listenin ilk öğesi geri düşüş DEĞİL, hata (boş sonuç).
+def pick_release(list_v: JsonValue) -> JsonValue | None:
+    if not nox.json.is_array(list_v):
+        return None
+    best: JsonValue | None = None
+    best_key: int = -1
+    n: int = nox.json.array_len(list_v)
+    i: int = 0
+    while i < n:
+        r: JsonValue = nox.json.array_get(list_v, i)
+        key: int = semver_key(json_str(r, "tag_name"))
+        if key > best_key and not json_flag(r, "draft") and not json_flag(r, "prerelease"):
+            best_key = key
+            best = r
+        i = i + 1
+    return best
+
 # GitHub'dan en son sürümü çeker ve yalnızca {tag, page, assets:[{name,url,size}]} biçiminde yeniden yazar ("" = başarısız).
 def fetch_release() -> str:
     headers: dict[str, str] = {"Accept": "application/vnd.github+json", "User-Agent": "noxlang-site"}
@@ -104,7 +157,10 @@ def fetch_release() -> str:
         r: HttpResponse = nox.http.request("GET", RELEASE_API, "", headers, 5000)
         if r.status != 200:
             return ""
-        v: JsonValue = nox.json.parse(r.body)
+        picked: JsonValue | None = pick_release(nox.json.parse(r.body))
+        if picked == None:
+            return ""
+        v: JsonValue = picked
         tag: str = json_str(v, "tag_name")
         if len(tag) == 0:
             return ""

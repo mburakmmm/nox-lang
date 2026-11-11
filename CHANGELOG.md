@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.47]
+
+### Düzeltildi
+
+- **`noxc upgrade` downgrade yapabiliyordu.** Sürüm `releases/latest` ucundan okunuyordu; GitHub bunu semver'e göre değil en son OLUŞTURULAN release'e göre seçer, CI sırası karışınca (eski bir sürümün release'i sonradan oluşunca) eski sürüm "latest" olurdu. Artık release LİSTESİ çekilir, taslak/ön sürüm/`vX.Y.Z` dışı etiketler atlanır ve en yüksek semver seçilir (`pickLatestStable`); açık sürüm verilmediyse çözülen sürüm çalışandan eskiyse asla düşürme yapılmaz ("already up to date"). Aynı düzeltme `install.sh`, `install.ps1` ve noxlang.com indirme sayfasının sürüm sorgusunda (`services/noxlang-site/main.nox`; canlıya alma ayrıca) yapıldı.
+- **CI / Dokümanlar:** `nox_http_request_read_raw` (v2.1.43) için wasm `nox.http` stub'ı eksikti, `check_wasm_http_stubs.py` kırmızıydı; stub eklendi.
+- **CI / Windows:** `wasm_grpc_tls_driver.mjs` (ve `wasm_redis_driver.mjs`) geçici dizin yollarını (`C:\Users\...`) Nox string sabitine kaçışsız yazıyordu (`\U` kaçış hatası); ters bölüler artık kaçırılıyor.
+
 ## [2.1.46]
 
 ### Eklendi

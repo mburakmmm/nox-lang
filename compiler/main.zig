@@ -495,7 +495,8 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
     };
     if (resolve_step) |st| st.done();
 
-    const up_to_date = upgrade_mod.isAlreadyUpToDate(a, target_tag) catch false;
+    // Açık sürüm verilmediyse ve çözülen sürüm çalışandan KESİN eskiyse (ör. release sırası karıştı) asla düşürme yapma: "zaten güncel" say.
+    const up_to_date = (upgrade_mod.isAlreadyUpToDate(a, target_tag) catch false) or (explicit_version == null and upgrade_mod.isOlderThanCurrent(a, target_tag));
 
     // `--check`: KURULUM/İNDİRME hiç TETİKLENMEZ, yalnızca `target_tag`
     // (açık sürüm VERİLDİYSE OYSA, aksi halde "latest release") mevcut

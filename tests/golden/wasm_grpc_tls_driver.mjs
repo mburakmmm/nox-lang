@@ -9,6 +9,8 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 
 const [, , noxc, template, host] = process.argv;
+// Windows yolları (`C:\\Users\\...`) Nox string sabitine yazılırken ters bölüler kaçırılmalıdır (aksi halde `\\U` kaçış hatası olur).
+const nx = (p) => p.replaceAll('\\', '\\\\');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nox-grpc-tls-'));
 const log = [];
 try {
@@ -28,7 +30,7 @@ try {
   srv.on('tlsClientError', (e) => log.push(`handshake error: ${e.message}`));
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 
-  const src = fs.readFileSync(template, 'utf8').replaceAll('__PORT__', String(srv.address().port)).replaceAll('__CA__', sc).replaceAll('__CERT__', cc).replaceAll('__KEY__', ck);
+  const src = fs.readFileSync(template, 'utf8').replaceAll('__PORT__', String(srv.address().port)).replaceAll('__CA__', nx(sc)).replaceAll('__CERT__', nx(cc)).replaceAll('__KEY__', nx(ck));
   fs.writeFileSync(path.join(dir, 'prog.nox'), src);
   execFileSync(noxc, ['build', '--target', 'wasm32-freestanding-asyncify', path.join(dir, 'prog.nox'), '-o', path.join(dir, 'prog.wasm')], { stdio: ['ignore', 'ignore', 'inherit'] });
   const child = spawn('node', ['--no-warnings', host, path.join(dir, 'prog.wasm'), '--allow-net'], { stdio: ['ignore', 'pipe', 'inherit'] });

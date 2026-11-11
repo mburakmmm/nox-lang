@@ -209,13 +209,47 @@ test "noxc upgrade --check: zaten guncelse indirme/cikarma HIC tetiklenmeden 0 d
     const current_tag = try std.fmt.allocPrint(gpa, "v{s}", .{current});
     defer gpa.free(current_tag);
 
-    const latest_json = try std.fmt.allocPrint(gpa, "{{\"tag_name\": \"{s}\"}}", .{current_tag});
+    const latest_json = try std.fmt.allocPrint(gpa, "[{{\"tag_name\": \"{s}\"}}]", .{current_tag});
     defer gpa.free(latest_json);
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
     defer _ = sys.close(listen_fd);
-    const routes = [_]Route{.{ .suffix = "/releases/latest", .body = latest_json, .content_type = "application/json" }};
+    const routes = [_]Route{.{ .suffix = "/releases?per_page=100", .body = latest_json, .content_type = "application/json" }};
+    const server_thread = try std.Thread.spawn(.{}, serveFixtureRoutes, .{ listen_fd, &routes, @as(usize, 1) });
+    defer server_thread.join();
+
+    const api_base = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{port});
+    defer gpa.free(api_base);
+
+    var env = try std.testing.environ.createMap(gpa);
+    defer env.deinit();
+    try env.put("NOX_UPGRADE_API_BASE", api_base);
+    try env.put("NOX_ALLOW_INSECURE_TRANSPORT", "1");
+
+    const result = try std.process.run(gpa, io, .{
+        .argv = &.{ noxcPath(), "upgrade", "--check" },
+        .environ_map = &env,
+    });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expectEqual(@as(u8, 0), result.term.exited);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "already up to date") != null);
+}
+
+test "noxc upgrade --check: listede calisandan ESKI bir surum 'latest' siradaysa bile dusurme onerilmez (en yuksek kararli surum secilir)" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    const current = try currentVersion(gpa, io);
+    defer gpa.free(current);
+    // Liste GitHub'un olusturulma sirasindadir: en yeni olusturulan release ESKI bir surumdur; calisan surum listede daha asagidadir; taslak/on surum atlanir.
+    const list_json = try std.fmt.allocPrint(gpa, "[{{\"tag_name\": \"v0.0.1\"}},{{\"tag_name\": \"v99999.0.0\", \"draft\": true}},{{\"tag_name\": \"v99999.1.0-rc.1\", \"prerelease\": true}},{{\"tag_name\": \"v{s}\"}}]", .{current});
+    defer gpa.free(list_json);
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer _ = sys.close(listen_fd);
+    const routes = [_]Route{.{ .suffix = "/releases?per_page=100", .body = list_json, .content_type = "application/json" }};
     const server_thread = try std.Thread.spawn(.{}, serveFixtureRoutes, .{ listen_fd, &routes, @as(usize, 1) });
     defer server_thread.join();
 
@@ -267,7 +301,7 @@ test "noxc upgrade: bozuk JSON API yaniti temiz bir hatayla cikis kodu 1 doner" 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
     defer _ = sys.close(listen_fd);
-    const routes = [_]Route{.{ .suffix = "/releases/latest", .body = "{ bozuk json", .content_type = "application/json" }};
+    const routes = [_]Route{.{ .suffix = "/releases?per_page=100", .body = "{ bozuk json", .content_type = "application/json" }};
     const server_thread = try std.Thread.spawn(.{}, serveFixtureRoutes, .{ listen_fd, &routes, @as(usize, 1) });
     defer server_thread.join();
 
@@ -303,7 +337,7 @@ test "noxc upgrade: GERCEK uctan-uca cikarma+degistirme (sahte tar.gz, izole kur
     const install_root = try gpa.dupe(u8, path_buf[0..install_root_len]);
     defer gpa.free(install_root);
 
-    const fake_tag = "v99.0.0-fixture";
+    const fake_tag = "v99.0.0";
     const asset_name = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .macos)
         "macos-arm64"
     else
@@ -320,14 +354,14 @@ test "noxc upgrade: GERCEK uctan-uca cikarma+degistirme (sahte tar.gz, izole kur
     const sha_body = try std.fmt.allocPrint(gpa, "{s}  {s}.tar.gz\n", .{ hex, stage_name });
     defer gpa.free(sha_body);
 
-    const latest_json = try std.fmt.allocPrint(gpa, "{{\"tag_name\": \"{s}\"}}", .{fake_tag});
+    const latest_json = try std.fmt.allocPrint(gpa, "[{{\"tag_name\": \"{s}\"}}]", .{fake_tag});
     defer gpa.free(latest_json);
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
     defer _ = sys.close(listen_fd);
     const routes = [_]Route{
-        .{ .suffix = "/releases/latest", .body = latest_json, .content_type = "application/json" },
+        .{ .suffix = "/releases?per_page=100", .body = latest_json, .content_type = "application/json" },
         .{ .suffix = ".tar.gz.sha256", .body = sha_body },
         .{ .suffix = ".tar.gz", .body = archive_bytes },
     };
@@ -358,7 +392,7 @@ test "noxc upgrade: GERCEK uctan-uca cikarma+degistirme (sahte tar.gz, izole kur
     }
 
     // v2.0.135: konuşkan ilerleme çıktısı (stderr bir boru, TTY değil): aşama satırları var, canlı çubuk/ANSI/imleç başa dönüşü YOK.
-    for ([_][]const u8{ "==> Checking the latest release ... done", "==> Downloading nox-lang-v99.0.0-fixture-", "==> Verifying checksum ... done", "==> Extracting ... done", "upgraded to: v99.0.0-fixture" }) |needle| {
+    for ([_][]const u8{ "==> Checking the latest release ... done", "==> Downloading nox-lang-v99.0.0-", "==> Verifying checksum ... done", "==> Extracting ... done", "upgraded to: v99.0.0" }) |needle| {
         if (std.mem.indexOf(u8, result.stderr, needle) == null) {
             std.debug.print("beklenen ilerleme satiri yok: {s}\nstderr:\n{s}\n", .{ needle, result.stderr });
             return error.MissingProgressLine;

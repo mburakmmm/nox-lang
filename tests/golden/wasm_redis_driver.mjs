@@ -70,7 +70,7 @@ try {
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', crt, '-days', '2', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
   const tport = await freePort();
   procs.push(await startRedis(tport, ['--port', '0', '--tls-port', String(tport), '--tls-cert-file', crt, '--tls-key-file', key, '--tls-ca-cert-file', crt, '--tls-auth-clients', 'no'], dir, tport));
-  await runProgram(tlsTemplate, { '@PORT@': String(tport), '@CA@': crt }, 'tls');
+  await runProgram(tlsTemplate, { '@PORT@': String(tport), '@CA@': crt.replaceAll('\\', '\\\\') }, 'tls');
 
   if (bridgeMode) {
     // Köprü sertifika dosyasını, izin listesini, token'ı ve geçersiz istekleri reddeder (WebSocket yükseltmesinden ÖNCE HTTP durumuyla).

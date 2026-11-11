@@ -411,6 +411,13 @@ export fn nox_http_request_body(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) 
     return null;
 }
 
+/// `req.read_chunk(n)` (v2.1.43): WASM'da gelen istek (HTTP/2 akış kipi) yoktur; gerçek çalışma zamanıyla aynı imza, her zaman "gövde bitti" (`""`).
+export fn nox_http_request_read_raw(rt: ?*anyopaque, conn: i64, max: i64) callconv(.c) ?[*:0]u8 {
+    _ = conn;
+    _ = max;
+    return str_mod.nox_str_from_bytes(rt, "");
+}
+
 export fn nox_http_request_peer_addr(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     if (srv.available()) return srv.requestPeer(req);
     _ = rt;

@@ -131,21 +131,69 @@ fn httpGetToMemory(a: Allocator, io: Io, url: []const u8) ![]const u8 {
     return body_out.toOwnedSlice() catch error.UpgradeFetchFailed;
 }
 
+/// Kararlı bir sürüm etiketi: `vMAJOR.MINOR.PATCH` (ön ek/`-rc.1` gibi soneklere izin YOK).
+pub const SemVer = struct { major: u64, minor: u64, patch: u64 };
+
+pub fn parseStableTag(tag: []const u8) ?SemVer {
+    if (tag.len < 6 or tag[0] != 'v') return null;
+    var it = std.mem.splitScalar(u8, tag[1..], '.');
+    var parts: [3]u64 = undefined;
+    var n: usize = 0;
+    while (it.next()) |p| : (n += 1) {
+        if (n >= 3 or p.len == 0) return null;
+        parts[n] = std.fmt.parseInt(u64, p, 10) catch return null;
+    }
+    if (n != 3) return null;
+    return .{ .major = parts[0], .minor = parts[1], .patch = parts[2] };
+}
+
+pub fn compareSemVer(x: SemVer, y: SemVer) std.math.Order {
+    if (x.major != y.major) return std.math.order(x.major, y.major);
+    if (x.minor != y.minor) return std.math.order(x.minor, y.minor);
+    return std.math.order(x.patch, y.patch);
+}
+
+/// GitHub'ın `releases` listesinden (JSON dizi) EN YÜKSEK kararlı sürümü seçer: taslak (`draft`) ve ön sürüm (`prerelease`) ile `vX.Y.Z` biçiminde olmayan etiketler atlanır.
+/// `releases/latest` KULLANILMAZ: GitHub onu semver'e göre değil en son OLUŞTURULAN release'e göre seçer; CI sırası karışınca (eski bir sürümün release'i sonradan oluşunca) eski sürüm
+/// "latest" olur ve `noxc upgrade` bir DÜŞÜRME yapardı.
+pub fn pickLatestStable(a: Allocator, body: []const u8) ![]const u8 {
+    const Rel = struct { tag_name: []const u8, draft: bool = false, prerelease: bool = false };
+    const parsed = std.json.parseFromSlice([]const Rel, a, body, .{ .ignore_unknown_fields = true }) catch return error.UpgradeVersionResolutionFailed;
+    defer parsed.deinit();
+    var best: ?SemVer = null;
+    var best_tag: []const u8 = "";
+    for (parsed.value) |r| {
+        if (r.draft or r.prerelease) continue;
+        const v = parseStableTag(r.tag_name) orelse continue;
+        if (best == null or compareSemVer(v, best.?) == .gt) {
+            best = v;
+            best_tag = r.tag_name;
+        }
+    }
+    if (best == null) return error.UpgradeVersionResolutionFailed;
+    return a.dupe(u8, best_tag);
+}
+
 /// `explicit` VERİLİRSE (ör. `noxc upgrade v1.3.0`) OLDUĞU GİBİ kullanılır
 /// (ağ çağrısı YOK — düşürme DAHİL herhangi bir sürüme sabitlemeyi
-/// destekler). AKSİ HALDE GitHub'ın "latest release" API'sinden `tag_name`
-/// (GERÇEK bir `std.json` ayrıştırmasıyla — `install.sh`nin grep/sed'i
-/// YERİNE) çözülür.
+/// destekler). AKSİ HALDE GitHub'ın release LİSTESİNDEN (`pickLatestStable`)
+/// en yüksek kararlı sürüm çözülür.
 pub fn resolveTargetVersion(a: Allocator, io: Io, explicit: ?[]const u8, policy: UpgradePolicy, fetch_policy: fetch_mod.FetchPolicy) ![]const u8 {
     if (explicit) |v| return a.dupe(u8, v);
 
-    const url = try std.fmt.allocPrint(a, "{s}/repos/{s}/releases/latest", .{ policy.api_base, REPO });
+    const url = try std.fmt.allocPrint(a, "{s}/repos/{s}/releases?per_page=100", .{ policy.api_base, REPO });
     try validateUpgradeUrlScheme(url, fetch_policy.allow_insecure_transport);
     const body = try httpGetToMemory(a, io, url);
+    return pickLatestStable(a, body);
+}
 
-    const Parsed = struct { tag_name: []const u8 };
-    const parsed = std.json.parseFromSlice(Parsed, a, body, .{ .ignore_unknown_fields = true }) catch return error.UpgradeVersionResolutionFailed;
-    return parsed.value.tag_name;
+/// `target_tag`, ŞU AN çalışan ikilinin sürümünden KESİN OLARAK eski mi? (Açık sürüm verilmediğinde bir DÜŞÜRMEYİ engellemek için.) Biri ayrıştırılamazsa `false`.
+pub fn isOlderThanCurrent(a: Allocator, target_tag: []const u8) bool {
+    const current = currentVersionTag(a) catch return false;
+    defer a.free(current);
+    const c = parseStableTag(current) orelse return false;
+    const t = parseStableTag(target_tag) orelse return false;
+    return compareSemVer(t, c) == .lt;
 }
 
 /// `target_tag`, ŞU AN çalışan ikilinin sürümüYLE (`currentVersionTag`)
@@ -698,4 +746,26 @@ test "managedBy: Homebrew, pacman, snap ve AppImage taninir, diger yollar serbes
 
     try std.testing.expect(managedBy("/Users/u/.nox-lang") == null);
     try std.testing.expect(managedBy("/usr/local") == null);
+}
+
+test "pickLatestStable: en yuksek kararli surumu secer; taslak/on surum/duzensiz etiketleri atlar; siralama karisik olabilir" {
+    const a = std.testing.allocator;
+    const body =
+        \\[{"tag_name":"v2.1.43"},{"tag_name":"v2.1.46","draft":true},{"tag_name":"v2.2.0-rc.1"},{"tag_name":"v2.1.45"},{"tag_name":"v2.1.9"},{"tag_name":"nightly"},{"tag_name":"v3.0.0","prerelease":true},{"tag_name":"v2.1.44"}]
+    ;
+    const got = try pickLatestStable(a, body);
+    defer a.free(got);
+    try std.testing.expectEqualStrings("v2.1.45", got);
+}
+
+test "pickLatestStable: yalnizca uygun olmayanlar varsa hata" {
+    const a = std.testing.allocator;
+    try std.testing.expectError(error.UpgradeVersionResolutionFailed, pickLatestStable(a, "[{\"tag_name\":\"v1.0.0\",\"draft\":true}]"));
+    try std.testing.expectError(error.UpgradeVersionResolutionFailed, pickLatestStable(a, "{ bozuk json"));
+}
+
+test "parseStableTag / compareSemVer: 10 > 9 sayisal karsilastirma" {
+    try std.testing.expect(parseStableTag("v2.1.x") == null);
+    try std.testing.expect(parseStableTag("2.1.3") == null);
+    try std.testing.expect(compareSemVer(parseStableTag("v2.1.10").?, parseStableTag("v2.1.9").?) == .gt);
 }

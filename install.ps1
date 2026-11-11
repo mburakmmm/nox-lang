@@ -49,8 +49,11 @@ function Resolve-Version {
     # notu) — API çağrısı BAŞARISIZ olursa (henüz Release yoksa/erişilemezse)
     # HATA AÇIK VE YARDIMCI olmalı, ham bir istisna İLE SESSİZCE ÇÖKMEMELİ.
     try {
-        $response = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -ErrorAction Stop
-        if ($response.tag_name) { return $response.tag_name }
+        # `releases/latest` KULLANILMAZ (GitHub onu semver'e göre değil en son OLUŞTURULAN release'e göre seçer); liste çekilip en yüksek kararlı `vX.Y.Z` seçilir.
+        $response = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=100" -ErrorAction Stop
+        $best = $response | Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]($_.tag_name.Substring(1)) } -Descending | Select-Object -First 1
+        if ($best) { return $best.tag_name }
     } catch {
         # Aşağıdaki Die'a düşülür.
     }

@@ -68,8 +68,10 @@ resolve_version() {
     # SONRA ayrıştır — böylece boş/bulunamayan sonuç HER ZAMAN
     # `die`in AÇIK/YARDIMCI mesajına ULAŞIR.
     local response tag
-    response="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)"
-    tag="$(printf '%s' "$response" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)"
+    # `releases/latest` KULLANILMAZ: GitHub onu semver'e göre değil en son OLUŞTURULAN release'e göre seçer (CI sırası karışırsa eski bir sürüm "latest" olur).
+    # Liste çekilir, yalnızca `vX.Y.Z` etiketleri (taslaklar API'de zaten görünmez; `-rc.1` gibi sonekliler elenir) arasından `sort -V` ile en yükseği alınır.
+    response="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=100" 2>/dev/null || true)"
+    tag="$(printf '%s' "$response" | grep -o '"tag_name": *"v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"' | sed -E 's/.*"(v[^"]+)"/\1/' | sort -t. -k1.2,1n -k2,2n -k3,3n | tail -1 || true)"
     [ -n "$tag" ] || die "could not resolve the latest release tag — no GitHub Release may have been published yet, or the GitHub API is unreachable. To install a specific version by hand: NOX_VERSION=v1.0.0 sh install.sh (or set NOX_VERSION=... on the shell that runs it)."
     echo "$tag"
 }

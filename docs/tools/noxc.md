@@ -73,7 +73,7 @@ Details: [Packages](packages.md) and [noxpkg](noxpkg.md).
 
 | Command | Description |
 |---|---|
-| `noxc upgrade [--check] [vX.Y.Z]` | update `noxc` itself to the latest release (or a given version); `--check` only reports |
+| `noxc upgrade [--check] [vX.Y.Z]` | update `noxc` itself to the highest stable release (or a given version); `--check` only reports. The version is the highest `vX.Y.Z` in the release list (drafts and pre-releases are skipped), not GitHub's "latest" flag, and `noxc upgrade` never downgrades without an explicit version |
 | `noxc version`, `noxc --version`, `-V` | print the version |
 | `noxc --help`, `-h` | print the help screen |
 
