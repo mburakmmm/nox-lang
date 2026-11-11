@@ -167,7 +167,7 @@ The compiler itself also runs as WebAssembly (a server-free playground, an embed
 
 ### Raw TCP: `nox.tls` and `nox.smtp`
 
-`nox.tls` and `nox.smtp` compile on every WebAssembly target. For real connections on `wasm32-freestanding-asyncify` the host provides the **TCP capability**: `runNox(bytes, io, { tcp: await nodeTcp() })` (`nodeTcp` is built on Node's `net`/`tls` and exported from `wasm_host.mjs`), or `--allow-net` on the Node command line. A browser has no raw sockets: there `tcp` is not provided and `connect` raises `TlsError`/`SmtpError` with a "tcp capability" message (you can supply your own `{ connect(host, port, useTls) }` provider, for example a WebSocket-to-TCP bridge). **TLS terminates in the host**: the module carries no CA bundle or handshake code, and certificate validation (hostname included) lives in the host's TLS stack (Node: system CAs plus `NODE_EXTRA_CA_CERTS`). The `smtp` STARTTLS upgrade also happens in the host. Streaming uses the same suspension mechanism as `fetch` (a read parks the fiber, writes have no reply). Limit: `--threads`, plain freestanding and `wasm32-wasi*` do not have the capability.
+`nox.tls` and `nox.smtp` compile on every WebAssembly target. For real connections on `wasm32-freestanding-asyncify` the host provides the **TCP capability**: `runNox(bytes, io, { tcp: await nodeTcp() })` (`nodeTcp` is built on Node's `net`/`tls` and exported from `wasm_host.mjs`), or `--allow-net` on the Node command line. A browser has no raw sockets: there `tcp` is not provided unless you give one, and `connect` raises `TlsError`/`SmtpError` with a "tcp capability" message. To get TCP in a browser, run the WebSocket-to-TCP bridge and pass `browserTcp` (see "TCP in a browser" below). **TLS terminates in the host**: the module carries no CA bundle or handshake code, and certificate validation (hostname included) lives in the host's TLS stack (Node: system CAs plus `NODE_EXTRA_CA_CERTS`). The `smtp` STARTTLS upgrade also happens in the host. Streaming uses the same suspension mechanism as `fetch` (a read parks the fiber, writes have no reply). Limit: `--threads`, plain freestanding and `wasm32-wasi*` do not have the capability.
 
 ### gRPC over TLS: `nox.grpc.connect_tls`
 
@@ -180,6 +180,21 @@ The compiler itself also runs as WebAssembly (a server-free playground, an embed
 ### MySQL / MariaDB
 
 `nox.mysql` runs on WebAssembly with a MySQL client protocol written in Zig instead of `libmysqlclient` (it needs the host TCP capability, see "Raw TCP"). Authentication: `mysql_native_password` and `caching_sha2_password` (MySQL 8's default: the fast path and, when the server's cache is empty, full authentication with the password encrypted under the server's RSA key with OAEP — no TLS required), including authentication-plugin switching. Queries use the text protocol (`COM_QUERY`); `prepare` + `bind_*` works as in the native driver, escaped on the client (aware of `NO_BACKSLASH_ESCAPES`) and embedded in the SQL. `last_insert_rowid()`, `changes()` and the `NULL` distinction work. Verified against real MySQL 8.4 and MariaDB 11 servers. Limits: no TLS (`open_url` carries no TLS option), TCP is used even for `localhost` (no Unix socket), only the first result of a multi-result statement such as `CALL` is returned, and there is no `LOCAL INFILE`.
+
+### TCP in a browser (WebSocket-to-TCP bridge)
+
+Every TCP-based module (`nox.tls`, `nox.smtp`, `nox.postgres`, `nox.mysql`, `nox.redis`, `nox.grpc`) works in a browser through a small Node process that turns a WebSocket into a TCP connection:
+
+```bash
+node compiler/wasm_tcp_bridge.mjs --listen 127.0.0.1:8765 --allow db.internal:5432,redis.internal:6379 --origin https://app.example.com --token SECRET
+```
+
+```text
+import { runNox, browserTcp } from './wasm_host.mjs';
+await runNox(bytes, io, { tcp: browserTcp({ url: 'ws://127.0.0.1:8765/', token: 'SECRET' }) });
+```
+
+One WebSocket carries one TCP connection (binary messages are the raw bytes). **TLS ends in the bridge**, not in the page: `connect(..., tls=True)` and the `STARTTLS` upgrades are performed by the bridge's TLS stack, which also verifies the certificate; the page never sees keys or certificates. The bridge is an open proxy, so `--allow` is **required** (same syntax as `--net-allow`; `"*"` allows everything); `--origin` and `--token` are optional extra checks, and a refused request gets an HTTP 403/400 before the WebSocket upgrade. `ca_file`/`cert_file`/`key_file` paths name files **on the bridge machine** and are honoured only with `--tls-files`. Limits: no back-pressure (a message is at most 16 MiB), one TLS upgrade per connection. The Node CLI can use the same path with `--tcp-bridge=ws://host:port/` (instead of `--allow-net`), which is how it is tested: the native redis programs run unchanged against real `redis-server` processes through the bridge.
 
 ### Redis
 

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.46]
+
+### Eklendi
+
+- **Tarayıcıda ham TCP: WebSocket→TCP köprüsü.** `compiler/wasm_tcp_bridge.mjs` (minimal RFC 6455 sunucusu; `startTcpBridge({ allow, origins, token, tlsFiles })` ve CLI) bir WebSocket'i bir TCP bağlantısına çevirir; TLS ve `STARTTLS` köprüde sonlanır. `wasm_host.mjs` yeni `browserTcp({ url, token })` sağlayıcısını dışa aktarır (`nodeTcp` ile aynı sözleşme) ve Node CLI'ya `--tcp-bridge=ws://...` ekler. İzin listesi ZORUNLUDUR (açık proxy olmasın); `origin`/`token` isteğe bağlı; reddedilen istek WebSocket yükseltmesinden önce 403/400 alır; `ca`/`cert`/`key` yolları yalnızca `--tls-files` ile. Test: aynı `redis_program` / `redis_tls_program` programları köprü üzerinden gerçek `redis-server`'a karşı aynı çıktıyı verir, ayrıca izin listesi/token/eksik-port reddi sınanır.
+
 ## [2.1.45]
 
 ### Eklendi

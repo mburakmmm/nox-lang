@@ -1029,3 +1029,26 @@ test "wasm32-freestanding --asyncify: nox.redis gercek redis-server'a karsi (kom
     // Beklenen çıktılar yerel testlerle ortaktır (`scripts/redis_probe.py`); sürücü her programın sonuna "exit N" ekler.
     try std.testing.expectEqualStrings(@embedFile("redis_program.expected") ++ "exit 0\n" ++ @embedFile("redis_tls_program.expected") ++ "exit 0\n", res.stdout);
 }
+
+// v2.1.46: tarayıcı yolu — ham TCP `compiler/wasm_tcp_bridge.mjs` WebSocket→TCP köprüsünden geçer (`--tcp-bridge`, `browserTcp`): aynı redis programları aynı çıktıyı verir (TLS köprüde sonlanır);
+// köprü izin listesi dışı hedefi/yanlış token'ı (403) ve eksik portu (400) WebSocket yükseltmesinden önce reddeder.
+test "wasm32-freestanding --asyncify: nox.redis WebSocket-TCP koprusu uzerinden (tarayici yolu), izin listesi ve token reddi" {
+    const allocator = std.testing.allocator;
+    const res = std.process.run(allocator, std.testing.io, .{
+        .argv = &.{ "node", "--no-warnings", build_options.redis_driver_path, build_options.noxc_path, build_options.redis_program_path, build_options.redis_tls_program_path, build_options.wasm_host_path, "bridge" },
+    }) catch |err| {
+        if (err == error.FileNotFound) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(res.stderr);
+    defer allocator.free(res.stdout);
+    if (res.term == .exited and res.term.exited == 77) return error.SkipZigTest;
+    if (res.term != .exited or res.term.exited != 0) {
+        const missing = std.mem.indexOf(u8, res.stderr, "openssl") != null or std.mem.indexOf(u8, res.stderr, "wasm-opt") != null;
+        if (missing) return error.SkipZigTest;
+        std.debug.print("redis kopru surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
+        return error.ProgramFailed;
+    }
+    try std.testing.expectEqualStrings(@embedFile("redis_program.expected") ++ "exit 0\n" ++ @embedFile("redis_tls_program.expected") ++ "exit 0\n" ++
+        "bridge disallowed host: 403\nbridge wrong token: 403\nbridge missing port: 400\nbridge allowed: 101\n", res.stdout);
+}

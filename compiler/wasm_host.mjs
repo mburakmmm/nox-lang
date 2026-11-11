@@ -469,6 +469,113 @@ export async function nodeTcp({ tlsFiles = false } = {}) {
 }
 
 /**
+ * Tarayıcı için TCP sağlayıcısı (v2.1.45): ham soket olmadığından her bağlantı için bir WebSocket→TCP köprüsüne (`wasm_tcp_bridge.mjs`) WebSocket açar. `url`: köprü adresi
+ * (`ws://host:8765/` ya da `wss://...`; `token` verilirse sorguya eklenir). TLS (bağlanma anında ya da `startTls`) KÖPRÜDE sonlanır. `WebSocket`: varsayılan `globalThis.WebSocket`.
+ * Protokol için bkz. `wasm_tcp_bridge.mjs` başlığı. Dönen nesne `nodeTcp()` ile aynı sözleşmeye uyar (`connect(host, port, useTls)`).
+ */
+export function browserTcp({ url, token = null, WebSocket: WS = globalThis.WebSocket } = {}) {
+  if (!url) throw new Error('browserTcp: `url` (the WebSocket-to-TCP bridge address) is required');
+  if (!WS) throw new Error('browserTcp: no WebSocket implementation is available');
+  return {
+    connect: (host, port, useTls) =>
+      new Promise((resolve, reject) => {
+        const u = new URL(url);
+        u.searchParams.set('host', host);
+        u.searchParams.set('port', String(port));
+        u.searchParams.set('tls', useTls ? '1' : '0');
+        if (token !== null) u.searchParams.set('token', token);
+        const ws = new WS(u.href);
+        ws.binaryType = 'arraybuffer';
+        const queue = [];
+        let ended = false;
+        let error = null;
+        let waiter = null;
+        let opened = false;
+        let ctrl = null; // bekleyen `startTls` yanıtı: { resolve, reject }
+        const wake = () => {
+          if (waiter) {
+            const w = waiter;
+            waiter = null;
+            w();
+          }
+        };
+        const end = (e) => {
+          if (e && !error) error = e;
+          ended = true;
+          wake();
+          if (!opened) reject(error || new Error('the TCP bridge closed the connection'));
+          if (ctrl) {
+            ctrl.reject(error || new Error('the TCP bridge closed the connection'));
+            ctrl = null;
+          }
+        };
+        const sock = {
+          write(bytes) {
+            // Wasm belleğinin görünümü değil KOPYA gönderilir (paylaşımlı bellek `WebSocket.send`te kabul edilmez).
+            try {
+              ws.send(bytes.slice());
+            } catch (e) {
+              error = e;
+            }
+          },
+          async read(max) {
+            while (queue.length === 0 && !ended) await new Promise((r) => (waiter = r));
+            if (queue.length === 0) {
+              if (error) throw error;
+              return null;
+            }
+            const head = queue[0];
+            if (head.length <= max) return queue.shift();
+            queue[0] = head.subarray(max);
+            return head.subarray(0, max);
+          },
+          startTls(servername, opts = {}) {
+            return new Promise((res, rej) => {
+              ctrl = { resolve: res, reject: rej };
+              ws.send(JSON.stringify({ op: 'starttls', servername, alpn: opts.alpn, ca: opts.ca, cert: opts.cert, key: opts.key }));
+            });
+          },
+          close() {
+            try {
+              ws.close();
+            } catch {}
+          },
+        };
+        ws.onmessage = (ev) => {
+          if (typeof ev.data === 'string') {
+            let m;
+            try {
+              m = JSON.parse(ev.data);
+            } catch {
+              return;
+            }
+            if (m.op === 'open') {
+              opened = true;
+              resolve(sock);
+            } else if (m.op === 'tls' && ctrl) {
+              const c = ctrl;
+              ctrl = null;
+              c.resolve();
+            } else if (m.op === 'error') {
+              const e = new Error(String(m.message));
+              if (ctrl) {
+                const c = ctrl;
+                ctrl = null;
+                c.reject(e);
+              } else end(e);
+            }
+            return;
+          }
+          queue.push(new Uint8Array(ev.data));
+          wake();
+        };
+        ws.onerror = () => end(new Error('could not reach the TCP bridge'));
+        ws.onclose = () => end(null);
+      }),
+  };
+}
+
+/**
  * Alt süreç (kind 13, `process_wasm.zig`): `proc.run(program, args, cwd, timeoutMs) -> Promise<{ status, stdout, stderr }>` sağlayıcısı. Node için varsayılan: `nodeProcess()`
  * (`child_process.spawn`, KABUKSUZ: argümanlar kabuk yorumundan geçmez). Yetenek açıkça verilmedikçe kapalıdır.
  */
@@ -1076,6 +1183,7 @@ function takeHostFlags(args) {
   let allowServe = process.env.NOX_ALLOW_SERVE === '1';
   let netAllow = process.env.NOX_NET_ALLOW || null;
   let processAllow = process.env.NOX_PROCESS_ALLOW || null;
+  let tcpBridge = process.env.NOX_TCP_BRIDGE || null;
   const rest = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -1088,9 +1196,10 @@ function takeHostFlags(args) {
       processAllow = a.slice('--allow-process='.length);
     } else if (a.startsWith('--net-allow=')) netAllow = a.slice('--net-allow='.length);
     else if (a === '--allow-serve') allowServe = true;
+    else if (a.startsWith('--tcp-bridge=')) tcpBridge = a.slice('--tcp-bridge='.length);
     else rest.push(a);
   }
-  return { dir, allowNet, allowProcess, allowServe, netAllow, processAllow, rest };
+  return { dir, allowNet, allowProcess, allowServe, netAllow, processAllow, tcpBridge, rest };
 }
 
 /** SIGINT/SIGTERM'de zarif kapanış için AbortSignal (sunucu modülü `serve` döngüsünden çıkar, program normal biter). */
@@ -1109,7 +1218,7 @@ async function nodeMain() {
     process.exit(2);
   }
   const bytes = fs.readFileSync(file);
-  const { dir: vfsDir, allowNet, allowProcess, allowServe, netAllow, processAllow, rest: progArgs } = takeHostFlags(argv.slice(3));
+  const { dir: vfsDir, allowNet, allowProcess, allowServe, netAllow, processAllow, tcpBridge, rest: progArgs } = takeHostFlags(argv.slice(3));
   const mod = await WebAssembly.compile(bytes);
   const modules = new Set(WebAssembly.Module.imports(mod).map((i) => i.module));
 
@@ -1129,7 +1238,8 @@ async function nodeMain() {
       vfs = { files: nv.load(), onSave: (snap) => nv.save(snap) };
     }
     const np = netAllow ? netPolicy(netAllow) : null;
-    let tcpImpl = allowNet ? await nodeTcp({ tlsFiles: true }) : null;
+    // `--tcp-bridge=ws://...`: ham TCP bir WebSocket→TCP köprüsünden geçer (tarayıcıdaki yolun aynısı); yoksa `--allow-net` Node'un `net`/`tls`ini kullanır.
+    let tcpImpl = tcpBridge ? browserTcp({ url: tcpBridge }) : allowNet ? await nodeTcp({ tlsFiles: true }) : null;
     let procImpl = allowProcess ? await nodeProcess() : null;
     let fetchImpl = allowNet ? globalThis.fetch : null;
     let wsImpl = globalThis.WebSocket;
