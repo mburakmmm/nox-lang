@@ -429,7 +429,7 @@ pub fn genTypedPtrStoreVolatile(self: *Codegen, p: Value, v: Value) CodegenError
 }
 
 fn isPtrManualBuiltin(name: []const u8) bool {
-    const names = [_][]const u8{ "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
+    const names = [_][]const u8{ "ptr_from_int", "ptr_to_int", "ptr_of", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
     for (names) |n| {
         if (std.mem.eql(u8, n, name)) return true;
     }
@@ -1033,6 +1033,14 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     if (c.args.len != 1) return error.Unsupported;
                     const v = try self.genExpr(c.args[0]);
                     return .{ .text = v.text, .qtype = .l };
+                }
+                if (std.mem.eql(u8, name, "ptr_of")) {
+                    // `list[T]` veri işaretçisi = liste işaretçisi + başlık (len@0, cap@8). Elemanlar hemen ardından, doğal boyutlu ve paketli dizilir.
+                    if (c.args.len != 1) return error.Unsupported;
+                    const v = try self.genExpr(c.args[0]);
+                    const data = try self.newTemp();
+                    try self.qbeOp2Imm(data, .l, "add", v.text, @intCast(LIST_HEADER_SIZE));
+                    return .{ .text = data, .qtype = .l, .heap = .none };
                 }
                 if (std.mem.eql(u8, name, "ptr_add")) {
                     if (c.args.len != 2) return error.Unsupported;

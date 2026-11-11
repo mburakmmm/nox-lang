@@ -39,3 +39,10 @@ Maliyet bir engel değil; engel **ergonomi ve kapsam**: (a) struct'ı değerle g
 ```sh
 zig build -Doptimize=ReleaseFast && python3 benchmarks/ffi_perf/run.py --repeat 3
 ```
+
+## Güncelleme (v2.1.62)
+
+- **Sıfır-kopya eklendi:** `lowlevel` içinde `ptr_of(xs)`; C listeyi kopyasız okur. `list[int]` -> C: 0.36 → **0.08 ns/eleman** (C 0.07). `Buffer` için `ptr_of(buf.data)`.
+- **Callback yeniden ölçüldü:** 1.9 ns (C'nin 2.5x'i); ilk ölçümdeki 5 ns sonraki derlemelerde düştü, ek çalışma gerekmedi.
+- QBE'deki `lowlevel` döngüsü 2.4x yavaş kalıyor (QBE optimizasyonsuz); varsayılan LLVM'de sorun yok.
+- Kalan ergonomi eksikleri (struct-by-value, kaydedilen callback, hata sözleşmesi) otomatik binding aracı (TODO 5.1) tasarımına bırakıldı.

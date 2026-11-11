@@ -231,6 +231,7 @@ jobs:
         run: brew install binaryen
 
       - name: binaryen kur (Linux)
+        continue-on-error: true  # v2.1.62: apt aynalarının DNS kesintisi isteğe bağlı kurulumu düşürmesin; araç yoksa testler atlanır
         if: runner.os == 'Linux'
         run: |
           apt_retry() { for i in 1 2 3 4; do if sudo apt-get "$@"; then return 0; fi; echo "apt-get $* başarısız (deneme $i), 15 sn sonra yeniden"; sleep 15; done; return 1; }
@@ -264,6 +265,7 @@ jobs:
         run: brew install qemu
 
       - name: qemu kur (Linux)
+        continue-on-error: true  # v2.1.62: apt aynalarının DNS kesintisi isteğe bağlı kurulumu düşürmesin; araç yoksa testler atlanır
         if: runner.os == 'Linux'
         run: |
           apt_retry() { for i in 1 2 3 4; do if sudo apt-get "$@"; then return 0; fi; echo "apt-get $* başarısız (deneme $i), 15 sn sonra yeniden"; sleep 15; done; return 1; }
@@ -281,6 +283,7 @@ jobs:
       # (Debian/Ubuntu'nun KENDİ, standart çözümü) — Linux/x86-64 runner'ı
       # da AYNI adımı ALIR (zararsız, native hedef ZATEN destekleniyordu).
       - name: binutils-multiarch kur (Linux — objcopy elf32-i386 hedefi için)
+        continue-on-error: true  # v2.1.62: apt aynalarının DNS kesintisi isteğe bağlı kurulumu düşürmesin; araç yoksa testler atlanır
         if: runner.os == 'Linux'
         run: |
           apt_retry() { for i in 1 2 3 4; do if sudo apt-get "$@"; then return 0; fi; echo "apt-get $* başarısız (deneme $i), 15 sn sonra yeniden"; sleep 15; done; return 1; }

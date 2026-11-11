@@ -97,4 +97,14 @@ def bench() -> None:
     report("marshal_list_to_ptr_per_elem", t, 20 * 1000000, acc % 1000003)
     c_free(buf)
 
+    # v2.1.62: sıfır-kopya — `ptr_of(xs)` ile C, listenin belleğini doğrudan okur (kopya yok).
+    t = now_ms()
+    acc = 0
+    r = 0
+    while r < 20:
+        lowlevel:
+            acc = acc + c_sum(ptr_from_int(ptr_to_int(ptr_of(xs))), 1000000)
+        r = r + 1
+    report("marshal_list_zero_copy_per_elem", t, 20 * 1000000, acc % 1000003)
+
 bench()

@@ -2469,3 +2469,38 @@ test "golden(typecheck): v2.1.38 — list[Task[T]] açık yönlendirici tip hata
         @embedFile("typecheck_cases/err_list_of_task.expected"),
     );
 }
+
+test "golden(typecheck): v2.1.62 — ptr_of lowlevel dışında reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_ptr_of_outside_lowlevel.nox"),
+        @embedFile("typecheck_cases/err_ptr_of_outside_lowlevel.expected"),
+    );
+}
+
+test "golden(typecheck): v2.1.62 — ptr_of geçici ifadeye uygulanamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_ptr_of_temporary.nox"),
+        @embedFile("typecheck_cases/err_ptr_of_temporary.expected"),
+    );
+}
+
+test "golden(typecheck): v2.1.62 — ptr_of list[str] için reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_ptr_of_string_list.nox"),
+        @embedFile("typecheck_cases/err_ptr_of_string_list.expected"),
+    );
+}
+
+test "golden(typecheck): v2.1.62 — ptr_of liste olmayan değerde reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_ptr_of_not_a_list.nox"),
+        @embedFile("typecheck_cases/err_ptr_of_not_a_list.expected"),
+    );
+}
+
+test "golden(typecheck): v2.1.62 — ptr_of list[int] kabul edilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_ptr_of_list_int.nox"),
+        @embedFile("typecheck_cases/ok_ptr_of_list_int.expected"),
+    );
+}

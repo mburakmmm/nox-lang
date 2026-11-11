@@ -51,9 +51,9 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 
 ## 3. FFI (rapor: ffi-performans-analizi)
 
-- [ ] **3.1** `lowlevel` içinde `ptr_of(liste)`/`Buffer` veri işaretçisi (sıfır-kopya) — kullanıcı ONAYLADI (2026-11-11); İlke 1/2 uyumlu: yalnız `lowlevel`, skaler elemanlı, tip denetimli
-- [ ] **3.2** QBE'de `lowlevel` `ptr_read/ptr_write` döngü maliyeti (0.87 vs 0.40 ns/eleman) incele
-- [ ] **3.3** Callback trampoline'ı profile et (4.99 ns, C'nin 7x'i)
+- [x] **3.1** `lowlevel` içinde `ptr_of(liste)` sıfır-kopya veri işaretçisi — **v2.1.62** (0.36 → 0.08 ns/eleman; `Buffer` için `ptr_of(buf.data)` alan erişimiyle)
+- [-] **3.2** QBE'de `lowlevel` `ptr_read/ptr_write` döngüsü (0.58 vs 0.36 ns/eleman, toplam 2.4x): QBE'nin optimizasyonsuz çıktısı; varsayılan LLVM'de sorun yok, QBE için ayrı iş yok (backend eşitliği hedefi madde 5.3'te ele alınır)
+- [x] **3.3** Callback: yeniden ölçüm 1.9 ns (C'nin 2.5x'i; ilk ölçüm 5 ns idi) — ek profil gerekmez, yeterli
 - [ ] **3.4** Struct-by-value ve saklanan (kayıtlı) callback tasarımı — madde 5.1 ile birlikte
 
 ## 4. WASM içe aktarma (rapor: wasm-import-kapsam-analizi; seçenek A onaylandı)

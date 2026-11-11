@@ -37,6 +37,9 @@ int main(void) {
         t = now_ms(); acc = 0;
         for (int r = 0; r < 20; r++) { for (int m = 0; m < 1000000; m++) buf[m] = xs[m]; acc += c_sum(buf, 1000000); }
         report("marshal_list_to_ptr_per_elem", t, 20 * 1000000, acc % 1000003);
+        t = now_ms(); acc = 0;
+        for (int r = 0; r < 20; r++) acc += c_sum(xs, 1000000);
+        report("marshal_list_zero_copy_per_elem", t, 20 * 1000000, acc % 1000003);
         c_free(xs); c_free(buf);
     }
     return 0;

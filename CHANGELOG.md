@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.62]
+
+### Eklendi
+
+- **`lowlevel` içinde `ptr_of(liste) -> ptr[T]` (kullanıcı onayıyla): sıfır-kopya FFI.** `list[int]`, `list[float]` ve sabit genişlikli tamsayı listelerinin veri işaretçisini (başlığın hemen ardı; doğal boyutlu, paketli elemanlar) verir; C bu listeyi kopyasız okuyup yazabilir. Bağımsız değişken değişken adı ya da alan erişimi olmalı (geçici ifade reddedilir), `lowlevel` dışında ve `list[str]`/liste olmayan değerlerde derleme hatası; işaretçi liste ayrılana ya da büyüyene dek geçerli (AGENTS §9.5 güven sınırı; İlke 1 ve 2 korunur). Ölçüm: 1M elemanlı listeyi C'ye geçirme eleman başına 0.36 → **0.08 ns** (C taban 0.07). Golden: `ptr_of_zero_copy` (tüm eleman türleri, okuma/yazma, libc `memset`/`memcmp` ile gerçek FFI; iki backend), 5 typecheck golden'ı. Docs: `docs/language/ffi.md`.
+- `benchmarks/ffi_perf` zero-copy senaryosu; callback yeniden ölçüldü: 1.9 ns (C'nin 2.5x'i; ilk ölçüm 5 ns idi).
+
+### Düzeltildi
+
+- CI: isteğe bağlı `apt-get` kurulumları (binaryen, qemu, binutils-multiarch) `continue-on-error`; GitHub Linux koşucularında Ubuntu aynalarının DNS kesintisi v2.1.56–60 CI'larını düşürüyordu. Araç yoksa ilgili testler zaten `SkipZigTest` ile atlanır.
+
 ## [2.1.61]
 
 ### Değişti

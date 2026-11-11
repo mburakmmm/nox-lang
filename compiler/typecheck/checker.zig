@@ -4367,7 +4367,7 @@ pub const Checker = struct {
     }
 
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "hpy_package_open", "hpy_package_close", "hpy_package_close_obj", "hpy_package_call_int", "hpy_package_call_int_arg", "hpy_package_call_bool", "hpy_package_call_float", "hpy_package_call_str", "hpy_package_call_obj", "hpy_package_call_str_arg", "hpy_package_call_float_arg", "hpy_package_method_int", "hpy_package_call_method", "hpy_package_new", "hpy_package_call_bytes", "hpy_package_call_int_keyword", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "hpy_package_open", "hpy_package_close", "hpy_package_close_obj", "hpy_package_call_int", "hpy_package_call_int_arg", "hpy_package_call_bool", "hpy_package_call_float", "hpy_package_call_str", "hpy_package_call_obj", "hpy_package_call_str_arg", "hpy_package_call_float_arg", "hpy_package_method_int", "hpy_package_call_method", "hpy_package_new", "hpy_package_call_bytes", "hpy_package_call_int_keyword", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_of", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -8972,6 +8972,29 @@ pub const Checker = struct {
                     const pt = try self.checkExpr(ctx, c.args[0]);
                     if (pt != .ptr and pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_to_int' takes a ptr or ptr[T]", .{});
                     return .int;
+                }
+                // v2.1.62 (kullanıcı onayıyla, 2026-11-11; `project/ffi-performans-analizi-2026-11.md`): `ptr_of(xs) -> ptr[T]` — `list[T]`in VERİ işaretçisi (başlığın hemen ardı), sıfır-kopya FFI
+                // için. YALNIZCA `lowlevel` içinde; yalnızca `list[int]`/`list[float]`/`list[sabit genişlikli tamsayı]` (doğal boyutlu, paketli eleman düzeni — okuma/yazma `ptr[T]` ile tip-denetimli);
+                // bağımsız değişken bir değişken adı ya da alan erişimi OLMALIDIR (geçici ifade değil: dönüş değeri ölçülü ömürlü bir listeye bağlı). İşaretçi, liste ayrılana ya da büyüyene
+                // (`append` yeniden tahsis edebilir) dek geçerlidir — `lowlevel` güven sınırının parçasıdır (AGENTS §9.5); sahiplik yüzeyde GÖRÜNMEZ kalır (İlke 1), tip denetimi sürer (İlke 2).
+                if (std.mem.eql(u8, name, "ptr_of")) {
+                    try self.requireLowlevel(name);
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_of' takes exactly 1 argument (a list variable or field)", .{});
+                    if (c.args[0] != .identifier and c.args[0] != .attribute) {
+                        return self.fail(error.TypeMismatch, "'ptr_of' can only be applied to a variable or a field — not to the result of an expression (its data pointer would outlive the temporary)", .{});
+                    }
+                    const lt = try self.checkExpr(ctx, c.args[0]);
+                    const elem: Type = switch (lt) {
+                        .list => |e| e.*,
+                        else => return self.fail(error.TypeMismatch, "'ptr_of' takes a list[T]", .{}),
+                    };
+                    switch (elem) {
+                        .int, .float, .fixed_int => {},
+                        else => return self.fail(error.TypeMismatch, "'ptr_of' supports list[int], list[float] and lists of fixed-width integers only", .{}),
+                    }
+                    const boxed = try self.allocator.create(Type);
+                    boxed.* = elem;
+                    return .{ .typed_ptr = boxed };
                 }
                 if (std.mem.eql(u8, name, "ptr_add")) {
                     try self.requireLowlevel(name);

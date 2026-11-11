@@ -143,10 +143,26 @@ for FFI, kernels and device access:
 | `ptr_read(p)`, `ptr_write(p, v)` | typed load / store |
 | `ptr_read_volatile`, `ptr_write_volatile` | loads/stores the optimiser must not elide (memory-mapped I/O) |
 | `memory_fence()`, `compiler_fence()` | ordering barriers |
+| `ptr_of(xs)` | the data pointer of a `list[int]`, `list[float]` or a list of fixed-width integers, as `ptr[T]` — zero-copy hand-over to native code (see below) |
 | `detach(x)`, `adopt(p)` | turn a managed object into a raw pointer, and take a raw pointer back as a managed object of a given class |
 
 Typed reads and writes are type-checked: `ptr_write(p, v)` requires `v` to have the pointee type. The [`nox.mem`](../stdlib/mem.md) module wraps
 the common patterns (`copy`, `move`, `set`, volatile access) so ordinary code rarely needs a `lowlevel` block of its own.
+
+### Passing a list to native code without copying
+
+`ptr_of(xs)` (inside `lowlevel`) gives the address of a list's elements, laid out contiguously at their natural width (`list[int]` as 8-byte integers, `list[u8]` as bytes, `list[float]` as doubles, and so on), typed as `ptr[T]`. Native code can then read or fill the list in place:
+
+```nox-fragment
+extern def memset(p: ptr, c: int, n: int) -> ptr from "c"
+
+buf: list[u8] = [u8(0), u8(0), u8(0), u8(0)]
+lowlevel:
+    memset(ptr_from_int(ptr_to_int(ptr_of(buf))), 255, 4)
+print(buf[0])      # 255
+```
+
+Rules: the argument must be a variable or a field (not a call result, whose list would be freed with the temporary); only `list[int]`, `list[float]` and lists of fixed-width integers are accepted. The pointer is valid until the list is released **or grows** (`append` can reallocate), exactly like any other `lowlevel` pointer, and lies inside the [trust boundary](#the-trust-boundary). Compared with copying the elements into a native buffer, this costs nothing per element (0.08 ns/element against 0.36 ns in the FFI benchmark).
 
 ## Sizes and layouts
 

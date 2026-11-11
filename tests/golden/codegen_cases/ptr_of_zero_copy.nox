@@ -1,0 +1,48 @@
+# v2.1.62: lowlevel `ptr_of(liste) -> ptr[T]` — list[T] veri işaretçisi (sıfır-kopya FFI). Okuma/yazma, tüm desteklenen eleman türleri, libc ile gerçek sıfır-kopya çağrı.
+extern def memset(p: ptr, c: int, n: int) -> ptr from "c"
+extern def memcmp(a: ptr, b: ptr, n: int) -> int from "c"
+
+xs: list[int] = [10, 20, 30, 40]
+fs: list[float] = [1.5, 2.5, 3.5]
+bs: list[u8] = [u8(1), u8(2), u8(3), u8(4), u8(5), u8(6)]
+ws: list[u16] = [u16(100), u16(200), u16(300)]
+ds: list[i32] = [i32(-5), i32(7), i32(-9)]
+zs: list[u8] = [u8(0), u8(0), u8(0), u8(0)]
+ys: list[u8] = [u8(9), u8(9), u8(9), u8(9)]
+
+lowlevel:
+    p: ptr[int] = ptr_of(xs)
+    total: int = 0
+    i: int = 0
+    while i < 4:
+        total = total + ptr_read(ptr_offset(p, i))
+        i = i + 1
+    print(total)
+    ptr_write(ptr_offset(p, 1), 99)
+
+    fp: ptr[float] = ptr_of(fs)
+    print(ptr_read(ptr_offset(fp, 2)))
+    ptr_write(ptr_offset(fp, 0), 0.25)
+
+    bp: ptr[u8] = ptr_of(bs)
+    print(ptr_read(ptr_offset(bp, 5)))
+    print(ptr_read(ptr_offset(bp, 0)))
+    ptr_write(ptr_offset(bp, 2), u8(77))
+
+    wp: ptr[u16] = ptr_of(ws)
+    print(ptr_read(ptr_offset(wp, 1)))
+
+    dp: ptr[i32] = ptr_of(ds)
+    print(ptr_read(ptr_offset(dp, 0)))
+    print(ptr_read(ptr_offset(dp, 2)))
+
+    # Gerçek sıfır-kopya FFI: libc memset doğrudan listenin belleğine yazar; memcmp iki listeyi karşılaştırır.
+    _m: ptr = memset(ptr_from_int(ptr_to_int(ptr_of(ys))), 255, 4)
+    print(memcmp(ptr_from_int(ptr_to_int(ptr_of(zs))), ptr_from_int(ptr_to_int(ptr_of(ys))), 4) < 0)
+    print(memcmp(ptr_from_int(ptr_to_int(ptr_of(ys))), ptr_from_int(ptr_to_int(ptr_of(ys))), 4))
+
+print(xs[1])
+print(fs[0])
+print(bs[2])
+print(ys[0], ys[3])
+print(len(xs), len(fs))
