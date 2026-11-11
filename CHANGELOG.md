@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.51]
+
+### Eklendi
+
+- **FFI performans analizi.** `benchmarks/ffi_perf/` (C kütüphanesi, C tabanı, Nox LLVM/QBE, Python `ctypes`; sağlama toplamları eşleşir) ve rapor `project/ffi-performans-analizi-2026-11.md`. Sonuç: `extern def` çağrı maliyeti C ile aynı (≈0.7 ns, `ctypes`ten 150-300x hızlı); callback 7x pahalı (≈5 ns); asıl maliyet veri aktarımı (`list`/`Buffer` için sıfır-kopya işaretçi yolu yok; QBE'de kopya döngüsü LLVM'in 2x'i). Kod davranışı DEĞİŞMEDİ.
+
 ## [2.1.50]
 
 ### Eklendi

@@ -1,0 +1,100 @@
+# FFI maliyet benchmark'ı (v2.1.51): her satır "ad<TAB>ns_çağrı<TAB>sağlama". ffi_bench.c ayrı derlenmiş bir .o'dur (run.py derler).
+import nox.time
+
+extern def c_add(a: int, b: int) -> int from "ffi_bench.o"
+extern def c_fmul(a: float, b: float) -> float from "ffi_bench.o"
+extern def c_first(s: str) -> int from "ffi_bench.o"
+extern def c_sum(p: ptr, n: int) -> int from "ffi_bench.o"
+extern def c_make(n: int) -> ptr from "ffi_bench.o"
+extern def c_free(p: ptr) -> None from "ffi_bench.o"
+
+@ffi.callback("cb", "userdata")
+extern def c_apply_n(cb: (int, int, ptr) -> int, n: int, userdata: ptr) -> int from "ffi_bench.o"
+
+def cb_add(a: int, b: int) -> int:
+    return a + b
+
+def now_ms() -> float:
+    return float(nox.time.monotonic_ns()) / 1000000.0
+
+def report(name: str, t0: float, calls: int, check: int) -> None:
+    print(name + "\t" + str((now_ms() - t0) * 1000000.0 / float(calls)) + "\t" + str(check))
+
+def bench() -> None:
+    n: int = 50000000
+    t: float = now_ms()
+    acc: int = 0
+    i: int = 0
+    while i < n:
+        acc = acc + c_add(i, 1)
+        i = i + 1
+    report("ffi_scalar_int", t, n, acc)
+
+    t = now_ms()
+    f: float = 1.0
+    i = 0
+    while i < n:
+        f = c_fmul(f, 1.0000001)
+        i = i + 1
+    report("ffi_scalar_float", t, n, 1 if f > 1.0 else 0)
+
+    s: str = "a" * 1024
+    t = now_ms()
+    acc = 0
+    i = 0
+    while i < n:
+        acc = acc + c_first(s)
+        i = i + 1
+    report("ffi_str_arg_1KB", t, n, acc)
+
+    arr: ptr = c_make(1000000)
+    t = now_ms()
+    acc = 0
+    r: int = 0
+    while r < 100:
+        acc = acc + c_sum(arr, 1000000)
+        r = r + 1
+    report("ffi_bulk_sum_1M_x100", t, 100, acc % 1000003)
+
+    # Aynı toplam Nox'ta lowlevel ptr_read döngüsüyle (FFI'nin ne zaman kazandığını göstermek için).
+    t = now_ms()
+    acc = 0
+    lowlevel:
+        p: ptr[int] = ptr[int](ptr_to_int(arr))
+        r = 0
+        while r < 100:
+            j: int = 0
+            while j < 1000000:
+                acc = acc + ptr_read(ptr_offset(p, j))
+                j = j + 1
+            r = r + 1
+    report("nox_bulk_sum_1M_x100", t, 100, acc % 1000003)
+    c_free(arr)
+
+    t = now_ms()
+    acc = c_apply_n(cb_add, n)
+    report("ffi_callback", t, n, acc)
+
+    # list[int] -> C tamponu: sıfır-kopya yol YOK; elemanlar lowlevel ptr_write döngüsüyle kopyalanır (ns/ELEMAN).
+    xs: list[int] = []
+    k: int = 0
+    while k < 1000000:
+        xs.append(k)
+        k = k + 1
+    buf: ptr = c_make(1000000)
+    t = now_ms()
+    acc = 0
+    r = 0
+    while r < 20:
+        lowlevel:
+            q: ptr[int] = ptr[int](ptr_to_int(buf))
+            m: int = 0
+            while m < 1000000:
+                ptr_write(ptr_offset(q, m), xs[m])
+                m = m + 1
+        acc = acc + c_sum(buf, 1000000)
+        r = r + 1
+    report("marshal_list_to_ptr_per_elem", t, 20 * 1000000, acc % 1000003)
+    c_free(buf)
+
+bench()
