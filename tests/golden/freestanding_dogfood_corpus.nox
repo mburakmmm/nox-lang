@@ -19,6 +19,40 @@ import nox.time
 
 print("DOGFOOD_START")
 
+# --- v2.1.54: boyut-sınıflı heap (öncesinde tek istekte 4096 baytın üstü reddediliyor ve bellek sessizce bozuluyordu) ---
+big: list[int] = []
+bi: int = 0
+while bi < 5000:
+    big.append(bi)
+    bi = bi + 1
+bsum: int = 0
+bj: int = 0
+while bj < 5000:
+    bsum = bsum + big[bj]
+    bj = bj + 1
+print(bsum)
+bigset: Set[int] = Set[int]()
+bk: int = 0
+while bk < 3000:
+    bigset.add(bk % 2000)
+    bk = bk + 1
+print(bigset.size())
+text: str = ""
+bm: int = 0
+while bm < 20000:
+    text = text + "x"
+    bm = bm + 1
+print(len(text))
+# ayır/serbest bırak çalkalaması: serbest bırakılan bellek yeniden kullanılmalı (4 MiB'tan çok daha fazlası dolaşır)
+churn: int = 0
+bn: int = 0
+while bn < 200000:
+    piece: str = "item" + str(bn)
+    if len(piece) > 0:
+        churn = churn + 1
+    bn = bn + 1
+print(churn)
+
 # --- unsigned yazdırma (`%llu`; v2.1.53 öncesi freestanding'de literal "%llu" basılıyordu) ---
 ua: u8 = u8(200)
 ub: u64 = u64(9223372036854775807) + u64(1)

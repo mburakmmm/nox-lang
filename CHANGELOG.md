@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.54]
+
+### Düzeltildi
+
+- **Freestanding: büyük liste/küme/dize sessizce bozuluyordu (F2/F3/F4/F6/F7).** Kök neden: x86_64 önyükleme zincirinin varsayılan allocator'ı (`kernel.zig` `kernelAlloc`) sayfa-içi "bump"tı: tek istekte 4096 baytın üstünü REDDEDİYORDU (`null`) ve `free` hiçbir şey yapmıyordu (bellek asla geri dönmüyordu); `nox_list_grow`/`nox_arena_list_grow` dönen `null`'ı denetlemeden `null+16`'ya yazdığından 129. eleman (1040 bayt → 2064 bayt büyütme) fiziksel sayfa 0'daki BIOS verisini (kesme vektör tablosu) listenin üstüne yazıyor, `Set` 1000+ eleman `IndexError`, 8 KiB+ dize hata, ~466 bin ayır/bırak sonrası tükenme gibi belirtiler veriyordu. Yeni `runtime/freestanding/size_class_heap.zig` (2'nin kuvveti boyut sınıfları, serbest listeler, bitişik 16 MiB bölge; sayfa havuzu altında) ve tahsis başarısızlığında `nox: out of memory — terminating the program` ile durma (`errors.nox_out_of_memory`). Birim testleri (hosted), dogfood korpusu (hosted ile QEMU aynı çıktıyı vermeli: 5000 elemanlı liste, 3000 ekleme `Set`, 20000 karakterlik dize, 200 bin çalkalama).
+- QEMU ölçümünde `collections_hashed_index`, `ordered_dict_remove_tombstones`, `str_append_in_place`, `pinned_string_passthrough`, `dict_list_dict_values_float_keys`, `async_task_churn_long` artık geçiyor.
+
 ## [2.1.53]
 
 ### Düzeltildi

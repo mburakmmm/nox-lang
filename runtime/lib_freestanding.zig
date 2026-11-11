@@ -141,7 +141,8 @@ fn kernelAllocAdapter(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment,
     _ = ctx;
     _ = ret_addr;
     const f = g_kernel_alloc_fn orelse return null;
-    const raw = f(len, alignment.toByteUnits()) orelse return null;
+    // v2.1.54: kernel allocator başarısız olursa SESSİZCE null döndürmek yerine açık bir iletiyle dur (çağıranların çoğu null'ı denetlemez; liste büyütmesi null+16'ya yazıp belleği bozuyordu).
+    const raw = f(len, alignment.toByteUnits()) orelse errors.nox_out_of_memory();
     return @ptrCast(raw);
 }
 

@@ -30,6 +30,8 @@ nox_allocator_install(kernel_alloc, kernel_free)
 The runtime then satisfies *every* memory request from them. The functions must return memory that is at least 8-byte aligned (the runtime's headers assume it) and must really own it. Because these functions back the
 whole managed heap, they sit inside the same [trust boundary](../language/ffi.md#the-trust-boundary) as `extern def`: a wrong allocator corrupts the whole program.
 
+**Default heap.** The reference x86_64 boot chain (`kernel.zig`) installs a built-in allocator: a size-class free-list heap over a contiguous 16 MiB region at the top of the 32 MiB identity-mapped memory (the page pool for `nox_alloc_page` lives below it). Requests are rounded up to a power-of-two class (16 B and up), blocks are reused after `free`, and there is no coalescing. If the heap (or a kernel-installed allocator) cannot satisfy a request, the program stops with `nox: out of memory — terminating the program` instead of continuing with a null pointer. Earlier releases rejected any request above 4096 bytes and never reclaimed memory, which silently corrupted lists above 128 elements.
+
 `nox_freestanding_early_init` is the one-time bootstrap step that runs, unconditionally and exactly once, before control reaches the program's top-level code.
 
 ## Hardware access

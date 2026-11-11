@@ -20,6 +20,7 @@ const diag_sink = @import("diag_sink");
 /// fiber.zig`nin `StackProvider` arayüzü (`nox_allocator_install`ın GENEL
 /// heap İçİn yaptığının AYNISI, AMA fiber yığınları İçİn) BURADA somutlaştırılır.
 const fiber_mod = @import("../../async_rt/fiber.zig");
+const heap_mod = @import("../size_class_heap.zig");
 
 // ---------------------------------------------------------------------
 // `outb`/`inb` — Zig 0.16'nın inline-asm sözdizimi doğrudan
@@ -291,7 +292,7 @@ fn ensurePageInit() void {
     if (g_page_init_done) return;
     g_page_init_done = true;
     const base = nox_kernel_phys_base();
-    const limit = nox_kernel_phys_limit();
+    const limit = pmmLimit(); // v2.1.54: Nox heap'inin bölgesi (üst kısım) sayfa havuzundan AYRILIR
     // `kernel_demo.nox`nin ESKİ algoritmasıyla BİREBİR: İLK sayfa (`base`)
     // BİLİNÇLİ olarak serbest listeye DAHİL EDİLMEZ (ESKİ implementasyonda
     // "kontrol sayfası" olarak KULLANILIYORDU — BURADA durum Zig `var`
@@ -342,42 +343,44 @@ export fn nox_free_pages() callconv(.c) i64 {
     return g_page_free_count;
 }
 
-/// Basit bir bump/sayfa-üstü katman — Nox'un yönetilen heap'inin
-/// DEĞİŞKEN boyutlu isteklerini (`nox_alloc_page`nin SADECE SABİT
-/// 4096-baytlık sayfalar VERMESİNE karşılık) `nox_allocator_install`
-/// ABI'sine (bkz. `lib_freestanding.zig`) bağlar.
-var g_bump_page: i64 = 0;
-var g_bump_offset: usize = 0;
+/// v2.1.54: Nox'un yönetilen heap'i için AYRILMIŞ bitişik bölge (fiziksel belleğin üst `KERNEL_HEAP_BYTES`ı; kimlik eşlemesi 0..32 MiB içinde). Sayfa havuzu (`nox_alloc_page`, kernel_demo'nun
+/// PMM'i) bu bölgenin ALTINDA kalır; ikisi çakışmaz. Önceki dağıtıcı (sayfa-içi bump) tek istekte 4096 baytı REDDEDİYOR ve `free` yapmıyordu: 512+ elemanlı liste, 1000+ elemanlı `Set`,
+/// 8 KiB+ dize `null` alıp çağıranın denetlemeden `null+16`'ya yazmasıyla sessizce BOZULUYORDU (`project/freestanding-kapsam-analizi-2026-11.md` F2-F4).
+const KERNEL_HEAP_BYTES: i64 = 16 * 1024 * 1024;
 
-/// **v1 sınırı** (AÇIKÇA belgelenir, bkz. plan dosyasının "Kapsam DIŞI"
-/// bölümü): `size`/`alignment` bir sayfadan (4096 bayt) BÜYÜKSE `null`
-/// döner — çoklu-sayfa BİTİŞİK ayırma DESTEKLENMEZ (`kernel_demo.nox`nin
-/// KENDİ kullanımı, küçük `list[int]`, BUNA HİÇ ihtiyaç DUYMUYOR).
-fn kernelAlloc(size: usize, alignment: usize) callconv(.c) ?*anyopaque {
-    if (alignment > 4096 or size > 4096) return null;
-    const page_base: usize = if (g_bump_page != 0) @intCast(g_bump_page) else 0;
-    const aligned_offset = if (g_bump_page != 0) std.mem.alignForward(usize, page_base + g_bump_offset, alignment) - page_base else 0;
-    if (g_bump_page == 0 or aligned_offset + size > 4096) {
-        const p = nox_alloc_page();
-        if (p == 0) return null;
-        g_bump_page = p;
-        const new_base: usize = @intCast(p);
-        const new_aligned_offset = std.mem.alignForward(usize, new_base, alignment) - new_base;
-        if (new_aligned_offset + size > 4096) return null;
-        g_bump_offset = new_aligned_offset + size;
-        return @ptrFromInt(new_base + new_aligned_offset);
-    }
-    g_bump_offset = aligned_offset + size;
-    return @ptrFromInt(page_base + aligned_offset);
+fn heapBytes() i64 {
+    const base = nox_kernel_phys_base();
+    const limit = nox_kernel_phys_limit();
+    // Çekirdek imajı büyükse (PMM'e en az 1 MiB kalmalı) heap küçülür.
+    var heap = KERNEL_HEAP_BYTES;
+    while (heap > 4096 and limit - heap < base + 1024 * 1024) heap = @divTrunc(heap, 2);
+    return heap;
 }
 
-/// **v1 sınırı** (AÇIKÇA belgelenir): bump-İçİ sub-page geri-kazanım YOK —
-/// SADECE tam-sayfa granülerliğinde geri kazanım VAR (`nox_free_page`
-/// ÜZERİNDEN, bu bump katmanı TARAFINDAN ŞU AN hiç ÇAĞRILMAZ). Bu HER
-/// ZAMAN sözleşme-yasal bir seçimdir (SADECE bellek İSRAFI, ASLA bir
-/// doğruluk hatası).
+fn pmmLimit() i64 {
+    return nox_kernel_phys_limit() - heapBytes();
+}
+
+var g_heap: heap_mod.SizeClassHeap = undefined;
+var g_heap_ready: bool = false;
+
+fn heapEnsure() void {
+    if (g_heap_ready) return;
+    g_heap_ready = true;
+    const limit: usize = @intCast(nox_kernel_phys_limit());
+    const start: usize = @intCast(pmmLimit());
+    g_heap = heap_mod.SizeClassHeap.init(start, limit);
+}
+
+/// Bölge tükenirse (ya da `alignment > 4096`) `null` döner; `lib_freestanding.zig` bunu "nox: out of memory" ile durdurur (sessiz bozulma YOK).
+fn kernelAlloc(size: usize, alignment: usize) callconv(.c) ?*anyopaque {
+    heapEnsure();
+    const addr = g_heap.alloc(size, alignment) orelse return null;
+    return @ptrFromInt(addr);
+}
+
+/// Blok, boyut sınıfının serbest listesine döner ve aynı sınıftaki sonraki istekte yeniden kullanılır (birleştirme yok).
 fn kernelFree(ptr: ?*anyopaque, size: usize, alignment: usize) callconv(.c) void {
-    _ = ptr;
-    _ = size;
-    _ = alignment;
+    const p = ptr orelse return;
+    g_heap.free(@intFromPtr(p), size, alignment);
 }
