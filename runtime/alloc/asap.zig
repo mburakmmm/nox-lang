@@ -356,6 +356,12 @@ pub const RuntimeState = struct {
     /// `nox_arena_create`/`nox_arena_destroy`ı) korur — `pool_free_lists_
     /// lock`la AYNI "her zaman aktif" gerekçesi.
     arena_pool_lock: SpinLock = .{},
+    /// v2.1.60: büyük (>= `LARGE_CACHE_MIN`) bloklar için TAM-EŞİT-boyutlu küçük önbellek (yalnızca Release, bkz. `use_large_cache`). `mmap`/`munmap` + sayfa hatası maliyetini (1 MB'lık dize
+    /// birleştirmesi başına ~0.2 ms) ortadan kaldırır. Boyut eşleşmesi TAM olduğundan ayırıcı sözleşmesi (`free` ile `alloc` boyutu aynı) korunur.
+    large_cache_lock: SpinLock = .{},
+    large_cache_ptr: [LARGE_CACHE_SLOTS]?[*]u8 = @splat(null),
+    large_cache_len: [LARGE_CACHE_SLOTS]usize = @splat(0),
+    large_cache_next: usize = 0,
     /// Faz S.3 (Katman 3, döngü çözücü) — `runtime/alloc/cycle_detector.zig`nin
     /// KENDİ `CycleGc` durumuna opak bir işaretçi (tembel/lazy oluşturulur,
     /// bkz. onun `getGc`si). `arena_pool` İLE AYNI gerekçeyle opak: `asap.zig`
@@ -920,6 +926,7 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // (aksi halde Debug modunda deinit SONRASI bir kullanım olurdu).
     // Havuzlanmış serbest ARC blokları `pool_ext` satırlarında da durabilir: önce onları bırak, sonra uzantıyı yık.
     nox_rc_pool_drain(rt);
+    largeCacheDrain(@ptrCast(@alignCast(rt orelse return)));
     if (state.pool_ext) |ext| state.allocator().destroy(ext);
     // Faz F.0.2: AYNI gerekçe — Release modunun arena-havuzunda KALAN
     // `ArenaHandle`ler de `debug_gpa.deinit()`DEN ÖNCE serbest bırakılmalı
@@ -978,8 +985,80 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
 pub const nox_alloc_alignment = std.mem.Alignment.fromByteUnits(@alignOf(usize));
 
 /// `size` bayt tahsis eder. Başarısızlıkta `null` döner.
+const LARGE_CACHE_MIN: usize = 64 * 1024;
+const LARGE_CACHE_SLOTS = 8;
+const LARGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+const use_large_cache = builtin.mode != .Debug and !is_freestanding;
+
+fn largeCacheTake(state: *RuntimeState, size: usize) ?[*]u8 {
+    state.large_cache_lock.lock();
+    defer state.large_cache_lock.unlock();
+    for (&state.large_cache_ptr, &state.large_cache_len) |*p, *l| {
+        if (p.* != null and l.* == size) {
+            const out = p.*;
+            p.* = null;
+            l.* = 0;
+            return out;
+        }
+    }
+    return null;
+}
+
+/// `true`: blok önbelleğe alındı (çağıran SERBEST BIRAKMAMALI).
+fn largeCachePut(state: *RuntimeState, bytes: [*]u8, size: usize) bool {
+    if (size > LARGE_CACHE_MAX_BYTES / 2) return false;
+    state.large_cache_lock.lock();
+    defer state.large_cache_lock.unlock();
+    var total: usize = size;
+    for (state.large_cache_len) |l| total += l;
+    // Toplam sınırı aşılıyorsa en eski yuvaları (halka sırası) gerçekten bırak.
+    while (total > LARGE_CACHE_MAX_BYTES) {
+        const i = state.large_cache_next % LARGE_CACHE_SLOTS;
+        state.large_cache_next +%= 1;
+        if (state.large_cache_ptr[i]) |old| {
+            total -= state.large_cache_len[i];
+            state.allocator().rawFree(old[0..state.large_cache_len[i]], nox_alloc_alignment, @returnAddress());
+            state.large_cache_ptr[i] = null;
+            state.large_cache_len[i] = 0;
+        }
+    }
+    var slot: ?usize = null;
+    for (state.large_cache_ptr, 0..) |p, i| {
+        if (p == null) {
+            slot = i;
+            break;
+        }
+    }
+    const i = slot orelse blk: {
+        const j = state.large_cache_next % LARGE_CACHE_SLOTS;
+        state.large_cache_next +%= 1;
+        if (state.large_cache_ptr[j]) |old| state.allocator().rawFree(old[0..state.large_cache_len[j]], nox_alloc_alignment, @returnAddress());
+        break :blk j;
+    };
+    state.large_cache_ptr[i] = bytes;
+    state.large_cache_len[i] = size;
+    return true;
+}
+
+/// `nox_runtime_deinit` çağırır: önbellekteki büyük blokları ayırıcıya geri verir.
+pub fn largeCacheDrain(state: *RuntimeState) void {
+    if (!use_large_cache) return;
+    state.large_cache_lock.lock();
+    defer state.large_cache_lock.unlock();
+    for (&state.large_cache_ptr, &state.large_cache_len) |*p, *l| {
+        if (p.*) |old| state.allocator().rawFree(old[0..l.*], nox_alloc_alignment, @returnAddress());
+        p.* = null;
+        l.* = 0;
+    }
+}
+
 pub export fn nox_alloc(rt: ?*anyopaque, size: usize) ?*anyopaque {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    if (comptime use_large_cache) {
+        if (size >= LARGE_CACHE_MIN) {
+            if (largeCacheTake(state, size)) |p| return p;
+        }
+    }
     const mem = state.allocator().alignedAlloc(u8, nox_alloc_alignment, size) catch return null;
     return mem.ptr;
 }
@@ -993,6 +1072,9 @@ pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
     const p = ptr orelse return;
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const bytes: [*]u8 = @ptrCast(p);
+    if (comptime use_large_cache) {
+        if (size >= LARGE_CACHE_MIN and largeCachePut(state, bytes, size)) return;
+    }
     state.allocator().rawFree(bytes[0..size], nox_alloc_alignment, @returnAddress());
 }
 
@@ -1169,4 +1251,19 @@ test "arcOwnerThreadOk: Faz X.3 — gerçek bir farklı-iş-parçacığı ihlali
     t.join();
 
     try std.testing.expect(!ctx.result); // FARKLI iş parçacığı — İHLAL doğru YAKALANDI
+}
+
+test "v2.1.60: büyük blok önbelleği — aynı boyutlu serbest bırak/ayır AYNI bloğu döndürür (Release); Debug'da kapalı" {
+    if (!use_large_cache) return error.SkipZigTest;
+    const rt = nox_runtime_init() orelse return error.InitFailed;
+    defer nox_runtime_deinit(rt);
+    const a = nox_alloc(rt, 1 << 20) orelse return error.AllocFailed;
+    nox_free(rt, a, 1 << 20);
+    const b = nox_alloc(rt, 1 << 20) orelse return error.AllocFailed;
+    try std.testing.expectEqual(a, b);
+    // Farklı boyut: önbellek eşleşmez, yeni blok.
+    const c = nox_alloc(rt, (1 << 20) + 4096) orelse return error.AllocFailed;
+    try std.testing.expect(c != b);
+    nox_free(rt, b, 1 << 20);
+    nox_free(rt, c, (1 << 20) + 4096);
 }

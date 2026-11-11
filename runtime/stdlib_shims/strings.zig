@@ -218,15 +218,8 @@ export fn nox_strings_eq_ignore_case_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) c
 
 const AsciiVec = @Vector(32, u8);
 
-/// Tüm baytlar < 0x80 mi? (32 baytlık SIMD tarama + skaler kuyruk)
 fn isAscii(slice: []const u8) bool {
-    var i: usize = 0;
-    while (i + 32 <= slice.len) : (i += 32) {
-        const v: AsciiVec = slice[i..][0..32].*;
-        if (@reduce(.Or, v >= @as(AsciiVec, @splat(0x80)))) return false;
-    }
-    while (i < slice.len) : (i += 1) if (slice[i] >= 0x80) return false;
-    return true;
+    return str_mod.isAsciiBytes(slice);
 }
 
 /// ASCII büyük/küçük harf dönüşümü (32 baytlık SIMD + skaler kuyruk). `dst.len == src.len`; `src` ASCII olmalı. `upper`: a-z -> A-Z, aksi halde A-Z -> a-z.
@@ -278,17 +271,6 @@ test "asciiCaseInto: SIMD ve skaler kuyruk std.ascii ile aynı sonucu verir (tü
             }
         }
     }
-}
-
-test "isAscii: SIMD blok sınırında ve kuyrukta ASCII-dışı baytı yakalar" {
-    var b: [100]u8 = @splat('a');
-    try std.testing.expect(isAscii(&b));
-    for ([_]usize{ 0, 31, 32, 63, 64, 95, 99 }) |pos| {
-        b[pos] = 0xC3;
-        try std.testing.expect(!isAscii(&b));
-        b[pos] = 'a';
-    }
-    try std.testing.expect(isAscii(""));
 }
 
 export fn nox_strings_upper_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {

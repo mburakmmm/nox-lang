@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.60]
+
+### Değişti
+
+- **Büyük tahsis maliyeti düşürüldü** (`project/yapilacaklar-2026-11.md` 2.9): (1) `asap.nox_alloc`/`nox_free` artık ≥ 64 KiB bloklar için **tam-eşit-boyutlu** küçük bir önbellek tutar (8 yuva, en çok 64 MiB; yalnızca Release; kapanışta boşaltılır) — 1 MB'lık dizelerin tekrarlı tahsisinde `mmap`/`munmap`/sayfa hatası kalmaz. (2) `len()`'in tetiklediği tembel ASCII taraması skalerdi (1 MB ≈ 0.3 ms); `str.isAsciiBytes` artık 32 baytlık SIMD tarar (`strings.upper/lower` ile paylaşılır). Ölçüm (ReleaseFast, M4): 1 MB `"  " + s` + `len` 0.36 → 0.10 ms; `str_upper_lower_trim_x20` 55 → 5.4 ms (CPython 13.9); stdlib kıyas geometrik ortalama nox/python 1.08 → **0.75**.
+- CI: `apt-get` çağrıları 4 denemeli yeniden-deneme sarmalayıcısıyla (v2.1.56/57'nin Linux işleri ağ hatasıyla — `binaryen` indirilemedi — kırmızıydı).
+
 ## [2.1.59]
 
 ### Eklendi

@@ -179,17 +179,24 @@ pub fn nox_str_slice(str_ptr: [*:0]const u8) []const u8 {
 /// GERÇEK OS iş parçacığı TARAFINDAN ASLA eşzamanlı TUTULMAZ. Düz bir
 /// oku/değiştir/yaz, refcount'un KENDİSİYLE AYNI güvenlik varsayımı
 /// altında yeterlidir.
+const AsciiVec = @Vector(32, u8);
+
+/// Tüm baytlar < 0x80 mi? 32 baytlık SIMD tarama + skaler kuyruk (v2.1.60: 1 MB'lık bir `len()` taraması skalerde ~0.3 ms'ydi).
+pub fn isAsciiBytes(bytes: []const u8) bool {
+    var i: usize = 0;
+    while (i + 32 <= bytes.len) : (i += 32) {
+        const v: AsciiVec = bytes[i..][0..32].*;
+        if (@reduce(.Or, v >= @as(AsciiVec, @splat(0x80)))) return false;
+    }
+    while (i < bytes.len) : (i += 1) if (bytes[i] >= 0x80) return false;
+    return true;
+}
+
 fn ensureAsciiResolved(str_ptr: [*:0]const u8) bool {
     const state = strAsciiState(str_ptr);
     if (state != ASCII_UNKNOWN) return state == ASCII_TRUE;
     const bytes = nox_str_slice(str_ptr);
-    var is_ascii = true;
-    for (bytes) |b| {
-        if (b >= 0x80) {
-            is_ascii = false;
-            break;
-        }
-    }
+    const is_ascii = isAsciiBytes(bytes);
     setStrAsciiState(str_ptr, if (is_ascii) ASCII_TRUE else ASCII_FALSE);
     return is_ascii;
 }
@@ -1391,4 +1398,15 @@ test "v1.156.0: nox_str_find/count/char_class/just" {
     const c = nox_str_just(rt, ab, 5, null, 2) orelse return error.Failed;
     defer nox_str_release(rt, c);
     try std.testing.expectEqualStrings("  ab ", nox_str_slice(c));
+}
+
+test "isAsciiBytes: SIMD blok sınırlarında ve kuyrukta ASCII-dışı baytı yakalar" {
+    var b: [100]u8 = @splat('a');
+    try std.testing.expect(isAsciiBytes(&b));
+    for ([_]usize{ 0, 31, 32, 63, 64, 95, 99 }) |pos| {
+        b[pos] = 0xC3;
+        try std.testing.expect(!isAsciiBytes(&b));
+        b[pos] = 'a';
+    }
+    try std.testing.expect(isAsciiBytes(""));
 }

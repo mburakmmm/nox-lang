@@ -42,7 +42,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [ ] **2.5** `regex` find_all/replace (1.5-1.7x) profil + optimize
 - [-] **2.6** `gzip` (2.5x/3.4x) — **yeni bağımlılık eklenmeyecek** (kullanıcı kararı); Zig flate kalır. İsteğe bağlı: bağımlılıksız ince ayar (düzey/tampon)
 - [~] **2.7** Eksik modül adaylarından hangileri gerçek talep: `bigint`/`decimal`, argüman ayrıştırma, `tempfile`/`glob`, XML/HTML, zip/tar/zstd, md5/sha3/blake3, `Mutex/Semaphore`, `.env`/ini
-- [ ] **2.9** Büyük (≥ ~64 KB) tahsislerde sayfa-hatası maliyeti: `"  " + 1MB + "  "` 0.44 ms (CPython 0.02 ms) — büyük blok önbelleği/yeniden kullanımı araştır (`nox_rc_alloc` büyük yol)
+- [x] **2.9** Büyük tahsis maliyeti: tam-eşit-boyutlu büyük blok önbelleği + SIMD ASCII taraması — **v2.1.60** (1 MB concat+len 0.36 → 0.10 ms; upper/lower/trim 55 → 5.4 ms)
 - [ ] **2.8** Her düzeltmeden sonra `benchmarks/stdlib_perf/run.py` ile yeniden ölç (hedef: tüm kalemler ≤ ~1.5x)
 
 ## 3. FFI (rapor: ffi-performans-analizi)
@@ -77,5 +77,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 ## 7. İşletim / bekleyenler
 
 - [~] **7.1** Site arka ucunun sürüm seçimi düzeltmesini M4'e canlıya alma (`services/noxlang-site/main.nox`) — **kullanıcı onayı gerekir**
+- [ ] **7.4** `http_serve_golden_test` h2c SSE testi macOS CI'da sıra yarışı yaşadı (v2.1.57: `events aborted`/`forever closed` satır sırası); testi sıra-bağımsız yap ya da senkronla
+- [x] **7.5** CI `apt-get` yeniden-deneme sarmalayıcısı (ağ hatası) — **v2.1.60**
 - [~] **7.2** CI takibi: v2.1.49–55 yeşil (v2.1.48 beklenen kırmızı, v2.1.49'da düzeldi); v2.1.56 bekleniyor — her sürüm sonrası `gh run list --workflow CI` ile kontrol
 - [ ] **7.3** `list[Task[T]]` (bilinçli desteklenmiyor; hata `TaskGroup`'a yönlendirir) — değişmedi
