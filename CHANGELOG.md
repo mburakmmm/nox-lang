@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.66]
+
+### Eklendi
+
+- **`nox.bigint`: keyfi hassasiyetli tamsayı (TODO 2.10, ilk parça):** `BigInt` sınıfı Python `int` anlamıyla `+ - * // % ** << >> & | ^`, karşılaştırmalar, `divmod`, `gcd`, `pow_mod`, `isqrt`, `is_probable_prime` (Miller-Rabin), `bit_length`, 2–36 tabanında `parse`/`to_str`, `factorial`. Capability gerektirmez; freestanding, wasm ve mobilde de çalışır. Golden: ~830 işlem Python `int` ile birebir (rastgele tohumlu, negatifler, 1200 bite kadar). Zig std'nin `Managed.gcd` dizin taşması ve `bitOr/And/Xor` karışık-işaret hataları atlatıldı. Docs: `docs/stdlib/bigint.md`.
+- `zig build runtime-test -Druntime-test-filter=<ad>`: runtime birim testlerini süzerek çalıştırır.
+
 ## [2.1.65]
 
 ### Değişti

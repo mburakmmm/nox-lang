@@ -22,7 +22,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
+| none | pure computation | `strings`, `mathx`, `bigint`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `sqlite`, `timezone` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `grpc`, `grpc_server`, `udp` |
 | `network` + `filesystem` | both | `transfer` |
@@ -49,6 +49,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 |---|---|
 | [`nox.strings`](strings.md) | split, join, trim, replace, search, padding, byte-level helpers |
 | [`nox.math`](math.md), [`nox.mathx`](mathx.md) | floating-point mathematics (libm-backed / libc-free) |
+| [`nox.bigint`](bigint.md) | arbitrary-precision integers |
 | [`nox.random`](random.md) | pseudo-random numbers and shuffling |
 | [`nox.time`](time.md) | wall clock, sleeping, calendar date-times, monotonic intervals |
 | [`nox.tasks`](tasks.md) | task groups: add, wait, limit, cancel |

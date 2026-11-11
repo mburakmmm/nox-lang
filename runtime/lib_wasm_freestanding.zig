@@ -47,6 +47,7 @@ pub const regex_shim = @import("stdlib_shims/regex.zig");
 pub const gzip_shim = @import("stdlib_shims/gzip.zig");
 pub const csv_shim = @import("stdlib_shims/csv.zig");
 pub const base64_shim = @import("stdlib_shims/base64.zig");
+pub const bigint_shim = @import("stdlib_shims/bigint.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
 pub const io_shim = @import("stdlib_shims/io.zig");
@@ -96,6 +97,7 @@ comptime {
     _ = gzip_shim;
     _ = csv_shim;
     _ = base64_shim;
+    _ = bigint_shim;
     _ = time_shim;
     _ = os_shim;
     _ = io_shim;

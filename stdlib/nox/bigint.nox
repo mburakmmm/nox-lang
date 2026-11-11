@@ -1,0 +1,192 @@
+# nox.bigint (v2.1.66) — keyfi hassasiyetli tamsayı. Değer değişmez bir `str` olarak taşınır (işaret baytı + küçük-endian büyüklük; bkz. `runtime/stdlib_shims/bigint.zig`):
+# ARC/ömür derdi yoktur, kopyalamak ucuzdur. Operatörler Python'la aynı anlamdadır (`//` ve `%` tabana yuvarlar, `>>` -sonsuza yuvarlar). Saf hesaplama; yetenek gerekmez.
+
+class BigIntError(Exception):
+    pass
+
+extern def nox_bigint_is_error(s: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bigint_from_i64(v: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_fits_i64(s: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bigint_to_i64(s: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bigint_parse_raw(s: str, base: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_to_string(s: str, base: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_add(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_sub(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_mul(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_gcd(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_and(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_or(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_xor(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_floordiv(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_mod(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_neg(a: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_abs(a: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_cmp(a: str, b: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bigint_sign(a: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bigint_pow(a: str, e: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_powmod(a: str, e: str, m: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_shl(a: str, n: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_shr(a: str, n: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_bit_length(a: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bigint_isqrt(a: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bigint_is_odd(a: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bigint_hash(a: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bigint_is_probable_prime(a: str, rounds: int) -> int from "zig-out/lib/noxrt.o"
+
+def _ok(r: str, what: str) -> str:
+    if nox_bigint_is_error(r) == 1:
+        raise BigIntError(what)
+    return r
+
+class BigInt:
+    v: str
+
+    def __init__(self, v: str) -> None:
+        self.v = v
+
+    def __add__(self, o: BigInt) -> BigInt:
+        return BigInt(nox_bigint_add(self.v, o.v))
+
+    def __sub__(self, o: BigInt) -> BigInt:
+        return BigInt(nox_bigint_sub(self.v, o.v))
+
+    def __mul__(self, o: BigInt) -> BigInt:
+        return BigInt(nox_bigint_mul(self.v, o.v))
+
+    def __floordiv__(self, o: BigInt) -> BigInt:
+        if nox_bigint_sign(o.v) == 0:
+            raise ZeroDivisionError("BigInt division by zero")
+        return BigInt(nox_bigint_floordiv(self.v, o.v))
+
+    def __mod__(self, o: BigInt) -> BigInt:
+        if nox_bigint_sign(o.v) == 0:
+            raise ZeroDivisionError("BigInt modulo by zero")
+        return BigInt(nox_bigint_mod(self.v, o.v))
+
+    def __pow__(self, e: int) -> BigInt:
+        return BigInt(_ok(nox_bigint_pow(self.v, e), "BigInt exponent must be between 0 and 2**32-1"))
+
+    def __neg__(self) -> BigInt:
+        return BigInt(nox_bigint_neg(self.v))
+
+    def __and__(self, o: BigInt) -> BigInt:
+        return BigInt(nox_bigint_and(self.v, o.v))
+
+    def __or__(self, o: BigInt) -> BigInt:
+        return BigInt(nox_bigint_or(self.v, o.v))
+
+    def __xor__(self, o: BigInt) -> BigInt:
+        return BigInt(nox_bigint_xor(self.v, o.v))
+
+    def __lshift__(self, n: int) -> BigInt:
+        return BigInt(_ok(nox_bigint_shl(self.v, n), "BigInt shift count out of range"))
+
+    def __rshift__(self, n: int) -> BigInt:
+        return BigInt(_ok(nox_bigint_shr(self.v, n), "BigInt shift count must not be negative"))
+
+    def __eq__(self, o: BigInt) -> bool:
+        return nox_bigint_cmp(self.v, o.v) == 0
+
+    def __ne__(self, o: BigInt) -> bool:
+        return nox_bigint_cmp(self.v, o.v) != 0
+
+    def __lt__(self, o: BigInt) -> bool:
+        return nox_bigint_cmp(self.v, o.v) < 0
+
+    def __le__(self, o: BigInt) -> bool:
+        return nox_bigint_cmp(self.v, o.v) <= 0
+
+    def __gt__(self, o: BigInt) -> bool:
+        return nox_bigint_cmp(self.v, o.v) > 0
+
+    def __ge__(self, o: BigInt) -> bool:
+        return nox_bigint_cmp(self.v, o.v) >= 0
+
+    def __str__(self) -> str:
+        return nox_bigint_to_string(self.v, 10)
+
+    def __repr__(self) -> str:
+        return nox_bigint_to_string(self.v, 10)
+
+    def __bool__(self) -> bool:
+        return nox_bigint_sign(self.v) != 0
+
+    # Python `divmod(a, b)`: (taban bölüm, bölenin işaretini taşıyan kalan).
+    def divmod(self, o: BigInt) -> tuple[BigInt, BigInt]:
+        if nox_bigint_sign(o.v) == 0:
+            raise ZeroDivisionError("BigInt division by zero")
+        return (BigInt(nox_bigint_floordiv(self.v, o.v)), BigInt(nox_bigint_mod(self.v, o.v)))
+
+    def abs(self) -> BigInt:
+        return BigInt(nox_bigint_abs(self.v))
+
+    # -1, 0 ya da 1.
+    def sign(self) -> int:
+        return nox_bigint_sign(self.v)
+
+    def is_zero(self) -> bool:
+        return nox_bigint_sign(self.v) == 0
+
+    def is_odd(self) -> bool:
+        return nox_bigint_is_odd(self.v) == 1
+
+    def is_even(self) -> bool:
+        return nox_bigint_is_odd(self.v) == 0
+
+    # Büyüklüğün bit uzunluğu (Python `int.bit_length`; 0 için 0).
+    def bit_length(self) -> int:
+        return nox_bigint_bit_length(self.v)
+
+    def gcd(self, o: BigInt) -> BigInt:
+        return BigInt(nox_bigint_gcd(self.v, o.v))
+
+    # `self ** e mod m` (e >= 0, m > 0); sonuç [0, m) aralığındadır.
+    def pow_mod(self, e: BigInt, m: BigInt) -> BigInt:
+        return BigInt(_ok(nox_bigint_powmod(self.v, e.v, m.v), "pow_mod needs exponent >= 0 and modulus > 0"))
+
+    # ⌊√self⌋ (self >= 0).
+    def isqrt(self) -> BigInt:
+        return BigInt(_ok(nox_bigint_isqrt(self.v), "isqrt of a negative number"))
+
+    # Miller-Rabin: ilk 12 asal tabanla (3.3e24'e kadar kesin) + `rounds` ek taban.
+    def is_probable_prime(self, rounds: int = 8) -> bool:
+        return nox_bigint_is_probable_prime(self.v, rounds) == 1
+
+    def fits_int(self) -> bool:
+        return nox_bigint_fits_i64(self.v) == 1
+
+    # 64 bit işaretli `int`e çevirir; sığmazsa `BigIntError`.
+    def to_int(self) -> int:
+        if nox_bigint_fits_i64(self.v) == 0:
+            raise BigIntError("BigInt does not fit in a 64-bit int")
+        return nox_bigint_to_i64(self.v)
+
+    # 2..36 tabanında yazı (küçük harf, işaret `-`).
+    def to_str(self, base: int = 10) -> str:
+        return _ok(nox_bigint_to_string(self.v, base), "base must be between 2 and 36")
+
+    def hash(self) -> int:
+        return nox_bigint_hash(self.v)
+
+# `int`ten BigInt.
+def from_int(x: int) -> BigInt:
+    return BigInt(nox_bigint_from_i64(x))
+
+# `from_int` için kısa ad.
+def big(x: int) -> BigInt:
+    return BigInt(nox_bigint_from_i64(x))
+
+# Python `int(s, base)` gibi: isteğe bağlı `+`/`-`, `_` ayırıcılar; geçersiz girdide `ValueError`.
+def parse(s: str, base: int = 10) -> BigInt:
+    r: str = nox_bigint_parse_raw(s, base)
+    if nox_bigint_is_error(r) == 1:
+        raise ValueError("invalid BigInt literal")
+    return BigInt(r)
+
+def factorial(n: int) -> BigInt:
+    r: BigInt = from_int(1)
+    i: int = 2
+    while i <= n:
+        r = r * from_int(i)
+        i = i + 1
+    return r

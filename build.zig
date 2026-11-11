@@ -1343,9 +1343,13 @@ pub fn build(b: *std.Build) void {
         m.addObjectFile(b.path(swap_asm_o_path));
         break :blk m;
     } else noxrt_mod;
-    const noxrt_test = b.addTest(.{ .root_module = noxrt_test_mod });
+    // v2.1.66: `-Druntime-test-filter=<alt dize>` + `zig build runtime-test` yalnızca runtime birim testlerini (shim'ler dahil) süzerek çalıştırır.
+    const runtime_test_filter = b.option([]const u8, "runtime-test-filter", "runtime-test adımında yalnızca adı bu alt dizeyi içeren testleri çalıştır");
+    const noxrt_test = b.addTest(.{ .root_module = noxrt_test_mod, .filters = if (runtime_test_filter) |f| b.dupeStrings(&.{f}) else &.{} });
     noxrt_test.step.dependOn(&compile_swap_asm.step);
     test_step.dependOn(&addTimedTestRun(b, noxrt_test, win_test_timeout_s).step);
+    const runtime_test_step = b.step("runtime-test", "Yalnızca runtime birim testleri (-Druntime-test-filter=<ad> ile süzülebilir)");
+    runtime_test_step.dependOn(&addTimedTestRun(b, noxrt_test, win_test_timeout_s).step);
     // Faz MN.8: `worker-pool-test`/`async-rt-test` İLE AYNI desen — SADECE
     // `noxrt_test`i (pool_bridge.zig/scheduler.zig/http_server.zig DAHİL
     // TÜM Zig-seviyesi runtime testleri) TAM takımın 700+ saniyelik golden/
