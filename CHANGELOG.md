@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.50]
+
+### Eklendi
+
+- **Stdlib performans analizi.** `benchmarks/stdlib_perf/` (Nox + Python, 26 stdlib işi, aynı sağlama toplamı zorunlu, `run.py` ile karşılaştırma) ve rapor `project/stdlib-performans-analizi-2026-11.md`. Sonuç: geometrik ortalama nox/python 1.08 (LLVM) / 1.11 (QBE); belirgin yavaş uçlar `nox.base64` (26x/36x, saf Nox uygulama), `strings.upper/lower` (4x, skaler döngü), `gzip` (2.5x/3.4x), `json` (1.7x), `regex` (1.5-1.7x). Eksik modül adayları listelendi. Kod davranışı DEĞİŞMEDİ.
+
 ## [2.1.49]
 
 ### Düzeltildi

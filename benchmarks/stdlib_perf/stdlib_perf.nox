@@ -1,0 +1,244 @@
+# Stdlib mikro-benchmark paketi (v2.1.50): her satır "ad<TAB>ms<TAB>sağlama". stdlib_perf.py AYNI işi Python'un standart kütüphanesiyle yapar ve AYNI sağlama toplamını üretmelidir.
+# Çalıştır: benchmarks/stdlib_perf/run.sh  (ReleaseFast runtime ile ölç; düz `zig build` Debug runtime'dır ve ~100x yavaştır.)
+import nox.time
+import nox.strings
+import nox.json
+import nox.regex
+import nox.base64
+import nox.crypto
+import nox.gzip
+import nox.csv
+import nox.url
+import nox.path
+import nox.random
+import nox.uuid
+from nox.collections import Set
+from nox.json import JsonValue
+from nox.url import URL
+
+def now_ms() -> float:
+    return float(nox.time.monotonic_ns()) / 1000000.0
+
+def report(name: str, t0: float, check: int) -> None:
+    print(name + "\t" + str(now_ms() - t0) + "\t" + str(check))
+
+def make_csvish(n: int) -> str:
+    parts: list[str] = []
+    i: int = 0
+    while i < n:
+        parts.append(str(i))
+        i = i + 1
+    return nox.strings.join(parts, ",")
+
+def bench() -> None:
+    # ---------------- strings ----------------
+    t: float = now_ms()
+    src: str = make_csvish(200000)
+    report("str_build_join_200k", t, len(src))
+
+    t = now_ms()
+    tot: int = 0
+    r: int = 0
+    while r < 5:
+        tot = tot + len(nox.strings.split(src, ","))
+        r = r + 1
+    report("str_split_200k_x5", t, tot)
+
+    t = now_ms()
+    tot = 0
+    r = 0
+    while r < 5:
+        tot = tot + len(nox.strings.replace(src, "1", "xyz"))
+        r = r + 1
+    report("str_replace_x5", t, tot)
+
+    t = now_ms()
+    cnt: int = 0
+    pos: int = 0
+    while pos < 300000:
+        k: int = ("item" + str(pos) + "tail").find("9")
+        if k >= 0:
+            cnt = cnt + k
+        pos = pos + 1
+    report("str_find_300k_small", t, cnt)
+
+    t = now_ms()
+    tot = 0
+    r = 0
+    while r < 20:
+        tot = tot + len(nox.strings.upper(src)) + len(nox.strings.lower(src)) + len(nox.strings.trim("  " + src + "  "))
+        r = r + 1
+    report("str_upper_lower_trim_x20", t, tot)
+
+    t = now_ms()
+    acc: str = ""
+    i2: int = 0
+    while i2 < 1000000:
+        acc = acc + "x"
+        i2 = i2 + 1
+    report("str_concat_1M", t, len(acc))
+
+    t = now_ms()
+    tot = 0
+    i2 = 0
+    while i2 < 300000:
+        s2: str = f"{i2}:{i2 * 2}"
+        tot = tot + len(s2)
+        i2 = i2 + 1
+    report("fstring_300k", t, tot)
+
+    # ---------------- json ----------------
+    parts: list[str] = []
+    i3: int = 0
+    while i3 < 50000:
+        parts.append("{\"id\":" + str(i3) + ",\"name\":\"item_" + str(i3) + "\",\"tags\":[\"a\",\"b\"],\"v\":1.5}")
+        i3 = i3 + 1
+    jtext: str = "[" + nox.strings.join(parts, ",") + "]"
+    t = now_ms()
+    jv: JsonValue = nox.json.parse(jtext)
+    report("json_parse_50k_objs", t, nox.json.array_len(jv))
+    t = now_ms()
+    out: str = nox.json.dump(jv)
+    report("json_dump_50k_objs", t, len(out))
+
+    # ---------------- regex ----------------
+    words: list[str] = []
+    i4: int = 0
+    while i4 < 50000:
+        words.append("w" + str(i4) + "x")
+        i4 = i4 + 1
+    rtext: str = nox.strings.join(words, " ")
+    t = now_ms()
+    ms: list[str] = nox.regex.find_all("[0-9]+", rtext)
+    report("regex_find_all_digits", t, len(ms))
+    t = now_ms()
+    rr: str = nox.regex.replace("[0-9]+", "#", rtext)
+    report("regex_replace_digits", t, len(rr))
+
+    # ---------------- base64 / crypto / gzip ----------------
+    blob: str = nox.strings.repeat("The quick brown fox jumps over the lazy dog. ", 90000)
+    t = now_ms()
+    enc: str = nox.base64.encode(blob)
+    report("base64_encode_4MB", t, len(enc))
+    t = now_ms()
+    dec: str = nox.base64.decode(enc)
+    report("base64_decode_4MB", t, len(dec))
+    t = now_ms()
+    tot = 0
+    i5: int = 0
+    chunk: str = nox.strings.repeat("abcdefgh", 8192)
+    while i5 < 128:
+        tot = tot + len(nox.crypto.sha256(chunk))
+        i5 = i5 + 1
+    report("sha256_64KiB_x128", t, tot)
+    t = now_ms()
+    z: list[int] = nox.gzip.compress(blob)
+    report("gzip_compress_4MB", t, len(z) % 100000)
+    t = now_ms()
+    unz: str = nox.gzip.decompress(z)
+    report("gzip_decompress_4MB", t, len(unz))
+
+    # ---------------- csv / url / path ----------------
+    rows: list[str] = []
+    i6: int = 0
+    while i6 < 50000:
+        rows.append(str(i6) + ",name" + str(i6) + ",\"quoted, text\"," + str(i6 * 3) + ",end")
+        i6 = i6 + 1
+    ctext: str = nox.strings.join(rows, "\n")
+    t = now_ms()
+    parsed: list[list[str]] = nox.csv.parse(ctext)
+    report("csv_parse_50k_rows", t, len(parsed))
+
+    t = now_ms()
+    tot = 0
+    i7: int = 0
+    while i7 < 100000:
+        u: URL = nox.url.parse("https://example.com:8080/a/b/c?x=" + str(i7) + "&y=hello%20world#frag")
+        tot = tot + len(u.path)
+        i7 = i7 + 1
+    report("url_parse_100k", t, tot)
+
+    t = now_ms()
+    tot = 0
+    i7 = 0
+    while i7 < 100000:
+        tot = tot + len(nox.url.percent_decode(nox.url.percent_encode("hello world/" + str(i7) + "?&=")))
+        i7 = i7 + 1
+    report("url_percent_roundtrip_100k", t, tot)
+
+    t = now_ms()
+    tot = 0
+    i7 = 0
+    while i7 < 300000:
+        tot = tot + len(nox.path.basename(nox.path.join("/usr/local/lib", "file" + str(i7) + ".txt")))
+        i7 = i7 + 1
+    report("path_join_basename_300k", t, tot)
+
+    # ---------------- collections / dict / sort ----------------
+    t = now_ms()
+    st: Set[int] = Set[int]()
+    i8: int = 0
+    while i8 < 200000:
+        st.add(i8 % 150000)
+        i8 = i8 + 1
+    hits: int = 0
+    i8 = 0
+    while i8 < 200000:
+        if st.contains(i8):
+            hits = hits + 1
+        i8 = i8 + 1
+    report("set_add_contains_200k", t, hits + st.size())
+
+    t = now_ms()
+    d: dict[str, int] = {}
+    i9: int = 0
+    while i9 < 300000:
+        d["key" + str(i9)] = i9
+        i9 = i9 + 1
+    tot = 0
+    i9 = 0
+    while i9 < 300000:
+        tot = tot + d["key" + str(i9)]
+        i9 = i9 + 1
+    report("dict_str_insert_lookup_300k", t, tot % 1000003)
+
+    t = now_ms()
+    nums: list[int] = []
+    x: int = 12345
+    i10: int = 0
+    while i10 < 1000000:
+        x = (x * 1103515245 + 12345) % 2147483648
+        nums.append(x)
+        i10 = i10 + 1
+    nums.sort()
+    report("sort_1M_ints", t, nums[0] + nums[999999] % 1000003)
+
+    t = now_ms()
+    strs: list[str] = []
+    i10 = 0
+    while i10 < 200000:
+        x = (x * 1103515245 + 12345) % 2147483648
+        strs.append("s" + str(x))
+        i10 = i10 + 1
+    strs.sort()
+    report("sort_200k_strs", t, len(strs[0]) + len(strs[199999]))
+
+    # ---------------- random / uuid ----------------
+    nox.random.seed(1)
+    t = now_ms()
+    fsum: float = 0.0
+    i11: int = 0
+    while i11 < 3000000:
+        fsum = fsum + nox.random.random()
+        i11 = i11 + 1
+    report("random_3M", t, 1 if fsum > 1000000.0 else 0)
+
+    t = now_ms()
+    tot = 0
+    i11 = 0
+    while i11 < 100000:
+        tot = tot + len(nox.uuid.uuid4())
+        i11 = i11 + 1
+    report("uuid4_100k", t, tot)
+
+bench()

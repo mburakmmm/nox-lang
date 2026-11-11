@@ -13,6 +13,8 @@
 bölümleri kısa iş yüklerinde süreç başlangıcıyla bulanıktır, gerçek hız için oraya bakın.
 C'ye göre geometrik ortalama (v1.158.0): Nox QBE 2.45×, Nox LLVM 2.17×, Go 1.28×, Node 5.43×, Python 23.2×. v2.0.38 yeniden ölçümü `benchmarks/cross_lang/README.md`de: tablodaki her kernel v1.158.0 değerlerinin ±%8'i içinde, gerileme yok.
 
+**Stdlib karşılaştırması (v2.1.50):** `benchmarks/stdlib_perf/` — 26 stdlib işi Nox vs CPython 3.15, aynı sağlama toplamı; geometrik ortalama nox/python 1.08 (LLVM) / 1.11 (QBE). Ayrıntı ve yavaş uçlar: `project/stdlib-performans-analizi-2026-11.md`.
+
 ## Bölüm 1 — Stres testleri (yalnızca Nox, büyük N)
 
 Bu testler yalnızca Nox'un büyük ölçekte çökmediğini/sızdırmadığını ve zamanla regresyona uğramadığını doğrular; başka bir dille kıyaslanmaz.
