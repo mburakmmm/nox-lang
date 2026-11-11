@@ -16,6 +16,7 @@ noxc build --profile freestanding --target riscv64 --emit-asm kernel.nox   # ass
 
 - `--profile freestanding` restricts imports to modules that need no capability, checked at compile time ([capabilities](../stdlib/index.md#capabilities)). `nox.mem`, `nox.bits`, `nox.buffer`, `nox.binary`, `nox.mathx`,
   `nox.collections`, `nox.strings`, `nox.console`, `nox.json`, `nox.csv` and the other pure modules are allowed; `nox.fs`, `nox.http`, `nox.thread`, `nox.time`'s clock functions and similar are rejected.
+- **Linked into the freestanding runtime today:** the pure modules above plus `nox.strings`, `nox.json`, `nox.regex`, `nox.base64`, `nox.path` (lexical only; `canonicalize` always fails without a file system) and `nox.random` (seeded from the time-stamp counter on x86_64; call `seed(n)` for reproducible output). **Not yet linkable** even though the profile admits them: `nox.gzip`/`nox.bytes` (compression state needs more stack than a fiber), `nox.crypto`, `nox.os`. Importing one is a link-time error naming the missing `nox_*` symbols. The same checks run in `scripts/freestanding_survey.py`.
 - `--target` selects the architecture (`x86_64`, `aarch64`; `riscv64` can only emit assembly — there is no freestanding boot chain). Hosted riscv64 is a separate target, `linux-riscv64`. The result is linked with `zig cc` against the freestanding runtime
   object (`noxrt-freestanding-generic-<arch>.o`).
 

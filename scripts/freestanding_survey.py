@@ -54,7 +54,7 @@ def link_check(name):
 def boot(name):
     src = os.path.join(CASES, name + ".nox")
     exp_path = os.path.join(CASES, name + ".expected")
-    expected = open(exp_path).read() if os.path.exists(exp_path) else None
+    expected = open(exp_path, newline="").read() if os.path.exists(exp_path) else None
     d = tempfile.mkdtemp(prefix="fsq-")
     try:
         stem = d + "/k"

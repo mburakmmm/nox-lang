@@ -53,15 +53,11 @@ runtime/stdlib_shims/http_server.zig	windows_listen_cache	process	Windows dinlem
 runtime/stdlib_shims/http_server.zig	windows_listen_cache_lock	process	Windows dinleme-soketi önbelleği, kilitli; işlem-geneli OS kaynağı
 runtime/stdlib_shims/http_server.zig	test_header_loop_iterations	test	yalnızca birim testlerinin sayaç/tamponu; üretim kodu okumaz
 runtime/stdlib_shims/io.zig	g_stdin_leftover_fallback	tl-errno	fiber DIŞINDAKİ (senkron üst-düzey) kod için iş parçacığı-yerel stdin artık tamponu; fiber içinde Fiber alanı kullanılır. Aynı iş parçacığında iki runtime stdin tamponunu paylaşır (bilinen sınır, 1.5 korpusu ölçer)
-runtime/stdlib_shims/json.zig	g_last_op_ok_fallback	tl-errno	`errno` benzeri son-işlem durumu: fiber içinde Fiber alanında, fiber DIŞINDA bu iş parçacığı-yerel yedekte. `last_op_ok()` API şekli bunu tanımlar; RuntimeState'e taşımak API değişikliğidir (açık borç, Faz 1.5 ölçer)
-runtime/stdlib_shims/json.zig	g_json_value_class_id	tl-scratch	JSON ayrıştırma için iş parçacığı-yerel sabit önbellek/geçici arena; sonuç runtime ayırıcısına kopyalanır
-runtime/stdlib_shims/json.zig	g_decode_arena	tl-scratch	JSON ayrıştırma için iş parçacığı-yerel sabit önbellek/geçici arena; sonuç runtime ayırıcısına kopyalanır
 runtime/stdlib_shims/mysql.zig	g_state	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
 runtime/stdlib_shims/mysql.zig	g_lib	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
 runtime/stdlib_shims/mysql.zig	g_funcs	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
 runtime/stdlib_shims/os.zig	g_argc	process	işlem argv'si doğası gereği işlem-geneli; başlangıçta bir kez ayarlanır
 runtime/stdlib_shims/os.zig	g_argv	process	işlem argv'si doğası gereği işlem-geneli; başlangıçta bir kez ayarlanır
-runtime/stdlib_shims/path.zig	g_last_ok_fallback	tl-errno	`errno` benzeri son-işlem durumu: fiber içinde Fiber alanında, fiber DIŞINDA bu iş parçacığı-yerel yedekte. `last_op_ok()` API şekli bunu tanımlar; RuntimeState'e taşımak API değişikliğidir (açık borç, Faz 1.5 ölçer)
 runtime/stdlib_shims/postgres.zig	g_state	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
 runtime/stdlib_shims/postgres.zig	g_lib	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
 runtime/stdlib_shims/postgres.zig	g_funcs	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
@@ -146,3 +142,6 @@ runtime/wasm_vfs.zig	g_ready	wasm-host	freestanding bellek-içi sanal dosya sist
 runtime/stdlib_shims/signal.zig	g_flags	process	sinyal başına "geldi" bayrağı: sigaction işleyicisi (async-signal-safe) yazar, Nox kodu okur. İşleyici RuntimeState/allocator bilmez; bayrak süreç-geneli olmak zorunda
 runtime/stdlib_shims/terminal.zig	g_orig	process	stdin'in özgün termios ayarı: terminal süreç-geneli bir OS kaynağı; ham moddan çıkışta/kurtarmada geri yüklenir
 runtime/stdlib_shims/terminal.zig	g_raw_depth	process	iç içe enable/disable ham mod sayacı; terminal süreç-geneli bir OS kaynağı
+
+runtime/stdlib_shims/shim_util.zig	g_bare_scratch	freestanding	AGENTS §2.6 belgeli istisna: tek-seferlik çekirdek bootstrap durumu (§3.197); çıplak çekirdekte `page_allocator` yoktur, çalışma zamanı kurulurken çekirdek allocator'ı bir kez kaydedilir (v2.1.57)
+runtime/stdlib_shims/shim_util.zig	g_bare_scratch_ready	freestanding	AGENTS §2.6 belgeli istisna: tek-seferlik çekirdek bootstrap durumu (§3.197); yukarıdakiyle birlikte (v2.1.57)

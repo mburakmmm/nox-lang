@@ -5,6 +5,7 @@
 //! (saf string işlemleri), bu yüzden `.nox` tarafında `raise` YOLU YOKTUR.
 
 const std = @import("std");
+const scratch_util = @import("shim_util.zig");
 const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
@@ -144,11 +145,15 @@ export fn nox_path_is_absolute_raw(p: ?[*:0]const u8) callconv(.c) i32 {
 // duyan TEK fonksiyon budur.
 /// Faz MN.2: bkz. `fiber.zig`nin belge notu — fiber İÇİNDE `Fiber.
 /// path_last_ok`e, DIŞINDA (senkron üst-düzey kod) BU yedeğe düşer.
-threadlocal var g_last_ok_fallback: bool = true;
+const LastOkFallbackSlot = if (scratch_util.bare_kernel) struct {
+    var value: bool = true;
+} else struct {
+    threadlocal var value: bool = true;
+};
 
 fn pathLastOkPtr() *bool {
     if (bridge.currentFiber()) |f| return &f.path_last_ok;
-    return &g_last_ok_fallback;
+    return &LastOkFallbackSlot.value;
 }
 
 export fn nox_path_last_op_ok() callconv(.c) i32 {
@@ -195,13 +200,18 @@ export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv
         pathLastOkPtr().* = true;
         return dupeToNoxStr(rt, buf[0..len]);
     }
+    if (comptime ((builtin.os.tag == .freestanding or builtin.os.tag == .other) and !builtin.cpu.arch.isWasm())) {
+        // Çıplak çekirdek (v2.1.57): dosya sistemi yok — `canonicalize` her zaman başarısız (`pathLastOk` = false, boş dize).
+        pathLastOkPtr().* = false;
+        return dupeToNoxStr(rt, "");
+    }
     if (comptime wasm_host.is_freestanding_wasm) {
         // freestanding: gerçek dosya sistemi yok; yol, bellek içi sanal dosya sisteminde (`wasm_vfs.zig`, spec §3.349) aranır.
         const canon = @import("../wasm_vfs.zig").canonicalPath(std.mem.span(path)) orelse {
             pathLastOkPtr().* = false;
             return dupeToNoxStr(rt, "");
         };
-        defer std.heap.page_allocator.free(canon);
+        defer scratch_util.scratchAllocator().free(canon);
         pathLastOkPtr().* = true;
         return dupeToNoxStr(rt, canon);
     }
@@ -240,12 +250,12 @@ export fn nox_path_components_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.
     const slice = str_mod.nox_str_slice(p orelse return null);
 
     var names: std.ArrayListUnmanaged([]const u8) = .empty;
-    defer names.deinit(std.heap.page_allocator);
+    defer names.deinit(scratch_util.scratchAllocator());
     var norm_buf: [path_cap]u8 = undefined;
     const It = std.fs.path.ComponentIterator(.posix, u8);
     var it = It.init(posixPath(&norm_buf, slice));
     while (it.next()) |comp| {
-        names.append(std.heap.page_allocator, comp.name) catch return null;
+        names.append(scratch_util.scratchAllocator(), comp.name) catch return null;
     }
 
     const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * names.items.len) orelse return null;

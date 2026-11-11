@@ -16,6 +16,12 @@ from nox.binary import BinaryReader, BinaryWriter
 from nox.collections import Stack, Set
 import nox.console
 import nox.time
+import nox.strings
+import nox.json
+from nox.json import JsonValue
+import nox.regex
+import nox.base64
+import nox.path
 
 print("DOGFOOD_START")
 
@@ -52,6 +58,16 @@ while bn < 200000:
         churn = churn + 1
     bn = bn + 1
 print(churn)
+
+# --- v2.1.57: freestanding'e bağlanan kabuklar (strings, json, regex, base64, path) ---
+words: list[str] = nox.strings.split("alpha,beta,gamma", ",")
+print(len(words))
+print(nox.strings.upper(words[1]) + nox.strings.replace("a-b-c", "-", "+"))
+doc: JsonValue = nox.json.parse("{\"k\": [1, 2, {\"z\": true}], \"s\": \"hi\"}")
+print(nox.json.dump(doc))
+print(nox.regex.find_all("[0-9]+", "a1b22c333"))
+print(nox.base64.decode(nox.base64.encode("freestanding")))
+print(nox.path.join("/usr", "lib"))
 
 # --- biçim belirteçleri (v2.1.55: boot yığını 64 KiB -> 1 MiB; öncesinde yığın taşması çöküşü) ---
 fpi: float = 3.14159

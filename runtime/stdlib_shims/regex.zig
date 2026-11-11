@@ -11,6 +11,7 @@
 //! Güvenlik: toplam VM adımı sınırlıdır; sınır aşılırsa o arama "eşleşme yok" döner (motor hiçbir zaman sonsuz döngüye girmez).
 
 const std = @import("std");
+const scratch_util = @import("shim_util.zig");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const unicode = @import("../unicode.zig");
@@ -974,7 +975,7 @@ fn dupStr(rt: ?*anyopaque, s: []const u8) ?[*:0]u8 {
 
 /// Geçerli desen için "" , aksi halde hata iletisi.
 export fn nox_regex_error_raw(rt: ?*anyopaque, pattern: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(scratch_util.scratchAllocator());
     defer arena.deinit();
     var err: []const u8 = "";
     _ = compile(arena.allocator(), str_mod.nox_str_slice(pattern orelse return dupStr(rt, "")), &err);
@@ -982,7 +983,7 @@ export fn nox_regex_error_raw(rt: ?*anyopaque, pattern: ?[*:0]const u8) callconv
 }
 
 export fn nox_regex_group_count_raw(pattern: ?[*:0]const u8) callconv(.c) i64 {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(scratch_util.scratchAllocator());
     defer arena.deinit();
     var err: []const u8 = "";
     const prog = compile(arena.allocator(), str_mod.nox_str_slice(pattern orelse return -1), &err) orelse return -1;
@@ -991,7 +992,7 @@ export fn nox_regex_group_count_raw(pattern: ?[*:0]const u8) callconv(.c) i64 {
 
 /// Grup adları `\n` ile ayrılmış (adsız grup = boş satır); toplam grup sayısı kadar giriş.
 export fn nox_regex_group_names_raw(rt: ?*anyopaque, pattern: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(scratch_util.scratchAllocator());
     defer arena.deinit();
     var err: []const u8 = "";
     const prog = compile(arena.allocator(), str_mod.nox_str_slice(pattern orelse return dupStr(rt, "")), &err) orelse return dupStr(rt, "");
@@ -1006,7 +1007,7 @@ export fn nox_regex_group_names_raw(rt: ?*anyopaque, pattern: ?[*:0]const u8) ca
 /// `from` (bayt) konumundan başlayarak ardışık, çakışmayan eşleşmeleri düz bir listeye yazar: her eşleşme için `(ngroups+1)*2`
 /// değer (`başlangıç, bitiş` çiftleri; eşleşmeyen grup `-1`). `limit <= 0`: sınırsız. Geçersiz desen / eşleşme yok → boş liste.
 export fn nox_regex_exec_all_raw(rt: ?*anyopaque, pattern: ?[*:0]const u8, text: ?[*:0]const u8, from: i64, flags: i64, limit: i64) callconv(.c) ?*anyopaque {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(scratch_util.scratchAllocator());
     defer arena.deinit();
     const a = arena.allocator();
     var err: []const u8 = "";
@@ -1044,7 +1045,7 @@ export fn nox_regex_slice_raw(rt: ?*anyopaque, text: ?[*:0]const u8, start: i64,
 }
 
 fn simpleSearch(pattern: ?[*:0]const u8, text: ?[*:0]const u8) ?isize {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(scratch_util.scratchAllocator());
     defer arena.deinit();
     const a = arena.allocator();
     var err: []const u8 = "";

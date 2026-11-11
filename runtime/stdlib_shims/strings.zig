@@ -17,6 +17,7 @@
 //! büyük/küçük harfe duyarsız).
 
 const std = @import("std");
+const scratch_util = @import("shim_util.zig");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("shim_util.zig");
 const abi_layout = @import("abi_layout");
@@ -152,16 +153,16 @@ export fn nox_strings_splitn_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]
     }
 
     var parts: std.ArrayListUnmanaged([]const u8) = .empty;
-    defer parts.deinit(std.heap.page_allocator);
+    defer parts.deinit(scratch_util.scratchAllocator());
 
     var rest = s_slice;
     var count: i64 = 1;
     while (count < n) : (count += 1) {
         const idx = std.mem.indexOf(u8, rest, sep_slice) orelse break;
-        parts.append(std.heap.page_allocator, rest[0..idx]) catch return null;
+        parts.append(scratch_util.scratchAllocator(), rest[0..idx]) catch return null;
         rest = rest[idx + sep_slice.len ..];
     }
-    parts.append(std.heap.page_allocator, rest) catch return null;
+    parts.append(scratch_util.scratchAllocator(), rest) catch return null;
 
     return buildStrList(rt, parts.items);
 }
@@ -177,11 +178,11 @@ export fn nox_strings_rsplit_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]
     }
 
     var parts: std.ArrayListUnmanaged([]const u8) = .empty;
-    defer parts.deinit(std.heap.page_allocator);
+    defer parts.deinit(scratch_util.scratchAllocator());
 
     var it = std.mem.splitSequence(u8, s_slice, sep_slice);
     while (it.next()) |part| {
-        parts.append(std.heap.page_allocator, part) catch return null;
+        parts.append(scratch_util.scratchAllocator(), part) catch return null;
     }
     std.mem.reverse([]const u8, parts.items);
 

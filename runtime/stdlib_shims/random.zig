@@ -91,6 +91,22 @@ fn ensureSeeded() void {
             seeded.* = true;
             return;
         }
+        if (comptime (builtin.os.tag == .freestanding or builtin.os.tag == .other)) {
+            // Çıplak çekirdek: OS saati/entropisi YOK. x86_64'te zaman damgası sayacı (rdtsc) zayıf bir tohum verir; diğer mimarilerde sabit tohum. Tekrarlanabilirlik için `nox.random.seed(n)` kullanın.
+            var seed_bare: u64 = 0x9E3779B97F4A7C15;
+            if (comptime builtin.cpu.arch == .x86_64) {
+                var lo: u32 = undefined;
+                var hi: u32 = undefined;
+                asm volatile ("rdtsc"
+                    : [lo] "={eax}" (lo),
+                      [hi] "={edx}" (hi),
+                );
+                seed_bare ^= (@as(u64, hi) << 32) | lo;
+            }
+            prng.* = std.Random.DefaultPrng.init(seed_bare);
+            seeded.* = true;
+            return;
+        }
         var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(.REALTIME, &ts);
         const seed: u64 = @bitCast(@as(i64, ts.sec) *% 1_000_000_000 +% ts.nsec);

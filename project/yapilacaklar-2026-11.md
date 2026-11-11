@@ -25,7 +25,10 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **1.6 F6** `dict[float, …]` değer listesinde #GP — **KAPANDI v2.1.54** (aynı kök neden)
 - [x] **1.7 F7** `async_task_churn_long` #UD — **KAPANDI v2.1.54** (aynı kök neden)
 - [~] **1.8 F8** `exp(1.0)` 1 ULP farkı — kabul edilebilir mi? (karar)
-- [ ] **1.9** 17 modülü bağla: `strings`, `json`, `regex`, `gzip`, `crypto`, `path`, `random`, `os` kabuklarını `lib_freestanding.zig` köküne ekle (76 LINK fixture) + `docs/tools/freestanding.md`'yi gerçeğe uydur
+- [x] **1.9** `strings`, `json`, `regex`, `base64`, `path`, `random` kabuklarını freestanding köküne bağla (`scratchAllocator`, `TlsSlot`) + `docs/tools/freestanding.md` — **v2.1.57** (PASS 345 → 396, LINK 76 → 13)
+- [ ] **1.9b** `nox.gzip`/`nox.bytes` freestanding'de: sıkıştırma durumu fiber yığınına (192 KiB) sığmaz → statik büyük yığınlı mini-fiber ya da ayrı yol (7 fixture)
+- [ ] **1.9c** `nox.crypto` freestanding'de (2 fixture; `http_client` bağımlılığı ayrıştırılmalı)
+- [ ] **1.9d** `nox.os` freestanding'de (3 fixture; `argv/getenv/exit` çıplak çekirdek anlamı kararı)
 - [~] **1.10** QEMU'da fatal hatada `isa-debug-exit` ile çıkış (test düzeneği için) — karar
 - [~] **1.11** aarch64 / riscv64 için QEMU boot zinciri — karar
 - [ ] **1.12** Her adımdan sonra `python3 scripts/freestanding_survey.py` ile yeniden ölç; başlangıç: PASS 323 / DIFF 20 / LINK 76
@@ -74,5 +77,5 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 ## 7. İşletim / bekleyenler
 
 - [~] **7.1** Site arka ucunun sürüm seçimi düzeltmesini M4'e canlıya alma (`services/noxlang-site/main.nox`) — **kullanıcı onayı gerekir**
-- [ ] **7.2** CI takibi: v2.1.48–52 koşuları yeşil mi (özellikle Linux, Dokümanlar, Windows); kırmızıysa düzelt
+- [~] **7.2** CI takibi: v2.1.49–55 yeşil (v2.1.48 beklenen kırmızı, v2.1.49'da düzeldi); v2.1.56 bekleniyor — her sürüm sonrası `gh run list --workflow CI` ile kontrol
 - [ ] **7.3** `list[Task[T]]` (bilinçli desteklenmiyor; hata `TaskGroup`'a yönlendirir) — değişmedi

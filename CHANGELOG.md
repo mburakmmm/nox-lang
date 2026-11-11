@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.57]
+
+### Eklendi
+
+- **Freestanding: `nox.strings`, `nox.json`, `nox.regex`, `nox.base64`, `nox.path`, `nox.random` artık bağlanıyor** (öncesinde yetenek denetiminden geçip bağlama aşamasında düşüyordu; `str.split/upper/find/replace` gibi dize yöntemleri freestanding'de kullanılamıyordu). Teknik: `shim_util.scratchAllocator()` (hosted/wasm'da `page_allocator`, çıplak çekirdekte `nox_runtime_init_freestanding`te kaydedilen çekirdek allocator'ı) ve `shim_util.TlsSlot` (çıplak çekirdekte FS tabanı kurulu olmadığından `threadlocal` yerine düz global; öncesinde `mov %fs:0` #GP veriyordu); `random` için rdtsc tohumu; `path.canonicalize` çıplak çekirdekte her zaman başarısız; float `**` için `pow`. Ölçüm (`scripts/freestanding_survey.py`): PASS 345 → 396, LINK 76 → 13 (kalan: `gzip`/`bytes` 7, `crypto` 2, `os` 3, `wasm_call` 1 = beklenen). Dogfood korpusu bu modülleri hosted ile QEMU'da aynı çıktıyla sınar.
+
+### Düzeltildi
+
+- `scripts/freestanding_survey.py` beklenen çıktıyı metin kipinde okuyup `\r`'yi `\n`'e çeviriyordu (`escape_sequences` sahte fark); artık `newline=""`.
+
 ## [2.1.56]
 
 ### Değişti

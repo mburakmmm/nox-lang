@@ -61,6 +61,13 @@ pub const math_shim = @import("stdlib_shims/math.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
 /// v2.1.56: `nox.base64` saf bir dilim işlevidir (OS/libc bağımlılığı YOK) — freestanding'de de bağlanır.
 pub const base64_shim = @import("stdlib_shims/base64.zig");
+/// v2.1.57: OS'tan bağımsız saf kabuklar (wasm-freestanding köküne zaten dahildi) — `import nox.strings/json/regex/gzip/path/random` artık bağlanır.
+const shim_util = @import("stdlib_shims/shim_util.zig");
+pub const strings_shim = @import("stdlib_shims/strings.zig");
+pub const json_shim = @import("stdlib_shims/json.zig");
+pub const regex_shim = @import("stdlib_shims/regex.zig");
+pub const path_shim = @import("stdlib_shims/path.zig");
+pub const random_shim = @import("stdlib_shims/random.zig");
 
 // Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
 // tamamlanması"): BU turda GERÇEK bir `noxc build --profile freestanding`
@@ -185,12 +192,14 @@ const kernel_vtable: std.mem.Allocator.VTable = .{
 pub export fn nox_runtime_init_freestanding() callconv(.c) ?*anyopaque {
     if (g_kernel_alloc_fn != null) {
         const installed: std.mem.Allocator = .{ .ptr = undefined, .vtable = &kernel_vtable };
+        shim_util.setBareScratch(installed);
         return asap.nox_runtime_init_with_allocator(installed);
     }
     if (!g_kernel_fba_ready) {
         g_kernel_fba = std.heap.FixedBufferAllocator.init(&g_kernel_heap_backing);
         g_kernel_fba_ready = true;
     }
+    shim_util.setBareScratch(g_kernel_fba.allocator());
     return asap.nox_runtime_init_with_allocator(g_kernel_fba.allocator());
 }
 
@@ -218,6 +227,12 @@ export fn strcmp(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) c_int {
         if (ca != cb) return @as(c_int, ca) - @as(c_int, cb);
         if (ca == 0) return 0;
     }
+}
+
+/// v2.1.57: float `**` operatörünün codegen'i `$pow` (libm) çağırır; çıplak çekirdekte libm yoktur. Zig'in `std.math.pow`u ile karşılanır (hosted libm ile son basamakta 1 ULP fark olabilir, bkz.
+/// `project/freestanding-kapsam-analizi-2026-11.md` F8).
+export fn pow(x: f64, y: f64) callconv(.c) f64 {
+    return std.math.pow(f64, x, y);
 }
 
 /// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `print()`
@@ -471,4 +486,9 @@ comptime {
     _ = math_shim;
     _ = time_shim;
     _ = base64_shim;
+    _ = strings_shim;
+    _ = json_shim;
+    _ = regex_shim;
+    _ = path_shim;
+    _ = random_shim;
 }

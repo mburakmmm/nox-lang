@@ -64,6 +64,7 @@
 //! yolunda bir null-pointer çökmesini de ÖNLER.
 
 const std = @import("std");
+const scratch_util = @import("shim_util.zig");
 const arc = @import("../alloc/arc.zig");
 const dispatch_registry = @import("../alloc/dispatch_registry.zig");
 const http_client = @import("shim_util.zig");
@@ -103,11 +104,11 @@ fn nox_json_make_json_value(
 // Faz BB.1: `nox.fs`nin `g_last_ok`ıyla AYNI gerekçeyle `threadlocal`.
 // Faz MN.2: bkz. `fiber.zig`nin belge notu — fiber İÇİNDE `Fiber.
 // json_last_op_ok`e, DIŞINDA (senkron üst-düzey kod) BU yedeğe düşer.
-threadlocal var g_last_op_ok_fallback: bool = true;
+const LastOkFallbackSlot = scratch_util.TlsSlot(bool, true);
 
 fn jsonLastOpOkPtr() *bool {
     if (bridge.currentFiber()) |f| return &f.json_last_op_ok;
-    return &g_last_op_ok_fallback;
+    return &LastOkFallbackSlot.value;
 }
 
 export fn nox_json_last_op_ok() callconv(.c) i32 {
@@ -401,7 +402,7 @@ fn buildNodeFast(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEm
 /// gerekçesi (Faz BB.1) — İDEMPOTENT bir önbellek OLSA da, `nox.thread.
 /// spawn`in paylaşımsız modeliyle İKİ GERÇEK OS iş parçacığı AYNI ANDA BU
 /// önbelleğe senkronize-olmadan YAZABİLİR.
-threadlocal var g_json_value_class_id: ?i64 = null;
+const JsonValueClassIdSlot = scratch_util.TlsSlot(?i64, null);
 
 /// `decode()`nin GEÇİCİ ayrıştırma-ağacı arabelleği İçİn kullandığı arena
 /// — `lowlevel.zig`nin `nox_arena_create`/`nox_arena_destroy`sıYLA AYNI
@@ -416,7 +417,12 @@ threadlocal var g_json_value_class_id: ?i64 = null;
 /// leak-izleme muhasebesiyle HİÇBİR etkileşimi YOK), `lowlevel.zig`nin
 /// `builtin.mode != .Debug` KOŞULUNA GEREK YOK — HER build modunda
 /// güvenli.
-threadlocal var g_decode_arena: ?std.heap.ArenaAllocator = null;
+// v2.1.57: çıplak çekirdekte (freestanding, wasm DIŞI) FS tabanı kurulu değildir; `threadlocal` erişimi (#GP) yerine düz global kullanılır (tek iş parçacığı). random.zig'in AYNI deseni.
+const DecodeArenaSlot = if (scratch_util.bare_kernel) struct {
+    var value: ?std.heap.ArenaAllocator = null;
+} else struct {
+    threadlocal var value: ?std.heap.ArenaAllocator = null;
+};
 
 /// Nadir/büyük bir payload'ın thread-yerel arenayı KALICI olarak
 /// şişirmesini ÖNLEMEK İçİn üst sınır (`reset`in KENDİ `.retain_with_
@@ -561,7 +567,7 @@ export fn nox_json_escape_string_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callcon
     // `page_allocator` HER çağrıda mmap/munmap sistem çağrısı yapar (ölçüldü:
     // Aether echo'da istek başına CPU'yu ~2x ARTIRDI). Yalnızca 4 KiB'ı
     // aşan kaçışlı çıktı `page_allocator`a düşer.
-    var sfa = std.heap.stackFallback(4096, std.heap.page_allocator);
+    var sfa = std.heap.stackFallback(4096, scratch_util.scratchAllocator());
     const allocator = sfa.get();
     const escaped = escapeJsonString(allocator, slice) catch return null;
     defer allocator.free(escaped);
@@ -605,10 +611,10 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     // `val_items` gibi arena-tahsisli geçici diziler `buildPtrList`nin
     // ONLARI GERÇEK bir `list[T]`ye KOPYALAMASINDAN SONRA BİR DAHA
     // kullanılmaz.
-    if (g_decode_arena == null) {
-        g_decode_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    if (DecodeArenaSlot.value == null) {
+        DecodeArenaSlot.value = std.heap.ArenaAllocator.init(scratch_util.scratchAllocator());
     }
-    const arena = &g_decode_arena.?;
+    const arena = &DecodeArenaSlot.value.?;
     defer _ = arena.reset(.{ .retain_with_limit = DECODE_ARENA_RETAIN_LIMIT });
     const allocator = arena.allocator();
 
@@ -633,7 +639,7 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     };
     defer releaseSharedEmpties(rt, shared);
 
-    if (g_json_value_class_id) |cid| {
+    if (JsonValueClassIdSlot.value) |cid| {
         const root = buildNodeFast(rt, allocator, shared, cid, parsed.value) catch {
             jsonLastOpOkPtr().* = false;
             return makeLeafFast(rt, shared, cid, 0, false, 0.0, sharedEmptyStr(shared));
@@ -651,7 +657,7 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     };
     jsonLastOpOkPtr().* = true;
     if (root) |r| {
-        g_json_value_class_id = @as(*align(1) const i64, @ptrCast(r)).*;
+        JsonValueClassIdSlot.value = @as(*align(1) const i64, @ptrCast(r)).*;
         return r;
     }
     return makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));

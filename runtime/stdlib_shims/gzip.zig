@@ -15,6 +15,7 @@
 //! olduğundan).
 
 const std = @import("std");
+const scratch_util = @import("shim_util.zig");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
@@ -44,12 +45,12 @@ fn readIntListAsBytes(list_ptr: ?*anyopaque) ?[]u8 {
     const p = list_ptr orelse return null;
     const base: [*]u8 = @ptrCast(p);
     const len: usize = @intCast(@as(*align(1) i64, @ptrCast(base)).*);
-    const out = std.heap.page_allocator.alloc(u8, len) catch return null;
+    const out = scratch_util.scratchAllocator().alloc(u8, len) catch return null;
     for (0..len) |i| {
         const slot = base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
         const v = @as(*align(1) i64, @ptrCast(slot)).*;
         if (v < 0 or v > 255) {
-            std.heap.page_allocator.free(out);
+            scratch_util.scratchAllocator().free(out);
             return null;
         }
         out[i] = @intCast(v);
@@ -117,12 +118,12 @@ pub export fn nox_gzip_compress_bytes_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque
         g_last_op_ok = false;
         return buildIntList(rt, &.{});
     };
-    defer std.heap.page_allocator.free(bytes);
-    const compressed = gzipCompress(std.heap.page_allocator, bytes) catch {
+    defer scratch_util.scratchAllocator().free(bytes);
+    const compressed = gzipCompress(scratch_util.scratchAllocator(), bytes) catch {
         g_last_op_ok = false;
         return buildIntList(rt, &.{});
     };
-    defer std.heap.page_allocator.free(compressed);
+    defer scratch_util.scratchAllocator().free(compressed);
     g_last_op_ok = true;
     return buildIntList(rt, compressed);
 }
@@ -132,12 +133,12 @@ pub export fn nox_gzip_decompress_bytes_raw(rt: ?*anyopaque, list_ptr: ?*anyopaq
         g_last_op_ok = false;
         return buildIntList(rt, &.{});
     };
-    defer std.heap.page_allocator.free(bytes);
-    const decompressed = gzipDecompress(std.heap.page_allocator, bytes) catch {
+    defer scratch_util.scratchAllocator().free(bytes);
+    const decompressed = gzipDecompress(scratch_util.scratchAllocator(), bytes) catch {
         g_last_op_ok = false;
         return buildIntList(rt, &.{});
     };
-    defer std.heap.page_allocator.free(decompressed);
+    defer scratch_util.scratchAllocator().free(decompressed);
     g_last_op_ok = true;
     return buildIntList(rt, decompressed);
 }
@@ -147,11 +148,11 @@ pub export fn nox_gzip_compress_str_raw(rt: ?*anyopaque, s: ?[*:0]const u8) ?*an
         g_last_op_ok = false;
         return buildIntList(rt, &.{});
     });
-    const compressed = gzipCompress(std.heap.page_allocator, text) catch {
+    const compressed = gzipCompress(scratch_util.scratchAllocator(), text) catch {
         g_last_op_ok = false;
         return buildIntList(rt, &.{});
     };
-    defer std.heap.page_allocator.free(compressed);
+    defer scratch_util.scratchAllocator().free(compressed);
     g_last_op_ok = true;
     return buildIntList(rt, compressed);
 }
@@ -161,12 +162,12 @@ pub export fn nox_gzip_decompress_to_str_raw(rt: ?*anyopaque, list_ptr: ?*anyopa
         g_last_op_ok = false;
         return str_mod.nox_str_from_bytes(rt, "");
     };
-    defer std.heap.page_allocator.free(bytes);
-    const decompressed = gzipDecompress(std.heap.page_allocator, bytes) catch {
+    defer scratch_util.scratchAllocator().free(bytes);
+    const decompressed = gzipDecompress(scratch_util.scratchAllocator(), bytes) catch {
         g_last_op_ok = false;
         return str_mod.nox_str_from_bytes(rt, "");
     };
-    defer std.heap.page_allocator.free(decompressed);
+    defer scratch_util.scratchAllocator().free(decompressed);
     if (std.mem.indexOfScalar(u8, decompressed, 0) != null) {
         g_last_op_ok = false;
         return str_mod.nox_str_from_bytes(rt, "");
@@ -188,7 +189,7 @@ pub export fn nox_bytes_str_from_list_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque
         g_last_op_ok = false;
         return str_mod.nox_str_from_bytes(rt, "");
     };
-    defer std.heap.page_allocator.free(bytes);
+    defer scratch_util.scratchAllocator().free(bytes);
     g_last_op_ok = true;
     return str_mod.nox_str_from_bytes(rt, bytes);
 }
@@ -202,10 +203,10 @@ const FiberHarness = struct {
     fn entry(arg: *anyopaque) void {
         _ = arg;
         const data = "gzip on a fiber stack " ** 40;
-        const z = gzipCompress(std.heap.page_allocator, data) catch return;
-        defer std.heap.page_allocator.free(z);
-        const back = gzipDecompress(std.heap.page_allocator, z) catch return;
-        defer std.heap.page_allocator.free(back);
+        const z = gzipCompress(scratch_util.scratchAllocator(), data) catch return;
+        defer scratch_util.scratchAllocator().free(z);
+        const back = gzipDecompress(scratch_util.scratchAllocator(), z) catch return;
+        defer scratch_util.scratchAllocator().free(back);
         ok = std.mem.eql(u8, back, data);
     }
 };
@@ -215,7 +216,7 @@ const FiberHarness = struct {
 test "gzipCompress/gzipDecompress work from a real fiber stack" {
     if (builtin.single_threaded) return error.SkipZigTest;
     FiberHarness.ok = false;
-    const fiber = try fiber_mod.Fiber.create(std.heap.page_allocator, FiberHarness.entry, undefined);
+    const fiber = try fiber_mod.Fiber.create(scratch_util.scratchAllocator(), FiberHarness.entry, undefined);
     defer fiber.destroy();
     fiber.resume_(&FiberHarness.main_ctx);
     try std.testing.expect(fiber.finished);

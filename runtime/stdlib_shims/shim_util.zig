@@ -10,6 +10,34 @@ pub fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
     return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
+/// v2.1.57: geçici tamponlar için allocator. Hosted ve wasm'da `std.heap.page_allocator` (eski davranış); freestanding (wasm DIŞI) çekirdekte `page_allocator` YOKTUR (`std.heap.page_size_max`
+/// sağlanmaz): `lib_freestanding.zig` çalışma zamanı kurulurken çekirdeğin kendi allocator'ını burada bir kez kaydeder (AGENTS §2.6 belgeli bootstrap-durumu istisnası; `project/global-state-allowlist.tsv`).
+pub const bare_kernel = (@import("builtin").os.tag == .freestanding or @import("builtin").os.tag == .other) and !@import("builtin").cpu.arch.isWasm();
+var g_bare_scratch: std.mem.Allocator = undefined;
+var g_bare_scratch_ready: bool = false;
+
+pub fn setBareScratch(a: std.mem.Allocator) void {
+    g_bare_scratch = a;
+    g_bare_scratch_ready = true;
+}
+
+/// Çıplak çekirdekte (FS tabanı kurulu değil: `threadlocal` erişimi #GP verir) düz global, diğer hedeflerde `threadlocal` depolama. Kullanım: `const Slot = shim_util.TlsSlot(bool, true);` ... `Slot.value`.
+pub fn TlsSlot(comptime T: type, comptime init_value: T) type {
+    return if (bare_kernel) struct {
+        pub var value: T = init_value;
+    } else struct {
+        pub threadlocal var value: T = init_value;
+    };
+}
+
+pub fn scratchAllocator() std.mem.Allocator {
+    if (comptime bare_kernel) {
+        if (!g_bare_scratch_ready) @panic("freestanding scratch allocator is not installed");
+        return g_bare_scratch;
+    }
+    return std.heap.page_allocator;
+}
+
 const wasm_host = @import("../wasm_host.zig");
 
 fn fillRandom(buffer: []u8) void {

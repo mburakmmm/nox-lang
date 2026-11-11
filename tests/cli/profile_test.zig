@@ -57,7 +57,7 @@ test "noxc check --profile freestanding: izin verilen bir stdlib modülü (nox.s
 // bulunmaması YÜZÜNDEN) BAŞARISIZ OLMALIDIR — bu, GELECEKTEKİ bir fazın
 // (`stdlib_shims/*`nin freestanding-uyumluluğunu TEK TEK doğrulayıp
 // `lib_freestanding.zig`ye eklemesi) konusudur.
-test "noxc build --profile freestanding: izin verilen bir stdlib modülü (nox.strings) checker'i GEÇER ama linkleme HENÜZ başarısız olur (stdlib_shims/* henüz lib_freestanding.zig'e dahil değil)" {
+test "noxc build --profile freestanding: izin verilen bir stdlib modülü (nox.strings) artık BAĞLANIR (v2.1.57)" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -67,6 +67,31 @@ test "noxc build --profile freestanding: izin verilen bir stdlib modülü (nox.s
         \\
         \\parts: list[str] = nox.strings.split("a,b,c", ",")
         \\print(len(parts))
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const out_path = try std.fmt.allocPrint(gpa, "{s}/prog_bin", .{path_buf[0..dir_len]});
+    defer gpa.free(out_path);
+
+    const build_result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path, "-o", out_path } });
+    defer gpa.free(build_result.stdout);
+    defer gpa.free(build_result.stderr);
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+}
+
+// `nox.os` yetenek denetiminden geçer ama freestanding köküne HENÜZ bağlı değildir (project/yapilacaklar-2026-11.md 1.9d): bağlama hatası `nox_os_*` sembollerini adlandırmalıdır.
+test "noxc build --profile freestanding: izin verilen ama HENÜZ bağlı olmayan bir modül (nox.os) checker'i GEÇER, linkleme başarısız olur" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.os
+        \\
+        \\print(nox.os.arg_count())
         \\
     , &tmp);
     defer gpa.free(path);
