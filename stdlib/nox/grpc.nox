@@ -11,7 +11,7 @@
 #     r: Response = c.call("/helloworld.Greeter/SayHello", [w.to_str()])      # durumu kendiniz denetleyin
 #     print(r.status, r.message, len(r.messages))
 #
-# Tek `call` unary, sunucu-akışlı (birden çok yanıt mesajı toplanır) ve istemci-akışlı (birden çok istek mesajı) RPC'leri kapsar; çift yönlü araya girme yoktur. Bir bağlantıda
+# `Client.open_stream` gerçek çift yönlü akış verir (`Stream.send`/`recv`). Tek `call` unary, sunucu-akışlı (birden çok yanıt mesajı toplanır) ve istemci-akışlı (birden çok istek mesajı) RPC'leri kapsar; (`call` içinde araya girme yoktur). Bir bağlantıda
 # çağrılar sırayla yapılır. `timeout_ms > 0` sunucuya `grpc-timeout` olarak bildirilir (sunucu `DEADLINE_EXCEEDED` döner); istemci tarafında okuma zaman aşımı yoktur.
 #
 # **Hata modeli:** taşıma/protokol hatası `GrpcError` olur ve bağlantı kapanır (`connect` ile yeniden açın); sunucu durumu `Response.status` ve `GrpcStatusError.code` ile gelir (`OK` = 0,
@@ -60,6 +60,15 @@ extern def nox_grpc_result_message_raw(r: ptr) -> str from "zig-out/lib/noxrt.o"
 extern def nox_grpc_result_count_raw(r: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_grpc_result_at_raw(r: ptr, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_grpc_result_header_raw(r: ptr, name: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_grpc_stream_open_raw(conn: ptr, path: str, meta: str, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_grpc_stream_send_raw(st: ptr, msg: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_grpc_stream_close_send_raw(st: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_grpc_stream_wait_raw(st: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_grpc_stream_take_raw(st: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_grpc_stream_status_raw(st: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_grpc_stream_message_raw(st: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_grpc_stream_header_raw(st: ptr, name: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_grpc_stream_free_raw(st: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_grpc_result_free_raw(r: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_grpc_is_null_raw(p: ptr) -> int from "zig-out/lib/noxrt.o"
 
@@ -90,6 +99,53 @@ class Response:
     def header(self: Response, name: str) -> str:
         return nox_grpc_result_header_raw(self.handle, name)
 
+# Elle sürülen (çift yönlü) RPC akışı: `send` ile istek mesajları, `recv` ile yanıt mesajları tek tek, araya girerek. `close_send()` istek tarafını kapatır (sunucu bitirir).
+# Bir bağlantıda aynı anda tek akış açıktır; akış `__del__` ile (ya da bitince) bırakılır. Akışı `Client.close()`dan ÖNCE bırakın/bitirin.
+class Stream:
+    handle: ptr
+    conn: ptr
+
+    def __init__(self: Stream, handle: ptr, conn: ptr) -> None:
+        self.handle = handle
+        self.conn = conn
+
+    def __del__(self: Stream) -> None:
+        nox_grpc_stream_free_raw(self.handle)
+
+    def send(self: Stream, message: str) -> None:
+        if nox_grpc_stream_send_raw(self.handle, message) == 0:
+            raise GrpcError(nox_grpc_errmsg_raw(self.conn))
+
+    def close_send(self: Stream) -> None:
+        if nox_grpc_stream_close_send_raw(self.handle) == 0:
+            raise GrpcError(nox_grpc_errmsg_raw(self.conn))
+
+    # Sıradaki yanıt mesajı; akış bittiyse `None` (durum `status`/`message`/`header`de). Taşıma hatasında `GrpcError`.
+    def recv(self: Stream) -> str | None:
+        w: int = nox_grpc_stream_wait_raw(self.handle)
+        if w < 0:
+            raise GrpcError(nox_grpc_errmsg_raw(self.conn))
+        if w == 0:
+            return None
+        return nox_grpc_stream_take_raw(self.handle)
+
+    # Kalan yanıtları okuyup atar ve gRPC durum kodunu döner (akışı bitirir).
+    def finish(self: Stream) -> int:
+        m: str | None = self.recv()
+        while m is not None:
+            m = self.recv()
+        return nox_grpc_stream_status_raw(self.handle)
+
+    # Akış bittikten sonra geçerli: gRPC durumu, iletisi ve yanıt başlığı/trailer değeri.
+    def status(self: Stream) -> int:
+        return nox_grpc_stream_status_raw(self.handle)
+
+    def message(self: Stream) -> str:
+        return nox_grpc_stream_message_raw(self.handle)
+
+    def header(self: Stream, name: str) -> str:
+        return nox_grpc_stream_header_raw(self.handle, name)
+
 class Client:
     host: str
     port: int
@@ -119,6 +175,16 @@ class Client:
     def call(self: Client, path: str, requests: list[str], timeout_ms: int = 0) -> Response:
         empty: dict[str, str] = {}
         return self.call_with(path, requests, empty, timeout_ms)
+
+    # Çift yönlü akış açar (istekler ve yanıtlar araya girebilir). `metadata`: istek üst verisi.
+    def open_stream(self: Client, path: str, metadata: dict[str, str], timeout_ms: int = 0) -> Stream:
+        meta: str = ""
+        for k in metadata.keys():
+            meta = meta + k + ": " + metadata[k] + "\n"
+        h: ptr = nox_grpc_stream_open_raw(self.handle, path, meta, timeout_ms)
+        if nox_grpc_is_null_raw(h) != 0:
+            raise GrpcError(nox_grpc_errmsg_raw(self.handle))
+        return Stream(h, self.handle)
 
     # Tek istek / tek yanıt: durum OK değilse `GrpcStatusError`, yanıt mesajı yoksa boş dize.
     def unary(self: Client, path: str, request: str, timeout_ms: int = 0) -> str:

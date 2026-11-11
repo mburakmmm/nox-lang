@@ -1,6 +1,6 @@
 # nox.grpc: gerçek bir gRPC sunucusuna karşı (scripts/grpc_probe.py, grpcio) unary, sunucu/istemci akışı, hata durumu, üst veri, büyük yük. @PORT@ doldurulur.
 import nox.grpc
-from nox.grpc import Client, Response, GrpcError, GrpcStatusError
+from nox.grpc import Client, Response, Stream, GrpcError, GrpcStatusError
 
 c: Client = nox.grpc.connect("127.0.0.1", @PORT@)
 
@@ -34,6 +34,31 @@ print(r5.status, len(r5.messages[0]))
 r6: Response = c.call("/test.Echo/Unimplemented", ["x"], 1000)
 print(r6.status)
 
+def bidi(c: Client) -> None:
+    none_meta: dict[str, str] = {}
+    st: Stream = c.open_stream("/test.Echo/Bidi", none_meta)
+    st.send("one")
+    a: str | None = st.recv()
+    if a is not None:
+        print(a)
+    st.send("two")
+    b: str | None = st.recv()
+    if b is not None:
+        print(b)
+    st.close_send()
+    end: str | None = st.recv()
+    print(end is None, st.status())
+
+def abandoned(c: Client) -> None:
+    none_meta: dict[str, str] = {}
+    st: Stream = c.open_stream("/test.Echo/Bidi", none_meta)
+    st.send("partial")
+    got: str | None = st.recv()
+    if got is not None:
+        print(got)
+
+bidi(c)
+abandoned(c)
 print(c.unary("/test.Echo/Unary", "again"))
 c.close()
 try:

@@ -63,7 +63,7 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 
 `nox.grpc`: HTTP/2 `h2c` istemcisi (`runtime/stdlib_shims/grpc.zig`, HPACK/kare yardımcıları `http2.zig`'den), unary + sunucu/istemci akışı (mesajlar toplanır), üst veri, trailer, akış denetimi. Gerçek `grpcio` sunucusuna karşı `scripts/grpc_probe.py` (iki arka uç).
 
-**TLS (v2.1.35):** `connect_tls` — vendor `tls_client.zig`ye ALPN `h2` yaması (üçüncü NOX PATCH; dosya Zig kurulumundan salt-okunur kopyalanmıştı, `chmod u+w` gerekti) ve `tcp_native.startTlsEx` (ALPN + `ca_file`). **Hâlâ açık:** (1) **mTLS** (istemci sertifikası) ve wasm'da TLS. (2) Çift yönlü akışta istek/yanıt araya girmesi (şimdi: önce istekler gider, sonra yanıtlar toplanır). (3) `grpc-encoding: gzip` sıkıştırması (`gzip.zig` hazır). (4) Sunucu tarafı gRPC (trailer desteği `respstream_trailers` ile var; çerçeve ve iletim biçimi yazılmadı). Kullanıcı istemedikçe sunucu tarafına girme.
+**TLS (v2.1.35):** `connect_tls` — vendor `tls_client.zig`ye ALPN `h2` yaması (üçüncü NOX PATCH; dosya Zig kurulumundan salt-okunur kopyalanmıştı, `chmod u+w` gerekti) ve `tcp_native.startTlsEx` (ALPN + `ca_file`). **Hâlâ açık:** (1) **mTLS** (istemci sertifikası) ve wasm'da TLS. (2) ~~Çift yönlü akış~~ v2.1.38'de `Client.open_stream`/`Stream` ile KAPANDI. (3) `grpc-encoding: gzip` sıkıştırması (`gzip.zig` hazır). (4) Sunucu tarafı gRPC (trailer desteği `respstream_trailers` ile var; çerçeve ve iletim biçimi yazılmadı). Kullanıcı istemedikçe sunucu tarafına girme.
 
 ### E3. IPv6 çok çekirdekli dinleme (KAPANDI v2.1.32)
 
@@ -78,10 +78,9 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 
 - **Durum:** Kapsam dışı (kullanıcı kararı, 2026-11-10). Yalnız **üst-düzey** fonksiyon dekoratörleri işleyici kaydeder (`router_from_decorators`/`decorator_handler`).
 
-### E6. Çıplak `list[Task[T]]`
+### E6. Çıplak `list[Task[T]]` (KARARLI OLARAK YAPILMADI, v2.1.38)
 
-- **Durum:** Hâlâ yazılamaz (codegen `Unsupported`); `nox.tasks.TaskGroup[T]` (v2.1.10) tutamak sınıfı kullanır.
-- **Ajan:** Çözüm olarak `TaskGroup` öner. Gerçek `list[Task[T]]` desteği ARC/yıkım semantiğini etkiler; ayrı tasarım gerektirir.
+Karar: gerçek destek verilmez. Liste eleman bilgisi (`ElemHeapInfo`) ~230 yerde, 16 dosyada kullanılıyor; Task yaşam döngüsü ARC dışı (`retainNonArcValue`/`destroyNonArcValue`) olduğundan her liste yolu (append, indeks, for, pop, kopya, döngü çözücü izleme) için ayrı doğrulama gerekir. İhtiyaç `nox.tasks.TaskGroup[T]` ile karşılanıyor (`add`, `finished`, `wait_all`, `wait_below`, `cancel_all`, sonuçlar için `handles()`). Yapılan: `list[Task|Channel|ThreadHandle|ThreadChannel|TaskLocal]` artık codegen'in anlaşılmaz hatası yerine yönlendiren bir TİP hatası verir (`checker.typeExprToType`). Gerçek destek istenirse tasarım: `set[T]` gibi derleyici-içi `list[__nox_TaskBox[T]]` indirgemesi (sınıf kutusu; append/indeks/for/len/pop yeniden yazımları).
 
 ### E7. `Channel` zaman aşımı (KAPANDI v2.1.34)
 

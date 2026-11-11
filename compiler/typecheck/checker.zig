@@ -898,6 +898,18 @@ pub const Checker = struct {
                         return self.fail(error.UnknownType, "'{s}' takes exactly one type argument", .{g.name});
                     }
                     const elem = try self.typeExprToType(g.args[0]);
+                    // v2.1.38: görev/kanal tutamakları liste elemanı OLAMAZ (ARC dışı yaşam döngüsü); codegen'in anlaşılmaz "desteklenmiyor" hatası yerine yönlendiren bir tip hatası.
+                    if (std.mem.eql(u8, g.name, "list")) {
+                        const what: ?[]const u8 = switch (elem) {
+                            .task => "Task",
+                            .channel => "Channel",
+                            .thread_handle => "ThreadHandle",
+                            .thread_channel => "ThreadChannel",
+                            .task_local => "TaskLocal",
+                            else => null,
+                        };
+                        if (what) |w| return self.fail(error.UnknownType, "'list[{s}[...]]' is not supported: tasks and channels cannot be stored in a list. For tasks use nox.tasks.TaskGroup[T] (it keeps each task in a TaskHandle[T] class), or hold the value in a class field; to gather results use a Channel", .{w});
+                    }
                     // Faz OO.2: `TaskLocal[T]`nin `T`si — `checkGenericConstruct`nin
                     // AYNI kısıtlaması (bkz. onun belge notu) BURADA da (BİR
                     // `TaskLocal[int]` DEĞİŞKEN/ALAN TİPİ bildirimi İçin de)

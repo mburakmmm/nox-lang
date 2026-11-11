@@ -47,6 +47,11 @@ class Handler(grpc.GenericRpcHandler):
                 ctx.set_trailing_metadata((("x-trailer", "trailer-val"),))
                 return req
             return grpc.unary_unary_rpc_method_handler(meta, request_deserializer=ident, response_serializer=ident)
+        if m == "/test.Echo/Bidi":
+            def bidi(it, ctx):
+                for req in it:
+                    yield b"echo:" + req
+            return grpc.stream_stream_rpc_method_handler(bidi, request_deserializer=ident, response_serializer=ident)
         if m == "/test.Echo/Big":
             return grpc.unary_unary_rpc_method_handler(lambda req, ctx: b"y" * int(req.decode()), request_deserializer=ident, response_serializer=ident)
         return None

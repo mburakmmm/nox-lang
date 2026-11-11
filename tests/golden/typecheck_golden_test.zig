@@ -2462,3 +2462,10 @@ test "golden(typecheck): ok_pool_run (v2.1.31: golden bağlandı)" {
         @embedFile("typecheck_cases/ok_pool_run.expected"),
     );
 }
+
+test "golden(typecheck): v2.1.38 — list[Task[T]] açık yönlendirici tip hatası" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_of_task.nox"),
+        @embedFile("typecheck_cases/err_list_of_task.expected"),
+    );
+}

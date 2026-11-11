@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.38]
+
+### Eklendi
+
+- **gRPC çift yönlü akış**: `Client.open_stream(path, metadata, timeout_ms=0) -> Stream` ile istekler ve yanıtlar araya girer (`Stream.send`, `recv` → `str | None`, `close_send`, `finish`, `status`/`message`/`header`). Bir bağlantıda tek akış açık olur; akış bitmeden bırakılırsa `RST_STREAM(CANCEL)` gönderilir ve bağlantı yeniden kullanılabilir. `call` aynı iç yardımcılara taşındı (davranış değişmedi). Gerçek `grpcio` çift yönlü işleyicisine karşı düz ve TLS, iki arka uçta sınanır.
+- **`list[Task[T]]` (ve `list[Channel[T]]`, `ThreadHandle`, `ThreadChannel`, `TaskLocal`) için açık tip hatası**: eskiden "codegen: bu yapı desteklenmiyor" diyordu; artık `nox.tasks.TaskGroup[T]` kullanmayı öneren bir tip hatası veriyor.
+
 ## [2.1.37]
 
 ### Düzeltildi (test altyapısı)

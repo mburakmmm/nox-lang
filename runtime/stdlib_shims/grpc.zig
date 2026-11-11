@@ -45,6 +45,8 @@ const GConn = struct {
     peer_max_frame: u32 = h2.default_max_frame,
     goaway: bool = false,
     tls: bool = false,
+    /// Elle sürülen bir `Stream` açıkken başka çağrı/akış başlatılamaz.
+    stream_active: bool = false,
 
     fn setErr(self: *GConn, msg: []const u8) void {
         if (self.errmsg_owned) gpa.free(self.errmsg);
@@ -401,7 +403,7 @@ fn pumpFrame(c: *GConn, stream: u32, p: *Pending, r: *Result) bool {
 }
 
 /// Bir istek akışının DATA gövdesini pencere kurallarına uyarak gönderir.
-fn sendBody(c: *GConn, stream: u32, p: *Pending, r: *Result, body: []const u8) bool {
+fn sendBody(c: *GConn, stream: u32, p: *Pending, r: *Result, body: []const u8, end_stream: bool) bool {
     var off: usize = 0;
     while (off < body.len) {
         const avail = @min(c.conn_window, p.stream_window);
@@ -411,7 +413,7 @@ fn sendBody(c: *GConn, stream: u32, p: *Pending, r: *Result, body: []const u8) b
             continue;
         }
         const n: usize = @min(@min(body.len - off, @as(usize, @intCast(avail))), @as(usize, c.peer_max_frame));
-        const last = off + n == body.len;
+        const last = end_stream and off + n == body.len;
         if (!c.sendFrame(h2.frame_data, if (last) h2.flag_end_stream else 0, stream, body[off .. off + n])) return false;
         c.conn_window -= @intCast(n);
         p.stream_window -= @intCast(n);
@@ -420,26 +422,8 @@ fn sendBody(c: *GConn, stream: u32, p: *Pending, r: *Result, body: []const u8) b
     return true;
 }
 
-fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8, timeout_ms: i64) ?*Result {
-    if (!c.ok) return null;
-    if (c.goaway) {
-        c.fail("connection is closing (GOAWAY received)");
-        return null;
-    }
-    const r = gpa.create(Result) catch {
-        c.fail("out of memory");
-        return null;
-    };
-    r.* = .{};
-    var p: Pending = .{ .stream_window = c.peer_stream_window };
-    defer {
-        p.data.deinit(gpa);
-        p.header_block.deinit(gpa);
-    }
-    const stream = c.next_stream;
-    c.next_stream += 2;
-
-    // İstek başlıkları
+/// İstek başlıklarını kurup (`HEADERS` + gerekirse `CONTINUATION`) `stream` akışında gönderir. `end_stream` başlıkla birlikte gönderilmez (gövde DATA ile gelir).
+fn sendRequestHeaders(c: *GConn, stream: u32, path: []const u8, meta: []const u8, timeout_ms: i64) bool {
     var hb: std.ArrayListUnmanaged(u8) = .empty;
     defer hb.deinit(gpa);
     const ok_hdr = blk: {
@@ -472,29 +456,73 @@ fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8,
     };
     if (!ok_hdr) {
         c.fail("out of memory");
+        return false;
+    }
+    const max = @as(usize, c.peer_max_frame);
+    var off: usize = 0;
+    var first = true;
+    while (off < hb.items.len or first) {
+        const n = @min(max, hb.items.len - off);
+        const end = off + n == hb.items.len;
+        const kind: u8 = if (first) h2.frame_headers else h2.frame_continuation;
+        const flags: u8 = if (end) h2.flag_end_headers else 0;
+        if (!c.sendFrame(kind, flags, stream, hb.items[off .. off + n])) return false;
+        off += n;
+        first = false;
+        if (end) break;
+    }
+    return true;
+}
+
+/// Akış bittikten sonra durumu kesinleştirir (RST_STREAM ya da trailer'daki `grpc-status`). `r` döner.
+fn finalizeResult(c: *GConn, p: *Pending, r: *Result) *Result {
+    _ = c;
+    if (p.rst) |code| {
+        var buf: [96]u8 = undefined;
+        r.status = STATUS_TRANSPORT;
+        const msg = std.fmt.bufPrint(&buf, "stream reset by the server (error code {d})", .{code}) catch "stream reset by the server";
+        if (r.message.len > 0) gpa.free(r.message);
+        r.message = gpa.dupe(u8, msg) catch &.{};
+        return r;
+    }
+    finishStatus(r);
+    if (r.status == STATUS_TRANSPORT) {
+        const http_status = headerValue(r, ":status") orelse "";
+        var buf: [128]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "missing grpc-status (HTTP status {s})", .{http_status}) catch "missing grpc-status";
+        if (r.message.len > 0) gpa.free(r.message);
+        r.message = gpa.dupe(u8, msg) catch &.{};
+    }
+    return r;
+}
+
+fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8, timeout_ms: i64) ?*Result {
+    if (!c.ok) return null;
+    if (c.goaway) {
+        c.fail("connection is closing (GOAWAY received)");
+        return null;
+    }
+    if (c.stream_active) {
+        c.fail("another stream is still open on this connection (finish it first)");
+        return null;
+    }
+    const r = gpa.create(Result) catch {
+        c.fail("out of memory");
+        return null;
+    };
+    r.* = .{};
+    var p: Pending = .{ .stream_window = c.peer_stream_window };
+    defer {
+        p.data.deinit(gpa);
+        p.header_block.deinit(gpa);
+    }
+    const stream = c.next_stream;
+    c.next_stream += 2;
+
+    if (!sendRequestHeaders(c, stream, path, meta, timeout_ms)) {
         r.deinit();
         gpa.destroy(r);
         return null;
-    }
-    // Başlık bloğu tek HEADERS karesine sığmazsa CONTINUATION ile böl.
-    {
-        const max = @as(usize, c.peer_max_frame);
-        var off: usize = 0;
-        var first = true;
-        while (off < hb.items.len or first) {
-            const n = @min(max, hb.items.len - off);
-            const end = off + n == hb.items.len;
-            const kind: u8 = if (first) h2.frame_headers else h2.frame_continuation;
-            const flags: u8 = if (end) h2.flag_end_headers else 0;
-            if (!c.sendFrame(kind, flags, stream, hb.items[off .. off + n])) {
-                r.deinit();
-                gpa.destroy(r);
-                return null;
-            }
-            off += n;
-            first = false;
-            if (end) break;
-        }
     }
 
     // İstek gövdesi: uzunluk önekli mesajlar; hiç mesaj yoksa boş DATA + END_STREAM.
@@ -523,7 +551,7 @@ fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8,
             gpa.destroy(r);
             return null;
         }
-    } else if (!sendBody(c, stream, &p, r, body.items)) {
+    } else if (!sendBody(c, stream, &p, r, body.items, true)) {
         r.deinit();
         gpa.destroy(r);
         return null;
@@ -536,24 +564,92 @@ fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8,
             return null;
         }
     }
-    if (p.rst) |code| {
-        var buf: [96]u8 = undefined;
-        r.status = STATUS_TRANSPORT;
-        const msg = std.fmt.bufPrint(&buf, "stream reset by the server (error code {d})", .{code}) catch "stream reset by the server";
-        if (r.message.len > 0) gpa.free(r.message);
-        r.message = gpa.dupe(u8, msg) catch &.{};
-        return r;
+    return finalizeResult(c, &p, r);
+}
+
+// ---- Çift yönlü / elle sürülen akış (v2.1.38) ----
+
+/// Açık bir RPC akışı: istekler `send` ile tek tek gider, yanıtlar `recv` ile tek tek gelir; araya girebilirler. Bağlantıda aynı anda tek akış açık olabilir.
+const Stream = struct {
+    c: *GConn,
+    id: u32,
+    p: Pending,
+    r: Result = .{},
+    taken: usize = 0,
+    send_closed: bool = false,
+    finalized: bool = false,
+};
+
+fn streamOpen(c: *GConn, path: []const u8, meta: []const u8, timeout_ms: i64) ?*Stream {
+    if (!c.ok) return null;
+    if (c.goaway) {
+        c.fail("connection is closing (GOAWAY received)");
+        return null;
     }
-    finishStatus(r);
-    if (r.status == STATUS_TRANSPORT) {
-        // Trailer yok / `grpc-status` yok: HTTP durumuna göre bir mesaj üret.
-        const http_status = headerValue(r, ":status") orelse "";
-        var buf: [128]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "missing grpc-status (HTTP status {s})", .{http_status}) catch "missing grpc-status";
-        if (r.message.len > 0) gpa.free(r.message);
-        r.message = gpa.dupe(u8, msg) catch &.{};
+    if (c.stream_active) {
+        c.fail("another stream is still open on this connection (finish it first)");
+        return null;
     }
-    return r;
+    const st = gpa.create(Stream) catch {
+        c.fail("out of memory");
+        return null;
+    };
+    st.* = .{ .c = c, .id = c.next_stream, .p = .{ .stream_window = c.peer_stream_window } };
+    c.next_stream += 2;
+    if (!sendRequestHeaders(c, st.id, path, meta, timeout_ms)) {
+        gpa.destroy(st);
+        return null;
+    }
+    c.stream_active = true;
+    return st;
+}
+
+fn streamSend(st: *Stream, msg: []const u8) bool {
+    const c = st.c;
+    if (!c.ok or st.send_closed or st.p.done) {
+        if (c.ok) c.setErr("the stream cannot send any more messages");
+        return false;
+    }
+    var body: std.ArrayListUnmanaged(u8) = .empty;
+    defer body.deinit(gpa);
+    var pre: [5]u8 = undefined;
+    pre[0] = 0;
+    std.mem.writeInt(u32, pre[1..5], @intCast(msg.len), .big);
+    body.appendSlice(gpa, &pre) catch {
+        c.fail("out of memory");
+        return false;
+    };
+    body.appendSlice(gpa, msg) catch {
+        c.fail("out of memory");
+        return false;
+    };
+    return sendBody(c, st.id, &st.p, &st.r, body.items, false);
+}
+
+fn streamCloseSend(st: *Stream) bool {
+    const c = st.c;
+    if (!c.ok) return false;
+    if (st.send_closed) return true;
+    st.send_closed = true;
+    if (st.p.done) return true;
+    return c.sendFrame(h2.frame_data, h2.flag_end_stream, st.id, &.{});
+}
+
+/// Sıradaki yanıt mesajı; yoksa akış bitene kadar kare okur. Dönüş: `1` mesaj hazır (`out`), `0` akış bitti (durum kesinleşti), `-1` taşıma hatası.
+fn streamRecv(st: *Stream) i32 {
+    const c = st.c;
+    while (st.taken >= st.r.msgs.items.len) {
+        if (st.p.done) {
+            if (!st.finalized) {
+                _ = finalizeResult(c, &st.p, &st.r);
+                st.finalized = true;
+                c.stream_active = false;
+            }
+            return 0;
+        }
+        if (!pumpFrame(c, st.id, &st.p, &st.r)) return -1;
+    }
+    return 1;
 }
 
 /// Düz TCP (h2c, önceden bilinen) bağlantı açar: ön ek + boş SETTINGS gönderir. Başarısız olsa da geçerli bir tutamak döner (`status == 0`, `errmsg` dolu); yalnızca bellek
@@ -699,6 +795,74 @@ pub export fn nox_grpc_result_free_raw(r: ?*anyopaque) callconv(.c) void {
 
 pub export fn nox_grpc_is_null_raw(p: ?*anyopaque) callconv(.c) i64 {
     return if (p == null) 1 else 0;
+}
+
+pub export fn nox_grpc_stream_open_raw(conn: ?*anyopaque, path: ?[*:0]const u8, meta: ?[*:0]const u8, timeout_ms: i64) callconv(.c) ?*anyopaque {
+    const c: *GConn = @ptrCast(@alignCast(conn orelse return null));
+    return streamOpen(c, str_mod.nox_str_slice(path orelse ""), str_mod.nox_str_slice(meta orelse ""), timeout_ms);
+}
+
+fn asStream(p: ?*anyopaque) ?*Stream {
+    return @ptrCast(@alignCast(p orelse return null));
+}
+
+/// `1` başarılı, `0` hata (bağlantı kullanılamaz olabilir; `nox_grpc_errmsg_raw`).
+pub export fn nox_grpc_stream_send_raw(st: ?*anyopaque, msg: ?[*:0]const u8) callconv(.c) i64 {
+    const s = asStream(st) orelse return 0;
+    return if (streamSend(s, str_mod.nox_str_slice(msg orelse ""))) 1 else 0;
+}
+
+pub export fn nox_grpc_stream_close_send_raw(st: ?*anyopaque) callconv(.c) i64 {
+    const s = asStream(st) orelse return 0;
+    return if (streamCloseSend(s)) 1 else 0;
+}
+
+/// Sıradaki yanıt mesajına bekler: `1` hazır (`nox_grpc_stream_take_raw` ile alınır), `0` akış bitti, `-1` taşıma hatası.
+pub export fn nox_grpc_stream_wait_raw(st: ?*anyopaque) callconv(.c) i64 {
+    const s = asStream(st) orelse return -1;
+    return streamRecv(s);
+}
+
+pub export fn nox_grpc_stream_take_raw(rt: ?*anyopaque, st: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    const s = asStream(st) orelse return shim_util.dupeToNoxStr(rt, "");
+    if (s.taken >= s.r.msgs.items.len) return shim_util.dupeToNoxStr(rt, "");
+    const m = s.r.msgs.items[s.taken];
+    s.taken += 1;
+    return shim_util.dupeToNoxStr(rt, m);
+}
+
+pub export fn nox_grpc_stream_status_raw(st: ?*anyopaque) callconv(.c) i64 {
+    return (asStream(st) orelse return STATUS_TRANSPORT).r.status;
+}
+
+pub export fn nox_grpc_stream_message_raw(rt: ?*anyopaque, st: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    const s = asStream(st) orelse return shim_util.dupeToNoxStr(rt, "");
+    return shim_util.dupeToNoxStr(rt, s.r.message);
+}
+
+pub export fn nox_grpc_stream_header_raw(rt: ?*anyopaque, st: ?*anyopaque, name: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const s = asStream(st) orelse return shim_util.dupeToNoxStr(rt, "");
+    var buf: [128]u8 = undefined;
+    const nm = str_mod.nox_str_slice(name orelse "");
+    if (nm.len == 0 or nm.len > buf.len) return shim_util.dupeToNoxStr(rt, "");
+    for (nm, 0..) |ch, i| buf[i] = std.ascii.toLower(ch);
+    return shim_util.dupeToNoxStr(rt, headerValue(&s.r, buf[0..nm.len]) orelse "");
+}
+
+/// Akışı bırakır. Hâlâ açıksa (bitmeden) iptal için `RST_STREAM` (CANCEL) gönderir ve bağlantıyı yeni çağrılara açar; sunucu akışın geç kareleri `pumpFrame`de yok sayılır.
+pub export fn nox_grpc_stream_free_raw(st: ?*anyopaque) callconv(.c) void {
+    const s = asStream(st) orelse return;
+    const c = s.c;
+    if (!s.p.done and c.ok) {
+        var code: [4]u8 = undefined;
+        std.mem.writeInt(u32, &code, @intFromEnum(h2.ErrorCode.cancel), .big);
+        _ = c.sendFrame(h2.frame_rst_stream, 0, s.id, &code);
+    }
+    c.stream_active = false;
+    s.r.deinit();
+    s.p.data.deinit(gpa);
+    s.p.header_block.deinit(gpa);
+    gpa.destroy(s);
 }
 
 test "percentDecode çözer ve bozuk dizileri olduğu gibi bırakır" {

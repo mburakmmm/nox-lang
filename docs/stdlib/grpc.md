@@ -27,11 +27,30 @@ c.close()
 | `Client.unary(path, request, timeout_ms=0) -> str` | one request, one reply message; a status other than `OK` raises `GrpcStatusError` (`code`, `detail`) |
 | `Client.call(path, requests, timeout_ms=0) -> Response` | any RPC shape: one or more request messages (client streaming), all reply messages collected (server streaming). The status is in the `Response`, not raised |
 | `Client.call_with(path, requests, metadata, timeout_ms) -> Response` | the same with request metadata (`dict[str, str]`) |
+| `Client.open_stream(path, metadata, timeout_ms=0) -> Stream` | a bidirectional stream: requests and replies interleave (see below) |
 | `Client.close()`, `Client.is_ok()` | close; whether the connection is still usable |
 | `Response.status`, `.message`, `.messages`, `.ok()`, `.header(name)` | gRPC status code, status message, reply messages, response header or trailer value (case-insensitive, `""` if absent) |
 
 `path` is `/package.Service/Method`. Status constants (`nox.grpc.NOT_FOUND`, `UNAVAILABLE`, ...) follow the gRPC status codes. `timeout_ms > 0` is sent as `grpc-timeout`; the server
 answers `DEADLINE_EXCEEDED` when it runs out.
+
+## Bidirectional streams
+
+`open_stream` returns a `Stream` for calls where requests and replies interleave (chat-like RPCs, or a server that answers each request before the next is sent):
+
+```text
+st: Stream = c.open_stream("/chat.Room/Talk", metadata)
+st.send(first)
+reply: str | None = st.recv()     # blocks (cooperatively) until a reply or the end of the stream
+st.close_send()                   # no more requests; the server may finish
+while st.recv() is not None:
+    pass
+print(st.status(), st.message(), st.header("x-trailer"))
+```
+
+`recv()` returns `None` once the server has finished the call; then `status()`, `message()` and `header(name)` hold the result. `finish()` reads and discards the rest and returns the status.
+Only one stream (or `call`) can be open on a connection at a time. Letting a `Stream` go out of scope before it ends cancels the call (`RST_STREAM`) and frees the connection for the next one;
+release or finish streams **before** `Client.close()`.
 
 ## Errors
 
@@ -41,7 +60,7 @@ answers `DEADLINE_EXCEEDED` when it runs out.
 ## Limits
 
 - **TLS needs TLS 1.3 ALPN support from the server** (the usual case for gRPC servers); a server that does not select `h2` makes `connect_tls` fail. No client certificates (mTLS) yet. Not available when compiled to WebAssembly.
-- **Sequential calls** on one connection; the client does not interleave a bidirectional stream (requests are sent, then replies are collected).
+- **One call or stream at a time** per connection (open several connections for parallel calls). `call` sends all requests and then collects the replies; use `open_stream` to interleave.
 - **No compression:** requests announce `grpc-accept-encoding: identity`; a compressed reply is an error.
 - **No client-side read timeout** (the same limit as [`nox.redis`](redis.md)); use `timeout_ms` so the server enforces the deadline.
 - Flow control is handled in both directions (a 300 KB request and a 2 MB reply are tested).
