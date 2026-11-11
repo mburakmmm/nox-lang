@@ -21,7 +21,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **1.2 F2** Liste 128 elemanı aşınca bozuluyordu — **KAPANDI v2.1.54**: kök neden `kernelAlloc` (4096 bayt sınırı, `free` yok) + denetlenmeyen `null`; boyut-sınıflı heap + OOM'da net hata
 - [x] **1.3 F3** `Set/OrderedDict/Counter` ~1000 elemanda `IndexError` — **KAPANDI v2.1.54** (aynı kök neden)
 - [x] **1.4 F4** `pinned_string_passthrough`, `str_append_in_place` — **KAPANDI v2.1.54** (aynı kök neden)
-- [ ] **1.5 F5** Biçim belirteçli f-string / `str.format` çökmesi (`fstring_format_specs`, `str_format_method`)
+- [x] **1.5 F5** Biçim belirteçli f-string / `str.format` çökmesi — **KAPANDI v2.1.55**: kök neden 64 KiB boot yığını; 1 MiB
 - [x] **1.6 F6** `dict[float, …]` değer listesinde #GP — **KAPANDI v2.1.54** (aynı kök neden)
 - [x] **1.7 F7** `async_task_churn_long` #UD — **KAPANDI v2.1.54** (aynı kök neden)
 - [~] **1.8 F8** `exp(1.0)` 1 ULP farkı — kabul edilebilir mi? (karar)

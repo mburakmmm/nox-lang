@@ -314,5 +314,5 @@ pd:
 
 .align 16
 boot_stack_bottom:
-    .skip 65536
+    .skip 1048576
 boot_stack_top:

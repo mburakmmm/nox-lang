@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.55]
+
+### Düzeltildi
+
+- **Freestanding: biçim belirteçli f-string / `str.format` çöküyordu (F5).** Kök neden: `boot.S` boot yığını 64 KiB'dı; `{x:8.3f}`, `{n:,}`, `{x:.2e}` gibi biçimlendirme yolları (özellikle Debug runtime) yığını taşırıp dönüş adreslerini bozuyordu (#PF, `RSP` çöp). Boot yığını 1 MiB'a çıkarıldı (Debug ve ReleaseFast'ta `fstring_format_specs` ve `str_format_method` artık QEMU'da beklenen çıktıyı veriyor). Dogfood korpusuna biçim belirteçleri eklendi (hosted ile QEMU aynı çıktıyı vermeli).
+
 ## [2.1.54]
 
 ### Düzeltildi
