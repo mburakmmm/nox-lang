@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.37]
+
+### Düzeltildi (test altyapısı)
+
+- Yeni bağlanan altı golden fixture CI'da kırmızı çıkıyordu: `sleep_ms_cooperative_in_fiber` macOS CI'da yük altında zamanlamaya takıldı (yavaş görev 200 ms → 1500 ms; tikler 90 ms'de biter). Windows'ta ise `fiber_net` kapalı olduğu için (fiber içi kooperatif uyku/ağ yok, bilinen platform sınırı) `sleep_ms` zamanlayıcıyı bloklar; `Task.wait`, `Channel.wait`, `signal.wait`, `TaskGroup`, `sleep_ms` sıralaması ve kapalı porta bağlanma hata iletisi fixture'ları Windows'ta atlanır (`Fixture.skip_windows`). Bu, Windows'ta gerçek fiber desteği eksikliğini gizlemez: `project/limitasyon-ajan-rehberi.md` E10'da açık iş olarak durur.
+
 ## [2.1.36]
 
 ### Düzeltildi (CI)

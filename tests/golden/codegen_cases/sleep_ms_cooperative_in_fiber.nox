@@ -17,7 +17,7 @@ async def ticker(out: Channel[int]) -> None:
 
 async def main_task() -> None:
     done: Channel[int] = Channel[int](0)
-    a: Task[None] = spawn sleeper("slow", 200, done)
+    a: Task[None] = spawn sleeper("slow", 1500, done)
     b: Task[None] = spawn ticker(done)
     await done.recv()
     await done.recv()

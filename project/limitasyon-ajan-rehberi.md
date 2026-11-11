@@ -102,6 +102,7 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 ### E10. Platform açıkları
 
 - **Windows `nox.terminal`:** denetim yok, `TerminalError` döner (C8).
+- **Windows'ta fiber içi kooperatif uyku/ağ yok** (`fiber_net.enabled == false`, spec §3.335/§3.337): `sleep_ms` zamanlayıcı iş parçacığını bloklar, bu yüzden `Task.wait`/`wait_any`, `Channel.wait`, `signal.wait`, `TaskGroup.wait_*` Windows'ta yalnızca ZAMAN AŞIMI sonucu verir (başka görev çalışamaz). v2.1.37'de bu davranışa bağlı 6 golden `skip_windows` ile atlandı; gerçek çözüm Windows reaktörüyle (`WindowsReactor`) kooperatif `sleepCooperative`/`waitFd` yazmaktır (mimari iş, önce sor).
 - **Android API 26 çökmesi:** açık (bkz. `project_limitation_round_2026_11_10`); cihaz/emülatör gerektirir.
 - **Windows CI zaman aşımı:** v2.1.19 `wasm_frontend_test`, v2.1.23 ve v2.1.31 `codegen_golden_test` "TÜM golden fixture'lar" 300 sn'yi aştı. v2.1.36'da `-Dwin-test-timeout=900`. Bu test tek parçadır ve korpusla büyür: 900 sn'yi de aşarsa fixture'ları birkaç teste bölmek (kalıcı çözüm) gerekir.
 - **aarch64 stack-smash:** KAPANDI (2026-10-08); "çözüldü" kabul et, yeniden açma.

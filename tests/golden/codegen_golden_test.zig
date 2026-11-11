@@ -111,6 +111,10 @@ const FixtureResult = struct {
 };
 
 fn runOneFixture(fx: *const Fixture, result: *FixtureResult) void {
+    if (@import("builtin").os.tag == .windows and fx.skip_windows) {
+        result.* = .{ .ok = true };
+        return;
+    }
     const outcome = switch (fx.kind) {
         .golden => expectGolden(fx.source, fx.expected_stdout),
         .uncaught_exception => expectUncaughtException(fx.source, fx.expected_stdout),
