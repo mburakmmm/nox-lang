@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.64]
+
+### Düzeltildi
+
+- CI: v2.1.63'ün `ci.yml` düzenlemesi YAML'ı bozdu (düz skalerde `Candidate: [`); iş akışı hiç başlamadı. `qemu-user kur` adımı blok skalere alındı ve YAML doğrulandı.
+
 ## [2.1.63]
 
 ### Değişti
