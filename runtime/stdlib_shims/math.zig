@@ -56,6 +56,8 @@ export fn nox_math_log_raw(x: f64) callconv(.c) f64 {
 }
 
 export fn nox_math_exp_raw(x: f64) callconv(.c) f64 {
+    // v2.1.59: çıplak çekirdekte compiler-rt `exp`i 1 ULP sapabilir; f128 tabanlı doğru yuvarlamalı sürüm (bkz. exp_accurate.zig).
+    if (comptime @import("shim_util.zig").bare_kernel) return @import("exp_accurate.zig").expAccurate(x);
     return @exp(x);
 }
 

@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.59]
+
+### Eklendi
+
+- **Freestanding: kurtarılamaz hatada QEMU çıkış kodu 35.** İşlenmemiş istisna, bellek tükenmesi, tamsayı taşması ve kilitlenme artık `isa-debug-exit` portuna `0x11` yazar (QEMU çıkış kodu 35; normal bitiş 33) — testler 25-30 sn zaman aşımı beklemez, hata türü ayırt edilir; gerçek donanımda port etkisiz, makine eskisi gibi durur. `kernel.zig` `fatalHalt` (halt sağlayıcısı), QEMU testi `freestanding: işlenmemiş istisna ... 35`, `scripts/freestanding_survey.py` 35'i tanır.
+- **Freestanding: doğru yuvarlamalı `exp`** (`runtime/stdlib_shims/exp_accurate.zig`): `f128` (compiler-rt yazılım emülasyonu) ile hesap, tek yuvarlama; 632 kesin (80 basamak `Decimal`) referans değerle bit-bit eşit (altnormaller ve sınırlar dahil), rastgele taramada libm'den en çok 1 ULP. Çıplak çekirdekte `nox.mathx.exp(1.0)` artık hosted ile aynı (`2.718281828459045`); `mathx_trig_log_constants` QEMU'da geçiyor. Diğer `mathx` işlevleri hosted libm'den son basamakta ayrılabilir (belgelendi).
+
 ## [2.1.58]
 
 ### Eklendi

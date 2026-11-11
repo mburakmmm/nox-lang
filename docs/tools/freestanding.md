@@ -47,3 +47,8 @@ assembly or Zig objects linked in with `extern def`.
 
 No threads, no scheduler pool (single-threaded cooperative `spawn` only if the runtime's fiber support is built for the target), no file system, networking or clock. Unhandled errors halt the machine rather than exiting a
 process.
+
+**Exit codes under QEMU.** The reference boot chain writes to the `isa-debug-exit` device: a program that finishes normally exits with QEMU status `33`; an unrecoverable error (unhandled exception, out of memory, integer overflow trap) prints its message on the serial port and exits with status `35`. On real hardware the port is inert and the machine halts.
+
+**Numerics.** There is no libm. Float `**` uses Zig's `std.math.pow`, and `nox.mathx.exp` uses a correctly rounded `f128` implementation (it agrees with a hosted libm to the last digit); the other `mathx` functions may differ from a hosted libm in the last digit.
+

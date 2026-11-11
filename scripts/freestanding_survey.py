@@ -6,7 +6,7 @@
   OTHER   beklenen reddetme (negatif fixture) ya da harici nesne eksik
   PASS    QEMU çıktısı beklenenle aynı
   DIFF    çalıştı ama çıktı farklı
-  HALT    program QEMU'yu kapatmadı ama hosted çalışma BAŞARILI: gerçek kusur. HALT-OK = hosted da hatayla bitiyor (işlenmemiş istisna/kilitlenme), makine durur (tasarım)
+  HALT    program QEMU'yu fatal çıkış kodu (35) ya da zaman aşımıyla bitirdi ama hosted çalışma BAŞARILI: gerçek kusur. HALT-OK = hosted da hatayla bitiyor (işlenmemiş istisna/kilitlenme), makine durur (tasarım)
   FAULT   CPU istisnası (`KERNEL_FAULT`)
   TIMEOUT çıktı yok ve kapanmadı
 Kullanım: scripts/freestanding_survey.py [--limit N] [--only ad1,ad2] [--jobs 6] [--out dizin]
@@ -69,16 +69,18 @@ def boot(name):
             return ("BUILD", "objcopy")
         cmd = ["qemu-system-x86_64", "-machine", "q35", "-cpu", "qemu64", "-m", "128M", "-kernel", d + "/k.elf", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", "-serial", "stdio", "-display", "none", "-monitor", "none", "-no-reboot"]
         halted = False
+        fatal = False
         try:
             q = subprocess.run(cmd, capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
             out_b = q.stdout
+            fatal = q.returncode == 35  # kurtarılamaz hata: kernel.zig `fatalHalt` isa-debug-exit 0x11 (v2.1.58); normal bitiş 33
         except subprocess.TimeoutExpired as te:
             out_b = te.stdout or b""
             halted = True
         out = out_b.decode("utf8", "replace").replace("\r\n", "\n")
         if "KERNEL_FAULT" in out:
             return ("FAULT", out[-100:].replace("\n", " "))
-        if halted:
+        if halted or fatal:
             # Makinenin durması yalnızca fixture'ın KENDİSİ hosted çalışmada da hatayla bitiyorsa (işlenmemiş istisna / kilitlenme tasarımı) beklenen davranıştır.
             hosted = subprocess.run([NOXC, "run", src], capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
             if hosted.returncode != 0:

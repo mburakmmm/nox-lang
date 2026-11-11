@@ -60,6 +60,8 @@ pub const udp_shim = @import("stdlib_shims/udp.zig");
 pub const chase_lev_deque = @import("async_rt/chase_lev_deque.zig");
 /// v2.1.54: freestanding varsayılan heap'inin saf dağıtıcısı (kernel.zig kullanır); birim testleri hosted'ta çalışır.
 pub const size_class_heap = @import("freestanding/size_class_heap.zig");
+/// v2.1.59: freestanding için doğru yuvarlamalı `exp` (f128); birim testleri hosted'ta çalışır.
+pub const exp_accurate = @import("stdlib_shims/exp_accurate.zig");
 /// Faz MN.3b: MN.3a İLE AYNI "bağımsız, sadece test-keşfi İçİn KAYITLI"
 /// deseni — bkz. onun modül üstü notu.
 pub const worker_pool = @import("async_rt/worker_pool.zig");
@@ -140,6 +142,7 @@ comptime {
     _ = udp_shim;
     _ = chase_lev_deque;
     _ = size_class_heap;
+    _ = exp_accurate;
     _ = worker_pool;
     _ = str;
     _ = @import("unicode.zig");

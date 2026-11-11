@@ -24,14 +24,14 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **1.5 F5** Biçim belirteçli f-string / `str.format` çökmesi — **KAPANDI v2.1.55**: kök neden 64 KiB boot yığını; 1 MiB
 - [x] **1.6 F6** `dict[float, …]` değer listesinde #GP — **KAPANDI v2.1.54** (aynı kök neden)
 - [x] **1.7 F7** `async_task_churn_long` #UD — **KAPANDI v2.1.54** (aynı kök neden)
-- [~] **1.8 F8** `exp(1.0)` 1 ULP farkı — kabul edilebilir mi? (karar)
+- [x] **1.8 F8** `exp(1.0)` 1 ULP farkı — kullanıcı kararı: doğru yuvarlamalı exp; **v2.1.59** (f128, 632 referansla bit-bit)
 - [x] **1.9** `strings`, `json`, `regex`, `base64`, `path`, `random` kabuklarını freestanding köküne bağla (`scratchAllocator`, `TlsSlot`) + `docs/tools/freestanding.md` — **v2.1.57** (PASS 345 → 396, LINK 76 → 13)
 - [x] **1.9b** `nox.gzip`/`nox.bytes` freestanding'de (statik 768 KiB yığınlı mini-fiber) — **v2.1.58**
 - [x] **1.9c** `nox.crypto` freestanding'de (özetler; argon2/scrypt/hash'ler çıplak çekirdekte desteklenmez) — **v2.1.58**
 - [x] **1.9d** `nox.os` freestanding'de (bellek içi ortam, `arg(0)`="nox", `exit` = durdur) — **v2.1.58**
-- [~] **1.10** QEMU'da fatal hatada `isa-debug-exit` ile çıkış (test düzeneği için) — karar
-- [~] **1.11** aarch64 / riscv64 için QEMU boot zinciri — karar
-- [ ] **1.12** Her adımdan sonra `python3 scripts/freestanding_survey.py` ile yeniden ölç; başlangıç: PASS 323 / DIFF 20 / LINK 76
+- [x] **1.10** QEMU'da fatal hatada `isa-debug-exit` ile çıkış kodu 35 — **v2.1.59**
+- [~] **1.11** aarch64 / riscv64 için QEMU boot zinciri — kullanıcı kararı: şimdilik yapılmayacak, 2-3-4. bölümlerden sonra yeniden sorulacak
+- [x] **1.12** Yeniden ölçüm tamam (v2.1.58): **PASS 423/525** (başlangıç 323); DIFF 20→1 (yalnız F8), LINK 76→1 (yalnız `wasm_call`, freestanding'de yok = beklenen), HALT 3→0, FAULT 2→0. Kalanlar tasarım gereği: CAP 69, negatif fixture 17, HALT-OK 12 (işlenmemiş istisna makineyi durdurur), NOEXP 2
 
 ## 2. Stdlib performans (rapor: stdlib-performans-analizi)
 

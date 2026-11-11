@@ -86,6 +86,17 @@ pub fn expectFreestandingBoot(
     source: []const u8,
     expected_checkpoints: []const []const u8,
 ) !void {
+    return expectFreestandingBootExit(allocator, io, source, expected_checkpoints, 33);
+}
+
+/// `expectFreestandingBoot` ile aynı; beklenen QEMU çıkış kodu parametreli: 33 = normal bitiş (`isa-debug-exit` 0x10), 35 = kurtarılamaz hata (0x11; v2.1.58).
+pub fn expectFreestandingBootExit(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    source: []const u8,
+    expected_checkpoints: []const []const u8,
+    expected_exit: u8,
+) !void {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     if (!toolAvailable(allocator, io, &.{ "qbe", "-h" })) return error.SkipZigTest;
@@ -228,7 +239,7 @@ pub fn expectFreestandingBoot(
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "KERNEL_FAULT") == null);
 
     try std.testing.expect(term == .exited);
-    try std.testing.expectEqual(@as(u8, 33), term.exited);
+    try std.testing.expectEqual(expected_exit, term.exited);
 }
 
 // Madde 2 (dogfood'un ASIL ÖZÜ): `freestanding_dogfood_corpus.nox`
@@ -263,4 +274,18 @@ test "Faz C madde 2: freestanding_dogfood_corpus.nox hosted VE GERÇEK QEMU'da A
     try std.testing.expect(checkpoints.items.len >= 10);
 
     try expectFreestandingBoot(allocator, io, corpus_source, checkpoints.items);
+}
+
+// v2.1.58: kurtarılamaz hata (işlenmemiş istisna) QEMU'da ayrı bir çıkış koduyla (35) biter, 25 sn zaman aşımı beklenmez; hata iletisi seri porta yazılır.
+test "freestanding: işlenmemiş istisna QEMU'da çıkış kodu 35 ile biter (isa-debug-exit 0x11)" {
+    const source =
+        \\class Boom(Exception):
+        \\    pass
+        \\
+        \\print("BEFORE_FATAL")
+        \\raise Boom("x")
+        \\print("NEVER")
+        \\
+    ;
+    try expectFreestandingBootExit(std.testing.allocator, std.testing.io, source, &.{ "BEFORE_FATAL", "uncaught exception: Boom" }, 35);
 }

@@ -21,6 +21,7 @@ const diag_sink = @import("diag_sink");
 /// heap İçİn yaptığının AYNISI, AMA fiber yığınları İçİn) BURADA somutlaştırılır.
 const fiber_mod = @import("../../async_rt/fiber.zig");
 const heap_mod = @import("../size_class_heap.zig");
+const errors_mod = @import("../../errors/handle.zig");
 
 // ---------------------------------------------------------------------
 // `outb`/`inb` — Zig 0.16'nın inline-asm sözdizimi doğrudan
@@ -151,8 +152,20 @@ export fn nox_isr_dispatch(vec: u64, err: u64, rip: u64) callconv(.c) void {
 
 /// `boot.S`nin `long_mode_start`ının `main`e atlamadan HEMEN ÖNCE çağırdığı
 /// TEK Zig bootstrap noktası.
+/// v2.1.58: kurtarılamaz hata (işlenmemiş istisna, OOM, tamsayı taşması, kilitlenme) — QEMU'da `isa-debug-exit` portuna `0x11` yazar (çıkış kodu `(0x11<<1)|1 = 35`; normal bitiş 33). Gerçek
+/// donanımda bu ISA portu etkisizdir ve makine eskisi gibi durur.
+fn fatalHalt(ctx: ?*anyopaque) noreturn {
+    _ = ctx;
+    outb(0xF4, 0x11);
+    haltForever();
+}
+
+const fatal_halt_vtable: errors_mod.HaltProviderVTable = .{ .halt = fatalHalt };
+const fatal_halt_provider: errors_mod.HaltProvider = .{ .ctx = null, .vtable = &fatal_halt_vtable };
+
 export fn nox_freestanding_early_init() callconv(.c) void {
     serialInit();
+    errors_mod.nox_register_halt_provider(&fatal_halt_provider);
     diag_sink.nox_register_diag_sink(serialDiagSink);
     picMaskAll();
     idtInstall();
