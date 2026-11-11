@@ -118,3 +118,7 @@ Karar: gerçek destek verilmez. Liste eleman bilgisi (`ElemHeapInfo`) ~230 yerde
 | Bir madde bayat çıktı | Kaydı `[-]` yap, bu rehberin D2 tablosuna sürümüyle ekle |
 
 İlgili dosyalar: `project/limitasyon-kaydi-2026-11.md`, `project/v2-hazirlik-yol-haritasi.md`, `AGENTS.md` §2, §9.5, §16, `nox-teknik-spesifikasyon.md` §3.381-3.393.
+
+### Freestanding kapsam analizi (2026-11-11)
+
+Tam ölçüm ve açık kusur listesi (F1–F8): `project/freestanding-kapsam-analizi-2026-11.md`; araç: `scripts/freestanding_survey.py`. Bir freestanding "düzeltmesi"ne başlamadan önce oraya bak (özellikle F2: liste 128 elemanı aşınca sessiz bozulma, kök neden henüz bilinmiyor).

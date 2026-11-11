@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.48]
+
+### Eklendi
+
+- **Freestanding kapsam analizi.** `scripts/freestanding_survey.py` 524 fixture'ı `--profile freestanding` ile derler/bağlar ve bağlananları GERÇEK QEMU önyüklemesinde çalıştırıp seri çıktıyı beklenenle karşılaştırır (PASS/DIFF/HALT/FAULT/LINK/CAP). Rapor: `project/freestanding-kapsam-analizi-2026-11.md` (323 fixture QEMU'da birebir geçiyor; 8 kusur kök neden durumuyla; belgelenen ama bağlanmayan 17 modül; öncelikli öneriler). Kod davranışı DEĞİŞMEDİ; bulunan kusurlar (liste 128 elemanı aşınca bozulma, `%llu` yazdırma, biçim belirteçli f-string çökmesi, vb.) ayrı sürümlerde düzeltilecek.
+
+### Değişti
+
+- `services/noxlang-site/nox.lock` v2.1.47'de yanlışlıkla commit edilen `hpy_*` alanlarından arındırıldı.
+
 ## [2.1.47]
 
 ### Düzeltildi
