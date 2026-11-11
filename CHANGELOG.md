@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.67]
+
+### Eklendi
+
+- **`nox.decimal` ve `nox.fraction` (TODO 2.10 tamam):** `Decimal` kesin ondalık (toplama/çıkarma/çarpma yuvarlamasız; `div` ve `quantize` açık basamak + 7 yuvarlama kipi; global bağlam yok), `Fraction` kesin rasyonel (`floor/ceil/trunc/round`, `**`, `"3/4"`/`"0.125"` ayrıştırma). İkisi de `nox.bigint` üzerine saf Nox; golden'lar Python `decimal`/`fractions` ile birebir (658 + 539 satır). Docs: `docs/stdlib/decimal.md`, `docs/stdlib/fraction.md`.
+
 ## [2.1.66]
 
 ### Eklendi

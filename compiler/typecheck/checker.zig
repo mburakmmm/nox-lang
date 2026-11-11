@@ -1438,6 +1438,8 @@ pub const Checker = struct {
         // AYNI gerekçeyle HİÇBİR OS/libc bağımlılığı TAŞIMAZ.
         // v2.1.66: `nox.bigint` — keyfi hassasiyetli tamsayı; hesaplama runtime kabuğunda (OS/libc bağımlılığı yok).
         .{ .name = "bigint", .caps = &.{} },
+        .{ .name = "decimal", .caps = &.{} },
+        .{ .name = "fraction", .caps = &.{} },
         .{ .name = "bits", .caps = &.{} },
         // v4 Faz A madde 5 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
         // `nox.buffer` — SAF `list[u8]` sarmalayıcısı, `nox.mem`/`nox.bits`

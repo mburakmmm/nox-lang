@@ -1,0 +1,177 @@
+# nox.fraction (v2.1.67) — kesin rasyonel sayı (Python `fractions.Fraction`), `nox.bigint` üzerine saf Nox. Değerler hep indirgenmiş (gcd = 1) ve payda > 0'dır.
+
+import nox.bigint
+from nox.bigint import BigInt, big, from_int, parse
+
+class Fraction:
+    num: BigInt
+    den: BigInt
+
+    # Ham yapıcı: indirgemez. Dışarıdan `make(p, q)` kullanın.
+    def __init__(self, num: BigInt, den: BigInt) -> None:
+        self.num = num
+        self.den = den
+
+    def __add__(self, o: Fraction) -> Fraction:
+        return make(self.num * o.den + o.num * self.den, self.den * o.den)
+
+    def __sub__(self, o: Fraction) -> Fraction:
+        return make(self.num * o.den - o.num * self.den, self.den * o.den)
+
+    def __mul__(self, o: Fraction) -> Fraction:
+        return make(self.num * o.num, self.den * o.den)
+
+    def __truediv__(self, o: Fraction) -> Fraction:
+        if o.num.is_zero():
+            raise ZeroDivisionError("Fraction division by zero")
+        return make(self.num * o.den, self.den * o.num)
+
+    def __neg__(self) -> Fraction:
+        return Fraction(-self.num, self.den)
+
+    def __pow__(self, e: int) -> Fraction:
+        if e >= 0:
+            return Fraction(self.num ** e, self.den ** e)
+        if self.num.is_zero():
+            raise ZeroDivisionError("0 cannot be raised to a negative power")
+        return make(self.den ** (-e), self.num ** (-e))
+
+    def __eq__(self, o: Fraction) -> bool:
+        return self.num == o.num and self.den == o.den
+
+    def __ne__(self, o: Fraction) -> bool:
+        return not (self.num == o.num and self.den == o.den)
+
+    def __lt__(self, o: Fraction) -> bool:
+        return self.num * o.den < o.num * self.den
+
+    def __le__(self, o: Fraction) -> bool:
+        return self.num * o.den <= o.num * self.den
+
+    def __gt__(self, o: Fraction) -> bool:
+        return self.num * o.den > o.num * self.den
+
+    def __ge__(self, o: Fraction) -> bool:
+        return self.num * o.den >= o.num * self.den
+
+    def __str__(self) -> str:
+        if self.den == big(1):
+            return str(self.num)
+        return str(self.num) + "/" + str(self.den)
+
+    def __repr__(self) -> str:
+        return "Fraction(" + str(self.num) + ", " + str(self.den) + ")"
+
+    def numerator(self) -> BigInt:
+        return self.num
+
+    def denominator(self) -> BigInt:
+        return self.den
+
+    def abs(self) -> Fraction:
+        return Fraction(self.num.abs(), self.den)
+
+    def sign(self) -> int:
+        return self.num.sign()
+
+    def is_integer(self) -> bool:
+        return self.den == big(1)
+
+    # Taban (−∞'a yuvarlama) tamsayı kısmı: Python `math.floor`.
+    def floor(self) -> BigInt:
+        return self.num // self.den
+
+    # Tavan: Python `math.ceil`.
+    def ceil(self) -> BigInt:
+        return -((-self.num) // self.den)
+
+    # Sıfıra doğru kesme: Python `int(fraction)`.
+    def trunc(self) -> BigInt:
+        if self.num.sign() >= 0:
+            return self.num // self.den
+        return -((-self.num) // self.den)
+
+    # En yakın tamsayı, eşitlikte çifte yuvarlama (Python `round(fraction)`).
+    def round(self) -> BigInt:
+        two: BigInt = big(2)
+        fl: BigInt = (self.num * two + self.den) // (self.den * two)
+        # tam yarım ise çifte git: (2n + d) % (2d) == 0
+        if (self.num * two + self.den) % (self.den * two) == big(0) and fl.is_odd():
+            return fl - big(1)
+        return fl
+
+    def reciprocal(self) -> Fraction:
+        if self.num.is_zero():
+            raise ZeroDivisionError("Fraction reciprocal of zero")
+        return make(self.den, self.num)
+
+    # En yakın `float` (40 basamaklı ondalık bölmeden).
+    def to_float(self) -> float:
+        digits: int = 40
+        neg: bool = self.num.sign() < 0
+        n: BigInt = self.num.abs()
+        scaled: BigInt = (n * (big(10) ** digits)) // self.den
+        s: str = str(scaled)
+        while len(s) <= digits:
+            s = "0" + s
+        text: str = s[0:len(s) - digits] + "." + s[len(s) - digits:len(s)]
+        if neg:
+            text = "-" + text
+        return float(text)
+
+# p/q'yu indirger; q = 0 ise ZeroDivisionError.
+def make(p: BigInt, q: BigInt) -> Fraction:
+    if q.is_zero():
+        raise ZeroDivisionError("Fraction denominator is zero")
+    n: BigInt = p
+    d: BigInt = q
+    if d.sign() < 0:
+        n = -n
+        d = -d
+    g: BigInt = n.gcd(d)
+    if g > big(1):
+        n = n // g
+        d = d // g
+    return Fraction(n, d)
+
+def from_ints(p: int, q: int = 1) -> Fraction:
+    return make(from_int(p), from_int(q))
+
+# "3/4", "-7", "0.125", "1e-3" biçimlerini ayrıştırır; geçersizse ValueError.
+def parse_fraction(s: str) -> Fraction:
+    slash: int = -1
+    i: int = 0
+    while i < len(s):
+        if s[i] == "/":
+            slash = i
+        i = i + 1
+    if slash >= 0:
+        return make(parse(s[0:slash]), parse(s[slash + 1:len(s)]))
+    # ondalık: işaret, tam, kesir, isteğe bağlı üs
+    text: str = s
+    exp10: int = 0
+    e_at: int = -1
+    j: int = 0
+    while j < len(text):
+        if text[j] == "e" or text[j] == "E":
+            e_at = j
+        j = j + 1
+    if e_at >= 0:
+        exp10 = int(text[e_at + 1:len(text)])
+        text = text[0:e_at]
+    point: int = -1
+    k: int = 0
+    while k < len(text):
+        if text[k] == ".":
+            point = k
+        k = k + 1
+    digits: str = text
+    frac_len: int = 0
+    if point >= 0:
+        digits = text[0:point] + text[point + 1:len(text)]
+        frac_len = len(text) - point - 1
+    unscaled: BigInt = parse(digits)
+    e: int = exp10 - frac_len
+    if e >= 0:
+        return make(unscaled * (big(10) ** e), big(1))
+    return make(unscaled, big(10) ** (-e))

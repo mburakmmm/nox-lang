@@ -1,0 +1,232 @@
+# nox.decimal (v2.1.67) — kesin ondalık sayı: değer = katsayı × 10^üs (katsayı `BigInt`). Toplama, çıkarma ve çarpma KESİNDİR (yuvarlama yok);
+# bölme ve yuvarlama açık basamak sayısı ve yuvarlama kipiyle yapılır (global bağlam yoktur — para hesaplarında sürpriz olmasın diye bilinçli).
+# Yuvarlama kipleri (Python `decimal` ile aynı anlam): "half_even", "half_up" (eşitlikte sıfırdan uzağa), "half_down" (eşitlikte sıfıra),
+# "down" (sıfıra), "up" (sıfırdan uzağa), "floor" (-∞), "ceiling" (+∞).
+
+import nox.bigint
+from nox.bigint import BigInt, big, parse as parse_int
+
+class DecimalError(Exception):
+    pass
+
+def _pow10(n: int) -> BigInt:
+    return big(10) ** n
+
+# n / d'yi (d > 0) belirtilen kiple tamsayıya yuvarlar.
+def _div_round(n: BigInt, d: BigInt, mode: str) -> BigInt:
+    q: BigInt = n // d
+    r: BigInt = n % d
+    if r.is_zero():
+        return q
+    nonneg: bool = n.sign() >= 0
+    if mode == "floor":
+        return q
+    if mode == "ceiling":
+        return q + big(1)
+    if mode == "down":
+        if nonneg:
+            return q
+        return q + big(1)
+    if mode == "up":
+        if nonneg:
+            return q + big(1)
+        return q
+    twice: BigInt = r * big(2)
+    if twice < d:
+        return q
+    if twice > d:
+        return q + big(1)
+    # tam yarım
+    if mode == "half_up":
+        if nonneg:
+            return q + big(1)
+        return q
+    if mode == "half_down":
+        if nonneg:
+            return q
+        return q + big(1)
+    if mode == "half_even":
+        if q.is_odd():
+            return q + big(1)
+        return q
+    raise DecimalError("unknown rounding mode: " + mode)
+
+class Decimal:
+    coef: BigInt
+    exp: int
+
+    def __init__(self, coef: BigInt, exp: int) -> None:
+        self.coef = coef
+        self.exp = exp
+
+    # `self`i `exp` üssüne hizalanmış katsayı (exp <= self.exp olmalı).
+    def _scaled(self, to_exp: int) -> BigInt:
+        return self.coef * _pow10(self.exp - to_exp)
+
+    def __add__(self, o: Decimal) -> Decimal:
+        e: int = self.exp
+        if o.exp < e:
+            e = o.exp
+        return Decimal(self._scaled(e) + o._scaled(e), e)
+
+    def __sub__(self, o: Decimal) -> Decimal:
+        e: int = self.exp
+        if o.exp < e:
+            e = o.exp
+        return Decimal(self._scaled(e) - o._scaled(e), e)
+
+    def __mul__(self, o: Decimal) -> Decimal:
+        return Decimal(self.coef * o.coef, self.exp + o.exp)
+
+    def __neg__(self) -> Decimal:
+        return Decimal(-self.coef, self.exp)
+
+    def __eq__(self, o: Decimal) -> bool:
+        return self.compare(o) == 0
+
+    def __ne__(self, o: Decimal) -> bool:
+        return self.compare(o) != 0
+
+    def __lt__(self, o: Decimal) -> bool:
+        return self.compare(o) < 0
+
+    def __le__(self, o: Decimal) -> bool:
+        return self.compare(o) <= 0
+
+    def __gt__(self, o: Decimal) -> bool:
+        return self.compare(o) > 0
+
+    def __ge__(self, o: Decimal) -> bool:
+        return self.compare(o) >= 0
+
+    # -1, 0 ya da 1 (sayısal: 1.0 == 1.00).
+    def compare(self, o: Decimal) -> int:
+        e: int = self.exp
+        if o.exp < e:
+            e = o.exp
+        a: BigInt = self._scaled(e)
+        b: BigInt = o._scaled(e)
+        if a < b:
+            return -1
+        if a > b:
+            return 1
+        return 0
+
+    # Düz (üssüz) gösterim: "12.345", "-0.001", "1200".
+    def __str__(self) -> str:
+        neg: bool = self.coef.sign() < 0
+        digits: str = str(self.coef.abs())
+        out: str = ""
+        if self.exp >= 0:
+            out = digits
+            if not self.coef.is_zero():
+                i: int = 0
+                while i < self.exp:
+                    out = out + "0"
+                    i = i + 1
+        else:
+            places: int = -self.exp
+            while len(digits) <= places:
+                digits = "0" + digits
+            out = digits[0:len(digits) - places] + "." + digits[len(digits) - places:len(digits)]
+        if neg:
+            return "-" + out
+        return out
+
+    def __repr__(self) -> str:
+        return "Decimal('" + str(self) + "')"
+
+    def sign(self) -> int:
+        return self.coef.sign()
+
+    def is_zero(self) -> bool:
+        return self.coef.is_zero()
+
+    def abs(self) -> Decimal:
+        return Decimal(self.coef.abs(), self.exp)
+
+    # Ondalık basamak sayısı (üs negatifse -üs, değilse 0).
+    def scale(self) -> int:
+        if self.exp < 0:
+            return -self.exp
+        return 0
+
+    # Sondaki sıfırları atar (1.500 -> 1.5, 1200 -> 1200 üssü 2 olarak).
+    def normalize(self) -> Decimal:
+        if self.coef.is_zero():
+            return Decimal(self.coef, 0)
+        c: BigInt = self.coef
+        e: int = self.exp
+        ten: BigInt = big(10)
+        while (c % ten).is_zero():
+            c = c // ten
+            e = e + 1
+        return Decimal(c, e)
+
+    # `places` ondalık basamağa yuvarlar (negatif places onlar/yüzler basamağıdır). Sonucun üssü -places olur.
+    def quantize(self, places: int, mode: str = "half_even") -> Decimal:
+        target: int = -places
+        if target <= self.exp:
+            return Decimal(self.coef * _pow10(self.exp - target), target)
+        return Decimal(_div_round(self.coef, _pow10(target - self.exp), mode), target)
+
+    # `self / o`, sonuç `places` ondalık basamakta yuvarlanır. Sıfıra bölme ZeroDivisionError.
+    def div(self, o: Decimal, places: int, mode: str = "half_even") -> Decimal:
+        if o.coef.is_zero():
+            raise ZeroDivisionError("Decimal division by zero")
+        # self/o = (a * 10^ea) / (b * 10^eb); sonuç katsayısı = a*10^(ea-eb+places) / b
+        shift: int = self.exp - o.exp + places
+        n: BigInt = self.coef
+        d: BigInt = o.coef
+        if shift >= 0:
+            n = n * _pow10(shift)
+        else:
+            d = d * _pow10(-shift)
+        if d.sign() < 0:
+            n = -n
+            d = -d
+        return Decimal(_div_round(n, d, mode), -places)
+
+    # Sıfıra doğru kesilmiş tamsayı kısmı.
+    def to_bigint(self) -> BigInt:
+        if self.exp >= 0:
+            return self.coef * _pow10(self.exp)
+        q: BigInt = self.coef.abs() // _pow10(-self.exp)
+        if self.coef.sign() < 0:
+            return -q
+        return q
+
+    def to_float(self) -> float:
+        return float(str(self))
+
+def from_int(x: int) -> Decimal:
+    return Decimal(big(x), 0)
+
+def from_bigint(x: BigInt) -> Decimal:
+    return Decimal(x, 0)
+
+# "12.345", "-0.5", "1e3", "2.5E-4" biçimleri; geçersizse ValueError.
+def parse(s: str) -> Decimal:
+    text: str = s
+    exp10: int = 0
+    e_at: int = -1
+    j: int = 0
+    while j < len(text):
+        if text[j] == "e" or text[j] == "E":
+            e_at = j
+        j = j + 1
+    if e_at >= 0:
+        exp10 = int(text[e_at + 1:len(text)])
+        text = text[0:e_at]
+    point: int = -1
+    k: int = 0
+    while k < len(text):
+        if text[k] == ".":
+            point = k
+        k = k + 1
+    digits: str = text
+    frac_len: int = 0
+    if point >= 0:
+        digits = text[0:point] + text[point + 1:len(text)]
+        frac_len = len(text) - point - 1
+    return Decimal(parse_int(digits), exp10 - frac_len)
