@@ -215,23 +215,79 @@ export fn nox_strings_eq_ignore_case_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) c
     return if (std.ascii.eqlIgnoreCase(a_slice, b_slice)) 1 else 0;
 }
 
-/// ASCII hızlı yolu + Unicode tam eşleme (`unicode.zig`): `ß`.upper() == `SS` gibi eşlemeler çıktı uzunluğunu değiştirebilir.
+const AsciiVec = @Vector(32, u8);
+
+/// Tüm baytlar < 0x80 mi? (32 baytlık SIMD tarama + skaler kuyruk)
+fn isAscii(slice: []const u8) bool {
+    var i: usize = 0;
+    while (i + 32 <= slice.len) : (i += 32) {
+        const v: AsciiVec = slice[i..][0..32].*;
+        if (@reduce(.Or, v >= @as(AsciiVec, @splat(0x80)))) return false;
+    }
+    while (i < slice.len) : (i += 1) if (slice[i] >= 0x80) return false;
+    return true;
+}
+
+/// ASCII büyük/küçük harf dönüşümü (32 baytlık SIMD + skaler kuyruk). `dst.len == src.len`; `src` ASCII olmalı. `upper`: a-z -> A-Z, aksi halde A-Z -> a-z.
+fn asciiCaseInto(dst: []u8, src: []const u8, upper: bool) void {
+    const lo: u8 = if (upper) 'a' else 'A';
+    const hi: u8 = if (upper) 'z' else 'Z';
+    const lov: AsciiVec = @splat(lo);
+    const hiv: AsciiVec = @splat(hi);
+    const flip: AsciiVec = @splat(0x20);
+    var i: usize = 0;
+    while (i + 32 <= src.len) : (i += 32) {
+        const v: AsciiVec = src[i..][0..32].*;
+        const in_range = (v >= lov) & (v <= hiv);
+        const out = @select(u8, in_range, v ^ flip, v);
+        dst[i..][0..32].* = out;
+    }
+    while (i < src.len) : (i += 1) {
+        const c = src[i];
+        dst[i] = if (c >= lo and c <= hi) c ^ 0x20 else c;
+    }
+}
+
+/// ASCII hızlı yolu (SIMD) + Unicode tam eşleme (`unicode.zig`): `ß`.upper() == `SS` gibi eşlemeler çıktı uzunluğunu değiştirebilir.
 fn caseMapRaw(rt: ?*anyopaque, s: ?[*:0]const u8, mode: unicode.Mode) ?[*:0]u8 {
     const slice = str_mod.nox_str_slice(s orelse return null);
-    var ascii = true;
-    for (slice) |c| if (c >= 0x80) {
-        ascii = false;
-        break;
-    };
-    if (ascii) {
+    if (isAscii(slice)) {
         const buf = str_mod.nox_str_alloc_buf(rt, slice.len) orelse return null;
-        for (slice, 0..) |c, i| buf[i] = if (mode == .upper) std.ascii.toUpper(c) else std.ascii.toLower(c);
+        asciiCaseInto(buf[0..slice.len], slice, mode == .upper);
         return @ptrCast(buf);
     }
     const n = unicode.mapInto(slice, mode, null);
     const buf = str_mod.nox_str_alloc_buf(rt, n) orelse return null;
     _ = unicode.mapInto(slice, mode, buf[0..n]);
     return @ptrCast(buf);
+}
+
+test "asciiCaseInto: SIMD ve skaler kuyruk std.ascii ile aynı sonucu verir (tüm uzunluklar, tüm baytlar)" {
+    var src: [200]u8 = undefined;
+    var dst: [200]u8 = undefined;
+    var i: usize = 0;
+    while (i < src.len) : (i += 1) src[i] = @intCast((i * 7 + 13) % 128);
+    var len: usize = 0;
+    while (len <= src.len) : (len += 1) {
+        for ([_]bool{ true, false }) |upper| {
+            asciiCaseInto(dst[0..len], src[0..len], upper);
+            for (src[0..len], dst[0..len]) |c, d| {
+                const want = if (upper) std.ascii.toUpper(c) else std.ascii.toLower(c);
+                try std.testing.expectEqual(want, d);
+            }
+        }
+    }
+}
+
+test "isAscii: SIMD blok sınırında ve kuyrukta ASCII-dışı baytı yakalar" {
+    var b: [100]u8 = @splat('a');
+    try std.testing.expect(isAscii(&b));
+    for ([_]usize{ 0, 31, 32, 63, 64, 95, 99 }) |pos| {
+        b[pos] = 0xC3;
+        try std.testing.expect(!isAscii(&b));
+        b[pos] = 'a';
+    }
+    try std.testing.expect(isAscii(""));
 }
 
 export fn nox_strings_upper_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {

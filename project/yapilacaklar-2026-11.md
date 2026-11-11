@@ -32,13 +32,14 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 
 ## 2. Stdlib performans (rapor: stdlib-performans-analizi)
 
-- [ ] **2.1** `nox.base64` encode/decode → Zig kabuğu (26x/36x yavaş)
-- [ ] **2.2** `strings.upper/lower` (+`trim`) → SIMD hızlı yol (4x yavaş)
+- [x] **2.1** `nox.base64` encode/decode → Zig kabuğu (26x/36x yavaştı; artık 1.0x/2.0x) — **v2.1.56**
+- [x] **2.2** `strings.upper/lower` ASCII SIMD yolu — **v2.1.56** (kalan maliyet büyük tahsis: 2.9)
 - [ ] **2.3** `strings.replace` (1.44x), `csv.parse` (1.35x) tahsis azaltma
 - [ ] **2.4** `json` parse/dump (1.7x) profil + optimize
 - [ ] **2.5** `regex` find_all/replace (1.5-1.7x) profil + optimize
 - [-] **2.6** `gzip` (2.5x/3.4x) — **yeni bağımlılık eklenmeyecek** (kullanıcı kararı); Zig flate kalır. İsteğe bağlı: bağımlılıksız ince ayar (düzey/tampon)
 - [~] **2.7** Eksik modül adaylarından hangileri gerçek talep: `bigint`/`decimal`, argüman ayrıştırma, `tempfile`/`glob`, XML/HTML, zip/tar/zstd, md5/sha3/blake3, `Mutex/Semaphore`, `.env`/ini
+- [ ] **2.9** Büyük (≥ ~64 KB) tahsislerde sayfa-hatası maliyeti: `"  " + 1MB + "  "` 0.44 ms (CPython 0.02 ms) — büyük blok önbelleği/yeniden kullanımı araştır (`nox_rc_alloc` büyük yol)
 - [ ] **2.8** Her düzeltmeden sonra `benchmarks/stdlib_perf/run.py` ile yeniden ölç (hedef: tüm kalemler ≤ ~1.5x)
 
 ## 3. FFI (rapor: ffi-performans-analizi)

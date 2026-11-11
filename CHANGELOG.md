@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.56]
+
+### Değişti
+
+- **`nox.base64` Zig kabuğuna taşındı** (`runtime/stdlib_shims/base64.zig`): saf Nox uygulaması (bayt başına dize birleştirme) 4 MiB'ta CPython'dan 26x (encode) / 36x (decode) yavaştı; artık encode 49.9 → 5.1 ms (CPython'la aynı), decode 46.4 → 6.2 ms. Anlam AYNEN korundu (std dolgulu, url dolgusuz, çözücü iki alfabeyi ve dolgusuz/fazla `=` girdisini kabul eder, hata sınıfları). Durumsuz tasarım (`check` ön geçişi; thread-local bayrak yok) olduğundan freestanding'de de bağlanır (`lib_freestanding.zig` köküne eklendi). Golden: `base64_zig_edge_cases` (+ mevcut `base64_and_jwt`), Zig birim testleri (RFC 4648 vektörleri, hata sınıfları, 100 KB ikili gidiş-dönüş).
+- **`strings.upper/lower` ASCII yolu SIMD** (32 baytlık vektör tarama + dönüşüm); birim testleri tüm uzunluk/bayt değerlerinde `std.ascii` ile karşılaştırır.
+
+### Bulgu
+
+- `upper/lower`'ın asıl maliyeti döngü değil, **1 MB'lık büyük dizelerin her seferinde yeni tahsisi** (sayfa hatası): düz `"  " + s + "  "` bile 0.44 ms/MB (CPython 0.02 ms). `project/yapilacaklar-2026-11.md` 2.9.
+
 ## [2.1.55]
 
 ### Düzeltildi

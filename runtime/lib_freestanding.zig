@@ -59,6 +59,8 @@ pub const math_shim = @import("stdlib_shims/math.zig");
 /// ZATEN men eder, bu stub'lar SADECE linker'ın sembolleri ÇÖZEBİLMESİ
 /// İçİndir (Nox'un "her üst-düzey fonksiyon koşulsuz derlenir" kuralı).
 pub const time_shim = @import("stdlib_shims/time.zig");
+/// v2.1.56: `nox.base64` saf bir dilim işlevidir (OS/libc bağımlılığı YOK) — freestanding'de de bağlanır.
+pub const base64_shim = @import("stdlib_shims/base64.zig");
 
 // Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
 // tamamlanması"): BU turda GERÇEK bir `noxc build --profile freestanding`
@@ -468,4 +470,5 @@ comptime {
     _ = list_ops;
     _ = math_shim;
     _ = time_shim;
+    _ = base64_shim;
 }

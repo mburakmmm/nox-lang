@@ -12,129 +12,30 @@
 # Modül capability-SİZDİR (HİÇBİR OS/ağ/dosya erişimi YOK) — freestanding
 # DAHİL her profilde kullanılabilir.
 
-import nox.strings
-
 class Base64Error(Exception):
     pass
 
-def _std_alphabet_char(six_bits: int) -> str:
-    if six_bits < 26:
-        return nox.strings.char_from_byte(65 + six_bits)
-    if six_bits < 52:
-        return nox.strings.char_from_byte(97 + (six_bits - 26))
-    if six_bits < 62:
-        return nox.strings.char_from_byte(48 + (six_bits - 52))
-    if six_bits == 62:
-        return "+"
-    return "/"
-
-def _url_alphabet_char(six_bits: int) -> str:
-    if six_bits < 26:
-        return nox.strings.char_from_byte(65 + six_bits)
-    if six_bits < 52:
-        return nox.strings.char_from_byte(97 + (six_bits - 26))
-    if six_bits < 62:
-        return nox.strings.char_from_byte(48 + (six_bits - 52))
-    if six_bits == 62:
-        return "-"
-    return "_"
-
-# `c`, zaten çıkarılmış HAM bir bayt DEĞERİDİR (`nox.strings.byte_at`den)
-# — hem standart (`+`/`/`) HEM URL-safe (`-`/`_`) alfabeyi AYNI ANDA
-# kabul eder (çoğu olgun base64 çözücünün yaptığı GİBİ, GİRDİNİN HANGİ
-# varyantla kodlandığını BİLMEK gerekmez).
-def _char_value(c: int) -> int:
-    if c >= 65 and c <= 90:
-        return c - 65
-    if c >= 97 and c <= 122:
-        return c - 71
-    if c >= 48 and c <= 57:
-        return c + 4
-    if c == 43 or c == 45:
-        return 62
-    if c == 47 or c == 95:
-        return 63
-    raise Base64Error("invalid base64 character")
-
-def _encode_impl(data: str, url_safe: bool) -> str:
-    n: int = nox.strings.byte_len(data)
-    out: str = ""
-    i: int = 0
-    while i + 3 <= n:
-        b0: int = nox.strings.byte_at(data, i)
-        b1: int = nox.strings.byte_at(data, i + 1)
-        b2: int = nox.strings.byte_at(data, i + 2)
-        c0: int = (b0 >> 2) & 63
-        c1: int = ((b0 << 4) | (b1 >> 4)) & 63
-        c2: int = ((b1 << 2) | (b2 >> 6)) & 63
-        c3: int = b2 & 63
-        if url_safe:
-            out = out + _url_alphabet_char(c0) + _url_alphabet_char(c1) + _url_alphabet_char(c2) + _url_alphabet_char(c3)
-        else:
-            out = out + _std_alphabet_char(c0) + _std_alphabet_char(c1) + _std_alphabet_char(c2) + _std_alphabet_char(c3)
-        i = i + 3
-    remaining: int = n - i
-    if remaining == 1:
-        b0: int = nox.strings.byte_at(data, i)
-        c0: int = (b0 >> 2) & 63
-        c1: int = (b0 << 4) & 63
-        if url_safe:
-            out = out + _url_alphabet_char(c0) + _url_alphabet_char(c1)
-        else:
-            out = out + _std_alphabet_char(c0) + _std_alphabet_char(c1) + "=="
-    elif remaining == 2:
-        b0: int = nox.strings.byte_at(data, i)
-        b1: int = nox.strings.byte_at(data, i + 1)
-        c0: int = (b0 >> 2) & 63
-        c1: int = ((b0 << 4) | (b1 >> 4)) & 63
-        c2: int = (b1 << 2) & 63
-        if url_safe:
-            out = out + _url_alphabet_char(c0) + _url_alphabet_char(c1) + _url_alphabet_char(c2)
-        else:
-            out = out + _std_alphabet_char(c0) + _std_alphabet_char(c1) + _std_alphabet_char(c2) + "="
-    return out
+# v2.1.56: çekirdek Zig kabuğunda (`runtime/stdlib_shims/base64.zig`); saf Nox uygulaması 4 MiB'ta CPython'dan 26x/36x yavaştı. Anlam AYNEN korunur.
+extern def nox_base64_encode_raw(s: str, url_safe: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_base64_check_raw(s: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_base64_decode_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
 
 # Standart base64 (RFC 4648 §4) — `+`/`/` alfabesi, `=` dolgulu.
 def encode(data: str) -> str:
-    return _encode_impl(data, False)
+    return nox_base64_encode_raw(data, 0)
 
 # URL-safe base64 (RFC 4648 §5) — `-`/`_` alfabesi, dolgu YOK (JWT'nin
 # KENDİ sözleşmesiyle TUTARLI, bkz. `nox.jwt`).
 def encode_url(data: str) -> str:
-    return _encode_impl(data, True)
+    return nox_base64_encode_raw(data, 1)
 
 # HEM standart HEM URL-safe (HEM dolgulu HEM dolgusuz) girdiyi kabul
-# eder — `_char_value`nin belge notuna bkz.
+# eder; sondaki tüm `=` işaretleri atılır. Geçersiz karakter ya da
+# geçersiz uzunlukta `Base64Error`.
 def decode(s: str) -> str:
-    n: int = nox.strings.byte_len(s)
-    eff_len: int = n
-    while eff_len > 0 and nox.strings.byte_at(s, eff_len - 1) == 61:
-        eff_len = eff_len - 1
-    out: str = ""
-    i: int = 0
-    while i + 4 <= eff_len:
-        v0: int = _char_value(nox.strings.byte_at(s, i))
-        v1: int = _char_value(nox.strings.byte_at(s, i + 1))
-        v2: int = _char_value(nox.strings.byte_at(s, i + 2))
-        v3: int = _char_value(nox.strings.byte_at(s, i + 3))
-        b0: int = ((v0 << 2) | (v1 >> 4)) & 255
-        b1: int = ((v1 << 4) | (v2 >> 2)) & 255
-        b2: int = ((v2 << 6) | v3) & 255
-        out = out + nox.strings.char_from_byte(b0) + nox.strings.char_from_byte(b1) + nox.strings.char_from_byte(b2)
-        i = i + 4
-    remaining: int = eff_len - i
-    if remaining == 1:
+    code: int = nox_base64_check_raw(s)
+    if code == 1:
+        raise Base64Error("invalid base64 character")
+    if code == 2:
         raise Base64Error("invalid base64 length")
-    elif remaining == 2:
-        v0: int = _char_value(nox.strings.byte_at(s, i))
-        v1: int = _char_value(nox.strings.byte_at(s, i + 1))
-        b0: int = ((v0 << 2) | (v1 >> 4)) & 255
-        out = out + nox.strings.char_from_byte(b0)
-    elif remaining == 3:
-        v0: int = _char_value(nox.strings.byte_at(s, i))
-        v1: int = _char_value(nox.strings.byte_at(s, i + 1))
-        v2: int = _char_value(nox.strings.byte_at(s, i + 2))
-        b0: int = ((v0 << 2) | (v1 >> 4)) & 255
-        b1: int = ((v1 << 4) | (v2 >> 2)) & 255
-        out = out + nox.strings.char_from_byte(b0) + nox.strings.char_from_byte(b1)
-    return out
+    return nox_base64_decode_raw(s)

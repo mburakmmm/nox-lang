@@ -1,0 +1,43 @@
+# v2.1.56: nox.base64 Zig kabuğu — uç durumlar: ikili veri (NUL/yüksek bayt), büyük girdi, dolgusuz/karışık alfabe girdisi, fazla dolgu, hata sınıfları.
+import nox.base64
+import nox.strings
+from nox.base64 import Base64Error
+
+# İkili veri: NUL ve yüksek baytlar.
+raw: str = nox.strings.char_from_byte(0) + nox.strings.char_from_byte(255) + nox.strings.char_from_byte(1) + nox.strings.char_from_byte(254) + nox.strings.char_from_byte(2)
+enc: str = nox.base64.encode(raw)
+print(enc)
+back: str = nox.base64.decode(enc)
+print(nox.strings.byte_len(back))
+print(nox.strings.byte_at(back, 0))
+print(nox.strings.byte_at(back, 1))
+print(nox.strings.byte_at(back, 4))
+print(back == raw)
+print(nox.base64.encode_url(raw))
+
+# Dolgusuz ve karışık alfabe girdi kabul edilir; fazla '=' atılır.
+print(nox.base64.decode("Zg"))
+print(nox.base64.decode("Zm8"))
+print(nox.base64.decode("Zg======"))
+print(nox.base64.decode("-__-AAE") == nox.base64.decode("+//+AAE="))
+
+# Büyük girdi gidiş-dönüş.
+big: str = nox.strings.repeat("The quick brown fox. ", 20000)
+print(nox.strings.byte_len(nox.base64.encode(big)))
+print(nox.base64.decode(nox.base64.encode(big)) == big)
+print(nox.base64.decode(nox.base64.encode_url(big)) == big)
+
+# Hata sınıfları.
+try:
+    nox.base64.decode("Zm9v!A==")
+except Base64Error as e:
+    print("char")
+try:
+    nox.base64.decode("Zm=v")
+except Base64Error as e:
+    print("char-middle-pad")
+try:
+    nox.base64.decode("Zm9vY")
+except Base64Error as e:
+    print("length")
+print(nox.base64.decode("") == "")
