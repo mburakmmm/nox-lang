@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.52]
+
+### Eklendi
+
+- **WASM içe aktarma kapsam denetimi.** `project/wasm-import-kapsam-analizi-2026-11.md`: gömülü yorumlayıcının gerçek kapsamı (yalnızca `i32` hesap işlevleri; bellek, global, tablo, import, `i64/f32/f64` yok; tek yerleşik `wasm_call(yol, ad, int)`), seçenekler (kendi yorumlayıcısını tamamlamak / wasm3 / Zig-yerel / wasmtime), önerilen fazlar ve kullanıcı kararları. Kod davranışı DEĞİŞMEDİ.
+
 ## [2.1.51]
 
 ### Eklendi

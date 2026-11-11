@@ -1,11 +1,9 @@
 //! Nox WASM köprüsü — yorumlayıcı (AGENTS.md §11).
 //!
-//! Minimal bir yığın makinesi: yalnızca DÜZ ÇİZGİ (dallanmasız) kod
-//! yürütür — `block`/`loop`/`if` gibi kontrol akışı talimatları
-//! desteklenmiyor (bkz. `execCode`, `else => error.UnsupportedInstruction`).
-//! Desteklenen talimat kümesi: `unreachable`, `nop`, `end`/`return`,
-//! `call`, `local.get`/`set`/`tee`, `i32.const`, `i32.add`/`sub`/`mul`.
-//! Yalnızca `i32` parametre/dönüş tipleri desteklenir.
+//! Minimal bir yığın makinesi. Desteklenen talimatlar: `unreachable`, `nop`, `block`/`loop`/`if`/`else`/`end`, `br`/`br_if`, `return`, `call`, `drop`, `select`,
+//! `local.get`/`set`/`tee`, `i32.const`, `i32` aritmetik/mantıksal/karşılaştırma işlemleri. Yalnızca `i32` parametre/dönüş tipleri desteklenir.
+//! Desteklenmeyenler (2026-11 kapsam denetimi, `project/wasm-import-kapsam-analizi-2026-11.md`): `br_table`, `call_indirect`, bellek, global, tablo, import,
+//! `i64`/`f32`/`f64` işlemleri.
 //!
 //! **Handle birleştirmesi (AGENTS.md §11: "iki ayrı FFI mekanizması yoktur,
 //! tek bir handle soyutlaması vardır"):** `callExport`, argümanları ve

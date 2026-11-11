@@ -9,7 +9,8 @@
 //!
 //! **Kapsam sınırlaması (bilinçli, v0.1):** yalnızca `i32` parametre/dönüş
 //! tipleri desteklenir; içe aktarma (import) YOK — yalnızca modülün
-//! KENDİ tanımladığı fonksiyonlar. Bkz. nox-teknik-spesifikasyon.md §3.13.
+//! KENDİ tanımladığı fonksiyonlar. Bkz. nox-teknik-spesifikasyon.md §3.13 ve
+//! `project/wasm-import-kapsam-analizi-2026-11.md` (tam kapsam için plan).
 
 const std = @import("std");
 
