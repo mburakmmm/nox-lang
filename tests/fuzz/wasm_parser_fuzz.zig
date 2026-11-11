@@ -70,7 +70,7 @@ test "regresyon: kisaltilmis bolum basligi cokmeden reddedilir" {
     // ardindan HICBIR veri yok (bolum boyutu/icerigi tamamen eksik).
     const bytes = "\x00asm\x01\x00\x00\x00\x01";
     const result = wasm_bridge.module.parse(std.testing.allocator, bytes);
-    try std.testing.expectError(error.UnexpectedEof, result);
+    try std.testing.expectError(error.InvalidModule, result);
 }
 
 test "regresyon: X.1 varint tasmasi — 6+ devam baytli Type bolumu boyutu" {
@@ -92,5 +92,5 @@ test "regresyon: buyuk-ama-sahte vektor sayisi cokmeden/asiri bellek harcamadan 
     // buyuk GERCEK tahsise (ör. 4 milyar eleman) YOL ACMAMALI.
     const bytes = "\x00asm\x01\x00\x00\x00\x01\x0a" ++ [_]u8{ 0xc0, 0x84, 0x3d };
     const result = wasm_bridge.module.parse(std.testing.allocator, bytes);
-    try std.testing.expectError(error.UnexpectedEof, result);
+    try std.testing.expectError(error.InvalidModule, result);
 }

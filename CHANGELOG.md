@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.65]
+
+### Değişti
+
+- **WASM yorumlayıcısı W1 (TODO 4.1/4.2; kullanıcı onaylı seçenek A):** `runtime/wasm_bridge` baştan yazıldı. Artık WASM 2.0 çekirdeğinin tüm bölümlerini ayrıştırır (içe aktarma, tablo, bellek, global, start, element, data), her işlevi spesifikasyonun doğrulama algoritmasıyla çalıştırmadan önce doğrular ve `i32/i64/f32/f64` tüm sayısal komutları, çok değerli blok/dönüşü, doğrusal belleği, global'leri, `call_indirect` ve tabloları, referans tiplerini, bulk-memory ile sign-extension/doymalı dönüşümleri çalıştırır. Önceki sürüm yalnızca tek `i32` argümanlı saf işlevleri çalıştırabiliyordu. Bağımlılık yok, JIT yok (iOS/Android'de de çalışır); güvenilmeyen modül için bellek/tablo sınırları, yakıt, yığın ve bellek tavanları var. Nox yüzeyi aynı (`wasm_call`); kalıcı tutamaç/host işlevleri/WASI (W2-W3) ayrıca onay bekler. Spesifikasyon §3.417.
+- **Farksal doğrulama:** 136 sayısal komut × 36904 uç değer Node/V8 ile bit-bit aynı (`scripts/wasm_gen_vectors.py`); `zig cc` ile derlenen gerçek bir C programı (özyineleme, `__int128`, f32/f64, dolaylı çağrı, memcpy/memset/memmove) V8 ile aynı sonuçları verir (`scripts/wasm_gen_programs.py`); yapısal özellikler `core.wat` testinde; bayt mutasyonu/kısaltma dayanıklılık testi. CI Linux işi vektörleri Node'a karşı yeniden doğrular.
+- `zig build wasm-bridge-test`: yalnızca WASM köprüsü testlerini çalıştırır.
+
 ## [2.1.64]
 
 ### Düzeltildi

@@ -1,410 +1,1047 @@
 //! Nox WASM köprüsü — yorumlayıcı (AGENTS.md §11).
 //!
-//! Minimal bir yığın makinesi. Desteklenen talimatlar: `unreachable`, `nop`, `block`/`loop`/`if`/`else`/`end`, `br`/`br_if`, `return`, `call`, `drop`, `select`,
-//! `local.get`/`set`/`tee`, `i32.const`, `i32` aritmetik/mantıksal/karşılaştırma işlemleri. Yalnızca `i32` parametre/dönüş tipleri desteklenir.
-//! Desteklenmeyenler (2026-11 kapsam denetimi, `project/wasm-import-kapsam-analizi-2026-11.md`): `br_table`, `call_indirect`, bellek, global, tablo, import,
-//! `i64`/`f32`/`f64` işlemleri.
+//! `module.zig` ikiliyi ayrıştırır, `compile.zig` her işlevi doğrulayıp düz `Instr` dizisine derler, burası kalıcı bir `Instance` (bellek, tablolar,
+//! globaller, segmentler) üzerinde bu diziyi çalıştırır. Yorumlayıcı yinelemelidir (özyineleme yok): çağrı yığını ayrı bir `Frame` dizisidir, değerler
+//! tek bir `[]u64` yığınında durur (`i32`/`f32` sıfır-genişletilmiş, `i64`/`f64` ham bit). Doğrulama sayesinde yığın taşması/yetersizliği, tip karışması
+//! ve etiket hataları çalışma zamanında denetlenmez; yalnızca belirsiz davranış üretebilecek durumlar denetlenir: bellek/tablo sınırları, sıfıra bölme,
+//! taşma, çağrı yığını/değer yığını derinliği, yakıt (sonsuz döngü), dolaylı çağrı tipi.
 //!
-//! **Handle birleştirmesi (AGENTS.md §11: "iki ayrı FFI mekanizması yoktur,
-//! tek bir handle soyutlaması vardır"):** `callExport`, argümanları ve
-//! dönüş değerini `runtime/hpy_bridge/context.zig`nin AYNI `HPy`/`Obj`
-//! temsiliyle alıp verir — Tier 0'ın HPy köprüsüyle TAM OLARAK aynı
-//! opaque handle sistemi, ayrı bir WASM-özel değer tipi YOKTUR.
+//! **Handle birleştirmesi (AGENTS.md §11: "iki ayrı FFI mekanizması yoktur, tek bir handle soyutlaması vardır"):** `callExport`, argümanları ve dönüş
+//! değerini `runtime/hpy_bridge/context.zig`nin AYNI `HPy`/`Obj` temsiliyle alıp verir.
+//!
+//! **Güven sınırı (AGENTS §9.5):** `.wasm` modülü GÜVENİLMEYEN koddur; bellek erişimi doğrusal belleğe kapalıdır, host işlevleri yalnızca `Imports`
+//! ile açıkça verilenlerdir (varsayılan: hiç yok), yakıt/yığın/bellek tavanları `Config`dedir.
 
 const std = @import("std");
 const module_mod = @import("module.zig");
+const compile = @import("compile.zig");
 const Module = module_mod.Module;
+const ValType = module_mod.ValType;
+const FuncCode = compile.FuncCode;
 const hpy_context = @import("hpy_bridge").context;
 const HPy = hpy_context.HPy;
 const HPyContext = hpy_context.HPyContext;
 
-const MAX_STACK = 64;
-const MAX_CALL_ARGS = 8;
-
-/// `callFunc`/`execCode` karşılıklı özyinelemelidir (`call` talimatı) — Zig
-/// bunun için çıkarımsal (inferred) hata kümesini çözemez ("dependency
-/// loop"), bu yüzden AÇIK bir hata kümesi gerekir.
-pub const InterpError = error{
+pub const Trap = error{
+    Unreachable,
+    IntegerDivideByZero,
+    IntegerOverflow,
+    InvalidConversionToInteger,
+    OutOfBoundsMemoryAccess,
+    OutOfBoundsTableAccess,
+    UndefinedElement,
+    UninitializedElement,
+    IndirectCallTypeMismatch,
+    StackExhausted,
+    OutOfFuel,
     OutOfMemory,
-    TypeMismatch,
-    UnsupportedInstruction,
-    UnexpectedEof,
-    Trap,
-    StackUnderflow,
-    StackOverflow,
-    ExportNotFound,
-    TooManyArgs,
+    HostFailure,
 };
 
-/// Faz X.1 (bkz. `module.zig`nin `readVarU32`sinin AYNI belge notu, bkz.
-/// docs/uretim-hazirlik-analizi.md P1 bulgusu #12): bayt-kod akışındaki
-/// (`call`/`local.*` indeksleri) LEB128 okuyucu, AYNI "5 baytla SINIRLA +
-/// u64 biriktir + u32 aralığına SIĞMA doğrula" düzeltmesini taşır — ESKİ
-/// `shift: u5` tasarımı, 6+ devam baytlı bozuk bayt kodunda TAŞMA
-/// PANİĞİNE (DoS) yol açardı. `error.Trap`, WASM'ın KENDİ "çalışma zamanı
-/// hatası" terminolojisiyle TUTARLI (bkz. `InterpError`'ın MEVCUT üyesi).
-fn readVarU32At(code: []const u8, pos: *usize) !u32 {
-    var result: u64 = 0;
-    var shift: u6 = 0;
-    var nbytes: u8 = 0;
-    while (true) {
-        if (nbytes >= 5) return error.Trap;
-        if (pos.* >= code.len) return error.UnexpectedEof;
-        const b = code[pos.*];
-        pos.* += 1;
-        nbytes += 1;
-        result |= @as(u64, b & 0x7f) << shift;
-        if (b & 0x80 == 0) break;
-        shift += 7;
+pub const LinkError = error{ InvalidModule, UnsupportedVersion, ImportNotFound, ImportTypeMismatch, OutOfMemory };
+
+pub const InterpError = Trap || LinkError || error{ ExportNotFound, TypeMismatch, TooManyArgs };
+
+pub const HostFn = *const fn (ctx: ?*anyopaque, inst: *Instance, args: []const u64, results: []u64) Trap!void;
+
+pub const HostFunc = struct {
+    params: []const ValType,
+    results: []const ValType,
+    f: HostFn,
+    ctx: ?*anyopaque = null,
+};
+
+pub const HostGlobal = struct { ty: module_mod.GlobalType, value: u64 };
+
+pub const HostItem = union(enum) {
+    func: HostFunc,
+    global: HostGlobal,
+};
+
+pub const HostBinding = struct { module: []const u8, name: []const u8, item: HostItem };
+
+pub const Config = struct {
+    /// Her dallanma/çağrı 1 yakıt harcar (sonsuz döngü ve özyineleme sınırı).
+    fuel: u64 = 2_000_000_000,
+    /// Değer yığını (u64 yuvası).
+    max_stack_slots: usize = 1 << 18,
+    max_call_depth: usize = 16384,
+    max_memory_pages: u32 = 4096,
+    max_table_elems: u32 = 10_000_000,
+};
+
+const MAX_HOST_RESULTS = 16;
+pub const NULL_REF: u64 = 0;
+
+const Table = struct {
+    elems: []u64,
+    max: u32,
+    elem_type: ValType,
+};
+
+const Frame = struct {
+    code: *const FuncCode,
+    pc: u32,
+    base: usize,
+};
+
+pub const Instance = struct {
+    allocator: std.mem.Allocator,
+    module: *const Module,
+    arena: std.heap.ArenaAllocator,
+    codes: []FuncCode,
+    cfg: Config,
+
+    host_funcs: []HostFunc,
+    mem: []u8 = &.{},
+    mem_max_pages: u32 = module_mod.MAX_PAGES,
+    tables: []Table,
+    globals: []u64,
+    data_dropped: []bool,
+    elem_dropped: []bool,
+    elem_vals: [][]u64,
+    /// Tür indeksi -> kanonik tür indeksi (yapısal eşitlik), dolaylı çağrı denetimi için.
+    canon: []u32,
+
+    stack: []u64,
+    frames: []Frame,
+    frame_top: usize = 0,
+    sp_top: usize = 0,
+    fuel: u64,
+
+    /// Modülü örnekler: içe aktarmaları bağlar, bellek/tablo/global kurar, etkin segmentleri uygular, `start`ı çalıştırır.
+    pub fn init(allocator: std.mem.Allocator, module: *const Module, bindings: []const HostBinding, cfg: Config) (LinkError || Trap)!*Instance {
+        const self = try allocator.create(Instance);
+        errdefer allocator.destroy(self);
+        self.* = .{
+            .allocator = allocator,
+            .module = module,
+            .arena = std.heap.ArenaAllocator.init(allocator),
+            .codes = &.{},
+            .cfg = cfg,
+            .host_funcs = &.{},
+            .tables = &.{},
+            .globals = &.{},
+            .data_dropped = &.{},
+            .elem_dropped = &.{},
+            .elem_vals = &.{},
+            .canon = &.{},
+            .stack = &.{},
+            .frames = &.{},
+            .fuel = cfg.fuel,
+        };
+        errdefer self.arena.deinit();
+        const a = self.arena.allocator();
+
+        self.codes = compile.compileModule(a, module) catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidModule => return error.InvalidModule,
+        };
+
+        // tür kanonikleştirme
+        self.canon = try a.alloc(u32, module.types.len);
+        for (module.types, 0..) |t, i| {
+            self.canon[i] = @intCast(i);
+            for (module.types[0..i], 0..) |u, j| {
+                if (t.eql(u)) {
+                    self.canon[i] = self.canon[j];
+                    break;
+                }
+            }
+        }
+
+        // içe aktarmalar
+        self.host_funcs = try a.alloc(HostFunc, module.num_imported_funcs);
+        self.globals = try a.alloc(u64, module.globals.len);
+        @memset(self.globals, 0);
+        self.tables = try a.alloc(Table, module.tables.len);
+        var fi: usize = 0;
+        var gi: usize = 0;
+        var ti: usize = 0;
+        var have_mem = false;
+        var mem_min: u32 = 0;
+        var mem_max: ?u32 = null;
+        for (module.imports) |imp| {
+            switch (imp.desc) {
+                .func => |type_idx| {
+                    const ft = module.types[type_idx];
+                    const b = findBinding(bindings, imp.module, imp.name) orelse return error.ImportNotFound;
+                    switch (b.item) {
+                        .func => |hf| {
+                            if (!std.mem.eql(ValType, hf.params, ft.params) or !std.mem.eql(ValType, hf.results, ft.results)) return error.ImportTypeMismatch;
+                            if (hf.results.len > MAX_HOST_RESULTS) return error.ImportTypeMismatch;
+                            self.host_funcs[fi] = hf;
+                        },
+                        else => return error.ImportTypeMismatch,
+                    }
+                    fi += 1;
+                },
+                .global => |gt| {
+                    const b = findBinding(bindings, imp.module, imp.name) orelse return error.ImportNotFound;
+                    switch (b.item) {
+                        .global => |hg| {
+                            if (hg.ty.valtype != gt.valtype or hg.ty.mutable != gt.mutable) return error.ImportTypeMismatch;
+                            self.globals[gi] = hg.value;
+                        },
+                        else => return error.ImportTypeMismatch,
+                    }
+                    gi += 1;
+                },
+                // İçe aktarılan tablo/bellek: ana bilgisayardan paylaşılmaz; bildirilen sınırlarla modüle özel yeni nesne olarak yaratılır.
+                .table => ti += 1,
+                .mem => |l| {
+                    have_mem = true;
+                    mem_min = l.min;
+                    mem_max = l.max;
+                },
+            }
+        }
+
+        // tablolar
+        for (self.tables, module.tables) |*t, tt| {
+            if (tt.limits.min > cfg.max_table_elems) return error.OutOfMemory;
+            t.* = .{ .elems = try a.alloc(u64, tt.limits.min), .max = @min(tt.limits.max orelse cfg.max_table_elems, cfg.max_table_elems), .elem_type = tt.elem };
+            @memset(t.elems, NULL_REF);
+        }
+
+        // bellek
+        if (module.mems.len > 0) {
+            const l = module.mems[0];
+            if (!have_mem) {
+                mem_min = l.min;
+                mem_max = l.max;
+            }
+            self.mem_max_pages = @min(mem_max orelse module_mod.MAX_PAGES, cfg.max_memory_pages);
+            if (mem_min > self.mem_max_pages) return error.OutOfMemory;
+            self.mem = allocator.alloc(u8, @as(usize, mem_min) * 65536) catch return error.OutOfMemory;
+            @memset(self.mem, 0);
+        }
+        errdefer allocator.free(self.mem);
+
+        // globaller (tanımlanan)
+        for (module.global_inits, 0..) |init_expr, i| {
+            self.globals[module.num_imported_globals + i] = self.evalConst(init_expr);
+        }
+
+        // segment durumu
+        self.data_dropped = try a.alloc(bool, module.datas.len);
+        @memset(self.data_dropped, false);
+        self.elem_dropped = try a.alloc(bool, module.elems.len);
+        @memset(self.elem_dropped, false);
+        self.elem_vals = try a.alloc([]u64, module.elems.len);
+        for (module.elems, 0..) |el, i| {
+            self.elem_vals[i] = try a.alloc(u64, el.items.len);
+            for (el.items, 0..) |it, k| self.elem_vals[i][k] = self.evalConst(it);
+        }
+
+        // yığınlar
+        self.stack = allocator.alloc(u64, cfg.max_stack_slots) catch return error.OutOfMemory;
+        errdefer allocator.free(self.stack);
+        self.frames = allocator.alloc(Frame, cfg.max_call_depth) catch return error.OutOfMemory;
+        errdefer allocator.free(self.frames);
+
+        // etkin elem segmentleri, sonra etkin data segmentleri (spec sırası)
+        for (module.elems, 0..) |el, i| {
+            switch (el.mode) {
+                .active => {
+                    const off: u32 = @truncate(self.evalConst(el.offset));
+                    const t = &self.tables[el.table];
+                    if (@as(u64, off) + el.items.len > t.elems.len) return error.OutOfBoundsTableAccess;
+                    @memcpy(t.elems[off..][0..el.items.len], self.elem_vals[i]);
+                    self.elem_dropped[i] = true;
+                },
+                .declarative => self.elem_dropped[i] = true,
+                .passive => {},
+            }
+        }
+        for (module.datas, 0..) |d, i| {
+            if (d.mode == .active) {
+                const off: u32 = @truncate(self.evalConst(d.offset));
+                if (@as(u64, off) + d.bytes.len > self.mem.len) return error.OutOfBoundsMemoryAccess;
+                @memcpy(self.mem[off..][0..d.bytes.len], d.bytes);
+                self.data_dropped[i] = true;
+            }
+        }
+
+        if (module.start) |s| try self.invoke(s, &.{}, &.{});
+        return self;
     }
-    if (result > std.math.maxInt(u32)) return error.Trap;
-    return @intCast(result);
+
+    pub fn deinit(self: *Instance) void {
+        const allocator = self.allocator;
+        allocator.free(self.mem);
+        allocator.free(self.stack);
+        allocator.free(self.frames);
+        self.arena.deinit();
+        allocator.destroy(self);
+    }
+
+    fn evalConst(self: *const Instance, e: module_mod.ConstExpr) u64 {
+        return switch (e) {
+            .i32 => |v| @as(u32, @bitCast(v)),
+            .i64 => |v| @bitCast(v),
+            .f32 => |v| v,
+            .f64 => |v| v,
+            .global_get => |g| self.globals[g],
+            .ref_null => NULL_REF,
+            .ref_func => |f| @as(u64, f) + 1,
+        };
+    }
+
+    pub fn findExport(self: *const Instance, name: []const u8, kind: module_mod.ExportKind) ?u32 {
+        for (self.module.exports) |e| {
+            if (e.kind == kind and std.mem.eql(u8, e.name, name)) return e.index;
+        }
+        return null;
+    }
+
+    /// Doğrusal belleğin şu anki içeriği (bellek yoksa boş). `memory.grow` sonrası yeniden alınmalıdır.
+    pub fn memory(self: *Instance) []u8 {
+        return self.mem;
+    }
+
+    pub fn global(self: *const Instance, idx: u32) u64 {
+        return self.globals[idx];
+    }
+
+    /// `func_idx` işlevini `args` ile çağırır; sonuçlar `results`a yazılır (uzunluk = sonuç sayısı). Değerler ham yuvalardır
+    /// (`i32` alt 32 bit, `f32` bit deseni, `f64`/`i64` 64 bit). Yeniden girişli: host işlevleri içinden de çağrılabilir.
+    pub fn invoke(self: *Instance, func_idx: u32, args: []const u64, results: []u64) Trap!void {
+        const ft = self.module.typeOf(func_idx);
+        std.debug.assert(args.len == ft.params.len and results.len == ft.results.len);
+        if (self.frame_top == 0) self.fuel = self.cfg.fuel; // yakıt, en dıştaki çağrı başına yenilenir
+        const base = self.sp_top;
+        if (base + args.len + ft.results.len + 1 > self.stack.len) return error.StackExhausted;
+        @memcpy(self.stack[base..][0..args.len], args);
+
+        const saved_top = self.sp_top;
+        const saved_frames = self.frame_top;
+        defer {
+            self.sp_top = saved_top;
+            self.frame_top = saved_frames;
+        }
+
+        if (func_idx < self.module.num_imported_funcs) {
+            const hf = self.host_funcs[func_idx];
+            var res: [MAX_HOST_RESULTS]u64 = undefined;
+            self.sp_top = base + args.len;
+            try hf.f(hf.ctx, self, self.stack[base..][0..args.len], res[0..hf.results.len]);
+            @memcpy(results, res[0..results.len]);
+            return;
+        }
+
+        const code = &self.codes[func_idx - self.module.num_imported_funcs];
+        try self.enter(code, base + args.len);
+        try self.run(saved_frames);
+        @memcpy(results, self.stack[base..][0..results.len]);
+    }
+
+    /// Yeni bir çerçeve açar: argümanlar `sp - num_params`dan başlar.
+    fn enter(self: *Instance, code: *const FuncCode, sp: usize) Trap!void {
+        const base = sp - code.num_params;
+        if (self.frame_top >= self.frames.len) return error.StackExhausted;
+        if (base + code.num_locals + code.max_stack + 1 > self.stack.len) return error.StackExhausted;
+        @memset(self.stack[sp .. base + code.num_locals], 0);
+        self.frames[self.frame_top] = .{ .code = code, .pc = 0, .base = base };
+        self.frame_top += 1;
+        self.sp_top = base + code.num_locals;
+    }
+
+    fn run(self: *Instance, stop_depth: usize) Trap!void {
+        const stack = self.stack;
+        const module = self.module;
+        const n_imp = module.num_imported_funcs;
+        var fr: *Frame = &self.frames[self.frame_top - 1];
+        var instrs = fr.code.instrs;
+        var pc: u32 = fr.pc;
+        var base = fr.base;
+        var opb = base + fr.code.num_locals;
+        var sp = self.sp_top;
+
+        while (true) {
+            const ins = instrs[pc];
+            pc += 1;
+            switch (ins.op) {
+                0x00 => return error.Unreachable,
+                compile.OP_IF => {
+                    sp -= 1;
+                    if (@as(u32, @truncate(stack[sp])) == 0) pc = ins.a;
+                },
+                compile.OP_JUMP => pc = ins.a,
+                compile.OP_BR, compile.OP_BR_IF, compile.OP_BR_TABLE => {
+                    var target_pc: u32 = ins.a;
+                    var height: u64 = ins.b;
+                    var arity: usize = ins.arity;
+                    if (ins.op == compile.OP_BR_IF) {
+                        sp -= 1;
+                        if (@as(u32, @truncate(stack[sp])) == 0) continue;
+                    } else if (ins.op == compile.OP_BR_TABLE) {
+                        sp -= 1;
+                        const idx = @as(u32, @truncate(stack[sp]));
+                        const n: u32 = @intCast(ins.b);
+                        const t = fr.code.brt[ins.a + @min(idx, n)];
+                        target_pc = t.pc;
+                        height = t.height;
+                        arity = t.arity;
+                    }
+                    if (self.fuel == 0) return error.OutOfFuel;
+                    self.fuel -= 1;
+                    const dst = opb + @as(usize, @intCast(height));
+                    if (sp - arity != dst) {
+                        std.mem.copyForwards(u64, stack[dst..][0..arity], stack[sp - arity .. sp]);
+                    }
+                    sp = dst + arity;
+                    pc = target_pc;
+                },
+                compile.OP_RETURN => {
+                    const nres: usize = ins.arity;
+                    if (sp - nres != base) std.mem.copyForwards(u64, stack[base..][0..nres], stack[sp - nres .. sp]);
+                    sp = base + nres;
+                    self.frame_top -= 1;
+                    if (self.frame_top == stop_depth) {
+                        self.sp_top = sp;
+                        return;
+                    }
+                    fr = &self.frames[self.frame_top - 1];
+                    instrs = fr.code.instrs;
+                    pc = fr.pc;
+                    base = fr.base;
+                    opb = base + fr.code.num_locals;
+                },
+                compile.OP_CALL, compile.OP_CALL_INDIRECT => {
+                    var callee: u32 = ins.a;
+                    if (ins.op == compile.OP_CALL_INDIRECT) {
+                        sp -= 1;
+                        const idx = @as(u32, @truncate(stack[sp]));
+                        const t = &self.tables[@intCast(ins.b)];
+                        if (idx >= t.elems.len) return error.UndefinedElement;
+                        const ref = t.elems[idx];
+                        if (ref == NULL_REF) return error.UninitializedElement;
+                        callee = @intCast(ref - 1);
+                        if (self.canon[module.func_type_indices[callee]] != self.canon[ins.a]) return error.IndirectCallTypeMismatch;
+                    }
+                    if (self.fuel == 0) return error.OutOfFuel;
+                    self.fuel -= 1;
+                    if (callee < n_imp) {
+                        const hf = self.host_funcs[callee];
+                        const np = hf.params.len;
+                        const nr = hf.results.len;
+                        self.sp_top = sp;
+                        var res: [MAX_HOST_RESULTS]u64 = undefined;
+                        try hf.f(hf.ctx, self, stack[sp - np .. sp], res[0..nr]);
+                        @memcpy(stack[sp - np ..][0..nr], res[0..nr]);
+                        sp = sp - np + nr;
+                    } else {
+                        fr.pc = pc;
+                        try self.enter(&self.codes[callee - n_imp], sp);
+                        fr = &self.frames[self.frame_top - 1];
+                        instrs = fr.code.instrs;
+                        pc = 0;
+                        base = fr.base;
+                        opb = base + fr.code.num_locals;
+                        sp = opb;
+                    }
+                },
+                0x1a => sp -= 1, // drop
+                0x1b => { // select
+                    sp -= 2;
+                    if (@as(u32, @truncate(stack[sp + 1])) == 0) stack[sp - 1] = stack[sp];
+                },
+                0x20 => {
+                    stack[sp] = stack[base + ins.a];
+                    sp += 1;
+                },
+                0x21 => {
+                    sp -= 1;
+                    stack[base + ins.a] = stack[sp];
+                },
+                0x22 => stack[base + ins.a] = stack[sp - 1],
+                0x23 => {
+                    stack[sp] = self.globals[ins.a];
+                    sp += 1;
+                },
+                0x24 => {
+                    sp -= 1;
+                    self.globals[ins.a] = stack[sp];
+                },
+                0x25 => { // table.get
+                    const t = &self.tables[ins.a];
+                    const i = @as(u32, @truncate(stack[sp - 1]));
+                    if (i >= t.elems.len) return error.OutOfBoundsTableAccess;
+                    stack[sp - 1] = t.elems[i];
+                },
+                0x26 => { // table.set
+                    const t = &self.tables[ins.a];
+                    sp -= 2;
+                    const i = @as(u32, @truncate(stack[sp]));
+                    if (i >= t.elems.len) return error.OutOfBoundsTableAccess;
+                    t.elems[i] = stack[sp + 1];
+                },
+
+                // ---- bellek ----
+                0x28, 0x2c...0x2f, 0x34, 0x35, 0x29, 0x30...0x33, 0x2a, 0x2b => {
+                    const size: usize = switch (ins.op) {
+                        0x28, 0x2a, 0x34, 0x35 => 4,
+                        0x29, 0x2b => 8,
+                        0x2c, 0x2d, 0x30, 0x31 => 1,
+                        else => 2,
+                    };
+                    const e = try self.effAddr(stack[sp - 1], ins.a, size);
+                    const m = self.mem;
+                    stack[sp - 1] = switch (ins.op) {
+                        0x28, 0x2a => std.mem.readInt(u32, m[e..][0..4], .little),
+                        0x29, 0x2b => std.mem.readInt(u64, m[e..][0..8], .little),
+                        0x2c => @as(u32, @bitCast(@as(i32, @as(i8, @bitCast(m[e]))))),
+                        0x2d => m[e],
+                        0x2e => @as(u32, @bitCast(@as(i32, std.mem.readInt(i16, m[e..][0..2], .little)))),
+                        0x2f => std.mem.readInt(u16, m[e..][0..2], .little),
+                        0x30 => @bitCast(@as(i64, @as(i8, @bitCast(m[e])))),
+                        0x31 => m[e],
+                        0x32 => @bitCast(@as(i64, std.mem.readInt(i16, m[e..][0..2], .little))),
+                        0x33 => std.mem.readInt(u16, m[e..][0..2], .little),
+                        0x34 => @bitCast(@as(i64, std.mem.readInt(i32, m[e..][0..4], .little))),
+                        else => std.mem.readInt(u32, m[e..][0..4], .little),
+                    };
+                },
+                0x36...0x3e => {
+                    sp -= 2;
+                    const size: usize = switch (ins.op) {
+                        0x36, 0x38, 0x3e => 4,
+                        0x37, 0x39 => 8,
+                        0x3a, 0x3c => 1,
+                        else => 2,
+                    };
+                    const e = try self.effAddr(stack[sp], ins.a, size);
+                    const v = stack[sp + 1];
+                    const m = self.mem;
+                    switch (size) {
+                        1 => m[e] = @truncate(v),
+                        2 => std.mem.writeInt(u16, m[e..][0..2], @truncate(v), .little),
+                        4 => std.mem.writeInt(u32, m[e..][0..4], @truncate(v), .little),
+                        else => std.mem.writeInt(u64, m[e..][0..8], v, .little),
+                    }
+                },
+                0x3f => {
+                    stack[sp] = self.mem.len / 65536;
+                    sp += 1;
+                },
+                0x40 => stack[sp - 1] = self.memGrow(@truncate(stack[sp - 1])),
+
+                // ---- sabitler ----
+                0x41, 0x42, 0x43, 0x44 => {
+                    stack[sp] = ins.b;
+                    sp += 1;
+                },
+
+                // ---- i32 ----
+                0x45 => stack[sp - 1] = @intFromBool(@as(u32, @truncate(stack[sp - 1])) == 0),
+                0x46...0x4f => {
+                    sp -= 1;
+                    const a: u32 = @truncate(stack[sp - 1]);
+                    const b: u32 = @truncate(stack[sp]);
+                    const sa: i32 = @bitCast(a);
+                    const sb: i32 = @bitCast(b);
+                    stack[sp - 1] = @intFromBool(switch (ins.op) {
+                        0x46 => a == b,
+                        0x47 => a != b,
+                        0x48 => sa < sb,
+                        0x49 => a < b,
+                        0x4a => sa > sb,
+                        0x4b => a > b,
+                        0x4c => sa <= sb,
+                        0x4d => a <= b,
+                        0x4e => sa >= sb,
+                        else => a >= b,
+                    });
+                },
+                0x50 => stack[sp - 1] = @intFromBool(stack[sp - 1] == 0),
+                0x51...0x5a => {
+                    sp -= 1;
+                    const a = stack[sp - 1];
+                    const b = stack[sp];
+                    const sa: i64 = @bitCast(a);
+                    const sb: i64 = @bitCast(b);
+                    stack[sp - 1] = @intFromBool(switch (ins.op) {
+                        0x51 => a == b,
+                        0x52 => a != b,
+                        0x53 => sa < sb,
+                        0x54 => a < b,
+                        0x55 => sa > sb,
+                        0x56 => a > b,
+                        0x57 => sa <= sb,
+                        0x58 => a <= b,
+                        0x59 => sa >= sb,
+                        else => a >= b,
+                    });
+                },
+                0x5b...0x60 => {
+                    sp -= 1;
+                    const a = f32v(stack[sp - 1]);
+                    const b = f32v(stack[sp]);
+                    stack[sp - 1] = @intFromBool(switch (ins.op) {
+                        0x5b => a == b,
+                        0x5c => a != b,
+                        0x5d => a < b,
+                        0x5e => a > b,
+                        0x5f => a <= b,
+                        else => a >= b,
+                    });
+                },
+                0x61...0x66 => {
+                    sp -= 1;
+                    const a = f64v(stack[sp - 1]);
+                    const b = f64v(stack[sp]);
+                    stack[sp - 1] = @intFromBool(switch (ins.op) {
+                        0x61 => a == b,
+                        0x62 => a != b,
+                        0x63 => a < b,
+                        0x64 => a > b,
+                        0x65 => a <= b,
+                        else => a >= b,
+                    });
+                },
+                0x67 => stack[sp - 1] = @clz(@as(u32, @truncate(stack[sp - 1]))),
+                0x68 => stack[sp - 1] = @ctz(@as(u32, @truncate(stack[sp - 1]))),
+                0x69 => stack[sp - 1] = @popCount(@as(u32, @truncate(stack[sp - 1]))),
+                0x6a...0x78 => {
+                    sp -= 1;
+                    const a: u32 = @truncate(stack[sp - 1]);
+                    const b: u32 = @truncate(stack[sp]);
+                    const sa: i32 = @bitCast(a);
+                    const sb: i32 = @bitCast(b);
+                    const sh: u5 = @truncate(b);
+                    stack[sp - 1] = switch (ins.op) {
+                        0x6a => a +% b,
+                        0x6b => a -% b,
+                        0x6c => a *% b,
+                        0x6d => blk: {
+                            if (b == 0) return error.IntegerDivideByZero;
+                            if (sa == std.math.minInt(i32) and sb == -1) return error.IntegerOverflow;
+                            break :blk @as(u32, @bitCast(@divTrunc(sa, sb)));
+                        },
+                        0x6e => blk: {
+                            if (b == 0) return error.IntegerDivideByZero;
+                            break :blk a / b;
+                        },
+                        0x6f => blk: {
+                            if (b == 0) return error.IntegerDivideByZero;
+                            if (sb == -1) break :blk 0;
+                            break :blk @as(u32, @bitCast(@rem(sa, sb)));
+                        },
+                        0x70 => blk: {
+                            if (b == 0) return error.IntegerDivideByZero;
+                            break :blk a % b;
+                        },
+                        0x71 => a & b,
+                        0x72 => a | b,
+                        0x73 => a ^ b,
+                        0x74 => a << sh,
+                        0x75 => @as(u32, @bitCast(sa >> sh)),
+                        0x76 => a >> sh,
+                        0x77 => std.math.rotl(u32, a, sh),
+                        else => std.math.rotr(u32, a, sh),
+                    };
+                },
+
+                // ---- i64 ----
+                0x79 => stack[sp - 1] = @clz(stack[sp - 1]),
+                0x7a => stack[sp - 1] = @ctz(stack[sp - 1]),
+                0x7b => stack[sp - 1] = @popCount(stack[sp - 1]),
+                0x7c...0x8a => {
+                    sp -= 1;
+                    const a = stack[sp - 1];
+                    const b = stack[sp];
+                    const sa: i64 = @bitCast(a);
+                    const sb: i64 = @bitCast(b);
+                    const sh: u6 = @truncate(b);
+                    stack[sp - 1] = switch (ins.op) {
+                        0x7c => a +% b,
+                        0x7d => a -% b,
+                        0x7e => a *% b,
+                        0x7f => blk: {
+                            if (b == 0) return error.IntegerDivideByZero;
+                            if (sa == std.math.minInt(i64) and sb == -1) return error.IntegerOverflow;
+                            break :blk @as(u64, @bitCast(@divTrunc(sa, sb)));
+                        },
+                        0x80 => blk: {
+                            if (b == 0) return error.IntegerDivideByZero;
+                            break :blk a / b;
+                        },
+                        0x81 => blk: {
+                            if (b == 0) return error.IntegerDivideByZero;
+                            if (sb == -1) break :blk 0;
+                            break :blk @as(u64, @bitCast(@rem(sa, sb)));
+                        },
+                        0x82 => blk: {
+                            if (b == 0) return error.IntegerDivideByZero;
+                            break :blk a % b;
+                        },
+                        0x83 => a & b,
+                        0x84 => a | b,
+                        0x85 => a ^ b,
+                        0x86 => a << sh,
+                        0x87 => @as(u64, @bitCast(sa >> sh)),
+                        0x88 => a >> sh,
+                        0x89 => std.math.rotl(u64, a, sh),
+                        else => std.math.rotr(u64, a, sh),
+                    };
+                },
+
+                // ---- f32 ----
+                0x8b...0x91 => {
+                    const x = f32v(stack[sp - 1]);
+                    stack[sp - 1] = switch (ins.op) {
+                        0x8b => stack[sp - 1] & 0x7fff_ffff,
+                        0x8c => (stack[sp - 1] ^ 0x8000_0000) & 0xffff_ffff,
+                        0x8d => vf32(@ceil(x)),
+                        0x8e => vf32(@floor(x)),
+                        0x8f => vf32(@trunc(x)),
+                        0x90 => vf32(nearest(f32, x)),
+                        else => vf32(@sqrt(x)),
+                    };
+                },
+                0x92...0x98 => {
+                    sp -= 1;
+                    const a = f32v(stack[sp - 1]);
+                    const b = f32v(stack[sp]);
+                    stack[sp - 1] = switch (ins.op) {
+                        0x92 => vf32(a + b),
+                        0x93 => vf32(a - b),
+                        0x94 => vf32(a * b),
+                        0x95 => vf32(a / b),
+                        0x96 => vf32(fmin(f32, a, b)),
+                        0x97 => vf32(fmax(f32, a, b)),
+                        else => vf32(std.math.copysign(a, b)),
+                    };
+                },
+
+                // ---- f64 ----
+                0x99...0x9f => {
+                    const x = f64v(stack[sp - 1]);
+                    stack[sp - 1] = switch (ins.op) {
+                        0x99 => stack[sp - 1] & 0x7fff_ffff_ffff_ffff,
+                        0x9a => stack[sp - 1] ^ 0x8000_0000_0000_0000,
+                        0x9b => vf64(@ceil(x)),
+                        0x9c => vf64(@floor(x)),
+                        0x9d => vf64(@trunc(x)),
+                        0x9e => vf64(nearest(f64, x)),
+                        else => vf64(@sqrt(x)),
+                    };
+                },
+                0xa0...0xa6 => {
+                    sp -= 1;
+                    const a = f64v(stack[sp - 1]);
+                    const b = f64v(stack[sp]);
+                    stack[sp - 1] = switch (ins.op) {
+                        0xa0 => vf64(a + b),
+                        0xa1 => vf64(a - b),
+                        0xa2 => vf64(a * b),
+                        0xa3 => vf64(a / b),
+                        0xa4 => vf64(fmin(f64, a, b)),
+                        0xa5 => vf64(fmax(f64, a, b)),
+                        else => vf64(std.math.copysign(a, b)),
+                    };
+                },
+
+                // ---- dönüşümler ----
+                0xa7 => stack[sp - 1] = stack[sp - 1] & 0xffff_ffff,
+                0xa8 => stack[sp - 1] = @as(u32, @bitCast(try truncTrap(i32, f32, f32v(stack[sp - 1])))),
+                0xa9 => stack[sp - 1] = try truncTrap(u32, f32, f32v(stack[sp - 1])),
+                0xaa => stack[sp - 1] = @as(u32, @bitCast(try truncTrap(i32, f64, f64v(stack[sp - 1])))),
+                0xab => stack[sp - 1] = try truncTrap(u32, f64, f64v(stack[sp - 1])),
+                0xac => stack[sp - 1] = @bitCast(@as(i64, @as(i32, @bitCast(@as(u32, @truncate(stack[sp - 1])))))),
+                0xad => stack[sp - 1] = stack[sp - 1] & 0xffff_ffff,
+                0xae => stack[sp - 1] = @bitCast(try truncTrap(i64, f32, f32v(stack[sp - 1]))),
+                0xaf => stack[sp - 1] = try truncTrap(u64, f32, f32v(stack[sp - 1])),
+                0xb0 => stack[sp - 1] = @bitCast(try truncTrap(i64, f64, f64v(stack[sp - 1]))),
+                0xb1 => stack[sp - 1] = try truncTrap(u64, f64, f64v(stack[sp - 1])),
+                0xb2 => stack[sp - 1] = vf32(@floatFromInt(@as(i32, @bitCast(@as(u32, @truncate(stack[sp - 1])))))),
+                0xb3 => stack[sp - 1] = vf32(@floatFromInt(@as(u32, @truncate(stack[sp - 1])))),
+                0xb4 => stack[sp - 1] = vf32(@floatFromInt(@as(i64, @bitCast(stack[sp - 1])))),
+                0xb5 => stack[sp - 1] = vf32(@floatFromInt(stack[sp - 1])),
+                0xb6 => stack[sp - 1] = vf32(@floatCast(f64v(stack[sp - 1]))),
+                0xb7 => stack[sp - 1] = vf64(@floatFromInt(@as(i32, @bitCast(@as(u32, @truncate(stack[sp - 1])))))),
+                0xb8 => stack[sp - 1] = vf64(@floatFromInt(@as(u32, @truncate(stack[sp - 1])))),
+                0xb9 => stack[sp - 1] = vf64(@floatFromInt(@as(i64, @bitCast(stack[sp - 1])))),
+                0xba => stack[sp - 1] = vf64(@floatFromInt(stack[sp - 1])),
+                0xbb => stack[sp - 1] = vf64(@floatCast(f32v(stack[sp - 1]))),
+                0xbc, 0xbd, 0xbe, 0xbf => {}, // reinterpret: bit deseni aynı
+                0xc0 => stack[sp - 1] = @as(u32, @bitCast(@as(i32, @as(i8, @truncate(@as(i64, @bitCast(stack[sp - 1]))))))),
+                0xc1 => stack[sp - 1] = @as(u32, @bitCast(@as(i32, @as(i16, @truncate(@as(i64, @bitCast(stack[sp - 1]))))))),
+                0xc2 => stack[sp - 1] = @bitCast(@as(i64, @as(i8, @truncate(@as(i64, @bitCast(stack[sp - 1])))))),
+                0xc3 => stack[sp - 1] = @bitCast(@as(i64, @as(i16, @truncate(@as(i64, @bitCast(stack[sp - 1])))))),
+                0xc4 => stack[sp - 1] = @bitCast(@as(i64, @as(i32, @truncate(@as(i64, @bitCast(stack[sp - 1])))))),
+
+                // ---- referanslar ----
+                0xd0 => {
+                    stack[sp] = NULL_REF;
+                    sp += 1;
+                },
+                0xd1 => stack[sp - 1] = @intFromBool(stack[sp - 1] == NULL_REF),
+                0xd2 => {
+                    stack[sp] = @as(u64, ins.a) + 1;
+                    sp += 1;
+                },
+
+                // ---- 0xFC: doymalı dönüşümler ----
+                compile.OP_FC + 0 => stack[sp - 1] = @as(u32, @bitCast(truncSat(i32, f32, f32v(stack[sp - 1])))),
+                compile.OP_FC + 1 => stack[sp - 1] = truncSat(u32, f32, f32v(stack[sp - 1])),
+                compile.OP_FC + 2 => stack[sp - 1] = @as(u32, @bitCast(truncSat(i32, f64, f64v(stack[sp - 1])))),
+                compile.OP_FC + 3 => stack[sp - 1] = truncSat(u32, f64, f64v(stack[sp - 1])),
+                compile.OP_FC + 4 => stack[sp - 1] = @bitCast(truncSat(i64, f32, f32v(stack[sp - 1]))),
+                compile.OP_FC + 5 => stack[sp - 1] = truncSat(u64, f32, f32v(stack[sp - 1])),
+                compile.OP_FC + 6 => stack[sp - 1] = @bitCast(truncSat(i64, f64, f64v(stack[sp - 1]))),
+                compile.OP_FC + 7 => stack[sp - 1] = truncSat(u64, f64, f64v(stack[sp - 1])),
+
+                // ---- 0xFC: bulk-memory ve tablo ----
+                compile.OP_FC + 8 => { // memory.init
+                    sp -= 3;
+                    const d: u32 = @truncate(stack[sp]);
+                    const s: u32 = @truncate(stack[sp + 1]);
+                    const n: u32 = @truncate(stack[sp + 2]);
+                    const seg: []const u8 = if (self.data_dropped[ins.a]) &.{} else module.datas[ins.a].bytes;
+                    if (@as(u64, s) + n > seg.len or @as(u64, d) + n > self.mem.len) return error.OutOfBoundsMemoryAccess;
+                    @memcpy(self.mem[d..][0..n], seg[s..][0..n]);
+                },
+                compile.OP_FC + 9 => self.data_dropped[ins.a] = true,
+                compile.OP_FC + 10 => { // memory.copy
+                    sp -= 3;
+                    const d: u32 = @truncate(stack[sp]);
+                    const s: u32 = @truncate(stack[sp + 1]);
+                    const n: u32 = @truncate(stack[sp + 2]);
+                    if (@as(u64, s) + n > self.mem.len or @as(u64, d) + n > self.mem.len) return error.OutOfBoundsMemoryAccess;
+                    @memmove(self.mem[d..][0..n], self.mem[s..][0..n]);
+                },
+                compile.OP_FC + 11 => { // memory.fill
+                    sp -= 3;
+                    const d: u32 = @truncate(stack[sp]);
+                    const v: u8 = @truncate(stack[sp + 1]);
+                    const n: u32 = @truncate(stack[sp + 2]);
+                    if (@as(u64, d) + n > self.mem.len) return error.OutOfBoundsMemoryAccess;
+                    @memset(self.mem[d..][0..n], v);
+                },
+                compile.OP_FC + 12 => { // table.init
+                    sp -= 3;
+                    const d: u32 = @truncate(stack[sp]);
+                    const s: u32 = @truncate(stack[sp + 1]);
+                    const n: u32 = @truncate(stack[sp + 2]);
+                    const seg: []const u64 = if (self.elem_dropped[ins.a]) &.{} else self.elem_vals[ins.a];
+                    const t = &self.tables[@intCast(ins.b)];
+                    if (@as(u64, s) + n > seg.len or @as(u64, d) + n > t.elems.len) return error.OutOfBoundsTableAccess;
+                    @memcpy(t.elems[d..][0..n], seg[s..][0..n]);
+                },
+                compile.OP_FC + 13 => self.elem_dropped[ins.a] = true,
+                compile.OP_FC + 14 => { // table.copy
+                    sp -= 3;
+                    const d: u32 = @truncate(stack[sp]);
+                    const s: u32 = @truncate(stack[sp + 1]);
+                    const n: u32 = @truncate(stack[sp + 2]);
+                    const dt = &self.tables[ins.a];
+                    const st = &self.tables[@intCast(ins.b)];
+                    if (@as(u64, s) + n > st.elems.len or @as(u64, d) + n > dt.elems.len) return error.OutOfBoundsTableAccess;
+                    @memmove(dt.elems[d..][0..n], st.elems[s..][0..n]);
+                },
+                compile.OP_FC + 15 => { // table.grow: [ref, n] -> eski boyut | -1
+                    sp -= 1;
+                    const n: u32 = @truncate(stack[sp]);
+                    const init_v = stack[sp - 1];
+                    stack[sp - 1] = self.tableGrow(ins.a, init_v, n);
+                },
+                compile.OP_FC + 16 => {
+                    stack[sp] = self.tables[ins.a].elems.len;
+                    sp += 1;
+                },
+                compile.OP_FC + 17 => { // table.fill: [i, ref, n]
+                    sp -= 3;
+                    const i: u32 = @truncate(stack[sp]);
+                    const v = stack[sp + 1];
+                    const n: u32 = @truncate(stack[sp + 2]);
+                    const t = &self.tables[ins.a];
+                    if (@as(u64, i) + n > t.elems.len) return error.OutOfBoundsTableAccess;
+                    @memset(t.elems[i..][0..n], v);
+                },
+                else => unreachable, // derleyici yalnızca yukarıdaki op'ları üretir
+            }
+        }
+    }
+
+    inline fn effAddr(self: *const Instance, slot: u64, offset: u32, size: usize) Trap!usize {
+        const e: u64 = @as(u64, @as(u32, @truncate(slot))) + offset;
+        if (e + size > self.mem.len) return error.OutOfBoundsMemoryAccess;
+        return @intCast(e);
+    }
+
+    fn memGrow(self: *Instance, delta: u32) u64 {
+        const old: u32 = @intCast(self.mem.len / 65536);
+        const new: u64 = @as(u64, old) + delta;
+        if (new > self.mem_max_pages) return 0xffff_ffff;
+        if (delta == 0) return old;
+        const nm = self.allocator.realloc(self.mem, @as(usize, @intCast(new)) * 65536) catch return 0xffff_ffff;
+        @memset(nm[self.mem.len..], 0);
+        self.mem = nm;
+        return old;
+    }
+
+    fn tableGrow(self: *Instance, tidx: u32, init_v: u64, n: u32) u64 {
+        const t = &self.tables[tidx];
+        const old: u32 = @intCast(t.elems.len);
+        const new: u64 = @as(u64, old) + n;
+        if (new > t.max) return 0xffff_ffff;
+        if (n == 0) return old;
+        const a = self.arena.allocator();
+        const ne = a.alloc(u64, @intCast(new)) catch return 0xffff_ffff;
+        @memcpy(ne[0..old], t.elems);
+        @memset(ne[old..], init_v);
+        t.elems = ne;
+        return old;
+    }
+
+    /// Dışa aktarılan işlevi adıyla çağırır (ham yuvalar).
+    pub fn callByName(self: *Instance, name: []const u8, args: []const u64, results: []u64) InterpError!void {
+        const idx = self.findExport(name, .func) orelse return error.ExportNotFound;
+        const ft = self.module.typeOf(idx);
+        if (ft.params.len != args.len or ft.results.len != results.len) return error.TypeMismatch;
+        try self.invoke(idx, args, results);
+    }
+};
+
+fn findBinding(bindings: []const HostBinding, module: []const u8, name: []const u8) ?HostBinding {
+    for (bindings) |b| {
+        if (std.mem.eql(u8, b.module, module) and std.mem.eql(u8, b.name, name)) return b;
+    }
+    return null;
 }
 
-fn readVarI32At(code: []const u8, pos: *usize) !i32 {
-    var result: i64 = 0;
-    var shift: u6 = 0;
-    var nbytes: u8 = 0;
-    var b: u8 = 0;
-    while (true) {
-        if (nbytes >= 5) return error.Trap;
-        if (pos.* >= code.len) return error.UnexpectedEof;
-        b = code[pos.*];
-        pos.* += 1;
-        nbytes += 1;
-        result |= @as(i64, b & 0x7f) << shift;
-        shift += 7;
-        if (b & 0x80 == 0) break;
-    }
-    if (shift < 64 and (b & 0x40) != 0) {
-        result |= @as(i64, -1) << shift;
-    }
-    if (result < std.math.minInt(i32) or result > std.math.maxInt(i32)) return error.Trap;
-    return @intCast(result);
+inline fn f32v(x: u64) f32 {
+    return @bitCast(@as(u32, @truncate(x)));
+}
+inline fn vf32(f: f32) u64 {
+    return @as(u32, @bitCast(f));
+}
+inline fn f64v(x: u64) f64 {
+    return @bitCast(x);
+}
+inline fn vf64(f: f64) u64 {
+    return @bitCast(f);
 }
 
-/// `func_index`i, verilen `args` (yalnızca `i32`) ile çalıştırır. Fonksiyon
-/// bir değer döndürüyorsa onu döner, `void` ise `null`.
+fn fmin(comptime T: type, a: T, b: T) T {
+    if (std.math.isNan(a) or std.math.isNan(b)) return std.math.nan(T);
+    if (a == 0 and b == 0) return if (std.math.signbit(a)) a else b;
+    return if (a < b) a else b;
+}
+
+fn fmax(comptime T: type, a: T, b: T) T {
+    if (std.math.isNan(a) or std.math.isNan(b)) return std.math.nan(T);
+    if (a == 0 and b == 0) return if (std.math.signbit(a)) b else a;
+    return if (a > b) a else b;
+}
+
+/// En yakın tamsayı, eşitlikte çifte yuvarlama (IEEE roundToIntegralTiesToEven).
+fn nearest(comptime T: type, x: T) T {
+    if (!std.math.isFinite(x) or x == 0) return x;
+    const lim: T = if (T == f32) 8388608.0 else 4503599627370496.0;
+    if (@abs(x) >= lim) return x;
+    const t = @trunc(x);
+    const diff = @abs(x - t);
+    if (diff < 0.5) return if (t == 0) std.math.copysign(@as(T, 0), x) else t;
+    if (diff > 0.5) return t + std.math.sign(x);
+    // tam yarı: çifte git
+    if (@mod(t, 2) == 0) return if (t == 0) std.math.copysign(@as(T, 0), x) else t;
+    return t + std.math.sign(x);
+}
+
+fn truncBounds(comptime I: type, comptime F: type) struct { lo: F, hi: F } {
+    const bits = @typeInfo(I).int.bits;
+    const signed = @typeInfo(I).int.signedness == .signed;
+    const hi: F = std.math.ldexp(@as(F, 1.0), if (signed) bits - 1 else bits);
+    const lo: F = if (signed) -hi else 0;
+    return .{ .lo = lo, .hi = hi };
+}
+
+fn truncTrap(comptime I: type, comptime F: type, x: F) Trap!I {
+    if (std.math.isNan(x)) return error.InvalidConversionToInteger;
+    const t = @trunc(x);
+    const b = comptime truncBounds(I, F);
+    if (t < b.lo or t >= b.hi) return error.IntegerOverflow;
+    return @intFromFloat(t);
+}
+
+fn truncSat(comptime I: type, comptime F: type, x: F) I {
+    if (std.math.isNan(x)) return 0;
+    const t = @trunc(x);
+    const b = comptime truncBounds(I, F);
+    if (t < b.lo) return std.math.minInt(I);
+    if (t >= b.hi) return std.math.maxInt(I);
+    return @intFromFloat(t);
+}
+
+// ---------------------------------------------------------------- eski (i32) API ve HPy birleştirmesi
+
+/// `func_index`i, verilen `args` (i32) ile çalıştırır (eski basit API: içe aktarmasız modüller için). Bir değer döndürüyorsa onu, `void` ise `null` döner.
 pub fn callFunc(allocator: std.mem.Allocator, module: *const Module, func_index: u32, args: []const i32) InterpError!?i32 {
     const ftype = module.typeOf(func_index);
     if (ftype.params.len != args.len) return error.TypeMismatch;
-    for (ftype.params) |p| {
-        if (p != .i32) return error.UnsupportedInstruction; // yalnızca i32 (bkz. modül üstü not)
-    }
-
-    const body = module.bodies[func_index];
-    const nlocals = ftype.params.len + body.locals.len;
-    const locals = try allocator.alloc(i32, nlocals);
-    defer allocator.free(locals);
-    @memset(locals, 0);
-    for (args, 0..) |a, i| locals[i] = a;
-
-    const result = try execCode(allocator, module, body.code, locals);
+    if (args.len > 16) return error.TooManyArgs;
+    for (ftype.params) |p| if (p != .i32) return error.TypeMismatch;
+    for (ftype.results) |p| if (p != .i32) return error.TypeMismatch;
+    if (ftype.results.len > 1) return error.TypeMismatch;
+    var slots: [16]u64 = undefined;
+    for (args, 0..) |a, i| slots[i] = @as(u32, @bitCast(a));
+    const inst = try Instance.init(allocator, module, &.{}, .{});
+    defer inst.deinit();
+    var res: [1]u64 = undefined;
+    try inst.invoke(func_index, slots[0..args.len], res[0..ftype.results.len]);
     if (ftype.results.len == 0) return null;
-    return result orelse error.StackUnderflow;
+    return @bitCast(@as(u32, @truncate(res[0])));
 }
 
-/// Bir fonksiyon çağrısı başına yürütülebilecek en fazla komut: sonsuz döngülü bir modülün (DoS) süreci kilitlemesini önler. Aşılırsa `Trap`.
-const MAX_STEPS: u64 = 50_000_000;
-const MAX_LABELS = 64;
-
-/// Yapılandırılmış kontrol bloğunun etiketi: `br` hedefi. `loop` için hedef döngü başıdır (kollar değer taşımaz), `block`/`if` için bloğun `end`inden sonraki konum.
-const Label = struct { is_loop: bool, target: usize, height: usize, arity: u1 };
-
-const BlockEnds = struct { else_pos: ?usize, end_pos: usize };
-
-/// `start`tan (blok tipi baytından SONRA) bu bloğun eşleşen `else` ve `end` konumlarını bulur; iç içe blokları atlar.
-fn findBlockEnds(code: []const u8, start: usize) InterpError!BlockEnds {
-    var p = start;
-    var depth: usize = 0;
-    var else_pos: ?usize = null;
-    while (p < code.len) {
-        const op = code[p];
-        p += 1;
-        switch (op) {
-            0x02, 0x03, 0x04 => {
-                p += 1;
-                depth += 1;
-            },
-            0x05 => if (depth == 0) {
-                else_pos = p;
-            },
-            0x0b => {
-                if (depth == 0) return .{ .else_pos = else_pos, .end_pos = p - 1 };
-                depth -= 1;
-            },
-            0x0c, 0x0d, 0x10, 0x20, 0x21, 0x22 => _ = try readVarU32At(code, &p),
-            0x41 => _ = try readVarI32At(code, &p),
-            0x00, 0x01, 0x0f, 0x1a, 0x1b, 0x45...0x4f, 0x6a...0x76 => {},
-            else => return error.UnsupportedInstruction,
-        }
+/// `module`nin `name` adında export edilmiş bir işlevini çağırır. Argümanlar ve dönüş değeri, `hpy_bridge/context.zig`nin AYNI `HPy` handle sistemiyle
+/// alınıp verilir (tamsayı ve `f32`/`f64` argümanlar; tek sonuç).
+pub fn callExport(allocator: std.mem.Allocator, ctx: *HPyContext, module: *const Module, name: []const u8, args: []const HPy) InterpError!HPy {
+    const func_index = module.findExportedFunc(name) orelse return error.ExportNotFound;
+    const ft = module.typeOf(func_index);
+    if (args.len != ft.params.len) return error.TypeMismatch;
+    if (args.len > 16) return error.TooManyArgs;
+    var slots: [16]u64 = undefined;
+    for (args, 0..) |a, i| {
+        slots[i] = switch (ft.params[i]) {
+            .i32 => @as(u32, @truncate(@as(u64, @bitCast(ctx.ctx_Long_AsInt64_t.?(ctx, a))))),
+            .i64 => @bitCast(ctx.ctx_Long_AsInt64_t.?(ctx, a)),
+            .f32 => vf32(@floatCast(ctx.ctx_Float_AsDouble.?(ctx, a))),
+            .f64 => vf64(ctx.ctx_Float_AsDouble.?(ctx, a)),
+            else => return error.TypeMismatch,
+        };
     }
-    return error.UnexpectedEof;
-}
-
-fn blockArity(bt: u8) InterpError!u1 {
-    return switch (bt) {
-        0x40 => 0,
-        0x7f => 1,
-        else => error.UnsupportedInstruction,
+    if (ft.results.len > 1) return error.TypeMismatch;
+    const inst = try Instance.init(allocator, module, &.{}, .{});
+    defer inst.deinit();
+    var res: [1]u64 = undefined;
+    try inst.invoke(func_index, slots[0..args.len], res[0..ft.results.len]);
+    if (ft.results.len == 0) return hpy_context.HPy_NULL;
+    return switch (ft.results[0]) {
+        .i32 => ctx.ctx_Long_FromInt64_t.?(ctx, @as(i32, @bitCast(@as(u32, @truncate(res[0]))))),
+        .i64 => ctx.ctx_Long_FromInt64_t.?(ctx, @bitCast(res[0])),
+        .f32 => ctx.ctx_Float_FromDouble.?(ctx, f32v(res[0])),
+        .f64 => ctx.ctx_Float_FromDouble.?(ctx, f64v(res[0])),
+        else => error.TypeMismatch,
     };
 }
 
-fn execCode(allocator: std.mem.Allocator, module: *const Module, code: []const u8, locals: []i32) InterpError!?i32 {
-    var stack: [MAX_STACK]i32 = undefined;
-    var sp: usize = 0;
-    var pos: usize = 0;
-    var labels: [MAX_LABELS]Label = undefined;
-    var nlabels: usize = 0;
-    var steps: u64 = 0;
+// ---------------------------------------------------------------- testler
 
-    while (pos < code.len) {
-        steps += 1;
-        if (steps > MAX_STEPS) return error.Trap; // yakıt tükendi
-        const op = code[pos];
-        pos += 1;
-        switch (op) {
-            0x00 => return error.Trap, // unreachable
-            0x01 => {}, // nop
-            0x02, 0x03 => { // block / loop
-                if (pos >= code.len) return error.UnexpectedEof;
-                const arity = try blockArity(code[pos]);
-                pos += 1;
-                if (nlabels >= MAX_LABELS) return error.StackOverflow;
-                if (op == 0x03) {
-                    labels[nlabels] = .{ .is_loop = true, .target = pos, .height = sp, .arity = 0 };
-                } else {
-                    const ends = try findBlockEnds(code, pos);
-                    labels[nlabels] = .{ .is_loop = false, .target = ends.end_pos + 1, .height = sp, .arity = arity };
-                }
-                nlabels += 1;
-            },
-            0x04 => { // if
-                if (sp < 1) return error.StackUnderflow;
-                if (pos >= code.len) return error.UnexpectedEof;
-                const arity = try blockArity(code[pos]);
-                pos += 1;
-                sp -= 1;
-                const cond = stack[sp] != 0;
-                const ends = try findBlockEnds(code, pos);
-                if (nlabels >= MAX_LABELS) return error.StackOverflow;
-                labels[nlabels] = .{ .is_loop = false, .target = ends.end_pos + 1, .height = sp, .arity = arity };
-                nlabels += 1;
-                if (!cond) {
-                    if (ends.else_pos) |e| {
-                        pos = e;
-                    } else {
-                        pos = ends.end_pos + 1;
-                        nlabels -= 1;
-                    }
-                }
-            },
-            0x05 => { // else: then-kolu bitti, bloğun sonuna atla
-                if (nlabels == 0) return error.Trap;
-                nlabels -= 1;
-                pos = labels[nlabels].target;
-            },
-            0x0c, 0x0d => { // br / br_if
-                const depth = try readVarU32At(code, &pos);
-                if (op == 0x0d) {
-                    if (sp < 1) return error.StackUnderflow;
-                    sp -= 1;
-                    if (stack[sp] == 0) continue;
-                }
-                if (depth >= nlabels) { // fonksiyon düzeyi: return gibi
-                    if (sp == 0) return null;
-                    return stack[sp - 1];
-                }
-                const label = labels[nlabels - 1 - depth];
-                if (label.is_loop) {
-                    sp = label.height;
-                    nlabels = nlabels - depth; // etiket korunur, içindekiler atılır
-                    pos = label.target;
-                } else {
-                    if (label.arity == 1) {
-                        if (sp < 1) return error.StackUnderflow;
-                        const v = stack[sp - 1];
-                        sp = label.height;
-                        stack[sp] = v;
-                        sp += 1;
-                    } else {
-                        sp = label.height;
-                    }
-                    nlabels = nlabels - 1 - depth;
-                    pos = label.target;
-                }
-            },
-            0x0b => { // end: blok sonu ya da fonksiyon sonu
-                if (nlabels > 0) {
-                    nlabels -= 1;
-                } else break;
-            },
-            0x0f => break, // return
-            0x10 => { // call
-                const callee_idx = try readVarU32At(code, &pos);
-                const callee_type = module.typeOf(callee_idx);
-                const nargs = callee_type.params.len;
-                if (nargs > sp or nargs > MAX_CALL_ARGS) return error.StackUnderflow;
-                var call_args: [MAX_CALL_ARGS]i32 = undefined;
-                var k: usize = 0;
-                while (k < nargs) : (k += 1) call_args[k] = stack[sp - nargs + k];
-                sp -= nargs;
-                if (try callFunc(allocator, module, callee_idx, call_args[0..nargs])) |r| {
-                    if (sp >= MAX_STACK) return error.StackOverflow;
-                    stack[sp] = r;
-                    sp += 1;
-                }
-            },
-            0x20 => { // local.get
-                const idx = try readVarU32At(code, &pos);
-                if (idx >= locals.len) return error.UnexpectedEof;
-                if (sp >= MAX_STACK) return error.StackOverflow;
-                stack[sp] = locals[idx];
-                sp += 1;
-            },
-            0x21 => { // local.set
-                const idx = try readVarU32At(code, &pos);
-                if (idx >= locals.len) return error.UnexpectedEof;
-                if (sp == 0) return error.StackUnderflow;
-                sp -= 1;
-                locals[idx] = stack[sp];
-            },
-            0x22 => { // local.tee
-                const idx = try readVarU32At(code, &pos);
-                if (idx >= locals.len) return error.UnexpectedEof;
-                if (sp == 0) return error.StackUnderflow;
-                locals[idx] = stack[sp - 1];
-            },
-            0x41 => { // i32.const
-                const v = try readVarI32At(code, &pos);
-                if (sp >= MAX_STACK) return error.StackOverflow;
-                stack[sp] = v;
-                sp += 1;
-            },
-            0x6a => { // i32.add
-                if (sp < 2) return error.StackUnderflow;
-                stack[sp - 2] = stack[sp - 2] +% stack[sp - 1];
-                sp -= 1;
-            },
-            0x6b => { // i32.sub
-                if (sp < 2) return error.StackUnderflow;
-                stack[sp - 2] = stack[sp - 2] -% stack[sp - 1];
-                sp -= 1;
-            },
-            0x6c => { // i32.mul
-                if (sp < 2) return error.StackUnderflow;
-                stack[sp - 2] = stack[sp - 2] *% stack[sp - 1];
-                sp -= 1;
-            },
-            0x1a => { // drop
-                if (sp < 1) return error.StackUnderflow;
-                sp -= 1;
-            },
-            0x1b => { // select: [a, b, c] -> c != 0 ? a : b
-                if (sp < 3) return error.StackUnderflow;
-                const chosen = if (stack[sp - 1] != 0) stack[sp - 3] else stack[sp - 2];
-                sp -= 2;
-                stack[sp - 1] = chosen;
-            },
-            0x45 => { // i32.eqz
-                if (sp < 1) return error.StackUnderflow;
-                stack[sp - 1] = @intFromBool(stack[sp - 1] == 0);
-            },
-            0x46...0x4f => { // i32 karşılaştırmaları: eq ne lt_s lt_u gt_s gt_u le_s le_u ge_s ge_u
-                if (sp < 2) return error.StackUnderflow;
-                const a = stack[sp - 2];
-                const b = stack[sp - 1];
-                const ua: u32 = @bitCast(a);
-                const ub: u32 = @bitCast(b);
-                const r = switch (op) {
-                    0x46 => a == b,
-                    0x47 => a != b,
-                    0x48 => a < b,
-                    0x49 => ua < ub,
-                    0x4a => a > b,
-                    0x4b => ua > ub,
-                    0x4c => a <= b,
-                    0x4d => ua <= ub,
-                    0x4e => a >= b,
-                    else => ua >= ub,
-                };
-                sp -= 1;
-                stack[sp - 1] = @intFromBool(r);
-            },
-            0x6d...0x70 => { // div_s div_u rem_s rem_u: sıfıra bölme ve INT_MIN / -1 taşması trap'tir
-                if (sp < 2) return error.StackUnderflow;
-                const a = stack[sp - 2];
-                const b = stack[sp - 1];
-                if (b == 0) return error.Trap;
-                const ua: u32 = @bitCast(a);
-                const ub: u32 = @bitCast(b);
-                const r: i32 = switch (op) {
-                    0x6d => blk: {
-                        if (a == std.math.minInt(i32) and b == -1) return error.Trap;
-                        break :blk @divTrunc(a, b);
-                    },
-                    0x6e => @bitCast(ua / ub),
-                    0x6f => if (b == -1) 0 else @rem(a, b), // INT_MIN rem -1 sonucu 0'dır (trap DEĞİL)
-                    else => @bitCast(ua % ub),
-                };
-                sp -= 1;
-                stack[sp - 1] = r;
-            },
-            0x71...0x76 => { // and or xor shl shr_s shr_u (kaydırma sayısı mod 32)
-                if (sp < 2) return error.StackUnderflow;
-                const a = stack[sp - 2];
-                const b = stack[sp - 1];
-                const ua: u32 = @bitCast(a);
-                const sh: u5 = @truncate(@as(u32, @bitCast(b)));
-                const r: i32 = switch (op) {
-                    0x71 => a & b,
-                    0x72 => a | b,
-                    0x73 => a ^ b,
-                    0x74 => @bitCast(ua << sh),
-                    0x75 => a >> sh,
-                    else => @bitCast(ua >> sh),
-                };
-                sp -= 1;
-                stack[sp - 1] = r;
-            },
-            else => return error.UnsupportedInstruction,
-        }
-    }
-
-    if (sp == 0) return null;
-    return stack[sp - 1];
-}
-
-/// `module`nin `name` adında export edilmiş bir fonksiyonunu çağırır.
-/// Argümanlar ve dönüş değeri, `hpy_bridge/context.zig`nin AYNI `HPy`
-/// handle sistemiyle alınıp verilir (bkz. modül üstü not).
-pub fn callExport(allocator: std.mem.Allocator, ctx: *HPyContext, module: *const Module, name: []const u8, args: []const HPy) InterpError!HPy {
-    const func_index = module.findExportedFunc(name) orelse return error.ExportNotFound;
-
-    var i32_args: [MAX_CALL_ARGS]i32 = undefined;
-    if (args.len > MAX_CALL_ARGS) return error.TooManyArgs;
-    for (args, 0..) |a, i| {
-        i32_args[i] = @truncate(ctx.ctx_Long_AsInt64_t.?(ctx, a));
-    }
-
-    const result = try callFunc(allocator, module, func_index, i32_args[0..args.len]);
-    const r = result orelse return hpy_context.HPy_NULL;
-    return ctx.ctx_Long_FromInt64_t.?(ctx, r);
-}
+const add_one_bytes = "\x00asm\x01\x00\x00\x00\x01\x06\x01\x60\x01\x7f\x01\x7f\x03\x02\x01\x00\x04\x05\x01\x70\x01\x01\x01\x05\x03\x01\x00\x10\x06\x09\x01\x7f\x01\x41\x80\x80\xc0\x00\x0b\x07\x14\x02\x06memory\x02\x00\x07add_one\x00\x00\x0a\x09\x01\x07\x00\x20\x00\x41\x01\x6a\x0b";
 
 test "callFunc: gerçek zig-derlenmiş add_one modülünü çalıştırır" {
-    const bytes = "\x00asm\x01\x00\x00\x00\x01\x06\x01\x60\x01\x7f\x01\x7f\x03\x02\x01\x00\x04\x05\x01\x70\x01\x01\x01\x05\x03\x01\x00\x10\x06\x09\x01\x7f\x01\x41\x80\x80\xc0\x00\x0b\x07\x14\x02\x06memory\x02\x00\x07add_one\x00\x00\x0a\x09\x01\x07\x00\x20\x00\x41\x01\x6a\x0b";
-    var mod = try module_mod.parse(std.testing.allocator, bytes);
+    var mod = try module_mod.parse(std.testing.allocator, add_one_bytes);
     defer mod.deinit();
-
     const idx = mod.findExportedFunc("add_one").?;
     const result = try callFunc(std.testing.allocator, &mod, idx, &.{41});
     try std.testing.expectEqual(@as(i32, 42), result.?);
 }
 
 test "callExport: HPy handle sistemi üzerinden çağrı" {
-    const bytes = "\x00asm\x01\x00\x00\x00\x01\x06\x01\x60\x01\x7f\x01\x7f\x03\x02\x01\x00\x04\x05\x01\x70\x01\x01\x01\x05\x03\x01\x00\x10\x06\x09\x01\x7f\x01\x41\x80\x80\xc0\x00\x0b\x07\x14\x02\x06memory\x02\x00\x07add_one\x00\x00\x0a\x09\x01\x07\x00\x20\x00\x41\x01\x6a\x0b";
-    var mod = try module_mod.parse(std.testing.allocator, bytes);
+    var mod = try module_mod.parse(std.testing.allocator, add_one_bytes);
     defer mod.deinit();
 
     const ctx = try hpy_context.createContext(std.testing.allocator);
@@ -419,97 +1056,23 @@ test "callExport: HPy handle sistemi üzerinden çağrı" {
     try std.testing.expectEqual(@as(i64, 42), ctx.ctx_Long_AsInt64_t.?(ctx, result));
 }
 
-test "readVarU32At/readVarI32At: kanonik değerler doğru çözülür" {
-    var pos: usize = 0;
-    const bytes1 = &[_]u8{ 0xac, 0x02 };
-    try std.testing.expectEqual(@as(u32, 300), try readVarU32At(bytes1, &pos));
-
-    pos = 0;
-    const bytes2 = &[_]u8{ 0x80, 0x7f };
-    try std.testing.expectEqual(@as(i32, -128), try readVarI32At(bytes2, &pos));
+test "nearest: eşitlikte çifte yuvarlama, işaretli sıfır" {
+    try std.testing.expectEqual(@as(f64, 2), nearest(f64, 2.5));
+    try std.testing.expectEqual(@as(f64, 4), nearest(f64, 3.5));
+    try std.testing.expectEqual(@as(f64, -2), nearest(f64, -1.5));
+    try std.testing.expectEqual(@as(f64, 0), nearest(f64, 0.5));
+    try std.testing.expect(std.math.signbit(nearest(f64, -0.5)));
+    try std.testing.expect(std.math.signbit(nearest(f64, -0.2)));
+    try std.testing.expectEqual(@as(f32, 8388609), nearest(f32, 8388609));
 }
 
-test "readVarU32At/readVarI32At: Faz X.1 — 6+ devam baytı taşma sınırına takılır" {
-    // `module.zig`nin `readVarU32`sinin AYNI Faz X.1 hatası — burada bayt-
-    // kod akışında (call/local.* indeksleri, i32.const) YÜRÜTME sırasında
-    // ortaya çıkan hali (bkz. modül üstü not, `error.Trap`).
-    var pos1: usize = 0;
-    const bytes1 = &[_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x00 };
-    try std.testing.expectError(error.Trap, readVarU32At(bytes1, &pos1));
-
-    var pos2: usize = 0;
-    try std.testing.expectError(error.Trap, readVarI32At(bytes1, &pos2));
-}
-
-fn runOps(code: []const u8, locals: []i32) InterpError!?i32 {
-    const m: Module = .{ .allocator = std.testing.allocator, .types = &.{}, .func_type_indices = &.{}, .exports = &.{}, .bodies = &.{} };
-    return execCode(std.testing.allocator, &m, code, locals);
-}
-
-test "i32 sayısal komutlar: karşılaştırma, bölme/kalan, bit işlemleri, kaydırma, select, drop" {
-    // 7 / 2 = 3, -7 / 2 = -3 (sıfıra doğru), 7 rem -2 = 1
-    try std.testing.expectEqual(@as(?i32, 3), try runOps(&.{ 0x41, 7, 0x41, 2, 0x6d, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, -3), try runOps(&.{ 0x41, 0x79, 0x41, 2, 0x6d, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 1), try runOps(&.{ 0x41, 7, 0x41, 0x7e, 0x6f, 0x0b }, &.{}));
-    // karşılaştırma: -1 < 1 işaretli doğru, işaretsiz yanlış
-    try std.testing.expectEqual(@as(?i32, 1), try runOps(&.{ 0x41, 0x7f, 0x41, 1, 0x48, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 0), try runOps(&.{ 0x41, 0x7f, 0x41, 1, 0x49, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 1), try runOps(&.{ 0x41, 0, 0x45, 0x0b }, &.{})); // eqz
-    // bit işlemleri ve kaydırma: 12 & 10 = 8, 12 | 10 = 14, 12 ^ 10 = 6, 1 << 33 = 2 (mod 32), -8 >> 1 = -4, -8 >>> 28 = 15
-    try std.testing.expectEqual(@as(?i32, 8), try runOps(&.{ 0x41, 12, 0x41, 10, 0x71, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 14), try runOps(&.{ 0x41, 12, 0x41, 10, 0x72, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 6), try runOps(&.{ 0x41, 12, 0x41, 10, 0x73, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 2), try runOps(&.{ 0x41, 1, 0x41, 33, 0x74, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, -4), try runOps(&.{ 0x41, 0x78, 0x41, 1, 0x75, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 15), try runOps(&.{ 0x41, 0x78, 0x41, 28, 0x76, 0x0b }, &.{}));
-    // select ve drop: [10, 20, 1] -> 10; [10, 20, 0] -> 20; drop atılan değeri bırakır
-    try std.testing.expectEqual(@as(?i32, 10), try runOps(&.{ 0x41, 10, 0x41, 20, 0x41, 1, 0x1b, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 20), try runOps(&.{ 0x41, 10, 0x41, 20, 0x41, 0, 0x1b, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 5), try runOps(&.{ 0x41, 5, 0x41, 9, 0x1a, 0x0b }, &.{}));
-}
-
-test "i32 bölme: sıfıra bölme ve INT_MIN / -1 trap, yığın yetersizliği hata verir" {
-    try std.testing.expectError(error.Trap, runOps(&.{ 0x41, 1, 0x41, 0, 0x6d, 0x0b }, &.{}));
-    try std.testing.expectError(error.Trap, runOps(&.{ 0x41, 1, 0x41, 0, 0x6f, 0x0b }, &.{}));
-    // INT_MIN = -2147483648 (LEB128 80 80 80 80 78), -1
-    try std.testing.expectError(error.Trap, runOps(&.{ 0x41, 0x80, 0x80, 0x80, 0x80, 0x78, 0x41, 0x7f, 0x6d, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 0), try runOps(&.{ 0x41, 0x80, 0x80, 0x80, 0x80, 0x78, 0x41, 0x7f, 0x6f, 0x0b }, &.{}));
-    try std.testing.expectError(error.StackUnderflow, runOps(&.{ 0x41, 1, 0x71 }, &.{})); // 0x71 and, tek işlenen
-    try std.testing.expectError(error.StackUnderflow, runOps(&.{0x1b}, &.{}));
-}
-
-test "yapılandırılmış kontrol akışı: loop + br_if ile toplama, block sonucu, if/else, iç içe br" {
-    // toplam = 5 + 4 + 3 + 2 + 1: local0 sayaç, local1 toplam
-    var locals = [_]i32{ 5, 0 };
-    const sum = [_]u8{
-        0x02, 0x40, // block
-        0x03, 0x40, // loop
-        0x20, 0, 0x45, 0x0d, 1, // n == 0 ise bloktan çık
-        0x20, 1, 0x20, 0, 0x6a, 0x21, 1, // toplam += n
-        0x20, 0, 0x41, 1, 0x6b, 0x21, 0, // n -= 1
-        0x0c, 0, // döngü başına dön
-        0x0b, // loop end
-        0x0b, // block end
-        0x20, 1, 0x0b, // sonuç = toplam
-    };
-    try std.testing.expectEqual(@as(?i32, 15), try runOps(&sum, &locals));
-
-    // if/else sonuçlu: koşul 1 -> 10, 0 -> 20
-    try std.testing.expectEqual(@as(?i32, 10), try runOps(&.{ 0x41, 1, 0x04, 0x7f, 0x41, 10, 0x05, 0x41, 20, 0x0b, 0x0b }, &.{}));
-    try std.testing.expectEqual(@as(?i32, 20), try runOps(&.{ 0x41, 0, 0x04, 0x7f, 0x41, 10, 0x05, 0x41, 20, 0x0b, 0x0b }, &.{}));
-    // else'siz if, koşul 0: gövde atlanır; sonuç yığında önceden duran değer
-    try std.testing.expectEqual(@as(?i32, 4), try runOps(&.{ 0x41, 4, 0x41, 0, 0x04, 0x40, 0x41, 99, 0x1a, 0x0b, 0x0b }, &.{}));
-    // block sonuçlu br: br'den sonraki komutlar çalışmaz
-    try std.testing.expectEqual(@as(?i32, 7), try runOps(&.{ 0x02, 0x7f, 0x41, 7, 0x0c, 0, 0x41, 9, 0x0b, 0x0b }, &.{}));
-    // iç içe: br 1 dıştaki bloğa atlar
-    try std.testing.expectEqual(@as(?i32, 3), try runOps(&.{ 0x02, 0x7f, 0x02, 0x40, 0x41, 3, 0x0c, 1, 0x0b, 0x41, 8, 0x0b, 0x0b }, &.{}));
-    // fonksiyon düzeyi br (derinlik >= etiket sayısı) return gibi davranır
-    try std.testing.expectEqual(@as(?i32, 5), try runOps(&.{ 0x41, 5, 0x0c, 0, 0x41, 6, 0x0b }, &.{}));
-}
-
-test "yakıt sınırı: sonsuz döngü Trap ile biter; hatalı blok tipi ve eksik end reddedilir" {
-    try std.testing.expectError(error.Trap, runOps(&.{ 0x03, 0x40, 0x0c, 0, 0x0b, 0x0b }, &.{}));
-    try std.testing.expectError(error.UnsupportedInstruction, runOps(&.{ 0x02, 0x7e, 0x0b, 0x0b }, &.{}));
-    try std.testing.expectError(error.UnexpectedEof, runOps(&.{ 0x02, 0x40, 0x41, 1 }, &.{}));
-    try std.testing.expectError(error.StackUnderflow, runOps(&.{ 0x04, 0x40, 0x0b, 0x0b }, &.{}));
+test "truncTrap/truncSat: sınırlar" {
+    try std.testing.expectEqual(@as(i32, -2147483648), try truncTrap(i32, f64, -2147483648.9));
+    try std.testing.expectError(error.IntegerOverflow, truncTrap(i32, f64, 2147483648.0));
+    try std.testing.expectError(error.InvalidConversionToInteger, truncTrap(i32, f32, std.math.nan(f32)));
+    try std.testing.expectEqual(@as(u32, 0), try truncTrap(u32, f32, -0.9));
+    try std.testing.expectError(error.IntegerOverflow, truncTrap(u32, f32, -1.0));
+    try std.testing.expectEqual(@as(i32, std.math.maxInt(i32)), truncSat(i32, f32, 3e10));
+    try std.testing.expectEqual(@as(u64, std.math.maxInt(u64)), truncSat(u64, f64, 1e30));
+    try std.testing.expectEqual(@as(i64, 0), truncSat(i64, f64, std.math.nan(f64)));
 }

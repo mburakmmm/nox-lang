@@ -3,9 +3,11 @@
 //! uca doğrulamaya hizmet eder.
 
 pub const module = @import("module.zig");
+pub const compile = @import("compile.zig");
 pub const interp = @import("interp.zig");
 
 comptime {
     _ = module;
+    _ = compile;
     _ = interp;
 }

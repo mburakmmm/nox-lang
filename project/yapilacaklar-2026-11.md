@@ -58,11 +58,11 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 
 ## 4. WASM içe aktarma (rapor: wasm-import-kapsam-analizi; seçenek A onaylandı)
 
-- [ ] **4.1 W1** Tam ikili çözümleme + doğrulama; `i32/i64/f32/f64` tüm sayısal işlemler + dönüşümler; `br_table`; bellek; global; tablo + `call_indirect`; veri/eleman; `start`; çok değerli dönüş; trap anlamı
-- [ ] **4.2 W1** Node `WebAssembly` ile farksal test düzeneği (CI'de)
+- [x] **4.1 W1** (**v2.1.65**) Tam ikili çözümleme + doğrulama; `i32/i64/f32/f64` tüm sayısal işlemler + dönüşümler; `br_table`; bellek; global; tablo + `call_indirect`; veri/eleman; `start`; çok değerli dönüş; trap anlamı
+- [x] **4.2 W1** (**v2.1.65**) Node `WebAssembly` ile farksal test düzeneği: 36904 sayısal vektör + gerçek `zig cc` programı; CI Linux işi yeniden doğrular
 - [~] **4.3 W2** Dil yüzeyi: `wasm_open` / `wasm_call_on` / bellek erişimi / `close` (yeni dil özelliği, **onay gerekir**)
 - [ ] **4.4 W3** Host işlevleri (import) Nox işlevleriyle + WASI preview1 alt kümesi (varsayılan kapalı)
-- [ ] **4.5 W4** bulk-memory, sign-extension, reference types; yakıt/yığın/bellek sınırı, fuzz
+- [~] **4.5 W4** bulk-memory, sign-extension, reference types, yakıt/yığın/bellek sınırı **v2.1.65'te W1 ile birlikte yapıldı**; kalan: fuzz hedefine `Instance.init` ekleme, performans ölçümü
 - [~] **4.6** SIMD ve threads kapsamı (karar)
 
 ## 5. Tartışılacak büyük başlıklar (henüz karar/tasarım yok)
@@ -83,5 +83,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [~] **7.1** Site arka ucunun sürüm seçimi düzeltmesini M4'e canlıya alma (`services/noxlang-site/main.nox`) — **kullanıcı onayı gerekir**
 - [ ] **7.4** `http_serve_golden_test` h2c SSE testi macOS CI'da sıra yarışı yaşadı (v2.1.57: `events aborted`/`forever closed` satır sırası); testi sıra-bağımsız yap ya da senkronla
 - [x] **7.5** CI `apt-get` yeniden-deneme sarmalayıcısı (ağ hatası) — **v2.1.60**
-- [~] **7.2** CI takibi: v2.1.49–55 yeşil (v2.1.48 beklenen kırmızı, v2.1.49'da düzeldi); v2.1.56 bekleniyor — her sürüm sonrası `gh run list --workflow CI` ile kontrol
+- [x] **7.2** CI yeşil: **v2.1.64** (11/11 iş). Kırmızı nedenleri: GitHub apt DNS kesintisi (v2.1.56–60, v2.1.62'de `continue-on-error`), `ptr_of` fixture'ında `memcmp` dönüş genişliği (Linux/Windows, v2.1.63), riscv64 işinde `qemu-user-static` paketinin kalkması, `ci.yml` YAML hatası (v2.1.64'te düzeldi). Her sürüm sonrası `gh run list` ile kontrol sürer
+- [ ] **7.6** `Snap package` iş akışı "unable to contact snap store" ile kırmızı (v2.1.62–64; CI değil, yayın iş akışı): Snap Store kimlik bilgisi/ağ kullanıcıda kontrol edilmeli
+- [ ] **7.7** `Release` iş akışı CI kırmızıyken atlanır: v2.1.56–63 için GitHub Release oluşmadı (v2.1.64 ile yeniden başladı); gerekirse boşluk sürümleri tek tek yayımlanmaz, v2.1.64 notları yeterli
 - [ ] **7.3** `list[Task[T]]` (bilinçli desteklenmiyor; hata `TaskGroup`'a yönlendirir) — değişmedi

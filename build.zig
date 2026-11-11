@@ -1673,6 +1673,43 @@ pub fn build(b: *std.Build) void {
     const wasm_compat_test = b.addTest(.{ .root_module = wasm_compat_mod });
     wasm_compat_test.step.dependOn(&compile_wasm.step);
     test_step.dependOn(&addTimedTestRun(b, wasm_compat_test, win_test_timeout_s).step);
+    const wasm_ops_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/wasm_ops_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+        },
+    });
+    const wasm_ops_test = b.addTest(.{ .root_module = wasm_ops_mod });
+    const wasm_interp_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/wasm_interp_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+        },
+    });
+    const wasm_interp_test = b.addTest(.{ .root_module = wasm_interp_mod });
+    const wasm_programs_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/wasm_programs_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+        },
+    });
+    const wasm_programs_test = b.addTest(.{ .root_module = wasm_programs_mod });
+    test_step.dependOn(&addTimedTestRun(b, wasm_programs_test, win_test_timeout_s).step);
+    test_step.dependOn(&addTimedTestRun(b, wasm_interp_test, win_test_timeout_s).step);
+    test_step.dependOn(&addTimedTestRun(b, wasm_ops_test, win_test_timeout_s).step);
+    const wasm_bridge_test_step = b.step("wasm-bridge-test", "Yalnızca WASM köprüsü testlerini çalıştırır (birim + uyumluluk + farksal)");
+    wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_bridge_test, win_test_timeout_s).step);
+    wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_compat_test, win_test_timeout_s).step);
+    wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_ops_test, win_test_timeout_s).step);
+    wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_fuzz_test, win_test_timeout_s).step);
+    wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_interp_test, win_test_timeout_s).step);
+    wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_programs_test, win_test_timeout_s).step);
 
     // ---- Planlanan Faz 20: Zig/C ABI FFI (`extern def`) uyumluluk testi ----
     //
