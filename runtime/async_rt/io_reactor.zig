@@ -776,6 +776,15 @@ const MarkReadySpy = struct {
 // alınmayan dalı ELER (bkz. `fiber.zig`nin AYNI teknikle yazılmış x86_64
 // dalı) — bu YÜZDEN Windows-özgü `WindowsReactor.makeLoopbackPair` gibi
 // çağrılar, YALNIZCA Windows'ta GERÇEKTEN semantik analiz edilir.
+/// Windows'ta kooperatif uyku (`fiber_net.sleepCooperative`) için hiç yazılmayan bir soket çifti: okuma ucu reaktörde zaman aşımıyla beklenir. POSIX'te `pipe` kullanılır, bu yardımcı yalnızca Windows içindir.
+pub fn makeIdlePair() ![2]posix.fd_t {
+    return testSocketPair();
+}
+
+pub fn closeIdleFd(fd: posix.fd_t) void {
+    testCloseFd(fd);
+}
+
 fn testSocketPair() ![2]posix.fd_t {
     if (builtin.os.tag == .windows) return WindowsReactor.makeLoopbackPair();
     var fds: [2]posix.fd_t = undefined;

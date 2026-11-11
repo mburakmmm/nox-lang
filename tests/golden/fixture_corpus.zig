@@ -18,8 +18,8 @@ pub const Fixture = struct {
     source: []const u8,
     expected_stdout: []const u8,
     expected_stderr: []const u8 = "",
-    /// Windows'ta bilinen platform sınırı: fiber içi kooperatif uyku/ağ yok (`fiber_net.enabled == false`, spec §3.335/§3.337); `sleep_ms` zamanlayıcı iş parçacığını bloklar, bu yüzden
-    /// zamanlamaya/kooperatif sıralamaya bağlı fixture'lar Windows'ta atlanır (gerçek Windows desteği `project/limitasyon-ajan-rehberi.md` E10).
+    /// Windows'ta bilinen platform farkı nedeniyle atlanır: fiber içi kooperatif UYKU v2.1.39'dan beri var (`fiber_net.sleepCooperativeWindows`), ama fiber-uyumlu AĞ G/Ç'si yok
+    /// (`fiber_net.enabled == false`, spec §3.335/§3.337) ve bazı sinyal/bağlantı hata davranışları farklı (`project/limitasyon-ajan-rehberi.md` E10).
     skip_windows: bool = false,
 };
 
@@ -546,16 +546,16 @@ pub const fixtures = [_]Fixture{
     .{ .name = "codegen(çalıştır): protobuf_wire_roundtrip (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/protobuf_wire_roundtrip.nox"), .expected_stdout = @embedFile("codegen_cases/protobuf_wire_roundtrip.expected") },
     .{ .name = "codegen(çalıştır): router_registration_all_workers (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/router_registration_all_workers.nox"), .expected_stdout = @embedFile("codegen_cases/router_registration_all_workers.expected") },
     .{ .name = "codegen(çalıştır): signal_install_take_wait (v2.1.31: golden fixture bağlandı)", .kind = .golden, .skip_windows = true, .source = @embedFile("codegen_cases/signal_install_take_wait.nox"), .expected_stdout = @embedFile("codegen_cases/signal_install_take_wait.expected") },
-    .{ .name = "codegen(çalıştır): sleep_ms_cooperative_in_fiber (v2.1.31: golden fixture bağlandı)", .kind = .golden, .skip_windows = true, .source = @embedFile("codegen_cases/sleep_ms_cooperative_in_fiber.nox"), .expected_stdout = @embedFile("codegen_cases/sleep_ms_cooperative_in_fiber.expected") },
+    .{ .name = "codegen(çalıştır): sleep_ms_cooperative_in_fiber (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/sleep_ms_cooperative_in_fiber.nox"), .expected_stdout = @embedFile("codegen_cases/sleep_ms_cooperative_in_fiber.expected") },
     .{ .name = "codegen(çalıştır): task_field_class_no_leak (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/task_field_class_no_leak.nox"), .expected_stdout = @embedFile("codegen_cases/task_field_class_no_leak.expected") },
-    .{ .name = "codegen(çalıştır): task_group_basic (v2.1.31: golden fixture bağlandı)", .kind = .golden, .skip_windows = true, .source = @embedFile("codegen_cases/task_group_basic.nox"), .expected_stdout = @embedFile("codegen_cases/task_group_basic.expected") },
+    .{ .name = "codegen(çalıştır): task_group_basic (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/task_group_basic.nox"), .expected_stdout = @embedFile("codegen_cases/task_group_basic.expected") },
     .{ .name = "codegen(çalıştır): task_local_unreleased_at_exit (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/task_local_unreleased_at_exit.nox"), .expected_stdout = @embedFile("codegen_cases/task_local_unreleased_at_exit.expected") },
-    .{ .name = "codegen(çalıştır): task_wait_timeout_first_done (v2.1.31: golden fixture bağlandı)", .kind = .golden, .skip_windows = true, .source = @embedFile("codegen_cases/task_wait_timeout_first_done.nox"), .expected_stdout = @embedFile("codegen_cases/task_wait_timeout_first_done.expected") },
+    .{ .name = "codegen(çalıştır): task_wait_timeout_first_done (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/task_wait_timeout_first_done.nox"), .expected_stdout = @embedFile("codegen_cases/task_wait_timeout_first_done.expected") },
     .{ .name = "codegen(çalıştır): template_blocks_for_if (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/template_blocks_for_if.nox"), .expected_stdout = @embedFile("codegen_cases/template_blocks_for_if.expected") },
     .{ .name = "codegen(çalıştır): time_boot_ms_clocks (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/time_boot_ms_clocks.nox"), .expected_stdout = @embedFile("codegen_cases/time_boot_ms_clocks.expected") },
     .{ .name = "codegen(çalıştır): time_nanosecond_clocks (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/time_nanosecond_clocks.nox"), .expected_stdout = @embedFile("codegen_cases/time_nanosecond_clocks.expected") },
     .{ .name = "codegen(çalıştır): timezone_iana_lookup (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/timezone_iana_lookup.nox"), .expected_stdout = @embedFile("codegen_cases/timezone_iana_lookup.expected") },
     .{ .name = "codegen(çalıştır): udp_loopback_roundtrip (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/udp_loopback_roundtrip.nox"), .expected_stdout = @embedFile("codegen_cases/udp_loopback_roundtrip.expected") },
     .{ .name = "codegen(çalıştır): url_query_decode_plus (v2.1.31: golden fixture bağlandı)", .kind = .golden, .source = @embedFile("codegen_cases/url_query_decode_plus.nox"), .expected_stdout = @embedFile("codegen_cases/url_query_decode_plus.expected") },
-    .{ .name = "codegen(çalıştır): Channel[T].wait(ms) zaman aşımlı hazır sorgusu (v2.1.34)", .kind = .golden, .skip_windows = true, .source = @embedFile("codegen_cases/channel_wait_timeout.nox"), .expected_stdout = @embedFile("codegen_cases/channel_wait_timeout.expected") },
+    .{ .name = "codegen(çalıştır): Channel[T].wait(ms) zaman aşımlı hazır sorgusu (v2.1.34)", .kind = .golden, .source = @embedFile("codegen_cases/channel_wait_timeout.nox"), .expected_stdout = @embedFile("codegen_cases/channel_wait_timeout.expected") },
 };

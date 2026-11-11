@@ -57,7 +57,7 @@ class Handler(grpc.GenericRpcHandler):
         return None
 
 
-server = grpc.server(futures.ThreadPoolExecutor(max_workers=4), options=[("grpc.max_send_message_length", 64 * 1024 * 1024), ("grpc.max_receive_message_length", 64 * 1024 * 1024)])
+server = grpc.server(futures.ThreadPoolExecutor(max_workers=4), compression=grpc.Compression.Gzip, options=[("grpc.max_send_message_length", 64 * 1024 * 1024), ("grpc.max_receive_message_length", 64 * 1024 * 1024)])
 server.add_generic_rpc_handlers((Handler(),))
 port = server.add_insecure_port("127.0.0.1:0")
 server.start()

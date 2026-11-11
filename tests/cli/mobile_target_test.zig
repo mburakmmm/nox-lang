@@ -451,5 +451,5 @@ test "android shared library is 16 KiB aligned" {
     defer gpa.free(ll);
     const text = try std.Io.Dir.cwd().readFileAlloc(io, ll, gpa, .limited(1 << 20));
     defer gpa.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "target triple = \"x86_64-linux-android24\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "target triple = \"x86_64-linux-android29\"") != null);
 }

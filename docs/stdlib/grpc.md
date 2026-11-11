@@ -61,6 +61,6 @@ release or finish streams **before** `Client.close()`.
 
 - **TLS needs TLS 1.3 ALPN support from the server** (the usual case for gRPC servers); a server that does not select `h2` makes `connect_tls` fail. No client certificates (mTLS) yet. Not available when compiled to WebAssembly.
 - **One call or stream at a time** per connection (open several connections for parallel calls). `call` sends all requests and then collects the replies; use `open_stream` to interleave.
-- **No compression:** requests announce `grpc-accept-encoding: identity`; a compressed reply is an error.
+- **Compression:** gzip only. Requests announce `grpc-accept-encoding: gzip,identity` and gzip replies are decoded automatically; `Client.use_compression(True)` gzips the request messages too. Any other `grpc-encoding` is an error.
 - **No client-side read timeout** (the same limit as [`nox.redis`](redis.md)); use `timeout_ms` so the server enforces the deadline.
 - Flow control is handled in both directions (a 300 KB request and a 2 MB reply are tested).

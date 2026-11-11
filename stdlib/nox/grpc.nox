@@ -15,8 +15,8 @@
 # çağrılar sırayla yapılır. `timeout_ms > 0` sunucuya `grpc-timeout` olarak bildirilir (sunucu `DEADLINE_EXCEEDED` döner); istemci tarafında okuma zaman aşımı yoktur.
 #
 # **Hata modeli:** taşıma/protokol hatası `GrpcError` olur ve bağlantı kapanır (`connect` ile yeniden açın); sunucu durumu `Response.status` ve `GrpcStatusError.code` ile gelir (`OK` = 0,
-# `UNAVAILABLE` = 14, ...). **TLS:** `connect_tls(host, port, ca_file="")` (ALPN `h2`; sistem CA deposu ya da PEM `ca_file`). **Sınırlar:** sıkıştırılmış mesajlar (`grpc-encoding`)
-# kabul edilmez; yanıt üst verisi `header(name)` ile okunur (başlıklar ve trailer birlikte, ad küçük harf).
+# `UNAVAILABLE` = 14, ...). **TLS:** `connect_tls(host, port, ca_file="")` (ALPN `h2`; sistem CA deposu ya da PEM `ca_file`). **Sınırlar:** gzip sıkıştırması desteklenir (diğer `grpc-encoding`ler
+# reddedilir); yanıt üst verisi `header(name)` ile okunur (başlıklar ve trailer birlikte, ad küçük harf).
 
 OK: int = 0
 CANCELLED: int = 1
@@ -51,6 +51,7 @@ class GrpcStatusError(Exception):
 
 extern def nox_grpc_open_raw(host: str, port: int) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_grpc_open_tls_raw(host: str, port: int, ca_file: str) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_grpc_set_compress_raw(conn: ptr, on: int) -> None from "zig-out/lib/noxrt.o"
 extern def nox_grpc_status_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_grpc_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_grpc_close_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
@@ -155,6 +156,13 @@ class Client:
         self.host = host
         self.port = port
         self.handle = handle
+
+    # Sonraki isteklerin mesajlarını gzip ile sıkıştırır (`grpc-encoding: gzip`); gzip'li yanıtlar her zaman çözülür.
+    def use_compression(self: Client, on: bool) -> None:
+        flag: int = 0
+        if on:
+            flag = 1
+        nox_grpc_set_compress_raw(self.handle, flag)
 
     def is_ok(self: Client) -> bool:
         return nox_grpc_status_raw(self.handle) != 0

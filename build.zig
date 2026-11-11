@@ -340,22 +340,26 @@ fn addMobileRuntimeChain(
         .root_source_file = b.path("shared/abi_layout.zig"),
         .target = os_target,
         .optimize = optimize,
+        .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
     });
     const diag_sink_mod = b.createModule(.{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
         .target = os_target,
         .optimize = optimize,
+        .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
     });
     const hpy_contract_mod = b.createModule(.{
         .root_source_file = b.path("shared/hpy_host_contract.zig"),
         .target = os_target,
         .optimize = optimize,
+        .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
         .link_libc = true,
     });
     const hpy_bridge_mod = b.createModule(.{
         .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
         .target = os_target,
         .optimize = optimize,
+        .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
         .link_libc = true,
         .imports = &.{
             .{ .name = "hpy_contract", .module = hpy_contract_mod },
@@ -365,6 +369,7 @@ fn addMobileRuntimeChain(
         .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
         .target = os_target,
         .optimize = optimize,
+        .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
         .link_libc = true,
         .imports = &.{
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
@@ -374,6 +379,7 @@ fn addMobileRuntimeChain(
         .root_source_file = b.path("runtime/lib.zig"),
         .target = os_target,
         .optimize = optimize,
+        .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
         .link_libc = true,
         .imports = &.{
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
@@ -1045,14 +1051,14 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .aarch64,
         .os_tag = .linux,
         .abi = .android,
-        .android_api_level = 24,
-    }, "aarch64-linux-android", "aarch64-linux-android24", "", "noxrt-android-arm64");
+        .android_api_level = 29,
+    }, "aarch64-linux-android", "aarch64-linux-android29", "", "noxrt-android-arm64");
     const android_x64_rt = addMobileRuntimeChain(b, optimize, .{
         .cpu_arch = .x86_64,
         .os_tag = .linux,
         .abi = .android,
-        .android_api_level = 24,
-    }, "x86_64-linux-android", "x86_64-linux-android24", "", "noxrt-android-x64");
+        .android_api_level = 29,
+    }, "x86_64-linux-android", "x86_64-linux-android29", "", "noxrt-android-x64");
     mobile_rt_step.dependOn(android_arm64_rt);
     mobile_rt_step.dependOn(android_x64_rt);
     // wasm çalışma zamanı nesneleri Debug derlemede de optimize (ReleaseSafe) üretilir: Asyncify gölge yığın çerçeveleri ve satır içi kararları optimizasyona bağlıdır

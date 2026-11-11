@@ -93,16 +93,15 @@ Karar: gerçek destek verilmez. Liste eleman bilgisi (`ElemHeapInfo`) ~230 yerde
 - Koruma ifadesinde lambda, comprehension ve sözlük sabiti desteklenmez.
 - Yeni `StmtKind` **eklenmedi** (≈25 dosya, 90+ yürüyücü); `match` mevcut `IfStmt` zincirine indirgenir. Bunu bozacak değişiklik büyük refaktördür, sormadan yapma.
 
-### E9. Redis TLS gerçek sertifikayla denenmedi
+### E9. Redis TLS (v2.1.39: büyük ölçüde doğrulandı)
 
-- **Durum:** `nox.redis` TLS (v2.1.9) başarılı el sıkışması **güvenilir sertifikalı** bir Redis'e karşı doğrulanmadı.
-- **İlk adım:** Elinde güvenilir sertifikalı bir Redis (örn. yönetilen servis) varsa bir kez dene; yoksa "denenmedi" notunu kaldırma.
+`connect(..., tls=True, ca_file=...)` gerçek bir TLS `redis-server`'a karşı çalışır, kendinden imzalı sertifika `ca_file` olmadan reddedilir (`scripts/redis_probe.py`). Hâlâ denenmeyen: genel CA'lı (Let's Encrypt vb.) yönetilen bir servis ve `rediss://` şeması; sistem CA deposu yolu `nox.tls` ile aynı olduğundan düşük risk. Aynı turda TLS 1.3 oturum bileti kaydının `readSome`da "read failed" ürettiği kök hata (postgres/mysql TLS'ini de etkiliyordu) düzeltildi.
 
 ### E10. Platform açıkları
 
 - **Windows `nox.terminal`:** denetim yok, `TerminalError` döner (C8).
-- **Windows'ta fiber içi kooperatif uyku/ağ yok** (`fiber_net.enabled == false`, spec §3.335/§3.337): `sleep_ms` zamanlayıcı iş parçacığını bloklar, bu yüzden `Task.wait`/`wait_any`, `Channel.wait`, `signal.wait`, `TaskGroup.wait_*` Windows'ta yalnızca ZAMAN AŞIMI sonucu verir (başka görev çalışamaz). v2.1.37'de bu davranışa bağlı 6 golden `skip_windows` ile atlandı; gerçek çözüm Windows reaktörüyle (`WindowsReactor`) kooperatif `sleepCooperative`/`waitFd` yazmaktır (mimari iş, önce sor).
-- **Android API 26 çökmesi:** açık (bkz. `project_limitation_round_2026_11_10`); cihaz/emülatör gerektirir.
+- **Windows'ta fiber içi kooperatif UYKU** v2.1.39'da eklendi (`fiber_net.sleepCooperativeWindows`, `WSAPoll` + loopback soket çifti); `Task.wait`, `Channel.wait`, `TaskGroup`, `sleep_ms` goldenları Windows'ta çalışır. **Hâlâ yok:** fiber-uyumlu AĞ G/Ç'si (`fiber_net.enabled == false`: Windows'ta `std.Io` net vtable yaması, HTTP/2 sunucusu uyandırma borusu, proxy). `signal_install_take_wait` ve `http_request_body_on_get_rejected` goldenları Windows'ta `skip_windows` ile atlanır (Windows'ta sinyal/refused-bağlantı davranışı farklı).
+- **Android:** en düşük API 29 (v2.1.39, kullanıcı kararı); API 26'daki ikincil iş parçacığı SEGV'si (ELF TLS yok) bu kararla kapandı, API 24-28 desteklenmez.
 - **Windows CI zaman aşımı:** v2.1.19 `wasm_frontend_test`, v2.1.23 ve v2.1.31 `codegen_golden_test` "TÜM golden fixture'lar" 300 sn'yi aştı. v2.1.36'da `-Dwin-test-timeout=900`. Bu test tek parçadır ve korpusla büyür: 900 sn'yi de aşarsa fixture'ları birkaç teste bölmek (kalıcı çözüm) gerekir.
 - **aarch64 stack-smash:** KAPANDI (2026-10-08); "çözüldü" kabul et, yeniden açma.
 

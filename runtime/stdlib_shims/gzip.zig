@@ -56,7 +56,7 @@ fn readIntListAsBytes(list_ptr: ?*anyopaque) ?[]u8 {
     return out;
 }
 
-fn gzipCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+pub fn gzipCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     // `Compress.init`nin KENDİ ön-koşulu: `assert(output.buffer.len > 8);`
     // — `Writer.Allocating.init` BOŞ (`&.{}`) bir buffer İLE başlar,
     // BU YÜZDEN `initCapacity` (N > 8) KULLANILMALI.
@@ -69,7 +69,7 @@ fn gzipCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     return out.toOwnedSlice();
 }
 
-fn gzipDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+pub fn gzipDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     var in_reader = std.Io.Reader.fixed(data);
     var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
     var decompress = std.compress.flate.Decompress.init(&in_reader, .gzip, &window_buf);

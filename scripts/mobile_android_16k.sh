@@ -48,12 +48,12 @@ int main(int argc, char **argv) {
     return dlsym(h, "nox_app_create") ? 0 : 2;
 }
 CEOF
-"$clang" -fPIE -pie -target aarch64-linux-android24 -o "$work/load" "$work/load.c" -ldl
+"$clang" -fPIE -pie -target aarch64-linux-android29 -o "$work/load" "$work/load.c" -ldl
 "$adb" push "$work/load" /data/local/tmp/nox-load >/dev/null
 "$adb" shell chmod 755 /data/local/tmp/nox-load
 fail=0
 for align in 16384 4096; do
-  "$clang" -shared -fPIC -target aarch64-linux-android24 "-Wl,-z,max-page-size=$align" -o "$work/lib$align.so" "$work/probe.o" "$rt" -lm -ldl -llog
+  "$clang" -shared -fPIC -target aarch64-linux-android29 "-Wl,-z,max-page-size=$align" -o "$work/lib$align.so" "$work/probe.o" "$rt" -lm -ldl -llog
   "$adb" push "$work/lib$align.so" "/data/local/tmp/lib$align.so" >/dev/null
   rc=$("$adb" shell "/data/local/tmp/nox-load /data/local/tmp/lib$align.so >/dev/null 2>&1; echo \$?" | tr -d '\r' | tail -1)
   if [ "$align" = 16384 ]; then

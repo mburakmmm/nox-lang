@@ -22,11 +22,11 @@ Kurulu NDK: `28.2.13676358` (`darwin-x86_64` önderlemesi). Kurulu platformlar a
 
 | | |
 |---|---|
-| En düşük API | 24 |
+| En düşük API | 29 (Android 10: ELF TLS desteği; v2.1.39 — API 24-28 desteği kaldırıldı) |
 | Hedef API | 35 |
 | Sayfa | 16 KiB |
 
-API 35, Android 15 ile gelen 16 KiB sayfa kuralının hedeflediği seviyedir. Üçlüler `aarch64-linux-android24` ve `x86_64-linux-android24`. Paylaşılan kütüphane `-Wl,-z,max-page-size=16384` ile bağlanır.
+API 35, Android 15 ile gelen 16 KiB sayfa kuralının hedeflediği seviyedir. Üçlüler `aarch64-linux-android29` ve `x86_64-linux-android29`. Paylaşılan kütüphane `-Wl,-z,max-page-size=16384` ile bağlanır.
 
 ## Destek iddiası
 

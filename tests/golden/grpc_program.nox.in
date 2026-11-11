@@ -28,6 +28,11 @@ big: str = "z" * 300000
 echoed: str = c.unary("/test.Echo/Unary", big)
 print(len(echoed), echoed == big)
 
+c.use_compression(True)
+r7: Response = c.call("/test.Echo/Unary", ["zz" * 5000])
+print(r7.header("grpc-encoding"), len(r7.messages[0]), r7.messages[0] == "zz" * 5000)
+c.use_compression(False)
+
 r5: Response = c.call("/test.Echo/Big", ["2000000"])
 print(r5.status, len(r5.messages[0]))
 

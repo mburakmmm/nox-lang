@@ -70,7 +70,31 @@ fn giveSleepPipe(fds: [2]c_int) void {
 }
 
 /// Fiber içindeysek `ms` milisaniye KOOPERATİF uyur (zamanlayıcı iş parçacığı başka fiber çalıştırır) ve `true` döner; fiber değilsek `false` (çağıran kendi bloklayan beklemesini yapar).
+/// Windows (v2.1.39): ağ G/Ç'si fiber-uyumlu DEĞİL (`enabled == false`), ama reaktör (`WSAPoll`) zaman aşımlı beklemeyi destekler: `sleep_ms` yalnızca çağıran fiber'ı askıya alsın diye
+/// hiç yazılmayan bir loopback soket çifti zaman aşımıyla beklenir (POSIX'teki `pipe` hilesinin karşılığı). `Task.wait`, `Channel.wait`, `signal.wait`, `TaskGroup` buna dayanır.
+const WIN_IDLE_POOL = 8;
+threadlocal var tl_win_pairs: [WIN_IDLE_POOL][2]posix.fd_t = undefined;
+threadlocal var tl_win_count: usize = 0;
+
+fn sleepCooperativeWindows(ms: u32) bool {
+    if (bridge.currentFiberScheduler() == null) return false;
+    const pair: [2]posix.fd_t = if (tl_win_count > 0) blk: {
+        tl_win_count -= 1;
+        break :blk tl_win_pairs[tl_win_count];
+    } else (io_reactor.makeIdlePair() catch return false);
+    _ = waitFd(pair[0], false, @max(ms, 1));
+    if (tl_win_count < WIN_IDLE_POOL) {
+        tl_win_pairs[tl_win_count] = pair;
+        tl_win_count += 1;
+    } else {
+        io_reactor.closeIdleFd(pair[0]);
+        io_reactor.closeIdleFd(pair[1]);
+    }
+    return true;
+}
+
 pub fn sleepCooperative(ms: u32) bool {
+    if (comptime builtin.os.tag == .windows) return sleepCooperativeWindows(ms);
     if (comptime !enabled) return false;
     if (!inFiber()) return false;
     const fds = takeSleepPipe() orelse return false;

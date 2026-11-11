@@ -55,6 +55,37 @@ try:
             if r.returncode != 0 or r.stdout != expected:
                 print(f"[{backend}] beklenmeyen sonuç (çıkış {r.returncode})\n--- stdout\n{r.stdout}\n--- stderr\n{r.stderr}\n--- beklenen\n{expected}")
                 sys.exit(1)
+
+    # --- TLS: özel CA (ca_file) ile güvenilir bağlantı ve güvenilmeyen kendinden imzalı sertifikanın reddi (v2.1.39). redis-server TLS'siz derlenmişse ya da openssl yoksa atlanır. ---
+    if shutil.which("openssl"):
+        with tempfile.TemporaryDirectory() as tdir:
+            key, cert = os.path.join(tdir, "key.pem"), os.path.join(tdir, "cert.pem")
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "2", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"], check=True, capture_output=True)
+            tport = free_port()
+            tproc = subprocess.Popen([server, "--port", "0", "--tls-port", str(tport), "--bind", "127.0.0.1", "--tls-cert-file", cert, "--tls-key-file", key, "--tls-ca-cert-file", cert, "--tls-auth-clients", "no", "--save", "", "--appendonly", "no", "--dir", tdir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            procs.append(tproc)
+            up = False
+            for _ in range(60):
+                if tproc.poll() is not None:
+                    break
+                try:
+                    socket.create_connection(("127.0.0.1", tport), timeout=0.2).close()
+                    up = True
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            if up:
+                ttemplate = open(os.path.join(ROOT, "tests/golden/redis_tls_program.nox.in")).read()
+                texpected = open(os.path.join(ROOT, "tests/golden/redis_tls_program.expected")).read()
+                tpath = os.path.join(tdir, "tls_program.nox")
+                open(tpath, "w").write(ttemplate.replace("@PORT@", str(tport)).replace("@CA@", cert))
+                for backend in ("llvm", "qbe"):
+                    r = subprocess.run([noxc, "run", "--backend", backend, tpath], capture_output=True, text=True, timeout=300)
+                    if r.returncode != 0 or r.stdout != texpected or r.stderr.strip():
+                        print(f"[tls {backend}] beklenmeyen sonuç (çıkış {r.returncode})\n--- stdout\n{r.stdout}\n--- stderr\n{r.stderr}\n--- beklenen\n{texpected}")
+                        sys.exit(1)
+            else:
+                print("skip: redis-server TLS desteği yok")
 finally:
     for p in procs:
         p.kill()

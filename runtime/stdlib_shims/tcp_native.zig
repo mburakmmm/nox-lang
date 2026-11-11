@@ -106,7 +106,8 @@ fn fail(c: *Conn, err: anyerror) bool {
 pub fn readSome(c: *Conn, max: usize) []const u8 {
     if (!c.ok or c.eof or max == 0) return &.{};
     const r: *std.Io.Reader = if (c.use_tls) &c.client.reader else &c.stream_reader.interface;
-    if (r.bufferedLen() == 0) {
+    // TLS 1.3'te uygulama verisi taşımayan kayıtlar (oturum bileti) `fillMore`u başarıyla bitirip tamponu boş bırakabilir: veri, EOF ya da hata gelene kadar tekrarla.
+    while (r.bufferedLen() == 0) {
         r.fillMore() catch |err| {
             if (err == error.EndOfStream) {
                 c.eof = true;

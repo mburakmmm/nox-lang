@@ -37,7 +37,7 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [x] **C3 ember NL-004** CPU-bound görevi sonlandırma — **KAPANDI v2.1.19**: kooperatif `nox.tasks.checkpoint()`/`is_cancelled()` + `ThreadHandle.cancel()` (kullanıcı kararı: işbirlikçi, önleyici değil).
 - [x] **C4 ember NL-008** sinyal abonelik API'si (`nox.signal`) — **KAPANDI v2.1.6**.
 - [x] **C5 ember NL-006/007/013** Postgres: SQLSTATE/`kind`, `statement_timeout`, `Transaction`, `Pool` **KAPANDI v2.1.8**; fiber-uyumlu (bloklamayan) libpq G/Ç, `set_query_timeout`, `cancel()` (`PQcancel`) **KAPANDI v2.1.17**.
-- [x] **C6 ember NL-001** `nox.redis` (RESP2, AUTH/ACL, TLS, Streams, betik/NOSCRIPT, reconnect) — **KAPANDI v2.1.9**; TLS başarılı el sıkışması güvenilir sertifikalı bir Redis'e karşı denenmedi.
+- [x] **C6 ember NL-001** `nox.redis` (RESP2, AUTH/ACL, TLS, Streams, betik/NOSCRIPT, reconnect) — **KAPANDI v2.1.9**; TLS başarılı el sıkışması **v2.1.39'da doğrulandı** (özel CA `ca_file` ile gerçek TLS `redis-server`; public-CA sertifikalı yönetilen servis hâlâ denenmedi).
 - [x] **C7 ember NL-009** JSON tam sayı hassasiyeti (2^53 üstü) — `as_int`, `number_text`, `dump` tam metni korur — **KAPANDI v2.1.7**.
 - [x] **C8 rune** `nox.terminal` (raw mod, boyut, poll, ham yazma, echo, yetenek tespiti) — **KAPANDI v2.1.7**; Windows'ta terminal denetimi yok (`TerminalError`).
 - [x] **C9 aether/nyx/ember** `serve_multicore` işleyici FABRİKASI (worker başına kurulum) + `AtomicRef` — **KAPANDI v2.1.20** (kullanıcı kararı: fabrika, ortak bellek değil). IPv6 çok çekirdekli dinleme **KAPANDI v2.1.32** (`configure(ip_family=...)`); `list`/`dict` paylaşımı kapsam dışı (belgelenmiş worker-başına-kopya modeli).

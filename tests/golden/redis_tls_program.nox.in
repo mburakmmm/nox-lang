@@ -1,0 +1,16 @@
+# nox.redis over TLS: özel CA ile güvenilir (ca_file), sistem deposuyla güvenilmeyen kendinden imzalı sertifika. scripts/redis_probe.py @PORT@ ve @CA@ doldurur.
+import nox.redis
+from nox.redis import Client, RedisError
+
+c: Client = nox.redis.connect("localhost", @PORT@, True, "", "", 0, "@CA@")
+c.set("k", "tls-value")
+v: str | None = c.get("k")
+if v is not None:
+    print(v)
+c.reconnect()
+print(c.ping())
+c.close()
+try:
+    nox.redis.connect("localhost", @PORT@, True)
+except RedisError as e:
+    print("untrusted rejected", e.is_connection_error())

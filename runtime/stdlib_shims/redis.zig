@@ -237,12 +237,31 @@ fn roundTrip(c: *RConn, args: []const []const u8) ?*Reply {
 /// Bağlanır; `password` doluysa `AUTH` (kullanıcı adı doluysa `AUTH kullanıcı parola`), `db > 0` ise `SELECT db`. Başarısız olsa da geçerli bir tutamak döner (`status == 0`, `errmsg` dolu);
 /// yalnızca bellek yetersizliğinde `null`.
 pub export fn nox_redis_open_raw(host: ?[*:0]const u8, port: i64, use_tls: i64, user: ?[*:0]const u8, password: ?[*:0]const u8, db: i64) callconv(.c) ?*anyopaque {
+    return openImpl(host, port, use_tls != 0, null, user, password, db);
+}
+
+/// `nox_redis_open_raw`ın TLS + özel CA dosyası (PEM) eşleniği: `ca_file` doluysa sistem CA deposu YERİNE yalnızca o dosyadaki CA'lara güvenilir (özel/kurumsal CA, kendinden imzalı sunucu).
+pub export fn nox_redis_open_tls_ca_raw(host: ?[*:0]const u8, port: i64, ca_file: ?[*:0]const u8, user: ?[*:0]const u8, password: ?[*:0]const u8, db: i64) callconv(.c) ?*anyopaque {
+    return openImpl(host, port, true, ca_file, user, password, db);
+}
+
+fn openImpl(host: ?[*:0]const u8, port: i64, use_tls: bool, ca_file: ?[*:0]const u8, user: ?[*:0]const u8, password: ?[*:0]const u8, db: i64) ?*anyopaque {
     const c = gpa.create(RConn) catch return null;
     const h = str_mod.nox_str_slice(host orelse "");
-    const tc = tcp.connect(h, port, use_tls != 0) orelse {
+    // `nox_str_slice` Nox `str` başlığını okur: null işaretçi için DOĞRUDAN boş dilim kullan (bir Zig `""` değişmezinin başlığı yoktur).
+    const ca: []const u8 = if (ca_file) |p| str_mod.nox_str_slice(p) else "";
+    const custom_ca = use_tls and ca.len > 0;
+    const tc = tcp.connect(h, port, use_tls and !custom_ca) orelse {
         gpa.destroy(c);
         return null;
     };
+    if (custom_ca and tc.ok) {
+        if (!tcp.startTlsEx(tc, h, false, ca)) {
+            c.* = .{ .c = tc, .ok = false };
+            c.setErr(if (tc.errmsg.len > 0) tc.errmsg else "TLS handshake failed");
+            return c;
+        }
+    }
     c.* = .{ .c = tc, .ok = tc.ok };
     if (!tc.ok) {
         c.setErr(if (tc.errmsg.len > 0) tc.errmsg else "could not connect");

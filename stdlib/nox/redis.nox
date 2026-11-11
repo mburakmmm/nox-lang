@@ -39,6 +39,7 @@ class RedisError(Exception):
         return self.code == "WRONGTYPE"
 
 extern def nox_redis_open_raw(host: str, port: int, use_tls: int, user: str, password: str, db: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_redis_open_tls_ca_raw(host: str, port: int, ca_file: str, user: str, password: str, db: int) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_redis_status_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_redis_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_redis_close_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
@@ -119,8 +120,9 @@ class Client:
     db: int
     handle: ptr
     scripts: dict[str, str]
+    ca_file: str
 
-    def __init__(self: Client, host: str, port: int, tls: bool, username: str, password: str, db: int, handle: ptr) -> None:
+    def __init__(self: Client, host: str, port: int, tls: bool, username: str, password: str, db: int, handle: ptr, ca_file: str = "") -> None:
         self.host = host
         self.port = port
         self.tls = tls
@@ -129,6 +131,7 @@ class Client:
         self.db = db
         self.handle = handle
         self.scripts = {}
+        self.ca_file = ca_file
 
     def is_ok(self: Client) -> bool:
         return nox_redis_status_raw(self.handle) != 0
@@ -139,7 +142,7 @@ class Client:
     # Bağlantıyı kapatıp aynı ayarlarla (AUTH/SELECT dahil) yeniden kurar. Betik önbelleği (sha'lar) sunucuya özgüdür: temizlenir.
     def reconnect(self: Client) -> None:
         nox_redis_close_raw(self.handle)
-        h: ptr = _open(self.host, self.port, self.tls, self.username, self.password, self.db)
+        h: ptr = _open(self.host, self.port, self.tls, self.username, self.password, self.db, self.ca_file)
         self.handle = h
         self.scripts = {}
 
@@ -268,11 +271,7 @@ def _evalsha_args(sha: str, keys: list[str], args: list[str]) -> list[str]:
         out.append(a)
     return out
 
-def _open(host: str, port: int, tls: bool, username: str, password: str, db: int) -> ptr:
-    use_tls: int = 0
-    if tls:
-        use_tls = 1
-    h: ptr = nox_redis_open_raw(host, port, use_tls, username, password, db)
+def _checked(h: ptr, host: str, port: int) -> ptr:
     if nox_redis_is_null_raw(h) != 0:
         raise RedisError("could not allocate a connection", "", "connection")
     if nox_redis_status_raw(h) == 0:
@@ -281,8 +280,17 @@ def _open(host: str, port: int, tls: bool, username: str, password: str, db: int
         raise RedisError("could not connect to " + host + ":" + str(port) + ": " + msg, "", "connection")
     return h
 
+def _open(host: str, port: int, tls: bool, username: str, password: str, db: int, ca_file: str = "") -> ptr:
+    if tls and len(ca_file) > 0:
+        return _checked(nox_redis_open_tls_ca_raw(host, port, ca_file, username, password, db), host, port)
+    use_tls: int = 0
+    if tls:
+        use_tls = 1
+    return _checked(nox_redis_open_raw(host, port, use_tls, username, password, db), host, port)
+
 # Bağlanır. `tls=True` bağlanır bağlanmaz TLS (sertifika ve sunucu adı sistem CA deposuna karşı doğrulanır). `password` doluysa AUTH
 # (`username` doluysa `AUTH kullanıcı parola`), `db > 0` ise SELECT yapılır. Başarısızlıkta `RedisError(kind="connection")`.
-def connect(host: str, port: int = 6379, tls: bool = False, username: str = "", password: str = "", db: int = 0) -> Client:
-    h: ptr = _open(host, port, tls, username, password, db)
-    return Client(host, port, tls, username, password, db, h)
+# `ca_file` (PEM yolu), `tls=True` ile birlikte verilirse sistem CA deposu YERİNE yalnızca o dosyadaki CA'lara güvenilir (özel/kurumsal CA, kendinden imzalı sunucu); sunucu adı yine doğrulanır.
+def connect(host: str, port: int = 6379, tls: bool = False, username: str = "", password: str = "", db: int = 0, ca_file: str = "") -> Client:
+    h: ptr = _open(host, port, tls, username, password, db, ca_file)
+    return Client(host, port, tls, username, password, db, h, ca_file)

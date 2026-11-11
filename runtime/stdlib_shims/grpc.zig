@@ -6,7 +6,7 @@
 //! araya girme yoktur). Bir bağlantıda çağrılar sırayla yapılır (akış kimlikleri 1, 3, 5, ...).
 //!
 //! Akış denetimi: gönderirken karşının bağlantı ve akış pencereleri izlenir (`WINDOW_UPDATE`, `SETTINGS_INITIAL_WINDOW_SIZE`); alırken her `DATA` için pencere yenilenir.
-//! Sıkıştırılmış mesaj (`grpc-encoding`) KABUL EDİLMEZ: istek `grpc-accept-encoding: identity` bildirir, sunucu yine de sıkıştırırsa çağrı hata verir.
+//! Sıkıştırma (v2.1.39): istek `grpc-accept-encoding: gzip,identity` bildirir ve `grpc-encoding: gzip` yanıtları çözülür; `nox_grpc_set_compress_raw` ile istekler de gzip'lenir.
 //!
 //! **TLS** (v2.1.35): `nox_grpc_open_tls_raw` ALPN `h2` bildiren yamalı vendor TLS istemcisiyle (`runtime/vendor/tls_client.zig`, `alpn_h2`) bağlanır; sistem CA deposu ya da `ca_file`.
 //! **v1 sınırları:** okuma zaman aşımı YOKTUR (`nox_tcp` taşımasının sınırı; süreyi sunucuya `grpc-timeout` ile bildirin, sunucu `DEADLINE_EXCEEDED` döner).
@@ -16,6 +16,7 @@ const builtin = @import("builtin");
 const str_mod = @import("../str.zig");
 const shim_util = @import("shim_util.zig");
 const h2 = @import("http2.zig");
+const gzip_shim = @import("gzip.zig");
 const tcp = if (builtin.cpu.arch.isWasm()) @import("tcp_host.zig") else @import("tcp_native.zig");
 const abi_layout = @import("abi_layout");
 
@@ -47,6 +48,8 @@ const GConn = struct {
     tls: bool = false,
     /// Elle sürülen bir `Stream` açıkken başka çağrı/akış başlatılamaz.
     stream_active: bool = false,
+    /// `true` ise istek mesajları gzip ile sıkıştırılır (`grpc-encoding: gzip`); yanıt sıkıştırması her zaman kabul edilir.
+    compress: bool = false,
 
     fn setErr(self: *GConn, msg: []const u8) void {
         if (self.errmsg_owned) gpa.free(self.errmsg);
@@ -245,8 +248,8 @@ fn drainMessages(c: *GConn, r: *Result, p: *Pending) bool {
     while (p.data.items.len >= 5) {
         const flag = p.data.items[0];
         const len = std.mem.readInt(u32, p.data.items[1..5], .big);
-        if (flag != 0) {
-            c.fail("compressed gRPC messages are not supported (grpc-encoding must be identity)");
+        if (flag > 1) {
+            c.fail("malformed gRPC message prefix");
             return false;
         }
         if (len > MAX_MESSAGE) {
@@ -254,7 +257,19 @@ fn drainMessages(c: *GConn, r: *Result, p: *Pending) bool {
             return false;
         }
         if (p.data.items.len < 5 + @as(usize, len)) return true;
-        const m = gpa.dupe(u8, p.data.items[5 .. 5 + @as(usize, len)]) catch {
+        const raw = p.data.items[5 .. 5 + @as(usize, len)];
+        const m: []u8 = if (flag == 1) blk: {
+            // Sıkıştırılmış mesaj: yalnızca `grpc-encoding: gzip` desteklenir.
+            const enc = headerValue(r, "grpc-encoding") orelse "";
+            if (!std.mem.eql(u8, enc, "gzip")) {
+                c.fail("unsupported grpc-encoding (only gzip and identity are supported)");
+                return false;
+            }
+            break :blk gzip_shim.gzipDecompress(gpa, raw) catch {
+                c.fail("could not decompress a gzip-encoded gRPC message");
+                return false;
+            };
+        } else gpa.dupe(u8, raw) catch {
             c.fail("out of memory");
             return false;
         };
@@ -433,7 +448,8 @@ fn sendRequestHeaders(c: *GConn, stream: u32, path: []const u8, meta: []const u8
         h2.encodeField(&hb, gpa, ":authority", c.authority) catch break :blk false;
         h2.encodeField(&hb, gpa, "content-type", "application/grpc") catch break :blk false;
         h2.encodeField(&hb, gpa, "te", "trailers") catch break :blk false;
-        h2.encodeField(&hb, gpa, "grpc-accept-encoding", "identity") catch break :blk false;
+        h2.encodeField(&hb, gpa, "grpc-accept-encoding", "gzip,identity") catch break :blk false;
+        if (c.compress) h2.encodeField(&hb, gpa, "grpc-encoding", "gzip") catch break :blk false;
         h2.encodeField(&hb, gpa, "user-agent", "grpc-nox/2.1") catch break :blk false;
         if (timeout_ms > 0) {
             var tb: [24]u8 = undefined;
@@ -496,6 +512,36 @@ fn finalizeResult(c: *GConn, p: *Pending, r: *Result) *Result {
     return r;
 }
 
+/// Bir istek mesajını uzunluk önekli (1 bayt bayrak + 4 bayt BE uzunluk) olarak `body`ye ekler; `c.compress` ise gzip ile sıkıştırır (bayrak 1).
+fn appendFramed(c: *GConn, body: *std.ArrayListUnmanaged(u8), msg: []const u8) bool {
+    var payload: []const u8 = msg;
+    var owned: ?[]u8 = null;
+    defer if (owned) |o| gpa.free(o);
+    var flag: u8 = 0;
+    if (c.compress) {
+        if (gzip_shim.gzipCompress(gpa, msg)) |z| {
+            owned = z;
+            payload = z;
+            flag = 1;
+        } else |_| {
+            c.fail("could not compress a gRPC message");
+            return false;
+        }
+    }
+    var pre: [5]u8 = undefined;
+    pre[0] = flag;
+    std.mem.writeInt(u32, pre[1..5], @intCast(payload.len), .big);
+    body.appendSlice(gpa, &pre) catch {
+        c.fail("out of memory");
+        return false;
+    };
+    body.appendSlice(gpa, payload) catch {
+        c.fail("out of memory");
+        return false;
+    };
+    return true;
+}
+
 fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8, timeout_ms: i64) ?*Result {
     if (!c.ok) return null;
     if (c.goaway) {
@@ -529,21 +575,11 @@ fn call(c: *GConn, path: []const u8, meta: []const u8, reqs: []const []const u8,
     var body: std.ArrayListUnmanaged(u8) = .empty;
     defer body.deinit(gpa);
     for (reqs) |m| {
-        var pre: [5]u8 = undefined;
-        pre[0] = 0;
-        std.mem.writeInt(u32, pre[1..5], @intCast(m.len), .big);
-        body.appendSlice(gpa, &pre) catch {
-            c.fail("out of memory");
+        if (!appendFramed(c, &body, m)) {
             r.deinit();
             gpa.destroy(r);
             return null;
-        };
-        body.appendSlice(gpa, m) catch {
-            c.fail("out of memory");
-            r.deinit();
-            gpa.destroy(r);
-            return null;
-        };
+        }
     }
     if (body.items.len == 0) {
         if (!c.sendFrame(h2.frame_data, h2.flag_end_stream, stream, &.{})) {
@@ -612,17 +648,7 @@ fn streamSend(st: *Stream, msg: []const u8) bool {
     }
     var body: std.ArrayListUnmanaged(u8) = .empty;
     defer body.deinit(gpa);
-    var pre: [5]u8 = undefined;
-    pre[0] = 0;
-    std.mem.writeInt(u32, pre[1..5], @intCast(msg.len), .big);
-    body.appendSlice(gpa, &pre) catch {
-        c.fail("out of memory");
-        return false;
-    };
-    body.appendSlice(gpa, msg) catch {
-        c.fail("out of memory");
-        return false;
-    };
+    if (!appendFramed(c, &body, msg)) return false;
     return sendBody(c, st.id, &st.p, &st.r, body.items, false);
 }
 
@@ -677,7 +703,7 @@ fn openImpl(host: ?[*:0]const u8, port: i64, use_tls: bool, ca_file: ?[*:0]const
         return c;
     }
     if (use_tls) {
-        if (!tcp.startTlsEx(tc, h, true, str_mod.nox_str_slice(ca_file orelse ""))) {
+        if (!tcp.startTlsEx(tc, h, true, if (ca_file) |p| str_mod.nox_str_slice(p) else "")) {
             c.fail(if (tc.errmsg.len > 0) tc.errmsg else "TLS handshake failed");
             return c;
         }
@@ -717,6 +743,12 @@ fn openImpl(host: ?[*:0]const u8, port: i64, use_tls: bool, ca_file: ?[*:0]const
     };
     _ = c.send(out.items);
     return c;
+}
+
+/// Sonraki istek mesajlarını gzip ile sıkıştırmayı açar/kapatır (`grpc-encoding: gzip`). Yanıt sıkıştırması her zaman çözülür.
+pub export fn nox_grpc_set_compress_raw(conn: ?*anyopaque, on: i64) callconv(.c) void {
+    const c: *GConn = @ptrCast(@alignCast(conn orelse return));
+    c.compress = on != 0;
 }
 
 pub export fn nox_grpc_status_raw(conn: ?*anyopaque) callconv(.c) i64 {

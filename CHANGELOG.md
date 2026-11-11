@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.39]
+
+### Değişti
+
+- **Android en düşük API 24 → 29** (kullanıcı kararı): hedef üçlüleri `aarch64-linux-android29` / `x86_64-linux-android29`; gecelik emülatör matrisi API 29 ve 34. API 26'da ikincil iş parçacığında görülen SEGV (ELF TLS API 29'dan önce yok) bu kararla kapandı; API 24-28 desteklenmez.
+
+### Eklendi
+
+- **Windows'ta kooperatif `sleep_ms`**: `fiber_net.sleepCooperativeWindows` (hiç yazılmayan loopback soket çifti + `WSAPoll` reaktör zaman aşımı). `Task.wait/wait_any`, `Channel.wait`, `TaskGroup`, fiber içi `sleep_ms` sıralaması Windows'ta artık ilgili görevleri çalıştırır. Ağ G/Ç'si hâlâ fiber-uyumlu değil.
+- **`nox.redis.connect(..., ca_file="")`**: TLS'te özel CA (PEM); sunucu adı doğrulanır, `reconnect()` korur. Güvenilir-sertifika TLS yolu gerçek bir TLS `redis-server`'a karşı doğrulandı (`scripts/redis_probe.py`).
+- **gRPC gzip sıkıştırması**: `grpc-accept-encoding: gzip,identity`, gzip yanıtları otomatik çözülür; `Client.use_compression(True)` istekleri de gzip'ler.
+
+### Düzeltildi
+
+- TLS 1.3'te uygulama verisi taşımayan kayıtlar (oturum bileti) `tcp_native.readSome`dan boş okuma döndürüp `nox.redis`/`postgres`/`mysql` TLS bağlantılarında "read failed" hatasına yol açıyordu; `readSome` artık veri/EOF/hata gelene kadar bekler.
+
 ## [2.1.38]
 
 ### Eklendi

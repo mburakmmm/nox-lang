@@ -216,7 +216,7 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
         .runtime_object_name = "noxrt-android-arm64",
         .zig_triple = "aarch64-linux-android",
         .is_windows = false,
-        .llvm_triple = "aarch64-linux-android24",
+        .llvm_triple = "aarch64-linux-android29",
         .mobile = .android,
         .min_page = 16384,
         .library = .shared_lib,
@@ -226,7 +226,7 @@ pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
         .runtime_object_name = "noxrt-android-x64",
         .zig_triple = "x86_64-linux-android",
         .is_windows = false,
-        .llvm_triple = "x86_64-linux-android24",
+        .llvm_triple = "x86_64-linux-android29",
         .mobile = .android,
         .min_page = 16384,
         .library = .shared_lib,
@@ -239,8 +239,8 @@ test "mobile llvm triples stay locked" {
     defer std.testing.allocator.free(locked);
     try std.testing.expect(std.mem.indexOf(u8, locked, "ios-arm64 arm64-apple-ios17.0\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, locked, "ios-simulator-arm64 arm64-apple-ios17.0-simulator\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, locked, "android-arm64 aarch64-linux-android24\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, locked, "android-x64 x86_64-linux-android24\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, locked, "android-arm64 aarch64-linux-android29\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, locked, "android-x64 x86_64-linux-android29\n") != null);
     const ios = hostedTargetInfo("ios-arm64").?;
     try std.testing.expectEqualStrings("arm64-apple-ios17.0", ios.llvmTriple());
     try std.testing.expect(ios.library == .static_lib);
@@ -249,10 +249,10 @@ test "mobile llvm triples stay locked" {
     try std.testing.expectEqualStrings("arm64-apple-ios17.0-simulator", sim.llvmTriple());
     try std.testing.expect(sim.mobile == .ios_simulator);
     const arm = hostedTargetInfo("android-arm64").?;
-    try std.testing.expectEqualStrings("aarch64-linux-android24", arm.llvmTriple());
+    try std.testing.expectEqualStrings("aarch64-linux-android29", arm.llvmTriple());
     try std.testing.expect(arm.library == .shared_lib);
     const x64 = hostedTargetInfo("android-x64").?;
-    try std.testing.expectEqualStrings("x86_64-linux-android24", x64.llvmTriple());
+    try std.testing.expectEqualStrings("x86_64-linux-android29", x64.llvmTriple());
     try std.testing.expect(hostedTargetInfo("macos-arm64").?.mobile == .none);
     // Masaüstü hedefler hem QBE hem LLVM ile derlenir: LLVM üçlüsü tanımlı, ama "yalnızca LLVM" değildir.
     for ([_][]const u8{ "macos-arm64", "macos-x64", "linux-x64", "linux-arm64", "linux-riscv64", "windows-x64" }) |target_name| {

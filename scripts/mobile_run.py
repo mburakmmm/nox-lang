@@ -44,7 +44,7 @@ def setup(platform, work, udid=""):
             sys.exit(f"{rt} yok (önce: zig build mobile-rt-simulator)")
         return {"platform": "ios", "sdk": sdk, "host_o": host_o, "rt": rt, "udid": udid}
     abi = os.environ.get("NOX_ANDROID_ABI", "arm64")
-    triple = {"arm64": "aarch64-linux-android24", "x64": "x86_64-linux-android24"}.get(abi)
+    triple = {"arm64": "aarch64-linux-android29", "x64": "x86_64-linux-android29"}.get(abi)
     if triple is None:
         sys.exit("NOX_ANDROID_ABI: arm64 | x64")
     ndk = os.environ.get("ANDROID_NDK_HOME") or os.environ.get("ANDROID_NDK_ROOT")
