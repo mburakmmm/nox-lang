@@ -82,16 +82,20 @@ test "noxc build --profile freestanding: izin verilen bir stdlib modülü (nox.s
     try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
 }
 
-// `nox.os` yetenek denetiminden geçer ama freestanding köküne HENÜZ bağlı değildir (project/yapilacaklar-2026-11.md 1.9d): bağlama hatası `nox_os_*` sembollerini adlandırmalıdır.
-test "noxc build --profile freestanding: izin verilen ama HENÜZ bağlı olmayan bir modül (nox.os) checker'i GEÇER, linkleme başarısız olur" {
+// v2.1.58: `nox.os` (ortam/argüman/çıkış) ve `nox.crypto`, `nox.gzip` da bağlanır; izinli modüller için "HENÜZ bağlı değil" durumu kalmadı.
+test "noxc build --profile freestanding: nox.os, nox.crypto ve nox.gzip da BAĞLANIR (v2.1.58)" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const path = try writeTempSource(gpa, io,
         \\import nox.os
+        \\import nox.crypto
+        \\import nox.gzip
         \\
         \\print(nox.os.arg_count())
+        \\print(len(nox.crypto.sha256("x")))
+        \\print(len(nox.gzip.compress("hello hello hello")) > 0)
         \\
     , &tmp);
     defer gpa.free(path);
@@ -104,8 +108,7 @@ test "noxc build --profile freestanding: izin verilen ama HENÜZ bağlı olmayan
     const build_result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path, "-o", out_path } });
     defer gpa.free(build_result.stdout);
     defer gpa.free(build_result.stderr);
-    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, build_result.stderr, "zig cc failed") != null);
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
 }
 
 test "noxc build --profile freestanding: dogrudan yasakli bir modul (nox.http) reddedilir" {

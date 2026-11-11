@@ -24,7 +24,7 @@ const abi_layout = @import("abi_layout");
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
-threadlocal var g_last_op_ok: bool = true;
+const LastOkSlot = scratch_util.TlsSlot(bool, true);
 
 fn buildIntList(rt: ?*anyopaque, bytes: []const u8) ?*anyopaque {
     const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * bytes.len) orelse return null;
@@ -73,7 +73,41 @@ fn compressJobMain(job: *CompressJob) void {
     job.result = gzipCompressInline(job.allocator, job.data) catch null;
 }
 
+// v2.1.57: çıplak çekirdek (freestanding, wasm DEĞİL): iş parçacığı yok ve fiber yığınları (192 KiB) sıkıştırıcı durumuna (~290 KB) yetmez. İş, statik büyük yığınlı bir mini-fiber üzerinde
+// çalışır (tek çekirdek/tek iş parçacığı; yeniden giriş desteklenmez: iç içe çağrı `OutOfMemory` döner).
+const fiber_mod = @import("../async_rt/fiber.zig");
+const BARE_STACK_BYTES = 768 * 1024;
+const BareStack = if (scratch_util.bare_kernel) struct {
+    var mem: [BARE_STACK_BYTES]u8 align(fiber_mod.STACK_ALIGN) = undefined;
+    var busy: bool = false;
+} else struct {};
+
+const BareJob = struct {
+    allocator: std.mem.Allocator,
+    data: []const u8,
+    compress: bool,
+    result: ?[]u8 = null,
+};
+
+fn bareEntry(arg: *anyopaque) void {
+    const job: *BareJob = @ptrCast(@alignCast(arg));
+    job.result = (if (job.compress) gzipCompressInline(job.allocator, job.data) else gzipDecompressInline(job.allocator, job.data)) catch null;
+}
+
+fn bareRun(allocator: std.mem.Allocator, data: []const u8, compress: bool) ![]u8 {
+    if (BareStack.busy) return error.OutOfMemory;
+    BareStack.busy = true;
+    defer BareStack.busy = false;
+    var job = BareJob{ .allocator = allocator, .data = data, .compress = compress };
+    var ctx: fiber_mod.Context = .{};
+    const f = try fiber_mod.Fiber.createWithStack(allocator, bareEntry, &job, &BareStack.mem);
+    f.resume_(&ctx);
+    _ = f.destroyKeepStack();
+    return job.result orelse error.OutOfMemory;
+}
+
 pub fn gzipCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    if (comptime scratch_util.bare_kernel) return bareRun(allocator, data, true);
     if (comptime builtin.single_threaded or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) {
         return gzipCompressInline(allocator, data);
     }
@@ -97,6 +131,11 @@ fn gzipCompressInline(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
 }
 
 pub fn gzipDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    if (comptime scratch_util.bare_kernel) return bareRun(allocator, data, false);
+    return gzipDecompressInline(allocator, data);
+}
+
+fn gzipDecompressInline(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     var in_reader = std.Io.Reader.fixed(data);
     const window_buf = try allocator.alloc(u8, std.compress.flate.max_window_len);
     defer allocator.free(window_buf);
@@ -110,69 +149,69 @@ pub fn gzipDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
 }
 
 pub export fn nox_gzip_last_op_ok() i32 {
-    return if (g_last_op_ok) 1 else 0;
+    return if (LastOkSlot.value) 1 else 0;
 }
 
 pub export fn nox_gzip_compress_bytes_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque) ?*anyopaque {
     const bytes = readIntListAsBytes(list_ptr) orelse {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return buildIntList(rt, &.{});
     };
     defer scratch_util.scratchAllocator().free(bytes);
     const compressed = gzipCompress(scratch_util.scratchAllocator(), bytes) catch {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return buildIntList(rt, &.{});
     };
     defer scratch_util.scratchAllocator().free(compressed);
-    g_last_op_ok = true;
+    LastOkSlot.value = true;
     return buildIntList(rt, compressed);
 }
 
 pub export fn nox_gzip_decompress_bytes_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque) ?*anyopaque {
     const bytes = readIntListAsBytes(list_ptr) orelse {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return buildIntList(rt, &.{});
     };
     defer scratch_util.scratchAllocator().free(bytes);
     const decompressed = gzipDecompress(scratch_util.scratchAllocator(), bytes) catch {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return buildIntList(rt, &.{});
     };
     defer scratch_util.scratchAllocator().free(decompressed);
-    g_last_op_ok = true;
+    LastOkSlot.value = true;
     return buildIntList(rt, decompressed);
 }
 
 pub export fn nox_gzip_compress_str_raw(rt: ?*anyopaque, s: ?[*:0]const u8) ?*anyopaque {
     const text = std.mem.span(s orelse {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return buildIntList(rt, &.{});
     });
     const compressed = gzipCompress(scratch_util.scratchAllocator(), text) catch {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return buildIntList(rt, &.{});
     };
     defer scratch_util.scratchAllocator().free(compressed);
-    g_last_op_ok = true;
+    LastOkSlot.value = true;
     return buildIntList(rt, compressed);
 }
 
 pub export fn nox_gzip_decompress_to_str_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque) ?[*:0]u8 {
     const bytes = readIntListAsBytes(list_ptr) orelse {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return str_mod.nox_str_from_bytes(rt, "");
     };
     defer scratch_util.scratchAllocator().free(bytes);
     const decompressed = gzipDecompress(scratch_util.scratchAllocator(), bytes) catch {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return str_mod.nox_str_from_bytes(rt, "");
     };
     defer scratch_util.scratchAllocator().free(decompressed);
     if (std.mem.indexOfScalar(u8, decompressed, 0) != null) {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return str_mod.nox_str_from_bytes(rt, "");
     }
-    g_last_op_ok = true;
+    LastOkSlot.value = true;
     return str_mod.nox_str_from_bytes(rt, decompressed);
 }
 
@@ -181,20 +220,19 @@ pub export fn nox_gzip_decompress_to_str_raw(rt: ?*anyopaque, list_ptr: ?*anyopa
 /// Son `nox_bytes_str_from_list_raw` çağrısı başarılı mıydı? (`nox_gzip_last_op_ok` ile aynı iş parçacığı-yerel bayrak; `nox.bytes` ayrı bir adla çağırır, böylece
 /// `nox.gzip` ile birlikte içe aktarıldığında extern adları çakışmaz.)
 pub export fn nox_bytes_last_ok_raw() callconv(.c) i64 {
-    return if (g_last_op_ok) 1 else 0;
+    return if (LastOkSlot.value) 1 else 0;
 }
 
 pub export fn nox_bytes_str_from_list_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     const bytes = readIntListAsBytes(list_ptr) orelse {
-        g_last_op_ok = false;
+        LastOkSlot.value = false;
         return str_mod.nox_str_from_bytes(rt, "");
     };
     defer scratch_util.scratchAllocator().free(bytes);
-    g_last_op_ok = true;
+    LastOkSlot.value = true;
     return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
-const fiber_mod = @import("../async_rt/fiber.zig");
 
 const FiberHarness = struct {
     var ok: bool = false;

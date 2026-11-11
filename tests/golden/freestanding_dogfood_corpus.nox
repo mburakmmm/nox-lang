@@ -22,6 +22,9 @@ from nox.json import JsonValue
 import nox.regex
 import nox.base64
 import nox.path
+import nox.gzip
+import nox.crypto
+import nox.os
 
 print("DOGFOOD_START")
 
@@ -68,6 +71,15 @@ print(nox.json.dump(doc))
 print(nox.regex.find_all("[0-9]+", "a1b22c333"))
 print(nox.base64.decode(nox.base64.encode("freestanding")))
 print(nox.path.join("/usr", "lib"))
+
+# --- v2.1.58: gzip (statik büyük yığınlı mini-fiber), crypto özetleri, os ---
+gz_text: str = nox.strings.repeat("Nox freestanding gzip roundtrip. ", 4000)
+gz: list[int] = nox.gzip.compress(gz_text)
+print(len(gz) < len(gz_text) // 10)
+print(nox.gzip.decompress(gz) == gz_text)
+print(nox.crypto.sha256("abc"))
+print(len(nox.os.arg(0)) > 0)
+print(nox.os.arg_count() >= 1)
 
 # --- biçim belirteçleri (v2.1.55: boot yığını 64 KiB -> 1 MiB; öncesinde yığın taşması çöküşü) ---
 fpi: float = 3.14159

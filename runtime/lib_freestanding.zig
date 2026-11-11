@@ -67,6 +67,9 @@ pub const strings_shim = @import("stdlib_shims/strings.zig");
 pub const json_shim = @import("stdlib_shims/json.zig");
 pub const regex_shim = @import("stdlib_shims/regex.zig");
 pub const path_shim = @import("stdlib_shims/path.zig");
+pub const gzip_shim = @import("stdlib_shims/gzip.zig");
+pub const crypto_shim = @import("stdlib_shims/crypto.zig");
+pub const os_shim = @import("stdlib_shims/os.zig");
 pub const random_shim = @import("stdlib_shims/random.zig");
 
 // Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
@@ -88,13 +91,6 @@ pub const random_shim = @import("stdlib_shims/random.zig");
 // bir placeholder'dır (GERÇEK bir konsol/UART HENÜZ YOK — bu Faz F.4'ün
 // İŞİ) — BU FAZ SADECE derleme+linkleme zincirini kanıtlıyor, ÜRETİLEN
 // ikiliyi ÇALIŞTIRMIYOR (bkz. plan dosyasının "Kapsam Dışı" bölümü).
-var g_os_argc: i32 = 0;
-var g_os_argv: ?[*]const ?[*:0]const u8 = null;
-
-export fn nox_os_init(argc: i32, argv: ?[*]const ?[*:0]const u8) callconv(.c) void {
-    g_os_argc = argc;
-    g_os_argv = argv;
-}
 
 /// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `genMain`/
 /// `genMainAsync`nin (bkz. `registration.zig`nin `runtimeInitSymbol`ı)
@@ -490,5 +486,8 @@ comptime {
     _ = json_shim;
     _ = regex_shim;
     _ = path_shim;
+    _ = gzip_shim;
+    _ = crypto_shim;
+    _ = os_shim;
     _ = random_shim;
 }

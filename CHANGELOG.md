@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.58]
+
+### Eklendi
+
+- **Freestanding: `nox.gzip`/`nox.bytes`, `nox.crypto` ve `nox.os` de bağlanıyor.** Artık yetenek denetiminden geçen HER stdlib modülü freestanding'de bağlanır. `gzip`: sıkıştırıcı durumu (~290 KB) fiber yığınından büyük olduğundan çıplak çekirdekte iş, statik 768 KiB yığınlı bir mini-fiber üzerinde yürütülür (tek çekirdek; iç içe çağrı `OutOfMemory`). `crypto`: sha1/sha256/sha512/hmac ve sabit-zamanlı karşılaştırma çalışır; entropi kaynağı olmadığından `argon2`/`scrypt` (MiB bellek) ve tuz isteyen `*_hash` işlevleri `""`/0 döner, `bcrypt_verify` çalışır, `secure_random_hex` boş dize döner (sessizce öngörülebilir rastgelelik üretilmez). `os`: bellek içi ortam tablosu, `arg(0)` = `"nox"`, `exit` makineyi durdurur, `current_dir` = `/`. Ölçüm: LINK 13 → 1 (kalan yalnızca `wasm_call`, beklenen).
+- Test sınırı: `kernel_boot_x86_64_test` ELF boyutu sınırı 2 → 4 MiB (runtime ≈1 MB büyüdü; 4 MiB heap `.bss`te olmasaydı aynı kanıt hâlâ geçerli).
+
 ## [2.1.57]
 
 ### Eklendi

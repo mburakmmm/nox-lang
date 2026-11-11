@@ -21,6 +21,8 @@ const std = @import("std");
 const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 const http_client = @import("shim_util.zig");
+/// v2.1.58: çıplak çekirdek (freestanding, wasm DEĞİL) de wasm32-freestanding gibi bellek içi ortam tablosu kullanır (OS ortamı yok).
+const free_env = wasm_host.is_freestanding_wasm or http_client.bare_kernel;
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 
@@ -44,10 +46,15 @@ export fn nox_os_init(argc: i32, argv: ?[*]const ?[*:0]const u8) callconv(.c) vo
 // mangle EDİLİR, FARKLI bir dize) bu çakışma yoktu; `has_env`in KISA adlı
 // bir sarmalayıcısı hiç OLMADIĞINDAN o da ÇAKIŞMAZ.
 export fn nox_os_arg_count_raw() callconv(.c) i64 {
+    // Çıplak çekirdekte önyükleyici argv vermez: wasm32-freestanding gibi `arg(0)` = "nox".
+    if (comptime http_client.bare_kernel) return if (g_argv == null) 1 else g_argc;
     return g_argc;
 }
 
 export fn nox_os_arg_raw(rt: ?*anyopaque, i: i64) callconv(.c) ?[*:0]u8 {
+    if (comptime http_client.bare_kernel) {
+        if (g_argv == null) return dupeToNoxStr(rt, if (i == 0) "nox" else "");
+    }
     if (i < 0 or i >= g_argc) return dupeToNoxStr(rt, "");
     const argv = g_argv orelse return dupeToNoxStr(rt, "");
     const arg = argv[@intCast(i)] orelse return dupeToNoxStr(rt, "");
@@ -63,7 +70,7 @@ const FreeEnv = struct {
     }
 
     fn set(name: []const u8, value: []const u8) void {
-        const a = std.heap.page_allocator;
+        const a = http_client.scratchAllocator();
         const v = a.dupe(u8, value) catch return;
         if (map.getPtr(name)) |slot| {
             a.free(slot.*);
@@ -83,18 +90,19 @@ const FreeEnv = struct {
 
 export fn nox_os_has_env(name: ?[*:0]const u8) callconv(.c) i32 {
     const n = name orelse return 0;
-    if (comptime wasm_host.is_freestanding_wasm) return if (FreeEnv.get(std.mem.span(n)) != null) 1 else 0;
+    if (comptime free_env) return if (FreeEnv.get(std.mem.span(n)) != null) 1 else 0;
     return if (std.c.getenv(n) != null) 1 else 0;
 }
 
 export fn nox_os_getenv_raw(rt: ?*anyopaque, name: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const n = name orelse return dupeToNoxStr(rt, "");
-    if (comptime wasm_host.is_freestanding_wasm) return dupeToNoxStr(rt, FreeEnv.get(std.mem.span(n)) orelse "");
+    if (comptime free_env) return dupeToNoxStr(rt, FreeEnv.get(std.mem.span(n)) orelse "");
     const v = std.c.getenv(n) orelse return dupeToNoxStr(rt, "");
     return dupeToNoxStr(rt, std.mem.span(v));
 }
 
 export fn nox_os_exit_raw(code: i64) callconv(.c) noreturn {
+    if (comptime http_client.bare_kernel) @import("../errors/handle.zig").exitProcess(code);
     wasm_host.exitProcess(@intCast(code));
 }
 
@@ -102,7 +110,7 @@ export fn nox_os_exit_raw(code: i64) callconv(.c) noreturn {
 // sürümünün `std.c`sinde YOK (`getenv`nin AKSİNE) — `runtime/foreign_
 // bridge.zig`nin AYNI "std.c'de eksikse ham `extern \"c\" fn` bildir"
 // deseniyle DOĞRUDAN bağlanır.
-const setenv = if (wasm_host.is_freestanding_wasm) struct {
+const setenv = if (free_env) struct {
     fn f(name: [*:0]const u8, value: [*:0]const u8, _: c_int) c_int {
         FreeEnv.set(std.mem.span(name), std.mem.span(value));
         return 0;
@@ -128,7 +136,7 @@ export fn nox_os_set_var_raw(name: ?[*:0]const u8, value: ?[*:0]const u8) callco
 }
 
 export fn nox_os_current_dir_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
-    if (comptime wasm_host.is_freestanding_wasm) return dupeToNoxStr(rt, "/");
+    if (comptime free_env) return dupeToNoxStr(rt, "/");
     var buf: [std.c.PATH_MAX]u8 = undefined;
     const result = std.c.getcwd(&buf, buf.len) orelse return dupeToNoxStr(rt, "");
     const z: [*:0]u8 = @ptrCast(result);

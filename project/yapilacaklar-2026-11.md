@@ -26,9 +26,9 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **1.7 F7** `async_task_churn_long` #UD — **KAPANDI v2.1.54** (aynı kök neden)
 - [~] **1.8 F8** `exp(1.0)` 1 ULP farkı — kabul edilebilir mi? (karar)
 - [x] **1.9** `strings`, `json`, `regex`, `base64`, `path`, `random` kabuklarını freestanding köküne bağla (`scratchAllocator`, `TlsSlot`) + `docs/tools/freestanding.md` — **v2.1.57** (PASS 345 → 396, LINK 76 → 13)
-- [ ] **1.9b** `nox.gzip`/`nox.bytes` freestanding'de: sıkıştırma durumu fiber yığınına (192 KiB) sığmaz → statik büyük yığınlı mini-fiber ya da ayrı yol (7 fixture)
-- [ ] **1.9c** `nox.crypto` freestanding'de (2 fixture; `http_client` bağımlılığı ayrıştırılmalı)
-- [ ] **1.9d** `nox.os` freestanding'de (3 fixture; `argv/getenv/exit` çıplak çekirdek anlamı kararı)
+- [x] **1.9b** `nox.gzip`/`nox.bytes` freestanding'de (statik 768 KiB yığınlı mini-fiber) — **v2.1.58**
+- [x] **1.9c** `nox.crypto` freestanding'de (özetler; argon2/scrypt/hash'ler çıplak çekirdekte desteklenmez) — **v2.1.58**
+- [x] **1.9d** `nox.os` freestanding'de (bellek içi ortam, `arg(0)`="nox", `exit` = durdur) — **v2.1.58**
 - [~] **1.10** QEMU'da fatal hatada `isa-debug-exit` ile çıkış (test düzeneği için) — karar
 - [~] **1.11** aarch64 / riscv64 için QEMU boot zinciri — karar
 - [ ] **1.12** Her adımdan sonra `python3 scripts/freestanding_survey.py` ile yeniden ölç; başlangıç: PASS 323 / DIFF 20 / LINK 76

@@ -9,7 +9,9 @@
 const std = @import("std");
 const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
-const http_client = if (@import("builtin").cpu.arch.isWasm()) @import("shim_util.zig") else @import("http_client.zig");
+const http_client = if (@import("builtin").cpu.arch.isWasm() or @import("shim_util.zig").bare_kernel) @import("shim_util.zig") else @import("http_client.zig");
+/// v2.1.58: çıplak çekirdek (freestanding, wasm DEĞİL): OS entropisi/`std.Io` yoktur. Özetler (sha1/sha256/sha512/hmac) ve sabit-zamanlı karşılaştırma çalışır; bellek-yoğun parola özetleri (argon2, scrypt: MiB) ve tuz gerektiren `*_hash` işlevleri DESTEKLENMEZ (`""`/0 döner), `bcrypt_verify` çalışır; `secure_random_hex` boş dize döner (sessizce öngörülebilir rastgelelik üretmek yerine).
+const bare_kernel = @import("shim_util.zig").bare_kernel;
 const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
@@ -40,10 +42,11 @@ const sharedIo = http_client.sharedClientIo;
 const pwhash_buf_len = 128;
 
 export fn nox_crypto_argon2_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    if (comptime bare_kernel) return dupeToNoxStr(rt, "");
     const p = password orelse return dupeToNoxStr(rt, "");
     var buf: [pwhash_buf_len]u8 = undefined;
     const hash = pwhash.argon2.strHash(str_mod.nox_str_slice(p), .{
-        .allocator = std.heap.page_allocator,
+        .allocator = @import("shim_util.zig").scratchAllocator(),
         .params = pwhash.argon2.Params.owasp_2id,
     }, &buf, sharedIo()) catch return dupeToNoxStr(rt, "");
     return dupeToNoxStr(rt, hash);
@@ -56,15 +59,17 @@ export fn nox_crypto_argon2_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) 
 /// (bir saldırgana bozuk-hash/yanlış-parola arasındaki farkı bir yan-kanal
 /// OLARAK sızdırmaz).
 export fn nox_crypto_argon2_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]const u8) callconv(.c) i32 {
+    if (comptime bare_kernel) return 0;
     const h = hash orelse return 0;
     const p = password orelse return 0;
     pwhash.argon2.strVerify(str_mod.nox_str_slice(h), str_mod.nox_str_slice(p), .{
-        .allocator = std.heap.page_allocator,
+        .allocator = @import("shim_util.zig").scratchAllocator(),
     }, sharedIo()) catch return 0;
     return 1;
 }
 
 export fn nox_crypto_bcrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    if (comptime bare_kernel) return dupeToNoxStr(rt, "");
     const p = password orelse return dupeToNoxStr(rt, "");
     var buf: [pwhash_buf_len]u8 = undefined;
     const hash = pwhash.bcrypt.strHash(str_mod.nox_str_slice(p), .{
@@ -84,10 +89,11 @@ export fn nox_crypto_bcrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]con
 }
 
 export fn nox_crypto_scrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    if (comptime bare_kernel) return dupeToNoxStr(rt, "");
     const p = password orelse return dupeToNoxStr(rt, "");
     var buf: [pwhash_buf_len]u8 = undefined;
     const hash = pwhash.scrypt.strHash(str_mod.nox_str_slice(p), .{
-        .allocator = std.heap.page_allocator,
+        .allocator = @import("shim_util.zig").scratchAllocator(),
         .params = pwhash.scrypt.Params.owasp,
         .encoding = .phc,
     }, &buf, sharedIo()) catch return dupeToNoxStr(rt, "");
@@ -95,10 +101,11 @@ export fn nox_crypto_scrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) 
 }
 
 export fn nox_crypto_scrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]const u8) callconv(.c) i32 {
+    if (comptime bare_kernel) return 0;
     const h = hash orelse return 0;
     const p = password orelse return 0;
     pwhash.scrypt.strVerify(str_mod.nox_str_slice(h), str_mod.nox_str_slice(p), .{
-        .allocator = std.heap.page_allocator,
+        .allocator = @import("shim_util.zig").scratchAllocator(),
     }) catch return 0;
     return 1;
 }
@@ -108,6 +115,10 @@ export fn nox_crypto_scrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]con
 /// düzeltmesi) — `advapi32.dll`nin `RtlGenRandom`i (`SystemFunction036`)
 /// YERİNE kullanılır.
 fn secureRandomBuf(buf: []u8) void {
+    if (comptime bare_kernel) {
+        @memset(buf, 0); // erişilemez: çağıranlar `bare_kernel` iken zaten dönmüştür
+        return;
+    }
     if (builtin.os.tag == .windows) {
         _ = SystemFunction036(buf.ptr, @intCast(buf.len));
     } else if (builtin.os.tag == .linux) {
@@ -257,6 +268,7 @@ export fn nox_crypto_constant_time_eq_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) 
 /// KULLANMAK İçin bilinçli bir v1 basitleştirmesi (yeni bir hata türü/
 /// `raise` yolu GEREKTİRMEZ).
 export fn nox_crypto_secure_random_hex_raw(rt: ?*anyopaque, n_bytes: i64) callconv(.c) ?[*:0]u8 {
+    if (comptime bare_kernel) return dupeToNoxStr(rt, "");
     if (n_bytes <= 0) return dupeToNoxStr(rt, "");
     const max_bytes = 256;
     const n: usize = @min(@as(usize, @intCast(n_bytes)), max_bytes);

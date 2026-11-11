@@ -41,6 +41,11 @@ pub fn scratchAllocator() std.mem.Allocator {
 const wasm_host = @import("../wasm_host.zig");
 
 fn fillRandom(buffer: []u8) void {
+    if (comptime bare_kernel) {
+        // Çıplak çekirdekte entropi kaynağı yok; `std.Io` yalnızca derleme için bağlanır (parola özetleri çıplak çekirdekte kapalıdır, bkz. crypto.zig).
+        @memset(buffer, 0);
+        return;
+    }
     if (comptime wasm_host.is_freestanding_wasm) {
         wasm_host.random_fill(buffer.ptr, buffer.len);
     } else {
@@ -57,7 +62,7 @@ fn hostRandomSecure(_: ?*anyopaque, buffer: []u8) std.Io.RandomSecureError!void 
 }
 
 /// Çok iş parçacıklı wasm'de `std.Io.Threaded` derlenmez (Zig 0.16 hatası): freestanding'deki entropi kancalı `failing` varyantı kullanılır.
-const use_host_io = wasm_host.is_freestanding_wasm or !@import("builtin").single_threaded;
+const use_host_io = wasm_host.is_freestanding_wasm or bare_kernel or !@import("builtin").single_threaded;
 
 /// wasm32-freestanding'de `std.Io`: hiçbir işletim sistemi G/Ç'si yok (`std.Io.failing`), ama entropi `nox_host.random_fill`den gelir (parola özetleri tuz için ister).
 const host_io_vtable = blk: {

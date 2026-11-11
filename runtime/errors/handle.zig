@@ -204,6 +204,12 @@ test "nox_int_pow: tam sayi us alma, sarma ve negatif us" {
     try std.testing.expectEqual(@as(i64, 1), nox_int_pow(-1, -2));
 }
 
+/// v2.1.58: `nox.os.exit` çıplak çekirdekte makineyi durdurur (kayıtlı halt sağlayıcısı; QEMU'da `isa-debug-exit`). Çıkış kodu çıplak çekirdekte iletilmez.
+pub fn exitProcess(code: i64) noreturn {
+    _ = code;
+    haltProcess();
+}
+
 /// v2.1.54: tahsis başarısızlığı (freestanding çekirdek heap'i tükendi) — eskiden `null` denetlenmeden kullanılıp sessizce bellek bozuyordu; artık açık bir iletiyle durur.
 pub export fn nox_out_of_memory() noreturn {
     diag_sink.report(null, "nox: out of memory — terminating the program\n", .{});
