@@ -59,7 +59,7 @@ release or finish streams **before** `Client.close()`.
 
 ## Limits
 
-- **TLS needs TLS 1.3 ALPN support from the server** (the usual case for gRPC servers); a server that does not select `h2` makes `connect_tls` fail. Client certificates: TLS 1.3 only (ECDSA, Ed25519, RSA-PSS keys; no password-protected keys). Not available when compiled to WebAssembly.
+- **TLS needs TLS 1.3 ALPN support from the server** (the usual case for gRPC servers); a server that does not select `h2` makes `connect_tls` fail. Client certificates: TLS 1.3 only (ECDSA, Ed25519, RSA-PSS keys; no password-protected keys). On `wasm32-freestanding-asyncify` the host terminates TLS (ALPN `h2`, `ca_file` and mTLS files are read by the host; see [WebAssembly](../tools/wasm.md#grpc-over-tls-noxgrpcconnect_tls)).
 - **One call or stream at a time** per connection (open several connections for parallel calls). `call` sends all requests and then collects the replies; use `open_stream` to interleave.
 - **Compression:** gzip only. Requests announce `grpc-accept-encoding: gzip,identity` and gzip replies are decoded automatically; `Client.use_compression(True)` gzips the request messages too. Any other `grpc-encoding` is an error.
 - **No client-side read timeout** (the same limit as [`nox.redis`](redis.md)); use `timeout_ms` so the server enforces the deadline.

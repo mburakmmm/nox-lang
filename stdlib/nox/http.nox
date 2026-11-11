@@ -126,6 +126,13 @@ class HttpRequest:
             return ""
         return nox_http_request_trailer_raw(self.conn, name)
 
+    # Akış kipindeki bir isteğin gövdesinden en çok `n` bayt okur (v2.1.43): HTTP/2 üzerinde `content-type: application/grpc` taşıyan istekler gövde bitmeden handler'a verilir ve gövde
+    # bu çağrıyla gelir (`req.body` boştur). Veri gelene ya da gövde bitene dek kooperatif bekler; `""` = gövde bitti. Diğer isteklerde (HTTP/1.1, normal HTTP/2) her zaman `""`: gövde `req.body`dedir.
+    def read_chunk(self: HttpRequest, n: int = 65536) -> str:
+        if self.conn == 0:
+            return ""
+        return nox_http_request_read_raw(self.conn, n)
+
     def sse(self: HttpRequest) -> ResponseStream:
         return self.stream(200, {"Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -186,6 +193,7 @@ extern def nox_http_shutdown_raw() -> None from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_start_raw(conn: int, status: int, headers: dict[str, str]) -> int from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_respstream_trailers_raw(conn: int, headers: dict[str, str]) -> int from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_request_trailer_raw(conn: int, name: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_request_read_raw(conn: int, max: int) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_respstream_send_raw(conn: int, data: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_end_raw(conn: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_open_raw(conn: int) -> int from "zig-out/lib/noxrt.o"

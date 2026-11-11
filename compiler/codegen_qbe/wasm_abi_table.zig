@@ -235,6 +235,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_http_request_method", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_http_request_peer_addr", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_http_request_raw", Entry{ .params = "PPPPWPL", .ret = 'P' } },
+    .{ "nox_http_request_read_raw", Entry{ .params = "PLL", .ret = 'P' } },
     .{ "nox_http_request_target", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_http_request_trailer_raw", Entry{ .params = "PLP", .ret = 'P' } },
     .{ "nox_http_response_body", Entry{ .params = "PP", .ret = 'P' } },

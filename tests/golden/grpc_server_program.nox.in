@@ -3,7 +3,7 @@ import nox.http
 import nox.grpc_server
 from nox.http import HttpRequest, HttpResponse
 from nox.grpc import GrpcStatusError
-from nox.grpc_server import Method
+from nox.grpc_server import Method, StreamMethod, Call
 
 def echo(requests: list[str]) -> list[str]:
     return [requests[0]]
@@ -38,7 +38,22 @@ def table() -> list[Method]:
         Method("/test.Echo/Big", big),
     ]
 
+def chat(call: Call) -> None:
+    m: str | None = call.recv()
+    while m is not None:
+        call.send("echo:" + m)
+        m = call.recv()
+
+def chat_fail(call: Call) -> None:
+    m: str | None = call.recv()
+    if m is not None:
+        call.send("first:" + m)
+    raise GrpcStatusError(9, "failed after the first message")
+
+def streams() -> list[StreamMethod]:
+    return [StreamMethod("/test.Echo/Bidi", chat), StreamMethod("/test.Echo/BidiFail", chat_fail)]
+
 def handle(req: HttpRequest) -> HttpResponse:
-    return nox.grpc_server.dispatch(table(), req)
+    return nox.grpc_server.dispatch_all(table(), streams(), req)
 
 nox.http.serve(@PORT@, handle)

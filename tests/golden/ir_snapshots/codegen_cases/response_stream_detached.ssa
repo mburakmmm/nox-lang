@@ -3527,17 +3527,44 @@ export function l $nox_http_HttpRequest_trailer(l %rt, l %p_self, l %p_name) {
 @fn_end4
     ret 0
 }
+export function l $nox_http_HttpRequest_read_chunk(l %rt, l %p_self, l %p_n) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    storel %p_self, %t0
+    storel %p_n, %t1
+    %t2 =l loadl %t0
+    %t3 =l add %t2, 48
+    %t4 =l loadl %t3
+    %t5 =w ceql %t4, 0
+    jnz %t5, @if_then1, @if_end0
+@if_then1
+    %t6 =l add $str33, 16
+    ret %t6
+@after_return2
+    jmp @if_end0
+@if_end0
+    %t7 =l loadl %t0
+    %t8 =l add %t7, 48
+    %t9 =l loadl %t8
+    %t10 =l loadl %t1
+    %t11 =l call $nox_http_request_read_raw(l %rt, l %t9, l %t10)
+    ret %t11
+@after_return3
+@fn_end4
+    ret 0
+}
 export function l $nox_http_HttpRequest_sse(l %rt, l %p_self) {
 @start
     %t0 =l alloc8 8
     storel %p_self, %t0
     %t1 =l loadl %t0
-    %t2 =l add $str33, 16
-    %t3 =l add $str34, 16
-    %t4 =l add $str35, 16
-    %t5 =l add $str36, 16
-    %t6 =l add $str37, 16
-    %t7 =l add $str38, 16
+    %t2 =l add $str34, 16
+    %t3 =l add $str35, 16
+    %t4 =l add $str36, 16
+    %t5 =l add $str37, 16
+    %t6 =l add $str38, 16
+    %t7 =l add $str39, 16
     %t8 =l call $nox_dict_new(l %rt, w 1)
     call $nox_dict_set(l %rt, l %t8, w 1, w 1, w 0, l %t2, l %t3)
     call $nox_dict_set(l %rt, l %t8, w 1, w 1, w 0, l %t4, l %t5)
@@ -3940,7 +3967,7 @@ export function $nox_http_HttpStream__fail(l %rt, l %p_self, l %p_what) {
     %t9 =w ceql %t8, 1
     jnz %t9, @if_then1, @if_end0
 @if_then1
-    %t10 =l add $str39, 16
+    %t10 =l add $str40, 16
     %t11 =l loadl %t0
     %t12 =l add %t11, 16
     %t13 =l loadl %t12
@@ -3992,8 +4019,8 @@ export function $nox_http_HttpStream__fail(l %rt, l %p_self, l %p_what) {
     ret
 @exc_continue14
     %t27 =l add %t15, 24
-    storel 379, %t27
-    call $nox_raise(l %rt, l %t15, l 379)
+    storel 387, %t27
+    call $nox_raise(l %rt, l %t15, l 387)
     %t28 =w call $nox_exception_pending(l %rt)
     jnz %t28, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -4002,7 +4029,7 @@ export function $nox_http_HttpStream__fail(l %rt, l %p_self, l %p_what) {
     jmp @if_end0
 @if_end0
     %t29 =l loadl %t1
-    %t30 =l add $str40, 16
+    %t30 =l add $str41, 16
     %t31 =l call $nox_str_concat(l %rt, l %t29, l %t30)
     %t32 =l loadl %t0
     %t33 =l add %t32, 16
@@ -4074,8 +4101,8 @@ export function $nox_http_HttpStream__fail(l %rt, l %p_self, l %p_what) {
     ret
 @exc_continue35
     %t53 =l add %t41, 24
-    storel 380, %t53
-    call $nox_raise(l %rt, l %t41, l 380)
+    storel 388, %t53
+    call $nox_raise(l %rt, l %t41, l 388)
     %t54 =w call $nox_exception_pending(l %rt)
     jnz %t54, @exc_propagate36, @exc_continue37
 @exc_propagate36
@@ -4097,7 +4124,7 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     %t5 =w loadw %t4
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str41, 16
+    %t6 =l add $str42, 16
     %t7 =l loadl %t0
     %t8 =l add %t7, 16
     %t9 =l loadl %t8
@@ -4170,8 +4197,8 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     ret 0
 @exc_continue14
     %t29 =l add %t11, 24
-    storel 384, %t29
-    call $nox_raise(l %rt, l %t11, l 384)
+    storel 392, %t29
+    call $nox_raise(l %rt, l %t11, l 392)
     %t30 =w call $nox_exception_pending(l %rt)
     jnz %t30, @exc_propagate21, @exc_continue22
 @exc_propagate21
@@ -4205,7 +4232,7 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     %t39 =w loadw %t38
     jnz %t39, @if_then30, @if_end29
 @if_then30
-    %t40 =l add $str42, 16
+    %t40 =l add $str43, 16
     %t41 =l loadl %t0
     %t42 =l add %t41, 16
     %t43 =l loadl %t42
@@ -4278,8 +4305,8 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     ret 0
 @exc_continue43
     %t63 =l add %t45, 24
-    storel 386, %t63
-    call $nox_raise(l %rt, l %t45, l 386)
+    storel 394, %t63
+    call $nox_raise(l %rt, l %t45, l 394)
     %t64 =w call $nox_exception_pending(l %rt)
     jnz %t64, @exc_propagate50, @exc_continue51
 @exc_propagate50
@@ -4312,7 +4339,7 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     %t72 =w cslel %t71, 0
     jnz %t72, @if_then59, @if_end58
 @if_then59
-    %t73 =l add $str43, 16
+    %t73 =l add $str44, 16
     %t74 =l loadl %t0
     %t75 =l add %t74, 16
     %t76 =l loadl %t75
@@ -4385,8 +4412,8 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     ret 0
 @exc_continue72
     %t96 =l add %t78, 24
-    storel 388, %t96
-    call $nox_raise(l %rt, l %t78, l 388)
+    storel 396, %t96
+    call $nox_raise(l %rt, l %t78, l 396)
     %t97 =w call $nox_exception_pending(l %rt)
     jnz %t97, @exc_propagate79, @exc_continue80
 @exc_propagate79
@@ -4450,7 +4477,7 @@ export function l $nox_http_HttpStream_read_chunk(l %rt, l %p_self, l %p_n) {
     jnz %t119, @if_then94, @if_end93
 @if_then94
     %t120 =l loadl %t0
-    %t121 =l add $str44, 16
+    %t121 =l add $str45, 16
     call $nox_http_HttpStream__fail(l %rt, l %t120, l %t121)
     %t122 =w call $nox_exception_pending(l %rt)
     jnz %t122, @exc_propagate95, @exc_continue96
@@ -4518,7 +4545,7 @@ export function $nox_http_HttpStream_write(l %rt, l %p_self, l %p_content) {
     %t4 =w loadw %t3
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str45, 16
+    %t5 =l add $str46, 16
     %t6 =l loadl %t0
     %t7 =l add %t6, 16
     %t8 =l loadl %t7
@@ -4570,8 +4597,8 @@ export function $nox_http_HttpStream_write(l %rt, l %p_self, l %p_content) {
     ret
 @exc_continue14
     %t22 =l add %t10, 24
-    storel 397, %t22
-    call $nox_raise(l %rt, l %t10, l 397)
+    storel 405, %t22
+    call $nox_raise(l %rt, l %t10, l 405)
     %t23 =w call $nox_exception_pending(l %rt)
     jnz %t23, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -4585,7 +4612,7 @@ export function $nox_http_HttpStream_write(l %rt, l %p_self, l %p_content) {
     %t27 =w xor %t26, 1
     jnz %t27, @if_then18, @if_end17
 @if_then18
-    %t28 =l add $str46, 16
+    %t28 =l add $str47, 16
     %t29 =l loadl %t0
     %t30 =l add %t29, 16
     %t31 =l loadl %t30
@@ -4637,8 +4664,8 @@ export function $nox_http_HttpStream_write(l %rt, l %p_self, l %p_content) {
     ret
 @exc_continue31
     %t45 =l add %t33, 24
-    storel 399, %t45
-    call $nox_raise(l %rt, l %t33, l 399)
+    storel 407, %t45
+    call $nox_raise(l %rt, l %t33, l 407)
     %t46 =w call $nox_exception_pending(l %rt)
     jnz %t46, @exc_propagate32, @exc_continue33
 @exc_propagate32
@@ -4655,7 +4682,7 @@ export function $nox_http_HttpStream_write(l %rt, l %p_self, l %p_content) {
     jnz %t52, @if_then35, @if_end34
 @if_then35
     %t53 =l loadl %t0
-    %t54 =l add $str47, 16
+    %t54 =l add $str48, 16
     call $nox_http_HttpStream__fail(l %rt, l %t53, l %t54)
     %t55 =w call $nox_exception_pending(l %rt)
     jnz %t55, @exc_propagate36, @exc_continue37
@@ -4676,7 +4703,7 @@ export function $nox_http_HttpStream_finish(l %rt, l %p_self) {
     %t3 =w loadw %t2
     jnz %t3, @if_then1, @if_end0
 @if_then1
-    %t4 =l add $str48, 16
+    %t4 =l add $str49, 16
     %t5 =l loadl %t0
     %t6 =l add %t5, 16
     %t7 =l loadl %t6
@@ -4728,8 +4755,8 @@ export function $nox_http_HttpStream_finish(l %rt, l %p_self) {
     ret
 @exc_continue14
     %t21 =l add %t9, 24
-    storel 406, %t21
-    call $nox_raise(l %rt, l %t9, l 406)
+    storel 414, %t21
+    call $nox_raise(l %rt, l %t9, l 414)
     %t22 =w call $nox_exception_pending(l %rt)
     jnz %t22, @exc_propagate15, @exc_continue16
 @exc_propagate15
@@ -4743,7 +4770,7 @@ export function $nox_http_HttpStream_finish(l %rt, l %p_self) {
     %t26 =w xor %t25, 1
     jnz %t26, @if_then18, @if_end17
 @if_then18
-    %t27 =l add $str49, 16
+    %t27 =l add $str50, 16
     %t28 =l loadl %t0
     %t29 =l add %t28, 16
     %t30 =l loadl %t29
@@ -4795,8 +4822,8 @@ export function $nox_http_HttpStream_finish(l %rt, l %p_self) {
     ret
 @exc_continue31
     %t44 =l add %t32, 24
-    storel 408, %t44
-    call $nox_raise(l %rt, l %t32, l 408)
+    storel 416, %t44
+    call $nox_raise(l %rt, l %t32, l 416)
     %t45 =w call $nox_exception_pending(l %rt)
     jnz %t45, @exc_propagate32, @exc_continue33
 @exc_propagate32
@@ -4812,7 +4839,7 @@ export function $nox_http_HttpStream_finish(l %rt, l %p_self) {
     jnz %t50, @if_then35, @if_end34
 @if_then35
     %t51 =l loadl %t0
-    %t52 =l add $str50, 16
+    %t52 =l add $str51, 16
     call $nox_http_HttpStream__fail(l %rt, l %t51, l %t52)
     %t53 =w call $nox_exception_pending(l %rt)
     jnz %t53, @exc_propagate36, @exc_continue37
@@ -5611,7 +5638,7 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str51, 16
+    %t5 =l add $str52, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -5689,7 +5716,7 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str52, 16
+    %t5 =l add $str53, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -5767,7 +5794,7 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str53, 16
+    %t5 =l add $str54, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -5857,7 +5884,7 @@ export function l $ord(l %rt, l %p_s) {
     %t5 =w csltl %t4, 0
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str54, 16
+    %t6 =l add $str55, 16
     %t7 =l call $nox_rc_alloc(l %rt, l 32)
     storel 6, %t7
     %t8 =l add %t7, 8
@@ -6535,7 +6562,7 @@ export function l $nox_strings_zfill(l %rt, l %p_s, l %p_width) {
     storel %p_width, %t1
     %t2 =l loadl %t0
     %t3 =l loadl %t1
-    %t4 =l add $str55, 16
+    %t4 =l add $str56, 16
     %t5 =l call $nox_strings_pad_left(l %rt, l %t2, l %t3, l %t4)
     ret %t5
 @after_return0
@@ -6558,9 +6585,9 @@ export function l $nox_http__sse_line(l %rt, l %p_s) {
     storel %p_s, %t0
     %t9 =l loadl %t0
     storel %t9, %t1
-    %t10 =l add $str56, 16
+    %t10 =l add $str57, 16
     storel %t10, %t2
-    %t11 =l add $str57, 16
+    %t11 =l add $str58, 16
     storel %t11, %t3
     %t12 =l loadl %t1
     %t13 =l loadl %t2
@@ -6573,9 +6600,9 @@ export function l $nox_http__sse_line(l %rt, l %p_s) {
 @inline_done0
     %t16 =l loadl %t4
     storel %t16, %t5
-    %t17 =l add $str58, 16
+    %t17 =l add $str59, 16
     storel %t17, %t6
-    %t18 =l add $str59, 16
+    %t18 =l add $str60, 16
     storel %t18, %t7
     %t19 =l loadl %t5
     %t20 =l loadl %t6
@@ -6620,7 +6647,7 @@ export function l $nox_http_multi(l %rt, l %p_values) {
     %t4 =l alloc8 8
     storel 0, %t1
     storel %p_values, %t0
-    %t5 =l add $str60, 16
+    %t5 =l add $str61, 16
     %t6 =l loadl %t1
     %t7 =w ceql %t6, 0
     jnz %t7, @release_skip1, @release0
@@ -6662,7 +6689,7 @@ export function l $nox_http_multi(l %rt, l %p_values) {
     %t21 =w xor %t20, 1
     jnz %t21, @if_then11, @if_end10
 @if_then11
-    %t22 =l add $str61, 16
+    %t22 =l add $str62, 16
     %t23 =l loadl %t1
     %t24 =l call $nox_str_append(l %rt, l %t23, l %t22)
     storel %t24, %t1
@@ -6797,7 +6824,7 @@ export function l $nox_http_listen(l %rt, l %p_port) {
     %t5 =w csltl %t4, 0
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str62, 16
+    %t6 =l add $str63, 16
     %t7 =l loadl %t0
     %t8 =l call $nox_int_to_str(l %rt, l %t7)
     %t9 =l call $nox_str_concat(l %rt, l %t6, l %t8)
@@ -6867,8 +6894,8 @@ export function l $nox_http_listen(l %rt, l %p_port) {
     ret 0
 @exc_continue20
     %t27 =l add %t15, 24
-    storel 233, %t27
-    call $nox_raise(l %rt, l %t15, l 233)
+    storel 241, %t27
+    call $nox_raise(l %rt, l %t15, l 241)
     %t28 =w call $nox_exception_pending(l %rt)
     jnz %t28, @exc_propagate21, @exc_continue22
 @exc_propagate21
@@ -6905,7 +6932,7 @@ export function l $nox_http_listen_v6(l %rt, l %p_port, w %p_v6_only) {
     %t9 =w csltl %t8, 0
     jnz %t9, @if_then3, @if_end2
 @if_then3
-    %t10 =l add $str63, 16
+    %t10 =l add $str64, 16
     %t11 =l loadl %t0
     %t12 =l call $nox_int_to_str(l %rt, l %t11)
     %t13 =l call $nox_str_concat(l %rt, l %t10, l %t12)
@@ -6975,8 +7002,8 @@ export function l $nox_http_listen_v6(l %rt, l %p_port, w %p_v6_only) {
     ret 0
 @exc_continue22
     %t31 =l add %t19, 24
-    storel 251, %t31
-    call $nox_raise(l %rt, l %t19, l 251)
+    storel 259, %t31
+    call $nox_raise(l %rt, l %t19, l 259)
     %t32 =w call $nox_exception_pending(l %rt)
     jnz %t32, @exc_propagate23, @exc_continue24
 @exc_propagate23
@@ -7021,7 +7048,7 @@ export function l $nox_http_get(l %rt, l %p_url, l %p_headers) {
     %t17 =w ceql %t16, 4
     jnz %t17, @if_then3, @if_end2
 @if_then3
-    %t18 =l add $str64, 16
+    %t18 =l add $str65, 16
     %t19 =l loadl %t0
     %t20 =l call $nox_str_concat(l %rt, l %t18, l %t19)
     %t21 =l call $nox_rc_alloc(l %rt, l 32)
@@ -7102,8 +7129,8 @@ export function l $nox_http_get(l %rt, l %p_url, l %p_headers) {
     ret 0
 @exc_continue16
     %t41 =l add %t21, 24
-    storel 260, %t41
-    call $nox_raise(l %rt, l %t21, l 260)
+    storel 268, %t41
+    call $nox_raise(l %rt, l %t21, l 268)
     %t42 =w call $nox_exception_pending(l %rt)
     jnz %t42, @exc_propagate26, @exc_continue27
 @exc_propagate26
@@ -7142,7 +7169,7 @@ export function l $nox_http_get(l %rt, l %p_url, l %p_headers) {
 @exc_continue27
     jmp @if_end2
 @if_end2
-    %t51 =l add $str65, 16
+    %t51 =l add $str66, 16
     %t52 =l loadl %t0
     %t53 =l call $nox_str_concat(l %rt, l %t51, l %t52)
     %t54 =l call $nox_rc_alloc(l %rt, l 32)
@@ -7223,8 +7250,8 @@ export function l $nox_http_get(l %rt, l %p_url, l %p_headers) {
     ret 0
 @exc_continue49
     %t74 =l add %t54, 24
-    storel 261, %t74
-    call $nox_raise(l %rt, l %t54, l 261)
+    storel 269, %t74
+    call $nox_raise(l %rt, l %t54, l 269)
     %t75 =w call $nox_exception_pending(l %rt)
     jnz %t75, @exc_propagate59, @exc_continue60
 @exc_propagate59
@@ -7416,7 +7443,7 @@ export function l $nox_http_post(l %rt, l %p_url, l %p_body, l %p_headers) {
     %t19 =w ceql %t18, 4
     jnz %t19, @if_then3, @if_end2
 @if_then3
-    %t20 =l add $str66, 16
+    %t20 =l add $str67, 16
     %t21 =l loadl %t0
     %t22 =l call $nox_str_concat(l %rt, l %t20, l %t21)
     %t23 =l call $nox_rc_alloc(l %rt, l 32)
@@ -7497,8 +7524,8 @@ export function l $nox_http_post(l %rt, l %p_url, l %p_body, l %p_headers) {
     ret 0
 @exc_continue16
     %t43 =l add %t23, 24
-    storel 280, %t43
-    call $nox_raise(l %rt, l %t23, l 280)
+    storel 288, %t43
+    call $nox_raise(l %rt, l %t23, l 288)
     %t44 =w call $nox_exception_pending(l %rt)
     jnz %t44, @exc_propagate26, @exc_continue27
 @exc_propagate26
@@ -7537,7 +7564,7 @@ export function l $nox_http_post(l %rt, l %p_url, l %p_body, l %p_headers) {
 @exc_continue27
     jmp @if_end2
 @if_end2
-    %t53 =l add $str67, 16
+    %t53 =l add $str68, 16
     %t54 =l loadl %t0
     %t55 =l call $nox_str_concat(l %rt, l %t53, l %t54)
     %t56 =l call $nox_rc_alloc(l %rt, l 32)
@@ -7618,8 +7645,8 @@ export function l $nox_http_post(l %rt, l %p_url, l %p_body, l %p_headers) {
     ret 0
 @exc_continue49
     %t76 =l add %t56, 24
-    storel 281, %t76
-    call $nox_raise(l %rt, l %t56, l 281)
+    storel 289, %t76
+    call $nox_raise(l %rt, l %t56, l 289)
     %t77 =w call $nox_exception_pending(l %rt)
     jnz %t77, @exc_propagate59, @exc_continue60
 @exc_propagate59
@@ -7799,7 +7826,7 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     storel %p_timeout_ms, %t4
     storel 0, %t5
     %t11 =l loadl %t0
-    %t12 =l add $str68, 16
+    %t12 =l add $str69, 16
     %t13 =w call $strcmp(l %t11, l %t12)
     %t14 =w ceqw %t13, 0
     jnz %t14, @logic_short2, @logic_rhs1
@@ -7807,7 +7834,7 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     jmp @logic_done3
 @logic_rhs1
     %t15 =l loadl %t0
-    %t16 =l add $str69, 16
+    %t16 =l add $str70, 16
     %t17 =w call $strcmp(l %t15, l %t16)
     %t18 =w ceqw %t17, 0
     jmp @logic_done3
@@ -7818,7 +7845,7 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     jmp @logic_done6
 @logic_rhs4
     %t20 =l loadl %t0
-    %t21 =l add $str70, 16
+    %t21 =l add $str71, 16
     %t22 =w call $strcmp(l %t20, l %t21)
     %t23 =w ceqw %t22, 0
     jmp @logic_done6
@@ -7859,10 +7886,10 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     %t42 =w ceql %t41, 4
     jnz %t42, @if_then13, @if_end12
 @if_then13
-    %t43 =l add $str71, 16
+    %t43 =l add $str72, 16
     %t44 =l loadl %t0
     %t45 =l call $nox_str_concat(l %rt, l %t43, l %t44)
-    %t46 =l add $str72, 16
+    %t46 =l add $str73, 16
     %t47 =l call $nox_str_concat(l %rt, l %t45, l %t46)
     %t48 =w ceql %t45, 0
     jnz %t48, @release_skip15, @release14
@@ -7982,8 +8009,8 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     ret 0
 @exc_continue38
     %t80 =l add %t60, 24
-    storel 307, %t80
-    call $nox_raise(l %rt, l %t60, l 307)
+    storel 315, %t80
+    call $nox_raise(l %rt, l %t60, l 315)
     %t81 =w call $nox_exception_pending(l %rt)
     jnz %t81, @exc_propagate48, @exc_continue49
 @exc_propagate48
@@ -8026,10 +8053,10 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     %t91 =w ceql %t90, 3
     jnz %t91, @if_then60, @if_end59
 @if_then60
-    %t92 =l add $str73, 16
+    %t92 =l add $str74, 16
     %t93 =l loadl %t0
     %t94 =l call $nox_str_concat(l %rt, l %t92, l %t93)
-    %t95 =l add $str74, 16
+    %t95 =l add $str75, 16
     %t96 =l call $nox_str_concat(l %rt, l %t94, l %t95)
     %t97 =w ceql %t94, 0
     jnz %t97, @release_skip62, @release61
@@ -8149,8 +8176,8 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     ret 0
 @exc_continue85
     %t129 =l add %t109, 24
-    storel 309, %t129
-    call $nox_raise(l %rt, l %t109, l 309)
+    storel 317, %t129
+    call $nox_raise(l %rt, l %t109, l 317)
     %t130 =w call $nox_exception_pending(l %rt)
     jnz %t130, @exc_propagate95, @exc_continue96
 @exc_propagate95
@@ -8193,10 +8220,10 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     %t140 =w ceql %t139, 1
     jnz %t140, @if_then107, @if_end106
 @if_then107
-    %t141 =l add $str75, 16
+    %t141 =l add $str76, 16
     %t142 =l loadl %t0
     %t143 =l call $nox_str_concat(l %rt, l %t141, l %t142)
-    %t144 =l add $str76, 16
+    %t144 =l add $str77, 16
     %t145 =l call $nox_str_concat(l %rt, l %t143, l %t144)
     %t146 =w ceql %t143, 0
     jnz %t146, @release_skip109, @release108
@@ -8316,8 +8343,8 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     ret 0
 @exc_continue132
     %t178 =l add %t158, 24
-    storel 311, %t178
-    call $nox_raise(l %rt, l %t158, l 311)
+    storel 319, %t178
+    call $nox_raise(l %rt, l %t158, l 319)
     %t179 =w call $nox_exception_pending(l %rt)
     jnz %t179, @exc_propagate142, @exc_continue143
 @exc_propagate142
@@ -8356,10 +8383,10 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
 @exc_continue143
     jmp @if_end106
 @if_end106
-    %t188 =l add $str77, 16
+    %t188 =l add $str78, 16
     %t189 =l loadl %t0
     %t190 =l call $nox_str_concat(l %rt, l %t188, l %t189)
-    %t191 =l add $str78, 16
+    %t191 =l add $str79, 16
     %t192 =l call $nox_str_concat(l %rt, l %t190, l %t191)
     %t193 =w ceql %t190, 0
     jnz %t193, @release_skip154, @release153
@@ -8479,8 +8506,8 @@ export function l $nox_http_request(l %rt, l %p_method, l %p_url, l %p_body, l %
     ret 0
 @exc_continue177
     %t225 =l add %t205, 24
-    storel 312, %t225
-    call $nox_raise(l %rt, l %t205, l 312)
+    storel 320, %t225
+    call $nox_raise(l %rt, l %t205, l 320)
     %t226 =w call $nox_exception_pending(l %rt)
     jnz %t226, @exc_propagate187, @exc_continue188
 @exc_propagate187
@@ -8646,7 +8673,7 @@ export function l $nox_http_put(l %rt, l %p_url, l %p_body, l %p_headers) {
     storel %p_url, %t0
     storel %p_body, %t1
     storel %p_headers, %t2
-    %t3 =l add $str79, 16
+    %t3 =l add $str80, 16
     %t4 =l loadl %t0
     %t5 =l loadl %t1
     %t6 =l loadl %t2
@@ -8669,7 +8696,7 @@ export function l $nox_http_patch(l %rt, l %p_url, l %p_body, l %p_headers) {
     storel %p_url, %t0
     storel %p_body, %t1
     storel %p_headers, %t2
-    %t3 =l add $str80, 16
+    %t3 =l add $str81, 16
     %t4 =l loadl %t0
     %t5 =l loadl %t1
     %t6 =l loadl %t2
@@ -8690,9 +8717,9 @@ export function l $nox_http_delete(l %rt, l %p_url, l %p_headers) {
     %t1 =l alloc8 8
     storel %p_url, %t0
     storel %p_headers, %t1
-    %t2 =l add $str81, 16
+    %t2 =l add $str82, 16
     %t3 =l loadl %t0
-    %t4 =l add $str82, 16
+    %t4 =l add $str83, 16
     %t5 =l loadl %t1
     %t6 =l call $nox_http_request(l %rt, l %t2, l %t3, l %t4, l %t5, l 0)
     %t7 =w call $nox_exception_pending(l %rt)
@@ -8711,9 +8738,9 @@ export function l $nox_http_head(l %rt, l %p_url, l %p_headers) {
     %t1 =l alloc8 8
     storel %p_url, %t0
     storel %p_headers, %t1
-    %t2 =l add $str83, 16
+    %t2 =l add $str84, 16
     %t3 =l loadl %t0
-    %t4 =l add $str84, 16
+    %t4 =l add $str85, 16
     %t5 =l loadl %t1
     %t6 =l call $nox_http_request(l %rt, l %t2, l %t3, l %t4, l %t5, l 0)
     %t7 =w call $nox_exception_pending(l %rt)
@@ -8732,9 +8759,9 @@ export function l $nox_http_options(l %rt, l %p_url, l %p_headers) {
     %t1 =l alloc8 8
     storel %p_url, %t0
     storel %p_headers, %t1
-    %t2 =l add $str85, 16
+    %t2 =l add $str86, 16
     %t3 =l loadl %t0
-    %t4 =l add $str86, 16
+    %t4 =l add $str87, 16
     %t5 =l loadl %t1
     %t6 =l call $nox_http_request(l %rt, l %t2, l %t3, l %t4, l %t5, l 0)
     %t7 =w call $nox_exception_pending(l %rt)
@@ -8788,10 +8815,10 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     %t24 =w ceql %t23, 4
     jnz %t24, @if_then3, @if_end2
 @if_then3
-    %t25 =l add $str87, 16
+    %t25 =l add $str88, 16
     %t26 =l loadl %t0
     %t27 =l call $nox_str_concat(l %rt, l %t25, l %t26)
-    %t28 =l add $str88, 16
+    %t28 =l add $str89, 16
     %t29 =l call $nox_str_concat(l %rt, l %t27, l %t28)
     %t30 =w ceql %t27, 0
     jnz %t30, @release_skip5, @release4
@@ -8880,8 +8907,8 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     ret 0
 @exc_continue28
     %t54 =l add %t42, 24
-    storel 432, %t54
-    call $nox_raise(l %rt, l %t42, l 432)
+    storel 440, %t54
+    call $nox_raise(l %rt, l %t42, l 440)
     %t55 =w call $nox_exception_pending(l %rt)
     jnz %t55, @exc_propagate29, @exc_continue30
 @exc_propagate29
@@ -8893,10 +8920,10 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     %t57 =w ceql %t56, 3
     jnz %t57, @if_then32, @if_end31
 @if_then32
-    %t58 =l add $str89, 16
+    %t58 =l add $str90, 16
     %t59 =l loadl %t0
     %t60 =l call $nox_str_concat(l %rt, l %t58, l %t59)
-    %t61 =l add $str90, 16
+    %t61 =l add $str91, 16
     %t62 =l call $nox_str_concat(l %rt, l %t60, l %t61)
     %t63 =w ceql %t60, 0
     jnz %t63, @release_skip34, @release33
@@ -8985,8 +9012,8 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     ret 0
 @exc_continue57
     %t87 =l add %t75, 24
-    storel 434, %t87
-    call $nox_raise(l %rt, l %t75, l 434)
+    storel 442, %t87
+    call $nox_raise(l %rt, l %t75, l 442)
     %t88 =w call $nox_exception_pending(l %rt)
     jnz %t88, @exc_propagate58, @exc_continue59
 @exc_propagate58
@@ -8998,10 +9025,10 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     %t90 =w ceql %t89, 1
     jnz %t90, @if_then61, @if_end60
 @if_then61
-    %t91 =l add $str91, 16
+    %t91 =l add $str92, 16
     %t92 =l loadl %t0
     %t93 =l call $nox_str_concat(l %rt, l %t91, l %t92)
-    %t94 =l add $str92, 16
+    %t94 =l add $str93, 16
     %t95 =l call $nox_str_concat(l %rt, l %t93, l %t94)
     %t96 =w ceql %t93, 0
     jnz %t96, @release_skip63, @release62
@@ -9090,8 +9117,8 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     ret 0
 @exc_continue86
     %t120 =l add %t108, 24
-    storel 436, %t120
-    call $nox_raise(l %rt, l %t108, l 436)
+    storel 444, %t120
+    call $nox_raise(l %rt, l %t108, l 444)
     %t121 =w call $nox_exception_pending(l %rt)
     jnz %t121, @exc_propagate87, @exc_continue88
 @exc_propagate87
@@ -9099,10 +9126,10 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
 @exc_continue88
     jmp @if_end60
 @if_end60
-    %t122 =l add $str93, 16
+    %t122 =l add $str94, 16
     %t123 =l loadl %t0
     %t124 =l call $nox_str_concat(l %rt, l %t122, l %t123)
-    %t125 =l add $str94, 16
+    %t125 =l add $str95, 16
     %t126 =l call $nox_str_concat(l %rt, l %t124, l %t125)
     %t127 =w ceql %t124, 0
     jnz %t127, @release_skip90, @release89
@@ -9191,8 +9218,8 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
     ret 0
 @exc_continue113
     %t151 =l add %t139, 24
-    storel 437, %t151
-    call $nox_raise(l %rt, l %t139, l 437)
+    storel 445, %t151
+    call $nox_raise(l %rt, l %t139, l 445)
     %t152 =w call $nox_exception_pending(l %rt)
     jnz %t152, @exc_propagate114, @exc_continue115
 @exc_propagate114
@@ -9202,7 +9229,7 @@ export function l $nox_http__open_stream(l %rt, l %p_method, l %p_url, l %p_body
 @if_end0
     %t153 =l loadl %t7
     %t154 =l loadl %t0
-    %t155 =l add $str95, 16
+    %t155 =l add $str96, 16
     %t156 =l call $nox_str_concat(l %rt, l %t154, l %t155)
     %t157 =l loadl %t1
     %t158 =l call $nox_str_concat(l %rt, l %t156, l %t157)
@@ -9294,7 +9321,7 @@ export function l $nox_http_stream(l %rt, l %p_method, l %p_url, l %p_headers, l
     storel %p_timeout_ms, %t4
     storel 0, %t5
     %t6 =l loadl %t3
-    %t7 =l add $str96, 16
+    %t7 =l add $str97, 16
     %t8 =w call $strcmp(l %t6, l %t7)
     %t9 =w cnew %t8, 0
     jnz %t9, @if_then1, @if_end0
@@ -9337,7 +9364,7 @@ export function l $nox_http_stream_upload(l %rt, l %p_method, l %p_url, l %p_hea
     %t7 =w csltl %t5, %t6
     jnz %t7, @if_then1, @if_end0
 @if_then1
-    %t8 =l add $str97, 16
+    %t8 =l add $str98, 16
     %t9 =l call $nox_rc_alloc(l %rt, l 32)
     storel 8, %t9
     %t10 =l add %t9, 8
@@ -9366,8 +9393,8 @@ export function l $nox_http_stream_upload(l %rt, l %p_method, l %p_url, l %p_hea
     ret 0
 @exc_continue8
     %t16 =l add %t9, 24
-    storel 452, %t16
-    call $nox_raise(l %rt, l %t9, l 452)
+    storel 460, %t16
+    call $nox_raise(l %rt, l %t9, l 460)
     %t17 =w call $nox_exception_pending(l %rt)
     jnz %t17, @exc_propagate9, @exc_continue10
 @exc_propagate9
@@ -9377,7 +9404,7 @@ export function l $nox_http_stream_upload(l %rt, l %p_method, l %p_url, l %p_hea
 @if_end0
     %t18 =l loadl %t0
     %t19 =l loadl %t1
-    %t20 =l add $str98, 16
+    %t20 =l add $str99, 16
     %t21 =l loadl %t2
     %t22 =l loadl %t3
     %t23 =l loadl %t4
@@ -9411,11 +9438,11 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t5
     storel 0, %t6
     storel 0, %t7
-    %t8 =l add $str99, 16
-    %t9 =l add $str100, 16
-    %t10 =l add $str101, 16
+    %t8 =l add $str100, 16
+    %t9 =l add $str101, 16
+    %t10 =l add $str102, 16
     %t11 =l call $nox_dict_new(l %rt, w 1)
-    %t12 =l add $str102, 16
+    %t12 =l add $str103, 16
     %t13 =l call $nox_rc_alloc(l %rt, l 56)
     storel 3, %t13
     %t14 =l add %t13, 8
@@ -9480,9 +9507,9 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done13
 @print_done13
     %t30 =l loadl %t1
-    %t31 =l add $str103, 16
-    %t32 =l add $str104, 16
-    %t33 =l add $str105, 16
+    %t31 =l add $str104, 16
+    %t32 =l add $str105, 16
+    %t33 =l add $str106, 16
     %t34 =w call $nox_http_ResponseStream_event(l %rt, l %t30, l %t31, l %t32, l %t33)
     %t35 =w call $nox_exception_pending(l %rt)
     jnz %t35, @exc_propagate14, @exc_continue15
@@ -9499,9 +9526,9 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done18
 @print_done18
     %t36 =l loadl %t1
-    %t37 =l add $str106, 16
-    %t38 =l add $str107, 16
-    %t39 =l add $str108, 16
+    %t37 =l add $str107, 16
+    %t38 =l add $str108, 16
+    %t39 =l add $str109, 16
     %t40 =w call $nox_http_ResponseStream_event(l %rt, l %t36, l %t37, l %t38, l %t39)
     %t41 =w call $nox_exception_pending(l %rt)
     jnz %t41, @exc_propagate19, @exc_continue20
@@ -9518,9 +9545,9 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done23
 @print_done23
     %t42 =l loadl %t1
-    %t43 =l add $str109, 16
-    %t44 =l add $str110, 16
-    %t45 =l add $str111, 16
+    %t43 =l add $str110, 16
+    %t44 =l add $str111, 16
+    %t45 =l add $str112, 16
     %t46 =w call $nox_http_ResponseStream_event(l %rt, l %t42, l %t43, l %t44, l %t45)
     %t47 =w call $nox_exception_pending(l %rt)
     jnz %t47, @exc_propagate24, @exc_continue25
@@ -9537,7 +9564,7 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done28
 @print_done28
     %t48 =l loadl %t1
-    %t49 =l add $str112, 16
+    %t49 =l add $str113, 16
     %t50 =w call $nox_http_ResponseStream_comment(l %rt, l %t48, l %t49)
     %t51 =w call $nox_exception_pending(l %rt)
     jnz %t51, @exc_propagate29, @exc_continue30
@@ -9570,7 +9597,7 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done38
 @print_done38
     %t55 =l loadl %t1
-    %t56 =l add $str113, 16
+    %t56 =l add $str114, 16
     %t57 =w call $nox_http_ResponseStream_send(l %rt, l %t55, l %t56)
     %t58 =w call $nox_exception_pending(l %rt)
     jnz %t58, @exc_propagate39, @exc_continue40
@@ -9630,10 +9657,10 @@ export function w $main(w %argc, l %argv) {
     %t78 =l add %t72, %t77
     %t79 =l loadl %t78
     storel %t79, %t3
-    %t80 =l add $str114, 16
+    %t80 =l add $str115, 16
     %t81 =l loadl %t3
     %t82 =l call $nox_str_concat(l %rt, l %t80, l %t81)
-    %t83 =l add $str115, 16
+    %t83 =l add $str116, 16
     %t84 =l call $nox_str_concat(l %rt, l %t82, l %t83)
     %t85 =w ceql %t82, 0
     jnz %t85, @release_skip55, @release54
@@ -9719,7 +9746,7 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done74
 @print_done74
     %t107 =l loadl %t1
-    %t108 =l add $str116, 16
+    %t108 =l add $str117, 16
     %t109 =w call $nox_http_ResponseStream_send(l %rt, l %t107, l %t108)
     %t110 =w call $nox_exception_pending(l %rt)
     jnz %t110, @exc_propagate75, @exc_continue76
@@ -9741,8 +9768,8 @@ export function w $main(w %argc, l %argv) {
     %t114 =l loadl %t113
     call $printf(l $fmt_int, ..., l %t114)
     %t115 =l loadl %t0
-    %t116 =l add $str117, 16
-    %t117 =l add $str118, 16
+    %t116 =l add $str118, 16
+    %t117 =l add $str119, 16
     %t118 =l call $nox_dict_new(l %rt, w 1)
     call $nox_dict_set(l %rt, l %t118, w 1, w 1, w 0, l %t116, l %t117)
     %t119 =l call $nox_http_HttpRequest_stream(l %rt, l %t115, l 200, l %t118)
@@ -9772,7 +9799,7 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t6
     storel %t119, %t6
     %t124 =l loadl %t6
-    %t125 =l add $str119, 16
+    %t125 =l add $str120, 16
     %t126 =w call $nox_http_ResponseStream_send(l %rt, l %t124, l %t125)
     %t127 =w call $nox_exception_pending(l %rt)
     jnz %t127, @exc_propagate88, @exc_continue89
@@ -9789,7 +9816,7 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done92
 @print_done92
     %t128 =l loadl %t6
-    %t129 =l add $str120, 16
+    %t129 =l add $str121, 16
     %t130 =w call $nox_http_ResponseStream_send(l %rt, l %t128, l %t129)
     %t131 =w call $nox_exception_pending(l %rt)
     jnz %t131, @exc_propagate93, @exc_continue94
@@ -9887,10 +9914,10 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t7
     storel %t177, %t7
     %t182 =l loadl %t7
-    %t183 =l add $str123, 16
-    %t184 =l add $str124, 16
-    %t185 =l add $str125, 16
-    %t186 =l add $str126, 16
+    %t183 =l add $str124, 16
+    %t184 =l add $str125, 16
+    %t185 =l add $str126, 16
+    %t186 =l add $str127, 16
     %t187 =l call $nox_dict_new(l %rt, w 1)
     call $nox_dict_set(l %rt, l %t187, w 1, w 1, w 0, l %t183, l %t184)
     call $nox_dict_set(l %rt, l %t187, w 1, w 1, w 0, l %t185, l %t186)
@@ -9925,11 +9952,11 @@ export function w $main(w %argc, l %argv) {
     %t195 =l loadl %t7
     %t196 =l add %t195, 24
     %t197 =l loadl %t196
-    %t198 =l add $str127, 16
+    %t198 =l add $str128, 16
     %t199 =w call $nox_dict_contains(l %rt, l %t197, w 1, l %t198)
     jnz %t199, @dict_get_ok142, @dict_get_err141
 @dict_get_err141
-    %t200 =l add $str128, 16
+    %t200 =l add $str129, 16
     %t201 =l call $nox_rc_alloc(l %rt, l 32)
     storel 14, %t201
     %t202 =l add %t201, 8
@@ -9987,8 +10014,8 @@ export function w $main(w %argc, l %argv) {
     jmp @release_done155
 @release_done155
     %t214 =l loadl %t7
-    %t215 =l add $str129, 16
-    %t216 =l add $str130, 16
+    %t215 =l add $str130, 16
+    %t216 =l add $str131, 16
     %t217 =l call $nox_dict_new(l %rt, w 1)
     call $nox_dict_set(l %rt, l %t217, w 1, w 1, w 0, l %t215, l %t216)
     %t218 =w call $nox_http_ResponseStream_trailers(l %rt, l %t214, l %t217)
@@ -10015,9 +10042,9 @@ export function w $main(w %argc, l %argv) {
     jmp @print_done163
 @print_done163
     %t221 =l loadl %t0
-    %t222 =l add $str131, 16
+    %t222 =l add $str132, 16
     %t223 =l call $nox_http_HttpRequest_trailer(l %rt, l %t221, l %t222)
-    %t224 =l add $str132, 16
+    %t224 =l add $str133, 16
     %t225 =w call $strcmp(l %t223, l %t224)
     %t226 =w ceqw %t225, 0
     %t227 =w ceql %t223, 0
@@ -10111,7 +10138,7 @@ export function w $main(w %argc, l %argv) {
 @fn_end191
     ret 0
 @list_idx_err98
-    %t137 =l add $str121, 16
+    %t137 =l add $str122, 16
     %t138 =l call $nox_rc_alloc(l %rt, l 32)
     storel 7, %t138
     %t139 =l add %t138, 8
@@ -10146,7 +10173,7 @@ export function w $main(w %argc, l %argv) {
     call $nox_unhandled_exception(l %rt)
     ret 0
 @list_idx_err107
-    %t155 =l add $str122, 16
+    %t155 =l add $str123, 16
     %t156 =l call $nox_rc_alloc(l %rt, l 32)
     storel 7, %t156
     %t157 =l add %t156, 8
@@ -10378,7 +10405,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str133, 16
+    %t9 =l add $str134, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -10493,7 +10520,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str134, 16
+    %t9 =l add $str135, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -10508,7 +10535,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str135, 16
+    %t20 =l add $str136, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -10564,109 +10591,110 @@ data $str29 = { l 1073741824, l 2305843009213693954, b "\n\n", b 0 }
 data $str30 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str31 = { l 1073741824, l 2305843009213694052, b "cannot start a streaming response (already started, invalid status or header, or the client is gone)", b 0 }
 data $str32 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str33 = { l 1073741824, l 2305843009213693964, b "Content-Type", b 0 }
-data $str34 = { l 1073741824, l 2305843009213693984, b "text/event-stream; charset=utf-8", b 0 }
-data $str35 = { l 1073741824, l 2305843009213693965, b "Cache-Control", b 0 }
-data $str36 = { l 1073741824, l 2305843009213693960, b "no-cache", b 0 }
-data $str37 = { l 1073741824, l 2305843009213693969, b "X-Accel-Buffering", b 0 }
-data $str38 = { l 1073741824, l 2305843009213693954, b "no", b 0 }
-data $str39 = { l 1073741824, l 2305843009213693971, b "request timed out: ", b 0 }
-data $str40 = { l 1073741824, l 2305843009213693954, b ": ", b 0 }
-data $str41 = { l 1073741824, l 2305843009213693970, b "stream is closed: ", b 0 }
-data $str42 = { l 1073741824, l 2305843009213694001, b "finish() the upload before reading the response: ", b 0 }
-data $str43 = { l 1073741824, l 2305843009213693986, b "read_chunk needs a positive size: ", b 0 }
-data $str44 = { l 1073741824, l 2305843009213693984, b "could not read the response body", b 0 }
-data $str45 = { l 1073741824, l 2305843009213693970, b "stream is closed: ", b 0 }
-data $str46 = { l 1073741824, l 2305843009213693982, b "this stream is not an upload: ", b 0 }
-data $str47 = { l 1073741824, l 2305843009213693983, b "could not send the request body", b 0 }
-data $str48 = { l 1073741824, l 2305843009213693970, b "stream is closed: ", b 0 }
-data $str49 = { l 1073741824, l 2305843009213693982, b "this stream is not an upload: ", b 0 }
-data $str50 = { l 1073741824, l 2305843009213693979, b "could not finish the upload", b 0 }
-data $str51 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
+data $str33 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str34 = { l 1073741824, l 2305843009213693964, b "Content-Type", b 0 }
+data $str35 = { l 1073741824, l 2305843009213693984, b "text/event-stream; charset=utf-8", b 0 }
+data $str36 = { l 1073741824, l 2305843009213693965, b "Cache-Control", b 0 }
+data $str37 = { l 1073741824, l 2305843009213693960, b "no-cache", b 0 }
+data $str38 = { l 1073741824, l 2305843009213693969, b "X-Accel-Buffering", b 0 }
+data $str39 = { l 1073741824, l 2305843009213693954, b "no", b 0 }
+data $str40 = { l 1073741824, l 2305843009213693971, b "request timed out: ", b 0 }
+data $str41 = { l 1073741824, l 2305843009213693954, b ": ", b 0 }
+data $str42 = { l 1073741824, l 2305843009213693970, b "stream is closed: ", b 0 }
+data $str43 = { l 1073741824, l 2305843009213694001, b "finish() the upload before reading the response: ", b 0 }
+data $str44 = { l 1073741824, l 2305843009213693986, b "read_chunk needs a positive size: ", b 0 }
+data $str45 = { l 1073741824, l 2305843009213693984, b "could not read the response body", b 0 }
+data $str46 = { l 1073741824, l 2305843009213693970, b "stream is closed: ", b 0 }
+data $str47 = { l 1073741824, l 2305843009213693982, b "this stream is not an upload: ", b 0 }
+data $str48 = { l 1073741824, l 2305843009213693983, b "could not send the request body", b 0 }
+data $str49 = { l 1073741824, l 2305843009213693970, b "stream is closed: ", b 0 }
+data $str50 = { l 1073741824, l 2305843009213693982, b "this stream is not an upload: ", b 0 }
+data $str51 = { l 1073741824, l 2305843009213693979, b "could not finish the upload", b 0 }
 data $str52 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
 data $str53 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
-data $str54 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
-data $str55 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
-data $str56 = { l 1073741824, l 2305843009213693953, b "\r", b 0 }
-data $str57 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str58 = { l 1073741824, l 2305843009213693953, b "\n", b 0 }
-data $str59 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str60 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str61 = { l 1073741824, l 2305843009213693953, b "\n", b 0 }
-data $str62 = { l 1073741824, l 2305843009213693972, b "listen failed: port ", b 0 }
-data $str63 = { l 1073741824, l 2305843009213693977, b "IPv6 listen failed: port ", b 0 }
-data $str64 = { l 1073741824, l 2305843009213694012, b "the 'network' capability is not available on this host: GET ", b 0 }
-data $str65 = { l 1073741824, l 2305843009213693968, b "request failed: ", b 0 }
-data $str66 = { l 1073741824, l 2305843009213694013, b "the 'network' capability is not available on this host: POST ", b 0 }
-data $str67 = { l 1073741824, l 2305843009213693968, b "request failed: ", b 0 }
-data $str68 = { l 1073741824, l 2305843009213693956, b "POST", b 0 }
-data $str69 = { l 1073741824, l 2305843009213693955, b "PUT", b 0 }
-data $str70 = { l 1073741824, l 2305843009213693957, b "PATCH", b 0 }
-data $str71 = { l 1073741824, l 2305843009213694008, b "the 'network' capability is not available on this host: ", b 0 }
-data $str72 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str73 = { l 1073741824, l 2305843009213694049, b "invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): ", b 0 }
-data $str74 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str75 = { l 1073741824, l 2305843009213693971, b "request timed out: ", b 0 }
-data $str76 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str77 = { l 1073741824, l 2305843009213693968, b "request failed: ", b 0 }
-data $str78 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str79 = { l 1073741824, l 2305843009213693955, b "PUT", b 0 }
-data $str80 = { l 1073741824, l 2305843009213693957, b "PATCH", b 0 }
-data $str81 = { l 1073741824, l 2305843009213693958, b "DELETE", b 0 }
-data $str82 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str83 = { l 1073741824, l 2305843009213693956, b "HEAD", b 0 }
-data $str84 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str85 = { l 1073741824, l 2305843009213693959, b "OPTIONS", b 0 }
-data $str86 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str87 = { l 1073741824, l 2305843009213694008, b "the 'network' capability is not available on this host: ", b 0 }
-data $str88 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str89 = { l 1073741824, l 2305843009213694049, b "invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): ", b 0 }
-data $str90 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str91 = { l 1073741824, l 2305843009213693971, b "request timed out: ", b 0 }
-data $str92 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str93 = { l 1073741824, l 2305843009213693968, b "request failed: ", b 0 }
-data $str94 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str54 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
+data $str55 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
+data $str56 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
+data $str57 = { l 1073741824, l 2305843009213693953, b "\r", b 0 }
+data $str58 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str59 = { l 1073741824, l 2305843009213693953, b "\n", b 0 }
+data $str60 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str61 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str62 = { l 1073741824, l 2305843009213693953, b "\n", b 0 }
+data $str63 = { l 1073741824, l 2305843009213693972, b "listen failed: port ", b 0 }
+data $str64 = { l 1073741824, l 2305843009213693977, b "IPv6 listen failed: port ", b 0 }
+data $str65 = { l 1073741824, l 2305843009213694012, b "the 'network' capability is not available on this host: GET ", b 0 }
+data $str66 = { l 1073741824, l 2305843009213693968, b "request failed: ", b 0 }
+data $str67 = { l 1073741824, l 2305843009213694013, b "the 'network' capability is not available on this host: POST ", b 0 }
+data $str68 = { l 1073741824, l 2305843009213693968, b "request failed: ", b 0 }
+data $str69 = { l 1073741824, l 2305843009213693956, b "POST", b 0 }
+data $str70 = { l 1073741824, l 2305843009213693955, b "PUT", b 0 }
+data $str71 = { l 1073741824, l 2305843009213693957, b "PATCH", b 0 }
+data $str72 = { l 1073741824, l 2305843009213694008, b "the 'network' capability is not available on this host: ", b 0 }
+data $str73 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str74 = { l 1073741824, l 2305843009213694049, b "invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): ", b 0 }
+data $str75 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str76 = { l 1073741824, l 2305843009213693971, b "request timed out: ", b 0 }
+data $str77 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str78 = { l 1073741824, l 2305843009213693968, b "request failed: ", b 0 }
+data $str79 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str80 = { l 1073741824, l 2305843009213693955, b "PUT", b 0 }
+data $str81 = { l 1073741824, l 2305843009213693957, b "PATCH", b 0 }
+data $str82 = { l 1073741824, l 2305843009213693958, b "DELETE", b 0 }
+data $str83 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str84 = { l 1073741824, l 2305843009213693956, b "HEAD", b 0 }
+data $str85 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str86 = { l 1073741824, l 2305843009213693959, b "OPTIONS", b 0 }
+data $str87 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str88 = { l 1073741824, l 2305843009213694008, b "the 'network' capability is not available on this host: ", b 0 }
+data $str89 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str90 = { l 1073741824, l 2305843009213694049, b "invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): ", b 0 }
+data $str91 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str92 = { l 1073741824, l 2305843009213693971, b "request timed out: ", b 0 }
+data $str93 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str94 = { l 1073741824, l 2305843009213693968, b "request failed: ", b 0 }
 data $str95 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
-data $str96 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str97 = { l 1073741824, l 2305843009213694010, b "content_length must be -1 (chunked) or a non-negative size", b 0 }
-data $str98 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str99 = { l 1073741824, l 2305843009213693955, b "GET", b 0 }
-data $str100 = { l 1073741824, l 2305843009213693959, b "/events", b 0 }
-data $str101 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str102 = { l 1073741824, l 2305843009213693965, b "10.0.0.1:5000", b 0 }
-data $str103 = { l 1073741824, l 2305843009213693955, b "one", b 0 }
-data $str104 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str96 = { l 1073741824, l 2305843009213693953, b " ", b 0 }
+data $str97 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str98 = { l 1073741824, l 2305843009213694010, b "content_length must be -1 (chunked) or a non-negative size", b 0 }
+data $str99 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str100 = { l 1073741824, l 2305843009213693955, b "GET", b 0 }
+data $str101 = { l 1073741824, l 2305843009213693959, b "/events", b 0 }
+data $str102 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str103 = { l 1073741824, l 2305843009213693965, b "10.0.0.1:5000", b 0 }
+data $str104 = { l 1073741824, l 2305843009213693955, b "one", b 0 }
 data $str105 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str106 = { l 1073741824, l 2305843009213693956, b "a\r\nb", b 0 }
-data $str107 = { l 1073741824, l 2305843009213693955, b "msg", b 0 }
-data $str108 = { l 1073741824, l 2305843009213693953, b "7", b 0 }
-data $str109 = { l 1073741824, l 2305843009213693953, b "x", b 0 }
-data $str110 = { l 1073741824, l 2305843009213693960, b "bad\nname", b 0 }
-data $str111 = { l 1073741824, l 2305843009213693956, b "i\r\nd", b 0 }
-data $str112 = { l 1073741824, l 2305843009213693959, b "hb\nbeat", b 0 }
-data $str113 = { l 1073741824, l 2305843009213693955, b "raw", b 0 }
-data $str114 = { l 1073741824, l 2305843009213693953, b "[", b 0 }
-data $str115 = { l 1073741824, l 2305843009213693953, b "]", b 0 }
-data $str116 = { l 1073741824, l 2305843009213693956, b "late", b 0 }
-data $str117 = { l 1073741824, l 2305843009213693964, b "Content-Type", b 0 }
-data $str118 = { l 1073741824, l 2305843009213693962, b "text/plain", b 0 }
-data $str119 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
-data $str120 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
-data $str121 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
+data $str106 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str107 = { l 1073741824, l 2305843009213693956, b "a\r\nb", b 0 }
+data $str108 = { l 1073741824, l 2305843009213693955, b "msg", b 0 }
+data $str109 = { l 1073741824, l 2305843009213693953, b "7", b 0 }
+data $str110 = { l 1073741824, l 2305843009213693953, b "x", b 0 }
+data $str111 = { l 1073741824, l 2305843009213693960, b "bad\nname", b 0 }
+data $str112 = { l 1073741824, l 2305843009213693956, b "i\r\nd", b 0 }
+data $str113 = { l 1073741824, l 2305843009213693959, b "hb\nbeat", b 0 }
+data $str114 = { l 1073741824, l 2305843009213693955, b "raw", b 0 }
+data $str115 = { l 1073741824, l 2305843009213693953, b "[", b 0 }
+data $str116 = { l 1073741824, l 2305843009213693953, b "]", b 0 }
+data $str117 = { l 1073741824, l 2305843009213693956, b "late", b 0 }
+data $str118 = { l 1073741824, l 2305843009213693964, b "Content-Type", b 0 }
+data $str119 = { l 1073741824, l 2305843009213693962, b "text/plain", b 0 }
+data $str120 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
+data $str121 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
 data $str122 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
-data $str123 = { l 1073741824, l 2305843009213693957, b "X-Sum", b 0 }
-data $str124 = { l 1073741824, l 2305843009213693953, b "1", b 0 }
-data $str125 = { l 1073741824, l 2305843009213693963, b "Grpc-Status", b 0 }
-data $str126 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
-data $str127 = { l 1073741824, l 2305843009213693957, b "X-Sum", b 0 }
-data $str128 = { l 1073741824, l 2305843009213693965, b "key not found", b 0 }
-data $str129 = { l 1073741824, l 2305843009213693956, b "late", b 0 }
-data $str130 = { l 1073741824, l 2305843009213693953, b "x", b 0 }
-data $str131 = { l 1073741824, l 2305843009213693957, b "X-Sum", b 0 }
-data $str132 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str123 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
+data $str124 = { l 1073741824, l 2305843009213693957, b "X-Sum", b 0 }
+data $str125 = { l 1073741824, l 2305843009213693953, b "1", b 0 }
+data $str126 = { l 1073741824, l 2305843009213693963, b "Grpc-Status", b 0 }
+data $str127 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
+data $str128 = { l 1073741824, l 2305843009213693957, b "X-Sum", b 0 }
+data $str129 = { l 1073741824, l 2305843009213693965, b "key not found", b 0 }
+data $str130 = { l 1073741824, l 2305843009213693956, b "late", b 0 }
+data $str131 = { l 1073741824, l 2305843009213693953, b "x", b 0 }
+data $str132 = { l 1073741824, l 2305843009213693957, b "X-Sum", b 0 }
 data $str133 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str134 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str135 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str136 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
 data $fmt_lit1 = { b "None", b 0 }
 data $fmt_lit2 = { b "None", b 0 }

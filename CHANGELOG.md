@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.43]
+
+### Eklendi
+
+- **gRPC sunucusunda gerçek çift yönlü akış** (kullanıcı onayıyla): HTTP/2 sunucusu `content-type: application/grpc` taşıyan istekleri gövde bitmeden handler'a verir (WebSocket için var olan `inbound` akış kipinin genellemesi) ve yeni `req.read_chunk(n)` gövdeyi geldikçe iletir (kooperatif bekleme, akış penceresiyle en çok 1 MiB tamponlanır). `nox.grpc_server`: `StreamMethod(path, handler)`, `Call.recv()`/`Call.send()`, `dispatch_all(methods, streams, req)`. İstek ve yanıt mesajları araya girer; akış içi `GrpcStatusError` yanıtı bozmadan duruma çevrilir. grpcio çift yönlü istemcisine karşı iki arka uçta sınanır (her yanıt, sonraki istek gönderilmeden gelir; 200 KB mesaj).
+- **wasm'da gRPC TLS** (`wasm32-freestanding-asyncify`): `nox.grpc` wasm çalışma zamanına bağlandı (`lib_wasm_freestanding.zig`, `wasm_link.zig` konak yetenek dışa aktarımı); `connect_tls` ALPN `h2`, özel CA ve mTLS dosyalarını Node konağının TLS yükseltmesine aktarır (`tcp_host.startTlsMtls`, `nodeTcp({ tlsFiles })`; CLI `--allow-net` ile açar, gömen konakta varsayılan kapalı). Test: `tests/golden/wasm_grpc_tls_driver.mjs` (ALPN `h2` bildiren, istemci sertifikası isteyen Node TLS sunucusu).
+- Bilinen kısıt (yeni değil): `nox.strings.join` NUL baytlı dizelerde güvenilir değildir; ikili gövdeler `+` ile birleştirilir.
+
 ## [2.1.42]
 
 ### Eklendi

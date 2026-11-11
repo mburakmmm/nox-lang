@@ -84,6 +84,40 @@ for backend in ("llvm", "qbe"):
             check(unary(b"gz" * 5000, compression=grpc.Compression.Gzip, timeout=10) == b"gz" * 5000, f"[{backend}] gzip'li istek")
             for i in range(20):
                 check(unary(str(i).encode(), timeout=10) == str(i).encode(), f"[{backend}] ardışık çağrı {i}")
+            # --- gerçek çift yönlü akış: her yanıt, sonraki istek GÖNDERİLMEDEN gelmeli ---
+            bidi = ch.stream_stream("/test.Echo/Bidi", request_serializer=ident, response_deserializer=ident)
+            import queue, threading
+            q = queue.Queue()
+            sentinel = object()
+
+            def requests():
+                while True:
+                    item = q.get()
+                    if item is sentinel:
+                        return
+                    yield item
+
+            call = bidi(requests(), timeout=30)
+            for word in (b"one", b"two", b"three"):
+                q.put(word)
+                reply = next(call)
+                check(reply == b"echo:" + word, f"[{backend}] çift yönlü yanıt {reply!r} (istek {word!r})")
+            big_msg = b"b" * 200000
+            q.put(big_msg)
+            check(next(call) == b"echo:" + big_msg, f"[{backend}] çift yönlü büyük mesaj")
+            q.put(sentinel)
+            check(list(call) == [], f"[{backend}] çift yönlü akış sonu")
+            check(call.code() == grpc.StatusCode.OK, f"[{backend}] çift yönlü durum {call.code()}")
+            # akış ortasında hata: ilk yanıt gelir, sonra durum
+            bidi_fail = ch.stream_stream("/test.Echo/BidiFail", request_serializer=ident, response_deserializer=ident)
+            fcall = bidi_fail(iter([b"x"]), timeout=30)
+            got = []
+            try:
+                for r in fcall:
+                    got.append(r)
+            except grpc.RpcError as e:
+                check(e.code() == grpc.StatusCode.FAILED_PRECONDITION, f"[{backend}] akış içi hata kodu {e.code()}")
+            check(got == [b"first:x"], f"[{backend}] akış içi hata öncesi yanıt {got}")
             ch.close()
         finally:
             # `noxc run` sunucuyu alt süreç olarak başlatır: tüm süreç grubunu öldür (yoksa stderr borusu açık kalır).

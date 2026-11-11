@@ -344,7 +344,13 @@ async function doTcp(req, streams, tcp) {
     const st = streams.get(req.stream);
     if (!st) return err(req.id, 'no such connection');
     try {
-      await st.startTls(req.url);
+      // Seçenekler (`headers`): `alpn=h2`, `ca=<yol>`, `cert=<yol>`, `key=<yol>` satırları (v2.1.44).
+      const opts = {};
+      for (const line of String(req.headers).split('\n')) {
+        const eq = line.indexOf('=');
+        if (eq > 0) opts[line.slice(0, eq)] = line.slice(eq + 1);
+      }
+      await st.startTls(req.url, opts);
       return { id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: emptyBytes };
     } catch (e) {
       return err(req.id, e);
@@ -363,9 +369,10 @@ async function doTcp(req, streams, tcp) {
 }
 
 /** Node'un `net`/`tls` modüllerine dayanan varsayılan TCP sağlayıcısı (bkz. `doTcp`). */
-export async function nodeTcp() {
+export async function nodeTcp({ tlsFiles = false } = {}) {
   const net = await import('node:net');
   const tls = await import('node:tls');
+  const fsmod = await import('node:fs');
   const wrap = (sock0) => {
     let sock = sock0;
     let queue = [];
@@ -418,7 +425,16 @@ export async function nodeTcp() {
         queue[0] = head.subarray(max);
         return head.subarray(0, max);
       },
-      async startTls(servername) {
+      async startTls(servername, opts = {}) {
+        // v2.1.44: ALPN `h2`, özel CA ve istemci sertifikası. Dosyaları host okur ve yalnızca `tlsFiles` izniyle (CLI `--allow-net` ile açar; gömen host varsayılan olarak kapalı).
+        const extra = {};
+        if (opts.alpn) extra.ALPNProtocols = [opts.alpn];
+        if (opts.ca || opts.cert || opts.key) {
+          if (!tlsFiles) throw new Error('TLS certificate files are not allowed by this host');
+          if (opts.ca) extra.ca = fsmod.readFileSync(opts.ca);
+          if (opts.cert) extra.cert = fsmod.readFileSync(opts.cert);
+          if (opts.key) extra.key = fsmod.readFileSync(opts.key);
+        }
         queue = [];
         sock.removeAllListeners('data');
         sock.removeAllListeners('end');
@@ -426,7 +442,14 @@ export async function nodeTcp() {
         sock.removeAllListeners('error');
         const upgraded = await new Promise((resolve, reject) => {
           // Node, IP adresini SNI olarak kabul etmez; IP ile bağlanıldıysa sertifika adı doğrulaması IP SAN'ına göre yapılır.
-          const t = tls.connect(net.isIP(servername) ? { socket: sock } : { socket: sock, servername }, () => resolve(t));
+          const t = tls.connect(net.isIP(servername) ? { socket: sock, ...extra } : { socket: sock, servername, ...extra }, () => {
+            if (opts.alpn && t.alpnProtocol !== opts.alpn) {
+              t.destroy();
+              reject(new Error(`the server did not negotiate ${opts.alpn === 'h2' ? 'HTTP/2' : opts.alpn} (ALPN)`));
+              return;
+            }
+            resolve(t);
+          });
           t.once('error', reject);
         });
         sock = upgraded;
@@ -1106,7 +1129,7 @@ async function nodeMain() {
       vfs = { files: nv.load(), onSave: (snap) => nv.save(snap) };
     }
     const np = netAllow ? netPolicy(netAllow) : null;
-    let tcpImpl = allowNet ? await nodeTcp() : null;
+    let tcpImpl = allowNet ? await nodeTcp({ tlsFiles: true }) : null;
     let procImpl = allowProcess ? await nodeProcess() : null;
     let fetchImpl = allowNet ? globalThis.fetch : null;
     let wsImpl = globalThis.WebSocket;

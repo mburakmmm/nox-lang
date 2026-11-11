@@ -1,0 +1,14 @@
+import nox.grpc
+from nox.grpc import Client, GrpcError
+
+try:
+    c: Client = nox.grpc.connect_tls("localhost", __PORT__, "__CA__", "__CERT__", "__KEY__")
+    print("connected")
+    # Sunucu HTTP/2 konuşmaz: ilk veriyi (HTTP/2 ön eki) görünce bağlantıyı kapatır. Bu çağrı konak olay döngüsünü döndürür (TLS 1.3 istemci uçuşu gider, sunucu el sıkışmayı tamamlar).
+    try:
+        c.unary("/x.Y/Z", "q")
+    except GrpcError as e:
+        print("closed")
+    c.close()
+except GrpcError as e:
+    print("grpc error:", str(e))

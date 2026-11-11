@@ -24,6 +24,8 @@ What a server handler receives.
 | `headers` | `dict[str, str]` | request headers, with the **names as the client wrote them** (`Content-Type`, `User-Agent`, …) — look up with the exact spelling, or loop |
 | `peer_addr` | `str` | the client's `ip:port` (IPv4 `a.b.c.d:port`; IPv6 clients appear as `[::1]:port`) |
 
+`req.read_chunk(n=65536) -> str` reads the body of a **streaming request**: over HTTP/2 a request with `content-type: application/grpc` reaches the handler before its body ends (`req.body` is empty) and the body arrives through `read_chunk` (it waits cooperatively for data and returns `""` when the body is complete). For every other request it returns `""` and the body is in `req.body`.
+
 `HttpRequest(method, target, body, headers, peer_addr="", conn=0)` can be constructed directly, which is how handlers are unit-tested (`conn` is the server's internal connection handle; leave it `0`). Constructor parameters are frozen; new ones are only
 ever added with defaults ([Stability](../apis/stability.md)).
 

@@ -1413,6 +1413,20 @@ export fn nox_http_request_trailer_raw(rt: ?*anyopaque, conn: i64, name: ?[*:0]c
     return str_mod.nox_str_from_bytes(rt, out.items);
 }
 
+/// `req.read_chunk(n)` (v2.1.43): akış kipindeki bir HTTP/2 isteğinin (gRPC) gövdesinden en çok `max` bayt okur. Veri gelene ya da istek bitene dek KOOPERATİF bekler; `""` = gövde bitti.
+/// Akış kipinde olmayan istekler (HTTP/1.1, gövdesi `req.body`de olanlar) için her zaman `""` döner.
+export fn nox_http_request_read_raw(rt: ?*anyopaque, conn: i64, max: i64) callconv(.c) ?[*:0]u8 {
+    const r = requestFromConn(conn) orelse return str_mod.nox_str_from_bytes(rt, "");
+    const hs = r.h2 orelse return str_mod.nox_str_from_bytes(rt, "");
+    if (!hs.ws_mode) return str_mod.nox_str_from_bytes(rt, "");
+    const cap: usize = @intCast(@min(@max(max, 1), 1 << 20));
+    const gpa = r.gpa orelse return str_mod.nox_str_from_bytes(rt, "");
+    const buf = gpa.alloc(u8, cap) catch return str_mod.nox_str_from_bytes(rt, "");
+    defer gpa.free(buf);
+    const n = h2srv.inboundRead(hs, buf) orelse return str_mod.nox_str_from_bytes(rt, "");
+    return str_mod.nox_str_from_bytes(rt, buf[0..n]);
+}
+
 /// Akış açık mı: başlamış, hata almamış, bitirilmemiş ve sunucu kapanmıyor.
 export fn nox_http_respstream_open_raw(conn: i64) callconv(.c) i64 {
     const r = requestFromConn(conn) orelse return 0;

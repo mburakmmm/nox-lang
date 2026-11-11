@@ -2281,6 +2281,8 @@ pub fn build(b: *std.Build) void {
     wasm_options.addOption([]const u8, "threads_net_program_path", "tests/golden/wasm_threads_net_program.nox.in");
     wasm_options.addOption([]const u8, "wasm_host_path", "compiler/wasm_host.mjs");
     wasm_options.addOption([]const u8, "tcp_driver_path", "tests/golden/wasm_tcp_driver.mjs");
+    wasm_options.addOption([]const u8, "grpc_tls_driver_path", "tests/golden/wasm_grpc_tls_driver.mjs");
+    wasm_options.addOption([]const u8, "grpc_tls_program_path", "tests/golden/wasm_grpc_tls_program.nox.in");
     wasm_options.addOption([]const u8, "pg_driver_path", "tests/golden/wasm_pg_driver.mjs");
     wasm_options.addOption([]const u8, "serve_driver_path", "tests/golden/wasm_serve_driver.mjs");
     wasm_options.addOption([]const u8, "pg_program_path", "tests/golden/wasm_pg_program.nox.in");

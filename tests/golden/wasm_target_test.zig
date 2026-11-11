@@ -986,3 +986,23 @@ test "wasm32-freestanding --asyncify: nox.http.serve host sunucusuyla (istek/yan
         },
     }
 }
+
+// v2.1.44: wasm'da `nox.grpc.connect_tls`: ALPN `h2`, özel CA ve istemci sertifikası (mTLS) host TLS'ine aktarılır (sunucu Node `tls`, ALPN `h2` bildirir ve istemci sertifikası ister).
+test "wasm32-freestanding --asyncify: nox.grpc.connect_tls ALPN h2 + ozel CA + istemci sertifikasi host TLS'inde" {
+    const allocator = std.testing.allocator;
+    const res = std.process.run(allocator, std.testing.io, .{
+        .argv = &.{ "node", "--no-warnings", build_options.grpc_tls_driver_path, build_options.noxc_path, build_options.grpc_tls_program_path, build_options.wasm_host_path },
+    }) catch |err| {
+        if (err == error.FileNotFound) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(res.stderr);
+    defer allocator.free(res.stdout);
+    if (res.term != .exited or res.term.exited != 0) {
+        const missing = std.mem.indexOf(u8, res.stderr, "openssl") != null or std.mem.indexOf(u8, res.stderr, "wasm-opt") != null;
+        if (missing) return error.SkipZigTest;
+        std.debug.print("grpc tls surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
+        return error.ProgramFailed;
+    }
+    try std.testing.expectEqualStrings("connected\nclosed\nexit 0\nserver alpn=h2 client=nox-client\n", res.stdout);
+}

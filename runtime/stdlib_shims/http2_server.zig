@@ -95,7 +95,7 @@ pub const Stream = struct {
     /// Genişletilmiş CONNECT (`:protocol`), RFC 8441: yalnızca "websocket" desteklenir.
     protocol: []const u8 = "",
     ws_connect: bool = false,
-    /// WebSocket kipi: istek gövdesi akış olarak `inbound`a girer (handler kendi hızında tüketir), handler istek bitmeden başlar.
+    /// Akış kipi (WebSocket ve gRPC): istek gövdesi akış olarak `inbound`a girer (handler kendi hızında tüketir), handler istek bitmeden başlar.
     ws_mode: bool = false,
     inbound: std.ArrayListUnmanaged(u8) = .empty,
     inbound_off: usize = 0,
@@ -1242,8 +1242,9 @@ fn finishHeaderBlock(c: *Conn, decoder: *h2.Decoder, cs: *ContState) bool {
         s.recv_ended = true;
         s.handler_state = .running;
         go = true;
-    } else if (s.ws_connect) {
-        // WebSocket: istek gövdesi (WS çerçeveleri) sürerken handler HEMEN başlar.
+    } else if (s.ws_connect or isGrpcRequest(s)) {
+        // WebSocket: istek gövdesi (WS çerçeveleri) sürerken handler HEMEN başlar. gRPC (`content-type: application/grpc`, v2.1.43) AYNI akış kipini kullanır: gövde `inbound`a girer,
+        // handler `req.read_chunk` (`inboundRead`) ile kendi hızında okur; böylece istek ve yanıt mesajları araya girebilir (gerçek çift yönlü akış).
         s.ws_mode = true;
         s.handler_state = .running;
         go = true;
@@ -1259,6 +1260,16 @@ fn finishHeaderBlock(c: *Conn, decoder: *h2.Decoder, cs: *ContState) bool {
     if (go) dispatchStream(c, s);
     wake(c);
     return true;
+}
+
+/// `content-type: application/grpc` (ya da `application/grpc+proto` vb.) taşıyan istek mi? Bu istekler gövde bitmeden handler'a verilir (bkz. akış kipi).
+fn isGrpcRequest(s: *Stream) bool {
+    for (s.headers.items) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "content-type")) {
+            return std.ascii.startsWithIgnoreCase(h.value, "application/grpc");
+        }
+    }
+    return false;
 }
 
 /// İstek tamamlandı (başlıklar + gövde): content-length doğrula, handler fiber'ını başlat.
