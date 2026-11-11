@@ -19,6 +19,7 @@ class Base64Error(Exception):
 extern def nox_base64_encode_raw(s: str, url_safe: int) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_base64_check_raw(s: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_base64_decode_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_base64_empty_raw(r: str) -> int from "zig-out/lib/noxrt.o"
 
 # Standart base64 (RFC 4648 §4) — `+`/`/` alfabesi, `=` dolgulu.
 def encode(data: str) -> str:
@@ -33,9 +34,12 @@ def encode_url(data: str) -> str:
 # eder; sondaki tüm `=` işaretleri atılır. Geçersiz karakter ya da
 # geçersiz uzunlukta `Base64Error`.
 def decode(s: str) -> str:
-    code: int = nox_base64_check_raw(s)
-    if code == 1:
-        raise Base64Error("invalid base64 character")
-    if code == 2:
-        raise Base64Error("invalid base64 length")
-    return nox_base64_decode_raw(s)
+    # Tek geçiş: geçersiz girdide çıktı boş döner; yalnız o zaman nedeni sınıflayan ikinci (yavaş) yol çalışır.
+    r: str = nox_base64_decode_raw(s)
+    if nox_base64_empty_raw(r) == 1:
+        code: int = nox_base64_check_raw(s)
+        if code == 1:
+            raise Base64Error("invalid base64 character")
+        if code == 2:
+            raise Base64Error("invalid base64 length")
+    return r

@@ -128,6 +128,24 @@ fn addFreestandingRuntimeChain(
     return obj;
 }
 
+/// v2.1.63: `nox.gzip` macOS ve Linux hedeflerinde libdeflate (MIT, `third_party/libdeflate`) kullanır: sıkıştırma ve açma Zig `std.compress.flate`ten ~2-3x hızlıdır.
+/// WebAssembly, mobil, çıplak çekirdek ve WINDOWS hedeflerinde bağlanmaz (kaynakta `gzip.zig`nin `use_libdeflate` koşuluyla aynı; COFF tek nesneye birden çok nesne gömemez, swap asm'in ayrı
+/// gönderilmesiyle aynı sınır); `zig cc` ile C olarak çalışma zamanı modülüne derlenir.
+fn addLibdeflate(b: *std.Build, mod: *std.Build.Module, arch: std.Target.Cpu.Arch, os_tag: std.Target.Os.Tag) void {
+    if (os_tag != .macos and os_tag != .linux) return;
+    mod.addIncludePath(b.path("third_party/libdeflate"));
+    mod.addIncludePath(b.path("third_party/libdeflate/lib"));
+    const common = [_][]const u8{ "lib/adler32.c", "lib/crc32.c", "lib/deflate_compress.c", "lib/deflate_decompress.c", "lib/gzip_compress.c", "lib/gzip_decompress.c", "lib/utils.c" };
+    const flags = [_][]const u8{ "-O3", "-DNDEBUG", "-fno-sanitize=undefined", "-fno-strict-aliasing" };
+    mod.addCSourceFiles(.{ .root = b.path("third_party/libdeflate"), .files = &common, .flags = &flags });
+    const arch_file: ?[]const u8 = switch (arch) {
+        .x86_64, .x86 => "lib/x86/cpu_features.c",
+        .aarch64, .arm => "lib/arm/cpu_features.c",
+        else => null,
+    };
+    if (arch_file) |f| mod.addCSourceFiles(.{ .root = b.path("third_party/libdeflate"), .files = &.{f}, .flags = &flags });
+}
+
 /// v2.0 madde 8: `addFreestandingRuntimeChain`in hosted karşılığı — SABİT
 /// bir (mimari, OS) çifti İçİn `runtime/lib.zig` kökünden bir runtime
 /// nesnesi zinciri kurar. Windows hedefi KENDİ çapraz-derlenmiş `swap_
@@ -189,6 +207,7 @@ fn addHostedRuntimeChain(
             .{ .name = "diag_sink", .module = diag_sink_mod },
         },
     });
+    addLibdeflate(b, mod, arch, os_tag);
     const swap_src: []const u8 = switch (arch) {
         .aarch64 => "runtime/async_rt/swap_aarch64.S",
         .x86_64 => "runtime/async_rt/swap_x86_64.S",
@@ -761,6 +780,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "diag_sink", .module = diag_sink_mod },
         },
     });
+    if (!is_freestanding) addLibdeflate(b, noxrt_mod, target.result.cpu.arch, target.result.os.tag);
     // Faz 21: `runtime/async_rt/bridge.zig` (Faz 21 aşama 4, `runtime/lib.zig`
     // üzerinden `noxrt_mod`a bağlı), `fiber.zig` aracılığıyla AYNI
     // `nox_swap_context` sembolüne ihtiyaç duyar.
@@ -1383,6 +1403,7 @@ pub fn build(b: *std.Build) void {
         "cc", "-c", "-o", alloc_abi_swap_o_path, alloc_abi_swap_src,
     });
     alloc_abi_test_mod.addObjectFile(b.path(alloc_abi_swap_o_path));
+    addLibdeflate(b, alloc_abi_test_mod, alloc_abi_target.result.cpu.arch, alloc_abi_target.result.os.tag);
     const alloc_abi_test = b.addTest(.{ .root_module = alloc_abi_test_mod });
     // `addFreestandingRuntimeChain`nin AYNI, ÖLÇÜLMÜŞ gerekçesi —
     // `lib_freestanding.zig`nin `printfReal`i x86_64'te (OS'tan BAĞIMSIZ,

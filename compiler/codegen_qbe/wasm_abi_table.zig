@@ -39,6 +39,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_atomic_store", Entry{ .params = "LL", .ret = 'v' } },
     .{ "nox_base64_check_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_base64_decode_raw", Entry{ .params = "PP", .ret = 'P' } },
+    .{ "nox_base64_empty_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_base64_encode_raw", Entry{ .params = "PPL", .ret = 'P' } },
     .{ "nox_bytes_last_ok_raw", Entry{ .params = "", .ret = 'L' } },
     .{ "nox_bytes_str_from_list_raw", Entry{ .params = "PP", .ret = 'P' } },

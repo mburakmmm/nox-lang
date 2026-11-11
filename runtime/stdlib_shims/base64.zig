@@ -92,36 +92,103 @@ pub fn decodedLen(s: []const u8) usize {
     return full + (if (rem == 2) @as(usize, 1) else if (rem == 3) @as(usize, 2) else 0);
 }
 
-/// `check(s) == 0` olmalı; `dst` en az `decodedLen(s)` bayt.
-pub fn decodeInto(dst: []u8, s: []const u8) usize {
+const VEC = 32;
+const VecU8 = @Vector(VEC, u8);
+const VecU32 = @Vector(VEC / 4, u32);
+const VecU5 = @Vector(VEC / 4, u5);
+
+inline fn splat8(x: u8) VecU8 {
+    return @splat(x);
+}
+
+/// 32 base64 baytını 6-bit değerlere çevirir (aralık aritmetiği, tablo yok); `bad` her geçersiz bayt için 0xFF.
+inline fn translate(c: VecU8) struct { v: VecU8, bad: VecU8 } {
+    const is_u = (c >= splat8('A')) & (c <= splat8('Z'));
+    const is_l = (c >= splat8('a')) & (c <= splat8('z'));
+    const is_d = (c >= splat8('0')) & (c <= splat8('9'));
+    const is_62 = (c == splat8('+')) | (c == splat8('-'));
+    const is_63 = (c == splat8('/')) | (c == splat8('_'));
+    var r = c -% splat8(65);
+    r = @select(u8, is_l, c -% splat8(71), r);
+    r = @select(u8, is_d, c +% splat8(4), r);
+    r = @select(u8, is_62, splat8(62), r);
+    r = @select(u8, is_63, splat8(63), r);
+    const ok = is_u | is_l | is_d | is_62 | is_63;
+    return .{ .v = r, .bad = @select(u8, ok, splat8(0), splat8(0xFF)) };
+}
+
+/// 8 grup (32 karakter) -> 24 bayt.
+inline fn packBlock(v: VecU8) @Vector(VEC / 4 * 3, u8) {
+    const w: VecU32 = @bitCast(v);
+    const m: VecU32 = @splat(0x3f);
+    const r = ((w & m) << @as(VecU5, @splat(18))) |
+        (((w >> @as(VecU5, @splat(8))) & m) << @as(VecU5, @splat(12))) |
+        (((w >> @as(VecU5, @splat(16))) & m) << @as(VecU5, @splat(6))) |
+        ((w >> @as(VecU5, @splat(24))) & m);
+    const y: VecU32 = @byteSwap(r << @as(VecU5, @splat(8)));
+    const yb: VecU8 = @bitCast(y);
+    const mask = comptime blk: {
+        var mk: [VEC / 4 * 3]i32 = undefined;
+        for (0..VEC / 4) |g| {
+            mk[g * 3] = @intCast(g * 4);
+            mk[g * 3 + 1] = @intCast(g * 4 + 1);
+            mk[g * 3 + 2] = @intCast(g * 4 + 2);
+        }
+        break :blk mk;
+    };
+    return @shuffle(u8, yb, undefined, mask);
+}
+
+/// Tek geçişte hem çözer hem doğrular (`check(s) == 0` ile AYNI kabul kümesi): geçerliyse yazılan bayt sayısı, değilse `null`.
+/// `dst` en az `decodedLen(s)` bayt olmalı; `null` dönerse `dst` içeriği anlamsızdır.
+pub fn decodeChecked(dst: []u8, s: []const u8) ?usize {
     const n = effLen(s);
+    const full = n / 4 * 4;
     var o: usize = 0;
     var i: usize = 0;
-    while (i + 4 <= n) : (i += 4) {
+    var bad: VecU8 = @splat(0);
+    while (i + VEC <= full) : (i += VEC) {
+        const t = translate(s[i..][0..VEC].*);
+        bad |= t.bad;
+        dst[o..][0 .. VEC / 4 * 3].* = packBlock(t.v);
+        o += VEC / 4 * 3;
+    }
+    var bad_s: u8 = @reduce(.Or, bad);
+    while (i < full) : (i += 4) {
         const v0 = decode_table[s[i]];
         const v1 = decode_table[s[i + 1]];
         const v2 = decode_table[s[i + 2]];
         const v3 = decode_table[s[i + 3]];
+        bad_s |= v0 | v1 | v2 | v3;
         dst[o] = (v0 << 2) | (v1 >> 4);
         dst[o + 1] = (v1 << 4) | (v2 >> 2);
         dst[o + 2] = (v2 << 6) | v3;
         o += 3;
     }
-    const rem = n - i;
+    if (bad_s & 0xC0 != 0) return null; // geçerli değerler < 64; 0xFF = geçersiz
+    const rem = n - full;
+    if (rem == 1) return null;
     if (rem == 2) {
         const v0 = decode_table[s[i]];
         const v1 = decode_table[s[i + 1]];
+        if ((v0 | v1) & 0xC0 != 0) return null;
         dst[o] = (v0 << 2) | (v1 >> 4);
         o += 1;
     } else if (rem == 3) {
         const v0 = decode_table[s[i]];
         const v1 = decode_table[s[i + 1]];
         const v2 = decode_table[s[i + 2]];
+        if ((v0 | v1 | v2) & 0xC0 != 0) return null;
         dst[o] = (v0 << 2) | (v1 >> 4);
         dst[o + 1] = (v1 << 4) | (v2 >> 2);
         o += 2;
     }
     return o;
+}
+
+/// `check(s) == 0` olmalı; `dst` en az `decodedLen(s)` bayt.
+pub fn decodeInto(dst: []u8, s: []const u8) usize {
+    return decodeChecked(dst, s) orelse 0;
 }
 
 pub export fn nox_base64_encode_raw(rt: ?*anyopaque, s: ?[*:0]const u8, url_safe: i64) callconv(.c) ?[*:0]u8 {
@@ -137,12 +204,22 @@ pub export fn nox_base64_check_raw(s: ?[*:0]const u8) callconv(.c) i64 {
     return check(src);
 }
 
+/// Tek geçişli çözme + doğrulama. Geçersiz girdide SABİT BOŞ `str` döner (çağıran `nox_base64_empty_raw` ile ayırır ve nedeni `nox_base64_check_raw` ile sınıflar);
+/// geçerli girdi boş çıktı da verebilir (`""`, `"===="`), bu yüzden boşluk tek başına hata değildir.
 pub export fn nox_base64_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const src = str_mod.nox_str_slice(s orelse return null);
     const n = decodedLen(src);
     const buf = str_mod.nox_str_alloc_buf(rt, n) orelse return null;
-    _ = decodeInto(buf[0..n], src);
+    if (decodeChecked(buf[0..n], src) == null) {
+        str_mod.nox_str_free_now(rt, @ptrCast(buf));
+        return @constCast(str_mod.nox_empty_str());
+    }
     return @ptrCast(buf);
+}
+
+/// `r` bayt uzunluğu 0 ise 1 (NUL baytlı ikili çıktılar için `str ==` kullanılmaz).
+pub export fn nox_base64_empty_raw(r: ?[*:0]const u8) callconv(.c) i64 {
+    return @intFromBool(str_mod.nox_str_slice(r orelse return 1).len == 0);
 }
 
 fn encodeAlloc(a: std.mem.Allocator, src: []const u8, url: bool) ![]u8 {
@@ -210,4 +287,40 @@ test "ikili veri (NUL ve yüksek baytlar) gidiş-dönüş, büyük girdi" {
         try std.testing.expectEqual(src.len, decodeInto(dec, enc));
         try std.testing.expectEqualSlices(u8, src, dec);
     }
+}
+
+test "v2.1.63: tek geçişli decodeChecked SIMD yolu — geçerli büyük girdi ve her konumda geçersiz bayt" {
+    const a = std.testing.allocator;
+    const src = try a.alloc(u8, 3 * 97 + 2); // 32'lik bloklar + skaler artık + dolgulu uç
+    defer a.free(src);
+    for (src, 0..) |*b, i| b.* = @truncate(i *% 40503 >> 3);
+    for ([_]bool{ false, true }) |url| {
+        const enc = try encodeAlloc(a, src, url);
+        defer a.free(enc);
+        const dec = try a.alloc(u8, decodedLen(enc));
+        defer a.free(dec);
+        try std.testing.expectEqual(@as(?usize, src.len), decodeChecked(dec, enc));
+        try std.testing.expectEqualSlices(u8, src, dec);
+        // her konuma geçersiz bayt: tümü reddedilmeli (check ile aynı sınıf: 1)
+        const bad_bytes = [_]u8{ '!', 0x00, 0x80, 0xFF, '@', '[', '`', '{', ':', '.' };
+        var pos: usize = 0;
+        const body = effLen(enc);
+        while (pos < body) : (pos += 1) {
+            const mut = try a.dupe(u8, enc);
+            defer a.free(mut);
+            for (bad_bytes) |bb| {
+                mut[pos] = bb;
+                const out = try a.alloc(u8, decodedLen(mut));
+                defer a.free(out);
+                try std.testing.expectEqual(@as(?usize, null), decodeChecked(out, mut));
+                try std.testing.expectEqual(@as(u8, 1), check(mut));
+            }
+        }
+    }
+    // tek artık karakter = uzunluk hatası; fazla dolgu atılır
+    var out: [16]u8 = undefined;
+    try std.testing.expectEqual(@as(?usize, null), decodeChecked(&out, "Zm9vY"));
+    try std.testing.expectEqual(@as(?usize, 3), decodeChecked(&out, "Zm9v======"));
+    try std.testing.expectEqual(@as(?usize, 0), decodeChecked(&out, ""));
+    try std.testing.expectEqual(@as(?usize, 0), decodeChecked(&out, "===="));
 }

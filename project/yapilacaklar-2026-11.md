@@ -3,7 +3,7 @@
 Tek takip noktası: 2026-11-11 oturumundaki analizlerden çıkan ve konuşulan **tüm işler**. Her iş bittikçe işaretlenir ve sürümü yazılır. Durum: `[ ]` açık, `[x]` bitti (sürümle), `[~]` karar/onay bekliyor, `[-]` yapılmayacak/bayat.
 Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdlib-performans-analizi-2026-11.md`, `project/ffi-performans-analizi-2026-11.md`, `project/wasm-import-kapsam-analizi-2026-11.md`.
 
-**Kullanıcı kararları (2026-11-11):** WASM için seçenek A (kendi Zig yorumlayıcısını MVP'ye tamamla) onaylandı · kusurlar önerilen sırayla düzeltilecek (`%llu` → liste bozulması → `base64`/`upper-lower` Zig'e) · **gzip için yeni bağımlılık YOK** (Zig flate kalır) · bu liste takip aracıdır.
+**Kullanıcı kararları (2026-11-11):** WASM için seçenek A (kendi Zig yorumlayıcısını MVP'ye tamamla) onaylandı · kusurlar önerilen sırayla düzeltilecek (`%llu` → liste bozulması → `base64`/`upper-lower` Zig'e) · ~~gzip için yeni bağımlılık YOK~~ (2026-11-11 sonradan geri alındı: libdeflate eklendi, v2.1.63) · bu liste takip aracıdır.
 
 ## 0. Tamamlananlar (analiz turu)
 
@@ -40,14 +40,14 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **2.3** `csv.parse` Zig'e (24.8 → 6.1 ms, 0.34x) — **v2.1.61**; `strings.replace` 1.35x: iki geçişli tarama sınırlı, kabul edildi (CPython tek geçiş memchr)
 - [x] **2.4** `json` parse 34.2 → 16.9 ms (0.91x), dump 27.2 → 18.3 ms (1.14x) — doğrudan düğüm ayrıştırıcı + Zig dump — **v2.1.61**
 - [x] **2.5** `regex` find_all 1.72 → 1.32x, replace 1.54 → 1.15x (ASCII bitmap + ilk-bayt ön süzgeci) — **v2.1.61**
-- [-] **2.6** `gzip` (2.5x/3.4x) — **yeni bağımlılık eklenmeyecek** (kullanıcı kararı); Zig flate kalır. İsteğe bağlı: bağımlılıksız ince ayar (düzey/tampon)
+- [x] **2.6** `gzip` libdeflate ile (kullanıcı kararı 2026-11-11: gerekirse bağımlılık) — sıkıştırma ≈16.5 → 2.6 ms (0.39x), açma 0.9 ms (0.98x) — **v2.1.63**; Windows/wasm/mobil/çıplak çekirdek Zig flate'te
 - [x] **2.7** Eksik modül adayları: kullanıcı seçimi (2026-11-11): bigint+decimal/fraction, argparse, tempfile+glob/fnmatch, zip/tar/zstd+md5/sha3/blake3 (aşağıda 2.10-2.13); `XML/HTML`, `Mutex/Semaphore`, `.env/ini` istenmedi
 - [ ] **2.10** `nox.bigint` + `nox.decimal`/`nox.fraction` (keyfi hassasiyet; bağımlılıksız, Zig std.math.big)
 - [ ] **2.11** `nox.argparse` (komut satırı ayrıştırıcı)
 - [ ] **2.12** `nox.tempfile` + `nox.glob`/`fnmatch`
 - [ ] **2.13** `zip`/`tar`/`zstd`(yalnız açma: Zig std yalnız açar) arşiv/sıkıştırma + `md5`/`sha3`/`blake3` özetleri (Zig std.crypto; yeni bağımlılık YOK)
 - [x] **2.9** Büyük tahsis maliyeti: tam-eşit-boyutlu büyük blok önbelleği + SIMD ASCII taraması — **v2.1.60** (1 MB concat+len 0.36 → 0.10 ms; upper/lower/trim 55 → 5.4 ms)
-- [x] **2.8** Yeniden ölçüm (v2.1.61): geometrik ortalama **0.68**; ≤ 1.5x hedefi: gzip 2.5x/2.2x (bağımlılık yok kararı) ve base64.decode 2.0x dışında sağlandı. (base64.decode için ayrı kalem olarak SIMD arama eklenebilir)
+- [x] **2.8** Yeniden ölçüm (v2.1.61): geometrik ortalama **0.68**; ≤ 1.5x hedefi: gzip 2.5x/2.2x (bağımlılık yok kararı) ve base64.decode 2.0x dışında sağlandı. (base64.decode SIMD tek geçişe alındı: 2.6 → 1.2 ms, 0.91x — v2.1.63; yeniden ölçüm geometrik ortalama 0.58)
 
 ## 3. FFI (rapor: ffi-performans-analizi)
 

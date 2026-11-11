@@ -43,3 +43,4 @@ not gzip
 
 - `nox.http` decompresses gzip and deflate response bodies automatically; use this module for your own data.
 - Whole inputs are processed in memory.
+- On macOS and Linux the codec is [libdeflate](https://github.com/ebiggers/libdeflate) (vendored, MIT); other targets use Zig's `std.compress.flate`. Output is standard gzip either way.

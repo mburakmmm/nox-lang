@@ -1,6 +1,7 @@
 # v2.1.62: lowlevel `ptr_of(liste) -> ptr[T]` — list[T] veri işaretçisi (sıfır-kopya FFI). Okuma/yazma, tüm desteklenen eleman türleri, libc ile gerçek sıfır-kopya çağrı.
 extern def memset(p: ptr, c: int, n: int) -> ptr from "c"
-extern def memcmp(a: ptr, b: ptr, n: int) -> int from "c"
+# memcmp C'de `int` (32 bit) döner: 64 bitlik `int` bildirmek üst yarıyı tanımsız bırakır (Linux'ta -255 pozitif görünür) — i32 bildirilir.
+extern def memcmp(a: ptr, b: ptr, n: int) -> i32 from "c"
 
 xs: list[int] = [10, 20, 30, 40]
 fs: list[float] = [1.5, 2.5, 3.5]
@@ -38,8 +39,10 @@ lowlevel:
 
     # Gerçek sıfır-kopya FFI: libc memset doğrudan listenin belleğine yazar; memcmp iki listeyi karşılaştırır.
     _m: ptr = memset(ptr_from_int(ptr_to_int(ptr_of(ys))), 255, 4)
-    print(memcmp(ptr_from_int(ptr_to_int(ptr_of(zs))), ptr_from_int(ptr_to_int(ptr_of(ys))), 4) < 0)
-    print(memcmp(ptr_from_int(ptr_to_int(ptr_of(ys))), ptr_from_int(ptr_to_int(ptr_of(ys))), 4))
+    lt: i32 = memcmp(ptr_from_int(ptr_to_int(ptr_of(zs))), ptr_from_int(ptr_to_int(ptr_of(ys))), 4)
+    print(lt < i32(0))
+    eq: i32 = memcmp(ptr_from_int(ptr_to_int(ptr_of(ys))), ptr_from_int(ptr_to_int(ptr_of(ys))), 4)
+    print(eq)
 
 print(xs[1])
 print(fs[0])

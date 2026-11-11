@@ -106,7 +106,62 @@ fn bareRun(allocator: std.mem.Allocator, data: []const u8, compress: bool) ![]u8
     return job.result orelse error.OutOfMemory;
 }
 
+// v2.1.63: macOS ve Linux'ta sıkıştırma/açma libdeflate ile (`third_party/libdeflate`, MIT; build.zig `addLibdeflate`). Durum yığında DEĞİL libdeflate'in kendi öbek tahsisindedir, yani fiber
+// yığını sorunu (aşağıdaki iş parçacığı/mini-fiber yolları) bu yolda yoktur. Diğer hedefler (Windows, WASM, mobil, çıplak çekirdek) Zig `std.compress.flate` yolunu kullanır.
+const use_libdeflate = (builtin.os.tag == .macos or builtin.os.tag == .linux) and !builtin.abi.isAndroid() and !builtin.cpu.arch.isWasm();
+const ld = if (use_libdeflate) struct {
+    const Compressor = opaque {};
+    const Decompressor = opaque {};
+    extern fn libdeflate_alloc_compressor(level: c_int) ?*Compressor;
+    extern fn libdeflate_free_compressor(c: *Compressor) void;
+    extern fn libdeflate_gzip_compress_bound(c: *Compressor, in_nbytes: usize) usize;
+    extern fn libdeflate_gzip_compress(c: *Compressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize) usize;
+    extern fn libdeflate_alloc_decompressor() ?*Decompressor;
+    extern fn libdeflate_free_decompressor(d: *Decompressor) void;
+    extern fn libdeflate_gzip_decompress_ex(d: *Decompressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize, actual_in_nbytes_ret: ?*usize, actual_out_nbytes_ret: ?*usize) c_int;
+    const SUCCESS: c_int = 0;
+    const BAD_DATA: c_int = 1;
+    const INSUFFICIENT_SPACE: c_int = 3;
+} else struct {};
+
+/// Bellek bombasına karşı üst sınır: açılmış çıktı 2 GiB'i geçerse hata (eski Zig yolunda sınır yoktu).
+const MAX_DECOMPRESSED: usize = 2 * 1024 * 1024 * 1024;
+
+fn ldCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    const c = ld.libdeflate_alloc_compressor(6) orelse return error.OutOfMemory; // 6 = eski `.default` ile aynı düzey
+    defer ld.libdeflate_free_compressor(c);
+    const bound = ld.libdeflate_gzip_compress_bound(c, data.len);
+    const out = try allocator.alloc(u8, bound);
+    errdefer allocator.free(out);
+    const n = ld.libdeflate_gzip_compress(c, data.ptr, data.len, out.ptr, out.len);
+    if (n == 0) return error.OutOfMemory;
+    return allocator.realloc(out, n) catch out[0..n];
+}
+
+fn ldDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    const d = ld.libdeflate_alloc_decompressor() orelse return error.OutOfMemory;
+    defer ld.libdeflate_free_decompressor(d);
+    // İlk tahmin: gzip alt bilgisindeki ISIZE (son 4 bayt, mod 2^32), en fazla deflate'in teorik oranı (1032:1) kadar; yetmezse iki katına çıkarılır.
+    var guess: usize = 64 * 1024;
+    if (data.len >= 18) {
+        const isize_hint: usize = std.mem.readInt(u32, data[data.len - 4 ..][0..4], .little);
+        guess = @max(@min(isize_hint, data.len * 1032), 64);
+    }
+    var cap: usize = @min(guess + 1, MAX_DECOMPRESSED);
+    while (true) {
+        const out = try allocator.alloc(u8, cap);
+        var actual_out: usize = 0;
+        const rc = ld.libdeflate_gzip_decompress_ex(d, data.ptr, data.len, out.ptr, out.len, null, &actual_out);
+        if (rc == ld.SUCCESS) return allocator.realloc(out, actual_out) catch out[0..actual_out];
+        allocator.free(out);
+        if (rc != ld.INSUFFICIENT_SPACE) return error.BadGzipData;
+        if (cap >= MAX_DECOMPRESSED) return error.OutOfMemory;
+        cap = @min(cap *| 2, MAX_DECOMPRESSED);
+    }
+}
+
 pub fn gzipCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    if (comptime use_libdeflate) return ldCompress(allocator, data);
     if (comptime scratch_util.bare_kernel) return bareRun(allocator, data, true);
     if (comptime builtin.single_threaded or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) {
         return gzipCompressInline(allocator, data);
@@ -131,6 +186,7 @@ fn gzipCompressInline(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
 }
 
 pub fn gzipDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    if (comptime use_libdeflate) return ldDecompress(allocator, data);
     if (comptime scratch_util.bare_kernel) return bareRun(allocator, data, false);
     return gzipDecompressInline(allocator, data);
 }
@@ -233,7 +289,6 @@ pub export fn nox_bytes_str_from_list_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque
     return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
-
 const FiberHarness = struct {
     var ok: bool = false;
     var main_ctx: fiber_mod.Context = .{};
@@ -259,4 +314,55 @@ test "gzipCompress/gzipDecompress work from a real fiber stack" {
     fiber.resume_(&FiberHarness.main_ctx);
     try std.testing.expect(fiber.finished);
     try std.testing.expect(FiberHarness.ok);
+}
+
+test "v2.1.63: libdeflate ile sıkıştırılan, Zig std.compress.flate ile açılır ve tersi (çapraz uyumluluk)" {
+    if (!use_libdeflate) return error.SkipZigTest;
+    const a = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x6A17);
+    const rand = prng.random();
+    const sizes = [_]usize{ 0, 1, 2, 17, 255, 4096, 65536, 300_000, 2_000_000 };
+    for (sizes) |n| {
+        const data = try a.alloc(u8, n);
+        defer a.free(data);
+        // yarı tekrarlı, yarı rastgele
+        for (data, 0..) |*b, i| b.* = if ((i / 97) % 2 == 0) @truncate(i *% 31) else rand.int(u8);
+        // libdeflate -> std flate
+        const z = try ldCompress(a, data);
+        defer a.free(z);
+        const back = try gzipDecompressInline(a, z);
+        defer a.free(back);
+        try std.testing.expectEqualSlices(u8, data, back);
+        // std flate -> libdeflate
+        const z2 = try gzipCompressInline(a, data);
+        defer a.free(z2);
+        const back2 = try ldDecompress(a, z2);
+        defer a.free(back2);
+        try std.testing.expectEqualSlices(u8, data, back2);
+    }
+}
+
+test "v2.1.63: libdeflate açma — bozuk veri hata verir, ISIZE yalanı (büyük/küçük) doğru sonuç ya da hata verir, çıktı sınırı" {
+    if (!use_libdeflate) return error.SkipZigTest;
+    const a = std.testing.allocator;
+    const text = "gzip " ** 50_000;
+    const z = try ldCompress(a, text);
+    defer a.free(z);
+    // bozuk CRC / kesik girdi
+    var bad = try a.dupe(u8, z);
+    defer a.free(bad);
+    bad[bad.len - 6] ^= 0xFF;
+    try std.testing.expectError(error.BadGzipData, ldDecompress(a, bad));
+    try std.testing.expectError(error.BadGzipData, ldDecompress(a, z[0 .. z.len / 2]));
+    try std.testing.expectError(error.BadGzipData, ldDecompress(a, "not gzip at all, not gzip at all"));
+    // ISIZE alanını küçük/büyük yalanla değiştir: sonuç yine doğru ya da hata (asla taşma/çökme)
+    for ([_]u32{ 0, 1, 10, 0xFFFFFFFF }) |fake| {
+        var lie = try a.dupe(u8, z);
+        defer a.free(lie);
+        std.mem.writeInt(u32, lie[lie.len - 4 ..][0..4], fake, .little);
+        if (ldDecompress(a, lie)) |out| {
+            defer a.free(out);
+            try std.testing.expectEqualStrings(text, out);
+        } else |_| {}
+    }
 }

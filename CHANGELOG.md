@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.63]
+
+### Değişti
+
+- **`nox.gzip` libdeflate ile (kullanıcı kararı: gerekirse bağımlılık):** macOS/Linux'ta sıkıştırma 11.9 → **2.6 ms**, açma 2.0 → **0.9 ms** (4 MiB; CPython zlib 6.6 / 0.9). `third_party/libdeflate` v1.23 (MIT, değiştirilmemiş, SBOM'da); Windows, wasm, mobil ve çıplak çekirdek Zig `flate`te kalır. Çıktı standart gzip: iki yönde Zig flate ile çapraz doğrulanır.
+- **`nox.base64.decode` tek geçişli SIMD:** doğrulama ve çözme birleşti (tablosuz aralık aritmetiği, 32 bayt/blok); 4 MiB çözme 2.6 → **1.2 ms** (CPython 1.3). Hata mesajları ve sınıflama (`invalid base64 character`/`length`) aynı.
+- Stdlib karşılaştırması: geometrik ortalama nox/python 0.68 → **0.58**; ≤ 1.5x hedefinin dışında kalan kalem yok.
+
+### Düzeltildi
+
+- CI: `ptr_of_zero_copy` golden'ı Linux ve Windows'ta kırmızıydı (v2.1.62): `memcmp` C'de 32 bitlik `int` döner, fixture 64 bitlik `int` bildirdiği için üst yarı tanımsızdı (macOS'ta tesadüfen işaret genişletiliyordu); dönüş tipi `i32` yapıldı. riscv64 qemu-user işi: yeni Ubuntu imajında `qemu-user-static` paketi yok, `qemu-user`a düşülür.
+- `memset_pattern16` (Apple clang'ın libdeflate'te ürettiği libc çağrısı) ayrılmış sembol listesine eklendi.
+
 ## [2.1.62]
 
 ### Eklendi

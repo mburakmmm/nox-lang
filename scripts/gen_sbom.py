@@ -27,6 +27,7 @@ def find(pattern: str, text: str, what: str) -> str:
 
 def build(version: str) -> dict:
     sqlite = find(r'#define SQLITE_VERSION\s+"([^"]+)"', read("third_party/sqlite/sqlite3.h"), "SQLite sürümü")
+    libdeflate = find(r"tag \*\*v([0-9.]+)\*\*", read("third_party/libdeflate/NOX_VENDOR.md"), "libdeflate sürümü")
     qbe_script = read("scripts/build_qbe.sh")
     qbe_version = find(r'version="([^"]+)"', qbe_script, "QBE sürümü")
     qbe_sha = find(r'sha256="([0-9a-f]{64})"', qbe_script, "QBE sağlama toplamı")
@@ -57,6 +58,18 @@ def build(version: str) -> dict:
             "comment": "Amalgamation, depoda third_party/sqlite altında; yalnızca WASM hedeflerinin çalışma zamanına bağlanır.",
         },
         {
+            "SPDXID": "SPDXRef-Package-libdeflate",
+            "name": "libdeflate",
+            "versionInfo": libdeflate,
+            "supplier": "Person: Eric Biggers",
+            "downloadLocation": "https://github.com/ebiggers/libdeflate",
+            "filesAnalyzed": False,
+            "licenseConcluded": "MIT",
+            "licenseDeclared": "MIT",
+            "copyrightText": "Copyright 2016 Eric Biggers",
+            "comment": "Değiştirilmemiş kaynak, depoda third_party/libdeflate altında; yalnızca macOS/Linux masaüstü çalışma zamanının nox.gzip yolunda derlenir.",
+        },
+        {
             "SPDXID": "SPDXRef-Package-qbe",
             "name": "qbe",
             "versionInfo": qbe_version,
@@ -83,7 +96,7 @@ def build(version: str) -> dict:
         },
     ]
     rels = [{"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-Package-nox-lang"}]
-    for name in ("sqlite", "qbe", "zig"):
+    for name in ("sqlite", "libdeflate", "qbe", "zig"):
         rels.append({"spdxElementId": "SPDXRef-Package-nox-lang", "relationshipType": "CONTAINS", "relatedSpdxElement": f"SPDXRef-Package-{name}"})
     return {
         "spdxVersion": "SPDX-2.3",
