@@ -37,7 +37,8 @@ nox.http.serve(50051, handle)
 | `dispatch_all(methods, streams, req) -> HttpResponse` | like `dispatch` with both tables |
 | `dispatch_full(methods, streams, ctxs, req, compress_replies=False) -> HttpResponse` | all three tables; `compress_replies=True` gzips replies for clients that accept it |
 | `dispatch(methods, req) -> HttpResponse` | runs the call for a `nox.http` handler: finds the method, calls the handler with the request messages, sends the reply messages and the `grpc-status` trailer |
-| `parse_messages(body) -> list[str]`, `frame(message) -> str` | the length-prefixed message framing, for tests and custom handlers |
+| `parse_messages(body) -> list[str]`, `frame(message) -> str`, `frame_gzip(message) -> str` | the length-prefixed message framing (`frame_gzip` compresses the message with gzip and sets the compressed flag), for tests and custom handlers |
+| `parse_timeout_ms(value) -> int` | parses a `grpc-timeout` header value (`5S`, `100m`, `2H`, units `H M S m u n`) into milliseconds; `0` if absent or malformed |
 
 A handler receives **all request messages** (one for a unary or server-streaming method, several for client streaming) and returns **all reply messages** (one for unary or client streaming, several for server streaming). Raise `GrpcStatusError(code, "message")` to
 return a status other than `OK`; the message is percent-encoded for you. A method that is not in the table answers `UNIMPLEMENTED` (12). A gzip-compressed request message is decompressed; replies are compressed only when you ask (see below).

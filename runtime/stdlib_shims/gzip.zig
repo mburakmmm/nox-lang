@@ -193,20 +193,31 @@ pub export fn nox_bytes_str_from_list_raw(rt: ?*anyopaque, list_ptr: ?*anyopaque
     return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
-fn smallStackRoundTrip(ok: *bool) void {
-    const data = "gzip on a fiber-sized stack " ** 40;
-    const z = gzipCompress(std.heap.page_allocator, data) catch return;
-    defer std.heap.page_allocator.free(z);
-    const back = gzipDecompress(std.heap.page_allocator, z) catch return;
-    defer std.heap.page_allocator.free(back);
-    ok.* = std.mem.eql(u8, back, data);
-}
+const fiber_mod = @import("../async_rt/fiber.zig");
 
-// v2.1.44: fiber yığınından (192 KiB) küçük bir yığında bile sıkıştırma çalışır (iş büyük yığınlı bir iş parçacığına taşınır); öncesinde SIGBUS veriyordu.
-test "gzipCompress works from a fiber-sized (192 KiB) stack" {
+const FiberHarness = struct {
+    var ok: bool = false;
+    var main_ctx: fiber_mod.Context = .{};
+
+    fn entry(arg: *anyopaque) void {
+        _ = arg;
+        const data = "gzip on a fiber stack " ** 40;
+        const z = gzipCompress(std.heap.page_allocator, data) catch return;
+        defer std.heap.page_allocator.free(z);
+        const back = gzipDecompress(std.heap.page_allocator, z) catch return;
+        defer std.heap.page_allocator.free(back);
+        ok = std.mem.eql(u8, back, data);
+    }
+};
+
+// v2.1.44: sıkıştırma GERÇEK bir fiber yığınında (192 KiB, koruma sayfalı) çalışır: iş büyük yığınlı bir iş parçacığına taşınır; öncesinde yığın korumasına çarpıp SIGBUS veriyordu.
+// (Önceki sürümdeki 192 KiB'lık `std.Thread` yığını Linux'ta `pthread_create` EINVAL verdiğinden — thread-local alanı sığmıyor — test gerçek fiber ile yazıldı.)
+test "gzipCompress/gzipDecompress work from a real fiber stack" {
     if (builtin.single_threaded) return error.SkipZigTest;
-    var ok = false;
-    const t = try std.Thread.spawn(.{ .stack_size = 192 * 1024 }, smallStackRoundTrip, .{&ok});
-    t.join();
-    try std.testing.expect(ok);
+    FiberHarness.ok = false;
+    const fiber = try fiber_mod.Fiber.create(std.heap.page_allocator, FiberHarness.entry, undefined);
+    defer fiber.destroy();
+    fiber.resume_(&FiberHarness.main_ctx);
+    try std.testing.expect(fiber.finished);
+    try std.testing.expect(FiberHarness.ok);
 }

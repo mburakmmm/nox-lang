@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.49]
+
+### Düzeltildi
+
+- **CI / Linux (x86-64 ve aarch64):** v2.1.44'te eklenen gzip birim testi 192 KiB yığınlı bir `std.Thread` açıyordu; Linux'ta `pthread_create` `EINVAL` verip testi düşürüyordu (thread-local alanı o yığına sığmıyor). Test artık GERÇEK bir fiber yığınında (192 KiB, koruma sayfalı) sıkıştırma + açma gidiş-dönüşü yapıyor.
+- **CI / Dokümanlar:** `docs/stdlib/grpc_server.md` `parse_timeout_ms` ve `frame_gzip`'i belgelemiyordu (stdlib kapsam denetimi kırmızıydı).
+
 ## [2.1.48]
 
 ### Eklendi
