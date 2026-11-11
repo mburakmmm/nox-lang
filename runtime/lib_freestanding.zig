@@ -258,6 +258,12 @@ fn printfReal(f: [*:0]const u8, ap_ptr: *std.builtin.VaList) usize {
             const v = @cVaArg(ap_ptr, i64);
             const written = std.fmt.bufPrint(buf[pos..], "{d}", .{v}) catch break;
             pos += written.len;
+        } else if (f[i] == '%' and f[i + 1] == 'l' and f[i + 2] == 'l' and f[i + 3] == 'u') {
+            // v2.1.53: unsigned (`u8..u64`, `fixed_int`) yazdırma — codegen `$fmt_uint`/`$fmt_uint_frag` (`%llu`) üretir; öncesinde literal "%llu" basılıyordu.
+            i += 3;
+            const v = @cVaArg(ap_ptr, u64);
+            const written = std.fmt.bufPrint(buf[pos..], "{d}", .{v}) catch break;
+            pos += written.len;
         } else if (f[i] == '%' and f[i + 1] == 'g') {
             i += 1;
             const v = @cVaArg(ap_ptr, f64);

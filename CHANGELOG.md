@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.53]
+
+### Düzeltildi
+
+- **Freestanding: unsigned yazdırma.** Serbest-standing `printf` yorumlayıcısı yalnızca `%lld`, `%g`, `%s` biliyordu; codegen'in `u8..u64`/`fixed_int` için ürettiği `%llu` literal olarak basılıyordu (QEMU ölçümünde 16 fixture). `printfReal` artık `%llu` işliyor; dogfood korpusuna (hosted ile QEMU'nun aynı çıktıyı vermesi şart) unsigned yazdırma eklendi. (`project/yapilacaklar-2026-11.md` 1.1)
+
+### Eklendi
+
+- `project/yapilacaklar-2026-11.md`: analizlerden çıkan tüm işlerin işaretli takip listesi (AGENTS.md §0'dan bağlı).
+
 ## [2.1.52]
 
 ### Eklendi
