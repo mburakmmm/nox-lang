@@ -213,7 +213,7 @@ def connect(host: str, port: int) -> Client:
         raise GrpcError("could not connect to " + host + ":" + str(port) + ": " + msg)
     return Client(host, port, h)
 
-# TLS (ALPN `h2`) üzerinden bağlanır. `cert_file` + `key_file` (PEM; ECDSA P-256/P-384 ya da Ed25519 anahtar, RSA desteklenmez) verilirse sunucu istemci sertifikası isterse (mTLS) sunulur. `ca_file` boşsa sistem CA deposu, doluysa (PEM yolu) yalnızca o dosyadaki CA'lar güvenilir sayılır; sunucu adı sertifikaya karşı doğrulanır.
+# TLS (ALPN `h2`) üzerinden bağlanır. `cert_file` + `key_file` (PEM; ECDSA P-256/P-384, Ed25519 ya da RSA anahtar; parolasız) verilirse sunucu istemci sertifikası isterse (mTLS) sunulur. `ca_file` boşsa sistem CA deposu, doluysa (PEM yolu) yalnızca o dosyadaki CA'lar güvenilir sayılır; sunucu adı sertifikaya karşı doğrulanır.
 def connect_tls(host: str, port: int, ca_file: str = "", cert_file: str = "", key_file: str = "") -> Client:
     h: ptr = nox_grpc_open_tls_raw(host, port, ca_file, cert_file, key_file)
     if nox_grpc_is_null_raw(h) != 0:

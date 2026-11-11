@@ -84,13 +84,15 @@ try:
                     if r.returncode != 0 or r.stdout != texpected or r.stderr.strip():
                         print(f"[tls {backend}] beklenmeyen sonuç (çıkış {r.returncode})\n--- stdout\n{r.stdout}\n--- stderr\n{r.stderr}\n--- beklenen\n{texpected}")
                         sys.exit(1)
-                # --- mTLS: sunucu istemci sertifikası ister (--tls-auth-clients yes); ECDSA P-256, P-384 ve Ed25519 istemci anahtarları ---
+                # --- mTLS: sunucu istemci sertifikası ister (--tls-auth-clients yes); ECDSA P-256/P-384, Ed25519 ve RSA-PSS (2048/4096 bit) istemci anahtarları ---
                 mtemplate = open(os.path.join(ROOT, "tests/golden/redis_mtls_program.nox.in")).read()
                 mexpected = open(os.path.join(ROOT, "tests/golden/redis_mtls_program.expected")).read()
                 kinds = {
                     "p256": ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1"],
                     "p384": ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:secp384r1"],
                     "ed25519": ["-newkey", "ed25519"],
+                    "rsa2048": ["-newkey", "rsa:2048"],
+                    "rsa4096": ["-newkey", "rsa:4096"],
                 }
                 for kind, keyargs in kinds.items():
                     ckey, ccert = os.path.join(tdir, f"c_{kind}.key"), os.path.join(tdir, f"c_{kind}.crt")

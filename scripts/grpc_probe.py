@@ -97,12 +97,14 @@ if shutil.which("openssl"):
                 rc = 1
         tserver.stop(0)
 
-        # --- mTLS: sunucu istemci sertifikası ister; ECDSA P-256 ve P-384 istemci anahtarları ---
+        # --- mTLS: sunucu istemci sertifikası ister; ECDSA P-256/P-384 ve RSA-PSS (2048/3072 bit) istemci anahtarları ---
         mtemplate = open(os.path.join(ROOT, "tests/golden/grpc_mtls_program.nox.in")).read()
         mexpected = open(os.path.join(ROOT, "tests/golden/grpc_mtls_program.expected")).read()
         key_kinds = {
             "p256": ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1"],
             "p384": ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:secp384r1"],
+            "rsa2048": ["openssl", "req", "-x509", "-newkey", "rsa:2048"],
+            "rsa3072": ["openssl", "req", "-x509", "-newkey", "rsa:3072"],
             # Ed25519 istemci sertifikası grpcio'da (BoringSSL) istenen imza algoritmaları listesinde YOK; Ed25519 yolu `scripts/redis_probe.py`de (OpenSSL sunucusu) sınanır.
         }
         for kind, base in key_kinds.items():

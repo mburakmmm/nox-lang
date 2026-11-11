@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.42]
+
+### Eklendi
+
+- **mTLS: RSA istemci anahtarları** (kullanıcı onayıyla): RSASSA-PSS (`rsa_pss_rsae_sha256/384/512`) ile `CertificateVerify`. `tls_client.zig` `rsaPssSign` (RFC 8017 EMSA-PSS-ENCODE + `std.crypto.ff` sabit-zamanlı `powWithEncodedExponent`, tuz bağlantı başına rastgele, en çok 4096 bit); `client_cert.zig` PKCS#1 (`BEGIN RSA PRIVATE KEY`) ve PKCS#8 RSA anahtarlarını okur (`n ‖ d` kopyası kapanışta sıfırlanır). İmzalar std'nin kendi PSS doğrulayıcısıyla (SHA-256/384/512) ve gerçek OpenSSL (Redis, 2048/4096 bit) ile BoringSSL (gRPC, 2048/3072 bit) sunucularıyla doğrulandı. Parola korumalı anahtarlar hâlâ reddedilir.
+
 ## [2.1.41]
 
 ### Eklendi

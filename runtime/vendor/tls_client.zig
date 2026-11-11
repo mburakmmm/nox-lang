@@ -127,25 +127,86 @@ pub const SslKeyLog = struct {
 /// at least this amount.
 pub const min_buffer_len = tls.max_ciphertext_record_len;
 
-/// NOX PATCH (v2.1.40, mTLS): istemci sertifikası. `chain`: DER sertifikalar (ilki yaprak). Anahtar türleri: ECDSA P-256, ECDSA P-384, Ed25519
-/// (std'de RSA imzalama yok, RSA istemci anahtarları desteklenmez). Yalnızca TLS 1.3'te ve sunucu `certificate_request` gönderirse kullanılır.
+/// RSA özel anahtarı (büyük-endian `n` ve `d`; en çok 4096 bit). İmza RSASSA-PSS'tir (TLS 1.3'te RSA `CertificateVerify` için yalnızca PSS geçerlidir).
+pub const RsaKey = struct { n: []const u8, d: []const u8 };
+
+/// RFC 8017 §8.1.1 RSASSA-PSS imzası (EMSA-PSS-ENCODE §9.1.1, `sLen = hLen`): `salt` en az `Hash.digest_length` bayt olmalı ve her imzada yeni rastgele olmalıdır.
+/// `out`a modül uzunluğunda imzayı yazar ve uzunluğu döner. Üs alma `std.crypto.ff` ile sabit-zamanlıdır (`powWithEncodedExponent`).
+pub fn rsaPssSign(comptime Hash: type, key: RsaKey, msg: []const u8, salt: []const u8, out: []u8) error{TlsBadSignatureScheme}!usize {
+    const M = crypto.ff.Modulus(4096);
+    const h_len = Hash.digest_length;
+    if (salt.len < h_len) return error.TlsBadSignatureScheme;
+    const m = M.fromBytes(key.n, .big) catch return error.TlsBadSignatureScheme;
+    const mod_bits = m.bits();
+    if (mod_bits < 8 * (2 * h_len + 2) or mod_bits > 4096) return error.TlsBadSignatureScheme;
+    const em_bits = mod_bits - 1;
+    const em_len = (em_bits + 7) / 8;
+    const mod_len = (mod_bits + 7) / 8;
+    if (out.len < mod_len) return error.TlsBadSignatureScheme;
+    var em: [512]u8 = undefined;
+    const db_len = em_len - h_len - 1;
+    // H = Hash(0x00×8 ‖ Hash(M) ‖ salt)
+    var m_hash: [h_len]u8 = undefined;
+    Hash.hash(msg, &m_hash, .{});
+    var m_prime: [8 + 2 * h_len]u8 = undefined;
+    @memset(m_prime[0..8], 0);
+    @memcpy(m_prime[8..][0..h_len], &m_hash);
+    @memcpy(m_prime[8 + h_len ..][0..h_len], salt[0..h_len]);
+    var h: [h_len]u8 = undefined;
+    Hash.hash(&m_prime, &h, .{});
+    // DB = 0x00… ‖ 0x01 ‖ salt
+    @memset(em[0..db_len], 0);
+    em[db_len - h_len - 1] = 0x01;
+    @memcpy(em[db_len - h_len ..][0..h_len], salt[0..h_len]);
+    // maskedDB = DB xor MGF1(H, db_len)
+    var counter: u32 = 0;
+    var idx: usize = 0;
+    var seed: [h_len + 4]u8 = undefined;
+    @memcpy(seed[0..h_len], &h);
+    while (idx < db_len) {
+        std.mem.writeInt(u32, seed[h_len..][0..4], counter, .big);
+        var block: [h_len]u8 = undefined;
+        Hash.hash(&seed, &block, .{});
+        const take = @min(h_len, db_len - idx);
+        for (0..take) |i| em[idx + i] ^= block[i];
+        idx += take;
+        counter += 1;
+    }
+    // En soldaki 8·emLen − emBits biti sıfırla.
+    const zero_bits: u3 = @intCast(8 * em_len - em_bits);
+    em[0] &= @as(u8, 0xff) >> zero_bits;
+    @memcpy(em[db_len..][0..h_len], &h);
+    em[em_len - 1] = 0xbc;
+    // s = EM^d mod n
+    const x = M.Fe.fromBytes(m, em[0..em_len], .big) catch return error.TlsBadSignatureScheme;
+    const y = m.powWithEncodedExponent(x, key.d, .big) catch return error.TlsBadSignatureScheme;
+    y.toBytes(out[0..mod_len], .big) catch return error.TlsBadSignatureScheme;
+    return mod_len;
+}
+
+/// NOX PATCH (v2.1.40, mTLS): istemci sertifikası. `chain`: DER sertifikalar (ilki yaprak). Anahtar türleri: ECDSA P-256, ECDSA P-384, Ed25519 ve RSA
+/// (RSASSA-PSS; v2.1.42). Yalnızca TLS 1.3'te ve sunucu `certificate_request` gönderirse kullanılır.
 pub const ClientCert = struct {
     /// El sıkışma mesajları için geçici (yığın dışı) tamponlar bununla ayrılır.
     gpa: std.mem.Allocator,
     chain: []const []const u8,
     key: Key,
-    pub const Key = union(enum) { p256: [32]u8, p384: [48]u8, ed25519: [32]u8 };
+    /// RSA-PSS tuzu için bağlantı başına rastgele bayt (çağıran doldurur; her bağlantıda yeni).
+    salt: [64]u8 = [_]u8{0} ** 64,
+    pub const Key = union(enum) { p256: [32]u8, p384: [48]u8, ed25519: [32]u8, rsa: RsaKey };
 
-    fn schemeCode(self: ClientCert) u16 {
+    /// Anahtarın kullanabileceği imza şemaları, tercih sırasıyla.
+    fn candidates(self: ClientCert) []const u16 {
         return switch (self.key) {
-            .p256 => @intFromEnum(tls.SignatureScheme.ecdsa_secp256r1_sha256),
-            .p384 => @intFromEnum(tls.SignatureScheme.ecdsa_secp384r1_sha384),
-            .ed25519 => @intFromEnum(tls.SignatureScheme.ed25519),
+            .p256 => &.{@intFromEnum(tls.SignatureScheme.ecdsa_secp256r1_sha256)},
+            .p384 => &.{@intFromEnum(tls.SignatureScheme.ecdsa_secp384r1_sha384)},
+            .ed25519 => &.{@intFromEnum(tls.SignatureScheme.ed25519)},
+            .rsa => &.{ @intFromEnum(tls.SignatureScheme.rsa_pss_rsae_sha256), @intFromEnum(tls.SignatureScheme.rsa_pss_rsae_sha384), @intFromEnum(tls.SignatureScheme.rsa_pss_rsae_sha512) },
         };
     }
 
-    /// `msg` üzerinde imza üretir; `out`a yazar, uzunluğu döner (ECDSA: DER, Ed25519: 64 bayt).
-    fn sign(self: ClientCert, msg: []const u8, out: *[160]u8) error{TlsBadSignatureScheme}!usize {
+    /// `msg` üzerinde `scheme` ile imza üretir; `out`a yazar, uzunluğu döner (ECDSA: DER, Ed25519: 64 bayt, RSA-PSS: modül uzunluğu).
+    fn sign(self: ClientCert, scheme: u16, msg: []const u8, out: *[512]u8) error{TlsBadSignatureScheme}!usize {
         switch (self.key) {
             .p256 => |sk_bytes| {
                 const E = crypto.sign.ecdsa.EcdsaP256Sha256;
@@ -172,6 +233,12 @@ pub const ClientCert = struct {
                 const b = sig.toBytes();
                 @memcpy(out[0..b.len], &b);
                 return b.len;
+            },
+            .rsa => |k| {
+                if (scheme == @intFromEnum(tls.SignatureScheme.rsa_pss_rsae_sha256)) return rsaPssSign(crypto.hash.sha2.Sha256, k, msg, &self.salt, out);
+                if (scheme == @intFromEnum(tls.SignatureScheme.rsa_pss_rsae_sha384)) return rsaPssSign(crypto.hash.sha2.Sha384, k, msg, &self.salt, out);
+                if (scheme == @intFromEnum(tls.SignatureScheme.rsa_pss_rsae_sha512)) return rsaPssSign(crypto.hash.sha2.Sha512, k, msg, &self.salt, out);
+                return error.TlsBadSignatureScheme;
             },
         }
     }
@@ -476,7 +543,9 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
     // mesajını kabul edip istemcinin kendi el sıkışma turunda boş bir
     // `Certificate` yanıtı inşa edebilmesi için gereken durum.
     var client_cert_requested = false;
-    var client_scheme_ok = false; // sunucunun signature_algorithms listesi istemci anahtarımızın şemasını içeriyor mu
+    var client_scheme: ?u16 = null; // sunucunun signature_algorithms listesinden seçilen, istemci anahtarımızın kullanabildiği şema
+    var offered_schemes: [48]u16 = undefined;
+    var offered_n: usize = 0;
     var cert_req_context_buf: [255]u8 = undefined;
     var cert_req_context_len: u8 = 0;
     var client_hs_write_seq: u64 = 0;
@@ -794,10 +863,19 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                 while (consumed + 2 <= list_len) : (consumed += 2) {
                                     try req_ed.ensure(2);
                                     const sch = req_ed.decode(u16);
-                                    if (options.client_cert) |cc| {
-                                        if (sch == cc.schemeCode()) client_scheme_ok = true;
+                                    if (offered_n < offered_schemes.len) {
+                                        offered_schemes[offered_n] = sch;
+                                        offered_n += 1;
                                     }
                                 }
+                            }
+                        }
+                        if (options.client_cert) |cc| {
+                            pick: for (cc.candidates()) |cand| {
+                                for (offered_schemes[0..offered_n]) |o| if (o == cand) {
+                                    client_scheme = cand;
+                                    break :pick;
+                                };
                             }
                         }
                         client_cert_requested = true;
@@ -1076,7 +1154,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                     var cert_record_buf: [tls.record_header_len + (1 + 3 + 255 + 3 + 1) + P.AEAD.tag_length]u8 = undefined;
                                     var cert_record_len: usize = 0;
                                     // NOX PATCH (v2.1.40, mTLS): gerçek istemci sertifikası + CertificateVerify, her biri kendi şifreli kaydında (seq 0, 1); Finished seq 2'de gider.
-                                    const use_client_cert = client_cert_requested and client_scheme_ok and options.client_cert != null;
+                                    const use_client_cert = client_cert_requested and client_scheme != null and options.client_cert != null;
                                     var mtls_flight: []u8 = &.{};
                                     defer if (mtls_flight.len > 0) options.client_cert.?.gpa.free(mtls_flight);
                                     if (use_client_cert) {
@@ -1110,12 +1188,12 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                         var to_sign: [cv_prefix.len + P.Hash.digest_length]u8 = undefined;
                                         @memcpy(to_sign[0..cv_prefix.len], cv_prefix);
                                         @memcpy(to_sign[cv_prefix.len..], &th);
-                                        var sig_buf: [160]u8 = undefined;
-                                        const sig_len = try cc.sign(&to_sign, &sig_buf);
-                                        var cv_msg: [4 + 2 + 2 + 160]u8 = undefined;
+                                        var sig_buf: [512]u8 = undefined;
+                                        const sig_len = try cc.sign(client_scheme.?, &to_sign, &sig_buf);
+                                        var cv_msg: [4 + 2 + 2 + 512]u8 = undefined;
                                         cv_msg[0] = @intFromEnum(tls.HandshakeType.certificate_verify);
                                         std.mem.writeInt(u24, cv_msg[1..4], @intCast(2 + 2 + sig_len), .big);
-                                        std.mem.writeInt(u16, cv_msg[4..6], cc.schemeCode(), .big);
+                                        std.mem.writeInt(u16, cv_msg[4..6], client_scheme.?, .big);
                                         std.mem.writeInt(u16, cv_msg[6..8], @intCast(sig_len), .big);
                                         @memcpy(cv_msg[8..][0..sig_len], sig_buf[0..sig_len]);
                                         const cv_total = 8 + sig_len;

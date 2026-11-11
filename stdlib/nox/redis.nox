@@ -294,7 +294,7 @@ def _open(host: str, port: int, tls: bool, username: str, password: str, db: int
 
 # Bağlanır. `tls=True` bağlanır bağlanmaz TLS (sertifika ve sunucu adı sistem CA deposuna karşı doğrulanır). `password` doluysa AUTH
 # (`username` doluysa `AUTH kullanıcı parola`), `db > 0` ise SELECT yapılır. Başarısızlıkta `RedisError(kind="connection")`.
-# `cert_file` + `key_file` (PEM; ECDSA P-256/P-384 ya da Ed25519 anahtar) mTLS için istemci sertifikasıdır. `ca_file` (PEM yolu), `tls=True` ile birlikte verilirse sistem CA deposu YERİNE yalnızca o dosyadaki CA'lara güvenilir (özel/kurumsal CA, kendinden imzalı sunucu); sunucu adı yine doğrulanır.
+# `cert_file` + `key_file` (PEM; ECDSA P-256/P-384, Ed25519 ya da RSA (PSS) anahtar; parolasız) mTLS için istemci sertifikasıdır. `ca_file` (PEM yolu), `tls=True` ile birlikte verilirse sistem CA deposu YERİNE yalnızca o dosyadaki CA'lara güvenilir (özel/kurumsal CA, kendinden imzalı sunucu); sunucu adı yine doğrulanır.
 def connect(host: str, port: int = 6379, tls: bool = False, username: str = "", password: str = "", db: int = 0, ca_file: str = "", cert_file: str = "", key_file: str = "") -> Client:
     h: ptr = _open(host, port, tls, username, password, db, ca_file, cert_file, key_file)
     return Client(host, port, tls, username, password, db, h, ca_file, cert_file, key_file)
