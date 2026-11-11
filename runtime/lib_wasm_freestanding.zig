@@ -58,6 +58,7 @@ pub const tcp_modules_wasm_shim = @import("stdlib_shims/tcp_modules_wasm.zig");
 pub const pg_wasm_shim = @import("stdlib_shims/pg_wasm.zig");
 pub const mysql_wasm_shim = @import("stdlib_shims/mysql_wasm.zig");
 pub const grpc_shim = @import("stdlib_shims/grpc.zig");
+pub const redis_shim = @import("stdlib_shims/redis.zig");
 pub const process_wasm_shim = @import("stdlib_shims/process_wasm.zig");
 pub const sqlite_shim = @import("stdlib_shims/sqlite.zig");
 pub const wasm_libc_sqlite = @import("wasm_libc_sqlite.zig");
@@ -104,6 +105,7 @@ comptime {
     _ = pg_wasm_shim;
     _ = mysql_wasm_shim;
     _ = grpc_shim;
+    _ = redis_shim;
     _ = process_wasm_shim;
     _ = sqlite_shim;
     _ = wasm_libc_sqlite;

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.45]
+
+### Eklendi
+
+- **`nox.redis` wasm'da** (`wasm32-freestanding-asyncify`): redis kabuğu wasm çalışma zamanına (`lib_wasm_freestanding.zig`) ve bağlayıcı yeteneğine (`wasm_link.zig`, `nox_redis_`) bağlandı; taşıma zaten `tcp_host` idi. Düz TCP, `AUTH`/ACL, Streams, betik önbelleği, kopan bağlantı + `reconnect()` ve host TLS (özel CA, güvenilmeyen sertifikanın reddi) yerel `redis_program` / `redis_tls_program` programlarının AYNISIYLA ve aynı beklenen çıktıyla GERÇEK `redis-server` süreçlerine karşı sınanır (`tests/golden/wasm_redis_driver.mjs`).
+
 ## [2.1.44]
 
 ### Eklendi

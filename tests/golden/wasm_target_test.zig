@@ -1006,3 +1006,26 @@ test "wasm32-freestanding --asyncify: nox.grpc.connect_tls ALPN h2 + ozel CA + i
     }
     try std.testing.expectEqualStrings("connected\nclosed\nexit 0\nserver alpn=h2 client=nox-client\n", res.stdout);
 }
+
+// v2.1.45: `nox.redis` wasm'da (host TCP + host TLS): yerel `redis_program.nox.in` ve `redis_tls_program.nox.in` programlarının AYNISI GERÇEK `redis-server` süreçlerine karşı çalışır
+// (komutlar, ikili yük, Streams, betik önbelleği, AUTH/ACL, kopan bağlantı + reconnect; özel CA ile TLS ve güvenilmeyen sertifikanın reddi). `redis-server`/`openssl` yoksa atlanır.
+test "wasm32-freestanding --asyncify: nox.redis gercek redis-server'a karsi (komutlar, Streams, AUTH/ACL, reconnect, TLS)" {
+    const allocator = std.testing.allocator;
+    const res = std.process.run(allocator, std.testing.io, .{
+        .argv = &.{ "node", "--no-warnings", build_options.redis_driver_path, build_options.noxc_path, build_options.redis_program_path, build_options.redis_tls_program_path, build_options.wasm_host_path },
+    }) catch |err| {
+        if (err == error.FileNotFound) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(res.stderr);
+    defer allocator.free(res.stdout);
+    if (res.term == .exited and res.term.exited == 77) return error.SkipZigTest;
+    if (res.term != .exited or res.term.exited != 0) {
+        const missing = std.mem.indexOf(u8, res.stderr, "openssl") != null or std.mem.indexOf(u8, res.stderr, "wasm-opt") != null;
+        if (missing) return error.SkipZigTest;
+        std.debug.print("redis surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
+        return error.ProgramFailed;
+    }
+    // Beklenen çıktılar yerel testlerle ortaktır (`scripts/redis_probe.py`); sürücü her programın sonuna "exit N" ekler.
+    try std.testing.expectEqualStrings(@embedFile("redis_program.expected") ++ "exit 0\n" ++ @embedFile("redis_tls_program.expected") ++ "exit 0\n", res.stdout);
+}
