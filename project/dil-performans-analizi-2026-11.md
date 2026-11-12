@@ -97,3 +97,22 @@ Kalan adaylar (her biri tasarım gerektirir): dolaylı çağrı istisna denetimi
 ## 3.5.4 Gerileme koruması (v2.1.77)
 
 `python3 benchmarks/lang_perf/run.py --scale 10 --repeat 5 --no-python --check benchmarks/lang_perf/baseline.json [--tolerance 1.3]`: her çekirdeğin donanımdan bağımsız ölçütü (C karşılığı olanlar için **llvm/c oranı**, olmayanlar için llvm ms) `baseline.json` ile karşılaştırılır; tolerans aşılırsa çıkış kodu 1. Sağlama toplamı doğrulaması her çalıştırmada yapılır. Yeni baseline: `--save-baseline benchmarks/lang_perf/baseline.json` (ReleaseFast ile, yeterince boşta bir makinede). Bilinçli olarak CI'ya bağlanmadı (paylaşılan koşucuların gürültüsü); kod değişikliği öncesi/sonrası yerelde çalıştırılır.
+
+## 3.5.3 Tur 2 ön değerlendirmesi (2026-11-12, henüz uygulanmadı)
+
+Kalan "C'ye uzak" çekirdeklerin ne kadarının GERÇEK açık alan olduğu ölçüldü:
+
+- `str_index_loop` (3.3x): çekirdeğin zamanı iki parçadır — `"abcab" * N` kurulumu (~0,6 ms/1M) + döngü (~1 ns/yineleme). Döngü zaten C'ye ~2x; kalan fark büyük ölçüde kıyas yapısı (C'de kurulum modülo ile satır içi). Küçük kazanç, düşük öncelik.
+- `dict_int` (6.7x): C referansı elle yazılmış, **tek yoklamalı, eklenme sırasız** açık adresli tablodur; Nox sözlüğü eklenme sırasını korur (`entries` + indeks) ve `contains`+`get`+`set` üç çağrıdır (`last_idx` önbelleği ikinci/üçüncüyü karşılar). Gerçek yapısal fark; mikro-optimizasyon (tohum yüklemesi, karıştırıcı) ~%10-20 verebilir, 6x'in çoğu tasarım gereği.
+- `func_value_calls` (3x): C referansı sabit işlev işaretçisini satır içine açıyor; Nox'ta kalan maliyet dolaylı çağrı + çağrı sonrası istisna denetimi. Gerçek açık alan: dolaylı çağrıdan önce hedefi sabit-işlev kanıtlanabiliyorsa doğrudan çağrıya çevirmek (yerel `f = inc` tek hedefli kanıtı zaten `local_escape`te var).
+- GERÇEK açık alan (sırayla): (1) `list_append` büyütmesi (4,5x; yerinde `realloc` için sahiplik sözleşmesi, 4.5.4 madde 3), (2) `matmul`/`sieve`/`insertion_sort` sınır denetimi + satır işaretçisi taşıma (2,4x/1,7x/1,6x), (3) tek hedefli işlev değeri → doğrudan çağrı, (4) QBE'ye satır içi açma (QBE çıktısı LLVM'in ~1,1-3,7x gerisinde).
+
+**Yan bulgu (4.5.4 madde 4):** `dict[int, Box]` + `d.pop(k, Box(0))` kalıbında RSS doğrusal büyüyor (~2 B/pop; 5M→40M işlemde 7,5→25,8 MB) ama Debug çalışma zamanı sızıntı denetimi **temiz** — gerçek sızıntı değil, ayırıcı/havuz düzeyinde bir birikim (yalnızca "sınıf varsayılanlı pop" kalıbında; yalnızca `set`/int değerli `pop` düz). Ayrı inceleme.
+
+### Tur 2 sonuçları (v2.1.80)
+
+- `s[i] == "c"` birleştirmesi uygulandı: `str_index_loop` döngüsü 1,0 → ~0,3 ns/yineleme (10M karakter: 10 → 3 ms).
+- Sözlük (`dict_int`): profil `findIndex` = %74 (tek gerçek arama, ~11 ns ≈ iki bağımlı önbellek ıskası: slot → `entries`). **Deney:** `int` anahtarı slotta satır içi (16 bayt slot) — ıskayı bire indirmesi beklenirken tablo iki katına çıkınca ~%5 YAVAŞ; geri alındı. Sözlük bu kıyasta tasarım sınırında (ekleme sıralı + tek arama).
+- `sieve` iç döngüsüne elle TBAA (liste uzunluğu ≠ eleman) eklenerek IR-düzeyi deney: fark yok (iç döngü bellek-bağımlı, adım atlamalı erişim) → uygulanmadı.
+- `func_value_calls`: kalan maliyet `apply` çağrısı + dolaylı çağrı + İKİ `nox_exception_pending` çalışma zamanı çağrısı (satır içi olamıyor, `RuntimeState` düzeni derleyiciyle paylaşılmıyor). Çözüm: sıcak yol bayrağını (fiber yoksa `pending_exception`) derleyicinin bildiği sabit ofsette satır içi okumak → ABI kararı (AGENTS §16: kullanıcıya sorulur).
+

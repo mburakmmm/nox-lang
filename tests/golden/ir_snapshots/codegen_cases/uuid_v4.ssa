@@ -7597,7 +7597,7 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
     %t6 =l alloc4 4
     %t7 =l alloc4 4
     %t8 =l alloc4 4
-    %t49 =l alloc8 8
+    %t45 =l alloc8 8
     storel %p_s, %t0
     %t9 =l loadl %t0
     %t10 =l call $nox_str_char_count(l %t9)
@@ -7658,50 +7658,43 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
 @str_idx_ascii28
     %t41 =l add %t28, %t29
     %t42 =w loadub %t41
-    %t43 =l extuw %t42
-    %t44 =l mul %t43, 24
-    %t45 =l add $nox_ascii_chars, %t44
-    %t46 =l add %t45, 16
+    %t43 =w cnew %t42, 45
     jmp @str_idx_done30
 @str_idx_unicode29
-    %t47 =l call $nox_str_char_at(l %rt, l %t28, l %t29)
-    jmp @str_idx_done30
-@str_idx_done30
-    %t40 =l phi @str_idx_ascii28 %t46, @str_idx_unicode29 %t47
-    %t48 =l add $str43, 16
-    %t50 =w loadub %t40
-    %t51 =w cnew %t50, 45
-    jnz %t51, @streq_false32, @streq_next34
+    %t44 =l call $nox_str_char_at(l %rt, l %t28, l %t29)
+    %t46 =w loadub %t44
+    %t47 =w cnew %t46, 45
+    jnz %t47, @streq_false32, @streq_next34
 @streq_next34
-    %t52 =l add %t40, 1
-    %t53 =w loadub %t52
-    %t54 =w ceqw %t53, 0
-    jnz %t54, @streq_true31, @streq_false32
+    %t48 =l add %t44, 1
+    %t49 =w loadub %t48
+    %t50 =w ceqw %t49, 0
+    jnz %t50, @streq_true31, @streq_false32
 @streq_true31
-    storel 1, %t49
+    storel 1, %t45
     jmp @streq_join33
 @streq_false32
-    storel 0, %t49
+    storel 0, %t45
     jmp @streq_join33
 @streq_join33
-    %t55 =l loadl %t49
-    %t56 =w ceql %t55, 0
-    %t57 =w ceql %t40, 0
-    jnz %t57, @release_skip37, @release36
+    %t51 =l loadl %t45
+    %t52 =w ceql %t51, 0
+    %t53 =w ceql %t44, 0
+    jnz %t53, @release_skip37, @release36
 @release36
-    %t58 =l sub %t40, 16
-    %t59 =l loadl %t58
-    %t60 =w csgel %t59, 536870912
-    jnz %t60, @str_free_done41, @str_rel_atomic42
+    %t54 =l sub %t44, 16
+    %t55 =l loadl %t54
+    %t56 =w csgel %t55, 536870912
+    jnz %t56, @str_free_done41, @str_rel_atomic42
 @str_rel_atomic42
-    %t61 =l sub %t40, 16
-    %t62 =l loadl %t61
-    %t63 =l sub %t62, 1
-    storel %t63, %t61
-    %t64 =w cslel %t63, 0
-    jnz %t64, @str_free39, @str_free_skip40
+    %t57 =l sub %t44, 16
+    %t58 =l loadl %t57
+    %t59 =l sub %t58, 1
+    storel %t59, %t57
+    %t60 =w cslel %t59, 0
+    jnz %t60, @str_free39, @str_free_skip40
 @str_free39
-    call $nox_str_free_now(l %rt, l %t40)
+    call $nox_str_free_now(l %rt, l %t44)
     jmp @str_free_done41
 @str_free_skip40
     jmp @str_free_done41
@@ -7710,7 +7703,10 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
 @release_skip37
     jmp @release_done38
 @release_done38
-    jnz %t56, @if_then43, @if_end18
+    jmp @str_idx_done30
+@str_idx_done30
+    %t61 =w phi @str_idx_ascii28 %t43, @release_done38 %t52
+    jnz %t61, @if_then43, @if_end18
 @if_then43
     ret 0
 @after_return44
@@ -7718,75 +7714,75 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
 @if_end18
     jmp @if_end6
 @if_else17
-    %t65 =l loadl %t0
-    storel %t65, %t2
-    %t66 =l loadl %t1
-    storel %t66, %t3
-    %t67 =l loadl %t2
-    %t68 =l loadl %t3
-    %t69 =l call $nox_strings_byte_at(l %rt, l %t67, l %t68)
-    storel %t69, %t4
-    %t70 =l loadl %t4
-    %t71 =w csgel %t70, 48
-    jnz %t71, @logic_rhs47, @logic_short48
+    %t62 =l loadl %t0
+    storel %t62, %t2
+    %t63 =l loadl %t1
+    storel %t63, %t3
+    %t64 =l loadl %t2
+    %t65 =l loadl %t3
+    %t66 =l call $nox_strings_byte_at(l %rt, l %t64, l %t65)
+    storel %t66, %t4
+    %t67 =l loadl %t4
+    %t68 =w csgel %t67, 48
+    jnz %t68, @logic_rhs47, @logic_short48
 @logic_short48
     jmp @logic_done49
 @logic_rhs47
-    %t72 =l loadl %t4
-    %t73 =w cslel %t72, 57
+    %t69 =l loadl %t4
+    %t70 =w cslel %t69, 57
     jmp @logic_done49
 @logic_done49
-    %t74 =w phi @logic_short48 0, @logic_rhs47 %t73
-    storew %t74, %t5
-    %t75 =l loadl %t4
-    %t76 =w csgel %t75, 97
-    jnz %t76, @logic_rhs50, @logic_short51
+    %t71 =w phi @logic_short48 0, @logic_rhs47 %t70
+    storew %t71, %t5
+    %t72 =l loadl %t4
+    %t73 =w csgel %t72, 97
+    jnz %t73, @logic_rhs50, @logic_short51
 @logic_short51
     jmp @logic_done52
 @logic_rhs50
-    %t77 =l loadl %t4
-    %t78 =w cslel %t77, 102
+    %t74 =l loadl %t4
+    %t75 =w cslel %t74, 102
     jmp @logic_done52
 @logic_done52
-    %t79 =w phi @logic_short51 0, @logic_rhs50 %t78
-    storew %t79, %t6
-    %t80 =l loadl %t4
-    %t81 =w csgel %t80, 65
-    jnz %t81, @logic_rhs53, @logic_short54
+    %t76 =w phi @logic_short51 0, @logic_rhs50 %t75
+    storew %t76, %t6
+    %t77 =l loadl %t4
+    %t78 =w csgel %t77, 65
+    jnz %t78, @logic_rhs53, @logic_short54
 @logic_short54
     jmp @logic_done55
 @logic_rhs53
-    %t82 =l loadl %t4
-    %t83 =w cslel %t82, 70
+    %t79 =l loadl %t4
+    %t80 =w cslel %t79, 70
     jmp @logic_done55
 @logic_done55
-    %t84 =w phi @logic_short54 0, @logic_rhs53 %t83
-    storew %t84, %t7
-    %t85 =w loadw %t5
-    jnz %t85, @logic_short57, @logic_rhs56
+    %t81 =w phi @logic_short54 0, @logic_rhs53 %t80
+    storew %t81, %t7
+    %t82 =w loadw %t5
+    jnz %t82, @logic_short57, @logic_rhs56
 @logic_short57
     jmp @logic_done58
 @logic_rhs56
-    %t86 =w loadw %t6
+    %t83 =w loadw %t6
     jmp @logic_done58
 @logic_done58
-    %t87 =w phi @logic_short57 1, @logic_rhs56 %t86
-    jnz %t87, @logic_short60, @logic_rhs59
+    %t84 =w phi @logic_short57 1, @logic_rhs56 %t83
+    jnz %t84, @logic_short60, @logic_rhs59
 @logic_short60
     jmp @logic_done61
 @logic_rhs59
-    %t88 =w loadw %t7
+    %t85 =w loadw %t7
     jmp @logic_done61
 @logic_done61
-    %t89 =w phi @logic_short60 1, @logic_rhs59 %t88
-    storew %t89, %t8
+    %t86 =w phi @logic_short60 1, @logic_rhs59 %t85
+    storew %t86, %t8
     jmp @inline_done46
 @after_inline_return62
     jmp @inline_done46
 @inline_done46
-    %t90 =w loadw %t8
-    %t91 =w xor %t90, 1
-    jnz %t91, @if_then63, @if_end45
+    %t87 =w loadw %t8
+    %t88 =w xor %t87, 1
+    jnz %t88, @if_then63, @if_end45
 @if_then63
     ret 0
 @after_return64
@@ -7794,9 +7790,9 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
 @if_end45
     jmp @if_end6
 @if_end6
-    %t92 =l loadl %t1
-    %t93 =l add %t92, 1
-    storel %t93, %t1
+    %t89 =l loadl %t1
+    %t90 =l add %t89, 1
+    storel %t90, %t1
     jmp @while_cond3
 @while_end5
     ret 1
@@ -7849,7 +7845,7 @@ export function l $nox_uuid__hex_fixed(l %rt, l %p_n, l %p_digits) {
     storel 0, %t3
     storel %p_n, %t0
     storel %p_digits, %t1
-    %t6 =l add $str44, 16
+    %t6 =l add $str43, 16
     %t7 =l loadl %t2
     %t8 =w ceql %t7, 0
     jnz %t8, @release_skip1, @release0
@@ -7877,7 +7873,7 @@ export function l $nox_uuid__hex_fixed(l %rt, l %p_n, l %p_digits) {
 @release_done2
     storel 0, %t2
     storel %t6, %t2
-    %t16 =l add $str45, 16
+    %t16 =l add $str44, 16
     %t17 =l loadl %t3
     %t18 =w ceql %t17, 0
     jnz %t18, @release_skip8, @release7
@@ -8091,7 +8087,7 @@ export function l $nox_uuid__hex_fixed(l %rt, l %p_n, l %p_digits) {
 @fn_end130
     ret 0
 @str_idx_err17
-    %t40 =l add $str46, 16
+    %t40 =l add $str45, 16
     %t41 =l call $nox_rc_alloc(l %rt, l 32)
     storel 15, %t41
     %t42 =l add %t41, 8
@@ -8228,7 +8224,7 @@ export function l $nox_uuid__hex_fixed(l %rt, l %p_n, l %p_digits) {
     storel 0, %t2
     ret 0
 @shift_err71
-    %t116 =l add $str47, 16
+    %t116 =l add $str46, 16
     %t117 =l call $nox_rc_alloc(l %rt, l 32)
     storel 16, %t117
     %t118 =l add %t117, 8
@@ -8384,7 +8380,7 @@ export function l $nox_uuid_uuid7_at(l %rt, l %p_unix_ms) {
     %t9 =w csltl %t8, 0
     jnz %t9, @if_then1, @if_end0
 @if_then1
-    %t10 =l add $str48, 16
+    %t10 =l add $str47, 16
     %t11 =l call $nox_rc_alloc(l %rt, l 32)
     storel 16, %t11
     %t12 =l add %t11, 8
@@ -8841,10 +8837,10 @@ export function l $nox_uuid_uuid7_at(l %rt, l %p_unix_ms) {
 @release_done120
     storel 0, %t2
     storel %t119, %t2
-    %t159 =l add $str49, 16
-    %t160 =l add $str50, 16
-    %t161 =l add $str51, 16
-    %t162 =l add $str52, 16
+    %t159 =l add $str48, 16
+    %t160 =l add $str49, 16
+    %t161 =l add $str50, 16
+    %t162 =l add $str51, 16
     %t163 =l call $nox_rc_alloc(l %rt, l 48)
     storel 4, %t163
     %t164 =l add %t163, 8
@@ -9024,7 +9020,7 @@ export function l $nox_uuid_uuid7_at(l %rt, l %p_unix_ms) {
     storel 0, %t2
     ret 0
 @exc_continue198
-    %t297 =l add $str54, 16
+    %t297 =l add $str53, 16
     %t298 =l call $nox_str_concat(l %rt, l %t266, l %t297)
     %t299 =w ceql %t266, 0
     jnz %t299, @release_skip224, @release223
@@ -9194,7 +9190,7 @@ export function l $nox_uuid_uuid7_at(l %rt, l %p_unix_ms) {
 @release_skip264
     jmp @release_done265
 @release_done265
-    %t356 =l add $str55, 16
+    %t356 =l add $str54, 16
     %t357 =l call $nox_str_concat(l %rt, l %t339, l %t356)
     %t358 =w ceql %t339, 0
     jnz %t358, @release_skip271, @release270
@@ -9364,7 +9360,7 @@ export function l $nox_uuid_uuid7_at(l %rt, l %p_unix_ms) {
 @release_skip311
     jmp @release_done312
 @release_done312
-    %t415 =l add $str56, 16
+    %t415 =l add $str55, 16
     %t416 =l call $nox_str_concat(l %rt, l %t398, l %t415)
     %t417 =w ceql %t398, 0
     jnz %t417, @release_skip318, @release317
@@ -9560,7 +9556,7 @@ export function l $nox_uuid_uuid7_at(l %rt, l %p_unix_ms) {
 @release_skip365
     jmp @release_done366
 @release_done366
-    %t484 =l add $str57, 16
+    %t484 =l add $str56, 16
     %t485 =l call $nox_str_concat(l %rt, l %t467, l %t484)
     %t486 =w ceql %t467, 0
     jnz %t486, @release_skip372, @release371
@@ -9911,7 +9907,7 @@ export function l $nox_uuid_uuid7_at(l %rt, l %p_unix_ms) {
 @fn_end467
     ret 0
 @list_idx_err130
-    %t181 =l add $str53, 16
+    %t181 =l add $str52, 16
     %t182 =l call $nox_rc_alloc(l %rt, l 32)
     storel 15, %t182
     %t183 =l add %t182, 8
@@ -10212,7 +10208,7 @@ export function l $nox_uuid_uuid7_timestamp_ms(l %rt, l %p_s) {
     %t11 =w xor %t9, 1
     jnz %t11, @if_then3, @if_end0
 @if_then3
-    %t12 =l add $str58, 16
+    %t12 =l add $str57, 16
     %t13 =l call $nox_rc_alloc(l %rt, l 32)
     storel 16, %t13
     %t14 =l add %t13, 8
@@ -10256,7 +10252,7 @@ export function l $nox_uuid_uuid7_timestamp_ms(l %rt, l %p_s) {
     jnz %t24, @str_idx_err14, @str_idx_ok15
 @str_idx_ok15
     %t34 =l call $nox_str_char_at(l %rt, l %t22, l 14)
-    %t35 =l add $str60, 16
+    %t35 =l add $str59, 16
     %t37 =w loadub %t34
     %t38 =w cnew %t37, 55
     jnz %t38, @streq_false24, @streq_next26
@@ -10300,7 +10296,7 @@ export function l $nox_uuid_uuid7_timestamp_ms(l %rt, l %p_s) {
 @release_done30
     jnz %t43, @if_then35, @if_end13
 @if_then35
-    %t52 =l add $str61, 16
+    %t52 =l add $str60, 16
     %t53 =l call $nox_rc_alloc(l %rt, l 32)
     storel 16, %t53
     %t54 =l add %t53, 8
@@ -10445,7 +10441,7 @@ export function l $nox_uuid_uuid7_timestamp_ms(l %rt, l %p_s) {
 @fn_end79
     ret 0
 @str_idx_err14
-    %t25 =l add $str59, 16
+    %t25 =l add $str58, 16
     %t26 =l call $nox_rc_alloc(l %rt, l 32)
     storel 15, %t26
     %t27 =l add %t26, 8
@@ -10478,7 +10474,7 @@ export function l $nox_uuid_uuid7_timestamp_ms(l %rt, l %p_s) {
     call $nox_raise(l %rt, l %t26, l 110)
     ret 0
 @shift_err50
-    %t70 =l add $str62, 16
+    %t70 =l add $str61, 16
     %t71 =l call $nox_rc_alloc(l %rt, l 32)
     storel 16, %t71
     %t72 =l add %t71, 8
@@ -10799,7 +10795,7 @@ export function w $main(w %argc, l %argv) {
 @release_skip101
     jmp @release_done102
 @release_done102
-    %t124 =l add $str67, 16
+    %t124 =l add $str66, 16
     %t125 =w call $nox_uuid_is_valid(l %rt, l %t124)
     %t126 =w call $nox_exception_pending(l %rt)
     jnz %t126, @exc_propagate107, @exc_continue108
@@ -10815,7 +10811,7 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done111
 @print_done111
-    %t127 =l add $str68, 16
+    %t127 =l add $str67, 16
     %t128 =w call $nox_uuid_is_valid(l %rt, l %t127)
     %t129 =w call $nox_exception_pending(l %rt)
     jnz %t129, @exc_propagate112, @exc_continue113
@@ -10831,7 +10827,7 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done116
 @print_done116
-    %t130 =l add $str69, 16
+    %t130 =l add $str68, 16
     %t131 =w call $nox_uuid_is_valid(l %rt, l %t130)
     %t132 =w call $nox_exception_pending(l %rt)
     jnz %t132, @exc_propagate117, @exc_continue118
@@ -10847,7 +10843,7 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done121
 @print_done121
-    %t133 =l add $str70, 16
+    %t133 =l add $str69, 16
     %t134 =w call $nox_uuid_is_valid(l %rt, l %t133)
     %t135 =w call $nox_exception_pending(l %rt)
     jnz %t135, @exc_propagate122, @exc_continue123
@@ -10919,7 +10915,7 @@ export function w $main(w %argc, l %argv) {
 @fn_end141
     ret 0
 @str_idx_err31
-    %t39 =l add $str63, 16
+    %t39 =l add $str62, 16
     %t40 =l call $nox_rc_alloc(l %rt, l 32)
     storel 15, %t40
     %t41 =l add %t40, 8
@@ -10954,7 +10950,7 @@ export function w $main(w %argc, l %argv) {
     call $nox_unhandled_exception(l %rt)
     ret 0
 @str_idx_err50
-    %t61 =l add $str64, 16
+    %t61 =l add $str63, 16
     %t62 =l call $nox_rc_alloc(l %rt, l 32)
     storel 15, %t62
     %t63 =l add %t62, 8
@@ -10989,7 +10985,7 @@ export function w $main(w %argc, l %argv) {
     call $nox_unhandled_exception(l %rt)
     ret 0
 @str_idx_err69
-    %t83 =l add $str65, 16
+    %t83 =l add $str64, 16
     %t84 =l call $nox_rc_alloc(l %rt, l 32)
     storel 15, %t84
     %t85 =l add %t84, 8
@@ -11024,7 +11020,7 @@ export function w $main(w %argc, l %argv) {
     call $nox_unhandled_exception(l %rt)
     ret 0
 @str_idx_err88
-    %t105 =l add $str66, 16
+    %t105 =l add $str65, 16
     %t106 =l call $nox_rc_alloc(l %rt, l 32)
     storel 15, %t106
     %t107 =l add %t106, 8
@@ -11256,7 +11252,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str71, 16
+    %t9 =l add $str70, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -11371,7 +11367,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str72, 16
+    %t9 =l add $str71, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -11386,7 +11382,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str73, 16
+    %t20 =l add $str72, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -11452,37 +11448,36 @@ data $str39 = { l 1073741824, l 2305843009213693954, b "-4", b 0 }
 data $str40 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
 data $str41 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
 data $str42 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str43 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
-data $str44 = { l 1073741824, l 2305843009213693968, b "0123456789abcdef", b 0 }
-data $str45 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str46 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str47 = { l 1073741824, l 2305843009213694015, b "invalid shift amount (negative or exceeds the type's bit width)", b 0 }
-data $str48 = { l 1073741824, l 2305843009213693980, b "unix_ms must not be negative", b 0 }
-data $str49 = { l 1073741824, l 2305843009213693953, b "8", b 0 }
-data $str50 = { l 1073741824, l 2305843009213693953, b "9", b 0 }
-data $str51 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
-data $str52 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
-data $str53 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
-data $str54 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
-data $str55 = { l 1073741824, l 2305843009213693954, b "-7", b 0 }
+data $str43 = { l 1073741824, l 2305843009213693968, b "0123456789abcdef", b 0 }
+data $str44 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str45 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
+data $str46 = { l 1073741824, l 2305843009213694015, b "invalid shift amount (negative or exceeds the type's bit width)", b 0 }
+data $str47 = { l 1073741824, l 2305843009213693980, b "unix_ms must not be negative", b 0 }
+data $str48 = { l 1073741824, l 2305843009213693953, b "8", b 0 }
+data $str49 = { l 1073741824, l 2305843009213693953, b "9", b 0 }
+data $str50 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
+data $str51 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
+data $str52 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
+data $str53 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
+data $str54 = { l 1073741824, l 2305843009213693954, b "-7", b 0 }
+data $str55 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
 data $str56 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
-data $str57 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
-data $str58 = { l 1073741824, l 2305843009213693968, b "not a valid UUID", b 0 }
-data $str59 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str60 = { l 1073741824, l 2305843009213693953, b "7", b 0 }
-data $str61 = { l 1073741824, l 2305843009213693972, b "not a version 7 UUID", b 0 }
-data $str62 = { l 1073741824, l 2305843009213694015, b "invalid shift amount (negative or exceeds the type's bit width)", b 0 }
+data $str57 = { l 1073741824, l 2305843009213693968, b "not a valid UUID", b 0 }
+data $str58 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
+data $str59 = { l 1073741824, l 2305843009213693953, b "7", b 0 }
+data $str60 = { l 1073741824, l 2305843009213693972, b "not a version 7 UUID", b 0 }
+data $str61 = { l 1073741824, l 2305843009213694015, b "invalid shift amount (negative or exceeds the type's bit width)", b 0 }
+data $str62 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
 data $str63 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
 data $str64 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
 data $str65 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str66 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str67 = { l 1073741824, l 2305843009213693962, b "not-a-uuid", b 0 }
-data $str68 = { l 1073741824, l 2305843009213693988, b "12345678-1234-1234-1234-123456789012", b 0 }
-data $str69 = { l 1073741824, l 2305843009213693988, b "12345678-1234-1234-X234-123456789012", b 0 }
-data $str70 = { l 1073741824, l 2305843009213693984, b "12345678123412341234123456789012", b 0 }
+data $str66 = { l 1073741824, l 2305843009213693962, b "not-a-uuid", b 0 }
+data $str67 = { l 1073741824, l 2305843009213693988, b "12345678-1234-1234-1234-123456789012", b 0 }
+data $str68 = { l 1073741824, l 2305843009213693988, b "12345678-1234-1234-X234-123456789012", b 0 }
+data $str69 = { l 1073741824, l 2305843009213693984, b "12345678123412341234123456789012", b 0 }
+data $str70 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str71 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str72 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str73 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
 data $fmt_lit1 = { b "None", b 0 }
 data $fmt_lit2 = { b "None", b 0 }

@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.80]
+
+### Değişti
+
+- **Performans turu 2 (TODO 3.5.3), `s[i] == "c"` / `!=` birleştirmesi:** döngü-ASCII önbellekli `str` üzerinde tek ASCII baytlık literalle karşılaştırma artık geçici tek karakterlik dize, tablo bakışı, phi ve release üretmez; ASCII yolunda doğrudan `bayt == c`. Unicode / negatif indeks yolu aynı sonucu verir (golden: `str_index_eq_char_fused`, iki backend). `str_index_loop` ~2,9x → ~1,9x (C'ye göre); stdlib ayrıştırıcıları (yaml/toml/url/regex/argparse…) 50 IR anlık görüntüsü yenilendi
+- **Denendi, geri alındı:** sözlük dizin tablosunda `int` anahtarı slotta satır içi tutma (16 bayt slot) — `dict_int` ~%5 YAVAŞLADI (tablo iki kat büyüdü, önbellek baskısı); uygulanmadı
+
 ## [2.1.79]
 
 ### Düzeltildi

@@ -698,6 +698,33 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
 /// olsa BİLE ÖNCE retain etmeye GEREK YOKTUR, yalnızca SONRADAN
 /// `releaseIfTemporary` ile tabanı serbest bırakmak yeterlidir.
 pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Value {
+    return genStrIndexImpl(self, obj, idx, null);
+}
+
+/// v2.1.80 (TODO 3.5.3 tur 2, #A): `s[i] == "c"` / `s[i] != "c"` (c tek ASCII baytı) birleştirmesi için istek: ASCII-önbellekli yolda tek baytlık
+/// geçici dize, sabit tablo bakışı, phi ve release'i atlayıp doğrudan `bayt == c` karşılaştırması üretilir.
+const StrCharCmp = struct { op: ast.BinaryOp, ch: u8 };
+
+/// `genBinary`nin `s[i] == "c"` birleştirmesi: kalıp uygunsa (`s` döngü-ASCII önbelleğinde) `w` bayrağı döner, değilse `null` (çağıran genel yola düşer).
+pub fn tryGenStrIndexEqChar(self: *Codegen, b: ast.Binary) CodegenError!?Value {
+    if (b.op != .eq and b.op != .ne) return null;
+    const ix_expr: ast.Expr, const lit_expr: ast.Expr = if (b.left.* == .index and b.right.* == .string_lit)
+        .{ b.left.*, b.right.* }
+    else if (b.right.* == .index and b.left.* == .string_lit)
+        .{ b.right.*, b.left.* }
+    else
+        return null;
+    const lit = lit_expr.string_lit;
+    if (lit.len != 1 or lit[0] >= 0x80 or lit[0] == 0) return null;
+    const idx = ix_expr.index;
+    if (idx.obj.* != .identifier) return null;
+    if (self.str_ascii_cache.get(idx.obj.identifier) == null) return null;
+    const obj = try self.genExpr(idx.obj.*);
+    if (obj.heap != .str) return error.Unsupported;
+    return try genStrIndexImpl(self, obj, idx, .{ .op = b.op, .ch = lit[0] });
+}
+
+fn genStrIndexImpl(self: *Codegen, obj: Value, idx: ast.Index, cmp: ?StrCharCmp) CodegenError!Value {
     var index_v = try self.genExpr(idx.index.*);
     // Faz GG.9: `genForRange`nin TESPİT ETTİĞİ `for i in range(len(s)):
     // ... s[i] ...` deseninin TAM İÇİNDEYSE (bkz. `bounds_elide_ctx`)
@@ -785,6 +812,27 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         // sabit bir değerdir, SIFIR ek çalışma-zamanı maliyetiyle yazılır.
         // v1.142.18: tahsis YOK — önceden kurulmuş PINNED ASCII tablosundan (`runtime/str.zig`nin
         // `nox_ascii_chars`i: 24 baytlık girişler, dize işaretçisi giriş + 16) adres hesaplanır.
+        if (cmp) |c| {
+            // Birleştirilmiş karşılaştırma: ASCII yolunda dize nesnesi hiç oluşmaz (sonuç doğrudan `w` bayrağı).
+            const ascii_cmp = try self.newTemp();
+            try self.qbeOp2Imm(ascii_cmp, .w, if (c.op == .eq) "ceqw" else "cnew", byte_val, @intCast(c.ch));
+            try self.qbeJmp(done_label);
+
+            try self.qbeLabel(unicode_label);
+            const uni_str = try self.newTemp();
+            try self.qbeCall(.{ .name = uni_str, .ty = .l }, "$nox_str_char_at", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = index_v.text } });
+            const uni_v: Value = .{ .text = uni_str, .qtype = .l, .heap = .str, .always_fresh = true };
+            const uni_cmp = try self.genStrEqLiteral(c.op, uni_v, &[_]u8{c.ch});
+            try self.releaseIfTemporary(idx.obj.*, uni_v);
+            const uni_pred = self.current_label;
+            try self.qbeJmp(done_label);
+
+            try self.qbeLabel(done_label);
+            const cmp_t = try self.newTemp();
+            try self.qbePhi(cmp_t, .w, ascii_label, ascii_cmp, uni_pred, uni_cmp.text);
+            try self.releaseIfTemporary(idx.obj.*, obj);
+            return .{ .text = cmp_t, .qtype = .w };
+        }
         const byte_l = try self.newTemp();
         try self.qbeOp1(byte_l, .l, "extuw", byte_val);
         const tbl_off = try self.newTemp();
@@ -1785,6 +1833,9 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     }
 
     if (b.op == .in_ or b.op == .not_in) return self.genIn(b);
+
+    // v2.1.80: `s[i] == "c"` (döngü-ASCII önbellekli `s`) — tek baytlık geçici dize olmadan doğrudan bayt karşılaştırması.
+    if (try tryGenStrIndexEqChar(self, b)) |fused| return fused;
 
     const l0 = try self.genExpr(b.left.*);
     // v2.0.70: `xs + [[]]` — sağdaki liste literali sol operandın tipini hedef alır (boş/iç içe boş literal çözülür).

@@ -2508,8 +2508,8 @@ export function l $count_two(l %rt, l %p_s) {
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    %t29 =l alloc8 8
-    %t68 =l alloc8 8
+    %t25 =l alloc8 8
+    %t61 =l alloc8 8
     storel %p_s, %t0
     storel 0, %t1
     storel 0, %t2
@@ -2531,50 +2531,43 @@ export function l $count_two(l %rt, l %p_s) {
 @str_idx_ascii13
     %t21 =l add %t8, %t9
     %t22 =w loadub %t21
-    %t23 =l extuw %t22
-    %t24 =l mul %t23, 24
-    %t25 =l add $nox_ascii_chars, %t24
-    %t26 =l add %t25, 16
+    %t23 =w ceqw %t22, 97
     jmp @str_idx_done15
 @str_idx_unicode14
-    %t27 =l call $nox_str_char_at(l %rt, l %t8, l %t9)
-    jmp @str_idx_done15
-@str_idx_done15
-    %t20 =l phi @str_idx_ascii13 %t26, @str_idx_unicode14 %t27
-    %t28 =l add $str5, 16
-    %t30 =w loadub %t20
-    %t31 =w cnew %t30, 97
-    jnz %t31, @streq_false17, @streq_next19
+    %t24 =l call $nox_str_char_at(l %rt, l %t8, l %t9)
+    %t26 =w loadub %t24
+    %t27 =w cnew %t26, 97
+    jnz %t27, @streq_false17, @streq_next19
 @streq_next19
-    %t32 =l add %t20, 1
-    %t33 =w loadub %t32
-    %t34 =w ceqw %t33, 0
-    jnz %t34, @streq_true16, @streq_false17
+    %t28 =l add %t24, 1
+    %t29 =w loadub %t28
+    %t30 =w ceqw %t29, 0
+    jnz %t30, @streq_true16, @streq_false17
 @streq_true16
-    storel 1, %t29
+    storel 1, %t25
     jmp @streq_join18
 @streq_false17
-    storel 0, %t29
+    storel 0, %t25
     jmp @streq_join18
 @streq_join18
-    %t35 =l loadl %t29
-    %t36 =w cnel %t35, 0
-    %t37 =w ceql %t20, 0
-    jnz %t37, @release_skip22, @release21
+    %t31 =l loadl %t25
+    %t32 =w cnel %t31, 0
+    %t33 =w ceql %t24, 0
+    jnz %t33, @release_skip22, @release21
 @release21
-    %t38 =l sub %t20, 16
-    %t39 =l loadl %t38
-    %t40 =w csgel %t39, 536870912
-    jnz %t40, @str_free_done26, @str_rel_atomic27
+    %t34 =l sub %t24, 16
+    %t35 =l loadl %t34
+    %t36 =w csgel %t35, 536870912
+    jnz %t36, @str_free_done26, @str_rel_atomic27
 @str_rel_atomic27
-    %t41 =l sub %t20, 16
-    %t42 =l loadl %t41
-    %t43 =l sub %t42, 1
-    storel %t43, %t41
-    %t44 =w cslel %t43, 0
-    jnz %t44, @str_free24, @str_free_skip25
+    %t37 =l sub %t24, 16
+    %t38 =l loadl %t37
+    %t39 =l sub %t38, 1
+    storel %t39, %t37
+    %t40 =w cslel %t39, 0
+    jnz %t40, @str_free24, @str_free_skip25
 @str_free24
-    call $nox_str_free_now(l %rt, l %t20)
+    call $nox_str_free_now(l %rt, l %t24)
     jmp @str_free_done26
 @str_free_skip25
     jmp @str_free_done26
@@ -2583,66 +2576,62 @@ export function l $count_two(l %rt, l %p_s) {
 @release_skip22
     jmp @release_done23
 @release_done23
-    jnz %t36, @if_then28, @if_end3
+    jmp @str_idx_done15
+@str_idx_done15
+    %t41 =w phi @str_idx_ascii13 %t23, @release_done23 %t32
+    jnz %t41, @if_then28, @if_end3
 @if_then28
-    %t45 =l loadl %t1
-    %t46 =l add %t45, 1
-    storel %t46, %t1
+    %t42 =l loadl %t1
+    %t43 =l add %t42, 1
+    storel %t43, %t1
     jmp @if_end3
 @if_end3
-    %t47 =l loadl %t0
-    %t48 =l loadl %t2
-    %t49 =w cugel %t48, %t4
-    jnz %t49, @str_idx_err30, @str_idx_ok31
+    %t44 =l loadl %t0
+    %t45 =l loadl %t2
+    %t46 =w cugel %t45, %t4
+    jnz %t46, @str_idx_err30, @str_idx_ok31
 @str_idx_ok31
     jnz %t5, @str_idx_ascii39, @str_idx_unicode40
 @str_idx_ascii39
-    %t60 =l add %t47, %t48
-    %t61 =w loadub %t60
-    %t62 =l extuw %t61
-    %t63 =l mul %t62, 24
-    %t64 =l add $nox_ascii_chars, %t63
-    %t65 =l add %t64, 16
+    %t57 =l add %t44, %t45
+    %t58 =w loadub %t57
+    %t59 =w ceqw %t58, 110
     jmp @str_idx_done41
 @str_idx_unicode40
-    %t66 =l call $nox_str_char_at(l %rt, l %t47, l %t48)
-    jmp @str_idx_done41
-@str_idx_done41
-    %t59 =l phi @str_idx_ascii39 %t65, @str_idx_unicode40 %t66
-    %t67 =l add $str7, 16
-    %t69 =w loadub %t59
-    %t70 =w cnew %t69, 110
-    jnz %t70, @streq_false43, @streq_next45
+    %t60 =l call $nox_str_char_at(l %rt, l %t44, l %t45)
+    %t62 =w loadub %t60
+    %t63 =w cnew %t62, 110
+    jnz %t63, @streq_false43, @streq_next45
 @streq_next45
-    %t71 =l add %t59, 1
-    %t72 =w loadub %t71
-    %t73 =w ceqw %t72, 0
-    jnz %t73, @streq_true42, @streq_false43
+    %t64 =l add %t60, 1
+    %t65 =w loadub %t64
+    %t66 =w ceqw %t65, 0
+    jnz %t66, @streq_true42, @streq_false43
 @streq_true42
-    storel 1, %t68
+    storel 1, %t61
     jmp @streq_join44
 @streq_false43
-    storel 0, %t68
+    storel 0, %t61
     jmp @streq_join44
 @streq_join44
-    %t74 =l loadl %t68
-    %t75 =w cnel %t74, 0
-    %t76 =w ceql %t59, 0
-    jnz %t76, @release_skip48, @release47
+    %t67 =l loadl %t61
+    %t68 =w cnel %t67, 0
+    %t69 =w ceql %t60, 0
+    jnz %t69, @release_skip48, @release47
 @release47
-    %t77 =l sub %t59, 16
-    %t78 =l loadl %t77
-    %t79 =w csgel %t78, 536870912
-    jnz %t79, @str_free_done52, @str_rel_atomic53
+    %t70 =l sub %t60, 16
+    %t71 =l loadl %t70
+    %t72 =w csgel %t71, 536870912
+    jnz %t72, @str_free_done52, @str_rel_atomic53
 @str_rel_atomic53
-    %t80 =l sub %t59, 16
-    %t81 =l loadl %t80
-    %t82 =l sub %t81, 1
-    storel %t82, %t80
-    %t83 =w cslel %t82, 0
-    jnz %t83, @str_free50, @str_free_skip51
+    %t73 =l sub %t60, 16
+    %t74 =l loadl %t73
+    %t75 =l sub %t74, 1
+    storel %t75, %t73
+    %t76 =w cslel %t75, 0
+    jnz %t76, @str_free50, @str_free_skip51
 @str_free50
-    call $nox_str_free_now(l %rt, l %t59)
+    call $nox_str_free_now(l %rt, l %t60)
     jmp @str_free_done52
 @str_free_skip51
     jmp @str_free_done52
@@ -2651,20 +2640,23 @@ export function l $count_two(l %rt, l %p_s) {
 @release_skip48
     jmp @release_done49
 @release_done49
-    jnz %t75, @if_then54, @if_end29
+    jmp @str_idx_done41
+@str_idx_done41
+    %t77 =w phi @str_idx_ascii39 %t59, @release_done49 %t68
+    jnz %t77, @if_then54, @if_end29
 @if_then54
-    %t84 =l loadl %t1
-    %t85 =l add %t84, 1
-    storel %t85, %t1
+    %t78 =l loadl %t1
+    %t79 =l add %t78, 1
+    storel %t79, %t1
     jmp @if_end29
 @if_end29
-    %t86 =l loadl %t2
-    %t87 =l add %t86, 1
-    storel %t87, %t2
+    %t80 =l loadl %t2
+    %t81 =l add %t80, 1
+    storel %t81, %t2
     jmp @while_cond0
 @while_end2
-    %t88 =l loadl %t1
-    ret %t88
+    %t82 =l loadl %t1
+    ret %t82
 @after_return55
 @fn_end56
     ret 0
@@ -2702,37 +2694,37 @@ export function l $count_two(l %rt, l %p_s) {
     call $nox_raise(l %rt, l %t12, l 5)
     ret 0
 @str_idx_err30
-    %t50 =l add $str6, 16
-    %t51 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 11, %t51
-    %t52 =l add %t51, 8
-    storel $IndexError_vtable, %t52
-    %t53 =l add %t51, 16
-    storel 0, %t53
-    %t54 =l add %t51, 24
-    storel 0, %t54
-    call $Exception___init__(l %rt, l %t51, l %t50)
-    %t55 =w call $nox_exception_pending(l %rt)
-    jnz %t55, @ctor_init_failed32, @ctor_init_cont33
+    %t47 =l add $str5, 16
+    %t48 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 11, %t48
+    %t49 =l add %t48, 8
+    storel $IndexError_vtable, %t49
+    %t50 =l add %t48, 16
+    storel 0, %t50
+    %t51 =l add %t48, 24
+    storel 0, %t51
+    call $Exception___init__(l %rt, l %t48, l %t47)
+    %t52 =w call $nox_exception_pending(l %rt)
+    jnz %t52, @ctor_init_failed32, @ctor_init_cont33
 @ctor_init_failed32
-    %t56 =w ceql %t51, 0
-    jnz %t56, @release_skip35, @release34
+    %t53 =w ceql %t48, 0
+    jnz %t53, @release_skip35, @release34
 @release34
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t51)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t48)
     jmp @release_done36
 @release_skip35
     jmp @release_done36
 @release_done36
     jmp @ctor_init_cont33
 @ctor_init_cont33
-    %t57 =w call $nox_exception_pending(l %rt)
-    jnz %t57, @exc_propagate37, @exc_continue38
+    %t54 =w call $nox_exception_pending(l %rt)
+    jnz %t54, @exc_propagate37, @exc_continue38
 @exc_propagate37
     ret 0
 @exc_continue38
-    %t58 =l add %t51, 24
-    storel 7, %t58
-    call $nox_raise(l %rt, l %t51, l 7)
+    %t55 =l add %t48, 24
+    storel 7, %t55
+    call $nox_raise(l %rt, l %t48, l 7)
     ret 0
 }
 export function l $count_via_for(l %rt, l %p_s) {
@@ -2740,7 +2732,7 @@ export function l $count_via_for(l %rt, l %p_s) {
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
-    %t21 =l alloc8 8
+    %t17 =l alloc8 8
     storel %p_s, %t0
     storel 0, %t1
     %t3 =l loadl %t0
@@ -2761,50 +2753,43 @@ export function l $count_via_for(l %rt, l %p_s) {
 @str_idx_ascii5
     %t13 =l add %t10, %t11
     %t14 =w loadub %t13
-    %t15 =l extuw %t14
-    %t16 =l mul %t15, 24
-    %t17 =l add $nox_ascii_chars, %t16
-    %t18 =l add %t17, 16
+    %t15 =w ceqw %t14, 98
     jmp @str_idx_done7
 @str_idx_unicode6
-    %t19 =l call $nox_str_char_at(l %rt, l %t10, l %t11)
-    jmp @str_idx_done7
-@str_idx_done7
-    %t12 =l phi @str_idx_ascii5 %t18, @str_idx_unicode6 %t19
-    %t20 =l add $str8, 16
-    %t22 =w loadub %t12
-    %t23 =w cnew %t22, 98
-    jnz %t23, @streq_false9, @streq_next11
+    %t16 =l call $nox_str_char_at(l %rt, l %t10, l %t11)
+    %t18 =w loadub %t16
+    %t19 =w cnew %t18, 98
+    jnz %t19, @streq_false9, @streq_next11
 @streq_next11
-    %t24 =l add %t12, 1
-    %t25 =w loadub %t24
-    %t26 =w ceqw %t25, 0
-    jnz %t26, @streq_true8, @streq_false9
+    %t20 =l add %t16, 1
+    %t21 =w loadub %t20
+    %t22 =w ceqw %t21, 0
+    jnz %t22, @streq_true8, @streq_false9
 @streq_true8
-    storel 1, %t21
+    storel 1, %t17
     jmp @streq_join10
 @streq_false9
-    storel 0, %t21
+    storel 0, %t17
     jmp @streq_join10
 @streq_join10
-    %t27 =l loadl %t21
-    %t28 =w cnel %t27, 0
-    %t29 =w ceql %t12, 0
-    jnz %t29, @release_skip14, @release13
+    %t23 =l loadl %t17
+    %t24 =w cnel %t23, 0
+    %t25 =w ceql %t16, 0
+    jnz %t25, @release_skip14, @release13
 @release13
-    %t30 =l sub %t12, 16
-    %t31 =l loadl %t30
-    %t32 =w csgel %t31, 536870912
-    jnz %t32, @str_free_done18, @str_rel_atomic19
+    %t26 =l sub %t16, 16
+    %t27 =l loadl %t26
+    %t28 =w csgel %t27, 536870912
+    jnz %t28, @str_free_done18, @str_rel_atomic19
 @str_rel_atomic19
-    %t33 =l sub %t12, 16
-    %t34 =l loadl %t33
-    %t35 =l sub %t34, 1
-    storel %t35, %t33
-    %t36 =w cslel %t35, 0
-    jnz %t36, @str_free16, @str_free_skip17
+    %t29 =l sub %t16, 16
+    %t30 =l loadl %t29
+    %t31 =l sub %t30, 1
+    storel %t31, %t29
+    %t32 =w cslel %t31, 0
+    jnz %t32, @str_free16, @str_free_skip17
 @str_free16
-    call $nox_str_free_now(l %rt, l %t12)
+    call $nox_str_free_now(l %rt, l %t16)
     jmp @str_free_done18
 @str_free_skip17
     jmp @str_free_done18
@@ -2813,22 +2798,25 @@ export function l $count_via_for(l %rt, l %p_s) {
 @release_skip14
     jmp @release_done15
 @release_done15
-    jnz %t28, @if_then20, @if_end4
+    jmp @str_idx_done7
+@str_idx_done7
+    %t33 =w phi @str_idx_ascii5 %t15, @release_done15 %t24
+    jnz %t33, @if_then20, @if_end4
 @if_then20
-    %t37 =l loadl %t1
-    %t38 =l add %t37, 1
-    storel %t38, %t1
+    %t34 =l loadl %t1
+    %t35 =l add %t34, 1
+    storel %t35, %t1
     jmp @if_end4
 @if_end4
     jmp @for_step3
 @for_step3
-    %t39 =l loadl %t2
-    %t40 =l add %t39, 1
-    storel %t40, %t2
+    %t36 =l loadl %t2
+    %t37 =l add %t36, 1
+    storel %t37, %t2
     jmp @for_cond0
 @for_end2
-    %t41 =l loadl %t1
-    ret %t41
+    %t38 =l loadl %t1
+    ret %t38
 @after_return21
 @fn_end22
     ret 0
@@ -2838,7 +2826,7 @@ export function w $main(w %argc, l %argv) {
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    %t0 =l add $str9, 16
+    %t0 =l add $str6, 16
     %t1 =l call $count_two(l %rt, l %t0)
     %t2 =w call $nox_exception_pending(l %rt)
     jnz %t2, @exc_propagate0, @exc_continue1
@@ -2847,7 +2835,7 @@ export function w $main(w %argc, l %argv) {
     ret 0
 @exc_continue1
     call $printf(l $fmt_int, ..., l %t1)
-    %t3 =l add $str10, 16
+    %t3 =l add $str7, 16
     %t4 =l call $count_via_for(l %rt, l %t3)
     %t5 =w call $nox_exception_pending(l %rt)
     jnz %t5, @exc_propagate2, @exc_continue3
@@ -3057,7 +3045,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str11, 16
+    %t9 =l add $str8, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -3172,7 +3160,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str12, 16
+    %t9 =l add $str9, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -3187,7 +3175,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str13, 16
+    %t20 =l add $str10, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -3215,12 +3203,9 @@ data $str1 = { l 1073741824, l 2305843009213693978, b "invalid format specifier:
 data $str2 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
 data $str3 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
 data $str4 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str5 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
-data $str6 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str7 = { l 1073741824, l 2305843009213693953, b "n", b 0 }
-data $str8 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
-data $str9 = { l 1073741824, l 2305843009213693958, b "banana", b 0 }
-data $str10 = { l 1073741824, l 2305843009213693958, b "babble", b 0 }
-data $str11 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str12 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str13 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str5 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
+data $str6 = { l 1073741824, l 2305843009213693958, b "banana", b 0 }
+data $str7 = { l 1073741824, l 2305843009213693958, b "babble", b 0 }
+data $str8 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str9 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str10 = { l 1073741824, l 2305843009213693952, b "", b 0 }

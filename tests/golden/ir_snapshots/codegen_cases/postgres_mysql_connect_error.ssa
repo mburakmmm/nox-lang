@@ -31171,7 +31171,7 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     %t125 =l alloc8 8
     %t144 =l alloc8 8
     %t166 =l alloc8 8
-    %t271 =l alloc8 8
+    %t267 =l alloc8 8
     storel 0, %t2
     storel 0, %t3
     storel 0, %t4
@@ -31809,50 +31809,43 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
 @str_idx_ascii162
     %t263 =l add %t260, %t261
     %t264 =w loadub %t263
-    %t265 =l extuw %t264
-    %t266 =l mul %t265, 24
-    %t267 =l add $nox_ascii_chars, %t266
-    %t268 =l add %t267, 16
+    %t265 =w ceqw %t264, 47
     jmp @str_idx_done164
 @str_idx_unicode163
-    %t269 =l call $nox_str_char_at(l %rt, l %t260, l %t261)
-    jmp @str_idx_done164
-@str_idx_done164
-    %t262 =l phi @str_idx_ascii162 %t268, @str_idx_unicode163 %t269
-    %t270 =l add $str229, 16
-    %t272 =w loadub %t262
-    %t273 =w cnew %t272, 47
-    jnz %t273, @streq_false166, @streq_next168
+    %t266 =l call $nox_str_char_at(l %rt, l %t260, l %t261)
+    %t268 =w loadub %t266
+    %t269 =w cnew %t268, 47
+    jnz %t269, @streq_false166, @streq_next168
 @streq_next168
-    %t274 =l add %t262, 1
-    %t275 =w loadub %t274
-    %t276 =w ceqw %t275, 0
-    jnz %t276, @streq_true165, @streq_false166
+    %t270 =l add %t266, 1
+    %t271 =w loadub %t270
+    %t272 =w ceqw %t271, 0
+    jnz %t272, @streq_true165, @streq_false166
 @streq_true165
-    storel 1, %t271
+    storel 1, %t267
     jmp @streq_join167
 @streq_false166
-    storel 0, %t271
+    storel 0, %t267
     jmp @streq_join167
 @streq_join167
-    %t277 =l loadl %t271
-    %t278 =w cnel %t277, 0
-    %t279 =w ceql %t262, 0
-    jnz %t279, @release_skip171, @release170
+    %t273 =l loadl %t267
+    %t274 =w cnel %t273, 0
+    %t275 =w ceql %t266, 0
+    jnz %t275, @release_skip171, @release170
 @release170
-    %t280 =l sub %t262, 16
-    %t281 =l loadl %t280
-    %t282 =w csgel %t281, 536870912
-    jnz %t282, @str_free_done175, @str_rel_atomic176
+    %t276 =l sub %t266, 16
+    %t277 =l loadl %t276
+    %t278 =w csgel %t277, 536870912
+    jnz %t278, @str_free_done175, @str_rel_atomic176
 @str_rel_atomic176
-    %t283 =l sub %t262, 16
-    %t284 =l loadl %t283
-    %t285 =l sub %t284, 1
-    storel %t285, %t283
-    %t286 =w cslel %t285, 0
-    jnz %t286, @str_free173, @str_free_skip174
+    %t279 =l sub %t266, 16
+    %t280 =l loadl %t279
+    %t281 =l sub %t280, 1
+    storel %t281, %t279
+    %t282 =w cslel %t281, 0
+    jnz %t282, @str_free173, @str_free_skip174
 @str_free173
-    call $nox_str_free_now(l %rt, l %t262)
+    call $nox_str_free_now(l %rt, l %t266)
     jmp @str_free_done175
 @str_free_skip174
     jmp @str_free_done175
@@ -31861,51 +31854,54 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
 @release_skip171
     jmp @release_done172
 @release_done172
-    jnz %t278, @if_then177, @if_end161
+    jmp @str_idx_done164
+@str_idx_done164
+    %t283 =w phi @str_idx_ascii162 %t265, @release_done172 %t274
+    jnz %t283, @if_then177, @if_end161
 @if_then177
-    %t287 =l loadl %t6
-    storel %t287, %t5
+    %t284 =l loadl %t6
+    storel %t284, %t5
     jmp @if_end161
 @if_end161
-    %t288 =l loadl %t6
-    %t289 =l add %t288, 1
-    storel %t289, %t6
+    %t285 =l loadl %t6
+    %t286 =l add %t285, 1
+    storel %t286, %t6
     jmp @while_cond158
 @while_end160
-    %t290 =l loadl %t4
-    %t291 =l loadl %t5
-    %t292 =l add %t291, 1
-    %t293 =l call $nox_url__substr(l %rt, l %t290, l 0, l %t292)
-    %t294 =w call $nox_exception_pending(l %rt)
-    jnz %t294, @exc_propagate178, @exc_continue179
+    %t287 =l loadl %t4
+    %t288 =l loadl %t5
+    %t289 =l add %t288, 1
+    %t290 =l call $nox_url__substr(l %rt, l %t287, l 0, l %t289)
+    %t291 =w call $nox_exception_pending(l %rt)
+    jnz %t291, @exc_propagate178, @exc_continue179
 @exc_propagate178
-    %t295 =l loadl %t2
-    %t296 =w ceql %t295, 0
-    jnz %t296, @release_skip181, @release180
+    %t292 =l loadl %t2
+    %t293 =w ceql %t292, 0
+    jnz %t293, @release_skip181, @release180
 @release180
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t295, l $nox_url_URL_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t292, l $nox_url_URL_release)
     jmp @release_done182
 @release_skip181
     jmp @release_done182
 @release_done182
     storel 0, %t2
-    %t297 =l loadl %t4
-    %t298 =w ceql %t297, 0
-    jnz %t298, @release_skip184, @release183
+    %t294 =l loadl %t4
+    %t295 =w ceql %t294, 0
+    jnz %t295, @release_skip184, @release183
 @release183
-    %t299 =l sub %t297, 16
-    %t300 =l loadl %t299
-    %t301 =w csgel %t300, 536870912
-    jnz %t301, @str_free_done188, @str_rel_atomic189
+    %t296 =l sub %t294, 16
+    %t297 =l loadl %t296
+    %t298 =w csgel %t297, 536870912
+    jnz %t298, @str_free_done188, @str_rel_atomic189
 @str_rel_atomic189
-    %t302 =l sub %t297, 16
-    %t303 =l loadl %t302
-    %t304 =l sub %t303, 1
-    storel %t304, %t302
-    %t305 =w cslel %t304, 0
-    jnz %t305, @str_free186, @str_free_skip187
+    %t299 =l sub %t294, 16
+    %t300 =l loadl %t299
+    %t301 =l sub %t300, 1
+    storel %t301, %t299
+    %t302 =w cslel %t301, 0
+    jnz %t302, @str_free186, @str_free_skip187
 @str_free186
-    call $nox_str_free_now(l %rt, l %t297)
+    call $nox_str_free_now(l %rt, l %t294)
     jmp @str_free_done188
 @str_free_skip187
     jmp @str_free_done188
@@ -31915,23 +31911,23 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @release_done185
 @release_done185
     storel 0, %t4
-    %t306 =l loadl %t3
-    %t307 =w ceql %t306, 0
-    jnz %t307, @release_skip191, @release190
+    %t303 =l loadl %t3
+    %t304 =w ceql %t303, 0
+    jnz %t304, @release_skip191, @release190
 @release190
-    %t308 =l sub %t306, 16
-    %t309 =l loadl %t308
-    %t310 =w csgel %t309, 536870912
-    jnz %t310, @str_free_done195, @str_rel_atomic196
+    %t305 =l sub %t303, 16
+    %t306 =l loadl %t305
+    %t307 =w csgel %t306, 536870912
+    jnz %t307, @str_free_done195, @str_rel_atomic196
 @str_rel_atomic196
-    %t311 =l sub %t306, 16
-    %t312 =l loadl %t311
-    %t313 =l sub %t312, 1
-    storel %t313, %t311
-    %t314 =w cslel %t313, 0
-    jnz %t314, @str_free193, @str_free_skip194
+    %t308 =l sub %t303, 16
+    %t309 =l loadl %t308
+    %t310 =l sub %t309, 1
+    storel %t310, %t308
+    %t311 =w cslel %t310, 0
+    jnz %t311, @str_free193, @str_free_skip194
 @str_free193
-    call $nox_str_free_now(l %rt, l %t306)
+    call $nox_str_free_now(l %rt, l %t303)
     jmp @str_free_done195
 @str_free_skip194
     jmp @str_free_done195
@@ -31941,23 +31937,23 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @release_done192
 @release_done192
     storel 0, %t3
-    %t315 =l loadl %t7
-    %t316 =w ceql %t315, 0
-    jnz %t316, @release_skip198, @release197
+    %t312 =l loadl %t7
+    %t313 =w ceql %t312, 0
+    jnz %t313, @release_skip198, @release197
 @release197
-    %t317 =l sub %t315, 16
-    %t318 =l loadl %t317
-    %t319 =w csgel %t318, 536870912
-    jnz %t319, @str_free_done202, @str_rel_atomic203
+    %t314 =l sub %t312, 16
+    %t315 =l loadl %t314
+    %t316 =w csgel %t315, 536870912
+    jnz %t316, @str_free_done202, @str_rel_atomic203
 @str_rel_atomic203
-    %t320 =l sub %t315, 16
-    %t321 =l loadl %t320
-    %t322 =l sub %t321, 1
-    storel %t322, %t320
-    %t323 =w cslel %t322, 0
-    jnz %t323, @str_free200, @str_free_skip201
+    %t317 =l sub %t312, 16
+    %t318 =l loadl %t317
+    %t319 =l sub %t318, 1
+    storel %t319, %t317
+    %t320 =w cslel %t319, 0
+    jnz %t320, @str_free200, @str_free_skip201
 @str_free200
-    call $nox_str_free_now(l %rt, l %t315)
+    call $nox_str_free_now(l %rt, l %t312)
     jmp @str_free_done202
 @str_free_skip201
     jmp @str_free_done202
@@ -31969,23 +31965,23 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     storel 0, %t7
     ret 0
 @exc_continue179
-    %t324 =l loadl %t7
-    %t325 =w ceql %t324, 0
-    jnz %t325, @release_skip205, @release204
+    %t321 =l loadl %t7
+    %t322 =w ceql %t321, 0
+    jnz %t322, @release_skip205, @release204
 @release204
-    %t326 =l sub %t324, 16
-    %t327 =l loadl %t326
-    %t328 =w csgel %t327, 536870912
-    jnz %t328, @str_free_done209, @str_rel_atomic210
+    %t323 =l sub %t321, 16
+    %t324 =l loadl %t323
+    %t325 =w csgel %t324, 536870912
+    jnz %t325, @str_free_done209, @str_rel_atomic210
 @str_rel_atomic210
-    %t329 =l sub %t324, 16
-    %t330 =l loadl %t329
-    %t331 =l sub %t330, 1
-    storel %t331, %t329
-    %t332 =w cslel %t331, 0
-    jnz %t332, @str_free207, @str_free_skip208
+    %t326 =l sub %t321, 16
+    %t327 =l loadl %t326
+    %t328 =l sub %t327, 1
+    storel %t328, %t326
+    %t329 =w cslel %t328, 0
+    jnz %t329, @str_free207, @str_free_skip208
 @str_free207
-    call $nox_str_free_now(l %rt, l %t324)
+    call $nox_str_free_now(l %rt, l %t321)
     jmp @str_free_done209
 @str_free_skip208
     jmp @str_free_done209
@@ -31995,28 +31991,28 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @release_done206
 @release_done206
     storel 0, %t7
-    storel %t293, %t7
-    %t333 =l loadl %t3
-    %t334 =l loadl %t7
-    %t335 =l call $nox_str_concat(l %rt, l %t333, l %t334)
-    %t336 =l loadl %t1
-    %t337 =l call $nox_str_concat(l %rt, l %t335, l %t336)
-    %t338 =w ceql %t335, 0
-    jnz %t338, @release_skip212, @release211
+    storel %t290, %t7
+    %t330 =l loadl %t3
+    %t331 =l loadl %t7
+    %t332 =l call $nox_str_concat(l %rt, l %t330, l %t331)
+    %t333 =l loadl %t1
+    %t334 =l call $nox_str_concat(l %rt, l %t332, l %t333)
+    %t335 =w ceql %t332, 0
+    jnz %t335, @release_skip212, @release211
 @release211
-    %t339 =l sub %t335, 16
-    %t340 =l loadl %t339
-    %t341 =w csgel %t340, 536870912
-    jnz %t341, @str_free_done216, @str_rel_atomic217
+    %t336 =l sub %t332, 16
+    %t337 =l loadl %t336
+    %t338 =w csgel %t337, 536870912
+    jnz %t338, @str_free_done216, @str_rel_atomic217
 @str_rel_atomic217
-    %t342 =l sub %t335, 16
-    %t343 =l loadl %t342
-    %t344 =l sub %t343, 1
-    storel %t344, %t342
-    %t345 =w cslel %t344, 0
-    jnz %t345, @str_free214, @str_free_skip215
+    %t339 =l sub %t332, 16
+    %t340 =l loadl %t339
+    %t341 =l sub %t340, 1
+    storel %t341, %t339
+    %t342 =w cslel %t341, 0
+    jnz %t342, @str_free214, @str_free_skip215
 @str_free214
-    call $nox_str_free_now(l %rt, l %t335)
+    call $nox_str_free_now(l %rt, l %t332)
     jmp @str_free_done216
 @str_free_skip215
     jmp @str_free_done216
@@ -32025,33 +32021,33 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
 @release_skip212
     jmp @release_done213
 @release_done213
-    %t346 =l loadl %t2
-    %t347 =w ceql %t346, 0
-    jnz %t347, @release_skip219, @release218
+    %t343 =l loadl %t2
+    %t344 =w ceql %t343, 0
+    jnz %t344, @release_skip219, @release218
 @release218
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t346, l $nox_url_URL_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t343, l $nox_url_URL_release)
     jmp @release_done220
 @release_skip219
     jmp @release_done220
 @release_done220
     storel 0, %t2
-    %t348 =l loadl %t4
-    %t349 =w ceql %t348, 0
-    jnz %t349, @release_skip222, @release221
+    %t345 =l loadl %t4
+    %t346 =w ceql %t345, 0
+    jnz %t346, @release_skip222, @release221
 @release221
-    %t350 =l sub %t348, 16
-    %t351 =l loadl %t350
-    %t352 =w csgel %t351, 536870912
-    jnz %t352, @str_free_done226, @str_rel_atomic227
+    %t347 =l sub %t345, 16
+    %t348 =l loadl %t347
+    %t349 =w csgel %t348, 536870912
+    jnz %t349, @str_free_done226, @str_rel_atomic227
 @str_rel_atomic227
-    %t353 =l sub %t348, 16
-    %t354 =l loadl %t353
-    %t355 =l sub %t354, 1
-    storel %t355, %t353
-    %t356 =w cslel %t355, 0
-    jnz %t356, @str_free224, @str_free_skip225
+    %t350 =l sub %t345, 16
+    %t351 =l loadl %t350
+    %t352 =l sub %t351, 1
+    storel %t352, %t350
+    %t353 =w cslel %t352, 0
+    jnz %t353, @str_free224, @str_free_skip225
 @str_free224
-    call $nox_str_free_now(l %rt, l %t348)
+    call $nox_str_free_now(l %rt, l %t345)
     jmp @str_free_done226
 @str_free_skip225
     jmp @str_free_done226
@@ -32061,23 +32057,23 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @release_done223
 @release_done223
     storel 0, %t4
-    %t357 =l loadl %t3
-    %t358 =w ceql %t357, 0
-    jnz %t358, @release_skip229, @release228
+    %t354 =l loadl %t3
+    %t355 =w ceql %t354, 0
+    jnz %t355, @release_skip229, @release228
 @release228
-    %t359 =l sub %t357, 16
-    %t360 =l loadl %t359
-    %t361 =w csgel %t360, 536870912
-    jnz %t361, @str_free_done233, @str_rel_atomic234
+    %t356 =l sub %t354, 16
+    %t357 =l loadl %t356
+    %t358 =w csgel %t357, 536870912
+    jnz %t358, @str_free_done233, @str_rel_atomic234
 @str_rel_atomic234
-    %t362 =l sub %t357, 16
-    %t363 =l loadl %t362
-    %t364 =l sub %t363, 1
-    storel %t364, %t362
-    %t365 =w cslel %t364, 0
-    jnz %t365, @str_free231, @str_free_skip232
+    %t359 =l sub %t354, 16
+    %t360 =l loadl %t359
+    %t361 =l sub %t360, 1
+    storel %t361, %t359
+    %t362 =w cslel %t361, 0
+    jnz %t362, @str_free231, @str_free_skip232
 @str_free231
-    call $nox_str_free_now(l %rt, l %t357)
+    call $nox_str_free_now(l %rt, l %t354)
     jmp @str_free_done233
 @str_free_skip232
     jmp @str_free_done233
@@ -32087,23 +32083,23 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @release_done230
 @release_done230
     storel 0, %t3
-    %t366 =l loadl %t7
-    %t367 =w ceql %t366, 0
-    jnz %t367, @release_skip236, @release235
+    %t363 =l loadl %t7
+    %t364 =w ceql %t363, 0
+    jnz %t364, @release_skip236, @release235
 @release235
-    %t368 =l sub %t366, 16
-    %t369 =l loadl %t368
-    %t370 =w csgel %t369, 536870912
-    jnz %t370, @str_free_done240, @str_rel_atomic241
+    %t365 =l sub %t363, 16
+    %t366 =l loadl %t365
+    %t367 =w csgel %t366, 536870912
+    jnz %t367, @str_free_done240, @str_rel_atomic241
 @str_rel_atomic241
-    %t371 =l sub %t366, 16
-    %t372 =l loadl %t371
-    %t373 =l sub %t372, 1
-    storel %t373, %t371
-    %t374 =w cslel %t373, 0
-    jnz %t374, @str_free238, @str_free_skip239
+    %t368 =l sub %t363, 16
+    %t369 =l loadl %t368
+    %t370 =l sub %t369, 1
+    storel %t370, %t368
+    %t371 =w cslel %t370, 0
+    jnz %t371, @str_free238, @str_free_skip239
 @str_free238
-    call $nox_str_free_now(l %rt, l %t366)
+    call $nox_str_free_now(l %rt, l %t363)
     jmp @str_free_done240
 @str_free_skip239
     jmp @str_free_done240
@@ -32113,35 +32109,35 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @release_done237
 @release_done237
     storel 0, %t7
-    ret %t337
+    ret %t334
 @after_return242
-    %t375 =l loadl %t2
-    %t376 =w ceql %t375, 0
-    jnz %t376, @release_skip244, @release243
+    %t372 =l loadl %t2
+    %t373 =w ceql %t372, 0
+    jnz %t373, @release_skip244, @release243
 @release243
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t375, l $nox_url_URL_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t372, l $nox_url_URL_release)
     jmp @release_done245
 @release_skip244
     jmp @release_done245
 @release_done245
     storel 0, %t2
-    %t377 =l loadl %t4
-    %t378 =w ceql %t377, 0
-    jnz %t378, @release_skip247, @release246
+    %t374 =l loadl %t4
+    %t375 =w ceql %t374, 0
+    jnz %t375, @release_skip247, @release246
 @release246
-    %t379 =l sub %t377, 16
-    %t380 =l loadl %t379
-    %t381 =w csgel %t380, 536870912
-    jnz %t381, @str_free_done251, @str_rel_atomic252
+    %t376 =l sub %t374, 16
+    %t377 =l loadl %t376
+    %t378 =w csgel %t377, 536870912
+    jnz %t378, @str_free_done251, @str_rel_atomic252
 @str_rel_atomic252
-    %t382 =l sub %t377, 16
-    %t383 =l loadl %t382
-    %t384 =l sub %t383, 1
-    storel %t384, %t382
-    %t385 =w cslel %t384, 0
-    jnz %t385, @str_free249, @str_free_skip250
+    %t379 =l sub %t374, 16
+    %t380 =l loadl %t379
+    %t381 =l sub %t380, 1
+    storel %t381, %t379
+    %t382 =w cslel %t381, 0
+    jnz %t382, @str_free249, @str_free_skip250
 @str_free249
-    call $nox_str_free_now(l %rt, l %t377)
+    call $nox_str_free_now(l %rt, l %t374)
     jmp @str_free_done251
 @str_free_skip250
     jmp @str_free_done251
@@ -32151,23 +32147,23 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @release_done248
 @release_done248
     storel 0, %t4
-    %t386 =l loadl %t3
-    %t387 =w ceql %t386, 0
-    jnz %t387, @release_skip254, @release253
+    %t383 =l loadl %t3
+    %t384 =w ceql %t383, 0
+    jnz %t384, @release_skip254, @release253
 @release253
-    %t388 =l sub %t386, 16
-    %t389 =l loadl %t388
-    %t390 =w csgel %t389, 536870912
-    jnz %t390, @str_free_done258, @str_rel_atomic259
+    %t385 =l sub %t383, 16
+    %t386 =l loadl %t385
+    %t387 =w csgel %t386, 536870912
+    jnz %t387, @str_free_done258, @str_rel_atomic259
 @str_rel_atomic259
-    %t391 =l sub %t386, 16
-    %t392 =l loadl %t391
-    %t393 =l sub %t392, 1
-    storel %t393, %t391
-    %t394 =w cslel %t393, 0
-    jnz %t394, @str_free256, @str_free_skip257
+    %t388 =l sub %t383, 16
+    %t389 =l loadl %t388
+    %t390 =l sub %t389, 1
+    storel %t390, %t388
+    %t391 =w cslel %t390, 0
+    jnz %t391, @str_free256, @str_free_skip257
 @str_free256
-    call $nox_str_free_now(l %rt, l %t386)
+    call $nox_str_free_now(l %rt, l %t383)
     jmp @str_free_done258
 @str_free_skip257
     jmp @str_free_done258
@@ -32177,23 +32173,23 @@ export function l $nox_url_join(l %rt, l %p_base, l %p_relative) {
     jmp @release_done255
 @release_done255
     storel 0, %t3
-    %t395 =l loadl %t7
-    %t396 =w ceql %t395, 0
-    jnz %t396, @release_skip261, @release260
+    %t392 =l loadl %t7
+    %t393 =w ceql %t392, 0
+    jnz %t393, @release_skip261, @release260
 @release260
-    %t397 =l sub %t395, 16
-    %t398 =l loadl %t397
-    %t399 =w csgel %t398, 536870912
-    jnz %t399, @str_free_done265, @str_rel_atomic266
+    %t394 =l sub %t392, 16
+    %t395 =l loadl %t394
+    %t396 =w csgel %t395, 536870912
+    jnz %t396, @str_free_done265, @str_rel_atomic266
 @str_rel_atomic266
-    %t400 =l sub %t395, 16
-    %t401 =l loadl %t400
-    %t402 =l sub %t401, 1
-    storel %t402, %t400
-    %t403 =w cslel %t402, 0
-    jnz %t403, @str_free263, @str_free_skip264
+    %t397 =l sub %t392, 16
+    %t398 =l loadl %t397
+    %t399 =l sub %t398, 1
+    storel %t399, %t397
+    %t400 =w cslel %t399, 0
+    jnz %t400, @str_free263, @str_free_skip264
 @str_free263
-    call $nox_str_free_now(l %rt, l %t395)
+    call $nox_str_free_now(l %rt, l %t392)
     jmp @str_free_done265
 @str_free_skip264
     jmp @str_free_done265
@@ -32217,7 +32213,7 @@ export function l $nox_mysql__substr(l %rt, l %p_s, l %p_start, l %p_end) {
     storel %p_s, %t0
     storel %p_start, %t1
     storel %p_end, %t2
-    %t5 =l add $str230, 16
+    %t5 =l add $str229, 16
     %t6 =l loadl %t3
     %t7 =w ceql %t6, 0
     jnz %t7, @release_skip1, @release0
@@ -32343,7 +32339,7 @@ export function l $nox_mysql__substr(l %rt, l %p_s, l %p_start, l %p_end) {
 @fn_end51
     ret 0
 @str_idx_err10
-    %t28 =l add $str231, 16
+    %t28 =l add $str230, 16
     %t29 =l call $nox_rc_alloc(l %rt, l 32)
     storel 28, %t29
     %t30 =l add %t29, 8
@@ -32677,7 +32673,7 @@ export function l $nox_mysql__read_rows(l %rt, l %p_res, l %p_ncols) {
     %t107 =l call $nox_mysql_row_isnull_raw(l %t105, l %t106)
     %t108 =w cnel %t107, 0
     storew %t108, %t9
-    %t109 =l add $str232, 16
+    %t109 =l add $str231, 16
     %t110 =l loadl %t10
     %t111 =w ceql %t110, 0
     jnz %t111, @release_skip44, @release43
@@ -33636,10 +33632,10 @@ export function $nox_mysql__mysql_bind_str(l %rt, l %p_stmt, l %p_idx, l %p_valu
     storel 0, %t4
     storel %t21, %t4
     %t28 =l loadl %t4
-    %t29 =l add $str233, 16
+    %t29 =l add $str232, 16
     %t30 =l loadl %t3
     %t31 =l call $nox_str_concat(l %rt, l %t29, l %t30)
-    %t32 =l add $str234, 16
+    %t32 =l add $str233, 16
     %t33 =l call $nox_str_concat(l %rt, l %t31, l %t32)
     %t34 =w ceql %t31, 0
     jnz %t34, @release_skip14, @release13
@@ -33869,7 +33865,7 @@ export function $nox_mysql__mysql_bind_null(l %rt, l %p_stmt, l %p_idx) {
     storel 0, %t2
     storel %t5, %t2
     %t12 =l loadl %t2
-    %t13 =l add $str235, 16
+    %t13 =l add $str234, 16
     %t14 =l loadl %t12
     %t15 =l add %t12, 8
     %t16 =l loadl %t15
@@ -34023,7 +34019,7 @@ export function l $nox_mysql__mysql_build_sql(l %rt, l %p_stmt) {
     storel 0, %t1
     storel 0, %t5
     storel %p_stmt, %t0
-    %t6 =l add $str236, 16
+    %t6 =l add $str235, 16
     %t7 =l loadl %t1
     %t8 =w ceql %t7, 0
     jnz %t8, @release_skip1, @release0
@@ -34102,7 +34098,7 @@ export function l $nox_mysql__mysql_build_sql(l %rt, l %p_stmt) {
     storel 0, %t5
     storel %t74, %t5
     %t84 =l loadl %t5
-    %t85 =l add $str238, 16
+    %t85 =l add $str237, 16
     %t87 =w loadub %t84
     %t88 =w cnew %t87, 63
     jnz %t88, @streq_false56, @streq_next58
@@ -34240,7 +34236,7 @@ export function l $nox_mysql__mysql_build_sql(l %rt, l %p_stmt) {
 @fn_end121
     ret 0
 @str_idx_err10
-    %t29 =l add $str237, 16
+    %t29 =l add $str236, 16
     %t30 =l call $nox_rc_alloc(l %rt, l 32)
     storel 28, %t30
     %t31 =l add %t30, 8
@@ -34377,7 +34373,7 @@ export function l $nox_mysql__mysql_build_sql(l %rt, l %p_stmt) {
     storel 0, %t5
     ret 0
 @list_idx_err62
-    %t103 =l add $str239, 16
+    %t103 =l add $str238, 16
     %t104 =l call $nox_rc_alloc(l %rt, l 32)
     storel 28, %t104
     %t105 =l add %t104, 8
@@ -34591,7 +34587,7 @@ export function l $nox_mysql__mysql_execute(l %rt, l %p_stmt) {
     %t30 =w cnel %t29, 0
     jnz %t30, @if_then17, @if_end16
 @if_then17
-    %t31 =l add $str240, 16
+    %t31 =l add $str239, 16
     %t32 =l loadl %t0
     %t33 =l add %t32, 24
     %t34 =l loadl %t33
@@ -34886,7 +34882,7 @@ export function l $nox_mysql__mysql_query(l %rt, l %p_stmt) {
     %t35 =w cnel %t34, 0
     jnz %t35, @if_then20, @if_end19
 @if_then20
-    %t36 =l add $str241, 16
+    %t36 =l add $str240, 16
     %t37 =l loadl %t0
     %t38 =l add %t37, 24
     %t39 =l loadl %t38
@@ -35112,7 +35108,7 @@ export function l $nox_mysql__mysql_query(l %rt, l %p_stmt) {
     %t114 =w cnel %t113, 0
     jnz %t114, @if_then78, @if_end77
 @if_then78
-    %t115 =l add $str242, 16
+    %t115 =l add $str241, 16
     %t116 =l loadl %t0
     %t117 =l add %t116, 24
     %t118 =l loadl %t117
@@ -35596,7 +35592,7 @@ export function l $nox_mysql_open_url(l %rt, l %p_conn_url) {
 @release_done41
     storel 0, %t2
     storel %t60, %t2
-    %t74 =l add $str243, 16
+    %t74 =l add $str242, 16
     %t75 =l loadl %t3
     %t76 =w ceql %t75, 0
     jnz %t76, @release_skip47, @release46
@@ -35628,7 +35624,7 @@ export function l $nox_mysql_open_url(l %rt, l %p_conn_url) {
     %t85 =l add %t84, 16
     %t86 =l loadl %t85
     storel %t86, %t9
-    %t87 =l add $str244, 16
+    %t87 =l add $str243, 16
     storel %t87, %t10
     %t88 =l loadl %t9
     %t89 =l loadl %t10
@@ -35996,7 +35992,7 @@ export function l $nox_mysql_open_url(l %rt, l %p_conn_url) {
     storel %t207, %t5
     %t221 =l loadl %t5
     storel %t221, %t12
-    %t222 =l add $str245, 16
+    %t222 =l add $str244, 16
     storel %t222, %t13
     %t223 =l loadl %t12
     %t224 =l loadl %t13
@@ -36187,7 +36183,7 @@ export function l $nox_mysql_open_url(l %rt, l %p_conn_url) {
     %t295 =w cnel %t294, 0
     jnz %t295, @if_then194, @if_end193
 @if_then194
-    %t296 =l add $str246, 16
+    %t296 =l add $str245, 16
     %t297 =l loadl %t0
     %t298 =l call $nox_str_concat(l %rt, l %t296, l %t297)
     %t299 =l call $nox_rc_alloc(l %rt, l 32)
@@ -36515,7 +36511,7 @@ export function l $nox_mysql_open_url(l %rt, l %p_conn_url) {
     storel %t396, %t8
     %t406 =l loadl %t7
     call $nox_mysql_close_raw(l %t406)
-    %t407 =l add $str247, 16
+    %t407 =l add $str246, 16
     %t408 =l loadl %t8
     %t409 =l call $nox_str_concat(l %rt, l %t407, l %t408)
     %t410 =l call $nox_rc_alloc(l %rt, l 32)
@@ -37070,7 +37066,7 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t1
     storel 0, %t2
     storel 0, %t3
-    %t5 =l add $str248, 16
+    %t5 =l add $str247, 16
     %t6 =l call $nox_postgres_open(l %rt, l %t5)
     %t7 =w call $nox_exception_pending(l %rt)
     jnz %t7, @exc_propagate3, @exc_continue4
@@ -37095,7 +37091,7 @@ export function w $main(w %argc, l %argv) {
     jnz %t11, @except_body9, @except_reraise10
 @except_body9
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t9)
-    %t12 =l add $str249, 16
+    %t12 =l add $str248, 16
     %t13 =w ceql %t12, 0
     jnz %t13, @print_none11, @print_some12
 @print_none11
@@ -37119,7 +37115,7 @@ export function w $main(w %argc, l %argv) {
     jmp @try_after1
 @try_after1
 @try_end2
-    %t15 =l add $str250, 16
+    %t15 =l add $str249, 16
     %t16 =l call $nox_mysql_open_url(l %rt, l %t15)
     %t17 =w call $nox_exception_pending(l %rt)
     jnz %t17, @exc_propagate19, @exc_continue20
@@ -37144,7 +37140,7 @@ export function w $main(w %argc, l %argv) {
     jnz %t21, @except_body25, @except_reraise26
 @except_body25
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t19)
-    %t22 =l add $str251, 16
+    %t22 =l add $str250, 16
     %t23 =w ceql %t22, 0
     jnz %t23, @print_none27, @print_some28
 @print_none27
@@ -37168,7 +37164,7 @@ export function w $main(w %argc, l %argv) {
     jmp @try_after17
 @try_after17
 @try_end18
-    %t25 =l add $str252, 16
+    %t25 =l add $str251, 16
     %t26 =l call $nox_postgres_open(l %rt, l %t25)
     %t27 =w call $nox_exception_pending(l %rt)
     jnz %t27, @exc_propagate35, @exc_continue36
@@ -37187,7 +37183,7 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t0
     storel %t26, %t0
     %t30 =l loadl %t0
-    %t31 =l add $str253, 16
+    %t31 =l add $str252, 16
     %t32 =l call $nox_postgres_Connection_prepare(l %rt, l %t30, l %t31)
     %t33 =w call $nox_exception_pending(l %rt)
     jnz %t33, @exc_propagate40, @exc_continue41
@@ -37213,7 +37209,7 @@ export function w $main(w %argc, l %argv) {
     jmp @try_dispatch32
 @exc_continue46
     %t38 =l loadl %t1
-    %t39 =l add $str254, 16
+    %t39 =l add $str253, 16
     call $nox_db_Statement_bind_str(l %rt, l %t38, l 1, l %t39)
     %t40 =w call $nox_exception_pending(l %rt)
     jnz %t40, @exc_propagate47, @exc_continue48
@@ -37255,7 +37251,7 @@ export function w $main(w %argc, l %argv) {
     jnz %t50, @except_body57, @except_reraise58
 @except_body57
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t48)
-    %t51 =l add $str255, 16
+    %t51 =l add $str254, 16
     %t52 =w ceql %t51, 0
     jnz %t52, @print_none59, @print_some60
 @print_none59
@@ -37279,7 +37275,7 @@ export function w $main(w %argc, l %argv) {
     jmp @try_after33
 @try_after33
 @try_end34
-    %t54 =l add $str256, 16
+    %t54 =l add $str255, 16
     %t55 =l call $nox_postgres_open(l %rt, l %t54)
     %t56 =w call $nox_exception_pending(l %rt)
     jnz %t56, @exc_propagate67, @exc_continue68
@@ -37303,7 +37299,7 @@ export function w $main(w %argc, l %argv) {
     call $nox_postgres_Connection_close(l %rt, l %t60)
     jmp @inline_done72
 @inline_done72
-    %t61 =l add $str257, 16
+    %t61 =l add $str256, 16
     %t62 =w ceql %t61, 0
     jnz %t62, @print_none73, @print_some74
 @print_none73
@@ -37325,7 +37321,7 @@ export function w $main(w %argc, l %argv) {
     jnz %t65, @except_body77, @except_reraise78
 @except_body77
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t63)
-    %t66 =l add $str258, 16
+    %t66 =l add $str257, 16
     %t67 =w ceql %t66, 0
     jnz %t67, @print_none79, @print_some80
 @print_none79
@@ -37742,7 +37738,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str259, 16
+    %t9 =l add $str258, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -37857,7 +37853,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str260, 16
+    %t9 =l add $str259, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -37872,7 +37868,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str261, 16
+    %t20 =l add $str260, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -38124,39 +38120,38 @@ data $str225 = { l 1073741824, l 2305843009213693957, b "https", b 0 }
 data $str226 = { l 1073741824, l 2305843009213693955, b "ftp", b 0 }
 data $str227 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
 data $str228 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
-data $str229 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
-data $str230 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str231 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str232 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str229 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str230 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
+data $str231 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str232 = { l 1073741824, l 2305843009213693953, b "'", b 0 }
 data $str233 = { l 1073741824, l 2305843009213693953, b "'", b 0 }
-data $str234 = { l 1073741824, l 2305843009213693953, b "'", b 0 }
-data $str235 = { l 1073741824, l 2305843009213693956, b "NULL", b 0 }
-data $str236 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str237 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
-data $str238 = { l 1073741824, l 2305843009213693953, b "?", b 0 }
-data $str239 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
-data $str240 = { l 1073741824, l 2305843009213693970, b "statement failed: ", b 0 }
-data $str241 = { l 1073741824, l 2305843009213693966, b "query failed: ", b 0 }
-data $str242 = { l 1073741824, l 2305843009213693980, b "could not fetch the result: ", b 0 }
-data $str243 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str244 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
-data $str245 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
-data $str246 = { l 1073741824, l 2305843009213694012, b "could not connect (libmysqlclient may have failed to load): ", b 0 }
-data $str247 = { l 1073741824, l 2305843009213693971, b "connection failed: ", b 0 }
-data $str248 = { l 1073741824, l 2305843009213693996, b "postgres://baduser@127.0.0.1:1/nonexistentdb", b 0 }
-data $str249 = { l 1073741824, l 2305843009213693975, b "PostgresError yakalandi", b 0 }
-data $str250 = { l 1073741824, l 2305843009213693993, b "mysql://baduser@127.0.0.1:1/nonexistentdb", b 0 }
-data $str251 = { l 1073741824, l 2305843009213693972, b "MysqlError yakalandi", b 0 }
-data $str252 = { l 1073741824, l 2305843009213693996, b "postgres://baduser@127.0.0.1:1/nonexistentdb", b 0 }
-data $str253 = { l 1073741824, l 2305843009213693966, b "select $1::int", b 0 }
-data $str254 = { l 1073741824, l 2305843009213693956, b "test", b 0 }
-data $str255 = { l 1073741824, l 2305843009213694006, b "Statement/prepare yolu (postgres) temiz basarisiz oldu", b 0 }
-data $str256 = { l 1073741824, l 2305843009213693996, b "postgres://baduser@127.0.0.1:1/nonexistentdb", b 0 }
-data $str257 = { l 1073741824, l 2305843009213694011, b "DbConnection protokolu nox.postgres.Connection'i karsiliyor", b 0 }
-data $str258 = { l 1073741824, l 2305843009213694006, b "Statement/prepare yolu (postgres) temiz basarisiz oldu", b 0 }
+data $str234 = { l 1073741824, l 2305843009213693956, b "NULL", b 0 }
+data $str235 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str236 = { l 1073741824, l 2305843009213693974, b "str index out of range", b 0 }
+data $str237 = { l 1073741824, l 2305843009213693953, b "?", b 0 }
+data $str238 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
+data $str239 = { l 1073741824, l 2305843009213693970, b "statement failed: ", b 0 }
+data $str240 = { l 1073741824, l 2305843009213693966, b "query failed: ", b 0 }
+data $str241 = { l 1073741824, l 2305843009213693980, b "could not fetch the result: ", b 0 }
+data $str242 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str243 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
+data $str244 = { l 1073741824, l 2305843009213693953, b "/", b 0 }
+data $str245 = { l 1073741824, l 2305843009213694012, b "could not connect (libmysqlclient may have failed to load): ", b 0 }
+data $str246 = { l 1073741824, l 2305843009213693971, b "connection failed: ", b 0 }
+data $str247 = { l 1073741824, l 2305843009213693996, b "postgres://baduser@127.0.0.1:1/nonexistentdb", b 0 }
+data $str248 = { l 1073741824, l 2305843009213693975, b "PostgresError yakalandi", b 0 }
+data $str249 = { l 1073741824, l 2305843009213693993, b "mysql://baduser@127.0.0.1:1/nonexistentdb", b 0 }
+data $str250 = { l 1073741824, l 2305843009213693972, b "MysqlError yakalandi", b 0 }
+data $str251 = { l 1073741824, l 2305843009213693996, b "postgres://baduser@127.0.0.1:1/nonexistentdb", b 0 }
+data $str252 = { l 1073741824, l 2305843009213693966, b "select $1::int", b 0 }
+data $str253 = { l 1073741824, l 2305843009213693956, b "test", b 0 }
+data $str254 = { l 1073741824, l 2305843009213694006, b "Statement/prepare yolu (postgres) temiz basarisiz oldu", b 0 }
+data $str255 = { l 1073741824, l 2305843009213693996, b "postgres://baduser@127.0.0.1:1/nonexistentdb", b 0 }
+data $str256 = { l 1073741824, l 2305843009213694011, b "DbConnection protokolu nox.postgres.Connection'i karsiliyor", b 0 }
+data $str257 = { l 1073741824, l 2305843009213694006, b "Statement/prepare yolu (postgres) temiz basarisiz oldu", b 0 }
+data $str258 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str259 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str260 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str261 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
 data $fmt_lit1 = { b "None", b 0 }
 data $fmt_lit2 = { b "None", b 0 }
