@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.83]
+
+### Değişti
+
+- **Sabit dize retain'inde atomik artış atlanır (TODO 4.5.4 madde 3b / 3.5.3):** `emitInlineRetain` `str` için başlık sayacını okur; `STR_PINNED_THRESHOLD` (2^29) üstündeyse (literaller, tek karakterlik tablo) atomik `add` yapılmaz (release tarafında v2.1.76'da yapılmıştı). Literal-yoğun ekleme döngüsünde ~%15-20 hızlanma; diğer çekirdekler nötr. Golden: `pinned_str_retain_skip` (Python ile aynı, iki backend)
+
 ## [2.1.82]
 
 ### Değişti

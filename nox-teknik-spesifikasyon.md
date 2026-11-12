@@ -29940,3 +29940,8 @@ Hepsi semantik korumalı (gözlemlenebilir davranış aynı), iki backend'de (LL
 ### 3.430 LLVM TBAA: liste uzunluğu / liste elemanı (v2.1.82, TODO 3.5.3)
 
 `Codegen.mem_tag` (`.none`/`.list_len`/`.list_elem`) yalnızca LLVM backend'inde sonraki `load`/`store`a `!tbaa !1` / `!tbaa !2` ekler (`llvm_emit.tbaaSuffix`); modül sonunda `!1..!5` etiket düğümleri yazılır (`nox.root` kökü altında `nox.list.len`, `nox.list.elem`). İşaretlenenler: `genIndex` ve `genListAssign`'daki uzunluk yüklemesi, `loadListElem` (b/h dışı) ve `genListAssign`'ın b/h dışı eleman yazımı. Etiketsiz erişimler (append başlık yazımı vb.) her şeyle çakışabilir sayıldığından hiçbir mevcut sıralama kısıtı gevşemez; yalnızca "eleman yazımı uzunluğu/başka eleman-dışı bölgeyi değiştirmez" bilgisi eklenir. QBE backend etiketleri yok sayar (QBE IR anlık görüntüleri değişmez).
+
+### 3.431 Sabit dize retain atlaması (v2.1.83, TODO 4.5.4)
+
+`ownership.zig` `emitInlineRetain(.str)`: `rc = load(ptr - retainOffset)`; `rc >= STR_PINNED_THRESHOLD` ise artış atlanır, değilse eski atomik `add`. Sabit dizeler (refcount 1<<30'dan başlar) için sayaç zaten hiç sıfıra inmez; release yolu (v2.1.76) zaten aynı eşiği kontrol eder. Diğer yığın türleri (`list`/`class`/`dict`) etkilenmez.
+

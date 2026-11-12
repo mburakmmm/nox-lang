@@ -1,0 +1,39 @@
+# v2.1.83: sabit (pinned) dize literallerinin retain'inde atomik artış atlanır; dinamik (sayaçlı) dizeler eskisi gibi sayılır. Karışık kullanımda
+# içerik ve yaşam süresi doğru kalmalı (erken serbest bırakma / sızıntı yok).
+class Tag:
+    name: str
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+def label(i: int) -> str:
+    if i % 2 == 0:
+        return "even"
+    return "n" + str(i)
+
+lits: list[str] = []
+for q in range(1000):
+    lits.append("hello")
+tags: list[Tag] = []
+for q in range(500):
+    tags.append(Tag("lit"))
+    tags.append(Tag("dyn" + str(q)))
+d: dict[str, str] = {}
+for q in range(300):
+    d[label(q)] = label(q + 1)
+    d["fixed"] = "value"
+copies: list[str] = []
+for t in tags:
+    copies.append(t.name)
+tags.clear()
+total: int = 0
+for s in copies:
+    total = total + len(s)
+print(len(lits))
+print(lits[0] + lits[999])
+print(len(copies))
+print(copies[0] + "," + copies[1] + "," + copies[998] + "," + copies[999])
+print(total)
+print(len(d))
+print(d["fixed"])
+print(d["even"])
+print(d["n7"])
