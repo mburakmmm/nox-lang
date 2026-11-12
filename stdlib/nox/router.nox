@@ -61,12 +61,10 @@ import nox.url
 # `s[1:]` (Nox'ta dilim sözdizimi YOK) eşdeğeri — yalnızca `":isim"`
 # segmentinden baştaki `:`yi ATMAK İçin, bu modül İçinde YEREL.
 def _drop_first_char(s: str) -> str:
-    result: str = ""
-    i: int = 1
-    while i < len(s):
-        result = result + s[i]
-        i = i + 1
-    return result
+    # v2.1.89: dilim ile tek kopya (len(s) <= 1 iken boş dize, eski döngüyle aynı).
+    if len(s) <= 1:
+        return ""
+    return s[1:]
 
 # Bir rotanın EŞLEŞTİĞİNDE işleyicisine iletilen ZENGİNLEŞTİRİLMİŞ istek
 # bağlamı — ham `nox.http.HttpRequest`in SABİT alan kümesi path parametreleri

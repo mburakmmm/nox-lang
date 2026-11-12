@@ -4361,226 +4361,275 @@ export function l $nox_toml__substr(l %rt, l %p_s, l %p_start, l %p_end) {
     storel %p_s, %t0
     storel %p_start, %t1
     storel %p_end, %t2
-    %t5 =l add $str10, 16
-    %t6 =l loadl %t3
-    %t7 =w ceql %t6, 0
-    jnz %t7, @release_skip1, @release0
-@release0
-    %t8 =l sub %t6, 16
-    %t9 =l loadl %t8
-    %t10 =w csgel %t9, 536870912
-    jnz %t10, @str_free_done5, @str_rel_atomic6
-@str_rel_atomic6
-    %t11 =l sub %t6, 16
-    %t12 =l loadl %t11
-    %t13 =l sub %t12, 1
-    storel %t13, %t11
-    %t14 =w cslel %t13, 0
-    jnz %t14, @str_free3, @str_free_skip4
-@str_free3
-    call $nox_str_free_now(l %rt, l %t6)
-    jmp @str_free_done5
-@str_free_skip4
-    jmp @str_free_done5
-@str_free_done5
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
+    %t5 =l loadl %t1
+    %t6 =w csgel %t5, 0
+    jnz %t6, @logic_rhs1, @logic_short2
+@logic_short2
+    jmp @logic_done3
+@logic_rhs1
+    %t7 =l loadl %t2
+    %t8 =l loadl %t0
+    %t9 =l call $nox_str_char_count(l %t8)
+    %t10 =w cslel %t7, %t9
+    jmp @logic_done3
+@logic_done3
+    %t11 =w phi @logic_short2 0, @logic_rhs1 %t10
+    jnz %t11, @if_then4, @if_end0
+@if_then4
+    %t12 =l loadl %t0
+    %t13 =l loadl %t1
+    %t14 =l loadl %t2
+    %t15 =l call $nox_str_slice_op(l %rt, l %t12, l %t13, w 1, l %t14, w 1, l 0, w 0)
+    %t16 =l loadl %t3
+    %t17 =w ceql %t16, 0
+    jnz %t17, @release_skip6, @release5
+@release5
+    %t18 =l sub %t16, 16
+    %t19 =l loadl %t18
+    %t20 =w csgel %t19, 536870912
+    jnz %t20, @str_free_done10, @str_rel_atomic11
+@str_rel_atomic11
+    %t21 =l sub %t16, 16
+    %t22 =l loadl %t21
+    %t23 =l sub %t22, 1
+    storel %t23, %t21
+    %t24 =w cslel %t23, 0
+    jnz %t24, @str_free8, @str_free_skip9
+@str_free8
+    call $nox_str_free_now(l %rt, l %t16)
+    jmp @str_free_done10
+@str_free_skip9
+    jmp @str_free_done10
+@str_free_done10
+    jmp @release_done7
+@release_skip6
+    jmp @release_done7
+@release_done7
     storel 0, %t3
-    storel %t5, %t3
-    %t15 =l loadl %t1
-    storel %t15, %t4
-    %t16 =l loadl %t0
-    %t17 =l call $nox_str_char_count(l %t16)
-    %t18 =l call $nox_str_is_ascii(l %t16)
-    jmp @while_cond7
-@while_cond7
-    %t19 =l loadl %t4
-    %t20 =l loadl %t2
-    %t21 =w csltl %t19, %t20
-    jnz %t21, @while_body8, @while_end9
-@while_body8
-    %t22 =l loadl %t0
-    %t23 =l loadl %t4
-    %t24 =l sar %t23, 63
-    %t25 =l and %t24, %t17
-    %t26 =l add %t23, %t25
-    %t27 =w cugel %t26, %t17
-    jnz %t27, @str_idx_err10, @str_idx_ok11
-@str_idx_ok11
-    jnz %t18, @str_idx_ascii36, @str_idx_unicode37
-@str_idx_ascii36
-    %t62 =l add %t22, %t26
-    %t63 =w loadub %t62
-    %t64 =l extuw %t63
-    %t65 =l mul %t64, 24
-    %t66 =l add $nox_ascii_chars, %t65
-    %t67 =l add %t66, 16
-    jmp @str_idx_done38
-@str_idx_unicode37
-    %t68 =l call $nox_str_char_at(l %rt, l %t22, l %t26)
-    jmp @str_idx_done38
-@str_idx_done38
-    %t61 =l phi @str_idx_ascii36 %t67, @str_idx_unicode37 %t68
-    %t69 =l loadl %t3
-    %t70 =l call $nox_str_append(l %rt, l %t69, l %t61)
-    storel %t70, %t3
-    %t71 =w ceql %t61, 0
-    jnz %t71, @release_skip40, @release39
-@release39
-    %t72 =l sub %t61, 16
-    %t73 =l loadl %t72
-    %t74 =w csgel %t73, 536870912
-    jnz %t74, @str_free_done44, @str_rel_atomic45
-@str_rel_atomic45
-    %t75 =l sub %t61, 16
-    %t76 =l loadl %t75
-    %t77 =l sub %t76, 1
-    storel %t77, %t75
-    %t78 =w cslel %t77, 0
-    jnz %t78, @str_free42, @str_free_skip43
-@str_free42
-    call $nox_str_free_now(l %rt, l %t61)
-    jmp @str_free_done44
-@str_free_skip43
-    jmp @str_free_done44
-@str_free_done44
-    jmp @release_done41
-@release_skip40
-    jmp @release_done41
-@release_done41
-    %t79 =l loadl %t4
-    %t80 =l add %t79, 1
-    storel %t80, %t4
-    jmp @while_cond7
-@while_end9
-    %t81 =l loadl %t3
-    ret %t81
-@after_return46
-    %t82 =l loadl %t3
-    %t83 =w ceql %t82, 0
-    jnz %t83, @release_skip48, @release47
-@release47
-    %t84 =l sub %t82, 16
-    %t85 =l loadl %t84
-    %t86 =w csgel %t85, 536870912
-    jnz %t86, @str_free_done52, @str_rel_atomic53
-@str_rel_atomic53
-    %t87 =l sub %t82, 16
-    %t88 =l loadl %t87
-    %t89 =l sub %t88, 1
-    storel %t89, %t87
-    %t90 =w cslel %t89, 0
-    jnz %t90, @str_free50, @str_free_skip51
-@str_free50
-    call $nox_str_free_now(l %rt, l %t82)
-    jmp @str_free_done52
-@str_free_skip51
-    jmp @str_free_done52
-@str_free_done52
-    jmp @release_done49
-@release_skip48
-    jmp @release_done49
-@release_done49
+    ret %t15
+@after_return12
+    jmp @if_end0
+@if_end0
+    %t25 =l add $str10, 16
+    %t26 =l loadl %t3
+    %t27 =w ceql %t26, 0
+    jnz %t27, @release_skip14, @release13
+@release13
+    %t28 =l sub %t26, 16
+    %t29 =l loadl %t28
+    %t30 =w csgel %t29, 536870912
+    jnz %t30, @str_free_done18, @str_rel_atomic19
+@str_rel_atomic19
+    %t31 =l sub %t26, 16
+    %t32 =l loadl %t31
+    %t33 =l sub %t32, 1
+    storel %t33, %t31
+    %t34 =w cslel %t33, 0
+    jnz %t34, @str_free16, @str_free_skip17
+@str_free16
+    call $nox_str_free_now(l %rt, l %t26)
+    jmp @str_free_done18
+@str_free_skip17
+    jmp @str_free_done18
+@str_free_done18
+    jmp @release_done15
+@release_skip14
+    jmp @release_done15
+@release_done15
     storel 0, %t3
-@fn_end54
+    storel %t25, %t3
+    %t35 =l loadl %t1
+    storel %t35, %t4
+    %t36 =l loadl %t0
+    %t37 =l call $nox_str_char_count(l %t36)
+    %t38 =l call $nox_str_is_ascii(l %t36)
+    jmp @while_cond20
+@while_cond20
+    %t39 =l loadl %t4
+    %t40 =l loadl %t2
+    %t41 =w csltl %t39, %t40
+    jnz %t41, @while_body21, @while_end22
+@while_body21
+    %t42 =l loadl %t0
+    %t43 =l loadl %t4
+    %t44 =l sar %t43, 63
+    %t45 =l and %t44, %t37
+    %t46 =l add %t43, %t45
+    %t47 =w cugel %t46, %t37
+    jnz %t47, @str_idx_err23, @str_idx_ok24
+@str_idx_ok24
+    jnz %t38, @str_idx_ascii49, @str_idx_unicode50
+@str_idx_ascii49
+    %t82 =l add %t42, %t46
+    %t83 =w loadub %t82
+    %t84 =l extuw %t83
+    %t85 =l mul %t84, 24
+    %t86 =l add $nox_ascii_chars, %t85
+    %t87 =l add %t86, 16
+    jmp @str_idx_done51
+@str_idx_unicode50
+    %t88 =l call $nox_str_char_at(l %rt, l %t42, l %t46)
+    jmp @str_idx_done51
+@str_idx_done51
+    %t81 =l phi @str_idx_ascii49 %t87, @str_idx_unicode50 %t88
+    %t89 =l loadl %t3
+    %t90 =l call $nox_str_append(l %rt, l %t89, l %t81)
+    storel %t90, %t3
+    %t91 =w ceql %t81, 0
+    jnz %t91, @release_skip53, @release52
+@release52
+    %t92 =l sub %t81, 16
+    %t93 =l loadl %t92
+    %t94 =w csgel %t93, 536870912
+    jnz %t94, @str_free_done57, @str_rel_atomic58
+@str_rel_atomic58
+    %t95 =l sub %t81, 16
+    %t96 =l loadl %t95
+    %t97 =l sub %t96, 1
+    storel %t97, %t95
+    %t98 =w cslel %t97, 0
+    jnz %t98, @str_free55, @str_free_skip56
+@str_free55
+    call $nox_str_free_now(l %rt, l %t81)
+    jmp @str_free_done57
+@str_free_skip56
+    jmp @str_free_done57
+@str_free_done57
+    jmp @release_done54
+@release_skip53
+    jmp @release_done54
+@release_done54
+    %t99 =l loadl %t4
+    %t100 =l add %t99, 1
+    storel %t100, %t4
+    jmp @while_cond20
+@while_end22
+    %t101 =l loadl %t3
+    ret %t101
+@after_return59
+    %t102 =l loadl %t3
+    %t103 =w ceql %t102, 0
+    jnz %t103, @release_skip61, @release60
+@release60
+    %t104 =l sub %t102, 16
+    %t105 =l loadl %t104
+    %t106 =w csgel %t105, 536870912
+    jnz %t106, @str_free_done65, @str_rel_atomic66
+@str_rel_atomic66
+    %t107 =l sub %t102, 16
+    %t108 =l loadl %t107
+    %t109 =l sub %t108, 1
+    storel %t109, %t107
+    %t110 =w cslel %t109, 0
+    jnz %t110, @str_free63, @str_free_skip64
+@str_free63
+    call $nox_str_free_now(l %rt, l %t102)
+    jmp @str_free_done65
+@str_free_skip64
+    jmp @str_free_done65
+@str_free_done65
+    jmp @release_done62
+@release_skip61
+    jmp @release_done62
+@release_done62
+    storel 0, %t3
+@fn_end67
     ret 0
-@str_idx_err10
-    %t28 =l add $str11, 16
-    %t29 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 13, %t29
-    %t30 =l add %t29, 8
-    storel $IndexError_vtable, %t30
-    %t31 =l add %t29, 16
-    storel 0, %t31
-    %t32 =l add %t29, 24
-    storel 0, %t32
-    call $Exception___init__(l %rt, l %t29, l %t28)
-    %t33 =w call $nox_exception_pending(l %rt)
-    jnz %t33, @ctor_init_failed12, @ctor_init_cont13
-@ctor_init_failed12
-    %t34 =w ceql %t29, 0
-    jnz %t34, @release_skip15, @release14
-@release14
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t29)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
-    jmp @ctor_init_cont13
-@ctor_init_cont13
-    %t35 =l sub %rt, 48
-    %t36 =w loadub %t35
-    %t37 =l sub %rt, 64
-    %t38 =l loadl %t37
-    jnz %t36, @exc_slow17, @exc_fast18
-@exc_fast18
-    %t39 =w cnel %t38, 0
-    jmp @exc_done19
-@exc_slow17
-    %t40 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done19
-@exc_done19
-    %t41 =w phi @exc_fast18 %t39, @exc_slow17 %t40
-    jnz %t41, @exc_propagate20, @exc_continue21
-@exc_propagate20
-    %t42 =l loadl %t3
-    %t43 =w ceql %t42, 0
-    jnz %t43, @release_skip23, @release22
-@release22
-    %t44 =l sub %t42, 16
-    %t45 =l loadl %t44
-    %t46 =w csgel %t45, 536870912
-    jnz %t46, @str_free_done27, @str_rel_atomic28
-@str_rel_atomic28
-    %t47 =l sub %t42, 16
-    %t48 =l loadl %t47
-    %t49 =l sub %t48, 1
-    storel %t49, %t47
-    %t50 =w cslel %t49, 0
-    jnz %t50, @str_free25, @str_free_skip26
-@str_free25
-    call $nox_str_free_now(l %rt, l %t42)
-    jmp @str_free_done27
-@str_free_skip26
-    jmp @str_free_done27
-@str_free_done27
-    jmp @release_done24
-@release_skip23
-    jmp @release_done24
-@release_done24
-    storel 0, %t3
-    ret 0
-@exc_continue21
-    %t51 =l add %t29, 24
-    storel 87, %t51
-    call $nox_raise(l %rt, l %t29, l 87)
-    %t52 =l loadl %t3
-    %t53 =w ceql %t52, 0
-    jnz %t53, @release_skip30, @release29
-@release29
-    %t54 =l sub %t52, 16
-    %t55 =l loadl %t54
-    %t56 =w csgel %t55, 536870912
-    jnz %t56, @str_free_done34, @str_rel_atomic35
-@str_rel_atomic35
-    %t57 =l sub %t52, 16
+@str_idx_err23
+    %t48 =l add $str11, 16
+    %t49 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 13, %t49
+    %t50 =l add %t49, 8
+    storel $IndexError_vtable, %t50
+    %t51 =l add %t49, 16
+    storel 0, %t51
+    %t52 =l add %t49, 24
+    storel 0, %t52
+    call $Exception___init__(l %rt, l %t49, l %t48)
+    %t53 =w call $nox_exception_pending(l %rt)
+    jnz %t53, @ctor_init_failed25, @ctor_init_cont26
+@ctor_init_failed25
+    %t54 =w ceql %t49, 0
+    jnz %t54, @release_skip28, @release27
+@release27
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t49)
+    jmp @release_done29
+@release_skip28
+    jmp @release_done29
+@release_done29
+    jmp @ctor_init_cont26
+@ctor_init_cont26
+    %t55 =l sub %rt, 48
+    %t56 =w loadub %t55
+    %t57 =l sub %rt, 64
     %t58 =l loadl %t57
-    %t59 =l sub %t58, 1
-    storel %t59, %t57
-    %t60 =w cslel %t59, 0
-    jnz %t60, @str_free32, @str_free_skip33
-@str_free32
-    call $nox_str_free_now(l %rt, l %t52)
-    jmp @str_free_done34
-@str_free_skip33
-    jmp @str_free_done34
-@str_free_done34
-    jmp @release_done31
-@release_skip30
-    jmp @release_done31
-@release_done31
+    jnz %t56, @exc_slow30, @exc_fast31
+@exc_fast31
+    %t59 =w cnel %t58, 0
+    jmp @exc_done32
+@exc_slow30
+    %t60 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done32
+@exc_done32
+    %t61 =w phi @exc_fast31 %t59, @exc_slow30 %t60
+    jnz %t61, @exc_propagate33, @exc_continue34
+@exc_propagate33
+    %t62 =l loadl %t3
+    %t63 =w ceql %t62, 0
+    jnz %t63, @release_skip36, @release35
+@release35
+    %t64 =l sub %t62, 16
+    %t65 =l loadl %t64
+    %t66 =w csgel %t65, 536870912
+    jnz %t66, @str_free_done40, @str_rel_atomic41
+@str_rel_atomic41
+    %t67 =l sub %t62, 16
+    %t68 =l loadl %t67
+    %t69 =l sub %t68, 1
+    storel %t69, %t67
+    %t70 =w cslel %t69, 0
+    jnz %t70, @str_free38, @str_free_skip39
+@str_free38
+    call $nox_str_free_now(l %rt, l %t62)
+    jmp @str_free_done40
+@str_free_skip39
+    jmp @str_free_done40
+@str_free_done40
+    jmp @release_done37
+@release_skip36
+    jmp @release_done37
+@release_done37
+    storel 0, %t3
+    ret 0
+@exc_continue34
+    %t71 =l add %t49, 24
+    storel 91, %t71
+    call $nox_raise(l %rt, l %t49, l 91)
+    %t72 =l loadl %t3
+    %t73 =w ceql %t72, 0
+    jnz %t73, @release_skip43, @release42
+@release42
+    %t74 =l sub %t72, 16
+    %t75 =l loadl %t74
+    %t76 =w csgel %t75, 536870912
+    jnz %t76, @str_free_done47, @str_rel_atomic48
+@str_rel_atomic48
+    %t77 =l sub %t72, 16
+    %t78 =l loadl %t77
+    %t79 =l sub %t78, 1
+    storel %t79, %t77
+    %t80 =w cslel %t79, 0
+    jnz %t80, @str_free45, @str_free_skip46
+@str_free45
+    call $nox_str_free_now(l %rt, l %t72)
+    jmp @str_free_done47
+@str_free_skip46
+    jmp @str_free_done47
+@str_free_done47
+    jmp @release_done44
+@release_skip43
+    jmp @release_done44
+@release_done44
     storel 0, %t3
     ret 0
 }
@@ -4684,8 +4733,8 @@ export function l $nox_toml__char_at_or_empty(l %rt, l %p_s, l %p_pos, l %p_n) {
     ret 0
 @exc_continue13
     %t28 =l add %t15, 24
-    storel 94, %t28
-    call $nox_raise(l %rt, l %t15, l 94)
+    storel 98, %t28
+    call $nox_raise(l %rt, l %t15, l 98)
     ret 0
 }
 export function l $nox_toml__safe_substr(l %rt, l %p_s, l %p_start, l %p_end, l %p_n) {
@@ -4989,8 +5038,8 @@ export function $nox_toml__skip_inline_ws(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue15
     %t27 =l add %t14, 24
-    storel 107, %t27
-    call $nox_raise(l %rt, l %t14, l 107)
+    storel 111, %t27
+    call $nox_raise(l %rt, l %t14, l 111)
     ret
 @list_idx_err18
     %t38 =l add $str16, 16
@@ -5034,8 +5083,8 @@ export function $nox_toml__skip_inline_ws(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue29
     %t52 =l add %t39, 24
-    storel 108, %t52
-    call $nox_raise(l %rt, l %t39, l 108)
+    storel 112, %t52
+    call $nox_raise(l %rt, l %t39, l 112)
     ret
 @str_idx_err30
     %t61 =l add $str17, 16
@@ -5079,8 +5128,8 @@ export function $nox_toml__skip_inline_ws(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue41
     %t75 =l add %t62, 24
-    storel 108, %t75
-    call $nox_raise(l %rt, l %t62, l 108)
+    storel 112, %t75
+    call $nox_raise(l %rt, l %t62, l 112)
     ret
 @list_idx_err60
     %t102 =l add $str18, 16
@@ -5124,8 +5173,8 @@ export function $nox_toml__skip_inline_ws(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue71
     %t116 =l add %t103, 24
-    storel 108, %t116
-    call $nox_raise(l %rt, l %t103, l 108)
+    storel 112, %t116
+    call $nox_raise(l %rt, l %t103, l 112)
     ret
 @str_idx_err72
     %t125 =l add $str19, 16
@@ -5169,8 +5218,8 @@ export function $nox_toml__skip_inline_ws(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue83
     %t139 =l add %t126, 24
-    storel 108, %t139
-    call $nox_raise(l %rt, l %t126, l 108)
+    storel 112, %t139
+    call $nox_raise(l %rt, l %t126, l 112)
     ret
 @list_assign_err101
     %t166 =l add $str20, 16
@@ -5214,8 +5263,8 @@ export function $nox_toml__skip_inline_ws(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue112
     %t180 =l add %t167, 24
-    storel 110, %t180
-    call $nox_raise(l %rt, l %t167, l 110)
+    storel 114, %t180
+    call $nox_raise(l %rt, l %t167, l 114)
     ret
 @list_idx_err113
     %t184 =l add $str21, 16
@@ -5259,8 +5308,8 @@ export function $nox_toml__skip_inline_ws(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue124
     %t198 =l add %t185, 24
-    storel 110, %t198
-    call $nox_raise(l %rt, l %t185, l 110)
+    storel 114, %t198
+    call $nox_raise(l %rt, l %t185, l 114)
     ret
 }
 export function $nox_toml__skip_to_eol(l %rt, l %p_text, l %p_pos) {
@@ -5459,8 +5508,8 @@ export function $nox_toml__skip_to_eol(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue15
     %t27 =l add %t14, 24
-    storel 118, %t27
-    call $nox_raise(l %rt, l %t14, l 118)
+    storel 122, %t27
+    call $nox_raise(l %rt, l %t14, l 122)
     ret
 @list_idx_err18
     %t38 =l add $str23, 16
@@ -5504,8 +5553,8 @@ export function $nox_toml__skip_to_eol(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue29
     %t52 =l add %t39, 24
-    storel 119, %t52
-    call $nox_raise(l %rt, l %t39, l 119)
+    storel 123, %t52
+    call $nox_raise(l %rt, l %t39, l 123)
     ret
 @str_idx_err30
     %t61 =l add $str24, 16
@@ -5549,8 +5598,8 @@ export function $nox_toml__skip_to_eol(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue41
     %t75 =l add %t62, 24
-    storel 119, %t75
-    call $nox_raise(l %rt, l %t62, l 119)
+    storel 123, %t75
+    call $nox_raise(l %rt, l %t62, l 123)
     ret
 @list_assign_err59
     %t101 =l add $str25, 16
@@ -5594,8 +5643,8 @@ export function $nox_toml__skip_to_eol(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue70
     %t115 =l add %t102, 24
-    storel 121, %t115
-    call $nox_raise(l %rt, l %t102, l 121)
+    storel 125, %t115
+    call $nox_raise(l %rt, l %t102, l 125)
     ret
 @list_idx_err71
     %t119 =l add $str26, 16
@@ -5639,8 +5688,8 @@ export function $nox_toml__skip_to_eol(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue82
     %t133 =l add %t120, 24
-    storel 121, %t133
-    call $nox_raise(l %rt, l %t120, l 121)
+    storel 125, %t133
+    call $nox_raise(l %rt, l %t120, l 125)
     ret
 @list_assign_err83
     %t145 =l add $str27, 16
@@ -5684,8 +5733,8 @@ export function $nox_toml__skip_to_eol(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue94
     %t159 =l add %t146, 24
-    storel 124, %t159
-    call $nox_raise(l %rt, l %t146, l 124)
+    storel 128, %t159
+    call $nox_raise(l %rt, l %t146, l 128)
     ret
 @list_idx_err95
     %t163 =l add $str28, 16
@@ -5729,8 +5778,8 @@ export function $nox_toml__skip_to_eol(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue106
     %t177 =l add %t164, 24
-    storel 124, %t177
-    call $nox_raise(l %rt, l %t164, l 124)
+    storel 128, %t177
+    call $nox_raise(l %rt, l %t164, l 128)
     ret
 }
 export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos) {
@@ -6231,8 +6280,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue15
     %t27 =l add %t14, 24
-    storel 130, %t27
-    call $nox_raise(l %rt, l %t14, l 130)
+    storel 134, %t27
+    call $nox_raise(l %rt, l %t14, l 134)
     ret
 @list_idx_err18
     %t38 =l add $str30, 16
@@ -6276,8 +6325,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue29
     %t52 =l add %t39, 24
-    storel 131, %t52
-    call $nox_raise(l %rt, l %t39, l 131)
+    storel 135, %t52
+    call $nox_raise(l %rt, l %t39, l 135)
     ret
 @str_idx_err30
     %t61 =l add $str31, 16
@@ -6321,8 +6370,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue41
     %t75 =l add %t62, 24
-    storel 131, %t75
-    call $nox_raise(l %rt, l %t62, l 131)
+    storel 135, %t75
+    call $nox_raise(l %rt, l %t62, l 135)
     ret
 @list_idx_err60
     %t102 =l add $str32, 16
@@ -6366,8 +6415,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue71
     %t116 =l add %t103, 24
-    storel 131, %t116
-    call $nox_raise(l %rt, l %t103, l 131)
+    storel 135, %t116
+    call $nox_raise(l %rt, l %t103, l 135)
     ret
 @str_idx_err72
     %t125 =l add $str33, 16
@@ -6411,8 +6460,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue83
     %t139 =l add %t126, 24
-    storel 131, %t139
-    call $nox_raise(l %rt, l %t126, l 131)
+    storel 135, %t139
+    call $nox_raise(l %rt, l %t126, l 135)
     ret
 @list_idx_err102
     %t167 =l add $str34, 16
@@ -6456,8 +6505,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue113
     %t181 =l add %t168, 24
-    storel 131, %t181
-    call $nox_raise(l %rt, l %t168, l 131)
+    storel 135, %t181
+    call $nox_raise(l %rt, l %t168, l 135)
     ret
 @str_idx_err114
     %t190 =l add $str35, 16
@@ -6501,8 +6550,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue125
     %t204 =l add %t191, 24
-    storel 131, %t204
-    call $nox_raise(l %rt, l %t191, l 131)
+    storel 135, %t204
+    call $nox_raise(l %rt, l %t191, l 135)
     ret
 @list_idx_err144
     %t232 =l add $str36, 16
@@ -6546,8 +6595,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue155
     %t246 =l add %t233, 24
-    storel 131, %t246
-    call $nox_raise(l %rt, l %t233, l 131)
+    storel 135, %t246
+    call $nox_raise(l %rt, l %t233, l 135)
     ret
 @str_idx_err156
     %t255 =l add $str37, 16
@@ -6591,8 +6640,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue167
     %t269 =l add %t256, 24
-    storel 131, %t269
-    call $nox_raise(l %rt, l %t256, l 131)
+    storel 135, %t269
+    call $nox_raise(l %rt, l %t256, l 135)
     ret
 @list_assign_err185
     %t296 =l add $str38, 16
@@ -6636,8 +6685,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue196
     %t310 =l add %t297, 24
-    storel 133, %t310
-    call $nox_raise(l %rt, l %t297, l 133)
+    storel 137, %t310
+    call $nox_raise(l %rt, l %t297, l 137)
     ret
 @list_idx_err197
     %t314 =l add $str39, 16
@@ -6681,8 +6730,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue208
     %t328 =l add %t315, 24
-    storel 133, %t328
-    call $nox_raise(l %rt, l %t315, l 133)
+    storel 137, %t328
+    call $nox_raise(l %rt, l %t315, l 137)
     ret
 @list_idx_err209
     %t341 =l add $str40, 16
@@ -6726,8 +6775,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue220
     %t355 =l add %t342, 24
-    storel 133, %t355
-    call $nox_raise(l %rt, l %t342, l 133)
+    storel 137, %t355
+    call $nox_raise(l %rt, l %t342, l 137)
     ret
 @str_idx_err221
     %t364 =l add $str41, 16
@@ -6771,8 +6820,8 @@ export function $nox_toml__skip_ws_newlines_comments(l %rt, l %p_text, l %p_pos)
     ret
 @exc_continue232
     %t378 =l add %t365, 24
-    storel 133, %t378
-    call $nox_raise(l %rt, l %t365, l 133)
+    storel 137, %t378
+    call $nox_raise(l %rt, l %t365, l 137)
     ret
 }
 export function l $nox_toml__hex_value(l %rt, l %p_text, l %p_start, l %p_count, l %p_n) {
@@ -6866,8 +6915,8 @@ export function l $nox_toml__hex_value(l %rt, l %p_text, l %p_start, l %p_count,
     ret 0
 @exc_continue11
     %t38 =l add %t16, 24
-    storel 143, %t38
-    call $nox_raise(l %rt, l %t16, l 143)
+    storel 147, %t38
+    call $nox_raise(l %rt, l %t16, l 147)
     %t39 =l sub %rt, 48
     %t40 =w loadub %t39
     %t41 =l sub %rt, 64
@@ -7104,8 +7153,8 @@ export function l $nox_toml__hex_value(l %rt, l %p_text, l %p_start, l %p_count,
     ret 0
 @exc_continue98
     %t164 =l add %t142, 24
-    storel 149, %t164
-    call $nox_raise(l %rt, l %t142, l 149)
+    storel 153, %t164
+    call $nox_raise(l %rt, l %t142, l 153)
     %t165 =l sub %rt, 48
     %t166 =w loadub %t165
     %t167 =l sub %rt, 64
@@ -7330,8 +7379,8 @@ export function l $nox_toml__hex_value(l %rt, l %p_text, l %p_start, l %p_count,
     ret 0
 @exc_continue45
     %t92 =l add %t70, 24
-    storel 147, %t92
-    call $nox_raise(l %rt, l %t70, l 147)
+    storel 151, %t92
+    call $nox_raise(l %rt, l %t70, l 151)
     %t93 =l loadl %t6
     %t94 =w ceql %t93, 0
     jnz %t94, @release_skip54, @release53
@@ -7477,8 +7526,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue37
     %t82 =l add %t60, 24
-    storel 157, %t82
-    call $nox_raise(l %rt, l %t60, l 157)
+    storel 161, %t82
+    call $nox_raise(l %rt, l %t60, l 161)
     %t83 =l sub %rt, 48
     %t84 =w loadub %t83
     %t85 =l sub %rt, 64
@@ -8342,8 +8391,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue509
     %t772 =l add %t742, 24
-    storel 182, %t772
-    call $nox_raise(l %rt, l %t742, l 182)
+    storel 186, %t772
+    call $nox_raise(l %rt, l %t742, l 186)
     %t773 =l sub %rt, 48
     %t774 =w loadub %t773
     %t775 =l sub %rt, 64
@@ -8483,8 +8532,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue12
     %t42 =l add %t20, 24
-    storel 156, %t42
-    call $nox_raise(l %rt, l %t20, l 156)
+    storel 160, %t42
+    call $nox_raise(l %rt, l %t20, l 160)
     %t43 =l loadl %t3
     %t44 =w ceql %t43, 0
     jnz %t44, @release_skip21, @release20
@@ -8580,8 +8629,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue68
     %t126 =l add %t104, 24
-    storel 158, %t126
-    call $nox_raise(l %rt, l %t104, l 158)
+    storel 162, %t126
+    call $nox_raise(l %rt, l %t104, l 162)
     %t127 =l loadl %t3
     %t128 =w ceql %t127, 0
     jnz %t128, @release_skip77, @release76
@@ -8677,8 +8726,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue94
     %t169 =l add %t147, 24
-    storel 158, %t169
-    call $nox_raise(l %rt, l %t147, l 158)
+    storel 162, %t169
+    call $nox_raise(l %rt, l %t147, l 162)
     %t170 =l loadl %t3
     %t171 =w ceql %t170, 0
     jnz %t171, @release_skip103, @release102
@@ -8774,8 +8823,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue127
     %t215 =l add %t193, 24
-    storel 159, %t215
-    call $nox_raise(l %rt, l %t193, l 159)
+    storel 163, %t215
+    call $nox_raise(l %rt, l %t193, l 163)
     %t216 =l loadl %t3
     %t217 =w ceql %t216, 0
     jnz %t217, @release_skip136, @release135
@@ -8871,8 +8920,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue153
     %t251 =l add %t229, 24
-    storel 159, %t251
-    call $nox_raise(l %rt, l %t229, l 159)
+    storel 163, %t251
+    call $nox_raise(l %rt, l %t229, l 163)
     %t252 =l loadl %t3
     %t253 =w ceql %t252, 0
     jnz %t253, @release_skip162, @release161
@@ -8968,8 +9017,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue297
     %t452 =l add %t430, 24
-    storel 175, %t452
-    call $nox_raise(l %rt, l %t430, l 175)
+    storel 179, %t452
+    call $nox_raise(l %rt, l %t430, l 179)
     %t453 =l loadl %t3
     %t454 =w ceql %t453, 0
     jnz %t454, @release_skip306, @release305
@@ -9065,8 +9114,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue335
     %t510 =l add %t488, 24
-    storel 176, %t510
-    call $nox_raise(l %rt, l %t488, l 176)
+    storel 180, %t510
+    call $nox_raise(l %rt, l %t488, l 180)
     %t511 =l loadl %t3
     %t512 =w ceql %t511, 0
     jnz %t512, @release_skip344, @release343
@@ -9162,8 +9211,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue361
     %t546 =l add %t524, 24
-    storel 176, %t546
-    call $nox_raise(l %rt, l %t524, l 176)
+    storel 180, %t546
+    call $nox_raise(l %rt, l %t524, l 180)
     %t547 =l loadl %t3
     %t548 =w ceql %t547, 0
     jnz %t548, @release_skip370, @release369
@@ -9259,8 +9308,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue404
     %t614 =l add %t592, 24
-    storel 179, %t614
-    call $nox_raise(l %rt, l %t592, l 179)
+    storel 183, %t614
+    call $nox_raise(l %rt, l %t592, l 183)
     %t615 =l loadl %t3
     %t616 =w ceql %t615, 0
     jnz %t616, @release_skip413, @release412
@@ -9356,8 +9405,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue442
     %t672 =l add %t650, 24
-    storel 180, %t672
-    call $nox_raise(l %rt, l %t650, l 180)
+    storel 184, %t672
+    call $nox_raise(l %rt, l %t650, l 184)
     %t673 =l loadl %t3
     %t674 =w ceql %t673, 0
     jnz %t674, @release_skip451, @release450
@@ -9453,8 +9502,8 @@ export function l $nox_toml__parse_escape(l %rt, l %p_text, l %p_pos, l %p_n) {
     ret 0
 @exc_continue468
     %t708 =l add %t686, 24
-    storel 180, %t708
-    call $nox_raise(l %rt, l %t686, l 180)
+    storel 184, %t708
+    call $nox_raise(l %rt, l %t686, l 184)
     %t709 =l loadl %t3
     %t710 =w ceql %t709, 0
     jnz %t710, @release_skip477, @release476
@@ -9664,8 +9713,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue141
     %t231 =l add %t200, 24
-    storel 191, %t231
-    call $nox_raise(l %rt, l %t200, l 191)
+    storel 195, %t231
+    call $nox_raise(l %rt, l %t200, l 195)
     %t232 =l sub %rt, 48
     %t233 =w loadub %t232
     %t234 =l sub %rt, 64
@@ -9951,8 +10000,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue369
     %t556 =l add %t525, 24
-    storel 197, %t556
-    call $nox_raise(l %rt, l %t525, l 197)
+    storel 201, %t556
+    call $nox_raise(l %rt, l %t525, l 201)
     %t557 =l sub %rt, 48
     %t558 =w loadub %t557
     %t559 =l sub %rt, 64
@@ -10351,8 +10400,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue11
     %t43 =l add %t12, 24
-    storel 186, %t43
-    call $nox_raise(l %rt, l %t12, l 186)
+    storel 190, %t43
+    call $nox_raise(l %rt, l %t12, l 190)
     %t44 =l loadl %t3
     %t45 =w ceql %t44, 0
     jnz %t45, @release_skip27, @release26
@@ -10500,8 +10549,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue51
     %t97 =l add %t66, 24
-    storel 186, %t97
-    call $nox_raise(l %rt, l %t66, l 186)
+    storel 190, %t97
+    call $nox_raise(l %rt, l %t66, l 190)
     %t98 =l loadl %t3
     %t99 =w ceql %t98, 0
     jnz %t99, @release_skip67, @release66
@@ -10649,8 +10698,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue102
     %t174 =l add %t143, 24
-    storel 190, %t174
-    call $nox_raise(l %rt, l %t143, l 190)
+    storel 194, %t174
+    call $nox_raise(l %rt, l %t143, l 194)
     %t175 =l loadl %t3
     %t176 =w ceql %t175, 0
     jnz %t176, @release_skip118, @release117
@@ -10798,8 +10847,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue186
     %t293 =l add %t262, 24
-    storel 192, %t293
-    call $nox_raise(l %rt, l %t262, l 192)
+    storel 196, %t293
+    call $nox_raise(l %rt, l %t262, l 196)
     %t294 =l loadl %t3
     %t295 =w ceql %t294, 0
     jnz %t295, @release_skip202, @release201
@@ -10947,8 +10996,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue226
     %t352 =l add %t321, 24
-    storel 192, %t352
-    call $nox_raise(l %rt, l %t321, l 192)
+    storel 196, %t352
+    call $nox_raise(l %rt, l %t321, l 196)
     %t353 =l loadl %t3
     %t354 =w ceql %t353, 0
     jnz %t354, @release_skip242, @release241
@@ -11096,8 +11145,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue284
     %t433 =l add %t402, 24
-    storel 194, %t433
-    call $nox_raise(l %rt, l %t402, l 194)
+    storel 198, %t433
+    call $nox_raise(l %rt, l %t402, l 198)
     %t434 =l loadl %t3
     %t435 =w ceql %t434, 0
     jnz %t435, @release_skip300, @release299
@@ -11245,8 +11294,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue324
     %t487 =l add %t456, 24
-    storel 194, %t487
-    call $nox_raise(l %rt, l %t456, l 194)
+    storel 198, %t487
+    call $nox_raise(l %rt, l %t456, l 198)
     %t488 =l loadl %t3
     %t489 =w ceql %t488, 0
     jnz %t489, @release_skip340, @release339
@@ -11394,8 +11443,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue447
     %t669 =l add %t638, 24
-    storel 202, %t669
-    call $nox_raise(l %rt, l %t638, l 202)
+    storel 206, %t669
+    call $nox_raise(l %rt, l %t638, l 206)
     %t670 =l loadl %t3
     %t671 =w ceql %t670, 0
     jnz %t671, @release_skip463, @release462
@@ -11543,8 +11592,8 @@ export function l $nox_toml__parse_basic_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue487
     %t723 =l add %t692, 24
-    storel 202, %t723
-    call $nox_raise(l %rt, l %t692, l 202)
+    storel 206, %t723
+    call $nox_raise(l %rt, l %t692, l 206)
     %t724 =l loadl %t3
     %t725 =w ceql %t724, 0
     jnz %t725, @release_skip503, @release502
@@ -11779,8 +11828,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue141
     %t231 =l add %t200, 24
-    storel 212, %t231
-    call $nox_raise(l %rt, l %t200, l 212)
+    storel 216, %t231
+    call $nox_raise(l %rt, l %t200, l 216)
     %t232 =l sub %rt, 48
     %t233 =w loadub %t232
     %t234 =l sub %rt, 64
@@ -12066,8 +12115,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue369
     %t556 =l add %t525, 24
-    storel 218, %t556
-    call $nox_raise(l %rt, l %t525, l 218)
+    storel 222, %t556
+    call $nox_raise(l %rt, l %t525, l 222)
     %t557 =l sub %rt, 48
     %t558 =w loadub %t557
     %t559 =l sub %rt, 64
@@ -12343,8 +12392,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue11
     %t43 =l add %t12, 24
-    storel 207, %t43
-    call $nox_raise(l %rt, l %t12, l 207)
+    storel 211, %t43
+    call $nox_raise(l %rt, l %t12, l 211)
     %t44 =l loadl %t3
     %t45 =w ceql %t44, 0
     jnz %t45, @release_skip27, @release26
@@ -12492,8 +12541,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue51
     %t97 =l add %t66, 24
-    storel 207, %t97
-    call $nox_raise(l %rt, l %t66, l 207)
+    storel 211, %t97
+    call $nox_raise(l %rt, l %t66, l 211)
     %t98 =l loadl %t3
     %t99 =w ceql %t98, 0
     jnz %t99, @release_skip67, @release66
@@ -12641,8 +12690,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue102
     %t174 =l add %t143, 24
-    storel 211, %t174
-    call $nox_raise(l %rt, l %t143, l 211)
+    storel 215, %t174
+    call $nox_raise(l %rt, l %t143, l 215)
     %t175 =l loadl %t3
     %t176 =w ceql %t175, 0
     jnz %t176, @release_skip118, @release117
@@ -12790,8 +12839,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue186
     %t293 =l add %t262, 24
-    storel 213, %t293
-    call $nox_raise(l %rt, l %t262, l 213)
+    storel 217, %t293
+    call $nox_raise(l %rt, l %t262, l 217)
     %t294 =l loadl %t3
     %t295 =w ceql %t294, 0
     jnz %t295, @release_skip202, @release201
@@ -12939,8 +12988,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue226
     %t352 =l add %t321, 24
-    storel 213, %t352
-    call $nox_raise(l %rt, l %t321, l 213)
+    storel 217, %t352
+    call $nox_raise(l %rt, l %t321, l 217)
     %t353 =l loadl %t3
     %t354 =w ceql %t353, 0
     jnz %t354, @release_skip242, @release241
@@ -13088,8 +13137,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue284
     %t433 =l add %t402, 24
-    storel 215, %t433
-    call $nox_raise(l %rt, l %t402, l 215)
+    storel 219, %t433
+    call $nox_raise(l %rt, l %t402, l 219)
     %t434 =l loadl %t3
     %t435 =w ceql %t434, 0
     jnz %t435, @release_skip300, @release299
@@ -13237,8 +13286,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue324
     %t487 =l add %t456, 24
-    storel 215, %t487
-    call $nox_raise(l %rt, l %t456, l 215)
+    storel 219, %t487
+    call $nox_raise(l %rt, l %t456, l 219)
     %t488 =l loadl %t3
     %t489 =w ceql %t488, 0
     jnz %t489, @release_skip340, @release339
@@ -13386,8 +13435,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue414
     %t620 =l add %t589, 24
-    storel 221, %t620
-    call $nox_raise(l %rt, l %t589, l 221)
+    storel 225, %t620
+    call $nox_raise(l %rt, l %t589, l 225)
     %t621 =l loadl %t3
     %t622 =w ceql %t621, 0
     jnz %t622, @release_skip430, @release429
@@ -13535,8 +13584,8 @@ export function l $nox_toml__parse_literal_string(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue454
     %t674 =l add %t643, 24
-    storel 221, %t674
-    call $nox_raise(l %rt, l %t643, l 221)
+    storel 225, %t674
+    call $nox_raise(l %rt, l %t643, l 225)
     %t675 =l loadl %t3
     %t676 =w ceql %t675, 0
     jnz %t676, @release_skip470, @release469
@@ -13913,8 +13962,8 @@ export function $nox_toml__skip_first_newline(l %rt, l %p_text, l %p_pos, l %p_n
     ret
 @exc_continue12
     %t21 =l add %t8, 24
-    storel 225, %t21
-    call $nox_raise(l %rt, l %t8, l 225)
+    storel 229, %t21
+    call $nox_raise(l %rt, l %t8, l 229)
     ret
 @list_assign_err32
     %t55 =l add $str102, 16
@@ -13958,8 +14007,8 @@ export function $nox_toml__skip_first_newline(l %rt, l %p_text, l %p_pos, l %p_n
     ret
 @exc_continue43
     %t69 =l add %t56, 24
-    storel 226, %t69
-    call $nox_raise(l %rt, l %t56, l 226)
+    storel 230, %t69
+    call $nox_raise(l %rt, l %t56, l 230)
     ret
 @list_idx_err44
     %t73 =l add $str103, 16
@@ -14003,8 +14052,8 @@ export function $nox_toml__skip_first_newline(l %rt, l %p_text, l %p_pos, l %p_n
     ret
 @exc_continue55
     %t87 =l add %t74, 24
-    storel 226, %t87
-    call $nox_raise(l %rt, l %t74, l 226)
+    storel 230, %t87
+    call $nox_raise(l %rt, l %t74, l 230)
     ret
 @list_idx_err56
     %t100 =l add $str104, 16
@@ -14048,8 +14097,8 @@ export function $nox_toml__skip_first_newline(l %rt, l %p_text, l %p_pos, l %p_n
     ret
 @exc_continue67
     %t114 =l add %t101, 24
-    storel 226, %t114
-    call $nox_raise(l %rt, l %t101, l 226)
+    storel 230, %t114
+    call $nox_raise(l %rt, l %t101, l 230)
     ret
 @list_idx_err88
     %t149 =l add $str106, 16
@@ -14093,8 +14142,8 @@ export function $nox_toml__skip_first_newline(l %rt, l %p_text, l %p_pos, l %p_n
     ret
 @exc_continue99
     %t163 =l add %t150, 24
-    storel 226, %t163
-    call $nox_raise(l %rt, l %t150, l 226)
+    storel 230, %t163
+    call $nox_raise(l %rt, l %t150, l 230)
     ret
 @list_assign_err118
     %t199 =l add $str108, 16
@@ -14138,8 +14187,8 @@ export function $nox_toml__skip_first_newline(l %rt, l %p_text, l %p_pos, l %p_n
     ret
 @exc_continue129
     %t213 =l add %t200, 24
-    storel 228, %t213
-    call $nox_raise(l %rt, l %t200, l 228)
+    storel 232, %t213
+    call $nox_raise(l %rt, l %t200, l 232)
     ret
 @list_idx_err130
     %t217 =l add $str109, 16
@@ -14183,8 +14232,8 @@ export function $nox_toml__skip_first_newline(l %rt, l %p_text, l %p_pos, l %p_n
     ret
 @exc_continue141
     %t231 =l add %t218, 24
-    storel 228, %t231
-    call $nox_raise(l %rt, l %t218, l 228)
+    storel 232, %t231
+    call $nox_raise(l %rt, l %t218, l 232)
     ret
 }
 export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
@@ -14507,8 +14556,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue209
     %t335 =l add %t295, 24
-    storel 239, %t335
-    call $nox_raise(l %rt, l %t295, l 239)
+    storel 243, %t335
+    call $nox_raise(l %rt, l %t295, l 243)
     %t336 =l sub %rt, 48
     %t337 =w loadub %t336
     %t338 =l sub %rt, 64
@@ -16593,8 +16642,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue11
     %t56 =l add %t16, 24
-    storel 233, %t56
-    call $nox_raise(l %rt, l %t16, l 233)
+    storel 237, %t56
+    call $nox_raise(l %rt, l %t16, l 237)
     %t57 =l loadl %t3
     %t58 =w ceql %t57, 0
     jnz %t58, @release_skip34, @release33
@@ -16794,8 +16843,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue65
     %t128 =l add %t88, 24
-    storel 233, %t128
-    call $nox_raise(l %rt, l %t88, l 233)
+    storel 237, %t128
+    call $nox_raise(l %rt, l %t88, l 237)
     %t129 =l loadl %t3
     %t130 =w ceql %t129, 0
     jnz %t130, @release_skip88, @release87
@@ -16995,8 +17044,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue156
     %t260 =l add %t220, 24
-    storel 238, %t260
-    call $nox_raise(l %rt, l %t220, l 238)
+    storel 242, %t260
+    call $nox_raise(l %rt, l %t220, l 242)
     %t261 =l loadl %t3
     %t262 =w ceql %t261, 0
     jnz %t262, @release_skip179, @release178
@@ -17196,8 +17245,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue268
     %t415 =l add %t375, 24
-    storel 240, %t415
-    call $nox_raise(l %rt, l %t375, l 240)
+    storel 244, %t415
+    call $nox_raise(l %rt, l %t375, l 244)
     %t416 =l loadl %t3
     %t417 =w ceql %t416, 0
     jnz %t417, @release_skip291, @release290
@@ -17397,8 +17446,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue322
     %t492 =l add %t452, 24
-    storel 240, %t492
-    call $nox_raise(l %rt, l %t452, l 240)
+    storel 244, %t492
+    call $nox_raise(l %rt, l %t452, l 244)
     %t493 =l loadl %t3
     %t494 =w ceql %t493, 0
     jnz %t494, @release_skip345, @release344
@@ -17598,8 +17647,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue395
     %t592 =l add %t552, 24
-    storel 241, %t592
-    call $nox_raise(l %rt, l %t552, l 241)
+    storel 245, %t592
+    call $nox_raise(l %rt, l %t552, l 245)
     %t593 =l loadl %t3
     %t594 =w ceql %t593, 0
     jnz %t594, @release_skip418, @release417
@@ -17799,8 +17848,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue449
     %t668 =l add %t628, 24
-    storel 241, %t668
-    call $nox_raise(l %rt, l %t628, l 241)
+    storel 245, %t668
+    call $nox_raise(l %rt, l %t628, l 245)
     %t669 =l loadl %t3
     %t670 =w ceql %t669, 0
     jnz %t670, @release_skip472, @release471
@@ -18000,8 +18049,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue551
     %t808 =l add %t768, 24
-    storel 244, %t808
-    call $nox_raise(l %rt, l %t768, l 244)
+    storel 248, %t808
+    call $nox_raise(l %rt, l %t768, l 248)
     %t809 =l loadl %t3
     %t810 =w ceql %t809, 0
     jnz %t810, @release_skip574, @release573
@@ -18201,8 +18250,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue646
     %t951 =l add %t911, 24
-    storel 250, %t951
-    call $nox_raise(l %rt, l %t911, l 250)
+    storel 254, %t951
+    call $nox_raise(l %rt, l %t911, l 254)
     %t952 =l loadl %t3
     %t953 =w ceql %t952, 0
     jnz %t953, @release_skip669, @release668
@@ -18402,8 +18451,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue700
     %t1023 =l add %t983, 24
-    storel 250, %t1023
-    call $nox_raise(l %rt, l %t983, l 250)
+    storel 254, %t1023
+    call $nox_raise(l %rt, l %t983, l 254)
     %t1024 =l loadl %t3
     %t1025 =w ceql %t1024, 0
     jnz %t1025, @release_skip723, @release722
@@ -18603,8 +18652,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue761
     %t1115 =l add %t1075, 24
-    storel 254, %t1115
-    call $nox_raise(l %rt, l %t1075, l 254)
+    storel 258, %t1115
+    call $nox_raise(l %rt, l %t1075, l 258)
     %t1116 =l loadl %t3
     %t1117 =w ceql %t1116, 0
     jnz %t1117, @release_skip784, @release783
@@ -18804,8 +18853,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1110
     %t1598 =l add %t1558, 24
-    storel 261, %t1598
-    call $nox_raise(l %rt, l %t1558, l 261)
+    storel 265, %t1598
+    call $nox_raise(l %rt, l %t1558, l 265)
     %t1599 =l loadl %t3
     %t1600 =w ceql %t1599, 0
     jnz %t1600, @release_skip1133, @release1132
@@ -19005,8 +19054,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1197
     %t1725 =l add %t1685, 24
-    storel 266, %t1725
-    call $nox_raise(l %rt, l %t1685, l 266)
+    storel 270, %t1725
+    call $nox_raise(l %rt, l %t1685, l 270)
     %t1726 =l loadl %t3
     %t1727 =w ceql %t1726, 0
     jnz %t1727, @release_skip1220, @release1219
@@ -19206,8 +19255,8 @@ export function l $nox_toml__parse_multiline_basic(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1251
     %t1797 =l add %t1757, 24
-    storel 266, %t1797
-    call $nox_raise(l %rt, l %t1757, l 266)
+    storel 270, %t1797
+    call $nox_raise(l %rt, l %t1757, l 270)
     %t1798 =l loadl %t3
     %t1799 =w ceql %t1798, 0
     jnz %t1799, @release_skip1274, @release1273
@@ -19544,8 +19593,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue160
     %t261 =l add %t230, 24
-    storel 278, %t261
-    call $nox_raise(l %rt, l %t230, l 278)
+    storel 282, %t261
+    call $nox_raise(l %rt, l %t230, l 282)
     %t262 =l sub %rt, 48
     %t263 =w loadub %t262
     %t264 =l sub %rt, 64
@@ -20235,8 +20284,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue11
     %t45 =l add %t14, 24
-    storel 272, %t45
-    call $nox_raise(l %rt, l %t14, l 272)
+    storel 276, %t45
+    call $nox_raise(l %rt, l %t14, l 276)
     %t46 =l loadl %t3
     %t47 =w ceql %t46, 0
     jnz %t47, @release_skip27, @release26
@@ -20384,8 +20433,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue51
     %t99 =l add %t68, 24
-    storel 272, %t99
-    call $nox_raise(l %rt, l %t68, l 272)
+    storel 276, %t99
+    call $nox_raise(l %rt, l %t68, l 276)
     %t100 =l loadl %t3
     %t101 =w ceql %t100, 0
     jnz %t101, @release_skip67, @release66
@@ -20533,8 +20582,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue121
     %t204 =l add %t173, 24
-    storel 277, %t204
-    call $nox_raise(l %rt, l %t173, l 277)
+    storel 281, %t204
+    call $nox_raise(l %rt, l %t173, l 281)
     %t205 =l loadl %t3
     %t206 =w ceql %t205, 0
     jnz %t206, @release_skip137, @release136
@@ -20682,8 +20731,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue205
     %t323 =l add %t292, 24
-    storel 279, %t323
-    call $nox_raise(l %rt, l %t292, l 279)
+    storel 283, %t323
+    call $nox_raise(l %rt, l %t292, l 283)
     %t324 =l loadl %t3
     %t325 =w ceql %t324, 0
     jnz %t325, @release_skip221, @release220
@@ -20831,8 +20880,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue245
     %t382 =l add %t351, 24
-    storel 279, %t382
-    call $nox_raise(l %rt, l %t351, l 279)
+    storel 283, %t382
+    call $nox_raise(l %rt, l %t351, l 283)
     %t383 =l loadl %t3
     %t384 =w ceql %t383, 0
     jnz %t384, @release_skip261, @release260
@@ -20980,8 +21029,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue304
     %t464 =l add %t433, 24
-    storel 280, %t464
-    call $nox_raise(l %rt, l %t433, l 280)
+    storel 284, %t464
+    call $nox_raise(l %rt, l %t433, l 284)
     %t465 =l loadl %t3
     %t466 =w ceql %t465, 0
     jnz %t466, @release_skip320, @release319
@@ -21129,8 +21178,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue344
     %t522 =l add %t491, 24
-    storel 280, %t522
-    call $nox_raise(l %rt, l %t491, l 280)
+    storel 284, %t522
+    call $nox_raise(l %rt, l %t491, l 284)
     %t523 =l loadl %t3
     %t524 =w ceql %t523, 0
     jnz %t524, @release_skip360, @release359
@@ -21278,8 +21327,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue425
     %t635 =l add %t604, 24
-    storel 282, %t635
-    call $nox_raise(l %rt, l %t604, l 282)
+    storel 286, %t635
+    call $nox_raise(l %rt, l %t604, l 286)
     %t636 =l loadl %t3
     %t637 =w ceql %t636, 0
     jnz %t637, @release_skip441, @release440
@@ -21427,8 +21476,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue499
     %t751 =l add %t720, 24
-    storel 288, %t751
-    call $nox_raise(l %rt, l %t720, l 288)
+    storel 292, %t751
+    call $nox_raise(l %rt, l %t720, l 292)
     %t752 =l loadl %t3
     %t753 =w ceql %t752, 0
     jnz %t753, @release_skip515, @release514
@@ -21576,8 +21625,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue539
     %t805 =l add %t774, 24
-    storel 288, %t805
-    call $nox_raise(l %rt, l %t774, l 288)
+    storel 292, %t805
+    call $nox_raise(l %rt, l %t774, l 292)
     %t806 =l loadl %t3
     %t807 =w ceql %t806, 0
     jnz %t807, @release_skip555, @release554
@@ -21725,8 +21774,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue579
     %t872 =l add %t841, 24
-    storel 292, %t872
-    call $nox_raise(l %rt, l %t841, l 292)
+    storel 296, %t872
+    call $nox_raise(l %rt, l %t841, l 296)
     %t873 =l loadl %t3
     %t874 =w ceql %t873, 0
     jnz %t874, @release_skip595, @release594
@@ -21874,8 +21923,8 @@ export function l $nox_toml__parse_multiline_literal(l %rt, l %p_text, l %p_pos)
     ret 0
 @exc_continue619
     %t926 =l add %t895, 24
-    storel 292, %t926
-    call $nox_raise(l %rt, l %t895, l 292)
+    storel 296, %t926
+    call $nox_raise(l %rt, l %t895, l 296)
     %t927 =l loadl %t3
     %t928 =w ceql %t927, 0
     jnz %t928, @release_skip635, @release634
@@ -22733,8 +22782,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue501
     %t735 =l add %t704, 24
-    storel 315, %t735
-    call $nox_raise(l %rt, l %t704, l 315)
+    storel 319, %t735
+    call $nox_raise(l %rt, l %t704, l 319)
     %t736 =l sub %rt, 48
     %t737 =w loadub %t736
     %t738 =l sub %rt, 64
@@ -22983,8 +23032,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue11
     %t47 =l add %t16, 24
-    storel 299, %t47
-    call $nox_raise(l %rt, l %t16, l 299)
+    storel 303, %t47
+    call $nox_raise(l %rt, l %t16, l 303)
     %t48 =l loadl %t4
     %t49 =w ceql %t48, 0
     jnz %t49, @release_skip27, @release26
@@ -23132,8 +23181,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue170
     %t267 =l add %t236, 24
-    storel 307, %t267
-    call $nox_raise(l %rt, l %t236, l 307)
+    storel 311, %t267
+    call $nox_raise(l %rt, l %t236, l 311)
     %t268 =l loadl %t4
     %t269 =w ceql %t268, 0
     jnz %t269, @release_skip186, @release185
@@ -23281,8 +23330,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue212
     %t328 =l add %t297, 24
-    storel 308, %t328
-    call $nox_raise(l %rt, l %t297, l 308)
+    storel 312, %t328
+    call $nox_raise(l %rt, l %t297, l 312)
     %t329 =l loadl %t4
     %t330 =w ceql %t329, 0
     jnz %t330, @release_skip228, @release227
@@ -23430,8 +23479,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue252
     %t387 =l add %t356, 24
-    storel 308, %t387
-    call $nox_raise(l %rt, l %t356, l 308)
+    storel 312, %t387
+    call $nox_raise(l %rt, l %t356, l 312)
     %t388 =l loadl %t4
     %t389 =w ceql %t388, 0
     jnz %t389, @release_skip268, @release267
@@ -23579,8 +23628,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue327
     %t484 =l add %t453, 24
-    storel 310, %t484
-    call $nox_raise(l %rt, l %t453, l 310)
+    storel 314, %t484
+    call $nox_raise(l %rt, l %t453, l 314)
     %t485 =l loadl %t4
     %t486 =w ceql %t485, 0
     jnz %t486, @release_skip343, @release342
@@ -23728,8 +23777,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue367
     %t543 =l add %t512, 24
-    storel 310, %t543
-    call $nox_raise(l %rt, l %t512, l 310)
+    storel 314, %t543
+    call $nox_raise(l %rt, l %t512, l 314)
     %t544 =l loadl %t4
     %t545 =w ceql %t544, 0
     jnz %t545, @release_skip383, @release382
@@ -23877,8 +23926,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue417
     %t615 =l add %t584, 24
-    storel 311, %t615
-    call $nox_raise(l %rt, l %t584, l 311)
+    storel 315, %t615
+    call $nox_raise(l %rt, l %t584, l 315)
     %t616 =l loadl %t4
     %t617 =w ceql %t616, 0
     jnz %t617, @release_skip433, @release432
@@ -24026,8 +24075,8 @@ export function l $nox_toml__parse_key_part(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue457
     %t669 =l add %t638, 24
-    storel 311, %t669
-    call $nox_raise(l %rt, l %t638, l 311)
+    storel 315, %t669
+    call $nox_raise(l %rt, l %t638, l 315)
     %t670 =l loadl %t4
     %t671 =w ceql %t670, 0
     jnz %t671, @release_skip473, @release472
@@ -24515,8 +24564,8 @@ export function l $nox_toml__parse_key_path(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue64
     %t134 =l add %t119, 24
-    storel 327, %t134
-    call $nox_raise(l %rt, l %t119, l 327)
+    storel 331, %t134
+    call $nox_raise(l %rt, l %t119, l 331)
     %t135 =l loadl %t3
     %t136 =w ceql %t135, 0
     jnz %t136, @release_skip69, @release68
@@ -24580,8 +24629,8 @@ export function l $nox_toml__parse_key_path(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue104
     %t188 =l add %t173, 24
-    storel 328, %t188
-    call $nox_raise(l %rt, l %t173, l 328)
+    storel 332, %t188
+    call $nox_raise(l %rt, l %t173, l 332)
     %t189 =l loadl %t3
     %t190 =w ceql %t189, 0
     jnz %t190, @release_skip109, @release108
@@ -24645,8 +24694,8 @@ export function l $nox_toml__parse_key_path(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue122
     %t210 =l add %t195, 24
-    storel 328, %t210
-    call $nox_raise(l %rt, l %t195, l 328)
+    storel 332, %t210
+    call $nox_raise(l %rt, l %t195, l 332)
     %t211 =l loadl %t3
     %t212 =w ceql %t211, 0
     jnz %t212, @release_skip127, @release126
@@ -25321,8 +25370,8 @@ export function l $nox_toml__scan_token(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue11
     %t25 =l add %t12, 24
-    storel 340, %t25
-    call $nox_raise(l %rt, l %t12, l 340)
+    storel 344, %t25
+    call $nox_raise(l %rt, l %t12, l 344)
     ret 0
 @list_idx_err15
     %t33 =l add $str184, 16
@@ -25366,8 +25415,8 @@ export function l $nox_toml__scan_token(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue26
     %t47 =l add %t34, 24
-    storel 341, %t47
-    call $nox_raise(l %rt, l %t34, l 341)
+    storel 345, %t47
+    call $nox_raise(l %rt, l %t34, l 345)
     ret 0
 @list_idx_err30
     %t58 =l add $str185, 16
@@ -25411,8 +25460,8 @@ export function l $nox_toml__scan_token(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue41
     %t72 =l add %t59, 24
-    storel 341, %t72
-    call $nox_raise(l %rt, l %t59, l 341)
+    storel 345, %t72
+    call $nox_raise(l %rt, l %t59, l 345)
     ret 0
 @str_idx_err42
     %t82 =l add $str186, 16
@@ -25456,8 +25505,8 @@ export function l $nox_toml__scan_token(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue53
     %t96 =l add %t83, 24
-    storel 341, %t96
-    call $nox_raise(l %rt, l %t83, l 341)
+    storel 345, %t96
+    call $nox_raise(l %rt, l %t83, l 345)
     ret 0
 @list_assign_err131
     %t207 =l add $str196, 16
@@ -25501,8 +25550,8 @@ export function l $nox_toml__scan_token(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue142
     %t221 =l add %t208, 24
-    storel 342, %t221
-    call $nox_raise(l %rt, l %t208, l 342)
+    storel 346, %t221
+    call $nox_raise(l %rt, l %t208, l 346)
     ret 0
 @list_idx_err143
     %t225 =l add $str197, 16
@@ -25546,8 +25595,8 @@ export function l $nox_toml__scan_token(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue154
     %t239 =l add %t226, 24
-    storel 342, %t239
-    call $nox_raise(l %rt, l %t226, l 342)
+    storel 346, %t239
+    call $nox_raise(l %rt, l %t226, l 346)
     ret 0
 @list_idx_err155
     %t253 =l add $str198, 16
@@ -25591,8 +25640,8 @@ export function l $nox_toml__scan_token(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue166
     %t267 =l add %t254, 24
-    storel 343, %t267
-    call $nox_raise(l %rt, l %t254, l 343)
+    storel 347, %t267
+    call $nox_raise(l %rt, l %t254, l 347)
     ret 0
 }
 export function w $nox_toml__is_date_prefix(l %rt, l %p_tok) {
@@ -26247,8 +26296,8 @@ export function w $nox_toml__is_date_prefix(l %rt, l %p_tok) {
     ret 0
 @exc_continue14
     %t45 =l add %t32, 24
-    storel 348, %t45
-    call $nox_raise(l %rt, l %t32, l 348)
+    storel 352, %t45
+    call $nox_raise(l %rt, l %t32, l 352)
     ret 0
 @str_idx_err30
     %t66 =l add $str200, 16
@@ -27186,8 +27235,8 @@ export function w $nox_toml__is_time_prefix(l %rt, l %p_tok) {
     ret 0
 @exc_continue14
     %t39 =l add %t26, 24
-    storel 353, %t39
-    call $nox_raise(l %rt, l %t26, l 353)
+    storel 357, %t39
+    call $nox_raise(l %rt, l %t26, l 357)
     ret 0
 @str_idx_err30
     %t60 =l add $str212, 16
@@ -28057,8 +28106,8 @@ export function l $nox_toml__digit_value(l %rt, l %p_c, l %p_base) {
     ret 0
 @exc_continue48
     %t80 =l add %t59, 24
-    storel 371, %t80
-    call $nox_raise(l %rt, l %t59, l 371)
+    storel 375, %t80
+    call $nox_raise(l %rt, l %t59, l 375)
     %t81 =l sub %rt, 48
     %t82 =w loadub %t81
     %t83 =l sub %rt, 64
@@ -28423,8 +28472,8 @@ export function l $nox_toml__parse_radix(l %rt, l %p_tok, l %p_base) {
     ret 0
 @exc_continue138
     %t206 =l add %t174, 24
-    storel 377, %t206
-    call $nox_raise(l %rt, l %t174, l 377)
+    storel 381, %t206
+    call $nox_raise(l %rt, l %t174, l 381)
     %t207 =l sub %rt, 48
     %t208 =w loadub %t207
     %t209 =l sub %rt, 64
@@ -28803,8 +28852,8 @@ export function l $nox_toml__parse_radix(l %rt, l %p_tok, l %p_base) {
     ret 0
 @exc_continue41
     %t75 =l add %t51, 24
-    storel 376, %t75
-    call $nox_raise(l %rt, l %t51, l 376)
+    storel 380, %t75
+    call $nox_raise(l %rt, l %t51, l 380)
     %t76 =l loadl %t2
     %t77 =w ceql %t76, 0
     jnz %t77, @release_skip53, @release52
@@ -28920,8 +28969,8 @@ export function l $nox_toml__parse_radix(l %rt, l %p_tok, l %p_base) {
     ret 0
 @exc_continue88
     %t140 =l add %t116, 24
-    storel 376, %t140
-    call $nox_raise(l %rt, l %t116, l 376)
+    storel 380, %t140
+    call $nox_raise(l %rt, l %t116, l 380)
     %t141 =l loadl %t2
     %t142 =w ceql %t141, 0
     jnz %t142, @release_skip100, @release99
@@ -29205,8 +29254,8 @@ export function $nox_toml__check_underscores(l %rt, l %p_tok) {
     ret
 @exc_continue52
     %t96 =l add %t64, 24
-    storel 389, %t96
-    call $nox_raise(l %rt, l %t64, l 389)
+    storel 393, %t96
+    call $nox_raise(l %rt, l %t64, l 393)
     %t97 =l sub %rt, 48
     %t98 =w loadub %t97
     %t99 =l sub %rt, 64
@@ -29418,8 +29467,8 @@ export function $nox_toml__check_underscores(l %rt, l %p_tok) {
     ret
 @exc_continue108
     %t171 =l add %t139, 24
-    storel 391, %t171
-    call $nox_raise(l %rt, l %t139, l 391)
+    storel 395, %t171
+    call $nox_raise(l %rt, l %t139, l 395)
     %t172 =l sub %rt, 48
     %t173 =w loadub %t172
     %t174 =l sub %rt, 64
@@ -29649,8 +29698,8 @@ export function $nox_toml__check_underscores(l %rt, l %p_tok) {
     ret
 @exc_continue168
     %t253 =l add %t221, 24
-    storel 394, %t253
-    call $nox_raise(l %rt, l %t221, l 394)
+    storel 398, %t253
+    call $nox_raise(l %rt, l %t221, l 398)
     %t254 =l sub %rt, 48
     %t255 =w loadub %t254
     %t256 =l sub %rt, 64
@@ -29960,8 +30009,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue31
     %t86 =l add %t60, 24
-    storel 398, %t86
-    call $nox_raise(l %rt, l %t60, l 398)
+    storel 402, %t86
+    call $nox_raise(l %rt, l %t60, l 402)
     %t87 =l loadl %t1
     %t88 =w ceql %t87, 0
     jnz %t88, @release_skip46, @release45
@@ -30237,8 +30286,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue101
     %t179 =l add %t153, 24
-    storel 400, %t179
-    call $nox_raise(l %rt, l %t153, l 400)
+    storel 404, %t179
+    call $nox_raise(l %rt, l %t153, l 404)
     %t180 =l loadl %t1
     %t181 =w ceql %t180, 0
     jnz %t181, @release_skip116, @release115
@@ -30591,8 +30640,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue192
     %t309 =l add %t283, 24
-    storel 402, %t309
-    call $nox_raise(l %rt, l %t283, l 402)
+    storel 406, %t309
+    call $nox_raise(l %rt, l %t283, l 406)
     %t310 =l loadl %t1
     %t311 =w ceql %t310, 0
     jnz %t311, @release_skip207, @release206
@@ -31534,8 +31583,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue676
     %t880 =l add %t854, 24
-    storel 410, %t880
-    call $nox_raise(l %rt, l %t854, l 410)
+    storel 414, %t880
+    call $nox_raise(l %rt, l %t854, l 414)
     %t881 =l sub %rt, 48
     %t882 =w loadub %t881
     %t883 =l sub %rt, 64
@@ -32020,8 +32069,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue808
     %t1062 =l add %t1028, 24
-    storel 424, %t1062
-    call $nox_raise(l %rt, l %t1028, l 424)
+    storel 428, %t1062
+    call $nox_raise(l %rt, l %t1028, l 428)
     %t1063 =l sub %rt, 48
     %t1064 =w loadub %t1063
     %t1065 =l sub %rt, 64
@@ -32142,8 +32191,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     jmp @try_dispatch842
 @exc_continue856
     %t1102 =l add %t1089, 24
-    storel 427, %t1102
-    call $nox_raise(l %rt, l %t1089, l 427)
+    storel 431, %t1102
+    call $nox_raise(l %rt, l %t1089, l 431)
     jmp @try_dispatch842
 @parse_ok846
     %t1103 =d call $nox_str_to_float(l %t1086)
@@ -32377,8 +32426,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue901
     %t1176 =l add %t1142, 24
-    storel 429, %t1176
-    call $nox_raise(l %rt, l %t1142, l 429)
+    storel 433, %t1176
+    call $nox_raise(l %rt, l %t1142, l 433)
     %t1177 =l sub %rt, 48
     %t1178 =w loadub %t1177
     %t1179 =l sub %rt, 64
@@ -32444,7 +32493,7 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
 @exc_continue919
     jmp @try_after843
 @except_reraise881
-    call $nox_raise(l %rt, l %t1134, l 429)
+    call $nox_raise(l %rt, l %t1134, l 433)
     %t1197 =l sub %rt, 48
     %t1198 =w loadub %t1197
     %t1199 =l sub %rt, 64
@@ -32558,8 +32607,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     jmp @try_dispatch951
 @exc_continue965
     %t1233 =l add %t1220, 24
-    storel 431, %t1233
-    call $nox_raise(l %rt, l %t1220, l 431)
+    storel 435, %t1233
+    call $nox_raise(l %rt, l %t1220, l 435)
     jmp @try_dispatch951
 @parse_ok955
     %t1234 =l call $nox_str_to_int(l %t1217)
@@ -32793,8 +32842,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue1010
     %t1307 =l add %t1273, 24
-    storel 433, %t1307
-    call $nox_raise(l %rt, l %t1273, l 433)
+    storel 437, %t1307
+    call $nox_raise(l %rt, l %t1273, l 437)
     %t1308 =l sub %rt, 48
     %t1309 =w loadub %t1308
     %t1310 =l sub %rt, 64
@@ -32860,7 +32909,7 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
 @exc_continue1028
     jmp @try_after952
 @except_reraise990
-    call $nox_raise(l %rt, l %t1265, l 433)
+    call $nox_raise(l %rt, l %t1265, l 437)
     %t1328 =l sub %rt, 48
     %t1329 =w loadub %t1328
     %t1330 =l sub %rt, 64
@@ -33063,8 +33112,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue256
     %t387 =l add %t361, 24
-    storel 403, %t387
-    call $nox_raise(l %rt, l %t361, l 403)
+    storel 407, %t387
+    call $nox_raise(l %rt, l %t361, l 407)
     %t388 =l loadl %t1
     %t389 =w ceql %t388, 0
     jnz %t389, @release_skip271, @release270
@@ -33200,8 +33249,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue309
     %t450 =l add %t424, 24
-    storel 403, %t450
-    call $nox_raise(l %rt, l %t424, l 403)
+    storel 407, %t450
+    call $nox_raise(l %rt, l %t424, l 407)
     %t451 =l loadl %t1
     %t452 =w ceql %t451, 0
     jnz %t452, @release_skip324, @release323
@@ -33337,8 +33386,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue396
     %t551 =l add %t525, 24
-    storel 405, %t551
-    call $nox_raise(l %rt, l %t525, l 405)
+    storel 409, %t551
+    call $nox_raise(l %rt, l %t525, l 409)
     %t552 =l loadl %t1
     %t553 =w ceql %t552, 0
     jnz %t553, @release_skip411, @release410
@@ -33474,8 +33523,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue449
     %t614 =l add %t588, 24
-    storel 405, %t614
-    call $nox_raise(l %rt, l %t588, l 405)
+    storel 409, %t614
+    call $nox_raise(l %rt, l %t588, l 409)
     %t615 =l loadl %t1
     %t616 =w ceql %t615, 0
     jnz %t616, @release_skip464, @release463
@@ -33611,8 +33660,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue536
     %t715 =l add %t689, 24
-    storel 407, %t715
-    call $nox_raise(l %rt, l %t689, l 407)
+    storel 411, %t715
+    call $nox_raise(l %rt, l %t689, l 411)
     %t716 =l loadl %t1
     %t717 =w ceql %t716, 0
     jnz %t717, @release_skip551, @release550
@@ -33748,8 +33797,8 @@ export function l $nox_toml__parse_number_token(l %rt, l %p_tok) {
     ret 0
 @exc_continue589
     %t778 =l add %t752, 24
-    storel 407, %t778
-    call $nox_raise(l %rt, l %t752, l 407)
+    storel 411, %t778
+    call $nox_raise(l %rt, l %t752, l 411)
     %t779 =l loadl %t1
     %t780 =w ceql %t779, 0
     jnz %t780, @release_skip604, @release603
@@ -33983,8 +34032,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue65
     %t147 =l add %t107, 24
-    storel 440, %t147
-    call $nox_raise(l %rt, l %t107, l 440)
+    storel 444, %t147
+    call $nox_raise(l %rt, l %t107, l 444)
     %t148 =l sub %rt, 48
     %t149 =w loadub %t148
     %t150 =l sub %rt, 64
@@ -37156,8 +37205,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1670
     %t2398 =l add %t2350, 24
-    storel 470, %t2398
-    call $nox_raise(l %rt, l %t2350, l 470)
+    storel 474, %t2398
+    call $nox_raise(l %rt, l %t2350, l 474)
     %t2399 =l sub %rt, 48
     %t2400 =w loadub %t2399
     %t2401 =l sub %rt, 64
@@ -37730,8 +37779,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1820
     %t2601 =l add %t2553, 24
-    storel 474, %t2601
-    call $nox_raise(l %rt, l %t2553, l 474)
+    storel 478, %t2601
+    call $nox_raise(l %rt, l %t2553, l 478)
     %t2602 =l sub %rt, 48
     %t2603 =w loadub %t2602
     %t2604 =l sub %rt, 64
@@ -38337,8 +38386,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue12
     %t72 =l add %t32, 24
-    storel 439, %t72
-    call $nox_raise(l %rt, l %t32, l 439)
+    storel 443, %t72
+    call $nox_raise(l %rt, l %t32, l 443)
     %t73 =l loadl %t4
     %t74 =w ceql %t73, 0
     jnz %t74, @release_skip35, @release34
@@ -38538,8 +38587,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue124
     %t227 =l add %t187, 24
-    storel 441, %t227
-    call $nox_raise(l %rt, l %t187, l 441)
+    storel 445, %t227
+    call $nox_raise(l %rt, l %t187, l 445)
     %t228 =l loadl %t4
     %t229 =w ceql %t228, 0
     jnz %t229, @release_skip147, @release146
@@ -38739,8 +38788,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue178
     %t305 =l add %t265, 24
-    storel 441, %t305
-    call $nox_raise(l %rt, l %t265, l 441)
+    storel 445, %t305
+    call $nox_raise(l %rt, l %t265, l 445)
     %t306 =l loadl %t4
     %t307 =w ceql %t306, 0
     jnz %t307, @release_skip201, @release200
@@ -38940,8 +38989,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue247
     %t398 =l add %t358, 24
-    storel 443, %t398
-    call $nox_raise(l %rt, l %t358, l 443)
+    storel 447, %t398
+    call $nox_raise(l %rt, l %t358, l 447)
     %t399 =l loadl %t4
     %t400 =w ceql %t399, 0
     jnz %t400, @release_skip270, @release269
@@ -39141,8 +39190,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue301
     %t474 =l add %t434, 24
-    storel 443, %t474
-    call $nox_raise(l %rt, l %t434, l 443)
+    storel 447, %t474
+    call $nox_raise(l %rt, l %t434, l 447)
     %t475 =l loadl %t4
     %t476 =w ceql %t475, 0
     jnz %t476, @release_skip324, @release323
@@ -39342,8 +39391,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue530
     %t797 =l add %t757, 24
-    storel 447, %t797
-    call $nox_raise(l %rt, l %t757, l 447)
+    storel 451, %t797
+    call $nox_raise(l %rt, l %t757, l 451)
     %t798 =l loadl %t4
     %t799 =w ceql %t798, 0
     jnz %t799, @release_skip553, @release552
@@ -39543,8 +39592,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue584
     %t873 =l add %t833, 24
-    storel 447, %t873
-    call $nox_raise(l %rt, l %t833, l 447)
+    storel 451, %t873
+    call $nox_raise(l %rt, l %t833, l 451)
     %t874 =l loadl %t4
     %t875 =w ceql %t874, 0
     jnz %t875, @release_skip607, @release606
@@ -39744,8 +39793,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1058
     %t1544 =l add %t1504, 24
-    storel 461, %t1544
-    call $nox_raise(l %rt, l %t1504, l 461)
+    storel 465, %t1544
+    call $nox_raise(l %rt, l %t1504, l 465)
     %t1545 =l loadl %t4
     %t1546 =w ceql %t1545, 0
     jnz %t1546, @release_skip1081, @release1080
@@ -39945,8 +39994,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1115
     %t1624 =l add %t1584, 24
-    storel 461, %t1624
-    call $nox_raise(l %rt, l %t1584, l 461)
+    storel 465, %t1624
+    call $nox_raise(l %rt, l %t1584, l 465)
     %t1625 =l loadl %t4
     %t1626 =w ceql %t1625, 0
     jnz %t1626, @release_skip1138, @release1137
@@ -40146,8 +40195,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1169
     %t1702 =l add %t1662, 24
-    storel 461, %t1702
-    call $nox_raise(l %rt, l %t1662, l 461)
+    storel 465, %t1702
+    call $nox_raise(l %rt, l %t1662, l 465)
     %t1703 =l loadl %t4
     %t1704 =w ceql %t1703, 0
     jnz %t1704, @release_skip1192, @release1191
@@ -40347,8 +40396,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1238
     %t1794 =l add %t1754, 24
-    storel 461, %t1794
-    call $nox_raise(l %rt, l %t1754, l 461)
+    storel 465, %t1794
+    call $nox_raise(l %rt, l %t1754, l 465)
     %t1795 =l loadl %t4
     %t1796 =w ceql %t1795, 0
     jnz %t1796, @release_skip1261, @release1260
@@ -40548,8 +40597,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1292
     %t1873 =l add %t1833, 24
-    storel 461, %t1873
-    call $nox_raise(l %rt, l %t1833, l 461)
+    storel 465, %t1873
+    call $nox_raise(l %rt, l %t1833, l 465)
     %t1874 =l loadl %t4
     %t1875 =w ceql %t1874, 0
     jnz %t1875, @release_skip1315, @release1314
@@ -40749,8 +40798,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1359
     %t1963 =l add %t1923, 24
-    storel 462, %t1963
-    call $nox_raise(l %rt, l %t1923, l 462)
+    storel 466, %t1963
+    call $nox_raise(l %rt, l %t1923, l 466)
     %t1964 =l loadl %t4
     %t1965 =w ceql %t1964, 0
     jnz %t1965, @release_skip1382, @release1381
@@ -40950,8 +40999,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1413
     %t2039 =l add %t1999, 24
-    storel 463, %t2039
-    call $nox_raise(l %rt, l %t1999, l 463)
+    storel 467, %t2039
+    call $nox_raise(l %rt, l %t1999, l 467)
     %t2040 =l loadl %t4
     %t2041 =w ceql %t2040, 0
     jnz %t2041, @release_skip1436, @release1435
@@ -41151,8 +41200,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1467
     %t2111 =l add %t2071, 24
-    storel 463, %t2111
-    call $nox_raise(l %rt, l %t2071, l 463)
+    storel 467, %t2111
+    call $nox_raise(l %rt, l %t2071, l 467)
     %t2112 =l loadl %t4
     %t2113 =w ceql %t2112, 0
     jnz %t2113, @release_skip1490, @release1489
@@ -41352,8 +41401,8 @@ export function l $nox_toml__parse_value(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue1583
     %t2278 =l add %t2238, 24
-    storel 468, %t2278
-    call $nox_raise(l %rt, l %t2238, l 468)
+    storel 472, %t2278
+    call $nox_raise(l %rt, l %t2238, l 472)
     %t2279 =l loadl %t4
     %t2280 =w ceql %t2279, 0
     jnz %t2280, @release_skip1606, @release1605
@@ -41594,8 +41643,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue79
     %t125 =l add %t110, 24
-    storel 486, %t125
-    call $nox_raise(l %rt, l %t110, l 486)
+    storel 490, %t125
+    call $nox_raise(l %rt, l %t110, l 490)
     %t126 =l sub %rt, 48
     %t127 =w loadub %t126
     %t128 =l sub %rt, 64
@@ -42162,8 +42211,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue380
     %t578 =l add %t563, 24
-    storel 499, %t578
-    call $nox_raise(l %rt, l %t563, l 499)
+    storel 503, %t578
+    call $nox_raise(l %rt, l %t563, l 503)
     %t579 =l sub %rt, 48
     %t580 =w loadub %t579
     %t581 =l sub %rt, 64
@@ -42311,8 +42360,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue11
     %t28 =l add %t13, 24
-    storel 480, %t28
-    call $nox_raise(l %rt, l %t13, l 480)
+    storel 484, %t28
+    call $nox_raise(l %rt, l %t13, l 484)
     %t29 =l loadl %t3
     %t30 =w ceql %t29, 0
     jnz %t30, @release_skip16, @release15
@@ -42376,8 +42425,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue29
     %t50 =l add %t35, 24
-    storel 480, %t50
-    call $nox_raise(l %rt, l %t35, l 480)
+    storel 484, %t50
+    call $nox_raise(l %rt, l %t35, l 484)
     %t51 =l loadl %t3
     %t52 =w ceql %t51, 0
     jnz %t52, @release_skip34, @release33
@@ -42441,8 +42490,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue62
     %t100 =l add %t85, 24
-    storel 485, %t100
-    call $nox_raise(l %rt, l %t85, l 485)
+    storel 489, %t100
+    call $nox_raise(l %rt, l %t85, l 489)
     %t101 =l loadl %t3
     %t102 =w ceql %t101, 0
     jnz %t102, @release_skip67, @release66
@@ -42506,8 +42555,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue103
     %t155 =l add %t140, 24
-    storel 487, %t155
-    call $nox_raise(l %rt, l %t140, l 487)
+    storel 491, %t155
+    call $nox_raise(l %rt, l %t140, l 491)
     %t156 =l loadl %t3
     %t157 =w ceql %t156, 0
     jnz %t157, @release_skip108, @release107
@@ -42571,8 +42620,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue121
     %t182 =l add %t167, 24
-    storel 487, %t182
-    call $nox_raise(l %rt, l %t167, l 487)
+    storel 491, %t182
+    call $nox_raise(l %rt, l %t167, l 491)
     %t183 =l loadl %t3
     %t184 =w ceql %t183, 0
     jnz %t184, @release_skip126, @release125
@@ -42636,8 +42685,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue156
     %t226 =l add %t211, 24
-    storel 488, %t226
-    call $nox_raise(l %rt, l %t211, l 488)
+    storel 492, %t226
+    call $nox_raise(l %rt, l %t211, l 492)
     %t227 =l loadl %t3
     %t228 =w ceql %t227, 0
     jnz %t228, @release_skip161, @release160
@@ -42701,8 +42750,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue174
     %t248 =l add %t233, 24
-    storel 488, %t248
-    call $nox_raise(l %rt, l %t233, l 488)
+    storel 492, %t248
+    call $nox_raise(l %rt, l %t233, l 492)
     %t249 =l loadl %t3
     %t250 =w ceql %t249, 0
     jnz %t250, @release_skip179, @release178
@@ -42766,8 +42815,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue230
     %t368 =l add %t353, 24
-    storel 493, %t368
-    call $nox_raise(l %rt, l %t353, l 493)
+    storel 497, %t368
+    call $nox_raise(l %rt, l %t353, l 497)
     %t369 =l loadl %t3
     %t370 =w ceql %t369, 0
     jnz %t370, @release_skip235, @release234
@@ -42831,8 +42880,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue270
     %t422 =l add %t407, 24
-    storel 494, %t422
-    call $nox_raise(l %rt, l %t407, l 494)
+    storel 498, %t422
+    call $nox_raise(l %rt, l %t407, l 498)
     %t423 =l loadl %t3
     %t424 =w ceql %t423, 0
     jnz %t424, @release_skip275, @release274
@@ -42896,8 +42945,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue288
     %t444 =l add %t429, 24
-    storel 494, %t444
-    call $nox_raise(l %rt, l %t429, l 494)
+    storel 498, %t444
+    call $nox_raise(l %rt, l %t429, l 498)
     %t445 =l loadl %t3
     %t446 =w ceql %t445, 0
     jnz %t446, @release_skip293, @release292
@@ -42961,8 +43010,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue306
     %t475 =l add %t460, 24
-    storel 494, %t475
-    call $nox_raise(l %rt, l %t460, l 494)
+    storel 498, %t475
+    call $nox_raise(l %rt, l %t460, l 498)
     %t476 =l loadl %t3
     %t477 =w ceql %t476, 0
     jnz %t477, @release_skip311, @release310
@@ -43026,8 +43075,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue346
     %t529 =l add %t514, 24
-    storel 496, %t529
-    call $nox_raise(l %rt, l %t514, l 496)
+    storel 500, %t529
+    call $nox_raise(l %rt, l %t514, l 500)
     %t530 =l loadl %t3
     %t531 =w ceql %t530, 0
     jnz %t531, @release_skip351, @release350
@@ -43091,8 +43140,8 @@ export function l $nox_toml__parse_array(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue364
     %t551 =l add %t536, 24
-    storel 496, %t551
-    call $nox_raise(l %rt, l %t536, l 496)
+    storel 500, %t551
+    call $nox_raise(l %rt, l %t536, l 500)
     %t552 =l loadl %t3
     %t553 =w ceql %t552, 0
     jnz %t553, @release_skip369, @release368
@@ -43171,8 +43220,8 @@ export function l $nox_toml__step(l %rt, l %p_cur, l %p_key) {
     ret 0
 @exc_continue11
     %t24 =l add %t9, 24
-    storel 504, %t24
-    call $nox_raise(l %rt, l %t9, l 504)
+    storel 508, %t24
+    call $nox_raise(l %rt, l %t9, l 508)
     %t25 =l loadl %t2
     %t26 =w ceql %t25, 0
     jnz %t26, @release_skip16, @release15
@@ -43394,8 +43443,8 @@ export function l $nox_toml__step(l %rt, l %p_cur, l %p_key) {
     ret 0
 @exc_continue83
     %t131 =l add %t108, 24
-    storel 509, %t131
-    call $nox_raise(l %rt, l %t108, l 509)
+    storel 513, %t131
+    call $nox_raise(l %rt, l %t108, l 513)
     %t132 =l sub %rt, 48
     %t133 =w loadub %t132
     %t134 =l sub %rt, 64
@@ -43487,8 +43536,8 @@ export function l $nox_toml__step(l %rt, l %p_cur, l %p_key) {
     ret 0
 @exc_continue46
     %t82 =l add %t67, 24
-    storel 508, %t82
-    call $nox_raise(l %rt, l %t67, l 508)
+    storel 512, %t82
+    call $nox_raise(l %rt, l %t67, l 512)
     %t83 =l loadl %t2
     %t84 =w ceql %t83, 0
     jnz %t84, @release_skip51, @release50
@@ -43893,8 +43942,8 @@ export function l $nox_toml__walk_implicit(l %rt, l %p_root, l %p_parts, l %p_co
     ret 0
 @exc_continue20
     %t46 =l add %t22, 24
-    storel 516, %t46
-    call $nox_raise(l %rt, l %t22, l 516)
+    storel 520, %t46
+    call $nox_raise(l %rt, l %t22, l 520)
     %t47 =l loadl %t5
     %t48 =w ceql %t47, 0
     jnz %t48, @release_skip32, @release31
@@ -44678,8 +44727,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue477
     %t675 =l add %t651, 24
-    storel 544, %t675
-    call $nox_raise(l %rt, l %t651, l 544)
+    storel 548, %t675
+    call $nox_raise(l %rt, l %t651, l 548)
     %t676 =l sub %rt, 48
     %t677 =w loadub %t676
     %t678 =l sub %rt, 64
@@ -44882,8 +44931,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue11
     %t37 =l add %t13, 24
-    storel 525, %t37
-    call $nox_raise(l %rt, l %t13, l 525)
+    storel 529, %t37
+    call $nox_raise(l %rt, l %t13, l 529)
     %t38 =l loadl %t3
     %t39 =w ceql %t38, 0
     jnz %t39, @release_skip23, @release22
@@ -44999,8 +45048,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue43
     %t77 =l add %t53, 24
-    storel 525, %t77
-    call $nox_raise(l %rt, l %t53, l 525)
+    storel 529, %t77
+    call $nox_raise(l %rt, l %t53, l 529)
     %t78 =l loadl %t3
     %t79 =w ceql %t78, 0
     jnz %t79, @release_skip55, @release54
@@ -45116,8 +45165,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue102
     %t166 =l add %t142, 24
-    storel 529, %t166
-    call $nox_raise(l %rt, l %t142, l 529)
+    storel 533, %t166
+    call $nox_raise(l %rt, l %t142, l 533)
     %t167 =l loadl %t3
     %t168 =w ceql %t167, 0
     jnz %t168, @release_skip114, @release113
@@ -45233,8 +45282,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue162
     %t247 =l add %t223, 24
-    storel 530, %t247
-    call $nox_raise(l %rt, l %t223, l 530)
+    storel 534, %t247
+    call $nox_raise(l %rt, l %t223, l 534)
     %t248 =l loadl %t3
     %t249 =w ceql %t248, 0
     jnz %t249, @release_skip174, @release173
@@ -45350,8 +45399,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue194
     %t287 =l add %t263, 24
-    storel 530, %t287
-    call $nox_raise(l %rt, l %t263, l 530)
+    storel 534, %t287
+    call $nox_raise(l %rt, l %t263, l 534)
     %t288 =l loadl %t3
     %t289 =w ceql %t288, 0
     jnz %t289, @release_skip206, @release205
@@ -45467,8 +45516,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue282
     %t409 =l add %t385, 24
-    storel 537, %t409
-    call $nox_raise(l %rt, l %t385, l 537)
+    storel 541, %t409
+    call $nox_raise(l %rt, l %t385, l 541)
     %t410 =l loadl %t3
     %t411 =w ceql %t410, 0
     jnz %t411, @release_skip294, @release293
@@ -45584,8 +45633,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue344
     %t492 =l add %t468, 24
-    storel 539, %t492
-    call $nox_raise(l %rt, l %t468, l 539)
+    storel 543, %t492
+    call $nox_raise(l %rt, l %t468, l 543)
     %t493 =l loadl %t3
     %t494 =w ceql %t493, 0
     jnz %t494, @release_skip356, @release355
@@ -45701,8 +45750,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue376
     %t532 =l add %t508, 24
-    storel 539, %t532
-    call $nox_raise(l %rt, l %t508, l 539)
+    storel 543, %t532
+    call $nox_raise(l %rt, l %t508, l 543)
     %t533 =l loadl %t3
     %t534 =w ceql %t533, 0
     jnz %t534, @release_skip388, @release387
@@ -45818,8 +45867,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue415
     %t590 =l add %t566, 24
-    storel 541, %t590
-    call $nox_raise(l %rt, l %t566, l 541)
+    storel 545, %t590
+    call $nox_raise(l %rt, l %t566, l 545)
     %t591 =l loadl %t3
     %t592 =w ceql %t591, 0
     jnz %t592, @release_skip427, @release426
@@ -45935,8 +45984,8 @@ export function l $nox_toml__parse_inline_table(l %rt, l %p_text, l %p_pos) {
     ret 0
 @exc_continue447
     %t630 =l add %t606, 24
-    storel 541, %t630
-    call $nox_raise(l %rt, l %t606, l 541)
+    storel 545, %t630
+    call $nox_raise(l %rt, l %t606, l 545)
     %t631 =l loadl %t3
     %t632 =w ceql %t631, 0
     jnz %t632, @release_skip459, @release458
@@ -46385,8 +46434,8 @@ export function $nox_toml__parse_pair(l %rt, l %p_text, l %p_pos, l %p_current) 
     ret
 @exc_continue133
     %t184 =l add %t156, 24
-    storel 553, %t184
-    call $nox_raise(l %rt, l %t156, l 553)
+    storel 557, %t184
+    call $nox_raise(l %rt, l %t156, l 557)
     %t185 =l sub %rt, 48
     %t186 =w loadub %t185
     %t187 =l sub %rt, 64
@@ -46921,8 +46970,8 @@ export function $nox_toml__parse_pair(l %rt, l %p_text, l %p_pos, l %p_current) 
     ret
 @exc_continue401
     %t509 =l add %t473, 24
-    storel 560, %t509
-    call $nox_raise(l %rt, l %t473, l 560)
+    storel 564, %t509
+    call $nox_raise(l %rt, l %t473, l 564)
     %t510 =l sub %rt, 48
     %t511 =w loadub %t510
     %t512 =l sub %rt, 64
@@ -47186,8 +47235,8 @@ export function $nox_toml__parse_pair(l %rt, l %p_text, l %p_pos, l %p_current) 
     ret
 @exc_continue57
     %t94 =l add %t66, 24
-    storel 552, %t94
-    call $nox_raise(l %rt, l %t66, l 552)
+    storel 556, %t94
+    call $nox_raise(l %rt, l %t66, l 556)
     %t95 =l loadl %t4
     %t96 =w ceql %t95, 0
     jnz %t96, @release_skip75, @release74
@@ -47343,8 +47392,8 @@ export function $nox_toml__parse_pair(l %rt, l %p_text, l %p_pos, l %p_current) 
     ret
 @exc_continue182
     %t239 =l add %t211, 24
-    storel 554, %t239
-    call $nox_raise(l %rt, l %t211, l 554)
+    storel 558, %t239
+    call $nox_raise(l %rt, l %t211, l 558)
     %t240 =l loadl %t4
     %t241 =w ceql %t240, 0
     jnz %t241, @release_skip200, @release199
@@ -47500,8 +47549,8 @@ export function $nox_toml__parse_pair(l %rt, l %p_text, l %p_pos, l %p_current) 
     ret
 @exc_continue226
     %t287 =l add %t259, 24
-    storel 554, %t287
-    call $nox_raise(l %rt, l %t259, l 554)
+    storel 558, %t287
+    call $nox_raise(l %rt, l %t259, l 558)
     %t288 =l loadl %t4
     %t289 =w ceql %t288, 0
     jnz %t289, @release_skip244, @release243
@@ -47657,8 +47706,8 @@ export function $nox_toml__parse_pair(l %rt, l %p_text, l %p_pos, l %p_current) 
     ret
 @exc_continue339
     %t430 =l add %t402, 24
-    storel 558, %t430
-    call $nox_raise(l %rt, l %t402, l 558)
+    storel 562, %t430
+    call $nox_raise(l %rt, l %t402, l 562)
     %t431 =l loadl %t4
     %t432 =w ceql %t431, 0
     jnz %t432, @release_skip357, @release356
@@ -48182,8 +48231,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue229
     %t389 =l add %t376, 24
-    storel 575, %t389
-    call $nox_raise(l %rt, l %t376, l 575)
+    storel 579, %t389
+    call $nox_raise(l %rt, l %t376, l 579)
     %t390 =l sub %rt, 48
     %t391 =w loadub %t390
     %t392 =l sub %rt, 64
@@ -48247,8 +48296,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue17
     %t32 =l add %t19, 24
-    storel 566, %t32
-    call $nox_raise(l %rt, l %t19, l 566)
+    storel 570, %t32
+    call $nox_raise(l %rt, l %t19, l 570)
     ret
 @list_idx_err42
     %t76 =l add $str370, 16
@@ -48292,8 +48341,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue53
     %t90 =l add %t77, 24
-    storel 567, %t90
-    call $nox_raise(l %rt, l %t77, l 567)
+    storel 571, %t90
+    call $nox_raise(l %rt, l %t77, l 571)
     ret
 @list_assign_err73
     %t124 =l add $str372, 16
@@ -48337,8 +48386,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue84
     %t138 =l add %t125, 24
-    storel 569, %t138
-    call $nox_raise(l %rt, l %t125, l 569)
+    storel 573, %t138
+    call $nox_raise(l %rt, l %t125, l 573)
     ret
 @list_idx_err85
     %t142 =l add $str373, 16
@@ -48382,8 +48431,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue96
     %t156 =l add %t143, 24
-    storel 569, %t156
-    call $nox_raise(l %rt, l %t143, l 569)
+    storel 573, %t156
+    call $nox_raise(l %rt, l %t143, l 573)
     ret
 @list_idx_err97
     %t169 =l add $str374, 16
@@ -48427,8 +48476,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue108
     %t183 =l add %t170, 24
-    storel 569, %t183
-    call $nox_raise(l %rt, l %t170, l 569)
+    storel 573, %t183
+    call $nox_raise(l %rt, l %t170, l 573)
     ret
 @list_assign_err128
     %t217 =l add $str376, 16
@@ -48472,8 +48521,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue139
     %t231 =l add %t218, 24
-    storel 571, %t231
-    call $nox_raise(l %rt, l %t218, l 571)
+    storel 575, %t231
+    call $nox_raise(l %rt, l %t218, l 575)
     ret
 @list_idx_err140
     %t235 =l add $str377, 16
@@ -48517,8 +48566,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue151
     %t249 =l add %t236, 24
-    storel 571, %t249
-    call $nox_raise(l %rt, l %t236, l 571)
+    storel 575, %t249
+    call $nox_raise(l %rt, l %t236, l 575)
     ret
 @list_idx_err153
     %t262 =l add $str378, 16
@@ -48562,8 +48611,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue164
     %t276 =l add %t263, 24
-    storel 572, %t276
-    call $nox_raise(l %rt, l %t263, l 572)
+    storel 576, %t276
+    call $nox_raise(l %rt, l %t263, l 576)
     ret
 @list_assign_err183
     %t310 =l add $str380, 16
@@ -48607,8 +48656,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue194
     %t324 =l add %t311, 24
-    storel 573, %t324
-    call $nox_raise(l %rt, l %t311, l 573)
+    storel 577, %t324
+    call $nox_raise(l %rt, l %t311, l 577)
     ret
 @list_idx_err195
     %t328 =l add $str381, 16
@@ -48652,8 +48701,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue206
     %t342 =l add %t329, 24
-    storel 573, %t342
-    call $nox_raise(l %rt, l %t329, l 573)
+    storel 577, %t342
+    call $nox_raise(l %rt, l %t329, l 577)
     ret
 @list_idx_err207
     %t354 =l add $str382, 16
@@ -48697,8 +48746,8 @@ export function $nox_toml__end_of_line(l %rt, l %p_text, l %p_pos) {
     ret
 @exc_continue218
     %t368 =l add %t355, 24
-    storel 573, %t368
-    call $nox_raise(l %rt, l %t355, l 573)
+    storel 577, %t368
+    call $nox_raise(l %rt, l %t355, l 577)
     ret
 }
 export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p_root) {
@@ -49503,8 +49552,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue580
     %t631 =l add %t595, 24
-    storel 588, %t631
-    call $nox_raise(l %rt, l %t595, l 588)
+    storel 592, %t631
+    call $nox_raise(l %rt, l %t595, l 592)
     %t632 =l sub %rt, 48
     %t633 =w loadub %t632
     %t634 =l sub %rt, 64
@@ -49948,8 +49997,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue904
     %t954 =l add %t918, 24
-    storel 592, %t954
-    call $nox_raise(l %rt, l %t918, l 592)
+    storel 596, %t954
+    call $nox_raise(l %rt, l %t918, l 596)
     %t955 =l sub %rt, 48
     %t956 =w loadub %t955
     %t957 =l sub %rt, 64
@@ -50702,8 +50751,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue1294
     %t1385 =l add %t1349, 24
-    storel 604, %t1385
-    call $nox_raise(l %rt, l %t1349, l 604)
+    storel 608, %t1385
+    call $nox_raise(l %rt, l %t1349, l 608)
     %t1386 =l loadl %t7
     %t1387 =w ceql %t1386, 0
     jnz %t1387, @release_skip1324, @release1323
@@ -51031,8 +51080,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue1385
     %t1482 =l add %t1438, 24
-    storel 606, %t1482
-    call $nox_raise(l %rt, l %t1438, l 606)
+    storel 610, %t1482
+    call $nox_raise(l %rt, l %t1438, l 610)
     %t1483 =l sub %rt, 48
     %t1484 =w loadub %t1483
     %t1485 =l sub %rt, 64
@@ -51532,8 +51581,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue1510
     %t1658 =l add %t1622, 24
-    storel 610, %t1658
-    call $nox_raise(l %rt, l %t1622, l 610)
+    storel 614, %t1658
+    call $nox_raise(l %rt, l %t1622, l 614)
     %t1659 =l loadl %t7
     %t1660 =w ceql %t1659, 0
     jnz %t1660, @release_skip1540, @release1539
@@ -51850,8 +51899,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue1598
     %t1750 =l add %t1706, 24
-    storel 612, %t1750
-    call $nox_raise(l %rt, l %t1706, l 612)
+    storel 616, %t1750
+    call $nox_raise(l %rt, l %t1706, l 616)
     %t1751 =l sub %rt, 48
     %t1752 =w loadub %t1751
     %t1753 =l sub %rt, 64
@@ -52161,8 +52210,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue1685
     %t1841 =l add %t1797, 24
-    storel 614, %t1841
-    call $nox_raise(l %rt, l %t1797, l 614)
+    storel 618, %t1841
+    call $nox_raise(l %rt, l %t1797, l 618)
     %t1842 =l sub %rt, 48
     %t1843 =w loadub %t1842
     %t1844 =l sub %rt, 64
@@ -52790,8 +52839,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue11
     %t59 =l add %t23, 24
-    storel 580, %t59
-    call $nox_raise(l %rt, l %t23, l 580)
+    storel 584, %t59
+    call $nox_raise(l %rt, l %t23, l 584)
     %t60 =l loadl %t7
     %t61 =w ceql %t60, 0
     jnz %t61, @release_skip41, @release40
@@ -53027,8 +53076,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue79
     %t123 =l add %t87, 24
-    storel 580, %t123
-    call $nox_raise(l %rt, l %t87, l 580)
+    storel 584, %t123
+    call $nox_raise(l %rt, l %t87, l 584)
     %t124 =l loadl %t7
     %t125 =w ceql %t124, 0
     jnz %t125, @release_skip109, @release108
@@ -53264,8 +53313,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue148
     %t196 =l add %t160, 24
-    storel 582, %t196
-    call $nox_raise(l %rt, l %t160, l 582)
+    storel 586, %t196
+    call $nox_raise(l %rt, l %t160, l 586)
     %t197 =l loadl %t7
     %t198 =w ceql %t197, 0
     jnz %t198, @release_skip178, @release177
@@ -53501,8 +53550,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue262
     %t313 =l add %t277, 24
-    storel 584, %t313
-    call $nox_raise(l %rt, l %t277, l 584)
+    storel 588, %t313
+    call $nox_raise(l %rt, l %t277, l 588)
     %t314 =l loadl %t7
     %t315 =w ceql %t314, 0
     jnz %t315, @release_skip292, @release291
@@ -53738,8 +53787,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue330
     %t377 =l add %t341, 24
-    storel 584, %t377
-    call $nox_raise(l %rt, l %t341, l 584)
+    storel 588, %t377
+    call $nox_raise(l %rt, l %t341, l 588)
     %t378 =l loadl %t7
     %t379 =w ceql %t378, 0
     jnz %t379, @release_skip360, @release359
@@ -53975,8 +54024,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue468
     %t517 =l add %t481, 24
-    storel 587, %t517
-    call $nox_raise(l %rt, l %t481, l 587)
+    storel 591, %t517
+    call $nox_raise(l %rt, l %t481, l 591)
     %t518 =l loadl %t7
     %t519 =w ceql %t518, 0
     jnz %t519, @release_skip498, @release497
@@ -54212,8 +54261,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue653
     %t702 =l add %t666, 24
-    storel 589, %t702
-    call $nox_raise(l %rt, l %t666, l 589)
+    storel 593, %t702
+    call $nox_raise(l %rt, l %t666, l 593)
     %t703 =l loadl %t7
     %t704 =w ceql %t703, 0
     jnz %t704, @release_skip683, @release682
@@ -54449,8 +54498,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue721
     %t766 =l add %t730, 24
-    storel 589, %t766
-    call $nox_raise(l %rt, l %t730, l 589)
+    storel 593, %t766
+    call $nox_raise(l %rt, l %t730, l 593)
     %t767 =l loadl %t7
     %t768 =w ceql %t767, 0
     jnz %t768, @release_skip751, @release750
@@ -54686,8 +54735,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue792
     %t840 =l add %t804, 24
-    storel 591, %t840
-    call $nox_raise(l %rt, l %t804, l 591)
+    storel 595, %t840
+    call $nox_raise(l %rt, l %t804, l 595)
     %t841 =l loadl %t7
     %t842 =w ceql %t841, 0
     jnz %t842, @release_skip822, @release821
@@ -54923,8 +54972,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue977
     %t1025 =l add %t989, 24
-    storel 593, %t1025
-    call $nox_raise(l %rt, l %t989, l 593)
+    storel 597, %t1025
+    call $nox_raise(l %rt, l %t989, l 597)
     %t1026 =l loadl %t7
     %t1027 =w ceql %t1026, 0
     jnz %t1027, @release_skip1007, @release1006
@@ -55160,8 +55209,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue1045
     %t1089 =l add %t1053, 24
-    storel 593, %t1089
-    call $nox_raise(l %rt, l %t1053, l 593)
+    storel 597, %t1089
+    call $nox_raise(l %rt, l %t1053, l 597)
     %t1090 =l loadl %t7
     %t1091 =w ceql %t1090, 0
     jnz %t1091, @release_skip1075, @release1074
@@ -55397,8 +55446,8 @@ export function l $nox_toml__parse_table_header(l %rt, l %p_text, l %p_pos, l %p
     ret 0
 @exc_continue1182
     %t1237 =l add %t1201, 24
-    storel 596, %t1237
-    call $nox_raise(l %rt, l %t1201, l 596)
+    storel 600, %t1237
+    call $nox_raise(l %rt, l %t1201, l 600)
     %t1238 =l loadl %t7
     %t1239 =w ceql %t1238, 0
     jnz %t1239, @release_skip1212, @release1211
@@ -56265,8 +56314,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue31
     %t62 =l add %t45, 24
-    storel 628, %t62
-    call $nox_raise(l %rt, l %t45, l 628)
+    storel 632, %t62
+    call $nox_raise(l %rt, l %t45, l 632)
     %t63 =l loadl %t2
     %t64 =w ceql %t63, 0
     jnz %t64, @release_skip39, @release38
@@ -56350,8 +56399,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue67
     %t107 =l add %t90, 24
-    storel 630, %t107
-    call $nox_raise(l %rt, l %t90, l 630)
+    storel 634, %t107
+    call $nox_raise(l %rt, l %t90, l 634)
     %t108 =l loadl %t2
     %t109 =w ceql %t108, 0
     jnz %t109, @release_skip75, @release74
@@ -56435,8 +56484,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue93
     %t140 =l add %t123, 24
-    storel 631, %t140
-    call $nox_raise(l %rt, l %t123, l 631)
+    storel 635, %t140
+    call $nox_raise(l %rt, l %t123, l 635)
     %t141 =l loadl %t2
     %t142 =w ceql %t141, 0
     jnz %t142, @release_skip101, @release100
@@ -56520,8 +56569,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue117
     %t171 =l add %t154, 24
-    storel 631, %t171
-    call $nox_raise(l %rt, l %t154, l 631)
+    storel 635, %t171
+    call $nox_raise(l %rt, l %t154, l 635)
     %t172 =l loadl %t2
     %t173 =w ceql %t172, 0
     jnz %t173, @release_skip125, @release124
@@ -56605,8 +56654,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue159
     %t220 =l add %t203, 24
-    storel 631, %t220
-    call $nox_raise(l %rt, l %t203, l 631)
+    storel 635, %t220
+    call $nox_raise(l %rt, l %t203, l 635)
     %t221 =l loadl %t2
     %t222 =w ceql %t221, 0
     jnz %t222, @release_skip167, @release166
@@ -56690,8 +56739,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue183
     %t251 =l add %t234, 24
-    storel 631, %t251
-    call $nox_raise(l %rt, l %t234, l 631)
+    storel 635, %t251
+    call $nox_raise(l %rt, l %t234, l 635)
     %t252 =l loadl %t2
     %t253 =w ceql %t252, 0
     jnz %t253, @release_skip191, @release190
@@ -56775,8 +56824,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue224
     %t300 =l add %t283, 24
-    storel 633, %t300
-    call $nox_raise(l %rt, l %t283, l 633)
+    storel 637, %t300
+    call $nox_raise(l %rt, l %t283, l 637)
     %t301 =l loadl %t2
     %t302 =w ceql %t301, 0
     jnz %t302, @release_skip232, @release231
@@ -56860,8 +56909,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue248
     %t326 =l add %t309, 24
-    storel 633, %t326
-    call $nox_raise(l %rt, l %t309, l 633)
+    storel 637, %t326
+    call $nox_raise(l %rt, l %t309, l 637)
     %t327 =l loadl %t2
     %t328 =w ceql %t327, 0
     jnz %t328, @release_skip256, @release255
@@ -56945,8 +56994,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue272
     %t361 =l add %t344, 24
-    storel 633, %t361
-    call $nox_raise(l %rt, l %t344, l 633)
+    storel 637, %t361
+    call $nox_raise(l %rt, l %t344, l 637)
     %t362 =l loadl %t2
     %t363 =w ceql %t362, 0
     jnz %t363, @release_skip280, @release279
@@ -57030,8 +57079,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue296
     %t392 =l add %t375, 24
-    storel 633, %t392
-    call $nox_raise(l %rt, l %t375, l 633)
+    storel 637, %t392
+    call $nox_raise(l %rt, l %t375, l 637)
     %t393 =l loadl %t2
     %t394 =w ceql %t393, 0
     jnz %t394, @release_skip304, @release303
@@ -57115,8 +57164,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue348
     %t454 =l add %t437, 24
-    storel 635, %t454
-    call $nox_raise(l %rt, l %t437, l 635)
+    storel 639, %t454
+    call $nox_raise(l %rt, l %t437, l 639)
     %t455 =l loadl %t2
     %t456 =w ceql %t455, 0
     jnz %t456, @release_skip356, @release355
@@ -57200,8 +57249,8 @@ export function l $nox_toml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue372
     %t485 =l add %t468, 24
-    storel 635, %t485
-    call $nox_raise(l %rt, l %t468, l 635)
+    storel 639, %t485
+    call $nox_raise(l %rt, l %t468, l 639)
     %t486 =l loadl %t2
     %t487 =w ceql %t486, 0
     jnz %t487, @release_skip380, @release379
@@ -57484,8 +57533,8 @@ export function l $nox_toml_get(l %rt, l %p_root, l %p_dotted_path) {
     ret 0
 @exc_continue84
     %t142 =l add %t108, 24
-    storel 652, %t142
-    call $nox_raise(l %rt, l %t108, l 652)
+    storel 656, %t142
+    call $nox_raise(l %rt, l %t108, l 656)
     %t143 =l sub %rt, 48
     %t144 =w loadub %t143
     %t145 =l sub %rt, 64
@@ -57645,8 +57694,8 @@ export function l $nox_toml_get(l %rt, l %p_root, l %p_dotted_path) {
     ret 0
 @exc_continue127
     %t195 =l add %t169, 24
-    storel 653, %t195
-    call $nox_raise(l %rt, l %t169, l 653)
+    storel 657, %t195
+    call $nox_raise(l %rt, l %t169, l 657)
     %t196 =l loadl %t6
     %t197 =w ceql %t196, 0
     jnz %t197, @release_skip142, @release141
@@ -57898,8 +57947,8 @@ export function l $nox_toml_get(l %rt, l %p_root, l %p_dotted_path) {
     ret 0
 @exc_continue25
     %t61 =l add %t35, 24
-    storel 650, %t61
-    call $nox_raise(l %rt, l %t35, l 650)
+    storel 654, %t61
+    call $nox_raise(l %rt, l %t35, l 654)
     %t62 =l loadl %t6
     %t63 =w ceql %t62, 0
     jnz %t63, @release_skip40, @release39
@@ -58482,8 +58531,8 @@ export function l $nox_toml__toml_dump_escape(l %rt, l %p_s) {
     ret 0
 @exc_continue21
     %t67 =l add %t36, 24
-    storel 664, %t67
-    call $nox_raise(l %rt, l %t36, l 664)
+    storel 668, %t67
+    call $nox_raise(l %rt, l %t36, l 668)
     %t68 =l loadl %t1
     %t69 =w ceql %t68, 0
     jnz %t69, @release_skip37, @release36
@@ -59312,8 +59361,8 @@ export function l $nox_toml__toml_dump_array(l %rt, l %p_v) {
     ret 0
 @exc_continue23
     %t55 =l add %t33, 24
-    storel 719, %t55
-    call $nox_raise(l %rt, l %t33, l 719)
+    storel 723, %t55
+    call $nox_raise(l %rt, l %t33, l 723)
     %t56 =l loadl %t1
     %t57 =w ceql %t56, 0
     jnz %t57, @release_skip32, @release31
@@ -59563,8 +59612,8 @@ export function l $nox_toml__toml_dump_inline_table(l %rt, l %p_v) {
     ret 0
 @exc_continue41
     %t90 =l add %t66, 24
-    storel 730, %t90
-    call $nox_raise(l %rt, l %t66, l 730)
+    storel 734, %t90
+    call $nox_raise(l %rt, l %t66, l 734)
     %t91 =l loadl %t2
     %t92 =w ceql %t91, 0
     jnz %t92, @release_skip53, @release52
@@ -60129,8 +60178,8 @@ export function l $nox_toml__toml_dump_table(l %rt, l %p_v, l %p_prefix) {
     ret 0
 @exc_continue121
     %t214 =l add %t162, 24
-    storel 742, %t214
-    call $nox_raise(l %rt, l %t162, l 742)
+    storel 746, %t214
+    call $nox_raise(l %rt, l %t162, l 746)
     %t215 =l loadl %t10
     %t216 =w ceql %t215, 0
     jnz %t216, @release_skip162, @release161
@@ -61121,8 +61170,8 @@ export function l $nox_toml__toml_dump_table(l %rt, l %p_v, l %p_prefix) {
     ret 0
 @exc_continue467
     %t655 =l add %t603, 24
-    storel 749, %t655
-    call $nox_raise(l %rt, l %t603, l 749)
+    storel 753, %t655
+    call $nox_raise(l %rt, l %t603, l 753)
     %t656 =l loadl %t10
     %t657 =w ceql %t656, 0
     jnz %t657, @release_skip508, @release507
@@ -63239,8 +63288,8 @@ export function l $nox_toml__toml_dump_table(l %rt, l %p_v, l %p_prefix) {
     ret 0
 @exc_continue20
     %t97 =l add %t45, 24
-    storel 741, %t97
-    call $nox_raise(l %rt, l %t45, l 741)
+    storel 745, %t97
+    call $nox_raise(l %rt, l %t45, l 745)
     %t98 =l loadl %t10
     %t99 =w ceql %t98, 0
     jnz %t99, @release_skip61, @release60
@@ -63560,8 +63609,8 @@ export function l $nox_toml__toml_dump_table(l %rt, l %p_v, l %p_prefix) {
     ret 0
 @exc_continue366
     %t538 =l add %t486, 24
-    storel 748, %t538
-    call $nox_raise(l %rt, l %t486, l 748)
+    storel 752, %t538
+    call $nox_raise(l %rt, l %t486, l 752)
     %t539 =l loadl %t10
     %t540 =w ceql %t539, 0
     jnz %t540, @release_skip407, @release406
@@ -63881,8 +63930,8 @@ export function l $nox_toml__toml_dump_table(l %rt, l %p_v, l %p_prefix) {
     ret 0
 @exc_continue836
     %t1226 =l add %t1174, 24
-    storel 764, %t1226
-    call $nox_raise(l %rt, l %t1174, l 764)
+    storel 768, %t1226
+    call $nox_raise(l %rt, l %t1174, l 768)
     %t1227 =l loadl %t10
     %t1228 =w ceql %t1227, 0
     jnz %t1228, @release_skip877, @release876
@@ -64101,8 +64150,8 @@ export function l $nox_toml_dump(l %rt, l %p_v) {
     ret 0
 @exc_continue13
     %t30 =l add %t15, 24
-    storel 776, %t30
-    call $nox_raise(l %rt, l %t15, l 776)
+    storel 780, %t30
+    call $nox_raise(l %rt, l %t15, l 780)
     %t31 =l sub %rt, 48
     %t32 =w loadub %t31
     %t33 =l sub %rt, 64

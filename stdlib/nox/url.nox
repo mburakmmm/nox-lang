@@ -51,6 +51,10 @@ class URL:
         self.fragment = fragment
 
 def _substr(s: str, start: int, end: int) -> str:
+    # v2.1.89: dilim ile tek kopya (eskiden karakter karakter birleştirme, O(n) tahsis). Geçerli aralıkta sonuç aynıdır; aralık dışında eski
+    # davranış (IndexError) korunur.
+    if start >= 0 and end <= len(s):
+        return s[start:end]
     result: str = ""
     i: int = start
     while i < end:

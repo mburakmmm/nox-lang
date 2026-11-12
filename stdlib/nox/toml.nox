@@ -81,6 +81,10 @@ def _is_key_char(c: str) -> bool:
     return (b >= 97 and b <= 122) or (b >= 65 and b <= 90) or (b >= 48 and b <= 57) or b == 95 or b == 45
 
 def _substr(s: str, start: int, end: int) -> str:
+    # v2.1.89: dilim ile tek kopya (eskiden karakter karakter birleştirme, O(n) tahsis). Geçerli aralıkta sonuç aynıdır; aralık dışında eski
+    # davranış (IndexError) korunur.
+    if start >= 0 and end <= len(s):
+        return s[start:end]
     result: str = ""
     i: int = start
     while i < end:

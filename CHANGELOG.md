@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.89]
+
+### Değişti
+
+- **Stdlib: karakter karakter alt dize kurma döngüleri dilimle değiştirildi (TODO 3.5.3):** `nox.url`, `nox.yaml`, `nox.toml`, `nox.template`, `nox.uuid`, `nox.mysql` içindeki `_substr` yardımcıları (ve `nox.router._drop_first_char`) `result = result + s[i]` döngüsü yerine tek kopyalık `s[start:end]` kullanır (aralık geçerli değilse eski döngü ve `IndexError` davranışı korunur). `url_parse_100k` 129 → 50 ms (nox/py 0,92 → 0,38); yaml/toml/template ayrıştırıcıları da aynı yardımcıyı kullanır. Çıktılar aynı (mevcut golden korpusu: yaml 52 belge, toml, url, uuid, template, router)
+
 ## [2.1.88]
 
 ### Değişti

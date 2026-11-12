@@ -29965,3 +29965,7 @@ Hepsi semantik korumalı (gözlemlenebilir davranış aynı), iki backend'de (LL
 
 `runtime/stdlib_shims/strings.zig`: `nox_strings_replace_raw` — `old.len == 1` ise `cnt` (otomatik vektörleşen) sayım; `cnt * 8 >= len` (yoğun) tek geçişli yazma döngüsü, aksi halde `indexOfScalarPos` atlamalı kopya; `nox_strings_split_raw` — `sep.len == 1` ise ayırıcı sayımı + `indexOfScalarPos` parça sınırları (parça sayısı `seps + 1`). `runtime/stdlib_shims/json.zig`: `copySmall` (>= 16 bayt `memcpy`, altı örtüşen iki yükleme/yazma), `putSlice`/`putByte`/`putEscaped`/`putInt` — `dumpNodeInto` artık ara `escapeJsonString` tahsisi ve libc çağrısı olmadan doğrudan çıktı tamponuna yazar (kaçış gerekiyorsa eski `escapeJsonString` yolu). Anlam değişmez.
 
+### 3.437 Stdlib alt dize yardımcıları dilime taşındı (v2.1.89)
+
+`stdlib/nox/{url,yaml,toml,template,uuid,mysql}.nox` `_substr(s, start, end)`: `start >= 0 and end <= len(s)` ise `s[start:end]` (dilim `computeSlice`, v1.153), değilse eski karakter döngüsü (aralık dışında `IndexError`). `router._drop_first_char` → `s[1:]`. Eski yorumlardaki "Nox'ta dilim sözdizimi YOK" ifadesi bayattı (dilimler v1.153'ten beri var).
+

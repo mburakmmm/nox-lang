@@ -5493,226 +5493,275 @@ export function l $nox_yaml__substr(l %rt, l %p_s, l %p_start, l %p_end) {
     storel %p_s, %t0
     storel %p_start, %t1
     storel %p_end, %t2
-    %t5 =l add $str14, 16
-    %t6 =l loadl %t3
-    %t7 =w ceql %t6, 0
-    jnz %t7, @release_skip1, @release0
-@release0
-    %t8 =l sub %t6, 16
-    %t9 =l loadl %t8
-    %t10 =w csgel %t9, 536870912
-    jnz %t10, @str_free_done5, @str_rel_atomic6
-@str_rel_atomic6
-    %t11 =l sub %t6, 16
-    %t12 =l loadl %t11
-    %t13 =l sub %t12, 1
-    storel %t13, %t11
-    %t14 =w cslel %t13, 0
-    jnz %t14, @str_free3, @str_free_skip4
-@str_free3
-    call $nox_str_free_now(l %rt, l %t6)
-    jmp @str_free_done5
-@str_free_skip4
-    jmp @str_free_done5
-@str_free_done5
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
+    %t5 =l loadl %t1
+    %t6 =w csgel %t5, 0
+    jnz %t6, @logic_rhs1, @logic_short2
+@logic_short2
+    jmp @logic_done3
+@logic_rhs1
+    %t7 =l loadl %t2
+    %t8 =l loadl %t0
+    %t9 =l call $nox_str_char_count(l %t8)
+    %t10 =w cslel %t7, %t9
+    jmp @logic_done3
+@logic_done3
+    %t11 =w phi @logic_short2 0, @logic_rhs1 %t10
+    jnz %t11, @if_then4, @if_end0
+@if_then4
+    %t12 =l loadl %t0
+    %t13 =l loadl %t1
+    %t14 =l loadl %t2
+    %t15 =l call $nox_str_slice_op(l %rt, l %t12, l %t13, w 1, l %t14, w 1, l 0, w 0)
+    %t16 =l loadl %t3
+    %t17 =w ceql %t16, 0
+    jnz %t17, @release_skip6, @release5
+@release5
+    %t18 =l sub %t16, 16
+    %t19 =l loadl %t18
+    %t20 =w csgel %t19, 536870912
+    jnz %t20, @str_free_done10, @str_rel_atomic11
+@str_rel_atomic11
+    %t21 =l sub %t16, 16
+    %t22 =l loadl %t21
+    %t23 =l sub %t22, 1
+    storel %t23, %t21
+    %t24 =w cslel %t23, 0
+    jnz %t24, @str_free8, @str_free_skip9
+@str_free8
+    call $nox_str_free_now(l %rt, l %t16)
+    jmp @str_free_done10
+@str_free_skip9
+    jmp @str_free_done10
+@str_free_done10
+    jmp @release_done7
+@release_skip6
+    jmp @release_done7
+@release_done7
     storel 0, %t3
-    storel %t5, %t3
-    %t15 =l loadl %t1
-    storel %t15, %t4
-    %t16 =l loadl %t0
-    %t17 =l call $nox_str_char_count(l %t16)
-    %t18 =l call $nox_str_is_ascii(l %t16)
-    jmp @while_cond7
-@while_cond7
-    %t19 =l loadl %t4
-    %t20 =l loadl %t2
-    %t21 =w csltl %t19, %t20
-    jnz %t21, @while_body8, @while_end9
-@while_body8
-    %t22 =l loadl %t0
-    %t23 =l loadl %t4
-    %t24 =l sar %t23, 63
-    %t25 =l and %t24, %t17
-    %t26 =l add %t23, %t25
-    %t27 =w cugel %t26, %t17
-    jnz %t27, @str_idx_err10, @str_idx_ok11
-@str_idx_ok11
-    jnz %t18, @str_idx_ascii36, @str_idx_unicode37
-@str_idx_ascii36
-    %t62 =l add %t22, %t26
-    %t63 =w loadub %t62
-    %t64 =l extuw %t63
-    %t65 =l mul %t64, 24
-    %t66 =l add $nox_ascii_chars, %t65
-    %t67 =l add %t66, 16
-    jmp @str_idx_done38
-@str_idx_unicode37
-    %t68 =l call $nox_str_char_at(l %rt, l %t22, l %t26)
-    jmp @str_idx_done38
-@str_idx_done38
-    %t61 =l phi @str_idx_ascii36 %t67, @str_idx_unicode37 %t68
-    %t69 =l loadl %t3
-    %t70 =l call $nox_str_append(l %rt, l %t69, l %t61)
-    storel %t70, %t3
-    %t71 =w ceql %t61, 0
-    jnz %t71, @release_skip40, @release39
-@release39
-    %t72 =l sub %t61, 16
-    %t73 =l loadl %t72
-    %t74 =w csgel %t73, 536870912
-    jnz %t74, @str_free_done44, @str_rel_atomic45
-@str_rel_atomic45
-    %t75 =l sub %t61, 16
-    %t76 =l loadl %t75
-    %t77 =l sub %t76, 1
-    storel %t77, %t75
-    %t78 =w cslel %t77, 0
-    jnz %t78, @str_free42, @str_free_skip43
-@str_free42
-    call $nox_str_free_now(l %rt, l %t61)
-    jmp @str_free_done44
-@str_free_skip43
-    jmp @str_free_done44
-@str_free_done44
-    jmp @release_done41
-@release_skip40
-    jmp @release_done41
-@release_done41
-    %t79 =l loadl %t4
-    %t80 =l add %t79, 1
-    storel %t80, %t4
-    jmp @while_cond7
-@while_end9
-    %t81 =l loadl %t3
-    ret %t81
-@after_return46
-    %t82 =l loadl %t3
-    %t83 =w ceql %t82, 0
-    jnz %t83, @release_skip48, @release47
-@release47
-    %t84 =l sub %t82, 16
-    %t85 =l loadl %t84
-    %t86 =w csgel %t85, 536870912
-    jnz %t86, @str_free_done52, @str_rel_atomic53
-@str_rel_atomic53
-    %t87 =l sub %t82, 16
-    %t88 =l loadl %t87
-    %t89 =l sub %t88, 1
-    storel %t89, %t87
-    %t90 =w cslel %t89, 0
-    jnz %t90, @str_free50, @str_free_skip51
-@str_free50
-    call $nox_str_free_now(l %rt, l %t82)
-    jmp @str_free_done52
-@str_free_skip51
-    jmp @str_free_done52
-@str_free_done52
-    jmp @release_done49
-@release_skip48
-    jmp @release_done49
-@release_done49
+    ret %t15
+@after_return12
+    jmp @if_end0
+@if_end0
+    %t25 =l add $str14, 16
+    %t26 =l loadl %t3
+    %t27 =w ceql %t26, 0
+    jnz %t27, @release_skip14, @release13
+@release13
+    %t28 =l sub %t26, 16
+    %t29 =l loadl %t28
+    %t30 =w csgel %t29, 536870912
+    jnz %t30, @str_free_done18, @str_rel_atomic19
+@str_rel_atomic19
+    %t31 =l sub %t26, 16
+    %t32 =l loadl %t31
+    %t33 =l sub %t32, 1
+    storel %t33, %t31
+    %t34 =w cslel %t33, 0
+    jnz %t34, @str_free16, @str_free_skip17
+@str_free16
+    call $nox_str_free_now(l %rt, l %t26)
+    jmp @str_free_done18
+@str_free_skip17
+    jmp @str_free_done18
+@str_free_done18
+    jmp @release_done15
+@release_skip14
+    jmp @release_done15
+@release_done15
     storel 0, %t3
-@fn_end54
+    storel %t25, %t3
+    %t35 =l loadl %t1
+    storel %t35, %t4
+    %t36 =l loadl %t0
+    %t37 =l call $nox_str_char_count(l %t36)
+    %t38 =l call $nox_str_is_ascii(l %t36)
+    jmp @while_cond20
+@while_cond20
+    %t39 =l loadl %t4
+    %t40 =l loadl %t2
+    %t41 =w csltl %t39, %t40
+    jnz %t41, @while_body21, @while_end22
+@while_body21
+    %t42 =l loadl %t0
+    %t43 =l loadl %t4
+    %t44 =l sar %t43, 63
+    %t45 =l and %t44, %t37
+    %t46 =l add %t43, %t45
+    %t47 =w cugel %t46, %t37
+    jnz %t47, @str_idx_err23, @str_idx_ok24
+@str_idx_ok24
+    jnz %t38, @str_idx_ascii49, @str_idx_unicode50
+@str_idx_ascii49
+    %t82 =l add %t42, %t46
+    %t83 =w loadub %t82
+    %t84 =l extuw %t83
+    %t85 =l mul %t84, 24
+    %t86 =l add $nox_ascii_chars, %t85
+    %t87 =l add %t86, 16
+    jmp @str_idx_done51
+@str_idx_unicode50
+    %t88 =l call $nox_str_char_at(l %rt, l %t42, l %t46)
+    jmp @str_idx_done51
+@str_idx_done51
+    %t81 =l phi @str_idx_ascii49 %t87, @str_idx_unicode50 %t88
+    %t89 =l loadl %t3
+    %t90 =l call $nox_str_append(l %rt, l %t89, l %t81)
+    storel %t90, %t3
+    %t91 =w ceql %t81, 0
+    jnz %t91, @release_skip53, @release52
+@release52
+    %t92 =l sub %t81, 16
+    %t93 =l loadl %t92
+    %t94 =w csgel %t93, 536870912
+    jnz %t94, @str_free_done57, @str_rel_atomic58
+@str_rel_atomic58
+    %t95 =l sub %t81, 16
+    %t96 =l loadl %t95
+    %t97 =l sub %t96, 1
+    storel %t97, %t95
+    %t98 =w cslel %t97, 0
+    jnz %t98, @str_free55, @str_free_skip56
+@str_free55
+    call $nox_str_free_now(l %rt, l %t81)
+    jmp @str_free_done57
+@str_free_skip56
+    jmp @str_free_done57
+@str_free_done57
+    jmp @release_done54
+@release_skip53
+    jmp @release_done54
+@release_done54
+    %t99 =l loadl %t4
+    %t100 =l add %t99, 1
+    storel %t100, %t4
+    jmp @while_cond20
+@while_end22
+    %t101 =l loadl %t3
+    ret %t101
+@after_return59
+    %t102 =l loadl %t3
+    %t103 =w ceql %t102, 0
+    jnz %t103, @release_skip61, @release60
+@release60
+    %t104 =l sub %t102, 16
+    %t105 =l loadl %t104
+    %t106 =w csgel %t105, 536870912
+    jnz %t106, @str_free_done65, @str_rel_atomic66
+@str_rel_atomic66
+    %t107 =l sub %t102, 16
+    %t108 =l loadl %t107
+    %t109 =l sub %t108, 1
+    storel %t109, %t107
+    %t110 =w cslel %t109, 0
+    jnz %t110, @str_free63, @str_free_skip64
+@str_free63
+    call $nox_str_free_now(l %rt, l %t102)
+    jmp @str_free_done65
+@str_free_skip64
+    jmp @str_free_done65
+@str_free_done65
+    jmp @release_done62
+@release_skip61
+    jmp @release_done62
+@release_done62
+    storel 0, %t3
+@fn_end67
     ret 0
-@str_idx_err10
-    %t28 =l add $str15, 16
-    %t29 =l call $nox_rc_alloc(l %rt, l 32)
-    storel 18, %t29
-    %t30 =l add %t29, 8
-    storel $IndexError_vtable, %t30
-    %t31 =l add %t29, 16
-    storel 0, %t31
-    %t32 =l add %t29, 24
-    storel 0, %t32
-    call $Exception___init__(l %rt, l %t29, l %t28)
-    %t33 =w call $nox_exception_pending(l %rt)
-    jnz %t33, @ctor_init_failed12, @ctor_init_cont13
-@ctor_init_failed12
-    %t34 =w ceql %t29, 0
-    jnz %t34, @release_skip15, @release14
-@release14
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t29)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
-    jmp @ctor_init_cont13
-@ctor_init_cont13
-    %t35 =l sub %rt, 48
-    %t36 =w loadub %t35
-    %t37 =l sub %rt, 64
-    %t38 =l loadl %t37
-    jnz %t36, @exc_slow17, @exc_fast18
-@exc_fast18
-    %t39 =w cnel %t38, 0
-    jmp @exc_done19
-@exc_slow17
-    %t40 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done19
-@exc_done19
-    %t41 =w phi @exc_fast18 %t39, @exc_slow17 %t40
-    jnz %t41, @exc_propagate20, @exc_continue21
-@exc_propagate20
-    %t42 =l loadl %t3
-    %t43 =w ceql %t42, 0
-    jnz %t43, @release_skip23, @release22
-@release22
-    %t44 =l sub %t42, 16
-    %t45 =l loadl %t44
-    %t46 =w csgel %t45, 536870912
-    jnz %t46, @str_free_done27, @str_rel_atomic28
-@str_rel_atomic28
-    %t47 =l sub %t42, 16
-    %t48 =l loadl %t47
-    %t49 =l sub %t48, 1
-    storel %t49, %t47
-    %t50 =w cslel %t49, 0
-    jnz %t50, @str_free25, @str_free_skip26
-@str_free25
-    call $nox_str_free_now(l %rt, l %t42)
-    jmp @str_free_done27
-@str_free_skip26
-    jmp @str_free_done27
-@str_free_done27
-    jmp @release_done24
-@release_skip23
-    jmp @release_done24
-@release_done24
-    storel 0, %t3
-    ret 0
-@exc_continue21
-    %t51 =l add %t29, 24
-    storel 97, %t51
-    call $nox_raise(l %rt, l %t29, l 97)
-    %t52 =l loadl %t3
-    %t53 =w ceql %t52, 0
-    jnz %t53, @release_skip30, @release29
-@release29
-    %t54 =l sub %t52, 16
-    %t55 =l loadl %t54
-    %t56 =w csgel %t55, 536870912
-    jnz %t56, @str_free_done34, @str_rel_atomic35
-@str_rel_atomic35
-    %t57 =l sub %t52, 16
+@str_idx_err23
+    %t48 =l add $str15, 16
+    %t49 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 18, %t49
+    %t50 =l add %t49, 8
+    storel $IndexError_vtable, %t50
+    %t51 =l add %t49, 16
+    storel 0, %t51
+    %t52 =l add %t49, 24
+    storel 0, %t52
+    call $Exception___init__(l %rt, l %t49, l %t48)
+    %t53 =w call $nox_exception_pending(l %rt)
+    jnz %t53, @ctor_init_failed25, @ctor_init_cont26
+@ctor_init_failed25
+    %t54 =w ceql %t49, 0
+    jnz %t54, @release_skip28, @release27
+@release27
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t49)
+    jmp @release_done29
+@release_skip28
+    jmp @release_done29
+@release_done29
+    jmp @ctor_init_cont26
+@ctor_init_cont26
+    %t55 =l sub %rt, 48
+    %t56 =w loadub %t55
+    %t57 =l sub %rt, 64
     %t58 =l loadl %t57
-    %t59 =l sub %t58, 1
-    storel %t59, %t57
-    %t60 =w cslel %t59, 0
-    jnz %t60, @str_free32, @str_free_skip33
-@str_free32
-    call $nox_str_free_now(l %rt, l %t52)
-    jmp @str_free_done34
-@str_free_skip33
-    jmp @str_free_done34
-@str_free_done34
-    jmp @release_done31
-@release_skip30
-    jmp @release_done31
-@release_done31
+    jnz %t56, @exc_slow30, @exc_fast31
+@exc_fast31
+    %t59 =w cnel %t58, 0
+    jmp @exc_done32
+@exc_slow30
+    %t60 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done32
+@exc_done32
+    %t61 =w phi @exc_fast31 %t59, @exc_slow30 %t60
+    jnz %t61, @exc_propagate33, @exc_continue34
+@exc_propagate33
+    %t62 =l loadl %t3
+    %t63 =w ceql %t62, 0
+    jnz %t63, @release_skip36, @release35
+@release35
+    %t64 =l sub %t62, 16
+    %t65 =l loadl %t64
+    %t66 =w csgel %t65, 536870912
+    jnz %t66, @str_free_done40, @str_rel_atomic41
+@str_rel_atomic41
+    %t67 =l sub %t62, 16
+    %t68 =l loadl %t67
+    %t69 =l sub %t68, 1
+    storel %t69, %t67
+    %t70 =w cslel %t69, 0
+    jnz %t70, @str_free38, @str_free_skip39
+@str_free38
+    call $nox_str_free_now(l %rt, l %t62)
+    jmp @str_free_done40
+@str_free_skip39
+    jmp @str_free_done40
+@str_free_done40
+    jmp @release_done37
+@release_skip36
+    jmp @release_done37
+@release_done37
+    storel 0, %t3
+    ret 0
+@exc_continue34
+    %t71 =l add %t49, 24
+    storel 101, %t71
+    call $nox_raise(l %rt, l %t49, l 101)
+    %t72 =l loadl %t3
+    %t73 =w ceql %t72, 0
+    jnz %t73, @release_skip43, @release42
+@release42
+    %t74 =l sub %t72, 16
+    %t75 =l loadl %t74
+    %t76 =w csgel %t75, 536870912
+    jnz %t76, @str_free_done47, @str_rel_atomic48
+@str_rel_atomic48
+    %t77 =l sub %t72, 16
+    %t78 =l loadl %t77
+    %t79 =l sub %t78, 1
+    storel %t79, %t77
+    %t80 =w cslel %t79, 0
+    jnz %t80, @str_free45, @str_free_skip46
+@str_free45
+    call $nox_str_free_now(l %rt, l %t72)
+    jmp @str_free_done47
+@str_free_skip46
+    jmp @str_free_done47
+@str_free_done47
+    jmp @release_done44
+@release_skip43
+    jmp @release_done44
+@release_done44
     storel 0, %t3
     ret 0
 }
@@ -6278,8 +6327,8 @@ export function w $nox_yaml__can_open_quote(l %rt, l %p_s, l %p_i) {
     ret 0
 @exc_continue21
     %t45 =l add %t23, 24
-    storel 119, %t45
-    call $nox_raise(l %rt, l %t23, l 119)
+    storel 123, %t45
+    call $nox_raise(l %rt, l %t23, l 123)
     %t46 =l loadl %t2
     %t47 =w ceql %t46, 0
     jnz %t47, @release_skip30, @release29
@@ -7440,8 +7489,8 @@ export function l $nox_yaml__strip_comment(l %rt, l %p_s) {
     ret 0
 @exc_continue21
     %t65 =l add %t34, 24
-    storel 128, %t65
-    call $nox_raise(l %rt, l %t34, l 128)
+    storel 132, %t65
+    call $nox_raise(l %rt, l %t34, l 132)
     %t66 =l loadl %t3
     %t67 =w ceql %t66, 0
     jnz %t67, @release_skip37, @release36
@@ -7589,8 +7638,8 @@ export function l $nox_yaml__strip_comment(l %rt, l %p_s) {
     ret 0
 @exc_continue166
     %t273 =l add %t242, 24
-    storel 139, %t273
-    call $nox_raise(l %rt, l %t242, l 139)
+    storel 143, %t273
+    call $nox_raise(l %rt, l %t242, l 143)
     %t274 =l loadl %t3
     %t275 =w ceql %t274, 0
     jnz %t275, @release_skip182, @release181
@@ -7738,8 +7787,8 @@ export function l $nox_yaml__strip_comment(l %rt, l %p_s) {
     ret 0
 @exc_continue224
     %t354 =l add %t323, 24
-    storel 139, %t354
-    call $nox_raise(l %rt, l %t323, l 139)
+    storel 143, %t354
+    call $nox_raise(l %rt, l %t323, l 143)
     %t355 =l loadl %t3
     %t356 =w ceql %t355, 0
     jnz %t356, @release_skip240, @release239
@@ -9060,8 +9109,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue21
     %t45 =l add %t23, 24
-    storel 152, %t45
-    call $nox_raise(l %rt, l %t23, l 152)
+    storel 156, %t45
+    call $nox_raise(l %rt, l %t23, l 156)
     %t46 =l loadl %t2
     %t47 =w ceql %t46, 0
     jnz %t47, @release_skip30, @release29
@@ -9157,8 +9206,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue67
     %t110 =l add %t88, 24
-    storel 156, %t110
-    call $nox_raise(l %rt, l %t88, l 156)
+    storel 160, %t110
+    call $nox_raise(l %rt, l %t88, l 160)
     %t111 =l loadl %t2
     %t112 =w ceql %t111, 0
     jnz %t112, @release_skip76, @release75
@@ -9254,8 +9303,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue109
     %t172 =l add %t150, 24
-    storel 157, %t172
-    call $nox_raise(l %rt, l %t150, l 157)
+    storel 161, %t172
+    call $nox_raise(l %rt, l %t150, l 161)
     %t173 =l loadl %t2
     %t174 =w ceql %t173, 0
     jnz %t174, @release_skip118, @release117
@@ -9351,8 +9400,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue155
     %t243 =l add %t221, 24
-    storel 161, %t243
-    call $nox_raise(l %rt, l %t221, l 161)
+    storel 165, %t243
+    call $nox_raise(l %rt, l %t221, l 165)
     %t244 =l loadl %t2
     %t245 =w ceql %t244, 0
     jnz %t245, @release_skip164, @release163
@@ -9448,8 +9497,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue199
     %t307 =l add %t285, 24
-    storel 161, %t307
-    call $nox_raise(l %rt, l %t285, l 161)
+    storel 165, %t307
+    call $nox_raise(l %rt, l %t285, l 165)
     %t308 =l loadl %t2
     %t309 =w ceql %t308, 0
     jnz %t309, @release_skip208, @release207
@@ -9545,8 +9594,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue268
     %t405 =l add %t383, 24
-    storel 168, %t405
-    call $nox_raise(l %rt, l %t383, l 168)
+    storel 172, %t405
+    call $nox_raise(l %rt, l %t383, l 172)
     %t406 =l loadl %t2
     %t407 =w ceql %t406, 0
     jnz %t407, @release_skip277, @release276
@@ -9642,8 +9691,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue342
     %t514 =l add %t492, 24
-    storel 176, %t514
-    call $nox_raise(l %rt, l %t492, l 176)
+    storel 180, %t514
+    call $nox_raise(l %rt, l %t492, l 180)
     %t515 =l loadl %t2
     %t516 =w ceql %t515, 0
     jnz %t516, @release_skip351, @release350
@@ -9739,8 +9788,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue386
     %t578 =l add %t556, 24
-    storel 176, %t578
-    call $nox_raise(l %rt, l %t556, l 176)
+    storel 180, %t578
+    call $nox_raise(l %rt, l %t556, l 180)
     %t579 =l loadl %t2
     %t580 =w ceql %t579, 0
     jnz %t580, @release_skip395, @release394
@@ -9836,8 +9885,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue468
     %t691 =l add %t669, 24
-    storel 182, %t691
-    call $nox_raise(l %rt, l %t669, l 182)
+    storel 186, %t691
+    call $nox_raise(l %rt, l %t669, l 186)
     %t692 =l loadl %t2
     %t693 =w ceql %t692, 0
     jnz %t693, @release_skip477, @release476
@@ -9933,8 +9982,8 @@ export function l $nox_yaml__find_key_sep(l %rt, l %p_content) {
     ret 0
 @exc_continue515
     %t757 =l add %t735, 24
-    storel 182, %t757
-    call $nox_raise(l %rt, l %t735, l 182)
+    storel 186, %t757
+    call $nox_raise(l %rt, l %t735, l 186)
     %t758 =l loadl %t2
     %t759 =w ceql %t758, 0
     jnz %t759, @release_skip524, @release523
@@ -10135,8 +10184,8 @@ export function w $nox_yaml__is_sequence_line(l %rt, l %p_content) {
     ret 0
 @exc_continue15
     %t21 =l add %t8, 24
-    storel 190, %t21
-    call $nox_raise(l %rt, l %t8, l 190)
+    storel 194, %t21
+    call $nox_raise(l %rt, l %t8, l 194)
     ret 0
 @str_idx_err33
     %t46 =l add $str60, 16
@@ -10180,8 +10229,8 @@ export function w $nox_yaml__is_sequence_line(l %rt, l %p_content) {
     ret 0
 @exc_continue44
     %t60 =l add %t47, 24
-    storel 194, %t60
-    call $nox_raise(l %rt, l %t47, l 194)
+    storel 198, %t60
+    call $nox_raise(l %rt, l %t47, l 198)
     ret 0
 }
 export function w $nox_yaml__is_mapping_line(l %rt, l %p_content) {
@@ -10514,8 +10563,8 @@ export function l $nox_yaml__count_leading_spaces(l %rt, l %p_raw) {
     ret 0
 @exc_continue17
     %t33 =l add %t20, 24
-    storel 212, %t33
-    call $nox_raise(l %rt, l %t20, l 212)
+    storel 216, %t33
+    call $nox_raise(l %rt, l %t20, l 216)
     ret 0
 }
 export function l $nox_yaml__escape_for_double_quotes(l %rt, l %p_s) {
@@ -14604,8 +14653,8 @@ export function l $nox_yaml__block_header(l %rt, l %p_content) {
     ret 0
 @exc_continue75
     %t203 =l add %t123, 24
-    storel 255, %t203
-    call $nox_raise(l %rt, l %t123, l 255)
+    storel 259, %t203
+    call $nox_raise(l %rt, l %t123, l 259)
     %t204 =l loadl %t12
     %t205 =w ceql %t204, 0
     jnz %t205, @release_skip132, @release131
@@ -15053,8 +15102,8 @@ export function l $nox_yaml__block_header(l %rt, l %p_content) {
     ret 0
 @exc_continue280
     %t467 =l add %t387, 24
-    storel 258, %t467
-    call $nox_raise(l %rt, l %t387, l 258)
+    storel 262, %t467
+    call $nox_raise(l %rt, l %t387, l 262)
     %t468 =l loadl %t12
     %t469 =w ceql %t468, 0
     jnz %t469, @release_skip337, @release336
@@ -15502,8 +15551,8 @@ export function l $nox_yaml__block_header(l %rt, l %p_content) {
     ret 0
 @exc_continue417
     %t637 =l add %t557, 24
-    storel 258, %t637
-    call $nox_raise(l %rt, l %t557, l 258)
+    storel 262, %t637
+    call $nox_raise(l %rt, l %t557, l 262)
     %t638 =l loadl %t12
     %t639 =w ceql %t638, 0
     jnz %t639, @release_skip474, @release473
@@ -15951,8 +16000,8 @@ export function l $nox_yaml__block_header(l %rt, l %p_content) {
     ret 0
 @exc_continue615
     %t895 =l add %t815, 24
-    storel 264, %t895
-    call $nox_raise(l %rt, l %t815, l 264)
+    storel 268, %t895
+    call $nox_raise(l %rt, l %t815, l 268)
     %t896 =l loadl %t12
     %t897 =w ceql %t896, 0
     jnz %t897, @release_skip672, @release671
@@ -16400,8 +16449,8 @@ export function l $nox_yaml__block_header(l %rt, l %p_content) {
     ret 0
 @exc_continue1092
     %t1528 =l add %t1448, 24
-    storel 279, %t1528
-    call $nox_raise(l %rt, l %t1448, l 279)
+    storel 283, %t1528
+    call $nox_raise(l %rt, l %t1448, l 283)
     %t1529 =l loadl %t12
     %t1530 =w ceql %t1529, 0
     jnz %t1530, @release_skip1149, @release1148
@@ -16849,8 +16898,8 @@ export function l $nox_yaml__block_header(l %rt, l %p_content) {
     ret 0
 @exc_continue1265
     %t1758 =l add %t1678, 24
-    storel 283, %t1758
-    call $nox_raise(l %rt, l %t1678, l 283)
+    storel 287, %t1758
+    call $nox_raise(l %rt, l %t1678, l 287)
     %t1759 =l loadl %t12
     %t1760 =w ceql %t1759, 0
     jnz %t1760, @release_skip1322, @release1321
@@ -17298,8 +17347,8 @@ export function l $nox_yaml__block_header(l %rt, l %p_content) {
     ret 0
 @exc_continue1402
     %t1932 =l add %t1852, 24
-    storel 284, %t1932
-    call $nox_raise(l %rt, l %t1852, l 284)
+    storel 288, %t1932
+    call $nox_raise(l %rt, l %t1852, l 288)
     %t1933 =l loadl %t12
     %t1934 =w ceql %t1933, 0
     jnz %t1934, @release_skip1459, @release1458
@@ -17747,8 +17796,8 @@ export function l $nox_yaml__block_header(l %rt, l %p_content) {
     ret 0
 @exc_continue1539
     %t2102 =l add %t2022, 24
-    storel 284, %t2102
-    call $nox_raise(l %rt, l %t2022, l 284)
+    storel 288, %t2102
+    call $nox_raise(l %rt, l %t2022, l 288)
     %t2103 =l loadl %t12
     %t2104 =w ceql %t2103, 0
     jnz %t2104, @release_skip1596, @release1595
@@ -18456,8 +18505,8 @@ export function l $nox_yaml__fold_block(l %rt, l %p_lines) {
     ret 0
 @exc_continue29
     %t69 =l add %t47, 24
-    storel 296, %t69
-    call $nox_raise(l %rt, l %t47, l 296)
+    storel 300, %t69
+    call $nox_raise(l %rt, l %t47, l 300)
     %t70 =l loadl %t1
     %t71 =w ceql %t70, 0
     jnz %t71, @release_skip38, @release37
@@ -18553,8 +18602,8 @@ export function l $nox_yaml__fold_block(l %rt, l %p_lines) {
     ret 0
 @exc_continue70
     %t123 =l add %t101, 24
-    storel 296, %t123
-    call $nox_raise(l %rt, l %t101, l 296)
+    storel 300, %t123
+    call $nox_raise(l %rt, l %t101, l 300)
     %t124 =l loadl %t1
     %t125 =w ceql %t124, 0
     jnz %t125, @release_skip79, @release78
@@ -20115,8 +20164,8 @@ export function l $nox_yaml__read_block_scalar(l %rt, l %p_raw_lines, l %p_start
     ret 0
 @exc_continue22
     %t85 =l add %t52, 24
-    storel 327, %t85
-    call $nox_raise(l %rt, l %t52, l 327)
+    storel 331, %t85
+    call $nox_raise(l %rt, l %t52, l 331)
     %t86 =l loadl %t9
     %t87 =w ceql %t86, 0
     jnz %t87, @release_skip41, @release40
@@ -20284,8 +20333,8 @@ export function l $nox_yaml__read_block_scalar(l %rt, l %p_raw_lines, l %p_start
     ret 0
 @exc_continue188
     %t387 =l add %t354, 24
-    storel 343, %t387
-    call $nox_raise(l %rt, l %t354, l 343)
+    storel 347, %t387
+    call $nox_raise(l %rt, l %t354, l 347)
     %t388 =l loadl %t9
     %t389 =w ceql %t388, 0
     jnz %t389, @release_skip207, @release206
@@ -20453,8 +20502,8 @@ export function l $nox_yaml__read_block_scalar(l %rt, l %p_raw_lines, l %p_start
     ret 0
 @exc_continue238
     %t456 =l add %t423, 24
-    storel 344, %t456
-    call $nox_raise(l %rt, l %t423, l 344)
+    storel 348, %t456
+    call $nox_raise(l %rt, l %t423, l 348)
     %t457 =l loadl %t9
     %t458 =w ceql %t457, 0
     jnz %t458, @release_skip257, @release256
@@ -20622,8 +20671,8 @@ export function l $nox_yaml__read_block_scalar(l %rt, l %p_raw_lines, l %p_start
     ret 0
 @exc_continue291
     %t529 =l add %t496, 24
-    storel 347, %t529
-    call $nox_raise(l %rt, l %t496, l 347)
+    storel 351, %t529
+    call $nox_raise(l %rt, l %t496, l 351)
     %t530 =l loadl %t9
     %t531 =w ceql %t530, 0
     jnz %t531, @release_skip310, @release309
@@ -21292,8 +21341,8 @@ export function l $nox_yaml__value_start(l %rt, l %p_content) {
     ret 0
 @exc_continue17
     %t44 =l add %t22, 24
-    storel 367, %t44
-    call $nox_raise(l %rt, l %t22, l 367)
+    storel 371, %t44
+    call $nox_raise(l %rt, l %t22, l 371)
     %t45 =l loadl %t3
     %t46 =w ceql %t45, 0
     jnz %t46, @release_skip26, @release25
@@ -21389,8 +21438,8 @@ export function l $nox_yaml__value_start(l %rt, l %p_content) {
     ret 0
 @exc_continue61
     %t107 =l add %t85, 24
-    storel 367, %t107
-    call $nox_raise(l %rt, l %t85, l 367)
+    storel 371, %t107
+    call $nox_raise(l %rt, l %t85, l 371)
     %t108 =l loadl %t3
     %t109 =w ceql %t108, 0
     jnz %t109, @release_skip70, @release69
@@ -21486,8 +21535,8 @@ export function l $nox_yaml__value_start(l %rt, l %p_content) {
     ret 0
 @exc_continue108
     %t174 =l add %t152, 24
-    storel 369, %t174
-    call $nox_raise(l %rt, l %t152, l 369)
+    storel 373, %t174
+    call $nox_raise(l %rt, l %t152, l 373)
     %t175 =l loadl %t3
     %t176 =w ceql %t175, 0
     jnz %t176, @release_skip117, @release116
@@ -21583,8 +21632,8 @@ export function l $nox_yaml__value_start(l %rt, l %p_content) {
     ret 0
 @exc_continue188
     %t295 =l add %t273, 24
-    storel 375, %t295
-    call $nox_raise(l %rt, l %t273, l 375)
+    storel 379, %t295
+    call $nox_raise(l %rt, l %t273, l 379)
     %t296 =l loadl %t3
     %t297 =w ceql %t296, 0
     jnz %t297, @release_skip197, @release196
@@ -23911,8 +23960,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue17
     %t67 =l add %t27, 24
-    storel 389, %t67
-    call $nox_raise(l %rt, l %t27, l 389)
+    storel 393, %t67
+    call $nox_raise(l %rt, l %t27, l 393)
     %t68 =l loadl %t4
     %t69 =w ceql %t68, 0
     jnz %t69, @release_skip40, @release39
@@ -24112,8 +24161,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue89
     %t164 =l add %t124, 24
-    storel 389, %t164
-    call $nox_raise(l %rt, l %t124, l 389)
+    storel 393, %t164
+    call $nox_raise(l %rt, l %t124, l 393)
     %t165 =l loadl %t4
     %t166 =w ceql %t165, 0
     jnz %t166, @release_skip112, @release111
@@ -24313,8 +24362,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue164
     %t266 =l add %t226, 24
-    storel 390, %t266
-    call $nox_raise(l %rt, l %t226, l 390)
+    storel 394, %t266
+    call $nox_raise(l %rt, l %t226, l 394)
     %t267 =l loadl %t4
     %t268 =w ceql %t267, 0
     jnz %t268, @release_skip187, @release186
@@ -24514,8 +24563,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue239
     %t369 =l add %t329, 24
-    storel 392, %t369
-    call $nox_raise(l %rt, l %t329, l 392)
+    storel 396, %t369
+    call $nox_raise(l %rt, l %t329, l 396)
     %t370 =l loadl %t4
     %t371 =w ceql %t370, 0
     jnz %t371, @release_skip262, @release261
@@ -24715,8 +24764,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue332
     %t506 =l add %t466, 24
-    storel 396, %t506
-    call $nox_raise(l %rt, l %t466, l 396)
+    storel 400, %t506
+    call $nox_raise(l %rt, l %t466, l 400)
     %t507 =l loadl %t4
     %t508 =w ceql %t507, 0
     jnz %t508, @release_skip355, @release354
@@ -24916,8 +24965,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue404
     %t609 =l add %t569, 24
-    storel 400, %t609
-    call $nox_raise(l %rt, l %t569, l 400)
+    storel 404, %t609
+    call $nox_raise(l %rt, l %t569, l 404)
     %t610 =l loadl %t4
     %t611 =w ceql %t610, 0
     jnz %t611, @release_skip427, @release426
@@ -25117,8 +25166,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue475
     %t708 =l add %t668, 24
-    storel 401, %t708
-    call $nox_raise(l %rt, l %t668, l 401)
+    storel 405, %t708
+    call $nox_raise(l %rt, l %t668, l 405)
     %t709 =l loadl %t4
     %t710 =w ceql %t709, 0
     jnz %t710, @release_skip498, @release497
@@ -25318,8 +25367,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue601
     %t891 =l add %t851, 24
-    storel 410, %t891
-    call $nox_raise(l %rt, l %t851, l 410)
+    storel 414, %t891
+    call $nox_raise(l %rt, l %t851, l 414)
     %t892 =l loadl %t4
     %t893 =w ceql %t892, 0
     jnz %t893, @release_skip624, @release623
@@ -25519,8 +25568,8 @@ export function l $nox_yaml__open_state(l %rt, l %p_s, l %p_start) {
     ret 0
 @exc_continue782
     %t1152 =l add %t1112, 24
-    storel 423, %t1152
-    call $nox_raise(l %rt, l %t1112, l 423)
+    storel 427, %t1152
+    call $nox_raise(l %rt, l %t1112, l 427)
     %t1153 =l loadl %t4
     %t1154 =w ceql %t1153, 0
     jnz %t1154, @release_skip805, @release804
@@ -26192,8 +26241,8 @@ export function l $nox_yaml__tokenize_docs(l %rt, l %p_text) {
     ret 0
 @exc_continue204
     %t411 =l add %t303, 24
-    storel 456, %t411
-    call $nox_raise(l %rt, l %t303, l 456)
+    storel 460, %t411
+    call $nox_raise(l %rt, l %t303, l 460)
     %t412 =l sub %rt, 48
     %t413 =w loadub %t412
     %t414 =l sub %rt, 64
@@ -32655,8 +32704,8 @@ export function l $nox_yaml__tokenize_docs(l %rt, l %p_text) {
     ret 0
 @exc_continue2214
     %t3133 =l add %t3025, 24
-    storel 500, %t3133
-    call $nox_raise(l %rt, l %t3025, l 500)
+    storel 504, %t3133
+    call $nox_raise(l %rt, l %t3025, l 504)
     %t3134 =l sub %rt, 48
     %t3135 =w loadub %t3134
     %t3136 =l sub %rt, 64
@@ -35021,8 +35070,8 @@ export function l $nox_yaml__tokenize_docs(l %rt, l %p_text) {
     ret 0
 @exc_continue25
     %t187 =l add %t79, 24
-    storel 454, %t187
-    call $nox_raise(l %rt, l %t79, l 454)
+    storel 458, %t187
+    call $nox_raise(l %rt, l %t79, l 458)
     %t188 =l loadl %t1
     %t189 =w ceql %t188, 0
     jnz %t189, @release_skip106, @release105
@@ -35650,8 +35699,8 @@ export function l $nox_yaml__tokenize_docs(l %rt, l %p_text) {
     ret 0
 @exc_continue971
     %t1474 =l add %t1366, 24
-    storel 475, %t1474
-    call $nox_raise(l %rt, l %t1366, l 475)
+    storel 479, %t1474
+    call $nox_raise(l %rt, l %t1366, l 479)
     %t1475 =l loadl %t1
     %t1476 =w ceql %t1475, 0
     jnz %t1476, @release_skip1052, @release1051
@@ -36279,8 +36328,8 @@ export function l $nox_yaml__tokenize_docs(l %rt, l %p_text) {
     ret 0
 @exc_continue1749
     %t2549 =l add %t2441, 24
-    storel 492, %t2549
-    call $nox_raise(l %rt, l %t2441, l 492)
+    storel 496, %t2549
+    call $nox_raise(l %rt, l %t2441, l 496)
     %t2550 =l loadl %t1
     %t2551 =w ceql %t2550, 0
     jnz %t2551, @release_skip1830, @release1829
@@ -36908,8 +36957,8 @@ export function l $nox_yaml__tokenize_docs(l %rt, l %p_text) {
     ret 0
 @exc_continue2389
     %t3352 =l add %t3244, 24
-    storel 501, %t3352
-    call $nox_raise(l %rt, l %t3244, l 501)
+    storel 505, %t3352
+    call $nox_raise(l %rt, l %t3244, l 505)
     %t3353 =l loadl %t1
     %t3354 =w ceql %t3353, 0
     jnz %t3354, @release_skip2470, @release2469
@@ -37511,8 +37560,8 @@ export function l $nox_yaml__parent_offset(l %rt, l %p_prefix) {
     ret 0
 @exc_continue17
     %t33 =l add %t20, 24
-    storel 525, %t33
-    call $nox_raise(l %rt, l %t20, l 525)
+    storel 529, %t33
+    call $nox_raise(l %rt, l %t20, l 529)
     ret 0
 @str_idx_err36
     %t64 =l add $str202, 16
@@ -37556,8 +37605,8 @@ export function l $nox_yaml__parent_offset(l %rt, l %p_prefix) {
     ret 0
 @exc_continue47
     %t78 =l add %t65, 24
-    storel 525, %t78
-    call $nox_raise(l %rt, l %t65, l 525)
+    storel 529, %t78
+    call $nox_raise(l %rt, l %t65, l 529)
     ret 0
 @str_idx_err69
     %t115 =l add $str203, 16
@@ -37601,8 +37650,8 @@ export function l $nox_yaml__parent_offset(l %rt, l %p_prefix) {
     ret 0
 @exc_continue80
     %t129 =l add %t116, 24
-    storel 528, %t129
-    call $nox_raise(l %rt, l %t116, l 528)
+    storel 532, %t129
+    call $nox_raise(l %rt, l %t116, l 532)
     ret 0
 }
 export function l $nox_yaml__hex_digit_value(l %rt, l %p_c) {
@@ -37766,8 +37815,8 @@ export function l $nox_yaml__hex_run(l %rt, l %p_s, l %p_start, l %p_count, l %p
     ret 0
 @exc_continue11
     %t29 =l add %t16, 24
-    storel 550, %t29
-    call $nox_raise(l %rt, l %t16, l 550)
+    storel 554, %t29
+    call $nox_raise(l %rt, l %t16, l 554)
     %t30 =l sub %rt, 48
     %t31 =w loadub %t30
     %t32 =l sub %rt, 64
@@ -37966,8 +38015,8 @@ export function l $nox_yaml__hex_run(l %rt, l %p_s, l %p_start, l %p_count, l %p
     ret 0
 @exc_continue73
     %t125 =l add %t112, 24
-    storel 556, %t125
-    call $nox_raise(l %rt, l %t112, l 556)
+    storel 560, %t125
+    call $nox_raise(l %rt, l %t112, l 560)
     %t126 =l sub %rt, 48
     %t127 =w loadub %t126
     %t128 =l sub %rt, 64
@@ -38044,8 +38093,8 @@ export function l $nox_yaml__hex_run(l %rt, l %p_s, l %p_start, l %p_count, l %p
     ret 0
 @exc_continue31
     %t65 =l add %t52, 24
-    storel 554, %t65
-    call $nox_raise(l %rt, l %t52, l 554)
+    storel 558, %t65
+    call $nox_raise(l %rt, l %t52, l 558)
     ret 0
 }
 export function l $nox_yaml__parse_double_quoted(l %rt, l %p_s) {
@@ -40032,8 +40081,8 @@ export function l $nox_yaml__parse_double_quoted(l %rt, l %p_s) {
     ret 0
 @exc_continue61
     %t162 =l add %t113, 24
-    storel 567, %t162
-    call $nox_raise(l %rt, l %t113, l 567)
+    storel 571, %t162
+    call $nox_raise(l %rt, l %t113, l 571)
     %t163 =l loadl %t6
     %t164 =w ceql %t163, 0
     jnz %t164, @release_skip91, @release90
@@ -40959,8 +41008,8 @@ export function l $nox_yaml__parse_single_quoted(l %rt, l %p_s) {
     ret 0
 @exc_continue61
     %t138 =l add %t89, 24
-    storel 615, %t138
-    call $nox_raise(l %rt, l %t89, l 615)
+    storel 619, %t138
+    call $nox_raise(l %rt, l %t89, l 619)
     %t139 =l loadl %t6
     %t140 =w ceql %t139, 0
     jnz %t140, @release_skip91, @release90
@@ -41330,8 +41379,8 @@ export function l $nox_yaml__strip_quotes_if_present(l %rt, l %p_s) {
     ret 0
 @exc_continue14
     %t27 =l add %t14, 24
-    storel 632, %t27
-    call $nox_raise(l %rt, l %t14, l 632)
+    storel 636, %t27
+    call $nox_raise(l %rt, l %t14, l 636)
     ret 0
 @str_idx_err39
     %t65 =l add $str234, 16
@@ -41375,8 +41424,8 @@ export function l $nox_yaml__strip_quotes_if_present(l %rt, l %p_s) {
     ret 0
 @exc_continue50
     %t79 =l add %t66, 24
-    storel 635, %t79
-    call $nox_raise(l %rt, l %t66, l 635)
+    storel 639, %t79
+    call $nox_raise(l %rt, l %t66, l 639)
     ret 0
 }
 export function w $nox_yaml__is_int_text(l %rt, l %p_s) {
@@ -41657,8 +41706,8 @@ export function w $nox_yaml__is_int_text(l %rt, l %p_s) {
     ret 0
 @exc_continue15
     %t28 =l add %t15, 24
-    storel 645, %t28
-    call $nox_raise(l %rt, l %t15, l 645)
+    storel 649, %t28
+    call $nox_raise(l %rt, l %t15, l 649)
     ret 0
 @str_idx_err31
     %t50 =l add $str239, 16
@@ -41702,8 +41751,8 @@ export function w $nox_yaml__is_int_text(l %rt, l %p_s) {
     ret 0
 @exc_continue42
     %t64 =l add %t51, 24
-    storel 645, %t64
-    call $nox_raise(l %rt, l %t51, l 645)
+    storel 649, %t64
+    call $nox_raise(l %rt, l %t51, l 649)
     ret 0
 @str_idx_err63
     %t100 =l add $str241, 16
@@ -41747,8 +41796,8 @@ export function w $nox_yaml__is_int_text(l %rt, l %p_s) {
     ret 0
 @exc_continue74
     %t114 =l add %t101, 24
-    storel 651, %t114
-    call $nox_raise(l %rt, l %t101, l 651)
+    storel 655, %t114
+    call $nox_raise(l %rt, l %t101, l 655)
     ret 0
 }
 export function w $nox_yaml__is_radix_text(l %rt, l %p_s, l %p_prefix, l %p_base) {
@@ -41999,8 +42048,8 @@ export function w $nox_yaml__is_radix_text(l %rt, l %p_s, l %p_prefix, l %p_base
     ret 0
 @exc_continue22
     %t50 =l add %t37, 24
-    storel 661, %t50
-    call $nox_raise(l %rt, l %t37, l 661)
+    storel 665, %t50
+    call $nox_raise(l %rt, l %t37, l 665)
     ret 0
 }
 export function l $nox_yaml__radix_value(l %rt, l %p_s, l %p_base) {
@@ -42203,8 +42252,8 @@ export function l $nox_yaml__radix_value(l %rt, l %p_s, l %p_base) {
     ret 0
 @exc_continue14
     %t37 =l add %t24, 24
-    storel 671, %t37
-    call $nox_raise(l %rt, l %t24, l 671)
+    storel 675, %t37
+    call $nox_raise(l %rt, l %t24, l 675)
     ret 0
 }
 export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
@@ -42985,8 +43034,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue15
     %t36 =l add %t23, 24
-    storel 680, %t36
-    call $nox_raise(l %rt, l %t23, l 680)
+    storel 684, %t36
+    call $nox_raise(l %rt, l %t23, l 684)
     ret 0
 @str_idx_err31
     %t58 =l add $str246, 16
@@ -43030,8 +43079,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue42
     %t72 =l add %t59, 24
-    storel 680, %t72
-    call $nox_raise(l %rt, l %t59, l 680)
+    storel 684, %t72
+    call $nox_raise(l %rt, l %t59, l 684)
     ret 0
 @str_idx_err62
     %t102 =l add $str248, 16
@@ -43075,8 +43124,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue73
     %t116 =l add %t103, 24
-    storel 683, %t116
-    call $nox_raise(l %rt, l %t103, l 683)
+    storel 687, %t116
+    call $nox_raise(l %rt, l %t103, l 687)
     ret 0
 @str_idx_err90
     %t149 =l add $str249, 16
@@ -43120,8 +43169,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue101
     %t163 =l add %t150, 24
-    storel 687, %t163
-    call $nox_raise(l %rt, l %t150, l 687)
+    storel 691, %t163
+    call $nox_raise(l %rt, l %t150, l 691)
     ret 0
 @str_idx_err121
     %t195 =l add $str251, 16
@@ -43165,8 +43214,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue132
     %t209 =l add %t196, 24
-    storel 689, %t209
-    call $nox_raise(l %rt, l %t196, l 689)
+    storel 693, %t209
+    call $nox_raise(l %rt, l %t196, l 693)
     ret 0
 @str_idx_err155
     %t247 =l add $str252, 16
@@ -43210,8 +43259,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue166
     %t261 =l add %t248, 24
-    storel 694, %t261
-    call $nox_raise(l %rt, l %t248, l 694)
+    storel 698, %t261
+    call $nox_raise(l %rt, l %t248, l 698)
     ret 0
 @str_idx_err182
     %t287 =l add $str254, 16
@@ -43255,8 +43304,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue193
     %t301 =l add %t288, 24
-    storel 694, %t301
-    call $nox_raise(l %rt, l %t288, l 694)
+    storel 698, %t301
+    call $nox_raise(l %rt, l %t288, l 698)
     ret 0
 @str_idx_err211
     %t334 =l add $str256, 16
@@ -43300,8 +43349,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue222
     %t348 =l add %t335, 24
-    storel 696, %t348
-    call $nox_raise(l %rt, l %t335, l 696)
+    storel 700, %t348
+    call $nox_raise(l %rt, l %t335, l 700)
     ret 0
 @str_idx_err238
     %t374 =l add $str258, 16
@@ -43345,8 +43394,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue249
     %t388 =l add %t375, 24
-    storel 696, %t388
-    call $nox_raise(l %rt, l %t375, l 696)
+    storel 700, %t388
+    call $nox_raise(l %rt, l %t375, l 700)
     ret 0
 @str_idx_err269
     %t421 =l add $str260, 16
@@ -43390,8 +43439,8 @@ export function w $nox_yaml__is_float_text(l %rt, l %p_s) {
     ret 0
 @exc_continue280
     %t435 =l add %t422, 24
-    storel 699, %t435
-    call $nox_raise(l %rt, l %t422, l 699)
+    storel 703, %t435
+    call $nox_raise(l %rt, l %t422, l 703)
     ret 0
 }
 export function l $nox_yaml__parse_plain_scalar(l %rt, l %p_s) {
@@ -44368,8 +44417,8 @@ export function l $nox_yaml__parse_plain_scalar(l %rt, l %p_s) {
     ret 0
 @exc_continue229
     %t430 =l add %t415, 24
-    storel 714, %t430
-    call $nox_raise(l %rt, l %t415, l 714)
+    storel 718, %t430
+    call $nox_raise(l %rt, l %t415, l 718)
     %t431 =l loadl %t2
     %t432 =w ceql %t431, 0
     jnz %t432, @release_skip234, @release233
@@ -44632,8 +44681,8 @@ export function l $nox_yaml__parse_plain_scalar(l %rt, l %p_s) {
     ret 0
 @exc_continue294
     %t538 =l add %t523, 24
-    storel 716, %t538
-    call $nox_raise(l %rt, l %t523, l 716)
+    storel 720, %t538
+    call $nox_raise(l %rt, l %t523, l 720)
     %t539 =l loadl %t2
     %t540 =w ceql %t539, 0
     jnz %t540, @release_skip299, @release298
@@ -44881,8 +44930,8 @@ export function l $nox_yaml__parse_plain_scalar(l %rt, l %p_s) {
     ret 0
 @exc_continue356
     %t637 =l add %t622, 24
-    storel 718, %t637
-    call $nox_raise(l %rt, l %t622, l 718)
+    storel 722, %t637
+    call $nox_raise(l %rt, l %t622, l 722)
     %t638 =l loadl %t2
     %t639 =w ceql %t638, 0
     jnz %t639, @release_skip361, @release360
@@ -45033,8 +45082,8 @@ export function l $nox_yaml__parse_plain_scalar(l %rt, l %p_s) {
     jmp @try_dispatch385
 @exc_continue399
     %t686 =l add %t673, 24
-    storel 721, %t686
-    call $nox_raise(l %rt, l %t673, l 721)
+    storel 725, %t686
+    call $nox_raise(l %rt, l %t673, l 725)
     jmp @try_dispatch385
 @parse_ok389
     %t687 =l call $nox_str_to_int(l %t670)
@@ -45172,8 +45221,8 @@ export function l $nox_yaml__parse_plain_scalar(l %rt, l %p_s) {
     ret 0
 @exc_continue429
     %t729 =l add %t714, 24
-    storel 723, %t729
-    call $nox_raise(l %rt, l %t714, l 723)
+    storel 727, %t729
+    call $nox_raise(l %rt, l %t714, l 727)
     %t730 =l loadl %t2
     %t731 =w ceql %t730, 0
     jnz %t731, @release_skip434, @release433
@@ -45601,8 +45650,8 @@ export function l $nox_yaml__parse_plain_scalar(l %rt, l %p_s) {
     jmp @try_dispatch526
 @exc_continue540
     %t869 =l add %t856, 24
-    storel 730, %t869
-    call $nox_raise(l %rt, l %t856, l 730)
+    storel 734, %t869
+    call $nox_raise(l %rt, l %t856, l 734)
     jmp @try_dispatch526
 @parse_ok530
     %t870 =d call $nox_str_to_float(l %t853)
@@ -45687,7 +45736,7 @@ export function l $nox_yaml__parse_plain_scalar(l %rt, l %p_s) {
     storel %t889, %t2
     jmp @try_after527
 @except_reraise555
-    call $nox_raise(l %rt, l %t889, l 732)
+    call $nox_raise(l %rt, l %t889, l 736)
     %t894 =l sub %rt, 48
     %t895 =w loadub %t894
     %t896 =l sub %rt, 64
@@ -47314,8 +47363,8 @@ export function l $nox_yaml__take_props(l %rt, l %p_raw) {
     ret 0
 @exc_continue41
     %t100 =l add %t60, 24
-    storel 743, %t100
-    call $nox_raise(l %rt, l %t60, l 743)
+    storel 747, %t100
+    call $nox_raise(l %rt, l %t60, l 747)
     %t101 =l loadl %t1
     %t102 =w ceql %t101, 0
     jnz %t102, @release_skip64, @release63
@@ -47864,8 +47913,8 @@ export function l $nox_yaml__apply_tag(l %rt, l %p_tag, l %p_v, w %p_was_quoted,
     ret 0
 @exc_continue59
     %t111 =l add %t90, 24
-    storel 771, %t111
-    call $nox_raise(l %rt, l %t90, l 771)
+    storel 775, %t111
+    call $nox_raise(l %rt, l %t90, l 775)
     %t112 =l sub %rt, 48
     %t113 =w loadub %t112
     %t114 =l sub %rt, 64
@@ -48086,8 +48135,8 @@ export function l $nox_yaml__apply_tag(l %rt, l %p_tag, l %p_v, w %p_was_quoted,
     ret 0
 @exc_continue111
     %t204 =l add %t183, 24
-    storel 777, %t204
-    call $nox_raise(l %rt, l %t183, l 777)
+    storel 781, %t204
+    call $nox_raise(l %rt, l %t183, l 781)
     %t205 =l sub %rt, 48
     %t206 =w loadub %t205
     %t207 =l sub %rt, 64
@@ -48242,8 +48291,8 @@ export function l $nox_yaml__apply_tag(l %rt, l %p_tag, l %p_v, w %p_was_quoted,
     ret 0
 @exc_continue151
     %t270 =l add %t249, 24
-    storel 781, %t270
-    call $nox_raise(l %rt, l %t249, l 781)
+    storel 785, %t270
+    call $nox_raise(l %rt, l %t249, l 785)
     %t271 =l sub %rt, 48
     %t272 =w loadub %t271
     %t273 =l sub %rt, 64
@@ -48518,8 +48567,8 @@ export function l $nox_yaml__lookup_alias(l %rt, l %p_ctx, l %p_name) {
     ret 0
 @exc_continue18
     %t32 =l add %t11, 24
-    storel 792, %t32
-    call $nox_raise(l %rt, l %t11, l 792)
+    storel 796, %t32
+    call $nox_raise(l %rt, l %t11, l 796)
     %t33 =l sub %rt, 48
     %t34 =w loadub %t33
     %t35 =l sub %rt, 64
@@ -48587,8 +48636,8 @@ export function l $nox_yaml__lookup_alias(l %rt, l %p_ctx, l %p_name) {
     ret 0
 @exc_continue35
     %t59 =l add %t46, 24
-    storel 793, %t59
-    call $nox_raise(l %rt, l %t46, l 793)
+    storel 797, %t59
+    call $nox_raise(l %rt, l %t46, l 797)
     ret 0
 @dict_get_ok25
     %t60 =l call $nox_dict_get(l %rt, l %t42, w 1, l %t43)
@@ -50430,8 +50479,8 @@ export function l $nox_yaml__split_flow_items(l %rt, l %p_inner) {
     ret 0
 @exc_continue71
     %t155 =l add %t104, 24
-    storel 808, %t155
-    call $nox_raise(l %rt, l %t104, l 808)
+    storel 812, %t155
+    call $nox_raise(l %rt, l %t104, l 812)
     %t156 =l loadl %t9
     %t157 =w ceql %t156, 0
     jnz %t157, @release_skip104, @release103
@@ -50672,8 +50721,8 @@ export function $nox_yaml__merge_into(l %rt, l %p_target, l %p_source) {
     ret
 @exc_continue24
     %t56 =l add %t41, 24
-    storel 847, %t56
-    call $nox_raise(l %rt, l %t41, l 847)
+    storel 851, %t56
+    call $nox_raise(l %rt, l %t41, l 851)
     %t57 =l loadl %t2
     %t58 =w ceql %t57, 0
     jnz %t58, @release_skip29, @release28
@@ -50871,8 +50920,8 @@ export function $nox_yaml__apply_merge(l %rt, l %p_target, l %p_merged) {
     ret
 @exc_continue34
     %t61 =l add %t46, 24
-    storel 856, %t61
-    call $nox_raise(l %rt, l %t46, l 856)
+    storel 860, %t61
+    call $nox_raise(l %rt, l %t46, l 860)
     %t62 =l sub %rt, 48
     %t63 =w loadub %t62
     %t64 =l sub %rt, 64
@@ -50992,8 +51041,8 @@ export function $nox_yaml__apply_merge(l %rt, l %p_target, l %p_merged) {
     ret
 @exc_continue63
     %t100 =l add %t85, 24
-    storel 859, %t100
-    call $nox_raise(l %rt, l %t85, l 859)
+    storel 863, %t100
+    call $nox_raise(l %rt, l %t85, l 863)
     %t101 =l sub %rt, 48
     %t102 =w loadub %t101
     %t103 =l sub %rt, 64
@@ -51240,8 +51289,8 @@ export function l $nox_yaml__parse_flow_sequence(l %rt, l %p_s, l %p_ctx) {
     ret 0
 @exc_continue20
     %t75 =l add %t30, 24
-    storel 863, %t75
-    call $nox_raise(l %rt, l %t30, l 863)
+    storel 867, %t75
+    call $nox_raise(l %rt, l %t30, l 867)
     %t76 =l sub %rt, 48
     %t77 =w loadub %t76
     %t78 =l sub %rt, 64
@@ -53183,8 +53232,8 @@ export function l $nox_yaml__parse_flow_mapping(l %rt, l %p_s, l %p_ctx) {
     ret 0
 @exc_continue20
     %t98 =l add %t35, 24
-    storel 883, %t98
-    call $nox_raise(l %rt, l %t35, l 883)
+    storel 887, %t98
+    call $nox_raise(l %rt, l %t35, l 887)
     %t99 =l sub %rt, 48
     %t100 =w loadub %t99
     %t101 =l sub %rt, 64
@@ -56743,8 +56792,8 @@ export function l $nox_yaml__find_flow_colon(l %rt, l %p_part) {
     ret 0
 @exc_continue15
     %t25 =l add %t12, 24
-    storel 916, %t25
-    call $nox_raise(l %rt, l %t12, l 916)
+    storel 920, %t25
+    call $nox_raise(l %rt, l %t12, l 920)
     ret 0
 @str_idx_err35
     %t56 =l add $str360, 16
@@ -56788,8 +56837,8 @@ export function l $nox_yaml__find_flow_colon(l %rt, l %p_part) {
     ret 0
 @exc_continue46
     %t70 =l add %t57, 24
-    storel 918, %t70
-    call $nox_raise(l %rt, l %t57, l 918)
+    storel 922, %t70
+    call $nox_raise(l %rt, l %t57, l 922)
     ret 0
 @str_idx_err63
     %t100 =l add $str361, 16
@@ -56833,8 +56882,8 @@ export function l $nox_yaml__find_flow_colon(l %rt, l %p_part) {
     ret 0
 @exc_continue74
     %t114 =l add %t101, 24
-    storel 919, %t114
-    call $nox_raise(l %rt, l %t101, l 919)
+    storel 923, %t114
+    call $nox_raise(l %rt, l %t101, l 923)
     ret 0
 @str_idx_err95
     %t153 =l add $str362, 16
@@ -56878,8 +56927,8 @@ export function l $nox_yaml__find_flow_colon(l %rt, l %p_part) {
     ret 0
 @exc_continue106
     %t167 =l add %t154, 24
-    storel 922, %t167
-    call $nox_raise(l %rt, l %t154, l 922)
+    storel 926, %t167
+    call $nox_raise(l %rt, l %t154, l 926)
     ret 0
 }
 export function l $nox_yaml__parse_scalar_or_flow(l %rt, l %p_raw, l %p_ctx) {
@@ -57643,8 +57692,8 @@ export function l $nox_yaml__parse_scalar_or_flow(l %rt, l %p_raw, l %p_ctx) {
     ret 0
 @exc_continue161
     %t272 =l add %t220, 24
-    storel 938, %t272
-    call $nox_raise(l %rt, l %t220, l 938)
+    storel 942, %t272
+    call $nox_raise(l %rt, l %t220, l 942)
     %t273 =l sub %rt, 48
     %t274 =w loadub %t273
     %t275 =l sub %rt, 64
@@ -58641,8 +58690,8 @@ export function l $nox_yaml__parse_scalar_or_flow(l %rt, l %p_raw, l %p_ctx) {
     ret 0
 @exc_continue435
     %t615 =l add %t563, 24
-    storel 946, %t615
-    call $nox_raise(l %rt, l %t563, l 946)
+    storel 950, %t615
+    call $nox_raise(l %rt, l %t563, l 950)
     %t616 =l sub %rt, 48
     %t617 =w loadub %t616
     %t618 =l sub %rt, 64
@@ -59178,8 +59227,8 @@ export function l $nox_yaml__parse_scalar_or_flow(l %rt, l %p_raw, l %p_ctx) {
     ret 0
 @exc_continue575
     %t798 =l add %t746, 24
-    storel 952, %t798
-    call $nox_raise(l %rt, l %t746, l 952)
+    storel 956, %t798
+    call $nox_raise(l %rt, l %t746, l 956)
     %t799 =l sub %rt, 48
     %t800 =w loadub %t799
     %t801 =l sub %rt, 64
@@ -60177,8 +60226,8 @@ export function w $nox_yaml__has_deeper_next_line(l %rt, l %p_lines, l %p_pos, l
     ret 0
 @exc_continue12
     %t20 =l add %t7, 24
-    storel 965, %t20
-    call $nox_raise(l %rt, l %t7, l 965)
+    storel 969, %t20
+    call $nox_raise(l %rt, l %t7, l 969)
     ret 0
 @list_idx_err15
     %t32 =l add $str380, 16
@@ -60222,8 +60271,8 @@ export function w $nox_yaml__has_deeper_next_line(l %rt, l %p_lines, l %p_pos, l
     ret 0
 @exc_continue26
     %t46 =l add %t33, 24
-    storel 967, %t46
-    call $nox_raise(l %rt, l %t33, l 967)
+    storel 971, %t46
+    call $nox_raise(l %rt, l %t33, l 971)
     ret 0
 @list_idx_err27
     %t56 =l add $str381, 16
@@ -60267,8 +60316,8 @@ export function w $nox_yaml__has_deeper_next_line(l %rt, l %p_lines, l %p_pos, l
     ret 0
 @exc_continue38
     %t70 =l add %t57, 24
-    storel 967, %t70
-    call $nox_raise(l %rt, l %t57, l 967)
+    storel 971, %t70
+    call $nox_raise(l %rt, l %t57, l 971)
     ret 0
 }
 export function l $nox_yaml__parse_block(l %rt, l %p_lines, l %p_pos, l %p_indent, l %p_ctx) {
@@ -61103,8 +61152,8 @@ export function l $nox_yaml__parse_block(l %rt, l %p_lines, l %p_pos, l %p_inden
     ret 0
 @exc_continue12
     %t35 =l add %t11, 24
-    storel 970, %t35
-    call $nox_raise(l %rt, l %t11, l 970)
+    storel 974, %t35
+    call $nox_raise(l %rt, l %t11, l 974)
     %t36 =l loadl %t4
     %t37 =w ceql %t36, 0
     jnz %t37, @release_skip24, @release23
@@ -61220,8 +61269,8 @@ export function l $nox_yaml__parse_block(l %rt, l %p_lines, l %p_pos, l %p_inden
     ret 0
 @exc_continue64
     %t109 =l add %t85, 24
-    storel 972, %t109
-    call $nox_raise(l %rt, l %t85, l 972)
+    storel 976, %t109
+    call $nox_raise(l %rt, l %t85, l 976)
     %t110 =l loadl %t4
     %t111 =w ceql %t110, 0
     jnz %t111, @release_skip76, @release75
@@ -61337,8 +61386,8 @@ export function l $nox_yaml__parse_block(l %rt, l %p_lines, l %p_pos, l %p_inden
     ret 0
 @exc_continue96
     %t155 =l add %t131, 24
-    storel 972, %t155
-    call $nox_raise(l %rt, l %t131, l 972)
+    storel 976, %t155
+    call $nox_raise(l %rt, l %t131, l 976)
     %t156 =l loadl %t4
     %t157 =w ceql %t156, 0
     jnz %t157, @release_skip108, @release107
@@ -61454,8 +61503,8 @@ export function l $nox_yaml__parse_block(l %rt, l %p_lines, l %p_pos, l %p_inden
     ret 0
 @exc_continue231
     %t335 =l add %t311, 24
-    storel 979, %t335
-    call $nox_raise(l %rt, l %t311, l 979)
+    storel 983, %t335
+    call $nox_raise(l %rt, l %t311, l 983)
     %t336 =l loadl %t4
     %t337 =w ceql %t336, 0
     jnz %t337, @release_skip243, @release242
@@ -61571,8 +61620,8 @@ export function l $nox_yaml__parse_block(l %rt, l %p_lines, l %p_pos, l %p_inden
     ret 0
 @exc_continue263
     %t375 =l add %t351, 24
-    storel 979, %t375
-    call $nox_raise(l %rt, l %t351, l 979)
+    storel 983, %t375
+    call $nox_raise(l %rt, l %t351, l 983)
     %t376 =l loadl %t4
     %t377 =w ceql %t376, 0
     jnz %t377, @release_skip275, @release274
@@ -62203,8 +62252,8 @@ export function w $nox_yaml__is_plain_text(l %rt, l %p_raw) {
     ret 0
 @exc_continue41
     %t78 =l add %t47, 24
-    storel 987, %t78
-    call $nox_raise(l %rt, l %t47, l 987)
+    storel 991, %t78
+    call $nox_raise(l %rt, l %t47, l 991)
     %t79 =l loadl %t1
     %t80 =w ceql %t79, 0
     jnz %t80, @release_skip57, @release56
@@ -62666,8 +62715,8 @@ export function l $nox_yaml__fold_plain_continuation(l %rt, l %p_lines, l %p_pos
     ret 0
 @exc_continue156
     %t227 =l add %t195, 24
-    storel 1002, %t227
-    call $nox_raise(l %rt, l %t195, l 1002)
+    storel 1006, %t227
+    call $nox_raise(l %rt, l %t195, l 1006)
     %t228 =l sub %rt, 48
     %t229 =w loadub %t228
     %t230 =l sub %rt, 64
@@ -62883,8 +62932,8 @@ export function l $nox_yaml__fold_plain_continuation(l %rt, l %p_lines, l %p_pos
     ret 0
 @exc_continue64
     %t100 =l add %t76, 24
-    storel 1000, %t100
-    call $nox_raise(l %rt, l %t76, l 1000)
+    storel 1004, %t100
+    call $nox_raise(l %rt, l %t76, l 1004)
     %t101 =l loadl %t6
     %t102 =w ceql %t101, 0
     jnz %t102, @release_skip76, @release75
@@ -63000,8 +63049,8 @@ export function l $nox_yaml__fold_plain_continuation(l %rt, l %p_lines, l %p_pos
     ret 0
 @exc_continue96
     %t146 =l add %t122, 24
-    storel 1000, %t146
-    call $nox_raise(l %rt, l %t122, l 1000)
+    storel 1004, %t146
+    call $nox_raise(l %rt, l %t122, l 1004)
     %t147 =l loadl %t6
     %t148 =w ceql %t147, 0
     jnz %t148, @release_skip108, @release107
@@ -63117,8 +63166,8 @@ export function l $nox_yaml__fold_plain_continuation(l %rt, l %p_lines, l %p_pos
     ret 0
 @exc_continue193
     %t281 =l add %t257, 24
-    storel 1004, %t281
-    call $nox_raise(l %rt, l %t257, l 1004)
+    storel 1008, %t281
+    call $nox_raise(l %rt, l %t257, l 1008)
     %t282 =l loadl %t6
     %t283 =w ceql %t282, 0
     jnz %t283, @release_skip205, @release204
@@ -63234,8 +63283,8 @@ export function l $nox_yaml__fold_plain_continuation(l %rt, l %p_lines, l %p_pos
     ret 0
 @exc_continue225
     %t321 =l add %t297, 24
-    storel 1004, %t321
-    call $nox_raise(l %rt, l %t297, l 1004)
+    storel 1008, %t321
+    call $nox_raise(l %rt, l %t297, l 1008)
     %t322 =l loadl %t6
     %t323 =w ceql %t322, 0
     jnz %t323, @release_skip237, @release236
@@ -64093,8 +64142,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue479
     %t637 =l add %t589, 24
-    storel 1014, %t637
-    call $nox_raise(l %rt, l %t589, l 1014)
+    storel 1018, %t637
+    call $nox_raise(l %rt, l %t589, l 1018)
     %t638 =l sub %rt, 48
     %t639 =w loadub %t638
     %t640 =l sub %rt, 64
@@ -64560,8 +64609,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue606
     %t788 =l add %t740, 24
-    storel 1017, %t788
-    call $nox_raise(l %rt, l %t740, l 1017)
+    storel 1021, %t788
+    call $nox_raise(l %rt, l %t740, l 1021)
     %t789 =l sub %rt, 48
     %t790 =w loadub %t789
     %t791 =l sub %rt, 64
@@ -66662,8 +66711,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue11
     %t79 =l add %t31, 24
-    storel 1010, %t79
-    call $nox_raise(l %rt, l %t31, l 1010)
+    storel 1014, %t79
+    call $nox_raise(l %rt, l %t31, l 1014)
     %t80 =l loadl %t8
     %t81 =w ceql %t80, 0
     jnz %t81, @release_skip46, @release45
@@ -66943,8 +66992,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue89
     %t173 =l add %t125, 24
-    storel 1010, %t173
-    call $nox_raise(l %rt, l %t125, l 1010)
+    storel 1014, %t173
+    call $nox_raise(l %rt, l %t125, l 1014)
     %t174 =l loadl %t8
     %t175 =w ceql %t174, 0
     jnz %t175, @release_skip124, @release123
@@ -67224,8 +67273,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue227
     %t341 =l add %t293, 24
-    storel 1012, %t341
-    call $nox_raise(l %rt, l %t293, l 1012)
+    storel 1016, %t341
+    call $nox_raise(l %rt, l %t293, l 1016)
     %t342 =l loadl %t8
     %t343 =w ceql %t342, 0
     jnz %t343, @release_skip262, @release261
@@ -67505,8 +67554,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue305
     %t429 =l add %t381, 24
-    storel 1012, %t429
-    call $nox_raise(l %rt, l %t381, l 1012)
+    storel 1016, %t429
+    call $nox_raise(l %rt, l %t381, l 1016)
     %t430 =l loadl %t8
     %t431 =w ceql %t430, 0
     jnz %t431, @release_skip340, @release339
@@ -67786,8 +67835,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue798
     %t1014 =l add %t966, 24
-    storel 1020, %t1014
-    call $nox_raise(l %rt, l %t966, l 1020)
+    storel 1024, %t1014
+    call $nox_raise(l %rt, l %t966, l 1024)
     %t1015 =l loadl %t8
     %t1016 =w ceql %t1015, 0
     jnz %t1016, @release_skip833, @release832
@@ -68067,8 +68116,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue879
     %t1110 =l add %t1062, 24
-    storel 1020, %t1110
-    call $nox_raise(l %rt, l %t1062, l 1020)
+    storel 1024, %t1110
+    call $nox_raise(l %rt, l %t1062, l 1024)
     %t1111 =l loadl %t8
     %t1112 =w ceql %t1111, 0
     jnz %t1112, @release_skip914, @release913
@@ -68348,8 +68397,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue957
     %t1204 =l add %t1156, 24
-    storel 1020, %t1204
-    call $nox_raise(l %rt, l %t1156, l 1020)
+    storel 1024, %t1204
+    call $nox_raise(l %rt, l %t1156, l 1024)
     %t1205 =l loadl %t8
     %t1206 =w ceql %t1205, 0
     jnz %t1206, @release_skip992, @release991
@@ -68629,8 +68678,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1038
     %t1302 =l add %t1254, 24
-    storel 1020, %t1302
-    call $nox_raise(l %rt, l %t1254, l 1020)
+    storel 1024, %t1302
+    call $nox_raise(l %rt, l %t1254, l 1024)
     %t1303 =l loadl %t8
     %t1304 =w ceql %t1303, 0
     jnz %t1304, @release_skip1073, @release1072
@@ -68910,8 +68959,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1116
     %t1396 =l add %t1348, 24
-    storel 1020, %t1396
-    call $nox_raise(l %rt, l %t1348, l 1020)
+    storel 1024, %t1396
+    call $nox_raise(l %rt, l %t1348, l 1024)
     %t1397 =l loadl %t8
     %t1398 =w ceql %t1397, 0
     jnz %t1398, @release_skip1151, @release1150
@@ -69191,8 +69240,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1205
     %t1507 =l add %t1459, 24
-    storel 1021, %t1507
-    call $nox_raise(l %rt, l %t1459, l 1021)
+    storel 1025, %t1507
+    call $nox_raise(l %rt, l %t1459, l 1025)
     %t1508 =l loadl %t8
     %t1509 =w ceql %t1508, 0
     jnz %t1509, @release_skip1240, @release1239
@@ -69472,8 +69521,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1283
     %t1601 =l add %t1553, 24
-    storel 1021, %t1601
-    call $nox_raise(l %rt, l %t1553, l 1021)
+    storel 1025, %t1601
+    call $nox_raise(l %rt, l %t1553, l 1025)
     %t1602 =l loadl %t8
     %t1603 =w ceql %t1602, 0
     jnz %t1603, @release_skip1318, @release1317
@@ -69753,8 +69802,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1421
     %t1769 =l add %t1721, 24
-    storel 1023, %t1769
-    call $nox_raise(l %rt, l %t1721, l 1023)
+    storel 1027, %t1769
+    call $nox_raise(l %rt, l %t1721, l 1027)
     %t1770 =l loadl %t8
     %t1771 =w ceql %t1770, 0
     jnz %t1771, @release_skip1456, @release1455
@@ -70034,8 +70083,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1499
     %t1857 =l add %t1809, 24
-    storel 1023, %t1857
-    call $nox_raise(l %rt, l %t1809, l 1023)
+    storel 1027, %t1857
+    call $nox_raise(l %rt, l %t1809, l 1027)
     %t1858 =l loadl %t8
     %t1859 =w ceql %t1858, 0
     jnz %t1859, @release_skip1534, @release1533
@@ -70315,8 +70364,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1666
     %t2060 =l add %t2012, 24
-    storel 1027, %t2060
-    call $nox_raise(l %rt, l %t2012, l 1027)
+    storel 1031, %t2060
+    call $nox_raise(l %rt, l %t2012, l 1031)
     %t2061 =l loadl %t8
     %t2062 =w ceql %t2061, 0
     jnz %t2062, @release_skip1701, @release1700
@@ -70596,8 +70645,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1744
     %t2155 =l add %t2107, 24
-    storel 1027, %t2155
-    call $nox_raise(l %rt, l %t2107, l 1027)
+    storel 1031, %t2155
+    call $nox_raise(l %rt, l %t2107, l 1031)
     %t2156 =l loadl %t8
     %t2157 =w ceql %t2156, 0
     jnz %t2157, @release_skip1779, @release1778
@@ -70877,8 +70926,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1829
     %t2261 =l add %t2213, 24
-    storel 1028, %t2261
-    call $nox_raise(l %rt, l %t2213, l 1028)
+    storel 1032, %t2261
+    call $nox_raise(l %rt, l %t2213, l 1032)
     %t2262 =l loadl %t8
     %t2263 =w ceql %t2262, 0
     jnz %t2263, @release_skip1864, @release1863
@@ -71158,8 +71207,8 @@ export function $nox_yaml__parse_explicit_entry(l %rt, l %p_lines, l %p_pos, l %
     ret
 @exc_continue1907
     %t2349 =l add %t2301, 24
-    storel 1028, %t2349
-    call $nox_raise(l %rt, l %t2301, l 1028)
+    storel 1032, %t2349
+    call $nox_raise(l %rt, l %t2301, l 1032)
     %t2350 =l loadl %t8
     %t2351 =w ceql %t2350, 0
     jnz %t2351, @release_skip1942, @release1941
@@ -72084,8 +72133,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue548
     %t723 =l add %t678, 24
-    storel 1060, %t723
-    call $nox_raise(l %rt, l %t678, l 1060)
+    storel 1064, %t723
+    call $nox_raise(l %rt, l %t678, l 1064)
     %t724 =l sub %rt, 48
     %t725 =w loadub %t724
     %t726 =l sub %rt, 64
@@ -73230,8 +73279,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue26
     %t77 =l add %t40, 24
-    storel 1047, %t77
-    call $nox_raise(l %rt, l %t40, l 1047)
+    storel 1051, %t77
+    call $nox_raise(l %rt, l %t40, l 1051)
     %t78 =l loadl %t8
     %t79 =w ceql %t78, 0
     jnz %t79, @release_skip51, @release50
@@ -73439,8 +73488,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue86
     %t151 =l add %t114, 24
-    storel 1048, %t151
-    call $nox_raise(l %rt, l %t114, l 1048)
+    storel 1052, %t151
+    call $nox_raise(l %rt, l %t114, l 1052)
     %t152 =l loadl %t8
     %t153 =w ceql %t152, 0
     jnz %t153, @release_skip111, @release110
@@ -73648,8 +73697,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue144
     %t223 =l add %t186, 24
-    storel 1048, %t223
-    call $nox_raise(l %rt, l %t186, l 1048)
+    storel 1052, %t223
+    call $nox_raise(l %rt, l %t186, l 1052)
     %t224 =l loadl %t8
     %t225 =w ceql %t224, 0
     jnz %t225, @release_skip169, @release168
@@ -73857,8 +73906,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue204
     %t298 =l add %t261, 24
-    storel 1050, %t298
-    call $nox_raise(l %rt, l %t261, l 1050)
+    storel 1054, %t298
+    call $nox_raise(l %rt, l %t261, l 1054)
     %t299 =l loadl %t8
     %t300 =w ceql %t299, 0
     jnz %t300, @release_skip229, @release228
@@ -74066,8 +74115,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue262
     %t370 =l add %t333, 24
-    storel 1050, %t370
-    call $nox_raise(l %rt, l %t333, l 1050)
+    storel 1054, %t370
+    call $nox_raise(l %rt, l %t333, l 1054)
     %t371 =l loadl %t8
     %t372 =w ceql %t371, 0
     jnz %t372, @release_skip287, @release286
@@ -74275,8 +74324,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue350
     %t475 =l add %t438, 24
-    storel 1054, %t475
-    call $nox_raise(l %rt, l %t438, l 1054)
+    storel 1058, %t475
+    call $nox_raise(l %rt, l %t438, l 1058)
     %t476 =l loadl %t8
     %t477 =w ceql %t476, 0
     jnz %t477, @release_skip375, @release374
@@ -74484,8 +74533,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue408
     %t547 =l add %t510, 24
-    storel 1054, %t547
-    call $nox_raise(l %rt, l %t510, l 1054)
+    storel 1058, %t547
+    call $nox_raise(l %rt, l %t510, l 1058)
     %t548 =l loadl %t8
     %t549 =w ceql %t548, 0
     jnz %t549, @release_skip433, @release432
@@ -74693,8 +74742,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue734
     %t953 =l add %t916, 24
-    storel 1063, %t953
-    call $nox_raise(l %rt, l %t916, l 1063)
+    storel 1067, %t953
+    call $nox_raise(l %rt, l %t916, l 1067)
     %t954 =l loadl %t8
     %t955 =w ceql %t954, 0
     jnz %t955, @release_skip759, @release758
@@ -74902,8 +74951,8 @@ export function l $nox_yaml__parse_mapping(l %rt, l %p_lines, l %p_pos, l %p_ind
     ret 0
 @exc_continue792
     %t1019 =l add %t982, 24
-    storel 1063, %t1019
-    call $nox_raise(l %rt, l %t982, l 1063)
+    storel 1067, %t1019
+    call $nox_raise(l %rt, l %t982, l 1067)
     %t1020 =l loadl %t8
     %t1021 =w ceql %t1020, 0
     jnz %t1021, @release_skip817, @release816
@@ -76140,8 +76189,8 @@ export function l $nox_yaml__parse_block_value(l %rt, l %p_lines, l %p_pos, l %p
     ret 0
 @exc_continue70
     %t117 =l add %t91, 24
-    storel 1077, %t117
-    call $nox_raise(l %rt, l %t91, l 1077)
+    storel 1081, %t117
+    call $nox_raise(l %rt, l %t91, l 1081)
     %t118 =l loadl %t7
     %t119 =w ceql %t118, 0
     jnz %t119, @release_skip85, @release84
@@ -76277,8 +76326,8 @@ export function l $nox_yaml__parse_block_value(l %rt, l %p_lines, l %p_pos, l %p
     ret 0
 @exc_continue108
     %t167 =l add %t141, 24
-    storel 1077, %t167
-    call $nox_raise(l %rt, l %t141, l 1077)
+    storel 1081, %t167
+    call $nox_raise(l %rt, l %t141, l 1081)
     %t168 =l loadl %t7
     %t169 =w ceql %t168, 0
     jnz %t169, @release_skip123, @release122
@@ -76527,8 +76576,8 @@ export function w $nox_yaml__same_indent_sequence_follows(l %rt, l %p_lines, l %
     ret 0
 @exc_continue12
     %t23 =l add %t8, 24
-    storel 1090, %t23
-    call $nox_raise(l %rt, l %t8, l 1090)
+    storel 1094, %t23
+    call $nox_raise(l %rt, l %t8, l 1094)
     %t24 =l loadl %t3
     %t25 =w ceql %t24, 0
     jnz %t25, @release_skip17, @release16
@@ -76592,8 +76641,8 @@ export function w $nox_yaml__same_indent_sequence_follows(l %rt, l %p_lines, l %
     ret 0
 @exc_continue35
     %t55 =l add %t40, 24
-    storel 1092, %t55
-    call $nox_raise(l %rt, l %t40, l 1092)
+    storel 1096, %t55
+    call $nox_raise(l %rt, l %t40, l 1096)
     %t56 =l loadl %t3
     %t57 =w ceql %t56, 0
     jnz %t57, @release_skip40, @release39
@@ -76657,8 +76706,8 @@ export function w $nox_yaml__same_indent_sequence_follows(l %rt, l %p_lines, l %
     ret 0
 @exc_continue53
     %t83 =l add %t68, 24
-    storel 1092, %t83
-    call $nox_raise(l %rt, l %t68, l 1092)
+    storel 1096, %t83
+    call $nox_raise(l %rt, l %t68, l 1096)
     %t84 =l loadl %t3
     %t85 =w ceql %t84, 0
     jnz %t85, @release_skip58, @release57
@@ -79367,8 +79416,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue18
     %t61 =l add %t29, 24
-    storel 1099, %t61
-    call $nox_raise(l %rt, l %t29, l 1099)
+    storel 1103, %t61
+    call $nox_raise(l %rt, l %t29, l 1103)
     %t62 =l loadl %t10
     %t63 =w ceql %t62, 0
     jnz %t63, @release_skip42, @release41
@@ -79564,8 +79613,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue76
     %t125 =l add %t93, 24
-    storel 1100, %t125
-    call $nox_raise(l %rt, l %t93, l 1100)
+    storel 1104, %t125
+    call $nox_raise(l %rt, l %t93, l 1104)
     %t126 =l loadl %t10
     %t127 =w ceql %t126, 0
     jnz %t127, @release_skip100, @release99
@@ -79761,8 +79810,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue132
     %t187 =l add %t155, 24
-    storel 1100, %t187
-    call $nox_raise(l %rt, l %t155, l 1100)
+    storel 1104, %t187
+    call $nox_raise(l %rt, l %t155, l 1104)
     %t188 =l loadl %t10
     %t189 =w ceql %t188, 0
     jnz %t189, @release_skip156, @release155
@@ -79958,8 +80007,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue190
     %t252 =l add %t220, 24
-    storel 1102, %t252
-    call $nox_raise(l %rt, l %t220, l 1102)
+    storel 1106, %t252
+    call $nox_raise(l %rt, l %t220, l 1106)
     %t253 =l loadl %t10
     %t254 =w ceql %t253, 0
     jnz %t254, @release_skip214, @release213
@@ -80155,8 +80204,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue246
     %t314 =l add %t282, 24
-    storel 1102, %t314
-    call $nox_raise(l %rt, l %t282, l 1102)
+    storel 1106, %t314
+    call $nox_raise(l %rt, l %t282, l 1106)
     %t315 =l loadl %t10
     %t316 =w ceql %t315, 0
     jnz %t316, @release_skip270, @release269
@@ -80352,8 +80401,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue331
     %t405 =l add %t373, 24
-    storel 1106, %t405
-    call $nox_raise(l %rt, l %t373, l 1106)
+    storel 1110, %t405
+    call $nox_raise(l %rt, l %t373, l 1110)
     %t406 =l loadl %t10
     %t407 =w ceql %t406, 0
     jnz %t407, @release_skip355, @release354
@@ -80549,8 +80598,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue387
     %t467 =l add %t435, 24
-    storel 1106, %t467
-    call $nox_raise(l %rt, l %t435, l 1106)
+    storel 1110, %t467
+    call $nox_raise(l %rt, l %t435, l 1110)
     %t468 =l loadl %t10
     %t469 =w ceql %t468, 0
     jnz %t469, @release_skip411, @release410
@@ -80746,8 +80795,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue529
     %t633 =l add %t601, 24
-    storel 1111, %t633
-    call $nox_raise(l %rt, l %t601, l 1111)
+    storel 1115, %t633
+    call $nox_raise(l %rt, l %t601, l 1115)
     %t634 =l loadl %t10
     %t635 =w ceql %t634, 0
     jnz %t635, @release_skip553, @release552
@@ -80943,8 +80992,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue585
     %t689 =l add %t657, 24
-    storel 1111, %t689
-    call $nox_raise(l %rt, l %t657, l 1111)
+    storel 1115, %t689
+    call $nox_raise(l %rt, l %t657, l 1115)
     %t690 =l loadl %t10
     %t691 =w ceql %t690, 0
     jnz %t691, @release_skip609, @release608
@@ -81140,8 +81189,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue725
     %t892 =l add %t860, 24
-    storel 1115, %t892
-    call $nox_raise(l %rt, l %t860, l 1115)
+    storel 1119, %t892
+    call $nox_raise(l %rt, l %t860, l 1119)
     %t893 =l loadl %t10
     %t894 =w ceql %t893, 0
     jnz %t894, @release_skip749, @release748
@@ -81337,8 +81386,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue781
     %t954 =l add %t922, 24
-    storel 1115, %t954
-    call $nox_raise(l %rt, l %t922, l 1115)
+    storel 1119, %t954
+    call $nox_raise(l %rt, l %t922, l 1119)
     %t955 =l loadl %t10
     %t956 =w ceql %t955, 0
     jnz %t956, @release_skip805, @release804
@@ -81534,8 +81583,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue844
     %t1041 =l add %t1009, 24
-    storel 1116, %t1041
-    call $nox_raise(l %rt, l %t1009, l 1116)
+    storel 1120, %t1041
+    call $nox_raise(l %rt, l %t1009, l 1120)
     %t1042 =l loadl %t10
     %t1043 =w ceql %t1042, 0
     jnz %t1043, @release_skip868, @release867
@@ -81731,8 +81780,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue900
     %t1103 =l add %t1071, 24
-    storel 1116, %t1103
-    call $nox_raise(l %rt, l %t1071, l 1116)
+    storel 1120, %t1103
+    call $nox_raise(l %rt, l %t1071, l 1120)
     %t1104 =l loadl %t10
     %t1105 =w ceql %t1104, 0
     jnz %t1105, @release_skip924, @release923
@@ -81928,8 +81977,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue1101
     %t1382 =l add %t1350, 24
-    storel 1122, %t1382
-    call $nox_raise(l %rt, l %t1350, l 1122)
+    storel 1126, %t1382
+    call $nox_raise(l %rt, l %t1350, l 1126)
     %t1383 =l loadl %t10
     %t1384 =w ceql %t1383, 0
     jnz %t1384, @release_skip1125, @release1124
@@ -82125,8 +82174,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue1157
     %t1444 =l add %t1412, 24
-    storel 1122, %t1444
-    call $nox_raise(l %rt, l %t1412, l 1122)
+    storel 1126, %t1444
+    call $nox_raise(l %rt, l %t1412, l 1126)
     %t1445 =l loadl %t10
     %t1446 =w ceql %t1445, 0
     jnz %t1446, @release_skip1181, @release1180
@@ -82322,8 +82371,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue1331
     %t1689 =l add %t1657, 24
-    storel 1128, %t1689
-    call $nox_raise(l %rt, l %t1657, l 1128)
+    storel 1132, %t1689
+    call $nox_raise(l %rt, l %t1657, l 1132)
     %t1690 =l loadl %t10
     %t1691 =w ceql %t1690, 0
     jnz %t1691, @release_skip1355, @release1354
@@ -82519,8 +82568,8 @@ export function l $nox_yaml__parse_sequence(l %rt, l %p_lines, l %p_pos, l %p_in
     ret 0
 @exc_continue1387
     %t1745 =l add %t1713, 24
-    storel 1128, %t1745
-    call $nox_raise(l %rt, l %t1713, l 1128)
+    storel 1132, %t1745
+    call $nox_raise(l %rt, l %t1713, l 1132)
     %t1746 =l loadl %t10
     %t1747 =w ceql %t1746, 0
     jnz %t1747, @release_skip1411, @release1410
@@ -82949,8 +82998,8 @@ export function l $nox_yaml__parse_doc(l %rt, l %p_lines) {
     ret 0
 @exc_continue184
     %t238 =l add %t211, 24
-    storel 1140, %t238
-    call $nox_raise(l %rt, l %t211, l 1140)
+    storel 1144, %t238
+    call $nox_raise(l %rt, l %t211, l 1144)
     %t239 =l sub %rt, 48
     %t240 =w loadub %t239
     %t241 =l sub %rt, 64
@@ -83127,8 +83176,8 @@ export function l $nox_yaml__parse_doc(l %rt, l %p_lines) {
     ret 0
 @exc_continue34
     %t60 =l add %t41, 24
-    storel 1137, %t60
-    call $nox_raise(l %rt, l %t41, l 1137)
+    storel 1141, %t60
+    call $nox_raise(l %rt, l %t41, l 1141)
     %t61 =l loadl %t5
     %t62 =w ceql %t61, 0
     jnz %t62, @release_skip45, @release44
@@ -83232,8 +83281,8 @@ export function l $nox_yaml__parse_doc(l %rt, l %p_lines) {
     ret 0
 @exc_continue88
     %t122 =l add %t103, 24
-    storel 1139, %t122
-    call $nox_raise(l %rt, l %t103, l 1139)
+    storel 1143, %t122
+    call $nox_raise(l %rt, l %t103, l 1143)
     %t123 =l loadl %t5
     %t124 =w ceql %t123, 0
     jnz %t124, @release_skip99, @release98
@@ -83337,8 +83386,8 @@ export function l $nox_yaml__parse_doc(l %rt, l %p_lines) {
     ret 0
 @exc_continue119
     %t161 =l add %t142, 24
-    storel 1140, %t161
-    call $nox_raise(l %rt, l %t142, l 1140)
+    storel 1144, %t161
+    call $nox_raise(l %rt, l %t142, l 1144)
     %t162 =l loadl %t5
     %t163 =w ceql %t162, 0
     jnz %t163, @release_skip130, @release129
@@ -83442,8 +83491,8 @@ export function l $nox_yaml__parse_doc(l %rt, l %p_lines) {
     ret 0
 @exc_continue149
     %t197 =l add %t178, 24
-    storel 1140, %t197
-    call $nox_raise(l %rt, l %t178, l 1140)
+    storel 1144, %t197
+    call $nox_raise(l %rt, l %t178, l 1144)
     %t198 =l loadl %t5
     %t199 =w ceql %t198, 0
     jnz %t199, @release_skip160, @release159
@@ -83644,8 +83693,8 @@ export function l $nox_yaml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue36
     %t55 =l add %t40, 24
-    storel 1149, %t55
-    call $nox_raise(l %rt, l %t40, l 1149)
+    storel 1153, %t55
+    call $nox_raise(l %rt, l %t40, l 1153)
     %t56 =l sub %rt, 48
     %t57 =w loadub %t56
     %t58 =l sub %rt, 64
@@ -83788,8 +83837,8 @@ export function l $nox_yaml_parse(l %rt, l %p_text) {
     ret 0
 @exc_continue59
     %t84 =l add %t69, 24
-    storel 1150, %t84
-    call $nox_raise(l %rt, l %t69, l 1150)
+    storel 1154, %t84
+    call $nox_raise(l %rt, l %t69, l 1154)
     %t85 =l loadl %t1
     %t86 =w ceql %t85, 0
     jnz %t86, @release_skip64, @release63
@@ -84334,8 +84383,8 @@ export function l $nox_yaml_get(l %rt, l %p_root, l %p_dotted_path) {
     ret 0
 @exc_continue42
     %t91 =l add %t65, 24
-    storel 1168, %t91
-    call $nox_raise(l %rt, l %t65, l 1168)
+    storel 1172, %t91
+    call $nox_raise(l %rt, l %t65, l 1172)
     %t92 =l loadl %t5
     %t93 =w ceql %t92, 0
     jnz %t93, @release_skip57, @release56
@@ -84580,8 +84629,8 @@ export function l $nox_yaml_get(l %rt, l %p_root, l %p_dotted_path) {
     ret 0
 @exc_continue110
     %t168 =l add %t142, 24
-    storel 1168, %t168
-    call $nox_raise(l %rt, l %t142, l 1168)
+    storel 1172, %t168
+    call $nox_raise(l %rt, l %t142, l 1172)
     %t169 =l loadl %t5
     %t170 =w ceql %t169, 0
     jnz %t170, @release_skip125, @release124
@@ -84735,8 +84784,8 @@ export function l $nox_yaml_get(l %rt, l %p_root, l %p_dotted_path) {
     ret 0
 @exc_continue150
     %t221 =l add %t195, 24
-    storel 1170, %t221
-    call $nox_raise(l %rt, l %t195, l 1170)
+    storel 1174, %t221
+    call $nox_raise(l %rt, l %t195, l 1174)
     %t222 =l loadl %t5
     %t223 =w ceql %t222, 0
     jnz %t223, @release_skip165, @release164
@@ -84934,8 +84983,8 @@ export function l $nox_yaml_get(l %rt, l %p_root, l %p_dotted_path) {
     ret 0
 @exc_continue237
     %t329 =l add %t295, 24
-    storel 1172, %t329
-    call $nox_raise(l %rt, l %t295, l 1172)
+    storel 1176, %t329
+    call $nox_raise(l %rt, l %t295, l 1176)
     %t330 =l sub %rt, 48
     %t331 =w loadub %t330
     %t332 =l sub %rt, 64
@@ -85181,8 +85230,8 @@ export function l $nox_yaml_get(l %rt, l %p_root, l %p_dotted_path) {
     ret 0
 @exc_continue188
     %t268 =l add %t242, 24
-    storel 1170, %t268
-    call $nox_raise(l %rt, l %t242, l 1170)
+    storel 1174, %t268
+    call $nox_raise(l %rt, l %t242, l 1174)
     %t269 =l loadl %t5
     %t270 =w ceql %t269, 0
     jnz %t270, @release_skip203, @release202
@@ -85693,8 +85742,8 @@ export function l $nox_yaml__yaml_dump_escape(l %rt, l %p_s) {
     ret 0
 @exc_continue21
     %t61 =l add %t30, 24
-    storel 1183, %t61
-    call $nox_raise(l %rt, l %t30, l 1183)
+    storel 1187, %t61
+    call $nox_raise(l %rt, l %t30, l 1187)
     %t62 =l loadl %t1
     %t63 =w ceql %t62, 0
     jnz %t63, @release_skip37, @release36
@@ -86341,8 +86390,8 @@ export function l $nox_yaml__yaml_dump_scalar(l %rt, l %p_v) {
     ret 0
 @exc_continue143
     %t235 =l add %t213, 24
-    storel 1219, %t235
-    call $nox_raise(l %rt, l %t213, l 1219)
+    storel 1223, %t235
+    call $nox_raise(l %rt, l %t213, l 1223)
     %t236 =l sub %rt, 48
     %t237 =w loadub %t236
     %t238 =l sub %rt, 64
@@ -87248,8 +87297,8 @@ export function l $nox_yaml__yaml_dump_mapping(l %rt, l %p_v, l %p_level) {
     ret 0
 @exc_continue210
     %t297 =l add %t256, 24
-    storel 1245, %t297
-    call $nox_raise(l %rt, l %t256, l 1245)
+    storel 1249, %t297
+    call $nox_raise(l %rt, l %t256, l 1249)
     %t298 =l loadl %t9
     %t299 =w ceql %t298, 0
     jnz %t299, @release_skip241, @release240
@@ -89326,8 +89375,8 @@ export function l $nox_yaml__yaml_dump_mapping(l %rt, l %p_v, l %p_level) {
     ret 0
 @exc_continue29
     %t94 =l add %t53, 24
-    storel 1244, %t94
-    call $nox_raise(l %rt, l %t53, l 1244)
+    storel 1248, %t94
+    call $nox_raise(l %rt, l %t53, l 1248)
     %t95 =l loadl %t9
     %t96 =w ceql %t95, 0
     jnz %t96, @release_skip60, @release59
@@ -89575,8 +89624,8 @@ export function l $nox_yaml__yaml_dump_mapping(l %rt, l %p_v, l %p_level) {
     ret 0
 @exc_continue140
     %t221 =l add %t180, 24
-    storel 1245, %t221
-    call $nox_raise(l %rt, l %t180, l 1245)
+    storel 1249, %t221
+    call $nox_raise(l %rt, l %t180, l 1249)
     %t222 =l loadl %t9
     %t223 =w ceql %t222, 0
     jnz %t223, @release_skip171, @release170
@@ -91882,8 +91931,8 @@ export function l $nox_yaml__yaml_dump_sequence(l %rt, l %p_v, l %p_level) {
     ret 0
 @exc_continue26
     %t103 =l add %t55, 24
-    storel 1277, %t103
-    call $nox_raise(l %rt, l %t55, l 1277)
+    storel 1281, %t103
+    call $nox_raise(l %rt, l %t55, l 1281)
     %t104 =l loadl %t11
     %t105 =w ceql %t104, 0
     jnz %t105, @release_skip61, @release60
@@ -92163,8 +92212,8 @@ export function l $nox_yaml__yaml_dump_sequence(l %rt, l %p_v, l %p_level) {
     ret 0
 @exc_continue181
     %t327 =l add %t279, 24
-    storel 1283, %t327
-    call $nox_raise(l %rt, l %t279, l 1283)
+    storel 1287, %t327
+    call $nox_raise(l %rt, l %t279, l 1287)
     %t328 =l loadl %t11
     %t329 =w ceql %t328, 0
     jnz %t329, @release_skip216, @release215
@@ -92444,8 +92493,8 @@ export function l $nox_yaml__yaml_dump_sequence(l %rt, l %p_v, l %p_level) {
     ret 0
 @exc_continue300
     %t521 =l add %t473, 24
-    storel 1287, %t521
-    call $nox_raise(l %rt, l %t473, l 1287)
+    storel 1291, %t521
+    call $nox_raise(l %rt, l %t473, l 1291)
     %t522 =l loadl %t11
     %t523 =w ceql %t522, 0
     jnz %t523, @release_skip335, @release334
@@ -92725,8 +92774,8 @@ export function l $nox_yaml__yaml_dump_sequence(l %rt, l %p_v, l %p_level) {
     ret 0
 @exc_continue470
     %t808 =l add %t760, 24
-    storel 1294, %t808
-    call $nox_raise(l %rt, l %t760, l 1294)
+    storel 1298, %t808
+    call $nox_raise(l %rt, l %t760, l 1298)
     %t809 =l loadl %t11
     %t810 =w ceql %t809, 0
     jnz %t810, @release_skip505, @release504
@@ -93006,8 +93055,8 @@ export function l $nox_yaml__yaml_dump_sequence(l %rt, l %p_v, l %p_level) {
     ret 0
 @exc_continue589
     %t1002 =l add %t954, 24
-    storel 1298, %t1002
-    call $nox_raise(l %rt, l %t954, l 1298)
+    storel 1302, %t1002
+    call $nox_raise(l %rt, l %t954, l 1302)
     %t1003 =l loadl %t11
     %t1004 =w ceql %t1003, 0
     jnz %t1004, @release_skip624, @release623
