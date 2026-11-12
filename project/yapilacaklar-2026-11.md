@@ -54,7 +54,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **3.1** `lowlevel` içinde `ptr_of(liste)` sıfır-kopya veri işaretçisi — **v2.1.62** (0.36 → 0.08 ns/eleman; `Buffer` için `ptr_of(buf.data)` alan erişimiyle)
 - [-] **3.2** QBE'de `lowlevel` `ptr_read/ptr_write` döngüsü (0.58 vs 0.36 ns/eleman, toplam 2.4x): QBE'nin optimizasyonsuz çıktısı; varsayılan LLVM'de sorun yok, QBE için ayrı iş yok (backend eşitliği hedefi madde 5.3'te ele alınır)
 - [x] **3.3** Callback: yeniden ölçüm 1.9 ns (C'nin 2.5x'i; ilk ölçüm 5 ns idi) — ek profil gerekmez, yeterli
-- [ ] **3.4** Struct-by-value ve saklanan (kayıtlı) callback tasarımı — madde 5.1 ile birlikte
+- [~] **3.4** Struct-by-value ve saklanan (kayıtlı) callback tasarımı — madde 5.1 ile birlikte. Tasarım: `project/ffi-binding-tasarimi-2026-11.md` (kullanıcı kararları 2026-11-12). F1 saklanan üst-düzey callback **v2.1.100'de BİTTİ**; sıradaki F2 closure `Callback` tutamacı, F3 `@ffi.errors`, F4 `noxc bindgen` (+ struct-by-value C kabuğu), F5 yyjson kabul testi + `nox.json` benchmark
 
 ## 3.5 Dil performans analizi ve agresif (semantik korumalı) optimizasyonlar (kullanıcı isteği 2026-11-12)
 
@@ -85,7 +85,7 @@ Hedef: sahiplik piramidinin (ASAP → ARC → döngü çözücü → `lowlevel`)
 
 ## 5. Tartışılacak büyük başlıklar (henüz karar/tasarım yok)
 
-- [~] **5.1** C/C++/Rust kütüphanelerinden otomatik Nox binding üretimi (SDK/araç) — kapsam: başlık ayrıştırma, struct, callback, hata sözleşmesi
+- [~] **5.1** (3.4'ün F4/F5 aşamaları; plan `project/ffi-binding-tasarimi-2026-11.md`) C/C++/Rust kütüphanelerinden otomatik Nox binding üretimi (SDK/araç) — kapsam: başlık ayrıştırma, struct, callback, hata sözleşmesi
 - [~] **5.2** Metaprogramlama altyapısını güçlendirme (comptime, derive, AST makro; İlke 1 ve 2 ile uyum)
 - [~] **5.3** QBE için M:N scheduler — hedef: iki backend tam eşit, Windows'ta paralellik, Nox'un kendini derlemesi için ön aşama (atomik ARC'nin QBE'de runtime çağrısı olması, `spawn` paketleme eşitliği)
 - [~] **5.4** HTTP/3 (QUIC, UDP, QPACK, TLS 1.3 QUIC) — istemci mi sunucu mu, gerçekten gerekli mi?

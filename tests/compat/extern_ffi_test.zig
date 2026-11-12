@@ -284,6 +284,34 @@ test "v2.0/2.3 @ffi.callback: C'nin trailing-userdata konvansiyonuyla Nox'a GER�
     try expectGolden(source, "7\n");
 }
 
+test "v2.1.100 @ffi.callback: SAKLANAN callback — C işlevi kaydeder, Nox başka çağrılarda/işlevlerde sonradan tetikler" {
+    const allocator = std.testing.allocator;
+    const source = try std.fmt.allocPrint(allocator,
+        \\def on_event(x: int) -> int:
+        \\    return x * 2 + 1
+        \\
+        \\def on_other(x: int) -> int:
+        \\    return x - 100
+        \\
+        \\@ffi.callback("cb", "userdata")
+        \\extern def nox_test_cb_store(cb: (int, ptr) -> int, userdata: ptr) -> None from "{s}"
+        \\extern def nox_test_cb_fire(x: int) -> int from "{s}"
+        \\
+        \\def fire_twice(x: int) -> int:
+        \\    return nox_test_cb_fire(x) + nox_test_cb_fire(x + 1)
+        \\
+        \\nox_test_cb_store(on_event)
+        \\print(nox_test_cb_fire(20))
+        \\print(fire_twice(5))
+        \\nox_test_cb_store(on_other)
+        \\print(nox_test_cb_fire(150))
+        \\
+    , .{ nox_lit.util_o_path, nox_lit.util_o_path });
+    defer allocator.free(source);
+
+    try expectGolden(source, "41\n24\n50\n");
+}
+
 test "extern def: list[str] dönüş tipi FFI-güvenli — indeksleme/ARC serbest bırakma doğru çalışır (sızıntı yok)" {
     // Not: `len(list[str])` DESTEKLENMİYOR (Alt-Faz B'nin bilinçli dar
     // kapsamı — `len` yalnızca `str` üzerinde çalışır, `list[T].len()`

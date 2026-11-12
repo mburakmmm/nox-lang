@@ -1823,6 +1823,8 @@ pub fn build(b: *std.Build) void {
     ffi_test.step.dependOn(&compile_counter_ext.step);
     ffi_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&addTimedTestRun(b, ffi_test, win_test_timeout_s).step);
+    const ffi_test_step = b.step("ffi-test", "Yalnızca extern def / @ffi.callback uyumluluk testlerini çalıştırır");
+    ffi_test_step.dependOn(&addTimedTestRun(b, ffi_test, win_test_timeout_s).step);
 
     // ---- Stdlib fazı §D.1.5: `stdlib/nox/http.nox` uçtan uca golden
     // testleri — yalnızca `zig-out/lib/noxrt.o`ya ihtiyaç duyar (EK bir

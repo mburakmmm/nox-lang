@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.100]
+
+### Eklendi
+
+- **Saklanan (kayıtlı) callback resmen desteklenir** (TODO 3.4, F1; tasarım: `project/ffi-binding-tasarimi-2026-11.md`): yoklama, C işlevi `@ffi.callback`i saklayıp sonra çağırdığında üst-düzey `def` ile ZATEN çalıştığını gösterdi (yasak teknik değil belge eksiğiydi; `userdata` aynı `%rt`yi geri taşır). `docs/language/ffi.md` "Stored callbacks" bölümü kuralları yazar (yalnızca Nox'un başlattığı iş parçacığında çağır; program bittikten sonra çağırma; closure/bağlı metot henüz callback olamaz). Test: `tests/compat/extern_ffi_test.zig` (kayıt, ayrı işlevlerden tetikleme, yeniden kayıt) + `zig build ffi-test` adımı; LLVM ve QBE arka uçları CLI ile elle doğrulandı
+- Tasarım belgesi: struct-by-value = üretilen C kabuğu, closure callback = açık `Callback` tutamacı, `noxc bindgen` (kendi C ayrıştırıcımız), `@ffi.errors` (dönüş kodu + errno + NULL), yyjson kabul testi ve `nox.json` kıyası
+
 ## [2.1.99]
 
 ### Eklendi

@@ -126,9 +126,16 @@ print(c_apply(add_ints, 3, 4))
 ```
 
 Rules: the callback type's last parameter must be `ptr`; every parameter and the result must be `int`, `float`, `bool` or `ptr`; the target must
-be a plain top-level, non-`async`, non-`extern` `def`, passed by name (no lambdas, bound methods or closures). The callback runs
-**synchronously** inside the native call — registering a callback to be called later (timers, event loops) is not supported. An exception
-escaping the callback terminates the program.
+be a plain top-level, non-`async`, non-`extern` `def`, passed by name (no lambdas, bound methods or closures). An exception escaping the callback
+terminates the program.
+
+### Stored callbacks
+
+The native side may keep the callback and call it **later**, from any later point of the program: register it in one call (`reg_set(on_event)`),
+fire it from another (`reg_fire(20)`), replace it by registering a different function. The compiler passes the same hidden `userdata` both times, so
+nothing else is needed. Two rules keep this safe: call the stored function **only on a thread Nox started** (the main thread or one of its own worker
+threads) — never from an OS thread the native library created itself — and **never after the program has finished** (an event loop that outlives
+`main`). Closures and bound methods cannot be callbacks yet (a callback handle for them is planned).
 
 ## Raw pointers
 

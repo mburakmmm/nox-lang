@@ -35,6 +35,20 @@ export fn nox_test_invoke_callback(cb: ?*const fn (i64, i64, ?*anyopaque) callco
     return f(a, b, userdata);
 }
 
+/// Saklanan (kayıtlı) callback: C tarafı `cb` + `userdata` ikilisini SAKLAR, daha sonraki ayrı bir çağrıda tetikler (v2.1.100, TODO 3.4 F1).
+var stored_cb: ?*const fn (i64, ?*anyopaque) callconv(.c) i64 = null;
+var stored_ud: ?*anyopaque = null;
+
+export fn nox_test_cb_store(cb: ?*const fn (i64, ?*anyopaque) callconv(.c) i64, userdata: ?*anyopaque) callconv(.c) void {
+    stored_cb = cb;
+    stored_ud = userdata;
+}
+
+export fn nox_test_cb_fire(x: i64) callconv(.c) i64 {
+    const f = stored_cb orelse return -1;
+    return f(x, stored_ud);
+}
+
 const std = @import("std");
 
 /// `noxrt.o`nun `nox_rc_alloc`ı (bkz. `runtime/alloc/arc.zig`) — AYRI
