@@ -470,10 +470,24 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         // GERÇEKTEN sıfıra/altına düştüğünde (NADİR yol) `strlen`+gerçek
         // serbest bırakma İçin `nox_str_free_now`ya (predecrement'siz
         // hafif sürüm) düşülür.
-        const should_free = try self.emitInlinePredecrement(ptr, .str);
+        //
+        // v2.1.76 (TODO 3.5.3 #1): sabit (pinned) dizeler — literaller ve ASCII tek-karakter tablosu — `PINNED_REFCOUNT` (1<<30) ile
+        // başlar ve ASLA serbest bırakılmaz; ama her `release` yine de bu paylaşılan başlığa ATOMİK bir `sub` yapıyordu (≈ 2 ns +
+        // iş parçacıkları arası önbellek hattı çekişmesi; `str_index_loop` 6.5x). Önce sayacı atomiksiz okuyup eşiğin (1<<29)
+        // üstündeyse tüm release'i atlarız: normal bir sayaç 536M referansa ulaşamaz, pinned olanlar hiç değişmez. Anlam aynı.
         const free_label = try self.newLabel("str_free");
         const skip_free_label = try self.newLabel("str_free_skip");
         const free_done_label = try self.newLabel("str_free_done");
+        const atomic_label = try self.newLabel("str_rel_atomic");
+        const pin_hdr = try self.newTemp();
+        try self.qbeOp2Imm(pin_hdr, .l, "sub", ptr, @intCast(retainOffset(.str)));
+        const pin_rc = try self.newTemp();
+        try self.qbeLoadL(pin_rc, pin_hdr);
+        const is_pinned = try self.newTemp();
+        try self.qbeOp2Imm(is_pinned, .w, "csgel", pin_rc, STR_PINNED_THRESHOLD);
+        try self.qbeJnz(is_pinned, free_done_label, atomic_label);
+        try self.qbeLabel(atomic_label);
+        const should_free = try self.emitInlinePredecrement(ptr, .str);
         try self.qbeJnz(should_free, free_label, skip_free_label);
         try self.qbeLabel(free_label);
         try self.qbeCall(null, "$nox_str_free_now", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr } });
@@ -761,6 +775,9 @@ pub fn checkNoLowlevelEscape(self: *Codegen, v: Value) CodegenError!void {
 /// `emitInlinePredecrement`in TEK bir sabit ofset varsayması (`.str`
 /// DAHİL) `list[str].append()`nin büyüme yolu GİBİ yerlerde SESSİZCE
 /// yanlış adreste refcount okur/yazardı — bulunup düzeltildi.
+/// Sabit (pinned) dize eşiği: `abi_layout.PINNED_REFCOUNT` (1<<30) / 2. Normal sayaçlar buna ulaşamaz.
+const STR_PINNED_THRESHOLD: i64 = 1 << 29;
+
 fn retainOffset(heap: HeapKind) usize {
     return if (heap == .str) ARC_HEADER_SIZE + types.STR_HEADER_SIZE else ARC_HEADER_SIZE;
 }

@@ -1,0 +1,305 @@
+# Üretildi: scripts/gen_streq_golden.py. Satır içi `s == "lit"` karşılaştırması strcmp anlamıyla (ilk NUL'da durur) birebir aynı olmalı.
+import nox.strings
+
+def f0(s: str) -> str:
+    r: str = ""
+    if s == "":
+        r = r + "E"
+    if "" == s:
+        r = r + "L"
+    if s != "":
+        r = r + "N"
+    return r
+
+def f1(s: str) -> str:
+    r: str = ""
+    if s == "a":
+        r = r + "E"
+    if "a" == s:
+        r = r + "L"
+    if s != "a":
+        r = r + "N"
+    return r
+
+def f2(s: str) -> str:
+    r: str = ""
+    if s == "ab":
+        r = r + "E"
+    if "ab" == s:
+        r = r + "L"
+    if s != "ab":
+        r = r + "N"
+    return r
+
+def f3(s: str) -> str:
+    r: str = ""
+    if s == "abc":
+        r = r + "E"
+    if "abc" == s:
+        r = r + "L"
+    if s != "abc":
+        r = r + "N"
+    return r
+
+def f4(s: str) -> str:
+    r: str = ""
+    if s == "hello":
+        r = r + "E"
+    if "hello" == s:
+        r = r + "L"
+    if s != "hello":
+        r = r + "N"
+    return r
+
+def f5(s: str) -> str:
+    r: str = ""
+    if s == "hello world!":
+        r = r + "E"
+    if "hello world!" == s:
+        r = r + "L"
+    if s != "hello world!":
+        r = r + "N"
+    return r
+
+def f6(s: str) -> str:
+    r: str = ""
+    if s == "0123456789abcdef":
+        r = r + "E"
+    if "0123456789abcdef" == s:
+        r = r + "L"
+    if s != "0123456789abcdef":
+        r = r + "N"
+    return r
+
+def f7(s: str) -> str:
+    r: str = ""
+    if s == "0123456789abcdefg":
+        r = r + "E"
+    if "0123456789abcdefg" == s:
+        r = r + "L"
+    if s != "0123456789abcdefg":
+        r = r + "N"
+    return r
+
+def f8(s: str) -> str:
+    r: str = ""
+    if s == "\n":
+        r = r + "E"
+    if "\n" == s:
+        r = r + "L"
+    if s != "\n":
+        r = r + "N"
+    return r
+
+def f9(s: str) -> str:
+    r: str = ""
+    if s == "\t":
+        r = r + "E"
+    if "\t" == s:
+        r = r + "L"
+    if s != "\t":
+        r = r + "N"
+    return r
+
+def f10(s: str) -> str:
+    r: str = ""
+    if s == "é":
+        r = r + "E"
+    if "é" == s:
+        r = r + "L"
+    if s != "é":
+        r = r + "N"
+    return r
+
+def f11(s: str) -> str:
+    r: str = ""
+    if s == "çğ":
+        r = r + "E"
+    if "çğ" == s:
+        r = r + "L"
+    if s != "çğ":
+        r = r + "N"
+    return r
+
+def f12(s: str) -> str:
+    r: str = ""
+    if s == "x y":
+        r = r + "E"
+    if "x y" == s:
+        r = r + "L"
+    if s != "x y":
+        r = r + "N"
+    return r
+
+def f13(s: str) -> str:
+    r: str = ""
+    if s == " ":
+        r = r + "E"
+    if " " == s:
+        r = r + "L"
+    if s != " ":
+        r = r + "N"
+    return r
+
+def f14(s: str) -> str:
+    r: str = ""
+    if s == "A":
+        r = r + "E"
+    if "A" == s:
+        r = r + "L"
+    if s != "A":
+        r = r + "N"
+    return r
+
+def f15(s: str) -> str:
+    r: str = ""
+    if s == "a-b_c":
+        r = r + "E"
+    if "a-b_c" == s:
+        r = r + "L"
+    if s != "a-b_c":
+        r = r + "N"
+    return r
+
+subjects: list[str] = [
+    "",
+    "x",
+    nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0),
+    "a",
+    "ax",
+    "",
+    "`",
+    "a" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "a",
+    "ab",
+    "abx",
+    "a",
+    "`b",
+    "ac",
+    "ab" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "ab",
+    "abc",
+    "abcx",
+    "ab",
+    "`bc",
+    "abb",
+    "abc" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "abc",
+    "hello",
+    "hellox",
+    "hell",
+    "iello",
+    "helln",
+    "hello" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "hello",
+    "hello world!",
+    "hello world!x",
+    "hello world",
+    "iello world!",
+    "hello world ",
+    "hello world!" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "hello world!",
+    "0123456789abcdef",
+    "0123456789abcdefx",
+    "0123456789abcde",
+    "1123456789abcdef",
+    "0123456789abcdeg",
+    "0123456789abcdef" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "0123456789abcdef",
+    "0123456789abcdefg",
+    "0123456789abcdefgx",
+    "0123456789abcdef",
+    "1123456789abcdefg",
+    "0123456789abcdeff",
+    "0123456789abcdefg" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "0123456789abcdefg",
+    nox.strings.char_from_byte(10),
+    nox.strings.char_from_byte(10) + "x",
+    "",
+    nox.strings.char_from_byte(11),
+    nox.strings.char_from_byte(10) + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + nox.strings.char_from_byte(10),
+    nox.strings.char_from_byte(9),
+    nox.strings.char_from_byte(9) + "x",
+    "",
+    nox.strings.char_from_byte(8),
+    nox.strings.char_from_byte(9) + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + nox.strings.char_from_byte(9),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(169),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(169) + "x",
+    nox.strings.char_from_byte(195),
+    nox.strings.char_from_byte(194) + nox.strings.char_from_byte(169),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(168),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(169) + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + nox.strings.char_from_byte(195) + nox.strings.char_from_byte(169),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(167) + nox.strings.char_from_byte(196) + nox.strings.char_from_byte(159),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(167) + nox.strings.char_from_byte(196) + nox.strings.char_from_byte(159) + "x",
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(167) + nox.strings.char_from_byte(196),
+    nox.strings.char_from_byte(194) + nox.strings.char_from_byte(167) + nox.strings.char_from_byte(196) + nox.strings.char_from_byte(159),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(167) + nox.strings.char_from_byte(196) + nox.strings.char_from_byte(158),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(167) + nox.strings.char_from_byte(196) + nox.strings.char_from_byte(159) + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + nox.strings.char_from_byte(195) + nox.strings.char_from_byte(167) + nox.strings.char_from_byte(196) + nox.strings.char_from_byte(159),
+    "x y",
+    "x yx",
+    "x ",
+    "y y",
+    "x x",
+    "x y" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "x y",
+    " ",
+    " x",
+    "",
+    "!",
+    " " + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + " ",
+    "A",
+    "Ax",
+    "",
+    "@",
+    "A" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "A",
+    "a-b_c",
+    "a-b_cx",
+    "a-b_",
+    "`-b_c",
+    "a-b_b",
+    "a-b_c" + nox.strings.char_from_byte(0) + "junk",
+    nox.strings.char_from_byte(0) + "a-b_c",
+    "",
+    "zzz",
+    "a" + nox.strings.char_from_byte(195) + nox.strings.char_from_byte(169),
+    nox.strings.char_from_byte(195) + nox.strings.char_from_byte(169) + "a",
+]
+for subj0 in subjects:
+    print(f0(subj0))
+for subj1 in subjects:
+    print(f1(subj1))
+for subj2 in subjects:
+    print(f2(subj2))
+for subj3 in subjects:
+    print(f3(subj3))
+for subj4 in subjects:
+    print(f4(subj4))
+for subj5 in subjects:
+    print(f5(subj5))
+for subj6 in subjects:
+    print(f6(subj6))
+for subj7 in subjects:
+    print(f7(subj7))
+for subj8 in subjects:
+    print(f8(subj8))
+for subj9 in subjects:
+    print(f9(subj9))
+for subj10 in subjects:
+    print(f10(subj10))
+for subj11 in subjects:
+    print(f11(subj11))
+for subj12 in subjects:
+    print(f12(subj12))
+for subj13 in subjects:
+    print(f13(subj13))
+for subj14 in subjects:
+    print(f14(subj14))
+for subj15 in subjects:
+    print(f15(subj15))

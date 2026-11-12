@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.76]
+
+### Değişti
+
+- **Performans turu 1 (TODO 3.5.3):** (1) sabit (pinned) dizelerin release'inde gereksiz atomik yazma atlanır; (2) `s == "lit"` / `s != "lit"` karşılaştırmaları kısa literal için `strcmp` çağrısı yerine satır içi bayt karşılaştırması olur (`strcmp` anlamıyla birebir, 1728 durumluk golden); (3) yakalamasız üst-düzey işlev değerleri her kullanımda yığın nesnesi tahsis etmek yerine statik kapanış verisi kullanır. Ölçüm (`benchmarks/lang_perf`, LLVM/C): `func_value_calls` 9.1x → 3.0x, `str_index_loop` 6.4x → 3.3x, geometrik ortalama 1.87x → 1.67x. Davranış değişmedi; iki backend'de aynı çıktı. IR anlık görüntüleri yeniden üretildi.
+
 ## [2.1.75]
 
 ### Eklendi

@@ -342,15 +342,13 @@ pub noinline fn buildFunctionValueForIdentifier(self: *Codegen, name: []const u8
     else
         self.from_imports.get(name) orelse return unresolvedIdentifier(self, name);
     const sig = self.functions.get(resolved_name) orelse return unresolvedIdentifier(self, name);
-    const trampoline_name = try std.fmt.allocPrint(self.allocator, "{s}__fnval", .{resolved_name});
+    // v2.1.76 (TODO 3.5.3 #2): yakalaması olmayan üst-düzey işlevin kapanışı DEĞİŞMEZdir (kod işaretçisi + release işaretçisi); her kullanımda
+    // `nox_rc_alloc` ile yığın nesnesi yaratmak yerine modül düzeyinde bir kez bildirilen STATİK, pinned veriyi (`<ad>__fnval_static`) kullanırız.
+    // Blok adresi = sembol + ARC başlığı (8). Sayaç 2^60'tan başlar: retain/release dengesizliği onu sıfıra indiremez; statik veri asla serbest bırakılmaz.
+    _ = try self.fnval_static.getOrPut(self.allocator, resolved_name);
     const block = try self.newTemp();
-    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = std.fmt.comptimePrint("{d}", .{CLOSURE_HEADER_SIZE}) } });
-    const trampoline_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{trampoline_name});
-    try self.qbeStoreL(trampoline_sym, block);
-    const rel_addr = try self.newTemp();
-    try self.qbeOp2Imm(rel_addr, .l, "add", block, @intCast(CLOSURE_RELEASE_FN_PTR_OFFSET));
-    const trampoline_release_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{trampoline_name});
-    try self.qbeStoreL(trampoline_release_sym, rel_addr);
+    const static_sym = try std.fmt.allocPrint(self.allocator, "${s}__fnval_static", .{resolved_name});
+    try self.qbeOp2Imm(block, .l, "add", static_sym, @intCast(ARC_HEADER_SIZE));
     const fsig = try self.allocator.create(FuncSigInfo);
     fsig.* = .{ .params = sig.params, .ret = sig.ret };
     // `always_fresh = true`: `isAliasingExpr`in `.identifier => true` GENEL
@@ -362,7 +360,7 @@ pub noinline fn buildFunctionValueForIdentifier(self: *Codegen, name: []const u8
     // `retainIfAliasing`nin belge notu) BUNU `retainIfAliasing`e bildirir
     // — AKSİ HALDE GERÇEK bir ÇİFT-RETAIN/sızıntı OLUŞUR (test EDİLİP
     // BULUNDU).
-    return .{ .text = block, .qtype = .l, .heap = .closure, .func_sig = fsig, .always_fresh = true };
+    return .{ .text = block, .qtype = .l, .heap = .closure, .func_sig = fsig, .always_fresh = true, .is_pinned = true };
 }
 
 pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
@@ -1406,6 +1404,56 @@ pub fn callLibm2(self: *Codegen, comptime name: []const u8, l: Value, r: Value) 
     return .{ .text = t, .qtype = .d };
 }
 
+/// Satır içi karşılaştırma için uygun literal: en çok 16 bayt ve NUL içermez.
+fn isInlineStrLit(t: []const u8) bool {
+    if (t.len > 16) return false;
+    for (t) |c| if (c == 0) return false;
+    return true;
+}
+
+/// `s == "lit"` / `s != "lit"` — `strcmp` ile aynı anlamda satır içi bayt karşılaştırması (bkz. `genBinary`deki v2.1.76 notu).
+pub fn genStrEqLiteral(self: *Codegen, op: ast.BinaryOp, s: Value, lit: []const u8) CodegenError!Value {
+    const slot = try self.newTemp();
+    try self.qbeAlloc(slot, .eight, 8);
+    const true_label = try self.newLabel("streq_true");
+    const false_label = try self.newLabel("streq_false");
+    const join_label = try self.newLabel("streq_join");
+    var k: usize = 0;
+    while (k <= lit.len) : (k += 1) {
+        var addr: []const u8 = s.text;
+        if (k > 0) {
+            const a = try self.newTemp();
+            try self.qbeOp2Imm(a, .l, "add", s.text, @intCast(k));
+            addr = a;
+        }
+        const byte = try self.newTemp();
+        try self.qbeLoadUB(byte, addr);
+        const next_label = try self.newLabel("streq_next");
+        if (k < lit.len) {
+            const ne = try self.newTemp();
+            try self.qbeOp2Imm(ne, .w, "cnew", byte, @intCast(lit[k]));
+            try self.qbeJnz(ne, false_label, next_label);
+        } else {
+            const isz = try self.newTemp();
+            try self.qbeOp2Imm(isz, .w, "ceqw", byte, 0);
+            try self.qbeJnz(isz, true_label, false_label);
+        }
+        if (k < lit.len) try self.qbeLabel(next_label);
+    }
+    try self.qbeLabel(true_label);
+    try self.qbeStoreImmL(1, slot);
+    try self.qbeJmp(join_label);
+    try self.qbeLabel(false_label);
+    try self.qbeStoreImmL(0, slot);
+    try self.qbeJmp(join_label);
+    try self.qbeLabel(join_label);
+    const rl = try self.newTemp();
+    try self.qbeLoadL(rl, slot);
+    const result = try self.newTemp();
+    try self.qbeOp2Imm(result, .w, if (op == .eq) "cnel" else "ceql", rl, 0);
+    return .{ .text = result, .qtype = .w };
+}
+
 /// `strcmp` (libc, `cc` bağlantısında zaten mevcut — `printf` gibi başka
 /// çağrılarla AYNI şekilde ekstra bir bağlama argümanı gerekmez) ile iki
 /// `str`in İÇERİĞİNİ karşılaştırır; sonucu `0`a karşı `w` bir bool'a çevirir.
@@ -1758,6 +1806,28 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     // GEREKİR — `list`/`class` eşitlik dalıyla (aşağı) VE `str + str`
     // dalıyla (aşağı) AYNI desen.
     if (l0.heap == .str and r0.heap == .str and (b.op == .eq or b.op == .ne)) {
+        // v2.1.76 (TODO 3.5.3 #1b): operandlardan biri kısa bir dize LİTERALİ ise `strcmp` çağrısı yerine satır içi bayt karşılaştırması.
+        // Anlam `strcmp` ile BİREBİR aynı (sıfır baytta durur): `s[k] != lit[k]` ilk farkta yanlış, literal bitince `s[len] == 0` aranır.
+        // Literal NUL içermediğinden, `s[k]` literal baytıyla eşitse `s[k+1]` okumak her zaman güvenlidir (s[k] != 0 → terminatör sonra gelir).
+        const lit_ok: ?struct { text: []const u8, other: Value } = blk: {
+            const rl: ?[]const u8 = switch (b.right.*) {
+                .string_lit => |t| t,
+                else => null,
+            };
+            if (rl) |t| if (isInlineStrLit(t)) break :blk .{ .text = t, .other = l0 };
+            const ll: ?[]const u8 = switch (b.left.*) {
+                .string_lit => |t| t,
+                else => null,
+            };
+            if (ll) |t| if (isInlineStrLit(t)) break :blk .{ .text = t, .other = r0 };
+            break :blk null;
+        };
+        if (lit_ok) |lo| {
+            const fast = try self.genStrEqLiteral(b.op, lo.other, lo.text);
+            try self.releaseIfTemporary(b.left.*, l0);
+            try self.releaseIfTemporary(b.right.*, r0);
+            return fast;
+        }
         const result = try self.genStrCompare(b.op, l0, r0);
         try self.releaseIfTemporary(b.left.*, l0);
         try self.releaseIfTemporary(b.right.*, r0);

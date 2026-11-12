@@ -1,0 +1,70 @@
+# v2.1.76: yakalamasız üst-düzey işlev değerleri statik (pinned) kapanış verisi kullanır. Saklama, yeniden atama, dönüş, listeler, sözlük, sınıf alanı,
+# yüksek-dereceli işlevler ve çok sayıda retain/release yinelemesi anlamı değiştirmemeli.
+
+def double(x: int) -> int:
+    return x * 2
+
+def triple(x: int) -> int:
+    return x * 3
+
+def neg(x: int) -> int:
+    return -x
+
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+def twice(f: (int) -> int, x: int) -> int:
+    return f(f(x))
+
+def pick(flag: bool) -> (int) -> int:
+    if flag:
+        return double
+    return triple
+
+def compose(f: (int) -> int, g: (int) -> int, x: int) -> int:
+    return f(g(x))
+
+class Holder:
+    fn: (int) -> int
+
+    def __init__(self, fn: (int) -> int) -> None:
+        self.fn = fn
+
+    def run(self, x: int) -> int:
+        return self.fn(x)
+
+f: (int) -> int = double
+print(f(21), apply(triple, 5), twice(double, 3), compose(double, triple, 4))
+
+g: (int) -> int = f
+f = triple
+print(f(10), g(10))
+
+ops: list[(int) -> int] = [double, triple, neg, double]
+total: int = 0
+for op in ops:
+    total = total + op(7)
+print(total)
+
+print(double(8), triple(8))
+
+h: Holder = Holder(neg)
+print(h.run(5))
+h2: Holder = Holder(pick(True))
+pf: (int) -> int = pick(False)
+print(h2.run(6), pf(6))
+
+acc: int = 0
+for i in range(100000):
+    q: (int) -> int = pick(i % 2 == 0)
+    acc = acc + apply(q, i) + apply(neg, 1)
+print(acc)
+
+fs: list[(int) -> int] = []
+for i in range(1000):
+    fs.append(double)
+    fs.append(triple)
+s2: int = 0
+for fn2 in fs:
+    s2 = s2 + fn2(1)
+print(len(fs), s2)

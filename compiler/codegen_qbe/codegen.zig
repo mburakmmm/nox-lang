@@ -329,6 +329,9 @@ pub const MainPlanItem = union(enum) {
     loose_run: struct { start: usize, end: usize },
 };
 
+/// Statik işlev-değeri kapanışının başlangıç sayacı (2^60): hiçbir gerçekçi retain/release dizisi sıfıra indiremez.
+pub const FNVAL_STATIC_REFCOUNT: i64 = 1 << 60;
+
 pub const Codegen = struct {
     pub const isFuncInlineEligible = inlining.isFuncInlineEligible;
     pub const computeInlinableFunctions = inlining.computeInlinableFunctions;
@@ -495,6 +498,7 @@ pub const Codegen = struct {
     pub const callLibm1 = expr_mod.callLibm1;
     pub const callLibm2 = expr_mod.callLibm2;
     pub const genStrCompare = expr_mod.genStrCompare;
+    pub const genStrEqLiteral = expr_mod.genStrEqLiteral;
     pub const genBinary = expr_mod.genBinary;
     pub const genTernary = expr_mod.genTernary;
     pub const genTernaryBranch = expr_mod.genTernaryBranch;
@@ -1353,6 +1357,8 @@ pub const Codegen = struct {
     current_label: []const u8 = "",
     string_counter: usize = 0,
     string_data: std.ArrayListUnmanaged(StringDatum) = .empty,
+    /// v2.1.76 (TODO 3.5.3 #2): yakalamasız üst-düzey işlev değerleri için statik (pinned) kapanış verisi — `<ad>__fnval_static` sembolleri (tekrarsız).
+    fnval_static: std.StringArrayHashMapUnmanaged(void) = .empty,
     next_class_id: usize = 1,
     /// Faz 7 (tekli kalıtım): `registration.computeInheritingClasses`
     /// tarafından, HERHANGİ bir sınıf kaydedilmeden ÖNCE BİR KEZ doldurulur
@@ -2205,6 +2211,9 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
         for (gen.fmt_data.items) |fd| {
             try gen.out.writer.print("data {s} = {{ b \"{s}\", b 0 }}\n", .{ fd.symbol, fd.escaped });
         }
+        for (gen.fnval_static.keys()) |fname| {
+            try gen.out.writer.print("data ${s}__fnval_static = {{ l {d}, l ${s}__fnval, l ${s}__fnval_release }}\n", .{ fname, FNVAL_STATIC_REFCOUNT, fname, fname });
+        }
     } else {
         for (gen.string_data.items) |sd| {
             const packed_header = packStrHeader(sd.byte_len, if (sd.is_ascii) STR_ASCII_TRUE else STR_ASCII_FALSE);
@@ -2216,6 +2225,16 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
             const name = if (fd.symbol.len > 0 and fd.symbol[0] == '$') fd.symbol[1..] else fd.symbol;
             const line = try llvm_emit.llvmCStringConstant(allocator, name, fd.raw);
             try gen.out.writer.writeAll(line);
+        }
+        for (gen.fnval_static.keys()) |fname| {
+            const sym = try std.fmt.allocPrint(allocator, "{s}__fnval_static", .{fname});
+            const tramp = try std.fmt.allocPrint(allocator, "${s}__fnval", .{fname});
+            const rel = try std.fmt.allocPrint(allocator, "${s}__fnval_release", .{fname});
+            const rc = try std.fmt.allocPrint(allocator, "{d}", .{FNVAL_STATIC_REFCOUNT});
+            const line = try llvm_emit.llvmWordArrayConstant(allocator, sym, &.{ rc, tramp, rel }, gen.isWasmTarget());
+            // sayaç atomik olarak değiştirilir: `constant` değil, yazılabilir `global` olmalı
+            const mutable = try std.mem.replaceOwned(u8, allocator, line, " constant ", " global ");
+            try gen.out.writer.writeAll(mutable);
         }
     }
 
