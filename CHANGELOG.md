@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.90]
+
+### Değişti
+
+- **LLVM çıktısında `nounwind` (İlke 3 ile uyum):** üretilen tüm `define`/`declare` satırlarına `nounwind` eklendi (Nox hiçbir zaman yığın çözmez; hata yayılımı örtük dönüş zinciriyle). LLVM artık bu işlevler için unwind tablosu (`.eh_frame` girdisi) üretmez: `lang_perf` nesnesi 128.6 → 114.0 KB (-%11), hız değişmedi (ölçüm gürültüsü içinde). QBE çıktısı etkilenmez
+
 ## [2.1.89]
 
 ### Değişti

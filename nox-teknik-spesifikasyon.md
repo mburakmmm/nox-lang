@@ -29969,3 +29969,7 @@ Hepsi semantik korumalı (gözlemlenebilir davranış aynı), iki backend'de (LL
 
 `stdlib/nox/{url,yaml,toml,template,uuid,mysql}.nox` `_substr(s, start, end)`: `start >= 0 and end <= len(s)` ise `s[start:end]` (dilim `computeSlice`, v1.153), değilse eski karakter döngüsü (aralık dışında `IndexError`). `router._drop_first_char` → `s[1:]`. Eski yorumlardaki "Nox'ta dilim sözdizimi YOK" ifadesi bayattı (dilimler v1.153'ten beri var).
 
+### 3.438 LLVM `nounwind` (v2.1.90)
+
+`llvm_emit.zig`: `declare … nounwind` ve `define … nounwind {`. Gerekçe: AGENTS §2 İlke 3 (unwind tablosu/landing pad yok) LLVM backend'inde de sağlanır; hata yayılımı yalnızca `nox_exception_pending` zinciridir. Hız etkisi yok, kod boyutu -%11.
+

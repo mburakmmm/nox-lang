@@ -938,7 +938,7 @@ fn ensureDeclared(self: *Codegen, name: []const u8, ret_str: []const u8, fixed_a
         try params_buf.appendSlice(self.allocator, "...");
     }
     const real_ret = if (use_entry) wasmClassType(entry.?.ret) else ret_str;
-    const decl_line = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ real_ret, name, params_buf.items });
+    const decl_line = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s}) nounwind\n", .{ real_ret, name, params_buf.items });
     try self.llvm_pending_declares.append(self.allocator, .{ .name = name, .line = decl_line });
     try self.llvm_declared_externs.put(self.allocator, name, {});
 }
@@ -1122,7 +1122,7 @@ pub fn qbeFuncParam(self: *Codegen, ty: QbeType, text: []const u8, first: bool) 
 /// (bkz. modül üstü not), bu YÜZDEN `start:` (`%start` DEĞİL). Giriş bloğu
 /// HENÜZ terminatör ALMADIĞINDAN `llvm_block_open = true`.
 pub fn qbeFuncHeaderEnd(self: *Codegen) CodegenError!void {
-    try self.out.writer.writeAll(") {\nstart:\n");
+    try self.out.writer.writeAll(") nounwind {\nstart:\n");
     self.llvm_block_open = true;
     self.alloc_insert_pos = self.out.writer.end;
     self.hoisted_allocs.clearRetainingCapacity();
