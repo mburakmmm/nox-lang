@@ -108,11 +108,17 @@ A `v128` value is 128 bits wide and cannot be represented as a Nox `int`, so it 
 
 Vectors live in a shadow stack next to the value stack, allocated only for modules that use SIMD, so a module without SIMD pays nothing. Float `min`/`max`/`nearest` follow the scalar rules (NaN, signed zero, ties-to-even); the payload of a produced NaN is unspecified, as the specification allows.
 
+## Threads (atomics and shared memory)
+
+The threads proposal's instruction set runs too: shared memories (`(memory 1 2 shared)`), every atomic load, store, read-modify-write and compare-exchange (`i32/i64.atomic.*`, including the 8/16/32-bit forms), `atomic.fence`, `memory.atomic.wait32/wait64` and `memory.atomic.notify`. Atomic accesses must be naturally aligned (a misaligned address traps, as the specification says).
+
+An instance runs on **one thread**, so the operations are plain, correct reads and writes and nothing else can touch the memory meanwhile. Consequences: `notify` always wakes 0 waiters; `wait` on a shared memory returns `1` when the value differs, returns `2` (timed out, **without sleeping**) when the timeout is `>= 0`, and traps when the timeout is infinite (no other thread could ever wake it, so the trap replaces a deadlock); `wait` on a non-shared memory traps. Real parallelism across instances sharing one memory is not part of this engine.
+
 ## Speed
 
 The engine is a plain interpreter (no JIT, by design: the same code runs on iOS and Android). Measured on an Apple M4, ReleaseFast: a recursive `fib(32)` takes about 170 ms (V8's JIT: 9 ms) and a 100-million-iteration `i64` loop about 1.3 s (V8: 0.12 s), roughly 10-20 times slower than a JIT. It is meant for plugins, sandboxed helpers and portable modules, not for heavy numeric kernels; for those compile the code natively or use `extern def`. The fuel budget counts branches and calls.
 
 ## Robustness
 
-The binary parser, the instantiation step (imports, memory and table setup, `start` function) and the execution of exported functions are fuzzed (`tests/fuzz/wasm_parser_fuzz.zig`), and every single-byte mutation and every prefix of four small valid modules (one of them SIMD) is checked on each test run: no input may crash, hang or leak. Differential tests compare 36 904 numeric vectors and 9 330 SIMD vectors (including `v128` blocks, branches, calls, `select` and recursion) and real compiled programs against Node's WebAssembly engine on every CI run.
+The binary parser, the instantiation step (imports, memory and table setup, `start` function) and the execution of exported functions are fuzzed (`tests/fuzz/wasm_parser_fuzz.zig`), and every single-byte mutation and every prefix of five small valid modules (one SIMD, one atomics) is checked on each test run: no input may crash, hang or leak. Differential tests compare 36 904 numeric vectors and 9 330 SIMD vectors and 5 109 atomics vectors (the SIMD set including `v128` blocks, branches, calls, `select` and recursion) and real compiled programs against Node's WebAssembly engine on every CI run.
 

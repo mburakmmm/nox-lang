@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.99]
+
+### Eklendi
+
+- **WASM threads: atomikler + paylaşımlı bellek** (`runtime/wasm_bridge/atomics.zig`, TODO 4.6'nın threads yarısının ilk aşaması): paylaşımlı bellek (limits bayrağı 0x03, üst sınır zorunlu; tablolarda geçersiz), `0xFE` önekli tüm komutlar — atomik yükleme/depolama (8/16/32/64), read-modify-write (add/sub/and/or/xor/xchg), cmpxchg, `atomic.fence`, `memory.atomic.wait32/wait64/notify`. Doğrulayıcı hizalamanın TAM doğal olmasını ister; hizasız adres çalışma zamanında `UnalignedAtomic` tuzağıdır. Yorumlayıcı bir örnek için TEK iş parçacığıdır: atomikler sıradan (doğru) okuma/yazmadır; `notify` 0 uyandırır, `wait` değer farklıysa 1, zaman aşımı >= 0 ise BEKLEMEDEN 2 döner, sonsuz bekleme kilitlenmek yerine `WaitWouldBlock` tuzağıdır, paylaşımsız bellekte `wait` `ExpectedSharedMemory` tuzağıdır
+- **Farksal test: 5 109 atomik vektör V8 ile bit-bit aynı** (`scripts/wasm_gen_atomics_vectors.py` -> `tests/compat/wasm_atomics/`, `tests/compat/wasm_atomics_test.zig`): 67 işlev, hizalı/hizasız/sınır dışı adresler, dar genişlikler; mutasyon denetimi yapıldı. Fuzz: beşinci deterministik mutasyon modülü atomikli. Golden `wasm_threads` (iki backend)
+
+### Notlar
+
+- Gerçek çok iş parçacıklı çalışma (aynı belleği paylaşan birden çok örnek) bu sürümde YOKTUR; bu bir ana-bilgisayar/API tasarım kararıdır (TODO 4.6 kalanı). Belge: `docs/stdlib/wasm.md` "Threads"
+
 ## [2.1.98]
 
 ### Eklendi

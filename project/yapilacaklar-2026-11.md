@@ -72,7 +72,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **4.3 W2** (**v2.1.92**: `nox.wasm` stdlib modülü — kalıcı tutamaç, çağrı, kayan nokta, bellek, limitler; yeni sözdizimi yok) Dil yüzeyi: `wasm_open` / `wasm_call_on` / bellek erişimi / `close` (yeni dil özelliği, **onay gerekir**)
 - [x] **4.4 W3** (**v2.1.93**: `Host` + WASI preview1 alt kümesi, varsayılan kapalı) Host işlevleri (import) Nox işlevleriyle + WASI preview1 alt kümesi (varsayılan kapalı)
 - [x] **4.5 W4** (**v2.1.94**: örnekleme+çalıştırma fuzz hedefi, deterministik bayt-mutasyon taraması, hız ölçümü: fib(32) 167 ms vs V8 9 ms, `docs/stdlib/wasm.md`) bulk-memory, sign-extension, reference types, yakıt/yığın/bellek sınırı **v2.1.65'te W1 ile birlikte yapıldı**; kalan: fuzz hedefine `Instance.init` ekleme, performans ölçümü
-- [~] **4.6** SIMD ve threads — SIMD **v2.1.98'de BİTTİ** (tam sabit-genişlikli SIMD, gölge yığın, 9 330 V8 farksal vektör, fuzz, golden; v128 Nox sınırından geçmez, v128 global yok). KALAN: threads/atomics (0xFE) — tek-iş-parçacıklı atomikler + paylaşımlı bellek bayrağı önce, gerçek çoklu iş parçacığı sonra (kullanıcı kararı: ikisini de yap).
+- [~] **4.6** SIMD ve threads — SIMD **v2.1.98'de**, threads atomikleri + paylaşımlı bellek **v2.1.99'da BİTTİ** (tek iş parçacıklı yürütme; 9 330 SIMD + 5 109 atomik V8 farksal vektör, fuzz, golden). KALAN: gerçek çok iş parçacıklı çalışma (aynı belleği paylaşan birden çok örnek + iş parçacığı oluşturma API'si) — host/API tasarım kararı gerekir (kullanıcıya sorulacak).
 
 ## 4.5 ARC / ASAP analizi, güçlendirme ve stres testleri (kullanıcı isteği 2026-11-12)
 

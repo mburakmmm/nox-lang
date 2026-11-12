@@ -15,6 +15,7 @@ const ValType = mod.ValType;
 const Module = mod.Module;
 const Reader = mod.Reader;
 const simd = @import("simd.zig");
+const atomics = @import("atomics.zig");
 
 pub const Instr = extern struct {
     op: u16,
@@ -53,6 +54,8 @@ pub const OP_CALL_INDIRECT: u16 = 0x11; // `a` = tür indeksi, `b` = tablo indek
 pub const OP_FC: u16 = 0x100;
 /// SIMD: `0xFD xx` -> `OP_FD + xx` (xx <= 0x113 -> 0x200..0x313).
 pub const OP_FD: u16 = 0x200;
+/// Threads: `0xFE xx` -> `OP_FE + xx` (xx <= 0x4e).
+pub const OP_FE: u16 = 0x400;
 /// v128 DEĞERLERİNİ taşıyan yığın/yerel işlemlerinin gölge-yığın farkında varyantları.
 pub const OP_LOCAL_GET_V: u16 = 0x3f0;
 pub const OP_LOCAL_SET_V: u16 = 0x3f1;
@@ -572,8 +575,59 @@ const Compiler = struct {
             },
             0xfc => try self.stepFc(r),
             0xfd => try self.stepFd(r),
+            0xfe => try self.stepFe(r),
             else => return error.InvalidModule,
         }
+    }
+
+    fn stepFe(self: *Compiler, r: *Reader) !void {
+        const sub = try r.readVarU32();
+        const info = atomics.atomicInfo(sub) orelse return error.InvalidModule;
+        var off: u32 = 0;
+        if (info.kind == .fence) {
+            if ((try r.byte()) != 0) return error.InvalidModule;
+        } else {
+            if (self.m.mems.len == 0) return error.InvalidModule;
+            const al = try r.readVarU32();
+            off = try r.readVarU32();
+            // Atomik erişimde hizalama TAM doğal olmalıdır.
+            if (al != std.math.log2_int(u8, info.width)) return error.InvalidModule;
+        }
+        const t = info.ty;
+        switch (info.kind) {
+            .notify => {
+                try self.popExpect(.i32);
+                try self.popExpect(.i32);
+                try self.push(.i32);
+            },
+            .wait32, .wait64 => {
+                try self.popExpect(.i64);
+                try self.popExpect(t);
+                try self.popExpect(.i32);
+                try self.push(.i32);
+            },
+            .fence => {},
+            .load => {
+                try self.popExpect(.i32);
+                try self.push(t);
+            },
+            .store => {
+                try self.popExpect(t);
+                try self.popExpect(.i32);
+            },
+            .rmw => {
+                try self.popExpect(t);
+                try self.popExpect(.i32);
+                try self.push(t);
+            },
+            .cmpxchg => {
+                try self.popExpect(t);
+                try self.popExpect(t);
+                try self.popExpect(.i32);
+                try self.push(t);
+            },
+        }
+        _ = try self.emit(.{ .op = OP_FE + @as(u16, @intCast(sub)), .arity = @intFromEnum(info.kind), .a = off });
     }
 
     fn stepFd(self: *Compiler, r: *Reader) !void {

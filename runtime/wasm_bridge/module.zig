@@ -53,7 +53,8 @@ pub const WasmExport = struct {
     index: u32,
 };
 
-pub const Limits = struct { min: u32, max: ?u32 };
+/// `shared`: threads önerisi (bayrak 0x03: üst sınır ZORUNLU); yalnızca bellek için geçerlidir.
+pub const Limits = struct { min: u32, max: ?u32, shared: bool = false };
 pub const TableType = struct { elem: ValType, limits: Limits };
 pub const GlobalType = struct { valtype: ValType, mutable: bool };
 
@@ -287,6 +288,12 @@ pub const Reader = struct {
                 if (min > max) return error.InvalidModule;
                 return .{ .min = min, .max = max };
             },
+            3 => {
+                const min = try self.readVarU32();
+                const max = try self.readVarU32();
+                if (min > max) return error.InvalidModule;
+                return .{ .min = min, .max = max, .shared = true };
+            },
             else => return error.InvalidModule,
         }
     }
@@ -301,7 +308,9 @@ fn readMemLimits(r: *Reader) !Limits {
 
 fn readTableType(r: *Reader) !TableType {
     const elem = try r.readRefType();
-    return .{ .elem = elem, .limits = try r.readLimits() };
+    const l = try r.readLimits();
+    if (l.shared) return error.InvalidModule;
+    return .{ .elem = elem, .limits = l };
 }
 
 fn readGlobalType(r: *Reader) !GlobalType {

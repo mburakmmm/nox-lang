@@ -1,0 +1,31 @@
+# v2.1.99: nox.wasm — WASM threads: paylaşımlı bellek ve atomik komutlar (tek iş parçacıklı yorumlayıcı; wait hiç uyandırılamaz).
+# (module (memory (export "mem") 1 2 shared) + i32.atomic.rmw.add / rmw.cmpxchg / atomic.load / memory.atomic.wait32 / notify dışa aktarmaları)
+import nox.wasm
+from nox.wasm import WasmError
+
+code: list[int] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 26, 4, 96, 2, 127, 127, 1, 127, 96, 3, 127, 127, 127, 1, 127, 96, 1, 127, 1, 127, 96, 3, 127, 127, 126, 1, 127, 3, 6, 5, 0, 1, 2, 3, 0, 5, 4, 1, 3, 1, 2, 7, 42, 6, 3, 109, 101, 109, 2, 0, 3, 105, 110, 99, 0, 0, 3, 99, 97, 115, 0, 1, 4, 108, 111, 97, 100, 0, 2, 4, 119, 97, 105, 116, 0, 3, 6, 110, 111, 116, 105, 102, 121, 0, 4, 10, 58, 5, 10, 0, 32, 0, 32, 1, 254, 30, 2, 0, 11, 12, 0, 32, 0, 32, 1, 32, 2, 254, 72, 2, 0, 11, 8, 0, 32, 0, 254, 16, 2, 0, 11, 12, 0, 32, 0, 32, 1, 32, 2, 254, 1, 2, 0, 11, 10, 0, 32, 0, 32, 1, 254, 0, 2, 0, 11]
+w: nox.wasm.Instance = nox.wasm.from_bytes(code)
+
+print(w.call("inc", [0, 5]))
+print(w.call("inc", [0, 7]))
+print(w.call("load", [0]))
+print(w.call("cas", [0, 12, 100]))
+print(w.call("cas", [0, 12, 200]))
+print(w.call("load", [0]))
+print(w.call("wait", [0, 0, 0]))
+print(w.call("wait", [0, 100, 0]))
+print(w.call("notify", [0, 1]))
+
+try:
+    w.call("load", [2])
+except WasmError:
+    print("unaligned atomic trapped")
+try:
+    w.call("inc", [65536, 1])
+except WasmError:
+    print("out of bounds atomic trapped")
+try:
+    w.call("wait", [0, 100, -1])
+except WasmError:
+    print("infinite wait would block forever, trapped")
+w.close()

@@ -16,6 +16,7 @@ const std = @import("std");
 const module_mod = @import("module.zig");
 const compile = @import("compile.zig");
 const simd = @import("simd.zig");
+const atomics = @import("atomics.zig");
 const Module = module_mod.Module;
 const ValType = module_mod.ValType;
 const FuncCode = compile.FuncCode;
@@ -37,6 +38,9 @@ pub const Trap = error{
     OutOfFuel,
     OutOfMemory,
     HostFailure,
+    UnalignedAtomic,
+    ExpectedSharedMemory,
+    WaitWouldBlock,
 };
 
 pub const LinkError = error{ InvalidModule, UnsupportedVersion, ImportNotFound, ImportTypeMismatch, OutOfMemory };
@@ -96,6 +100,8 @@ pub const Instance = struct {
     host_funcs: []HostFunc,
     mem: []u8 = &.{},
     mem_max_pages: u32 = module_mod.MAX_PAGES,
+    /// Paylaşımlı bellek (threads): `memory.atomic.wait` yalnızca bunda geçerlidir.
+    mem_shared: bool = false,
     tables: []Table,
     globals: []u64,
     data_dropped: []bool,
@@ -213,6 +219,7 @@ pub const Instance = struct {
         // bellek
         if (module.mems.len > 0) {
             const l = module.mems[0];
+            self.mem_shared = l.shared;
             if (!have_mem) {
                 mem_min = l.min;
                 mem_max = l.max;
@@ -498,6 +505,7 @@ pub const Instance = struct {
                     if (@as(u32, @truncate(stack[sp + 1])) == 0) vstack[sp - 1] = vstack[sp];
                 },
                 compile.OP_FD...compile.OP_FD + 0xff => sp = try simd.exec(self.mem, @enumFromInt(ins.arity), ins.op - compile.OP_FD, ins.a, ins.b, fr.code.consts, stack, vstack, sp),
+                compile.OP_FE...compile.OP_FE + 0x4e => sp = try atomics.exec(self.mem, self.mem_shared, @enumFromInt(ins.arity), ins.op - compile.OP_FE, ins.a, stack, sp),
                 0x1a => sp -= 1, // drop
                 0x1b => { // select
                     sp -= 2;
