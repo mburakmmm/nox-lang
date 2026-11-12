@@ -29973,3 +29973,7 @@ Hepsi semantik korumalı (gözlemlenebilir davranış aynı), iki backend'de (LL
 
 `llvm_emit.zig`: `declare … nounwind` ve `define … nounwind {`. Gerekçe: AGENTS §2 İlke 3 (unwind tablosu/landing pad yok) LLVM backend'inde de sağlanır; hata yayılımı yalnızca `nox_exception_pending` zinciridir. Hız etkisi yok, kod boyutu -%11.
 
+### 3.439 `nox.wasm` kalıcı örnek tutamacı (v2.1.92, TODO 4.3 W2)
+
+W2 dil yüzeyi yeni sözdizimi/yerleşik EKLEMEDEN stdlib modülü olarak sunuldu (AGENTS İlke 1/2 etkilenmez; `wasm_call` aynen kalır). `runtime/stdlib_shims/wasm.zig`: `Handle` (modül baytları + `Module` + `Instance` + son hata + son sonuçlar) `RuntimeState.allocator()` ile tahsis edilir; açılış başarısız olsa bile tutamaç döner (hata metni içinde) — global durum yok. `nox_wasm_open_raw`/`open_bytes_raw`, `call_raw` (ham 64-bit yuvalar, `i32` sonuç işaret genişletilir), `call_f_raw` (argümanlar `f64` bit desenleri olarak `list[int]`; C ABI `list[float]` geçirmez), `mem_*` (sınır denetimli; sınır dışı = hata + güvenli dönüş), `exports`/`signature`, `close`. `stdlib/nox/wasm.nox`: `Instance`, `WasmError`, `open*`/`from_bytes*`. `MODULE_CAPABILITIES`: `wasm` = `{filesystem}`; `WASM_UNAVAILABLE_MODULES`: `wasm`. Sınırlar `interp.Config` (fuel, `max_memory_pages`); host işlevi bağlama (`HostBinding`) W3'te.
+

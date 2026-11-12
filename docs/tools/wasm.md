@@ -33,7 +33,7 @@ Every mode exists for both `wasm32-wasi` and `wasm32-freestanding`. Language and
 - **The file system** depends on the runner's WASI pre-opens (`wasm_run.mjs` opens `.` and `/tmp`).
 - **Math** functions (`exp`, `sin`, ...) come from wasi-libc and may differ from the platform libm in the last digit (for example `exp(1.0)`).
 
-Details and rationale: [ADR-012](../internals/adr/012-wasm-target.md). *Importing* a WebAssembly module into Nox (`wasm_call`) is a separate mechanism: [HPy and WebAssembly](../internals/hpy-wasm.md).
+Details and rationale: [ADR-012](../internals/adr/012-wasm-target.md). *Importing* a WebAssembly module into Nox ([`nox.wasm`](../stdlib/wasm.md) for a persistent instance handle, or the older single-call `wasm_call` built-in) is a separate mechanism: [HPy and WebAssembly](../internals/hpy-wasm.md).
 
 ## Capability model and `--deny-capability`
 

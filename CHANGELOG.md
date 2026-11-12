@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.92]
+
+### Eklendi
+
+- **`nox.wasm` — WebAssembly için kalıcı örnek tutamacı (TODO 4.3 W2):** gömülü saf-Zig yorumlayıcıyı Nox'tan kullanma. `open(path)` / `open_with_limits(path, fuel, max_pages)` / `from_bytes(data)` / `from_bytes_with_limits(...)` → `Instance`; `call(name, args)` (tamsayı, en çok 16 argüman), `call_f(name, args)` (kayan nokta), `result`/`result_count` (çok değerli dönüş), `exports()`, `signature(name)`, sınır denetimli doğrusal bellek: `memory_size`, `read_bytes`/`write_bytes`, `read_str`/`write_str`, `load`/`store` (1/2/4/8 bayt, küçük-endian); `close()` (idempotent) ve `with` desteği; `f64_bits`/`f64_from_bits`/`f32_bits`/`f32_from_bits`. Sandbox: dosya/ağ/süreç yok; içe aktarma isteyen modül açılmaz (host işlevleri W3); yakıt (varsayılan 2 milyar talimat) ve bellek tavanı (varsayılan 4096 sayfa) → `WasmError`. Tutamaç opaktır (İlke 4). Yetenek: `filesystem` (dynamic_code değil; mobil dahil). `--target wasm32-*` ve freestanding'de reddedilir. Eski `wasm_call` yerleşiği değişmedi. Golden: `wasm_instance_api` (iki backend) + Zig birim testi + `docs/stdlib/wasm.md`
+
 ## [2.1.91]
 
 ### Belgelendi

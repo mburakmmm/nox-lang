@@ -412,6 +412,7 @@ const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }
     .{ .name = "native", .why = "WASI has no dynamic loading" },
     .{ .name = "plugin", .why = "WASI has no dynamic loading" },
     .{ .name = "hpy", .why = "the HPy bridge is not part of the wasm runtime" },
+    .{ .name = "wasm", .why = "the embedded WebAssembly engine is not part of the wasm runtime" },
 };
 
 /// `freestanding` profilinde sınıflandırılmış olsa bile ÇALIŞMA ZAMANINDA bulunmayan modüller (mobil/hosted çalışma zamanında vardır, `lib_freestanding.zig`de yoktur): yetenek tablosunda
@@ -1503,6 +1504,8 @@ pub const Checker = struct {
         .{ .name = "signal", .caps = &.{.process} },
         // v2.1.71: `nox.tar` (ustar yazma/okuma) ve `nox.zstd` (yalnızca açma) saf hesaptır; zstd çıplak çekirdekte kapalıdır (8 MiB pencere).
         .{ .name = "tar", .caps = &.{} },
+        // v2.1.92: `nox.wasm` — gömülü WebAssembly yorumlayıcısı (saf Zig, SANDBOX: dosya/ağ/süreç erişimi yok, yakıt ve bellek tavanı); yalnızca modül dosyasını okur. `dynamic_code` DEĞİL (dlopen/native kod yok), bu yüzden mobil hedefte de açıktır.
+        .{ .name = "wasm", .caps = &.{.filesystem} },
         .{ .name = "tempfile", .caps = &.{.filesystem} },
         .{ .name = "zstd", .caps = &.{} },
         .{ .name = "zip", .caps = &.{} },

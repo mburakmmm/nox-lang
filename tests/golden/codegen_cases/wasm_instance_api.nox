@@ -1,0 +1,79 @@
+# v2.1.92: nox.wasm — kalıcı örnek tutamacı (W2): çağrı, kayan nokta, bellek, hata yolları, with.
+import nox.wasm
+from nox.wasm import WasmError
+
+w: nox.wasm.Instance = nox.wasm.open("tests/compat/wasm_ops/ops.wasm")
+print(w.call("i32.add", [2147483647, 1]))
+print(w.call("i64.mul", [4294967296, 4294967296]))
+print(w.call("i32.div_s", [7, -2]))
+print(w.call_f("f64.add", [0.1, 0.2]))
+print(w.call_f("f32.mul", [1.5, 2.5]))
+print(w.call_f("f64.sqrt", [2.0]))
+print(w.signature("f64.add"))
+print(w.signature("nope") == "")
+try:
+    w.call("i32.div_s", [1, 0])
+except WasmError:
+    print("trap caught")
+try:
+    w.call("i32.add", [1])
+except WasmError:
+    print("arity caught")
+try:
+    w.call("nope", [1])
+except WasmError:
+    print("missing export caught")
+print(w.call("i32.add", [40, 2]))
+w.close()
+w.close()
+try:
+    w.call("i32.add", [1, 2])
+except WasmError:
+    print("closed caught")
+
+try:
+    bad: nox.wasm.Instance = nox.wasm.from_bytes([0, 1, 2, 3])
+except WasmError:
+    print("invalid module caught")
+try:
+    nox.wasm.open("tests/compat/wasm_ops/does_not_exist.wasm")
+except WasmError:
+    print("missing file caught")
+
+with nox.wasm.open("tests/compat/wasm_ext/addone.wasm") as m:
+    print(m.call("add_one", [41]))
+    print(m.call("add_two", [40, 2]))
+    print(m.signature("add_one"))
+    m.store(16, 4, 305419896)
+    print(m.load(16, 4))
+    print(m.load(16, 1))
+    print(m.load(17, 2))
+    m.write_str(64, "hello wasm")
+    print(m.read_str(64, 10))
+    print(m.read_bytes(64, 3))
+    m.write_bytes(128, [1, 2, 255])
+    print(m.read_bytes(128, 3))
+    print(m.memory_size() > 0)
+    try:
+        m.load(m.memory_size() - 2, 4)
+    except WasmError:
+        print("oob read caught")
+    try:
+        m.write_str(m.memory_size() - 2, "abcd")
+    except WasmError:
+        print("oob write caught")
+
+lim: nox.wasm.Instance = nox.wasm.open_with_limits("tests/compat/wasm_ext/addone.wasm", 1000, 16)
+print(lim.call("add_one", [1]))
+lim.close()
+print(nox.wasm.f64_from_bits(nox.wasm.f64_bits(1.5)))
+print(nox.wasm.f32_from_bits(nox.wasm.f32_bits(2.5)))
+
+# sonsuz döngü: yakıt bitince WasmError (sandbox: ana program asılmaz)
+spin_code: list[int] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 7, 8, 1, 4, 115, 112, 105, 110, 0, 0, 10, 9, 1, 7, 0, 3, 64, 12, 0, 11, 11]
+spin: nox.wasm.Instance = nox.wasm.from_bytes_with_limits(spin_code, 100000, 0)
+try:
+    spin.call("spin", [])
+except WasmError:
+    print("out of fuel caught")
+spin.close()

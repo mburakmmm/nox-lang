@@ -1,0 +1,168 @@
+# nox.wasm (v2.1.92) — gömülü WebAssembly yorumlayıcısı (saf Zig, JIT yok; mobil dahil her hedefte aynı). Bir `.wasm` modülünü açar, dışa aktarılan
+# işlevlerini çağırır ve doğrusal belleğini sınır denetimli okur/yazar. Modül SANDBOX'tadır: dosya/ağ/süreç erişimi yoktur (içe aktarma gerektiren
+# modüller `open` ile açılamaz; host işlevleri sonraki sürüm). Yakıt (talimat sayısı) ve bellek sayfası tavanı vardır: sonsuz döngü ve bellek
+# tüketimi `WasmError` verir. Değerler: `i32`/`i64` parametre ve sonuçlar `int` (i32 işaret genişletilir); `f32`/`f64` için `call_f` ya da
+# `f64_bits`/`f64_from_bits`. Opak tutamaç: Nox'a modülün ham belleği verilmez (İlke 4), yalnızca kopyalayan `read_*`/`write_*` çağrıları vardır.
+
+extern def nox_wasm_open_raw(path: str, fuel: int, max_pages: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_open_bytes_raw(data: list[int], fuel: int, max_pages: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_is_null_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_error_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_close_raw(h: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_wasm_call_raw(h: ptr, name: str, args: list[int]) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_call_f_raw(h: ptr, name: str, args: list[int]) -> float from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_result_raw(h: ptr, i: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_result_count_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_exports_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_signature_raw(h: ptr, name: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_mem_size_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_mem_read_raw(h: ptr, off: int, n: int) -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_mem_read_str_raw(h: ptr, off: int, n: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_mem_write_raw(h: ptr, off: int, data: list[int]) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_mem_write_str_raw(h: ptr, off: int, s: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_mem_load_raw(h: ptr, off: int, width: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_mem_store_raw(h: ptr, off: int, width: int, value: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_f64_to_bits_raw(x: float) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_f64_from_bits_raw(b: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_wasm_f32_to_bits_raw(x: float) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_f32_from_bits_raw(b: int) -> float from "zig-out/lib/noxrt.o"
+
+class WasmError(Exception):
+    pass
+
+class Instance:
+    def __init__(self: Instance, handle: ptr) -> None:
+        self.handle = handle
+        self.closed = False
+
+    def _check(self: Instance) -> None:
+        if self.closed:
+            raise WasmError("wasm instance is closed")
+        msg: str = nox_wasm_error_raw(self.handle)
+        if msg != "":
+            raise WasmError(msg)
+
+    # Dışa aktarılan işlevi tamsayı argümanlarla çağırır (en çok 16); ilk sonucu döner (sonuç yoksa 0). Tuzak/yakıt bitişi `WasmError`.
+    def call(self: Instance, name: str, args: list[int]) -> int:
+        if self.closed:
+            raise WasmError("wasm instance is closed")
+        r: int = nox_wasm_call_raw(self.handle, name, args)
+        self._check()
+        return r
+
+    # `f32`/`f64` içeren imzalar için: argümanlar `float` (tamsayı parametreler değeri keser), ilk sonuç `float` döner.
+    def call_f(self: Instance, name: str, args: list[float]) -> float:
+        if self.closed:
+            raise WasmError("wasm instance is closed")
+        bits: list[int] = []
+        for a in args:
+            bits.append(nox_wasm_f64_to_bits_raw(a))
+        r: float = nox_wasm_call_f_raw(self.handle, name, bits)
+        self._check()
+        return r
+
+    # Çok değerli dönüşlerde `i`. sonucun ham 64 bit deseni (son `call`/`call_f` çağrısından).
+    def result(self: Instance, i: int) -> int:
+        return nox_wasm_result_raw(self.handle, i)
+
+    def result_count(self: Instance) -> int:
+        return nox_wasm_result_count_raw(self.handle)
+
+    # Dışa aktarılan işlevlerin adları (modüldeki sırayla).
+    def exports(self: Instance) -> list[str]:
+        txt: str = nox_wasm_exports_raw(self.handle)
+        if txt == "":
+            empty: list[str] = []
+            return empty
+        return txt.split("\n")
+
+    # "i32,i32->i32" biçiminde imza ("" = böyle bir dışa aktarım yok).
+    def signature(self: Instance, name: str) -> str:
+        return nox_wasm_signature_raw(self.handle, name)
+
+    # Doğrusal bellek boyutu (bayt; bellek yoksa 0).
+    def memory_size(self: Instance) -> int:
+        return nox_wasm_mem_size_raw(self.handle)
+
+    def read_bytes(self: Instance, offset: int, length: int) -> list[int]:
+        data: list[int] = nox_wasm_mem_read_raw(self.handle, offset, length)
+        self._check()
+        return data
+
+    # UTF-8 metin okur (modül belleğinde NUL görülürse orada biter; Nox `str` NUL içeremez).
+    def read_str(self: Instance, offset: int, length: int) -> str:
+        s: str = nox_wasm_mem_read_str_raw(self.handle, offset, length)
+        self._check()
+        return s
+
+    def write_bytes(self: Instance, offset: int, data: list[int]) -> None:
+        rc: int = nox_wasm_mem_write_raw(self.handle, offset, data)
+        if rc != 0:
+            self._check()
+            raise WasmError("memory write failed")
+
+    def write_str(self: Instance, offset: int, text: str) -> None:
+        rc: int = nox_wasm_mem_write_str_raw(self.handle, offset, text)
+        if rc != 0:
+            self._check()
+            raise WasmError("memory write failed")
+
+    # Küçük-endian işaretsiz tamsayı okuma/yazma (`width` 1, 2, 4 veya 8 bayt).
+    def load(self: Instance, offset: int, width: int) -> int:
+        v: int = nox_wasm_mem_load_raw(self.handle, offset, width)
+        self._check()
+        return v
+
+    def store(self: Instance, offset: int, width: int, value: int) -> None:
+        rc: int = nox_wasm_mem_store_raw(self.handle, offset, width, value)
+        if rc != 0:
+            self._check()
+            raise WasmError("memory store failed")
+
+    def close(self: Instance) -> None:
+        if not self.closed:
+            nox_wasm_close_raw(self.handle)
+            self.closed = True
+
+    def __enter__(self: Instance) -> Instance:
+        return self
+
+    def __exit__(self: Instance) -> None:
+        self.close()
+
+def _wrap(h: ptr, what: str) -> Instance:
+    if nox_wasm_is_null_raw(h) != 0:
+        raise WasmError("out of memory while opening " + what)
+    msg: str = nox_wasm_error_raw(h)
+    if msg != "":
+        nox_wasm_close_raw(h)
+        raise WasmError(msg)
+    return Instance(h)
+
+# `.wasm` dosyasını açıp örnekler. Varsayılan yakıt 2 milyar talimat, en çok 4096 sayfa (256 MiB) bellek.
+def open(path: str) -> Instance:
+    return _wrap(nox_wasm_open_raw(path, 0, 0), path)
+
+# Yakıt (talimat) ve bellek sayfası (64 KiB) tavanlarıyla açar.
+def open_with_limits(path: str, fuel: int, max_pages: int) -> Instance:
+    return _wrap(nox_wasm_open_raw(path, fuel, max_pages), path)
+
+# Bellekteki bayt listesinden (her eleman 0..255) açar.
+def from_bytes(data: list[int]) -> Instance:
+    return _wrap(nox_wasm_open_bytes_raw(data, 0, 0), "<bytes>")
+
+# `from_bytes` ile aynı, yakıt (talimat) ve bellek sayfası tavanlarıyla.
+def from_bytes_with_limits(data: list[int], fuel: int, max_pages: int) -> Instance:
+    return _wrap(nox_wasm_open_bytes_raw(data, fuel, max_pages), "<bytes>")
+
+def f64_bits(x: float) -> int:
+    return nox_wasm_f64_to_bits_raw(x)
+
+def f64_from_bits(b: int) -> float:
+    return nox_wasm_f64_from_bits_raw(b)
+
+def f32_bits(x: float) -> int:
+    return nox_wasm_f32_to_bits_raw(x)
+
+def f32_from_bits(b: int) -> float:
+    return nox_wasm_f32_from_bits_raw(b)

@@ -23,7 +23,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 | Capability | Meaning | Modules |
 |---|---|---|
 | none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
-| `filesystem` | files and directories | `fs`, `glob`, `tempfile`, `sqlite`, `timezone` |
+| `filesystem` | files and directories | `fs`, `glob`, `tempfile`, `sqlite`, `timezone`, `wasm` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `grpc`, `grpc_server`, `udp` |
 | `network` + `filesystem` | both | `transfer` |
 | `process` | the process and its children | `os`, `process`, `signal`, `terminal` |
@@ -90,6 +90,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.validate`](validate.md) | validate JSON against a schema |
 | [`nox.url`](url.md) | URLs, percent-encoding, query strings |
 | [`nox.base64`](base64.md), [`nox.uuid`](uuid.md), [`nox.gzip`](gzip.md), [`nox.tar`](tar.md), [`nox.zip`](zip.md), [`nox.zstd`](zstd.md) | Base64, UUIDs, compression and archives |
+| [`nox.wasm`](wasm.md) | Run WebAssembly modules (embedded interpreter, sandboxed, fuel and memory limits) |
 
 ### Security
 
