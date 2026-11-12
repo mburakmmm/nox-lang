@@ -1,0 +1,147 @@
+# nox.glob (v2.1.69) — dosya adı kalıbı genişletme (Python `glob`): `*`, `?`, `[..]` ve `recursive=True` ile `**`. Sonuçlar SIRALI döner (Python'un sırası belirsizdir).
+# `*`/`?`/`[..]` gizli adlarla ('.' ile başlayan) kalıp da '.' ile başlamıyorsa eşleşmez; `**` gizli dizinlere girmez. Dizin okuma `nox.fs.read_dir` üzerinden (filesystem yeteneği).
+# `root_dir` verilirse göreli kalıplar oradan çözülür ve sonuçlar `root_dir`e göre göreli kalır. GÜVEN SINIRI: kalıp güvenilmeyen girdiyse `nox.path.safe_join` ile kökünüzü sınırlayın.
+
+import nox.fs
+import nox.fnmatch
+from nox.fnmatch import has_magic, fnmatch
+
+def _join(prefix: str, name: str) -> str:
+    if prefix == "":
+        return name
+    if prefix[len(prefix) - 1] == "/":
+        return prefix + name
+    return prefix + "/" + name
+
+def _fs_path(root_dir: str, display: str) -> str:
+    if root_dir == "":
+        if display == "":
+            return "."
+        return display
+    if display == "" or display == "/":
+        return root_dir
+    if display[0] == "/":
+        return display
+    return _join(root_dir, display)
+
+def _split(pattern: str) -> list[str]:
+    parts: list[str] = []
+    cur: str = ""
+    i: int = 0
+    while i < len(pattern):
+        c: str = pattern[i]
+        if c == "/":
+            parts.append(cur)
+            cur = ""
+        else:
+            cur = cur + c
+        i = i + 1
+    parts.append(cur)
+    return parts
+
+def _sorted(xs: list[str]) -> list[str]:
+    return sorted(xs)
+
+def _is_hidden(name: str) -> bool:
+    return len(name) > 0 and name[0] == "."
+
+def _list(root_dir: str, display: str) -> list[str]:
+    path: str = _fs_path(root_dir, display)
+    if not nox.fs.is_dir(path):
+        return []
+    return _sorted(nox.fs.read_dir(path))
+
+# `display` dizinindeki tüm (gizli olmayan) alt dizinleri özyinelemeli toplar. (Liste parametresini değiştirmek bu derleyicide desteklenmediğinden yeni liste döner.)
+def _subdirs(root_dir: str, display: str) -> list[str]:
+    out: list[str] = []
+    names: list[str] = _list(root_dir, display)
+    for name in names:
+        if _is_hidden(name):
+            continue
+        child: str = _join(display, name)
+        if nox.fs.is_dir(_fs_path(root_dir, child)):
+            out.append(child)
+            deeper: list[str] = _subdirs(root_dir, child)
+            for d in deeper:
+                out.append(d)
+    return out
+
+# Her gizli olmayan girdi (dosya ve dizin), özyinelemeli.
+def _all_entries(root_dir: str, display: str) -> list[str]:
+    out: list[str] = []
+    names: list[str] = _list(root_dir, display)
+    for name in names:
+        if _is_hidden(name):
+            continue
+        child: str = _join(display, name)
+        out.append(child)
+        if nox.fs.is_dir(_fs_path(root_dir, child)):
+            deeper: list[str] = _all_entries(root_dir, child)
+            for e in deeper:
+                out.append(e)
+    return out
+
+def glob(pattern: str, root_dir: str = "", recursive: bool = False) -> list[str]:
+    if pattern == "":
+        return []
+    comps: list[str] = _split(pattern)
+    results: list[str] = [""]
+    if comps[0] == "" and len(comps) > 1:
+        # mutlak yol
+        results = ["/"]
+        rest: list[str] = []
+        k: int = 1
+        while k < len(comps):
+            rest.append(comps[k])
+            k = k + 1
+        comps = rest
+    idx: int = 0
+    while idx < len(comps):
+        comp: str = comps[idx]
+        last: bool = idx == len(comps) - 1
+        nxt: list[str] = []
+        if comp == "":
+            # sondaki '/': yalnızca dizinler, sonuna '/' eklenir
+            if last:
+                for r in results:
+                    if r != "" and nox.fs.is_dir(_fs_path(root_dir, r)):
+                        if r[len(r) - 1] == "/":
+                            nxt.append(r)
+                        else:
+                            nxt.append(r + "/")
+            else:
+                nxt = results
+        elif recursive and comp == "**":
+            for r in results:
+                if last:
+                    if r != "":
+                        nxt.append(_join(r, ""))
+                    entries: list[str] = _all_entries(root_dir, r)
+                    for e in entries:
+                        nxt.append(e)
+                else:
+                    nxt.append(r)
+                    dirs: list[str] = _subdirs(root_dir, r)
+                    for d in dirs:
+                        nxt.append(d)
+        elif has_magic(comp):
+            for r in results:
+                listing: list[str] = _list(root_dir, r)
+                for name in listing:
+                    if _is_hidden(name) and not _is_hidden(comp):
+                        continue
+                    if fnmatch(name, comp):
+                        cand: str = _join(r, name)
+                        if last or nox.fs.is_dir(_fs_path(root_dir, cand)):
+                            nxt.append(cand)
+        else:
+            for r in results:
+                cand2: str = _join(r, comp)
+                if last:
+                    if nox.fs.exists(_fs_path(root_dir, cand2)):
+                        nxt.append(cand2)
+                elif nox.fs.is_dir(_fs_path(root_dir, cand2)):
+                    nxt.append(cand2)
+        results = nxt
+        idx = idx + 1
+    return _sorted(results)

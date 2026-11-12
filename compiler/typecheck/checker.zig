@@ -1459,6 +1459,9 @@ pub const Checker = struct {
         .{ .name = "csv", .caps = &.{} },
         .{ .name = "db", .caps = &.{} },
         .{ .name = "fs", .caps = &.{.filesystem} },
+        // v2.1.69: `nox.fnmatch` saf kalıp eşleme; `nox.glob`/`nox.tempfile` `nox.fs` üzerine kuruludur.
+        .{ .name = "fnmatch", .caps = &.{} },
+        .{ .name = "glob", .caps = &.{.filesystem} },
         // v2.1.33: gRPC istemcisi (HTTP/2 h2c, düz TCP); Windows/wasm'da `tcp` taşımasının sınırları redis ile aynıdır.
         .{ .name = "grpc", .caps = &.{.network} },
         .{ .name = "grpc_server", .caps = &.{.network} },
@@ -1498,6 +1501,7 @@ pub const Checker = struct {
         .{ .name = "postgres", .caps = &.{.network} },
         .{ .name = "process", .caps = &.{.process} },
         .{ .name = "signal", .caps = &.{.process} },
+        .{ .name = "tempfile", .caps = &.{.filesystem} },
         .{ .name = "terminal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },
         .{ .name = "property", .caps = &.{} },

@@ -1931,7 +1931,22 @@ test "HTTP/2 (h2c): SSE parça parça akar; istemci RST_STREAM'i handler'ı biti
     srv.watchdog.disarm();
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
-    try std.testing.expectEqualStrings("events done\nevents aborted\nforever closed\ndrained\n", stdout_data);
+    // "events aborted" (istemci iptali) ile "forever closed" (SIGTERM) arasındaki sıra yüklü CI koşucularında kayabilir (iptal bir sonraki 250 ms aralığında fark edilir);
+    // sıra-bağımsız doğrula: ilk "events done", son "drained", ortadaki ikisi her biri tam bir kez.
+    var lines_it = std.mem.splitScalar(u8, stdout_data, '\n');
+    var got: [8][]const u8 = undefined;
+    var ngot: usize = 0;
+    while (lines_it.next()) |ln| {
+        if (ln.len == 0) continue;
+        got[ngot] = ln;
+        ngot += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 4), ngot);
+    try std.testing.expectEqualStrings("events done", got[0]);
+    try std.testing.expectEqualStrings("drained", got[3]);
+    const mid_ok = (std.mem.eql(u8, got[1], "events aborted") and std.mem.eql(u8, got[2], "forever closed")) or
+        (std.mem.eql(u8, got[1], "forever closed") and std.mem.eql(u8, got[2], "events aborted"));
+    try std.testing.expect(mid_ok);
     try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
 }
 

@@ -242,11 +242,11 @@ jobs:
       - name: WASM farksal vektörleri (Node/V8) güncel mi
         if: runner.os == 'Linux'
         run: |
-          if command -v node >/dev/null 2>&1 && command -v wasm-as >/dev/null 2>&1; then
+          if command -v node >/dev/null 2>&1; then
             python3 scripts/wasm_gen_vectors.py --check
             python3 scripts/wasm_gen_programs.py --check
           else
-            echo "node/wasm-as yok: farksal vektör denetimi atlandı"
+            echo "node yok: farksal vektör denetimi atlandı"
           fi
 
       # v2.1.36: `tests/cli/grpc_test.zig` (nox.grpc, gerçek bir grpcio sunucusuna karşı) grpcio yoksa sessizce atlanır; Linux'ta kurulur (macOS'ta pip "externally managed" olabilir, orada atlanması kabul).

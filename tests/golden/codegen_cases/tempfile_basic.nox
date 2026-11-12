@@ -1,0 +1,29 @@
+# nox.tempfile: mkdtemp/mkstemp/TemporaryDirectory (with), benzersiz adlar, ön ek/son ek, temizlik.
+import nox.fs
+import nox.tempfile
+from nox.tempfile import TemporaryDirectory, mkdtemp, mkstemp, gettempdir
+
+print(gettempdir() != "")
+
+d1: str = mkdtemp("nox-t-")
+d2: str = mkdtemp("nox-t-")
+print(nox.fs.is_dir(d1), nox.fs.is_dir(d2), d1 != d2)
+print(d1.startswith("/") or len(d1) > 3)
+
+f: str = mkstemp("nox-f-", ".log", d1)
+print(nox.fs.is_file(f), f.endswith(".log"), nox.fs.read_to_string(f) == "")
+nox.fs.write_string(f, "hello")
+print(nox.fs.read_to_string(f))
+
+kept: str = ""
+with TemporaryDirectory("nox-w-", "", d1) as t:
+    nox.fs.write_string(t.path + "/a.txt", "1")
+    nox.fs.create_dir_all(t.path + "/sub/deep")
+    nox.fs.write_string(t.path + "/sub/deep/b.txt", "2")
+    print(nox.fs.is_dir(t.path), nox.fs.exists(t.path + "/sub/deep/b.txt"))
+    kept = t.path
+print(nox.fs.exists(kept))
+
+nox.fs.remove_dir_all(d1)
+nox.fs.remove_dir_all(d2)
+print(nox.fs.exists(d1), nox.fs.exists(d2))

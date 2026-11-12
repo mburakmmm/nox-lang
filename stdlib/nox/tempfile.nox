@@ -1,0 +1,75 @@
+# nox.tempfile (v2.1.69) — geçici dosya/dizin (Python `tempfile`): `mkdtemp`, `mkstemp`, `TemporaryDirectory` (with ile). Adlar `nox.crypto.secure_random_hex` ile
+# tahmin edilemez üretilir; dizin oluşturma atomiktir (var olan ad `FsError` verir ve yeniden denenir), dosya oluşturma `exists` + yazma ile yapılır (O_EXCL yok: tahmin
+# edilemez ad nedeniyle yarış penceresi pratikte kapalıdır). GÜVENLİK: dosya izinleri işletim sistemi varsayılanıdır (0600 zorlanmaz).
+
+import nox.fs
+import nox.os
+import nox.crypto
+from nox.fs import FsError
+
+class TempFileError(Exception):
+    pass
+
+# Geçici dosyaların konacağı dizin: TMPDIR, TEMP, TMP ortam değişkenleri sırasıyla; yoksa "/tmp".
+def gettempdir() -> str:
+    for name in ["TMPDIR", "TEMP", "TMP"]:
+        v: str = nox.os.getenv(name)
+        if v != "":
+            return v
+    return "/tmp"
+
+def _base(dir: str) -> str:
+    if dir != "":
+        return dir
+    return gettempdir()
+
+def _candidate(prefix: str, suffix: str, dir: str) -> str:
+    base: str = _base(dir)
+    sep: str = "/"
+    if base[len(base) - 1] == "/":
+        sep = ""
+    return base + sep + prefix + nox.crypto.secure_random_hex(6) + suffix
+
+# Yeni, boş bir dizin oluşturur ve yolunu döndürür.
+def mkdtemp(prefix: str = "tmp", suffix: str = "", dir: str = "") -> str:
+    attempt: int = 0
+    while attempt < 100:
+        path: str = _candidate(prefix, suffix, dir)
+        if not nox.fs.exists(path):
+            try:
+                nox.fs.create_dir(path)
+                return path
+            except FsError as e:
+                attempt = attempt + 1
+                continue
+        attempt = attempt + 1
+    raise TempFileError("could not create a unique temporary directory")
+
+# Yeni, boş bir dosya oluşturur ve yolunu döndürür.
+def mkstemp(prefix: str = "tmp", suffix: str = "", dir: str = "") -> str:
+    attempt: int = 0
+    while attempt < 100:
+        path: str = _candidate(prefix, suffix, dir)
+        if not nox.fs.exists(path):
+            nox.fs.write_string(path, "")
+            return path
+        attempt = attempt + 1
+    raise TempFileError("could not create a unique temporary file")
+
+# `with TemporaryDirectory() as d:` — çıkışta dizin ve içindekiler silinir.
+class TemporaryDirectory:
+    path: str
+
+    def __init__(self, prefix: str = "tmp", suffix: str = "", dir: str = "") -> None:
+        self.path = mkdtemp(prefix, suffix, dir)
+
+    def __enter__(self: TemporaryDirectory) -> TemporaryDirectory:
+        return self
+
+    def __exit__(self: TemporaryDirectory) -> None:
+        self.cleanup()
+
+    # Dizini ve içeriğini siler (zaten silinmişse sessizce geçer).
+    def cleanup(self) -> None:
+        if nox.fs.exists(self.path):
+            nox.fs.remove_dir_all(self.path)

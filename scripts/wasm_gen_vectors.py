@@ -120,12 +120,16 @@ process.stdout.write(out.join('\n') + '\n');
 """
 
 
-def generate():
+def generate(check=False):
     with tempfile.TemporaryDirectory() as d:
         watp = os.path.join(d, "ops.wat")
         wasmp = os.path.join(d, "ops.wasm")
         open(watp, "w").write(wat())
-        subprocess.check_call(["wasm-as", "--enable-sign-ext", "--enable-nontrapping-float-to-int", "--enable-bulk-memory", "--enable-reference-types", "--enable-multivalue", "--enable-mutable-globals", watp, "-o", wasmp])
+        if check:
+            # --check: depodaki ops.wasm'ı kullan (eski binaryen sürümleri bu WAT'ı ayrıştıramayabilir); yalnızca Node gerekir.
+            open(wasmp, "wb").write(open(os.path.join(OUT, "ops.wasm"), "rb").read())
+        else:
+            subprocess.check_call(["wasm-as", "--enable-sign-ext", "--enable-nontrapping-float-to-int", "--enable-bulk-memory", "--enable-reference-types", "--enable-multivalue", "--enable-mutable-globals", watp, "-o", wasmp])
         cs = cases()
         jc = [[n, p, r, [format(a, "0%dx" % HEX[p[i]]) for i, a in enumerate(args)]] for n, p, r, args in cs]
         cj = os.path.join(d, "cases.json")
@@ -137,7 +141,7 @@ def generate():
 
 
 def main():
-    w, wasm, txt = generate()
+    w, wasm, txt = generate("--check" in sys.argv)
     if "--check" in sys.argv:
         bad = []
         # ops.wasm baytları binaryen sürümüne göre değişebilir; anlamsal olarak önemli olan beklenen sonuçlardır.

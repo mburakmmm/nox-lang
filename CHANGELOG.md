@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.69]
+
+### Eklendi
+
+- **`nox.fnmatch`, `nox.glob`, `nox.tempfile` (TODO 2.12):** kabuk tarzı ad eşleme (`*`, `?`, `[..]`, `[!..]`), dosya adı kalıbı genişletme (`**` özyinelemeli, gizli ad kuralı, `root_dir`, sıralı sonuç) ve geçici dosya/dizin (`mkdtemp`, `mkstemp`, `with TemporaryDirectory()`). `fnmatch` 400 rastgele çiftte, `glob` 51 kalıpta Python ile birebir. Docs: `fnmatch.md`, `glob.md`, `tempfile.md`.
+
+### Düzeltildi
+
+- CI: macOS'ta h2c SSE testi (`events aborted` / `forever closed` satır sırası yük altında kayıyordu) sıra-bağımsız doğrulanıyor (TODO 7.4). Farksal WASM vektör denetimi yalnızca Node gerektirir (Ubuntu'daki eski binaryen WAT'ı ayrıştıramadığı için Linux aarch64 işi kırmızıydı).
+
 ## [2.1.68]
 
 ### Eklendi

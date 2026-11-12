@@ -44,7 +44,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **2.7** Eksik modül adayları: kullanıcı seçimi (2026-11-11): bigint+decimal/fraction, argparse, tempfile+glob/fnmatch, zip/tar/zstd+md5/sha3/blake3 (aşağıda 2.10-2.13); `XML/HTML`, `Mutex/Semaphore`, `.env/ini` istenmedi
 - [x] **2.10** `nox.bigint` (**v2.1.66**, Zig std.math.big + Python `int` ile birebir golden) + `nox.decimal`/`nox.fraction` (**v2.1.67**, saf Nox)
 - [x] **2.11** `nox.argparse` (komut satırı ayrıştırıcı) — **v2.1.68** (Python `argparse` ile 140 rastgele argv'de birebir)
-- [ ] **2.12** `nox.tempfile` + `nox.glob`/`fnmatch`
+- [x] **2.12** `nox.tempfile` + `nox.glob`/`fnmatch` — **v2.1.69** (Python `fnmatch`/`glob` ile birebir golden)
 - [ ] **2.13** `zip`/`tar`/`zstd`(yalnız açma: Zig std yalnız açar) arşiv/sıkıştırma + `md5`/`sha3`/`blake3` özetleri (Zig std.crypto; yeni bağımlılık YOK)
 - [x] **2.9** Büyük tahsis maliyeti: tam-eşit-boyutlu büyük blok önbelleği + SIMD ASCII taraması — **v2.1.60** (1 MB concat+len 0.36 → 0.10 ms; upper/lower/trim 55 → 5.4 ms)
 - [x] **2.8** Yeniden ölçüm (v2.1.61): geometrik ortalama **0.68**; ≤ 1.5x hedefi: gzip 2.5x/2.2x (bağımlılık yok kararı) ve base64.decode 2.0x dışında sağlandı. (base64.decode SIMD tek geçişe alındı: 2.6 → 1.2 ms, 0.91x — v2.1.63; yeniden ölçüm geometrik ortalama 0.58)
@@ -81,9 +81,10 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 ## 7. İşletim / bekleyenler
 
 - [~] **7.1** Site arka ucunun sürüm seçimi düzeltmesini M4'e canlıya alma (`services/noxlang-site/main.nox`) — **kullanıcı onayı gerekir**
-- [ ] **7.4** `http_serve_golden_test` h2c SSE testi macOS CI'da sıra yarışı yaşadı (v2.1.57: `events aborted`/`forever closed` satır sırası); testi sıra-bağımsız yap ya da senkronla
+- [x] **7.4** (**v2.1.69**: son iki satır sıra-bağımsız doğrulanıyor) `http_serve_golden_test` h2c SSE testi macOS CI'da sıra yarışı yaşadı (v2.1.57: `events aborted`/`forever closed` satır sırası); testi sıra-bağımsız yap ya da senkronla
 - [x] **7.5** CI `apt-get` yeniden-deneme sarmalayıcısı (ağ hatası) — **v2.1.60**
 - [x] **7.2** CI yeşil: **v2.1.64** (11/11 iş). Kırmızı nedenleri: GitHub apt DNS kesintisi (v2.1.56–60, v2.1.62'de `continue-on-error`), `ptr_of` fixture'ında `memcmp` dönüş genişliği (Linux/Windows, v2.1.63), riscv64 işinde `qemu-user-static` paketinin kalkması, `ci.yml` YAML hatası (v2.1.64'te düzeldi). Her sürüm sonrası `gh run list` ile kontrol sürer
 - [ ] **7.6** `Snap package` iş akışı "unable to contact snap store" ile kırmızı (v2.1.62–64; CI değil, yayın iş akışı): Snap Store kimlik bilgisi/ağ kullanıcıda kontrol edilmeli
 - [ ] **7.7** `Release` iş akışı CI kırmızıyken atlanır: v2.1.56–63 için GitHub Release oluşmadı (v2.1.64 ile yeniden başladı); gerekirse boşluk sürümleri tek tek yayımlanmaz, v2.1.64 notları yeterli
+- [ ] **7.8** Derleyici kısıtı: serbest işlevde `list[T]` PARAMETRESİNİ değiştirmek (`def f(acc: list[int]) -> None: acc.append(1)`) `codegen: ... not supported at the moment` veriyor (HEAD'de, her iki backend); ayrı inceleme gerekir (v2.1.69'da stdlib çözümü: yeni liste döndürmek)
 - [ ] **7.3** `list[Task[T]]` (bilinçli desteklenmiyor; hata `TaskGroup`'a yönlendirir) — değişmedi

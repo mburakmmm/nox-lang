@@ -1,0 +1,117 @@
+# nox.fnmatch (v2.1.69) — kabuk tarzı ad eşleme (Python `fnmatch`): `*` (her şey), `?` (tek karakter), `[abc]`, `[a-z]`, `[!abc]` (olumsuz sınıf).
+# Büyük/küçük harfe DUYARLIDIR (Python'un Windows'taki harf normalleştirmesi yoktur). Saf Nox; baytlar üzerinde çalışır (ASCII adlar için tam).
+
+# `name`, `pattern` ile tamamen eşleşiyor mu.
+def fnmatch(name: str, pattern: str) -> bool:
+    return _match(name, 0, pattern, 0)
+
+# `names` içinden `pattern` ile eşleşenleri döndürür (sırayı korur).
+def filter_names(names: list[str], pattern: str) -> list[str]:
+    out: list[str] = []
+    for n in names:
+        if fnmatch(n, pattern):
+            out.append(n)
+    return out
+
+# Kalıpta özel karakter (`*`, `?`, `[`) var mı.
+def has_magic(pattern: str) -> bool:
+    i: int = 0
+    while i < len(pattern):
+        c: str = pattern[i]
+        if c == "*" or c == "?" or c == "[":
+            return True
+        i = i + 1
+    return False
+
+# Kalıptaki özel karakterleri sıradan karaktere çevirir (`[*]` biçimine sarar).
+def escape(s: str) -> str:
+    out: str = ""
+    i: int = 0
+    while i < len(s):
+        c: str = s[i]
+        if c == "*" or c == "?" or c == "[":
+            out = out + "[" + c + "]"
+        else:
+            out = out + c
+        i = i + 1
+    return out
+
+# `[...]` sınıfı `pattern[pi]` ('[')dan başlar; kapanış indeksini ya da -1 (sınıf kapanmıyor: '[' sıradan karakter) döndürür.
+def _class_end(pattern: str, pi: int) -> int:
+    j: int = pi + 1
+    if j < len(pattern) and pattern[j] == "!":
+        j = j + 1
+    if j < len(pattern) and pattern[j] == "]":
+        j = j + 1
+    while j < len(pattern) and pattern[j] != "]":
+        j = j + 1
+    if j >= len(pattern):
+        return -1
+    return j
+
+def _in_class(c: str, pattern: str, pi: int, end: int) -> bool:
+    j: int = pi + 1
+    negate: bool = False
+    if pattern[j] == "!":
+        negate = True
+        j = j + 1
+    found: bool = False
+    first: bool = True
+    while j < end:
+        lo: str = pattern[j]
+        if j + 2 < end and pattern[j + 1] == "-":
+            hi: str = pattern[j + 2]
+            if c >= lo and c <= hi:
+                found = True
+            j = j + 3
+        else:
+            if c == lo:
+                found = True
+            j = j + 1
+        first = False
+    if negate:
+        return not found
+    return found
+
+def _match(name: str, ni: int, pattern: str, pi: int) -> bool:
+    # yineleme: `*` için geri izleme
+    star_pi: int = -1
+    star_ni: int = 0
+    while True:
+        if pi < len(pattern):
+            p: str = pattern[pi]
+            if p == "*":
+                star_pi = pi
+                star_ni = ni
+                pi = pi + 1
+                continue
+            if ni < len(name):
+                if p == "?":
+                    ni = ni + 1
+                    pi = pi + 1
+                    continue
+                if p == "[":
+                    end: int = _class_end(pattern, pi)
+                    if end >= 0:
+                        if _in_class(name[ni], pattern, pi, end):
+                            ni = ni + 1
+                            pi = end + 1
+                            continue
+                    elif name[ni] == "[":
+                        ni = ni + 1
+                        pi = pi + 1
+                        continue
+                elif p == name[ni]:
+                    ni = ni + 1
+                    pi = pi + 1
+                    continue
+        elif ni >= len(name):
+            return True
+        # uyuşmazlık: son `*`ı bir karakter daha genişlet
+        if star_pi >= 0 and star_ni < len(name):
+            star_ni = star_ni + 1
+            ni = star_ni
+            pi = star_pi + 1
+            continue
+        return False
+    return False

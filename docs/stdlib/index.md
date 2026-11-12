@@ -22,8 +22,8 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
-| `filesystem` | files and directories | `fs`, `sqlite`, `timezone` |
+| none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
+| `filesystem` | files and directories | `fs`, `glob`, `tempfile`, `sqlite`, `timezone` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `grpc`, `grpc_server`, `udp` |
 | `network` + `filesystem` | both | `transfer` |
 | `process` | the process and its children | `os`, `process`, `signal`, `terminal` |
