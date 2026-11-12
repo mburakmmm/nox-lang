@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.73]
+
+### Eklendi
+
+- **`benchmarks/lang_perf/` — dil çekirdeği kıyas paketi (TODO 3.5.1):** 19 çekirdek (sayısal döngü, özyineleme, sözlük, liste, dize, metot/sanal/işlev-değer çağrısı, jeneratör, istisna, nesne ağacı, sıralama) Nox'ta, Python'da ve C'de; `run.py` sağlama toplamlarını üç dilde doğrulayıp LLVM/QBE/C/Python sürelerini ve oranlarını yazar. Tur 1: Nox LLVM, C -O2'nin ortalama ~1.9 katında, CPython 3.15 JIT'ten ~11x hızlı. Rapor: `project/dil-performans-analizi-2026-11.md`.
+
 ## [2.1.72]
 
 ### Eklendi
