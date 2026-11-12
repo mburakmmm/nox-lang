@@ -1218,8 +1218,19 @@ pub export fn nox_str_repeat(rt: ?*anyopaque, s: ?[*:0]const u8, n: i64) ?[*:0]u
     const bytes = nox_str_slice(p);
     const count: usize = @intCast(n);
     const buf = nox_str_alloc_buf(rt, bytes.len * count) orelse return null;
-    var i: usize = 0;
-    while (i < count) : (i += 1) @memcpy(buf[i * bytes.len ..][0..bytes.len], bytes);
+    // v2.1.85: kalıp bir kez kopyalanır, dolu bölge ikiye katlanarak çoğaltılır (eskiden `count` adet küçük `memcpy`); tek baytlıkta `memset`.
+    const total = bytes.len * count;
+    if (bytes.len == 1) {
+        @memset(buf[0..total], bytes[0]);
+    } else if (total > 0) {
+        @memcpy(buf[0..bytes.len], bytes);
+        var filled: usize = bytes.len;
+        while (filled < total) {
+            const chunk = @min(filled, total - filled);
+            @memcpy(buf[filled..][0..chunk], buf[0..chunk]);
+            filled += chunk;
+        }
+    }
     if (ensureAsciiResolved(p)) setStrAsciiState(@ptrCast(buf), ASCII_TRUE);
     return @ptrCast(buf);
 }

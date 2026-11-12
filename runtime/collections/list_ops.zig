@@ -47,8 +47,10 @@ fn sliceRaw(rt: ?*anyopaque, src: [*]const u8, lo: usize, hi: usize, esz: usize,
     const n = hi - lo;
     const out = newList(rt, n, esz) orelse return null;
     if (n > 0) @memcpy(out[HDR..][0 .. n * esz], src[HDR + lo * esz ..][0 .. n * esz]);
-    var i: usize = 0;
-    while (i < n) : (i += 1) retainElem(out + HDR + i * esz, kind);
+    if (kind != 0) {
+        var i: usize = 0;
+        while (i < n) : (i += 1) retainElem(out + HDR + i * esz, kind);
+    }
     return @ptrCast(out);
 }
 
@@ -66,8 +68,10 @@ pub export fn nox_list_concat(rt: ?*anyopaque, a: ?*anyopaque, b: ?*anyopaque, e
     const out = newList(rt, la + lb, esz) orelse return null;
     if (la > 0) @memcpy(out[HDR..][0 .. la * esz], pa[HDR..][0 .. la * esz]);
     if (lb > 0) @memcpy(out[HDR + la * esz ..][0 .. lb * esz], pb[HDR..][0 .. lb * esz]);
-    var i: usize = 0;
-    while (i < la + lb) : (i += 1) retainElem(out + HDR + i * esz, kind);
+    if (kind != 0) {
+        var i: usize = 0;
+        while (i < la + lb) : (i += 1) retainElem(out + HDR + i * esz, kind);
+    }
     return @ptrCast(out);
 }
 
@@ -78,12 +82,28 @@ pub export fn nox_list_repeat(rt: ?*anyopaque, a: ?*anyopaque, n_i: i64, esz_i: 
     const la = hdrLen(@constCast(pa));
     const reps: usize = if (n_i <= 0) 0 else @intCast(n_i);
     const out = newList(rt, la * reps, esz) orelse return null;
-    var r: usize = 0;
-    while (r < reps) : (r += 1) {
-        if (la > 0) @memcpy(out[HDR + r * la * esz ..][0 .. la * esz], pa[HDR..][0 .. la * esz]);
+    // v2.1.85: kalıp bir kez kopyalanır, sonra dolu bölge ikiye katlanarak çoğaltılır (O(log n) `memcpy`; `[x] * n` için eskiden n adet 1-8 baytlık
+    // kopya vardı). Tek baytlık elemanda (`list[bool]`/`u8`) doğrudan `memset`.
+    const total = la * reps * esz;
+    if (total > 0) {
+        const unit = la * esz;
+        const dst = out + HDR;
+        if (unit == 1) {
+            @memset(dst[0..total], pa[HDR]);
+        } else {
+            @memcpy(dst[0..unit], pa[HDR..][0..unit]);
+            var filled: usize = unit;
+            while (filled < total) {
+                const chunk = @min(filled, total - filled);
+                @memcpy(dst[filled..][0..chunk], dst[0..chunk]);
+                filled += chunk;
+            }
+        }
     }
-    var i: usize = 0;
-    while (i < la * reps) : (i += 1) retainElem(out + HDR + i * esz, kind);
+    if (kind != 0) {
+        var i: usize = 0;
+        while (i < la * reps) : (i += 1) retainElem(out + HDR + i * esz, kind);
+    }
     return @ptrCast(out);
 }
 

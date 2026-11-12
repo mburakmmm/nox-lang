@@ -29949,3 +29949,7 @@ Hepsi semantik korumalı (gözlemlenebilir davranış aynı), iki backend'de (LL
 
 `dict.zig` `compact`: indeks kuruluysa ve `index.slots.len >= 2 * (canlı + 1)` ise `deinit` + `buildIndex` yerine mevcut dizi `@memset(0)` ile sıfırlanıp girdiler `IndexTable.place` ile yeniden yerleştirilir (`count`/`deleted` sıfırlanıp yeniden sayılır); aksi halde eski yol. Neden: ölçüm (vmmap + sayaçlı sarmalayıcı allocator) canlı bayt ve ARC sayaçlarının dengeli, RSS'in `SmpAllocator` dilimlerinde büyüdüğünü gösterdi; tahsis döngüsünü ortadan kaldırmak sorunu giderdi. `grow` (yük çarpanı) yolu değişmedi.
 
+### 3.433 Tekrar (`*`) doldurmasında ikiye katlama (v2.1.85, TODO 3.5.3)
+
+`runtime/collections/list_ops.zig` `nox_list_repeat` ve `runtime/str.zig` `nox_str_repeat`: ilk `unit = len*esz` bayt kopyalanır, sonra `filled` bölgesi `min(filled, total - filled)` parçalarla kendi üzerine kopyalanarak ikiye katlanır (O(log n) çağrı); `unit == 1` ise `@memset`. Sahiplik/anlam değişmez: skaler olmayan elemanlarda kopya sonrası her eleman retain edilir (aynı örnek paylaşılır; büyütme/yeniden tahsis sonrası ayrışma mevcut davranışıdır ve değişmedi).
+

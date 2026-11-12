@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.85]
+
+### Değişti
+
+- **`list * n` ve `str * n` ikiye katlanarak doldurulur (TODO 3.5.3):** `nox_list_repeat` ve `nox_str_repeat` kalıbı bir kez kopyalayıp dolu bölgeyi ikiye katlıyor (tek baytlık elemanda `memset`); eskiden her tekrar için ayrı küçük `memcpy` çağrısı vardı. Retain döngüsü `kind == 0` (skaler) iken atlanır (`copy`/`concat`/`slice` dahil). `[True] * 4_000_000` 5,4 ms → 0,05 ms; `lang_perf` `sieve_4M` 3,0x → 1,5x, `str_index_loop_1M` 2,7x → 1,5x; geometrik ortalama llvm/c 1,57 → 1,45 (QBE 1,97 → 1,84). Golden: `repeat_doubling_fill` (Python ile aynı, iki backend)
+
 ## [2.1.84]
 
 ### Düzeltildi
