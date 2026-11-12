@@ -137,6 +137,9 @@ const mut_add = [_]u8{ 0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1,
 const mut_spin = [_]u8{ 0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 7, 8, 1, 4, 115, 112, 105, 110, 0, 0, 10, 9, 1, 7, 0, 3, 64, 12, 0, 11, 11 };
 const mut_import = [_]u8{ 0, 97, 115, 109, 1, 0, 0, 0, 1, 6, 1, 96, 1, 127, 1, 127, 2, 13, 1, 3, 101, 110, 118, 5, 116, 119, 105, 99, 101, 0, 0, 3, 2, 1, 0, 7, 7, 1, 3, 114, 117, 110, 0, 1, 10, 11, 1, 9, 0, 32, 0, 16, 0, 65, 1, 106, 11 };
 
+// SIMD (v128, 0xFD önekli) komutlar, v128 blok sonucu/dallanma ve gölge yığın yolları (v2.1.98).
+const mut_simd = [_]u8{ 0, 97, 115, 109, 1, 0, 0, 0, 1, 6, 1, 96, 1, 127, 1, 127, 3, 2, 1, 0, 5, 3, 1, 0, 1, 7, 11, 2, 3, 109, 101, 109, 2, 0, 1, 102, 0, 0, 10, 74, 1, 72, 1, 1, 123, 2, 123, 32, 0, 253, 0, 0, 1, 253, 12, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 253, 174, 1, 32, 0, 13, 0, 26, 32, 0, 253, 17, 11, 34, 1, 32, 1, 253, 13, 0, 17, 2, 19, 4, 21, 6, 23, 8, 25, 10, 27, 12, 29, 14, 31, 32, 0, 253, 109, 253, 27, 2, 11 };
+
 fn mutateAll(base: []const u8) !void {
     const copy = try std.testing.allocator.alloc(u8, base.len);
     defer std.testing.allocator.free(copy);
@@ -155,5 +158,5 @@ test "regresyon: geçerli modüllerin bayt mutasyonları ve önekleri çökmeden
     try mutateAll(&mut_add);
     try mutateAll(&mut_spin);
     try mutateAll(&mut_import);
+    try mutateAll(&mut_simd);
 }
-

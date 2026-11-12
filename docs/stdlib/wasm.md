@@ -100,11 +100,19 @@ WASI is **off by default**; `h.enable_wasi(args)` turns on a small, capability-b
 
 A WASI function that the engine does not implement is reported by name when the module is opened.
 
+## SIMD (v128)
+
+The engine runs the fixed-width SIMD proposal (the `0xFD` prefix: loads/stores, lane operations, shuffle/swizzle, integer and float arithmetic, comparisons, narrowing/widening, conversions; everything except the relaxed-SIMD extension). Compilers such as `clang -msimd128` or Rust with `+simd128` emit it, and a module that uses it validates and runs like any other.
+
+A `v128` value is 128 bits wide and cannot be represented as a Nox `int`, so it **never crosses the Nox boundary**: an export whose parameters or results include `v128` is reported by `signature()` but `call` raises `WasmError`, a host import with a `v128` signature is rejected when the module is opened, and `v128` globals are not supported (the module is rejected). Pass vectors through linear memory or as an `i64` pair in a thin wrapper export (`(i64 lo, i64 hi)`), which is also how the test-suite drives every instruction.
+
+Vectors live in a shadow stack next to the value stack, allocated only for modules that use SIMD, so a module without SIMD pays nothing. Float `min`/`max`/`nearest` follow the scalar rules (NaN, signed zero, ties-to-even); the payload of a produced NaN is unspecified, as the specification allows.
+
 ## Speed
 
 The engine is a plain interpreter (no JIT, by design: the same code runs on iOS and Android). Measured on an Apple M4, ReleaseFast: a recursive `fib(32)` takes about 170 ms (V8's JIT: 9 ms) and a 100-million-iteration `i64` loop about 1.3 s (V8: 0.12 s), roughly 10-20 times slower than a JIT. It is meant for plugins, sandboxed helpers and portable modules, not for heavy numeric kernels; for those compile the code natively or use `extern def`. The fuel budget counts branches and calls.
 
 ## Robustness
 
-The binary parser, the instantiation step (imports, memory and table setup, `start` function) and the execution of exported functions are fuzzed (`tests/fuzz/wasm_parser_fuzz.zig`), and every single-byte mutation and every prefix of three small valid modules is checked on each test run: no input may crash, hang or leak. Differential tests compare 36 904 numeric vectors and real compiled programs against Node's WebAssembly engine on every CI run.
+The binary parser, the instantiation step (imports, memory and table setup, `start` function) and the execution of exported functions are fuzzed (`tests/fuzz/wasm_parser_fuzz.zig`), and every single-byte mutation and every prefix of four small valid modules (one of them SIMD) is checked on each test run: no input may crash, hang or leak. Differential tests compare 36 904 numeric vectors and 9 330 SIMD vectors (including `v128` blocks, branches, calls, `select` and recursion) and real compiled programs against Node's WebAssembly engine on every CI run.
 

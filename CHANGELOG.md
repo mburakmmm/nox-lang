@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.98]
+
+### Eklendi
+
+- **WASM SIMD (v128) desteği** (`runtime/wasm_bridge/simd.zig`, TODO 4.6'nın SIMD yarısı): sabit-genişlikli SIMD önerisinin tamamı (`0xFD` öneki; relaxed-SIMD hariç) — yükleme/depolama (+ lane, splat, zero, extend), `v128.const`, `i8x16.shuffle`/`swizzle`, splat/extract/replace, tüm tamsayı ve float aritmetiği, karşılaştırmalar, bitmask/all_true/any_true, narrow/extend/extmul/extadd/dot/q15, dönüşümler. Tasarım: v128 değeri normal `u64` yığınıyla AYNI indeksli bir **gölge yığın** (`vstack: []u128`, yalnızca SIMD kullanan modülde tahsis edilir) yuvasında yaşar; v128 yerel/`select`/dallanma/dönüş için ayrı iç opcode'lar (`OP_*_V`) kullanıldığından SIMD kullanmayan kodun opcode akışı ve hızı DEĞİŞMEDİ. v128 sabitleri/shuffle maskeleri işlev başına sabit havuzunda. Doğrulayıcı `v128` blok tiplerini (`-5`), v128 yerel/blok parametre/sonuçlarını, hizalama ve lane sınırlarını denetler
+- **Farksal test: 9 330 SIMD vektörü V8 ile bit-bit aynı** (`scripts/wasm_gen_simd_vectors.py` -> `tests/compat/wasm_simd/`, `tests/compat/wasm_simd_test.zig`): 370 işlev (her komut + her lane indeksi + 8 shuffle maskesi + bellek yükleme/depolama sınır tuzakları) ve v128 değerlerinin blok/`br_if`/`br_table`/`select`/çağrı/çok-değerli dönüş/özyineleme/`call_indirect`/`return`/döngü parametresiyle taşındığı denetim akışı programları; NaN lane'ler "NaN mı" olarak karşılaştırılır. Mutasyon denetimi yapıldı (tek bir komutu bozmak testi kırar)
+- **Fuzz kapsamı:** dördüncü deterministik mutasyon modülü SIMD'li (`mut_simd`: v128 blok sonucu, `br_if`, shuffle, shift)
+- Golden `wasm_simd` (iki backend): i32 arayüzlü SIMD modülünü `nox.wasm` ile sürer (splat/replace/extract, `v128.load`/`store` döngüsü, bitmask, sınır reddi, bellek tuzağı)
+
+### Notlar
+
+- **v128 Nox sınırından GEÇMEZ:** `v128` parametre/sonuçlu dışa aktarma `call`da `WasmError`, `v128` imzalı host içe aktarması modül açılırken reddedilir, `v128` globaller desteklenmez (modül reddedilir). Vektörler doğrusal bellek ya da `(i64, i64)` sarmalayıcıyla taşınır. Belge: `docs/stdlib/wasm.md` "SIMD (v128)"
+
 ## [2.1.97]
 
 ### Düzeltildi

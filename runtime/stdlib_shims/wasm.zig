@@ -138,7 +138,6 @@ fn trapName(e: anyerror) []const u8 {
     return @errorName(e);
 }
 
-
 // ----------------------------------------------------------------------------------------- WASI preview1 alt kümesi (yetenek tabanlı, varsayılan kapalı)
 
 const WasiFn = struct { name: []const u8, p: []const module_mod.ValType, r: []const module_mod.ValType, f: interp.HostFn };
@@ -608,6 +607,14 @@ fn callCommon(h: *Handle, name: []const u8, args: []const u64) bool {
         setErr(h, "too many results", .{});
         return false;
     }
+    for (ft.params) |t| if (t == .v128) {
+        setErr(h, "'{s}' takes a v128 parameter, which cannot cross the Nox boundary (wrap it in an i64-pair export)", .{name});
+        return false;
+    };
+    for (ft.results) |t| if (t == .v128) {
+        setErr(h, "'{s}' returns a v128 value, which cannot cross the Nox boundary (wrap it in an i64-pair export)", .{name});
+        return false;
+    };
     var res: [16]u64 = undefined;
     inst.invoke(idx, args, res[0..ft.results.len]) catch |e| {
         setErr(h, "trap: {s}", .{trapName(e)});

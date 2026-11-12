@@ -6,13 +6,15 @@
 //! ne de çalışma zamanı tip denetimine ihtiyaç duyar; bozuk bir modül çalıştırılmadan önce `error.InvalidModule` ile reddedilir.
 //!
 //! Desteklenenler: MVP + çok değerli dönüş/blok tipleri + sign-extension + doymalı dönüşümler (0xFC 0-7) + bulk-memory (0xFC 8-17) + reference types
-//! (`ref.*`, `table.get/set`, tipli `select`). SIMD (0xFD) ve threads (0xFE) desteklenmez.
+//! (`ref.*`, `table.get/set`, tipli `select`) + SABİT-GENİŞLİKLİ SIMD (0xFD, v2.1.98): v128 değeri aynı yığın indeksli `vstack` GÖLGE yuvasında yaşar, v128 yerel/`select`/dallanma/dönüş
+//! için ayrı iç opcode'lar (`OP_*_V`) kullanılır, böylece v128 kullanmayan kodun opcode akışı ve hızı DEĞİŞMEZ. Threads (0xFE) desteklenmez.
 
 const std = @import("std");
 const mod = @import("module.zig");
 const ValType = mod.ValType;
 const Module = mod.Module;
 const Reader = mod.Reader;
+const simd = @import("simd.zig");
 
 pub const Instr = extern struct {
     op: u16,
@@ -33,6 +35,10 @@ pub const FuncCode = struct {
     num_locals: u32,
     /// Operand yığınının ulaşabileceği azami yükseklik.
     max_stack: u32,
+    /// v128 sabitleri ve `i8x16.shuffle` maskeleri (komutun `a` alanı bu havuza indeks).
+    consts: []u128 = &.{},
+    /// Bu işlev v128 değerleri kullanıyor (gölge yığın gerekir).
+    uses_simd: bool = false,
 };
 
 /// Yorumlayıcının iç operasyon kodları: tek baytlık WASM opcode'ları aynen; `0xFC xx` -> `0x100 + xx`.
@@ -45,6 +51,17 @@ pub const OP_RETURN: u16 = 0x0f;
 pub const OP_CALL: u16 = 0x10;
 pub const OP_CALL_INDIRECT: u16 = 0x11; // `a` = tür indeksi, `b` = tablo indeksi
 pub const OP_FC: u16 = 0x100;
+/// SIMD: `0xFD xx` -> `OP_FD + xx` (xx <= 0x113 -> 0x200..0x313).
+pub const OP_FD: u16 = 0x200;
+/// v128 DEĞERLERİNİ taşıyan yığın/yerel işlemlerinin gölge-yığın farkında varyantları.
+pub const OP_LOCAL_GET_V: u16 = 0x3f0;
+pub const OP_LOCAL_SET_V: u16 = 0x3f1;
+pub const OP_LOCAL_TEE_V: u16 = 0x3f2;
+pub const OP_SELECT_V: u16 = 0x3f3;
+pub const OP_BR_V: u16 = 0x3f4;
+pub const OP_BR_IF_V: u16 = 0x3f5;
+pub const OP_BR_TABLE_V: u16 = 0x3f6;
+pub const OP_RETURN_V: u16 = 0x3f7;
 
 pub const CompileError = error{ InvalidModule, OutOfMemory };
 
@@ -52,6 +69,7 @@ const one_i32 = [_]ValType{.i32};
 const one_i64 = [_]ValType{.i64};
 const one_f32 = [_]ValType{.f32};
 const one_f64 = [_]ValType{.f64};
+const one_v128 = [_]ValType{.v128};
 const one_funcref = [_]ValType{.funcref};
 const one_externref = [_]ValType{.externref};
 const empty_types = [_]ValType{};
@@ -62,9 +80,15 @@ fn oneOf(t: ValType) []const ValType {
         .i64 => &one_i64,
         .f32 => &one_f32,
         .f64 => &one_f64,
+        .v128 => &one_v128,
         .funcref => &one_funcref,
         .externref => &one_externref,
     };
+}
+
+fn hasV128(ts: []const ValType) bool {
+    for (ts) |t| if (t == .v128) return true;
+    return false;
 }
 
 const Sig = struct { in: [2]ValType, n: u2, out: ValType };
@@ -181,8 +205,11 @@ const Compiler = struct {
     ctls: std.ArrayList(Ctl) = .empty,
     fixups: std.ArrayList(Fixup) = .empty,
     max_height: u32 = 0,
+    consts: std.ArrayList(u128) = .empty,
+    uses_simd: bool = false,
 
     fn deinit(self: *Compiler) void {
+        self.consts.deinit(self.a);
         self.instrs.deinit(self.a);
         self.brt.deinit(self.a);
         self.vals.deinit(self.a);
@@ -201,6 +228,9 @@ const Compiler = struct {
     }
 
     fn push(self: *Compiler, t: ?ValType) !void {
+        if (t) |tt| if (tt == .v128) {
+            self.uses_simd = true;
+        };
         try self.vals.append(self.a, t);
         if (self.vals.items.len > self.max_height) self.max_height = @intCast(self.vals.items.len);
     }
@@ -265,6 +295,7 @@ const Compiler = struct {
             -2 => .i64,
             -3 => .f32,
             -4 => .f64,
+            -5 => .v128,
             -16 => .funcref,
             -17 => .externref,
             else => return error.InvalidModule,
@@ -362,7 +393,7 @@ const Compiler = struct {
                 const c = try self.labelFor(depth);
                 const lt = c.labelTypes();
                 try self.popAll(lt);
-                try self.emitBranch(OP_BR, c);
+                try self.emitBranch(if (hasV128(lt)) OP_BR_V else OP_BR, c);
                 self.setUnreachable();
             },
             0x0d => { // br_if
@@ -371,7 +402,7 @@ const Compiler = struct {
                 const c = try self.labelFor(depth);
                 const lt = c.labelTypes();
                 try self.popAll(lt);
-                try self.emitBranch(OP_BR_IF, c);
+                try self.emitBranch(if (hasV128(lt)) OP_BR_IF_V else OP_BR_IF, c);
                 try self.pushAll(lt);
             },
             0x0e => { // br_table
@@ -383,6 +414,8 @@ const Compiler = struct {
                 for (labels) |*l| l.* = try r.readVarU32();
                 const def = try self.labelFor(labels[n]);
                 const arity = def.labelTypes().len;
+                var any_v = false;
+                for (labels) |l| any_v = any_v or hasV128((try self.labelFor(l)).labelTypes());
                 for (labels) |l| {
                     const c = try self.labelFor(l);
                     const lt = c.labelTypes();
@@ -395,12 +428,12 @@ const Compiler = struct {
                     if (c.kind != .loop) try self.fixups.append(self.a, .{ .in_pool = true, .idx = target, .ctl = self.ctlIndex(c) });
                 }
                 try self.popAll(def.labelTypes());
-                _ = try self.emit(.{ .op = OP_BR_TABLE, .a = start, .b = n });
+                _ = try self.emit(.{ .op = if (any_v) OP_BR_TABLE_V else OP_BR_TABLE, .a = start, .b = n });
                 self.setUnreachable();
             },
             0x0f => { // return
                 try self.popAll(self.ftype.results);
-                _ = try self.emit(.{ .op = OP_RETURN, .arity = @intCast(self.ftype.results.len) });
+                _ = try self.emit(.{ .op = if (hasV128(self.ftype.results)) OP_RETURN_V else OP_RETURN, .arity = @intCast(self.ftype.results.len) });
                 self.setUnreachable();
             },
             0x10 => { // call
@@ -427,6 +460,7 @@ const Compiler = struct {
                 _ = try self.emit(.{ .op = 0x1a });
             },
             0x1b, 0x1c => { // select / select t
+                var sel_v = false;
                 if (op == 0x1c) {
                     const n = try r.readCount();
                     if (n != 1) return error.InvalidModule;
@@ -435,6 +469,7 @@ const Compiler = struct {
                     try self.popExpect(t);
                     try self.popExpect(t);
                     try self.push(t);
+                    sel_v = t == .v128;
                 } else {
                     try self.popExpect(.i32);
                     const t1 = try self.pop();
@@ -443,25 +478,28 @@ const Compiler = struct {
                     if (t2) |x| if (x.isRef()) return error.InvalidModule;
                     if (t1 != null and t2 != null and t1.? != t2.?) return error.InvalidModule;
                     try self.push(t1 orelse t2);
+                    sel_v = (t1 orelse t2) == ValType.v128;
                 }
-                _ = try self.emit(.{ .op = 0x1b });
+                _ = try self.emit(.{ .op = if (sel_v) OP_SELECT_V else 0x1b });
             },
             0x20 => { // local.get
                 const idx = try r.readVarU32();
-                try self.push(try self.localType(idx));
-                _ = try self.emit(.{ .op = 0x20, .a = idx });
+                const lt = try self.localType(idx);
+                try self.push(lt);
+                _ = try self.emit(.{ .op = if (lt == .v128) OP_LOCAL_GET_V else 0x20, .a = idx });
             },
             0x21 => { // local.set
                 const idx = try r.readVarU32();
-                try self.popExpect(try self.localType(idx));
-                _ = try self.emit(.{ .op = 0x21, .a = idx });
+                const lt = try self.localType(idx);
+                try self.popExpect(lt);
+                _ = try self.emit(.{ .op = if (lt == .v128) OP_LOCAL_SET_V else 0x21, .a = idx });
             },
             0x22 => { // local.tee
                 const idx = try r.readVarU32();
                 const t = try self.localType(idx);
                 try self.popExpect(t);
                 try self.push(t);
-                _ = try self.emit(.{ .op = 0x22, .a = idx });
+                _ = try self.emit(.{ .op = if (t == .v128) OP_LOCAL_TEE_V else 0x22, .a = idx });
             },
             0x23 => { // global.get
                 const idx = try r.readVarU32();
@@ -533,8 +571,62 @@ const Compiler = struct {
                 _ = try self.emit(.{ .op = 0xd2, .a = idx });
             },
             0xfc => try self.stepFc(r),
+            0xfd => try self.stepFd(r),
             else => return error.InvalidModule,
         }
+    }
+
+    fn stepFd(self: *Compiler, r: *Reader) !void {
+        const sub = try r.readVarU32();
+        const info = simd.simdInfo(sub) orelse return error.InvalidModule;
+        self.uses_simd = true;
+        var a: u32 = 0;
+        var b: u64 = 0;
+        switch (info.kind) {
+            .load, .store, .load_lane, .store_lane => {
+                if (self.m.mems.len == 0) return error.InvalidModule;
+                const al = try r.readVarU32();
+                const off = try r.readVarU32();
+                if (al > info.align_log2) return error.InvalidModule;
+                a = off;
+                if (info.kind == .load_lane or info.kind == .store_lane) {
+                    const lane = try r.byte();
+                    if (lane >= info.lanes) return error.InvalidModule;
+                    b = lane;
+                }
+            },
+            .extract, .replace => {
+                const lane = try r.byte();
+                if (lane >= info.lanes) return error.InvalidModule;
+                a = lane;
+            },
+            .vconst => {
+                var v: u128 = 0;
+                var i: u7 = 0;
+                while (i < 16) : (i += 1) v |= @as(u128, try r.byte()) << (i * 8);
+                a = @intCast(self.consts.items.len);
+                try self.consts.append(self.a, v);
+            },
+            .shuffle => {
+                var v: u128 = 0;
+                var i: u7 = 0;
+                while (i < 16) : (i += 1) {
+                    const lane = try r.byte();
+                    if (lane >= 32) return error.InvalidModule;
+                    v |= @as(u128, lane) << (i * 8);
+                }
+                a = @intCast(self.consts.items.len);
+                try self.consts.append(self.a, v);
+            },
+            else => {},
+        }
+        var i: u2 = info.n;
+        while (i > 0) {
+            i -= 1;
+            try self.popExpect(info.in[i]);
+        }
+        if (info.out) |o| try self.push(o);
+        _ = try self.emit(.{ .op = OP_FD + @as(u16, @intCast(sub)), .arity = @intFromEnum(info.kind), .a = a, .b = b });
     }
 
     fn stepFc(self: *Compiler, r: *Reader) !void {
@@ -656,7 +748,7 @@ const Compiler = struct {
         self.fixups.shrinkRetainingCapacity(keep);
         _ = self.ctls.pop();
         if (c.kind == .func) {
-            _ = try self.emit(.{ .op = OP_RETURN, .arity = @intCast(c.results.len) });
+            _ = try self.emit(.{ .op = if (hasV128(c.results)) OP_RETURN_V else OP_RETURN, .arity = @intCast(c.results.len) });
             return;
         }
         try self.pushAll(c.results);
@@ -684,6 +776,8 @@ pub fn compileFunc(a: std.mem.Allocator, m: *const Module, func_index: u32) Comp
         .num_results = @intCast(ft.results.len),
         .num_locals = @intCast(local_types.len),
         .max_stack = c.max_height,
+        .consts = try a.dupe(u128, c.consts.items),
+        .uses_simd = c.uses_simd or hasV128(local_types) or hasV128(ft.results),
     };
 }
 
@@ -713,6 +807,7 @@ pub fn validateModule(m: *const Module) CompileError!void {
     for (m.tables) |t| {
         if (t.limits.max) |mx| if (mx < t.limits.min) return error.InvalidModule;
     }
+    for (m.globals) |g| if (g.valtype == .v128) return error.InvalidModule; // v128 globaller desteklenmez (sınırlama)
     for (m.global_inits, 0..) |init, i| {
         const gt = m.globals[m.num_imported_globals + i];
         if ((try constExprType(m, init)) != gt.valtype) return error.InvalidModule;

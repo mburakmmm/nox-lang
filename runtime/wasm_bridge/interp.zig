@@ -15,6 +15,7 @@
 const std = @import("std");
 const module_mod = @import("module.zig");
 const compile = @import("compile.zig");
+const simd = @import("simd.zig");
 const Module = module_mod.Module;
 const ValType = module_mod.ValType;
 const FuncCode = compile.FuncCode;
@@ -104,6 +105,8 @@ pub const Instance = struct {
     canon: []u32,
 
     stack: []u64,
+    /// SIMD gölge yığını: v128 değeri `stack` ile AYNI indeksli yuvada (yalnızca modül SIMD kullanıyorsa tahsis edilir).
+    vstack: []u128 = &.{},
     frames: []Frame,
     frame_top: usize = 0,
     sp_top: usize = 0,
@@ -165,6 +168,9 @@ pub const Instance = struct {
             switch (imp.desc) {
                 .func => |type_idx| {
                     const ft = module.types[type_idx];
+                    // v128 değerleri ana bilgisayar sınırından geçemez (u64 yuvaları).
+                    for (ft.params) |t| if (t == .v128) return error.ImportTypeMismatch;
+                    for (ft.results) |t| if (t == .v128) return error.ImportTypeMismatch;
                     const b = findBinding(bindings, imp.module, imp.name) orelse return error.ImportNotFound;
                     switch (b.item) {
                         .func => |hf| {
@@ -239,6 +245,10 @@ pub const Instance = struct {
         errdefer allocator.free(self.stack);
         self.frames = allocator.alloc(Frame, cfg.max_call_depth) catch return error.OutOfMemory;
         errdefer allocator.free(self.frames);
+        var any_simd = false;
+        for (self.codes) |c| any_simd = any_simd or c.uses_simd;
+        if (any_simd) self.vstack = allocator.alloc(u128, cfg.max_stack_slots) catch return error.OutOfMemory;
+        errdefer allocator.free(self.vstack);
 
         // etkin elem segmentleri, sonra etkin data segmentleri (spec sırası)
         for (module.elems, 0..) |el, i| {
@@ -271,6 +281,7 @@ pub const Instance = struct {
         const allocator = self.allocator;
         allocator.free(self.mem);
         allocator.free(self.stack);
+        allocator.free(self.vstack);
         allocator.free(self.frames);
         self.arena.deinit();
         allocator.destroy(self);
@@ -342,6 +353,7 @@ pub const Instance = struct {
         if (self.frame_top >= self.frames.len) return error.StackExhausted;
         if (base + code.num_locals + code.max_stack + 1 > self.stack.len) return error.StackExhausted;
         @memset(self.stack[sp .. base + code.num_locals], 0);
+        if (code.uses_simd) @memset(self.vstack[sp .. base + code.num_locals], 0);
         self.frames[self.frame_top] = .{ .code = code, .pc = 0, .base = base };
         self.frame_top += 1;
         self.sp_top = base + code.num_locals;
@@ -349,6 +361,7 @@ pub const Instance = struct {
 
     fn run(self: *Instance, stop_depth: usize) Trap!void {
         const stack = self.stack;
+        const vstack = self.vstack;
         const module = self.module;
         const n_imp = module.num_imported_funcs;
         var fr: *Frame = &self.frames[self.frame_top - 1];
@@ -393,9 +406,38 @@ pub const Instance = struct {
                     sp = dst + arity;
                     pc = target_pc;
                 },
-                compile.OP_RETURN => {
+                compile.OP_BR_V, compile.OP_BR_IF_V, compile.OP_BR_TABLE_V => {
+                    var target_pc: u32 = ins.a;
+                    var height: u64 = ins.b;
+                    var arity: usize = ins.arity;
+                    if (ins.op == compile.OP_BR_IF_V) {
+                        sp -= 1;
+                        if (@as(u32, @truncate(stack[sp])) == 0) continue;
+                    } else if (ins.op == compile.OP_BR_TABLE_V) {
+                        sp -= 1;
+                        const idx = @as(u32, @truncate(stack[sp]));
+                        const n: u32 = @intCast(ins.b);
+                        const t = fr.code.brt[ins.a + @min(idx, n)];
+                        target_pc = t.pc;
+                        height = t.height;
+                        arity = t.arity;
+                    }
+                    if (self.fuel == 0) return error.OutOfFuel;
+                    self.fuel -= 1;
+                    const dst = opb + @as(usize, @intCast(height));
+                    if (sp - arity != dst) {
+                        std.mem.copyForwards(u64, stack[dst..][0..arity], stack[sp - arity .. sp]);
+                        std.mem.copyForwards(u128, vstack[dst..][0..arity], vstack[sp - arity .. sp]);
+                    }
+                    sp = dst + arity;
+                    pc = target_pc;
+                },
+                compile.OP_RETURN, compile.OP_RETURN_V => {
                     const nres: usize = ins.arity;
-                    if (sp - nres != base) std.mem.copyForwards(u64, stack[base..][0..nres], stack[sp - nres .. sp]);
+                    if (sp - nres != base) {
+                        std.mem.copyForwards(u64, stack[base..][0..nres], stack[sp - nres .. sp]);
+                        if (ins.op == compile.OP_RETURN_V) std.mem.copyForwards(u128, vstack[base..][0..nres], vstack[sp - nres .. sp]);
+                    }
                     sp = base + nres;
                     self.frame_top -= 1;
                     if (self.frame_top == stop_depth) {
@@ -442,6 +484,20 @@ pub const Instance = struct {
                         sp = opb;
                     }
                 },
+                compile.OP_LOCAL_GET_V => {
+                    vstack[sp] = vstack[base + ins.a];
+                    sp += 1;
+                },
+                compile.OP_LOCAL_SET_V => {
+                    sp -= 1;
+                    vstack[base + ins.a] = vstack[sp];
+                },
+                compile.OP_LOCAL_TEE_V => vstack[base + ins.a] = vstack[sp - 1],
+                compile.OP_SELECT_V => {
+                    sp -= 2;
+                    if (@as(u32, @truncate(stack[sp + 1])) == 0) vstack[sp - 1] = vstack[sp];
+                },
+                compile.OP_FD...compile.OP_FD + 0xff => sp = try simd.exec(self.mem, @enumFromInt(ins.arity), ins.op - compile.OP_FD, ins.a, ins.b, fr.code.consts, stack, vstack, sp),
                 0x1a => sp -= 1, // drop
                 0x1b => { // select
                     sp -= 2;
@@ -901,6 +957,8 @@ pub const Instance = struct {
         const idx = self.findExport(name, .func) orelse return error.ExportNotFound;
         const ft = self.module.typeOf(idx);
         if (ft.params.len != args.len or ft.results.len != results.len) return error.TypeMismatch;
+        for (ft.params) |t| if (t == .v128) return error.TypeMismatch;
+        for (ft.results) |t| if (t == .v128) return error.TypeMismatch;
         try self.invoke(idx, args, results);
     }
 };
@@ -925,20 +983,20 @@ inline fn vf64(f: f64) u64 {
     return @bitCast(f);
 }
 
-fn fmin(comptime T: type, a: T, b: T) T {
+pub fn fmin(comptime T: type, a: T, b: T) T {
     if (std.math.isNan(a) or std.math.isNan(b)) return std.math.nan(T);
     if (a == 0 and b == 0) return if (std.math.signbit(a)) a else b;
     return if (a < b) a else b;
 }
 
-fn fmax(comptime T: type, a: T, b: T) T {
+pub fn fmax(comptime T: type, a: T, b: T) T {
     if (std.math.isNan(a) or std.math.isNan(b)) return std.math.nan(T);
     if (a == 0 and b == 0) return if (std.math.signbit(a)) b else a;
     return if (a > b) a else b;
 }
 
 /// En yakın tamsayı, eşitlikte çifte yuvarlama (IEEE roundToIntegralTiesToEven).
-fn nearest(comptime T: type, x: T) T {
+pub fn nearest(comptime T: type, x: T) T {
     if (!std.math.isFinite(x) or x == 0) return x;
     const lim: T = if (T == f32) 8388608.0 else 4503599627370496.0;
     if (@abs(x) >= lim) return x;
@@ -967,7 +1025,7 @@ fn truncTrap(comptime I: type, comptime F: type, x: F) Trap!I {
     return @intFromFloat(t);
 }
 
-fn truncSat(comptime I: type, comptime F: type, x: F) I {
+pub fn truncSat(comptime I: type, comptime F: type, x: F) I {
     if (std.math.isNan(x)) return 0;
     const t = @trunc(x);
     const b = comptime truncBounds(I, F);

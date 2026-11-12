@@ -15,6 +15,9 @@ pub const ValType = enum(u8) {
     i64 = 0x7e,
     f32 = 0x7d,
     f64 = 0x7c,
+    /// v2.1.98 (W5 SIMD): 128 bit vektör. Yorumlayıcıda değer, `stack[sp]` yuvasının yanında aynı indeksli `vstack[sp]` GÖLGE yuvasında yaşar
+    /// (tek yuva/değer düzeni korunur; yalnızca SIMD kullanan işlevler bu gölgeyi okur/yazar).
+    v128 = 0x7b,
     funcref = 0x70,
     externref = 0x6f,
 
@@ -249,7 +252,7 @@ pub const Reader = struct {
     pub fn readValType(self: *Reader) !ValType {
         const b = try self.byte();
         return switch (b) {
-            0x7f, 0x7e, 0x7d, 0x7c, 0x70, 0x6f => @enumFromInt(b),
+            0x7f, 0x7e, 0x7d, 0x7c, 0x7b, 0x70, 0x6f => @enumFromInt(b),
             else => error.InvalidModule,
         };
     }
