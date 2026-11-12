@@ -1,0 +1,63 @@
+# ARC stres: istisna/finally/with yolları — canlı nesnelerle fırlatma, yakalama, yeniden fırlatma; her yol nesneleri bırakmalı.
+import nox.os
+
+class Res:
+    n: int
+    data: list[int]
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+        self.data = [n, n, n, n]
+
+    def __enter__(self: Res) -> Res:
+        return self
+
+    def __exit__(self: Res) -> None:
+        self.n = self.n + 1
+
+def scale() -> int:
+    if nox.os.arg_count() > 1:
+        return int(nox.os.arg(1))
+    return 1
+
+def risky(i: int) -> int:
+    r: Res = Res(i)
+    if i % 3 == 0:
+        raise ValueError("boom")
+    if i % 7 == 0:
+        raise IndexError("idx")
+    return r.data[0] + 1
+
+def wrapper(i: int) -> int:
+    local: list[str] = ["a" + str(i), "b" + str(i)]
+    try:
+        v: int = risky(i)
+        return v + len(local)
+    except ValueError as e:
+        return -1
+    finally:
+        local.append("done")
+
+def with_path(i: int) -> int:
+    t: int = 0
+    with Res(i) as r:
+        t = r.n
+        if i % 11 == 0:
+            raise ValueError("in with")
+    return t
+
+def drive(n: int) -> int:
+    t: int = 0
+    for i in range(n):
+        try:
+            t = t + wrapper(i)
+        except IndexError as e:
+            t = t + 5
+        try:
+            t = t + with_path(i)
+        except ValueError as e2:
+            t = t + 3
+    return t
+
+S: int = scale()
+print(drive(300000 * S))

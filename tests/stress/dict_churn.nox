@@ -1,0 +1,38 @@
+# ARC stres: sözlük insert/overwrite/delete döngüleri (mezar taşı + yoğunlaştırma), dize anahtar/değerler; bellek sabit kalmalı.
+import nox.os
+
+class Box:
+    v: int
+
+    def __init__(self, v: int) -> None:
+        self.v = v
+
+def scale() -> int:
+    if nox.os.arg_count() > 1:
+        return int(nox.os.arg(1))
+    return 1
+
+def churn(n: int) -> int:
+    d: dict[str, int] = {}
+    t: int = 0
+    for i in range(n):
+        k: str = "key-" + str(i % 5000)
+        d[k] = i
+        if i % 3 == 0:
+            d.pop("key-" + str((i + 17) % 5000), 0)
+        t = t + len(d)
+    return t
+
+def class_values(n: int) -> int:
+    d: dict[int, Box] = {}
+    t: int = 0
+    for i in range(n):
+        d[i % 1000] = Box(i)
+        if i % 4 == 0:
+            d.pop((i + 5) % 1000, Box(0))
+        t = t + len(d)
+    return t
+
+S: int = scale()
+print(churn(400000 * S))
+print(class_values(300000 * S))

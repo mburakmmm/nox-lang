@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.78]
+
+### Eklendi
+
+- **ARC/ASAP analizi ve stres düzeneği (TODO 4.5.1-4.5.3):** `NOX_FORCE_ARC=1` gölge modu (derleme ortamı; her yerel ARC, ayarlı değilken IR aynı), `scripts/arc_shadow_test.py` (437 program aynı çıktı/stderr, 0 fark, Debug sızıntı denetimiyle), `scripts/arc_inventory.py` (541 programda yerellerin %98'i ARC), `tests/stress/` altı program + `scripts/arc_stress.py` (LLVM/QBE/gölge mod eşitliği, RSS tavanı, ölçekle büyüme denetimi, baseline). Rapor: `project/arc-asap-analizi-2026-11.md` — bulgular: kapsam darlığı, döngü çözücü olası-kök tamponunun serbest bırakmada küçülmemesi (zincir tekrarında RSS ölçekle doğrusal büyüyor, sızıntı değil), sözlük churn'ünde hafif büyüme, liste büyütme sahiplik sözleşmesi. Atomik→düz sayaç deneyi Apple M'de fark vermedi.
+
 ## [2.1.77]
 
 ### Eklendi

@@ -1,0 +1,51 @@
+# ARC stres: çok derin/geniş nesne grafikleri — 1M düğümlü zincir ve derin ikili ağaç serbest bırakma (yığın taşmadan), tekrar tekrar.
+import nox.os
+
+class Link:
+    nxt: Link | None
+    v: int
+
+    def __init__(self, v: int, nxt: Link | None) -> None:
+        self.v = v
+        self.nxt = nxt
+
+class Tree:
+    l: Tree | None
+    r: Tree | None
+
+    def __init__(self, l: Tree | None, r: Tree | None) -> None:
+        self.l = l
+        self.r = r
+
+def scale() -> int:
+    if nox.os.arg_count() > 1:
+        return int(nox.os.arg(1))
+    return 1
+
+def chain(n: int) -> int:
+    head: Link | None = None
+    for i in range(n):
+        head = Link(i, head)
+    cnt: int = 0
+    cur: Link | None = head
+    while cur is not None:
+        cnt = cnt + 1
+        cur = cur.nxt
+    return cnt
+
+def build(d: int) -> Tree:
+    if d == 0:
+        return Tree(None, None)
+    return Tree(build(d - 1), build(d - 1))
+
+def size(t: Tree | None) -> int:
+    if t is None:
+        return 0
+    return 1 + size(t.l) + size(t.r)
+
+S: int = scale()
+tot: int = 0
+for r in range(3 * S):
+    tot = tot + chain(300000)
+    tot = tot + size(build(16))
+print(tot)

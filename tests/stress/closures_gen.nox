@@ -1,0 +1,38 @@
+# ARC stres: yakalayan kapanışlar ve terk edilen jeneratörler — nesne tutan kapanış/jeneratör ömrü bittiğinde bırakılmalı.
+import nox.os
+
+class Payload:
+    xs: list[int]
+
+    def __init__(self, n: int) -> None:
+        self.xs = [n, n + 1, n + 2]
+
+def scale() -> int:
+    if nox.os.arg_count() > 1:
+        return int(nox.os.arg(1))
+    return 1
+
+def make_adder(p: Payload) -> (int) -> int:
+    def add(x: int) -> int:
+        return x + p.xs[0]
+    return add
+
+def gen(p: Payload, n: int) -> Iterator[int]:
+    i: int = 0
+    while i < n:
+        yield p.xs[i % 3] + i
+        i = i + 1
+
+def drive(n: int) -> int:
+    t: int = 0
+    for i in range(n):
+        p: Payload = Payload(i)
+        f: (int) -> int = make_adder(p)
+        t = t + f(1)
+        g: Iterator[int] = gen(p, 10)
+        t = t + next(g) + next(g)
+        # g terk edilir (tüketilmez)
+    return t
+
+S: int = scale()
+print(drive(200000 * S))
