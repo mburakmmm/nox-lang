@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.74]
+
+### Düzeltildi
+
+- Sürüm numarası notu: `v2.1.73` etiketi yanlışlıkla v2.1.72 commit'ine atıldı ve geri alınamadı (uzak etiket silme engellendi); `[2.1.73]` girişinin içeriği (benchmark paketi ve rapor) bu sürümle (v2.1.74) yayımlanır. `v2.1.73` etiketini kullanmayın.
+
 ## [2.1.73]
 
 ### Eklendi
