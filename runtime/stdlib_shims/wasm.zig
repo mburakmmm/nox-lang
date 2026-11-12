@@ -12,6 +12,7 @@ const asap = @import("../alloc/asap.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
 const wasm_bridge = @import("wasm_bridge");
+const crypto_shim = @import("crypto.zig");
 
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
@@ -54,7 +55,61 @@ const Handle = struct {
     /// Son çağrının sonuç sayısı ve sonuçları (çok değerli dönüş).
     nresults: usize = 0,
     results: [16]u64 = undefined,
+    /// W3 (v2.1.93): host işlevleri. `.nox` tarafı HER çağrıda (ve açılışta) tek bir gönderici geçirir; yalnızca o çağrı süresince saklanır (kayıtlı/saklanan geri çağrı yok).
+    cb: ?HostCallback = null,
+    ud: ?*anyopaque = null,
+    host_failed: bool = false,
+    hctx: []HostCtx = &.{},
+    hbind: []interp.HostBinding = &.{},
+    /// W3b (WASI preview1 alt kümesi, varsayılan KAPALI): yakalanan çıktılar, argümanlar, izinler, çıkış kodu.
+    wasi: bool = false,
+    wasi_clock: bool = false,
+    wasi_random: bool = false,
+    wasi_inherit: bool = false,
+    wasi_args: [][]u8 = &.{},
+    out: std.ArrayListUnmanaged(u8) = .empty,
+    errout: std.ArrayListUnmanaged(u8) = .empty,
+    exit_code: i64 = -1,
+    rng_state: u64 = 0x9E3779B97F4A7C15,
 };
+
+const WASI_OUT_LIMIT: usize = 16 * 1024 * 1024;
+
+/// Nox gönderici işlevinin C ABI imzası (`@ffi.callback` hedefi): (host_indeks, a0, a1, a2, a3, userdata=rt) -> sonuç.
+const HostCallback = *const fn (i64, i64, i64, i64, i64, ?*anyopaque) callconv(.c) i64;
+
+const HostCtx = struct { h: *Handle, idx: i64, nparams: usize, nresults: usize, ptypes: []const module_mod.ValType, rtypes: []const module_mod.ValType };
+
+fn hostThunk(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    _ = inst;
+    const c: *HostCtx = @ptrCast(@alignCast(ctx.?));
+    const h = c.h;
+    const cb = h.cb orelse {
+        setErr(h, "host function called outside a nox.wasm call", .{});
+        return error.HostFailure;
+    };
+    var a: [4]i64 = .{ 0, 0, 0, 0 };
+    for (args, 0..) |v, i| {
+        a[i] = switch (c.ptypes[i]) {
+            .i32 => @as(i64, @as(i32, @bitCast(@as(u32, @truncate(v))))),
+            .f32 => @as(i64, @intCast(@as(u32, @truncate(v)))),
+            else => @bitCast(v),
+        };
+    }
+    const r = cb(c.idx, a[0], a[1], a[2], a[3], h.ud);
+    if (h.host_failed) {
+        h.host_failed = false;
+        setErr(h, "a host function raised an exception", .{});
+        return error.HostFailure;
+    }
+    if (c.nresults > 0) {
+        results[0] = switch (c.rtypes[0]) {
+            .i32 => @as(u64, @as(u32, @truncate(@as(u64, @bitCast(r))))),
+            .f32 => @as(u64, @as(u32, @truncate(@as(u64, @bitCast(r))))),
+            else => @bitCast(r),
+        };
+    }
+}
 
 fn setErr(h: *Handle, comptime fmt: []const u8, args: anytype) void {
     const s = std.fmt.bufPrint(&h.err, fmt, args) catch h.err[0..0];
@@ -83,7 +138,221 @@ fn trapName(e: anyerror) []const u8 {
     return @errorName(e);
 }
 
+
+// ----------------------------------------------------------------------------------------- WASI preview1 alt kümesi (yetenek tabanlı, varsayılan kapalı)
+
+const WasiFn = struct { name: []const u8, p: []const module_mod.ValType, r: []const module_mod.ValType, f: interp.HostFn };
+const I32 = module_mod.ValType.i32;
+const I64 = module_mod.ValType.i64;
+
+fn wasiH(ctx: ?*anyopaque) *Handle {
+    return @ptrCast(@alignCast(ctx.?));
+}
+
+fn wmem(inst: *interp.Instance, off: u64, len: u64) ?[]u8 {
+    const m = inst.memory();
+    const o: usize = @intCast(@as(u32, @truncate(off)));
+    const l: usize = @intCast(@as(u32, @truncate(len)));
+    if (o > m.len or l > m.len - o) return null;
+    return m[o .. o + l];
+}
+
+fn wr32(inst: *interp.Instance, off: u64, v: u32) bool {
+    const sl = wmem(inst, off, 4) orelse return false;
+    std.mem.writeInt(u32, sl[0..4], v, .little);
+    return true;
+}
+
+fn wasiFdWrite(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    const h = wasiH(ctx);
+    const fd = @as(u32, @truncate(args[0]));
+    if (fd != 1 and fd != 2) {
+        results[0] = 8; // EBADF
+        return;
+    }
+    const iovs_ptr: usize = @intCast(@as(u32, @truncate(args[1])));
+    const iovs_len: usize = @intCast(@as(u32, @truncate(args[2])));
+    var total: u32 = 0;
+    for (0..iovs_len) |i| {
+        const iov = wmem(inst, iovs_ptr + i * 8, 8) orelse {
+            results[0] = 21; // EFAULT
+            return;
+        };
+        const buf_ptr = std.mem.readInt(u32, iov[0..4], .little);
+        const buf_len = std.mem.readInt(u32, iov[4..8], .little);
+        const data = wmem(inst, buf_ptr, buf_len) orelse {
+            results[0] = 21;
+            return;
+        };
+        const dst = if (fd == 1) &h.out else &h.errout;
+        if (dst.items.len + data.len > WASI_OUT_LIMIT) {
+            results[0] = 28; // ENOSPC
+            return;
+        }
+        dst.appendSlice(h.allocator, data) catch {
+            results[0] = 48; // ENOMEM
+            return;
+        };
+        if (comptime @import("builtin").os.tag != .windows) {
+            if (h.wasi_inherit) _ = std.c.write(@intCast(fd), data.ptr, data.len);
+        }
+        total +%= buf_len;
+    }
+    results[0] = if (wr32(inst, args[3], total)) 0 else 21;
+}
+
+fn wasiFdOther(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    _ = ctx;
+    _ = inst;
+    _ = args;
+    results[0] = 8; // EBADF: dosya sistemi/stdin yok
+}
+
+fn wasiFdClose(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    _ = ctx;
+    _ = inst;
+    _ = args;
+    results[0] = 0;
+}
+
+fn wasiFdFdstatGet(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    _ = ctx;
+    const fd = @as(u32, @truncate(args[0]));
+    if (fd > 2) {
+        results[0] = 8;
+        return;
+    }
+    const sl = wmem(inst, args[1], 24) orelse {
+        results[0] = 21;
+        return;
+    };
+    @memset(sl, 0);
+    sl[0] = 2; // filetype = karakter aygıtı
+    std.mem.writeInt(u64, sl[8..16], if (fd == 0) 2 else 64, .little); // yalnızca fd_read (stdin) ya da fd_write haklarından biri
+    results[0] = 0;
+}
+
+fn wasiArgsSizes(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    const h = wasiH(ctx);
+    var total: u32 = 0;
+    for (h.wasi_args) |a| total += @intCast(a.len + 1);
+    results[0] = if (wr32(inst, args[0], @intCast(h.wasi_args.len)) and wr32(inst, args[1], total)) 0 else 21;
+}
+
+fn wasiArgsGet(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    const h = wasiH(ctx);
+    var buf_off: u32 = @truncate(args[1]);
+    for (h.wasi_args, 0..) |a, i| {
+        if (!wr32(inst, args[0] + i * 4, buf_off)) {
+            results[0] = 21;
+            return;
+        }
+        const sl = wmem(inst, buf_off, a.len + 1) orelse {
+            results[0] = 21;
+            return;
+        };
+        @memcpy(sl[0..a.len], a);
+        sl[a.len] = 0;
+        buf_off += @intCast(a.len + 1);
+    }
+    results[0] = 0;
+}
+
+fn wasiEnvSizes(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    _ = ctx;
+    results[0] = if (wr32(inst, args[0], 0) and wr32(inst, args[1], 0)) 0 else 21;
+}
+
+fn wasiEnvGet(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    _ = ctx;
+    _ = inst;
+    _ = args;
+    results[0] = 0;
+}
+
+fn wasiClockTime(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    const h = wasiH(ctx);
+    if (!h.wasi_clock) {
+        results[0] = 63; // EPERM: saat yeteneği verilmedi
+        return;
+    }
+    if (comptime @import("builtin").os.tag == .windows) {
+        results[0] = 52; // ENOSYS: bu sürümde Windows'ta saat yok
+        return;
+    }
+    var ts: std.c.timespec = undefined;
+    const clk: std.c.clockid_t = if (@as(u32, @truncate(args[0])) == 0) .REALTIME else .MONOTONIC;
+    _ = std.c.clock_gettime(clk, &ts);
+    const ns: u64 = @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
+    const sl = wmem(inst, args[2], 8) orelse {
+        results[0] = 21;
+        return;
+    };
+    std.mem.writeInt(u64, sl[0..8], ns, .little);
+    results[0] = 0;
+}
+
+fn wasiRandomGet(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    const h = wasiH(ctx);
+    if (!h.wasi_random) {
+        results[0] = 63;
+        return;
+    }
+    const sl = wmem(inst, args[0], args[1]) orelse {
+        results[0] = 21;
+        return;
+    };
+    crypto_shim.secureRandomBuf(sl);
+    results[0] = 0;
+}
+
+fn wasiProcExit(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    _ = inst;
+    _ = results;
+    const h = wasiH(ctx);
+    h.exit_code = @as(i64, @intCast(@as(u32, @truncate(args[0]))));
+    return error.HostFailure;
+}
+
+fn wasiYield(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, results: []u64) interp.Trap!void {
+    _ = ctx;
+    _ = inst;
+    _ = args;
+    results[0] = 0;
+}
+
+const wasi_table = [_]WasiFn{
+    .{ .name = "fd_write", .p = &.{ I32, I32, I32, I32 }, .r = &.{I32}, .f = wasiFdWrite },
+    .{ .name = "fd_read", .p = &.{ I32, I32, I32, I32 }, .r = &.{I32}, .f = wasiFdOther },
+    .{ .name = "fd_close", .p = &.{I32}, .r = &.{I32}, .f = wasiFdClose },
+    .{ .name = "fd_seek", .p = &.{ I32, I64, I32, I32 }, .r = &.{I32}, .f = wasiFdOther },
+    .{ .name = "fd_fdstat_get", .p = &.{ I32, I32 }, .r = &.{I32}, .f = wasiFdFdstatGet },
+    .{ .name = "fd_prestat_get", .p = &.{ I32, I32 }, .r = &.{I32}, .f = wasiFdOther },
+    .{ .name = "fd_prestat_dir_name", .p = &.{ I32, I32, I32 }, .r = &.{I32}, .f = wasiFdOther },
+    .{ .name = "args_sizes_get", .p = &.{ I32, I32 }, .r = &.{I32}, .f = wasiArgsSizes },
+    .{ .name = "args_get", .p = &.{ I32, I32 }, .r = &.{I32}, .f = wasiArgsGet },
+    .{ .name = "environ_sizes_get", .p = &.{ I32, I32 }, .r = &.{I32}, .f = wasiEnvSizes },
+    .{ .name = "environ_get", .p = &.{ I32, I32 }, .r = &.{I32}, .f = wasiEnvGet },
+    .{ .name = "clock_time_get", .p = &.{ I32, I64, I32 }, .r = &.{I32}, .f = wasiClockTime },
+    .{ .name = "random_get", .p = &.{ I32, I32 }, .r = &.{I32}, .f = wasiRandomGet },
+    .{ .name = "proc_exit", .p = &.{I32}, .r = &.{}, .f = wasiProcExit },
+    .{ .name = "sched_yield", .p = &.{}, .r = &.{I32}, .f = wasiYield },
+};
+
+fn findWasi(name: []const u8) ?*const WasiFn {
+    for (&wasi_table) |*w| {
+        if (std.mem.eql(u8, w.name, name)) return w;
+    }
+    return null;
+}
+
+const WasiOpts = struct { enabled: bool = false, clock: bool = false, random: bool = false, inherit: bool = false, args: []const []const u8 = &.{} };
+
 fn openBytes(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64) ?*anyopaque {
+    return openBytesHost(rt, bytes, fuel, max_pages, &.{}, null, null, .{});
+}
+
+fn openBytesHost(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64, names: []const []const u8, cb: ?HostCallback, ud: ?*anyopaque, wopts: WasiOpts) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const a = state.allocator();
     const h = a.create(Handle) catch return null;
@@ -96,15 +365,156 @@ fn openBytes(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64) ?*anyopaqu
     var cfg: interp.Config = .{};
     if (fuel > 0) cfg.fuel = @intCast(fuel);
     if (max_pages > 0) cfg.max_memory_pages = @intCast(@min(max_pages, 65536));
-    h.inst = interp.Instance.init(a, &h.module, &.{}, cfg) catch |e| {
+    // Host işlevi içe aktarmalarını bağla: "modül.ad" anahtarı `names` içindeki konumu (= Nox tarafı `hosts` indeksi) verir.
+    var nfuncs: usize = 0;
+    for (h.module.imports) |imp| {
+        if (imp.desc == .func) nfuncs += 1;
+    }
+    if (nfuncs > 0) {
+        h.hctx = a.alloc(HostCtx, nfuncs) catch return @ptrCast(h);
+        h.hbind = a.alloc(interp.HostBinding, nfuncs) catch return @ptrCast(h);
+        var k: usize = 0;
+        for (h.module.imports) |imp| {
+            const type_idx = switch (imp.desc) {
+                .func => |t| t,
+                else => continue,
+            };
+            const ft = h.module.types[type_idx];
+            if (wopts.enabled and std.mem.eql(u8, imp.module, "wasi_snapshot_preview1")) {
+                if (findWasi(imp.name)) |wf| {
+                    if (!std.mem.eql(module_mod.ValType, wf.p, ft.params) or !std.mem.eql(module_mod.ValType, wf.r, ft.results)) {
+                        setErr(h, "WASI function '{s}' has an unexpected signature", .{imp.name});
+                        return @ptrCast(h);
+                    }
+                    h.hbind[k] = .{ .module = imp.module, .name = imp.name, .item = .{ .func = .{ .params = wf.p, .results = wf.r, .f = wf.f, .ctx = h } } };
+                    k += 1;
+                    continue;
+                }
+                setErr(h, "WASI function '{s}' is not supported by nox.wasm (supported: fd_write, args_*, environ_*, clock_time_get, random_get, proc_exit, ...)", .{imp.name});
+                return @ptrCast(h);
+            }
+            var found: ?usize = null;
+            for (names, 0..) |nm, i| {
+                if (nm.len == imp.module.len + 1 + imp.name.len and std.mem.startsWith(u8, nm, imp.module) and nm[imp.module.len] == '.' and std.mem.eql(u8, nm[imp.module.len + 1 ..], imp.name)) {
+                    found = i;
+                    break;
+                }
+            }
+            const idx = found orelse {
+                setErr(h, "missing host function '{s}.{s}' (register it with Host.func before opening)", .{ imp.module, imp.name });
+                return @ptrCast(h);
+            };
+            if (ft.params.len > 4 or ft.results.len > 1) {
+                setErr(h, "host function '{s}.{s}': at most 4 parameters and 1 result are supported", .{ imp.module, imp.name });
+                return @ptrCast(h);
+            }
+            for (ft.params) |p| {
+                if (p.isRef()) {
+                    setErr(h, "host function '{s}.{s}': reference-typed parameters are not supported", .{ imp.module, imp.name });
+                    return @ptrCast(h);
+                }
+            }
+            h.hctx[k] = .{ .h = h, .idx = @intCast(idx), .nparams = ft.params.len, .nresults = ft.results.len, .ptypes = ft.params, .rtypes = ft.results };
+            h.hbind[k] = .{ .module = imp.module, .name = imp.name, .item = .{ .func = .{ .params = ft.params, .results = ft.results, .f = hostThunk, .ctx = &h.hctx[k] } } };
+            k += 1;
+        }
+    }
+    h.wasi = wopts.enabled;
+    h.wasi_clock = wopts.clock;
+    h.wasi_random = wopts.random;
+    h.wasi_inherit = wopts.inherit;
+    if (wopts.args.len > 0) {
+        h.wasi_args = a.alloc([]u8, wopts.args.len) catch return @ptrCast(h);
+        for (wopts.args, 0..) |arg, i| h.wasi_args[i] = a.dupe(u8, arg) catch return @ptrCast(h);
+    }
+    h.cb = cb;
+    h.ud = ud;
+    defer {
+        h.cb = null;
+        h.ud = null;
+    }
+    h.inst = interp.Instance.init(a, &h.module, h.hbind, cfg) catch |e| {
         if (e == error.ImportNotFound) {
-            setErr(h, "the module imports host functions/memory (not supported by nox.wasm.open yet)", .{});
+            setErr(h, "the module imports host memory/tables/globals (not supported by nox.wasm)", .{});
         } else {
             setErr(h, "could not instantiate the module: {s}", .{trapName(e)});
         }
         return @ptrCast(h);
     };
     return @ptrCast(h);
+}
+
+fn readStrList(a: std.mem.Allocator, list: ?*anyopaque) ?[][]const u8 {
+    const lp: [*]const u8 = @ptrCast(list orelse return &.{});
+    const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
+    const out = a.alloc([]const u8, n) catch return null;
+    for (0..n) |i| {
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+        out[i] = if (addr == 0) "" else str_mod.nox_str_slice(@ptrFromInt(addr));
+    }
+    return out;
+}
+
+/// Host işlevli (ve isteğe bağlı WASI) açılış: `names[i]` = "modül.ad"; Nox tarafındaki `hosts[i]` bu içe aktarmanın gövdesidir. `flags`: bit0 saat, bit1 rastgelelik, bit2 çıktıyı süreç
+/// stdout/stderr'ine de yaz, bit3 WASI etkin. `cb`/`ud` (userdata = rt) yalnızca açılış (start işlevi) süresince geçerlidir.
+pub export fn nox_wasm_open_host_raw(path: ?[*:0]const u8, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const rt = ud;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const a = state.allocator();
+    const p = str_mod.nox_str_slice(path orelse return failedHandle(rt, "path is null", .{}));
+    const pz = a.dupeZ(u8, p) catch return null;
+    defer a.free(pz);
+    const bytes = readFileAll(a, pz) catch |e| return failedHandle(rt, "cannot read '{s}': {s}", .{ p, trapName(e) });
+    const nm = readStrList(a, names) orelse return null;
+    defer a.free(nm);
+    const wa = readStrList(a, wasi_args) orelse return null;
+    defer a.free(wa);
+    return openBytesHost(rt, bytes, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa });
+}
+
+pub export fn nox_wasm_open_bytes_host_raw(data: ?*anyopaque, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const rt = ud;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const a = state.allocator();
+    const lp: [*]const u8 = @ptrCast(data orelse return failedHandle(rt, "no data", .{}));
+    const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
+    const buf = a.alloc(u8, n) catch return null;
+    for (0..n) |i| {
+        const v = @as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*;
+        buf[i] = @truncate(@as(u64, @bitCast(v)));
+    }
+    const nm = readStrList(a, names) orelse return null;
+    defer a.free(nm);
+    const wa = readStrList(a, wasi_args) orelse return null;
+    defer a.free(wa);
+    return openBytesHost(rt, buf, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa });
+}
+
+/// WASI: biriken stdout/stderr'i döner ve boşaltır.
+pub export fn nox_wasm_take_stdout_raw(rt: ?*anyopaque, hp: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    const h = asHandle(hp) orelse return str_mod.nox_str_from_bytes(rt, "");
+    const out = str_mod.nox_str_from_bytes(rt, h.out.items);
+    h.out.clearRetainingCapacity();
+    return out;
+}
+
+pub export fn nox_wasm_take_stderr_raw(rt: ?*anyopaque, hp: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    const h = asHandle(hp) orelse return str_mod.nox_str_from_bytes(rt, "");
+    const out = str_mod.nox_str_from_bytes(rt, h.errout.items);
+    h.errout.clearRetainingCapacity();
+    return out;
+}
+
+/// `proc_exit` ile çıkış kodu (yoksa -1).
+pub export fn nox_wasm_exit_code_raw(hp: ?*anyopaque) callconv(.c) i64 {
+    const h = asHandle(hp) orelse return -1;
+    return h.exit_code;
+}
+
+/// Host işlevi bir Nox istisnası fırlattığında gönderici çağırır: sonraki geri dönüşte yürütme `HostFailure` ile kesilir.
+pub export fn nox_wasm_host_fail_raw(hp: ?*anyopaque) callconv(.c) void {
+    const h = asHandle(hp) orelse return;
+    h.host_failed = true;
 }
 
 /// `path`teki modülü okuyup örnekler. `fuel`/`max_pages` <= 0 ise varsayılan sınırlar.
@@ -132,6 +542,10 @@ pub export fn nox_wasm_open_bytes_raw(rt: ?*anyopaque, data: ?*anyopaque, fuel: 
     return openBytes(rt, buf, fuel, max_pages);
 }
 
+pub export fn nox_wasm_null_raw() callconv(.c) ?*anyopaque {
+    return null;
+}
+
 pub export fn nox_wasm_is_null_raw(hp: ?*anyopaque) callconv(.c) i64 {
     return @intFromBool(hp == null);
 }
@@ -145,6 +559,12 @@ pub export fn nox_wasm_close_raw(hp: ?*anyopaque) callconv(.c) void {
     const h = asHandle(hp) orelse return;
     const a = h.allocator;
     if (h.inst) |i| i.deinit();
+    for (h.wasi_args) |arg| a.free(arg);
+    if (h.wasi_args.len > 0) a.free(h.wasi_args);
+    h.out.deinit(a);
+    h.errout.deinit(a);
+    if (h.hctx.len > 0) a.free(h.hctx);
+    if (h.hbind.len > 0) a.free(h.hbind);
     if (h.module_ok) h.module.deinit();
     if (h.bytes.len > 0) a.free(h.bytes);
     a.destroy(h);
@@ -170,6 +590,7 @@ fn normalizeResult(ty: module_mod.ValType, v: u64) i64 {
 fn callCommon(h: *Handle, name: []const u8, args: []const u64) bool {
     clearErr(h);
     h.nresults = 0;
+    h.exit_code = -1;
     const inst = h.inst orelse {
         if (h.err_len == 0) setErr(h, "module is not instantiated", .{});
         return false;
@@ -208,6 +629,20 @@ pub export fn nox_wasm_call_raw(rt: ?*anyopaque, hp: ?*anyopaque, name: ?[*:0]co
     };
     if (!callCommon(h, str_mod.nox_str_slice(name orelse return 0), slots[0..n])) return 0;
     return if (h.nresults > 0) @bitCast(h.results[0]) else 0;
+}
+
+/// `nox_wasm_call_raw` + host gönderici (bu çağrı süresince geçerli; iç içe çağrılarda önceki değer geri yüklenir).
+pub export fn nox_wasm_call_host_raw(hp: ?*anyopaque, name: ?[*:0]const u8, args: ?*anyopaque, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) i64 {
+    const h = asHandle(hp) orelse return 0;
+    const saved_cb = h.cb;
+    const saved_ud = h.ud;
+    h.cb = cb;
+    h.ud = ud;
+    defer {
+        h.cb = saved_cb;
+        h.ud = saved_ud;
+    }
+    return nox_wasm_call_raw(ud, hp, name, args);
 }
 
 /// Kayan noktalı argümanlarla çağırır (argümanlar `f64` ham bit desenleri olarak `list[int]`te taşınır; C ABI `list[float]` geçirmez): `f32`/`f64` parametreler
@@ -251,6 +686,19 @@ pub export fn nox_wasm_call_f_raw(rt: ?*anyopaque, hp: ?*anyopaque, name: ?[*:0]
         .f32 => @floatCast(@as(f32, @bitCast(@as(u32, @truncate(raw))))),
         else => @floatFromInt(@as(i64, @bitCast(raw))),
     };
+}
+
+pub export fn nox_wasm_call_f_host_raw(hp: ?*anyopaque, name: ?[*:0]const u8, args: ?*anyopaque, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) f64 {
+    const h = asHandle(hp) orelse return 0;
+    const saved_cb = h.cb;
+    const saved_ud = h.ud;
+    h.cb = cb;
+    h.ud = ud;
+    defer {
+        h.cb = saved_cb;
+        h.ud = saved_ud;
+    }
+    return nox_wasm_call_f_raw(ud, hp, name, args);
 }
 
 /// Çok değerli dönüşte `i`. sonucun ham deseni (son çağrıdan).

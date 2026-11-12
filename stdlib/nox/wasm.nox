@@ -7,6 +7,7 @@
 extern def nox_wasm_open_raw(path: str, fuel: int, max_pages: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_wasm_open_bytes_raw(data: list[int], fuel: int, max_pages: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_wasm_is_null_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_wasm_null_raw() -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_wasm_error_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_wasm_close_raw(h: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_wasm_call_raw(h: ptr, name: str, args: list[int]) -> int from "zig-out/lib/noxrt.o" with_rt
@@ -30,10 +31,35 @@ extern def nox_wasm_f32_from_bits_raw(b: int) -> float from "zig-out/lib/noxrt.o
 class WasmError(Exception):
     pass
 
+# WASI `proc_exit(kod)` çağrıldığında fırlar; kod `Instance.exit_code()` ile okunur.
+class WasmExit(Exception):
+    pass
+
+# --- W3: host işlevleri (v2.1.93). Modülün içe aktarmaları Nox işlevleriyle karşılanır. Host işlevi en çok 4 parametre ve 1 sonuç alır; hepsi `int`:
+# wasm `i32` işaret genişletilmiş, `i64` olduğu gibi, `f32`/`f64` ham bit deseni olarak gelir (`f64_from_bits` ile çevrilir). Gönderici (`@ffi.callback`)
+# her çağrı süresince geçerlidir; saklanan bir geri çağrı yoktur. Host işlevinde fırlayan istisna yürütmeyi keser ve çağrıda `WasmError` olur.
+@ffi.callback("cb", "userdata")
+extern def nox_wasm_open_host_raw(path: str, names: list[str], wasi_args: list[str], flags: int, fuel: int, max_pages: int, cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> ptr from "zig-out/lib/noxrt.o"
+@ffi.callback("cb", "userdata")
+extern def nox_wasm_open_bytes_host_raw(data: list[int], names: list[str], wasi_args: list[str], flags: int, fuel: int, max_pages: int, cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> ptr from "zig-out/lib/noxrt.o"
+@ffi.callback("cb", "userdata")
+extern def nox_wasm_call_host_raw(h: ptr, name: str, args: list[int], cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> int from "zig-out/lib/noxrt.o"
+@ffi.callback("cb", "userdata")
+extern def nox_wasm_call_f_host_raw(h: ptr, name: str, args: list[int], cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> float from "zig-out/lib/noxrt.o"
+extern def nox_wasm_host_fail_raw(h: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_wasm_take_stdout_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_take_stderr_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_exit_code_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+
+def _no_hosts() -> list[(int, int, int, int) -> int]:
+    empty: list[(int, int, int, int) -> int] = []
+    return empty
+
 class Instance:
-    def __init__(self: Instance, handle: ptr) -> None:
+    def __init__(self: Instance, handle: ptr, hosts: list[(int, int, int, int) -> int]) -> None:
         self.handle = handle
         self.closed = False
+        self.hosts = hosts
 
     def _check(self: Instance) -> None:
         if self.closed:
@@ -42,12 +68,28 @@ class Instance:
         if msg != "":
             raise WasmError(msg)
 
+    # Çağrı sonrası denetim: önce WASI `proc_exit` (WasmExit), sonra hata (WasmError).
+    def _check_call(self: Instance) -> None:
+        if self.closed:
+            raise WasmError("wasm instance is closed")
+        if nox_wasm_exit_code_raw(self.handle) >= 0:
+            raise WasmExit("wasm module exited with code " + str(nox_wasm_exit_code_raw(self.handle)))
+        self._check()
+
     # Dışa aktarılan işlevi tamsayı argümanlarla çağırır (en çok 16); ilk sonucu döner (sonuç yoksa 0). Tuzak/yakıt bitişi `WasmError`.
     def call(self: Instance, name: str, args: list[int]) -> int:
         if self.closed:
             raise WasmError("wasm instance is closed")
-        r: int = nox_wasm_call_raw(self.handle, name, args)
-        self._check()
+        r: int = 0
+        if len(self.hosts) > 0:
+            _active.append(self)
+            try:
+                r = nox_wasm_call_host_raw(self.handle, name, args, _host_dispatch)
+            finally:
+                _active.pop()
+        else:
+            r = nox_wasm_call_raw(self.handle, name, args)
+        self._check_call()
         return r
 
     # `f32`/`f64` içeren imzalar için: argümanlar `float` (tamsayı parametreler değeri keser), ilk sonuç `float` döner.
@@ -57,8 +99,16 @@ class Instance:
         bits: list[int] = []
         for a in args:
             bits.append(nox_wasm_f64_to_bits_raw(a))
-        r: float = nox_wasm_call_f_raw(self.handle, name, bits)
-        self._check()
+        r: float = 0.0
+        if len(self.hosts) > 0:
+            _active.append(self)
+            try:
+                r = nox_wasm_call_f_host_raw(self.handle, name, bits, _host_dispatch)
+            finally:
+                _active.pop()
+        else:
+            r = nox_wasm_call_f_raw(self.handle, name, bits)
+        self._check_call()
         return r
 
     # Çok değerli dönüşlerde `i`. sonucun ham 64 bit deseni (son `call`/`call_f` çağrısından).
@@ -119,6 +169,27 @@ class Instance:
             self._check()
             raise WasmError("memory store failed")
 
+    # --- WASI (yalnızca `Host.enable_wasi` ile açıldıysa anlamlı): yakalanan çıktı, çıkış kodu, `_start` kısayolu.
+    # `fd_write` çıktısı (fd 1 / fd 2) bellekte birikir; bu çağrılar birikeni döner ve boşaltır.
+    def stdout(self: Instance) -> str:
+        return nox_wasm_take_stdout_raw(self.handle)
+
+    def stderr(self: Instance) -> str:
+        return nox_wasm_take_stderr_raw(self.handle)
+
+    # `proc_exit` ile verilen çıkış kodu (çağrılmadıysa -1).
+    def exit_code(self: Instance) -> int:
+        return nox_wasm_exit_code_raw(self.handle)
+
+    # `_start` işlevini çalıştırır; `proc_exit(kod)` -> `kod`, normal dönüş -> 0.
+    def run_start(self: Instance) -> int:
+        empty: list[int] = []
+        try:
+            self.call("_start", empty)
+        except WasmExit:
+            return nox_wasm_exit_code_raw(self.handle)
+        return 0
+
     def close(self: Instance) -> None:
         if not self.closed:
             nox_wasm_close_raw(self.handle)
@@ -130,30 +201,30 @@ class Instance:
     def __exit__(self: Instance) -> None:
         self.close()
 
-def _wrap(h: ptr, what: str) -> Instance:
+def _wrap(h: ptr, what: str, hosts: list[(int, int, int, int) -> int]) -> Instance:
     if nox_wasm_is_null_raw(h) != 0:
         raise WasmError("out of memory while opening " + what)
     msg: str = nox_wasm_error_raw(h)
     if msg != "":
         nox_wasm_close_raw(h)
         raise WasmError(msg)
-    return Instance(h)
+    return Instance(h, hosts)
 
 # `.wasm` dosyasını açıp örnekler. Varsayılan yakıt 2 milyar talimat, en çok 4096 sayfa (256 MiB) bellek.
 def open(path: str) -> Instance:
-    return _wrap(nox_wasm_open_raw(path, 0, 0), path)
+    return _wrap(nox_wasm_open_raw(path, 0, 0), path, _no_hosts())
 
 # Yakıt (talimat) ve bellek sayfası (64 KiB) tavanlarıyla açar.
 def open_with_limits(path: str, fuel: int, max_pages: int) -> Instance:
-    return _wrap(nox_wasm_open_raw(path, fuel, max_pages), path)
+    return _wrap(nox_wasm_open_raw(path, fuel, max_pages), path, _no_hosts())
 
 # Bellekteki bayt listesinden (her eleman 0..255) açar.
 def from_bytes(data: list[int]) -> Instance:
-    return _wrap(nox_wasm_open_bytes_raw(data, 0, 0), "<bytes>")
+    return _wrap(nox_wasm_open_bytes_raw(data, 0, 0), "<bytes>", _no_hosts())
 
 # `from_bytes` ile aynı, yakıt (talimat) ve bellek sayfası tavanlarıyla.
 def from_bytes_with_limits(data: list[int], fuel: int, max_pages: int) -> Instance:
-    return _wrap(nox_wasm_open_bytes_raw(data, fuel, max_pages), "<bytes>")
+    return _wrap(nox_wasm_open_bytes_raw(data, fuel, max_pages), "<bytes>", _no_hosts())
 
 def f64_bits(x: float) -> int:
     return nox_wasm_f64_to_bits_raw(x)
@@ -166,3 +237,100 @@ def f32_bits(x: float) -> int:
 
 def f32_from_bits(b: int) -> float:
     return nox_wasm_f32_from_bits_raw(b)
+
+# Etkin örnek yığını: gönderici çağrıyı yapan örneğin `hosts` listesine ulaşır (iç içe çağrılar yığınla yönetilir).
+_active: list[Instance] = []
+
+def _host_dispatch(idx: int, a0: int, a1: int, a2: int, a3: int) -> int:
+    inst: Instance = _active[len(_active) - 1]
+    f: (int, int, int, int) -> int = inst.hosts[idx]
+    try:
+        return f(a0, a1, a2, a3)
+    except Exception:
+        nox_wasm_host_fail_raw(inst.handle)
+        return 0
+
+def _drop0(f: () -> int) -> (int, int, int, int) -> int:
+    return lambda a, b, c, d: f()
+
+def _drop1(f: (int) -> int) -> (int, int, int, int) -> int:
+    return lambda a, b, c, d: f(a)
+
+def _drop2(f: (int, int) -> int) -> (int, int, int, int) -> int:
+    return lambda a, b, c, d: f(a, b)
+
+def _drop3(f: (int, int, int) -> int) -> (int, int, int, int) -> int:
+    return lambda a, b, c, d: f(a, b, c)
+
+# Modülün içe aktarmalarını karşılayacak Nox işlevleri: `func0..func4` ile (modül adı, içe aktarma adı, işlev) kaydedilir, sonra `open`/`open_bytes`.
+class Host:
+    def __init__(self: Host, names: list[str], fns: list[(int, int, int, int) -> int], wasi_args: list[str]) -> None:
+        self.names = names
+        self.fns = fns
+        self.wasi_args = wasi_args
+        self.flags = 0
+
+    # WASI preview1 alt kümesini açar (varsayılan KAPALI): `fd_write` (fd 1/2, yakalanır), `args_*`, `environ_*` (boş), `proc_exit`, `sched_yield`, ve
+    # sahte-kapalı `fd_*`. Dosya sistemi / ağ / stdin yoktur. Saat ve rastgelelik ayrı yeteneklerdir (`allow_clock`, `allow_random`).
+    def enable_wasi(self: Host, args: list[str]) -> None:
+        self.wasi_args = args
+        self.flags = self.flags | 8
+
+    def allow_clock(self: Host) -> None:
+        self.flags = self.flags | 1
+
+    def allow_random(self: Host) -> None:
+        self.flags = self.flags | 2
+
+    # WASI çıktısını yakalamaya EK OLARAK gerçek stdout/stderr'e de yazar.
+    def inherit_output(self: Host) -> None:
+        self.flags = self.flags | 4
+
+    def func0(self: Host, module: str, name: str, f: () -> int) -> None:
+        self.names.append(module + "." + name)
+        self.fns.append(_drop0(f))
+
+    def func1(self: Host, module: str, name: str, f: (int) -> int) -> None:
+        self.names.append(module + "." + name)
+        self.fns.append(_drop1(f))
+
+    def func2(self: Host, module: str, name: str, f: (int, int) -> int) -> None:
+        self.names.append(module + "." + name)
+        self.fns.append(_drop2(f))
+
+    def func3(self: Host, module: str, name: str, f: (int, int, int) -> int) -> None:
+        self.names.append(module + "." + name)
+        self.fns.append(_drop3(f))
+
+    def func4(self: Host, module: str, name: str, f: (int, int, int, int) -> int) -> None:
+        self.names.append(module + "." + name)
+        self.fns.append(f)
+
+    def open(self: Host, path: str) -> Instance:
+        return self.open_with_limits(path, 0, 0)
+
+    def open_with_limits(self: Host, path: str, fuel: int, max_pages: int) -> Instance:
+        tmp: Instance = Instance(nox_wasm_null_raw(), self.fns)
+        _active.append(tmp)
+        h: ptr = nox_wasm_null_raw()
+        try:
+            h = nox_wasm_open_host_raw(path, self.names, self.wasi_args, self.flags, fuel, max_pages, _host_dispatch)
+        finally:
+            _active.pop()
+        return _wrap(h, path, self.fns)
+
+    def open_bytes(self: Host, data: list[int]) -> Instance:
+        tmp: Instance = Instance(nox_wasm_null_raw(), self.fns)
+        _active.append(tmp)
+        h: ptr = nox_wasm_null_raw()
+        try:
+            h = nox_wasm_open_bytes_host_raw(data, self.names, self.wasi_args, self.flags, 0, 0, _host_dispatch)
+        finally:
+            _active.pop()
+        return _wrap(h, "<bytes>", self.fns)
+
+# Boş bir `Host` (derleyici kısıtı: sınıf alanı kurucudan gelen listeyle kurulur; bu fabrika onu sağlar).
+def host() -> Host:
+    names: list[str] = []
+    wargs: list[str] = []
+    return Host(names, _no_hosts(), wargs)

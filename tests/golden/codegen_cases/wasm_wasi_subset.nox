@@ -1,0 +1,38 @@
+# v2.1.93: nox.wasm W3b — WASI preview1 alt kümesi (varsayılan KAPALI, yetenek tabanlı): fd_write yakalama, proc_exit, args.
+# Modül: (import fd_write, proc_exit) _start = fd_write(1, iov{8,3}, 1, 20) + proc_exit(7); bellek[8..11] = "hi\n"
+import nox.wasm
+from nox.wasm import WasmError, WasmExit
+
+code: list[int] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 16, 3, 96, 4, 127, 127, 127, 127, 1, 127, 96, 1, 127, 0, 96, 0, 0, 2, 70, 2, 22, 119, 97, 115, 105, 95, 115, 110, 97, 112, 115, 104, 111, 116, 95, 112, 114, 101, 118, 105, 101, 119, 49, 8, 102, 100, 95, 119, 114, 105, 116, 101, 0, 0, 22, 119, 97, 115, 105, 95, 115, 110, 97, 112, 115, 104, 111, 116, 95, 112, 114, 101, 118, 105, 101, 119, 49, 9, 112, 114, 111, 99, 95, 101, 120, 105, 116, 0, 1, 3, 2, 1, 2, 5, 3, 1, 0, 1, 7, 19, 2, 6, 95, 115, 116, 97, 114, 116, 0, 2, 6, 109, 101, 109, 111, 114, 121, 2, 0, 10, 19, 1, 17, 0, 65, 1, 65, 0, 65, 1, 65, 20, 16, 0, 26, 65, 7, 16, 1, 11, 11, 17, 1, 0, 65, 0, 11, 11, 8, 0, 0, 0, 3, 0, 0, 0, 104, 105, 10]
+
+# WASI varsayılan kapalı: Host olmadan ya da enable_wasi olmadan WASI içe aktarmaları karşılanmaz
+try:
+    nox.wasm.from_bytes(code)
+except WasmError:
+    print("wasi imports need enable_wasi")
+hn: nox.wasm.Host = nox.wasm.host()
+try:
+    hn.open_bytes(code)
+except WasmError:
+    print("wasi disabled by default")
+
+h: nox.wasm.Host = nox.wasm.host()
+args: list[str] = ["prog", "x"]
+h.enable_wasi(args)
+w: nox.wasm.Instance = h.open_bytes(code)
+code_out: int = w.run_start()
+print(code_out)
+print(w.exit_code())
+print(w.stdout() == "hi\n")
+print(w.stdout() == "")
+print(w.load(20, 4))
+w.close()
+
+# proc_exit WasmExit olarak da görülebilir
+w2: nox.wasm.Instance = h.open_bytes(code)
+try:
+    w2.call("_start", [])
+except WasmExit:
+    print("exit caught")
+print(w2.stderr() == "")
+w2.close()

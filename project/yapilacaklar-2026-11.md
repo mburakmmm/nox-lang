@@ -70,7 +70,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **4.1 W1** (**v2.1.65**) Tam ikili çözümleme + doğrulama; `i32/i64/f32/f64` tüm sayısal işlemler + dönüşümler; `br_table`; bellek; global; tablo + `call_indirect`; veri/eleman; `start`; çok değerli dönüş; trap anlamı
 - [x] **4.2 W1** (**v2.1.65**) Node `WebAssembly` ile farksal test düzeneği: 36904 sayısal vektör + gerçek `zig cc` programı; CI Linux işi yeniden doğrular
 - [x] **4.3 W2** (**v2.1.92**: `nox.wasm` stdlib modülü — kalıcı tutamaç, çağrı, kayan nokta, bellek, limitler; yeni sözdizimi yok) Dil yüzeyi: `wasm_open` / `wasm_call_on` / bellek erişimi / `close` (yeni dil özelliği, **onay gerekir**)
-- [ ] **4.4 W3** Host işlevleri (import) Nox işlevleriyle + WASI preview1 alt kümesi (varsayılan kapalı)
+- [x] **4.4 W3** (**v2.1.93**: `Host` + WASI preview1 alt kümesi, varsayılan kapalı) Host işlevleri (import) Nox işlevleriyle + WASI preview1 alt kümesi (varsayılan kapalı)
 - [~] **4.5 W4** bulk-memory, sign-extension, reference types, yakıt/yığın/bellek sınırı **v2.1.65'te W1 ile birlikte yapıldı**; kalan: fuzz hedefine `Instance.init` ekleme, performans ölçümü
 - [~] **4.6** SIMD ve threads kapsamı (karar)
 

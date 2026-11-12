@@ -114,7 +114,7 @@ export fn nox_crypto_scrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]con
 /// Windows'ta void'dir (bkz. `runtime/collections/dict.zig`nin AYNI
 /// düzeltmesi) — `advapi32.dll`nin `RtlGenRandom`i (`SystemFunction036`)
 /// YERİNE kullanılır.
-fn secureRandomBuf(buf: []u8) void {
+pub fn secureRandomBuf(buf: []u8) void {
     if (comptime bare_kernel) {
         @memset(buf, 0); // erişilemez: çağıranlar `bare_kernel` iken zaten dönmüştür
         return;

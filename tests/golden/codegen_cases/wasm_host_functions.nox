@@ -1,0 +1,56 @@
+# v2.1.93: nox.wasm W3 — modülün içe aktarmalarını (host işlevleri) Nox işlevleriyle karşılama.
+# (module (import "env" "twice" (func (param i32) (result i32))) (func (export "run") (param i32) (result i32) local.get 0 call 0 i32.const 1 i32.add))
+import nox.wasm
+from nox.wasm import WasmError
+
+calls: list[int] = []
+
+def twice(x: int) -> int:
+    calls.append(x)
+    return x * 2
+
+def boom(x: int) -> int:
+    return 10 // (x - x)
+
+code: list[int] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 6, 1, 96, 1, 127, 1, 127, 2, 13, 1, 3, 101, 110, 118, 5, 116, 119, 105, 99, 101, 0, 0, 3, 2, 1, 0, 7, 7, 1, 3, 114, 117, 110, 0, 1, 10, 11, 1, 9, 0, 32, 0, 16, 0, 65, 1, 106, 11]
+
+h: nox.wasm.Host = nox.wasm.host()
+h.func1("env", "twice", twice)
+w: nox.wasm.Instance = h.open_bytes(code)
+print(w.call("run", [20]))
+print(w.call("run", [-3]))
+print(w.call_f("run", [4.0]))
+print(calls)
+w.close()
+
+# lambda ile host işlevi
+h4: nox.wasm.Host = nox.wasm.host()
+h4.func1("env", "twice", lambda v: v + 100)
+w4: nox.wasm.Instance = h4.open_bytes(code)
+print(w4.call("run", [5]))
+w4.close()
+
+# host işlevinde fırlayan istisna yürütmeyi keser ve WasmError olur; örnek sonra da kullanılabilir
+h2: nox.wasm.Host = nox.wasm.host()
+h2.func1("env", "twice", boom)
+w2: nox.wasm.Instance = h2.open_bytes(code)
+try:
+    w2.call("run", [1])
+except WasmError:
+    print("host exception became WasmError")
+try:
+    w2.call("run", [2])
+except WasmError:
+    print("still failing, still caught")
+w2.close()
+
+# içe aktarma isteyen modül Host olmadan açılmaz; eksik host işlevi adıyla bildirilir
+try:
+    nox.wasm.from_bytes(code)
+except WasmError:
+    print("imports need a Host")
+h3: nox.wasm.Host = nox.wasm.host()
+try:
+    h3.open_bytes(code)
+except WasmError:
+    print("missing host function caught")

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.93]
+
+### Eklendi
+
+- **`nox.wasm` W3 — host işlevleri ve WASI preview1 alt kümesi (TODO 4.4):** `Host` (`nox.wasm.host()`): `func0..func4(modül, ad, işlev)` ile modülün işlev içe aktarmalarını Nox işlevleri/lambdalarıyla karşılar (en çok 4 `int` parametre, 1 `int` sonuç; `f32`/`f64` ham bit deseni), `open`/`open_with_limits`/`open_bytes`. Host işlevinde istisna → yürütme kesilir, çağrıda `WasmError` (örnek kullanılabilir kalır). Eksik içe aktarma adıyla bildirilir. Gönderici (`@ffi.callback`) yalnızca çağrı süresince geçerlidir (saklanan geri çağrı yok; 3.4 kararı beklemeden). WASI VARSAYILAN KAPALI: `enable_wasi(args)` ile `fd_write` (fd 1/2, bellekte yakalanır; `stdout()`/`stderr()`; `inherit_output()` Unix'te gerçek akışa da yazar), `args_*`, boş `environ_*`, `proc_exit` (`WasmExit` ya da `run_start()` çıkış kodu), `sched_yield`, etkisiz `fd_*`; saat ve rastgelelik ayrı yetenekler (`allow_clock`, `allow_random`; yoksa `EPERM`); dosya sistemi/stdin/ağ yok. Desteklenmeyen WASI işlevi açılışta adıyla bildirilir. Golden: `wasm_host_functions`, `wasm_wasi_subset` (iki backend); `docs/stdlib/wasm.md` güncellendi
+
 ## [2.1.92]
 
 ### Eklendi
