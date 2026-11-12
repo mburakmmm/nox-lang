@@ -1,0 +1,56 @@
+# nox.tar (v2.1.71) — tar arşivi (ustar) yazma/okuma. İçerik `str` içinde ham bayt olarak taşınır (ikili güvenli); `.tar.gz` için sonucu `nox.gzip.compress` ile sıkıştırın.
+# Yazılan arşiv Python `tarfile` ustar çıktısıyla bayt-bayt aynıdır (mode 0644/0755, uid/gid/mtime 0). Okuma ustar + GNU uzun ad + PAX `path`/`size` başlıklarını anlar;
+# düz dosya ve dizin dışındaki girdiler (bağlantı, aygıt) atlanır. GÜVENLİK: `unpack` yalnızca bellekte çalışır; adları diske yazarken `nox.path.safe_join` ile sınırlayın.
+
+class TarError(Exception):
+    pass
+
+extern def nox_tar_pack_raw(names: list[str], datas: list[str]) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_tar_unpack_raw(data: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_tar_last_ok() -> int from "zig-out/lib/noxrt.o"
+
+class TarEntry:
+    name: str
+    data: str
+
+    def __init__(self, name: str, data: str) -> None:
+        self.name = name
+        self.data = data
+
+    # Adı '/' ile biten girdi dizindir.
+    def is_dir(self) -> bool:
+        return len(self.name) > 0 and self.name[len(self.name) - 1] == "/"
+
+# Dosya girdisi.
+def file_entry(name: str, data: str) -> TarEntry:
+    return TarEntry(name, data)
+
+# Dizin girdisi (adın sonuna '/' eklenir).
+def dir_entry(name: str) -> TarEntry:
+    if len(name) > 0 and name[len(name) - 1] == "/":
+        return TarEntry(name, "")
+    return TarEntry(name + "/", "")
+
+# Girdilerden tar baytları (str). 100 bayttan uzun adlar `önek/ad` olarak bölünür; sığmazsa ya da ad boşsa `TarError`.
+def pack(entries: list[TarEntry]) -> str:
+    names: list[str] = []
+    datas: list[str] = []
+    for e in entries:
+        names.append(e.name)
+        datas.append(e.data)
+    out: str = nox_tar_pack_raw(names, datas)
+    if nox_tar_last_ok() == 0:
+        raise TarError("cannot pack tar archive (empty or too long entry name)")
+    return out
+
+# tar baytlarını girdilere çözer; bozuk/kısaltılmış arşivde `TarError`.
+def unpack(data: str) -> list[TarEntry]:
+    flat: list[str] = nox_tar_unpack_raw(data)
+    if nox_tar_last_ok() == 0:
+        raise TarError("invalid or truncated tar archive")
+    out: list[TarEntry] = []
+    i: int = 0
+    while i + 1 < len(flat):
+        out.append(TarEntry(flat[i], flat[i + 1]))
+        i = i + 2
+    return out

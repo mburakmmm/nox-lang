@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.71]
+
+### Eklendi
+
+- **`nox.tar` (ustar yazma/okuma) ve `nox.zstd` (Zstandard açma) — TODO 2.13'ün arşiv kısmı:** `pack` çıktısı Python `tarfile` USTAR çıktısıyla bayt-bayt aynı; `unpack` ustar/GNU/PAX arşivlerini okur (uzun adlar dahil), bozuk sağlama/kısaltılmış arşivde `TarError`. `zstd.decompress` Python `compression.zstd` ile sıkıştırılmış verileri (düzey 1–19, çok çerçeveli, 200 KB) aynı özetle açar. Sıkıştırma yok (Zig std yalnızca açar). Docs: `tar.md`, `zstd.md`.
+
 ## [2.1.70]
 
 ### Eklendi

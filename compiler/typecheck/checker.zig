@@ -1501,7 +1501,10 @@ pub const Checker = struct {
         .{ .name = "postgres", .caps = &.{.network} },
         .{ .name = "process", .caps = &.{.process} },
         .{ .name = "signal", .caps = &.{.process} },
+        // v2.1.71: `nox.tar` (ustar yazma/okuma) ve `nox.zstd` (yalnızca açma) saf hesaptır; zstd çıplak çekirdekte kapalıdır (8 MiB pencere).
+        .{ .name = "tar", .caps = &.{} },
         .{ .name = "tempfile", .caps = &.{.filesystem} },
+        .{ .name = "zstd", .caps = &.{} },
         .{ .name = "terminal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },
         .{ .name = "property", .caps = &.{} },

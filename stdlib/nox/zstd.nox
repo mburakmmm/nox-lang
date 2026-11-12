@@ -1,0 +1,15 @@
+# nox.zstd (v2.1.71) — Zstandard AÇMA. Sıkıştırma YOKTUR (Zig standart kütüphanesi yalnızca açar); sıkıştırmak için `nox.gzip` kullanın. Girdi/çıktı `str` içinde ham bayttır
+# (ikili güvenli). Pencere sınırı 8 MiB, çıktı sınırı 1 GiB; sözlük (dictionary) desteklenmez. Çıplak çekirdekte (freestanding) kapalıdır.
+
+class ZstdError(Exception):
+    pass
+
+extern def nox_zstd_decompress_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_zstd_last_ok() -> int from "zig-out/lib/noxrt.o"
+
+# Bir ya da daha çok Zstandard çerçevesini açar; bozuk/desteklenmeyen girdide `ZstdError`.
+def decompress(data: str) -> str:
+    out: str = nox_zstd_decompress_raw(data)
+    if nox_zstd_last_ok() == 0:
+        raise ZstdError("invalid or unsupported zstd data")
+    return out

@@ -565,6 +565,9 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_strings_trim_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_strings_trim_start_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_strings_upper_raw", Entry{ .params = "PP", .ret = 'P' } },
+    .{ "nox_tar_last_ok", Entry{ .params = "", .ret = 'L' } },
+    .{ "nox_tar_pack_raw", Entry{ .params = "PPP", .ret = 'P' } },
+    .{ "nox_tar_unpack_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_task_cancel", Entry{ .params = "P", .ret = 'v' } },
     .{ "nox_task_check_cancelled", Entry{ .params = "P", .ret = 'W' } },
     .{ "nox_task_is_done", Entry{ .params = "P", .ret = 'W' } },
@@ -664,6 +667,8 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_ws_server_ok_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_ws_server_recv_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_ws_server_send_text_raw", Entry{ .params = "PPL", .ret = 'L' } },
+    .{ "nox_zstd_decompress_raw", Entry{ .params = "PP", .ret = 'P' } },
+    .{ "nox_zstd_last_ok", Entry{ .params = "", .ret = 'L' } },
 });
 
 const std = @import("std");

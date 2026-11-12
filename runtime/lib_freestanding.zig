@@ -62,6 +62,8 @@ pub const time_shim = @import("stdlib_shims/time.zig");
 /// v2.1.56: `nox.base64` saf bir dilim işlevidir (OS/libc bağımlılığı YOK) — freestanding'de de bağlanır.
 pub const base64_shim = @import("stdlib_shims/base64.zig");
 pub const bigint_shim = @import("stdlib_shims/bigint.zig");
+pub const tar_shim = @import("stdlib_shims/tar.zig");
+pub const zstd_shim = @import("stdlib_shims/zstd.zig");
 /// v2.1.57: OS'tan bağımsız saf kabuklar (wasm-freestanding köküne zaten dahildi) — `import nox.strings/json/regex/gzip/path/random` artık bağlanır.
 const shim_util = @import("stdlib_shims/shim_util.zig");
 pub const strings_shim = @import("stdlib_shims/strings.zig");
@@ -485,6 +487,8 @@ comptime {
     _ = time_shim;
     _ = base64_shim;
     _ = bigint_shim;
+    _ = tar_shim;
+    _ = zstd_shim;
     _ = strings_shim;
     _ = json_shim;
     _ = regex_shim;

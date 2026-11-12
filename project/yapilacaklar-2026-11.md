@@ -3,7 +3,7 @@
 Tek takip noktası: 2026-11-11 oturumundaki analizlerden çıkan ve konuşulan **tüm işler**. Her iş bittikçe işaretlenir ve sürümü yazılır. Durum: `[ ]` açık, `[x]` bitti (sürümle), `[~]` karar/onay bekliyor, `[-]` yapılmayacak/bayat.
 Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdlib-performans-analizi-2026-11.md`, `project/ffi-performans-analizi-2026-11.md`, `project/wasm-import-kapsam-analizi-2026-11.md`.
 
-**Kullanıcı kararları (2026-11-11):** WASM için seçenek A (kendi Zig yorumlayıcısını MVP'ye tamamla) onaylandı · kusurlar önerilen sırayla düzeltilecek (`%llu` → liste bozulması → `base64`/`upper-lower` Zig'e) · ~~gzip için yeni bağımlılık YOK~~ (2026-11-11 sonradan geri alındı: libdeflate eklendi, v2.1.63) · bu liste takip aracıdır.
+**Kullanıcı kararları (2026-11-12): 3. bölümden sonra 3.5 (dil performans analizi + agresif ama semantik değiştirmeyen optimizasyonlar), 4. bölümden sonra 4.5 (ARC/ASAP analizi + stres testleri) eklendi; sıra 1 → 2 → 3 → 3.5 → 4 → 4.5.** **Kullanıcı kararları (2026-11-11):** WASM için seçenek A (kendi Zig yorumlayıcısını MVP'ye tamamla) onaylandı · kusurlar önerilen sırayla düzeltilecek (`%llu` → liste bozulması → `base64`/`upper-lower` Zig'e) · ~~gzip için yeni bağımlılık YOK~~ (2026-11-11 sonradan geri alındı: libdeflate eklendi, v2.1.63) · bu liste takip aracıdır.
 
 ## 0. Tamamlananlar (analiz turu)
 
@@ -45,7 +45,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **2.10** `nox.bigint` (**v2.1.66**, Zig std.math.big + Python `int` ile birebir golden) + `nox.decimal`/`nox.fraction` (**v2.1.67**, saf Nox)
 - [x] **2.11** `nox.argparse` (komut satırı ayrıştırıcı) — **v2.1.68** (Python `argparse` ile 140 rastgele argv'de birebir)
 - [x] **2.12** `nox.tempfile` + `nox.glob`/`fnmatch` — **v2.1.69** (Python `fnmatch`/`glob` ile birebir golden)
-- [~] **2.13** (özetler `md5`/`sha384`/`sha3`/`blake3` **v2.1.70'te bitti**; kalan: arşivler) `zip`/`tar`/`zstd`(yalnız açma: Zig std yalnız açar) arşiv/sıkıştırma + `md5`/`sha3`/`blake3` özetleri (Zig std.crypto; yeni bağımlılık YOK)
+- [~] **2.13** (özetler `md5`/`sha384`/`sha3`/`blake3` **v2.1.70'te**, `tar` + `zstd` açma **v2.1.71'de bitti**; kalan: `zip`) `zip`/`tar`/`zstd`(yalnız açma: Zig std yalnız açar) arşiv/sıkıştırma + `md5`/`sha3`/`blake3` özetleri (Zig std.crypto; yeni bağımlılık YOK)
 - [x] **2.9** Büyük tahsis maliyeti: tam-eşit-boyutlu büyük blok önbelleği + SIMD ASCII taraması — **v2.1.60** (1 MB concat+len 0.36 → 0.10 ms; upper/lower/trim 55 → 5.4 ms)
 - [x] **2.8** Yeniden ölçüm (v2.1.61): geometrik ortalama **0.68**; ≤ 1.5x hedefi: gzip 2.5x/2.2x (bağımlılık yok kararı) ve base64.decode 2.0x dışında sağlandı. (base64.decode SIMD tek geçişe alındı: 2.6 → 1.2 ms, 0.91x — v2.1.63; yeniden ölçüm geometrik ortalama 0.58)
 
@@ -56,6 +56,15 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **3.3** Callback: yeniden ölçüm 1.9 ns (C'nin 2.5x'i; ilk ölçüm 5 ns idi) — ek profil gerekmez, yeterli
 - [ ] **3.4** Struct-by-value ve saklanan (kayıtlı) callback tasarımı — madde 5.1 ile birlikte
 
+## 3.5 Dil performans analizi ve agresif (semantik korumalı) optimizasyonlar (kullanıcı isteği 2026-11-12)
+
+İlke: **dilin yüzeyi ve anlamı DEĞİŞMEZ** (yeni sözdizimi yok, gözlemlenebilir davranış aynı, hata/istisna sırası aynı, taşma/NaN/sıralama anlamı aynı); yalnızca daha hızlı kod/çalışma zamanı. AGENTS §2 değişmez ilkeleri geçerlidir (ownership görünmez, unwind tablosu yok...). Her optimizasyon için: iki backend (LLVM varsayılan + QBE) golden/fark testi, önce-sonra çıktı eşitliği, ölçülmüş kazanç; kazanç ölçülmezse geri alınır.
+
+- [ ] **3.5.1** Ölçüm altyapısı: dil çekirdeği için kapsamlı, yeniden üretilebilir benchmark paketi — sayısal döngüler (int/float), çağrı maliyeti, sınıf/metot/vtable, generic/monomorphization, closure/yüksek-dereceli işlev, `str` işlemleri (birleştirme, dilimleme, f-string, `find/replace`), `list/dict/set` (ekleme, indeksleme, yineleme, silme), jeneratör, istisna yolu, `spawn/Task/Channel`, `nox.json`/`regex`/`csv` karşılaştırmaları; referanslar: CPython 3.15, C (`-O2`), Go/Rust mümkünse. Çıktı: `benchmarks/lang_perf/` + çalıştırıcı + `project/dil-performans-analizi-2026-11.md`
+- [ ] **3.5.2** Profil ve darboğaz analizi: sıcak yolların örneklemeli profili (`sample`/`perf`), LLVM vs QBE üretilen kod kalitesi farkı, runtime çağrı yoğunluğu (tahsis, retain/release, sınır denetimi, dize kopyası), kaçınılabilir kopyalar; sonuç sıralı bir fırsat listesi (kazanç × risk)
+- [ ] **3.5.3** Uygulama turu (ölçüm sırasına göre): ör. sınır denetimi eleme, küçük işlevlerin ve runtime ilkellerinin satır içi açılması / bitcode ile bağ-zamanı optimizasyonu (LTO), `noalias/readonly/nounwind/nonnull` LLVM öznitelikleri, `list[int]/list[float]` ve `dict[str,*]` özel yolları, dize özet önbelleği, sabit katlama / döngü-değişmezi taşıma, `str +=` zincirinin builder'a indirgenmesi, küçük-nesne tahsis havuzları, dallanma ipuçları, PGO denemesi. Her biri ayrı sürüm, ölçüm + fark testiyle
+- [ ] **3.5.4** Gerileme koruması: benchmark eşik denetimi (CI'da veya `scripts/` ile), "optimizasyonlu / optimizasyonsuz çıktı aynı" fark düzeneği, rastgele program fuzz'ı (iki backend + `-O0` karşılaştırması)
+
 ## 4. WASM içe aktarma (rapor: wasm-import-kapsam-analizi; seçenek A onaylandı)
 
 - [x] **4.1 W1** (**v2.1.65**) Tam ikili çözümleme + doğrulama; `i32/i64/f32/f64` tüm sayısal işlemler + dönüşümler; `br_table`; bellek; global; tablo + `call_indirect`; veri/eleman; `start`; çok değerli dönüş; trap anlamı
@@ -64,6 +73,15 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [ ] **4.4 W3** Host işlevleri (import) Nox işlevleriyle + WASI preview1 alt kümesi (varsayılan kapalı)
 - [~] **4.5 W4** bulk-memory, sign-extension, reference types, yakıt/yığın/bellek sınırı **v2.1.65'te W1 ile birlikte yapıldı**; kalan: fuzz hedefine `Instance.init` ekleme, performans ölçümü
 - [~] **4.6** SIMD ve threads kapsamı (karar)
+
+## 4.5 ARC / ASAP analizi, güçlendirme ve stres testleri (kullanıcı isteği 2026-11-12)
+
+Hedef: sahiplik piramidinin (ASAP → ARC → döngü çözücü → `lowlevel`) performansını artırmak, eksiklerini bulmak ve kanıtlamak. İlke 1 korunur: ownership kullanıcıya görünmez; belirsizlikte sessizce ARC'ye düşülür; ASAP "yanlış pozitif güvenli" karar vermez.
+
+- [ ] **4.5.1** Envanter ve ölçüm: ASAP kararlarının kapsamı (hangi kalıplar ASAP, hangileri neden ARC'ye düşüyor — kapsam/escape/container/closure/işlev sınırı), derleyici içi sayaçlar (ASAP vs ARC değişken oranı, derleme zamanı retain/release sayısı), çalışma zamanı sayaçları (retain/release/atomik işlem/çevrim taraması/ara bellek yüksek-su-işareti) ve hepsini raporlayan bir araç (`NOX_ARC_STATS`); çıktı: `project/arc-asap-analizi-2026-11.md`
+- [ ] **4.5.2** Eksiklik analizi: ASAP'ın kaçırdığı güvenli durumlar (işlevler arası sahiplik özetleri, ödünç çıkarımı, son kullanımda taşıma), gereksiz retain/release çiftleri (eşleştirip eleme), atomik ARC maliyeti (M:N), `str`/`list` paylaşımı ve kopya-yazma fırsatları, döngü çözücü tetikleme sezgisi ve duraklama süreleri, istisna/`defer`/jeneratör yollarında sızıntı ya da fazla iş; her bulgu için risk sınıfı ve öneri
+- [ ] **4.5.3** Stres/soak test düzeneği: (a) tahsis fırtınası ve parçalanma, (b) döngüsel yapılar (çift bağlı liste, graf, closure döngüleri, sınıf-sınıf döngüleri) ile çevrim çözücü doğruluğu ve süre, (c) derin/geniş nesne grafikleri ve derin özyineleme ile serbest bırakma, (d) M:N zamanlayıcı altında paylaşılan nesne yarışları (çok iş parçacıklı ARC; sızıntı/çift serbest bırakma tespiti), (e) istisna ve iptal yollarında sızıntı, (f) **gölge mod fark testi**: aynı program ASAP açık ve "her şey ARC" zorlanmış çalışır — çıktı özdeş ve sızıntısız olmalı, (g) `DebugAllocator` altında sızıntı/çift serbest bırakma, (h) bellek yüksek-su-işareti gerileme eşiği; rastgele program üreteciyle fuzz
+- [ ] **4.5.4** İyileştirme turu: 4.5.2'nin bulgularından kazancı ölçülenler (ör. retain/release eleme, ASAP kapsam genişletme, atomik yerine ayrı-iş-parçacığı yerel sayım, çevrim tetikleyici ayarı); her biri ayrı sürüm, 4.5.3 düzeneğinden geçmeden birleşmez
 
 ## 5. Tartışılacak büyük başlıklar (henüz karar/tasarım yok)
 
