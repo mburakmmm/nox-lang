@@ -104,9 +104,37 @@ extern def keep_ref(xs: ptr) -> None from "libexample.a"
 
 ### Errors
 
-An `extern def` call has no exception channel of its own. Where a native API has an error convention (return codes, errno, a thread-local
-error object), wrap the call in a Nox function that checks it and raises. The HPy/WASM bridges generate this translation automatically
-(trampolines); for plain `extern def` it is your job.
+An `extern def` call has no exception channel of its own, but most C APIs follow one of three conventions. Declare which with **`@ffi.errors`** and
+every call raises a Nox exception on failure instead of returning a code you must remember to check:
+
+```nox-fragment
+class SysError(Exception):
+    pass
+
+def describe(code: int) -> str:
+    return "code " + str(code)
+
+@ffi.errors(raises=SysError, ok=0, errno=True, message="describe")
+extern def chdir(path: str) -> int from "c"          # 0 = success, -1 = failure with errno set
+
+@ffi.errors(raises=SysError, ok_min=0)
+extern def dup(fd: int) -> int from "c"              # >= 0 = success
+
+@ffi.errors(raises=SysError, null_is_error=True, errno=True)
+extern def fopen(path: str, mode: str) -> ptr from "c"   # NULL = failure
+```
+
+| Argument | Meaning |
+|---|---|
+| `raises=E` | the exception class raised on failure (required); it is built from one message string |
+| `ok=V` / `ok_min=V` / `null_is_error=True` | the success test, **exactly one**: result `== V`; result `>= V`; result is not NULL/0 |
+| `errno=True` | append `strerror(errno)` to the message (needs `import nox.ffi`; the value is read right after the call) |
+| `message="fn"` | append `fn(code)` where `def fn(code: int) -> str` is a top-level function of yours |
+
+The raised message reads `chdir failed (code -1): describe(-1): No such file or directory`. The result type must be an integer (`ok=`/`ok_min=`) or a `ptr`/integer
+(`null_is_error=True`); `@ffi.errors` cannot be combined with `@ffi.callback`. Calls are compiled through a small wrapper the compiler writes for you, so the
+raw declaration keeps its C symbol name. For APIs with other conventions (an out-parameter, a separate `get_last_error()`), wrap the call in a Nox function
+that checks it and raises.
 
 ## Callbacks
 

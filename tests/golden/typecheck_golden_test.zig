@@ -976,6 +976,41 @@ test "golden(typecheck): @ffi.callback — geçerli kullanım, OK" {
     );
 }
 
+test "golden(typecheck): @ffi.errors — geçerli kullanımlar (ok=, ok_min=, null_is_error=, errno, message), OK" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_extern_ffi_errors_valid.nox"),
+        @embedFile("typecheck_cases/ok_extern_ffi_errors_valid.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.errors — raises= zorunlu" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_errors_no_raises.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_errors_no_raises.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.errors — başarı ölçütü tam biri olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_errors_two_kinds.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_errors_two_kinds.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.errors — dönüş tipi uygun olmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_errors_bad_return.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_errors_bad_return.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.errors — errno=True nox.ffi içe aktarmayı gerektirir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_errors_errno_needs_import.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_errors_errno_needs_import.expected"),
+    );
+}
+
 test "golden(typecheck): @ffi.callback — async hedef reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_extern_ffi_callback_async_target.nox"),

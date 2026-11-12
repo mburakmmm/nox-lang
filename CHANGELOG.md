@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.102]
+
+### Eklendi
+
+- **`@ffi.errors`: C hata sözleşmesi dilde bildirilir** (TODO 3.4 F3): `@ffi.errors(raises=E, ok=0 | ok_min=0 | null_is_error=True, errno=True, message="fn")` taşıyan bir `extern def` çağrısı başarısızlıkta `E` istisnasını fırlatır (`chdir failed (code -1): describe(-1): No such file or directory`). Üç yaygın kalıp: dönüş kodu (`ok=`), eşik (`ok_min=`, ör. `read` -1), NULL/0 (`null_is_error=True`, `ptr` ya da tamsayı dönüş); `errno=True` `strerror(errno)` ekler (`import nox.ffi`), `message="fn"` kullanıcının `def fn(code: int) -> str` işlevini ekler. Uygulama: çağrı yerleri tembelce üretilen `__ffi_err_<ad>` sarmalayıcısına yeniden yazılır (kaynak metin olarak üretilip normal ayrıştırıcı/denetleyiciden geçer; ham extern C sembol adını korur). Ayrıştırıcı: decorator argümanları artık `ad=ifade` anahtar-kelime biçimini kabul eder (konumsal `@ffi.callback("cb", "ud")` değişmedi). `nox.ffi`: `errno()`, `errno_text()`, `is_null()`; runtime kabuğu `nox_ffi_errno_raw`/`nox_ffi_errno_text_raw`
+- Testler: 5 typecheck golden (geçerli + `raises` eksik, iki başarı ölçütü, uygunsuz dönüş tipi, `import nox.ffi` eksik), fixture `ffi_errors` (gerçek libc `chdir`/`fopen`/`dup`; iki backend; Windows hariç), errno kabuğu birim testi
+
 ## [2.1.101]
 
 ### Eklendi

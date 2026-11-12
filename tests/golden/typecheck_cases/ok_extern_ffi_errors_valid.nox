@@ -1,0 +1,18 @@
+# v2.1.102: @ffi.errors — geçerli bildirimler (ok=, ok_min=, null_is_error=; message). Çağrı yerleri sarmalayıcıya yeniden yazılır; sarmalayıcıdaki `raise`
+# gerçek bir İstisna tabanı gerektirir (bu denetim kapısında çekirdek modül yok) — çağrılar uçtan uca `fixture_corpus`taki `ffi_errors` ile sınanır.
+class SysError:
+    pass
+
+def describe(code: int) -> str:
+    return "code " + str(code)
+
+@ffi.errors(raises=SysError, ok=0, message="describe")
+extern def c_op(path: str) -> int from "fake_errors.o"
+
+@ffi.errors(raises=SysError, ok_min=0)
+extern def c_read(fd: int) -> int from "fake_errors.o"
+
+@ffi.errors(raises=SysError, null_is_error=True)
+extern def c_open(path: str) -> ptr from "fake_errors.o"
+
+print(1)

@@ -2989,6 +2989,36 @@ export function l $nox_mem_stats(l %rt) {
 @fn_end1
     ret 0
 }
+export function l $nox_ffi_errno(l %rt) {
+@start
+    %t0 =l call $nox_ffi_errno_raw()
+    ret %t0
+@after_return0
+@fn_end1
+    ret 0
+}
+export function l $nox_ffi_errno_text(l %rt) {
+@start
+    %t0 =l call $nox_ffi_errno_text_raw(l %rt)
+    ret %t0
+@after_return0
+@fn_end1
+    ret 0
+}
+export function w $nox_ffi_is_null(l %rt, l %p_p) {
+@start
+    %t0 =l alloc8 8
+    storel %p_p, %t0
+    %t1 =l call $nox_arena_create(l %rt)
+    %t2 =l loadl %t0
+    %t3 =w ceql %t2, 0
+    call $nox_arena_destroy(l %rt, l %t1)
+    ret %t3
+@after_return0
+    call $nox_arena_destroy(l %rt, l %t1)
+@fn_end1
+    ret 0
+}
 export function l $build(l %rt, l %p_k) {
 @start
     %t0 =l alloc8 8

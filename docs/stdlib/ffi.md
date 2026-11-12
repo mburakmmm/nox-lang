@@ -1,6 +1,6 @@
 # nox.ffi
 
-Closures and lambdas as C callbacks.
+Closures and lambdas as C callbacks, and `errno` helpers for C error conventions.
 
 ```text
 import nox.ffi
@@ -40,3 +40,13 @@ Rules:
 - Call the stored callback **only from a thread Nox started** and **never after `close()`** (the pinned function is gone): the library's own OS threads and
   late "shutdown" callbacks are not supported.
 - An exception that escapes the callback terminates the program (there is no exception channel through C).
+
+## errno helpers
+
+| Function | Meaning |
+|---|---|
+| `errno()` | the current C `errno` (0 on Windows) |
+| `errno_text()` | its `strerror` text (`"errno N"` when 0 or unsupported) |
+| `is_null(p)` | `True` when the `ptr` is NULL |
+
+[`@ffi.errors(errno=True)`](../language/ffi.md#errors) uses `errno_text()` for you (it needs `import nox.ffi`); call them directly when you wrap an API yourself.

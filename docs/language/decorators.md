@@ -32,6 +32,7 @@ A few decorator names **are** interpreted by the compiler, because they describe
 | `@packed` | class | no padding between fields |
 | `@ffi.escape("p", …)`, `@ffi.noescape("p", …)` | `extern def` | which pointer arguments the native code may retain |
 | `@ffi.callback("cb", "userdata")` | `extern def` | Nox function passed as a C callback |
+| `@ffi.errors(raises=E, ok=0 \| ok_min=0 \| null_is_error=True, errno=True, message="fn")` | `extern def` | turns the C error convention into a Nox exception |
 | `@capability.requires("clock")` | `def`/`extern def` | the function needs a runtime capability ([Freestanding](../tools/freestanding.md)) |
 
 Every other decorator name is yours.

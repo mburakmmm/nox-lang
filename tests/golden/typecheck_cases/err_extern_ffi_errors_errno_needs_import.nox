@@ -1,0 +1,8 @@
+# v2.1.102: errno=True için 'import nox.ffi' gerekir.
+class SysError:
+    pass
+
+@ffi.errors(raises=SysError, ok=0, errno=True)
+extern def c_op(path: str) -> int from "fake_errors.o"
+
+print(c_op("x"))

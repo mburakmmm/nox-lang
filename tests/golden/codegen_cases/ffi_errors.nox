@@ -1,0 +1,40 @@
+# v2.1.102: @ffi.errors — C hata sözleşmesi (dönüş kodu / errno / NULL) Nox istisnasına çevrilir. Gerçek libc işlevleriyle (Unix).
+import nox.ffi
+
+class SysError(Exception):
+    pass
+
+def describe(code: int) -> str:
+    return "describe(" + str(code) + ")"
+
+@ffi.errors(raises=SysError, ok=0, errno=True, message="describe")
+extern def chdir(path: str) -> int from "c"
+
+@ffi.errors(raises=SysError, null_is_error=True, errno=True)
+extern def fopen(path: str, mode: str) -> ptr from "c"
+
+@ffi.errors(raises=SysError, ok_min=0)
+extern def dup(fd: int) -> int from "c"
+
+print(chdir("/"))
+try:
+    chdir("/definitely/not/here")
+except SysError as e:
+    print(e)
+try:
+    fopen("/definitely/not/here.txt", "r")
+except SysError as e:
+    print(e)
+print(dup(1) > 2)
+try:
+    dup(-5)
+except SysError as e:
+    print(e)
+
+# başarı yolu istisna fırlatmaz; döngüde tekrar tekrar çağrı sızıntı bırakmaz
+n: int = 0
+i: int = 0
+while i < 50:
+    n = n + chdir("/")
+    i = i + 1
+print(n)

@@ -53,6 +53,8 @@ const class_attr_promote = @import("class_attr_promote.zig");
 const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
+const lexer_mod = @import("../lexer/lexer.zig");
+const parser_mod = @import("../parser/parser.zig");
 const Span = span_mod.Span;
 const effect_graph = @import("../effect_graph.zig");
 
@@ -166,6 +168,31 @@ const FuncSig = struct {
     /// v1.147.0: parametrelerin AST bildirimi (`self` HARİÇ) — ad + varsayılan değer. `null` İSE (fonksiyon-tipli değerler,
     /// dahili imzalar) keyword/varsayılan argüman desteklenmez. Bkz. `checkArgsDecl`.
     decl: ?[]const ast.Param = null,
+};
+
+/// `@ffi.errors` sarmalayıcı kaynağını kuran küçük metin yazıcı (Zig 0.16'da `ArrayList.writer` yok).
+const SrcWriter = struct {
+    list: *std.ArrayListUnmanaged(u8),
+    a: std.mem.Allocator,
+    fn writeAll(self: SrcWriter, text: []const u8) !void {
+        try self.list.appendSlice(self.a, text);
+    }
+    fn print(self: SrcWriter, comptime fmt: []const u8, args: anytype) !void {
+        try self.list.appendSlice(self.a, try std.fmt.allocPrint(self.a, fmt, args));
+    }
+};
+
+/// v2.1.102 (TODO 3.4 F3): `@ffi.errors` yapılandırması.
+const ExternErrorsConfig = struct {
+    pub const Kind = enum { ok, ok_min, null_is_error };
+    raises: []const u8,
+    kind: Kind,
+    value: i64 = 0,
+    errno: bool = false,
+    message_fn: ?[]const u8 = null,
+    /// Ham extern'in imzası (sarmalayıcı kaynağını üretmek için).
+    params: []const ast.Param,
+    return_type: ast.TypeExpr,
 };
 
 /// v2.0 madde 2.3 (bkz. `Checker.extern_callbacks`in belge notu).
@@ -633,6 +660,12 @@ pub const Checker = struct {
     /// v2.1.101 (TODO 3.4 F2): `nox.ffi.Callback[F]`in somutlaştırılmış sınıf adları — bir `@ffi.callback` parametresine closure/lambda geçirmenin
     /// tutamacı (bkz. `checkCallbackTargetArg`). Anahtar: mangled sınıf adı; tip argümanı `class_type_args`ta.
     ffi_callback_classes: std.StringHashMapUnmanaged(void) = .{},
+    /// v2.1.102 (TODO 3.4 F3): `@ffi.errors(...)` taşıyan extern def'ler (anahtar: extern adı). Çağrı yerleri tembelce üretilen `__ffi_err_<ad>`
+    /// sarmalayıcısına yeniden yazılır (bkz. `ensureErrorsHelper`).
+    extern_errors: std.StringHashMapUnmanaged(ExternErrorsConfig) = .{},
+    /// extern adı -> sarmalayıcı adı (üretilmişse); `errors_building` sarmalayıcı gövdesi denetlenirken içerideki ham çağrının yeniden yazılmasını engeller.
+    errors_helpers: std.StringHashMapUnmanaged([]const u8) = .{},
+    errors_building: std.StringHashMapUnmanaged(void) = .{},
     /// Yapısal protokoller (Faz 11) — adları modül düzeyinde benzersizdir,
     /// bir sınıfla hiçbir açık ilişki (implements) bildirmezler (bkz.
     /// `collectProtocols`). Bir fonksiyonun bir parametresi/dönüş tipi bir
@@ -1918,9 +1951,11 @@ pub const Checker = struct {
             // (ör. `nox.crypto.secure_random_hex_raw`nin KENDİSİ İŞARETLENEBİLİR
             // — bkz. `registerCapabilityDecorator`).
             const is_capability = std.mem.eql(u8, dec.name, "capability.requires");
-            if (!is_escape and !is_noescape and !is_callback and !is_capability) {
-                return self.fail(error.UnknownExternDecorator, "extern function '{s}': unknown decorator '@{s}' (only @ffi.escape/@ffi.noescape/@ffi.callback/@capability.requires are valid)", .{ ed.name, dec.name });
+            const is_errors = std.mem.eql(u8, dec.name, "ffi.errors");
+            if (!is_escape and !is_noescape and !is_callback and !is_capability and !is_errors) {
+                return self.fail(error.UnknownExternDecorator, "extern function '{s}': unknown decorator '@{s}' (only @ffi.escape/@ffi.noescape/@ffi.callback/@ffi.errors/@capability.requires are valid)", .{ ed.name, dec.name });
             }
+            if (is_errors) try self.registerExternErrors(ed, dec, ret);
             if (is_capability) {
                 const arg_values = try self.allocator.alloc([]const u8, dec.args.len);
                 for (dec.args, 0..) |a, i| {
@@ -1979,6 +2014,139 @@ pub const Checker = struct {
         try self.functions.put(self.allocator, ed.name, .{ .params = params, .return_type = ret });
         try self.extern_func_names.put(self.allocator, ed.name, {});
         try self.registerExternCallback(ed, params, ret);
+    }
+
+    /// v2.1.102 (TODO 3.4 F3): `@ffi.errors(raises=E, ok=0 | ok_min=0 | null_is_error=True, errno=True, message="fn")` doğrulaması. Başarı ölçütü TAM BİRİ:
+    /// `ok=V` (dönüş == V başarı), `ok_min=V` (dönüş >= V başarı, ör. `read` -1 hata), `null_is_error=True` (NULL/0 hata; `ptr` ya da `int` dönüş).
+    /// `errno=True` hata iletisine `strerror(errno)` ekler (`import nox.ffi` gerekir); `message="fn"` üst-düzey `def fn(code: int) -> str` işlevinin sonucunu ekler.
+    fn registerExternErrors(self: *Checker, ed: ast.ExternDef, dec: ast.Decorator, ret: Type) TypeError!void {
+        var raises: ?[]const u8 = null;
+        var kind: ?ExternErrorsConfig.Kind = null;
+        var value: i64 = 0;
+        var errno_on = false;
+        var message_fn: ?[]const u8 = null;
+        for (dec.args) |a| {
+            if (a != .kwarg) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors' takes keyword arguments only (raises=, ok=, ok_min=, null_is_error=, errno=, message=)", .{ed.name});
+            const k = a.kwarg;
+            const v = k.value.*;
+            if (std.mem.eql(u8, k.name, "raises")) {
+                if (v != .identifier) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors(raises=...)' must name an exception class", .{ed.name});
+                raises = v.identifier;
+            } else if (std.mem.eql(u8, k.name, "ok") or std.mem.eql(u8, k.name, "ok_min")) {
+                const n: i64 = switch (v) {
+                    .int_lit => |x| x,
+                    .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) -u.operand.int_lit else return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors({s}=...)' takes an integer literal", .{ ed.name, k.name }),
+                    else => return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors({s}=...)' takes an integer literal", .{ ed.name, k.name }),
+                };
+                if (kind != null) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors' takes exactly one of ok=, ok_min=, null_is_error=", .{ed.name});
+                kind = if (std.mem.eql(u8, k.name, "ok")) .ok else .ok_min;
+                value = n;
+            } else if (std.mem.eql(u8, k.name, "null_is_error")) {
+                if (v != .bool_lit) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors(null_is_error=...)' takes True or False", .{ed.name});
+                if (v.bool_lit) {
+                    if (kind != null) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors' takes exactly one of ok=, ok_min=, null_is_error=", .{ed.name});
+                    kind = .null_is_error;
+                }
+            } else if (std.mem.eql(u8, k.name, "errno")) {
+                if (v != .bool_lit) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors(errno=...)' takes True or False", .{ed.name});
+                errno_on = v.bool_lit;
+            } else if (std.mem.eql(u8, k.name, "message")) {
+                if (v != .string_lit) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors(message=...)' takes a string literal naming a top-level function", .{ed.name});
+                message_fn = v.string_lit;
+            } else {
+                return self.fail(error.TypeMismatch, "extern function '{s}': unknown '@ffi.errors' argument '{s}'", .{ ed.name, k.name });
+            }
+        }
+        const rname = raises orelse return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors' requires raises=<exception class>", .{ed.name});
+        const kd = kind orelse return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors' requires one of ok=, ok_min=, null_is_error=True", .{ed.name});
+        for (ed.decorators) |d2| {
+            if (std.mem.eql(u8, d2.name, "ffi.callback")) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors' cannot be combined with '@ffi.callback'", .{ed.name});
+        }
+        const ret_ok = switch (kd) {
+            .null_is_error => ret == .ptr or ret == .typed_ptr or ret == .int or ret == .fixed_int,
+            else => ret == .int or ret == .fixed_int,
+        };
+        if (!ret_ok) return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.errors' needs an integer return type (ok=/ok_min=) or a ptr/integer return type (null_is_error=True)", .{ed.name});
+        try self.extern_errors.put(self.allocator, ed.name, .{ .raises = rname, .kind = kd, .value = value, .errno = errno_on, .message_fn = message_fn, .params = ed.params, .return_type = ed.return_type });
+    }
+
+    fn typeExprText(self: *Checker, t: ast.TypeExpr) TypeError![]const u8 {
+        return switch (t) {
+            .simple => |n| n,
+            .generic => |g| blk: {
+                var buf: std.ArrayListUnmanaged(u8) = .empty;
+                try buf.appendSlice(self.allocator, g.name);
+                try buf.append(self.allocator, '[');
+                for (g.args, 0..) |a, i| {
+                    if (i > 0) try buf.appendSlice(self.allocator, ", ");
+                    try buf.appendSlice(self.allocator, try self.typeExprText(a));
+                }
+                try buf.append(self.allocator, ']');
+                break :blk buf.items;
+            },
+            .qualified => |segs| blk: {
+                var buf: std.ArrayListUnmanaged(u8) = .empty;
+                for (segs, 0..) |sg, i| {
+                    if (i > 0) try buf.append(self.allocator, '.');
+                    try buf.appendSlice(self.allocator, sg);
+                }
+                break :blk buf.items;
+            },
+            else => self.fail(error.TypeMismatch, "'@ffi.errors': unsupported parameter or return type form", .{}),
+        };
+    }
+
+    /// `@ffi.errors` taşıyan `name` extern def'i için sarmalayıcıyı (`__ffi_err_<name>`) tembelce üretir: ham extern'i çağırır, başarı ölçütünü denetler, hata
+    /// durumunda `raises` sınıfından istisna fırlatır. Sarmalayıcı kaynağı METİN olarak üretilip normal ayrıştırıcıdan geçer (elle AST kurmaktan kaçınılır).
+    fn ensureErrorsHelper(self: *Checker, name: []const u8) TypeError![]const u8 {
+        if (self.errors_helpers.get(name)) |h| return h;
+        const cfg = self.extern_errors.get(name).?;
+        if (cfg.errno and !self.imported_modules.contains("nox.ffi")) {
+            return self.fail(error.UnknownType, "'{s}': '@ffi.errors(errno=True)' needs 'import nox.ffi'", .{name});
+        }
+        const helper = try std.fmt.allocPrint(self.allocator, "__ffi_err_{s}", .{name});
+        const rtext = try self.typeExprText(cfg.return_type);
+        var src: std.ArrayListUnmanaged(u8) = .empty;
+        const w: SrcWriter = .{ .list = &src, .a = self.allocator };
+        try w.print("def {s}(", .{helper});
+        for (cfg.params, 0..) |p, i| {
+            if (i > 0) try w.writeAll(", ");
+            try w.print("{s}: {s}", .{ p.name, try self.typeExprText(p.type_expr) });
+        }
+        try w.print(") -> {s}:\n    __r: {s} = {s}(", .{ rtext, rtext, name });
+        for (cfg.params, 0..) |p, i| {
+            if (i > 0) try w.writeAll(", ");
+            try w.writeAll(p.name);
+        }
+        try w.writeAll(")\n");
+        const is_ptr = std.mem.eql(u8, rtext, "ptr") or std.mem.startsWith(u8, rtext, "ptr[");
+        const code_expr: []const u8 = if (is_ptr) "0" else if (std.mem.eql(u8, rtext, "int")) "__r" else "int(__r)";
+        switch (cfg.kind) {
+            .ok => try w.print("    __bad: bool = __r != {d}\n", .{cfg.value}),
+            .ok_min => try w.print("    __bad: bool = __r < {d}\n", .{cfg.value}),
+            .null_is_error => if (is_ptr)
+                try w.writeAll("    __bad: bool = False\n    lowlevel:\n        __bad = ptr_to_int(__r) == 0\n")
+            else
+                try w.writeAll("    __bad: bool = __r == 0\n"),
+        }
+        try w.writeAll("    if __bad:\n");
+        if (cfg.errno) try w.writeAll("        __e: str = nox.ffi.errno_text()\n");
+        try w.print("        __m: str = \"{s} failed (code \" + str({s}) + \")\"\n", .{ name, code_expr });
+        if (cfg.message_fn) |mf| try w.print("        __m = __m + \": \" + {s}({s})\n", .{ mf, code_expr });
+        if (cfg.errno) try w.writeAll("        __m = __m + \": \" + __e\n");
+        try w.print("        raise {s}(__m)\n    return __r\n", .{cfg.raises});
+
+        const toks = lexer_mod.tokenize(self.allocator, src.items) catch return self.fail(error.TypeMismatch, "'{s}': could not build the '@ffi.errors' wrapper", .{name});
+        const m = parser_mod.parseModule(self.allocator, toks) catch return self.fail(error.TypeMismatch, "'{s}': could not build the '@ffi.errors' wrapper", .{name});
+        if (m.body.len != 1 or m.body[0].kind != .func_def) return self.fail(error.TypeMismatch, "'{s}': could not build the '@ffi.errors' wrapper", .{name});
+        const fd = m.body[0].kind.func_def;
+        try self.errors_helpers.put(self.allocator, name, helper);
+        try self.errors_building.put(self.allocator, name, {});
+        defer _ = self.errors_building.remove(name);
+        try self.registerFunc(fd);
+        try self.instantiations.append(self.allocator, fd);
+        try self.checkFunctionBody(fd);
+        return helper;
     }
 
     /// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.188):
@@ -9297,6 +9465,15 @@ pub const Checker = struct {
                 }
                 if (self.generic_functions.get(name)) |gfd| {
                     return try self.instantiateGeneric(ctx, gfd, c);
+                }
+                // v2.1.102 (TODO 3.4 F3): `@ffi.errors` taşıyan extern def — çağrı, tembelce üretilen sarmalayıcıya yeniden yazılır (sarmalayıcının
+                // KENDİ gövdesindeki ham çağrı hariç).
+                if (self.extern_errors.contains(name) and !self.errors_building.contains(name)) {
+                    const helper = try self.ensureErrorsHelper(name);
+                    c.callee.* = .{ .identifier = helper };
+                    const hsig = self.functions.get(helper).?;
+                    try self.checkArgsDecl(ctx, hsig, c.args, helper, @intFromPtr(c.callee));
+                    return hsig.return_type;
                 }
                 if (self.functions.get(name)) |sig| {
                     // `async def` fonksiyonlar DOĞRUDAN çağrılamaz — gövdeleri

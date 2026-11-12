@@ -8,6 +8,8 @@
 const std = @import("std");
 const arc = @import("../alloc/arc.zig");
 const abi_ptr = @import("../abi_ptr.zig");
+const str_mod = @import("../str.zig");
+const builtin = @import("builtin");
 
 const BOX_SIZE: usize = 2 * @sizeOf(usize);
 /// `CLOSURE_RELEASE_FN_PTR_OFFSET` (bkz. `compiler/codegen_qbe/types.zig`): closure bloğunun ofset 8'indeki release işlevi.
@@ -66,4 +68,40 @@ test "kutu closure referansını tutar ve bırakır" {
     // sahte release işlevi sayım dışında bir şey yapmadığından kutunun +1'i ile kendi +1'imizi elle bırakırız
     arc.nox_rc_release(rt, fake, 32);
     arc.nox_rc_release(rt, fake, 32);
+}
+
+extern "c" fn strerror(errnum: c_int) ?[*:0]const u8;
+
+fn currentErrno() c_int {
+    if (builtin.os.tag == .windows or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) return 0;
+    return std.c._errno().*;
+}
+
+/// `@ffi.errors(errno=True)` yardımcısı: o anki `errno` değeri.
+pub export fn nox_ffi_errno_raw() callconv(.c) i64 {
+    return currentErrno();
+}
+
+/// `errno`nun `strerror` metni (`errno == 0` ya da desteklenmeyen platformda "errno 0"). Nox `str` döndürür (ARC, `rt` allocator'ı).
+pub export fn nox_ffi_errno_text_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    const e = currentErrno();
+    if (e != 0 and builtin.os.tag != .windows and builtin.os.tag != .freestanding and builtin.os.tag != .wasi) {
+        if (strerror(e)) |msg| return str_mod.nox_str_from_bytes(rt, std.mem.span(msg));
+    }
+    var buf: [32]u8 = undefined;
+    const t = std.fmt.bufPrint(&buf, "errno {d}", .{e}) catch "errno";
+    return str_mod.nox_str_from_bytes(rt, t);
+}
+
+test "errno metni strerror'dan gelir; errno 0 ise sayısal metin" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) return error.SkipZigTest;
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    std.c._errno().* = 2; // ENOENT
+    try std.testing.expectEqual(@as(i64, 2), nox_ffi_errno_raw());
+    const t = nox_ffi_errno_text_raw(rt) orelse return error.AllocFailed;
+    const text = std.mem.span(t);
+    try std.testing.expect(std.mem.indexOf(u8, text, "No such file") != null);
+    str_mod.nox_str_release(rt, t);
 }

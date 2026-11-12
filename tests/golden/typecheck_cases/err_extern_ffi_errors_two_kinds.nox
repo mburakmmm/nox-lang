@@ -1,0 +1,8 @@
+# v2.1.102: ok= ve ok_min= birlikte verilemez (tam biri).
+class SysError:
+    pass
+
+@ffi.errors(raises=SysError, ok=0, ok_min=0)
+extern def c_op(path: str) -> int from "fake_errors.o"
+
+print(c_op("x"))

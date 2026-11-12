@@ -1077,6 +1077,18 @@ pub const Parser = struct {
         return .{ .var_decl = .{ .name = tmp, .type_expr = .{ .simple = "__infer" }, .value = subject, .is_match_temp = true } };
     }
 
+    /// v2.1.102 (TODO 3.4 F3): decorator argümanı — konumsal ifade ya da `ad=ifade` (anahtar-kelime; `@ffi.errors(raises=E, ok=0)`). Anahtar-kelime
+    /// argümanlar `Expr.kwarg` olarak taşınır (çağrılardaki gibi); `@ffi.callback("cb", "ud")` gibi konumsal biçimler değişmedi.
+    fn parseDecoratorArg(self: *Parser) ParseError!ast.Expr {
+        if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .assign) {
+            const name = self.advance().lexeme;
+            _ = self.advance(); // `=`
+            const value = try self.parseExpr();
+            return .{ .kwarg = .{ .name = name, .value = try self.box(value) } };
+        }
+        return self.parseExpr();
+    }
+
     fn parseDecorators(self: *Parser) ParseError![]ast.Decorator {
         var decorators = std.ArrayList(ast.Decorator).empty;
         while (self.check(.at_sign)) {
@@ -1095,9 +1107,9 @@ pub const Parser = struct {
             var args = std.ArrayList(ast.Expr).empty;
             if (self.match(.l_paren)) {
                 if (!self.check(.r_paren)) {
-                    try args.append(self.allocator, try self.parseExpr());
+                    try args.append(self.allocator, try self.parseDecoratorArg());
                     while (self.match(.comma)) {
-                        try args.append(self.allocator, try self.parseExpr());
+                        try args.append(self.allocator, try self.parseDecoratorArg());
                     }
                 }
                 _ = try self.expect(.r_paren);

@@ -10,6 +10,19 @@
 # Nox'un başlattığı iş parçacığından ve `close()`dan ÖNCE çağırması gerekir. Capability gerektirmez, WASM hedeflerinde kullanılamaz.
 
 extern def nox_cb_box_free(box: ptr) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_ffi_errno_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_ffi_errno_text_raw() -> str from "zig-out/lib/noxrt.o" with_rt
+
+# `@ffi.errors(..., errno=True)` yardımcıları (derleyicinin ürettiği sarmalayıcı çağırır; kullanıcı da doğrudan çağırabilir).
+def errno() -> int:
+    return nox_ffi_errno_raw()
+
+def errno_text() -> str:
+    return nox_ffi_errno_text_raw()
+
+def is_null(p: ptr) -> bool:
+    lowlevel:
+        return ptr_to_int(p) == 0
 
 class Callback[F]:
     fn: F
