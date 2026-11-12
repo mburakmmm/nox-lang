@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.104]
+
+### Eklendi
+
+- **`noxc bindgen`: C başlığından Nox binding'i üretimi** (TODO 3.4/5.1 F4; `compiler/bindgen.zig`, belge `docs/tools/bindgen.md`): `noxc bindgen <baslik.h> --lib <kütüphane> [--prefix p1,p2] [-I] [-D] [-o]`. Başlık `cc -E` ile ön işlenir (+ `-dM` ile makrolar), dış bağımlılık OLMAYAN küçük bir C bildirim ayrıştırıcısıyla okunur (typedef, struct/union, enum, işlev bildirimi/tanımı, işlev işaretçileri, `__attribute__`/`__asm`, satır içi gövdeler dengeli parantezle atlanır; hedef başlığın dışındaki sistem bildirimleri yalnızca tip çözümü için okunur). Çıktı: `extern def`ler, enum üyeleri ve `static const` tamsayıları (`NAME: i32 = i32(v)`), `--prefix` ile `#define` tamsayı/dize sabitleri (sabit-ifade değerlendiricili). Tür eşleme: tamsayı aileleri -> `i8…u64`/`usize`/`isize`, `double` -> `float`, `_Bool` -> `bool`, `const char *` parametresi -> `str`, diğer işaretçiler -> `ptr`, enum -> `i32`. `static inline` işlevler ve `float` (f32) parametre/sonuçlular üretilen **C kabuğundan** geçer (`nox_shim_<ad>` + Nox sarmalayıcı `def`; dış sembolü olan işlevlerde sarmalayıcı `<ad>_`, çünkü üst-düzey `def` de ham sembol üretir); kabuk `cc -c` ile otomatik derlenir. Değerle struct/union, `...`, `long double`, `_Complex` uyarıyla atlanır. Gerçek `sqlite3.h` üzerinde 283 işlev + 498 sabit üretildi ve üretilen binding ile gerçek sorgular iki backend'de çalıştırıldı
+- Testler: ayrıştırıcı/üretici birim testleri (5), `tests/golden/bindgen_golden_test.zig` (gerçek başlık+kaynak -> `cc` -> `runCli` -> program, QBE ve LLVM aynı çıktı); `nox.ffi.null()`; `zig build ffi-test`e eklendi
+
+### Düzeltildi
+
+- **CI (v2.1.99–v2.1.103 kırmızısı):** (1) Linux/aarch64 `binary_size_test` sınırı 14 MB -> 16 MB (ikili 14,69 MB ölçüldü: `-rdynamic` altında `nox.wasm` kabuğunun dışa aktarılan sembolleri ve SIMD/threads yorumlayıcısı ayrılmadan tutuluyor; dead-stripping negatif-sembol kontrolü geçiyor). (2) Windows: `ffi_callback_golden_test` `util.o` yolundaki `\` Nox dize kaçışı sayılıyordu (`UnexpectedToken`) -> yol kaçışlanıyor; `bindgen_golden_test` Windows'ta atlanır (cc ortamı yok)
+
 ## [2.1.103]
 
 ### Düzeltildi

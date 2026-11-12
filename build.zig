@@ -1840,9 +1840,23 @@ pub fn build(b: *std.Build) void {
     ffi_cb_test.step.dependOn(&compile_zig_ext.step);
     ffi_cb_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&addTimedTestRun(b, ffi_cb_test, win_test_timeout_s).step);
+    // v2.1.103: `noxc bindgen` uçtan uca (gerçek C başlığı/kaynağı, iki backend).
+    const bindgen_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/bindgen_golden_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "nox", .module = nox_mod },
+            .{ .name = "host_link", .module = host_link_mod },
+        },
+    });
+    const bindgen_test = b.addTest(.{ .root_module = bindgen_mod });
+    bindgen_test.step.dependOn(&install_noxrt.step);
+    test_step.dependOn(&addTimedTestRun(b, bindgen_test, win_test_timeout_s).step);
     const ffi_test_step = b.step("ffi-test", "Yalnızca extern def / @ffi.callback uyumluluk testlerini çalıştırır");
     ffi_test_step.dependOn(&addTimedTestRun(b, ffi_test, win_test_timeout_s).step);
     ffi_test_step.dependOn(&addTimedTestRun(b, ffi_cb_test, win_test_timeout_s).step);
+    ffi_test_step.dependOn(&addTimedTestRun(b, bindgen_test, win_test_timeout_s).step);
 
     // ---- Stdlib fazı §D.1.5: `stdlib/nox/http.nox` uçtan uca golden
     // testleri — yalnızca `zig-out/lib/noxrt.o`ya ihtiyaç duyar (EK bir

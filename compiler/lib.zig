@@ -18,6 +18,7 @@ pub const project = @import("project.zig");
 pub const test_runner = @import("pkg/test_runner.zig");
 pub const fetch = @import("pkg/fetch.zig");
 pub const sandbox = @import("sandbox.zig");
+pub const bindgen = @import("bindgen.zig");
 pub const signing = @import("pkg/signing.zig");
 pub const hpy_host = @import("pkg/hpy_host.zig");
 pub const pkg_index = @import("pkg/index.zig");

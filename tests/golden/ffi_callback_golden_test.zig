@@ -10,7 +10,9 @@ fn expectBoth(comptime template: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const source = try std.fmt.allocPrint(a, template, .{ build_options.util_o_path, build_options.util_o_path });
+    // Windows yollarındaki `\` Nox dize literalinde kaçış dizisi sayılmasın diye `\\`a çevrilir.
+    const lit = try std.mem.replaceOwned(u8, a, build_options.util_o_path, "\\", "\\\\");
+    const source = try std.fmt.allocPrint(a, template, .{ lit, lit });
     const objs = [_][]const u8{build_options.util_o_path};
     const qbe = try compile_helpers.compileAndRunWithObjs(a, source, &objs);
     try expectRun(qbe, expected, "qbe");

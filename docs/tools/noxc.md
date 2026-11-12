@@ -26,6 +26,7 @@ normally).
 | `noxc check [options] <file.nox>` | parse and type-check only — fast, no code generation. Exit status 0 means "no type errors" |
 | `noxc test [name\|path …]` | run every `*_test.nox` under the current directory, or only those whose file name contains `name`, or the given directory. A compile error is a failed file; the rest still run ([Testing](testing.md)) |
 | `noxc expand <file.nox>` | print the decorator metadata the compiler extracted from the file |
+| `noxc bindgen <header.h> --lib <lib>` | generate Nox `extern def` bindings (and a C shim where needed) from a C header ([bindgen](bindgen.md)) |
 | `noxc explain [--release] <file.nox>` | print each local variable's allocation decision (stack, arena or reference-counted) and why ([Memory](../language/memory.md#seeing-the-compilers-decisions-noxc-explain)) |
 | `noxc fmt <file.nox>` | rewrite the file in the standard style, in place ([Formatter](formatter.md)) |
 

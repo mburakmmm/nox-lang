@@ -5,6 +5,8 @@ the system libraries — callable from Nox with normal static typing at the boun
 and the trust boundary. For richer integrations see [the three APIs](../apis/index.md): the **Nox Native Interface** for plugins that keep
 the runtime's data structures private, and the HPy/WASM bridges in [Internals](../internals/hpy-wasm.md).
 
+For a whole C library, [`noxc bindgen`](../tools/bindgen.md) writes the declarations for you from its header.
+
 ## `extern def`
 
 ```nox

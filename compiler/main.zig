@@ -19,6 +19,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const sandbox = @import("sandbox.zig");
+const bindgen = @import("bindgen.zig");
 const signing = @import("pkg/signing.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
@@ -149,6 +150,7 @@ fn printHelp(is_tr: bool) void {
             \\  test [isim|yol ...]   *_test.nox dosyalarını çalıştırır; isim dosya adında aranır
             \\  check <dosya.nox>     yalnızca tip denetimi yapar (codegen/qbe/cc yok, hızlı)
             \\  expand <dosya.nox>    decorator metadata'sını (isim/argümanlar) yazdırır
+            \\  bindgen <baslik.h>    bir C basligindan Nox binding'i uretir (--lib zorunlu; noxc bindgen --help)
             \\  explain [--release] <dosya.nox>  yerel değişkenlerin stack/arena/ARC tahsis kararını ve nedenini yazdırır
             \\  fmt <dosya.nox>       dosyayı standart biçimde yeniden yazar
             \\  init [ad]             yeni bir proje iskeleti oluşturur (nox.json + main.nox)
@@ -199,6 +201,7 @@ fn printHelp(is_tr: bool) void {
             \\  test [name|path ...]  run *_test.nox files; a name matches the file name
             \\  check <file.nox>      type-check only (no codegen/qbe/cc, fast feedback)
             \\  expand <file.nox>     print decorator metadata (name/args) extracted from the file
+            \\  bindgen <header.h>    generate Nox bindings from a C header (--lib required; see noxc bindgen --help)
             \\  explain [--release] <file.nox>  print each local variable's stack/arena/ARC allocation decision and why
             \\  fmt <file.nox>        rewrite the file in the standard format
             \\  init [name]           scaffold a new project (nox.json + main.nox)
@@ -394,7 +397,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
+    const Subcommand = enum { sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -422,6 +425,7 @@ fn realMain(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "check")) break :blk .check;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
         if (std.mem.eql(u8, first, "explain")) break :blk .explain;
+        if (std.mem.eql(u8, first, "bindgen")) break :blk .bindgen;
         // `-v`/`--dump` ZATEN `build`in AYRINTILI-döküm bayrağı olduğundan
         // (bkz. modül üstü not), sürüm İÇİN `-V` (büyük harf, `-v` İLE
         // ÇAKIŞMAZ) VE `--version`/`version` KULLANILIR — `rustc`/`go`/`node`
@@ -460,6 +464,10 @@ fn realMain(init: std.process.Init) !void {
         .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .expand => try cmdExpand(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .explain => try cmdExplain(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
+        .bindgen => {
+            const code = try bindgen.runCli(gpa, io, a, rest);
+            if (code != 0) std.process.exit(code);
+        },
         .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, nox_home),
         .install => try cmdInstall(gpa, io, a, rest, nox_home, resource_dirs, registry_policy, fetch_policy, init.environ_map),
         .uninstall => try cmdUninstall(io, a, rest, nox_home),
