@@ -35,6 +35,9 @@ ap.add_argument("--py-scale", type=int, default=1)
 ap.add_argument("--no-python", action="store_true")
 ap.add_argument("--no-qbe", action="store_true")
 ap.add_argument("--json")
+ap.add_argument("--save-baseline", help="llvm/c oranlarını (C karşılığı olmayanlar için llvm ms) bu dosyaya yazar")
+ap.add_argument("--check", help="baseline dosyasıyla karşılaştırır; --tolerance'dan fazla yavaşlayan çekirdek varsa çıkış kodu 1")
+ap.add_argument("--tolerance", type=float, default=1.30)
 a = ap.parse_args()
 
 with tempfile.TemporaryDirectory() as d:
@@ -92,4 +95,30 @@ def gm(xs): return math.exp(sum(math.log(x) for x in xs) / len(xs)) if xs else f
 print(f"\ngeometrik ortalama: llvm/c = {gm(ratios_c):.2f}   qbe/c = {gm(ratios_q):.2f}   llvm/python = {gm(ratios_py):.3f}   (1.0 = eşit; < 1 Nox daha hızlı)")
 if a.json:
     json.dump(rows, open(a.json, "w"), indent=1)
-sys.exit(1 if bad else 0)
+
+def metric(r):
+    """Donanımdan bağımsız ölçüt: C karşılığı varsa llvm/c oranı, yoksa llvm ms (aynı makinede karşılaştırılmalı)."""
+    return ("ratio", r["llvm_ms"] / r["c_ms"]) if r["c_ms"] == r["c_ms"] and r["c_ms"] > 0 else ("ms", r["llvm_ms"])
+
+if a.save_baseline:
+    json.dump({r["kernel"]: dict(zip(("kind", "value"), metric(r))) for r in rows}, open(a.save_baseline, "w"), indent=1)
+    print(f"baseline yazıldı: {a.save_baseline}")
+regress = 0
+if a.check:
+    base = json.load(open(a.check))
+    print(f"\nbaseline karşılaştırması (tolerans {a.tolerance:.2f}x):")
+    for r in rows:
+        b = base.get(r["kernel"])
+        if not b:
+            continue
+        kind, val = metric(r)
+        if kind != b["kind"] or b["value"] <= 0:
+            continue
+        rel = val / b["value"]
+        flag = "GERİLEME" if rel > a.tolerance else ("iyileşme" if rel < 1 / a.tolerance else "")
+        if rel > a.tolerance:
+            regress += 1
+        if flag:
+            print(f"  {r['kernel']:26s} {kind}: {b['value']:.3f} -> {val:.3f}  ({rel:.2f}x) {flag}")
+    print("  gerileme yok" if not regress else f"  {regress} çekirdek gerilemiş")
+sys.exit(1 if (bad or regress) else 0)

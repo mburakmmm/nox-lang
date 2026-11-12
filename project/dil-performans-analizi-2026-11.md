@@ -74,5 +74,26 @@ Yöntem: en uzak çekirdeklerin (llvm/c oranı) tek başına küçük programlar
 
 ## Sıradaki adımlar
 
-- **3.5.3** uygulama turu: yukarıdaki sırayla, her fırsat ayrı sürüm (ölçüm + iki backend fark testi + golden). Önce 1-3 (düşük risk).
-- **3.5.4** gerileme koruması: `lang_perf` eşik denetimi.
+## 3.5.3 Uygulama turu 1 (v2.1.76) ve düzeltilen bulgular
+
+Uygulananlar (hepsi semantik korumalı, iki backend'de doğrulandı, ayrıntı spec §3.425):
+
+| Fırsat | Sonuç |
+|---|---|
+| #1 pinned dize release'inde atomik yazma atlama + `s == "lit"` satır içi bayt karşılaştırması | `str_index_loop` 6.4x → 3.3x (profil: süre %76 `strcmp`'teydi; atomik atlama tek başına görünür fark vermedi, gerçek kazanç satır içi karşılaştırmadan) |
+| #2 yakalamasız işlev değeri → statik/pinned kapanış | `func_value_calls` 9.1x → 3.0x |
+
+Geometrik ortalama (llvm/c): 1.87x → **1.67x** (QBE 2.20x → 2.06x).
+
+**Rapor düzeltmeleri (tur 1 sırasında bulundu):**
+
+- *Bulgu 3 (sözlük):* dict'te zaten **son-yuva önbelleği var** (`Dict.last_idx`, v1.142.16); ikinci/üçüncü arama önbellekten döner. Kalan maliyet tek gerçek `findIndex` (tohumlu hash + açık adresleme + `entries` dolaylı karşılaştırma, ~10 ns). Kazanç tablo tasarımı (satır içi anahtar/özet, daha az dolaylılık) gerektirir; orta risk, ayrı tur.
+- *Bulgu 4 (liste büyütme):* yerinde `realloc` mümkün değil — üretilen `append` kodu eski bloğu kendisi release ediyor ve eleman retain/release dengesine güveniyor; sözleşmeyi değiştirmek (büyütme + eski bloğun sahiplik devri tek runtime çağrısında) hem `genListAppend` hem `nox_list_grow` için kapsamlı bir codegen+runtime değişikliği ve ARC testleri gerektirir. 4.5 (ARC/ASAP) bölümüyle birlikte ele alınacak.
+- *Bulgu 5 (istisna denetimi):* `computeMustNotRaise` (compiler/codegen_qbe/exceptions.zig) doğrudan çağrılar için denetimi **zaten kaldırıyor**; kalan denetimler dolaylı (işlev değeri) ve sanal çağrılarda, yani callee bilinmediğinde zorunlu. Kazanç yalnızca denetimin kendisini ucuzlatmaktan gelir (`nox_exception_pending` bir çağrı; fiber-farkındalığı nedeniyle satır içi yük için `RuntimeState` alan ofsetlerinin ABI'ye açılması gerekir).
+- *Bulgu 6 (`matmul`, `sieve`, `insertion_sort`):* IR incelemesi: iç döngüde `a[i][k]`, `b[k][j]` için dört liste uzunluğu yükü + sınır denetimi; indeks döngü değişkenli olduğundan denetimler kalır, satır işaretçisi/uzunlukları LLVM tarafından döngü dışına çıkarılabilir durumda. `list[list[float]]` çift dolaylılığı (C'de bitişik 2B dizi) doğal bir maliyet; 2.4x kabul edilebilir, yapısal kazanç ancak sabit-boyutlu çok boyutlu dizi türüyle (dil özelliği, ayrı karar) mümkün.
+
+Kalan adaylar (her biri tasarım gerektirir): dolaylı çağrı istisna denetimini ucuzlatmak (RuntimeState ABI), sözlük tablo mikro-yapısı, liste büyütme sahiplik sözleşmesi (→ 4.5), sınır denetimi eleme (LLVM `llvm.assume` ipuçları), QBE'ye satır içi açma.
+
+## 3.5.4 Gerileme koruması (v2.1.77)
+
+`python3 benchmarks/lang_perf/run.py --scale 10 --repeat 5 --no-python --check benchmarks/lang_perf/baseline.json [--tolerance 1.3]`: her çekirdeğin donanımdan bağımsız ölçütü (C karşılığı olanlar için **llvm/c oranı**, olmayanlar için llvm ms) `baseline.json` ile karşılaştırılır; tolerans aşılırsa çıkış kodu 1. Sağlama toplamı doğrulaması her çalıştırmada yapılır. Yeni baseline: `--save-baseline benchmarks/lang_perf/baseline.json` (ReleaseFast ile, yeterince boşta bir makinede). Bilinçli olarak CI'ya bağlanmadı (paylaşılan koşucuların gürültüsü); kod değişikliği öncesi/sonrası yerelde çalıştırılır.

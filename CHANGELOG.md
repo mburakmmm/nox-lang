@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.77]
+
+### Eklendi
+
+- **Performans gerileme koruması (TODO 3.5.4):** `benchmarks/lang_perf/run.py --check baseline.json --tolerance 1.3` (`--save-baseline` ile yeni taban) — her çekirdeğin llvm/C oranını kayıtlı tabanla karşılaştırır, tolerans aşılırsa hata verir. Rapor `project/dil-performans-analizi-2026-11.md` tur 1 sonuçlarıyla ve düzeltilen bulgularla (sözlükte son-yuva önbelleği zaten var; doğrudan çağrılarda istisna denetimi zaten kalkıyor; liste büyütme sözleşmesi 4.5'e) güncellendi. Kod değişmedi.
+
 ## [2.1.76]
 
 ### Değişti
