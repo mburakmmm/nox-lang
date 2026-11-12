@@ -94,3 +94,58 @@ pub fn genFfiCallbackTrampoline(self: *Codegen, name: []const u8) CodegenError!v
     try self.qbeRet(ret_temp);
     try self.qbeFuncEnd();
 }
+
+/// v2.1.101 (TODO 3.4 F2): `nox.ffi.Callback` tutamaçları için BİR `@ffi.callback` extern def başına closure-trampoline'ı (`$<extern>__clotramp`).
+/// C'nin geri taşıdığı `userdata`, `nox_cb_box_new`in kurduğu kutudur: `[rt@0, closure@8]`. Trampoline `rt`yi ve closure'ı kutudan okur, closure'ın
+/// `fn_ptr`ini (`closure@0`) `(rt, closure, args...)` ile çağırır (bkz. `calls.zig`nin `genIndirectCallThroughClosurePtr`ı); sonrası `genFfiCallbackTrampoline`
+/// ile aynı: yakalanmamış istisna `$nox_unhandled_exception` ile süreci sonlandırır.
+pub fn genClosureCallbackTrampoline(self: *Codegen, extern_name: []const u8) CodegenError!void {
+    const esig = self.extern_functions.get(extern_name) orelse return error.Unsupported;
+    const cb = esig.callback orelse return;
+    const fsig = esig.params[cb.param_idx].func_sig orelse return error.Unsupported;
+    if (fsig.params.len == 0) return error.Unsupported;
+    const n = fsig.params.len - 1; // son parametre userdata
+
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    const sym = try std.fmt.allocPrint(self.allocator, "${s}__clotramp", .{extern_name});
+    try self.qbeFuncHeaderStart(if (fsig.ret.qtype == .none) null else fsig.ret.qtype, sym);
+    for (fsig.params[0..n], 0..) |p, i| {
+        try self.qbeFuncParam(p.qtype, try std.fmt.allocPrint(self.allocator, "%p{d}", .{i}), i == 0);
+    }
+    try self.qbeFuncParam(.l, "%ud", n == 0);
+    try self.qbeFuncHeaderEnd();
+
+    const rt = try self.newTemp();
+    try self.qbeLoadL(rt, "%ud");
+    const clo_slot = try self.newTemp();
+    try self.qbeOp2Imm(clo_slot, .l, "add", "%ud", 8);
+    const clo = try self.newTemp();
+    try self.qbeLoadL(clo, clo_slot);
+    const fn_ptr = try self.newTemp();
+    try self.qbeLoadL(fn_ptr, clo);
+
+    const ret_temp: ?[]const u8 = if (fsig.ret.qtype == .none) null else try self.newTemp();
+    const call_args = try self.allocator.alloc(codegen.QbeArg, 2 + n);
+    call_args[0] = .{ .ty = .l, .text = rt };
+    call_args[1] = .{ .ty = .l, .text = clo };
+    for (fsig.params[0..n], 0..) |p, i| {
+        call_args[2 + i] = .{ .ty = p.qtype, .text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{i}) };
+    }
+    try self.qbeCall(if (ret_temp) |rv| .{ .name = rv, .ty = fsig.ret.qtype } else null, fn_ptr, call_args);
+
+    const pending = try self.newTemp();
+    try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = rt }});
+    const abort_label = try self.newLabel("clocb_exc_abort");
+    const ok_label = try self.newLabel("clocb_exc_ok");
+    try self.qbeJnz(pending, abort_label, ok_label);
+    try self.qbeLabel(abort_label);
+    try self.qbeCall(null, "$nox_unhandled_exception", &.{.{ .ty = .l, .text = rt }});
+    try self.emitDefaultReturn(if (fsig.ret.qtype == .none) .none else fsig.ret.qtype);
+    try self.qbeLabel(ok_label);
+    try self.qbeRet(ret_temp);
+    try self.qbeFuncEnd();
+}

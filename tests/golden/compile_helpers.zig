@@ -28,6 +28,11 @@ pub const hostLinkArgv = host_link.hostLinkArgv;
 /// `RunResult`'ı döner (çıkış kodu/stderr üzerindeki iddialar çağırana
 /// bırakılır).
 pub fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
+    return compileAndRunWithObjs(allocator, source, &.{});
+}
+
+/// `compileAndRun` + bağlama satırına ek nesne dosyaları (ör. `@ffi.callback` testlerinin C/Zig yardımcıları).
+pub fn compileAndRunWithObjs(allocator: std.mem.Allocator, source: []const u8, extra_objs: []const []const u8) !std.process.RunResult {
     const io = std.testing.io;
 
     const tokens = try nox.lexer.tokenize(allocator, source);
@@ -96,7 +101,7 @@ pub fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.proc
     // `-rdynamic` ZORUNLUDUR — `runtime/stdlib_shims/json.zig`nin `dlsym`i
     // ana programın KENDİ sembollerini dinamik sembol tablosunda bulmayı
     // gerektirir (bkz. `compiler/main.zig`nin AYNI satırı).
-    const link_argv = try hostLinkArgv(allocator, &.{ "cc", hostLinkVisibility() }, bin_path, asm_path, &.{});
+    const link_argv = try hostLinkArgv(allocator, &.{ "cc", hostLinkVisibility() }, bin_path, asm_path, extra_objs);
     defer allocator.free(link_argv);
     const cc_result = try std.process.run(allocator, io, .{
         .argv = link_argv,
@@ -113,6 +118,10 @@ pub fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.proc
 /// `buildOne`ının `--release` yolunu İZLER (`.ll` yazıp TEK bir
 /// `clang -O2` çağrısı, geleneksel `opt|llc|cc` boru hattı DEĞİL).
 pub fn compileAndRunLlvm(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
+    return compileAndRunLlvmWithObjs(allocator, source, &.{});
+}
+
+pub fn compileAndRunLlvmWithObjs(allocator: std.mem.Allocator, source: []const u8, extra_objs: []const []const u8) !std.process.RunResult {
     const io = std.testing.io;
 
     const tokens = try nox.lexer.tokenize(allocator, source);
@@ -175,7 +184,7 @@ pub fn compileAndRunLlvm(allocator: std.mem.Allocator, source: []const u8) !std.
 
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ll", .data = ir });
 
-    const link_argv = try hostLinkArgv(allocator, &.{ "clang", "-O2", hostLinkVisibility() }, bin_path, ll_path, &.{});
+    const link_argv = try hostLinkArgv(allocator, &.{ "clang", "-O2", hostLinkVisibility() }, bin_path, ll_path, extra_objs);
     defer allocator.free(link_argv);
     const clang_result = std.process.run(allocator, io, .{
         .argv = link_argv,

@@ -1,0 +1,33 @@
+# nox.ffi — C'ye closure/lambda/bağlı metot callback'i verebilmek için `Callback` tutamacı (v2.1.101, TODO 3.4 F2).
+#
+#     import nox.ffi
+#     cb: nox.ffi.Callback[(int) -> int] = nox.ffi.Callback[(int) -> int](lambda x: x * 2)
+#     reg_set(cb)        # @ffi.callback parametresine tutamaç verilir; userdata'yı derleyici doldurur
+#     ...
+#     cb.close()         # C artık çağırmayacağında (with bloğu da çalışır)
+#
+# Tutamaç, closure'ı C hâlâ tutarken ARC'nin serbest bırakmaması için pinler; `close()` açıktır ve tekrar çağrılabilir. C'nin callback'i YALNIZCA
+# Nox'un başlattığı iş parçacığından ve `close()`dan ÖNCE çağırması gerekir. Capability gerektirmez, WASM hedeflerinde kullanılamaz.
+
+extern def nox_cb_box_free(box: ptr) -> None from "zig-out/lib/noxrt.o" with_rt
+
+class Callback[F]:
+    fn: F
+    box: ptr
+    live: bool
+
+    def __init__(self, fn: F) -> None:
+        self.fn = fn
+        self.live = True
+        self.box = ffi_box(fn)
+
+    def close(self) -> None:
+        if self.live:
+            self.live = False
+            nox_cb_box_free(self.box)
+
+    def __enter__(self) -> Callback[F]:
+        return self
+
+    def __exit__(self) -> None:
+        self.close()

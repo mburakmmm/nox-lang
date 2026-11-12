@@ -1,0 +1,42 @@
+# v2.1.101: nox.ffi.Callback — closure tutamacının yaşam döngüsü (C olmadan): kurma, close(), tekrar close(), with, yakalanan değişken, sızıntı yok.
+import nox.mem
+import nox.ffi
+from nox.ffi import Callback
+
+def build(k: int) -> Callback[(int) -> int]:
+    return Callback[(int) -> int](lambda x: x * k)
+
+base: int = 10
+h: Callback[(int) -> int] = Callback[(int) -> int](lambda x: x + base)
+print(h.live)
+print(h.fn(5))
+base = 20
+print(h.fn(5))
+h.close()
+print(h.live)
+h.close()
+print(h.live)
+
+g: Callback[(int) -> int] = build(7)
+print(g.fn(6))
+with g as inner:
+    print(inner.fn(2))
+print(g.live)
+
+def churn(n: int) -> int:
+    i: int = 0
+    t: int = 0
+    while i < n:
+        c: Callback[(int) -> int] = build(i)
+        t = t + c.fn(2)
+        c.close()
+        i = i + 1
+    return t
+
+nox.mem.stats()
+print(churn(200))
+s1: nox.mem.MemStats = nox.mem.stats()
+print(churn(200))
+s2: nox.mem.MemStats = nox.mem.stats()
+# s1'in kendisi (MemStats nesnesi) 1 canlı blok sayılır; döngü 400 kez Callback kurup kapattı ve fazladan canlı blok BIRAKMADI
+print(s2.live - s1.live <= 1)

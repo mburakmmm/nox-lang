@@ -91,6 +91,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.url`](url.md) | URLs, percent-encoding, query strings |
 | [`nox.base64`](base64.md), [`nox.uuid`](uuid.md), [`nox.gzip`](gzip.md), [`nox.tar`](tar.md), [`nox.zip`](zip.md), [`nox.zstd`](zstd.md) | Base64, UUIDs, compression and archives |
 | [`nox.wasm`](wasm.md) | Run WebAssembly modules (embedded interpreter, sandboxed, fuel and memory limits) |
+| [`nox.ffi`](ffi.md) | `Callback[F]` handles: lambdas and closures as C callbacks |
 
 ### Security
 

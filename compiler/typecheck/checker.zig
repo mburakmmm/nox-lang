@@ -413,6 +413,7 @@ const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }
     .{ .name = "plugin", .why = "WASI has no dynamic loading" },
     .{ .name = "hpy", .why = "the HPy bridge is not part of the wasm runtime" },
     .{ .name = "wasm", .why = "the embedded WebAssembly engine is not part of the wasm runtime" },
+    .{ .name = "ffi", .why = "C callbacks need native code, which a wasm module does not link" },
 };
 
 /// `freestanding` profilinde sınıflandırılmış olsa bile ÇALIŞMA ZAMANINDA bulunmayan modüller (mobil/hosted çalışma zamanında vardır, `lib_freestanding.zig`de yoktur): yetenek tablosunda
@@ -629,6 +630,9 @@ pub const Checker = struct {
     in_spawn_operand: bool = false,
     /// v1.168.0: somutlaştırılmış generic sınıf adı → tip argümanları (`set()` boş kurucusu beklenen tipten eleman tipini bulur).
     class_type_args: std.StringHashMapUnmanaged([]const Type) = .{},
+    /// v2.1.101 (TODO 3.4 F2): `nox.ffi.Callback[F]`in somutlaştırılmış sınıf adları — bir `@ffi.callback` parametresine closure/lambda geçirmenin
+    /// tutamacı (bkz. `checkCallbackTargetArg`). Anahtar: mangled sınıf adı; tip argümanı `class_type_args`ta.
+    ffi_callback_classes: std.StringHashMapUnmanaged(void) = .{},
     /// Yapısal protokoller (Faz 11) — adları modül düzeyinde benzersizdir,
     /// bir sınıfla hiçbir açık ilişki (implements) bildirmezler (bkz.
     /// `collectProtocols`). Bir fonksiyonun bir parametresi/dönüş tipi bir
@@ -4383,7 +4387,7 @@ pub const Checker = struct {
     }
 
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "hpy_package_open", "hpy_package_close", "hpy_package_close_obj", "hpy_package_call_int", "hpy_package_call_int_arg", "hpy_package_call_bool", "hpy_package_call_float", "hpy_package_call_str", "hpy_package_call_obj", "hpy_package_call_str_arg", "hpy_package_call_float_arg", "hpy_package_method_int", "hpy_package_call_method", "hpy_package_new", "hpy_package_call_bytes", "hpy_package_call_int_keyword", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_of", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "hpy_package_open", "hpy_package_close", "hpy_package_close_obj", "hpy_package_call_int", "hpy_package_call_int_arg", "hpy_package_call_bool", "hpy_package_call_float", "hpy_package_call_str", "hpy_package_call_obj", "hpy_package_call_str_arg", "hpy_package_call_float_arg", "hpy_package_method_int", "hpy_package_call_method", "hpy_package_new", "hpy_package_call_bytes", "hpy_package_call_int_keyword", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_of", "ffi_box", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -8993,6 +8997,13 @@ pub const Checker = struct {
                 // için. YALNIZCA `lowlevel` içinde; yalnızca `list[int]`/`list[float]`/`list[sabit genişlikli tamsayı]` (doğal boyutlu, paketli eleman düzeni — okuma/yazma `ptr[T]` ile tip-denetimli);
                 // bağımsız değişken bir değişken adı ya da alan erişimi OLMALIDIR (geçici ifade değil: dönüş değeri ölçülü ömürlü bir listeye bağlı). İşaretçi, liste ayrılana ya da büyüyene
                 // (`append` yeniden tahsis edebilir) dek geçerlidir — `lowlevel` güven sınırının parçasıdır (AGENTS §9.5); sahiplik yüzeyde GÖRÜNMEZ kalır (İlke 1), tip denetimi sürer (İlke 2).
+                // v2.1.101 (TODO 3.4 F2): `ffi_box(f) -> ptr` — bir closure/fonksiyon DEĞERİNİ C'ye `userdata` olarak verilebilecek bir kutuya sarar
+                // (`nox.ffi.Callback`ın kurucusu kullanır). Kutu closure'ın kendi +1 referansını tutar; `nox.ffi.Callback.release()` bırakır.
+                if (std.mem.eql(u8, name, "ffi_box")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ffi_box' takes exactly 1 argument (a function value)", .{});
+                    if ((try self.checkExpr(ctx, c.args[0])) != .func) return self.fail(error.TypeMismatch, "'ffi_box' takes a function value", .{});
+                    return .ptr;
+                }
                 if (std.mem.eql(u8, name, "ptr_of")) {
                     try self.requireLowlevel(name);
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_of' takes exactly 1 argument (a list variable or field)", .{});
@@ -10235,7 +10246,7 @@ pub const Checker = struct {
             const ae = args[arg_i];
             arg_i += 1;
             if (pi == cfg.param_idx) {
-                try self.checkCallbackTargetArg(ctx, ae, cfg.callback_type, name);
+                try self.checkCallbackTargetArg(ctx, args, arg_i - 1, cfg.callback_type, name);
                 continue;
             }
             const at = try self.checkExprExpected(ctx, ae, pt);
@@ -10254,7 +10265,35 @@ pub const Checker = struct {
     /// ...)` üretebilmesi İçİn GEREKLİDİR. Hedefin KENDİ imzası (gizli
     /// `%rt` HARİÇ — Nox seviyesinde ZATEN GÖRÜNMEZ), callback tipinin
     /// SON parametresi (userdata yuvası) HARİÇ kalanıyla TAM eşleşmelidir.
-    fn checkCallbackTargetArg(self: *Checker, ctx: *FnCtx, ae: ast.Expr, cb_type: types.FuncType, extern_name: []const u8) TypeError!void {
+    fn checkCallbackTargetArg(self: *Checker, ctx: *FnCtx, args: []const ast.Expr, idx: usize, cb_type: types.FuncType, extern_name: []const u8) TypeError!void {
+        const ae = args[idx];
+        // v2.1.101 (TODO 3.4 F2): closure/lambda/bağlı metot callback'i — `nox.ffi.Callback[F]` tutamacı. Argüman bir DEĞİŞKEN ya da ALAN olmalıdır (geçici bir
+        // `Callback[...](..)` ifadesi çağrıdan hemen sonra serbest kalır, oysa C kutuyu saklayabilir). Tutamaç `.box` alanına yeniden yazılır; codegen closure-
+        // trampoline'ını ve kutuyu `userdata` olarak geçirir.
+        if (ae == .attribute or (ae == .identifier and (try ctx.scope.lookup(self.allocator, ae.identifier)) != null)) {
+            const ht = try self.checkExpr(ctx, ae);
+            if (ht == .class and self.ffi_callback_classes.contains(ht.class)) {
+                const f = self.class_type_args.get(ht.class).?[0].func;
+                const expected = cb_type.params[0 .. cb_type.params.len - 1];
+                if (f.params.len != expected.len) {
+                    return self.fail(error.TypeMismatch, "'{s}': the Callback handle takes {d} parameters, the callback signature has {d}", .{ extern_name, f.params.len, expected.len });
+                }
+                for (f.params, expected, 0..) |pt, ept, i| {
+                    if (!scalarTypeEql(pt, ept)) {
+                        return self.fail(error.TypeMismatch, "'{s}': the Callback handle: the type of parameter {d} does not match the callback signature", .{ extern_name, i + 1 });
+                    }
+                }
+                if (!scalarTypeEql(f.return_type.*, cb_type.return_type.*)) {
+                    return self.fail(error.TypeMismatch, "'{s}': the Callback handle: the return type does not match the callback signature", .{extern_name});
+                }
+                const mutable: []ast.Expr = @constCast(args);
+                const obj = try self.allocator.create(ast.Expr);
+                obj.* = ae;
+                mutable[idx] = .{ .attribute = .{ .obj = obj, .attr = "box" } };
+                _ = try self.checkExpr(ctx, mutable[idx]);
+                return;
+            }
+        }
         if (ae != .identifier) {
             return self.fail(error.TypeMismatch, "'{s}': the '@ffi.callback' target can only be the BARE name of a top-level function (lambdas/bound methods/capturing closures are NOT ACCEPTED)", .{extern_name});
         }
@@ -11088,6 +11127,15 @@ pub const Checker = struct {
         // AYNI yorumuyla TUTARLI), SONRA gövdeyi denetle.
         try self.putClass(mangled);
         try self.class_type_args.put(self.allocator, mangled, try self.allocator.dupe(Type, bound_types));
+        if (std.mem.eql(u8, gcd.name, "nox_ffi_Callback") and bound_types.len == 1 and bound_types[0] == .func) {
+            var has_fn = false;
+            var has_box = false;
+            for (gcd.fields) |f| {
+                if (std.mem.eql(u8, f.name, "fn")) has_fn = true;
+                if (std.mem.eql(u8, f.name, "box")) has_box = true;
+            }
+            if (has_fn and has_box) try self.ffi_callback_classes.put(self.allocator, mangled, {});
+        }
         try self.registerClassSignatures(concrete);
         const inst_index = self.class_instantiations.items.len;
         try self.class_instantiations.append(self.allocator, concrete);

@@ -360,6 +360,23 @@ pub const Codegen = struct {
     pub const genClosureRelease = closures.genClosureRelease;
     pub const genFunctionValueTrampoline = closures.genFunctionValueTrampoline;
     pub const genFfiCallbackTrampoline = ffi_callback.genFfiCallbackTrampoline;
+    pub const genClosureCallbackTrampoline = ffi_callback.genClosureCallbackTrampoline;
+
+    /// `nox.ffi.Callback[F]` (sınıf adı `nox_ffi_Callback__...`, alanları `fn` + `box`) bu modülde somutlaştırılmış mı?
+    pub fn usesFfiCallbackHandles(self: *Codegen) bool {
+        var it = self.classes.iterator();
+        while (it.next()) |e| {
+            if (!std.mem.startsWith(u8, e.key_ptr.*, "nox_ffi_Callback__")) continue;
+            var has_fn = false;
+            var has_box = false;
+            for (e.value_ptr.fields.items) |f| {
+                if (std.mem.eql(u8, f.name, "fn")) has_fn = true;
+                if (std.mem.eql(u8, f.name, "box")) has_box = true;
+            }
+            if (has_fn and has_box) return true;
+        }
+        return false;
+    }
 
     pub const genClassVtable = layout.genClassVtable;
     pub const genClassRelease = layout.genClassRelease;
@@ -1966,6 +1983,21 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     // "HERHANGİ bir fonksiyon GÖVDESİ üretilmeden ÖNCEKİ TEK nokta" —
     // `@ffi.callback` hedeflerinin C-ABI trampoline'ları BURADA üretilir.
     for (callback_targets) |name| try gen.genFfiCallbackTrampoline(name);
+    // v2.1.101 (TODO 3.4 F2): `nox.ffi.Callback[F]` somutlaştırılmışsa (`nox_ffi_Callback__...` sınıfı, `fn` + `box` alanlı) her `@ffi.callback` extern def'i için
+    // closure-trampoline'ı üretilir (ad sırasına göre: IR deterministik). `Callback` kullanmayan modüllerin IR'ı değişmez.
+    if (gen.usesFfiCallbackHandles()) {
+        var ext_names: std.ArrayListUnmanaged([]const u8) = .empty;
+        var ext_it = gen.extern_functions.iterator();
+        while (ext_it.next()) |e| {
+            if (e.value_ptr.callback != null) try ext_names.append(gen.allocator, e.key_ptr.*);
+        }
+        std.mem.sort([]const u8, ext_names.items, {}, struct {
+            fn lt(_: void, x: []const u8, y: []const u8) bool {
+                return std.mem.lessThan(u8, x, y);
+            }
+        }.lt);
+        for (ext_names.items) |name| try gen.genClosureCallbackTrampoline(name);
+    }
 
     // Performans fazı: HANGİ serbest fonksiyon/kurucuların (transitif
     // olarak) ASLA istisna fırlatamayacağı kanıtlanabiliyorsa `genCall`/

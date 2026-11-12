@@ -1823,8 +1823,26 @@ pub fn build(b: *std.Build) void {
     ffi_test.step.dependOn(&compile_counter_ext.step);
     ffi_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&addTimedTestRun(b, ffi_test, win_test_timeout_s).step);
+    // v2.1.100/101: saklanan + closure callback'leri iki backend'de uçtan uca (C yardımcıları `tests/compat/zig_ext/util.zig`te).
+    const ffi_cb_options = b.addOptions();
+    ffi_cb_options.addOption([]const u8, "util_o_path", pathFromRootCompat(b, zig_ext_o_path));
+    const ffi_cb_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/ffi_callback_golden_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "nox", .module = nox_mod },
+            .{ .name = "host_link", .module = host_link_mod },
+            .{ .name = "build_options", .module = ffi_cb_options.createModule() },
+        },
+    });
+    const ffi_cb_test = b.addTest(.{ .root_module = ffi_cb_mod });
+    ffi_cb_test.step.dependOn(&compile_zig_ext.step);
+    ffi_cb_test.step.dependOn(&install_noxrt.step);
+    test_step.dependOn(&addTimedTestRun(b, ffi_cb_test, win_test_timeout_s).step);
     const ffi_test_step = b.step("ffi-test", "Yalnızca extern def / @ffi.callback uyumluluk testlerini çalıştırır");
     ffi_test_step.dependOn(&addTimedTestRun(b, ffi_test, win_test_timeout_s).step);
+    ffi_test_step.dependOn(&addTimedTestRun(b, ffi_cb_test, win_test_timeout_s).step);
 
     // ---- Stdlib fazı §D.1.5: `stdlib/nox/http.nox` uçtan uca golden
     // testleri — yalnızca `zig-out/lib/noxrt.o`ya ihtiyaç duyar (EK bir

@@ -1022,6 +1022,16 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // backend-SOYUTLANMIŞ `qbeOp2`/`qbeOp2Imm`/`qbeLoad`/`qbeStore`
             // emitter'larını KULLANIR — HEM QBE HEM LLVM'de SIFIR EK kod
             // İLE çalışır.
+            if (std.mem.eql(u8, name, "ffi_box")) {
+                // v2.1.101 (TODO 3.4 F2): closure değerini `{rt, closure+1}` kutusuna sarar (bkz. `runtime/stdlib_shims/ffi_cb.zig`).
+                if (c.args.len != 1) return error.Unsupported;
+                const v = try self.genExpr(c.args[0]);
+                const box = try self.newTemp();
+                try self.qbeCall(.{ .name = box, .ty = .l }, "$nox_cb_box_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = v.text } });
+                // Kutu kendi +1'ini tutar; argüman geçici (ör. lambda ifadesi) ise çağrının kendi referansı burada bırakılır.
+                try self.releaseTemporaryArgs(c.args, &.{v});
+                return .{ .text = box, .qtype = .l, .heap = .none };
+            }
             if (isPtrManualBuiltin(name)) {
                 try checkInsideLowlevel(self);
                 if (std.mem.eql(u8, name, "ptr_from_int")) {
@@ -1283,16 +1293,23 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     // dolgu DEĞERİDİR.
                     const release_exprs = try self.allocator.alloc(ast.Expr, esig.params.len);
                     var arg_i: usize = 0;
+                    // v2.1.101 (TODO 3.4 F2): callback argümanı `Callback` tutamacıysa (checker `.box` alanına yeniden yazmıştır) `userdata` = kutu,
+                    // callback = `$<extern>__clotramp`; aksi halde üst-düzey `def` yolu (userdata = `%rt`).
+                    const cb_arg_pos = cb.param_idx - @as(usize, if (cb.context_idx < cb.param_idx) 1 else 0);
+                    const closure_handle = c.args[cb_arg_pos] == .attribute;
+                    const ud_value: Value = if (closure_handle) try self.genExpr(c.args[cb_arg_pos]) else .{ .text = RT_PARAM, .qtype = .l };
                     for (esig.params, 0..) |p, pi| {
                         if (pi == cb.context_idx) {
-                            arg_values[pi] = .{ .text = RT_PARAM, .qtype = .l };
+                            arg_values[pi] = ud_value;
                             release_exprs[pi] = c.args[0];
                             continue;
                         }
                         if (pi == cb.param_idx) {
-                            const target_name = c.args[arg_i].identifier;
+                            const tramp_sym = if (closure_handle)
+                                try std.fmt.allocPrint(self.allocator, "${s}__clotramp", .{name})
+                            else
+                                try std.fmt.allocPrint(self.allocator, "${s}__cbtramp", .{c.args[arg_i].identifier});
                             arg_i += 1;
-                            const tramp_sym = try std.fmt.allocPrint(self.allocator, "${s}__cbtramp", .{target_name});
                             arg_values[pi] = .{ .text = tramp_sym, .qtype = .l };
                             release_exprs[pi] = c.args[0];
                             continue;

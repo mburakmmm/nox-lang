@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.101]
+
+### Eklendi
+
+- **`nox.ffi.Callback[F]`: closure / lambda / bağlı metot C callback'i** (TODO 3.4 F2): `@ffi.callback` parametresine artık yalnızca üst-düzey `def` değil, `Callback[(int) -> int](lambda x: x + base)` tutamacı da verilebilir. Tutamaç closure'ı pinler (ARC +1) ve rt-bağımsız bir kutu (`{rt, closure}`, `runtime/stdlib_shims/ffi_cb.zig`) kurar; derleyici her `@ffi.callback` extern def'i için bir closure-trampoline'ı (`$<extern>__clotramp`) üretir (yalnızca `Callback` somutlaştırılan modüllerde; diğer IR'lar değişmez), `userdata` yerine kutuyu geçirir. Çağrı yerinde argüman bir değişken/alan olmalıdır (geçici ifade reddedilir), `F` imzası callback tipiyle (son `userdata` hariç) eşleşmelidir. `close()` açıktır ve tekrarlanabilir (`with` de çalışır); kapanmamış tutamaç program sonuna kadar yaşar. Yeni yerleşik `ffi_box(f) -> ptr`; stdlib `nox.ffi` (capability yok, wasm hedeflerinde kullanılamaz); belge `docs/stdlib/ffi.md`
+- Testler: `tests/golden/ffi_callback_golden_test.zig` (QBE + LLVM, C yardımcısı `util.zig`: saklanan üst-düzey callback ve closure tutamacı; `compile_helpers.zig`ye `compileAndRun*WithObjs` eklendi, `zig build ffi-test`), fixture `ffi_callback_handle` (yaşam döngüsü + sızıntısızlık), kutu için runtime birim testi
+
+### Notlar
+
+- `with Callback[...](...) as c:` (doğrudan kurucu ifadesi) mevcut `with` codegen sınırlaması yüzünden desteklenmez; önce değişkene atayıp `with h as c:` kullanın
+- Üst-düzey `def` callback'leri değişmedi (kutu gerektirmez)
+
 ## [2.1.100]
 
 ### Eklendi
