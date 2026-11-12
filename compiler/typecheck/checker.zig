@@ -1428,6 +1428,7 @@ pub const Checker = struct {
     /// İçİn transitivite ZATEN OTOMATİK/ÜCRETSİZ ÇALIŞIR.
     const MODULE_CAPABILITIES = [_]ModuleCaps{
         .{ .name = "arch", .caps = &.{.arch_x86_64} },
+        .{ .name = "argparse", .caps = &.{} },
         // Faz B.1: `nox.atomic` — page_allocator + OS thread atomikleri,
         // anlamlı olması İçin `threads` gerektirir (freestanding'de yok).
         .{ .name = "atomic", .caps = &.{.threads} },

@@ -1,0 +1,50 @@
+# nox.argparse: alt komutlar, seçenekler (choices/float/required), yardım metni ve hata iletileri.
+import nox.argparse
+from nox.argparse import ArgumentParser, Namespace, ArgumentError
+
+root: ArgumentParser = ArgumentParser("git-lite", "Tiny VCS.")
+root.add_flag("-q", "--quiet", "less output")
+
+commit: ArgumentParser = ArgumentParser("git-lite commit", "Record changes.")
+commit.add_option("-m", "--message", "", "commit message", True)
+commit.add_flag("-a", "--all", "stage everything")
+commit.add_choice_option("", "--sign", ["none", "gpg", "ssh"], "none", "signature kind")
+commit.add_float_option("", "--ratio", 0.5, "similarity ratio")
+commit.add_optional_positional("branch", "main", "target branch")
+
+log: ArgumentParser = ArgumentParser("git-lite log")
+log.add_int_option("-n", "--max-count", 10, "limit")
+log.add_rest("paths", "limit to paths")
+
+root.add_command("commit", commit, "record changes")
+root.add_command("log", log, "show history")
+
+def show(args: list[str]) -> None:
+    try:
+        ns: Namespace = root.parse(args)
+        if ns.help_requested:
+            print("help")
+        elif ns.command == "commit":
+            print("commit", ns.get_str("message"), ns.flag("all"), ns.get_str("sign"), ns.get_float("ratio"), ns.get_str("branch"), ns.flag("quiet"))
+        elif ns.command == "log":
+            print("log", ns.get_int("max_count"), ns.get_list("paths"), ns.has("max_count"))
+        else:
+            print("none")
+    except ArgumentError as e:
+        print("error:", e)
+
+show(["commit", "-m", "init", "-a", "dev"])
+show(["-q", "commit", "--message=fix", "--sign", "gpg", "--ratio", "0.75"])
+show(["commit"])
+show(["commit", "-m", "x", "--sign", "pgp"])
+show(["commit", "-m", "x", "--ratio", "abc"])
+show(["log", "-n", "3", "src", "docs"])
+show(["log", "--max-count=2"])
+show(["log", "-n", "x"])
+show(["fetch"])
+show([])
+show(["-h"])
+show(["commit", "-m"])
+print(root.usage())
+print(root.help_text())
+print(commit.help_text())

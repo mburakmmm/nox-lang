@@ -43,7 +43,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **2.6** `gzip` libdeflate ile (kullanıcı kararı 2026-11-11: gerekirse bağımlılık) — sıkıştırma ≈16.5 → 2.6 ms (0.39x), açma 0.9 ms (0.98x) — **v2.1.63**; Windows/wasm/mobil/çıplak çekirdek Zig flate'te
 - [x] **2.7** Eksik modül adayları: kullanıcı seçimi (2026-11-11): bigint+decimal/fraction, argparse, tempfile+glob/fnmatch, zip/tar/zstd+md5/sha3/blake3 (aşağıda 2.10-2.13); `XML/HTML`, `Mutex/Semaphore`, `.env/ini` istenmedi
 - [x] **2.10** `nox.bigint` (**v2.1.66**, Zig std.math.big + Python `int` ile birebir golden) + `nox.decimal`/`nox.fraction` (**v2.1.67**, saf Nox)
-- [ ] **2.11** `nox.argparse` (komut satırı ayrıştırıcı)
+- [x] **2.11** `nox.argparse` (komut satırı ayrıştırıcı) — **v2.1.68** (Python `argparse` ile 140 rastgele argv'de birebir)
 - [ ] **2.12** `nox.tempfile` + `nox.glob`/`fnmatch`
 - [ ] **2.13** `zip`/`tar`/`zstd`(yalnız açma: Zig std yalnız açar) arşiv/sıkıştırma + `md5`/`sha3`/`blake3` özetleri (Zig std.crypto; yeni bağımlılık YOK)
 - [x] **2.9** Büyük tahsis maliyeti: tam-eşit-boyutlu büyük blok önbelleği + SIMD ASCII taraması — **v2.1.60** (1 MB concat+len 0.36 → 0.10 ms; upper/lower/trim 55 → 5.4 ms)

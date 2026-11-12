@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.68]
+
+### Eklendi
+
+- **`nox.argparse` (TODO 2.11):** komut satırı ayrıştırıcı — bayrak, dize/tamsayı/ondalık/seçmeli/tekrarlanabilir seçenekler, konumsal (zorunlu, isteğe bağlı, kalan), alt komutlar, `-h` ile `usage()`/`help_text()`. Python `parse_intermixed_args` ile 140 rastgele argv'de aynı sonuç ve hata. Saf Nox, capability gerektirmez. Docs: `docs/stdlib/argparse.md`.
+
 ## [2.1.67]
 
 ### Eklendi
