@@ -667,6 +667,9 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_ws_server_ok_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_ws_server_recv_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_ws_server_send_text_raw", Entry{ .params = "PPL", .ret = 'L' } },
+    .{ "nox_zip_last_ok", Entry{ .params = "", .ret = 'L' } },
+    .{ "nox_zip_pack_raw", Entry{ .params = "PPPL", .ret = 'P' } },
+    .{ "nox_zip_unpack_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_zstd_decompress_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_zstd_last_ok", Entry{ .params = "", .ret = 'L' } },
 });

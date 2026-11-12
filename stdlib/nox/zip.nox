@@ -1,0 +1,57 @@
+# nox.zip (v2.1.72) — ZIP arşivi yazma/okuma (yöntem 0 depolanmış, 8 deflate). İçerik `str` içinde ham bayt (ikili güvenli). ZIP64, şifreleme ve diğer sıkıştırma yöntemleri
+# DESTEKLENMEZ (bozuk/desteklenmeyen arşivde `ZipError`). Sıkıştırma `nox.gzip` ile aynı deflate motorunu kullanır. Açarken CRC32 ve boyut doğrulanır.
+# GÜVENLİK: `unpack` yalnızca bellekte çalışır; adları diske yazarken `nox.path.safe_join` ile sınırlayın (ad `..` ya da mutlak yol içerebilir). Girdi başına açılmış boyut 1 GiB ile sınırlıdır.
+
+class ZipError(Exception):
+    pass
+
+extern def nox_zip_pack_raw(names: list[str], datas: list[str], compress: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_zip_unpack_raw(data: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_zip_last_ok() -> int from "zig-out/lib/noxrt.o"
+
+class ZipEntry:
+    name: str
+    data: str
+
+    def __init__(self, name: str, data: str) -> None:
+        self.name = name
+        self.data = data
+
+    # Adı '/' ile biten girdi dizindir.
+    def is_dir(self) -> bool:
+        return len(self.name) > 0 and self.name[len(self.name) - 1] == "/"
+
+def file_entry(name: str, data: str) -> ZipEntry:
+    return ZipEntry(name, data)
+
+def dir_entry(name: str) -> ZipEntry:
+    if len(name) > 0 and name[len(name) - 1] == "/":
+        return ZipEntry(name, "")
+    return ZipEntry(name + "/", "")
+
+# Girdilerden ZIP baytları (str). `compress=True` ise sıkıştırma küçültüyorsa deflate, aksi halde depolanmış yazılır. Boş ad ya da 65535'ten çok girdi `ZipError`.
+def pack(entries: list[ZipEntry], compress: bool = True) -> str:
+    names: list[str] = []
+    datas: list[str] = []
+    for e in entries:
+        names.append(e.name)
+        datas.append(e.data)
+    flag: int = 0
+    if compress:
+        flag = 1
+    out: str = nox_zip_pack_raw(names, datas, flag)
+    if nox_zip_last_ok() == 0:
+        raise ZipError("cannot pack zip archive (empty name or too many/large entries)")
+    return out
+
+# ZIP baytlarını girdilere çözer; bozuk, şifreli, ZIP64 ya da desteklenmeyen yöntemde `ZipError`.
+def unpack(data: str) -> list[ZipEntry]:
+    flat: list[str] = nox_zip_unpack_raw(data)
+    if nox_zip_last_ok() == 0:
+        raise ZipError("invalid or unsupported zip archive")
+    out: list[ZipEntry] = []
+    i: int = 0
+    while i + 1 < len(flat):
+        out.append(ZipEntry(flat[i], flat[i + 1]))
+        i = i + 2
+    return out

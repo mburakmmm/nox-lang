@@ -64,6 +64,7 @@ pub const base64_shim = @import("stdlib_shims/base64.zig");
 pub const bigint_shim = @import("stdlib_shims/bigint.zig");
 pub const tar_shim = @import("stdlib_shims/tar.zig");
 pub const zstd_shim = @import("stdlib_shims/zstd.zig");
+pub const zip_shim = @import("stdlib_shims/zip.zig");
 /// v2.1.57: OS'tan bağımsız saf kabuklar (wasm-freestanding köküne zaten dahildi) — `import nox.strings/json/regex/gzip/path/random` artık bağlanır.
 const shim_util = @import("stdlib_shims/shim_util.zig");
 pub const strings_shim = @import("stdlib_shims/strings.zig");
@@ -489,6 +490,7 @@ comptime {
     _ = bigint_shim;
     _ = tar_shim;
     _ = zstd_shim;
+    _ = zip_shim;
     _ = strings_shim;
     _ = json_shim;
     _ = regex_shim;

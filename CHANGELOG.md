@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.72]
+
+### Eklendi
+
+- **`nox.zip` — TODO 2.13 tamam:** ZIP yazma/okuma (depolanmış + deflate), CRC32/boyut doğrulamalı, dizin ve UTF-8 adlarla. Python `zipfile` arşivleri (depolanmış/deflate, 150 KB) `unpack` ile aynı içerikle açılır; `pack` çıktısı Python `zipfile.testzip()` ile geçerli (`scripts/verify_zip_interop.py`, CI'da). ZIP64/şifreleme/diğer yöntemler desteklenmez (`ZipError`). Docs: `zip.md`.
+
 ## [2.1.71]
 
 ### Eklendi

@@ -45,7 +45,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **2.10** `nox.bigint` (**v2.1.66**, Zig std.math.big + Python `int` ile birebir golden) + `nox.decimal`/`nox.fraction` (**v2.1.67**, saf Nox)
 - [x] **2.11** `nox.argparse` (komut satırı ayrıştırıcı) — **v2.1.68** (Python `argparse` ile 140 rastgele argv'de birebir)
 - [x] **2.12** `nox.tempfile` + `nox.glob`/`fnmatch` — **v2.1.69** (Python `fnmatch`/`glob` ile birebir golden)
-- [~] **2.13** (özetler `md5`/`sha384`/`sha3`/`blake3` **v2.1.70'te**, `tar` + `zstd` açma **v2.1.71'de bitti**; kalan: `zip`) `zip`/`tar`/`zstd`(yalnız açma: Zig std yalnız açar) arşiv/sıkıştırma + `md5`/`sha3`/`blake3` özetleri (Zig std.crypto; yeni bağımlılık YOK)
+- [x] **2.13** `md5`/`sha384`/`sha3`/`blake3` (**v2.1.70**), `tar` + `zstd` açma (**v2.1.71**), `zip` (**v2.1.72**): hepsi Python referanslarıyla birebir golden; zstd sıkıştırma Zig std'de yok (yalnız açma)
 - [x] **2.9** Büyük tahsis maliyeti: tam-eşit-boyutlu büyük blok önbelleği + SIMD ASCII taraması — **v2.1.60** (1 MB concat+len 0.36 → 0.10 ms; upper/lower/trim 55 → 5.4 ms)
 - [x] **2.8** Yeniden ölçüm (v2.1.61): geometrik ortalama **0.68**; ≤ 1.5x hedefi: gzip 2.5x/2.2x (bağımlılık yok kararı) ve base64.decode 2.0x dışında sağlandı. (base64.decode SIMD tek geçişe alındı: 2.6 → 1.2 ms, 0.91x — v2.1.63; yeniden ölçüm geometrik ortalama 0.58)
 

@@ -50,6 +50,7 @@ pub const base64_shim = @import("stdlib_shims/base64.zig");
 pub const bigint_shim = @import("stdlib_shims/bigint.zig");
 pub const tar_shim = @import("stdlib_shims/tar.zig");
 pub const zstd_shim = @import("stdlib_shims/zstd.zig");
+pub const zip_shim = @import("stdlib_shims/zip.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
 pub const io_shim = @import("stdlib_shims/io.zig");
@@ -102,6 +103,7 @@ comptime {
     _ = bigint_shim;
     _ = tar_shim;
     _ = zstd_shim;
+    _ = zip_shim;
     _ = time_shim;
     _ = os_shim;
     _ = io_shim;

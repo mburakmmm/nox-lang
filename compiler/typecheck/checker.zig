@@ -1505,6 +1505,7 @@ pub const Checker = struct {
         .{ .name = "tar", .caps = &.{} },
         .{ .name = "tempfile", .caps = &.{.filesystem} },
         .{ .name = "zstd", .caps = &.{} },
+        .{ .name = "zip", .caps = &.{} },
         .{ .name = "terminal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },
         .{ .name = "property", .caps = &.{} },
