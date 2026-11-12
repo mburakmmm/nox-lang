@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.103]
+
+### Düzeltildi
+
+- **`noxc fmt`: yalnızca `pass` içeren sınıf gövdesi siliniyordu** (`class A(Exception):\n    pass`): ayrıştırıcı sınıf gövdesindeki `pass`i tüketir ama AST'ye kaydetmez; formatlayıcı alan/sabit/metod/docstring'i olmayan sınıf için gövdeyi boş basıyor ve çıktı ayrıştırılamaz hale geliyordu. Boş gövdeye artık `pass` geri yazılır (`compiler/fmt/formatter.zig`). `def f(): pass`, `if/elif/else/while/for/try-except` içindeki `pass` etkilenmiyordu (ayrı `pass_stmt` düğümü)
+- Test: fmt golden `fmt_cases/pass_only_bodies.nox` (sınıf/def/if/while/for/try gövdeleri değişmeden kalır, idempotent)
+
 ## [2.1.102]
 
 ### Eklendi

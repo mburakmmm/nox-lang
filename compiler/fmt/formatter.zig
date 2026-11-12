@@ -598,6 +598,15 @@ const Printer = struct {
                     }
                     try self.printFuncDefNoLeading(m, depth + 1);
                 }
+                // v2.1.103: `class A(Exception): pass` — ayrıştırıcı sınıf
+                // gövdesindeki `pass`i TÜKETİR ama AST'ye KAYDETMEZ; ne doc, ne
+                // alan, ne sabit, ne metod varsa gövde BOŞ basılır ve çıktı
+                // artık ayrıştırılamazdı. Boş gövdeye `pass` geri yazılır.
+                if (c.doc == null and c.fields.len == 0 and c.consts.len == 0 and c.methods.len == 0) {
+                    try self.indentTo(depth + 1);
+                    try self.writer.writeAll("pass");
+                    try self.line(stmt.line);
+                }
             },
             .protocol_def => |pd| {
                 try self.indentTo(depth);

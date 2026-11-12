@@ -575,3 +575,29 @@ test "fmt: match koruma, ic ice ve literal desenler korunur" {
     const once = try formatSource(allocator, canonical);
     try std.testing.expectEqualStrings(canonical, once);
 }
+
+// v2.1.103: yalnızca `pass` içeren sınıf gövdesi (`class A(Exception): pass`)
+// formatlayıcı tarafından SİLİNİYORDU (ayrıştırıcı sınıf-gövdesi `pass`ini AST'ye
+// kaydetmez; boş gövde basılınca çıktı ayrıştırılamaz hale geliyordu). Biçimleme
+// anlamı DEĞİŞTİRMEMELİ: girdi zaten kanonik olduğundan çıktı AYNEN aynı olmalı,
+// çıktı yeniden ayrıştırılabilmeli ve ikinci geçiş idempotent olmalı.
+test "fmt: yalnızca pass içeren gövdeler (sınıf/def/if/while/for/try) DEĞİŞMEDEN kalır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("fmt_cases/pass_only_bodies.nox");
+
+    const once = try formatSource(allocator, source);
+    try std.testing.expectEqualStrings(source, once);
+    const twice = try formatSource(allocator, once);
+    try std.testing.expectEqualStrings(once, twice);
+
+    const small = [_][]const u8{
+        "class A(Exception):\n    pass\n\nprint(1)\n",
+        "class A:\n    pass\n",
+    };
+    for (small) |s| {
+        const out = try formatSource(allocator, s);
+        try std.testing.expectEqualStrings(s, out);
+    }
+}
