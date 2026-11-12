@@ -1349,8 +1349,22 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
 
             const arg_values = try self.allocator.alloc(Value, c.args.len);
             const eval_order = try self.takeEvalOrder(c.args.len);
+            // v2.1.96 (TODO 7.8): referans liste parametrelerinde argüman DEĞERİ değil, değişken YUVASININ adresi geçirilir.
+            const ref_flags: ?[]bool = self.ref_params.get(name);
+            var ref_temp_slots: ?[]?[]const u8 = null;
+            if (ref_flags != null) {
+                ref_temp_slots = try self.allocator.alloc(?[]const u8, c.args.len);
+                @memset(ref_temp_slots.?, null);
+            }
             for (eval_order) |i| {
                 const a = c.args[i];
+                if (ref_flags) |fl| {
+                    if (i < fl.len and fl[i]) {
+                        const addr = try genRefListArgAddr(self, a, sig.params[i], &ref_temp_slots.?[i]);
+                        arg_values[i] = .{ .text = addr, .qtype = .l };
+                        continue;
+                    }
+                }
                 const v0 = try self.genExprForTarget(a, sig.params[i]);
                 try self.checkNoLowlevelEscape(v0);
                 arg_values[i] = try self.convert(v0, sig.params[i].qtype);
@@ -1376,6 +1390,15 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // kontrolden ÖNCEYE taşındı — bu, DERLEYİCİDEKİ EN SIK
             // ÇALIŞAN çağrı yolu (HER serbest fonksiyon çağrısı) OLDUĞUNDAN
             // özellikle önemli.
+            // v2.1.96: geçici (lvalue olmayan) referans-liste argümanının YUVASINDAKİ (büyümüş olabilir) liste, çağrı sonrası geçici olarak bırakılır.
+            if (ref_temp_slots) |slots| {
+                for (slots, 0..) |maybe_slot, i| {
+                    const slot = maybe_slot orelse continue;
+                    const cur = try self.newTemp();
+                    try self.qbeLoadL(cur, slot);
+                    try self.releaseValueIfSet(cur, .list, sig.params[i].elem_qtype, null, sig.params[i].elem_heap_info, null);
+                }
+            }
             try self.releaseTemporaryArgs(c.args, arg_values);
             if (!self.must_not_raise.contains(name)) try self.emitExceptionCheck();
 
@@ -1435,6 +1458,53 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             return self.genIndirectCallThroughClosurePtr(v.text, fsig, c.args);
         },
         else => return error.Unsupported,
+    }
+}
+
+/// v2.1.96 (TODO 7.8): referans liste parametresi için argüman YUVASININ adresini üretir. Çıplak yerel/global ya da `nesne.alan` ise o yuvanın adresi;
+/// başka her ifade (çağrı sonucu, literal, ...) için geçici bir yuva açılıp değer oraya yazılır (`temp_slot` doldurulur; çağıran çağrı SONRASI içeriği bırakır).
+fn genRefListArgAddr(self: *Codegen, a: ast.Expr, param: types.TypeInfo, temp_slot: *?[]const u8) CodegenError![]const u8 {
+    switch (a) {
+        .identifier => |nm| {
+            if (self.vars.get(nm)) |vi| {
+                if (vi.heap != .list) return error.Unsupported;
+                // Yığın/arena listeleri büyütülemez: referans geçirilmez (çağıran taraf bunları zaten ARC'ye düşürür; güvenlik için burada da reddedilir).
+                if (vi.arena or vi.is_stack_local or vi.growable_arena != null or vi.borrowed_field) return error.Unsupported;
+                if (vi.is_param and !vi.ref_param) return error.Unsupported;
+                return vi.slot;
+            }
+            const g = self.module_globals.get(nm) orelse return error.Unsupported;
+            const block = try self.newTemp();
+            try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
+            return addr;
+        },
+        .attribute => |fa| {
+            const base = try self.genExpr(fa.obj.*);
+            if (base.heap == .class) {
+                try self.checkNoLowlevelEscape(base);
+                const cinfo = self.classes.get(base.class_name.?) orelse return error.Unsupported;
+                for (cinfo.fields.items) |f| {
+                    if (!std.mem.eql(u8, f.name, fa.attr)) continue;
+                    const addr = try self.newTemp();
+                    try self.qbeOp2Imm(addr, .l, "add", base.text, @intCast(f.offset));
+                    return addr;
+                }
+            }
+            return error.Unsupported;
+        },
+        else => {
+            // Yalnızca TAZE (sahipli +1) değerler geçici yuvaya konabilir; ödünç bir ifade (ör. `grid[i]`) büyüyünce yeni işaretçiyi geri yazacak bir yuva yoktur.
+            if (!abi.isTemporaryExpr(a)) return error.Unsupported;
+            const v0 = try self.genExprForTarget(a, param);
+            try self.checkNoLowlevelEscape(v0);
+            const slot = try self.newTemp();
+            try self.qbeAlloc(slot, .eight, 8);
+            try self.qbeStoreL(v0.text, slot);
+            temp_slot.* = slot;
+            return slot;
+        },
     }
 }
 
@@ -2526,7 +2596,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
             // — büyüme yolunun YENİ işaretçiyi geri yazacağı ADRES ya bir
             // yerelin KENDİ stack slotu ya da globals bloğundaki ofsetidir.
             if (self.vars.get(recv_name)) |var_info| {
-                if (var_info.is_param) return error.Unsupported;
+                if (var_info.is_param and !var_info.ref_param) return error.Unsupported;
                 break :blk var_info.slot;
             }
             const g = self.module_globals.get(recv_name) orelse return error.Unsupported;

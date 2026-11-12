@@ -106,6 +106,28 @@ print(total(1), total(1, 2, 3, 4))
 1 10
 ```
 
+## Growing a list parameter
+
+A free function can add to a list its caller passed in, as in Python:
+
+```nox
+def fill(acc: list[int], n: int) -> None:
+    for i in range(n):
+        acc.append(i * i)
+
+xs: list[int] = []
+fill(xs, 4)
+print(xs)
+```
+
+```output
+[0, 1, 4, 9]
+```
+
+`append` and `insert` (and `extend`, which is rewritten to `append`) on a list parameter are visible to the caller, also through several call levels, recursion, module-level lists and object fields (`fill(obj.items, 3)`), and a fresh temporary argument (`fill([1, 2], 3)`) is simply dropped afterwards. Nothing about this shows in the syntax: the compiler passes the address of the caller's variable instead of a copy for such parameters.
+
+What is not supported yet (the compiler reports an unsupported construct): methods that grow a list parameter, using such a function as a value (`f = fill`) or as a decorated/`async` function, growing a parameter that the function also reassigns (`acc = [...]`), and passing a borrowed element such as `grid[i]` to a growing parameter (bind it to a variable first: `row = grid[i]; fill(row, 3)`). Like every list in Nox, a second variable that still points at the old list does not see a reallocation (the existing aliasing difference).
+
 ## Functions are values
 
 A function name used as a value has a function type `(P1, P2) -> R`. Functions can be assigned, stored in lists and dictionaries,

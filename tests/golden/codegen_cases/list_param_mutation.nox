@@ -1,0 +1,101 @@
+# v2.1.96 (TODO 7.8): bir serbest işlevin `list[T]` PARAMETRESİNİ büyütmesi (append/insert, özyineleme, geçişli çağrı) çağıranın değişkenine yansır.
+# Çağıran yerel / modül global / nesne alanı / taze geçici olabilir. Python ile aynı çıktı.
+class Bag:
+    items: list[int]
+    names: list[str]
+    def __init__(self, items: list[int], names: list[str]) -> None:
+        self.items = items
+        self.names = names
+
+def push_many(acc: list[int], base: int, n: int) -> None:
+    for i in range(n):
+        acc.append(base + i)
+
+def push_names(acc: list[str], n: int) -> None:
+    for i in range(n):
+        acc.append("n" + str(i))
+
+def insert_front(acc: list[int], v: int) -> None:
+    acc.insert(0, v)
+
+def make_and_fill() -> int:
+    local: list[int] = []
+    push_many(local, 100, 1000)
+    return len(local) + local[999]
+
+def temp_arg() -> int:
+    push_many([1, 2, 3], 0, 5)
+    return 7
+
+def raises_after_growth(acc: list[int]) -> None:
+    acc.append(1)
+    acc.append(2)
+    raise ValueError("boom")
+
+g: list[int] = []
+push_many(g, 0, 10)
+print(len(g), g[9])
+
+b: Bag = Bag([], [])
+push_many(b.items, 5, 4)
+push_names(b.names, 3)
+print(b.items, b.names)
+
+big: list[int] = []
+push_many(big, 0, 300000)
+print(len(big), big[299999])
+insert_front(big, -1)
+print(big[0], big[1], len(big))
+
+print(make_and_fill())
+print(temp_arg())
+
+ss: list[str] = []
+push_names(ss, 50)
+print(len(ss), ss[49])
+
+e: list[int] = []
+try:
+    raises_after_growth(e)
+except ValueError:
+    print("caught", e)
+
+nested: list[list[int]] = [[], []]
+inner: list[int] = nested[0]
+push_many(inner, 9, 3)
+print(inner)
+
+# --- özyineleme / karşılıklı özyineleme / yalnızca okuyan / yerinde işlemler ---
+def rec(acc: list[int], n: int) -> None:
+    if n > 0:
+        acc.append(n)
+        rec(acc, n - 1)
+
+def even(acc: list[int], n: int) -> None:
+    if n > 0:
+        acc.append(n * 10)
+        odd(acc, n - 1)
+
+def odd(acc: list[int], n: int) -> None:
+    if n > 0:
+        acc.append(n)
+        even(acc, n - 1)
+
+def reads_only(acc: list[int]) -> int:
+    return len(acc) + acc[0]
+
+def sorter(acc: list[int]) -> None:
+    acc.sort()
+    acc.reverse()
+    acc.append(-1)
+    acc.pop()
+
+xs3: list[int] = []
+rec(xs3, 5)
+print(xs3)
+ys3: list[int] = []
+even(ys3, 5)
+print(ys3)
+print(reads_only(xs3))
+sorter(xs3)
+print(xs3)

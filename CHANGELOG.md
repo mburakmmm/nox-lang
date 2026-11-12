@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.96]
+
+### Eklendi
+
+- **Serbest işlevde `list[T]` parametresini büyütmek (TODO 7.8):** `def fill(acc: list[int]): acc.append(1)` artık derlenir ve çağıranın değişkenine yansır (Python gibi). Yeni sözdizimi yok (İlke 1): `compiler/codegen_qbe/ref_params.zig` analizi, gövdesinde `p.append/insert` (ya da geçişli olarak böyle bir işleve geçirme) bulunan ve aynı işlevde yeniden bağlanmayan liste parametrelerini "referans" işaretler; bunlar için çağrı sözleşmesi değer yerine çağıranın DEĞİŞKEN YUVASININ adresidir (imza `l`, değişmez), işlev gövdesinde parametre yuvası çağıranın yuvasıdır (büyüme yeni işaretçiyi oraya yazar, tek sahipli `realloc` yolu dahil). Çağrı yerinde argüman yerel / modül global / `nesne.alan` ise yuvası, taze geçici (çağrı sonucu, literal) ise geçici yuva (çağrı sonrası içeriği bırakılır). Satır içi açma ve yığın/arena listeleri referans parametrelerden dışlanır. Desteklenmeyenler (eski "desteklenmiyor" hatası sürer): metodlar, işlev değeri/dekoratörlü/`async` işlevler, aynı işlevde yeniden bağlanan parametre, `grid[i]` gibi ödünç eleman argümanı. Golden: `list_param_mutation` (Python ile aynı çıktı, iki backend, Debug çalışma zamanı sızıntısız); `docs/language/functions.md` "Growing a list parameter"
+
 ## [2.1.95]
 
 ### Belgelendi

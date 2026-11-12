@@ -700,7 +700,7 @@ pub fn computeInlinableFunctions(self: *Codegen, module: ast.Module, extra_funct
     for (module.body) |stmt| {
         switch (stmt.kind) {
             .func_def => |fd| {
-                if (self.isFuncInlineEligible(fd, generic_template_names)) {
+                if (!self.ref_params.contains(fd.name) and self.isFuncInlineEligible(fd, generic_template_names)) {
                     try self.inlinable_funcs.put(self.allocator, fd.name, fd);
                 }
             },

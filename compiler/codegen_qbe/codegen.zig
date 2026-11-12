@@ -224,6 +224,7 @@ const decorators_mod = @import("decorators.zig");
 const qbe_emit = @import("qbe_emit.zig");
 const llvm_emit = @import("llvm_emit.zig");
 const hpy_sigs = @import("hpy_sigs.zig");
+const ref_params_mod = @import("ref_params.zig");
 const effect_graph = @import("../effect_graph.zig");
 
 pub const CodegenError = abi.CodegenError;
@@ -1551,6 +1552,8 @@ pub const Codegen = struct {
     /// tarafından OKUNUR (bir çağrı sitesinin `.identifier`i BU haritada
     /// VARSA, o site inline-adayı olarak KAYDEDİLİR).
     inlinable_funcs: std.StringHashMapUnmanaged(ast.FuncDef) = .empty,
+    /// v2.1.96 (TODO 7.8): işlev adı -> parametre başına "referans liste parametresi" bayrakları (bkz. `ref_params.zig`). Yalnızca en az bir bayrağı olan işlevler.
+    ref_params: ref_params_mod.RefMap = .empty,
     /// Faz GG.2: (transitif olarak) KENDİ KENDİSİNİ çağıran serbest
     /// fonksiyon/metod sembollerinin kümesi — `markRecursiveFuncs`
     /// tarafından doldurulur, `computeInlinableFunctions` bu kümedeki
@@ -1934,6 +1937,17 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     // derlenmez (tip parametreleri/protokol adları QBE'nin bilmediği
     // isimlerdir) — yalnızca checker'ın ürettiği somut örneklemeler
     // (`extra_functions`) derlenir.
+    // v2.1.96 (TODO 7.8): serbest işlevlerin referans liste parametreleri, gövde üretilmeden ÖNCE hesaplanır (çağrı yerleri ve prolog buna bakar).
+    {
+        var cand: std.ArrayListUnmanaged(ast.FuncDef) = .empty;
+        defer cand.deinit(allocator);
+        for (module.body) |stmt| {
+            if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {
+                try cand.append(allocator, stmt.kind.func_def);
+            }
+        }
+        gen.ref_params = try ref_params_mod.analyze(gen.allocator, cand.items, functions_used_as_value, callback_targets);
+    }
     for (module.body) |stmt| {
         if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {
             try gen.registerFunc(stmt.kind.func_def);

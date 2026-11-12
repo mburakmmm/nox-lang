@@ -391,6 +391,8 @@ pub const VarInfo = struct {
     /// kind'ı.
     elem_fixed_int: ?FixedIntKind = null,
     is_param: bool = false,
+    /// v2.1.96 (TODO 7.8): "referans liste parametresi" — `slot` çağıranın DEĞİŞKEN YUVASININ adresidir (kopya değil); bkz. `ref_params.zig`.
+    ref_param: bool = false,
     arena: bool = false,
     /// GG.17 (bkz. nox-teknik-spesifikasyon.md §3.10X): `local_escape.zig`nin
     /// `registerLocalStackSlots`ı, BU yerelin İLK (VE TEK) atamasının bir
@@ -433,6 +435,8 @@ pub const LocalDecl = struct {
     name: []const u8,
     info: TypeInfo,
     is_param: bool = false,
+    /// v2.1.96: bkz. `VarInfo.ref_param`.
+    ref_param: bool = false,
     arena: bool = false,
     /// GG.12: bkz. `VarInfo.borrowed_field`in belge notu — `allocSlot`
     /// BUNU doğrudan `VarInfo`ye taşır.
