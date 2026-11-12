@@ -868,12 +868,19 @@ pub export fn nox_wasm_f32_from_bits_raw(b: i64) callconv(.c) f64 {
     return @floatCast(@as(f32, @bitCast(@as(u32, @truncate(@as(u64, @bitCast(b)))))));
 }
 
-test "nox.wasm kabuğu: addone.wasm aç, çağır, belleği sınırla, kapat" {
+test "nox.wasm kabuğu: modül aç, çağır, belleği sınırla, kapat" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
-    const path = str_mod.nox_str_from_bytes(rt, "tests/compat/wasm_ext/addone.wasm") orelse return error.AllocFailed;
-    defer str_mod.nox_str_release(rt, path);
-    const hp = nox_wasm_open_raw(rt, path, 0, 0) orelse return error.OpenFailed;
+    // (module (memory 1) (func (export "add_one") (param i32) (result i32) local.get 0 i32.const 1 i32.add)) — kendi kendine yeten bayt listesi:
+    // test dosya sistemindeki üretilmiş bir ikiliye (CI'da sıralama bağımlı) DAYANMAZ.
+    const code = [_]u8{ 0, 97, 115, 109, 1, 0, 0, 0, 1, 6, 1, 96, 1, 127, 1, 127, 3, 2, 1, 0, 5, 3, 1, 0, 1, 7, 11, 1, 7, 97, 100, 100, 95, 111, 110, 101, 0, 0, 10, 9, 1, 7, 0, 32, 0, 65, 1, 106, 11 };
+    const lraw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * code.len) orelse return error.AllocFailed;
+    defer arc.nox_rc_free_payload(rt, lraw, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * code.len);
+    const lb: [*]u8 = @ptrCast(lraw);
+    @as(*align(1) i64, @ptrCast(lb)).* = code.len;
+    @as(*align(1) i64, @ptrCast(lb + 8)).* = code.len;
+    for (code, 0..) |c, i| @as(*align(1) i64, @ptrCast(lb + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).* = c;
+    const hp = nox_wasm_open_bytes_raw(rt, lraw, 0, 0) orelse return error.OpenFailed;
     defer nox_wasm_close_raw(hp);
     const err0 = nox_wasm_error_raw(rt, hp) orelse return error.AllocFailed;
     defer str_mod.nox_str_release(rt, err0);
@@ -881,10 +888,10 @@ test "nox.wasm kabuğu: addone.wasm aç, çağır, belleği sınırla, kapat" {
     const name = str_mod.nox_str_from_bytes(rt, "add_one") orelse return error.AllocFailed;
     defer str_mod.nox_str_release(rt, name);
     const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE) orelse return error.AllocFailed;
-    const lb: [*]u8 = @ptrCast(raw);
-    @as(*align(1) i64, @ptrCast(lb)).* = 1;
-    @as(*align(1) i64, @ptrCast(lb + 8)).* = 1;
-    @as(*align(1) i64, @ptrCast(lb + LIST_HEADER_SIZE)).* = 41;
+    const ab: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(ab)).* = 1;
+    @as(*align(1) i64, @ptrCast(ab + 8)).* = 1;
+    @as(*align(1) i64, @ptrCast(ab + LIST_HEADER_SIZE)).* = 41;
     defer arc.nox_rc_free_payload(rt, raw, LIST_HEADER_SIZE + FIELD_SLOT_SIZE);
     try std.testing.expectEqual(@as(i64, 42), nox_wasm_call_raw(rt, hp, name, raw));
     // Bellek sınır denetimi: modül belleğinin SONUNDAKİ erişim hata verir, çökme/okuma yok; sınır içi okuma/yazma çalışır.

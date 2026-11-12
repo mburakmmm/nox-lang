@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.97]
+
+### Düzeltildi
+
+- **CI: `nox.wasm` kabuğunun birim testi derleme sırasına bağımlıydı:** test `tests/compat/wasm_ext/addone.wasm` (derleme sırasında ÜRETİLEN bir dosya) dosyasını açıyordu; Linux CI'da bu dosya test koşulduğunda henüz yoktu (v2.1.92 aarch64, v2.1.93 x86-64/aarch64 kırmızı). Test artık kendi içinde bir bayt listesinden modül açar (hiçbir üretilmiş dosyaya bağımlı değil)
+
 ## [2.1.96]
 
 ### Eklendi
