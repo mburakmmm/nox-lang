@@ -11,6 +11,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
+const abi_layout = @import("abi_layout");
 const codegen = @import("codegen.zig");
 
 const Codegen = codegen.Codegen;
@@ -1116,6 +1117,41 @@ pub fn markRecursiveFuncs(self: *Codegen, info_map: *const std.StringHashMapUnma
     }
 }
 
+/// v2.1.81 (TODO 3.5.3 tur 2): "bekleyen istisna var mı" sorgusu (`w` 0/1 temp). 64-bit yerel hedeflerde çalışma zamanının sabit yerleşimli sıcak
+/// bloğu (`abi_layout.RT_HOT_*`, `rt`nin hemen öncesi) SATIR İÇİ okunur: fiber hiç etkinleşmediyse (bayt 0) bekleyen istisna işaretçisi
+/// `!= 0` mı; etkinleşmişse fiber-farkındalıklı `nox_exception_pending` çağrılır (eski yol). wasm ve freestanding profili eski çağrıyı kullanır.
+pub fn emitPendingQuery(self: *Codegen) CodegenError![]const u8 {
+    if (self.profile != .hosted or self.isWasmTarget()) {
+        const pending = try self.newTemp();
+        try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
+        return pending;
+    }
+    const flag_addr = try self.newTemp();
+    try self.qbeOp2Imm(flag_addr, .l, "sub", RT_PARAM, @intCast(abi_layout.RT_HOT_FIBER_FLAG_BACK));
+    const flag = try self.newTemp();
+    try self.qbeLoadUB(flag, flag_addr);
+    const slot_addr = try self.newTemp();
+    try self.qbeOp2Imm(slot_addr, .l, "sub", RT_PARAM, @intCast(abi_layout.RT_HOT_PENDING_BACK));
+    const exc = try self.newTemp();
+    try self.qbeLoadL(exc, slot_addr);
+    const slow_l = try self.newLabel("exc_slow");
+    const fast_l = try self.newLabel("exc_fast");
+    const done_l = try self.newLabel("exc_done");
+    try self.qbeJnz(flag, slow_l, fast_l);
+    try self.qbeLabel(fast_l);
+    const fast = try self.newTemp();
+    try self.qbeOp2Imm(fast, .w, "cnel", exc, 0);
+    try self.qbeJmp(done_l);
+    try self.qbeLabel(slow_l);
+    const slow = try self.newTemp();
+    try self.qbeCall(.{ .name = slow, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeJmp(done_l);
+    try self.qbeLabel(done_l);
+    const pending = try self.newTemp();
+    try self.qbePhi(pending, .w, fast_l, fast, slow_l, slow);
+    return pending;
+}
+
 /// Bir kullanıcı fonksiyonu/metodu/kurucu çağrısından hemen sonra çağrılır.
 /// QBE hiçbir zaman unwind tablosu üretmez (İlke #3); bunun yerine bekleyen
 /// bir istisna olup olmadığı burada AÇIKÇA kontrol edilir — Zig'in error
@@ -1142,8 +1178,7 @@ pub fn emitExceptionCheck(self: *Codegen) CodegenError!void {
 /// yol açıyordu (GERÇEK bir SIGSEGV İLE KANITLANDI, `lowlevel` HİÇ
 /// KULLANILMADAN).
 pub fn emitExceptionCheckExcept(self: *Codegen, except_name: ?[]const u8) CodegenError!void {
-    const pending = try self.newTemp();
-    try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const pending = try emitPendingQuery(self);
     const propagate_label = try self.newLabel("exc_propagate");
     const continue_label = try self.newLabel("exc_continue");
     try self.qbeJnz(pending, propagate_label, continue_label);

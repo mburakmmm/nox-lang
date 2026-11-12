@@ -850,7 +850,7 @@ fn deinitRuntimeExpectNoLeak(rt: ?*anyopaque) !void {
         const check = state.debug_gpa.deinit();
         try testing.expectEqual(std.heap.Check.ok, check);
     }
-    std.heap.page_allocator.destroy(state);
+    asap.destroyState(std.heap.page_allocator, state);
 }
 
 // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-spesifikasyon.md

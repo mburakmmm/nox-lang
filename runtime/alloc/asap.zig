@@ -44,6 +44,7 @@ const fiber_mod = @import("../async_rt/fiber.zig");
 /// sink" üzerinden yazdırılabilmesi İçİn — sıfır-bağımlılıklı bir yaprak
 /// dosya, döngüsel bağımlılık riski YOK.
 const diag_sink = @import("diag_sink");
+const abi_layout = @import("abi_layout");
 
 /// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `nox_
 /// runtime_init`in (argümansız, hosted-özel giriş noktası) `std.heap.
@@ -230,7 +231,31 @@ pub const debug_gpa_config: std.heap.DebugAllocatorConfig = .{
     },
 };
 
+/// v2.1.81: derleyicinin satır içi okuduğu sabit yerleşimli "sıcak" çalışma zamanı durumu (bkz. `abi_layout.RT_HOT_SIZE`). `RuntimeState`in
+/// `rt - RT_HOT_SIZE` adresindeki komşusudur; alan sırası `extern` olduğundan sabittir.
+/// `pending_exception` / `pending_exception_line`: fiber DIŞINDA (senkron üst-düzey kod) çalışan `nox_raise`/`nox_exception_*` çağrılarının
+/// deposu (fiber İÇİNDE `Fiber.pending_exception`; bkz. `runtime/errors/handle.zig` `pendingException`). `fiber_ever_active`: BU süreçte
+/// `nox_async_init` en az bir kez çağrıldı mı (`bridge.currentFiber()` threadlocal okumasını async kullanmayan programlarda atlamak için;
+/// program-sırası garantisiyle güvenli) — derleyicinin satır içi istisna denetimi de bunu okur.
+pub const HotState = extern struct {
+    pending_exception: ?*anyopaque = null,
+    pending_exception_line: i64 = 0,
+    fiber_ever_active: u8 = 0,
+    _pad: [47]u8 = @splat(0),
+};
+
+comptime {
+    std.debug.assert(@sizeOf(HotState) == abi_layout.RT_HOT_SIZE);
+    std.debug.assert(@offsetOf(HotState, "pending_exception") == 0);
+    std.debug.assert(@offsetOf(HotState, "fiber_ever_active") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_FIBER_FLAG_BACK);
+}
+
 pub const RuntimeState = struct {
+    /// Sıcak blok: `rt - RT_HOT_SIZE` (bkz. `HotState`).
+    pub inline fn hot(self: *RuntimeState) *HotState {
+        return @ptrFromInt(@intFromPtr(self) - abi_layout.RT_HOT_SIZE);
+    }
+
     debug_gpa: if (use_debug_allocator) std.heap.DebugAllocator(debug_gpa_config) else void,
     /// Faz F.0.2 (bkz. plan dosyası "Allocator enjeksiyonu") — `RuntimeState`in
     /// KENDİ bootstrap tahsisinde (`backing.create(RuntimeState)`) KULLANILAN
@@ -263,20 +288,6 @@ pub const RuntimeState = struct {
     /// (`nox_alloc`/dict/arena/vb.nin KULLANDIĞI, ~120x hız kazanımı
     /// SAĞLAYAN değer — bkz. modül üstü not).
     injected_allocator: std.mem.Allocator = if (is_freestanding) freestanding_unreachable_allocator else if (use_debug_allocator) std.heap.page_allocator else if (builtin.cpu.arch.isWasm()) std.heap.page_allocator else std.heap.smp_allocator,
-    /// Faz OO.3, Faz MN.2'de fiber-affine hale GETİRİLDİ: birincil depo
-    /// ARTIK `Fiber.pending_exception`dir (bkz. onun belge notu) —
-    /// BURADAKİ alan SADECE fiber DIŞINDA (senkron üst-düzey kod,
-    /// `bridge.currentFiber() == null`) çalışan `nox_raise`/`nox_
-    /// exception_*` çağrıları İçin YEDEKTİR (`runtime/errors/handle.zig`nin
-    /// `pendingException`i, BUGÜNKÜ davranışla BİREBİR aynı).
-    pending_exception: ?*anyopaque = null,
-    /// Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84, "zengin exception
-    /// stack/source span"): `nox_raise`in ARTIK ikinci bir argümanla
-    /// aldığı, `raise`/örtük-raise (IndexError/KeyError/ValueError) SATIR
-    /// numarası — `nox_unhandled_exception`ın yakalanmamış bir istisnayı
-    /// TİP ADI + SATIR + MESAJLA raporlayabilmesi İçİn. Faz MN.2: AYNI
-    /// yedek-depo notu (`pending_exception`e bkz.) BURASI İçin de geçerlidir.
-    pending_exception_line: i64 = 0,
     /// Faz MN.10 (bkz. profillenmiş kanıt — Aether'in HTTP+JSON `wrk`
     /// ölçümü, "8 worker 1 worker'dan YAVAŞ" ters ölçekleme): TEK
     /// paylaşılan diziden (Faz MN.3b'nin ORİJİNAL şekli, `pool_free_
@@ -476,19 +487,6 @@ pub const RuntimeState = struct {
     /// BUGÜNKÜ, DEĞİŞMEMİŞ mantığı izler. `WorkerPool.create` BUNU
     /// kendine işaret edecek şekilde AYARLAR.
     worker_pool: ?*anyopaque = null,
-    /// Faz [YENİ] (bkz. plan dosyası "İki gerçek performans regresyonunu
-    /// düzeltme"): BU süreçte `nox_async_init` EN AZ BİR KEZ çağrıldı MI —
-    /// `errors/handle.zig`nin `pendingException()`i, `bridge.currentFiber()`
-    /// (threadlocal, macOS'ta TLV thunk'ına GERÇEK bir `blr` üreten — bkz.
-    /// onun belge notu) ÇAĞRISINI, HİÇ async/spawn KULLANMAYAN (EZİCİ
-    /// ÇOĞUNLUKTAKİ) programlarda TAMAMEN ATLAMAK İçİn kullanır. `nox_
-    /// async_init`in BAŞINDA KOŞULSUZ işaretlenir — doğruluk kanıtı: bir
-    /// iş parçacığının `currentFiber()`ı hiç `null`-dışı dönebilmesi İçİn
-    /// KENDİSİNİN ÖNCE `nox_async_init`i (AYNI iş parçacığında, `g_scheduler`
-    /// threadlocal OLDUĞUNDAN) çağırmış OLMASI GEREKİR — program-sırası
-    /// (program order) garantisi BU bayrağı sıralama-modundan BAĞIMSIZ
-    /// güvenli kılar (yalnızca KENDİ geçmişi önemlidir).
-    fiber_ever_active: std.atomic.Value(bool) = .init(false),
     /// AYNI gerekçe — `alloc/arc.zig`nin `nox_rc_alloc`/`nox_rc_free_payload`ı
     /// `asap.currentWorkerSlot()` (AYNI TLV maliyeti) çağırmak yerine, HİÇ
     /// bir `WorkerPool` YARATILMAMIŞ programlarda DOĞRUDAN slot 0 kullanır.
@@ -839,6 +837,28 @@ pub fn nox_runtime_init_child(parent: ?*anyopaque) ?*anyopaque {
     return rt;
 }
 
+// Tahsis: [STATE_PREFIX bayt: sondaki RT_HOT_SIZE'ı sıcak blok] [RuntimeState]. `rt` = taban + STATE_PREFIX. Hizalama RuntimeState'in kendisininkinden
+// (x86-64'te 64, aarch64'te 128) küçülmez; en az sıcak blok kadardır.
+const STATE_PREFIX: usize = @max(abi_layout.RT_HOT_SIZE, @alignOf(RuntimeState));
+const state_alloc_align = std.mem.Alignment.fromByteUnits(STATE_PREFIX);
+const state_alloc_len: usize = STATE_PREFIX + @sizeOf(RuntimeState);
+
+/// `RuntimeState`i sıcak bloğuyla birlikte tahsis eder (başarısızlıkta `null`). Yok etmek için `destroyState` (aynı allocator).
+pub fn createState(backing: std.mem.Allocator, init: RuntimeState) ?*RuntimeState {
+    const raw = backing.alignedAlloc(u8, state_alloc_align, state_alloc_len) catch return null;
+    const state: *RuntimeState = @ptrCast(@alignCast(raw.ptr + STATE_PREFIX));
+    state.hot().* = .{};
+    state.* = init;
+    return state;
+}
+
+pub fn destroyState(backing: std.mem.Allocator, state: *RuntimeState) void {
+    const base: [*]align(STATE_PREFIX) u8 = @ptrFromInt(@intFromPtr(state) - STATE_PREFIX);
+    const whole: []align(STATE_PREFIX) u8 = base[0..state_alloc_len];
+    backing.free(whole);
+}
+
+
 /// Faz F.0.2: GERÇEK allocator enjeksiyonu İçİn YENİ, AYRI bir giriş
 /// noktası — `backing`i HEM `RuntimeState`in KENDİ bootstrap tahsisi
 /// (`bootstrap_allocator`) HEM `debug_gpa`nın backing'i (Debug) HEM
@@ -857,12 +877,11 @@ pub fn nox_runtime_init_child(parent: ?*anyopaque) ?*anyopaque {
 /// `std.heap.page_allocator.destroy(state)`) yok etmek GERÇEK bir
 /// uyumsuzluğa yol açar.
 pub fn nox_runtime_init_with_allocator(backing: std.mem.Allocator) ?*anyopaque {
-    const state = backing.create(RuntimeState) catch return null;
-    state.* = .{
+    const state = createState(backing, .{
         .debug_gpa = if (use_debug_allocator) .{ .backing_allocator = backing } else {},
         .bootstrap_allocator = backing,
         .injected_allocator = backing,
-    };
+    }) orelse return null;
     return @ptrCast(state);
 }
 
@@ -898,8 +917,7 @@ pub export fn nox_runtime_init() ?*anyopaque {
         _ = crt._setmode(2, o_binary);
         _ = crt.fflush(null);
     }
-    const state = std.heap.page_allocator.create(RuntimeState) catch return null;
-    state.* = .{ .debug_gpa = if (use_debug_allocator) .init else {} };
+    const state = createState(std.heap.page_allocator, .{ .debug_gpa = if (use_debug_allocator) .init else {} }) orelse return null;
     return @ptrCast(state);
 }
 
@@ -955,7 +973,7 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
             diag_sink.report(rt, "nox runtime: memory leak detected\n", .{});
         }
     }
-    bootstrap_allocator.destroy(state);
+    destroyState(bootstrap_allocator, state);
 }
 
 /// v2.0 madde 9'un `nox_allocator_install` ABI'si (bkz. `lib_freestanding.

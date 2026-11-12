@@ -1,0 +1,67 @@
+# v2.1.81: istisna denetimi 64-bit yerel hedeflerde sıcak bloktan SATIR İÇİ okunur; fiber etkinleşince (async) eski yola düşer.
+# Aynı davranış: işlev değeri / sanal çağrı / doğrudan çağrı üzerinden fırlatma ve yakalama, fiber ÖNCESİ ve SONRASI.
+class Boom(Exception):
+    pass
+
+class Shape:
+    def area(self) -> int:
+        return 0
+
+class Bad(Shape):
+    def area(self) -> int:
+        raise Boom("bad shape")
+
+class Good(Shape):
+    def area(self) -> int:
+        return 7
+
+def inc(x: int) -> int:
+    return x + 1
+
+def thrower(x: int) -> int:
+    if x > 2:
+        raise Boom("x too large")
+    return x
+
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+def run_phase(tag: str) -> None:
+    total: int = 0
+    for q in range(5):
+        try:
+            total = total + apply(thrower, q)
+        except Boom:
+            total = total + 100
+    print(tag + " func-value " + str(total))
+    shapes: list[Shape] = [Good(), Bad(), Good()]
+    caught: int = 0
+    s: int = 0
+    for sh in shapes:
+        try:
+            s = s + sh.area()
+        except Boom:
+            caught = caught + 1
+    print(tag + " virtual " + str(s) + " " + str(caught))
+    print(tag + " ok " + str(apply(inc, 41)))
+
+run_phase("before")
+
+async def child(n: int) -> int:
+    r: int = 0
+    try:
+        r = apply(thrower, n)
+    except Boom:
+        r = -1
+    return r
+
+async def driver() -> None:
+    t1: Task[int] = spawn child(1)
+    t2: Task[int] = spawn child(9)
+    a: int = await t1
+    b: int = await t2
+    print("tasks " + str(a) + " " + str(b))
+
+d: Task[None] = spawn driver()
+await d
+run_phase("after")

@@ -191,3 +191,12 @@ pub const CLOSURE_RELEASE_FN_PTR_OFFSET: usize = 8;
 pub const TRACE_BUF_LEN_SIZE: usize = 8;
 /// Trace-buffer'daki HER çocuk işaretçi yuvasının bayt boyutu.
 pub const TRACE_BUF_SLOT_SIZE: usize = 8;
+
+/// v2.1.81 (TODO 3.5.3 tur 2): "sıcak blok" — `RuntimeState`in (Zig serbest düzenli) KENDİ alan sırasından BAĞIMSIZ, derleyicinin
+/// satır içi okuyabileceği sabit yerleşim. Çalışma zamanı bağlamı tahsis edilirken `rt` işaretçisinin HEMEN ÖNCESİNDEKİ
+/// `RT_HOT_SIZE` bayt bu bloğa ayrılır (`rt - RT_HOT_SIZE` ... `rt`). Alanlar (rt'ye göre bayt ofseti):
+/// bekleyen istisna işaretçisi `rt - 64`, istisna satırı `rt - 56`, "fiber hiç etkinleşti mi" baytı `rt - 48`.
+/// Yalnızca 64-bit yerel hedeflerde derleyici tarafından satır içi okunur (wasm/freestanding eski `nox_exception_pending` çağrısını kullanır).
+pub const RT_HOT_SIZE: usize = 64;
+pub const RT_HOT_PENDING_BACK: usize = 64;
+pub const RT_HOT_FIBER_FLAG_BACK: usize = 48;

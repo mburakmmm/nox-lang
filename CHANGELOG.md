@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.81]
+
+### Değişti
+
+- **Satır içi istisna denetimi (TODO 3.5.3 tur 2):** 64-bit yerel hedeflerde ("hosted", wasm/freestanding hariç) her çağrı sonrası `nox_exception_pending` çalışma zamanı çağrısı yerine çalışma zamanının SABİT yerleşimli "sıcak bloğu" (`rt`nin hemen öncesindeki 64 bayt: bekleyen istisna işaretçisi, istisna satırı, fiber-etkinleşti baytı) satır içi okunur; fiber etkinleşmişse eski fiber-farkındalıklı çağrıya düşülür. `RuntimeState` artık `createState`/`destroyState` ile sıcak blokla birlikte tahsis edilir (alan sırasından bağımsız ABI; `abi_layout.RT_HOT_*`). İki backend. Ölçüm (lang_perf, LLVM): `virtual_dispatch` 3,06 → 1,69 ms, `func_value_calls` 4,53 → 2,97, `generator` 14,8 → 12,3, `exceptions` 1,08 → 0,87; geometrik ortalama llvm/c 1,87 → 1,58 (QBE 2,19 → 1,97). Golden: `exception_check_inline_hot_block`; tüm IR anlık görüntüleri yenilendi
+
 ## [2.1.80]
 
 ### Değişti

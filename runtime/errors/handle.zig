@@ -76,10 +76,11 @@ fn pendingException(state: *asap.RuntimeState) PendingException {
     // TAMAMEN GEREKSİZDİR — `state.fiber_ever_active` (bkz. onun belge
     // notu) `false` İKEN `currentFiber()` zaten HER ZAMAN `null` dönerdi,
     // bu YÜZDEN o çağrıyı TAMAMEN ATLAMAK davranışı DEĞİŞTİRMEZ.
-    if (state.fiber_ever_active.load(.monotonic)) {
+    const hot = state.hot();
+    if (@atomicLoad(u8, &hot.fiber_ever_active, .monotonic) != 0) {
         if (bridge.currentFiber()) |f| return .{ .obj = &f.pending_exception, .line = &f.pending_exception_line };
     }
-    return .{ .obj = &state.pending_exception, .line = &state.pending_exception_line };
+    return .{ .obj = &hot.pending_exception, .line = &hot.pending_exception_line };
 }
 
 /// `obj`'yi (bir Nox sınıf örneği işaretçisini) bekleyen istisna olarak

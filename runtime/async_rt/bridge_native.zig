@@ -172,7 +172,7 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
     // BU çağrının KENDİSİ, BU iş parçacığının bir fiber'ı hiç çalıştırıp
     // çalıştırmayacağının (`g_scheduler` threadlocal'ının doldurulduğu)
     // TEK noktasıdır, bu YÜZDEN KOŞULSUZ işaretlenir.
-    state.fiber_ever_active.store(true, .monotonic);
+    @atomicStore(u8, &state.hot().fiber_ever_active, 1, .monotonic);
     if (comptime !is_freestanding) {
         if (state.worker_pool) |wp_ptr| {
             const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(wp_ptr));
