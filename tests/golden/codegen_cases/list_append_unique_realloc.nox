@@ -1,0 +1,71 @@
+# v2.1.87: tek sahipli liste büyütmesi (realloc yolu) ve paylaşımlı (alias) büyütme aynı sonucu vermeli; büyük listeler (>256 KiB) libc yoluna girer.
+class Box:
+    v: int
+    def __init__(self, v: int) -> None:
+        self.v = v
+
+class Holder:
+    items: list[int]
+    boxes: list[Box]
+    names: list[str]
+    def __init__(self) -> None:
+        self.items = []
+        self.boxes = []
+        self.names = []
+
+    def fill(self, n: int) -> None:
+        for i in range(n):
+            self.items.append(i * 2)
+            self.boxes.append(Box(i))
+            self.names.append("n" + str(i))
+
+big: list[int] = []
+for i in range(400000):
+    big.append(i * 3 + 1)
+t: int = 0
+for v in big:
+    t = t + v
+print(len(big))
+print(t)
+print(big[0] + big[199999] + big[399999])
+
+strs: list[str] = []
+for i in range(60000):
+    strs.append("s" + str(i))
+print(len(strs))
+print(strs[0] + strs[59999] + strs[31337])
+
+boxes: list[Box] = []
+for i in range(60000):
+    boxes.append(Box(i))
+bt: int = 0
+for b in boxes:
+    bt = bt + b.v
+print(bt)
+
+h: Holder = Holder()
+h.fill(50000)
+print(len(h.items))
+print(h.items[49999])
+print(h.boxes[777].v)
+print(h.names[49999])
+
+# paylaşımlı büyütme: ikinci sahip varken ana liste büyür, diğer kopya eski kalır (Nox'un büyütmede ayrışma davranışı).
+a: list[int] = [1, 2, 3]
+b2: list[int] = a
+for i in range(20):
+    a.append(i)
+print(len(a))
+print(len(b2))
+
+nested: list[list[int]] = []
+for i in range(1000):
+    row: list[int] = []
+    for j in range(i % 7 + 1):
+        row.append(j * i)
+    nested.append(row)
+nt: int = 0
+for r in nested:
+    for x in r:
+        nt = nt + x
+print(nt)

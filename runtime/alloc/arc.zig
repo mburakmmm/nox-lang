@@ -460,6 +460,61 @@ pub export fn nox_list_grow(rt: ?*anyopaque, old_ptr: ?*anyopaque, copy_bytes: u
     return new_ptr;
 }
 
+/// v2.1.87 (TODO 3.5.3): `list.append` büyütmesinin TEK SAHİPLİ (refcount == 1) yolu. Eski bloğun sahipliğini DEVRALIR: eleman işaretçileri aynen taşınır
+/// (retain/decrement dengesi gerekmez), başlık sayacı (1) korunur, eski işaretçi geçersiz sayılır. Büyük bloklarda (libc yolu) `realloc` çekirdek sayfa
+/// yeniden eşlemesiyle kopyalamadan büyür; havuz sınıfı aynıysa işaretçi aynen döner; diğer boyutlarda tahsis + kopya + eski bloğu bırakma (eski büyütmeyle
+/// aynı maliyet). `old_payload`/`new_payload` bayt cinsinden YÜK boyutlarıdır (başlık hariç, `nox_rc_alloc` ile aynı).
+pub export fn nox_list_realloc(rt: ?*anyopaque, old_ptr: ?*anyopaque, old_payload: usize, new_payload: usize) ?*anyopaque {
+    const old = old_ptr orelse return null;
+    const old_total = old_payload + HEADER_SIZE;
+    const new_total = new_payload + HEADER_SIZE;
+    if (use_pool) {
+        if (poolClassIndex(old_total)) |oi| {
+            if (poolClassIndex(new_total)) |ni| {
+                if (oi == ni) return old;
+            }
+        }
+    }
+    if (comptime asap.use_libc_large) {
+        const pooled_old = use_pool and poolClassIndex(old_total) != null;
+        if (!pooled_old and old_total >= asap.LIBC_LARGE_MIN and new_total >= asap.LIBC_LARGE_MIN) {
+            const bytes: [*]u8 = @ptrCast(old);
+            const base = bytes - HEADER_SIZE;
+            const nb: [*]u8 = @ptrCast(std.c.realloc(base, new_total) orelse return null);
+            return nb + HEADER_SIZE;
+        }
+    }
+    const new = nox_rc_alloc(rt, new_payload) orelse return null;
+    const src: [*]const u8 = @ptrCast(old);
+    const dst: [*]u8 = @ptrCast(new);
+    @memcpy(dst[0..old_payload], src[0..old_payload]);
+    nox_rc_free_payload(rt, old, old_payload);
+    return new;
+}
+
+test "v2.1.87: nox_list_realloc içerik ve başlık sayacını korur (havuz aynı sınıf / havuz→büyük / büyük→daha büyük)" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const hdr: usize = 16;
+    var cap: usize = 4;
+    var p: [*]u8 = @ptrCast(nox_rc_alloc(rt, hdr + cap * 8) orelse return error.AllocFailed);
+    var k: usize = 0;
+    while (k < cap) : (k += 1) @as(*align(1) i64, @ptrCast(p + hdr + k * 8)).* = @intCast(k * 7 + 1);
+    // Sınıfı aşana kadar ve büyük boyuta (> 256 KiB) çıkana kadar büyüt; her adımda içerik + sayaç doğrulanır.
+    while (cap < 100_000) {
+        const ncap = cap * 2;
+        const np: [*]u8 = @ptrCast(nox_list_realloc(rt, p, hdr + cap * 8, hdr + ncap * 8) orelse return error.AllocFailed);
+        try std.testing.expectEqual(@as(i64, 1), refcountOf(np).*);
+        k = 0;
+        while (k < cap) : (k += 1) try std.testing.expectEqual(@as(i64, @intCast(k * 7 + 1)), @as(*align(1) i64, @ptrCast(np + hdr + k * 8)).*);
+        k = cap;
+        while (k < ncap) : (k += 1) @as(*align(1) i64, @ptrCast(np + hdr + k * 8)).* = @intCast(k * 7 + 1);
+        p = np;
+        cap = ncap;
+    }
+    nox_rc_free_payload(rt, p, hdr + cap * 8);
+}
+
 /// GG.18 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2"): `nox_list_grow`nin
 /// arena-farkında ikizi — bir fonksiyon-kapsamlı arenaya (`compiler/
 /// codegen_qbe/local_escape.zig`nin kanıtladığı, SKALER-elemanlı, kaçmayan

@@ -1008,6 +1008,23 @@ const LARGE_CACHE_SLOTS = 8;
 const LARGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 const use_large_cache = builtin.mode != .Debug and !is_freestanding;
 
+/// v2.1.87 (TODO 3.5.3): büyük (>= 256 KiB) bloklar yerel hedeflerde libc `malloc`/`realloc`/`free` ile tahsis edilir. Neden: `realloc` büyük bloklarda
+/// çekirdek sayfa yeniden eşlemesi kullanır (macOS `vm_copy`, Linux `mremap`) — `list.append` büyütmesi veri kopyalamadan ve yeni sayfa hatası olmadan
+/// yerinde büyür (`nox_list_realloc`). Zig `SmpAllocator` bu platformlarda yeniden eşleme sunmaz. Debug (DebugAllocator denetimi), wasm, çıplak çekirdek
+/// ve Windows (CRT `realloc` kopyalar, kazanç yok) eski yolda kalır. Tahsis/serbest bırakma yönü HER ZAMAN `size`a göre seçilir (aynı `size` ile eşleşmek zorunlu).
+pub const LIBC_LARGE_MIN: usize = 256 * 1024;
+pub const use_libc_large = builtin.mode != .Debug and !is_freestanding and !builtin.cpu.arch.isWasm() and builtin.os.tag != .windows and builtin.link_libc;
+
+fn rawFreeBlock(state: *RuntimeState, bytes: [*]u8, size: usize) void {
+    if (comptime use_libc_large) {
+        if (size >= LIBC_LARGE_MIN) {
+            std.c.free(bytes);
+            return;
+        }
+    }
+    state.allocator().rawFree(bytes[0..size], nox_alloc_alignment, @returnAddress());
+}
+
 fn largeCacheTake(state: *RuntimeState, size: usize) ?[*]u8 {
     state.large_cache_lock.lock();
     defer state.large_cache_lock.unlock();
@@ -1035,7 +1052,7 @@ fn largeCachePut(state: *RuntimeState, bytes: [*]u8, size: usize) bool {
         state.large_cache_next +%= 1;
         if (state.large_cache_ptr[i]) |old| {
             total -= state.large_cache_len[i];
-            state.allocator().rawFree(old[0..state.large_cache_len[i]], nox_alloc_alignment, @returnAddress());
+            rawFreeBlock(state, old, state.large_cache_len[i]);
             state.large_cache_ptr[i] = null;
             state.large_cache_len[i] = 0;
         }
@@ -1050,7 +1067,7 @@ fn largeCachePut(state: *RuntimeState, bytes: [*]u8, size: usize) bool {
     const i = slot orelse blk: {
         const j = state.large_cache_next % LARGE_CACHE_SLOTS;
         state.large_cache_next +%= 1;
-        if (state.large_cache_ptr[j]) |old| state.allocator().rawFree(old[0..state.large_cache_len[j]], nox_alloc_alignment, @returnAddress());
+        if (state.large_cache_ptr[j]) |old| rawFreeBlock(state, old, state.large_cache_len[j]);
         break :blk j;
     };
     state.large_cache_ptr[i] = bytes;
@@ -1064,7 +1081,7 @@ pub fn largeCacheDrain(state: *RuntimeState) void {
     state.large_cache_lock.lock();
     defer state.large_cache_lock.unlock();
     for (&state.large_cache_ptr, &state.large_cache_len) |*p, *l| {
-        if (p.*) |old| state.allocator().rawFree(old[0..l.*], nox_alloc_alignment, @returnAddress());
+        if (p.*) |old| rawFreeBlock(state, old, l.*);
         p.* = null;
         l.* = 0;
     }
@@ -1076,6 +1093,9 @@ pub export fn nox_alloc(rt: ?*anyopaque, size: usize) ?*anyopaque {
         if (size >= LARGE_CACHE_MIN) {
             if (largeCacheTake(state, size)) |p| return p;
         }
+    }
+    if (comptime use_libc_large) {
+        if (size >= LIBC_LARGE_MIN) return std.c.malloc(size);
     }
     const mem = state.allocator().alignedAlloc(u8, nox_alloc_alignment, size) catch return null;
     return mem.ptr;
@@ -1093,7 +1113,7 @@ pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
     if (comptime use_large_cache) {
         if (size >= LARGE_CACHE_MIN and largeCachePut(state, bytes, size)) return;
     }
-    state.allocator().rawFree(bytes[0..size], nox_alloc_alignment, @returnAddress());
+    rawFreeBlock(state, bytes, size);
 }
 
 // Faz F.0.2 (bkz. plan dosyası "Allocator enjeksiyonu"): `nox_runtime_

@@ -311,7 +311,7 @@ const IndexTable = struct {
         self.* = .{};
     }
 
-    inline fn find(self: *const IndexTable, entries: []const Entry, key_is_str: bool, key: i64, h: u64) ?usize {
+    inline fn find(self: *const IndexTable, entries: []const Entry, comptime key_is_str: bool, key: i64, h: u64) ?usize {
         if (self.slots.len == 0) return null;
         const mask = self.slots.len - 1;
         const tag: u32 = @truncate(h);
@@ -439,17 +439,33 @@ fn findIndexLinear(d: *Dict, key: i64) ?usize {
     return null;
 }
 
-fn findIndex(d: *Dict, key: i64, rt: ?*anyopaque) ?usize {
+/// v2.1.87: sıcak yol satır içi — son-arama önbelleği (`last_idx`) isabeti çağrısız çözülür; kaçırma `findIndexSlow`a (noinline, `usize` sentinel
+/// döner: isteğe bağlı sonucun bellekten dönüşü ve büyük prolog/epilog yalnızca yavaş yola düşer).
+const NOT_FOUND: usize = std.math.maxInt(usize);
+
+inline fn findIndex(d: *Dict, key: i64, rt: ?*anyopaque) ?usize {
     const li = d.last_idx;
     if (li < d.entries.items.len and d.entries.items[li].key == key) return li;
+    const r = findIndexSlow(d, key, rt);
+    return if (r == NOT_FOUND) null else r;
+}
+
+noinline fn findIndexSlow(d: *Dict, key: i64, rt: ?*anyopaque) usize {
     const found = if (!d.index_built)
         findIndexLinear(d, key)
     else blk: {
         const ctx: StrOrIntContext = .{ .key_is_str = d.key_is_str, .rt = rt };
-        break :blk d.index.find(d.entries.items, d.key_is_str, key, ctx.hash(key));
+        // Anahtar türüne göre özelleştirilmiş arama (int: tek `==`, str: içerik karşılaştırması) — çalışma zamanı dalı yok.
+        break :blk if (d.key_is_str)
+            d.index.find(d.entries.items, true, key, ctx.hash(key))
+        else
+            d.index.find(d.entries.items, false, key, ctx.hash(key));
     };
-    if (found) |i| d.last_idx = i;
-    return found;
+    if (found) |i| {
+        d.last_idx = i;
+        return i;
+    }
+    return NOT_FOUND;
 }
 
 /// `entries`i (TÜMÜNÜ, MEVCUT haliyle) `index`e AKTARIR VE `index_built`i

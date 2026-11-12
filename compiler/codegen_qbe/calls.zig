@@ -2554,12 +2554,18 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         break :blk t;
     } else obj.text;
 
+    // v2.1.87: başlık (uzunluk/kapasite) erişimleri TBAA `list_len`, eleman yazımı `list_elem` ile işaretlenir (bkz. `Codegen.mem_tag`): LLVM, ekleme
+    // döngüsünde uzunluğu/kapasiteyi yazmaçta tutabilir. Büyütme yolundaki başlık yazımları etiketsiz kalır (her şeyle çakışabilir = güvenli).
     const len_t = try self.newTemp();
+    self.setMemTag(.list_len);
     try self.qbeLoadL(len_t, list_text);
+    self.setMemTag(.none);
     const cap_addr = try self.newTemp();
     try self.qbeOp2Imm(cap_addr, .l, "add", list_text, 8);
     const cap_t = try self.newTemp();
+    self.setMemTag(.list_len);
     try self.qbeLoadL(cap_t, cap_addr);
+    self.setMemTag(.none);
     const has_room = try self.newTemp();
     try self.qbeOp2(has_room, .w, "csltl", len_t, cap_t);
     const grow_label = try self.newLabel("append_grow");
@@ -2602,6 +2608,47 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const sz = try self.newTemp();
         try self.qbeOp2Imm(sz, .l, "mul", len_t, @intCast(elem_size));
         try self.qbeOp2Imm(copy_bytes, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
+    }
+    // v2.1.87 (TODO 3.5.3): TEK SAHİPLİ liste (başlık sayacı == 1, arena değil, 64-bit yerel hedef) → `nox_list_realloc`: eski bloğun sahipliği
+    // çalışma zamanına devredilir (büyük bloklarda `realloc` sayfa yeniden eşlemesiyle kopyalamadan büyür), eleman retain/decrement dansı ve eski blok
+    // serbest bırakma GEREKMEZ (elemanlar aynı işaretçilerle taşınır). Sayaç > 1 ise (başka bir sahip/alias var) aşağıdaki eski paylaşımlı yol.
+    if (obj.growable_arena == null and self.profile == .hosted and !self.isWasmTarget()) {
+        const rc_addr = try self.newTemp();
+        try self.qbeOp2Imm(rc_addr, .l, "sub", list_text, @intCast(types.ARC_HEADER_SIZE));
+        const rc_t = try self.newTemp();
+        try self.qbeLoadL(rc_t, rc_addr);
+        const is_unique = try self.newTemp();
+        try self.qbeOp2Imm(is_unique, .w, "ceql", rc_t, 1);
+        const unique_label = try self.newLabel("append_unique");
+        const shared_label = try self.newLabel("append_shared");
+        try self.qbeJnz(is_unique, unique_label, shared_label);
+        try self.qbeLabel(unique_label);
+        const old_payload = try self.newTemp();
+        {
+            const sz = try self.newTemp();
+            try self.qbeOp2Imm(sz, .l, "mul", cap_t, @intCast(elem_size));
+            try self.qbeOp2Imm(old_payload, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
+        }
+        const uptr = try self.newTemp();
+        try self.qbeCall(.{ .name = uptr, .ty = .l }, "$nox_list_realloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = old_payload }, .{ .ty = .l, .text = new_payload_size } });
+        {
+            const byte_off = try self.newTemp();
+            try self.qbeOp2Imm(byte_off, .l, "mul", len_t, @intCast(elem_size));
+            const off16 = try self.newTemp();
+            try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
+            const addr = try self.newTemp();
+            try self.qbeOp2(addr, .l, "add", uptr, off16);
+            try self.qbeStore(obj.elem_qtype, val.text, addr);
+        }
+        const unew_len = try self.newTemp();
+        try self.qbeOp2Imm(unew_len, .l, "add", len_t, 1);
+        try self.qbeStoreL(unew_len, uptr);
+        const ucap_addr = try self.newTemp();
+        try self.qbeOp2Imm(ucap_addr, .l, "add", uptr, 8);
+        try self.qbeStoreL(new_cap, ucap_addr);
+        try self.qbeStoreL(uptr, recv_addr);
+        try self.qbeJmp(done_label);
+        try self.qbeLabel(shared_label);
     }
     const new_ptr = try self.newTemp();
     if (obj.growable_arena) |arena_handle| {
@@ -2721,11 +2768,15 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
         const addr = try self.newTemp();
         try self.qbeOp2(addr, .l, "add", list_text, off16);
+        if (obj.elem_qtype != .b and obj.elem_qtype != .sb and obj.elem_qtype != .h and obj.elem_qtype != .sh) self.setMemTag(.list_elem);
         try self.qbeStore(obj.elem_qtype, val.text, addr);
+        self.setMemTag(.none);
     }
     const fast_new_len = try self.newTemp();
     try self.qbeOp2Imm(fast_new_len, .l, "add", len_t, 1);
+    self.setMemTag(.list_len);
     try self.qbeStoreL(fast_new_len, list_text);
+    self.setMemTag(.none);
     try self.qbeJmp(done_label);
 
     try self.qbeLabel(done_label);

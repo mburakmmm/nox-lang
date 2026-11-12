@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.87]
+
+### Değişti
+
+- **`list.append` büyütmesi: tek sahipli yerinde büyüme (TODO 3.5.3, mimari değişiklik onaylı):** başlık sayacı 1 olan (arena olmayan, 64-bit yerel hedef) listenin büyütmesi `nox_list_realloc`a devredilir: eski bloğun sahipliği çalışma zamanına geçer, elemanlar aynı işaretçilerle taşınır (retain/decrement dansı ve eski blok serbest bırakma yok). Büyük bloklar (>= 256 KiB; macOS/Linux, Release) libc `malloc`/`realloc`/`free` ile tahsis edilir → `realloc` kopyalamadan çekirdek sayfa yeniden eşlemesiyle büyür (Zig `SmpAllocator`da yeniden eşleme yoktu). Sayaç > 1 (alias) ise eski paylaşımlı yol aynen. Ekleme hızlı yolunda başlık/eleman erişimleri TBAA etiketli. Standalone 200M ekleme 0,75 → 0,42 s (C 0,13 s); `lang_perf` `list_append_sum_pop_2M` C'ye göre 3,4x → ~3,2x (hızlı yol artık yazmaç değil bellek bağımlılığı: ~5 çevrim/ekleme)
+- **Sözlük arama sıcak yolu satır içi (TODO 3.5.3):** `findIndex` artık satır içi son-arama önbelleği denetimi + `noinline` yavaş yol (`usize` sentinel dönüşü, büyük prolog/epilog yalnızca kaçırmada); yavaş yol anahtar türüne göre özelleştirilmiş. `dict_int_1.5M` 25,6 → ~17 ms (aynı algoritmanın C portu 10,2 ms, elle yazılmış sırasız tablo 3,5 ms). Golden: `list_append_unique_realloc` (Python ile aynı, iki backend, `MallocScribble` temiz) + Zig birim testi `nox_list_realloc`
+
 ## [2.1.86]
 
 ### Eklendi
