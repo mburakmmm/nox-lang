@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.91]
+
+### Belgelendi
+
+- **TODO 3.5.3 kapandı:** performans turunun madde madde sonuç tablosu (`project/dil-performans-analizi-2026-11.md` "3.5.3 Kapanış"): yapılanlar, denenip geri alınanlar (sözlük satır içi anahtar, PGO), uygulanamayanlar (ptr-tipli IR öznitelikleri, bitcode LTO) ve kalan araştırma düzeyi açık alanlar. Ölçüm dersi: `zig build test` sonrası `zig-out` Debug kurulur; perf ölçümünden önce `-Doptimize=ReleaseFast`
+
 ## [2.1.90]
 
 ### Değişti

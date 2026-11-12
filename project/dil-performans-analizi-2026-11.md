@@ -116,3 +116,34 @@ Kalan "C'ye uzak" çekirdeklerin ne kadarının GERÇEK açık alan olduğu öl�
 - `sieve` iç döngüsüne elle TBAA (liste uzunluğu ≠ eleman) eklenerek IR-düzeyi deney: fark yok (iç döngü bellek-bağımlı, adım atlamalı erişim) → uygulanmadı.
 - `func_value_calls`: kalan maliyet `apply` çağrısı + dolaylı çağrı + İKİ `nox_exception_pending` çalışma zamanı çağrısı (satır içi olamıyor, `RuntimeState` düzeni derleyiciyle paylaşılmıyor). Çözüm: sıcak yol bayrağını (fiber yoksa `pending_exception`) derleyicinin bildiği sabit ofsette satır içi okumak → ABI kararı (AGENTS §16: kullanıcıya sorulur).
 
+## 3.5.3 Kapanış (v2.1.80 → v2.1.90): madde madde sonuç
+
+Geometrik ortalama llvm/c: **1,87 → ~1,3-1,4** (QBE 2,19 → ~1,8); `benchmarks/stdlib_perf` nox/python geometrik ortalaması 1,08 → 0,5 civarı (replace/split/json.dump/url.parse düzeltmeleri). Madde durumları:
+
+| Fikir | Sonuç |
+|---|---|
+| Pinned dize release/retain atlama | YAPILDI (v2.1.76, v2.1.83) |
+| `s[i] == "c"` birleştirme | YAPILDI (v2.1.80) |
+| Statik işlev-değeri kapanışı | YAPILDI (v2.1.76) |
+| Satır içi istisna denetimi | YAPILDI (v2.1.81, sıcak blok) — `virtual_dispatch` 3,06 → 1,69 ms |
+| LLVM TBAA (liste uzunluk/eleman) | YAPILDI (v2.1.82, ekleme hızlı yolu v2.1.87) |
+| `list * n` / `str * n` doldurma | YAPILDI (v2.1.85) — `sieve` 3,0x → 1,4x |
+| Liste büyütme: tek sahipli `realloc` + büyük blok libc yolu | YAPILDI (v2.1.87) — 200M ekleme 0,75 → 0,42 s |
+| Sözlük sıcak yolu (satır içi son-arama önbelleği, `noinline` yavaş yol) | YAPILDI (v2.1.87) — `dict_int` 25,6 → ~17 ms |
+| Sözlük yoğunlaştırmasında yerinde indeks | YAPILDI (v2.1.84) — RSS büyümesi giderildi |
+| stdlib: replace/split/json.dump/_substr | YAPILDI (v2.1.88, v2.1.89) |
+| LLVM `nounwind` | YAPILDI (v2.1.90) — kod -%11 |
+| Sözlük satır içi `int` anahtar (16 B slot) | DENENDİ, GERİ ALINDI (+%5 yavaş) |
+| `sieve`/`insertion_sort` elle TBAA, bellek-bağımlı | UYGULANDI genel TBAA ile; `lang_perf` çekirdekleri nötr |
+| PGO (`-fprofile-instr-use`) | DENENDİ, kazanç yok (174,0 → 174,6 ms toplam) |
+| `nounwind` ötesi öznitelikler (`noalias/readonly/nonnull`) | UYGULANAMAZ: tüm işaretçiler `i64`+`inttoptr`; `ptr` tipli IR'a geçiş ayrı büyük bir mimari iş |
+| Runtime bitcode + LTO | UYGULANAMAZ: Zig'in LLVM sürümü ile kullanıcının `clang`ı eşleşmeyebilir (bitcode sürüm-bağımlı); onun yerine sıcak runtime yolları (istisna denetimi, retain, liste/sözlük ilk-isabet) derleyici tarafında satır içi |
+| `dict[str,*]` özel yol / dize özet önbelleği | GEREKSİZ: sıralı kompakt sözlük zaten CPython düzeni; `dict_str_get` Python'dan 7x hızlı; `str` başlığında özet için yer yok (ABI) |
+| `str +=` zinciri → builder | ZATEN VAR (`nox_str_append`, yerinde büyüme, v1.142.17) |
+| Küçük-nesne havuzu, dallanma ipuçları (`!prof`), sabit katlama/LICM | ZATEN VAR / LLVM yapar |
+| QBE satır içi açma | Nox'un kendi küçük-işlev satır içi açıcısı var; QBE farkı QBE optimizasyon geçişlerinin yokluğu (Windows'ta QBE kullanılır) — ayrı proje |
+
+**Ölçüm dersi:** `zig build test` bittiğinde `zig-out` DEBUG olarak yeniden kurulur; perf ölçümünden önce `zig build -Doptimize=ReleaseFast` şart (üç kez yanlış alarm: 24 sn'lik "ağır yük", 1,8 sn'lik "yavaş sort", 52 ms'lik "yavaş reverse" — hepsi Debug çalışma zamanıydı). Test koşturucu betik artık bitişte Release'i geri kurar.
+
+**Kalan gerçek açık alanlar (araştırma düzeyi):** liste ekleme döngüsünde uzunluğun yazmaçta tutulması (~5 çevrim bellek bağımlılığı), `dict` için tipli düzen (sıralı yapının tek-yoklama maliyeti), iç içe `list[list[float]]` çift dolaylılığı, QBE optimizasyon geçişleri.
+
