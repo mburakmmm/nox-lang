@@ -57,6 +57,28 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
         return @ptrCast(bytes);
     }
 
+    // v2.1.88: tek baytlık ayırıcı (en yaygın: "," "\n" " ") — parça sayısı otomatik vektörleşen sayımla, parçalar `indexOfScalarPos` ile bulunur.
+    if (sep_slice.len == 1) {
+        const c = sep_slice[0];
+        var seps: usize = 0;
+        for (s_slice) |b| seps += @intFromBool(b == c);
+        const n1 = seps + 1;
+        const raw1 = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * n1) orelse return null;
+        const bytes1: [*]u8 = @ptrCast(raw1);
+        @as(*align(1) i64, @ptrCast(bytes1)).* = @intCast(n1);
+        @as(*align(1) i64, @ptrCast(bytes1 + 8)).* = @intCast(n1);
+        var start: usize = 0;
+        var k: usize = 0;
+        while (k < n1) : (k += 1) {
+            const end = if (k + 1 < n1) (std.mem.indexOfScalarPos(u8, s_slice, start, c) orelse s_slice.len) else s_slice.len;
+            const dup = dupeToNoxStr(rt, s_slice[start..end]) orelse return null;
+            const slot = bytes1 + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * k;
+            @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
+            start = end + 1;
+        }
+        return @ptrCast(bytes1);
+    }
+
     var count: usize = 0;
     {
         var it = std.mem.splitSequence(u8, s_slice, sep_slice);
@@ -293,6 +315,40 @@ export fn nox_strings_replace_raw(rt: ?*anyopaque, s: ?[*:0]const u8, old: ?[*:0
     const old_slice = str_mod.nox_str_slice(old orelse return null);
     const new_slice = str_mod.nox_str_slice(new orelse return null);
     if (old_slice.len == 0) return dupeToNoxStr(rt, s_slice);
+
+    // v2.1.88: tek baytlık `old` (en yaygın durum) — sayım otomatik vektörleşen tek geçiş; yoğun eşleşmede (>= 1/8 bayt) tek geçişli yazma döngüsü
+    // (eşleşme başına SIMD tarama kurulumu yok), seyrekte `indexOfScalarPos` ile atlama. Sonuç `std.mem.replace` ile aynıdır.
+    if (old_slice.len == 1) {
+        const c = old_slice[0];
+        var cnt: usize = 0;
+        for (s_slice) |b| cnt += @intFromBool(b == c);
+        if (cnt == 0) return dupeToNoxStr(rt, s_slice);
+        const out_len1 = s_slice.len - cnt + cnt * new_slice.len;
+        const buf1 = str_mod.nox_str_alloc_buf(rt, out_len1) orelse return null;
+        var w: usize = 0;
+        if (cnt * 8 >= s_slice.len) {
+            for (s_slice) |b| {
+                if (b == c) {
+                    @memcpy(buf1[w..][0..new_slice.len], new_slice);
+                    w += new_slice.len;
+                } else {
+                    buf1[w] = b;
+                    w += 1;
+                }
+            }
+        } else {
+            var r: usize = 0;
+            while (std.mem.indexOfScalarPos(u8, s_slice, r, c)) |idx| {
+                @memcpy(buf1[w..][0 .. idx - r], s_slice[r..idx]);
+                w += idx - r;
+                @memcpy(buf1[w..][0..new_slice.len], new_slice);
+                w += new_slice.len;
+                r = idx + 1;
+            }
+            @memcpy(buf1[w..][0 .. s_slice.len - r], s_slice[r..]);
+        }
+        return @ptrCast(buf1);
+    }
 
     // `std.mem.replace`/`replacementSize` her konumda `startsWith` denediği için 57 baytlık bir
     // dizede Python'dan ~4x yavaştı; `index_of`un SIMD ilk-bayt aramasıyla (`fastIndexOf`) iki geçiş.

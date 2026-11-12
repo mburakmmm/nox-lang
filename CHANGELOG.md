@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.88]
+
+### Değişti
+
+- **Stdlib hızlı yolları (`benchmarks/stdlib_perf`, Nox vs CPython 3.15):** (1) `nox.strings.replace` tek baytlık `old` için tek geçişli sayım + yoğun eşleşmede doğrudan yazma/seyrekte `indexOfScalarPos`: `str_replace_x5` 16,1 → 6,2 ms (nox/py 1,33 → 0,43). (2) `nox.strings.split` tek baytlık ayırıcı için vektörleşen sayım + `indexOfScalarPos`: `str_split_200k_x5` 17,2 → 10,1 ms (1,03 → 0,44). (3) `nox.json.dump` yazıcısı: küçük dilimlerde libc `memmove` yerine satır içi kopya, kaçış gerektirmeyen dizeler doğrudan tampona, elle tamsayı biçimleme: `json_dump_50k_objs` 17,9 → 6,2 ms (1,06 → 0,39). Çıktılar eski uygulamayla ve Python ile aynı. Golden: `strings_json_fastpaths` (iki backend)
+
 ## [2.1.87]
 
 ### Değişti

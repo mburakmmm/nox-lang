@@ -1023,74 +1023,143 @@ fn rdPtr(p: [*]const u8, off: usize) ?[*]const u8 {
     return @ptrFromInt(@as(usize, @intCast(v)));
 }
 
+/// v2.1.88: JSON yazıcı yardımcıları — küçük dilimlerde libc `memmove` çağrısı yerine satır içi kopya (çıktı düğüm başına onlarca küçük ekleme içerir),
+/// kaçış gerektirmeyen dizeler tek taramayla doğrudan tampona.
+inline fn copySmall(dst: [*]u8, src: [*]const u8, n: usize) void {
+    if (n >= 16) {
+        @memcpy(dst[0..n], src[0..n]);
+    } else if (n >= 8) {
+        const a = @as(*align(1) const u64, @ptrCast(src)).*;
+        const b = @as(*align(1) const u64, @ptrCast(src + n - 8)).*;
+        @as(*align(1) u64, @ptrCast(dst)).* = a;
+        @as(*align(1) u64, @ptrCast(dst + n - 8)).* = b;
+    } else if (n >= 4) {
+        const a = @as(*align(1) const u32, @ptrCast(src)).*;
+        const b = @as(*align(1) const u32, @ptrCast(src + n - 4)).*;
+        @as(*align(1) u32, @ptrCast(dst)).* = a;
+        @as(*align(1) u32, @ptrCast(dst + n - 4)).* = b;
+    } else if (n > 0) {
+        dst[0] = src[0];
+        dst[n / 2] = src[n / 2];
+        dst[n - 1] = src[n - 1];
+    }
+}
+
+fn putSlice(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), sl: []const u8) std.mem.Allocator.Error!void {
+    try out.ensureUnusedCapacity(a, sl.len);
+    copySmall(out.items.ptr + out.items.len, sl.ptr, sl.len);
+    out.items.len += sl.len;
+}
+
+fn putByte(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), b: u8) std.mem.Allocator.Error!void {
+    try out.ensureUnusedCapacity(a, 1);
+    out.items.ptr[out.items.len] = b;
+    out.items.len += 1;
+}
+
+/// `"..."` biçiminde kaçışlı dizeyi doğrudan `out`a yazar (`escapeJsonString` ile aynı çıktı).
+fn putEscaped(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), bytes: []const u8) std.mem.Allocator.Error!void {
+    var clean = true;
+    for (bytes) |c| {
+        if (c < 0x20 or c == '"' or c == '\\') {
+            clean = false;
+            break;
+        }
+    }
+    if (clean) {
+        try out.ensureUnusedCapacity(a, bytes.len + 2);
+        const d = out.items.ptr + out.items.len;
+        d[0] = '"';
+        copySmall(d + 1, bytes.ptr, bytes.len);
+        d[bytes.len + 1] = '"';
+        out.items.len += bytes.len + 2;
+        return;
+    }
+    var sfa = std.heap.stackFallback(1024, a);
+    const ea = sfa.get();
+    const esc = try escapeJsonString(ea, bytes);
+    defer ea.free(esc);
+    try putSlice(a, out, esc);
+}
+
+fn putInt(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), v: i64) std.mem.Allocator.Error!void {
+    var tmp: [20]u8 = undefined;
+    var i: usize = tmp.len;
+    var u: u64 = if (v < 0) @as(u64, @intCast(-(v + 1))) + 1 else @as(u64, @intCast(v));
+    if (u == 0) {
+        i -= 1;
+        tmp[i] = '0';
+    }
+    while (u != 0) {
+        i -= 1;
+        tmp[i] = @intCast('0' + u % 10);
+        u /= 10;
+    }
+    if (v < 0) {
+        i -= 1;
+        tmp[i] = '-';
+    }
+    try putSlice(a, out, tmp[i..]);
+}
+
 fn dumpNumberInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), n: f64) std.mem.Allocator.Error!void {
     if (n < 1000000000000000.0 and n > -1000000000000000.0) {
         const i: i64 = @intFromFloat(n);
         if (@as(f64, @floatFromInt(i)) == n) {
-            var tmp: [24]u8 = undefined;
-            const t = std.fmt.bufPrint(&tmp, "{d}", .{i}) catch unreachable;
-            return out.appendSlice(a, t);
+            return putInt(a, out, i);
         }
     }
     var fb: [64]u8 = undefined;
-    return out.appendSlice(a, str_mod.formatFloatRepr(&fb, n));
+    return putSlice(a, out, str_mod.formatFloatRepr(&fb, n));
 }
 
 fn dumpNodeInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), node: [*]const u8) std.mem.Allocator.Error!void {
     switch (rdI64(node, FIELD_SLOT_SIZE * 1)) {
-        0 => try out.appendSlice(a, "null"),
-        1 => try out.appendSlice(a, if (rdI64(node, FIELD_SLOT_SIZE * 2) != 0) "true" else "false"),
+        0 => try putSlice(a, out, "null"),
+        1 => try putSlice(a, out, if (rdI64(node, FIELD_SLOT_SIZE * 2) != 0) "true" else "false"),
         2 => {
             if (rdPtr(node, FIELD_SLOT_SIZE * 4)) |sp| {
                 const sl = str_mod.nox_str_slice(@ptrCast(sp));
-                if (sl.len > 0) return out.appendSlice(a, sl);
+                if (sl.len > 0) return putSlice(a, out, sl);
             }
             try dumpNumberInto(a, out, rdF64(node, FIELD_SLOT_SIZE * 3));
         },
         3 => {
             const sl: []const u8 = if (rdPtr(node, FIELD_SLOT_SIZE * 4)) |sp| str_mod.nox_str_slice(@ptrCast(sp)) else "";
-            var sfa = std.heap.stackFallback(4096, a);
-            const ea = sfa.get();
-            const esc = try escapeJsonString(ea, sl);
-            defer ea.free(esc);
-            try out.appendSlice(a, esc);
+            try putEscaped(a, out, sl);
         },
         4 => {
-            const list = rdPtr(node, FIELD_SLOT_SIZE * 5) orelse return out.appendSlice(a, "[]");
+            const list = rdPtr(node, FIELD_SLOT_SIZE * 5) orelse return putSlice(a, out, "[]");
             const n: usize = @intCast(rdI64(list, 0));
-            try out.append(a, '[');
+            try putByte(a, out, '[');
             for (0..n) |i| {
-                if (i > 0) try out.append(a, ',');
+                if (i > 0) try putByte(a, out, ',');
                 const child = rdPtr(list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i) orelse {
-                    try out.appendSlice(a, "null");
+                    try putSlice(a, out, "null");
                     continue;
                 };
                 try dumpNodeInto(a, out, child);
             }
-            try out.append(a, ']');
+            try putByte(a, out, ']');
         },
         else => {
-            const keys = rdPtr(node, FIELD_SLOT_SIZE * 6) orelse return out.appendSlice(a, "{}");
-            const vals = rdPtr(node, FIELD_SLOT_SIZE * 7) orelse return out.appendSlice(a, "{}");
+            const keys = rdPtr(node, FIELD_SLOT_SIZE * 6) orelse return putSlice(a, out, "{}");
+            const vals = rdPtr(node, FIELD_SLOT_SIZE * 7) orelse return putSlice(a, out, "{}");
             const n: usize = @intCast(rdI64(keys, 0));
-            try out.append(a, '{');
+            try putByte(a, out, '{');
             for (0..n) |i| {
-                if (i > 0) try out.append(a, ',');
+                if (i > 0) try putByte(a, out, ',');
                 const kp = rdPtr(keys, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i);
                 const ksl: []const u8 = if (kp) |k| str_mod.nox_str_slice(@ptrCast(k)) else "";
-                var sfa = std.heap.stackFallback(1024, a);
-                const ea = sfa.get();
-                const esc = try escapeJsonString(ea, ksl);
-                defer ea.free(esc);
-                try out.appendSlice(a, esc);
-                try out.append(a, ':');
+                try putEscaped(a, out, ksl);
+                try putByte(a, out, ':');
                 const child = rdPtr(vals, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i) orelse {
-                    try out.appendSlice(a, "null");
+                    try putSlice(a, out, "null");
                     continue;
                 };
                 try dumpNodeInto(a, out, child);
             }
-            try out.append(a, '}');
+            try putByte(a, out, '}');
         },
     }
 }

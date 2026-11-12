@@ -1,0 +1,33 @@
+# v2.1.88: tek baytlık replace/split hızlı yolları ve JSON dump yazıcısı Python ile aynı sonucu vermeli (kenar durumlar dahil).
+import nox.strings
+import nox.json
+from nox.json import JsonValue
+
+def show(parts: list[str]) -> str:
+    out: str = str(len(parts)) + ":"
+    for p in parts:
+        out = out + "[" + p + "]"
+    return out
+
+print(nox.strings.replace("a,b,,c,", ",", "--"))
+print(nox.strings.replace(",,,", ",", ""))
+print(nox.strings.replace("abc", "x", "y"))
+print(nox.strings.replace("", "x", "y"))
+print(nox.strings.replace("héllo wörld", "ö", "oe"))
+print(nox.strings.replace("aaaa", "a", "bb"))
+print(nox.strings.replace("a1b2c3" * 5, "2", "<two>"))
+print(nox.strings.replace("x" * 100 + "." + "y" * 100, ".", "!!"))
+print(show(nox.strings.split("a,b,,c,", ",")))
+print(show(nox.strings.split(",", ",")))
+print(show(nox.strings.split("", ",")))
+print(show(nox.strings.split("abc", ",")))
+print(show(nox.strings.split(",,a", ",")))
+print(show(nox.strings.split("é;ü;ö", ";")))
+print(show(nox.strings.split("one two", " ")))
+print(show(nox.strings.split("a\nb\n", "\n")))
+print(show(nox.strings.split("a--b--c", "--")))
+
+doc: JsonValue = nox.json.parse("[1, -2, 0, 1.5, -0.25, 1e3, 123456789012, \"hi\", \"q\\\"uote\\\\ \\n tab\\t \\u0001 é\", true, false, null, [], {}, {\"k\": [1, {\"z\": \"y\"}], \"é\": 2.5}]")
+print(nox.json.dump(doc))
+big: str = "[" + ",".join([str(i * 37 % 1001) for i in range(300)]) + "]"
+print(len(nox.json.dump(nox.json.parse(big))))
