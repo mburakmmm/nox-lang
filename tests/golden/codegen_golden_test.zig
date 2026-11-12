@@ -110,11 +110,27 @@ const FixtureResult = struct {
     err_name: []const u8 = "",
 };
 
+fn monotonicNs() u64 {
+    if (@import("builtin").os.tag == .windows) return 0;
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
+}
+
 fn runOneFixture(fx: *const Fixture, result: *FixtureResult) void {
     if (@import("builtin").os.tag == .windows and fx.skip_windows) {
         result.* = .{ .ok = true };
         return;
     }
+    // v2.1.86: yerel hızlı koşu — ağır fixture'lar atlanır (CI/tam koşuda `NOX_TEST_FAST` ayarlı değildir).
+    if (fx.slow and std.c.getenv("NOX_TEST_FAST") != null) {
+        result.* = .{ .ok = true };
+        return;
+    }
+    const t0 = monotonicNs();
+    defer if (std.c.getenv("NOX_FIXTURE_TIMES") != null) {
+        std.debug.print("FIXTURE_TIME {d} ms: {s}\n", .{ (monotonicNs() - t0) / 1_000_000, fx.name });
+    };
     const outcome = switch (fx.kind) {
         .golden => expectGolden(fx.source, fx.expected_stdout),
         .uncaught_exception => expectUncaughtException(fx.source, fx.expected_stdout),

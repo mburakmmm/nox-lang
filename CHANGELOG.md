@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.86]
+
+### Eklendi
+
+- **Hızlı yerel test döngüsü (TODO 3.5 / geliştirme hızı):** (A) `zig build -Dtrace-frames=N` — Debug çalışma zamanındaki `DebugAllocator`ın tahsis/serbest bırakma başına yığın izi derinliği (varsayılan 6, CI aynen); 0 iken ağır bir fixture 8,7 s → 0,21 s (yığın çözme asıl maliyetti; `.safety = true` sızıntı/çift serbest/kullanım-sonrası denetimleri açık kalır, yalnızca sızıntı raporunda yığın izi yoktur). (C) `scripts/test-fast.sh` = `NOX_TEST_FAST=1 zig build test -Dtrace-frames=0`: `Fixture.slow` işaretli 25 ağır fixture'ı (her ailenin en hızlısı hariç; stdlib yaml/toml/bigint/decimal/fraction/argon2/jeneratör vb.) atlar. (D) `NOX_FIXTURE_TIMES=1` fixture başına süre yazdırır. Ölçüm (10 çekirdek): tam koşu 30-80 dk (varsayılan, yığın izi 6) → 12,5 dk (`-Dtrace-frames=0`, tüm fixture'lar) → 7,5 dk (hızlı katman). `zig build test` ve CI komutu değişmedi (tam kanıt). Ayrıca Windows CI test zaman aşımı 900 → 1800 sn (v2.1.83/84 Windows işi "TÜM golden fixture'lar" testinde 900 sn'ye takıldı: korpus büyüdükçe süre sınıra yaklaşmıştı, v2.1.80-82 geçmişti)
+
 ## [2.1.85]
 
 ### Değişti

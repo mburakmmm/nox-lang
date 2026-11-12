@@ -83,6 +83,7 @@ fn addFreestandingRuntimeChain(
     });
     const diag_sink_mod = b.createModule(.{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .imports = &.{.{ .name = "test_tuning", .module = tuningModule(b) }},
         .target = fs_target,
         .optimize = optimize,
     });
@@ -168,6 +169,7 @@ fn addHostedRuntimeChain(
     });
     const diag_sink_mod = b.createModule(.{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .imports = &.{.{ .name = "test_tuning", .module = tuningModule(b) }},
         .target = os_target,
         .optimize = optimize,
     });
@@ -274,6 +276,7 @@ fn addWasmRuntimeChainTo(b: *std.Build, optimize: std.builtin.OptimizeMode, root
     });
     const diag_sink_mod = b.createModule(.{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .imports = &.{.{ .name = "test_tuning", .module = tuningModule(b) }},
         .target = os_target,
         .optimize = optimize,
     });
@@ -363,6 +366,7 @@ fn addMobileRuntimeChain(
     });
     const diag_sink_mod = b.createModule(.{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .imports = &.{.{ .name = "test_tuning", .module = tuningModule(b) }},
         .target = os_target,
         .optimize = optimize,
         .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
@@ -497,6 +501,20 @@ fn sourceCommit(b: *std.Build) []const u8 {
     return b.dupe(t);
 }
 
+/// v2.1.86: `zig build -Dtrace-frames=N` — Debug çalışma zamanındaki `DebugAllocator`ın tahsis/serbest bırakma başına yakaladığı yığın izi derinliği
+/// (varsayılan 6, eski davranış). Yerel hızlı test koşuları için 0 (güvenlik denetimleri `.safety = true` aynen açık kalır; yalnızca sızıntı
+/// raporlarında yığın izi yoktur). Bilinçli olarak `diag_sink` modülü üzerinden taşınır (asap.zig'i içeren her modülde zaten vardır).
+fn tuningModule(b: *std.Build) *std.Build.Module {
+    const S = struct {
+        var cached: ?*std.Build.Module = null;
+    };
+    if (S.cached) |m| return m;
+    const opts = b.addOptions();
+    opts.addOption(u8, "trace_frames", b.option(u8, "trace-frames", "DebugAllocator yığın izi derinliği (varsayılan 6; yerel hızlı test için 0)") orelse 6);
+    S.cached = opts.createModule();
+    return S.cached.?;
+}
+
 pub fn build(b: *std.Build) void {
     if (builtin.zig_version.order(EXPECTED_ZIG_VERSION) != .eq) {
         std.debug.print(
@@ -607,6 +625,7 @@ pub fn build(b: *std.Build) void {
     // path"). Named-module olarak PAYLAŞMAK bu sınırı ORTADAN KALDIRIR.
     const diag_sink_mod = b.addModule("diag_sink", .{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .imports = &.{.{ .name = "test_tuning", .module = tuningModule(b) }},
         .target = target,
         .optimize = optimize,
     });
@@ -866,6 +885,7 @@ pub fn build(b: *std.Build) void {
     });
     const diag_sink_mod_fs = b.createModule(.{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .imports = &.{.{ .name = "test_tuning", .module = tuningModule(b) }},
         .target = freestanding_target,
         .optimize = optimize,
     });
@@ -961,6 +981,7 @@ pub fn build(b: *std.Build) void {
     });
     const diag_sink_mod_k = b.createModule(.{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .imports = &.{.{ .name = "test_tuning", .module = tuningModule(b) }},
         .target = kernel_target,
         .optimize = optimize,
     });
@@ -1375,6 +1396,7 @@ pub fn build(b: *std.Build) void {
     });
     const diag_sink_mod_alloc = b.createModule(.{
         .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .imports = &.{.{ .name = "test_tuning", .module = tuningModule(b) }},
         .target = alloc_abi_target,
         .optimize = optimize,
     });

@@ -95,6 +95,7 @@ Hedef: sahiplik piramidinin (ASAP → ARC → döngü çözücü → `lowlevel`)
 - [ ] **6.1** HTTP/2 sunucusu Windows'ta (uyandırma boruları → loopback soket çifti, `supported = enabled or windows`)
 - [ ] **6.2** Fiber-farkındalıklı ağ G/Ç (Windows)
 - [ ] **6.4** Windows: `glob_python_equivalence` ve `tempfile_basic` golden fixture'ları v2.1.79 CI'da (TMPDIR düzeltmesinden sonra) "TÜM golden fixture'lar" testini 900 s zaman aşımına uğrattı (v2.1.75'te getenv hatasıyla hızlı düşüyordu); v2.1.81'de geçici `skip_windows`. Windows oturumunda gerçek nedeni bul (takılan döngü / yol ayırıcı) ve atlamayı kaldır
+- [ ] **6.5** `linux-riscv64 qemu-user duman` işi v2.1.84 CI'da runner CPU'suna bağlı olarak düştü: `zig build` (Debug, native) sırasında libdeflate `x86/adler32_template.h` AVX-512 (`evex512`) hatası; v2.1.82'de geçmişti. Kalıcı çözüm: libdeflate C kaynaklarını native yerine taban CPU ile derlemek ya da AVX-512 yolunu kapatmak (araştır)
 - [ ] **6.3** Windows'ta atlanan ~6 h2c testini aç (`tests/compat/http_serve_golden_test.zig`)
 
 ## 7. İşletim / bekleyenler

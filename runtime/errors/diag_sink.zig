@@ -19,6 +19,9 @@ const builtin = @import("builtin");
 /// DERLENEMEYEN bir I/O katmanına dayanır.
 const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
 
+/// v2.1.86: `zig build -Dtrace-frames=N` ile ayarlanan `DebugAllocator` yığın izi derinliği (bkz. `build.zig` `tuningModule`; varsayılan 6).
+pub const trace_frames: u8 = @import("test_tuning").trace_frames;
+
 /// wasm32-freestanding (ADR-013): stderr `nox_host.write(2, ...)` ile yazılır. (`wasm_host.zig` bu modülün kök dizini dışında; aynı import burada yinelenir.)
 const is_wasm_freestanding = builtin.cpu.arch.isWasm() and builtin.os.tag == .freestanding;
 extern "nox_host" fn write(fd: i32, ptr: [*]const u8, len: usize) i32;

@@ -226,7 +226,7 @@ pub const debug_gpa_config: std.heap.DebugAllocatorConfig = .{
     // sızıntı/UAF/çift-serbest güvenlik denetimleri (.safety = true) TAMAMEN
     // KORUNURKEN Windows'ta yığın-yürütme çökmesi önlenir.
     .stack_trace_frames = if (builtin.os.tag == .windows) 0 else switch (builtin.mode) {
-        .Debug => if (std.debug.sys_can_stack_trace) 6 else 0,
+        .Debug => if (std.debug.sys_can_stack_trace) diag_sink.trace_frames else 0,
         else => 0,
     },
 };

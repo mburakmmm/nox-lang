@@ -29953,3 +29953,7 @@ Hepsi semantik korumalı (gözlemlenebilir davranış aynı), iki backend'de (LL
 
 `runtime/collections/list_ops.zig` `nox_list_repeat` ve `runtime/str.zig` `nox_str_repeat`: ilk `unit = len*esz` bayt kopyalanır, sonra `filled` bölgesi `min(filled, total - filled)` parçalarla kendi üzerine kopyalanarak ikiye katlanır (O(log n) çağrı); `unit == 1` ise `@memset`. Sahiplik/anlam değişmez: skaler olmayan elemanlarda kopya sonrası her eleman retain edilir (aynı örnek paylaşılır; büyütme/yeniden tahsis sonrası ayrışma mevcut davranışıdır ve değişmedi).
 
+### 3.434 Hızlı yerel test katmanı (v2.1.86)
+
+`build.zig` `tuningModule`: `-Dtrace-frames` (u8, varsayılan 6) `test_tuning` seçenek modülüne yazılır ve her `diag_sink` modülüne içe aktarılır; `diag_sink.trace_frames` → `asap.debug_gpa_config.stack_trace_frames` (yalnızca Debug, Windows zaten 0). `tests/golden/fixture_corpus.zig` `Fixture.slow`; `codegen_golden_test.zig`: `NOX_TEST_FAST` ayarlıysa `slow` fixture'lar atlanır, `NOX_FIXTURE_TIMES` ayarlıysa süre yazılır. `scripts/test-fast.sh` ikisini birleştirir. Yayın öncesi kanıt: `zig build test` (hızlı katman yalnızca geliştirme içindir). Not: 3 wasm TLS/redis testi yük altında seyrek kararsız (yalnız koşulduklarında geçer).
+
