@@ -99,3 +99,12 @@ inst.close()
 WASI is **off by default**; `h.enable_wasi(args)` turns on a small, capability-based subset: `fd_write` to stdout/stderr (captured in memory and read with `stdout()`/`stderr()`; `h.inherit_output()` also writes to the real streams on Unix), `args_get`/`args_sizes_get`, empty `environ_*`, `proc_exit`, `sched_yield` and inert `fd_*` calls (no file system, no stdin, no network). The clock and randomness are separate capabilities: `h.allow_clock()` enables `clock_time_get` and `h.allow_random()` enables `random_get`; without them the call returns the `EPERM` errno. `proc_exit(code)` stops the module; `inst.run_start()` runs `_start` and returns the exit code (0 on a normal return), and a plain `call` raises `WasmExit` instead.
 
 A WASI function that the engine does not implement is reported by name when the module is opened.
+
+## Speed
+
+The engine is a plain interpreter (no JIT, by design: the same code runs on iOS and Android). Measured on an Apple M4, ReleaseFast: a recursive `fib(32)` takes about 170 ms (V8's JIT: 9 ms) and a 100-million-iteration `i64` loop about 1.3 s (V8: 0.12 s), roughly 10-20 times slower than a JIT. It is meant for plugins, sandboxed helpers and portable modules, not for heavy numeric kernels; for those compile the code natively or use `extern def`. The fuel budget counts branches and calls.
+
+## Robustness
+
+The binary parser, the instantiation step (imports, memory and table setup, `start` function) and the execution of exported functions are fuzzed (`tests/fuzz/wasm_parser_fuzz.zig`), and every single-byte mutation and every prefix of three small valid modules is checked on each test run: no input may crash, hang or leak. Differential tests compare 36 904 numeric vectors and real compiled programs against Node's WebAssembly engine on every CI run.
+

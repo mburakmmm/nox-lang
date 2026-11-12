@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.94]
+
+### Eklendi
+
+- **WASM W4 kalanı (TODO 4.5):** `tests/fuzz/wasm_parser_fuzz.zig`ye ayrıştırma sonrası aşamalar için fuzz hedefi (örnekleme `Instance.init` + dışa aktarılan işlevlerin küçük yakıt/yığın/bellek sınırlarıyla çalıştırılması) ve her `zig build test`te çalışan deterministik karşılığı: üç küçük geçerli modülün (toplama, sonsuz döngü, host içe aktarmalı) her baytının 11 farklı değerle mutasyonu ve her öneki — çökme/asılma/sızıntı yok. Yorumlayıcı hız ölçümü (Apple M4, ReleaseFast): `fib(32)` 167 ms (V8 JIT 9 ms), 100M yinelemeli `i64` döngüsü 1,3 s (V8 0,12 s), yani JIT'e göre ~10-20x yavaş; `docs/stdlib/wasm.md` "Speed"/"Robustness" bölümleri. TODO 4.6 (SIMD/threads) için öneri kaydedildi (ertele; kullanıcı kararı bekliyor)
+
 ## [2.1.93]
 
 ### Eklendi
