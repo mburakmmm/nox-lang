@@ -18,6 +18,10 @@ All return a lowercase hexadecimal string of the digest of the UTF-8 bytes of `d
 |---|---|
 | `sha256(data)` | SHA-256 (64 hex characters) |
 | `sha512(data)` | SHA-512 (128 hex characters) |
+| `sha384(data)` | SHA-384 (96 hex characters) |
+| `sha3_256(data)`, `sha3_512(data)` | SHA-3 (64 / 128 hex characters) |
+| `blake3(data)` | BLAKE3 with a 32-byte output (64 hex characters) |
+| `md5(data)` | MD5 (32 hex characters). **Not collision resistant**: use it only for checksums and legacy compatibility, never for security |
 | `sha1(data)` | SHA-1 — **broken for security** (practical collisions exist); only for legacy interoperability |
 
 ## Message authentication and comparison

@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.70]
+
+### Eklendi
+
+- **`nox.crypto`: `md5`, `sha384`, `sha3_256`, `sha3_512`, `blake3` (TODO 2.13, özet kısmı):** Zig `std.crypto.hash` üzerine; Python `hashlib` ile 22 girdi × 7 algoritmada, blake3 resmî vektörlerle birebir. `md5` çakışma-dirençli değildir (belgede uyarı).
+
 ## [2.1.69]
 
 ### Eklendi

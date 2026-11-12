@@ -187,6 +187,36 @@ export fn nox_crypto_sha1_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callcon
     return dupeToNoxStr(rt, &hex_buf);
 }
 
+/// v2.1.70: genel özet -> küçük harf hex yardımcısı (`Hash.hash(bytes, &out, .{})` arayüzüne sahip her `std.crypto.hash` türü).
+fn hashHex(comptime Hash: type, rt: ?*anyopaque, data: ?[*:0]const u8) ?[*:0]u8 {
+    const d = data orelse return dupeToNoxStr(rt, "");
+    const span = str_mod.nox_str_slice(d);
+    var digest: [Hash.digest_length]u8 = undefined;
+    Hash.hash(span, &digest, .{});
+    var hex_buf: [Hash.digest_length * 2]u8 = undefined;
+    for (digest, 0..) |byte, i| {
+        hex_buf[i * 2] = hex_chars[byte >> 4];
+        hex_buf[i * 2 + 1] = hex_chars[byte & 0xF];
+    }
+    return dupeToNoxStr(rt, &hex_buf);
+}
+
+export fn nox_crypto_md5_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    return hashHex(std.crypto.hash.Md5, rt, data);
+}
+export fn nox_crypto_sha384_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    return hashHex(std.crypto.hash.sha2.Sha384, rt, data);
+}
+export fn nox_crypto_sha3_256_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    return hashHex(std.crypto.hash.sha3.Sha3_256, rt, data);
+}
+export fn nox_crypto_sha3_512_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    return hashHex(std.crypto.hash.sha3.Sha3_512, rt, data);
+}
+export fn nox_crypto_blake3_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    return hashHex(std.crypto.hash.Blake3, rt, data);
+}
+
 /// Faz III.9 — `sha256_hex_raw` İLE BİREBİR AYNI desen, `std.crypto.hash.
 /// sha2.Sha512` (64 baytlık özet, 128 karakterlik hex).
 export fn nox_crypto_sha512_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
@@ -621,4 +651,24 @@ test "bozuk/capraz-algoritma hash dizeleri cokme yerine guvenle reddedilir" {
     try std.testing.expectEqual(@as(i32, 0), nox_crypto_bcrypt_verify_raw(invalid_str, pw));
     try std.testing.expectEqual(@as(i32, 0), nox_crypto_scrypt_verify_raw(invalid_str, pw));
     try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw(empty, empty));
+}
+
+test "v2.1.70: md5/sha384/sha3/blake3 bilinen vektörler" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const abc = str_mod.nox_str_from_bytes(rt, "abc") orelse return error.Failed;
+    defer str_mod.nox_str_release(rt, abc);
+    const cases = [_]struct { f: *const fn (?*anyopaque, ?[*:0]const u8) callconv(.c) ?[*:0]u8, want: []const u8 }{
+        .{ .f = nox_crypto_md5_hex_raw, .want = "900150983cd24fb0d6963f7d28e17f72" },
+        .{ .f = nox_crypto_sha384_hex_raw, .want = "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7" },
+        .{ .f = nox_crypto_sha3_256_hex_raw, .want = "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532" },
+        .{ .f = nox_crypto_sha3_512_hex_raw, .want = "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0" },
+        .{ .f = nox_crypto_blake3_hex_raw, .want = "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85" },
+    };
+    for (cases) |c| {
+        const h = c.f(rt, abc) orelse return error.Failed;
+        defer str_mod.nox_str_release(rt, h);
+        try std.testing.expectEqualStrings(c.want, str_mod.nox_str_slice(h));
+    }
 }

@@ -45,6 +45,28 @@ def sha512(data: str) -> str:
         raise CryptoError("sha512 failed")
     return result
 
+# v2.1.70: Zig `std.crypto.hash` özetleri. MD5 çakışma-dirençli DEĞİLDİR (yalnızca uyumluluk/sağlama toplamı; güvenlik için sha256/sha3/blake3 kullanın).
+extern def nox_crypto_md5_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_sha384_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_sha3_256_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_sha3_512_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_blake3_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+
+def md5(data: str) -> str:
+    return nox_crypto_md5_hex_raw(data)
+
+def sha384(data: str) -> str:
+    return nox_crypto_sha384_hex_raw(data)
+
+def sha3_256(data: str) -> str:
+    return nox_crypto_sha3_256_hex_raw(data)
+
+def sha3_512(data: str) -> str:
+    return nox_crypto_sha3_512_hex_raw(data)
+
+def blake3(data: str) -> str:
+    return nox_crypto_blake3_hex_raw(data)
+
 # Güvenlik bulguları M-4/M-5/M-6 (bkz. güvenlik raporu) — DÜZELTİLDİ:
 # stdlib'de HMAC/zaman-sabit-karşılaştırma/güvenli-rastgelelik
 # ilkelleri YOKTU.
