@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.82]
+
+### Değişti
+
+- **LLVM TBAA — liste uzunluğu / liste elemanı (TODO 3.5.3 tur 2):** `xs[i]` okuma ve `xs[i] = v` yazma yollarında liste başlığı uzunluk yüklemesi ve tam genişlikli eleman erişimi LLVM `!tbaa` ile işaretlenir (iki bellek bölgesi asla örtüşmez); LLVM eleman yazımından sonra uzunluğu yeniden yüklemez ve sınır denetimlerini birleştirir. Etiketsiz erişimler (`append` başlık yazımı, çalışma zamanı çağrıları, bool/dar elemanlar) her şeyle çakışmayı varsaydığından güvenlidir. Sabit sınırlı `while` + indeks döngülerinde ~2-3x (ör. yerinde insertion sort 0,51 → 0,18 s); `lang_perf` çekirdekleri nötr (zaten hoist ediliyordu). Golden: `list_tbaa_len_elem_mix` (Python ile aynı, iki backend)
+- **Denendi, uygulanmadı:** liste büyütmesinde yerinde `realloc` (macOS Zig ayırıcısında `remap` yok; kazanç yalnızca Linux'ta büyük listelerde, sahiplik sözleşmesi değişikliği riski yüksek)
+
 ## [2.1.81]
 
 ### Değişti

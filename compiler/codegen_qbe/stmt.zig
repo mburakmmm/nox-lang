@@ -478,7 +478,9 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     var index_v = try self.genExpr(idx.index.*);
 
     const len_t = try self.newTemp();
+    self.setMemTag(.list_len);
     try self.qbeLoadL(len_t, obj.text);
+    self.setMemTag(.none);
     index_v.text = try expr_mod.normalizeNegativeIndex(self, idx.index.*, index_v.text, len_t);
     // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
     // işaretsiz yorumlandığında ≥ 2^63 > len olur (3 işlem → 1).
@@ -544,7 +546,9 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
         const elem_dict_info: ?*const DictInfo = if (obj.elem_heap_info) |ehi| ehi.dict_info else null;
         try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested, elem_dict_info);
     } else {
+        if (obj.elem_qtype != .b and obj.elem_qtype != .sb and obj.elem_qtype != .h and obj.elem_qtype != .sh) self.setMemTag(.list_elem);
         try self.qbeStore(obj.elem_qtype, val.text, addr);
+        self.setMemTag(.none);
     }
     try self.releaseIfTemporary(idx.obj.*, obj);
 }

@@ -621,7 +621,9 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     // olduğu döngünün KENDİ sınırından ZATEN KANITLANMIŞTIR.
     if (!self.boundsElideApplies(idx)) {
         const len_t = try self.newTemp();
+        self.setMemTag(.list_len);
         try self.qbeLoadL(len_t, obj.text);
+        self.setMemTag(.none);
         index_v.text = try normalizeNegativeIndex(self, idx.index.*, index_v.text, len_t);
         // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
         // işaretsiz yorumlandığında ≥ 2^63 > len olur (3 işlem → 1).

@@ -316,6 +316,8 @@ pub const QbeAllocSize = qbe_emit.QbeAllocSize;
 /// KULLANIMLARI (BU dosyanın İçİNDE VE 15+ sibling dosyada) DEĞİŞMEDEN
 /// çalışmaya devam eder (enum-literal karşılaştırması bir TİP TAKMA
 /// ADI ÜZERİNDEN ŞEFFAFTIR).
+pub const MemTag = enum { none, list_len, list_elem };
+
 pub const Backend = @import("../typecheck/types.zig").Backend;
 
 /// Faz F.2: `Backend`nin AYNI yeniden-ihraç deseni — `compiler/main.zig`nin
@@ -1004,6 +1006,11 @@ pub const Codegen = struct {
         return abi.valueFromElemDescriptor(raw, coll.elem_qtype, coll.elem_heap_info, coll.elem_is_str, coll.elem_fixed_int);
     }
 
+    /// Sonraki tek `load`/`store`u TBAA etiketiyle işaretlemek için `mem_tag`i ayarlar; çağıran erişimden hemen sonra `clearMemTag` çağırır.
+    pub fn setMemTag(self: *Codegen, tag: MemTag) void {
+        self.mem_tag = tag;
+    }
+
     /// Liste elemanı okuma: `.b` (bool) 1 bayt zero-extend (`loadub`), diğerleri tam genişlik.
     pub fn loadListElem(self: *Codegen, dst: []const u8, elem_qtype: QbeType, addr: []const u8) CodegenError!void {
         return switch (elem_qtype) {
@@ -1011,7 +1018,11 @@ pub const Codegen = struct {
             .sb => self.qbeLoadSB(dst, addr),
             .h => self.qbeLoadUH(dst, addr),
             .sh => self.qbeLoadSH(dst, addr),
-            else => self.qbeLoad(dst, elem_qtype, elem_qtype, addr),
+            else => blk: {
+                self.setMemTag(.list_elem);
+                defer self.setMemTag(.none);
+                break :blk self.qbeLoad(dst, elem_qtype, elem_qtype, addr);
+            },
         };
     }
 
@@ -1077,6 +1088,11 @@ pub const Codegen = struct {
     /// `registration.zig`nin `runtimeInitSymbol`ı TARAFINDAN OKUNUR (HANGİ
     /// `$nox_runtime_init*` sembolünün ÇAĞRILACAĞINI seçmek İçİn).
     profile: Profile = .hosted,
+    /// v2.1.82 (TODO 3.5.3 tur 2): LLVM backend'inde SONRAKİ `load`/`store`a eklenecek TBAA etiketi (`.none` = etiketsiz = her şeyle çakışabilir).
+    /// Yalnızca liste başlığı uzunluğu (`list_len`) ve liste elemanları (`list_elem`) okuma/yazmaları işaretlenir: bu iki bellek bölgesi asla örtüşmez,
+    /// LLVM bu sayede eleman yazımı sonrası uzunluğu yeniden yüklemez / sınır denetimlerini birleştirir. Etiketsiz erişimler (ör. `append` başlık
+    /// yazımı, çalışma zamanı çağrıları) her şeyle çakışmayı varsaydığından güvenlidir. Her kullanım `withMemTag` ile tek bir erişimi sarar.
+    mem_tag: MemTag = .none,
     /// Mobil kütüphane çıktısı: `$main` yerine `$nox_embed_user_entry`.
     /// Çalışma zamanını başlatmaz; host `nox_app_start` ile verir.
     library_mode: bool = false,
@@ -2254,6 +2270,8 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
         }
         // `qbeJnzCold`un `!prof !0` dal ağırlığı (true = hata yolu: 1, false = sıcak yol: 4000).
         try gen.out.writer.writeAll("!0 = !{!\"branch_weights\", i32 1, i32 4000}\n");
+        // v2.1.82: TBAA — `!1` liste uzunluğu, `!2` liste elemanı erişim etiketi (bkz. `Codegen.mem_tag`).
+        try gen.out.writer.writeAll("!1 = !{!3, !3, i64 0}\n!2 = !{!4, !4, i64 0}\n!3 = !{!\"nox.list.len\", !5}\n!4 = !{!\"nox.list.elem\", !5}\n!5 = !{!\"nox.root\"}\n");
     }
 
     const ir_text = try gen.out.toOwnedSlice();

@@ -597,7 +597,16 @@ pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]c
 pub fn qbeLoad(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
     if (dst_ty != mem_ty) return error.Unsupported;
     const ptr_reg = try resolveAddrPtr(self, addr);
-    try self.out.writer.print("    {s} = load {s}, ptr {s}\n", .{ dst, llvmTypeName(dst_ty), ptr_reg });
+    try self.out.writer.print("    {s} = load {s}, ptr {s}{s}\n", .{ dst, llvmTypeName(dst_ty), ptr_reg, tbaaSuffix(self) });
+}
+
+/// `Codegen.mem_tag`a göre `, !tbaa !N` eki (etiketsiz ise boş).
+fn tbaaSuffix(self: *const Codegen) []const u8 {
+    return switch (self.mem_tag) {
+        .none => "",
+        .list_len => ", !tbaa !1",
+        .list_elem => ", !tbaa !2",
+    };
 }
 
 pub fn qbeLoadL(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
@@ -609,7 +618,7 @@ pub fn qbeStore(self: *Codegen, ty: QbeType, value_raw: []const u8, addr: []cons
     if (ty == .h or ty == .sh) return qbeStoreH(self, value_raw, addr);
     const value = try renderOperand(self, value_raw);
     const ptr_reg = try resolveAddrPtr(self, addr);
-    try self.out.writer.print("    store {s} {s}, ptr {s}\n", .{ llvmTypeName(ty), value, ptr_reg });
+    try self.out.writer.print("    store {s} {s}, ptr {s}{s}\n", .{ llvmTypeName(ty), value, ptr_reg, tbaaSuffix(self) });
 }
 
 pub fn qbeStoreL(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
