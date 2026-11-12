@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.95]
+
+### Belgelendi
+
+- **TODO 4.5.4 kapandı:** ARC/ASAP/bellek turunun kapanış tablosu (`project/arc-asap-analizi-2026-11.md`): yapılan dört iyileştirme (döngü çözücü tombstone, pinned retain, sözlük yoğunlaştırma, liste realloc), ölçülüp uygulanmayan ASAP kapsam genişletmesi (nesne başına ~6 ns, dize başına ~19 ns tahsis maliyeti; risk/kâr olumsuz) ve olası sonraki küçük adım
+
 ## [2.1.94]
 
 ### Eklendi

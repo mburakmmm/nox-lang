@@ -56,3 +56,17 @@ Doğrulama: altı programın hepsi **Debug çalışma zamanı** altında (DebugA
 2. ASAP kapsamı: kaçmayan dize/dönüş-değeri sahipliği (bulgu 1a/1b) — önce `noxc explain` ile yeni kararların gerekçelendirilmesi, gölge modda fark yok koşulu.
 3. Liste büyütme sahiplik sözleşmesi (bulgu 4: v2.1.82'de incelendi, macOS'ta `remap` yok → ertelendi) ve pinned retain (bulgu 5: YAPILDI v2.1.83).
 4. Sözlük mezar taşı/dize anahtar tahsisleri (bulgu 3): YAPILDI v2.1.84 (kök neden: yoğunlaştırmada indeks dizisinin yeniden tahsisi + Zig SmpAllocator dilim davranışı).
+
+## 4.5.4 Kapanış (v2.1.79 → v2.1.87): sonuçlar
+
+| Aday | Sonuç |
+|---|---|
+| Döngü çözücü tombstone sıkıştırması (bulgu 2) | YAPILDI v2.1.79 — `deep_structures` RSS ölçekten bağımsız (1,00x) |
+| Pinned dize retain atlaması (bulgu 5) | YAPILDI v2.1.83 — literal-yoğun ekleme döngüsünde ~%15-20 |
+| Sözlük mezar taşı/indeks yeniden tahsisi (bulgu 3) | YAPILDI v2.1.84 — kök neden: yoğunlaştırmada indeks dizisinin yeniden tahsisi + Zig `SmpAllocator` dilim davranışı (sızıntı DEĞİL: sayaçlar dengeli); `dict_churn` 1,59x → 1,00x |
+| Liste büyütme sahiplik sözleşmesi (bulgu 4) | YAPILDI v2.1.87 — tek sahipli (sayaç 1) büyütme `nox_list_realloc`a devredilir; büyük bloklar libc `realloc` (sayfa yeniden eşleme) |
+| ASAP kapsamı: dize / dönüş değeri / çağrı sonucu (bulgu 1) | ÖLÇÜLDÜ, UYGULANMADI (aşağıda) |
+| Atomik sayaç yerine ayrı-iş-parçacığı yerel sayım | UYGULANMADI: çekişmesiz atomikler bu donanımda ölçülemedi (4.5.1) |
+
+**ASAP kapsam genişletmesi neden uygulanmadı.** Tahsis maliyeti zaten çok düşük: havuz tabanlı `nox_rc_alloc`/`free` ile nesne başına ~6 ns (5M yineleme × 3 `Vec` nesnesi = 95 ms), dize kurma başına ~19 ns (5M `"k" + str(i)` = 95 ms); aynı işlerde CPython saniyeler sürer, `alloc_tree` ve `str_build_join` zaten C'den hızlı. Kaçmayan dize/dönüş değerini yığın/arenaya taşımak en iyi durumda bu 6-19 ns'yi 1-2 ns'ye indirir (mikro-kıyasta ~3-4x), gerçek programlarda toplam süreye etkisi küçüktür; buna karşılık ASAP "yanlış pozitif güvenli" karar verirse bellek bozulması riski taşır (değişmez ilke 8: kanıtlanamıyorsa ARC). Kâr/risk dengesi olumsuz; gölge mod (`NOX_FORCE_ARC`) ve stres düzeneği hazır olduğundan ihtiyaç doğarsa güvenle denenebilir. Yan bulgu: `a.add(b)` gibi bir yöntem çağrısının sonucu "bilinmeyen çağrı hedefi" olarak ARC'ye düşer; Nox'un kendi satır içi açıcısı küçük yöntemleri açsa da sahiplik analizi açılmış gövdeyi görmez — olası bir sonraki küçük adım.
+
