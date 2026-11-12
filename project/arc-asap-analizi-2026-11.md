@@ -52,7 +52,7 @@ Doğrulama: altı programın hepsi **Debug çalışma zamanı** altında (DebugA
 
 ## 4.5.4 İyileştirme adayları (sırayla, her biri 4.5.3'ten geçmeli)
 
-1. Döngü çözücü: canlı-kök sayacı + tombstone sıkıştırması + toplama sonrası kapasite küçültme (bulgu 2) — hedef: `deep_structures` RSS'inin ölçekten bağımsız olması.
+1. (YAPILDI v2.1.79) Döngü çözücü: canlı-kök sayacı + tombstone sıkıştırması + toplama sonrası kapasite küçültme (bulgu 2) — hedef: `deep_structures` RSS'inin ölçekten bağımsız olması.
 2. ASAP kapsamı: kaçmayan dize/dönüş-değeri sahipliği (bulgu 1a/1b) — önce `noxc explain` ile yeni kararların gerekçelendirilmesi, gölge modda fark yok koşulu.
 3. Liste büyütme sahiplik sözleşmesi (bulgu 4) ve pinned retain (bulgu 5).
 4. Sözlük mezar taşı/dize anahtar tahsisleri (bulgu 3).

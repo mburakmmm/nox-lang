@@ -6,6 +6,7 @@ import nox.fs
 import nox.os
 import nox.crypto
 from nox.fs import FsError
+from nox.os import OsError
 
 class TempFileError(Exception):
     pass
@@ -13,7 +14,11 @@ class TempFileError(Exception):
 # Geçici dosyaların konacağı dizin: TMPDIR, TEMP, TMP ortam değişkenleri sırasıyla; yoksa "/tmp".
 def gettempdir() -> str:
     for name in ["TMPDIR", "TEMP", "TMP"]:
-        v: str = nox.os.getenv(name)
+        v: str = ""
+        try:
+            v = nox.os.getenv(name)
+        except OsError:
+            v = ""
         if v != "":
             return v
     return "/tmp"
@@ -26,7 +31,8 @@ def _base(dir: str) -> str:
 def _candidate(prefix: str, suffix: str, dir: str) -> str:
     base: str = _base(dir)
     sep: str = "/"
-    if base[len(base) - 1] == "/":
+    last: str = base[len(base) - 1]
+    if last == "/" or last == "\\":
         sep = ""
     return base + sep + prefix + nox.crypto.secure_random_hex(6) + suffix
 

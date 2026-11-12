@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.79]
+
+### Düzeltildi
+
+- **CI v2.1.66'dan beri kırmızıydı (kök neden):** `nox.tempfile.gettempdir()` `TMPDIR`/`TEMP`/`TMP` tanımsızken `nox.os.getenv`in `OsError` fırlatması nedeniyle çöküyordu (geliştirici makinesinde TMPDIR hep tanımlıydı, CI'da değil; Windows'ta `TMPDIR` yok). Artık `OsError` yakalanır, sıradaki değişkene/`/tmp`ye düşülür; sondaki `\\` ayırıcısı da tanınır. Dokümanlar işi ve `nox.glob`/`nox.tempfile` fixture'ları bununla yeşile döner
+- **wasm32-freestanding çerçeve derleyicisi derlenmiyordu (v2.1.78 gerilemesi):** `NOX_FORCE_ARC` için `std.c.getenv` çağrısı libc'siz hedefte derleme hatası veriyordu; freestanding'de derleme zamanında atlanır
+
+### Değişti
+
+- **Döngü çözücü kök tablosu (TODO 4.5.4 madde 1):** canlı-kök sayacı + tombstone sıkıştırması — `forget` ile boşaltılan yuvalar kök listesinde birikmez; `compactRoots` liste 8192'yi geçip canlı köklerin ≥4 katına ulaştığında çalışır
+
 ## [2.1.78]
 
 ### Eklendi

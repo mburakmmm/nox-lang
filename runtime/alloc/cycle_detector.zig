@@ -189,6 +189,8 @@ const CycleGc = struct {
     /// `null` girdiler: `nox_cycle_forget`in tombstone'ları (serbest bırakılmış kök).
     roots: std.ArrayListUnmanaged(?*anyopaque) = .empty,
     possible_roots_since_collect: usize = 0,
+    /// v2.1.79 (TODO 4.5.4): tamponda hâlâ CANLI (tombstone olmayan) kök sayısı. `nox_cycle_forget` düşürür; tombstone oranı yüksekse `compactRoots` diziyi sıkıştırır.
+    live_roots: usize = 0,
     collect_threshold: usize = DEFAULT_COLLECT_THRESHOLD,
     /// Son `collectRoots`in serbest bıraktığı nesne sayısı (uyarlanabilir eşik İçin).
     freed_in_collect: usize = 0,
@@ -305,6 +307,25 @@ pub export fn nox_cycle_deinit(rt: ?*anyopaque) void {
     state.cycle_gc = null;
 }
 
+/// `compactRoots`un tetiklenmesi için en küçük dizi uzunluğu (küçük dizilerde sıkıştırma maliyeti kazançtan büyüktür).
+const COMPACT_MIN_LEN: usize = 8192;
+
+/// v2.1.79: `gc.roots` içindeki tombstone'ları (`null`) atıp canlı kökleri öne taşır ve her taşınan nesnenin başlığındaki yuva indeksini günceller. Çağıran
+/// `cycle_gc_lock`u TUTMALIDIR. Eşzamanlı sayaç güncellemeleri başlığın düşük bitlerine atomik yazar; indeks bitleri yalnızca bu kilit altında değiştiğinden
+/// `hdrAnd`+`hdrOr` çifti güvenlidir. Amortize O(1): sıkıştırma ≥ 3/4 tombstone varken çalışır.
+fn compactRoots(gc: *CycleGc) void {
+    var w: usize = 0;
+    for (gc.roots.items) |maybe| {
+        const ptr = maybe orelse continue;
+        if (w < gc.roots.items.len) gc.roots.items[w] = ptr;
+        const h = hdrWord(ptr);
+        hdrAnd(h, ~IDX_MASK);
+        hdrOr(h, (@as(u64, @intCast(w)) << IDX_SHIFT) & IDX_MASK);
+        w += 1;
+    }
+    gc.roots.shrinkRetainingCapacity(w);
+}
+
 /// Bacon-Rajan'ın `PossibleRoot(S)`si — bkz. modül üstü not. `codegen.zig`nin
 /// `genClassRelease`i, `nox_rc_predecrement` refcount'u SIFIRA
 /// DÜŞÜRMEDİĞİNDE (nesne hâlâ CANLI, ama BELKİ bir döngünün parçası) bunu
@@ -338,8 +359,12 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
         hdrOr(h, @as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT);
         return;
     }
+    // v2.1.79: tombstone'lar (serbest bırakılan köklerin boş yuvaları) dizinin ≥ 3/4'ünü kaplıyorsa önce sıkıştır: kısa ömürlü, döngüye elverişli nesneler
+    // (zincir/ağaç/graf düğümleri) her tur kök olarak kaydedilip bırakılırken tampon ve toplama sıklığı sınırsız şişmesin.
+    if (gc.roots.items.len >= COMPACT_MIN_LEN and gc.roots.items.len >= 4 * gc.live_roots) compactRoots(gc);
     const idx = gc.roots.items.len;
     gc.roots.append(state.allocator(), ptr) catch return;
+    gc.live_roots += 1;
     // Refcount'u eşzamanlı artıran/azaltan iş parçacıklarıyla (atomik ARC) çakışmamak
     // için tek atomik OR: renk=mor, buffered, yuva indeksi.
     const set: u64 = BUFFERED_BIT | (@as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT) | ((@as(u64, @intCast(idx)) << IDX_SHIFT) & IDX_MASK);
@@ -418,7 +443,12 @@ pub export fn nox_cycle_forget(rt: ?*anyopaque, p: ?*anyopaque) void {
     const gc_ptr = state.cycle_gc orelse return; // hiç başlatılmadıysa unutacak bir şey yok
     const gc: *CycleGc = @ptrCast(@alignCast(gc_ptr));
     const idx: usize = @intCast((hdrWord(ptr).* & IDX_MASK) >> IDX_SHIFT);
-    if (idx < gc.roots.items.len and gc.roots.items[idx] == ptr) gc.roots.items[idx] = null;
+    if (idx < gc.roots.items.len and gc.roots.items[idx] == ptr) {
+        gc.roots.items[idx] = null;
+        if (gc.live_roots > 0) gc.live_roots -= 1;
+        // Toplama baskısı da düşer: serbest bırakılan kök artık toplanacak bir aday değil (aksi halde hep canlı-olmayan kayıtlar eşiği tetikler ve verimsiz toplamalar eşiği katlar).
+        if (gc.possible_roots_since_collect > 0) gc.possible_roots_since_collect -= 1;
+    }
     clearFlags(ptr);
 }
 
@@ -590,6 +620,7 @@ fn collectRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
         }
     }
     gc.roots.clearRetainingCapacity();
+    gc.live_roots = 0;
 
     for (whites.items) |ptr| {
         const tag = readTag(ptr);
@@ -838,6 +869,53 @@ fn deinitRuntimeExpectNoLeak(rt: ?*anyopaque) !void {
 // KALICI bir REGRESYON kilidi olarak KALIYOR (derleyicinin KENDİSİ düzeldi,
 // AMA algoritmanın "trace hiçbir çocuk raporlamazsa döngü KESİNLİKLE
 // KAÇIRILIR" özelliği DOĞRU/beklenen — bu test O KURALI kanıtlıyor).
+test "v2.1.79: tombstone sıkıştırması — çok sayıda kök kaydedilip unutulunca dizi küçülür, indeksler tutarlı kalır, toplama çalışmaya devam eder" {
+    injectFakeDispatch();
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    const gc = getGc(state);
+    gc.collect_threshold = 1 << 24; // bu testte otomatik toplama tetiklenmesin
+    const n: usize = COMPACT_MIN_LEN + 1000;
+    const objs = try testing.allocator.alloc(*anyopaque, n);
+    defer testing.allocator.free(objs);
+    for (objs) |*o| {
+        o.* = newFakeObject(rt);
+        arc.nox_rc_retain(o.*); // RC=2: bırakma sayacı sıfırlamasın
+        nox_cycle_possible_root(rt, o.*);
+    }
+    try testing.expectEqual(n, gc.live_roots);
+    try testing.expectEqual(n, gc.roots.items.len);
+    // Hepsini (sonuncu hariç) unut: tombstone oranı eşiği aşar.
+    for (objs[0 .. n - 1]) |o| nox_cycle_forget(rt, o);
+    try testing.expectEqual(@as(usize, 1), gc.live_roots);
+    try testing.expectEqual(n, gc.roots.items.len); // henüz sıkıştırılmadı
+    // Yeni bir kök kaydı sıkıştırmayı tetikler.
+    const extra = newFakeObject(rt);
+    arc.nox_rc_retain(extra);
+    nox_cycle_possible_root(rt, extra);
+    try testing.expectEqual(@as(usize, 2), gc.roots.items.len);
+    try testing.expectEqual(@as(usize, 2), gc.live_roots);
+    // Her canlı kökün başlık indeksi dizideki konumuyla eşleşmeli.
+    for (gc.roots.items, 0..) |maybe, idx| {
+        const ptr = maybe.?;
+        try testing.expect(isBuffered(ptr));
+        try testing.expectEqual(idx, @as(usize, @intCast((hdrWord(ptr).* & IDX_MASK) >> IDX_SHIFT)));
+    }
+    // Sıkıştırma sonrası unutma doğru yuvayı bulur.
+    nox_cycle_forget(rt, objs[n - 1]);
+    nox_cycle_forget(rt, extra);
+    try testing.expectEqual(@as(usize, 0), gc.live_roots);
+    nox_cycle_collect(rt);
+    // Temizlik: tüm nesneler birer fazladan retain taşıyor.
+    for (objs) |o| {
+        _ = arc.nox_rc_predecrement(o);
+        arc.nox_rc_free_payload(rt, o, FAKE_PAYLOAD_SIZE);
+    }
+    _ = arc.nox_rc_predecrement(extra);
+    arc.nox_rc_free_payload(rt, extra, FAKE_PAYLOAD_SIZE);
+    try deinitRuntimeExpectNoLeak(rt);
+}
+
 test "v3 madde 3: trace() çocuk raporlamazsa (list/dict-of-class alanının DÜZELTME-ÖNCESİ simülasyonu) A<->B döngüsü nox_cycle_collect TARAFINDAN KAÇIRILIR" {
     injectFakeDispatch();
 

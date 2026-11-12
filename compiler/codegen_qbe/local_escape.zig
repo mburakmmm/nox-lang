@@ -135,7 +135,10 @@ pub const Candidate = union(enum) {
 pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.VarDecl, running_total: *usize, class_params: []const inlining.ClassParam) CodegenError!?Candidate {
     // v2.1.78 (TODO 4.5.3, "gölge mod"): `NOX_FORCE_ARC=1` derleme ortamında her yerel ARC'ye zorlanır (yığın/arena yükseltmesi kapalı). Aynı program iki modda
     // da aynı çıktıyı vermeli ve sızıntı yapmamalıdır; `scripts/arc_shadow_test.py` bunu tüm korpusta denetler. Yalnızca tanı amaçlıdır.
-    if (std.c.getenv("NOX_FORCE_ARC") != null) return null;
+    // wasm32-freestanding çerçeve derleyicisinde libc yok: bu ortam değişkeni orada okunmaz (yalnızca ana makine derleyicisi).
+    if (comptime @import("builtin").os.tag != .freestanding) {
+        if (std.c.getenv("NOX_FORCE_ARC") != null) return null;
+    }
     // Tek hedefli func yereli, bu gövdenin tamamından okunur (`f = g`
     // bildirimi, adayın kendisinden ÖNCE de olabilir). `current_fn_params`
     // çağıran tarafından bu gövdenin parametrelerine kurulmuş olmalıdır.
