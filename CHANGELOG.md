@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.75]
+
+### Eklendi
+
+- **Dil performans analizi, profil ve darboğazlar (TODO 3.5.2):** `project/dil-performans-analizi-2026-11.md` — C'ye en uzak çekirdeklerin IR düzeyinde incelenmesi, 7 bulgu (pinned dize release'inde gereksiz atomik yazma, yakalamasız işlev değerinin her kullanımda tahsisi, aynı anahtar için üç sözlük araması, liste büyütmesinde kopyala-bırak, kanıtlanmış-fırlatmayan çağrılarda istisna denetimi, sınır denetimleri, QBE farkı) ve kazanç × risk sıralı fırsat listesi. Kod değişmedi.
+
 ## [2.1.74]
 
 ### Düzeltildi

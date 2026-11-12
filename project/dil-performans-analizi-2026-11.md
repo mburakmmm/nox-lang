@@ -47,7 +47,32 @@ geometrik ortalama: llvm/c = 1.87   qbe/c = 2.19   llvm/python = 0.087   (1.0 = 
 - QBE çoğu çekirdekte LLVM'den yavaş (özellikle `insertion_sort` 3.7x, `func_value_calls` 11x); backend eşitliği hedefi (madde 5.3) için not.
 - `method_calls` ilk sürümde LLVM/C tarafından kapalı biçimde katlanıp 0 ms çıktı; çekirdek `(toplam*31 + x) % p` ile katlanamaz hale getirildi. Yeni çekirdek yazarken bu tuzak göz önünde tutulmalı.
 
+## 3.5.2 Profil ve darboğaz analizi (v2.1.75)
+
+Yöntem: en uzak çekirdeklerin (llvm/c oranı) tek başına küçük programlara ayrılması, üretilen LLVM IR'ının (`noxc build ... -o X` yanında `X.ll` bırakır) satır satır okunması ve gerekirse parça parça süre ölçümü. Bulgular, kazanç tahmini ve riske göre sıralanmıştır (hepsi anlamı korur).
+
+### Bulgular
+
+1. **Sabit (pinned) dizenin her `release`inde atomik çarpma (`str_index_loop` 6.5x, tüm `str` kullanan kod).** `text[i]` ASCII yolunda `nox_ascii_chars` tablosundaki **statik** tek-karakterlik dizeyi döndürür (tahsis yok), ama sonuçtaki `release` dizisi koşulsuz `atomicrmw sub ... acq_rel` yapar: pinned bir nesnenin sayacına her yinelemede atomik yazma (≈ 2 ns, iş parçacıkları arası önbellek hattı çekişmesi). Ayrıca `== "a"` için libc `strcmp` çağrısı. *Fırsat:* (a) release öncesi sayacı **atomiksiz yükleyip** pinned ise atla (dize literalleri, `ascii_chars`, her pinned değer için geçerli); (b) tek baytlık literalle karşılaştırmayı satır içi bayt karşılaştırmasına indir. *Risk:* düşük. *Tahmin:* `str_index_loop` ~3-4x, genel `str` ağır kodda %5-15.
+2. **Yakalamasız üst-düzey işlev değerinin her kullanımda yığın nesnesi olarak tahsisi (`func_value_calls` 9x).** `apply(inc, q)` döngüsü her yinelemede `nox_rc_alloc(16)` ile 16 baytlık kapanış nesnesi yaratıp (kod işaretçisi + release işaretçisi) çağrıdan sonra dolaylı `release` çağırır. Yakalaması olmayan kapanış değişmezdir. *Fırsat:* bu nesneyi **statik, pinned** veri olarak bir kez bildirmek (dize literalleri gibi); tahsis ve release ortadan kalkar. *Risk:* düşük (kimlik karşılaştırması yok; pinned sayaç release'i zaten atlar). *Tahmin:* ~5x.
+3. **Aynı anahtar için üç ayrı sözlük araması (`dict_int` 6.8x, `dict_str`).** `if k in d: d[k] = d[k] + 1` kalıbı `nox_dict_contains` + `nox_dict_get` + `nox_dict_set` olarak üç kez özetleyip dolaşır; C eşdeğeri tek arama. *Fırsat:* sözlük başına **son erişilen yuva önbelleği** (anahtar + indeks, doğrulamalı); aynı anahtara ardışık aramalar özetleme ve dolaşma yapmaz. Bir **tek geçişli** `d[k] += v`/`get-or-insert` ilkeli ayrı bir yol. *Risk:* orta (geçersizleştirme: silme/yeniden boyutlandırma). *Tahmin:* ~1.6-2x.
+4. **Liste büyütmesi tahsis-kopyala-bırak (`list_append_sum_pop` 4.4x; 20M eleman: ekleme Nox 73 ms vs C 12.7 ms, toplama ve çıkarma eşit).** Ekleme hızlı yolu satır içi ve ucuz; fark `nox_list_grow`un her iki katlamada yeni blok alıp kopyalaması (büyük bloklarda taze sayfa hataları + 2×n bayt kopya); C `realloc` büyük bloklarda `mremap` ile kopyasız büyür. *Fırsat:* `nox_list_grow`u `allocator.remap/realloc` (yerinde büyütme; Linux'ta `mremap`) ile yapmak, büyük listelerde büyüme çarpanını ayarlamak. *Risk:* düşük (taşınan işaretçiler zaten yeniden yazılıyor). *Tahmin:* ~2-3x ekleme (macOS'ta `mremap` yok → daha az).
+5. **Çağrı sonrası `nox_exception_pending` denetimi (her doğrudan/dolaylı çağrıda).** Yaprak ve "asla fırlatmaz" kanıtlanabilen işlevlerin çağrılarında denetim gereksiz (`compiler/effect_graph.zig` zaten etki bilgisi taşıyor). *Fırsat:* kanıtlanmış-fırlatmayan çağrılardan denetimi çıkarmak. *Risk:* orta (etki analizi muhafazakâr olmalı; fırlatma yolu `finally`/`defer` ile etkileşir). *Tahmin:* çağrı ağır kodda %3-10.
+6. **`matmul_100` 2.4x ve `virtual_dispatch` 2x, `sieve`/`insertion_sort` 1.6x:** büyük olasılıkla liste indeksleme sınır denetimleri + `list[list[float]]` çift dolaylılığı + döngü değişmezi taşımanın yapılamaması (`alloca` yüklemeleri). Henüz IR düzeyinde doğrulanmadı: 3.5.3'te `bounds_check_elision` düzeneğiyle ayrıca ölçülecek.
+7. **QBE farkı:** QBE çoğu çekirdekte LLVM'in 1.1-3.7x gerisinde (özellikle iç içe döngüler); QBE'nin optimizasyonsuz çıktısı ve satır içi açma yokluğu. Backend eşitliği hedefi (madde 5.3) ile birlikte ele alınır; bu turda yalnızca ortak (runtime/IR düzeyi) kazançlar hedeflenir.
+
+### Sıralı fırsat listesi (kazanç × risk)
+
+| # | Fırsat | Etkilenen çekirdekler | Risk |
+|---|---|---|---|
+| 1 | Pinned dize release'inde atomiksiz atlama + tek baytlık karşılaştırmayı satır içi | `str_index_loop`, tüm `str` kodu | düşük |
+| 2 | Yakalamasız işlev değerlerini statik/pinned yapmak | `func_value_calls` ve tüm yüksek-dereceli kod | düşük |
+| 3 | `nox_list_grow` için yerinde büyütme (realloc/mremap) | `list_append`, tüm büyük listeler | düşük |
+| 4 | Sözlük son-yuva önbelleği / tek aramalı güncelleme | `dict_int`, `dict_str` | orta |
+| 5 | Kanıtlanmış-fırlatmayan çağrılardan istisna denetimini kaldırmak | çağrı yoğun kod | orta |
+| 6 | Sınır denetimi eleme / döngü değişmezi (3.5.3'te ölçülecek) | `matmul`, `sieve`, `insertion_sort` | orta |
+
 ## Sıradaki adımlar
 
-- **3.5.2** profil ve darboğaz analizi: yukarıdaki en uzak çekirdekler için üretilen IR/assembly ve örneklemeli profil; fırsat listesi (kazanç × risk).
-- **3.5.3** uygulama turu, **3.5.4** gerileme koruması (bu paketin eşik denetimi).
+- **3.5.3** uygulama turu: yukarıdaki sırayla, her fırsat ayrı sürüm (ölçüm + iki backend fark testi + golden). Önce 1-3 (düşük risk).
+- **3.5.4** gerileme koruması: `lang_perf` eşik denetimi.
