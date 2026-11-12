@@ -1,0 +1,42 @@
+# v2.1.84: sözlük mezar taşı yoğunlaştırması indeks dizisini yerinde yeniden kurar; çok sayıda ekle/sil/üzerine yaz turundan sonra
+# arama, sıra, uzunluk ve silinmiş anahtarların yokluğu Python ile aynı olmalı (int ve str anahtar).
+d: dict[int, int] = {}
+for i in range(60000):
+    k: int = (i * 37) % 700
+    d[k] = i
+    if i % 3 == 0:
+        kk: int = (i * 11 + 5) % 700
+        if kk in d:
+            d.pop(kk, 0)
+    if i % 5 == 0:
+        del_k: int = (i * 13 + 2) % 700
+        if del_k in d:
+            del d[del_k]
+total: int = 0
+for key in d:
+    total = total + key * 3 + d[key]
+print(len(d))
+print(total)
+has5: int = 0
+if 5 in d:
+    has5 = 1
+print(has5)
+first: int = 0
+for key in d:
+    first = key
+    break
+print(first)
+
+s: dict[str, int] = {}
+for i in range(20000):
+    name: str = "k" + str((i * 7) % 300)
+    s[name] = i
+    if i % 4 == 0:
+        other: str = "k" + str((i * 3 + 1) % 300)
+        if other in s:
+            s.pop(other, 0)
+acc: int = 0
+for name in s:
+    acc = acc + len(name) + s[name]
+print(len(s))
+print(acc)

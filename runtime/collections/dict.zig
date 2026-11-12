@@ -567,6 +567,20 @@ fn compact(rt: ?*anyopaque, d: *Dict) void {
     d.dead = 0;
     d.dead_bits.clearRetainingCapacity();
     d.last_idx = std.math.maxInt(usize);
+    // v2.1.84: mevcut indeks dizisi yeni canlı girdi sayısına yetiyorsa YENİDEN TAHSİS ETMEDEN sıfırlayıp yeniden doldurulur. Her yoğunlaştırmada
+    // `deinit` + 16 slottan çift katlayarak yeniden kurma (≈ 2x boyutta tahsis/serbest) `SmpAllocator`da sınıf-başına serbest listelerde
+    // sürekli yeni 64 KiB dilim açılmasına yol açıyordu (ekle/sil dönen sözlükte RSS doğrusal büyüyordu).
+    if (w > SMALL_MAP_THRESHOLD and d.index_built and d.index.slots.len >= 2 * (w + 1)) {
+        const ctx: StrOrIntContext = .{ .key_is_str = d.key_is_str, .rt = rt };
+        @memset(d.index.slots, 0);
+        d.index.count = 0;
+        d.index.deleted = 0;
+        for (d.entries.items, 0..) |e, i| {
+            IndexTable.place(d.index.slots, @truncate(ctx.hash(e.key)), i);
+            d.index.count += 1;
+        }
+        return;
+    }
     d.index.deinit(state.allocator());
     d.index_built = false;
     if (w > SMALL_MAP_THRESHOLD) buildIndex(d, state.allocator(), rt);
@@ -1268,6 +1282,31 @@ test "Aura L2: indeks kuruluyken silme mezar taşı bırakır; sıra, len, get/c
     try std.testing.expectEqual(@as(i64, 1), @as(*align(1) const i64, @ptrCast(kb + 16)).*);
     try std.testing.expectEqual(@as(i64, 4), @as(*align(1) const i64, @ptrCast(kb + 16 + 8 * 90)).*);
     try std.testing.expectEqual(@as(i64, 444), nox_dict_get(rt, d, 0, 4)); // indeks sıkıştırmadan sonra da doğru
+    nox_dict_release(rt, d, 0, 0, 0);
+}
+
+test "v2.1.84: yoğunlaştırma sonrası yeniden kurulan indeksle arama/ekleme/silme doğru kalır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    const dd: *Dict = @ptrCast(@alignCast(d));
+    var k: i64 = 0;
+    while (k < 200) : (k += 1) nox_dict_set(rt, d, 0, 0, 0, k, k * 3);
+    // Çok sayıda ekle/sil turu: her tur yoğunlaştırmayı (yerinde yeniden kurma) tetikler; sonuçlar doğru kalmalı.
+    var round: i64 = 0;
+    while (round < 50) : (round += 1) {
+        k = 0;
+        while (k < 100) : (k += 1) _ = nox_dict_remove(rt, d, 0, 0, 0, k + @rem(round, 2) * 50);
+        k = 0;
+        while (k < 100) : (k += 1) nox_dict_set(rt, d, 0, 0, 0, k + @rem(round, 2) * 50, k + round);
+    }
+    try std.testing.expect(dd.index_built);
+    try std.testing.expectEqual(@as(i64, 200), nox_dict_len(d));
+    // Son çift tur (48): 0..99 = anahtar + 48; son tek tur (49): 50..149 = (anahtar - 50) + 49; 150..199 ilk değerlerinde.
+    try std.testing.expectEqual(@as(i64, 10 + 48), nox_dict_get(rt, d, 0, 10));
+    try std.testing.expectEqual(@as(i64, (60 - 50) + 49), nox_dict_get(rt, d, 0, 60));
+    try std.testing.expectEqual(@as(i64, 3 * 190), nox_dict_get(rt, d, 0, 190));
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_contains(rt, d, 0, 250));
     nox_dict_release(rt, d, 0, 0, 0);
 }
 

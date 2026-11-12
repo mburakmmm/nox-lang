@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.84]
+
+### Düzeltildi
+
+- **Ekle/sil dönen sözlükte doğrusal RSS büyümesi (TODO 4.5.4 madde 4 / 3.5.3 yan bulgusu):** her mezar taşı yoğunlaştırması (`compact`) indeks dizisini serbest bırakıp 16 slottan çift katlayarak yeniden tahsis ediyordu; bu tahsis/serbest bırakma deseni Zig `SmpAllocator`da sınıf-başına serbest listelerde sürekli yeni 64 KiB dilim açılmasına yol açıyordu (sızıntı değil: ARC sayaçları dengeli, canlı bayt sabit; `c_allocator` ile aynı program 2,1 MB'ta sabit kalıyordu). Mevcut indeks dizisi yeni canlı girdi sayısına yetiyorsa artık sıfırlanıp yerinde yeniden doldurulur. `d[k] = Box(i)` + `del d[...]` döngüsü 150M işlemde 89,7 MB → 2,1 MB; `dict_churn` stres programı 6,9 → 2,8 MB, büyüme 1,59x → 1,00x (altı stres programının hepsi düz). Golden: `dict_compact_in_place` (Python ile aynı, iki backend) + Zig birim testi
+
 ## [2.1.83]
 
 ### Değişti

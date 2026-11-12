@@ -29945,3 +29945,7 @@ Hepsi semantik korumalı (gözlemlenebilir davranış aynı), iki backend'de (LL
 
 `ownership.zig` `emitInlineRetain(.str)`: `rc = load(ptr - retainOffset)`; `rc >= STR_PINNED_THRESHOLD` ise artış atlanır, değilse eski atomik `add`. Sabit dizeler (refcount 1<<30'dan başlar) için sayaç zaten hiç sıfıra inmez; release yolu (v2.1.76) zaten aynı eşiği kontrol eder. Diğer yığın türleri (`list`/`class`/`dict`) etkilenmez.
 
+### 3.432 Sözlük yoğunlaştırmasında yerinde indeks yeniden kurma (v2.1.84, TODO 4.5.4)
+
+`dict.zig` `compact`: indeks kuruluysa ve `index.slots.len >= 2 * (canlı + 1)` ise `deinit` + `buildIndex` yerine mevcut dizi `@memset(0)` ile sıfırlanıp girdiler `IndexTable.place` ile yeniden yerleştirilir (`count`/`deleted` sıfırlanıp yeniden sayılır); aksi halde eski yol. Neden: ölçüm (vmmap + sayaçlı sarmalayıcı allocator) canlı bayt ve ARC sayaçlarının dengeli, RSS'in `SmpAllocator` dilimlerinde büyüdüğünü gösterdi; tahsis döngüsünü ortadan kaldırmak sorunu giderdi. `grow` (yük çarpanı) yolu değişmedi.
+
