@@ -49,6 +49,27 @@ export fn nox_test_cb_fire(x: i64) callconv(.c) i64 {
     return f(x, stored_ud);
 }
 
+/// Yabancı iş parçacığı callback'i (v2.1.118, TODO 8.8): `nox_test_thread_fire` kendi OS iş parçacığını başlatır; o iş parçacığı `cb(i, userdata, i * 0.5)`
+/// çağrısını `n` kez yapar (Nox'un hiçbir iş parçacığı değildir). `nox_test_thread_join` iş parçacığını bekler.
+var fire_thread: ?std.Thread = null;
+
+const ThreadCb = *const fn (i32, ?*anyopaque, f64) callconv(.c) i32;
+
+fn threadBody(cb: ThreadCb, ud: ?*anyopaque, n: i32) void {
+    var i: i32 = 0;
+    while (i < n) : (i += 1) _ = cb(i, ud, @as(f64, @floatFromInt(i)) * 0.5);
+}
+
+export fn nox_test_thread_fire(cb: ?ThreadCb, userdata: ?*anyopaque, n: i32) callconv(.c) void {
+    const f = cb orelse return;
+    fire_thread = std.Thread.spawn(.{}, threadBody, .{ f, userdata, n }) catch null;
+}
+
+export fn nox_test_thread_join() callconv(.c) void {
+    if (fire_thread) |t| t.join();
+    fire_thread = null;
+}
+
 const std = @import("std");
 
 /// `noxrt.o`nun `nox_rc_alloc`ı (bkz. `runtime/alloc/arc.zig`) — AYRI

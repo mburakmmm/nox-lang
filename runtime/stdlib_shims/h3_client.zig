@@ -77,6 +77,7 @@ fn clientCtx() ?*quic.Ctx {
 
 /// `host` adresini (IPv4/IPv6 literal ya da ad) çözer; en çok `out.len` adres yazar, sayıyı döner.
 pub fn resolve(host: []const u8, out: []quic.Addr) usize {
+    if (comptime !quic.supported) return 0; // Windows/wasm: `getaddrinfo` yapıları farklı; QUIC zaten desteklenmiyor
     if (std.Io.net.IpAddress.parse(host, 0)) |ip| {
         switch (ip) {
             .ip4 => |a| {
@@ -512,6 +513,7 @@ test "h3_client: Content-Encoding gzip/deflate çözülür, bilinmeyen kodlama o
 }
 
 test "h3_client: adres çözümleme IPv4/IPv6 literalleri ve geçersiz ad" {
+    if (!quic.supported) return error.SkipZigTest;
     var addrs: [4]quic.Addr = undefined;
     try testing.expectEqual(@as(usize, 1), resolve("127.0.0.1", &addrs));
     try testing.expectEqual([4]u8{ 127, 0, 0, 1 }, addrs[0].v4);

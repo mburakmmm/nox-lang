@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.118]
+
+### Eklendi
+
+- **C FFI son tipler (TODO 8):** `noxc bindgen` artık `_Complex` (`cfloat_make/_re/_im`, `cdouble_*`), `__int128`/`unsigned __int128` (`i128_make(lo, hi)/_lo/_hi`, `u128_*`; iki `u64` yarım) ve `long double` (`bindgen.json` `"long_double": "f64"` ile `float`a daraltılır) için `ptr` bloğu yardımcıları + kabuk üretir; struct alanları/global değişkenler bu tiplerde adres verir. **Değişken argümanlı (`...`) işlevler:** `--config bindgen.json` `"variadic"` listesiyle sabit imzalı kabuk sürümleri (`printf_s`, `printf_i`...; tipler `int/long/double/str/ptr/size`); tanımsız `...` işlevi uyarıyla atlanır ve uyarı config'e yönlendirir. Bit alanları zaten alan erişimcileriyle (`Name_get_f/_set_f`) destekleniyordu (TODO 8.5 listesi bayattı); testle kanıtlandı.
+- **`nox.ffi.EventQueue` (TODO 8.8):** kütüphanenin KENDİ iş parçacığından çağrılan callback'ler için Nox'tan bağımsız C trampoline'ları (`callback(ud_index)`), kilitli olay kuyruğu, `wait/poll/int_arg/float_arg/float32_arg/set_return/pending/dropped/close`. Kuyruk dolunca en yeni olay atılır (kütüphane iş parçacığı bloklanmaz). SysV x86-64 ve AAPCS64 kayıt sınıflandırmasına dayanır (en çok 6 tamsayı + 4 double argüman, Windows'ta desteklenmez). `bindgen.json` `"event_callbacks"` bu işlevlerin callback parametresini ham `ptr` bırakır.
+- Testler: gerçek C kütüphanesiyle iki backend'de `_Complex`/`__int128`/`long double`/değişken argüman/bit alanı uçtan uca; gerçek bir yabancı iş parçacığından 5 olay + kuyruk dolması (dropped); runtime birim testleri (userdata ayıklama, yanlış tutamaç, kapanış, 500 olaylı iş parçacığı yarışı).
+
+### Düzeltildi
+
+- **CI: Windows derlemesi (v2.1.116 kırmızısı):** `h3_client.zig` adres çözümleme testi Windows'ta `std.c.addrinfo` bulunmadığından derlenmiyordu; `resolve` QUIC desteklenmeyen hedeflerde derleme-zamanı erken dönüyor ve test atlanıyor.
+
+### Bilinçli olarak kapsam dışı (neden)
+
+- **SIMD vektör tipleri (8.4):** işlemciye özgü, Nox'ta vektör tipi yok; kullanan kütüphane çok az. Uyarıyla atlanır.
+- **Callback'te değerle struct (8.7):** `@ffi.callback`/`EventQueue` imzasında struct değerle geçirmek ABI sınıflandırması ister; nadir. Uyarıyla atlanır, ihtiyaç çıkarsa bindgen'in C kabuğu struct'ı işaretçiye çevirecek şekilde genişletilebilir.
+
 ## [2.1.117]
 
 ### Düzeltildi

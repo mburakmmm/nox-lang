@@ -119,6 +119,7 @@ pub const zip_shim = @import("stdlib_shims/zip.zig");
 // v2.1.92 (TODO 4.3 W2): `nox.wasm` — gömülü WebAssembly yorumlayıcısına kalıcı örnek tutamacı.
 pub const wasm_shim = @import("stdlib_shims/wasm.zig");
 pub const ffi_cb_shim = @import("stdlib_shims/ffi_cb.zig");
+pub const ffi_events_shim = @import("stdlib_shims/ffi_events.zig");
 pub const smtp_shim = @import("stdlib_shims/smtp.zig");
 
 // Bu modüllerin yalnızca isim üzerinden yeniden dışa aktarılması, Zig'in
@@ -204,5 +205,6 @@ comptime {
     _ = zip_shim;
     _ = wasm_shim;
     _ = ffi_cb_shim;
+    _ = ffi_events_shim;
     _ = smtp_shim;
 }

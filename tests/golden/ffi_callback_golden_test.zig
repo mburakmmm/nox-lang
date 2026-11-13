@@ -86,3 +86,56 @@ test "v2.1.101 nox.ffi.Callback: closure/lambda callback'i — C saklar, Nox son
         \\
     , "105\n31\n7\n49\n");
 }
+
+test "v2.1.118 nox.ffi.EventQueue: kütüphanenin KENDİ iş parçacığından gelen callback'ler kuyruğa yazılır, Nox okur (iki backend)" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try expectBoth(
+        \\import nox.ffi
+        \\
+        \\extern def nox_test_thread_fire(cb: ptr, userdata: ptr, n: int) -> None from "{s}"
+        \\extern def nox_test_thread_join() -> None from "{s}"
+        \\
+        \\q: nox.ffi.EventQueue = nox.ffi.EventQueue(64)
+        \\nox_test_thread_fire(q.callback(1), q.userdata(), 5)
+        \\got: int = 0
+        \\total: int = 0
+        \\fsum: float = 0.0
+        \\while got < 5:
+        \\    if q.wait(2000):
+        \\        total = total + q.int_arg(0)
+        \\        fsum = fsum + q.float_arg(0)
+        \\        got += 1
+        \\    else:
+        \\        break
+        \\nox_test_thread_join()
+        \\print(got)
+        \\print(total)
+        \\print(fsum)
+        \\print(q.pending())
+        \\print(q.dropped())
+        \\q.close()
+        \\
+    , "5\n10\n5.0\n0\n0\n");
+}
+
+test "v2.1.118 nox.ffi.EventQueue: kuyruk dolunca en yeni olaylar atılır (dropped), kütüphane iş parçacığı bloklanmaz (iki backend)" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try expectBoth(
+        \\import nox.ffi
+        \\
+        \\extern def nox_test_thread_fire(cb: ptr, userdata: ptr, n: int) -> None from "{s}"
+        \\extern def nox_test_thread_join() -> None from "{s}"
+        \\
+        \\q: nox.ffi.EventQueue = nox.ffi.EventQueue(3)
+        \\nox_test_thread_fire(q.callback(1), q.userdata(), 10)
+        \\nox_test_thread_join()
+        \\print(q.pending())
+        \\print(q.dropped())
+        \\first: int = -1
+        \\if q.poll():
+        \\    first = q.int_arg(0)
+        \\print(first)
+        \\q.close()
+        \\
+    , "3\n7\n0\n");
+}

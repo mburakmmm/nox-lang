@@ -94,9 +94,39 @@ functions and gets a trailing underscore when the library also exports a symbol 
 otherwise collide at link time. Names that are Nox keywords or builtins (`in`, `from`, `sum`, …) get the same treatment (functions: `in_`; parameters: `from_`). Helper and accessor names
 (`Name_get_f`, `counter_get`, …) are shim symbols themselves; if one would collide with a library function it gets a trailing `_`.
 
+### Wide and special types: `_Complex`, `__int128`, `long double`
+
+| C type | In Nox | Helpers (generated once) |
+|---|---|---|
+| `float _Complex`, `double _Complex` | a `ptr` block | `cfloat_make(re, im)` / `cdouble_make(re, im)`, `_re(p)`, `_im(p)`, `_new`, `_free`, `_size` |
+| `__int128`, `unsigned __int128` | a `ptr` block | `i128_make(lo, hi)` / `u128_make(lo, hi)` (two `u64` halves), `_lo(p)`, `_hi(p)`, `_new`, `_free`, `_size` |
+| `long double` | `float` (narrowed to `f64`, precision is lost) | none; **off by default**: set `"long_double": "f64"` in the config |
+
+Arguments are the addresses of such blocks; a result is a NEW block that the caller releases with `<name>_free`. Struct fields and globals of these types give the address of the
+field, like nested structs. Bit fields work like any field (`Name_get_f` / `Name_set_f`; the C compiler decides the layout).
+
+### Variadic functions (`...`)
+
+A `printf`-style function cannot be called directly. Describe the fixed-signature versions you need in a JSON file and pass it with `--config bindgen.json`:
+
+```json
+{
+  "variadic": [
+    {"function": "my_log", "name": "my_log_s", "args": ["str"]},
+    {"function": "my_logn", "name": "my_logn_si", "args": ["str", "int"]}
+  ],
+  "long_double": "f64",
+  "event_callbacks": ["lib_on_event"]
+}
+```
+
+`function` is the C function, `name` the generated Nox function (a C shim that makes the real variadic call), `args` the types of the part after the fixed parameters: `int`, `long`,
+`double`, `str`, `ptr` or `size`. A variadic function without an entry is skipped with a warning that points here. `event_callbacks` lists functions whose callback the library calls
+from its OWN thread: the callback parameter stays a plain `ptr` for [`nox.ffi.EventQueue`](../stdlib/ffi.md#callbacks-from-a-library-thread).
+
 ### What is skipped (with a warning)
 
-Variadic functions (`...`), `long double`, `_Complex`, `__int128` and SIMD vector types. A declaration the parser cannot understand is skipped with a warning naming its line, never silently.
+SIMD vector types (`__m128`, `float32x4_t`, `vector_size`) and callbacks that take or return a struct by value. A declaration the parser cannot understand is skipped with a warning naming its line, never silently.
 
 ## Using the output
 

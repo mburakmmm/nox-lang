@@ -115,12 +115,12 @@ Hedef: sahiplik piramidinin (ASAP → ARC → döngü çözücü → `lowlevel`)
 
 `noxc bindgen` ve `extern def` için bu tipler şu an uyarıyla atlanır; tasarım/gereklilik kararı konuşulacak:
 
-- [ ] **8.1** `long double` (x87 80-bit / aarch64 128-bit / MSVC 64-bit: platforma göre üç ayrı ABI; Nox'ta karşılığı yok) — seçenekler: `f64`'e daraltan kabuk, ayrı `f128`/`f80` tipi, ya da kapsam dışı
-- [ ] **8.2** `_Complex` (`float _Complex`, `double _Complex`) — seçenekler: iki alanlı `@repr("C")` sınıf + kabuk, ya da kapsam dışı
-- [ ] **8.3** `__int128` / `unsigned __int128` — `i128`/`u128` tipi eklemek dil kararı (İlke 2 ile uyumlu ama yeni sayısal tip); alternatif: iki `u64` yarım + kabuk
-- [ ] **8.4** SIMD vektör tipleri (`__m128`, `float32x4_t`, `__attribute__((vector_size))`) — platforma özgü; Nox'ta vektör tipi yok
-- [ ] **8.5** Bit alanları (`unsigned a : 3;`) — C standardı yerleşimi uygulama-tanımlıdır; seçenek: alanı atlayıp yerleşimi `_pad` ile korumak, ya da erişim kabuğu üretmek
-- [ ] **8.6** Değişken argümanlı (`...`) işlevler (`printf`, `sqlite3_mprintf`) — doğrudan çağrılamaz; seçenek: `bindgen.json` ile sabit imzalı kabuk sürümleri (`printf_s(fmt, str)`, `printf_i(fmt, int)`), ya da `va_list` alan `v*` kardeşleri (`vsnprintf`) için ptr yardımcıları
-- [ ] **8.7** Callback parametresi/dönüşü olarak DEĞERLE struct/union (`void (*)(point p)`) — trampoline ABI sınıflandırması gerektirir; seçenek: `bindgen` callback imzasındaki struct'ı işaretçiye çeviren C kabuk trampoline'ı üretir
-- [ ] **8.8** Kütüphanenin KENDİ OS iş parçacığından çağrılan callback (ARC sahipliği Nox'un başlattığı iş parçacığına bağlı, bkz. `arc.zig` Faz X.3) — seçenek: kütüphane iş parçacığı callback'i bir kanala yazar, Nox iş parçacığı okur (`ThreadChannel`)
+- [x] **8.1** (**KAPANDI v2.1.118: `bindgen.json` `long_double: "f64"` ile float'a daraltılır**) `long double` (x87 80-bit / aarch64 128-bit / MSVC 64-bit: platforma göre üç ayrı ABI; Nox'ta karşılığı yok) — seçenekler: `f64`'e daraltan kabuk, ayrı `f128`/`f80` tipi, ya da kapsam dışı
+- [x] **8.2** (**KAPANDI v2.1.118: `cfloat/cdouble` ptr bloğu + `_make/_re/_im`**) `_Complex` (`float _Complex`, `double _Complex`) — seçenekler: iki alanlı `@repr("C")` sınıf + kabuk, ya da kapsam dışı
+- [x] **8.3** (**KAPANDI v2.1.118: `i128/u128` ptr bloğu + `_make(lo, hi)/_lo/_hi`**) `__int128` / `unsigned __int128` — `i128`/`u128` tipi eklemek dil kararı (İlke 2 ile uyumlu ama yeni sayısal tip); alternatif: iki `u64` yarım + kabuk
+- [-] **8.4** (KAPSAM DIŞI (kullanıcı onayıyla): işlemciye özgü vektör tipleri, kullanan kütüphane az; uyarıyla atlanır) SIMD vektör tipleri (`__m128`, `float32x4_t`, `__attribute__((vector_size))`) — platforma özgü; Nox'ta vektör tipi yok
+- [x] **8.5** (**KAPANDI bit alanları zaten alan erişimcileriyle destekleniyordu (v2.1.107); v2.1.118'de testle kanıtlandı**) Bit alanları (`unsigned a : 3;`) — C standardı yerleşimi uygulama-tanımlıdır; seçenek: alanı atlayıp yerleşimi `_pad` ile korumak, ya da erişim kabuğu üretmek
+- [x] **8.6** (**KAPANDI v2.1.118: `--config` `variadic` sabit imzalı kabuk sürümleri**) Değişken argümanlı (`...`) işlevler (`printf`, `sqlite3_mprintf`) — doğrudan çağrılamaz; seçenek: `bindgen.json` ile sabit imzalı kabuk sürümleri (`printf_s(fmt, str)`, `printf_i(fmt, int)`), ya da `va_list` alan `v*` kardeşleri (`vsnprintf`) için ptr yardımcıları
+- [-] **8.7** (KAPSAM DIŞI (kullanıcı onayıyla): callback'te değerle struct ABI sınıflandırması ister, nadir; uyarıyla atlanır) Callback parametresi/dönüşü olarak DEĞERLE struct/union (`void (*)(point p)`) — trampoline ABI sınıflandırması gerektirir; seçenek: `bindgen` callback imzasındaki struct'ı işaretçiye çeviren C kabuk trampoline'ı üretir
+- [x] **8.8** (**KAPANDI v2.1.118: `nox.ffi.EventQueue` + `bindgen.json` `event_callbacks`**) Kütüphanenin KENDİ OS iş parçacığından çağrılan callback (ARC sahipliği Nox'un başlattığı iş parçacığına bağlı, bkz. `arc.zig` Faz X.3) — seçenek: kütüphane iş parçacığı callback'i bir kanala yazar, Nox iş parçacığı okur (`ThreadChannel`)
 

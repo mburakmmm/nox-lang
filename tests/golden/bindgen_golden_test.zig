@@ -364,3 +364,126 @@ test "bindgen: callback + userdata kalıbı (userdata ilk ya da son) @ffi.callba
         try std.testing.expectEqualStrings(expected, r.stdout);
     }
 }
+
+const wide_header =
+    \\#include <stdint.h>
+    \\typedef struct { int flags; unsigned a : 3; unsigned b : 5; double w; } packed_t;
+    \\double _Complex cmul(double _Complex x, double _Complex y);
+    \\float _Complex cscale(float _Complex x, float k);
+    \\__int128 big_add(__int128 a, __int128 b);
+    \\unsigned __int128 ubig_mul(unsigned __int128 a, uint64_t b);
+    \\long double ld_half(long double x);
+    \\int ld_sum(long double a, long double b);
+    \\int my_log(const char *fmt, ...);
+    \\int my_logn(int level, const char *fmt, ...);
+    \\packed_t *packed_new(void);
+    \\
+;
+
+const wide_source =
+    \\#include "wide.h"
+    \\#include <stdlib.h>
+    \\#include <stdio.h>
+    \\#include <stdarg.h>
+    \\double _Complex cmul(double _Complex x, double _Complex y) { return x * y; }
+    \\float _Complex cscale(float _Complex x, float k) { return x * k; }
+    \\__int128 big_add(__int128 a, __int128 b) { return a + b; }
+    \\unsigned __int128 ubig_mul(unsigned __int128 a, uint64_t b) { return a * b; }
+    \\long double ld_half(long double x) { return x / 2; }
+    \\int ld_sum(long double a, long double b) { return (int)(a + b); }
+    \\int my_log(const char *fmt, ...) { va_list ap; va_start(ap, fmt); int n = vsnprintf(NULL, 0, fmt, ap); va_end(ap); return n; }
+    \\int my_logn(int level, const char *fmt, ...) { va_list ap; va_start(ap, fmt); int n = vsnprintf(NULL, 0, fmt, ap); va_end(ap); return n + level * 1000; }
+    \\packed_t *packed_new(void) { packed_t *p = calloc(1, sizeof *p); p->a = 5; p->b = 17; return p; }
+    \\
+;
+
+const wide_config =
+    \\{"variadic":[{"function":"my_log","name":"my_log_s","args":["str"]},{"function":"my_log","name":"my_log_i","args":["int"]},{"function":"my_logn","name":"my_logn_si","args":["str","int"]}],"long_double":"f64"}
+;
+
+const wide_program =
+    \\p1: ptr = cdouble_make(1.0, 2.0)
+    \\p2: ptr = cdouble_make(3.0, 4.0)
+    \\r: ptr = cmul_(p1, p2)
+    \\print(cdouble_re(r))
+    \\print(cdouble_im(r))
+    \\cdouble_free(p1)
+    \\cdouble_free(p2)
+    \\cdouble_free(r)
+    \\c1: ptr = cfloat_make(1.5, 2.0)
+    \\c2: ptr = cscale_(c1, 2.0)
+    \\print(cfloat_re(c2))
+    \\print(cfloat_im(c2))
+    \\cfloat_free(c1)
+    \\cfloat_free(c2)
+    \\x: ptr = i128_make(u64(0), u64(1))
+    \\y: ptr = i128_make(u64(5), u64(1))
+    \\z: ptr = big_add_(x, y)
+    \\print(i128_lo(z))
+    \\print(i128_hi(z))
+    \\i128_free(x)
+    \\i128_free(y)
+    \\i128_free(z)
+    \\m: u64 = u64(4294967295) * u64(4294967297)
+    \\u: ptr = u128_make(m, u64(0))
+    \\w: ptr = ubig_mul_(u, u64(3))
+    \\print(u128_lo(w))
+    \\print(u128_hi(w))
+    \\u128_free(u)
+    \\u128_free(w)
+    \\print(ld_half_(5.0))
+    \\print(ld_sum_(1.5, 2.5))
+    \\print(my_log_s("hello %s", "world"))
+    \\print(my_log_i("n=%d", 42))
+    \\print(my_logn_si(2, "x=%s %d", "ab", 7))
+    \\pk: ptr = packed_new()
+    \\print(packed_t_get_a(pk))
+    \\print(packed_t_get_b(pk))
+    \\packed_t_set_a(pk, u32(7))
+    \\print(packed_t_get_a(pk))
+    \\
+;
+
+test "bindgen: _Complex, __int128, long double (f64), değişken argümanlı sürümler ve bit alanları iki backend'de aynı" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "wide.h", .data = wide_header });
+    try tmp.dir.writeFile(io, .{ .sub_path = "wide.c", .data = wide_source });
+    try tmp.dir.writeFile(io, .{ .sub_path = "bindgen.json", .data = wide_config });
+    const h_path = try std.fmt.allocPrint(a, "{s}/wide.h", .{dir});
+    const c_path = try std.fmt.allocPrint(a, "{s}/wide.c", .{dir});
+    const o_path = try std.fmt.allocPrint(a, "{s}/wide.o", .{dir});
+    const out_path = try std.fmt.allocPrint(a, "{s}/wide.nox", .{dir});
+    const cfg_path = try std.fmt.allocPrint(a, "{s}/bindgen.json", .{dir});
+    const shim_o = try std.fmt.allocPrint(a, "{s}/wide_shim.o", .{dir});
+    const cc = try std.process.run(a, io, .{ .argv = &.{ "cc", "-c", "-fPIC", c_path, "-o", o_path, "-I", dir } });
+    if (cc.term != .exited or cc.term.exited != 0) {
+        std.debug.print("cc basarisiz: {s}\n", .{cc.stderr});
+        return error.CcFailed;
+    }
+    const code = try nox.bindgen.runCli(std.testing.allocator, io, a, &.{ h_path, "--lib", o_path, "--config", cfg_path, "-o", out_path });
+    try std.testing.expectEqual(@as(u8, 0), code);
+    const generated = try tmp.dir.readFileAlloc(io, "wide.nox", a, .limited(1 << 20));
+    const full = try std.fmt.allocPrint(a, "{s}\n{s}", .{ generated, wide_program });
+
+    const objs = [_][]const u8{ o_path, shim_o };
+    const qbe = try compile_helpers.compileAndRunWithObjs(a, full, &objs);
+    const llvm = try compile_helpers.compileAndRunLlvmWithObjs(a, full, &objs);
+    const expected = "-5.0\n10.0\n3.0\n4.0\n5\n2\n18446744073709551613\n2\n2.5\n4\n11\n4\n2006\n5\n17\n7\n";
+    for ([_]std.process.RunResult{ qbe, llvm }) |r| {
+        if (r.term != .exited or r.term.exited != 0 or r.stderr.len != 0) {
+            std.debug.print("program basarisiz: {s}\n", .{r.stderr});
+            return error.ProgramFailed;
+        }
+        try std.testing.expectEqualStrings(expected, r.stdout);
+    }
+}

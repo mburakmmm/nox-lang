@@ -23,7 +23,36 @@ pub const Options = struct {
     include_name: []const u8,
     /// Yalnızca bu önekle başlayan işlevler/sabitler çıkarılır (boş = hedef başlıktakilerin hepsi; makrolar için BÜYÜK/küçük harf duyarsız önek ZORUNLU).
     prefix: []const u8 = "",
+    /// `--config` (bindgen.json): `...` alan işlevler için sabit imzalı kabuk sürümleri ve `long double` davranışı.
+    config: Config = .{},
 };
+
+/// `bindgen.json`:
+/// `{"variadic":[{"function":"printf","name":"printf_s","args":["str"]}], "long_double":"f64", "event_callbacks":["lib_on_event"]}`
+/// `args`: değişken kısmın tipleri (`int`, `long`, `double`, `str`, `ptr`, `size`). `long_double: "f64"` -> `long double` `float`a daraltılır (hassasiyet kaybı).
+pub const Config = struct {
+    variadic: []const VariadicShim = &.{},
+    long_double_as_f64: bool = false,
+    /// Callback'i kütüphanenin KENDİ iş parçacığından çağıran işlevler: callback parametresi `@ffi.callback` yerine ham `ptr` kalır (`nox.ffi.EventQueue.callback(i)` ile beslenir).
+    event_callbacks: []const []const u8 = &.{},
+};
+
+pub const VariadicShim = struct {
+    function: []const u8,
+    name: []const u8,
+    args: []const []const u8,
+};
+
+/// `bindgen.json` metnini ayrıştırır.
+pub fn parseConfig(a: std.mem.Allocator, text: []const u8) !Config {
+    const Raw = struct {
+        variadic: []const VariadicShim = &.{},
+        long_double: []const u8 = "",
+        event_callbacks: []const []const u8 = &.{},
+    };
+    const parsed = try std.json.parseFromSliceLeaky(Raw, a, text, .{ .ignore_unknown_fields = true });
+    return .{ .variadic = parsed.variadic, .long_double_as_f64 = std.mem.eql(u8, parsed.long_double, "f64"), .event_callbacks = parsed.event_callbacks };
+}
 
 pub const Output = struct {
     nox: []const u8,
@@ -160,6 +189,30 @@ fn lex(a: std.mem.Allocator, text: []const u8, target_base: []const u8, all_in_t
 
 // ------------------------------------------------------------------------------------------------ C tür modeli
 
+const Wide = enum {
+    cfloat,
+    cdouble,
+    i128,
+    u128,
+
+    fn display(self: Wide) []const u8 {
+        return switch (self) {
+            .cfloat => "cfloat",
+            .cdouble => "cdouble",
+            .i128 => "i128",
+            .u128 => "u128",
+        };
+    }
+    fn ctext(self: Wide) []const u8 {
+        return switch (self) {
+            .cfloat => "float _Complex",
+            .cdouble => "double _Complex",
+            .i128 => "__int128",
+            .u128 => "unsigned __int128",
+        };
+    }
+};
+
 const IntKind = struct { bits: u8, signed: bool, is_size: bool = false, is_char: bool = false };
 
 const CType = union(enum) {
@@ -175,6 +228,10 @@ const CType = union(enum) {
     enum_: []const u8,
     named: []const u8, // typedef adı (tembelce çözülür)
     unsupported: []const u8,
+    /// `long double` (v2.1.118: yalnızca `--config` `long_double: f64` ile `float`a daraltılarak kabuktan geçer)
+    long_double,
+    /// `_Complex`/`__int128`: bellek bloğu (`ptr`) olarak kabuktan geçer; yardımcılar `<ad>_make/_new/_free/...`
+    wide: Wide,
 
     const Ptr = struct { to: *const CType, const_pointee: bool };
     const Array = struct { elem: *const CType, len: ?u64 };
@@ -332,7 +389,10 @@ const Parser = struct {
         var kw_double = false;
         var kw_bool = false;
         var kw_void = false;
-        var kw_other_unsupported: ?[]const u8 = null;
+        const kw_other_unsupported: ?[]const u8 = null;
+        var kw_complex = false;
+        var kw_int128 = false;
+        var int128_unsigned = false;
         var have_type = false;
         while (!self.atEof()) {
             self.skipAttrs();
@@ -383,10 +443,11 @@ const Parser = struct {
                 kw_bool = true;
                 have_type = true;
             } else if (std.mem.eql(u8, s, "_Complex") or std.mem.eql(u8, s, "__complex__")) {
-                kw_other_unsupported = "_Complex";
+                kw_complex = true;
                 have_type = true;
             } else if (std.mem.eql(u8, s, "__int128") or std.mem.eql(u8, s, "__int128_t") or std.mem.eql(u8, s, "__uint128_t")) {
-                kw_other_unsupported = "__int128";
+                kw_int128 = true;
+                if (std.mem.eql(u8, s, "__uint128_t")) int128_unsigned = true;
                 have_type = true;
             } else if (std.mem.eql(u8, s, "__builtin_va_list")) {
                 sp.base = .{ .ptr = .{ .to = try self.box(.void), .const_pointee = false } };
@@ -420,6 +481,10 @@ const Parser = struct {
         if (sp.base == null) {
             if (kw_other_unsupported) |u| {
                 sp.base = .{ .unsupported = u };
+            } else if (kw_complex) {
+                sp.base = if (kw_double and n_long > 0) .{ .unsupported = "long double _Complex" } else if (kw_float) .{ .wide = .cfloat } else .{ .wide = .cdouble };
+            } else if (kw_int128) {
+                sp.base = .{ .wide = if (int128_unsigned or is_unsigned) .u128 else .i128 };
             } else if (kw_void) {
                 sp.base = .void;
             } else if (kw_bool) {
@@ -427,7 +492,7 @@ const Parser = struct {
             } else if (kw_float) {
                 sp.base = .f32;
             } else if (kw_double) {
-                sp.base = if (n_long > 0) .{ .unsupported = "long double" } else .f64;
+                sp.base = if (n_long > 0) .long_double else .f64;
             } else if (kw_char) {
                 sp.base = .{ .int = .{ .bits = 8, .signed = if (is_signed) true else if (is_unsigned) false else self.char_signed, .is_char = !is_signed and !is_unsigned } };
             } else if (n_short) {
@@ -1053,6 +1118,8 @@ const Emitter = struct {
     warnings: std.ArrayListUnmanaged([]const u8) = .empty,
     /// değerle geçirilen kayıtlar: etiket -> C tür metni (yardımcılar bunlar için de üretilir)
     by_value: std.StringHashMapUnmanaged([]const u8) = .empty,
+    /// kullanılan geniş tipler (`Wide` sırasıyla): yardımcıları sonda bir kez üretilir
+    wide_used: [4]bool = .{ false, false, false, false },
 
     /// Kaydın yardımcı/erişimci adlarında kullanılan görünen ad: typedef takma adı, yoksa (adsız değilse) etiket.
     fn recordDisplay(self: *Emitter, tag: []const u8) ?[]const u8 {
@@ -1117,6 +1184,16 @@ const Emitter = struct {
                 };
                 try self.by_value.put(self.a, tag, ct);
                 return .{ .nox = "ptr", .c = "const void *", .needs_shim = true, .rec = ct, .rec_tag = tag };
+            },
+            .long_double => {
+                if (self.opts.config.long_double_as_f64) return .{ .nox = "float", .c = "double", .needs_shim = true };
+                reason.* = "unsupported type 'long double' (set \"long_double\": \"f64\" in --config to narrow it to float)";
+                return null;
+            },
+            .wide => |w| {
+                self.wide_used[@intFromEnum(w)] = true;
+                const tag = try std.fmt.allocPrint(self.a, "__wide_{s}", .{w.display()});
+                return .{ .nox = "ptr", .c = "const void *", .needs_shim = true, .rec = w.ctext(), .rec_tag = tag };
             },
             .unsupported => |u| {
                 reason.* = try std.fmt.allocPrint(self.a, "unsupported type '{s}'", .{u});
@@ -1230,7 +1307,16 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
         if (!em.matchesPrefix(f.name) or seen.contains(f.name)) continue;
         try seen.put(a, f.name, {});
         if (f.sig.variadic) {
-            try em.warn("line {d}: skipped {s}: variadic function (see TODO 8.6)", .{ f.line, f.name });
+            var configured = false;
+            for (opts.config.variadic) |vs| {
+                if (!std.mem.eql(u8, vs.function, f.name)) continue;
+                configured = true;
+                if (try emitVariadicShim(&em, f, vs, &nox, &shim, &taken)) {
+                    n_funcs += 1;
+                    n_shims += 1;
+                }
+            }
+            if (!configured) try em.warn("line {d}: skipped {s}: variadic function (add a fixed-signature version under \"variadic\" in --config)", .{ f.line, f.name });
             continue;
         }
         var reason: []const u8 = "";
@@ -1260,7 +1346,11 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
         }
         n_funcs += 1;
         if (!needs_shim) {
-            const cbp = try detectCallback(&em, f);
+            var event_cb = false;
+            for (opts.config.event_callbacks) |ec| {
+                if (std.mem.eql(u8, ec, f.name)) event_cb = true;
+            }
+            const cbp = if (event_cb) null else try detectCallback(&em, f);
             if (cbp) |cp| {
                 const dflt = f.sig.params[cp.cb_idx];
                 _ = dflt;
@@ -1316,7 +1406,7 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
             }
             try appendF(a, out_list, ") -> {s}:\n", .{ret_t.nox});
             if (ret_is_rec) {
-                const helper = em.recordDisplay(ret_t.rec_tag) orelse "rec";
+                const helper = if (std.mem.startsWith(u8, ret_t.rec_tag, "__wide_")) ret_t.rec_tag[7..] else (em.recordDisplay(ret_t.rec_tag) orelse "rec");
                 try appendF(a, out_list, "    nox_ret: ptr = {s}_new()\n    {s}(", .{ helper, shim_name });
                 for (names) |nm| try appendF(a, out_list, "{s}, ", .{nm});
                 try out_list.appendSlice(a, "nox_ret)\n    return nox_ret\n");
@@ -1335,6 +1425,14 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
     if (pending_wrappers.items.len > 0) {
         try nox.appendSlice(a, "\n# by-value struct/union wrappers: arguments are pointers to the struct memory; a returned struct is a NEW block the caller frees with <Name>_free\n");
         try nox.appendSlice(a, pending_wrappers.items);
+    }
+
+    // `_Complex` / `__int128` yardımcıları (kullanılanlar için bir kez)
+    var wi: usize = 0;
+    while (wi < em.wide_used.len) : (wi += 1) {
+        if (!em.wide_used[wi]) continue;
+        try emitWide(&em, @enumFromInt(wi), &nox, &shim, &taken);
+        n_shims += 0;
     }
 
     // struct/union yardımcıları ve alan erişimcileri; değerle geçirilen kayıtlar için de yardımcılar
@@ -1364,7 +1462,7 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
         if (!em.matchesPrefix(g.name)) continue;
         var reason: []const u8 = "";
         const r = parser.resolve(g.ty);
-        if (r == .array or r == .record) {
+        if (r == .array or r == .record or r == .wide) {
             const nm = try uniqueName(a, &taken, try std.fmt.allocPrint(a, "{s}_ptr", .{g.name}));
             try appendF(a, &shim, "void *{s}(void) {{ return (void *)&{s}; }}\n", .{ nm, g.name });
             try appendF(a, &nox, "extern def {s}() -> ptr from \"{s}\"\n", .{ nm, opts.shim_lib });
@@ -1455,6 +1553,116 @@ fn detectCallback(em: *Emitter, f: FuncDecl) !?CallbackPattern {
     return null;
 }
 
+/// `_Complex` (`<ad>_make(re, im)`, `_re`, `_im`) ve `__int128` (`<ad>_make(lo, hi)`, `_lo`, `_hi`) için bellek bloğu yardımcıları. Değerler `ptr` bloğudur (`_new/_free/_size` ile);
+/// işlevlere/alanlara bloğun adresi verilir, dönen değerler YENİ bir bloktur (çağıran `_free` eder).
+fn emitWide(em: *Emitter, w: Wide, nox: *std.ArrayListUnmanaged(u8), shim: *std.ArrayListUnmanaged(u8), taken: *std.StringHashMapUnmanaged(void)) !void {
+    const a = em.a;
+    const lib = em.opts.shim_lib;
+    const d = w.display();
+    const c = w.ctext();
+    const new_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_new", .{d}));
+    const free_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_free", .{d}));
+    const size_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_size", .{d}));
+    try appendF(a, shim, "void *{s}(void) {{ return calloc(1, sizeof({s})); }}\nvoid {s}(void *p) {{ free(p); }}\nsize_t {s}(void) {{ return sizeof({s}); }}\n", .{ new_n, c, free_n, size_n, c });
+    try appendF(a, nox, "\n# {s} values are `ptr` blocks: {s}_new / {s}_free / {s}_size, built with {s}_make\nextern def {s}() -> ptr from \"{s}\"\nextern def {s}(p: ptr) -> None from \"{s}\"\nextern def {s}() -> usize from \"{s}\"\n", .{ c, d, d, d, d, new_n, lib, free_n, lib, size_n, lib });
+    const make_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_make", .{d}));
+    switch (w) {
+        .cfloat, .cdouble => {
+            const base: []const u8 = if (w == .cfloat) "float" else "double";
+            const re_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_re", .{d}));
+            const im_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_im", .{d}));
+            try appendF(a, shim, "void *{s}(double re, double im) {{ {s} *p = malloc(sizeof({s})); *p = __builtin_complex(({s})re, ({s})im); return p; }}\n", .{ make_n, c, c, base, base });
+            try appendF(a, shim, "double {s}(const void *p) {{ return __real__ *(const {s} *)p; }}\ndouble {s}(const void *p) {{ return __imag__ *(const {s} *)p; }}\n", .{ re_n, c, im_n, c });
+            try appendF(a, nox, "extern def {s}(re: float, im: float) -> ptr from \"{s}\"\nextern def {s}(p: ptr) -> float from \"{s}\"\nextern def {s}(p: ptr) -> float from \"{s}\"\n", .{ make_n, lib, re_n, lib, im_n, lib });
+        },
+        .i128, .u128 => {
+            const lo_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_lo", .{d}));
+            const hi_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_hi", .{d}));
+            try appendF(a, shim, "void *{s}(uint64_t lo, uint64_t hi) {{ {s} *p = malloc(sizeof({s})); *p = ({s})(((unsigned __int128)hi << 64) | lo); return p; }}\n", .{ make_n, c, c, c });
+            try appendF(a, shim, "uint64_t {s}(const void *p) {{ return (uint64_t)*(const {s} *)p; }}\nuint64_t {s}(const void *p) {{ return (uint64_t)((unsigned __int128)*(const {s} *)p >> 64); }}\n", .{ lo_n, c, hi_n, c });
+            try appendF(a, nox, "extern def {s}(lo: u64, hi: u64) -> ptr from \"{s}\"\nextern def {s}(p: ptr) -> u64 from \"{s}\"\nextern def {s}(p: ptr) -> u64 from \"{s}\"\n", .{ make_n, lib, lo_n, lib, hi_n, lib });
+        },
+    }
+}
+
+/// `bindgen.json`daki sabit imzalı bir `...` sürümünü üretir: C kabuğu değişken çağrıyı derleyiciye bırakır (`printf(fmt, a0)`), Nox tarafı doğrudan bu adı çağırır. `false`: sürüm üretilemedi (uyarı yazıldı).
+fn emitVariadicShim(em: *Emitter, f: FuncDecl, vs: VariadicShim, nox: *std.ArrayListUnmanaged(u8), shim: *std.ArrayListUnmanaged(u8), taken: *std.StringHashMapUnmanaged(void)) !bool {
+    const a = em.a;
+    var reason: []const u8 = "";
+    const ret_t = (try em.mapType(f.sig.ret, false, &reason)) orelse {
+        try em.warn("line {d}: variadic {s}: return type: {s}", .{ f.line, vs.name, reason });
+        return false;
+    };
+    if (ret_t.rec != null) {
+        try em.warn("line {d}: variadic {s}: by-value struct/wide return is not supported", .{ f.line, vs.name });
+        return false;
+    }
+    const Extra = struct { nox: []const u8, c: []const u8 };
+    var params: std.ArrayListUnmanaged(NoxType) = .empty;
+    for (f.sig.params, 0..) |pa, i| {
+        const pt = (try em.mapType(pa.ty, true, &reason)) orelse {
+            try em.warn("line {d}: variadic {s}: parameter {d}: {s}", .{ f.line, vs.name, i + 1, reason });
+            return false;
+        };
+        if (pt.rec != null) {
+            try em.warn("line {d}: variadic {s}: by-value struct/wide parameter {d} is not supported", .{ f.line, vs.name, i + 1 });
+            return false;
+        }
+        try params.append(a, pt);
+    }
+    var extras: std.ArrayListUnmanaged(Extra) = .empty;
+    for (vs.args) |t| {
+        const e: Extra = if (std.mem.eql(u8, t, "int")) .{ .nox = "i32", .c = "int" } else if (std.mem.eql(u8, t, "long")) .{ .nox = "i64", .c = "long long" } else if (std.mem.eql(u8, t, "double")) .{ .nox = "float", .c = "double" } else if (std.mem.eql(u8, t, "str")) .{ .nox = "str", .c = "const char *" } else if (std.mem.eql(u8, t, "ptr")) .{ .nox = "ptr", .c = "void *" } else if (std.mem.eql(u8, t, "size")) .{ .nox = "usize", .c = "size_t" } else {
+            try em.warn("variadic {s}: unknown argument type '{s}' (use int, long, double, str, ptr, size)", .{ vs.name, t });
+            return false;
+        };
+        try extras.append(a, e);
+    }
+    const name = try uniqueName(a, taken, vs.name);
+    try appendF(a, shim, "{s} {s}(", .{ ret_t.c, name });
+    var first = true;
+    for (params.items, 0..) |pt, i| {
+        if (!first) try shim.appendSlice(a, ", ");
+        first = false;
+        try appendF(a, shim, "{s}{s}a{d}", .{ pt.c, if (std.mem.endsWith(u8, pt.c, "*")) "" else " ", i });
+    }
+    for (extras.items, 0..) |e, i| {
+        if (!first) try shim.appendSlice(a, ", ");
+        first = false;
+        try appendF(a, shim, "{s}{s}x{d}", .{ e.c, if (std.mem.endsWith(u8, e.c, "*")) "" else " ", i });
+    }
+    if (first) try shim.appendSlice(a, "void");
+    try shim.appendSlice(a, ") { ");
+    if (!std.mem.eql(u8, ret_t.c, "void")) try shim.appendSlice(a, "return ");
+    try appendF(a, shim, "{s}(", .{f.name});
+    var firstc = true;
+    for (params.items, 0..) |_, i| {
+        if (!firstc) try shim.appendSlice(a, ", ");
+        firstc = false;
+        try appendF(a, shim, "a{d}", .{i});
+    }
+    for (extras.items, 0..) |_, i| {
+        if (!firstc) try shim.appendSlice(a, ", ");
+        firstc = false;
+        try appendF(a, shim, "x{d}", .{i});
+    }
+    try shim.appendSlice(a, "); }\n");
+    try appendF(a, nox, "extern def {s}(", .{name});
+    var firstn = true;
+    for (params.items, 0..) |pt, i| {
+        if (!firstn) try nox.appendSlice(a, ", ");
+        firstn = false;
+        try appendF(a, nox, "a{d}: {s}", .{ i, pt.nox });
+    }
+    for (extras.items, 0..) |e, i| {
+        if (!firstn) try nox.appendSlice(a, ", ");
+        firstn = false;
+        try appendF(a, nox, "x{d}: {s}", .{ i, e.nox });
+    }
+    try appendF(a, nox, ") -> {s} from \"{s}\"\n", .{ ret_t.nox, em.opts.shim_lib });
+    return true;
+}
+
 fn uniqueName(a: std.mem.Allocator, taken: *std.StringHashMapUnmanaged(void), base: []const u8) ![]const u8 {
     var name = base;
     while (taken.contains(name)) name = try std.fmt.allocPrint(a, "{s}_", .{name});
@@ -1517,7 +1725,7 @@ fn emitFields(em: *Emitter, rec: Record, display: []const u8, ctext: []const u8,
                     try appendF(a, nox, "extern def {s}(p: ptr, i: usize, v: {s}) -> None from \"{s}\"\n", .{ set_n, mt.nox, lib });
                 }
             },
-            .record => {
+            .record, .wide => {
                 const addr_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_get_{s}", .{ display, f.name }));
                 try appendF(a, shim, "void *{s}(void *p) {{ return (void *)&{s}; }}\n", .{ addr_n, acc });
                 try appendF(a, nox, "extern def {s}(p: ptr) -> ptr from \"{s}\"\n", .{ addr_n, lib });
@@ -1590,13 +1798,14 @@ pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     var shim_path: ?[]const u8 = null;
     var shim_lib: ?[]const u8 = null;
     var no_compile = false;
+    var config_path: ?[]const u8 = null;
     var cc: []const u8 = "cc";
     var cpp_flags: std.ArrayListUnmanaged([]const u8) = .empty;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         const needs_val = std.mem.eql(u8, arg, "--lib") or std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--prefix") or std.mem.eql(u8, arg, "--shim") or
-            std.mem.eql(u8, arg, "--shim-lib") or std.mem.eql(u8, arg, "--cc") or std.mem.eql(u8, arg, "-I") or std.mem.eql(u8, arg, "-D");
+            std.mem.eql(u8, arg, "--shim-lib") or std.mem.eql(u8, arg, "--config") or std.mem.eql(u8, arg, "--cc") or std.mem.eql(u8, arg, "-I") or std.mem.eql(u8, arg, "-D");
         if (needs_val) {
             if (i + 1 >= args.len) {
                 std.debug.print("{s}: missing value\n{s}", .{ arg, usage });
@@ -1604,7 +1813,7 @@ pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
             }
             i += 1;
             const v = args[i];
-            if (std.mem.eql(u8, arg, "--lib")) lib = v else if (std.mem.eql(u8, arg, "-o")) out_path = v else if (std.mem.eql(u8, arg, "--prefix")) prefix = v else if (std.mem.eql(u8, arg, "--shim")) shim_path = v else if (std.mem.eql(u8, arg, "--shim-lib")) shim_lib = v else if (std.mem.eql(u8, arg, "--cc")) cc = v else {
+            if (std.mem.eql(u8, arg, "--lib")) lib = v else if (std.mem.eql(u8, arg, "-o")) out_path = v else if (std.mem.eql(u8, arg, "--prefix")) prefix = v else if (std.mem.eql(u8, arg, "--shim")) shim_path = v else if (std.mem.eql(u8, arg, "--shim-lib")) shim_lib = v else if (std.mem.eql(u8, arg, "--config")) config_path = v else if (std.mem.eql(u8, arg, "--cc")) cc = v else {
                 try cpp_flags.append(a, arg);
                 try cpp_flags.append(a, v);
             }
@@ -1666,12 +1875,24 @@ pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
 
     // 2) üretim
     const include_name = baseName(hdr);
+    var config: Config = .{};
+    if (config_path) |cp| {
+        const text = std.Io.Dir.cwd().readFileAlloc(io, cp, a, .limited(1 << 20)) catch |err| {
+            std.debug.print("could not read --config {s}: {t}\n", .{ cp, err });
+            return 1;
+        };
+        config = parseConfig(a, text) catch |err| {
+            std.debug.print("invalid --config {s}: {t}\n", .{ cp, err });
+            return 1;
+        };
+    }
     const result = try generateFromText(a, pp.stdout, dm.stdout, .{
         .header = hdr,
         .lib = lib_v,
         .shim_lib = shim_lib_v,
         .include_name = include_name,
         .prefix = prefix,
+        .config = config,
     }, false);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = out_v, .data = result.nox });
     if (result.n_shims > 0) try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = shim_v, .data = result.shim });

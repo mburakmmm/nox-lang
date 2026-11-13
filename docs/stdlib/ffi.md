@@ -41,6 +41,39 @@ Rules:
   late "shutdown" callbacks are not supported.
 - An exception that escapes the callback terminates the program (there is no exception channel through C).
 
+## Callbacks from a library thread
+
+`@ffi.callback` runs your function on the thread that called into C. Some libraries (audio, networking, event loops) call the callback from a thread of their own, where Nox code
+cannot run safely. `EventQueue` solves that: the C library is given a tiny C function that only writes the arguments into a locked queue, and your Nox code reads them in an ordinary
+task.
+
+```nox-fragment
+import nox.ffi
+
+q: nox.ffi.EventQueue = nox.ffi.EventQueue(4096)
+lib_on_event(q.callback(1), q.userdata())   # void cb(int level, void *ud, double value): userdata is integer-class argument 1
+while q.wait(1000):
+    level: int = q.int_arg(0)               # userdata is left out; the integer-class arguments follow in order
+    value: float = q.float_arg(0)           # double arguments, in order
+q.close()                                   # after unregistering the callback in the library
+```
+
+| Member | Meaning |
+|---|---|
+| `EventQueue(capacity = 1024)` | a queue of `capacity` events |
+| `callback(ud_index)` | the C function pointer to give the library; `ud_index` (0 to 5) says which integer-class argument is the userdata |
+| `userdata()` | the queue handle to pass as the callback's userdata |
+| `poll()` / `wait(timeout_ms)` | fetch the next event (`wait` waits cooperatively in a task); `True` when there is one |
+| `int_arg(i)` / `float_arg(i)` / `float32_arg(i)` | argument `i` of the fetched event: integer-class (integers, pointers, `bool`, enums), `double`, or `float` (f32) |
+| `set_return(v)` | the value the callback returns to C (ignored by `void` callbacks) |
+| `pending()` / `dropped()` | queued events / events discarded because the queue was full (the library's thread is never blocked) |
+| `close()` | stop accepting events; unregister the callback in the library first |
+
+`EventQueue(...)` and `callback(...)` raise `FfiError` when the platform does not support queues (Windows), the queue cannot be allocated, or `ud_index` is outside 0 to 5.
+
+Limits: at most 6 integer-class and 4 `double` arguments, no struct arguments by value, macOS and Linux only (the C function relies on the System V / AAPCS64 argument registers).
+With `noxc bindgen`, list the function under `event_callbacks` in the config so its callback parameter stays a plain `ptr`.
+
 ## errno helpers
 
 | Function | Meaning |

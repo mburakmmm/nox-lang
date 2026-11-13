@@ -9,6 +9,8 @@
 # Tutamaç, closure'ı C hâlâ tutarken ARC'nin serbest bırakmaması için pinler; `close()` açıktır ve tekrar çağrılabilir. C'nin callback'i YALNIZCA
 # Nox'un başlattığı iş parçacığından ve `close()`dan ÖNCE çağırması gerekir. Capability gerektirmez, WASM hedeflerinde kullanılamaz.
 
+import nox.time
+
 extern def nox_cb_box_free(box: ptr) -> None from "zig-out/lib/noxrt.o" with_rt
 extern def nox_ffi_errno_raw() -> int from "zig-out/lib/noxrt.o"
 extern def nox_ffi_errno_text_raw() -> str from "zig-out/lib/noxrt.o" with_rt
@@ -68,3 +70,97 @@ class Callback[F]:
 
     def __exit__(self) -> None:
         self.close()
+
+# ---- Kütüphanenin KENDİ iş parçacığından gelen callback'ler (v2.1.118, TODO 8.8) -------------------------------------------------------------------------------
+#
+#     q: nox.ffi.EventQueue = nox.ffi.EventQueue(4096)
+#     lib_on_event(q.callback(1), q.userdata())     # C: void cb(int level, void *ud, double value); userdata 2. (indeks 1) tamsayı-sınıfı argüman
+#     while q.wait(1000):
+#         level: int = q.int_arg(0)                 # userdata HARİÇ tamsayı/işaretçi/bool/enum argümanlar sırayla
+#         value: float = q.float_arg(0)             # double argümanlar sırayla (`float` = f32 için float32_arg)
+#
+# `@ffi.callback` callback'i Nox'un başlattığı iş parçacığında çalıştırır; kütüphane callback'i KENDİ iş parçacığından çağırıyorsa Nox kodu orada çalışamaz. `EventQueue.callback(i)` ise
+# Nox'tan bağımsız bir C işlevi verir: argümanları kilitli bir kuyruğa yazar, Nox tarafı `wait`/`poll` ile okur. Sınırlar: en çok 6 tamsayı + 4 double argüman, struct-değerle argüman
+# yok, Windows'ta desteklenmez. Callback dönüş değeri `set_return` ile ayarlanır (void callback'lerde yok sayılır). Kuyruk dolarsa en yeni olay atılır (`dropped`); kütüphane iş parçacığı
+# ASLA bloklanmaz. `close()` ÖNCE kütüphaneden callback'i kaldırmanın ardından çağrılmalıdır.
+
+extern def nox_evq_new(capacity: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_evq_close(q: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_evq_fn(ud_index: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_evq_pop(q: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_evq_int_arg(q: ptr, i: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_evq_float_arg(q: ptr, i: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_evq_float32_arg(q: ptr, i: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_evq_pending(q: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_evq_dropped(q: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_evq_set_return(q: ptr, v: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_evq_supported() -> int from "zig-out/lib/noxrt.o"
+
+class FfiError(Exception):
+    pass
+
+class EventQueue:
+    handle: ptr
+    live: bool
+
+    def __init__(self, capacity: int = 1024) -> None:
+        if nox_evq_supported() == 0:
+            raise FfiError("nox.ffi.EventQueue is not supported on this platform (macOS and Linux only)")
+        self.live = True
+        self.handle = nox_evq_new(capacity)
+        if is_null(self.handle):
+            raise FfiError("cannot create an event queue")
+
+    # C'ye callback olarak verilecek işlev işaretçisi; `ud_index`: userdata'nın kaçıncı (0'dan) TAMSAYI-sınıfı argüman olduğu (0..5).
+    def callback(self, ud_index: int) -> ptr:
+        p: ptr = nox_evq_fn(ud_index)
+        if is_null(p):
+            raise FfiError("ud_index must be between 0 and 5")
+        return p
+
+    # C'ye userdata olarak verilecek kuyruk tutamağı.
+    def userdata(self) -> ptr:
+        return self.handle
+
+    # Bekleme olmadan: sıradaki olayı çeker (varsa True). Çekilen olayın argümanları `int_arg`/`float_arg` ile okunur.
+    def poll(self) -> bool:
+        return nox_evq_pop(self.handle) == 1
+
+    # En çok `timeout_ms` bekler (görevde kooperatif); olay gelirse onu çeker ve True döner.
+    def wait(self, timeout_ms: int) -> bool:
+        deadline: int = nox.time.now_ms() + timeout_ms
+        while nox.time.now_ms() < deadline:
+            if nox_evq_pop(self.handle) == 1:
+                return True
+            nox.time.sleep_ms(1)
+        return nox_evq_pop(self.handle) == 1
+
+    def int_arg(self, i: int) -> int:
+        return nox_evq_int_arg(self.handle, i)
+
+    def float_arg(self, i: int) -> float:
+        return nox_evq_float_arg(self.handle, i)
+
+    def float32_arg(self, i: int) -> float:
+        return nox_evq_float32_arg(self.handle, i)
+
+    def set_return(self, v: int) -> None:
+        nox_evq_set_return(self.handle, v)
+
+    def pending(self) -> int:
+        return nox_evq_pending(self.handle)
+
+    def dropped(self) -> int:
+        return nox_evq_dropped(self.handle)
+
+    def close(self) -> None:
+        if self.live:
+            self.live = False
+            nox_evq_close(self.handle)
+
+    def __enter__(self) -> EventQueue:
+        return self
+
+    def __exit__(self) -> None:
+        self.close()
+
