@@ -334,13 +334,15 @@ All tasks run on fibers scheduled by the runtime:
   Module-level variables: by default every worker keeps its own copy of them (this is what makes `serve_multicore` handlers independent).
   Programs that share **mutable** module state between tasks without `serve_multicore*` / `nox.thread.pool_run` use one of three models,
   chosen by the compiler (no syntax involved):
-  - **Shared block (parallel):** the only mutable module state is a module-level number/bool that is reassigned, and/or `dict[K, V]` with
-    number/bool values that is never rebound. All workers then see **one** copy. Each dict operation (`d[k] = v`, `d[k]`, `k in d`,
-    `len(d)`, `get`, `pop`, `keys()`, ...) is atomic on its own (a lock inside the dict, taken only when the pool has more than one worker);
-    compound updates such as `d[k] = d[k] + 1` are not atomic as a whole — the program stays memory-safe but increments can be lost. Use a
-    channel or `AtomicRef` when you need exact counters.
-  - **One worker:** any other mutable module state (a module-level list, class instance, channel, task, closure, a `str` that is reassigned, or
-    a dict with `str`/list/class values) still runs the whole program on **one worker** on both backends, so a task never reads another
+  - **Shared block (parallel):** every piece of mutable module state is one of: a module-level number/bool that is reassigned; a `dict[K, V]`
+    with number/bool values that is never rebound; a `Channel[T]` or `Task[T]` that is never rebound; or an instance of a class that does not
+    take part in inheritance and has only number/bool/`str` fields (a `str` field must not be assigned outside `__init__`) and is never
+    rebound. All workers then see **one** copy. Each dict operation (`d[k] = v`, `d[k]`, `k in d`, `len(d)`, `get`, `pop`, `keys()`, ...) is
+    atomic on its own (a lock inside the dict, taken only when the pool has more than one worker); number/bool fields and variables are plain
+    aligned loads and stores. Compound updates such as `d[k] = d[k] + 1` or `stats.hits = stats.hits + 1` are not atomic as a whole — the program
+    stays memory-safe but increments can be lost. Use a channel or `AtomicRef` when you need exact counters.
+  - **One worker:** any other mutable module state (a module-level list, closure, a `str` that is reassigned, a dict with `str`/list/class values, or a class
+    instance with inheritance, list/dict/class fields, or a `str` field assigned after `__init__`) still runs the whole program on **one worker** on both backends, so a task never reads another
     worker's copy (this restriction is being lifted case by case; see the Faz 9.0 notes in the changelog).
   - Module-level constants (numbers and strings assigned once) need neither.
   Setting `NOX_POOL_WORKERS` overrides the worker count (for the "one worker" model, at your own risk).

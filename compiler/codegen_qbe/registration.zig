@@ -959,7 +959,59 @@ fn isSharedSafeDict(g: types.GlobalVar, module: ast.Module) bool {
     return !assignsName(module.body, g.name);
 }
 
+/// `name` adlı bir ALANA (`x.name = ...`, herhangi bir alıcıya) bir `__init__` gövdesi DIŞINDA atama var mı? (muhafazakâr: alıcı tipine bakılmaz.) `in_init`: şu an bir `__init__`in içindeyiz.
+fn assignsAttrOutsideInit(stmts: []const ast.Stmt, name: []const u8, in_init: bool) bool {
+    for (stmts) |st| {
+        switch (st.kind) {
+            .assign => |a| switch (a.target) {
+                .attribute => |at| if (!in_init and std.mem.eql(u8, at.attr, name)) return true,
+                else => {},
+            },
+            .if_stmt => |i| {
+                if (assignsAttrOutsideInit(i.then_body, name, in_init)) return true;
+                for (i.elif_clauses) |e| if (assignsAttrOutsideInit(e.body, name, in_init)) return true;
+                if (i.else_body) |eb| if (assignsAttrOutsideInit(eb, name, in_init)) return true;
+            },
+            .while_stmt => |w| if (assignsAttrOutsideInit(w.body, name, in_init)) return true,
+            .for_stmt => |f| if (assignsAttrOutsideInit(f.body, name, in_init)) return true,
+            .try_stmt => |t| {
+                if (assignsAttrOutsideInit(t.try_body, name, in_init)) return true;
+                for (t.except_clauses) |c| if (assignsAttrOutsideInit(c.body, name, in_init)) return true;
+                if (t.finally_body) |fb| if (assignsAttrOutsideInit(fb, name, in_init)) return true;
+            },
+            .with_stmt => |w| if (assignsAttrOutsideInit(w.body, name, in_init)) return true,
+            .lowlevel_stmt => |l| if (assignsAttrOutsideInit(l.body, name, in_init)) return true,
+            .func_def => |fd| if (assignsAttrOutsideInit(fd.body, name, in_init)) return true,
+            .class_def => |cd| for (cd.methods) |m| {
+                if (assignsAttrOutsideInit(m.body, name, std.mem.eql(u8, m.name, "__init__"))) return true;
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// Paylaşılan tek blokta güvenle yaşayabilen sınıf örneği global'i mi? Sınıf kalıtıma katılmaz (alt sınıf örneği ek yığın alanı taşıyamaz), `__del__` yoktur, tüm alanlar skaler ya da `str`dir; `str`
+/// alanlar `__init__` dışında HİÇ atanmaz (işaretçi değişimi ARC'de yarışırdı); skaler alanlar değişebilir (hizalı 8 baytlık okuma/yazma bellek-güvenlidir; bileşik güncellemeler atomik değildir, karar A).
+/// Örnek işaretçisi yeniden bağlanmaz. Örnek işçiler arasında tek ortak nesnedir; metod çağrıları ve takma adlar güvenlidir.
+fn isSharedSafeClassInstance(self: *Codegen, g: types.GlobalVar, module: ast.Module) bool {
+    if (g.info.heap != .class) return false;
+    if (assignsName(module.body, g.name)) return false;
+    const cn = g.info.class_name orelse return false;
+    const info = self.classes.getPtr(cn) orelse return false;
+    if (info.has_vtable or info.del_owner != null) return false;
+    for (info.fields.items) |f| {
+        switch (f.info.heap) {
+            .none => {},
+            .str => if (assignsAttrOutsideInit(module.body, f.name, false)) return false,
+            else => return false,
+        }
+    }
+    return true;
+}
+
 /// Faz 9.0: sınıflandırır VE paylaşılan-güvenli sözlük globallerini `shared_dict_globals`a yazar (`genGlobalInitStmt` bunları başlangıçta paylaşılan olarak işaretler).
+/// Kanal/görev globalleri (zaten iş parçacığı güvenli tutamaçlar; hiç yeniden atanmamışsa) ve skaler/`str`-alanlı sınıf örnekleri de paylaşılan tek blokta yaşar.
 pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module) CodegenError!SharedGlobalsKind {
     var kind: SharedGlobalsKind = .none;
     var it = self.module_globals.valueIterator();
@@ -971,6 +1023,14 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module) CodegenError!Shared
             .str => if (assignsName(module.body, g.name)) return .pinned,
             .dict => {
                 if (!isSharedSafeDict(g.*, module)) return .pinned;
+                kind = .shared_block;
+            },
+            .channel, .task => {
+                if (assignsName(module.body, g.name)) return .pinned;
+                kind = .shared_block;
+            },
+            .class => {
+                if (!isSharedSafeClassInstance(self, g.*, module)) return .pinned;
                 kind = .shared_block;
             },
             else => return .pinned,

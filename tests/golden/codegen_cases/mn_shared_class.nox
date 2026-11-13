@@ -1,0 +1,49 @@
+# Faz 9.0 (v2.1.120): skaler/`str` alanlı modül düzeyi sınıf örneği tüm işçilerde TEK ortak nesnedir. `cfg` yalnız okunur (`str` alanı `__init__` dışında atanmaz),
+# `stats` skaler sayaçtır (bileşik artışlar atomik değildir: yalnız sınırlar doğrulanır).
+class Config:
+    name: str
+    limit: int
+    def __init__(self, name: str, limit: int) -> None:
+        self.name = name
+        self.limit = limit
+
+class Stats:
+    hits: int
+    last: int
+    def __init__(self) -> None:
+        self.hits = 0
+        self.last = -1
+    def touch(self, who: int) -> None:
+        self.hits = self.hits + 1
+        self.last = who
+
+cfg: Config = Config("nox", 1000)
+stats: Stats = Stats()
+
+async def work(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    i: int = 0
+    while i < cfg.limit * 400:
+        acc = (acc * 31 + i + id) % 1000003
+        i = i + 1
+    stats.touch(id)
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 8:
+        t: Task[None] = spawn work(k, out)
+        k = k + 1
+    total: int = 0
+    k = 0
+    while k < 8:
+        total = total + await out.recv()
+        k = k + 1
+    print(total)
+    print(cfg.name)
+    print(stats.hits >= 1 and stats.hits <= 8)
+    print(stats.last >= 0 and stats.last < 8)
+
+mt: Task[None] = spawn main_task()
+await mt

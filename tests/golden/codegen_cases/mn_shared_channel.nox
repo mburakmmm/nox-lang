@@ -1,0 +1,40 @@
+# Faz 9.0 (v2.1.120): hiç yeniden atanmayan modül düzeyi Channel globalleri tüm işçilerde TEK ortak kanaldır (işçi başına kopya değil).
+# Üretici ana görev işleri kanala yazar, birden çok tüketici işçi aynı kanaldan okur; toplam belirleyicidir.
+jobs: Channel[int] = Channel[int](8)
+results: Channel[int] = Channel[int](64)
+
+async def consumer(id: int) -> None:
+    acc: int = 0
+    while True:
+        v: int = await jobs.recv()
+        if v < 0:
+            break
+        # küçük bir hesap: işlerin farklı işçilere dağılmasına zaman tanır
+        i: int = 0
+        while i < 20000:
+            i = i + 1
+        acc = acc + v
+    await results.send(acc)
+
+async def main_task() -> None:
+    k: int = 0
+    while k < 4:
+        t: Task[None] = spawn consumer(k)
+        k = k + 1
+    n: int = 1
+    while n <= 100:
+        await jobs.send(n)
+        n = n + 1
+    k = 0
+    while k < 4:
+        await jobs.send(-1)
+        k = k + 1
+    total: int = 0
+    k = 0
+    while k < 4:
+        total = total + await results.recv()
+        k = k + 1
+    print(total)
+
+mt: Task[None] = spawn main_task()
+await mt

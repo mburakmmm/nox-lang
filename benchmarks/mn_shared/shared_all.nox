@@ -1,7 +1,6 @@
-# 9.0.1: modül düzeyinde paylaşılan DEĞİŞKEN sözlük + liste + sınıf. Her görev KENDİ anahtarlarına yazar (sonuç belirleyici),
+# 9.0.1 (dilim 2): modül düzeyinde paylaşılan DEĞİŞKEN sözlük + sınıf örneği (skaler alanlı). `list` globali henüz dilimde değil (tek işçi). Her görev KENDİ anahtarlarına yazar (sonuç belirleyici),
 # ama kapsayıcılar görevler arasında ORTAKTIR. Bugün (v2.1.117) bu program tek işçiye sabitlenir.
 counts: dict[int, int] = {}
-log: list[int] = []
 
 class Stats:
     hits: int
@@ -18,7 +17,6 @@ async def work(id: int, out: Channel[int]) -> None:
         if i % 2000 == 0:
             counts[id * 1000 + (i // 2000) % 1000] = acc
         i = i + 1
-    log.append(acc)
     stats.hits = stats.hits + 1
     await out.send(acc)
 
@@ -35,7 +33,6 @@ async def main_task() -> None:
         k = k + 1
     print(total)
     print(len(counts))
-    print(len(log))
     print(stats.hits)
 
 mt: Task[None] = spawn main_task()

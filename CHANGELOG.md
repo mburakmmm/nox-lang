@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.121]
+
+### Eklendi
+
+- **M:N paylaşılan modül durumu, dilim 2 (Faz 9.0):** hiç yeniden atanmayan `Channel[T]`/`Task[T]` modül globalleri ve kalıtıma katılmayan, yalnızca skaler/`str` alanlı sınıf örneği globalleri (`str` alanı `__init__` dışında atanmıyorsa; `__del__` yok) artık programı tek işçiye SABİTLEMEZ: tüm işçiler tek ortak globals bloğunu görür. Skaler alanlar düz hizalı okuma/yazmadır (bileşik güncellemeler atomik değil, bellek-güvenli; karar A). Depodaki async programların tek işçiye düşenleri 4/59'dan 1/59'a indi (kalan: liste global'i). Dict+sınıf iş yükü 1 işçide 2,44 s → 8 işçide 0,39 s.
+- Testler: iki backend golden `mn_shared_channel`, `mn_shared_class`; `docs/language/concurrency.md` ve spesifikasyon §3.459 güncellendi.
+
 ## [2.1.120]
 
 ### Eklendi
