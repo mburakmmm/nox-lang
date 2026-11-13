@@ -197,3 +197,38 @@ jobs:
       - name: HTTP/2 fuzz (62 yapısal vaka + 1000 mutasyon)
         run: python3 scripts/http2_server_fuzz.py --iterations 1000
 
+  # v2.1.127 (Faz 9.8): paylaşılan modül durumu (M:N tek ortak globals bloğu) yarış stresi — `mn_shared_*` fixture'ları LLVM ile, `NOX_POOL_WORKERS` 1/2/4/8 ve 20 turda
+  # çalıştırılır (Debug çalışma zamanı: sızıntı/çift bırakma DebugAllocator ile yakalanır; stderr boş olmalıdır). QBE yolu yerelde `scripts/mn_shared_stress.sh` ile koşulur.
+  mn-shared-stress:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            name: macOS (aarch64)
+            zig_arch: aarch64-macos
+          - os: ubuntu-latest
+            name: Linux (x86-64)
+            zig_arch: x86_64-linux
+    name: M:N paylaşılan durum stresi (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-${{ matrix.zig_arch }}-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-${{ matrix.zig_arch }}-0.16.0" >>"$GITHUB_PATH"
+
+      - name: zig build (Debug çalışma zamanı: sızıntı denetimi açık)
+        run: zig build
+
+      - name: M:N paylaşılan durum stresi
+        run: BACKENDS=llvm scripts/mn_shared_stress.sh 20
+
+      - name: Paylaşılan durum RSS büyüme denetimi (soak)
+        run: python3 scripts/shared_state_soak.py --rounds 40000
+

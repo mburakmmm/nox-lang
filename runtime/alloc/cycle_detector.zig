@@ -326,6 +326,9 @@ fn compactRoots(gc: *CycleGc) void {
     gc.roots.shrinkRetainingCapacity(w);
 }
 
+/// `nox_cycle_collect` sonunda kök tablosunun korunacağı en büyük kapasite (eleman sayısı); aşan kapasite bırakılır.
+const ROOTS_KEEP_CAPACITY: usize = 4096;
+
 /// Bacon-Rajan'ın `PossibleRoot(S)`si — bkz. modül üstü not. `codegen.zig`nin
 /// `genClassRelease`i, `nox_rc_predecrement` refcount'u SIFIRA
 /// DÜŞÜRMEDİĞİNDE (nesne hâlâ CANLI, ama BELKİ bir döngünün parçası) bunu
@@ -621,6 +624,8 @@ fn collectRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     }
     gc.roots.clearRetainingCapacity();
     gc.live_roots = 0;
+    // Faz 9.11: tepe yük sonrası kök tablosunun kapasitesi sonsuza dek tutulmasın (kararlı düşük yükte RSS şişkin kalıyordu): büyük kapasite boşaltılır, küçük kapasite korunur.
+    if (gc.roots.capacity > ROOTS_KEEP_CAPACITY) gc.roots.shrinkAndFree(state.allocator(), 0);
 
     for (whites.items) |ptr| {
         const tag = readTag(ptr);

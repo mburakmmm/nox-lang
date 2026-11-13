@@ -236,6 +236,9 @@ const shapes_program =
     \\node_set_w(n, usize(1), 2.5)
     \\print(node_get_w(n, usize(1)))
     \\print(node_w_LEN)
+    \\node_set_w(n, usize(5), 9.9)
+    \\print(node_get_w(n, usize(5)))
+    \\print(node_get_w(n, usize(1)))
     \\print(nox.ffi.is_null(node_get_next(n)))
     \\node_free(n)
     \\print(shapes_counter_get())
@@ -278,7 +281,8 @@ test "bindgen: struct alanları, değerle struct, dizi/bit alanı, global deği�
     const objs = [_][]const u8{ o_path, shim_o };
     const qbe = try compile_helpers.compileAndRunWithObjs(a, full, &objs);
     const llvm = try compile_helpers.compileAndRunLlvmWithObjs(a, full, &objs);
-    const expected = "3.5\n5.5\n42.5\n7\nalpha\n5\n2.5\n3\nTrue\n40\n42\n1.2\n6.0\n";
+    // v2.1.127 (9.5): sınır dışı dizi indeksi denetimli erişimcilerde 0.0 döner ve yazma yok sayılır.
+    const expected = "3.5\n5.5\n42.5\n7\nalpha\n5\n2.5\n3\n0.0\n2.5\nTrue\n40\n42\n1.2\n6.0\n";
     for ([_]std.process.RunResult{ qbe, llvm }) |r| {
         if (r.term != .exited or r.term.exited != 0 or r.stderr.len != 0) {
             std.debug.print("program basarisiz: {s}\n", .{r.stderr});

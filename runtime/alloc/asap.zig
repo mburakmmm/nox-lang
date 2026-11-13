@@ -248,6 +248,10 @@ comptime {
     std.debug.assert(@sizeOf(HotState) == abi_layout.RT_HOT_SIZE);
     std.debug.assert(@offsetOf(HotState, "pending_exception") == 0);
     std.debug.assert(@offsetOf(HotState, "fiber_ever_active") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_FIBER_FLAG_BACK);
+    // Faz 9.10: derleyicinin satır içi kullandığı HER alan ofseti, boyut ve hizalama derleme zamanında doğrulanır (sıcak blok `rt`nin hemen öncesindedir: `rt - RT_HOT_SIZE`).
+    std.debug.assert(@offsetOf(HotState, "pending_exception_line") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_LINE_BACK);
+    std.debug.assert(abi_layout.RT_HOT_SIZE % @alignOf(HotState) == 0); // `rt - RT_HOT_SIZE` her hedefte (32/64 bit) HotState hizalamasını korur
+    std.debug.assert(abi_layout.RT_HOT_PENDING_BACK == abi_layout.RT_HOT_SIZE); // blok başı = rt - RT_HOT_SIZE = bekleyen istisna işaretçisi
 }
 
 pub const RuntimeState = struct {

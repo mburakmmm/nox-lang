@@ -200,3 +200,5 @@ pub const TRACE_BUF_SLOT_SIZE: usize = 8;
 pub const RT_HOT_SIZE: usize = 64;
 pub const RT_HOT_PENDING_BACK: usize = 64;
 pub const RT_HOT_FIBER_FLAG_BACK: usize = 48;
+/// `pending_exception_line` alanının `rt`ye göre geri ofseti (`rt - 56`).
+pub const RT_HOT_LINE_BACK: usize = 56;

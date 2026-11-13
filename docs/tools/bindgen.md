@@ -47,9 +47,9 @@ For every complete `struct`/`union` in the header `bindgen` generates, through t
 
 | Function | Meaning |
 |---|---|
-| `Name_new()` / `Name_free(p)` / `Name_size()` | zeroed memory for one struct (`calloc`), release it, `sizeof` |
+| `Name_new()` / `Name_free(p)` / `Name_size()` | zeroed memory for one struct (`calloc`), release it, `sizeof`. **`Name_free` only releases blocks made by `Name_new` (or returned by by-value wrappers).** Never call it on a pointer the library owns (use the library's own destroy function) and note that it does not free memory the fields point to |
 | `Name_get_f(p)` / `Name_set_f(p, v)` | read / write field `f` (also bit fields; no setter for `const` fields) |
-| `Name_get_f(p, i)` / `Name_set_f(p, i, v)`, `Name_f_ptr(p)`, `Name_f_LEN` | an array field: element access, the array's start (use `nox.ffi.cstr` for a `char` array) and its length |
+| `Name_get_f(p, i)` / `Name_set_f(p, i, v)`, `Name_f_ptr(p)`, `Name_f_LEN` | an array field: element access, the array's start (use `nox.ffi.cstr` for a `char` array) and its length. For a fixed-length array the accessors are **bounds-checked**: an index `>= Name_f_LEN` makes the getter return `0`/`NULL` and the setter do nothing. Set `"unchecked_accessors": true` in `--config` for raw `p->f[i]` access (and always for flexible arrays, whose length is unknown) |
 | `Name_get_f(p)` for a nested struct | the **address** of the nested struct (read or write it with that struct's accessors); `Name_set_f(p, v)` copies `*v` into it |
 
 Fields of an anonymous inner `struct`/`union` are reachable directly on the outer type. A function that takes or returns a struct **by value** (`vec2 add(vec2 a, vec2 b)`) is called

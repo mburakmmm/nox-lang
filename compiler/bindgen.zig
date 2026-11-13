@@ -35,6 +35,8 @@ pub const Config = struct {
     long_double_as_f64: bool = false,
     /// Callback'i kütüphanenin KENDİ iş parçacığından çağıran işlevler: callback parametresi `@ffi.callback` yerine ham `ptr` kalır (`nox.ffi.EventQueue.callback(i)` ile beslenir).
     event_callbacks: []const []const u8 = &.{},
+    /// Faz 9.5: `true` ise sabit uzunluklu dizi alanı erişimcileri SINIR DENETİMSİZ (`p->f[i]`) üretilir; varsayılan (`false`) denetimlidir: `i >= N` ise getter 0/NULL döner, setter hiçbir şey yazmaz.
+    unchecked_accessors: bool = false,
 };
 
 pub const VariadicShim = struct {
@@ -49,9 +51,10 @@ pub fn parseConfig(a: std.mem.Allocator, text: []const u8) !Config {
         variadic: []const VariadicShim = &.{},
         long_double: []const u8 = "",
         event_callbacks: []const []const u8 = &.{},
+        unchecked_accessors: bool = false,
     };
     const parsed = try std.json.parseFromSliceLeaky(Raw, a, text, .{ .ignore_unknown_fields = true });
-    return .{ .variadic = parsed.variadic, .long_double_as_f64 = std.mem.eql(u8, parsed.long_double, "f64"), .event_callbacks = parsed.event_callbacks };
+    return .{ .variadic = parsed.variadic, .long_double_as_f64 = std.mem.eql(u8, parsed.long_double, "f64"), .event_callbacks = parsed.event_callbacks, .unchecked_accessors = parsed.unchecked_accessors };
 }
 
 pub const Output = struct {
@@ -1449,7 +1452,7 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
             return std.mem.lessThan(u8, x, y);
         }
     }.lt);
-    if (rec_names.items.len > 0) try nox.appendSlice(a, "\n# struct/union helpers: <Name>_new / _free / _size and per-field <Name>_get_<f> / <Name>_set_<f> (struct memory is always a `ptr`)\n");
+    if (rec_names.items.len > 0) try nox.appendSlice(a, "\n# struct/union helpers: <Name>_new / _free / _size and per-field <Name>_get_<f> / <Name>_set_<f> (struct memory is always a `ptr`)\n# OWNERSHIP: <Name>_free only releases blocks made by <Name>_new (or returned by-value wrappers). Never call it on a pointer the library owns (use the library's own destroy/free function), and it does not free memory that fields point to.\n");
     for (rec_names.items) |tag| {
         const rec = parser.records.get(tag).?;
         const display = em.recordDisplay(tag).?;
@@ -1707,7 +1710,8 @@ fn emitFields(em: *Emitter, rec: Record, display: []const u8, ctext: []const u8,
                 if (arr.len) |n| try appendF(a, nox, "{s}_{s}_LEN: int = {d}\n", .{ display, f.name, n });
                 if (er == .record) {
                     const addr_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_get_{s}", .{ display, f.name }));
-                    try appendF(a, shim, "void *{s}(void *p, size_t i) {{ return (void *)&{s}[i]; }}\n", .{ addr_n, acc });
+                    const guard: []const u8 = if (arr.len != null and !em.opts.config.unchecked_accessors) try std.fmt.allocPrint(a, "if (i >= {d}) return (void *)0; ", .{arr.len.?}) else "";
+                    try appendF(a, shim, "void *{s}(void *p, size_t i) {{ {s}return (void *)&{s}[i]; }}\n", .{ addr_n, guard, acc });
                     try appendF(a, nox, "extern def {s}(p: ptr, i: usize) -> ptr from \"{s}\"\n", .{ addr_n, lib });
                     continue;
                 }
@@ -1717,11 +1721,14 @@ fn emitFields(em: *Emitter, rec: Record, display: []const u8, ctext: []const u8,
                 };
                 const get_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_get_{s}", .{ display, f.name }));
                 const cast: []const u8 = if (std.mem.endsWith(u8, mt.c, "*")) "(void *)" else if (mt.is_f32) "(double)" else "";
-                try appendF(a, shim, "{s} {s}(void *p, size_t i) {{ return {s}{s}[i]; }}\n", .{ mt.c, get_n, cast, acc });
+                const checked = arr.len != null and !em.opts.config.unchecked_accessors;
+                const get_guard: []const u8 = if (checked) try std.fmt.allocPrint(a, "if (i >= {d}) return {s}0; ", .{ arr.len.?, if (std.mem.endsWith(u8, mt.c, "*")) "(void *)" else "" }) else "";
+                try appendF(a, shim, "{s} {s}(void *p, size_t i) {{ {s}return {s}{s}[i]; }}\n", .{ mt.c, get_n, get_guard, cast, acc });
                 try appendF(a, nox, "extern def {s}(p: ptr, i: usize) -> {s} from \"{s}\"\n", .{ get_n, mt.nox, lib });
                 if (!f.is_const) {
                     const set_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_set_{s}", .{ display, f.name }));
-                    try appendF(a, shim, "void {s}(void *p, size_t i, {s}{s}v) {{ {s}[i] = (__typeof__({s}[0]))v; }}\n", .{ set_n, mt.c, if (std.mem.endsWith(u8, mt.c, "*")) "" else " ", acc, acc });
+                    const set_guard: []const u8 = if (checked) try std.fmt.allocPrint(a, "if (i >= {d}) return; ", .{arr.len.?}) else "";
+                    try appendF(a, shim, "void {s}(void *p, size_t i, {s}{s}v) {{ {s}{s}[i] = (__typeof__({s}[0]))v; }}\n", .{ set_n, mt.c, if (std.mem.endsWith(u8, mt.c, "*")) "" else " ", set_guard, acc, acc });
                     try appendF(a, nox, "extern def {s}(p: ptr, i: usize, v: {s}) -> None from \"{s}\"\n", .{ set_n, mt.nox, lib });
                 }
             },

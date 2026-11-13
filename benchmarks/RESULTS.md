@@ -1737,4 +1737,6 @@ ortancası, ms/tekrar (10 tekrar):
 Okuma: `nox.json` CPython ile aynı hızda; üretilen yyjson binding'i gezinmede `nox.json`dan **4,8x**, yazmada **8,4x** hızlı ve yazmada doğrudan C ile aynı hızda
 (iş tamamen C'de; Nox yalnızca çağırır). Gezinmede binding'in C'ye göre 2,2x geriliği, 20 000 öğe x 3 `yyjson_obj_get` + yineleyici çağrısının her birinin bir Nox
 sarmalayıcı + kabuk katmanından geçmesidir. Not: `yyjson_arr_get(i)` değişmez belgede O(i)'dir (kütüphanenin belgelediği davranış); gezinme yineleyiciyle yapıldı.
+
+**Eşit-iş uyarısı (Faz 9.13, v2.1.127):** gezinme sütunundaki iki taraf AYNI arama stratejisini kullanmaz: `nox.json` yolu (`walk_nox`) bir nesnenin alanlarını sırayla gezip anahtar karşılaştırırken, yyjson yolu (`walk_yyjson`) `yyjson_obj_get` ile anahtarı doğrudan arar (C tarafında hash/doğrusal arama). Yani 4,8x/8,4x oranı "aynı işin" iki gerçekleştirimi değil, iki farklı erişim biçiminin toplam maliyetidir; yalnız yönü (bağlama katmanı pahalı değil) gösterir, kesin bir kütüphane-hız oranı olarak alıntılanmamalıdır. Eşit-iş için iki taraf da aynı sırayla `n` alanı okuyan bir varyant gerekir.
 QBE ve LLVM backend'leri aynı sıralamayı verir (QBE gezinme 2,15 ms).

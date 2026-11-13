@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.127]
+
+### Düzeltildi / Eklendi (Faz 9 kontrol/debug)
+
+- **9.5 bindgen:** sabit uzunluklu dizi alanı erişimcileri SINIR DENETİMLİ üretilir (aralık dışı getter `0`/`NULL`, setter hiçbir şey yazmaz); ham `p->f[i]` için `bindgen.json`da `"unchecked_accessors": true`. Esnek (uzunluğu bilinmeyen) dizilerde denetim yoktur.
+- **9.6 bindgen:** `Name_free` sahiplik uyarısı (yalnız `Name_new`/değerle-dönen sarmalayıcı blokları; kütüphanenin sahip olduğu işaretçide ve alanların işaret ettiği bellekte kullanılmaz) üretilen başlığa ve `docs/tools/bindgen.md`ye eklendi.
+- **9.9 LLVM TBAA:** çalışma zamanı çağrılarıyla (reverse/insert/remove/del/sort/clear/copy/`+`/dilim) değişen liste + satır içi eleman erişimi fixture'ı (`list_tbaa_runtime_mutators`; Python ile aynı).
+- **9.10:** sıcak blok (`HotState`) her alan ofseti/boyut/hizalaması `comptime` doğrulanır (`abi_layout.RT_HOT_LINE_BACK`).
+- **9.11:** döngü çözücü kök tablosu kapasitesi (> 4096) tepe yükten sonra bırakılır.
+- **9.8 / 9.12:** `scripts/mn_shared_stress.sh` (paylaşılan modül durumu yarış stresi: iki backend × `NOX_POOL_WORKERS` 1/2/4/8 × tur; 240 çalıştırma 0 hata) ve `scripts/shared_state_soak.py` (1x/4x tur RSS oranı; sızıntı denetimi) gecelik `stress.yml` işine (`mn-shared-stress`) bağlandı. ThreadSanitizer bu sürümde YOK.
+- **9.13:** `benchmarks/RESULTS.md` yyjson kıyasına "iki taraf aynı arama stratejisini kullanmıyor" uyarısı.
+
 ## [2.1.126]
 
 ### Eklendi

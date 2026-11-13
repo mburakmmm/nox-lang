@@ -1,0 +1,52 @@
+# Faz 9.12: paylaşılan modül durumunda ARC/kilit sızıntısı denetimi. Her görev paylaşılan dict/list/str/sınıf üzerinde @ROUNDS@ tur ekle/oku/üzerine yaz/çıkar yapar; sızıntı varsa
+# tepe RSS tur sayısıyla doğrusal büyür (scripts/shared_state_soak.py 1x ve 4x tur sayısını karşılaştırır).
+class Entry:
+    name: str
+    hits: int
+    def __init__(self: Entry, name: str, hits: int) -> None:
+        self.name = name
+        self.hits = hits
+
+cache: dict[str, Entry] = {}
+words: dict[int, str] = {}
+log: list[str] = []
+objs: list[Entry] = []
+current: str = "init"
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    r: int = 0
+    while r < @ROUNDS@:
+        key: str = "k" + str(r % 64)
+        cache[key] = Entry(key, r)
+        e: Entry = cache[key]
+        acc = acc + e.hits % 7
+        words[r % 128] = "w" + str(r)
+        log.append("l" + str(r))
+        if len(log) > 200:
+            log.clear()
+        objs.append(Entry("o", r))
+        if len(objs) > 150:
+            objs.pop()
+            objs[0] = Entry("n", r)
+        current = "c" + str(id) + "-" + str(r)
+        acc = acc + len(current) % 3
+        r = r + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 4:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    total: int = 0
+    k = 0
+    while k < 4:
+        total = total + await out.recv()
+        k = k + 1
+    print(total > 0)
+    print(len(cache))
+
+mt: Task[None] = spawn main_task()
+await mt

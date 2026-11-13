@@ -1,0 +1,61 @@
+# v2.1.127 (Faz 9.9): LLVM TBAA — çalışma zamanı çağrılarıyla (reverse/insert/remove/del/sort/clear/copy/+/dilim) değişen liste, satır içi eleman okuma/yazma döngüleriyle iç içe;
+# sonuç Python ile aynı olmalı (etiketli satır içi erişimler çalışma zamanı değişikliklerini yanlış önbelleğe almamalı/yeniden sıralamamalı).
+def mix(n: int) -> int:
+    xs: list[int] = []
+    t: int = 0
+    i: int = 0
+    while i < n:
+        xs.append(i * 7 % 23)
+        if i % 5 == 4:
+            xs.reverse()
+        if i % 6 == 5:
+            xs.insert(0, i)
+        if i % 7 == 6 and len(xs) > 3:
+            xs.remove(xs[2])
+        if i % 9 == 8 and len(xs) > 2:
+            del xs[1]
+        if i % 11 == 10:
+            xs.sort()
+        j: int = 0
+        while j < len(xs):
+            xs[j] = xs[j] + 1
+            t = t + xs[j] * (j + 1)
+            j = j + 1
+        i = i + 1
+    return t + len(xs)
+
+def extend_and_copy(n: int) -> int:
+    a: list[int] = [1, 2, 3]
+    b: list[int] = []
+    t: int = 0
+    i: int = 0
+    while i < n:
+        b = a.copy()
+        a = a + [i, i + 1]
+        k: int = 0
+        while k < len(b):
+            b[k] = b[k] * 2
+            t = t + b[k] + a[k]
+            k = k + 1
+        if len(a) > 12:
+            a = a[2:8]
+        i = i + 1
+    return t + len(a) * 1000 + len(b)
+
+def clear_cycle(n: int) -> int:
+    xs: list[int] = [5, 6, 7]
+    t: int = 0
+    i: int = 0
+    while i < n:
+        t = t + xs[0] + len(xs)
+        xs.clear()
+        xs.append(i)
+        xs.append(i + 2)
+        t = t + xs[1] - xs[0]
+        xs = xs + [i * 3]
+        i = i + 1
+    return t + xs[2]
+
+print(mix(60))
+print(extend_and_copy(40))
+print(clear_cycle(25))
