@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.137]
+
+### Eklendi (Faz 9.0 F6: stres + ölçüm)
+
+- `scripts/mn_shared_stress.sh` (ve gecelik `mn-shared-stress` işi) artık `mn_dyn_*` fixture'larını da kapsar (yerelde llvm, 1/4/8 işçi × 3 tur × 20 fixture: 180 çalıştırma, 0 hata, DebugAllocator sızıntı/çift bırakma denetimli).
+- Ölçüm: `benchmarks/mn_shared/RESULTS-v2.1.136.txt` — bariyerler hesap-baskın işlerde ölçeklenmeyi bozmaz (pure_compute/shared_dict/shared_all: 2.6 s → 0.4 s @8 işçi); ortak veriyi sürekli tarayan sıcak döngüler kilit çekişmesiyle sınırlıdır. ThreadSanitizer entegrasyonu (derleme altyapısı gerektirir) açık kalır.
+
 ## [2.1.136]
 
 ### Eklendi (Faz 9.0 F5: kalıtım, tutamaç alanları, `__del__`, yuva bariyerli globaller)

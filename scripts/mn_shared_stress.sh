@@ -1,5 +1,5 @@
 #!/bin/bash
-# Faz 9.8: M:N paylaşılan modül durumu yarış stresi. `tests/golden/codegen_cases/mn_shared_*.nox` fixture'larını iki backend'de derler ve `NOX_POOL_WORKERS` 1/2/4/8 ile
+# Faz 9.8: M:N paylaşılan modül durumu yarış stresi. `tests/golden/codegen_cases/mn_shared_*.nox` ve `mn_dyn_*.nox` fixture'larını iki backend'de derler ve `NOX_POOL_WORKERS` 1/2/4/8 ile
 # ROUNDS tur çalıştırır; çıktı `.expected` ile bire bir aynı olmalı ve stderr boş (sızıntı/çökme yok) olmalıdır.
 # Kullanım: [BACKENDS="llvm"] scripts/mn_shared_stress.sh [ROUNDS=5] [WORKERS="1 2 4 8"]   (önkoşul: `zig build`; nightly: .github/workflows/stress.yml)
 cd "$(dirname "$0")/.." || exit 1
@@ -10,7 +10,7 @@ NOXC=${NOXC:-zig-out/bin/noxc}
 OUT=$(mktemp -d)
 fail=0
 total=0
-for src in tests/golden/codegen_cases/mn_shared_*.nox tests/golden/codegen_cases/wasm_host_interleave.nox; do
+for src in tests/golden/codegen_cases/mn_shared_*.nox tests/golden/codegen_cases/mn_dyn_*.nox tests/golden/codegen_cases/wasm_host_interleave.nox; do
   name=$(basename "$src" .nox)
   exp="tests/golden/codegen_cases/$name.expected"
   [ -f "$exp" ] || continue

@@ -1,0 +1,7 @@
+# Faz 9.0 F6 ölçümü (v2.1.136, ReleaseFast, M-serisi 8 çekirdek): sabit, hesap-baskın yük + paylaşılan veri
+pure_compute      llvm w=1 2.62s  w=4 0.65s  w=8 0.39s   (taban v2.1.119: 2.44 / 0.68 / 0.40 — fark yok)
+shared_dict       llvm w=1 2.66s  w=4 0.65s  w=8 0.41s   (taban: çalışmıyordu — tek işçiye düşüyordu)
+shared_all        llvm w=1 2.67s  w=4 0.65s  w=8 0.40s
+shared_dict_hot   llvm w=1 2.73s  w=4 2.56s  w=8 3.45s   (aşırı çekişme: ölçeklenmez; bilinen sınır — parçalı sözlük fikri açık)
+dyn_heap_lists    llvm w=1 0.24s  w=4 0.13s  w=8 0.26s   ·  qbe w=1 0.27s w=4 0.09s w=8 0.26s  (büyüyen paylaşılan list[str]/list[Sınıf] üstünde her 25 yinelemede tam tarama: kilit çekişmeli)
+# Sonuç: bariyerler hesap-baskın işlerde ölçeklenmeyi bozmaz; ortak veriyi sürekli tarayan/yazan sıcak döngüler kilit çekişmesiyle sınırlıdır (Go'da `sync.Mutex` ile aynı sınıf).
