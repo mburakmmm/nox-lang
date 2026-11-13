@@ -1721,3 +1721,20 @@ kullanın (bkz. runtime/alloc/asap.zig, nox-teknik-spesifikasyon.md).
 
 Toplam: 30/30 stres testi, 10/10 karşılaştırma çifti, 8/8 Rust stdlib çifti, 4/4 Rust crate çifti geçti.
 ```
+
+## yyjson kabul testi ve `nox.json` kıyası (v2.1.105, TODO 3.4/5.1 F5)
+
+`benchmarks/yyjson/run.py`: `noxc bindgen` ile `yyjson.h`den (0.13.0, MIT, `benchmarks/yyjson/`) otomatik üretilen binding'i (331 işlev, 116 sabit; 288 işlev C
+kabuğundan geçer çünkü yyjson API'sinin çoğu `static inline`) AYNI belgede `nox.json`, doğrudan C ve CPython `json` ile kıyaslar. Belge: 20 000 öğe
+(`{"id","name","active","score","tags"}`), ≈ 1,6 MB; sağlama toplamları ve yazılan uzunluk tüm uygulamalarda BİREBİR eşit. Apple M4, ReleaseFast, 5 koşunun
+ortancası, ms/tekrar (10 tekrar):
+
+| iş | nox.json | yyjson (Nox binding) | yyjson (C) | CPython json |
+|---|---:|---:|---:|---:|
+| ayrıştır + gez (id, active, score) | 9,85 | **2,06** | 0,93 | 9,92 |
+| ayrıştır + yaz | 10,36 | **1,23** | 1,21 | 16,42 |
+
+Okuma: `nox.json` CPython ile aynı hızda; üretilen yyjson binding'i gezinmede `nox.json`dan **4,8x**, yazmada **8,4x** hızlı ve yazmada doğrudan C ile aynı hızda
+(iş tamamen C'de; Nox yalnızca çağırır). Gezinmede binding'in C'ye göre 2,2x geriliği, 20 000 öğe x 3 `yyjson_obj_get` + yineleyici çağrısının her birinin bir Nox
+sarmalayıcı + kabuk katmanından geçmesidir. Not: `yyjson_arr_get(i)` değişmez belgede O(i)'dir (kütüphanenin belgelediği davranış); gezinme yineleyiciyle yapıldı.
+QBE ve LLVM backend'leri aynı sıralamayı verir (QBE gezinme 2,15 ms).

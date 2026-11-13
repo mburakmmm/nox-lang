@@ -67,3 +67,11 @@ mylib_free(c)
 Constants made from `#define` are plain `int`s, so convert them where a parameter has a fixed width (`i32(SQLITE_OPEN_READWRITE)`). The generated `extern def`s
 are raw native calls: they run with the full authority of the process ([trust boundary](../language/ffi.md#the-trust-boundary)). Combine them with
 [`@ffi.errors`](../language/ffi.md#errors) and [`nox.ffi.Callback`](../stdlib/ffi.md) to get exceptions and closure callbacks.
+
+## Worked example: yyjson
+
+`noxc bindgen yyjson.h --lib yyjson.o --prefix yyjson` turns the whole yyjson header (about 9000 lines, mostly `static inline` functions) into 331 functions and 116
+constants, 288 of them through the generated shim. Reading, walking (with the array iterator) and writing a JSON document work from Nox on both backends, and on
+a 1.6 MB document the generated binding walks it 4.8 times faster and writes it 8.4 times faster than `nox.json` (writing is as fast as C itself). The
+benchmark and the numbers are in `benchmarks/yyjson/` and `benchmarks/RESULTS.md`.
+

@@ -1,0 +1,114 @@
+# nox.json ve yyjson'un (noxc bindgen ile üretilen binding üzerinden) AYNI belgede kıyaslaması. `run.py` bu dosyanın başına üretilen binding'i ekler.
+# Çıktı: ad<TAB>ms/tekrar<TAB>sağlama toplamı
+import nox.json
+import nox.time
+
+extern def malloc(n: int) -> ptr from "c"
+extern def free(p: ptr) -> None from "c"
+
+def build_doc(n: int) -> str:
+    parts: list[str] = []
+    i: int = 0
+    while i < n:
+        flag: str = "true"
+        if i % 3 == 0:
+            flag = "false"
+        parts.append("{\"id\":" + str(i) + ",\"name\":\"item-" + str(i) + "\",\"active\":" + flag + ",\"score\":" + str(float(i) * 0.5 + 0.25) + ",\"tags\":[\"a\",\"b\"]}")
+        i = i + 1
+    return "[" + ",".join(parts) + "]"
+
+def walk_nox(text: str) -> int:
+    v: JsonValue = nox.json.parse(text)
+    n: int = nox.json.array_len(v)
+    ids: int = 0
+    active: int = 0
+    score: float = 0.0
+    i: int = 0
+    while i < n:
+        item: JsonValue = nox.json.array_get(v, i)
+        m: int = nox.json.object_len(item)
+        j: int = 0
+        while j < m:
+            k: str = nox.json.object_key(item, j)
+            x: JsonValue = nox.json.object_value(item, j)
+            if k == "id":
+                ids = ids + nox.json.as_int(x)
+            elif k == "active":
+                if nox.json.as_bool(x):
+                    active = active + 1
+            elif k == "score":
+                score = score + nox.json.as_number(x)
+            j = j + 1
+        i = i + 1
+    return ids + 1000 * active + int(score)
+
+def walk_yyjson(text: str) -> int:
+    doc: ptr = yyjson_read(text, usize(len(text)), YYJSON_READ_NOFLAG)
+    root: ptr = yyjson_doc_get_root(doc)
+    ids: int = 0
+    active: int = 0
+    score: float = 0.0
+    # yyjson_arr_get(i) değişmez belgede O(i)'dir; gezinme için yineleyici kullanılır (kütüphanenin önerdiği yol)
+    it: ptr = malloc(64)
+    yyjson_arr_iter_init(root, it)
+    while yyjson_arr_iter_has_next(it):
+        item: ptr = yyjson_arr_iter_next(it)
+        ids = ids + int(yyjson_get_sint(yyjson_obj_get(item, "id")))
+        if yyjson_get_bool(yyjson_obj_get(item, "active")):
+            active = active + 1
+        score = score + yyjson_get_num(yyjson_obj_get(item, "score"))
+    free(it)
+    yyjson_doc_free(doc)
+    return ids + 1000 * active + int(score)
+
+def roundtrip_nox(text: str) -> int:
+    v: JsonValue = nox.json.parse(text)
+    return len(nox.json.dump(v))
+
+def roundtrip_yyjson(text: str, lenp: ptr) -> int:
+    doc: ptr = yyjson_read(text, usize(len(text)), YYJSON_READ_NOFLAG)
+    out: ptr = yyjson_write(doc, YYJSON_WRITE_NOFLAG, lenp)
+    n: int = 0
+    lowlevel:
+        n = ptr_read_int(lenp)
+    free(out)
+    yyjson_doc_free(doc)
+    return n
+
+text: str = build_doc(20000)
+reps: int = 10
+lenp: ptr = malloc(8)
+
+def report(name: str, t0: int, check: int) -> None:
+    ms: float = float(nox.time.monotonic_ns() - t0) / 1000000.0 / float(reps)
+    print(name + "\t" + str(ms) + "\t" + str(check))
+
+check: int = 0
+r: int = 0
+t0: int = nox.time.monotonic_ns()
+while r < reps:
+    check = walk_nox(text)
+    r = r + 1
+report("parse+walk nox.json", t0, check)
+
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = walk_yyjson(text)
+    r = r + 1
+report("parse+walk yyjson (Nox binding)", t0, check)
+
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = roundtrip_nox(text)
+    r = r + 1
+report("parse+write nox.json", t0, check)
+
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = roundtrip_yyjson(text, lenp)
+    r = r + 1
+report("parse+write yyjson (Nox binding)", t0, check)
+free(lenp)

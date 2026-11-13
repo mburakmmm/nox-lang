@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.105]
+
+### Eklendi
+
+- **yyjson kabul testi ve `nox.json` kıyası** (TODO 3.4/5.1 F5): `benchmarks/yyjson/` (yyjson 0.13.0, MIT, `yyjson.h`/`yyjson.c`/`LICENSE` vendor edildi). `noxc bindgen yyjson.h` 331 işlev + 116 sabit üretir (288 işlev `static inline` olduğundan C kabuğundan; yalnızca değerle yineleyici dönen 4 `*_iter_with` atlanır) ve üretilen binding ile JSON okuma/gezinme/yazma iki backend'de çalışır (`tests/golden/bindgen_golden_test.zig`, Unix). `benchmarks/yyjson/run.py` aynı 20 000 öğelik belgede `nox.json`, yyjson (Nox binding), yyjson (C) ve CPython `json`u ölçer ve sağlama toplamlarının eşitliğini doğrular: gezinme `nox.json` 9,85 ms vs yyjson-binding **2,06 ms (4,8x)**, yazma 10,36 ms vs **1,23 ms (8,4x, C ile aynı)**; sonuçlar `benchmarks/RESULTS.md`de
+
+### Notlar
+
+- Kıyas sırasında bulundu (düzeltilmedi): `nox.json.dump` tamsayı değerli kayan noktaları tamsayı olarak yazar (`1.0` -> `1`, `1e2` -> `100`), CPython `1.0`/`100.0` yazar; JSON açısından geçerli ama yeniden okunduğunda tür değişir (ayrı karar)
+
 ## [2.1.104]
 
 ### Eklendi
