@@ -4388,6 +4388,30 @@ export function $List_JsonValue_release(l %rt, l %p) {
 }
 export function w $List_str_eq(l %rt, l %a, l %b) {
 @start
+    %t0 =l sub %a, 8
+    %t1 =l loadl %t0
+    %t2 =l and %t1, 288230376151711744
+    %t3 =w cnel %t2, 0
+    %t4 =l sub %b, 8
+    %t5 =l loadl %t4
+    %t6 =l and %t5, 288230376151711744
+    %t7 =w cnel %t6, 0
+    %t8 =w or %t3, %t7
+    jnz %t8, @listeq_lock0, @listeq_go1
+@listeq_lock0
+    call $nox_obj_lock_pair(l %a, l %b)
+    jmp @listeq_go1
+@listeq_go1
+    %t9 =w call $List_str_eq_raw(l %rt, l %a, l %b)
+    jnz %t8, @listeq_unlock2, @listeq_done3
+@listeq_unlock2
+    call $nox_obj_unlock_pair(l %a, l %b)
+    jmp @listeq_done3
+@listeq_done3
+    ret %t9
+}
+export function w $List_str_eq_raw(l %rt, l %a, l %b) {
+@start
     %t0 =l loadl %a
     %t1 =l loadl %b
     %t2 =w cnel %t0, %t1
@@ -4427,6 +4451,30 @@ export function w $List_str_eq(l %rt, l %a, l %b) {
     ret 0
 }
 export function w $List_JsonValue_eq(l %rt, l %a, l %b) {
+@start
+    %t0 =l sub %a, 8
+    %t1 =l loadl %t0
+    %t2 =l and %t1, 288230376151711744
+    %t3 =w cnel %t2, 0
+    %t4 =l sub %b, 8
+    %t5 =l loadl %t4
+    %t6 =l and %t5, 288230376151711744
+    %t7 =w cnel %t6, 0
+    %t8 =w or %t3, %t7
+    jnz %t8, @listeq_lock0, @listeq_go1
+@listeq_lock0
+    call $nox_obj_lock_pair(l %a, l %b)
+    jmp @listeq_go1
+@listeq_go1
+    %t9 =w call $List_JsonValue_eq_raw(l %rt, l %a, l %b)
+    jnz %t8, @listeq_unlock2, @listeq_done3
+@listeq_unlock2
+    call $nox_obj_unlock_pair(l %a, l %b)
+    jmp @listeq_done3
+@listeq_done3
+    ret %t9
+}
+export function w $List_JsonValue_eq_raw(l %rt, l %a, l %b) {
 @start
     %t0 =l loadl %a
     %t1 =l loadl %b

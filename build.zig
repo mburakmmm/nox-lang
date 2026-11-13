@@ -770,7 +770,10 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // Faz 9.0 F6: `-Dsanitize-thread` çalışma zamanını (fiber geçişleri `__tsan_*` ile açıklanmış) ThreadSanitizer ile derler; `NOX_SANITIZE_THREAD=1 noxc build --backend llvm` ile birlikte kullanılır (scripts/tsan_check.sh).
+    const sanitize_thread = b.option(bool, "sanitize-thread", "noxrt.o'yu ThreadSanitizer ile derle (yalnız ana makine, hosted; scripts/tsan_check.sh)") orelse false;
     const noxrt_mod = b.createModule(.{
+        .sanitize_thread = if (sanitize_thread) true else null,
         // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
         // freestanding hedeflerde `runtime/lib_freestanding.zig` KÖK olarak
         // kullanılır (SADECE ARC/scheduler/dict/handle çekirdeği — bkz. onun

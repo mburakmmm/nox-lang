@@ -146,6 +146,14 @@ pub const Context = switch (builtin.cpu.arch) {
     else => @compileError("runtime/async_rt is currently implemented only for aarch64/x86-64/riscv64 (see nox-teknik-spesifikasyon.md §3.21/Phase R.2 and §3.290)"),
 };
 
+/// Faz 9.0 F6: ThreadSanitizer fiber açıklamaları (yalnız `-Dsanitize-thread` derlemesinde): yığın değiştiren her geçiş TSan'a bildirilir, aksi halde gölge yığın bozulur.
+const tsan = if (builtin.sanitize_thread) struct {
+    extern fn __tsan_create_fiber(flags: c_uint) ?*anyopaque;
+    extern fn __tsan_destroy_fiber(fiber: ?*anyopaque) void;
+    extern fn __tsan_switch_to_fiber(fiber: ?*anyopaque, flags: c_uint) void;
+    extern fn __tsan_get_current_fiber() ?*anyopaque;
+} else struct {};
+
 const nox_swap_context = if (is_wasm) asyncify.swap else struct {
     extern fn nox_swap_context(old: *Context, new: *Context) void;
 }.nox_swap_context;
@@ -515,6 +523,9 @@ pub const Fiber = struct {
     /// kapsamı DIŞINDA AYRI bir iş).
     prng: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0),
     prng_seeded: bool = false,
+    /// ThreadSanitizer: bu fiber'ın TSan tutamacı ve geri dönülecek (çağıran) tutamaç — yalnız `-Dsanitize-thread` derlemesinde kullanılır.
+    tsan_fiber: ?*anyopaque = null,
+    tsan_ret: ?*anyopaque = null,
     path_last_ok: bool = true,
     fs_last_ok: bool = true,
     fs_last_size: i64 = 0,
@@ -544,6 +555,7 @@ pub const Fiber = struct {
             .arg = arg,
             .allocator = allocator,
         };
+        if (comptime builtin.sanitize_thread) self.tsan_fiber = tsan.__tsan_create_fiber(0);
         // İlk yığın işaretçisi: yığının TEPESİ (aşağı doğru büyür), 16
         // baytlık hizalamaya (AAPCS64/SysV ABI'nin gerektirdiği) yuvarlanmış.
         const stack_top = @intFromPtr(self.stack.ptr) + self.stack.len;
@@ -631,6 +643,7 @@ pub const Fiber = struct {
     }
 
     pub fn destroy(self: *Fiber) void {
+        if (comptime builtin.sanitize_thread) tsan.__tsan_destroy_fiber(self.tsan_fiber);
         if (comptime is_wasm) asyncify.discard(&self.ctx);
         self.task_locals.deinit(self.allocator);
         self.stdin_leftover.deinit(self.allocator);
@@ -646,6 +659,7 @@ pub const Fiber = struct {
     /// `task_locals` fiber BİTERKEN `trampoline`de `task_local_entry.drain` ile boşaltılır; burada yalnızca
     /// haritanın Zig-içi ayırımı bırakılır (bitmeden yok edilen fiber'ın değerleri için bkz. `task_local_entry.zig`).
     pub fn destroyKeepStack(self: *Fiber) []align(STACK_ALIGN) u8 {
+        if (comptime builtin.sanitize_thread) tsan.__tsan_destroy_fiber(self.tsan_fiber);
         if (comptime is_wasm) asyncify.discard(&self.ctx);
         self.task_locals.deinit(self.allocator);
         self.stdin_leftover.deinit(self.allocator);
@@ -661,6 +675,10 @@ pub const Fiber = struct {
     /// çalıştığı değişir).
     pub fn resume_(self: *Fiber, caller_ctx: *Context) void {
         self.return_ctx = caller_ctx;
+        if (comptime builtin.sanitize_thread) {
+            self.tsan_ret = tsan.__tsan_get_current_fiber();
+            tsan.__tsan_switch_to_fiber(self.tsan_fiber, 0);
+        }
         nox_swap_context(caller_ctx, &self.ctx);
     }
 
@@ -668,6 +686,7 @@ pub const Fiber = struct {
     /// geri verir. `resume_` tekrar çağrılırsa, bu fonksiyon SANKİ normal
     /// bir fonksiyon çağrısından dönmüş gibi devam eder.
     pub fn yield(self: *Fiber) void {
+        if (comptime builtin.sanitize_thread) tsan.__tsan_switch_to_fiber(self.tsan_ret, 0);
         nox_swap_context(&self.ctx, self.return_ctx.?);
     }
 };

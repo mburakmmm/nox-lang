@@ -493,7 +493,7 @@ pub fn genListAssign(self: *Codegen, obj0: Value, idx: ast.Index, value_expr: as
 
     const len_t = try self.newTemp();
     self.setMemTag(.list_len);
-    try self.qbeLoadL(len_t, obj0.text);
+    if (self.list_locks) try self.qbeLoadAtomicL(len_t, obj0.text) else try self.qbeLoadL(len_t, obj0.text);
     self.setMemTag(.none);
     index_v.text = try expr_mod.normalizeNegativeIndex(self, idx.index.*, index_v.text, len_t);
     // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
@@ -533,7 +533,7 @@ pub fn genListAssign(self: *Codegen, obj0: Value, idx: ast.Index, value_expr: as
     if (mctx.active) {
         try dyn_share.emitPublishElemIfShared(self, obj.text, val.text, obj);
         const len2 = try self.newTemp();
-        try self.qbeLoadL(len2, obj.text);
+        try self.qbeLoadAtomicL(len2, obj.text);
         const idx2 = try expr_mod.normalizeNegativeIndex(self, idx.index.*, index_v.text, len2);
         index_v.text = idx2;
         const oob2 = try self.newTemp();
@@ -617,6 +617,8 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
     const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
+    // Faz 9.0 F5: paylaşım kipinde yığın değerli sözlüğe konan değer eklenmeden ÖNCE yayımlanır.
+    if (self.owned_dict_reads) if (dyn_share.dictValueTypeInfo(dinfo)) |vi| try dyn_share.emitPublishValue(self, value_converted.text, vi);
     try self.qbeCall(null, "$nox_dict_set", &.{
         .{ .ty = .l, .text = RT_PARAM },
         .{ .ty = .l, .text = obj.text },
@@ -655,7 +657,7 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     }
     const dinfo = obj.dict_info.?;
     // Paylaşılan (sözlük alanlı sınıf) kipinde TÜM `str`/sınıf değerli sözlük okumaları sahiplidir: takma ad/alan yoluyla ulaşılan paylaşılan sözlükte ödünç okuma eş zamanlı üzerine yazmayla yarışırdı.
-    if (self.owned_dict_reads and (dinfo.value_is_str or dinfo.value_is_class)) return shared_globals.genDictGetOwned(self, obj_expr, obj, key_expr);
+    if (self.owned_dict_reads and (dinfo.value_is_str or dinfo.valueIsArc())) return shared_globals.genDictGetOwned(self, obj_expr, obj, key_expr);
     const key_v0 = try self.genExpr(key_expr);
     try self.checkNoLowlevelEscape(key_v0);
     const key_payload = try self.toPayload(key_v0);
@@ -1247,7 +1249,7 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     const list_ptr = try self.newTemp();
     try self.qbeLoadL(list_ptr, list_info.slot);
     const len_t = try self.newTemp();
-    try self.qbeLoadL(len_t, list_ptr);
+    if (self.list_locks) try self.qbeLoadAtomicL(len_t, list_ptr) else try self.qbeLoadL(len_t, list_ptr);
     // Faz 9.0 F3b: yığın elemanlı paylaşılan liste — her yinelemede blok kilidi altında uzunluk yeniden doğrulanır, eleman sahipli (retain) yüklenir.
     const iter_locked = dyn_share.listHeapElems(self, .{ .text = list_ptr, .qtype = .l, .heap = .list, .elem_qtype = list_info.elem_qtype, .elem_heap_info = list_info.elem_heap_info, .elem_is_str = list_info.elem_is_str });
 
@@ -1270,7 +1272,7 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     const cmp = try self.newTemp();
     if (iter_locked) {
         const len_now = try self.newTemp();
-        try self.qbeLoadL(len_now, list_ptr);
+        if (self.list_locks) try self.qbeLoadAtomicL(len_now, list_ptr) else try self.qbeLoadL(len_now, list_ptr);
         try self.qbeOp2(cmp, .w, "csltl", idx_cur, len_now);
     } else {
         try self.qbeOp2(cmp, .w, "csltl", idx_cur, len_t);

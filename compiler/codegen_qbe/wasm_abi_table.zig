@@ -140,6 +140,8 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_dict_get_owned", Entry{ .params = "PPWLW", .ret = 'L' } },
 
     .{ "nox_dict_make_shared", Entry{ .params = "PP", .ret = 'v' } },
+    .{ "nox_dict_publish_begin", Entry{ .params = "PP", .ret = 'W' } },
+    .{ "nox_dict_entry_owned", Entry{ .params = "PLWW", .ret = 'L' } },
     .{ "nox_dict_new", Entry{ .params = "PW", .ret = 'P' } },
     .{ "nox_dict_pop", Entry{ .params = "PPWL", .ret = 'L' } },
     .{ "nox_dict_release", Entry{ .params = "PPWWW", .ret = 'v' } },
@@ -352,6 +354,8 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_list_nested_shallow_gc_free", Entry{ .params = "PPL", .ret = 'v' } },
     .{ "nox_list_push", Entry{ .params = "PPLL", .ret = 'P' } },
     .{ "nox_list_remove_at", Entry{ .params = "PLL", .ret = 'v' } },
+    .{ "nox_list_find_ptr", Entry{ .params = "PLL", .ret = 'L' } },
+    .{ "nox_list_take_all", Entry{ .params = "PPL", .ret = 'P' } },
     .{ "nox_list_repeat", Entry{ .params = "PPLLW", .ret = 'P' } },
     .{ "nox_list_reverse", Entry{ .params = "PL", .ret = 'v' } },
     .{ "nox_list_shallow_gc_free", Entry{ .params = "PP", .ret = 'v' } },

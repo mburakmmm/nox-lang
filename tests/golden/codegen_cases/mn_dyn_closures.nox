@@ -1,0 +1,61 @@
+# Faz 9.0 F5 (v2.1.138): paylaşılan sınıf alanında/listesinde CLOSURE — closure değişmezdir; yakalanan sınıf/liste oluşturulurken geçişli yayımlanır, alan okuması sahipli, yazması yayımlayıp kilitli.
+class Box:
+    n: int
+    log: list[int]
+    def __init__(self: Box) -> None:
+        self.n = 0
+        self.log = []
+    def bump(self: Box, v: int) -> None:
+        self.log.append(v)
+
+class Hooks:
+    on_event: (int) -> int
+    chain: list[(int) -> int]
+    def __init__(self: Hooks) -> None:
+        self.on_event = ident
+        self.chain = []
+
+def ident(x: int) -> int:
+    return x
+
+def make_hook(b: Box, k: int) -> (int) -> int:
+    def hook(x: int) -> int:
+        b.bump(x + k)
+        return x + k
+    return hook
+
+box: Box = Box()
+hooks: Hooks = Hooks()
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 80:
+        h: (int) -> int = make_hook(box, id)
+        hooks.on_event = h
+        hooks.chain.append(h)
+        f: (int) -> int = hooks.on_event
+        acc = acc + f(j) % 7
+        if len(hooks.chain) > 3:
+            g: (int) -> int = hooks.chain[1]
+            acc = acc + g(j) % 3
+        j = j + 1
+    await out.send(id)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s)
+    print(len(hooks.chain))
+    print(len(box.log) > 480)
+
+mt: Task[None] = spawn main_task()
+await mt

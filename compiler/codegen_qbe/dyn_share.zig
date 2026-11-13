@@ -28,7 +28,7 @@ pub fn isDynClass(self: *const Codegen, name: ?[]const u8) bool {
 /// Bir alan, bariyer gerektiren yığın alanı mı (`str` değişmez ama işaretçi değişimi yarışır: o da bariyerlidir)?
 pub fn isBarrierField(f: ClassField) bool {
     return switch (f.info.heap) {
-        .str, .dict, .class, .list => true,
+        .str, .dict, .class, .list, .closure, .boxed_scalar, .channel, .task, .thread_channel, .thread_handle => true,
         else => false,
     };
 }
@@ -38,7 +38,7 @@ pub fn emitSharedFlag(self: *Codegen, obj_text: []const u8) CodegenError![]const
     const hdr = try self.newTemp();
     try self.qbeOp2Imm(hdr, .l, "sub", obj_text, @intCast(types.ARC_HEADER_SIZE));
     const w = try self.newTemp();
-    try self.qbeLoadL(w, hdr);
+    try self.qbeLoadAtomicL(w, hdr);
     const m = try self.newTemp();
     try self.qbeOp2Imm(m, .l, "and", w, @intCast(types.HDR_SHARED_BIT));
     const f = try self.newTemp();
@@ -68,6 +68,27 @@ pub fn listHeapElems(self: *const Codegen, v: Value) bool {
 pub fn listElemHeap(v: Value) HeapKind {
     if (v.elem_heap_info) |e| return e.heap;
     return .str;
+}
+
+fn classUserCode(self: *const Codegen, cn: []const u8) bool {
+    var it = self.dyn_classes.keyIterator();
+    while (it.next()) |k| {
+        if (!isSubtypeOf(self, k.*, cn, 0)) continue;
+        const ci = self.classes.get(k.*) orelse continue;
+        if (ci.del_owner != null or ci.methods.contains("__eq__") or ci.methods.contains("__repr__") or ci.methods.contains("__str__")) return true;
+    }
+    if (self.classes.get(cn)) |ci| {
+        if (ci.del_owner != null or ci.methods.contains("__eq__") or ci.methods.contains("__repr__") or ci.methods.contains("__str__")) return true;
+    }
+    return false;
+}
+
+/// Eleman sınıfı (ya da alt sınıfları) kullanıcı kodu çalıştırabiliyor mu (`__eq__`/`__repr__`/`__str__`/`__del__`)? Öyleyse eşitlik taramaları kilit DIŞINDA anlık görüntüde yapılır.
+pub fn elemUserCode(self: *const Codegen, v: Value) bool {
+    if (!listHeapElems(self, v)) return false;
+    const e = v.elem_heap_info orelse return false;
+    if (e.heap != .class) return false;
+    return classUserCode(self, e.class_name orelse return false);
 }
 
 /// Liste bloğunun KENDİ kilidini (paylaşılansa) alır; `w` bayrağını döner (`emitCondUnlock` ile bırakılır).
@@ -194,7 +215,12 @@ pub fn genSlotRead(self: *Codegen, g: types.GlobalVar) CodegenError!Value {
     try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
     const t = try self.newTemp();
     try self.qbeLoadL(t, addr);
-    try self.emitInlineRetain(t, g.info.heap);
+    if (self.isSpawnRefcountedType(g.info.heap)) {
+        // Kanal/görev tutamaçları: ARC-dışı sayaç (`nox_channel_retain`/`nox_task_retain`).
+        try self.retainNonArcValue(t, g.info.heap);
+    } else if (isHeapManaged(g.info.heap)) {
+        try self.emitInlineRetain(t, g.info.heap);
+    }
     try emitGslotUnlock(self);
     return .{ .text = t, .qtype = g.info.qtype, .heap = g.info.heap, .elem_qtype = g.info.elem_qtype, .class_name = g.info.class_name, .elem_heap_info = g.info.elem_heap_info, .elem_is_str = g.info.elem_is_str, .dict_info = g.info.dict_info, .func_sig = g.info.func_sig, .fixed_int = g.info.fixed_int, .elem_fixed_int = g.info.elem_fixed_int, .always_fresh = true };
 }
@@ -211,7 +237,11 @@ pub fn genSlotStore(self: *Codegen, g: types.GlobalVar, val_text: []const u8) Co
     try self.qbeLoadL(old, addr);
     try self.qbeStoreL(val_text, addr);
     try emitGslotUnlock(self);
-    try self.releaseValueIfSet(old, g.info.heap, g.info.elem_qtype, g.info.class_name, g.info.elem_heap_info, g.info.dict_info);
+    if (self.isSpawnRefcountedType(g.info.heap)) {
+        try self.destroyNonArcValue(old, g.info.heap);
+    } else {
+        try self.releaseValueIfSet(old, g.info.heap, g.info.elem_qtype, g.info.class_name, g.info.elem_heap_info, g.info.dict_info);
+    }
 }
 
 /// Faz 9.0 F4: iş parçacığı sınırını geçen değeri (spawn argümanı, kanal öğesi, görev sonucu) geçişli yayımlar (`SHARED` + dinamik bariyerler etkin).
@@ -311,9 +341,20 @@ pub fn emitOwnedFieldLoad(self: *Codegen, obj_text: []const u8, f: ClassField) C
     try self.qbeOp2Imm(addr, .l, "add", obj_text, @intCast(f.offset));
     const r = try self.newTemp();
     try self.qbeLoadL(r, addr);
-    try self.emitInlineRetain(r, f.info.heap);
+    if (self.isSpawnRefcountedType(f.info.heap)) {
+        try self.retainNonArcValue(r, f.info.heap);
+    } else {
+        try self.emitInlineRetain(r, f.info.heap);
+    }
     try emitCondCall(self, shared, "$nox_obj_unlock", &.{.{ .ty = .l, .text = obj_text }}, "dyn_rd_unlock");
     return r;
+}
+
+/// Sözlük değerinin sınıf/liste/sözlük tip bilgisi (yığın değerli sözlükler için), yoksa null.
+pub fn dictValueTypeInfo(di: *const types.DictInfo) ?TypeInfo {
+    if (di.value_is_class) return .{ .qtype = .l, .heap = .class, .class_name = di.value_class_name };
+    if (di.value_heap != .none) if (di.value_ti) |vt| return vt.*;
+    return null;
 }
 
 /// Değeri yayımlar (paylaşılan bir yere yazılmadan ÖNCE): sınıf → `$nox_publish_<Sınıf>`, sözlük → paylaşılan işaretle, `str` → gerekmez.
@@ -325,7 +366,57 @@ pub fn emitPublishValue(self: *Codegen, ptr_text: []const u8, info: TypeInfo) Co
             const sym = try std.fmt.allocPrint(self.allocator, "$nox_publish_{s}", .{cn});
             try self.qbeCall(null, sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr_text } });
         },
-        .dict => try self.qbeCall(null, "$nox_dict_make_shared", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr_text } }),
+        .dict => {
+            const di = info.dict_info orelse return;
+            var vinfo: ?TypeInfo = null;
+            if (di.value_is_class) {
+                vinfo = .{ .qtype = .l, .heap = .class, .class_name = di.value_class_name };
+            } else if (di.value_heap != .none) {
+                if (di.value_ti) |vt| vinfo = vt.*;
+            }
+            const vi = vinfo orelse {
+                try self.qbeCall(null, "$nox_dict_make_shared", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr_text } });
+                return;
+            };
+            // Değerleri sınıf/liste/sözlük olan sözlük: ilk yayımlamada tüm değerler geçişli yayımlanır.
+            const first = try self.newTemp();
+            try self.qbeCall(.{ .name = first, .ty = .w }, "$nox_dict_publish_begin", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr_text } });
+            const pre = try self.newLabel("pub_dict_pre");
+            const cond = try self.newLabel("pub_dict_cond");
+            const body = try self.newLabel("pub_dict_body");
+            const end = try self.newLabel("pub_dict_end");
+            try self.qbeJnz(first, pre, end);
+            try self.qbeLabel(pre);
+            const slot = try self.newTemp();
+            try self.qbeAlloc(slot, .eight, 8);
+            try self.qbeStoreImmL(0, slot);
+            const len = try self.newTemp();
+            try self.qbeCall(.{ .name = len, .ty = .l }, "$nox_dict_len", &.{.{ .ty = .l, .text = ptr_text }});
+            try self.qbeJmp(cond);
+            try self.qbeLabel(cond);
+            const i = try self.newTemp();
+            try self.qbeLoadL(i, slot);
+            const c = try self.newTemp();
+            try self.qbeOp2(c, .w, "csltl", i, len);
+            try self.qbeJnz(c, body, end);
+            try self.qbeLabel(body);
+            const e = try self.newTemp();
+            try self.qbeCall(.{ .name = e, .ty = .l }, "$nox_dict_entry_value", &.{ .{ .ty = .l, .text = ptr_text }, .{ .ty = .l, .text = i } });
+            const nz = try self.newTemp();
+            try self.qbeOp2Imm(nz, .w, "cnel", e, 0);
+            const have = try self.newLabel("pub_dict_have");
+            const skip = try self.newLabel("pub_dict_skip");
+            try self.qbeJnz(nz, have, skip);
+            try self.qbeLabel(have);
+            try emitPublishValue(self, e, vi);
+            try self.qbeJmp(skip);
+            try self.qbeLabel(skip);
+            const inext = try self.newTemp();
+            try self.qbeOp2Imm(inext, .l, "add", i, 1);
+            try self.qbeStoreL(inext, slot);
+            try self.qbeJmp(cond);
+            try self.qbeLabel(end);
+        },
         // Liste bloğu: `SHARED` bitini kur; sınıf/sözlük/liste elemanları ilk kez yayımlanıyorsa tek tek yayımlanır.
         .list => {
             const elem_info = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", info.elem_qtype, info.elem_heap_info, info.elem_is_str, info.elem_fixed_int));
@@ -400,7 +491,21 @@ pub fn emitBarrierFieldStore(self: *Codegen, obj_text: []const u8, f: ClassField
     try self.qbeLoadL(old_ptr, addr);
     try self.qbeStore(f.info.qtype, val_text, addr);
     try emitCondCall(self, shared, "$nox_obj_unlock", &.{.{ .ty = .l, .text = obj_text }}, "dyn_wr_unlock");
-    try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
+    if (self.isSpawnRefcountedType(f.info.heap)) {
+        try self.destroyNonArcValue(old_ptr, f.info.heap);
+    } else {
+        try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
+    }
+}
+
+/// `sub`, `sup`un (taban/mixin zincirinden) alt tipi mi (ya da aynı sınıf)?
+fn isSubtypeOf(self: *const Codegen, sub: []const u8, sup: []const u8, depth: u8) bool {
+    if (std.mem.eql(u8, sub, sup)) return true;
+    if (depth > 16) return false;
+    const ci = self.classes.get(sub) orelse return false;
+    if (ci.base) |b| if (isSubtypeOf(self, b, sup, depth + 1)) return true;
+    for (ci.mixins) |m| if (isSubtypeOf(self, m, sup, depth + 1)) return true;
+    return false;
 }
 
 /// `$nox_publish_<Sınıf>(rt, p)`: nesneyi (ilk kez ise) `SHARED` yapar ve yığın alanlarını geçişli yayımlar. Kalıtım hiyerarşisinde çalışma-zamanı etiketine göre
@@ -448,21 +553,21 @@ pub fn genPublishFunctions(self: *Codegen) CodegenError!void {
         const done_l = try self.newLabel("pub_done");
         try self.qbeJnz(first, body_l, done_l);
         try self.qbeLabel(body_l);
-        if (cinfo.has_vtable and cinfo.descendant_class_ids.len > 1) {
+        var multi = false;
+        {
+            var dk = self.dyn_classes.keyIterator();
+            while (dk.next()) |k2| {
+                if (!std.mem.eql(u8, k2.*, cn) and isSubtypeOf(self, k2.*, cn, 0)) multi = true;
+            }
+        }
+        if (multi) {
             const tag = try self.newTemp();
             try self.qbeLoadL(tag, "%p");
-            for (cinfo.descendant_class_ids) |id| {
-                // `id` -> sınıf adı
-                var name: ?[]const u8 = null;
-                var cit = self.classes.iterator();
-                while (cit.next()) |e| {
-                    if (e.value_ptr.class_id == id) {
-                        name = e.key_ptr.*;
-                        break;
-                    }
-                }
-                const dn = name orelse continue;
-                if (!self.dyn_classes.contains(dn)) continue;
+            var dk = self.dyn_classes.keyIterator();
+            while (dk.next()) |k2| {
+                const dn = k2.*;
+                if (!isSubtypeOf(self, dn, cn, 0)) continue;
+                const id = self.classes.get(dn).?.class_id;
                 const eq = try self.newTemp();
                 try self.qbeOp2Imm(eq, .w, "ceql", tag, @intCast(id));
                 const case_l = try self.newLabel("pub_case");

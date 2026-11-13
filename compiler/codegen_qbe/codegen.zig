@@ -857,6 +857,18 @@ pub const Codegen = struct {
             .llvm => llvm_emit.qbeAtomicAdd(self, addr, imm),
         };
     }
+    pub fn qbeStoreAtomicL(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreL(self, value, addr),
+            .llvm => llvm_emit.qbeStoreAtomicL(self, value, addr),
+        };
+    }
+    pub fn qbeLoadAtomicL(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadL(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadAtomicL(self, dst, addr),
+        };
+    }
     pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
         return switch (self.backend) {
             .qbe => if (self.mn_qbe) qbe_emit.qbeAtomicAddCall(self, addr, imm, "sub") else qbe_emit.qbeAtomicSub(self, addr, imm),
@@ -1278,6 +1290,8 @@ pub const Codegen = struct {
     list_locks: bool = false,
     /// Faz 9.0 F4: iş parçacığı sınırını geçen sınıf/liste/sözlük değerleri (spawn argümanı, kanal öğesi, görev sonucu) geçilmeden ÖNCE yayımlanır.
     dyn_crossing: bool = false,
+    /// Faz 9.0 F5: paylaşılan alanlarda/öğelerde closure var — yakalanan yığın değerler closure oluşturulurken yayımlanır ve TÜM sınıflar bariyerli olur.
+    dyn_closures: bool = false,
     /// Faz 9.0 F5: yuva bariyerli (sahipli okuma / yayımlayıp kilitli yazma) global `list`/`dict`/sınıf adları ve ortak yuva kilidinin globals bloğundaki ofseti (0 = kilit yok).
     dyn_slot_globals: std.StringHashMapUnmanaged(void) = .empty,
     gslot_lock_offset: usize = 0,
@@ -2003,12 +2017,16 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
         if (globals_kind != .pinned and !wants_multicore_pool and gen.profile == .hosted and !gen.isWasmTarget() and moduleUsesAsync(module, extra_functions)) {
             if (!try gen.crossingSafe(module, extra_functions)) globals_kind = .pinned;
         }
+        if (gen.dyn_closures and globals_kind != .pinned) {
+            if (!try registration.makeAllClassesDyn(&gen, module)) globals_kind = .pinned else gen.dyn_crossing = true;
+        }
         gen.globals_pinned = globals_kind == .pinned;
         gen.shared_block_mode = globals_kind == .shared_block;
         if (globals_kind == .pinned or (!gen.shared_block_mode and !gen.dyn_crossing)) {
             gen.owned_dict_reads = false;
             gen.list_locks = false;
             gen.dyn_crossing = false;
+            gen.dyn_closures = false;
             gen.dyn_slot_globals.clearRetainingCapacity();
             gen.shared_class_globals.clearRetainingCapacity();
             gen.dyn_classes.clearRetainingCapacity();

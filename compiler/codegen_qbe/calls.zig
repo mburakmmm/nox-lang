@@ -489,7 +489,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 // okunur (`nox.json`nin `array_len`/`object_len`si İÇİN
                 // eklendi — GENEL bir yerleşik, JSON'a özgü DEĞİL).
                 if (v.heap == .list) {
-                    try self.qbeLoadL(result_t, v.text);
+                    if (self.list_locks) try self.qbeLoadAtomicL(result_t, v.text) else try self.qbeLoadL(result_t, v.text);
                 } else if (v.heap == .dict) {
                     // v1.149.0: `len(d)` — `d.len()` ile aynı.
                     try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_dict_len", &.{.{ .ty = .l, .text = v.text }});
@@ -2353,7 +2353,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
     const heap_kind: HeapKind = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else dinfo.value_heap;
 
     // Faz 9.0 dilim 3: paylaşılan `dict[K, str]` global'inde `contains` + `get/pop` iki ayrı çağrı olamaz (arada başka işçi anahtarı silebilir): TEK çağrı, sahipli sonuç (get: kilit altında retain; pop: devralma).
-    const routed = ((a.obj.* == .identifier and self.routed_dict_str.contains(a.obj.identifier) and !self.vars.contains(a.obj.identifier)) or (self.owned_dict_reads and (dinfo.value_is_str or dinfo.value_is_class))) and (is_get or is_pop);
+    const routed = ((a.obj.* == .identifier and self.routed_dict_str.contains(a.obj.identifier) and !self.vars.contains(a.obj.identifier)) or (self.owned_dict_reads and (dinfo.value_is_str or dinfo.valueIsArc()))) and (is_get or is_pop);
     var pre_payload: ?[]const u8 = null;
     const has_t = try self.newTemp();
     if (routed) {
@@ -2361,7 +2361,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
         if (is_pop) {
             try self.qbeCall(.{ .name = pp, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
         } else {
-            try self.qbeCall(.{ .name = pp, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text }, .{ .ty = .w, .text = if (dinfo.value_is_class) "2" else "1" } });
+            try self.qbeCall(.{ .name = pp, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text }, .{ .ty = .w, .text = if (dinfo.valueIsArc()) "2" else "1" } });
         }
         try self.qbeOp2Imm(has_t, .w, "cnel", pp, 0);
         pre_payload = pp;
@@ -2443,6 +2443,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
             const key_v = try self.retainIfAliasing(key_expr, key_v0);
             const key_payload2 = try self.toPayload(key_v);
             if (heap_value) try self.emitInlineRetain(dv.text, heap_kind);
+            if (self.owned_dict_reads) if (dyn_share.dictValueTypeInfo(dinfo)) |vi| try dyn_share.emitPublishValue(self, dv.text, vi);
             const value_payload = try self.toPayload(.{ .text = dv.text, .qtype = dv.qtype });
             try self.qbeCall(null, "$nox_dict_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .w, .text = value_is_str_lit }, .{ .ty = .w, .text = value_is_class_lit }, .{ .ty = .l, .text = key_payload2.text }, .{ .ty = .l, .text = value_payload.text } });
         } else {
@@ -2695,7 +2696,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // döngüsünde uzunluğu/kapasiteyi yazmaçta tutabilir. Büyütme yolundaki başlık yazımları etiketsiz kalır (her şeyle çakışabilir = güvenli).
     const len_t = try self.newTemp();
     self.setMemTag(.list_len);
-    try self.qbeLoadL(len_t, list_text);
+    if (self.list_locks) try self.qbeLoadAtomicL(len_t, list_text) else try self.qbeLoadL(len_t, list_text);
     self.setMemTag(.none);
     const cap_addr = try self.newTemp();
     try self.qbeOp2Imm(cap_addr, .l, "add", list_text, 8);
@@ -2753,7 +2754,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const rc_addr = try self.newTemp();
         try self.qbeOp2Imm(rc_addr, .l, "sub", list_text, @intCast(types.ARC_HEADER_SIZE));
         const rc_t = try self.newTemp();
-        try self.qbeLoadL(rc_t, rc_addr);
+        try self.qbeLoadAtomicL(rc_t, rc_addr);
         const is_unique = try self.newTemp();
         try self.qbeOp2Imm(is_unique, .w, "ceql", rc_t, 1);
         const unique_label = try self.newLabel("append_unique");
@@ -2915,7 +2916,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const fast_new_len = try self.newTemp();
     try self.qbeOp2Imm(fast_new_len, .l, "add", len_t, 1);
     self.setMemTag(.list_len);
-    try self.qbeStoreL(fast_new_len, list_text);
+    if (self.list_locks) try self.qbeStoreAtomicL(fast_new_len, list_text) else try self.qbeStoreL(fast_new_len, list_text);
     self.setMemTag(.none);
     if (blk_flag) |bf| try dyn_share.emitCondUnlock(self, bf, list_text);
     try self.qbeJmp(done_label);
@@ -2980,7 +2981,7 @@ pub fn genListPop(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Va
     const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
     const obj = mctx.obj;
     const len_t = try self.newTemp();
-    try self.qbeLoadL(len_t, obj.text);
+    if (self.list_locks) try self.qbeLoadAtomicL(len_t, obj.text) else try self.qbeLoadL(len_t, obj.text);
 
     const empty_t = try self.newTemp();
     try self.qbeOp2Imm(empty_t, .w, "ceql", len_t, 0);
@@ -3013,7 +3014,7 @@ pub fn genListPop(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Va
     // listeyi TAMAMEN yıkıyorsa (refcount sıfıra düşerse), `genListElemRelease`
     // bu ANDAN İTİBAREN yalnızca 0..new_len'i gezer, az önce okuduğumuz
     // (şimdi new_len indeksindeki) elemana HİÇ dokunmaz.
-    try self.qbeStoreL(new_len, obj.text);
+    if (self.list_locks) try self.qbeStoreAtomicL(new_len, obj.text) else try self.qbeStoreL(new_len, obj.text);
 
     const byte_off = try self.newTemp();
     try self.qbeOp2Imm(byte_off, .l, "mul", new_len, @intCast(qbeSizeOf(obj.elem_qtype)));
@@ -3118,6 +3119,15 @@ fn genListClear(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Valu
     try self.checkNoLowlevelEscape(obj0);
     const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
     const obj = mctx.obj;
+    if (dyn_share.elemUserCode(self, obj0)) {
+        // Elemanları kullanıcı kodu (`__del__`) çalıştırabilir: elemanlar kilit altında yeni bir bloğa TAŞINIR, serbest bırakma kilit DIŞINDA yapılır.
+        const taken = try self.newTemp();
+        try self.qbeCall(.{ .name = taken, .ty = .l }, "$nox_list_take_all", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = try listEszLit(self, obj) } });
+        try dyn_share.finishMut(self, mctx);
+        try self.releaseValueIfSet(taken, .list, obj.elem_qtype, obj.class_name, obj.elem_heap_info, obj.dict_info);
+        try self.releaseIfTemporary(a.obj.*, obj0);
+        return .{ .text = "0", .qtype = .none };
+    }
     if (obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap)) {
         const idx_slot = try self.newTemp();
         try self.qbeAlloc(idx_slot, .eight, 8);
@@ -3143,7 +3153,7 @@ fn genListClear(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Valu
         try self.qbeJmp(cond_label);
         try self.qbeLabel(done_label);
     }
-    try self.qbeStoreImmL(0, obj.text);
+    if (self.list_locks) try self.qbeStoreAtomicL("0", obj.text) else try self.qbeStoreImmL(0, obj.text);
     try dyn_share.finishMut(self, mctx);
     try self.releaseIfTemporary(a.obj.*, obj0);
     return .{ .text = "0", .qtype = .none };
@@ -3186,6 +3196,7 @@ fn genListSearchOp(self: *Codegen, obj0: Value, a: ast.Attribute, args: []const 
     const x = try self.genExpr(args[0]);
     try self.checkNoLowlevelEscape(obj0);
     try self.checkNoLowlevelEscape(x);
+    if (dyn_share.elemUserCode(self, obj0)) return genListSearchUserCode(self, obj0, a, args, x);
     const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
     const obj = mctx.obj;
     const rels = [_]RelPair{ .{ .e = a.obj.*, .v = obj0 }, .{ .e = args[0], .v = x } };
@@ -3212,6 +3223,81 @@ fn genListSearchOp(self: *Codegen, obj0: Value, a: ast.Attribute, args: []const 
         return .{ .text = "0", .qtype = .none };
     }
     try dyn_share.finishMut(self, mctx);
+    try self.releaseIfTemporary(args[0], x);
+    try self.releaseIfTemporary(a.obj.*, obj0);
+    return .{ .text = idx, .qtype = .l };
+}
+
+/// Faz 9.0 F5: elemanları kullanıcı `__eq__`/`__del__` kodu çalıştırabilen paylaşılan liste — eşitlik taraması kilit DIŞINDA anlık görüntüde yapılır; `remove` canlı listede
+/// aynı ELEMANI (kimlik) kilit altında bulup çıkarır (bulunamazsa eşzamanlı silinmiştir → `ValueError`).
+fn genListSearchUserCode(self: *Codegen, obj0: Value, a: ast.Attribute, args: []const ast.Expr, x: Value) CodegenError!Value {
+    const rels = [_]RelPair{ .{ .e = a.obj.*, .v = obj0 }, .{ .e = args[0], .v = x } };
+    const sn = try dyn_share.snapshotRead(self, obj0);
+    if (std.mem.eql(u8, a.attr, "count")) {
+        const n = try self.emitListCount(sn.v, x);
+        try dyn_share.releaseSnap(self, sn);
+        try self.releaseIfTemporary(args[0], x);
+        try self.releaseIfTemporary(a.obj.*, obj0);
+        return .{ .text = n, .qtype = .l };
+    }
+    const idx = try self.emitListFind(sn.v, x);
+    const bad = try self.newTemp();
+    try self.qbeOp2Imm(bad, .w, "csltl", idx, 0);
+    const msg: []const u8 = if (std.mem.eql(u8, a.attr, "remove")) "list.remove(x): x is not in the list" else "list.index(x): x is not in the list";
+    // anlık görüntü hata yolunda da bırakılır
+    self.cold_unlock = null;
+    {
+        const err_label = try self.newLabel("list_err");
+        const ok_label = try self.newLabel("list_ok");
+        try self.qbeJnzCold(bad, err_label, ok_label);
+        const cold_start = self.beginCold();
+        try self.qbeLabel(err_label);
+        try dyn_share.releaseSnap(self, sn);
+        const msg_value = try self.emitStringLiteral(msg);
+        const cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
+        const err_obj = try self.genConstructFromValues("ValueError", cinfo, &.{msg_value}, null);
+        try self.emitExceptionLineStore(err_obj.text, "ValueError", self.current_raise_line);
+        try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = err_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+        for (rels) |r| try self.releaseIfTemporary(r.e, r.v);
+        try self.emitRaisePropagate();
+        try self.stashCold(cold_start);
+        try self.qbeLabel(ok_label);
+    }
+    if (std.mem.eql(u8, a.attr, "remove")) {
+        const elem = try self.loadListElemValueAt(sn.v, idx);
+        const esz = try listEszLit(self, obj0);
+        const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
+        const live = mctx.obj;
+        const j = try self.newTemp();
+        try self.qbeCall(.{ .name = j, .ty = .l }, "$nox_list_find_ptr", &.{ .{ .ty = .l, .text = live.text }, .{ .ty = .l, .text = elem.text }, .{ .ty = .l, .text = esz } });
+        const gone = try self.newTemp();
+        try self.qbeOp2Imm(gone, .w, "csltl", j, 0);
+        const rm_err = try self.newLabel("list_rm_gone");
+        const rm_ok = try self.newLabel("list_rm_ok");
+        try self.qbeJnzCold(gone, rm_err, rm_ok);
+        const cold_start = self.beginCold();
+        try self.qbeLabel(rm_err);
+        try dyn_share.abortMut(self, mctx);
+        try dyn_share.releaseSnap(self, sn);
+        const msg_value = try self.emitStringLiteral("list.remove(x): x is not in the list");
+        const cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
+        const err_obj = try self.genConstructFromValues("ValueError", cinfo, &.{msg_value}, null);
+        try self.emitExceptionLineStore(err_obj.text, "ValueError", self.current_raise_line);
+        try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = err_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+        for (rels) |r| try self.releaseIfTemporary(r.e, r.v);
+        try self.emitRaisePropagate();
+        try self.stashCold(cold_start);
+        try self.qbeLabel(rm_ok);
+        try self.qbeCall(null, "$nox_list_remove_at", &.{ .{ .ty = .l, .text = live.text }, .{ .ty = .l, .text = j }, .{ .ty = .l, .text = esz } });
+        try dyn_share.finishMut(self, mctx);
+        // kullanıcı `__del__`ı kilit DIŞINDA: canlı listenin bu elemana olan referansı bırakılır
+        try releaseListElem(self, obj0, elem.text);
+        try dyn_share.releaseSnap(self, sn);
+        try self.releaseIfTemporary(args[0], x);
+        try self.releaseIfTemporary(a.obj.*, obj0);
+        return .{ .text = "0", .qtype = .none };
+    }
+    try dyn_share.releaseSnap(self, sn);
     try self.releaseIfTemporary(args[0], x);
     try self.releaseIfTemporary(a.obj.*, obj0);
     return .{ .text = idx, .qtype = .l };

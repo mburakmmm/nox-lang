@@ -1,0 +1,68 @@
+# Faz 9.0 F5 (v2.1.138): ÇOKLU KALITIM/mixin bileşeni paylaşılır — mixin tipli değişken alt sınıf örneğini gösterir; yayımlama etikete göre (taban + mixin alanları), bariyerler bileşenin tüm üyelerinde.
+class Named:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def rename(self, n: str) -> None:
+        self.name = n
+
+    def label(self) -> str:
+        return "N:" + self.name
+
+class Counted:
+    def __init__(self) -> None:
+        self.count = 0
+        self.tags: list[str] = []
+
+    def tag(self, t: str) -> None:
+        self.tags.append(t)
+        self.count += 1
+
+class Item(Named, Counted):
+    def __init__(self, name: str) -> None:
+        Named.__init__(self, name)
+        Counted.__init__(self)
+        self.price = 10
+
+class Special(Item):
+    def label(self) -> str:
+        return "S:" + self.name
+
+item: Item = Item("base")
+special: Special = Special("sp")
+
+def touch_named(n: Named, s: str) -> None:
+    n.rename(s)
+
+def touch_counted(c: Counted, s: str) -> None:
+    c.tag(s)
+
+async def worker(id: int, out: Channel[int]) -> None:
+    j: int = 0
+    while j < 100:
+        touch_named(item, "w" + str(id) + "_" + str(j))
+        touch_named(special, "s" + str(j))
+        touch_counted(item, "t" + str(j))
+        touch_counted(special, "u" + str(j))
+        j = j + 1
+    await out.send(id)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s)
+    print(len(item.tags))
+    print(len(special.tags))
+    print(len(item.label()) > 0)
+    print(len(special.label()) > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

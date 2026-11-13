@@ -1011,8 +1011,15 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
                 // dual-pipe) kullandığından `genChannelOp`DAN AYRI bir
                 // fonksiyona (`genThreadChannelOp`) dispatch edilir.
                 const recv_val = try self.genExpr(a.obj.*);
-                if (recv_val.heap == .thread_channel) return self.genThreadChannelOp(a, c.args, recv_val);
-                return self.genChannelOp(a, c.args, recv_val);
+                if (recv_val.heap == .thread_channel) {
+                    const tr = try self.genThreadChannelOp(a, c.args, recv_val);
+                    if (recv_val.always_fresh) try self.releaseNonArcIfTemporary(a.obj.*, recv_val);
+                    return tr;
+                }
+                const cr = try self.genChannelOp(a, c.args, recv_val);
+                // Yuva bariyerli global kanal: okuma sahiplidir (retain) — işlem bittikten sonra bırakılır.
+                if (recv_val.always_fresh) try self.releaseNonArcIfTemporary(a.obj.*, recv_val);
+                return cr;
             }
             // Faz BB.4: `ThreadHandle[T].join()` — `Channel.send`/`.recv`
             // İLE AYNI "yalnızca await üzerinden" desen (bkz.
@@ -1049,7 +1056,7 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_async_await", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text } });
     // `await spawn f(...)`: Task tutamağı TAZE bir geçicidir (hiçbir değişken sahibi değil) — sonuç alındıktan sonra burada yıkılır; aksi halde her
     // çağrıda bir Task sızardı. İstisna denetiminden ÖNCE yapılır ki hata yolu da serbest bırakmış olsun.
-    if (operand == .spawn_expr and task_val.heap == .task) try self.destroyNonArcValue(task_val.text, .task);
+    if (operand == .spawn_expr and task_val.heap == .task) try self.destroyNonArcValue(task_val.text, .task) else if (task_val.always_fresh) try self.releaseNonArcIfTemporary(operand, task_val);
     // Faz SC.1: `nox_async_await` (bkz. `runtime/async_rt/bridge.zig`)
     // ARTIK sarmalanan `async def` gövdesinde YAKALANMAMIŞ bir istisna
     // VARSA çağıranın bağlamına YENİDEN fırlatır (`nox_raise`) — sıradan

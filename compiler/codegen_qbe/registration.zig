@@ -1100,44 +1100,54 @@ fn classDefinesMethod(module: ast.Module, cn: []const u8, method: []const u8) bo
 /// Faz 9.0 F2: DİNAMİK paylaşıma uygun sınıf mı (bariyer üretilebilir)? Kalıtımsız, `__del__`siz, dekoratörsüz; alanlar skaler, `str`, skaler/`str` değerli `dict` ya da (özyinelemeli) dinamik-uygun sınıf.
 /// Uygunsa sınıf ve alt sınıfları `out`a eklenir.
 fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.StringHashMapUnmanaged(void), depth: u8) CodegenError!bool {
-    if (depth > 6) return false;
+    if (depth > 16) return false;
     if (out.contains(cn)) return true;
     const info = self.classes.getPtr(cn) orelse return false;
-    if (info.mixins.len > 0 or classHasDecorators(module, cn)) return false;
+    // `@packed` düzen hizasız işaretçi yuvaları üretir (atomik/kilitli erişim güvenli değil); `@repr("C")` hizalıdır ve desteklenir.
+    if (info.layout_mode == .packed_) return false;
     try out.put(self.allocator, cn, {});
     for (info.fields.items) |f| {
         // Faz 9.0 F5: kanal/görev tutamaçları iş parçacığı güvenlidir; yalnız `__init__` dışında yeniden atanmıyorsa (yuva değişmez) alan olarak taşınabilir.
-        if (f.info.heap == .channel or f.info.heap == .task or f.info.heap == .thread_channel or f.info.heap == .task_local) {
-            if (assignsAttrOutsideInit(module.body, f.name, false)) return false;
-            continue;
-        }
+        if (f.info.heap == .task_local) continue; // görev-yerel tutamaç: değer görev-yerel depoda kalır
+
         if (!try dynSafeType(self, f.info, module, out, depth)) return false;
     }
-    // Faz 9.0 F5: kalıtım hiyerarşisinin TÜM üyeleri birlikte bariyerlidir (taban tipli değişken alt sınıf örneğini gösterebilir; yayımlama çalışma-zamanı etiketiyle dağıtılır).
-    if (info.has_vtable) {
-        var root: []const u8 = cn;
-        var guard: u8 = 0;
-        while (self.classes.get(root)) |ci| : (guard += 1) {
-            if (guard > 32) return false;
-            root = ci.base orelse break;
-        }
+    // Faz 9.0 F5: kalıtım/mixin bileşeninin TÜM üyeleri birlikte bariyerlidir (taban/mixin tipli değişken alt sınıf örneğini gösterebilir; yayımlama çalışma-zamanı etiketiyle dağıtılır).
+    if (info.has_vtable or info.base != null or info.mixins.len > 0) {
         var names: std.ArrayListUnmanaged([]const u8) = .empty;
         defer names.deinit(self.allocator);
-        var cit = self.classes.iterator();
-        while (cit.next()) |e| {
-            var cur: []const u8 = e.key_ptr.*;
-            var g2: u8 = 0;
-            while (self.classes.get(cur)) |ci| : (g2 += 1) {
-                if (g2 > 32) break;
-                if (std.mem.eql(u8, cur, root)) {
-                    try names.append(self.allocator, e.key_ptr.*);
-                    break;
+        try names.append(self.allocator, cn);
+        var qi: usize = 0;
+        while (qi < names.items.len) : (qi += 1) {
+            const cur = names.items[qi];
+            var cit = self.classes.iterator();
+            while (cit.next()) |e| {
+                const other = e.key_ptr.*;
+                var related = false;
+                if (self.classes.get(cur)) |ci| {
+                    if (ci.base) |b| if (std.mem.eql(u8, b, other)) {
+                        related = true;
+                    };
+                    for (ci.mixins) |m| if (std.mem.eql(u8, m, other)) {
+                        related = true;
+                    };
                 }
-                cur = ci.base orelse break;
+                if (e.value_ptr.base) |b| if (std.mem.eql(u8, b, cur)) {
+                    related = true;
+                };
+                for (e.value_ptr.mixins) |m| if (std.mem.eql(u8, m, cur)) {
+                    related = true;
+                };
+                if (!related) continue;
+                var seen = false;
+                for (names.items) |nm| if (std.mem.eql(u8, nm, other)) {
+                    seen = true;
+                };
+                if (!seen) try names.append(self.allocator, other);
             }
         }
         for (names.items) |k| {
-            if (!try dynSafeClass(self, k, module, out, depth + 1)) return false;
+            if (!try dynSafeClass(self, k, module, out, depth)) return false;
         }
     }
     return true;
@@ -1147,11 +1157,28 @@ fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.St
 /// Uygunsa sınıflar `out`a eklenir; `list_locks`/`owned_dict_reads` kipleri gerektiği gibi açılır.
 fn dynSafeType(self: *Codegen, info: types.TypeInfo, module: ast.Module, out: *std.StringHashMapUnmanaged(void), depth: u8) CodegenError!bool {
     switch (info.heap) {
-        .none, .str => return true,
+        .none, .str, .boxed_scalar, .typed_ptr, .thread_handle, .thread_channel, .channel, .task, .task_local => return true,
+        // Closure değişmezdir (yakalananlar oluşturulurken geçişli yayımlanır): alan/öğe olarak bariyerli, yakalamalar için tüm sınıflar bariyerli yapılır.
+        .closure => {
+            self.dyn_closures = true;
+            return true;
+        },
         .dict => {
             const di = info.dict_info orelse return false;
-            if (di.value_heap != .none or di.value_is_class) return false;
             if (di.value_is_str) self.owned_dict_reads = true;
+            if (di.value_is_class) {
+                // sınıf değerli sözlük: değerler yayımlanır, okumalar sahiplidir
+                const vc = di.value_class_name orelse return false;
+                self.owned_dict_reads = true;
+                return try dynSafeClass(self, vc, module, out, depth + 1);
+            }
+            if (di.value_heap != .none) {
+                const vt = di.value_ti orelse return false;
+                if (depth > 4) return false;
+                self.owned_dict_reads = true;
+                if (vt.heap == .list or vt.heap == .dict) return try dynSafeType(self, vt.*, module, out, depth + 1);
+                return false;
+            }
             return true;
         },
         .class => {
@@ -1163,13 +1190,19 @@ fn dynSafeType(self: *Codegen, info: types.TypeInfo, module: ast.Module, out: *s
             const sh = shared_globals.listElemShape(info) orelse {
                 // F3c: iç içe skaler liste (`list[list[int|float|bool]]`) ve skaler değerli sözlük elemanları (`list[dict[K, skaler|str]]`).
                 const ehi = info.elem_heap_info orelse return false;
-                if (ehi.heap == .list) {
-                    if (ehi.nested != null or ehi.elem_is_str or ehi.dict_info != null) return false;
-                    if (ehi.elem_qtype != .l and ehi.elem_qtype != .d and ehi.elem_qtype != .b) return false;
+                if (ehi.heap == .closure) {
+                    self.dyn_closures = true;
+                } else if (ehi.heap == .list) {
+                    // İç liste: kendi tipi (skaler/`str`/sınıf/iç içe) özyinelemeli doğrulanır.
+                    var inner: types.TypeInfo = .{ .qtype = .l, .heap = .list, .elem_qtype = ehi.elem_qtype, .elem_heap_info = ehi.nested, .elem_is_str = ehi.elem_is_str };
+                    if (ehi.elem_qtype == .none) inner.elem_qtype = .l;
+                    if (depth > 4) return false;
+                    if (!try dynSafeType(self, inner, module, out, depth + 1)) return false;
                 } else if (ehi.heap == .dict) {
-                    const di = ehi.dict_info orelse return false;
-                    if (di.value_heap != .none or di.value_is_class) return false;
-                    if (di.value_is_str) self.owned_dict_reads = true;
+                    var inner: types.TypeInfo = .{ .qtype = .l, .heap = .dict, .dict_info = ehi.dict_info };
+                    if (depth > 4) return false;
+                    if (!try dynSafeType(self, inner, module, out, depth + 1)) return false;
+                    _ = &inner;
                 } else return false;
                 self.list_locks = true;
                 return true;
@@ -1178,15 +1211,28 @@ fn dynSafeType(self: *Codegen, info: types.TypeInfo, module: ast.Module, out: *s
                 self.list_locks = true;
             } else if (sh.kind == 2) {
                 const ec = info.elem_heap_info.?.class_name.?;
-                if (classDefinesMethod(module, ec, "__eq__") or classDefinesMethod(module, ec, "__repr__") or classDefinesMethod(module, ec, "__str__") or classDefinesMethod(module, ec, "__del__")) return false;
-                if (self.classes.get(ec)) |eci| if (eci.del_owner != null) return false;
+
                 if (!try dynSafeClass(self, ec, module, out, depth + 1)) return false;
                 self.list_locks = true;
             }
             return true;
         },
-        else => return false,
     }
+}
+
+/// Faz 9.0 F5: closure yakalamalarının sınıfları önceden bilinemez — closure paylaşılıyorsa programın TÜM sınıfları bariyerli olur (liste kilitleri ve sahipli sözlük okumaları da açılır).
+pub fn makeAllClassesDyn(self: *Codegen, module: ast.Module) CodegenError!bool {
+    var set: std.StringHashMapUnmanaged(void) = .empty;
+    defer set.deinit(self.allocator);
+    var it = self.classes.keyIterator();
+    while (it.next()) |k| {
+        if (!try dynSafeClass(self, k.*, module, &set, 0)) return false;
+    }
+    var sit = set.keyIterator();
+    while (sit.next()) |k| try self.dyn_classes.put(self.allocator, k.*, {});
+    self.list_locks = true;
+    self.owned_dict_reads = true;
+    return true;
 }
 
 /// Faz 9.0 F4: iş parçacığı sınırını geçen tipler (async işlev parametre/dönüşleri, global ve sınıf alanlarındaki kanal/görev öğe tipleri) bariyerli paylaşıma uygun mu?
@@ -1220,7 +1266,7 @@ pub fn crossingSafe(self: *Codegen, module: ast.Module, extra_functions: []const
     }
     var sit = set.keyIterator();
     while (sit.next()) |k| try self.dyn_classes.put(self.allocator, k.*, {});
-    self.dyn_crossing = any;
+    self.dyn_crossing = self.dyn_crossing or any;
     return true;
 }
 
@@ -1253,10 +1299,16 @@ fn crossRoot(self: *Codegen, ti: types.TypeInfo, module: ast.Module, set: *std.S
 
 /// Faz 9.0 F5: yuva bariyerli global (sahipli okuma + yayımlayıp kilitli yazma): tip bariyerli paylaşıma uygunsa kaydeder.
 fn dynSlotGlobal(self: *Codegen, g: *const types.GlobalVar, module: ast.Module) CodegenError!bool {
-    if (g.info.heap != .list and g.info.heap != .dict and g.info.heap != .class) return false;
+    const handle = g.info.heap == .channel or g.info.heap == .task or g.info.heap == .thread_channel or g.info.heap == .thread_handle or g.info.heap == .task_local;
+    if (g.info.heap != .list and g.info.heap != .dict and g.info.heap != .class and g.info.heap != .closure and g.info.heap != .boxed_scalar and !handle) return false;
     var set: std.StringHashMapUnmanaged(void) = .empty;
     defer set.deinit(self.allocator);
-    if (!try dynSafeType(self, g.info, module, &set, 0)) return false;
+    if (handle) {
+        // Tutamaç globali: öğe tipi sınırı geçer (`crossRoot`); yuva kilitli okunur/yazılır.
+        var any = false;
+        if (!try crossRoot(self, g.info, module, &set, &any, 0)) return false;
+        if (any) self.dyn_crossing = true;
+    } else if (!try dynSafeType(self, g.info, module, &set, 0)) return false;
     var sit = set.keyIterator();
     while (sit.next()) |k| try self.dyn_classes.put(self.allocator, k.*, {});
     try self.dyn_slot_globals.put(self.allocator, g.name, {});
@@ -1300,8 +1352,10 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
                 kind = .shared_block;
             },
             // Kanal/görev/görev-yerel tutamaçları iş parçacığı güvenlidir (görev-yerel değer her fiber'ın KENDİ deposundadır); yeniden atanmıyorsa tek ortak blokta yaşayabilir.
-            .channel, .task, .task_local => {
-                if (assignsName(module.body, g.name)) return .pinned;
+            .channel, .task, .task_local, .thread_channel, .thread_handle => {
+                if (assignsName(module.body, g.name)) {
+                    if (!try dynSlotGlobal(self, g, module)) return .pinned;
+                }
                 kind = .shared_block;
             },
             .class => {
@@ -1321,7 +1375,24 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
                     kind = .shared_block;
                 } else return .pinned;
             },
-            else => return .pinned,
+            // Closure ve kutulanmış (Optional) skaler değişmez ARC nesneleridir: yeniden atanmıyorsa yuva sabittir, atanıyorsa yuva bariyeri (sahipli okuma, kilitli yazma).
+            .closure => {
+                self.dyn_closures = true;
+                if (assignsName(module.body, g.name)) {
+                    if (!try dynSlotGlobal(self, g, module)) return .pinned;
+                }
+                kind = .shared_block;
+            },
+            .boxed_scalar => {
+                if (assignsName(module.body, g.name)) {
+                    if (!try dynSlotGlobal(self, g, module)) return .pinned;
+                }
+                kind = .shared_block;
+            },
+            // Ham tipli işaretçi değeri (`ptr[T]`): skaler gibi paylaşılan blokta yaşar (içeriğin eşzamanlama sorumluluğu kullanıcıdadır — `extern`/`lowlevel` güven sınırı).
+            .typed_ptr => {
+                kind = .shared_block;
+            },
         }
     }
     if (self.dyn_slot_globals.count() > 0) {

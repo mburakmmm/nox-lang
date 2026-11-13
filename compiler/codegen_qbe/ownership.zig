@@ -482,7 +482,7 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         const pin_hdr = try self.newTemp();
         try self.qbeOp2Imm(pin_hdr, .l, "sub", ptr, @intCast(retainOffset(.str)));
         const pin_rc = try self.newTemp();
-        try self.qbeLoadL(pin_rc, pin_hdr);
+        try self.qbeLoadAtomicL(pin_rc, pin_hdr);
         const is_pinned = try self.newTemp();
         try self.qbeOp2Imm(is_pinned, .w, "csgel", pin_rc, STR_PINNED_THRESHOLD);
         try self.qbeJnz(is_pinned, free_done_label, atomic_label);
@@ -801,7 +801,7 @@ pub fn emitInlineRetain(self: *Codegen, ptr: []const u8, heap: HeapKind) Codegen
     if (heap == .str) {
         // v2.1.83: sabit (pinned) dizeler (literaller, tek karakterlik tablo) için atomik artış gereksiz: sayaç `STR_PINNED_THRESHOLD` üstündeyse atla.
         const rc_now = try self.newTemp();
-        try self.qbeLoadL(rc_now, hdr);
+        try self.qbeLoadAtomicL(rc_now, hdr);
         const is_pinned = try self.newTemp();
         try self.qbeOp2Imm(is_pinned, .w, "csgel", rc_now, STR_PINNED_THRESHOLD);
         const bump_label = try self.newLabel("retain_bump");

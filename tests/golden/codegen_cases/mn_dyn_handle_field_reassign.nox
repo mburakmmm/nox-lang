@@ -1,0 +1,34 @@
+# Faz 9.0 F5 (v2.1.138): yeniden atanan KANAL alanı — alan okuması kilitli retain, yazma yayımlayıp kilitli değiştirir ve eski kanalı kilit dışında yok eder.
+class Hub:
+    out: Channel[int]
+    def __init__(self: Hub, out: Channel[int]) -> None:
+        self.out = out
+    def swap(self: Hub) -> None:
+        self.out = Channel[int](2048)
+
+hub: Hub = Hub(Channel[int](2048))
+
+async def worker(id: int, fin: Channel[int]) -> None:
+    j: int = 0
+    while j < 50:
+        if j % 10 == 9:
+            hub.swap()
+        await hub.out.send(j)
+        j = j + 1
+    await fin.send(id)
+
+async def main_task() -> None:
+    fin: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, fin)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await fin.recv()
+        k = k + 1
+    print(s)
+
+mt: Task[None] = spawn main_task()
+await mt

@@ -640,7 +640,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     if (!self.boundsElideApplies(idx)) {
         const len_t = try self.newTemp();
         self.setMemTag(.list_len);
-        try self.qbeLoadL(len_t, obj.text);
+        if (self.list_locks) try self.qbeLoadAtomicL(len_t, obj.text) else try self.qbeLoadL(len_t, obj.text);
         self.setMemTag(.none);
         index_v.text = try normalizeNegativeIndex(self, idx.index.*, index_v.text, len_t);
         // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
@@ -1663,7 +1663,7 @@ pub fn emitListFind(self: *Codegen, coll: Value, x: Value) CodegenError![]const 
     try self.qbeStoreImmL(0, idx_slot);
     try self.qbeStoreImmL(-1, res_slot);
     const len_t = try self.newTemp();
-    try self.qbeLoadL(len_t, coll.text);
+    if (self.list_locks) try self.qbeLoadAtomicL(len_t, coll.text) else try self.qbeLoadL(len_t, coll.text);
 
     const cond_label = try self.newLabel("find_cond");
     const body_label = try self.newLabel("find_body");
@@ -1708,7 +1708,7 @@ pub fn emitListCount(self: *Codegen, coll: Value, x: Value) CodegenError![]const
     try self.qbeStoreImmL(0, idx_slot);
     try self.qbeStoreImmL(0, cnt_slot);
     const len_t = try self.newTemp();
-    try self.qbeLoadL(len_t, coll.text);
+    if (self.list_locks) try self.qbeLoadAtomicL(len_t, coll.text) else try self.qbeLoadL(len_t, coll.text);
 
     const cond_label = try self.newLabel("count_cond");
     const body_label = try self.newLabel("count_body");
@@ -2668,8 +2668,17 @@ fn genPrintDict(self: *Codegen, v: Value) CodegenError!void {
     try self.qbeJmp(skip_label);
     try self.qbeLabel(skip_label);
 
+    // Faz 9.0 F5: paylaşım kipinde girdiler kilit altında retain edilerek (sahipli) okunur; eş zamanlı üzerine yazma yazdırılan değeri geçersiz kılmaz.
+    const owned_print = self.owned_dict_reads or self.shared_block_mode or self.dyn_crossing;
     const key_raw = try self.newTemp();
-    try self.qbeCall(.{ .name = key_raw, .ty = .l }, "$nox_dict_entry_key", &.{
+    if (owned_print) {
+        try self.qbeCall(.{ .name = key_raw, .ty = .l }, "$nox_dict_entry_owned", &.{
+            .{ .ty = .l, .text = v.text },
+            .{ .ty = .l, .text = idx_cur },
+            .{ .ty = .w, .text = "0" },
+            .{ .ty = .w, .text = if (dinfo.key_is_str) "1" else "0" },
+        });
+    } else try self.qbeCall(.{ .name = key_raw, .ty = .l }, "$nox_dict_entry_key", &.{
         .{ .ty = .l, .text = v.text },
         .{ .ty = .l, .text = idx_cur },
     });
@@ -2680,18 +2689,27 @@ fn genPrintDict(self: *Codegen, v: Value) CodegenError!void {
         .heap = if (dinfo.key_is_str) .str else .none,
     };
     try self.genPrintFragment(kv);
+    if (owned_print and dinfo.key_is_str) try self.releaseValueIfSet(key_converted.text, .str, .none, null, null, null);
 
     const colon = try self.internFmtString(": ");
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = colon }});
 
     const val_raw = try self.newTemp();
-    try self.qbeCall(.{ .name = val_raw, .ty = .l }, "$nox_dict_entry_value", &.{
+    if (owned_print) {
+        try self.qbeCall(.{ .name = val_raw, .ty = .l }, "$nox_dict_entry_owned", &.{
+            .{ .ty = .l, .text = v.text },
+            .{ .ty = .l, .text = idx_cur },
+            .{ .ty = .w, .text = "1" },
+            .{ .ty = .w, .text = if (dinfo.value_is_str) "1" else if (dinfo.valueIsArc()) "2" else "0" },
+        });
+    } else try self.qbeCall(.{ .name = val_raw, .ty = .l }, "$nox_dict_entry_value", &.{
         .{ .ty = .l, .text = v.text },
         .{ .ty = .l, .text = idx_cur },
     });
     const val_converted = try self.fromPayload(.{ .text = val_raw, .qtype = .l }, dinfo.value_qtype);
     const vv = abi.dictValueValue(dinfo, val_converted.text, val_converted.qtype);
     try self.genPrintFragment(vv);
+    if (owned_print and (dinfo.value_is_str or dinfo.valueIsArc())) try self.releaseValueIfSet(vv.text, vv.heap, vv.elem_qtype, vv.class_name, vv.elem_heap_info, vv.dict_info);
 
     const idx_next = try self.newTemp();
     try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);

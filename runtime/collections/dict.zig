@@ -415,6 +415,8 @@ pub const Dict = struct {
     /// `nox_dict_make_shared`): her dışa açık işlem `lock` altında çalışır (okumalar dahil: `last_idx` önbelleği okumada da yazılır).
     /// Tek işlemler atomik, bileşik işlemler (`d[k] = d[k] + 1`) değildir; bellek-güvenlidir. Paylaşılmayan sözlüklerde maliyet: bir dal.
     shared: bool = false,
+    /// Faz 9.0 F5: derleyici yayımlama noktasından (sınıf/liste değerlerini yayımlamak için) en az bir kez geçti mi?
+    published: bool = false,
     /// Sıcak kilit kendi önbellek satırında durur (yanlış paylaşım: kilidi bekleyenler sözlük alanlarının satırını geçersiz kılmasın).
     _pad: [64]u8 = undefined,
     lock: SpinLock = .{},
@@ -448,6 +450,30 @@ pub export fn nox_dict_make_shared(rt: ?*anyopaque, dp: ?*anyopaque) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     // Havuzda tek işçi varsa eş zamanlı erişim OLAMAZ: kilit hiç alınmaz (tek işçili çalıştırmada sıfır ek maliyet).
     d.shared = state.main_pool_workers > 1;
+}
+
+/// Faz 9.0 F5: `nox_dict_make_shared` gibi ama sözlük bu çağrıdan ÖNCE yayımlanmamışsa 1 döner (derleyici o durumda sınıf/liste değerlerini yayımlar).
+pub export fn nox_dict_publish_begin(rt: ?*anyopaque, dp: ?*anyopaque) i32 {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return 0));
+    if (d.published) return 0;
+    d.published = true;
+    d.shared = state.main_pool_workers > 1;
+    return 1;
+}
+
+/// Faz 9.0 F5: `idx`indeki girdinin anahtarını (`want_value=0`) ya da değerini kilit altında RETAIN ederek döner (`kind`: 1 = `str`, 2 = ARC işaretçisi, 0 = retain yok).
+pub export fn nox_dict_entry_owned(dp: ?*anyopaque, idx: i64, want_value: i32, kind: i32) i64 {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockRead(d);
+    defer unlockRead(d, held);
+    if (idx < 0) return 0;
+    const i = liveEntryAt(d, @intCast(idx)) orelse return 0;
+    const v = if (want_value != 0) d.entries.items[i].value else d.entries.items[i].key;
+    if (v != 0) {
+        if (kind == 2) arc.nox_rc_retain(@as(?*anyopaque, @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(v))))))) else if (kind == 1) str_mod.nox_str_retain(payloadToStrPtr(v));
+    }
+    return v;
 }
 
 /// `entries[i]` mezar taşı mı? (`dead == 0` hızlı yolu.)

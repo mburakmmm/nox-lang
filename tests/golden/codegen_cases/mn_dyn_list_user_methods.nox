@@ -1,0 +1,67 @@
+# Faz 9.0 F5 (v2.1.138): liste ELEMANI sınıfta kullanıcı `__eq__`/`__repr__`/`__del__` — kullanıcı kodu liste kilidi altında ÇALIŞMAZ: eşitlik taramaları kilit dışında anlık görüntüde,
+# `remove` canlı listede aynı elemanı kimlikle bulur, `clear` elemanları yeni bloğa taşıyıp kilit dışında bırakır (`__del__` orada çalışır).
+class Job:
+    name: str
+    n: int
+    def __init__(self: Job, name: str, n: int) -> None:
+        self.name = name
+        self.n = n
+    def __eq__(self: Job, other: Job) -> bool:
+        return self.n == other.n
+    def __repr__(self: Job) -> str:
+        return "Job(" + self.name + ")"
+    def __del__(self: Job) -> None:
+        dead.append(1)
+
+class Queue:
+    jobs: list[Job]
+    def __init__(self: Queue) -> None:
+        self.jobs = []
+    def push(self: Queue, n: int) -> None:
+        self.jobs.append(Job("j" + str(n), n))
+    def drop(self: Queue, n: int) -> None:
+        try:
+            self.jobs.remove(Job("x", n))
+        except ValueError:
+            pass
+    def has(self: Queue, n: int) -> bool:
+        return Job("x", n) in self.jobs
+    def how_many(self: Queue, n: int) -> int:
+        return self.jobs.count(Job("x", n))
+    def wipe(self: Queue) -> None:
+        self.jobs.clear()
+
+dead: list[int] = []
+q: Queue = Queue()
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 120:
+        q.push(j % 10)
+        q.push(j % 7)
+        if q.has(j % 9):
+            acc = acc + 1
+        acc = acc + q.how_many(j % 5) % 2
+        q.drop(j % 4)
+        if j % 40 == 39:
+            q.wipe()
+        j = j + 1
+    await out.send(id)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s)
+    print(len(q.jobs) >= 0)
+
+mt: Task[None] = spawn main_task()
+await mt

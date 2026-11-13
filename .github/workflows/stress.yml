@@ -232,3 +232,23 @@ jobs:
       - name: Paylaşılan durum RSS büyüme denetimi (soak)
         run: python3 scripts/shared_state_soak.py --rounds 40000
 
+
+  tsan:
+    name: ThreadSanitizer (bariyer/kilit yolları, macOS aarch64)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-aarch64-macos-0.16.0" >>"$GITHUB_PATH"
+
+      - name: noxc derle
+        run: zig build
+
+      - name: TSan denetimi (mn_* fixture'ları, 4 işçi, 5 tur)
+        run: scripts/tsan_check.sh 5 4 mn_

@@ -613,6 +613,13 @@ pub fn qbeLoadL(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!
     try qbeLoad(self, dst, .l, .l, addr);
 }
 
+/// Faz 9.0 F6: başlık sözcüğünün (SHARED/LOCK bitleri) ATOMİK gevşek (monotonic) yüklemesi — başka işçilerin atomik refcount/bayrak işlemleriyle yarışmaz ve derleyici yüklemeyi bayta daraltamaz (wasm tek iş parçacığında düz).
+pub fn qbeLoadAtomicL(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    if (isWasm(self) and !isWasmThreads(self)) return qbeLoadL(self, dst, addr);
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    try self.out.writer.print("    {s} = load atomic i64, ptr {s} monotonic, align 8\n", .{ dst, ptr_reg });
+}
+
 pub fn qbeStore(self: *Codegen, ty: QbeType, value_raw: []const u8, addr: []const u8) CodegenError!void {
     if (ty == .b or ty == .sb) return qbeStoreB(self, value_raw, addr);
     if (ty == .h or ty == .sh) return qbeStoreH(self, value_raw, addr);
@@ -623,6 +630,14 @@ pub fn qbeStore(self: *Codegen, ty: QbeType, value_raw: []const u8, addr: []cons
 
 pub fn qbeStoreL(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
     try qbeStore(self, .l, value, addr);
+}
+
+/// Faz 9.0 F6: `qbeLoadAtomicL`in yazma ikizi (gevşek atomik; wasm tek iş parçacığında düz).
+pub fn qbeStoreAtomicL(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+    if (isWasm(self) and !isWasmThreads(self)) return qbeStoreL(self, value, addr);
+    const v = try renderOperand(self, value);
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    try self.out.writer.print("    store atomic i64 {s}, ptr {s} monotonic, align 8\n", .{ v, ptr_reg });
 }
 
 pub fn qbeStoreImmL(self: *Codegen, imm: i64, addr: []const u8) CodegenError!void {

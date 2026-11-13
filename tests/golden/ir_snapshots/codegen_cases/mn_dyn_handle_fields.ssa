@@ -1685,59 +1685,77 @@ export function $Hub___init__(l %rt, l %p_self, l %p_out) {
     %t2 =l loadl %t0
     %t3 =l loadl %t1
     call $nox_channel_retain(l %t3)
-    %t4 =l add %t2, 8
+    %t4 =l sub %t2, 8
     %t5 =l loadl %t4
-    storel %t3, %t4
-    call $nox_channel_destroy(l %rt, l %t5)
-    %t6 =l loadl %t0
-    %t7 =l add $str0, 16
-    %t8 =l sub %t6, 8
-    %t9 =l loadl %t8
-    %t10 =l and %t9, 288230376151711744
-    %t11 =w cnel %t10, 0
-    jnz %t11, @dyn_wr_pub0, @dyn_wr_lockp1
+    %t6 =l and %t5, 288230376151711744
+    %t7 =w cnel %t6, 0
+    jnz %t7, @dyn_wr_pub0, @dyn_wr_lockp1
 @dyn_wr_pub0
     jmp @dyn_wr_lockp1
 @dyn_wr_lockp1
-    jnz %t11, @dyn_wr_lock2, @dyn_done3
+    jnz %t7, @dyn_wr_lock2, @dyn_done3
 @dyn_wr_lock2
-    call $nox_obj_lock(l %t6)
+    call $nox_obj_lock(l %t2)
     jmp @dyn_done3
 @dyn_done3
-    %t12 =l add %t6, 16
-    %t13 =l loadl %t12
-    storel %t7, %t12
-    jnz %t11, @dyn_wr_unlock4, @dyn_done5
+    %t8 =l add %t2, 8
+    %t9 =l loadl %t8
+    storel %t3, %t8
+    jnz %t7, @dyn_wr_unlock4, @dyn_done5
 @dyn_wr_unlock4
-    call $nox_obj_unlock(l %t6)
+    call $nox_obj_unlock(l %t2)
     jmp @dyn_done5
 @dyn_done5
-    %t14 =w ceql %t13, 0
-    jnz %t14, @release_skip7, @release6
-@release6
-    %t15 =l sub %t13, 16
-    %t16 =l loadl %t15
-    %t17 =w csgel %t16, 536870912
-    jnz %t17, @str_free_done11, @str_rel_atomic12
-@str_rel_atomic12
-    %t18 =l sub %t13, 16
-    %t19 =l call $nox_atomic_rc_sub(l %t18, l 1)
-    %t20 =w cslel %t19, 0
-    jnz %t20, @str_free9, @str_free_skip10
-@str_free9
-    call $nox_str_free_now(l %rt, l %t13)
-    jmp @str_free_done11
-@str_free_skip10
-    jmp @str_free_done11
-@str_free_done11
-    jmp @release_done8
-@release_skip7
-    jmp @release_done8
-@release_done8
-    %t21 =l loadl %t0
-    %t22 =l add %t21, 24
-    storel 0, %t22
-@fn_end13
+    call $nox_channel_destroy(l %rt, l %t9)
+    %t10 =l loadl %t0
+    %t11 =l add $str0, 16
+    %t12 =l sub %t10, 8
+    %t13 =l loadl %t12
+    %t14 =l and %t13, 288230376151711744
+    %t15 =w cnel %t14, 0
+    jnz %t15, @dyn_wr_pub6, @dyn_wr_lockp7
+@dyn_wr_pub6
+    jmp @dyn_wr_lockp7
+@dyn_wr_lockp7
+    jnz %t15, @dyn_wr_lock8, @dyn_done9
+@dyn_wr_lock8
+    call $nox_obj_lock(l %t10)
+    jmp @dyn_done9
+@dyn_done9
+    %t16 =l add %t10, 16
+    %t17 =l loadl %t16
+    storel %t11, %t16
+    jnz %t15, @dyn_wr_unlock10, @dyn_done11
+@dyn_wr_unlock10
+    call $nox_obj_unlock(l %t10)
+    jmp @dyn_done11
+@dyn_done11
+    %t18 =w ceql %t17, 0
+    jnz %t18, @release_skip13, @release12
+@release12
+    %t19 =l sub %t17, 16
+    %t20 =l loadl %t19
+    %t21 =w csgel %t20, 536870912
+    jnz %t21, @str_free_done17, @str_rel_atomic18
+@str_rel_atomic18
+    %t22 =l sub %t17, 16
+    %t23 =l call $nox_atomic_rc_sub(l %t22, l 1)
+    %t24 =w cslel %t23, 0
+    jnz %t24, @str_free15, @str_free_skip16
+@str_free15
+    call $nox_str_free_now(l %rt, l %t17)
+    jmp @str_free_done17
+@str_free_skip16
+    jmp @str_free_done17
+@str_free_done17
+    jmp @release_done14
+@release_skip13
+    jmp @release_done14
+@release_done14
+    %t25 =l loadl %t0
+    %t26 =l add %t25, 24
+    storel 0, %t26
+@fn_end19
     ret
 }
 export function $Hub_rename(l %rt, l %p_self, l %p_n) {
@@ -2362,8 +2380,10 @@ export function $nox_publish_Tracker(l %rt, l %p) {
 }
 export function $nox_publish_body_Hub(l %rt, l %p) {
 @start
-    %t0 =l add %p, 16
+    %t0 =l add %p, 8
     %t1 =l loadl %t0
+    %t2 =l add %p, 16
+    %t3 =l loadl %t2
     ret
 }
 export function $nox_publish_Hub(l %rt, l %p) {
@@ -3677,14 +3697,30 @@ export function $worker(l %rt, l %p_id, l %p_fin) {
     %t75 =l call $nox_globals_get(l %rt)
     %t76 =l add %t75, 16
     %t77 =l loadl %t76
-    %t78 =l add %t77, 8
+    %t78 =l sub %t77, 8
     %t79 =l loadl %t78
-    %t80 =l loadl %t0
-    call $nox_channel_send(l %rt, l %t79, l %t80)
-    %t81 =l loadl %t1
-    %t82 =l loadl %t0
-    call $nox_channel_send(l %rt, l %t81, l %t82)
-@fn_end52
+    %t80 =l and %t79, 288230376151711744
+    %t81 =w cnel %t80, 0
+    jnz %t81, @dyn_rd_lock52, @dyn_done53
+@dyn_rd_lock52
+    call $nox_obj_lock(l %t77)
+    jmp @dyn_done53
+@dyn_done53
+    %t82 =l add %t77, 8
+    %t83 =l loadl %t82
+    call $nox_channel_retain(l %t83)
+    jnz %t81, @dyn_rd_unlock54, @dyn_done55
+@dyn_rd_unlock54
+    call $nox_obj_unlock(l %t77)
+    jmp @dyn_done55
+@dyn_done55
+    %t84 =l loadl %t0
+    call $nox_channel_send(l %rt, l %t83, l %t84)
+    call $nox_channel_destroy(l %rt, l %t83)
+    %t85 =l loadl %t1
+    %t86 =l loadl %t0
+    call $nox_channel_send(l %rt, l %t85, l %t86)
+@fn_end56
     ret
 }
 export function $main_task(l %rt) {

@@ -10,6 +10,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
+const dyn_share = @import("dyn_share.zig");
 
 const Codegen = codegen.Codegen;
 const LocalDecl = types.LocalDecl;
@@ -126,6 +127,8 @@ pub fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u
         try self.qbeLoad(v, src_slot.qtype, src_slot.qtype, src_slot.slot);
         if (isHeapManaged(c.info.heap)) {
             try self.emitInlineRetain(v, c.info.heap);
+            // Faz 9.0 F5: closure paylaşılabilir — yakalanan sınıf/liste/sözlük oluşturulurken geçişli yayımlanır.
+            if (self.dyn_closures) try dyn_share.emitPublishCrossingInfo(self, v, c.info);
         } else if (self.isSpawnRefcountedType(c.info.heap)) {
             // Task/Channel kapanışa girerken KENDİ referansını alır: kapanışın `_release`i (aşağıda) `destroyNonArcValue` çağırır; retain'siz bu
             // aşırı serbest bırakma olurdu (ör. bir `Channel[T]` parametresini yakalayan async üreteç; yerel çalışma zamanında sarkan işaretçi ile

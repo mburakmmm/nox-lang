@@ -547,7 +547,7 @@ pub fn genDictGetOwned(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr:
     const key_payload = try self.toPayload(key_v0);
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const payload_t = try self.newTemp();
-    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text }, .{ .ty = .w, .text = if (dinfo.value_is_class) "2" else "1" } });
+    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text }, .{ .ty = .w, .text = if (dinfo.valueIsArc()) "2" else "1" } });
     const missing = try self.newTemp();
     try self.qbeOp2Imm(missing, .w, "ceql", payload_t, 0);
     const err_label = try self.newLabel("dict_get_err");

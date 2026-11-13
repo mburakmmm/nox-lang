@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.138]
+
+### Eklendi (Faz 9.0 F5 tamam + F6: tek işçiye düşen durum kalmadı, ThreadSanitizer)
+
+- **Kalan tüm tipler bariyerli paylaşımda:** yığın değerli sözlükler (`dict[K, list]`/`dict[K, Sınıf]`/`dict[K, dict]`: eklenen değerler geçişli yayımlanır, `get`/`pop`/indeks okumaları sahipli, yazdırma girdileri kilit altında retain ederek okur); closure (alan/liste öğesi/global; yakalananlar closure oluşturulurken yayımlanır, bu durumda programın tüm sınıfları bariyerli olur); çoklu kalıtım/mixin bileşenleri (alt tip dağıtımlı yayımlama); `@repr("C")` sınıflar; yeniden atanan kanal/görev/thread-kanalı ALANLARI ve GLOBALLERİ (yuva kilitli retain/destroy); yeniden atanan closure/`Optional` globalleri; yığın elemanlı iç içe listeler (`list[list[str]]`, kilitli eşitlik sarmalayıcısı `_eq` → `_eq_raw`); liste ELEMANI sınıfta kullanıcı `__eq__`/`__repr__`/`__str__`/`__del__` (kullanıcı kodu kilit altında ÇALIŞMAZ: eşitlik taramaları anlık görüntüde, `remove` canlı listede elemanı kimlikle bulur [`nox_list_find_ptr`], `clear` elemanları yeni bloğa taşıyıp kilit dışında bırakır [`nox_list_take_all`]). Hiyerarşi bileşeni özyinelemesi derinlik sayacını şişiriyordu (büyük kalıtım ağaçları reddediliyordu) — düzeltildi. Depodaki hiçbir fixture artık tek işçiye sabitlenmiyor (önceden `router_registration_all_workers`).
+- Hâlâ tek işçi (`pinned` geri düşüşü yalnız bunlarda kalır): `@packed` sınıflar (hizasız işaretçi yuvaları), 16'dan derin sınıf yuvalanması ve `crossingSafe`/`dynSafeType`ın tanımadığı yeni bir tip eklenirse.
+- **ThreadSanitizer (F6):** `zig build -Dsanitize-thread=true` noxrt.o'yu TSan ile derler; fiber geçişleri `__tsan_create/switch_to/destroy_fiber` ile açıklanmıştır. `NOX_SANITIZE_THREAD=1 noxc build --backend llvm` işlev başlarına `sanitize_thread` ekleyip `-fsanitize=thread -g` ile derler/bağlar. `scripts/tsan_check.sh` (+ gecelik `tsan` işi, macOS) `mn_*` fixture'larını 4 işçiyle çalıştırır: **bariyer/kilit yolları (heap alanlar, heap listeler, sözlük değerleri, global yuva, closure, kalıtım, tutamaçlar) 0 rapor**. Kasıtlı Anlam-A yarışları (skaler `x = x + 1`, kilitsiz skaler liste erişimi) betikte açıkça atlanır. TSan'ın bulduğu gerçek biçimsel yarışlar kapatıldı: başlık sözcüğü yüklemeleri (SHARED bayrağı, `str` pinned eşiği, liste benzersizlik denetimi, `__del__` bayrağı) ve liste uzunluk sözcüğü gevşek atomik; `nox_str_append` benzersizlik denetimi acquire.
+- Test: `mn_dyn_dict_heap_values`, `mn_dyn_closures`, `mn_dyn_mixins`, `mn_dyn_list_user_methods`, `mn_dyn_list_nested_heap`, `mn_dyn_handle_globals`, `mn_dyn_handle_field_reassign` (iki backend); tam mn_* stres (llvm+qbe, 1/4/8 işçi, Debug runtime): 324 çalıştırma, 0 hata.
+
 ## [2.1.137]
 
 ### Eklendi (Faz 9.0 F6: stres + ölçüm)

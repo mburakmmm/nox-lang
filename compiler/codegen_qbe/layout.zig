@@ -348,7 +348,7 @@ fn emitDelHook(self: *Codegen, del_owner: []const u8, done_label: []const u8) Co
     const hdr = try self.newTemp();
     try self.qbeOp2Imm(hdr, .l, "sub", "%p", @intCast(types.ARC_HEADER_SIZE));
     const word = try self.newTemp();
-    try self.qbeLoadL(word, hdr);
+    try self.qbeLoadAtomicL(word, hdr);
     const fin_bits = try self.newTemp();
     try self.qbeOp2Imm(fin_bits, .l, "and", word, std.math.minInt(i64));
     const already = try self.newTemp();
@@ -1518,7 +1518,46 @@ pub fn genListEq(self: *Codegen, name: []const u8, elem_qtype: QbeType, elem_hea
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    const listeq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{name});
+    // Faz 9.0 F5: yığın elemanlı paylaşılan listelerde karşılaştırma iki bloğu (adres sıralı) kilitleyen bir sarmalayıcı içinden yapılır; çıplak gövde `_eq_raw` olur.
+    const elem_is_heap = (if (elem_heap_info) |ehi| isHeapManaged(ehi.heap) else false) or elem_is_str;
+    const wrap = self.list_locks and elem_is_heap;
+    if (wrap) {
+        const wsym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{name});
+        try self.qbeFuncHeaderStart(.w, wsym);
+        try self.qbeFuncParam(.l, RT_PARAM, true);
+        try self.qbeFuncParam(.l, "%a", false);
+        try self.qbeFuncParam(.l, "%b", false);
+        try self.qbeFuncHeaderEnd();
+        const fa = try dyn_share.emitSharedFlag(self, "%a");
+        const fb = try dyn_share.emitSharedFlag(self, "%b");
+        const any = try self.newTemp();
+        try self.qbeOp2(any, .w, "or", fa, fb);
+        const yes = try self.newLabel("listeq_lock");
+        const go = try self.newLabel("listeq_go");
+        try self.qbeJnz(any, yes, go);
+        try self.qbeLabel(yes);
+        try self.qbeCall(null, "$nox_obj_lock_pair", &.{ .{ .ty = .l, .text = "%a" }, .{ .ty = .l, .text = "%b" } });
+        try self.qbeJmp(go);
+        try self.qbeLabel(go);
+        const r = try self.newTemp();
+        const rsym = try std.fmt.allocPrint(self.allocator, "${s}_eq_raw", .{name});
+        try self.qbeCall(.{ .name = r, .ty = .w }, rsym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%a" }, .{ .ty = .l, .text = "%b" } });
+        const yes2 = try self.newLabel("listeq_unlock");
+        const done = try self.newLabel("listeq_done");
+        try self.qbeJnz(any, yes2, done);
+        try self.qbeLabel(yes2);
+        try self.qbeCall(null, "$nox_obj_unlock_pair", &.{ .{ .ty = .l, .text = "%a" }, .{ .ty = .l, .text = "%b" } });
+        try self.qbeJmp(done);
+        try self.qbeLabel(done);
+        try self.qbeRet(r);
+        try self.qbeFuncEnd();
+        self.temp_counter = 0;
+        self.label_counter = 0;
+        self.mod_cache.deinit(self.allocator);
+        self.mod_cache = .empty;
+    }
+
+    const listeq_sym = if (wrap) try std.fmt.allocPrint(self.allocator, "${s}_eq_raw", .{name}) else try std.fmt.allocPrint(self.allocator, "${s}_eq", .{name});
     try self.qbeFuncHeaderStart(.w, listeq_sym);
     try self.qbeFuncParam(.l, RT_PARAM, true);
     try self.qbeFuncParam(.l, "%a", false);

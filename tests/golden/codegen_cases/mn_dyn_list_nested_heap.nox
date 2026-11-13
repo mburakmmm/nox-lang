@@ -1,0 +1,46 @@
+# Faz 9.0 F5 (v2.1.138): yığın elemanlı İÇ İÇE liste (list[list[str]]) alanı — iç listeler paylaşılan, kilitli yazmalar; eşitlik/dolaşma kilitli sarmalayıcıdan.
+class Grid:
+    rows: list[list[str]]
+    def __init__(self: Grid) -> None:
+        self.rows = [["a", "b"]]
+    def add(self: Grid, s: str) -> None:
+        self.rows.append([s, s + "x"])
+    def touch(self: Grid, i: int, s: str) -> None:
+        if i < len(self.rows):
+            row: list[str] = self.rows[i]
+            row.append(s)
+    def total(self: Grid) -> int:
+        n: int = 0
+        for r in self.rows:
+            for x in r:
+                n = n + len(x)
+        return n
+
+g: Grid = Grid()
+
+async def worker(id: int, out: Channel[int]) -> None:
+    j: int = 0
+    while j < 100:
+        g.add("w" + str(id) + str(j))
+        g.touch(j % 5, "t" + str(j))
+        j = j + 1
+    print(g.total() > 0)
+    await out.send(id)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s)
+    print(len(g.rows))
+    print(g.rows == g.rows)
+
+mt: Task[None] = spawn main_task()
+await mt

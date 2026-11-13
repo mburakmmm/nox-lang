@@ -59,6 +59,8 @@ const build_options = @import("build_options");
 // okur. `std.debug.print`in KENDİSİ HER ZAMAN stderr'e yazdığından (bkz.
 // modül üstü not, "TÜM mesajlar HER ZAMAN stderr'e") tespit de stderr
 // ÜZERİNDEN yapılır.
+/// Faz 9.0 F6: `NOX_SANITIZE_THREAD=1` — LLVM yolunda derleme/bağlamaya `-fsanitize=thread -g` eklenir (noxrt.o `zig build -Dsanitize-thread` ile derlenmiş olmalı).
+var g_tsan: bool = false;
 var g_use_color: bool = false;
 
 fn detectUseColor(io: std.Io, environ_map: *const std.process.Environ.Map) bool {
@@ -282,6 +284,7 @@ fn realMain(init: std.process.Init) !void {
     const io = init.io;
 
     g_use_color = detectUseColor(io, init.environ_map);
+    g_tsan = init.environ_map.get("NOX_SANITIZE_THREAD") != null;
     g_progress_live = detectLiveProgress(io, init.environ_map);
 
     var all_args: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -3412,7 +3415,9 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             if (ht.wasm) return linkWasm(gpa, io, a, stem, ir, ht, output_override, resource_dirs, module, extern_root);
         }
         const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{stem});
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
+        // ThreadSanitizer: clang yalnız `sanitize_thread` özniteliği taşıyan işlevleri araçlar; `.ll` girdisinde öznitelik her işlev başlığına eklenir.
+        const ir_out: []const u8 = if (g_tsan) try std.mem.replaceOwned(u8, a, ir, ") nounwind {", ") nounwind sanitize_thread {") else ir;
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir_out });
 
         // v2.0.177: masaüstü `--target` (çapraz) hedefinde bağlayıcı `zig cc -target <üçlü>`dür; hedefin işletim sistemi/çalışma zamanı nesnesi ana makineninkinden bağımsız seçilir.
         const cross: ?qbe_target.HostedTargetInfo = if (hosted_info) |ht| (if (ht.isDesktop()) ht else null) else null;
@@ -3430,6 +3435,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             },
             .clang, .none => {
                 try clang_argv.appendSlice(a, &.{ "clang", "-O2", "-Wno-override-module" });
+                if (g_tsan) try clang_argv.appendSlice(a, &.{ "-fsanitize=thread", "-g" });
                 if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-target", "x86_64-w64-windows-gnu" });
             },
         }

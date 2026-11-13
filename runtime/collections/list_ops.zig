@@ -14,12 +14,19 @@ const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
 const HDR = abi_layout.LIST_HEADER_SIZE;
 
+// Faz 9.0 F6: uzunluk sözcüğü paylaşılan listelerde kilitsiz okunur (`len(xs)`) — gevşek (monotonic) atomik erişim yarış yok sayılmaz, maliyeti sıfırdır.
+// (wasm32'de 64-bit atomik yok: tek iş parçacıklı, düz erişim.)
 fn hdrLen(list: [*]u8) usize {
-    return @intCast(@as(*align(1) i64, @ptrCast(list)).*);
+    if (comptime @import("builtin").cpu.arch.isWasm()) return @intCast(@as(*align(1) i64, @ptrCast(list)).*);
+    return @intCast(@atomicLoad(i64, @as(*align(8) i64, @ptrCast(@alignCast(list))), .monotonic));
 }
 
 fn setLen(list: [*]u8, n: usize) void {
-    @as(*align(1) i64, @ptrCast(list)).* = @intCast(n);
+    if (comptime @import("builtin").cpu.arch.isWasm()) {
+        @as(*align(1) i64, @ptrCast(list)).* = @intCast(n);
+        return;
+    }
+    @atomicStore(i64, @as(*align(8) i64, @ptrCast(@alignCast(list))), @intCast(n), .monotonic);
 }
 
 fn retainElem(slot: [*]const u8, kind: i32) void {
@@ -180,6 +187,34 @@ pub export fn nox_list_remove_at(list: ?*anyopaque, idx_i: i64, esz_i: i64) void
     if (idx >= n) return;
     if (idx + 1 < n) std.mem.copyForwards(u8, base[HDR + idx * esz ..][0 .. (n - 1 - idx) * esz], base[HDR + (idx + 1) * esz ..][0 .. (n - 1 - idx) * esz]);
     setLen(base, n - 1);
+}
+
+/// Faz 9.0 F5: ilk `esz` baytlık yuvası `ptr`ye (kimlik) eşit elemanın indeksini döner, yoksa -1 (kullanıcı `__eq__`ı kilit dışında çalışırken canlı listede aynı elemanı bulmak için).
+pub export fn nox_list_find_ptr(list: ?*anyopaque, ptr: i64, esz_i: i64) i64 {
+    const base: [*]u8 = @ptrCast(list orelse return -1);
+    const esz: usize = @intCast(esz_i);
+    const n = hdrLen(base);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const slot: *align(1) const i64 = @ptrCast(base + HDR + i * esz);
+        if (slot.* == ptr) return @intCast(i);
+    }
+    return -1;
+}
+
+/// Faz 9.0 F5: listenin TÜM elemanlarını (sahiplikleriyle, retain yok) yeni bir bloğa taşır ve listeyi boşaltır; çağıran kilidi bıraktıktan SONRA yeni bloğu serbest bırakarak
+/// `__del__` gibi kullanıcı kodunu kilit DIŞINDA çalıştırır. Bellek yoksa null (liste değişmez).
+pub export fn nox_list_take_all(rt: ?*anyopaque, list: ?*anyopaque, esz_i: i64) ?*anyopaque {
+    const base: [*]u8 = @ptrCast(list orelse return null);
+    const esz: usize = @intCast(esz_i);
+    const n = hdrLen(base);
+    const blk = arc.nox_rc_alloc(rt, HDR + n * esz) orelse return null;
+    const dst: [*]u8 = @ptrCast(blk);
+    @memcpy(dst[HDR..][0 .. n * esz], base[HDR..][0 .. n * esz]);
+    setLen(dst, n);
+    @as(*align(1) i64, @ptrCast(dst + 8)).* = @intCast(n);
+    setLen(base, 0);
+    return blk;
 }
 
 fn testFree(rt: ?*anyopaque, p: ?*anyopaque) void {

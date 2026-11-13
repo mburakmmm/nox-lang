@@ -1,0 +1,31 @@
+# Faz 9.0 F5 (v2.1.138): yeniden atanan kanal globali — yuva kilitli okunur/yazılır (tutamaç retain/destroy ile), eski kanal kilit DIŞINDA bırakılır.
+chan: Channel[int] = Channel[int](1024)
+
+async def worker(id: int, fin: Channel[int]) -> None:
+    j: int = 0
+    while j < 60:
+        if j % 20 == 19:
+            chan = Channel[int](1024)
+        await chan.send(j)
+        j = j + 1
+    await fin.send(id)
+
+async def drain() -> int:
+    n: int = 0
+    return n
+
+async def main_task() -> None:
+    fin: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, fin)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await fin.recv()
+        k = k + 1
+    print(s)
+
+mt: Task[None] = spawn main_task()
+await mt

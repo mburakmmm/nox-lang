@@ -373,7 +373,8 @@ pub export fn nox_str_append(rt: ?*anyopaque, a: ?[*:0]u8, b: ?[*:0]const u8) ?[
 
     const arc_ptr = strArcPtr(pa);
     const rc_word: *const i64 = @ptrCast(@alignCast(arc_ptr - abi_layout.ARC_HEADER_SIZE));
-    const unique = rc_word.* == 1;
+    // Faz 9.0 F6: başka bir işçinin az önce bıraktığı (atomik azaltılmış) referansı görmek için acquire — Rust `Arc::get_mut` ile aynı desen.
+    const unique = (if (comptime @import("builtin").cpu.arch.isWasm()) rc_word.* else @atomicLoad(i64, rc_word, .acquire)) == 1;
     const need_payload = STR_HEADER_SIZE + total + 1;
     if (unique) {
         const cap_payload: usize = if (cap_exp != 0)
