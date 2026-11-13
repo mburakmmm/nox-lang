@@ -8,12 +8,12 @@
 
 const std = @import("std");
 
-export fn nox_list_sort_int(data: [*]i64, len: i64) callconv(.c) void {
+pub export fn nox_list_sort_int(data: [*]i64, len: i64) callconv(.c) void {
     if (len <= 0) return;
     std.mem.sort(i64, data[0..@intCast(len)], {}, std.sort.asc(i64));
 }
 
-export fn nox_list_sort_float(data: [*]f64, len: i64) callconv(.c) void {
+pub export fn nox_list_sort_float(data: [*]f64, len: i64) callconv(.c) void {
     if (len <= 0) return;
     std.mem.sort(f64, data[0..@intCast(len)], {}, std.sort.asc(f64));
 }
@@ -28,7 +28,7 @@ fn lessThanStr(_: void, a: i64, b: i64) bool {
     return std.mem.order(u8, std.mem.span(pa), std.mem.span(pb)) == .lt;
 }
 
-export fn nox_list_sort_str(data: [*]i64, len: i64) callconv(.c) void {
+pub export fn nox_list_sort_str(data: [*]i64, len: i64) callconv(.c) void {
     if (len <= 0) return;
     std.mem.sort(i64, data[0..@intCast(len)], {}, lessThanStr);
 }

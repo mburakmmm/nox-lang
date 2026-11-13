@@ -393,6 +393,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
             // TUTARLI, bkz. onun belge notu).
             if (self.module_globals.get(name)) |g| {
                 if (self.routed_lists.contains(name)) break :blk try shared_globals.genListSnapshot(self, g);
+                if (self.routed_strs.contains(name)) break :blk try shared_globals.genStrGlobalGet(self, g);
                 const block = try self.newTemp();
                 try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
                 const addr = try self.newTemp();

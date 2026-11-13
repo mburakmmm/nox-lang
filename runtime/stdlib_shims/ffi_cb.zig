@@ -28,10 +28,15 @@ const Registry = struct {
 };
 
 fn registryOf(state: *rtstate.RuntimeState) ?*Registry {
-    if (state.cb_boxes) |p| return @ptrCast(@alignCast(p));
-    const reg = state.allocator().create(Registry) catch return null;
+    // Eş zamanlı ilk kullanım (birden çok işçi aynı anda ilk `Callback`i kurabilir): tek kazanan kayıt defterini yayımlar, kaybeden kendi kopyasını bırakır.
+    if (@atomicLoad(?*anyopaque, &state.cb_boxes, .acquire)) |p| return @ptrCast(@alignCast(p));
+    const a = state.allocator();
+    const reg = a.create(Registry) catch return null;
     reg.* = .{};
-    state.cb_boxes = reg;
+    if (@cmpxchgStrong(?*anyopaque, &state.cb_boxes, null, @as(?*anyopaque, reg), .acq_rel, .acquire)) |existing| {
+        a.destroy(reg);
+        return @ptrCast(@alignCast(existing.?));
+    }
     state.cb_deinit_hook = registryDeinit;
     return reg;
 }

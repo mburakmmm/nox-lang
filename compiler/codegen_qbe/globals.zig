@@ -91,6 +91,7 @@ fn genGlobalInitStmt(self: *Codegen, stmt: ast.Stmt, block: []const u8) CodegenE
             var val = try self.convert(retained, g.info.qtype);
             // Faz 9.0 dilim 3: paylaşılan `list` global'inin yuvasına listenin kendisi değil hücresi yazılır.
             if (self.routed_lists.contains(v.name)) val.text = try shared_globals.wrapInitList(self, val.text);
+            if (self.routed_strs.contains(v.name)) val.text = try shared_globals.wrapInitStr(self, val.text);
             const addr = try self.newTemp();
             try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
             try self.qbeStore(g.info.qtype, val.text, addr);
@@ -189,6 +190,10 @@ pub fn genNoxDeinitGlobals(self: *Codegen) CodegenError!void {
         try self.qbeLoadL(ptr, addr);
         if (self.routed_lists.contains(g.name)) {
             try shared_globals.freeList(self, g.*, ptr);
+            continue;
+        }
+        if (self.routed_strs.contains(g.name)) {
+            try shared_globals.freeStr(self, ptr);
             continue;
         }
         try self.releaseValueIfSet(ptr, g.info.heap, g.info.elem_qtype, g.info.class_name, g.info.elem_heap_info, g.info.dict_info);

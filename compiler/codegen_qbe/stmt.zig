@@ -358,6 +358,7 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
             // "eski değeri yükle → yeni değeri yaz → eskiyi serbest
             // bırak" deseni.
             const g = self.module_globals.get(name) orelse return error.Unsupported;
+            if (self.routed_strs.contains(name)) return try shared_globals.genStrGlobalSet(self, g, a.value);
             const v0 = try self.genExprForTarget(a.value, g.info);
             const retained = try self.retainIfAliasing(a.value, v0);
             const val = try self.convert(retained, g.info.qtype);

@@ -334,23 +334,23 @@ All tasks run on fibers scheduled by the runtime:
   Module-level variables: by default every worker keeps its own copy of them (this is what makes `serve_multicore` handlers independent).
   Programs that share **mutable** module state between tasks without `serve_multicore*` / `nox.thread.pool_run` use one of three models,
   chosen by the compiler (no syntax involved):
-  - **Shared block (parallel):** every piece of mutable module state is one of: a module-level number/bool that is reassigned; a `dict[K, V]`
+  - **Shared block (parallel):** every piece of mutable module state is one of: a module-level number/bool or `str` that is reassigned (a `str` read returns a stable copy of the reference, so a concurrent assignment never invalidates it); a `dict[K, V]`
     that is never rebound, with number/bool values or with `str` values (see the access rules below); a `list[T]` of numbers, bools or `str`
-    that is never rebound and starts from a fresh list (`[]`, a literal or a call); a `Channel[T]` or `Task[T]` that is never rebound; or an
+    that is never rebound and starts from a fresh list (`[]`, a literal or a call); a `Channel[T]`, `Task[T]` or `TaskLocal[T]` that is never rebound; or an
     instance of a class that does not take part in inheritance and has only number/bool/`str` fields (a `str` field must not be assigned
     outside `__init__`) and is never rebound. All workers then see **one** copy. Each dict or list operation is atomic on its own (a lock taken
     only when the pool has more than one worker); number/bool fields and variables are plain aligned loads and stores. Compound updates such
     as `d[k] = d[k] + 1`, `xs[i] = xs[i] + 1` or `stats.hits = stats.hits + 1` are not atomic as a whole — the program stays memory-safe but
     increments can be lost. Use a channel or `AtomicRef` when you need exact counters.
     Access rules for shared **lists** and **dicts with `str` or class values** (anything else makes the program fall back to one worker): use the
-    name directly. Lists: `xs.append(v)`, `xs.pop()`, `xs.clear()`, `xs[i]`, `xs[i] = v`, `len(xs)`, and the read-only forms `x in xs`, `xs[a:b]`,
+    name directly. Lists: `xs.append(v)`, `xs.pop()`, `xs.clear()`, `xs.sort()`, `xs[i]`, `xs[i] = v`, `len(xs)`, and the read-only forms `x in xs`, `xs[a:b]`,
     `print(xs)` and `for x in xs`, which see a consistent snapshot copy of the list; passing the list to a module-level function is allowed when that
     function only reads the parameter (index read, `len`, `in`, slice, `print`, `for`, or passing it on to another reading function) — the call receives
     a snapshot. Dicts: `d[k]`, `d[k] = v`, `d.get(k[, default])`, `d.pop(k)`, `k in d`, `len(d)`, `d.keys()`, `d.values()`. Elements and values may be
     numbers, bools, `str`, or instances of a class that has only number/bool/`str` fields, no inheritance and no `__del__` (a `str` field must not be
     assigned outside `__init__`); reads return a new reference to the element, so an element object is one shared object (number fields are plain loads and
     stores). Assigning the list/dict to another name, returning it, or storing it elsewhere is not allowed.
-  - **One worker:** any other mutable module state (a module-level closure, a `str` that is reassigned, a list or `dict[K, str]` used in any form not
+  - **One worker:** any other mutable module state (a module-level closure, a list or `dict[K, str]` used in any form not
     listed above, a list of lists/classes, a dict with list/class values, or a class instance with inheritance, list/dict/class fields, or a `str`
     field assigned after `__init__`) still runs the whole program on **one worker** on both backends, so a task never reads another
     worker's copy (this restriction is being lifted case by case; see the Faz 9.0 notes in the changelog).

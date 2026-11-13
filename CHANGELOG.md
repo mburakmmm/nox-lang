@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.126]
+
+### Eklendi
+
+- **M:N paylaşılan modül durumu, dilim 6 (Faz 9.0):** (1) yeniden atanan paylaşılan `str` globali (yuvada tek elemanlı hücre; her okuma kilit altında RETAIN edilmiş kopya döner, atama eskiyi kilit altında bırakır; `msg = msg + "x"` bileşik güncellemesi atomik değildir); (2) hiç yeniden bağlanmayan `TaskLocal[T]` globali; (3) paylaşılan listede `xs.sort()` (kilit altında yerinde; int/float/str).
+- **Kullanım çözümlemesi kapsam-farkında (yanlış pozitif sabitleme giderildi):** bir işlev `name`i parametre/yerel olarak bağlıyorsa (`funcBindsName`) gövdesindeki atama/kullanımlar modül global'ini kastetmez. Önceden, bileşik programa dahil edilen kitaplık işlevlerindeki sık yerel adlar (`ch`, `s`, `i`...) aynı adlı bir modül globalini "yeniden atanıyor" sayıp programı tek işçiye sabitliyordu (örn. `ch: Channel[int]`). Depodaki async programlardan sabitlenenler 3/59'dan 1/59'a indi (kalan: `serve_multicore` modelli `Router` kaydı).
+- Testler: iki backend golden `mn_shared_str`, `mn_shared_list_sort`; `task_local_unreleased_at_exit` artık paylaşılan blokta çalışır.
+- **`nox.ffi.Callback` kutu kayıt defteri yarışı:** kayıt defterinin tembel kurulumu iş parçacığı güvenli değildi (iki işçi aynı anda ilk `Callback`i kurarsa kaybeden kayıt defteri sızıyordu; `wasm_host_interleave` yük altında aralıklı sızıntı veriyordu). Tek kazananlı `cmpxchg` ile yayımlanır.
+
 ## [2.1.125]
 
 ### Eklendi

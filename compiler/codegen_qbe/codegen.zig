@@ -1267,6 +1267,8 @@ pub const Codegen = struct {
     /// Faz 9.0 dilim 3: ad üzerinden yönlendirilen paylaşılan `list[T]` globalleri (yuvada hücre) ve `dict[K, str]` globalleri (sahipli okuma).
     routed_lists: std.StringHashMapUnmanaged(void) = .empty,
     routed_dict_str: std.StringHashMapUnmanaged(void) = .empty,
+    /// Faz 9.0 dilim 6: yeniden atanan paylaşılan `str` globalleri (yuvada tek elemanlı hücre; okuma/atama kilit altında).
+    routed_strs: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz 9.0: `shared_block_mode` içinde başlangıçta paylaşılan olarak işaretlenecek `dict` globalleri (bkz. `registration.isSharedSafeDict`).
     shared_dict_globals: std.StringHashMapUnmanaged(void) = .empty,
     /// Son terfi etmiş `var_decl`ın `module.body` indeksi (dahil). Bu

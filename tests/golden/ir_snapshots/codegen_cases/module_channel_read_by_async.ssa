@@ -3017,7 +3017,7 @@ export function l $main_body(l %argp) {
 }
 export function w $main(w %argc, l %argv) {
 @start
-    %rt =l call $nox_pool_main_init(w 2)
+    %rt =l call $nox_pool_main_init(w 3)
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
     call $nox_async_init(l %rt)
@@ -3025,7 +3025,7 @@ export function w $main(w %argc, l %argv) {
     %t0 =l call $nox_alloc(l %rt, l 8)
     storel %rt, %t0
     %t1 =l call $nox_async_spawn(l %rt, l $main_body, l %t0)
-    call $nox_pool_main_spawn_workers(l %rt, l $main_pool_ginit, l $main_pool_gdeinit)
+    call $nox_pool_main_spawn_workers(l %rt, l 0, l 0)
     %t2 =w call $nox_async_run_to_completion(l %rt)
     jnz %t2, @deadlock0, @no_deadlock1
 @deadlock0
@@ -3036,18 +3036,6 @@ export function w $main(w %argc, l %argv) {
     call $nox_deinit_globals(l %rt)
     call $nox_async_deinit(l %rt)
     call $nox_pool_main_join_and_destroy(l %rt)
-    ret 0
-}
-export function l $main_pool_ginit(l %argp) {
-@start
-    %rt =l copy %argp
-    call $nox_init_globals(l %rt)
-    ret 0
-}
-export function l $main_pool_gdeinit(l %argp) {
-@start
-    %rt =l copy %argp
-    call $nox_deinit_globals(l %rt)
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

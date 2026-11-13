@@ -13,6 +13,7 @@ const asap = @import("../alloc/asap.zig");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const list_ops = @import("list_ops.zig");
+const list_sort = @import("list_sort.zig");
 const dispatch_registry = @import("../alloc/dispatch_registry.zig");
 const abi_ptr = @import("../abi_ptr.zig");
 const abi_layout = @import("abi_layout");
@@ -103,6 +104,16 @@ pub export fn nox_slist_new(rt: ?*anyopaque, block: ?*anyopaque) ?*anyopaque {
     const c = std.heap.page_allocator.create(Cell) catch return null;
     c.* = .{ .block = @ptrCast(block orelse return null), .shared = state.main_pool_workers > 1 };
     return c;
+}
+
+/// Tek elemanlı hücre (paylaşılan `str` global'i için): `v` (str işaretçisi, sahiplik hücreye geçer) tek elemandır; okuma `get(0)`, atama `set(0)`.
+pub export fn nox_slist_new_one(rt: ?*anyopaque, v: i64) ?*anyopaque {
+    const raw = arc.nox_rc_alloc(rt, HDR + 8) orelse return null;
+    const b: [*]u8 = @ptrCast(raw);
+    setLen(b, 1);
+    setCap(b, 1);
+    storeElem(b, 0, 8, v);
+    return nox_slist_new(rt, raw);
 }
 
 /// Hücreyi ve elemanlarını serbest bırakır (program çıkışı).
@@ -209,6 +220,22 @@ pub export fn nox_slist_clear(rt: ?*anyopaque, cp: ?*anyopaque, esz: i64, kind: 
         while (i < n) : (i += 1) releaseElem(rt, kind, loadElem(c.block, i, esz));
     }
     setLen(c.block, 0);
+}
+
+/// `xs.sort()`: kilit altında YERİNDE sıralar. `mode`: 0 int, 1 float, 2 `str`, 3 bool (1 baytlık).
+pub export fn nox_slist_sort(cp: ?*anyopaque, mode: i32) void {
+    const c: *Cell = @ptrCast(@alignCast(cp orelse return));
+    const held = lockCell(c);
+    defer unlockCell(c, held);
+    const n = hdrLen(c.block);
+    if (n <= 1) return;
+    const data = c.block + HDR;
+    switch (mode) {
+        0 => list_sort.nox_list_sort_int(@ptrCast(@alignCast(data)), n),
+        1 => list_sort.nox_list_sort_float(@ptrCast(@alignCast(data)), n),
+        2 => list_sort.nox_list_sort_str(@ptrCast(@alignCast(data)), n),
+        else => std.mem.sort(u8, data[0..@intCast(n)], {}, std.sort.asc(u8)),
+    }
 }
 
 /// Salt-okunur toplu kullanımlar için: listenin O ANKİ içeriğinin bağımsız bir kopyası (`str` elemanlar retain edilir; çağırana ait taze liste).

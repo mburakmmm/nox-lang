@@ -1,0 +1,41 @@
+# Faz 9.0 dilim 6 (v2.1.125): yeniden atanan modül düzeyi `str` globali işçiler arasında TEK ortak değerdir; her okuma/atama kilit altında, eski değer eş zamanlı bırakılsa bile
+# okuyanın elindeki işaretçi geçerli kalır (sahipli okuma). Bileşik güncelleme (`msg = msg + "x"`) atomik değildir (kayıp artış olabilir, bellek-güvenli).
+status: str = "init"
+msg: str = ""
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 40:
+        i: int = 0
+        while i < 1000:
+            acc = (acc * 31 + i + j + id) % 1000003
+            i = i + 1
+        status = "worker-" + str(id) + "-" + str(j)
+        msg = msg + "x"
+        seen: str = status
+        if len(seen) < 10:
+            acc = acc + 1
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s)
+    print(status.startswith("worker-"))
+    print(len(msg) >= 40 and len(msg) <= 240)
+    status = "done"
+    print(status)
+    print("init" in "init x")
+
+mt: Task[None] = spawn main_task()
+await mt

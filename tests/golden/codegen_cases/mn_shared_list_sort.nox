@@ -1,0 +1,45 @@
+# Faz 9.0 dilim 6 (v2.1.125): paylaşılan listede `sort()` kilit altında yerinde sıralar (int/float/str).
+ints: list[int] = []
+floats: list[float] = []
+words: list[str] = []
+flags: list[bool] = []
+
+async def fill(id: int, out: Channel[int]) -> None:
+    j: int = 0
+    while j < 10:
+        ints.append((id * 37 + j * 11) % 53)
+        floats.append(float((id + j * 7) % 13) / 2.0)
+        words.append("w" + str((id * 5 + j * 3) % 17))
+        flags.append((id + j) % 3 == 0)
+        j = j + 1
+    await out.send(1)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](8)
+    k: int = 0
+    while k < 4:
+        t: Task[None] = spawn fill(k, out)
+        k = k + 1
+    k = 0
+    while k < 4:
+        r: int = await out.recv()
+        k = k + 1
+    ints.sort()
+    floats.sort()
+    words.sort()
+    ok: bool = True
+    i: int = 1
+    while i < len(ints):
+        if ints[i - 1] > ints[i]:
+            ok = False
+        if floats[i - 1] > floats[i]:
+            ok = False
+        if words[i - 1] > words[i]:
+            ok = False
+        i = i + 1
+    print(ok)
+    print(len(ints))
+    print(len(flags))
+
+mt: Task[None] = spawn main_task()
+await mt

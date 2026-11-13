@@ -42,6 +42,48 @@ pub fn listElemShape(info: types.TypeInfo) ?ElemShape {
     };
 }
 
+/// `name`, bu deyim listesinde YEREL olarak bağlanıyor mu (`var_decl`, `for` döngü değişkeni, `except ... as`, `with ... as`, iç içe `def` adı/parametreleri)? İç içe gövdelere de iner.
+pub fn stmtsBindName(stmts: []const ast.Stmt, name: []const u8) bool {
+    for (stmts) |st| {
+        switch (st.kind) {
+            .var_decl => |v| if (std.mem.eql(u8, v.name, name)) return true,
+            .for_stmt => |f| {
+                if (std.mem.eql(u8, f.var_name, name) or stmtsBindName(f.body, name)) return true;
+            },
+            .if_stmt => |f| {
+                if (stmtsBindName(f.then_body, name)) return true;
+                for (f.elif_clauses) |ec| if (stmtsBindName(ec.body, name)) return true;
+                if (f.else_body) |eb| if (stmtsBindName(eb, name)) return true;
+            },
+            .while_stmt => |w| if (stmtsBindName(w.body, name)) return true,
+            .func_def => |fd| if (funcBindsName(fd, name)) return true,
+            .class_def => |cd| for (cd.methods) |m| if (funcBindsName(m, name)) return true,
+            .try_stmt => |t| {
+                if (stmtsBindName(t.try_body, name)) return true;
+                for (t.except_clauses) |ec| {
+                    if (ec.bind_name) |n| if (std.mem.eql(u8, n, name)) return true;
+                    if (stmtsBindName(ec.body, name)) return true;
+                }
+                if (t.finally_body) |fb| if (stmtsBindName(fb, name)) return true;
+            },
+            .lowlevel_stmt => |ll| if (stmtsBindName(ll.body, name)) return true,
+            .with_stmt => |w| {
+                if (w.binding) |n| if (std.mem.eql(u8, n, name)) return true;
+                if (stmtsBindName(w.body, name)) return true;
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// İşlev `name`i parametre ya da yerel olarak bağlıyorsa doğru: gövdesindeki `name` kullanımları/atamaları MODÜL global'ini DEĞİL yereli kasteder (kitaplık işlevlerindeki `ch`, `s`, `i` gibi sık adların yanlış pozitif sabitlemesini önler).
+pub fn funcBindsName(fd: ast.FuncDef, name: []const u8) bool {
+    if (std.mem.eql(u8, fd.name, name)) return false;
+    for (fd.params) |p| if (std.mem.eql(u8, p.name, name)) return true;
+    return stmtsBindName(fd.body, name);
+}
+
 // ---- Kullanım çözümlemesi ---------------------------------------------------------------------------------------------------------------------------------------
 
 /// İşlev tablosu ve "parametre salt-okunur mu" önbelleği (liste global'ini işlev argümanı olarak geçirebilmek için; bkz. `paramReadOnly`).
@@ -84,7 +126,7 @@ const Walker = struct {
         switch (self.kind) {
             .list => {
                 if (std.mem.eql(u8, m, "append")) return nargs == 1;
-                if (std.mem.eql(u8, m, "pop") or std.mem.eql(u8, m, "clear")) return nargs == 0;
+                if (std.mem.eql(u8, m, "pop") or std.mem.eql(u8, m, "clear") or std.mem.eql(u8, m, "sort")) return nargs == 0;
                 return false;
             },
             .list_ro => return false,
@@ -107,10 +149,9 @@ const Walker = struct {
         for (list) |st| self.stmt(st, top);
     }
 
-    fn params(self: *Walker, ps: []const ast.Param) void {
-        for (ps) |p| if (std.mem.eql(u8, p.name, self.name)) {
-            self.bad = true;
-        };
+    /// Bu işlev `name`i yerel olarak bağlıyorsa gövdesi global'e dokunmaz: atlanır.
+    fn funcSkipped(self: *const Walker, fd: ast.FuncDef) bool {
+        return funcBindsName(fd, self.name);
     }
 
     fn stmt(self: *Walker, st: ast.Stmt, top: bool) void {
@@ -151,13 +192,11 @@ const Walker = struct {
                 self.stmts(f.body, false);
             },
             .func_def => |fd| {
-                self.params(fd.params);
                 if (std.mem.eql(u8, fd.name, self.name)) self.bad = true;
-                self.stmts(fd.body, false);
+                if (!self.funcSkipped(fd)) self.stmts(fd.body, false);
             },
             .class_def => |cd| for (cd.methods) |m| {
-                self.params(m.params);
-                self.stmts(m.body, false);
+                if (!self.funcSkipped(m)) self.stmts(m.body, false);
             },
             .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
             .return_stmt => |r| if (r) |e| self.expr(e),
@@ -263,10 +302,11 @@ const Walker = struct {
                 self.comp(dc.clauses);
             },
             .lambda => |lam| {
+                var binds = false;
                 for (lam.params) |p| if (std.mem.eql(u8, p, self.name)) {
-                    self.bad = true;
+                    binds = true;
                 };
-                self.expr(lam.body.*);
+                if (!binds) self.expr(lam.body.*);
             },
             .slice => |sl| {
                 if (self.isG(sl.obj.*)) {
@@ -304,8 +344,7 @@ pub fn usesAreRouted(a: std.mem.Allocator, body: []const ast.Stmt, extra: []cons
     var w: Walker = .{ .name = name, .kind = kind, .ctx = &ctx };
     w.stmts(body, true);
     for (extra) |fd| {
-        w.params(fd.params);
-        w.stmts(fd.body, false);
+        if (!w.funcSkipped(fd)) w.stmts(fd.body, false);
     }
     return !w.bad;
 }
@@ -486,6 +525,12 @@ pub fn genListMethod(self: *Codegen, g: GlobalVar, a: ast.Attribute, args: []con
         try calls.emitColdListError(self, try notOk(self, slot), "IndexError", "cannot pop from an empty list", &.{});
         return elemValue(self, g, raw, false);
     }
+    if (std.mem.eql(u8, a.attr, "sort")) {
+        const cell = try loadCell(self, g);
+        const mode: []const u8 = if (sh.esz == 1) "3" else if (g.info.elem_qtype == .d) "1" else if (sh.kind == 1) "2" else "0";
+        try self.qbeCall(null, "$nox_slist_sort", &.{ .{ .ty = .l, .text = cell }, .{ .ty = .w, .text = mode } });
+        return .{ .text = "0", .qtype = .none };
+    }
     if (std.mem.eql(u8, a.attr, "clear")) {
         const cell = try loadCell(self, g);
         try self.qbeCall(null, "$nox_slist_clear", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cell }, .{ .ty = .l, .text = try lit(self, "{d}", .{sh.esz}) }, .{ .ty = .w, .text = try lit(self, "{d}", .{sh.kind}) } });
@@ -523,4 +568,38 @@ pub fn genDictGetOwned(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr:
     var v = abi.dictValueValue(dinfo, payload_t, .l);
     v.always_fresh = true;
     return v;
+}
+
+// ---- Yeniden atanan paylaşılan `str` global'i (dilim 6) -------------------------------------------------------------------------------------------------------
+
+/// `$nox_init_globals`te: başlangıç `str` değerini (sahiplik devredilir) tek elemanlı hücreye sarar.
+pub fn wrapInitStr(self: *Codegen, str_text: []const u8) CodegenError![]const u8 {
+    const cell = try self.newTemp();
+    try self.qbeCall(.{ .name = cell, .ty = .l }, "$nox_slist_new_one", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = str_text } });
+    return cell;
+}
+
+pub fn freeStr(self: *Codegen, handle: []const u8) CodegenError!void {
+    try self.qbeCall(null, "$nox_slist_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle }, .{ .ty = .w, .text = "1" }, .{ .ty = .l, .text = "8" } });
+}
+
+/// Çıplak ad okuması: kilit altında RETAIN edilmiş (sahipli, taze) `str` döner; eş zamanlı bir atama eski değeri bıraksa bile elimizdeki işaretçi geçerli kalır.
+pub fn genStrGlobalGet(self: *Codegen, g: GlobalVar) CodegenError!Value {
+    const cell = try loadCell(self, g);
+    const slot = try okSlot(self);
+    const raw = try self.newTemp();
+    try self.qbeCall(.{ .name = raw, .ty = .l }, "$nox_slist_get", &.{ .{ .ty = .l, .text = cell }, .{ .ty = .l, .text = "0" }, .{ .ty = .l, .text = "8" }, .{ .ty = .w, .text = "1" }, .{ .ty = .l, .text = slot } });
+    var v: Value = .{ .text = raw, .qtype = .l, .heap = .str };
+    v.always_fresh = true;
+    return v;
+}
+
+/// `name = <ifade>`: yeni değer retain edilip hücreye konur, eski değer kilit altında bırakılır.
+pub fn genStrGlobalSet(self: *Codegen, g: GlobalVar, value_expr: ast.Expr) CodegenError!void {
+    const v0 = try self.genExprForTarget(value_expr, g.info);
+    const retained = try self.retainIfAliasing(value_expr, v0);
+    const val = try self.convert(retained, g.info.qtype);
+    const cell = try loadCell(self, g);
+    const ok = try self.newTemp();
+    try self.qbeCall(.{ .name = ok, .ty = .l }, "$nox_slist_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cell }, .{ .ty = .l, .text = "0" }, .{ .ty = .l, .text = "8" }, .{ .ty = .w, .text = "1" }, .{ .ty = .l, .text = val.text } });
 }

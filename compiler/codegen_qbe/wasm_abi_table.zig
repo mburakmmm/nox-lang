@@ -121,6 +121,8 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_dict_keys", Entry{ .params = "PPWL", .ret = 'P' } },
     .{ "nox_dict_len", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_slist_new", Entry{ .params = "PP", .ret = 'P' } },
+    .{ "nox_slist_new_one", Entry{ .params = "PL", .ret = 'P' } },
+    .{ "nox_slist_sort", Entry{ .params = "PW", .ret = 'v' } },
     .{ "nox_slist_free", Entry{ .params = "PPWL", .ret = 'v' } },
     .{ "nox_slist_len", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_slist_get", Entry{ .params = "PLLWP", .ret = 'L' } },

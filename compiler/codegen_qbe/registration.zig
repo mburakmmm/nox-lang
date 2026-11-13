@@ -936,8 +936,9 @@ fn assignsName(stmts: []const ast.Stmt, name: []const u8) bool {
                 if (assignsName(w.body, name)) return true;
             },
             .lowlevel_stmt => |l| if (assignsName(l.body, name)) return true,
-            .func_def => |fd| if (assignsName(fd.body, name)) return true,
-            .class_def => |cd| for (cd.methods) |m| if (assignsName(m.body, name)) return true,
+            // Faz 9.0: işlev `name`i YEREL bağlıyorsa (parametre/`var_decl`/döngü değişkeni...) içindeki atamalar yereldir; kitaplık işlevlerindeki sık adlar (`ch`, `s`, `i`) global'i sabitlemesin.
+            .func_def => |fd| if (!shared_globals.funcBindsName(fd, name) and assignsName(fd.body, name)) return true,
+            .class_def => |cd| for (cd.methods) |m| if (!shared_globals.funcBindsName(m, name) and assignsName(m.body, name)) return true,
             else => {},
         }
     }
@@ -1060,7 +1061,11 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
             .none => {
                 if (assignsName(module.body, g.name)) kind = .shared_block;
             },
-            .str => if (assignsName(module.body, g.name)) return .pinned,
+            .str => if (assignsName(module.body, g.name)) {
+                // Yeniden atanan `str`: yuvada tek elemanlı hücre; her okuma/atama kilit altındadır (str değişmez olduğundan başka kısıt yok).
+                try self.routed_strs.put(self.allocator, g.name, {});
+                kind = .shared_block;
+            },
             .dict => {
                 if (isSharedSafeDict(g.*, module)) {
                     kind = .shared_block;
@@ -1074,7 +1079,8 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
                 try self.routed_lists.put(self.allocator, g.name, {});
                 kind = .shared_block;
             },
-            .channel, .task => {
+            // Kanal/görev/görev-yerel tutamaçları iş parçacığı güvenlidir (görev-yerel değer her fiber'ın KENDİ deposundadır); yeniden atanmıyorsa tek ortak blokta yaşayabilir.
+            .channel, .task, .task_local => {
                 if (assignsName(module.body, g.name)) return .pinned;
                 kind = .shared_block;
             },
