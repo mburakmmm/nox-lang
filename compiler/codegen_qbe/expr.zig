@@ -2428,8 +2428,13 @@ fn genPrintRaw(self: *Codegen, v: Value) CodegenError!void {
     }
     switch (v.qtype) {
         .l => if (v.heap == .str) {
-            try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = v.text }});
-            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
+            if (self.mn()) {
+                // M:N çalışma zamanı: metin + satır sonu TEK çağrıda (işçiler arası çıktı karışmasın).
+                try self.qbeCall(null, "$nox_println_str", &.{.{ .ty = .l, .text = v.text }});
+            } else {
+                try self.qbeCall(null, "$nox_print_str", &.{.{ .ty = .l, .text = v.text }});
+                try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
+            }
         } else try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int" }}, &.{.{ .ty = .l, .text = v.text }}),
         .d => try genPrintFloat(self, v, true),
         .w => {

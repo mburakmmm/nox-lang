@@ -216,7 +216,7 @@ fn poolWorkersOverride() ?usize {
     return std.fmt.parseInt(usize, std.mem.span(s), 10) catch null;
 }
 
-fn pickMainWorkerCount(wants_multicore_pool: bool) usize {
+fn pickMainWorkerCount(mode: i32) usize {
     // Kaçış kapısı — küçük/gecikme-duyarlı `--release` betikleri İçİn
     // `NOX_POOL_WORKERS=1` TAM opt-out sağlar. `std.process`nin YENİ
     // `Environ` API'si `main`in KENDİ ortam-bloğunu GEREKTİRDİĞİNDEN
@@ -224,7 +224,10 @@ fn pickMainWorkerCount(wants_multicore_pool: bool) usize {
     if (poolWorkersOverride()) |n| {
         return std.math.clamp(n, @as(usize, 1), asap.MAX_POOL_WORKERS);
     }
-    if (!wants_multicore_pool) return SMALL_MAIN_POOL_DEFAULT;
+    // v2.1.117: mod 2 = TEK işçi. Her işçi modül globals'ının KENDİ kopyasını taşıdığından, paylaşılan DEĞİŞKEN modül durumu olan (liste/sözlük/sınıf/kanal/görev ya da yeniden atanan
+    // bir modül değişkeni) ve `serve_multicore`/`pool_run` kullanmayan programlarda çalınan bir görev başka işçinin tutarsız kopyasını okuyabilirdi; bu programlar tek işçide çalışır.
+    if (mode == 2) return 1;
+    if (mode == 0) return SMALL_MAIN_POOL_DEFAULT;
     const cpu = if (comptime builtin.cpu.arch.isWasm()) WASM_DEFAULT_WORKERS else (std.Thread.getCpuCount() catch 1);
     return std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS);
 }
@@ -232,8 +235,8 @@ fn pickMainWorkerCount(wants_multicore_pool: bool) usize {
 /// wasm32: işlemci sayısı sorgulanamaz; havuz sabit sayıda işçiyle kurulur (`NOX_POOL_WORKERS` yoksa).
 const WASM_DEFAULT_WORKERS: usize = 4;
 
-pub export fn nox_pool_main_init(wants_multicore_pool: i32) callconv(.c) ?*anyopaque {
-    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount(wants_multicore_pool != 0)) catch @panic("OOM: $main pool");
+pub export fn nox_pool_main_init(mode: i32) callconv(.c) ?*anyopaque {
+    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount(mode)) catch @panic("OOM: $main pool");
     return pool.rt;
 }
 
@@ -810,16 +813,22 @@ fn setTestEnv(name: [*:0]const u8, value: ?[*:0]const u8) void {
 
 test "pickMainWorkerCount: multicore-olmayan $main küçük sabit worker sayısı kullanır, multicore CPU sayısını kullanmaya devam eder" {
     setTestEnv("NOX_POOL_WORKERS", null);
-    try std.testing.expectEqual(@as(usize, SMALL_MAIN_POOL_DEFAULT), pickMainWorkerCount(false));
+    try std.testing.expectEqual(@as(usize, SMALL_MAIN_POOL_DEFAULT), pickMainWorkerCount(0));
     const cpu = std.Thread.getCpuCount() catch 1;
-    try std.testing.expectEqual(std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS), pickMainWorkerCount(true));
+    try std.testing.expectEqual(std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS), pickMainWorkerCount(1));
+}
+
+test "pickMainWorkerCount: mod 2 (paylaşılan değişken modül durumu) TEK işçi kullanır" {
+    if (std.c.getenv("NOX_POOL_WORKERS") != null) return error.SkipZigTest;
+    try std.testing.expectEqual(@as(usize, 1), pickMainWorkerCount(2));
 }
 
 test "pickMainWorkerCount: NOX_POOL_WORKERS HER İKİ dalı da (multicore/multicore-olmayan) EZER" {
     setTestEnv("NOX_POOL_WORKERS", "5");
     defer setTestEnv("NOX_POOL_WORKERS", null);
-    try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(false));
-    try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(true));
+    try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(0));
+    try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(2));
+    try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(1));
 }
 
 // ---- Birim testleri (Faz MN.7a) -----------------------------------------

@@ -288,6 +288,37 @@ pub export fn nox_print_str(s: ?[*:0]const u8) void {
     @import("stdout_flush.zig").flushStdout();
 }
 
+/// `print(s)` (tek `str` argümanı) için: metin + satır sonu TEK `printf` çağrısıyla yazılır, böylece M:N havuzunda iki işçinin çıktısı satır ortasında birbirine girmez (`nox_print_str` +
+/// ayrı `printf("\n")` iki çağrıydı). `null`/boş dize yalnızca satır sonu basar.
+pub export fn nox_println_str(s: ?[*:0]const u8) void {
+    const builtin = @import("builtin");
+    if (comptime wasm_host.is_freestanding_wasm) {
+        if (s) |p| {
+            const bytes = nox_str_slice(p);
+            if (bytes.len > 0) _ = wasm_host.write(1, bytes.ptr, bytes.len);
+        }
+        _ = wasm_host.write(1, "\n", 1);
+        return;
+    }
+    if (comptime builtin.os.tag == .freestanding or builtin.os.tag == .other) {
+        if (s) |p| {
+            const bytes = nox_str_slice(p);
+            if (bytes.len > 0) diag_sink.diagSink()(null, bytes.ptr, bytes.len);
+        }
+        diag_sink.diagSink()(null, "\n", 1);
+        return;
+    }
+    const c = struct {
+        extern "c" fn printf(fmt: [*:0]const u8, ...) c_int;
+    };
+    if (s) |p| {
+        if (nox_str_slice(p).len > 0) {
+            _ = c.printf("%s\n", p);
+        } else _ = c.printf("\n");
+    } else _ = c.printf("\n");
+    @import("stdout_flush.zig").flushStdout();
+}
+
 test "nox_str_from_cstr baslikli bir str uretir" {
     const asap = @import("alloc/asap.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;

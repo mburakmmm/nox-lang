@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.117]
+
+### Düzeltildi
+
+- **LLVM (varsayılan backend) ve QBE: çalınan görev başka işçinin boş modül kopyasını okuyordu** (kullanıcı onaylı; bkz. v2.1.114 ve v2.1.115): her işçi modül globals'ının KENDİ kopyasını taşır; ana gövdede atanan değer, oluşturulan kanal/görev ya da sınıf nesnesi başka işçide çalışan bir görev tarafından görülmüyor, aralıklı çökme/askı olabiliyordu. Artık **paylaşılan DEĞİŞKEN modül durumu** (modül düzeyi liste/sözlük/sınıf/kanal/görev/closure ya da yeniden atanan bir sayı/dize) olan ve `serve_multicore*`/`nox.thread.pool_run` kullanmayan programlar iki backend'de de TEK işçide çalışır (`$nox_pool_main_init` modu 2; `NOX_POOL_WORKERS` bunu ezer). Bir kez atanıp hiç değişmeyen sabit sayı/dize globalleri sayılmaz, o programlar paralel kalır. `serve_multicore` fabrika modeli (işçi başına durum) değişmedi.
+- **QBE: gereksiz kısıt kalktı:** v2.1.115'te bir fonksiyonun okuduğu HERHANGİ bir modül değişkeni QBE'de havuzu kapatıyordu; artık yalnızca paylaşılan değişken durum tek işçiye iner, modül sabitleri olan programlar QBE'de de tam M:N çalışma zamanını (atomik ARC, liste/sözlük/sınıf argümanları) kullanır.
+- **`print(s)` M:N çalışma zamanında tek çağrı:** `str` yazdıran tek-argümanlı `print` artık metin + satır sonunu TEK `printf` ile yazar (`nox_println_str`); iki işçide aynı anda çalışan handler'ların çıktıları satır ortasında birbirine giriyordu (`up:okup:ok`; `http_serve_golden_test` el aralıklı kırmızısı). M:N olmayan programlar eski koddan etkilenmez.
+- Testler: `pickMainWorkerCount` modu 2 testi; `module_channel_read_by_async`, `module_global_source_order_async`, `task_local_basic` iki backend'de varsayılan işçi sayısıyla 150'şer turda 0 hata; `examples/todo-backend` duman testi iki backend'de temiz; IR anlık görüntüleri (`$nox_pool_main_init(w 2)`).
+
 ## [2.1.116]
 
 ### Eklendi

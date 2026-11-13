@@ -905,21 +905,55 @@ fn ensureGlobalsReady(sink: report_sink.Sink, a: std.mem.Allocator, expr: ast.Ex
     }
 }
 
-/// Bir modül değişkeni (üst düzey `var_decl`) bir fonksiyon/metot gövdesinde başvuruluyor mu? (`collectModuleGlobals`ın terfi ölçütünün ilk adımı: boşsa hiçbir global terfi etmez.)
-/// M:N havuzunda her işçi modül globals'ının KENDİ kopyasını taşır; çalınan görev başka işçinin kopyasını okuyabilir. QBE'de bu programlar eskisi gibi tek işçide çalışır (v2.1.115).
-pub fn moduleReadsGlobalsInFunctions(a: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef) bool {
-    var used: std.StringHashMapUnmanaged(void) = .empty;
-    defer used.deinit(a);
-    for (module.body) |stmt| {
-        switch (stmt.kind) {
-            .func_def => |fd| collectFreeNamesForTopLevelFunc(a, fd.params, fd.body, &used) catch return true,
-            .class_def => |cd| for (cd.methods) |m| collectFreeNamesForTopLevelFunc(a, m.params, m.body, &used) catch return true,
+/// `name` adlı bir değişkene modülde HERHANGİ bir yerde (iç içe bloklar, fonksiyon/metot gövdeleri dahil; yerel gölgelemeler de sayılır: muhafazakâr) yeniden atama var mı?
+fn assignsName(stmts: []const ast.Stmt, name: []const u8) bool {
+    for (stmts) |st| {
+        switch (st.kind) {
+            .assign => |a| switch (a.target) {
+                .identifier => |n| if (std.mem.eql(u8, n, name)) return true,
+                else => {},
+            },
+            .if_stmt => |i| {
+                if (assignsName(i.then_body, name)) return true;
+                for (i.elif_clauses) |e| if (assignsName(e.body, name)) return true;
+                if (i.else_body) |eb| if (assignsName(eb, name)) return true;
+            },
+            .while_stmt => |w| if (assignsName(w.body, name)) return true,
+            .for_stmt => |f| {
+                if (std.mem.eql(u8, f.var_name, name) or assignsName(f.body, name)) return true;
+            },
+            .try_stmt => |t| {
+                if (assignsName(t.try_body, name)) return true;
+                for (t.except_clauses) |c| {
+                    if (c.bind_name) |bn| if (std.mem.eql(u8, bn, name)) return true;
+                    if (assignsName(c.body, name)) return true;
+                }
+                if (t.finally_body) |fb| if (assignsName(fb, name)) return true;
+            },
+            .with_stmt => |w| {
+                if (w.binding) |b| if (std.mem.eql(u8, b, name)) return true;
+                if (assignsName(w.body, name)) return true;
+            },
+            .lowlevel_stmt => |l| if (assignsName(l.body, name)) return true,
+            .func_def => |fd| if (assignsName(fd.body, name)) return true,
+            .class_def => |cd| for (cd.methods) |m| if (assignsName(m.body, name)) return true,
             else => {},
         }
     }
-    for (extra_functions) |fd| collectFreeNamesForTopLevelFunc(a, fd.params, fd.body, &used) catch return true;
-    for (module.body) |stmt| {
-        if (stmt.kind == .var_decl and used.contains(stmt.kind.var_decl.name)) return true;
+    return false;
+}
+
+/// v2.1.117: terfi etmiş modül değişkenleri arasında PAYLAŞILAN DEĞİŞKEN durum var mı? (liste/sözlük/sınıf/kanal/görev/closure gibi yığın nesneleri ya da yeniden atanan bir değişken.) Her işçi modül
+/// globals'ının KENDİ kopyasını taşır (`serve_multicore` fabrika modeli); sabit kalan skaler/`str` globaller kopyalar arasında özdeştir ve sayılmaz. Doğruysa (ve `serve_multicore`/`pool_run` yoksa)
+/// program TEK işçide çalıştırılır: çalınan bir görev başka işçinin tutarsız kopyasını okumaz.
+pub fn hasSharedMutableGlobals(self: *Codegen, module: ast.Module) bool {
+    var it = self.module_globals.valueIterator();
+    while (it.next()) |g| {
+        switch (g.info.heap) {
+            .none, .str => if (!assignsName(module.body, g.name)) continue,
+            else => {},
+        }
+        return true;
     }
     return false;
 }
@@ -2012,8 +2046,8 @@ fn emitDispatchTableRegistration(self: *Codegen) CodegenError!void {
     });
 }
 
-pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_multicore_pool: bool) CodegenError!void {
-    if (use_async) return self.genMainAsync(stmts, wants_multicore_pool);
+pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_multicore_pool: bool, pin_single_worker: bool) CodegenError!void {
+    if (use_async) return self.genMainAsync(stmts, wants_multicore_pool, pin_single_worker);
 
     self.vars.clearRetainingCapacity();
     self.narrowed_unbox.clearRetainingCapacity();
@@ -2123,7 +2157,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
 /// çoğunluk) `genMain`in DEĞİŞMEMİŞ, sıfır-ek-maliyetli yolundan
 /// geçmeye devam etmesini sağlar (bkz. nox-teknik-spesifikasyon.md
 /// §3.21, aşama 4).
-pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_pool: bool) CodegenError!void {
+pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_pool: bool, pin_single_worker: bool) CodegenError!void {
     self.vars.clearRetainingCapacity();
     self.narrowed_unbox.clearRetainingCapacity();
     self.temp_counter = 0;
@@ -2254,7 +2288,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
         // `pickMainWorkerCount` CPU-sayısı YERİNE küçük bir sabite düşer
         // (bkz. `pool_bridge.zig`nin belge notu, BURADA SADECE derleme-
         // zamanı sinyali `.w`-tipli 0/1 olarak TAŞINIR).
-        const wmp_text: []const u8 = if (wants_multicore_pool) "1" else "0";
+        const wmp_text: []const u8 = if (wants_multicore_pool) "1" else if (pin_single_worker) "2" else "0";
         try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_pool_main_init", &.{.{ .ty = .w, .text = wmp_text }});
     } else {
         try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, runtimeInitSymbol(self), &.{});

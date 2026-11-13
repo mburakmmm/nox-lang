@@ -440,6 +440,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_pool_run", Entry{ .params = "PLPPP", .ret = 'W' } },
     .{ "nox_pool_serve", Entry{ .params = "PLPP", .ret = 'W' } },
     .{ "nox_print_str", Entry{ .params = "P", .ret = 'v' } },
+    .{ "nox_println_str", Entry{ .params = "P", .ret = 'v' } },
     .{ "nox_process_output_free_raw", Entry{ .params = "P", .ret = 'v' } },
     .{ "nox_process_output_ok_raw", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_process_output_status_raw", Entry{ .params = "P", .ret = 'L' } },

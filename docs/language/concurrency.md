@@ -331,8 +331,11 @@ All tasks run on fibers scheduled by the runtime:
   variable. Reference counting is atomic whenever a program uses tasks or threads, so values may safely be shared between tasks on different
   workers. On the QBE backend (which has no atomic instructions in its IL) the atomic count updates are calls into the runtime, emitted only
   for programs that use `spawn`, `async`, `nox.thread` or the multi-core pool; other QBE programs keep plain, faster counts.
-  One exception: every worker keeps its own copy of the module-level variables, so on QBE a program whose functions read a module-level variable stays on a
-  single worker (as before 2.1.111); use the default LLVM backend for parallel tasks in such programs.
+  Module-level variables: every worker keeps its own copy of them (this is what makes `serve_multicore` handlers independent). A program that
+  shares **mutable** module state between tasks — a module-level list, dict, class instance, channel or task, or a module-level number/string that is
+  reassigned — and does not use `serve_multicore*` or `nox.thread.pool_run` therefore runs on **one worker** on both backends, so a task never
+  reads another worker's copy. Module-level constants (numbers and strings assigned once) do not count. Setting `NOX_POOL_WORKERS` overrides this
+  (at your own risk).
 - **Freestanding targets:** a single-threaded cooperative scheduler. Tasks interleave only at `await` points (and at blocking I/O, which is
   non-blocking at the fiber level); `time.sleep_ms` inside a task suspends only that task.
 
