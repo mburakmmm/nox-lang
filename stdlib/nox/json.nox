@@ -92,6 +92,55 @@ def number_text(v: JsonValue) -> str:
         return v.s
     return dump_number(v.n)
 
+# v2.1.110: `@derive("json")`in üretilen kodunun kullandığı, tip denetimli okuyucular (yanlış türde ya da eksik alanda JsonError). Doğrudan da kullanılabilir.
+def expect_object(v: JsonValue, what: str) -> None:
+    if v.kind != 5:
+        raise JsonError("expected a JSON object for " + what)
+
+def expect_array(v: JsonValue) -> None:
+    if v.kind != 4:
+        raise JsonError("expected a JSON array")
+
+# Nesnenin `key` anahtarının değeri (yoksa JsonError). Anahtarlar belge sırasındadır; arama doğrusaldır.
+def get(v: JsonValue, key: str) -> JsonValue:
+    n: int = object_len(v)
+    i: int = 0
+    while i < n:
+        if object_key(v, i) == key:
+            return object_value(v, i)
+        i += 1
+    raise JsonError("missing field '" + key + "'")
+
+# `get`, ama anahtar yoksa JSON `null` düğümü döner.
+def get_or_null(v: JsonValue, key: str) -> JsonValue:
+    n: int = object_len(v)
+    i: int = 0
+    while i < n:
+        if object_key(v, i) == key:
+            return object_value(v, i)
+        i += 1
+    return parse("null")
+
+def read_int(v: JsonValue) -> int:
+    if v.kind != 2:
+        raise JsonError("expected a number")
+    return as_int(v)
+
+def read_float(v: JsonValue) -> float:
+    if v.kind != 2:
+        raise JsonError("expected a number")
+    return v.n
+
+def read_bool(v: JsonValue) -> bool:
+    if v.kind != 1:
+        raise JsonError("expected a boolean")
+    return v.b
+
+def read_str(v: JsonValue) -> str:
+    if v.kind != 3:
+        raise JsonError("expected a string")
+    return v.s
+
 def as_string(v: JsonValue) -> str:
     return v.s
 

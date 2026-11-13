@@ -1018,6 +1018,48 @@ test "golden(typecheck): @ffi.callback — ud_index imza dışında reddedilir" 
     );
 }
 
+test "golden(typecheck): @dataclass/@derive — bilinmeyen @derive adı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_derive_unknown_name.nox"),
+        @embedFile("typecheck_cases/err_derive_unknown_name.expected"),
+    );
+}
+
+test "golden(typecheck): @dataclass/@derive — order sıralanamayan alanı reddeder" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_derive_order_unorderable.nox"),
+        @embedFile("typecheck_cases/err_derive_order_unorderable.expected"),
+    );
+}
+
+test "golden(typecheck): @dataclass/@derive — elle __init__ ile birleşmez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_dataclass_explicit_init.nox"),
+        @embedFile("typecheck_cases/err_dataclass_explicit_init.expected"),
+    );
+}
+
+test "golden(typecheck): @dataclass/@derive — json import nox.json ister" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_derive_json_needs_import.nox"),
+        @embedFile("typecheck_cases/err_derive_json_needs_import.expected"),
+    );
+}
+
+test "golden(typecheck): @dataclass/@derive — copy @dataclass ister" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_derive_copy_needs_dataclass.nox"),
+        @embedFile("typecheck_cases/err_derive_copy_needs_dataclass.expected"),
+    );
+}
+
+test "golden(typecheck): @dataclass/@derive — geçerli kullanım, OK" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_dataclass_valid.nox"),
+        @embedFile("typecheck_cases/ok_dataclass_valid.expected"),
+    );
+}
+
 test "golden(typecheck): @ffi.callback — async hedef reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_extern_ffi_callback_async_target.nox"),

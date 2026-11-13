@@ -1,0 +1,51 @@
+# v2.1.110: @dataclass / @derive("order","copy","json") — alanlardan üretilen __init__, sıralama, copy, JSON gidiş-dönüş (iç içe sınıf, liste, sözlük, Optional, kalıtım).
+import nox.json
+from nox.json import JsonError
+
+@dataclass
+@derive("order", "copy", "json")
+class Point:
+    x: int
+    y: float
+    label: str
+
+@dataclass
+@derive("copy", "json")
+class Rec:
+    name: str
+    origin: Point
+    corners: list[Point]
+    tags: list[str]
+    extra: dict[str, int]
+    note: str | None
+    ok: bool
+
+@dataclass
+class Point3(Point):
+    z: int
+
+p: Point = Point(1, 2.5, "a")
+q: Point = p.copy()
+q.x = 2
+print(p)
+print(p < q, q < p, p <= q, p >= q, p == p.copy())
+print(p.to_json())
+print(Point.from_json(p.to_json()) == p)
+r: Rec = Rec("tri", p, [p, q], ["u", "v"], {"k": 7}, None, True)
+js: str = r.to_json()
+print(js)
+r2: Rec = Rec.from_json(js)
+print(r2.to_json() == js)
+print(r2.note is None)
+r3: Rec = Rec("n", p, [], [], {}, "hello", False)
+print(Rec.from_json(r3.to_json()).note)
+t: Point3 = Point3(9, 1.0, "z", 5)
+print(t.z, t.x, t)
+try:
+    Point.from_json("{\"x\": 1}")
+except JsonError as e:
+    print("error: " + str(e))
+try:
+    Point.from_json("{\"x\": \"s\", \"y\": 1.0, \"label\": \"\"}")
+except JsonError as e:
+    print("error: " + str(e))

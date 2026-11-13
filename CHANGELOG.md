@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.110]
+
+### Eklendi
+
+- **`@dataclass` ve `@derive(...)`: alanlardan metod üretimi** (TODO 5.2; `compiler/typecheck/derive.zig`, belge `docs/language/classes.md`): `@dataclass` -> `__init__(self, alanlar...)` (taban `@dataclass` alanları önde, `super().__init__`); `@derive("order")` -> `__lt__/__le__/__gt__/__ge__` (alanlara göre sözlüksel); `@derive("copy")` -> `copy()` (sığ); `@derive("json")` -> `to_json`, `write_json`, statik `from_json`/`from_json_value` (int/float/bool/str, `list[T]`, `dict[str, T]`, `T | None`, iç içe `@derive("json")` sınıfları; eksik alan/yanlış tür `JsonError`). Üretim `@ffi.errors` sarmalayıcısıyla aynı mekanizmadır: üretilecek metodların Nox kaynağı metin olarak kurulur, ayrıştırılır ve sınıfa eklenir (checker öncesi, `mixin_flatten`/`class_attr_promote`tan sonra); üretilen kod sıradan kod gibi tip denetimine girer — yeni sözdizimi yok, çalışma zamanında üretim yok (İlke 2 korunur). `==`/`print`/`repr` zaten yapısal olduğundan türetilmez; bilinmeyen ad, elle yazılmış aynı adlı metod, `@dataclass` + `__init__`, sıralanamaz alan, eksik `import nox.json` açık hatadır
+- **`nox.json` denetimli okuyucular:** `get`, `get_or_null`, `expect_object`, `expect_array`, `read_int/float/bool/str` (yanlış tür/eksik anahtarda `JsonError`); türetilen JSON bunları çağırır
+- Testler: fixture `dataclass_derive` (iki backend: üretilen `__init__`/sıralama/copy, JSON gidiş-dönüşü, kalıtım, hata mesajları), 6 typecheck golden, 2 birim testi
+
+### Notlar
+
+- Test sırasında bulundu (ayrı görev): `str | None` değerlerinin `==` ile karşılaştırılması çalışma zamanında çöküyor, `str | None` alanlı sınıf `==` yanlış sonuç veriyor ve `dict == dict` codegen'de desteklenmiyor; bu yüzden türetilen sınıflar için `==` ile gidiş-dönüş denetimi yerine JSON metni karşılaştırılıyor
+
 ## [2.1.109]
 
 ### Düzeltildi

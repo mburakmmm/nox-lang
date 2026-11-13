@@ -30,6 +30,7 @@ A few decorator names **are** interpreted by the compiler, because they describe
 |---|---|---|
 | `@repr("C")` | class | natural C field alignment and padding ([Classes](classes.md#layout-control-for-foreign-code)) |
 | `@packed` | class | no padding between fields |
+| `@dataclass`, `@derive("order", "copy", "json")` | class | the compiler generates `__init__`, ordering, `copy` and JSON methods from the fields ([Classes](classes.md#generated-methods-dataclass-and-derive)) |
 | `@ffi.escape("p", …)`, `@ffi.noescape("p", …)` | `extern def` | which pointer arguments the native code may retain |
 | `@ffi.callback("cb", "userdata")` | `extern def` | Nox function passed as a C callback |
 | `@ffi.errors(raises=E, ok=0 \| ok_min=0 \| null_is_error=True, errno=True, message="fn")` | `extern def` | turns the C error convention into a Nox exception |

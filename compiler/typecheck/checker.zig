@@ -50,6 +50,7 @@ const nonlocal_desugar = @import("nonlocal_desugar.zig");
 const generator_desugar = @import("generator_desugar.zig");
 const mixin_flatten = @import("mixin_flatten.zig");
 const class_attr_promote = @import("class_attr_promote.zig");
+const derive = @import("derive.zig");
 const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
@@ -4044,6 +4045,11 @@ pub const Checker = struct {
         }
         // TODO 8.3: `Sınıf.NAME = ...` ile atanan sınıf sabitleri değişebilir sınıf özniteliğine (sentetik modül değişkeni) yükseltilir.
         try class_attr_promote.run(self.allocator, module.body, &self.from_imports, &self.module_aliases);
+        // v2.1.110 (TODO 5.2): `@dataclass` / `@derive(...)` — alanlardan __init__, sıralama, copy, JSON metodlarını kaynak şablonuyla üretir.
+        if (try derive.run(self.allocator, module.body)) |d| {
+            self.current_line = d.line;
+            return self.fail(error.TypeMismatch, "{s}", .{d.message});
+        }
         try self.collectClassNames(module);
         // Faz C.6 (bkz. `index_call_fixup.zig`nin belge notu): `name[i](y)`
         // belirsizliği — `generic_classes` kurulduktan SONRA, HERHANGİ bir

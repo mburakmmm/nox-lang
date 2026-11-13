@@ -359,6 +359,62 @@ print(Item("pen", 3), [Item("ink", 1)], repr(Item("x", 0)))
 Item(name='pen', qty=3) [Item(name='ink', qty=1)] Item(name='x', qty=0)
 ```
 
+## Generated methods: `@dataclass` and `@derive`
+
+Two class decorators make the compiler write boilerplate methods from the class's **fields** (the bare `name: type` lines of the class body). The methods are
+generated as ordinary Nox source before type checking, so they are type-checked like code you wrote yourself, nothing is created at run time, and an
+error in a generated method points at the class.
+
+| Decorator | Generates |
+|---|---|
+| `@dataclass` | `__init__(self, <every field, in order>)`; a base class must be a `@dataclass` too and its fields come first (`super().__init__` is called) |
+| `@derive("order")` | `__lt__`, `__le__`, `__gt__`, `__ge__`, comparing the fields in order (fields must be `int`, `float`, `bool`, `str` or an orderable class) |
+| `@derive("copy")` | `copy(self)`, a shallow copy (needs `@dataclass`) |
+| `@derive("json")` | `to_json()`, `write_json(w)`, and the static `from_json(text)` / `from_json_value(v)` (needs `@dataclass` and `import nox.json`) |
+
+`==`, `str()`/`print()` and `repr()` are already structural for every class, so there is nothing to derive for them. A class that defines one of the generated methods
+itself, or a `@dataclass` that defines `__init__`, is an error. JSON supports `int`, `float`, `bool`, `str`, `list[T]`, `dict[str, T]`, `T | None` (a missing
+or `null` field reads as `None`) and other classes with `@derive("json")`; a missing field or a value of the wrong type raises `JsonError`.
+
+```nox
+import nox.json
+from nox.json import JsonError
+
+@dataclass
+@derive("order", "copy", "json")
+class Point:
+    x: int
+    y: float
+    label: str
+
+@dataclass
+@derive("json")
+class Path:
+    name: str
+    points: list[Point]
+    note: str | None
+
+p: Point = Point(1, 2.5, "a")
+q: Point = p.copy()
+q.x = 2
+print(p, p < q, p == p.copy())
+path: Path = Path("tri", [p, q], None)
+text: str = path.to_json()
+print(text)
+print(Path.from_json(text).to_json() == text)
+try:
+    Point.from_json("{\"x\": 1}")
+except JsonError as e:
+    print(e)
+```
+
+```output
+Point(x=1, y=2.5, label='a') True True
+{"name":"tri","points":[{"x":1,"y":2.5,"label":"a"},{"x":2,"y":2.5,"label":"a"}],"note":null}
+True
+missing field 'y'
+```
+
 ## Layout control for foreign code
 
 `@repr("C")` lays fields out with natural C alignment and padding, `@packed` removes padding, and `sizeof(T)`, `alignof(T)` and
