@@ -140,6 +140,19 @@ pub fn abortMut(self: *Codegen, ctx: MutCtx) CodegenError!void {
     if (ctx.active) if (ctx.recv) |r| try self.releaseIfTemporary(r.attribute.obj.*, ctx.base.?);
 }
 
+/// Faz 9.0 F4: iş parçacığı sınırını geçen değeri (spawn argümanı, kanal öğesi, görev sonucu) geçişli yayımlar (`SHARED` + dinamik bariyerler etkin).
+pub fn emitPublishCrossing(self: *Codegen, v: Value) CodegenError!void {
+    if (!self.dyn_crossing) return;
+    if (v.heap != .class and v.heap != .list and v.heap != .dict) return;
+    try emitPublishValue(self, v.text, abi.typeInfoOfValue(v));
+}
+
+pub fn emitPublishCrossingInfo(self: *Codegen, text: []const u8, info: TypeInfo) CodegenError!void {
+    if (!self.dyn_crossing) return;
+    if (info.heap != .class and info.heap != .list and info.heap != .dict) return;
+    try emitPublishValue(self, text, info);
+}
+
 /// Eski blok paylaşılansa yeni bloğu da paylaşılan işaretler (yalnız bayrak; elemanlar zaten yayımlanmıştır).
 pub fn emitPropagateShared(self: *Codegen, old_text: []const u8, new_text: []const u8) CodegenError!void {
     const fl = try emitSharedFlag(self, old_text);

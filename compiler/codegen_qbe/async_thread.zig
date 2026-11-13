@@ -8,6 +8,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
+const dyn_share = @import("dyn_share.zig");
 
 const Codegen = codegen.Codegen;
 const Value = types.Value;
@@ -486,6 +487,7 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
             // BUNLARI HER İKİ backend'de de İZİN VERİR).
             try self.retainNonArcValue(av.text, av.heap);
         }
+        try dyn_share.emitPublishCrossing(self, av);
         const off = 8 + 8 * i;
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", closure, @intCast(off));
@@ -591,6 +593,7 @@ pub fn genSpawnWrapper(self: *Codegen, spec: SpawnWrapperSpec) CodegenError!void
         }
         const result_t = try self.newTemp();
         try self.qbeCall(.{ .name = result_t, .ty = spec.sig.ret.qtype }, target_sym, call_args);
+        try dyn_share.emitPublishCrossingInfo(self, result_t, spec.sig.ret);
         break :blk try self.toPayload(.{ .text = result_t, .qtype = spec.sig.ret.qtype });
     };
 
@@ -1106,8 +1109,11 @@ pub fn genTaskWait(self: *Codegen, task_val: Value, a: ast.Attribute, args: []co
 pub fn genChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr, ch_val: Value) CodegenError!Value {
     if (std.mem.eql(u8, a.attr, "send")) {
         if (args.len != 1) return error.Unsupported;
-        const v = try self.genExpr(args[0]);
+        const v0 = try self.genExpr(args[0]);
+        // Kanal kendi referansını tutar: gönderen yerelin kapsam sonunda bırakılması kuyruktaki değeri geçersiz kılmasın (alıcı sahipliği devralır).
+        const v = try self.retainIfAliasing(args[0], v0);
         const converted = try self.convert(v, ch_val.elem_qtype);
+        try dyn_share.emitPublishCrossing(self, converted);
         const payload = try self.toPayload(converted);
         try self.qbeCall(null, "$nox_channel_send", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text }, .{ .ty = .l, .text = payload.text } });
         return .{ .text = "0", .qtype = .none };

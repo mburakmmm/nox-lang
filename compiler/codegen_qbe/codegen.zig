@@ -661,6 +661,7 @@ pub const Codegen = struct {
     pub const registerClassesInOrder = registration.registerClassesInOrder;
     pub const collectModuleGlobals = registration.collectModuleGlobals;
     pub const sharedGlobalsKind = registration.sharedGlobalsKind;
+    pub const crossingSafe = registration.crossingSafe;
     pub const stmtRunsInGlobalInit = registration.stmtRunsInGlobalInit;
     pub const inferFieldType = registration.inferFieldType;
     pub const registerFunc = registration.registerFunc;
@@ -1275,6 +1276,8 @@ pub const Codegen = struct {
     owned_dict_reads: bool = false,
     /// Faz 9.0 F3b: yığın elemanlı (`str`/sınıf/…) liste eleman erişimleri liste bloğu kilidi altında SAHİPLİ yapılır (bkz. `dyn_share.listHeapElems`).
     list_locks: bool = false,
+    /// Faz 9.0 F4: iş parçacığı sınırını geçen sınıf/liste/sözlük değerleri (spawn argümanı, kanal öğesi, görev sonucu) geçilmeden ÖNCE yayımlanır.
+    dyn_crossing: bool = false,
     /// Faz 9.0 F3b: açık liste-değiştirme kilit bağlamı (soğuk hata yolları raise öncesi kilitleri bırakır).
     cold_unlock: ?dyn_share.MutCtx = null,
     /// Faz 9.0 F2: DİNAMİK paylaşım bariyerleri üretilen sınıflar (bkz. `dyn_share.zig`) ve başlangıçta yayımlanacak global örnekler.
@@ -1992,12 +1995,17 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     {
         // Faz 9.0: serve_multicore/pool_run işçi-başına-kopya (fabrika) modelini korur; aksi halde paylaşım biçimi sınıflanır (init kodu üretilmeden ÖNCE).
         // Eşzamansız (spawn/async) kullanmayan programlarda işçi paylaşımı yoktur: yönlendirme/işaretleme yapılmaz (sıradan liste/sözlük erişimi eskisi gibi satır içi kalır).
-        const globals_kind: registration.SharedGlobalsKind = if (wants_multicore_pool or !moduleUsesAsync(module, extra_functions)) .none else try gen.sharedGlobalsKind(module, extra_functions);
+        var globals_kind: registration.SharedGlobalsKind = if (wants_multicore_pool or !moduleUsesAsync(module, extra_functions)) .none else try gen.sharedGlobalsKind(module, extra_functions);
+        // Faz 9.0 F4: iş parçacığı sınırını geçen tipler de bariyerli paylaşıma uygun olmalı; değilse tek işçi (güvenli geri düşüş).
+        if (globals_kind != .pinned and !wants_multicore_pool and gen.profile == .hosted and !gen.isWasmTarget() and moduleUsesAsync(module, extra_functions)) {
+            if (!try gen.crossingSafe(module, extra_functions)) globals_kind = .pinned;
+        }
         gen.globals_pinned = globals_kind == .pinned;
         gen.shared_block_mode = globals_kind == .shared_block;
-        if (!gen.shared_block_mode) {
+        if (globals_kind == .pinned or (!gen.shared_block_mode and !gen.dyn_crossing)) {
             gen.owned_dict_reads = false;
             gen.list_locks = false;
+            gen.dyn_crossing = false;
             gen.shared_class_globals.clearRetainingCapacity();
             gen.dyn_classes.clearRetainingCapacity();
             gen.dyn_publish_globals.clearRetainingCapacity();

@@ -1106,46 +1106,116 @@ fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.St
     if (info.has_vtable or info.del_owner != null or classHasDecorators(module, cn)) return false;
     try out.put(self.allocator, cn, {});
     for (info.fields.items) |f| {
-        switch (f.info.heap) {
-            .none, .str => {},
-            .dict => {
-                const di = f.info.dict_info orelse return false;
-                if (di.value_heap != .none or di.value_is_class) return false;
-                if (di.value_is_str) self.owned_dict_reads = true;
-            },
-            .class => {
-                const fc = f.info.class_name orelse return false;
-                if (!try dynSafeClass(self, fc, module, out, depth + 1)) return false;
-            },
-            // Skaler elemanlı liste alanı (F3a): blok yayımlanınca `SHARED` olur (büyüme kopyalama yoluna düşer), alan yuvası bariyerlidir.
-            .list => {
-                const sh = shared_globals.listElemShape(f.info) orelse {
-                    // F3c: iç içe skaler liste (`list[list[int|float|bool]]`) ve skaler değerli sözlük elemanları (`list[dict[K, skaler|str]]`).
-                    const ehi = f.info.elem_heap_info orelse return false;
-                    if (ehi.heap == .list) {
-                        if (ehi.nested != null or ehi.elem_is_str or ehi.dict_info != null) return false;
-                        if (ehi.elem_qtype != .l and ehi.elem_qtype != .d and ehi.elem_qtype != .b) return false;
-                    } else if (ehi.heap == .dict) {
-                        const di = ehi.dict_info orelse return false;
-                        if (di.value_heap != .none or di.value_is_class) return false;
-                        if (di.value_is_str) self.owned_dict_reads = true;
-                    } else return false;
-                    self.list_locks = true;
-                    continue;
-                };
-                if (sh.kind == 1) {
-                    self.list_locks = true;
-                } else if (sh.kind == 2) {
-                    const ec = f.info.elem_heap_info.?.class_name.?;
-                    if (classDefinesMethod(module, ec, "__eq__") or classDefinesMethod(module, ec, "__repr__") or classDefinesMethod(module, ec, "__str__")) return false;
-                    if (!try dynSafeClass(self, ec, module, out, depth + 1)) return false;
-                    self.list_locks = true;
-                }
-            },
-            else => return false,
-        }
+        if (!try dynSafeType(self, f.info, module, out, depth)) return false;
     }
     return true;
+}
+
+/// Faz 9.0 F4: bir TİPİN iş parçacığı sınırını (alan / spawn argümanı / kanal öğesi / görev sonucu) güvenle geçebilmesi için bariyerli-paylaşıma uygun olup olmadığı.
+/// Uygunsa sınıflar `out`a eklenir; `list_locks`/`owned_dict_reads` kipleri gerektiği gibi açılır.
+fn dynSafeType(self: *Codegen, info: types.TypeInfo, module: ast.Module, out: *std.StringHashMapUnmanaged(void), depth: u8) CodegenError!bool {
+    switch (info.heap) {
+        .none, .str => return true,
+        .dict => {
+            const di = info.dict_info orelse return false;
+            if (di.value_heap != .none or di.value_is_class) return false;
+            if (di.value_is_str) self.owned_dict_reads = true;
+            return true;
+        },
+        .class => {
+            const fc = info.class_name orelse return false;
+            return try dynSafeClass(self, fc, module, out, depth + 1);
+        },
+        // Skaler elemanlı liste (F3a): blok yayımlanınca `SHARED` olur (büyüme kopyalama yoluna düşer), alan yuvası bariyerlidir.
+        .list => {
+            const sh = shared_globals.listElemShape(info) orelse {
+                // F3c: iç içe skaler liste (`list[list[int|float|bool]]`) ve skaler değerli sözlük elemanları (`list[dict[K, skaler|str]]`).
+                const ehi = info.elem_heap_info orelse return false;
+                if (ehi.heap == .list) {
+                    if (ehi.nested != null or ehi.elem_is_str or ehi.dict_info != null) return false;
+                    if (ehi.elem_qtype != .l and ehi.elem_qtype != .d and ehi.elem_qtype != .b) return false;
+                } else if (ehi.heap == .dict) {
+                    const di = ehi.dict_info orelse return false;
+                    if (di.value_heap != .none or di.value_is_class) return false;
+                    if (di.value_is_str) self.owned_dict_reads = true;
+                } else return false;
+                self.list_locks = true;
+                return true;
+            };
+            if (sh.kind == 1) {
+                self.list_locks = true;
+            } else if (sh.kind == 2) {
+                const ec = info.elem_heap_info.?.class_name.?;
+                if (classDefinesMethod(module, ec, "__eq__") or classDefinesMethod(module, ec, "__repr__") or classDefinesMethod(module, ec, "__str__")) return false;
+                if (!try dynSafeClass(self, ec, module, out, depth + 1)) return false;
+                self.list_locks = true;
+            }
+            return true;
+        },
+        else => return false,
+    }
+}
+
+/// Faz 9.0 F4: iş parçacığı sınırını geçen tipler (async işlev parametre/dönüşleri, global ve sınıf alanlarındaki kanal/görev öğe tipleri) bariyerli paylaşıma uygun mu?
+/// Uygunsa ilgili sınıflar `dyn_classes`a eklenir (yayımlama noktaları `dyn_crossing` ile etkinleşir); değilse `false` (çağıran tek işçiye sabitler).
+pub fn crossingSafe(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!bool {
+    var set: std.StringHashMapUnmanaged(void) = .empty;
+    defer set.deinit(self.allocator);
+    var any = false;
+    for (module.body) |st| {
+        if (st.kind != .func_def) continue;
+        const fd = st.kind.func_def;
+        if (!fd.is_async) continue;
+        if (!try crossFunc(self, fd, module, &set, &any)) return false;
+    }
+    for (extra_functions) |fd| {
+        if (!fd.is_async) continue;
+        if (!try crossFunc(self, fd, module, &set, &any)) return false;
+    }
+    var git = self.module_globals.valueIterator();
+    while (git.next()) |g| {
+        // Global sınıf/liste/sözlük değerleri `sharedGlobalsKind`da sınıflanır; burada yalnız kanal/görev tutamaçlarının öğe tipleri sınırı geçer.
+        if (g.info.heap != .channel and g.info.heap != .task and g.info.heap != .thread_channel) continue;
+        if (!try crossRoot(self, g.info, module, &set, &any, 0)) return false;
+    }
+    var cit = self.classes.valueIterator();
+    while (cit.next()) |ci| {
+        for (ci.fields.items) |f| {
+            if (f.info.heap != .channel and f.info.heap != .task) continue;
+            if (!try crossRoot(self, f.info, module, &set, &any, 0)) return false;
+        }
+    }
+    var sit = set.keyIterator();
+    while (sit.next()) |k| try self.dyn_classes.put(self.allocator, k.*, {});
+    self.dyn_crossing = any;
+    return true;
+}
+
+fn crossFunc(self: *Codegen, fd: ast.FuncDef, module: ast.Module, set: *std.StringHashMapUnmanaged(void), any: *bool) CodegenError!bool {
+    for (fd.params) |p| {
+        const pt = self.resolveType(p.type_expr) catch continue;
+        if (!try crossRoot(self, pt, module, set, any, 0)) return false;
+    }
+    const rt = self.resolveType(fd.return_type) catch return true;
+    return try crossRoot(self, rt, module, set, any, 0);
+}
+
+fn crossRoot(self: *Codegen, ti: types.TypeInfo, module: ast.Module, set: *std.StringHashMapUnmanaged(void), any: *bool, depth: u8) CodegenError!bool {
+    if (depth > 4) return false;
+    switch (ti.heap) {
+        .task_local => return true, // değer görev-yerel depoda kalır, iş parçacığı sınırını geçmez
+        .channel, .task, .thread_channel => {
+            const et = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", ti.elem_qtype, ti.elem_heap_info, ti.elem_is_str, ti.elem_fixed_int));
+            if (et.heap == .none or et.heap == .str) return true;
+            return try crossRoot(self, et, module, set, any, depth + 1);
+        },
+        .class, .list, .dict => {
+            any.* = true;
+            const ok = try dynSafeType(self, ti, module, set, 0);
+            return ok;
+        },
+        else => return true,
+    }
 }
 
 /// Faz 9.0: sınıflandırır VE paylaşılan-güvenli sözlük globallerini `shared_dict_globals`a yazar (`genGlobalInitStmt` bunları başlangıçta paylaşılan olarak işaretler).

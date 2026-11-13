@@ -1,0 +1,50 @@
+# Faz 9.0 F4 (v2.1.135): iş parçacığı sınırını geçen değerlerin yayımlanması — global DEĞİL: `spawn` argümanı olarak geçen sınıf örneği/liste ve kanal üzerinden gönderilen sınıf örneği.
+# Sınıf/liste geçmeden önce geçişli `SHARED` olur; alan bariyerleri/liste kilitleri eş zamanlı işçilerde bellek güvenliğini sağlar. Sızıntı/çift bırakma DebugAllocator ile yakalanır.
+class Stats:
+    label: str
+    seen: list[int]
+    total: int
+    def __init__(self: Stats, label: str) -> None:
+        self.label = label
+        self.seen = []
+        self.total = 0
+    def note(self: Stats, v: int) -> None:
+        self.seen.append(v)
+        self.total = self.total + 1
+        if v % 17 == 0:
+            self.label = "l" + str(v)
+
+async def worker(id: int, st: Stats, out: Channel[Stats]) -> None:
+    j: int = 0
+    while j < 200:
+        st.note(id * 1000 + j)
+        k: int = 0
+        acc: int = 0
+        while k < 100:
+            acc = (acc * 31 + k + j + id) % 1000003
+            k = k + 1
+        j = j + 1
+    mine: Stats = Stats("done" + str(id))
+    mine.note(id)
+    await out.send(mine)
+
+async def main_task() -> None:
+    st: Stats = Stats("start")
+    out: Channel[Stats] = Channel[Stats](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, st, out)
+        k = k + 1
+    got: int = 0
+    k = 0
+    while k < 6:
+        m: Stats = await out.recv()
+        got = got + m.total
+        k = k + 1
+    print(got)
+    print(len(st.seen))
+    print(st.total > 0 and st.total <= 1200)
+    print(len(st.label) > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.135]
+
+### Eklendi (Faz 9.0 F4: yayımlama noktaları)
+
+- **İş parçacığı sınırını geçen değerler yayımlanır:** `spawn` argümanı, `Channel.send` ile gönderilen öğe ve görev sonucu olarak geçen sınıf/liste/sözlük, geçişten ÖNCE geçişli olarak `SHARED` yapılır; ilgili sınıflar dinamik-paylaşım bariyerlerini (F2) ve liste kilitlerini (F3) kazanır. GLOBAL gerekmez: `async def` parametre/dönüş tipleri ile global ve sınıf alanlarındaki `Channel[T]`/`Task[T]` öğe tipleri taranır (`crossingSafe`); hepsi bariyerli paylaşıma uygunsa program çok işçili kalır, değilse (kalıtım, `__del__`, kanal alanı vb.) güvenli geri düşüş olarak tek işçiye sabitlenir (F5'te kalkacak). `TaskLocal` sınırı geçmez; wasm/freestanding hedefleri etkilenmez.
+- **Düzeltme (gerçek ARC hatası):** `await ch.send(v)` yerel bir `str`/sınıf/liste değerini retain etmeden kuyruğa koyuyordu; gönderen yerelin kapsam sonunda bırakılması alıcıdaki değeri geçersiz kılıyordu (`Channel[str]` + yerel `str` → SIGSEGV). Kanal artık kendi referansını tutar.
+- Test: iki backend golden `mn_dyn_cross_spawn_channel` (global YOK; 6 işçi, spawn argümanı sınıf örneği + kanalla gönderilen sınıf örneği); bariyersiz çift bırakma, bariyerli 40 çalıştırmada 0 hata. Not: `x = x + 1` gibi skaler okuma-değiştirme-yazma bileşik işlemleri atomik DEĞİLDİR (kayıp güncelleme olabilir; Go ile aynı); `append`/alan atamaları güvenlidir. Checker'ın `SpawnSharedMutation` kuralı (spawn hedefinde paylaşılan liste parametresini doğrudan değiştirme) olduğu gibi duruyor — gevşetilmesi dil kararıdır.
+
 ## [2.1.134]
 
 ### Eklendi (Faz 9.0 F3c: iç içe liste ve sözlük elemanlı paylaşılan liste alanları)
