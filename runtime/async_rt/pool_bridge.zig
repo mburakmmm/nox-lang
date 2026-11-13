@@ -224,10 +224,11 @@ fn pickMainWorkerCount(mode: i32) usize {
     if (poolWorkersOverride()) |n| {
         return std.math.clamp(n, @as(usize, 1), asap.MAX_POOL_WORKERS);
     }
+    // v2.1.120: mod 3 = paylaşılan tek globals bloğu (çok işçi); işçi sayısı mod 0 gibi (küçük varsayılan, `NOX_POOL_WORKERS` ile ölçeklenir).
     // v2.1.117: mod 2 = TEK işçi. Her işçi modül globals'ının KENDİ kopyasını taşıdığından, paylaşılan DEĞİŞKEN modül durumu olan (liste/sözlük/sınıf/kanal/görev ya da yeniden atanan
     // bir modül değişkeni) ve `serve_multicore`/`pool_run` kullanmayan programlarda çalınan bir görev başka işçinin tutarsız kopyasını okuyabilirdi; bu programlar tek işçide çalışır.
     if (mode == 2) return 1;
-    if (mode == 0) return SMALL_MAIN_POOL_DEFAULT;
+    if (mode == 0 or mode == 3) return SMALL_MAIN_POOL_DEFAULT;
     const cpu = if (comptime builtin.cpu.arch.isWasm()) WASM_DEFAULT_WORKERS else (std.Thread.getCpuCount() catch 1);
     return std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS);
 }
@@ -237,6 +238,14 @@ const WASM_DEFAULT_WORKERS: usize = 4;
 
 pub export fn nox_pool_main_init(mode: i32) callconv(.c) ?*anyopaque {
     const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount(mode)) catch @panic("OOM: $main pool");
+    if (mode == 3) {
+        const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
+        state.globals_shared = true;
+    }
+    {
+        const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
+        state.main_pool_workers = pool.workers.len;
+    }
     return pool.rt;
 }
 

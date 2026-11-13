@@ -943,19 +943,46 @@ fn assignsName(stmts: []const ast.Stmt, name: []const u8) bool {
     return false;
 }
 
-/// v2.1.117: terfi etmiş modül değişkenleri arasında PAYLAŞILAN DEĞİŞKEN durum var mı? (liste/sözlük/sınıf/kanal/görev/closure gibi yığın nesneleri ya da yeniden atanan bir değişken.) Her işçi modül
-/// globals'ının KENDİ kopyasını taşır (`serve_multicore` fabrika modeli); sabit kalan skaler/`str` globaller kopyalar arasında özdeştir ve sayılmaz. Doğruysa (ve `serve_multicore`/`pool_run` yoksa)
-/// program TEK işçide çalıştırılır: çalınan bir görev başka işçinin tutarsız kopyasını okumaz.
-pub fn hasSharedMutableGlobals(self: *Codegen, module: ast.Module) bool {
+/// v2.1.117/v2.1.120: modül globals'ının işçilerle paylaşım biçimi (Faz 9.0). Her işçi bugün modül globals'ının KENDİ kopyasını taşır (`serve_multicore` fabrika modeli); sabit kalan skaler/`str` globaller
+/// kopyalar arasında özdeştir (`none`). Değişken durum için:
+/// - `scalar_shared`: yalnız yeniden atanan skaler (int/float/bool) globaller var → tek ORTAK blok güvenlidir (hizalı 8 baytlık okuma/yazma; bileşik işlemler atomik değildir, bellek-güvenlidir: karar A);
+/// - `pinned`: liste/sözlük/sınıf/kanal/görev/closure ya da yeniden atanan `str` gibi paylaşılan yığın durumu → program TEK işçide çalışır (kalıcı çözüm dilimleri 9.0.x ile bu durumu daraltır).
+pub const SharedGlobalsKind = enum { none, shared_block, pinned };
+
+/// Paylaşılan tek blokta güvenle yaşayabilen `dict[K, V]` global'i mi? Değerler skaler olmalı (str/sınıf/liste değerleri ödünç okunur ve eş zamanlı değiştirilince bırakılmış belleğe
+/// işaret edebilir); sözlük işaretçisi hiç yeniden atanmamalı (eski sözlüğün bırakılması yarışırdı). Anahtar `int`/`float`/`bool`/`str` olabilir. Sözlüğün KENDİ işlemleri çalışma zamanında
+/// `Dict.lock` ile korunur (`nox_dict_make_shared`, `runtime/collections/dict.zig`); takma ad (alias) ya da işlev argümanı olarak dolaşması güvenlidir.
+fn isSharedSafeDict(g: types.GlobalVar, module: ast.Module) bool {
+    if (g.info.heap != .dict) return false;
+    const di = g.info.dict_info orelse return false;
+    if (di.value_is_str or di.value_is_class or di.value_heap != .none) return false;
+    return !assignsName(module.body, g.name);
+}
+
+/// Faz 9.0: sınıflandırır VE paylaşılan-güvenli sözlük globallerini `shared_dict_globals`a yazar (`genGlobalInitStmt` bunları başlangıçta paylaşılan olarak işaretler).
+pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module) CodegenError!SharedGlobalsKind {
+    var kind: SharedGlobalsKind = .none;
     var it = self.module_globals.valueIterator();
     while (it.next()) |g| {
         switch (g.info.heap) {
-            .none, .str => if (!assignsName(module.body, g.name)) continue,
-            else => {},
+            .none => {
+                if (assignsName(module.body, g.name)) kind = .shared_block;
+            },
+            .str => if (assignsName(module.body, g.name)) return .pinned,
+            .dict => {
+                if (!isSharedSafeDict(g.*, module)) return .pinned;
+                kind = .shared_block;
+            },
+            else => return .pinned,
         }
-        return true;
     }
-    return false;
+    if (kind == .shared_block) {
+        var it2 = self.module_globals.valueIterator();
+        while (it2.next()) |g| {
+            if (g.info.heap == .dict) try self.shared_dict_globals.put(self.allocator, g.name, {});
+        }
+    }
+    return kind;
 }
 
 pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
@@ -2288,7 +2315,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
         // `pickMainWorkerCount` CPU-sayısı YERİNE küçük bir sabite düşer
         // (bkz. `pool_bridge.zig`nin belge notu, BURADA SADECE derleme-
         // zamanı sinyali `.w`-tipli 0/1 olarak TAŞINIR).
-        const wmp_text: []const u8 = if (wants_multicore_pool) "1" else if (pin_single_worker) "2" else "0";
+        const wmp_text: []const u8 = if (wants_multicore_pool) "1" else if (pin_single_worker) "2" else if (self.shared_block_mode) "3" else "0";
         try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_pool_main_init", &.{.{ .ty = .w, .text = wmp_text }});
     } else {
         try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, runtimeInitSymbol(self), &.{});
@@ -2323,7 +2350,8 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     if (self.mn() and (!self.isWasmTarget() or self.isWasmThreads())) {
         var ginit_sym: []const u8 = "0";
         var gdeinit_sym: []const u8 = "0";
-        if (self.module_globals.count() > 0) {
+        // Paylaşılan tek blok kipinde (Faz 9.0) kardeş işçiler kendi globals kopyasını İLKLEMEZ/ATMAZ: hepsi slot 0'ın bloğunu görür.
+        if (self.module_globals.count() > 0 and !self.shared_block_mode) {
             main_ginit_name = try std.fmt.allocPrint(self.allocator, "main_pool_ginit", .{});
             main_gdeinit_name = try std.fmt.allocPrint(self.allocator, "main_pool_gdeinit", .{});
             ginit_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{main_ginit_name.?});

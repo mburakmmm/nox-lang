@@ -40,6 +40,24 @@ pub const SpinLock = struct {
         }
     }
 
+    /// Kısa kritik bölümler için (paylaşılan koleksiyonlar, Faz 9.0): önce okuma-ağırlıklı (test-and-test-and-set) kısa bir döngüde bekler,
+    /// ancak ısrarla çekişme varsa CPU'yu bırakır. `lock`ın ilk çekişmede `sched_yield` yapması, çok işçili sıcak kilitte sistem çağrısı fırtınası yaratıyordu.
+    pub fn lockBackoff(self: *SpinLock) void {
+        var backoff: u32 = 4;
+        var rounds: u32 = 0;
+        while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+            // Üstel geri çekilme: çekişme sürdükçe kilit satırına bakma sıklığı azalır (satır sıçramasını sınırlar).
+            var i: u32 = 0;
+            while (i < backoff) : (i += 1) std.atomic.spinLoopHint();
+            if (backoff < 1024) backoff *= 2;
+            rounds += 1;
+            if (rounds > 64) {
+                if (comptime !is_freestanding) @import("thread_spawn.zig").yield();
+                rounds = 32;
+            }
+        }
+    }
+
     pub fn unlock(self: *SpinLock) void {
         self.state.store(0, .release);
     }

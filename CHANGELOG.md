@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.120]
+
+### Eklendi
+
+- **M:N paylaşılan modül durumu, dilim 1 (Faz 9.0):** yalnızca yeniden atanan skaler (int/float/bool) modül değişkenleri ve/veya hiç yeniden bağlanmayan, skaler değerli `dict[K, V]` modül globalleri artık programı tek işçiye SABİTLEMEZ. Tüm işçiler tek ortak globals bloğunu görür (`nox_pool_main_init(3)`); paylaşılan sözlüğün her işlemi kilit altındadır (havuzda birden çok işçi varsa). Tek işlemler atomik, bileşik işlemler (`d[k] = d[k] + 1`) değildir (bellek-güvenli). Aynı iş yükü LLVM'de 2,62 s (1 işçi) → 0,41 s (8 işçi), QBE'de 3,32 s → 0,52 s. Liste/sınıf/kanal/closure/`str` yeniden atama ve heap değerli sözlük sonraki dilimlerde (şimdilik tek işçi).
+- Ölçüm tabanı `benchmarks/mn_shared/` (+ `BASELINE-v2.1.119.txt`), spesifikasyon §3.459, `docs/language/concurrency.md` güncellendi.
+
 ## [2.1.119]
 
 ### Eklendi

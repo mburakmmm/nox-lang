@@ -1,0 +1,17 @@
+# Faz 9.0 (v2.1.120): yeniden atanan skaler modül globali TÜM işçilerde tek ortak kopyadır (işçi başına kopya değil).
+# Ana görev işçisini yield etmeden bekletir; `writer` ancak BAŞKA bir işçiye çalınırsa çalışabilir ve değeri ortak globale yazar.
+phase: int = 0
+
+async def writer() -> None:
+    phase = 9
+
+async def main_task() -> None:
+    w: Task[None] = spawn writer()
+    spin: int = 0
+    while phase == 0 and spin < 3000000000:
+        spin = spin + 1
+    print(phase)
+    await w
+
+mt: Task[None] = spawn main_task()
+await mt

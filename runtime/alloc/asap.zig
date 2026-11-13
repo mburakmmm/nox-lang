@@ -501,6 +501,12 @@ pub const RuntimeState = struct {
     /// edilen worker'lar `spawn()`DAN ÖNCEKİ HER ŞEYİ (Zig/C11 iş parçacığı
     /// modelinin garantisi) GÖRÜR.
     pool_ever_active: std.atomic.Value(bool) = .init(false),
+    /// Faz 9.0 (v2.1.120): `$main` havuzu "paylaşılan tek globals bloğu" kipinde kurulduysa (`nox_pool_main_init(3)`) TÜM işçiler slot 0'ın bloğunu görür
+    /// (`nox_globals_get/set`): derleyici, paylaşılan DEĞİŞKEN modül durumunun yalnız bu kipin güvenli olduğu biçimlerde kullanıldığını kanıtlamıştır.
+    /// Havuz kurulurken (işçiler başlamadan ÖNCE) bir kez yazılır; sonra salt okunurdur.
+    globals_shared: bool = false,
+    /// Faz 9.0: `$main` havuzunun işçi sayısı (`nox_pool_main_init`); tek işçide paylaşılan koleksiyonlar kilit almaz. Havuz yoksa 1.
+    main_pool_workers: usize = 1,
     /// Faz MN.9.2: `$main`in (`--release` altında) OTOMATİK kurduğu
     /// havuzun `PoolRunCtx`si (`pool_bridge.zig`, `nox_pool_main_spawn_
     /// workers` TARAFINDAN AYARLANIR) — `nox_pool_main_join_and_destroy`
@@ -1175,6 +1181,7 @@ test "enjekte edilen bir allocator ile başlatılan runtime, HER şeyi (bootstra
 noinline fn poolSlotForGlobals(state: *RuntimeState) usize {
     if (state.pool_ever_active.load(.monotonic)) {
         @branchHint(.unlikely);
+        if (state.globals_shared) return 0;
         return currentWorkerSlot();
     }
     return 0;

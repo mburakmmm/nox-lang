@@ -381,6 +381,71 @@ test "WorkerPool: 4 worker eş zamanlı ARC/arena/cycle-gc/globals izolasyonu" {
     cycle_detector.nox_cycle_collect(pool.rt);
 }
 
+/// Faz 9.0 (v2.1.120): `globals_shared` kipinde TÜM işçiler aynı globals bloğunu görür (slot 0'ın); işçi başına izolasyon KAPALIDIR.
+fn sharedGlobalsWorkerBody(rt: *anyopaque, slot: usize, shared: *StressShared) void {
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        // Hangi işçiden okunursa okunsun slot 0'ın bloğu gelmeli; her işçi aynı sihirli değeri okur.
+        if (asap.nox_globals_get(rt) != @as(?*anyopaque, @ptrFromInt(0xBEEF))) shared.globals_mismatch.store(true, .seq_cst);
+        thread_spawn.yield();
+    }
+    _ = slot;
+}
+
+test "WorkerPool: paylaşılan globals kipinde tüm işçiler tek ortak bloğu görür" {
+    const testing = std.testing;
+    var pool = try WorkerPool.create(testing.allocator, 4);
+    defer pool.destroy();
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
+    state.globals_shared = true;
+    // Slot 0 (çağıran iş parçacığı) bloğu kurar; işçiler başlamadan önce görünür olur.
+    asap.nox_globals_set(pool.rt, @ptrFromInt(0xBEEF));
+
+    var shared = StressShared{};
+    try pool.spawnWorkers(*StressShared, sharedGlobalsWorkerBody, &shared);
+    sharedGlobalsWorkerBody(pool.rt, 0, &shared);
+    pool.joinAll();
+    try testing.expect(!shared.globals_mismatch.load(.seq_cst));
+    asap.nox_globals_set(pool.rt, null);
+}
+
+/// Faz 9.0 (v2.1.120): paylaşılan sözlük (`nox_dict_make_shared`) çok işçili kullanımda bellek-güvenli ve tutarlıdır.
+const dict_mod = @import("../collections/dict.zig");
+const SharedDictStress = struct {
+    dict: ?*anyopaque,
+    bad: std.atomic.Value(bool) = .init(false),
+};
+
+fn sharedDictWorkerBody(rt: *anyopaque, slot: usize, st: *SharedDictStress) void {
+    var i: i64 = 0;
+    while (i < 4000) : (i += 1) {
+        const key: i64 = @as(i64, @intCast(slot)) * 100000 + i;
+        dict_mod.nox_dict_set(rt, st.dict, 0, 0, 0, key, key * 2);
+        if (dict_mod.nox_dict_contains(rt, st.dict, 0, key) != 1) st.bad.store(true, .seq_cst);
+        if (dict_mod.nox_dict_get(rt, st.dict, 0, key) != key * 2) st.bad.store(true, .seq_cst);
+        // Ortak anahtarlara üzerine yazma (aynı değer): okuma-yazma çekişmesi.
+        dict_mod.nox_dict_set(rt, st.dict, 0, 0, 0, 7, 14);
+        _ = dict_mod.nox_dict_len(st.dict);
+    }
+}
+
+test "WorkerPool: paylaşılan sözlük 4 işçide eş zamanlı set/get/contains/len doğru" {
+    const testing = std.testing;
+    var pool = try WorkerPool.create(testing.allocator, 4);
+    defer pool.destroy();
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
+    state.main_pool_workers = 4; // test havuzu `nox_pool_main_init` ile kurulmaz
+    var st = SharedDictStress{ .dict = dict_mod.nox_dict_new(pool.rt, 0) };
+    dict_mod.nox_dict_make_shared(pool.rt, st.dict);
+    try pool.spawnWorkers(*SharedDictStress, sharedDictWorkerBody, &st);
+    sharedDictWorkerBody(pool.rt, 0, &st);
+    pool.joinAll();
+    try testing.expect(!st.bad.load(.seq_cst));
+    // 4 işçi × 4000 ayrı anahtar + ortak anahtar 7 (slot 0 anahtarı 0..3999 içinde 7'yi zaten içerir: yeniden yazıldı).
+    try testing.expectEqual(@as(i64, 4 * 4000), dict_mod.nox_dict_len(st.dict));
+    dict_mod.nox_dict_release(pool.rt, st.dict, 0, 0, 0);
+}
+
 test "WorkerPool: create/destroy tek başına (worker yok) sızmaz" {
     const testing = std.testing;
     var pool = try WorkerPool.create(testing.allocator, 1);

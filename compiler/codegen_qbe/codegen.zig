@@ -658,7 +658,7 @@ pub const Codegen = struct {
     pub const registerClass = registration.registerClass;
     pub const registerClassesInOrder = registration.registerClassesInOrder;
     pub const collectModuleGlobals = registration.collectModuleGlobals;
-    pub const hasSharedMutableGlobals = registration.hasSharedMutableGlobals;
+    pub const sharedGlobalsKind = registration.sharedGlobalsKind;
     pub const stmtRunsInGlobalInit = registration.stmtRunsInGlobalInit;
     pub const inferFieldType = registration.inferFieldType;
     pub const registerFunc = registration.registerFunc;
@@ -1260,6 +1260,11 @@ pub const Codegen = struct {
     /// FIELD_SLOT_SIZE` ofsetinde (`TAG_SIZE` YOK, bkz. `GlobalVar`nin
     /// belge notu).
     module_globals_size: usize = 0,
+    /// Faz 9.0: modül globals'ı TÜM işçiler arasında tek ortak blokta paylaşılıyor (bkz. `registration.sharedGlobalsKind`).
+    shared_block_mode: bool = false,
+    globals_pinned: bool = false,
+    /// Faz 9.0: `shared_block_mode` içinde başlangıçta paylaşılan olarak işaretlenecek `dict` globalleri (bkz. `registration.isSharedSafeDict`).
+    shared_dict_globals: std.StringHashMapUnmanaged(void) = .empty,
     /// Son terfi etmiş `var_decl`ın `module.body` indeksi (dahil). Bu
     /// indekse KADAR (dahil) olan, terfi etmiş bir globale yazan üst düzey
     /// atamalar/metod çağrıları `$nox_init_globals`e girer; SONRAKİLER
@@ -1966,6 +1971,13 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     // ÖNCE (`genExpr`/`genAssign`nin `.identifier` yedek dalları
     // `gen.module_globals`in DOLU olmasına güvenir).
     try gen.collectModuleGlobals(module, extra_functions);
+    const wants_multicore_pool = moduleUsesMulticorePool(module, extra_functions);
+    {
+        // Faz 9.0: serve_multicore/pool_run işçi-başına-kopya (fabrika) modelini korur; aksi halde paylaşım biçimi sınıflanır (init kodu üretilmeden ÖNCE).
+        const globals_kind: registration.SharedGlobalsKind = if (wants_multicore_pool) .none else try gen.sharedGlobalsKind(module);
+        gen.globals_pinned = globals_kind == .pinned;
+        gen.shared_block_mode = globals_kind == .shared_block;
+    }
 
     for (module.body) |stmt| {
         if (stmt.kind == .extern_def) try gen.registerExternFunc(stmt.kind.extern_def);
@@ -2163,8 +2175,7 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     // düşüp düşmeyeceğine karar vermek İçİn — `genMain`nin (QBE yolu)
     // KENDİSİ BUNU HİÇ KULLANMAZ, SADECE `use_async == true` İKEN
     // `genMainAsync`e taşınır.
-    const wants_multicore_pool = moduleUsesMulticorePool(module, extra_functions);
-    const pin_single_worker = !wants_multicore_pool and gen.hasSharedMutableGlobals(module);
+    const pin_single_worker = gen.globals_pinned;
     try gen.genMain(loose.items, use_async, wants_multicore_pool, pin_single_worker);
 
     // `list[T]`nin elemanları heap-yönetimliyken (sınıf/iç içe liste) gereken

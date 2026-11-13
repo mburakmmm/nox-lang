@@ -1,0 +1,41 @@
+# Faz 9.0 (v2.1.120): paylaşılan DEĞİŞKEN sözlük modül globali, M:N işçileri arasında TEK ortak nesnedir (işçi başına kopya değil) ve kilit altında bellek-güvenlidir.
+# Her görev kendi anahtarlarına yazar (sonuç belirleyici); okumalar (`in`, `get`, `len`) eş zamanlı yazmalarla karışır.
+counts: dict[int, int] = {}
+hits: int = 0
+
+async def work(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    seen: int = 0
+    i: int = 0
+    while i < 400000:
+        acc = (acc * 31 + i + id) % 1000003
+        if i % 8000 == 0:
+            k: int = id * 1000 + i // 8000
+            counts[k] = acc
+            if k in counts:
+                seen = seen + counts.get(k, 0) % 2
+        i = i + 1
+    hits = hits + 1
+    await out.send(acc + seen)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](64)
+    k: int = 0
+    while k < 16:
+        t: Task[None] = spawn work(k, out)
+        k = k + 1
+    total: int = 0
+    k = 0
+    while k < 16:
+        total = total + await out.recv()
+        k = k + 1
+    print(total)
+    print(len(counts))
+    s: int = 0
+    for key in counts.keys():
+        s = s + counts.get(key, 0)
+    print(s)
+    print(hits > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

@@ -91,6 +91,10 @@ fn genGlobalInitStmt(self: *Codegen, stmt: ast.Stmt, block: []const u8) CodegenE
             const addr = try self.newTemp();
             try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
             try self.qbeStore(g.info.qtype, val.text, addr);
+            // Faz 9.0: paylaşılan tek blokta yaşayan sözlük, eş zamanlı erişim BAŞLAMADAN (işçiler henüz dokunmadan) paylaşılan olarak işaretlenir.
+            if (self.shared_dict_globals.contains(v.name)) {
+                try self.qbeCall(null, "$nox_dict_make_shared", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = val.text } });
+            }
         },
         // `cfg.secret_key = ...` boot()'tan ÖNCE aynı nesneye yazılsın. `genAssign`in global dalı `$main` ile AYNI yoldur.
         .assign => |asg| try self.genAssign(asg),

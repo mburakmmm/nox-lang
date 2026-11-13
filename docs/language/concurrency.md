@@ -331,11 +331,19 @@ All tasks run on fibers scheduled by the runtime:
   variable. Reference counting is atomic whenever a program uses tasks or threads, so values may safely be shared between tasks on different
   workers. On the QBE backend (which has no atomic instructions in its IL) the atomic count updates are calls into the runtime, emitted only
   for programs that use `spawn`, `async`, `nox.thread` or the multi-core pool; other QBE programs keep plain, faster counts.
-  Module-level variables: every worker keeps its own copy of them (this is what makes `serve_multicore` handlers independent). A program that
-  shares **mutable** module state between tasks — a module-level list, dict, class instance, channel or task, or a module-level number/string that is
-  reassigned — and does not use `serve_multicore*` or `nox.thread.pool_run` therefore runs on **one worker** on both backends, so a task never
-  reads another worker's copy. Module-level constants (numbers and strings assigned once) do not count. Setting `NOX_POOL_WORKERS` overrides this
-  (at your own risk).
+  Module-level variables: by default every worker keeps its own copy of them (this is what makes `serve_multicore` handlers independent).
+  Programs that share **mutable** module state between tasks without `serve_multicore*` / `nox.thread.pool_run` use one of three models,
+  chosen by the compiler (no syntax involved):
+  - **Shared block (parallel):** the only mutable module state is a module-level number/bool that is reassigned, and/or `dict[K, V]` with
+    number/bool values that is never rebound. All workers then see **one** copy. Each dict operation (`d[k] = v`, `d[k]`, `k in d`,
+    `len(d)`, `get`, `pop`, `keys()`, ...) is atomic on its own (a lock inside the dict, taken only when the pool has more than one worker);
+    compound updates such as `d[k] = d[k] + 1` are not atomic as a whole — the program stays memory-safe but increments can be lost. Use a
+    channel or `AtomicRef` when you need exact counters.
+  - **One worker:** any other mutable module state (a module-level list, class instance, channel, task, closure, a `str` that is reassigned, or
+    a dict with `str`/list/class values) still runs the whole program on **one worker** on both backends, so a task never reads another
+    worker's copy (this restriction is being lifted case by case; see the Faz 9.0 notes in the changelog).
+  - Module-level constants (numbers and strings assigned once) need neither.
+  Setting `NOX_POOL_WORKERS` overrides the worker count (for the "one worker" model, at your own risk).
 - **Freestanding targets:** a single-threaded cooperative scheduler. Tasks interleave only at `await` points (and at blocking I/O, which is
   non-blocking at the fiber level); `time.sleep_ms` inside a task suspends only that task.
 

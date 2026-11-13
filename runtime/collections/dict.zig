@@ -411,7 +411,35 @@ pub const Dict = struct {
     /// temizler (amortize O(1) silme). `dead == 0` iken `dead_bits` kullanılmaz ve her yol eski davranışla aynıdır.
     dead: usize = 0,
     dead_bits: std.ArrayListUnmanaged(u64) = .empty,
+    /// Faz 9.0 (v2.1.120): `true` ise sözlük işçiler arasında PAYLAŞILIYOR (derleyici paylaşılan modül globali olarak işaretler,
+    /// `nox_dict_make_shared`): her dışa açık işlem `lock` altında çalışır (okumalar dahil: `last_idx` önbelleği okumada da yazılır).
+    /// Tek işlemler atomik, bileşik işlemler (`d[k] = d[k] + 1`) değildir; bellek-güvenlidir. Paylaşılmayan sözlüklerde maliyet: bir dal.
+    shared: bool = false,
+    /// Sıcak kilit kendi önbellek satırında durur (yanlış paylaşım: kilidi bekleyenler sözlük alanlarının satırını geçersiz kılmasın).
+    _pad: [64]u8 = undefined,
+    lock: SpinLock = .{},
 };
+
+const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
+
+/// Paylaşılan sözlükte kilidi alır (paylaşılmıyorsa hiçbir şey yapmaz); `unlockShared` ile eşleşir.
+inline fn lockShared(d: *Dict) bool {
+    if (!d.shared) return false;
+    d.lock.lockBackoff();
+    return true;
+}
+
+inline fn unlockShared(d: *Dict, held: bool) void {
+    if (held) d.lock.unlock();
+}
+
+/// Sözlüğü işçiler arasında paylaşılan olarak işaretler (derleyici, paylaşılan modül globali başlatıldıktan hemen sonra çağırır). Eş zamanlı erişim BAŞLAMADAN önce çağrılmalıdır.
+pub export fn nox_dict_make_shared(rt: ?*anyopaque, dp: ?*anyopaque) void {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return));
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    // Havuzda tek işçi varsa eş zamanlı erişim OLAMAZ: kilit hiç alınmaz (tek işçili çalıştırmada sıfır ek maliyet).
+    d.shared = state.main_pool_workers > 1;
+}
 
 /// `entries[i]` mezar taşı mı? (`dead == 0` hızlı yolu.)
 inline fn isDead(d: *const Dict, i: usize) bool {
@@ -502,6 +530,8 @@ pub export fn nox_dict_new(rt: ?*anyopaque, key_is_str: i32) ?*anyopaque {
 pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64, value: i64) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const d: *Dict = @ptrCast(@alignCast(dp orelse return));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     const ctx: StrOrIntContext = .{ .key_is_str = key_is_str != 0, .rt = rt };
     if (findIndex(d, key, rt)) |i| {
         const old = d.entries.items[i];
@@ -605,6 +635,8 @@ fn compact(rt: ?*anyopaque, d: *Dict) void {
 /// `del d[k]` / `d.remove`: anahtar + değer (str/sınıf ise) serbest bırakılarak silinir. Silindiyse 1, yoksa 0.
 pub export fn nox_dict_remove(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64) i32 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     const i = findIndex(d, key, rt) orelse return 0;
     const old = d.entries.items[i];
     // Önce silinir (indeks, `key` canlıyken karmasını okur), SONRA payload'lar bırakılır.
@@ -619,6 +651,8 @@ pub export fn nox_dict_remove(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32,
 /// Anahtar yoksa 0 döner (çağıran önce `contains` ile doğrular).
 pub export fn nox_dict_pop(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     const i = findIndex(d, key, rt) orelse return 0;
     const old = d.entries.items[i];
     removeAt(rt, d, i, key);
@@ -629,6 +663,8 @@ pub export fn nox_dict_pop(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, ke
 /// `d.clear()`: tüm girdiler (str/sınıf anahtar-değerler) serbest bırakılır, sözlük boş kalır.
 pub export fn nox_dict_clear(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32) void {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     for (d.entries.items, 0..) |e, i| {
         if (isDead(d, i)) continue;
@@ -649,6 +685,8 @@ pub export fn nox_dict_clear(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, 
 pub export fn nox_dict_update(rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32) void {
     const s: *Dict = @ptrCast(@alignCast(src orelse return));
     if (dst == src) return;
+    // Paylaşılan kaynakta kilit yalnızca kaynak okunurken tutulur (dst.set kendi kilidini alır): iki sözlüğün kilidi birlikte tutulmaz, kilitlenme olmaz.
+    var held = lockShared(s);
     compact(rt, s); // kaynak sırayla gezilir: mezar taşı bırakma
     if (dst) |dp| {
         const dd: *Dict = @ptrCast(@alignCast(dp));
@@ -657,11 +695,18 @@ pub export fn nox_dict_update(rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaqu
     // `src.entries` `dst` güncellenirken DEĞİŞMEZ (farklı sözlükler), ama güvenli olsun diye uzunluk önceden alınır.
     var i: usize = 0;
     const n = s.entries.items.len;
+    unlockShared(s, held);
     while (i < n) : (i += 1) {
+        held = lockShared(s);
+        if (i >= s.entries.items.len) {
+            unlockShared(s, held);
+            break;
+        }
         const e = s.entries.items[i];
         if (key_is_str != 0 and e.key != 0) str_mod.nox_str_retain(payloadToStrPtr(e.key).?);
         if (value_is_str != 0 and e.value != 0) str_mod.nox_str_retain(payloadToStrPtr(e.value).?);
         if (value_is_class != 0 and e.value != 0) arc.nox_rc_retain(payloadToStrPtr(e.value).?);
+        unlockShared(s, held);
         nox_dict_set(rt, dst, key_is_str, value_is_str, value_is_class, e.key, e.value);
     }
 }
@@ -673,6 +718,8 @@ pub export fn nox_dict_update(rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaqu
 pub export fn nox_dict_get(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i64 {
     _ = key_is_str;
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     if (findIndex(d, key, rt)) |i| return d.entries.items[i].value;
     return 0;
 }
@@ -683,6 +730,8 @@ pub export fn nox_dict_get(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, ke
 pub export fn nox_dict_contains(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i32 {
     _ = key_is_str;
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     return if (findIndex(d, key, rt) != null) 1 else 0;
 }
 
@@ -740,6 +789,12 @@ pub export fn nox_dict_eq(rt: ?*anyopaque, ap: ?*anyopaque, bp: ?*anyopaque, vki
     if (ap == bp) return 1;
     const a: *Dict = @ptrCast(@alignCast(ap orelse return 0));
     const b: *Dict = @ptrCast(@alignCast(bp orelse return 0));
+    // İki sözlüğü de kilitle (adres sırası: kilitlenme yok).
+    const first_a = @intFromPtr(a) < @intFromPtr(b);
+    const held_first = lockShared(if (first_a) a else b);
+    defer unlockShared(if (first_a) a else b, held_first);
+    const held_second = lockShared(if (first_a) b else a);
+    defer unlockShared(if (first_a) b else a, held_second);
     if (liveCount(a) != liveCount(b)) return 0;
     for (a.entries.items, 0..) |e, i| {
         if (isDead(a, i)) continue;
@@ -751,6 +806,8 @@ pub export fn nox_dict_eq(rt: ?*anyopaque, ap: ?*anyopaque, bp: ?*anyopaque, vki
 
 pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     return @intCast(liveCount(d));
 }
 
@@ -770,6 +827,8 @@ fn liveEntryAt(d: *const Dict, idx: usize) ?usize {
 /// v2.0.23: Sözlüğün `idx` indisindeki (ekleme sırası) anahtarının 8-baytlık ham payload'ını döner (borrowed okuma).
 pub export fn nox_dict_entry_key(dp: ?*anyopaque, idx: i64) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     if (idx < 0) return 0;
     const i = liveEntryAt(d, @intCast(idx)) orelse return 0;
     return d.entries.items[i].key;
@@ -778,6 +837,8 @@ pub export fn nox_dict_entry_key(dp: ?*anyopaque, idx: i64) i64 {
 /// v2.0.23: Sözlüğün `idx` indisindeki (ekleme sırası) değerinin 8-baytlık ham payload'ını döner (borrowed okuma).
 pub export fn nox_dict_entry_value(dp: ?*anyopaque, idx: i64) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     if (idx < 0) return 0;
     const i = liveEntryAt(d, @intCast(idx)) orelse return 0;
     return d.entries.items[i].value;
@@ -830,12 +891,16 @@ fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, is_class: bool, elem_
 /// `d.keys() -> list[K]` — bkz. `buildEntryList`in belge notu.
 pub export fn nox_dict_keys(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key_elem_size: i64) ?*anyopaque {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return null));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     return buildEntryList(rt, d, key_is_str != 0, false, key_elem_size, true);
 }
 
 /// `d.values() -> list[V]` — bkz. `buildEntryList`in belge notu.
 pub export fn nox_dict_values(rt: ?*anyopaque, dp: ?*anyopaque, value_is_str: i32, value_is_class: i32, value_elem_size: i64) ?*anyopaque {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return null));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
     return buildEntryList(rt, d, value_is_str != 0, value_is_class != 0, value_elem_size, false);
 }
 
