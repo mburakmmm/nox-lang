@@ -88,7 +88,7 @@ Hedef: sahiplik piramidinin (ASAP → ARC → döngü çözücü → `lowlevel`)
 - [~] **5.1** (3.4'ün F4/F5 aşamaları; plan `project/ffi-binding-tasarimi-2026-11.md`) C/C++/Rust kütüphanelerinden otomatik Nox binding üretimi (SDK/araç) — kapsam: başlık ayrıştırma, struct, callback, hata sözleşmesi
 - [~] **5.2** (**v2.1.110**: `@dataclass` + `@derive(order/copy/json)` BİTTİ; kullanıcı kararı 2026-11-13: derleme zamanı sabitleri ve kullanıcı makroları kapsam DIŞI) Metaprogramlama altyapısını güçlendirme (comptime, derive, AST makro; İlke 1 ve 2 ile uyum)
 - [x] **5.3** (**v2.1.112**: atomik ARC çalışma zamanı çağrısı + havuz/spawn/pool_run eşitliği, yalnız gerektiğinde; Windows paralelliği gerçek Windows testinde doğrulanacak) QBE için M:N scheduler — hedef: iki backend tam eşit, Windows'ta paralellik, Nox'un kendini derlemesi için ön aşama (atomik ARC'nin QBE'de runtime çağrısı olması, `spawn` paketleme eşitliği)
-- [~] **5.4** HTTP/3 (QUIC, UDP, QPACK, TLS 1.3 QUIC) — **karar: istemci + sunucu, OpenSSL>=3.5 QUIC (dlopen) + kendi h3/QPACK**; tasarım `project/http3-tasarimi-2026-11.md`; H3.1 (quic.zig taşıma katmanı) v2.1.113; sıradaki H3.2 (h3 çerçeveleri + QPACK)
+- [~] **5.4** HTTP/3 (QUIC, UDP, QPACK, TLS 1.3 QUIC) — **karar: istemci + sunucu, OpenSSL>=3.5 QUIC (dlopen) + kendi h3/QPACK**; tasarım `project/http3-tasarimi-2026-11.md`; H3.1 (quic.zig taşıma katmanı) v2.1.113; H3.2 (h3.zig çerçeveler + QPACK) v2.1.114 (M:N global-paylaşım düzeltmesiyle aynı sürüm); sıradaki H3.3 (sunucu `nox.http.serve_h3`)
 
 ## 6. Windows (akşam, kullanıcıyla birlikte, SSH; hafıza planı hazır)
 

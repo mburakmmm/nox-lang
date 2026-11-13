@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.114]
+
+### Eklendi
+
+- **HTTP/3 çerçeveleme + QPACK** (TODO 5.4, aşama H3.2; aynı sürümde M:N düzeltmesiyle birlikte yayımlandı): `runtime/stdlib_shims/h3.zig` — QUIC değişken uzunluklu tamsayı, HTTP/3 çerçeve başlığı (DATA/HEADERS/SETTINGS/GOAWAY...), SETTINGS üretimi/çözümü (HTTP/2'den kalan ayrılmış kimlikler ve yinelenen kimlikler reddedilir, bilinmeyenler yok sayılır), akış türleri ve HTTP/3 hata kodları, QPACK statik tablo (99 giriş) ile kodlayıcı/çözücü (dinamik tablo kapasitesi 0; dinamik atıf `QpackDecompressionFailed`; alan bloğu boyut sınırı). Saf, G/Ç'siz, allocator'ı açık; henüz kullanıcıya açık yüzey yok (H3.3 sunucu, H3.4 istemci).
+- `http2.zig`: `readInt`/`appendInt` public; yeni `huffmanEncode`/`huffmanEncodedLen` (QPACK ile paylaşılan HPACK Huffman kodlayıcısı).
+- Testler: RFC 9000 Ek A.1 varint vektörleri, RFC 7541 C.4.1 Huffman vektörü, RFC 9204 Ek B.1 alan bloğu, statik tablo çapraz denetimi (nghttp3 dizeleri), 200 turluk sabit tohumlu rastgele kodla-çöz gidiş-dönüşü, bozuk giriş reddi (9 test).
+
+### Düzeltildi
+
+- **CI: rastgele kırmızı riscv64/Linux derlemesi** (v2.1.113 `linux-riscv64` işi): bazı koşucu CPU'larında (AVX-512 var, evex512 yok) Zig'in clang'ı libdeflate `adler32` AVX-512 VNNI varyantlarını derleyemiyordu ("requires target feature 'evex512'"); libdeflate'in resmi kaçış makrosu (`LIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI`) `build.zig`de tanımlandı. AVX2/AVX-VNNI/PCLMUL yolları kalır.
+- **M:N zamanlayıcıda modül düzeyi değişkenler çalınan görevlerde çöküyordu** (CI v2.1.112 Linux x86-64/aarch64 kırmızısı; LLVM varsayılan backend'inde de `NOX_POOL_WORKERS=8` ile %38–73 çökme): her işçi iş parçacığı modül globals'ının AYRI, yalnızca sıfırlanmış bir kopyasını tutuyordu; `$main_body` ya da bir görev başka işçiye çalınınca (QBE'ye havuz gelince Linux'ta sık) boş kopyayı okuyup çöküyordu. Kullanıcı kararıyla (2026-11-13) globals artık havuzdaki TÜM işçilerde PAYLAŞILIR: tek blok (slot 0), kardeş işçilerin yeniden ilklendirme/yıkım sarmalayıcıları sahip değilse no-op (`nox_globals_owner_slot`). Ham skaler globaller senkronize değildir (kanal/`nox.atomic`/`nox.sharedmem` kullanılmalı); ARC sayaçları atomiktir.
+- **Modül düzeyi `Channel[T]` başka işçide oluşturulup program sonunda yıkılınca çöküyordu:** kanal, oluşturan işçinin iş parçacığı-yerel `Scheduler`ına işaret ediyordu ve `deinit` onun allocator'ını okuyordu (işçi çıkınca geçersiz); artık allocator kanalın kendi alanında tutulur.
+- Fixture `task_local_basic`: iki işçinin yazdırma sırası paralel zamanlayıcıda belirsizdi; B bitmeden A serbest bırakılmıyor (aynı çıktı).
+- Testler: iki birim testi paylaşılan-globals sözleşmesine güncellendi (`worker_pool`, `pool_bridge`); `module_channel_read_by_async` ve `module_global_source_order_async` 4/8 işçide iki backend'de 100 turda 0 hata; tüm async fixture'lar 8 işçide iki backend'de 10 turda taranıp başka hata bulunmadı.
+
 ## [2.1.113]
 
 ### Eklendi

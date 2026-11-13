@@ -3041,13 +3041,21 @@ export function w $main(w %argc, l %argv) {
 export function l $main_pool_ginit(l %argp) {
 @start
     %rt =l copy %argp
+    %t0 =w call $nox_globals_owner_slot(l %rt)
+    jnz %t0, @globals_owner0, @globals_skip1
+@globals_owner0
     call $nox_init_globals(l %rt)
+@globals_skip1
     ret 0
 }
 export function l $main_pool_gdeinit(l %argp) {
 @start
     %rt =l copy %argp
+    %t0 =w call $nox_globals_owner_slot(l %rt)
+    jnz %t0, @globals_owner0, @globals_skip1
+@globals_owner0
     call $nox_deinit_globals(l %rt)
+@globals_skip1
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

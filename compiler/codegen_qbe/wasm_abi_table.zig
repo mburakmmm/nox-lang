@@ -169,6 +169,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_fs_stat_size_raw", Entry{ .params = "", .ret = 'L' } },
     .{ "nox_fs_write_fd_raw", Entry{ .params = "LP", .ret = 'v' } },
     .{ "nox_fs_write_string_raw", Entry{ .params = "PPP", .ret = 'v' } },
+    .{ "nox_globals_owner_slot", Entry{ .params = "P", .ret = 'W' } },
     .{ "nox_globals_get", Entry{ .params = "P", .ret = 'P' } },
     .{ "nox_globals_set", Entry{ .params = "PP", .ret = 'v' } },
     .{ "nox_grpc_call_raw", Entry{ .params = "PPPPL", .ret = 'P' } },

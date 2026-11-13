@@ -273,6 +273,32 @@ pub fn huffmanDecode(gpa: Allocator, input: []const u8, out: *std.ArrayListUnman
     if (pending_bits > 7 or !all_ones) return error.CompressionError;
 }
 
+/// RFC 7541 §5.2: Huffman ile kodlanmış uzunluk (bayt). HTTP/3 QPACK da AYNI tabloyu kullanır (RFC 9204 §4.1.2).
+pub fn huffmanEncodedLen(s: []const u8) usize {
+    var bits: usize = 0;
+    for (s) |b| bits += huff_lens[b];
+    return (bits + 7) / 8;
+}
+
+/// RFC 7541 §5.2: Huffman kodlama (son bayt EOS önekinin 1 bitleriyle doldurulur).
+pub fn huffmanEncode(list: *std.ArrayListUnmanaged(u8), gpa: Allocator, s: []const u8) Allocator.Error!void {
+    var acc: u64 = 0;
+    var nbits: u6 = 0;
+    for (s) |b| {
+        const len: u6 = @intCast(huff_lens[b]);
+        acc = (acc << len) | huff_codes[b];
+        nbits += len;
+        while (nbits >= 8) {
+            nbits -= 8;
+            try list.append(gpa, @intCast((acc >> nbits) & 0xff));
+        }
+    }
+    if (nbits > 0) {
+        const pad: u6 = 8 - nbits;
+        try list.append(gpa, @intCast(((acc << pad) | ((@as(u64, 1) << pad) - 1)) & 0xff));
+    }
+}
+
 // ---- HPACK kod çözücü ---------------------------------------------------------------------------------------------------------------------------------
 
 const DynEntry = struct { name: []u8, value: []u8 };
@@ -399,7 +425,7 @@ pub const Decoder = struct {
 };
 
 /// RFC 7541 §5.1: `prefix_bits` bitlik önekli tamsayı. Taşmaya karşı korumalı (2^31 üstü reddedilir).
-fn readInt(block: []const u8, pos: *usize, prefix_bits: u4) error{CompressionError}!usize {
+pub fn readInt(block: []const u8, pos: *usize, prefix_bits: u4) error{CompressionError}!usize {
     if (pos.* >= block.len) return error.CompressionError;
     const mask: usize = (@as(usize, 1) << prefix_bits) - 1;
     var v: usize = block[pos.*] & mask;
@@ -434,7 +460,7 @@ fn readString(block: []const u8, pos: *usize, out_alloc: Allocator) error{ Compr
 
 // ---- HPACK kodlayıcı (durumsuz, Huffman'sız) -------------------------------------------------------------------------------------------------------------------------
 
-fn appendInt(list: *std.ArrayListUnmanaged(u8), gpa: Allocator, first_bits: u8, prefix_bits: u4, value: usize) Allocator.Error!void {
+pub fn appendInt(list: *std.ArrayListUnmanaged(u8), gpa: Allocator, first_bits: u8, prefix_bits: u4, value: usize) Allocator.Error!void {
     const mask: usize = (@as(usize, 1) << prefix_bits) - 1;
     if (value < mask) {
         try list.append(gpa, first_bits | @as(u8, @intCast(value)));

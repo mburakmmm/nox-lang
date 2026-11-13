@@ -80,6 +80,9 @@ pub fn Channel(comptime T: type) type {
         /// İçİn KULLANILMAZ — bkz. `scheduler_mod.currentScheduler()`nin
         /// belge notu (BURADA NEDEN).
         scheduler: *Scheduler,
+        /// v2.1.114: `scheduler.allocator`ın KOPYASI — kanal, onu OLUŞTURAN işçi iş parçacığından UZUN yaşayabilir (modül düzeyi kanal paylaşılan globals'ta, program sonunda başka
+        /// iş parçacığında yıkılır); `scheduler` işaretçisi o işçinin iş parçacığı-yerel belleğine işaret eder ve işçi çıkınca GEÇERSİZ olur. Tahsis/serbest bırakma YALNIZCA bu alanı kullanır.
+        allocator: std.mem.Allocator,
         capacity: usize,
         mutex: SpinLock = .{},
         buffer: std.ArrayListUnmanaged(T) = .empty,
@@ -106,13 +109,13 @@ pub fn Channel(comptime T: type) type {
         refcount: std.atomic.Value(u32) = .init(1),
 
         pub fn init(scheduler: *Scheduler, capacity: usize) Self {
-            return .{ .scheduler = scheduler, .capacity = capacity };
+            return .{ .scheduler = scheduler, .allocator = scheduler.allocator, .capacity = capacity };
         }
 
         pub fn deinit(self: *Self) void {
-            self.buffer.deinit(self.scheduler.allocator);
-            self.send_waiters.deinit(self.scheduler.allocator);
-            self.recv_waiters.deinit(self.scheduler.allocator);
+            self.buffer.deinit(self.allocator);
+            self.send_waiters.deinit(self.allocator);
+            self.recv_waiters.deinit(self.allocator);
         }
 
         /// Tampondan bir öğe boşaldıktan sonra, bekleyen (tampon DOLUYKEN
@@ -126,7 +129,7 @@ pub fn Channel(comptime T: type) type {
         fn wakeOneSenderLocked(self: *Self) ?*SendSlot {
             if (self.send_waiters.items.len == 0) return null;
             const slot = self.send_waiters.orderedRemove(0);
-            self.buffer.append(self.scheduler.allocator, slot.value) catch @panic("OOM: could not grow the channel buffer");
+            self.buffer.append(self.allocator, slot.value) catch @panic("OOM: could not grow the channel buffer");
             return slot;
         }
 
@@ -158,7 +161,7 @@ pub fn Channel(comptime T: type) type {
                 return value;
             }
             var slot = RecvSlot{ .fiber = sched.current.?, .scheduler = sched };
-            self.recv_waiters.append(self.scheduler.allocator, &slot) catch @panic("OOM: could not grow the channel receiver queue");
+            self.recv_waiters.append(self.allocator, &slot) catch @panic("OOM: could not grow the channel receiver queue");
             self.mutex.unlock();
             sched.suspendCurrent();
             return slot.result;
@@ -178,14 +181,14 @@ pub fn Channel(comptime T: type) type {
                 return;
             }
             if (self.buffer.items.len < self.capacity) {
-                self.buffer.append(self.scheduler.allocator, value) catch @panic("OOM: could not grow the channel buffer");
+                self.buffer.append(self.allocator, value) catch @panic("OOM: could not grow the channel buffer");
                 self.mutex.unlock();
                 return;
             }
             // Tampon dolu (ya da kapasite 0 ve bekleyen alıcı yok) —
             // gönderici olarak bloklanır.
             var slot = SendSlot{ .fiber = sched.current.?, .scheduler = sched, .value = value };
-            self.send_waiters.append(self.scheduler.allocator, &slot) catch @panic("OOM: could not grow the channel sender queue");
+            self.send_waiters.append(self.allocator, &slot) catch @panic("OOM: could not grow the channel sender queue");
             self.mutex.unlock();
             sched.suspendCurrent();
         }

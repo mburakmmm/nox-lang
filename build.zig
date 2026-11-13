@@ -137,7 +137,9 @@ fn addLibdeflate(b: *std.Build, mod: *std.Build.Module, arch: std.Target.Cpu.Arc
     mod.addIncludePath(b.path("third_party/libdeflate"));
     mod.addIncludePath(b.path("third_party/libdeflate/lib"));
     const common = [_][]const u8{ "lib/adler32.c", "lib/crc32.c", "lib/deflate_compress.c", "lib/deflate_decompress.c", "lib/gzip_compress.c", "lib/gzip_decompress.c", "lib/utils.c" };
-    const flags = [_][]const u8{ "-O3", "-DNDEBUG", "-fno-sanitize=undefined", "-fno-strict-aliasing" };
+    // v2.1.114: bazı CI koşucu CPU'larında (AVX-512 var, evex512 yok) Zig'in clang'ı `adler32` AVX-512 VNNI varyantlarını derleyemiyor ("requires target feature 'evex512'", rastgele
+    // kırmızı CI). libdeflate'in resmi kaçış makrosu o iki AVX-512 varyantını çıkarır; AVX2/AVX-VNNI/PCLMUL yolları kalır, kaynak dosyalarına dokunulmaz.
+    const flags = [_][]const u8{ "-O3", "-DNDEBUG", "-fno-sanitize=undefined", "-fno-strict-aliasing", "-DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI" };
     mod.addCSourceFiles(.{ .root = b.path("third_party/libdeflate"), .files = &common, .flags = &flags });
     const arch_file: ?[]const u8 = switch (arch) {
         .x86_64, .x86 => "lib/x86/cpu_features.c",

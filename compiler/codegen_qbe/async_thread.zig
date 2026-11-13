@@ -955,7 +955,15 @@ pub fn genPoolRunGlobalsInitWrapper(self: *Codegen, wrapper_name: []const u8) Co
     try self.qbeFuncParam(.l, "%argp", true);
     try self.qbeFuncHeaderEnd();
     try self.qbeOp1(RT_PARAM, .l, "copy", "%argp");
+    // v2.1.114: globals bloğu tüm işçilerde paylaşılır; yalnızca sahip (slot 0) ilklendirir/yıkar.
+    const owner_t = try self.newTemp();
+    try self.qbeCall(.{ .name = owner_t, .ty = .w }, "$nox_globals_owner_slot", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const do_label = try self.newLabel("globals_owner");
+    const skip_label = try self.newLabel("globals_skip");
+    try self.qbeJnz(owner_t, do_label, skip_label);
+    try self.qbeLabel(do_label);
     try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeLabel(skip_label);
     try self.qbeRet("0");
     try self.qbeFuncEnd();
 }
@@ -971,7 +979,15 @@ pub fn genPoolRunGlobalsDeinitWrapper(self: *Codegen, wrapper_name: []const u8) 
     try self.qbeFuncParam(.l, "%argp", true);
     try self.qbeFuncHeaderEnd();
     try self.qbeOp1(RT_PARAM, .l, "copy", "%argp");
+    // v2.1.114: globals bloğu tüm işçilerde paylaşılır; yalnızca sahip (slot 0) ilklendirir/yıkar.
+    const owner_t = try self.newTemp();
+    try self.qbeCall(.{ .name = owner_t, .ty = .w }, "$nox_globals_owner_slot", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const do_label = try self.newLabel("globals_owner");
+    const skip_label = try self.newLabel("globals_skip");
+    try self.qbeJnz(owner_t, do_label, skip_label);
+    try self.qbeLabel(do_label);
     try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeLabel(skip_label);
     try self.qbeRet("0");
     try self.qbeFuncEnd();
 }

@@ -858,7 +858,6 @@ pub fn destroyState(backing: std.mem.Allocator, state: *RuntimeState) void {
     backing.free(whole);
 }
 
-
 /// Faz F.0.2: GERÇEK allocator enjeksiyonu İçİn YENİ, AYRI bir giriş
 /// noktası — `backing`i HEM `RuntimeState`in KENDİ bootstrap tahsisi
 /// (`bootstrap_allocator`) HEM `debug_gpa`nın backing'i (Debug) HEM
@@ -1173,11 +1172,16 @@ test "enjekte edilen bir allocator ile başlatılan runtime, HER şeyi (bootstra
 /// üçlü ifadenin LLVM tarafından koşulsuz-çağır+`csel`e DÖNÜŞTÜRÜLDÜĞÜ
 /// `otool -tV` İLE DAHA ÖNCE KANITLANMIŞTI) kullanır.
 noinline fn poolSlotForGlobals(state: *RuntimeState) usize {
-    if (state.pool_ever_active.load(.monotonic)) {
-        @branchHint(.unlikely);
-        return currentWorkerSlot();
-    }
+    // v2.1.114 (kullanıcı kararı 2026-11-13): modül düzeyi globaller havuzdaki TÜM işçiler arasında PAYLAŞILIR — tek blok, slot 0'ın hücresi. Eskiden her işçinin
+    // kendi (yalnızca sıfırlanmış) kopyası vardı; çalınan bir görev (ya da `$main_body`) başka işçinin boş kopyasını okuyup çöküyordu (LLVM'de de, CI'da Linux'ta QBE'de görüldü).
+    _ = state;
     return 0;
+}
+
+/// Bu iş parçacığı modül-globals bloğunun SAHİBİ mi (slot 0 ya da havuz yok)? Kardeş işçilerin ilklendirme/yıkım sarmalayıcıları sahip değilse hiçbir şey yapmaz.
+pub export fn nox_globals_owner_slot(rt: ?*anyopaque) i32 {
+    _ = rt;
+    return if (currentWorkerSlot() == 0) 1 else 0;
 }
 
 pub export fn nox_globals_get(rt: ?*anyopaque) ?*anyopaque {

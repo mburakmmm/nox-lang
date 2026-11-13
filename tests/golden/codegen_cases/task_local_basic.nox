@@ -28,10 +28,10 @@ async def main_task() -> None:
     tb: Task[None] = spawn worker(ctx_local, "B", b_ready, b_go)
     await a_ready.recv()
     await b_ready.recv()
-    await a_go.send(1)
     await b_go.send(1)
-    await ta
     await tb
+    await a_go.send(1)
+    await ta
 
 m: Task[None] = spawn main_task()
 await m
