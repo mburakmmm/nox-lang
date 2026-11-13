@@ -98,7 +98,7 @@ def run_program(ctx, name, src, work, timeout=120):
     try:
         if ctx["platform"] == "ios":
             root = work / f"root_{name}"
-            env = dict(os.environ, SIMCTL_CHILD_NOX_MOBILE_ROOT=str(root), SIMCTL_CHILD_NOX_MOBILE_TEMP="/tmp")
+            env = dict(os.environ, SIMCTL_CHILD_NOX_MOBILE_ROOT=str(root), SIMCTL_CHILD_NOX_MOBILE_TEMP="/tmp", SIMCTL_CHILD_TMPDIR="/tmp")
             p = subprocess.run(["xcrun", "simctl", "spawn", ctx["udid"], str(binary)], capture_output=True, text=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
         else:
             remote = f"/data/local/tmp/nox-corpus/{name}"

@@ -51,26 +51,39 @@ export fn nox_test_cb_fire(x: i64) callconv(.c) i64 {
 
 /// Yabancı iş parçacığı callback'i (v2.1.118, TODO 8.8): `nox_test_thread_fire` kendi OS iş parçacığını başlatır; o iş parçacığı `cb(i, userdata, i * 0.5)`
 /// çağrısını `n` kez yapar (Nox'un hiçbir iş parçacığı değildir). `nox_test_thread_join` iş parçacığını bekler.
-var fire_thread: ?std.Thread = null;
+// std.Thread.spawn bu nesne C başlatma kodlu (libc) bir ikiliye bağlandığında Linux/aarch64'da `linux.tls.area_desc` başlatılmadığı için assert ile çöker
+// (v2.1.118 CI); bu yüzden doğrudan pthread kullanılır. Windows'ta bu yardımcılar kullanılmaz (EventQueue desteklenmez).
+const is_posix = builtin.os.tag != .windows;
+var fire_thread: if (is_posix) ?std.c.pthread_t else void = if (is_posix) null else {};
 
 const ThreadCb = *const fn (i32, ?*anyopaque, f64) callconv(.c) i32;
 
-fn threadBody(cb: ThreadCb, ud: ?*anyopaque, n: i32) void {
+const FireArgs = struct { cb: ThreadCb, ud: ?*anyopaque, n: i32 };
+var fire_args: FireArgs = undefined;
+
+fn threadBody(arg: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const a: *FireArgs = @ptrCast(@alignCast(arg.?));
     var i: i32 = 0;
-    while (i < n) : (i += 1) _ = cb(i, ud, @as(f64, @floatFromInt(i)) * 0.5);
+    while (i < a.n) : (i += 1) _ = a.cb(i, a.ud, @as(f64, @floatFromInt(i)) * 0.5);
+    return null;
 }
 
 export fn nox_test_thread_fire(cb: ?ThreadCb, userdata: ?*anyopaque, n: i32) callconv(.c) void {
+    if (comptime !is_posix) return;
     const f = cb orelse return;
-    fire_thread = std.Thread.spawn(.{}, threadBody, .{ f, userdata, n }) catch null;
+    fire_args = .{ .cb = f, .ud = userdata, .n = n };
+    var t: std.c.pthread_t = undefined;
+    if (std.c.pthread_create(&t, null, threadBody, &fire_args) == .SUCCESS) fire_thread = t;
 }
 
 export fn nox_test_thread_join() callconv(.c) void {
-    if (fire_thread) |t| t.join();
+    if (comptime !is_posix) return;
+    if (fire_thread) |t| _ = std.c.pthread_join(t, null);
     fire_thread = null;
 }
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 /// `noxrt.o`nun `nox_rc_alloc`ı (bkz. `runtime/alloc/arc.zig`) — AYRI
 /// derlenmiş bu nesne dosyası, DAHA SONRA `noxrt.o` İLE AYNI ikiliye

@@ -99,6 +99,7 @@ Hedef: sahiplik piramidinin (ASAP → ARC → döngü çözücü → `lowlevel`)
 - [ ] **6.3** Windows'ta atlanan ~6 h2c testini aç (`tests/compat/http_serve_golden_test.zig`)
 - [ ] **6.6** HTTP/3 (QUIC) Windows'ta: `quic.zig` POSIX fd/`fcntl`/`socket`e dayanıyor (`supported` false). Yapılacak: Winsock UDP soketi (`WSASocket`, `ioctlsocket` bloklamayan, `BIO_new_dgram` SOCKET), `libssl-3-x64.dll` >= 3.5 yükleme (QUIC sembolleri ayrı DLL'de `GetProcAddress` tuzağı, bkz. `tls_server.zig` libcrypto notu), `fiber_net.waitFd` yerine WSAPoll tabanlı bekleme, `getaddrinfo` Windows karşılığı; sonra Windows CI'da `h3`/`HTTP/3` testlerinin açılması. OpenSSL 3.5+ Windows paketi (vcpkg/Shining Light) gerekir; indirme izni gerekir.
 - [ ] **6.7** HTTP/3 istemci/sunucu için Windows hedefinin `alt-svc` davranışı: Windows'ta sunucu HTTP/3 açmaz, `set_http3(True)` yalnızca TCP'de `alt-svc` eklemez (bugün `g_alt_svc` boş kalır, doğru) ve istemci TCP'de kalır; 6.6 bitince bu iki yol Windows testleriyle doğrulanacak
+- [ ] **6.8** bindgen uçtan uca Windows doğrulaması (Faz 9.14): `tests/golden/bindgen_golden_test.zig` Windows'ta atlanıyor; LLP64 `long` (32 bit), `size_t`/`intptr_t`, `unsigned char*` → `ptr`, `_Complex`/`__int128` (MSVC desteklemez; clang-cl/zig cc ile) gerçek C çağrı testleri
 
 ## 7. İşletim / bekleyenler
 
@@ -123,4 +124,30 @@ Hedef: sahiplik piramidinin (ASAP → ARC → döngü çözücü → `lowlevel`)
 - [x] **8.6** (**KAPANDI v2.1.118: `--config` `variadic` sabit imzalı kabuk sürümleri**) Değişken argümanlı (`...`) işlevler (`printf`, `sqlite3_mprintf`) — doğrudan çağrılamaz; seçenek: `bindgen.json` ile sabit imzalı kabuk sürümleri (`printf_s(fmt, str)`, `printf_i(fmt, int)`), ya da `va_list` alan `v*` kardeşleri (`vsnprintf`) için ptr yardımcıları
 - [-] **8.7** (KAPSAM DIŞI (kullanıcı onayıyla): callback'te değerle struct ABI sınıflandırması ister, nadir; uyarıyla atlanır) Callback parametresi/dönüşü olarak DEĞERLE struct/union (`void (*)(point p)`) — trampoline ABI sınıflandırması gerektirir; seçenek: `bindgen` callback imzasındaki struct'ı işaretçiye çeviren C kabuk trampoline'ı üretir
 - [x] **8.8** (**KAPANDI v2.1.118: `nox.ffi.EventQueue` + `bindgen.json` `event_callbacks`**) Kütüphanenin KENDİ OS iş parçacığından çağrılan callback (ARC sahipliği Nox'un başlattığı iş parçacığına bağlı, bkz. `arc.zig` Faz X.3) — seçenek: kütüphane iş parçacığı callback'i bir kanala yazar, Nox iş parçacığı okur (`ThreadChannel`)
+
+## 9. Kontrol / debug fazı (harici GPT analizleri temelli; ayrıntı + bayat bulgular: `project/faz9-kontrol-debug-analizi-2026-11.md`)
+
+Kural: önce kırmızı kanıt testi, sonra düzeltme; iki backend'de doğrula. Bayat/kapanmış bulgular belgenin B bölümünde.
+
+- [ ] **9.0** (**ÖNCELİK 1 — kullanıcı kararı 2026-11-13**) **M:N kalıcı çözümü: tek-işçi kuralını (v2.1.117, `pin_single_worker`) kaldır.** LLVM ve QBE'de tam denk, performans kısmayan paralel M:N; `NOX_POOL_WORKERS` ile işçi artırmak güvenli olsun. Taslak + seçenekler + kabul ölçütleri: `project/faz9-kontrol-debug-analizi-2026-11.md` §D. Alt maddeler: **9.0.1** ölçüm tabanı (paylaşılan dict/list/sınıf, 1/2/4/8 işçi, iki backend) · **9.0.2** tasarım kararı (KULLANICIYA SORULACAK: paylaşılan-senkronize için seçenek A ince taneli kilit + bayrak yayılımı, bileşik işlemlerin anlamı) · **9.0.3** değişmez-sonra-paylaşılan sınıf (ölümsüz/donmuş nesneler) · **9.0.4** işçi-yerel sınıf · **9.0.5** paylaşılan-senkronize uygulama · **9.0.6** yarış stres + ThreadSanitizer + golden (iki backend, `NOX_POOL_WORKERS` 1/2/4/8) · **9.0.7** kuralı sil, belge + spesifikasyon güncelle
+
+- [ ] **9.1** (YÜKSEK) WASM `Instance.close()` sonrası kullanım: `result`, `result_count`, `exports`, `signature`, `mem_size` `_check()` çağırmıyor (serbest bırakılmış tutamaç). Düzeltme: tüm yöntemler `_check()`; test: close sonrası HER yöntem `WasmError`
+- [ ] **9.2** (YÜKSEK) WASM host callback yönlendirmesi: modül-düzeyi `_active` yığını, host işlevi görevi askıya alırsa (sleep_ms/I/O) bozulur → yanlış örneğin host işlevi çalışabilir. Düzeltme: dispatch'e örnek bağlamı (tutamaç) geçir, tutamaç→Instance tablosu; test: iki görev/iki örnek eşzamanlı host callback'ler
+- [ ] **9.3** (YÜKSEK) QUIC istemcisi: `SSL_set1_host` dönüşünü denetle (başarısızsa bağlantı hatası) ve `Conn.connect` içinde ALPN `h3`ü zorunlu kıl; testler
+- [ ] **9.4** (ORTA) `nox.ffi.Callback.close()` sonrası C hâlâ çağırırsa serbest bırakılmış kutu okunuyor: kutuyu bırakma yerine closure'ı sıfırla (16 B kutu kalır), trampoline null closure'da net hata mesajıyla sonlansın; belge sözleşmesi güncelle
+- [ ] **9.5** (ORTA) bindgen dizi alanı erişimcileri sınır denetimsiz: `Name_f_LEN` biliniyorsa kabukta denetim (`--checked-accessors`/`--unchecked-accessors`); varsayılan KARARI kullanıcıya sorulacak (öneri: varsayılan denetimli)
+- [ ] **9.6** (ORTA) bindgen `Name_free` sahiplik uyarısı: yalnızca `Name_new` blokları için güvenli; kütüphane yıkıcısı/ödünç işaretçi/içte tahsisli alan uyarısı belgeye ve üretilen `.nox` başlığına
+- [ ] **9.7** (ORTA) HTTP/3 çözme bütçesi + hata yolu testleri (kesilen akış, yarım POST, beklenmedik EOF, bozuk QPACK, bağlantı iptali, tahsis hatası): `readQString` Huffman açılımını kalan alan-bölümü bütçesiyle sınırla, alan sayısı sınırı, "Huffman bombası" testi (+ isteğe bağlı: SETTINGS bilinmeyen kimlik tekrarı sıkılaştırması)
+- [ ] **9.8** (ORTA; 9.0.6 ile birleşir) M:N yarış stres test ailesi (`NOX_POOL_WORKERS` ile çok işçi + değişken modül durumu dahil): ortak dict/list, çok işçili Channel, iptal, işçi kapanışı, `NOX_POOL_WORKERS` 1/2/4/8 taraması; mümkünse ThreadSanitizer koşusu; ARC gölge korpusuna eşzamanlı senaryolar
+- [ ] **9.9** (ORTA) LLVM TBAA regresyon ailesi: `lowlevel`/`ptr_of`/FFI ile liste elemanı/uzunluk yazma + okuma, LLVM -O2 ve QBE çıktısı aynı
+- [ ] **9.10** (ORTA) `RuntimeState` sıcak blok ABI: alan ofsetlerini/hizalamayı `abi_layout` sabitleriyle `comptime` doğrula + fiber geçişi testi
+- [ ] **9.11** (DÜŞÜK-ORTA) Döngü çözücü kök tablosu kapasitesi: yüksek tepe → düşük kararlı yük sonrası RSS ölç; gerekirse kapasiteyi küçült
+- [ ] **9.12** (ORTA) Uzun soak testi: milyonlarca istek (HTTP/1.1, h2, h3), RSS/canlı nesne/kapasite eğrileri, `tests/stress/` altında + betik
+- [ ] **9.13** (DÜŞÜK) yyjson kıyasını eşit iş yapan varyantla yenile ya da `RESULTS.md`ye "alan arama stratejisi farklı" notu
+- [ ] **9.14** (WINDOWS) bindgen uçtan uca Windows doğrulaması (LLP64 `long`, `unsigned char*`): TODO 6.8
+- [ ] **9.15** (İZLEME) WASM varsayılan kotaları çok-kiracılı kullanım için gevşek: sıkı hazır ayar + capability sınırları W2/W3 ile (Nexus)
+- [ ] **9.16** (YÜKSEK) HTTP/3 istemcisi kısmi gönderim: `attempt()` `writeAll` hatasında her zaman `.presend` dönüyor; gönderilen bayt sayısını izle: 0 bayt → güvenli fallback, >0 → `.failed_data` (POST tekrarı yok). Test: yarım yazılan POST asla TCP'de tekrarlanmaz
+- [ ] **9.17** (YÜKSEK, kolay) `EventQueue.close()` olay tamponunu (`buf`, ≤80 MiB) serbest bırak; küçük başlık kalsın (geç callback güvenliği); test: close sonrası tampon bırakıldı + geç callback güvenli
+- [ ] **9.18** (YÜKSEK) HTTP/3 gzip/deflate açma sınırı yazma sırasında uygulanmalı (sınırlı writer; 512 MiB aşılınca hemen dur); H1/H2 `http_client.zig:1107` aynı deseni kontrol et; test: sıkıştırma bombası
+- [ ] **9.19** (ORTA) `ctlTrailers` kısmi tahsis hata yolu çift serbest bırakma: yalnız ilk `n` başlığın içeriğini bırak, `copy`yi tam uzunlukla bir kez bırak; `FailingAllocator` testi
 

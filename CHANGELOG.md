@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.119]
+
+### Eklendi
+
+- **Faz 9 — kontrol/debug fazı (TODO bölüm 9):** harici (GPT) analizlerinin (6. analiz v2.1.115–118 dahil) v2.1.118 koduna karşı doğrulanan, bayat olmayan 20 bulgusu `project/yapilacaklar-2026-11.md` §9'a ve ayrıntılı analiz (bayat/kapanmış bulgu listesiyle) `project/faz9-kontrol-debug-analizi-2026-11.md`ye yazıldı. **Öncelik 1 (9.0): M:N tek-işçi kuralının kalıcı çözümü** (LLVM+QBE denk, performans kısmayan paylaşılan durum; tasarım taslağı analiz belgesi §D). Yeni bulgular: HTTP/3 istemcisi kısmi gönderim (9.16), `EventQueue.close()` tampon sızıntısı (9.17), HTTP/3 sıkıştırma bombası (9.18), `ctlTrailers` çift serbest bırakma (9.19). Bu sürümde Faz 9 maddeleri için kod değişikliği yok (yalnız kayıt); ilk üç madde yüksek öncelikli (WASM `close()` sonrası kullanım, WASM host callback yönlendirmesi, QUIC `SSL_set1_host`/ALPN). TODO 6.8: bindgen Windows uçtan uca doğrulaması.
+
+### Düzeltildi (CI)
+
+- **Snap paketi:** `ubuntu-latest` Ubuntu 26.04'e geçince `snapcraft` (core24) "Ubuntu 24.04 builds cannot be performed on this Ubuntu 26.04 system" ile kırılıyordu; amd64 koşucusu `ubuntu-24.04`e sabitlendi.
+- **iOS simülatör fixture korpusu:** simülatör süreci kendi `TMPDIR`ini kullandığı için `nox.tempfile` (`tempfile_basic`, `glob_python_equivalence`) mobil kök politikasına takılıyordu; `scripts/mobile_run.py` süreci `TMPDIR=/tmp` ile başlatıyor. `wasm_instance_api` depo-göreli `.wasm` yolu okuduğundan (mobil kök politikası göreli yolu reddeder) `wasm_call_builtin` gibi mobil denylist'e gerekçeyle eklendi.
+
 ## [2.1.118]
 
 ### Eklendi
