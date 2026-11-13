@@ -334,13 +334,22 @@ pub fn emitCondUnlock(self: *Codegen, flag: []const u8, obj_text: []const u8) Co
 }
 
 /// Yığın tipli alanın SAHİPLİ okuması: örnek paylaşılansa kilit altında yükle+retain; değilse yükle+retain (kilitsiz). Dönen işaretçi çağırana aittir.
-pub fn emitOwnedFieldLoad(self: *Codegen, obj_text: []const u8, f: ClassField) CodegenError![]const u8 {
+/// `@packed` sınıflarda işaretçi yuvaları hizasız olabilir: yükleme/saklama hizasız komutlarla yapılır (erişim yine örnek kilidi altındadır).
+fn loadSlot(self: *Codegen, dst: []const u8, addr: []const u8, pk: bool) CodegenError!void {
+    if (pk) try self.qbeLoadUnaligned(dst, .l, .l, addr) else try self.qbeLoadL(dst, addr);
+}
+
+fn storeSlot(self: *Codegen, val: []const u8, addr: []const u8, ty: types.QbeType, pk: bool) CodegenError!void {
+    if (pk) try self.qbeStoreUnaligned(ty, val, addr) else try self.qbeStore(ty, val, addr);
+}
+
+pub fn emitOwnedFieldLoad(self: *Codegen, obj_text: []const u8, f: ClassField, pk: bool) CodegenError![]const u8 {
     const shared = try emitSharedFlag(self, obj_text);
     try emitCondCall(self, shared, "$nox_obj_lock", &.{.{ .ty = .l, .text = obj_text }}, "dyn_rd_lock");
     const addr = try self.newTemp();
     try self.qbeOp2Imm(addr, .l, "add", obj_text, @intCast(f.offset));
     const r = try self.newTemp();
-    try self.qbeLoadL(r, addr);
+    try loadSlot(self, r, addr, pk);
     if (self.isSpawnRefcountedType(f.info.heap)) {
         try self.retainNonArcValue(r, f.info.heap);
     } else {
@@ -472,7 +481,7 @@ pub fn emitPublishValue(self: *Codegen, ptr_text: []const u8, info: TypeInfo) Co
 }
 
 /// Yığın tipli alana YAZMA (yeni değer `val_text` zaten sahipli/retain edilmiş): örnek paylaşılansa yeni değeri yayımla, kilit altında değiştir, kilidi bırak, ESKİYİ bırak.
-pub fn emitBarrierFieldStore(self: *Codegen, obj_text: []const u8, f: ClassField, val_text: []const u8) CodegenError!void {
+pub fn emitBarrierFieldStore(self: *Codegen, obj_text: []const u8, f: ClassField, val_text: []const u8, pk: bool) CodegenError!void {
     const shared = try emitSharedFlag(self, obj_text);
     // yayımla (paylaşılan örneğe yazılan değer artık paylaşılır)
     {
@@ -488,8 +497,8 @@ pub fn emitBarrierFieldStore(self: *Codegen, obj_text: []const u8, f: ClassField
     const addr = try self.newTemp();
     try self.qbeOp2Imm(addr, .l, "add", obj_text, @intCast(f.offset));
     const old_ptr = try self.newTemp();
-    try self.qbeLoadL(old_ptr, addr);
-    try self.qbeStore(f.info.qtype, val_text, addr);
+    try loadSlot(self, old_ptr, addr, pk);
+    try storeSlot(self, val_text, addr, f.info.qtype, pk);
     try emitCondCall(self, shared, "$nox_obj_unlock", &.{.{ .ty = .l, .text = obj_text }}, "dyn_wr_unlock");
     if (self.isSpawnRefcountedType(f.info.heap)) {
         try self.destroyNonArcValue(old_ptr, f.info.heap);
@@ -531,7 +540,7 @@ pub fn genPublishFunctions(self: *Codegen) CodegenError!void {
                 const addr = try self.newTemp();
                 try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
                 const v = try self.newTemp();
-                try self.qbeLoadL(v, addr);
+                try loadSlot(self, v, addr, cinfo.layout_mode == .packed_);
                 try emitPublishValue(self, v, f.info);
             }
             try self.qbeRet(null);

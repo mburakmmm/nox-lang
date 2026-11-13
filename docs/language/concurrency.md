@@ -332,40 +332,34 @@ All tasks run on fibers scheduled by the runtime:
   workers. On the QBE backend (which has no atomic instructions in its IL) the atomic count updates are calls into the runtime, emitted only
   for programs that use `spawn`, `async`, `nox.thread` or the multi-core pool; other QBE programs keep plain, faster counts.
   Module-level variables: by default every worker keeps its own copy of them (this is what makes `serve_multicore` handlers independent).
-  Programs that share **mutable** module state between tasks without `serve_multicore*` / `nox.thread.pool_run` use one of three models,
-  chosen by the compiler (no syntax involved):
-  - **Shared block (parallel):** every piece of mutable module state is one of: a module-level number/bool or `str` that is reassigned (a `str` read returns a stable copy of the reference, so a concurrent assignment never invalidates it); a `dict[K, V]`
-    that is never rebound, with number/bool values or with `str` values (see the access rules below); a `list[T]` of numbers, bools or `str`
-    that is never rebound and starts from a fresh list (`[]`, a literal or a call); a `Channel[T]`, `Task[T]` or `TaskLocal[T]` that is never rebound; or an
-    instance of a class that does not take part in inheritance and has only number/bool/`str` fields (a `str` field must not be assigned
-    outside `__init__`) and is never rebound; a **module-level** instance may in addition have `dict` fields (values numbers, `str` or such a class) and fields holding another
-    such instance, as long as those fields are never assigned outside `__init__` (the dict fields are shared and locked from program start, and every `str`/class-valued
-    dict read in the program then returns a new reference). All workers then see **one** copy. Each dict or list operation is atomic on its own (a lock taken
-    only when the pool has more than one worker); number/bool fields and variables are plain aligned loads and stores. Compound updates such
-    as `d[k] = d[k] + 1`, `xs[i] = xs[i] + 1` or `stats.hits = stats.hits + 1` are not atomic as a whole — the program stays memory-safe but
-    increments can be lost. Use a channel or `AtomicRef` when you need exact counters.
-    Access rules for shared **lists** and **dicts with `str` or class values** (anything else makes the program fall back to one worker): use the
-    name directly. Lists: `xs.append(v)`, `xs.pop()`, `xs.clear()`, `xs.sort()`, `xs[i]`, `xs[i] = v`, `len(xs)`, and the read-only forms `x in xs`, `xs[a:b]`,
-    `print(xs)` and `for x in xs`, which see a consistent snapshot copy of the list; passing the list to a module-level function is allowed when that
-    function only reads the parameter (index read, `len`, `in`, slice, `print`, `for`, or passing it on to another reading function) — the call receives
-    a snapshot. Dicts: `d[k]`, `d[k] = v`, `d.get(k[, default])`, `d.pop(k)`, `k in d`, `len(d)`, `d.keys()`, `d.values()`. Elements and values may be
-    numbers, bools, `str`, or instances of a class that has only number/bool/`str` fields, no inheritance and no `__del__` (a `str` field must not be
-    assigned outside `__init__`); reads return a new reference to the element, so an element object is one shared object (number fields are plain loads and
-    stores). Assigning the list/dict to another name, returning it, or storing it elsewhere is not allowed.
-  - **One worker:** any other mutable module state (a module-level closure, a list or `dict[K, str]` used in any form not
-    listed above, a list of lists/classes, a dict with list/class values, or a class instance with inheritance, list/dict/class fields, or a `str`
-    field assigned after `__init__`) still runs the whole program on **one worker** on both backends, so a task never reads another
-    worker's copy (this restriction is being lifted case by case; see the Faz 9.0 notes in the changelog).
-  - Module-level constants (numbers and strings assigned once) need neither.
-  Setting `NOX_POOL_WORKERS` overrides the worker count (for the "one worker" model, at your own risk).
+  **Shared values (all types, no syntax):** lists, dicts, class instances (including inheritance, mixins, `__del__`, `@packed`/`@repr("C")`), closures,
+  `str`, channels/tasks, and any nesting of them can be shared between tasks, held in module-level variables (assigned or reassigned anywhere)
+  and class fields, and handed to `spawn`/channels — the program always runs on the whole worker pool; no program is pinned to one worker. The
+  compiler picks the protection per type, invisibly:
+  - A value becomes **shared** the moment it can be seen by another worker (it is stored in a shared module variable, handed to `spawn`,
+    sent on a channel, returned from a task, or captured by a shared closure). From then on, reading a heap-typed field/element/variable takes
+    a new reference under a short per-object lock, writing one publishes the new value, swaps it under the lock and drops the old value
+    **outside** the lock, and list operations (`append`, `pop`, `insert`, `remove`, `sort`, `[i]`, `[i] = v`, `for`, `in`, `==`, `+`, slices,
+    comprehensions, `print`) are atomic as a whole. User code (`__eq__`, `__repr__`, `__str__`, `__del__`) never runs while a lock is held.
+  - An object that was never shared pays only a flag test.
+  - Memory safety is guaranteed; **compound updates are not atomic**: `x = x + 1`, `d[k] = d[k] + 1`, `xs[i] = xs[i] + 1`, `obj.hits = obj.hits + 1` can
+    lose updates, and unlocked scalar elements of a list may be read while another task appends (Go-style data races on plain numbers, never a
+    crash). Use a channel, `AtomicRef` or `nox.atomic` when you need exact counters. (`scripts/tsan_check.sh` runs the shared-data fixtures
+    under ThreadSanitizer: the lock/barrier paths are race-free; only these documented plain-number races are reported.)
+  - Module-level variables in programs that use `serve_multicore*` / `nox.thread.pool_run` keep the per-worker-copy model (this is what makes
+    handlers independent); module-level constants (numbers and strings assigned once) need nothing.
+  - Hot loops that scan or write the same shared container from many workers are limited by lock contention (like a `sync.Mutex` in Go);
+    work that is mostly computation scales with the worker count (see `benchmarks/mn_shared/`).
+  Setting `NOX_POOL_WORKERS` overrides the worker count.
 - **Freestanding targets:** a single-threaded cooperative scheduler. Tasks interleave only at `await` points (and at blocking I/O, which is
   non-blocking at the fiber level); `time.sleep_ms` inside a task suspends only that task.
 
 Consequences for portable code:
 
 - Do not rely on tasks running in parallel *or* strictly interleaved — write them to be correct under both.
-- Data shared between tasks should flow through channels. Module-level variables are not a safe way to communicate between tasks that may run on different
-  workers (each worker keeps its own copy of the module state); use channels, `nox.atomic` counters, or `nox.sharedmem`.
+- Data shared between tasks should still preferably flow through channels; shared module-level values and class fields are memory-safe (see above) but
+  compound updates are not atomic — use channels, `AtomicRef`, `nox.atomic` counters, or `nox.sharedmem` for exact counters. (With `serve_multicore*` /
+  `nox.thread.pool_run` every worker keeps its own copy of the module state.)
 - `time.sleep_ms` inside a task (an `async def`, an HTTP handler) suspends only that task on both backends; outside a task (and on Windows) it blocks its thread.
 - The argument and result types of `spawn`/`nox.thread.start` may be scalars, `str`, `None`, `ptr`, thread channels, lists, dictionaries,
   class instances, tasks and channels on both backends of hosted targets; freestanding targets are restricted to scalars, `str`, `None`,
@@ -383,7 +377,9 @@ fit comfortably; user code that recurses very deeply should run outside fibers.
 
 - Ownership stays invisible: values handed to a task are retained for it; a value can be used by several tasks safely under the M:N
   runtime (atomic reference counts).
-- The compiler rejects, at compile time, obvious data races in `spawn` arguments (for example mutating a list after handing it to a task
-  that still reads it).
+- Since v2.1.139 the compiler no longer rejects mutating a list/dict/class instance that is shared through `spawn` (the accesses are locked and
+  memory-safe). The old compile-time check is available as a lint: `noxc check --strict-spawn-shared` (also accepted by `build` and `run`).
+  Appending directly to a list *parameter* is still not supported (the grown list cannot be written back to the caller): use index
+  assignment, a dict, or a field of a class instance.
 - Network and file operations in the standard library are non-blocking at the fiber level: a task waiting on a socket does not block the
   worker.

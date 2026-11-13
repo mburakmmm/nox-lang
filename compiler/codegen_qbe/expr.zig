@@ -526,7 +526,7 @@ pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
         if (!std.mem.eql(u8, f.name, a.attr)) continue;
         // Faz 9.0 F2: paylaşım-yetenekli sınıfın yığın alanı — sahipli okuma (paylaşılan örnekte kilit altında retain).
         if (dyn_share.isDynClass(self, obj.class_name) and dyn_share.isBarrierField(f)) {
-            const r = try dyn_share.emitOwnedFieldLoad(self, obj.text, f);
+            const r = try dyn_share.emitOwnedFieldLoad(self, obj.text, f, cinfo.layout_mode == .packed_);
             try self.releaseIfTemporary(a.obj.*, obj);
             return .{ .text = r, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig, .fixed_int = f.info.fixed_int, .elem_fixed_int = f.info.elem_fixed_int, .always_fresh = true };
         }
@@ -2800,7 +2800,7 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
         try self.qbeOp2Imm(addr, .l, "add", v.text, @intCast(f.offset));
         // Faz 9.0 F2: paylaşım-yetenekli sınıfın yığın alanı sahipli (kilit altında retain) okunur; basıldıktan sonra bırakılır (kullanıcı `__repr__`ı kilit DIŞINDA çalışır).
         const dyn_field = dyn_share.isDynClass(self, class_name) and dyn_share.isBarrierField(f);
-        const fv: []const u8 = if (dyn_field) try dyn_share.emitOwnedFieldLoad(self, v.text, f) else blk: {
+        const fv: []const u8 = if (dyn_field) try dyn_share.emitOwnedFieldLoad(self, v.text, f, cinfo.layout_mode == .packed_) else blk: {
             const t = try self.newTemp();
             try self.qbeLoad(t, f.info.qtype, f.info.qtype, addr);
             break :blk t;

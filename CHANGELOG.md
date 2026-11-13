@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.140]
+
+### Eklendi/Değişti (Faz 9.0.7: tek-işçi kuralının kaldırılması tamamlandı)
+
+- `@packed` sınıflar da paylaşılır (barikat yükleme/saklamaları hizasız komutlarla, erişim yine örnek kilidi altında); artık hiçbir kullanıcı programı tek işçiye sabitlenmez. `codegen_ir_diff_test` her fixture için `nox_pool_main_init(w 2)` (tek işçi) üretilmediğini denetler (gerileme koruması). Sabitleme yolu yalnız sınıflayıcının tanımadığı durumlar için güvenlik ağı olarak kodda kalır.
+- Belgeler: `docs/language/concurrency.md` (paylaşılan değerler, anlam, `--strict-spawn-shared`) ve `nox-teknik-spesifikasyon.md` §3.461 yeni modele göre yazıldı.
+- Test: iki backend golden `mn_dyn_packed_repr_c` (30 çalıştırmada 0 hata, TSan 0 rapor).
+
 ## [2.1.139]
 
 ### Değişti (Faz 9.0: `SpawnSharedMutation` kısıtı gevşetildi)

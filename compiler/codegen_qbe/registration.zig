@@ -1103,8 +1103,6 @@ fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.St
     if (depth > 16) return false;
     if (out.contains(cn)) return true;
     const info = self.classes.getPtr(cn) orelse return false;
-    // `@packed` düzen hizasız işaretçi yuvaları üretir (atomik/kilitli erişim güvenli değil); `@repr("C")` hizalıdır ve desteklenir.
-    if (info.layout_mode == .packed_) return false;
     try out.put(self.allocator, cn, {});
     for (info.fields.items) |f| {
         // Faz 9.0 F5: kanal/görev tutamaçları iş parçacığı güvenlidir; yalnız `__init__` dışında yeniden atanmıyorsa (yuva değişmez) alan olarak taşınabilir.

@@ -130,6 +130,12 @@ test "codegen IR metni: fixture başına çekili anlık görüntüyle byte-bireb
                 continue;
             };
 
+            // Faz 9.0.7: HİÇBİR fixture tek işçiye sabitlenmemeli (`nox_pool_main_init(w 2)`): sabitleme yalnızca sınıflayıcının tanımadığı tipler için güvenlik ağıdır — bir fixture ona düşerse
+            // paylaşım kapsamında bir gerileme var demektir.
+            if (std.mem.indexOf(u8, ir, "nox_pool_main_init(w 2)") != null) {
+                try mismatches.append(allocator, try std.fmt.allocPrint(allocator, "TEK İŞÇİYE SABİTLENDİ (paylaşım gerilemesi): {s}/{s}", .{ fixture_dir, entry.name }));
+            }
+
             const snapshot_name = try std.fmt.allocPrint(allocator, "{s}.ssa", .{entry.name[0 .. entry.name.len - ".nox".len]});
             const existing = snapshot_dir.readFileAlloc(io, snapshot_name, allocator, .limited(8 * 1024 * 1024)) catch |e| switch (e) {
                 error.FileNotFound => {

@@ -402,7 +402,7 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
                 const val = try self.convert(retained, f.info.qtype);
                 // Faz 9.0 F2: paylaşım-yetenekli sınıfın yığın alanı — yayımla, kilit altında değiştir, eskiyi kilit dışında bırak.
                 if (dyn_share.isDynClass(self, obj.class_name) and dyn_share.isBarrierField(f)) {
-                    try dyn_share.emitBarrierFieldStore(self, obj.text, f, val.text);
+                    try dyn_share.emitBarrierFieldStore(self, obj.text, f, val.text, cinfo.layout_mode == .packed_);
                     try self.releaseIfTemporary(attr.obj.*, obj);
                     return;
                 }
