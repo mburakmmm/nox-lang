@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.113]
+
+### Eklendi
+
+- **HTTP/3 için QUIC taşıma katmanı** (TODO 5.4, aşama H3.1; tasarım `project/http3-tasarimi-2026-11.md`): `runtime/stdlib_shims/quic.zig` OpenSSL >= 3.5'in QUIC API'sini çalışma zamanında yükler (`tls_server` ile aynı tembel dlopen deseni; OpenSSL < 3.5 ise `available()` false ve hiçbir şey etkilenmez). Dinleyici, istemci bağlantısı (ALPN `h3`, SNI + sertifika doğrulaması), çift yönlü/tek yönlü akışlar, fiber reaktörüne bağlı bekleme (`fiber_net.waitFd` + `SSL_get_event_timeout`). Henüz kullanıcıya açık bir `nox.http` yüzeyi yok (H3.2–H3.4).
+- Testler: yerel istemci↔sunucu el sıkışması (ALPN h3) + akış yankısı, yanlış CA reddi, sembol tablosu; test sertifikası `runtime/stdlib_shims/testdata/quic_test_*.pem` (yalnızca test).
+
 ## [2.1.112]
 
 ### Eklendi

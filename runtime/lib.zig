@@ -101,6 +101,7 @@ pub const native_shim = @import("stdlib_shims/native.zig");
 pub const mysql_shim = if (mobile_db) @import("stdlib_shims/mysql_wasm.zig") else @import("stdlib_shims/mysql.zig");
 pub const tls_shim = @import("stdlib_shims/tls.zig");
 pub const tls_server_shim = @import("stdlib_shims/tls_server.zig");
+pub const quic_shim = @import("stdlib_shims/quic.zig");
 pub const websocket_shim = @import("stdlib_shims/websocket.zig");
 pub const websocket_server_shim = @import("stdlib_shims/websocket_server.zig");
 pub const shared_mem_shim = @import("stdlib_shims/shared_mem.zig");
@@ -148,6 +149,7 @@ comptime {
     _ = client_cert_shim;
     _ = tz_shim;
     _ = udp_shim;
+    _ = quic_shim;
     _ = chase_lev_deque;
     _ = size_class_heap;
     _ = exp_accurate;
