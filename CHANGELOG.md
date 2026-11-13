@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.106]
+
+### Düzeltildi
+
+- **CI Windows: "TÜM golden fixture'lar" testi 1800 sn'yi aştı** (v2.1.104 koşusu): Windows test zaman aşımı 3600 sn'ye çıkarıldı; `wasm_simd`, `wasm_threads`, `ffi_callback_handle` fixture'ları Windows'ta atlanır (köprü/atomik/SIMD Windows'ta `tests/compat` altında zaten sınanıyor, `Callback` Unix'te iki backend'de uçtan uca sınanıyor)
+
 ## [2.1.105]
 
 ### Eklendi

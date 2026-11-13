@@ -808,14 +808,16 @@ jobs:
           }
 
       # Linux ve macOS ile aynı `zig build test` korpusu. qbe PATH'te,
-      # OpenSSL kurulu. `-Dwin-test-timeout=1800` her testin adını basar ve
-      # 1800 saniyede bitmeyen testi `TIMEOUT: <ad>` ile düşürür. İşin 180
+      # OpenSSL kurulu. `-Dwin-test-timeout=3600` her testin adını basar ve
+      # 3600 saniyede bitmeyen testi `TIMEOUT: <ad>` ile düşürür. İşin 180
       # dakikalık sınırı, koşucunun kendisi asılırsa yedektir.
       # v2.1.36: 300 saniye, "TÜM golden fixture'lar" testi için artık yetmiyordu (v2.1.19, v2.1.23, v2.1.31:
       # tek test 500+ fixture'ı Windows Debug'ta derleyip çalıştırır; korpus büyüdükçe süre 300 sn'yi aştı).
       # v2.1.86: 900 sn de aşıldı (v2.1.83/84: korpus yeni fixture'larla ~900 sn sınırına yaklaşmıştı; v2.1.80-82'de başarıyla geçmişti) → 1800.
+      # v2.1.106: v2.1.104'ün koşusunda 1800 sn de aşıldı (SIMD/threads/FFI fixture'ları eklendi; korpus ~% büyüdü) → 3600 (işin 180 dk sınırı hâlâ yedektir);
+      # yorumlayıcı/atomik/Callback fixture'ları Windows'ta atlanır (wasm köprüsü Windows'ta tests/compat altında zaten sınanıyor).
       - name: zig build test (Debug)
-        run: zig build test -Dwin-test-timeout=1800
+        run: zig build test -Dwin-test-timeout=3600
 
   # v2.0.8: hosted riscv64 dumanı. Tam dil korpusu değil. Sınıf/liste/spawn,
   # fibonacci, sözlük yazdırma ve satır taşıma hata sırası qemu-user altında çalışır.
