@@ -23,6 +23,8 @@ pub const Options = struct {
     include_name: []const u8,
     /// Yalnızca bu önekle başlayan işlevler/sabitler çıkarılır (boş = hedef başlıktakilerin hepsi; makrolar için BÜYÜK/küçük harf duyarsız önek ZORUNLU).
     prefix: []const u8 = "",
+    /// v2.1.141: ham katmanın üstüne otomatik Nox SINIFLARI (ARC/`__del__` ile serbest bırakma) üretilir; `--no-classes` ile kapatılır.
+    classes: bool = true,
     /// `--config` (bindgen.json): `...` alan işlevler için sabit imzalı kabuk sürümleri ve `long double` davranışı.
     config: Config = .{},
 };
@@ -37,7 +39,13 @@ pub const Config = struct {
     event_callbacks: []const []const u8 = &.{},
     /// Faz 9.5: `true` ise sabit uzunluklu dizi alanı erişimcileri SINIR DENETİMSİZ (`p->f[i]`) üretilir; varsayılan (`false`) denetimlidir: `i >= N` ise getter 0/NULL döner, setter hiçbir şey yazmaz.
     unchecked_accessors: bool = false,
+    /// v2.1.141: kütüphanenin KENDİ yıkıcısı olan (ör. `sqlite3` -> `sqlite3_close`) ya da `_free` yerine başka işlev gerektiren kayıtlar: sınıfın `__del__`ı bunu çağırır (opak/eksik tipler için de sınıf üretir).
+    classes: []const ClassFree = &.{},
+    /// İşaretçi döndüren ve sonucu ÇAĞIRANIN sahiplendiği işlevler (sınıf `owned=True` ile sarar; aksi halde dönen işaretçiler ÖDÜNÇ kabul edilir).
+    owned_returns: []const []const u8 = &.{},
 };
+
+pub const ClassFree = struct { record: []const u8, free: []const u8 };
 
 pub const VariadicShim = struct {
     function: []const u8,
@@ -52,9 +60,11 @@ pub fn parseConfig(a: std.mem.Allocator, text: []const u8) !Config {
         long_double: []const u8 = "",
         event_callbacks: []const []const u8 = &.{},
         unchecked_accessors: bool = false,
+        classes: []const ClassFree = &.{},
+        owned_returns: []const []const u8 = &.{},
     };
     const parsed = try std.json.parseFromSliceLeaky(Raw, a, text, .{ .ignore_unknown_fields = true });
-    return .{ .variadic = parsed.variadic, .long_double_as_f64 = std.mem.eql(u8, parsed.long_double, "f64"), .event_callbacks = parsed.event_callbacks, .unchecked_accessors = parsed.unchecked_accessors };
+    return .{ .variadic = parsed.variadic, .long_double_as_f64 = std.mem.eql(u8, parsed.long_double, "f64"), .event_callbacks = parsed.event_callbacks, .unchecked_accessors = parsed.unchecked_accessors, .classes = parsed.classes, .owned_returns = parsed.owned_returns };
 }
 
 pub const Output = struct {
@@ -1114,6 +1124,12 @@ const NoxType = struct {
     rec_tag: []const u8 = "",
 };
 
+/// Sınıf katmanı üst-verisi.
+const ClsField = struct { display: []const u8, name: []const u8, nox: []const u8, get_n: []const u8, set_n: ?[]const u8 };
+const ClsParam = struct { name: []const u8, nox: []const u8, cls: ?[]const u8 };
+const ClsFn = struct { name: []const u8, params: []const ClsParam, ret_nox: []const u8, ret_cls: ?[]const u8, ret_owned: bool };
+const ClsHelpers = struct { new_n: []const u8, free_n: []const u8 };
+
 const Emitter = struct {
     a: std.mem.Allocator,
     p: *Parser,
@@ -1123,6 +1139,10 @@ const Emitter = struct {
     by_value: std.StringHashMapUnmanaged([]const u8) = .empty,
     /// kullanılan geniş tipler (`Wide` sırasıyla): yardımcıları sonda bir kez üretilir
     wide_used: [4]bool = .{ false, false, false, false },
+    /// sınıf katmanı için toplanan üst-veri (bkz. `emitClasses`)
+    cls_fields: std.ArrayListUnmanaged(ClsField) = .empty,
+    cls_fns: std.ArrayListUnmanaged(ClsFn) = .empty,
+    cls_helpers: std.StringHashMapUnmanaged(ClsHelpers) = .empty,
 
     /// Kaydın yardımcı/erişimci adlarında kullanılan görünen ad: typedef takma adı, yoksa (adsız değilse) etiket.
     fn recordDisplay(self: *Emitter, tag: []const u8) ?[]const u8 {
@@ -1348,12 +1368,14 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
             nm.* = if (raw.len == 0) try std.fmt.allocPrint(a, "a{d}", .{i}) else if (isReserved(raw)) try std.fmt.allocPrint(a, "{s}_", .{raw}) else raw;
         }
         n_funcs += 1;
+        var meta_skip = false;
         if (!needs_shim) {
             var event_cb = false;
             for (opts.config.event_callbacks) |ec| {
                 if (std.mem.eql(u8, ec, f.name)) event_cb = true;
             }
             const cbp = if (event_cb) null else try detectCallback(&em, f);
+            if (cbp != null) meta_skip = true;
             if (cbp) |cp| {
                 const dflt = f.sig.params[cp.cb_idx];
                 _ = dflt;
@@ -1392,8 +1414,10 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
             }
             try shim.appendSlice(a, "); }\n");
             // Nox: ham extern + sarmalayıcı
-            // Dış sembolü olan (satır içi OLMAYAN) bir işlevin sarmalayıcısı C adını kullanamaz: Nox'un üst-düzey `def`i de AYNI ham sembolü üretir ve bağlama çakışır.
-            const wrapper_name: []const u8 = if (!f.is_inline or isReserved(f.name)) try std.fmt.allocPrint(a, "{s}_", .{f.name}) else f.name;
+            // v2.1.141: sarmalayıcı HER ZAMAN C adıyla çağrılır (`vec2_add`). Dış sembolü olan (satır içi OLMAYAN) bir işlevin Nox `def`i aynı ham sembolü üretip bağlamada çakışacağından,
+            // sembol adı `@link_name("nox_w_<ad>")` ile ayrılır (eski `<ad>_` ek adı kalktı).
+            const wrapper_name: []const u8 = if (isReserved(f.name)) try std.fmt.allocPrint(a, "{s}_", .{f.name}) else f.name;
+            const wrapper_link: ?[]const u8 = if (!f.is_inline or isReserved(f.name)) try std.fmt.allocPrint(a, "nox_w_{s}", .{f.name}) else null;
             try appendF(a, &nox, "extern def {s}(", .{shim_name});
             for (names, params.items, 0..) |nm, pt, i| {
                 if (i > 0) try nox.appendSlice(a, ", ");
@@ -1402,6 +1426,7 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
             if (ret_is_rec) try appendF(a, &nox, "{s}nox_ret: ptr", .{if (names.len > 0) ", " else ""});
             try appendF(a, &nox, ") -> {s} from \"{s}\"\n", .{ if (ret_is_rec) "None" else ret_t.nox, opts.shim_lib });
             const out_list: *std.ArrayListUnmanaged(u8) = if (ret_is_rec) &pending_wrappers else &nox;
+            if (wrapper_link) |wl| try appendF(a, out_list, "@link_name(\"{s}\")\n", .{wl});
             try appendF(a, out_list, "def {s}(", .{wrapper_name});
             for (names, params.items, 0..) |nm, pt, i| {
                 if (i > 0) try out_list.appendSlice(a, ", ");
@@ -1424,6 +1449,7 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
                 try out_list.appendSlice(a, ")\n");
             }
         }
+        if (!meta_skip) try collectFnMeta(&em, f, names, params.items, ret_t);
     }
     if (pending_wrappers.items.len > 0) {
         try nox.appendSlice(a, "\n# by-value struct/union wrappers: arguments are pointers to the struct memory; a returned struct is a NEW block the caller frees with <Name>_free\n");
@@ -1487,6 +1513,9 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
         }
         n_shims += 1;
     }
+
+    // yüksek seviyeli sınıflar (ham katmanın üstünde; varsayılan açık, `--no-classes` ile kapalı)
+    if (opts.classes) try emitClasses(&em, &nox, &taken);
 
     // yalnızca yapı yardımcıları/erişimcileri kabuğa yazıldıysa da kabuk dosyası gerekir
     if (n_shims == 0 and shim.items.len > shim_prelude_len) n_shims = 1;
@@ -1666,6 +1695,197 @@ fn emitVariadicShim(em: *Emitter, f: FuncDecl, vs: VariadicShim, nox: *std.Array
     return true;
 }
 
+/// Kayıt (struct/union) tipi: `T` (değerle) ya da `T *` (işaretçiyle) → (görünen ad, değerle mi).
+fn recOf(em: *Emitter, ty: CType) ?struct { display: []const u8, by_value: bool } {
+    const r = em.p.resolve(ty);
+    switch (r) {
+        .record => |tag| return .{ .display = em.recordDisplay(tag) orelse return null, .by_value = true },
+        .ptr => |p| {
+            const inner = em.p.resolve(p.to.*);
+            if (inner == .record) return .{ .display = em.recordDisplay(inner.record) orelse return null, .by_value = false };
+            return null;
+        },
+        else => return null,
+    }
+}
+
+fn collectFnMeta(em: *Emitter, f: FuncDecl, names: []const []const u8, params: []const NoxType, ret_t: NoxType) !void {
+    const a = em.a;
+    const ps = try a.alloc(ClsParam, params.len);
+    for (ps, params, names, 0..) |*dst, pt, nm, i| {
+        const ro = recOf(em, f.sig.params[i].ty);
+        dst.* = .{ .name = nm, .nox = pt.nox, .cls = if (ro) |r| r.display else null };
+    }
+    var ret_cls: ?[]const u8 = null;
+    var ret_owned = false;
+    if (recOf(em, f.sig.ret)) |r| {
+        ret_cls = r.display;
+        ret_owned = r.by_value;
+        if (!r.by_value) for (em.opts.config.owned_returns) |o| {
+            if (std.mem.eql(u8, o, f.name)) ret_owned = true;
+        };
+    }
+    try em.cls_fns.append(a, .{ .name = f.name, .params = ps, .ret_nox = ret_t.nox, .ret_cls = ret_cls, .ret_owned = ret_owned });
+}
+
+fn pascal(a: std.mem.Allocator, s: []const u8) ![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var up = true;
+    for (s) |c| {
+        if (c == '_') {
+            up = true;
+            continue;
+        }
+        try out.append(a, if (up) std.ascii.toUpper(c) else c);
+        up = false;
+    }
+    return out.toOwnedSlice(a);
+}
+
+fn validIdent(s: []const u8) bool {
+    if (s.len == 0 or std.ascii.isDigit(s[0])) return false;
+    for (s) |c| if (!isIdentChar(c)) return false;
+    return !isReserved(s);
+}
+
+/// Sınıf üyesi (metot/alan erişimcisi) adı olabilir mi? Anahtar sözcükler ve `self`/`super` olamaz; yerleşik işlev adları (`len`, `min`...) üye adı olarak serbesttir.
+fn validMemberName(s: []const u8) bool {
+    if (s.len == 0 or std.ascii.isDigit(s[0]) or std.mem.startsWith(u8, s, "__")) return false;
+    for (s) |c| if (!isIdentChar(c)) return false;
+    const keywords = nox_reserved[0..42];
+    for (keywords) |k| if (std.mem.eql(u8, k, s)) return false;
+    return !std.mem.eql(u8, s, "self") and !std.mem.eql(u8, s, "super");
+}
+
+/// Ham katmanın ÜSTÜNE Nox sınıfları üretir: yapıcı/`__del__` (ARC ile otomatik serbest bırakma), skaler alanlar için `x()`/`set_x(v)`, ilk parametresi kayıt olan işlevler için metot,
+/// kaydı döndüren işlevler için `@staticmethod`. Ham işlevler DEĞİŞMEDEN kalır (gelişmiş kullanım/geriye dönük uyum).
+fn emitClasses(em: *Emitter, nox: *std.ArrayListUnmanaged(u8), taken: *std.StringHashMapUnmanaged(void)) !void {
+    const a = em.a;
+    // sınıf adayları: yardımcıları üretilen kayıtlar + yapılandırmada yıkıcısı verilen (opak olabilen) kayıtlar
+    var cls_names: std.StringHashMapUnmanaged([]const u8) = .empty; // görünen ad -> sınıf adı
+    var free_fn: std.StringHashMapUnmanaged([]const u8) = .empty; // görünen ad -> serbest bırakma işlevi
+    var order: std.ArrayListUnmanaged([]const u8) = .empty;
+    var hit = em.cls_helpers.iterator();
+    while (hit.next()) |e| {
+        try free_fn.put(a, e.key_ptr.*, e.value_ptr.free_n);
+        try order.append(a, e.key_ptr.*);
+    }
+    for (em.opts.config.classes) |cf| {
+        if (!free_fn.contains(cf.record)) try order.append(a, cf.record);
+        try free_fn.put(a, cf.record, cf.free);
+    }
+    std.mem.sort([]const u8, order.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    var kept: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (order.items) |disp| {
+        const cn = try pascal(a, disp);
+        if (!validIdent(cn) or taken.contains(cn)) {
+            try em.warn("class for '{s}' skipped: name '{s}' is unavailable", .{ disp, cn });
+            continue;
+        }
+        // opak (yardımcısız) kayıt yalnızca bir işlev onu kullanıyorsa sınıf olur
+        if (!em.cls_helpers.contains(disp)) {
+            var used = false;
+            for (em.cls_fns.items) |fnm| {
+                if (fnm.ret_cls != null and std.mem.eql(u8, fnm.ret_cls.?, disp)) used = true;
+                for (fnm.params) |p| if (p.cls != null and std.mem.eql(u8, p.cls.?, disp)) {
+                    used = true;
+                };
+            }
+            if (!used) continue;
+        }
+        try cls_names.put(a, disp, cn);
+        try kept.append(a, disp);
+    }
+    if (kept.items.len == 0) return;
+    try nox.appendSlice(a, "\n# ---- high-level classes (generated; the raw functions above stay available) ----\n# A class owns its C block when `owned` is true: `__del__` releases it with the matching free function. A pointer returned by the library is wrapped as BORROWED\n# (`owned=False`) unless the function is listed in `owned_returns` of --config; opaque handles need `classes` (record + free function) in --config.\n");
+    for (kept.items) |disp| {
+        const cn = cls_names.get(disp).?;
+        const free_name = free_fn.get(disp).?;
+        try appendF(a, nox, "\nclass {s}:\n    _p: ptr\n    _own: bool\n\n    def __init__(self: {s}, p: ptr, owned: bool) -> None:\n        self._p = p\n        self._own = owned\n\n    def __del__(self: {s}) -> None:\n        if self._own:\n            {s}(self._p)\n", .{ cn, cn, cn, free_name });
+        var used_methods: std.StringHashMapUnmanaged(void) = .empty;
+        try used_methods.put(a, "__init__", {});
+        try used_methods.put(a, "__del__", {});
+        if (em.cls_helpers.get(disp)) |h| {
+            try used_methods.put(a, "new", {});
+            try appendF(a, nox, "\n    @staticmethod\n    def new() -> {s}:\n        return {s}({s}(), True)\n", .{ cn, cn, h.new_n });
+        }
+        // skaler alanlar
+        for (em.cls_fields.items) |cf| {
+            if (!std.mem.eql(u8, cf.display, disp) or !validMemberName(cf.name) or std.mem.startsWith(u8, cf.name, "_")) continue;
+            if (!used_methods.contains(cf.name)) {
+                try used_methods.put(a, cf.name, {});
+                try appendF(a, nox, "\n    def {s}(self: {s}) -> {s}:\n        return {s}(self._p)\n", .{ cf.name, cn, cf.nox, cf.get_n });
+            }
+            if (cf.set_n) |sn| {
+                const setter = try std.fmt.allocPrint(a, "set_{s}", .{cf.name});
+                if (!used_methods.contains(setter)) {
+                    try used_methods.put(a, setter, {});
+                    try appendF(a, nox, "\n    def {s}(self: {s}, v: {s}) -> None:\n        {s}(self._p, v)\n", .{ setter, cn, cf.nox, sn });
+                }
+            }
+        }
+        // metotlar / statik fabrikalar
+        // ad öneki: önce `<kayıt>_` (en uzun), sonra kaydın son `_parça`sı atılmış hali (`sqlite3_stmt` -> `sqlite3_`)
+        const prefix = try std.fmt.allocPrint(a, "{s}_", .{disp});
+        const prefix2: []const u8 = if (std.mem.lastIndexOfScalar(u8, disp, '_')) |u| try std.fmt.allocPrint(a, "{s}_", .{disp[0..u]}) else "";
+        for (em.cls_fns.items) |fnm| {
+            const is_method = fnm.params.len > 0 and fnm.params[0].cls != null and std.mem.eql(u8, fnm.params[0].cls.?, disp);
+            const is_static = !is_method and fnm.ret_cls != null and std.mem.eql(u8, fnm.ret_cls.?, disp);
+            if (!is_method and !is_static) continue;
+            if (std.mem.eql(u8, fnm.name, free_name)) continue;
+            var mname: []const u8 = if (std.mem.startsWith(u8, fnm.name, prefix) and fnm.name.len > prefix.len)
+                fnm.name[prefix.len..]
+            else if (prefix2.len > 0 and std.mem.startsWith(u8, fnm.name, prefix2) and fnm.name.len > prefix2.len)
+                fnm.name[prefix2.len..]
+            else
+                fnm.name;
+            if (!validMemberName(mname)) continue;
+            if (used_methods.contains(mname)) {
+                try em.warn("method '{s}.{s}' skipped (name already used)", .{ cn, mname });
+                continue;
+            }
+            mname = try a.dupe(u8, mname);
+            try used_methods.put(a, mname, {});
+            const ret_text: []const u8 = if (fnm.ret_cls) |rc| (cls_names.get(rc) orelse fnm.ret_nox) else fnm.ret_nox;
+            if (is_static) try nox.appendSlice(a, "\n    @staticmethod");
+            try appendF(a, nox, "\n    def {s}(", .{mname});
+            var first = true;
+            if (is_method) {
+                try appendF(a, nox, "self: {s}", .{cn});
+                first = false;
+            }
+            for (fnm.params, 0..) |p, i| {
+                if (is_method and i == 0) continue;
+                if (!first) try nox.appendSlice(a, ", ");
+                first = false;
+                const pty: []const u8 = if (p.cls) |pc| (cls_names.get(pc) orelse p.nox) else p.nox;
+                try appendF(a, nox, "{s}: {s}", .{ p.name, pty });
+            }
+            try appendF(a, nox, ") -> {s}:\n        ", .{ret_text});
+            const returns_value = !std.mem.eql(u8, fnm.ret_nox, "None");
+            const wrap_cls: ?[]const u8 = if (fnm.ret_cls) |rc| cls_names.get(rc) else null;
+            if (returns_value) try nox.appendSlice(a, "return ");
+            if (wrap_cls) |wc| try appendF(a, nox, "{s}(", .{wc});
+            try appendF(a, nox, "{s}(", .{fnm.name});
+            for (fnm.params, 0..) |p, i| {
+                if (i > 0) try nox.appendSlice(a, ", ");
+                if (is_method and i == 0) {
+                    try nox.appendSlice(a, "self._p");
+                } else if (p.cls != null and cls_names.contains(p.cls.?)) {
+                    try appendF(a, nox, "{s}._p", .{p.name});
+                } else try nox.appendSlice(a, p.name);
+            }
+            try nox.append(a, ')');
+            if (wrap_cls != null) try appendF(a, nox, ", {s})", .{if (fnm.ret_owned) "True" else "False"});
+            try nox.append(a, '\n');
+        }
+    }
+}
+
 fn uniqueName(a: std.mem.Allocator, taken: *std.StringHashMapUnmanaged(void), base: []const u8) ![]const u8 {
     var name = base;
     while (taken.contains(name)) name = try std.fmt.allocPrint(a, "{s}_", .{name});
@@ -1683,6 +1903,7 @@ fn emitRecord(em: *Emitter, rec: Record, display: []const u8, ctext: []const u8,
     const size_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_size", .{display}));
     try appendF(a, shim, "void *{s}(void) {{ return calloc(1, sizeof({s})); }}\nvoid {s}(void *p) {{ free(p); }}\nsize_t {s}(void) {{ return sizeof({s}); }}\n", .{ new_n, ctext, free_n, size_n, ctext });
     try appendF(a, nox, "extern def {s}() -> ptr from \"{s}\"\nextern def {s}(p: ptr) -> None from \"{s}\"\nextern def {s}() -> usize from \"{s}\"\n", .{ new_n, lib, free_n, lib, size_n, lib });
+    try em.cls_helpers.put(a, display, .{ .new_n = new_n, .free_n = free_n });
     if (rec.in_target and rec.fields_ok) try emitFields(em, rec, display, ctext, "", nox, shim, taken);
 }
 
@@ -1751,8 +1972,11 @@ fn emitFields(em: *Emitter, rec: Record, display: []const u8, ctext: []const u8,
                 const cast: []const u8 = if (std.mem.endsWith(u8, mt.c, "*")) "(void *)" else if (mt.is_f32) "(double)" else "";
                 try appendF(a, shim, "{s} {s}(void *p) {{ return {s}{s}; }}\n", .{ mt.c, get_n, cast, acc });
                 try appendF(a, nox, "extern def {s}(p: ptr) -> {s} from \"{s}\"\n", .{ get_n, mt.nox, lib });
+                var cls_set: ?[]const u8 = null;
+                defer em.cls_fields.append(a, .{ .display = display, .name = f.name, .nox = mt.nox, .get_n = get_n, .set_n = cls_set }) catch {};
                 if (!f.is_const) {
                     const set_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_set_{s}", .{ display, f.name }));
+                    cls_set = set_n;
                     // bit alanlarında `__typeof__` kullanılamaz: düz atama (örtük dönüşüm)
                     const rhs: []const u8 = if (f.bitfield) "v" else try std.fmt.allocPrint(a, "(__typeof__({s}))v", .{acc});
                     try appendF(a, shim, "void {s}(void *p, {s}{s}v) {{ {s} = {s}; }}\n", .{ set_n, mt.c, if (std.mem.endsWith(u8, mt.c, "*")) "" else " ", acc, rhs });
@@ -1792,6 +2016,7 @@ const usage =
     \\  --shim <file.c>       generated C shim for static inline functions and `float` (default: <out>_shim.c)
     \\  --shim-lib <file.o>   object name written into the generated `from` clauses (default: <out>_shim.o)
     \\  --no-compile          do not compile the shim (you compile it yourself: cc -c <shim.c> -I<header dir>)
+    \\  --no-classes          do not generate the high-level classes (only the raw functions)
     \\  --cc <compiler>       C compiler (default: cc)
     \\
 ;
@@ -1805,6 +2030,7 @@ pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     var shim_path: ?[]const u8 = null;
     var shim_lib: ?[]const u8 = null;
     var no_compile = false;
+    var no_classes = false;
     var config_path: ?[]const u8 = null;
     var cc: []const u8 = "cc";
     var cpp_flags: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -1828,6 +2054,8 @@ pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
             try cpp_flags.append(a, arg);
         } else if (std.mem.eql(u8, arg, "--no-compile")) {
             no_compile = true;
+        } else if (std.mem.eql(u8, arg, "--no-classes")) {
+            no_classes = true;
         } else if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             std.debug.print("{s}", .{usage});
             return 0;
@@ -1899,6 +2127,7 @@ pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         .shim_lib = shim_lib_v,
         .include_name = include_name,
         .prefix = prefix,
+        .classes = !no_classes,
         .config = config,
     }, false);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = out_v, .data = result.nox });
@@ -1974,7 +2203,7 @@ test "satır içi işlev, float ve ayrılmış ad kabuktan geçer; gövdeler atl
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def nox_shim_doc_len(d: ptr) -> i32 from \"x_shim.o\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "def doc_len(d: ptr) -> i32:\n    return nox_shim_doc_len(d)") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def nox_shim_halve(x: float) -> float") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.nox, "def halve_(x: float) -> float:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.nox, "@link_name(\"nox_w_halve\")\ndef halve(x: float) -> float:") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "def in_(from_: i32, to: i32) -> i32:") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def ok(x: i32) -> i32 from \"libx\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.shim, "int32_t nox_shim_doc_len(const char *d)") == null);
@@ -1998,7 +2227,7 @@ test "değerle struct, değişken argüman ve long double uyarıyla atlanır; fo
         \\int total(int xs[], int n);
     ;
     const out = try generateFromText(a, src, "", .{ .header = "x.h", .lib = "libx", .shim_lib = "x_shim.o", .include_name = "x.h" }, true);
-    try std.testing.expect(std.mem.indexOf(u8, out.nox, "def vec_add_(a: ptr, b: ptr) -> ptr:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.nox, "@link_name(\"nox_w_vec_add\")\ndef vec_add(a: ptr, b: ptr) -> ptr:") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "logf2") == null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def sort_it(base: ptr, n: i32, cmp: ptr) -> None") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def apply(cb: ptr, v: i32) -> None") != null);
@@ -2070,7 +2299,7 @@ test "struct alanları, değerle struct, global değişkenler ve dizi/bit alanı
         }
     }.f;
     // değerle struct: işaretçi alan/dönen sarmalayıcı + yardımcılar
-    try std.testing.expect(has(out.nox, "def vec_add_(a: ptr, b: ptr) -> ptr:\n    nox_ret: ptr = vec_new()"));
+    try std.testing.expect(has(out.nox, "def vec_add(a: ptr, b: ptr) -> ptr:\n    nox_ret: ptr = vec_new()"));
     try std.testing.expect(has(out.shim, "void nox_shim_vec_add(const void *a, const void *b, void *nox_ret) { *(vec *)nox_ret = vec_add(*(vec *)a, *(vec *)b); }"));
     try std.testing.expect(has(out.nox, "extern def vec_new() -> ptr"));
     try std.testing.expect(has(out.nox, "extern def vec_get_x(p: ptr) -> i32"));
@@ -2118,4 +2347,31 @@ test "C23: stdbool makrosu olmadan çıplak `bool` anahtar sözcüğü _Bool'dur
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def flag_set(name: str, on: bool) -> bool from \"libx\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "def is_on() -> bool:") != null);
     try std.testing.expectEqual(@as(usize, 0), out.warnings.len);
+}
+
+test "v2.1.141: struct için otomatik sınıf (yapıcı/__del__/alan erişimcileri/metot) ve --no-classes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src =
+        \\typedef struct { float x; float y; } vec2;
+        \\vec2 vec2_add(vec2 a, vec2 b);
+        \\float vec2_len(vec2 a);
+        \\int vec_open(const char *p, int flags);
+    ;
+    const out = try generateFromText(a, src, "", .{ .header = "x.h", .lib = "libx", .shim_lib = "s.o", .include_name = "x.h" }, true);
+    const has = struct {
+        fn f(h: []const u8, n: []const u8) bool {
+            return std.mem.indexOf(u8, h, n) != null;
+        }
+    }.f;
+    try std.testing.expect(has(out.nox, "class Vec2:"));
+    try std.testing.expect(has(out.nox, "vec2_free(self._p)"));
+    try std.testing.expect(has(out.nox, "def set_x(self: Vec2, v: float) -> None:"));
+    try std.testing.expect(has(out.nox, "def add(self: Vec2, b: Vec2) -> Vec2:\n        return Vec2(vec2_add(self._p, b._p), True)"));
+    try std.testing.expect(has(out.nox, "def len(self: Vec2) -> float:"));
+    // ham katman yerinde kalır
+    try std.testing.expect(has(out.nox, "def vec2_add(a: ptr, b: ptr) -> ptr:"));
+    const raw = try generateFromText(a, src, "", .{ .header = "x.h", .lib = "libx", .shim_lib = "s.o", .include_name = "x.h", .classes = false }, true);
+    try std.testing.expect(!has(raw.nox, "class Vec2:"));
 }

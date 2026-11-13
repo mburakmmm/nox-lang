@@ -2281,6 +2281,7 @@ pub fn allocInlineSlot(self: *Codegen, orig_name: []const u8, info: TypeInfo, is
 /// Bir kullanıcı üst-düzey fonksiyonunun nesne dosyası sembol ADI (sigil'siz). Libc/libm/POSIX adlarıyla çakışan adlar `nox_user_` öneki alır (bkz. `reserved_symbols.zig`);
 /// çağrı yerleri, işlev değerleri, spawn/thread hedefleri, dekoratörler ve FFI geri çağrıları tanımla AYNI adı kullanmak için bunu çağırır.
 pub fn userFnName(self: *Codegen, name: []const u8) CodegenError![]const u8 {
+    if (self.func_defs.get(name)) |fd| if (fd.link_name) |ln| return ln;
     return reserved_symbols.symbolName(self.allocator, name);
 }
 

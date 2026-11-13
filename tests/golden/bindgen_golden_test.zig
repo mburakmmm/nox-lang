@@ -46,7 +46,7 @@ const program =
     \\print(mylib_total(c))
     \\mylib_free(c)
     \\print(mylib_twice(i32(21)))
-    \\print(mylib_half_(9.0))
+    \\print(mylib_half(9.0))
     \\print(MYLIB_VERSION)
     \\print(MYLIB_NAME)
     \\
@@ -84,7 +84,7 @@ test "bindgen: üretilen binding gerçek bir C kütüphanesini iki backend'de ay
     const generated = try tmp.dir.readFileAlloc(io, "mylib.nox", a, .limited(1 << 20));
     try std.testing.expect(std.mem.indexOf(u8, generated, "extern def mylib_run(c: ptr, x: i64, flags: u32) -> i32") != null);
     try std.testing.expect(std.mem.indexOf(u8, generated, "mylib_sum3") == null); // değişken argümanlı: atlanır
-    try std.testing.expect(std.mem.indexOf(u8, generated, "def mylib_half_(x: float) -> float:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, generated, "def mylib_half(x: float) -> float:") != null);
     const full = try std.fmt.allocPrint(a, "{s}\n{s}", .{ generated, program });
 
     const objs = [_][]const u8{ o_path, shim_o };
@@ -221,10 +221,10 @@ const shapes_program =
     \\b: ptr = vec2_new()
     \\vec2_set_x(b, 2.0)
     \\vec2_set_y(b, 3.5)
-    \\c: ptr = vec2_add_(a, b)
+    \\c: ptr = vec2_add(a, b)
     \\print(vec2_get_x(c))
     \\print(vec2_get_y(c))
-    \\print(vec2_len2_(c))
+    \\print(vec2_len2(c))
     \\vec2_free(a)
     \\vec2_free(b)
     \\vec2_free(c)
@@ -245,7 +245,7 @@ const shapes_program =
     \\shapes_counter_set(42)
     \\print(shapes_counter_get())
     \\print(nox.ffi.cstr(shapes_version_get()))
-    \\print(shapes_scale_(3.0))
+    \\print(shapes_scale(3.0))
     \\
 ;
 
@@ -408,21 +408,21 @@ const wide_config =
 const wide_program =
     \\p1: ptr = cdouble_make(1.0, 2.0)
     \\p2: ptr = cdouble_make(3.0, 4.0)
-    \\r: ptr = cmul_(p1, p2)
+    \\r: ptr = cmul(p1, p2)
     \\print(cdouble_re(r))
     \\print(cdouble_im(r))
     \\cdouble_free(p1)
     \\cdouble_free(p2)
     \\cdouble_free(r)
     \\c1: ptr = cfloat_make(1.5, 2.0)
-    \\c2: ptr = cscale_(c1, 2.0)
+    \\c2: ptr = cscale(c1, 2.0)
     \\print(cfloat_re(c2))
     \\print(cfloat_im(c2))
     \\cfloat_free(c1)
     \\cfloat_free(c2)
     \\x: ptr = i128_make(u64(0), u64(1))
     \\y: ptr = i128_make(u64(5), u64(1))
-    \\z: ptr = big_add_(x, y)
+    \\z: ptr = big_add(x, y)
     \\print(i128_lo(z))
     \\print(i128_hi(z))
     \\i128_free(x)
@@ -430,13 +430,13 @@ const wide_program =
     \\i128_free(z)
     \\m: u64 = u64(4294967295) * u64(4294967297)
     \\u: ptr = u128_make(m, u64(0))
-    \\w: ptr = ubig_mul_(u, u64(3))
+    \\w: ptr = ubig_mul(u, u64(3))
     \\print(u128_lo(w))
     \\print(u128_hi(w))
     \\u128_free(u)
     \\u128_free(w)
-    \\print(ld_half_(5.0))
-    \\print(ld_sum_(1.5, 2.5))
+    \\print(ld_half(5.0))
+    \\print(ld_sum(1.5, 2.5))
     \\print(my_log_s("hello %s", "world"))
     \\print(my_log_i("n=%d", 42))
     \\print(my_logn_si(2, "x=%s %d", "ab", 7))
@@ -489,5 +489,62 @@ test "bindgen: _Complex, __int128, long double (f64), değişken argümanlı sü
             return error.ProgramFailed;
         }
         try std.testing.expectEqualStrings(expected, r.stdout);
+    }
+}
+
+const classes_program =
+    \\c: MylibCtx = MylibCtx.new("demo")
+    \\print(c.run(i64(5), MYLIB_FLAG_FAST) == MYLIB_OK)
+    \\print(c.run(i64(7), u32(0)) == MYLIB_ERR)
+    \\print(c.total())
+    \\i: int = 0
+    \\while i < 200:
+    \\    t: MylibCtx = MylibCtx.new("x")
+    \\    i = i + 1
+    \\print(i)
+    \\
+;
+
+test "bindgen: v2.1.141 otomatik sınıflar — opak tutamaç (yapılandırmada yıkıcı + owned_returns), metotlar, __del__ ile otomatik serbest bırakma iki backend'de aynı" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "mylib.h", .data = header });
+    try tmp.dir.writeFile(io, .{ .sub_path = "mylib.c", .data = source });
+    try tmp.dir.writeFile(io, .{ .sub_path = "bindgen.json", .data = "{\"classes\":[{\"record\":\"mylib_ctx\",\"free\":\"mylib_free\"}],\"owned_returns\":[\"mylib_new\"]}" });
+    const h_path = try std.fmt.allocPrint(a, "{s}/mylib.h", .{dir});
+    const c_path = try std.fmt.allocPrint(a, "{s}/mylib.c", .{dir});
+    const o_path = try std.fmt.allocPrint(a, "{s}/mylib.o", .{dir});
+    const out_path = try std.fmt.allocPrint(a, "{s}/mylib.nox", .{dir});
+    const cfg_path = try std.fmt.allocPrint(a, "{s}/bindgen.json", .{dir});
+    const shim_o = try std.fmt.allocPrint(a, "{s}/mylib_shim.o", .{dir});
+    const cc = try std.process.run(a, io, .{ .argv = &.{ "cc", "-c", "-fPIC", c_path, "-o", o_path, "-I", dir } });
+    if (cc.term != .exited or cc.term.exited != 0) return error.CcFailed;
+    const code = try nox.bindgen.runCli(std.testing.allocator, io, a, &.{ h_path, "--lib", o_path, "--prefix", "mylib", "-o", out_path, "--config", cfg_path });
+    try std.testing.expectEqual(@as(u8, 0), code);
+
+    const generated = try tmp.dir.readFileAlloc(io, "mylib.nox", a, .limited(1 << 20));
+    try std.testing.expect(std.mem.indexOf(u8, generated, "class MylibCtx:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, generated, "mylib_free(self._p)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, generated, "def run(self: MylibCtx, x: i64, flags: u32) -> i32:") != null);
+    const full = try std.fmt.allocPrint(a, "{s}\n{s}", .{ generated, classes_program });
+
+    const objs = [_][]const u8{ o_path, shim_o };
+    const qbe = try compile_helpers.compileAndRunWithObjs(a, full, &objs);
+    const llvm = try compile_helpers.compileAndRunLlvmWithObjs(a, full, &objs);
+    for ([_]std.process.RunResult{ qbe, llvm }) |r| {
+        if (r.term != .exited or r.term.exited != 0 or r.stderr.len != 0) {
+            std.debug.print("program basarisiz: {s}\n", .{r.stderr});
+            return error.ProgramFailed;
+        }
+        try std.testing.expectEqualStrings("True\nTrue\n12\n200\n", r.stdout);
     }
 }

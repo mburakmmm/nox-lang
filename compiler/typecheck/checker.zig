@@ -730,6 +730,12 @@ pub const Checker = struct {
     /// `registerSignatures`in parametre/dönüş tiplerini gövdeyi kontrol
     /// ETMEDEN çözmesi gibi.
     module_globals: std.StringHashMapUnmanaged(Type) = .{},
+    /// v2.1.141: DEĞİŞMEZ tamsayı sabitleri — `NAME: int = <literal>` biçiminde bildirilen ve modülün HİÇBİR yerinde yeniden atanmayan üst-düzey değişkenlerin değeri. Bu adlar (ve yalnız
+    /// bunlardan/literallerden kurulu `|`, `&`, `+`... ifadeleri) hedef tipi sabit-genişlikli tamsayı olan bir yerde değer aralığa sığıyorsa AÇIK DÖNÜŞÜM OLMADAN kabul edilir
+    /// (Go/Zig'deki "tipsiz sabit" ergonomisi; `i32(SQLITE_OPEN_READWRITE)` yazmak gerekmez).
+    module_int_consts: std.StringHashMapUnmanaged(i64) = .{},
+    /// Üst-düzey kapsam (`checkModule`un yerel `top_scope`u): bu kapsamda bulunan bir ad modül global'inin KENDİSİdir (yerel gölgeleme değil).
+    top_scope_ptr: ?*Scope = null,
     /// Faz U.4.2: İÇ İÇE `def`lerin yakalama listeleri — anahtar
     /// `"<dış_yol>.<iç_isim>"` (bkz. `FnCtx.path`in belge notu),
     /// `checkNestedFuncDef` tarafından doldurulur. U.4.3'ün codegen'i
@@ -1830,6 +1836,85 @@ pub const Checker = struct {
             if (v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer")) continue;
             const declared = try self.typeExprToType(v.type_expr);
             try self.module_globals.put(self.allocator, v.name, declared);
+            if (declared == .int) {
+                const lit: ?i64 = switch (v.value) {
+                    .int_lit => |x| x,
+                    .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) -u.operand.int_lit else null,
+                    else => null,
+                };
+                if (lit) |lv| try self.module_int_consts.put(self.allocator, v.name, lv);
+            }
+        }
+        // yeniden atanan (herhangi bir yerde, muhafazakâr: yerel gölgelemeler dahil) adlar sabit değildir
+        var it = self.module_int_consts.keyIterator();
+        var drop: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer drop.deinit(self.allocator);
+        while (it.next()) |k| if (stmtsAssignName(module.body, k.*)) try drop.append(self.allocator, k.*);
+        for (drop.items) |k| _ = self.module_int_consts.remove(k);
+    }
+
+    /// `name`e modülün herhangi bir yerinde (iç içe bloklar, işlev/metot gövdeleri dahil) atama var mı? (Muhafazakâr: yerel gölgelemeler de sayılır.)
+    fn stmtsAssignName(stmts: []const ast.Stmt, name: []const u8) bool {
+        for (stmts) |st| switch (st.kind) {
+            .assign => |a| if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return true,
+            .if_stmt => |s| {
+                if (stmtsAssignName(s.then_body, name)) return true;
+                for (s.elif_clauses) |ec| if (stmtsAssignName(ec.body, name)) return true;
+                if (s.else_body) |eb| if (stmtsAssignName(eb, name)) return true;
+            },
+            .while_stmt => |s| if (stmtsAssignName(s.body, name)) return true,
+            .for_stmt => |s| if (std.mem.eql(u8, s.var_name, name) or stmtsAssignName(s.body, name)) return true,
+            .try_stmt => |s| {
+                if (stmtsAssignName(s.try_body, name)) return true;
+                for (s.except_clauses) |ec| if (stmtsAssignName(ec.body, name)) return true;
+                if (s.finally_body) |fb| if (stmtsAssignName(fb, name)) return true;
+            },
+            .with_stmt => |s| if (stmtsAssignName(s.body, name)) return true,
+            .lowlevel_stmt => |s| if (stmtsAssignName(s.body, name)) return true,
+            .func_def => |fd| if (stmtsAssignName(fd.body, name)) return true,
+            .class_def => |cd| for (cd.methods) |m| if (stmtsAssignName(m.body, name)) return true,
+            else => {},
+        };
+        return false;
+    }
+
+    /// Derleme zamanı tamsayı değeri: literal, değişmez sabit adı (yerelde gölgelenmemişse) ve bunlardan `-`, `~`, `+ - * | & ^ << >>` ile kurulu ifade; değilse null.
+    fn constIntValue(self: *Checker, ctx: *FnCtx, expr: ast.Expr, depth: u8) TypeError!?i64 {
+        if (depth > 32) return null;
+        switch (expr) {
+            .int_lit => |x| return x,
+            .identifier => |n| {
+                if (ctx.narrowed.contains(n)) return null;
+                if ((try ctx.scope.lookup(self.allocator, n)) != null) {
+                    // üst-düzey kodda global kendi kapsamında görünür: yalnız bu kapsamdaysa (iç içe bir `def`te değilse) global'in kendisidir
+                    if (self.top_scope_ptr == null or ctx.scope != self.top_scope_ptr.?) return null;
+                }
+                return self.module_int_consts.get(n);
+            },
+            .unary => |u| {
+                const v = (try self.constIntValue(ctx, u.operand.*, depth + 1)) orelse return null;
+                return switch (u.op) {
+                    .neg => -%v,
+                    .invert => ~v,
+                    else => null,
+                };
+            },
+            .binary => |b| {
+                const l = (try self.constIntValue(ctx, b.left.*, depth + 1)) orelse return null;
+                const r = (try self.constIntValue(ctx, b.right.*, depth + 1)) orelse return null;
+                return switch (b.op) {
+                    .add => l +% r,
+                    .sub => l -% r,
+                    .mul => l *% r,
+                    .bit_or => l | r,
+                    .bit_and => l & r,
+                    .bit_xor => l ^ r,
+                    .shl => if (r >= 0 and r < 63) l << @as(u6, @intCast(r)) else null,
+                    .shr => if (r >= 0 and r < 63) l >> @as(u6, @intCast(r)) else null,
+                    else => null,
+                };
+            },
+            else => return null,
         }
     }
 
@@ -4103,6 +4188,8 @@ pub const Checker = struct {
         try self.computeReturnAliasEffects(module);
 
         var top_scope: Scope = .{};
+        self.top_scope_ptr = &top_scope;
+        defer self.top_scope_ptr = null;
         // `in_async = true`: Nox'ta açık bir `def main()` sözleşmesi YOK —
         // modülün gevşek üst-düzey deyimleri KENDİSİ programın giriş
         // noktasıdır (bkz. nox-teknik-spesifikasyon.md §3.1). Bu yüzden
@@ -6896,6 +6983,19 @@ pub const Checker = struct {
                     if (!kind.fitsValue(expr.int_lit)) {
                         return self.fail(error.TypeMismatch, "the value {d} does not fit in the range of '{s}'", .{ expr.int_lit, kind.name() });
                     }
+                    return exp;
+                }
+            }
+        }
+        // v2.1.141: değişmez tamsayı sabitleri ve bunlardan kurulu sabit ifadeler (`FLAG_A | FLAG_B`) hedef sabit-genişlikli tamsayıya sığıyorsa örtük kabul edilir.
+        if (expected) |exp| {
+            if (exp == .fixed_int and expr != .int_lit and (expr == .identifier or expr == .binary or (expr == .unary and !(expr.unary.op == .neg and expr.unary.operand.* == .int_lit)))) {
+                if (try self.constIntValue(ctx, expr, 0)) |cv| {
+                    const kind = exp.fixed_int;
+                    if (!kind.fitsValue(cv)) {
+                        return self.fail(error.TypeMismatch, "the constant value {d} does not fit in the range of '{s}'", .{ cv, kind.name() });
+                    }
+                    _ = try self.checkExpr(ctx, expr);
                     return exp;
                 }
             }

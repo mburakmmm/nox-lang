@@ -294,6 +294,9 @@ pub const FuncDef = struct {
     /// Faz 1 decorator: `def` HEMEN ÖNCESİNDE ayrıştırılan sıfır-veya-daha
     /// fazla `@isim(...)` satırı — boşsa (varsayılan) HİÇBİR decorator YOK.
     decorators: []const Decorator = &.{},
+    /// v2.1.141: `@link_name("sembol")` — nesne dosyasındaki sembol adı (Nox adı değişmez). `noxc bindgen`in sarmalayıcıları, C kütüphanesinin AYNI adlı sembolüyle bağlama
+    /// çakışmasını bununla önler (sarmalayıcı Nox'ta C adıyla çağrılır, sembolü `nox_w_<ad>` olur).
+    link_name: ?[]const u8 = null,
     /// İç içe `def` gövdesindeki `nonlocal a, b` bildirimi (kaynakta sıra serbest; AST'de gövde başına toplanır). Checker öncesi
     /// `nonlocal_desugar.zig` bu adları bir hücreye (tek elemanlı liste) çevirir.
     nonlocals: []const []const u8 = &.{},

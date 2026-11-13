@@ -4,7 +4,7 @@ Generate Nox bindings from a C header.
 
 ```text
 noxc bindgen <header.h> --lib <library> [-o <file.nox>] [--prefix <p[,p2]>] [-I <dir>] [-D <name[=value]>]
-                        [--shim <file.c>] [--shim-lib <file.o>] [--no-compile] [--cc <compiler>]
+                        [--shim <file.c>] [--shim-lib <file.o>] [--no-compile] [--no-classes] [--config <bindgen.json>] [--cc <compiler>]
 ```
 
 `bindgen` runs the C preprocessor (`cc -E`) on the header, reads the declarations with a small built-in C declaration parser (no libclang, no extra
@@ -23,6 +23,8 @@ noxc bindgen sqlite3.h --lib sqlite3 --prefix sqlite3_,sqlite_ -o sqlite.nox
 | `-I`, `-D` | forwarded to the preprocessor and the shim compiler |
 | `--shim`, `--shim-lib` | the generated C shim and the object name used in the generated `from` clauses (default `<output>_shim.c` / `<output>_shim.o`) |
 | `--no-compile` | do not compile the shim; the command prints the `cc` line to run |
+| `--no-classes` | do not write the [high-level classes](#high-level-classes) (only the raw functions) |
+| `--config` | a JSON file with variadic shims, `long_double`, `event_callbacks`, `unchecked_accessors`, and the class settings `classes` / `owned_returns` |
 
 ## What is generated
 
@@ -59,7 +61,7 @@ with pointers to struct memory, and a returned struct is a **new** block you fre
 a: ptr = vec2_new()
 vec2_set_x(a, 1.5)
 vec2_set_y(a, 2.0)
-c: ptr = vec2_add_(a, b)      # `_` suffix: the library exports `vec2_add` itself
+c: ptr = vec2_add(a, b)       # a NEW block: free it (or use the generated classes below, which do it for you)
 print(vec2_get_x(c))
 vec2_free(a)
 vec2_free(c)
@@ -89,10 +91,11 @@ Some functions cannot be called directly from Nox, so `bindgen` also writes a sm
 - `float` (32-bit) parameters and results do not match Nox's `float` (64-bit), so the shim converts;
 - struct/union arguments and results, struct field access and global variables go through it too.
 
-A shimmed function becomes a raw `extern def nox_shim_<name>` (linked from the shim object) plus an ordinary Nox `def` that calls it. The wrapper keeps the C name for `static inline`
-functions and gets a trailing underscore when the library also exports a symbol of that name (`mylib_half` -> `mylib_half_`), because a top-level Nox `def` and the C symbol would
-otherwise collide at link time. Names that are Nox keywords or builtins (`in`, `from`, `sum`, …) get the same treatment (functions: `in_`; parameters: `from_`). Helper and accessor names
-(`Name_get_f`, `counter_get`, …) are shim symbols themselves; if one would collide with a library function it gets a trailing `_`.
+A shimmed function becomes a raw `extern def nox_shim_<name>` (linked from the shim object) plus an ordinary Nox `def` that calls it. **The wrapper always has the C name**
+(`mylib_half`, `vec2_add`). When the library also exports a symbol of that name, the wrapper is marked `@link_name("nox_w_<name>")` — a built-in attribute that changes only the
+object-file symbol of a `def`, never its Nox name — so the two do not collide at link time. Names that are Nox keywords or builtins (`in`, `from`, `sum`, …) get a trailing underscore
+in Nox (functions: `in_`; parameters: `from_`). Helper and accessor names (`Name_get_f`, `counter_get`, …) are shim symbols themselves; if one would collide with a library function
+it gets a trailing `_`.
 
 ### Wide and special types: `_Complex`, `__int128`, `long double`
 
@@ -137,9 +140,46 @@ if mylib_run(c, i64(5), MYLIB_FLAG_FAST) != MYLIB_OK:
 mylib_free(c)
 ```
 
-Constants made from `#define` are plain `int`s, so convert them where a parameter has a fixed width (`i32(SQLITE_OPEN_READWRITE)`). The generated `extern def`s
+Constants made from `#define` are `int`s, and a constant that is never reassigned fits a fixed-width parameter **implicitly** when its value is in range, including expressions
+such as `SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE` (see [numbers](../language/numbers.md)); no `i32(...)` is needed. The generated `extern def`s
 are raw native calls: they run with the full authority of the process ([trust boundary](../language/ffi.md#the-trust-boundary)). Combine them with
 [`@ffi.errors`](../language/ffi.md#errors) and [`nox.ffi.Callback`](../stdlib/ffi.md) to get exceptions and closure callbacks.
+
+## High-level classes
+
+Unless you pass `--no-classes`, `bindgen` also writes, below the raw functions (which stay available), a Nox **class** for every struct/union it made helpers for:
+
+```nox-fragment
+from vec import Vec2
+
+a: Vec2 = Vec2.new()          # zeroed C memory, freed automatically when `a` goes away
+a.set_x(3.0)
+a.set_y(4.0)
+b: Vec2 = Vec2.new()
+b.set_x(1.0)
+c: Vec2 = a.add(b)            # `vec2_add(vec2, vec2)`: the result is a NEW block that `c` owns
+print(c.len())
+```
+
+- The constructor is `Name(p, owned)`; `Name.new()` allocates. `__del__` calls the free function when `owned` is true, so you never write `free`.
+- Scalar fields become `x()` / `set_x(v)`. A function whose **first parameter** is the struct (by value or pointer) becomes a method (the `Name_` or `lib_` prefix is dropped:
+  `vec2_add` -> `add`, `sqlite3_stmt_readonly` -> `readonly`); a function that **returns** the struct and takes no struct first becomes a `@staticmethod`.
+  Parameters and results of struct type use the class. Names that would clash are skipped with a warning, and the raw function is still there.
+- A pointer **returned by the library** is wrapped as *borrowed* (`owned=False`, never freed by the class), because `bindgen` cannot know who owns it. List the functions that hand
+  you an owned pointer in `owned_returns`, and give opaque handles (`typedef struct sqlite3 sqlite3;`, no body) their destroy function in `classes`:
+
+```json
+{
+  "classes": [{"record": "sqlite3", "free": "sqlite3_close"}, {"record": "sqlite3_stmt", "free": "sqlite3_finalize"}],
+  "owned_returns": ["sqlite3_open_helper"]
+}
+```
+
+  The class then calls that function in `__del__` (instead of `Name_free`). Objects that must be destroyed in a particular order (a statement before its connection) still need
+  you to keep the owner alive or `del` them in order; the generated code cannot see that relationship.
+- Cost: the class adds one small ARC object per wrapped value. Measured on an Apple M-series CPU with a by-value `vec2_add` returning a new block, 30 million iterations of
+  "add, read, free" take 0.67 s through the raw functions and 0.86 s through the class (about 22 ns and 29 ns per iteration), so per-call allocation is not a bottleneck for
+  per-frame game or UI code.
 
 ## Worked example: yyjson
 

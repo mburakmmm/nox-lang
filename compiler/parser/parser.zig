@@ -1131,7 +1131,14 @@ pub const Parser = struct {
         return switch (self.curKind()) {
             .kw_def, .kw_async => blk: {
                 var fd = try self.parseFuncDef(null);
-                fd.decorators = decorators;
+                // `@link_name("sembol")` yerleşik bir öznitelik: dekoratör listesinden çıkarılır, `FuncDef.link_name`e yazılır.
+                var kept = std.ArrayList(ast.Decorator).empty;
+                for (decorators) |d| {
+                    if (std.mem.eql(u8, d.name, "link_name") and d.args.len == 1 and d.args[0] == .string_lit) {
+                        fd.link_name = d.args[0].string_lit;
+                    } else try kept.append(self.allocator, d);
+                }
+                fd.decorators = try kept.toOwnedSlice(self.allocator);
                 break :blk .{ .func_def = fd };
             },
             .kw_class => blk: {

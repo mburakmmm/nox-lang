@@ -2585,3 +2585,17 @@ test "golden(typecheck): v2.1.62 — ptr_of list[int] kabul edilir" {
         @embedFile("typecheck_cases/ok_ptr_of_list_int.expected"),
     );
 }
+
+test "golden(typecheck): v2.1.141 — değişmez tamsayı sabiti hedef sabit-genişlikli tamsayıya SIĞMIYORSA hata" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_const_int_overflow_narrowing.nox"),
+        @embedFile("typecheck_cases/err_const_int_overflow_narrowing.expected"),
+    );
+}
+
+test "golden(typecheck): v2.1.141 — yeniden atanan tamsayı değişkeni sabit sayılmaz (örtük daraltma yok)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_const_int_reassigned_not_const.nox"),
+        @embedFile("typecheck_cases/err_const_int_reassigned_not_const.expected"),
+    );
+}

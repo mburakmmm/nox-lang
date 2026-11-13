@@ -151,6 +151,10 @@ deliberately from `int`:
 
 - They **never mix implicitly** — with each other, with `int`, or with `float`. `u8 + i32` and `u8 + int` are compile errors.
 - A literal fits implicitly where the value is in range: `b: u8 = 200` is fine, `b: u8 = 300` is a compile error.
+- So does a **constant**: a module-level `NAME: int = <literal>` that is never reassigned anywhere in the program, and any expression built only from literals and such
+  names with `+ - * | & ^ << >> ~` (`FLAG_A | FLAG_B`), is accepted where a fixed-width integer is expected when its value is in range (`x: i32 = FLAG_A | FLAG_B`,
+  `f(FLAG_A)` for an `i32` parameter). A value that does not fit is a compile error naming the constant value; a variable that is ever reassigned is not a constant.
+  This is what lets the `#define` flags that [`noxc bindgen`](../tools/bindgen.md) writes be passed to C functions without `i32(...)`.
 - Conversion is explicit and **range-checked on every backend**: `u8(300)` terminates the program, `u8(-1)` too.
 - **Overflow of `+`, `-` and `*` terminates the program** with a message (`'u8' integer overflow`), on both backends. Plain `int`
   wraps; fixed-width does not.

@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.141]
+
+### Eklendi/Değişti (bindgen ergonomisi + dilde tipsiz tamsayı sabitleri)
+
+- **Dil: değişmez tamsayı sabitleri hedef sabit-genişlikli tamsayıya örtük sığar.** Hiçbir yerde yeniden atanmayan `NAME: int = <literal>` modül değişkenleri ve bunlardan/literallerden `+ - * | & ^ << >> ~` ile kurulu ifadeler (`FLAG_A | FLAG_B`), değer aralığa sığıyorsa `i32`/`u8`… beklenen yerde `i32(...)` yazmadan kabul edilir; sığmıyorsa derleme hatası, yeniden atanan değişken sabit sayılmaz. `#define` bayrakları artık C işlevlerine doğrudan verilir.
+- **Dil: `@link_name("sembol")`** (yerleşik öznitelik): `def`in nesne dosyası sembolünü değiştirir, Nox adı değişmez.
+- **bindgen: `_` ekli sarmalayıcı adları kalktı.** Sarmalayıcı her zaman C adını taşır (`vec2_add`, `mylib_half`); kütüphane aynı sembolü dışa aktarıyorsa `@link_name("nox_w_<ad>")` ile çakışma önlenir. Anahtar sözcük/yerleşik adlar yine sonda `_` alır (`in_`). (Eski `foo_` adlarını kullanan kodlar `foo`ya geçmeli.)
+- **bindgen: otomatik yüksek seviyeli sınıflar (varsayılan açık, `--no-classes` ile kapalı).** Her struct/union için `Name` sınıfı: `Name.new()`, `__del__` ile otomatik serbest bırakma (`owned` bayrağı; kütüphanenin döndürdüğü işaretçiler ödünç sarılır), skaler alanlar için `x()`/`set_x(v)`, ilk parametresi struct olan işlevler için metot (`vec2_add` → `a.add(b)`), struct döndürenler için `@staticmethod`. `--config` anahtarları: `classes` (kayıt + yıkıcı işlev; opak tutamaçlar için) ve `owned_returns`. Ham katman aynen yerinde kalır.
+- **Ölçüm (değerle struct dönüşünde `calloc`):** 30 milyon "ekle-oku-serbest bırak" ham işlevlerle 0,67 sn (≈22 ns), sınıfla 0,86 sn (≈29 ns): darboğaz değil, `_into` aşırı yüklemesi gerekmedi.
+- Test: 3 yeni typecheck/golden (`const_int_narrowing`, aşırı taşan sabit ve yeniden atanan değişken hataları), bindgen birim testi + uçtan uca sınıf testi (opak tutamaç, config, iki backend), mevcut bindgen e2e testleri yeni adlarla; tam takım GREEN. Windows doğrulaması (TODO 9.14) kullanıcı kararıyla ertelendi.
+
 ## [2.1.140]
 
 ### Eklendi/Değişti (Faz 9.0.7: tek-işçi kuralının kaldırılması tamamlandı)

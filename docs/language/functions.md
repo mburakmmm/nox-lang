@@ -452,6 +452,17 @@ print(depth(10000))
 `@name` and `@name("arg")` before a top-level function attach **metadata** that tools can query with `nox.reflect`; they do not wrap the
 function. See [Decorators and reflection](decorators.md).
 
+## Object-file symbol names: `@link_name`
+
+`@link_name("symbol")` before a top-level `def` changes only the **object-file symbol** of that function; the Nox name is unchanged and calls use it as usual. It exists for
+wrappers that must keep a C library's name but cannot share its symbol (`noxc bindgen` writes it for you); you rarely need it by hand.
+
+```nox-fragment
+@link_name("nox_w_square")
+def square(x: int) -> int:
+    return x * x
+```
+
 ## Async functions
 
 `async def` defines a function that may be started with `spawn` and awaited; see [Concurrency](concurrency.md).
