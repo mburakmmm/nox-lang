@@ -396,6 +396,12 @@ pub const Codegen = struct {
     pub const genReflectMetadata = decorators_mod.genReflectMetadata;
     pub const genGcFreeDispatch = layout.genGcFreeDispatch;
     pub const genClassEq = layout.genClassEq;
+    pub const genDictEq = layout.genDictEq;
+    pub const anyClassHasUserEq = layout.anyClassHasUserEq;
+    pub const eqFnNameForDict = layout.eqFnNameForDict;
+    pub const dictEqMangle = layout.dictEqMangle;
+    pub const emitNonNullEq = layout.emitNonNullEq;
+    pub const genNullSafeEq = layout.genNullSafeEq;
     pub const genEqCompareOrJump = layout.genEqCompareOrJump;
     pub const genClassEqInline = layout.genClassEqInline;
     pub const eqMangleFor = layout.eqMangleFor;
@@ -1428,6 +1434,9 @@ pub const Codegen = struct {
     /// bu yüzden `str` ile `int` burada AYRI mangled adlara sahiptir.
     list_eq_seen: std.StringHashMapUnmanaged(void) = .empty,
     list_eq_queue: std.ArrayListUnmanaged(struct { name: []const u8, elem_qtype: QbeType, elem_heap_info: ?*const ElemHeapInfo, elem_is_str: bool }) = .empty,
+    /// v2.1.111: `dict[K, V] == dict[K, V]` için `$Dict_<mangled>_eq` fonksiyonlarının TEMBEL kaydı (`list_eq_*` deseni).
+    dict_eq_seen: std.StringHashMapUnmanaged(void) = .empty,
+    dict_eq_queue: std.ArrayListUnmanaged(struct { name: []const u8, info: *const DictInfo }) = .empty,
     /// `print(list[T]/sınıf)` görüntülemesinin (bkz. `internFmtString`) sınıf/
     /// alan adı gibi derleme-zamanı sabit metinlerden ürettiği `printf` format
     /// dizesi sembolleri — `string_data`den FARKLI olarak pinned-refcount
@@ -2159,8 +2168,14 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     // yapısal eşitlik") — `list_release_queue` ile AYNI "sonda tüket" deseni
     // (bir `$List_..._eq`i üretmek İÇ İÇE bir liste durumunda YENİ bir
     // ihtiyacı keşfedebilir, bkz. `eqFnNameForList`/`eqMangleFor`).
-    while (gen.list_eq_queue.pop()) |item| {
-        try gen.genListEq(item.name, item.elem_qtype, item.elem_heap_info, item.elem_is_str);
+    // v2.1.111: `dict_eq_queue` `list_eq_queue`yu (ve tersi) besleyebilir (`dict[str, list[dict[...]]]`) — İKİSİ de kuyruklar boşalana kadar birlikte tüketilir.
+    while (gen.list_eq_queue.items.len > 0 or gen.dict_eq_queue.items.len > 0) {
+        while (gen.list_eq_queue.pop()) |item| {
+            try gen.genListEq(item.name, item.elem_qtype, item.elem_heap_info, item.elem_is_str);
+        }
+        while (gen.dict_eq_queue.pop()) |item| {
+            try gen.genDictEq(item.name, item.info);
+        }
     }
 
     // Faz U.4.3: her iç içe `def` deyimi için TEMBEL kaydedilen closure

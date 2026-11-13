@@ -1507,6 +1507,80 @@ pub fn genStrEqLiteral(self: *Codegen, op: ast.BinaryOp, s: Value, lit: []const 
 /// `strcmp` (libc, `cc` bağlantısında zaten mevcut — `printf` gibi başka
 /// çağrılarla AYNI şekilde ekstra bir bağlama argümanı gerekmez) ile iki
 /// `str`in İÇERİĞİNİ karşılaştırır; sonucu `0`a karşı `w` bir bool'a çevirir.
+/// v2.1.111: `a == b` / `a != b`, işlenenlerden en az biri `T | None` (checker `opt_eq`). `None == None` doğru, `None` ile değer eşitsiz,
+/// iki değer iç tipin eşitliğine devredilir (`str`: içerik, `class`: `__eq__` ya da alan alana, `list`/`dict`: yapısal, `int`/`float`/
+/// `bool`: kutulanmış değerlerin karşılaştırması). Düz `T` işlenen (karışık `x == "a"` biçimi) asla null sayılır; daraltılmış
+/// (`narrowed_unbox`) kutulanmış-Optional işlenen zaten çıplak skalerdir.
+pub fn genOptionalEq(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) CodegenError!Value {
+    try self.checkNoLowlevelEscape(l0);
+    try self.checkNoLowlevelEscape(r0);
+    const lb = l0.heap == .boxed_scalar;
+    const rb = r0.heap == .boxed_scalar;
+    var eq: []const u8 = undefined;
+    if (lb or rb) {
+        const inner: QbeType = if (lb) l0.elem_qtype else r0.elem_qtype;
+        const an: []const u8 = if (lb) blk: {
+            const t = try self.newTemp();
+            try self.qbeOp2Imm(t, .w, "ceql", l0.text, 0);
+            break :blk t;
+        } else "0";
+        const bn: []const u8 = if (rb) blk: {
+            const t = try self.newTemp();
+            try self.qbeOp2Imm(t, .w, "ceql", r0.text, 0);
+            break :blk t;
+        } else "0";
+        const either: []const u8 = if (lb and rb) blk: {
+            const t = try self.newTemp();
+            try self.qbeOp2(t, .w, "or", an, bn);
+            break :blk t;
+        } else if (lb) an else bn;
+        const both_null: []const u8 = if (lb and rb) blk: {
+            const t = try self.newTemp();
+            try self.qbeOp2(t, .w, "and", an, bn);
+            break :blk t;
+        } else "0";
+        const null_label = try self.newLabel("opteq_null");
+        const val_label = try self.newLabel("opteq_val");
+        const done_label = try self.newLabel("opteq_done");
+        try self.qbeJnz(either, null_label, val_label);
+        try self.qbeLabel(null_label);
+        const null_pred = self.current_label;
+        try self.qbeJmp(done_label);
+        try self.qbeLabel(val_label);
+        var xa = l0;
+        if (lb) {
+            const t = try self.newTemp();
+            try self.qbeLoad(t, inner, inner, l0.text);
+            xa = .{ .text = t, .qtype = inner };
+        } else {
+            xa = try self.convert(l0, inner);
+        }
+        var xb = r0;
+        if (rb) {
+            const t = try self.newTemp();
+            try self.qbeLoad(t, inner, inner, r0.text);
+            xb = .{ .text = t, .qtype = inner };
+        } else {
+            xb = try self.convert(r0, inner);
+        }
+        const cmp = try self.emitCmp(.eq, xa, xb, inner);
+        const val_pred = self.current_label;
+        try self.qbeJmp(done_label);
+        try self.qbeLabel(done_label);
+        const phi_t = try self.newTemp();
+        try self.qbePhi(phi_t, .w, null_pred, both_null, val_pred, cmp.text);
+        eq = phi_t;
+    } else {
+        eq = try self.genNullSafeEq(l0.text, r0.text, l0.heap, l0.class_name, l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str, l0.dict_info);
+    }
+    if (op == .ne) {
+        const t = try self.newTemp();
+        try self.qbeOp2Imm(t, .w, "xor", eq, 1);
+        eq = t;
+    }
+    return .{ .text = eq, .qtype = .w };
+}
+
 pub fn genStrCompare(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value) CodegenError!Value {
     const cmp_t = try self.newTemp();
     try self.qbeCall(.{ .name = cmp_t, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = l.text }, .{ .ty = .l, .text = r.text } });
@@ -1846,6 +1920,16 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     else
         try self.genExpr(b.right.*);
 
+    // v2.1.111: `T | None` işleneni olan `==`/`!=` (checker `opt_eq` bayrağıyla işaretler): null-güvenli değer eşitliği.
+    if (b.opt_eq and (b.op == .eq or b.op == .ne) and (l0.heap != .none or r0.heap != .none)) {
+        const result = try genOptionalEq(self, b.op, l0, r0);
+        try self.releaseIfTemporary(b.left.*, l0);
+        try self.releaseIfTemporary(b.right.*, r0);
+        // `$C_eq` kullanıcı `__eq__`ine devredebilir (bkz. `genClassEq`): fırlattığı istisna burada yakalanır.
+        if (self.anyClassHasUserEq()) try self.emitExceptionCheck();
+        return result;
+    }
+
     // `str == str` / `str != str` — GERÇEK içerik karşılaştırması
     // (`strcmp`, çünkü `str` her zaman sıfırla-sonlanan bir C dizesidir).
     // checker.zig zaten yalnızca `==`/`!=`i (ve yalnızca AYNI tipteki iki
@@ -1901,7 +1985,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     // DEĞİL) hiçbir zaman null OLAMAZ — bu yüzden `genEqCompareOrJump`'ın
     // alan/eleman-seviyesi null-güvenliği burada GEREKMEZ; `$..._eq`
     // DOĞRUDAN çağrılır.
-    if ((l0.heap == .list or l0.heap == .class) and r0.heap == l0.heap and (b.op == .eq or b.op == .ne)) {
+    if ((l0.heap == .list or l0.heap == .class or l0.heap == .dict) and r0.heap == l0.heap and (b.op == .eq or b.op == .ne)) {
         try self.checkNoLowlevelEscape(l0);
         try self.checkNoLowlevelEscape(r0);
         // GG.13 (bkz. nox-teknik-spesifikasyon.md §3.66): küçük (≤8 alan),
@@ -1911,16 +1995,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         const eq_temp: []const u8 = if (l0.heap == .class and classEqInlineEligible(self.classes.get(l0.class_name.?).?))
             try self.genClassEqInline(self.classes.get(l0.class_name.?).?, l0.text, r0.text)
         else blk: {
-            const t = try self.newTemp();
-            if (l0.heap == .class) {
-                const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{l0.class_name.?});
-                try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
-            } else {
-                const fn_name = try self.eqFnNameForList(l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str);
-                const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{fn_name});
-                try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
-            }
-            break :blk t;
+            break :blk try self.emitNonNullEq(l0.text, r0.text, l0.heap, l0.class_name, l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str, l0.dict_info);
         };
         const result: []const u8 = if (b.op == .ne) blk: {
             const t = try self.newTemp();
@@ -1929,6 +2004,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         } else eq_temp;
         try self.releaseIfTemporary(b.left.*, l0);
         try self.releaseIfTemporary(b.right.*, r0);
+        if (self.anyClassHasUserEq()) try self.emitExceptionCheck();
         return .{ .text = result, .qtype = .w };
     }
 

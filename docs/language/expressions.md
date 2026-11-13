@@ -38,9 +38,28 @@ print(-2 ** 2, 2 ** 3 ** 2, 1 + 2 << 3, 6 & 3 == 2, 2 + 3 * 4 - 1, 7 // 2 * 2, n
 ## Comparisons
 
 Comparison operators work on numbers (`int` and `float` mix), strings (code-point order), `bool` (equality only), lists, dictionaries,
-tuples and classes (equality, structural: element-wise for lists/tuples/dictionaries, field-wise for classes unless `__eq__` is
-defined). Comparisons **chain** like Python: `a < b < c` means `a < b and b < c`, and the middle operand is evaluated once and must
-be free of side effects.
+tuples and classes (equality, structural: element-wise for lists/tuples, key-by-key for dictionaries — insertion order does not matter,
+as in Python — and field-wise for classes unless `__eq__` is defined). The structure is followed all the way down: a class field, a list
+element or a dictionary value that is itself a list, dictionary or class is compared structurally, and a nested class that defines
+`__eq__` is compared with its `__eq__`. Comparisons **chain** like Python: `a < b < c` means `a < b and b < c`, and the middle operand
+is evaluated once and must be free of side effects.
+
+`==` and `!=` also accept optional operands (`T | None`) — two optionals, or an optional and a plain `T`: `None == None` is true, `None`
+against a value is false, and two values are compared with the equality of `T` (including a class's `__eq__`). The same holds for optional
+class fields.
+
+```nox
+a: str | None = None
+b: str | None = None
+c: str | None = "x"
+d1: dict[str, int] = {"p": 1, "q": 2}
+d2: dict[str, int] = {"q": 2, "p": 1}
+print(a == b, a == c, c == "x", d1 == d2)
+```
+
+```output
+True False True True
+```
 
 `x in c` and `x not in c` test membership: an element of a list, a key of a dict, a member of a set, a substring of a string.
 `x is None`, `x is not None`, `x == None` and `x != None` test optionals and are never overloaded.

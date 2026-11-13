@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.111]
+
+### Düzeltildi
+
+- **`T | None` işlenenli `==`/`!=` çöküyordu / yanlış sonuç veriyordu:** `x: str | None = None; y: str | None = None; print(x == y)` `strcmp(NULL, NULL)` ile SIGSEGV'e düşüyor (`int | None`/`float | None`/`bool | None`te iki ayrı kutunun işaretçisi karşılaştırılıyordu, yani eşit değerler `False` çıkıyordu; sınıf-tipli Optional'da `$C_eq` null işaretçiye çağrılıyordu). Checker artık iki Optional'ı (ya da bir Optional ile düz `T`'yi) `Binary.opt_eq` bayraklı bir kopyaya yeniden yazar (`expr_rewrites`); codegen null-güvenli değer eşitliği üretir: `None == None` doğru, `None` ile değer eşitsiz, iki değer iç tipin eşitliğine devredilir (`str` içerik, sınıf `__eq__`/alan alana, list/dict yapısal, `int`/`float`/`bool` kutu içi değer). Daraltılmış (`narrowed_unbox`) işlenenler de doğru çalışır. `x == None` / `x is None` testi değişmedi.
+- **Optional alanlı sınıf eşitliği:** `class A: n: str | None` için `A(None) == A(None)` çöküyordu; artık sınıf/liste/sözlük alanları ve liste elemanları için üretilen `$C_eq`/`$List_*_eq` karşılaştırıcıları `str` dahil her yığın tipinde null-güvenli (ikisi null → eşit, biri null → eşitsiz).
+- **`dict == dict` hiç derlenmiyordu** ("construct that is not supported"): artık yapısal eşitlik — aynı canlı girdi sayısı ve birinin her anahtarı ötekinde aynı değerle var; **ekleme sırası önemsiz** (Python gibi). Değer türleri: `int`/`bool`/sabit-genişlikli (payload), `float` (sayısal `==`), `str` (içerik), `list`, iç `dict`, sınıf. Sınıf alanı olarak (`dict[str, int]`, `dict[str, list[int]]`…), `list[dict[...]]` elemanı ve `dict[K, Class]` değeri olarak da yapısal (önceden alanlar için işaretçi kimliği karşılaştırılıyordu). Yeni runtime işlevi `nox_dict_eq` (`runtime/collections/dict.zig`, birim testli), `wasm_abi_table`a eklendi.
+- **İç içe `__eq__` yok sayılıyordu:** kullanıcı `__eq__(self, other: C) -> bool` tanımladıysa `C` tipli bir sınıf alanı, liste elemanı, sözlük değeri ya da Optional işlenen artık alan alana yapısal karşılaştırma yerine `__eq__`e devreder (`$C_eq` bir `__eq__` çağrısına dönüşür; kalıtımlı sınıfta vtable üzerinden). `__eq__`in fırlattığı istisna `==` sitesinde yakalanır (programda `__eq__` tanımlayan sınıf varsa kontrol üretilir; yoksa IR değişmez).
+
+### Notlar
+
+- Fixture'lar (iki backend, sızıntı denetimli — `nox.mem.stats()`): `optional_eq`, `class_optional_dict_field_eq`, `dict_eq`, `eq_dunder_nested_exception`. `docs/language/expressions.md` karşılaştırma bölümü ve örneği güncellendi.
+- `list[T | None]` (Optional elemanlı liste) dil tarafından zaten desteklenmiyor (checker/codegen reddeder); bu sürümde değişmedi.
+
 ## [2.1.110]
 
 ### Eklendi

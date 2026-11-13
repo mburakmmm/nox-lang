@@ -7542,6 +7542,21 @@ pub const Checker = struct {
                 // eşit-olmayan-serbest karşılaştırma DAVRANIŞI DEĞİŞMEZ).
                 _ = try self.requireSameFixedIntOrNone(l, r);
                 if (types.isNumeric(l) and types.isNumeric(r)) break :blk .boolean;
+                // v2.1.111: `T | None` değerlerinin eşitliği (iki Optional ya da Optional ile düz `T`). İşlenenler çıplak `None` DEĞİLSE ifade,
+                // codegen'e null-güvenli değer eşitliğini bildiren `opt_eq` bayraklı bir kopyaya yeniden yazılır (`x == None` testi bundan ayrıdır).
+                if (b.opt_eq) break :blk .boolean;
+                if ((l == .optional or r == .optional) and l != .none and r != .none) {
+                    const l_inner: Type = if (l == .optional) l.optional.* else l;
+                    const r_inner: Type = if (r == .optional) r.optional.* else r;
+                    if (types.eql(l_inner, r_inner)) {
+                        const nl = try self.allocator.create(ast.Expr);
+                        nl.* = b.left.*;
+                        const nr = try self.allocator.create(ast.Expr);
+                        nr.* = b.right.*;
+                        _ = try self.rewriteExprTo(ctx, @intFromPtr(b.left), .{ .binary = .{ .op = b.op, .left = nl, .right = nr, .opt_eq = true } });
+                        break :blk .boolean;
+                    }
+                }
                 if (types.eql(l, r)) break :blk .boolean;
                 // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `x !=
                 // None` / `x == None` — bir Optional'ı `None` ile

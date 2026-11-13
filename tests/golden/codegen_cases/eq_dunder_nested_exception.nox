@@ -1,0 +1,31 @@
+class R:
+    k: int
+    def __init__(self, k: int) -> None:
+        self.k = k
+    def __eq__(self, o: R) -> bool:
+        if self.k < 0:
+            raise ValueError("neg")
+        return self.k == o.k
+
+class W:
+    r: R
+    def __init__(self, r: R) -> None:
+        self.r = r
+
+a: R | None = R(1)
+b: R | None = R(1)
+c: R | None = R(-1)
+print(a == b)
+try:
+    print(c == b)
+except ValueError as e:
+    print("caught1")
+try:
+    print(W(R(-1)) == W(R(2)))
+except ValueError as e:
+    print("caught2")
+try:
+    print(R(-1) == R(2))
+except ValueError as e:
+    print("caught3")
+print("end")

@@ -705,6 +705,50 @@ pub export fn nox_hash_str(rt: ?*anyopaque, s: ?[*:0]const u8) i64 {
     return @bitCast(h & 0x7fff_ffff_ffff_ffff);
 }
 
+/// v2.1.111: `nox_dict_eq`nin DEĞER karşılaştırma türleri (codegen `DictInfo.value_*`dan seçer).
+/// `payload`: int/bool/sabit-genişlikli/ptr (8 baytlık payload eşitliği); `float`: sayısal `==` (payload f64 bit örüntüsü);
+/// `str`: içerik karşılaştırması (null-güvenli); `callback`: class/list/dict değerler için derleyicinin ürettiği `$X_eq(rt, a, b) w`.
+pub const DICT_VEQ_PAYLOAD: i32 = 0;
+pub const DICT_VEQ_FLOAT: i32 = 1;
+pub const DICT_VEQ_STR: i32 = 2;
+pub const DICT_VEQ_CALLBACK: i32 = 3;
+
+fn payloadsEqual(rt: ?*anyopaque, vkind: i32, veq: ?*const fn (abi_ptr.Arg, abi_ptr.Arg, abi_ptr.Arg) callconv(.c) i32, a: i64, b: i64) bool {
+    switch (vkind) {
+        DICT_VEQ_FLOAT => return @as(f64, @bitCast(a)) == @as(f64, @bitCast(b)),
+        DICT_VEQ_STR => {
+            if (a == b) return true;
+            const pa = payloadToStrPtr(a) orelse return false;
+            const pb = payloadToStrPtr(b) orelse return false;
+            return std.mem.orderZ(u8, pa, pb) == .eq;
+        },
+        DICT_VEQ_CALLBACK => {
+            if (a == b) return true;
+            const pa = payloadToStrPtr(a) orelse return false;
+            const pb = payloadToStrPtr(b) orelse return false;
+            const f = veq orelse return false;
+            return f(abi_ptr.arg(rt), abi_ptr.arg(pa), abi_ptr.arg(pb)) != 0;
+        },
+        else => return a == b,
+    }
+}
+
+/// v2.1.111: yapısal `dict == dict` — aynı canlı girdi sayısı ve `a`nın HER anahtarı `b`de var, değerleri eşit (ekleme sırası ÖNEMSİZ,
+/// Python gibi). Anahtarlar `b`nin KENDİ arama yoluyla (str: içerik) bulunur. `null` dict'ler (yalnızca ilklenmemiş alan) yalnızca
+/// ikisi de `null` ise eşittir.
+pub export fn nox_dict_eq(rt: ?*anyopaque, ap: ?*anyopaque, bp: ?*anyopaque, vkind: i32, veq: ?*const fn (abi_ptr.Arg, abi_ptr.Arg, abi_ptr.Arg) callconv(.c) i32) i32 {
+    if (ap == bp) return 1;
+    const a: *Dict = @ptrCast(@alignCast(ap orelse return 0));
+    const b: *Dict = @ptrCast(@alignCast(bp orelse return 0));
+    if (liveCount(a) != liveCount(b)) return 0;
+    for (a.entries.items, 0..) |e, i| {
+        if (isDead(a, i)) continue;
+        const j = findIndex(b, e.key, rt) orelse return 0;
+        if (!payloadsEqual(rt, vkind, veq, e.value, b.entries.items[j].value)) return 0;
+    }
+    return 1;
+}
+
 pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
     return @intCast(liveCount(d));
@@ -893,6 +937,41 @@ test "nox_dict_remove/pop/clear/update — sıra korunur, indeks yeniden kurulur
     try std.testing.expectEqual(@as(i64, 33), nox_dict_get(rt, d, 0, 3));
     nox_dict_release(rt, d, 0, 0, 0);
     nox_dict_release(rt, e, 0, 0, 0);
+}
+
+test "nox_dict_eq — ekleme sırası önemsiz, boyut/değer farkı eşitsiz, float/str/callback değer türleri" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const a = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    const b = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    var k: i64 = 1;
+    while (k <= 20) : (k += 1) nox_dict_set(rt, a, 0, 0, 0, k, k * 10); // eşik aşılır -> indeks kurulu
+    k = 20;
+    while (k >= 1) : (k -= 1) nox_dict_set(rt, b, 0, 0, 0, k, k * 10); // ters ekleme sırası
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_eq(rt, a, b, DICT_VEQ_PAYLOAD, null));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_eq(rt, a, a, DICT_VEQ_PAYLOAD, null));
+    nox_dict_set(rt, b, 0, 0, 0, 7, 71); // farklı değer
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_eq(rt, a, b, DICT_VEQ_PAYLOAD, null));
+    nox_dict_set(rt, b, 0, 0, 0, 7, 70);
+    nox_dict_set(rt, b, 0, 0, 0, 99, 1); // farklı boyut
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_eq(rt, a, b, DICT_VEQ_PAYLOAD, null));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_remove(rt, b, 0, 0, 0, 99));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_eq(rt, a, b, DICT_VEQ_PAYLOAD, null)); // mezar taşlı b yine eşit
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_eq(rt, a, null, DICT_VEQ_PAYLOAD, null));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_eq(rt, null, null, DICT_VEQ_PAYLOAD, null));
+
+    const fa = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    const fb = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    nox_dict_set(rt, fa, 0, 0, 0, 1, @bitCast(@as(f64, 0.0)));
+    nox_dict_set(rt, fb, 0, 0, 0, 1, @bitCast(@as(f64, -0.0)));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_eq(rt, fa, fb, DICT_VEQ_FLOAT, null)); // 0.0 == -0.0
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_eq(rt, fa, fb, DICT_VEQ_PAYLOAD, null)); // ham bit karşılaştırması farklıdır
+
+    nox_dict_release(rt, a, 0, 0, 0);
+    nox_dict_release(rt, b, 0, 0, 0);
+    nox_dict_release(rt, fa, 0, 0, 0);
+    nox_dict_release(rt, fb, 0, 0, 0);
 }
 
 test "nox_dict_new/set/get/contains/len/destroy — int anahtar/değer" {

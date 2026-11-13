@@ -1,0 +1,146 @@
+# v2.1.111: dict == dict — yapısal, ekleme sırası ÖNEMSİZ (Python gibi); boyut/değer farkı eşitsiz; iç içe değerler, sınıf alanı, sızıntı yok.
+import nox.mem
+
+d1: dict[str, int] = {"k": 7}
+d2: dict[str, int] = {"k": 7}
+print(d1 == d2)
+print(d1 != d2)
+d3: dict[str, int] = {"k": 8}
+d4: dict[str, int] = {"j": 7}
+d5: dict[str, int] = {"k": 7, "x": 1}
+print(d1 == d3, d1 == d4, d1 == d5, d5 == d1)
+print(d1 != d3, d1 != d4, d1 != d5)
+print(d1 == d1)
+
+# ekleme sırası ÖNEMSİZ
+o1: dict[str, int] = {"a": 1, "b": 2, "c": 3}
+o2: dict[str, int] = {"c": 3, "a": 1, "b": 2}
+print(o1 == o2, o1 != o2)
+
+# boş sözlükler
+e1: dict[str, int] = {}
+e2: dict[str, int] = {}
+print(e1 == e2, e1 == d1, d1 == e1)
+
+# büyük sözlükler (iç indeks kurulu), ters sırada kurulmuş
+big1: dict[int, int] = {}
+big2: dict[int, int] = {}
+i: int = 0
+while i < 50:
+    big1[i] = i * 3
+    big2[49 - i] = (49 - i) * 3
+    i = i + 1
+print(big1 == big2)
+big2[10] = -1
+print(big1 == big2)
+big2[10] = 30
+big2[100] = 1
+print(big1 == big2, big2 == big1)
+
+# silme sonrası (mezar taşı) eşitlik
+big2.pop(100)
+print(big1 == big2)
+
+# değer türleri
+f1: dict[str, float] = {"a": 1.5, "b": 0.0}
+f2: dict[str, float] = {"b": 0.0, "a": 1.5}
+f3: dict[str, float] = {"a": 1.5, "b": 2.5}
+print(f1 == f2, f1 == f3)
+s1: dict[str, str] = {"a": "x", "b": "y"}
+s2: dict[str, str] = {"b": "y", "a": "x"}
+s3: dict[str, str] = {"a": "x", "b": "z"}
+s4: dict[str, str] = {"a": "x" + "", "b": "y"}
+print(s1 == s2, s1 == s3, s1 == s4)
+b1: dict[int, bool] = {1: True, 2: False}
+b2: dict[int, bool] = {2: False, 1: True}
+b3: dict[int, bool] = {1: True, 2: True}
+print(b1 == b2, b1 == b3)
+
+# list / iç içe dict değerleri
+l1: dict[str, list[int]] = {"a": [1, 2], "b": [3]}
+l2: dict[str, list[int]] = {"b": [3], "a": [1, 2]}
+l3: dict[str, list[int]] = {"a": [1, 2], "b": [4]}
+print(l1 == l2, l1 == l3)
+n1: dict[str, dict[str, int]] = {"o": {"x": 1, "y": 2}, "p": {}}
+n2: dict[str, dict[str, int]] = {"p": {}, "o": {"y": 2, "x": 1}}
+n3: dict[str, dict[str, int]] = {"o": {"x": 1, "y": 3}, "p": {}}
+print(n1 == n2, n1 == n3, n1 != n3)
+
+# sınıf değerleri: `__eq__`siz → alan alana; `__eq__`li → ona devreder
+class P:
+    k: int
+    t: int
+    def __init__(self, k: int, t: int) -> None:
+        self.k = k
+        self.t = t
+
+class Q:
+    k: int
+    t: int
+    def __init__(self, k: int, t: int) -> None:
+        self.k = k
+        self.t = t
+    def __eq__(self, o: Q) -> bool:
+        return self.k == o.k
+
+p1: dict[str, P] = {"a": P(1, 2), "b": P(3, 4)}
+p2: dict[str, P] = {"b": P(3, 4), "a": P(1, 2)}
+p3: dict[str, P] = {"a": P(1, 2), "b": P(3, 5)}
+print(p1 == p2, p1 == p3)
+q1: dict[str, Q] = {"a": Q(1, 2), "b": Q(3, 4)}
+q2: dict[str, Q] = {"b": Q(3, 99), "a": Q(1, 98)}
+q3: dict[str, Q] = {"a": Q(1, 2), "b": Q(4, 4)}
+print(q1 == q2, q1 == q3)
+
+# sınıf alanı olarak sözlük: sınıf eşitliği alan alana, sözlük alanı yapısal
+class H:
+    name: str
+    m: dict[str, int]
+    r: dict[str, list[int]]
+    def __init__(self, name: str, m: dict[str, int], r: dict[str, list[int]]) -> None:
+        self.name = name
+        self.m = m
+        self.r = r
+
+h1: H = H("h", {"a": 1, "b": 2}, {"x": [1], "y": [2, 3]})
+h2: H = H("h", {"b": 2, "a": 1}, {"y": [2, 3], "x": [1]})
+h3: H = H("h", {"a": 1, "b": 9}, {"x": [1], "y": [2, 3]})
+h4: H = H("h", {"a": 1, "b": 2}, {"x": [1], "y": [2, 4]})
+h5: H = H("g", {"a": 1, "b": 2}, {"x": [1], "y": [2, 3]})
+print(h1 == h2, h1 == h3, h1 == h4, h1 == h5, h1 != h3)
+
+# list[dict]
+ld1: list[dict[str, int]] = [{"a": 1, "b": 2}, {"c": 3}]
+ld2: list[dict[str, int]] = [{"b": 2, "a": 1}, {"c": 3}]
+ld3: list[dict[str, int]] = [{"a": 1, "b": 2}, {"c": 4}]
+print(ld1 == ld2, ld1 == ld3)
+
+# dict değerli sınıf alanı: sınıf için kimlik DEĞİL yapısal
+a1: dict[str, int] = {"x": 1}
+a2: dict[str, int] = {"x": 1}
+class Box:
+    d: dict[str, int]
+    def __init__(self, d: dict[str, int]) -> None:
+        self.d = d
+print(Box(a1) == Box(a2), Box(a1) == Box({"x": 2}))
+
+# sızıntı: tekrar tekrar kur/karşılaştır, canlı blok büyümemeli
+def churn(n: int) -> int:
+    t: int = 0
+    j: int = 0
+    while j < n:
+        x: dict[str, list[int]] = {"a": [j, 1], "b": [2]}
+        y: dict[str, list[int]] = {"b": [2], "a": [j, 1]}
+        hh1: H = H("h" + str(j), {"a": j}, {"x": [j]})
+        hh2: H = H("h" + str(j), {"a": j}, {"x": [j]})
+        if x == y and hh1 == hh2 and not (x != y):
+            t = t + 1
+        j = j + 1
+    return t
+
+nox.mem.stats()
+print(churn(200))
+m1: nox.mem.MemStats = nox.mem.stats()
+print(churn(200))
+m2: nox.mem.MemStats = nox.mem.stats()
+print(m2.live - m1.live <= 1)

@@ -18,6 +18,8 @@ const ElemHeapInfo = types.ElemHeapInfo;
 const DictInfo = types.DictInfo;
 const ClassField = types.ClassField;
 const ClassInfo = types.ClassInfo;
+const ClassMethodInfo = types.ClassMethodInfo;
+const TAG_SIZE = types.TAG_SIZE;
 const ClassIdEntry = types.ClassIdEntry;
 const RT_PARAM = types.RT_PARAM;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
@@ -1043,6 +1045,31 @@ pub fn genClassEq(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) Code
     try self.qbeFuncParam(.l, "%a", false);
     try self.qbeFuncParam(.l, "%b", false);
     try self.qbeFuncHeaderEnd();
+    // v2.1.111: kullanıcı `__eq__(self, other: <Sınıf>) -> bool` tanımladıysa, `==` dışındaki HER yapısal-eşitlik kullanımı (sınıf alanı,
+    // liste/sözlük elemanı, `T | None` işleneni) alan alana karşılaştırma yerine ona devreder (docs: "field-wise ... unless `__eq__` is defined").
+    // Çağrı, `genMethodCall`in AYNI düzeniyle yapılır (kalıtımlı sınıfta vtable üzerinden). Metod bir istisna fırlatırsa bekleyen istisna
+    // bu fonksiyonun ÇAĞIRANINDA (`==` sitesi, bkz. `genBinary`) kontrol edilir.
+    if (userEqMethod(cinfo)) |m| {
+        const r = try self.newTemp();
+        const args: []const codegen.QbeArg = &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%a" }, .{ .ty = .l, .text = "%b" } };
+        if (cinfo.has_vtable) {
+            const vt_addr = try self.newTemp();
+            try self.qbeOp2Imm(vt_addr, .l, "add", "%a", @intCast(TAG_SIZE));
+            const vtable_ptr = try self.newTemp();
+            try self.qbeLoadL(vtable_ptr, vt_addr);
+            const slot_addr = try self.newTemp();
+            try self.qbeOp2Imm(slot_addr, .l, "add", vtable_ptr, @intCast(m.slot * 8));
+            const fn_ptr = try self.newTemp();
+            try self.qbeLoadL(fn_ptr, slot_addr);
+            try self.qbeCall(.{ .name = r, .ty = .w }, fn_ptr, args);
+        } else {
+            const method_sym = try std.fmt.allocPrint(self.allocator, "${s}___eq__", .{m.owner});
+            try self.qbeCall(.{ .name = r, .ty = .w }, method_sym, args);
+        }
+        try self.qbeRet(r);
+        try self.qbeFuncEnd();
+        return;
+    }
     const mismatch_label = try self.newLabel("classeq_mismatch");
     for (cinfo.fields.items) |f| {
         const addr_a = try self.newTemp();
@@ -1053,7 +1080,7 @@ pub fn genClassEq(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) Code
         try self.narrowLoad(va, f.info, cinfo.layout_mode, addr_a);
         const vb = try self.newTemp();
         try self.narrowLoad(vb, f.info, cinfo.layout_mode, addr_b);
-        try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, mismatch_label, null);
+        try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, f.info.dict_info, mismatch_label, null);
     }
     try self.qbeRet("1");
     try self.qbeLabel(mismatch_label);
@@ -1100,6 +1127,7 @@ pub fn genEqCompareOrJump(
     elem_qtype: QbeType,
     elem_heap_info: ?*const ElemHeapInfo,
     elem_is_str: bool,
+    dict_info: ?*const DictInfo,
     mismatch_label: []const u8,
     success_label: ?[]const u8,
 ) CodegenError!void {
@@ -1118,17 +1146,9 @@ pub fn genEqCompareOrJump(
         if (success_label) |sl| try self.qbeJmp(sl);
         return;
     }
-    if (heap == .str) {
-        const cmp = try self.newTemp();
-        try self.qbeCall(.{ .name = cmp, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
-        const cont_label = try self.newLabel("eqcmp_cont");
-        try self.qbeJnz(cmp, mismatch_label, cont_label);
-        try self.qbeLabel(cont_label);
-        if (success_label) |sl| try self.qbeJmp(sl);
-        return;
-    }
 
-    // `heap == .class` ya da `.list` — NULL olabilir (bkz. belge notu).
+    // `heap == .str`/`.class`/`.list`/`.dict`/kutulanmış-Optional — NULL olabilir (bkz. belge notu; `str | None` alanı ya da `__init__`in
+    // koşullu dalda atlattığı alan): ikisi de null ise eşit, yalnızca biri null ise eşitsiz, ikisi de doluysa türe özgü karşılaştırma.
     const a_null = try self.newTemp();
     try self.qbeOp2Imm(a_null, .w, "ceql", va, 0);
     const b_null = try self.newTemp();
@@ -1144,51 +1164,119 @@ pub fn genEqCompareOrJump(
     try self.qbeOp2(both_null, .w, "and", a_null, b_null);
     try self.qbeJnz(both_null, cont_label, mismatch_label);
     try self.qbeLabel(rec_label);
-    const rec: []const u8 = switch (heap) {
-        .class => blk: {
+    const rec = try self.emitNonNullEq(va, vb, heap, class_name, elem_qtype, elem_heap_info, elem_is_str, dict_info);
+    try self.qbeJnz(rec, cont_label, mismatch_label);
+    try self.qbeLabel(cont_label);
+    if (success_label) |sl| try self.qbeJmp(sl);
+}
+
+/// `va`/`vb` (İKİSİ DE null OLMAYAN, `heap` türünde iki değer) için eşitlik: `1`/`0` döndüren bir `w` temp'i. `genEqCompareOrJump`,
+/// `genNullSafeEq` ve `emitValueEq` ortak kullanır. `str`: içerik (`strcmp`); `class`: `$C_eq` (kullanıcı `__eq__`i varsa ona devreden,
+/// yoksa alan alana yapısal — bkz. `genClassEq`); `list`: `$List_*_eq`; `dict`: `$Dict_*_eq` (sıra-bağımsız yapısal);
+/// kutulanmış-Optional-ilkel: kutu içindeki skalerlerin değer eşitliği. `Task`/`Channel`/closure/iş parçacığı tutamaçları/`ptr[T]`
+/// yapısal eşitliğe SAHİP DEĞİL — tutamaç kimliği (pointer) karşılaştırması.
+pub fn emitNonNullEq(
+    self: *Codegen,
+    va: []const u8,
+    vb: []const u8,
+    heap: HeapKind,
+    class_name: ?[]const u8,
+    elem_qtype: QbeType,
+    elem_heap_info: ?*const ElemHeapInfo,
+    elem_is_str: bool,
+    dict_info: ?*const DictInfo,
+) CodegenError![]const u8 {
+    switch (heap) {
+        .str => {
+            const cmp = try self.newTemp();
+            try self.qbeCall(.{ .name = cmp, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
+            const t = try self.newTemp();
+            try self.qbeOp2Imm(t, .w, "ceqw", cmp, 0);
+            return t;
+        },
+        .class => {
             const t = try self.newTemp();
             const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{class_name.?});
             try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
-            break :blk t;
+            return t;
         },
-        .list => blk: {
+        .list => {
             const fn_name = try self.eqFnNameForList(elem_qtype, elem_heap_info, elem_is_str);
             const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{fn_name});
             const t = try self.newTemp();
             try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
-            break :blk t;
+            return t;
         },
-        // `dict`/`Task`/`Channel` — opak tutamaçlar, YAPISAL derinlemesine
-        // eşitliği YOK (stdlib fazı §C'nin `dict` KAPSAM dışı bıraktığı
-        // bir özellik, bkz. checker.zig). `HttpResponse.headers` gibi bir
-        // `dict[str,str]` sınıf ALANI, HER sınıf İÇİN OTOMATİK üretilen
-        // `$ClassName_eq`de (kullanıcı `==` HİÇ kullanmasa BİLE) bu dala
-        // düşer — güvenli varsayılan: TUTAMAÇ KİMLİĞİ (pointer) karşılaştırması.
-        // Faz U.4.3: closure değerleri henüz `==` karşılaştırmasını
-        // DESTEKLEMİYOR (checker bu dala HİÇ düşürmemeli) — savunmacı
-        // olarak `dict`/`Task`/`Channel` İLE AYNI tutamaç-kimliği
-        // (pointer) karşılaştırmasına düşülür.
-        // Faz FF.6.4: `list[int | None]` gibi bir kutulanmış-Optional
-        // ELEMANLI liste (v1'de HİÇBİR golden fixture'ın EGZERSİZ
-        // ETMEDİĞİ, ama exhaustive switch GEREKSİNİMİYLE buraya düşen
-        // bir kombinasyon) — GÜVENLİ/tutucu bir varsayılan olarak
-        // `dict`/`Task`/`Channel` İLE AYNI tutamaç-kimliği (pointer)
-        // karşılaştırmasına düşülür (DEĞER eşitliği DEĞİL) — İKİ AYRI
-        // kutunun AYNI değeri TAŞISA BİLE eşit SAYILMAYACAĞI, bilinçli
-        // bir v1 sınırlamasıdır.
-        // v2.0 madde 6: `ptr[T]` de (`dict`/`Task`/`Channel` İLE AYNI
-        // gerekçe) yapısal derinlemesine eşitliğe SAHİP DEĞİL — güvenli
-        // varsayılan: tutamaç-kimliği (pointer/adres) karşılaştırması.
-        .dict, .task, .channel, .closure, .thread_handle, .thread_channel, .boxed_scalar, .task_local, .typed_ptr => blk: {
+        .dict => {
+            const fn_name = try self.eqFnNameForDict(dict_info.?);
+            const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{fn_name});
+            const t = try self.newTemp();
+            try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
+            return t;
+        },
+        // `int | None`/`float | None`/`bool | None`: kutu = 8 baytlık tek payload (bkz. `boxScalar`); iki kutunun İÇERİĞİ karşılaştırılır.
+        .boxed_scalar => {
+            const xa = try self.newTemp();
+            try self.qbeLoad(xa, elem_qtype, elem_qtype, va);
+            const xb = try self.newTemp();
+            try self.qbeLoad(xb, elem_qtype, elem_qtype, vb);
+            const mnemonic: []const u8 = switch (elem_qtype) {
+                .l => "ceql",
+                .d => "ceqd",
+                else => "ceqw",
+            };
+            const t = try self.newTemp();
+            try self.qbeOp2(t, .w, mnemonic, xa, xb);
+            return t;
+        },
+        // Task/Channel/closure/iş parçacığı tutamaçları/task_local/`ptr[T]`: yapısal eşitlik YOK — tutamaç kimliği.
+        // (HttpResponse gibi opak alanlı sınıflar için, kullanıcı `==` HİÇ kullanmasa bile otomatik üretilen `$C_eq` bu dala düşer.)
+        .task, .channel, .closure, .thread_handle, .thread_channel, .task_local, .typed_ptr => {
             const t = try self.newTemp();
             try self.qbeOp2(t, .w, "ceql", va, vb);
-            break :blk t;
+            return t;
         },
-        .none, .str => unreachable,
-    };
-    try self.qbeJnz(rec, cont_label, mismatch_label);
-    try self.qbeLabel(cont_label);
-    if (success_label) |sl| try self.qbeJmp(sl);
+        .none => unreachable,
+    }
+}
+
+/// `a == b` — HER İKİ işlenen de aynı `heap` türünde, ama `null` OLABİLİR (`T | None`): ikisi null ise `1`, yalnızca biri null ise `0`,
+/// ikisi de doluysa `emitNonNullEq`. Sonuç bir `phi` ile tek `w` temp'ine birleştirilir (dallar arası yığın slotu GEREKTİRMEZ; `phi`nin
+/// öncül adları HER dalın GERÇEKTEN bittiği blok olan `current_label`dan alınır — `emitNonNullEq` kendi içinde blok açabilir).
+pub fn genNullSafeEq(
+    self: *Codegen,
+    va: []const u8,
+    vb: []const u8,
+    heap: HeapKind,
+    class_name: ?[]const u8,
+    elem_qtype: QbeType,
+    elem_heap_info: ?*const ElemHeapInfo,
+    elem_is_str: bool,
+    dict_info: ?*const DictInfo,
+) CodegenError![]const u8 {
+    const a_null = try self.newTemp();
+    try self.qbeOp2Imm(a_null, .w, "ceql", va, 0);
+    const b_null = try self.newTemp();
+    try self.qbeOp2Imm(b_null, .w, "ceql", vb, 0);
+    const either_null = try self.newTemp();
+    try self.qbeOp2(either_null, .w, "or", a_null, b_null);
+    const null_case_label = try self.newLabel("nseq_null");
+    const rec_label = try self.newLabel("nseq_rec");
+    const done_label = try self.newLabel("nseq_done");
+    try self.qbeJnz(either_null, null_case_label, rec_label);
+    try self.qbeLabel(null_case_label);
+    const both_null = try self.newTemp();
+    try self.qbeOp2(both_null, .w, "and", a_null, b_null);
+    const null_pred = self.current_label;
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(rec_label);
+    const rec = try self.emitNonNullEq(va, vb, heap, class_name, elem_qtype, elem_heap_info, elem_is_str, dict_info);
+    const rec_pred = self.current_label;
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(done_label);
+    const result = try self.newTemp();
+    try self.qbePhi(result, .w, null_pred, both_null, rec_pred, rec);
+    return result;
 }
 
 /// GG.13 (bkz. nox-teknik-spesifikasyon.md §3.66): `a == b`/`a != b`
@@ -1202,7 +1290,24 @@ pub fn genEqCompareOrJump(
 /// `==`in ÇOK sayıda KULLANIM sitesinde tekrar tekrar üretilen kod
 /// miktarını sınırlamak İçin küçük bir eşik (≤8 alan) uygulanır.
 pub fn classEqInlineEligible(cinfo: ClassInfo) bool {
-    return cinfo.fields.items.len <= 8;
+    return cinfo.fields.items.len <= 8 and userEqMethod(cinfo) == null;
+}
+
+/// Kullanıcının tanımladığı `__eq__(self, other: <Sınıf>) -> bool` (yapısal eşitliğin YERİNE geçer); yoksa `null`.
+pub fn userEqMethod(cinfo: ClassInfo) ?ClassMethodInfo {
+    const m = cinfo.methods.get("__eq__") orelse return null;
+    if (m.sig.params.len != 1 or m.sig.params[0].heap != .class or m.sig.ret.qtype != .w or m.sig.ret.heap != .none) return null;
+    return m;
+}
+
+/// Programda `__eq__` tanımlayan en az bir sınıf var mı — `==` sitelerinin, `$C_eq`nin içinde fırlatılmış bir istisnayı ÇAĞIRAN yerde
+/// yakalayabilmesi için (yoksa ek kod ÜRETİLMEZ, IR değişmez).
+pub fn anyClassHasUserEq(self: *Codegen) bool {
+    var it = self.classes.valueIterator();
+    while (it.next()) |c| {
+        if (userEqMethod(c.*) != null) return true;
+    }
+    return false;
 }
 
 /// GG.13: `genClassEq`nin AYNI alan-alana karşılaştırma mantığını,
@@ -1238,7 +1343,7 @@ pub fn genClassEqInline(self: *Codegen, cinfo: ClassInfo, a_ptr: []const u8, b_p
         const vb = try self.newTemp();
         try self.narrowLoad(vb, f.info, cinfo.layout_mode, addr_b);
         const is_last = i == cinfo.fields.items.len - 1;
-        try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, mismatch_label, if (is_last) match_label else null);
+        try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, f.info.dict_info, mismatch_label, if (is_last) match_label else null);
     }
     try self.qbeLabel(match_label);
     const done_label = try self.newLabel("eqinline_done");
@@ -1279,13 +1384,15 @@ pub fn eqMangleFor(self: *Codegen, elem_qtype: QbeType, elem_heap_info: ?*const 
             // karşılaştırması İçin DEĞİL, ama `genClassEq`nin TÜM alanları
             // KOŞULSUZ ziyaret etmesi YÜZÜNDEN) — ÖNCEDEN `unreachable`e
             // düşüp ÇÖKÜYORDU.
-            .dict => "dict",
+            // v2.1.111: `dict` ARTIK yapısal (sıra-bağımsız) karşılaştırılır — ad dict'in DEĞER şeklini taşır; kutulanmış-Optional
+            // ELEMAN (`list[int | None]`) kutu içi değer eşitliğiyle karşılaştırılır — ad iç skaler tipini taşır.
+            .dict => try std.fmt.allocPrint(self.allocator, "Dict_{s}", .{try self.dictEqMangle(ehi.dict_info.?)}),
+            .boxed_scalar => try std.fmt.allocPrint(self.allocator, "Boxed_{s}", .{qbeTypeName(ehi.elem_qtype)}),
             .task => "task",
             .channel => "channel",
             .closure => "closure",
             .thread_handle => "thread_handle",
             .thread_channel => "thread_channel",
-            .boxed_scalar => "boxed_scalar",
             .task_local => "task_local",
             // v2.0 madde 6: `list[ptr[T]]` bu turda desteklenmez (bkz. plan
             // dosyası "kapsam DIŞI") — `resolveType`in `list` dalının elem-
@@ -1298,6 +1405,79 @@ pub fn eqMangleFor(self: *Codegen, elem_qtype: QbeType, elem_heap_info: ?*const 
     }
     if (elem_is_str) return "str";
     return try std.fmt.allocPrint(self.allocator, "prim{s}", .{qbeTypeName(elem_qtype)});
+}
+
+/// `dict[K, V]` eşitlik fonksiyonunun adındaki DEĞER şekli: anahtar türü eşitliği etkilemez (anahtarlar dict'in KENDİ arama yoluyla bulunur),
+/// yalnızca değerlerin nasıl karşılaştırılacağı (payload / float / str / class / list / iç dict) önemlidir.
+pub fn dictEqMangle(self: *Codegen, di: *const DictInfo) CodegenError![]const u8 {
+    if (di.value_is_class) return try std.fmt.allocPrint(self.allocator, "class_{s}", .{di.value_class_name.?});
+    switch (di.value_heap) {
+        .list => {
+            const vti = di.value_ti.?;
+            const inner = try self.eqMangleFor(vti.elem_qtype, vti.elem_heap_info, vti.elem_is_str);
+            return try std.fmt.allocPrint(self.allocator, "list_{s}", .{inner});
+        },
+        .dict => return try std.fmt.allocPrint(self.allocator, "dict_{s}", .{try self.dictEqMangle(di.value_ti.?.dict_info.?)}),
+        else => {},
+    }
+    if (di.value_is_str) return "str";
+    if (di.value_qtype == .d) return "float";
+    return "int";
+}
+
+/// `dict[K, V]` için `$Dict_<mangled>_eq(rt, a, b) w`i ister — ilk istekte `dict_eq_queue`ya TEMBEL kaydedilir (`eqFnNameForList` deseni).
+pub fn eqFnNameForDict(self: *Codegen, di: *const DictInfo) CodegenError![]const u8 {
+    const name = try std.fmt.allocPrint(self.allocator, "Dict_{s}", .{try self.dictEqMangle(di)});
+    if (!self.dict_eq_seen.contains(name)) {
+        try self.dict_eq_seen.put(self.allocator, name, {});
+        try self.dict_eq_queue.append(self.allocator, .{ .name = name, .info = di });
+    }
+    return name;
+}
+
+/// `eqFnNameForDict`in kuyruğa aldığı `$Dict_<name>_eq(rt, a, b) w`i üretir: runtime'ın `nox_dict_eq`ine değer-karşılaştırma türünü
+/// (payload / float / str / geri-çağrı) ve gerekirse sınıf/liste/iç dict `_eq` fonksiyonunun adresini geçirir. `null` dict'ler
+/// (`nox_dict_eq` içinde) yalnızca ikisi de null ise eşittir.
+pub fn genDictEq(self: *Codegen, name: []const u8, di: *const DictInfo) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    var vkind: []const u8 = "0"; // DICT_VEQ_PAYLOAD
+    var cb: []const u8 = "0";
+    if (di.value_is_class) {
+        vkind = "3";
+        cb = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{di.value_class_name.?});
+    } else switch (di.value_heap) {
+        .list => {
+            const vti = di.value_ti.?;
+            vkind = "3";
+            cb = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{try self.eqFnNameForList(vti.elem_qtype, vti.elem_heap_info, vti.elem_is_str)});
+        },
+        .dict => {
+            vkind = "3";
+            cb = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{try self.eqFnNameForDict(di.value_ti.?.dict_info.?)});
+        },
+        else => {
+            if (di.value_is_str) {
+                vkind = "2";
+            } else if (di.value_qtype == .d) {
+                vkind = "1";
+            }
+        },
+    }
+
+    const sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{name});
+    try self.qbeFuncHeaderStart(.w, sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%a", false);
+    try self.qbeFuncParam(.l, "%b", false);
+    try self.qbeFuncHeaderEnd();
+    const r = try self.newTemp();
+    try self.qbeCall(.{ .name = r, .ty = .w }, "$nox_dict_eq", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%a" }, .{ .ty = .l, .text = "%b" }, .{ .ty = .w, .text = vkind }, .{ .ty = .l, .text = cb } });
+    try self.qbeRet(r);
+    try self.qbeFuncEnd();
 }
 
 /// Bir `list[T]`nin (elemanları `elem_qtype`/`elem_heap_info`/`elem_is_str`
@@ -1405,7 +1585,7 @@ pub fn genListEq(self: *Codegen, name: []const u8, elem_qtype: QbeType, elem_hea
     try self.loadListElem(eb, elem_qtype, addr_b);
     const elem_heap: HeapKind = if (elem_heap_info) |ehi| ehi.heap else if (elem_is_str) .str else .none;
     const elem_class_name: ?[]const u8 = if (elem_heap_info) |ehi| ehi.class_name else null;
-    try self.genEqCompareOrJump(ea, eb, elem_qtype, elem_heap, elem_class_name, if (elem_heap_info) |ehi| ehi.elem_qtype else .none, if (elem_heap_info) |ehi| ehi.nested else null, if (elem_heap_info) |ehi| ehi.elem_is_str else false, false_label, backedge_label);
+    try self.genEqCompareOrJump(ea, eb, elem_qtype, elem_heap, elem_class_name, if (elem_heap_info) |ehi| ehi.elem_qtype else .none, if (elem_heap_info) |ehi| ehi.nested else null, if (elem_heap_info) |ehi| ehi.elem_is_str else false, if (elem_heap_info) |ehi| ehi.dict_info else null, false_label, backedge_label);
     try self.qbeLabel(backedge_label);
     try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);
     try self.qbeJmp(cond_label);
