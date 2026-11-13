@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.109]
+
+### Düzeltildi
+
+- **`noxc bindgen`: C23 `bool` anahtar sözcüğü** (CI v2.1.105–108 Linux kırmızısı): gcc 15+ varsayılanı C23'tür ve `<stdbool.h>` makrosu olmadan çıplak `bool` bırakır; ayrıştırıcı onu tür adı bilemeyip `yyjson.h`te 150+ bildirimi atlıyordu (180 işlev + 320 uyarı, kabuk derlenmedi). Artık `bool` (typedef edilmemişse) `_Bool`dur; gcc 16, Apple clang ve zig cc ile yyjson 335 işlev + 0 uyarı. Birim testi eklendi
+
 ## [2.1.108]
 
 ### Düzeltildi

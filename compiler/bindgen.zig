@@ -378,7 +378,8 @@ const Parser = struct {
             } else if (std.mem.eql(u8, s, "unsigned")) {
                 is_unsigned = true;
                 have_type = true;
-            } else if (std.mem.eql(u8, s, "_Bool")) {
+            } else if (std.mem.eql(u8, s, "_Bool") or (std.mem.eql(u8, s, "bool") and !self.typedefs.contains("bool"))) {
+                // C23'te `bool` anahtar sözcüktür (gcc 15+ varsayılanı); eski standartlarda <stdbool.h> makrosu zaten `_Bool`a açılır
                 kw_bool = true;
                 have_type = true;
             } else if (std.mem.eql(u8, s, "_Complex") or std.mem.eql(u8, s, "__complex__")) {
@@ -1875,4 +1876,18 @@ test "hedef ABI: __SIZEOF_LONG__=4 ve __CHAR_UNSIGNED__ tür eşlemesini değiş
     ;
     const out = try generateFromText(a, "long f(long x, char c, long long y);", defs, .{ .header = "x.h", .lib = "libx", .shim_lib = "s.o", .include_name = "x.h" }, true);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def f(x: i32, c: u8, y: i64) -> i32") != null);
+}
+
+test "C23: stdbool makrosu olmadan çıplak `bool` anahtar sözcüğü _Bool'dur (gcc 15+ varsayılanı)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src =
+        \\__attribute__((visibility("default"))) bool flag_set(const char *name, bool on);
+        \\static inline bool is_on(void) { return 1; }
+    ;
+    const out = try generateFromText(a, src, "", .{ .header = "x.h", .lib = "libx", .shim_lib = "s.o", .include_name = "x.h" }, true);
+    try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def flag_set(name: str, on: bool) -> bool from \"libx\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.nox, "def is_on() -> bool:") != null);
+    try std.testing.expectEqual(@as(usize, 0), out.warnings.len);
 }
