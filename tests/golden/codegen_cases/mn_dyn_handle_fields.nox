@@ -1,0 +1,69 @@
+# Faz 9.0 F5 (v2.1.136): paylaşılan sınıf örneği KANAL tutamacı alanı taşır (yuva `__init__` dışında değişmez) + `__del__` olan paylaşılan sınıf.
+# Tutamaçlar iş parçacığı güvenlidir; alan okuması düz yükleme, sınıfın diğer alanları bariyerli kalır. `__del__` kilit DIŞINDA (eski değer bırakılırken) çalışır.
+class Hub:
+    out: Channel[int]
+    name: str
+    sent: int
+    def __init__(self: Hub, out: Channel[int]) -> None:
+        self.out = out
+        self.name = "hub"
+        self.sent = 0
+    def rename(self: Hub, n: str) -> None:
+        self.name = n
+        self.sent = self.sent + 1
+
+class Tracker:
+    label: str
+    def __init__(self: Tracker, label: str) -> None:
+        self.label = label
+    def __del__(self: Tracker) -> None:
+        done.append(1)
+
+class Slot:
+    cur: Tracker
+    n: int
+    def __init__(self: Slot) -> None:
+        self.cur = Tracker("a")
+        self.n = 0
+    def swap(self: Slot, s: str) -> None:
+        self.cur = Tracker(s)
+        self.n = self.n + 1
+
+done: list[int] = []
+chan: Channel[int] = Channel[int](64)
+hub: Hub = Hub(chan)
+slot: Slot = Slot()
+
+async def worker(id: int, fin: Channel[int]) -> None:
+    j: int = 0
+    while j < 100:
+        hub.rename("w" + str(id) + "_" + str(j))
+        slot.swap("t" + str(j))
+        j = j + 1
+    await hub.out.send(id)
+    await fin.send(id)
+
+async def main_task() -> None:
+    fin: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, fin)
+        k = k + 1
+    tot: int = 0
+    k = 0
+    while k < 6:
+        tot = tot + await fin.recv()
+        k = k + 1
+    got: int = 0
+    k = 0
+    while k < 6:
+        got = got + await chan.recv()
+        k = k + 1
+    print(tot)
+    print(got)
+    print(len(hub.name) > 0)
+    print(hub.sent > 0)
+    print(len(slot.cur.label) > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

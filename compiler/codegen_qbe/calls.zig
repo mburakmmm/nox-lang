@@ -2620,6 +2620,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     var field_recv = false;
     // Faz 9.0 F3: paylaşım-yetenekli sınıfın liste alanını büyüten `append` alan yuvasına geri yazar: tüm işlem örnek kilidi altında yapılır (örnek paylaşılansa).
     var dyn_holder: ?[]const u8 = null;
+    var dyn_gslot = false;
     const recv_addr: []const u8 = switch (a.obj.*) {
         .attribute => |fa| blk: {
             const base = try self.genExpr(fa.obj.*);
@@ -2651,6 +2652,11 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
             try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
             const addr = try self.newTemp();
             try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
+            if (self.dyn_slot_globals.contains(recv_name)) {
+                // Faz 9.0 F5: yuva bariyerli global liste — büyüme yuvaya geri yazar: yuva kilidi altında bloğu yuvadan yeniden oku.
+                dyn_gslot = true;
+                field_recv = true;
+            }
             break :blk addr;
         },
     };
@@ -2666,6 +2672,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // bırakabilir — işaretçi argümandan SONRA alandan YENİDEN okunur.
     // (Yerel/global alıcıda bu hesap gereksizdir, `obj.text` kullanılır.)
     var dyn_shared_flag: ?[]const u8 = null;
+    if (dyn_gslot) try dyn_share.emitGslotLock(self);
     if (dyn_holder) |h| {
         const fl = try dyn_share.emitSharedFlag(self, h);
         try dyn_share.emitCondLock(self, fl, h);
@@ -2915,6 +2922,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
 
     try self.qbeLabel(done_label);
     if (dyn_shared_flag) |fl| try dyn_share.emitCondUnlock(self, fl, dyn_holder.?);
+    if (dyn_gslot) try dyn_share.emitGslotUnlock(self);
     // Alıcı paylaşım-yetenekli alanın SAHİPLİ okumasıysa (`always_fresh`) o referans burada bırakılır (diğer liste yöntemleri kendileri bırakır).
     try self.releaseIfTemporary(a.obj.*, obj);
     return .{ .text = "0", .qtype = .w };

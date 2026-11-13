@@ -1,0 +1,87 @@
+# Faz 9.0 F5 (v2.1.136): DİNAMİK paylaşım + KALITIM — taban tipli alan/liste alt sınıf örnekleri taşır; yayımlama çalışma-zamanı etiketine göre gerçek sınıfın alanlarını geçişli yayımlar
+# (`$nox_publish_body_<Sınıf>`), bariyerler hiyerarşinin tüm üyelerinde etkindir. Sızıntı/çift bırakma DebugAllocator ile yakalanır.
+class Shape:
+    name: str
+    side: int
+    def __init__(self: Shape, name: str, side: int) -> None:
+        self.name = name
+        self.side = side
+    def area(self: Shape) -> int:
+        return self.side
+
+class Square(Shape):
+    tag: str
+    def __init__(self: Square, side: int) -> None:
+        super().__init__("sq", side)
+        self.tag = "t" + str(side)
+    def area(self: Square) -> int:
+        return self.side * self.side
+
+class Circle(Shape):
+    label: str
+    def __init__(self: Circle, r: int) -> None:
+        super().__init__("ci", r)
+        self.label = "c" + str(r)
+    def area(self: Circle) -> int:
+        return 3 * self.side * self.side
+
+class Canvas:
+    shapes: list[Shape]
+    current: Shape
+    def __init__(self: Canvas) -> None:
+        self.shapes = []
+        self.current = Shape("base", 1)
+    def add(self: Canvas, j: int) -> None:
+        if j % 2 == 0:
+            self.shapes.append(Square(j % 9 + 1))
+        else:
+            self.shapes.append(Circle(j % 5 + 1))
+    def swap(self: Canvas, j: int) -> None:
+        if j % 3 == 0:
+            self.current = Square(j % 7 + 1)
+        else:
+            self.current = Circle(j % 4 + 1)
+    def cur_area(self: Canvas) -> int:
+        c: Shape = self.current
+        return c.area()
+
+canvas: Canvas = Canvas()
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 150:
+        canvas.add(j + id)
+        canvas.swap(j + id)
+        acc = acc + canvas.cur_area() % 7
+        if len(canvas.shapes) > 2:
+            s: Shape = canvas.shapes[1]
+            acc = acc + s.area() % 3
+        k: int = 0
+        while k < 100:
+            acc = (acc * 31 + k + j + id) % 1000003
+            k = k + 1
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s > 0)
+    print(len(canvas.shapes))
+    tot: int = 0
+    for sh in canvas.shapes:
+        tot = tot + sh.area()
+    print(tot > 0)
+    print(canvas.cur_area() > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

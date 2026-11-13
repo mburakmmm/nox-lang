@@ -69,6 +69,7 @@ pub fn genNoxInitGlobals(self: *Codegen, module: ast.Module) CodegenError!void {
     const block = try self.newTemp();
     try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.module_globals_size}) } });
     try self.qbeCall(null, "$nox_globals_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = block } });
+    try dyn_share.emitGslotInit(self, block);
 
     for (module.body, 0..) |stmt, i| {
         if (!self.stmtRunsInGlobalInit(stmt, i)) continue;
@@ -150,6 +151,7 @@ pub fn genNoxGlobalsAlloc(self: *Codegen) CodegenError!void {
     const block = try self.newTemp();
     try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.module_globals_size}) } });
     try self.qbeCall(null, "$nox_globals_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = block } });
+    try dyn_share.emitGslotInit(self, block);
     try self.qbeRet(null);
     try self.qbeFuncEnd();
 }

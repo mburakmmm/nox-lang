@@ -3244,67 +3244,72 @@ export function $Board_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+export function $nox_publish_body_Board(l %rt, l %p) {
+@start
+    %t3 =l alloc8 8
+    %t17 =l alloc8 8
+    %t0 =l add %p, 8
+    %t1 =l loadl %t0
+    %t2 =w call $nox_obj_publish_begin(l %t1)
+    jnz %t2, @pub_list_pre0, @pub_list_end3
+@pub_list_pre0
+    storel 0, %t3
+    %t4 =l loadl %t1
+    jmp @pub_list_cond1
+@pub_list_cond1
+    %t5 =l loadl %t3
+    %t6 =w csltl %t5, %t4
+    jnz %t6, @pub_list_body2, @pub_list_end3
+@pub_list_body2
+    %t7 =l mul %t5, 8
+    %t8 =l add %t7, 16
+    %t9 =l add %t1, %t8
+    %t10 =l loadl %t9
+    %t11 =w cnel %t10, 0
+    jnz %t11, @pub_list_have4, @pub_list_skip5
+@pub_list_have4
+    %t12 =w call $nox_obj_publish_begin(l %t10)
+    jmp @pub_list_skip5
+@pub_list_skip5
+    %t13 =l add %t5, 1
+    storel %t13, %t3
+    jmp @pub_list_cond1
+@pub_list_end3
+    %t14 =l add %p, 16
+    %t15 =l loadl %t14
+    %t16 =w call $nox_obj_publish_begin(l %t15)
+    jnz %t16, @pub_list_pre6, @pub_list_end9
+@pub_list_pre6
+    storel 0, %t17
+    %t18 =l loadl %t15
+    jmp @pub_list_cond7
+@pub_list_cond7
+    %t19 =l loadl %t17
+    %t20 =w csltl %t19, %t18
+    jnz %t20, @pub_list_body8, @pub_list_end9
+@pub_list_body8
+    %t21 =l mul %t19, 8
+    %t22 =l add %t21, 16
+    %t23 =l add %t15, %t22
+    %t24 =l loadl %t23
+    %t25 =w cnel %t24, 0
+    jnz %t25, @pub_list_have10, @pub_list_skip11
+@pub_list_have10
+    call $nox_dict_make_shared(l %rt, l %t24)
+    jmp @pub_list_skip11
+@pub_list_skip11
+    %t26 =l add %t19, 1
+    storel %t26, %t17
+    jmp @pub_list_cond7
+@pub_list_end9
+    ret
+}
 export function $nox_publish_Board(l %rt, l %p) {
 @start
-    %t4 =l alloc8 8
-    %t18 =l alloc8 8
     %t0 =w call $nox_obj_publish_begin(l %p)
     jnz %t0, @pub_body0, @pub_done1
 @pub_body0
-    %t1 =l add %p, 8
-    %t2 =l loadl %t1
-    %t3 =w call $nox_obj_publish_begin(l %t2)
-    jnz %t3, @pub_list_pre2, @pub_list_end5
-@pub_list_pre2
-    storel 0, %t4
-    %t5 =l loadl %t2
-    jmp @pub_list_cond3
-@pub_list_cond3
-    %t6 =l loadl %t4
-    %t7 =w csltl %t6, %t5
-    jnz %t7, @pub_list_body4, @pub_list_end5
-@pub_list_body4
-    %t8 =l mul %t6, 8
-    %t9 =l add %t8, 16
-    %t10 =l add %t2, %t9
-    %t11 =l loadl %t10
-    %t12 =w cnel %t11, 0
-    jnz %t12, @pub_list_have6, @pub_list_skip7
-@pub_list_have6
-    %t13 =w call $nox_obj_publish_begin(l %t11)
-    jmp @pub_list_skip7
-@pub_list_skip7
-    %t14 =l add %t6, 1
-    storel %t14, %t4
-    jmp @pub_list_cond3
-@pub_list_end5
-    %t15 =l add %p, 16
-    %t16 =l loadl %t15
-    %t17 =w call $nox_obj_publish_begin(l %t16)
-    jnz %t17, @pub_list_pre8, @pub_list_end11
-@pub_list_pre8
-    storel 0, %t18
-    %t19 =l loadl %t16
-    jmp @pub_list_cond9
-@pub_list_cond9
-    %t20 =l loadl %t18
-    %t21 =w csltl %t20, %t19
-    jnz %t21, @pub_list_body10, @pub_list_end11
-@pub_list_body10
-    %t22 =l mul %t20, 8
-    %t23 =l add %t22, 16
-    %t24 =l add %t16, %t23
-    %t25 =l loadl %t24
-    %t26 =w cnel %t25, 0
-    jnz %t26, @pub_list_have12, @pub_list_skip13
-@pub_list_have12
-    call $nox_dict_make_shared(l %rt, l %t25)
-    jmp @pub_list_skip13
-@pub_list_skip13
-    %t27 =l add %t20, 1
-    storel %t27, %t18
-    jmp @pub_list_cond9
-@pub_list_end11
+    call $nox_publish_body_Board(l %rt, l %p)
     jmp @pub_done1
 @pub_done1
     ret

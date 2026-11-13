@@ -364,6 +364,7 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
             const v0 = try self.genExprForTarget(a.value, g.info);
             const retained = try self.retainIfAliasing(a.value, v0);
             const val = try self.convert(retained, g.info.qtype);
+            if (self.dyn_slot_globals.contains(name)) return try dyn_share.genSlotStore(self, g, val.text);
             const block = try self.newTemp();
             try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
             const addr = try self.newTemp();

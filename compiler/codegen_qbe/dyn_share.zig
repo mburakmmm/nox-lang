@@ -84,6 +84,7 @@ pub const MutCtx = struct {
     holder_flag: ?[]const u8 = null,
     block_flag: ?[]const u8 = null,
     active: bool = false,
+    gslot: bool = false,
     recv: ?ast.Expr = null,
     base: ?Value = null,
 };
@@ -93,6 +94,19 @@ pub fn enterMut(self: *Codegen, recv: ast.Expr, obj: Value) CodegenError!MutCtx 
     if (!listHeapElems(self, obj)) return ctx;
     ctx.active = true;
     var list_text = obj.text;
+    if (recv == .identifier and !self.vars.contains(recv.identifier) and self.dyn_slot_globals.contains(recv.identifier)) {
+        // Global yuvadaki liste: yuva kilidi altında bloğu yuvadan yeniden oku (bayat olmasın).
+        const g = self.module_globals.get(recv.identifier).?;
+        try emitGslotLock(self);
+        const block = try self.newTemp();
+        try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
+        const addr = try self.newTemp();
+        try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
+        const t = try self.newTemp();
+        try self.qbeLoadL(t, addr);
+        list_text = t;
+        ctx.gslot = true;
+    }
     if (recv == .attribute) {
         const fa = recv.attribute;
         const base = try self.genExpr(fa.obj.*);
@@ -126,6 +140,7 @@ pub fn exitMut(self: *Codegen, ctx: MutCtx) CodegenError!void {
     if (!ctx.active) return;
     if (ctx.block_flag) |fl| try emitCondUnlock(self, fl, ctx.obj.text);
     if (ctx.holder) |h| try emitCondUnlock(self, ctx.holder_flag.?, h);
+    if (ctx.gslot) try emitGslotUnlock(self);
 }
 
 /// `exitMut` + (varsa) tutan taban ifadesinin geçici referansını bırakma; kilit bağlamını kapatır (normal yol sonu).
@@ -138,6 +153,65 @@ pub fn finishMut(self: *Codegen, ctx: MutCtx) CodegenError!void {
 pub fn abortMut(self: *Codegen, ctx: MutCtx) CodegenError!void {
     try exitMut(self, ctx);
     if (ctx.active) if (ctx.recv) |r| try self.releaseIfTemporary(r.attribute.obj.*, ctx.base.?);
+}
+
+/// Faz 9.0 F5: yuva bariyerli global için ortak yuva kilidi (globals bloğundaki ayrılmış 16 bayt; sözde-yük başlığı `+8`).
+fn gslotLockPtr(self: *Codegen) CodegenError![]const u8 {
+    const block = try self.newTemp();
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const p = try self.newTemp();
+    try self.qbeOp2Imm(p, .l, "add", block, @intCast(self.gslot_lock_offset + 8));
+    return p;
+}
+
+pub fn emitGslotLock(self: *Codegen) CodegenError!void {
+    const p = try gslotLockPtr(self);
+    try self.qbeCall(null, "$nox_obj_lock", &.{.{ .ty = .l, .text = p }});
+}
+
+pub fn emitGslotUnlock(self: *Codegen) CodegenError!void {
+    const p = try gslotLockPtr(self);
+    try self.qbeCall(null, "$nox_obj_unlock", &.{.{ .ty = .l, .text = p }});
+}
+
+/// Globals bloğu ayrıldıktan sonra yuva kilit sözcüklerini sıfırlar (bellek sıfırlanmış gelmez).
+pub fn emitGslotInit(self: *Codegen, block: []const u8) CodegenError!void {
+    if (self.dyn_slot_globals.count() == 0) return;
+    const a = try self.newTemp();
+    try self.qbeOp2Imm(a, .l, "add", block, @intCast(self.gslot_lock_offset));
+    try self.qbeStoreImmL(0, a);
+    const b = try self.newTemp();
+    try self.qbeOp2Imm(b, .l, "add", block, @intCast(self.gslot_lock_offset + 8));
+    try self.qbeStoreImmL(0, b);
+}
+
+/// Yuva bariyerli globalin SAHİPLİ okuması: kilit altında yükle + retain.
+pub fn genSlotRead(self: *Codegen, g: types.GlobalVar) CodegenError!Value {
+    try emitGslotLock(self);
+    const block = try self.newTemp();
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const addr = try self.newTemp();
+    try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
+    const t = try self.newTemp();
+    try self.qbeLoadL(t, addr);
+    try self.emitInlineRetain(t, g.info.heap);
+    try emitGslotUnlock(self);
+    return .{ .text = t, .qtype = g.info.qtype, .heap = g.info.heap, .elem_qtype = g.info.elem_qtype, .class_name = g.info.class_name, .elem_heap_info = g.info.elem_heap_info, .elem_is_str = g.info.elem_is_str, .dict_info = g.info.dict_info, .func_sig = g.info.func_sig, .fixed_int = g.info.fixed_int, .elem_fixed_int = g.info.elem_fixed_int, .always_fresh = true };
+}
+
+/// Yuva bariyerli globale yazma: yeni değer (zaten sahipli) yayımlanır, kilit altında değiştirilir, eski değer kilit DIŞINDA bırakılır.
+pub fn genSlotStore(self: *Codegen, g: types.GlobalVar, val_text: []const u8) CodegenError!void {
+    try emitPublishValue(self, val_text, g.info);
+    try emitGslotLock(self);
+    const block = try self.newTemp();
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const addr = try self.newTemp();
+    try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
+    const old = try self.newTemp();
+    try self.qbeLoadL(old, addr);
+    try self.qbeStoreL(val_text, addr);
+    try emitGslotUnlock(self);
+    try self.releaseValueIfSet(old, g.info.heap, g.info.elem_qtype, g.info.class_name, g.info.elem_heap_info, g.info.dict_info);
 }
 
 /// Faz 9.0 F4: iş parçacığı sınırını geçen değeri (spawn argümanı, kanal öğesi, görev sonucu) geçişli yayımlar (`SHARED` + dinamik bariyerler etkin).
@@ -329,12 +403,36 @@ pub fn emitBarrierFieldStore(self: *Codegen, obj_text: []const u8, f: ClassField
     try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
 }
 
-/// `$nox_publish_<Sınıf>(rt, p)`: nesneyi (ilk kez ise) `SHARED` yapar ve yığın alanlarını geçişli yayımlar. Her `dyn_classes` sınıfı için bir kez üretilir.
+/// `$nox_publish_<Sınıf>(rt, p)`: nesneyi (ilk kez ise) `SHARED` yapar ve yığın alanlarını geçişli yayımlar. Kalıtım hiyerarşisinde çalışma-zamanı etiketine göre
+/// gerçek sınıfın gövdesine (`$nox_publish_body_<Sınıf>`) dağıtır. Her `dyn_classes` sınıfı için bir kez üretilir.
 pub fn genPublishFunctions(self: *Codegen) CodegenError!void {
     var it = self.dyn_classes.keyIterator();
     while (it.next()) |kp| {
         const cn = kp.*;
         const cinfo = self.classes.get(cn) orelse continue;
+        // 1) gövde: bu sınıfın (miras alınanlar dahil) yığın alanlarını yayımlar
+        {
+            self.temp_counter = 0;
+            self.label_counter = 0;
+            self.mod_cache.deinit(self.allocator);
+            self.mod_cache = .empty;
+            const sym = try std.fmt.allocPrint(self.allocator, "$nox_publish_body_{s}", .{cn});
+            try self.qbeFuncHeaderStart(null, sym);
+            try self.qbeFuncParam(.l, RT_PARAM, true);
+            try self.qbeFuncParam(.l, "%p", false);
+            try self.qbeFuncHeaderEnd();
+            for (cinfo.fields.items) |f| {
+                if (!isBarrierField(f)) continue;
+                const addr = try self.newTemp();
+                try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
+                const v = try self.newTemp();
+                try self.qbeLoadL(v, addr);
+                try emitPublishValue(self, v, f.info);
+            }
+            try self.qbeRet(null);
+            try self.qbeFuncEnd();
+        }
+        // 2) giriş: yalnız ilk yayımlamada gövdeye (kalıtımda etikete göre) gider
         self.temp_counter = 0;
         self.label_counter = 0;
         self.mod_cache.deinit(self.allocator);
@@ -350,15 +448,38 @@ pub fn genPublishFunctions(self: *Codegen) CodegenError!void {
         const done_l = try self.newLabel("pub_done");
         try self.qbeJnz(first, body_l, done_l);
         try self.qbeLabel(body_l);
-        for (cinfo.fields.items) |f| {
-            if (!isBarrierField(f)) continue;
-            const addr = try self.newTemp();
-            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
-            const v = try self.newTemp();
-            try self.qbeLoadL(v, addr);
-            try emitPublishValue(self, v, f.info);
+        if (cinfo.has_vtable and cinfo.descendant_class_ids.len > 1) {
+            const tag = try self.newTemp();
+            try self.qbeLoadL(tag, "%p");
+            for (cinfo.descendant_class_ids) |id| {
+                // `id` -> sınıf adı
+                var name: ?[]const u8 = null;
+                var cit = self.classes.iterator();
+                while (cit.next()) |e| {
+                    if (e.value_ptr.class_id == id) {
+                        name = e.key_ptr.*;
+                        break;
+                    }
+                }
+                const dn = name orelse continue;
+                if (!self.dyn_classes.contains(dn)) continue;
+                const eq = try self.newTemp();
+                try self.qbeOp2Imm(eq, .w, "ceql", tag, @intCast(id));
+                const case_l = try self.newLabel("pub_case");
+                const next_l = try self.newLabel("pub_next");
+                try self.qbeJnz(eq, case_l, next_l);
+                try self.qbeLabel(case_l);
+                const bsym = try std.fmt.allocPrint(self.allocator, "$nox_publish_body_{s}", .{dn});
+                try self.qbeCall(null, bsym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
+                try self.qbeJmp(done_l);
+                try self.qbeLabel(next_l);
+            }
+            try self.qbeJmp(done_l);
+        } else {
+            const bsym = try std.fmt.allocPrint(self.allocator, "$nox_publish_body_{s}", .{cn});
+            try self.qbeCall(null, bsym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
+            try self.qbeJmp(done_l);
         }
-        try self.qbeJmp(done_l);
         try self.qbeLabel(done_l);
         try self.qbeRet(null);
         try self.qbeFuncEnd();

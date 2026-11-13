@@ -1278,6 +1278,9 @@ pub const Codegen = struct {
     list_locks: bool = false,
     /// Faz 9.0 F4: iş parçacığı sınırını geçen sınıf/liste/sözlük değerleri (spawn argümanı, kanal öğesi, görev sonucu) geçilmeden ÖNCE yayımlanır.
     dyn_crossing: bool = false,
+    /// Faz 9.0 F5: yuva bariyerli (sahipli okuma / yayımlayıp kilitli yazma) global `list`/`dict`/sınıf adları ve ortak yuva kilidinin globals bloğundaki ofseti (0 = kilit yok).
+    dyn_slot_globals: std.StringHashMapUnmanaged(void) = .empty,
+    gslot_lock_offset: usize = 0,
     /// Faz 9.0 F3b: açık liste-değiştirme kilit bağlamı (soğuk hata yolları raise öncesi kilitleri bırakır).
     cold_unlock: ?dyn_share.MutCtx = null,
     /// Faz 9.0 F2: DİNAMİK paylaşım bariyerleri üretilen sınıflar (bkz. `dyn_share.zig`) ve başlangıçta yayımlanacak global örnekler.
@@ -2006,6 +2009,7 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
             gen.owned_dict_reads = false;
             gen.list_locks = false;
             gen.dyn_crossing = false;
+            gen.dyn_slot_globals.clearRetainingCapacity();
             gen.shared_class_globals.clearRetainingCapacity();
             gen.dyn_classes.clearRetainingCapacity();
             gen.dyn_publish_globals.clearRetainingCapacity();

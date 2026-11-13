@@ -1103,10 +1103,42 @@ fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.St
     if (depth > 6) return false;
     if (out.contains(cn)) return true;
     const info = self.classes.getPtr(cn) orelse return false;
-    if (info.has_vtable or info.del_owner != null or classHasDecorators(module, cn)) return false;
+    if (info.mixins.len > 0 or classHasDecorators(module, cn)) return false;
     try out.put(self.allocator, cn, {});
     for (info.fields.items) |f| {
+        // Faz 9.0 F5: kanal/görev tutamaçları iş parçacığı güvenlidir; yalnız `__init__` dışında yeniden atanmıyorsa (yuva değişmez) alan olarak taşınabilir.
+        if (f.info.heap == .channel or f.info.heap == .task or f.info.heap == .thread_channel or f.info.heap == .task_local) {
+            if (assignsAttrOutsideInit(module.body, f.name, false)) return false;
+            continue;
+        }
         if (!try dynSafeType(self, f.info, module, out, depth)) return false;
+    }
+    // Faz 9.0 F5: kalıtım hiyerarşisinin TÜM üyeleri birlikte bariyerlidir (taban tipli değişken alt sınıf örneğini gösterebilir; yayımlama çalışma-zamanı etiketiyle dağıtılır).
+    if (info.has_vtable) {
+        var root: []const u8 = cn;
+        var guard: u8 = 0;
+        while (self.classes.get(root)) |ci| : (guard += 1) {
+            if (guard > 32) return false;
+            root = ci.base orelse break;
+        }
+        var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer names.deinit(self.allocator);
+        var cit = self.classes.iterator();
+        while (cit.next()) |e| {
+            var cur: []const u8 = e.key_ptr.*;
+            var g2: u8 = 0;
+            while (self.classes.get(cur)) |ci| : (g2 += 1) {
+                if (g2 > 32) break;
+                if (std.mem.eql(u8, cur, root)) {
+                    try names.append(self.allocator, e.key_ptr.*);
+                    break;
+                }
+                cur = ci.base orelse break;
+            }
+        }
+        for (names.items) |k| {
+            if (!try dynSafeClass(self, k, module, out, depth + 1)) return false;
+        }
     }
     return true;
 }
@@ -1146,7 +1178,8 @@ fn dynSafeType(self: *Codegen, info: types.TypeInfo, module: ast.Module, out: *s
                 self.list_locks = true;
             } else if (sh.kind == 2) {
                 const ec = info.elem_heap_info.?.class_name.?;
-                if (classDefinesMethod(module, ec, "__eq__") or classDefinesMethod(module, ec, "__repr__") or classDefinesMethod(module, ec, "__str__")) return false;
+                if (classDefinesMethod(module, ec, "__eq__") or classDefinesMethod(module, ec, "__repr__") or classDefinesMethod(module, ec, "__str__") or classDefinesMethod(module, ec, "__del__")) return false;
+                if (self.classes.get(ec)) |eci| if (eci.del_owner != null) return false;
                 if (!try dynSafeClass(self, ec, module, out, depth + 1)) return false;
                 self.list_locks = true;
             }
@@ -1218,6 +1251,19 @@ fn crossRoot(self: *Codegen, ti: types.TypeInfo, module: ast.Module, set: *std.S
     }
 }
 
+/// Faz 9.0 F5: yuva bariyerli global (sahipli okuma + yayımlayıp kilitli yazma): tip bariyerli paylaşıma uygunsa kaydeder.
+fn dynSlotGlobal(self: *Codegen, g: *const types.GlobalVar, module: ast.Module) CodegenError!bool {
+    if (g.info.heap != .list and g.info.heap != .dict and g.info.heap != .class) return false;
+    var set: std.StringHashMapUnmanaged(void) = .empty;
+    defer set.deinit(self.allocator);
+    if (!try dynSafeType(self, g.info, module, &set, 0)) return false;
+    var sit = set.keyIterator();
+    while (sit.next()) |k| try self.dyn_classes.put(self.allocator, k.*, {});
+    try self.dyn_slot_globals.put(self.allocator, g.name, {});
+    try self.dyn_publish_globals.put(self.allocator, g.name, {});
+    return true;
+}
+
 /// Faz 9.0: sınıflandırır VE paylaşılan-güvenli sözlük globallerini `shared_dict_globals`a yazar (`genGlobalInitStmt` bunları başlangıçta paylaşılan olarak işaretler).
 /// Kanal/görev globalleri (zaten iş parçacığı güvenli tutamaçlar; hiç yeniden atanmamışsa) ve skaler/`str`-alanlı sınıf örnekleri de paylaşılan tek blokta yaşar.
 pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!SharedGlobalsKind {
@@ -1240,10 +1286,16 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
                     try self.routed_dict_str.put(self.allocator, g.name, {});
                     self.owned_dict_reads = true;
                     kind = .shared_block;
+                } else if (try dynSlotGlobal(self, g, module)) {
+                    kind = .shared_block;
                 } else return .pinned;
             },
             .list => {
-                if (!isRoutedList(self, g.*, module, extra_functions)) return .pinned;
+                if (!isRoutedList(self, g.*, module, extra_functions)) {
+                    if (!try dynSlotGlobal(self, g, module)) return .pinned;
+                    kind = .shared_block;
+                    continue;
+                }
                 try self.routed_lists.put(self.allocator, g.name, {});
                 kind = .shared_block;
             },
@@ -1265,10 +1317,17 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
                     while (sit.next()) |k| try self.dyn_classes.put(self.allocator, k.*, {});
                     try self.dyn_publish_globals.put(self.allocator, g.name, {});
                     kind = .shared_block;
+                } else if (g.info.class_name != null and try dynSlotGlobal(self, g, module)) {
+                    kind = .shared_block;
                 } else return .pinned;
             },
             else => return .pinned,
         }
+    }
+    if (self.dyn_slot_globals.count() > 0) {
+        // Ortak yuva kilidi: globals bloğunun sonunda ayrılmış 16 bayt.
+        self.gslot_lock_offset = self.module_globals_size;
+        self.module_globals_size += 16;
     }
     if (kind == .shared_block) {
         var it2 = self.module_globals.valueIterator();

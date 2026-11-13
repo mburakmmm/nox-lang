@@ -1,0 +1,55 @@
+# Faz 9.0 F5 (v2.1.136): yuva bariyerli globaller — yönlendirilmeyen (iç içe liste), yeniden atanan sözlük ve yeniden atanan sınıf örneği globalleri tek işçiye sabitlenmez:
+# okuma kilit altında sahipli (retain), atama yeni değeri yayımlayıp kilit altında değiştirir, eskiyi kilit dışında bırakır; `append` yuva kilidini tutar. Sızıntı/çift bırakma DebugAllocator ile yakalanır.
+class Cfg:
+    name: str
+    level: int
+    def __init__(self: Cfg, name: str, level: int) -> None:
+        self.name = name
+        self.level = level
+
+grid: list[list[int]] = [[0, 1], [2, 3]]
+book: dict[str, int] = {}
+cfg: Cfg = Cfg("base", 0)
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 150:
+        grid.append([j, id])
+        row: list[int] = grid[0]
+        acc = acc + len(row) % 3
+        if j % 40 == 39:
+            book = {}
+        book["k" + str(j % 13)] = j
+        cfg = Cfg("c" + str(id), j % 5)
+        c: Cfg = cfg
+        acc = acc + c.level % 2 + len(c.name) % 2
+        k: int = 0
+        while k < 100:
+            acc = (acc * 31 + k + j + id) % 1000003
+            k = k + 1
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s > 0)
+    print(len(grid))
+    n: int = 0
+    for r in grid:
+        n = n + len(r)
+    print(n)
+    print(len(book) <= 13)
+    print(len(cfg.name) > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

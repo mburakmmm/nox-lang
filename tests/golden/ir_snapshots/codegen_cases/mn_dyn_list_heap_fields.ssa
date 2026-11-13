@@ -3385,44 +3385,55 @@ export function $Registry_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+export function $nox_publish_body_Registry(l %rt, l %p) {
+@start
+    %t6 =l alloc8 8
+    %t0 =l add %p, 8
+    %t1 =l loadl %t0
+    %t2 =w call $nox_obj_publish_begin(l %t1)
+    %t3 =l add %p, 16
+    %t4 =l loadl %t3
+    %t5 =w call $nox_obj_publish_begin(l %t4)
+    jnz %t5, @pub_list_pre0, @pub_list_end3
+@pub_list_pre0
+    storel 0, %t6
+    %t7 =l loadl %t4
+    jmp @pub_list_cond1
+@pub_list_cond1
+    %t8 =l loadl %t6
+    %t9 =w csltl %t8, %t7
+    jnz %t9, @pub_list_body2, @pub_list_end3
+@pub_list_body2
+    %t10 =l mul %t8, 8
+    %t11 =l add %t10, 16
+    %t12 =l add %t4, %t11
+    %t13 =l loadl %t12
+    %t14 =w cnel %t13, 0
+    jnz %t14, @pub_list_have4, @pub_list_skip5
+@pub_list_have4
+    call $nox_publish_Job(l %rt, l %t13)
+    jmp @pub_list_skip5
+@pub_list_skip5
+    %t15 =l add %t8, 1
+    storel %t15, %t6
+    jmp @pub_list_cond1
+@pub_list_end3
+    ret
+}
 export function $nox_publish_Registry(l %rt, l %p) {
 @start
-    %t7 =l alloc8 8
     %t0 =w call $nox_obj_publish_begin(l %p)
     jnz %t0, @pub_body0, @pub_done1
 @pub_body0
-    %t1 =l add %p, 8
-    %t2 =l loadl %t1
-    %t3 =w call $nox_obj_publish_begin(l %t2)
-    %t4 =l add %p, 16
-    %t5 =l loadl %t4
-    %t6 =w call $nox_obj_publish_begin(l %t5)
-    jnz %t6, @pub_list_pre2, @pub_list_end5
-@pub_list_pre2
-    storel 0, %t7
-    %t8 =l loadl %t5
-    jmp @pub_list_cond3
-@pub_list_cond3
-    %t9 =l loadl %t7
-    %t10 =w csltl %t9, %t8
-    jnz %t10, @pub_list_body4, @pub_list_end5
-@pub_list_body4
-    %t11 =l mul %t9, 8
-    %t12 =l add %t11, 16
-    %t13 =l add %t5, %t12
-    %t14 =l loadl %t13
-    %t15 =w cnel %t14, 0
-    jnz %t15, @pub_list_have6, @pub_list_skip7
-@pub_list_have6
-    call $nox_publish_Job(l %rt, l %t14)
-    jmp @pub_list_skip7
-@pub_list_skip7
-    %t16 =l add %t9, 1
-    storel %t16, %t7
-    jmp @pub_list_cond3
-@pub_list_end5
+    call $nox_publish_body_Registry(l %rt, l %p)
     jmp @pub_done1
 @pub_done1
+    ret
+}
+export function $nox_publish_body_Job(l %rt, l %p) {
+@start
+    %t0 =l add %p, 8
+    %t1 =l loadl %t0
     ret
 }
 export function $nox_publish_Job(l %rt, l %p) {
@@ -3430,8 +3441,7 @@ export function $nox_publish_Job(l %rt, l %p) {
     %t0 =w call $nox_obj_publish_begin(l %p)
     jnz %t0, @pub_body0, @pub_done1
 @pub_body0
-    %t1 =l add %p, 8
-    %t2 =l loadl %t1
+    call $nox_publish_body_Job(l %rt, l %p)
     jmp @pub_done1
 @pub_done1
     ret

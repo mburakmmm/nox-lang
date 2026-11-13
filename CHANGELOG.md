@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.136]
+
+### Eklendi (Faz 9.0 F5: kalıtım, tutamaç alanları, `__del__`, yuva bariyerli globaller)
+
+- **Kalıtım:** kalıtıma katılan sınıflar artık dinamik paylaşıma uygundur; hiyerarşinin TÜM üyeleri birlikte bariyerli olur (taban tipli değişken/`list[Taban]` alt sınıf örnekleri taşır). Yayımlama çalışma-zamanı sınıf etiketine göre dağıtılır: `$nox_publish_<Sınıf>` (ilk yayımlama + etiket dağıtımı) → `$nox_publish_body_<Gerçek sınıf>` (miras alınanlar dahil yığın alanları). Çoklu kalıtım (mixin) hâlâ tek işçiye sabitlenir.
+- **Kanal/görev tutamacı alanları** (yuva `__init__` dışında değişmiyorsa) ve **`__del__`** olan sınıflar paylaşılabilir (`__del__` eski değer kilit DIŞINDA bırakılırken çalışır; `__del__`li sınıf liste ELEMANI olamaz — kullanıcı kodu liste kilidi altında çalışmasın diye).
+- **Yuva bariyerli globaller:** yönlendirilemeyen (ör. iç içe `list[list[int]]`), yeniden atanan `dict` ve yeniden atanan sınıf örneği globalleri tek işçiye sabitlenmez. Okuma ortak yuva kilidi altında sahipli (retain), atama yeni değeri yayımlayıp kilit altında değiştirir ve eskiyi kilit dışında bırakır; global liste `append`/değiştiricileri yuva kilidini tutar (kilit globals bloğunun sonundaki 16 bayttır, `$nox_obj_lock` ile).
+- Test: iki backend golden `mn_dyn_inheritance`, `mn_dyn_handle_fields`, `mn_dyn_slot_globals` (6 işçi); yuva kilidi kapatılınca 19/20 başarısız (negatif kontrol), kilitli 40 çalıştırmada 0 hata. Yayımlama işlevleri gövde/giriş olarak ikiye ayrıldığından `mn_dyn_*` IR anlık görüntüleri yenilendi.
+- Kalan (tek işçiye sabitlenen durumlar): closure/işlev tipli alan, çoklu kalıtım, yeniden atanan kanal/görev globali, yığın elemanlı iç listeler, `crossingSafe`ın reddettiği tipler.
+
 ## [2.1.135]
 
 ### Eklendi (Faz 9.0 F4: yayımlama noktaları)

@@ -2205,16 +2205,21 @@ export function $Stats_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     ret
 }
+export function $nox_publish_body_Stats(l %rt, l %p) {
+@start
+    %t0 =l add %p, 8
+    %t1 =l loadl %t0
+    %t2 =l add %p, 16
+    %t3 =l loadl %t2
+    %t4 =w call $nox_obj_publish_begin(l %t3)
+    ret
+}
 export function $nox_publish_Stats(l %rt, l %p) {
 @start
     %t0 =w call $nox_obj_publish_begin(l %p)
     jnz %t0, @pub_body0, @pub_done1
 @pub_body0
-    %t1 =l add %p, 8
-    %t2 =l loadl %t1
-    %t3 =l add %p, 16
-    %t4 =l loadl %t3
-    %t5 =w call $nox_obj_publish_begin(l %t4)
+    call $nox_publish_body_Stats(l %rt, l %p)
     jmp @pub_done1
 @pub_done1
     ret

@@ -395,6 +395,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
             if (self.module_globals.get(name)) |g| {
                 if (self.routed_lists.contains(name)) break :blk try shared_globals.genListSnapshot(self, g);
                 if (self.routed_strs.contains(name)) break :blk try shared_globals.genStrGlobalGet(self, g);
+                if (self.dyn_slot_globals.contains(name)) break :blk try dyn_share.genSlotRead(self, g);
                 const block = try self.newTemp();
                 try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
                 const addr = try self.newTemp();
