@@ -400,17 +400,19 @@ Try it with `curl --http2 -k https://localhost:8443/` (TLS) or `curl --http2-pri
 
 ### HTTP/3 (QUIC)
 
-`nox.http.set_http3(True)` makes a TLS server (`serve_tls`, `serve_ws_tls`... started after the call) also listen on the **same port number over UDP** and answer [HTTP/3](https://www.rfc-editor.org/rfc/rfc9114) requests with the same handler. It is off by default.
+`nox.http.set_http3(True)` turns HTTP/3 on in both directions. It is off by default and must be called before the servers or requests it should affect.
+
+**Server.** A TLS server (`serve_tls`, `serve_ws_tls`... started after the call) also listens on the **same port number over UDP** (IPv6 dual-stack, falling back to IPv4) and answers [HTTP/3](https://www.rfc-editor.org/rfc/rfc9114) requests with the same handler. HTTP/1.1 and HTTP/2 responses of that server carry `alt-svc: h3=":<port>"; ma=86400` (unless your handler sets its own `alt-svc`), which is how browsers and the Nox client learn that HTTP/3 is available. Everything a handler can do on HTTP/2 works here too: buffered responses, streaming responses with `req.stream(...)` and `trailers(...)` (and Server-Sent Events), request `trailer(...)`, `HEAD`. A slow reader slows your `send` calls down instead of filling memory. On `SIGTERM` or `nox.http.shutdown()` the server sends `GOAWAY`, lets running requests finish (up to the drain timeout) and closes connections with `H3_NO_ERROR`; protocol violations close the connection with the matching HTTP/3 error code. QPACK dynamic table: the server accepts it from clients (table size 4096), which shrinks repeated headers such as cookies.
+
+**Client.** `nox.http.get`, `post`, `request`... keep using HTTP/1.1 or HTTP/2 over TCP at first. When an `https` origin answers with `alt-svc: h3=":<port>"` (same host only; `ma` is honoured up to one day, `clear` forgets it), later requests to that origin go over HTTP/3. If the QUIC connection cannot be established the request silently falls back to TCP (nothing is sent twice); once the request has been sent over QUIC, failures are reported as for any other request. HTTP/3 connections are kept for reuse (up to the `client_pool` size, 60 seconds idle): a stale pooled connection is replaced transparently, and a request that is safe to repeat (`GET`, `HEAD`, `OPTIONS`, `PUT`, `DELETE`) is retried once on a fresh connection if the pooled one fails before any response byte arrives. IPv4 and IPv6 addresses are tried in resolver order. `Content-Encoding: gzip`/`deflate` is decoded and `accept-encoding: gzip, deflate` is sent unless you set your own, as on TCP. Certificates are checked against the OpenSSL trust store (`SSL_CERT_FILE` / `SSL_CERT_DIR` apply); a proxy (`HTTPS_PROXY`) makes requests use TCP.
 
 | | |
 |---|---|
-| Requires | OpenSSL 3.5 or newer (loaded at run time, like the TLS server); on macOS the Homebrew `openssl@3` package, on Linux a distribution that ships OpenSSL 3.5+. Without it, or when the UDP port cannot be opened, the server prints one line and keeps serving HTTP/1.1 and HTTP/2 |
+| Requires | OpenSSL 3.5 or newer (loaded at run time, like the TLS server); on macOS the Homebrew `openssl@3` package, on Linux a distribution that ships OpenSSL 3.5+. Without it, or when the UDP port cannot be opened, the server prints one line and keeps serving HTTP/1.1 and HTTP/2; the client simply stays on TCP |
 | Platforms | macOS and Linux (not Windows, WebAssembly or freestanding) |
-| Requests and responses | buffered (the whole body is read before your handler runs; the response is sent when it returns); `max_body_bytes` answers `413`, `max_header_bytes` answers `431` |
-| Headers | `host` is filled from `:authority`; response `Content-Length` is added for you; connection-specific headers are dropped |
-| Not supported yet | streaming responses (`req.stream(...)`), WebSocket and `CONNECT`, server push, the QPACK dynamic table, IPv6 UDP, `req.peer_addr` (empty on HTTP/3), the HTTP/3 client |
-
-Browsers switch to HTTP/3 after seeing an `alt-svc` response header, so have your handler return `alt-svc: h3=":443"; ma=86400` (use your real port).
+| Request bodies | buffered up to `max_body_bytes` (`413` beyond it); headers beyond `max_header_bytes` answer `431` |
+| `req.peer_addr` | empty on HTTP/3: OpenSSL 3.5 has no API that reports the peer address of a QUIC connection |
+| Not supported, by design | WebSocket and `CONNECT` over HTTP/3 ([RFC 9220](https://www.rfc-editor.org/rfc/rfc9220); no browser uses it), server push (deprecated, as on HTTP/2), 0-RTT (OpenSSL 3.5 QUIC does not offer it), HTTP/3 through proxies (MASQUE) |
 
 ```nox
 import nox.http

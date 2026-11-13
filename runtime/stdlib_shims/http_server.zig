@@ -56,6 +56,7 @@ const websocket_server = @import("websocket_server.zig");
 const fiber_net = @import("fiber_net.zig");
 const quic = @import("quic.zig");
 const h3srv = @import("h3_server.zig");
+const h3_client = @import("h3_client.zig");
 
 /// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): okuma zaman aşımı —
 /// bir bağlantı BAŞLIK/GÖVDE göndermeden bu süreden UZUN askıda kalırsa
@@ -100,6 +101,7 @@ export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
     }
     if (key == 8) {
         g_serve_config.http3.store(if (value == 2) 0 else 1, .monotonic);
+        http_client.g_client_h3.store(if (value == 2) 0 else 1, .monotonic);
         return;
     }
     if (key == 7) {
@@ -1122,6 +1124,8 @@ const ServerRequest = struct {
     stream: ?*StreamState = null,
     /// HTTP/2 akışı (v2.0.127): doluysa `nox_http_respstream_*` HTTP/2 yazma yolunu kullanır.
     h2: ?*h2srv.Stream = null,
+    /// HTTP/3 akış denetimi (v2.1.116): doluysa `nox_http_respstream_*` HTTP/3 yazma yolunu kullanır.
+    h3: ?*h3srv.StreamCtl = null,
     /// HTTP/1.1 chunked istek trailer'ları ham metin ("Ad: değer\n" satırları); `req.trailer(ad)`.
     trailers_blob: []const u8 = &.{},
 };
@@ -1328,6 +1332,13 @@ export fn nox_http_respstream_start_raw(rt: ?*anyopaque, conn: i64, status: i64,
         defer releaseHeaderList(rt, gpa2, hdrs2);
         return if (h2srv.streamBegin(st, @intCast(status), hdrs2)) 1 else 0;
     }
+    if (r.h3) |ctl| {
+        if (status < 200 or status > 599 or status == 204 or status == 304) return 0;
+        const gpa3 = r.gpa orelse return 0;
+        const hdrs3 = retainHeaders(rt, gpa3, headers) catch return 0;
+        defer releaseHeaderList(rt, gpa3, hdrs3);
+        return if (h3srv.ctlBegin(ctl, @intCast(status), @ptrCast(hdrs3))) 1 else 0;
+    }
     if (r.stream != null) return 0;
     const request = r.http_request orelse return 0;
     const gpa = r.gpa orelse return 0;
@@ -1362,6 +1373,10 @@ export fn nox_http_respstream_send_raw(conn: i64, data: ?[*:0]const u8) callconv
         const b2: []const u8 = if (data) |d| str_mod.nox_str_slice(@constCast(d)) else &.{};
         return if (h2srv.streamSend(hs, b2)) 1 else 0;
     }
+    if (r.h3) |ctl| {
+        const b3: []const u8 = if (data) |d| str_mod.nox_str_slice(@constCast(d)) else &.{};
+        return if (h3srv.ctlSend(ctl, b3)) 1 else 0;
+    }
     const st = r.stream orelse return 0;
     if (st.failed or st.ended) return 0;
     const bytes: []const u8 = if (data) |d| str_mod.nox_str_slice(@constCast(d)) else &.{};
@@ -1388,6 +1403,10 @@ export fn nox_http_respstream_end_raw(conn: i64) callconv(.c) i64 {
         h2srv.streamEnd(hs);
         return 1;
     }
+    if (r.h3) |ctl| {
+        h3srv.ctlEnd(ctl);
+        return 1;
+    }
     const st = r.stream orelse return 0;
     return if (finishH1Stream(st)) 1 else 0;
 }
@@ -1400,6 +1419,10 @@ export fn nox_http_respstream_trailers_raw(rt: ?*anyopaque, conn: i64, headers: 
     if (r.h2) |hs| {
         defer releaseHeaderList(rt, gpa, hdrs);
         return if (h2srv.streamTrailers(hs, hdrs)) 1 else 0;
+    }
+    if (r.h3) |ctl| {
+        defer releaseHeaderList(rt, gpa, hdrs);
+        return if (h3srv.ctlTrailers(ctl, @ptrCast(hdrs))) 1 else 0;
     }
     const st = r.stream orelse {
         releaseHeaderList(rt, gpa, hdrs);
@@ -1423,6 +1446,8 @@ export fn nox_http_request_trailer_raw(rt: ?*anyopaque, conn: i64, name: ?[*:0]c
     defer out.deinit(gpa);
     if (r.h2) |hs| {
         _ = h2srv.requestTrailer(hs, wanted, &out, gpa);
+    } else if (r.h3) |ctl| {
+        _ = h3srv.ctlRequestTrailer(ctl, wanted, &out, gpa);
     } else {
         var lines = std.mem.splitScalar(u8, r.trailers_blob, '\n');
         var found = false;
@@ -1456,6 +1481,7 @@ export fn nox_http_request_read_raw(rt: ?*anyopaque, conn: i64, max: i64) callco
 export fn nox_http_respstream_open_raw(conn: i64) callconv(.c) i64 {
     const r = requestFromConn(conn) orelse return 0;
     if (r.h2) |hs| return if (h2srv.streamOpen(hs)) 1 else 0;
+    if (r.h3) |ctl| return if (h3srv.ctlOpen(ctl)) 1 else 0;
     const st = r.stream orelse return 0;
     return if (!st.failed and !st.ended and !shuttingDown()) 1 else 0;
 }
@@ -1632,6 +1658,21 @@ fn readChunkedBody(in: *std.Io.Reader, out: *std.Io.Writer, max_bytes: usize, tr
 
 // ---- HTTP/3 yapıştırıcı (v2.1.115, spec §3.455) -------------------------------------------------------------------------------------------------------------
 
+/// HTTP/3 çalışırken HTTP/1.1 ve HTTP/2 yanıtlarına eklenen `alt-svc` değeri (`h3=":port"; ma=86400`); motor kapalıyken uzunluk 0.
+var g_alt_svc: [48]u8 = undefined;
+var g_alt_svc_len: std.atomic.Value(usize) = .init(0);
+
+/// `headers`ta `alt-svc` yoksa ve HTTP/3 açıksa, başlıklara `alt-svc` ekleyen YENİ bir dilim (çağıran `gpa` ile serbest bırakır); aksi halde `null` (özgün başlıklar kullanılır).
+fn headersWithAltSvc(gpa: std.mem.Allocator, headers: []const std.http.Header) ?[]std.http.Header {
+    const n = g_alt_svc_len.load(.acquire);
+    if (n == 0) return null;
+    for (headers) |h| if (std.ascii.eqlIgnoreCase(h.name, "alt-svc")) return null;
+    const out = gpa.alloc(std.http.Header, headers.len + 1) catch return null;
+    @memcpy(out[0..headers.len], headers);
+    out[headers.len] = .{ .name = "alt-svc", .value = g_alt_svc[0..n] };
+    return out;
+}
+
 /// `serveImpl` başına bir HTTP/3 (QUIC) motoru: TLS sunucusuyla AYNI port numarasında UDP dinler, AYNI handler'ı çağırır. Motor tek bir sabitlenmiş fiber'dır (`h3_server.run`).
 const H3Ctx = struct {
     gpa: std.mem.Allocator,
@@ -1681,6 +1722,11 @@ fn h3ShuttingDown() bool {
     return shuttingDown();
 }
 
+/// Geri basınçta handler'ın kooperatif ~1 ms beklemesi (diğer fiber'lar ilerler).
+fn h3Pause() void {
+    if (!fiber_net.sleepCooperative(1)) http_client.sleepMs(1);
+}
+
 /// Bir HTTP/3 isteğinin handler fiber'ı: isteği Nox değerlerine çevirir, uygulama handler'ını çağırır, yanıtı motorun sahip olacağı belleğe kopyalar (HTTP/2 yolunun `h2ServeStream` gövdesiyle aynı sözleşme).
 fn h3Serve(user: *anyopaque, gpa: std.mem.Allocator, req: *const h3srv.Request, out: *h3srv.Response) bool {
     const c: *H3Ctx = @ptrCast(@alignCast(user));
@@ -1724,9 +1770,16 @@ fn h3Serve(user: *anyopaque, gpa: std.mem.Allocator, req: *const h3srv.Request, 
         .headers = headers_list.items,
         .peer_addr = peer_addr_str,
         .gpa = gpa,
+        .h3 = req.ctl,
     };
-    const resp_payload = c.handler(c.handler_ctx, &req_handle) orelse return false;
-    const resp: *ServerResponse = @ptrCast(@alignCast(resp_payload));
+    const resp_payload = c.handler(c.handler_ctx, &req_handle);
+    // `req.stream(...)` kullanıldıysa yanıt zaten akışta; motor `ctlEnd` ile bitirir (handler istisna fırlatsa bile akış başlamışsa kesilmeden kapanır).
+    if (h3srv.ctlStarted(req.ctl)) {
+        if (resp_payload) |rp| destroyResponse(rt, gpa, @ptrCast(@alignCast(rp)));
+        out.* = .{ .status = 200, .streamed = true };
+        return true;
+    }
+    const resp: *ServerResponse = @ptrCast(@alignCast(resp_payload orelse return false));
     defer destroyResponse(rt, gpa, resp);
 
     const body_slice: []const u8 = if (resp.body) |p| str_mod.nox_str_slice(p) else &.{};
@@ -1764,6 +1817,7 @@ fn h3EngineEntry(arg: *anyopaque) void {
         .serve = h3Serve,
         .spawn = h3Spawn,
         .shuttingDown = h3ShuttingDown,
+        .pause = h3Pause,
     }, &c.stop);
     c.done.store(true, .release);
 }
@@ -1784,7 +1838,7 @@ fn startH3(rt: ?*anyopaque, gpa: std.mem.Allocator, h: *ServerHandle, handler: H
         std.debug.print("nox.http: HTTP/3 disabled: QUIC context failed ({t})\n", .{e});
         return null;
     };
-    const listener = quic.Listener.open(&qctx, .{ 0, 0, 0, 0 }, port) catch |e| {
+    const listener = quic.Listener.openAnyAddr(&qctx, port) catch |e| {
         std.debug.print("nox.http: HTTP/3 disabled: UDP port {d} could not be opened ({t})\n", .{ port, e });
         qctx.deinit();
         return null;
@@ -1814,11 +1868,13 @@ fn startH3(rt: ?*anyopaque, gpa: std.mem.Allocator, h: *ServerHandle, handler: H
         gpa.destroy(c);
         return null;
     }
+    if (std.fmt.bufPrint(&g_alt_svc, "h3=\":{d}\"; ma=86400", .{port})) |v| g_alt_svc_len.store(v.len, .release) else |_| {}
     return c;
 }
 
 fn stopH3(c: ?*H3Ctx) void {
     const ctx = c orelse return;
+    g_alt_svc_len.store(0, .release);
     ctx.stop.store(true, .release);
     while (!ctx.done.load(.acquire)) drainPause();
     ctx.listener.deinit();
@@ -1935,7 +1991,9 @@ fn h2ServeStream(user: *anyopaque, st: *h2srv.Stream) void {
     if (resp_payload) |r| {
         const resp: *ServerResponse = @ptrCast(@alignCast(r));
         const body_slice: []const u8 = if (resp.body) |p| str_mod.nox_str_slice(p) else &.{};
-        h2srv.respond(st, @intCast(resp.status), resp.headers, body_slice);
+        const alt = headersWithAltSvc(gpa, resp.headers);
+        defer if (alt) |a| gpa.free(a);
+        h2srv.respond(st, @intCast(resp.status), alt orelse resp.headers, body_slice);
     }
     // payload yoksa (handler istisna fırlattı): motor 500 döner.
 }
@@ -2297,10 +2355,12 @@ fn connectionEntry(arg: *anyopaque) void {
         if (resp_payload) |r| {
             const resp: *ServerResponse = @ptrCast(@alignCast(r));
             const body_slice: []const u8 = if (resp.body) |p| str_mod.nox_str_slice(p) else &.{};
+            const alt = headersWithAltSvc(gpa, resp.headers);
+            defer if (alt) |a| gpa.free(a);
             request.respond(body_slice, .{
                 .status = @enumFromInt(resp.status),
                 .keep_alive = keepAliveAllowed(requests_served),
-                .extra_headers = resp.headers,
+                .extra_headers = alt orelse resp.headers,
             }) catch break;
         } else {
             request.respond("Internal Server Error", .{
@@ -3104,7 +3164,7 @@ test "HTTP/3: serve_tls + set_http3 aynı handler'ı QUIC (UDP) üzerinden çağ
             var conn: quic.Conn = undefined;
             var attempt: usize = 0;
             while (true) : (attempt += 1) {
-                if (quic.Conn.connect(&cctx, .{ 127, 0, 0, 1 }, p, "localhost", 3000)) |c| {
+                if (quic.Conn.connect(&cctx, .{ .v4 = .{ 127, 0, 0, 1 } }, p, "localhost", 3000)) |c| {
                     conn = c;
                     break;
                 } else |_| {}
@@ -3131,6 +3191,126 @@ test "HTTP/3: serve_tls + set_http3 aynı handler'ı QUIC (UDP) üzerinden çağ
     try std.testing.expectEqualStrings("200", Client.status[0..Client.status_len]);
     try std.testing.expectEqualStrings("hi", Client.body[0..Client.body_len]);
     try std.testing.expectEqual(@as(usize, 1), TestHandlerLog.log.items.len);
+}
+
+test "HTTP/3: h3_client.request sunucuya GET/POST yapar, yanıt başlıkları ve gövde gelir (alt-svc önbelleği ve geri düşme dahil)" {
+    if (!quic.supported) return error.SkipZigTest;
+    if (!quic.available()) return error.SkipZigTest;
+    // OpenSSL varsayılan güven deposu: test sertifikasını SSL_CERT_FILE ile güvenilir yap (istemci bağlamı ilk kullanımda yüklenir).
+    const libc = struct {
+        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+    };
+    _ = libc.setenv("SSL_CERT_FILE", "runtime/stdlib_shims/testdata/quic_test_cert.pem", 1);
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    bridge.nox_async_init(rt);
+    defer bridge.nox_async_deinit(rt);
+
+    g_serve_config.http3.store(1, .monotonic);
+    defer g_serve_config.http3.store(0, .monotonic);
+    const server = nox_http_server_listen_tls(rt, 0, "runtime/stdlib_shims/testdata/quic_test_cert.pem", "runtime/stdlib_shims/testdata/quic_test_key.pem") orelse return error.ListenFailed;
+    defer nox_http_server_close(rt, server);
+    const port: u16 = @intCast(nox_http_server_port(server));
+
+    TestHandlerLog.log.clearRetainingCapacity();
+    TestHandlerLog.rt_ptr = rt;
+
+    const Client = struct {
+        var status: u16 = 0;
+        var body: [64]u8 = undefined;
+        var body_len: usize = 0;
+        var post_status: u16 = 0;
+        var have_len_header: bool = false;
+        var closed_port_fallback: bool = false;
+        var pool_after_first: usize = 99;
+        var pool_after_second: usize = 99;
+        var v6_status: u16 = 0;
+        fn run(p: u16) void {
+            defer nox_http_shutdown_raw();
+            const gpa = std.heap.page_allocator;
+            var attempt: usize = 0;
+            while (attempt < 5) : (attempt += 1) {
+                switch (h3_client.request(gpa, "127.0.0.1", p, "localhost", "GET", "/h3c", &.{.{ .name = "X-Probe", .value = "1" }}, null, 5000, 4)) {
+                    .done => |r| {
+                        var rr = r;
+                        defer rr.deinit(gpa);
+                        status = rr.status;
+                        body_len = @min(rr.body.len, body.len);
+                        @memcpy(body[0..body_len], rr.body[0..body_len]);
+                        for (rr.headers) |h| if (std.mem.eql(u8, h.name, "content-length")) {
+                            have_len_header = true;
+                        };
+                        break;
+                    },
+                    else => {},
+                }
+            }
+            pool_after_first = h3_client.poolIdleCount();
+            switch (h3_client.request(gpa, "127.0.0.1", p, "localhost", "POST", "/h3c", &.{}, "payload", 5000, 4)) {
+                .done => |r| {
+                    var rr = r;
+                    defer rr.deinit(gpa);
+                    post_status = rr.status;
+                },
+                else => {},
+            }
+            pool_after_second = h3_client.poolIdleCount();
+            // IPv6 (çift yığınlı dinleyici): yalnızca makinede ::1 varsa anlamlı; yoksa `.fallback` döner ve doğrulama atlanır.
+            switch (h3_client.request(gpa, "::1", p, "[::1]", "GET", "/v6", &.{}, null, 3000, 0)) {
+                .done => |r| {
+                    var rr = r;
+                    defer rr.deinit(gpa);
+                    v6_status = rr.status;
+                },
+                else => {},
+            }
+            h3_client.poolClear();
+            // Dinleyen kimse olmayan UDP portu: el sıkışma hiç bitmez -> hiçbir bayt gönderilmeden `.fallback`.
+            switch (h3_client.request(gpa, "127.0.0.1", 1, "localhost", "GET", "/", &.{}, null, 1500, 0)) {
+                .fallback => closed_port_fallback = true,
+                else => {},
+            }
+        }
+    };
+    const t = try std.Thread.spawn(.{}, Client.run, .{port});
+    defer t.join();
+
+    var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 0 };
+    const serve_task = bridge.nox_async_spawn(rt, testServeEntry, &args).?;
+    const rc = bridge.nox_async_run_to_completion(rt);
+    _ = bridge.nox_async_await(rt, serve_task);
+    bridge.nox_async_destroy_task(rt, serve_task);
+    g_shutdown.store(false, .release);
+    try std.testing.expectEqual(@as(i32, 0), rc);
+    try std.testing.expectEqual(@as(u16, 200), Client.status);
+    try std.testing.expectEqualStrings("hi", Client.body[0..Client.body_len]);
+    try std.testing.expect(Client.have_len_header);
+    try std.testing.expectEqual(@as(u16, 200), Client.post_status);
+    try std.testing.expect(Client.closed_port_fallback);
+    // Havuz: her istek bağlantısını boşta bırakır; ikinci istek aynı bağlantıyı yeniden kullandığından boşta sayısı 1 kalır.
+    try std.testing.expectEqual(@as(usize, 1), Client.pool_after_first);
+    try std.testing.expectEqual(@as(usize, 1), Client.pool_after_second);
+    const v6_ok = Client.v6_status == 200;
+    const expected_calls: usize = if (v6_ok) 3 else 2;
+    try std.testing.expectEqual(expected_calls, TestHandlerLog.log.items.len);
+}
+
+test "HTTP/3: headersWithAltSvc yalnızca HTTP/3 açıkken ve başlık yokken ekler" {
+    const gpa = std.testing.allocator;
+    const hs = [_]std.http.Header{.{ .name = "x-a", .value = "1" }};
+    g_alt_svc_len.store(0, .release);
+    try std.testing.expect(headersWithAltSvc(gpa, &hs) == null);
+    const v = "h3=\":8443\"; ma=86400";
+    @memcpy(g_alt_svc[0..v.len], v);
+    g_alt_svc_len.store(v.len, .release);
+    defer g_alt_svc_len.store(0, .release);
+    const out = headersWithAltSvc(gpa, &hs).?;
+    defer gpa.free(out);
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("alt-svc", out[1].name);
+    try std.testing.expectEqualStrings(v, out[1].value);
+    const own = [_]std.http.Header{.{ .name = "Alt-Svc", .value = "clear" }};
+    try std.testing.expect(headersWithAltSvc(gpa, &own) == null);
 }
 
 /// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — çok-çekirdekli

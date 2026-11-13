@@ -401,6 +401,303 @@ pub fn decodeFieldSection(arena: Allocator, block: []const u8, max_field_section
     return .{ .headers = out.items };
 }
 
+// ---- QPACK dinamik tablo çözücüsü (RFC 9204 §3.2, §4.3, §4.4) ----------------------------------------------------------------------------------------------------
+//
+// SETTINGS_QPACK_BLOCKED_STREAMS = 0 bildirilir: karşı taraf kodlayıcısı, henüz onaylanmamış (bizce alınmamış) bir girişe atıf yapan blok göndermez; yine de alan satırlarında dinamik tabloya
+// atıf (Required Insert Count > 0) çözülür. RIC > bizim toplam ekleme sayımız olan bir blok bloklanacaktı: `QpackDecompressionFailed`. Kodlayıcımız yalnızca statik tabloyu kullanır
+// (yanıtlar/istekler için dinamik giriş eklemez).
+
+pub const QpackEncoderStreamError = error{ QpackEncoderStreamError, OutOfMemory };
+
+fn tryInt(buf: []const u8, pos: *usize, prefix_bits: u4) error{Invalid}!?usize {
+    // `h2.readInt` ile aynı; veri bitince hata değil `null` (daha fazla bayt gerekir).
+    if (pos.* >= buf.len) return null;
+    const mask: usize = (@as(usize, 1) << prefix_bits) - 1;
+    var v: usize = buf[pos.*] & mask;
+    var p = pos.* + 1;
+    if (v >= mask) {
+        var shift: u32 = 0;
+        while (true) {
+            if (p >= buf.len) return null;
+            const b = buf[p];
+            p += 1;
+            if (shift > 28) return error.Invalid;
+            v += (@as(usize, b & 0x7f)) << @as(std.math.Log2Int(usize), @intCast(shift));
+            if (v > 0x7fffffff) return error.Invalid;
+            if (b & 0x80 == 0) break;
+            shift += 7;
+        }
+    }
+    pos.* = p;
+    return v;
+}
+
+fn tryString(gpa: Allocator, buf: []const u8, pos: *usize, prefix_bits: u4) error{ Invalid, OutOfMemory }!?[]u8 {
+    var p = pos.*;
+    if (p >= buf.len) return null;
+    const h_flag: u8 = @as(u8, 1) << @as(u3, @intCast(prefix_bits));
+    const huffman = buf[p] & h_flag != 0;
+    const len = (try tryInt(buf, &p, prefix_bits)) orelse return null;
+    if (len > 1 << 20) return error.Invalid;
+    if (buf.len - p < len) return null;
+    const raw = buf[p..][0..len];
+    p += len;
+    var out: []u8 = undefined;
+    if (!huffman) {
+        out = try gpa.dupe(u8, raw);
+    } else {
+        var list: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer list.deinit(gpa);
+        h2.huffmanDecode(gpa, raw, &list) catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.CompressionError => return error.Invalid,
+        };
+        out = try list.toOwnedSlice(gpa);
+    }
+    pos.* = p;
+    return out;
+}
+
+pub const QpackDecoder = struct {
+    const Entry = struct { name: []u8, value: []u8 };
+
+    gpa: Allocator,
+    /// Bizim bildirdiğimiz SETTINGS_QPACK_MAX_TABLE_CAPACITY (üst sınır).
+    max_capacity: usize,
+    capacity: usize = 0,
+    size: usize = 0,
+    /// En eskisi önce.
+    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    /// `entries[0]`ın mutlak dizini.
+    dropped: u64 = 0,
+    /// Toplam eklenen giriş sayısı.
+    inserted: u64 = 0,
+    /// Henüz tam gelmemiş kodlayıcı-akışı baytları.
+    pending: std.ArrayListUnmanaged(u8) = .empty,
+    /// Gönderilecek kod çözücü-akışı baytları (Section Acknowledgment / Insert Count Increment).
+    out: std.ArrayListUnmanaged(u8) = .empty,
+
+    pub fn init(gpa: Allocator, max_capacity: usize) QpackDecoder {
+        return .{ .gpa = gpa, .max_capacity = max_capacity };
+    }
+
+    pub fn deinit(self: *QpackDecoder) void {
+        for (self.entries.items) |e| {
+            self.gpa.free(e.name);
+            self.gpa.free(e.value);
+        }
+        self.entries.deinit(self.gpa);
+        self.pending.deinit(self.gpa);
+        self.out.deinit(self.gpa);
+    }
+
+    fn evictOne(self: *QpackDecoder) void {
+        const e = self.entries.orderedRemove(0);
+        self.size -= e.name.len + e.value.len + 32;
+        self.gpa.free(e.name);
+        self.gpa.free(e.value);
+        self.dropped += 1;
+    }
+
+    /// `name`/`value` sahipliği devralınır (hata durumunda serbest bırakılır).
+    fn insert(self: *QpackDecoder, name: []u8, value: []u8) QpackEncoderStreamError!void {
+        const need = name.len + value.len + 32;
+        if (need > self.capacity) {
+            self.gpa.free(name);
+            self.gpa.free(value);
+            return error.QpackEncoderStreamError;
+        }
+        while (self.size + need > self.capacity) self.evictOne();
+        self.entries.append(self.gpa, .{ .name = name, .value = value }) catch {
+            self.gpa.free(name);
+            self.gpa.free(value);
+            return error.OutOfMemory;
+        };
+        self.size += need;
+        self.inserted += 1;
+    }
+
+    fn dynEntry(self: *const QpackDecoder, abs: u64) ?*const Entry {
+        if (abs < self.dropped or abs >= self.inserted) return null;
+        return &self.entries.items[@intCast(abs - self.dropped)];
+    }
+
+    /// Kodlayıcı akışından gelen baytları işler (kısmi talimatlar sonraki çağrıya kalır). Geçersiz talimat `QpackEncoderStreamError` (bağlantı hatası).
+    pub fn processEncoderBytes(self: *QpackDecoder, bytes: []const u8) QpackEncoderStreamError!void {
+        self.pending.appendSlice(self.gpa, bytes) catch return error.OutOfMemory;
+        const before = self.inserted;
+        var pos: usize = 0;
+        while (pos < self.pending.items.len) {
+            const buf = self.pending.items;
+            const b = buf[pos];
+            var p = pos;
+            if (b & 0x80 != 0) {
+                // Insert With Name Reference
+                const static = b & 0x40 != 0;
+                const idx = (tryInt(buf, &p, 6) catch return error.QpackEncoderStreamError) orelse break;
+                const value = (tryString(self.gpa, buf, &p, 7) catch |e| return mapEs(e)) orelse break;
+                var name_src: []const u8 = undefined;
+                if (static) {
+                    if (idx >= static_table.len) {
+                        self.gpa.free(value);
+                        return error.QpackEncoderStreamError;
+                    }
+                    name_src = static_table[idx].name;
+                } else {
+                    if (idx >= self.inserted) {
+                        self.gpa.free(value);
+                        return error.QpackEncoderStreamError;
+                    }
+                    const e = self.dynEntry(self.inserted - 1 - idx) orelse {
+                        self.gpa.free(value);
+                        return error.QpackEncoderStreamError;
+                    };
+                    name_src = e.name;
+                }
+                const name = self.gpa.dupe(u8, name_src) catch {
+                    self.gpa.free(value);
+                    return error.OutOfMemory;
+                };
+                try self.insert(name, value);
+            } else if (b & 0x40 != 0) {
+                // Insert With Literal Name
+                const name = (tryString(self.gpa, buf, &p, 5) catch |e| return mapEs(e)) orelse break;
+                const value = (tryString(self.gpa, buf, &p, 7) catch |e| {
+                    self.gpa.free(name);
+                    return mapEs(e);
+                }) orelse {
+                    self.gpa.free(name);
+                    break;
+                };
+                try self.insert(name, value);
+            } else if (b & 0x20 != 0) {
+                // Set Dynamic Table Capacity
+                const c = (tryInt(buf, &p, 5) catch return error.QpackEncoderStreamError) orelse break;
+                if (c > self.max_capacity) return error.QpackEncoderStreamError;
+                self.capacity = c;
+                while (self.size > self.capacity) self.evictOne();
+            } else {
+                // Duplicate
+                const idx = (tryInt(buf, &p, 5) catch return error.QpackEncoderStreamError) orelse break;
+                if (idx >= self.inserted) return error.QpackEncoderStreamError;
+                const e = self.dynEntry(self.inserted - 1 - idx) orelse return error.QpackEncoderStreamError;
+                const name = self.gpa.dupe(u8, e.name) catch return error.OutOfMemory;
+                const value = self.gpa.dupe(u8, e.value) catch {
+                    self.gpa.free(name);
+                    return error.OutOfMemory;
+                };
+                try self.insert(name, value);
+            }
+            pos = p;
+        }
+        if (pos > 0) self.pending.replaceRange(self.gpa, 0, pos, &.{}) catch return error.OutOfMemory;
+        if (self.pending.items.len > 1 << 20) return error.QpackEncoderStreamError;
+        if (self.inserted > before) {
+            // Insert Count Increment: 00 + 6 bit önekli artış.
+            h2.appendInt(&self.out, self.gpa, 0x00, 6, @intCast(self.inserted - before)) catch return error.OutOfMemory;
+        }
+    }
+
+    /// Bir alan bloğunu çözer (statik + dinamik tablo). `stream_id`: RIC > 0 ise Section Acknowledgment için. Dizeler `arena`ya kopyalanır (tablo girişleri sonradan atılabilir).
+    pub fn decode(self: *QpackDecoder, arena: Allocator, block: []const u8, max_field_section_size: usize, stream_id: u64) QpackError!Decoded {
+        var pos: usize = 0;
+        const enc_ric = h2.readInt(block, &pos, 8) catch return error.QpackDecompressionFailed;
+        var ric: u64 = 0;
+        if (enc_ric != 0) {
+            const max_entries: u64 = self.max_capacity / 32;
+            if (max_entries == 0) return error.QpackDecompressionFailed;
+            const full_range = 2 * max_entries;
+            if (enc_ric > full_range) return error.QpackDecompressionFailed;
+            const max_value = self.inserted + max_entries;
+            const max_wrapped = (max_value / full_range) * full_range;
+            ric = max_wrapped + enc_ric - 1;
+            if (ric > max_value) {
+                if (ric <= full_range) return error.QpackDecompressionFailed;
+                ric -= full_range;
+            }
+            if (ric == 0) return error.QpackDecompressionFailed;
+        }
+        // Bloklanması gereken blok: bildirdiğimiz BLOCKED_STREAMS = 0 olduğundan protokol ihlali.
+        if (ric > self.inserted) return error.QpackDecompressionFailed;
+        if (pos >= block.len) return error.QpackDecompressionFailed;
+        const sign = block[pos] & 0x80 != 0;
+        const delta = h2.readInt(block, &pos, 7) catch return error.QpackDecompressionFailed;
+        var base: u64 = undefined;
+        if (sign) {
+            if (@as(u64, delta) + 1 > ric) return error.QpackDecompressionFailed;
+            base = ric - delta - 1;
+        } else base = ric + delta;
+
+        var out: std.ArrayListUnmanaged(Header) = .empty;
+        var total: usize = 0;
+        while (pos < block.len) {
+            const b = block[pos];
+            var hd: Header = undefined;
+            if (b & 0x80 != 0) {
+                const t_static = b & 0x40 != 0;
+                const idx = h2.readInt(block, &pos, 6) catch return error.QpackDecompressionFailed;
+                if (t_static) {
+                    if (idx >= static_table.len) return error.QpackDecompressionFailed;
+                    hd = static_table[idx];
+                } else {
+                    if (@as(u64, idx) + 1 > base) return error.QpackDecompressionFailed;
+                    const abs = base - 1 - idx;
+                    if (abs >= ric) return error.QpackDecompressionFailed;
+                    const e = self.dynEntry(abs) orelse return error.QpackDecompressionFailed;
+                    hd = .{ .name = try arena.dupe(u8, e.name), .value = try arena.dupe(u8, e.value) };
+                }
+            } else if (b & 0x40 != 0) {
+                const t_static = b & 0x10 != 0;
+                const idx = h2.readInt(block, &pos, 4) catch return error.QpackDecompressionFailed;
+                var name: []const u8 = undefined;
+                if (t_static) {
+                    if (idx >= static_table.len) return error.QpackDecompressionFailed;
+                    name = static_table[idx].name;
+                } else {
+                    if (@as(u64, idx) + 1 > base) return error.QpackDecompressionFailed;
+                    const abs = base - 1 - idx;
+                    if (abs >= ric) return error.QpackDecompressionFailed;
+                    const e = self.dynEntry(abs) orelse return error.QpackDecompressionFailed;
+                    name = try arena.dupe(u8, e.name);
+                }
+                hd = .{ .name = name, .value = try readQString(arena, block, &pos, 7) };
+            } else if (b & 0x20 != 0) {
+                const name = try readQString(arena, block, &pos, 3);
+                hd = .{ .name = name, .value = try readQString(arena, block, &pos, 7) };
+            } else if (b & 0x10 != 0) {
+                // Indexed Field Line With Post-Base Index
+                const idx = h2.readInt(block, &pos, 4) catch return error.QpackDecompressionFailed;
+                const abs = base + idx;
+                if (abs >= ric) return error.QpackDecompressionFailed;
+                const e = self.dynEntry(abs) orelse return error.QpackDecompressionFailed;
+                hd = .{ .name = try arena.dupe(u8, e.name), .value = try arena.dupe(u8, e.value) };
+            } else {
+                // Literal Field Line With Post-Base Name Reference
+                const idx = h2.readInt(block, &pos, 3) catch return error.QpackDecompressionFailed;
+                const abs = base + idx;
+                if (abs >= ric) return error.QpackDecompressionFailed;
+                const e = self.dynEntry(abs) orelse return error.QpackDecompressionFailed;
+                hd = .{ .name = try arena.dupe(u8, e.name), .value = try readQString(arena, block, &pos, 7) };
+            }
+            total += hd.name.len + hd.value.len + 32;
+            if (total > max_field_section_size) return error.FieldSectionTooLarge;
+            try out.append(arena, hd);
+        }
+        if (ric > 0) {
+            // Section Acknowledgment: 1 + 7 bit önekli akış kimliği.
+            h2.appendInt(&self.out, self.gpa, 0x80, 7, @intCast(stream_id)) catch return error.OutOfMemory;
+        }
+        return .{ .headers = out.items };
+    }
+};
+
+fn mapEs(e: error{ Invalid, OutOfMemory }) QpackEncoderStreamError {
+    return switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.Invalid => error.QpackEncoderStreamError,
+    };
+}
+
 // ---- Birim testleri -------------------------------------------------------------------------------------------------------------------------------------------------
 
 const testing = std.testing;
@@ -549,4 +846,64 @@ test "h3: QPACK rastgele gidiş-dönüş (sabit tohum)" {
             try testing.expectEqualSlices(u8, want.value, got.value);
         }
     }
+}
+
+test "h3: QPACK dinamik tablo — RFC 9204 Ek B.2 (ekleme + post-base atıf) ve Insert Count Increment" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var dec = QpackDecoder.init(testing.allocator, 220);
+    defer dec.deinit();
+    // Kodlayıcı akışı: kapasite 220; :authority=www.example.com (statik ad atfı); :path=/sample/path
+    const enc_stream = [_]u8{ 0x3f, 0xbd, 0x01, 0xc0, 0x0f, 0x77, 0x77, 0x77, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d, 0xc1, 0x0c, 0x2f, 0x73, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2f, 0x70, 0x61, 0x74, 0x68 };
+    // Parçalı gelişi de dene: ilk 7 bayt, sonra kalanı.
+    try dec.processEncoderBytes(enc_stream[0..7]);
+    try dec.processEncoderBytes(enc_stream[7..]);
+    try testing.expectEqual(@as(u64, 2), dec.inserted);
+    try testing.expectEqual(@as(usize, 220), dec.capacity);
+    try testing.expectEqualSlices(u8, &.{0x02}, dec.out.items); // Insert Count Increment(2)
+    // Alan bloğu: 03 81 10 11
+    const d = try dec.decode(a, &.{ 0x03, 0x81, 0x10, 0x11 }, 1 << 20, 4);
+    try testing.expectEqual(@as(usize, 2), d.headers.len);
+    try testing.expectEqualStrings(":authority", d.headers[0].name);
+    try testing.expectEqualStrings("www.example.com", d.headers[0].value);
+    try testing.expectEqualStrings(":path", d.headers[1].name);
+    try testing.expectEqualStrings("/sample/path", d.headers[1].value);
+    // Section Acknowledgment(akış 4): 0x84
+    try testing.expectEqualSlices(u8, &.{ 0x02, 0x84 }, dec.out.items);
+}
+
+test "h3: QPACK dinamik tablo — göreli atıf, çoğaltma, çıkarma ve geçersiz talimatlar" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var dec = QpackDecoder.init(testing.allocator, 256);
+    defer dec.deinit();
+    // Kapasite 128; literal ad "x-a"="1" (35 bayt) ; "x-b"="22" (36) ; çoğalt (göreli 1 = x-a) ; "x-c"="3" daha eklenince en eskiler çıkar.
+    try dec.processEncoderBytes(&.{ 0x20 | 0x1f, 0x61 }); // capacity: 5 bit önek 31 + devam 0x61=97 -> 128
+    try testing.expectEqual(@as(usize, 128), dec.capacity);
+    try dec.processEncoderBytes(&.{ 0x43, 'x', '-', 'a', 0x01, '1' }); // literal ad (uzunluk 3), değer "1"
+    try dec.processEncoderBytes(&.{ 0x43, 'x', '-', 'b', 0x02, '2', '2' });
+    try dec.processEncoderBytes(&.{0x01}); // Duplicate göreli 1 -> x-a
+    try testing.expectEqual(@as(u64, 3), dec.inserted);
+    try testing.expectEqual(@as(usize, 36 + 37 + 36), dec.size);
+    try dec.processEncoderBytes(&.{ 0x43, 'x', '-', 'c', 0x01, '3' }); // 106 + 35 > 128: en eski çıkarılır
+    try testing.expectEqual(@as(u64, 1), dec.dropped);
+    try testing.expect(dec.dynEntry(0) == null); // çıkarılmış
+    try testing.expectEqualStrings("x-b", dec.dynEntry(1).?.name);
+    // RIC kodlaması: max_entries=8, full_range=16; inserted=4 -> RIC=4 için enc = 4 % 16 + 1 = 5; Base=4 (delta 0). Göreli 0 = abs 3 (x-c), göreli 1 = abs 2 (x-a kopyası).
+    const d = try dec.decode(a, &.{ 0x05, 0x00, 0x80, 0x81 }, 1 << 20, 8);
+    try testing.expectEqualStrings("x-c", d.headers[0].name);
+    try testing.expectEqualStrings("3", d.headers[0].value);
+    try testing.expectEqualStrings("x-a", d.headers[1].name);
+    // Çıkarılmış girişe atıf: abs 0
+    try testing.expectError(error.QpackDecompressionFailed, dec.decode(a, &.{ 0x05, 0x00, 0x83 }, 1 << 20, 12)); // göreli 3 = abs 0 (çıkarılmış)
+    // Bloklanacak blok (RIC > eklenen): enc 7 -> RIC 6 > 4
+    try testing.expectError(error.QpackDecompressionFailed, dec.decode(a, &.{ 0x07, 0x00, 0x80 }, 1 << 20, 16));
+    // Geçersiz kodlayıcı talimatları
+    try testing.expectError(error.QpackEncoderStreamError, dec.processEncoderBytes(&.{ 0x20 | 0x1f, 0xff, 0x7f })); // kapasite > azami
+    var dec2 = QpackDecoder.init(testing.allocator, 64);
+    defer dec2.deinit();
+    try testing.expectError(error.QpackEncoderStreamError, dec2.processEncoderBytes(&.{ 0x43, 'x', '-', 'a', 0x01, '1' })); // kapasite 0: sığmaz
+    try testing.expectError(error.QpackEncoderStreamError, dec2.processEncoderBytes(&.{0x03})); // Duplicate: boş tablo
 }

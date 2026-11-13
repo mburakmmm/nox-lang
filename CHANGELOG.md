@@ -14,6 +14,31 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.116]
+
+### Eklendi
+
+- **HTTP/3 istemcisi, Alt-Svc ile otomatik** (TODO 5.4, aşama H3.4): `nox.http.set_http3(True)` artık istemciyi de açar. `get`/`post`/`request`... önce TCP ile gider; bir `https` kaynağı `alt-svc: h3=":port"` bildirirse (yalnızca aynı ana makine, `ma` en çok 1 gün, `clear` siler) sonraki istekler `h3_client.zig` ile HTTP/3 üzerinden yapılır. QUIC bağlantısı kurulamazsa (hiçbir bayt gönderilmeden) sessizce TCP'ye düşülür ve duyuru unutulur; istek gönderildikten sonraki hatalar normal hata olarak döner. Proxy (`HTTPS_PROXY`) ayarlıysa HTTP/3 denenmez. Sertifikalar OpenSSL güven deposuyla doğrulanır (`SSL_CERT_FILE`/`SSL_CERT_DIR`).
+- **İstemci bağlantı havuzu:** tamamlanan HTTP/3 bağlantıları kaynak başına boşta tutulur (`client_pool` boyutu, 60 sn); bayat bağlantı şeffafça yenilenir, tekrarlanabilir yöntemler (GET/HEAD/OPTIONS/PUT/DELETE) havuz bağlantısı yanıt baytı gelmeden düşerse bir kez taze bağlantıyla yeniden denenir. `client_pool(0)` havuzu boşaltır.
+- **İstemci: IPv6 ve içerik kodlaması:** IPv4/IPv6 adresleri çözümleme sırasıyla denenir; `Content-Encoding: gzip/deflate` çözülür ve (kullanıcı vermediyse) `accept-encoding: gzip, deflate` istenir.
+- **Sunucu `alt-svc` duyurusu:** HTTP/3 açıkken sunucunun HTTP/1.1 ve HTTP/2 yanıtlarına `alt-svc: h3=":port"; ma=86400` eklenir (handler kendi `alt-svc` başlığını koyduysa dokunulmaz).
+- **Sunucu: akışlı yanıt, trailer'lar, HEAD:** `req.stream(...)`/`ResponseStream.send`/`trailers`/`end`/SSE ve `req.trailer(...)` HTTP/3'te de çalışır (`StreamCtl`: handler kilitli çıkış tamponuna çerçeve ekler, motor yazar; yavaş istemcide geri basınç tamponu sınırlar). HEAD yanıtları gövdesiz, `content-length` korunarak gider.
+- **Sunucu: QPACK dinamik tablo:** istemci kodlayıcı akışı çözülür (Set Capacity, Insert With Name Reference / Literal Name, Duplicate; çıkarma, post-base atıfları), Section Acknowledgment ve Insert Count Increment çözücü akışına yazılır; SETTINGS'te kapasite 4096, engellenen akış 0 bildirilir (gerçek curl/nghttp3 ile doğrulandı).
+- **Sunucu: IPv6 UDP** (çift yığın `::`, yoksa IPv4), **zarif kapanış** (GOAWAY, uçuştaki istekler `drain_timeout_ms` içinde biter, `H3_NO_ERROR` ile kapanış) ve **hata koduyla kapanış** (eksik SETTINGS, çerçeve ihlali, QPACK hataları, kritik akışın kapanması vb. için ilgili HTTP/3 hata kodu).
+- `quic.zig`: IPv4/IPv6 `Addr`, `Listener.openAnyAddr`, `Conn.closeWithError`, `Stream.id`.
+- Testler: motor (GET/POST/413/HEAD/çoklanmış istekler; akışlı yanıt + 600 KiB geri basınç + yanıt/istek trailer'ı; QPACK dinamik ekleme + atıf + Section Ack; eksik SETTINGS ile kapanış + GOAWAY), QPACK dinamik tablo (RFC 9204 Ek B.2 vektörü, çıkarma, çoğaltma, geçersiz talimatlar), istemci (GET/POST/havuz yeniden kullanımı/IPv6/dinleyicisiz portta `.fallback`, gzip/deflate), Alt-Svc önbelleği, `headersWithAltSvc`; gerçek curl 8.23 (ngtcp2/nghttp3) ile elle uyumluluk: dinamik QPACK, aynı bağlantıda çoklu istek, akışlı yanıt + trailer, HEAD, 3 MB yükleme, IPv6, 20 paralel istek.
+
+### Düzeltildi
+
+- **CI: Linux x86-64 derlemesi (v2.1.115 kırmızısı):** bazı koşucu CPU'larında Zig'in clang'ı libdeflate'in `crc32` VPCLMULQDQ (AVX-512) varyantlarını da derleyemiyordu ("requires target feature 'evex512'"); v2.1.114'te `adler32` için eklenen kaçışa `LIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ` de eklendi (libdeflate'in tüm AVX-512 yolları artık derlenmez; AVX2/PCLMUL kalır). Yerelde sapphirerapids/znver4/znver5/icelake/skylake-avx512/graniterapids/x86-64-v4 (evex512'siz biçimleri dahil) hedefleriyle derleme doğrulandı.
+
+### Bilinen sınırlar (neden)
+
+- `req.peer_addr` HTTP/3'te boş: OpenSSL 3.5'te QUIC bağlantısının eş adresini veren bir API yok.
+- WebSocket/`CONNECT` over HTTP/3 (RFC 9220, tarayıcılar kullanmıyor), sunucu itme (RFC 9114'te kullanımdan kalkıyor, HTTP/2'deki gibi bilinçli yok), 0-RTT (OpenSSL 3.5 QUIC sunmuyor), proxy üzerinden HTTP/3 (MASQUE) desteklenmez; proxy varsa istemci TCP kullanır.
+- İstemci QPACK dinamik tablosunu kapalı (kapasite 0) bildirir: sunucular tabloya ihtiyaç duymadan yanıtlar; yanıt başlıkları statik tabloyla çözülür.
+- Windows/WebAssembly/çıplak çekirdek: `quic.supported` false. Windows için ayrı bir oturum (TODO 6.x) gerekir.
+
 ## [2.1.115]
 
 ### Eklendi

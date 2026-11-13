@@ -32,6 +32,8 @@ const PollDesc = extern struct {
 };
 const POLL_SOCK_FD: u32 = 1;
 
+const ShutdownArgs = extern struct { quic_error_code: u64, quic_reason: ?[*:0]const u8 };
+
 const AlpnSelectCb = *const fn (ssl: Opaque, out: *?[*]const u8, outlen: *u8, in: [*]const u8, inlen: c_uint, arg: ?*anyopaque) callconv(.c) c_int;
 
 /// Alan adları C sembol adlarıyla BİREBİR aynıdır (`loadAll` alan alan `lookup` yapar).
@@ -73,6 +75,8 @@ const Funcs = struct {
     SSL_get0_alpn_selected: *const fn (s: Opaque, data: *?[*]const u8, len: *c_uint) callconv(.c) void,
     SSL_get_verify_result: *const fn (s: Opaque) callconv(.c) c_long,
     SSL_get_stream_type: *const fn (s: Opaque) callconv(.c) c_int,
+    SSL_get_stream_id: *const fn (s: Opaque) callconv(.c) u64,
+    SSL_shutdown_ex: *const fn (s: Opaque, flags: u64, args: *const ShutdownArgs, len: usize) callconv(.c) c_int,
     SSL_get_conn_close_info: *const fn (s: Opaque, info: [*]u8, len: usize) callconv(.c) c_int,
     BIO_new_dgram: *const fn (fd: c_int, close_flag: c_int) callconv(.c) Opaque,
     BIO_ADDR_new: *const fn () callconv(.c) Opaque,
@@ -92,6 +96,8 @@ const SSL_CTRL_SET_TLSEXT_HOSTNAME: c_int = 55;
 const TLSEXT_NAMETYPE_host_name: c_long = 0;
 const ACCEPT_NO_BLOCK: u64 = 1;
 const STREAM_FLAG_UNI: u64 = 1;
+const SHUTDOWN_RAPID: u64 = 1;
+const SHUTDOWN_NO_BLOCK: u64 = 4;
 const OPENSSL_NPN_NEGOTIATED: c_int = 1;
 const SSL_TLSEXT_ERR_OK: c_int = 0;
 const SSL_TLSEXT_ERR_ALERT_FATAL: c_int = 2;
@@ -251,6 +257,12 @@ pub fn newClientCtx(ca_file: ?[*:0]const u8, verify: bool) Error!Ctx {
     return .{ .ctx = ctx, .is_server = false };
 }
 
+/// Eş adresi: IPv4 ya da IPv6 (ham bayt dizisi, ağ sırası).
+pub const Addr = union(enum) {
+    v4: [4]u8,
+    v6: [16]u8,
+};
+
 // ---- UDP soketi -----------------------------------------------------------------------------------------------------------------------------------------------
 
 fn setNonBlocking(fd: posix.fd_t) void {
@@ -271,31 +283,57 @@ pub const Listener = struct {
     ssl: Opaque,
     port: u16,
 
-    /// `127.0.0.1`/`0.0.0.0` (IPv4) üzerinde UDP `port`u dinler. `port == 0` ise çekirdek bir port seçer (`self.port` gerçek değeri tutar).
-    pub fn open(ctx: *const Ctx, bind_addr: [4]u8, port: u16) Error!Listener {
+    /// `bind_addr` üzerinde UDP `port`u dinler. `port == 0` ise çekirdek bir port seçer (`self.port` gerçek değeri tutar).
+    pub fn open(ctx: *const Ctx, bind_addr: Addr, port: u16) Error!Listener {
         if (!ensureLoaded()) return error.LibraryUnavailable;
-        const fd = try udpSocket(std.c.AF.INET);
-        var closed_fd = true;
-        defer if (closed_fd) {
-            _ = std.c.close(fd);
+        const family: c_int = switch (bind_addr) {
+            .v4 => std.c.AF.INET,
+            .v6 => std.c.AF.INET6,
         };
-        var sa: std.c.sockaddr.in = std.mem.zeroes(std.c.sockaddr.in);
-        sa.family = std.c.AF.INET;
-        sa.port = std.mem.nativeToBig(u16, port);
-        @memcpy(std.mem.asBytes(&sa.addr), &bind_addr);
-        if (std.c.bind(fd, @ptrCast(&sa), @sizeOf(std.c.sockaddr.in)) != 0) return error.ListenFailed;
-        var real = sa;
-        var rl: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-        _ = std.c.getsockname(fd, @ptrCast(&real), &rl);
-
+        const fd = try udpSocket(family);
+        errdefer _ = std.c.close(fd);
+        var real_port: u16 = 0;
+        switch (bind_addr) {
+            .v4 => |a| {
+                var sa: std.c.sockaddr.in = std.mem.zeroes(std.c.sockaddr.in);
+                sa.family = std.c.AF.INET;
+                sa.port = std.mem.nativeToBig(u16, port);
+                @memcpy(std.mem.asBytes(&sa.addr), &a);
+                if (std.c.bind(fd, @ptrCast(&sa), @sizeOf(std.c.sockaddr.in)) != 0) return error.ListenFailed;
+                var real = sa;
+                var rl: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+                _ = std.c.getsockname(fd, @ptrCast(&real), &rl);
+                real_port = std.mem.bigToNative(u16, real.port);
+            },
+            .v6 => |a| {
+                // Çift yığın: IPv4 istemciler IPv4-eşlemeli adreslerle de bağlanabilsin.
+                var off: c_int = 0;
+                // `std.c`de IPV6_V6ONLY yok: Darwin 27, Linux 26; IPPROTO_IPV6 = 41.
+                const v6only_opt: u32 = if (builtin.os.tag == .linux) 26 else 27;
+                _ = std.c.setsockopt(fd, 41, v6only_opt, &off, @sizeOf(c_int));
+                var sa: std.c.sockaddr.in6 = std.mem.zeroes(std.c.sockaddr.in6);
+                sa.family = std.c.AF.INET6;
+                sa.port = std.mem.nativeToBig(u16, port);
+                @memcpy(&sa.addr, &a);
+                if (std.c.bind(fd, @ptrCast(&sa), @sizeOf(std.c.sockaddr.in6)) != 0) return error.ListenFailed;
+                var real = sa;
+                var rl: std.c.socklen_t = @sizeOf(std.c.sockaddr.in6);
+                _ = std.c.getsockname(fd, @ptrCast(&real), &rl);
+                real_port = std.mem.bigToNative(u16, real.port);
+            },
+        }
         const l = g_funcs.SSL_new_listener(ctx.ctx, 0) orelse return error.ListenFailed;
         errdefer g_funcs.SSL_free(l);
         const bio = g_funcs.BIO_new_dgram(fd, 1) orelse return error.ListenFailed; // BIO_CLOSE: fd'yi BIO sahiplenir
-        closed_fd = false;
         g_funcs.SSL_set_bio(l, bio, bio);
         _ = g_funcs.SSL_set_blocking_mode(l, 0);
         if (g_funcs.SSL_listen(l) != 1) return error.ListenFailed;
-        return .{ .ssl = l, .port = std.mem.bigToNative(u16, real.port) };
+        return .{ .ssl = l, .port = real_port };
+    }
+
+    /// Önce çift yığınlı (`::`) dinler; IPv6 yoksa IPv4 `0.0.0.0`a düşer.
+    pub fn openAnyAddr(ctx: *const Ctx, port: u16) Error!Listener {
+        return open(ctx, .{ .v6 = [_]u8{0} ** 16 }, port) catch open(ctx, .{ .v4 = .{ 0, 0, 0, 0 } }, port);
     }
 
     pub fn deinit(self: *Listener) void {
@@ -337,28 +375,44 @@ pub const Listener = struct {
 pub const Conn = struct {
     ssl: Opaque,
 
-    /// IPv4 `addr:port`a QUIC istemci bağlantısı kurar (ALPN `h3`), el sıkışma bitene dek (en çok `timeout_ms`) bekler. `sni`: sunucu adı (TLS SNI + sertifika konak adı doğrulaması).
-    pub fn connect(ctx: *const Ctx, addr: [4]u8, port: u16, sni: [:0]const u8, timeout_ms: u32) Error!Conn {
+    /// `addr:port`a QUIC istemci bağlantısı kurar (ALPN `h3`), el sıkışma bitene dek (en çok `timeout_ms`) bekler. `sni`: sunucu adı (TLS SNI + sertifika konak adı doğrulaması).
+    pub fn connect(ctx: *const Ctx, addr: Addr, port: u16, sni: [:0]const u8, timeout_ms: u32) Error!Conn {
         if (!ensureLoaded()) return error.LibraryUnavailable;
-        const fd = try udpSocket(std.c.AF.INET);
+        const family: c_int = switch (addr) {
+            .v4 => std.c.AF.INET,
+            .v6 => std.c.AF.INET6,
+        };
+        const fd = try udpSocket(family);
         var own_fd = true;
         defer if (own_fd) {
             _ = std.c.close(fd);
         };
-        var sa: std.c.sockaddr.in = std.mem.zeroes(std.c.sockaddr.in);
-        sa.family = std.c.AF.INET;
-        sa.port = std.mem.nativeToBig(u16, port);
-        @memcpy(std.mem.asBytes(&sa.addr), &addr);
-        if (std.c.connect(fd, @ptrCast(&sa), @sizeOf(std.c.sockaddr.in)) != 0) return error.ConnectFailed;
-
+        const ba = g_funcs.BIO_ADDR_new() orelse return error.ConnectFailed;
+        defer g_funcs.BIO_ADDR_free(ba);
+        const net_port = std.mem.nativeToBig(u16, port);
+        switch (addr) {
+            .v4 => |a| {
+                var sa: std.c.sockaddr.in = std.mem.zeroes(std.c.sockaddr.in);
+                sa.family = std.c.AF.INET;
+                sa.port = net_port;
+                @memcpy(std.mem.asBytes(&sa.addr), &a);
+                if (std.c.connect(fd, @ptrCast(&sa), @sizeOf(std.c.sockaddr.in)) != 0) return error.ConnectFailed;
+                if (g_funcs.BIO_ADDR_rawmake(ba, std.c.AF.INET, &a, 4, net_port) != 1) return error.ConnectFailed;
+            },
+            .v6 => |a| {
+                var sa: std.c.sockaddr.in6 = std.mem.zeroes(std.c.sockaddr.in6);
+                sa.family = std.c.AF.INET6;
+                sa.port = net_port;
+                @memcpy(&sa.addr, &a);
+                if (std.c.connect(fd, @ptrCast(&sa), @sizeOf(std.c.sockaddr.in6)) != 0) return error.ConnectFailed;
+                if (g_funcs.BIO_ADDR_rawmake(ba, std.c.AF.INET6, &a, 16, net_port) != 1) return error.ConnectFailed;
+            },
+        }
         const s = g_funcs.SSL_new(ctx.ctx) orelse return error.ConnectFailed;
         errdefer g_funcs.SSL_free(s);
         const bio = g_funcs.BIO_new_dgram(fd, 1) orelse return error.ConnectFailed;
         own_fd = false;
         g_funcs.SSL_set_bio(s, bio, bio);
-        const ba = g_funcs.BIO_ADDR_new() orelse return error.ConnectFailed;
-        defer g_funcs.BIO_ADDR_free(ba);
-        if (g_funcs.BIO_ADDR_rawmake(ba, std.c.AF.INET, &sa.addr, 4, sa.port) != 1) return error.ConnectFailed;
         if (g_funcs.SSL_set1_initial_peer_addr(s, ba) != 1) return error.ConnectFailed;
         if (g_funcs.SSL_set_alpn_protos(s, &server_alpn, server_alpn.len) != 0) return error.ConnectFailed;
         _ = g_funcs.SSL_set1_host(s, sni.ptr);
@@ -384,6 +438,12 @@ pub const Conn = struct {
             if (left <= 0) return error.Timeout;
             pump(s, @intCast(@min(left, 1000)));
         }
+    }
+
+    /// Bağlantıyı uygulama hata koduyla (`h3.ErrorCode`) hemen kapatır (CONNECTION_CLOSE gönderilir); sonra `deinit` çağrılabilir.
+    pub fn closeWithError(self: *Conn, code: u64, reason: [:0]const u8) void {
+        const args: ShutdownArgs = .{ .quic_error_code = code, .quic_reason = reason.ptr };
+        _ = g_funcs.SSL_shutdown_ex(self.ssl, SHUTDOWN_RAPID | SHUTDOWN_NO_BLOCK, &args, @sizeOf(ShutdownArgs));
     }
 
     pub fn deinit(self: *Conn) void {
@@ -449,6 +509,10 @@ pub const Stream = struct {
     pub fn deinit(self: *Stream) void {
         if (self.ssl) |s| g_funcs.SSL_free(s);
         self.ssl = null;
+    }
+
+    pub fn id(self: *const Stream) u64 {
+        return g_funcs.SSL_get_stream_id(self.ssl);
     }
 
     pub const Kind = enum { none, uni_read, uni_write, bidi };
@@ -570,11 +634,11 @@ test "quic: istemci-sunucu el sıkışması (ALPN h3) ve çift yönlü akış ya
     defer sctx.deinit();
     var cctx = try newClientCtx(test_cert, true);
     defer cctx.deinit();
-    var l = try Listener.open(&sctx, .{ 127, 0, 0, 1 }, 0);
+    var l = try Listener.open(&sctx, .{ .v4 = .{ 127, 0, 0, 1 } }, 0);
     defer l.deinit();
     var srv: EchoSrv = .{ .listener = &l };
     const t = try std.Thread.spawn(.{}, EchoSrv.run, .{&srv});
-    var conn = try Conn.connect(&cctx, .{ 127, 0, 0, 1 }, l.port, "localhost", 10_000);
+    var conn = try Conn.connect(&cctx, .{ .v4 = .{ 127, 0, 0, 1 } }, l.port, "localhost", 10_000);
     defer conn.deinit();
     try testing.expect(conn.alpnIsH3());
     var st = try conn.openStream(false);
@@ -603,7 +667,7 @@ test "quic: sertifika doğrulaması yanlış CA ile başarısız olur" {
     // Sistem kök deposu bu kendinden imzalı sertifikaya güvenmez.
     var cctx = try newClientCtx(null, true);
     defer cctx.deinit();
-    var l = try Listener.open(&sctx, .{ 127, 0, 0, 1 }, 0);
+    var l = try Listener.open(&sctx, .{ .v4 = .{ 127, 0, 0, 1 } }, 0);
     defer l.deinit();
     // Sunucu tarafı el sıkışmayı yürütmek için dinleyiciyi döndürmelidir.
     const t = try std.Thread.spawn(.{}, struct {
@@ -617,5 +681,5 @@ test "quic: sertifika doğrulaması yanlış CA ile başarısız olur" {
         }
     }.run, .{&l});
     defer t.join();
-    try testing.expectError(error.ConnectFailed, Conn.connect(&cctx, .{ 127, 0, 0, 1 }, l.port, "localhost", 5_000));
+    try testing.expectError(error.ConnectFailed, Conn.connect(&cctx, .{ .v4 = .{ 127, 0, 0, 1 } }, l.port, "localhost", 5_000));
 }

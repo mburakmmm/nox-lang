@@ -15,8 +15,8 @@ Bir QUIC bağlantısının (ve akışlarının) TÜM OpenSSL çağrıları TEK s
 - **H3.1 (v2.1.113)**: `runtime/stdlib_shims/quic.zig` — sembol yükleyici, `Ctx`, `Listener`, `Conn`, `Stream`, fiber-uyumlu `pump`; birim testleri: yerel istemci↔sunucu el sıkışması (ALPN h3) + akış yankısı + yanlış CA reddi. Test sertifikası: `runtime/stdlib_shims/testdata/quic_test_*.pem` (yalnızca test; EC P-256, 100 yıl).
 - **H3.2 (v2.1.114, bitti)**: `h3.zig` — HTTP/3 çerçeveleri (DATA/HEADERS/SETTINGS/GOAWAY), kontrol + QPACK tek yönlü akışları, QPACK kodlayıcı/çözücü (statik tablo + Huffman — `http2.zig`nin HPACK Huffman tablosu yeniden kullanılır; dinamik tablo kapasitesi 0), RFC 9204 ek vektörleri ile birim testleri.
 - **H3.3 (v2.1.115, bitti)**: sunucu — yeni bir Nox API'si yerine `nox.http.set_http3(True)` + mevcut `serve_tls`: aynı handler, aynı port numarası UDP'de; `h3_server.zig` tek sahip motor fiber'ı, arabellekli istek/yanıt. Akışlı yanıt, WebSocket ve `peer_addr` sonraya.
-- **H3.4**: istemci — `nox.http` istemcisinde h3 seçeneği (`set_http3`), `Alt-Svc` ile terfi H3.5'e bırakılır.
-- **H3.5**: dış uyumluluk (curl/aioquic ile; indirme izni gerekir), belge, Windows kararı.
+- **H3.4 (v2.1.116, bitti)**: istemci — kullanıcı kararı: otomatik, `Alt-Svc` ile keşif (`set_http3(True)` iki yönü de açar); TCP'den öğrenilen duyuru sonrası istekler h3, kurulamazsa TCP.
+- **H3.5 (v2.1.116, bitti)**: gerçek curl 8.23 (ngtcp2/nghttp3, Homebrew) ile dış uyumluluk (indirme gerekmedi), akışlı yanıt + trailer, QPACK dinamik tablo (çözücü), IPv6, GOAWAY ve hata kodları, istemci havuzu + gzip. Kalan bilinçli sınırlar CHANGELOG'da gerekçesiyle.
 
 ## Kapsam dışı (şimdilik)
 0-RTT, bağlantı göçü denetimi, WebTransport, QPACK dinamik tablo, Windows/wasm (`quic.supported` false), IPv6 (H3.1 yalnız IPv4; H3.3'te eklenir).

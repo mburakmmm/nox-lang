@@ -104,6 +104,7 @@ pub const tls_server_shim = @import("stdlib_shims/tls_server.zig");
 pub const quic_shim = @import("stdlib_shims/quic.zig");
 pub const h3_shim = @import("stdlib_shims/h3.zig");
 pub const h3_server_shim = @import("stdlib_shims/h3_server.zig");
+pub const h3_client_shim = @import("stdlib_shims/h3_client.zig");
 pub const websocket_shim = @import("stdlib_shims/websocket.zig");
 pub const websocket_server_shim = @import("stdlib_shims/websocket_server.zig");
 pub const shared_mem_shim = @import("stdlib_shims/shared_mem.zig");
@@ -154,6 +155,7 @@ comptime {
     _ = quic_shim;
     _ = h3_shim;
     _ = h3_server_shim;
+    _ = h3_client_shim;
     _ = chase_lev_deque;
     _ = size_class_heap;
     _ = exp_accurate;

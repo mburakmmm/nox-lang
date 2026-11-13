@@ -50,6 +50,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 pub const net_dial = @import("net_dial.zig");
+const h3_client = @import("h3_client.zig");
 const fiber_net = @import("fiber_net.zig");
 const asap = @import("../alloc/asap.zig");
 const arc = @import("../alloc/arc.zig");
@@ -664,6 +665,7 @@ fn ensureReaper() void {
 /// Boşta havuzu `new_size` bağlantıya indirir (en eskiler kapanır) ve üst sınırı ayarlar.
 fn resizePool(new_size: usize) void {
     g_pool_size.store(new_size, .monotonic);
+    if (new_size == 0) h3_client.poolClear();
     g_pool.lock.lock();
     defer g_pool.lock.unlock();
     if (!g_pool.ready) return;
@@ -713,6 +715,144 @@ fn canRetryOnStale(ctx: *RequestCtx, reused: bool, attempt: u8) bool {
     };
 }
 
+// ---- HTTP/3 (Alt-Svc ile keşif, v2.1.116, spec §3.456) ----------------------------------------------------------------------------------------------------
+
+/// `nox.http.set_http3(True)` istemciyi de açar: bir `https` kaynağı yanıtında `alt-svc: h3=":port"` bildirirse sonraki istekler (tarayıcı gibi) HTTP/3 ile denenir; olmazsa TCP'ye düşülür.
+pub var g_client_h3: std.atomic.Value(u8) = .init(0);
+
+const ALT_MAX: usize = 32;
+const AltEntry = struct {
+    used: bool = false,
+    host: [96]u8 = undefined,
+    host_len: u8 = 0,
+    origin_port: u16 = 0,
+    h3_port: u16 = 0,
+    expires_ms: i64 = 0,
+};
+var g_alt: [ALT_MAX]AltEntry = @splat(.{});
+var g_alt_lock: asap.SpinLock = .{};
+
+fn nowMs() i64 {
+    return @intCast(monotonicMs());
+}
+
+fn altFind(host: []const u8, origin_port: u16) ?*AltEntry {
+    for (&g_alt) |*e| {
+        if (e.used and e.origin_port == origin_port and std.ascii.eqlIgnoreCase(e.host[0..e.host_len], host)) return e;
+    }
+    return null;
+}
+
+/// `alt-svc` başlık değerini işler: `clear` kaydı siler; `h3=":port"[; ma=saniye]` kaydeder (ana makine boş olmalı: başka ana makineye yönlendirme yok sayılır).
+pub fn altSvcRecord(host: []const u8, origin_port: u16, value: []const u8) void {
+    if (host.len == 0 or host.len > 96) return;
+    g_alt_lock.lock();
+    defer g_alt_lock.unlock();
+    if (std.mem.eql(u8, std.mem.trim(u8, value, " \t"), "clear")) {
+        if (altFind(host, origin_port)) |e| e.used = false;
+        return;
+    }
+    var it = std.mem.splitScalar(u8, value, ',');
+    while (it.next()) |raw| {
+        const alt = std.mem.trim(u8, raw, " \t");
+        if (!std.mem.startsWith(u8, alt, "h3=\"")) continue; // yalnızca RFC 9114 `h3` (taslak sürümleri değil)
+        const rest = alt[4..];
+        const q = std.mem.indexOfScalar(u8, rest, '"') orelse continue;
+        const auth = rest[0..q];
+        if (auth.len < 2 or auth[0] != ':') continue; // yalnızca aynı ana makine (":port")
+        const port = std.fmt.parseInt(u16, auth[1..], 10) catch continue;
+        var ma: i64 = 86400;
+        if (std.mem.indexOf(u8, rest[q..], "ma=")) |mi| {
+            const tail = rest[q + mi + 3 ..];
+            var end: usize = 0;
+            while (end < tail.len and std.ascii.isDigit(tail[end])) end += 1;
+            ma = std.fmt.parseInt(i64, tail[0..end], 10) catch 86400;
+        }
+        ma = @min(ma, 86400);
+        if (ma <= 0) {
+            if (altFind(host, origin_port)) |e| e.used = false;
+            return;
+        }
+        const slot: *AltEntry = altFind(host, origin_port) orelse blk: {
+            var oldest: *AltEntry = &g_alt[0];
+            for (&g_alt) |*e| {
+                if (!e.used) break :blk e;
+                if (e.expires_ms < oldest.expires_ms) oldest = e;
+            }
+            break :blk oldest;
+        };
+        slot.* = .{ .used = true, .host_len = @intCast(host.len), .origin_port = origin_port, .h3_port = port, .expires_ms = nowMs() + ma * 1000 };
+        @memcpy(slot.host[0..host.len], host);
+        return;
+    }
+}
+
+/// Bu kaynak için geçerli bir HTTP/3 duyurusu varsa UDP portunu döner.
+pub fn altSvcLookup(host: []const u8, origin_port: u16) ?u16 {
+    g_alt_lock.lock();
+    defer g_alt_lock.unlock();
+    const e = altFind(host, origin_port) orelse return null;
+    if (e.expires_ms <= nowMs()) {
+        e.used = false;
+        return null;
+    }
+    return e.h3_port;
+}
+
+pub fn altSvcForget(host: []const u8, origin_port: u16) void {
+    g_alt_lock.lock();
+    defer g_alt_lock.unlock();
+    if (altFind(host, origin_port)) |e| e.used = false;
+}
+
+fn proxyConfigured() bool {
+    const names = [_][*:0]const u8{ "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy" };
+    for (names) |n| if (std.c.getenv(n)) |v| if (std.mem.span(v).len > 0) return true;
+    return false;
+}
+
+/// HTTP/3 denemesi: `true` ise istek HTTP/3 ile bitti (başarıyla ya da `ctx.failed` ile); `false` ise TCP yoluna düşülmelidir (hiçbir bayt gönderilmedi).
+fn tryH3(ctx: *RequestCtx, uri: std.Uri, host: []const u8, origin_port: u16, h3_port: u16) bool {
+    if (proxyConfigured()) return false;
+    var path_buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&path_buf);
+    uri.path.formatPath(&w) catch return false;
+    if (uri.query) |q| {
+        w.writeByte('?') catch return false;
+        q.formatQuery(&w) catch return false;
+    }
+    var path: []const u8 = w.buffered();
+    if (path.len == 0) path = "/";
+    var auth_buf: [160]u8 = undefined;
+    const bracket = std.mem.indexOfScalar(u8, host, ':') != null; // IPv6 literal: [::1]
+    const authority = if (origin_port == 443 and !bracket)
+        host
+    else if (origin_port == 443)
+        (std.fmt.bufPrint(&auth_buf, "[{s}]", .{host}) catch return false)
+    else if (bracket)
+        (std.fmt.bufPrint(&auth_buf, "[{s}]:{d}", .{ host, origin_port }) catch return false)
+    else
+        (std.fmt.bufPrint(&auth_buf, "{s}:{d}", .{ host, origin_port }) catch return false);
+    const hdrs: []const h3_client.Header = @ptrCast(ctx.request_headers);
+    const outcome = h3_client.request(ctx.allocator, host, h3_port, authority, @tagName(ctx.method), path, hdrs, ctx.body, @intCast(@min(ctx.timeout_ms, std.math.maxInt(u32))), g_pool_size.load(.monotonic));
+    switch (outcome) {
+        .fallback => {
+            altSvcForget(host, origin_port);
+            return false;
+        },
+        .failed => {
+            ctx.failed = true;
+            return true;
+        },
+        .done => |r| {
+            ctx.status = r.status;
+            ctx.response_headers = @ptrCast(r.headers);
+            ctx.response_body = r.body;
+            return true;
+        },
+    }
+}
+
 fn workerThreadFn(ctx: *RequestCtx) void {
     // `write_fd` BURADA (fonksiyon GİRİŞİNDE) YEREL bir değişkene
     // KOPYALANIR — GERÇEK bir yarış durumu (Linux/x86-64 CI'de bir
@@ -751,6 +891,20 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         return;
     };
     const https = std.ascii.eqlIgnoreCase(uri.scheme, "https");
+
+    // HTTP/3: önceki bir yanıt `alt-svc: h3` bildirdiyse önce QUIC denenir (hiçbir bayt gönderilmeden başarısız olursa TCP yoluna düşülür).
+    var alt_host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+    var alt_host: []const u8 = "";
+    var alt_port: u16 = 443;
+    if (https and g_client_h3.load(.monotonic) == 1) {
+        if (uri.getHost(&alt_host_buf)) |hn| {
+            alt_host = hn.bytes;
+            alt_port = uri.port orelse 443;
+            if (altSvcLookup(alt_host, alt_port)) |h3_port| {
+                if (tryH3(ctx, uri, alt_host, alt_port, h3_port)) return;
+            }
+        } else |_| {}
+    }
 
     // Havuz kapalıyken (ya da kapatıldığında) eski yol: İstek ömrü kadar bir arena. `std.http.Client` başarısız bağlantıda
     // (Windows AFD) bıraktığı ara tahsisler Nox'un DebugAllocator sızıntı sayacına düşmesin; istek bitince arena hepsini geri verir.
@@ -889,6 +1043,11 @@ fn workerThreadFn(ctx: *RequestCtx) void {
                 ctx.allocator.free(value_copy);
                 continue;
             };
+        }
+        if (https and alt_host.len > 0 and g_client_h3.load(.monotonic) == 1) {
+            for (headers_list.items) |h| {
+                if (std.ascii.eqlIgnoreCase(h.name, "alt-svc")) altSvcRecord(alt_host, alt_port, h.value);
+            }
         }
         ctx.response_headers = headers_list.toOwnedSlice(ctx.allocator) catch &.{};
         // Düzeltme 1/2 gövde-okuma başarısızlıklarının (decompress tamponu
@@ -1862,4 +2021,33 @@ test "nox_http_request_raw: ikili gövde (gömülü NUL, 0x80+ baytlar) reddedil
     const got = nox_http_response_body(rt, resp) orelse return error.NoBody;
     defer str_mod.nox_str_release(rt, got);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0xff, 0x80, 'a', 0x00 }, str_mod.nox_str_slice(got));
+}
+
+test "HTTP/3 keşfi: alt-svc kaydı, arama, süre sonu, clear ve yabancı ana makine/taslak sürümleri yok sayılır" {
+    // Önceki testlerden kalan kayıtları sil.
+    for (&g_alt) |*e| e.used = false;
+    altSvcRecord("example.test", 443, "h3=\":8443\"; ma=60, h3-29=\":443\"");
+    try std.testing.expectEqual(@as(?u16, 8443), altSvcLookup("example.test", 443));
+    try std.testing.expectEqual(@as(?u16, 8443), altSvcLookup("EXAMPLE.test", 443)); // ana makine büyük/küçük harf duyarsız
+    try std.testing.expectEqual(@as(?u16, null), altSvcLookup("example.test", 444)); // başka kaynak portu
+    try std.testing.expectEqual(@as(?u16, null), altSvcLookup("other.test", 443));
+    // Başka ana makineye yönlendirme ve taslak sürümleri yok sayılır.
+    altSvcRecord("a.test", 443, "h3=\"other.test:443\"");
+    altSvcRecord("b.test", 443, "h3-29=\":443\"");
+    try std.testing.expectEqual(@as(?u16, null), altSvcLookup("a.test", 443));
+    try std.testing.expectEqual(@as(?u16, null), altSvcLookup("b.test", 443));
+    // ma=0 ve clear kaydı siler.
+    altSvcRecord("example.test", 443, "h3=\":8443\"; ma=0");
+    try std.testing.expectEqual(@as(?u16, null), altSvcLookup("example.test", 443));
+    altSvcRecord("c.test", 443, "h3=\":443\"");
+    try std.testing.expect(altSvcLookup("c.test", 443) != null);
+    altSvcRecord("c.test", 443, "clear");
+    try std.testing.expectEqual(@as(?u16, null), altSvcLookup("c.test", 443));
+    // Sona erme.
+    altSvcRecord("d.test", 443, "h3=\":443\"; ma=1");
+    for (&g_alt) |*e| if (e.used) {
+        e.expires_ms = nowMs() - 1;
+    };
+    try std.testing.expectEqual(@as(?u16, null), altSvcLookup("d.test", 443));
+    for (&g_alt) |*e| e.used = false;
 }

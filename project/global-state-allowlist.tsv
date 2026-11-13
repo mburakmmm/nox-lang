@@ -145,3 +145,11 @@ runtime/stdlib_shims/shim_util.zig	g_bare_scratch_ready	freestanding	AGENTS §2.
 runtime/stdlib_shims/quic.zig	g_state	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
 runtime/stdlib_shims/quic.zig	g_lib	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
 runtime/stdlib_shims/quic.zig	g_funcs	lazy-lib	işlem-geneli TEMBEL yüklenen, yüklendikten sonra değişmeyen dış kütüphane/CA önbelleği (atomik durum korumalı); runtime verisi taşımaz
+runtime/stdlib_shims/http_server.zig	g_alt_svc	shared-io	HTTP/3 açıkken yanıtlara eklenen alt-svc değeri (motor başlarken yazılır, atomik uzunlukla yayımlanır); runtime verisi taşımaz
+runtime/stdlib_shims/http_server.zig	g_alt_svc_len	shared-io	g_alt_svc geçerli uzunluğu (0 = HTTP/3 kapalı); atomik bayrak
+runtime/stdlib_shims/http_client.zig	g_client_h3	shared-io	süreç-geneli istemci HTTP/3 anahtarı (nox.http.set_http3); atomik bayrak
+runtime/stdlib_shims/http_client.zig	g_alt	shared-io	süreç-geneli Alt-Svc keşif önbelleği (kaynak -> h3 portu, sona erme); SpinLock korumalı, runtime verisi taşımaz
+runtime/stdlib_shims/http_client.zig	g_alt_lock	shared-io	g_alt önbelleğinin kilidi
+runtime/stdlib_shims/h3_client.zig	g_ctx	lazy-lib	süreç-geneli TEMBEL kurulan QUIC istemci bağlamı (OpenSSL güven deposu bir kez yüklenir; atomik durum korumalı); runtime verisi taşımaz
+runtime/stdlib_shims/h3_client.zig	g_pool	shared-io	süreç-geneli HTTP/3 istemci bağlantı havuzu (en çok 8 boşta QUIC bağlantısı, 60 sn); SpinLock korumalı, runtime verisi taşımaz
+runtime/stdlib_shims/h3_client.zig	g_pool_lock	shared-io	g_pool havuzunun kilidi

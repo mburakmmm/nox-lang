@@ -217,8 +217,8 @@ def set_http2(enabled: bool) -> None:
     else:
         nox_http_config_set_raw(6, 2)
 
-# HTTP/3 (v2.1.115, QUIC): `serve_tls` ile birlikte aynı port numarasında UDP dinler ve AYNI handler'ı çağırır. Yalnızca arabellekli istek/yanıt (akışlı yanıt, WebSocket ve sunucu itme yok). OpenSSL >= 3.5 gerekir; yoksa ya da
-# UDP port açılamazsa tek satırlık bir uyarıyla HTTP/1.1 + HTTP/2 olarak sürer. `serve*`dan ÖNCE çağrılmalıdır; varsayılan kapalıdır. Tarayıcıların h3'e geçmesi için handler'ınız `alt-svc: h3=":443"` başlığı döndürmelidir.
+# HTTP/3 (QUIC), iki yönde. Sunucu: `serve_tls` ile birlikte aynı port numarasında UDP dinler, AYNI handler'ı çağırır ve HTTP/1.1 + HTTP/2 yanıtlarına `alt-svc: h3` ekler. İstemci: bir https kaynağı
+# `alt-svc: h3` bildirdiyse sonraki istekler HTTP/3 ile denenir, kurulamazsa TCP'ye düşülür. OpenSSL >= 3.5 gerekir; yoksa HTTP/1.1 + HTTP/2 olarak sürer. `serve*`/istekten ÖNCE çağrılmalıdır; varsayılan kapalıdır.
 def set_http3(enabled: bool) -> None:
     if enabled:
         nox_http_config_set_raw(8, 1)
