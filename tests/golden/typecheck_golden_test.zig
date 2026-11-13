@@ -1338,17 +1338,13 @@ test "golden(typecheck): Faz BB.3 — nox.thread.start güvenli olmayan (list[in
     );
 }
 
-// Faz MN.9.4: `Checker.backend`in VARSAYILANI (`.qbe`) İLE `nox.thread.
-// start`ın `list[int]` DÖNÜŞ tipi REDDEDİLİR — `tests/golden/llvm_golden_
-// test.zig`nin AYNI (BİREBİR) kaynağını `.llvm` backend'iyle BAŞARIYLA
-// derleyip ÇALIŞTIRAN pozitif testinin negatif KARŞILIĞI (bkz. onun MN.9.4
-// notu) — backend sınırının GERÇEKTEN ZORLANDIĞININ kanıtı: `noxc check`
-// (HER ZAMAN `.qbe`) BUNU HATA olarak İŞARETLER, AYNI kaynak `noxc build
-// --release` İLE GERÇEKTEN DERLENEBİLİR (bilinçli taşınabilirlik-maliyeti).
-test "golden(typecheck): Faz MN.9.4 — nox.thread.start list[int] SADECE --release'de güvenli, .qbe varsayılanında reddedilir" {
+// v2.1.111 (TODO 5.3): `nox.thread.start`in `list[int]` donusu ARTIK varsayilan
+// (hosted, .qbe) `noxc check`te de kabul edilir — QBE de M:N paylasimli calisma
+// zamanina (atomik ARC + havuz) sahip. Eski Faz MN.9.4 testinin tersine cevrilmis hali.
+test "golden(typecheck): v2.1.111 — nox.thread.start list[int] hosted .qbe varsayilaninda da kabul edilir" {
     try expectGolden(
-        @embedFile("typecheck_cases/err_thread_start_release_only_list.nox"),
-        @embedFile("typecheck_cases/err_thread_start_release_only_list.expected"),
+        @embedFile("typecheck_cases/ok_thread_start_list_hosted.nox"),
+        @embedFile("typecheck_cases/ok_thread_start_list_hosted.expected"),
     );
 }
 

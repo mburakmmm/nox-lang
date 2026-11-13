@@ -476,7 +476,7 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
             // YOKTU). Düzeltme: `list`/`class`/`dict`YLE AYNI retain+
             // release-if-temporary çiftini `str`e de UYGULA.
             try self.emitInlineRetain(av.text, .str);
-        } else if (self.backend == .llvm and (av.heap == .list or av.heap == .class or av.heap == .dict)) {
+        } else if (self.mn() and (av.heap == .list or av.heap == .class or av.heap == .dict)) {
             try self.emitInlineRetain(av.text, av.heap);
         } else if (self.isSpawnRefcountedType(av.heap)) {
             // v1.29.12: `Task[T]`/`Channel[T]` (bkz. `ownership.zig`nin
@@ -502,7 +502,7 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     // OLABİLDİĞİNDEN (checker), o üçü İçİn `self.backend == .llvm` kontrolü
     // KORUNUR.
     for (call.args, 0..) |a, i| {
-        if (arg_values[i].heap == .str or (self.backend == .llvm and (arg_values[i].heap == .list or arg_values[i].heap == .class or arg_values[i].heap == .dict))) {
+        if (arg_values[i].heap == .str or (self.mn() and (arg_values[i].heap == .list or arg_values[i].heap == .class or arg_values[i].heap == .dict))) {
             try self.releaseIfTemporary(a, arg_values[i]);
         }
     }
@@ -609,7 +609,7 @@ pub fn genSpawnWrapper(self: *Codegen, spec: SpawnWrapperSpec) CodegenError!void
             try self.releaseValueIfSet(at, .str, .none, null, null, null);
         }
     }
-    if (self.backend == .llvm) {
+    if (self.mn()) {
         for (spec.sig.params, arg_texts) |p, at| {
             if (p.heap == .list or p.heap == .class or p.heap == .dict) {
                 try self.releaseValueIfSet(at, p.heap, p.elem_qtype, p.class_name, p.elem_heap_info, p.dict_info);
@@ -676,7 +676,7 @@ pub fn genThreadStartExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
     // `genThreadHandleJoin`nin (bkz. onların MN.9.4 notları) HANGİ
     // runtime fonksiyonlarını ÇAĞIRACAĞINI seçen STATİK dispatch
     // etiketidir.
-    if (self.backend == .llvm) {
+    if (self.mn()) {
         const arg_arr = try self.allocator.alloc(ast.Expr, 1);
         arg_arr[0] = c.args[1];
         const callee_expr = try self.allocator.create(ast.Expr);
@@ -835,7 +835,7 @@ pub fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenErr
 /// — bu YÜZDEN `nox.thread.pool_run` SADECE `--release` (LLVM backend)
 /// İLE derlenebilir.
 pub fn genPoolRunExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
-    if (self.backend == .qbe) return error.Unsupported;
+    if (!self.mn()) return error.Unsupported;
     if (c.args.len != 2) return error.Unsupported;
     const num_workers_v0 = try self.genExpr(c.args[0]);
     try self.checkNoLowlevelEscape(num_workers_v0);
@@ -987,7 +987,7 @@ pub fn genThreadHandleJoin(self: *Codegen, a: ast.Attribute) CodegenError!Value 
     // `*Task(i64)`dir (bkz. `genThreadStartExpr`nin MN.9.4 notu) — `$nox_
     // async_await` `$nox_thread_join` İLE BİREBİR AYNI ŞEKLİ (`(rt,
     // işaretçi) -> i64 payload`) taşıdığından SADECE sembol adı DEĞİŞİR.
-    const join_sym = if (self.backend == .llvm) "$nox_async_await" else "$nox_thread_join";
+    const join_sym = if (self.mn()) "$nox_async_await" else "$nox_thread_join";
     try self.qbeCall(.{ .name = payload_t, .ty = .l }, join_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_val.text } });
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, handle_val.elem_qtype);
     return valueFromElemDescriptor(converted.text, converted.qtype, handle_val.elem_heap_info, handle_val.elem_is_str, handle_val.elem_fixed_int);
@@ -1193,7 +1193,7 @@ pub fn genThreadChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
     // çapraz-worker GÜVENLİ hale getirilmiş mekanizma). `.qbe` dalı
     // BİREBİR DEĞİŞMEDEN kalır (`nox_threadchannel_*`nin `_val`/`_str`
     // ikili API'si).
-    if (self.backend == .llvm) return self.genChannelOp(a, args, ch_val);
+    if (self.mn()) return self.genChannelOp(a, args, ch_val);
     if (std.mem.eql(u8, a.attr, "send")) {
         if (args.len != 1) return error.Unsupported;
         const v = try self.genExpr(args[0]);

@@ -2100,7 +2100,7 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     if (obj.heap == .task_local) return async_thread_mod.genTaskLocalOp(self, obj, a, args);
     // `h.cancel()` (ThreadHandle): LLVM'de tutamak bir `Task`tır (bkz. `destroyNonArcValue`), QBE'de ayrı `ThreadHandle` bayrağı.
     if (obj.heap == .thread_handle) {
-        const sym: []const u8 = if (self.backend == .llvm) "$nox_task_cancel" else "$nox_thread_cancel";
+        const sym: []const u8 = if (self.mn()) "$nox_task_cancel" else "$nox_thread_cancel";
         try self.qbeCall(null, sym, &.{.{ .ty = .l, .text = obj.text }});
         return .{ .text = "0", .qtype = .none };
     }
@@ -3658,7 +3658,7 @@ pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError
     // `ThreadChannel` tip adı KORUNUR (aşağıdaki `.heap = .thread_channel`
     // etiketi DEĞİŞMEDEN kalır), SADECE ALTTAKİ runtime çağrısı DEĞİŞİR
     // (bkz. `genThreadChannelOp`/`destroyNonArcValue`nin AYNI MN.9.4 notu).
-    const new_fn_name = if (is_thread_channel and self.backend != .llvm) "nox_threadchannel_new" else "nox_channel_new";
+    const new_fn_name = if (is_thread_channel and !self.mn()) "nox_threadchannel_new" else "nox_channel_new";
     const new_fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{new_fn_name});
     try self.qbeCall(.{ .name = ch_t, .ty = .l }, new_fn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cap_val.text } });
 

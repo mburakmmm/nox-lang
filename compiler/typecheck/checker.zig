@@ -2374,8 +2374,14 @@ pub const Checker = struct {
     /// (ÇAĞRI MEKANİZMASINDAN — `spawn` mı `thread.start` mı —
     /// BAĞIMSIZ, TANIM ANINDA) denetlenir. `.qbe` dalı BİREBİR
     /// DEĞİŞMEDEN kalır.
+    /// v2.1.111 (TODO 5.3): M:N paylaşımlı çalışma zamanı (atomik ARC + işçi havuzu) LLVM'de VE hosted QBE'de vardır (QBE yalnızca `spawn`/çok çekirdekli havuz
+    /// kullanan programlarda ARC'yi atomik çalışma zamanı çağrısına çevirir); freestanding QBE iş parçacıksızdır.
+    fn sharesRuntime(self: *const Checker) bool {
+        return self.backend == .llvm or self.profile == .hosted;
+    }
+
     fn isSpawnParamSafeType(self: *const Checker, t: Type) bool {
-        if (self.backend == .llvm) {
+        if (self.sharesRuntime()) {
             return switch (t) {
                 .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .typed_ptr, .thread_channel, .task_local, .list, .class, .dict, .fixed_int => true,
                 .thread_handle, .func, .optional => false,
@@ -2426,7 +2432,7 @@ pub const Checker = struct {
     /// (2) `list`/`class`/`dict` (YENİ, `async_thread.zig`nin `--release`-
     /// SINIRLI retain/release-farkındalı kapanış paketlemesi GEREKTİRİR).
     fn isThreadTransferSafeType(self: *const Checker, t: Type) bool {
-        if (self.backend == .llvm) {
+        if (self.sharesRuntime()) {
             return switch (t) {
                 .int, .float, .boolean, .str, .none, .ptr, .typed_ptr, .thread_channel, .task, .channel, .task_local, .list, .class, .dict, .fixed_int => true,
                 .thread_handle, .func, .optional => false,
@@ -2800,7 +2806,7 @@ pub const Checker = struct {
             // maliyetli bir taşımadır, ekstra paketleme gerekmez).
             for (fd.params, 0..) |p, i| {
                 if (!self.isSpawnParamSafeType(params[i])) {
-                    return self.fail(error.TypeMismatch, "'async def {s}': parameter '{s}' has an unsupported type (only int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parameters can be packed, and additionally list/class/dict under --release)", .{ fd.name, p.name });
+                    return self.fail(error.TypeMismatch, "'async def {s}': parameter '{s}' has an unsupported type (only int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parameters can be packed, and additionally list/class/dict on hosted targets)", .{ fd.name, p.name });
                 }
             }
         }
@@ -3682,10 +3688,10 @@ pub const Checker = struct {
             return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry' must take EXACTLY one parameter", .{});
         }
         if (!self.isThreadTransferSafeType(sig.params[0])) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': the parameter type of 'entry' is not safe across threads (only int/float/bool/str/None/ptr, and additionally task/channel/list/class/dict under --release)", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.start': the parameter type of 'entry' is not safe across threads (only int/float/bool/str/None/ptr, and additionally task/channel/list/class/dict on hosted targets)", .{});
         }
         if (!self.isThreadTransferSafeType(sig.return_type)) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': the return type of 'entry' is not safe across threads (only int/float/bool/str/None/ptr, and additionally task/channel/list/class/dict under --release)", .{});
+            return self.fail(error.TypeMismatch, "'nox.thread.start': the return type of 'entry' is not safe across threads (only int/float/bool/str/None/ptr, and additionally task/channel/list/class/dict on hosted targets)", .{});
         }
 
         const arg_t = try self.checkExpr(ctx, c.args[1]);
@@ -7243,7 +7249,7 @@ pub const Checker = struct {
             }
             const elem_t = try self.typeExprToType(g.type_args[0]);
             if (!self.isThreadTransferSafeType(elem_t)) {
-                return self.fail(error.TypeMismatch, "the 'ThreadChannel' element type can only be int/float/bool/str/None/ptr (and additionally task/channel/list/class/dict under --release)", .{});
+                return self.fail(error.TypeMismatch, "the 'ThreadChannel' element type can only be int/float/bool/str/None/ptr (and additionally task/channel/list/class/dict on hosted targets)", .{});
             }
             if (g.args.len != 1) {
                 return self.fail(error.ArgumentCountMismatch, "the 'ThreadChannel' constructor takes exactly 1 argument (capacity: int)", .{});

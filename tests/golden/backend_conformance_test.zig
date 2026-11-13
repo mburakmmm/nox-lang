@@ -333,35 +333,31 @@ test "conformance: generic fonksiyon/sınıf örneklemesinin ÇALIŞMA-ZAMANI da
 // `isSpawnParamSafeType`/`isThreadTransferSafeType`si + codegen_qbe'nin
 // `pool_run`/decorator KABUL-RED asimetrisi. ---
 
-test "divergence: spawn'a list[int] parametresi — QBE reddeder, LLVM kabul eder" {
-    try expectDivergence(
+test "uyum: spawn'a list[int] parametresi — v2.1.111'den beri QBE de kabul eder, LLVM ile ayni cikti" {
+    try expectConformant(
         @embedFile("conformance_cases/divergence_spawn_list_param.nox"),
-        .rejected,
-        .{ .accepted = "6\n" },
+        "6\n",
     );
 }
 
-test "divergence: spawn'a class parametresi — QBE reddeder, LLVM kabul eder" {
-    try expectDivergence(
+test "uyum: spawn'a class parametresi — v2.1.111'den beri QBE de kabul eder, LLVM ile ayni cikti" {
+    try expectConformant(
         @embedFile("conformance_cases/divergence_spawn_class_param.nox"),
-        .rejected,
-        .{ .accepted = "7\n" },
+        "7\n",
     );
 }
 
-test "divergence: nox.thread.start'a list[int] parametresi — QBE reddeder, LLVM kabul eder" {
-    try expectDivergence(
+test "uyum: nox.thread.start'a list[int] parametresi — v2.1.111'den beri QBE de kabul eder, LLVM ile ayni cikti" {
+    try expectConformant(
         @embedFile("conformance_cases/divergence_thread_start_list_param.nox"),
-        .rejected,
-        .{ .accepted = "60\n" },
+        "60\n",
     );
 }
 
-test "divergence: nox.thread.pool_run — QBE reddeder (codegen error.Unsupported), LLVM kabul eder" {
-    try expectDivergence(
+test "uyum: nox.thread.pool_run — v2.1.111'den beri QBE de kabul eder, LLVM ile ayni cikti" {
+    try expectConformant(
         @embedFile("conformance_cases/divergence_pool_run.nox"),
-        .rejected,
-        .{ .accepted = "42\n" },
+        "42\n",
     );
 }
 
@@ -382,27 +378,24 @@ test "conformance: decorator + nox.reflect + router_from_decorators — QBE ve L
 // matrisin KALAN yarısını (dict×spawn, class×thread.start, dict×
 // thread.start) tamamlar.
 
-test "divergence: spawn'a dict[str,str] parametresi — QBE reddeder, LLVM kabul eder" {
-    try expectDivergence(
+test "uyum: spawn'a dict[str,str] parametresi — v2.1.111'den beri QBE de kabul eder, LLVM ile ayni cikti" {
+    try expectConformant(
         @embedFile("conformance_cases/divergence_spawn_dict_param.nox"),
-        .rejected,
-        .{ .accepted = "merhaba\n" },
+        "merhaba\n",
     );
 }
 
-test "divergence: nox.thread.start'a sınıf parametresi — QBE reddeder, LLVM kabul eder" {
-    try expectDivergence(
+test "uyum: nox.thread.start'a sınıf parametresi — v2.1.111'den beri QBE de kabul eder, LLVM ile ayni cikti" {
+    try expectConformant(
         @embedFile("conformance_cases/divergence_thread_start_class_param.nox"),
-        .rejected,
-        .{ .accepted = "70\n" },
+        "70\n",
     );
 }
 
-test "divergence: nox.thread.start'a dict[str,str] parametresi — QBE reddeder, LLVM kabul eder" {
-    try expectDivergence(
+test "uyum: nox.thread.start'a dict[str,str] parametresi — v2.1.111'den beri QBE de kabul eder, LLVM ile ayni cikti" {
+    try expectConformant(
         @embedFile("conformance_cases/divergence_thread_start_dict_param.nox"),
-        .rejected,
-        .{ .accepted = "merhaba\n" },
+        "merhaba\n",
     );
 }
 

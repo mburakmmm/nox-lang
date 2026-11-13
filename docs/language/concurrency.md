@@ -325,11 +325,13 @@ await t
 
 All tasks run on fibers scheduled by the runtime:
 
-- **LLVM backend (default):** an automatic **M:N work-stealing scheduler** — the program's tasks run in parallel on a pool of worker
+- **Both backends (hosted targets):** an automatic **M:N work-stealing scheduler** — the program's tasks run in parallel on a pool of worker
   threads. The pool size is fixed at compile time (a small default for programs that only use plain `spawn`, the CPU count for programs
   using `nox.http.serve_multicore*` or `nox.thread.pool_run`) and can be overridden at run time with the `NOX_POOL_WORKERS` environment
-  variable. Reference counting is atomic on this backend, so values may safely be shared between tasks on different workers.
-- **QBE backend:** a **single-threaded cooperative scheduler**. Tasks interleave only at `await` points (and at blocking I/O, which is
+  variable. Reference counting is atomic whenever a program uses tasks or threads, so values may safely be shared between tasks on different
+  workers. On the QBE backend (which has no atomic instructions in its IL) the atomic count updates are calls into the runtime, emitted only
+  for programs that use `spawn`, `async`, `nox.thread` or the multi-core pool; other QBE programs keep plain, faster counts.
+- **Freestanding targets:** a single-threaded cooperative scheduler. Tasks interleave only at `await` points (and at blocking I/O, which is
   non-blocking at the fiber level); `time.sleep_ms` inside a task suspends only that task.
 
 Consequences for portable code:
@@ -338,8 +340,11 @@ Consequences for portable code:
 - Data shared between tasks should flow through channels. Module-level variables are not a safe way to communicate between tasks that may run on different
   workers (each worker keeps its own copy of the module state); use channels, `nox.atomic` counters, or `nox.sharedmem`.
 - `time.sleep_ms` inside a task (an `async def`, an HTTP handler) suspends only that task on both backends; outside a task (and on Windows) it blocks its thread.
-- The argument and result types of `spawn`/`nox.thread.start` are restricted on QBE to scalars, `str`, `None`, `ptr` and thread
-  channels; on LLVM lists, dictionaries, class instances, tasks and channels are accepted too.
+- The argument and result types of `spawn`/`nox.thread.start` may be scalars, `str`, `None`, `ptr`, thread channels, lists, dictionaries,
+  class instances, tasks and channels on both backends of hosted targets; freestanding targets are restricted to scalars, `str`, `None`,
+  `ptr` and thread channels. `Optional`, function values and `ThreadHandle` are never accepted.
+- A listening socket shared by several tasks (for example `serve_fd` called on the same fd from two threads) is closed by whichever task
+  finishes first; use `nox.http.serve_multicore*` for multi-worker servers.
 
 ### Fiber stacks
 

@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.112]
+
+### Eklendi
+
+- **QBE arka ucu için M:N zamanlayıcı eşitliği** (TODO 5.3): hosted QBE derlemesi artık LLVM ile aynı çok çekirdekli work-stealing havuzunu ve atomik ARC'yi kullanır. QBE IL'inde atomik komut olmadığından ARC artırma/azaltma, yalnızca `spawn`/`async`/`nox.thread`/çok çekirdekli havuz kullanan programlarda `$nox_atomic_rc_add/_sub` çalışma zamanı çağrısına çevrilir; diğer QBE programları düz sayaçlarla (daha hızlı) kalır. `spawn`/`nox.thread.start` argüman ve dönüş tipleri her iki arka uçta aynıdır (liste, sözlük, sınıf, `Task`, `Channel`); `nox.thread.pool_run` QBE'de de derlenir. Freestanding hedefler tek iş parçacıklı kalır.
+
+### Değişti
+
+- Checker hata iletileri: "... under --release" -> "... on hosted targets". `noxc check` artık `nox.thread.start`ın `list[int]` dönüşünü kabul eder.
+- IR anlık görüntüleri: `spawn`/`async` kullanan 59 fixture'da atomik ARC çağrıları.
+- Testler: 7 `divergence` testi `uyum` (conformance) testine çevrildi; eski MN.9.4 typecheck golden'ı tersine çevrildi (`ok_thread_start_list_hosted`); `serve_fd` birleşik-ilkeller testi tek işçiye uyarlandı (paylaşılan dinleme fd'sini ilk biten kapatır; bu LLVM'de de aynıdır).
+
 ## [2.1.111]
 
 ### Düzeltildi

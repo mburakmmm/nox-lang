@@ -537,7 +537,7 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     // fonksiyon HEM `$nox_thread_spawn` (`.qbe`) HEM `$nox_pool_serve`
     // (`.llvm`) TARAFINDAN `entry_fn` OLARAK KULLANILABİLİR, İKİNCİ bir
     // sarmalayıcı GEREKMEZ.
-    if (self.backend == .llvm) {
+    if (self.mn()) {
         const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
         const rc = try self.newTemp();
         try self.qbeCall(.{ .name = rc, .ty = .w }, "$nox_pool_serve", &.{
@@ -1337,7 +1337,7 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     // `%argp+8` yorumuyla BİREBİR UYUMLU olduğundan, AYNI ÜRETİLEN worker
     // fonksiyonu DEĞİŞİKLİKSİZ `nox_pool_serve`nin `entry_fn`i OLARAK
     // kullanılabilir.
-    if (self.backend == .llvm) {
+    if (self.mn()) {
         const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
         const rc = try self.newTemp();
         try self.qbeCall(.{ .name = rc, .ty = .w }, "$nox_pool_serve", &.{

@@ -29,6 +29,8 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_atomic_add", Entry{ .params = "LL", .ret = 'L' } },
     .{ "nox_atomic_cas", Entry{ .params = "LLL", .ret = 'L' } },
     .{ "nox_atomic_free", Entry{ .params = "L", .ret = 'v' } },
+    .{ "nox_atomic_rc_add", Entry{ .params = "LL", .ret = 'L' } },
+    .{ "nox_atomic_rc_sub", Entry{ .params = "LL", .ret = 'L' } },
     .{ "nox_atomic_load", Entry{ .params = "L", .ret = 'L' } },
     .{ "nox_atomic_new", Entry{ .params = "L", .ret = 'L' } },
     .{ "nox_atomic_ref_free", Entry{ .params = "L", .ret = 'v' } },

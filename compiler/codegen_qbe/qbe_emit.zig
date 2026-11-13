@@ -163,6 +163,15 @@ pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]c
     return new;
 }
 
+/// v2.1.111 (TODO 5.3): QBE IL'de atomik komut olmadığından, M:N çalışma zamanı açıkken ARC artırımı/azaltımı `$nox_atomic_rc_add`/`_sub` çalışma zamanı
+/// çağrısıdır (gerçek `lock xadd`/`ldadd`); İŞLEM-SONRASI değeri döner (`qbeAtomicAdd` ile aynı sözleşme).
+pub fn qbeAtomicAddCall(self: *Codegen, addr: []const u8, imm: i64, comptime op: []const u8) CodegenError![]const u8 {
+    const new = try self.newTemp();
+    const imm_text = try std.fmt.allocPrint(self.allocator, "{d}", .{imm});
+    try self.qbeCall(.{ .name = new, .ty = .l }, "$nox_atomic_rc_" ++ op, &.{ .{ .ty = .l, .text = addr }, .{ .ty = .l, .text = imm_text } });
+    return new;
+}
+
 /// `qbeAtomicAdd`nin AYNISI, `sub` mnemoniğiyle.
 pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
     const old = try self.newTemp();

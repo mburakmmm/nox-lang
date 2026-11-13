@@ -842,15 +842,20 @@ pub const Codegen = struct {
         return self.backend == .llvm and llvm_emit.isWasm(self) and llvm_emit.isWasmThreads(self);
     }
 
+    /// M:N çalışma zamanı paylaşımı: LLVM'de her zaman, QBE'de `mn_qbe` iken (bkz. `mn_qbe`). `self.backend == .llvm` olan M:N kapılarının yerini alır.
+    pub fn mn(self: *const Codegen) bool {
+        return self.backend == .llvm or self.mn_qbe;
+    }
+
     pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
         return switch (self.backend) {
-            .qbe => qbe_emit.qbeAtomicAdd(self, addr, imm),
+            .qbe => if (self.mn_qbe) qbe_emit.qbeAtomicAddCall(self, addr, imm, "add") else qbe_emit.qbeAtomicAdd(self, addr, imm),
             .llvm => llvm_emit.qbeAtomicAdd(self, addr, imm),
         };
     }
     pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
         return switch (self.backend) {
-            .qbe => qbe_emit.qbeAtomicSub(self, addr, imm),
+            .qbe => if (self.mn_qbe) qbe_emit.qbeAtomicAddCall(self, addr, imm, "sub") else qbe_emit.qbeAtomicSub(self, addr, imm),
             .llvm => llvm_emit.qbeAtomicSub(self, addr, imm),
         };
     }
@@ -1112,6 +1117,9 @@ pub const Codegen = struct {
     /// `registration.zig`nin `runtimeInitSymbol`ı TARAFINDAN OKUNUR (HANGİ
     /// `$nox_runtime_init*` sembolünün ÇAĞRILACAĞINI seçmek İçİn).
     profile: Profile = .hosted,
+    /// v2.1.111 (TODO 5.3): QBE'de çok çekirdekli M:N çalışma zamanı AÇIK mı? Program `spawn`/`async`/çok çekirdekli havuz kullanıyorsa ve hedef hosted ise
+    /// ARC artırım/azaltımı atomik çalışma zamanı çağrısına çevrilir ve LLVM'in M:N yolları (havuz, geniş `spawn` argümanları, paylaşımlı kanallar) QBE'de de üretilir.
+    mn_qbe: bool = false,
     /// v2.1.82 (TODO 3.5.3 tur 2): LLVM backend'inde SONRAKİ `load`/`store`a eklenecek TBAA etiketi (`.none` = etiketsiz = her şeyle çakışabilir).
     /// Yalnızca liste başlığı uzunluğu (`list_len`) ve liste elemanları (`list_elem`) okuma/yazmaları işaretlenir: bu iki bellek bölgesi asla örtüşmez,
     /// LLVM bu sayede eleman yazımı sonrası uzunluğu yeniden yüklemez / sınır denetimlerini birleştirir. Etiketsiz erişimler (ör. `append` başlık
@@ -1816,6 +1824,8 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
 /// `generateModuleWithMeta` ile aynı; codegen iletileri (desteklenmeyen yapı vb.) `diag_sink`e yazılır (tarayıcıdaki WASM derleyici için stderr yoktur, spec §3.353).
 pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8), class_ctors: []const decorators_mod.ClassCtorInfo, library_mode: bool, llvm_triple: []const u8, diag_sink: report_sink.Sink) CodegenError![]u8 {
     var gen: Codegen = .{ .diag_sink = diag_sink, .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile, .resolved_bases = resolved_bases, .library_mode = library_mode, .llvm_triple = llvm_triple };
+    // v2.1.111 (TODO 5.3): hosted QBE'de, `spawn`/async/çok çekirdekli havuz kullanan programlar LLVM ile aynı M:N paylaşımlı çalışma zamanını kullanır.
+    gen.mn_qbe = gen.backend == .qbe and profile == .hosted and !library_mode and (moduleUsesAsync(module, extra_functions) or moduleUsesMulticorePool(module, extra_functions));
     if (gen.backend == .llvm and llvm_triple.len > 0) {
         try gen.out.writer.print("target triple = \"{s}\"\n", .{llvm_triple});
     }

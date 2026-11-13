@@ -224,6 +224,16 @@ pub export fn nox_raw_memcpy(dst: ?*anyopaque, src: ?*anyopaque, len: usize) voi
     @memcpy(d[0..len], s[0..len]);
 }
 
+/// v2.1.111 (TODO 5.3): QBE IL'de atomik komut yoktur; M:N çalışma zamanı açıkken QBE codegen'i ARC sayacı artırım/azaltımını bu çağrılara çevirir
+/// (LLVM'in `atomicrmw add/sub acq_rel`inin AYNISI). İŞLEM-SONRASI değeri döner.
+pub export fn nox_atomic_rc_add(addr: *i64, imm: i64) i64 {
+    return atomic64.rmw(i64, .add, addr, imm) +% imm;
+}
+
+pub export fn nox_atomic_rc_sub(addr: *i64, imm: i64) i64 {
+    return atomic64.rmw(i64, .sub, addr, imm) -% imm;
+}
+
 /// Refcount'u bir artırır (bir değer başka bir isme/alana atandığında).
 /// Faz MN.1 (bkz. plan dosyası "LLVM-only atomic ARC"): bu fonksiyon
 /// ZATEN gerçek bir çağrı (inline EDİLMİYOR — bkz. `codegen_qbe/
@@ -769,3 +779,11 @@ test "havuz: çok büyük bir tahsis (havuz sınırının üstünde) hâlâ doğ
     try std.testing.expectEqual(@as(u8, 99), bytes[0]);
     nox_rc_free_payload(rt, ptr, big_size);
 }
+
+test "nox_atomic_rc_add/sub işlem-sonrası değeri döner" {
+    var v: i64 = 5;
+    try std.testing.expectEqual(@as(i64, 6), nox_atomic_rc_add(&v, 1));
+    try std.testing.expectEqual(@as(i64, 4), nox_atomic_rc_sub(&v, 2));
+    try std.testing.expectEqual(@as(i64, 4), v);
+}
+

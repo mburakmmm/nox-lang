@@ -7,7 +7,7 @@ Nox compiles the typed program to one of two back ends, which are tested against
 | Pipeline | typed IR → LLVM IR (`.ll`) → `clang -O2` (or `zig cc -O2`) → native | typed IR → QBE IL (`.ssa`) → `qbe` → assembly → `cc` → native |
 | Code speed | faster (roughly 1.5× C on a mixed benchmark suite) | good (roughly 1.7× C) |
 | Compile speed | fast | fast |
-| Scheduler | **multi-core M:N work-stealing** with atomic reference counts | single-threaded cooperative |
+| Scheduler | **multi-core M:N work-stealing** with atomic reference counts | the same M:N scheduler (since 2.1.111); atomic reference counts only in programs that use tasks or threads |
 | Needs | `clang` or `zig` on `PATH` | the bundled `qbe`, and a C compiler for linking |
 | Debug info (`-g`) | no | yes (DWARF line tables) |
 | `--target` cross-compile (desktop) | yes, needs `zig` (`zig cc -O2 -target`) | yes |

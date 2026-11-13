@@ -630,11 +630,11 @@ pub fn destroyNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind) Codeg
             const fn_name = switch (heap) {
                 .task => "nox_async_destroy_task",
                 .channel => "nox_channel_destroy",
-                .thread_handle => if (self.backend == .llvm) "nox_async_destroy_task" else "nox_thread_destroy",
+                .thread_handle => if (self.mn()) "nox_async_destroy_task" else "nox_thread_destroy",
                 // Faz MN.9.4: `--release` altında `.thread_channel`nin
                 // ÇALIŞMA-ZAMANI temsili ARTIK GERÇEKTEN bir `Channel(T)*`
                 // dir (bkz. `genGenericConstruct`nin MN.9.4 notu).
-                .thread_channel => if (self.backend == .llvm) "nox_channel_destroy" else "nox_threadchannel_destroy",
+                .thread_channel => if (self.mn()) "nox_channel_destroy" else "nox_threadchannel_destroy",
                 .task_local => "nox_tasklocal_destroy",
                 else => unreachable,
             };
@@ -672,7 +672,7 @@ pub fn isSpawnRefcountedType(self: *const Codegen, heap: HeapKind) bool {
         // TİPTE bir işaretçi üzerinde ÇALIŞIRDI. AYRICA `.thread_handle`
         // ZATEN `isSpawnParamSafeType`nin `.qbe` dalında HİÇ İZİN
         // VERİLMEZ.
-        .thread_handle, .thread_channel => self.backend == .llvm,
+        .thread_handle, .thread_channel => self.mn(),
         else => false,
     };
 }

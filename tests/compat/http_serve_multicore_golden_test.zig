@@ -251,6 +251,12 @@ test "nox.http.serve_multicore: uctan uca, N=2 is parcacigi, iki EZSAMANLI istem
     }
 }
 
+// v2.1.111 notu: `serve_fd` isi bitince paylasilan dinleme fd'sini KAPATIR.
+// Eskiden QBE'de `nox.thread.start` gercek OS is parcacigiydi ve iki
+// is parcacigi AYNI fd'de bloklayici accept ederdi; M:N havuzunda (LLVM'de
+// her zaman, QBE'de v2.1.111'den beri) ilk biten fd'yi kapatinca digeri
+// siradaki baglantiyi KAYBEDER (yaris). Bu yuzden tek isci iki istegi
+// sunar; paylasilan-fd'li coklu sunucu `serve_multicore`un isidir.
 test "nox.http.listen + nox.thread.start + nox.http.serve_fd: birlestirilebilir ilkeller DOGRUDAN kullanildiginda da calisir" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -269,11 +275,10 @@ test "nox.http.listen + nox.thread.start + nox.http.serve_fd: birlestirilebilir 
         \\    return nox_http_HttpResponse(200, "ok", {{"x": "x"}})
         \\
         \\async def worker(fd: int) -> None:
-        \\    nox.http.serve_fd(fd, handle, 1)
+        \\    nox.http.serve_fd(fd, handle, 2)
         \\
         \\fd: int = nox.http.listen({d})
         \\t: ThreadHandle[None] = nox.thread.start(worker, fd)
-        \\nox.http.serve_fd(fd, handle, 1)
         \\await t.join()
         \\
     , .{port});
