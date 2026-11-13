@@ -77,6 +77,41 @@ pub export fn nox_obj_unlock(p: ?*anyopaque) callconv(.c) void {
     if (p) |q| unlock(q);
 }
 
+/// Yayımlama: `SHARED` bitini kurar; ilk kurulumsa 1 (çağıran grafiğin çocuklarını da yayımlar), zaten paylaşılıyorsa/null ise 0.
+pub export fn nox_obj_publish_begin(p: ?*anyopaque) callconv(.c) i32 {
+    const q = p orelse return 0;
+    return if (setShared(q)) 1 else 0;
+}
+
+/// Eşitlik gibi iki nesneyi birlikte okuyan gezginler için: paylaşılan olanları adres sırasıyla kilitler (kilitlenme yok); `a == b` ise tek kilit.
+pub export fn nox_obj_lock_pair(a: ?*anyopaque, b: ?*anyopaque) callconv(.c) void {
+    const x = a orelse {
+        nox_obj_lock(b);
+        return;
+    };
+    const y = b orelse {
+        nox_obj_lock(x);
+        return;
+    };
+    if (x == y) {
+        if (isShared(x)) lock(x);
+        return;
+    }
+    const first = if (@intFromPtr(x) < @intFromPtr(y)) x else y;
+    const second = if (first == x) y else x;
+    if (isShared(first)) lock(first);
+    if (isShared(second)) lock(second);
+}
+
+pub export fn nox_obj_unlock_pair(a: ?*anyopaque, b: ?*anyopaque) callconv(.c) void {
+    const x = a orelse {
+        if (b) |q| if (isShared(q)) unlock(q);
+        return;
+    };
+    if (isShared(x)) unlock(x);
+    if (b) |q| if (q != x and isShared(q)) unlock(q);
+}
+
 // ---- Birim testleri -----------------------------------------------------------------------------------------------------------------------------------------
 
 const arc = @import("arc.zig");

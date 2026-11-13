@@ -8,6 +8,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const shared_globals = @import("shared_globals.zig");
+const dyn_share = @import("dyn_share.zig");
 const expr_mod = @import("expr.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
@@ -397,6 +398,12 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
                 try self.checkNoLowlevelEscape(v0);
                 const retained = try self.retainIfAliasing(a.value, v0);
                 const val = try self.convert(retained, f.info.qtype);
+                // Faz 9.0 F2: paylaşım-yetenekli sınıfın yığın alanı — yayımla, kilit altında değiştir, eskiyi kilit dışında bırak.
+                if (dyn_share.isDynClass(self, obj.class_name) and dyn_share.isBarrierField(f)) {
+                    try dyn_share.emitBarrierFieldStore(self, obj.text, f, val.text);
+                    try self.releaseIfTemporary(attr.obj.*, obj);
+                    return;
+                }
                 const addr = try self.newTemp();
                 try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
                 if (isHeapManaged(f.info.heap)) {

@@ -604,6 +604,8 @@ pub const VTABLE_PTR_SIZE = abi_layout.VTABLE_PTR_SIZE;
 /// Faz P1.2: ARC refcount başlığının bayt boyutu — bkz.
 /// `abi_layout.ARC_HEADER_SIZE`nin belge notu.
 pub const ARC_HEADER_SIZE = abi_layout.ARC_HEADER_SIZE;
+/// Faz 9.0 F2: başlık sözcüğündeki `SHARED` biti (bkz. `abi_layout.HDR_SHARED_BIT`).
+pub const HDR_SHARED_BIT = abi_layout.HDR_SHARED_BIT;
 /// Faz P1.2: pinned string literal refcount değeri — bkz.
 /// `abi_layout.PINNED_REFCOUNT`nin belge notu.
 pub const PINNED_REFCOUNT = abi_layout.PINNED_REFCOUNT;

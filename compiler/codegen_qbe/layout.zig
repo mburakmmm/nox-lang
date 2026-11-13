@@ -9,6 +9,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
+const dyn_share = @import("dyn_share.zig");
 const llvm_emit = @import("llvm_emit.zig");
 
 const Codegen = codegen.Codegen;
@@ -1071,6 +1072,9 @@ pub fn genClassEq(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) Code
         return;
     }
     const mismatch_label = try self.newLabel("classeq_mismatch");
+    // Faz 9.0 F2: paylaşım-yetenekli sınıfta alan-alan karşılaştırma iki örneği (paylaşılansa, adres sırasıyla) kilitler; iç içe `__eq__`/alt eşitlikler kilit altında çalışır ama bir nesneyi yeniden kilitlemez (yalnızca kapsama sırası).
+    const dyn_eq = dyn_share.isDynClass(self, class_name);
+    if (dyn_eq) try self.qbeCall(null, "$nox_obj_lock_pair", &.{ .{ .ty = .l, .text = "%a" }, .{ .ty = .l, .text = "%b" } });
     for (cinfo.fields.items) |f| {
         const addr_a = try self.newTemp();
         try self.qbeOp2Imm(addr_a, .l, "add", "%a", @intCast(f.offset));
@@ -1082,8 +1086,10 @@ pub fn genClassEq(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) Code
         try self.narrowLoad(vb, f.info, cinfo.layout_mode, addr_b);
         try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, f.info.dict_info, mismatch_label, null);
     }
+    if (dyn_eq) try self.qbeCall(null, "$nox_obj_unlock_pair", &.{ .{ .ty = .l, .text = "%a" }, .{ .ty = .l, .text = "%b" } });
     try self.qbeRet("1");
     try self.qbeLabel(mismatch_label);
+    if (dyn_eq) try self.qbeCall(null, "$nox_obj_unlock_pair", &.{ .{ .ty = .l, .text = "%a" }, .{ .ty = .l, .text = "%b" } });
     try self.qbeRet("0");
     try self.qbeFuncEnd();
 }

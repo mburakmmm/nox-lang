@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.131]
+
+### Eklendi (Faz 9.0 F2: sınıf örneği alan bariyerleri)
+
+- **Dinamik paylaşım F2:** kilitsiz ölçütleri sağlamayan (alanları eş zamanlı YENİDEN ATANAN `str`/`dict`/iç içe sınıf alanlı) MODÜL DÜZEYİ sınıf örnekleri artık tek işçiye sabitlenmez. Derleyici paylaşım-yetenekli sınıfları (`dyn_classes`: kalıtımsız, `__del__`siz, dekoratörsüz; alanlar skaler/`str`/skaler-`str` değerli `dict`/iç içe böyle bir sınıf) belirler ve YALNIZ onlar için bariyer üretir: yığın alanı OKUMASI paylaşılan örnekte kilit altında retain eder (sahipli sonuç), YAZMASI yeni değeri yayımlar (`$nox_publish_<Sınıf>`: grafiği geçişli `SHARED`), kilit altında değiştirir ve eskiyi kilit DIŞINDA bırakır; alan-alan eşitlik iki örneği adres sırasıyla kilitler; yazdırma alanları sahipli okur (kullanıcı `__repr__`ı kilit dışında). Başlıktaki `SHARED` biti yoksa maliyet: bir yükleme + dal.
+- Çalışma zamanı: `nox_obj_publish_begin`, `nox_obj_lock_pair/unlock_pair`. Test: iki backend golden `mn_dyn_class_fields` (6 işçi, eş zamanlı `set_status/swap_cfg/tag/reset_tags`); bariyersiz aynı program her çalıştırmada çift serbest bırakma verir (negatif kontrol), bariyerli 60 çalıştırmada 0 hata.
+
 ## [2.1.130]
 
 ### Eklendi (Faz 9.0 F1: kalıcı M:N mimarisinin temeli)

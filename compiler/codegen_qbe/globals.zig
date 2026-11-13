@@ -12,6 +12,7 @@ const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
 const shared_globals = @import("shared_globals.zig");
+const dyn_share = @import("dyn_share.zig");
 
 const Codegen = codegen.Codegen;
 const RT_PARAM = types.RT_PARAM;
@@ -96,6 +97,10 @@ fn genGlobalInitStmt(self: *Codegen, stmt: ast.Stmt, block: []const u8) CodegenE
             try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
             try self.qbeStore(g.info.qtype, val.text, addr);
             // Faz 9.0: paylaşılan tek blokta yaşayan sözlük, eş zamanlı erişim BAŞLAMADAN (işçiler henüz dokunmadan) paylaşılan olarak işaretlenir.
+            if (self.dyn_publish_globals.contains(v.name)) {
+                // Faz 9.0 F2: dinamik paylaşım kökü — örnek ve grafiği başlangıçta yayımlanır (SHARED).
+                try dyn_share.emitPublishValue(self, val.text, g.info);
+            }
             if (self.shared_class_globals.contains(v.name)) {
                 try shared_globals.genMarkSharedInstance(self, g.info.class_name.?, val.text, 0);
             }

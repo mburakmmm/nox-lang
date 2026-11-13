@@ -214,6 +214,7 @@ const ffi_callback = @import("ffi_callback.zig");
 const layout = @import("layout.zig");
 const globals_mod = @import("globals.zig");
 const shared_globals = @import("shared_globals.zig");
+const dyn_share = @import("dyn_share.zig");
 const ownership = @import("ownership.zig");
 const exceptions = @import("exceptions.zig");
 const calls = @import("calls.zig");
@@ -1272,6 +1273,9 @@ pub const Codegen = struct {
     /// Faz 9.0 dilim 7: paylaşılan sözlük alanlı sınıf örnekleri (başlangıçta alanları `Dict.shared` olarak işaretlenir) ve bu yüzden TÜM `str`/sınıf değerli sözlük okumalarının SAHİPLİ olduğu kip.
     shared_class_globals: std.StringHashMapUnmanaged(void) = .empty,
     owned_dict_reads: bool = false,
+    /// Faz 9.0 F2: DİNAMİK paylaşım bariyerleri üretilen sınıflar (bkz. `dyn_share.zig`) ve başlangıçta yayımlanacak global örnekler.
+    dyn_classes: std.StringHashMapUnmanaged(void) = .empty,
+    dyn_publish_globals: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz 9.0: `shared_block_mode` içinde başlangıçta paylaşılan olarak işaretlenecek `dict` globalleri (bkz. `registration.isSharedSafeDict`).
     shared_dict_globals: std.StringHashMapUnmanaged(void) = .empty,
     /// Son terfi etmiş `var_decl`ın `module.body` indeksi (dahil). Bu
@@ -1990,6 +1994,8 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
         if (!gen.shared_block_mode) {
             gen.owned_dict_reads = false;
             gen.shared_class_globals.clearRetainingCapacity();
+            gen.dyn_classes.clearRetainingCapacity();
+            gen.dyn_publish_globals.clearRetainingCapacity();
         }
     }
 
@@ -2130,6 +2136,7 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
         try gen.genClassVtable(cd.name, cinfo);
         try class_ids.append(allocator, .{ .name = cd.name, .id = cinfo.class_id });
     }
+    try dyn_share.genPublishFunctions(&gen);
     if (class_ids.items.len > 0) {
         try gen.genTraceDispatch(class_ids.items);
         try gen.genGcFreeDispatch(class_ids.items);

@@ -1076,6 +1076,42 @@ fn isRoutedStrDict(self: *Codegen, g: types.GlobalVar, module: ast.Module, extra
     return shared_globals.usesAreRouted(self.allocator, module.body, extra_functions, g.name, .dict_str);
 }
 
+/// Sınıfın kaynak tanımı dekoratör taşıyor mu (yansıma/türetme üreteçleri alanları ham okur: bariyer kapsamı dışı)?
+fn classHasDecorators(module: ast.Module, cn: []const u8) bool {
+    for (module.body) |st| {
+        if (st.kind != .class_def) continue;
+        const cd = st.kind.class_def;
+        if (std.mem.eql(u8, cd.name, cn)) return cd.decorators.len > 0;
+    }
+    return false;
+}
+
+/// Faz 9.0 F2: DİNAMİK paylaşıma uygun sınıf mı (bariyer üretilebilir)? Kalıtımsız, `__del__`siz, dekoratörsüz; alanlar skaler, `str`, skaler/`str` değerli `dict` ya da (özyinelemeli) dinamik-uygun sınıf.
+/// Uygunsa sınıf ve alt sınıfları `out`a eklenir.
+fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.StringHashMapUnmanaged(void), depth: u8) CodegenError!bool {
+    if (depth > 6) return false;
+    if (out.contains(cn)) return true;
+    const info = self.classes.getPtr(cn) orelse return false;
+    if (info.has_vtable or info.del_owner != null or classHasDecorators(module, cn)) return false;
+    try out.put(self.allocator, cn, {});
+    for (info.fields.items) |f| {
+        switch (f.info.heap) {
+            .none, .str => {},
+            .dict => {
+                const di = f.info.dict_info orelse return false;
+                if (di.value_heap != .none or di.value_is_class) return false;
+                if (di.value_is_str) self.owned_dict_reads = true;
+            },
+            .class => {
+                const fc = f.info.class_name orelse return false;
+                if (!try dynSafeClass(self, fc, module, out, depth + 1)) return false;
+            },
+            else => return false,
+        }
+    }
+    return true;
+}
+
 /// Faz 9.0: sınıflandırır VE paylaşılan-güvenli sözlük globallerini `shared_dict_globals`a yazar (`genGlobalInitStmt` bunları başlangıçta paylaşılan olarak işaretler).
 /// Kanal/görev globalleri (zaten iş parçacığı güvenli tutamaçlar; hiç yeniden atanmamışsa) ve skaler/`str`-alanlı sınıf örnekleri de paylaşılan tek blokta yaşar.
 pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!SharedGlobalsKind {
@@ -1111,9 +1147,19 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
                 kind = .shared_block;
             },
             .class => {
-                if (!isSharedSafeClassInstance(self, g.*, module)) return .pinned;
-                try self.shared_class_globals.put(self.allocator, g.name, {});
-                kind = .shared_block;
+                if (isSharedSafeClassInstance(self, g.*, module)) {
+                    try self.shared_class_globals.put(self.allocator, g.name, {});
+                    kind = .shared_block;
+                } else if (g.info.class_name != null and !assignsName(module.body, g.name)) {
+                    // Faz 9.0 F2: kilitsiz ölçütleri sağlamayan ama dinamik-uygun sınıf örneği: bariyerli paylaşım (yayımlama + sahipli okuma / kilitli yazma).
+                    var set: std.StringHashMapUnmanaged(void) = .empty;
+                    defer set.deinit(self.allocator);
+                    if (!try dynSafeClass(self, g.info.class_name.?, module, &set, 0)) return .pinned;
+                    var sit = set.keyIterator();
+                    while (sit.next()) |k| try self.dyn_classes.put(self.allocator, k.*, {});
+                    try self.dyn_publish_globals.put(self.allocator, g.name, {});
+                    kind = .shared_block;
+                } else return .pinned;
             },
             else => return .pinned,
         }

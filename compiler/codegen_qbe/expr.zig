@@ -9,6 +9,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const shared_globals = @import("shared_globals.zig");
+const dyn_share = @import("dyn_share.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
 const layout = @import("layout.zig");
@@ -522,6 +523,12 @@ pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
     const cinfo = self.classes.get(obj.class_name.?).?;
     for (cinfo.fields.items) |f| {
         if (!std.mem.eql(u8, f.name, a.attr)) continue;
+        // Faz 9.0 F2: paylaşım-yetenekli sınıfın yığın alanı — sahipli okuma (paylaşılan örnekte kilit altında retain).
+        if (dyn_share.isDynClass(self, obj.class_name) and dyn_share.isBarrierField(f)) {
+            const r = try dyn_share.emitOwnedFieldLoad(self, obj.text, f);
+            try self.releaseIfTemporary(a.obj.*, obj);
+            return .{ .text = r, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig, .fixed_int = f.info.fixed_int, .elem_fixed_int = f.info.elem_fixed_int, .always_fresh = true };
+        }
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
         const result = try self.newTemp();
@@ -1999,7 +2006,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         // paylaşılan `$ClassName_eq`e bir `call`+dönüş yerine, karşılaştırıcıyı
         // DOĞRUDAN BU kullanım sitesine splice et — `list == list` (HER ZAMAN
         // bir döngü gerektirir) BU optimizasyonun kapsamı DIŞINDA kalır.
-        const eq_temp: []const u8 = if (l0.heap == .class and classEqInlineEligible(self.classes.get(l0.class_name.?).?))
+        const eq_temp: []const u8 = if (l0.heap == .class and classEqInlineEligible(self.classes.get(l0.class_name.?).?) and !dyn_share.isDynClass(self, l0.class_name))
             try self.genClassEqInline(self.classes.get(l0.class_name.?).?, l0.text, r0.text)
         else blk: {
             break :blk try self.emitNonNullEq(l0.text, r0.text, l0.heap, l0.class_name, l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str, l0.dict_info);
@@ -2736,14 +2743,20 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
         try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = name_sym }});
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", v.text, @intCast(f.offset));
-        const fv = try self.newTemp();
-        try self.qbeLoad(fv, f.info.qtype, f.info.qtype, addr);
+        // Faz 9.0 F2: paylaşım-yetenekli sınıfın yığın alanı sahipli (kilit altında retain) okunur; basıldıktan sonra bırakılır (kullanıcı `__repr__`ı kilit DIŞINDA çalışır).
+        const dyn_field = dyn_share.isDynClass(self, class_name) and dyn_share.isBarrierField(f);
+        const fv: []const u8 = if (dyn_field) try dyn_share.emitOwnedFieldLoad(self, v.text, f) else blk: {
+            const t = try self.newTemp();
+            try self.qbeLoad(t, f.info.qtype, f.info.qtype, addr);
+            break :blk t;
+        };
         // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
         // `genCall`/`genInlinedCall`in AYNI bulgusu — bir sınıfın
         // sabit-genişlikli tamsayı ALANI (`x: u8` GİBİ) `print(obj)`
         // İLE basıldığında `fixed_int` DAMGALANMADIĞINDAN "True"/"False"
         // OLARAK YANLIŞ basılıyordu.
         try self.genPrintFragment(.{ .text = fv, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .fixed_int = f.info.fixed_int });
+        if (dyn_field) try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
     }
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_rparen" }});
 }

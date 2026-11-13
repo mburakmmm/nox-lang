@@ -1,0 +1,73 @@
+# Faz 9.0 F2 (v2.1.131): DİNAMİK paylaşım — alanları eş zamanlı YENİDEN ATANAN (`str`, `dict`, iç içe sınıf) modül düzeyi sınıf örneği. Kilitsiz ölçütleri sağlamaz; bariyerler (yayımlama,
+# paylaşılan örnekte kilit altında sahipli okuma / kilitli yazma, eskiyi kilit dışında bırakma) bellek güvenliğini sağlar. Sızıntı/çift bırakma DebugAllocator ile yakalanır.
+class Config:
+    name: str
+    level: int
+    def __init__(self: Config, name: str, level: int) -> None:
+        self.name = name
+        self.level = level
+
+class Server:
+    status: str
+    cfg: Config
+    tags: dict[str, int]
+    hits: int
+    def __init__(self: Server) -> None:
+        self.status = "idle"
+        self.cfg = Config("base", 0)
+        self.tags = {}
+        self.hits = 0
+    def set_status(self: Server, s: str) -> None:
+        self.status = s
+        self.hits = self.hits + 1
+    def swap_cfg(self: Server, n: str, lv: int) -> None:
+        self.cfg = Config(n, lv)
+    def reset_tags(self: Server) -> None:
+        self.tags = {}
+    def tag(self: Server, k: str) -> None:
+        self.tags[k] = len(k)
+    def info(self: Server) -> str:
+        return self.status + ":" + self.cfg.name + ":" + str(self.cfg.level)
+
+srv: Server = Server()
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 400:
+        srv.set_status("w" + str(id) + "-" + str(j))
+        srv.swap_cfg("c" + str(id), j % 7)
+        srv.tag("t" + str(j % 11))
+        if j % 50 == 49:
+            srv.reset_tags()
+        text: str = srv.info()
+        if len(text) < 5:
+            acc = acc + 1000
+        acc = acc + len(srv.status) % 3
+        acc = acc + srv.cfg.level % 2
+        k: int = 0
+        while k < 300:
+            acc = (acc * 31 + k + j + id) % 1000003
+            k = k + 1
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s < 1000000000)
+    print(srv.hits > 0 and srv.hits <= 2400)
+    print(len(srv.info()) >= 5)
+    print(srv.status.startswith("w"))
+    print(srv == srv)
+
+mt: Task[None] = spawn main_task()
+await mt
