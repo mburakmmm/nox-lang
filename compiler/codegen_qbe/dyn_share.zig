@@ -27,7 +27,7 @@ pub fn isDynClass(self: *const Codegen, name: ?[]const u8) bool {
 /// Bir alan, bariyer gerektiren yığın alanı mı (`str` değişmez ama işaretçi değişimi yarışır: o da bariyerlidir)?
 pub fn isBarrierField(f: ClassField) bool {
     return switch (f.info.heap) {
-        .str, .dict, .class => true,
+        .str, .dict, .class, .list => true,
         else => false,
     };
 }
@@ -55,6 +55,15 @@ fn emitCondCall(self: *Codegen, flag: []const u8, sym: []const u8, args: []const
     try self.qbeLabel(done);
 }
 
+/// Örnek kilidini (paylaşılansa) alır / bırakır — `flag` `emitSharedFlag` sonucudur.
+pub fn emitCondLock(self: *Codegen, flag: []const u8, obj_text: []const u8) CodegenError!void {
+    try emitCondCall(self, flag, "$nox_obj_lock", &.{.{ .ty = .l, .text = obj_text }}, "dyn_hold_lock");
+}
+
+pub fn emitCondUnlock(self: *Codegen, flag: []const u8, obj_text: []const u8) CodegenError!void {
+    try emitCondCall(self, flag, "$nox_obj_unlock", &.{.{ .ty = .l, .text = obj_text }}, "dyn_hold_unlock");
+}
+
 /// Yığın tipli alanın SAHİPLİ okuması: örnek paylaşılansa kilit altında yükle+retain; değilse yükle+retain (kilitsiz). Dönen işaretçi çağırana aittir.
 pub fn emitOwnedFieldLoad(self: *Codegen, obj_text: []const u8, f: ClassField) CodegenError![]const u8 {
     const shared = try emitSharedFlag(self, obj_text);
@@ -78,6 +87,8 @@ pub fn emitPublishValue(self: *Codegen, ptr_text: []const u8, info: TypeInfo) Co
             try self.qbeCall(null, sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr_text } });
         },
         .dict => try self.qbeCall(null, "$nox_dict_make_shared", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr_text } }),
+        // Liste bloğu (skaler elemanlı): yalnızca `SHARED` bitini kur (elemanlar yayımlanacak yığın nesnesi değildir).
+        .list => try self.qbeCall(null, "$nox_obj_publish_begin", &.{.{ .ty = .l, .text = ptr_text }}),
         else => {},
     }
 }

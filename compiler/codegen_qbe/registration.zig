@@ -1106,6 +1106,11 @@ fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.St
                 const fc = f.info.class_name orelse return false;
                 if (!try dynSafeClass(self, fc, module, out, depth + 1)) return false;
             },
+            // Skaler elemanlı liste alanı (F3a): blok yayımlanınca `SHARED` olur (büyüme kopyalama yoluna düşer), alan yuvası bariyerlidir.
+            .list => {
+                const sh = shared_globals.listElemShape(f.info) orelse return false;
+                if (sh.kind != 0) return false;
+            },
             else => return false,
         }
     }

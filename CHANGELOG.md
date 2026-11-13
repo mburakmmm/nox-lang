@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.132]
+
+### Eklendi (Faz 9.0 F3a: paylaşım-yetenekli sınıfın skaler elemanlı liste alanı)
+
+- **Dinamik paylaşım F3a:** `dyn_classes` sınıflarında skaler elemanlı `list[int|float|bool|...]` alanı artık bariyerli alandır (`isBarrierField` `.list`): okuma paylaşılan örnekte kilit altında blok referansını retain eder (sahipli), yeniden atama yeni bloğu yayımlar (`SHARED` biti) + kilit altında değiştirir + eskiyi kilit DIŞINDA bırakır. `alan.append(v)` (alan yuvasına geri yazar) tüm işlem boyunca örnek kilidini tutar (paylaşılansa); paylaşılan blok büyümesi hep kopyalama yoluna düşer, eş zamanlı okuyucular eski bloğu tutar. `append`/`insert` sahipli okuma referansını bırakır.
+- Satır içi liste azaltımı artık YALNIZ refcount'a (düşük 32 bit) bakar (`SHARED`/`LOCK` yüksek bitleri sıfır testini bozmaz; sınıflarla aynı kural) — bu yüzden tüm IR anlık görüntüleri yenilendi.
+- Test: iki backend golden `mn_dyn_list_scalar_fields` (6 işçi, eş zamanlı `append`/yeniden atama/okuma; 1200 öğe + toplam doğrulanır). Kilitsiz aynı program 20/20 kayıp-güncelleme verir (negatif kontrol), kilitli 40 çalıştırmada 0 hata. Bilinen kalan (F3b): `pop`/`insert`/`sort`/dilim vb. diğer yazıcıların kilitli yolları ve yığın elemanlı listeler.
+
 ## [2.1.131]
 
 ### Eklendi (Faz 9.0 F2: sınıf örneği alan bariyerleri)

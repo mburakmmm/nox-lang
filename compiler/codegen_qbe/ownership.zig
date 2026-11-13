@@ -835,7 +835,8 @@ pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8, heap: HeapKind) C
     // `llvm_emit.zig`nin AYNI-isimli metodu).
     const rc2 = try self.qbeAtomicSub(hdr, 1);
     const should_free = try self.newTemp();
-    if (heap == .class) {
+    // Faz 9.0 F3a: paylaşılan liste bloklarının başlık kelimesi de yüksek bitler (SHARED/LOCK) taşır — sıfır testi yalnızca refcount'a (düşük 32 bit) bakar.
+    if (heap == .class or heap == .list) {
         // v1.142.14: sınıf başlık kelimesinin yüksek 32 biti döngü çözücü
         // bayraklarını taşır (bkz. `cycle_detector.zig`) — sıfır testi yalnızca
         // refcount'u (düşük 32 bit) görmelidir.

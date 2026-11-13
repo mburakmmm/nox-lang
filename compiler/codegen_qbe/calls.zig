@@ -11,6 +11,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const shared_globals = @import("shared_globals.zig");
+const dyn_share = @import("dyn_share.zig");
 const expr_mod = @import("expr.zig");
 const codegen = @import("codegen.zig");
 const async_thread_mod = @import("async_thread.zig");
@@ -2617,6 +2618,8 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // büyüme yolunun yeni işaretçiyi geri yazacağı adres, nesnenin
     // alan ofsetidir (`genAssign`in `.attribute` dalıyla AYNI hesap).
     var field_recv = false;
+    // Faz 9.0 F3: paylaşım-yetenekli sınıfın liste alanını büyüten `append` alan yuvasına geri yazar: tüm işlem örnek kilidi altında yapılır (örnek paylaşılansa).
+    var dyn_holder: ?[]const u8 = null;
     const recv_addr: []const u8 = switch (a.obj.*) {
         .attribute => |fa| blk: {
             const base = try self.genExpr(fa.obj.*);
@@ -2625,6 +2628,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
             const cinfo = self.classes.get(base.class_name.?) orelse return error.Unsupported;
             for (cinfo.fields.items) |f| {
                 if (!std.mem.eql(u8, f.name, fa.attr)) continue;
+                if (dyn_share.isDynClass(self, base.class_name)) dyn_holder = base.text;
                 const addr = try self.newTemp();
                 try self.qbeOp2Imm(addr, .l, "add", base.text, @intCast(f.offset));
                 field_recv = true;
@@ -2661,6 +2665,12 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // self.make())`, `make` AYNI alanı büyütebilir) `obj.text`i BAYAT
     // bırakabilir — işaretçi argümandan SONRA alandan YENİDEN okunur.
     // (Yerel/global alıcıda bu hesap gereksizdir, `obj.text` kullanılır.)
+    var dyn_shared_flag: ?[]const u8 = null;
+    if (dyn_holder) |h| {
+        const fl = try dyn_share.emitSharedFlag(self, h);
+        try dyn_share.emitCondLock(self, fl, h);
+        dyn_shared_flag = fl;
+    }
     const list_text: []const u8 = if (field_recv) blk: {
         const t = try self.newTemp();
         try self.qbeLoadL(t, recv_addr);
@@ -2893,6 +2903,9 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     try self.qbeJmp(done_label);
 
     try self.qbeLabel(done_label);
+    if (dyn_shared_flag) |fl| try dyn_share.emitCondUnlock(self, fl, dyn_holder.?);
+    // Alıcı paylaşım-yetenekli alanın SAHİPLİ okumasıysa (`always_fresh`) o referans burada bırakılır (diğer liste yöntemleri kendileri bırakır).
+    try self.releaseIfTemporary(a.obj.*, obj);
     return .{ .text = "0", .qtype = .w };
 }
 
@@ -3123,6 +3136,7 @@ fn genListInsert(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast
     const fresh = try self.genExpr(a.obj.*);
     const esz = try listEszLit(self, obj);
     try self.qbeCall(null, "$nox_list_move_last", &.{ .{ .ty = .l, .text = fresh.text }, .{ .ty = .l, .text = idx.text }, .{ .ty = .l, .text = esz } });
+    try self.releaseIfTemporary(a.obj.*, fresh);
     return .{ .text = "0", .qtype = .none };
 }
 
