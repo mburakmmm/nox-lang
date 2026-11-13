@@ -1105,7 +1105,7 @@ test "nox_pool_serve: TÜM slotlar (0 DAHİL) KENDİ entry'sini ÇALIŞTIRIR + K
     }
 }
 
-test "nox_pool_run: Faz MN.8 Bulgu A - globals bloğu tüm işçilerde paylaşılır, ÇALINAN bir görev sahibin bloğunu okur" {
+test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KENDİ slotu İçİn ilklendirilir, ÇALINAN bir görev doğru bloğu okur" {
     const testing = std.testing;
 
     const N_WORKERS = 4;
@@ -1136,15 +1136,15 @@ test "nox_pool_run: Faz MN.8 Bulgu A - globals bloğu tüm işçilerde paylaşı
         // sezgiselinin YERİNE.
         var workers_started: std.atomic.Value(usize) = .init(0);
 
-        // v2.1.114: globals bloğu tüm işçilerde PAYLAŞILIR; yalnızca sahip (slot 0) yazar, kardeşler yalnızca "başladım" sayacını artırır (üretilen sarmalayıcılarla aynı sözleşme).
         fn globalsInitFn(rt: *anyopaque) callconv(.c) i64 {
-            if (asap.nox_globals_owner_slot(rt) != 0) asap.nox_globals_set(rt, @ptrFromInt(0x1000));
+            const slot = asap.currentWorkerSlot();
+            asap.nox_globals_set(rt, @ptrFromInt(0x1000 + slot));
             _ = workers_started.fetchAdd(1, .release);
             return 0;
         }
 
         fn globalsDeinitFn(rt: *anyopaque) callconv(.c) i64 {
-            if (asap.nox_globals_owner_slot(rt) != 0) asap.nox_globals_set(rt, null);
+            asap.nox_globals_set(rt, null);
             return 0;
         }
 
@@ -1153,7 +1153,7 @@ test "nox_pool_run: Faz MN.8 Bulgu A - globals bloğu tüm işçilerde paylaşı
         fn childFn(rt_arg: *anyopaque) callconv(.c) i64 {
             const slot = asap.currentWorkerSlot();
             const got = asap.nox_globals_get(rt_arg);
-            const expected: usize = 0x1000;
+            const expected: usize = 0x1000 + slot;
             if (@intFromPtr(got) != expected) {
                 _ = mismatch_count.fetchAdd(1, .seq_cst);
             }

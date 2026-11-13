@@ -331,15 +331,16 @@ All tasks run on fibers scheduled by the runtime:
   variable. Reference counting is atomic whenever a program uses tasks or threads, so values may safely be shared between tasks on different
   workers. On the QBE backend (which has no atomic instructions in its IL) the atomic count updates are calls into the runtime, emitted only
   for programs that use `spawn`, `async`, `nox.thread` or the multi-core pool; other QBE programs keep plain, faster counts.
+  One exception: every worker keeps its own copy of the module-level variables, so on QBE a program whose functions read a module-level variable stays on a
+  single worker (as before 2.1.111); use the default LLVM backend for parallel tasks in such programs.
 - **Freestanding targets:** a single-threaded cooperative scheduler. Tasks interleave only at `await` points (and at blocking I/O, which is
   non-blocking at the fiber level); `time.sleep_ms` inside a task suspends only that task.
 
 Consequences for portable code:
 
 - Do not rely on tasks running in parallel *or* strictly interleaved — write them to be correct under both.
-- Data shared between tasks should flow through channels. Module-level variables are shared by all workers of the scheduler (there is a single copy of the module state), but plain
-  reads and writes of them are not synchronised: use channels, `nox.atomic` counters, or `nox.sharedmem` for data that tasks on different workers mutate. (`nox.thread.start` runs the thread in a separate
-  runtime, and that thread has its own module state.)
+- Data shared between tasks should flow through channels. Module-level variables are not a safe way to communicate between tasks that may run on different
+  workers (each worker keeps its own copy of the module state); use channels, `nox.atomic` counters, or `nox.sharedmem`.
 - `time.sleep_ms` inside a task (an `async def`, an HTTP handler) suspends only that task on both backends; outside a task (and on Windows) it blocks its thread.
 - The argument and result types of `spawn`/`nox.thread.start` may be scalars, `str`, `None`, `ptr`, thread channels, lists, dictionaries,
   class instances, tasks and channels on both backends of hosted targets; freestanding targets are restricted to scalars, `str`, `None`,

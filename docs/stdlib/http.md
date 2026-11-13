@@ -398,6 +398,32 @@ http2 configurable
 
 Try it with `curl --http2 -k https://localhost:8443/` (TLS) or `curl --http2-prior-knowledge http://localhost:8080/` (cleartext); `curl -w '%{http_version}'` prints `2`.
 
+### HTTP/3 (QUIC)
+
+`nox.http.set_http3(True)` makes a TLS server (`serve_tls`, `serve_ws_tls`... started after the call) also listen on the **same port number over UDP** and answer [HTTP/3](https://www.rfc-editor.org/rfc/rfc9114) requests with the same handler. It is off by default.
+
+| | |
+|---|---|
+| Requires | OpenSSL 3.5 or newer (loaded at run time, like the TLS server); on macOS the Homebrew `openssl@3` package, on Linux a distribution that ships OpenSSL 3.5+. Without it, or when the UDP port cannot be opened, the server prints one line and keeps serving HTTP/1.1 and HTTP/2 |
+| Platforms | macOS and Linux (not Windows, WebAssembly or freestanding) |
+| Requests and responses | buffered (the whole body is read before your handler runs; the response is sent when it returns); `max_body_bytes` answers `413`, `max_header_bytes` answers `431` |
+| Headers | `host` is filled from `:authority`; response `Content-Length` is added for you; connection-specific headers are dropped |
+| Not supported yet | streaming responses (`req.stream(...)`), WebSocket and `CONNECT`, server push, the QPACK dynamic table, IPv6 UDP, `req.peer_addr` (empty on HTTP/3), the HTTP/3 client |
+
+Browsers switch to HTTP/3 after seeing an `alt-svc` response header, so have your handler return `alt-svc: h3=":443"; ma=86400` (use your real port).
+
+```nox
+import nox.http
+
+nox.http.set_http3(True)
+nox.http.set_http3(False)
+print("http3 configurable")
+```
+
+```output
+http3 configurable
+```
+
 ### Behaviour
 
 - Request bodies and headers are limited to sane sizes; a client that stalls on reading or writing is cut off by a write timeout (2.0 closes the slow-reader denial-of-service hole).

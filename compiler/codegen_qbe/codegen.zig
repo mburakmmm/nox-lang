@@ -658,6 +658,7 @@ pub const Codegen = struct {
     pub const registerClass = registration.registerClass;
     pub const registerClassesInOrder = registration.registerClassesInOrder;
     pub const collectModuleGlobals = registration.collectModuleGlobals;
+    pub const moduleReadsGlobalsInFunctions = registration.moduleReadsGlobalsInFunctions;
     pub const stmtRunsInGlobalInit = registration.stmtRunsInGlobalInit;
     pub const inferFieldType = registration.inferFieldType;
     pub const registerFunc = registration.registerFunc;
@@ -1824,8 +1825,9 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
 /// `generateModuleWithMeta` ile aynı; codegen iletileri (desteklenmeyen yapı vb.) `diag_sink`e yazılır (tarayıcıdaki WASM derleyici için stderr yoktur, spec §3.353).
 pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8), class_ctors: []const decorators_mod.ClassCtorInfo, library_mode: bool, llvm_triple: []const u8, diag_sink: report_sink.Sink) CodegenError![]u8 {
     var gen: Codegen = .{ .diag_sink = diag_sink, .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile, .resolved_bases = resolved_bases, .library_mode = library_mode, .llvm_triple = llvm_triple };
-    // v2.1.111 (TODO 5.3): hosted QBE'de, `spawn`/async/çok çekirdekli havuz kullanan programlar LLVM ile aynı M:N paylaşımlı çalışma zamanını kullanır.
-    gen.mn_qbe = gen.backend == .qbe and profile == .hosted and !library_mode and (moduleUsesAsync(module, extra_functions) or moduleUsesMulticorePool(module, extra_functions));
+    // v2.1.111 (TODO 5.3): hosted QBE'de, `spawn`/async/çok çekirdekli havuz kullanan programlar LLVM ile aynı M:N paylaşımlı çalışma zamanını kullanır. v2.1.115: işçi başına ayrı modül globals'ı
+    // çalınan görevlerde tutarsız olduğundan, bir fonksiyonun okuduğu modül değişkeni olan programlar QBE'de eskisi gibi tek işçide kalır.
+    gen.mn_qbe = gen.backend == .qbe and profile == .hosted and !library_mode and (moduleUsesAsync(module, extra_functions) or moduleUsesMulticorePool(module, extra_functions)) and !registration.moduleReadsGlobalsInFunctions(allocator, module, extra_functions);
     if (gen.backend == .llvm and llvm_triple.len > 0) {
         try gen.out.writer.print("target triple = \"{s}\"\n", .{llvm_triple});
     }

@@ -14,7 +14,7 @@ Bir QUIC bağlantısının (ve akışlarının) TÜM OpenSSL çağrıları TEK s
 ## Aşamalar (her biri ayrı patch sürümü, iki backend'de golden)
 - **H3.1 (v2.1.113)**: `runtime/stdlib_shims/quic.zig` — sembol yükleyici, `Ctx`, `Listener`, `Conn`, `Stream`, fiber-uyumlu `pump`; birim testleri: yerel istemci↔sunucu el sıkışması (ALPN h3) + akış yankısı + yanlış CA reddi. Test sertifikası: `runtime/stdlib_shims/testdata/quic_test_*.pem` (yalnızca test; EC P-256, 100 yıl).
 - **H3.2 (v2.1.114, bitti)**: `h3.zig` — HTTP/3 çerçeveleri (DATA/HEADERS/SETTINGS/GOAWAY), kontrol + QPACK tek yönlü akışları, QPACK kodlayıcı/çözücü (statik tablo + Huffman — `http2.zig`nin HPACK Huffman tablosu yeniden kullanılır; dinamik tablo kapasitesi 0), RFC 9204 ek vektörleri ile birim testleri.
-- **H3.3**: sunucu — `nox.http.serve_h3(port, cert, key, handler)`: mevcut `HttpRequest`/`HttpResponse` ve akışlı yanıt yüzeyine bağlanır (`http_server.zig`de `h2` yanında `h3` akış tutamağı).
+- **H3.3 (v2.1.115, bitti)**: sunucu — yeni bir Nox API'si yerine `nox.http.set_http3(True)` + mevcut `serve_tls`: aynı handler, aynı port numarası UDP'de; `h3_server.zig` tek sahip motor fiber'ı, arabellekli istek/yanıt. Akışlı yanıt, WebSocket ve `peer_addr` sonraya.
 - **H3.4**: istemci — `nox.http` istemcisinde h3 seçeneği (`set_http3`), `Alt-Svc` ile terfi H3.5'e bırakılır.
 - **H3.5**: dış uyumluluk (curl/aioquic ile; indirme izni gerekir), belge, Windows kararı.
 

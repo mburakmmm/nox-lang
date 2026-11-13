@@ -54,6 +54,8 @@ const tls_server = @import("tls_server.zig");
 const h2srv = @import("http2_server.zig");
 const websocket_server = @import("websocket_server.zig");
 const fiber_net = @import("fiber_net.zig");
+const quic = @import("quic.zig");
+const h3srv = @import("h3_server.zig");
 
 /// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): okuma zaman aşımı —
 /// bir bağlantı BAŞLIK/GÖVDE göndermeden bu süreden UZUN askıda kalırsa
@@ -79,6 +81,8 @@ const ServeConfig = struct {
     http2: std.atomic.Value(u8) = .init(1),
     /// Çok çekirdekli (`serve_multicore*`) dinleyici ailesi: 0 = IPv4 (varsayılan), 1 = IPv6 dual-stack (`::`, IPv4 istemciler de bağlanır), 2 = yalnızca IPv6. Windows'ta yok sayılır.
     ip_family: std.atomic.Value(u8) = .init(0),
+    /// HTTP/3 (QUIC, OpenSSL >= 3.5): 0 = kapalı (varsayılan), 1 = açık. TLS sunucusuyla aynı port numarasında UDP dinler (`nox.http.set_http3`).
+    http3: std.atomic.Value(u8) = .init(0),
 };
 const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
 const MIN_HEADER_BYTES: usize = 4 * 1024;
@@ -92,6 +96,10 @@ export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
     if (key == 6) {
         g_serve_config.http2.store(if (value == 2) 2 else 1, .monotonic);
         tls_server.setHttp2Enabled(value != 2);
+        return;
+    }
+    if (key == 8) {
+        g_serve_config.http3.store(if (value == 2) 0 else 1, .monotonic);
         return;
     }
     if (key == 7) {
@@ -310,6 +318,9 @@ const ServerHandle = struct {
     /// `ServerHandle`ı SERBEST BIRAKMAMALI).
     tls_ctx: ?*anyopaque = null,
     owns_tls_ctx: bool = false,
+    /// HTTP/3 için PEM yolları (yalnızca bağlamı yöntemin kendisi kuran `listen_tls`/`from_fd_tls_owned`); `gpa` ile ayrılmış, `nox_http_server_close` bırakır.
+    tls_cert: ?[:0]u8 = null,
+    tls_key: ?[:0]u8 = null,
 };
 
 /// `nox_http_server_listen`in socket/bind/listen mantığı — Faz DD.1'de
@@ -460,6 +471,7 @@ export fn nox_http_server_listen_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:
         return null;
     };
     handle.* = .{ .listen_fd = fd, .owns_fd = true, .tls_ctx = ctx, .owns_tls_ctx = true };
+    rememberTlsPaths(state.allocator(), handle, cp, kp);
     return handle;
 }
 
@@ -867,7 +879,18 @@ export fn nox_http_server_from_fd_tls_owned(rt: ?*anyopaque, fd: i64, cert_path:
         return null;
     };
     handle.* = .{ .listen_fd = i64ToFd(fd), .owns_fd = false, .tls_ctx = ctx, .owns_tls_ctx = true };
+    rememberTlsPaths(state.allocator(), handle, cp, kp);
     return handle;
+}
+
+/// HTTP/3 için sertifika/anahtar yollarını saklar (bellek yoksa h3 sessizce devre dışı kalır).
+fn rememberTlsPaths(gpa: std.mem.Allocator, h: *ServerHandle, cert: [*:0]const u8, key: [*:0]const u8) void {
+    h.tls_cert = gpa.dupeZ(u8, std.mem.span(cert)) catch return;
+    h.tls_key = gpa.dupeZ(u8, std.mem.span(key)) catch {
+        gpa.free(h.tls_cert.?);
+        h.tls_cert = null;
+        return;
+    };
 }
 
 export fn nox_http_server_port(server: ?*anyopaque) callconv(.c) i64 {
@@ -889,6 +912,8 @@ export fn nox_http_server_close(rt: ?*anyopaque, server: ?*anyopaque) callconv(.
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
     if (h.owns_tls_ctx) if (h.tls_ctx) |ctx| tls_server.freeServerCtx(ctx);
     if (h.owns_fd) _ = closeSocket(h.listen_fd);
+    if (h.tls_cert) |c| state.allocator().free(c);
+    if (h.tls_key) |k| state.allocator().free(k);
     state.allocator().destroy(h);
 }
 
@@ -1605,6 +1630,203 @@ fn readChunkedBody(in: *std.Io.Reader, out: *std.Io.Writer, max_bytes: usize, tr
     }
 }
 
+// ---- HTTP/3 yapıştırıcı (v2.1.115, spec §3.455) -------------------------------------------------------------------------------------------------------------
+
+/// `serveImpl` başına bir HTTP/3 (QUIC) motoru: TLS sunucusuyla AYNI port numarasında UDP dinler, AYNI handler'ı çağırır. Motor tek bir sabitlenmiş fiber'dır (`h3_server.run`).
+const H3Ctx = struct {
+    gpa: std.mem.Allocator,
+    rt: ?*anyopaque,
+    handler: HandlerFn,
+    handler_ctx: ?*anyopaque,
+    ctx_refcounted: bool,
+    needs_headers: bool,
+    max_body_bytes: usize,
+    qctx: quic.Ctx,
+    listener: quic.Listener,
+    stop: std.atomic.Value(bool) = .init(false),
+    done: std.atomic.Value(bool) = .init(false),
+};
+
+/// Genel amaçlı bağlı fiber başlatır (`h2SpawnFiber`ın bağlantı bağımsız hali).
+fn spawnFiberGeneric(gpa: std.mem.Allocator, entry: *const fn (*anyopaque) void, arg: *anyopaque, pinned: bool) bool {
+    const s = bridge.currentFiberScheduler() orelse return false;
+    const stack = s.acquireStack() catch return false;
+    const fiber = fiber_mod.Fiber.createWithStack(gpa, entry, arg, stack) catch {
+        s.releaseStack(stack);
+        return false;
+    };
+    if (s.pool_live_count) |plc| {
+        _ = plc.fetchAdd(1, .monotonic);
+    } else {
+        s.live_count += 1;
+    }
+    if (pinned) {
+        if (s.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
+        s.markReady(fiber);
+    } else if (s.ownDeque()) |d| {
+        d.pushBottom(fiber) catch s.markReady(fiber);
+        if (s.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
+    } else {
+        s.markReady(fiber);
+    }
+    return true;
+}
+
+fn h3Spawn(user: *anyopaque, entry: *const fn (*anyopaque) void, arg: *anyopaque, pinned: bool) bool {
+    const c: *H3Ctx = @ptrCast(@alignCast(user));
+    return spawnFiberGeneric(c.gpa, entry, arg, pinned);
+}
+
+fn h3ShuttingDown() bool {
+    return shuttingDown();
+}
+
+/// Bir HTTP/3 isteğinin handler fiber'ı: isteği Nox değerlerine çevirir, uygulama handler'ını çağırır, yanıtı motorun sahip olacağı belleğe kopyalar (HTTP/2 yolunun `h2ServeStream` gövdesiyle aynı sözleşme).
+fn h3Serve(user: *anyopaque, gpa: std.mem.Allocator, req: *const h3srv.Request, out: *h3srv.Response) bool {
+    const c: *H3Ctx = @ptrCast(@alignCast(user));
+    const rt = c.rt;
+    const method_str = http_client.dupeToNoxStr(rt, req.method) orelse return false;
+    defer str_mod.nox_str_release(rt, method_str);
+    const target_str = http_client.dupeToNoxStr(rt, req.path) orelse return false;
+    defer str_mod.nox_str_release(rt, target_str);
+    const peer_addr_str = http_client.dupeToNoxStr(rt, "") orelse return false;
+    defer str_mod.nox_str_release(rt, peer_addr_str);
+
+    var headers_list: std.ArrayListUnmanaged(std.http.Header) = .empty;
+    defer {
+        for (headers_list.items) |h| {
+            str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
+            str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
+        }
+        headers_list.deinit(gpa);
+    }
+    if (c.needs_headers) {
+        for (req.headers) |h| {
+            const name_copy = http_client.dupeToNoxStr(rt, h.name) orelse continue;
+            const value_copy = http_client.dupeToNoxStr(rt, h.value) orelse {
+                str_mod.nox_str_release(rt, name_copy);
+                continue;
+            };
+            headers_list.append(gpa, .{ .name = str_mod.nox_str_slice(name_copy), .value = str_mod.nox_str_slice(value_copy) }) catch {
+                str_mod.nox_str_release(rt, name_copy);
+                str_mod.nox_str_release(rt, value_copy);
+                continue;
+            };
+        }
+    }
+    const body_str = http_client.dupeToNoxStr(rt, req.body) orelse return false;
+    defer str_mod.nox_str_release(rt, body_str);
+
+    var req_handle: ServerRequest = .{
+        .method = method_str,
+        .target = target_str,
+        .body = body_str,
+        .headers = headers_list.items,
+        .peer_addr = peer_addr_str,
+        .gpa = gpa,
+    };
+    const resp_payload = c.handler(c.handler_ctx, &req_handle) orelse return false;
+    const resp: *ServerResponse = @ptrCast(@alignCast(resp_payload));
+    defer destroyResponse(rt, gpa, resp);
+
+    const body_slice: []const u8 = if (resp.body) |p| str_mod.nox_str_slice(p) else &.{};
+    const body_copy = gpa.dupe(u8, body_slice) catch return false;
+    errdefer gpa.free(body_copy);
+    const hs = gpa.alloc(h3srv.Header, resp.headers.len) catch return false;
+    var n: usize = 0;
+    errdefer {
+        for (hs[0..n]) |h| {
+            gpa.free(h.name);
+            gpa.free(h.value);
+        }
+        gpa.free(hs);
+    }
+    for (resp.headers) |h| {
+        const nm = gpa.dupe(u8, h.name) catch return false;
+        const vl = gpa.dupe(u8, h.value) catch {
+            gpa.free(nm);
+            return false;
+        };
+        hs[n] = .{ .name = nm, .value = vl };
+        n += 1;
+    }
+    out.* = .{ .status = resp.status, .headers = hs, .body = body_copy };
+    return true;
+}
+
+fn h3EngineEntry(arg: *anyopaque) void {
+    const c: *H3Ctx = @ptrCast(@alignCast(arg));
+    h3srv.run(c.gpa, &c.listener, .{
+        .max_body_bytes = c.max_body_bytes,
+        .max_header_bytes = g_serve_config.max_header_bytes.load(.monotonic),
+    }, .{
+        .user = c,
+        .serve = h3Serve,
+        .spawn = h3Spawn,
+        .shuttingDown = h3ShuttingDown,
+    }, &c.stop);
+    c.done.store(true, .release);
+}
+
+/// `h` TLS sertifikası saklıyorsa, HTTP/3 açıksa ve OpenSSL >= 3.5 varsa UDP QUIC motorunu başlatır; aksi halde `null` (sessiz: HTTP/1.1 + HTTP/2 etkilenmez).
+fn startH3(rt: ?*anyopaque, gpa: std.mem.Allocator, h: *ServerHandle, handler: HandlerFn, handler_ctx: ?*anyopaque, needs_headers: bool, ctx_refcounted: bool, max_body_bytes: usize) ?*H3Ctx {
+    if (comptime !quic.supported) return null;
+    if (g_serve_config.http3.load(.monotonic) != 1) return null;
+    const cert = h.tls_cert orelse return null;
+    const key = h.tls_key orelse return null;
+    if (bridge.currentFiberScheduler() == null) return null;
+    if (!quic.available()) {
+        std.debug.print("nox.http: HTTP/3 requested but OpenSSL >= 3.5 (QUIC) is not available; serving HTTP/1.1 + HTTP/2 only\n", .{});
+        return null;
+    }
+    const port: u16 = @intCast(nox_http_server_port(h));
+    var qctx = quic.newServerCtx(cert.ptr, key.ptr) catch |e| {
+        std.debug.print("nox.http: HTTP/3 disabled: QUIC context failed ({t})\n", .{e});
+        return null;
+    };
+    const listener = quic.Listener.open(&qctx, .{ 0, 0, 0, 0 }, port) catch |e| {
+        std.debug.print("nox.http: HTTP/3 disabled: UDP port {d} could not be opened ({t})\n", .{ port, e });
+        qctx.deinit();
+        return null;
+    };
+    const c = gpa.create(H3Ctx) catch {
+        var l = listener;
+        l.deinit();
+        qctx.deinit();
+        return null;
+    };
+    c.* = .{
+        .gpa = gpa,
+        .rt = rt,
+        .handler = handler,
+        .handler_ctx = handler_ctx,
+        .ctx_refcounted = ctx_refcounted,
+        .needs_headers = needs_headers,
+        .max_body_bytes = max_body_bytes,
+        .qctx = qctx,
+        .listener = listener,
+    };
+    if (ctx_refcounted) handlerCtxRetain(handler_ctx);
+    if (!spawnFiberGeneric(gpa, h3EngineEntry, c, true)) {
+        if (ctx_refcounted) handlerCtxRelease(handler_ctx);
+        c.listener.deinit();
+        c.qctx.deinit();
+        gpa.destroy(c);
+        return null;
+    }
+    return c;
+}
+
+fn stopH3(c: ?*H3Ctx) void {
+    const ctx = c orelse return;
+    ctx.stop.store(true, .release);
+    while (!ctx.done.load(.acquire)) drainPause();
+    ctx.listener.deinit();
+    ctx.qctx.deinit();
+    if (ctx.ctx_refcounted) handlerCtxRelease(ctx.handler_ctx);
+    ctx.gpa.destroy(ctx);
+}
+
 // ---- HTTP/2 yapıştırıcı (v2.0.127, spec §3.332) -----------------------------------------------------------------------------------------------------------
 
 /// Aynı süreçte bağlı bir fiber başlatır (bkz. `serveImpl`nin bağlantı fiber'ı başlatma kalıbı: `acquireStack` + `createWithStack` + canlı sayaç + deque'e it).
@@ -2239,6 +2461,10 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
 
     installShutdownSignals();
 
+    // HTTP/3 (opt-in, `nox.http.set_http3`): TLS ile aynı port numarasında UDP/QUIC; accept döngüsü bitince (ve bağlantılar boşaldıktan sonra) kapatılır.
+    const h3_ctx = startH3(rt, gpa, h, handler, handler_ctx, needs_headers, ctx_refcounted, max_body_bytes);
+    defer stopH3(h3_ctx);
+
     var served: i64 = 0;
     accept_loop: while (true) {
         // Graceful shutdown: yeni bağlantı kabul etme (aşağıdaki drain uçuştakileri bitirir).
@@ -2843,6 +3069,68 @@ test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzama
     try std.testing.expectEqual(@as(usize, 2), TestHandlerLog.log.items.len);
     try std.testing.expectEqualStrings("fast tamamlandi", TestHandlerLog.log.items[0]);
     try std.testing.expectEqualStrings("slow tamamlandi", TestHandlerLog.log.items[1]);
+}
+
+test "HTTP/3: serve_tls + set_http3 aynı handler'ı QUIC (UDP) üzerinden çağırır (yerel QUIC istemcisiyle)" {
+    if (!quic.supported) return error.SkipZigTest;
+    if (!quic.available()) return error.SkipZigTest;
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    bridge.nox_async_init(rt);
+    defer bridge.nox_async_deinit(rt);
+
+    g_serve_config.http3.store(1, .monotonic);
+    defer g_serve_config.http3.store(0, .monotonic);
+    const server = nox_http_server_listen_tls(rt, 0, "runtime/stdlib_shims/testdata/quic_test_cert.pem", "runtime/stdlib_shims/testdata/quic_test_key.pem") orelse return error.ListenFailed;
+    defer nox_http_server_close(rt, server);
+    const port: u16 = @intCast(nox_http_server_port(server));
+
+    TestHandlerLog.log.clearRetainingCapacity();
+    TestHandlerLog.rt_ptr = rt;
+
+    const Client = struct {
+        var status: [8]u8 = undefined;
+        var status_len: usize = 0;
+        var body: [64]u8 = undefined;
+        var body_len: usize = 0;
+        fn run(p: u16) void {
+            defer nox_http_shutdown_raw();
+            var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena_state.deinit();
+            const a = arena_state.allocator();
+            var cctx = quic.newClientCtx("runtime/stdlib_shims/testdata/quic_test_cert.pem", true) catch return;
+            defer cctx.deinit();
+            // Sunucu fiber'ı başlayana kadar yeniden dene.
+            var conn: quic.Conn = undefined;
+            var attempt: usize = 0;
+            while (true) : (attempt += 1) {
+                if (quic.Conn.connect(&cctx, .{ 127, 0, 0, 1 }, p, "localhost", 3000)) |c| {
+                    conn = c;
+                    break;
+                } else |_| {}
+                if (attempt >= 5) return;
+            }
+            defer conn.deinit();
+            const r = h3srv.testRequest(a, &conn, "GET", "/h3", "") catch return;
+            status_len = @min(r.status.len, status.len);
+            @memcpy(status[0..status_len], r.status[0..status_len]);
+            body_len = @min(r.body.len, body.len);
+            @memcpy(body[0..body_len], r.body[0..body_len]);
+        }
+    };
+    const t = try std.Thread.spawn(.{}, Client.run, .{port});
+    defer t.join();
+
+    var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 0 };
+    const serve_task = bridge.nox_async_spawn(rt, testServeEntry, &args).?;
+    const rc = bridge.nox_async_run_to_completion(rt);
+    _ = bridge.nox_async_await(rt, serve_task);
+    bridge.nox_async_destroy_task(rt, serve_task);
+    g_shutdown.store(false, .release);
+    try std.testing.expectEqual(@as(i32, 0), rc);
+    try std.testing.expectEqualStrings("200", Client.status[0..Client.status_len]);
+    try std.testing.expectEqualStrings("hi", Client.body[0..Client.body_len]);
+    try std.testing.expectEqual(@as(usize, 1), TestHandlerLog.log.items.len);
 }
 
 /// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — çok-çekirdekli

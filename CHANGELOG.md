@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.115]
+
+### Eklendi
+
+- **HTTP/3 sunucusu** (TODO 5.4, aşama H3.3): `nox.http.set_http3(True)` çağrısından sonra başlayan `serve_tls`/`serve_ws_tls` sunucusu AYNI port numarasında UDP/QUIC de dinler ve AYNI handler'ı HTTP/3 istekleri için çağırır (OpenSSL >= 3.5, çalışma zamanında yüklenir; yoksa tek satırlık uyarıyla HTTP/1.1 + HTTP/2 sürer; varsayılan kapalı). `runtime/stdlib_shims/h3_server.zig`: tek sahip fiber QUIC'in tüm OpenSSL çağrılarını yürütür (bağlantı/akış kabulü, çerçeve ayrıştırma, yazma), handler'lar ayrı fiber'larda çalışır; kontrol + QPACK tek yönlü akışları ve SETTINGS gönderilir; gövde sınırı 413, başlık sınırı 431, geçersiz istek 400, aşırı yük 503. Kapsam: arabellekli istek/yanıt (akışlı yanıt, WebSocket/CONNECT, sunucu itme, QPACK dinamik tablo, IPv6 UDP ve `req.peer_addr` henüz yok). Belge: `docs/stdlib/http.md` "HTTP/3 (QUIC)".
+- `quic.zig`: bloklamayan yardımcılar (`tryAccept`, `tryAcceptStream`, `tryRead`, `tryWrite`, `isClosed`, `pumpOnce`), bağlantılarda `SSL_set_default_stream_mode(NONE)`; `NOX_QUIC_DEBUG=1` ile tanı çıktısı.
+- Testler: motor birim testi (GET, POST, 413, tek bağlantıda çoklanmış üç istek) ve gerçek `serveImpl` yolunu (TLS dinleyici + `set_http3` + gerçek handler) QUIC istemcisiyle sınayan test; fixture `http_set_http3`.
+
+### Düzeltildi
+
+- **Paylaşılan modül globals'ı geri alındı** (v2.1.114'ün CI'daki `docs` işi kırmızısı): v2.1.114'te modül düzeyi değişkenler tüm işçilerde tek kopya olarak paylaştırılmıştı; sunucu örneklerinde (`examples/todo-backend`: ortak `RateLimiter`/`dict`) kilitsiz yarış, aralıklı bellek sızıntısı üretti. İşçi başına ayrı kopya tasarımı geri geldi (sunucular güvenli). Bunun yerine, QBE'de bir fonksiyonun okuduğu modül değişkeni olan programlar eskisi gibi tek işçide çalışır (`moduleReadsGlobalsInFunctions`); `module_channel_read_by_async` ve `module_global_source_order_async` bu yolla kararlı. v2.1.114'ün kanal allocator düzeltmesi, `task_local_basic` sıra düzeltmesi, libdeflate AVX-512 kaçışı ve h3 çerçeveleri korunur. LLVM'deki eski sınırlama (ana gövdede atanan bir modül değişkenini çalınan görevin okuması) hâlâ açık, ayrı iş.
+- **`examples/todo-backend`: çok işçide başlangıç yarışı:** her işçi modül başlatıcısını (`open_db()`) kendi kopyası için çalıştırdığından, yeni bir SQLite dosyasını aynı anda ilk kez açıp WAL'e geçirmeye çalışan işçilerden biri "database is locked" alıp süreç açılışta ölüyordu (CI'daki LLVM duman testinde zamanlamaya bağlı rastgele kırmızı). `open_db` artık kısa aralıklarla yeniden dener.
+
 ## [2.1.114]
 
 ### Eklendi

@@ -56,6 +56,7 @@ const Funcs = struct {
     SSL_accept_stream: *const fn (s: Opaque, flags: u64) callconv(.c) Opaque,
     SSL_new_stream: *const fn (s: Opaque, flags: u64) callconv(.c) Opaque,
     SSL_set_blocking_mode: *const fn (s: Opaque, blocking: c_int) callconv(.c) c_int,
+    SSL_set_default_stream_mode: *const fn (s: Opaque, mode: u32) callconv(.c) c_int,
     SSL_set1_initial_peer_addr: *const fn (s: Opaque, a: Opaque) callconv(.c) c_int,
     SSL_set_alpn_protos: *const fn (s: Opaque, p: [*]const u8, n: c_uint) callconv(.c) c_int,
     SSL_set1_host: *const fn (s: Opaque, name: [*:0]const u8) callconv(.c) c_int,
@@ -71,6 +72,8 @@ const Funcs = struct {
     SSL_shutdown: *const fn (s: Opaque) callconv(.c) c_int,
     SSL_get0_alpn_selected: *const fn (s: Opaque, data: *?[*]const u8, len: *c_uint) callconv(.c) void,
     SSL_get_verify_result: *const fn (s: Opaque) callconv(.c) c_long,
+    SSL_get_stream_type: *const fn (s: Opaque) callconv(.c) c_int,
+    SSL_get_conn_close_info: *const fn (s: Opaque, info: [*]u8, len: usize) callconv(.c) c_int,
     BIO_new_dgram: *const fn (fd: c_int, close_flag: c_int) callconv(.c) Opaque,
     BIO_ADDR_new: *const fn () callconv(.c) Opaque,
     BIO_ADDR_free: *const fn (a: Opaque) callconv(.c) void,
@@ -146,6 +149,15 @@ fn ensureLoaded() bool {
         }
     }
     return g_state.load(.acquire) == .ready;
+}
+
+/// Hata kuyruğundaki son OpenSSL hatasını (varsa) `buf`a yazar; yoksa boş dilim.
+pub fn lastError(buf: []u8) []const u8 {
+    if (!ensureLoaded()) return "";
+    const code = g_funcs.ERR_get_error();
+    if (code == 0) return "";
+    g_funcs.ERR_error_string_n(code, buf.ptr, buf.len);
+    return std.mem.sliceTo(buf, 0);
 }
 
 /// OpenSSL >= 3.5 (QUIC sunucu + istemci) bu makinede yüklenebiliyor mu?
@@ -291,12 +303,26 @@ pub const Listener = struct {
         self.ssl = null;
     }
 
+    /// Bekleme olmadan: hazır bir bağlantı varsa döner (olay motorunu ilerletmez; önce `pumpOnce`).
+    pub fn tryAccept(self: *Listener) ?Conn {
+        const c = g_funcs.SSL_accept_connection(self.ssl, ACCEPT_NO_BLOCK) orelse return null;
+        _ = g_funcs.SSL_set_blocking_mode(c, 0);
+        _ = g_funcs.SSL_set_default_stream_mode(c, 0);
+        return .{ .ssl = c };
+    }
+
+    /// UDP fd'sinin okunabilmesini ya da QUIC olay süresinin dolmasını (en çok `max_ms`) bekler ve TÜM motoru (dinleyici + bağlantılar + akışlar) ilerletir.
+    pub fn pumpOnce(self: *Listener, max_ms: u32) void {
+        pump(self.ssl, max_ms);
+    }
+
     /// Bir bağlantı kabul edene dek (en çok `timeout_ms`) bekler; süre dolarsa `null`.
     pub fn accept(self: *Listener, timeout_ms: u32) ?Conn {
         const deadline = nowMs() + timeout_ms;
         while (true) {
             if (g_funcs.SSL_accept_connection(self.ssl, ACCEPT_NO_BLOCK)) |c| {
                 _ = g_funcs.SSL_set_blocking_mode(c, 0);
+                _ = g_funcs.SSL_set_default_stream_mode(c, 0); // SSL_DEFAULT_STREAM_MODE_NONE: yalnızca açık akış nesneleri
                 return .{ .ssl = c };
             }
             const left = deadline - nowMs();
@@ -338,13 +364,22 @@ pub const Conn = struct {
         _ = g_funcs.SSL_set1_host(s, sni.ptr);
         _ = g_funcs.SSL_ctrl(s, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, @ptrCast(@constCast(sni.ptr)));
         _ = g_funcs.SSL_set_blocking_mode(s, 0);
+        _ = g_funcs.SSL_set_default_stream_mode(s, 0);
 
         const deadline = nowMs() + timeout_ms;
         while (true) {
             const r = g_funcs.SSL_connect(s);
             if (r == 1) return .{ .ssl = s };
             const e = g_funcs.SSL_get_error(s, r);
-            if (e != SSL_ERROR_WANT_READ and e != SSL_ERROR_WANT_WRITE) return error.ConnectFailed;
+            if (e != SSL_ERROR_WANT_READ and e != SSL_ERROR_WANT_WRITE) {
+                if (std.c.getenv("NOX_QUIC_DEBUG") != null) {
+                    var eb: [256]u8 = undefined;
+                    const code = g_funcs.ERR_get_error();
+                    g_funcs.ERR_error_string_n(code, &eb, eb.len);
+                    std.debug.print("quic connect failed: ssl_error={d} {s}\n", .{ e, std.mem.sliceTo(&eb, 0) });
+                }
+                return error.ConnectFailed;
+            }
             const left = deadline - nowMs();
             if (left <= 0) return error.Timeout;
             pump(s, @intCast(@min(left, 1000)));
@@ -372,6 +407,23 @@ pub const Conn = struct {
         }
     }
 
+    /// Beklemeden QUIC olay motorunu bir adım ilerletir.
+    pub fn handleEvents(self: *Conn) void {
+        _ = g_funcs.SSL_handle_events(self.ssl);
+    }
+
+    /// Bekleme olmadan: eş tarafın açtığı hazır bir akış varsa döner.
+    pub fn tryAcceptStream(self: *Conn) ?Stream {
+        const st = g_funcs.SSL_accept_stream(self.ssl, ACCEPT_NO_BLOCK) orelse return null;
+        return .{ .ssl = st, .conn = self.ssl };
+    }
+
+    /// Bağlantı kapandı/kapanıyor mu (eş taraf kapattı, kimlik/zaman aşımı hatası, uygulama kapatması)?
+    pub fn isClosed(self: *const Conn) bool {
+        var info: [64]u8 align(8) = undefined;
+        return g_funcs.SSL_get_conn_close_info(self.ssl, &info, info.len) == 1;
+    }
+
     /// Yeni bir çift yönlü (`uni=false`) ya da tek yönlü akış açar.
     pub fn openStream(self: *Conn, uni: bool) Error!Stream {
         const st = g_funcs.SSL_new_stream(self.ssl, if (uni) STREAM_FLAG_UNI else 0) orelse return error.StreamFailed;
@@ -397,6 +449,37 @@ pub const Stream = struct {
     pub fn deinit(self: *Stream) void {
         if (self.ssl) |s| g_funcs.SSL_free(s);
         self.ssl = null;
+    }
+
+    pub const Kind = enum { none, uni_read, uni_write, bidi };
+
+    pub fn kind(self: *const Stream) Kind {
+        return switch (g_funcs.SSL_get_stream_type(self.ssl)) {
+            1 => .uni_read,
+            2 => .uni_write,
+            3 => .bidi,
+            else => .none,
+        };
+    }
+
+    /// Tek deneme, beklemez: `.data`, `.eof` (FIN), `.timeout` (şu an veri yok) ya da `.closed` (sıfırlandı/bağlantı koptu).
+    pub fn tryRead(self: *Stream, buf: []u8) ReadResult {
+        var n: usize = 0;
+        if (g_funcs.SSL_read_ex(self.ssl, buf.ptr, buf.len, &n) == 1) return .{ .data = n };
+        const e = g_funcs.SSL_get_error(self.ssl, 0);
+        if (e == SSL_ERROR_ZERO_RETURN) return .eof;
+        if (e == SSL_ERROR_WANT_READ) return .timeout;
+        return .closed;
+    }
+
+    /// Tek deneme, beklemez: yazılan bayt sayısı (akış kontrolü doluysa 0); akış/bağlantı kapalıysa `error.Closed`.
+    pub fn tryWrite(self: *Stream, bytes: []const u8) Error!usize {
+        if (bytes.len == 0) return 0;
+        var w: usize = 0;
+        if (g_funcs.SSL_write_ex(self.ssl, bytes.ptr, bytes.len, &w) == 1) return w;
+        const e = g_funcs.SSL_get_error(self.ssl, 0);
+        if (e == SSL_ERROR_WANT_WRITE or e == SSL_ERROR_WANT_READ) return 0;
+        return error.Closed;
     }
 
     /// En az 1 bayt gelene, akış kapanana ya da `timeout_ms` dolana dek bekler.

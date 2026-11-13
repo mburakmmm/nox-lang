@@ -33,7 +33,7 @@ def env_or(name: str, fallback: str) -> str:
 
 SECRET: str = env_or("JWT_SECRET", "dev-secret-change-me-dev-secret-change-me")
 
-def open_db() -> Connection:
+def open_db_once() -> Connection:
     c: Connection = nox.sqlite.open(env_or("TODO_DB", "todo.db"))
     # PRAGMA'lar satır döndürür: `execute` yalnızca "bitti" kabul eder, bu yüzden `query` ile çalıştırılır.
     c.prepare("PRAGMA busy_timeout = 5000").query()
@@ -41,6 +41,18 @@ def open_db() -> Connection:
     c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, hash TEXT NOT NULL)")
     c.execute("CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
     return c
+
+# Çok işçili çalışma zamanında her işçi modül başlatıcısını (yani bu işlevi) kendi kopyası için çalıştırır: yeni bir veritabanı dosyasını aynı anda ilk kez açıp
+# `journal_mode = WAL`e geçirmeye çalışan işçilerden biri "database is locked" alabilir. Kısa aralıklarla yeniden denemek bu başlangıç yarışını giderir.
+def open_db() -> Connection:
+    tries: int = 0
+    while tries < 200:
+        try:
+            return open_db_once()
+        except Exception:
+            tries += 1
+            nox.time.sleep_ms(25)
+    return open_db_once()
 
 db: Connection = open_db()
 cors: Cors = Cors(["http://localhost:3000"], "GET, POST, PUT, DELETE", "Content-Type, Authorization", 600, False)

@@ -301,8 +301,6 @@ const StressShared = struct {
 /// `nox_cycle_forget` (`cycle_gc_lock`, YUKARIDAKİ notla SINIRLI), (d)
 /// `nox_globals_set`/`nox_globals_get` İLE KENDİ slotunun İZOLE kaldığını
 /// doğrulama.
-const SHARED_GLOBALS_MARKER: ?*anyopaque = @ptrFromInt(0x1000);
-
 fn stressWorkerBody(rt: *anyopaque, slot: usize, shared: *StressShared) void {
     // Faz F.0.1'den İtibaren `dispatch_registry` PROGRAM-genelinde TEK,
     // PAYLAŞILAN bir tablodur (bkz. `cycle_detector.zig`'in "bir iş
@@ -352,20 +350,21 @@ fn stressWorkerBody(rt: *anyopaque, slot: usize, shared: *StressShared) void {
             }
         }
 
-        // (d) v2.1.114: modül-globals bloğu TÜM işçilerde PAYLAŞILIR — her işçi, havuz kurulurken slot 0'ın yazdığı AYNI bloğu görmelidir.
-        _ = slot;
+        // (d) `globals_blocks[slot]` İZOLASYONU — BAŞKA worker'ların
+        // ARALARDA yazdığı değerlerle ASLA KARIŞMAMALI.
+        const marker: ?*anyopaque = @ptrFromInt(0x1000 + slot * 8 + @mod(i, 4));
+        asap.nox_globals_set(rt, marker);
         thread_spawn.yield();
-        if (asap.nox_globals_get(rt) != SHARED_GLOBALS_MARKER) shared.globals_mismatch.store(true, .seq_cst);
+        if (asap.nox_globals_get(rt) != marker) shared.globals_mismatch.store(true, .seq_cst);
     }
 }
 
-test "WorkerPool: 4 worker eş zamanlı ARC/arena/cycle-gc/paylaşılan globals" {
+test "WorkerPool: 4 worker eş zamanlı ARC/arena/cycle-gc/globals izolasyonu" {
     const testing = std.testing;
     var pool = try WorkerPool.create(testing.allocator, 4);
     defer pool.destroy();
 
     var shared = StressShared{};
-    asap.nox_globals_set(pool.rt, SHARED_GLOBALS_MARKER); // slot 0 (havuzu kuran iş parçacığı) bloğu kurar; tüm işçiler paylaşır
     try pool.spawnWorkers(*StressShared, stressWorkerBody, &shared);
     // Çağıran iş parçacığı (slot 0) KENDİSİ de bir worker OLUR (bkz.
     // `spawnWorkers`in belge notu).

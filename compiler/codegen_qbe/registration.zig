@@ -905,6 +905,25 @@ fn ensureGlobalsReady(sink: report_sink.Sink, a: std.mem.Allocator, expr: ast.Ex
     }
 }
 
+/// Bir modül değişkeni (üst düzey `var_decl`) bir fonksiyon/metot gövdesinde başvuruluyor mu? (`collectModuleGlobals`ın terfi ölçütünün ilk adımı: boşsa hiçbir global terfi etmez.)
+/// M:N havuzunda her işçi modül globals'ının KENDİ kopyasını taşır; çalınan görev başka işçinin kopyasını okuyabilir. QBE'de bu programlar eskisi gibi tek işçide çalışır (v2.1.115).
+pub fn moduleReadsGlobalsInFunctions(a: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef) bool {
+    var used: std.StringHashMapUnmanaged(void) = .empty;
+    defer used.deinit(a);
+    for (module.body) |stmt| {
+        switch (stmt.kind) {
+            .func_def => |fd| collectFreeNamesForTopLevelFunc(a, fd.params, fd.body, &used) catch return true,
+            .class_def => |cd| for (cd.methods) |m| collectFreeNamesForTopLevelFunc(a, m.params, m.body, &used) catch return true,
+            else => {},
+        }
+    }
+    for (extra_functions) |fd| collectFreeNamesForTopLevelFunc(a, fd.params, fd.body, &used) catch return true;
+    for (module.body) |stmt| {
+        if (stmt.kind == .var_decl and used.contains(stmt.kind.var_decl.name)) return true;
+    }
+    return false;
+}
+
 pub fn collectModuleGlobals(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
     var used_in_functions: std.StringHashMapUnmanaged(void) = .empty;
     defer used_in_functions.deinit(self.allocator);
