@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.130]
+
+### Eklendi (Faz 9.0 F1: kalıcı M:N mimarisinin temeli)
+
+- **Tip-yönlendirmeli dinamik paylaşım mimarisi** kararlaştırıldı (kullanıcı kararı: istisnasız, Go/Tokio gibi paralellik; `project/faz9-kontrol-debug-analizi-2026-11.md` D.3 + F1-F6 aşamaları + saha denetimi). Monitör/kapsam-dışı listeli yaklaşım reddedildi.
+- **F1 temel:** ARC başlık sözcüğünde `SHARED` (bit 58) ve `LOCK` (bit 59) bitleri (`abi_layout.HDR_SHARED_BIT/HDR_LOCK_BIT`); döngü çözücü yuva indeksi 28 → 26 bit (≈ 67 milyon kök; taşarsa nesne kök olarak kaydedilmez, güvenlik etkilenmez). `runtime/alloc/shared_obj.zig`: `isShared`, `setShared` (yapışkan, ilk kurulumu bildirir), `lock/unlock` (döndürme + üstel geri çekilme, refcount trafiğiyle aynı sözcükte çakışmaz), C ABI `nox_obj_is_shared/lock/unlock`. Birim testleri: yapışkanlık + sıfır testi etkilenmez, 4 iş parçacığında karşılıklı dışlama (eşzamanlı retain/release trafiğiyle).
+- Davranış değişikliği YOK (bitler henüz hiçbir yerde kurulmaz); sonraki aşamalar F2-F6.
+
 ## [2.1.129]
 
 ### Eklendi

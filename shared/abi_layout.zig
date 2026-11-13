@@ -200,5 +200,10 @@ pub const TRACE_BUF_SLOT_SIZE: usize = 8;
 pub const RT_HOT_SIZE: usize = 64;
 pub const RT_HOT_PENDING_BACK: usize = 64;
 pub const RT_HOT_FIBER_FLAG_BACK: usize = 48;
+/// Faz 9.0 F1: ARC başlık sözcüğünün (8 bayt, `payload - 8`) paylaşım bitleri. Düşük 32 bit refcount, 32-57 döngü çözücü yuvası, 60-61 renk, 62 tamponlu.
+/// `SHARED`: nesne birden çok görevden erişilebilir (yayımlandı; yapışkan). `LOCK`: nesne başına döndürme kilidi (yalnız `SHARED` nesnelerde kullanılır).
+pub const HDR_SHARED_BIT: u64 = @as(u64, 1) << 58;
+pub const HDR_LOCK_BIT: u64 = @as(u64, 1) << 59;
+
 /// `pending_exception_line` alanının `rt`ye göre geri ofseti (`rt - 56`).
 pub const RT_HOT_LINE_BACK: usize = 56;

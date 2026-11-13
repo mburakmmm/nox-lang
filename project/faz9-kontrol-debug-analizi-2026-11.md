@@ -95,12 +95,28 @@ Karar: **A** (tek işlemler atomik, bileşik işlemler değil; çökme/bellek bo
 - **Çalışma zamanı:** yeni mod `nox_pool_main_init(3)` = "paylaşılan tek blok": `nox_globals_get/set` tüm işçiler için slot 0 bloğunu verir; kardeş işçiler globals init/deinit çalıştırmaz. `pickMainWorkerCount(3)` modu 0 gibi (küçük varsayılan); ölçeklemek için `NOX_POOL_WORKERS` ya da ileride CPU sayısı politikası.
 - **Ölçüm tabanı:** `benchmarks/mn_shared/` (v2.1.119): paylaşılan sözlüklü program bugün LLVM 2.37 s (tek işçi) / `NOX_POOL_WORKERS=2` → YANLIŞ çıktı (işçi başına kopya), 4+ → çökme; paylaşımsız aynı iş yükü 8 işçide 0.40 s. Hedef: aynı çıktı + 8 işçide ~0.4-0.6 s (kilit çekişmesi payı hariç).
 
-### D.3 Kalan paylaşım durumları için çözüm: "monitör sınıfları" (2026-11-13, kullanıcı: "geriye kalanları da içeren çözümü önce uygulayalım")
+### D.3 KALICI mimari: tip-yönlendirmeli dinamik paylaşım (kullanıcı kararı 2026-11-13: "hiçbir istisna bırakmayacağız, Rust/Tokio/Go gibi korkusuz paralellik")
 
-Kalan örnekler (liste/iç içe kapsayıcı alanlı sınıf örnekleri, kalıtımlı sınıflar) nesne GRAFİĞİ paylaşımı ister. Kilitsiz/alan-düzeyi kilit modelleri her alan okuma/yazma kodunu ve ABI'yi (iz/eşitlik/bırakma/yansıma) değiştirmeyi gerektirir; bunun yerine **monitör** modeli seçildi:
+Monitör/kapsam-dışı listeli yaklaşım REDDEDİLDİ (tek kilit serileştirir, istisna bırakır). Hedef: HERHANGİ bir nesne grafiği iki görev arasında paylaşılabilir; programlar HİÇBİR koşulda tek işçiye sabitlenmez; bellek güvenliği (UAF/çift bırakma/yırtık yapı yok) ve ölçeklenme. Rust'ın `Send/Sync` tipleri İlke 1'i (görünmez sahiplik) bozar; bu yüzden güvenlik ÇALIŞMA ZAMANINDA sağlanır (Java / Python free-threading ailesi).
 
-- Bir MODÜL-DÜZEYİ sınıf örneği, kilitsiz kriterleri (skaler/`str`/`dict` alan) sağlamıyorsa ama **kapalı bir değer sınıfıysa** monitör olur: tüm alanları skaler, `str`, skaler/`str` elemanlı `list`/`dict`, ya da iç içe başka bir kapalı sınıf; kalıtım hiyerarşisinin TÜM sınıfları aynı koşulu sağlar; `__del__` yok.
-- Örneğe yalnız ADLA erişilir (takma ad yok): `G.metot(...)`, `G.alan` okuma/atama, `G.alan.metot(...)`/`G.alan[i]` zincirleri. Çözümleme `G`nin çıplak kullanımını (argüman, atama, dönüş, yakalama) reddeder; metot gövdeleri `self`i dışarı sızdırmaz (argüman/atama/dönüş/yakalama yok), kapsayıcı/sınıf TİPLİ alanı ya da onun elemanını döndürmez (yalnız skaler/`str`/taze değer), kapsayıcı/sınıf tipli parametreyi alana KOYMAZ (yalnız skaler/`str`).
-- Çalışma zamanı: tek, **yeniden girişli, fiber-farkında** program monitörü (`RuntimeState.monitor`; sahip = fiber ya da iş parçacığı kimliği, derinlik sayacı). Beklerken fiber yield eder (askıya alınan sahip varken bekleyenler işçileri döndürüp kilitlenmez). `G.` üzerindeki her erişim `monitor_enter` … `monitor_exit` ile sarılır; çağrıdan DÖNÜŞTE (istisna denetiminden ÖNCE) bırakılır, bu yüzden istisna yolları kilit sızdırmaz.
-- Maliyet: monitör sınıflarına erişimler birbirini serileştirir (tek kilit); monitöre dokunmayan kod paralel kalır. Kilitsiz kriterleri sağlayan sınıflar monitör KULLANMAZ.
-- Kapsam dışı (tek işçide kalır): kapsayıcı elemanı olarak sınıf örneği taşıyan monitör alanları, `list[list]` global'i, closure globalleri (ayrı tasarım gerekir).
+**Çekirdek fikirler**
+1. **Dinamik "paylaşılan" bayrağı + nesne kilidi.** Her yığın nesnesinin ARC başlık sözcüğünde iki bit: `SHARED` (nesne ≥2 görevden erişilebilir) ve `LOCK` (nesne başına döndürme kilidi). Düşük 32 bit refcount, 32-57 döngü çözücü yuva indeksi (28 → 26 bit), 58 `SHARED`, 59 `LOCK`, 60-61 renk, 62 tamponlu. Bayrak yoksa erişim maliyeti: tek yükleme + öngörülür dal.
+2. **Yayımlama bariyeri (publish).** Bir işaretçi paylaşılan bir yere yazıldığında (paylaşılan nesnenin alanı/listesi/sözlüğü, modül globali, kanal gönderimi, `spawn` argümanı/yakalaması, görev sonucu) gösterilen grafik **geçişli olarak** `SHARED` işaretlenir (yapışkan; bir nesne en çok bir kez gezilir). Tip bilgisi derleme zamanında bilindiğinden derleyici tip başına bir `$T_publish` üretir.
+3. **Paylaşılan nesnede erişim = sahipli okuma / kilitli yazma.** Yığın tipli alan/eleman okuması kilit altında retain eder (okuyan kendi referansını tutar); yazma kilit altında yeni işaretçiyi koyar, ESKİYİ kilit DIŞINDA bırakır (kullanıcı kodu çağrısı kilit içinde asla çalışmaz → kilitlenme yok). `list` büyümesi paylaşılan bloğu kopyalar (eski blok başka tutucuda yaşar, serbest bırakılmaz).
+4. **Tip-yönlendirmeli ödeme.** Yayımlama noktalarının statik tiplerinden (global tipleri, kanal eleman tipleri, `spawn` argüman/sonuç tipleri, yakalama tipleri) başlayıp alan/eleman tiplerine, alt sınıflara ve protokolü gerçekleyen sınıflara kapanan "paylaşım-yetenekli tipler" kümesi `S` hesaplanır. Bariyerler YALNIZ `S` tipleri için üretilir; paylaşım yapmayan programlar/tipler SIFIR maliyetlidir.
+5. **Mevcut ad-üzerinden yönlendirilen hücreler (dilim 1-7) HIZLI YOL olarak kalır** (kilit-sıfır/hücre); genel model onların kapsamadığı HER ŞEYİ kapsar ve v2.1.117 tek-işçi sabitlemesini KALDIRIR.
+
+**Aşamalar (her biri tek başına yeşil ve yayınlanabilir; bayrak hiç kurulmadan davranış değişmez)**
+- F1 Temel: başlık bitleri + çalışma zamanı ilkelleri (`isShared/lock/unlock/publish`), birim + iş parçacığı testleri; `S` tip kümesi analizi.
+- F2 Sınıf örneği alanları: sahipli okuma / kilitli yazma bariyerleri, `$T_publish`, eşitlik/yazdırma sarmalayıcıları (kilit altında).
+- F3 `list`: tüm satır içi liste işlemleri için paylaşılan yavaş yol (indeks/atama/append/pop/len/for/dilim/sort/…), iç içe listeler, listeyi alan/değişken/argüman olarak taşıma.
+- F4 Yayımlama noktaları: kanal gönderimi, `spawn` argüman/yakalama, görev sonucu, global atama.
+- F5 Kalıtım/protokoller, closure, `TaskLocal`, `Task`/kanal tutamaç tipli alanlar; tek-işçi sabitlemesinin kaldırılması (`pinned` KALMAZ).
+- F6 Yük/yarış/soak testleri, ThreadSanitizer, performans ölçümü (paylaşım yapmayan programda ≤%1; paylaşılan iş yükünde ölçekleme), belgeler.
+
+**F2-F5 için saha denetimi (2026-11-13; hiçbir kaynak değişmeden okuyarak çıkarıldı).** Sınıf alanını HAM okuyan/yazan üreteç noktaları — her biri paylaşılan örnek için ya bariyer ya da kilit-altı anlık görüntü gerektirir:
+- Bariyer (sahipli okuma / yayımlayıp kilitli yazma): `expr.zig` `genFieldRead`, `genFieldReadFromValue`; `stmt.zig` `genAssign` `.attribute` dalı; `calls.zig` alan-alıcılı `append`/liste işlemleri (`genListAppend` `field_recv`), `genRefListArgAddr`, `calls.zig:1516/2144/2629` alan adresi hesapları; `simple_init`/kurucu depolamaları (taze nesne: bariyer gerekmez).
+- Kilit-altı gezginler (eşitlik, yazdırma, JSON/yansıma): `layout.zig` `genClassEq` (satır ~1076, ~1338), `expr.zig` `genPrintClass` (~2677, ~2738), `exceptions.zig:51`, `decorators.zig` `genReflectFieldGetter`; kullanıcı `__eq__/__repr__/__str__` çağıran yollar kilidi TUTARAK çağırmamalı (anlık görüntü al, kilidi bırak, sonra çağır).
+- Zaten güvenli: sınıf serbest bırakma (rc=0: dışlayıcı), iz/gc-free (STW).
+- Liste: `list[T]` alanı için alan-hücresi (`nox_slist_*` ailesi alan başına) ve genel `list` işlemleri için paylaşılan yavaş yol.
+

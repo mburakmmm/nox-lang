@@ -118,7 +118,10 @@ const Color = enum(u2) { black, gray, white, purple };
 /// Başlık kelimesi düzeni (bkz. modül üstü not).
 const RC_MASK: u64 = 0xFFFF_FFFF;
 const IDX_SHIFT: u6 = 32;
-const IDX_MASK: u64 = ((@as(u64, 1) << 28) - 1) << IDX_SHIFT;
+/// Faz 9.0 F1: yuva indeksi 28 → 26 bit (≈ 67 milyon kök); 58 `SHARED`, 59 `LOCK` bitlerine (bkz. `shared_obj.zig`) yer açar.
+const IDX_BITS: u6 = 26;
+const MAX_ROOT_IDX: usize = (@as(usize, 1) << IDX_BITS) - 1;
+const IDX_MASK: u64 = ((@as(u64, 1) << IDX_BITS) - 1) << IDX_SHIFT;
 const COLOR_SHIFT: u6 = 60;
 const COLOR_MASK: u64 = @as(u64, 3) << COLOR_SHIFT;
 const BUFFERED_BIT: u64 = @as(u64, 1) << 62;
@@ -366,6 +369,7 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     // (zincir/ağaç/graf düğümleri) her tur kök olarak kaydedilip bırakılırken tampon ve toplama sıklığı sınırsız şişmesin.
     if (gc.roots.items.len >= COMPACT_MIN_LEN and gc.roots.items.len >= 4 * gc.live_roots) compactRoots(gc);
     const idx = gc.roots.items.len;
+    if (idx > MAX_ROOT_IDX) return; // yuva indeksi başlık alanına sığmaz: bu nesne kök olarak kaydedilmez (yalnızca döngü toplama kaçırılır, güvenlik etkilenmez)
     gc.roots.append(state.allocator(), ptr) catch return;
     gc.live_roots += 1;
     // Refcount'u eşzamanlı artıran/azaltan iş parçacıklarıyla (atomik ARC) çakışmamak
