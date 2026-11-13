@@ -553,6 +553,9 @@ pub const RuntimeState = struct {
     embed_active: bool = false,
     embed_roots: [4]?[*:0]const u8 = .{ null, null, null, null },
     embed_roots_owned: bool = false,
+    /// Faz 9.4: `nox.ffi.Callback` kutularının kayıt defteri (`stdlib_shims/ffi_cb.zig`; tembel) ve çıkışta onu boşaltan kanca. Kapatılan kutular kapanış-sonrası çağrıları yakalamak için bellekte kalır, çıkışta bırakılır.
+    cb_boxes: ?*anyopaque = null,
+    cb_deinit_hook: ?*const fn (?*anyopaque) callconv(.c) void = null,
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
@@ -942,6 +945,7 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // serbest-bırakma yazımı olurdu).
     nox_cycle_collect(rt);
     nox_cycle_deinit(rt);
+    if (state.cb_deinit_hook) |hook| hook(rt);
     if (comptime !is_freestanding) @import("../stdout_flush.zig").flushStdout();
     // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
     // düzeltme"): `pool_ext` (VARSA) `state.allocator()` İLE (`WorkerPool.

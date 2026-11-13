@@ -456,8 +456,7 @@ fn readStrList(a: std.mem.Allocator, list: ?*anyopaque) ?[][]const u8 {
 
 /// Host işlevli (ve isteğe bağlı WASI) açılış: `names[i]` = "modül.ad"; Nox tarafındaki `hosts[i]` bu içe aktarmanın gövdesidir. `flags`: bit0 saat, bit1 rastgelelik, bit2 çıktıyı süreç
 /// stdout/stderr'ine de yaz, bit3 WASI etkin. `cb`/`ud` (userdata = rt) yalnızca açılış (start işlevi) süresince geçerlidir.
-pub export fn nox_wasm_open_host_raw(path: ?[*:0]const u8, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
-    const rt = ud;
+pub export fn nox_wasm_open_host_raw(rt: ?*anyopaque, path: ?[*:0]const u8, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const a = state.allocator();
     const p = str_mod.nox_str_slice(path orelse return failedHandle(rt, "path is null", .{}));
@@ -471,8 +470,7 @@ pub export fn nox_wasm_open_host_raw(path: ?[*:0]const u8, names: ?*anyopaque, w
     return openBytesHost(rt, bytes, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa });
 }
 
-pub export fn nox_wasm_open_bytes_host_raw(data: ?*anyopaque, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
-    const rt = ud;
+pub export fn nox_wasm_open_bytes_host_raw(rt: ?*anyopaque, data: ?*anyopaque, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const a = state.allocator();
     const lp: [*]const u8 = @ptrCast(data orelse return failedHandle(rt, "no data", .{}));

@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.124]
+
+### Düzeltildi (Faz 9 kontrol/debug)
+
+- **9.1 WASM:** `Instance.close()` sonrası `result`/`result_count`/`exports`/`signature`/`memory_size`/`read_*`/`write_*`/`load`/`store`/`stdout`/`stderr`/`exit_code` serbest bırakılmış tutamacı kullanmadan `WasmError` verir (fixture `wasm_instance_closed`).
+- **9.2 WASM host gönderici:** modül düzeyinde "etkin örnek yığını" kaldırıldı; her örnek KENDİ `Callback` tutamacını (tutamaç + host listesi; `Instance`a geri referans yok) taşır. Host işlevi görevi askıya alıp (`sleep_ms`) başka bir görev başka örneği çağırsa da doğru örneğin host işlevi çalışır; `nox.wasm` kullanan async programlar artık modül-global yüzünden tek işçiye sabitlenmez (fixture `wasm_host_interleave`). `nox_wasm_open_host_raw`/`open_bytes_host_raw` artık açık `rt` alır.
+- **9.3 QUIC istemcisi:** `SSL_set1_host` ve SNI dönüş değerleri denetlenir (başarısızsa bağlantı kurulmaz), ALPN `h3` zorunlu.
+- **9.4 `nox.ffi.Callback`:** `close()` sonrası C hâlâ çağırırsa rastgele çökme yerine net iletiyle sonlanır; 16 baytlık kutu çalışma zamanı kayıt defterinde çıkışa kadar tutulur.
+- **9.7 HTTP/3 QPACK:** bozuk/rastgele blok testi (Huffman açılımı ham boyutun en çok ~1,6 katıdır; bomba riski yok).
+- **9.16 HTTP/3 istemcisi:** `writeAllProgress`; bayt gönderildikten sonra hata olursa istek TCP'de TEKRARLANMAZ (`.failed_data`), yalnız sıfır bayt gittiyse güvenli geri düşme.
+- **9.17 `EventQueue.close()`** olay tamponunu (en çok ~80 MiB) bırakır.
+- **9.18 Gövde sınırı:** HTTP/3 ve HTTP/1.1-2 istemcilerinde 512 MiB sınırı gövde YAZILIRKEN uygulanır (sıkıştırma bombası tahsis taşmasından önce durur).
+- **9.19 `ctlTrailers`:** kısmi tahsis hatasında çift serbest bırakma giderildi (`FailingAllocator` testi).
+- `mn_shared_scalar` fixture'ı yield ile bekler (mobil CI'da zamanlamaya bağımlı değildi).
+
 ## [2.1.123]
 
 ### Düzeltildi

@@ -415,15 +415,21 @@ pub const Conn = struct {
         g_funcs.SSL_set_bio(s, bio, bio);
         if (g_funcs.SSL_set1_initial_peer_addr(s, ba) != 1) return error.ConnectFailed;
         if (g_funcs.SSL_set_alpn_protos(s, &server_alpn, server_alpn.len) != 0) return error.ConnectFailed;
-        _ = g_funcs.SSL_set1_host(s, sni.ptr);
-        _ = g_funcs.SSL_ctrl(s, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, @ptrCast(@constCast(sni.ptr)));
+        // Sertifika ana makine doğrulaması ve SNI kurulamazsa bağlantı BAŞLAMADAN reddedilir (sessizce doğrulamasız bağlanılmaz).
+        if (g_funcs.SSL_set1_host(s, sni.ptr) != 1) return error.ConnectFailed;
+        if (g_funcs.SSL_ctrl(s, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, @ptrCast(@constCast(sni.ptr))) != 1) return error.ConnectFailed;
         _ = g_funcs.SSL_set_blocking_mode(s, 0);
         _ = g_funcs.SSL_set_default_stream_mode(s, 0);
 
         const deadline = nowMs() + timeout_ms;
         while (true) {
             const r = g_funcs.SSL_connect(s);
-            if (r == 1) return .{ .ssl = s };
+            if (r == 1) {
+                const conn: Conn = .{ .ssl = s };
+                // ALPN `h3` zorunludur: sunucu başka bir protokol seçtiyse (ya da hiçbir şey) bağlantı kurulmuş sayılmaz.
+                if (!conn.alpnIsH3()) return error.ConnectFailed;
+                return conn;
+            }
             const e = g_funcs.SSL_get_error(s, r);
             if (e != SSL_ERROR_WANT_READ and e != SSL_ERROR_WANT_WRITE) {
                 if (std.c.getenv("NOX_QUIC_DEBUG") != null) {
@@ -563,12 +569,20 @@ pub const Stream = struct {
 
     /// Tüm baytları yazar (akış kontrolü dolarsa bekler); eş taraf akışı kapattıysa `error.Closed`.
     pub fn writeAll(self: *Stream, bytes: []const u8, timeout_ms: u32) Error!void {
+        var sent: usize = 0;
+        return self.writeAllProgress(bytes, timeout_ms, &sent);
+    }
+
+    /// `writeAll` + ilerleme: hata/zaman aşımında bile `sent.*` o ana kadar KABUL EDİLEN bayt sayısını tutar (istemci: sıfır bayt gönderildiyse isteği güvenle başka taşıyıcıda tekrarlayabilir, kısmi gönderimde tekrarlamamalı).
+    pub fn writeAllProgress(self: *Stream, bytes: []const u8, timeout_ms: u32, sent: *usize) Error!void {
         const deadline = nowMs() + timeout_ms;
         var off: usize = 0;
+        sent.* = 0;
         while (off < bytes.len) {
             var w: usize = 0;
             if (g_funcs.SSL_write_ex(self.ssl, bytes.ptr + off, bytes.len - off, &w) == 1) {
                 off += w;
+                sent.* = off;
                 continue;
             }
             const e = g_funcs.SSL_get_error(self.ssl, 0);

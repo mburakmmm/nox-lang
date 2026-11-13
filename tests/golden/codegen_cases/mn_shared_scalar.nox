@@ -1,5 +1,7 @@
 # Faz 9.0 (v2.1.120): yeniden atanan skaler modül globali TÜM işçilerde tek ortak kopyadır (işçi başına kopya değil).
-# Ana görev işçisini yield etmeden bekletir; `writer` ancak BAŞKA bir işçiye çalınırsa çalışabilir ve değeri ortak globale yazar.
+# Ana görev `sleep_ms` ile yield ederek bekler; `writer` hangi işçide çalışırsa çalışsın değeri ortak globale yazar ve ana görev onu görür (tek işçili ortamlarda da belirleyici).
+import nox.time
+
 phase: int = 0
 
 async def writer() -> None:
@@ -8,7 +10,8 @@ async def writer() -> None:
 async def main_task() -> None:
     w: Task[None] = spawn writer()
     spin: int = 0
-    while phase == 0 and spin < 3000000000:
+    while phase == 0 and spin < 20000:
+        nox.time.sleep_ms(1)
         spin = spin + 1
     print(phase)
     await w

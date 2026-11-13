@@ -2,7 +2,7 @@
 //!
 //! Kutu, rt-bağımsız küçük bir ARC bloğudur: `[rt: *RuntimeState, closure: *Closure]`. C tarafı `userdata` olarak kutunun adresini saklar; derleyicinin
 //! ürettiği closure-trampoline'ı (`$<extern>__clotramp`) kutudan `rt` ile closure'ı okuyup closure'ı çağırır. Kutu closure'ın KENDİ referansını (+1) tutar
-//! (C hâlâ kullanıyorken ARC onu serbest bırakmasın); `nox_cb_box_free` hem o referansı hem kutuyu bırakır. Allocator her zaman `rt` üzerinden
+//! (C hâlâ kullanıyorken ARC onu serbest bırakmasın); `nox_cb_box_free` yalnızca o referansı bırakır (kutu, kapanıştan sonra gelen çağrıları yakalamak için kalır). Allocator her zaman `rt` üzerinden
 //! (İlke 6: gizli global yok). Kutu YALNIZCA Nox'un başlattığı iş parçacığında kullanılmalıdır (ARC iş parçacığı sahipliği, bkz. `arc.zig` Faz X.3).
 
 const std = @import("std");
@@ -10,6 +10,8 @@ const arc = @import("../alloc/arc.zig");
 const abi_ptr = @import("../abi_ptr.zig");
 const str_mod = @import("../str.zig");
 const builtin = @import("builtin");
+const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
+const rtstate = @import("../alloc/asap.zig");
 
 const BOX_SIZE: usize = 2 * @sizeOf(usize);
 /// `CLOSURE_RELEASE_FN_PTR_OFFSET` (bkz. `compiler/codegen_qbe/types.zig`): closure bloğunun ofset 8'indeki release işlevi.
@@ -19,18 +21,64 @@ fn words(box: *anyopaque) [*]usize {
     return @ptrCast(@alignCast(box));
 }
 
+/// Çalışma zamanı başına kutu kayıt defteri: kutular `rt` allocator'ından tahsis edilir ve `close()` SONRASI da çıkışa kadar yaşar (kapanış-sonrası çağrıyı yakalamak için, bkz. `nox_cb_box_free`).
+const Registry = struct {
+    lock: SpinLock = .{},
+    boxes: std.ArrayListUnmanaged(*anyopaque) = .empty,
+};
+
+fn registryOf(state: *rtstate.RuntimeState) ?*Registry {
+    if (state.cb_boxes) |p| return @ptrCast(@alignCast(p));
+    const reg = state.allocator().create(Registry) catch return null;
+    reg.* = .{};
+    state.cb_boxes = reg;
+    state.cb_deinit_hook = registryDeinit;
+    return reg;
+}
+
+fn registryDeinit(rt: ?*anyopaque) callconv(.c) void {
+    const state: *rtstate.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    const reg: *Registry = @ptrCast(@alignCast(state.cb_boxes orelse return));
+    const a = state.allocator();
+    var box_len: usize = BOX_SIZE;
+    _ = &box_len;
+    for (reg.boxes.items) |b| {
+        const slice: []align(@alignOf(usize)) u8 = @alignCast(@as([*]u8, @ptrCast(b))[0..box_len]);
+        a.free(slice);
+    }
+    reg.boxes.deinit(a);
+    a.destroy(reg);
+    state.cb_boxes = null;
+    state.cb_deinit_hook = null;
+}
+
 /// Kutuyu kurar; `closure`un +1 referansını tutar. Başarısızlıkta `null`.
 pub export fn nox_cb_box_new(rt: ?*anyopaque, closure: ?*anyopaque) callconv(.c) ?*anyopaque {
     const c = closure orelse return null;
-    const raw = arc.nox_rc_alloc(rt, BOX_SIZE) orelse return null;
+    const state: *rtstate.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const a = state.allocator();
+    const mem = a.alignedAlloc(u8, .of(usize), BOX_SIZE) catch return null;
+    const reg = registryOf(state) orelse {
+        a.free(mem);
+        return null;
+    };
+    reg.lock.lock();
+    reg.boxes.append(a, mem.ptr) catch {
+        reg.lock.unlock();
+        a.free(mem);
+        return null;
+    };
+    reg.lock.unlock();
     arc.nox_rc_retain(c);
-    const w = words(raw);
+    const w = words(mem.ptr);
     w[0] = @intFromPtr(rt);
     w[1] = @intFromPtr(c);
-    return raw;
+    return mem.ptr;
 }
 
-/// Kutudaki closure referansını ve kutuyu bırakır (kutu başına BİR kez çağrılmalıdır; `nox.ffi.Callback.release` tekrarı engeller).
+/// Kutudaki closure referansını bırakır ve closure işaretçisini sıfırlar (kutu başına BİR kez çağrılmalıdır; `nox.ffi.Callback.release` tekrarı engeller). Kutunun KENDİSİ bilerek
+/// serbest bırakılmaz (Faz 9.4): C kütüphanesi `close()` sonrası hâlâ çağırırsa trampoline sıfırlanmış işaretçiyi görüp net bir iletiyle sonlanır (`nox_cb_closed_abort`); kutu bırakılsaydı
+/// bellek yeniden kullanılabilir ve çağrı rastgele çökerdi. Kutular çıkışta `registryDeinit` ile bırakılır (sızıntı sayılmaz).
 pub export fn nox_cb_box_free(rt: ?*anyopaque, box: ?*anyopaque) callconv(.c) void {
     const raw = box orelse return;
     const w = words(raw);
@@ -41,7 +89,13 @@ pub export fn nox_cb_box_free(rt: ?*anyopaque, box: ?*anyopaque) callconv(.c) vo
         const rel: *const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void = @ptrFromInt(rel_slot.*);
         rel(abi_ptr.arg(rt), abi_ptr.arg(closure));
     }
-    arc.nox_rc_release(rt, raw, BOX_SIZE);
+}
+
+/// `Callback.close()` SONRASI çağrılan bir callback'in trampoline'ı çağırır (v2.1.124, Faz 9.4): serbest bırakılmış closure'ı çalıştırmak yerine net bir iletiyle süreci sonlandırır.
+pub export fn nox_cb_closed_abort() callconv(.c) void {
+    const msg = "nox.ffi.Callback: a C library called a callback after the handle was closed (call close() only after the library can no longer call it)\n";
+    std.debug.print("{s}", .{msg});
+    std.process.abort();
 }
 
 /// NUL ile biten bir C dizesini (`char *`) YENİ bir Nox `str`e kopyalar; NULL -> "" (v2.1.107).

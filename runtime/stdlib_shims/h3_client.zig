@@ -271,6 +271,11 @@ fn idempotent(method: []const u8) bool {
 const Attempt = union(enum) { done: Response, presend, failed_no_data, failed_data };
 
 fn decodeBody(gpa: Allocator, encoding: []const u8, raw: []u8) ![]u8 {
+    return decodeBodyLimit(gpa, encoding, raw, max_response_body);
+}
+
+/// `decodeBody`nin sınırı parametreli hali. Açılan bayt sayısı YAZMA SIRASINDA sınırlanır (sıkıştırma bombası): sınır aşıldığında çözme hemen durur, tahsis sınırı (`limit` + bir yığın) aşmaz.
+fn decodeBodyLimit(gpa: Allocator, encoding: []const u8, raw: []u8, limit: usize) ![]u8 {
     const ce: ?std.http.ContentEncoding = if (std.ascii.eqlIgnoreCase(encoding, "gzip") or std.ascii.eqlIgnoreCase(encoding, "x-gzip"))
         .gzip
     else if (std.ascii.eqlIgnoreCase(encoding, "deflate"))
@@ -285,8 +290,16 @@ fn decodeBody(gpa: Allocator, encoding: []const u8, raw: []u8) ![]u8 {
     const rd = std.http.Decompress.init(&dec, &in, window, kind);
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
-    _ = rd.streamRemaining(&out.writer) catch return error.DecodeFailed;
-    if (out.written().len > max_response_body) return error.DecodeFailed;
+    // `limit + 1` bayta kadar oku: bir fazla bayt gelirse sınır aşılmıştır.
+    var remaining: usize = limit + 1;
+    while (remaining > 0) {
+        const n = rd.stream(&out.writer, .limited(remaining)) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => return error.DecodeFailed,
+        };
+        remaining -= n;
+    }
+    if (out.written().len > limit) return error.DecodeFailed;
     gpa.free(raw);
     return out.toOwnedSlice();
 }
@@ -339,7 +352,9 @@ fn attempt(gpa: Allocator, b: *Bundle, authority: []const u8, method: []const u8
 
     // Bağlantı kapalıysa hiçbir şey gönderilmeden başarısız say.
     if (b.conn.isClosed()) return .presend;
-    st.writeAll(out.items, phase_ms) catch return .presend;
+    // Kısmi gönderim "hiç gönderilmedi" sayılmaz: bayt gittiyse istek başka taşıyıcıda TEKRARLANMAZ (POST çift işlem riski).
+    var sent: usize = 0;
+    st.writeAllProgress(out.items, phase_ms, &sent) catch return if (sent == 0) .presend else .failed_data;
     st.conclude();
 
     var inbuf: std.ArrayListUnmanaged(u8) = .empty;
@@ -519,4 +534,18 @@ test "h3_client: adres çözümleme IPv4/IPv6 literalleri ve geçersiz ad" {
     try testing.expectEqual([4]u8{ 127, 0, 0, 1 }, addrs[0].v4);
     try testing.expectEqual(@as(usize, 1), resolve("::1", &addrs));
     try testing.expectEqual(@as(u8, 1), addrs[0].v6[15]);
+}
+
+test "h3_client: gzip/deflate açma sınırı yazma sırasında uygulanır (sıkıştırma bombası)" {
+    const gpa = std.testing.allocator;
+    const gz = [_]u8{ 0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xed, 0xc1, 0x01, 0x0d, 0x00, 0x00, 0x00, 0xc2, 0xa0, 0xf7, 0x4f, 0x6d, 0x0f, 0x07, 0x14, 0x00, 0x00, 0x00, 0xf0, 0x6e, 0x11, 0x00, 0x1c, 0xc7, 0x00, 0x10, 0x00, 0x00 };
+    // Sınır içinde: 4096 sıfır bayt açılır.
+    const ok_raw = try gpa.dupe(u8, &gz);
+    const ok = try decodeBodyLimit(gpa, "gzip", ok_raw, 5000);
+    defer gpa.free(ok);
+    try std.testing.expectEqual(@as(usize, 4096), ok.len);
+    // Sınır aşılır: hata döner, `raw` çağırana ait kalır (serbest bırakma çağıranın işi), sızıntı yok.
+    const bomb_raw = try gpa.dupe(u8, &gz);
+    defer gpa.free(bomb_raw);
+    try std.testing.expectError(error.DecodeFailed, decodeBodyLimit(gpa, "gzip", bomb_raw, 1000));
 }

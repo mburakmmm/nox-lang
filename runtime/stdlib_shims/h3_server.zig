@@ -190,7 +190,12 @@ pub fn ctlTrailers(ctl: *StreamCtl, headers: []const Header) bool {
         n += 1;
     }
     if (n != headers.len) {
-        freeHeaders(ctl.gpa, copy[0..n]);
+        // Kısmi tahsis hatası: yalnız tamamlanan ilk `n` başlığın içerikleri bırakılır, `copy` dizisi TAM tahsis uzunluğuyla bir kez bırakılır
+        // (`freeHeaders(copy[0..n])` dizi dilimini yanlış uzunlukla bırakır ve ardından `free(copy)` aynı tahsisi ikinci kez bırakırdı).
+        for (copy[0..n]) |h| {
+            ctl.gpa.free(h.name);
+            ctl.gpa.free(h.value);
+        }
         ctl.gpa.free(copy);
         return false;
     }
@@ -1155,6 +1160,20 @@ const TestRig = struct {
         self.sctx.deinit();
     }
 };
+
+test "h3_server: ctlTrailers kısmi tahsis hatasında sızıntı/çift bırakma olmaz (FailingAllocator)" {
+    var fail_at: usize = 0;
+    while (fail_at < 8) : (fail_at += 1) {
+        var fa = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_at });
+        var ctl: StreamCtl = .{ .gpa = fa.allocator(), .pause = struct {
+            fn p() void {}
+        }.p };
+        ctl.started = true;
+        defer ctl.deinit();
+        const hs = [_]Header{ .{ .name = "x-a", .value = "1" }, .{ .name = "x-b", .value = "2" } };
+        _ = ctlTrailers(&ctl, &hs);
+    }
+}
 
 test "h3_server: GET/POST gidiş-dönüşü, 413, HEAD ve çoklanmış istekler (yerel QUIC istemcisiyle)" {
     if (!quic.supported) return error.SkipZigTest;

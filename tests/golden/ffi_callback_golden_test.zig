@@ -139,3 +139,41 @@ test "v2.1.118 nox.ffi.EventQueue: kuyruk dolunca en yeni olaylar atılır (drop
         \\
     , "3\n7\n0\n");
 }
+
+/// Faz 9.4 (v2.1.124): `close()` SONRASI çağrılan callback, serbest bırakılmış closure'ı çalıştırmaz; net bir iletiyle süreç sonlanır (iki backend).
+fn expectClosedCallbackAbort(r: std.process.RunResult, which: []const u8) !void {
+    if (r.term == .exited and r.term.exited == 0) {
+        std.debug.print("[{s}] close() sonrası çağrı sessizce başarılı oldu (abort beklenirdi)\n", .{which});
+        return error.ExpectedAbort;
+    }
+    if (std.mem.indexOf(u8, r.stderr, "after the handle was closed") == null) {
+        std.debug.print("[{s}] beklenen ileti yok; stderr: {s}\n", .{ which, r.stderr });
+        return error.MissingClosedMessage;
+    }
+}
+
+test "v2.1.124 Faz 9.4: nox.ffi.Callback close() sonrası C hâlâ çağırırsa net iletiyle sonlanır (iki backend)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const lit = try std.mem.replaceOwned(u8, a, build_options.util_o_path, "\\", "\\\\");
+    const template =
+        \\import nox.ffi
+        \\from nox.ffi import Callback
+        \\
+        \\@ffi.callback("cb", "userdata")
+        \\extern def nox_test_cb_store(cb: (int, ptr) -> int, userdata: ptr) -> None from "{s}"
+        \\extern def nox_test_cb_fire(x: int) -> int from "{s}"
+        \\
+        \\a: Callback[(int) -> int] = Callback[(int) -> int](lambda x: x + 100)
+        \\nox_test_cb_store(a)
+        \\print(nox_test_cb_fire(5))
+        \\a.close()
+        \\print(nox_test_cb_fire(6))
+        \\
+    ;
+    const source = try std.fmt.allocPrint(a, template, .{ lit, lit });
+    const objs = [_][]const u8{build_options.util_o_path};
+    try expectClosedCallbackAbort(try compile_helpers.compileAndRunWithObjs(a, source, &objs), "qbe");
+    try expectClosedCallbackAbort(try compile_helpers.compileAndRunLlvmWithObjs(a, source, &objs), "llvm");
+}

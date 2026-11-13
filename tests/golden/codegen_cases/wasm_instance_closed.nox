@@ -1,0 +1,84 @@
+# v2.1.124 (Faz 9.1): `Instance.close()` sonrası HER erişimci yöntemi serbest bırakılmış tutamacı kullanmadan `WasmError` fırlatır.
+import nox.wasm
+from nox.wasm import WasmError
+
+w: nox.wasm.Instance = nox.wasm.open("tests/compat/wasm_ops/ops.wasm")
+print(w.call("i32.add", [1, 2]))
+w.close()
+empty: list[int] = []
+
+def check(name: str, ok: bool) -> None:
+    print(name + (" closed caught" if ok else " NOT CAUGHT"))
+
+try:
+    w.result(0)
+    check("result", False)
+except WasmError:
+    check("result", True)
+try:
+    w.result_count()
+    check("result_count", False)
+except WasmError:
+    check("result_count", True)
+try:
+    w.exports()
+    check("exports", False)
+except WasmError:
+    check("exports", True)
+try:
+    w.signature("i32.add")
+    check("signature", False)
+except WasmError:
+    check("signature", True)
+try:
+    w.memory_size()
+    check("memory_size", False)
+except WasmError:
+    check("memory_size", True)
+try:
+    w.read_bytes(0, 1)
+    check("read_bytes", False)
+except WasmError:
+    check("read_bytes", True)
+try:
+    w.read_str(0, 1)
+    check("read_str", False)
+except WasmError:
+    check("read_str", True)
+try:
+    w.write_bytes(0, empty)
+    check("write_bytes", False)
+except WasmError:
+    check("write_bytes", True)
+try:
+    w.write_str(0, "x")
+    check("write_str", False)
+except WasmError:
+    check("write_str", True)
+try:
+    w.load(0, 4)
+    check("load", False)
+except WasmError:
+    check("load", True)
+try:
+    w.store(0, 4, 1)
+    check("store", False)
+except WasmError:
+    check("store", True)
+try:
+    w.stdout()
+    check("stdout", False)
+except WasmError:
+    check("stdout", True)
+try:
+    w.stderr()
+    check("stderr", False)
+except WasmError:
+    check("stderr", True)
+try:
+    w.exit_code()
+    check("exit_code", False)
+except WasmError:
+    check("exit_code", True)
+w.close()
+print("done")

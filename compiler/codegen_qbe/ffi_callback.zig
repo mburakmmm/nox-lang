@@ -145,6 +145,16 @@ pub fn genClosureCallbackTrampoline(self: *Codegen, extern_name: []const u8) Cod
     try self.qbeOp2Imm(clo_slot, .l, "add", "%ud", 8);
     const clo = try self.newTemp();
     try self.qbeLoadL(clo, clo_slot);
+    // Faz 9.4: `close()` kutudaki closure işaretçisini sıfırlar; C kütüphanesi kapanıştan SONRA hâlâ çağırırsa serbest bırakılmış closure'ı okumak yerine net bir iletiyle sonlanılır.
+    const closed_t = try self.newTemp();
+    try self.qbeOp2Imm(closed_t, .w, "ceql", clo, 0);
+    const closed_label = try self.newLabel("clocb_closed");
+    const live_label = try self.newLabel("clocb_live");
+    try self.qbeJnz(closed_t, closed_label, live_label);
+    try self.qbeLabel(closed_label);
+    try self.qbeCall(null, "$nox_cb_closed_abort", &.{});
+    try self.emitDefaultReturn(if (fsig.ret.qtype == .none) .none else fsig.ret.qtype);
+    try self.qbeLabel(live_label);
     const fn_ptr = try self.newTemp();
     try self.qbeLoadL(fn_ptr, clo);
 

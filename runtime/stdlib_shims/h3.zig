@@ -907,3 +907,22 @@ test "h3: QPACK dinamik tablo — göreli atıf, çoğaltma, çıkarma ve geçer
     try testing.expectError(error.QpackEncoderStreamError, dec2.processEncoderBytes(&.{ 0x43, 'x', '-', 'a', 0x01, '1' })); // kapasite 0: sığmaz
     try testing.expectError(error.QpackEncoderStreamError, dec2.processEncoderBytes(&.{0x03})); // Duplicate: boş tablo
 }
+
+test "h3: bozuk/rastgele QPACK blokları panik/sızıntı olmadan hata ya da başarı döner (Faz 9.7; Huffman açılımı ham boyutun en çok ~1,6 katıdır ve alan bölümü sınırı her alandan sonra denetlenir)" {
+    var prng = std.Random.DefaultPrng.init(0x51ac_0de);
+    const r = prng.random();
+    var i: usize = 0;
+    while (i < 3000) : (i += 1) {
+        var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena_state.deinit();
+        var buf: [96]u8 = undefined;
+        const n = r.intRangeAtMost(usize, 0, buf.len);
+        r.bytes(buf[0..n]);
+        // Yarısında başlığı geçerli (RIC=0, Delta Base=0) yap: gövde ayrıştırıcıya ulaşsın.
+        if (i % 2 == 0 and n >= 2) {
+            buf[0] = 0;
+            buf[1] = 0;
+        }
+        _ = decodeFieldSection(arena_state.allocator(), buf[0..n], 512) catch {};
+    }
+}

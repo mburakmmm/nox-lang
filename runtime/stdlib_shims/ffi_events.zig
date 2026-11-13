@@ -9,8 +9,8 @@
 //! `float32_arg`. Sınırlar: en çok 6 tamsayı + 4 kayan nokta argüman, struct-değerle argüman yok, Windows x64'te (pozisyonel kayıtlar) desteklenmez. Userdata `ud_index`.
 //! inci TAMSAYI-sınıfı argümandır (0..5) ve kuyruk tutamağını taşır. Dönüş: `set_return` ile ayarlanan `i64` (void callback'lerde yok sayılır).
 //!
-//! Kuyruk dolarsa en yeni olay atılır ve `dropped` artar (kütüphane iş parçacığı ASLA bloklanmaz). Kuyruk yapısı `close`dan sonra da (küçük bir başlık) bellekte kalır:
-//! kütüphane iş parçacığı kapanıştan sonra çağırsa bile geçerli belleğe yazar (olay atılır). Bellek `page_allocator`dan alınır (İlke 6: yalnızca bu kuyruğa özgü durum).
+//! Kuyruk dolarsa en yeni olay atılır ve `dropped` artar (kütüphane iş parçacığı ASLA bloklanmaz). Kuyruk başlığı `close`dan sonra da (küçük bir yapı) bellekte kalır, olay tamponu ise kapanışta bırakılır:
+//! kütüphane iş parçacığı kapanıştan sonra çağırsa bile geçerli belleğe dokunur (olay atılır). Bellek `page_allocator`dan alınır (İlke 6: yalnızca bu kuyruğa özgü durum).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -64,6 +64,9 @@ pub export fn nox_evq_close(p: ?*anyopaque) callconv(.c) void {
     if (q.closed) return;
     q.closed = true;
     q.len = 0;
+    // Olay tamponu (kapasite × ~80 B, en çok ~80 MiB) kapanışta bırakılır; yalnız küçük başlık kalır. `push`/`pop` `closed`/`len == 0` denetiminden önce tampona dokunmaz.
+    std.heap.page_allocator.free(q.buf);
+    q.buf = q.buf[0..0];
 }
 
 fn push(q: *Queue, ud_index: usize, ints: [6]i64, floats: [4]f64) i64 {
@@ -189,6 +192,11 @@ test "evq: trampoline userdata'yı ayıklar, tamsayı ve kayan nokta argümanlar
     nox_evq_close(q);
     _ = tr(9, qi, 9, 0, 0, 0, 0, 0, 0, 0);
     try std.testing.expectEqual(@as(i64, 0), nox_evq_pending(q));
+    // v2.1.124 (9.17): olay tamponu kapanışta bırakıldı; geç gelen callback/pop güvenli (sıfır uzunluklu dilim).
+    const qq: *Queue = @ptrCast(@alignCast(q));
+    try std.testing.expectEqual(@as(usize, 0), qq.buf.len);
+    try std.testing.expectEqual(@as(i64, 0), nox_evq_pop(q));
+    _ = tr(10, qi, 10, 0, 0, 0, 0, 0, 0, 0);
 }
 
 test "evq: gerçek bir yabancı iş parçacığı callback'i çağırır" {

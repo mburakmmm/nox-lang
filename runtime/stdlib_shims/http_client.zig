@@ -47,6 +47,9 @@
 //! http.Client`ın TAMAMINI forklamayı gerektirir, fayda/risk oranı düşük.
 
 const std = @import("std");
+
+/// Belleğe alınan (akışsız) HTTP yanıt gövdesi sınırı (bayt); aşılırsa istek başarısız sayılır (bkz. `h3_client.max_response_body`).
+const max_buffered_response_body: usize = 512 * 1024 * 1024;
 const builtin = @import("builtin");
 const posix = std.posix;
 pub const net_dial = @import("net_dial.zig");
@@ -1104,10 +1107,22 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
         var body_out: std.Io.Writer.Allocating = .init(ctx.allocator);
         defer body_out.deinit();
-        _ = reader.streamRemaining(&body_out.writer) catch {
+        // Faz 9.18: gövde belleğe alınırken (sıkıştırma bombası dahil) 512 MiB sınırı YAZMA SIRASINDA uygulanır; çok büyük gövdeler için akışlı API kullanılır.
+        var body_remaining: usize = max_buffered_response_body + 1;
+        while (body_remaining > 0) {
+            const n = reader.stream(&body_out.writer, .limited(body_remaining)) catch |e| switch (e) {
+                error.EndOfStream => break,
+                else => {
+                    ctx.failed = true;
+                    return;
+                },
+            };
+            body_remaining -= n;
+        }
+        if (body_out.written().len > max_buffered_response_body) {
             ctx.failed = true;
             return;
-        };
+        }
         // Sunucu Content-Length/chunked gövdesini tamamlamadan bağlantıyı kapattıysa `streamRemaining` bunu temiz bir gövde sonu
         // sayar; eksik gövde sessizce başarı olarak dönmesin (v2.0.69).
         if (responseBodyTruncated(&req, ctx.method, response.head.status)) {

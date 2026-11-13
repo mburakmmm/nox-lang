@@ -27,7 +27,7 @@ cb.close()         # when the library will not call it any more
 | Member | Meaning |
 |---|---|
 | `Callback[F](f)` | pins the function value `f` (an ARC reference is held for as long as the handle is open) and prepares what C needs |
-| `cb.close()` | releases the pinned function and the handle's block; calling it again does nothing |
+| `cb.close()` | releases the pinned function; calling it again does nothing. The 16-byte handle block stays allocated until the program ends so that a late call from the library stops the program with a clear message instead of crashing |
 | `with cb as h:` | closes the handle when the block ends |
 | `cb.live` | `False` after `close()` |
 
