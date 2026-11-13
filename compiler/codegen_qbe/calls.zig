@@ -2352,7 +2352,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
     const heap_kind: HeapKind = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else dinfo.value_heap;
 
     // Faz 9.0 dilim 3: paylaşılan `dict[K, str]` global'inde `contains` + `get/pop` iki ayrı çağrı olamaz (arada başka işçi anahtarı silebilir): TEK çağrı, sahipli sonuç (get: kilit altında retain; pop: devralma).
-    const routed = a.obj.* == .identifier and self.routed_dict_str.contains(a.obj.identifier) and !self.vars.contains(a.obj.identifier) and (is_get or is_pop);
+    const routed = ((a.obj.* == .identifier and self.routed_dict_str.contains(a.obj.identifier) and !self.vars.contains(a.obj.identifier)) or (self.owned_dict_reads and (dinfo.value_is_str or dinfo.value_is_class))) and (is_get or is_pop);
     var pre_payload: ?[]const u8 = null;
     const has_t = try self.newTemp();
     if (routed) {

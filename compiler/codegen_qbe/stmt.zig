@@ -625,6 +625,8 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
         return shared_globals.genDictGetOwned(self, obj_expr, obj, key_expr);
     }
     const dinfo = obj.dict_info.?;
+    // Paylaşılan (sözlük alanlı sınıf) kipinde TÜM `str`/sınıf değerli sözlük okumaları sahiplidir: takma ad/alan yoluyla ulaşılan paylaşılan sözlükte ödünç okuma eş zamanlı üzerine yazmayla yarışırdı.
+    if (self.owned_dict_reads and (dinfo.value_is_str or dinfo.value_is_class)) return shared_globals.genDictGetOwned(self, obj_expr, obj, key_expr);
     const key_v0 = try self.genExpr(key_expr);
     try self.checkNoLowlevelEscape(key_v0);
     const key_payload = try self.toPayload(key_v0);

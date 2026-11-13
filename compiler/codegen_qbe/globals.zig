@@ -96,6 +96,9 @@ fn genGlobalInitStmt(self: *Codegen, stmt: ast.Stmt, block: []const u8) CodegenE
             try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
             try self.qbeStore(g.info.qtype, val.text, addr);
             // Faz 9.0: paylaşılan tek blokta yaşayan sözlük, eş zamanlı erişim BAŞLAMADAN (işçiler henüz dokunmadan) paylaşılan olarak işaretlenir.
+            if (self.shared_class_globals.contains(v.name)) {
+                try shared_globals.genMarkSharedInstance(self, g.info.class_name.?, val.text, 0);
+            }
             if (self.shared_dict_globals.contains(v.name)) {
                 try self.qbeCall(null, "$nox_dict_make_shared", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = val.text } });
             }

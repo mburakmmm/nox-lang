@@ -603,3 +603,27 @@ pub fn genStrGlobalSet(self: *Codegen, g: GlobalVar, value_expr: ast.Expr) Codeg
     const ok = try self.newTemp();
     try self.qbeCall(.{ .name = ok, .ty = .l }, "$nox_slist_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cell }, .{ .ty = .l, .text = "0" }, .{ .ty = .l, .text = "8" }, .{ .ty = .w, .text = "1" }, .{ .ty = .l, .text = val.text } });
 }
+
+// ---- Sözlük alanlı paylaşılan sınıf örneği (dilim 7) ---------------------------------------------------------------------------------------------------------
+
+/// Paylaşılan global sınıf örneğinin `dict` alanlarını (ve iç içe sınıf alanlarının sözlüklerini) başlangıçta `Dict.shared` olarak işaretler; eş zamanlı erişim başlamadan önce çalışır.
+pub fn genMarkSharedInstance(self: *Codegen, class_name: []const u8, ptr_text: []const u8, depth: u8) CodegenError!void {
+    if (depth > 4) return;
+    const info = self.classes.get(class_name) orelse return;
+    for (info.fields.items) |f| {
+        switch (f.info.heap) {
+            .dict, .class => {
+                const addr = try self.newTemp();
+                try self.qbeOp2Imm(addr, .l, "add", ptr_text, @intCast(f.offset));
+                const field_ptr = try self.newTemp();
+                try self.qbeLoadL(field_ptr, addr);
+                if (f.info.heap == .dict) {
+                    try self.qbeCall(null, "$nox_dict_make_shared", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = field_ptr } });
+                } else if (f.info.class_name) |fc| {
+                    try genMarkSharedInstance(self, fc, field_ptr, depth + 1);
+                }
+            },
+            else => {},
+        }
+    }
+}

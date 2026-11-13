@@ -1000,17 +1000,42 @@ fn isSharedSafeClassInstance(self: *Codegen, g: types.GlobalVar, module: ast.Mod
     if (g.info.heap != .class) return false;
     if (assignsName(module.body, g.name)) return false;
     const cn = g.info.class_name orelse return false;
-    return isShareSafeClass(self, cn, module);
+    // GLOBAL örnek, `dict` alanlı (ve iç içe paylaşım-güvenli sınıf alanlı) olabilir: sözlük alanları başlangıçta paylaşılan olarak işaretlenir (`globals.zig` `genMarkSharedInstance`).
+    return isShareSafeClassDepth(self, cn, module, true, 0);
 }
 
 /// Bir sınıf örneği işçiler arasında paylaşılabilir mi (bkz. `isSharedSafeClassInstance` koşulları; global'e bağlı olmayan kısım)?
 fn isShareSafeClass(self: *Codegen, cn: []const u8, module: ast.Module) bool {
+    return isShareSafeClassDepth(self, cn, module, false, 0);
+}
+
+/// `allow_containers`: GLOBAL örnek için `dict` alanları ve iç içe sınıf alanları da kabul edilir (alan işaretçileri `__init__` dışında yeniden atanmaz; sözlük alanları başlangıçta `Dict.shared` olarak işaretlenir). Kapsayıcı
+/// ELEMANI olan sınıflar (`list[Sınıf]`, `dict[K, Sınıf]`) kapsayıcı alanı taşıyamaz: eleman örnekleri işaretlenmez. `str`/sınıf değerli sözlük alanları programı "sahipli sözlük okuması" kipine alır (`owned_dict_reads`).
+fn isShareSafeClassDepth(self: *Codegen, cn: []const u8, module: ast.Module, allow_containers: bool, depth: u8) bool {
+    if (depth > 4) return false;
     const info = self.classes.getPtr(cn) orelse return false;
     if (info.has_vtable or info.del_owner != null) return false;
     for (info.fields.items) |f| {
         switch (f.info.heap) {
             .none => {},
             .str => if (assignsAttrOutsideInit(module.body, f.name, false)) return false,
+            .dict => {
+                if (!allow_containers) return false;
+                if (assignsAttrOutsideInit(module.body, f.name, false)) return false;
+                const di = f.info.dict_info orelse return false;
+                if (di.value_heap != .none) return false;
+                if (di.value_is_class) {
+                    const vc = di.value_class_name orelse return false;
+                    if (!isShareSafeClassDepth(self, vc, module, false, depth + 1)) return false;
+                }
+                if (di.value_is_str or di.value_is_class) self.owned_dict_reads = true;
+            },
+            .class => {
+                if (!allow_containers) return false;
+                if (assignsAttrOutsideInit(module.body, f.name, false)) return false;
+                const fc = f.info.class_name orelse return false;
+                if (!isShareSafeClassDepth(self, fc, module, true, depth + 1)) return false;
+            },
             else => return false,
         }
     }
@@ -1071,6 +1096,7 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
                     kind = .shared_block;
                 } else if (isRoutedStrDict(self, g.*, module, extra_functions)) {
                     try self.routed_dict_str.put(self.allocator, g.name, {});
+                    self.owned_dict_reads = true;
                     kind = .shared_block;
                 } else return .pinned;
             },
@@ -1086,6 +1112,7 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []
             },
             .class => {
                 if (!isSharedSafeClassInstance(self, g.*, module)) return .pinned;
+                try self.shared_class_globals.put(self.allocator, g.name, {});
                 kind = .shared_block;
             },
             else => return .pinned,

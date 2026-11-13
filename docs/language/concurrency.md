@@ -338,7 +338,9 @@ All tasks run on fibers scheduled by the runtime:
     that is never rebound, with number/bool values or with `str` values (see the access rules below); a `list[T]` of numbers, bools or `str`
     that is never rebound and starts from a fresh list (`[]`, a literal or a call); a `Channel[T]`, `Task[T]` or `TaskLocal[T]` that is never rebound; or an
     instance of a class that does not take part in inheritance and has only number/bool/`str` fields (a `str` field must not be assigned
-    outside `__init__`) and is never rebound. All workers then see **one** copy. Each dict or list operation is atomic on its own (a lock taken
+    outside `__init__`) and is never rebound; a **module-level** instance may in addition have `dict` fields (values numbers, `str` or such a class) and fields holding another
+    such instance, as long as those fields are never assigned outside `__init__` (the dict fields are shared and locked from program start, and every `str`/class-valued
+    dict read in the program then returns a new reference). All workers then see **one** copy. Each dict or list operation is atomic on its own (a lock taken
     only when the pool has more than one worker); number/bool fields and variables are plain aligned loads and stores. Compound updates such
     as `d[k] = d[k] + 1`, `xs[i] = xs[i] + 1` or `stats.hits = stats.hits + 1` are not atomic as a whole — the program stays memory-safe but
     increments can be lost. Use a channel or `AtomicRef` when you need exact counters.

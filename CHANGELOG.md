@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.129]
+
+### Eklendi
+
+- **M:N paylaşılan modül durumu, dilim 7 (Faz 9.0):** MODÜL DÜZEYİ sınıf örneği artık `dict` alanları (değer: sayı/`str`/paylaşım-güvenli sınıf) ve iç içe paylaşım-güvenli sınıf alanları taşıyabilir (alanlar `__init__` dışında yeniden atanmaz): sözlük alanları program başında paylaşılan (kilitli) olarak işaretlenir (`genMarkSharedInstance`), bu kipte programdaki TÜM `str`/sınıf değerli sözlük okumaları sahiplidir (`owned_dict_reads`). Kapsayıcı ELEMANI olan sınıflar (`list[Sınıf]`, `dict[K, Sınıf]`) kapsayıcı alanı taşıyamaz.
+- Test: iki backend golden `mn_shared_class_dict_fields`.
+
 ## [2.1.128]
 
 ### Düzeltildi

@@ -1,0 +1,65 @@
+# Faz 9.0 dilim 7 (v2.1.129): `dict` alanlı (ve iç içe sınıf alanlı) paylaşılan global sınıf örneği: sözlük alanları başlangıçta paylaşılan olarak işaretlenir; metotlardaki sözlük erişimleri kilit altındadır,
+# `str`/sınıf değerli sözlük okumaları sahiplidir (eş zamanlı üzerine yazma okuyanın değerini geçersiz kılmaz). Sözlük alanları `__init__` dışında yeniden atanmaz.
+class Meta:
+    hits: int
+    def __init__(self: Meta) -> None:
+        self.hits = 0
+
+class Store:
+    data: dict[str, str]
+    counts: dict[str, int]
+    meta: Meta
+    def __init__(self: Store) -> None:
+        self.data = {}
+        self.counts = {}
+        self.meta = Meta()
+    def put(self: Store, k: str, v: str) -> None:
+        self.data[k] = v
+        self.counts[k] = len(v)
+        self.meta.hits = self.meta.hits + 1
+    def get(self: Store, k: str) -> str:
+        return self.data.get(k, "-")
+    def size(self: Store) -> int:
+        return len(self.data)
+
+store: Store = Store()
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 40:
+        i: int = 0
+        while i < 1500:
+            acc = (acc * 31 + i + j + id) % 1000003
+            i = i + 1
+        k: str = "k" + str(id) + "-" + str(j % 10)
+        store.put(k, "v" + str(id) + "x" * (j % 5))
+        got: str = store.get(k)
+        if len(got) < 2:
+            acc = acc + 1
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s)
+    print(store.size())
+    print(store.get("k0-0")[0])
+    print(store.get("zzz"))
+    print(store.meta.hits >= 40 and store.meta.hits <= 240)
+    total: int = 0
+    for key in store.counts.keys():
+        total = total + store.counts[key]
+    print(total > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

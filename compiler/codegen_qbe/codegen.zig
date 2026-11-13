@@ -1269,6 +1269,9 @@ pub const Codegen = struct {
     routed_dict_str: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz 9.0 dilim 6: yeniden atanan paylaşılan `str` globalleri (yuvada tek elemanlı hücre; okuma/atama kilit altında).
     routed_strs: std.StringHashMapUnmanaged(void) = .empty,
+    /// Faz 9.0 dilim 7: paylaşılan sözlük alanlı sınıf örnekleri (başlangıçta alanları `Dict.shared` olarak işaretlenir) ve bu yüzden TÜM `str`/sınıf değerli sözlük okumalarının SAHİPLİ olduğu kip.
+    shared_class_globals: std.StringHashMapUnmanaged(void) = .empty,
+    owned_dict_reads: bool = false,
     /// Faz 9.0: `shared_block_mode` içinde başlangıçta paylaşılan olarak işaretlenecek `dict` globalleri (bkz. `registration.isSharedSafeDict`).
     shared_dict_globals: std.StringHashMapUnmanaged(void) = .empty,
     /// Son terfi etmiş `var_decl`ın `module.body` indeksi (dahil). Bu
@@ -1984,6 +1987,10 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
         const globals_kind: registration.SharedGlobalsKind = if (wants_multicore_pool or !moduleUsesAsync(module, extra_functions)) .none else try gen.sharedGlobalsKind(module, extra_functions);
         gen.globals_pinned = globals_kind == .pinned;
         gen.shared_block_mode = globals_kind == .shared_block;
+        if (!gen.shared_block_mode) {
+            gen.owned_dict_reads = false;
+            gen.shared_class_globals.clearRetainingCapacity();
+        }
     }
 
     for (module.body) |stmt| {
