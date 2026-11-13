@@ -1439,7 +1439,11 @@ pub fn registerExternFunc(self: *Codegen, ed: ast.ExternDef) CodegenError!void {
     var callback_info: ?types.CallbackInfo = null;
     for (ed.decorators) |dec| {
         if (!std.mem.eql(u8, dec.name, "ffi.callback")) continue;
-        if (dec.args.len != 2 or dec.args[0] != .string_lit or dec.args[1] != .string_lit) continue;
+        if (dec.args.len < 2 or dec.args[0] != .string_lit or dec.args[1] != .string_lit) continue;
+        var ud_kw: ?usize = null;
+        for (dec.args[2..]) |extra| {
+            if (extra == .kwarg and std.mem.eql(u8, extra.kwarg.name, "ud_index") and extra.kwarg.value.* == .int_lit) ud_kw = @intCast(extra.kwarg.value.int_lit);
+        }
         var param_idx: ?usize = null;
         var context_idx: ?usize = null;
         for (ed.params, 0..) |p, i| {
@@ -1447,7 +1451,8 @@ pub fn registerExternFunc(self: *Codegen, ed: ast.ExternDef) CodegenError!void {
             if (std.mem.eql(u8, p.name, dec.args[1].string_lit)) context_idx = i;
         }
         if (param_idx) |pi| if (context_idx) |ci| {
-            callback_info = .{ .param_idx = pi, .context_idx = ci };
+            const fsig_n: usize = if (params[pi].func_sig) |fs| fs.params.len else 1;
+            callback_info = .{ .param_idx = pi, .context_idx = ci, .ud_pos = ud_kw orelse (fsig_n - 1) };
         };
     }
     try self.extern_functions.put(self.allocator, ed.name, .{ .params = params, .ret = ret, .needs_rt = ed.needs_rt, .retains = retains, .callback = callback_info });

@@ -20,6 +20,26 @@ def errno() -> int:
 def errno_text() -> str:
     return nox_ffi_errno_text_raw()
 
+extern def nox_ffi_cstr_raw(p: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_ffi_cstr_n_raw(p: ptr, n: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_ffi_alloc_raw(n: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_ffi_release_raw(p: ptr) -> None from "zig-out/lib/noxrt.o"
+
+# `char *` (NUL ile biten C dizesi) -> Nox `str` (KOPYALANIR; ptr'in sahipliği çağırandadır). NULL -> "". UTF-8 değilse bayt değerleri aynen taşınır.
+def cstr(p: ptr) -> str:
+    return nox_ffi_cstr_raw(p)
+
+# `n` baytlık bölge (NUL aranmaz ama C dizesi gibi ilk NUL'da kesilir) -> `str`
+def cstr_n(p: ptr, n: int) -> str:
+    return nox_ffi_cstr_n_raw(p, n)
+
+# C tarafına verilecek ham bellek (çıkış parametreleri, struct'lar): sıfırlanmış `n` bayt; `release(p)` ile serbest bırak
+def alloc(n: int) -> ptr:
+    return nox_ffi_alloc_raw(n)
+
+def release(p: ptr) -> None:
+    nox_ffi_release_raw(p)
+
 def null() -> ptr:
     lowlevel:
         return ptr_from_int(0)

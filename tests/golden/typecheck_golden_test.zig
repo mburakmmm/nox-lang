@@ -1011,6 +1011,13 @@ test "golden(typecheck): @ffi.errors — errno=True nox.ffi içe aktarmayı gere
     );
 }
 
+test "golden(typecheck): @ffi.callback — ud_index imza dışında reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_callback_ud_index_range.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_callback_ud_index_range.expected"),
+    );
+}
+
 test "golden(typecheck): @ffi.callback — async hedef reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_extern_ffi_callback_async_target.nox"),

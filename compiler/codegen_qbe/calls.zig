@@ -1297,7 +1297,8 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     // callback = `$<extern>__clotramp`; aksi halde üst-düzey `def` yolu (userdata = `%rt`).
                     const cb_arg_pos = cb.param_idx - @as(usize, if (cb.context_idx < cb.param_idx) 1 else 0);
                     const closure_handle = c.args[cb_arg_pos] == .attribute;
-                    const ud_value: Value = if (closure_handle) try self.genExpr(c.args[cb_arg_pos]) else .{ .text = RT_PARAM, .qtype = .l };
+                    const null_cb = c.args[cb_arg_pos] == .none_lit;
+                    const ud_value: Value = if (null_cb) .{ .text = "0", .qtype = .l } else if (closure_handle) try self.genExpr(c.args[cb_arg_pos]) else .{ .text = RT_PARAM, .qtype = .l };
                     for (esig.params, 0..) |p, pi| {
                         if (pi == cb.context_idx) {
                             arg_values[pi] = ud_value;
@@ -1305,10 +1306,13 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                             continue;
                         }
                         if (pi == cb.param_idx) {
-                            const tramp_sym = if (closure_handle)
+                            const tramp_sym = if (null_cb) "0" else if (closure_handle)
                                 try std.fmt.allocPrint(self.allocator, "${s}__clotramp", .{name})
                             else
-                                try std.fmt.allocPrint(self.allocator, "${s}__cbtramp", .{c.args[arg_i].identifier});
+                                (if (cb.ud_pos == (esig.params[cb.param_idx].func_sig orelse return error.Unsupported).params.len - 1)
+                                    try std.fmt.allocPrint(self.allocator, "${s}__cbtramp", .{c.args[arg_i].identifier})
+                                else
+                                    try std.fmt.allocPrint(self.allocator, "${s}__cbtramp_u{d}", .{ c.args[arg_i].identifier, cb.ud_pos }));
                             arg_i += 1;
                             arg_values[pi] = .{ .text = tramp_sym, .qtype = .l };
                             release_exprs[pi] = c.args[0];

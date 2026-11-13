@@ -41,9 +41,16 @@ const CodegenError = abi.CodegenError;
 /// AYNI çağrı deseni (bkz. `closures.zig`) — HER `@ffi.callback` HEDEFİ
 /// İçİn BİR KEZ çağrılır (`callback_targets`, checker'ın `checkCallbackTargetArg`
 /// TARAFINDAN doğrulanmış hedef adlarının DÜZ listesi).
-pub fn genFfiCallbackTrampoline(self: *Codegen, name: []const u8) CodegenError!void {
+pub fn genFfiCallbackTrampoline(self: *Codegen, key: []const u8) CodegenError!void {
+    // `ad` (userdata son parametre) ya da `ad@k` (userdata k. parametre; v2.1.108 `@ffi.callback(..., ud_index=k)`)
+    var name = key;
+    var ud_at: ?usize = null;
+    if (std.mem.indexOfScalar(u8, key, '@')) |at| {
+        name = key[0..at];
+        ud_at = std.fmt.parseInt(usize, key[at + 1 ..], 10) catch return error.Unsupported;
+    }
     const sig = self.functions.get(name) orelse return error.Unsupported;
-    const trampoline_name = try std.fmt.allocPrint(self.allocator, "{s}__cbtramp", .{name});
+    const trampoline_name = if (ud_at) |k| try std.fmt.allocPrint(self.allocator, "{s}__cbtramp_u{d}", .{ name, k }) else try std.fmt.allocPrint(self.allocator, "{s}__cbtramp", .{name});
 
     self.temp_counter = 0;
     self.label_counter = 0;
@@ -52,18 +59,22 @@ pub fn genFfiCallbackTrampoline(self: *Codegen, name: []const u8) CodegenError!v
 
     const trampoline_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{trampoline_name});
     try self.qbeFuncHeaderStart(if (sig.ret.qtype == .none) null else sig.ret.qtype, trampoline_sym);
-    for (sig.params, 0..) |p, i| {
-        const param_text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{i});
-        // `qbeFuncParam`in 3. argümanı `is_first` — SADECE gerçekten İLK
-        // yayılan parametrede `true` (öncesine VİRGÜL EKLENMEZ), diğer
-        // TÜM parametrelerde (ctx_rt DAHİL) `false` OLMALI (bkz. `closures.
-        // zig`nin `genFunctionValueTrampoline`ının AYNI deseni).
-        try self.qbeFuncParam(p.qtype, param_text, i == 0);
+    const total = sig.params.len + 1;
+    const ud_k: usize = ud_at orelse sig.params.len;
+    {
+        var j: usize = 0; // hedefin parametre sayacı
+        var pos: usize = 0;
+        while (pos < total) : (pos += 1) {
+            // `qbeFuncParam`in 3. argümanı `is_first` — SADECE gerçekten İLK yayılan parametrede `true`.
+            if (pos == ud_k) {
+                // checker'ın `registerExternCallback`ı TARAFINDAN ZATEN `ptr` OLARAK doğrulanmış "userdata" yuvası `%rt` OLARAK yorumlanır
+                try self.qbeFuncParam(.l, "%ctx_rt", pos == 0);
+            } else {
+                try self.qbeFuncParam(sig.params[j].qtype, try std.fmt.allocPrint(self.allocator, "%p{d}", .{j}), pos == 0);
+                j += 1;
+            }
+        }
     }
-    // Son parametre — checker'ın `registerExternCallback`ı TARAFINDAN
-    // ZATEN `ptr` OLARAK doğrulanmış "userdata" yuvası, `%rt` OLARAK
-    // yorumlanır (bkz. modül üstü not).
-    try self.qbeFuncParam(.l, "%ctx_rt", sig.params.len == 0);
     try self.qbeFuncHeaderEnd();
 
     const ret_temp: ?[]const u8 = if (sig.ret.qtype == .none) null else try self.newTemp();
@@ -104,7 +115,8 @@ pub fn genClosureCallbackTrampoline(self: *Codegen, extern_name: []const u8) Cod
     const cb = esig.callback orelse return;
     const fsig = esig.params[cb.param_idx].func_sig orelse return error.Unsupported;
     if (fsig.params.len == 0) return error.Unsupported;
-    const n = fsig.params.len - 1; // son parametre userdata
+    const n = fsig.params.len - 1; // userdata hariç parametre sayısı
+    const ud_k = cb.ud_pos;
 
     self.temp_counter = 0;
     self.label_counter = 0;
@@ -113,10 +125,18 @@ pub fn genClosureCallbackTrampoline(self: *Codegen, extern_name: []const u8) Cod
 
     const sym = try std.fmt.allocPrint(self.allocator, "${s}__clotramp", .{extern_name});
     try self.qbeFuncHeaderStart(if (fsig.ret.qtype == .none) null else fsig.ret.qtype, sym);
-    for (fsig.params[0..n], 0..) |p, i| {
-        try self.qbeFuncParam(p.qtype, try std.fmt.allocPrint(self.allocator, "%p{d}", .{i}), i == 0);
+    {
+        var j: usize = 0;
+        var pos: usize = 0;
+        while (pos < fsig.params.len) : (pos += 1) {
+            if (pos == ud_k) {
+                try self.qbeFuncParam(.l, "%ud", pos == 0);
+            } else {
+                try self.qbeFuncParam(fsig.params[pos].qtype, try std.fmt.allocPrint(self.allocator, "%p{d}", .{j}), pos == 0);
+                j += 1;
+            }
+        }
     }
-    try self.qbeFuncParam(.l, "%ud", n == 0);
     try self.qbeFuncHeaderEnd();
 
     const rt = try self.newTemp();
@@ -132,8 +152,13 @@ pub fn genClosureCallbackTrampoline(self: *Codegen, extern_name: []const u8) Cod
     const call_args = try self.allocator.alloc(codegen.QbeArg, 2 + n);
     call_args[0] = .{ .ty = .l, .text = rt };
     call_args[1] = .{ .ty = .l, .text = clo };
-    for (fsig.params[0..n], 0..) |p, i| {
-        call_args[2 + i] = .{ .ty = p.qtype, .text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{i}) };
+    {
+        var j: usize = 0;
+        for (fsig.params, 0..) |p, pos| {
+            if (pos == ud_k) continue;
+            call_args[2 + j] = .{ .ty = p.qtype, .text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{j}) };
+            j += 1;
+        }
     }
     try self.qbeCall(if (ret_temp) |rv| .{ .name = rv, .ty = fsig.ret.qtype } else null, fn_ptr, call_args);
 

@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.107]
+
+### Eklendi
+
+- **C FFI tip kapsamı (F4b; kullanıcı isteği: "hiç desteklenmeyenler" hariç tümü)** — `noxc bindgen`:
+  - **struct/union alanları:** ayrıştırıcı artık gövdeleri okur (iç içe, dizi, bit alanı, adsız iç struct/union, `const`); her tam struct için `Name_new/_free/_size` ve alan başına `Name_get_f/Name_set_f` (dizi alanları için indeksli erişim + `Name_f_ptr` + `Name_f_LEN`; iç içe struct için adres) C kabuğu üzerinden üretilir — yerleşimi, hizalamayı, bit alanlarını C derleyicisi çözer
+  - **değerle struct/union** parametre ve dönüş: işaretçi alan/dönen sarmalayıcı (`vec2_add_(a, b) -> ptr`, dönen bellek yenidir, `Name_free` ile bırakılır); yyjson'daki 4 `*_iter_with` artık atlanmaz (335 işlev, 0 uyarı)
+  - **global değişkenler:** `name_get()` / `name_set(v)` (`const` ise yalnızca okuma; dizi/struct ise `name_ptr()`)
+  - **hedef ABI:** `long` genişliği ve düz `char` işaretliliği `cc -dM` makrolarından (`__SIZEOF_LONG__`, `__CHAR_UNSIGNED__`) okunur (Windows'ta `long` 32 bit); `const char *` yalnızca düz `char` için `str` (`unsigned char *`/`uint8_t *` `ptr` kalır — zlib/ikili veri)
+  - **callback + userdata kalıbı:** `void *` userdata'lı işlev işaretçisi parametresi (+ yanında `void *`) `@ffi.callback` ile bildirilir; userdata callback imzasında son olmak zorunda değildir
+- **`@ffi.callback(..., ud_index=N)`** (derleyici): userdata yuvasının callback tipindeki konumu (varsayılan son parametre; `sqlite3_exec` ilk). Trampoline sembolü konuma göre (`__cbtramp_u<k>`); `Callback[F]` tutamacı ve `None` ile de çalışır. **`None` = callback yok** (NULL işlev + NULL userdata)
+- **`nox.ffi`:** `cstr(p)` (C dizesi -> `str`), `cstr_n(p, n)`, `alloc(n)` / `release(p)`, `null()`
+- Doğrulama: gerçek `sqlite3.h` (struct yok ama `sqlite3_exec` callback'i userdata-ilk + `None`), `zlib.h` (`compress`/`uncompress`/`crc32` + `z_stream` erişimcileri), `yyjson.h`; iki backend'de uçtan uca testler (`tests/golden/bindgen_golden_test.zig`: struct/dizi/bit alanı/global/by-value/float/cstr; callback userdata ilk-son-`None`-closure), 2 yeni birim testi + ABI testi, typecheck golden (`ud_index` aralık dışı)
+
+### Notlar
+
+- Hâlâ desteklenmeyenler `project/yapilacaklar-2026-11.md` bölüm 8'de (kullanıcıyla tartışılacak): `long double`, `_Complex`, `__int128`, SIMD vektör tipleri, `...` işlevler; ayrıca callback içinde değerle struct ve kütüphanenin kendi OS iş parçacığından callback
+
 ## [2.1.106]
 
 ### Düzeltildi

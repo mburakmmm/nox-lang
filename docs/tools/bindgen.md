@@ -28,32 +28,75 @@ noxc bindgen sqlite3.h --lib sqlite3 --prefix sqlite3_,sqlite_ -o sqlite.nox
 
 | C | Nox |
 |---|---|
-| `int8_t … uint64_t`, `char`, `short`, `int`, `long` (64-bit), `long long` | `i8 … i64`, `u8 … u64` |
+| `int8_t … uint64_t`, `char`, `short`, `int`, `long`, `long long` | `i8 … i64`, `u8 … u64` (`long` and plain `char` follow the C compiler's own target: `__SIZEOF_LONG__`, `__CHAR_UNSIGNED__`) |
 | `size_t`, `uintptr_t` / `ssize_t`, `ptrdiff_t`, `intptr_t` | `usize` / `isize` |
 | `double`, `_Bool` | `float`, `bool` |
-| `const char *` parameter | `str` |
+| `float` | `float` through the shim (the shim converts) |
+| `const char *` parameter | `str` (plain `char` only; `unsigned char *` / `uint8_t *` stay `ptr`) |
 | every other pointer, function pointer, array parameter | `ptr` |
 | `enum` type | `i32`; the enumerators become `NAME: i32 = i32(value)` constants |
 | `static const <integer> NAME = expr;` | `NAME: <type> = <type>(value)` |
 | `#define NAME <integer expression>` / `"string"` (needs `--prefix`) | `NAME: int = value` / `NAME: str = "..."` |
-| `typedef`s, `struct`/`union` names | resolved; a struct is only ever used through a pointer, i.e. `ptr` |
+| `struct` / `union` | memory is always a `ptr`; helpers and field accessors, below |
+| `extern T name;` | `name_get()` / `name_set(v)` (no setter for `const`) |
+| function pointer parameter with a `void *` userdata | `@ffi.callback(...)` declaration, below |
+
+### Structs, unions and by-value arguments
+
+For every complete `struct`/`union` in the header `bindgen` generates, through the C shim (so the C compiler decides layout, padding, bit fields and `const`):
+
+| Function | Meaning |
+|---|---|
+| `Name_new()` / `Name_free(p)` / `Name_size()` | zeroed memory for one struct (`calloc`), release it, `sizeof` |
+| `Name_get_f(p)` / `Name_set_f(p, v)` | read / write field `f` (also bit fields; no setter for `const` fields) |
+| `Name_get_f(p, i)` / `Name_set_f(p, i, v)`, `Name_f_ptr(p)`, `Name_f_LEN` | an array field: element access, the array's start (use `nox.ffi.cstr` for a `char` array) and its length |
+| `Name_get_f(p)` for a nested struct | the **address** of the nested struct (read or write it with that struct's accessors); `Name_set_f(p, v)` copies `*v` into it |
+
+Fields of an anonymous inner `struct`/`union` are reachable directly on the outer type. A function that takes or returns a struct **by value** (`vec2 add(vec2 a, vec2 b)`) is called
+with pointers to struct memory, and a returned struct is a **new** block you free with `Name_free`:
+
+```nox-fragment
+a: ptr = vec2_new()
+vec2_set_x(a, 1.5)
+vec2_set_y(a, 2.0)
+c: ptr = vec2_add_(a, b)      # `_` suffix: the library exports `vec2_add` itself
+print(vec2_get_x(c))
+vec2_free(a)
+vec2_free(c)
+```
+
+### Callbacks
+
+When a function takes a function pointer whose own signature has a non-`const` `void *` (the userdata) and the function has a `void *` next to it, `bindgen` writes the
+declaration with [`@ffi.callback`](../language/ffi.md#callbacks), including `ud_index=` when the userdata is not the callback's last parameter (`sqlite3_exec` has it first):
+
+```nox-fragment
+def on_row(ncols: i32, vals: ptr, names: ptr) -> i32:
+    print(ncols)
+    return i32(0)
+
+sqlite3_exec(db, "select * from t", on_row, np())     # the userdata argument is left out: the compiler fills it in
+sqlite3_exec(db, "create table x(a)", None, np())     # None = no callback (a NULL function pointer)
+```
+
+A closure or lambda goes through a [`nox.ffi.Callback`](../stdlib/ffi.md) handle in the same place. Callback parameters are scalars, enums and pointers; read a `char *` with `nox.ffi.cstr(p)`.
 
 ### The C shim
 
 Some functions cannot be called directly from Nox, so `bindgen` also writes a small C file that wraps them:
 
 - `static inline` functions have no symbol in the library;
-- `float` (32-bit) parameters and results do not match Nox's `float` (64-bit), so the shim converts.
+- `float` (32-bit) parameters and results do not match Nox's `float` (64-bit), so the shim converts;
+- struct/union arguments and results, struct field access and global variables go through it too.
 
-Each such function becomes a raw `extern def nox_shim_<name>` (linked from the shim object) plus an ordinary Nox `def` that calls it. The wrapper keeps the
-C name for `static inline` functions and gets a trailing underscore when the library also exports a symbol of that name (`mylib_half` -> `mylib_half_`),
-because a top-level Nox `def` and the C symbol would otherwise collide at link time. Names that are Nox keywords or builtins (`in`, `from`, `sum`, …) get the
-same treatment (functions: `in_`; parameters: `from_`).
+A shimmed function becomes a raw `extern def nox_shim_<name>` (linked from the shim object) plus an ordinary Nox `def` that calls it. The wrapper keeps the C name for `static inline`
+functions and gets a trailing underscore when the library also exports a symbol of that name (`mylib_half` -> `mylib_half_`), because a top-level Nox `def` and the C symbol would
+otherwise collide at link time. Names that are Nox keywords or builtins (`in`, `from`, `sum`, …) get the same treatment (functions: `in_`; parameters: `from_`). Helper and accessor names
+(`Name_get_f`, `counter_get`, …) are shim symbols themselves; if one would collide with a library function it gets a trailing `_`.
 
 ### What is skipped (with a warning)
 
-Variadic functions (`...`), `long double`, `_Complex`, `__int128`, and functions that take or return a `struct`/`union` **by value**. A declaration the parser
-cannot understand is skipped with a warning naming its line, never silently. Struct fields are not generated yet (structs stay opaque `ptr`).
+Variadic functions (`...`), `long double`, `_Complex`, `__int128` and SIMD vector types. A declaration the parser cannot understand is skipped with a warning naming its line, never silently.
 
 ## Using the output
 

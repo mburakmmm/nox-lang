@@ -162,7 +162,8 @@ fn isListType(t: ast.TypeExpr) bool {
 }
 
 fn contains(names: []const []const u8, n: []const u8) bool {
-    for (names) |x| if (std.mem.eql(u8, x, n)) return true;
+    // callback hedef anahtarları `ad@k` biçiminde olabilir (v2.1.108: userdata konumu)
+    for (names) |x| if (std.mem.eql(u8, x, n) or (x.len > n.len and std.mem.startsWith(u8, x, n) and x[n.len] == '@')) return true;
     return false;
 }
 

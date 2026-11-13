@@ -200,6 +200,8 @@ const ExternCallbackConfig = struct {
     param_idx: usize,
     context_idx: usize,
     callback_type: types.FuncType,
+    /// v2.1.108: callback tipinde `userdata` yuvasının indeksi (varsayılan: son parametre; `ud_index=` ile değiştirilir — ör. sqlite3_exec'in callback'inde ilk).
+    ud_pos: usize,
 };
 
 /// Aether NOX_LIMITATIONS.md yol haritası, Faz A.6 (bkz. nox-teknik-
@@ -2158,7 +2160,18 @@ pub const Checker = struct {
         _ = ret;
         for (ed.decorators) |dec| {
             if (!std.mem.eql(u8, dec.name, "ffi.callback")) continue;
-            if (dec.args.len < 1 or dec.args.len > 2 or dec.args[0] != .string_lit) {
+            // v2.1.108: opsiyonel `ud_index=N` anahtar-kelime argümanı (callback tipindeki userdata konumu); konumsal argümanlar ondan önce gelir
+            var ud_index_kw: ?i64 = null;
+            var n_pos: usize = 0;
+            for (dec.args) |da| {
+                if (da == .kwarg) {
+                    if (!std.mem.eql(u8, da.kwarg.name, "ud_index") or da.kwarg.value.* != .int_lit) {
+                        return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.callback' accepts only the keyword argument ud_index=<integer literal>", .{ed.name});
+                    }
+                    ud_index_kw = da.kwarg.value.int_lit;
+                } else n_pos += 1;
+            }
+            if (n_pos < 1 or n_pos > 2 or dec.args[0] != .string_lit) {
                 return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.callback' expects at least \"param_name\" (the callback parameter) AND an optional \"context_param=...\" argument", .{ed.name});
             }
             const callback_param_name = dec.args[0].string_lit;
@@ -2179,7 +2192,7 @@ pub const Checker = struct {
             if (!isFfiSafeCallbackType(cb_func)) {
                 return self.fail(error.TypeMismatch, "extern function '{s}': the SIGNATURE of the '@ffi.callback' target '{s}' is not FFI-safe (only int/float/bool/ptr parameters AND an int/float/bool/ptr/None return)", .{ ed.name, callback_param_name });
             }
-            if (dec.args.len != 2 or dec.args[1] != .string_lit) {
+            if (n_pos != 2 or dec.args[1] != .string_lit) {
                 return self.fail(error.TypeMismatch, "extern function '{s}': in v1 '@ffi.callback' is not supported WITHOUT a \"context_param\" argument (C APIs without a userdata slot are outside the v1 scope)", .{ed.name});
             }
             const context_param_name = dec.args[1].string_lit;
@@ -2202,10 +2215,16 @@ pub const Checker = struct {
             if (cb_func.params.len == 0) {
                 return self.fail(error.TypeMismatch, "extern function '{s}': the SIGNATURE of the '@ffi.callback' target '{s}' must have at least one parameter (the LAST parameter COUNTS as the 'userdata' slot)", .{ ed.name, callback_param_name });
             }
-            if (cb_func.params[cb_func.params.len - 1] != .ptr) {
-                return self.fail(error.TypeMismatch, "extern function '{s}': the LAST parameter of the SIGNATURE of the '@ffi.callback' target '{s}' (the userdata slot) must be of type 'ptr'", .{ ed.name, callback_param_name });
+            const ud_pos: usize = if (ud_index_kw) |k| blk: {
+                if (k < 0 or k >= cb_func.params.len) {
+                    return self.fail(error.TypeMismatch, "extern function '{s}': '@ffi.callback' ud_index={d} is outside the callback signature ({d} parameters)", .{ ed.name, k, cb_func.params.len });
+                }
+                break :blk @intCast(k);
+            } else cb_func.params.len - 1;
+            if (cb_func.params[ud_pos] != .ptr) {
+                return self.fail(error.TypeMismatch, "extern function '{s}': parameter {d} of the SIGNATURE of the '@ffi.callback' target '{s}' (the userdata slot; the LAST one unless ud_index= is given) must be of type 'ptr'", .{ ed.name, ud_pos + 1, callback_param_name });
             }
-            try self.extern_callbacks.put(self.allocator, ed.name, .{ .param_idx = cb_idx, .context_idx = ctx_idx, .callback_type = cb_func });
+            try self.extern_callbacks.put(self.allocator, ed.name, .{ .param_idx = cb_idx, .context_idx = ctx_idx, .callback_type = cb_func, .ud_pos = ud_pos });
         }
     }
 
@@ -10423,7 +10442,7 @@ pub const Checker = struct {
             const ae = args[arg_i];
             arg_i += 1;
             if (pi == cfg.param_idx) {
-                try self.checkCallbackTargetArg(ctx, args, arg_i - 1, cfg.callback_type, name);
+                try self.checkCallbackTargetArg(ctx, args, arg_i - 1, cfg.callback_type, cfg.ud_pos, name);
                 continue;
             }
             const at = try self.checkExprExpected(ctx, ae, pt);
@@ -10431,6 +10450,19 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{name});
             }
         }
+    }
+
+    /// `params`tan `skip` indeksini çıkarır (callback tipinden userdata yuvasını ayıklamak için).
+    fn paramsWithout(self: *Checker, params: []const Type, skip: usize) ![]const Type {
+        if (skip == params.len - 1) return params[0 .. params.len - 1];
+        const out = try self.allocator.alloc(Type, params.len - 1);
+        var j: usize = 0;
+        for (params, 0..) |pt, i| {
+            if (i == skip) continue;
+            out[j] = pt;
+            j += 1;
+        }
+        return out;
     }
 
     /// `checkExternCallbackArgs`in yardımcısı: `ae` KESİNLİKLE üst-düzey,
@@ -10442,8 +10474,10 @@ pub const Checker = struct {
     /// ...)` üretebilmesi İçİn GEREKLİDİR. Hedefin KENDİ imzası (gizli
     /// `%rt` HARİÇ — Nox seviyesinde ZATEN GÖRÜNMEZ), callback tipinin
     /// SON parametresi (userdata yuvası) HARİÇ kalanıyla TAM eşleşmelidir.
-    fn checkCallbackTargetArg(self: *Checker, ctx: *FnCtx, args: []const ast.Expr, idx: usize, cb_type: types.FuncType, extern_name: []const u8) TypeError!void {
+    fn checkCallbackTargetArg(self: *Checker, ctx: *FnCtx, args: []const ast.Expr, idx: usize, cb_type: types.FuncType, ud_pos: usize, extern_name: []const u8) TypeError!void {
         const ae = args[idx];
+        // v2.1.108: `None` = callback YOK (C'de NULL işlev + NULL userdata; sqlite3_exec gibi isteğe bağlı callback'ler)
+        if (ae == .none_lit) return;
         // v2.1.101 (TODO 3.4 F2): closure/lambda/bağlı metot callback'i — `nox.ffi.Callback[F]` tutamacı. Argüman bir DEĞİŞKEN ya da ALAN olmalıdır (geçici bir
         // `Callback[...](..)` ifadesi çağrıdan hemen sonra serbest kalır, oysa C kutuyu saklayabilir). Tutamaç `.box` alanına yeniden yazılır; codegen closure-
         // trampoline'ını ve kutuyu `userdata` olarak geçirir.
@@ -10451,7 +10485,7 @@ pub const Checker = struct {
             const ht = try self.checkExpr(ctx, ae);
             if (ht == .class and self.ffi_callback_classes.contains(ht.class)) {
                 const f = self.class_type_args.get(ht.class).?[0].func;
-                const expected = cb_type.params[0 .. cb_type.params.len - 1];
+                const expected = try self.paramsWithout(cb_type.params, ud_pos);
                 if (f.params.len != expected.len) {
                     return self.fail(error.TypeMismatch, "'{s}': the Callback handle takes {d} parameters, the callback signature has {d}", .{ extern_name, f.params.len, expected.len });
                 }
@@ -10490,7 +10524,7 @@ pub const Checker = struct {
         const sig = self.functions.get(target_name) orelse {
             return self.fail(error.UndefinedFunction, "'{s}': the '@ffi.callback' target is an undefined function: {s}", .{ extern_name, target_name });
         };
-        const expected_params = cb_type.params[0 .. cb_type.params.len - 1];
+        const expected_params = try self.paramsWithout(cb_type.params, ud_pos);
         if (sig.params.len != expected_params.len) {
             return self.fail(error.TypeMismatch, "'{s}': the parameter COUNT of the '@ffi.callback' target '{s}' does not match the callback signature ({d} expected, {d} found)", .{ extern_name, target_name, expected_params.len, sig.params.len });
         }
@@ -10502,7 +10536,9 @@ pub const Checker = struct {
         if (!scalarTypeEql(sig.return_type, cb_type.return_type.*)) {
             return self.fail(error.TypeMismatch, "'{s}': the return type of the '@ffi.callback' target '{s}' does not match the callback signature", .{ extern_name, target_name });
         }
-        try self.callback_targets.put(self.allocator, target_name, {});
+        // trampoline sembolü userdata konumuna bağlıdır: varsayılan (son) konum için çıplak ad, diğerleri için `ad@k`
+        const tkey: []const u8 = if (ud_pos == cb_type.params.len - 1) target_name else try std.fmt.allocPrint(self.allocator, "{s}@{d}", .{ target_name, ud_pos });
+        try self.callback_targets.put(self.allocator, tkey, {});
     }
 
     /// `isFfiSafeCallbackType`in İZİN VERDİĞİ 5 tipin (int/float/bool/ptr/

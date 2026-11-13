@@ -3005,6 +3005,51 @@ export function l $nox_ffi_errno_text(l %rt) {
 @fn_end1
     ret 0
 }
+export function l $nox_ffi_cstr(l %rt, l %p_p) {
+@start
+    %t0 =l alloc8 8
+    storel %p_p, %t0
+    %t1 =l loadl %t0
+    %t2 =l call $nox_ffi_cstr_raw(l %rt, l %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret 0
+}
+export function l $nox_ffi_cstr_n(l %rt, l %p_p, l %p_n) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    storel %p_p, %t0
+    storel %p_n, %t1
+    %t2 =l loadl %t0
+    %t3 =l loadl %t1
+    %t4 =l call $nox_ffi_cstr_n_raw(l %rt, l %t2, l %t3)
+    ret %t4
+@after_return0
+@fn_end1
+    ret 0
+}
+export function l $nox_ffi_alloc(l %rt, l %p_n) {
+@start
+    %t0 =l alloc8 8
+    storel %p_n, %t0
+    %t1 =l loadl %t0
+    %t2 =l call $nox_ffi_alloc_raw(l %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret 0
+}
+export function $nox_ffi_release(l %rt, l %p_p) {
+@start
+    %t0 =l alloc8 8
+    storel %p_p, %t0
+    %t1 =l loadl %t0
+    call $nox_ffi_release_raw(l %t1)
+@fn_end0
+    ret
+}
 export function l $nox_ffi_null(l %rt) {
 @start
     %t0 =l call $nox_arena_create(l %rt)

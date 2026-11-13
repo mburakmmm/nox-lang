@@ -54,7 +54,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **3.1** `lowlevel` içinde `ptr_of(liste)` sıfır-kopya veri işaretçisi — **v2.1.62** (0.36 → 0.08 ns/eleman; `Buffer` için `ptr_of(buf.data)` alan erişimiyle)
 - [-] **3.2** QBE'de `lowlevel` `ptr_read/ptr_write` döngüsü (0.58 vs 0.36 ns/eleman, toplam 2.4x): QBE'nin optimizasyonsuz çıktısı; varsayılan LLVM'de sorun yok, QBE için ayrı iş yok (backend eşitliği hedefi madde 5.3'te ele alınır)
 - [x] **3.3** Callback: yeniden ölçüm 1.9 ns (C'nin 2.5x'i; ilk ölçüm 5 ns idi) — ek profil gerekmez, yeterli
-- [~] **3.4** Struct-by-value ve saklanan (kayıtlı) callback tasarımı — madde 5.1 ile birlikte. Tasarım: `project/ffi-binding-tasarimi-2026-11.md` (kullanıcı kararları 2026-11-12). F1 saklanan üst-düzey callback **v2.1.100'de**, F2 closure `nox.ffi.Callback` tutamacı **v2.1.101'de BİTTİ**; F3 `@ffi.errors` **v2.1.102'de BİTTİ**; F4 `noxc bindgen` MVP **v2.1.104'te** (struct alanları + struct-by-value kabuğu KALDI: F4b); F5 yyjson kabul testi + `nox.json` benchmark **v2.1.105'te BİTTİ** (gezinme 4,8x, yazma 8,4x); KALAN: F4b
+- [~] **3.4** Struct-by-value ve saklanan (kayıtlı) callback tasarımı — madde 5.1 ile birlikte. Tasarım: `project/ffi-binding-tasarimi-2026-11.md` (kullanıcı kararları 2026-11-12). F1 saklanan üst-düzey callback **v2.1.100'de**, F2 closure `nox.ffi.Callback` tutamacı **v2.1.101'de BİTTİ**; F3 `@ffi.errors` **v2.1.102'de BİTTİ**; F4 `noxc bindgen` MVP **v2.1.104'te** (struct alanları + struct-by-value kabuğu KALDI: F4b); F5 yyjson kabul testi + `nox.json` benchmark **v2.1.105'te BİTTİ** (gezinme 4,8x, yazma 8,4x); F4b (struct alanları, değerle struct, global, cstr, ABI, userdata konumu, None callback) **v2.1.107'de BİTTİ** — kalan tipler bölüm 8'de
 
 ## 3.5 Dil performans analizi ve agresif (semantik korumalı) optimizasyonlar (kullanıcı isteği 2026-11-12)
 
@@ -108,3 +108,17 @@ Hedef: sahiplik piramidinin (ASAP → ARC → döngü çözücü → `lowlevel`)
 - [ ] **7.7** `Release` iş akışı CI kırmızıyken atlanır: v2.1.56–63 için GitHub Release oluşmadı (v2.1.64 ile yeniden başladı); gerekirse boşluk sürümleri tek tek yayımlanmaz, v2.1.64 notları yeterli
 - [x] **7.8** (**v2.1.96**: referans liste parametresi — `ref_params.zig`; metodlar/işlev değeri/yeniden bağlama/ödünç eleman hâlâ desteklenmiyor, `docs/language/functions.md`) Derleyici kısıtı: serbest işlevde `list[T]` PARAMETRESİNİ değiştirmek (`def f(acc: list[int]) -> None: acc.append(1)`) `codegen: ... not supported at the moment` veriyor (HEAD'de, her iki backend); ayrı inceleme gerekir (v2.1.69'da stdlib çözümü: yeni liste döndürmek)
 - [ ] **7.3** `list[Task[T]]` (bilinçli desteklenmiyor; hata `TaskGroup`'a yönlendirir) — değişmedi
+
+## 8. C FFI: hiç desteklenmeyen tipler (kullanıcı isteği 2026-11-13: sonda tartışılacak; diğer tüm FFI tipleri F4b'de desteklenir)
+
+`noxc bindgen` ve `extern def` için bu tipler şu an uyarıyla atlanır; tasarım/gereklilik kararı konuşulacak:
+
+- [ ] **8.1** `long double` (x87 80-bit / aarch64 128-bit / MSVC 64-bit: platforma göre üç ayrı ABI; Nox'ta karşılığı yok) — seçenekler: `f64`'e daraltan kabuk, ayrı `f128`/`f80` tipi, ya da kapsam dışı
+- [ ] **8.2** `_Complex` (`float _Complex`, `double _Complex`) — seçenekler: iki alanlı `@repr("C")` sınıf + kabuk, ya da kapsam dışı
+- [ ] **8.3** `__int128` / `unsigned __int128` — `i128`/`u128` tipi eklemek dil kararı (İlke 2 ile uyumlu ama yeni sayısal tip); alternatif: iki `u64` yarım + kabuk
+- [ ] **8.4** SIMD vektör tipleri (`__m128`, `float32x4_t`, `__attribute__((vector_size))`) — platforma özgü; Nox'ta vektör tipi yok
+- [ ] **8.5** Bit alanları (`unsigned a : 3;`) — C standardı yerleşimi uygulama-tanımlıdır; seçenek: alanı atlayıp yerleşimi `_pad` ile korumak, ya da erişim kabuğu üretmek
+- [ ] **8.6** Değişken argümanlı (`...`) işlevler (`printf`, `sqlite3_mprintf`) — doğrudan çağrılamaz; seçenek: `bindgen.json` ile sabit imzalı kabuk sürümleri (`printf_s(fmt, str)`, `printf_i(fmt, int)`), ya da `va_list` alan `v*` kardeşleri (`vsnprintf`) için ptr yardımcıları
+- [ ] **8.7** Callback parametresi/dönüşü olarak DEĞERLE struct/union (`void (*)(point p)`) — trampoline ABI sınıflandırması gerektirir; seçenek: `bindgen` callback imzasındaki struct'ı işaretçiye çeviren C kabuk trampoline'ı üretir
+- [ ] **8.8** Kütüphanenin KENDİ OS iş parçacığından çağrılan callback (ARC sahipliği Nox'un başlattığı iş parçacığına bağlı, bkz. `arc.zig` Faz X.3) — seçenek: kütüphane iş parçacığı callback'i bir kanala yazar, Nox iş parçacığı okur (`ThreadChannel`)
+

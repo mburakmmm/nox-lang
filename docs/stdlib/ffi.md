@@ -48,5 +48,9 @@ Rules:
 | `errno()` | the current C `errno` (0 on Windows) |
 | `errno_text()` | its `strerror` text (`"errno N"` when 0 or unsupported) |
 | `is_null(p)` | `True` when the `ptr` is NULL |
+| `null()` | the NULL `ptr` |
+| `cstr(p)` | copy a NUL-terminated C string (`char *`) into a Nox `str` (NULL gives `""`) |
+| `cstr_n(p, n)` | the same for an `n`-byte region |
+| `alloc(n)` / `release(p)` | `n` zeroed bytes of C memory (output parameters, structs) / free it |
 
 [`@ffi.errors(errno=True)`](../language/ffi.md#errors) uses `errno_text()` for you (it needs `import nox.ffi`); call them directly when you wrap an API yourself.

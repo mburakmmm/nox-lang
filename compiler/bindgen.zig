@@ -160,7 +160,7 @@ fn lex(a: std.mem.Allocator, text: []const u8, target_base: []const u8, all_in_t
 
 // ------------------------------------------------------------------------------------------------ C tür modeli
 
-const IntKind = struct { bits: u8, signed: bool, is_size: bool = false };
+const IntKind = struct { bits: u8, signed: bool, is_size: bool = false, is_char: bool = false };
 
 const CType = union(enum) {
     void,
@@ -169,7 +169,7 @@ const CType = union(enum) {
     f32,
     f64,
     ptr: Ptr,
-    array: *const CType,
+    array: Array,
     func: *const FuncSig,
     record: []const u8, // kayıt anahtarı (etiket ya da sentetik)
     enum_: []const u8,
@@ -177,6 +177,7 @@ const CType = union(enum) {
     unsupported: []const u8,
 
     const Ptr = struct { to: *const CType, const_pointee: bool };
+    const Array = struct { elem: *const CType, len: ?u64 };
 };
 
 const Param = struct { name: []const u8, ty: CType };
@@ -193,6 +194,22 @@ const FuncDecl = struct {
     is_inline: bool, // static / inline: dış sembol yok -> kabuk
     line: u32,
 };
+
+const Field = struct { name: []const u8, ty: CType, bitfield: bool = false, is_const: bool = false };
+
+/// Gövdesi görülmüş (ya da yalnızca etiketi anılmış) struct/union.
+const Record = struct {
+    tag: []const u8,
+    is_union: bool,
+    fields: []const Field = &.{},
+    /// Gövde (`{...}`) görüldü mü (tam tip)?
+    complete: bool = false,
+    /// Alanlar hatasız ayrıştırıldı mı (gövde atlanmışsa false)?
+    fields_ok: bool = false,
+    in_target: bool = false,
+};
+
+const GlobalDecl = struct { name: []const u8, ty: CType, is_const: bool, line: u32 };
 
 const ConstDecl = struct { name: []const u8, ty_text: []const u8, value: i128, is_str: bool = false, str_text: []const u8 = "" };
 
@@ -213,6 +230,13 @@ const Parser = struct {
     enum_consts: std.StringHashMapUnmanaged(i128) = .empty,
     funcs: std.ArrayListUnmanaged(FuncDecl) = .empty,
     consts: std.ArrayListUnmanaged(ConstDecl) = .empty,
+    records: std.StringHashMapUnmanaged(Record) = .empty,
+    /// etiket -> o kayda işaret eden ilk typedef adı
+    record_alias: std.StringHashMapUnmanaged([]const u8) = .empty,
+    globals: std.ArrayListUnmanaged(GlobalDecl) = .empty,
+    /// Hedef ABI (cc -dM makrolarından): `long` genişliği, düz `char` işaretliliği.
+    long_bits: u8 = 64,
+    char_signed: bool = true,
     warnings: std.ArrayListUnmanaged([]const u8) = .empty,
     anon_counter: u32 = 0,
 
@@ -296,7 +320,7 @@ const Parser = struct {
 
     // ---- bildirim belirticileri
 
-    fn parseSpecs(self: *Parser) !Specs {
+    fn parseSpecs(self: *Parser) anyerror!Specs {
         var sp: Specs = .{};
         var n_long: u8 = 0;
         var n_short = false;
@@ -404,11 +428,11 @@ const Parser = struct {
             } else if (kw_double) {
                 sp.base = if (n_long > 0) .{ .unsupported = "long double" } else .f64;
             } else if (kw_char) {
-                sp.base = .{ .int = .{ .bits = 8, .signed = !is_unsigned } };
+                sp.base = .{ .int = .{ .bits = 8, .signed = if (is_signed) true else if (is_unsigned) false else self.char_signed, .is_char = !is_signed and !is_unsigned } };
             } else if (n_short) {
                 sp.base = .{ .int = .{ .bits = 16, .signed = !is_unsigned } };
             } else if (n_long > 0) {
-                sp.base = .{ .int = .{ .bits = 64, .signed = !is_unsigned } };
+                sp.base = .{ .int = .{ .bits = if (n_long >= 2) 64 else self.long_bits, .signed = !is_unsigned } };
             } else if (kw_int or is_signed or is_unsigned) {
                 sp.base = .{ .int = .{ .bits = 32, .signed = !is_unsigned } };
             }
@@ -424,9 +448,10 @@ const Parser = struct {
             std.mem.eql(u8, n.text, ":");
     }
 
-    fn parseRecord(self: *Parser, is_union: bool) !CType {
+    fn parseRecord(self: *Parser, is_union: bool) anyerror!CType {
         self.skipAttrs();
         var tag: []const u8 = "";
+        const in_target = self.cur().in_target;
         if (self.cur().kind == .ident) {
             tag = self.cur().text;
             self.pos += 1;
@@ -435,10 +460,55 @@ const Parser = struct {
             tag = try std.fmt.allocPrint(self.a, "__anon_record_{d}", .{self.anon_counter});
         }
         self.skipAttrs();
-        if (self.isP("{")) self.skipBalanced();
+        if (self.isP("{")) {
+            const body_start = self.pos;
+            var rec: Record = .{ .tag = tag, .is_union = is_union, .complete = true, .in_target = in_target };
+            if (self.parseRecordBody()) |fields| {
+                rec.fields = fields;
+                rec.fields_ok = true;
+            } else |_| {
+                self.pos = body_start;
+                self.skipBalanced();
+            }
+            try self.records.put(self.a, tag, rec);
+        } else if (!self.records.contains(tag)) {
+            try self.records.put(self.a, tag, .{ .tag = tag, .is_union = is_union });
+        }
         self.skipAttrs();
-        _ = is_union;
         return .{ .record = tag };
+    }
+
+    /// `{` üzerinde başlar; alanları okuyup `}`in ardında biter.
+    fn parseRecordBody(self: *Parser) anyerror![]const Field {
+        var list: std.ArrayListUnmanaged(Field) = .empty;
+        self.pos += 1; // `{`
+        while (!self.atEof() and !self.isP("}")) {
+            if (self.acceptP(";")) continue;
+            const sp = try self.parseSpecs();
+            const base = sp.base orelse return error.BadField;
+            if (self.acceptP(";")) {
+                // adsız iç struct/union (C11): alanları üst kayıtta doğrudan erişilir
+                if (base == .record) try list.append(self.a, .{ .name = "", .ty = base });
+                continue;
+            }
+            while (true) {
+                const d = try self.parseDeclarator(base, sp.is_const, true);
+                var bit = false;
+                if (self.acceptP(":")) {
+                    bit = true;
+                    while (!self.atEof() and !self.isP(",") and !self.isP(";")) {
+                        if (self.isP("(")) self.skipBalanced() else self.pos += 1;
+                    }
+                }
+                self.skipAttrs();
+                if (d.name.len > 0) try list.append(self.a, .{ .name = d.name, .ty = d.ty, .bitfield = bit, .is_const = sp.is_const });
+                if (self.acceptP(",")) continue;
+                if (!self.acceptP(";")) return error.BadField;
+                break;
+            }
+        }
+        if (!self.acceptP("}")) return error.BadField;
+        return list.items;
     }
 
     fn parseEnum(self: *Parser) !CType {
@@ -506,7 +576,7 @@ const Parser = struct {
             var ty = d.ty;
             // dizi/işlev parametreleri işaretçiye çürür
             switch (ty) {
-                .array => |elem| ty = .{ .ptr = .{ .to = elem, .const_pointee = false } },
+                .array => |arr| ty = .{ .ptr = .{ .to = arr.elem, .const_pointee = false } },
                 .func => ty = .{ .ptr = .{ .to = try self.box(.void), .const_pointee = false } },
                 else => {},
             }
@@ -555,12 +625,19 @@ const Parser = struct {
         }
         self.skipAttrs();
         // sonekler: önce hepsini topla, sonra sağdan sola uygula
-        const Suffix = union(enum) { arr, func: struct { params: []const Param, variadic: bool } };
+        const Suffix = union(enum) { arr: ?u64, func: struct { params: []const Param, variadic: bool } };
         var suffixes: std.ArrayListUnmanaged(Suffix) = .empty;
         while (true) {
             if (self.isP("[")) {
+                const open_pos = self.pos;
                 self.skipBalanced();
-                try suffixes.append(self.a, .arr);
+                var alen: ?u64 = null;
+                if (self.pos - open_pos >= 3) {
+                    if (self.evalRange(open_pos + 1, self.pos - 1)) |v| {
+                        if (v >= 0 and v <= std.math.maxInt(u32)) alen = @intCast(v);
+                    }
+                }
+                try suffixes.append(self.a, .{ .arr = alen });
             } else if (self.isP("(")) {
                 self.pos += 1;
                 const pr = try self.parseParams();
@@ -572,9 +649,9 @@ const Parser = struct {
         while (i > 0) {
             i -= 1;
             switch (suffixes.items[i]) {
-                .arr => {
+                .arr => |alen| {
                     const boxed = try self.box(t);
-                    t = .{ .array = boxed };
+                    t = .{ .array = .{ .elem = boxed, .len = alen } };
                 },
                 .func => |f| {
                     const sig = try self.a.create(FuncSig);
@@ -651,11 +728,26 @@ const Parser = struct {
             const d = try self.parseDeclarator(base, sp.is_const, false);
             self.skipAttrs();
             if (sp.is_typedef) {
-                if (d.name.len > 0) try self.typedefs.put(self.a, d.name, d.ty);
+                if (d.name.len > 0) {
+                    try self.typedefs.put(self.a, d.name, d.ty);
+                    if (d.ty == .record and !self.record_alias.contains(d.ty.record)) try self.record_alias.put(self.a, d.ty.record, d.name);
+                }
             } else if (d.ty == .func) {
                 if (d.name.len > 0 and in_target) {
                     try self.funcs.append(self.a, .{ .name = d.name, .sig = d.ty.func, .is_inline = sp.is_static or sp.is_inline, .line = line });
                 }
+            } else if (d.name.len > 0 and in_target and !sp.is_static and (sp.is_extern or !self.isP("{")) and d.ty != .func) {
+                // dış değişken (extern T x; ya da tanım): okuma/yazma erişimcileri üretilir
+                try self.globals.append(self.a, .{ .name = d.name, .ty = d.ty, .is_const = sp.is_const, .line = line });
+                if (self.isP("=")) {
+                    self.pos += 1;
+                    while (!self.atEof() and !self.isP(",") and !self.isP(";")) {
+                        if (self.isP("(") or self.isP("[") or self.isP("{")) self.skipBalanced() else self.pos += 1;
+                    }
+                }
+                if (self.acceptP(",")) continue;
+                _ = self.acceptP(";");
+                return;
             } else if (d.name.len > 0 and sp.is_static and sp.is_const and in_target and self.isP("=")) {
                 // static const <int> NAME = <const-expr>;
                 if (self.resolveInt(d.ty)) |_| {
@@ -948,6 +1040,9 @@ const NoxType = struct {
     c: []const u8,
     is_f32: bool = false,
     needs_shim: bool = false,
+    /// değerle struct/union: kabukta `*(<rec> *)ptr` olarak geçer; değer C tür metni
+    rec: ?[]const u8 = null,
+    rec_tag: []const u8 = "",
 };
 
 const Emitter = struct {
@@ -955,6 +1050,23 @@ const Emitter = struct {
     p: *Parser,
     opts: Options,
     warnings: std.ArrayListUnmanaged([]const u8) = .empty,
+    /// değerle geçirilen kayıtlar: etiket -> C tür metni (yardımcılar bunlar için de üretilir)
+    by_value: std.StringHashMapUnmanaged([]const u8) = .empty,
+
+    /// Kaydın yardımcı/erişimci adlarında kullanılan görünen ad: typedef takma adı, yoksa (adsız değilse) etiket.
+    fn recordDisplay(self: *Emitter, tag: []const u8) ?[]const u8 {
+        if (self.p.record_alias.get(tag)) |al| return al;
+        if (std.mem.startsWith(u8, tag, "__anon_record_")) return null;
+        return tag;
+    }
+
+    /// Kaydın C tür metni (`Vec` ya da `struct vec`/`union u`).
+    fn recordCText(self: *Emitter, tag: []const u8) !?[]const u8 {
+        if (self.p.record_alias.get(tag)) |al| return al;
+        if (std.mem.startsWith(u8, tag, "__anon_record_")) return null;
+        const rec = self.p.records.get(tag) orelse return null;
+        return try std.fmt.allocPrint(self.a, "{s} {s}", .{ if (rec.is_union) "union" else "struct", tag });
+    }
 
     fn warn(self: *Emitter, comptime fmt: []const u8, args: anytype) !void {
         try self.warnings.append(self.a, try std.fmt.allocPrint(self.a, fmt, args));
@@ -978,15 +1090,32 @@ const Emitter = struct {
             .ptr => |pt| {
                 if (as_param and pt.const_pointee) {
                     const to = self.p.resolve(pt.to.*);
-                    if (to == .int and to.int.bits == 8) return .{ .nox = "str", .c = "const char *" };
+                    // yalnızca düz `char` (metin): `unsigned char`/`uint8_t`/`signed char` ikili veridir ve `ptr` kalır
+                    if (to == .int and to.int.is_char) return .{ .nox = "str", .c = "const char *" };
                 }
                 return .{ .nox = "ptr", .c = "void *" };
             },
             .array => return .{ .nox = "ptr", .c = "void *" },
             .func => return .{ .nox = "ptr", .c = "void *" },
-            .record => {
-                reason.* = "struct/union by value is not supported yet";
-                return null;
+            .record => |tag| {
+                const rec = self.p.records.get(tag) orelse {
+                    reason.* = "struct/union with an unknown definition";
+                    return null;
+                };
+                if (!rec.complete) {
+                    reason.* = "incomplete (opaque) struct/union cannot be passed by value";
+                    return null;
+                }
+                // özgün (çözülmemiş) tipte typedef adı varsa onu, yoksa etiketli metni kullan
+                const ct: []const u8 = switch (t) {
+                    .named => |n| n,
+                    else => (try self.recordCText(tag)) orelse {
+                        reason.* = "anonymous struct/union";
+                        return null;
+                    },
+                };
+                try self.by_value.put(self.a, tag, ct);
+                return .{ .nox = "ptr", .c = "const void *", .needs_shim = true, .rec = ct, .rec_tag = tag };
             },
             .unsupported => |u| {
                 reason.* = try std.fmt.allocPrint(self.a, "unsupported type '{s}'", .{u});
@@ -1014,9 +1143,8 @@ const Emitter = struct {
 pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text: []const u8, opts: Options, all_in_target: bool) !Output {
     const toks = try lex(a, pp_text, baseName(opts.header), all_in_target);
     var parser = Parser{ .a = a, .toks = toks };
-    try parser.parseTop();
 
-    // makro sabitleri
+    // makro sabitleri (ve hedef ABI: `long` genişliği, düz `char` işaretliliği)
     var macros = MacroEval{ .a = a, .parser = &parser };
     var lines = std.mem.splitScalar(u8, defines_text, '\n');
     var macro_names: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -1032,7 +1160,13 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
         const body = std.mem.trim(u8, rest[e..], " \t");
         try macros.bodies.put(a, name, body);
         try macro_names.append(a, name);
+        if (std.mem.eql(u8, name, "__SIZEOF_LONG__")) {
+            if (std.fmt.parseInt(u8, body, 10)) |n| parser.long_bits = n * 8 else |_| {}
+        } else if (std.mem.eql(u8, name, "__CHAR_UNSIGNED__")) {
+            parser.char_signed = false;
+        }
     }
+    try parser.parseTop();
 
     var em = Emitter{ .a = a, .p = &parser, .opts = opts };
     for (parser.warnings.items) |w| try em.warnings.append(a, w);
@@ -1044,7 +1178,9 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
     var n_consts: usize = 0;
 
     try appendF(a, &nox, "# Generated by `noxc bindgen` from {s}. Do not edit by hand: regenerate.\n#\n# Pointers are `ptr`; `const char *` parameters are `str`; enums are `i32`.\n# Functions marked (shim) are `static inline` or take a `float`: they call a generated C shim.\n\n", .{baseName(opts.header)});
-    try appendF(a, &shim, "/* Generated by `noxc bindgen` from {s}. Compile with the same flags as the library: cc -c <this file> -I<header dir>. */\n#include <stdint.h>\n#include <stddef.h>\n#include \"{s}\"\n\n", .{ baseName(opts.header), opts.include_name });
+    try appendF(a, &shim, "/* Generated by `noxc bindgen` from {s}. Compile with the same flags as the library: cc -c <this file> -I<header dir>. */\n#include <stdint.h>\n#include <stddef.h>\n#include <stdlib.h>\n#include \"{s}\"\n\n", .{ baseName(opts.header), opts.include_name });
+
+    const shim_prelude_len = shim.items.len;
 
     // sabitler: enum üyeleri + static const + makrolar
     var emitted: std.StringHashMapUnmanaged(void) = .empty;
@@ -1081,13 +1217,19 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
     }
     if (n_consts > 0) try nox.append(a, '\n');
 
+    // dış ad çakışması denetimi: kütüphanenin (ve kabuğun) tüm işlev adları
+    var taken: std.StringHashMapUnmanaged(void) = .empty;
+    for (parser.funcs.items) |f| try taken.put(a, f.name, {});
+    for (parser.globals.items) |g| try taken.put(a, g.name, {});
+
     // işlevler
     var seen: std.StringHashMapUnmanaged(void) = .empty;
+    var pending_wrappers: std.ArrayListUnmanaged(u8) = .empty; // değerle-struct sarmalayıcıları `Name_new`i sonra tanımlanan yardımcılardan çağırır
     for (parser.funcs.items) |f| {
         if (!em.matchesPrefix(f.name) or seen.contains(f.name)) continue;
         try seen.put(a, f.name, {});
         if (f.sig.variadic) {
-            try em.warn("line {d}: skipped {s}: variadic function", .{ f.line, f.name });
+            try em.warn("line {d}: skipped {s}: variadic function (see TODO 8.6)", .{ f.line, f.name });
             continue;
         }
         var reason: []const u8 = "";
@@ -1117,31 +1259,45 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
         }
         n_funcs += 1;
         if (!needs_shim) {
+            const cbp = try detectCallback(&em, f);
+            if (cbp) |cp| {
+                const dflt = f.sig.params[cp.cb_idx];
+                _ = dflt;
+                const cs = em.p.resolve(em.p.resolve(f.sig.params[cp.cb_idx].ty).ptr.to.*).func;
+                try appendF(a, &nox, "@ffi.callback(\"{s}\", \"{s}\"", .{ names[cp.cb_idx], names[cp.ud_outer] });
+                if (cp.ud_pos != cs.params.len - 1) try appendF(a, &nox, ", ud_index={d}", .{cp.ud_pos});
+                try nox.appendSlice(a, ")\n");
+            }
             try appendF(a, &nox, "extern def {s}(", .{f.name});
             for (names, params.items, 0..) |nm, pt, i| {
                 if (i > 0) try nox.appendSlice(a, ", ");
-                try appendF(a, &nox, "{s}: {s}", .{ nm, pt.nox });
+                const ty_text: []const u8 = if (cbp != null and i == cbp.?.cb_idx) cbp.?.type_text else pt.nox;
+                try appendF(a, &nox, "{s}: {s}", .{ nm, ty_text });
             }
             try appendF(a, &nox, ") -> {s} from \"{s}\"\n", .{ ret_t.nox, opts.lib });
         } else {
             n_shims += 1;
             const shim_name = try std.fmt.allocPrint(a, "nox_shim_{s}", .{f.name});
-            // C kabuğu
-            try appendF(a, &shim, "{s} {s}(", .{ ret_t.c, shim_name });
-            if (names.len == 0) try shim.appendSlice(a, "void");
+            const ret_is_rec = ret_t.rec != null;
+            // C kabuğu: değerle dönen struct, son parametre `void *nox_ret` ile yazılır
+            try appendF(a, &shim, "{s} {s}(", .{ if (ret_is_rec) "void" else ret_t.c, shim_name });
+            if (names.len == 0 and !ret_is_rec) try shim.appendSlice(a, "void");
             for (names, params.items, 0..) |nm, pt, i| {
                 if (i > 0) try shim.appendSlice(a, ", ");
                 try appendF(a, &shim, "{s}{s}{s}", .{ pt.c, if (std.mem.endsWith(u8, pt.c, "*")) "" else " ", nm });
             }
+            if (ret_is_rec) try appendF(a, &shim, "{s}void *nox_ret", .{if (names.len > 0) ", " else ""});
             try shim.appendSlice(a, ") { ");
-            if (!std.mem.eql(u8, ret_t.c, "void")) try shim.appendSlice(a, "return ");
+            if (ret_is_rec) {
+                try appendF(a, &shim, "*({s} *)nox_ret = ", .{ret_t.rec.?});
+            } else if (!std.mem.eql(u8, ret_t.c, "void")) try shim.appendSlice(a, "return ");
             try appendF(a, &shim, "{s}(", .{f.name});
-            for (names, 0..) |nm, i| {
+            for (names, params.items, 0..) |nm, pt, i| {
                 if (i > 0) try shim.appendSlice(a, ", ");
-                try shim.appendSlice(a, nm);
+                if (pt.rec) |rt| try appendF(a, &shim, "*({s} *){s}", .{ rt, nm }) else try shim.appendSlice(a, nm);
             }
             try shim.appendSlice(a, "); }\n");
-            // Nox: ham extern + C adıyla sarmalayıcı
+            // Nox: ham extern + sarmalayıcı
             // Dış sembolü olan (satır içi OLMAYAN) bir işlevin sarmalayıcısı C adını kullanamaz: Nox'un üst-düzey `def`i de AYNI ham sembolü üretir ve bağlama çakışır.
             const wrapper_name: []const u8 = if (!f.is_inline or isReserved(f.name)) try std.fmt.allocPrint(a, "{s}_", .{f.name}) else f.name;
             try appendF(a, &nox, "extern def {s}(", .{shim_name});
@@ -1149,24 +1305,246 @@ pub fn generateFromText(a: std.mem.Allocator, pp_text: []const u8, defines_text:
                 if (i > 0) try nox.appendSlice(a, ", ");
                 try appendF(a, &nox, "{s}: {s}", .{ nm, pt.nox });
             }
-            try appendF(a, &nox, ") -> {s} from \"{s}\"\n", .{ ret_t.nox, opts.shim_lib });
-            try appendF(a, &nox, "def {s}(", .{wrapper_name});
+            if (ret_is_rec) try appendF(a, &nox, "{s}nox_ret: ptr", .{if (names.len > 0) ", " else ""});
+            try appendF(a, &nox, ") -> {s} from \"{s}\"\n", .{ if (ret_is_rec) "None" else ret_t.nox, opts.shim_lib });
+            const out_list: *std.ArrayListUnmanaged(u8) = if (ret_is_rec) &pending_wrappers else &nox;
+            try appendF(a, out_list, "def {s}(", .{wrapper_name});
             for (names, params.items, 0..) |nm, pt, i| {
-                if (i > 0) try nox.appendSlice(a, ", ");
-                try appendF(a, &nox, "{s}: {s}", .{ nm, pt.nox });
+                if (i > 0) try out_list.appendSlice(a, ", ");
+                try appendF(a, out_list, "{s}: {s}", .{ nm, pt.nox });
             }
-            try appendF(a, &nox, ") -> {s}:\n    ", .{ret_t.nox});
-            if (!std.mem.eql(u8, ret_t.nox, "None")) try nox.appendSlice(a, "return ");
-            try appendF(a, &nox, "{s}(", .{shim_name});
-            for (names, 0..) |nm, i| {
-                if (i > 0) try nox.appendSlice(a, ", ");
-                try nox.appendSlice(a, nm);
+            try appendF(a, out_list, ") -> {s}:\n", .{ret_t.nox});
+            if (ret_is_rec) {
+                const helper = em.recordDisplay(ret_t.rec_tag) orelse "rec";
+                try appendF(a, out_list, "    nox_ret: ptr = {s}_new()\n    {s}(", .{ helper, shim_name });
+                for (names) |nm| try appendF(a, out_list, "{s}, ", .{nm});
+                try out_list.appendSlice(a, "nox_ret)\n    return nox_ret\n");
+            } else {
+                try out_list.appendSlice(a, "    ");
+                if (!std.mem.eql(u8, ret_t.nox, "None")) try out_list.appendSlice(a, "return ");
+                try appendF(a, out_list, "{s}(", .{shim_name});
+                for (names, 0..) |nm, i| {
+                    if (i > 0) try out_list.appendSlice(a, ", ");
+                    try out_list.appendSlice(a, nm);
+                }
+                try out_list.appendSlice(a, ")\n");
             }
-            try nox.appendSlice(a, ")\n");
         }
     }
+    if (pending_wrappers.items.len > 0) {
+        try nox.appendSlice(a, "\n# by-value struct/union wrappers: arguments are pointers to the struct memory; a returned struct is a NEW block the caller frees with <Name>_free\n");
+        try nox.appendSlice(a, pending_wrappers.items);
+    }
 
+    // struct/union yardımcıları ve alan erişimcileri; değerle geçirilen kayıtlar için de yardımcılar
+    var rec_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var rit = parser.records.iterator();
+    while (rit.next()) |e| {
+        const rec = e.value_ptr.*;
+        const wanted_by_value = em.by_value.contains(rec.tag);
+        const display = em.recordDisplay(rec.tag) orelse continue;
+        if ((rec.in_target and rec.complete and em.matchesPrefix(display)) or wanted_by_value) try rec_names.append(a, rec.tag);
+    }
+    std.mem.sort([]const u8, rec_names.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    if (rec_names.items.len > 0) try nox.appendSlice(a, "\n# struct/union helpers: <Name>_new / _free / _size and per-field <Name>_get_<f> / <Name>_set_<f> (struct memory is always a `ptr`)\n");
+    for (rec_names.items) |tag| {
+        const rec = parser.records.get(tag).?;
+        const display = em.recordDisplay(tag).?;
+        const ctext = (try em.recordCText(tag)) orelse continue;
+        try emitRecord(&em, rec, display, ctext, &nox, &shim, &taken);
+    }
+
+    // global değişkenler
+    for (parser.globals.items) |g| {
+        if (!em.matchesPrefix(g.name)) continue;
+        var reason: []const u8 = "";
+        const r = parser.resolve(g.ty);
+        if (r == .array or r == .record) {
+            const nm = try uniqueName(a, &taken, try std.fmt.allocPrint(a, "{s}_ptr", .{g.name}));
+            try appendF(a, &shim, "void *{s}(void) {{ return (void *)&{s}; }}\n", .{ nm, g.name });
+            try appendF(a, &nox, "extern def {s}() -> ptr from \"{s}\"\n", .{ nm, opts.shim_lib });
+            n_shims += 1;
+            continue;
+        }
+        const mt = (try em.mapType(g.ty, false, &reason)) orelse {
+            try em.warn("line {d}: skipped global {s}: {s}", .{ g.line, g.name, reason });
+            continue;
+        };
+        const get = try uniqueName(a, &taken, try std.fmt.allocPrint(a, "{s}_get", .{g.name}));
+        const cast: []const u8 = if (std.mem.endsWith(u8, mt.c, "*")) "(void *)" else if (mt.is_f32) "(double)" else "";
+        try appendF(a, &shim, "{s} {s}(void) {{ return {s}{s}; }}\n", .{ mt.c, get, cast, g.name });
+        try appendF(a, &nox, "extern def {s}() -> {s} from \"{s}\"\n", .{ get, mt.nox, opts.shim_lib });
+        if (!g.is_const) {
+            const set = try uniqueName(a, &taken, try std.fmt.allocPrint(a, "{s}_set", .{g.name}));
+            try appendF(a, &shim, "void {s}({s}{s}v) {{ {s} = (__typeof__({s}))v; }}\n", .{ set, mt.c, if (std.mem.endsWith(u8, mt.c, "*")) "" else " ", g.name, g.name });
+            try appendF(a, &nox, "extern def {s}(v: {s}) -> None from \"{s}\"\n", .{ set, mt.nox, opts.shim_lib });
+        }
+        n_shims += 1;
+    }
+
+    // yalnızca yapı yardımcıları/erişimcileri kabuğa yazıldıysa da kabuk dosyası gerekir
+    if (n_shims == 0 and shim.items.len > shim_prelude_len) n_shims = 1;
     return .{ .nox = nox.items, .shim = shim.items, .warnings = em.warnings.items, .n_funcs = n_funcs, .n_shims = n_shims, .n_consts = n_consts };
+}
+
+const CallbackPattern = struct {
+    cb_idx: usize,
+    ud_outer: usize,
+    ud_pos: usize,
+    /// Nox callback tipi metni, ör. `(ptr, i32, ptr) -> i32` (userdata dahil — C imzasının aynısı)
+    type_text: []const u8,
+};
+
+/// `T (*cb)(..., void *ud, ...)` parametresi + yanında bir `void *` userdata parametresi varsa `@ffi.callback` kalıbını bulur (yoksa null).
+fn detectCallback(em: *Emitter, f: FuncDecl) !?CallbackPattern {
+    const ps = f.sig.params;
+    for (ps, 0..) |pa, i| {
+        const r = em.p.resolve(pa.ty);
+        if (r != .ptr) continue;
+        const target = em.p.resolve(r.ptr.to.*);
+        if (target != .func) continue;
+        const cs = target.func;
+        if (cs.variadic) continue;
+        // callback imzasında userdata adayı: `const` OLMAYAN `void *` (birden çoksa sonuncusu)
+        var ud_pos: ?usize = null;
+        for (cs.params, 0..) |cp, k| {
+            const cr = em.p.resolve(cp.ty);
+            if (cr == .ptr and !cr.ptr.const_pointee and em.p.resolve(cr.ptr.to.*) == .void) ud_pos = k;
+        }
+        const k = ud_pos orelse continue;
+        // dış işlevde yanındaki `void *` parametresi (önce sonraki, sonra önceki)
+        var ud_outer: ?usize = null;
+        const cand_idx = [_]isize{ @as(isize, @intCast(i)) + 1, @as(isize, @intCast(i)) - 1 };
+        for (cand_idx) |ci| {
+            if (ci < 0 or ci >= ps.len) continue;
+            const pr = em.p.resolve(ps[@intCast(ci)].ty);
+            if (pr == .ptr and em.p.resolve(pr.ptr.to.*) == .void) {
+                ud_outer = @intCast(ci);
+                break;
+            }
+        }
+        const uo = ud_outer orelse continue;
+        // callback tipi: her parametre/dönüş Nox'ta ifade edilebilmeli (f32/struct değil)
+        var text: std.ArrayListUnmanaged(u8) = .empty;
+        try text.append(em.a, '(');
+        var ok = true;
+        var reason: []const u8 = "";
+        for (cs.params, 0..) |cp, kk| {
+            const mt = (try em.mapType(cp.ty, false, &reason)) orelse {
+                ok = false;
+                break;
+            };
+            if (mt.is_f32 or mt.rec != null) {
+                ok = false;
+                break;
+            }
+            if (kk > 0) try text.appendSlice(em.a, ", ");
+            try text.appendSlice(em.a, mt.nox);
+        }
+        if (!ok) continue;
+        const rt = (try em.mapType(cs.ret, false, &reason)) orelse continue;
+        if (rt.is_f32 or rt.rec != null) continue;
+        try appendF(em.a, &text, ") -> {s}", .{rt.nox});
+        return .{ .cb_idx = i, .ud_outer = uo, .ud_pos = k, .type_text = text.items };
+    }
+    return null;
+}
+
+fn uniqueName(a: std.mem.Allocator, taken: *std.StringHashMapUnmanaged(void), base: []const u8) ![]const u8 {
+    var name = base;
+    while (taken.contains(name)) name = try std.fmt.allocPrint(a, "{s}_", .{name});
+    try taken.put(a, name, {});
+    return name;
+}
+
+/// Bir struct/union için `_new/_free/_size` ve (alanları ayrıştırılmışsa) alan erişimcilerini üretir. Erişim C derleyicisince derlenen kabuktan geçer:
+/// yerleşim, bit alanları, hizalama, `const` ve sendikalar elle hesaplanmaz.
+fn emitRecord(em: *Emitter, rec: Record, display: []const u8, ctext: []const u8, nox: *std.ArrayListUnmanaged(u8), shim: *std.ArrayListUnmanaged(u8), taken: *std.StringHashMapUnmanaged(void)) !void {
+    const a = em.a;
+    const lib = em.opts.shim_lib;
+    const new_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_new", .{display}));
+    const free_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_free", .{display}));
+    const size_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_size", .{display}));
+    try appendF(a, shim, "void *{s}(void) {{ return calloc(1, sizeof({s})); }}\nvoid {s}(void *p) {{ free(p); }}\nsize_t {s}(void) {{ return sizeof({s}); }}\n", .{ new_n, ctext, free_n, size_n, ctext });
+    try appendF(a, nox, "extern def {s}() -> ptr from \"{s}\"\nextern def {s}(p: ptr) -> None from \"{s}\"\nextern def {s}() -> usize from \"{s}\"\n", .{ new_n, lib, free_n, lib, size_n, lib });
+    if (rec.in_target and rec.fields_ok) try emitFields(em, rec, display, ctext, "", nox, shim, taken);
+}
+
+fn emitFields(em: *Emitter, rec: Record, display: []const u8, ctext: []const u8, unused: []const u8, nox: *std.ArrayListUnmanaged(u8), shim: *std.ArrayListUnmanaged(u8), taken: *std.StringHashMapUnmanaged(void)) !void {
+    _ = unused;
+    const a = em.a;
+    const lib = em.opts.shim_lib;
+    for (rec.fields) |f| {
+        if (f.name.len == 0) {
+            // adsız iç struct/union: alanları doğrudan `p->alan` ile erişilir
+            if (f.ty == .record) {
+                if (em.p.records.get(f.ty.record)) |inner| if (inner.fields_ok) try emitFields(em, inner, display, ctext, "", nox, shim, taken);
+            }
+            continue;
+        }
+        const acc = try std.fmt.allocPrint(a, "(({s} *)p)->{s}", .{ ctext, f.name });
+        const r = em.p.resolve(f.ty);
+        var reason: []const u8 = "";
+        switch (r) {
+            .array => |arr| {
+                const er = em.p.resolve(arr.elem.*);
+                const ptr_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_{s}_ptr", .{ display, f.name }));
+                try appendF(a, shim, "void *{s}(void *p) {{ return (void *){s}; }}\n", .{ ptr_n, acc });
+                try appendF(a, nox, "extern def {s}(p: ptr) -> ptr from \"{s}\"\n", .{ ptr_n, lib });
+                if (arr.len) |n| try appendF(a, nox, "{s}_{s}_LEN: int = {d}\n", .{ display, f.name, n });
+                if (er == .record) {
+                    const addr_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_get_{s}", .{ display, f.name }));
+                    try appendF(a, shim, "void *{s}(void *p, size_t i) {{ return (void *)&{s}[i]; }}\n", .{ addr_n, acc });
+                    try appendF(a, nox, "extern def {s}(p: ptr, i: usize) -> ptr from \"{s}\"\n", .{ addr_n, lib });
+                    continue;
+                }
+                const mt = (try em.mapType(arr.elem.*, false, &reason)) orelse {
+                    try em.warn("skipped field {s}.{s}: {s}", .{ display, f.name, reason });
+                    continue;
+                };
+                const get_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_get_{s}", .{ display, f.name }));
+                const cast: []const u8 = if (std.mem.endsWith(u8, mt.c, "*")) "(void *)" else if (mt.is_f32) "(double)" else "";
+                try appendF(a, shim, "{s} {s}(void *p, size_t i) {{ return {s}{s}[i]; }}\n", .{ mt.c, get_n, cast, acc });
+                try appendF(a, nox, "extern def {s}(p: ptr, i: usize) -> {s} from \"{s}\"\n", .{ get_n, mt.nox, lib });
+                if (!f.is_const) {
+                    const set_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_set_{s}", .{ display, f.name }));
+                    try appendF(a, shim, "void {s}(void *p, size_t i, {s}{s}v) {{ {s}[i] = (__typeof__({s}[0]))v; }}\n", .{ set_n, mt.c, if (std.mem.endsWith(u8, mt.c, "*")) "" else " ", acc, acc });
+                    try appendF(a, nox, "extern def {s}(p: ptr, i: usize, v: {s}) -> None from \"{s}\"\n", .{ set_n, mt.nox, lib });
+                }
+            },
+            .record => {
+                const addr_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_get_{s}", .{ display, f.name }));
+                try appendF(a, shim, "void *{s}(void *p) {{ return (void *)&{s}; }}\n", .{ addr_n, acc });
+                try appendF(a, nox, "extern def {s}(p: ptr) -> ptr from \"{s}\"\n", .{ addr_n, lib });
+                if (!f.is_const) {
+                    const set_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_set_{s}", .{ display, f.name }));
+                    try appendF(a, shim, "void {s}(void *p, const void *v) {{ {s} = *(const __typeof__({s}) *)v; }}\n", .{ set_n, acc, acc });
+                    try appendF(a, nox, "extern def {s}(p: ptr, v: ptr) -> None from \"{s}\"\n", .{ set_n, lib });
+                }
+            },
+            else => {
+                const mt = (try em.mapType(f.ty, false, &reason)) orelse {
+                    try em.warn("skipped field {s}.{s}: {s}", .{ display, f.name, reason });
+                    continue;
+                };
+                const get_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_get_{s}", .{ display, f.name }));
+                const cast: []const u8 = if (std.mem.endsWith(u8, mt.c, "*")) "(void *)" else if (mt.is_f32) "(double)" else "";
+                try appendF(a, shim, "{s} {s}(void *p) {{ return {s}{s}; }}\n", .{ mt.c, get_n, cast, acc });
+                try appendF(a, nox, "extern def {s}(p: ptr) -> {s} from \"{s}\"\n", .{ get_n, mt.nox, lib });
+                if (!f.is_const) {
+                    const set_n = try uniqueName(a, taken, try std.fmt.allocPrint(a, "{s}_set_{s}", .{ display, f.name }));
+                    // bit alanlarında `__typeof__` kullanılamaz: düz atama (örtük dönüşüm)
+                    const rhs: []const u8 = if (f.bitfield) "v" else try std.fmt.allocPrint(a, "(__typeof__({s}))v", .{acc});
+                    try appendF(a, shim, "void {s}(void *p, {s}{s}v) {{ {s} = {s}; }}\n", .{ set_n, mt.c, if (std.mem.endsWith(u8, mt.c, "*")) "" else " ", acc, rhs });
+                    try appendF(a, nox, "extern def {s}(p: ptr, v: {s}) -> None from \"{s}\"\n", .{ set_n, mt.nox, lib });
+                }
+            },
+        }
+    }
 }
 
 fn appendF(a: std.mem.Allocator, list: *std.ArrayListUnmanaged(u8), comptime fmt: []const u8, args: anytype) !void {
@@ -1391,12 +1769,12 @@ test "değerle struct, değişken argüman ve long double uyarıyla atlanır; fo
         \\int total(int xs[], int n);
     ;
     const out = try generateFromText(a, src, "", .{ .header = "x.h", .lib = "libx", .shim_lib = "x_shim.o", .include_name = "x.h" }, true);
-    try std.testing.expect(std.mem.indexOf(u8, out.nox, "vec_add") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out.nox, "def vec_add_(a: ptr, b: ptr) -> ptr:") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "logf2") == null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def sort_it(base: ptr, n: i32, cmp: ptr) -> None") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def apply(cb: ptr, v: i32) -> None") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def total(xs: ptr, n: i32) -> i32") != null);
-    try std.testing.expect(out.warnings.len >= 3);
+    try std.testing.expect(out.warnings.len >= 2);
 }
 
 test "static const tamsayıları ve #define sabitleri (önek süzgeci) sabit olur" {
@@ -1442,4 +1820,59 @@ test "linemarker: yalnızca hedef başlıktaki bildirimler çıkar, sistem tiple
     const out = try generateFromText(a, src, "", .{ .header = "/tmp/mylib.h", .lib = "libm", .shim_lib = "s.o", .include_name = "mylib.h" }, false);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "sys_func") == null);
     try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def my_func(n: u64, k: u16) -> i32 from \"libm\"") != null);
+}
+
+test "struct alanları, değerle struct, global değişkenler ve dizi/bit alanı/adsız sendika erişimcileri" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const src =
+        \\typedef struct { int x; int y; } vec;
+        \\vec vec_add(vec a, vec b);
+        \\struct node { int id; const char *name; double w[3]; struct node *next; unsigned flag : 3; union { int i; float f; }; vec pos; const int fixed; };
+        \\extern int counter;
+        \\extern const char *const version;
+        \\extern double table[4];
+    ;
+    const out = try generateFromText(a, src, "", .{ .header = "x.h", .lib = "libx", .shim_lib = "x_shim.o", .include_name = "x.h" }, true);
+    const has = struct {
+        fn f(hay: []const u8, needle: []const u8) bool {
+            return std.mem.indexOf(u8, hay, needle) != null;
+        }
+    }.f;
+    // değerle struct: işaretçi alan/dönen sarmalayıcı + yardımcılar
+    try std.testing.expect(has(out.nox, "def vec_add_(a: ptr, b: ptr) -> ptr:\n    nox_ret: ptr = vec_new()"));
+    try std.testing.expect(has(out.shim, "void nox_shim_vec_add(const void *a, const void *b, void *nox_ret) { *(vec *)nox_ret = vec_add(*(vec *)a, *(vec *)b); }"));
+    try std.testing.expect(has(out.nox, "extern def vec_new() -> ptr"));
+    try std.testing.expect(has(out.nox, "extern def vec_get_x(p: ptr) -> i32"));
+    try std.testing.expect(has(out.nox, "extern def vec_set_y(p: ptr, v: i32) -> None"));
+    // alanlar
+    try std.testing.expect(has(out.nox, "extern def node_get_id(p: ptr) -> i32"));
+    try std.testing.expect(has(out.nox, "extern def node_get_name(p: ptr) -> ptr"));
+    try std.testing.expect(has(out.nox, "extern def node_get_w(p: ptr, i: usize) -> float"));
+    try std.testing.expect(has(out.nox, "extern def node_w_ptr(p: ptr) -> ptr"));
+    try std.testing.expect(has(out.nox, "node_w_LEN: int = 3"));
+    try std.testing.expect(has(out.nox, "extern def node_set_flag(p: ptr, v: u32) -> None"));
+    try std.testing.expect(has(out.shim, "((struct node *)p)->flag = v;"));
+    try std.testing.expect(has(out.nox, "extern def node_get_i(p: ptr) -> i32")); // adsız sendikanın alanı
+    try std.testing.expect(has(out.nox, "extern def node_get_pos(p: ptr) -> ptr")); // iç içe struct: adres
+    try std.testing.expect(!has(out.nox, "node_set_fixed")); // const alan: yazıcı yok
+    // global değişkenler
+    try std.testing.expect(has(out.nox, "extern def counter_get() -> i32"));
+    try std.testing.expect(has(out.nox, "extern def counter_set(v: i32) -> None"));
+    try std.testing.expect(has(out.nox, "extern def version_get() -> ptr"));
+    try std.testing.expect(!has(out.nox, "version_set"));
+    try std.testing.expect(has(out.nox, "extern def table_ptr() -> ptr"));
+}
+
+test "hedef ABI: __SIZEOF_LONG__=4 ve __CHAR_UNSIGNED__ tür eşlemesini değiştirir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const defs =
+        \\#define __SIZEOF_LONG__ 4
+        \\#define __CHAR_UNSIGNED__ 1
+    ;
+    const out = try generateFromText(a, "long f(long x, char c, long long y);", defs, .{ .header = "x.h", .lib = "libx", .shim_lib = "s.o", .include_name = "x.h" }, true);
+    try std.testing.expect(std.mem.indexOf(u8, out.nox, "extern def f(x: i32, c: u8, y: i64) -> i32") != null);
 }

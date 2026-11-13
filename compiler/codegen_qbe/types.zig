@@ -242,6 +242,8 @@ pub const CallbackInfo = struct {
     /// "userdata" (`%rt`nin ÇAĞRI SİTESİNDE otomatik doldurulduğu) yuvasının
     /// İNDEKSİ — checker TARAFINDAN ZATEN `ptr` OLARAK doğrulanmış.
     context_idx: usize,
+    /// v2.1.108: callback TİPİNDE userdata yuvasının indeksi (varsayılan son parametre).
+    ud_pos: usize,
 };
 
 /// Faz HH.4: `handle` fonksiyonu gövdesinin `req` parametresinin HANGİ

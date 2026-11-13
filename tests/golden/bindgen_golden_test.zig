@@ -185,3 +185,182 @@ test "bindgen: yyjson.h (gerçek, ~9000 satırlık satır içi ağırlıklı ba�
         try std.testing.expectEqualStrings(expected, r.stdout);
     }
 }
+
+const shapes_header =
+    \\#ifndef SHAPES_H
+    \\#define SHAPES_H
+    \\typedef struct { double x, y; } vec2;
+    \\typedef struct node { int id; const char *name; double w[3]; struct node *next; unsigned flag : 3; const int fixed; } node;
+    \\vec2 vec2_add(vec2 a, vec2 b);
+    \\double vec2_len2(vec2 v);
+    \\node *node_make(int id, const char *name);
+    \\extern int shapes_counter;
+    \\extern const char *const shapes_version;
+    \\float shapes_scale(float x);
+    \\#endif
+    \\
+;
+
+const shapes_source =
+    \\#include "shapes.h"
+    \\#include <stdlib.h>
+    \\#include <string.h>
+    \\int shapes_counter = 40;
+    \\const char *const shapes_version = "1.2";
+    \\vec2 vec2_add(vec2 a, vec2 b) { vec2 r = { a.x + b.x, a.y + b.y }; return r; }
+    \\double vec2_len2(vec2 v) { return v.x * v.x + v.y * v.y; }
+    \\node *node_make(int id, const char *name) { node *n = calloc(1, sizeof(node)); n->id = id; n->name = strdup(name); return n; }
+    \\float shapes_scale(float x) { return x * 2; }
+    \\
+;
+
+const shapes_program =
+    \\a: ptr = vec2_new()
+    \\vec2_set_x(a, 1.5)
+    \\vec2_set_y(a, 2.0)
+    \\b: ptr = vec2_new()
+    \\vec2_set_x(b, 2.0)
+    \\vec2_set_y(b, 3.5)
+    \\c: ptr = vec2_add_(a, b)
+    \\print(vec2_get_x(c))
+    \\print(vec2_get_y(c))
+    \\print(vec2_len2_(c))
+    \\vec2_free(a)
+    \\vec2_free(b)
+    \\vec2_free(c)
+    \\n: ptr = node_make(7, "alpha")
+    \\print(node_get_id(n))
+    \\print(nox.ffi.cstr(node_get_name(n)))
+    \\node_set_flag(n, u32(5))
+    \\print(node_get_flag(n))
+    \\node_set_w(n, usize(1), 2.5)
+    \\print(node_get_w(n, usize(1)))
+    \\print(node_w_LEN)
+    \\print(nox.ffi.is_null(node_get_next(n)))
+    \\node_free(n)
+    \\print(shapes_counter_get())
+    \\shapes_counter_set(42)
+    \\print(shapes_counter_get())
+    \\print(nox.ffi.cstr(shapes_version_get()))
+    \\print(shapes_scale_(3.0))
+    \\
+;
+
+test "bindgen: struct alanları, değerle struct, dizi/bit alanı, global değişken, float kabuğu ve nox.ffi.cstr iki backend'de aynı" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "shapes.h", .data = shapes_header });
+    try tmp.dir.writeFile(io, .{ .sub_path = "shapes.c", .data = shapes_source });
+    const h_path = try std.fmt.allocPrint(a, "{s}/shapes.h", .{dir});
+    const c_path = try std.fmt.allocPrint(a, "{s}/shapes.c", .{dir});
+    const o_path = try std.fmt.allocPrint(a, "{s}/shapes.o", .{dir});
+    const out_path = try std.fmt.allocPrint(a, "{s}/shapes.nox", .{dir});
+    const shim_o = try std.fmt.allocPrint(a, "{s}/shapes_shim.o", .{dir});
+    const cc = try std.process.run(a, io, .{ .argv = &.{ "cc", "-c", "-fPIC", c_path, "-o", o_path, "-I", dir } });
+    if (cc.term != .exited or cc.term.exited != 0) {
+        std.debug.print("cc basarisiz: {s}\n", .{cc.stderr});
+        return error.CcFailed;
+    }
+    const code = try nox.bindgen.runCli(std.testing.allocator, io, a, &.{ h_path, "--lib", o_path, "--prefix", "shapes_,vec2,node", "-o", out_path });
+    try std.testing.expectEqual(@as(u8, 0), code);
+    const generated = try tmp.dir.readFileAlloc(io, "shapes.nox", a, .limited(1 << 20));
+    const full = try std.fmt.allocPrint(a, "import nox.ffi\n{s}\n{s}", .{ generated, shapes_program });
+
+    const objs = [_][]const u8{ o_path, shim_o };
+    const qbe = try compile_helpers.compileAndRunWithObjs(a, full, &objs);
+    const llvm = try compile_helpers.compileAndRunLlvmWithObjs(a, full, &objs);
+    const expected = "3.5\n5.5\n42.5\n7\nalpha\n5\n2.5\n3\nTrue\n40\n42\n1.2\n6.0\n";
+    for ([_]std.process.RunResult{ qbe, llvm }) |r| {
+        if (r.term != .exited or r.term.exited != 0 or r.stderr.len != 0) {
+            std.debug.print("program basarisiz: {s}\n", .{r.stderr});
+            return error.ProgramFailed;
+        }
+        try std.testing.expectEqualStrings(expected, r.stdout);
+    }
+}
+
+const cbs_header =
+    \\#ifndef CBS_H
+    \\#define CBS_H
+    \\typedef int (*visit_fn)(void *ud, int key, const char *val);
+    \\int walk_items(int n, visit_fn cb, void *ud);
+    \\int sum_with(void *ud, int (*step)(int, void *), int n);
+    \\#endif
+    \\
+;
+
+const cbs_source =
+    \\#include "cbs.h"
+    \\int walk_items(int n, visit_fn cb, void *ud) { if (!cb) return -1; int total = 0; for (int i = 0; i < n; i++) total += cb(ud, i, "v"); return total; }
+    \\int sum_with(void *ud, int (*step)(int, void *), int n) { int total = 0; for (int i = 0; i < n; i++) total += step(i, ud); return total; }
+    \\
+;
+
+const cbs_program =
+    \\def visitor(key: i32, val: ptr) -> i32:
+    \\    return key * i32(10) + i32(len(nox.ffi.cstr(val)))
+    \\
+    \\def stepper(i: i32) -> i32:
+    \\    return i * i
+    \\
+    \\print(walk_items(i32(3), visitor))
+    \\print(sum_with(stepper, i32(4)))
+    \\base: i32 = i32(100)
+    \\h: Callback[(i32, ptr) -> i32] = Callback[(i32, ptr) -> i32](lambda k, v: k + base)
+    \\print(walk_items(i32(3), h))
+    \\h.close()
+    \\print(walk_items(i32(3), None))
+    \\
+;
+
+test "bindgen: callback + userdata kalıbı (userdata ilk ya da son) @ffi.callback üretir; üst-düzey def ve Callback tutamacı iki backend'de" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "cbs.h", .data = cbs_header });
+    try tmp.dir.writeFile(io, .{ .sub_path = "cbs.c", .data = cbs_source });
+    const h_path = try std.fmt.allocPrint(a, "{s}/cbs.h", .{dir});
+    const c_path = try std.fmt.allocPrint(a, "{s}/cbs.c", .{dir});
+    const o_path = try std.fmt.allocPrint(a, "{s}/cbs.o", .{dir});
+    const out_path = try std.fmt.allocPrint(a, "{s}/cbs.nox", .{dir});
+    const cc = try std.process.run(a, io, .{ .argv = &.{ "cc", "-c", "-fPIC", c_path, "-o", o_path, "-I", dir } });
+    if (cc.term != .exited or cc.term.exited != 0) {
+        std.debug.print("cc basarisiz: {s}\n", .{cc.stderr});
+        return error.CcFailed;
+    }
+    const code = try nox.bindgen.runCli(std.testing.allocator, io, a, &.{ h_path, "--lib", o_path, "--prefix", "walk,sum", "-o", out_path });
+    try std.testing.expectEqual(@as(u8, 0), code);
+    const generated = try tmp.dir.readFileAlloc(io, "cbs.nox", a, .limited(1 << 20));
+    try std.testing.expect(std.mem.indexOf(u8, generated, "@ffi.callback(\"cb\", \"ud\", ud_index=0)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, generated, "@ffi.callback(\"step\", \"ud\")") != null);
+    const full = try std.fmt.allocPrint(a, "import nox.ffi\nfrom nox.ffi import Callback\n{s}\n{s}", .{ generated, cbs_program });
+
+    const objs = [_][]const u8{o_path};
+    const qbe = try compile_helpers.compileAndRunWithObjs(a, full, &objs);
+    const llvm = try compile_helpers.compileAndRunLlvmWithObjs(a, full, &objs);
+    const expected = "33\n14\n303\n-1\n";
+    for ([_]std.process.RunResult{ qbe, llvm }) |r| {
+        if (r.term != .exited or r.term.exited != 0 or r.stderr.len != 0) {
+            std.debug.print("program basarisiz: {s}\n", .{r.stderr});
+            return error.ProgramFailed;
+        }
+        try std.testing.expectEqualStrings(expected, r.stdout);
+    }
+}

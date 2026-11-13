@@ -159,6 +159,9 @@ Rules: the callback type's last parameter must be `ptr`; every parameter and the
 be a plain top-level, non-`async`, non-`extern` `def`, passed by name, **or** a `nox.ffi.Callback[F]` handle that wraps a lambda, closure or bound method (see below). An exception escaping the callback
 terminates the program.
 
+The userdata does not have to be the callback's last parameter: `@ffi.callback("cb", "userdata", ud_index=0)` says it is parameter 0 of the callback type (C APIs such as `sqlite3_exec` put it
+first). Pass `None` where the callback goes to give the library a NULL function pointer (and a NULL userdata) when it accepts "no callback".
+
 ### Stored callbacks
 
 The native side may keep the callback and call it **later**, from any later point of the program: register it in one call (`reg_set(on_event)`),
