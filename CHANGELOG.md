@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.123]
+
+### Düzeltildi
+
+- **Linux CI kırmızısı (v2.1.118'den beri):** `tests/compat/zig_ext/util.zig` yabancı iş parçacığı test yardımcısı libc OLMADAN derlenen bir nesnede `std.Thread.spawn` kullanıyordu (ham `clone` + kendi TLS kurulumu). aarch64'te `linux.tls.area_desc` başlatılmadığından assert ile çöküyor (v2.1.119'da `std.c` kullanımı da libc bağımlılığı hatası verdi), x86-64'te glibc TLS'i kurulmamış iş parçacığında Nox callback'i takılıp işi 75 dakikada iptal ettiriyordu. Yardımcı artık düz `extern fn pthread_create/pthread_join` kullanır (libc son bağlamada çözülür).
+
 ## [2.1.122]
 
 ### Eklendi

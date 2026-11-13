@@ -51,10 +51,14 @@ export fn nox_test_cb_fire(x: i64) callconv(.c) i64 {
 
 /// Yabancı iş parçacığı callback'i (v2.1.118, TODO 8.8): `nox_test_thread_fire` kendi OS iş parçacığını başlatır; o iş parçacığı `cb(i, userdata, i * 0.5)`
 /// çağrısını `n` kez yapar (Nox'un hiçbir iş parçacığı değildir). `nox_test_thread_join` iş parçacığını bekler.
-// std.Thread.spawn bu nesne C başlatma kodlu (libc) bir ikiliye bağlandığında Linux/aarch64'da `linux.tls.area_desc` başlatılmadığı için assert ile çöker
-// (v2.1.118 CI); bu yüzden doğrudan pthread kullanılır. Windows'ta bu yardımcılar kullanılmaz (EventQueue desteklenmez).
+// Yabancı iş parçacığı yardımcısı: nesne `zig build-obj` ile libc OLMADAN derlenir ve sonra libc'li (glibc/Darwin) ana ikiliye bağlanır. `std.Thread.spawn` libc'siz derlemede ham `clone` + kendi TLS
+// kurulumuyla bir iş parçacığı açar: aarch64'te `linux.tls.area_desc` başlatılmadığından assert ile çöker, x86-64'te glibc TLS'si kurulmamış iş parçacığında Nox callback'i takılabilir (v2.1.118/119 CI).
+// Bu yüzden doğrudan pthread (düz `extern fn`, libc son bağlamada çözülür) kullanılır. Windows'ta kullanılmaz (EventQueue desteklenmez).
 const is_posix = builtin.os.tag != .windows;
-var fire_thread: if (is_posix) ?std.c.pthread_t else void = if (is_posix) null else {};
+extern fn pthread_create(thread: *usize, attr: ?*const anyopaque, start: *const fn (?*anyopaque) callconv(.c) ?*anyopaque, arg: ?*anyopaque) c_int;
+extern fn pthread_join(thread: usize, retval: ?*?*anyopaque) c_int;
+var fire_thread: usize = 0;
+var fire_started: bool = false;
 
 const ThreadCb = *const fn (i32, ?*anyopaque, f64) callconv(.c) i32;
 
@@ -72,14 +76,17 @@ export fn nox_test_thread_fire(cb: ?ThreadCb, userdata: ?*anyopaque, n: i32) cal
     if (comptime !is_posix) return;
     const f = cb orelse return;
     fire_args = .{ .cb = f, .ud = userdata, .n = n };
-    var t: std.c.pthread_t = undefined;
-    if (std.c.pthread_create(&t, null, threadBody, &fire_args) == .SUCCESS) fire_thread = t;
+    var t: usize = 0;
+    if (pthread_create(&t, null, threadBody, &fire_args) == 0) {
+        fire_thread = t;
+        fire_started = true;
+    }
 }
 
 export fn nox_test_thread_join() callconv(.c) void {
     if (comptime !is_posix) return;
-    if (fire_thread) |t| _ = std.c.pthread_join(t, null);
-    fire_thread = null;
+    if (fire_started) _ = pthread_join(fire_thread, null);
+    fire_started = false;
 }
 
 const std = @import("std");
