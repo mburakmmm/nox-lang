@@ -1,0 +1,20 @@
+# v2.1.108: nox.json gidiş-dönüşte tamsayı/ondalık yazımını korur (1 ile 1.0 ayrı kalır, Python json.dumps ile aynı).
+import nox.json
+
+v: JsonValue = nox.json.parse("[1, 1.0, 2.5, 3e0, 1e2, -0, -0.0, 0.0, 10, 1.5e300, 9007199254740993, 123456789012345678901234567890]")
+print(nox.json.dump(v))
+print(nox.json.dump_pretty(nox.json.parse("{\"a\": 1.0, \"b\": [2, 2.0]}"), 2))
+x: JsonValue = nox.json.array_get(v, 1)
+print(nox.json.as_number(x))
+print(nox.json.as_int(x))
+print(nox.json.number_text(x))
+print(nox.json.number_text(nox.json.array_get(v, 0)))
+print(nox.json.as_int(nox.json.array_get(v, 4)))
+print(nox.json.as_int(nox.json.array_get(v, 10)))
+w: nox.json.JsonWriter = nox.json.JsonWriter()
+w.begin_array()
+w.write_int(1)
+w.write_float(1.0)
+w.write_float(2.5)
+w.end_array()
+print(w.build())

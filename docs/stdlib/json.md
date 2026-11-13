@@ -27,7 +27,7 @@ Every node is exactly one of null, boolean, number, string, array or object. Tes
 | `is_null(v)`, `is_bool(v)`, `is_number(v)`, `is_string(v)`, `is_array(v)`, `is_object(v)` | kind tests |
 | `as_bool(v)`, `as_number(v)`, `as_string(v)` | the value; `as_number` is a `float` (integers above 2^53 lose precision as a `float`: use `as_int`) |
 | `as_int(v)` | the exact `int` value of a number (a `JsonError` if it is not an integer or does not fit in `int`); integers of 2^53 and above keep their exact text, so `9007199254740993` is not rounded |
-| `number_text(v)` | the number's decimal text (the exact text for integers of 2^53 and above); `dump` writes such integers unchanged |
+| `number_text(v)` | the number's decimal text (the exact text for integers of 2^53 and above, and `1.0` / `100.0` for a number written with a fraction or exponent); `dump` writes such numbers unchanged |
 | `array_len(v)`, `array_get(v, i)` | array length and element |
 | `object_len(v)`, `object_key(v, i)`, `object_value(v, i)` | an object's `i`-th entry, **in document order** |
 
@@ -75,7 +75,7 @@ To look a key up by name, loop over `object_key` (objects are small and ordered;
 
 | Function | Description |
 |---|---|
-| `dump(v)` | compact JSON text |
+| `dump(v)` | compact JSON text. A number keeps the way it was written: `1` stays `1`, `1.0` and `1e2` come back as `1.0` and `100.0` (like Python's `json.dumps`), so a parse/dump round trip never turns a float into an int |
 | `dump_pretty(v, indent)` | indented JSON, `indent` spaces per level |
 | `dump_string(s)` | a JSON string literal for `s`, with all required escapes |
 | `dump_number(n)` | a JSON number for a `float` (whole values print without `.0`) |

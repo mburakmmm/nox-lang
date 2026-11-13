@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.108]
+
+### Düzeltildi
+
+- **`nox.json.dump` tamsayı değerli ondalık sayıyı tamsayıya çeviriyordu** (`1.0` -> `1`, `1e2` -> `100`; CPython `1.0`/`100.0` yazar ve yeniden okununca tür değişiyordu): ayrıştırıcı, tamsayı değerli ama ondalık/üslü yazılmış sayıların `repr` metnini (`1.0`, `100.0`) düğümün `s` alanında taşır ve `dump` onu aynen yazar; `1` (tamsayı yazımı) ve `2.5` değişmedi, ek tahsis yalnızca bu nadir sayılar için. `number_text` aynı metni verir; `as_int(1.0)` hâlâ `1` döner. `-0` metni korunur. Fixture `json_float_fidelity` (Python çıktısıyla karşılaştırıldı), `docs/stdlib/json.md`
+
 ## [2.1.107]
 
 ### Eklendi

@@ -74,7 +74,8 @@ def as_number(v: JsonValue) -> float:
 def as_int(v: JsonValue) -> int:
     if v.kind != 2:
         raise JsonError("not a number")
-    if len(v.s) > 0:
+    # `s` büyük tamsayının tam metni (`123456789012345678`) ya da tamsayı değerli ondalığın metnidir (`1.0`, `1e2`: yalnızca `dump` için tutulur)
+    if len(v.s) > 0 and not ("." in v.s or "e" in v.s or "E" in v.s):
         try:
             return int(v.s)
         except ValueError as e:
@@ -140,8 +141,8 @@ def object_value(v: JsonValue, i: int) -> JsonValue:
 def dump_string(s: str) -> str:
     return nox_json_escape_string_raw(s)
 
-# JSON sayıları tek tipte (float) tutulur; tamsayı değerli olanlar `1` olarak yazılır (`1.0` değil) — Python'un
-# `json.dumps`ı int'i int olarak yazar ve JSON'da ayrım yoktur. Diğerleri `str(float)` (en kısa gidiş-dönüşlü).
+# JSON sayıları tek tipte (float) tutulur; s alanı boş olan tamsayı değerli sayılar `1` olarak yazılır. v2.1.108: AYRIŞTIRILAN `1.0`/`1e2` gibi ondalık yazımlar `s`te
+# `repr` metnini taşır ve `dump` onları `1.0`/`100.0` olarak yazar (Python `json.dumps` ile aynı, gidiş-dönüşte tür korunur). Diğerleri `str(float)` (en kısa gidiş-dönüşlü).
 def dump_number(n: float) -> str:
     if n < 1000000000000000.0 and n > -1000000000000000.0:
         i: int = int(n)

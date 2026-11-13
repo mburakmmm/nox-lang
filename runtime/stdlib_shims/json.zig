@@ -252,6 +252,19 @@ fn exactNumberText(rt: ?*anyopaque, shared: SharedEmpties, text: []const u8) ?[*
     return dupeToNoxStr(rt, text) orelse sharedEmptyStr(shared);
 }
 
+/// v2.1.108: ayrıştırılan, TAMSAYI DEĞERLİ ama ondalık/üslü yazılmış sayı (`1.0`, `1e2`) `int`e dönüşmesin diye `s` alanında Python `repr` metnini (`1.0`, `100.0`) taşır;
+/// `dump` onu aynen yazar. Tamsayı olarak yazılmış sayılar (`1`) ve tamsayı olmayanlar (`2.5`) paylaşılan boş `s` ile kalır (ek tahsis yok).
+fn floatLeafText(rt: ?*anyopaque, shared: SharedEmpties, f: f64) ?[*:0]const u8 {
+    if (std.math.isFinite(f) and f < 1000000000000000.0 and f > -1000000000000000.0) {
+        const i: i64 = @intFromFloat(f);
+        if (@as(f64, @floatFromInt(i)) == f) {
+            var fb: [64]u8 = undefined;
+            return exactNumberText(rt, shared, str_mod.formatFloatRepr(&fb, f));
+        }
+    }
+    return sharedEmptyStr(shared);
+}
+
 fn isPlainBigInteger(s: []const u8) bool {
     var digits = s;
     if (digits.len > 0 and digits[0] == '-') digits = digits[1..];
@@ -272,7 +285,7 @@ fn buildNode(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEmptie
             }
             break :blk makeLeaf(rt, shared, 2, false, @floatFromInt(i), sharedEmptyStr(shared));
         },
-        .float => |f| makeLeaf(rt, shared, 2, false, f, sharedEmptyStr(shared)),
+        .float => |f| makeLeaf(rt, shared, 2, false, f, floatLeafText(rt, shared, f)),
         .number_string => |s| makeLeaf(rt, shared, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, if (isPlainBigInteger(s)) exactNumberText(rt, shared, s) else sharedEmptyStr(shared)),
         .string => |s| blk: {
             const dup = dupeToNoxStr(rt, s) orelse break :blk null;
@@ -365,7 +378,7 @@ fn buildNodeFast(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEm
             }
             break :blk makeLeafFast(rt, shared, class_id, 2, false, @floatFromInt(i), sharedEmptyStr(shared));
         },
-        .float => |f| makeLeafFast(rt, shared, class_id, 2, false, f, sharedEmptyStr(shared)),
+        .float => |f| makeLeafFast(rt, shared, class_id, 2, false, f, floatLeafText(rt, shared, f)),
         .number_string => |s| makeLeafFast(rt, shared, class_id, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, if (isPlainBigInteger(s)) exactNumberText(rt, shared, s) else sharedEmptyStr(shared)),
         .string => |s| blk: {
             const dup = dupeToNoxStr(rt, s) orelse break :blk null;
@@ -979,7 +992,11 @@ const FastJson = struct {
         const integer_like = !std.mem.eql(u8, tok, "-0") and std.mem.indexOfAny(u8, tok, ".eE") == null;
         if (!integer_like) {
             const f = std.fmt.parseFloat(f64, tok) catch 0.0;
-            if (std.math.isFinite(f)) return self.leaf(rt, shared, 2, false, f, sharedEmptyStr(shared));
+            if (std.math.isFinite(f)) {
+                // `-0` JSON'da tamsayı yazımıdır (Python `0` yazar): işaretlenmez; `1.0`/`1e2` gibi tamsayı değerli ondalıklar `repr` metniyle işaretlenir
+                if (std.mem.eql(u8, tok, "-0")) return self.leaf(rt, shared, 2, false, f, sharedEmptyStr(shared));
+                return self.leaf(rt, shared, 2, false, f, floatLeafText(rt, shared, f));
+            }
             return self.leaf(rt, shared, 2, false, f, if (isPlainBigInteger(tok)) exactNumberText(rt, shared, tok) else sharedEmptyStr(shared));
         }
         if (std.fmt.parseInt(i64, tok, 10)) |i| {
