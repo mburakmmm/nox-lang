@@ -1,0 +1,69 @@
+# Faz 9.0 F3c (v2.1.134): DİNAMİK paylaşım — iç içe `list[list[int]]` ve `list[dict[str, int]]` alanları olan paylaşılan sınıf örneği. Dış blok kilitli sahipli eleman okuması; iç liste/sözlük elemanları
+# eklenmeden önce yayımlanır (iç blok `SHARED`, sözlük kilitli). Sızıntı/çift bırakma DebugAllocator ile yakalanır.
+class Board:
+    grid: list[list[int]]
+    tags: list[dict[str, int]]
+    n: int
+    def __init__(self: Board) -> None:
+        self.grid = [[0, 0], [0, 0]]
+        self.tags = [{"a": 1}]
+        self.n = 0
+    def add_row(self: Board, v: int) -> None:
+        self.grid.append([v, v + 1, v + 2])
+    def set_row(self: Board, i: int, v: int) -> None:
+        if i < len(self.grid):
+            self.grid[i] = [v, v]
+    def row_sum(self: Board, i: int) -> int:
+        if i < len(self.grid):
+            row: list[int] = self.grid[i]
+            s: int = 0
+            for x in row:
+                s = s + x
+            return s
+        return 0
+    def add_tag(self: Board, k: str) -> None:
+        d: dict[str, int] = {}
+        d[k] = len(k)
+        self.tags.append(d)
+    def tag_total(self: Board) -> int:
+        t: int = 0
+        for d in self.tags:
+            t = t + len(d)
+        return t
+
+board: Board = Board()
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 150:
+        board.add_row(j)
+        board.set_row(j % 7, id + j)
+        acc = acc + board.row_sum(j % 11) % 5
+        board.add_tag("k" + str(id) + "_" + str(j))
+        acc = acc + board.tag_total() % 3
+        k: int = 0
+        while k < 120:
+            acc = (acc * 31 + k + j + id) % 1000003
+            k = k + 1
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s > 0)
+    print(len(board.grid))
+    print(len(board.tags))
+    print(board.tag_total())
+
+mt: Task[None] = spawn main_task()
+await mt

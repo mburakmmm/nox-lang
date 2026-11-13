@@ -1119,7 +1119,20 @@ fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.St
             },
             // Skaler elemanlı liste alanı (F3a): blok yayımlanınca `SHARED` olur (büyüme kopyalama yoluna düşer), alan yuvası bariyerlidir.
             .list => {
-                const sh = shared_globals.listElemShape(f.info) orelse return false;
+                const sh = shared_globals.listElemShape(f.info) orelse {
+                    // F3c: iç içe skaler liste (`list[list[int|float|bool]]`) ve skaler değerli sözlük elemanları (`list[dict[K, skaler|str]]`).
+                    const ehi = f.info.elem_heap_info orelse return false;
+                    if (ehi.heap == .list) {
+                        if (ehi.nested != null or ehi.elem_is_str or ehi.dict_info != null) return false;
+                        if (ehi.elem_qtype != .l and ehi.elem_qtype != .d and ehi.elem_qtype != .b) return false;
+                    } else if (ehi.heap == .dict) {
+                        const di = ehi.dict_info orelse return false;
+                        if (di.value_heap != .none or di.value_is_class) return false;
+                        if (di.value_is_str) self.owned_dict_reads = true;
+                    } else return false;
+                    self.list_locks = true;
+                    continue;
+                };
                 if (sh.kind == 1) {
                     self.list_locks = true;
                 } else if (sh.kind == 2) {

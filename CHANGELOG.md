@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.134]
+
+### Eklendi (Faz 9.0 F3c: iç içe liste ve sözlük elemanlı paylaşılan liste alanları)
+
+- **Dinamik paylaşım F3c:** paylaşım-yetenekli sınıflarda `list[list[int|float|bool]]` ve `list[dict[K, skaler|str]]` alanları artık tek işçiye sabitlenmez. Dış blok F3b kilitleriyle korunur (sahipli eleman okuması, kilitli mutatörler); iç liste/sözlük elemanları paylaşılan listeye eklenmeden ÖNCE geçişli yayımlanır (iç blok `SHARED`, sözlük kilitli).
+- Test: iki backend golden `mn_dyn_list_nested_fields` (6 işçi; `add_row`/`set_row`/`row_sum`/`add_tag`/`tag_total`), 40 çalıştırmada 0 hata. Kalan (F4 ile): `list[list[str|Sınıf]]` ve yığın elemanlı iç listeler, routed olmayan global listeler (global yuva bariyeri).
+
 ## [2.1.133]
 
 ### Eklendi (Faz 9.0 F3b: yığın elemanlı paylaşılan listeler)
