@@ -58,6 +58,7 @@ fn expectCheckerErrorLlvm(comptime source: []const u8, expected_code: nox.checke
 
     var checker_state = nox.checker.Checker.init(allocator);
     checker_state.backend = .llvm;
+    checker_state.strict_spawn_shared_mutation = true; // GG.22 lint testleri
     const result = checker_state.checkModule(module);
     if (result) |_| {
         if (checker_state.diagnostics.items.len == 0) {
@@ -193,6 +194,7 @@ test "llvm: GG.20 — spawn'a geçen yerelin ÜRETTİĞİ IR'da nox_rc_alloc HÂ
 
     var checker_state = nox.checker.Checker.init(allocator);
     checker_state.backend = .llvm;
+    checker_state.strict_spawn_shared_mutation = true; // GG.22 lint testleri
     checker_state.checkModule(module) catch return error.FixtureNotWellTyped;
     if (checker_state.diagnostics.items.len > 0) return error.FixtureNotWellTyped;
 

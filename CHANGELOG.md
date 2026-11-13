@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.139]
+
+### Değişti (Faz 9.0: `SpawnSharedMutation` kısıtı gevşetildi)
+
+- **`spawn` ile paylaşılan `list`/`dict`/sınıfı değiştirmek artık geçerli:** spawn hedefinde paylaşılan parametreyi (doğrudan ya da geçişli) değiştirmek ve çağıranın `spawn`dan sonra `await`ten önce aynı yereli değiştirmesi derleme hatası DEĞİL. Gerekçe: paylaşılan sınıf/liste/sözlük erişimleri artık bariyerli ve bellek-güvenli (F1-F6, TSan ile doğrulandı). Anlam değişmedi: tek işlemler (`xs[i] = v`, `d[k] = v`, alan atama, `append` alan listesine) güvenli; skaler okuma-değiştirme-yazma (`x = x + 1`) atomik DEĞİL (kayıp güncelleme olabilir). Not: parametre OLAN listeye doğrudan `append` hâlâ desteklenmiyor (v1 codegen sınırı: büyüme yuvaya geri yazılamaz) — indeksle atama / sınıf alanı / sözlük kullanın.
+- Eski denetim silinmedi: `noxc check|build|run --strict-spawn-shared` (lint) ile aynı analiz açılır (`Checker.strict_spawn_shared_mutation`); `err_spawn_shared_*` golden testleri bu kipte çalışır.
+- Test: iki backend golden `mn_dyn_spawn_shared_mutation` (spawn hedefinde paylaşılan `list[str]` indeks ataması, `dict`, sınıf alanı + liste, çağıranın spawn sonrası yazması; 6 işçi): 30 çalıştırmada 0 hata, TSan 0 rapor.
+
 ## [2.1.138]
 
 ### Eklendi (Faz 9.0 F5 tamam + F6: tek işçiye düşen durum kalmadı, ThreadSanitizer)

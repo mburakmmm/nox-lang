@@ -179,6 +179,7 @@ fn printHelp(is_tr: bool) void {
             \\  -o <çıktı>             çıktı ikilisinin adı (yalnızca build ile)
             \\  --profile <hosted|freestanding>  stdlib import allowlist'i (build/check ile, varsayılan: hosted)
             \\  --backend <llvm|qbe>   kod üretim backend'i (varsayılan: llvm; freestanding/--target/--emit-asm/-g yada clang ve zig yoksa qbe)
+            \\  --strict-spawn-shared  lint: spawn ile paylaşılan list/dict/sınıfın eş zamanlı değiştirilmesini derleme hatası yap (varsayılan kapalı)
             \\
             \\Örnekler:
             \\  noxc run main.nox -- a b c
@@ -230,6 +231,7 @@ fn printHelp(is_tr: bool) void {
             \\  -o <output>            output binary name (build only)
             \\  --profile <hosted|freestanding>  stdlib import allowlist (with build/check, default: hosted)
             \\  --backend <llvm|qbe>   code generation backend (default: llvm; qbe for freestanding/--target/--emit-asm/-g or when neither clang nor zig is found)
+            \\  --strict-spawn-shared  lint: reject concurrent mutation of lists/dicts/classes shared through spawn (off by default)
             \\
             \\Examples:
             \\  noxc run main.nox -- a b c
@@ -1381,6 +1383,8 @@ const BuildOpts = struct {
     /// `--target`, `--emit-asm`, Windows, clang yok). `--backend qbe|llvm` ve (eski ad) `--release`
     /// seçimi açıkça sabitler.
     backend: BackendChoice = .auto,
+    /// `--strict-spawn-shared`: `spawn` ile paylaşılan listeyi/sınıfı/sözlüğü eş zamanlı değiştirmeyi derleme hatası yapan lint (varsayılan kapalı).
+    strict_spawn_shared: bool = false,
     /// Faz F.2 (bkz. plan dosyası "capability sistemi"): `--profile
     /// <hosted|freestanding>` — `checker_state.profile`e AKTARILIR
     /// (bkz. `buildOne`). VARSAYILAN `.hosted` — mevcut TÜM davranış
@@ -1544,6 +1548,8 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             opts.verbose = true;
         } else if (std.mem.eql(u8, arg, "-g")) {
             opts.debug_info = true;
+        } else if (std.mem.eql(u8, arg, "--strict-spawn-shared")) {
+            opts.strict_spawn_shared = true;
         } else if (std.mem.eql(u8, arg, "--release")) {
             opts.backend = .llvm;
         } else if (std.mem.eql(u8, arg, "--backend")) {
@@ -1681,7 +1687,7 @@ fn isRunnableOnHost(profile: codegen.Profile, target: []const u8) bool {
 fn buildFlagTakesValue(arg: []const u8) ?bool {
     const valued = [_][]const u8{ "-o", "--backend", "--profile", "--target" };
     for (valued) |f| if (std.mem.eql(u8, arg, f)) return true;
-    const bare = [_][]const u8{ "--dump", "-v", "-g", "--release", "--asyncify", "--threads", "--emit-asm", "--emit-obj", "--emit-static-lib", "--emit-shared-lib" };
+    const bare = [_][]const u8{ "--dump", "-v", "-g", "--release", "--strict-spawn-shared", "--asyncify", "--threads", "--emit-asm", "--emit-obj", "--emit-static-lib", "--emit-shared-lib" };
     for (bare) |f| if (std.mem.eql(u8, arg, f)) return false;
     return null;
 }
@@ -2725,6 +2731,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     checker_state.wasm_freestanding = if (opts.profile == .hosted and opts.target != null) (if (qbe_target.hostedTargetInfo(opts.target.?)) |ht| ht.wasm_freestanding else false) else false;
     // `build` ile aynı backend'e göre denetle (checker'ın `spawn` tip kuralları backend'e bağlıdır).
     checker_state.backend = if (resolveRelease(gpa, io, opts.backend, opts.profile, opts.target, opts.emit_asm, opts.debug_info)) .llvm else .qbe;
+    checker_state.strict_spawn_shared_mutation = opts.strict_spawn_shared;
     checker_state.checkModule(module) catch |e| {
         printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         std.process.exit(1);
@@ -2837,6 +2844,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     var checker_state = checker.Checker.init(a);
     applyDeniedCapabilities(&checker_state);
     checker_state.backend = backend;
+    checker_state.strict_spawn_shared_mutation = opts.strict_spawn_shared;
     checker_state.checkModule(module) catch |e| {
         printErr("type error ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(no message)" });
         std.process.exit(1);

@@ -1,0 +1,43 @@
+# Faz 9.0 (v2.1.139): `spawn` hedefinde paylaşılan list/dict/sınıf PARAMETRESİNİ değiştirmek ve çağıranın `spawn`dan sonra `await`ten önce aynı değeri değiştirmesi artık
+# geçerlidir (`SpawnSharedMutation` kısıtı kaldırıldı; `--strict-spawn-shared` ile lint olarak açılır): yazılar bariyerli/kilitli, bellek güvenli.
+class Log:
+    lines: list[str]
+    tag: str
+    def __init__(self: Log) -> None:
+        self.lines = []
+        self.tag = "t"
+
+async def worker(id: int, xs: list[str], d: dict[str, int], lg: Log, out: Channel[int]) -> None:
+    j: int = 0
+    while j < 100:
+        xs[j % 5] = "w" + str(id) + "_" + str(j)
+        d["k" + str(j % 7)] = j
+        lg.lines.append("l" + str(j))
+        lg.tag = "t" + str(id)
+        j = j + 1
+    await out.send(id)
+
+async def main_task() -> None:
+    xs: list[str] = ["a", "b", "c", "d", "e"]
+    d: dict[str, int] = {}
+    lg: Log = Log()
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, xs, d, lg, out)
+        k = k + 1
+    xs[0] = "main"
+    lg.lines.append("main")
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s)
+    print(len(xs))
+    print(len(d) <= 7)
+    print(len(lg.lines))
+    print(len(lg.tag) > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

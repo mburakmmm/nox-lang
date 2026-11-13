@@ -37,6 +37,7 @@ fn expectGoldenLlvm(comptime source: []const u8, comptime expected: []const u8) 
 
     var checker_state = nox.checker.Checker.init(allocator);
     checker_state.backend = .llvm;
+    checker_state.strict_spawn_shared_mutation = true; // bu fixture'lar sıkı lint analizini sınar
 
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();

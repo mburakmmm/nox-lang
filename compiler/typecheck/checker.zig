@@ -784,6 +784,9 @@ pub const Checker = struct {
     /// `checkNoPostSpawnCallerMutation` arena ömrüyle sınırlar (başında/sonunda sıfırlanır).
     flow_jump_states: std.ArrayListUnmanaged(SpawnFlowState) = .empty,
     backend: types.Backend = .qbe,
+    /// Faz 9.0 (v2.1.139): `spawn` hedefinde paylaşılan parametreyi / `spawn`dan sonra `await`ten önce paylaşılan yereli değiştirme denetimi (`SpawnSharedMutation`) varsayılan KAPALI —
+    /// paylaşılan sınıf/liste/sözlük erişimi artık bariyerli ve bellek-güvenlidir (skaler okuma-değiştirme-yazma hâlâ atomik değildir). `--strict-spawn-shared` ile (lint) açılır.
+    strict_spawn_shared_mutation: bool = false,
 
     /// Faz F.2 (bkz. plan dosyası "capability sistemi"): `Backend`den
     /// TAMAMEN BAĞIMSIZ bir EKSEN — `.freestanding` İKEN `collectImports`
@@ -5819,14 +5822,14 @@ pub const Checker = struct {
                 if (is_shared_kind) try shared_params.append(self.allocator, .{ .name = p.name, .ty = pt });
             }
         }
-        if (shared_params.items.len > 0) {
+        if (self.strict_spawn_shared_mutation and shared_params.items.len > 0) {
             try self.checkNoSpawnSharedMutation(fd.name, fd.body, shared_params.items);
         }
         // GG.22: bu, `is_spawn_target`den BAĞIMSIZDIR — HERHANGİ bir
         // fonksiyon bir `spawn` çağırabilir (spawn'ın HEDEFİ olmasına GEREK
         // YOK), bu YÜZDEN her fonksiyon gövdesi bu YENİ, AYRI kontrolden
         // geçirilir (bkz. `checkNoPostSpawnCallerMutation`nin belge notu).
-        try self.checkNoPostSpawnCallerMutation(fd.body, fd.params);
+        if (self.strict_spawn_shared_mutation) try self.checkNoPostSpawnCallerMutation(fd.body, fd.params);
         const ret = try self.typeExprToType(fd.return_type);
         var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async, .path = fd.name, .cls_alias = self.cls_alias_by_func.get(fd.name) };
         for (fd.body) |*s| try self.checkStmt(&ctx, s);
