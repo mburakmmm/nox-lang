@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.128]
+
+### Düzeltildi
+
+- `stress.yml` (v2.1.127'de eklenen `mn-shared-stress` işi): adım adındaki `: ` YAML'ı bozuyordu ("workflow file issue"); düzeltildi ve tüm iş akışları Ruby `Psych` ile ayrıştırılarak doğrulandı.
+
 ## [2.1.127]
 
 ### Düzeltildi / Eklendi (Faz 9 kontrol/debug)
