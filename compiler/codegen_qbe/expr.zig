@@ -624,6 +624,9 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     if (obj.heap == .str) return self.genStrIndex(obj, idx);
     if (obj.heap != .list) return error.Unsupported;
     var index_v = try self.genExpr(idx.index.*);
+    // Faz 9.0 F3b: yığın elemanlı liste — paylaşılan blokta eleman okuması (sınır + yükleme + retain) blok kilidi altında yapılır, sonuç sahiplidir.
+    const blk_locked = dyn_share.listHeapElems(self, obj);
+    const blk_flag: ?[]const u8 = if (blk_locked) try dyn_share.emitBlockLock(self, obj.text) else null;
 
     // Faz S.2: sınır kontrolü — `genStrIndex`in AYNI "önce doğrula, hata
     // dalında raise et, phi'SİZ ok'e atla" deseni (bkz. onun belge notu).
@@ -648,6 +651,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         try self.qbeJnzCold(oob_t, err_label, ok_label);
         const cold_start = self.beginCold();
         try self.qbeLabel(err_label);
+        if (blk_flag) |fl| try dyn_share.emitCondUnlock(self, fl, obj.text);
 
         const msg_value = try self.emitStringLiteral("list index out of range");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
@@ -698,6 +702,14 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     // DEĞİL) geçirmek, onu BİR BELLEK ADRESİ SANIP atomic-add YAPMAYA
     // ÇALIŞIRDI (GERÇEK bir bellek bozulması riski — ÇALIŞTIRILMADAN
     // ÖNCE fark edilip DÜZELTİLDİ).
+    if (blk_flag) |fl| {
+        try self.emitInlineRetain(result, dyn_share.listElemHeap(obj));
+        try dyn_share.emitCondUnlock(self, fl, obj.text);
+        try self.releaseIfTemporary(idx.obj.*, obj);
+        var owned = valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int);
+        owned.always_fresh = true;
+        return owned;
+    }
     if (isTemporaryExpr(idx.obj.*) and obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap)) {
         try self.emitInlineRetain(result, obj.elem_heap_info.?.heap);
     }
@@ -1607,7 +1619,17 @@ pub fn genStrCompare(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value) Codeg
 /// İki aynı-tipli değerin eşitliği (`w` 0/1 temp metni): `genBinary`nin `==` dallarıyla AYNI yollar —
 /// `str` (`strcmp`), `class`/`list` (`$X_eq`), skaler (ortak tipe `convert` + `ceq*`). `genIn` liste elemanlarını
 /// aranan değerle karşılaştırmak için kullanır.
-pub fn emitValueEq(self: *Codegen, l0: Value, r0: Value) CodegenError![]const u8 {
+pub fn emitValueEq(self: *Codegen, l0_in: Value, r0_in: Value) CodegenError![]const u8 {
+    var l0 = l0_in;
+    var r0 = r0_in;
+    var sn_l: ?dyn_share.Snap = null;
+    var sn_r: ?dyn_share.Snap = null;
+    if (l0.heap == .list and r0.heap == .list) {
+        sn_l = try dyn_share.snapshotRead(self, l0);
+        sn_r = try dyn_share.snapshotRead(self, r0);
+        l0 = sn_l.?.v;
+        r0 = sn_r.?.v;
+    }
     if (l0.heap == .str and r0.heap == .str) return (try self.genStrCompare(.eq, l0, r0)).text;
     if ((l0.heap == .list or l0.heap == .class) and r0.heap == l0.heap) {
         const t = try self.newTemp();
@@ -1619,6 +1641,8 @@ pub fn emitValueEq(self: *Codegen, l0: Value, r0: Value) CodegenError![]const u8
             const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{fn_name});
             try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
         }
+        if (sn_l) |s| try dyn_share.releaseSnap(self, s);
+        if (sn_r) |s| try dyn_share.releaseSnap(self, s);
         return t;
     }
     if (l0.heap != .none or r0.heap != .none) return error.Unsupported;
@@ -1750,7 +1774,9 @@ pub fn genIn(self: *Codegen, b: ast.Binary) CodegenError!Value {
             found = t;
         },
         .list => {
-            const hit = try emitListFind(self, coll, x);
+            const sn = try dyn_share.snapshotRead(self, coll);
+            const hit = try emitListFind(self, sn.v, x);
+            try dyn_share.releaseSnap(self, sn);
             const w = try self.newTemp();
             try self.qbeOp2Imm(w, .w, "cnel", hit, -1);
             found = w;
@@ -2070,8 +2096,12 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     if (l0.heap == .list and r0.heap == .list and b.op == .add) {
         try self.checkNoLowlevelEscape(l0);
         try self.checkNoLowlevelEscape(r0);
+        const sn_l = try dyn_share.snapshotRead(self, l0);
+        const sn_r = try dyn_share.snapshotRead(self, r0);
         const result_t = try self.newTemp();
-        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_list_concat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text }, .{ .ty = .l, .text = try self.listEszLit(l0) }, .{ .ty = .w, .text = self.listKindLit(l0) } });
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_list_concat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = sn_l.v.text }, .{ .ty = .l, .text = sn_r.v.text }, .{ .ty = .l, .text = try self.listEszLit(l0) }, .{ .ty = .w, .text = self.listKindLit(l0) } });
+        try dyn_share.releaseSnap(self, sn_l);
+        try dyn_share.releaseSnap(self, sn_r);
         try self.releaseIfTemporary(b.left.*, l0);
         try self.releaseIfTemporary(b.right.*, r0);
         return self.freshListValue(l0, result_t);
@@ -2082,7 +2112,9 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         try self.checkNoLowlevelEscape(lst);
         const n = try self.convert(n0, .l);
         const result_t = try self.newTemp();
-        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_list_repeat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = lst.text }, .{ .ty = .l, .text = n.text }, .{ .ty = .l, .text = try self.listEszLit(lst) }, .{ .ty = .w, .text = self.listKindLit(lst) } });
+        const sn_lst = try dyn_share.snapshotRead(self, lst);
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_list_repeat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = sn_lst.v.text }, .{ .ty = .l, .text = n.text }, .{ .ty = .l, .text = try self.listEszLit(lst) }, .{ .ty = .w, .text = self.listKindLit(lst) } });
+        try dyn_share.releaseSnap(self, sn_lst);
         try self.releaseIfTemporary(if (l0.heap == .list) b.left.* else b.right.*, lst);
         return self.freshListValue(lst, result_t);
     }
@@ -2485,7 +2517,11 @@ pub fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
 
 fn genPrintFragmentRaw(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .dict) return genPrintDict(self, v);
-    if (v.heap == .list) return self.genPrintList(v);
+    if (v.heap == .list) {
+        const sn = try dyn_share.snapshotRead(self, v);
+        try self.genPrintList(sn.v);
+        return dyn_share.releaseSnap(self, sn);
+    }
     if (v.heap == .class) return self.genPrintClass(v);
     if (v.fixed_int) |kind| {
         const widened = try self.widenFixedIntForPrint(v, kind);

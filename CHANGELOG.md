@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.133]
+
+### Eklendi (Faz 9.0 F3b: yığın elemanlı paylaşılan listeler)
+
+- **Dinamik paylaşım F3b:** paylaşım-yetenekli sınıflarda `list[str]` / `list[Sınıf]` (sınıf kendisi dinamik-uygun, `__eq__`/`__repr__`/`__str__` tanımsız) alanları artık tek işçiye sabitlenmez (`list_locks` kipi). Paylaşılan (`SHARED`) liste bloğunda: eleman okuması (`xs[i]`) blok kilidi altında sınır + yükleme + retain yapar (sahipli sonuç); `append`/`insert`/`pop`/`pop(i)`/`remove`/`sort`/`reverse`/`clear`/`copy`/`del xs[i]`/indeksle atama tutan örnek kilidi + blok kilidi altında çalışır (hata/raise yolları kilidi bırakır, eski eleman kilit DIŞINDA bırakılır); `for` her yinelemede kilit altında uzunluğu yeniden doğrulayıp sahipli eleman yükler; `in`/`==`/`+`/`*`/dilim/anlama/`print` salt-okunur tüketiciler paylaşılan blokta kilit altında özel kopya (anlık görüntü) üzerinde çalışır. Yeni elemanlar paylaşılan listeye eklenmeden yayımlanır; paylaşılan bloktan büyüyen blok da paylaşılandır (skaler listeler dahil).
+- Satır içi kod yalnız `list_locks` açıkken değişir (diğer programların IR'ı aynı). Bilinen kısıt: `insert` = ekle + sona-taşı iki ayrı kilit penceresidir (ara durum görünür, bellek güvenli).
+- Test: iki backend golden `mn_dyn_list_heap_fields` (6 işçi) ve `mn_dyn_list_heap_ops` (tüm yöntemler); blok kilidi kapatılınca çekişmeli program 15/15 çift bırakma verir (negatif kontrol), kilitli 15/15 temiz; 40 çalıştırmada 0 hata.
+
 ## [2.1.132]
 
 ### Eklendi (Faz 9.0 F3a: paylaşım-yetenekli sınıfın skaler elemanlı liste alanı)

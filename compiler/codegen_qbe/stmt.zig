@@ -10,6 +10,7 @@ const abi = @import("abi.zig");
 const shared_globals = @import("shared_globals.zig");
 const dyn_share = @import("dyn_share.zig");
 const expr_mod = @import("expr.zig");
+const calls = @import("calls.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
 
@@ -485,13 +486,13 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
 /// (YENİ yazılan DEĞER, aşağıda) üzerindeki AYRI `checkNoLowlevelEscape`
 /// çağrısı (GERÇEKTEN bir arena-değerinin LİSTEYE kaçmasını önlediği İçİn)
 /// KORUNDU, DEĞİŞMEDİ.
-pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
-    if (obj.heap != .list) return error.Unsupported;
+pub fn genListAssign(self: *Codegen, obj0: Value, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
+    if (obj0.heap != .list) return error.Unsupported;
     var index_v = try self.genExpr(idx.index.*);
 
     const len_t = try self.newTemp();
     self.setMemTag(.list_len);
-    try self.qbeLoadL(len_t, obj.text);
+    try self.qbeLoadL(len_t, obj0.text);
     self.setMemTag(.none);
     index_v.text = try expr_mod.normalizeNegativeIndex(self, idx.index.*, index_v.text, len_t);
     // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
@@ -512,18 +513,35 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
     // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
     // yeniden eklendi, döngü testiyle DOĞRULANDI.
-    try self.releaseIfTemporary(idx.obj.*, obj);
+    try self.releaseIfTemporary(idx.obj.*, obj0);
     try self.emitRaisePropagate();
     try self.stashCold(cold_start);
 
     try self.qbeLabel(ok_label);
     // v1.161.0: hedef (liste elemanı) tipi biliniyor → `xs[i] = []` / `xs[i] = {}` boş literalleri çözülebilir.
-    const elem_target = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int));
+    const elem_target = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", obj0.elem_qtype, obj0.elem_heap_info, obj0.elem_is_str, obj0.elem_fixed_int));
     const value_v0 = try self.genExprForTarget(value_expr, elem_target);
     try self.checkNoLowlevelEscape(value_v0);
     const retained = try self.retainIfAliasing(value_expr, value_v0);
-    const val = try self.convert(retained, obj.elem_qtype);
+    const val = try self.convert(retained, obj0.elem_qtype);
 
+    // Faz 9.0 F3b: yığın elemanlı paylaşılan liste — yeni eleman yayımlanır, sonra kilit altında sınır yeniden doğrulanıp yer değiştirilir (eski eleman kilit dışında bırakılır).
+    const mctx = try dyn_share.enterMut(self, idx.obj.*, obj0);
+    const obj = mctx.obj;
+    var finished = false;
+    if (mctx.active) {
+        try dyn_share.emitPublishElemIfShared(self, obj.text, val.text, obj);
+        const len2 = try self.newTemp();
+        try self.qbeLoadL(len2, obj.text);
+        const idx2 = try expr_mod.normalizeNegativeIndex(self, idx.index.*, index_v.text, len2);
+        index_v.text = idx2;
+        const oob2 = try self.newTemp();
+        try self.qbeOp2(oob2, .w, "cugel", idx2, len2);
+        var vv = val;
+        vv.always_fresh = true;
+        const rels2 = [_]calls.RelPair{ .{ .e = idx.obj.*, .v = obj0 }, .{ .e = value_expr, .v = vv } };
+        try calls.emitColdListError(self, oob2, "IndexError", "list index out of range", &rels2);
+    }
     const byte_off = try self.newTemp();
     try optimizations.emitScaledByteOffset(self, byte_off, index_v.text, qbeSizeOf(obj.elem_qtype));
     const off16 = try self.newTemp();
@@ -556,13 +574,16 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
         // (derleyicinin KENDİSİ çökerdi, Nox-seviyesi bir hata DEĞİL)
         // ÇÖKERDİ. `elem_heap_info.dict_info` BURADAN DOĞRU akıtılır.
         const elem_dict_info: ?*const DictInfo = if (obj.elem_heap_info) |ehi| ehi.dict_info else null;
+        try dyn_share.finishMut(self, mctx);
+        finished = true;
         try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested, elem_dict_info);
     } else {
         if (obj.elem_qtype != .b and obj.elem_qtype != .sb and obj.elem_qtype != .h and obj.elem_qtype != .sh) self.setMemTag(.list_elem);
         try self.qbeStore(obj.elem_qtype, val.text, addr);
         self.setMemTag(.none);
     }
-    try self.releaseIfTemporary(idx.obj.*, obj);
+    if (!finished) try dyn_share.finishMut(self, mctx);
+    try self.releaseIfTemporary(idx.obj.*, obj0);
 }
 
 /// `d[key] = value` — `nox_dict_set`e lowerlanır (bkz. `genDictLit`in
@@ -1226,6 +1247,8 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     try self.qbeLoadL(list_ptr, list_info.slot);
     const len_t = try self.newTemp();
     try self.qbeLoadL(len_t, list_ptr);
+    // Faz 9.0 F3b: yığın elemanlı paylaşılan liste — her yinelemede blok kilidi altında uzunluk yeniden doğrulanır, eleman sahipli (retain) yüklenir.
+    const iter_locked = dyn_share.listHeapElems(self, .{ .text = list_ptr, .qtype = .l, .heap = .list, .elem_qtype = list_info.elem_qtype, .elem_heap_info = list_info.elem_heap_info, .elem_is_str = list_info.elem_is_str });
 
     const cond_label = try self.newLabel("forlist_cond");
     const body_label = try self.newLabel("forlist_body");
@@ -1244,9 +1267,31 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     const idx_cur = try self.newTemp();
     try self.qbeLoadL(idx_cur, idx_slot);
     const cmp = try self.newTemp();
-    try self.qbeOp2(cmp, .w, "csltl", idx_cur, len_t);
+    if (iter_locked) {
+        const len_now = try self.newTemp();
+        try self.qbeLoadL(len_now, list_ptr);
+        try self.qbeOp2(cmp, .w, "csltl", idx_cur, len_now);
+    } else {
+        try self.qbeOp2(cmp, .w, "csltl", idx_cur, len_t);
+    }
     try self.qbeJnz(cmp, body_label, end_label);
     try self.qbeLabel(body_label);
+    var iter_flag: ?[]const u8 = null;
+    if (iter_locked) {
+        const fl = try dyn_share.emitBlockLock(self, list_ptr);
+        iter_flag = fl;
+        const len2 = try self.newTemp();
+        try self.qbeLoadL(len2, list_ptr);
+        const still = try self.newTemp();
+        try self.qbeOp2(still, .w, "csltl", idx_cur, len2);
+        const go_label = try self.newLabel("forlist_go");
+        const bail_label = try self.newLabel("forlist_bail");
+        try self.qbeJnz(still, go_label, bail_label);
+        try self.qbeLabel(bail_label);
+        try dyn_share.emitCondUnlock(self, fl, list_ptr);
+        try self.qbeJmp(end_label);
+        try self.qbeLabel(go_label);
+    }
 
     const byte_off = try self.newTemp();
     // v1.142.19: adım ve yükleme LİSTENİN eleman depolama tipinden (`.b` = 1 bayt), döngü değişkeni ise
@@ -1263,6 +1308,7 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
         try self.releaseSlotIfSet(loop_var);
         try self.emitInlineRetain(elem_val, loop_var.heap);
     }
+    if (iter_flag) |fl| try dyn_share.emitCondUnlock(self, fl, list_ptr);
     try self.qbeStore(loop_var.qtype, elem_val, loop_var.slot);
 
     try pushLoop(self, end_label, step_label);

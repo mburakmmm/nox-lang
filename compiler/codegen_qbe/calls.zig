@@ -2676,6 +2676,13 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         try self.qbeLoadL(t, recv_addr);
         break :blk t;
     } else obj.text;
+    // Faz 9.0 F3b: yığın elemanlı paylaşılan liste — blok kilidi (büyüme yolunda eski blok serbest bırakılmadan ÖNCE bırakılır) + yeni elemanın yayımlanması.
+    const blk_heap = dyn_share.listHeapElems(self, obj);
+    var blk_flag: ?[]const u8 = null;
+    if (blk_heap) {
+        blk_flag = try dyn_share.emitBlockLock(self, list_text);
+        try dyn_share.emitPublishElemIfShared(self, list_text, val.text, obj);
+    }
 
     // v2.1.87: başlık (uzunluk/kapasite) erişimleri TBAA `list_len`, eleman yazımı `list_elem` ile işaretlenir (bkz. `Codegen.mem_tag`): LLVM, ekleme
     // döngüsünde uzunluğu/kapasiteyi yazmaçta tutabilir. Büyütme yolundaki başlık yazımları etiketsiz kalır (her şeyle çakışabilir = güvenli).
@@ -2821,6 +2828,8 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // `genIndex`indeki AYNI bulgu, "elem_heap_info != null" ARTIK
     // (`list[u8]` GİBİ skaler-AMA-sabit-genişlikli elemanlarda) "heap-
     // yönetimli" ANLAMINA GELMİYOR.
+    // Faz 9.0 F3: paylaşılan bloktan büyüyen yeni blok da paylaşılandır (okuyucular/yazıcılar kilit kullanır).
+    if (dyn_holder != null or blk_heap) try dyn_share.emitPropagateShared(self, list_text, new_ptr);
     if (obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap) and obj.growable_arena == null) {
         try self.emitListElemRetainLoop(new_ptr, len_t, obj.elem_heap_info.?.heap);
     }
@@ -2850,6 +2859,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // arenanın KENDİSİ per-object free DESTEKLEMEZ (ESKİ chunk SADECE
     // "çöp" olarak, fonksiyonun `function_arena`sı TOPLU yıkılana kadar
     // yaşar — bu, arenaların DOĞAL/beklenen MODELİDİR).
+    if (blk_flag) |bf| try dyn_share.emitCondUnlock(self, bf, list_text);
     if (obj.growable_arena == null) {
         const should_free = try self.emitInlinePredecrement(list_text, .list);
         const free_label = try self.newLabel("append_free_old");
@@ -2900,6 +2910,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     self.setMemTag(.list_len);
     try self.qbeStoreL(fast_new_len, list_text);
     self.setMemTag(.none);
+    if (blk_flag) |bf| try dyn_share.emitCondUnlock(self, bf, list_text);
     try self.qbeJmp(done_label);
 
     try self.qbeLabel(done_label);
@@ -2918,8 +2929,10 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
 /// `nox_list_sort_int`/`_float`/`_str`den (bkz. `runtime/collections/
 /// list_sort.zig`) DOĞRU olanı, listenin BAŞLIKTAN (16 bayt) SONRAKİ
 /// ham eleman adresi + `len`i geçirerek çağırır.
-pub fn genListSort(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+pub fn genListSort(self: *Codegen, obj0: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
     if (args.len != 0) return error.Unsupported;
+    const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
+    const obj = mctx.obj;
 
     const len_t = try self.newTemp();
     try self.qbeLoadL(len_t, obj.text);
@@ -2934,11 +2947,12 @@ pub fn genListSort(self: *Codegen, obj: Value, a: ast.Attribute, args: []const a
         "nox_list_sort_int";
     const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fn_name});
     try self.qbeCall(null, fn_sym, &.{ .{ .ty = .l, .text = data_addr }, .{ .ty = .l, .text = len_t } });
+    try dyn_share.finishMut(self, mctx);
     // `.append`nin AKSİNE alıcı çıplak bir isimle SINIRLI DEĞİLDİR
     // (bkz. bu fonksiyonun belge notu) — `a.obj.*` bir GEÇİCİ (ör.
     // `getList().sort()`) OLABİLİR, `genDictMethod`nin `contains`/`len`
     // dallarıyla AYNI şekilde serbest bırakılmalıdır.
-    try self.releaseIfTemporary(a.obj.*, obj);
+    try self.releaseIfTemporary(a.obj.*, obj0);
     return .{ .text = "0", .qtype = .none };
 }
 
@@ -2953,7 +2967,10 @@ pub fn genListSort(self: *Codegen, obj: Value, a: ast.Attribute, args: []const a
 /// GEREKMEZ (net refcount DEĞİŞMEZ, sadece MÜLKİYET listeden çağırana
 /// TAŞINIR) — `genIndex`in ÖDÜNÇ-ALINMIŞ okumasının AKSİNE (bkz. onun
 /// belge notu), çünkü ORADA eleman listenin İÇİNDE KALIR.
-pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
+pub fn genListPop(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Value {
+    // Faz 9.0 F3b: yığın elemanlı paylaşılan listede tüm işlem (uzunluk, eleman, yeni uzunluk) kilit altında.
+    const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
+    const obj = mctx.obj;
     const len_t = try self.newTemp();
     try self.qbeLoadL(len_t, obj.text);
 
@@ -2964,6 +2981,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     try self.qbeJnzCold(empty_t, err_label, ok_label);
     const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
+    try dyn_share.abortMut(self, mctx);
     const msg_value = try self.emitStringLiteral("cannot pop from an empty list");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
@@ -2976,7 +2994,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     // (aşağıdaki `ok_label` SONRASI) serbest bırakma BURAYA HİÇ
     // ULAŞMAZ. `obj`nin BURADAN SONRA HİÇ kullanılmadığı İçin (SADECE
     // raise edip çıkıyoruz) serbest bırakmak GÜVENLİDİR.
-    try self.releaseIfTemporary(a.obj.*, obj);
+    try self.releaseIfTemporary(a.obj.*, obj0);
     try self.emitRaisePropagate();
     try self.stashCold(cold_start);
     try self.qbeLabel(ok_label);
@@ -2997,8 +3015,9 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     try self.qbeOp2(addr, .l, "add", obj.text, off8);
     const result = try self.newTemp();
     try self.loadListElem(result, obj.elem_qtype, addr);
+    try dyn_share.finishMut(self, mctx);
 
-    try self.releaseIfTemporary(a.obj.*, obj);
+    try self.releaseIfTemporary(a.obj.*, obj0);
 
     return abi.valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int);
 }
@@ -3031,7 +3050,7 @@ pub fn freshListValue(_: *Codegen, proto: Value, text: []const u8) Value {
     return v;
 }
 
-const RelPair = struct { e: ast.Expr, v: Value };
+pub const RelPair = struct { e: ast.Expr, v: Value };
 
 /// Listeden çıkarılan/silinen elemanı (heap-yönetimliyse) serbest bırakır.
 fn releaseListElem(self: *Codegen, obj: Value, elem_text: []const u8) CodegenError!void {
@@ -3048,6 +3067,7 @@ pub fn emitColdListError(self: *Codegen, bad: []const u8, class_name: []const u8
     try self.qbeJnzCold(bad, err_label, ok_label);
     const cold_start = self.beginCold();
     try self.qbeLabel(err_label);
+    if (self.cold_unlock) |cu| try dyn_share.abortMut(self, cu);
     const msg_value = try self.emitStringLiteral(msg);
     const cinfo = self.classes.get(class_name) orelse return error.Unsupported;
     const err_obj = try self.genConstructFromValues(class_name, cinfo, &.{msg_value}, null);
@@ -3074,17 +3094,22 @@ fn emitListRemoveAtChecked(self: *Codegen, obj: Value, index_expr: ast.Expr, idx
     return elem;
 }
 
-fn genListReverse(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
-    try self.checkNoLowlevelEscape(obj);
+fn genListReverse(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj0);
+    const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
+    const obj = mctx.obj;
     const esz = try listEszLit(self, obj);
     try self.qbeCall(null, "$nox_list_reverse", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = esz } });
-    try self.releaseIfTemporary(a.obj.*, obj);
+    try dyn_share.finishMut(self, mctx);
+    try self.releaseIfTemporary(a.obj.*, obj0);
     return .{ .text = "0", .qtype = .none };
 }
 
 /// `xs.clear()`: heap-yönetimli elemanları tek tek serbest bırakır, `len`i 0 yapar (kapasite korunur; sonraki `append` yerinde yazar).
-fn genListClear(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
-    try self.checkNoLowlevelEscape(obj);
+fn genListClear(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj0);
+    const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
+    const obj = mctx.obj;
     if (obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap)) {
         const idx_slot = try self.newTemp();
         try self.qbeAlloc(idx_slot, .eight, 8);
@@ -3111,17 +3136,21 @@ fn genListClear(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value
         try self.qbeLabel(done_label);
     }
     try self.qbeStoreImmL(0, obj.text);
-    try self.releaseIfTemporary(a.obj.*, obj);
+    try dyn_share.finishMut(self, mctx);
+    try self.releaseIfTemporary(a.obj.*, obj0);
     return .{ .text = "0", .qtype = .none };
 }
 
 /// `xs.copy()`: yüzeysel kopya — yeni bir blok, heap-yönetimli elemanlar RETAIN edilir (iki liste bağımsız sahip).
-fn genListCopy(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
-    try self.checkNoLowlevelEscape(obj);
+fn genListCopy(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj0);
+    const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
+    const obj = mctx.obj;
     const esz = try listEszLit(self, obj);
     const t = try self.newTemp();
     try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_list_copy", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = esz }, .{ .ty = .w, .text = listKindLit(self, obj) } });
-    try self.releaseIfTemporary(a.obj.*, obj);
+    try dyn_share.finishMut(self, mctx);
+    try self.releaseIfTemporary(a.obj.*, obj0);
     return freshListValue(self, obj, t);
 }
 
@@ -3134,24 +3163,29 @@ fn genListInsert(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast
     const idx = try self.convert(idx0, .l);
     _ = try genListAppend(self, obj, a, args[1..2]);
     const fresh = try self.genExpr(a.obj.*);
+    const mctx = try dyn_share.enterMut(self, a.obj.*, fresh);
     const esz = try listEszLit(self, obj);
-    try self.qbeCall(null, "$nox_list_move_last", &.{ .{ .ty = .l, .text = fresh.text }, .{ .ty = .l, .text = idx.text }, .{ .ty = .l, .text = esz } });
+    try self.qbeCall(null, "$nox_list_move_last", &.{ .{ .ty = .l, .text = mctx.obj.text }, .{ .ty = .l, .text = idx.text }, .{ .ty = .l, .text = esz } });
+    try dyn_share.finishMut(self, mctx);
     try self.releaseIfTemporary(a.obj.*, fresh);
     return .{ .text = "0", .qtype = .none };
 }
 
 /// `xs.remove(x)` / `xs.index(x)` / `xs.count(x)`: doğrusal tarama, eşitlik `==` ile aynı (`emitValueEq`). `remove`/`index`
 /// bulunamazsa `ValueError`; `remove` elemanı serbest bırakır.
-fn genListSearchOp(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+fn genListSearchOp(self: *Codegen, obj0: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
     if (args.len != 1) return error.Unsupported;
     const x = try self.genExpr(args[0]);
-    try self.checkNoLowlevelEscape(obj);
+    try self.checkNoLowlevelEscape(obj0);
     try self.checkNoLowlevelEscape(x);
-    const rels = [_]RelPair{ .{ .e = a.obj.*, .v = obj }, .{ .e = args[0], .v = x } };
+    const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
+    const obj = mctx.obj;
+    const rels = [_]RelPair{ .{ .e = a.obj.*, .v = obj0 }, .{ .e = args[0], .v = x } };
     if (std.mem.eql(u8, a.attr, "count")) {
         const n = try self.emitListCount(obj, x);
+        try dyn_share.finishMut(self, mctx);
         try self.releaseIfTemporary(args[0], x);
-        try self.releaseIfTemporary(a.obj.*, obj);
+        try self.releaseIfTemporary(a.obj.*, obj0);
         return .{ .text = n, .qtype = .l };
     }
     const idx = try self.emitListFind(obj, x);
@@ -3163,24 +3197,29 @@ fn genListSearchOp(self: *Codegen, obj: Value, a: ast.Attribute, args: []const a
         const elem = try self.loadListElemValueAt(obj, idx);
         const esz = try listEszLit(self, obj);
         try self.qbeCall(null, "$nox_list_remove_at", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = idx }, .{ .ty = .l, .text = esz } });
+        try dyn_share.finishMut(self, mctx);
         try releaseListElem(self, obj, elem.text);
         try self.releaseIfTemporary(args[0], x);
-        try self.releaseIfTemporary(a.obj.*, obj);
+        try self.releaseIfTemporary(a.obj.*, obj0);
         return .{ .text = "0", .qtype = .none };
     }
+    try dyn_share.finishMut(self, mctx);
     try self.releaseIfTemporary(args[0], x);
-    try self.releaseIfTemporary(a.obj.*, obj);
+    try self.releaseIfTemporary(a.obj.*, obj0);
     return .{ .text = idx, .qtype = .l };
 }
 
 /// `xs.pop(i)`: `i`indeksindeki elemanı çıkarıp döner (sahiplik listeden çağırana geçer); aralık dışı → `IndexError`.
-fn genListPopAt(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
-    try self.checkNoLowlevelEscape(obj);
+fn genListPopAt(self: *Codegen, obj0: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    try self.checkNoLowlevelEscape(obj0);
     const idx0 = try self.genExpr(args[0]);
     const idx = try self.convert(idx0, .l);
-    const rels = [_]RelPair{.{ .e = a.obj.*, .v = obj }};
+    const mctx = try dyn_share.enterMut(self, a.obj.*, obj0);
+    const obj = mctx.obj;
+    const rels = [_]RelPair{.{ .e = a.obj.*, .v = obj0 }};
     const elem = try emitListRemoveAtChecked(self, obj, args[0], idx.text, &rels);
-    try self.releaseIfTemporary(a.obj.*, obj);
+    try dyn_share.finishMut(self, mctx);
+    try self.releaseIfTemporary(a.obj.*, obj0);
     return elem;
 }
 
@@ -3226,9 +3265,10 @@ pub fn genSlice(self: *Codegen, sl: ast.Slice) CodegenError!Value {
         return .{ .text = result, .qtype = .l, .heap = .str };
     }
     if (obj.heap != .list) return error.Unsupported;
+    const sn_slice = try dyn_share.snapshotRead(self, obj);
     try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_list_slice", &.{
         .{ .ty = .l, .text = RT_PARAM },
-        .{ .ty = .l, .text = obj.text },
+        .{ .ty = .l, .text = sn_slice.v.text },
         .{ .ty = .l, .text = bounds[0].text },
         .{ .ty = .w, .text = bounds[0].has },
         .{ .ty = .l, .text = bounds[1].text },
@@ -3238,6 +3278,7 @@ pub fn genSlice(self: *Codegen, sl: ast.Slice) CodegenError!Value {
         .{ .ty = .l, .text = try listEszLit(self, obj) },
         .{ .ty = .w, .text = listKindLit(self, obj) },
     });
+    try dyn_share.releaseSnap(self, sn_slice);
     try self.releaseIfTemporary(sl.obj.*, obj);
     return freshListValue(self, obj, result);
 }
@@ -3363,9 +3404,11 @@ fn genCompFor(self: *Codegen, clauses: []const ast.CompClause, i: usize, fc: ast
         try self.qbeJmp(cond_label);
         try self.qbeLabel(end_label);
     } else {
-        const iter = try self.genExpr(fc.iterable);
-        try self.checkNoLowlevelEscape(iter);
-        if (iter.heap != .list) return error.Unsupported;
+        const iter0 = try self.genExpr(fc.iterable);
+        try self.checkNoLowlevelEscape(iter0);
+        if (iter0.heap != .list) return error.Unsupported;
+        const sn_iter = try dyn_share.snapshotRead(self, iter0);
+        const iter = sn_iter.v;
         const idx_slot = try self.newTemp();
         try self.qbeAlloc(idx_slot, .eight, 8);
         try self.qbeStoreImmL(0, idx_slot);
@@ -3388,7 +3431,8 @@ fn genCompFor(self: *Codegen, clauses: []const ast.CompClause, i: usize, fc: ast
         try self.qbeStoreL(idx2, idx_slot);
         try self.qbeJmp(cond_label);
         try self.qbeLabel(end_label);
-        try self.releaseIfTemporary(fc.iterable, iter);
+        try dyn_share.releaseSnap(self, sn_iter);
+        try self.releaseIfTemporary(fc.iterable, iter0);
     }
     self.restoreModCache(mc_snap);
     if (saved) |sv| {
@@ -3478,14 +3522,17 @@ pub fn genDictComp(self: *Codegen, dc: ast.DictComp) CodegenError!Value {
 }
 
 /// `del xs[i]`: elemanı çıkarıp serbest bırakır; aralık dışı → `IndexError`.
-pub fn genListDelete(self: *Codegen, ix: ast.Index, obj: Value) CodegenError!void {
-    try self.checkNoLowlevelEscape(obj);
+pub fn genListDelete(self: *Codegen, ix: ast.Index, obj0: Value) CodegenError!void {
+    try self.checkNoLowlevelEscape(obj0);
     const idx0 = try self.genExpr(ix.index.*);
     const idx = try self.convert(idx0, .l);
-    const rels = [_]RelPair{.{ .e = ix.obj.*, .v = obj }};
+    const mctx = try dyn_share.enterMut(self, ix.obj.*, obj0);
+    const obj = mctx.obj;
+    const rels = [_]RelPair{.{ .e = ix.obj.*, .v = obj0 }};
     const elem = try emitListRemoveAtChecked(self, obj, ix.index.*, idx.text, &rels);
+    try dyn_share.finishMut(self, mctx);
     try releaseListElem(self, obj, elem.text);
-    try self.releaseIfTemporary(ix.obj.*, obj);
+    try self.releaseIfTemporary(ix.obj.*, obj0);
 }
 
 /// v1.156.0: `print(a, b, ...)`, `print()`, `print(..., sep=s, end=e)` — tüm argümanlar ÖNCE değerlendirilir, sonra `sep` (varsayılan " ") ile

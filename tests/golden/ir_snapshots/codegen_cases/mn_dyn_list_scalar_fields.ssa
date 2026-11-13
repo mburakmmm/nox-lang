@@ -1691,7 +1691,7 @@ export function $Bag___init__(l %rt, l %p_self) {
     %t7 =w cnel %t6, 0
     jnz %t7, @dyn_wr_pub0, @dyn_wr_lockp1
 @dyn_wr_pub0
-    call $nox_obj_publish_begin(l %t2)
+    %t8 =w call $nox_obj_publish_begin(l %t2)
     jmp @dyn_wr_lockp1
 @dyn_wr_lockp1
     jnz %t7, @dyn_wr_lock2, @dyn_done3
@@ -1699,28 +1699,28 @@ export function $Bag___init__(l %rt, l %p_self) {
     call $nox_obj_lock(l %t1)
     jmp @dyn_done3
 @dyn_done3
-    %t8 =l add %t1, 8
-    %t9 =l loadl %t8
-    storel %t2, %t8
+    %t9 =l add %t1, 8
+    %t10 =l loadl %t9
+    storel %t2, %t9
     jnz %t7, @dyn_wr_unlock4, @dyn_done5
 @dyn_wr_unlock4
     call $nox_obj_unlock(l %t1)
     jmp @dyn_done5
 @dyn_done5
-    %t10 =w ceql %t9, 0
-    jnz %t10, @release_skip7, @release6
+    %t11 =w ceql %t10, 0
+    jnz %t11, @release_skip7, @release6
 @release6
-    %t11 =l add %t9, 8
-    %t12 =l loadl %t11
-    %t13 =l mul %t12, 8
-    %t14 =l add %t13, 16
-    %t15 =l sub %t9, 8
-    %t16 =l call $nox_atomic_rc_sub(l %t15, l 1)
-    %t18 =l and %t16, 4294967295
-    %t17 =w ceql %t18, 0
-    jnz %t17, @list_free9, @list_free_skip10
+    %t12 =l add %t10, 8
+    %t13 =l loadl %t12
+    %t14 =l mul %t13, 8
+    %t15 =l add %t14, 16
+    %t16 =l sub %t10, 8
+    %t17 =l call $nox_atomic_rc_sub(l %t16, l 1)
+    %t19 =l and %t17, 4294967295
+    %t18 =w ceql %t19, 0
+    jnz %t18, @list_free9, @list_free_skip10
 @list_free9
-    call $nox_rc_free_payload(l %rt, l %t9, l %t14)
+    call $nox_rc_free_payload(l %rt, l %t10, l %t15)
     jmp @list_free_done11
 @list_free_skip10
     jmp @list_free_done11
@@ -1729,47 +1729,47 @@ export function $Bag___init__(l %rt, l %p_self) {
 @release_skip7
     jmp @release_done8
 @release_done8
-    %t19 =l loadl %t0
-    %t20 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 0, %t20
-    %t21 =l add %t20, 8
+    %t20 =l loadl %t0
+    %t21 =l call $nox_rc_alloc(l %rt, l 16)
     storel 0, %t21
-    %t22 =l sub %t19, 8
-    %t23 =l loadl %t22
-    %t24 =l and %t23, 288230376151711744
-    %t25 =w cnel %t24, 0
-    jnz %t25, @dyn_wr_pub12, @dyn_wr_lockp13
+    %t22 =l add %t21, 8
+    storel 0, %t22
+    %t23 =l sub %t20, 8
+    %t24 =l loadl %t23
+    %t25 =l and %t24, 288230376151711744
+    %t26 =w cnel %t25, 0
+    jnz %t26, @dyn_wr_pub12, @dyn_wr_lockp13
 @dyn_wr_pub12
-    call $nox_obj_publish_begin(l %t20)
+    %t27 =w call $nox_obj_publish_begin(l %t21)
     jmp @dyn_wr_lockp13
 @dyn_wr_lockp13
-    jnz %t25, @dyn_wr_lock14, @dyn_done15
+    jnz %t26, @dyn_wr_lock14, @dyn_done15
 @dyn_wr_lock14
-    call $nox_obj_lock(l %t19)
+    call $nox_obj_lock(l %t20)
     jmp @dyn_done15
 @dyn_done15
-    %t26 =l add %t19, 16
-    %t27 =l loadl %t26
-    storel %t20, %t26
-    jnz %t25, @dyn_wr_unlock16, @dyn_done17
+    %t28 =l add %t20, 16
+    %t29 =l loadl %t28
+    storel %t21, %t28
+    jnz %t26, @dyn_wr_unlock16, @dyn_done17
 @dyn_wr_unlock16
-    call $nox_obj_unlock(l %t19)
+    call $nox_obj_unlock(l %t20)
     jmp @dyn_done17
 @dyn_done17
-    %t28 =w ceql %t27, 0
-    jnz %t28, @release_skip19, @release18
+    %t30 =w ceql %t29, 0
+    jnz %t30, @release_skip19, @release18
 @release18
-    %t29 =l add %t27, 8
-    %t30 =l loadl %t29
-    %t31 =l mul %t30, 8
-    %t32 =l add %t31, 16
-    %t33 =l sub %t27, 8
-    %t34 =l call $nox_atomic_rc_sub(l %t33, l 1)
-    %t36 =l and %t34, 4294967295
-    %t35 =w ceql %t36, 0
-    jnz %t35, @list_free21, @list_free_skip22
+    %t31 =l add %t29, 8
+    %t32 =l loadl %t31
+    %t33 =l mul %t32, 8
+    %t34 =l add %t33, 16
+    %t35 =l sub %t29, 8
+    %t36 =l call $nox_atomic_rc_sub(l %t35, l 1)
+    %t38 =l and %t36, 4294967295
+    %t37 =w ceql %t38, 0
+    jnz %t37, @list_free21, @list_free_skip22
 @list_free21
-    call $nox_rc_free_payload(l %rt, l %t27, l %t32)
+    call $nox_rc_free_payload(l %rt, l %t29, l %t34)
     jmp @list_free_done23
 @list_free_skip22
     jmp @list_free_done23
@@ -1778,9 +1778,9 @@ export function $Bag___init__(l %rt, l %p_self) {
 @release_skip19
     jmp @release_done20
 @release_done20
-    %t37 =l loadl %t0
-    %t38 =l add %t37, 24
-    storel 0, %t38
+    %t39 =l loadl %t0
+    %t40 =l add %t39, 24
+    storel 0, %t40
 @fn_end24
     ret
 }
@@ -1871,71 +1871,80 @@ export function $Bag_put(l %rt, l %p_self, l %p_v) {
     jmp @append_done11
 @append_shared16
     %t43 =l call $nox_list_grow(l %rt, l %t19, l %t30, l %t28)
-    %t44 =l mul %t20, 8
-    %t45 =l add %t44, 16
-    %t46 =l add %t43, %t45
-    storel %t14, %t46
-    %t47 =l add %t20, 1
-    storel %t47, %t43
-    %t48 =l add %t43, 8
-    storel %t27, %t48
-    %t49 =l sub %t19, 8
-    %t50 =l call $nox_atomic_rc_sub(l %t49, l 1)
-    %t52 =l and %t50, 4294967295
-    %t51 =w ceql %t52, 0
-    jnz %t51, @append_free_old17, @append_skip_free18
-@append_free_old17
-    %t54 =l mul %t22, 8
-    %t53 =l add %t54, 16
-    call $nox_rc_free_payload(l %rt, l %t19, l %t53)
-    jmp @append_skip_free18
-@append_skip_free18
+    %t44 =l sub %t19, 8
+    %t45 =l loadl %t44
+    %t46 =l and %t45, 288230376151711744
+    %t47 =w cnel %t46, 0
+    jnz %t47, @dyn_grow_pub17, @dyn_done18
+@dyn_grow_pub17
+    call $nox_obj_publish_begin(l %t43)
+    jmp @dyn_done18
+@dyn_done18
+    %t48 =l mul %t20, 8
+    %t49 =l add %t48, 16
+    %t50 =l add %t43, %t49
+    storel %t14, %t50
+    %t51 =l add %t20, 1
+    storel %t51, %t43
+    %t52 =l add %t43, 8
+    storel %t27, %t52
+    %t53 =l sub %t19, 8
+    %t54 =l call $nox_atomic_rc_sub(l %t53, l 1)
+    %t56 =l and %t54, 4294967295
+    %t55 =w ceql %t56, 0
+    jnz %t55, @append_free_old19, @append_skip_free20
+@append_free_old19
+    %t58 =l mul %t22, 8
+    %t57 =l add %t58, 16
+    call $nox_rc_free_payload(l %rt, l %t19, l %t57)
+    jmp @append_skip_free20
+@append_skip_free20
     storel %t43, %t13
     jmp @append_done11
 @append_write10
-    %t55 =l mul %t20, 8
-    %t56 =l add %t55, 16
-    %t57 =l add %t19, %t56
-    storel %t14, %t57
-    %t58 =l add %t20, 1
-    storel %t58, %t19
+    %t59 =l mul %t20, 8
+    %t60 =l add %t59, 16
+    %t61 =l add %t19, %t60
+    storel %t14, %t61
+    %t62 =l add %t20, 1
+    storel %t62, %t19
     jmp @append_done11
 @append_done11
-    jnz %t18, @dyn_hold_unlock19, @dyn_done20
-@dyn_hold_unlock19
+    jnz %t18, @dyn_hold_unlock21, @dyn_done22
+@dyn_hold_unlock21
     call $nox_obj_unlock(l %t12)
-    jmp @dyn_done20
-@dyn_done20
-    %t59 =w ceql %t8, 0
-    jnz %t59, @release_skip22, @release21
-@release21
-    %t60 =l add %t8, 8
-    %t61 =l loadl %t60
-    %t62 =l mul %t61, 8
-    %t63 =l add %t62, 16
-    %t64 =l sub %t8, 8
-    %t65 =l call $nox_atomic_rc_sub(l %t64, l 1)
-    %t67 =l and %t65, 4294967295
-    %t66 =w ceql %t67, 0
-    jnz %t66, @list_free24, @list_free_skip25
-@list_free24
-    call $nox_rc_free_payload(l %rt, l %t8, l %t63)
-    jmp @list_free_done26
-@list_free_skip25
-    jmp @list_free_done26
-@list_free_done26
-    jmp @release_done23
-@release_skip22
-    jmp @release_done23
-@release_done23
-@fn_end27
+    jmp @dyn_done22
+@dyn_done22
+    %t63 =w ceql %t8, 0
+    jnz %t63, @release_skip24, @release23
+@release23
+    %t64 =l add %t8, 8
+    %t65 =l loadl %t64
+    %t66 =l mul %t65, 8
+    %t67 =l add %t66, 16
+    %t68 =l sub %t8, 8
+    %t69 =l call $nox_atomic_rc_sub(l %t68, l 1)
+    %t71 =l and %t69, 4294967295
+    %t70 =w ceql %t71, 0
+    jnz %t70, @list_free26, @list_free_skip27
+@list_free26
+    call $nox_rc_free_payload(l %rt, l %t8, l %t67)
+    jmp @list_free_done28
+@list_free_skip27
+    jmp @list_free_done28
+@list_free_done28
+    jmp @release_done25
+@release_skip24
+    jmp @release_done25
+@release_done25
+@fn_end29
     ret
 }
 export function $Bag_churn(l %rt, l %p_self, l %p_j) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
-    %t52 =l alloc8 8
+    %t53 =l alloc8 8
     storel %p_self, %t0
     storel %p_j, %t1
     %t2 =l loadl %t0
@@ -1960,7 +1969,7 @@ export function $Bag_churn(l %rt, l %p_self, l %p_j) {
     %t16 =w cnel %t15, 0
     jnz %t16, @dyn_wr_pub0, @dyn_wr_lockp1
 @dyn_wr_pub0
-    call $nox_obj_publish_begin(l %t8)
+    %t17 =w call $nox_obj_publish_begin(l %t8)
     jmp @dyn_wr_lockp1
 @dyn_wr_lockp1
     jnz %t16, @dyn_wr_lock2, @dyn_done3
@@ -1968,28 +1977,28 @@ export function $Bag_churn(l %rt, l %p_self, l %p_j) {
     call $nox_obj_lock(l %t2)
     jmp @dyn_done3
 @dyn_done3
-    %t17 =l add %t2, 16
-    %t18 =l loadl %t17
-    storel %t8, %t17
+    %t18 =l add %t2, 16
+    %t19 =l loadl %t18
+    storel %t8, %t18
     jnz %t16, @dyn_wr_unlock4, @dyn_done5
 @dyn_wr_unlock4
     call $nox_obj_unlock(l %t2)
     jmp @dyn_done5
 @dyn_done5
-    %t19 =w ceql %t18, 0
-    jnz %t19, @release_skip7, @release6
+    %t20 =w ceql %t19, 0
+    jnz %t20, @release_skip7, @release6
 @release6
-    %t20 =l add %t18, 8
-    %t21 =l loadl %t20
-    %t22 =l mul %t21, 8
-    %t23 =l add %t22, 16
-    %t24 =l sub %t18, 8
-    %t25 =l call $nox_atomic_rc_sub(l %t24, l 1)
-    %t27 =l and %t25, 4294967295
-    %t26 =w ceql %t27, 0
-    jnz %t26, @list_free9, @list_free_skip10
+    %t21 =l add %t19, 8
+    %t22 =l loadl %t21
+    %t23 =l mul %t22, 8
+    %t24 =l add %t23, 16
+    %t25 =l sub %t19, 8
+    %t26 =l call $nox_atomic_rc_sub(l %t25, l 1)
+    %t28 =l and %t26, 4294967295
+    %t27 =w ceql %t28, 0
+    jnz %t27, @list_free9, @list_free_skip10
 @list_free9
-    call $nox_rc_free_payload(l %rt, l %t18, l %t23)
+    call $nox_rc_free_payload(l %rt, l %t19, l %t24)
     jmp @list_free_done11
 @list_free_skip10
     jmp @list_free_done11
@@ -1998,144 +2007,153 @@ export function $Bag_churn(l %rt, l %p_self, l %p_j) {
 @release_skip7
     jmp @release_done8
 @release_done8
-    %t28 =l loadl %t0
-    %t29 =l sub %t28, 8
-    %t30 =l loadl %t29
-    %t31 =l and %t30, 288230376151711744
-    %t32 =w cnel %t31, 0
-    jnz %t32, @dyn_rd_lock12, @dyn_done13
+    %t29 =l loadl %t0
+    %t30 =l sub %t29, 8
+    %t31 =l loadl %t30
+    %t32 =l and %t31, 288230376151711744
+    %t33 =w cnel %t32, 0
+    jnz %t33, @dyn_rd_lock12, @dyn_done13
 @dyn_rd_lock12
-    call $nox_obj_lock(l %t28)
+    call $nox_obj_lock(l %t29)
     jmp @dyn_done13
 @dyn_done13
-    %t33 =l add %t28, 16
-    %t34 =l loadl %t33
-    %t35 =w ceql %t34, 0
-    jnz %t35, @retain_skip15, @retain14
+    %t34 =l add %t29, 16
+    %t35 =l loadl %t34
+    %t36 =w ceql %t35, 0
+    jnz %t36, @retain_skip15, @retain14
 @retain14
-    %t36 =l sub %t34, 8
-    %t37 =l call $nox_atomic_rc_add(l %t36, l 1)
+    %t37 =l sub %t35, 8
+    %t38 =l call $nox_atomic_rc_add(l %t37, l 1)
     jmp @retain_done16
 @retain_skip15
     jmp @retain_done16
 @retain_done16
-    jnz %t32, @dyn_rd_unlock17, @dyn_done18
+    jnz %t33, @dyn_rd_unlock17, @dyn_done18
 @dyn_rd_unlock17
-    call $nox_obj_unlock(l %t28)
+    call $nox_obj_unlock(l %t29)
     jmp @dyn_done18
 @dyn_done18
-    %t38 =l loadl %t0
-    %t39 =l add %t38, 16
-    %t40 =l loadl %t1
-    %t41 =l sub %t38, 8
-    %t42 =l loadl %t41
-    %t43 =l and %t42, 288230376151711744
-    %t44 =w cnel %t43, 0
-    jnz %t44, @dyn_hold_lock19, @dyn_done20
+    %t39 =l loadl %t0
+    %t40 =l add %t39, 16
+    %t41 =l loadl %t1
+    %t42 =l sub %t39, 8
+    %t43 =l loadl %t42
+    %t44 =l and %t43, 288230376151711744
+    %t45 =w cnel %t44, 0
+    jnz %t45, @dyn_hold_lock19, @dyn_done20
 @dyn_hold_lock19
-    call $nox_obj_lock(l %t38)
+    call $nox_obj_lock(l %t39)
     jmp @dyn_done20
 @dyn_done20
-    %t45 =l loadl %t39
-    %t46 =l loadl %t45
-    %t47 =l add %t45, 8
-    %t48 =l loadl %t47
-    %t49 =w csltl %t46, %t48
-    jnz %t49, @append_write22, @append_grow21
+    %t46 =l loadl %t40
+    %t47 =l loadl %t46
+    %t48 =l add %t46, 8
+    %t49 =l loadl %t48
+    %t50 =w csltl %t47, %t49
+    jnz %t50, @append_write22, @append_grow21
 @append_grow21
-    %t50 =w ceql %t48, 0
-    %t51 =l mul %t48, 2
-    jnz %t50, @append_capzero24, @append_capnz25
+    %t51 =w ceql %t49, 0
+    %t52 =l mul %t49, 2
+    jnz %t51, @append_capzero24, @append_capnz25
 @append_capzero24
-    storel 1, %t52
+    storel 1, %t53
     jmp @append_capdone26
 @append_capnz25
-    storel %t51, %t52
+    storel %t52, %t53
     jmp @append_capdone26
 @append_capdone26
-    %t53 =l loadl %t52
-    %t55 =l mul %t53, 8
-    %t54 =l add %t55, 16
-    %t57 =l mul %t46, 8
-    %t56 =l add %t57, 16
-    %t58 =l sub %t45, 8
-    %t59 =l loadl %t58
-    %t60 =w ceql %t59, 1
-    jnz %t60, @append_unique27, @append_shared28
+    %t54 =l loadl %t53
+    %t56 =l mul %t54, 8
+    %t55 =l add %t56, 16
+    %t58 =l mul %t47, 8
+    %t57 =l add %t58, 16
+    %t59 =l sub %t46, 8
+    %t60 =l loadl %t59
+    %t61 =w ceql %t60, 1
+    jnz %t61, @append_unique27, @append_shared28
 @append_unique27
-    %t62 =l mul %t48, 8
-    %t61 =l add %t62, 16
-    %t63 =l call $nox_list_realloc(l %rt, l %t45, l %t61, l %t54)
-    %t64 =l mul %t46, 8
-    %t65 =l add %t64, 16
-    %t66 =l add %t63, %t65
-    storel %t40, %t66
-    %t67 =l add %t46, 1
-    storel %t67, %t63
-    %t68 =l add %t63, 8
-    storel %t53, %t68
-    storel %t63, %t39
+    %t63 =l mul %t49, 8
+    %t62 =l add %t63, 16
+    %t64 =l call $nox_list_realloc(l %rt, l %t46, l %t62, l %t55)
+    %t65 =l mul %t47, 8
+    %t66 =l add %t65, 16
+    %t67 =l add %t64, %t66
+    storel %t41, %t67
+    %t68 =l add %t47, 1
+    storel %t68, %t64
+    %t69 =l add %t64, 8
+    storel %t54, %t69
+    storel %t64, %t40
     jmp @append_done23
 @append_shared28
-    %t69 =l call $nox_list_grow(l %rt, l %t45, l %t56, l %t54)
-    %t70 =l mul %t46, 8
-    %t71 =l add %t70, 16
-    %t72 =l add %t69, %t71
-    storel %t40, %t72
-    %t73 =l add %t46, 1
-    storel %t73, %t69
-    %t74 =l add %t69, 8
-    storel %t53, %t74
-    %t75 =l sub %t45, 8
-    %t76 =l call $nox_atomic_rc_sub(l %t75, l 1)
-    %t78 =l and %t76, 4294967295
-    %t77 =w ceql %t78, 0
-    jnz %t77, @append_free_old29, @append_skip_free30
-@append_free_old29
-    %t80 =l mul %t48, 8
-    %t79 =l add %t80, 16
-    call $nox_rc_free_payload(l %rt, l %t45, l %t79)
-    jmp @append_skip_free30
-@append_skip_free30
-    storel %t69, %t39
+    %t70 =l call $nox_list_grow(l %rt, l %t46, l %t57, l %t55)
+    %t71 =l sub %t46, 8
+    %t72 =l loadl %t71
+    %t73 =l and %t72, 288230376151711744
+    %t74 =w cnel %t73, 0
+    jnz %t74, @dyn_grow_pub29, @dyn_done30
+@dyn_grow_pub29
+    call $nox_obj_publish_begin(l %t70)
+    jmp @dyn_done30
+@dyn_done30
+    %t75 =l mul %t47, 8
+    %t76 =l add %t75, 16
+    %t77 =l add %t70, %t76
+    storel %t41, %t77
+    %t78 =l add %t47, 1
+    storel %t78, %t70
+    %t79 =l add %t70, 8
+    storel %t54, %t79
+    %t80 =l sub %t46, 8
+    %t81 =l call $nox_atomic_rc_sub(l %t80, l 1)
+    %t83 =l and %t81, 4294967295
+    %t82 =w ceql %t83, 0
+    jnz %t82, @append_free_old31, @append_skip_free32
+@append_free_old31
+    %t85 =l mul %t49, 8
+    %t84 =l add %t85, 16
+    call $nox_rc_free_payload(l %rt, l %t46, l %t84)
+    jmp @append_skip_free32
+@append_skip_free32
+    storel %t70, %t40
     jmp @append_done23
 @append_write22
-    %t81 =l mul %t46, 8
-    %t82 =l add %t81, 16
-    %t83 =l add %t45, %t82
-    storel %t40, %t83
-    %t84 =l add %t46, 1
-    storel %t84, %t45
+    %t86 =l mul %t47, 8
+    %t87 =l add %t86, 16
+    %t88 =l add %t46, %t87
+    storel %t41, %t88
+    %t89 =l add %t47, 1
+    storel %t89, %t46
     jmp @append_done23
 @append_done23
-    jnz %t44, @dyn_hold_unlock31, @dyn_done32
-@dyn_hold_unlock31
-    call $nox_obj_unlock(l %t38)
-    jmp @dyn_done32
-@dyn_done32
-    %t85 =w ceql %t34, 0
-    jnz %t85, @release_skip34, @release33
-@release33
-    %t86 =l add %t34, 8
-    %t87 =l loadl %t86
-    %t88 =l mul %t87, 8
-    %t89 =l add %t88, 16
-    %t90 =l sub %t34, 8
-    %t91 =l call $nox_atomic_rc_sub(l %t90, l 1)
-    %t93 =l and %t91, 4294967295
-    %t92 =w ceql %t93, 0
-    jnz %t92, @list_free36, @list_free_skip37
-@list_free36
-    call $nox_rc_free_payload(l %rt, l %t34, l %t89)
-    jmp @list_free_done38
-@list_free_skip37
-    jmp @list_free_done38
-@list_free_done38
-    jmp @release_done35
-@release_skip34
-    jmp @release_done35
-@release_done35
-@fn_end39
+    jnz %t45, @dyn_hold_unlock33, @dyn_done34
+@dyn_hold_unlock33
+    call $nox_obj_unlock(l %t39)
+    jmp @dyn_done34
+@dyn_done34
+    %t90 =w ceql %t35, 0
+    jnz %t90, @release_skip36, @release35
+@release35
+    %t91 =l add %t35, 8
+    %t92 =l loadl %t91
+    %t93 =l mul %t92, 8
+    %t94 =l add %t93, 16
+    %t95 =l sub %t35, 8
+    %t96 =l call $nox_atomic_rc_sub(l %t95, l 1)
+    %t98 =l and %t96, 4294967295
+    %t97 =w ceql %t98, 0
+    jnz %t97, @list_free38, @list_free_skip39
+@list_free38
+    call $nox_rc_free_payload(l %rt, l %t35, l %t94)
+    jmp @list_free_done40
+@list_free_skip39
+    jmp @list_free_done40
+@list_free_done40
+    jmp @release_done37
+@release_skip36
+    jmp @release_done37
+@release_done37
+@fn_end41
     ret
 }
 export function l $Bag_peek(l %rt, l %p_self) {
@@ -2502,10 +2520,10 @@ export function $nox_publish_Bag(l %rt, l %p) {
 @pub_body0
     %t1 =l add %p, 8
     %t2 =l loadl %t1
-    call $nox_obj_publish_begin(l %t2)
-    %t3 =l add %p, 16
-    %t4 =l loadl %t3
-    call $nox_obj_publish_begin(l %t4)
+    %t3 =w call $nox_obj_publish_begin(l %t2)
+    %t4 =l add %p, 16
+    %t5 =l loadl %t4
+    %t6 =w call $nox_obj_publish_begin(l %t5)
     jmp @pub_done1
 @pub_done1
     ret

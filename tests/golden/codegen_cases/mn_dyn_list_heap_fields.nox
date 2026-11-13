@@ -1,0 +1,75 @@
+# Faz 9.0 F3b (v2.1.133): DİNAMİK paylaşım — yığın elemanlı `list[str]` / `list[Sınıf]` alanları olan modül düzeyi sınıf örneği. Eleman okumaları blok kilidi altında sahipli (retain), `append`/`pop`/
+# indeksle atama/`for` kilit altında; yeni elemanlar paylaşılan listeye eklenmeden yayımlanır. Sızıntı/çift bırakma DebugAllocator ile yakalanır.
+class Job:
+    name: str
+    prio: int
+    def __init__(self: Job, name: str, prio: int) -> None:
+        self.name = name
+        self.prio = prio
+
+class Registry:
+    names: list[str]
+    jobs: list[Job]
+    done: int
+    def __init__(self: Registry) -> None:
+        self.names = []
+        self.jobs = []
+        self.done = 0
+    def add(self: Registry, n: str, p: int) -> None:
+        self.names.append(n)
+        self.jobs.append(Job(n, p))
+    def replace_first(self: Registry, n: str) -> None:
+        if len(self.jobs) > 0:
+            self.jobs[0] = Job(n, 1)
+            self.names[0] = n
+    def take(self: Registry) -> int:
+        if len(self.jobs) > 100000:
+            j: Job = self.jobs.pop()
+            return j.prio
+        return 0
+
+reg: Registry = Registry()
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 150:
+        reg.add("w" + str(id) + "-" + str(j), j)
+        reg.replace_first("first" + str(j))
+        acc = acc + reg.take()
+        if len(reg.names) > 3:
+            s: str = reg.names[2]
+            acc = acc + len(s) % 2
+            jb: Job = reg.jobs[1]
+            acc = acc + jb.prio % 2
+        if j % 25 == 24:
+            for nm in reg.names:
+                acc = acc + len(nm) % 2
+        k: int = 0
+        while k < 150:
+            acc = (acc * 31 + k + j + id) % 1000003
+            k = k + 1
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s < 1000000000)
+    print(len(reg.names))
+    print(len(reg.jobs))
+    tot: int = 0
+    for jb in reg.jobs:
+        tot = tot + jb.prio
+    print(tot > 0)
+
+mt: Task[None] = spawn main_task()
+await mt

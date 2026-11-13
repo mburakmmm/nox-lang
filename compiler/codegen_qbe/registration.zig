@@ -1086,6 +1086,17 @@ fn classHasDecorators(module: ast.Module, cn: []const u8) bool {
     return false;
 }
 
+/// Sınıf bu adlı metodu tanımlıyor mu (kullanıcı kodu kilit altında çalışmasın diye eleman sınıflarında `__eq__`/`__repr__`/`__str__` yasak)?
+fn classDefinesMethod(module: ast.Module, cn: []const u8, method: []const u8) bool {
+    for (module.body) |st| {
+        if (st.kind != .class_def) continue;
+        const cd = st.kind.class_def;
+        if (!std.mem.eql(u8, cd.name, cn)) continue;
+        for (cd.methods) |m| if (std.mem.eql(u8, m.name, method)) return true;
+    }
+    return false;
+}
+
 /// Faz 9.0 F2: DİNAMİK paylaşıma uygun sınıf mı (bariyer üretilebilir)? Kalıtımsız, `__del__`siz, dekoratörsüz; alanlar skaler, `str`, skaler/`str` değerli `dict` ya da (özyinelemeli) dinamik-uygun sınıf.
 /// Uygunsa sınıf ve alt sınıfları `out`a eklenir.
 fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.StringHashMapUnmanaged(void), depth: u8) CodegenError!bool {
@@ -1109,7 +1120,14 @@ fn dynSafeClass(self: *Codegen, cn: []const u8, module: ast.Module, out: *std.St
             // Skaler elemanlı liste alanı (F3a): blok yayımlanınca `SHARED` olur (büyüme kopyalama yoluna düşer), alan yuvası bariyerlidir.
             .list => {
                 const sh = shared_globals.listElemShape(f.info) orelse return false;
-                if (sh.kind != 0) return false;
+                if (sh.kind == 1) {
+                    self.list_locks = true;
+                } else if (sh.kind == 2) {
+                    const ec = f.info.elem_heap_info.?.class_name.?;
+                    if (classDefinesMethod(module, ec, "__eq__") or classDefinesMethod(module, ec, "__repr__") or classDefinesMethod(module, ec, "__str__")) return false;
+                    if (!try dynSafeClass(self, ec, module, out, depth + 1)) return false;
+                    self.list_locks = true;
+                }
             },
             else => return false,
         }

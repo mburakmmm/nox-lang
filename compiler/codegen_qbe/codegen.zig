@@ -1273,6 +1273,10 @@ pub const Codegen = struct {
     /// Faz 9.0 dilim 7: paylaşılan sözlük alanlı sınıf örnekleri (başlangıçta alanları `Dict.shared` olarak işaretlenir) ve bu yüzden TÜM `str`/sınıf değerli sözlük okumalarının SAHİPLİ olduğu kip.
     shared_class_globals: std.StringHashMapUnmanaged(void) = .empty,
     owned_dict_reads: bool = false,
+    /// Faz 9.0 F3b: yığın elemanlı (`str`/sınıf/…) liste eleman erişimleri liste bloğu kilidi altında SAHİPLİ yapılır (bkz. `dyn_share.listHeapElems`).
+    list_locks: bool = false,
+    /// Faz 9.0 F3b: açık liste-değiştirme kilit bağlamı (soğuk hata yolları raise öncesi kilitleri bırakır).
+    cold_unlock: ?dyn_share.MutCtx = null,
     /// Faz 9.0 F2: DİNAMİK paylaşım bariyerleri üretilen sınıflar (bkz. `dyn_share.zig`) ve başlangıçta yayımlanacak global örnekler.
     dyn_classes: std.StringHashMapUnmanaged(void) = .empty,
     dyn_publish_globals: std.StringHashMapUnmanaged(void) = .empty,
@@ -1993,6 +1997,7 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
         gen.shared_block_mode = globals_kind == .shared_block;
         if (!gen.shared_block_mode) {
             gen.owned_dict_reads = false;
+            gen.list_locks = false;
             gen.shared_class_globals.clearRetainingCapacity();
             gen.dyn_classes.clearRetainingCapacity();
             gen.dyn_publish_globals.clearRetainingCapacity();
