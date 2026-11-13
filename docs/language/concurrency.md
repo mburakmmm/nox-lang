@@ -342,11 +342,14 @@ All tasks run on fibers scheduled by the runtime:
     only when the pool has more than one worker); number/bool fields and variables are plain aligned loads and stores. Compound updates such
     as `d[k] = d[k] + 1`, `xs[i] = xs[i] + 1` or `stats.hits = stats.hits + 1` are not atomic as a whole — the program stays memory-safe but
     increments can be lost. Use a channel or `AtomicRef` when you need exact counters.
-    Access rules for shared **lists** and **`dict[K, str]`** (anything else makes the program fall back to one worker): use the name directly.
-    Lists: `xs.append(v)`, `xs.pop()`, `xs.clear()`, `xs[i]`, `xs[i] = v`, `len(xs)`, and the read-only forms `x in xs`, `xs[a:b]` and
-    `print(xs)`, which see a consistent snapshot copy of the list. Dicts with `str` values: `d[k]`, `d[k] = v`, `d.get(k[, default])`,
-    `d.pop(k)`, `k in d`, `len(d)`, `d.keys()`, `d.values()`. Passing the list or dict to a function, assigning it to another name, iterating it
-    with `for`, or returning it is not allowed (loop with an index, `while i < len(xs): ... xs[i]`, or iterate over `d.keys()`).
+    Access rules for shared **lists** and **dicts with `str` or class values** (anything else makes the program fall back to one worker): use the
+    name directly. Lists: `xs.append(v)`, `xs.pop()`, `xs.clear()`, `xs[i]`, `xs[i] = v`, `len(xs)`, and the read-only forms `x in xs`, `xs[a:b]`,
+    `print(xs)` and `for x in xs`, which see a consistent snapshot copy of the list; passing the list to a module-level function is allowed when that
+    function only reads the parameter (index read, `len`, `in`, slice, `print`, `for`, or passing it on to another reading function) — the call receives
+    a snapshot. Dicts: `d[k]`, `d[k] = v`, `d.get(k[, default])`, `d.pop(k)`, `k in d`, `len(d)`, `d.keys()`, `d.values()`. Elements and values may be
+    numbers, bools, `str`, or instances of a class that has only number/bool/`str` fields, no inheritance and no `__del__` (a `str` field must not be
+    assigned outside `__init__`); reads return a new reference to the element, so an element object is one shared object (number fields are plain loads and
+    stores). Assigning the list/dict to another name, returning it, or storing it elsewhere is not allowed.
   - **One worker:** any other mutable module state (a module-level closure, a `str` that is reassigned, a list or `dict[K, str]` used in any form not
     listed above, a list of lists/classes, a dict with list/class values, or a class instance with inheritance, list/dict/class fields, or a `str`
     field assigned after `__init__`) still runs the whole program on **one worker** on both backends, so a task never reads another

@@ -1,0 +1,68 @@
+# Faz 9.0 dilim 5 (v2.1.125): paylaşılan modül `dict[str, Sınıf]` ve `list[Sınıf]` globalleri (sınıf: skaler/`str` alanlı, kalıtımsız). Okumalar kilit altında RETAIN edilmiş (sahipli) örnek döner.
+class Entry:
+    name: str
+    hits: int
+    def __init__(self: Entry, name: str, hits: int) -> None:
+        self.name = name
+        self.hits = hits
+    def bump(self: Entry) -> None:
+        self.hits = self.hits + 1
+
+cache: dict[str, Entry] = {}
+log: list[Entry] = []
+
+async def worker(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 30:
+        i: int = 0
+        while i < 1500:
+            acc = (acc * 31 + i + j + id) % 1000003
+            i = i + 1
+        key: str = "k" + str(id) + "-" + str(j)
+        cache[key] = Entry(key, j)
+        log.append(Entry("log" + str(id), j))
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 6:
+        t: Task[None] = spawn worker(k, out)
+        k = k + 1
+    s: int = 0
+    k = 0
+    while k < 6:
+        s = s + await out.recv()
+        k = k + 1
+    print(s)
+    print(len(cache))
+    print(len(log))
+    e: Entry = cache["k3-7"]
+    print(e.name)
+    print(e.hits)
+    e.bump()
+    print(cache["k3-7"].hits)
+    total: int = 0
+    i: int = 0
+    while i < len(log):
+        total = total + log[i].hits
+        i = i + 1
+    print(total)
+    first: Entry = log[0]
+    print(len(first.name))
+    got: Entry | None = cache.get("k0-0")
+    if got is not None:
+        print(got.hits)
+    old: Entry = cache.pop("k5-29")
+    print(old.hits)
+    print(len(cache))
+    log[0] = Entry("replaced", 99)
+    print(log[0].name)
+    last: Entry = log.pop()
+    print(len(log))
+    print("k1-1" in cache)
+
+mt: Task[None] = spawn main_task()
+await mt

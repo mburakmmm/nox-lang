@@ -999,6 +999,11 @@ fn isSharedSafeClassInstance(self: *Codegen, g: types.GlobalVar, module: ast.Mod
     if (g.info.heap != .class) return false;
     if (assignsName(module.body, g.name)) return false;
     const cn = g.info.class_name orelse return false;
+    return isShareSafeClass(self, cn, module);
+}
+
+/// Bir sınıf örneği işçiler arasında paylaşılabilir mi (bkz. `isSharedSafeClassInstance` koşulları; global'e bağlı olmayan kısım)?
+fn isShareSafeClass(self: *Codegen, cn: []const u8, module: ast.Module) bool {
     const info = self.classes.getPtr(cn) orelse return false;
     if (info.has_vtable or info.del_owner != null) return false;
     for (info.fields.items) |f| {
@@ -1028,7 +1033,8 @@ fn initIsFresh(module: ast.Module, name: []const u8) bool {
 /// Paylaşılan `list[T]` global'i olabilir mi? Eleman skaler/`str`, yeniden atama yok, başlatıcı taze, tüm kullanımlar izinli biçimlerde (bkz. `shared_globals.zig`).
 fn isRoutedList(self: *Codegen, g: types.GlobalVar, module: ast.Module, extra_functions: []const ast.FuncDef) bool {
     if (g.info.heap != .list) return false;
-    if (shared_globals.listElemShape(g.info) == null) return false;
+    const shape = shared_globals.listElemShape(g.info) orelse return false;
+    if (shape.kind == 2 and !isShareSafeClass(self, g.info.elem_heap_info.?.class_name.?, module)) return false;
     if (assignsName(module.body, g.name) or !initIsFresh(module, g.name)) return false;
     return shared_globals.usesAreRouted(self.allocator, module.body, extra_functions, g.name, .list);
 }
@@ -1037,7 +1043,9 @@ fn isRoutedList(self: *Codegen, g: types.GlobalVar, module: ast.Module, extra_fu
 fn isRoutedStrDict(self: *Codegen, g: types.GlobalVar, module: ast.Module, extra_functions: []const ast.FuncDef) bool {
     if (g.info.heap != .dict) return false;
     const di = g.info.dict_info orelse return false;
-    if (!di.value_is_str or di.value_is_class or di.value_heap != .none) return false;
+    if (di.value_heap != .none) return false;
+    if (di.value_is_str == di.value_is_class) return false; // tam olarak biri: `str` ya da sınıf
+    if (di.value_is_class and !(di.value_class_name != null and isShareSafeClass(self, di.value_class_name.?, module))) return false;
     if (assignsName(module.body, g.name)) return false;
     return shared_globals.usesAreRouted(self.allocator, module.body, extra_functions, g.name, .dict_str);
 }

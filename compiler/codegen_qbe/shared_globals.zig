@@ -20,7 +20,8 @@ const QbeType = types.QbeType;
 const CodegenError = abi.CodegenError;
 const GlobalVar = types.GlobalVar;
 
-pub const Kind = enum { list, dict_str };
+/// `list_ro`: bir işlevin LİSTE PARAMETRESİNİN salt-okunur olup olmadığını denetlemek için (yazıcı yok); yalnız çözümleme içindir.
+pub const Kind = enum { list, dict_str, list_ro };
 
 /// Hücre/işlem ABI'si için eleman şekli: `esz` bayt (1 ya da 8), `kind` 0 skaler / 1 `str`.
 pub const ElemShape = struct { esz: u8, kind: u8 };
@@ -29,6 +30,8 @@ pub fn listElemShape(info: types.TypeInfo) ?ElemShape {
     if (info.elem_fixed_int != null) return null;
     if (info.elem_heap_info) |ehi| {
         if (ehi.heap == .str and ehi.nested == null) return .{ .esz = 8, .kind = 1 };
+        // Sınıf örneği elemanlar: paylaşım güvenliği (`isSharedSafeClass`) sınıflamada ayrıca doğrulanır.
+        if (ehi.heap == .class and ehi.nested == null and ehi.class_name != null) return .{ .esz = 8, .kind = 2 };
         return null;
     }
     if (info.elem_is_str) return .{ .esz = 8, .kind = 1 };
@@ -41,10 +44,36 @@ pub fn listElemShape(info: types.TypeInfo) ?ElemShape {
 
 // ---- Kullanım çözümlemesi ---------------------------------------------------------------------------------------------------------------------------------------
 
+/// İşlev tablosu ve "parametre salt-okunur mu" önbelleği (liste global'ini işlev argümanı olarak geçirebilmek için; bkz. `paramReadOnly`).
+const Ctx = struct {
+    a: std.mem.Allocator,
+    funcs: std.StringHashMapUnmanaged(*const ast.FuncDef) = .empty,
+    memo: std.StringHashMapUnmanaged(bool) = .empty,
+
+    /// `fd`nin `idx`. parametresi salt-okunur mu: gövdede yalnız izinli OKUMA biçimlerinde (indeks okuma, `len`, `in`, dilim, `print`, `for` ile gezme, başka bir salt-okunur parametreye geçirme) geçer;
+    /// yazma, metod çağrısı, atama, dönüş, yakalama yok. Özyineleme için iyimser varsayım (döngüdeki çağrılar salt-okunur sayılır; başka bir ihlal yine yakalanır).
+    fn paramReadOnly(self: *Ctx, fd: *const ast.FuncDef, idx: usize) bool {
+        if (fd.type_params.len > 0 or fd.decorators.len > 0) return false;
+        if (idx >= fd.params.len) return false;
+        const p = fd.params[idx];
+        if (p.variadic or p.var_kw) return false;
+        const key = std.fmt.allocPrint(self.a, "{s}#{d}", .{ fd.name, idx }) catch return false;
+        if (self.memo.get(key)) |r| return r;
+        self.memo.put(self.a, key, true) catch return false; // iyimser (özyineleme)
+        var w: Walker = .{ .name = p.name, .kind = .list_ro, .ctx = self };
+        for (fd.params, 0..) |q, j| if (j != idx and std.mem.eql(u8, q.name, p.name)) {
+            w.bad = true;
+        };
+        w.stmts(fd.body, false);
+        self.memo.put(self.a, key, !w.bad) catch return false;
+        return !w.bad;
+    }
+};
+
 const Walker = struct {
     name: []const u8,
     kind: Kind,
-    fn_names: *const std.StringHashMapUnmanaged(void),
+    ctx: *Ctx,
     bad: bool = false,
 
     fn isG(self: *const Walker, e: ast.Expr) bool {
@@ -58,6 +87,7 @@ const Walker = struct {
                 if (std.mem.eql(u8, m, "pop") or std.mem.eql(u8, m, "clear")) return nargs == 0;
                 return false;
             },
+            .list_ro => return false,
             .dict_str => {
                 if (std.mem.eql(u8, m, "get")) return nargs == 1 or nargs == 2;
                 if (std.mem.eql(u8, m, "pop")) return nargs == 1;
@@ -68,9 +98,9 @@ const Walker = struct {
     }
 
     fn allowedBuiltin(self: *const Walker, f: []const u8) bool {
-        if (self.fn_names.contains(f)) return false;
+        if (self.ctx.funcs.contains(f)) return false;
         if (std.mem.eql(u8, f, "len")) return true;
-        return self.kind == .list and std.mem.eql(u8, f, "print");
+        return self.kind != .dict_str and std.mem.eql(u8, f, "print");
     }
 
     fn stmts(self: *Walker, list: []const ast.Stmt, top: bool) void {
@@ -93,6 +123,7 @@ const Walker = struct {
             },
             .assign => |asg| {
                 if (asg.target == .index and self.isG(asg.target.index.obj.*)) {
+                    if (self.kind == .list_ro) self.bad = true;
                     self.expr(asg.target.index.index.*);
                     self.expr(asg.value);
                 } else {
@@ -115,7 +146,8 @@ const Walker = struct {
             },
             .for_stmt => |f| {
                 if (std.mem.eql(u8, f.var_name, self.name)) self.bad = true;
-                self.expr(f.iterable);
+                // `for x in xs` (liste): checker iterable'ı gizli yerele alır; paylaşılan listede bu yerel O ANKİ KOPYADIR (anlık görüntü).
+                if (!((self.kind == .list or self.kind == .list_ro) and self.isG(f.iterable))) self.expr(f.iterable);
                 self.stmts(f.body, false);
             },
             .func_def => |fd| {
@@ -196,12 +228,24 @@ const Walker = struct {
                         for (c.args) |arg| self.expr(arg);
                         return;
                     },
-                    .identifier => |fname| if (self.allowedBuiltin(fname)) {
-                        for (c.args) |arg| {
-                            if (self.isG(arg)) continue;
-                            self.expr(arg);
+                    .identifier => |fname| {
+                        if (self.allowedBuiltin(fname)) {
+                            for (c.args) |arg| {
+                                if (self.isG(arg)) continue;
+                                self.expr(arg);
+                            }
+                            return;
                         }
-                        return;
+                        // Liste global'i bir modül işlevine ARGÜMAN olarak geçirilebilir; işlev o parametreyi yalnız okuyorsa çağrı ANLIK KOPYA alır (kopya üzerinde okumak eşdeğerdir).
+                        if ((self.kind == .list or self.kind == .list_ro) and self.ctx.funcs.get(fname) != null) {
+                            const fd = self.ctx.funcs.get(fname).?;
+                            for (c.args, 0..) |arg, j| {
+                                if (self.isG(arg)) {
+                                    if (!self.ctx.paramReadOnly(fd, j)) self.bad = true;
+                                } else self.expr(arg);
+                            }
+                            return;
+                        }
                     },
                     else => {},
                 }
@@ -251,12 +295,13 @@ const Walker = struct {
 
 /// `name` global'inin TÜM kullanımları izinli biçimlerdeyse doğru (bkz. modül notu). `body`: modül deyimleri; `extra`: yükseltilmiş lambda/generic örneklemeleri.
 pub fn usesAreRouted(a: std.mem.Allocator, body: []const ast.Stmt, extra: []const ast.FuncDef, name: []const u8, kind: Kind) bool {
-    var fn_names: std.StringHashMapUnmanaged(void) = .empty;
-    defer fn_names.deinit(a);
-    for (body) |st| {
-        if (st.kind == .func_def) fn_names.put(a, st.kind.func_def.name, {}) catch return false;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    var ctx: Ctx = .{ .a = arena.allocator() };
+    for (body) |*st| {
+        if (st.kind == .func_def) ctx.funcs.put(ctx.a, st.kind.func_def.name, &st.kind.func_def) catch return false;
     }
-    var w: Walker = .{ .name = name, .kind = kind, .fn_names = &fn_names };
+    var w: Walker = .{ .name = name, .kind = kind, .ctx = &ctx };
     w.stmts(body, true);
     for (extra) |fd| {
         w.params(fd.params);
@@ -358,7 +403,7 @@ fn elemValue(self: *Codegen, g: GlobalVar, raw: []const u8, owned_str: bool) Cod
         try self.qbeOp1(d, .d, "cast", raw);
         v.text = d;
     }
-    if (owned_str and sh.kind == 1) v.always_fresh = true;
+    if (owned_str and sh.kind != 0) v.always_fresh = true;
     return v;
 }
 
@@ -407,12 +452,12 @@ pub fn genListSet(self: *Codegen, g: GlobalVar, index_expr: ast.Expr, value_expr
     const bad = try self.newTemp();
     try self.qbeOp2Imm(bad, .w, "ceql", ok, 0);
     // Başarısızsa elemanın sahipliği listeye geçmedi: `str` ise bırak (sızıntı olmasın), sonra IndexError.
-    if (sh.kind == 1) {
+    if (sh.kind != 0) {
         const rel_label = try self.newLabel("slist_set_rel");
         const cont_label = try self.newLabel("slist_set_cont");
         try self.qbeJnz(bad, rel_label, cont_label);
         try self.qbeLabel(rel_label);
-        try self.releaseValueIfSet(val.text, .str, .none, null, null, null);
+        try self.releaseValueIfSet(val.text, val.heap, val.elem_qtype, val.class_name, val.elem_heap_info, val.dict_info);
         try self.qbeJmp(cont_label);
         try self.qbeLabel(cont_label);
     }
@@ -457,7 +502,7 @@ pub fn genDictGetOwned(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr:
     const key_payload = try self.toPayload(key_v0);
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const payload_t = try self.newTemp();
-    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text }, .{ .ty = .w, .text = if (dinfo.value_is_class) "2" else "1" } });
     const missing = try self.newTemp();
     try self.qbeOp2Imm(missing, .w, "ceql", payload_t, 0);
     const err_label = try self.newLabel("dict_get_err");

@@ -5,7 +5,7 @@
 //! ve her işlem kendi önbellek satırındaki kilit altında çalışır. Okuma sonucu `str` ise RETAIN edilmiş (çağırana ait) döner; salt-okunur toplu kullanımlar (`for`, `in`, dilim, `print`) için `snapshot`
 //! bağımsız bir kopya verir. Tek işlemler atomiktir, bileşik işlemler değildir (karar A).
 //!
-//! Eleman türleri: `esz` 8 (int/float/`str` işaretçisi) ya da 1 (bool); `kind`: 0 skaler, 1 `str` (paketlenmiş başlıklı: `nox_str_retain/release`).
+//! Eleman türleri: `esz` 8 (int/float/`str` işaretçisi) ya da 1 (bool); `kind`: 0 skaler, 1 `str` (paketlenmiş başlıklı: `nox_str_retain/release`), 2 ARC sınıf örneği (`nox_rc_retain` / etiket-dağıtımlı bırakma; sınıf alanları yalnız skaler/`str` olmalıdır).
 //! Tek işçili havuzda (`RuntimeState.main_pool_workers <= 1`) kilit alınmaz.
 
 const std = @import("std");
@@ -13,6 +13,8 @@ const asap = @import("../alloc/asap.zig");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const list_ops = @import("list_ops.zig");
+const dispatch_registry = @import("../alloc/dispatch_registry.zig");
+const abi_ptr = @import("../abi_ptr.zig");
 const abi_layout = @import("abi_layout");
 const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
 
@@ -68,6 +70,28 @@ inline fn storeElem(b: [*]u8, i: usize, esz: i64, v: i64) void {
     }
 }
 
+/// Elemanı `kind`a göre bırakır: 1 = `str`, 2 = ARC sınıf örneği (etiket-dağıtımlı bırakma, bkz. `dict.zig` `releaseClassPayload`).
+fn releaseElem(rt: ?*anyopaque, kind: i32, v: i64) void {
+    if (v == 0) return;
+    if (kind == 1) {
+        str_mod.nox_str_release(rt, strPtr(v));
+    } else if (kind == 2) {
+        const p: *anyopaque = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(v)))));
+        const f = dispatch_registry.classReleaseFn() orelse return;
+        const tag: *const i64 = @ptrCast(@alignCast(p));
+        f(abi_ptr.arg(rt), tag.*, abi_ptr.arg(p));
+    }
+}
+
+inline fn retainElem(kind: i32, v: i64) void {
+    if (v == 0) return;
+    if (kind == 1) {
+        str_mod.nox_str_retain(strPtr(v));
+    } else if (kind == 2) {
+        arc.nox_rc_retain(@as(?*anyopaque, @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(v)))))));
+    }
+}
+
 inline fn strPtr(v: i64) ?[*:0]u8 {
     if (v == 0) return null;
     return @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(v)))));
@@ -85,9 +109,9 @@ pub export fn nox_slist_new(rt: ?*anyopaque, block: ?*anyopaque) ?*anyopaque {
 pub export fn nox_slist_free(rt: ?*anyopaque, cp: ?*anyopaque, kind: i32, esz: i64) void {
     const c: *Cell = @ptrCast(@alignCast(cp orelse return));
     const n: usize = @intCast(hdrLen(c.block));
-    if (kind == 1) {
+    if (kind != 0) {
         var i: usize = 0;
-        while (i < n) : (i += 1) str_mod.nox_str_release(rt, strPtr(loadElem(c.block, i, esz)));
+        while (i < n) : (i += 1) releaseElem(rt, kind, loadElem(c.block, i, esz));
     }
     const cap: usize = @intCast(hdrCap(c.block));
     arc.nox_rc_free_payload(rt, c.block, HDR + cap * @as(usize, @intCast(esz)));
@@ -116,7 +140,7 @@ pub export fn nox_slist_get(cp: ?*anyopaque, i: i64, esz: i64, kind: i32, ok: *i
         return 0;
     }
     const v = loadElem(c.block, @intCast(idx), esz);
-    if (kind == 1 and v != 0) str_mod.nox_str_retain(strPtr(v));
+    if (kind != 0) retainElem(kind, v);
     ok.* = 1;
     return v;
 }
@@ -131,7 +155,7 @@ pub export fn nox_slist_set(rt: ?*anyopaque, cp: ?*anyopaque, i: i64, esz: i64, 
     if (idx < 0 or idx >= n) return 0;
     const old = loadElem(c.block, @intCast(idx), esz);
     storeElem(c.block, @intCast(idx), esz, v);
-    if (kind == 1) str_mod.nox_str_release(rt, strPtr(old));
+    if (kind != 0) releaseElem(rt, kind, old);
     return 1;
 }
 
@@ -180,9 +204,9 @@ pub export fn nox_slist_clear(rt: ?*anyopaque, cp: ?*anyopaque, esz: i64, kind: 
     const held = lockCell(c);
     defer unlockCell(c, held);
     const n: usize = @intCast(hdrLen(c.block));
-    if (kind == 1) {
+    if (kind != 0) {
         var i: usize = 0;
-        while (i < n) : (i += 1) str_mod.nox_str_release(rt, strPtr(loadElem(c.block, i, esz)));
+        while (i < n) : (i += 1) releaseElem(rt, kind, loadElem(c.block, i, esz));
     }
     setLen(c.block, 0);
 }

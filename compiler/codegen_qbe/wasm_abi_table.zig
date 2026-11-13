@@ -129,7 +129,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_slist_pop", Entry{ .params = "PLP", .ret = 'L' } },
     .{ "nox_slist_clear", Entry{ .params = "PPLW", .ret = 'v' } },
     .{ "nox_slist_snapshot", Entry{ .params = "PPLW", .ret = 'P' } },
-    .{ "nox_dict_get_owned", Entry{ .params = "PPWL", .ret = 'L' } },
+    .{ "nox_dict_get_owned", Entry{ .params = "PPWLW", .ret = 'L' } },
 
     .{ "nox_dict_make_shared", Entry{ .params = "PP", .ret = 'v' } },
     .{ "nox_dict_new", Entry{ .params = "PW", .ret = 'P' } },

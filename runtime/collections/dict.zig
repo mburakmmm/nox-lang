@@ -422,7 +422,8 @@ pub const Dict = struct {
 
 const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
 
-/// Paylaşılan sözlükte kilidi alır (paylaşılmıyorsa hiçbir şey yapmaz); `unlockShared` ile eşleşir.
+/// Paylaşılan sözlükte kilidi alır (paylaşılmıyorsa hiçbir şey yapmaz); `unlockShared` ile eşleşir. Okuma da dışlayıcıdır: kısa kritik bölümlerde okuyucu-yazıcı kilidinin iki atomik RMW'si
+/// (okuyucu sayacı) tek bir dışlayıcı kilitten PAHALIDIR (ölçüldü: 8 işçide okuma-ağırlıklı yükte RW 12,3 s, dışlayıcı 5,7 s) ve `last_idx` önbelleği okumada da yazıldığından okumalar salt-okunur değildir.
 inline fn lockShared(d: *Dict) bool {
     if (!d.shared) return false;
     d.lock.lockBackoff();
@@ -431,6 +432,14 @@ inline fn lockShared(d: *Dict) bool {
 
 inline fn unlockShared(d: *Dict, held: bool) void {
     if (held) d.lock.unlock();
+}
+
+inline fn lockRead(d: *Dict) bool {
+    return lockShared(d);
+}
+
+inline fn unlockRead(d: *Dict, held: bool) void {
+    unlockShared(d, held);
 }
 
 /// Sözlüğü işçiler arasında paylaşılan olarak işaretler (derleyici, paylaşılan modül globali başlatıldıktan hemen sonra çağırır). Eş zamanlı erişim BAŞLAMADAN önce çağrılmalıdır.
@@ -718,22 +727,25 @@ pub export fn nox_dict_update(rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaqu
 pub export fn nox_dict_get(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i64 {
     _ = key_is_str;
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    const held = lockShared(d);
-    defer unlockShared(d, held);
+    const held = lockRead(d);
+    defer unlockRead(d, held);
     if (findIndex(d, key, rt)) |i| return d.entries.items[i].value;
     return 0;
 }
 
 /// Faz 9.0 dilim 3: `nox_dict_get`in SAHİPLİ (owned) ikizi — `str` değerli paylaşılan sözlükler için. Değer kilit altında RETAIN edilir (çağırana ait taze referans); böylece başka bir işçi aynı anahtarı
-/// eş zamanlı üzerine yazıp eski `str`i bıraksa bile çağıranın eline geçen işaretçi geçerli kalır. Anahtar yoksa 0 (retain yok).
-pub export fn nox_dict_get_owned(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i64 {
+/// eş zamanlı üzerine yazıp eski değeri (`str` ya da sınıf örneği) bıraksa bile çağıranın eline geçen işaretçi geçerli kalır. Anahtar yoksa 0 (retain yok).
+pub export fn nox_dict_get_owned(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64, value_kind: i32) i64 {
     _ = key_is_str;
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    const held = lockShared(d);
-    defer unlockShared(d, held);
+    const held = lockRead(d);
+    defer unlockRead(d, held);
     if (findIndex(d, key, rt)) |i| {
         const v = d.entries.items[i].value;
-        if (v != 0) str_mod.nox_str_retain(payloadToStrPtr(v));
+        if (v != 0) {
+            // value_kind: 1 = `str` (paketlenmiş başlıklı), 2 = ARC sınıf örneği.
+            if (value_kind == 2) arc.nox_rc_retain(@as(?*anyopaque, @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(v))))))) else str_mod.nox_str_retain(payloadToStrPtr(v));
+        }
         return v;
     }
     return 0;
@@ -745,8 +757,8 @@ pub export fn nox_dict_get_owned(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i
 pub export fn nox_dict_contains(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i32 {
     _ = key_is_str;
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    const held = lockShared(d);
-    defer unlockShared(d, held);
+    const held = lockRead(d);
+    defer unlockRead(d, held);
     return if (findIndex(d, key, rt) != null) 1 else 0;
 }
 
@@ -806,10 +818,10 @@ pub export fn nox_dict_eq(rt: ?*anyopaque, ap: ?*anyopaque, bp: ?*anyopaque, vki
     const b: *Dict = @ptrCast(@alignCast(bp orelse return 0));
     // İki sözlüğü de kilitle (adres sırası: kilitlenme yok).
     const first_a = @intFromPtr(a) < @intFromPtr(b);
-    const held_first = lockShared(if (first_a) a else b);
-    defer unlockShared(if (first_a) a else b, held_first);
-    const held_second = lockShared(if (first_a) b else a);
-    defer unlockShared(if (first_a) b else a, held_second);
+    const held_first = lockRead(if (first_a) a else b);
+    defer unlockRead(if (first_a) a else b, held_first);
+    const held_second = lockRead(if (first_a) b else a);
+    defer unlockRead(if (first_a) b else a, held_second);
     if (liveCount(a) != liveCount(b)) return 0;
     for (a.entries.items, 0..) |e, i| {
         if (isDead(a, i)) continue;
@@ -821,8 +833,8 @@ pub export fn nox_dict_eq(rt: ?*anyopaque, ap: ?*anyopaque, bp: ?*anyopaque, vki
 
 pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    const held = lockShared(d);
-    defer unlockShared(d, held);
+    const held = lockRead(d);
+    defer unlockRead(d, held);
     return @intCast(liveCount(d));
 }
 
@@ -842,8 +854,8 @@ fn liveEntryAt(d: *const Dict, idx: usize) ?usize {
 /// v2.0.23: Sözlüğün `idx` indisindeki (ekleme sırası) anahtarının 8-baytlık ham payload'ını döner (borrowed okuma).
 pub export fn nox_dict_entry_key(dp: ?*anyopaque, idx: i64) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    const held = lockShared(d);
-    defer unlockShared(d, held);
+    const held = lockRead(d);
+    defer unlockRead(d, held);
     if (idx < 0) return 0;
     const i = liveEntryAt(d, @intCast(idx)) orelse return 0;
     return d.entries.items[i].key;
@@ -852,8 +864,8 @@ pub export fn nox_dict_entry_key(dp: ?*anyopaque, idx: i64) i64 {
 /// v2.0.23: Sözlüğün `idx` indisindeki (ekleme sırası) değerinin 8-baytlık ham payload'ını döner (borrowed okuma).
 pub export fn nox_dict_entry_value(dp: ?*anyopaque, idx: i64) i64 {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    const held = lockShared(d);
-    defer unlockShared(d, held);
+    const held = lockRead(d);
+    defer unlockRead(d, held);
     if (idx < 0) return 0;
     const i = liveEntryAt(d, @intCast(idx)) orelse return 0;
     return d.entries.items[i].value;

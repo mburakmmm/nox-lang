@@ -2360,7 +2360,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
         if (is_pop) {
             try self.qbeCall(.{ .name = pp, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
         } else {
-            try self.qbeCall(.{ .name = pp, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+            try self.qbeCall(.{ .name = pp, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text }, .{ .ty = .w, .text = if (dinfo.value_is_class) "2" else "1" } });
         }
         try self.qbeOp2Imm(has_t, .w, "cnel", pp, 0);
         pre_payload = pp;

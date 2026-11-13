@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.125]
+
+### Eklendi
+
+- **M:N paylaşılan modül durumu, dilim 4-5 (Faz 9.0):** paylaşılan `list` global'i artık `for x in xs` ile gezilebilir ve yalnızca OKUYAN modül işlevlerine argüman olarak geçirilebilir (çağrı anlık kopya alır; parametre salt-okunurluğu `shared_globals.zig` `Ctx.paramReadOnly` ile çözümlenir: yazma/metod/atama/dönüş/yakalama yok, özyinelemede iyimser). Liste elemanları ve `dict[K, V]` değerleri artık kalıtımsız, yalnızca skaler/`str` alanlı sınıf örneği de olabilir (`list[Sınıf]`, `dict[str, Sınıf]`): okuma kilit altında RETAIN edilmiş örnek döner (`nox_slist_*` kind 2, `nox_dict_get_owned` `value_kind`).
+- Testler: iki backend golden `mn_shared_list_args`, `mn_shared_class_containers`.
+- Ölçüm notu (`benchmarks/mn_shared/shared_dict_read.nox`): AŞIRI okuma-ağırlıklı (25 ns'de bir okuma) tek sözlükte kilit çekişmesi ölçeklenmez (8 işçide 5,7 s, tek işçi 3,2 s); okuyucu-yazıcı kilidi DENENDİ ve geri alındı (okuyucu sayacının iki atomik RMW'si dışlayıcı kilitten pahalı: 12,3 s). Gerçekçi sıklıkta (≥ binlerce iterasyonda bir erişim) ölçekleme normaldir. Parçalı (sharded) sözlük sonraki iş.
+
 ## [2.1.124]
 
 ### Düzeltildi (Faz 9 kontrol/debug)

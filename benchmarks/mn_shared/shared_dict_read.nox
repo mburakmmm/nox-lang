@@ -1,0 +1,32 @@
+# 9.0 (dilim 6): OKUMA-ağırlıklı paylaşılan sözlük (her 20 iterasyonda bir okuma, yazma yok). RwSpinLock ile okuyucular eş zamanlıdır.
+table: dict[int, int] = {}
+i0: int = 0
+while i0 < 1000:
+    table[i0] = i0 * 3
+    i0 = i0 + 1
+
+async def work(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    i: int = 0
+    while i < 20000000:
+        acc = (acc * 31 + i + id) % 1000003
+        if i % 20 == 0:
+            acc = acc + table[(i // 20) % 1000]
+        i = i + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](64)
+    k: int = 0
+    while k < 32:
+        t: Task[None] = spawn work(k, out)
+        k = k + 1
+    total: int = 0
+    k = 0
+    while k < 32:
+        total = total + await out.recv()
+        k = k + 1
+    print(total)
+
+mt: Task[None] = spawn main_task()
+await mt
