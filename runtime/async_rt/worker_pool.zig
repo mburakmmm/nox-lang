@@ -446,6 +446,72 @@ test "WorkerPool: paylaşılan sözlük 4 işçide eş zamanlı set/get/contains
     dict_mod.nox_dict_release(pool.rt, st.dict, 0, 0, 0);
 }
 
+/// Faz 9.0 dilim 3: paylaşılan liste hücresi (`str` elemanlı) çok işçili append/get/set/pop altında bellek-güvenli ve sızıntısızdır.
+const slist_mod = @import("../collections/shared_list.zig");
+const str_mod_t = @import("../str.zig");
+const SharedListStress = struct {
+    cell: ?*anyopaque,
+    appended: std.atomic.Value(i64) = .init(0),
+    popped: std.atomic.Value(i64) = .init(0),
+    bad: std.atomic.Value(bool) = .init(false),
+};
+
+fn sharedListWorkerBody(rt: *anyopaque, slot: usize, st: *SharedListStress) void {
+    var i: usize = 0;
+    while (i < 3000) : (i += 1) {
+        var buf: [32]u8 = undefined;
+        const text = std.fmt.bufPrint(&buf, "w{d}-{d}", .{ slot, i }) catch unreachable;
+        const s = str_mod_t.nox_str_from_bytes(rt, text) orelse continue;
+        const sv: i64 = @intCast(@intFromPtr(s));
+        if (slist_mod.nox_slist_append(rt, st.cell, 8, 1, sv) == 1) _ = st.appended.fetchAdd(1, .monotonic);
+        var ok: i64 = 0;
+        // Rastgele indeksten oku: sahipli str'yi hemen bırak (tutarlı ARC).
+        const n = slist_mod.nox_slist_len(st.cell);
+        if (n > 0) {
+            const got = slist_mod.nox_slist_get(st.cell, @intCast(@mod(i * 7, @as(usize, @intCast(n)))), 8, 1, &ok);
+            if (ok == 1) {
+                if (got == 0) st.bad.store(true, .seq_cst);
+                str_mod_t.nox_str_release(rt, @ptrFromInt(@as(usize, @intCast(got))));
+            }
+        }
+        // Üzerine yazma: yeni str koy, eskisi hücrede bırakılır.
+        if (i % 5 == 0 and n > 0) {
+            const t2 = std.fmt.bufPrint(&buf, "s{d}-{d}", .{ slot, i }) catch unreachable;
+            if (str_mod_t.nox_str_from_bytes(rt, t2)) |s2| {
+                const sv2: i64 = @intCast(@intFromPtr(s2));
+                if (slist_mod.nox_slist_set(rt, st.cell, @intCast(@mod(i * 3, @as(usize, @intCast(n)))), 8, 1, sv2) == 0) str_mod_t.nox_str_release(rt, s2);
+            }
+        }
+        // Zaman zaman pop: sahiplik çağırana geçer, bırakılır.
+        if (i % 3 == 0) {
+            var pok: i64 = 0;
+            const pv = slist_mod.nox_slist_pop(st.cell, 8, &pok);
+            if (pok == 1) {
+                _ = st.popped.fetchAdd(1, .monotonic);
+                str_mod_t.nox_str_release(rt, @ptrFromInt(@as(usize, @intCast(pv))));
+            }
+        }
+    }
+}
+
+test "WorkerPool: paylaşılan liste hücresi (str) 4 işçide eş zamanlı append/get/set/pop tutarlı" {
+    const testing = std.testing;
+    var pool = try WorkerPool.create(testing.allocator, 4);
+    defer pool.destroy();
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
+    state.main_pool_workers = 4;
+    const raw = arc.nox_rc_alloc(pool.rt, 16).?;
+    @as(*align(1) i64, @ptrCast(raw)).* = 0;
+    @as(*align(1) i64, @ptrCast(@as([*]u8, @ptrCast(raw)) + 8)).* = 0;
+    var st = SharedListStress{ .cell = slist_mod.nox_slist_new(pool.rt, raw) };
+    try pool.spawnWorkers(*SharedListStress, sharedListWorkerBody, &st);
+    sharedListWorkerBody(pool.rt, 0, &st);
+    pool.joinAll();
+    try testing.expect(!st.bad.load(.seq_cst));
+    try testing.expectEqual(st.appended.load(.seq_cst) - st.popped.load(.seq_cst), slist_mod.nox_slist_len(st.cell));
+    slist_mod.nox_slist_free(pool.rt, st.cell, 1, 8);
+}
+
 test "WorkerPool: create/destroy tek başına (worker yok) sızmaz" {
     const testing = std.testing;
     var pool = try WorkerPool.create(testing.allocator, 1);

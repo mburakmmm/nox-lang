@@ -1,0 +1,76 @@
+# Faz 9.0 dilim 3 (v2.1.122): paylaşılan modül düzeyi `list[int]` / `list[str]` ve `dict[str, str]` globalleri, M:N işçileri arasında TEK ortak nesnedir.
+# Görevler eş zamanlı ekler; okuma/yazma/pop/`in`/dilim ana görevde belirleyici biçimde doğrulanır.
+nums: list[int] = []
+names: list[str] = []
+labels: dict[str, str] = {}
+
+async def work(id: int, out: Channel[int]) -> None:
+    acc: int = 0
+    j: int = 0
+    while j < 50:
+        i: int = 0
+        while i < 2000:
+            acc = (acc * 31 + i + j + id) % 1000003
+            i = i + 1
+        nums.append(id * 1000 + j)
+        names.append("w" + str(id) + "-" + str(j))
+        labels["k" + str(id) + "-" + str(j)] = "v" + str(id)
+        j = j + 1
+    await out.send(acc)
+
+async def main_task() -> None:
+    out: Channel[int] = Channel[int](16)
+    k: int = 0
+    while k < 8:
+        t: Task[None] = spawn work(k, out)
+        k = k + 1
+    total: int = 0
+    k = 0
+    while k < 8:
+        total = total + await out.recv()
+        k = k + 1
+    print(total)
+    print(len(nums))
+    print(len(names))
+    print(len(labels))
+    s: int = 0
+    i: int = 0
+    while i < len(nums):
+        s = s + nums[i]
+        i = i + 1
+    print(s)
+    n: int = 0
+    i = 0
+    while i < len(names):
+        n = n + len(names[i])
+        i = i + 1
+    print(n)
+    print("w3-7" in names)
+    print("w9-9" in names)
+    print(labels["k5-20"])
+    print(labels.get("k1-1", "none"))
+    print(labels.get("zzz", "none"))
+    nums[0] = -1
+    names[0] = "first"
+    print(nums[0])
+    print(names[0])
+    print(nums[-1] >= 0)
+    last: int = nums.pop()
+    print(last >= 0)
+    print(len(nums))
+    sl: list[int] = nums[0:3]
+    print(len(sl))
+    print(sl[0])
+    removed: str = labels.pop("k0-0")
+    print(removed)
+    print(len(labels))
+    try:
+        bad: int = nums[100000]
+        print(bad)
+    except IndexError:
+        print("IndexError")
+    nums.clear()
+    print(len(nums))
+
+mt: Task[None] = spawn main_task()
+await mt

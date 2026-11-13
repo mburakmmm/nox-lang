@@ -11,6 +11,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
+const shared_globals = @import("shared_globals.zig");
 
 const Codegen = codegen.Codegen;
 const RT_PARAM = types.RT_PARAM;
@@ -87,7 +88,9 @@ fn genGlobalInitStmt(self: *Codegen, stmt: ast.Stmt, block: []const u8) CodegenE
             const g = self.module_globals.get(v.name) orelse return;
             const v0 = try self.genExprForTarget(v.value, g.info);
             const retained = try self.retainIfAliasing(v.value, v0);
-            const val = try self.convert(retained, g.info.qtype);
+            var val = try self.convert(retained, g.info.qtype);
+            // Faz 9.0 dilim 3: paylaşılan `list` global'inin yuvasına listenin kendisi değil hücresi yazılır.
+            if (self.routed_lists.contains(v.name)) val.text = try shared_globals.wrapInitList(self, val.text);
             const addr = try self.newTemp();
             try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
             try self.qbeStore(g.info.qtype, val.text, addr);
@@ -184,6 +187,10 @@ pub fn genNoxDeinitGlobals(self: *Codegen) CodegenError!void {
         try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
         const ptr = try self.newTemp();
         try self.qbeLoadL(ptr, addr);
+        if (self.routed_lists.contains(g.name)) {
+            try shared_globals.freeList(self, g.*, ptr);
+            continue;
+        }
         try self.releaseValueIfSet(ptr, g.info.heap, g.info.elem_qtype, g.info.class_name, g.info.elem_heap_info, g.info.dict_info);
     }
     try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = block }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.module_globals_size}) } });

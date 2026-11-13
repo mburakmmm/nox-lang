@@ -724,6 +724,21 @@ pub export fn nox_dict_get(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, ke
     return 0;
 }
 
+/// Faz 9.0 dilim 3: `nox_dict_get`in SAHİPLİ (owned) ikizi — `str` değerli paylaşılan sözlükler için. Değer kilit altında RETAIN edilir (çağırana ait taze referans); böylece başka bir işçi aynı anahtarı
+/// eş zamanlı üzerine yazıp eski `str`i bıraksa bile çağıranın eline geçen işaretçi geçerli kalır. Anahtar yoksa 0 (retain yok).
+pub export fn nox_dict_get_owned(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i64 {
+    _ = key_is_str;
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
+    const held = lockShared(d);
+    defer unlockShared(d, held);
+    if (findIndex(d, key, rt)) |i| {
+        const v = d.entries.items[i].value;
+        if (v != 0) str_mod.nox_str_retain(payloadToStrPtr(v));
+        return v;
+    }
+    return 0;
+}
+
 /// Faz MN.4: `rt` parametresi EKLENDİ (bkz. `hashSeed`in belge notu) —
 /// `nox_dict_len`in AKSİNE (hiç hash'lemez, `rt`ye ihtiyacı YOK, DEĞİŞMEDİ)
 /// BU fonksiyon `findIndex` ÜZERİNDEN hash'e İHTİYAÇ DUYABİLİR.

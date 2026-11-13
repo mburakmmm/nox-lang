@@ -8,6 +8,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
+const shared_globals = @import("shared_globals.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
 const layout = @import("layout.zig");
@@ -391,6 +392,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
             // okumasıYLA BİREBİR AYNIDIR (checker.zig'in AYNI düşüşüyle
             // TUTARLI, bkz. onun belge notu).
             if (self.module_globals.get(name)) |g| {
+                if (self.routed_lists.contains(name)) break :blk try shared_globals.genListSnapshot(self, g);
                 const block = try self.newTemp();
                 try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
                 const addr = try self.newTemp();
@@ -591,6 +593,10 @@ pub fn normalizeNegativeIndex(self: *Codegen, index_expr: ast.Expr, index_text: 
 }
 
 pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
+    // Faz 9.0 dilim 3: paylaşılan `list` global'inin O(1) hücre okuması.
+    if (idx.obj.* == .identifier and self.routed_lists.contains(idx.obj.identifier) and !self.vars.contains(idx.obj.identifier)) {
+        return shared_globals.genListGet(self, self.module_globals.get(idx.obj.identifier).?, idx.index.*);
+    }
     const hoisted: ?Value = if (idx.obj.* == .index) blk: {
         const inner = idx.obj.*.index;
         if (inner.obj.* == .identifier and inner.index.* == .identifier) {

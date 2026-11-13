@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.122]
+
+### Eklendi
+
+- **M:N paylaşılan modül durumu, dilim 3 (Faz 9.0):** hiç yeniden atanmayan, taze başlatılan `list[int|float|bool|str]` ve `dict[K, str]` modül globalleri artık programı tek işçiye SABİTLEMEZ. Liste yuvasında listenin kendisi değil `runtime/collections/shared_list.zig` hücresi durur (`list` büyürken yeniden tahsis edildiğinden nesne başına kilit uygun değildi): `append`/`pop`/`clear`/`xs[i]`/`xs[i] = v`/`len(xs)` hücreye, `x in xs`/dilim/`print(xs)` anlık kopyaya yönlenir; `dict[K, str]` okumaları (`d[k]`, `get`, `pop`) kilit altında tek çağrıda SAHİPLİ döner (`nox_dict_get_owned`). Global'in tüm kullanımları izinli biçimlerde değilse (fonksiyona argüman, takma ad, `for` ile gezme vb.) program eskisi gibi tek işçide kalır (`compiler/codegen_qbe/shared_globals.zig` kullanım çözümlemesi). Dict+liste+sınıf iş yükü 1 işçide 2,46 s → 8 işçide 0,39 s.
+- Eşzamansız (`spawn`/`async`) kullanmayan programlarda paylaşım sınıflaması/yönlendirmesi yapılmaz (sıradan global liste erişimi satır içi kalır).
+- Testler: iki backend golden `mn_shared_list`; `worker_pool.zig` 4 işçili `str` elemanlı liste gerilim testi; `runtime-test` `slist`.
+
+### Düzeltildi
+
+- Aralıklı kırmızı HTTP/3 testi: TCP için verilen rastgele port numarası başka bir testin QUIC istemci UDP soketiyle çakışabiliyordu (`UDP port N could not be opened`); iki HTTP/3 testi artık boş UDP portunu önceden yoklayıp TCP dinleyicisini o portta açıyor.
+
 ## [2.1.121]
 
 ### Eklendi

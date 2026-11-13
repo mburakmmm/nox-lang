@@ -8,6 +8,7 @@ const report_sink = @import("../report_sink.zig");
 const reserved_symbols = @import("reserved_symbols.zig");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
+const shared_globals = @import("shared_globals.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
 const inlining = @import("inlining.zig");
@@ -1010,9 +1011,40 @@ fn isSharedSafeClassInstance(self: *Codegen, g: types.GlobalVar, module: ast.Mod
     return true;
 }
 
+/// Üst düzey `name: T = <başlatıcı>` bildiriminin başlatıcısı TAZE (sahibi tek) bir değer mi? (`list_lit`/çağrı/liste üretimi; başka bir değişkenin takma adı DEĞİL.)
+fn initIsFresh(module: ast.Module, name: []const u8) bool {
+    for (module.body) |st| {
+        if (st.kind != .var_decl) continue;
+        const v = st.kind.var_decl;
+        if (!std.mem.eql(u8, v.name, name)) continue;
+        return switch (v.value) {
+            .list_lit, .list_comp, .call => true,
+            else => false,
+        };
+    }
+    return false;
+}
+
+/// Paylaşılan `list[T]` global'i olabilir mi? Eleman skaler/`str`, yeniden atama yok, başlatıcı taze, tüm kullanımlar izinli biçimlerde (bkz. `shared_globals.zig`).
+fn isRoutedList(self: *Codegen, g: types.GlobalVar, module: ast.Module, extra_functions: []const ast.FuncDef) bool {
+    if (g.info.heap != .list) return false;
+    if (shared_globals.listElemShape(g.info) == null) return false;
+    if (assignsName(module.body, g.name) or !initIsFresh(module, g.name)) return false;
+    return shared_globals.usesAreRouted(self.allocator, module.body, extra_functions, g.name, .list);
+}
+
+/// Paylaşılan `dict[K, str]` global'i olabilir mi? Değer `str`, yeniden bağlama yok, tüm kullanımlar izinli biçimlerde.
+fn isRoutedStrDict(self: *Codegen, g: types.GlobalVar, module: ast.Module, extra_functions: []const ast.FuncDef) bool {
+    if (g.info.heap != .dict) return false;
+    const di = g.info.dict_info orelse return false;
+    if (!di.value_is_str or di.value_is_class or di.value_heap != .none) return false;
+    if (assignsName(module.body, g.name)) return false;
+    return shared_globals.usesAreRouted(self.allocator, module.body, extra_functions, g.name, .dict_str);
+}
+
 /// Faz 9.0: sınıflandırır VE paylaşılan-güvenli sözlük globallerini `shared_dict_globals`a yazar (`genGlobalInitStmt` bunları başlangıçta paylaşılan olarak işaretler).
 /// Kanal/görev globalleri (zaten iş parçacığı güvenli tutamaçlar; hiç yeniden atanmamışsa) ve skaler/`str`-alanlı sınıf örnekleri de paylaşılan tek blokta yaşar.
-pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module) CodegenError!SharedGlobalsKind {
+pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!SharedGlobalsKind {
     var kind: SharedGlobalsKind = .none;
     var it = self.module_globals.valueIterator();
     while (it.next()) |g| {
@@ -1022,7 +1054,16 @@ pub fn sharedGlobalsKind(self: *Codegen, module: ast.Module) CodegenError!Shared
             },
             .str => if (assignsName(module.body, g.name)) return .pinned,
             .dict => {
-                if (!isSharedSafeDict(g.*, module)) return .pinned;
+                if (isSharedSafeDict(g.*, module)) {
+                    kind = .shared_block;
+                } else if (isRoutedStrDict(self, g.*, module, extra_functions)) {
+                    try self.routed_dict_str.put(self.allocator, g.name, {});
+                    kind = .shared_block;
+                } else return .pinned;
+            },
+            .list => {
+                if (!isRoutedList(self, g.*, module, extra_functions)) return .pinned;
+                try self.routed_lists.put(self.allocator, g.name, {});
                 kind = .shared_block;
             },
             .channel, .task => {

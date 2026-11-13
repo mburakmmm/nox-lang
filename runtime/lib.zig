@@ -75,6 +75,7 @@ pub const format = @import("format.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
 pub const list_ops = @import("collections/list_ops.zig");
+pub const shared_list = @import("collections/shared_list.zig");
 pub const http_client = @import("stdlib_shims/http_client.zig");
 pub const http_stream = @import("stdlib_shims/http_stream.zig");
 pub const http_server = @import("stdlib_shims/http_server.zig");
@@ -168,6 +169,7 @@ comptime {
     _ = dict;
     _ = list_sort;
     _ = list_ops;
+    _ = shared_list;
     _ = embed;
     _ = http_client;
     _ = @import("stdlib_shims/net_dial.zig");

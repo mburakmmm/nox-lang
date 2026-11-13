@@ -7,6 +7,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
+const shared_globals = @import("shared_globals.zig");
 const expr_mod = @import("expr.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
@@ -443,6 +444,9 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
         // `genListAssign`/`genDictAssign`e (İKİSİ de ARTIK ham `idx`
         // yerine ÖNCEDEN değerlendirilmiş `obj`u ALIR) dağıtılır.
         .index => |idx| {
+            if (idx.obj.* == .identifier and self.routed_lists.contains(idx.obj.identifier) and !self.vars.contains(idx.obj.identifier)) {
+                return shared_globals.genListSet(self, self.module_globals.get(idx.obj.identifier).?, idx.index.*, a.value);
+            }
             const obj = try self.genExpr(idx.obj.*);
             if (obj.heap == .list) return self.genListAssign(obj, idx, a.value);
             return self.genDictAssign(obj, idx, a.value);
@@ -616,6 +620,9 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
 /// GÜVENMEK ASLA YETERLİ DEĞİLDİ — bu AYRICA bağımsız bir doğruluk
 /// hatasıydı, yalnızca bellek güvenliği DEĞİL).
 pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.Expr) CodegenError!Value {
+    if (obj_expr == .identifier and self.routed_dict_str.contains(obj_expr.identifier) and !self.vars.contains(obj_expr.identifier)) {
+        return shared_globals.genDictGetOwned(self, obj_expr, obj, key_expr);
+    }
     const dinfo = obj.dict_info.?;
     const key_v0 = try self.genExpr(key_expr);
     try self.checkNoLowlevelEscape(key_v0);

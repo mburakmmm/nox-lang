@@ -3131,6 +3131,34 @@ test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzama
     try std.testing.expectEqualStrings("slow tamamlandi", TestHandlerLog.log.items[1]);
 }
 
+/// HTTP/3 testleri için: TCP dinleyicisi ve QUIC için gereken AYNI numaralı UDP portu birlikte boş olan bir port bulur (işletim sistemi TCP için rastgele port verir, aynı numara başka bir testin
+/// QUIC istemci soketi tarafından UDP'de kullanılıyor olabilir: `UDP port N could not be opened`). Boş UDP portu önceden yoklanır; TCP dinleyicisi o portta açılır, olmazsa yeniden denenir.
+fn listenTlsWithFreeUdp(rt: ?*anyopaque, cert: [*:0]const u8, key: [*:0]const u8) ?*anyopaque {
+    if (comptime !quic.supported) return null;
+    const c = std.c;
+    var attempt: usize = 0;
+    while (attempt < 20) : (attempt += 1) {
+        const fd = c.socket(c.AF.INET, c.SOCK.DGRAM, 0);
+        if (fd < 0) return null;
+        var addr: c.sockaddr.in = std.mem.zeroes(c.sockaddr.in);
+        addr.family = c.AF.INET;
+        addr.addr = std.mem.nativeToBig(u32, 0x7f000001);
+        if (c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.in)) != 0) {
+            _ = c.close(fd);
+            continue;
+        }
+        var len: c.socklen_t = @sizeOf(c.sockaddr.in);
+        if (c.getsockname(fd, @ptrCast(&addr), &len) != 0) {
+            _ = c.close(fd);
+            continue;
+        }
+        const port: u16 = std.mem.bigToNative(u16, addr.port);
+        _ = c.close(fd);
+        if (nox_http_server_listen_tls(rt, @intCast(port), cert, key)) |srv| return srv;
+    }
+    return null;
+}
+
 test "HTTP/3: serve_tls + set_http3 aynı handler'ı QUIC (UDP) üzerinden çağırır (yerel QUIC istemcisiyle)" {
     if (!quic.supported) return error.SkipZigTest;
     if (!quic.available()) return error.SkipZigTest;
@@ -3141,7 +3169,7 @@ test "HTTP/3: serve_tls + set_http3 aynı handler'ı QUIC (UDP) üzerinden çağ
 
     g_serve_config.http3.store(1, .monotonic);
     defer g_serve_config.http3.store(0, .monotonic);
-    const server = nox_http_server_listen_tls(rt, 0, "runtime/stdlib_shims/testdata/quic_test_cert.pem", "runtime/stdlib_shims/testdata/quic_test_key.pem") orelse return error.ListenFailed;
+    const server = listenTlsWithFreeUdp(rt, "runtime/stdlib_shims/testdata/quic_test_cert.pem", "runtime/stdlib_shims/testdata/quic_test_key.pem") orelse return error.ListenFailed;
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
 
@@ -3208,7 +3236,7 @@ test "HTTP/3: h3_client.request sunucuya GET/POST yapar, yanıt başlıkları ve
 
     g_serve_config.http3.store(1, .monotonic);
     defer g_serve_config.http3.store(0, .monotonic);
-    const server = nox_http_server_listen_tls(rt, 0, "runtime/stdlib_shims/testdata/quic_test_cert.pem", "runtime/stdlib_shims/testdata/quic_test_key.pem") orelse return error.ListenFailed;
+    const server = listenTlsWithFreeUdp(rt, "runtime/stdlib_shims/testdata/quic_test_cert.pem", "runtime/stdlib_shims/testdata/quic_test_key.pem") orelse return error.ListenFailed;
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
 

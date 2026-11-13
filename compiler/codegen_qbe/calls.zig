@@ -10,6 +10,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
+const shared_globals = @import("shared_globals.zig");
 const expr_mod = @import("expr.zig");
 const codegen = @import("codegen.zig");
 const async_thread_mod = @import("async_thread.zig");
@@ -477,6 +478,9 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // AYNI tek-argümanlı imza, yalnızca fonksiyon adı değişti.
             if (std.mem.eql(u8, name, "len")) {
                 if (c.args.len != 1) return error.Unsupported;
+                if (c.args[0] == .identifier and self.routed_lists.contains(c.args[0].identifier) and !self.vars.contains(c.args[0].identifier)) {
+                    return shared_globals.genListLen(self, self.module_globals.get(c.args[0].identifier).?);
+                }
                 const v = try self.genExpr(c.args[0]);
                 const result_t = try self.newTemp();
                 // Stdlib fazı §L: `list[T]` dalı — `genListLit`in AYNI
@@ -2072,6 +2076,10 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     if (isSuperCallExpr(a.obj.*)) return self.genSuperMethodCall(a, args);
     // v1.169.0: kaynak-sırası değerlendirme permütasyonu, alıcı ifadesi (iç çağrılar içerebilir) değerlendirilmeden ÖNCE alınır.
     const eval_order = try self.takeEvalOrder(args.len);
+    // Faz 9.0 dilim 3: paylaşılan `list` global'inin yazıcıları hücreye yönlendirilir (alıcı anlık kopya olarak DEĞERLENDİRİLMEZ).
+    if (a.obj.* == .identifier and self.routed_lists.contains(a.obj.identifier) and !self.vars.contains(a.obj.identifier)) {
+        return shared_globals.genListMethod(self, self.module_globals.get(a.obj.identifier).?, a, args);
+    }
     const obj = try self.genExpr(a.obj.*);
     if (obj.heap == .str) return genStrMethod(self, obj, a, args);
     if (obj.heap == .dict) return self.genDictMethod(obj, a, args);
@@ -2343,8 +2351,20 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
     const heap_value = dinfo.value_is_str or dinfo.valueIsArc();
     const heap_kind: HeapKind = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else dinfo.value_heap;
 
+    // Faz 9.0 dilim 3: paylaşılan `dict[K, str]` global'inde `contains` + `get/pop` iki ayrı çağrı olamaz (arada başka işçi anahtarı silebilir): TEK çağrı, sahipli sonuç (get: kilit altında retain; pop: devralma).
+    const routed = a.obj.* == .identifier and self.routed_dict_str.contains(a.obj.identifier) and !self.vars.contains(a.obj.identifier) and (is_get or is_pop);
+    var pre_payload: ?[]const u8 = null;
     const has_t = try self.newTemp();
-    try self.qbeCall(.{ .name = has_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+    if (routed) {
+        const pp = try self.newTemp();
+        if (is_pop) {
+            try self.qbeCall(.{ .name = pp, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+        } else {
+            try self.qbeCall(.{ .name = pp, .ty = .l }, "$nox_dict_get_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+        }
+        try self.qbeOp2Imm(has_t, .w, "cnel", pp, 0);
+        pre_payload = pp;
+    } else try self.qbeCall(.{ .name = has_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
     const found_label = try self.newLabel("dict_found");
     const miss_label = try self.newLabel("dict_miss");
     const end_label = try self.newLabel("dict_end");
@@ -2357,8 +2377,8 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
         try self.qbeLabel(err_label);
         try emitKeyError(self, key_expr, key_v0, a.obj.*, obj);
         try self.qbeLabel(found_label);
-        const payload_t = try self.newTemp();
-        try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+        const payload_t = if (pre_payload) |pp| pp else try self.newTemp();
+        if (pre_payload == null) try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
         const conv = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
         try self.releaseIfTemporary(key_expr, key_v0);
         try self.releaseIfTemporary(a.obj.*, obj);
@@ -2373,8 +2393,10 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
     var found_qtype: QbeType = undefined;
     var found_val: Value = undefined;
     {
-        const payload_t = try self.newTemp();
-        if (is_pop) {
+        const payload_t = if (pre_payload) |pp| pp else try self.newTemp();
+        if (pre_payload != null) {
+            // Paylaşılan sözlük: değer yukarıdaki tek çağrıda sahipli alındı.
+        } else if (is_pop) {
             try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
         } else {
             try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
@@ -2382,7 +2404,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
         const conv = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
         found_val = dictValueOf(dinfo, conv);
         // `get`/`setdefault`: ödünç okuma → sonuç için retain; `pop`: sahiplik zaten devralındı.
-        if (!is_pop and heap_value) try self.emitInlineRetain(found_val.text, heap_kind);
+        if (!is_pop and heap_value and pre_payload == null) try self.emitInlineRetain(found_val.text, heap_kind);
         if (is_get and args.len == 1) {
             // `get(k)`: Optional sonuç — skalerde kutula.
             if (!heap_value) {

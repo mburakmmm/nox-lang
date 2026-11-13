@@ -213,6 +213,7 @@ const closures = @import("closures.zig");
 const ffi_callback = @import("ffi_callback.zig");
 const layout = @import("layout.zig");
 const globals_mod = @import("globals.zig");
+const shared_globals = @import("shared_globals.zig");
 const ownership = @import("ownership.zig");
 const exceptions = @import("exceptions.zig");
 const calls = @import("calls.zig");
@@ -1263,6 +1264,9 @@ pub const Codegen = struct {
     /// Faz 9.0: modül globals'ı TÜM işçiler arasında tek ortak blokta paylaşılıyor (bkz. `registration.sharedGlobalsKind`).
     shared_block_mode: bool = false,
     globals_pinned: bool = false,
+    /// Faz 9.0 dilim 3: ad üzerinden yönlendirilen paylaşılan `list[T]` globalleri (yuvada hücre) ve `dict[K, str]` globalleri (sahipli okuma).
+    routed_lists: std.StringHashMapUnmanaged(void) = .empty,
+    routed_dict_str: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz 9.0: `shared_block_mode` içinde başlangıçta paylaşılan olarak işaretlenecek `dict` globalleri (bkz. `registration.isSharedSafeDict`).
     shared_dict_globals: std.StringHashMapUnmanaged(void) = .empty,
     /// Son terfi etmiş `var_decl`ın `module.body` indeksi (dahil). Bu
@@ -1974,7 +1978,8 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     const wants_multicore_pool = moduleUsesMulticorePool(module, extra_functions);
     {
         // Faz 9.0: serve_multicore/pool_run işçi-başına-kopya (fabrika) modelini korur; aksi halde paylaşım biçimi sınıflanır (init kodu üretilmeden ÖNCE).
-        const globals_kind: registration.SharedGlobalsKind = if (wants_multicore_pool) .none else try gen.sharedGlobalsKind(module);
+        // Eşzamansız (spawn/async) kullanmayan programlarda işçi paylaşımı yoktur: yönlendirme/işaretleme yapılmaz (sıradan liste/sözlük erişimi eskisi gibi satır içi kalır).
+        const globals_kind: registration.SharedGlobalsKind = if (wants_multicore_pool or !moduleUsesAsync(module, extra_functions)) .none else try gen.sharedGlobalsKind(module, extra_functions);
         gen.globals_pinned = globals_kind == .pinned;
         gen.shared_block_mode = globals_kind == .shared_block;
     }
