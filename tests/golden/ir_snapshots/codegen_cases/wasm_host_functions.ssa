@@ -7501,6 +7501,42 @@ export function $nox_wasm_Host_enable_wasi(l %rt, l %p_self, l %p_args) {
 @fn_end6
     ret
 }
+export function $nox_wasm_Host_enable_threads(l %rt, l %p_self, l %p_max_threads) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    storel %p_self, %t0
+    storel %p_max_threads, %t1
+    %t3 =l loadl %t1
+    storel %t3, %t2
+    %t4 =l loadl %t2
+    %t5 =w csltl %t4, 0
+    jnz %t5, @if_then1, @if_end0
+@if_then1
+    storel 0, %t2
+    jmp @if_end0
+@if_end0
+    %t6 =l loadl %t2
+    %t7 =w csgtl %t6, 256
+    jnz %t7, @if_then3, @if_end2
+@if_then3
+    storel 256, %t2
+    jmp @if_end2
+@if_end2
+    %t8 =l loadl %t0
+    %t9 =l loadl %t0
+    %t10 =l add %t9, 32
+    %t11 =l loadl %t10
+    %t12 =l and %t11, 65535
+    %t13 =l loadl %t2
+    %t14 =l mul %t13, 65536
+    %t15 =l or %t12, %t14
+    %t16 =l add %t8, 32
+    storel %t15, %t16
+@fn_end4
+    ret
+}
 export function $nox_wasm_Host_allow_clock(l %rt, l %p_self) {
 @start
     %t0 =l alloc8 8
@@ -9299,7 +9335,7 @@ export function l $nox_wasm_Host_open_with_limits(l %rt, l %p_self, l %p_path, l
 @except_check28
     %t60 =l loadl %t5
     call $nox_ffi_Callback__func_int_int_int_int_int_int_close(l %rt, l %t60)
-    call $nox_raise(l %rt, l %t58, l 348)
+    call $nox_raise(l %rt, l %t58, l 358)
     %t61 =l sub %rt, 48
     %t62 =w loadub %t61
     %t63 =l sub %rt, 64
@@ -9567,7 +9603,7 @@ export function l $nox_wasm_Host_open_bytes(l %rt, l %p_self, l %p_data) {
 @except_check28
     %t56 =l loadl %t3
     call $nox_ffi_Callback__func_int_int_int_int_int_int_close(l %rt, l %t56)
-    call $nox_raise(l %rt, l %t54, l 358)
+    call $nox_raise(l %rt, l %t54, l 368)
     %t57 =l sub %rt, 48
     %t58 =w loadub %t57
     %t59 =l sub %rt, 64

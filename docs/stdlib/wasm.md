@@ -108,11 +108,27 @@ A `v128` value is 128 bits wide and cannot be represented as a Nox `int`, so it 
 
 Vectors live in a shadow stack next to the value stack, allocated only for modules that use SIMD, so a module without SIMD pays nothing. Float `min`/`max`/`nearest` follow the scalar rules (NaN, signed zero, ties-to-even); the payload of a produced NaN is unspecified, as the specification allows.
 
-## Threads (atomics and shared memory)
+## Threads (atomics, shared memory and wasi-threads)
 
-The threads proposal's instruction set runs too: shared memories (`(memory 1 2 shared)`), every atomic load, store, read-modify-write and compare-exchange (`i32/i64.atomic.*`, including the 8/16/32-bit forms), `atomic.fence`, `memory.atomic.wait32/wait64` and `memory.atomic.notify`. Atomic accesses must be naturally aligned (a misaligned address traps, as the specification says).
+The threads proposal's instruction set runs: shared memories (`(memory 1 2 shared)`), every atomic load, store, read-modify-write and compare-exchange (`i32/i64.atomic.*`, including the 8/16/32-bit forms), `atomic.fence`, `memory.atomic.wait32/wait64` and `memory.atomic.notify`. Atomic accesses must be naturally aligned (a misaligned address traps, as the specification says).
 
-An instance runs on **one thread**, so the operations are plain, correct reads and writes and nothing else can touch the memory meanwhile. Consequences: `notify` always wakes 0 waiters; `wait` on a shared memory returns `1` when the value differs, returns `2` (timed out, **without sleeping**) when the timeout is `>= 0`, and traps when the timeout is infinite (no other thread could ever wake it, so the trap replaces a deadlock); `wait` on a non-shared memory traps. Real parallelism across instances sharing one memory is not part of this engine.
+**By default an instance runs on one thread**, so the operations are plain, correct reads and writes: `notify` wakes 0 waiters, `wait` returns `1` when the value differs, returns `2` (timed out, without sleeping) when the timeout is `>= 0`, and traps when the timeout is infinite (no other thread could ever wake it). `wait` on a non-shared memory traps.
+
+**Real threads (opt-in, since v2.1.155).** `h.enable_threads(max_threads)` on a `Host` (1 to 256) binds the module's `wasi::thread-spawn` import — the [wasi-threads](https://github.com/WebAssembly/wasi-threads) contract that `wasi-libc`'s `pthread_create` uses — and lets the module run up to `max_threads` operating-system threads at once on **one shared linear memory**:
+
+```text
+h: nox.wasm.Host = nox.wasm.Host([], [], [])
+h.enable_threads(8)
+inst: nox.wasm.Instance = h.open("app.wasm")      # imports `wasi::thread-spawn` and a shared memory
+print(inst.call("run", [4]))
+inst.close()                                      # cancels and joins every thread
+```
+
+- `thread-spawn(start_arg)` returns a positive thread id, or a negative number when `max_threads` live threads already exist (or the OS refuses); the new thread runs the module's exported `wasi_thread_start(tid, start_arg)` in a fresh execution state (own stacks, globals and table copy; active data/element segments and `start` are not run again).
+- Shared-memory atomics are real hardware atomics; `memory.atomic.wait/notify` really block and wake (a waiter polls with short sleeps, so wake-up latency is about 1 ms; it burns no CPU). `memory.grow` on a shared memory grows in place up to the declared maximum (the address range is reserved once, never moved).
+- **Host functions are callable only from the main execution state**: a thread that calls an imported host function (or WASI) traps. A trap in any thread, or `close()`, cancels all the others (they stop at their next branch/call or blocking `wait`) and `close()` joins them before it returns.
+- Fuel is counted per thread; `max_pages`, `max_threads` and the instance's own limits apply. A non-shared memory cannot be used with threads.
+- **Not available on iOS and Android** (and WebAssembly hosts): opening a module with `enable_threads` raises `WasmError`.
 
 ## Speed
 

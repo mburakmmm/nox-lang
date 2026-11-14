@@ -345,7 +345,7 @@ fn findWasi(name: []const u8) ?*const WasiFn {
     return null;
 }
 
-const WasiOpts = struct { enabled: bool = false, clock: bool = false, random: bool = false, inherit: bool = false, args: []const []const u8 = &.{} };
+const WasiOpts = struct { enabled: bool = false, clock: bool = false, random: bool = false, inherit: bool = false, args: []const []const u8 = &.{}, max_threads: u32 = 0 };
 
 fn openBytes(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64) ?*anyopaque {
     return openBytesHost(rt, bytes, fuel, max_pages, &.{}, null, null, .{});
@@ -364,11 +364,20 @@ fn openBytesHost(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64, names:
     var cfg: interp.Config = .{};
     if (fuel > 0) cfg.fuel = @intCast(fuel);
     if (max_pages > 0) cfg.max_memory_pages = @intCast(@min(max_pages, 65536));
+    if (wopts.max_threads > 0) {
+        // wasi-threads (opt-in): iOS/Android'de kapalı (kullanıcı kararı 2026-11-14).
+        if (!interp.threads_supported) {
+            setErr(h, "wasi-threads are not available on this platform (iOS/Android/WebAssembly hosts)", .{});
+            return @ptrCast(h);
+        }
+        cfg.max_threads = @min(wopts.max_threads, 256);
+    }
     // Host işlevi içe aktarmalarını bağla: "modül.ad" anahtarı `names` içindeki konumu (= Nox tarafı `hosts` indeksi) verir.
     var nfuncs: usize = 0;
     for (h.module.imports) |imp| {
         if (imp.desc == .func) nfuncs += 1;
     }
+    var nbind: usize = 0;
     if (nfuncs > 0) {
         h.hctx = a.alloc(HostCtx, nfuncs) catch return @ptrCast(h);
         h.hbind = a.alloc(interp.HostBinding, nfuncs) catch return @ptrCast(h);
@@ -392,6 +401,8 @@ fn openBytesHost(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64, names:
                 setErr(h, "WASI function '{s}' is not supported by nox.wasm (supported: fd_write, args_*, environ_*, clock_time_get, random_get, proc_exit, ...)", .{imp.name});
                 return @ptrCast(h);
             }
+            // Yerleşik wasi-threads içe aktarması motorda çözülür (bkz. `interp.threadSpawnHost`).
+            if (wopts.max_threads > 0 and std.mem.eql(u8, imp.module, "wasi") and std.mem.eql(u8, imp.name, "thread-spawn")) continue;
             var found: ?usize = null;
             for (names, 0..) |nm, i| {
                 if (nm.len == imp.module.len + 1 + imp.name.len and std.mem.startsWith(u8, nm, imp.module) and nm[imp.module.len] == '.' and std.mem.eql(u8, nm[imp.module.len + 1 ..], imp.name)) {
@@ -417,6 +428,7 @@ fn openBytesHost(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64, names:
             h.hbind[k] = .{ .module = imp.module, .name = imp.name, .item = .{ .func = .{ .params = ft.params, .results = ft.results, .f = hostThunk, .ctx = &h.hctx[k] } } };
             k += 1;
         }
+        nbind = k; // yerleşik (thread-spawn) içe aktarmaları atlandıysa kullanılmayan kuyruk bağlanmaz (hbind'in KENDİSİ kısaltılmaz: serbest bırakma boyutu bozulurdu)
     }
     h.wasi = wopts.enabled;
     h.wasi_clock = wopts.clock;
@@ -432,7 +444,7 @@ fn openBytesHost(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64, names:
         h.cb = null;
         h.ud = null;
     }
-    h.inst = interp.Instance.init(a, &h.module, h.hbind, cfg) catch |e| {
+    h.inst = interp.Instance.init(a, &h.module, h.hbind[0..nbind], cfg) catch |e| {
         if (e == error.ImportNotFound) {
             setErr(h, "the module imports host memory/tables/globals (not supported by nox.wasm)", .{});
         } else {
@@ -467,7 +479,7 @@ pub export fn nox_wasm_open_host_raw(rt: ?*anyopaque, path: ?[*:0]const u8, name
     defer a.free(nm);
     const wa = readStrList(a, wasi_args) orelse return null;
     defer a.free(wa);
-    return openBytesHost(rt, bytes, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa });
+    return openBytesHost(rt, bytes, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa, .max_threads = @intCast(@max(0, flags >> 16) & 0xffff) });
 }
 
 pub export fn nox_wasm_open_bytes_host_raw(rt: ?*anyopaque, data: ?*anyopaque, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
@@ -484,7 +496,7 @@ pub export fn nox_wasm_open_bytes_host_raw(rt: ?*anyopaque, data: ?*anyopaque, n
     defer a.free(nm);
     const wa = readStrList(a, wasi_args) orelse return null;
     defer a.free(wa);
-    return openBytesHost(rt, buf, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa });
+    return openBytesHost(rt, buf, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa, .max_threads = @intCast(@max(0, flags >> 16) & 0xffff) });
 }
 
 /// WASI: biriken stdout/stderr'i döner ve boşaltır.

@@ -1754,6 +1754,15 @@ pub fn build(b: *std.Build) void {
         },
     });
     const wasm_atomics_test = b.addTest(.{ .root_module = wasm_atomics_mod });
+    const wasm_threads_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/wasm_threads_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+        },
+    });
+    const wasm_threads_test = b.addTest(.{ .root_module = wasm_threads_mod });
     const wasm_interp_mod = b.createModule(.{
         .root_source_file = b.path("tests/compat/wasm_interp_test.zig"),
         .target = target,
@@ -1777,12 +1786,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&addTimedTestRun(b, wasm_ops_test, win_test_timeout_s).step);
     test_step.dependOn(&addTimedTestRun(b, wasm_simd_test, win_test_timeout_s).step);
     test_step.dependOn(&addTimedTestRun(b, wasm_atomics_test, win_test_timeout_s).step);
+    test_step.dependOn(&addTimedTestRun(b, wasm_threads_test, win_test_timeout_s).step);
     const wasm_bridge_test_step = b.step("wasm-bridge-test", "Yalnızca WASM köprüsü testlerini çalıştırır (birim + uyumluluk + farksal)");
     wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_bridge_test, win_test_timeout_s).step);
     wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_compat_test, win_test_timeout_s).step);
     wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_ops_test, win_test_timeout_s).step);
     wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_simd_test, win_test_timeout_s).step);
     wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_atomics_test, win_test_timeout_s).step);
+    wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_threads_test, win_test_timeout_s).step);
     wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_fuzz_test, win_test_timeout_s).step);
     wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_interp_test, win_test_timeout_s).step);
     wasm_bridge_test_step.dependOn(&addTimedTestRun(b, wasm_programs_test, win_test_timeout_s).step);

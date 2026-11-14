@@ -305,6 +305,16 @@ class Host:
         self.wasi_args = args
         self.flags = self.flags | 8
 
+    # wasi-threads (varsayılan KAPALI): modülün `wasi::thread-spawn` içe aktarımını bağlar; en çok `max_threads` (1..256) EŞ ZAMANLI OS iş parçacığı. Paylaşımlı bellek gerçek atomikler ve gerçek
+    # `memory.atomic.wait/notify` kullanır. iOS/Android'de açılış `WasmError` verir. Ana bilgisayar (host) işlevleri yalnızca ana yürütme durumundan çağrılabilir.
+    def enable_threads(self: Host, max_threads: int) -> None:
+        n: int = max_threads
+        if n < 0:
+            n = 0
+        if n > 256:
+            n = 256
+        self.flags = (self.flags & 65535) | (n * 65536)
+
     def allow_clock(self: Host) -> None:
         self.flags = self.flags | 1
 

@@ -20,7 +20,7 @@
 - The whole MVP numeric, control-flow (`block`, `loop`, `if`, `br`, `br_if`, `br_table`, `return`, `call`, `call_indirect`), variable, memory and parametric instruction set.
 - Sign-extension operators, non-trapping (saturating) float-to-int conversions (`0xFC 0-7`), bulk memory (`0xFC 8-17`: `memory.copy/fill/init`, `data.drop`, table equivalents), reference types.
 - Fixed-width SIMD (`0xFD`, v2.1.98), everything except relaxed SIMD.
-- Threads (`0xFE`, v2.1.99): shared memory and atomics, executed on a single thread (see [nox.wasm](../stdlib/wasm.md#threads-atomics-and-shared-memory)).
+- Threads (`0xFE`, v2.1.99): shared memory and atomics; since v2.1.155 optionally on real OS threads through the wasi-threads `thread-spawn` contract (see [nox.wasm](../stdlib/wasm.md#threads-atomics-shared-memory-and-wasi-threads)).
 - A small opt-in WASI preview1 subset.
 
 Not supported (rejected): exception handling, tail calls, GC and function-reference types, memory64, multi-memory, component model, relaxed SIMD, `v128` host-function signatures and `v128` crossing the Nox boundary.

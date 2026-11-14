@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.155]
+
+### Eklendi (TODO 4.6: gerçek çok iş parçacıklı WASM — wasi-threads)
+
+- **`Host.enable_threads(max_threads)`** (varsayılan KAPALI): modülün `wasi::thread-spawn` içe aktarmasını motorda çözer; en çok `max_threads` eş zamanlı OS iş parçacığı TEK paylaşımlı lineer bellekte çalışır. Her iş parçacığı kendi yürütme durumuna (değer/çağrı yığını, global'ler, tablo kopyası) sahiptir ve dışa aktarılan `wasi_thread_start(tid, start_arg)`ı çalıştırır (etkin data/elem segmentleri ve `start` yeniden çalışmaz).
+- **Paylaşımlı bellek** (`runtime/wasm_bridge/shared_mem.zig`): `max_pages` adres alanı bir kez ayrılır ve taşınmaz, `memory.grow` sayfa sayacını atomik artırır, her yürütme durumu sınır dışı erişimde görünümünü yeniler. Atomik komutlar paylaşımlı bellekte **gerçek donanım atomikleridir** (`@atomicRmw`/`@cmpxchgStrong`); `memory.atomic.wait/notify` gerçek bekleme/uyandırma yapar (adres-anahtarlı FIFO, zaman aşımı, ≤ ~1 ms gecikme, CPU yakmaz). Tek yürütme durumlu örnekte eski davranış aynen korunur.
+- **Kapanış/iptal:** `close()` ve herhangi bir iş parçacığındaki tuzak diğerlerini iptal eder (yakıt denetiminde ve bloklayan `wait`te görülür) ve hepsini birleştirir; ana bilgisayar (host) işlevleri yalnızca ana yürütme durumundan çağrılabilir (iş parçacığında Trap).
+- **iOS/Android'de KAPALI** (kullanıcı kararı): `enable_threads` ile açmak `WasmError`; `interp.threads_supported`.
+- Test: `tests/compat/wasm_threads_test.zig` + `threads.wat` (4 iş parçacığı × 10000 atomik artış = 40000, 20 tur; `max_threads` sınırı; kapalıyken içe aktarma çözülemez; tuzak iptali; sonsuz `wait`te kapanış; sızıntı yok), golden `wasm_threads_spawn_atomics` (iki backend), `shared_mem.zig` birim testi. Not: aşama 4'ün Node farksal/TSan koşuları ve Windows doğrulaması bu sürümde YOK (PC çevrimdışıydı; CI Windows koşar).
+- Düzeltme: `nox.wasm` kabuğu, `thread-spawn` gibi motorda çözülen içe aktarmalar atlandığında bağlama dizisinin tamamını (kısmen doldurulmamış) motora veriyordu.
+
 ## [2.1.154]
 
 ### Eklendi (TODO 7.4 S2: yayıncı anahtarı + imzalı yayın bildirimi)

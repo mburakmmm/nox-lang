@@ -1,0 +1,17 @@
+# nox.wasm wasi-threads (TODO 4.6, v2.1.155): `Host.enable_threads` ile 4 gerçek OS iş parçacığı paylaşımlı bellekte 4 x 10000 atomik artış yapar (tam toplam), gerçek wait/notify ile ana iş
+# parçacığı bitmelerini bekler; kapalıyken (varsayılan) `wasi::thread-spawn` içe aktarması çözülemez.
+import nox.wasm
+
+h: nox.wasm.Host = nox.wasm.Host([], [], [])
+h.enable_threads(8)
+inst: nox.wasm.Instance = h.open("tests/compat/wasm_threads/threads.wasm")
+print(inst.call("run", [4]))
+inst.close()
+
+h2: nox.wasm.Host = nox.wasm.Host([], [], [])
+try:
+    i2: nox.wasm.Instance = h2.open("tests/compat/wasm_threads/threads.wasm")
+    print("opened without threads?")
+    i2.close()
+except nox_wasm_WasmError as e:
+    print("threads off:", e.message[0:46])

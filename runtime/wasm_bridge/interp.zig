@@ -13,10 +13,12 @@
 //! ile açıkça verilenlerdir (varsayılan: hiç yok), yakıt/yığın/bellek tavanları `Config`dedir.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const module_mod = @import("module.zig");
 const compile = @import("compile.zig");
 const simd = @import("simd.zig");
 const atomics = @import("atomics.zig");
+const shared_mem = @import("shared_mem.zig");
 const Module = module_mod.Module;
 const ValType = module_mod.ValType;
 const FuncCode = compile.FuncCode;
@@ -41,6 +43,7 @@ pub const Trap = error{
     UnalignedAtomic,
     ExpectedSharedMemory,
     WaitWouldBlock,
+    Canceled,
 };
 
 pub const LinkError = error{ InvalidModule, UnsupportedVersion, ImportNotFound, ImportTypeMismatch, OutOfMemory };
@@ -73,7 +76,96 @@ pub const Config = struct {
     max_call_depth: usize = 16384,
     max_memory_pages: u32 = 4096,
     max_table_elems: u32 = 10_000_000,
+    /// wasi-threads: `wasi::thread-spawn` içe aktarımını bağlar ve en çok bu kadar EŞ ZAMANLI iş parçacığına izin verir (0 = kapalı, varsayılan). Her iş parçacığı bir OS iş parçacığıdır.
+    max_threads: u32 = 0,
 };
+
+/// Bu platformda WASM iş parçacıkları açılabilir mi? iOS/Android'de kapalıdır (iş parçacığı/sanal adres alanı sınırları; kullanıcı kararı 2026-11-14).
+pub const threads_supported = switch (builtin.os.tag) {
+    .ios, .tvos, .watchos, .visionos, .freestanding, .wasi => false,
+    else => !builtin.abi.isAndroid() and !builtin.cpu.arch.isWasm(),
+};
+
+/// İş parçacıkları arası paylaşılan her nesne (SharedMemory, ThreadHub, iş parçacığı örnekleri) için İŞ PARÇACIĞI GÜVENLİ ayırıcı: çağıranın (`RuntimeState`) ayırıcısı tek iş parçacıklıdır.
+const thread_alloc = std.heap.smp_allocator;
+
+const spawn_params = [_]ValType{.i32};
+const spawn_results = [_]ValType{.i32};
+
+/// Bir `Instance` ve onun `thread-spawn` ile açtığı iş parçacıkları için ortak durum. Yalnızca kök örnek sahiplenir/serbest bırakır.
+pub const ThreadHub = struct {
+    gpa: std.mem.Allocator,
+    root: *Instance,
+    max_threads: u32,
+    live: std.atomic.Value(u32) = .init(0),
+    next_tid: std.atomic.Value(u32) = .init(1),
+    /// Kök kapanırken ya da bir iş parçacığı tuzağa düştüğünde kurulur: tüm yürütme durumları sonraki yakıt denetiminde / `wait`te `Canceled`/`OutOfFuel` ile çıkar.
+    cancel: std.atomic.Value(bool) = .init(false),
+    failed: std.atomic.Value(bool) = .init(false),
+    lock: shared_mem.SpinLock = .{},
+    threads: std.ArrayListUnmanaged(std.Thread) = .empty,
+
+    fn fail(self: *ThreadHub) void {
+        self.failed.store(true, .release);
+        self.cancel.store(true, .release);
+    }
+
+    /// Tüm iş parçacıklarını iptal edip birleştirir (kök `deinit`te).
+    fn shutdown(self: *ThreadHub) void {
+        self.cancel.store(true, .release);
+        while (true) {
+            self.lock.lock();
+            const t = self.threads.pop();
+            self.lock.unlock();
+            const th = t orelse break;
+            th.join();
+        }
+        self.threads.deinit(self.gpa);
+    }
+};
+
+fn threadMain(hub: *ThreadHub, tid: u32, start_arg: u32) void {
+    defer _ = hub.live.fetchSub(1, .acq_rel);
+    const child = Instance.initThread(hub) catch {
+        if (hub.root.shared) |sm| _ = sm.attached.fetchSub(1, .acq_rel);
+        hub.fail();
+        return;
+    };
+    defer child.deinit(); // `attached`i düşürür
+    var args = [2]u64{ tid, start_arg };
+    child.callByName("wasi_thread_start", &args, &.{}) catch hub.fail();
+}
+
+/// `wasi::thread-spawn(start_arg: i32) -> i32`: pozitif iş parçacığı kimliği ya da hata için negatif (sınır aşıldı / başlatılamadı).
+fn threadSpawnHost(ctx: ?*anyopaque, inst: *Instance, args: []const u64, results: []u64) Trap!void {
+    _ = ctx;
+    results[0] = 0xffff_ffff;
+    const hub = inst.hub orelse return;
+    if (hub.cancel.load(.acquire)) return;
+    var cur = hub.live.load(.acquire);
+    while (true) {
+        if (cur >= hub.max_threads) return;
+        cur = hub.live.cmpxchgWeak(cur, cur + 1, .acq_rel, .acquire) orelse break;
+    }
+    const sm = hub.root.shared.?;
+    _ = sm.attached.fetchAdd(1, .acq_rel); // iş parçacığı başlamadan SAYILIR: ana iş parçacığının `wait`i tek-iş-parçacığı yoluna düşmesin
+    var tid = hub.next_tid.fetchAdd(1, .monotonic) & 0x1fff_ffff;
+    if (tid == 0) tid = hub.next_tid.fetchAdd(1, .monotonic) & 0x1fff_ffff;
+    const th = std.Thread.spawn(.{}, threadMain, .{ hub, tid, @as(u32, @truncate(args[0])) }) catch {
+        _ = sm.attached.fetchSub(1, .acq_rel);
+        _ = hub.live.fetchSub(1, .acq_rel);
+        return;
+    };
+    hub.lock.lock();
+    hub.threads.append(hub.gpa, th) catch {
+        hub.lock.unlock();
+        th.detach();
+        results[0] = tid;
+        return;
+    };
+    hub.lock.unlock();
+    results[0] = tid;
+}
 
 const MAX_HOST_RESULTS = 16;
 pub const NULL_REF: u64 = 0;
@@ -102,6 +194,11 @@ pub const Instance = struct {
     mem_max_pages: u32 = module_mod.MAX_PAGES,
     /// Paylaşımlı bellek (threads): `memory.atomic.wait` yalnızca bunda geçerlidir.
     mem_shared: bool = false,
+    /// Paylaşımlı bellek nesnesi (threads; `mem` onun görünümüdür, serbest bırakılmaz). `null`: kendi `mem`i.
+    shared: ?*shared_mem.SharedMemory = null,
+    /// `max_threads > 0` ve paylaşımlı bellek varsa kökte kurulur; iş parçacığı örneklerinde köktekini gösterir.
+    hub: ?*ThreadHub = null,
+    is_thread: bool = false,
     tables: []Table,
     globals: []u64,
     data_dropped: []bool,
@@ -177,7 +274,14 @@ pub const Instance = struct {
                     // v128 değerleri ana bilgisayar sınırından geçemez (u64 yuvaları).
                     for (ft.params) |t| if (t == .v128) return error.ImportTypeMismatch;
                     for (ft.results) |t| if (t == .v128) return error.ImportTypeMismatch;
-                    const b = findBinding(bindings, imp.module, imp.name) orelse return error.ImportNotFound;
+                    const maybe_b = findBinding(bindings, imp.module, imp.name);
+                    if (maybe_b == null and cfg.max_threads > 0 and threads_supported and std.mem.eql(u8, imp.module, "wasi") and std.mem.eql(u8, imp.name, "thread-spawn")) {
+                        if (!std.mem.eql(ValType, &spawn_params, ft.params) or !std.mem.eql(ValType, &spawn_results, ft.results)) return error.ImportTypeMismatch;
+                        self.host_funcs[fi] = .{ .params = &spawn_params, .results = &spawn_results, .f = threadSpawnHost };
+                        fi += 1;
+                        continue;
+                    }
+                    const b = maybe_b orelse return error.ImportNotFound;
                     switch (b.item) {
                         .func => |hf| {
                             if (!std.mem.eql(ValType, hf.params, ft.params) or !std.mem.eql(ValType, hf.results, ft.results)) return error.ImportTypeMismatch;
@@ -226,10 +330,26 @@ pub const Instance = struct {
             }
             self.mem_max_pages = @min(mem_max orelse module_mod.MAX_PAGES, cfg.max_memory_pages);
             if (mem_min > self.mem_max_pages) return error.OutOfMemory;
-            self.mem = allocator.alloc(u8, @as(usize, mem_min) * 65536) catch return error.OutOfMemory;
-            @memset(self.mem, 0);
+            if (l.shared) {
+                const sm = shared_mem.SharedMemory.create(thread_alloc, mem_min, self.mem_max_pages) catch return error.OutOfMemory;
+                _ = sm.attached.fetchAdd(1, .acq_rel);
+                self.shared = sm;
+                self.mem = sm.view();
+            } else {
+                self.mem = allocator.alloc(u8, @as(usize, mem_min) * 65536) catch return error.OutOfMemory;
+                @memset(self.mem, 0);
+            }
         }
-        errdefer allocator.free(self.mem);
+        errdefer if (self.shared) |sm| {
+            _ = sm.attached.fetchSub(1, .acq_rel);
+            sm.release(thread_alloc);
+        } else allocator.free(self.mem);
+        if (self.shared != null and cfg.max_threads > 0 and threads_supported) {
+            const hub = thread_alloc.create(ThreadHub) catch return error.OutOfMemory;
+            hub.* = .{ .gpa = thread_alloc, .root = self, .max_threads = cfg.max_threads };
+            self.hub = hub;
+        }
+        errdefer if (self.hub) |h| thread_alloc.destroy(h);
 
         // globaller (tanımlanan)
         for (module.global_inits, 0..) |init_expr, i| {
@@ -284,9 +404,73 @@ pub const Instance = struct {
         return self;
     }
 
+    /// `thread-spawn`ın yeni OS iş parçacığı için yürütme durumu: kökün derlenmiş kodunu/tür tablosunu PAYLAŞIR (salt okunur, kök bu iş parçacığından uzun yaşar: `shutdown` önce birleştirir);
+    /// kendi değer/çağrı yığını, global'leri (başlangıç değerleri), tabloları (kökün şu anki içeriğinin kopyası) ve segment durumu vardır. Etkin data/elem segmentleri ve `start` YENİDEN çalıştırılmaz.
+    /// Bellek, kökün paylaşımlı belleğidir (`attached` sayacı `thread-spawn`da zaten artırıldı).
+    fn initThread(hub: *ThreadHub) (LinkError || Trap)!*Instance {
+        const root = hub.root;
+        const allocator = thread_alloc; // iş parçacığı örneği kendi ayırıcısını taşır (deinit aynısını kullanır)
+        const module = root.module;
+        const cfg = root.cfg;
+        const self = try allocator.create(Instance);
+        errdefer allocator.destroy(self);
+        self.* = .{
+            .allocator = allocator,
+            .module = module,
+            .arena = std.heap.ArenaAllocator.init(allocator),
+            .codes = root.codes,
+            .cfg = cfg,
+            .host_funcs = root.host_funcs,
+            .mem_max_pages = root.mem_max_pages,
+            .mem_shared = true,
+            .tables = &.{},
+            .globals = &.{},
+            .data_dropped = &.{},
+            .elem_dropped = &.{},
+            .elem_vals = root.elem_vals,
+            .canon = root.canon,
+            .stack = &.{},
+            .frames = &.{},
+            .fuel = cfg.fuel,
+            .hub = hub,
+            .is_thread = true,
+        };
+        errdefer self.arena.deinit();
+        const a = self.arena.allocator();
+        self.globals = try a.alloc(u64, module.globals.len);
+        @memset(self.globals, 0);
+        @memcpy(self.globals[0..module.num_imported_globals], root.globals[0..module.num_imported_globals]);
+        for (module.global_inits, 0..) |init_expr, i| self.globals[module.num_imported_globals + i] = self.evalConst(init_expr);
+        self.tables = try a.alloc(Table, root.tables.len);
+        for (self.tables, root.tables) |*t, rt| t.* = .{ .elems = try a.dupe(u64, rt.elems), .max = rt.max, .elem_type = rt.elem_type };
+        self.data_dropped = try a.dupe(bool, root.data_dropped);
+        self.elem_dropped = try a.dupe(bool, root.elem_dropped);
+        self.stack = allocator.alloc(u64, cfg.max_stack_slots) catch return error.OutOfMemory;
+        errdefer allocator.free(self.stack);
+        self.frames = allocator.alloc(Frame, cfg.max_call_depth) catch return error.OutOfMemory;
+        errdefer allocator.free(self.frames);
+        var any_simd = false;
+        for (self.codes) |c| any_simd = any_simd or c.uses_simd;
+        if (any_simd) self.vstack = allocator.alloc(u128, cfg.max_stack_slots) catch return error.OutOfMemory;
+        errdefer allocator.free(self.vstack);
+        const sm = root.shared.?;
+        sm.retain();
+        self.shared = sm;
+        self.mem = sm.view();
+        return self;
+    }
+
     pub fn deinit(self: *Instance) void {
         const allocator = self.allocator;
-        allocator.free(self.mem);
+        if (self.hub) |h| if (!self.is_thread) {
+            h.shutdown();
+            thread_alloc.destroy(h);
+            self.hub = null;
+        };
+        if (self.shared) |sm| {
+            _ = sm.attached.fetchSub(1, .acq_rel);
+            sm.release(thread_alloc);
+        } else allocator.free(self.mem);
         allocator.free(self.stack);
         allocator.free(self.vstack);
         allocator.free(self.frames);
@@ -341,6 +525,7 @@ pub const Instance = struct {
 
         if (func_idx < self.module.num_imported_funcs) {
             const hf = self.host_funcs[func_idx];
+            if (self.is_thread and hf.f != threadSpawnHost) return error.HostFailure;
             var res: [MAX_HOST_RESULTS]u64 = undefined;
             self.sp_top = base + args.len;
             try hf.f(hf.ctx, self, self.stack[base..][0..args.len], res[0..hf.results.len]);
@@ -406,6 +591,7 @@ pub const Instance = struct {
                     }
                     if (self.fuel == 0) return error.OutOfFuel;
                     self.fuel -= 1;
+                    if (self.fuel & 1023 == 0) if (self.hub) |h| if (h.cancel.load(.monotonic)) return error.OutOfFuel;
                     const dst = opb + @as(usize, @intCast(height));
                     if (sp - arity != dst) {
                         std.mem.copyForwards(u64, stack[dst..][0..arity], stack[sp - arity .. sp]);
@@ -431,6 +617,7 @@ pub const Instance = struct {
                     }
                     if (self.fuel == 0) return error.OutOfFuel;
                     self.fuel -= 1;
+                    if (self.fuel & 1023 == 0) if (self.hub) |h| if (h.cancel.load(.monotonic)) return error.OutOfFuel;
                     const dst = opb + @as(usize, @intCast(height));
                     if (sp - arity != dst) {
                         std.mem.copyForwards(u64, stack[dst..][0..arity], stack[sp - arity .. sp]);
@@ -471,8 +658,10 @@ pub const Instance = struct {
                     }
                     if (self.fuel == 0) return error.OutOfFuel;
                     self.fuel -= 1;
+                    if (self.fuel & 1023 == 0) if (self.hub) |h| if (h.cancel.load(.monotonic)) return error.OutOfFuel;
                     if (callee < n_imp) {
                         const hf = self.host_funcs[callee];
+                        if (self.is_thread and hf.f != threadSpawnHost) return error.HostFailure; // ana bilgisayar işlevleri yalnızca ana yürütme durumundan çağrılabilir
                         const np = hf.params.len;
                         const nr = hf.results.len;
                         self.sp_top = sp;
@@ -504,8 +693,8 @@ pub const Instance = struct {
                     sp -= 2;
                     if (@as(u32, @truncate(stack[sp + 1])) == 0) vstack[sp - 1] = vstack[sp];
                 },
-                compile.OP_FD...compile.OP_FD + 0xff => sp = try simd.exec(self.mem, @enumFromInt(ins.arity), ins.op - compile.OP_FD, ins.a, ins.b, fr.code.consts, stack, vstack, sp),
-                compile.OP_FE...compile.OP_FE + 0x4e => sp = try atomics.exec(self.mem, self.mem_shared, @enumFromInt(ins.arity), ins.op - compile.OP_FE, ins.a, stack, sp),
+                compile.OP_FD...compile.OP_FD + 0xff => sp = try simd.exec(self.syncedMem(), @enumFromInt(ins.arity), ins.op - compile.OP_FD, ins.a, ins.b, fr.code.consts, stack, vstack, sp),
+                compile.OP_FE...compile.OP_FE + 0x4e => sp = try atomics.exec(self.syncedMem(), self.shared, if (self.hub) |h| &h.cancel else null, @enumFromInt(ins.arity), ins.op - compile.OP_FE, ins.a, stack, sp),
                 0x1a => sp -= 1, // drop
                 0x1b => { // select
                     sp -= 2;
@@ -586,7 +775,7 @@ pub const Instance = struct {
                     }
                 },
                 0x3f => {
-                    stack[sp] = self.mem.len / 65536;
+                    stack[sp] = self.syncedMem().len / 65536;
                     sp += 1;
                 },
                 0x40 => stack[sp - 1] = self.memGrow(@truncate(stack[sp - 1])),
@@ -864,7 +1053,7 @@ pub const Instance = struct {
                     const s: u32 = @truncate(stack[sp + 1]);
                     const n: u32 = @truncate(stack[sp + 2]);
                     const seg: []const u8 = if (self.data_dropped[ins.a]) &.{} else module.datas[ins.a].bytes;
-                    if (@as(u64, s) + n > seg.len or @as(u64, d) + n > self.mem.len) return error.OutOfBoundsMemoryAccess;
+                    if (@as(u64, s) + n > seg.len or @as(u64, d) + n > self.syncedMem().len) return error.OutOfBoundsMemoryAccess;
                     @memcpy(self.mem[d..][0..n], seg[s..][0..n]);
                 },
                 compile.OP_FC + 9 => self.data_dropped[ins.a] = true,
@@ -873,7 +1062,7 @@ pub const Instance = struct {
                     const d: u32 = @truncate(stack[sp]);
                     const s: u32 = @truncate(stack[sp + 1]);
                     const n: u32 = @truncate(stack[sp + 2]);
-                    if (@as(u64, s) + n > self.mem.len or @as(u64, d) + n > self.mem.len) return error.OutOfBoundsMemoryAccess;
+                    if (@as(u64, s) + n > self.syncedMem().len or @as(u64, d) + n > self.mem.len) return error.OutOfBoundsMemoryAccess;
                     @memmove(self.mem[d..][0..n], self.mem[s..][0..n]);
                 },
                 compile.OP_FC + 11 => { // memory.fill
@@ -881,7 +1070,7 @@ pub const Instance = struct {
                     const d: u32 = @truncate(stack[sp]);
                     const v: u8 = @truncate(stack[sp + 1]);
                     const n: u32 = @truncate(stack[sp + 2]);
-                    if (@as(u64, d) + n > self.mem.len) return error.OutOfBoundsMemoryAccess;
+                    if (@as(u64, d) + n > self.syncedMem().len) return error.OutOfBoundsMemoryAccess;
                     @memset(self.mem[d..][0..n], v);
                 },
                 compile.OP_FC + 12 => { // table.init
@@ -929,13 +1118,27 @@ pub const Instance = struct {
         }
     }
 
-    inline fn effAddr(self: *const Instance, slot: u64, offset: u32, size: usize) Trap!usize {
+    /// Paylaşımlı bellekte başka bir iş parçacığı büyütmüş olabilir: görünümü güncel sayfa sayısına yeniler (paylaşımsız bellekte işlemsiz).
+    inline fn syncedMem(self: *Instance) []u8 {
+        if (self.shared) |sm| self.mem = sm.view();
+        return self.mem;
+    }
+
+    inline fn effAddr(self: *Instance, slot: u64, offset: u32, size: usize) Trap!usize {
         const e: u64 = @as(u64, @as(u32, @truncate(slot))) + offset;
-        if (e + size > self.mem.len) return error.OutOfBoundsMemoryAccess;
+        if (e + size > self.mem.len) {
+            // Yavaş yol: paylaşımlı bellek büyümüş olabilir.
+            if (self.shared == null or e + size > self.syncedMem().len) return error.OutOfBoundsMemoryAccess;
+        }
         return @intCast(e);
     }
 
     fn memGrow(self: *Instance, delta: u32) u64 {
+        if (self.shared) |sm| {
+            const r = sm.grow(delta);
+            self.mem = sm.view();
+            return r;
+        }
         const old: u32 = @intCast(self.mem.len / 65536);
         const new: u64 = @as(u64, old) + delta;
         if (new > self.mem_max_pages) return 0xffff_ffff;

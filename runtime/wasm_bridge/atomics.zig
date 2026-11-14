@@ -8,9 +8,12 @@
 
 const std = @import("std");
 const mod = @import("module.zig");
+const shared_mem = @import("shared_mem.zig");
 const ValType = mod.ValType;
 
-pub const Trap = error{ OutOfBoundsMemoryAccess, UnalignedAtomic, ExpectedSharedMemory, WaitWouldBlock };
+var fence_cell: std.atomic.Value(u32) = .init(0);
+
+pub const Trap = error{ OutOfBoundsMemoryAccess, UnalignedAtomic, ExpectedSharedMemory, WaitWouldBlock, Canceled };
 
 pub const Kind = enum(u8) { notify, wait32, wait64, fence, load, store, rmw, cmpxchg };
 
@@ -74,61 +77,126 @@ inline fn maskOf(w: u8) u64 {
     return if (w == 8) ~@as(u64, 0) else (@as(u64, 1) << @intCast(w * 8)) - 1;
 }
 
-fn wait(mem: []u8, shared: bool, slot: u64, off: u32, w: u8, expected: u64, timeout: u64) Trap!u64 {
+fn wait(mem: []u8, sm: ?*shared_mem.SharedMemory, cancel: ?*const std.atomic.Value(bool), slot: u64, off: u32, w: u8, expected: u64, timeout: u64) Trap!u64 {
     const e = try ea(mem, slot, off, w);
-    if (!shared) return error.ExpectedSharedMemory;
-    if (rd(mem, e, w) != (expected & maskOf(w))) return 1; // "not-equal"
-    if (@as(i64, @bitCast(timeout)) < 0) return error.WaitWouldBlock;
-    return 2; // "timed-out" (tek iş parçacığında kimse uyandıramaz; beklenmez)
+    const shared = sm orelse return error.ExpectedSharedMemory;
+    const timeout_ns: i64 = @bitCast(timeout);
+    // Bu belleğe başka yürütme durumu bağlı değilse (tek iş parçacığı) eski davranış: bekleme yok.
+    if (shared.attached.load(.acquire) <= 1) {
+        if (rd(mem, e, w) != (expected & maskOf(w))) return 1;
+        if (timeout_ns < 0) return error.WaitWouldBlock;
+        return 2;
+    }
+    const r = shared.wait(e, w, expected, timeout_ns, cancel);
+    if (r == shared_mem.CANCELED) return error.Canceled;
+    return r;
 }
 
-/// Bir atomik komutu yürütür; yeni `sp`yi döndürür.
-pub fn exec(mem: []u8, shared: bool, kind: Kind, sub: u32, off: u32, stack: []u64, sp0: usize) Trap!usize {
+inline fn aRd(mem: []u8, e: usize, w: u8) u64 {
+    return shared_mem.atomicLoad(mem.ptr, e, w);
+}
+
+inline fn aWr(mem: []u8, e: usize, w: u8, v: u64) void {
+    switch (w) {
+        1 => @atomicStore(u8, @as(*u8, @ptrCast(mem.ptr + e)), @truncate(v), .seq_cst),
+        2 => @atomicStore(u16, @as(*u16, @ptrCast(@alignCast(mem.ptr + e))), @truncate(v), .seq_cst),
+        4 => @atomicStore(u32, @as(*u32, @ptrCast(@alignCast(mem.ptr + e))), @truncate(v), .seq_cst),
+        else => @atomicStore(u64, @as(*u64, @ptrCast(@alignCast(mem.ptr + e))), v, .seq_cst),
+    }
+}
+
+inline fn aRmw(comptime T: type, p: *T, op: u8, v: T) T {
+    return switch (op) {
+        0 => @atomicRmw(T, p, .Add, v, .seq_cst),
+        1 => @atomicRmw(T, p, .Sub, v, .seq_cst),
+        2 => @atomicRmw(T, p, .And, v, .seq_cst),
+        3 => @atomicRmw(T, p, .Or, v, .seq_cst),
+        4 => @atomicRmw(T, p, .Xor, v, .seq_cst),
+        else => @atomicRmw(T, p, .Xchg, v, .seq_cst),
+    };
+}
+
+fn atomicRmwW(mem: []u8, e: usize, w: u8, op: u8, v: u64) u64 {
+    return switch (w) {
+        1 => aRmw(u8, @ptrCast(mem.ptr + e), op, @truncate(v)),
+        2 => aRmw(u16, @ptrCast(@alignCast(mem.ptr + e)), op, @truncate(v)),
+        4 => aRmw(u32, @ptrCast(@alignCast(mem.ptr + e)), op, @truncate(v)),
+        else => aRmw(u64, @ptrCast(@alignCast(mem.ptr + e)), op, v),
+    };
+}
+
+fn atomicCmpxchgW(mem: []u8, e: usize, w: u8, expected: u64, new: u64) u64 {
+    return switch (w) {
+        1 => cx(u8, @ptrCast(mem.ptr + e), @truncate(expected), @truncate(new)),
+        2 => cx(u16, @ptrCast(@alignCast(mem.ptr + e)), @truncate(expected), @truncate(new)),
+        4 => cx(u32, @ptrCast(@alignCast(mem.ptr + e)), @truncate(expected), @truncate(new)),
+        else => cx(u64, @ptrCast(@alignCast(mem.ptr + e)), expected, new),
+    };
+}
+
+inline fn cx(comptime T: type, p: *T, expected: T, new: T) T {
+    return @cmpxchgStrong(T, p, expected, new, .seq_cst, .seq_cst) orelse expected;
+}
+
+/// Bir atomik komutu yürütür; yeni `sp`yi döndürür. `sm != null`: paylaşımlı bellek (gerçek donanım atomikleri + gerçek wait/notify); aksi halde tek iş parçacığında sıradan okuma/yazma.
+pub fn exec(mem: []u8, sm: ?*shared_mem.SharedMemory, cancel: ?*const std.atomic.Value(bool), kind: Kind, sub: u32, off: u32, stack: []u64, sp0: usize) Trap!usize {
     var sp = sp0;
     const info = atomicInfo(sub).?;
     const w = info.width;
+    const shared = sm != null;
     switch (kind) {
         .notify => {
             sp -= 1;
-            _ = try ea(mem, stack[sp - 1], off, 4);
-            stack[sp - 1] = 0;
+            const e = try ea(mem, stack[sp - 1], off, 4);
+            const count: u32 = @truncate(stack[sp]);
+            stack[sp - 1] = if (sm) |m| m.notify(e, count) else 0;
         },
         .wait32, .wait64 => {
             sp -= 2;
-            stack[sp - 1] = try wait(mem, shared, stack[sp - 1], off, w, stack[sp], stack[sp + 1]);
+            stack[sp - 1] = try wait(mem, sm, cancel, stack[sp - 1], off, w, stack[sp], stack[sp + 1]);
         },
-        .fence => {},
+        .fence => {
+            if (shared) _ = fence_cell.fetchAdd(0, .seq_cst); // tam bellek bariyeri (`@fence` Zig 0.16'da yok: seq_cst RMW aynı sırayı verir)
+        },
         .load => {
             const e = try ea(mem, stack[sp - 1], off, w);
-            stack[sp - 1] = rd(mem, e, w);
+            stack[sp - 1] = if (shared) aRd(mem, e, w) else rd(mem, e, w);
         },
         .store => {
             sp -= 2;
             const e = try ea(mem, stack[sp], off, w);
-            wr(mem, e, w, stack[sp + 1]);
+            if (shared) aWr(mem, e, w, stack[sp + 1]) else wr(mem, e, w, stack[sp + 1]);
         },
         .rmw => {
             sp -= 1;
             const e = try ea(mem, stack[sp - 1], off, w);
-            const old = rd(mem, e, w);
             const v = stack[sp];
-            const new: u64 = switch (info.op) {
-                0 => old +% v,
-                1 => old -% v,
-                2 => old & v,
-                3 => old | v,
-                4 => old ^ v,
-                else => v,
-            };
-            wr(mem, e, w, new);
-            stack[sp - 1] = old;
+            if (shared) {
+                stack[sp - 1] = atomicRmwW(mem, e, w, info.op, v);
+            } else {
+                const old = rd(mem, e, w);
+                const new: u64 = switch (info.op) {
+                    0 => old +% v,
+                    1 => old -% v,
+                    2 => old & v,
+                    3 => old | v,
+                    4 => old ^ v,
+                    else => v,
+                };
+                wr(mem, e, w, new);
+                stack[sp - 1] = old;
+            }
         },
         .cmpxchg => {
             sp -= 2;
             const e = try ea(mem, stack[sp - 1], off, w);
-            const old = rd(mem, e, w);
-            if (old == (stack[sp] & maskOf(w))) wr(mem, e, w, stack[sp + 1]);
-            stack[sp - 1] = old;
+            if (shared) {
+                stack[sp - 1] = atomicCmpxchgW(mem, e, w, stack[sp] & maskOf(w), stack[sp + 1]);
+            } else {
+                const old = rd(mem, e, w);
+                if (old == (stack[sp] & maskOf(w))) wr(mem, e, w, stack[sp + 1]);
+                stack[sp - 1] = old;
+            }
         },
     }
     return sp;
