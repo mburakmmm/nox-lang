@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.148]
+
+### Belge
+
+- `project/acik-isler-2026-11-14.md`: tüm planlama dosyalarındaki açık işlerin tek temiz listesi (engeller, geliştirme, 2.2, Aura, temizlik).
+
 ## [2.1.147]
 
 ### Eklendi (Windows: macOS/Linux ile denk fiber-farkındalıklı istemci ağı — TODO 6.2)
