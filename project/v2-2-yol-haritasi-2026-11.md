@@ -12,7 +12,7 @@ Verilen kararlar (2026-11-14, kullanıcı):
 
 ## Aşamalar
 
-- [ ] **1. Builtin fonksiyonların yeterliliği ve performans analizi.** Eksik builtin'ler (Python'a karşı), `len/sum/min/max/sorted/...` mikro-benchmark, codegen satır içileme.
+- [x] **1. Builtin fonksiyonların yeterliliği ve performans analizi.** BİTTİ (v2.1.159-163). Eksik builtin'ler eklendi (`pow`/3-arg `pow`, `hex/oct/bin`, `sum(start)`, `enumerate(start)`, `zip` 3 liste, `min/max(default=)`, `int(s, taban)`); hızlandırmalar: `round` hızlı yolu, `any/all(genexpr)` kısa devre, `enumerate/zip` döngüleri ve tuple/`divmod` açma demet üretmeden, liste comprehension ön-ayırma + satır içi ekleme, `len(str)` satır içi. Ölçüm paketi: `benchmarks/builtins/run.sh` (Nox / C / CPython, 17 iş). Dışarıda bırakılan (tasarım gereği dinamik): `isinstance/type/id/hash/next/iter`; `min/max` 3+ argüman ve `print(file=)` aşama 5'e (variadik) bağlı. Açık fark (C'ye göre): `sum/max/min` ~2x (bellek bant genişliği/vektörleme), `map/filter` kapanış çağrısı, `any/all(gen)` kapanış çağrısı.
 - [ ] **2. Stdlib daha agresif performans analizi ve düzeltmeleri.** Modül modül ölçüm (collections, str, regex, url, time, fs, csv...), sıcak yolların düzeltilmesi.
 - [ ] **3. JSON kütüphanesi agresif performans analizi ve düzeltmeleri.** `nox.json` ayrıştırma/üretme, yyjson ile karşılaştırma (aşama 8'e girdi).
 - [ ] **4. HTTP ve IO performans analizi ve agresif çözümler.** sunucu/istemci sıcak yol, fs/stream, kqueue/epoll, kopya sayısı, tampon yönetimi.

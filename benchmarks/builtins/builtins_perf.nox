@@ -1,0 +1,123 @@
+from nox.time import now_ms
+
+def t0() -> int:
+    return now_ms()
+
+def report(name: str, start: int, chk: int) -> None:
+    print(name + " " + str(now_ms() - start) + "ms chk=" + str(chk))
+
+def bench() -> None:
+    n: int = 2000000
+    xs: list[int] = []
+    i: int = 0
+    while i < n:
+        xs.append((i * 7919) % 100003)
+        i = i + 1
+    fs: list[float] = []
+    for v in xs:
+        fs.append(float(v) * 0.5)
+    strs: list[str] = []
+    for v in xs[:200000]:
+        strs.append(str(v))
+
+    s: int = t0()
+    c: int = 0
+    r: int = 0
+    while r < 20:
+        c = c + sum(xs)
+        r = r + 1
+    report("sum_int_x20", s, c)
+
+    s = t0()
+    c = 0
+    r = 0
+    while r < 20:
+        c = c + len(xs) + max(xs) + min(xs)
+        r = r + 1
+    report("len_max_min_x20", s, c)
+
+    s = t0()
+    ys: list[int] = sorted(xs)
+    report("sorted_int_2M", s, ys[1000])
+
+    s = t0()
+    ys2: list[int] = sorted(xs, key=lambda v: -v)
+    report("sorted_key_2M", s, ys2[1000])
+
+    s = t0()
+    c = 0
+    for idx, v in enumerate(xs):
+        c = c + idx + v
+    report("enumerate_2M", s, c)
+
+    s = t0()
+    c = 0
+    for a, b in zip(xs, xs):
+        c = c + a - b + 1
+    report("zip_2M", s, c)
+
+    s = t0()
+    m: list[int] = list(map(lambda v: v + 1, xs))
+    report("map_2M", s, m[5])
+
+    s = t0()
+    f: list[int] = list(filter(lambda v: v % 2 == 0, xs))
+    report("filter_2M", s, len(f))
+
+    s = t0()
+    rv: list[int] = list(reversed(xs))
+    report("reversed_2M", s, rv[0])
+
+    s = t0()
+    c = 0
+    for v in xs:
+        c = c + abs(v - 50000) + round(float(v) * 0.5)
+    report("abs_round_2M", s, c)
+
+    s = t0()
+    c = 0
+    for v in xs:
+        q, rem = divmod(v, 7)
+        c = c + q + rem
+    report("divmod_2M", s, c)
+
+    s = t0()
+    c = 0
+    for t in strs:
+        c = c + int(t)
+    report("int_from_str_200k", s, c)
+
+    s = t0()
+    c = 0
+    for v in xs[:500000]:
+        c = c + len(str(v))
+    report("str_from_int_500k", s, c)
+
+    s = t0()
+    c = 0
+    r = 0
+    while r < 20:
+        if any(v > 100000 for v in xs):
+            c = c + 1
+        if all(v >= 0 for v in xs):
+            c = c + 1
+        r = r + 1
+    report("any_all_gen_x20", s, c)
+
+    s = t0()
+    c = 0
+    for fv in fs:
+        c = c + int(fv)
+    report("int_from_float_2M", s, c)
+
+    s = t0()
+    ls: list[int] = list(range(n))
+    report("list_range_2M", s, ls[10])
+
+    s = t0()
+    c = 0
+    for v in xs:
+        c = c + min(v, 50000) + max(v, 20000)
+    report("min2_max2_2M", s, c)
+
+bench()
