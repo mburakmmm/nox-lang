@@ -21,10 +21,13 @@ const net = std.Io.net;
 const IpAddress = net.IpAddress;
 const HostName = net.HostName;
 
+/// Windows'ta da açık (v2.1.147): Winsock + `WindowsReactor` (WSAPoll) üzerinden POSIX ile aynı fiber-kooperatif istemci ağı (`win_udp.zig`).
 pub const enabled = switch (builtin.os.tag) {
-    .windows, .freestanding, .wasi, .other => false,
+    .freestanding, .wasi, .other => false,
     else => !builtin.cpu.arch.isWasm(),
 };
+const is_win = builtin.os.tag == .windows;
+const win = @import("win_udp.zig");
 
 /// Tek bir deneme için üst sınır: son tarih uzaksa ilk adresin kara delik olması sonraki adresleri (IPv4 yedeği) aç bırakmasın.
 const ATTEMPT_CAP_MS: i64 = 4000;
@@ -82,11 +85,13 @@ var g_base_connect_ip: ?@TypeOf(@as(Io.VTable, undefined).netConnectIp) = null;
 /// 1 ms bekleme: bir zamanlayıcıdaki fiber içindeysek KOOPERATİF (zamanlayıcı iş parçacığı başka fiber çalıştırır), değilse iş parçacığını uyutur.
 fn pause() void {
     if (fiber_net.sleepCooperative(1)) return;
+    if (comptime is_win) return win.sleepMs(1);
     var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
     _ = std.c.nanosleep(&ts, null);
 }
 
 fn nowNs() i64 {
+    if (comptime is_win) return win.nowNs();
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
     return @as(i64, ts.sec) * std.time.ns_per_s + ts.nsec;
@@ -251,6 +256,32 @@ fn lookupThread(job: *LookupJob) void {
 fn resolveInto(job: *LookupJob) void {
     var service_buf: [8]u8 = undefined;
     const service = std.fmt.bufPrintZ(&service_buf, "{d}", .{job.port}) catch return;
+    if (comptime is_win) {
+        var wlist: ?*win.AddrInfo = null;
+        const host: [*:0]const u8 = @ptrCast(&job.host_z);
+        const fam: c_int = if (job.family) |f| switch (f) {
+            .ip4 => win.AF_INET,
+            .ip6 => win.AF_INET6,
+        } else 0;
+        if (!win.getaddrinfoStream(host, service.ptr, fam, &wlist)) return;
+        defer win.freeaddrinfo(wlist);
+        var wit = wlist;
+        while (wit) |ai| : (wit = ai.next) {
+            if (job.count >= MAX_ADDRS) break;
+            const sa = ai.addr orelse continue;
+            if (ai.family == win.AF_INET) {
+                const sin: *const win.SockAddrIn = @ptrCast(@alignCast(sa));
+                job.addrs[job.count] = .{ .ip4 = .{ .bytes = sin.addr, .port = job.port } };
+                job.count += 1;
+            } else if (ai.family == win.AF_INET6) {
+                const sin6: *const win.SockAddrIn6 = @ptrCast(@alignCast(sa));
+                job.addrs[job.count] = .{ .ip6 = .{ .bytes = sin6.addr, .port = job.port } };
+                job.count += 1;
+            }
+        }
+        job.ok = job.count > 0;
+        return;
+    }
     var hints = std.mem.zeroes(std.c.addrinfo);
     hints.family = if (job.family) |f| switch (f) {
         .ip4 => std.c.AF.INET,
@@ -490,7 +521,128 @@ fn connectHandshake(fd: std.c.fd_t, tn: *const Tunnel, rem_ms: i64) IpAddress.Co
     if (len < 12 or !std.mem.startsWith(u8, head[0..len], "HTTP/1.") or head[9] != '2') return error.ConnectionRefused;
 }
 
+// ---- TCP (Windows) --------------------------------------------------------------------------------------------------------------
+
+fn wsaToConnectError(e: c_int) IpAddress.ConnectError {
+    return switch (e) {
+        win.WSAECONNREFUSED => error.ConnectionRefused,
+        win.WSAECONNRESET, win.WSAECONNABORTED => error.ConnectionResetByPeer,
+        win.WSAETIMEDOUT => error.Timeout,
+        win.WSAENETUNREACH => error.NetworkUnreachable,
+        win.WSAEHOSTUNREACH => error.HostUnreachable,
+        win.WSAEACCES => error.AccessDenied,
+        win.WSAEADDRNOTAVAIL => error.AddressUnavailable,
+        win.WSAEAFNOSUPPORT => error.AddressFamilyUnsupported,
+        win.WSAEMFILE => error.ProcessFdQuotaExceeded,
+        else => error.NetworkUnreachable,
+    };
+}
+
+/// Windows: soket hazır olana ya da `budget_ms` dolana dek bekler (fiber içinde kooperatif). `false`: zaman aşımı.
+fn waitReadyWin(s: usize, write: bool, budget_ms: i64) bool {
+    const ms: u32 = @intCast(@min(@max(budget_ms, 1), std.math.maxInt(i32)));
+    if (fiber_net.inFiber()) return fiber_net.waitFd(@ptrFromInt(s), write, ms) == .ready;
+    return win.pollReady(s, write, ms);
+}
+
+/// Windows karşılığı `connectHandshake`: vekile `CONNECT host:port` gönderir, `2xx` bekler; başlık dışında bayt tüketmez.
+fn connectHandshakeWin(s: usize, tn: *const Tunnel, rem_ms: i64) IpAddress.ConnectError!void {
+    errdefer win.close(s);
+    var req_buf: [768]u8 = undefined;
+    const host_is_v6 = std.mem.indexOfScalar(u8, tn.target_host, ':') != null;
+    const req = (if (tn.authorization) |auth|
+        std.fmt.bufPrint(&req_buf, "CONNECT {s}{s}{s}:{d} HTTP/1.1\r\nHost: {s}{s}{s}:{d}\r\nProxy-Authorization: {s}\r\n\r\n", .{
+            if (host_is_v6) "[" else "", tn.target_host, if (host_is_v6) "]" else "", tn.target_port,
+            if (host_is_v6) "[" else "", tn.target_host, if (host_is_v6) "]" else "", tn.target_port,
+            auth,
+        })
+    else
+        std.fmt.bufPrint(&req_buf, "CONNECT {s}{s}{s}:{d} HTTP/1.1\r\nHost: {s}{s}{s}:{d}\r\n\r\n", .{
+            if (host_is_v6) "[" else "", tn.target_host, if (host_is_v6) "]" else "", tn.target_port,
+            if (host_is_v6) "[" else "", tn.target_host, if (host_is_v6) "]" else "", tn.target_port,
+        })) catch return error.ConnectionRefused;
+    const deadline = nowNs() + @min(rem_ms, 30_000) * std.time.ns_per_ms;
+    var off: usize = 0;
+    while (off < req.len) {
+        var iov = [1]win.WsaBuf{.{ .len = @intCast(req.len - off), .buf = @constCast(req[off..].ptr) }};
+        switch (win.sendVec(s, &iov)) {
+            .n => |n| off += n,
+            .err => |e| {
+                if (e != win.WSAEWOULDBLOCK) return error.ConnectionResetByPeer;
+                const left = @divFloor(deadline - nowNs(), std.time.ns_per_ms);
+                if (left <= 0 or !waitReadyWin(s, true, left)) {
+                    deadlineState().timed_out.* = true;
+                    return error.Timeout;
+                }
+            },
+        }
+    }
+    var head: [1024]u8 = undefined;
+    var len: usize = 0;
+    while (true) {
+        var byte: [1]u8 = undefined;
+        var iov = [1]win.WsaBuf{.{ .len = 1, .buf = &byte }};
+        switch (win.recvVec(s, &iov)) {
+            .n => |n| {
+                if (n == 0) return error.ConnectionResetByPeer;
+                if (len == head.len) return error.ConnectionRefused;
+                head[len] = byte[0];
+                len += 1;
+                if (len >= 4 and std.mem.eql(u8, head[len - 4 .. len], "\r\n\r\n")) break;
+            },
+            .err => |e| {
+                if (e != win.WSAEWOULDBLOCK) return error.ConnectionResetByPeer;
+                const left = @divFloor(deadline - nowNs(), std.time.ns_per_ms);
+                if (left <= 0 or !waitReadyWin(s, false, left)) {
+                    deadlineState().timed_out.* = true;
+                    return error.Timeout;
+                }
+            },
+        }
+    }
+    if (len < 12 or !std.mem.startsWith(u8, head[0..len], "HTTP/1.") or head[9] != '2') return error.ConnectionRefused;
+}
+
+fn boundedConnectIpWin(address: *const IpAddress, options: IpAddress.ConnectOptions) IpAddress.ConnectError!net.Socket {
+    const tunnel = activeTunnel();
+    // Soket hep bizimdir (netRead/netWrite Winsock kullanır): süresiz çağrı da sınırsız süreyle ama bloklamayan yolla bağlanır.
+    const rem = remainingMs() orelse @as(i64, std.math.maxInt(i32));
+    _ = options;
+    if (rem == 0) {
+        deadlineState().timed_out.* = true;
+        return error.Timeout;
+    }
+    const s = win.tcpSocket(switch (address.*) {
+        .ip4 => win.AF_INET,
+        .ip6 => win.AF_INET6,
+    }) orelse return wsaToConnectError(win.lastError());
+    errdefer win.close(s);
+    const res = switch (address.*) {
+        .ip4 => |a| win.connectNb(s, win.SockAddrIn{ .port = std.mem.nativeToBig(u16, a.port), .addr = a.bytes }),
+        .ip6 => |a| win.connectNb(s, win.SockAddrIn6{ .port = std.mem.nativeToBig(u16, a.port), .flowinfo = a.flow, .addr = a.bytes }),
+    };
+    switch (res) {
+        .done => {},
+        .failed => return wsaToConnectError(win.lastError()),
+        .in_progress => {
+            const budget = @min(rem, ATTEMPT_CAP_MS);
+            if (!waitReadyWin(s, true, budget)) {
+                if (budget >= rem) deadlineState().timed_out.* = true;
+                return error.Timeout;
+            }
+            const so = win.soError(s);
+            if (so != 0) return wsaToConnectError(so);
+        },
+    }
+    if (tunnel) |tn| try connectHandshakeWin(s, tn, rem);
+    return .{ .handle = @ptrFromInt(s), .address = address.* };
+}
+
 fn boundedConnectIp(userdata: ?*anyopaque, address: *const IpAddress, options: IpAddress.ConnectOptions) IpAddress.ConnectError!net.Socket {
+    if (comptime is_win) {
+        if (options.mode != .stream or options.protocol != null) return g_base_connect_ip.?(userdata, address, options);
+        return boundedConnectIpWin(address, options);
+    }
     // Fiber içinde süresiz bağlanma bile bloklamayan yolla yapılır (kooperatif); fiber dışında süresiz çağrı std'nin özgün uygulamasına gider.
     const tunnel = activeTunnel();
     const rem = remainingMs() orelse (if (fiber_net.inFiber() or tunnel != null) @as(i64, std.math.maxInt(i32)) else return g_base_connect_ip.?(userdata, address, options));
@@ -579,12 +731,13 @@ test "sınırlı bağlanma: kapalı yerel port hızla reddedilir" {
     defer threaded.deinit();
     var vt: Io.VTable = undefined;
     const io = testIo(&threaded, &vt);
-    begin(2000);
+    // Windows, kapalı bir yerel porta bağlanırken RST'yi hemen raporlamaz: SYN'i yeniden dener ve ~2 sn sonra WSAECONNREFUSED verir; bu yüzden payı geniştir.
+    begin(if (is_win) 8000 else 2000);
     defer end();
     const host = try HostName.init("127.0.0.1");
     const t0 = nowNs();
     try std.testing.expectError(error.ConnectionRefused, host.connect(io, 1, .{ .mode = .stream }));
-    try std.testing.expect(nowNs() - t0 < 1500 * std.time.ns_per_ms);
+    try std.testing.expect(nowNs() - t0 < (if (is_win) @as(i64, 6000) else 1500) * std.time.ns_per_ms);
 }
 
 test "sınırlı bağlanma: cevap vermeyen adres son tarihte bırakılır" {
@@ -657,8 +810,7 @@ test "DNS yuvaları: bekleyen, başka bir iş parçacığı yuva bırakınca dev
     try std.testing.expect(slots.acquireUntil(1, 0));
     const releaser = try std.Thread.spawn(.{}, struct {
         fn run(sl: *Slots) void {
-            var ts: std.c.timespec = .{ .sec = 0, .nsec = 30 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            sleepMsTest(30);
             sl.release();
         }
     }.run, .{&slots});
@@ -703,8 +855,7 @@ const FakeResolver = struct {
         const self: *FakeResolver = @ptrCast(@alignCast(job.ctx.?));
         _ = self.calls.fetchAdd(1, .acq_rel);
         while (!self.gate.load(.acquire)) {
-            var ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
-            _ = std.c.nanosleep(&ts, null);
+            sleepMsTest(1);
         }
         job.addrs[0] = .{ .ip4 = .loopback(job.port) };
         job.count = 1;
@@ -713,6 +864,7 @@ const FakeResolver = struct {
 };
 
 fn sleepMsTest(ms: i64) void {
+    if (comptime is_win) return win.sleepMs(@intCast(ms));
     var ts: std.c.timespec = .{ .sec = @intCast(@divTrunc(ms, 1000)), .nsec = @intCast(@mod(ms, 1000) * std.time.ns_per_ms) };
     _ = std.c.nanosleep(&ts, null);
 }

@@ -1,5 +1,5 @@
 # Pulse HTTP-003: GET/DELETE ile boş olmayan gövde sessizce atılmaz, "invalid request" olarak reddedilir
-# (ağa hiç çıkılmaz). Boş gövde geçerlidir ve normal bağlantı hatasına düşer.
+# (ağa hiç çıkılmaz). Boş gövde geçerlidir ve normal bağlantı hatasına düşer. (Zaman aşımı 5 sn: Windows kapalı yerel porta ~2 sn sonra "refused" der.)
 import nox.http
 from nox.http import HttpError, HttpResponse
 
@@ -11,7 +11,7 @@ for method in ["GET", "DELETE", "HEAD", "OPTIONS"]:
     except HttpError as e:
         print(method + ": " + e.message[0:15])
 try:
-    r2: HttpResponse = nox.http.request("GET", "http://127.0.0.1:1/", "", h, 1000)
+    r2: HttpResponse = nox.http.request("GET", "http://127.0.0.1:1/", "", h, 5000)
     print("accepted")
 except HttpError as e:
     print("empty body: " + e.message[0:14])

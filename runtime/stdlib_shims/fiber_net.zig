@@ -19,6 +19,9 @@ pub const enabled = net_dial.enabled;
 
 var g_base_read: ?@TypeOf(@as(Io.VTable, undefined).netRead) = null;
 var g_base_write: ?@TypeOf(@as(Io.VTable, undefined).netWrite) = null;
+var g_base_close: ?@TypeOf(@as(Io.VTable, undefined).netClose) = null;
+const is_win = builtin.os.tag == .windows;
+const win = @import("win_udp.zig");
 
 /// Çağıran bir zamanlayıcıdaki fiber mi? (Bloklamayan yolun kapısı.)
 pub fn inFiber() bool {
@@ -104,6 +107,7 @@ pub fn sleepCooperative(ms: u32) bool {
 }
 
 fn fiberRead(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize {
+    if (comptime is_win) unreachable; // Windows `winRead` kullanır
     if (!inFiber()) return g_base_read.?(userdata, fd, data);
     var iovecs: [16]posix.iovec = undefined;
     var n: usize = 0;
@@ -150,6 +154,7 @@ fn addBuf(iovecs: []posix.iovec_const, len: *usize, bytes: []const u8) void {
 }
 
 fn fiberWrite(userdata: ?*anyopaque, fd: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize {
+    if (comptime is_win) unreachable; // Windows `winWrite` kullanır
     if (!inFiber()) return g_base_write.?(userdata, fd, header, data, splat);
     var iovecs: [16]posix.iovec_const = undefined;
     var n: usize = 0;
@@ -203,11 +208,122 @@ fn fiberWrite(userdata: ?*anyopaque, fd: net.Socket.Handle, header: []const u8, 
     }
 }
 
+// ---- Windows (v2.1.147) ---------------------------------------------------------------------------------------------------------
+// Soketler `net_dial.zig`de Winsock ile açılır ve HEP bloklamasızdır; okuma/yazma `WSARecv`/`WSASend` + `WindowsReactor` (fiber içinde) ya da `WSAPoll` (fiber dışında) ile bekler.
+// POSIX'teki gibi iki durumda da aynı kod yolu çalışır (std'nin AFD tabanlı `netReadWindows` kullanılmaz).
+
+fn waitSock(handle: net.Socket.Handle, write: bool) void {
+    if (inFiber()) {
+        _ = waitFd(handle, write, null);
+    } else {
+        _ = win.pollReady(@intFromPtr(handle), write, null);
+    }
+}
+
+fn winRead(userdata: ?*anyopaque, handle: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize {
+    _ = userdata;
+    var bufs: [16]win.WsaBuf = undefined;
+    var n: usize = 0;
+    for (data) |buf| {
+        if (n == bufs.len) break;
+        if (buf.len != 0) {
+            bufs[n] = .{ .len = @intCast(@min(buf.len, std.math.maxInt(u32))), .buf = buf.ptr };
+            n += 1;
+        }
+    }
+    std.debug.assert(n > 0);
+    const s: usize = @intFromPtr(handle);
+    while (true) {
+        switch (win.recvVec(s, bufs[0..n])) {
+            .n => |got| return got,
+            .err => |e| switch (e) {
+                win.WSAEINTR => continue,
+                win.WSAEWOULDBLOCK => {
+                    waitSock(handle, false);
+                    continue;
+                },
+                win.WSAENOBUFS => return error.SystemResources,
+                win.WSAENOTCONN => return error.SocketUnconnected,
+                win.WSAECONNRESET, win.WSAECONNABORTED => return error.ConnectionResetByPeer,
+                win.WSAETIMEDOUT => return error.Timeout,
+                win.WSAENETDOWN => return error.NetworkDown,
+                win.WSAESHUTDOWN => return 0,
+                else => return error.Unexpected,
+            },
+        }
+    }
+}
+
+fn addWsaBuf(bufs: []win.WsaBuf, len: *usize, bytes: []const u8) void {
+    if (bytes.len == 0 or len.* == bufs.len) return;
+    bufs[len.*] = .{ .len = @intCast(@min(bytes.len, std.math.maxInt(u32))), .buf = @constCast(bytes.ptr) };
+    len.* += 1;
+}
+
+fn winWrite(userdata: ?*anyopaque, handle: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize {
+    _ = userdata;
+    var bufs: [16]win.WsaBuf = undefined;
+    var n: usize = 0;
+    addWsaBuf(&bufs, &n, header);
+    for (data[0 .. data.len - 1]) |bytes| addWsaBuf(&bufs, &n, bytes);
+    const pattern = data[data.len - 1];
+    var splat_buf: [256]u8 = undefined;
+    switch (splat) {
+        0 => {},
+        1 => addWsaBuf(&bufs, &n, pattern),
+        else => switch (pattern.len) {
+            0 => {},
+            1 => {
+                const len = @min(splat_buf.len, splat);
+                @memset(splat_buf[0..len], pattern[0]);
+                addWsaBuf(&bufs, &n, splat_buf[0..len]);
+            },
+            else => {
+                var i: usize = 0;
+                while (i < splat and n < bufs.len) : (i += 1) addWsaBuf(&bufs, &n, pattern);
+            },
+        },
+    }
+    const s: usize = @intFromPtr(handle);
+    while (true) {
+        switch (win.sendVec(s, bufs[0..n])) {
+            .n => |sent| return sent,
+            .err => |e| switch (e) {
+                win.WSAEINTR => continue,
+                win.WSAEWOULDBLOCK => {
+                    waitSock(handle, true);
+                    continue;
+                },
+                win.WSAECONNRESET, win.WSAECONNABORTED => return error.ConnectionResetByPeer,
+                win.WSAENOBUFS => return error.SystemResources,
+                win.WSAESHUTDOWN, win.WSAENOTCONN => return error.SocketUnconnected,
+                win.WSAEHOSTUNREACH => return error.HostUnreachable,
+                win.WSAENETUNREACH => return error.NetworkUnreachable,
+                win.WSAENETDOWN => return error.NetworkDown,
+                else => return error.Unexpected,
+            },
+        }
+    }
+}
+
+fn winClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
+    for (handles) |h| {
+        if (!win.closeChecked(@intFromPtr(h))) g_base_close.?(userdata, &.{h});
+    }
+}
+
 /// Paylaşılan istemci `Io` vtable'ına bağlanır (`net_dial.install`dan SONRA, bir kez).
 pub fn install(vtable: *Io.VTable) void {
     if (comptime !enabled) return;
     g_base_read = vtable.netRead;
     g_base_write = vtable.netWrite;
+    if (comptime is_win) {
+        g_base_close = vtable.netClose;
+        vtable.netRead = winRead;
+        vtable.netWrite = winWrite;
+        vtable.netClose = winClose;
+        return;
+    }
     vtable.netRead = fiberRead;
     vtable.netWrite = fiberWrite;
 }

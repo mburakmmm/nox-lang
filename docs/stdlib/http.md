@@ -51,7 +51,7 @@ What a handler returns and what the client functions return.
 | `delete(url, headers)`, `head(url, headers)`, `options(url, headers)` | bodyless requests |
 | `request(method, url, body, headers, timeout_ms=0)` | any of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; optional timeout |
 
-**Concurrency.** Inside a task (`spawn`) or a `serve` handler, a request does not occupy an operating-system thread: the task is suspended while it waits for the network and the worker runs other tasks, so thousands of requests can be in flight at once on a few threads (about 110 KB of memory per request in flight). Outside a task (plain top-level code), on Windows and for `stream`/`stream_upload`, each request still uses a helper thread.
+**Concurrency.** Inside a task (`spawn`) or a `serve` handler, a request does not occupy an operating-system thread: the task is suspended while it waits for the network and the worker runs other tasks, so thousands of requests can be in flight at once on a few threads (about 110 KB of memory per request in flight). Outside a task (plain top-level code) and for `stream`/`stream_upload`, each request still uses a helper thread. Windows behaves like macOS and Linux (since v2.1.147).
 
 `headers` are *added* to the request (the client also sends its own `Host`, `User-Agent`, `Accept-Encoding` …). Redirects are **not** followed: a 3xx response is returned as it is, so you decide whether to follow `Location` (and whether to forward `Authorization`). gzip/deflate response bodies are decoded
 automatically. A non-2xx status is **not** an error: inspect `status`. `HttpError` is raised when the request could not be made at all (connection refused, DNS failure, TLS failure) or when the body arrives incomplete (the connection closed before the announced `Content-Length`).
@@ -137,7 +137,7 @@ The client honours `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (and the lower-ca
 - **`http://` targets** go through the proxy in the standard forward-proxy form (`GET http://host/path`).
 - **`https://` targets** are tunnelled with `CONNECT host:443`; TLS to the *target* (server name, certificate check) then runs inside the tunnel, so the proxy sees only encrypted bytes. If the proxy refuses the tunnel the request **fails**; it is never retried as a plain-text request to the proxy. Tunnelled connections are pooled like direct ones. The proxy URL itself must be `http://` (a TLS connection to the proxy is not supported; such a request fails rather than bypassing the proxy).
 - **`NO_PROXY`** is a comma-separated list: `*` for everything, `example.com` for the host and its subdomains, `.example.com` for subdomains only; a `:port` suffix is ignored and IP ranges (CIDR) are not understood (an exact IP matches). Matching hosts connect directly.
-- `user:password@` in the proxy URL is sent as `Proxy-Authorization: Basic`. Environment variables are not read on Windows.
+- `user:password@` in the proxy URL is sent as `Proxy-Authorization: Basic`. On Windows they are read the same way (since v2.1.147).
 
 ### Streaming large bodies
 

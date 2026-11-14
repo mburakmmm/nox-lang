@@ -406,7 +406,7 @@ pub fn releaseSharedCa(client: *std.http.Client) void {
 /// `noxc run --sandbox` ağı kapalı başlatır (ADR-010) ve `NOX_SANDBOX_NO_NET=1` ayarlar. İşletim sistemi `connect`i zaten reddeder, ama
 /// Zig'in `std.Io` katmanı beklenmeyen `EPERM`i programcı hatası sayıp süreci düşürür; bu denetim reddi temiz bir bağlantı hatasına çevirir.
 pub fn networkDenied() bool {
-    if (builtin.os.tag == .windows or builtin.os.tag == .freestanding) return false;
+    if (builtin.os.tag == .freestanding) return false;
     const v = std.c.getenv("NOX_SANDBOX_NO_NET") orelse return false;
     return v[0] == '1';
 }
@@ -478,10 +478,10 @@ const POOL_MAX_SIZE: usize = 1024;
 /// std `Client.now`ı (sertifika geçerlilik denetimi) yalnızca ilk HTTPS isteğinde yazar; uzun ömürlü istemcide bayatlamaması için bu aralıkta yenilenir.
 const POOL_NOW_REFRESH_MS: u64 = 10 * 60 * 1000;
 
-/// `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (küçük harfli karşılıkları dahil) ortam değişkenlerinden istemcinin vekillerini kurar (std `initDefaultProxies`). Windows ve wasm'da ortam
-/// değişkeni okunmaz (vekil yok).
+/// `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (küçük harfli karşılıkları dahil) ortam değişkenlerinden istemcinin vekillerini kurar (std `initDefaultProxies`). wasm'da ortam
+/// değişkeni okunmaz (vekil yok); Windows'ta (v2.1.147) POSIX ile aynı okunur.
 fn applyProxyEnv(client: *std.http.Client, arena: std.mem.Allocator) void {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return;
+    if (comptime builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return;
     var map = std.process.Environ.Map.init(arena);
     const names = [_][:0]const u8{ "http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY" };
     for (names) |n| {
@@ -494,7 +494,7 @@ fn applyProxyEnv(client: *std.http.Client, arena: std.mem.Allocator) void {
 }
 
 fn noProxyEnv() ?[]const u8 {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return null;
+    if (comptime builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return null;
     if (std.c.getenv("NO_PROXY")) |v| return std.mem.span(v);
     if (std.c.getenv("no_proxy")) |v| return std.mem.span(v);
     return null;
@@ -1778,15 +1778,56 @@ test "Güvenlik M-1: copyHeaders normal (CR/LF'siz) başlıklarda HÂLÂ doğru 
 const CustomMode = enum { echo_method, stall, binary, head_keepalive };
 
 /// Tek bağlantı kabul edip isteği (başlık sonuna kadar) okur; `mode`a göre yanıt verir. Yalnızca POSIX (testler Windows'ta atlanır).
+const TSock = if (builtin.os.tag == .windows) usize else c_int;
+
+fn tAccept(listen_fd: posix.fd_t) ?TSock {
+    if (builtin.os.tag == .windows) {
+        const c = windowsAccept(@intFromPtr(listen_fd), 15_000);
+        return if (c == io_mod.WinSock.INVALID_SOCKET) null else c;
+    }
+    const c = acceptWithTimeout(listen_fd, 15_000);
+    return if (c < 0) null else c;
+}
+
+fn tRead(c: TSock, buf: []u8) isize {
+    if (builtin.os.tag == .windows) return io_mod.WinSock.recv(c, buf.ptr, @intCast(buf.len), 0);
+    return std.c.read(c, buf.ptr, buf.len);
+}
+
+fn tWrite(c: TSock, bytes: []const u8) void {
+    if (builtin.os.tag == .windows) {
+        _ = io_mod.WinSock.send(c, bytes.ptr, @intCast(bytes.len), 0);
+        return;
+    }
+    _ = std.c.write(c, bytes.ptr, bytes.len);
+}
+
+fn tClose(c: TSock) void {
+    if (builtin.os.tag == .windows) {
+        _ = io_mod.WinSock.closesocket(c);
+        return;
+    }
+    _ = std.c.close(c);
+}
+
+/// Karşı taraf veri gönderene/kapatana ya da `ms` dolana dek bekler.
+fn tWaitIn(c: TSock, ms: i32) void {
+    if (builtin.os.tag == .windows) {
+        _ = @import("win_udp.zig").pollReady(c, false, @intCast(ms));
+        return;
+    }
+    var pfd = [1]posix.pollfd{.{ .fd = c, .events = posix.POLL.IN, .revents = 0 }};
+    _ = posix.poll(&pfd, ms) catch 0;
+}
+
 fn testServeCustom(listen_fd: posix.fd_t, mode: CustomMode) void {
-    const conn = acceptWithTimeout(listen_fd, 15_000);
-    if (conn < 0) return;
-    defer _ = std.c.close(conn);
+    const conn = tAccept(listen_fd) orelse return;
+    defer tClose(conn);
 
     var req_buf: [4096]u8 = undefined;
     var total: usize = 0;
     while (total < req_buf.len) {
-        const n = std.c.read(conn, req_buf[total..].ptr, req_buf.len - total);
+        const n = tRead(conn, req_buf[total..]);
         if (n <= 0) break;
         total += @intCast(n);
         if (std.mem.indexOf(u8, req_buf[0..total], "\r\n\r\n") != null) break;
@@ -1798,7 +1839,7 @@ fn testServeCustom(listen_fd: posix.fd_t, mode: CustomMode) void {
             // İstemci bağlantıyı iptal edene (EOF) kadar yanıt vermeden bekle; üst sınır `read` blokajı + istemci kapanışıdır.
             var scratch: [64]u8 = undefined;
             while (true) {
-                const n = std.c.read(conn, &scratch, scratch.len);
+                const n = tRead(conn, &scratch);
                 if (n <= 0) break;
             }
         },
@@ -1807,21 +1848,20 @@ fn testServeCustom(listen_fd: posix.fd_t, mode: CustomMode) void {
             var out: [256]u8 = undefined;
             const is_head = std.mem.eql(u8, method, "HEAD");
             const text = std.fmt.bufPrint(&out, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nX-Method: {s}\r\nConnection: close\r\n\r\n{s}", .{ method.len, method, if (is_head) "" else method }) catch return;
-            _ = std.c.write(conn, text.ptr, text.len);
+            tWrite(conn, text);
         },
         .head_keepalive => {
             // Nova 8: HEAD yanıtı gerçek bir sunucudaki gibi `Content-Length` bildirir ama gövde göndermez ve bağlantıyı
             // AÇIK tutar (keep-alive). İstemci gövde beklerse burada kapanana kadar (1.5 sn) takılır.
             const header = "HTTP/1.1 200 OK\r\nContent-Length: 64\r\nContent-Type: text/plain\r\n\r\n";
-            _ = std.c.write(conn, header.ptr, header.len);
-            var pfd = [1]posix.pollfd{.{ .fd = conn, .events = posix.POLL.IN, .revents = 0 }};
-            _ = posix.poll(&pfd, 1500) catch 0;
+            tWrite(conn, header);
+            tWaitIn(conn, 1500);
         },
         .binary => {
             const body = [_]u8{ 0x00, 0xff, 0x80, 'a', 0x00 };
             const header = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n";
-            _ = std.c.write(conn, header.ptr, header.len);
-            _ = std.c.write(conn, &body, body.len);
+            tWrite(conn, header);
+            tWrite(conn, &body);
         },
     }
 }
@@ -1832,7 +1872,6 @@ fn testUrl(rt: ?*anyopaque, port: u16, buf: []u8) !?[*:0]u8 {
 }
 
 test "nox_http_request_raw: PUT/PATCH/DELETE/OPTIONS/HEAD gerçek metodla gider, bilinmeyen metod reddedilir" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
@@ -1875,7 +1914,6 @@ test "nox_http_request_raw: PUT/PATCH/DELETE/OPTIONS/HEAD gerçek metodla gider,
 }
 
 test "nox_http_request_raw: HEAD + Content-Length + keep-alive gövde BEKLEMEZ (Nova 8, RFC 7230 §3.3.3)" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
@@ -1986,7 +2024,6 @@ test "Watchdog: 100 eşzamanlı kayıt TEK iş parçacığıyla izlenir, hepsi t
 }
 
 test "nox_http_request_raw: sessiz sunucuda timeout_ms gerçek zaman aşımı verir (error_kind 1), bağlantı iptal edilir" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
@@ -2002,13 +2039,10 @@ test "nox_http_request_raw: sessiz sunucuda timeout_ms gerçek zaman aşımı ve
     const method = str_mod.nox_str_from_bytes(rt, "GET") orelse return error.AllocFailed;
     defer str_mod.nox_str_release(rt, method);
 
-    var t0: std.c.timespec = undefined;
-    _ = std.c.clock_gettime(.MONOTONIC, &t0);
+    const t0 = monotonicMs();
     const resp = nox_http_request_raw(rt, method, url, null, 0, null, 300) orelse return error.RequestFailed;
     defer nox_http_response_free(resp);
-    var t1: std.c.timespec = undefined;
-    _ = std.c.clock_gettime(.MONOTONIC, &t1);
-    const elapsed_ms: i64 = (t1.sec - t0.sec) * 1000 + @divTrunc(t1.nsec - t0.nsec, 1_000_000);
+    const elapsed_ms: i64 = @intCast(monotonicMs() - t0);
 
     try std.testing.expectEqual(@as(i32, 0), nox_http_response_ok(resp));
     try std.testing.expectEqual(@as(i64, 1), nox_http_response_error_kind(resp));
@@ -2017,7 +2051,6 @@ test "nox_http_request_raw: sessiz sunucuda timeout_ms gerçek zaman aşımı ve
 }
 
 test "nox_http_request_raw: ikili gövde (gömülü NUL, 0x80+ baytlar) reddedilmez, aynen döner" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 

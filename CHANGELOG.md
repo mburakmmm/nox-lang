@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.147]
+
+### Eklendi (Windows: macOS/Linux ile denk fiber-farkındalıklı istemci ağı — TODO 6.2)
+
+- **Windows'ta istemci ağı artık fiber-kooperatif:** `net_dial.enabled` ve `fiber_net` Windows'ta da açık. Soketler Winsock ile açılır (`win_udp.zig`: bloklamayan `connect`, `WSARecv`/`WSASend`, `getaddrinfo`, QPC saati), bekleme fiber içinde `WindowsReactor` (WSAPoll), fiber dışında `WSAPoll` ile yapılır; vtable'da `netConnectIp`/`netLookup`/`netRead`/`netWrite`/`netClose` yamalanır (std'nin AFD tabanlı yolu kullanılmaz). Sonuç: bir `spawn` görevinden `nox.http.request` artık istek başına OS iş parçacığı açmaz (300 eşzamanlı istek 170 ms'de, süreçte toplam 19 iş parçacığı). `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` ve CONNECT tüneli Windows'ta da okunur/çalışır.
+- **Windows sunucu kapanışı:** HTTP/1 soketi kapatılmadan önce FIN gönderilir ve gelmiş okunmamış veri bloklamadan atılır (Windows aksi halde RST yollayıp 413/431 gibi yanıtları istemciye kaybettirebilir; dalgalı testin nedeni).
+- **Testler:** Windows'ta atlanan 4 `http_client` birim testi ve vekil-ortam golden testi açıldı (test sunucu yardımcıları Winsock'a taşındı); `http_request_body_on_get_rejected` fixture'ı Windows'ta da koşar (zaman aşımı 5 sn: Windows kapalı yerel porta ~2 sn sonra "refused" der; macOS/Linux anında). Gerçek Windows 11'de tam korpus yeşil (yalnız PC'ye özgü `exp(1.0)` 1 ulp ve gzip.exe yokluğu hariç).
+- Kalan bilinçli Windows farkları: `nox.signal` (Windows'ta sinyal yok), wasm SIMD/threads fixture'ları (node), `@ffi.errors`/`Callback` fixture'ları (libc çağrıları).
+
 ## [2.1.146]
 
 ### Eklendi (Windows: HTTP/3 / QUIC) ve düzeltme

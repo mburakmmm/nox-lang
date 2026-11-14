@@ -163,7 +163,17 @@ fn installShutdownSignals() void {
 /// `closesocket` (Winsock) KULLANILIR.
 fn closeSocket(fd: posix.fd_t) void {
     if (builtin.os.tag == .windows) {
-        _ = io_mod.WinSock.closesocket(@intFromPtr(fd));
+        const sock = @intFromPtr(fd);
+        // Okunmamış istemci verisi varken `closesocket` RST gönderir ve istemci yanıtı (ör. 413/431) okuyamadan kaybeder. Önce FIN gönder, sonra gelmiş veriyi (bloklamadan) at.
+        _ = io_mod.WinSock.shutdown(sock, 1);
+        var scratch: [4096]u8 = undefined;
+        var drained: usize = 0;
+        while (drained < 256 * 1024) {
+            const n = io_mod.WinSock.recv(sock, &scratch, scratch.len, 0);
+            if (n <= 0) break;
+            drained += @intCast(n);
+        }
+        _ = io_mod.WinSock.closesocket(sock);
     } else {
         _ = std.c.close(fd);
     }
