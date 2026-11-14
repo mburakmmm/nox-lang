@@ -17,10 +17,10 @@ const h2 = @import("http2.zig");
 const fiber_net = @import("fiber_net.zig");
 const http_client = @import("http_client.zig");
 const asap = @import("../alloc/asap.zig");
-const io_mod = @import("../async_rt/io.zig");
+const io_reactor = @import("../async_rt/io_reactor.zig");
 
-/// Windows ve wasm'da (kendi-kendine-boru/fiber ağı yok) HTTP/2 sunulmaz; bağlantılar HTTP/1.1 kalır.
-pub const supported = fiber_net.enabled;
+/// wasm'da HTTP/2 sunulmaz; bağlantılar HTTP/1.1 kalır. Windows'ta (v2.1.143) sunucu tarafı reaktör (WSAPoll) üzerinden çalışır: uyandırma çifti UDP-loopback soket çiftidir.
+pub const supported = fiber_net.enabled or builtin.os.tag == .windows;
 
 pub const FiberFn = *const fn (*anyopaque) void;
 
@@ -213,8 +213,7 @@ fn sleepCoop(ms: u32) void {
 
 fn wake(c: *Conn) void {
     if (!c.wake_pending.swap(true, .acq_rel)) {
-        const b = [1]u8{1};
-        _ = std.c.write(c.wake_w, &b, 1);
+        io_reactor.wakeSignal(c.wake_w);
     }
 }
 
@@ -543,11 +542,7 @@ fn writerEntry(arg: *anyopaque) void {
 }
 
 fn drainWakePipe(c: *Conn) void {
-    var buf: [64]u8 = undefined;
-    while (true) {
-        const n = std.c.read(c.wake_r, &buf, buf.len);
-        if (n <= 0) break;
-    }
+    io_reactor.wakeDrain(c.wake_r);
 }
 
 fn writerLoop(c: *Conn, writer: *std.Io.Writer) void {
@@ -796,13 +791,10 @@ pub fn run(gpa: Allocator, reader: *std.Io.Reader, writer: *std.Io.Writer, cfg: 
     if (!std.mem.eql(u8, &pre, h2.preface)) return;
     // (Zaman aşımları `afterPreface` ile kalkar; Conn oluşturulduktan sonra çağrılır.)
 
-    var fds: [2]c_int = undefined;
-    if (std.c.pipe(&fds) != 0) return;
-    io_mod.setNonBlocking(fds[0]);
-    io_mod.setNonBlocking(fds[1]);
+    const fds = io_reactor.makeWakePair() catch return;
     const c = gpa.create(Conn) catch {
-        _ = std.c.close(fds[0]);
-        _ = std.c.close(fds[1]);
+        io_reactor.closeWakeFd(fds[0]);
+        io_reactor.closeWakeFd(fds[1]);
         return;
     };
     c.* = .{ .gpa = gpa, .cfg = cfg, .hooks = hooks, .last_activity_ms = .init(nowMs()), .wake_r = fds[0], .wake_w = fds[1] };
@@ -819,8 +811,8 @@ pub fn run(gpa: Allocator, reader: *std.Io.Reader, writer: *std.Io.Writer, cfg: 
         c.lock.unlock();
         c.outq.deinit(gpa);
         c.retire.deinit(gpa);
-        _ = std.c.close(fds[0]);
-        _ = std.c.close(fds[1]);
+        io_reactor.closeWakeFd(fds[0]);
+        io_reactor.closeWakeFd(fds[1]);
         gpa.destroy(c);
     }
 

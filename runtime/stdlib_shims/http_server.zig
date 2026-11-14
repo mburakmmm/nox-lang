@@ -1918,7 +1918,11 @@ fn h2ShuttingDown() bool {
 
 fn h2CloseRead(user: *anyopaque) void {
     const conn: *ConnCtx = @ptrCast(@alignCast(user));
-    if (builtin.os.tag != .windows) _ = std.c.shutdown(conn.fd, 0);
+    if (builtin.os.tag == .windows) {
+        _ = io_mod.WinSock.shutdown(@intFromPtr(conn.fd), 0);
+    } else {
+        _ = std.c.shutdown(conn.fd, 0);
+    }
 }
 
 fn h2AfterPreface(user: *anyopaque, wake: *const fn (*anyopaque) void, wake_arg: *anyopaque) void {

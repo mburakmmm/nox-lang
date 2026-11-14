@@ -55,6 +55,7 @@ pub const WinSock = if (builtin.os.tag == .windows) struct {
     pub extern "ws2_32" fn setsockopt(s: usize, level: i32, optname: i32, optval: ?*const anyopaque, optlen: i32) callconv(.c) i32;
     pub extern "ws2_32" fn getsockname(s: usize, addr: *std.os.windows.ws2_32.sockaddr.in, namelen: *i32) callconv(.c) i32;
     pub extern "ws2_32" fn closesocket(s: usize) callconv(.c) i32;
+    pub extern "ws2_32" fn shutdown(s: usize, how: i32) callconv(.c) i32;
     pub const FIONBIO: i32 = -2147195266; // 0x8004667e (i32 olarak imzalı bit deseni)
     pub const INVALID_SOCKET: usize = ~@as(usize, 0);
     pub const WSAEWOULDBLOCK: i32 = 10035;

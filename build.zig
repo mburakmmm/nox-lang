@@ -1884,6 +1884,8 @@ pub fn build(b: *std.Build) void {
     const http_stdlib_test = b.addTest(.{ .root_module = http_stdlib_test_mod });
     http_stdlib_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&addTimedTestRun(b, http_stdlib_test, win_test_timeout_s).step);
+    const http_stdlib_step = b.step("http-stdlib-test", "Yalnızca nox.http istemci/stdlib uçtan uca golden testlerini çalıştırır");
+    http_stdlib_step.dependOn(&addTimedTestRun(b, http_stdlib_test, win_test_timeout_s).step);
 
     // Bulundu (bkz. proje belleği "f-string + augmented atama" görevi):
     // `noxc search`in YENİ `loadIndexFromUrl` yolunu GERÇEK bir yerel HTTP
@@ -1987,6 +1989,8 @@ pub fn build(b: *std.Build) void {
     const http_serve_test = b.addTest(.{ .root_module = http_serve_test_mod });
     http_serve_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&addTimedTestRun(b, http_serve_test, win_test_timeout_s).step);
+    const http_serve_step = b.step("http-serve-test", "Yalnızca nox.http.serve uçtan uca golden testlerini (HTTP/1.1, HTTP/2) çalıştırır");
+    http_serve_step.dependOn(&addTimedTestRun(b, http_serve_test, win_test_timeout_s).step);
 
     // ---- `stdlib/nox/router.nox` + `nox.http.serve*` etkileşiminin
     // regresyon testi (bkz. router_module_state_golden_test.zig'in modül

@@ -785,6 +785,42 @@ pub fn closeIdleFd(fd: posix.fd_t) void {
     testCloseFd(fd);
 }
 
+/// Bir iş parçacığının/fiber'ın (ör. HTTP/2 yazıcısı) başka bir iş parçacığı tarafından uyandırılması için bloklamayan ÇİFT (v2.1.143): POSIX'te `pipe`, Windows'ta UDP-loopback soket çifti
+/// (`makeIdlePair`ın bloklamayan hâli). Okuma ucu (`[0]`) reaktörde beklenir; yazma ucu (`[1]`) `wakeSignal` ile tetiklenir.
+pub fn makeWakePair() ![2]posix.fd_t {
+    const io_mod = @import("io.zig");
+    var fds: [2]posix.fd_t = undefined;
+    if (builtin.os.tag == .windows) {
+        fds = try WindowsReactor.makeLoopbackPair();
+    } else {
+        var raw: [2]c_int = undefined;
+        if (std.c.pipe(&raw) != 0) return error.PipeFailed;
+        fds = .{ raw[0], raw[1] };
+    }
+    io_mod.setNonBlocking(fds[0]);
+    io_mod.setNonBlocking(fds[1]);
+    return fds;
+}
+
+/// `makeWakePair` çiftinin yazma ucuna bir bayt yazar (dolu/bloklayan durumda sessizce vazgeçer: okuma ucu zaten hazırdır).
+pub fn wakeSignal(fd: posix.fd_t) void {
+    const b = [1]u8{1};
+    _ = testWrite(fd, &b);
+}
+
+/// Okuma ucundaki bekleyen tüm baytları boşaltır (bloklamaz).
+pub fn wakeDrain(fd: posix.fd_t) void {
+    var buf: [64]u8 = undefined;
+    while (true) {
+        const n = testRead(fd, &buf);
+        if (n <= 0) break;
+    }
+}
+
+pub fn closeWakeFd(fd: posix.fd_t) void {
+    testCloseFd(fd);
+}
+
 fn testSocketPair() ![2]posix.fd_t {
     if (builtin.os.tag == .windows) return WindowsReactor.makeLoopbackPair();
     var fds: [2]posix.fd_t = undefined;

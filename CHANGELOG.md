@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.143]
+
+### Eklendi (Windows: HTTP/2 sunucusu)
+
+- **Windows'ta HTTP/2 (h2c) sunucusu çalışır.** `http2_server.supported` Windows'ta açıldı; uyandırma borusu yerine `io_reactor.makeWakePair` (Windows'ta bloklamayan UDP-loopback soket çifti), `h2CloseRead` için `ws2_32.shutdown`. TLS ALPN ve istemci tarafı fiber ağı (TODO 6.2) Windows'ta hâlâ yok.
+- Test: `http_serve_golden_test` içindeki 5 h2c testi, `sleep_ms` akış testi ve HTTP/1.1 trailer testi Windows'ta açıldı (gerçek Windows 11'de 22 geçti / 4 atlandı: yalnız SIGTERM tabanlı). Yeni `zig build http-serve-test` ve `http-stdlib-test` adımları.
+
 ## [2.1.142]
 
 ### Değişti/Eklendi (M:N eksikleri: işçi sayısı, bloklayan FFI, çok kanallı select)

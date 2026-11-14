@@ -382,7 +382,7 @@ Limits and protection: 100 concurrent requests per connection (further ones are 
 
 On `SIGTERM` or `nox.http.shutdown()` each HTTP/2 connection is sent `GOAWAY`, requests already running finish, and the connection closes ([Configuration and graceful shutdown](#configuration-and-graceful-shutdown)); a stream loop that checks `stream.is_open()` ends by itself.
 
-`nox.http.set_http2(False)` turns HTTP/2 off (TLS then offers only `http/1.1` and cleartext HTTP/2 is not detected); `True` turns it back on. It applies to connections accepted afterwards. HTTP/2 is not available on Windows yet; connections there stay on HTTP/1.1.
+`nox.http.set_http2(False)` turns HTTP/2 off (TLS then offers only `http/1.1` and cleartext HTTP/2 is not detected); `True` turns it back on. It applies to connections accepted afterwards. On Windows (since v2.1.143) cleartext HTTP/2 (h2c) works; TLS ALPN negotiation is not available there yet, so HTTPS connections stay on HTTP/1.1.
 
 ```nox
 import nox.http

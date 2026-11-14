@@ -803,7 +803,6 @@ var stream_resp_buf: [8192]u8 = undefined;
 var stream_resp_len: usize = 0;
 
 test "nox.http: akışlı yanıt (SSE) — chunked çerçeveleme doğru, akış sürerken başka istek HIZLICA sunulur (kooperatif sleep_ms)" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows: ResponseStream.sleep_ms kooperatif değil (Windows'ta fiber_net yok): sleep zamanlayıcıyı bloklar
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1171,6 +1170,14 @@ const H2Server = struct {
     /// SIGTERM (graceful) + çıktıyı topla. Çağıran tüm istemci soketlerini önce kapatmış olmalı.
     fn stop(self: *H2Server, allocator: std.mem.Allocator, out_stdout: *[]u8, expected_stderr_prefix: []const u8) !void {
         const io = std.testing.io;
+        if (@import("builtin").os.tag == .windows) {
+            // Windows'ta SIGTERM yok: süreç sonlandırılır; zarif boşaltma (`drained` çıktısı, temiz çıkış kodu, boş stderr) POSIX testleriyle doğrulanır.
+            _ = std.os.windows.ntdll.NtTerminateProcess(self.child.id.?, @enumFromInt(1));
+            _ = try self.child.wait(io);
+            self.watchdog.disarm();
+            out_stdout.* = try allocator.dupe(u8, "");
+            return;
+        }
         try sendSigterm(self.child.id.?);
         var stdout_buf: [4096]u8 = undefined;
         var stdout_reader = self.child.stdout.?.reader(io, &stdout_buf);
@@ -1388,7 +1395,6 @@ const H2Conn = struct {
 };
 
 test "HTTP/2 (h2c): GET/POST, çok parçalı gövde, yanıt başlıkları, PING/SETTINGS, bilinmeyen çerçeve yok sayılır" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows: HTTP/2 sunucusu henüz yok (fiber ağ/uyandırma katmanı POSIX; bkz. spec §3.334)
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -1445,11 +1451,10 @@ test "HTTP/2 (h2c): GET/POST, çok parçalı gövde, yanıt başlıkları, PING/
     var out: []u8 = undefined;
     try srv.stop(allocator, &out, "nox: uncaught exception in a server handler");
     defer allocator.free(out);
-    try std.testing.expectEqualStrings("drained\n", out);
+    if (@import("builtin").os.tag != .windows) try std.testing.expectEqualStrings("drained\n", out);
 }
 
 test "HTTP/2 (h2c): çoklama (yavaş akış hızlıyı bloklamaz), akış kontrolü (pencere dolunca durur, WINDOW_UPDATE ile sürer), 101. eşzamanlı akış reddedilir" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows: HTTP/2 sunucusu henüz yok (fiber ağ/uyandırma katmanı POSIX; bkz. spec §3.334)
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -1532,7 +1537,6 @@ test "HTTP/2 (h2c): çoklama (yavaş akış hızlıyı bloklamaz), akış kontro
 }
 
 test "HTTP/2 (h2c): hatalı biçimli istekler akışı sıfırlar (bağlantı yaşar); çerçeve ihlalleri GOAWAY ile bağlantıyı bitirir; CONTINUATION; sel ve rapid-reset sınırı" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows: HTTP/2 sunucusu henüz yok (fiber ağ/uyandırma katmanı POSIX; bkz. spec §3.334)
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -1686,7 +1690,6 @@ fn maskedTextFrame(a: std.mem.Allocator, text: []const u8) ![]u8 {
 }
 
 test "HTTP/2 (h2c): Expect: 100-continue ara yanıtı, yanıt trailer'ları (akışlı), istek trailer'ları (gövdeden sonra HEADERS)" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows: HTTP/2 sunucusu henüz yok (fiber ağ/uyandırma katmanı POSIX; bkz. spec §3.334)
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -1773,7 +1776,6 @@ test "HTTP/2 (h2c): Expect: 100-continue ara yanıtı, yanıt trailer'ları (ak�
 }
 
 test "HTTP/1.1: chunked yanıt trailer'ları ve chunked istek trailer'ları (req.trailer)" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows'ta sinyal yok (H2Server.stop SIGTERM kullanır)
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -1802,7 +1804,6 @@ test "HTTP/1.1: chunked yanıt trailer'ları ve chunked istek trailer'ları (req
 }
 
 test "HTTP/2 (h2c): WebSocket üzerinden RFC 8441 — genişletilmiş CONNECT, maskeli çerçeveler akış DATA'sında, iki mesaj yankısı, düz CONNECT 501" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest; // Windows: HTTP/2 sunucusu henüz yok (fiber ağ/uyandırma katmanı POSIX; bkz. spec §3.334)
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
