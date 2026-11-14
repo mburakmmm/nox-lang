@@ -3149,6 +3149,20 @@ test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzama
 /// QUIC istemci soketi tarafından UDP'de kullanılıyor olabilir: `UDP port N could not be opened`). Boş UDP portu önceden yoklanır; TCP dinleyicisi o portta açılır, olmazsa yeniden denenir.
 fn listenTlsWithFreeUdp(rt: ?*anyopaque, cert: [*:0]const u8, key: [*:0]const u8) ?*anyopaque {
     if (comptime !quic.supported) return null;
+    if (comptime builtin.os.tag == .windows) {
+        const win = @import("win_udp.zig");
+        var wattempt: usize = 0;
+        while (wattempt < 20) : (wattempt += 1) {
+            const s = win.udpSocket(win.AF_INET) orelse return null;
+            const wport = win.bind4(s, .{ 127, 0, 0, 1 }, 0) orelse {
+                win.close(s);
+                continue;
+            };
+            win.close(s);
+            if (nox_http_server_listen_tls(rt, @intCast(wport), cert, key)) |srv| return srv;
+        }
+        return null;
+    }
     const c = std.c;
     var attempt: usize = 0;
     while (attempt < 20) : (attempt += 1) {
@@ -3239,7 +3253,12 @@ test "HTTP/3: h3_client.request sunucuya GET/POST yapar, yanıt başlıkları ve
     if (!quic.supported) return error.SkipZigTest;
     if (!quic.available()) return error.SkipZigTest;
     // OpenSSL varsayılan güven deposu: test sertifikasını SSL_CERT_FILE ile güvenilir yap (istemci bağlamı ilk kullanımda yüklenir).
-    const libc = struct {
+    const libc = if (builtin.os.tag == .windows) struct {
+        extern "c" fn _putenv_s(name: [*:0]const u8, value: [*:0]const u8) c_int;
+        fn setenv(name: [*:0]const u8, value: [*:0]const u8, _: c_int) c_int {
+            return _putenv_s(name, value);
+        }
+    } else struct {
         extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
     };
     _ = libc.setenv("SSL_CERT_FILE", "runtime/stdlib_shims/testdata/quic_test_cert.pem", 1);

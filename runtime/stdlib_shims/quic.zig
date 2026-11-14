@@ -7,18 +7,31 @@
 //! TÜM OpenSSL çağrıları TEK bir sahibin (çağıran fiber'ın) elindedir: OpenSSL nesneleri bu katmanda eşzamanlı kullanılmaz (sunucu motoru bunu `h3_server`de
 //! sahip-fiber + kuyruk ile sağlar).
 //!
-//! Kapsam: yalnızca POSIX (macOS/Linux). Windows/wasm/freestanding'de `supported` false. Tüm tutamaklar opaktır (`?*anyopaque`); İlke 4 (opak tutamaç) korunur.
+//! Kapsam: macOS/Linux ve (v2.1.146) Windows (`win_udp.zig`, `libssl-3-x64.dll` >= 3.5). wasm/freestanding'de `supported` false. Tüm tutamaklar opaktır (`?*anyopaque`); İlke 4 (opak tutamaç) korunur.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const fiber_net = @import("fiber_net.zig");
+const win = @import("win_udp.zig");
+const bridge = @import("../async_rt/bridge_native.zig");
+const is_win = builtin.os.tag == .windows;
 
-/// QUIC yalnızca POSIX masaüstünde derlenir/çalışır.
+/// QUIC masaüstünde (macOS, Linux, Windows) derlenir/çalışır.
 pub const supported = switch (builtin.os.tag) {
-    .macos, .linux => !builtin.cpu.arch.isWasm(),
+    .macos, .linux, .windows => !builtin.cpu.arch.isWasm(),
     else => false,
 };
+
+/// Bir zamanlayıcıdaki fiber içinde miyiz? (`fiber_net.inFiber` Windows'ta kapalıdır; sunucu tarafı reaktörü ise Windows'ta çalışır.)
+fn inFiberAny() bool {
+    if (comptime is_win) return bridge.currentFiberScheduler() != null;
+    return fiber_net.inFiber();
+}
+
+/// Soket tutamağı: POSIX'te fd, Windows'ta SOCKET.
+const Sock = if (is_win) usize else posix.fd_t;
+const TimeVal = if (is_win) win.TimeVal else std.c.timeval;
 
 pub const Error = error{ Unsupported, LibraryUnavailable, CtxFailed, CertFailed, KeyFailed, SocketFailed, ListenFailed, ConnectFailed, StreamFailed, Timeout, Closed, Failed };
 
@@ -66,7 +79,7 @@ const Funcs = struct {
     SSL_connect: *const fn (s: Opaque) callconv(.c) c_int,
     SSL_get_error: *const fn (s: Opaque, ret: c_int) callconv(.c) c_int,
     SSL_get_rpoll_descriptor: *const fn (s: Opaque, d: *PollDesc) callconv(.c) c_int,
-    SSL_get_event_timeout: *const fn (s: Opaque, tv: *std.c.timeval, inf: *c_int) callconv(.c) c_int,
+    SSL_get_event_timeout: *const fn (s: Opaque, tv: *TimeVal, inf: *c_int) callconv(.c) c_int,
     SSL_handle_events: *const fn (s: Opaque) callconv(.c) c_int,
     SSL_read_ex: *const fn (s: Opaque, buf: [*]u8, n: usize, got: *usize) callconv(.c) c_int,
     SSL_write_ex: *const fn (s: Opaque, buf: [*]const u8, n: usize, wrote: *usize) callconv(.c) c_int,
@@ -104,7 +117,7 @@ const SSL_TLSEXT_ERR_ALERT_FATAL: c_int = 2;
 
 const LoadState = enum(u8) { uninit, initializing, ready, failed };
 var g_state: std.atomic.Value(LoadState) = .init(.uninit);
-var g_lib: std.DynLib = undefined;
+var g_lib: if (is_win) ?*anyopaque else std.DynLib = undefined;
 var g_funcs: Funcs = undefined;
 
 fn libraryCandidates() []const [:0]const u8 {
@@ -115,12 +128,35 @@ fn libraryCandidates() []const [:0]const u8 {
             "/opt/homebrew/opt/openssl@4/lib/libssl.4.dylib",
             "/opt/local/lib/libssl.dylib",
         },
+        .windows => &.{ "libssl-3-x64.dll", "libssl-4-x64.dll" },
         else => &.{ "libssl.so.3", "libssl.so.4", "libssl.so" },
     };
 }
 
+fn loadAllWindows() bool {
+    if (comptime !is_win) return false;
+    var h: ?*anyopaque = null;
+    if (std.c.getenv("NOX_OPENSSL_LIB")) |p| h = win.loadLibrary(p);
+    if (h == null) for (libraryCandidates()) |name| {
+        h = win.loadLibrary(name.ptr);
+        if (h != null) break;
+    };
+    if (h == null) return false;
+    // Windows'ta `GetProcAddress` bağımlılıklara inmez: BIO_*/ERR_* sembolleri libcrypto'dadır.
+    const hc = win.loadLibrary("libcrypto-3-x64.dll") orelse win.loadLibrary("libcrypto-4-x64.dll");
+    var f: Funcs = undefined;
+    inline for (@typeInfo(Funcs).@"struct".fields) |fld| {
+        const addr = win.procAddress(h, fld.name) orelse (if (hc != null) win.procAddress(hc, fld.name) else null) orelse return false;
+        @field(f, fld.name) = @ptrCast(addr);
+    }
+    g_lib = h;
+    g_funcs = f;
+    return true;
+}
+
 fn loadAll() bool {
     if (comptime !supported) return false;
+    if (comptime is_win) return loadAllWindows();
     var lib: std.DynLib = blk: {
         if (std.c.getenv("NOX_OPENSSL_LIB")) |p| {
             if (std.DynLib.open(std.mem.span(p))) |l| break :blk l else |_| {}
@@ -176,7 +212,7 @@ pub fn available() bool {
 /// `root` (bağlantı ya da dinleyici) için UDP fd'sinin okunabilmesini ya da QUIC olay süresinin dolmasını (en çok `max_ms`) bekler, sonra QUIC makinesini ilerletir.
 fn pump(root: Opaque, max_ms: u32) void {
     var ms: u32 = max_ms;
-    var tv: std.c.timeval = undefined;
+    var tv: TimeVal = undefined;
     var infinite: c_int = 0;
     if (g_funcs.SSL_get_event_timeout(root, &tv, &infinite) == 1 and infinite == 0) {
         const t: i64 = @as(i64, tv.sec) * 1000 + @divTrunc(@as(i64, tv.usec), 1000);
@@ -184,18 +220,28 @@ fn pump(root: Opaque, max_ms: u32) void {
     }
     var pd: PollDesc = undefined;
     if (g_funcs.SSL_get_rpoll_descriptor(root, &pd) == 1 and pd.type == POLL_SOCK_FD) {
-        const fd: posix.fd_t = pd.value.fd;
-        if (fiber_net.inFiber()) {
-            _ = fiber_net.waitFd(fd, false, ms);
+        if (comptime is_win) {
+            const sock: usize = @intCast(pd.value.fd);
+            if (inFiberAny()) {
+                _ = fiber_net.waitFd(@ptrFromInt(sock), false, ms);
+            } else {
+                win.pollReadable(sock, ms);
+            }
         } else {
-            var p = [1]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
-            _ = posix.poll(&p, @intCast(@min(ms, 1 << 30))) catch 0;
+            const fd: posix.fd_t = pd.value.fd;
+            if (fiber_net.inFiber()) {
+                _ = fiber_net.waitFd(fd, false, ms);
+            } else {
+                var p = [1]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
+                _ = posix.poll(&p, @intCast(@min(ms, 1 << 30))) catch 0;
+            }
         }
     }
     _ = g_funcs.SSL_handle_events(root);
 }
 
 fn nowMs() i64 {
+    if (comptime is_win) return win.nowMs();
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.MONOTONIC, &ts);
     return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), 1_000_000);
@@ -270,12 +316,26 @@ fn setNonBlocking(fd: posix.fd_t) void {
     if (flags >= 0) _ = std.c.fcntl(fd, std.c.F.SETFL, flags | @as(c_int, @bitCast(std.c.O{ .NONBLOCK = true })));
 }
 
-fn udpSocket(family: c_int) Error!posix.fd_t {
+fn udpSocket(family: c_int) Error!Sock {
+    if (comptime is_win) return win.udpSocket(family) orelse error.SocketFailed;
     const fd = std.c.socket(@intCast(family), std.c.SOCK.DGRAM, 0);
     if (fd < 0) return error.SocketFailed;
     setNonBlocking(fd);
     return fd;
 }
+
+fn closeSock(fd: Sock) void {
+    if (comptime is_win) return win.close(fd);
+    _ = std.c.close(fd);
+}
+
+/// OpenSSL `BIO_new_dgram` `int` fd alır (Windows'ta SOCKET küçük bir tam sayıdır).
+fn sockInt(fd: Sock) c_int {
+    return @intCast(fd);
+}
+
+const AF4: c_int = if (is_win) win.AF_INET else std.c.AF.INET;
+const AF6: c_int = if (is_win) win.AF_INET6 else std.c.AF.INET6;
 
 // ---- Dinleyici (sunucu) ---------------------------------------------------------------------------------------------------------------------------------------
 
@@ -287,13 +347,16 @@ pub const Listener = struct {
     pub fn open(ctx: *const Ctx, bind_addr: Addr, port: u16) Error!Listener {
         if (!ensureLoaded()) return error.LibraryUnavailable;
         const family: c_int = switch (bind_addr) {
-            .v4 => std.c.AF.INET,
-            .v6 => std.c.AF.INET6,
+            .v4 => AF4,
+            .v6 => AF6,
         };
         const fd = try udpSocket(family);
-        errdefer _ = std.c.close(fd);
+        errdefer closeSock(fd);
         var real_port: u16 = 0;
-        switch (bind_addr) {
+        if (comptime is_win) switch (bind_addr) {
+            .v4 => |a| real_port = win.bind4(fd, a, port) orelse return error.ListenFailed,
+            .v6 => |a| real_port = win.bind6(fd, a, port) orelse return error.ListenFailed,
+        } else switch (bind_addr) {
             .v4 => |a| {
                 var sa: std.c.sockaddr.in = std.mem.zeroes(std.c.sockaddr.in);
                 sa.family = std.c.AF.INET;
@@ -324,7 +387,7 @@ pub const Listener = struct {
         }
         const l = g_funcs.SSL_new_listener(ctx.ctx, 0) orelse return error.ListenFailed;
         errdefer g_funcs.SSL_free(l);
-        const bio = g_funcs.BIO_new_dgram(fd, 1) orelse return error.ListenFailed; // BIO_CLOSE: fd'yi BIO sahiplenir
+        const bio = g_funcs.BIO_new_dgram(sockInt(fd), 1) orelse return error.ListenFailed; // BIO_CLOSE: fd'yi BIO sahiplenir
         g_funcs.SSL_set_bio(l, bio, bio);
         _ = g_funcs.SSL_set_blocking_mode(l, 0);
         if (g_funcs.SSL_listen(l) != 1) return error.ListenFailed;
@@ -379,18 +442,27 @@ pub const Conn = struct {
     pub fn connect(ctx: *const Ctx, addr: Addr, port: u16, sni: [:0]const u8, timeout_ms: u32) Error!Conn {
         if (!ensureLoaded()) return error.LibraryUnavailable;
         const family: c_int = switch (addr) {
-            .v4 => std.c.AF.INET,
-            .v6 => std.c.AF.INET6,
+            .v4 => AF4,
+            .v6 => AF6,
         };
         const fd = try udpSocket(family);
         var own_fd = true;
         defer if (own_fd) {
-            _ = std.c.close(fd);
+            closeSock(fd);
         };
         const ba = g_funcs.BIO_ADDR_new() orelse return error.ConnectFailed;
         defer g_funcs.BIO_ADDR_free(ba);
         const net_port = std.mem.nativeToBig(u16, port);
-        switch (addr) {
+        if (comptime is_win) switch (addr) {
+            .v4 => |a| {
+                if (!win.connect4(fd, a, net_port)) return error.ConnectFailed;
+                if (g_funcs.BIO_ADDR_rawmake(ba, AF4, &a, 4, net_port) != 1) return error.ConnectFailed;
+            },
+            .v6 => |a| {
+                if (!win.connect6(fd, a, net_port)) return error.ConnectFailed;
+                if (g_funcs.BIO_ADDR_rawmake(ba, AF6, &a, 16, net_port) != 1) return error.ConnectFailed;
+            },
+        } else switch (addr) {
             .v4 => |a| {
                 var sa: std.c.sockaddr.in = std.mem.zeroes(std.c.sockaddr.in);
                 sa.family = std.c.AF.INET;
@@ -410,7 +482,7 @@ pub const Conn = struct {
         }
         const s = g_funcs.SSL_new(ctx.ctx) orelse return error.ConnectFailed;
         errdefer g_funcs.SSL_free(s);
-        const bio = g_funcs.BIO_new_dgram(fd, 1) orelse return error.ConnectFailed;
+        const bio = g_funcs.BIO_new_dgram(sockInt(fd), 1) orelse return error.ConnectFailed;
         own_fd = false;
         g_funcs.SSL_set_bio(s, bio, bio);
         if (g_funcs.SSL_set1_initial_peer_addr(s, ba) != 1) return error.ConnectFailed;

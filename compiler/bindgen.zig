@@ -2021,6 +2021,14 @@ const usage =
     \\
 ;
 
+fn slashPath(a: std.mem.Allocator, p: []const u8) ![]const u8 {
+    const out = try a.dupe(u8, p);
+    for (out) |*c| {
+        if (c.* == '\\') c.* = '/';
+    }
+    return out;
+}
+
 /// `noxc bindgen` komutu. Çıkış kodunu döndürür.
 pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8) !u8 {
     var header: ?[]const u8 = null;
@@ -2121,10 +2129,11 @@ pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
             return 1;
         };
     }
+    // Windows yolları ters eğik çizgi içerir (`C:\tmp\x.o`); üretilen `from "..."` dize değişmezinde `\t`/`\U` gibi kaçışlar sayılır. Windows `/` ayırıcısını da kabul eder.
     const result = try generateFromText(a, pp.stdout, dm.stdout, .{
         .header = hdr,
-        .lib = lib_v,
-        .shim_lib = shim_lib_v,
+        .lib = try slashPath(a, lib_v),
+        .shim_lib = try slashPath(a, shim_lib_v),
         .include_name = include_name,
         .prefix = prefix,
         .classes = !no_classes,

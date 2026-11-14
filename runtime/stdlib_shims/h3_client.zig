@@ -12,8 +12,10 @@
 //! gönderildikten sonra hata; `.done` yanıt tamam.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const quic = @import("quic.zig");
+const win = @import("win_udp.zig");
 const h3 = @import("h3.zig");
 const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
 
@@ -47,6 +49,7 @@ fn isConnectionSpecific(name: []const u8) bool {
 }
 
 fn nowMs() i64 {
+    if (comptime builtin.os.tag == .windows) return win.nowMs();
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.MONOTONIC, &ts);
     return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), 1_000_000);
@@ -77,7 +80,7 @@ fn clientCtx() ?*quic.Ctx {
 
 /// `host` adresini (IPv4/IPv6 literal ya da ad) çözer; en çok `out.len` adres yazar, sayıyı döner.
 pub fn resolve(host: []const u8, out: []quic.Addr) usize {
-    if (comptime !quic.supported) return 0; // Windows/wasm: `getaddrinfo` yapıları farklı; QUIC zaten desteklenmiyor
+    if (comptime !quic.supported) return 0; // wasm/freestanding: QUIC desteklenmiyor
     if (std.Io.net.IpAddress.parse(host, 0)) |ip| {
         switch (ip) {
             .ip4 => |a| {
@@ -94,6 +97,26 @@ pub fn resolve(host: []const u8, out: []quic.Addr) usize {
     if (host.len >= buf.len) return 0;
     @memcpy(buf[0..host.len], host);
     buf[host.len] = 0;
+    if (comptime builtin.os.tag == .windows) {
+        var wlist: ?*win.AddrInfo = null;
+        if (!win.getaddrinfoUdp(@ptrCast(&buf), &wlist)) return 0;
+        defer win.freeaddrinfo(wlist);
+        var wn: usize = 0;
+        var wit = wlist;
+        while (wit) |ai| : (wit = ai.next) {
+            if (wn >= out.len) break;
+            if (ai.family == win.AF_INET) {
+                const sa: *const win.SockAddrIn = @ptrCast(@alignCast(ai.addr.?));
+                out[wn] = .{ .v4 = sa.addr };
+                wn += 1;
+            } else if (ai.family == win.AF_INET6) {
+                const sa: *const win.SockAddrIn6 = @ptrCast(@alignCast(ai.addr.?));
+                out[wn] = .{ .v6 = sa.addr };
+                wn += 1;
+            }
+        }
+        return wn;
+    }
     var hints = std.mem.zeroes(std.c.addrinfo);
     hints.family = std.c.AF.UNSPEC;
     hints.socktype = std.c.SOCK.DGRAM;

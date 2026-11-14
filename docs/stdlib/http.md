@@ -409,7 +409,7 @@ Try it with `curl --http2 -k https://localhost:8443/` (TLS) or `curl --http2-pri
 | | |
 |---|---|
 | Requires | OpenSSL 3.5 or newer (loaded at run time, like the TLS server); on macOS the Homebrew `openssl@3` package, on Linux a distribution that ships OpenSSL 3.5+. Without it, or when the UDP port cannot be opened, the server prints one line and keeps serving HTTP/1.1 and HTTP/2; the client simply stays on TCP |
-| Platforms | macOS and Linux (not Windows, WebAssembly or freestanding) |
+| Platforms | macOS, Linux and (since v2.1.146) Windows (needs `libssl-3-x64.dll`/`libcrypto-3-x64.dll` from OpenSSL 3.5+ on the `PATH`); not WebAssembly or freestanding |
 | Request bodies | buffered up to `max_body_bytes` (`413` beyond it); headers beyond `max_header_bytes` answer `431` |
 | `req.peer_addr` | empty on HTTP/3: OpenSSL 3.5 has no API that reports the peer address of a QUIC connection |
 | Not supported, by design | WebSocket and `CONNECT` over HTTP/3 ([RFC 9220](https://www.rfc-editor.org/rfc/rfc9220); no browser uses it), server push (deprecated, as on HTTP/2), 0-RTT (OpenSSL 3.5 QUIC does not offer it), HTTP/3 through proxies (MASQUE) |

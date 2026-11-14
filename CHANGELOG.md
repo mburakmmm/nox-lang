@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.146]
+
+### Eklendi (Windows: HTTP/3 / QUIC) ve düzeltme
+
+- **HTTP/3 (QUIC) Windows'ta çalışır** (TODO 6.6/6.7): yeni `win_udp.zig` (Winsock UDP soketi, `WSAPoll`, QPC saati, `getaddrinfo`, `LoadLibrary`/`GetProcAddress`), `quic.zig` ve `h3_client.zig` Windows dalları; OpenSSL ≥ 3.5 `libssl-3-x64.dll` + `libcrypto-3-x64.dll` (BIO_*/ERR_* sembolleri libcrypto'da; `GetProcAddress` bağımlılıklara inmez). Gerçek Windows 11 PC'de OpenSSL 3.6.5 (UCRT) ile: `quic` el sıkışma/ALPN h3/akış/sertifika doğrulama testleri, `serve_tls + set_http3` ve `h3_client.request` (GET/POST, alt-svc, geri düşme) geçti. Windows'ta sunucu HTTP/3 açtığında `alt-svc` artık TCP yanıtlarına eklenir (6.7).
+- **bindgen Windows yol hatası:** `--lib`/`--shim-lib` yolları üretilen `from "..."` dize değişmezine ters eğik çizgiyle yazılıyordu; `C:\...\tmp\Uxyz` gibi yollar `\t`/`\U` kaçışı sayılıp rastgele `UnexpectedToken` veriyordu. Yollar artık `/` ayırıcılıdır.
+- Not: `fiber_net` hâlâ Windows'ta kapalı (TODO 6.2): Windows'ta istek başına yardımcı iş parçacığı kalır; doğruluk sorunu yok (12 eşzamanlı istek 6/6 koşuda 12/12), yalnızca performans.
+
 ## [2.1.145]
 
 ### Değişti (Windows: TLS ALPN ile HTTP/2, test dalgalanması)
