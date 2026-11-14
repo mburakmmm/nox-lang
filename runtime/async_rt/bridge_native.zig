@@ -191,6 +191,8 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
                 .stw_lock = pool.pool_stw_lock,
                 .active_workers = pool.pool_active_workers,
                 .stw_round_n = pool.pool_stw_round_n,
+                .started_workers = pool.pool_started_workers,
+                .my_stat = &pool.pool_slot_stats[slot],
                 .wake_fds = pool.wake_fds,
                 .collect_fn = &cycle_detector.nox_cycle_collect,
                 .rt = rt,

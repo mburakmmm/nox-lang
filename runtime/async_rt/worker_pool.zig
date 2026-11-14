@@ -46,6 +46,7 @@ const fiber_mod = @import("fiber.zig");
 /// verildiğinden, sorunsuz derlenir).
 const scheduler_mod = @import("scheduler.zig");
 const channel_mod = @import("channel.zig");
+const slot_stat = @import("slot_stat.zig");
 
 /// Bir havuzdaki TEK worker — "bir deque + bir OS iş parçacığı" (bkz.
 /// proje planı, MN.3b'nin (a) maddesi). `deque` BU FAZDA hiç KULLANILMAZ
@@ -103,6 +104,11 @@ pub const WorkerPool = struct {
     pool_stw_lock: *asap.SpinLock,
     pool_active_workers: *std.atomic.Value(usize),
     pool_stw_round_n: *std.atomic.Value(usize),
+    /// v2.1.142: büyüyebilen havuz — başlatılmış işçi sayısı (`PoolExtension.pool_started_workers`), kapasite (`workers.len`) ve şimdiye dek `threads`te başlatılan iş parçacığı sayısı.
+    pool_started_workers: *std.atomic.Value(usize),
+    pool_slot_stats: []slot_stat.SlotStat,
+    /// `threads[0..n_spawned]` geçerlidir (slot `i + 1`). `n_spawned` yalnız `pool_stw_lock` altında artar.
+    n_spawned: usize = 0,
 
     /// TEK paylaşılan `RuntimeState`yi kurar, `arc_owner_pool` kapasitesini
     /// `n_workers`e YÜKSELTİR (Debug-only etki — bkz. `asap.
@@ -117,23 +123,29 @@ pub const WorkerPool = struct {
     /// `create()` DÖNDÜKTEN SONRA GEÇERSİZLEŞMESİNE (sallanan işaretçi) yol
     /// AÇARDI — heap tahsisi bu SORUNU YAPISAL olarak ORTADAN KALDIRIR.
     pub fn create(allocator: std.mem.Allocator, n_workers: usize) !*WorkerPool {
+        return createWithCapacity(allocator, n_workers, n_workers);
+    }
+
+    /// `create` + büyüme kapasitesi: `capacity >= n_workers` kuyruk/iş parçacığı yuvası ayrılır; yalnız ilk `n_workers` işçi `spawnWorkers` ile başlar, kalanlar `growOne` ile istek üzerine.
+    pub fn createWithCapacity(allocator: std.mem.Allocator, n_workers: usize, capacity: usize) !*WorkerPool {
         std.debug.assert(n_workers >= 1 and n_workers <= asap.MAX_POOL_WORKERS);
+        std.debug.assert(capacity >= n_workers and capacity <= asap.MAX_POOL_WORKERS);
         const rt = asap.nox_runtime_init() orelse return error.RuntimeInitFailed;
         const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
-        asap.setArcOwnerPoolCapacity(state, n_workers);
+        asap.setArcOwnerPoolCapacity(state, capacity);
 
         const self = try allocator.create(WorkerPool);
         errdefer allocator.destroy(self);
 
-        const workers = try allocator.alloc(Worker, n_workers);
+        const workers = try allocator.alloc(Worker, capacity);
         errdefer allocator.free(workers);
         for (workers, 0..) |*w, i| w.* = .{ .slot = i };
 
-        const deque_list = try allocator.alloc(*chase_lev_deque.ChaseLevDeque(*fiber_mod.Fiber, 256), n_workers);
+        const deque_list = try allocator.alloc(*chase_lev_deque.ChaseLevDeque(*fiber_mod.Fiber, 256), capacity);
         errdefer allocator.free(deque_list);
         for (workers, 0..) |*w, i| deque_list[i] = &w.deque;
 
-        const threads = try allocator.alloc(thread_spawn.Thread, n_workers - 1);
+        const threads = try allocator.alloc(thread_spawn.Thread, capacity - 1);
         errdefer allocator.free(threads);
 
         // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
@@ -152,6 +164,7 @@ pub const WorkerPool = struct {
         // eşitlenir — HER worker `run()`dan KALICI olarak çıktığında
         // (`tryPermanentExit`) BİR AZALTILIR.
         pool_ext.pool_active_workers.store(n_workers, .monotonic);
+        pool_ext.pool_started_workers.store(n_workers, .monotonic);
 
         // Çağıran iş parçacığı HER ZAMAN slot 0'dır.
         asap.setWorkerSlot(0);
@@ -173,6 +186,8 @@ pub const WorkerPool = struct {
             .pool_stw_lock = &pool_ext.pool_stw_lock,
             .pool_active_workers = &pool_ext.pool_active_workers,
             .pool_stw_round_n = &pool_ext.pool_stw_round_n,
+            .pool_started_workers = &pool_ext.pool_started_workers,
+            .pool_slot_stats = pool_ext.pool_slot_stats[0..],
             .wake_fds = pool_ext.pool_wake_fds[0..],
         };
         // `bridge.zig`nin `nox_async_init`i BUNU görüp `Scheduler.
@@ -210,19 +225,59 @@ pub const WorkerPool = struct {
                 args.entry(args.rt, args.slot, args.ctx);
             }
         };
-        for (self.threads, 0..) |*t, i| {
+        const initial = self.pool_started_workers.load(.monotonic);
+        var i: usize = 0;
+        while (i + 1 < initial) : (i += 1) {
             const slot = i + 1;
-            t.* = try thread_spawn.spawn(Trampoline.run, .{Args{
+            self.threads[i] = try thread_spawn.spawn(Trampoline.run, .{Args{
                 .rt = self.rt,
                 .slot = slot,
                 .ctx = ctx,
                 .entry = entryFn,
             }});
+            self.n_spawned = i + 1;
         }
     }
 
+    /// v2.1.142: büyüyebilen havuza BİR işçi ekler (yeni OS iş parçacığı + yeni slot). `false`: eklenemedi (kapasite dolu, bir STW turu sürüyor — tur kapanınca yeniden denenir — ya da iş parçacığı
+    /// başlatılamadı). `pool_stw_lock` altında yapılır: round-talebi ve kalıcı çıkışla aynı kilit olduğundan yeni işçi hiçbir STW turunun katılımcı sayısını bozmaz.
+    pub fn growOne(
+        self: *WorkerPool,
+        comptime Ctx: type,
+        entryFn: *const fn (rt: *anyopaque, slot: usize, ctx: Ctx) void,
+        ctx: Ctx,
+    ) bool {
+        const Args = struct {
+            rt: *anyopaque,
+            slot: usize,
+            ctx: Ctx,
+            entry: *const fn (rt: *anyopaque, slot: usize, ctx: Ctx) void,
+        };
+        const Trampoline = struct {
+            fn run(args: Args) void {
+                asap.setWorkerSlot(args.slot);
+                args.entry(args.rt, args.slot, args.ctx);
+            }
+        };
+        self.pool_stw_lock.lock();
+        defer self.pool_stw_lock.unlock();
+        if (self.pool_stw_requested.load(.monotonic)) return false;
+        const slot = self.pool_started_workers.load(.monotonic);
+        if (slot >= self.workers.len) return false;
+        self.threads[slot - 1] = thread_spawn.spawn(Trampoline.run, .{Args{
+            .rt = self.rt,
+            .slot = slot,
+            .ctx = ctx,
+            .entry = entryFn,
+        }}) catch return false;
+        self.n_spawned = slot;
+        _ = self.pool_active_workers.fetchAdd(1, .monotonic);
+        self.pool_started_workers.store(slot + 1, .release);
+        return true;
+    }
+
     pub fn joinAll(self: *WorkerPool) void {
-        for (self.threads) |t| t.join();
+        for (self.threads[0..self.n_spawned]) |t| t.join();
         // Değişmez (yalnız Debug/ReleaseSafe): tüm işçiler çıkınca hiçbir `ready` listesinde fiber kalmamalı. Sayaç artık kalırsa `poolWideDeadlockCheck` gerçek bir
         // deadlock'u asla ilan edemez; eksik kalırsa yanlış-pozitif verir (bkz. `asap.RuntimeState.pool_ready_total`). Gerçek programlar (torture, serve_multicore) bunu bedavaya doğrular.
         std.debug.assert(self.pool_ready_total.load(.acquire) == 0);

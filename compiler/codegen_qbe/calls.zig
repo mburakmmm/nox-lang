@@ -2129,6 +2129,26 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
         try self.qbeCall(.{ .name = r, .ty = .w }, "$nox_channel_wait", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = ms.text } });
         return .{ .text = r, .qtype = .w };
     }
+    // `a.wait_any(b[, c[, d]], ms)` (Channel): ilk hazır kanalın indeksi ya da -1 (bkz. `nox_channel_wait_any`).
+    if (obj.heap == .channel and std.mem.eql(u8, a.attr, "wait_any")) {
+        if (args.len < 2 or args.len > 4) return error.Unsupported;
+        var texts = [4][]const u8{ obj.text, "0", "0", "0" };
+        var vals: [3]Value = undefined;
+        const nch = args.len - 1;
+        for (args[0..nch], 0..) |ca, i| {
+            vals[i] = try self.genExpr(ca);
+            texts[i + 1] = vals[i].text;
+        }
+        const ms = try self.convert(try self.genExpr(args[args.len - 1]), .l);
+        const r = try self.newTemp();
+        try self.qbeCall(.{ .name = r, .ty = .w }, "$nox_channel_wait_any", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = texts[0] }, .{ .ty = .l, .text = texts[1] }, .{ .ty = .l, .text = texts[2] }, .{ .ty = .l, .text = texts[3] }, .{ .ty = .l, .text = ms.text } });
+        // yuva bariyerli global/alan okumaları sahiplidir: bekleme bittikten sonra bırakılır
+        try self.releaseNonArcIfTemporary(a.obj.*, obj);
+        for (args[0..nch], 0..) |ca, i| try self.releaseNonArcIfTemporary(ca, vals[i]);
+        const widened = try self.newTemp();
+        try self.qbeOp1(widened, .l, "extsw", r);
+        return .{ .text = widened, .qtype = .l };
+    }
     if (obj.heap != .class) return error.Unsupported;
     try self.checkNoLowlevelEscape(obj);
     const cinfo = self.classes.get(obj.class_name.?).?;

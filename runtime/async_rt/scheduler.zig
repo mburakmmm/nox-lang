@@ -77,6 +77,7 @@ const Deque = chase_lev_deque.ChaseLevDeque(*Fiber, 256);
 /// notu (`cycle_detector.zig`nin STW round'unu `signalWakeFd` İLE
 /// UYANDIRABİLMESİ İçİn gereken paylaşım).
 const self_pipe = @import("self_pipe.zig");
+const slot_stat = @import("slot_stat.zig");
 
 /// Faz MN.6: `attachToPool`in TEK parametresi — `own_slot`/`sibling_deques`
 /// + havuz-çapında YEDİ atomik/fonksiyon işaretçisinin TAMAMINI TEK bir
@@ -107,6 +108,9 @@ pub const PoolLink = struct {
     stw_lock: *SpinLock,
     active_workers: *std.atomic.Value(usize),
     stw_round_n: *std.atomic.Value(usize),
+    /// v2.1.142: başlatılmış işçi sayısına (büyüyebilen havuz) ve bu işçinin ilerleme damgasına işaretçiler; `null` = sabit havuz (eski davranış).
+    started_workers: ?*std.atomic.Value(usize) = null,
+    my_stat: ?*slot_stat.SlotStat = null,
     /// Faz MN.6: HER worker'ın wake-fd YAZMA ucuna işaretçilerin dizisi
     /// (`RuntimeState.pool_wake_fds`e karşılık gelir, AYNI `own_slot`
     /// İNDEKSİYLE) — `attachToPool`, KENDİ `wake_write_fd`sini `wake_fds
@@ -208,6 +212,9 @@ pub const Scheduler = struct {
     /// TARAFINDAN `WorkerPool.deque_list`den GEÇİRİLİR (bkz. modül üstü
     /// not). BOŞ dizi (`&.{}`) İSE havuzsuz kullanım.
     sibling_deques: []const *Deque = &.{},
+    /// v2.1.142: büyüyebilen havuz için başlatılmış işçi sayısı ve bu işçinin ilerleme damgası (`null` = sabit havuz).
+    started_workers: ?*std.atomic.Value(usize) = null,
+    my_stat: ?*slot_stat.SlotStat = null,
     /// Faz MN.4/5.8: havuz-çapında YAKLAŞIK deadlock tespiti İçİn ÜÇ
     /// PAYLAŞILAN atomik sayaca DOĞRUDAN işaretçiler (bkz. `asap.
     /// RuntimeState`nin `pool_live_count`/`pool_waiting_on_io`/
@@ -287,6 +294,8 @@ pub const Scheduler = struct {
     pub fn attachToPool(self: *Scheduler, link: PoolLink) !void {
         self.own_slot = link.own_slot;
         self.sibling_deques = link.sibling_deques;
+        self.started_workers = link.started_workers;
+        self.my_stat = link.my_stat;
         self.pool_live_count = link.live_count;
         self.pool_waiting_on_io = link.waiting_on_io;
         self.pool_idle_workers = link.idle_workers;
@@ -613,9 +622,12 @@ pub const Scheduler = struct {
     /// GİRMEMİŞ fiber'ları çalar).
     fn tryStealFromSiblings(self: *Scheduler) ?*Fiber {
         const siblings = self.sibling_deques;
+        // büyüyebilen havuzda yalnız BAŞLATILMIŞ işçilerin kuyrukları taranır (`started_workers`); sabit havuzda tüm dilim
+        const n = if (self.started_workers) |sw| @min(sw.load(.acquire), siblings.len) else siblings.len;
+        if (n == 0) return null;
         var i: usize = 0;
-        while (i < siblings.len) : (i += 1) {
-            const idx = (self.own_slot + 1 + i) % siblings.len;
+        while (i < n) : (i += 1) {
+            const idx = (self.own_slot + 1 + i) % n;
             if (idx == self.own_slot) continue;
             if (siblings[idx].steal()) |f| return f;
         }
@@ -684,7 +696,7 @@ pub const Scheduler = struct {
     /// UYANDIRDI), deadlock İLAN EDİLMEZ — çağıran `run()` döngüsü
     /// BAŞA DÖNÜP YENİDEN dener (bu FONKSİYON YENİDEN çağrılır).
     fn poolWideDeadlockCheck(self: *Scheduler) bool {
-        const n_workers = self.sibling_deques.len;
+        const n_workers = if (self.started_workers) |sw| sw.load(.acquire) else self.sibling_deques.len;
         const live = self.pool_live_count.?;
         const waiting_io = self.pool_waiting_on_io.?;
         const idle = self.pool_idle_workers.?;
@@ -869,7 +881,12 @@ pub const Scheduler = struct {
                 return error.Deadlock;
             };
             self.current = fiber;
+            if (self.my_stat) |st| {
+                st.tick.store(st.tick.load(.monotonic) +% 1, .monotonic);
+                st.busy.store(true, .monotonic);
+            }
             fiber.resume_(&self.root_ctx);
+            if (self.my_stat) |st| st.busy.store(false, .monotonic);
             self.current = null;
             if (fiber.finished) {
                 // Faz MN.4/5: havuzluysa `pool_live_count` (PAYLAŞILAN,

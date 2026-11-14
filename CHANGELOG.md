@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.142]
+
+### Değişti/Eklendi (M:N eksikleri: işçi sayısı, bloklayan FFI, çok kanallı select)
+
+- **Varsayılan havuz boyutu = CPU sayısı.** Yalnız düz `spawn` kullanan programlar da artık CPU başına bir işçiyle çalışır (eskiden sabit 2; `SMALL_MAIN_POOL_DEFAULT` kalktı). `NOX_POOL_WORKERS` yine geçersiz kılar.
+- **Bloklayan FFI çağrılarında işçi devri.** İzleyici iş parçacığı (10 ms yoklama) tüm işçilerin ~30 ms aynı fiber'da meşgul olduğunu ve çalıştırılabilir iş beklediğini görürse havuza yeni işçi ekler (başlangıcın 2 katına, en çok 64'e kadar; `WorkerPool.growOne`, `pool_stw_lock` altında; `SlotStat` damgaları). Ölçüm (3 işçi, 4 × 500 ms `usleep` bloklayıcısı): son görevin başlama gecikmesi 510 ms → ~60 ms. Sınır: başlamış bir fiber başladığı işçiye bağlı kalır. `NOX_POOL_WORKERS` (tek başına), WASM, çok çekirdekli sunucu havuzu ve sabitlenmiş mod için kapalı; `NOX_POOL_MAX_WORKERS=<n>` üst sınırı elle belirler.
+- **`Channel[T].wait_any(b[, c[, d]], ms) -> int`:** birden çok kanalı (farklı öğe tipli olabilir) bekleyip hazır olanın indeksini (veya zaman aşımında -1) döndürür; yalnız alma, yoklama tabanlı (gecikme ≤ ~4 ms).
+- **CI:** Linux x86-64 işinin v2.1.132'den beri askıda kalmasını teşhis için test adımına gözcü eklendi: 35 dakikadan sonra süreç ağacı ve eski süreçlerin gdb yığın izleri yazdırılır.
+- Test: golden `channel_wait_any_select`, `blocking_ffi_pool_growth` (iki backend), havuz birim testleri.
+
 ## [2.1.141]
 
 ### Eklendi/Değişti (bindgen ergonomisi + dilde tipsiz tamsayı sabitleri)

@@ -80,6 +80,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_channel_retain", Entry{ .params = "P", .ret = 'v' } },
     .{ "nox_channel_send", Entry{ .params = "PPL", .ret = 'v' } },
     .{ "nox_channel_wait", Entry{ .params = "PPL", .ret = 'W' } },
+    .{ "nox_channel_wait_any", Entry{ .params = "PPPPPL", .ret = 'W' } },
     .{ "nox_char_from_byte", Entry{ .params = "PL", .ret = 'P' } },
     .{ "nox_chr_raw", Entry{ .params = "PL", .ret = 'P' } },
     .{ "nox_crypto_argon2_hash_raw", Entry{ .params = "PP", .ret = 'P' } },

@@ -1,0 +1,24 @@
+# v2.1.142: bloklayan FFI çağrıları (usleep) havuzu doldursa bile (işçi sayısı = CPU sayısı) izleyici ek işçi başlatır; hepsi biter ve sonuç tutarlıdır.
+extern def usleep(us: u32) -> i32 from "c"
+
+async def blocker(out: Channel[int]) -> None:
+    usleep(u32(30000))
+    await out.send(1)
+
+async def main_task() -> None:
+    n: int = 48
+    out: Channel[int] = Channel[int](64)
+    k: int = 0
+    while k < n:
+        t: Task[None] = spawn blocker(out)
+        k = k + 1
+    total: int = 0
+    j: int = 0
+    while j < n:
+        v: int = await out.recv()
+        total = total + v
+        j = j + 1
+    print(total)
+
+mt: Task[None] = spawn main_task()
+await mt

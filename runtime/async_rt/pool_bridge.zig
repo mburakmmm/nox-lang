@@ -181,23 +181,15 @@ fn poolWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolRunCtx) void {
 /// `state.worker_pool`un DOLU olduğunu görüp OTOMATİK `attachToPool`
 /// çağırır — bkz. `bridge.zig`nin belge notu, BURADA SIFIR YENİ mantık
 /// gerekir).
-/// Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 3):
-/// `wants_multicore_pool` — `moduleUsesMulticorePool`nin (`compiler/
-/// codegen_qbe/async_thread.zig`) DERLEME-ZAMANI kararı: modül `nox.http.
-/// serve_multicore*`/`nox.thread.pool_run`DAN HİÇBİRİNİ ÇAĞIRMIYORSA
-/// `false` — bu durumda CPU-sayısı YERİNE `SMALL_MAIN_POOL_DEFAULT`e
-/// (work-stealing'in ANLAMLI olması İçİn EN AZ 2 GEREKİR — 1'e düşürmek
-/// `nox.thread.start`/çıplak `spawn`ı `$main`in KENDİ worker'ına
-/// TAMAMEN SERİLEŞTİRİRDİ) düşülür. `NOX_POOL_WORKERS` HER İKİ dalda
-/// da ÖNCE kontrol edilir — KOŞULSUZ EZER (kaçış kapısı DEĞİŞMEDEN kalır).
-/// **Bilinçli ödünleşim (kullanıcı KARARIYLA kabul edildi):** `nox.
-/// thread.start`/çıplak `spawn`ı GERÇEK paralel iş İçİn (sadece "birkaç
-/// arka plan görevi" DEĞİL) KULLANAN AMA `serve_multicore`/`pool_run`i
-/// HİÇ ÇAĞIRMAYAN programlar BU değişiklikten SONRA SESSİZCE CPU-
-/// sayısından `SMALL_MAIN_POOL_DEFAULT`e düşer — `NOX_POOL_WORKERS`
-/// kaçış kapısı VAR ama otomatik/uyarısız (bkz. `stdlib/nox/thread.nox`
-/// belge notu).
-const SMALL_MAIN_POOL_DEFAULT: usize = 2;
+/// v2.1.142: `$main` havuzunun varsayılan işçi sayısı CPU sayısıdır (önceden `serve_multicore` kullanmayan programlar için sabit 2'ydi; başlangıç maliyeti ölçüldü: 1 → 10 işçi ≈ 4 ms,
+/// fark yok). `NOX_POOL_WORKERS` HER ZAMAN ezer; mod 2 (yalnız sınıflayıcının tanımadığı tipler için güvenlik ağı) tek işçidir.
+
+/// `NOX_POOL_MAX_WORKERS=<n>`: büyüyebilen havuzun işçi üst sınırı (`NOX_POOL_WORKERS` başlangıç sayısıyla birlikte verilirse havuz o sayıdan bu sınıra kadar büyüyebilir).
+fn poolMaxWorkersOverride() ?usize {
+    if (comptime is_wasm_freestanding or builtin.os.tag == .windows) return null;
+    const s = std.c.getenv("NOX_POOL_MAX_WORKERS") orelse return null;
+    return std.fmt.parseInt(usize, std.mem.span(s), 10) catch null;
+}
 
 fn poolWorkersOverride() ?usize {
     if (builtin.os.tag == .windows) {
@@ -228,7 +220,7 @@ fn pickMainWorkerCount(mode: i32) usize {
     // v2.1.117: mod 2 = TEK işçi. Her işçi modül globals'ının KENDİ kopyasını taşıdığından, paylaşılan DEĞİŞKEN modül durumu olan (liste/sözlük/sınıf/kanal/görev ya da yeniden atanan
     // bir modül değişkeni) ve `serve_multicore`/`pool_run` kullanmayan programlarda çalınan bir görev başka işçinin tutarsız kopyasını okuyabilirdi; bu programlar tek işçide çalışır.
     if (mode == 2) return 1;
-    if (mode == 0 or mode == 3) return SMALL_MAIN_POOL_DEFAULT;
+    // v2.1.142: varsayılan artık CPU sayısıdır (ölçüm: 1 → 10 işçide başlangıç maliyeti ≈ aynı, ~4 ms); `NOX_POOL_WORKERS` yine kaçış kapısıdır.
     const cpu = if (comptime builtin.cpu.arch.isWasm()) WASM_DEFAULT_WORKERS else (std.Thread.getCpuCount() catch 1);
     return std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS);
 }
@@ -237,14 +229,21 @@ fn pickMainWorkerCount(mode: i32) usize {
 const WASM_DEFAULT_WORKERS: usize = 4;
 
 pub export fn nox_pool_main_init(mode: i32) callconv(.c) ?*anyopaque {
-    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount(mode)) catch @panic("OOM: $main pool");
+    const initial = pickMainWorkerCount(mode);
+    // v2.1.142: `$main` havuzu (mod 0/3) takılan işçiler için ek işçi başlatabilir (en çok 2x). Kullanıcı `NOX_POOL_WORKERS` verdiyse sayı kesindir; tek-işçi (mod 2), çok-çekirdekli sunucu (mod 1) ve wasm büyümez.
+    const max_override = poolMaxWorkersOverride();
+    const cap_wanted: usize = if (max_override) |m| m else if (poolWorkersOverride() == null) initial * 2 else initial;
+    const cap = std.math.clamp(cap_wanted, initial, asap.MAX_POOL_WORKERS);
+    const grows = !is_wasm_freestanding and !builtin.cpu.arch.isWasm() and (mode == 0 or mode == 3) and cap > initial;
+    const pool = worker_pool_mod.WorkerPool.createWithCapacity(std.heap.page_allocator, initial, cap) catch @panic("OOM: $main pool");
     if (mode == 3) {
         const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
         state.globals_shared = true;
     }
     {
         const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
-        state.main_pool_workers = pool.workers.len;
+        // Büyüyebilen havuzda sözlük/liste kilitleri başlangıçta tek işçi görünse bile işçi sonradan eklenebilir: karşılaştırma (`> 1`) hep doğru kalsın.
+        state.main_pool_workers = if (grows) @max(initial, 2) else pool.workers.len;
     }
     return pool.rt;
 }
@@ -270,6 +269,60 @@ pub export fn nox_pool_main_spawn_workers(
     ctx.* = .{ .entry_fn = undefined, .globals_init_fn = globals_init_fn, .globals_deinit_fn = globals_deinit_fn };
     state.main_pool_ctx = ctx;
     pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, ctx) catch @panic("OOM: $main pool workers");
+    // v2.1.142: kapasite başlatılmış işçi sayısından büyükse izleyici iş parçacığı başlar (bkz. `poolMonitorMain`).
+    if (pool.workers.len > pool.pool_started_workers.load(.monotonic)) {
+        const ext = state.pool_ext.?;
+        const mctx = std.heap.page_allocator.create(MonitorCtx) catch @panic("OOM: pool monitor");
+        mctx.* = .{ .pool = pool, .ctx = ctx };
+        ext.pool_monitor_ctx = mctx;
+        ext.pool_monitor_thread = thread_spawn.spawn(poolMonitorMain, .{mctx}) catch null;
+    }
+}
+
+const MonitorCtx = struct { pool: *worker_pool_mod.WorkerPool, ctx: *PoolRunCtx };
+
+/// Bir işçi bu kadar milisaniye AYNI fiber'da (tick değişmeden) kalırsa "takılı" sayılır: bloklayan bir FFI/sistem çağrısı ya da uzun bir hesap.
+const MONITOR_STUCK_MS: u32 = 30;
+
+/// v2.1.142: havuz izleyicisi (Go'nun `sysmon`undaki işçi devri benzeri, sinyalsiz). Her 10 ms'de işçilerin ilerleme damgalarına bakar; bir işçi `MONITOR_STUCK_MS`tir takılıysa, beklemede
+/// iş (kuyrukta fiber) varsa ve boşta işçi yoksa havuza BİR işçi ekler (kapasiteye kadar), böylece bloklayan çağrılar diğer görevleri aç bırakmaz. Takılı işçinin KENDİ kuyruğuna alınmış
+/// (başlamış, ona sabitlenmiş) fiber'lar o işçi dönene kadar bekler — yeni/çalınabilir görevler ise yeni işçiye gider. Programın sonunda `nox_pool_main_join_and_destroy` durdurur.
+fn poolMonitorMain(m: *MonitorCtx) void {
+    const pool = m.pool;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
+    const ext = state.pool_ext.?;
+    var last_tick: [asap.MAX_POOL_WORKERS]u32 = @splat(0);
+    var stuck_ms: [asap.MAX_POOL_WORKERS]u32 = @splat(0);
+    while (!ext.pool_monitor_stop.load(.acquire)) {
+        var k: usize = 0;
+        while (k < 10 and !ext.pool_monitor_stop.load(.acquire)) : (k += 1) sleepOneMs();
+        const n = ext.pool_started_workers.load(.acquire);
+        var stuck: usize = 0;
+        var slot: usize = 0;
+        while (slot < n) : (slot += 1) {
+            const st = &ext.pool_slot_stats[slot];
+            const t = st.tick.load(.monotonic);
+            if (st.busy.load(.monotonic) and t == last_tick[slot]) {
+                stuck_ms[slot] +|= 10;
+            } else stuck_ms[slot] = 0;
+            last_tick[slot] = t;
+            if (stuck_ms[slot] >= MONITOR_STUCK_MS) stuck += 1;
+        }
+        if (stuck == 0) continue;
+        if (ext.pool_live_count.load(.monotonic) == 0) continue;
+        var pending = ext.pool_ready_total.load(.monotonic) > 0;
+        if (!pending) {
+            for (pool.deque_list[0..n]) |d| {
+                if (d.size() > 0) {
+                    pending = true;
+                    break;
+                }
+            }
+        }
+        if (!pending) continue;
+        if (ext.pool_idle_workers.load(.monotonic) > 0) continue;
+        _ = pool.growOne(*PoolRunCtx, poolWorkerMain, m.ctx);
+    }
 }
 
 /// `genMainAsync`nin `$nox_runtime_deinit` YERİNE (`--release` altında)
@@ -283,6 +336,12 @@ pub export fn nox_pool_main_spawn_workers(
 pub export fn nox_pool_main_join_and_destroy(rt: ?*anyopaque) callconv(.c) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
     const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(state.worker_pool.?));
+    // izleyici önce durdurulur (artık işçi eklenmez), sonra tüm işçiler beklenir
+    if (state.pool_ext) |ext| {
+        ext.pool_monitor_stop.store(true, .release);
+        if (ext.pool_monitor_thread) |t| t.join();
+        if (ext.pool_monitor_ctx) |mc| std.heap.page_allocator.destroy(@as(*MonitorCtx, @ptrCast(@alignCast(mc))));
+    }
     pool.joinAll();
     if (state.main_pool_ctx) |c| std.heap.page_allocator.destroy(@as(*PoolRunCtx, @ptrCast(@alignCast(c))));
     pool.destroy();
@@ -822,8 +881,8 @@ fn setTestEnv(name: [*:0]const u8, value: ?[*:0]const u8) void {
 
 test "pickMainWorkerCount: multicore-olmayan $main küçük sabit worker sayısı kullanır, multicore CPU sayısını kullanmaya devam eder" {
     setTestEnv("NOX_POOL_WORKERS", null);
-    try std.testing.expectEqual(@as(usize, SMALL_MAIN_POOL_DEFAULT), pickMainWorkerCount(0));
     const cpu = std.Thread.getCpuCount() catch 1;
+    try std.testing.expectEqual(std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS), pickMainWorkerCount(0));
     try std.testing.expectEqual(std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS), pickMainWorkerCount(1));
 }
 

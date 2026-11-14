@@ -1,0 +1,59 @@
+# Channel[T].wait_any(b[, c[, d]], ms): birden çok kanalı aynı anda bekle (Go `select`ine benzer, yalnız alma; yoklama tabanlı). Farklı öğe tipli kanallar, zaman aşımı ve tüketim.
+import nox.time
+
+async def producer_int(ch: Channel[int], n: int, delay: int) -> None:
+    i: int = 0
+    while i < n:
+        nox.time.sleep_ms(delay)
+        await ch.send(i + 1)
+        i = i + 1
+
+async def producer_str(ch: Channel[str], n: int, delay: int) -> None:
+    i: int = 0
+    while i < n:
+        nox.time.sleep_ms(delay)
+        await ch.send("s" + str(i))
+        i = i + 1
+
+async def main_task() -> None:
+    a: Channel[int] = Channel[int](8)
+    b: Channel[str] = Channel[str](8)
+    c: Channel[int] = Channel[int](8)
+    print(a.wait_any(b, c, 5))
+    pa: Task[None] = spawn producer_int(a, 3, 2)
+    pb: Task[None] = spawn producer_str(b, 2, 3)
+    pc: Task[None] = spawn producer_int(c, 4, 1)
+    got_a: int = 0
+    got_b: int = 0
+    got_c: int = 0
+    sum_a: int = 0
+    sum_c: int = 0
+    total: int = 9
+    n: int = 0
+    while n < total:
+        which: int = a.wait_any(b, c, 2000)
+        if which == 0:
+            sum_a = sum_a + await a.recv()
+            got_a = got_a + 1
+        elif which == 1:
+            s: str = await b.recv()
+            got_b = got_b + len(s)
+        elif which == 2:
+            sum_c = sum_c + await c.recv()
+            got_c = got_c + 1
+        else:
+            print("timeout")
+            return
+        n = n + 1
+    print(got_a)
+    print(got_b)
+    print(got_c)
+    print(sum_a)
+    print(sum_c)
+    print(a.wait_any(c, 5))
+    await pa
+    await pb
+    await pc
+
+mt: Task[None] = spawn main_task()
+await mt

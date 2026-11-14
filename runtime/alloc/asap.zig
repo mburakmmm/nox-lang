@@ -30,6 +30,7 @@
 
 const std = @import("std");
 const atomic_compat = @import("../async_rt/atomic_compat.zig");
+const slot_stat = @import("../async_rt/slot_stat.zig");
 const thread_spawn = @import("../async_rt/thread_spawn.zig");
 const builtin = @import("builtin");
 /// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): `nox_runtime_
@@ -653,6 +654,14 @@ pub const PoolExtension = struct {
     /// worker'ları (0 DAHİL) kapsaması GEREKTİĞİNDEN, `pool_free_lists`/
     /// `globals_blocks`nin AKSİNE off-by-one KAYDIRMASI YAPILMAZ.
     pool_wake_fds: [MAX_POOL_WORKERS]std.atomic.Value(i32) = @splat(.init(-1)),
+    /// v2.1.142: BAŞLATILMIŞ işçi sayısı (0..MAX). Sabit havuzlarda `WorkerPool.create`in `n_workers`ına eşittir ve hiç değişmez; büyüyebilen havuzda (`$main` havuzu) izleyici takılı işçiler
+    /// için ek işçi başlatınca artar. Çalma halkası ve deadlock tespiti `sibling_deques.len` yerine BUNU kullanır.
+    pool_started_workers: std.atomic.Value(usize) = .init(0),
+    /// v2.1.142: işçi başına ilerleme damgaları (bkz. `slot_stat.zig`) ve izleyicinin durdurma bayrağı.
+    pool_slot_stats: [MAX_POOL_WORKERS]slot_stat.SlotStat = @splat(.{}),
+    pool_monitor_stop: std.atomic.Value(bool) = .init(false),
+    pool_monitor_thread: ?thread_spawn.Thread = null,
+    pool_monitor_ctx: ?*anyopaque = null,
     /// Faz [YENİ] (bkz. plan dosyası "STW bariyeri kilitlenmesi düzeltmesi"
     /// — GERÇEK bir gdb backtrace'İYLE bulunan, önceden var olan bir yarış):
     /// `nox_cycle_possible_root`ün (cycle_detector.zig) `pool_stw_requested`i

@@ -9792,7 +9792,16 @@ pub const Checker = struct {
                         if ((try self.checkExpr(ctx, c.args[0])) != .int) return self.fail(error.TypeMismatch, "the timeout of 'wait' must be an int (milliseconds)", .{});
                         return .boolean;
                     }
-                    return self.fail(error.UndefinedMethod, "Channel has no method '{s}' (only send/recv/wait)", .{a.attr});
+                    // `ch.wait_any(b[, c[, d]], ms) -> int` (v2.1.142): kanallardan hangisinde `recv` hazır (0 = `ch`, 1.. = argümanlar; yok = -1). Kanalların öğe tipleri farklı olabilir.
+                    if (std.mem.eql(u8, a.attr, "wait_any")) {
+                        if (c.args.len < 2 or c.args.len > 4) return self.fail(error.ArgumentCountMismatch, "'wait_any' takes 1 to 3 other channels and a timeout in milliseconds", .{});
+                        for (c.args[0 .. c.args.len - 1]) |ca| {
+                            if ((try self.checkExpr(ctx, ca)) != .channel) return self.fail(error.TypeMismatch, "the channel arguments of 'wait_any' must be Channels", .{});
+                        }
+                        if ((try self.checkExpr(ctx, c.args[c.args.len - 1])) != .int) return self.fail(error.TypeMismatch, "the timeout of 'wait_any' must be an int (milliseconds)", .{});
+                        return .int;
+                    }
+                    return self.fail(error.UndefinedMethod, "Channel has no method '{s}' (only send/recv/wait/wait_any)", .{a.attr});
                 }
                 // `TaskLocal[T]`in yerleşik `get`/`set`/`clear`i — Faz OO.2
                 // (bkz. nox-teknik-spesifikasyon.md §3.83), `Channel` İLE

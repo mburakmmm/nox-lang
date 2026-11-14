@@ -240,6 +240,24 @@ else:
     print("no work for 500 ms")
 ```
 
+### Waiting on several channels (`wait_any`)
+
+`a.wait_any(b[, c[, d]], ms)` waits for the first of up to four channels (which may carry different element types) to become receivable. It returns the index of a ready
+channel (`0` is `a`, `1` is the first argument, and so on) or `-1` if `ms` milliseconds pass first. Like `wait`, it does not consume anything: call `await <channel>.recv()`
+on the channel it names.
+
+```text
+which: int = jobs.wait_any(control, 1000)
+if which == 0:
+    job: int = await jobs.recv()
+elif which == 1:
+    cmd: str = await control.recv()
+else:
+    print("idle")
+```
+
+This is a receive-only, polling-based select (it re-checks every few milliseconds, so the wake-up latency is at most about 4 ms); there are no send cases.
+
 ### Fan-out and fan-in
 
 There is no `list[Task[T]]` in 2.0 (tasks and channels cannot be stored in collections). The idiom for "start N workers and gather the
@@ -326,9 +344,8 @@ await t
 All tasks run on fibers scheduled by the runtime:
 
 - **Both backends (hosted targets):** an automatic **M:N work-stealing scheduler** — the program's tasks run in parallel on a pool of worker
-  threads. The pool size is fixed at compile time (a small default for programs that only use plain `spawn`, the CPU count for programs
-  using `nox.http.serve_multicore*` or `nox.thread.pool_run`) and can be overridden at run time with the `NOX_POOL_WORKERS` environment
-  variable. Reference counting is atomic whenever a program uses tasks or threads, so values may safely be shared between tasks on different
+  threads. The pool has one worker per CPU by default (since v2.1.142; it was a fixed 2 for programs using only plain `spawn`) and the size can be overridden at run time with the `NOX_POOL_WORKERS` environment
+  variable. **Blocking foreign calls** (a C function such as `usleep`, a blocking database driver) park the whole worker thread. A monitor thread notices when every worker has been busy on the same fiber for ~30 ms while runnable work is queued, and starts an additional worker (up to twice the initial size, at most 64). The extra workers pick up *unstarted* tasks; a task that has already started stays on the worker it began on, so it waits for that worker to return. Growth is off when `NOX_POOL_WORKERS` is set without `NOX_POOL_MAX_WORKERS`, for the WebAssembly targets and for the multi-core server pool. Reference counting is atomic whenever a program uses tasks or threads, so values may safely be shared between tasks on different
   workers. On the QBE backend (which has no atomic instructions in its IL) the atomic count updates are calls into the runtime, emitted only
   for programs that use `spawn`, `async`, `nox.thread` or the multi-core pool; other QBE programs keep plain, faster counts.
   Module-level variables: by default every worker keeps its own copy of them (this is what makes `serve_multicore` handlers independent).
