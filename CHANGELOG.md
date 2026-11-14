@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.167]
+
+### Performans (2.2 aşama 3: JSON bant tabanlı tembel `JsonValue`)
+
+- **`nox.json.parse` tek geçişli bant (tape) ayrıştırıcıya geçti** (`runtime/stdlib_shims/json_tape.zig`): doğrulama ve bant yazımı aynı geçişte; belge değişmez bir blok (girdiler + çocuk tablosu + çözülmüş dizeler) olarak bir Nox `str` nesnesinde tutulur (yaşam süresi sıradan atomik ARC). Skalerler hemen dolu düğüm olur, konteynerler (`kind` 4/5) belgeye bağlı TEMBEL düğümlerdir; `array_len/array_get/object_*/get/get_or_null/dump` bantlardan okur (düğümler değişmez, iş parçacığı güvenli, sıralı `array_get` O(1)). Doğrulama kuralları (RFC 8259, UTF-8/vekil çifti, derinlik 32, yinelenen anahtar = hata) ve sayı sınıflandırması eski `FastJson` ile birebir; eski yol farksal testlerde referans olarak kaldı. Farksal sınamalar: `std.json.Value` ile karşılaştırma (geçerli/geçersiz kümeler + 4000 rastgele bozulmuş belge), derinlik/yinelenen anahtar, sayı metinleri.
+- Ölçüm (50k nesne, 2,9 MB): ayrıştırma 17,7 ms → 8,5 ms (yyjson: 1,5-2,9 ms); yalnızca bant kurulumu 5,6 ms. `dump` tembel düğümde bantlardan doğrudan yazılır. Sonraki dilim (2.1.168): ayarlar (dize taraması, bant yazımı, düğüm kurma).
+- `JsonValue` sınıfına iki gizli alan eklendi (`doc: str`, `tpos: int`; yalnızca `nox.json` erişimcileri kullanır, kamu API'si değişmedi). Golden `json_lazy_tape_access`.
+
 ## [2.1.166]
 
 ### Performans / tasarım (2.2 aşama 3: JSON)

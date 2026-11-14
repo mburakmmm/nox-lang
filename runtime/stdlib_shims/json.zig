@@ -78,6 +78,7 @@ const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 const TAG_SIZE = abi_layout.TAG_SIZE;
 const abi_ptr = @import("../abi_ptr.zig");
+const tape = @import("json_tape.zig");
 
 /// `stdlib/nox/core.nox`nin `nox_json_make_json_value` fonksiyonu — ismi
 /// core.nox'ta SABİT (mangle EDİLMEZ) yazıldığından ("nox_json_make_json_value").
@@ -317,7 +318,7 @@ fn buildNode(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEmptie
 /// atama SIRASIYLA BİREBİR: kind@8, b@16, n@24, s@32, arr@40, keys@48,
 /// vals@56 — `calls.zig`nin `genConstructFromValues`ıyla BAĞIMSIZ olarak
 /// doğrulandı) toplam payload boyutu.
-const JSONVALUE_FIELD_COUNT: usize = 7;
+const JSONVALUE_FIELD_COUNT: usize = 9; // kind b n s arr keys vals + (v2.1.168) doc idx
 const JSONVALUE_PAYLOAD_SIZE: usize = TAG_SIZE + JSONVALUE_FIELD_COUNT * FIELD_SLOT_SIZE;
 
 /// `buildPtrList`nin AYNI ilkesi — bir `JsonValue` örneğini `nox_rc_alloc`
@@ -352,7 +353,169 @@ fn makeJsonValueDirect(
     @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 5)).* = abi_ptr.slot(arr);
     @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 6)).* = abi_ptr.slot(keys);
     @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 7)).* = abi_ptr.slot(vals);
+    // v2.1.168: eager düğümde `doc` = `s`nin takma adı (kendi sahiplik birimiyle), `tpos` = 0 (bant yok); tembel düğümde `tpos` = bant girdisi + 1.
+    if (s) |sp| str_mod.nox_str_retain(sp);
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 8)).* = abi_ptr.slot(s);
+    @as(*align(1) i64, @ptrCast(bytes + FIELD_SLOT_SIZE * 9)).* = 0;
     return raw;
+}
+
+/// Bant belgesine bağlı TEMBEL bir konteyner düğümü (`kind` 4/5): `arr/keys/vals/s` paylaşılan boş değerler, `doc` bloğu (+1 retain), `idx` bant girdisi.
+fn makeLazyNode(rt: ?*anyopaque, class_id: i64, kind: i64, shared: SharedEmpties, doc: ?[*:0]u8, idx: u32) ?*anyopaque {
+    const raw = arc.nox_rc_alloc(rt, JSONVALUE_PAYLOAD_SIZE) orelse return null;
+    const bytes: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(bytes)).* = class_id;
+    @as(*align(1) i64, @ptrCast(bytes + FIELD_SLOT_SIZE * 1)).* = kind;
+    @as(*align(1) i64, @ptrCast(bytes + FIELD_SLOT_SIZE * 2)).* = 0;
+    @as(*align(1) f64, @ptrCast(bytes + FIELD_SLOT_SIZE * 3)).* = 0.0;
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 4)).* = abi_ptr.slot(sharedEmptyStr(shared));
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 5)).* = abi_ptr.slot(sharedEmptyList(shared));
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 6)).* = abi_ptr.slot(sharedEmptyList(shared));
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 7)).* = abi_ptr.slot(sharedEmptyList(shared));
+    if (doc) |d| str_mod.nox_str_retain(d);
+    @as(*align(1) abi_ptr.Slot, @ptrCast(bytes + FIELD_SLOT_SIZE * 8)).* = abi_ptr.slot(doc);
+    @as(*align(1) i64, @ptrCast(bytes + FIELD_SLOT_SIZE * 9)).* = @as(i64, idx) + 1;
+    return raw;
+}
+
+/// Bant girdisi `idx` için bir `JsonValue` düğümü: skalerler dolu (eager), konteynerler tembel (belgeye bağlı).
+fn tapeNode(rt: ?*anyopaque, view: tape.View, doc: ?[*:0]u8, shared: SharedEmpties, idx: u32) ?*anyopaque {
+    const e = view.entries[idx];
+    const cid = view.cid;
+    switch (e.kind) {
+        tape.K_NULL => return makeLeafFast(rt, shared, cid, 0, false, 0.0, sharedEmptyStr(shared)),
+        tape.K_BOOL => return makeLeafFast(rt, shared, cid, 1, e.val != 0, 0.0, sharedEmptyStr(shared)),
+        tape.K_NUMBER => {
+            const text = view.numberText(idx);
+            const n: f64 = @bitCast(e.val);
+            return makeLeafFast(rt, shared, cid, 2, false, n, if (text.len > 0) (dupeToNoxStr(rt, text) orelse sharedEmptyStr(shared)) else sharedEmptyStr(shared));
+        },
+        tape.K_STRING => {
+            const dup = dupeToNoxStr(rt, view.str(e)) orelse return null;
+            return makeLeafFast(rt, shared, cid, 3, false, 0.0, dup);
+        },
+        tape.K_ARRAY => return makeLazyNode(rt, cid, 4, shared, doc, idx),
+        tape.K_OBJECT => return makeLazyNode(rt, cid, 5, shared, doc, idx),
+        else => return null,
+    }
+}
+
+/// Kök skaler (bant girdisi 0) için dolu düğüm; `built` henüz bloğa yazılmamış bant bölümleridir.
+fn rootScalarNode(rt: ?*anyopaque, shared: SharedEmpties, cid: i64, built: *const tape.Built) ?*anyopaque {
+    const e = built.entries.items[0];
+    switch (e.kind) {
+        tape.K_NULL => return makeLeafFast(rt, shared, cid, 0, false, 0.0, sharedEmptyStr(shared)),
+        tape.K_BOOL => return makeLeafFast(rt, shared, cid, 1, e.val != 0, 0.0, sharedEmptyStr(shared)),
+        tape.K_NUMBER => {
+            var sv: ?[*:0]const u8 = null;
+            if (e.flags & tape.F_TEXT != 0) {
+                const t = built.entries.items[1];
+                sv = dupeToNoxStr(rt, built.strs.items[@intCast(t.val)..][0..t.len]);
+            }
+            if (sv == null) sv = sharedEmptyStr(shared);
+            return makeLeafFast(rt, shared, cid, 2, false, @bitCast(e.val), sv);
+        },
+        else => {
+            const dup = dupeToNoxStr(rt, built.strs.items[@intCast(e.val)..][0..e.len]) orelse return null;
+            return makeLeafFast(rt, shared, cid, 3, false, 0.0, dup);
+        },
+    }
+}
+
+fn docBytes(doc: ?[*:0]const u8) ?[]const u8 {
+    const d = doc orelse return null;
+    const sl = str_mod.nox_str_slice(d);
+    if (sl.len < tape.HEADER_SIZE) return null;
+    return sl;
+}
+
+/// Tembel konteynerin (kind 4/5) eleman/çift sayısı.
+export fn nox_json_tape_len(doc: ?[*:0]const u8, idx: i64) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return 0;
+    const v = tape.View.fromBlob(blob);
+    if (idx < 0 or idx >= v.entries.len) return 0;
+    return v.entries[@intCast(idx)].len;
+}
+
+/// Dizi tembel düğümünün `i`. elemanı (çağıran `0 <= i < len` doğrular). `e_list`/`e_str` ebeveynin paylaşılan boş liste/dizesi (çocuk bunları paylaşır).
+export fn nox_json_tape_array_get(rt: ?*anyopaque, doc: ?[*:0]u8, idx: i64, i: i64, e_list: ?*anyopaque, e_str: ?[*:0]u8) callconv(.c) ?*anyopaque {
+    const blob = docBytes(doc) orelse return null;
+    const v = tape.View.fromBlob(blob);
+    const child = v.child(@intCast(idx), @intCast(i));
+    return tapeNode(rt, v, doc, .{ .list = e_list, .str = e_str }, child);
+}
+
+export fn nox_json_tape_object_key(rt: ?*anyopaque, doc: ?[*:0]const u8, idx: i64, i: i64) callconv(.c) ?[*:0]u8 {
+    const blob = docBytes(doc) orelse return null;
+    const v = tape.View.fromBlob(blob);
+    const k = v.child(@intCast(idx), @intCast(i));
+    return dupeToNoxStr(rt, v.str(v.entries[k]));
+}
+
+export fn nox_json_tape_object_value(rt: ?*anyopaque, doc: ?[*:0]u8, idx: i64, i: i64, e_list: ?*anyopaque, e_str: ?[*:0]u8) callconv(.c) ?*anyopaque {
+    const blob = docBytes(doc) orelse return null;
+    const v = tape.View.fromBlob(blob);
+    const k = v.child(@intCast(idx), @intCast(i));
+    return tapeNode(rt, v, doc, .{ .list = e_list, .str = e_str }, k + 1);
+}
+
+/// Nesnede `key`in çift indeksi (belge sırası, ilk eşleşme), yoksa -1.
+export fn nox_json_tape_find(doc: ?[*:0]const u8, idx: i64, key: ?[*:0]const u8) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return -1;
+    const v = tape.View.fromBlob(blob);
+    const ks: []const u8 = if (key) |k| str_mod.nox_str_slice(k) else "";
+    const n: usize = v.entries[@intCast(idx)].len;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        if (std.mem.eql(u8, v.str(v.entries[v.child(@intCast(idx), i)]), ks)) return @intCast(i);
+    }
+    return -1;
+}
+
+fn dumpTapeInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), v: tape.View, idx: u32) std.mem.Allocator.Error!void {
+    const e = v.entries[idx];
+    switch (e.kind) {
+        tape.K_NULL => try putSlice(a, out, "null"),
+        tape.K_BOOL => try putSlice(a, out, if (e.val != 0) "true" else "false"),
+        tape.K_NUMBER => {
+            const text = v.numberText(idx);
+            if (text.len > 0) return putSlice(a, out, text);
+            try dumpNumberInto(a, out, @bitCast(e.val));
+        },
+        tape.K_STRING, tape.K_KEY => try putEscaped(a, out, v.str(e)),
+        tape.K_ARRAY => {
+            try putByte(a, out, '[');
+            var i: usize = 0;
+            while (i < e.len) : (i += 1) {
+                if (i > 0) try putByte(a, out, ',');
+                try dumpTapeInto(a, out, v, v.child(idx, i));
+            }
+            try putByte(a, out, ']');
+        },
+        else => {
+            try putByte(a, out, '{');
+            var i: usize = 0;
+            while (i < e.len) : (i += 1) {
+                if (i > 0) try putByte(a, out, ',');
+                const k = v.child(idx, i);
+                try putEscaped(a, out, v.str(v.entries[k]));
+                try putByte(a, out, ':');
+                try dumpTapeInto(a, out, v, k + 1);
+            }
+            try putByte(a, out, '}');
+        },
+    }
+}
+
+/// Tembel düğümün alt ağacını `nox_json_dump_raw` ile aynı biçimde (kompakt) yazar; ara düğüm üretmez.
+export fn nox_json_tape_dump(rt: ?*anyopaque, doc: ?[*:0]const u8, idx: i64) callconv(.c) ?[*:0]u8 {
+    const blob = docBytes(doc) orelse return dupeToNoxStr(rt, "null");
+    const v = tape.View.fromBlob(blob);
+    const a = scratch_util.scratchAllocator();
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(a);
+    dumpTapeInto(a, &out, v, @intCast(idx)) catch return null;
+    return dupeToNoxStr(rt, out.items);
 }
 
 fn makeLeafFast(rt: ?*anyopaque, shared: SharedEmpties, class_id: i64, kind: i64, b: bool, n: f64, s: ?[*:0]const u8) ?*anyopaque {
@@ -1210,32 +1373,89 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     // Zig dize literal'i "" BUNU SAĞLAMAZ (başlıksız bellek okunması OLURDU).
     const slice = if (s) |sp| str_mod.nox_str_slice(sp) else "";
 
-    // v2.1.61: doğrudan-düğüm ayrıştırıcı (ilk çağrı dahil: sınıf kimliği ilk düğüm Nox kurucusundan okunur). `std.json` tabanlı aşağıdaki yol REFERANS olarak (farksal testler) kalır.
+    // v2.1.168: bant (tape) tabanlı TEK GEÇİŞLİ ayrıştırma (bkz. `json_tape.zig` ve `project/json-bant-tasarimi-2026-11.md`). Belge bir Nox `str` bloğu
+    // olarak tutulur; skalerler hemen, konteynerler TEMBEL düğümlere dönüşür (çocuklar `array_get`/`get` ile ilk erişimde kurulur). Eski (iki geçişli, eager)
+    // `FastJson` yolu yalnızca farksal sınamalar için `fastValidate` ile durur.
     {
         if (DecodeArenaSlot.value == null) {
             DecodeArenaSlot.value = std.heap.ArenaAllocator.init(scratch_util.scratchAllocator());
         }
         const farena = &DecodeArenaSlot.value.?;
         defer _ = farena.reset(.{ .retain_with_limit = DECODE_ARENA_RETAIN_LIMIT });
-        var fp = FastJson{ .s = slice, .allocator = farena.allocator(), .cid = JsonValueClassIdSlot.value };
-        fp.ws();
-        const ok = fp.validValue(0) and blk: {
-            fp.ws();
-            break :blk fp.i == slice.len;
-        };
-        if (!ok) {
+        var built: tape.Built = .{};
+        if (!tape.build(farena.allocator(), slice, &built)) {
             jsonLastOpOkPtr().* = false;
             return makeLeafUnshared(rt, 0, false, 0.0, "");
         }
-        const fshared = initSharedEmpties(rt) orelse {
+        const shared = initSharedEmpties(rt) orelse {
             jsonLastOpOkPtr().* = true;
             return makeLeafUnshared(rt, 0, false, 0.0, "");
         };
-        defer releaseSharedEmpties(rt, fshared);
-        fp.i = 0;
-        const froot = fp.buildValue(rt, fshared);
+        defer releaseSharedEmpties(rt, shared);
+        const root = built.entries.items[0];
+        const is_container = root.kind == tape.K_ARRAY or root.kind == tape.K_OBJECT;
+        const known_cid: i64 = if (JsonValueClassIdSlot.value) |c| c else -1;
+        var doc: ?[*:0]u8 = null;
+        var blob: []u8 = &.{};
+        if (is_container) {
+            const blob_len = built.blobSize();
+            const buf = str_mod.nox_str_alloc_buf(rt, blob_len) orelse {
+                jsonLastOpOkPtr().* = true;
+                return makeLeafUnshared(rt, 0, false, 0.0, "");
+            };
+            blob = buf[0..blob_len];
+            built.writeBlob(blob, known_cid);
+            doc = @ptrCast(buf);
+        }
+        defer if (doc) |d| str_mod.nox_str_release(rt, d); // kendi sahiplik birimimizi bırak: kök düğüm kendi +1'ini tutar
+        var result: ?*anyopaque = null;
+        if (known_cid >= 0) {
+            if (is_container) {
+                result = tapeNode(rt, tape.View.fromBlob(blob), doc, shared, 0);
+            } else {
+                result = rootScalarNode(rt, shared, known_cid, &built);
+            }
+        } else {
+            // Sınıf kimliği bu iş parçacığında henüz bilinmiyor: ilk düğüm Nox kurucusundan üretilir, kimlik oradan okunur.
+            const kind: i64 = switch (root.kind) {
+                tape.K_NULL => 0,
+                tape.K_BOOL => 1,
+                tape.K_NUMBER => 2,
+                tape.K_STRING => 3,
+                tape.K_ARRAY => 4,
+                else => 5,
+            };
+            var n: f64 = 0.0;
+            var sv: ?[*:0]const u8 = null;
+            if (root.kind == tape.K_NUMBER) {
+                n = @bitCast(root.val);
+                if (root.flags & tape.F_TEXT != 0) {
+                    const t = built.entries.items[1];
+                    sv = dupeToNoxStr(rt, built.strs.items[@intCast(t.val)..][0..t.len]);
+                }
+            } else if (root.kind == tape.K_STRING) {
+                sv = dupeToNoxStr(rt, built.strs.items[@intCast(root.val)..][0..root.len]);
+            }
+            if (sv == null) sv = sharedEmptyStr(shared);
+            const r = callMakeJsonValue(rt, kind, if (root.kind == tape.K_BOOL and root.val != 0) 1 else 0, n, sv, sharedEmptyList(shared), sharedEmptyList(shared), sharedEmptyList(shared));
+            if (r) |rp| {
+                const cid = @as(*align(1) const i64, @ptrCast(rp)).*;
+                JsonValueClassIdSlot.value = cid;
+                if (is_container) {
+                    // kurucu `doc = s` takma adını bıraktı: onu serbest bırakıp belgeyi ve girdi indeksini yerleştir; blok başlığına sınıf kimliği yaz
+                    const nb: [*]u8 = @ptrCast(rp);
+                    const old_doc = @as(*align(1) const u64, @ptrCast(nb + FIELD_SLOT_SIZE * 8)).*;
+                    if (old_doc != 0) str_mod.nox_str_release(rt, @ptrFromInt(@as(usize, @intCast(old_doc))));
+                    str_mod.nox_str_retain(doc);
+                    @as(*align(1) abi_ptr.Slot, @ptrCast(nb + FIELD_SLOT_SIZE * 8)).* = abi_ptr.slot(doc);
+                    @as(*align(1) i64, @ptrCast(nb + FIELD_SLOT_SIZE * 9)).* = 1; // tpos = girdi 0 + 1
+                    std.mem.writeInt(i64, blob[16..24], cid, .little);
+                }
+            }
+            result = r;
+        }
         jsonLastOpOkPtr().* = true;
-        return froot orelse makeLeaf(rt, fshared, 0, false, 0.0, sharedEmptyStr(fshared));
+        return result orelse makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
     }
 
     // GG.23: `std.json.parseFromSlice`ı HİÇ ÇAĞIRMADAN ÖNCE — bkz.

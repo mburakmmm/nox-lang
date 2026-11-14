@@ -1,0 +1,64 @@
+# v2.1.168: nox.json tembel (bant tabanlı) düğümler — erişim sırası, negatif indeks, hata yolları, alt ağaç dump'ı, sayı metinleri
+import nox.json
+import nox.strings
+from nox.json import JsonValue, JsonError
+
+doc: str = "{\"id\":7,\"name\":\"ada\",\"tags\":[\"x\",\"y\",[1,2,{\"deep\":true}]],\"big\":9007199254740993,\"f\":1.0,\"o\":{\"a\":null,\"b\":[]}}"
+v: JsonValue = nox.json.parse(doc)
+
+print(nox.json.object_len(v), nox.json.is_object(v), nox.json.is_array(v))
+# get -> as_*
+print(nox.json.as_int(nox.json.get(v, "id")), nox.json.as_string(nox.json.get(v, "name")))
+# get sonra array_get sonra iç içe get
+tags: JsonValue = nox.json.get(v, "tags")
+print(nox.json.array_len(tags), nox.json.as_string(nox.json.array_get(tags, 0)), nox.json.as_string(nox.json.array_get(tags, -2)))
+inner: JsonValue = nox.json.array_get(tags, 2)
+print(nox.json.array_len(inner), nox.json.as_int(nox.json.array_get(inner, 1)), nox.json.as_bool(nox.json.get(nox.json.array_get(inner, 2), "deep")))
+# object_key/object_value (doğrudan indeks, negatif dahil) ve sıra korunumu
+i: int = 0
+while i < nox.json.object_len(v):
+    print(nox.json.object_key(v, i), nox.json.dump(nox.json.object_value(v, i)))
+    i = i + 1
+print(nox.json.object_key(v, -1), nox.json.dump(nox.json.object_value(v, -1)))
+# sayı metinleri: büyük tamsayı tam, 1.0 repr
+print(nox.json.number_text(nox.json.get(v, "big")), nox.json.number_text(nox.json.get(v, "f")), nox.json.as_int(nox.json.get(v, "big")))
+# get_or_null, yok olan anahtar, boş konteynerler
+print(nox.json.is_null(nox.json.get_or_null(v, "nope")), nox.json.is_null(nox.json.get(nox.json.get(v, "o"), "a")))
+print(nox.json.array_len(nox.json.get(nox.json.get(v, "o"), "b")), nox.json.object_len(nox.json.get(v, "o")))
+# alt ağaç dump ve tüm belge dump (bant doğrudan yazılır)
+print(nox.json.dump(tags))
+print(nox.json.dump(v) == doc, nox.json.dump_pretty(nox.json.get(v, "o"), 2))
+# aynı düğüme tekrarlı erişim, farklı sırayla
+a1: JsonValue = nox.json.get(v, "tags")
+a2: JsonValue = nox.json.get(v, "tags")
+print(nox.json.array_len(a1) + nox.json.array_len(a2), nox.json.dump(a1) == nox.json.dump(a2))
+# hata yolları
+try:
+    print(nox.json.get(v, "missing"))
+except JsonError as e:
+    print("JsonError missing")
+try:
+    print(nox.json.array_get(tags, 3))
+except IndexError as e:
+    print("IndexError array_get")
+try:
+    print(nox.json.array_get(tags, -4))
+except IndexError as e:
+    print("IndexError negative")
+try:
+    print(nox.json.object_key(v, 6))
+except IndexError as e:
+    print("IndexError object_key")
+# büyük dizi: sıralı erişim O(1)/eleman
+parts: list[str] = []
+k: int = 0
+while k < 2000:
+    parts.append("{\"n\":" + str(k) + ",\"s\":\"v" + str(k) + "\"}")
+    k = k + 1
+big: JsonValue = nox.json.parse("[" + nox.strings.join(parts, ",") + "]")
+total: int = 0
+k = 0
+while k < nox.json.array_len(big):
+    total = total + nox.json.as_int(nox.json.get(nox.json.array_get(big, k), "n"))
+    k = k + 1
+print(nox.json.array_len(big), total, nox.json.as_string(nox.json.get(nox.json.array_get(big, 1999), "s")))

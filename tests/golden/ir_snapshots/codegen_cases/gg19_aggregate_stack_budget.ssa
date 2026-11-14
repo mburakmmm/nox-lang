@@ -1432,7 +1432,54 @@ export function $JsonValue___init__(l %rt, l %p_self, l %p_kind, w %p_b, d %p_n,
 @release_skip27
     jmp @release_done28
 @release_done28
-@fn_end29
+    %t62 =l loadl %t0
+    %t63 =l loadl %t4
+    %t64 =w ceql %t63, 0
+    jnz %t64, @retain_skip30, @retain29
+@retain29
+    %t65 =l sub %t63, 16
+    %t66 =l loadl %t65
+    %t67 =w csgel %t66, 536870912
+    jnz %t67, @retain_done31, @retain_bump32
+@retain_bump32
+    %t68 =l loadl %t65
+    %t69 =l add %t68, 1
+    storel %t69, %t65
+    jmp @retain_done31
+@retain_skip30
+    jmp @retain_done31
+@retain_done31
+    %t70 =l add %t62, 64
+    %t71 =l loadl %t70
+    storel %t63, %t70
+    %t72 =w ceql %t71, 0
+    jnz %t72, @release_skip34, @release33
+@release33
+    %t73 =l sub %t71, 16
+    %t74 =l loadl %t73
+    %t75 =w csgel %t74, 536870912
+    jnz %t75, @str_free_done38, @str_rel_atomic39
+@str_rel_atomic39
+    %t76 =l sub %t71, 16
+    %t77 =l loadl %t76
+    %t78 =l sub %t77, 1
+    storel %t78, %t76
+    %t79 =w cslel %t78, 0
+    jnz %t79, @str_free36, @str_free_skip37
+@str_free36
+    call $nox_str_free_now(l %rt, l %t71)
+    jmp @str_free_done38
+@str_free_skip37
+    jmp @str_free_done38
+@str_free_done38
+    jmp @release_done35
+@release_skip34
+    jmp @release_done35
+@release_done35
+    %t80 =l loadl %t0
+    %t81 =l add %t80, 72
+    storel 0, %t81
+@fn_end40
     ret
 }
 export function $JsonValue_release(l %rt, l %p) {
@@ -1505,7 +1552,33 @@ export function $JsonValue_release(l %rt, l %p) {
 @release_skip17
     jmp @release_done18
 @release_done18
-    call $nox_rc_free_payload(l %rt, l %p, l 64)
+    %t24 =l add %p, 64
+    %t25 =l loadl %t24
+    %t26 =w ceql %t25, 0
+    jnz %t26, @release_skip20, @release19
+@release19
+    %t27 =l sub %t25, 16
+    %t28 =l loadl %t27
+    %t29 =w csgel %t28, 536870912
+    jnz %t29, @str_free_done24, @str_rel_atomic25
+@str_rel_atomic25
+    %t30 =l sub %t25, 16
+    %t31 =l loadl %t30
+    %t32 =l sub %t31, 1
+    storel %t32, %t30
+    %t33 =w cslel %t32, 0
+    jnz %t33, @str_free22, @str_free_skip23
+@str_free22
+    call $nox_str_free_now(l %rt, l %t25)
+    jmp @str_free_done24
+@str_free_skip23
+    jmp @str_free_done24
+@str_free_done24
+    jmp @release_done21
+@release_skip20
+    jmp @release_done21
+@release_done21
+    call $nox_rc_free_payload(l %rt, l %p, l 80)
     jmp @release_done1
 @release_done1
     ret
@@ -1594,6 +1667,29 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
     %t51 =w call $List_JsonValue_eq(l %rt, l %t45, l %t46)
     jnz %t51, @eqcmp_cont15, @classeq_mismatch0
 @eqcmp_cont15
+    %t52 =l add %a, 64
+    %t53 =l add %b, 64
+    %t54 =l loadl %t52
+    %t55 =l loadl %t53
+    %t56 =w ceql %t54, 0
+    %t57 =w ceql %t55, 0
+    %t58 =w or %t56, %t57
+    jnz %t58, @eqcmp_nullcase16, @eqcmp_rec17
+@eqcmp_nullcase16
+    %t59 =w and %t56, %t57
+    jnz %t59, @eqcmp_cont18, @classeq_mismatch0
+@eqcmp_rec17
+    %t60 =w call $strcmp(l %t54, l %t55)
+    %t61 =w ceqw %t60, 0
+    jnz %t61, @eqcmp_cont18, @classeq_mismatch0
+@eqcmp_cont18
+    %t62 =l add %a, 72
+    %t63 =l add %b, 72
+    %t64 =l loadl %t62
+    %t65 =l loadl %t63
+    %t66 =w ceql %t64, %t65
+    jnz %t66, @eqcmp_cont19, @classeq_mismatch0
+@eqcmp_cont19
     ret 1
 @classeq_mismatch0
     ret 0
@@ -1761,7 +1857,33 @@ export function $JsonValue_gc_free(l %rt, l %p) {
 @gcfree_list_skip13
     jmp @gcfree_list_after15
 @gcfree_list_after15
-    call $nox_rc_free_payload(l %rt, l %p, l 64)
+    %t19 =l add %p, 64
+    %t20 =l loadl %t19
+    %t21 =w ceql %t20, 0
+    jnz %t21, @release_skip17, @release16
+@release16
+    %t22 =l sub %t20, 16
+    %t23 =l loadl %t22
+    %t24 =w csgel %t23, 536870912
+    jnz %t24, @str_free_done21, @str_rel_atomic22
+@str_rel_atomic22
+    %t25 =l sub %t20, 16
+    %t26 =l loadl %t25
+    %t27 =l sub %t26, 1
+    storel %t27, %t25
+    %t28 =w cslel %t27, 0
+    jnz %t28, @str_free19, @str_free_skip20
+@str_free19
+    call $nox_str_free_now(l %rt, l %t20)
+    jmp @str_free_done21
+@str_free_skip20
+    jmp @str_free_done21
+@str_free_done21
+    jmp @release_done18
+@release_skip17
+    jmp @release_done18
+@release_done18
+    call $nox_rc_free_payload(l %rt, l %p, l 80)
     ret
 }
 export function $Big___init__(l %rt, l %p_self, l %p_f0, l %p_f1, l %p_f2, l %p_f3, l %p_f4, l %p_f5, l %p_f6, l %p_f7, l %p_f8, l %p_f9, l %p_f10, l %p_f11, l %p_f12, l %p_f13, l %p_f14, l %p_f15, l %p_f16, l %p_f17, l %p_f18, l %p_f19, l %p_f20, l %p_f21, l %p_f22, l %p_f23, l %p_f24, l %p_f25, l %p_f26, l %p_f27, l %p_f28, l %p_f29, l %p_f30, l %p_f31, l %p_f32, l %p_f33, l %p_f34, l %p_f35, l %p_f36, l %p_f37, l %p_f38, l %p_f39, l %p_f40, l %p_f41, l %p_f42, l %p_f43, l %p_f44, l %p_f45, l %p_f46, l %p_f47, l %p_f48, l %p_f49, l %p_f50, l %p_f51, l %p_f52, l %p_f53, l %p_f54, l %p_f55, l %p_f56, l %p_f57, l %p_f58, l %p_f59, l %p_f60, l %p_f61, l %p_f62, l %p_f63, l %p_f64, l %p_f65, l %p_f66, l %p_f67, l %p_f68, l %p_f69, l %p_f70, l %p_f71, l %p_f72, l %p_f73, l %p_f74, l %p_f75, l %p_f76, l %p_f77, l %p_f78, l %p_f79, l %p_f80, l %p_f81, l %p_f82, l %p_f83, l %p_f84, l %p_f85, l %p_f86, l %p_f87, l %p_f88, l %p_f89, l %p_f90, l %p_f91, l %p_f92, l %p_f93, l %p_f94, l %p_f95, l %p_f96, l %p_f97, l %p_f98, l %p_f99, l %p_f100, l %p_f101, l %p_f102, l %p_f103, l %p_f104, l %p_f105, l %p_f106, l %p_f107, l %p_f108, l %p_f109, l %p_f110, l %p_f111, l %p_f112, l %p_f113, l %p_f114, l %p_f115, l %p_f116, l %p_f117, l %p_f118, l %p_f119, l %p_f120, l %p_f121, l %p_f122, l %p_f123, l %p_f124, l %p_f125, l %p_f126, l %p_f127, l %p_f128, l %p_f129, l %p_f130, l %p_f131, l %p_f132, l %p_f133, l %p_f134, l %p_f135, l %p_f136, l %p_f137, l %p_f138, l %p_f139, l %p_f140, l %p_f141, l %p_f142, l %p_f143, l %p_f144, l %p_f145, l %p_f146, l %p_f147, l %p_f148, l %p_f149, l %p_f150, l %p_f151, l %p_f152, l %p_f153, l %p_f154, l %p_f155, l %p_f156, l %p_f157, l %p_f158, l %p_f159, l %p_f160, l %p_f161, l %p_f162, l %p_f163, l %p_f164, l %p_f165, l %p_f166, l %p_f167, l %p_f168, l %p_f169, l %p_f170, l %p_f171, l %p_f172, l %p_f173, l %p_f174, l %p_f175, l %p_f176, l %p_f177, l %p_f178, l %p_f179, l %p_f180, l %p_f181, l %p_f182, l %p_f183, l %p_f184, l %p_f185, l %p_f186, l %p_f187, l %p_f188, l %p_f189, l %p_f190, l %p_f191, l %p_f192, l %p_f193, l %p_f194, l %p_f195, l %p_f196, l %p_f197, l %p_f198, l %p_f199, l %p_f200, l %p_f201, l %p_f202, l %p_f203, l %p_f204, l %p_f205, l %p_f206, l %p_f207, l %p_f208, l %p_f209, l %p_f210, l %p_f211, l %p_f212, l %p_f213, l %p_f214, l %p_f215, l %p_f216, l %p_f217, l %p_f218, l %p_f219, l %p_f220, l %p_f221, l %p_f222, l %p_f223, l %p_f224, l %p_f225, l %p_f226, l %p_f227, l %p_f228, l %p_f229, l %p_f230, l %p_f231, l %p_f232, l %p_f233, l %p_f234, l %p_f235, l %p_f236, l %p_f237, l %p_f238, l %p_f239, l %p_f240, l %p_f241, l %p_f242, l %p_f243, l %p_f244, l %p_f245, l %p_f246, l %p_f247, l %p_f248, l %p_f249, l %p_f250, l %p_f251, l %p_f252, l %p_f253, l %p_f254, l %p_f255, l %p_f256, l %p_f257, l %p_f258, l %p_f259, l %p_f260, l %p_f261, l %p_f262, l %p_f263, l %p_f264, l %p_f265, l %p_f266, l %p_f267, l %p_f268, l %p_f269, l %p_f270, l %p_f271, l %p_f272, l %p_f273, l %p_f274, l %p_f275, l %p_f276, l %p_f277, l %p_f278, l %p_f279, l %p_f280, l %p_f281, l %p_f282, l %p_f283, l %p_f284, l %p_f285, l %p_f286, l %p_f287, l %p_f288, l %p_f289, l %p_f290, l %p_f291, l %p_f292, l %p_f293, l %p_f294, l %p_f295, l %p_f296, l %p_f297, l %p_f298, l %p_f299, l %p_f300, l %p_f301, l %p_f302, l %p_f303, l %p_f304, l %p_f305, l %p_f306, l %p_f307, l %p_f308, l %p_f309, l %p_f310, l %p_f311, l %p_f312, l %p_f313, l %p_f314, l %p_f315, l %p_f316, l %p_f317, l %p_f318, l %p_f319, l %p_f320, l %p_f321, l %p_f322, l %p_f323, l %p_f324, l %p_f325, l %p_f326, l %p_f327, l %p_f328, l %p_f329, l %p_f330, l %p_f331, l %p_f332, l %p_f333, l %p_f334, l %p_f335, l %p_f336, l %p_f337, l %p_f338, l %p_f339, l %p_f340, l %p_f341, l %p_f342, l %p_f343, l %p_f344, l %p_f345, l %p_f346, l %p_f347, l %p_f348, l %p_f349, l %p_f350, l %p_f351, l %p_f352, l %p_f353, l %p_f354, l %p_f355, l %p_f356, l %p_f357, l %p_f358, l %p_f359, l %p_f360, l %p_f361, l %p_f362, l %p_f363, l %p_f364, l %p_f365, l %p_f366, l %p_f367, l %p_f368, l %p_f369, l %p_f370, l %p_f371, l %p_f372, l %p_f373, l %p_f374, l %p_f375, l %p_f376, l %p_f377, l %p_f378, l %p_f379, l %p_f380, l %p_f381, l %p_f382, l %p_f383, l %p_f384, l %p_f385, l %p_f386, l %p_f387, l %p_f388, l %p_f389, l %p_f390, l %p_f391, l %p_f392, l %p_f393, l %p_f394, l %p_f395, l %p_f396, l %p_f397, l %p_f398, l %p_f399, l %p_f400, l %p_f401, l %p_f402, l %p_f403, l %p_f404, l %p_f405, l %p_f406, l %p_f407, l %p_f408, l %p_f409, l %p_f410, l %p_f411, l %p_f412, l %p_f413, l %p_f414, l %p_f415, l %p_f416, l %p_f417, l %p_f418, l %p_f419, l %p_f420, l %p_f421, l %p_f422, l %p_f423, l %p_f424, l %p_f425, l %p_f426, l %p_f427, l %p_f428, l %p_f429, l %p_f430, l %p_f431, l %p_f432, l %p_f433, l %p_f434, l %p_f435, l %p_f436, l %p_f437, l %p_f438, l %p_f439, l %p_f440, l %p_f441, l %p_f442, l %p_f443, l %p_f444, l %p_f445, l %p_f446, l %p_f447, l %p_f448, l %p_f449, l %p_f450, l %p_f451, l %p_f452, l %p_f453, l %p_f454, l %p_f455, l %p_f456, l %p_f457, l %p_f458, l %p_f459, l %p_f460, l %p_f461, l %p_f462, l %p_f463, l %p_f464, l %p_f465, l %p_f466, l %p_f467, l %p_f468, l %p_f469, l %p_f470, l %p_f471, l %p_f472, l %p_f473, l %p_f474, l %p_f475, l %p_f476, l %p_f477, l %p_f478, l %p_f479, l %p_f480, l %p_f481, l %p_f482, l %p_f483, l %p_f484, l %p_f485, l %p_f486, l %p_f487, l %p_f488, l %p_f489, l %p_f490, l %p_f491, l %p_f492, l %p_f493, l %p_f494, l %p_f495, l %p_f496, l %p_f497, l %p_f498, l %p_f499) {
@@ -8657,7 +8779,7 @@ export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l 
     %t11 =l loadl %t4
     %t12 =l loadl %t5
     %t13 =l loadl %t6
-    %t14 =l call $nox_rc_alloc(l %rt, l 64)
+    %t14 =l call $nox_rc_alloc(l %rt, l 80)
     storel 3, %t14
     %t15 =l add %t14, 8
     storel 0, %t15
@@ -8673,6 +8795,10 @@ export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l 
     storel 0, %t20
     %t21 =l add %t14, 56
     storel 0, %t21
+    %t22 =l add %t14, 64
+    storel 0, %t22
+    %t23 =l add %t14, 72
+    storel 0, %t23
     call $JsonValue___init__(l %rt, l %t14, l %t7, w %t8, d %t9, l %t10, l %t11, l %t12, l %t13)
     ret %t14
 @after_return0
@@ -8791,8 +8917,8 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue18
     %t29 =l add %t8, 24
-    storel 465, %t29
-    call $nox_raise(l %rt, l %t8, l 465)
+    storel 469, %t29
+    call $nox_raise(l %rt, l %t8, l 469)
     %t30 =l sub %rt, 48
     %t31 =w loadub %t30
     %t32 =l sub %rt, 64
@@ -8898,8 +9024,8 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     ret 0
 @exc_continue18
     %t29 =l add %t8, 24
-    storel 470, %t29
-    call $nox_raise(l %rt, l %t8, l 470)
+    storel 474, %t29
+    call $nox_raise(l %rt, l %t8, l 474)
     %t30 =l sub %rt, 48
     %t31 =w loadub %t30
     %t32 =l sub %rt, 64
@@ -9005,8 +9131,8 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue18
     %t29 =l add %t8, 24
-    storel 475, %t29
-    call $nox_raise(l %rt, l %t8, l 475)
+    storel 479, %t29
+    call $nox_raise(l %rt, l %t8, l 479)
     %t30 =l sub %rt, 48
     %t31 =w loadub %t30
     %t32 =l sub %rt, 64
@@ -9098,8 +9224,8 @@ export function l $ord(l %rt, l %p_s) {
     ret 0
 @exc_continue11
     %t20 =l add %t7, 24
-    storel 484, %t20
-    call $nox_raise(l %rt, l %t7, l 484)
+    storel 488, %t20
+    call $nox_raise(l %rt, l %t7, l 488)
     %t21 =l sub %rt, 48
     %t22 =w loadub %t21
     %t23 =l sub %rt, 64

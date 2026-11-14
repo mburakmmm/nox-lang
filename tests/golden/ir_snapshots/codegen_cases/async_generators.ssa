@@ -1350,7 +1350,50 @@ export function $JsonValue___init__(l %rt, l %p_self, l %p_kind, w %p_b, d %p_n,
 @release_skip27
     jmp @release_done28
 @release_done28
-@fn_end29
+    %t57 =l loadl %t0
+    %t58 =l loadl %t4
+    %t59 =w ceql %t58, 0
+    jnz %t59, @retain_skip30, @retain29
+@retain29
+    %t60 =l sub %t58, 16
+    %t61 =l loadl %t60
+    %t62 =w csgel %t61, 536870912
+    jnz %t62, @retain_done31, @retain_bump32
+@retain_bump32
+    %t63 =l call $nox_atomic_rc_add(l %t60, l 1)
+    jmp @retain_done31
+@retain_skip30
+    jmp @retain_done31
+@retain_done31
+    %t64 =l add %t57, 64
+    %t65 =l loadl %t64
+    storel %t58, %t64
+    %t66 =w ceql %t65, 0
+    jnz %t66, @release_skip34, @release33
+@release33
+    %t67 =l sub %t65, 16
+    %t68 =l loadl %t67
+    %t69 =w csgel %t68, 536870912
+    jnz %t69, @str_free_done38, @str_rel_atomic39
+@str_rel_atomic39
+    %t70 =l sub %t65, 16
+    %t71 =l call $nox_atomic_rc_sub(l %t70, l 1)
+    %t72 =w cslel %t71, 0
+    jnz %t72, @str_free36, @str_free_skip37
+@str_free36
+    call $nox_str_free_now(l %rt, l %t65)
+    jmp @str_free_done38
+@str_free_skip37
+    jmp @str_free_done38
+@str_free_done38
+    jmp @release_done35
+@release_skip34
+    jmp @release_done35
+@release_done35
+    %t73 =l loadl %t0
+    %t74 =l add %t73, 72
+    storel 0, %t74
+@fn_end40
     ret
 }
 export function $JsonValue_release(l %rt, l %p) {
@@ -1419,7 +1462,31 @@ export function $JsonValue_release(l %rt, l %p) {
 @release_skip17
     jmp @release_done18
 @release_done18
-    call $nox_rc_free_payload(l %rt, l %p, l 64)
+    %t22 =l add %p, 64
+    %t23 =l loadl %t22
+    %t24 =w ceql %t23, 0
+    jnz %t24, @release_skip20, @release19
+@release19
+    %t25 =l sub %t23, 16
+    %t26 =l loadl %t25
+    %t27 =w csgel %t26, 536870912
+    jnz %t27, @str_free_done24, @str_rel_atomic25
+@str_rel_atomic25
+    %t28 =l sub %t23, 16
+    %t29 =l call $nox_atomic_rc_sub(l %t28, l 1)
+    %t30 =w cslel %t29, 0
+    jnz %t30, @str_free22, @str_free_skip23
+@str_free22
+    call $nox_str_free_now(l %rt, l %t23)
+    jmp @str_free_done24
+@str_free_skip23
+    jmp @str_free_done24
+@str_free_done24
+    jmp @release_done21
+@release_skip20
+    jmp @release_done21
+@release_done21
+    call $nox_rc_free_payload(l %rt, l %p, l 80)
     jmp @release_done1
 @release_done1
     ret
@@ -1508,6 +1575,29 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
     %t51 =w call $List_JsonValue_eq(l %rt, l %t45, l %t46)
     jnz %t51, @eqcmp_cont15, @classeq_mismatch0
 @eqcmp_cont15
+    %t52 =l add %a, 64
+    %t53 =l add %b, 64
+    %t54 =l loadl %t52
+    %t55 =l loadl %t53
+    %t56 =w ceql %t54, 0
+    %t57 =w ceql %t55, 0
+    %t58 =w or %t56, %t57
+    jnz %t58, @eqcmp_nullcase16, @eqcmp_rec17
+@eqcmp_nullcase16
+    %t59 =w and %t56, %t57
+    jnz %t59, @eqcmp_cont18, @classeq_mismatch0
+@eqcmp_rec17
+    %t60 =w call $strcmp(l %t54, l %t55)
+    %t61 =w ceqw %t60, 0
+    jnz %t61, @eqcmp_cont18, @classeq_mismatch0
+@eqcmp_cont18
+    %t62 =l add %a, 72
+    %t63 =l add %b, 72
+    %t64 =l loadl %t62
+    %t65 =l loadl %t63
+    %t66 =w ceql %t64, %t65
+    jnz %t66, @eqcmp_cont19, @classeq_mismatch0
+@eqcmp_cont19
     ret 1
 @classeq_mismatch0
     ret 0
@@ -1673,7 +1763,31 @@ export function $JsonValue_gc_free(l %rt, l %p) {
 @gcfree_list_skip13
     jmp @gcfree_list_after15
 @gcfree_list_after15
-    call $nox_rc_free_payload(l %rt, l %p, l 64)
+    %t18 =l add %p, 64
+    %t19 =l loadl %t18
+    %t20 =w ceql %t19, 0
+    jnz %t20, @release_skip17, @release16
+@release16
+    %t21 =l sub %t19, 16
+    %t22 =l loadl %t21
+    %t23 =w csgel %t22, 536870912
+    jnz %t23, @str_free_done21, @str_rel_atomic22
+@str_rel_atomic22
+    %t24 =l sub %t19, 16
+    %t25 =l call $nox_atomic_rc_sub(l %t24, l 1)
+    %t26 =w cslel %t25, 0
+    jnz %t26, @str_free19, @str_free_skip20
+@str_free19
+    call $nox_str_free_now(l %rt, l %t19)
+    jmp @str_free_done21
+@str_free_skip20
+    jmp @str_free_done21
+@str_free_done21
+    jmp @release_done18
+@release_skip17
+    jmp @release_done18
+@release_done18
+    call $nox_rc_free_payload(l %rt, l %p, l 80)
     ret
 }
 export function $Source___init__(l %rt, l %p_self, l %p_base) {
@@ -3362,8 +3476,8 @@ export function l $__nox_Gen__int___next__(l %rt, l %p_self) {
     ret 0
 @exc_continue25
     %t51 =l add %t29, 24
-    storel 282, %t51
-    call $nox_raise(l %rt, l %t29, l 282)
+    storel 286, %t51
+    call $nox_raise(l %rt, l %t29, l 286)
     %t52 =l loadl %t2
     %t53 =w ceql %t52, 0
     jnz %t53, @release_skip36, @release35
@@ -3469,8 +3583,8 @@ export function l $__nox_Gen__int___next__(l %rt, l %p_self) {
     ret 0
 @exc_continue99
     %t158 =l add %t136, 24
-    storel 290, %t158
-    call $nox_raise(l %rt, l %t136, l 290)
+    storel 294, %t158
+    call $nox_raise(l %rt, l %t136, l 294)
     %t159 =l loadl %t2
     %t160 =w ceql %t159, 0
     jnz %t160, @release_skip110, @release109
@@ -3651,8 +3765,8 @@ export function l $__nox_Gen__int___nox_next_raise__(l %rt, l %p_self) {
     ret 0
 @exc_continue29
     %t42 =l add %t24, 24
-    storel 301, %t42
-    call $nox_raise(l %rt, l %t24, l 301)
+    storel 305, %t42
+    call $nox_raise(l %rt, l %t24, l 305)
     %t43 =l sub %rt, 48
     %t44 =w loadub %t43
     %t45 =l sub %rt, 64
@@ -3972,7 +4086,7 @@ export function $__nox_Gen__int___del__(l %rt, l %p_self) {
     storel %t18, %t1
     jmp @try_after6
 @except_reraise15
-    call $nox_raise(l %rt, l %t18, l 319)
+    call $nox_raise(l %rt, l %t18, l 323)
     %t33 =l sub %rt, 48
     %t34 =w loadub %t33
     %t35 =l sub %rt, 64
@@ -4225,7 +4339,7 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     storel %t151, %t4
     jmp @try_after102
 @except_reraise119
-    call $nox_raise(l %rt, l %t151, l 334)
+    call $nox_raise(l %rt, l %t151, l 338)
     %t156 =l sub %rt, 48
     %t157 =w loadub %t156
     %t158 =l sub %rt, 64
@@ -4372,8 +4486,8 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     ret
 @exc_continue151
     %t200 =l add %t176, 24
-    storel 336, %t200
-    call $nox_raise(l %rt, l %t176, l 336)
+    storel 340, %t200
+    call $nox_raise(l %rt, l %t176, l 340)
     %t201 =l sub %rt, 48
     %t202 =w loadub %t201
     %t203 =l sub %rt, 64
@@ -4562,8 +4676,8 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     ret
 @exc_continue34
     %t66 =l add %t42, 24
-    storel 326, %t66
-    call $nox_raise(l %rt, l %t42, l 326)
+    storel 330, %t66
+    call $nox_raise(l %rt, l %t42, l 330)
     %t67 =l loadl %t4
     %t68 =w ceql %t67, 0
     jnz %t68, @release_skip48, @release47
@@ -4689,8 +4803,8 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     ret
 @exc_continue70
     %t111 =l add %t87, 24
-    storel 327, %t111
-    call $nox_raise(l %rt, l %t87, l 327)
+    storel 331, %t111
+    call $nox_raise(l %rt, l %t87, l 331)
     %t112 =l loadl %t4
     %t113 =w ceql %t112, 0
     jnz %t113, @release_skip84, @release83
@@ -4794,8 +4908,8 @@ export function l $__nox_Gen__int_throw(l %rt, l %p_self, l %p_e) {
     jmp @retain_done13
 @retain_done13
     %t28 =l add %t24, 24
-    storel 343, %t28
-    call $nox_raise(l %rt, l %t24, l 343)
+    storel 347, %t28
+    call $nox_raise(l %rt, l %t24, l 347)
     %t29 =l sub %rt, 48
     %t30 =w loadub %t29
     %t31 =l sub %rt, 64
@@ -4910,8 +5024,8 @@ export function l $__nox_Gen__int_throw(l %rt, l %p_self, l %p_e) {
     ret 0
 @exc_continue30
     %t55 =l add %t42, 24
-    storel 344, %t55
-    call $nox_raise(l %rt, l %t42, l 344)
+    storel 348, %t55
+    call $nox_raise(l %rt, l %t42, l 348)
     ret 0
 }
 export function l $__nox_Gen__int___iter__(l %rt, l %p_self) {
@@ -6269,8 +6383,8 @@ export function l $__nox_Gen__str___next__(l %rt, l %p_self) {
     ret 0
 @exc_continue33
     %t73 =l add %t40, 24
-    storel 282, %t73
-    call $nox_raise(l %rt, l %t40, l 282)
+    storel 286, %t73
+    call $nox_raise(l %rt, l %t40, l 286)
     %t74 =l loadl %t2
     %t75 =w ceql %t74, 0
     jnz %t75, @release_skip52, @release51
@@ -6434,8 +6548,8 @@ export function l $__nox_Gen__str___next__(l %rt, l %p_self) {
     ret 0
 @exc_continue147
     %t235 =l add %t202, 24
-    storel 290, %t235
-    call $nox_raise(l %rt, l %t202, l 290)
+    storel 294, %t235
+    call $nox_raise(l %rt, l %t202, l 294)
     %t236 =l loadl %t2
     %t237 =w ceql %t236, 0
     jnz %t237, @release_skip166, @release165
@@ -6660,8 +6774,8 @@ export function l $__nox_Gen__str___nox_next_raise__(l %rt, l %p_self) {
     ret 0
 @exc_continue31
     %t51 =l add %t30, 24
-    storel 301, %t51
-    call $nox_raise(l %rt, l %t30, l 301)
+    storel 305, %t51
+    call $nox_raise(l %rt, l %t30, l 305)
     %t52 =l sub %rt, 48
     %t53 =w loadub %t52
     %t54 =l sub %rt, 64
@@ -6984,7 +7098,7 @@ export function $__nox_Gen__str___del__(l %rt, l %p_self) {
     storel %t18, %t1
     jmp @try_after6
 @except_reraise15
-    call $nox_raise(l %rt, l %t18, l 319)
+    call $nox_raise(l %rt, l %t18, l 323)
     %t33 =l sub %rt, 48
     %t34 =w loadub %t33
     %t35 =l sub %rt, 64
@@ -7247,7 +7361,7 @@ export function $__nox_Gen__str_close(l %rt, l %p_self) {
     storel %t169, %t4
     jmp @try_after107
 @except_reraise125
-    call $nox_raise(l %rt, l %t169, l 334)
+    call $nox_raise(l %rt, l %t169, l 338)
     %t174 =l sub %rt, 48
     %t175 =w loadub %t174
     %t176 =l sub %rt, 64
@@ -7404,8 +7518,8 @@ export function $__nox_Gen__str_close(l %rt, l %p_self) {
     ret
 @exc_continue158
     %t224 =l add %t197, 24
-    storel 336, %t224
-    call $nox_raise(l %rt, l %t197, l 336)
+    storel 340, %t224
+    call $nox_raise(l %rt, l %t197, l 340)
     %t225 =l sub %rt, 48
     %t226 =w loadub %t225
     %t227 =l sub %rt, 64
@@ -7609,8 +7723,8 @@ export function $__nox_Gen__str_close(l %rt, l %p_self) {
     ret
 @exc_continue35
     %t72 =l add %t45, 24
-    storel 326, %t72
-    call $nox_raise(l %rt, l %t45, l 326)
+    storel 330, %t72
+    call $nox_raise(l %rt, l %t45, l 330)
     %t73 =l loadl %t4
     %t74 =w ceql %t73, 0
     jnz %t74, @release_skip50, @release49
@@ -7746,8 +7860,8 @@ export function $__nox_Gen__str_close(l %rt, l %p_self) {
     ret
 @exc_continue73
     %t123 =l add %t96, 24
-    storel 327, %t123
-    call $nox_raise(l %rt, l %t96, l 327)
+    storel 331, %t123
+    call $nox_raise(l %rt, l %t96, l 331)
     %t124 =l loadl %t4
     %t125 =w ceql %t124, 0
     jnz %t125, @release_skip88, @release87
@@ -7856,8 +7970,8 @@ export function l $__nox_Gen__str_throw(l %rt, l %p_self, l %p_e) {
     jmp @retain_done13
 @retain_done13
     %t28 =l add %t24, 24
-    storel 343, %t28
-    call $nox_raise(l %rt, l %t24, l 343)
+    storel 347, %t28
+    call $nox_raise(l %rt, l %t24, l 347)
     %t29 =l sub %rt, 48
     %t30 =w loadub %t29
     %t31 =l sub %rt, 64
@@ -7972,8 +8086,8 @@ export function l $__nox_Gen__str_throw(l %rt, l %p_self, l %p_e) {
     ret 0
 @exc_continue30
     %t55 =l add %t42, 24
-    storel 344, %t55
-    call $nox_raise(l %rt, l %t42, l 344)
+    storel 348, %t55
+    call $nox_raise(l %rt, l %t42, l 348)
     ret 0
 }
 export function l $__nox_Gen__str___iter__(l %rt, l %p_self) {
@@ -9000,7 +9114,7 @@ export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l 
     %t11 =l loadl %t4
     %t12 =l loadl %t5
     %t13 =l loadl %t6
-    %t14 =l call $nox_rc_alloc(l %rt, l 64)
+    %t14 =l call $nox_rc_alloc(l %rt, l 80)
     storel 5, %t14
     %t15 =l add %t14, 8
     storel 0, %t15
@@ -9016,6 +9130,10 @@ export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l 
     storel 0, %t20
     %t21 =l add %t14, 56
     storel 0, %t21
+    %t22 =l add %t14, 64
+    storel 0, %t22
+    %t23 =l add %t14, 72
+    storel 0, %t23
     call $JsonValue___init__(l %rt, l %t14, l %t7, w %t8, d %t9, l %t10, l %t11, l %t12, l %t13)
     ret %t14
 @after_return0
@@ -9132,8 +9250,8 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue18
     %t28 =l add %t8, 24
-    storel 465, %t28
-    call $nox_raise(l %rt, l %t8, l 465)
+    storel 469, %t28
+    call $nox_raise(l %rt, l %t8, l 469)
     %t29 =l sub %rt, 48
     %t30 =w loadub %t29
     %t31 =l sub %rt, 64
@@ -9237,8 +9355,8 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     ret 0
 @exc_continue18
     %t28 =l add %t8, 24
-    storel 470, %t28
-    call $nox_raise(l %rt, l %t8, l 470)
+    storel 474, %t28
+    call $nox_raise(l %rt, l %t8, l 474)
     %t29 =l sub %rt, 48
     %t30 =w loadub %t29
     %t31 =l sub %rt, 64
@@ -9342,8 +9460,8 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue18
     %t28 =l add %t8, 24
-    storel 475, %t28
-    call $nox_raise(l %rt, l %t8, l 475)
+    storel 479, %t28
+    call $nox_raise(l %rt, l %t8, l 479)
     %t29 =l sub %rt, 48
     %t30 =w loadub %t29
     %t31 =l sub %rt, 64
@@ -9435,8 +9553,8 @@ export function l $ord(l %rt, l %p_s) {
     ret 0
 @exc_continue11
     %t20 =l add %t7, 24
-    storel 484, %t20
-    call $nox_raise(l %rt, l %t7, l 484)
+    storel 488, %t20
+    call $nox_raise(l %rt, l %t7, l 488)
     %t21 =l sub %rt, 48
     %t22 =w loadub %t21
     %t23 =l sub %rt, 64
@@ -18439,8 +18557,8 @@ export function l $__nox_unwrap____nox_Gen__int(l %rt, l %p_o) {
     ret 0
 @exc_continue12
     %t17 =l add %t4, 24
-    storel 434, %t17
-    call $nox_raise(l %rt, l %t4, l 434)
+    storel 438, %t17
+    call $nox_raise(l %rt, l %t4, l 438)
     %t18 =l sub %rt, 48
     %t19 =w loadub %t18
     %t20 =l sub %rt, 64
@@ -18758,8 +18876,8 @@ export function l $__nox_unwrap____nox_Gen__str(l %rt, l %p_o) {
     ret 0
 @exc_continue12
     %t17 =l add %t4, 24
-    storel 434, %t17
-    call $nox_raise(l %rt, l %t4, l 434)
+    storel 438, %t17
+    call $nox_raise(l %rt, l %t4, l 438)
     %t18 =l sub %rt, 48
     %t19 =w loadub %t18
     %t20 =l sub %rt, 64

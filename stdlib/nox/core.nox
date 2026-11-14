@@ -215,6 +215,10 @@ class JsonValue:
         self.arr = arr
         self.keys = keys
         self.vals = vals
+        # v2.1.168: bant (tape) belgesine bağlı TEMBEL konteyner düğümleri (`tpos > 0`): `doc` belge bloğu (ikili içerikli `str`), `tpos` bant girdisi + 1;
+        # eager düğümde `doc` `s`nin takma adı, `tpos = 0` (bkz. `project/json-bant-tasarimi-2026-11.md`). Yalnızca `nox.json` erişimcileri kullanır.
+        self.doc = s
+        self.tpos = 0
 
 def nox_json_make_json_value(kind: int, b: bool, n: float, s: str,
                               arr: list[JsonValue], keys: list[str], vals: list[JsonValue]) -> JsonValue:

@@ -38,6 +38,12 @@ extern def nox_json_decode_raw(s: str) -> JsonValue from "zig-out/lib/noxrt.o" w
 extern def nox_json_last_op_ok() -> int from "zig-out/lib/noxrt.o"
 extern def nox_json_escape_string_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_json_object_find(keys: list[str], key: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_len(doc: str, idx: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_array_get(doc: str, idx: int, i: int, e_list: list[str], e_str: str) -> JsonValue from "zig-out/lib/noxrt.o" with_rt
+extern def nox_json_tape_object_key(doc: str, idx: int, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_json_tape_object_value(doc: str, idx: int, i: int, e_list: list[str], e_str: str) -> JsonValue from "zig-out/lib/noxrt.o" with_rt
+extern def nox_json_tape_find(doc: str, idx: int, key: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_dump(doc: str, idx: int) -> str from "zig-out/lib/noxrt.o" with_rt
 
 def parse(s: str) -> JsonValue:
     v: JsonValue = nox_json_decode_raw(s)
@@ -104,6 +110,11 @@ def expect_array(v: JsonValue) -> None:
 
 # Nesnenin `key` anahtarının değeri (yoksa JsonError). Anahtarlar belge sırasındadır; arama doğrusaldır.
 def get(v: JsonValue, key: str) -> JsonValue:
+    if v.tpos > 0 and v.kind == 5:
+        j: int = nox_json_tape_find(v.doc, v.tpos - 1, key)
+        if j >= 0:
+            return nox_json_tape_object_value(v.doc, v.tpos - 1, j, v.keys, v.s)
+        raise JsonError("missing field '" + key + "'")
     i: int = nox_json_object_find(v.keys, key)
     if i >= 0:
         return v.vals[i]
@@ -111,6 +122,11 @@ def get(v: JsonValue, key: str) -> JsonValue:
 
 # `get`, ama anahtar yoksa JSON `null` düğümü döner.
 def get_or_null(v: JsonValue, key: str) -> JsonValue:
+    if v.tpos > 0 and v.kind == 5:
+        j: int = nox_json_tape_find(v.doc, v.tpos - 1, key)
+        if j >= 0:
+            return nox_json_tape_object_value(v.doc, v.tpos - 1, j, v.keys, v.s)
+        return parse("null")
     i: int = nox_json_object_find(v.keys, key)
     if i >= 0:
         return v.vals[i]
@@ -139,19 +155,49 @@ def read_str(v: JsonValue) -> str:
 def as_string(v: JsonValue) -> str:
     return v.s
 
+# Tembel (bant tabanlı) konteyner düğümlerinde (`v.tpos > 0`) erişimciler belgeyi doğrudan okur (düğümler değişmez, ilk erişimde kurulur);
+# eager düğümlerde eski liste yolu.
 def array_len(v: JsonValue) -> int:
+    if v.tpos > 0 and v.kind == 4:
+        return nox_json_tape_len(v.doc, v.tpos - 1)
     return len(v.arr)
 
 def array_get(v: JsonValue, i: int) -> JsonValue:
+    if v.tpos > 0 and v.kind == 4:
+        n: int = nox_json_tape_len(v.doc, v.tpos - 1)
+        j: int = i
+        if j < 0:
+            j = j + n
+        if j < 0 or j >= n:
+            return v.arr[i]
+        return nox_json_tape_array_get(v.doc, v.tpos - 1, j, v.keys, v.s)
     return v.arr[i]
 
 def object_len(v: JsonValue) -> int:
+    if v.tpos > 0 and v.kind == 5:
+        return nox_json_tape_len(v.doc, v.tpos - 1)
     return len(v.keys)
 
 def object_key(v: JsonValue, i: int) -> str:
+    if v.tpos > 0 and v.kind == 5:
+        n: int = nox_json_tape_len(v.doc, v.tpos - 1)
+        j: int = i
+        if j < 0:
+            j = j + n
+        if j < 0 or j >= n:
+            return v.keys[i]
+        return nox_json_tape_object_key(v.doc, v.tpos - 1, j)
     return v.keys[i]
 
 def object_value(v: JsonValue, i: int) -> JsonValue:
+    if v.tpos > 0 and v.kind == 5:
+        n: int = nox_json_tape_len(v.doc, v.tpos - 1)
+        j: int = i
+        if j < 0:
+            j = j + n
+        if j < 0 or j >= n:
+            return v.vals[i]
+        return nox_json_tape_object_value(v.doc, v.tpos - 1, j, v.keys, v.s)
     return v.vals[i]
 
 # Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67, test kapsamı
@@ -198,6 +244,8 @@ def dump_number(n: float) -> str:
 extern def nox_json_dump_raw(v: JsonValue) -> str from "zig-out/lib/noxrt.o" with_rt
 
 def dump(v: JsonValue) -> str:
+    if v.tpos > 0:
+        return nox_json_tape_dump(v.doc, v.tpos - 1)
     return nox_json_dump_raw(v)
 
 def dump_array(v: JsonValue) -> str:

@@ -88,6 +88,7 @@ pub const wasm_vfs = @import("wasm_vfs.zig");
 pub const path_shim = @import("stdlib_shims/path.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
 pub const json_shim = @import("stdlib_shims/json.zig");
+pub const json_tape = @import("stdlib_shims/json_tape.zig");
 pub const random_shim = @import("stdlib_shims/random.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const regex_shim = @import("stdlib_shims/regex.zig");
@@ -185,6 +186,7 @@ comptime {
     _ = path_shim;
     _ = time_shim;
     _ = json_shim;
+    _ = json_tape;
     _ = random_shim;
     _ = crypto_shim;
     _ = regex_shim;

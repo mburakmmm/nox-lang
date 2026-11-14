@@ -57,9 +57,9 @@ Alanlar (kind, b, n, s, arr, keys, vals) KALIR; iki gizli alan eklenir: `doc: Js
 3. Golden: tembel erişim sırası (`get` sonra `array_get`, `object_key` sonra `get`), `dump` tembel/karışık, boş konteynerler, kök skaler.
 4. Benchmark: `benchmarks/stdlib_perf` json işleri + bu belgedeki 3 ölçüm (`benchmarks/json/`).
 
-## 7. Dilimler
+## 7. Dilimler (güncel: 167 = bant ayrıştırıcı + tembel düğümler birlikte yayınlandı; neredeyse tüm tasarım uygulandı)
 
 - **166** (bu sürüm): `nox_json_object_find` + tasarım belgesi.
-- **167**: `json_tape.zig` tek geçişli ayrıştırıcı + farksal test (henüz kullanılmaz; `decode` hâlâ eski yol).
-- **168**: `JsonDoc`/`JsonValue` gizli alanları, tembel erişimciler, `dump` bantlardan; eski yol referans olarak kalır.
-- **169**: ölçüm, ayar, eski doğrulama geçişinin kaldırılması, `RESULTS.md`.
+- **167** (yayınlandı): `json_tape.zig` tek geçişli ayrıştırıcı + farksal test + `JsonValue` tembel erişimciler (`doc`/`tpos` alanları; değişmez düğümler, önbellek yok) + bantlardan `dump`.
+- **168**: ayar (dize taraması 16 bayt, bant yazımı, düğüm kurma, `dump` kaçışları); gezinme için düğüm önbelleği gerekirse ayrı karar.
+- **169**: ölçüm sonuçlarının `benchmarks/RESULTS.md`ye yazılması, kullanılmayan eski eager yolun temizliği.
