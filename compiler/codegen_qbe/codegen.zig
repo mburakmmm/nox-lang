@@ -1058,16 +1058,16 @@ pub const Codegen = struct {
 
     /// Liste elemanı okuma: `.b` (bool) 1 bayt zero-extend (`loadub`), diğerleri tam genişlik.
     pub fn loadListElem(self: *Codegen, dst: []const u8, elem_qtype: QbeType, addr: []const u8) CodegenError!void {
+        // v2.1.164: dar (1/2 baytlık) elemanlar da `list_elem` TBAA etiketi taşır; başlık (`list_len`) ile örtüşmediği için LLVM uzunluk yüklemesini
+        // döngü dışına çıkarıp sınır denetimini sadeleştirebilir (`sieve`: 24 ms → ?).
+        self.setMemTag(.list_elem);
+        defer self.setMemTag(.none);
         return switch (elem_qtype) {
             .b => self.qbeLoadUB(dst, addr),
             .sb => self.qbeLoadSB(dst, addr),
             .h => self.qbeLoadUH(dst, addr),
             .sh => self.qbeLoadSH(dst, addr),
-            else => blk: {
-                self.setMemTag(.list_elem);
-                defer self.setMemTag(.none);
-                break :blk self.qbeLoad(dst, elem_qtype, elem_qtype, addr);
-            },
+            else => self.qbeLoad(dst, elem_qtype, elem_qtype, addr),
         };
     }
 

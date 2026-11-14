@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.164]
+
+### Performans (2.2 aşama 12 hazırlığı; ölçüt C)
+
+- **Dar (1/2 baytlık) liste elemanları (`list[bool]`, `list[u8]`, `list[i16]`...) TBAA `list_elem` etiketi taşır:** yalnızca 8 baytlık eleman erişimleri etiketliydi; bayt erişimleri etiketsiz olduğundan LLVM, elemana yazan bir döngüde liste uzunluğunu (`list_len`) her yinelemede yeniden okuyordu ve sınır denetimini döngü dışına çıkaramıyordu. `sieve` 10M: eleme evresi 24 ms → 12 ms, sayım evresi 7 ms → 4-5 ms (C: 8 / 1,3 ms).
+
 ## [2.1.163]
 
 ### Performans (2.2 aşama 1-2)

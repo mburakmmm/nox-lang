@@ -579,7 +579,7 @@ pub fn genListAssign(self: *Codegen, obj0: Value, idx: ast.Index, value_expr: as
         finished = true;
         try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested, elem_dict_info);
     } else {
-        if (obj.elem_qtype != .b and obj.elem_qtype != .sb and obj.elem_qtype != .h and obj.elem_qtype != .sh) self.setMemTag(.list_elem);
+        self.setMemTag(.list_elem);
         try self.qbeStore(obj.elem_qtype, val.text, addr);
         self.setMemTag(.none);
     }

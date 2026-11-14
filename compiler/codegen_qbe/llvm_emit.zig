@@ -651,7 +651,7 @@ pub fn qbeStoreImmL(self: *Codegen, imm: i64, addr: []const u8) CodegenError!voi
 pub fn qbeLoadUB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
     const ptr_reg = try resolveAddrPtr(self, addr);
     const byte_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = load i8, ptr {s}\n", .{ byte_reg, ptr_reg });
+    try self.out.writer.print("    {s} = load i8, ptr {s}{s}\n", .{ byte_reg, ptr_reg, tbaaSuffix(self) });
     try self.out.writer.print("    {s} = zext i8 {s} to i32\n", .{ dst, byte_reg });
 }
 
@@ -664,7 +664,7 @@ pub fn qbeStoreB(self: *Codegen, value_raw: []const u8, addr: []const u8) Codege
     const ptr_reg = try resolveAddrPtr(self, addr);
     const byte_reg = try self.newTemp();
     try self.out.writer.print("    {s} = trunc i32 {s} to i8\n", .{ byte_reg, value });
-    try self.out.writer.print("    store i8 {s}, ptr {s}\n", .{ byte_reg, ptr_reg });
+    try self.out.writer.print("    store i8 {s}, ptr {s}{s}\n", .{ byte_reg, ptr_reg, tbaaSuffix(self) });
 }
 
 /// v2.0 madde 5: `qbeLoadUB`nin İMZALI karşılığı (`i8` alan okuma,
@@ -672,7 +672,7 @@ pub fn qbeStoreB(self: *Codegen, value_raw: []const u8, addr: []const u8) Codege
 pub fn qbeLoadSB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
     const ptr_reg = try resolveAddrPtr(self, addr);
     const byte_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = load i8, ptr {s}\n", .{ byte_reg, ptr_reg });
+    try self.out.writer.print("    {s} = load i8, ptr {s}{s}\n", .{ byte_reg, ptr_reg, tbaaSuffix(self) });
     try self.out.writer.print("    {s} = sext i8 {s} to i32\n", .{ dst, byte_reg });
 }
 
@@ -680,7 +680,7 @@ pub fn qbeLoadSB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError
 pub fn qbeLoadUH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
     const ptr_reg = try resolveAddrPtr(self, addr);
     const half_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = load i16, ptr {s}\n", .{ half_reg, ptr_reg });
+    try self.out.writer.print("    {s} = load i16, ptr {s}{s}\n", .{ half_reg, ptr_reg, tbaaSuffix(self) });
     try self.out.writer.print("    {s} = zext i16 {s} to i32\n", .{ dst, half_reg });
 }
 
@@ -688,7 +688,7 @@ pub fn qbeLoadUH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError
 pub fn qbeLoadSH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
     const ptr_reg = try resolveAddrPtr(self, addr);
     const half_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = load i16, ptr {s}\n", .{ half_reg, ptr_reg });
+    try self.out.writer.print("    {s} = load i16, ptr {s}{s}\n", .{ half_reg, ptr_reg, tbaaSuffix(self) });
     try self.out.writer.print("    {s} = sext i16 {s} to i32\n", .{ dst, half_reg });
 }
 
@@ -699,7 +699,7 @@ pub fn qbeStoreH(self: *Codegen, value_raw: []const u8, addr: []const u8) Codege
     const ptr_reg = try resolveAddrPtr(self, addr);
     const half_reg = try self.newTemp();
     try self.out.writer.print("    {s} = trunc i32 {s} to i16\n", .{ half_reg, value });
-    try self.out.writer.print("    store i16 {s}, ptr {s}\n", .{ half_reg, ptr_reg });
+    try self.out.writer.print("    store i16 {s}, ptr {s}{s}\n", .{ half_reg, ptr_reg, tbaaSuffix(self) });
 }
 
 /// v2.0 madde 5: `@packed` bir sınıfın GENİŞ (u32/u64/int/float/pointer)

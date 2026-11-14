@@ -2929,7 +2929,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
         const addr = try self.newTemp();
         try self.qbeOp2(addr, .l, "add", list_text, off16);
-        if (obj.elem_qtype != .b and obj.elem_qtype != .sb and obj.elem_qtype != .h and obj.elem_qtype != .sh) self.setMemTag(.list_elem);
+        self.setMemTag(.list_elem);
         try self.qbeStore(obj.elem_qtype, val.text, addr);
         self.setMemTag(.none);
     }
