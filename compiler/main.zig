@@ -2154,6 +2154,9 @@ fn prepareRunCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, path_
     defer home_dir.close(io);
     try home_dir.createDirPath(io, try std.fmt.allocPrint(a, "cache/run/obj/{s}", .{content_hex}));
     try home_dir.createDirPath(io, "cache/run/paths");
+    // Girdiyi hemen "kullanımda" işaretle: ikilisiz, eski bir girdi (önceki başarısız derleme) yeniden kullanılırken başka bir sürecin `prune`u onu derleme/bağlama sürerken silebiliyordu
+    // (`ld: open() failed, errno=2 .../bin`, TODO 11.10). `used` işaretçisi eskiden yalnızca derleme BİTİNCE yazılıyordu.
+    run_cache.touch(io, obj_dir);
 
     const suffix = if (builtin.os.tag == .windows) ".exe" else "";
     const bin_path = try std.fmt.allocPrint(a, "{s}/bin{s}", .{ obj_dir, suffix });

@@ -1,0 +1,67 @@
+# Plugin API (nox.plugin) manifest fuzz (TODO 7.5): bozuk/eksik/yanlış tipli manifestler yalnızca PluginError verir (JSON hatası dahil), hiçbiri çökmez; her önek denenir.
+import nox.fs
+import nox.tempfile
+from nox.plugin import read_manifest, PluginManifest, PluginError
+
+def attempt(label: str, dir: str, text: str) -> None:
+    path: str = dir + "/nox-plugin.json"
+    nox.fs.write_string(path, text)
+    try:
+        m: PluginManifest = read_manifest(path)
+        print(label + ": ok " + m.name)
+    except PluginError as e:
+        print(label + ": PluginError")
+    except Exception as e:
+        print(label + ": OTHER " + e.message[0:50])
+
+d: str = nox.tempfile.mkdtemp("nox-pf-")
+plat: str = "macos-arm64"
+good: str = "{\"name\":\"a\",\"version\":\"1\",\"plugin_api\":1,\"library\":{\"macos-arm64\":\"l.dylib\",\"linux-x64\":\"l.so\",\"linux-arm64\":\"l.so\",\"linux-riscv64\":\"l.so\",\"windows-x64\":\"l.dll\"},\"capabilities\":[\"fs.read\"],\"functions\":[{\"name\":\"f\",\"args\":[\"int\"],\"returns\":\"int\"}]}"
+attempt("good", d, good)
+attempt("empty", d, "")
+attempt("not json", d, "xyz")
+attempt("array root", d, "[1,2]")
+attempt("number root", d, "5")
+attempt("null root", d, "null")
+attempt("name number", d, good.replace("\"name\":\"a\"", "\"name\":5"))
+attempt("version null", d, good.replace("\"version\":\"1\"", "\"version\":null"))
+attempt("api string", d, good.replace("\"plugin_api\":1", "\"plugin_api\":\"1\""))
+attempt("api huge", d, good.replace("\"plugin_api\":1", "\"plugin_api\":1e300"))
+attempt("api neg", d, good.replace("\"plugin_api\":1", "\"plugin_api\":-1"))
+attempt("lib array", d, good.replace("\"library\":{", "\"library\":[{").replace("\"windows-x64\":\"l.dll\"}", "\"windows-x64\":\"l.dll\"}]"))
+attempt("lib value number", d, good.replace("\"l.dylib\"", "5").replace("\"l.so\"", "5").replace("\"l.dll\"", "5"))
+attempt("lib value null", d, good.replace("\"l.dylib\"", "null").replace("\"l.so\"", "null").replace("\"l.dll\"", "null"))
+attempt("caps object", d, good.replace("[\"fs.read\"]", "{}"))
+attempt("caps number elem", d, good.replace("[\"fs.read\"]", "[5]"))
+attempt("caps null elem", d, good.replace("[\"fs.read\"]", "[null]"))
+attempt("functions number", d, good.replace("[{\"name\":\"f\",\"args\":[\"int\"],\"returns\":\"int\"}]", "5"))
+attempt("function elem number", d, good.replace("[{\"name\":\"f\",\"args\":[\"int\"],\"returns\":\"int\"}]", "[5]"))
+attempt("function elem array", d, good.replace("[{\"name\":\"f\",\"args\":[\"int\"],\"returns\":\"int\"}]", "[[]]"))
+attempt("function no name", d, good.replace("\"name\":\"f\",", ""))
+attempt("function bad ret", d, good.replace("\"returns\":\"int\"", "\"returns\":\"quux\""))
+attempt("args object", d, good.replace("\"args\":[\"int\"]", "\"args\":{}"))
+attempt("args number elem", d, good.replace("\"args\":[\"int\"]", "\"args\":[7]"))
+attempt("args dots first", d, good.replace("\"args\":[\"int\"]", "\"args\":[\"...\"]"))
+attempt("args bad kind", d, good.replace("\"args\":[\"int\"]", "\"args\":[\"zzz\"]"))
+attempt("unicode name", d, good.replace("\"name\":\"a\"", "\"name\":\"\\u00e9\\ud83d\\ude00\""))
+attempt("lone surrogate", d, good.replace("\"name\":\"a\"", "\"name\":\"\\ud800\""))
+attempt("deep nest", d, "[" * 400 + "]" * 400)
+attempt("trailing garbage", d, good + "xx")
+attempt("dup keys", d, good.replace("{\"name\":\"a\",", "{\"name\":\"a\",\"name\":\"b\","))
+cut: int = 0
+rejected: int = 0
+bad: int = 0
+accepted: int = 0
+while cut < len(good):
+    p2: str = d + "/nox-plugin.json"
+    nox.fs.write_string(p2, good[0:cut])
+    try:
+        mm: PluginManifest = read_manifest(p2)
+        accepted = accepted + 1
+    except PluginError as e:
+        rejected = rejected + 1
+    except Exception as e:
+        bad = bad + 1
+    cut = cut + 1
+print("prefixes rejected as PluginError: " + str(rejected) + ", accepted: " + str(accepted) + ", other exceptions: " + str(bad))
+nox.fs.remove_dir_all(d)

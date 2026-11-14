@@ -111,7 +111,7 @@ struct NoxApiV1 {
 |---|---|
 | `retain`, `release` | thread-safe; adjust the reference count of any valid handle |
 | `string_new`, `string_view`, `bytes_new`, `bytes_view` | thread-safe; see *Handles* |
-| `alloc`, `free` | the host allocator (the one Nox uses for the plugin's context); `free` must receive the same size and alignment |
+| `alloc`, `free` | the host allocator (the one Nox uses for the plugin's context); `free` must receive the same size and alignment. `alloc` with `size == 0` returns `NULL` (like `malloc(0)` on some platforms) and `free(NULL, ...)` does nothing |
 | `error_set` | records a message for the *current call* and returns `NOX_ERROR`; use as `return api->error_set(rt, code, msg, len);` |
 | `register_function` | valid **only during** `nox_plugin_init_v1`; registers a callable by name |
 | `post_event` | thread-safe, callable from **any** thread; copies string/bytes payloads; `kind` must be `>= 0` |

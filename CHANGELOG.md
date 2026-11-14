@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.149]
+
+### Düzeltildi (açık işler turu: B1–B3)
+
+- **`noxc run` önbelleği yarışı (TODO 11.10):** ikilisiz eski bir girdi yeniden kullanılırken `used` işaretçisi derleme bitince yazılıyordu; paralel bir `prune` girdiyi derleme/bağlama sürerken siliyordu (`ld: open() failed, errno=2 .../bin`). Artık `prepareRunCache` işaretçiyi hemen yazar (regresyon testi `run_cache.zig`).
+- **NNI `alloc(rt, 0, ...)`** Zig ayırıcısında taşma/çökme veriyordu; artık `malloc(0)` gibi `NULL` döner (`docs/apis/nni.md`). Bulgu yeni 20 000 adımlık NNI API fuzz testinden geldi (rastgele/eski/bozuk tutamaç, uzunluk, tür).
+- **`nox.plugin.read_manifest`:** geçersiz JSON artık `PluginError` verir (belgede zaten böyleydi; JSON hatası sızıyordu); `library` girdisi ve `capabilities` öğeleri dize değilse `PluginError` (eskiden sessizce `""` kabul ediliyordu); boş kitaplık adı reddedilir. Yeni golden `plugin_manifest_fuzz` (iki backend; her önek + yanlış tipli alanlar).
+- **Belge:** `docs/internals/wasm-coverage.md` "yalnız i32" diyordu; gerçek motorla (MVP, çok değerli, sign-ext, doymalı dönüşüm, bulk, reftypes, SIMD, threads) yeniden yazıldı.
+
 ## [2.1.148]
 
 ### Belge

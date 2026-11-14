@@ -281,7 +281,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [x] **6.4 CPython uyumluluk iddiasını dürüstçe sınırla.** (v2.0.39: aynı sayfa; NumPy/Pandas desteklenmez, "as-is çalışır" denmez; AGENTS Tier tablosu yol haritası olarak işaretlendi.) NumPy/Pandas
   hedefi için gereken gerçek API matrisi, eksik semboller ve test programı
   hazırlanmalı; “as-is çalışır” denmemeli.
-- [~] **6.5 WASM interpreter kapsam matrisi çıkar.** (v2.0.39: `docs/internals/wasm-coverage.md` matrisi ve hedef yüzey sırası yazıldı; v2.0.41: i32 karşılaştırma/bölme/bit/kaydırma/select/drop eklendi, trap ve taşma testli. v2.0.44: block/loop/if/else/br/br_if + yakıt sınırı (50M komut) eklendi. Açık: bellek, i64, br_table.) Bugünkü parser/interpreter
+- [x] **6.5 WASM interpreter kapsam matrisi çıkar.** (v2.1.149: `docs/internals/wasm-coverage.md` gerçek motorla (MVP, çok değerli, sign-ext, doymalı dönüşüm, bulk, reftypes, SIMD, threads) yeniden yazıldı; bayat "yalnız i32" iddiası kaldırıldı.) (v2.0.39: `docs/internals/wasm-coverage.md` matrisi ve hedef yüzey sırası yazıldı; v2.0.41: i32 karşılaştırma/bölme/bit/kaydırma/select/drop eklendi, trap ve taşma testli. v2.0.44: block/loop/if/else/br/br_if + yakıt sınırı (50M komut) eklendi. Açık: bellek, i64, br_table.) Bugünkü parser/interpreter
   yalnız sınırlı instruction/value türlerini destekliyor. İstenen WASM
   surface'i belirle, trap/error ve fuzz korpusunu genişlet. WASM backend
   kesinlikle eklenmez.
@@ -303,7 +303,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
 - [~] **7.4 Registry güvenlik kapılarını genişlet.** (v2.0.39: moderasyon, "metadata onayı kod incelemesi değildir", kilit dosyası = provenance, olay müdahale adımları `docs/reference/security.md`de. Açık: otomatik tarama, yayıncı imzası, üretilmiş SBOM — 7.1 tasarımına bağlı.) Metadata approval,
   malware/native-code uyarısı, provenance/SBOM ve incident response akışı
   belgelenip test edilmeli.
-- [~] **7.5 FFI sınır fuzzing'i ekle.** (v2.0.46: HPy tutamaç tablosu için 200 turluk rastgele geçerli ctx dizisi eklendi. (v2.0.37: embed ABI için 300 turluk deterministik rastgele çağrı dizisi + bozuk yapılandırma/UTF-8/uzunluk fuzz testi; WASM ayrıştırıcı ve lexer/parser fuzz önceden vardı. Açık: NNI, Plugin API, HPy sınırı.) NNI, Plugin API, HPy, WASM ve embed
+- [x] **7.5 FFI sınır fuzzing'i ekle.** (v2.1.149: NNI ana makine API'si için 20 000 adımlık deterministik fuzz (`native.zig`) — `alloc(0)` çökmesi bulundu/düzeltildi; Plugin API için `plugin_manifest_fuzz` golden (her önek + yanlış tipli alanlar) — JSON hatası PluginError yerine sızıyordu, `library`/`capabilities` girdileri tür denetimsizdi, ikisi düzeltildi.) Önceki sürümler: HPy tutamaç tablosu 200 turluk fuzz, embed ABI 300 turluk fuzz. (v2.0.46: HPy tutamaç tablosu için 200 turluk rastgele geçerli ctx dizisi eklendi. (v2.0.37: embed ABI için 300 turluk deterministik rastgele çağrı dizisi + bozuk yapılandırma/UTF-8/uzunluk fuzz testi; WASM ayrıştırıcı ve lexer/parser fuzz önceden vardı. Açık: NNI, Plugin API, HPy sınırı.) NNI, Plugin API, HPy, WASM ve embed
   ABI için length/null/version/ownership girdileri fuzz edilmelidir.
 
 ## Faz 8 — P3 dil/stdlib kapsam kararları
@@ -393,7 +393,7 @@ sınır: `try`yi terk eden `return`/`break`/`continue` ile `yield` içeren `fina
   bağımlılık paketinin kendi göreli `extern`ünü paket kökünde aramak (`module` birleşik gelir, kaynak bilgisi taşınmıyor); `.o`/`.a` içeriğinin `noxc run` önbellek anahtarına girmemesi (eski statik kütüphane
   ile bayat ikili) ayrı bir eksik.
 - [x] **11.6 2.1 ilanı (v2.1.0).** CHANGELOG/sürüm notu, `docs/whatsnew`, site ve duyuru; yalnızca 11.1–11.5 kapanınca.
-- [ ] **11.10 (2.2) `noxc run` önbelleğinde aralıklı eşzamanlı silme (araştırılacak).** 2026-11-06'da `scripts/check_docs.py` (6 işçi) yerelde iki kez aralıklı olarak `ld: open() failed, errno=2 for ~/.nox/cache/run/obj/<özet>/bin`
+- [x] **11.10 (v2.1.149) `noxc run` önbelleğinde aralıklı eşzamanlı silme.** KÖK NEDEN: ikilisiz eski bir girdi (önceki başarısız derleme) yeniden kullanılırken `used` işaretçisi derleme BİTİNCE yazılıyordu; başka bir sürecin `prune`u girdiyi (işaretçi eski, ikili yok) "başarısız" sayıp derleme/bağlama sürerken siliyordu. Düzeltme: `prepareRunCache` işaretçiyi hemen yazar + regresyon testi. (Eski not:  2026-11-06'da `scripts/check_docs.py` (6 işçi) yerelde iki kez aralıklı olarak `ld: open() failed, errno=2 for ~/.nox/cache/run/obj/<özet>/bin`
   ile düştü (bağlama sırasında çıktı dizini yok olmuş), üçüncü koşu temiz geçti. Önbellek tavanda (≈513 MB / 512 MiB) ve `~/.nox`u başka bir oturumun `noxc`si (Aura ajanı) de kullanıyor. 192 paralel `noxc run` (8 işçi, json/http/regex
   import'lu) ile yeniden ÜRETİLEMEDİ; CI'da (taze önbellek) görülmedi. Şüphe: bir başka sürecin `prune`u ya da `cache prune`u derlemesi süren girdiyi siliyor (`prune` 600 sn korumasına güvenir, ama `used` işaretçisi derleme BİTİNCE yazılır). Olası güvenli
   önlem: `prepareRunCache`te dizin açılır açılmaz `used` işaretçisi yazmak. Yeniden üretilmeden kod değiştirilmedi.

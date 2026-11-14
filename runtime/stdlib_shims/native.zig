@@ -224,6 +224,8 @@ fn apiBytesView(rt: *NoxRuntime, h: NoxHandle, p: *[*]const u8, len: *usize) cal
 }
 
 fn apiAlloc(rt: *NoxRuntime, size: usize, alignment: usize) callconv(.c) ?*anyopaque {
+    // `size == 0` Zig ayırıcılarında tanımsızdır (DebugAllocator `len - 1` taşar): C'deki `malloc(0)` gibi NULL döner; `free` NULL'u yok sayar.
+    if (size == 0) return null;
     const host = hostFrom(rt);
     const al: std.mem.Alignment = std.mem.Alignment.fromByteUnits(if (alignment == 0 or !std.math.isPowerOfTwo(alignment)) 16 else alignment);
     const p = host.allocator.rawAlloc(size, al, @returnAddress()) orelse return null;
@@ -858,4 +860,87 @@ test "plugin platform anahtari riscv64'u linux-riscv64 yapar" {
     try std.testing.expectEqualStrings("linux-riscv64", key);
     try std.testing.expectEqualStrings("arm64", archToken(.aarch64));
     try std.testing.expectEqualStrings("x64", archToken(.x86_64));
+}
+
+test "NNI fuzz: rastgele/eski/bozuk tutamaçlar, uzunluklar ve türler çökmeden, sızıntısız ve tanımlı durum kodlarıyla işlenir (TODO 7.5)" {
+    var host: Host = .{ .allocator = std.testing.allocator, .lib = undefined };
+    defer {
+        for (host.entries.items) |*e| if (e.in_use) std.testing.allocator.free(e.data);
+        host.entries.deinit(std.testing.allocator);
+        if (host.err_msg.len > 0) std.testing.allocator.free(host.err_msg);
+    }
+    const rt: *NoxRuntime = @ptrCast(&host);
+    var prng = std.Random.DefaultPrng.init(0x6e6e695f66757a7a);
+    const rnd = prng.random();
+
+    var pool: [32]NoxHandle = @splat(0);
+    var bytes: [96]u8 = undefined;
+    const valid = [_]NoxStatus{ NOX_OK, NOX_ERROR, 2, 3, NOX_BAD_HANDLE, 5, 6, 7, 8 };
+    var steps: usize = 0;
+    while (steps < 20_000) : (steps += 1) {
+        rnd.bytes(&bytes);
+        const slot = rnd.uintLessThan(usize, pool.len);
+        // Tutamaç: havuzdaki (geçerli ya da eski), sıfır ya da tamamen rastgele.
+        const h: NoxHandle = switch (rnd.uintLessThan(u8, 5)) {
+            0 => 0,
+            1 => rnd.int(u64),
+            else => pool[slot],
+        };
+        const len = rnd.uintLessThan(usize, bytes.len + 1);
+        switch (rnd.uintLessThan(u8, 14)) {
+            0 => pool[slot] = apiStringNew(rt, &bytes, len),
+            1 => pool[slot] = apiBytesNew(rt, &bytes, len),
+            2 => pool[slot] = apiListNew(rt),
+            3 => pool[slot] = apiDictNew(rt),
+            4 => apiRelease(rt, h),
+            5 => apiRetain(rt, h),
+            6 => {
+                var p: [*]const u8 = undefined;
+                var l: usize = 0;
+                const st = if (rnd.boolean()) apiStringView(rt, h, &p, &l) else apiBytesView(rt, h, &p, &l);
+                try std.testing.expect(st == NOX_OK or st == NOX_BAD_HANDLE);
+            },
+            7 => {
+                const st = apiListAppendInt(rt, h, rnd.int(i64));
+                try std.testing.expect(std.mem.indexOfScalar(NoxStatus, &valid, st) != null);
+            },
+            8 => {
+                var out: i64 = 0;
+                const idx: i64 = switch (rnd.uintLessThan(u8, 3)) {
+                    0 => -@as(i64, @intCast(rnd.uintLessThan(u32, 100))),
+                    1 => std.math.maxInt(i64) - @as(i64, @intCast(rnd.uintLessThan(u8, 4))),
+                    else => @intCast(rnd.uintLessThan(u32, 40)),
+                };
+                const st = apiListGetInt(rt, h, idx, &out);
+                try std.testing.expect(std.mem.indexOfScalar(NoxStatus, &valid, st) != null);
+                var n: i64 = -1;
+                _ = apiListLen(rt, h, &n);
+            },
+            9 => {
+                const st = apiDictSetInt(rt, h, &bytes, len, rnd.int(i64));
+                try std.testing.expect(std.mem.indexOfScalar(NoxStatus, &valid, st) != null);
+            },
+            10 => {
+                var out: i64 = 0;
+                const st = apiDictGetInt(rt, h, &bytes, len, &out);
+                try std.testing.expect(std.mem.indexOfScalar(NoxStatus, &valid, st) != null);
+                var n: i64 = -1;
+                _ = apiDictLen(rt, h, &n);
+            },
+            11 => {
+                const alignment = rnd.uintLessThan(usize, 70);
+                const p = apiAlloc(rt, len, alignment);
+                // `free` sözleşmesi: aynı boyut ve aynı hizalama (geçersiz hizalama ayırıcıda 16'ya düşer).
+                if (p) |q| apiFree(rt, q, len, alignment);
+                if (len == 0) try std.testing.expect(p == null);
+            },
+            12 => _ = apiErrorSet(rt, 1, &bytes, len),
+            else => {
+                // Sıfır uzunluklu ve en büyük anahtarlar.
+                _ = apiDictSetInt(rt, h, &bytes, 0, 1);
+                _ = apiStringNew(rt, &bytes, 0);
+            },
+        }
+    }
+    for (pool) |h| apiRelease(rt, h);
 }

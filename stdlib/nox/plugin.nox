@@ -101,7 +101,11 @@ def require_string(v: JsonValue, key: str, what: str) -> str:
 def read_manifest(manifest_path: str) -> PluginManifest:
     if not exists(manifest_path):
         raise PluginError("manifest not found: " + manifest_path)
-    root: JsonValue = parse(read_to_string(manifest_path))
+    root: JsonValue = parse("null")
+    try:
+        root = parse(read_to_string(manifest_path))
+    except Exception as e:
+        raise PluginError(manifest_path + ": " + e.message)
     if not is_object(root):
         raise PluginError(manifest_path + ": the manifest root must be an object")
     name: str = require_string(root, "name", manifest_path)
@@ -127,7 +131,12 @@ def read_manifest(manifest_path: str) -> PluginManifest:
     li: int = 0
     while li < object_len(lib_field):
         if object_key(lib_field, li) == platform:
-            lib_name = as_string(object_value(lib_field, li))
+            lib_value: JsonValue = object_value(lib_field, li)
+            if not is_string(lib_value):
+                raise PluginError(name + ": the 'library' entry for " + platform + " must be a string")
+            lib_name = as_string(lib_value)
+            if lib_name == "":
+                raise PluginError(name + ": the 'library' entry for " + platform + " is empty")
             found = True
         li = li + 1
     if not found:
@@ -143,7 +152,10 @@ def read_manifest(manifest_path: str) -> PluginManifest:
             raise PluginError(name + ": field 'capabilities' must be an array")
         ci: int = 0
         while ci < array_len(caps_field):
-            caps.append(as_string(array_get(caps_field, ci)))
+            cap_value: JsonValue = array_get(caps_field, ci)
+            if not is_string(cap_value):
+                raise PluginError(name + ": every entry of 'capabilities' must be a string")
+            caps.append(as_string(cap_value))
             ci = ci + 1
 
     specs: list[FunctionSpec] = []

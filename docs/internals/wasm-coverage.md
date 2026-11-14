@@ -1,28 +1,34 @@
 # WebAssembly coverage
 
-`runtime/wasm_bridge/` is a **library import** (an embedded interpreter that loads WASM modules into a Nox program). Compiling Nox *to* WebAssembly is a separate feature: [WebAssembly](../tools/wasm.md). This page lists exactly what it accepts today. Anything not listed is rejected with a named error, never silently ignored.
+`runtime/wasm_bridge/` is a **library import** (an embedded interpreter that loads WASM modules into a Nox program). Compiling Nox *to* WebAssembly is a separate feature: [WebAssembly](../tools/wasm.md). This page lists what the interpreter accepts today (v2.1.148); the user-facing API is [nox.wasm](../stdlib/wasm.md). A module is validated with the specification's algorithm in one pass (`compile.zig`) and rejected with `InvalidModule` before anything runs; an opcode outside the list below is rejected, never silently ignored. A WASM back end for Nox is never added.
 
 ## Module format
 
 | Part | Status |
 |---|---|
-| Header, version | parsed |
-| Type section (1) | parsed; only the function form `0x60` |
-| Function section (3) | parsed |
-| Export section (7) | parsed; function exports are callable |
-| Code section (10) | parsed (locals + body) |
-| Import (2), Table (4), Memory (5), Global (6), Start (8), Element (9), Data (11), custom sections | skipped by size, no meaning |
+| Header, version, type section (1), function (3), export (7), code (10) | parsed and validated |
+| Import (2) | functions are bound to Nox host functions (up to 4 `int` parameters, 1 result); other import kinds are rejected |
+| Table (4), element (9), reference types | supported (`call_indirect`, `table.get/set`, `ref.null/is_null/func`) |
+| Memory (5), data (11), data count (12) | supported, including shared memories (threads); `memory.grow` is limited by `max_pages` |
+| Global (6), start (8) | supported (`v128` globals are rejected) |
+| Custom sections | skipped |
 
-Value types: `i32` only in the interpreter. A module that declares `i64`, `f32` or `f64` parameters is rejected by the call path (`TypeMismatch`).
+## Value types and instructions
 
-## Instructions (straight-line code, `i32`)
+`i32`, `i64`, `f32`, `f64`, `v128` (SIMD, inside the module only), `funcref`/`externref`. Multi-value results and block types are supported.
 
-`unreachable` (traps), `nop`, `end`/`return`, `call`, `drop`, `select`, `local.get`, `local.set`, `local.tee`, `i32.const`; arithmetic `i32.add`, `sub`, `mul`, `div_s`, `div_u`, `rem_s`, `rem_u` (division by zero and `INT_MIN / -1` trap; `INT_MIN rem -1` is 0); comparisons `i32.eqz`, `eq`, `ne`, `lt_s`, `lt_u`, `gt_s`, `gt_u`, `le_s`, `le_u`, `ge_s`, `ge_u`; bitwise `and`, `or`, `xor`, `shl`, `shr_s`, `shr_u` (shift count modulo 32). Every other opcode is `UnsupportedInstruction`. Structured control flow works: `block`, `loop`, `if`/`else`, `br`, `br_if` (block types `0x40` and `i32`). A `br` deeper than the open blocks acts as `return`. A call may execute at most 50 million instructions and open 64 nested blocks; going over traps, so a module with an infinite loop cannot hang the process. There is no memory access, no tables, no imports, no `i64`/floats, no `br_table`.
+- The whole MVP numeric, control-flow (`block`, `loop`, `if`, `br`, `br_if`, `br_table`, `return`, `call`, `call_indirect`), variable, memory and parametric instruction set.
+- Sign-extension operators, non-trapping (saturating) float-to-int conversions (`0xFC 0-7`), bulk memory (`0xFC 8-17`: `memory.copy/fill/init`, `data.drop`, table equivalents), reference types.
+- Fixed-width SIMD (`0xFD`, v2.1.98), everything except relaxed SIMD.
+- Threads (`0xFE`, v2.1.99): shared memory and atomics, executed on a single thread (see [nox.wasm](../stdlib/wasm.md#threads-atomics-and-shared-memory)).
+- A small opt-in WASI preview1 subset.
+
+Not supported (rejected): exception handling, tail calls, GC and function-reference types, memory64, multi-memory, component model, relaxed SIMD, `v128` host-function signatures and `v128` crossing the Nox boundary.
 
 ## Errors and limits
 
-`Trap` (unreachable, malformed LEB128), `StackUnderflow`, `StackOverflow` (fixed operand stack), `UnsupportedInstruction`, `TypeMismatch`, `ExportNotFound`, `TooManyArgs`, `UnexpectedEof`, `OutOfMemory`. LEB128 is capped at five bytes. The parser has a fuzz target (`tests/fuzz/wasm_parser_fuzz.zig`).
+`Trap` (unreachable, division by zero, out-of-range memory/table access, misaligned atomic, infinite `wait`), `InvalidModule`, `UnsupportedInstruction`, `StackOverflow`, `TypeMismatch`, `ExportNotFound`, `TooManyArgs`, `UnexpectedEof`, `OutOfMemory`, and the fuel limit (`open_with_limits`, default budget counts branches and calls). Memory pages are capped.
 
-## Decided target surface
+## Verification
 
-The next steps, in this order, each with its own golden/fuzz tests: (1) ~~the rest of the `i32` numeric instructions~~ (done in 2.0.41; `clz`/`ctz`/`popcnt`/`rotl`/`rotr` remain); (2) ~~structured control flow~~ (done in 2.0.44; `br_table` remains); (3) linear memory with bounds-checked `load`/`store`; (4) `i64`. Floats, tables, imports and multi-value are out of scope until a real module needs them. A WASM back end for Nox is never added.
+Fuzzing: `tests/fuzz/wasm_parser_fuzz.zig` (parser, instantiation, execution; every single-byte mutation and prefix of small valid modules on each test run). Differential tests against Node's WebAssembly engine on every CI run: 36 904 numeric vectors, 9 330 SIMD vectors, 5 109 atomics vectors, plus compiled programs. See [nox.wasm](../stdlib/wasm.md#robustness).

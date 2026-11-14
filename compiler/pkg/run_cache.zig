@@ -305,6 +305,28 @@ test "prune: eski, ikilisiz ve tavani asan girdiler silinir; taze olana dokunulm
     try std.testing.expect(!exists(io, tmp.dir, "cache/run/paths/orphan"));
 }
 
+test "touch: ikilisiz eski girdi, yeniden kullanıma başlarken işaretlenince prune tarafından silinmez (TODO 11.10)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    var rb: [Io.Dir.max_path_bytes]u8 = undefined;
+    const home = rb[0..try tmp.dir.realPath(io, &rb)];
+
+    const now: i64 = 2_000_000_000;
+    const day: i64 = 24 * 3600;
+    try writeEntry(io, tmp.dir, "reused0000000001", "", 0, 2 * day, now); // önceki başarısız derlemeden kalan, ikilisiz
+    // Yeniden kullanım başlıyor: işaretçi şimdi yazılır (gerçek saatle), `prune` ise "şimdi"yi gerçek saat olarak görür.
+    const obj_dir = try std.fmt.allocPrint(a, "{s}/cache/run/obj/reused0000000001", .{home});
+    touch(io, obj_dir);
+    const real_now: i64 = @intCast(@divFloor(Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
+    const report = try prune(a, io, home, .{ .max_bytes = 0 }, real_now, false);
+    try std.testing.expectEqual(@as(usize, 0), report.removed);
+    try std.testing.expect(exists(io, tmp.dir, "cache/run/obj/reused0000000001/used"));
+}
+
 test "prune: boyut tavani asilirsa en eski kullanilanlar silinir, grace icindekiler korunur" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

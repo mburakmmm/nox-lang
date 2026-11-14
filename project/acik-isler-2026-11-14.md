@@ -19,11 +19,11 @@ Bu listede olmayanlar: `v2-hazirlik-yol-haritasi.md` (37/37 bitti), `limitasyon-
 
 ## B. Geliştirme işleri (yapılabilir, tasarım kararı gerekmeyen/az gerektiren)
 
-- [ ] **B1. (11.10) `noxc run` önbelleğinde aralıklı eşzamanlı silme.** `ld: open() failed, errno=2 .../cache/run/obj/<özet>/bin` iki kez görüldü, yeniden üretilemedi; şüphe: başka bir sürecin `prune`u derlemesi süren girdiyi siliyor (`used` işaretçisi derleme bitince yazılıyor). Önerilen güvenli önlem: `prepareRunCache`te dizin açılır açılmaz `used` işaretçisi yazmak. Önce yeniden üret, sonra değiştir.
-- [?] **B2. (6.5) WASM yorumlayıcı kapsam matrisi.** Kayıtta "Açık: bellek, i64, br_table"; sonraki WASM işleri (v2.1.98–99 SIMD/atomikler, 9 330 + 5 109 V8 farksal vektör) bunu büyük ölçüde kapatmış olabilir. `docs/internals/wasm-coverage.md` ile karşılaştırıp kayıt güncellenecek.
-- [?] **B3. (7.5) FFI sınır fuzzing'i.** Kayıtta "Açık: NNI, Plugin API, HPy sınırı". Doğrula, açıksa fuzz hedefleri ekle.
-- [?] **B4. (7.4) Registry güvenlik kapıları.** Açık: otomatik tarama, yayıncı imzası, üretilmiş SBOM. Kapsam 7.1/noxpkg tasarımına bağlı; önce neyin gerçekten eksik olduğunu doğrula.
-- [?] **B5. (4.6) Kanıt zinciri sertleştirme.** Açık: Aura commit'i ve toolchain alanlarının zorunluluğu (Aura deposu ayrı olduğundan D bölümüyle ilişkili).
+- [x] **B1. (11.10)** v2.1.149: kök neden bulundu (ikilisiz eski girdi yeniden kullanılırken `used` işaretçisi geç yazılıyordu, başka sürecin `prune`u siliyordu); işaretçi artık hemen yazılır + regresyon testi.
+- [x] **B2. (6.5)** v2.1.149: `docs/internals/wasm-coverage.md` gerçek motorla (MVP, çok değerli, sign-ext, doymalı, bulk, reftypes, SIMD, threads) yeniden yazıldı; kayıt bayattı.
+- [x] **B3. (7.5)** v2.1.149: NNI API fuzz (`alloc(0)` çökmesi düzeltildi) + Plugin API manifest fuzz golden (JSON hatası/yanlış tipler PluginError olur). HPy sınırı v2.0.46'dan fuzz'lıydı.
+- [K] **B4. (7.4) Registry güvenlik kapıları: otomatik tarama, yayıncı imzası, üretilmiş SBOM.** Bunlar ürün/mimari kararı (paket imzalama modeli, anahtar yönetimi, tarama hizmeti); AGENTS §16 gereği önce tasarım onayı gerekir. Mevcut güvenceler `docs/reference/security.md`de.
+- [K] **B5. (4.6) Kanıt zinciri: Aura commit'i ve toolchain alanlarının zorunluluğu.** Aura deposu ayrı olduğundan D bölümüne taşındı; Nox tarafı v2.0.38'de tamam.
 - [ ] **B6. (4.6, WASM) Gerçek çok iş parçacıklı WASM çalışması.** SIMD ve threads atomikleri bitti; kalan: aynı belleği paylaşan birden çok örnek + iş parçacığı oluşturma API'si. **Host/API tasarım kararı gerekir** (kullanıcıya sorulacak) → karar gelmeden başlanmaz.
 - [ ] **B7. (9.15) WASM varsayılan kotaları çok-kiracılı kullanım için gevşek.** İzleme maddesi; sıkı hazır ayar + capability sınırları W2/W3 ile (Nexus). Çok-kiracılı kullanım gündeme gelince.
 - [ ] **B8. M:N: başlamış fiber, başladığı işçiye bağlı.** Bloklayan FFI'da işçi büyütme (v2.1.142) yalnızca başlamamış görevleri kurtarır; başlamış bir fiber bloklanmış işçide beklemeye devam eder. Tam çözüm = preemption / fiber göçü. **Kullanıcı kararıyla ertelendi** (2026-11-13/14); gündeme gelince yeniden sorulacak.
