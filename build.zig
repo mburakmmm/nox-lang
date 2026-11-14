@@ -73,6 +73,7 @@ fn addFreestandingRuntimeChain(
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
     arch: std.Target.Cpu.Arch,
+    root_file: []const u8,
     install_name: []const u8,
 ) *std.Build.Step.Compile {
     const fs_target = b.resolveTargetQuery(.{ .cpu_arch = arch, .os_tag = .freestanding, .abi = .none });
@@ -88,10 +89,12 @@ fn addFreestandingRuntimeChain(
         .optimize = optimize,
     });
     const mod = b.createModule(.{
-        .root_source_file = b.path("runtime/lib_freestanding.zig"),
+        .root_source_file = b.path(root_file),
         .target = fs_target,
         .optimize = optimize,
         .link_libc = false,
+        // riscv64 `virt` RAM 0x80000000'dadır: medlow (±2 GiB) kod modeli o adrese erişemez.
+        .code_model = if (arch == .riscv64) .medium else .default,
         .imports = &.{
             .{ .name = "abi_layout", .module = abi_layout_mod },
             .{ .name = "diag_sink", .module = diag_sink_mod },
@@ -100,6 +103,7 @@ fn addFreestandingRuntimeChain(
     const swap_src: []const u8 = switch (arch) {
         .aarch64 => "runtime/async_rt/swap_aarch64.S",
         .x86_64 => "runtime/async_rt/swap_x86_64.S",
+        .riscv64 => "runtime/async_rt/swap_riscv64.S",
         else => @panic("addFreestandingRuntimeChain: desteklenmeyen mimari"),
     };
     const swap_o_path = b.fmt("runtime/async_rt/swap_{s}_{s}.o", .{ @tagName(arch), install_name });
@@ -1050,8 +1054,11 @@ pub fn build(b: *std.Build) void {
     // vs `lib_freestanding_kernel.zig`) derlenen FARKLI nesnelerdir, AYNI
     // dosya adını PAYLAŞAMAZLAR. riscv64 İçİn zincir EKLENMEZ (`fiber.zig`nin
     // mimari kapısına çarpar — bkz. plan dosyasının araştırma notu).
-    _ = addFreestandingRuntimeChain(b, optimize, .x86_64, "noxrt-freestanding-generic-x86_64");
-    _ = addFreestandingRuntimeChain(b, optimize, .aarch64, "noxrt-freestanding-generic-aarch64");
+    _ = addFreestandingRuntimeChain(b, optimize, .x86_64, "runtime/lib_freestanding.zig", "noxrt-freestanding-generic-x86_64");
+    _ = addFreestandingRuntimeChain(b, optimize, .aarch64, "runtime/lib_freestanding.zig", "noxrt-freestanding-generic-aarch64");
+    // v2.1.151 (TODO 1.11): QEMU `virt` çekirdek zincirleri (UART + çıkış + yığın havuzu; bkz. `runtime/freestanding/<arch>/`).
+    _ = addFreestandingRuntimeChain(b, optimize, .aarch64, "runtime/lib_freestanding_kernel_aarch64.zig", "noxrt-freestanding-aarch64");
+    _ = addFreestandingRuntimeChain(b, optimize, .riscv64, "runtime/lib_freestanding_kernel_riscv64.zig", "noxrt-freestanding-riscv64");
 
     // v2.0 madde 8: kamuya açık `--target` bayrağının hosted tarafı.
     // Sürüm varlığı hâlâ `macos-arm64`/`linux-x64`/`linux-arm64`/
@@ -1182,6 +1189,21 @@ pub fn build(b: *std.Build) void {
         "runtime/freestanding/x86_64/boot_x86_64.o", "runtime/freestanding/x86_64/boot.S",
     });
     b.getInstallStep().dependOn(&compile_boot_x86_64.step);
+    const compile_boot_aarch64 = b.addSystemCommand(&.{
+        b.graph.zig_exe,                               "cc",
+        "-target",                                     "aarch64-freestanding-none",
+        "-c",                                          "-o",
+        "runtime/freestanding/aarch64/boot_aarch64.o", "runtime/freestanding/aarch64/boot.S",
+    });
+    b.getInstallStep().dependOn(&compile_boot_aarch64.step);
+    const compile_boot_riscv64 = b.addSystemCommand(&.{
+        b.graph.zig_exe,                               "cc",
+        "-target",                                     "riscv64-freestanding-none",
+        "-mcmodel=medany",                             "-c",
+        "-o",                                          "runtime/freestanding/riscv64/boot_riscv64.o",
+        "runtime/freestanding/riscv64/boot.S",
+    });
+    b.getInstallStep().dependOn(&compile_boot_riscv64.step);
 
     // Faz O §P.1: `noxc`nin proje kökü DIŞINDAN çalıştırılabilmesi İÇİN
     // `stdlib/` ağacı da (`noxrt.o` İLE AYNI kurulum kökü altına,
@@ -2362,6 +2384,27 @@ pub fn build(b: *std.Build) void {
     // noktası — CI'ye qemu KURULMADAN BU adım ZATEN test_step İçİnde
     // SESSİZCE atlanıyor (bkz. testin KENDİ "qemu yoksa SkipZigTest" notu),
     // AMA opt-in bir `zig build kernel-boot-test` de HAZIR bekler.
+    // v2.1.151 (TODO 1.11): aarch64 + riscv64 QEMU `virt` boot testleri (`tests/golden/kernel_boot_qemu_test.zig`; qbe/qemu yoksa atlanır).
+    const kernel_boot_qemu_options = b.addOptions();
+    kernel_boot_qemu_options.addOption([]const u8, "zig_exe_path", b.graph.zig_exe);
+    kernel_boot_qemu_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
+    const kernel_boot_qemu_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/kernel_boot_qemu_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = kernel_boot_qemu_options.createModule() },
+        },
+    });
+    const kernel_boot_qemu_test = b.addTest(.{ .root_module = kernel_boot_qemu_mod });
+    kernel_boot_qemu_test.step.dependOn(&install_noxc.step);
+    kernel_boot_qemu_test.step.dependOn(b.getInstallStep());
+    kernel_boot_qemu_test.step.dependOn(&install_stdlib.step);
+    const kernel_boot_qemu_run = addTimedTestRun(b, kernel_boot_qemu_test, win_test_timeout_s);
+    test_step.dependOn(&kernel_boot_qemu_run.step);
+    const kernel_boot_qemu_step = b.step("kernel-boot-qemu-test", "aarch64 + riscv64 QEMU virt çıplak çekirdek boot testlerini çalıştırır (qbe + qemu-system-<arch> gerekir)");
+    kernel_boot_qemu_step.dependOn(&kernel_boot_qemu_run.step);
+
     const kernel_boot_test_step = b.step("kernel-boot-test", "Faz F.4'ün x86_64 QEMU boot testini (GERÇEK bare-metal çalıştırma) çalıştırır — qemu/qbe PATH'te olmalı");
     kernel_boot_test_step.dependOn(&kernel_boot_test_run.step);
 

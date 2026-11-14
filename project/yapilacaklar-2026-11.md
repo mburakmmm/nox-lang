@@ -32,7 +32,7 @@ Kaynak raporlar: `project/freestanding-kapsam-analizi-2026-11.md`, `project/stdl
 - [x] **1.9c** `nox.crypto` freestanding'de (özetler; argon2/scrypt/hash'ler çıplak çekirdekte desteklenmez) — **v2.1.58**
 - [x] **1.9d** `nox.os` freestanding'de (bellek içi ortam, `arg(0)`="nox", `exit` = durdur) — **v2.1.58**
 - [x] **1.10** QEMU'da fatal hatada `isa-debug-exit` ile çıkış kodu 35 — **v2.1.59**
-- [~] **1.11** aarch64 / riscv64 için QEMU boot zinciri — kullanıcı kararı: şimdilik yapılmayacak, 2-3-4. bölümlerden sonra yeniden sorulacak
+- [x] **1.11** (v2.1.151) aarch64 / riscv64 için QEMU boot zinciri — kullanıcı kararı 2026-11-14: ikisi birden; yapıldı
 - [x] **1.12** Yeniden ölçüm tamam (v2.1.58): **PASS 423/525** (başlangıç 323); DIFF 20→1 (yalnız F8), LINK 76→1 (yalnız `wasm_call`, freestanding'de yok = beklenen), HALT 3→0, FAULT 2→0. Kalanlar tasarım gereği: CAP 69, negatif fixture 17, HALT-OK 12 (işlenmemiş istisna makineyi durdurur), NOEXP 2
 
 ## 2. Stdlib performans (rapor: stdlib-performans-analizi)

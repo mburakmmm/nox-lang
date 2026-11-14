@@ -306,7 +306,73 @@ fn printfReal(f: [*:0]const u8, ap_ptr: *std.builtin.VaList) usize {
     return pos;
 }
 
-export fn printf(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
+/// v2.1.151 (TODO 1.11): aarch64 (AAPCS64, ELF) ve riscv64 (LP64D) `VaList` kullanmadan çalışır: değişken argümanlı çağrıda ilk 7 tamsayı/işaretçi argümanı `x1..x7`/`a1..a7`, aarch64'te ilk 8
+/// kayan nokta `d0..d7` yazmaçlarında, riscv64'te kayan nokta da `a1..a7` tamsayı yazmaçlarında (çıplak bit deseni) gelir. `printf`i bu imzayla (sabit parametreler) dışa açmak, çağıranın
+/// gördüğü yazmaç düzeniyle birebir uyumludur. Sınır: bir `printf` çağrısında en çok 7 tamsayı + (aarch64) 8 kayan nokta argümanı (yığın argümanı yok); `print` ifadeleri bunu aşmaz.
+const printf_regs = (builtin.cpu.arch == .aarch64 or builtin.cpu.arch == .riscv64) and builtin.os.tag == .freestanding;
+
+fn printfRegs(f: [*:0]const u8, ints: [7]u64, floats: [8]f64) usize {
+    var buf: [1024]u8 = undefined;
+    var pos: usize = 0;
+    var i: usize = 0;
+    var ni: usize = 0;
+    var nf: usize = 0;
+    while (f[i] != 0) : (i += 1) {
+        if (f[i] == '%' and f[i + 1] == 'l' and f[i + 2] == 'l' and (f[i + 3] == 'd' or f[i + 3] == 'u')) {
+            const unsigned = f[i + 3] == 'u';
+            i += 3;
+            const raw: u64 = if (ni < ints.len) ints[ni] else 0;
+            ni += 1;
+            const written = (if (unsigned) std.fmt.bufPrint(buf[pos..], "{d}", .{raw}) else std.fmt.bufPrint(buf[pos..], "{d}", .{@as(i64, @bitCast(raw))})) catch break;
+            pos += written.len;
+        } else if (f[i] == '%' and f[i + 1] == 'g') {
+            i += 1;
+            const v: f64 = if (builtin.cpu.arch == .aarch64)
+                (if (nf < floats.len) floats[nf] else 0)
+            else
+                @bitCast(if (ni < ints.len) ints[ni] else 0);
+            if (builtin.cpu.arch == .aarch64) nf += 1 else ni += 1;
+            const written = std.fmt.bufPrint(buf[pos..], "{d}", .{v}) catch break;
+            pos += written.len;
+        } else if (f[i] == '%' and f[i + 1] == 's') {
+            i += 1;
+            const addr: usize = @intCast(if (ni < ints.len) ints[ni] else 0);
+            ni += 1;
+            if (addr != 0) {
+                const s: [*:0]const u8 = @ptrFromInt(addr);
+                const slen = std.mem.len(s);
+                const copy_len = @min(slen, buf.len - pos);
+                @memcpy(buf[pos..][0..copy_len], s[0..copy_len]);
+                pos += copy_len;
+            }
+        } else if (pos < buf.len) {
+            buf[pos] = f[i];
+            pos += 1;
+        }
+    }
+    diag_sink.diagSink()(null, &buf, pos);
+    return pos;
+}
+
+comptime {
+    if (printf_regs) {
+        const Impl = struct {
+            fn aarch64(fmt: ?[*:0]const u8, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64, a7: u64, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) callconv(.c) c_int {
+                const f = fmt orelse return 0;
+                return @intCast(printfRegs(f, .{ a1, a2, a3, a4, a5, a6, a7 }, .{ f0, f1, f2, f3, f4, f5, f6, f7 }));
+            }
+            fn riscv64(fmt: ?[*:0]const u8, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64, a7: u64) callconv(.c) c_int {
+                const f = fmt orelse return 0;
+                return @intCast(printfRegs(f, .{ a1, a2, a3, a4, a5, a6, a7 }, @splat(0)));
+            }
+        };
+        if (builtin.cpu.arch == .aarch64) @export(&Impl.aarch64, .{ .name = "printf" }) else @export(&Impl.riscv64, .{ .name = "printf" });
+    } else {
+        @export(&printfVariadic, .{ .name = "printf" });
+    }
+}
+
+fn printfVariadic(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
     if (comptime !printf_real) return 0;
     const f = fmt orelse return 0;
     var ap = @cVaStart();

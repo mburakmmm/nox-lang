@@ -262,7 +262,7 @@ emülatörde otomatik, fiziksel hedeflerde tekrarlanabilir çalışır.
   temsilî dil/runtime/exception/ARC/async matrisi ve düzenli CI.
 - [x] **5.5 Freestanding riscv64 hedefini kararlaştır.** (v2.0.46 KARAR: assembly-only KALIR, boot zinciri yapılmaz; `platforms.md` ve `freestanding.md` bunu zaten söylüyor. Gerekçe: x86-64 zinciri bir QEMU kapısıyla kanıtlı; riscv64 için ayrı linker betiği/UART/SBI ve test kapısı ayrı bir proje.) Şu anda assembly
   only; boot zinciri isteniyorsa linker/runtime/QEMU kapıları tasarlanmalı.
-- [~] **5.6 Freestanding aarch64 boot kanıtını tamamla.** (v2.0.46: belgeler ELF üretimi ile boot kanıtını ayırıyor (yalnız x86-64 boot edilir). aarch64 için boot kodu, linker betiği ve `qemu-system-aarch64` kapısı yazılmadı: ayrı proje; QEMU yerelde mevcut.) ELF üretimi ile
+- [x] **5.6 Freestanding aarch64 boot kanıtını tamamla.** (v2.1.151: aarch64 VE riscv64 QEMU `virt`te önyükleniyor, `kernel_boot_qemu_test.zig`.) (v2.0.46: belgeler ELF üretimi ile boot kanıtını ayırıyor (yalnız x86-64 boot edilir). aarch64 için boot kodu, linker betiği ve `qemu-system-aarch64` kapısı yazılmadı: ayrı proje; QEMU yerelde mevcut.) ELF üretimi ile
   gerçek QEMU/device boot kanıtını ayır.
 - [x] **5.7 LLVM debug-info politikasını kararlaştır.** (v2.0.46 KARAR: `-g` QBE'de kalır ve otomatik QBE seçer; `noxc.md` bunu açıkça yazıyor. LLVM DWARF/CodeView ayrı tasarım; kullanıcı sorunu çıkarsa açılır.) `-g` yalnız QBE'de;
   LLVM DWARF/CodeView desteği ayrı tasarım ve test ister.

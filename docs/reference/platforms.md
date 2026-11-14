@@ -24,14 +24,14 @@ Both back ends run the whole golden corpus and must agree on program output, inc
 | Linux x86-64 | yes (LLVM or QBE) | full test suite |
 | Linux aarch64 | yes | full test suite |
 | Windows x86-64 | yes — LLVM (`zig cc`) and QBE, end to end (classes, lists, dictionaries, tasks, f-strings, exceptions, TLS and WebSocket); installer and zip releases | the whole Debug `zig build test` corpus on `windows-latest`, plus end-to-end LLVM/QBE smoke tests |
-| riscv64 | hosted Linux (`--target linux-riscv64`, static musl, QEMU user-mode smoke: class, list, dictionary, loop ordering and `spawn`/`await`). Freestanding is still assembly only | QEMU user-mode smoke CI; not the full corpus |
+| riscv64 | hosted Linux (`--target linux-riscv64`, static musl, QEMU user-mode smoke: class, list, dictionary, loop ordering and `spawn`/`await`). Freestanding boots in QEMU `virt` (see [Freestanding](../tools/freestanding.md)) | QEMU user-mode smoke CI; not the full corpus |
 | WebAssembly (`wasm32-wasi`, `wasm32-freestanding`) | `.wasm` WASI command, or a libc-free module that talks to its host through `nox_host` imports; `--asyncify` gives real fibers through `wasm-opt`; `--target wasm32-wasi-threads` and `wasm32-freestanding-threads` (`--threads`) add parallel M:N threads through shared memory; sockets, child processes and servers are opt-in host capabilities (default off), and there are no native libraries ([WebAssembly](../tools/wasm.md)). The compiler itself also runs in a browser tab ([Playground](../tools/playground.md)). Tests in `zig build test` (Node and, where available, PostgreSQL and MySQL servers), the whole corpus under `zig build wasm-corpus-test` (Node WASI) | smoke tests; corpus is opt-in |
 | iOS arm64 and iOS Simulator arm64 | library only (`--emit-obj` or `--emit-static-lib`). Not a third profile | experimental; not `supported` |
 | Android arm64 and Android x64 | `libnoxapp.so`, 16 KiB ELF alignment | experimental; not `supported` |
 
 macOS x86-64 is expected to work (`macos-x64`) but is not part of CI or the release matrix: there is no prebuilt archive for Intel Macs, so build the compiler from source ([Installing](../install/index.md#from-source)).
 
-**Freestanding** (bare-metal) builds exist for x86-64 and aarch64: an ELF with the Zig runtime and a kernel-provided allocator. The x86-64 path is proven by booting a real kernel image in QEMU as part of the test suite ([Freestanding](../tools/freestanding.md)).
+**Freestanding** (bare-metal) builds exist for x86-64, aarch64 and riscv64 (all three boot in QEMU as part of the test suite): an ELF with the Zig runtime and a kernel-provided allocator. The x86-64 path is proven by booting a real kernel image in QEMU as part of the test suite ([Freestanding](../tools/freestanding.md)).
 
 ## Toolchain requirements
 
@@ -49,9 +49,8 @@ macOS x86-64 is expected to work (`macos-x64`) but is not part of CI or the rele
    end-to-end smoke tests; it does not yet mirror every ReleaseFast/stress job
    from the macOS/Linux matrix. Under Node's WASI, `nox.fs.read_dir` is not
    available on Windows ([WebAssembly](../tools/wasm.md)).
-3. **riscv64 freestanding** still has no boot-tested runtime. Hosted Linux is `--target linux-riscv64`.
-4. **Multi-core parallelism** is a property of the LLVM back end; QBE programs run tasks on one thread.
-5. `extern def`, `lowlevel`, NNI plugins and dependencies with native code run with full authority ([Security](security.md)).
+3. **Multi-core parallelism** is a property of the LLVM back end; QBE programs run tasks on one thread.
+4. `extern def`, `lowlevel`, NNI plugins and dependencies with native code run with full authority ([Security](security.md)).
 
 ## Reporting a platform problem
 

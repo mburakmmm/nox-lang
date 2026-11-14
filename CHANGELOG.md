@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.151]
+
+### Eklendi (TODO 1.11 / 5.6: aarch64 ve riscv64 çıplak çekirdek boot zinciri)
+
+- **aarch64 ve riscv64 artık QEMU `virt`'te gerçekten önyükleniyor** (x86-64'e ek): `runtime/freestanding/{aarch64,riscv64}/` (`boot.S`, `kernel.ld`, `kernel.zig`, `kernel_demo.nox`), `noxrt-freestanding-{aarch64,riscv64}.o` zincirleri (`build.zig`: `addFreestandingRuntimeChain` kök dosya parametresi aldı, riscv64 swap asm + `medium` kod modeli). Test: `tests/golden/kernel_boot_qemu_test.zig` (`zig build kernel-boot-qemu-test`; `qbe`/`qemu-system-<arch>` yoksa atlanır) liste/sözlük/dize/sınıf/float/özyineleme/istisna işaretlerini ve çıkış kodunu doğrular. CI Linux işi `qemu-system-arm` + `qemu-system-misc` kurar.
+- **aarch64:** MMU kapalıyken hizasız erişim hizalama hatası verdiğinden `boot.S` kimlik eşlemeli tek seviyeli tablo kurar (1 GiB Device + 1 GiB Normal) ve MMU/önbellekleri açar; UART PL011, çıkış ARM semihosting.
+- **riscv64:** QBE çıktısı adresleri `lui %hi` + `addi %lo` ile kurar (yalnızca ilk 2 GiB); QEMU RAM'i 0x80000000'da olduğundan `noxc build --target riscv64 --profile freestanding --emit-asm` bu çiftleri PC-göreli `lla`ya çevirir. UART NS16550, çıkış SiFive test finisher.
+- **`print` aarch64/riscv64 çıplak çekirdekte:** `printf` bu mimarilerde `va_list` olmadan yazmaç tabanlı çalışır (tamsayı + float + dize; ≤7 tamsayı, aarch64'te ≤8 float). Eskiden aarch64'te satır sonu ve tamsayı/float yazdırma sessizce kayboluyordu.
+- Belge: `docs/tools/freestanding.md` ("Reference boot chains"), `docs/reference/platforms.md`.
+
 ## [2.1.150]
 
 ### Belge (tasarım)

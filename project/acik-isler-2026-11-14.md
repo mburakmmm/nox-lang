@@ -32,7 +32,7 @@ Bu listede olmayanlar: `v2-hazirlik-yol-haritasi.md` (37/37 bitti), `limitasyon-
 
 - [ ] **C1. (11.7) REPL — LLVM ORC JIT.** `noxc` LLVM'e bağlı değil; libLLVM'i çalışma anında tembel yükleme, `noxrt.o`yu JIT'e nesne olarak ekleme, satırlar arası durum için modül-global + ARC. iOS'ta JIT yasak → yalnızca masaüstü. Önce spike + tasarım onayı.
 - [ ] **C2. (11.8) C FFI maliyetini sıfıra yaklaştır / C kütüphanelerini Nox'ta çalıştır.** Önce mevcut maliyetin ölçümü ve tasarım seçenekleri. AGENTS §9.5 güven sınırı geçerli: sandbox/"güvenli mod" kapsamlı güvenlik tasarımı gerektirir, yarım eklenmez.
-- [ ] **C3. (1.11)** Kullanıcı kararı 2026-11-14: **aarch64 ve riscv64 birlikte** yapılacak (QEMU `virt`). Sürüyor.
+- [x] **C3. (1.11)** v2.1.151: aarch64 + riscv64 QEMU `virt` boot zincirleri + test + belge.
 - [x] **C4. (5.1/5.2)** bindgen F4/F4b/F5 ve `@dataclass`/`@derive` bitti; yapilacaklar bölüm 8'de açık madde yok. Derleme zamanı sabitleri ve kullanıcı makroları kapsam dışı (kullanıcı kararı 2026-11-13).
 - [ ] **C5. (7.3) `list[Task[T]]`.** Bilinçli desteklenmiyor, hata `TaskGroup`'a yönlendirir. Değişmedi; yalnızca tasarım kararıyla.
 - [ ] **C6. Preemption** (B8 ile aynı konu). Kullanıcı "şimdilik gerekmez" dedi.

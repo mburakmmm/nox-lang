@@ -1,0 +1,58 @@
+# Freestanding aarch64 (QEMU `virt`) demo çekirdeği (v2.1.151, TODO 1.11): `tests/golden/kernel_boot_aarch64_test.zig` bunu derleyip QEMU'da çalıştırır.
+# İşaretler UART'tan sırayla basılır; test hepsini ve `ALL_CHECKPOINTS_OK`i arar.
+print("Hello Nox")
+
+xs: list[int] = []
+i: int = 0
+while i < 100:
+    xs.append(i * i)
+    i = i + 1
+total: int = 0
+for v in xs:
+    total = total + v
+if total == 328350:
+    print("HEAP_OK")
+
+d: dict[str, int] = {"a": 1, "b": 2}
+d["c"] = 3
+if d["a"] + d["b"] + d["c"] == 6:
+    print("DICT_OK")
+
+s: str = "nox" * 3 + "-" + str(len(xs))
+if s == "noxnoxnox-100":
+    print("STR_OK")
+
+class Counter:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def bump(self) -> int:
+        self.n = self.n + 1
+        return self.n
+
+c: Counter = Counter(41)
+if c.bump() == 42:
+    print("CLASS_OK")
+
+x: float = 1.5
+if x * 2.0 == 3.0:
+    print("FLOAT_OK")
+
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+if fib(20) == 6765:
+    print("RECURSION_OK")
+
+try:
+    raise ValueError("boom")
+except ValueError:
+    print("EXCEPT_OK")
+
+print("INT_PRINT", total, len(xs))
+print("FLOAT_PRINT", x * 2.0)
+print("ALL_CHECKPOINTS_OK")

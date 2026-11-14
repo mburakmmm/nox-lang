@@ -3538,6 +3538,10 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         return error.BuildFailed;
     }
 
+    // v2.1.151 (TODO 1.11): QBE'nin riscv64 çıktısı adresleri mutlak `lui %hi(sym)` + `addi %lo(sym)` ile kurar (R_RISCV_HI20: yalnızca ilk 2 GiB). QEMU `virt` RAM'i 0x80000000'dadır;
+    // çıplak çekirdek için çiftleri PC-göreli `lla sym`e (auipc+addi, ±2 GiB) çeviririz. Hosted riscv64 (Linux) etkilenmez.
+    if (profile == .freestanding and target != null and std.mem.eql(u8, target.?, "riscv64")) try rewriteRiscvAbsToPcrel(io, a, asm_path);
+
     // `-g`: QBE değişken yönergesi bilmez. Fonksiyon gövdesinin en üstündeki
     // skaler yereller tek bir `alloc` yuvasında durur; adları hedefe uygun
     // `.debug_str` bölümüne yazılır. macOS `ld` bu bölümü bağlı ikiliden
@@ -3940,4 +3944,59 @@ fn cmdSign(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home:
 
     std.debug.print("{s}", .{usage});
     std.process.exit(1);
+}
+
+/// `lui R, %hi(S)` + hemen ardından `addi R, R, %lo(S)` çiftlerini `lla R, S`ye çevirir (bkz. çağıran yer). Çevrilmeyen satırlar aynen geçer.
+fn rewriteRiscvAbsToPcrel(io: std.Io, a: std.mem.Allocator, asm_path: []const u8) !void {
+    const text = try std.Io.Dir.cwd().readFileAlloc(io, asm_path, a, .limited(256 * 1024 * 1024));
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var pending: ?[]const u8 = null; // bekleyen `lui` satırı
+    while (it.next()) |line| {
+        if (pending) |lui_line| {
+            pending = null;
+            if (riscvPair(lui_line, line)) |pair| {
+                try out.print(a, "\tlla {s}, {s}\n", .{ pair.reg, pair.sym });
+                continue;
+            }
+            try out.appendSlice(a, lui_line);
+            try out.append(a, '\n');
+        }
+        if (std.mem.startsWith(u8, line, "\tlui ") and std.mem.indexOf(u8, line, "%hi(") != null) {
+            pending = line;
+            continue;
+        }
+        try out.appendSlice(a, line);
+        if (it.peek() != null) try out.append(a, '\n');
+    }
+    if (pending) |lui_line| try out.appendSlice(a, lui_line);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = asm_path, .data = out.items });
+}
+
+const RiscvPair = struct { reg: []const u8, sym: []const u8 };
+
+fn riscvPair(lui_line: []const u8, addi_line: []const u8) ?RiscvPair {
+    // "\tlui a0, %hi(sym)" / "\taddi a0, a0, %lo(sym)"
+    if (!std.mem.startsWith(u8, lui_line, "\tlui ") or !std.mem.startsWith(u8, addi_line, "\taddi ")) return null;
+    const lui_rest = lui_line["\tlui ".len..];
+    const comma = std.mem.indexOf(u8, lui_rest, ", %hi(") orelse return null;
+    const reg = lui_rest[0..comma];
+    const sym_start = comma + ", %hi(".len;
+    const close = std.mem.lastIndexOfScalar(u8, lui_rest, ')') orelse return null;
+    if (close < sym_start) return null;
+    const sym = lui_rest[sym_start..close];
+    var expect: [256]u8 = undefined;
+    const want = std.fmt.bufPrint(&expect, "\taddi {s}, {s}, %lo({s})", .{ reg, reg, sym }) catch return null;
+    if (!std.mem.eql(u8, std.mem.trimEnd(u8, addi_line, " \r"), want)) return null;
+    return .{ .reg = reg, .sym = sym };
+}
+
+test "riscv64: lui %hi + addi %lo çifti lla olur, çiftsizler dokunulmaz" {
+    try std.testing.expect(riscvPair("\tlui a0, %hi(foo)", "\taddi a0, a0, %lo(foo)") != null);
+    const p = riscvPair("\tlui t1, %hi(.Lstr.7)", "\taddi t1, t1, %lo(.Lstr.7)").?;
+    try std.testing.expectEqualStrings("t1", p.reg);
+    try std.testing.expectEqualStrings(".Lstr.7", p.sym);
+    try std.testing.expect(riscvPair("\tlui a0, %hi(foo)", "\taddi a1, a1, %lo(foo)") == null);
+    try std.testing.expect(riscvPair("\tlui a0, %hi(foo)", "\taddi a0, a0, %lo(bar)") == null);
+    try std.testing.expect(riscvPair("\tlui a0, 5", "\taddi a0, a0, 1") == null);
 }
