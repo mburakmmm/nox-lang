@@ -75,7 +75,7 @@ True False
 | Function | Description |
 |---|---|
 | `abs(x)` | absolute value of an `int` or `float` |
-| `min(a, b)`, `max(a, b)` | of two numbers or strings (both arguments the same type) |
+| `min(a, b, ...)`, `max(a, b, ...)` | of two or more numbers or strings (all arguments the same type) |
 | `min(xs)`, `max(xs)`, with `key=f` | of a list; `ValueError` when the list is empty |
 | `min(xs, default=d)`, `max(xs, default=d)` | like above, but `d` is returned for an empty list (also combines with `key=f`) |
 | `sum(xs)`, `sum(xs, start)` | sum of a `list[int]` or `list[float]` (plus `start`, default 0); also accepts a generator expression |

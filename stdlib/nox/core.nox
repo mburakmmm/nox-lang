@@ -666,6 +666,25 @@ def __nox_min_key[T, K](xs: list[T], key: (T) -> K) -> T:
             best_k = k
     return best
 
+# v2.1.170: `min(a, b, c, ...)` / `max(a, b, c, ...)` (3+ konumsal argüman; `*rest` değişken sayıda parametre) — checker bu işlevlere yönlendirir.
+def __nox_min_many[T](a: T, b: T, *rest: T) -> T:
+    best: T = a
+    if b < best:
+        best = b
+    for x in rest:
+        if x < best:
+            best = x
+    return best
+
+def __nox_max_many[T](a: T, b: T, *rest: T) -> T:
+    best: T = a
+    if b > best:
+        best = b
+    for x in rest:
+        if x > best:
+            best = x
+    return best
+
 # v2.1.159: `max(xs, default=d)` / `min(xs, default=d)` (+ `key=`): boş listede `d` döner (Python gibi), aksi halde sıradan sonuç.
 def __nox_max_default[T](xs: list[T], default: T) -> T:
     if len(xs) == 0:

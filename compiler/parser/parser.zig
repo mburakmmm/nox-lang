@@ -1227,8 +1227,15 @@ pub const Parser = struct {
                 };
             }
         }
-        _ = try self.expect(.arrow);
-        const return_type = try self.parseTypeExpr();
+        // v2.1.170: `-> T` atlanırsa dönüş tipi `None`dır (yalnızca değer döndürmeyen gövdeler; `return x` tip hatasıdır).
+        var ret_omitted = false;
+        const return_type: ast.TypeExpr = if (self.check(.colon)) blk: {
+            ret_omitted = true;
+            break :blk .{ .simple = "None" };
+        } else blk: {
+            _ = try self.expect(.arrow);
+            break :blk try self.parseTypeExpr();
+        };
         _ = try self.expect(.colon);
         var nonlocals = std.ArrayList([]const u8).empty;
         const saved_nonlocals = self.cur_nonlocals;
@@ -1241,6 +1248,7 @@ pub const Parser = struct {
             .type_params = try type_params.toOwnedSlice(self.allocator),
             .params = try params.toOwnedSlice(self.allocator),
             .return_type = return_type,
+            .ret_omitted = ret_omitted,
             .body = body,
             .is_async = is_async,
             .nonlocals = try nonlocals.toOwnedSlice(self.allocator),

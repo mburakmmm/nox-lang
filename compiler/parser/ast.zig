@@ -286,6 +286,8 @@ pub const FuncDef = struct {
     type_params: []const []const u8 = &.{},
     params: []Param,
     return_type: TypeExpr,
+    /// v2.1.170: dönüş tipi yazılmadı (`def f(x: int):`) → `return_type` `None`; biçimlendirici yazımı korur. AGENTS §5'in dar istisnası (kullanıcı kararı 2026-11-14).
+    ret_omitted: bool = false,
     body: []Stmt,
     /// `async def` — gövdesi içinde `await` kullanılabilir (checker zorunlu
     /// kılar); yalnızca `spawn` ile çağrılabilir (bkz. nox-teknik-

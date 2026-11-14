@@ -1,0 +1,52 @@
+# v2.1.170: dönüş tipi yazılmayan `def` = `-> None` (serbest fonksiyon, metod, __init__, iç içe def, async); `-> None` yazımı hâlâ geçerli
+
+log: list[str] = []
+
+def note(msg: str):
+    log.append(msg)
+
+def twice(msg: str) -> None:
+    note(msg)
+    note(msg)
+
+def early(n: int):
+    if n < 0:
+        return
+    note("n=" + str(n))
+
+class Counter:
+    def __init__(self, start: int):
+        self.n = start
+
+    def bump(self):
+        self.n = self.n + 1
+
+    def reset(self) -> None:
+        self.n = 0
+
+    def value(self) -> int:
+        return self.n
+
+def outer(base: int):
+    def inner(delta: int):
+        note("inner " + str(base + delta))
+    inner(1)
+    inner(2)
+
+async def work(tag: str):
+    note("work " + tag)
+
+note("a")
+twice("b")
+early(5)
+early(-1)
+c: Counter = Counter(10)
+c.bump()
+c.bump()
+print(c.value())
+c.reset()
+print(c.value())
+outer(100)
+t: Task[None] = spawn work("w")
+await t
+print(log)

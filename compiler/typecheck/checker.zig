@@ -8454,6 +8454,11 @@ pub const Checker = struct {
                 (if (is_max) "__nox_max_list" else "__nox_min_list") };
             return null;
         }
+        // v2.1.170: `min/max(a, b, c, ...)` (3+ konumsal argüman) → değişken sayıda parametreli çekirdek yardımcılar.
+        if ((eq(u8, name, "max") or eq(u8, name, "min")) and positional >= 3 and positional == c.args.len) {
+            c.callee.* = .{ .identifier = if (eq(u8, name, "max")) "__nox_max_many" else "__nox_min_many" };
+            return null;
+        }
         // v2.1.159: `hex/oct/bin(n)`, `pow(a, b[, m])`, `int(s, base)`, `zip(a, b, c)` — yalnızca kullanıcı aynı adlı bir işlev TANIMLAMADIYSA
         // (yukarıdaki `user_defined` erken dönüşü) çekirdek yardımcılarına yönlendirilir.
         if (positional == c.args.len) {

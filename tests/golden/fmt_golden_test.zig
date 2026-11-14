@@ -394,6 +394,25 @@ test "fmt: v1.157.0 — tuple literal, açma ve çıplak tuple İDEMPOTENT round
     }
 }
 
+test "fmt: v2.1.170 — dönüş tipi atlanan `def` (None) yazımı korur, idempotent" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "def f(x: int):\n    print(x)\n", .out = "def f(x: int):\n    print(x)\n" },
+        .{ .in = "def g():\n    pass\n", .out = "def g():\n    pass\n" },
+        .{ .in = "def h(x: int) -> None:\n    print(x)\n", .out = "def h(x: int) -> None:\n    print(x)\n" },
+        .{ .in = "class C:\n    def m(self, a: int):\n        self.a = a\n", .out = "class C:\n    def m(self, a: int):\n        self.a = a\n" },
+        .{ .in = "async def w(n: int):\n    print(n)\n", .out = "async def w(n: int):\n    print(n)\n" },
+    };
+    for (cases) |c| {
+        const once = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}
+
 test "fmt: v1.162.0 — assert, birleşik atama (öz/dizin), zincirleme karşılaştırma, üreteç ifadesi İDEMPOTENT round-trip" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

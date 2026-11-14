@@ -18,7 +18,7 @@ hello nox
 12
 ```
 
-Every parameter has a type and every function has a return type (`-> None` for procedures). The one exception is `self` in a method
+Every parameter has a type and every function has a return type (`-> None` for procedures; a `def` that writes no `-> T` at all returns `None`, so `def greet(name: str):` is the same as `def greet(name: str) -> None:` and `return value` in it is a type error). The other exception is `self` in a method
 ([Classes](classes.md)). A function must return a value of its declared type on **every path**; the compiler reports
 "does not return a value on all paths" otherwise. Function names are unique within a module (defining the same name twice is an
 error), and a top-level function may not be called `main`.

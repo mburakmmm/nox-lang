@@ -841,9 +841,13 @@ const Printer = struct {
         }
         try self.writer.writeAll("(");
         try self.printParams(fd.params);
-        try self.writer.writeAll(") -> ");
-        try self.printType(fd.return_type);
-        try self.writer.writeAll(":");
+        if (fd.ret_omitted) {
+            try self.writer.writeAll("):");
+        } else {
+            try self.writer.writeAll(") -> ");
+            try self.printType(fd.return_type);
+            try self.writer.writeAll(":");
+        }
     }
 
     fn printParams(self: *Printer, params: []const ast.Param) FormatError!void {

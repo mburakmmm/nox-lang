@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.170]
+
+### Eklendi (2.2 aşama 5: sözdizimi sadeliği)
+
+- **Dönüş tipi atlanabilir:** `def f(x: int):` = `def f(x: int) -> None:` (serbest fonksiyon, metod, `__init__`, iç içe `def`, `async def`). Dönüş tipi her zaman statik olarak `None`dır; gövdede `return değer` tip hatasıdır. `-> None` yazmak geçerli kalır; `noxc fmt` yazılan biçimi korur (`FuncDef.ret_omitted`). AGENTS §5'e dar istisna notu (kullanıcı kararı 2026-11-14), tree-sitter grammar'ı (`return_type` isteğe bağlı) ve corpus testi, `docs/language/functions.md`.
+- **`min(a, b, c, ...)` / `max(a, b, c, ...)`** üç ve daha fazla konumsal argümanla (değişken sayıda parametreli çekirdek yardımcı `__nox_min_many/__nox_max_many`).
+- Not: değişken sayıda konumsal parametre (`*xs: T`), `**kwargs`, yalnızca anahtar-sözcük ve `f(a, *xs)` açma ZATEN dilde vardı (docs/language/functions.md); bu madde için yeni dil özelliği gerekmedi.
+- Goldenlar: `def_omitted_return_none`, `min_max_many_args`, fmt idempotent round-trip.
+
 ## [2.1.169]
 
 ### Performans (2.2 aşama 4: HTTP ve IO)

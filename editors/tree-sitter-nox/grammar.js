@@ -183,8 +183,8 @@ module.exports = grammar({
       field('name', $.identifier),
       optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
-      '->',
-      field('return_type', $._type_expression),
+      // v2.1.170: dönüş tipi atlanabilir (`def f(x: int):` = `-> None`)
+      optional(seq('->', field('return_type', $._type_expression))),
       ':',
       field('body', $.block),
     ),
