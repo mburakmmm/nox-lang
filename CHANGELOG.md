@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.165]
+
+### Düzeltildi (CI kararlılığı)
+
+- **`wasm_threads_test` "max_threads sınırı" testi yarışlıydı:** `run(6)` kısa iş parçacıkları başlatıyordu; ikisi üçüncü `spawn`dan önce bitip yuvayı boşaltırsa (yavaş/yüklü macOS CI koşucusu) üçüncü spawn kabul ediliyordu. Test sonsuz `wait`te kalan iş parçacıklarıyla (`spawn_one(99)`) belirlenimli hâle getirildi.
+- **macOS `HTTP/3: h3_client.request` testi:** CI günlüğü (v2.1.161 tanı çıktısı) ilk el sıkışmanın ara sıra `fallback` döndürdüğünü gösterdi; deneme sayısı 5 → 8.
+
 ## [2.1.164]
 
 ### Performans (2.2 aşama 12 hazırlığı; ölçüt C)

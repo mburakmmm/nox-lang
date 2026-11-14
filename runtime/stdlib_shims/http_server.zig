@@ -3300,7 +3300,7 @@ test "HTTP/3: h3_client.request sunucuya GET/POST yapar, yanıt başlıkları ve
             defer nox_http_shutdown_raw();
             const gpa = std.heap.page_allocator;
             var attempt: usize = 0;
-            while (attempt < 5) : (attempt += 1) {
+            while (attempt < 8) : (attempt += 1) { // macOS CI koşucusunda ilk el sıkışma(lar) ara sıra `fallback` döner
                 switch (h3_client.request(gpa, "127.0.0.1", p, "localhost", "GET", "/h3c", &.{.{ .name = "X-Probe", .value = "1" }}, null, 5000, 4)) {
                     .done => |r| {
                         var rr = r;

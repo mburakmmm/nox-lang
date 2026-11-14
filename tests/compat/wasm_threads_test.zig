@@ -30,7 +30,12 @@ test "wasi-threads: max_threads sınırı aşılınca thread-spawn negatif döne
     const inst = try wasm.interp.Instance.init(a, &m, &.{}, .{ .max_threads = 2 });
     defer inst.deinit();
     var res = [1]u64{0};
-    try inst.callByName("run", &[_]u64{6}, &res);
+    // `arg == 99` iş parçacıkları sonsuz `wait`te kalır (bitip yuva boşaltmaz): sınır belirlenimli sınanır (`run(6)` kısa iş parçacıklarıyla yarışırdı).
+    try inst.callByName("spawn_one", &[_]u64{99}, &res);
+    try std.testing.expect(@as(u32, @truncate(res[0])) != 0xffff_ffff);
+    try inst.callByName("spawn_one", &[_]u64{99}, &res);
+    try std.testing.expect(@as(u32, @truncate(res[0])) != 0xffff_ffff);
+    try inst.callByName("spawn_one", &[_]u64{99}, &res);
     try std.testing.expectEqual(@as(u32, 0xffff_ffff), @as(u32, @truncate(res[0]))); // 3. spawn reddedildi -> -1
 }
 
